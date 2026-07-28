@@ -38,7 +38,8 @@ import { openHostedIosHybridRoute } from './hosted-ios-hybrid-route-handoff.mjs'
 import { verifyHostedNativeTerminalSettingsHandoff } from './hosted-ios-native-settings-handoff.mjs'
 import { verifyHostedSourceControlReviewJourney } from './hosted-ios-source-control-review-journey.mjs'
 import { captureNativeSourceControlReviewBaselines } from './hosted-ios-source-control-review-parity.mjs'
-import { verifyHostedIosTerminalClipboardPaste } from './hosted-ios-terminal-clipboard-paste.mjs'
+import { resetHostedIosPhotosPermission } from './hosted-ios-photo-permission-denial.mjs'
+import { verifyHostedIosTerminalDeviceInputJourney } from './hosted-ios-terminal-device-input-journey.mjs'
 import { completeHostedIosNativeOnboarding } from './hosted-ios-native-onboarding.mjs'
 import { activateHostedWorkspaceRow } from './hosted-webview-workspace-activation.mjs'
 import { resolveHostedWebViewRuntimeDirectory } from './hosted-webview-runtime-directory.mjs'
@@ -101,6 +102,11 @@ async function main() {
             worktree
           })
         )
+    if (options.securityOnly) {
+      await evidenceStep('Photos permission reset', () =>
+        resetHostedIosPhotosPermission(deviceUdid)
+      )
+    }
     launcher = startMobileLauncher(deviceUdid, emulatorController.userData)
     await waitForLauncher(launcher, options.timeoutMs)
     const emulator = {
@@ -208,24 +214,28 @@ async function main() {
       openHostedIosHybridRoute(emulator, options.timeoutMs)
     )
     const inspectorPort = await findAvailableLoopbackPort()
+    const discoveryUrl = `http://127.0.0.1:${inspectorPort}`
     inspector = await startCdpServer({ port: inspectorPort })
     let workspaceDocument = await waitForVisibleHostedWebView({
-      discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
+      discoveryUrl,
       expectedText: 'Orca Desktop',
       timeoutMs: options.timeoutMs
     })
-    const terminalClipboardPaste = options.securityOnly
-      ? await evidenceStep('hosted terminal clipboard text paste', () =>
-          verifyHostedIosTerminalClipboardPaste({
-            deviceUdid,
-            discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
-            emulator,
+    const securityJourney = {
+      deviceUdid,
+      discoveryUrl,
+      emulator,
+      orcaCli: orcaSelection.command,
+      pairingRuntimeUserDataPath: path.join(runtimeDirectory, 'paired-host', 'userData'),
+      timeoutMs: options.timeoutMs,
+      worktree
+    }
+    const terminalDeviceInput = options.securityOnly
+      ? await evidenceStep('hosted terminal device input journey', () =>
+          verifyHostedIosTerminalDeviceInputJourney({
+            ...securityJourney,
             expectedWorkspace,
-            orcaCli: orcaSelection.command,
-            pairingRuntimeUserDataPath: path.join(runtimeDirectory, 'paired-host', 'userData'),
-            timeoutMs: options.timeoutMs,
-            workspaceDocument,
-            worktree
+            workspaceDocument
           })
         )
       : null
@@ -369,8 +379,8 @@ async function main() {
             })
           })
     const securityDocument =
-      options.securityOnly && terminalClipboardPaste
-        ? terminalClipboardPaste.sessionDocument
+      options.securityOnly && terminalDeviceInput
+        ? terminalDeviceInput.photoPermissionDenial.sessionDocument
         : options.accountsOnly || options.filesPreviewOnly
           ? parityWorkspaceDocument
           : await waitForVisibleHostedWebView({
@@ -410,7 +420,8 @@ async function main() {
           networkIsolation,
           navigationIsolation,
           nativeOnboarding,
-          terminalClipboardPaste: terminalClipboardPaste?.evidence ?? null,
+          photoPermissionDenial: terminalDeviceInput?.photoPermissionDenial.evidence ?? null,
+          terminalClipboardPaste: terminalDeviceInput?.terminalClipboardPaste.evidence ?? null,
           workspaceParity: hostedWorkspace,
           accountsParity: hostedAccounts?.evidence ?? null,
           agentHistory: historyEvidence,

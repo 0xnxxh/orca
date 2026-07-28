@@ -370,7 +370,7 @@ repository data is current.
 | Repeated process loss                     | Reject the failing build and recover the previous healthy generation; if none exists, remount with an explicit unavailable-recovery warning instead of a blank screen               | Recovery unit contracts exist; repeated-loss live validation remains open                                                                 |
 | Host switch, unpair, or stale route       | Revoke the prior session and streams before switching; resolve persisted workspace identity freshly; fall back to a safe host/workspace route when stale                            | Cold-resume, host-removal, broker-lifecycle, and opaque-navigation tests                                                                  |
 | Feature loading, empty, and partial data  | Preserve the existing route/component state and copy. Web adapters return bounded typed projections and must not reinterpret partial data as complete                               | Exact-source RNW route imports and focused adapter tests; deterministic native-versus-hosted fixtures remain open                         |
-| Permission denied, cancelled, or revoked  | Preserve current inline/native permission flows, return stable capability outcomes, and never expose platform permission objects or raw errors to the page                          | Picker, dictation, clipboard, and capability contracts; denial/revocation matrix remains open                                             |
+| Permission denied, cancelled, or revoked  | Preserve current inline/native permission flows, return stable capability outcomes, and never expose platform permission objects or raw errors to the page                          | Real iOS Photos first-use denial and Android microphone denial pass; post-grant revocation and broader capability matrix remain open      |
 | Operation-specific failure                | Preserve the existing surface’s inline/toast/retry behavior while mapping raw Desktop/native errors to stable bridge errors                                                         | Stable error schemas and multiple route adapter tests; full per-surface interaction matrix remains open                                   |
 
 ## Accessibility and Input Inventory
@@ -415,10 +415,15 @@ unchanged Attach control. The shell created a 2,808,983-byte host temp PNG;
 focused tests cover accepted/cancelled/permission/size feedback plus local and
 SSH upload authority. The exact cached iPhone app now accepts the real iOS paste
 privacy prompt and delivers an exact text marker through the unchanged hosted
-Paste control to the temporary Desktop terminal. Clipboard-image paste,
-document selection, camera, denial/revocation, interruption, Android, and
-physical-device evidence remain open. The live run did not observe terminal
-Enter execution after the upload.
+Paste control to the temporary Desktop terminal. The same gate denies the real
+first-use Photos prompt from unchanged Attach, shows the existing denial toast,
+retains the exact Session, leaves Desktop terminal output unchanged, and
+shows no image data or `orca-paste-` marker in hosted page text. Focused
+contracts separately require a status-only result. Clipboard-image paste,
+selected-document upload, post-grant revocation, interruption, and
+physical-device evidence remain open. Camera is native QR pairing only; the
+existing attachment UI has no camera action. The live run did not observe
+terminal Enter execution after the upload.
 Long-pressing the same unchanged control opened the native iOS document picker
 and Cancel returned cleanly; selected-document upload remains open.
 
@@ -540,9 +545,11 @@ a protocol-compatible local cell. The UX-state and accessibility/input
 ownership inventories are now frozen, including accurate incompatible-build
 fallback copy and shell alert/live-region semantics. Complete live
 waiting/loading/error, ambiguous-delivery, file-opening, production cloud Relay
-with realistic latency/reconnect. Complete document picker, camera,
-interruption, Android, and physical-device attachment evidence after the
-selected-photo path proven on iOS Simulator. Add
+with realistic latency/reconnect. Complete selected-document upload,
+post-grant revocation, interruption, and physical-device attachment evidence
+after the selected-photo and first-use denial paths proven on iOS Simulator.
+Keep camera validation scoped to the existing native QR-pairing route rather
+than inventing an attachment action. Add
 deterministic native-versus-hosted Tasks and session fixtures beyond the
 completed manual iOS Simulator passes. Finish the notification/deep-link
 live matrix with connected Host 37: exact session, missing target, consecutive

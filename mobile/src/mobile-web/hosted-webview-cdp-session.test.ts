@@ -517,8 +517,9 @@ describe('hosted WebView CDP target selection', () => {
       "expectedText: options.sourceControlOnly ? '1 tab' : '2 tabs'"
     )
     expect(simulatorHarnessSource).toContain(
-      "await evidenceStep('hosted terminal clipboard text paste'"
+      "await evidenceStep('hosted terminal device input journey'"
     )
+    expect(simulatorHarnessSource).toContain("await evidenceStep('Photos permission reset'")
     expect(simulatorHarnessSource).toContain('await clearHostedIosWebViewSecurityProbe(deviceUdid)')
     expect(simulatorAppBuildSource).toContain("'xcodebuild'")
     expect(simulatorAppBuildSource).toContain("'simctl', 'install', deviceUdid, appPath")

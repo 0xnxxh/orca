@@ -143,7 +143,10 @@ boundary. The native shell owns permission, picker bytes, execution-host
 resolution, bounded upload, and ordered terminal injection; hosted JavaScript
 receives only a bounded status. Focused tests cover local and SSH authority,
 accepted/cancelled/denied/too-large outcomes, and the iPhone simulator uploaded
-a selected 2,808,983-byte photo to a shell-owned host temp file.
+a selected 2,808,983-byte photo to a shell-owned host temp file. The exact
+cached app now also denies the real first-use Photos prompt from the unchanged
+control, preserves the hosted Session and Desktop terminal, shows the existing
+denial toast, and shows no image data or temp-path marker in hosted page text.
 The unchanged native-chat composer now also hydrates and coalesces drafts
 through `HostSessionChatDraftOperations`. Hosted reads and writes carry only
 opaque workspace/tab IDs; the broker resolves current host authority, and
@@ -930,9 +933,12 @@ copy.
       and ordered terminal injection. Two focused files / 9 tests cover
       accepted, cancelled, permission-denied, too-large, floating-workspace,
       and SSH cases. A selected 2,808,983-byte simulator photo reached a
-      shell-owned host temp file. Document selection, camera, live
-      denial/revocation, interruption, Android, and physical-device evidence
-      remain device/topology validation work.
+      shell-owned host temp file. The exact cached app also passes real iOS
+      first-use denial without terminal output or a hosted page-text marker. Selected
+      document upload, permission revocation after a grant, interruption, and
+      physical-device evidence remain device/topology validation work. Camera
+      remains part of the existing native QR-pairing route; there is no current
+      attachment-camera action to migrate.
 - [~] Implement draft and session persistence with host/build isolation.
   Native-chat drafts now hydrate, coalesce writes, flush on tab/route teardown,
   and clear after accepted delivery through a named native/web operations seam.
@@ -1333,9 +1339,13 @@ copy.
   native-only; cancellation returns only a status. The unchanged native-chat
   composer now receives session-scoped opaque image references and bounded JPEG
   thumbnails, and its attach, paste, retry, unknown-delivery reconciliation,
-  healing, and release paths pass focused tests. Document selection, camera,
-  denial/revocation, physical-device, and exact-app live native-chat image
-  evidence remain. On the Pixel 9 Pro API 36 emulator, the unchanged Attach
+  healing, and release paths pass focused tests. The exact cached iPhone app
+  now denies the real first-use Photos prompt, shows `Photo permission denied`,
+  keeps terminal output unchanged, and shows neither image data nor a temp path
+  marker in hosted page text. Selected document upload, permission revocation
+  after a grant, physical-device, and exact-app live native-chat image evidence
+  remain. Camera is currently native QR pairing only; the unchanged attachment
+  UI has no camera action. On the Pixel 9 Pro API 36 emulator, the unchanged Attach
   control opens the real Android Photos picker. Sending the picker to Home and
   bringing Orca back cancels the pending operation cleanly while retaining the
   exact hosted session; no selected path or bytes enter the page. Accepted
@@ -1403,7 +1413,10 @@ copy.
   the exact hosted session without exposing a result. An ordinary Home
   transition during active recording now stops speech, retains the exact hosted
   session and process, and permits a second recording after foreground return.
-  Physical-device behavior remains open.
+  The exact iPhone Simulator now also passes first-use Photos denial through
+  the unchanged Attach control without upload, terminal mutation, or page
+  leakage. Photos revocation after a grant and physical-device behavior remain
+  open.
 - [~] Verify every privileged native action has the intended user mediation.
   Clipboard writes, external links, settings handoff, account selection/reset,
   workspace creation, agent-history resume, image picking, speech control, and
@@ -2044,6 +2057,8 @@ copy.
 | 2026-07-27 | Android native UI       | Exact-app Settings and About routes plus Privacy Policy external-browser handoff and return                                                                                                                                 | Passed on Pixel 9 Pro API 36; native route content and `v0.0.32 (8)` remained outside the hosted document                                                                                         |
 | 2026-07-27 | Android interruption    | Pressed Home during active hosted dictation with an existing microphone grant, then foregrounded the same process and session                                                                                               | Passed; Listening returned to idle, exact hosted session/PID persisted, and a second recording started and stopped                                                                                |
 | 2026-07-27 | Android image upload    | Accepted the unchanged Attach picker, uploaded the selected PNG through shell-owned host authority, and injected its temp path into the Desktop terminal                                                                    | Passed; 579 bytes and SHA-256 `058144d94ecb1faea3a6af708ddf25e1e204a492d6011d30b38c1f95cc3933e6` matched exactly                                                                                  |
+| 2026-07-28 | iOS Photos denial       | Reset Orca's Photos permission before launch, tapped unchanged Attach, denied the real system prompt, and inspected the hosted Session plus Desktop terminal                                                                | Passed automatically on iPhone 17 Pro; existing toast appeared, terminal output stayed unchanged, no image/path marker appeared in page text, and both isolation probes passed                    |
+| 2026-07-28 | Photos denial tests     | Full mobile suite, both typechecks, mobile/RNW lint, changed-file formatting, max-lines, reliability, RNW package verification, and diff hygiene                                                                            | Passed; 564 files / 3,331 tests with 2 expected skips; focused device-input harness covers 3 files / 9 tests                                                                                      |
 | 2026-07-27 | Android audio defect    | Queued 64,000 PCM bytes through the linked native module, then paused and resumed during playback                                                                                                                           | Reproduced; the original engine wrote only 8,730 bytes because a pause-induced zero write discarded the tail                                                                                      |
 | 2026-07-27 | Android audio repair    | Partial-write drain, pause gate, zero-progress retry, cancellation, and invalid-result Kotlin tests; Debug APK rebuild and Release Kotlin compile                                                                           | Passed; 75 unit-test tasks, 571 Debug assembly tasks, and 367 Release compile tasks                                                                                                               |
 | 2026-07-27 | Android audio E2E       | Reinstalled the repaired Debug APK and probed `ExpoTwoWayAudio` through the live Hermes inspector during Pause/Resume/Stop                                                                                                  | Passed; 64,000 queued bytes equaled 64,000 written bytes, peak output volume was 0.6661, and `isPlaying` was false after Stop                                                                     |
@@ -2487,4 +2502,6 @@ copy.
 | 2026-07-28 | Complete | Clipboard-slice validation passes 562 mobile files / 3,325 tests with 2 expected skips, both typechecks, mobile and RNW lint, changed-file formatting, max-lines, and diff hygiene. The focused clipboard/security harness covers 2 files / 24 tests.                                                                                                                                                                                   |
 | 2026-07-28 | Finding  | The optional changed-code React Doctor scan compares the full 1,247-file migration against `0404f27b3` and reports 41 existing migration findings; none are in this clipboard driver, test, or documentation slice. Its native and type-aware scans report zero new findings.                                                                                                                                                           |
 | 2026-07-28 | Finding  | Repository-wide formatting still reports 19 unrelated baseline files; every migration-owned changed file passes formatting.                                                                                                                                                                                                                                                                                                             |
+| 2026-07-28 | Complete | The exact cached iPhone app reset only Orca's Photos permission, entered the unchanged hosted Session, tapped existing Attach, and denied the real system prompt. The existing denial toast appeared, terminal output stayed unchanged, no image data or `orca-paste-` marker appeared in hosted page text, and both isolation probes passed without manual intervention.                                                               |
+| 2026-07-28 | Complete | Photos-denial validation passes 564 mobile files / 3,331 tests with 2 expected skips and 3 focused files / 9 tests. Typechecks, lint, formatting, max-lines, reliability, package verification, and diff hygiene pass. Changed-code scans find zero native/type-aware issues and no React Doctor finding in this slice; 41 migration-wide findings pre-exist.                                                                           |
 | 2026-07-28 | Next     | Complete the remaining parity inventory and cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                  |

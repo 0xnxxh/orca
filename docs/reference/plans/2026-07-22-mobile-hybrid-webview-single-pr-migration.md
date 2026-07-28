@@ -693,11 +693,18 @@ so it is not claimed. A later exact cached-app run seeded
 `ORCA_HOSTED_CLIPBOARD_TEXT_PASTE`, activated the unchanged Paste control
 through a native accessibility tap, accepted the real iOS paste privacy prompt,
 and required the exact marker in the temporary Desktop terminal before passing
-both isolation probes. Live clipboard-image paste, document selection, camera,
-denial/revocation, background interruption, Android, and physical-device
-evidence remain open. Long-pressing the same unchanged control opened the
-native iOS document picker and Cancel returned cleanly; selected-document
-upload remains open.
+both isolation probes. A later deterministic run reset only Orca's Photos
+permission before launch, denied the real first-use prompt from the unchanged
+Attach control, observed the existing `Photo permission denied` toast, retained
+the exact Session, and proved the Desktop terminal output unchanged. Neither
+image data nor an `orca-paste-` marker appeared in hosted page text, and both
+isolation probes passed. Focused contracts separately require a status-only
+bridge result. Live clipboard-image paste, selected-document upload,
+permission revocation after a grant, background interruption, and
+physical-device evidence remain open. Long-pressing the same unchanged control
+opened the native iOS document picker and Cancel returned cleanly. Camera is
+currently owned by the native QR-pairing route; the existing attachment UI has
+no camera action to migrate.
 
 The following persistence checkpoint leaves the existing native-chat composer
 unchanged and injects `HostSessionChatDraftOperations` below it. Native and
@@ -996,8 +1003,11 @@ remain open. Full-process pending-message recovery now passes on iOS Simulator.
 Photo attachment selection and host upload now also pass through
 the unchanged hosted UI on iPhone Simulator: native owns the selected bytes,
 execution-host resolution, bounded upload, and terminal-ordered injection, while
-the page receives only bounded status. Document selection, camera,
-denial/revocation, and physical-device evidence remain. On the Pixel 9 Pro API
+the page receives only bounded status. Real iOS first-use Photos denial now
+passes without upload, terminal mutation, or a hosted page-text marker. Selected
+document upload, permission revocation after a grant, and physical-device
+evidence remain. Camera remains in native QR pairing rather than the unchanged
+attachment UI. On the Pixel 9 Pro API
 36 emulator, the unchanged Attach control opens Android's real Photos picker.
 Backgrounding through Home and returning to Orca cancels the pending picker,
 retains the exact hosted session, and exposes no selected path or bytes to the
@@ -1957,9 +1967,12 @@ the unchanged route. Full resize/reflow, persisted pinch text zoom, clipboard
 paste end-to-end evidence, native-chat emulator parity, WebGL fallback, and
 physical-device performance evidence remain open. Clipboard and picker
 execution now stays in the shell behind typed, terminal-ordered operations;
-the system Photos picker opens from the unchanged Attach control. The existing
-terminal JSX, styles, tab composition, input affordances, and view models were
-not replaced.
+the system Photos picker and first-use denial prompt open from the unchanged
+Attach control. Denial preserves the Session, shows the existing toast, leaves
+Desktop terminal output unchanged, and shows no image/path marker in hosted
+page text. Focused contracts require the bridge result to contain status only.
+The existing terminal JSX, styles, tab composition, input affordances, and view
+models were not replaced.
 
 Dictation follows the same presentation-preserving boundary. The existing mic
 controls, setup drawer, model list, transcript routing, toasts, haptics,

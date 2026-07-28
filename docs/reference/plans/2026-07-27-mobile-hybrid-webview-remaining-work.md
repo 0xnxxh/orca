@@ -97,7 +97,7 @@ formatting, localization, and the max-lines ratchet pass.
 The independently verified React Native Web package is
 `9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`:
 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes. The current mobile
-suite passes 562 files / 3,325 tests with 2 expected skips. Mobile and
+suite passes 564 files / 3,331 tests with 2 expected skips. Mobile and
 mobile-web typechecks and lints, changed-file formatting, max-lines, package
 verification, and diff hygiene pass. The repository-wide formatter still
 reports 19 unrelated baseline files, so changed-file formatting is the
@@ -121,6 +121,15 @@ tap, accepts the real iOS paste privacy prompt, and requires the exact
 `ORCA_HOSTED_CLIPBOARD_TEXT_PASTE` marker in the temporary Desktop terminal.
 The successful run used two bounded activation attempts and then passed the
 private-origin network and navigation isolation probes.
+
+The same gate now resets only Orca's Photos permission before launch and denies
+the real iOS prompt from the unchanged Attach control. The existing
+`Photo permission denied` toast appears, the exact hosted Session stays active,
+Desktop terminal output remains unchanged, no image data or `orca-paste-` path
+marker appears in hosted page text, and both isolation probes pass. Focused
+contract tests separately require the bridge result to contain status only.
+Permission revocation after a prior grant, clipboard-image paste, and
+selected-document upload remain open.
 
 ## 1. Finish Hosted Feature Parity
 
