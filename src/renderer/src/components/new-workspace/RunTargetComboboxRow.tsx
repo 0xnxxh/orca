@@ -13,9 +13,11 @@ export function HostRowIcon({ hostId }: { hostId: ExecutionHostId }): React.JSX.
 }
 
 /**
- * One run-target row. Shares the Project picker's shape — 32px, baseline-aligned
- * name over a right-aligned detail, ↵ cap on the armed row — so the two fields
- * in the same form read as one control.
+ * One run-target row. Shares the Project picker's shape — 32px, label and
+ * right-aligned detail on one baseline — so the two composer fields read as one
+ * control. `stacked` switches to a two-line card for the Add-host choices,
+ * where the description explains what you're picking rather than labelling a
+ * thing you already know.
  */
 export function RunTargetRow({
   icon,
@@ -26,6 +28,7 @@ export function RunTargetRow({
   optionId,
   dimmed = false,
   submenu = false,
+  stacked = false,
   onArm,
   onCommit,
   trailing
@@ -38,8 +41,10 @@ export function RunTargetRow({
   optionId: string | undefined
   /** Not-ready hosts are dormant, not errors — quiet them without disabling. */
   dimmed?: boolean
-  /** Opens a nested list, so it gets a chevron instead of an Enter cap. */
+  /** Opens a nested list, so it gets a trailing chevron. */
   submenu?: boolean
+  /** Two-line card: label over description, for rows that need explaining. */
+  stacked?: boolean
   onArm: () => void
   onCommit: () => void
   trailing?: React.ReactNode
@@ -57,32 +62,50 @@ export function RunTargetRow({
       onMouseMove={onArm}
       onClick={onCommit}
       className={cn(
-        'flex h-8 cursor-default items-baseline gap-2 rounded-sm px-2 text-sm',
+        'flex cursor-default gap-2 rounded-sm px-2 text-sm',
+        stacked ? 'items-center py-1.5' : 'h-8 items-baseline',
         armed && 'bg-accent text-accent-foreground',
         current && !armed && 'bg-accent/60'
       )}
     >
       {/* Icons are glyphs, not text, so they centre on the row. */}
-      <span className={cn('flex h-8 shrink-0 items-center', dimmed && 'opacity-60')}>{icon}</span>
       <span
         className={cn(
-          'max-w-[50%] shrink truncate',
-          current && 'font-medium',
+          'flex shrink-0 items-center',
+          stacked ? 'self-start pt-0.5' : 'h-8',
           dimmed && 'opacity-60'
         )}
       >
-        {label}
+        {icon}
       </span>
-      <ProjectOptionDetail
-        detail={detail}
-        className={cn(
-          'ml-auto min-w-0 flex-1 shrink-[999] justify-end pl-2 text-right text-xs text-muted-foreground',
-          dimmed && 'opacity-60'
-        )}
-      />
+      {stacked ? (
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className={cn('truncate', current && 'font-medium')}>{label}</span>
+          <span className="truncate text-xs text-muted-foreground">{detail}</span>
+        </span>
+      ) : (
+        <>
+          <span
+            className={cn(
+              'max-w-[50%] shrink truncate',
+              current && 'font-medium',
+              dimmed && 'opacity-60'
+            )}
+          >
+            {label}
+          </span>
+          <ProjectOptionDetail
+            detail={detail}
+            className={cn(
+              'ml-auto min-w-0 flex-1 shrink-[999] justify-end pl-2 text-right text-xs text-muted-foreground',
+              dimmed && 'opacity-60'
+            )}
+          />
+        </>
+      )}
       {trailing}
       {submenu ? (
-        <span className="flex h-8 shrink-0 items-center pl-1.5">
+        <span className={cn('flex shrink-0 items-center pl-1.5', stacked ? 'self-center' : 'h-8')}>
           <ChevronRight className="size-3.5 text-muted-foreground" />
         </span>
       ) : null}

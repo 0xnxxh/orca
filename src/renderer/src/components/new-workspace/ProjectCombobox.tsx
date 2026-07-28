@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Plus } from 'lucide-react'
+import { ChevronDown, FolderPlus } from 'lucide-react'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import type { NewWorkspaceProjectOption } from '@/lib/new-workspace-project-options'
@@ -360,9 +360,7 @@ export default function ProjectCombobox({
                 armedRowKey === ADD_PROJECT_KEY && 'bg-accent text-accent-foreground'
               )}
             >
-              {/* Plus, not FolderPlus: matches "Add host" on the Run-on picker,
-                  whose lighter glyph sits better against the row's text. */}
-              <Plus className="size-3.5 shrink-0 text-muted-foreground" />
+              <FolderPlus className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="truncate">
                 {translate(
                   'auto.components.new.workspace.ProjectCombobox.addProject',

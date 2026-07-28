@@ -308,6 +308,7 @@ export default function RunTargetCombobox({
               }
               if (row.kind === 'needs-setup') {
                 const connecting = connectingHostIds.has(row.option.hostId)
+                const hasConnect = Boolean(row.option.connectAction && onConnectHost)
                 return (
                   <RunTargetRow
                     key={row.key}
@@ -319,7 +320,10 @@ export default function RunTargetCombobox({
                       />
                     }
                     label={row.option.label}
-                    detail={row.option.detail}
+                    // Why: a Connect button on the row already says the host
+                    // isn't connected, so its detail line only repeats that.
+                    // Rows without the action still need theirs to explain why.
+                    detail={hasConnect ? '' : row.option.detail}
                     armed={isArmed}
                     current={false}
                     dimmed

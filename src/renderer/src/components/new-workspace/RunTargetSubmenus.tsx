@@ -160,6 +160,7 @@ export function AddHostSubmenuRow({
               )}
               armed={hoveredKey === 'ssh'}
               current={false}
+              stacked
               optionId={undefined}
               onArm={() => setHoveredKey('ssh')}
               onCommit={onAddSshHost}
@@ -178,6 +179,7 @@ export function AddHostSubmenuRow({
               )}
               armed={hoveredKey === 'remote'}
               current={false}
+              stacked
               optionId={undefined}
               onArm={() => setHoveredKey('remote')}
               onCommit={onAddRemoteServer}
