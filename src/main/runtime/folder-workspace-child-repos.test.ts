@@ -105,6 +105,13 @@ describe('matchFolderWorkspaceChildRepo', () => {
   it('returns null for the repo root itself, which addresses no file', () => {
     expect(matchFolderWorkspaceChildRepo([API], FOLDER, 'fint_api')).toBeNull()
   })
+
+  it('refuses a nested repo root instead of routing it to the ancestor repo', () => {
+    // Why: the ancestor reports a nested repo as one untracked dir (`? vendor/sdk/`),
+    // so this path is reachable from the merged status. Routing it to the ancestor
+    // makes discard run `git clean -ffdx` over the nested repo — .git and all.
+    expect(matchFolderWorkspaceChildRepo([API, NESTED], FOLDER, 'fint_api/vendor/sdk')).toBeNull()
+  })
 })
 
 describe('prefixFolderWorkspaceEntryPath', () => {

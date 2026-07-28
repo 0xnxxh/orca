@@ -7242,8 +7242,12 @@ export class OrcaRuntimeService {
     // but execution is not: the caller's loop has no rollback, so a repo failing
     // midway leaves earlier repos already staged.
     const byRepoId = new Map<string, { repo: Repo; relativePaths: string[] }>()
+    // Why: hoisted — matching re-filters and re-sorts the repo list otherwise, and
+    // each comparison normalizes a path by regex. Staging thousands of files across
+    // a many-repo workspace would burn that on the main process before any git runs.
+    const childRepos = listFolderWorkspaceChildRepos(repos, folderPath)
     for (const relativePath of relativePaths) {
-      const match = matchFolderWorkspaceChildRepo(repos, folderPath, relativePath)
+      const match = matchFolderWorkspaceChildRepo(repos, folderPath, relativePath, childRepos)
       if (!match) {
         throw new Error('selector_not_found')
       }
@@ -24215,6 +24219,13 @@ export class OrcaRuntimeService {
       childRepos.map(async (repo) => {
         const target = await this.resolveChildRepoGitTarget(repo)
         if (!target) {
+          // Why warn: an unresolvable child drops out of the merged list looking
+          // exactly like a clean repo, so the omission needs a trace. The commit
+          // path fails closed on this same state; status stays best-effort so one
+          // cold repo cannot blank the whole workspace.
+          console.warn('[runtime] folder-workspace status skipped an unresolvable child repo', {
+            repo: repo.path
+          })
           return null
         }
         // Why: one unreadable child repo must not blank the whole workspace list,

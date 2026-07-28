@@ -53,7 +53,9 @@ export type FolderWorkspaceChildRepoMatch = {
 export function matchFolderWorkspaceChildRepo(
   repos: readonly Repo[],
   folderPath: string,
-  relativePath: string | undefined
+  relativePath: string | undefined,
+  /** Pre-computed `listFolderWorkspaceChildRepos` result, so a bulk caller sorts once. */
+  childRepos?: readonly Repo[]
 ): FolderWorkspaceChildRepoMatch | null {
   if (!relativePath) {
     return null
@@ -66,13 +68,20 @@ export function matchFolderWorkspaceChildRepo(
   if (relativePathInsideRoot(folderPath, absolutePath) === null) {
     return null
   }
-  for (const repo of listFolderWorkspaceChildRepos(repos, folderPath)) {
+  for (const repo of childRepos ?? listFolderWorkspaceChildRepos(repos, folderPath)) {
     if (!isPathInsideOrEqual(repo.path, absolutePath)) {
       continue
     }
     const rebasedRelativePath = relativePathInsideRoot(repo.path, absolutePath)
-    if (rebasedRelativePath === null || rebasedRelativePath === '') {
+    if (rebasedRelativePath === null) {
       continue
+    }
+    // Why: the path names this repo's own root, so it addresses no file. Falling
+    // through to an ancestor would rebase it as an ordinary path there — and a
+    // discard then runs `git clean -ffdx` over the whole nested repo, deleting its
+    // .git and any uncommitted work. Refuse rather than route it to the parent.
+    if (rebasedRelativePath === '') {
+      return null
     }
     return { repo, rebasedRelativePath }
   }

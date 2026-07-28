@@ -39,7 +39,9 @@ function buildFixture(): void {
   for (const repo of ['fint_api', 'fint-portal']) {
     const dir = join(CONTAINER, repo)
     mkdirSync(join(dir, 'src'), { recursive: true })
-    git(dir, 'init', '-q', '-b', 'master', '.')
+    // Why not `init -b`: that flag lands in git 2.28, above the repo's 2.25 baseline.
+    git(dir, 'init', '-q', '.')
+    git(dir, 'symbolic-ref', 'HEAD', 'refs/heads/master')
     git(dir, 'config', 'user.email', 'a@b.c')
     git(dir, 'config', 'user.name', 't')
     writeFileSync(join(dir, 'src', 'app.ts'), 'export {}\n')
