@@ -5216,6 +5216,7 @@ export default function SessionScreen() {
           onRename: setRenameTarget,
           onClear: (target) => void handleClearTerminal(target),
           onClose: (target) => void handleCloseTerminal(target),
+          onCloseSessionTab: (tab) => void handleCloseSessionTab(tab),
           bulkCloseActions
         })}
         onClose={() => setActionTarget(null)}
