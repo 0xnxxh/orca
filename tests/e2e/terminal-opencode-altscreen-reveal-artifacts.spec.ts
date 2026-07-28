@@ -542,6 +542,38 @@ async function readSynchronizedOutputLatch(page: Page, tabId: string): Promise<b
   }, tabId)
 }
 
+async function hideLatchedPaneInOtherWorktree(
+  page: Page,
+  tabId: string,
+  currentWorktreeId: string
+): Promise<{ latchWasOpen: boolean | null; otherWorktreeId: string | null }> {
+  return page.evaluate(
+    ({ tabId, currentWorktreeId }) => {
+      const store = window.__store
+      const manager = window.__paneManagers?.get(tabId)
+      if (!store || !manager) {
+        return { latchWasOpen: null, otherWorktreeId: null }
+      }
+      const pane = manager.getActivePane?.() ?? manager.getPanes?.()[0] ?? null
+      const modes = (
+        pane?.terminal as unknown as
+          | { _core?: { coreService?: { decPrivateModes?: { synchronizedOutput?: boolean } } } }
+          | undefined
+      )?._core?.coreService?.decPrivateModes
+      const latchWasOpen = modes ? modes.synchronizedOutput === true : null
+      const state = store.getState()
+      const other = Object.values(state.worktreesByRepo)
+        .flat()
+        .find((worktree) => worktree.id !== currentWorktreeId)
+      if (latchWasOpen && other) {
+        state.setActiveWorktree(other.id)
+      }
+      return { latchWasOpen, otherWorktreeId: other?.id ?? null }
+    },
+    { tabId, currentWorktreeId }
+  )
+}
+
 async function streamWhileHidden(setup: StreamingTabSetup, minFrames: number): Promise<void> {
   const heartbeatBefore = heartbeatFrame(setup.heartbeatPath)
   await expect
@@ -752,14 +784,12 @@ test.describe('OpenCode alt-screen reveal artifacts (STA-2694)', () => {
         })
         .toBe(true)
 
-      const otherWorktreeId = await switchToOtherWorktree(orcaPage, setup.worktreeId)
-      test.skip(!otherWorktreeId, 'test session has a single worktree; cannot surface-hide')
-      // Why re-check here: the pane was still VISIBLE between the freeze and this
-      // switch, so refreshes reached bufferRows and armed xterm's 1s watchdog. If
-      // it fired before the hide, the pane is now unlatched and the final
-      // assertion would pass without the defect ever existing.
+      // Observe the latch and hide synchronously so xterm's 1s watchdog cannot
+      // clear it between Playwright round trips.
+      const hidden = await hideLatchedPaneInOtherWorktree(orcaPage, setup.tabId, setup.worktreeId)
+      test.skip(!hidden.otherWorktreeId, 'test session has a single worktree; cannot surface-hide')
       expect(
-        await readSynchronizedOutputLatch(orcaPage, setup.tabId),
+        hidden.latchWasOpen,
         'the watchdog cleared the latch before the hide, so this run proves nothing'
       ).toBe(true)
       await orcaPage.waitForTimeout(2_500)

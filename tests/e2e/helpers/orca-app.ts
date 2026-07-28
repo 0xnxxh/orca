@@ -25,7 +25,11 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import os from 'node:os'
 import path from 'node:path'
 import { TEST_REPO_PATH_FILE } from '../global-setup'
-import { cleanupE2EDaemons, closeElectronAppForE2E } from './electron-process-shutdown'
+import {
+  cleanupE2EDaemons,
+  closeElectronAppForE2E,
+  readE2EDaemonPids
+} from './electron-process-shutdown'
 import { getOrcaElectronLaunchArgs } from './electron-launch-args'
 import { getE2ECompletedOnboardingProfile } from './e2e-completed-onboarding-profile'
 import {
@@ -261,8 +265,9 @@ export const test = base.extend<OrcaTestFixtures, OrcaWorkerFixtures>({
       const resolvedHome = await app.evaluate(({ app }) => app.getPath('home'))
       assertElectronResolvedIsolatedHome(resolvedHome, homeIsolation)
     } catch (error) {
+      const daemonPids = readE2EDaemonPids(userDataDir)
       await closeElectronAppForE2E(app)
-      await cleanupE2EDaemons(userDataDir)
+      await cleanupE2EDaemons(userDataDir, daemonPids)
       await removeUserDataDirAfterShutdown(userDataDir)
       throw error
     }
@@ -270,8 +275,11 @@ export const test = base.extend<OrcaTestFixtures, OrcaWorkerFixtures>({
     await provideFixture(app)
     // Why: the Playwright close promise can settle before all Electron and PTY
     // descendants are gone in CI; worker teardown then hangs on open handles.
+    // Capture first because daemon shutdown unlinks its PID record before
+    // waiting on PTYs, which can otherwise leave an undiscoverable test orphan.
+    const daemonPids = readE2EDaemonPids(userDataDir)
     await closeElectronAppForE2E(app)
-    await cleanupE2EDaemons(userDataDir)
+    await cleanupE2EDaemons(userDataDir, daemonPids)
     await removeUserDataDirAfterShutdown(userDataDir)
   },
 

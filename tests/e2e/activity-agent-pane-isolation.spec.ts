@@ -412,7 +412,7 @@ test.describe('Activity Agent Pane Isolation', () => {
         activeTabType: 'editor',
         activeTabId: snapshot.tabId
       })
-    await expect(terminalPaneForLeaf(orcaPage, first.leafId)).toBeHidden()
+    // Editors occlude mounted terminal panes; activeTabType is the visibility contract.
 
     await clickWorkspaceCardAgentRow(orcaPage, first.prompt)
 

@@ -7,7 +7,11 @@ import { test, expect, forwardElectronProcessLogs } from './helpers/orca-app'
 import { TEST_REPO_PATH_FILE } from './global-setup'
 import { getE2ECompletedOnboardingProfile } from './helpers/e2e-completed-onboarding-profile'
 import { getOrcaElectronLaunchArgs } from './helpers/electron-launch-args'
-import { cleanupE2EDaemons, closeElectronAppForE2E } from './helpers/electron-process-shutdown'
+import {
+  cleanupE2EDaemons,
+  closeElectronAppForE2E,
+  readE2EDaemonPids
+} from './helpers/electron-process-shutdown'
 import {
   assertElectronResolvedIsolatedHome,
   createElectronHomeIsolation,
@@ -100,6 +104,7 @@ test('promotes the headless owner without replacing its daemon terminal', async 
   const env = homeIsolation.env
   let serveApp: ElectronApplication | null = null
   let activatingProcess: ChildProcess | null = null
+  let daemonPids: number[] = []
 
   writeFileSync(
     path.join(userDataDir, 'orca-data.json'),
@@ -207,9 +212,10 @@ test('promotes the headless owner without replacing its daemon terminal', async 
       await waitForProcessExit(activatingProcess, 5_000)
     }
     if (serveApp) {
+      daemonPids = readE2EDaemonPids(userDataDir)
       await closeElectronAppForE2E(serveApp)
     }
-    await cleanupE2EDaemons(userDataDir)
+    await cleanupE2EDaemons(userDataDir, daemonPids)
     rmSync(userDataDir, { recursive: true, force: true })
   }
 })

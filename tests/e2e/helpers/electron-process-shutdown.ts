@@ -155,7 +155,7 @@ export async function closeElectronAppForE2E(app: ElectronApplication): Promise<
   }
 }
 
-function readDaemonPidFiles(userDataDir: string): number[] {
+export function readE2EDaemonPids(userDataDir: string): number[] {
   const daemonDir = path.join(userDataDir, 'daemon')
   if (!existsSync(daemonDir)) {
     return []
@@ -182,11 +182,15 @@ function readDaemonPidFiles(userDataDir: string): number[] {
   return pids
 }
 
-export async function cleanupE2EDaemons(userDataDir: string): Promise<void> {
+export async function cleanupE2EDaemons(
+  userDataDir: string,
+  capturedPids: readonly number[] = []
+): Promise<void> {
   // Why: app quit intentionally leaves daemon PTYs alive for warm reattach.
   // E2E temp profiles are deleted after each test, so their detached daemons
   // must be stopped explicitly or CI accumulates orphan Electron/shell trees.
-  for (const pid of readDaemonPidFiles(userDataDir)) {
+  const pids = new Set([...capturedPids, ...readE2EDaemonPids(userDataDir)])
+  for (const pid of pids) {
     await forceKillPidTree(pid)
   }
 }

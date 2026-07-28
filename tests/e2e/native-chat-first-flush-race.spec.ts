@@ -8,7 +8,7 @@ import { ensureTerminalVisible, waitForActiveWorktree, waitForSessionReady } fro
 import { waitForActivePaneHookDescriptor, waitForActiveTerminalManager } from './helpers/terminal'
 import type { GlobalSettings } from '../../src/shared/types'
 
-const LOADING_TITLE = 'Loading conversation…'
+const EMPTY_TITLE = 'Start a chat with Claude'
 const ERROR_TITLE = 'Could not load conversation'
 
 async function enableNativeChatSetting(page: Page): Promise<void> {
@@ -93,7 +93,7 @@ function claudeTranscriptLines(args: {
 }
 
 test.describe('Native chat first-flush transcript race (#8401)', () => {
-  test('stays in loading (never errors) until a not-yet-flushed transcript appears, then hydrates live', async ({
+  test('never errors while a not-yet-flushed transcript is missing, then hydrates live', async ({
     orcaPage
   }, testInfo) => {
     await waitForSessionReady(orcaPage)
@@ -135,10 +135,12 @@ test.describe('Native chat first-flush transcript race (#8401)', () => {
       await expect(orcaPage.locator('[data-native-chat-root="true"]')).toBeVisible({
         timeout: 15_000
       })
-      await expect(orcaPage.getByText(LOADING_TITLE)).toBeVisible({ timeout: 10_000 })
+      // A live working hook intentionally wins over transcript loading and
+      // renders the empty composer until the first turn reaches disk.
+      await expect(orcaPage.getByText(EMPTY_TITLE)).toBeVisible({ timeout: 10_000 })
       await expect(orcaPage.getByText(ERROR_TITLE)).toHaveCount(0)
       await orcaPage.screenshot({
-        path: path.join(screenshotDir, '01-loading-no-error.png')
+        path: path.join(screenshotDir, '01-empty-no-error.png')
       })
 
       // Why: a short real delay proves the first readSession attempt already

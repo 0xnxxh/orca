@@ -22,7 +22,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { getE2ECompletedOnboardingProfile } from './e2e-completed-onboarding-profile'
 import { getOrcaElectronLaunchArgs } from './electron-launch-args'
-import { cleanupE2EDaemons, closeElectronAppForE2E } from './electron-process-shutdown'
+import {
+  cleanupE2EDaemons,
+  closeElectronAppForE2E,
+  readE2EDaemonPids
+} from './electron-process-shutdown'
 import {
   assertElectronResolvedIsolatedHome,
   createElectronHomeIsolation,
@@ -140,6 +144,13 @@ export function createRestartSession(
   const headful = shouldLaunchHeadful(testInfo)
   const homeIsolation = createRestartLaunchIsolation(userDataDir, headful, extraEnv)
   let runtimeWsPort: number | null = null
+  const daemonPids = new Set<number>()
+
+  const captureDaemonPids = (): void => {
+    for (const pid of readE2EDaemonPids(userDataDir)) {
+      daemonPids.add(pid)
+    }
+  }
 
   // Why: this helper bypasses the shared `electronApp` fixture, so it must
   // seed the same completed onboarding profile or first-run overlays cover
@@ -169,6 +180,7 @@ export function createRestartSession(
       const resolvedHome = await app.evaluate(({ app }) => app.getPath('home'))
       assertElectronResolvedIsolatedHome(resolvedHome, homeIsolation)
     } catch (error) {
+      captureDaemonPids()
       await closeElectronAppForE2E(app)
       throw error
     }
@@ -179,11 +191,12 @@ export function createRestartSession(
   }
 
   const close = async (app: ElectronApplication): Promise<void> => {
+    captureDaemonPids()
     await closeElectronAppForE2E(app)
   }
 
   const dispose = async (): Promise<void> => {
-    await cleanupE2EDaemons(userDataDir)
+    await cleanupE2EDaemons(userDataDir, daemonPids)
     if (process.env.ORCA_E2E_PRESERVE_RESTART_PROFILE === '1') {
       console.log(`[e2e] Preserved restart profile at ${userDataDir}`)
       return

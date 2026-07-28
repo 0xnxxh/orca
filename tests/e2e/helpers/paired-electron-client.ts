@@ -11,7 +11,11 @@ import {
 
 import { getE2ECompletedOnboardingProfile } from './e2e-completed-onboarding-profile'
 import { getOrcaElectronLaunchArgs } from './electron-launch-args'
-import { cleanupE2EDaemons, closeElectronAppForE2E } from './electron-process-shutdown'
+import {
+  cleanupE2EDaemons,
+  closeElectronAppForE2E,
+  readE2EDaemonPids
+} from './electron-process-shutdown'
 import {
   assertElectronResolvedIsolatedHome,
   createElectronHomeIsolation
@@ -222,8 +226,9 @@ export async function launchPairedElectronClient(
       environmentId,
       captureDirectSshAttempts,
       dispose: async () => {
+        const daemonPids = readE2EDaemonPids(userDataDir)
         await closeElectronAppForE2E(app)
-        await cleanupE2EDaemons(userDataDir)
+        await cleanupE2EDaemons(userDataDir, daemonPids)
         await removeProfile(userDataDir)
       },
       getDirectSshAttemptTargetIds: async () => {
@@ -235,8 +240,9 @@ export async function launchPairedElectronClient(
       replacePairingInPlace
     }
   } catch (error) {
+    const daemonPids = readE2EDaemonPids(userDataDir)
     await closeElectronAppForE2E(app)
-    await cleanupE2EDaemons(userDataDir)
+    await cleanupE2EDaemons(userDataDir, daemonPids)
     await removeProfile(userDataDir)
     throw error
   }
