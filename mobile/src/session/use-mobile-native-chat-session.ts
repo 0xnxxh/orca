@@ -48,13 +48,16 @@ export function useMobileNativeChatSession(args: {
 }): MobileNativeChatSession {
   const { client, agent, sessionId, transcriptPath } = args
   const [messages, setMessages] = useState<NativeChatMessage[]>([])
-  const [status, setStatus] = useState<MobileNativeChatStatus>('idle')
-  // The transcript identity `messages`/`status` currently describe. Written by
-  // the subscription effect, so it lags the props by exactly the commit on
-  // which the active tab changes — the render that would otherwise judge the
-  // new tab by the previous tab's transcript.
   const identity = `${agent ?? ''}\0${sessionId ?? ''}\0${transcriptPath ?? ''}`
-  const [loadedIdentity, setLoadedIdentity] = useState<string | null>(null)
+  // The status travels with the transcript identity it describes, in one state
+  // written by the subscription effect. It therefore lags the props by exactly
+  // the commit on which the active tab changes — the render that would
+  // otherwise judge the new tab by the previous tab's transcript.
+  const [read, setRead] = useState<{ identity: string | null; status: MobileNativeChatStatus }>({
+    identity: null,
+    status: 'idle'
+  })
+  const status = read.status
   const [error, setError] = useState<string | undefined>(undefined)
   const [hasMore, setHasMore] = useState(false)
   const [loadingEarlier, setLoadingEarlier] = useState(false)
@@ -85,21 +88,20 @@ export function useMobileNativeChatSession(args: {
     limitRef.current = INITIAL_LIMIT
     loadingEarlierRef.current = false
     setLoadingEarlier(false)
-    setLoadedIdentity(identity)
     setList([])
     setError(undefined)
     setHasMore(false)
     beforeOffsetRef.current = null
     if (!client || !agent) {
-      setStatus('idle')
+      setRead({ identity, status: 'idle' })
       return
     }
     if (!sessionId) {
-      setStatus('waiting-session')
+      setRead({ identity, status: 'waiting-session' })
       return
     }
 
-    setStatus('loading')
+    setRead({ identity, status: 'loading' })
 
     const unsubscribe = client.subscribe(
       'nativeChat.subscribe',
@@ -134,7 +136,7 @@ export function useMobileNativeChatSession(args: {
           return
         }
         if (applied.kind === 'error') {
-          setStatus('error')
+          setRead({ identity, status: 'error' })
           setError(applied.error)
           return
         }
@@ -153,7 +155,7 @@ export function useMobileNativeChatSession(args: {
           setLoadingEarlier(false)
           beforeOffsetRef.current = null
         }
-        setStatus('ready')
+        setRead({ identity, status: 'ready' })
       }
     )
 
@@ -231,7 +233,7 @@ export function useMobileNativeChatSession(args: {
   return {
     messages,
     status,
-    transcriptLoading: status === 'loading' || loadedIdentity !== identity,
+    transcriptLoading: read.status === 'loading' || read.identity !== identity,
     error,
     hasMore,
     loadingEarlier,
