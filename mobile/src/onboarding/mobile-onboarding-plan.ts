@@ -1,11 +1,13 @@
 import { shouldPresentNotificationOptIn } from '../notifications/notification-opt-in-gate'
 import { shouldPresentSessionViewOptIn } from '../session/session-view-opt-in-gate'
+import { mobileHostWorkspaceEntry } from '../mobile-web/mobile-web-home-navigation'
 
 export const MOBILE_ONBOARDING_STEPS = ['session-view', 'notifications'] as const
 export type MobileOnboardingStep = (typeof MOBILE_ONBOARDING_STEPS)[number]
 export type MobileOnboardingDestination =
   | '/'
   | `/h/${string}`
+  | `/hybrid?hostId=${string}`
   | {
       pathname: '/mobile-onboarding'
       params: { steps: string; hostId?: string }
@@ -32,7 +34,7 @@ export function mobileOnboardingDestination(
   hostId?: string
 ): MobileOnboardingDestination {
   if (steps.length === 0) {
-    return hostId ? `/h/${hostId}` : '/'
+    return hostId ? mobileHostWorkspaceEntry(hostId) : '/'
   }
   return {
     pathname: '/mobile-onboarding',

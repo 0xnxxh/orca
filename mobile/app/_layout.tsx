@@ -13,6 +13,7 @@ import {
   MOBILE_WEB_NAVIGATION_INTENTS,
   shouldHandoffNotificationToMobileWeb
 } from '../src/mobile-web/mobile-web-navigation-intent-buffer'
+import { MOBILE_WEB_DEFAULT_ENTRY_ENABLED } from '../src/mobile-web/mobile-web-home-navigation'
 import {
   loadMobileWebColdResumeRoute,
   mobileWebColdResumeStartupPath
@@ -162,10 +163,14 @@ export default function RootLayout() {
         navigation &&
         shouldHandoffNotificationToMobileWeb(
           pathnameRef.current,
-          MOBILE_WEB_NAVIGATION_INTENTS.hasListener()
+          MOBILE_WEB_NAVIGATION_INTENTS.hasListener(),
+          MOBILE_WEB_DEFAULT_ENTRY_ENABLED
         )
       ) {
         MOBILE_WEB_NAVIGATION_INTENTS.publish(navigation.target)
+        if (pathnameRef.current !== '/hybrid') {
+          router.push('/hybrid')
+        }
       } else if (navigation) {
         router.push(navigation.path)
       }
@@ -228,7 +233,6 @@ export default function RootLayout() {
           />
           <Stack.Screen name="settings" options={{ headerShown: false }} />
           <Stack.Screen name="hybrid" options={{ headerShown: false }} />
-          <Stack.Screen name="hybrid-prototype" options={{ headerShown: false }} />
           <Stack.Screen name="terminal-settings" options={{ headerShown: false }} />
           <Stack.Screen name="native-chat-settings" options={{ headerShown: false }} />
           <Stack.Screen name="browser-settings" options={{ headerShown: false }} />

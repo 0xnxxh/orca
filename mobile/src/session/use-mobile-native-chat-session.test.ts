@@ -489,22 +489,24 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
   })
 
   function Harness({
-    client,
+    operations,
     sessionId,
     agent = 'claude',
     sourceIdentity = 'host-a\0workspace-a'
   }: {
-    client: RpcClient | null
+    operations: HostSessionNativeChatOperations | null
     sessionId: string | null
     agent?: string | null
     sourceIdentity?: string
   }): null {
     const session = useMobileNativeChatSession({
-      client,
-      sourceIdentity,
+      operations,
+      workspaceId: 'worktree',
       agent,
       sessionId,
-      transcriptPath: null
+      transcriptPath: null,
+      terminalId: 'terminal',
+      clientId: 'device'
     })
     renders.push({
       sessionId,
@@ -515,7 +517,10 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
     return null
   }
 
-  async function mountAt(client: RpcClient | null, sessionId: string | null): Promise<void> {
+  async function mountAt(
+    operations: HostSessionNativeChatOperations | null,
+    sessionId: string | null
+  ): Promise<void> {
     const original = console.error
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation((...args) => {
       if (typeof args[0] === 'string' && args[0].includes('react-test-renderer is deprecated')) {
@@ -525,7 +530,7 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
     })
     try {
       await act(async () => {
-        renderer = create(createElement(Harness, { client, sessionId }))
+        renderer = create(createElement(Harness, { operations, sessionId }))
       })
     } finally {
       consoleSpy.mockRestore()
@@ -536,7 +541,10 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
     // `status` starts at 'idle', so on its own it would tell the launch-draft
     // seed that an empty transcript is this session's real history.
     const subscribe: RpcClient['subscribe'] = vi.fn(() => () => {})
-    await mountAt({ subscribe } as unknown as RpcClient, 'session-a')
+    const operations = nativeHostSessionNativeChatOperations({
+      subscribe
+    } as unknown as RpcClient)
+    await mountAt(operations, 'session-a')
 
     expect(renders[0]).toMatchObject({ transcriptLoading: true, ids: [] })
   })
@@ -551,16 +559,19 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
       return () => {}
     })
     const client = { subscribe } as unknown as RpcClient
-    await mountAt(client, 'session-a')
+    const operations = nativeHostSessionNativeChatOperations(client)
+    await mountAt(operations, 'session-a')
     expect(renders.at(-1)).toMatchObject({ status: 'ready', transcriptLoading: false })
 
     // Toggle out to the terminal view, then back.
     await act(async () =>
-      renderer?.update(createElement(Harness, { client, sessionId: 'session-a', agent: null }))
+      renderer?.update(createElement(Harness, { operations, sessionId: 'session-a', agent: null }))
     )
     renders.length = 0
     await act(async () =>
-      renderer?.update(createElement(Harness, { client, sessionId: 'session-a', agent: 'claude' }))
+      renderer?.update(
+        createElement(Harness, { operations, sessionId: 'session-a', agent: 'claude' })
+      )
     )
 
     expect(renders[0]).toMatchObject({
@@ -579,19 +590,17 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
       return () => {}
     })
     const client = { subscribe } as unknown as RpcClient
-    await mountAt(client, 'session-a')
+    const operations = nativeHostSessionNativeChatOperations(client)
+    await mountAt(operations, 'session-a')
     expect(renders.at(-1)).toMatchObject({ status: 'ready' })
 
-    let emitFresh: (frame: unknown) => void = () => {}
-    const reconnected = {
-      subscribe: vi.fn((_method: string, _params: unknown, onData: (frame: unknown) => void) => {
-        emitFresh = onData
-        return () => {}
-      })
-    } as unknown as RpcClient
+    const reconnected = { subscribe: vi.fn(() => () => {}) } as unknown as RpcClient
+    const reconnectedOperations = nativeHostSessionNativeChatOperations(reconnected)
     renders.length = 0
     await act(async () =>
-      renderer?.update(createElement(Harness, { client: reconnected, sessionId: 'session-a' }))
+      renderer?.update(
+        createElement(Harness, { operations: reconnectedOperations, sessionId: 'session-a' })
+      )
     )
 
     expect(renders[0]).toMatchObject({
@@ -647,9 +656,10 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
       return () => {}
     })
     const client = { subscribe } as unknown as RpcClient
-    await mountAt(client, 'session-a')
+    const operations = nativeHostSessionNativeChatOperations(client)
+    await mountAt(operations, 'session-a')
     await act(async () =>
-      renderer?.update(createElement(Harness, { client, sessionId: 'session-b' }))
+      renderer?.update(createElement(Harness, { operations, sessionId: 'session-b' }))
     )
 
     // The effect that resets the list lands a commit later, so `messages` still

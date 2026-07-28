@@ -44,7 +44,7 @@ function sourceFiles(root: URL): URL[] {
   })
 }
 
-describe('mobile web production prototype boundary', () => {
+describe('mobile web retired artifacts', () => {
   it('keeps prototype contracts and names out of production sources', () => {
     const violations = productionRoots.flatMap(sourceFiles).flatMap((file) => {
       const source = readFileSync(file, 'utf8')
@@ -64,5 +64,18 @@ describe('mobile web production prototype boundary', () => {
     })
 
     expect(rendererImports).toEqual([])
+  })
+
+  it('keeps the superseded prototype architecture removed', () => {
+    const retiredPrototypeArtifacts = [
+      new URL('../app/hybrid-prototype.tsx', import.meta.url),
+      new URL('./hybrid-prototype', import.meta.url),
+      new URL('../../src/shared/mobile-web-prototype-contract.ts', import.meta.url),
+      new URL('../../src/main/runtime/rpc/methods/mobile-web-prototype.ts', import.meta.url),
+      new URL('../../src/main/runtime/rpc/mobile-web-prototype-assets.ts', import.meta.url),
+      new URL('../../src/main/runtime/rpc/mobile-web-prototype-document.ts', import.meta.url)
+    ]
+
+    expect(retiredPrototypeArtifacts.filter((artifact) => existsSync(artifact))).toEqual([])
   })
 })

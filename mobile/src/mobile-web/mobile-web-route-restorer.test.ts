@@ -50,7 +50,11 @@ describe('MobileWebRouteRestorer', () => {
       '/h/paired-orca-desktop/session/workspace-two?name=Workspace+two'
     )
 
-    mocks.shell = { ...shellState('ignored', 'Ignored', 3), resumeRoute: { kind: 'workspaceList' } }
+    mocks.shell = {
+      ...shellState('ignored', 'Ignored', 3),
+      navigationRoute: { kind: 'workspaceList' },
+      resumeRoute: { kind: 'workspaceList' }
+    }
     renderRestorer()
     expect(mocks.replace).toHaveBeenCalledTimes(3)
     expect(mocks.replace).toHaveBeenLastCalledWith('/')
@@ -82,6 +86,7 @@ function shellState(
   workspaceName: string,
   routeRevision: number
 ): MobileWebNativeShellState {
+  const route = { kind: 'session' as const, workspaceId, workspaceName }
   return {
     client: null,
     context: {
@@ -91,7 +96,8 @@ function shellState(
     connection: 'connected',
     reconnectAttempts: 0,
     lastConnectedAt: Date.now(),
-    resumeRoute: { kind: 'session', workspaceId, workspaceName },
+    navigationRoute: route,
+    resumeRoute: route,
     routeRevision,
     rememberRoute: () => true
   }

@@ -10,7 +10,6 @@ const storageImportPattern =
 const EXPECTED_PERSISTED_STATE_SOURCES = [
   'mobile/app/index.tsx',
   'mobile/src/cache/home-snapshot-cache.ts',
-  'mobile/src/hybrid-prototype/mobile-web-prototype-cache.ts',
   'mobile/src/mobile-web/mobile-web-cold-resume-route.ts',
   'mobile/src/notifications/notification-reconnect-catchup.ts',
   'mobile/src/session/session-last-visited-worktree.ts',

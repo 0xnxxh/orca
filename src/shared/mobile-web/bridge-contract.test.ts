@@ -307,7 +307,30 @@ describe('mobile web bridge shell contract', () => {
     expect(
       MobileWebBridgeShellMessageSchema.safeParse({
         ...navigation,
+        route: { kind: 'tasks', taskSource: 'gitlab' }
+      }).success
+    ).toBe(true)
+    expect(
+      MobileWebBridgeShellMessageSchema.safeParse({
+        ...navigation,
+        route: { kind: 'tasks', taskSource: 'jira' }
+      }).success
+    ).toBe(false)
+    expect(
+      MobileWebBridgeShellMessageSchema.safeParse({
+        ...navigation,
         route: { ...navigation.route, hostWorkspaceId: '/private/orca' }
+      }).success
+    ).toBe(false)
+    expect(
+      MobileWebBridgeShellMessageSchema.safeParse({
+        version: MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
+        type: 'init',
+        shellSessionId: SHELL_SESSION_ID,
+        buildId: BUILD_ID,
+        connection: 'connected',
+        grants: [operationGrant()],
+        resumeRoute: { kind: 'accounts' }
       }).success
     ).toBe(false)
     expect(

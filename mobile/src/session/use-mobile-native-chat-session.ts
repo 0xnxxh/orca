@@ -81,10 +81,7 @@ export function useMobileNativeChatSession(args: {
   // Without this a toggle out of chat view and back (agent null, then the same
   // identity again) would resurface a settled 'ready' over an emptied list.
   let current = read
-  if (
-    current !== null &&
-    (current.identity !== identity || current.operations !== operations)
-  ) {
+  if (current !== null && (current.identity !== identity || current.operations !== operations)) {
     current = null
     setRead(null)
   }
@@ -307,6 +304,7 @@ export function useMobileNativeChatSession(args: {
     hasMore,
     loadingEarlier,
     loadEarlier
+  }
 }
 
 function nativeChatTarget(

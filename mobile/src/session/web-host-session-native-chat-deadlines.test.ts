@@ -34,7 +34,7 @@ describe('hosted native-chat deadlines', () => {
     } as unknown as MobileWebBridgeClient
     const operations = webHostSessionNativeChatOperations(client)
 
-    await expect(operations.sendMessage(TARGET, 'hello', 20_000)).resolves.toBe('accepted')
+    await expect(operations.sendMessage(TARGET, 'hello', 20_000, true)).resolves.toBe('accepted')
     await expect(operations.respond(TARGET, '1', false, 20_000)).resolves.toBe('accepted')
     await expect(operations.stop(TARGET, 20_000)).resolves.toBe('accepted')
 
@@ -43,7 +43,8 @@ describe('hosted native-chat deadlines', () => {
         workspaceId: 'workspace',
         sessionId: 'native_chat_session',
         text: 'hello',
-        deadline: 20_000
+        deadline: 20_000,
+        clearInputFirst: true
       },
       { timeoutMs: 10_000 }
     )

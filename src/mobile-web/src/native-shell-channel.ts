@@ -14,6 +14,7 @@ import {
   parseMobileWebBridgeShellMessage,
   type MobileWebBridgeMessageContext,
   type MobileWebBridgePageMessage,
+  type MobileWebNavigationRoute,
   type MobileWebResumeRoute
 } from '../../shared/mobile-web/bridge-contract'
 import { MobileWebBridgeClient } from './mobile-web-bridge-client'
@@ -33,6 +34,7 @@ export type MobileWebNativeShellState = {
   connection: 'connecting' | 'connected' | 'offline' | 'recovering'
   reconnectAttempts: number
   lastConnectedAt: number | null
+  navigationRoute: MobileWebNavigationRoute
   resumeRoute: MobileWebResumeRoute
   routeRevision: number
   rememberRoute: (route: MobileWebResumeRoute) => boolean
@@ -60,6 +62,7 @@ function useMobileWebNativeShellChannel(): MobileWebNativeShellState {
     connection: 'connecting',
     reconnectAttempts: 0,
     lastConnectedAt: null,
+    navigationRoute: { kind: 'workspaceList' },
     resumeRoute: { kind: 'workspaceList' },
     routeRevision: 0,
     rememberRoute: () => false
@@ -72,6 +75,7 @@ function useMobileWebNativeShellChannel(): MobileWebNativeShellState {
       reconnectAttempts: 0,
       lastConnectedAt: null
     }
+    let navigationRoute: MobileWebNavigationRoute = { kind: 'workspaceList' }
     let resumeRoute: MobileWebResumeRoute = { kind: 'workspaceList' }
     let routeRevision = 0
     let lastNavigationSequence = -1
@@ -89,13 +93,17 @@ function useMobileWebNativeShellChannel(): MobileWebNativeShellState {
         metrics = nextMobileWebShellConnectionMetrics(metrics, init, retainsContext)
         if (!retainsContext) {
           resumeRoute = init.resumeRoute ?? { kind: 'workspaceList' }
+          navigationRoute = resumeRoute
           routeRevision += 1
           lastNavigationSequence = -1
         }
         rememberRoute = (route) => {
           resumeRoute = route
+          navigationRoute = route
           setState((current) =>
-            sameContext(current.context, nextContext) ? { ...current, resumeRoute: route } : current
+            sameContext(current.context, nextContext)
+              ? { ...current, navigationRoute: route, resumeRoute: route }
+              : current
           )
           return postPageMessage({
             version: MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
@@ -109,6 +117,7 @@ function useMobileWebNativeShellChannel(): MobileWebNativeShellState {
             client,
             context,
             connection: init.connection,
+            navigationRoute,
             resumeRoute,
             routeRevision,
             rememberRoute,
@@ -133,6 +142,7 @@ function useMobileWebNativeShellChannel(): MobileWebNativeShellState {
           client,
           context,
           connection: init.connection,
+          navigationRoute,
           resumeRoute,
           routeRevision,
           rememberRoute,
@@ -159,11 +169,11 @@ function useMobileWebNativeShellChannel(): MobileWebNativeShellState {
           return
         }
         lastNavigationSequence = parsed.value.sequence
-        resumeRoute = parsed.value.route
+        navigationRoute = parsed.value.route
         routeRevision += 1
         setState((current) =>
           sameContext(current.context, activeContext)
-            ? { ...current, resumeRoute, routeRevision, rememberRoute }
+            ? { ...current, navigationRoute, routeRevision, rememberRoute }
             : current
         )
         return
@@ -175,6 +185,7 @@ function useMobileWebNativeShellChannel(): MobileWebNativeShellState {
           client,
           context,
           connection: parsed.value.state,
+          navigationRoute,
           resumeRoute,
           routeRevision,
           rememberRoute,

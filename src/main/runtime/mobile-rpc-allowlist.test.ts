@@ -15,10 +15,6 @@ const MOBILE_DYNAMIC_RPC_METHODS = [
   'github.updatePRState',
   'gitlab.updateIssue',
   'gitlab.updateMR',
-  // Prototype asset requests pass through a downloader callback, so they are
-  // not visible to the literal sendRequest scan.
-  'mobileWeb.prototype.chunk',
-  'mobileWeb.prototype.manifest',
   // Production asset requests will also pass through the native package
   // downloader rather than literal feature call sites.
   'mobileWeb.package.asset',

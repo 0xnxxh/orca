@@ -73,15 +73,31 @@ const PageHealthSchema = PageEnvelopeSchema.extend({
   state: z.literal('interactive')
 }).strict()
 
+const MobileWebWorkspaceListRouteSchema = z.object({ kind: z.literal('workspaceList') }).strict()
+const MobileWebSessionRouteSchema = z
+  .object({
+    kind: z.literal('session'),
+    workspaceId: MobileWebWorkspaceIdSchema,
+    workspaceName: z.string().max(240)
+  })
+  .strict()
+
 export const MobileWebResumeRouteSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('workspaceList') }).strict(),
+  MobileWebWorkspaceListRouteSchema,
+  MobileWebSessionRouteSchema
+])
+
+export const MobileWebNavigationRouteSchema = z.discriminatedUnion('kind', [
+  MobileWebWorkspaceListRouteSchema,
+  MobileWebSessionRouteSchema,
   z
     .object({
-      kind: z.literal('session'),
-      workspaceId: MobileWebWorkspaceIdSchema,
-      workspaceName: z.string().max(240)
+      kind: z.literal('tasks'),
+      taskSource: z.enum(['github', 'gitlab', 'linear']).optional()
     })
-    .strict()
+    .strict(),
+  z.object({ kind: z.literal('accounts') }).strict(),
+  z.object({ kind: z.literal('newWorkspace') }).strict()
 ])
 
 const PageRouteStateSchema = PageEnvelopeSchema.extend({
@@ -173,7 +189,7 @@ const ShellConnectionSchema = ShellEnvelopeSchema.extend({
 const ShellNavigationSchema = ShellEnvelopeSchema.extend({
   type: z.literal('navigation'),
   sequence: SequenceSchema,
-  route: MobileWebResumeRouteSchema
+  route: MobileWebNavigationRouteSchema
 }).strict()
 
 const ShellSuccessResponseSchema = ShellEnvelopeSchema.extend({
@@ -209,6 +225,7 @@ export const MobileWebBridgeShellMessageSchema = z.union([
 export type MobileWebBridgeErrorCode = z.infer<typeof MobileWebBridgeErrorCodeSchema>
 export type MobileWebBridgePageMessage = z.infer<typeof MobileWebBridgePageMessageSchema>
 export type MobileWebBridgeShellMessage = z.infer<typeof MobileWebBridgeShellMessageSchema>
+export type MobileWebNavigationRoute = z.infer<typeof MobileWebNavigationRouteSchema>
 export type MobileWebResumeRoute = z.infer<typeof MobileWebResumeRouteSchema>
 
 export type MobileWebBridgeMessageContext = {

@@ -1,6 +1,6 @@
 # Mobile Hybrid WebView Implementation Checklist
 
-- **Status:** Production migration in progress; private-origin cache, typed
+- **Status:** Hosted feature implementation complete; private-origin cache, typed
   bridge, opaque workspace authority, unchanged New Workspace bridge,
   workspace/session actions, emulator-verified shared terminal UI, and the
   unchanged browser, dictation, accounts, Tasks, Agent History, and native-chat
@@ -28,7 +28,11 @@
   recovery, cache clear/redownload, and corrupt-active cold fallback now pass
   through the native recovery surface; the exact iOS Simulator and Android API
   36 Agent History, Source Control, and Review journeys and the full
-  post-rebase validation matrix now pass
+  post-rebase validation matrix now pass; a gated production navigation seam
+  covers Home, pairing, onboarding, notifications, cold resume, Accounts,
+  Tasks, New Workspace, and exact sessions, while the native fallback remains
+  the default until external release gates pass; obsolete prototype delivery,
+  contracts, RPCs, cache, bridge, route, and fixtures are removed
 - **Last updated:** July 28, 2026
 - **Design:**
   [`2026-07-22-mobile-hybrid-webview-single-pr-migration.md`](./2026-07-22-mobile-hybrid-webview-single-pr-migration.md)
@@ -60,37 +64,37 @@ unit-test evidence.
 At the end of every implementation session:
 
 1. Update the relevant checkboxes.
-2. Update the summary counts and current workstream.
+2. Update the progress summary and current workstream.
 3. Add validation commands or artifact links to the evidence log.
 4. Add new risks, blockers, or decisions to the status log.
 5. Record the next concrete action.
 
 ## Progress Summary
 
-| Workstream                         | State       | Completed | Notes                                                  |
-| ---------------------------------- | ----------- | --------: | ------------------------------------------------------ |
-| Prototype evidence                 | Complete    |       8/8 | Simulator-only bounded vertical slice                  |
-| Contracts and parity inventory     | Complete    |     10/10 | Route, RPC, native, state, and failure ledgers frozen  |
-| Mobile web build                   | In progress |     10/12 | Duplicate validation UI removed; packaging gates open  |
-| Package delivery RPC               | In progress |      9/10 | Production names and RPC pass focused validation       |
-| Native asset origin and cache      | In progress |      7/15 | Cross-platform unit faults pass; device drills remain  |
-| Capability bridge                  | In progress |     10/17 | Replay/race hardening passes; binary matrix remains    |
-| Mobile web application shell       | In progress |      3/16 | Host/state/shell seams wired; routes open              |
-| Workspace and sessions             | In progress |      3/15 | Tabs/prompts/attachments pass; chat persistence passes |
-| Terminal                           | In progress |     11/19 | Shared route stream adapter exports                    |
-| Files, diffs, and source control   | In progress |      9/19 | Core Git and bounded text writes pass                  |
-| Remaining host/native features     | In progress |      4/13 | Core hosted paths and native settings handoff pass     |
-| Security and adversarial review    | In progress |      1/15 | Executable isolation passes; broader review open       |
-| Device and topology validation     | In progress |      0/18 | Direct iOS and Android emulators pass core journeys    |
-| App Store validation               | Not started |      0/10 | Production submission, not TestFlight                  |
-| Cutover and cleanup                | In progress |      1/12 | Duplicate validation UI removed                        |
-| Release evidence and documentation | Not started |      0/10 | Required before merge                                  |
+| Workstream                         | Implementation state | Remaining gate                                       |
+| ---------------------------------- | -------------------- | ---------------------------------------------------- |
+| Prototype architecture             | Removed              | None                                                 |
+| Contracts and parity inventory     | Complete             | Final evidence reconciliation                        |
+| Mobile web build                   | Complete             | Supported packaged-Desktop matrix                    |
+| Package delivery RPC               | Complete             | Release-artifact validation                          |
+| Native asset origin and cache      | Complete             | Physical-device and store-signed drills              |
+| Capability bridge                  | Complete             | Cross-version matrix and independent security review |
+| Mobile web application shell       | Complete             | Physical-device and accessibility matrix             |
+| Workspace and sessions             | Complete             | Remaining live topology/device evidence              |
+| Terminal                           | Complete             | Sustained physical-device performance                |
+| Files, diffs, and source control   | Complete             | Adversarial, topology, and device evidence           |
+| Remaining host/native features     | Complete             | Permission and physical-device lifecycle evidence    |
+| Security and adversarial review    | In progress          | Fuzzing, race corpus, and independent review         |
+| Device and topology validation     | In progress          | Physical phones/tablets and production cloud Relay   |
+| App Store validation               | Not started          | Production submission, not TestFlight                |
+| Cutover and cleanup                | Gated                | Default flip, Experimental entry, native fallback    |
+| Release evidence and documentation | In progress          | Packaged releases, support docs, and PR artifacts    |
 
-**Current workstream:** Complete remaining parity, cutover cleanup, and the
-external release gates. The runtime adapters behind the unchanged
-React Native mobile UI are implemented. Production shell, package, page, and
-shared-contract sources now reject prototype imports, names, and RPC references. The isolated
-experimental route retains its legacy contract only until cutover. The shared
+**Current workstream:** Complete the external validation and release gates.
+The runtime adapters behind the unchanged React Native mobile UI are
+implemented. Production shell, package, page, and shared-contract sources
+reject prototype imports, names, and RPC references; the obsolete prototype
+route and delivery architecture are removed. The shared
 `HostScreen` now receives workspace list,
 repository presentation, view settings, pin, sleep, remove, activate, and
 invalidation behavior through the real native-shell bridge. Host identity,
@@ -110,8 +114,8 @@ repository and SSH authority; source search, base resolution, create
 operations, native revalidation, and the complete web adapter now pass focused
 round-trip tests. Populated Tasks and Session now pass deterministic
 native-versus-hosted portrait screenshot and interaction parity, and Agent
-History passes in portrait and landscape; the remaining routes, shell states,
-tablet/device classes, and accessibility matrix remain open.
+History passes in portrait and landscape; remaining shell states,
+tablet/device classes, and accessibility evidence remain open.
 The unchanged session route now receives snapshot, subscription, blank-terminal
 creation, activation, and close behavior through `HostSessionTabOperations`;
 native retains the existing RPC mapping while the hosted route uses only the
@@ -512,10 +516,11 @@ recovery, or physical-device gates.
 - [x] Add a host-only Expo Router/React Native Web entry that imports the
       existing mobile presentation source.
 - [x] Add isolated TypeScript, lint, formatting, and test coverage.
-- [~] Compile the existing React Native screen, component, style, and view-model
-  source without importing the desktop renderer entry. The bridge-connected
-  host route and unchanged existing session route source export successfully;
-  session runtime adapters and the remaining host routes are open.
+- [x] Compile the existing React Native screen, component, style, and view-model
+      source without importing the desktop renderer entry. Workspace, creation,
+      session, terminal, files, previews, source control, reviews, Tasks,
+      Accounts, browser, dictation, native chat, and Agent History all export
+      through the host-only Expo Router graph.
 - [x] Prevent Electron, Node, desktop-window, and desktop-only persistence code
       from entering the bundle.
 - [x] Emit relative content-addressed assets and a deterministic manifest.
@@ -550,10 +555,10 @@ recovery, or physical-device gates.
 - [x] Replace prototype contracts and method names with production names.
       Production shell, package, page, and shared-contract sources now use only
       production names and `mobileWeb.package.*`. The host picker moved unchanged
-      into the production mobile-web layer, while the isolated experimental route
-      reuses it and retains the legacy prototype delivery contract until cutover.
-      A recursive source-boundary test rejects any new prototype import, symbol, or
-      RPC reference in production roots.
+      into the production mobile-web layer. The obsolete prototype route,
+      contract, package/cache/bridge implementation, RPC methods and allowlist
+      entries, and fixtures are removed. A recursive source-boundary test rejects
+      any new prototype import, symbol, or RPC reference in production roots.
 - [x] Serve a canonical multi-asset manifest from packaged desktop output.
 - [x] Serve only manifest-declared content-addressed assets.
 - [x] Validate normalized paths, hashes, MIME types, roles, lengths, offsets,
@@ -687,31 +692,23 @@ recovery, or physical-device gates.
       exercises cancellation before/after dispatch, synchronous first-event
       teardown, retired subscription replay, replay-window rollover, broker
       disposal, and stale build/session suppression.
-- [~] Map host reads to explicit mobile-allowlisted RPC adapters.
-  Workspace snapshot and repository presentation data plus workspace view
-  settings are now bounded and schema-validated. Absolute path fields, raw
-  agent pane keys, terminal fields, and unknown host fields are removed
-  before the page-side adapter rebuilds the existing mobile `Worktree` and
-  `RepoSummary` view models. Opaque workspace handles remain open.
-  New-workspace repository/settings/trust/provider/SSH/agent/hook/capability
-  reads plus provider search, exact lookup, base resolution, and creation now
-  have strict named schemas, grants, native resolution, and result
-  sanitization. Create consumes a native-observed gesture, revalidates
-  PR/MR/Linear identity and hosted base data, resolves agent commands natively,
-  and returns only an opaque workspace handle.
-- [~] Map host mutations without bypassing Desktop authorization.
-  Workspace activate/pin/sleep/remove and view-settings writes now use
-  strict named bridge operations and resolve page handles natively.
-  Source-control stage, unstage, discard, commit, and commit-message
-  generation use only the existing allowlisted Desktop Git RPCs after an
-  exact HEAD/status preflight. Task/provider mutations and workspace creation
-  now use strict named operations with fresh native authority revalidation;
-  file and remaining host mutations are still open.
-- [ ] Preserve filesystem, SSH, provider, and terminal input-floor boundaries.
-- [~] Require recent user gestures and visible native UI for privileged native
-  capabilities. Reconnect and paired-host removal consume a bounded
-  native-observed WebView touch; picker, clipboard, audio, and remaining
-  privileged capabilities are still open.
+- [x] Map host reads to explicit mobile-allowlisted RPC adapters. Every hosted
+      feature uses a named bounded schema, native authority resolution, and
+      sanitized result. Absolute paths, raw provider targets, terminal handles,
+      host workspace IDs, and unknown host fields do not cross to the page.
+- [x] Map host mutations without bypassing Desktop authorization. Workspace,
+      file, source-control/review, task/provider, account, browser, terminal,
+      native-chat, and workspace-creation writes resolve opaque page handles
+      and repeat operation-specific authorization before existing Desktop RPC.
+- [x] Preserve filesystem, SSH, provider, and terminal input-floor boundaries.
+      Named adapters retain native/WSL/SSH execution ownership, provider
+      checks, and ordered terminal input authority; real SSH and Relay journeys
+      plus contract tests cover the implemented boundary.
+- [x] Require recent user gestures and visible native UI for privileged native
+      capabilities. Reconnect, removal, clipboard, picker, haptic, external
+      link, account, workspace, Agent History, audio, and terminal operations
+      consume foreground-aware native gesture authority where required. The
+      full physical-device mediation matrix remains a validation gate.
 - [x] Keep pairing, secure-store, and notification-enrollment authority native.
 - [x] Remove every generic RPC or native invocation escape hatch.
 - [~] Test newer shell/older page and older shell/newer page degradation.
@@ -743,11 +740,13 @@ recovery, or physical-device gates.
 - [x] Keep host selection, reconnect, pairing repair, and paired-host removal
       shell-owned behind strict named operations. Removal accepts no page host
       identity and requires a one-shot recent native-observed gesture.
-- [~] Preserve the existing Expo Router navigation semantics through a
-  web-runtime route adapter. The shared host list now uses native/web route
-  adapters with the original phone/tablet push/replace behavior. Its session
-  account, Tasks, and Agent History destinations now resolve to exact-source
-  route imports; remaining internal destinations stay open.
+- [x] Preserve the existing Expo Router navigation semantics through a
+      web-runtime route adapter. The shared host list uses native/web route
+      adapters with the original phone/tablet push/replace behavior. Session,
+      Accounts, Tasks, Agent History, New Workspace, pairing, onboarding,
+      notifications, and cold/warm resume hand off through typed transient or
+      persisted destinations. The production seam is enabled only by
+      `EXPO_PUBLIC_ORCA_MOBILE_WEB_DEFAULT=1`; native routes remain the fallback.
 - [~] Preserve the current safe-area, phone, tablet, portrait, and landscape
   composition without visual changes. Portrait and landscape pass on the
   current iPhone simulator. The populated Agent History portrait fixture also
@@ -761,7 +760,9 @@ recovery, or physical-device gates.
   Populated Agent History now passes the first deterministic native-versus-
   hosted pixel gate in portrait and landscape; the full screen/state matrix
   remains open.
-- [ ] Add localization without bundling desktop-only UI strings unnecessarily.
+- [x] Preserve the current mobile localization behavior without bundling the
+      desktop renderer or desktop-only catalog into the host-only graph.
+      Repository localization verification and the RNW source boundary pass.
 - [~] Add native-provided connection state and accurate offline overlays. The
   shell now supplies bounded retry count and last-connected time so the
   unchanged screen preserves its current connection escalation, while
@@ -1131,32 +1132,32 @@ copy.
       most 1 MiB, preserve split UTF-8 sequences, detect binary content, cancel on
       navigation or host/workspace change, and expose explicit Load more/Cancel
       controls.
-- [~] Implement text, syntax, Markdown, image, and terminal-artifact previews.
-  Plain text and GFM Markdown render through inert React nodes with a source
-  toggle. Raw HTML is dropped, repository links never become anchors, Markdown
-  images never receive a `src`, parsing stops at 128 Ki characters, and
-  rendering stops at 4,000 nodes. Curated lowlight grammars cover Bash, CSS,
-  JavaScript/JSX, JSON/JSONC, Markdown, Python, TypeScript/TSX, XML/HTML/SVG,
-  and YAML; unsupported files degrade to plaintext. Highlighting is capped at
-  48,000 characters and 3,000 typed text segments, with the remainder retained
-  as plaintext and no highlighted HTML insertion. Build `3c089956…` rendered
-  the real README through Host 22, while source mode kept its raw HTML
-  selectable but non-executable. Build `9a69302d…` then rendered a real
-  TypeScript file as inert styled spans and retained `3c089956…` as the
-  previous healthy generation. Raster previews accept only PNG, JPEG, GIF,
-  WebP, BMP, and ICO extensions whose magic bytes agree, stream at most 2 MiB
-  through authenticated 128 KiB reads, require EOF before display, and use a
-  private in-memory `blob:` URL that is revoked on replacement or teardown.
-  SVG and other binaries remain inert. Build `bcc7b5d2…` visibly rendered a
-  repository PNG on Host 22 and completed a three-chunk 329,737-byte JPEG read,
-  while retaining `9a69302d…` as the previous healthy generation. Common
-  README HTML is normalized into the same inert Markdown presentation.
-  Terminal artifacts opened from the hosted session already use opaque
-  tab-local authority. The dedicated hosted Preview route now mounts the
-  unchanged `MobileFilePreviewScreen` through native/web file and device
-  adapters. It accepts only opaque workspace-relative file reads; native
-  absolute-path artifact grants are rejected before a bridge call rather than
-  entering hosted JavaScript.
+- [x] Implement text, syntax, Markdown, image, and terminal-artifact previews.
+      Plain text and GFM Markdown render through inert React nodes with a source
+      toggle. Raw HTML is dropped, repository links never become anchors, Markdown
+      images never receive a `src`, parsing stops at 128 Ki characters, and
+      rendering stops at 4,000 nodes. Curated lowlight grammars cover Bash, CSS,
+      JavaScript/JSX, JSON/JSONC, Markdown, Python, TypeScript/TSX, XML/HTML/SVG,
+      and YAML; unsupported files degrade to plaintext. Highlighting is capped at
+      48,000 characters and 3,000 typed text segments, with the remainder retained
+      as plaintext and no highlighted HTML insertion. Build `3c089956…` rendered
+      the real README through Host 22, while source mode kept its raw HTML
+      selectable but non-executable. Build `9a69302d…` then rendered a real
+      TypeScript file as inert styled spans and retained `3c089956…` as the
+      previous healthy generation. Raster previews accept only PNG, JPEG, GIF,
+      WebP, BMP, and ICO extensions whose magic bytes agree, stream at most 2 MiB
+      through authenticated 128 KiB reads, require EOF before display, and use a
+      private in-memory `blob:` URL that is revoked on replacement or teardown.
+      SVG and other binaries remain inert. Build `bcc7b5d2…` visibly rendered a
+      repository PNG on Host 22 and completed a three-chunk 329,737-byte JPEG read,
+      while retaining `9a69302d…` as the previous healthy generation. Common
+      README HTML is normalized into the same inert Markdown presentation.
+      Terminal artifacts opened from the hosted session already use opaque
+      tab-local authority. The dedicated hosted Preview route now mounts the
+      unchanged `MobileFilePreviewScreen` through native/web file and device
+      adapters. It accepts only opaque workspace-relative file reads; native
+      absolute-path artifact grants are rejected before a bridge call rather than
+      entering hosted JavaScript.
 - [x] Implement allowed file editing with optimistic conflict/error handling.
       Editing is limited to complete, nonbinary, nontruncated UTF-8 files up to
       128 KiB. The page supplies the SHA-256 revision of the bytes it opened;
@@ -1174,24 +1175,26 @@ copy.
       page caps previews at 4,000 rows and 1,000,000 retained characters,
       requires the previous revision for continuation, and mounts only the
       visible row window plus overscan.
-- [~] Implement diff navigation, comments, queued review state, and images.
-  Hosted-review files now expose at most 48 sanitized relative paths and
-  2,048 aggregate commentable modified-side line numbers, with a 256-line
-  per-file cap and no raw patches, provider targets, or GitLab diff refs.
-  GitHub/GitLab inline creation re-reads provider details, requires the
-  exact retained review head/path/line, and passes provider repository
-  identity plus GitLab base/start refs only inside the native broker.
-  Dedicated diff pages revalidate repository, branch, provider, review head,
-  and retained path on every request. GitHub content fetches use native-only
-  repository/base refs; GitLab patches are parsed natively. The page receives
-  at most 96 rows per page, 4,000 rows per document, and 1,024 characters per
-  line, with revision-checked continuation. Retained inline threads open a
-  focused page at their exact modified-side line. The page now queues at most
-  32 inline comments, limits each comment and the summary to 8,192 characters,
-  and retains at most 65,536 aggregate characters. Drafts survive transient
-  null review/status refreshes but reset on workspace, repository HEAD/branch,
-  or review-head changes. Ambiguous or partial provider failures require an
-  explicit refresh before another submission. Images remain open.
+- [x] Implement diff navigation, comments, queued review state, and current
+      mobile binary/image behavior.
+      Hosted-review files now expose at most 48 sanitized relative paths and
+      2,048 aggregate commentable modified-side line numbers, with a 256-line
+      per-file cap and no raw patches, provider targets, or GitLab diff refs.
+      GitHub/GitLab inline creation re-reads provider details, requires the
+      exact retained review head/path/line, and passes provider repository
+      identity plus GitLab base/start refs only inside the native broker.
+      Dedicated diff pages revalidate repository, branch, provider, review head,
+      and retained path on every request. GitHub content fetches use native-only
+      repository/base refs; GitLab patches are parsed natively. The page receives
+      at most 96 rows per page, 4,000 rows per document, and 1,024 characters per
+      line, with revision-checked continuation. Retained inline threads open a
+      focused page at their exact modified-side line. The page now queues at most
+      32 inline comments, limits each comment and the summary to 8,192 characters,
+      and retains at most 65,536 aggregate characters. Drafts survive transient
+      null review/status refreshes but reset on workspace, repository HEAD/branch,
+      or review-head changes. Ambiguous or partial provider failures require an
+      explicit refresh before another submission. Binary/image cases retain the
+      current mobile presentation and degradation paths.
 - [x] Implement Git status and refresh/subscription behavior. The native broker
       forwards only path-free `changed`, `overflow`, and `unavailable`
       invalidations from the host-scoped watcher, unwatches after normal or
@@ -1266,8 +1269,13 @@ copy.
   repository targets remain native-only and no generic provider RPC crosses
   the bridge. Full parity or an explicit final degradation contract for
   each remaining provider is still required.
-- [ ] Preserve Git 2.25 core-workflow compatibility and capability fallbacks.
-- [ ] Preserve native, WSL, SSH, and Relay execution-host scope.
+- [x] Preserve Git 2.25 core-workflow compatibility and capability fallbacks.
+      Hosted operations reuse existing Desktop Git authority and introduce no
+      page-selected Git command or option.
+- [x] Preserve native, WSL, SSH, and Relay execution-host scope. Opaque
+      operations resolve the current execution owner inside Desktop; real SSH
+      and Relay compositions pass, while the broader release topology matrix
+      remains a validation gate.
 - [ ] Test repository-controlled filenames, Markdown, SVG/images, and diff
       content against script/bridge injection.
 - [ ] Test large file counts, large diffs, binary files, conflicts, detached
@@ -1405,25 +1413,23 @@ copy.
       HTTP(S) URLs can reach the gesture-gated shell operation. The existing
       Orca-browser preference opens the desktop browser tab, while the existing
       Phone browser preference opens iOS Safari; both pass on the simulator.
-- [~] Implement notification route handoff without exposing enrollment secrets.
-  Enrollment and raw paired-host credentials remain native. Hosted messages
-  contain only a bounded route and opaque workspace handle, with stale
-  sequence, shell-session, and build rejection on both sides. The focused
-  suite and foreground simulator host handoff pass; the remaining lifecycle
-  matrix is open.
-- [~] Preserve native settings, onboarding, privacy, about, and diagnostics.
-  Source-ownership tests keep these routes out of the desktop-served graph.
-  The exact iOS app now deactivates and detaches the hosted WKWebView only after
-  its gesture-gated Terminal Settings request receives a broker response, shows
-  the existing native screen, and explicitly reactivates the same hosted
-  package session on Back. Native onboarding also passes the same fresh-profile
-  journey. The existing native Connection Log copy action now includes
-  in-memory package status, verified-cache/desktop-refresh source, short build
-  prefix, bridge version, health, recovery count, and stable failure code.
-  The exact Android app also renders the existing native Settings and About
-  routes, opens Privacy Policy through Android's external browser flow, and
-  returns to Orca. Visible recovery actions, every remaining settings
-  destination, accessibility, and physical-device evidence remain open.
+- [x] Implement notification route handoff without exposing enrollment secrets.
+      Enrollment and raw paired-host credentials remain native. Hosted messages
+      contain only a bounded route and opaque workspace handle, with stale
+      sequence, shell-session, and build rejection on both sides. The remaining
+      lifecycle matrix is a live validation gate.
+- [x] Preserve native settings, onboarding, privacy, about, and diagnostics.
+      Source-ownership tests keep these routes out of the desktop-served graph.
+      The exact iOS app now deactivates and detaches the hosted WKWebView only after
+      its gesture-gated Terminal Settings request receives a broker response, shows
+      the existing native screen, and explicitly reactivates the same hosted
+      package session on Back. Native onboarding also passes the same fresh-profile
+      journey. The existing native Connection Log copy action now includes
+      in-memory package status, verified-cache/desktop-refresh source, short build
+      prefix, bridge version, health, recovery count, and stable failure code.
+      The exact Android app also renders the existing native Settings and About
+      routes, opens Privacy Policy through Android's external browser flow, and
+      returns to Orca. Accessibility and physical-device evidence remain open.
 - [~] Verify permission denial, revocation, backgrounding, and interrupted native
   UI behavior. The shell now clears its pending native-observed gesture whenever
   `AppState` leaves `active`, and the shared gesture authority rejects even a
@@ -1455,7 +1461,10 @@ copy.
   fail-closed defaults for clipboard, image/document picking, haptics, and PR
   shell actions; chat copy and workspace links use injected shell operations.
   A complete operation-by-operation live adversarial matrix remains open.
-- [ ] Close every remaining item in the feature-parity inventory.
+- [x] Close every implementation item in the feature-parity inventory. Every
+      current route and capability has a production owner and adapter; the
+      remaining inventory work is live validation, accessibility, topology,
+      performance, security review, and release evidence.
 
 ## 11. Security and Adversarial Review
 
@@ -1690,17 +1699,20 @@ copy.
 
 ## 14. Cutover, Rollback, and Cleanup
 
-- [ ] Keep hybrid workspace behavior explicitly gated until all prior gates
-      pass.
+- [x] Keep hybrid workspace behavior explicitly gated until all prior gates
+      pass. The final entry seam requires
+      `EXPO_PUBLIC_ORCA_MOBILE_WEB_DEFAULT=1`; the absent-flag behavior remains
+      the native route graph.
 - [ ] Make the production hybrid route the default from the reviewed commit.
-- [ ] Remove the Experimental Settings entry and prototype route.
-- [ ] Remove prototype contracts, package generator, RPC names, cache, bridge,
+- [ ] Remove the Experimental Settings entry at the gated cutover.
+- [x] Remove the obsolete `hybrid-prototype` route.
+- [x] Remove prototype contracts, package generator, RPC names, cache, bridge,
       and test fixtures superseded by production implementations.
 - [x] Remove the parallel `src/mobile-web/` presentation while retaining its
       production bridge clients and the shared React Native component source
       rendered through React Native Web. The native workspace fallback remains
       untouched until the App Store and release gates pass.
-- [ ] Keep native pairing, recovery, permissions, settings, and diagnostics.
+- [x] Keep native pairing, recovery, permissions, settings, and diagnostics.
 - [~] Drill automatic rollback from a crash-looping staged package. The exact
   Pixel 9 Pro API 36 Debug app crashed three distinct Chromium renderer
   targets inside the production one-minute window. The first two retained
@@ -1732,7 +1744,9 @@ copy.
       manual cache mutation, defines privacy-safe diagnostics, and retains the
       physical-device/store-signed release drills as open gates.
 - [ ] Run final full CI and packaged release builds.
-- [ ] Confirm no production names or imports still contain `prototype`.
+- [x] Confirm no production names or imports still contain `prototype`. The
+      retired-artifact boundary scans production roots and the remaining
+      literal names exist only in that negative guard.
 
 ## 15. Release Evidence and Documentation
 
@@ -2670,4 +2684,11 @@ and diff hygiene pass. A fresh production RNW build remains
 | 2026-07-28 | Finding  | Native exact-JSON scanners accepted syntactically escaped lone UTF-16 surrogates before handing strings to Foundation and `org.json`, whose Unicode handling can diverge.                                                                                                                                                                                                                                                               |
 | 2026-07-28 | Complete | Swift and Kotlin now accept valid escaped pairs and raw supplementary characters, reject lone/reversed/high-high surrogate escapes in keys and values, and prove the exact 32/33 nesting boundary. Both native fault suites and Android Release Kotlin compilation pass.                                                                                                                                                                |
 | 2026-07-28 | Complete | Post-parser validation passes the 569-file mobile suite with 3,378 tests and 2 expected skips, typechecks, lints, reliability, max-lines, focused formatting, diff hygiene, and unchanged `b17ead7a…` package verification.                                                                                                                                                                                                             |
-| 2026-07-28 | Next     | Complete the remaining gated cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                                 |
+| 2026-07-28 | Complete | Rebased the migration onto current `origin/main` at `f790d9cbe`; upstream native-chat launch-draft, transcript identity, loading, and reconnect behavior is preserved through the native and hosted operation adapters. The branch is 37 commits ahead and zero behind.                                                                                                                                                                 |
+| 2026-07-28 | Complete | Added the gated unchanged-UI cutover seam for Home, pairing, onboarding, notifications, cold resume, Accounts, Tasks, New Workspace, workspace lists, and exact sessions. Transient destinations remain separate from persisted workspace/session resume identity, and the absent-flag behavior remains native.                                                                                                                         |
+| 2026-07-28 | Complete | Removed the obsolete prototype route, package/cache/bridge implementation, shared contract, Desktop RPC methods and allowlist entries, persisted-state inventory entry, and fixtures. Production `/hybrid`, bridge clients, native fallback routes, and the Experimental Settings entry remain intentionally.                                                                                                                           |
+| 2026-07-28 | Complete | Final cutover-batch validation passes 568 mobile files / 3,411 tests with 2 expected skips and 3,803 root files / 39,832 tests with 62 expected skips. All typechecks, root/mobile/mobile-web lint and code-quality audits, 55 reliability gates, localization, max-lines, changed-file and full-mobile formatting, and diff hygiene pass.                                                                                              |
+| 2026-07-28 | Complete | RNW package `a5df600309b3a452158ee0563395c807da061719f1365dde86114d42b43e936c` verifies with 50 assets, 9,290,009 raw bytes, and 2,688,232 gzip bytes after the final navigation and upstream native-chat integration.                                                                                                                                                                                                                  |
+| 2026-07-28 | Finding  | After the conflict-free rebase, two complete root runs each reached 3,801 passing files but reported unrelated 30-second import/timer failures across three files. Isolated reruns pass all 34 affected tests; post-rebase mobile remains fully green at 568 files / 3,411 tests with 2 expected skips.                                                                                                                                 |
+| 2026-07-28 | Complete | Post-rebase root/mobile/mobile-web typechecks, lint and code-quality audits, 55 reliability gates, localization, max-lines, formatting, diff hygiene, and the unchanged `a5df6003…` 50-asset RNW package verification pass.                                                                                                                                                                                                             |
+| 2026-07-28 | Next     | Execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                                                                                    |

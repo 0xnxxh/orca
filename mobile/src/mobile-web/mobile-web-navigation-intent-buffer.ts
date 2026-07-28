@@ -1,10 +1,18 @@
 import type { NotificationNavigationTarget } from '../notifications/notification-routing'
+import type { TaskProvider } from '../tasks/mobile-task-providers'
+
+export type MobileWebNavigationIntentTarget =
+  | { kind: 'workspaceList' }
+  | { kind: 'session'; hostWorkspaceId: string }
+  | { kind: 'tasks'; taskSource?: TaskProvider }
+  | { kind: 'accounts' }
+  | { kind: 'newWorkspace' }
 
 export type MobileWebNavigationIntent = {
   sequence: number
-  source: 'notification' | 'coldResume'
+  source: 'notification' | 'coldResume' | 'home'
   hostId: string
-  target: { kind: 'workspaceList' } | { kind: 'session'; hostWorkspaceId: string }
+  target: MobileWebNavigationIntentTarget
 }
 
 type MobileWebNavigationIntentListener = (intent: MobileWebNavigationIntent) => void
@@ -16,17 +24,23 @@ export class MobileWebNavigationIntentBuffer {
 
   publish(
     target: NotificationNavigationTarget,
-    source: MobileWebNavigationIntent['source'] = 'notification'
+    source: 'notification' | 'coldResume' = 'notification'
   ): MobileWebNavigationIntent {
-    const intent: MobileWebNavigationIntent = {
-      sequence: this.nextSequence,
-      source,
-      hostId: target.hostId,
-      target:
-        target.kind === 'session'
-          ? { kind: 'session', hostWorkspaceId: target.hostWorkspaceId }
-          : { kind: 'workspaceList' }
-    }
+    return this.publishHostTarget(
+      target.hostId,
+      target.kind === 'session'
+        ? { kind: 'session', hostWorkspaceId: target.hostWorkspaceId }
+        : { kind: 'workspaceList' },
+      source
+    )
+  }
+
+  publishHostTarget(
+    hostId: string,
+    target: MobileWebNavigationIntentTarget,
+    source: MobileWebNavigationIntent['source'] = 'home'
+  ): MobileWebNavigationIntent {
+    const intent = { sequence: this.nextSequence, source, hostId, target }
     this.nextSequence += 1
     this.latest = intent
     this.listeners.forEach((listener) => listener(intent))
@@ -62,7 +76,8 @@ export const MOBILE_WEB_NAVIGATION_INTENTS = new MobileWebNavigationIntentBuffer
 
 export function shouldHandoffNotificationToMobileWeb(
   pathname: string,
-  hasIntentListener: boolean
+  hasIntentListener: boolean,
+  mobileWebDefault = false
 ): boolean {
-  return pathname === '/hybrid' && hasIntentListener
+  return mobileWebDefault || (pathname === '/hybrid' && hasIntentListener)
 }

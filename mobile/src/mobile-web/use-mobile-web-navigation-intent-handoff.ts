@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
   type MobileWebBridgeShellMessage,
+  type MobileWebNavigationRoute,
   type MobileWebResumeRoute
 } from '../../../src/shared/mobile-web/bridge-contract'
 import type { ConnectionState, HostProfile } from '../transport/types'
@@ -77,10 +78,7 @@ export function useMobileWebNavigationIntentHandoff(options: {
     let cancelled = false
     void (async () => {
       try {
-        const route =
-          intent.target.kind === 'session'
-            ? await broker.resolveNavigationRoute(intent.target.hostWorkspaceId)
-            : ({ kind: 'workspaceList' } as const)
+        const route = await resolveIntentRoute(intent, broker)
         if (
           cancelled ||
           !MOBILE_WEB_NAVIGATION_INTENTS.isCurrent(intent.sequence) ||
@@ -88,8 +86,10 @@ export function useMobileWebNavigationIntentHandoff(options: {
         ) {
           return
         }
-        options.rememberRoute(route)
-        options.onNavigationResolved?.(intent, route)
+        if (route.kind === 'workspaceList' || route.kind === 'session') {
+          options.rememberRoute(route)
+          options.onNavigationResolved?.(intent, route)
+        }
         await options.postMessage({
           version: MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
           type: 'navigation',
@@ -105,7 +105,7 @@ export function useMobileWebNavigationIntentHandoff(options: {
         if (!cancelled && MOBILE_WEB_NAVIGATION_INTENTS.consume(intent.sequence)) {
           setIntent(null)
           options.showWarning(
-            `${intent.source === 'coldResume' ? 'Previous workspace' : 'Notification destination'} could not be verified (${mobileWebBridgeErrorCode(error)}).`
+            `${navigationIntentFailureSubject(intent.source)} could not be verified (${mobileWebBridgeErrorCode(error)}).`
           )
         }
       }
@@ -126,4 +126,27 @@ export function useMobileWebNavigationIntentHandoff(options: {
     options.shellContext,
     options.showWarning
   ])
+}
+
+async function resolveIntentRoute(
+  intent: MobileWebNavigationIntent,
+  broker: MobileWebCapabilityBroker
+): Promise<MobileWebNavigationRoute> {
+  if (intent.target.kind === 'session') {
+    return broker.resolveNavigationRoute(intent.target.hostWorkspaceId)
+  }
+  if (intent.target.kind === 'tasks') {
+    return {
+      kind: 'tasks',
+      ...(intent.target.taskSource ? { taskSource: intent.target.taskSource } : {})
+    }
+  }
+  return intent.target
+}
+
+function navigationIntentFailureSubject(source: MobileWebNavigationIntent['source']): string {
+  if (source === 'coldResume') {
+    return 'Previous workspace'
+  }
+  return source === 'notification' ? 'Notification destination' : 'Destination'
 }

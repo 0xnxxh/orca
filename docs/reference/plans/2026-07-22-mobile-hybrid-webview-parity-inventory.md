@@ -1,8 +1,7 @@
 # Mobile Hybrid WebView Feature-Parity Inventory
 
-- **Status:** In progress; route, terminal, native, persisted-state, UX-state,
-  accessibility/input, notification, native-chat, and UI-preservation
-  boundaries frozen
+- **Status:** Feature ownership and adapters complete; live validation and
+  gated cutover remain
 - **Last updated:** July 28, 2026
 - **Design:**
   [`2026-07-22-mobile-hybrid-webview-single-pr-migration.md`](./2026-07-22-mobile-hybrid-webview-single-pr-migration.md)
@@ -74,7 +73,7 @@ but is a component, not a route. It migrates with the session UI.
 | `mobile/app/h/[hostId]/review/[worktreeId].tsx`         | Diff review and comments                                                           | Mobile web app | Complete on iOS and Android emulators: same review presentation and virtualization; standalone controls verified independently                                                    |
 | `mobile/app/h/[hostId]/history/[worktreeId].tsx`        | Legacy source-control history redirect                                             | Mobile web app | Complete: provider-neutral compatibility redirect preserves the history segment during rollout                                                                                    |
 | `mobile/app/h/[hostId]/pr/[worktreeId].tsx`             | Legacy pull-request redirect                                                       | Mobile web app | Complete: provider-neutral compatibility redirect preserves the pull-request segment during rollout                                                                               |
-| `mobile/app/hybrid-prototype.tsx`                       | Experimental single-document Option B prototype                                    | Remove         | Replace with production host route after all gates pass                                                                                                                           |
+| `mobile/app/hybrid-prototype.tsx`                       | Retired Option B prototype                                                         | Removed        | Production `/hybrid` owns the hosted route; the Experimental Settings entry remains until cutover                                                                                 |
 
 ## RPC and Subscription Inventory
 
@@ -341,7 +340,7 @@ the Expo module rather than JavaScript storage.
 | Session and terminal preferences | AsyncStorage global or host/worktree/tab scoped: default/override view, text scale, autocomplete, live-input opt-out, link mode, sidebar/dock widths, pins, accessory keys/layout | Every collection and serialized record has an explicit count/character bound. Invalid entries fall back to current defaults; UI code remains the owner for both native and hosted rendering.                                                   |
 | Workspace/home resume cache      | AsyncStorage home snapshot v1 and last-visited host/worktree/repository record                                                                                                    | Home snapshot is capped at 2 MiB and treated as retained presentation only; a fresh authenticated host response replaces it. Last-visited IDs are hints and must resolve against current paired-host/worktree data.                            |
 | Notification catch-up            | AsyncStorage per-host last-sequence watermark                                                                                                                                     | Monotonic bounded sequence only; reconnect requests missed notifications from Desktop and advances after accepted events. Enrollment credentials do not enter this store.                                                                      |
-| Legacy prototype cache           | AsyncStorage `orca:mobile-web-prototype:*`, reachable only from the explicit infrastructure fixture                                                                               | Remove with the prototype route at final cutover. It is not an authority or migration source for production native package generations.                                                                                                        |
+| Legacy prototype cache           | Removed with the retired prototype route                                                                                                                                          | No production reader, writer, persisted-state inventory entry, or migration source remains.                                                                                                                                                    |
 | In-memory RPC caches             | Repo, worktree, directory, browser-frame, and request single-flight caches                                                                                                        | Non-durable and process-scoped. They may improve retained presentation but cannot authorize mutations or substitute for a fresh host identity/version check.                                                                                   |
 
 ## UX-State Inventory
@@ -397,17 +396,17 @@ validation boundary is:
 
 ## Cross-Cutting Inventory Status
 
-| Area                           | Status      | Completion requirement                                                                                                |
-| ------------------------------ | ----------- | --------------------------------------------------------------------------------------------------------------------- |
-| Expo Router routes             | Complete    | Every current route has a target owner and migration decision above                                                   |
-| RPC requests and subscriptions | Complete    | Callers, allowlist, operation registry, grants/bounds, named adapters, topology, and cleanup are frozen above         |
-| Terminal contract              | Complete    | Existing opcodes, batching, ACKs, floor ownership, input/query ordering, snapshots, and recovery are mapped           |
-| Native capabilities            | Complete    | Every current native/platform boundary is classified with page exposure, permission, gesture, and lifecycle rules     |
-| Persisted state                | Complete    | Every durable JS/native store, scope, bound, cleanup path, legacy source, and migration rule is frozen above          |
-| UX states                      | Complete    | Loading, empty, offline, reconnect, incompatible, partial, permission, retained, recovery, and error behavior mapped  |
-| Notifications and deep links   | Complete    | Native fallback, host selection, readiness, fresh resolution, opaque handoff, stale suppression, and redirects mapped |
-| Accessibility and input        | Complete    | Screen reader, focus, keyboard, IME, dictation, gesture, selection, layout, motion, and text-scale behavior mapped    |
-| UI source and visual behavior  | In progress | Reuse existing screen/component/style source and prove native-versus-web screenshot and interaction parity            |
+| Area                           | Status                       | Completion requirement                                                                                                             |
+| ------------------------------ | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Expo Router routes             | Complete                     | Every current route has a target owner and migration decision above                                                                |
+| RPC requests and subscriptions | Complete                     | Callers, allowlist, operation registry, grants/bounds, named adapters, topology, and cleanup are frozen above                      |
+| Terminal contract              | Complete                     | Existing opcodes, batching, ACKs, floor ownership, input/query ordering, snapshots, and recovery are mapped                        |
+| Native capabilities            | Complete                     | Every current native/platform boundary is classified with page exposure, permission, gesture, and lifecycle rules                  |
+| Persisted state                | Complete                     | Every durable JS/native store, scope, bound, cleanup path, legacy source, and migration rule is frozen above                       |
+| UX states                      | Complete                     | Loading, empty, offline, reconnect, incompatible, partial, permission, retained, recovery, and error behavior mapped               |
+| Notifications and deep links   | Complete                     | Native fallback, host selection, readiness, fresh resolution, opaque handoff, stale suppression, and redirects mapped              |
+| Accessibility and input        | Complete                     | Screen reader, focus, keyboard, IME, dictation, gesture, selection, layout, motion, and text-scale behavior mapped                 |
+| UI source and visual behavior  | Implemented; validation open | Existing screen/component/style source is reused; complete the remaining screenshot, interaction, accessibility, and device matrix |
 
 Clipboard availability, clipboard text/image paste, and photo/document
 attachment now have strict shell-owned contracts. The iOS Simulator passes the
@@ -465,6 +464,13 @@ draft remained in its hashed host/build/workspace/tab store. Markdown drafts
 and pending-delivery persistence now use the exact hashed scopes recorded
 above. The remaining work is runtime/device lifecycle evidence, not discovery
 of an unowned durable store.
+
+The gated production entry seam now covers Home host selection, workspace-list
+entry, exact-session resume, Tasks, Accounts, New Workspace, pairing and
+onboarding completion, notification navigation, and cold resume. Transient
+Tasks, Accounts, and New Workspace destinations are not written into persisted
+resume state. Without `EXPO_PUBLIC_ORCA_MOBILE_WEB_DEFAULT=1`, the unchanged
+native routes remain the default and fallback.
 
 Dictation now has strict hosted contracts for setup reads/mutations, model
 download/delete, start/stop/cancel, and lifecycle subscription. The native

@@ -46,7 +46,8 @@ export async function executeMobileWebNativeChatTerminalOperation(args: {
         payload.text,
         true,
         args.terminalClientId,
-        payload.deadline
+        payload.deadline,
+        payload.clearInputFirst
       )
     )
   }
@@ -115,7 +116,8 @@ async function sendTerminal(
   text: string,
   enter: boolean,
   clientId: string,
-  deadline: number
+  deadline: number,
+  clearInputFirst = false
 ): Promise<MobileNativeChatSendOutcome> {
   const timeoutMs = deadline - Date.now()
   if (timeoutMs < MOBILE_NATIVE_CHAT_MIN_WRITE_TIMEOUT_MS) {
@@ -126,7 +128,7 @@ async function sendTerminal(
       'terminal.send',
       {
         terminal,
-        text,
+        text: clearInputFirst ? `\x15${text}` : text,
         enter,
         client: { id: clientId, type: 'mobile' }
       },

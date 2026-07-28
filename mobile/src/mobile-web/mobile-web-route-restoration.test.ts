@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { mobileWebResumeRouteTarget } from './mobile-web-route-restoration'
+import {
+  mobileWebNavigationRouteTarget,
+  mobileWebResumeRouteTarget
+} from './mobile-web-route-restoration'
 
 describe('mobile web route restoration', () => {
   it('keeps the workspace list as the default recovery route', () => {
@@ -17,5 +20,17 @@ describe('mobile web route restoration', () => {
         'paired-orca-desktop'
       )
     ).toBe('/h/paired-orca-desktop/session/opaque%2Fworkspace%3Fone?name=Feature+%26+tests')
+  })
+
+  it.each([
+    [{ kind: 'tasks' } as const, '/h/paired-orca-desktop/tasks'],
+    [
+      { kind: 'tasks', taskSource: 'gitlab' } as const,
+      '/h/paired-orca-desktop/tasks?taskSource=gitlab'
+    ],
+    [{ kind: 'accounts' } as const, '/h/paired-orca-desktop/accounts'],
+    [{ kind: 'newWorkspace' } as const, '/?action=newWorktree']
+  ])('maps the typed native destination %s', (route, expected) => {
+    expect(mobileWebNavigationRouteTarget(route, 'paired-orca-desktop')).toBe(expected)
   })
 })

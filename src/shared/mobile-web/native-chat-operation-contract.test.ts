@@ -24,7 +24,8 @@ describe('mobile web native-chat operation contract', () => {
       MobileWebNativeChatSendMessagePayloadSchema.safeParse({
         ...TARGET,
         text: 'hello',
-        deadline
+        deadline,
+        clearInputFirst: true
       }).success
     ).toBe(true)
     expect(
@@ -40,6 +41,14 @@ describe('mobile web native-chat operation contract', () => {
     )
     expect(
       MobileWebNativeChatSendMessagePayloadSchema.safeParse({ ...TARGET, text: 'hello' }).success
+    ).toBe(false)
+    expect(
+      MobileWebNativeChatSendMessagePayloadSchema.safeParse({
+        ...TARGET,
+        text: 'hello',
+        deadline,
+        clearInputFirst: 'true'
+      }).success
     ).toBe(false)
     expect(
       MobileWebNativeChatStopPayloadSchema.safeParse({

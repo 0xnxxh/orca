@@ -1,6 +1,6 @@
 # Mobile Hybrid WebView Remaining Work
 
-- **Status:** Implementation tail in progress
+- **Status:** Core implementation complete; validation and gated cutover remain
 - **Last updated:** July 28, 2026
 - **Detailed evidence archive:**
   [`2026-07-22-mobile-hybrid-webview-implementation-checklist.md`](./2026-07-22-mobile-hybrid-webview-implementation-checklist.md)
@@ -20,9 +20,22 @@ Agent History, Source Control, and Review foundations exist. The hosted routes
 reuse the current React Native presentation through React Native Web; there is
 no replacement product UI.
 
-The active implementation tail is final parity closure and production cutover.
-Broad validation, independent security review, physical-device performance, and
-App Store acceptance remain open.
+Hosted feature implementation is complete. Broad validation, independent
+security review, physical-device performance, and App Store acceptance remain
+open. The native workspace route remains the fallback until those gates pass.
+
+The gated cutover seam now routes Home host selection, exact-session resume,
+Tasks, Accounts, New Workspace, pairing completion, onboarding completion,
+notification navigation, and cold resume into the production hybrid shell when
+`EXPO_PUBLIC_ORCA_MOBILE_WEB_DEFAULT=1`. Without the flag, the unchanged native
+routes remain the default. Transient shell destinations are not persisted as
+cold-resume state.
+
+The obsolete `hybrid-prototype` route, prototype package/cache/bridge
+implementation, prototype RPC methods and allowlist entries, shared prototype
+contract, and their fixtures are removed. The production `/hybrid` route,
+production bridge clients, Experimental Settings entry, and native workspace
+fallback remain intentionally.
 
 The exact iPhone 17 Pro Simulator app now passes the hosted Source Control and
 Review journey. The unchanged Session-origin flow opens a changed file as a
@@ -89,19 +102,18 @@ pixels and 0.910 mean channel difference; Review passes at 2.134% and 1.947,
 within the 3% / 4 budgets. The packaged document opts into native safe-area
 insets, and nested syntax text retains the native effective font behavior.
 
-The migration is rebased onto `origin/main` at `0404f27b3`. Current post-rebase
-validation passes 552 mobile files / 3,291 tests with 2 expected skips and
-3,770 root files / 39,212 tests with 62 expected skips. All project typechecks,
-root/mobile/mobile-web lint, reliability gates, changed-file and full-mobile
-formatting, localization, and the max-lines ratchet pass.
-The independently verified React Native Web package is
-`b17ead7a3c85071f5cfc45dd695bd457e37a49c4895ad3ac979689ca2a13805f`:
-49 assets, 9,281,663 raw bytes, and 2,684,764 gzip bytes. The current mobile
-suite passes 568 files / 3,373 tests with 2 expected skips. Mobile and
-mobile-web typechecks and lints, changed-file formatting, max-lines, package
-verification, and diff hygiene pass. The repository-wide formatter still
-reports 19 unrelated baseline files, so changed-file formatting is the
-migration-owned gate.
+The migration is rebased onto `origin/main` at `f790d9cbe`, 37 commits ahead
+and zero behind. Post-rebase validation passes 568 mobile files / 3,411 tests
+with 2 expected skips. Two complete root runs each reached 3,801 passing files
+and then reported unrelated timeout/timer failures; the three affected files
+pass all 34 tests in isolated reruns. The immediately preceding full root run
+passes 3,803 files / 39,832 tests with 62 expected skips. All project
+typechecks, root/mobile/mobile-web lint and code-quality audits, 55 reliability
+gates, changed-file and full-mobile formatting, localization, the max-lines
+ratchet, and diff hygiene pass. The independently verified React Native Web
+package is
+`a5df600309b3a452158ee0563395c807da061719f1365dde86114d42b43e936c`:
+50 assets, 9,290,009 raw bytes, and 2,688,232 gzip bytes.
 
 The latest native-authority audit keeps the unchanged UI but removes hosted
 fallback access to Expo clipboard, image/document pickers, haptics, and direct
@@ -252,29 +264,21 @@ green after the parser repair.
 The remaining security work below is release-app corpus testing, fuzzing,
 cross-scope races, privacy/authorization audit, and independent review.
 
-## 1. Finish Hosted Feature Parity
+## 1. Production Cutover and Cleanup
 
-- [ ] Close every remaining route and action in the parity inventory.
-
-## 2. Production Cutover and Cleanup
-
-- [ ] Keep the native workspace route available as the fallback until the
-      security, device, and App Store gates pass.
 - [ ] Make the production hybrid route the default from the reviewed release
-      candidate.
-- [ ] Remove the Experimental Settings entry and `hybrid-prototype` route.
-- [ ] Remove superseded prototype contracts, package generation, RPC names,
-      cache, bridge code, and fixtures.
-- [ ] Confirm production source and imports contain no `prototype` names.
+      candidate after the security, device, performance, and App Store gates
+      pass.
+- [ ] Remove the Experimental Settings entry at the gated cutover.
 
-## 3. Automated Integration Gates
+## 2. Automated Integration Gates
 
 - [ ] Run packaged Desktop delivery on macOS, Windows, Linux, and headless
       runtimes.
 - [ ] Update the design, architecture, mobile developer, support, privacy,
       troubleshooting, and recovery documentation.
 
-## 4. Security Gates
+## 3. Security Gates
 
 - [ ] Run the deterministic filename, diff, terminal-link, provider/task,
       bounded-error, HTML, SVG, Markdown, and Mermaid corpus through the exact
@@ -326,7 +330,7 @@ cross-scope races, privacy/authorization audit, and independent review.
 - [ ] Complete an independent threat-model and adversarial review.
 - [ ] Resolve every high-severity security finding.
 
-## 5. Device, Topology, Accessibility, and Performance Gates
+## 4. Device, Topology, Accessibility, and Performance Gates
 
 - [ ] Test low-memory and current physical iPhone and Android phones.
 - [ ] Test supported iPad and Android tablet layouts.
@@ -341,7 +345,7 @@ cross-scope races, privacy/authorization audit, and independent review.
       degradation.
 - [ ] Record the device, topology, accessibility, and benchmark artifacts.
 
-## 6. App Store and Final Release Gates
+## 5. App Store and Final Release Gates
 
 - [ ] Provision an internet-accessible review Desktop with durable credentials,
       representative data, a sample QR code, and exact pairing instructions.

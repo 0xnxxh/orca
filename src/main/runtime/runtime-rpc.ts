@@ -352,8 +352,6 @@ const MOBILE_RPC_METHOD_ALLOWLIST = new Set([
   'linear.updateIssue',
   'markdown.readTab',
   'markdown.saveTab',
-  'mobileWeb.prototype.chunk',
-  'mobileWeb.prototype.manifest',
   'mobileWeb.package.asset',
   'mobileWeb.package.manifest',
   'notifications.getMissedSince',

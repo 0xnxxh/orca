@@ -72,9 +72,22 @@ describe('mobile web navigation intent buffer', () => {
     expect(notification.sequence).toBeGreaterThan(restored.sequence)
   })
 
+  it('accepts typed Home destinations without host credentials or paths', () => {
+    const buffer = new MobileWebNavigationIntentBuffer()
+    const intent = buffer.publishHostTarget('paired-host', { kind: 'tasks', taskSource: 'linear' })
+
+    expect(intent).toEqual({
+      sequence: 0,
+      source: 'home',
+      hostId: 'paired-host',
+      target: { kind: 'tasks', taskSource: 'linear' }
+    })
+  })
+
   it('uses hosted handoff only while the Hybrid route has a live consumer', () => {
     expect(shouldHandoffNotificationToMobileWeb('/hybrid', true)).toBe(true)
     expect(shouldHandoffNotificationToMobileWeb('/hybrid', false)).toBe(false)
     expect(shouldHandoffNotificationToMobileWeb('/h/paired-host', true)).toBe(false)
+    expect(shouldHandoffNotificationToMobileWeb('/', false, true)).toBe(true)
   })
 })

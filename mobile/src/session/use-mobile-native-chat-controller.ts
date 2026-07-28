@@ -1,28 +1,13 @@
-import {
-  useCallback,
-  useMemo,
-  useRef,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction
-} from 'react'
+import { useCallback, useMemo, useRef, type MutableRefObject } from 'react'
 import { useMobileSessionViewMode } from './use-mobile-session-view-mode'
-import { parseAskFromStatus } from './mobile-native-chat-ask'
 import { type MobileNativeChatTab, resolveMobileNativeChat } from './mobile-native-chat-eligibility'
-import { detectAgentPermission } from './mobile-native-chat-permission'
-import { parseAgentQuestion } from './mobile-native-chat-question'
 import type {
   HostSessionNativeChatOperations,
   HostSessionNativeChatTarget
 } from './host-session-native-chat-operations'
 import { useMobileNativeChatPermissionSend } from './mobile-native-chat-permission-send'
-import type { MobileNativeChatSendOutcome } from './mobile-native-chat-send'
-import {
-  useMobileNativeChatAnswerSend,
-  type MobileNativeChatAnswerSend
-} from './use-mobile-native-chat-answer-send'
+import { useMobileNativeChatAnswerSend } from './use-mobile-native-chat-answer-send'
 import { useMobileNativeChatDrafts } from './use-mobile-native-chat-drafts'
-import type { MobileNativeChatPendingMessage } from './use-mobile-native-chat-pending-deliveries'
 import { useMobileNativeChatFileSearch } from './use-mobile-native-chat-file-search'
 import { useMobileNativeChatMessageSend } from './use-mobile-native-chat-message-send'
 import { mobileNativeChatScopeKey } from './mobile-native-chat-scope-key'
@@ -39,46 +24,10 @@ import {
   resolveMobileNativeChatDuringDisconnect,
   type MobileNativeChatDisconnectRetention
 } from './mobile-native-chat-disconnect-retention'
+import type { MobileNativeChatController } from './mobile-native-chat-controller-contract'
+export type { MobileNativeChatController } from './mobile-native-chat-controller-contract'
 
 const NATIVE_CHAT_STREAM_THROTTLE_MS = 50
-
-export type MobileNativeChatController = {
-  /** Whether a tab's effective view is chat (per-tab override, else the default). */
-  isTabChatView: (tabId: string) => boolean
-  toggleTabChatView: (tabId: string) => void
-  showNativeChat: boolean
-  showNativeChatRef: MutableRefObject<boolean>
-  /** Resolved agent for the active chat tab (names the empty-state copy). */
-  nativeChatAgent: string | null
-  chatComposerText: string
-  setChatComposerText: Dispatch<SetStateAction<string>>
-  chatPending: MobileNativeChatPendingMessage[]
-  nativeChatSession: ReturnType<typeof useMobileNativeChatSession>
-  nativeChatAgentWorking: boolean
-  nativeChatTargetRef: MutableRefObject<HostSessionNativeChatTarget | null>
-  nativeChatStreamingText?: string
-  nativeChatPermission: ReturnType<typeof detectAgentPermission>
-  nativeChatQuestion: ReturnType<typeof parseAgentQuestion>
-  nativeChatAsk: ReturnType<typeof parseAskFromStatus>
-  handleNativeChatOpenFile: (relativePath: string) => void
-  handleNativeChatAnswerAsk: MobileNativeChatAnswerSend['answerAsk']
-  handleNativeChatCancelAsk: () => Promise<boolean>
-  handleNativeChatRespondPermission: (text: string) => Promise<boolean>
-  handleNativeChatStop: () => void
-  nativeChatFilePaths: string[]
-  loadNativeChatFiles: (query: string) => void
-  handleNativeChatQuestionAnswer: (text: string) => Promise<boolean>
-  handleNativeChatSend: (text: string, images?: string[]) => Promise<boolean>
-  /** Outcome-preserving send: callers that pasted terminal input beforehand
-   *  (image sends) must see 'unknown' to heal a possibly-orphaned paste. Such a
-   *  caller passes its own `deadline` so the paste it already spent and this text
-   *  body share one budget instead of holding the composer for two. */
-  handleNativeChatSendWithOutcome: (
-    text: string,
-    images?: string[],
-    deadline?: number
-  ) => Promise<MobileNativeChatSendOutcome>
-}
 
 /** Owns mobile native-chat state and teardown outside the already dense session
  *  route. The route remains responsible only for choosing and rendering the view. */

@@ -36,7 +36,8 @@ describe('mobile web native chat operations', () => {
           workspaceId: context.pageWorkspaceId,
           sessionId: context.pageSessionId,
           text: 'hello',
-          deadline
+          deadline,
+          clearInputFirst: true
         },
         client: { sendRequest } as unknown as RpcClient,
         workspaceAuthority: context.workspaceAuthority,
@@ -53,7 +54,7 @@ describe('mobile web native chat operations', () => {
       'terminal.send',
       {
         terminal: 'terminal-secret',
-        text: 'hello',
+        text: '\x15hello',
         enter: true,
         client: { id: 'mobile-device', type: 'mobile' }
       },

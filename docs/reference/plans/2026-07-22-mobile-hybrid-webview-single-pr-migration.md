@@ -1,6 +1,6 @@
 # Mobile Hybrid WebView Single-PR Migration
 
-- **Status:** Implementation in progress; cutover gates remain open
+- **Status:** Core implementation complete; validation and cutover gates remain open
 - **Date:** July 22, 2026
 - **Last updated:** July 28, 2026
 - **Target:** One long-lived pull request, gated before cutover
@@ -27,12 +27,12 @@ Native implementation or a broad cross-version mobile/desktop compatibility
 layer. Option A accelerates delivery but retains both sources of maintenance.
 
 This is not unconditional approval to merge a full rewrite. The implementation
-has established that authenticated package delivery, verified per-host caching,
-a narrow native bridge, the real xterm transport, and the unchanged shared
-mobile UI are feasible in iOS and Android emulators. It has not established full
-feature parity, terminal stress and topology behavior, physical-device
-performance, the complete Android feature and lifecycle matrix, security under
-attack, or App Store acceptance.
+has established authenticated package delivery, verified per-host caching, a
+narrow native bridge, the real xterm transport, and every current hosted route
+through the unchanged shared mobile UI. It has not completed the full live
+interaction, terminal stress, topology, physical-device, accessibility,
+security-review, performance, packaged-release, or App Store validation
+matrices.
 
 The migration may be implemented in one PR only if the PR remains a draft
 through those gates. Its commits must stay independently reviewable, the
@@ -132,6 +132,25 @@ rendering, and the haptic bridge without a prototype error.
 
 The single-PR migration now has a production-shaped vertical slice beyond the
 prototype:
+
+- Hosted feature implementation is complete across workspace lists and
+  creation, sessions, terminal, files and previews, source control and reviews,
+  tasks, accounts, browser, dictation, native chat, and Agent History. These
+  routes reuse the current React Native presentation through React Native Web;
+  no replacement product UI remains.
+- A gated shell entry seam covers Home host selection, exact-session resume,
+  pairing and onboarding completion, notification navigation, cold resume,
+  Accounts, Tasks, and New Workspace. It activates only with
+  `EXPO_PUBLIC_ORCA_MOBILE_WEB_DEFAULT=1`; absent that flag, the native route
+  graph remains the default and fallback.
+- The obsolete `hybrid-prototype` route, package/cache/bridge implementation,
+  shared contract, Desktop RPC methods and allowlist entries, persisted-state
+  inventory entry, and fixtures are removed. The production `/hybrid` route,
+  production bridge clients, native fallback, and Experimental Settings entry
+  remain intentionally until the external cutover gates pass.
+- The branch is rebased onto `origin/main` at `f790d9cbe`; upstream
+  native-chat launch-draft, transcript identity, loading, and reconnect
+  behavior is retained in both native and hosted adapters.
 
 - Desktop emits a deterministic content-addressed multi-asset build and serves
   its manifest and bounded chunks through explicit mobile RPC methods.
@@ -2590,9 +2609,10 @@ silent WebKit miss.
 ### 12. Cut over and remove duplicate workspace UI
 
 - Make the hybrid workspace route the default only after every gate passes.
-- Remove the experimental entry at cutover. The parallel `src/mobile-web/`
-  presentation is already removed; retain its production bridge clients and the
-  shared React Native screen/component source used by React Native Web.
+- Remove the Experimental Settings entry at cutover. The obsolete
+  `hybrid-prototype` route and the parallel `src/mobile-web/` presentation are
+  already removed; retain production bridge clients and the shared React
+  Native screen/component source used by React Native Web.
 - Keep native pairing, recovery, permissions, settings, and diagnostics.
 - Build the final exact release candidate, rerun smoke/performance/security
   checks, and resubmit if the binary materially differs from the accepted
@@ -2921,8 +2941,10 @@ The single PR may merge only when all boxes are true:
       changes the reviewed binary.
 - [ ] Rollback drills recover from a bad package, corrupt cache, WebView loss,
       disconnected desktop, incompatible bridge, and bad native rollout.
-- [ ] Prototype paths and duplicate native workspace feature screens are removed
-      after all gates; native pairing/recovery remains.
+- [x] Obsolete prototype paths, contracts, RPCs, cache, bridge, and fixtures are
+      removed.
+- [ ] Duplicate native workspace feature screens are removed after all gates;
+      native pairing/recovery remains.
 - [ ] CI, release builds, focused and full tests, lint, format, max-lines ratchet,
       and `git diff --check` pass apart from documented unrelated baseline
       failures.

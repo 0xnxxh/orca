@@ -69,6 +69,7 @@ describe('mobile web native shell channel', () => {
       workspaceId: 'opaque-workspace',
       workspaceName: 'Feature'
     })
+    expect(hook.result.current.navigationRoute).toEqual(hook.result.current.resumeRoute)
     expect(posted).toContainEqual({
       version: MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
       type: 'ready',
@@ -78,6 +79,7 @@ describe('mobile web native shell channel', () => {
       expect(hook.result.current.rememberRoute({ kind: 'workspaceList' })).toBe(true)
     })
     expect(hook.result.current.resumeRoute).toEqual({ kind: 'workspaceList' })
+    expect(hook.result.current.navigationRoute).toEqual({ kind: 'workspaceList' })
     expect(hook.result.current.routeRevision).toBe(1)
     expect(posted).toContainEqual({
       version: MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
@@ -101,16 +103,17 @@ describe('mobile web native shell channel', () => {
         })
       )
     )
-    expect(hook.result.current.resumeRoute).toEqual({
+    expect(hook.result.current.navigationRoute).toEqual({
       kind: 'session',
       workspaceId: 'notification-target',
       workspaceName: 'Notification target'
     })
+    expect(hook.result.current.resumeRoute).toEqual({ kind: 'workspaceList' })
     expect(hook.result.current.routeRevision).toBe(2)
 
     act(() => dispatchShellMessage(navigationMessage(2, { kind: 'workspaceList' })))
     act(() => dispatchShellMessage(navigationMessage(1, { kind: 'workspaceList' })))
-    expect(hook.result.current.resumeRoute).toEqual({
+    expect(hook.result.current.navigationRoute).toEqual({
       kind: 'session',
       workspaceId: 'notification-target',
       workspaceName: 'Notification target'

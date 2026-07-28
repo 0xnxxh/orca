@@ -144,7 +144,8 @@ export const MobileWebNativeChatSendMessagePayloadSchema = z
     text: z
       .string()
       .min(1)
-      .max(64 * 1024)
+      .max(64 * 1024),
+    clearInputFirst: z.boolean().optional()
   })
   .strict()
 export const MobileWebNativeChatRespondPayloadSchema = z

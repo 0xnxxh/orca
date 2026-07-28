@@ -39,7 +39,6 @@ import { EMULATOR_METHODS } from './emulator'
 import { PAIRING_METHODS } from './pairing'
 import { UPDATER_METHODS } from './updater'
 import { AGENT_SESSION_METHODS } from './agent-session'
-import { MOBILE_WEB_PROTOTYPE_METHODS } from './mobile-web-prototype'
 import { MOBILE_WEB_PACKAGE_METHODS } from './mobile-web-package'
 import { MOBILE_FILE_WRITE_METHODS } from './mobile-file-write-if-unchanged'
 
@@ -89,6 +88,5 @@ export const ALL_RPC_METHODS: readonly RpcAnyMethod[] = [
   ...EMULATOR_METHODS,
   ...PAIRING_METHODS,
   ...UPDATER_METHODS,
-  ...MOBILE_WEB_PACKAGE_METHODS,
-  ...MOBILE_WEB_PROTOTYPE_METHODS
+  ...MOBILE_WEB_PACKAGE_METHODS
 ]

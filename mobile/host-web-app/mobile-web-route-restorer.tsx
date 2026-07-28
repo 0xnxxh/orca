@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useRouter } from 'expo-router'
 
 import { useMobileWebNativeShell } from '../../src/mobile-web/src/native-shell-channel'
-import { mobileWebResumeRouteTarget } from '../src/mobile-web/mobile-web-route-restoration'
+import { mobileWebNavigationRouteTarget } from '../src/mobile-web/mobile-web-route-restoration'
 
 const HOSTED_PAGE_HOST_ID = 'paired-orca-desktop'
 
@@ -20,9 +20,8 @@ export function MobileWebRouteRestorer() {
       return
     }
     restoredContextRef.current = restorationKey
-    const target = mobileWebResumeRouteTarget(shell.resumeRoute, HOSTED_PAGE_HOST_ID)
-    router.replace(target ?? '/')
-  }, [router, shell.context, shell.resumeRoute, shell.routeRevision])
+    router.replace(mobileWebNavigationRouteTarget(shell.navigationRoute, HOSTED_PAGE_HOST_ID))
+  }, [router, shell.context, shell.navigationRoute, shell.routeRevision])
 
   return null
 }
