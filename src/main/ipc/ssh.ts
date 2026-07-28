@@ -113,34 +113,35 @@ export function listRegisteredRemovedSshTargetLabels(): Record<string, string> {
 
 export async function disconnectRegisteredSshTarget(targetId: string): Promise<void> {
   invalidateConnectAttempt(targetId)
-  if (!connectionManager) {
-    return
-  }
-  await detachActiveSshSession(targetId)
-  await connectionManager.disconnect(targetId)
+  await runTargetLifecycle(targetId, () =>
+    teardownSshTargetTransport(targetId, (session) => session.detach())
+  )
 }
 
 export async function removeRegisteredSshTarget(targetId: string): Promise<void> {
   if (!sshStore) {
     return
   }
+  const store = sshStore
   invalidateConnectAttempt(targetId)
-  // Why: removal is destructive; dispose so remote PTYs cannot reattach to a deleted target.
-  await disposeActiveSshSession(targetId)
-  try {
-    await connectionManager?.disconnect(targetId)
-  } catch (err) {
-    // Why: a failed disconnect must not block metadata removal, else the target lingers in the store with uncleaned leases.
-    console.warn(
-      `[ssh] Failed to disconnect removed target ${targetId}: ${err instanceof Error ? err.message : String(err)}`
-    )
-  }
-  persistedStore?.removeSshRemotePtyLeases(targetId)
-  sshStore.removeTarget(targetId)
+  await runTargetLifecycle(targetId, async () => {
+    try {
+      // Why: removal is destructive; dispose so remote PTYs cannot reattach to a deleted target.
+      await teardownSshTargetTransport(targetId, (session) => session.dispose())
+    } catch (err) {
+      // Why: a failed disconnect must not block metadata removal, else the target lingers in the store with uncleaned leases.
+      console.warn(
+        `[ssh] Failed to disconnect removed target ${targetId}: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+    persistedStore?.removeSshRemotePtyLeases(targetId)
+    store.removeTarget(targetId)
+  })
 }
 
 // One session per SSH target owns the whole relay lifecycle (mux, providers, abort controller, state machine).
 const activeSessions = new Map<string, SshRelaySession>()
+const targetLifecycleInFlight = new Map<string, Promise<void>>()
 
 export function getActiveSshAiVaultHostInfo(targetId: string): SshRelayAiVaultHostInfo | null {
   if (isRuntimeOwnedSshTargetId(targetId)) {
@@ -159,12 +160,54 @@ export function getActiveSshAiVaultHostInfos(): SshRelayAiVaultHostInfo[] {
   })
 }
 
-async function detachActiveSshSession(targetId: string): Promise<void> {
-  await teardownActiveSshSession(targetId, (session) => session.detach())
+function runTargetLifecycle(targetId: string, operation: () => Promise<void>): Promise<void> {
+  const prior = targetLifecycleInFlight.get(targetId)
+  const operationPromise = (async () => {
+    if (prior) {
+      await prior.catch(() => undefined)
+    }
+    await operation()
+  })()
+  let trackedPromise!: Promise<void>
+  trackedPromise = operationPromise.finally(() => {
+    if (targetLifecycleInFlight.get(targetId) === trackedPromise) {
+      targetLifecycleInFlight.delete(targetId)
+    }
+  })
+  targetLifecycleInFlight.set(targetId, trackedPromise)
+  return trackedPromise
 }
 
-async function disposeActiveSshSession(targetId: string): Promise<void> {
-  await teardownActiveSshSession(targetId, (session) => session.dispose())
+async function awaitTargetLifecycle(targetId: string): Promise<void> {
+  while (true) {
+    const lifecycle = targetLifecycleInFlight.get(targetId)
+    if (!lifecycle) {
+      return
+    }
+    await lifecycle.catch(() => undefined)
+  }
+}
+
+async function teardownSshTargetTransport(
+  targetId: string,
+  teardown: (session: SshRelaySession) => void
+): Promise<void> {
+  let transportDisconnect: Promise<{ ok: true } | { ok: false; error: unknown }>
+  try {
+    transportDisconnect = Promise.resolve(connectionManager?.disconnect(targetId)).then(
+      () => ({ ok: true }) as const,
+      (error: unknown) => ({ ok: false, error }) as const
+    )
+  } catch (error) {
+    transportDisconnect = Promise.resolve({ ok: false, error })
+  }
+  const [disconnectResult] = await Promise.all([
+    transportDisconnect,
+    teardownActiveSshSession(targetId, teardown)
+  ])
+  if (!disconnectResult.ok) {
+    throw disconnectResult.error
+  }
 }
 
 async function teardownActiveSshSession(
@@ -178,9 +221,11 @@ async function teardownActiveSshSession(
   // Why: await port teardown so local listeners are released before disconnect/remove completes, else an immediate reconnect hits EADDRINUSE.
   await portForwardManager?.removeAllForwards(targetId)
   teardown(session)
-  activeSessions.delete(targetId)
-  clearRelayLostBackoff(targetId)
-  clearRelayStateOverride(targetId)
+  if (activeSessions.get(targetId) === session) {
+    activeSessions.delete(targetId)
+    clearRelayLostBackoff(targetId)
+    clearRelayStateOverride(targetId)
+  }
 }
 
 function relayGracePeriodForTarget(target: SshTarget | null | undefined): number | undefined {
@@ -840,6 +885,7 @@ export function registerSshHandlers(
       appendFileSync(e2eProbePath, `${JSON.stringify(targetId)}\n`)
       throw new Error('e2e_forbidden_local_ssh_connect')
     }
+    await awaitTargetLifecycle(targetId)
     const reset = resetRelayInFlight.get(targetId)
     if (reset) {
       await reset
@@ -925,9 +971,11 @@ export function registerSshHandlers(
         throw connectCancelledError()
       }
       existingSession.detach()
-      activeSessions.delete(targetId)
-      clearRelayLostBackoff(targetId)
-      clearRelayStateOverride(targetId)
+      if (activeSessions.get(targetId) === existingSession) {
+        activeSessions.delete(targetId)
+        clearRelayLostBackoff(targetId)
+        clearRelayStateOverride(targetId)
+      }
     }
 
     if (pendingTransportDisconnect) {
@@ -1026,66 +1074,60 @@ export function registerSshHandlers(
 
   ipcMain.handle('ssh:terminateSessions', async (_event, args: { targetId: string }) => {
     invalidateConnectAttempt(args.targetId)
-    const session = activeSessions.get(args.targetId)
-    const provider = getSshPtyProvider(args.targetId)
-    const leasedIds = persistedStore!
-      .getSshRemotePtyLeases(args.targetId)
-      .filter((lease) => lease.state !== 'terminated' && lease.state !== 'expired')
-      .map((lease) => lease.ptyId)
-    const ptyIdsByRelayId = new Map<string, string>()
-    for (const ptyId of getPtyIdsForConnection(args.targetId)) {
-      const relayPtyId = toRelaySshPtyId(args.targetId, ptyId)
-      ptyIdsByRelayId.set(relayPtyId, toAppSshPtyId(args.targetId, ptyId))
-    }
-    for (const ptyId of leasedIds) {
-      const relayPtyId = toRelaySshPtyId(args.targetId, ptyId)
-      ptyIdsByRelayId.set(
-        relayPtyId,
-        ptyIdsByRelayId.get(relayPtyId) ?? toAppSshPtyId(args.targetId, ptyId)
-      )
-    }
-    const ptyIds = Array.from(ptyIdsByRelayId, ([relayPtyId, appPtyId]) => ({
-      relayPtyId,
-      appPtyId
-    }))
-
-    if (ptyIds.length > 0 && !provider) {
-      throw new Error(
-        `${SSH_TERMINATE_RECONNECT_REQUIRED}: SSH relay is not connected; reconnect before terminating remote sessions.`
-      )
-    }
-    const shutdownResults = provider
-      ? await Promise.allSettled(
-          ptyIds.map(({ appPtyId }) =>
-            provider.shutdown(appPtyId, { immediate: true, keepHistory: false })
-          )
-        )
-      : []
-    const shutdownFailures: string[] = []
-    for (const [index, result] of shutdownResults.entries()) {
-      const { appPtyId, relayPtyId } = ptyIds[index]
-      if (result.status !== 'fulfilled' && !isSshPtyNotFoundError(result.reason)) {
-        shutdownFailures.push(
-          `${relayPtyId}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`
-        )
-        continue
+    await runTargetLifecycle(args.targetId, async () => {
+      const provider = getSshPtyProvider(args.targetId)
+      const leasedIds = persistedStore!
+        .getSshRemotePtyLeases(args.targetId)
+        .filter((lease) => lease.state !== 'terminated' && lease.state !== 'expired')
+        .map((lease) => lease.ptyId)
+      const ptyIdsByRelayId = new Map<string, string>()
+      for (const ptyId of getPtyIdsForConnection(args.targetId)) {
+        const relayPtyId = toRelaySshPtyId(args.targetId, ptyId)
+        ptyIdsByRelayId.set(relayPtyId, toAppSshPtyId(args.targetId, ptyId))
       }
-      clearProviderPtyState(appPtyId)
-      deletePtyOwnership(appPtyId)
-      persistedStore!.markSshRemotePtyLease(args.targetId, relayPtyId, 'terminated')
-    }
-    if (shutdownFailures.length > 0) {
-      // Why: a failed relay shutdown can leave the remote process alive in the grace window; keep the lease/session so the user can retry.
-      throw new Error(`Failed to terminate SSH host sessions: ${shutdownFailures.join('; ')}`)
-    }
-    if (session) {
-      await portForwardManager!.removeAllForwards(args.targetId)
-      session.dispose()
-      activeSessions.delete(args.targetId)
-      clearRelayLostBackoff(args.targetId)
-      clearRelayStateOverride(args.targetId)
-    }
-    await connectionManager!.disconnect(args.targetId)
+      for (const ptyId of leasedIds) {
+        const relayPtyId = toRelaySshPtyId(args.targetId, ptyId)
+        ptyIdsByRelayId.set(
+          relayPtyId,
+          ptyIdsByRelayId.get(relayPtyId) ?? toAppSshPtyId(args.targetId, ptyId)
+        )
+      }
+      const ptyIds = Array.from(ptyIdsByRelayId, ([relayPtyId, appPtyId]) => ({
+        relayPtyId,
+        appPtyId
+      }))
+
+      if (ptyIds.length > 0 && !provider) {
+        throw new Error(
+          `${SSH_TERMINATE_RECONNECT_REQUIRED}: SSH relay is not connected; reconnect before terminating remote sessions.`
+        )
+      }
+      const shutdownResults = provider
+        ? await Promise.allSettled(
+            ptyIds.map(({ appPtyId }) =>
+              provider.shutdown(appPtyId, { immediate: true, keepHistory: false })
+            )
+          )
+        : []
+      const shutdownFailures: string[] = []
+      for (const [index, result] of shutdownResults.entries()) {
+        const { appPtyId, relayPtyId } = ptyIds[index]
+        if (result.status !== 'fulfilled' && !isSshPtyNotFoundError(result.reason)) {
+          shutdownFailures.push(
+            `${relayPtyId}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`
+          )
+          continue
+        }
+        clearProviderPtyState(appPtyId)
+        deletePtyOwnership(appPtyId)
+        persistedStore!.markSshRemotePtyLease(args.targetId, relayPtyId, 'terminated')
+      }
+      if (shutdownFailures.length > 0) {
+        // Why: a failed relay shutdown can leave the remote process alive in the grace window; keep the lease/session so the user can retry.
+        throw new Error(`Failed to terminate SSH host sessions: ${shutdownFailures.join('; ')}`)
+      }
+      await teardownSshTargetTransport(args.targetId, (session) => session.dispose())
+    })
   })
 
   async function doResetRelay(targetId: string, target: SshTarget): Promise<void> {
@@ -1339,6 +1381,7 @@ export async function resetSshHandlerStateForTests(): Promise<void> {
   }
   relayStateOverrides.clear()
   connectInFlight.clear()
+  targetLifecycleInFlight.clear()
   pendingTransportReconnects.clear()
   resetSshConnectionGenerations()
   resetSshProviderAuthorities()
