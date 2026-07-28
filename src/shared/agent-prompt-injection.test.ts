@@ -4,7 +4,6 @@ import {
   AGENT_PROMPT_BRACKETED_PASTE_START,
   buildAgentPromptPasteBytes,
   buildAgentPromptSubmitBytes,
-  getAgentPromptSubmitDelayMs,
   iterateAgentPromptPasteChunks,
   sanitizeAgentPromptText
 } from './agent-prompt-injection'
@@ -22,12 +21,6 @@ describe('agent prompt injection bytes', () => {
   it('keeps submit separate from the paste frame', () => {
     expect(buildAgentPromptPasteBytes('hello')).not.toContain('\r')
     expect(buildAgentPromptSubmitBytes()).toBe('\r')
-  })
-
-  it('gives Windows ConPTY more time to render before submit', () => {
-    expect(getAgentPromptSubmitDelayMs('win32')).toBe(1_500)
-    expect(getAgentPromptSubmitDelayMs('darwin')).toBe(500)
-    expect(getAgentPromptSubmitDelayMs('linux')).toBe(500)
   })
 
   it('sanitizes embedded escape bytes before framing', () => {

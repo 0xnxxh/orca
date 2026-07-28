@@ -30,8 +30,7 @@ it('prints a lifecycle rejection and exits unsuccessfully', async () => {
       ['from', 'term_foreign'],
       ['to', 'term_coord'],
       ['subject', 'done'],
-      ['type', 'worker_done'],
-      ['outcome', 'succeeded']
+      ['type', 'worker_done']
     ]),
     client: { call: callMock },
     cwd: '/tmp/repo',

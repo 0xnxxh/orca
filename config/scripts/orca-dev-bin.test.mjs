@@ -25,7 +25,6 @@ describe('orca-dev package bin', () => {
         `fs.writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify({`,
         '  argv: process.argv.slice(2),',
         '  userDataPath: process.env.ORCA_USER_DATA_PATH,',
-        '  devCliInvocation: process.env.ORCA_DEV_CLI_INVOCATION,',
         '  appExecutable: process.env.ORCA_APP_EXECUTABLE',
         '}));'
       ].join('\n'),
@@ -48,7 +47,6 @@ describe('orca-dev package bin', () => {
     expect(JSON.parse(readFileSync(outputPath, 'utf8'))).toEqual({
       argv: ['--help'],
       userDataPath: path.join(root, 'user-data'),
-      devCliInvocation: '1',
       appExecutable: path.join(root, 'Electron')
     })
   })

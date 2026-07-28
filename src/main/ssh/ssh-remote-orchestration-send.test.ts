@@ -38,7 +38,6 @@ describe('remote orchestration send compatibility', () => {
       new Map([
         ['task-id', 'task_1'],
         ['dispatch-id', 'ctx_1'],
-        ['outcome', 'succeeded'],
         ['files-modified', 'src/a.ts, src/b.ts,'],
         ['report-path', 'report.md'],
         ['phase', 'reviewing']
@@ -48,7 +47,6 @@ describe('remote orchestration send compatibility', () => {
     expect(JSON.parse(payload ?? '{}')).toEqual({
       taskId: 'task_1',
       dispatchId: 'ctx_1',
-      outcome: 'succeeded',
       filesModified: ['src/a.ts', 'src/b.ts'],
       reportPath: 'report.md',
       phase: 'reviewing'

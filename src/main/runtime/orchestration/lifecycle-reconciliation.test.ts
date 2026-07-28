@@ -17,7 +17,7 @@ describe('lifecycle reconciliation', () => {
       to: 'term_coordinator',
       subject: 'Done',
       type: 'worker_done',
-      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id, outcome: 'succeeded' })
+      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id })
     })
 
     expect(reconcileLifecycleMessage(db, message, (line) => logs.push(line))).toMatchObject({
@@ -43,100 +43,12 @@ describe('lifecycle reconciliation', () => {
       to: 'term_coordinator',
       subject: 'Done',
       type: 'worker_done',
-      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id, outcome: 'succeeded' }),
+      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id }),
       senderPaneKey: `tab_w:${LEAF_A}`
     })
 
     expect(reconcileLifecycleMessage(db, message).action).toBe('completed')
     expect(db.getTask(task.id)?.status).toBe('completed')
-  })
-
-  it('fails both the dispatch and task from an authenticated failed worker report', () => {
-    db = new OrchestrationDb(':memory:')
-    const task = db.createTask({ spec: 'work' })
-    const dispatch = db.createDispatchContext(task.id, 'term_worker', `tab_w:${LEAF_A}`)
-    const message = db.insertMessage({
-      from: 'term_worker',
-      to: 'term_coordinator',
-      subject: 'Failed: tests cannot start',
-      body: 'I attempted the work. The required service is unavailable. No files changed.',
-      type: 'worker_done',
-      payload: JSON.stringify({
-        taskId: task.id,
-        dispatchId: dispatch.id,
-        outcome: 'failed',
-        filesModified: []
-      }),
-      senderPaneKey: `tab_w:${LEAF_A}`
-    })
-
-    expect(reconcileLifecycleMessage(db, message)).toEqual({
-      action: 'failed',
-      taskId: task.id,
-      dispatchId: dispatch.id
-    })
-    expect(db.getTask(task.id)).toMatchObject({ status: 'failed' })
-    expect(db.getDispatchContextById(dispatch.id)).toMatchObject({ status: 'failed' })
-    expect(JSON.parse(db.getTask(task.id)?.result ?? '{}')).toMatchObject({
-      provenance: 'worker_report',
-      outcome: 'failed',
-      messageId: message.id
-    })
-  })
-
-  it('replays an identical terminal outcome without mutating settled state', () => {
-    db = new OrchestrationDb(':memory:')
-    const task = db.createTask({ spec: 'work' })
-    const dispatch = db.createDispatchContext(task.id, 'term_worker')
-    const makeMessage = () =>
-      db.insertMessage({
-        from: 'term_worker',
-        to: 'term_coordinator',
-        subject: 'Done',
-        type: 'worker_done',
-        payload: JSON.stringify({
-          taskId: task.id,
-          dispatchId: dispatch.id,
-          outcome: 'succeeded'
-        })
-      })
-
-    expect(reconcileLifecycleMessage(db, makeMessage()).action).toBe('completed')
-    const result = db.getTask(task.id)?.result
-    expect(reconcileLifecycleMessage(db, makeMessage()).action).toBe('completed')
-    expect(db.getTask(task.id)?.result).toBe(result)
-  })
-
-  it.each([
-    { payload: undefined, code: 'invalid_payload' },
-    { payload: '{', code: 'invalid_payload' },
-    {
-      payload: JSON.stringify({ dispatchId: 'ctx_1', outcome: 'succeeded' }),
-      code: 'missing_task_id'
-    },
-    {
-      payload: JSON.stringify({ taskId: 'task_1', outcome: 'succeeded' }),
-      code: 'missing_dispatch_id'
-    },
-    {
-      payload: JSON.stringify({ taskId: 'task_1', dispatchId: 'ctx_1', outcome: 'maybe' }),
-      code: 'invalid_outcome'
-    }
-  ])('rejects malformed worker reports with $code', ({ payload, code }) => {
-    db = new OrchestrationDb(':memory:')
-    const message = db.insertMessage({
-      from: 'term_worker',
-      to: 'term_coordinator',
-      subject: 'Done',
-      type: 'worker_done',
-      payload
-    })
-
-    expect(reconcileLifecycleMessage(db, message)).toMatchObject({ action: 'rejected', code })
-    expect(db.getMessageById(message.id)).toMatchObject({
-      priority: 'high',
-      subject: 'Rejected worker_done: Done'
-    })
   })
 
   it('completes worker_done from the same leaf after a pane break-out changed the tab half', () => {
@@ -150,7 +62,7 @@ describe('lifecycle reconciliation', () => {
       to: 'term_coordinator',
       subject: 'Done',
       type: 'worker_done',
-      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id, outcome: 'succeeded' }),
+      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id }),
       senderPaneKey: `tab_old:${LEAF_A}`
     })
 
@@ -167,7 +79,7 @@ describe('lifecycle reconciliation', () => {
       to: 'term_coordinator',
       subject: 'Done',
       type: 'worker_done',
-      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id, outcome: 'succeeded' }),
+      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id }),
       senderPaneKey: 'tab_w:42'
     })
 
@@ -184,7 +96,7 @@ describe('lifecycle reconciliation', () => {
       to: 'term_coordinator',
       subject: 'Done',
       type: 'worker_done',
-      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id, outcome: 'succeeded' }),
+      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id }),
       senderPaneKey: `tab_w2:${LEAF_B}`
     })
 
@@ -230,7 +142,6 @@ describe('lifecycle reconciliation', () => {
       payload: JSON.stringify({
         taskId: task.id,
         dispatchId: dispatch.id,
-        outcome: 'succeeded',
         _orcaLifecycleRejection: {
           code: 'sender_not_assignee',
           reason: 'caller supplied'
@@ -256,7 +167,7 @@ describe('lifecycle reconciliation', () => {
       to: 'term_coordinator',
       subject: 'Done',
       type: 'worker_done',
-      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id, outcome: 'succeeded' })
+      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id })
     })
 
     expect(reconcileLifecycleMessage(db, message)).toMatchObject({
@@ -275,11 +186,7 @@ describe('lifecycle reconciliation', () => {
       to: 'term_coordinator',
       subject: 'Done',
       type: 'worker_done',
-      payload: JSON.stringify({
-        taskId: acceptedTask.id,
-        dispatchId: acceptedDispatch.id,
-        outcome: 'succeeded'
-      })
+      payload: JSON.stringify({ taskId: acceptedTask.id, dispatchId: acceptedDispatch.id })
     })
     expect(reconcileLifecycleMessage(db, accepted).action).toBe('completed')
 
@@ -290,11 +197,7 @@ describe('lifecycle reconciliation', () => {
       to: 'term_coordinator',
       subject: 'Done',
       type: 'worker_done',
-      payload: JSON.stringify({
-        taskId: rejectedTask.id,
-        dispatchId: rejectedDispatch.id,
-        outcome: 'succeeded'
-      })
+      payload: JSON.stringify({ taskId: rejectedTask.id, dispatchId: rejectedDispatch.id })
     })
     expect(reconcileLifecycleMessage(db, rejected)).toMatchObject({
       action: 'rejected',
@@ -308,11 +211,7 @@ describe('lifecycle reconciliation', () => {
     const parent = db.createTask({ spec: 'parent' })
     const child = db.createTask({ spec: 'child', deps: [parent.id] })
     const dispatch = db.createDispatchContext(parent.id, 'term_worker', `tab_w:${LEAF_A}`)
-    const payload = JSON.stringify({
-      taskId: parent.id,
-      dispatchId: dispatch.id,
-      outcome: 'succeeded'
-    })
+    const payload = JSON.stringify({ taskId: parent.id, dispatchId: dispatch.id })
 
     const foreign = db.insertMessage({
       from: 'term_coordinator',
@@ -344,11 +243,7 @@ describe('lifecycle reconciliation', () => {
     db = new OrchestrationDb(':memory:')
     const task = db.createTask({ spec: 'work' })
     const dispatch = db.createDispatchContext(task.id, 'term_worker', `tab_w:${LEAF_A}`)
-    const payload = JSON.stringify({
-      taskId: task.id,
-      dispatchId: dispatch.id,
-      outcome: 'succeeded'
-    })
+    const payload = JSON.stringify({ taskId: task.id, dispatchId: dispatch.id })
     const owner = db.insertMessage({
       from: 'term_worker',
       to: 'term_coordinator',
@@ -385,7 +280,7 @@ describe('lifecycle reconciliation', () => {
       to: 'term_coordinator',
       subject: 'Done',
       type: 'worker_done',
-      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id, outcome: 'succeeded' }),
+      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id }),
       senderPaneKey: `tab_w2:${LEAF_B}`
     })
 
@@ -495,7 +390,7 @@ describe('lifecycle reconciliation', () => {
       to: 'term_coordinator',
       subject: 'Done',
       type: 'worker_done',
-      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id, outcome: 'succeeded' })
+      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id })
     })
 
     reconcileLifecycleMessage(db, done)

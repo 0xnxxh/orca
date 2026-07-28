@@ -242,7 +242,6 @@ export class Coordinator {
         case 'dispatch':
         case 'handoff':
         case 'merge_ready':
-        case 'question':
           break
       }
     }
@@ -256,10 +255,6 @@ export class Coordinator {
       if (!this.state.completedTasks.includes(result.taskId)) {
         this.state.completedTasks.push(result.taskId)
       }
-      return
-    }
-    if (result.action === 'failed' && !this.state.failedTasks.includes(result.taskId)) {
-      this.state.failedTasks.push(result.taskId)
     }
   }
 

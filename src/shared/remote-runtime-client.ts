@@ -18,7 +18,6 @@ import {
 import {
   isKeepaliveFrame,
   RuntimeRpcEnvelopeSchema,
-  type RuntimeOrchestrationEnvelope,
   type RuntimeRpcResponse
 } from './runtime-rpc-envelope'
 import { SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY } from './protocol-version'
@@ -83,8 +82,7 @@ export async function sendRemoteRuntimeRequest<TResult>(
   pairing: PairingOffer,
   method: string,
   params: unknown,
-  timeoutMs: number,
-  envelope?: RuntimeOrchestrationEnvelope
+  timeoutMs: number
 ): Promise<RuntimeRpcResponse<TResult>> {
   if (!isSafeTimerDelayMs(timeoutMs)) {
     throw new RemoteRuntimeClientError(
@@ -100,14 +98,11 @@ export async function sendRemoteRuntimeRequest<TResult>(
   })
   const pendingRequest = {
     preparedRequest: prepareRemoteRuntimeRequest(new Map(), () =>
-      serializeRemoteRuntimePayload({
-        id: requestId,
+      serializeRemoteRuntimeRpcRequest({
+        requestId,
         deviceToken: pairing.deviceToken,
         method,
-        params,
-        orchestrationCapability: envelope?.orchestrationCapability,
-        orchestrationContractVersion: envelope?.orchestrationContractVersion,
-        orchestrationRequestId: envelope?.orchestrationRequestId
+        params
       })
     )
   }

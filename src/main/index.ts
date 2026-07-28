@@ -41,13 +41,6 @@ import { resolveConsent } from './telemetry/consent'
 import { triggerStartupNotificationRegistration } from './ipc/notifications'
 import { OrcaRuntimeService, type RuntimeWorktreeLifecycleEvent } from './runtime/orca-runtime'
 import { loadAgentSessionClaimSigner } from './runtime/agent-session-claim-identity'
-import {
-  fingerprintOrchestrationPeer,
-  type OrchestrationEnvironmentTransport
-} from './runtime/orchestration/environment-transport'
-import { callRuntimeEnvironment } from './ipc/runtime-environment-transport-routing'
-import { resolveEnvironment } from '../shared/runtime-environment-store'
-import { getPreferredPairingOffer } from '../shared/runtime-environments'
 import { OrcaRuntimeRpcServer } from './runtime/runtime-rpc'
 import { resolveAdvertisedPairingEndpoint } from './runtime/pairing-endpoint'
 import { ServeReadinessPublisher } from './server/serve-readiness'
@@ -2116,27 +2109,6 @@ app.whenReady().then(async () => {
       .filter((account) => !activeIds.has(account.id))
       .map((account) => ({ id: account.id, managedHomePath: account.managedHomePath }))
   })
-  const orchestrationEnvironmentTransport: OrchestrationEnvironmentTransport = {
-    resolve: (selector) => {
-      const environment = resolveEnvironment(app.getPath('userData'), selector)
-      const pairing = getPreferredPairingOffer(environment)
-      return {
-        environmentId: environment.id,
-        name: environment.name,
-        peerFingerprint: fingerprintOrchestrationPeer(pairing.publicKeyB64)
-      }
-    },
-    call: (selector, method, params, timeoutMs, envelope) =>
-      callRuntimeEnvironment(
-        app.getPath('userData'),
-        selector,
-        method,
-        params,
-        timeoutMs,
-        undefined,
-        envelope
-      )
-  }
   const runtimeService = new OrcaRuntimeService(store, stats, {
     agentSessionClaimSigner: loadAgentSessionClaimSigner(
       getProfileUserDataPath(),
@@ -2175,8 +2147,7 @@ app.whenReady().then(async () => {
         systemCodexHomePath: resolveHostCodexSessionSourceHome(store!.getSettings())
       }),
     buildAgentHookPtyEnv: () =>
-      isAgentStatusHooksEnabled(store?.getSettings()) ? agentHookServer.buildPtyEnv() : {},
-    orchestrationEnvironmentTransport
+      isAgentStatusHooksEnabled(store?.getSettings()) ? agentHookServer.buildPtyEnv() : {}
   })
   runtime = runtimeService
   publishProviderSessionChanges(agentHookServer.getProviderSessionIdentities())

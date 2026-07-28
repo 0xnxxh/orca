@@ -15,9 +15,9 @@ import {
   type RpcRequest,
   type RpcResponse
 } from './core'
-
 import type { TerminalStreamFrame } from '../../../shared/terminal-stream-protocol'
 import type { FeatureInteractionId } from '../../../shared/feature-interactions'
+import { isBrowserPaneUiRuntimeRpcParams } from '../../../shared/runtime-rpc-feature-interaction-source'
 import {
   computerErrorData,
   errorResponse,
@@ -30,13 +30,6 @@ import { ALL_RPC_METHODS } from './methods'
 import { emulatorProbe, emulatorProbeError } from '../../emulator/emulator-probe'
 import type { OrcaRuntimeService } from '../orca-runtime'
 import type { RuntimeCapability } from '../../../shared/protocol-version'
-import {
-  OrchestrationMutationExecutor,
-  authenticatedCallerFingerprint,
-  type DurableMutationInvocation
-} from './orchestration-mutation-executor'
-import { orchestrationMigrationFence } from './orchestration-contract-fence'
-import { getRuntimeFeatureInteractionId } from './runtime-feature-interaction'
 
 export type DispatcherOptions = {
   runtime: OrcaRuntimeService
@@ -46,12 +39,10 @@ export type DispatcherOptions = {
 export class RpcDispatcher {
   private readonly runtime: OrcaRuntimeService
   private readonly registry: RpcRegistry
-  private readonly orchestrationMutations: OrchestrationMutationExecutor
 
   constructor({ runtime, methods = ALL_RPC_METHODS }: DispatcherOptions) {
     this.runtime = runtime
     this.registry = buildRegistry(methods)
-    this.orchestrationMutations = new OrchestrationMutationExecutor(runtime)
   }
 
   async dispatch(request: RpcRequest, options?: { signal?: AbortSignal }): Promise<RpcResponse> {
@@ -64,11 +55,6 @@ export class RpcDispatcher {
         'method_not_found',
         `Unknown method: ${request.method}`
       )
-    }
-
-    const migrationFence = orchestrationMigrationFence(request, meta)
-    if (migrationFence) {
-      return migrationFence
     }
 
     const parsedParams = this.parseParams(request, method, meta)
@@ -93,17 +79,10 @@ export class RpcDispatcher {
       emulatorProbe(`rpc ${request.method}`, request.params)
     }
     try {
-      const invoke = (mutation?: DurableMutationInvocation) =>
-        method.handler(parsedParams.value, {
-          runtime: this.runtime,
-          signal: options?.signal,
-          requestId: request.id,
-          orchestrationCapability: request.orchestrationCapability,
-          authenticatedCallerFingerprint: authenticatedCallerFingerprint(request),
-          recordMutationReceipt: mutation?.recordReceipt,
-          orchestrationMutation: mutation?.identity
-        })
-      const result = await this.orchestrationMutations.run(request, parsedParams.value, invoke)
+      const result = await method.handler(parsedParams.value, {
+        runtime: this.runtime,
+        signal: options?.signal
+      })
       this.recordRuntimeFeatureInteraction(request.method, result, undefined, request.params)
       return successResponse(request.id, meta, result)
     } catch (error) {
@@ -146,12 +125,6 @@ export class RpcDispatcher {
       return
     }
 
-    const migrationFence = orchestrationMigrationFence(request, meta)
-    if (migrationFence) {
-      reply(JSON.stringify(migrationFence))
-      return
-    }
-
     const parsedParams = this.parseParams(request, method, meta)
     if (parsedParams.error) {
       reply(JSON.stringify(parsedParams.error))
@@ -160,25 +133,19 @@ export class RpcDispatcher {
 
     if (!isStreamingMethod(method)) {
       try {
-        const invoke = (mutation?: DurableMutationInvocation) =>
-          method.handler(parsedParams.value, {
-            runtime: this.runtime,
-            signal: options?.signal,
-            requestId: request.id,
-            connectionId: options?.connectionId,
-            clientId: options?.clientId,
-            pairedDeviceId: options?.pairedDeviceId,
-            clientKind: options?.clientKind,
-            clientCapabilities: options?.clientCapabilities,
-            orchestrationCapability: request.orchestrationCapability,
-            authenticatedCallerFingerprint: authenticatedCallerFingerprint(request),
-            recordMutationReceipt: mutation?.recordReceipt,
-            orchestrationMutation: mutation?.identity,
-            pairing: options?.pairing,
-            sendBinary: options?.sendBinary,
-            registerBinaryStreamHandler: options?.registerBinaryStreamHandler
-          })
-        const result = await this.orchestrationMutations.run(request, parsedParams.value, invoke)
+        const result = await method.handler(parsedParams.value, {
+          runtime: this.runtime,
+          signal: options?.signal,
+          requestId: request.id,
+          connectionId: options?.connectionId,
+          clientId: options?.clientId,
+          pairedDeviceId: options?.pairedDeviceId,
+          clientKind: options?.clientKind,
+          clientCapabilities: options?.clientCapabilities,
+          pairing: options?.pairing,
+          sendBinary: options?.sendBinary,
+          registerBinaryStreamHandler: options?.registerBinaryStreamHandler
+        })
         this.recordRuntimeFeatureInteraction(request.method, result, undefined, request.params)
         reply(JSON.stringify(successResponse(request.id, meta, result)))
       } catch (error) {
@@ -306,4 +273,51 @@ export class RpcDispatcher {
       // Best-effort education state must not break runtime tools.
     }
   }
+}
+
+function getRuntimeFeatureInteractionId(
+  method: string,
+  result: unknown,
+  rawParams?: unknown
+): FeatureInteractionId | null {
+  if (method === 'browser.profileImportFromBrowser') {
+    return hasBooleanResult(result, 'ok') ? 'cookie-import' : null
+  }
+  if (method === 'browser.profileClearDefaultCookies') {
+    return hasBooleanResult(result, 'cleared') ? 'cookie-import' : null
+  }
+  if (method === 'browser.screencast.unsubscribe') {
+    return null
+  }
+  if (method.startsWith('browser.') && isBrowserPaneUiRuntimeRpcParams(rawParams)) {
+    return null
+  }
+  if (method.startsWith('browser.') && !method.startsWith('browser.profile')) {
+    return 'agent-browser-use'
+  }
+  if (method.startsWith('emulator.')) {
+    // Emulator commands are allowed from terminal/CLI (workspace-scoped, like other automation).
+    // Return null to indicate no special feature-interaction restriction (or add 'emulator-use' later).
+    return null
+  }
+  if (method === 'computer.permissions') {
+    return 'computer-use-setup'
+  }
+  if (
+    method.startsWith('computer.') &&
+    method !== 'computer.capabilities' &&
+    method !== 'computer.permissionsStatus'
+  ) {
+    return 'computer-use'
+  }
+  if (method.startsWith('orchestration.')) {
+    return 'agent-orchestration'
+  }
+  return null
+}
+
+function hasBooleanResult(value: unknown, key: string): boolean {
+  return (
+    value !== null && typeof value === 'object' && (value as Record<string, unknown>)[key] === true
+  )
 }

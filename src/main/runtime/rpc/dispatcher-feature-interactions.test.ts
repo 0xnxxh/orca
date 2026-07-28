@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import type { PersistedUIState } from '../../../shared/types'
 import { getDefaultUIState } from '../../../shared/constants'
-import { ORCHESTRATION_CONTRACT_VERSION } from '../../../shared/protocol-version'
 import {
   ORCA_RUNTIME_RPC_BROWSER_UI_SOURCE,
   ORCA_RUNTIME_RPC_FEATURE_INTERACTION_SOURCE_KEY
@@ -12,15 +11,7 @@ import { defineMethod, defineStreamingMethod, type RpcRequest } from './core'
 import type { OrcaRuntimeService } from '../orca-runtime'
 
 function makeRequest(method: string, params: unknown = {}): RpcRequest {
-  return {
-    id: 'req-1',
-    authToken: 'tok',
-    method,
-    params,
-    ...(method.startsWith('orchestration.')
-      ? { orchestrationContractVersion: ORCHESTRATION_CONTRACT_VERSION }
-      : {})
-  }
+  return { id: 'req-1', authToken: 'tok', method, params }
 }
 
 function makeRuntime(ui: PersistedUIState = getDefaultUIState()): OrcaRuntimeService {

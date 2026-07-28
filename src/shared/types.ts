@@ -2256,13 +2256,6 @@ export type CreateWorktreeResult = {
   workspaceLineage?: WorkspaceLineage | null
   warnings?: WorktreeLineageWarning[]
   setup?: WorktreeSetupLaunch
-  setupReceipt?: {
-    requested: 'run' | 'skip' | 'inherit'
-    hookFound: boolean
-    startupPolicy: 'start-immediately' | 'wait-for-setup'
-    state: 'running' | 'skipped' | 'not_configured' | 'spawn_failed'
-    terminalHandle?: string
-  }
   defaultTabs?: WorktreeDefaultTabsLaunch
   warning?: string
   initialBaseStatus?: WorktreeBaseStatusEvent
