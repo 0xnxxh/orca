@@ -81,6 +81,8 @@ export type SkillFreshnessInstallation = {
   currentPackageDigest: string
   currentAppVersion: string
   observedPackageDigest: string | null
+  /** Git tree sha of the observed bytes; lets the post-run verdict match disk against the updater's lock. */
+  observedGitTreeSha?: string | null
   errorCategory: string | null
 }
 
