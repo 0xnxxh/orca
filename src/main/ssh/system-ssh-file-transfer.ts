@@ -4,7 +4,10 @@ import { lstat, open, opendir } from 'node:fs/promises'
 import { join as pathJoin } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import type { SshTarget } from '../../shared/ssh-types'
-import { stringifyJsonWithinByteLimit } from '../../shared/memory-safety/node-bounded-json-stringify'
+import {
+  JsonStringifyByteLimitError,
+  stringifyJsonWithinByteLimit
+} from '../../shared/memory-safety/node-bounded-json-stringify'
 import { shellEscape, wrapRemoteCommandForPosixShell } from './ssh-connection-utils'
 import { findSystemSsh } from './system-ssh-binary'
 import {
@@ -26,6 +29,7 @@ import {
 import { writeBufferViaSystemSsh } from './system-ssh-file-binary-transfer'
 import {
   SshDirectoryTransferBudget,
+  SshDirectoryTransferCapacityError,
   WINDOWS_SSH_UPLOAD_PACKAGE_MAX_BYTES
 } from './ssh-directory-transfer-budget'
 
@@ -187,10 +191,21 @@ async function writeWindowsUploadPackageViaSystemSsh(
   options: SystemSshOperationOptions
 ): Promise<void> {
   throwIfAborted(options.signal)
-  const serialized = stringifyJsonWithinByteLimit(
-    entries,
-    WINDOWS_SSH_UPLOAD_PACKAGE_MAX_BYTES
-  ).serialized
+  // Why: JSON escaping can outgrow the byte budget charged during the walk — a control
+  // character costs 1 charged byte but 6 serialized ones — so the package gets its own
+  // ceiling, reported with the same typed reason as every other capacity rejection.
+  let serialized: string
+  try {
+    serialized = stringifyJsonWithinByteLimit(
+      entries,
+      WINDOWS_SSH_UPLOAD_PACKAGE_MAX_BYTES
+    ).serialized
+  } catch (err) {
+    if (err instanceof JsonStringifyByteLimitError) {
+      throw new SshDirectoryTransferCapacityError('package')
+    }
+    throw err
+  }
   const channel = spawnSystemSshCommand(target, makeWindowsUploadPackageCommand(), {
     wrapCommand: false,
     ...getSystemSshBuildArgsFromOperationOptions(options)
