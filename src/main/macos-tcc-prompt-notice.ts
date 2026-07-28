@@ -62,18 +62,23 @@ export function handleTccPromptForTests(): TccPromptNoticePayload | null {
 }
 
 function recordPrompt(): TccPromptNoticePayload | null {
-  if (tally.dismissed || tally.notified) {
+  if (tally.dismissed || tally.notified || tally.promptCount >= TCC_PROMPT_NOTICE_THRESHOLD) {
     return null
   }
   tally = { ...tally, promptCount: tally.promptCount + 1 }
-  const shouldNotify = !tally.notified && tally.promptCount >= TCC_PROMPT_NOTICE_THRESHOLD
-  if (shouldNotify) {
-    tally = { ...tally, notified: true }
-  }
   saveTally()
-  if (!shouldNotify) {
+  if (tally.promptCount < TCC_PROMPT_NOTICE_THRESHOLD) {
     return null
   }
+  return { promptCount: tally.promptCount }
+}
+
+export function consumePendingTccPromptNotice(): TccPromptNoticePayload | null {
+  if (tally.dismissed || tally.notified || tally.promptCount < TCC_PROMPT_NOTICE_THRESHOLD) {
+    return null
+  }
+  tally = { ...tally, notified: true }
+  saveTally()
   return { promptCount: tally.promptCount }
 }
 
@@ -97,14 +102,24 @@ export function initTccPromptNotice(mainWindow: BrowserWindow): void {
     return
   }
   mainWindowRef = mainWindow
+  if (tally.promptCount >= TCC_PROMPT_NOTICE_THRESHOLD) {
+    mainWindow.webContents.send(TCC_PROMPT_NOTICE_CHANNEL, {
+      promptCount: tally.promptCount
+    })
+    return
+  }
   watch = new MacosTccPromptWatch({
     onPrompt: () => {
       const payload = recordPrompt()
-      const target = mainWindowRef
-      if (payload && target && !target.isDestroyed() && !target.webContents.isDestroyed()) {
-        target.webContents.send(TCC_PROMPT_NOTICE_CHANNEL, payload)
-        stopTccPromptNotice()
+      if (!payload) {
+        return
       }
+      const target = mainWindowRef
+      if (target && !target.isDestroyed() && !target.webContents.isDestroyed()) {
+        target.webContents.send(TCC_PROMPT_NOTICE_CHANNEL, payload)
+      }
+      // Why: pending state is renderer-consumed, so the log child can stop at threshold.
+      stopTccPromptNotice()
     }
   })
   watch.start()

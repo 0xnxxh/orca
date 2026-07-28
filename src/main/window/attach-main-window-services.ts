@@ -2,14 +2,14 @@
 import { randomUUID } from 'node:crypto'
 
 import { app, ipcMain } from 'electron'
-import type { BrowserWindow } from 'electron'
+import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import type { Store } from '../persistence'
 import type {
   CreateWorktreeResult,
   UpdateCheckOptions,
   WorktreeStartupLaunch
 } from '../../shared/types'
-import { dismissTccPromptNotice } from '../macos-tcc-prompt-notice'
+import { consumePendingTccPromptNotice, dismissTccPromptNotice } from '../macos-tcc-prompt-notice'
 import { registerRepoHandlers } from '../ipc/repos'
 import { registerWorktreeHandlers } from '../ipc/worktrees'
 import { registerWorkspaceCleanupHandlers } from '../ipc/workspace-cleanup'
@@ -65,6 +65,8 @@ export function ensureAutoUpdaterConfigured(): void {
 
 let appReloadHandlerTokenCounter = 0
 let activeAppReloadHandlerToken: number | null = null
+let tccPromptHandlerTokenCounter = 0
+let activeTccPromptHandlerToken: number | null = null
 let runtimeNotifierTokenCounter = 0
 let activeRuntimeNotifierToken: number | null = null
 
@@ -133,12 +135,7 @@ export function attachMainWindowServices(
   registerSshHandlers(store, () => mainWindow, runtime)
   registerRemoteWorkspaceHandlers(store, () => mainWindow)
   registerFileDropRelay(mainWindow)
-  // Why: handler only — initTccPromptNotice spawns a `log stream` child, so it is
-  // started from the app bootstrap instead of here, which unit tests call directly.
-  ipcMain.removeHandler('macosTccPrompts:dismiss')
-  ipcMain.handle('macosTccPrompts:dismiss', () => {
-    dismissTccPromptNotice()
-  })
+  registerTccPromptNoticeHandlers(mainWindow)
   // Why: setupAutoUpdater sync-require()s electron-updater (slow on cold Windows w/ Defender, #7225), so defer past first paint; timer fallback covers crash-looping renderers.
   let updaterSetupDone = false
   const setupAutoUpdaterDeferred = (): void => {
@@ -206,6 +203,35 @@ export function attachMainWindowServices(
   mainWindow.on('closed', () => {
     // Why: clear main-owned guest registrations on close so stale tab→webContents ids don't leak across relaunch/hot-reload.
     browserManager.unregisterAll()
+  })
+}
+
+function registerTccPromptNoticeHandlers(mainWindow: BrowserWindow): void {
+  const handlerToken = ++tccPromptHandlerTokenCounter
+  activeTccPromptHandlerToken = handlerToken
+  const consumeChannel = 'macosTccPrompts:consumePending'
+  const dismissChannel = 'macosTccPrompts:dismiss'
+  ipcMain.removeHandler(consumeChannel)
+  ipcMain.removeHandler(dismissChannel)
+  const mainWebContents = mainWindow.webContents
+  const ownsNotice = (event: IpcMainInvokeEvent): boolean =>
+    !mainWindow.isDestroyed() && !mainWebContents.isDestroyed() && event.sender === mainWebContents
+  ipcMain.handle(consumeChannel, (event) =>
+    ownsNotice(event) ? consumePendingTccPromptNotice() : null
+  )
+  ipcMain.handle(dismissChannel, (event) => {
+    if (ownsNotice(event)) {
+      dismissTccPromptNotice()
+    }
+  })
+  // Why: macOS can stay windowless; drop stale closures without letting an old close clear newer handlers.
+  mainWindow.on('closed', () => {
+    if (activeTccPromptHandlerToken !== handlerToken) {
+      return
+    }
+    ipcMain.removeHandler(consumeChannel)
+    ipcMain.removeHandler(dismissChannel)
+    activeTccPromptHandlerToken = null
   })
 }
 

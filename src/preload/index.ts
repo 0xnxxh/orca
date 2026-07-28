@@ -2273,6 +2273,8 @@ const api = {
       ipcRenderer.on('macosTccPrompts:threshold', listener)
       return () => ipcRenderer.removeListener('macosTccPrompts:threshold', listener)
     },
+    consumePending: (): Promise<{ promptCount: number } | null> =>
+      ipcRenderer.invoke('macosTccPrompts:consumePending'),
     dismiss: (): Promise<void> => ipcRenderer.invoke('macosTccPrompts:dismiss')
   },
 

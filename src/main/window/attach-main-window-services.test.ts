@@ -17,7 +17,9 @@ const {
   hydrateLocalPtyRegistryAtBootMock,
   setupAutoUpdaterMock,
   browserManagerUnregisterAllMock,
-  runWorktreeChangeInvalidatorsMock
+  runWorktreeChangeInvalidatorsMock,
+  consumePendingTccPromptNoticeMock,
+  dismissTccPromptNoticeMock
 } = vi.hoisted(() => ({
   onMock: vi.fn(),
   removeAllListenersMock: vi.fn(),
@@ -34,7 +36,9 @@ const {
   hydrateLocalPtyRegistryAtBootMock: vi.fn(),
   setupAutoUpdaterMock: vi.fn(),
   browserManagerUnregisterAllMock: vi.fn(),
-  runWorktreeChangeInvalidatorsMock: vi.fn()
+  runWorktreeChangeInvalidatorsMock: vi.fn(),
+  consumePendingTccPromptNoticeMock: vi.fn(),
+  dismissTccPromptNoticeMock: vi.fn()
 }))
 
 vi.mock('electron', () => ({
@@ -90,6 +94,11 @@ vi.mock('../updater', () => ({
   quitAndInstall: vi.fn(),
   dismissNudge: vi.fn(),
   setupAutoUpdater: setupAutoUpdaterMock
+}))
+
+vi.mock('../macos-tcc-prompt-notice', () => ({
+  consumePendingTccPromptNotice: consumePendingTccPromptNoticeMock,
+  dismissTccPromptNotice: dismissTccPromptNoticeMock
 }))
 
 import { attachMainWindowServices } from './attach-main-window-services'
@@ -195,6 +204,8 @@ describe('attachMainWindowServices', () => {
     hydrateLocalPtyRegistryAtBootMock.mockReset()
     setupAutoUpdaterMock.mockReset()
     browserManagerUnregisterAllMock.mockReset()
+    consumePendingTccPromptNoticeMock.mockReset()
+    dismissTccPromptNoticeMock.mockReset()
     systemPreferencesAskForMediaAccessMock.mockResolvedValue(true)
     systemPreferencesGetMediaAccessStatusMock.mockReturnValue('granted')
   })
@@ -289,13 +300,61 @@ describe('attachMainWindowServices', () => {
     expect(store.flush).toHaveBeenCalledTimes(1)
   })
 
-  it('replaces the TCC dismiss handler when the main window is reattached', () => {
+  it('replaces the TCC handlers when the main window is reattached', () => {
     attachMainWindowServices(createMainWindow() as never, createStore(), createRuntime() as never)
     attachMainWindowServices(createMainWindow() as never, createStore(), createRuntime() as never)
 
-    const channel = 'macosTccPrompts:dismiss'
-    expect(removeHandlerMock.mock.calls.filter(([value]) => value === channel)).toHaveLength(2)
-    expect(handleMock.mock.calls.filter(([value]) => value === channel)).toHaveLength(2)
+    for (const channel of ['macosTccPrompts:consumePending', 'macosTccPrompts:dismiss']) {
+      expect(removeHandlerMock.mock.calls.filter(([value]) => value === channel)).toHaveLength(2)
+      expect(handleMock.mock.calls.filter(([value]) => value === channel)).toHaveLength(2)
+    }
+  })
+
+  it('lets only the current main renderer consume the pending TCC notice', () => {
+    const mainWindow = createMainWindow()
+    consumePendingTccPromptNoticeMock.mockReturnValue({ promptCount: 3 })
+    attachMainWindowServices(mainWindow as never, createStore(), createRuntime() as never)
+
+    const handler = handleMock.mock.calls.find(
+      ([channel]) => channel === 'macosTccPrompts:consumePending'
+    )?.[1]
+    expect(handler?.({ sender: { id: 999 } })).toBeNull()
+    expect(consumePendingTccPromptNoticeMock).not.toHaveBeenCalled()
+    expect(handler?.({ sender: mainWindow.webContents })).toEqual({ promptCount: 3 })
+  })
+
+  it('removes the TCC handlers when the owning window closes', () => {
+    const mainWindow = createMainWindow()
+    attachMainWindowServices(mainWindow as never, createStore(), createRuntime() as never)
+
+    removeHandlerMock.mockClear()
+    for (const handler of getClosedHandlers(mainWindow.on)) {
+      handler()
+    }
+
+    expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:consumePending')
+    expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:dismiss')
+  })
+
+  it('keeps newer TCC handlers when an older window closes late', () => {
+    const oldWindow = createMainWindow()
+    attachMainWindowServices(oldWindow as never, createStore(), createRuntime() as never)
+    const oldClosedHandlers = getClosedHandlers(oldWindow.on)
+    const newWindow = createMainWindow()
+    attachMainWindowServices(newWindow as never, createStore(), createRuntime() as never)
+
+    removeHandlerMock.mockClear()
+    for (const handler of oldClosedHandlers) {
+      handler()
+    }
+    expect(removeHandlerMock).not.toHaveBeenCalledWith('macosTccPrompts:consumePending')
+    expect(removeHandlerMock).not.toHaveBeenCalledWith('macosTccPrompts:dismiss')
+
+    for (const handler of getClosedHandlers(newWindow.on)) {
+      handler()
+    }
+    expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:consumePending')
+    expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:dismiss')
   })
 
   it('ignores app reload requests from non-main webContents', async () => {

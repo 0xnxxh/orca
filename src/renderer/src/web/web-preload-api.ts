@@ -2743,6 +2743,7 @@ function createMacosTccPromptsApi(): NonNullable<Partial<PreloadApi>['macosTccPr
   // Why: TCC is a macOS-desktop concept; the web client has no log stream to watch.
   return {
     onThreshold: () => noopUnsubscribe,
+    consumePending: () => Promise.resolve(null),
     dismiss: () => Promise.resolve()
   }
 }

@@ -90,6 +90,15 @@ describe('startup ordering', () => {
     expect(startIndex).toBeGreaterThan(attachIndex)
   })
 
+  it('attaches renderer services before starting the TCC prompt watcher', () => {
+    const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const attachIndex = source.indexOf('attachMainWindowServices(')
+    const tccNoticeIndex = source.indexOf('initTccPromptNotice(window)')
+
+    expect(attachIndex).toBeGreaterThanOrEqual(0)
+    expect(tccNoticeIndex).toBeGreaterThan(attachIndex)
+  })
+
   it('starts the automation scheduler before headless serve reports ready', () => {
     const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
     const serveStart = source.indexOf('if (serveOptions) {')

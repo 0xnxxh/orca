@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as NodeFs from 'node:fs'
 
 const writeFileAtomically = vi.fn()
+const readTallyFile = vi.fn()
 const watchStart = vi.fn()
 const watchStop = vi.fn()
 const watchOptions: { onPrompt: () => void }[] = []
@@ -24,13 +25,12 @@ vi.mock('./macos-tcc-prompt-watch', () => ({
 }))
 vi.mock('node:fs', async (importOriginal) => ({
   ...(await importOriginal<typeof NodeFs>()),
-  readFileSync: () => {
-    throw new Error('ENOENT')
-  }
+  readFileSync: (...args: unknown[]) => readTallyFile(...args)
 }))
 
 const {
   TCC_PROMPT_NOTICE_THRESHOLD,
+  consumePendingTccPromptNotice,
   dismissTccPromptNotice,
   handleTccPromptForTests,
   initTccPromptNotice,
@@ -43,6 +43,10 @@ beforeEach(() => {
   watchStart.mockClear()
   watchStop.mockClear()
   writeFileAtomically.mockClear()
+  readTallyFile.mockReset()
+  readTallyFile.mockImplementation(() => {
+    throw new Error('ENOENT')
+  })
 })
 
 describe('tcc prompt notice threshold', () => {
@@ -84,6 +88,19 @@ describe('tcc prompt notice threshold', () => {
     expect(writeFileAtomically).not.toHaveBeenCalled()
   })
 
+  it('retains the threshold until the renderer consumes it', () => {
+    for (let i = 0; i < TCC_PROMPT_NOTICE_THRESHOLD; i += 1) {
+      handleTccPromptForTests()
+    }
+
+    expect(consumePendingTccPromptNotice()).toEqual({
+      promptCount: TCC_PROMPT_NOTICE_THRESHOLD
+    })
+    expect(consumePendingTccPromptNotice()).toBeNull()
+    const [, contents] = writeFileAtomically.mock.calls.at(-1) as [string, string]
+    expect(JSON.parse(contents)).toMatchObject({ promptCount: 3, notified: true })
+  })
+
   it('routes a later prompt to the replacement main window', () => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')
     Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
@@ -116,6 +133,28 @@ describe('tcc prompt notice threshold', () => {
         }
       }).not.toThrow()
       expect(mainWindow.webContents.send).not.toHaveBeenCalled()
+      expect(watchStop).toHaveBeenCalledTimes(1)
+      expect(consumePendingTccPromptNotice()).toEqual({ promptCount: 3 })
+    } finally {
+      Object.defineProperty(process, 'platform', platform!)
+    }
+  })
+
+  it('does not respawn the watcher for a persisted pending threshold', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    readTallyFile.mockReturnValue(
+      JSON.stringify({ promptCount: 3, notified: false, dismissed: false })
+    )
+    try {
+      const mainWindow = createWindowStub()
+      initTccPromptNotice(mainWindow as never)
+
+      expect(watchStart).not.toHaveBeenCalled()
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith('macosTccPrompts:threshold', {
+        promptCount: 3
+      })
+      expect(consumePendingTccPromptNotice()).toEqual({ promptCount: 3 })
     } finally {
       Object.defineProperty(process, 'platform', platform!)
     }

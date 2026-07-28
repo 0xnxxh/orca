@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { toast } from 'sonner'
 import { useAppStore } from '@/store'
 import { translate } from '@/i18n/i18n'
+import { subscribeToMacosTccPromptNotice } from './macos-tcc-prompt-notice-subscription'
 
 /**
  * Shows the Full Disk Access hint only after macOS has repeatedly raised its
@@ -13,11 +14,7 @@ export function useMacosTccPromptNotice(): void {
   const openSettingsTarget = useAppStore((s) => s.openSettingsTarget)
 
   useEffect(() => {
-    const subscribe = window.api?.macosTccPrompts?.onThreshold
-    if (!subscribe) {
-      return
-    }
-    return subscribe(() => {
+    return subscribeToMacosTccPromptNotice(window.api?.macosTccPrompts, () => {
       toast.warning(
         translate(
           'auto.hooks.useMacosTccPromptNotice.title',
