@@ -1,6 +1,6 @@
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { AutomationDraft } from './AutomationEditorDialog'
 import {
   AutomationCustomCronPanel,
@@ -35,6 +35,11 @@ const BASE_DRAFT: AutomationDraft = {
 }
 
 describe('AutomationSchedulePicker', () => {
+  // Reset here, not after the assertion: a failed expect would otherwise leak the locale.
+  afterEach(async () => {
+    await i18n.changeLanguage('en')
+  })
+
   it('provides an i18n key for every selectable cadence (#10043)', () => {
     expect(AUTOMATION_SCHEDULE_PRESET_OPTIONS).toContainEqual([
       'custom',
@@ -58,7 +63,6 @@ describe('AutomationSchedulePicker', () => {
   ])('translates every cadence option in %s', async (locale, labels) => {
     await i18n.changeLanguage(locale)
     expect(AUTOMATION_SCHEDULE_PRESET_OPTIONS.map(getAutomationSchedulePresetLabel)).toEqual(labels)
-    await i18n.changeLanguage('en')
   })
 
   it('seeds custom cron from the current simple schedule', () => {
