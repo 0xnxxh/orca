@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   isChecksPanelHostedReviewSystemBrowserModifier,
   openChecksPanelHostedReviewUrl,
-  resolveChecksPanelHostedReviewHttpOpenOptions
+  resolveChecksPanelHostedReviewHttpOpenOptions,
+  resolveChecksPanelHostedReviewModifierDestination
 } from './checks-panel-hosted-review-click-routing'
 
 const { openHttpLinkMock } = vi.hoisted(() => ({ openHttpLinkMock: vi.fn() }))
@@ -71,5 +72,66 @@ describe('checks panel hosted review click routing', () => {
       worktreeId: 'wt-1',
       modifierHeld: true
     })
+  })
+})
+
+describe('checks panel hosted review modifier hint destination', () => {
+  it('names the system browser when a plain click already opens in Orca', () => {
+    expect(resolveChecksPanelHostedReviewModifierDestination({ openLinksInApp: true }, true)).toBe(
+      'system-browser'
+    )
+  })
+
+  // Why: this is the gesture the invert setting adds — without it the hint stays hidden
+  // and the only way to reach Orca from this button is undiscoverable.
+  it('names Orca when inverting is on and links open externally', () => {
+    expect(
+      resolveChecksPanelHostedReviewModifierDestination(
+        { openLinksInApp: false, openLinksInAppModifierInverts: true },
+        true
+      )
+    ).toBe('orca')
+  })
+
+  it('stays silent while inverting is off and links open externally', () => {
+    expect(
+      resolveChecksPanelHostedReviewModifierDestination({ openLinksInApp: false }, true)
+    ).toBeNull()
+    expect(resolveChecksPanelHostedReviewModifierDestination(null, true)).toBeNull()
+  })
+
+  // Why: openHttpLink refuses to route a remote-owned link into Orca, and openLinksInApp
+  // cannot apply there either, so neither destination is reachable.
+  it('stays silent while a remote runtime is active', () => {
+    expect(
+      resolveChecksPanelHostedReviewModifierDestination(
+        { openLinksInApp: true, activeRuntimeEnvironmentId: 'remote-1' },
+        true
+      )
+    ).toBeNull()
+    expect(
+      resolveChecksPanelHostedReviewModifierDestination(
+        {
+          openLinksInApp: false,
+          openLinksInAppModifierInverts: true,
+          activeRuntimeEnvironmentId: 'remote-1'
+        },
+        true
+      )
+    ).toBeNull()
+  })
+
+  // Why: openHttpLink gates routing to Orca on a worktree id, so without one the
+  // modifier lands in the system browser either way.
+  it('stays silent without a worktree', () => {
+    expect(
+      resolveChecksPanelHostedReviewModifierDestination(
+        { openLinksInApp: false, openLinksInAppModifierInverts: true },
+        false
+      )
+    ).toBeNull()
+    expect(
+      resolveChecksPanelHostedReviewModifierDestination({ openLinksInApp: true }, false)
+    ).toBeNull()
   })
 })

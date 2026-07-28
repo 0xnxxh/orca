@@ -63,6 +63,12 @@ export function getTerminalUrlSystemBrowserHint(): string {
   return isMacPlatform() ? '⇧⌘+click for system browser' : 'Shift+Ctrl+click for system browser'
 }
 
+// Why: the mirror of the system-browser hint for surfaces where inverting sends the
+// modifier the other way; a plain click there already opens the system browser.
+export function getTerminalUrlOrcaBrowserHint(): string {
+  return isMacPlatform() ? '⇧⌘+click to open in Orca' : 'Shift+Ctrl+click to open in Orca'
+}
+
 export function getTerminalWorktreePathOpenHint(canOpenWithSystemDefault: boolean): string {
   if (!canOpenWithSystemDefault) {
     return isMacPlatform() ? '⌘+click to switch workspace' : 'Ctrl+click to switch workspace'
