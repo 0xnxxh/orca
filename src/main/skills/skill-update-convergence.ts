@@ -1,4 +1,8 @@
-import type { SkillFreshnessInstallation, SkillKnownSnapshot } from '../../shared/skill-freshness'
+import {
+  SUPPORTED_GLOBAL_SKILL_TOPOLOGIES,
+  type SkillFreshnessInstallation,
+  type SkillKnownSnapshot
+} from '../../shared/skill-freshness'
 
 /**
  * Names `skills update` can still move, judged against what it believes it installed.
@@ -25,8 +29,18 @@ export function convergableSkillNames(
 ): ReadonlySet<string> {
   const convergable = new Set(globalSkillLocks.keys())
   for (const [name, lockHash] of globalSkillLocks) {
+    // Why: judged only over the placements the command writes, like eligibility
+    // itself. A plugin-cache or repo copy is never the command's to converge, so
+    // it must neither gate the name nor rescue it — an unidentifiable cache copy
+    // (or one parked at the lock's own revision) would otherwise defeat the gate
+    // and re-arm the unwinnable update.
     const digests = installations
-      .filter((entry) => entry.name === name && entry.observedPackageDigest)
+      .filter(
+        (entry) =>
+          entry.name === name &&
+          SUPPORTED_GLOBAL_SKILL_TOPOLOGIES.has(entry.topology) &&
+          entry.observedPackageDigest
+      )
       .map((entry) => entry.observedPackageDigest)
     if (digests.length === 0) {
       continue

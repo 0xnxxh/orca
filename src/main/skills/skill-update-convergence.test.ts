@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest'
 import type { SkillFreshnessInstallation, SkillKnownSnapshot } from '../../shared/skill-freshness'
 import { convergableSkillNames } from './skill-update-convergence'
 
-function placement(name: string, observedPackageDigest: string | null): SkillFreshnessInstallation {
+function placement(
+  name: string,
+  observedPackageDigest: string | null,
+  topology: SkillFreshnessInstallation['topology'] = 'canonical-copy'
+): SkillFreshnessInstallation {
   return {
-    id: `${name}:${observedPackageDigest}`,
+    id: `${name}:${observedPackageDigest}:${topology}`,
     name,
     rootId: 'home',
     providers: [],
@@ -13,7 +17,7 @@ function placement(name: string, observedPackageDigest: string | null): SkillFre
     unresolvedPath: `~/.agents/skills/${name}`,
     resolvedPath: `/home/u/.agents/skills/${name}`,
     physicalIdentity: '1:1',
-    topology: 'canonical-copy',
+    topology,
     status: 'outdated',
     installedReleaseRevision: null,
     installedAppVersion: null,
@@ -113,6 +117,45 @@ describe('convergableSkillNames', () => {
       }
     )
     expect([...result]).toEqual(['orca-cli'])
+  })
+
+  // Why: copies the command never writes must not defeat the gate. An
+  // unidentifiable plugin-cache repack would otherwise read as an unresolved
+  // placement and re-arm the unwinnable update on the drifted canonical.
+  it('ignores an unidentifiable plugin-cache copy when judging the canonical', () => {
+    const result = convergableSkillNames(
+      [
+        placement('orca-linear', 'digest-pre-stub'),
+        placement('orca-linear', 'digest-cache-repack', 'plugin-cache')
+      ],
+      new Map([['orca-linear', '091d9bcc']]),
+      {
+        'orca-linear': [
+          revision('digest-pre-stub', 'f3727995'),
+          revision('digest-stub', '091d9bcc')
+        ]
+      }
+    )
+    expect([...result]).toEqual([])
+  })
+
+  // A cache copy parked at the lock's own revision is not an anchor either —
+  // the command only writes the canonical, which is still drifted.
+  it('ignores a plugin-cache copy that matches the lock', () => {
+    const result = convergableSkillNames(
+      [
+        placement('orca-linear', 'digest-pre-stub'),
+        placement('orca-linear', 'digest-stub', 'plugin-cache')
+      ],
+      new Map([['orca-linear', '091d9bcc']]),
+      {
+        'orca-linear': [
+          revision('digest-pre-stub', 'f3727995'),
+          revision('digest-stub', '091d9bcc')
+        ]
+      }
+    )
+    expect([...result]).toEqual([])
   })
 
   it('judges each locked skill independently', () => {
