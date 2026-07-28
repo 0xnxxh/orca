@@ -1057,8 +1057,12 @@ export class AgentHookServer {
     body: unknown,
     original: EnrichedAgentHookEventPayload
   ): void {
+    // Why: a nested non-codex CLI inherits ORCA_PANE_KEY, so clearing here would silently end a live codex poll.
+    if (source !== 'codex') {
+      return
+    }
     this.clearCodexSubagentPoll(original.paneKey)
-    if (source !== 'codex' || !hasCodexTranscriptSubagents(this.state, original.paneKey)) {
+    if (!hasCodexTranscriptSubagents(this.state, original.paneKey)) {
       return
     }
     const timer = setTimeout(() => {
