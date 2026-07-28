@@ -281,6 +281,61 @@ class MobileWebPackageStoreTest {
   }
 
   @Test
+  fun rejectsOversizedPersistedFiles() {
+    val root = temporary.newFolder()
+    val store = testStore(root)
+    val fixture = packageFixture()
+    stagePackage(store, "paired-host", fixture)
+    val session = store.openSession("paired-host", fixture.buildId, 1)
+    store.markSessionHealthy(session.getValue("sessionId"))
+    val hostRoot = File(root, sha256Hex("paired-host".toByteArray()))
+    val generationRoot = File(hostRoot, "generations/${fixture.buildId}")
+    val manifest = File(generationRoot, "manifest.json")
+    val canonicalManifest = File(generationRoot, "canonical-manifest.json")
+    val document = File(generationRoot, "index.html")
+
+    manifest.writeBytes(ByteArray(256 * 1024 + 1) { 0x20 })
+    assertEquals(
+      "mobile_web_generation_invalid",
+      assertThrows(IllegalArgumentException::class.java) {
+        store.openSession("paired-host", fixture.buildId, 1)
+      }.message
+    )
+    manifest.writeText(fixture.manifest, Charsets.UTF_8)
+
+    canonicalManifest.writeBytes(ByteArray(256 * 1024 + 1) { 0x20 })
+    assertEquals(
+      "mobile_web_generation_invalid",
+      assertThrows(IllegalArgumentException::class.java) {
+        store.openSession("paired-host", fixture.buildId, 1)
+      }.message
+    )
+    canonicalManifest.writeText(fixture.canonical, Charsets.UTF_8)
+
+    document.writeBytes(ByteArray(fixture.bytes.size + 1))
+    assertEquals(
+      "mobile_web_generation_invalid",
+      assertThrows(IllegalArgumentException::class.java) {
+        store.readAsset(session.getValue("sessionId"), "index.html")
+      }.message
+    )
+    assertEquals(
+      "mobile_web_generation_invalid",
+      assertThrows(IllegalArgumentException::class.java) {
+        store.openSession("paired-host", fixture.buildId, 1)
+      }.message
+    )
+
+    File(hostRoot, "activation.json").writeBytes(ByteArray(1025) { 0x20 })
+    assertEquals(
+      "mobile_web_activation_invalid",
+      assertThrows(IllegalArgumentException::class.java) {
+        store.openSession("paired-host", null, 1)
+      }.message
+    )
+  }
+
+  @Test
   fun activatesAndRecoversThePreviousVerifiedGeneration() {
     val root = temporary.newFolder()
     val store = testStore(root)

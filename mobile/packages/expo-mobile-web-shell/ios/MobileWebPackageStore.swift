@@ -5,6 +5,7 @@ import Security
 private let chunkByteLimit = 48 * 1024
 private let chunkBase64CharacterLimit = ((chunkByteLimit + 2) / 3) * 4
 private let manifestJsonByteLimit = 256 * 1024
+private let activationJsonByteLimit = 1024
 private let assetByteLimit = 10 * 1024 * 1024
 private let sha256Pattern = "^[a-f0-9]{64}$"
 private let safePathPattern = "^[A-Za-z0-9._/-]+$"
@@ -221,7 +222,11 @@ final class MobileWebPackageStore {
         throw MobileWebStoreError("mobile_web_stage_asset_unknown")
       }
       let file = assetUrl(root: stage.root, path: path)
-      let bytes = try Data(contentsOf: file, options: .mappedIfSafe)
+      let bytes = try readMobileWebFile(
+        file,
+        byteLimit: asset.byteLength,
+        overflowCode: "mobile_web_stage_asset_invalid"
+      )
       guard bytes.count == asset.byteLength, sha256Hex(bytes) == asset.sha256 else {
         throw MobileWebStoreError("mobile_web_stage_asset_invalid")
       }
@@ -441,7 +446,11 @@ final class MobileWebPackageStore {
       let file = assetUrl(root: session.root, path: asset.path)
       let data: Data
       do {
-        data = try Data(contentsOf: file, options: .mappedIfSafe)
+        data = try readMobileWebFile(
+          file,
+          byteLimit: asset.byteLength,
+          overflowCode: "mobile_web_generation_invalid"
+        )
       } catch {
         throw MobileWebStoreError("mobile_web_generation_invalid")
       }
@@ -592,8 +601,11 @@ final class MobileWebPackageStore {
     manifest: MobileWebManifestRecord
   ) throws {
     for asset in manifest.assets.values {
-      let bytes = try Data(
-        contentsOf: assetUrl(root: root, path: asset.path), options: .mappedIfSafe)
+      let bytes = try readMobileWebFile(
+        assetUrl(root: root, path: asset.path),
+        byteLimit: asset.byteLength,
+        overflowCode: "mobile_web_generation_invalid"
+      )
       guard bytes.count == asset.byteLength, sha256Hex(bytes) == asset.sha256 else {
         throw MobileWebStoreError("mobile_web_generation_invalid")
       }
@@ -602,14 +614,22 @@ final class MobileWebPackageStore {
 
   private func verifyGeneration(_ root: URL) throws -> MobileWebManifestRecord {
     do {
-      let manifestJson = try String(
-        contentsOf: root.appendingPathComponent("manifest.json"),
-        encoding: .utf8
+      let manifestData = try readMobileWebFile(
+        root.appendingPathComponent("manifest.json"),
+        byteLimit: manifestJsonByteLimit,
+        overflowCode: "mobile_web_generation_invalid"
       )
-      let canonicalManifestJson = try String(
-        contentsOf: root.appendingPathComponent("canonical-manifest.json"),
-        encoding: .utf8
+      let canonicalManifestData = try readMobileWebFile(
+        root.appendingPathComponent("canonical-manifest.json"),
+        byteLimit: manifestJsonByteLimit,
+        overflowCode: "mobile_web_generation_invalid"
       )
+      guard
+        let manifestJson = String(data: manifestData, encoding: .utf8),
+        let canonicalManifestJson = String(data: canonicalManifestData, encoding: .utf8)
+      else {
+        throw MobileWebStoreError("mobile_web_generation_invalid")
+      }
       let manifest = try parseManifest(
         manifestJson: manifestJson,
         canonicalManifestJson: canonicalManifestJson
@@ -623,7 +643,11 @@ final class MobileWebPackageStore {
 
   private func readActivation(hostRoot: URL) throws -> MobileWebActivationRecord {
     do {
-      let data = try Data(contentsOf: hostRoot.appendingPathComponent("activation.json"))
+      let data = try readMobileWebFile(
+        hostRoot.appendingPathComponent("activation.json"),
+        byteLimit: activationJsonByteLimit,
+        overflowCode: "mobile_web_activation_invalid"
+      )
       let activation = try JSONDecoder().decode(MobileWebActivationRecord.self, from: data)
       guard
         isMobileWebSha256(activation.active),
@@ -894,6 +918,32 @@ private func storageError(_ error: Error, fallback: String) -> MobileWebStoreErr
   if let storeError = error as? MobileWebStoreError { return storeError }
   let code = isStorageUnavailable(error) ? "mobile_web_cache_storage_unavailable" : fallback
   return MobileWebStoreError(code)
+}
+
+private func readMobileWebFile(
+  _ url: URL,
+  byteLimit: Int,
+  overflowCode: String
+) throws -> Data {
+  let handle = try FileHandle(forReadingFrom: url)
+  defer { try? handle.close() }
+  var data = Data()
+  data.reserveCapacity(byteLimit + 1)
+  while data.count <= byteLimit {
+    let remaining = byteLimit + 1 - data.count
+    guard
+      remaining > 0,
+      let chunk = try handle.read(upToCount: min(64 * 1024, remaining)),
+      !chunk.isEmpty
+    else {
+      break
+    }
+    data.append(chunk)
+  }
+  guard data.count <= byteLimit else {
+    throw MobileWebStoreError(overflowCode)
+  }
+  return data
 }
 
 private func mobileWebAvailableStorageBytes(_ root: URL) -> Int64? {

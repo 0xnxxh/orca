@@ -498,7 +498,7 @@ IDs, and unrelated provider state never enter the page result.
 | Bridge request/subscription caps | Implemented and focused-test passing            | 640 KiB envelope, 64 pending requests, 32 subscriptions, per-operation byte/concurrency/rate grants                                          |
 | Package read concurrency         | Implemented and focused-test passing            | Four concurrent 48 KiB reads / 192 KiB in flight per connection                                                                              |
 | Terminal stream memory           | Implemented and focused-test passing            | 16 KiB input, 64 KiB output batch, 256 KiB outstanding, 2 MiB snapshot                                                                       |
-| Native verified cache            | Implemented and native-policy-test passing      | 128 MiB per host, 512 MiB global, 16 MiB minimum free; active/session generations are protected; activation hashes are exact-type validated  |
+| Native verified cache            | Implemented and native-policy-test passing      | 128 MiB per host, 512 MiB global, 16 MiB minimum free; protected generations; bounded persisted manifests, activation metadata, and assets   |
 
 Manifest and package-RPC validation now consume the same exact asset-path
 predicate. Swift additionally requires its regular-expression match range to
@@ -516,6 +516,11 @@ The manifest's extension/MIME/role table is now authoritative for source-parity
 tests over both native maps. Each runtime also passes the same eight valid and
 eight mismatched metadata cases, including case, charset, role, extension, and
 hash mutations.
+Persisted primary and canonical manifests now use 256 KiB bounded readers,
+activation records use a 1 KiB bounded reader, and assets use their declared
+length on both native platforms. Each path reads only one overflow byte before
+failing with its stable error, and mirrored Swift/Kotlin oversized-file faults
+pass.
 
 ## Next Inventory Action
 

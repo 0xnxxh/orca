@@ -1556,9 +1556,12 @@ copy.
   Swift and Kotlin maps to match it, and mirrored valid/mutated corpora reject
   case, charset, role, extension, and hash mismatches. The packager and verifier
   consume one document-CSP contract, and source tests require the iOS and
-  Android response policies to match its exact directive sequence. Broader
-  generated mutation, CSP behavior, and persisted-cache metadata fuzzing
-  remains open.
+  Android response policies to match its exact directive sequence. Persisted
+  primary/canonical manifests now read at most 256 KiB plus one overflow byte,
+  activation metadata at most 1 KiB plus one, and assets at most their declared
+  length plus one on both platforms. Mirrored Swift/Kotlin faults preserve the
+  stable generation and activation errors. Broader generated mutation, CSP
+  behavior, and cache metadata fuzzing remains open.
 - [ ] Fuzz bridge envelopes, schemas, sizes, IDs, ordering, cancellation, and
       subscription lifecycle.
 - [ ] Attempt cross-host, cross-build, cross-workspace, and cross-session races.
@@ -1576,7 +1579,9 @@ copy.
   response accounting to 4,000 characters, 100 nodes, 20 collection items,
   128-character keys, and five levels of nesting. Manifest, task-table,
   workspace, source-control, file, terminal, browser-frame, and package limits
-  have focused coverage; full fuzzing and sustained allocation evidence remain.
+  have focused coverage. Native persisted manifests, activation records, and
+  assets are bounded before whole-file allocation; full fuzzing and sustained
+  allocation evidence remain.
 - [ ] Complete an independent threat-model and adversarial review.
 - [ ] Resolve every high-severity finding before cutover.
 

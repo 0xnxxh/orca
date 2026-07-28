@@ -5,6 +5,7 @@ import android.system.Os
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.security.MessageDigest
@@ -14,6 +15,7 @@ import java.util.Base64
 private const val CHUNK_BYTE_LIMIT = 48 * 1024
 private const val CHUNK_BASE64_CHARACTER_LIMIT = ((CHUNK_BYTE_LIMIT + 2) / 3) * 4
 private const val MANIFEST_JSON_BYTE_LIMIT = 256 * 1024
+private const val ACTIVATION_JSON_BYTE_LIMIT = 1024
 private const val ASSET_BYTE_LIMIT = 10 * 1024 * 1024
 private val SHA256_PATTERN = Regex("^[a-f0-9]{64}$")
 private val SAFE_PATH_PATTERN = Regex("^[A-Za-z0-9._/-]+$")
@@ -164,7 +166,12 @@ internal class MobileWebPackageStore internal constructor(
       ?: throw IllegalArgumentException("mobile_web_stage_asset_unknown")
     require(path !in stage.finishedPaths) { "mobile_web_stage_asset_unknown" }
     val file = assetFile(stage.root, path)
-    require(file.length() == asset.byteLength.toLong() && sha256Hex(file.readBytes()) == asset.sha256) {
+    val bytes = readMobileWebFile(
+      file,
+      asset.byteLength,
+      "mobile_web_stage_asset_invalid"
+    )
+    require(bytes.size == asset.byteLength && sha256Hex(bytes) == asset.sha256) {
       "mobile_web_stage_asset_invalid"
     }
     FileOutputStream(file, true).use { it.fd.sync() }
@@ -307,7 +314,7 @@ internal class MobileWebPackageStore internal constructor(
       ?: throw IllegalArgumentException("mobile_web_asset_unavailable")
     val file = assetFile(session.root, asset.path)
     val bytes = try {
-      file.readBytes()
+      readMobileWebFile(file, asset.byteLength, "mobile_web_generation_invalid")
     } catch (_: Exception) {
       throw IllegalArgumentException("mobile_web_generation_invalid")
     }
@@ -420,7 +427,12 @@ internal class MobileWebPackageStore internal constructor(
   private fun verifyCommittedGeneration(root: File, manifest: MobileWebManifestRecord) {
     for (asset in manifest.assets.values) {
       val file = assetFile(root, asset.path)
-      require(file.length() == asset.byteLength.toLong() && sha256Hex(file.readBytes()) == asset.sha256) {
+      val bytes = readMobileWebFile(
+        file,
+        asset.byteLength,
+        "mobile_web_generation_invalid"
+      )
+      require(bytes.size == asset.byteLength && sha256Hex(bytes) == asset.sha256) {
         "mobile_web_generation_invalid"
       }
     }
@@ -428,8 +440,16 @@ internal class MobileWebPackageStore internal constructor(
 
   private fun verifyGeneration(root: File): MobileWebManifestRecord = try {
     val manifest = parseManifest(
-      File(root, "manifest.json").readText(Charsets.UTF_8),
-      File(root, "canonical-manifest.json").readText(Charsets.UTF_8)
+      readMobileWebFile(
+        File(root, "manifest.json"),
+        MANIFEST_JSON_BYTE_LIMIT,
+        "mobile_web_generation_invalid"
+      ).toString(Charsets.UTF_8),
+      readMobileWebFile(
+        File(root, "canonical-manifest.json"),
+        MANIFEST_JSON_BYTE_LIMIT,
+        "mobile_web_generation_invalid"
+      ).toString(Charsets.UTF_8)
     )
     verifyCommittedGeneration(root, manifest)
     manifest
@@ -438,7 +458,13 @@ internal class MobileWebPackageStore internal constructor(
   }
 
   private fun readActivation(hostRoot: File): Pair<String, String?> = try {
-    val value = parseJsonObject(File(hostRoot, "activation.json").readText(Charsets.UTF_8))
+    val value = parseJsonObject(
+      readMobileWebFile(
+        File(hostRoot, "activation.json"),
+        ACTIVATION_JSON_BYTE_LIMIT,
+        "mobile_web_activation_invalid"
+      ).toString(Charsets.UTF_8)
+    )
     require(value.keys().asSequence().toSet().let { it == setOf("active") || it == setOf("active", "previous") })
     val active = strictJsonString(value, "active") ?: ""
     val previous = if (value.has("previous") && !value.isNull("previous")) {
@@ -675,6 +701,24 @@ private fun storageException(error: Exception, fallback: String): IllegalArgumen
   return IllegalArgumentException(
     if (isStorageUnavailable(error)) "mobile_web_cache_storage_unavailable" else fallback
   )
+}
+
+private fun readMobileWebFile(
+  file: File,
+  byteLimit: Int,
+  overflowCode: String
+): ByteArray {
+  val bytes = ByteArray(byteLimit + 1)
+  var offset = 0
+  FileInputStream(file).use { input ->
+    while (offset < bytes.size) {
+      val read = input.read(bytes, offset, bytes.size - offset)
+      if (read <= 0) break
+      offset += read
+    }
+  }
+  require(offset <= byteLimit) { overflowCode }
+  return bytes.copyOf(offset)
 }
 
 private fun isStorageUnavailable(error: Throwable?): Boolean {

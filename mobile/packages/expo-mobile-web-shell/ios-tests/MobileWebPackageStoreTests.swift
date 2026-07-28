@@ -22,6 +22,7 @@ enum MobileWebPackageStoreTests {
     try deletesInterruptedStage(root: root.appendingPathComponent("interrupted"))
     try rejectsOversizedEncodedChunks(root: root.appendingPathComponent("chunk-limit"))
     try rejectsIncompleteAndCorruptGeneration(root: root.appendingPathComponent("corrupt"))
+    try rejectsOversizedPersistedFiles(root: root.appendingPathComponent("persisted-limits"))
     try activatesAndRecoversPreviousGeneration(root: root.appendingPathComponent("rollback"))
     try fallsBackFromCorruptActiveGeneration(root: root.appendingPathComponent("corrupt-active"))
     try rejectsNumericActivationFields(root: root.appendingPathComponent("activation-types"))
@@ -360,6 +361,79 @@ enum MobileWebPackageStoreTests {
         _ = try store.openSession(
           hostIdentity: "paired-host",
           buildId: fixture.buildId,
+          bridgeVersion: 1
+        )
+      }
+    )
+  }
+
+  private static func rejectsOversizedPersistedFiles(root: URL) throws {
+    let store = MobileWebPackageStore(cacheRoot: root)
+    let fixture = try packageFixture()
+    try stagePackage(store: store, host: "paired-host", fixture: fixture)
+    let session = try store.openSession(
+      hostIdentity: "paired-host",
+      buildId: fixture.buildId,
+      bridgeVersion: 1
+    )
+    _ = try store.markSessionHealthy(sessionId: session["sessionId"]!)
+    let hostRoot = root.appendingPathComponent(sha256Hex(Data("paired-host".utf8)))
+    let generationRoot =
+      hostRoot
+      .appendingPathComponent("generations")
+      .appendingPathComponent(fixture.buildId)
+    let manifest = generationRoot.appendingPathComponent("manifest.json")
+    let canonicalManifest = generationRoot.appendingPathComponent("canonical-manifest.json")
+    let document = generationRoot.appendingPathComponent("index.html")
+
+    try Data(repeating: 0x20, count: 256 * 1024 + 1).write(to: manifest)
+    precondition(
+      throwsCode("mobile_web_generation_invalid") {
+        _ = try store.openSession(
+          hostIdentity: "paired-host",
+          buildId: fixture.buildId,
+          bridgeVersion: 1
+        )
+      }
+    )
+    try Data(fixture.manifest.utf8).write(to: manifest)
+
+    try Data(repeating: 0x20, count: 256 * 1024 + 1).write(to: canonicalManifest)
+    precondition(
+      throwsCode("mobile_web_generation_invalid") {
+        _ = try store.openSession(
+          hostIdentity: "paired-host",
+          buildId: fixture.buildId,
+          bridgeVersion: 1
+        )
+      }
+    )
+    try Data(fixture.canonical.utf8).write(to: canonicalManifest)
+
+    try Data(repeating: 0, count: fixture.bytes.count + 1).write(to: document)
+    precondition(
+      throwsCode("mobile_web_generation_invalid") {
+        _ = try store.readAsset(sessionId: session["sessionId"]!, path: "index.html")
+      }
+    )
+    precondition(
+      throwsCode("mobile_web_generation_invalid") {
+        _ = try store.openSession(
+          hostIdentity: "paired-host",
+          buildId: fixture.buildId,
+          bridgeVersion: 1
+        )
+      }
+    )
+
+    try Data(repeating: 0x20, count: 1025).write(
+      to: hostRoot.appendingPathComponent("activation.json")
+    )
+    precondition(
+      throwsCode("mobile_web_activation_invalid") {
+        _ = try store.openSession(
+          hostIdentity: "paired-host",
+          buildId: nil,
           bridgeVersion: 1
         )
       }

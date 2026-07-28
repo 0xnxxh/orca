@@ -176,6 +176,11 @@ locally, and the mirrored native SHA corpus enforces it on Swift and Kotlin.
 The manifest now exports the exact extension/MIME/role map. Source-parity tests
 require both native maps to match, and all three runtimes pass the same eight
 valid and eight mutated metadata cases.
+Both native stores now read persisted manifests with the 256 KiB ceiling,
+activation metadata with a 1 KiB ceiling, and assets with their exact declared
+length plus one overflow byte. Oversized files fail with the existing stable
+generation or activation error before whole-file allocation; mirrored Swift
+and Kotlin fault suites pass.
 The remaining security work below is release-app corpus testing, fuzzing,
 cross-scope races, privacy/authorization audit, and independent review.
 
@@ -228,14 +233,19 @@ cross-scope races, privacy/authorization audit, and independent review.
       hash, Git object, bridge/session ID, domain token, and base64 schemas also
       require exact full-string matches; native Swift/Kotlin SHA corpora pass. A
       shared extension/MIME/role map now has exact native source parity and
-      mirrored valid/mutated coverage. A fresh exact-app rerun, generated
-      mutation, and the other listed boundaries remain.
+      mirrored valid/mutated coverage. Persisted primary/canonical manifests,
+      activation metadata, and assets now use bounded `limit + 1` readers on
+      both platforms, with mirrored oversized-file faults and stable errors. A
+      fresh exact-app rerun, generated mutation, and the other listed
+      boundaries remain.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,
       reconnect, process-loss, and host-removal races.
 - [ ] Verify no credential or privileged host identity reaches URLs, DOM state,
       page storage, cache assets, logs, diagnostics, analytics, or fixtures.
 - [ ] Verify Desktop reauthorizes every mutation and all resource limits apply
-      before allocation and during assembly.
+      before allocation and during assembly. Persisted native manifests,
+      activation metadata, and assets now have pre-allocation read ceilings;
+      bridge and full generated allocation fuzzing remain.
 - [ ] Complete an independent threat-model and adversarial review.
 - [ ] Resolve every high-severity security finding.
 

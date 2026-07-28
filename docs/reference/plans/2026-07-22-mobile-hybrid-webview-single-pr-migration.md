@@ -2735,8 +2735,12 @@ extension/MIME/role map; source-parity tests require both native maps to match
 it, and mirrored valid/mutated corpora reject case, charset, role, extension,
 and hash mismatches. The RNW packager and verifier consume one document-CSP
 contract, and source tests require both native response policies to match its
-exact directive sequence. Generated mutation and the remaining CSP/cache corpus
-are still required.
+exact directive sequence. Both native stores now cap persisted primary and
+canonical manifest reads at 256 KiB, activation records at 1 KiB, and asset
+reads at the manifest-declared length before hashing or parsing. Each reader
+consumes at most one overflow byte, and mirrored Swift/Kotlin faults preserve
+the stable generation and activation errors. Generated mutation and the
+remaining CSP/cache corpus are still required.
 
 ## App Store Gate
 
