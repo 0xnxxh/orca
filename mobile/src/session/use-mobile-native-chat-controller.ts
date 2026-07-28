@@ -73,6 +73,9 @@ export type MobileNativeChatController = {
     images?: string[],
     deadline?: number
   ) => Promise<MobileNativeChatSendOutcome>
+  /** Launch-context text still parked on the agent's TUI input line, or null.
+   *  Image sends read it to size their leading clear (one Ctrl+U per line). */
+  readSeededLaunchDraft: () => string | null
 }
 
 /** Owns mobile native-chat state and teardown outside the already dense session
@@ -134,6 +137,7 @@ export function useMobileNativeChatController(args: {
     setComposerText: setChatComposerText,
     pending: chatPending,
     captureSendOrigin,
+    readSeededLaunchDraft,
     clearDraftForSend,
     restoreRejectedDraft,
     acceptSend,
@@ -243,6 +247,7 @@ export function useMobileNativeChatController(args: {
     handleRef: activeHandleRef,
     deviceTokenRef,
     captureSendOrigin,
+    readSeededLaunchDraft,
     clearDraftForSend,
     restoreRejectedDraft,
     acceptSend,
@@ -278,6 +283,7 @@ export function useMobileNativeChatController(args: {
     loadNativeChatFiles,
     handleNativeChatQuestionAnswer,
     handleNativeChatSend,
-    handleNativeChatSendWithOutcome
+    handleNativeChatSendWithOutcome,
+    readSeededLaunchDraft
   }
 }

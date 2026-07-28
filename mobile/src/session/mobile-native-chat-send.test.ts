@@ -8,6 +8,7 @@ import {
   sendMobileNativeChatMessage,
   sendMobileNativeChatMessageWithOutcome
 } from './mobile-native-chat-send'
+import { buildAgentTuiClearInputForText } from '../../../src/shared/agent-tui-input-clear'
 
 function clientWithResponse(response: unknown): RpcClient {
   return {
@@ -283,5 +284,70 @@ describe('sendMobileNativeChatMessage', () => {
     const budget = openMobileNativeChatSendBudget() - Date.now()
     expect(budget).toBeGreaterThan(MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS - 1_000)
     expect(budget).toBeLessThanOrEqual(MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS)
+  })
+})
+
+describe('clearing a parked multi-line launch draft', () => {
+  const accepted = {
+    id: 'request',
+    ok: true,
+    result: { send: { accepted: true } },
+    _meta: { runtimeId: 'runtime' }
+  }
+  const sentText = (client: RpcClient): string =>
+    (vi.mocked(client.sendRequest).mock.calls[0]![1] as { text: string }).text
+
+  it('uses the caller-sized burst instead of one Ctrl+U', async () => {
+    // One Ctrl+U kills only the LAST line, so the draft's earlier lines would
+    // survive and glue onto this message.
+    const client = clientWithResponse(accepted)
+    const clearInput = buildAgentTuiClearInputForText('Linked Linear issue: ABC-123\nhttps://x')
+    await sendMobileNativeChatMessage({
+      client,
+      terminal: 'term',
+      text: 'hello',
+      clearInputFirst: true,
+      clearInput
+    })
+    expect(sentText(client)).toBe(`${clearInput}hello`)
+    expect(sentText(client)).not.toBe(`\x15hello`)
+  })
+
+  it('rides the clear in the SAME write as the body so nothing can land between', async () => {
+    const client = clientWithResponse(accepted)
+    const clearInput = buildAgentTuiClearInputForText('a\nb')
+    await sendMobileNativeChatMessage({
+      client,
+      terminal: 'term',
+      text: 'body',
+      clearInputFirst: true,
+      clearInput
+    })
+    expect(client.sendRequest).toHaveBeenCalledTimes(1)
+    expect(sentText(client).endsWith('body')).toBe(true)
+  })
+
+  it('falls back to a single Ctrl+U when no draft is parked', async () => {
+    const client = clientWithResponse(accepted)
+    await sendMobileNativeChatMessage({
+      client,
+      terminal: 'term',
+      text: 'hello',
+      clearInputFirst: true
+    })
+    expect(sentText(client)).toBe('\x15hello')
+  })
+
+  it('never prefixes a clear when the caller already pasted (image sends)', async () => {
+    // A second clear here would wipe the image that was just pasted.
+    const client = clientWithResponse(accepted)
+    await sendMobileNativeChatMessage({
+      client,
+      terminal: 'term',
+      text: 'caption',
+      clearInputFirst: false,
+      clearInput: buildAgentTuiClearInputForText('a\nb')
+    })
+    expect(sentText(client)).toBe('caption')
   })
 })

@@ -5,9 +5,11 @@ import { getSettingsForAgentTabRuntimeOwner } from '@/lib/agent-paste-draft'
 import {
   sendNativeChatMessage,
   sendNativeChatMessageWithImageAttachments,
+  submitNativeChatDraftInPlace,
   submitNativeChatPrompt
 } from './native-chat-runtime-send'
 import type { NativeChatSendHandle } from './native-chat-runtime-send'
+import { resolveNativeChatLaunchDraftSend } from './native-chat-launch-draft-send'
 import { getVerifiedNativeChatCommands } from '../../../../shared/native-chat-agent-profiles'
 import { emitNativeChatMessageSent } from '@/lib/native-chat-telemetry'
 import {
@@ -250,21 +252,37 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
         return
       }
       const classification = classifySend(text)
+      // Why: the agent's input line may still hold the launch-context draft Orca
+      // injected at launch. When it does, the buffer already holds this exact
+      // message, so the send is Enter alone — that cannot concatenate and makes
+      // a multi-line draft submit as one turn. Otherwise the line must be
+      // cleared line-by-line before the body (see agent-tui-input-clear.ts).
+      const { plan: launchDraftPlan, sendOptions } = resolveNativeChatLaunchDraftSend({
+        launchDraft,
+        launchDraftResolved,
+        agent,
+        text,
+        hasImages: imagePaths.length > 0,
+        readScreen: () => readTerminalScreen?.()
+      })
       let pendingHandle: NativeChatSendHandle | null = null
       // Why: image attachments take the attachment send path even for a
       // command/unknown send, otherwise `clearImageAttachments()` below drops
       // them silently when the text starts with the agent's slash/skill prefix.
-      if (classification !== 'chat' && imagePaths.length === 0) {
-        pendingHandle = sendNativeChatMessage(target.settings, target.ptyId, text)
+      if (launchDraftPlan.kind === 'submit-in-place') {
+        pendingHandle = submitNativeChatDraftInPlace(target.settings, target.ptyId)
+      } else if (classification !== 'chat' && imagePaths.length === 0) {
+        pendingHandle = sendNativeChatMessage(target.settings, target.ptyId, text, sendOptions)
       } else if (imagePaths.length > 0) {
         pendingHandle = sendNativeChatMessageWithImageAttachments(
           target.settings,
           target.ptyId,
           text,
-          imagePaths
+          imagePaths,
+          sendOptions
         )
       } else if (text.trim().length > 0) {
-        pendingHandle = sendNativeChatMessage(target.settings, target.ptyId, text)
+        pendingHandle = sendNativeChatMessage(target.settings, target.ptyId, text, sendOptions)
       } else {
         submitNativeChatPrompt(target.settings, target.ptyId)
       }
@@ -296,8 +314,9 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
       clearSkillOrigin()
       clearImageAttachments()
       setNotice(null)
-      // Why: the send path pre-clears the TUI input line, so any launch-draft
-      // prefill still parked there is gone — retire the composer seed with it.
+      // Why: the send either submitted the parked prefill in place or cleared the
+      // TUI input line before its body — either way it is gone, so retire the
+      // composer seed with it.
       useAppStore.getState().clearNativeChatLaunchDraft(terminalTabId)
     }, [
       agent,
@@ -308,6 +327,9 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
       imageAttachments,
       disabled,
       isDispatchingSessionOption,
+      launchDraft,
+      launchDraftResolved,
+      readTerminalScreen,
       resolveTarget,
       onOptimisticSend,
       onSlashCommand,

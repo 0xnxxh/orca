@@ -35,6 +35,7 @@ vi.mock('./use-mobile-native-chat-drafts', () => ({
       setComposerText: vi.fn(),
       pending: [],
       captureSendOrigin,
+      readSeededLaunchDraft: () => null,
       clearDraftForSend,
       restoreRejectedDraft,
       acceptSend,

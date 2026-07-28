@@ -12,14 +12,11 @@ export function seedNativeChatLaunchDraftForAgentTab(args: {
   agent: TuiAgent
   text: string
 }): void {
-  // Single-line only: the chat send pre-clears the TUI with Ctrl+U
-  // (kill-to-start-of-LINE), so a multi-line prefill (e.g. a Linear issue block)
-  // would leave earlier lines to glue onto the next message.
-  if (
-    args.text.trim().length === 0 ||
-    args.text.includes('\n') ||
-    !isNativeChatSupportedAgent(args.agent)
-  ) {
+  // Multi-line drafts mirror too: the chat send no longer pastes on top of the
+  // parked prefill. It submits the TUI buffer in place when the composer still
+  // holds exactly what was injected, and otherwise clears every line before its
+  // body (agent-tui-input-clear.ts), so earlier lines cannot glue onto the message.
+  if (args.text.trim().length === 0 || !isNativeChatSupportedAgent(args.agent)) {
     return
   }
   useAppStore.getState().seedNativeChatLaunchDraft({

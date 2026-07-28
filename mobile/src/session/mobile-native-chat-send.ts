@@ -11,6 +11,11 @@ type MobileTerminalClient = {
 // Why: Ctrl+U kills the TUI's current input line (desktop native chat sends the
 // same byte before its body), so a launch-context prefill parked there cannot
 // concatenate with a mobile chat message. The host writes text bytes verbatim.
+//
+// One Ctrl+U clears ONE logical line. A parked launch draft is routinely
+// multi-line (every Linear block is), so callers that know one is parked pass
+// `clearInput` built by buildAgentTuiClearInputForText — see
+// src/shared/agent-tui-input-clear.ts for the measured 2N-1 law.
 const CLEAR_UNSUBMITTED_INPUT = '\x15'
 
 type MobileNativeChatSendArgs = {
@@ -19,6 +24,9 @@ type MobileNativeChatSendArgs = {
   text: string
   enter?: boolean
   clearInputFirst?: boolean
+  /** Bytes used to clear the input line. Defaults to a single Ctrl+U, which is
+   *  enough only when the line cannot be holding a multi-line parked draft. */
+  clearInput?: string
   mobileClient?: MobileTerminalClient
   /** Shared budget for a whole user action (heal → paste → text, or one selector's
    *  keystroke sequence). Omit to give this write its own full budget. */
@@ -57,7 +65,11 @@ export async function sendMobileNativeChatMessageWithOutcome(
       'terminal.send',
       {
         terminal: args.terminal,
-        text: args.clearInputFirst ? `${CLEAR_UNSUBMITTED_INPUT}${args.text}` : args.text,
+        // The clear rides in the SAME write as the body, so the TUI consumes it
+        // first by stream order — no window for anything to land between them.
+        text: args.clearInputFirst
+          ? `${args.clearInput ?? CLEAR_UNSUBMITTED_INPUT}${args.text}`
+          : args.text,
         enter: args.enter ?? true,
         ...(args.mobileClient ? { client: args.mobileClient } : {})
       },

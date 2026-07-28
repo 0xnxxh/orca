@@ -7,6 +7,7 @@ import {
 } from './mobile-native-chat-send'
 import { healMobileNativeChatStaleInput } from './mobile-native-chat-stale-input'
 import type { MobileNativeChatSendOrigin } from './use-mobile-native-chat-drafts'
+import { buildAgentTuiClearInputForText } from '../../../src/shared/agent-tui-input-clear'
 
 export type MobileNativeChatMessageSend = {
   /** Composer send that syncs the draft (clear on send, restore on rejection). */
@@ -32,6 +33,9 @@ export function useMobileNativeChatMessageSend(args: {
   handleRef: MutableRefObject<string | null>
   deviceTokenRef: MutableRefObject<string | null>
   captureSendOrigin: (text: string) => MobileNativeChatSendOrigin | null
+  /** Launch-context text Orca parked on the agent's TUI input line, or null. Read
+   *  at send time so the pre-clear can be sized to every line it occupies. */
+  readSeededLaunchDraft: () => string | null
   clearDraftForSend: (origin: MobileNativeChatSendOrigin, text: string) => void
   restoreRejectedDraft: (origin: MobileNativeChatSendOrigin, text: string) => void
   acceptSend: (origin: MobileNativeChatSendOrigin, text: string, images?: string[]) => void
@@ -48,6 +52,7 @@ export function useMobileNativeChatMessageSend(args: {
     handleRef,
     deviceTokenRef,
     captureSendOrigin,
+    readSeededLaunchDraft,
     clearDraftForSend,
     restoreRejectedDraft,
     acceptSend,
@@ -95,10 +100,20 @@ export function useMobileNativeChatMessageSend(args: {
       if (syncComposer) {
         clearDraftForSend(origin, text)
       }
+      // Why: a parked launch draft is routinely multi-line, and one Ctrl+U clears
+      // only one logical line. Size the clear to the text Orca injected, with
+      // slack — the user can also have typed into the TUI line directly, so that
+      // line count is a lower bound. Mobile cannot read the agent's screen, so
+      // there is no empty-line observable to confirm against here; the upper
+      // bound plus the atomic clear+body write is what makes it safe.
+      const seededLaunchDraft = readSeededLaunchDraft()
       const outcome = await sendMobileNativeChatMessageWithOutcome({
         client,
         terminal: handle,
         text,
+        ...(seededLaunchDraft
+          ? { clearInput: buildAgentTuiClearInputForText(seededLaunchDraft) }
+          : {}),
         // Why: pre-clear only when nothing was deliberately pasted first. The heal
         // above fires only for terminals a mobile image paste marked, so a desktop
         // launch-draft prefill parked on the input line would otherwise glue onto
@@ -141,6 +156,7 @@ export function useMobileNativeChatMessageSend(args: {
       handleRef,
       holdUnconfirmedSend,
       onSendError,
+      readSeededLaunchDraft,
       restoreRejectedDraft
     ]
   )
