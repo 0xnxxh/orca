@@ -200,6 +200,7 @@ describe('useDashboardPopoutBridge repo icon publishing', () => {
   // Longer than PUBLISH_THROTTLE_MS, so the next store change publishes on the
   // leading edge instead of parking on the trailing timer.
   const PAST_THROTTLE_MS = 1_000
+  const WITHIN_THROTTLE_MS = 50
   let root: Root
   let now = 0
   let nowSpy: ReturnType<typeof vi.spyOn>
@@ -218,6 +219,7 @@ describe('useDashboardPopoutBridge repo icon publishing', () => {
   })
 
   afterEach(async () => {
+    vi.useRealTimers()
     await act(async () => root.unmount())
     nowSpy.mockRestore()
   })
@@ -251,6 +253,26 @@ describe('useDashboardPopoutBridge repo icon publishing', () => {
     expect(mocks.publishSnapshot).toHaveBeenCalledTimes(2)
     expect(lastPublished()).not.toHaveProperty('repoIconsByRepoId')
     expect(lastPublished().generatedAt).toBe(now)
+  })
+
+  // A burst collapses onto the trailing timer, so that edge carries most of the
+  // republishes this PR exists to slim down.
+  it('omits the icon map on the throttled trailing republish', async () => {
+    await mountAndOpen()
+    // Date.now stays spied — only the throttle's timer is faked.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+
+    now += WITHIN_THROTTLE_MS
+    notifySnapshotInputsChanged()
+    expect(mocks.publishSnapshot).toHaveBeenCalledTimes(1)
+
+    now += PAST_THROTTLE_MS
+    act(() => {
+      vi.advanceTimersByTime(PAST_THROTTLE_MS)
+    })
+
+    expect(mocks.publishSnapshot).toHaveBeenCalledTimes(2)
+    expect(lastPublished()).not.toHaveProperty('repoIconsByRepoId')
   })
 
   it('resends the icon map when the pop-out asks for a fresh snapshot', async () => {
