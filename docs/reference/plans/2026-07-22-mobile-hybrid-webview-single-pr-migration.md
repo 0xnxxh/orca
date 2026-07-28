@@ -2714,8 +2714,11 @@ staging. The corpus found Android `JSONObject.optInt` string coercion and iOS
 `NSNumber`/`CFBoolean` integer bridging; both native parsers now require exact
 JSON scalar types. The shared chunk envelope also caps base64 at the exact
 65,536-character encoding of 48 KiB and rejects type confusion, noncanonical
-encoding, decoded-length mismatch, and extra fields. Generated mutation and the
-remaining path/MIME/CSP/cache corpus are still required.
+encoding, decoded-length mismatch, and extra fields. Native activation
+metadata now likewise requires string-typed active and previous hashes on both
+platforms; hash-shaped JSON numbers fail with
+`mobile_web_activation_invalid`. Generated mutation and the remaining
+path/MIME/CSP/cache corpus are still required.
 
 ## App Store Gate
 

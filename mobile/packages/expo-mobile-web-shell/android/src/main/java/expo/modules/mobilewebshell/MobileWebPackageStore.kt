@@ -419,21 +419,20 @@ internal class MobileWebPackageStore internal constructor(
     throw IllegalArgumentException("mobile_web_generation_invalid")
   }
 
-  private fun readActivation(hostRoot: File): Pair<String, String?> {
+  private fun readActivation(hostRoot: File): Pair<String, String?> = try {
     val value = parseJsonObject(File(hostRoot, "activation.json").readText(Charsets.UTF_8))
-    require(value.keys().asSequence().toSet().let { it == setOf("active") || it == setOf("active", "previous") }) {
-      "mobile_web_activation_invalid"
-    }
-    val active = value.optString("active")
+    require(value.keys().asSequence().toSet().let { it == setOf("active") || it == setOf("active", "previous") })
+    val active = strictJsonString(value, "active") ?: ""
     val previous = if (value.has("previous") && !value.isNull("previous")) {
-      value.optString("previous")
+      strictJsonString(value, "previous")
+        ?: throw IllegalArgumentException("mobile_web_activation_invalid")
     } else {
       null
     }
-    require(SHA256_PATTERN.matches(active) && (previous == null || SHA256_PATTERN.matches(previous))) {
-      "mobile_web_activation_invalid"
-    }
-    return active to previous
+    require(SHA256_PATTERN.matches(active) && (previous == null || SHA256_PATTERN.matches(previous)))
+    active to previous
+  } catch (_: Exception) {
+    throw IllegalArgumentException("mobile_web_activation_invalid")
   }
 
   private fun writeActivation(hostRoot: File, active: String, previous: String?) {

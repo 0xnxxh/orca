@@ -603,13 +603,17 @@ final class MobileWebPackageStore {
   }
 
   private func readActivation(hostRoot: URL) throws -> MobileWebActivationRecord {
-    let data = try Data(contentsOf: hostRoot.appendingPathComponent("activation.json"))
-    let activation = try JSONDecoder().decode(MobileWebActivationRecord.self, from: data)
-    guard isSha256(activation.active), activation.previous == nil || isSha256(activation.previous!)
-    else {
+    do {
+      let data = try Data(contentsOf: hostRoot.appendingPathComponent("activation.json"))
+      let activation = try JSONDecoder().decode(MobileWebActivationRecord.self, from: data)
+      guard isSha256(activation.active), activation.previous == nil || isSha256(activation.previous!)
+      else {
+        throw MobileWebStoreError("mobile_web_activation_invalid")
+      }
+      return activation
+    } catch {
       throw MobileWebStoreError("mobile_web_activation_invalid")
     }
-    return activation
   }
 
   private func writeActivation(_ activation: MobileWebActivationRecord, hostRoot: URL) throws {
