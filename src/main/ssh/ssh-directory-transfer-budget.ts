@@ -33,7 +33,9 @@ export const SSH_FOLDER_DOWNLOAD_LIMITS: SshDirectoryTransferLimits = {
 export const WINDOWS_SSH_UPLOAD_PACKAGE_MAX_BYTES = 48 * 1024 * 1024
 
 export class SshDirectoryTransferCapacityError extends Error {
-  constructor(readonly reason: 'entries' | 'depth' | 'path' | 'paths' | 'file' | 'files') {
+  constructor(
+    readonly reason: 'entries' | 'depth' | 'path' | 'paths' | 'file' | 'files' | 'package'
+  ) {
     super(`SSH directory transfer exceeds the ${reason} limit`)
     this.name = 'SshDirectoryTransferCapacityError'
   }
