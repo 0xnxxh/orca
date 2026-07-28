@@ -219,9 +219,11 @@ function registerTccPromptNoticeHandlers(mainWindow: BrowserWindow): void {
   activeTccPromptHandlerToken = handlerToken
   const consumeChannel = 'macosTccPrompts:consumePending'
   const acknowledgeChannel = 'macosTccPrompts:acknowledgePending'
+  const releaseChannel = 'macosTccPrompts:releasePending'
   const dismissChannel = 'macosTccPrompts:dismiss'
   ipcMain.removeHandler(consumeChannel)
   ipcMain.removeHandler(acknowledgeChannel)
+  ipcMain.removeHandler(releaseChannel)
   ipcMain.removeHandler(dismissChannel)
   const mainWebContents = mainWindow.webContents
   const ownsNotice = (event: IpcMainInvokeEvent): boolean =>
@@ -232,6 +234,11 @@ function registerTccPromptNoticeHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(acknowledgeChannel, (event, claimId: number) => {
     if (ownsNotice(event) && Number.isSafeInteger(claimId)) {
       acknowledgePendingTccPromptNotice(handlerToken, claimId)
+    }
+  })
+  ipcMain.handle(releaseChannel, (event, claimId: number) => {
+    if (ownsNotice(event) && Number.isSafeInteger(claimId)) {
+      releasePendingTccPromptNotice(handlerToken, claimId)
     }
   })
   ipcMain.handle(dismissChannel, (event) => {
@@ -247,6 +254,7 @@ function registerTccPromptNoticeHandlers(mainWindow: BrowserWindow): void {
     releasePendingTccPromptNotice(handlerToken)
     ipcMain.removeHandler(consumeChannel)
     ipcMain.removeHandler(acknowledgeChannel)
+    ipcMain.removeHandler(releaseChannel)
     ipcMain.removeHandler(dismissChannel)
     activeTccPromptHandlerToken = null
   })

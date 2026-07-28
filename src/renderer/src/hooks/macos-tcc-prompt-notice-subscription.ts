@@ -6,31 +6,54 @@ type MacosTccPromptNoticeApi = {
   onThreshold?: (callback: (payload: TccPromptNoticePayload) => void) => () => void
   consumePending?: () => Promise<TccPromptNoticeClaim | null>
   acknowledgePending?: (claimId: number) => Promise<void>
+  releasePending?: (claimId: number) => Promise<void>
 }
 
 export function subscribeToMacosTccPromptNotice(
   api: MacosTccPromptNoticeApi | undefined,
   onNotice: (payload: TccPromptNoticePayload) => void
 ): () => void {
+  const releaseClaim = (claimId: number): void => {
+    void api?.releasePending?.(claimId).catch(() => {})
+  }
+  const showNotice = (payload: TccPromptNoticePayload, claimId?: number): boolean => {
+    try {
+      onNotice(payload)
+      return true
+    } catch (error) {
+      if (claimId !== undefined) {
+        releaseClaim(claimId)
+      }
+      console.error('[macos-tcc-prompts] Failed to show notice:', error)
+      return false
+    }
+  }
   const consume = (fallback?: TccPromptNoticePayload): void => {
     if (!api?.consumePending) {
       if (fallback) {
-        onNotice(fallback)
+        showNotice(fallback)
       }
       return
     }
     void api.consumePending().then(
       (pending) => {
         if (pending) {
-          onNotice({ promptCount: pending.promptCount })
-          if (typeof pending.claimId === 'number') {
-            void api.acknowledgePending?.(pending.claimId).catch(() => {})
+          const claimId = pending.claimId
+          if (!showNotice({ promptCount: pending.promptCount }, claimId)) {
+            return
+          }
+          if (typeof claimId === 'number') {
+            if (!api.acknowledgePending) {
+              releaseClaim(claimId)
+              return
+            }
+            void api.acknowledgePending(claimId).catch(() => releaseClaim(claimId))
           }
         }
       },
       () => {
         if (fallback) {
-          onNotice(fallback)
+          showNotice(fallback)
         }
       }
     )
@@ -39,6 +62,6 @@ export function subscribeToMacosTccPromptNotice(
   const unsubscribe = api?.onThreshold?.((payload) => consume(payload)) ?? (() => {})
   // Why: the threshold can land before React subscribes or while the main window is closed.
   consume()
-  // Why: a claimed one-shot must finish through StrictMode cleanup or main would suppress an unseen notice.
+  // Why: StrictMode cleanup must not abandon a claim before it is acknowledged or released.
   return unsubscribe
 }

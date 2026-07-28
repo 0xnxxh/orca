@@ -2432,6 +2432,7 @@ export type PreloadApi = {
     onThreshold: (callback: (payload: { promptCount: number }) => void) => () => void
     consumePending: () => Promise<{ claimId: number; promptCount: number } | null>
     acknowledgePending: (claimId: number) => Promise<void>
+    releasePending: (claimId: number) => Promise<void>
     dismiss: () => Promise<void>
   }
   developerPermissions: {

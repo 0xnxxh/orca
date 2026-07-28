@@ -116,7 +116,9 @@ describe('tcc prompt notice threshold', () => {
     }
 
     const oldClaim = consumePendingTccPromptNotice(1)
-    releasePendingTccPromptNotice(1)
+    releasePendingTccPromptNotice(1, oldClaim!.claimId + 1)
+    expect(consumePendingTccPromptNotice(2)).toBeNull()
+    releasePendingTccPromptNotice(1, oldClaim!.claimId)
     const replacementClaim = consumePendingTccPromptNotice(2)
 
     expect(oldClaim).toEqual({ claimId: 1, promptCount: 3 })

@@ -107,8 +107,11 @@ export function acknowledgePendingTccPromptNotice(ownerToken: number, claimId: n
   saveTally()
 }
 
-export function releasePendingTccPromptNotice(ownerToken: number): void {
-  if (pendingClaim?.ownerToken === ownerToken) {
+export function releasePendingTccPromptNotice(ownerToken: number, claimId?: number): void {
+  if (
+    pendingClaim?.ownerToken === ownerToken &&
+    (claimId === undefined || pendingClaim.claimId === claimId)
+  ) {
     pendingClaim = null
   }
 }
@@ -159,7 +162,7 @@ export function initTccPromptNotice(mainWindow: BrowserWindow): void {
       if (target && !target.isDestroyed() && !target.webContents.isDestroyed()) {
         target.webContents.send(TCC_PROMPT_NOTICE_CHANNEL, payload)
       }
-      // Why: pending state is renderer-consumed, so the log child can stop at threshold.
+      // Why: pending state is renderer-acknowledged, so the log child can stop at threshold.
       stopTccPromptNotice()
     }
   })

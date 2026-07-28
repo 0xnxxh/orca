@@ -2277,6 +2277,8 @@ const api = {
       ipcRenderer.invoke('macosTccPrompts:consumePending'),
     acknowledgePending: (claimId: number): Promise<void> =>
       ipcRenderer.invoke('macosTccPrompts:acknowledgePending', claimId),
+    releasePending: (claimId: number): Promise<void> =>
+      ipcRenderer.invoke('macosTccPrompts:releasePending', claimId),
     dismiss: (): Promise<void> => ipcRenderer.invoke('macosTccPrompts:dismiss')
   },
 

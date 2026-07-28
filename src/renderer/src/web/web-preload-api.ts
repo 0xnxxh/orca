@@ -2745,6 +2745,7 @@ function createMacosTccPromptsApi(): NonNullable<Partial<PreloadApi>['macosTccPr
     onThreshold: () => noopUnsubscribe,
     consumePending: () => Promise.resolve(null),
     acknowledgePending: () => Promise.resolve(),
+    releasePending: () => Promise.resolve(),
     dismiss: () => Promise.resolve()
   }
 }

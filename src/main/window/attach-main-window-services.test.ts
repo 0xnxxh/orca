@@ -316,6 +316,7 @@ describe('attachMainWindowServices', () => {
     for (const channel of [
       'macosTccPrompts:consumePending',
       'macosTccPrompts:acknowledgePending',
+      'macosTccPrompts:releasePending',
       'macosTccPrompts:dismiss'
     ]) {
       expect(removeHandlerMock.mock.calls.filter(([value]) => value === channel)).toHaveLength(2)
@@ -353,6 +354,22 @@ describe('attachMainWindowServices', () => {
     expect(acknowledgePendingTccPromptNoticeMock).toHaveBeenCalledWith(expect.any(Number), 7)
   })
 
+  it('releases a claim only from the current main renderer', () => {
+    const mainWindow = createMainWindow()
+    attachMainWindowServices(mainWindow as never, createStore(), createRuntime() as never)
+    releasePendingTccPromptNoticeMock.mockClear()
+
+    const handler = handleMock.mock.calls.find(
+      ([channel]) => channel === 'macosTccPrompts:releasePending'
+    )?.[1]
+    handler?.({ sender: { id: 999 } }, 7)
+    handler?.({ sender: mainWindow.webContents }, Number.NaN)
+    expect(releasePendingTccPromptNoticeMock).not.toHaveBeenCalled()
+
+    handler?.({ sender: mainWindow.webContents }, 7)
+    expect(releasePendingTccPromptNoticeMock).toHaveBeenCalledWith(expect.any(Number), 7)
+  })
+
   it('removes the TCC handlers when the owning window closes', () => {
     const mainWindow = createMainWindow()
     attachMainWindowServices(mainWindow as never, createStore(), createRuntime() as never)
@@ -365,6 +382,7 @@ describe('attachMainWindowServices', () => {
 
     expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:consumePending')
     expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:acknowledgePending')
+    expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:releasePending')
     expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:dismiss')
     expect(releasePendingTccPromptNoticeMock).toHaveBeenCalledOnce()
   })
@@ -382,6 +400,7 @@ describe('attachMainWindowServices', () => {
     }
     expect(removeHandlerMock).not.toHaveBeenCalledWith('macosTccPrompts:consumePending')
     expect(removeHandlerMock).not.toHaveBeenCalledWith('macosTccPrompts:acknowledgePending')
+    expect(removeHandlerMock).not.toHaveBeenCalledWith('macosTccPrompts:releasePending')
     expect(removeHandlerMock).not.toHaveBeenCalledWith('macosTccPrompts:dismiss')
 
     for (const handler of getClosedHandlers(newWindow.on)) {
@@ -389,6 +408,7 @@ describe('attachMainWindowServices', () => {
     }
     expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:consumePending')
     expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:acknowledgePending')
+    expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:releasePending')
     expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:dismiss')
   })
 
