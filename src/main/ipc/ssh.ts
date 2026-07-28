@@ -816,7 +816,9 @@ export function registerSshHandlers(
   ipcMain.handle('ssh:importConfig', (_event, args?: { reAdopt?: boolean }) => {
     const targets = sshStore!.importFromSshConfig(args)
     const repoReadoptions = takeRepoReadoptions()
-    return { targets, repoReadoptions }
+    // Why: include ceilings can drop part of ~/.ssh/config, so a "synced N hosts"
+    // report would understate what the user actually has. Pass the reason through.
+    return { targets, repoReadoptions, truncatedBy: sshStore!.lastConfigTruncation }
   })
 
   // ── Connection lifecycle ───────────────────────────────────────────

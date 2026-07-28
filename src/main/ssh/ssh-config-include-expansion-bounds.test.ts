@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -36,7 +36,7 @@ describe('SSH config include expansion bounds', () => {
       )
     }
 
-    const expanded = expandSshConfigIncludes(join(root, '0.conf'))
+    const expanded = expandSshConfigIncludes(join(root, '0.conf')).content
 
     expect(expanded).toContain('Host depth-15')
     expect(expanded).not.toContain('Host depth-16')
@@ -97,7 +97,7 @@ describe('SSH config include expansion bounds', () => {
     )
 
     const expandedBytes = Buffer.byteLength(
-      expandSshConfigIncludes(join(root, 'root.conf')),
+      expandSshConfigIncludes(join(root, 'root.conf')).content,
       'utf8'
     )
 
@@ -158,8 +158,106 @@ describe('SSH config include expansion bounds', () => {
     const root = makeTempRoot()
     writeFileSync(join(root, 'root.conf'), '\n'.repeat(1_000_000))
 
-    const expanded = expandSshConfigIncludes(join(root, 'root.conf'))
+    const expanded = expandSshConfigIncludes(join(root, 'root.conf')).content
 
     expect(expanded.split('\n')).toHaveLength(200_000)
+  })
+})
+
+describe('SSH config truncation reporting', () => {
+  it('reports nothing truncated for a config that fits every ceiling', () => {
+    const root = makeTempRoot()
+    writeFileSync(join(root, 'root.conf'), 'Host alpha\n  HostName alpha.example.com\n')
+
+    expect(expandSshConfigIncludes(join(root, 'root.conf')).truncatedBy).toBeNull()
+  })
+
+  it('reports the output ceiling that dropped later hosts', () => {
+    // Why: this is the case the user actually feels — a host defined past the ceiling is
+    // absent from the returned config and indistinguishable from one that was never written.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const root = makeTempRoot()
+    writeFileSync(
+      join(root, 'root.conf'),
+      `${'\n'.repeat(200_000)}Host past-the-ceiling\n  HostName dropped.example.com\n`
+    )
+
+    const expansion = expandSshConfigIncludes(join(root, 'root.conf'))
+
+    expect(expansion.content).not.toContain('past-the-ceiling')
+    expect(expansion.truncatedBy).toEqual(['expanded-output'])
+  })
+
+  it('reports the nesting ceiling that dropped deeper includes', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const root = makeTempRoot()
+    for (let depth = 0; depth < 20; depth += 1) {
+      writeFileSync(
+        join(root, `${depth}.conf`),
+        `Host depth-${depth}\n${depth < 19 ? `Include ${depth + 1}.conf\n` : ''}`
+      )
+    }
+
+    const expansion = expandSshConfigIncludes(join(root, '0.conf'))
+
+    expect(expansion.content).not.toContain('Host depth-16')
+    expect(expansion.truncatedBy).toEqual(['nesting-depth'])
+  })
+
+  it('reports an include skipped for exceeding the per-file ceiling', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const root = makeTempRoot()
+    writeFileSync(
+      join(root, 'big.conf'),
+      `${'#'.repeat(SSH_CONFIG_INCLUDE_LIMITS.fileBytes + 1)}\nHost inside-big\n`
+    )
+    writeFileSync(join(root, 'root.conf'), 'Include big.conf\nHost alpha\n')
+
+    const expansion = expandSshConfigIncludes(join(root, 'root.conf'))
+
+    expect(expansion.content).not.toContain('inside-big')
+    expect(expansion.content).toContain('Host alpha')
+    expect(expansion.truncatedBy).toEqual(['file-bytes'])
+  })
+
+  it('reports a glob that matched more files than the ceiling admits', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const root = makeTempRoot()
+    const includeDir = join(root, 'conf.d')
+    mkdirSync(includeDir)
+    const overflow = SSH_CONFIG_INCLUDE_LIMITS.globMatches + 1
+    for (let index = 0; index < overflow; index += 1) {
+      writeFileSync(join(includeDir, `${String(index).padStart(4, '0')}.conf`), `Host g-${index}\n`)
+    }
+    writeFileSync(join(root, 'root.conf'), 'Include conf.d/*.conf\n')
+
+    const expansion = expandSshConfigIncludes(join(root, 'root.conf'))
+
+    // The last file sorts past the ceiling, so its host is dropped from the result.
+    expect(expansion.content).not.toContain(`Host g-${overflow - 1}`)
+    expect(expansion.truncatedBy).toEqual(['glob-matches'])
+  })
+
+  it('surfaces truncation through loadUserSshConfig so importers see a partial result', async () => {
+    // Why: the ceilings live several layers below the import call site. Asserting on the
+    // expander alone leaves the plumbing untested — deleting it keeps those tests green.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const home = makeTempRoot()
+    mkdirSync(join(home, '.ssh'))
+    writeFileSync(
+      join(home, '.ssh', 'config'),
+      `Host visible\n  HostName visible.example.com\n${'\n'.repeat(200_000)}Host dropped\n`
+    )
+    vi.doMock('node:os', async (importOriginal) => ({
+      ...((await importOriginal()) as Record<string, unknown>),
+      homedir: () => home
+    }))
+    vi.resetModules()
+    const { loadUserSshConfig } = await import('./ssh-config-parser')
+
+    const result = loadUserSshConfig()
+
+    expect(result.hosts.map((host) => host.host)).toEqual(['visible'])
+    expect(result.truncatedBy).toEqual(['expanded-output'])
   })
 })
