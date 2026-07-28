@@ -385,6 +385,18 @@ const runtimeRpcStartFailedSchema = z
   .object({ error_class: runtimeRpcStartErrorClassSchema })
   .strict()
 
+// Why: a deadlocked main thread never crashes, so it produces no crash report and no user report
+// beyond "it froze" — incidence has been unmeasurable. `self_recovered` splits stalls that cleared
+// from ones that never did, which is the number that decides whether auto-recovery is ever safe to
+// build: every self-recovered stall is a kill that design would have gotten wrong. `unresponsive_ms`
+// is the observed silence, kept raw so the 45s threshold can be calibrated against real tails.
+const mainThreadHangDetectedSchema = z
+  .object({
+    unresponsive_ms: z.number().int().nonnegative(),
+    self_recovered: z.boolean()
+  })
+  .strict()
+
 // Why: daemon replace/retire lifecycle signal — issue #7936 was undiagnosable without asking a user for daemon.log.
 // Enum-only + bucketed session count so no paths, raw versions, or exact counts reach the wire.
 // The union keeps each reason pinned to its transition, so a death can't be reported as a replace.
@@ -1397,6 +1409,7 @@ export const eventSchemas = {
   agent_hook_unattributed: agentHookUnattributedSchema,
 
   daemon_start_failed: daemonStartFailedSchema,
+  main_thread_hang_detected: mainThreadHangDetectedSchema,
   daemon_lifecycle: daemonLifecycleSchema,
   runtime_rpc_start_failed: runtimeRpcStartFailedSchema,
 
