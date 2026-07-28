@@ -102,7 +102,10 @@ import {
   type DirectSshPaneRetryHistory,
   type DirectSshPaneRetryResult
 } from './direct-ssh-terminal-recovery'
-import { retryDirectSshTerminalPanes } from './direct-ssh-pane-retry-ledger'
+import {
+  retryDirectSshTerminalPanes,
+  retrySettledDirectSshTerminalPane
+} from './direct-ssh-pane-retry-ledger'
 import {
   settleDirectSshPaneRetryState,
   transferDirectSshPaneDetachLedger
@@ -680,7 +683,7 @@ export type TerminalSlice = {
   clearDirectSshTargetPtyBindings: (targetId: string) => number
   invalidateStaleDirectSshTargetPtyBindings: (authority: DirectSshAuthority) => number
   retryDirectSshTargetPanes: (authority: DirectSshAuthority, now?: number) => number
-  settleDirectSshPaneRetry: (result: DirectSshPaneRetryResult) => void
+  settleDirectSshPaneRetry: (result: DirectSshPaneRetryResult, now?: number) => void
   shutdownWorktreeTerminals: (
     worktreeId: string,
     opts?: {
@@ -2118,15 +2121,16 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         }
       } else {
         const liveBinding = s.directSshLivePtyBindingByTabId[tabId]
-        if (
-          liveBinding &&
-          replacementPtyId === liveBinding.ptyId &&
-          boundTab?.ptyId === ptyId &&
-          isCurrentDirectSshAuthority(s, liveBinding.authority)
-        ) {
-          nextDirectSshLivePtyBindingByTabId = {
-            ...s.directSshLivePtyBindingByTabId,
-            [tabId]: { ...liveBinding, ptyId }
+        if (liveBinding) {
+          if (
+            replacementPtyId === liveBinding.ptyId &&
+            boundTab?.ptyId === ptyId &&
+            isCurrentDirectSshAuthority(s, liveBinding.authority)
+          ) {
+            nextDirectSshLivePtyBindingByTabId = {
+              ...s.directSshLivePtyBindingByTabId,
+              [tabId]: { ...liveBinding, ptyId }
+            }
           }
         }
       }
@@ -2557,12 +2561,27 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     return retriedCount
   },
 
-  settleDirectSshPaneRetry: (result) => {
+  settleDirectSshPaneRetry: (result, now = Date.now()) => {
     set((s) => {
       if (!isCurrentDirectSshAuthority(s, result.authority)) {
         return s
       }
-      return settleDirectSshPaneRetryState(s, result) ?? s
+      const settlement = settleDirectSshPaneRetryState(s, result)
+      if (!settlement) {
+        return s
+      }
+      const settledState = { ...s, ...settlement }
+      if (result.status !== 'failed' && result.status !== 'timed-out') {
+        return settledState
+      }
+      const retry = retrySettledDirectSshTerminalPane(
+        settledState,
+        resolveDirectSshTerminalKeys(settledState, result.authority.targetId),
+        result.authority,
+        result.tabId,
+        now
+      )
+      return retry.patch ? { ...settledState, ...retry.patch } : settledState
     })
   },
 

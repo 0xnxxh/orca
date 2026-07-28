@@ -991,40 +991,38 @@ export function useIpcEvents(): void {
     let reachableRuntimeEnvironmentKey = buildRuntimeClientEventEnvironmentKey(
       reachableRuntimeEnvironmentIds
     )
-    unsubs.push(
-      useAppStore.subscribe(() => {
-        const nextEnvironmentIds = getRuntimeClientEventEnvironmentIds()
-        const nextKey = buildRuntimeClientEventEnvironmentKey(nextEnvironmentIds)
-        const nextReachableEnvironmentIds = getReachableRuntimeEnvironmentIds()
-        const nextReachableKey = buildRuntimeClientEventEnvironmentKey(nextReachableEnvironmentIds)
-        if (
-          nextKey === runtimeClientEventEnvironmentKey &&
-          nextReachableKey === reachableRuntimeEnvironmentKey
-        ) {
-          return
-        }
-        for (const environmentId of getRuntimeProjectRefreshEnvironmentIds({
-          previousDesired: runtimeClientEventEnvironmentIds,
-          nextDesired: nextEnvironmentIds,
-          previousReachable: reachableRuntimeEnvironmentIds,
-          nextReachable: nextReachableEnvironmentIds
-        })) {
-          runtimeProjectRefreshScheduler.request(environmentId)
-        }
-        for (const environmentId of getNewlyDisconnectedRuntimeEnvironmentIds(
-          reachableRuntimeEnvironmentIds,
-          nextReachableEnvironmentIds
-        )) {
-          // No-op when the environment has no SSH bucket (e.g. web client).
-          useAppStore.getState().markEnvironmentSshStateStale(environmentId)
-        }
-        runtimeClientEventEnvironmentIds = nextEnvironmentIds
-        runtimeClientEventEnvironmentKey = nextKey
-        reachableRuntimeEnvironmentIds = nextReachableEnvironmentIds
-        reachableRuntimeEnvironmentKey = nextReachableKey
-        runtimeClientEventsSync.sync()
-      })
-    )
+    const unsubscribeRuntimeEnvironmentStore = useAppStore.subscribe(() => {
+      const nextEnvironmentIds = getRuntimeClientEventEnvironmentIds()
+      const nextKey = buildRuntimeClientEventEnvironmentKey(nextEnvironmentIds)
+      const nextReachableEnvironmentIds = getReachableRuntimeEnvironmentIds()
+      const nextReachableKey = buildRuntimeClientEventEnvironmentKey(nextReachableEnvironmentIds)
+      if (
+        nextKey === runtimeClientEventEnvironmentKey &&
+        nextReachableKey === reachableRuntimeEnvironmentKey
+      ) {
+        return
+      }
+      for (const environmentId of getRuntimeProjectRefreshEnvironmentIds({
+        previousDesired: runtimeClientEventEnvironmentIds,
+        nextDesired: nextEnvironmentIds,
+        previousReachable: reachableRuntimeEnvironmentIds,
+        nextReachable: nextReachableEnvironmentIds
+      })) {
+        runtimeProjectRefreshScheduler.request(environmentId)
+      }
+      for (const environmentId of getNewlyDisconnectedRuntimeEnvironmentIds(
+        reachableRuntimeEnvironmentIds,
+        nextReachableEnvironmentIds
+      )) {
+        // No-op when the environment has no SSH bucket (e.g. web client).
+        useAppStore.getState().markEnvironmentSshStateStale(environmentId)
+      }
+      runtimeClientEventEnvironmentIds = nextEnvironmentIds
+      runtimeClientEventEnvironmentKey = nextKey
+      reachableRuntimeEnvironmentIds = nextReachableEnvironmentIds
+      reachableRuntimeEnvironmentKey = nextReachableKey
+      runtimeClientEventsSync.sync()
+    })
     unsubs.push(runtimeClientEventsSync.stop)
     unsubs.push(runtimeProjectRefreshScheduler.stop)
 
@@ -3317,13 +3315,11 @@ export function useIpcEvents(): void {
 
     // Why: main hook server is the durable source of truth; pull the snapshot only after tabs are ready so early startup pushes can be ignored, not buffered.
     requestAgentStatusSnapshotIfReady()
-    unsubs.push(
-      useAppStore.subscribe((state, previousState) => {
-        requestAgentStatusSnapshotIfReady()
-        flushPendingAgentStatuses()
-        syncAgentHookCompletionNotificationsForStoreUpdate(state, previousState)
-      })
-    )
+    const unsubscribeAgentStatusStore = useAppStore.subscribe((state, previousState) => {
+      requestAgentStatusSnapshotIfReady()
+      flushPendingAgentStatuses()
+      syncAgentHookCompletionNotificationsForStoreUpdate(state, previousState)
+    })
 
     let mobileStateHydrated = isRuntimeEnvironmentActive()
     type PendingMobileStateEvent =
@@ -3451,6 +3447,8 @@ export function useIpcEvents(): void {
       pendingAgentStatusEvents.length = 0
       mobileStateHydrationDisposed = true
       pendingMobileStateEvents.length = 0
+      unsubscribeRuntimeEnvironmentStore()
+      unsubscribeAgentStatusStore()
       unsubs.forEach((fn) => fn())
       directSshEffectStopped = true
       for (const deadline of authorityReconciliationDeadlines) {

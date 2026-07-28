@@ -2,6 +2,7 @@ import type { DirectSshAuthority } from '../../../../shared/ssh-types'
 import type { TerminalTab } from '../../../../shared/types'
 import type { CodexRestartNotice } from './terminals'
 import {
+  directSshAuthoritiesEqual,
   liveBindingMatches,
   pruneObsoleteAuthorityState,
   withoutTabIds
@@ -113,21 +114,33 @@ export function clearDirectSshTerminalBindings(
 export function invalidateStaleDirectSshTerminalBindings(
   state: DirectSshTerminalBindingState,
   terminalWorkspaceKeys: ReadonlySet<string>,
-  authority: DirectSshAuthority
+  authority: DirectSshAuthority,
+  qualifiedTabIds?: ReadonlySet<string>
 ): DirectSshTerminalBindingClearResult {
   const authorityState = pruneObsoleteAuthorityState(state, authority)
   const staleTabIds = new Set<string>()
+  const preservedPendingByTabId: DirectSshTerminalBindingState['directSshPaneRetryByTabId'] = {}
   for (const workspaceKey of terminalWorkspaceKeys) {
     for (const tab of state.tabsByWorktree[workspaceKey] ?? []) {
+      if (qualifiedTabIds && !qualifiedTabIds.has(tab.id)) {
+        continue
+      }
       const liveBinding = authorityState.directSshLivePtyBindingByTabId[tab.id]
       const pending = authorityState.directSshPaneRetryByTabId[tab.id]
       const hasCurrentLiveBinding = liveBindingMatches(tab, liveBinding, authority)
+      const hasCurrentPending =
+        pending != null &&
+        directSshAuthoritiesEqual(pending.authority, authority) &&
+        pending.tabGeneration === (tab.generation ?? 0)
       if (
         (tab.ptyId != null && !hasCurrentLiveBinding) ||
         (liveBinding != null && !hasCurrentLiveBinding) ||
-        (pending != null && pending.tabGeneration !== (tab.generation ?? 0))
+        (pending != null && !hasCurrentPending)
       ) {
         staleTabIds.add(tab.id)
+        if (hasCurrentPending) {
+          preservedPendingByTabId[tab.id] = pending
+        }
       }
     }
   }
@@ -144,8 +157,17 @@ export function invalidateStaleDirectSshTerminalBindings(
   if (!cleared.patch && !authorityChanged) {
     return cleared
   }
+  const preservedPending =
+    cleared.patch && Object.keys(preservedPendingByTabId).length > 0
+      ? {
+          directSshPaneRetryByTabId: {
+            ...cleared.patch.directSshPaneRetryByTabId,
+            ...preservedPendingByTabId
+          }
+        }
+      : {}
   return {
     clearedCount: cleared.clearedCount,
-    patch: { ...authorityState, ...cleared.patch }
+    patch: { ...authorityState, ...cleared.patch, ...preservedPending }
   }
 }

@@ -141,6 +141,18 @@ describe('direct SSH terminal retry ledger', () => {
     })
     expect(store.getState().directSshPaneRetryByTabId).toBe(pendingBeforeStaleSettlement)
 
+    store.getState().settleDirectSshPaneRetry(
+      {
+        status: 'failed',
+        tabId: TAB_ID,
+        attemptId: attempt.attemptId,
+        authority: authority('stale-epoch', 0),
+        tabGeneration: attempt.tabGeneration
+      },
+      1_001
+    )
+    expect(store.getState().directSshPaneRetryByTabId).toBe(pendingBeforeStaleSettlement)
+
     store.getState().settleDirectSshPaneRetry({
       status: 'success',
       tabId: TAB_ID,
@@ -176,26 +188,104 @@ describe('direct SSH terminal retry ledger', () => {
 
     expect(store.getState().retryDirectSshTargetPanes(authority(), 1_000)).toBe(1)
     const firstAttempt = store.getState().directSshPaneRetryByTabId[TAB_ID]
-    store.getState().settleDirectSshPaneRetry({
-      status: 'failed',
-      tabId: TAB_ID,
-      attemptId: firstAttempt.attemptId,
-      authority: firstAttempt.authority,
-      tabGeneration: firstAttempt.tabGeneration
-    })
-    expect(store.getState().retryDirectSshTargetPanes(authority(), 2_000)).toBe(1)
+    store.getState().settleDirectSshPaneRetry(
+      {
+        status: 'failed',
+        tabId: TAB_ID,
+        attemptId: firstAttempt.attemptId,
+        authority: firstAttempt.authority,
+        tabGeneration: firstAttempt.tabGeneration
+      },
+      2_000
+    )
     const secondAttempt = store.getState().directSshPaneRetryByTabId[TAB_ID]
-    store.getState().settleDirectSshPaneRetry({
-      status: 'timed-out',
-      tabId: TAB_ID,
-      attemptId: secondAttempt.attemptId,
-      authority: secondAttempt.authority,
-      tabGeneration: secondAttempt.tabGeneration
-    })
+    expect(secondAttempt.tabGeneration).toBe(2)
+    store.getState().settleDirectSshPaneRetry(
+      {
+        status: 'timed-out',
+        tabId: TAB_ID,
+        attemptId: secondAttempt.attemptId,
+        authority: secondAttempt.authority,
+        tabGeneration: secondAttempt.tabGeneration
+      },
+      3_000
+    )
 
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBeUndefined()
+    expect(store.getState().tabsByWorktree[WORKTREE_ID][0].generation).toBe(2)
     expect(store.getState().retryDirectSshTargetPanes(authority(), 30_999)).toBe(0)
     expect(store.getState().retryDirectSshTargetPanes(authority(), 31_000)).toBe(1)
     expect(store.getState().tabsByWorktree[WORKTREE_ID][0].generation).toBe(3)
+  })
+
+  it('does not turn two thirty-one-second timeouts into an unbounded retry chain', () => {
+    const store = seedStore()
+
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 1_000)).toBe(1)
+    const firstAttempt = store.getState().directSshPaneRetryByTabId[TAB_ID]
+    store.getState().settleDirectSshPaneRetry(
+      {
+        status: 'timed-out',
+        tabId: TAB_ID,
+        attemptId: firstAttempt.attemptId,
+        authority: firstAttempt.authority,
+        tabGeneration: firstAttempt.tabGeneration
+      },
+      32_000
+    )
+    const secondAttempt = store.getState().directSshPaneRetryByTabId[TAB_ID]
+    expect(secondAttempt.tabGeneration).toBe(2)
+
+    store.getState().settleDirectSshPaneRetry(
+      {
+        status: 'timed-out',
+        tabId: TAB_ID,
+        attemptId: secondAttempt.attemptId,
+        authority: secondAttempt.authority,
+        tabGeneration: secondAttempt.tabGeneration
+      },
+      63_000
+    )
+
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBeUndefined()
+    expect(store.getState().tabsByWorktree[WORKTREE_ID][0].generation).toBe(2)
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 63_000)).toBe(1)
+  })
+
+  it('re-arms only the exact failed tab', () => {
+    const store = seedStore()
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 1_000)).toBe(1)
+    const firstAttempt = store.getState().directSshPaneRetryByTabId[TAB_ID]
+    const sibling = makeTab({
+      id: 'tab-unrelated',
+      worktreeId: WORKTREE_ID,
+      ptyId: null
+    })
+    store.setState((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [WORKTREE_ID]: [...state.tabsByWorktree[WORKTREE_ID], sibling]
+      },
+      ptyIdsByTabId: { ...state.ptyIdsByTabId, [sibling.id]: [] }
+    }))
+
+    store.getState().settleDirectSshPaneRetry(
+      {
+        status: 'failed',
+        tabId: TAB_ID,
+        attemptId: firstAttempt.attemptId,
+        authority: firstAttempt.authority,
+        tabGeneration: firstAttempt.tabGeneration
+      },
+      2_000
+    )
+
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]?.tabGeneration).toBe(2)
+    expect(store.getState().directSshPaneRetryByTabId[sibling.id]).toBeUndefined()
+    expect(
+      store.getState().tabsByWorktree[WORKTREE_ID].find((tab) => tab.id === sibling.id)
+        ?.generation ?? 0
+    ).toBe(0)
   })
 
   it('re-arms a pending attempt when its bound SSH PTY exits', () => {
@@ -277,6 +367,34 @@ describe('direct SSH terminal retry ledger', () => {
       authority: authority(),
       tabGeneration: 1
     })
+  })
+
+  it('clears a snapshot hint without superseding its current pending attempt', () => {
+    const store = seedStore()
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 1_000)).toBe(1)
+    const pending = store.getState().directSshPaneRetryByTabId[TAB_ID]
+    store.setState((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [WORKTREE_ID]: state.tabsByWorktree[WORKTREE_ID].map((tab) => ({
+          ...tab,
+          ptyId: 'ssh:target@@pty-snapshot'
+        }))
+      },
+      ptyIdsByTabId: {
+        ...state.ptyIdsByTabId,
+        [TAB_ID]: ['ssh:target@@pty-snapshot']
+      }
+    }))
+
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 1_001)).toBe(0)
+
+    expect(store.getState().tabsByWorktree[WORKTREE_ID][0]).toMatchObject({
+      generation: 1,
+      ptyId: null
+    })
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBe(pending)
+    expect(store.getState().directSshPaneRetryHistoryByTabId[TAB_ID].attemptedAt).toEqual([1_000])
   })
 
   it('rotates obsolete pending, success, and retry history by exact authority', () => {

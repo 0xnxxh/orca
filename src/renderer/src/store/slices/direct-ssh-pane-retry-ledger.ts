@@ -15,6 +15,11 @@ import type {
 const AUTOMATIC_RETRY_LIMIT = 2
 const AUTOMATIC_RETRY_WINDOW_MS = 30_000
 
+type DirectSshTerminalRetryOptions = {
+  qualifiedTabIds?: ReadonlySet<string>
+  preserveAttemptChain?: boolean
+}
+
 function createAttemptId(
   authority: DirectSshAuthority,
   tabId: string,
@@ -37,13 +42,15 @@ export function retryDirectSshTerminalPanes(
   },
   terminalWorkspaceKeys: ReadonlySet<string>,
   authority: DirectSshAuthority,
-  now: number
+  now: number,
+  options: DirectSshTerminalRetryOptions = {}
 ): DirectSshTerminalRetryResult {
   const authorityState = pruneObsoleteAuthorityState(state, authority)
   const invalidated = invalidateStaleDirectSshTerminalBindings(
     { ...state, ...authorityState },
     terminalWorkspaceKeys,
-    authority
+    authority,
+    options.qualifiedTabIds
   )
   const working = { ...state, ...authorityState, ...invalidated.patch }
   let tabsByWorktree = working.tabsByWorktree
@@ -55,6 +62,9 @@ export function retryDirectSshTerminalPanes(
     const tabs = working.tabsByWorktree[workspaceKey] ?? []
     let nextTabs = tabs
     for (const [index, tab] of tabs.entries()) {
+      if (options.qualifiedTabIds && !options.qualifiedTabIds.has(tab.id)) {
+        continue
+      }
       const currentPending = pending[tab.id]
       if (
         currentPending &&
@@ -74,12 +84,15 @@ export function retryDirectSshTerminalPanes(
         continue
       }
       const previousHistory = history[tab.id]
-      const recentAttempts =
+      const sameAuthorityAttempts =
         previousHistory && directSshAuthoritiesEqual(previousHistory.authority, authority)
-          ? previousHistory.attemptedAt.filter(
-              (attemptedAt) => now - attemptedAt < AUTOMATIC_RETRY_WINDOW_MS
-            )
+          ? previousHistory.attemptedAt
           : []
+      const recentAttempts = options.preserveAttemptChain
+        ? sameAuthorityAttempts
+        : sameAuthorityAttempts.filter(
+            (attemptedAt) => now - attemptedAt < AUTOMATIC_RETRY_WINDOW_MS
+          )
       if (recentAttempts.length >= AUTOMATIC_RETRY_LIMIT) {
         continue
       }
@@ -134,4 +147,19 @@ export function retryDirectSshTerminalPanes(
       directSshPaneRetryHistoryByTabId: history
     }
   }
+}
+
+export function retrySettledDirectSshTerminalPane(
+  state: DirectSshTerminalBindingState & {
+    deferredSshSessionIdsByTabId: Record<string, string>
+  },
+  terminalWorkspaceKeys: ReadonlySet<string>,
+  authority: DirectSshAuthority,
+  tabId: string,
+  now: number
+): DirectSshTerminalRetryResult {
+  return retryDirectSshTerminalPanes(state, terminalWorkspaceKeys, authority, now, {
+    qualifiedTabIds: new Set([tabId]),
+    preserveAttemptChain: true
+  })
 }
