@@ -215,9 +215,14 @@ export function waitForSentinel(
         }
         const transport: MultiplexerTransport = {
           write: (buf: Buffer, onSettled) => {
-            channel.stdin.write(buf, (error?: Error | null) => {
+            return channel.stdin.write(buf, (error?: Error | null) => {
               onSettled?.(error ? { ok: false, error } : { ok: true })
             })
+          },
+          supportsWriteSettlement: true,
+          onDrain: (cb) => {
+            channel.stdin.on('drain', cb)
+            return () => channel.stdin.off('drain', cb)
           },
           onData: (cb) => {
             dataCallbacks.push(cb)

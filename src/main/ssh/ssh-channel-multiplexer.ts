@@ -14,18 +14,14 @@ import {
   type JsonRpcResponse,
   type JsonRpcNotification
 } from './relay-protocol'
+import {
+  SshMultiplexerTransportWriter,
+  type MultiplexerTransport,
+  type MultiplexerWriteSettlement,
+  type MultiplexerWriterLane
+} from './ssh-multiplexer-transport-writer'
 
-export type MultiplexerTransport = {
-  write: (
-    data: Buffer,
-    onSettled?: (result: { ok: true } | { ok: false; error: Error }) => void
-  ) => void
-  onData: (cb: (data: Buffer) => void) => void
-  onClose: (cb: () => void) => void
-  pauseReads?: () => void
-  resumeReads?: () => void
-  close?: () => void
-}
+export type { MultiplexerTransport, MultiplexerWriteSettlement }
 
 type PendingRequest = {
   resolve: (result: unknown) => void
@@ -48,6 +44,7 @@ const WAKE_GAP_MS = KEEPALIVE_SEND_MS * 3
 export class SshChannelMultiplexer {
   private decoder: FrameDecoder
   private transport: MultiplexerTransport
+  private writer: SshMultiplexerTransportWriter
   private nextRequestId = 1
   private nextOutgoingSeq = 1
   private highestReceivedSeq = 0
@@ -74,6 +71,9 @@ export class SshChannelMultiplexer {
 
   constructor(transport: MultiplexerTransport) {
     this.transport = transport
+    this.writer = new SshMultiplexerTransportWriter(transport, (error) =>
+      this.handleProtocolError(error)
+    )
 
     this.decoder = new FrameDecoder(
       (frame) => this.handleFrame(frame),
@@ -328,6 +328,9 @@ export class SshChannelMultiplexer {
       this.pendingRequests.delete(id)
     }
 
+    const writerError = new Error(errorMessage) as Error & { code: string }
+    writerError.code = errorCode
+    this.writer.dispose(writerError)
     this.unackedTimestamps.clear()
     // Why: relay teardown can race with late provider registration; disposed
     // muxes must not retain provider/session closures through subscribers.
@@ -354,33 +357,12 @@ export class SshChannelMultiplexer {
 
   private sendMessage(
     msg: JsonRpcMessage,
-    onSettled?: (result: { ok: true } | { ok: false; error: Error }) => void
+    onSettled?: (result: MultiplexerWriteSettlement) => void
   ): void {
     const seq = this.nextOutgoingSeq++
     const frame = encodeJsonRpcFrame(msg, seq, this.highestReceivedSeq)
     this.trackOutgoingTimestamp(seq, false)
-    let writeSettled = false
-    const settleWrite = onSettled
-      ? (result: { ok: true } | { ok: false; error: Error }): void => {
-          if (writeSettled) {
-            return
-          }
-          writeSettled = true
-          onSettled(result)
-        }
-      : undefined
-    try {
-      this.transport.write(frame, settleWrite)
-    } catch (err) {
-      settleWrite?.({
-        ok: false,
-        error: err instanceof Error ? err : new Error(String(err))
-      })
-      // Why: a remote reboot can make the SSH channel's stdin throw EPIPE
-      // from a timer/request path. Scope it to this mux instead of letting
-      // the Electron main process treat it as an uncaught exception.
-      this.handleProtocolError(err)
-    }
+    this.writer.enqueue(frame, messageLane(msg), onSettled)
   }
 
   private sendKeepAlive(): void {
@@ -390,13 +372,7 @@ export class SshChannelMultiplexer {
     const seq = this.nextOutgoingSeq++
     const frame = encodeKeepAliveFrame(seq, this.highestReceivedSeq)
     this.trackOutgoingTimestamp(seq, true)
-    try {
-      this.transport.write(frame)
-    } catch (err) {
-      // Why: keepalive runs on an interval; without catching transport
-      // write failures here, a dead SSH host can terminate the whole app.
-      this.handleProtocolError(err)
-    }
+    this.writer.enqueue(frame, 'control')
   }
 
   private handleFrame(frame: DecodedFrame): void {
@@ -620,4 +596,8 @@ export class SshChannelMultiplexer {
       this.unackedTimestamps.set(seq, now)
     }
   }
+}
+
+function messageLane(msg: JsonRpcMessage): MultiplexerWriterLane {
+  return 'method' in msg && msg.method === 'pty.data' ? 'ordinary' : 'control'
 }

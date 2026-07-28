@@ -20,6 +20,16 @@ export type SshPtyOutputSourceReservation = Readonly<{
   span: PtySourceSpan
 }>
 
+export type SshPtyAcceptedSourceCheckpoint = Readonly<{
+  id: string
+  providerGeneration: number
+  clientGeneration: number
+  ownerGeneration: number
+  ptyIncarnation: string
+  deliveryToken: string
+  acceptedSourceEndSu: number
+}>
+
 export class SshPtyOutputSourceObligations {
   private readonly coordinator: SshPtySourceObligationCoordinator
   private readonly remoteConsumers: SshPtyRemoteSourceRangeConsumers
@@ -137,6 +147,27 @@ export class SshPtyOutputSourceObligations {
         this.identityByPty.delete(key)
       }
     }
+  }
+
+  acceptedCheckpoints(providerGeneration: number): readonly SshPtyAcceptedSourceCheckpoint[] {
+    const checkpoints: SshPtyAcceptedSourceCheckpoint[] = []
+    for (const identity of this.identityByPty.values()) {
+      if (identity.providerGeneration !== providerGeneration) {
+        continue
+      }
+      checkpoints.push(
+        Object.freeze({
+          id: identity.id,
+          providerGeneration: identity.providerGeneration,
+          clientGeneration: identity.clientGeneration,
+          ownerGeneration: identity.ownerGeneration,
+          ptyIncarnation: identity.ptyIncarnation,
+          deliveryToken: identity.deliveryToken,
+          acceptedSourceEndSu: this.coordinator.modelAcceptedEnd(identity)
+        })
+      )
+    }
+    return Object.freeze(checkpoints)
   }
 
   dispose(): void {

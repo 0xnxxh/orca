@@ -66,13 +66,18 @@ export class DispatcherWriterAdmission {
     return this.producerBytes
   }
 
+  get producerQueueCapacity(): number {
+    return this.producerQueueMaxBytes
+  }
+
   get queuedEntries(): number {
     return Object.values(this.queues).reduce((total, queue) => total + queue.length, 0)
   }
 
   canAdmitProducer(bytes: number, producerFrameCapacity: number): boolean {
     return (
-      bytes <= producerFrameCapacity && this.producerBytes + bytes <= this.producerQueueMaxBytes
+      bytes <= Math.max(producerFrameCapacity, this.producerQueueMaxBytes) &&
+      this.producerBytes + bytes <= this.producerQueueMaxBytes
     )
   }
 

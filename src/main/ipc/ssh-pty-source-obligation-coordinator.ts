@@ -119,6 +119,10 @@ export class SshPtySourceObligationCoordinator {
     return this.ledger.snapshot(identity)
   }
 
+  modelAcceptedEnd(identity: PtySourceDeliveryIdentity): number {
+    return this.ledger.modelAcceptedEnd(identity)
+  }
+
   obligation(spanId: string, consumer: SshPtySourceConsumerId): SshPtySourceObligationState {
     return this.ledger.obligation(spanId, consumer)
   }

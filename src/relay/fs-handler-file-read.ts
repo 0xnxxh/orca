@@ -183,14 +183,7 @@ async function pumpChunks(
             break
           }
         }
-        const base64Budget =
-          dispatcher.producerDataBudget?.(
-            'fs.streamChunk',
-            { streamId, seq },
-            pumpOptions.clientId
-          ) ?? Number.MAX_SAFE_INTEGER
-        const sinkChunkBytes = Math.max(1, Math.floor(Math.max(0, base64Budget - 32) / 4) * 3)
-        const want = Math.min(STREAM_CHUNK_SIZE, sinkChunkBytes, totalSize - offset)
+        const want = Math.min(STREAM_CHUNK_SIZE, totalSize - offset)
         const bytesRead = await readFullStreamChunk(entry.handle, buffer, want, offset)
         if (bytesRead !== want) {
           endReason = 'error'

@@ -210,6 +210,103 @@ describe('SshPtyConsumerSessionAdapter', () => {
     expect(setPaused).toEqual([{ id: 'pty-1', paused: true }])
   })
 
+  it('token-fences V1 pause and clears an owned pause before detach retention', async () => {
+    const setPaused: { id: string; paused: boolean }[] = []
+    dispatcher = new RelayDispatcher(
+      (_data, onSettled) => {
+        onSettled({ ok: true })
+        return true
+      },
+      { supportsWriteCallback: true },
+      endpointIdentity
+    )
+    const adapter = new SshPtyConsumerSessionAdapter(dispatcher, 'build-a', (id, paused) => {
+      setPaused.push({ id, paused })
+    })
+    dispatcher.feed(
+      openFrame(1, {
+        capabilities: { outputFlowControl: { versions: [1], requestedWindowSu: 8 } }
+      })
+    )
+    await flushRequests()
+    const identity = adapter.openDelivery(1, 'pty-1', 'incarnation-1')!
+
+    for (const [sequence, deliveryToken] of [
+      [2, 'stale-token'],
+      [3, identity.deliveryToken]
+    ] as const) {
+      dispatcher.feed(
+        encodeJsonRpcFrame(
+          {
+            jsonrpc: '2.0',
+            method: 'pty.setDeliveryPaused',
+            params: {
+              id: identity.id,
+              paused: true,
+              clientGeneration: identity.clientGeneration,
+              ownerGeneration: identity.ownerGeneration,
+              deliveryToken
+            }
+          },
+          sequence,
+          0
+        )
+      )
+    }
+    dispatcher.invalidateClient()
+
+    expect(setPaused).toEqual([
+      { id: 'pty-1', paused: true },
+      { id: 'pty-1', paused: false }
+    ])
+  })
+
+  it('clears the exact token pause before cancellation cleanup', async () => {
+    const setPaused: { id: string; paused: boolean }[] = []
+    dispatcher = new RelayDispatcher(
+      (_data, onSettled) => {
+        onSettled({ ok: true })
+        return true
+      },
+      { supportsWriteCallback: true },
+      endpointIdentity
+    )
+    const adapter = new SshPtyConsumerSessionAdapter(dispatcher, 'build-a', (id, paused) => {
+      setPaused.push({ id, paused })
+    })
+    dispatcher.feed(
+      openFrame(1, {
+        capabilities: { outputFlowControl: { versions: [1], requestedWindowSu: 8 } }
+      })
+    )
+    await flushRequests()
+    const identity = adapter.openDelivery(1, 'pty-1', 'incarnation-1')!
+    dispatcher.feed(
+      encodeJsonRpcFrame(
+        {
+          jsonrpc: '2.0',
+          method: 'pty.setDeliveryPaused',
+          params: {
+            id: identity.id,
+            paused: true,
+            clientGeneration: identity.clientGeneration,
+            ownerGeneration: identity.ownerGeneration,
+            deliveryToken: identity.deliveryToken
+          }
+        },
+        2,
+        0
+      )
+    )
+
+    adapter.cancelDelivery(identity, 'restore-required')
+
+    expect(setPaused).toEqual([
+      { id: 'pty-1', paused: true },
+      { id: 'pty-1', paused: false }
+    ])
+  })
+
   it('intersects the negotiated V1 source window without changing legacy omission', async () => {
     const writes: Buffer[] = []
     dispatcher = new RelayDispatcher(

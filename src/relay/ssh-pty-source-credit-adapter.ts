@@ -15,6 +15,7 @@ import {
   ptySourceCancellationResult,
   RecentPtySourceCancellationIndex
 } from './pty-source-cancellation-index'
+import { ownedPtySourceDelivery } from './pty-source-delivery-ownership'
 import {
   RelayPtySourceCreditLedger,
   type PtySourceSendReservation
@@ -29,7 +30,8 @@ export class SshPtySourceCreditAdapter {
   private disposed = false
 
   constructor(
-    private readonly publishCancellation?: (proof: PtySourceDeliveryCancellation) => void
+    private readonly publishCancellation?: (proof: PtySourceDeliveryCancellation) => void,
+    private readonly onCreditAvailable?: (id: string) => void
   ) {}
 
   open(
@@ -88,6 +90,7 @@ export class SshPtySourceCreditAdapter {
     )
     this.identityByToken.delete(oldIdentity.deliveryToken)
     this.recentCancellations.remember(rotation.cancellation)
+    this.publishCancellation?.(rotation.cancellation)
     this.identityByToken.set(replacement.deliveryToken, replacement)
     this.clearGraceWhenSettled(oldIdentity.ownerGeneration)
     return Object.freeze({ identity: replacement, ...rotation })
@@ -161,13 +164,16 @@ export class SshPtySourceCreditAdapter {
         continue
       }
       try {
-        this.sourceCredit.acknowledge(identity, {
+        const result = this.sourceCredit.acknowledge(identity, {
           id: String(candidate.id ?? ''),
           clientGeneration: Number(candidate.clientGeneration),
           ownerGeneration: Number(candidate.ownerGeneration),
           deliveryToken: String(candidate.deliveryToken),
           creditedEndSu: Number(candidate.creditedEndSu)
         })
+        if (result === 'advanced') {
+          this.onCreditAvailable?.(identity.id)
+        }
         this.pruneClosed(token, identity)
       } catch {
         /* Invalid and stale cumulative ACKs never mutate credit. */
@@ -212,11 +218,28 @@ export class SshPtySourceCreditAdapter {
     this.closeClientDeliveries(grant.clientGeneration)
   }
 
-  retentionSnapshot(): Readonly<{ deliveryTokens: number; graceTimers: number }> {
+  retentionSnapshot() {
     return Object.freeze({
       deliveryTokens: this.identityByToken.size,
-      graceTimers: this.graceTimers.size
+      graceTimers: this.graceTimers.size,
+      ...this.sourceCredit.retentionSnapshot()
     })
+  }
+
+  ownsDelivery(
+    token: string,
+    grant: Readonly<PtyConsumerSessionGrant>,
+    id: string
+  ): PtySourceDeliveryIdentity | null {
+    return ownedPtySourceDelivery(this.identityByToken.get(token), grant, id)
+  }
+
+  cancelIdentity(identity: PtySourceDeliveryIdentity, reason: string): void {
+    const token = identity.deliveryToken
+    if (this.identityByToken.get(token) !== identity) {
+      return
+    }
+    this.cancelExact(token, identity, reason)
   }
 
   dispose(): void {
@@ -279,14 +302,10 @@ export class SshPtySourceCreditAdapter {
     }
   }
 
-  private hasOwnerDeliveries(ownerGeneration: number): boolean {
-    for (const identity of this.identityByToken.values()) {
-      if (identity.ownerGeneration === ownerGeneration) {
-        return true
-      }
-    }
-    return false
-  }
+  private hasOwnerDeliveries = (ownerGeneration: number): boolean =>
+    Array.from(this.identityByToken.values()).some(
+      (identity) => identity.ownerGeneration === ownerGeneration
+    )
 
   private clearGraceWhenSettled(ownerGeneration: number): void {
     if (!this.hasOwnerDeliveries(ownerGeneration)) {

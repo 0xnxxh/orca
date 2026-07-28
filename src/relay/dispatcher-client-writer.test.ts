@@ -300,6 +300,26 @@ describe('DispatcherClientWriter', () => {
     expect(sink.accepted[1].data).toBe('cancel')
   })
 
+  it('admits one bounded producer frame larger than an empty native sink window', () => {
+    const sink = new FakeSink()
+    sink.highWaterMark = 4096
+    sink.saturateNext = true
+    const writer = createWriter(sink, vi.fn(), 8192)
+    const oversized = 'x'.repeat(5000)
+
+    expect(writer.producerFrameCapacity).toBe(3072)
+    const first = enqueue(writer, 'bulk', oversized)
+    enqueue(writer, 'ordinary', 'after-drain')
+    expect(writer.enqueue('bulk', () => Buffer.alloc(8193), 8193)).toBe(false)
+    expect(sink.accepted.map((write) => write.data)).toEqual([oversized])
+
+    sink.accepted[0].settle({ ok: true })
+    expect(first).toHaveBeenCalledWith({ ok: true })
+    expect(sink.accepted).toHaveLength(1)
+    sink.drain()
+    expect(sink.accepted.map((write) => write.data)).toEqual([oversized, 'after-drain'])
+  })
+
   it('gives independent writers progress when one client stays saturated', () => {
     const slowSink = new FakeSink()
     const fastSink = new FakeSink()

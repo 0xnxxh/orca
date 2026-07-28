@@ -111,6 +111,36 @@ describe('SshPtySourceObligationLedger', () => {
     expect(ledger.snapshot(owner)).toMatchObject({ ackPublishedEndSu: 4, openSpans: 0 })
   })
 
+  it('checkpoints only the contiguous model-settled prefix', () => {
+    const ledger = new SshPtySourceObligationLedger()
+    const owner = identity()
+    ledger.open(owner)
+    commitSpan(ledger, owner, span(owner, 'span-1', 0, 'abcd'))
+    commitSpan(ledger, owner, span(owner, 'span-2', 4, 'efgh'))
+
+    expect(ledger.modelAcceptedEnd(owner)).toBe(0)
+    ledger.settle('span-2', 'model', 'out-of-order')
+    expect(ledger.modelAcceptedEnd(owner)).toBe(0)
+    ledger.settle('span-1', 'model', 'emulator-receipt')
+    expect(ledger.modelAcceptedEnd(owner)).toBe(8)
+  })
+
+  it('continues checkpoints from the reclaimed ACK-published prefix', () => {
+    const ledger = new SshPtySourceObligationLedger()
+    const owner = identity()
+    ledger.open(owner)
+    commitSpan(ledger, owner, span(owner, 'span-1', 0, 'abcd'))
+    commitSpan(ledger, owner, span(owner, 'span-2', 4, 'efgh'))
+    ledger.settle('span-1', 'model', 'emulator-receipt')
+    ledger.settle('span-1', 'desktop', 'renderer-parse')
+    ledger.queueAck(owner)!.onSettled({ ok: true })
+
+    expect(ledger.snapshot(owner)).toMatchObject({ ackPublishedEndSu: 4, openSpans: 1 })
+    expect(ledger.modelAcceptedEnd(owner)).toBe(4)
+    ledger.settle('span-2', 'model', 'emulator-receipt')
+    expect(ledger.modelAcceptedEnd(owner)).toBe(8)
+  })
+
   it('requires an exact transfer fence before a desktop obligation becomes terminal', () => {
     const ledger = new SshPtySourceObligationLedger()
     const owner = identity()

@@ -76,7 +76,13 @@ describe('SshPtySourceCreditAdapter cleanup', () => {
       adapter.settleExit(identity, { ok: true })
     }
 
-    expect(adapter.retentionSnapshot()).toEqual({ deliveryTokens: 0, graceTimers: 0 })
+    expect(adapter.retentionSnapshot()).toEqual({
+      deliveryTokens: 0,
+      graceTimers: 0,
+      sourceSu: 0,
+      dataBytes: 0,
+      spans: 0
+    })
   })
 
   it('disposes grace timers and exact retained tokens', () => {
@@ -86,11 +92,23 @@ describe('SshPtySourceCreditAdapter cleanup', () => {
     const first = adapter.open(grant, 'pty-1', 'incarnation-1')!
     const second = adapter.open(grant, 'pty-2', 'incarnation-2')!
     adapter.retainOrCloseOnDetach(grant)
-    expect(adapter.retentionSnapshot()).toEqual({ deliveryTokens: 2, graceTimers: 1 })
+    expect(adapter.retentionSnapshot()).toEqual({
+      deliveryTokens: 2,
+      graceTimers: 1,
+      sourceSu: 0,
+      dataBytes: 0,
+      spans: 0
+    })
 
     adapter.dispose()
 
-    expect(adapter.retentionSnapshot()).toEqual({ deliveryTokens: 0, graceTimers: 0 })
+    expect(adapter.retentionSnapshot()).toEqual({
+      deliveryTokens: 0,
+      graceTimers: 0,
+      sourceSu: 0,
+      dataBytes: 0,
+      spans: 0
+    })
     expect(adapter.snapshot(first)).toMatchObject({ state: 'closed', generationClosed: true })
     expect(adapter.snapshot(second)).toMatchObject({ state: 'closed', generationClosed: true })
     expect(() => adapter.open(grant, 'pty-late', 'incarnation-late')).toThrow('disposed')

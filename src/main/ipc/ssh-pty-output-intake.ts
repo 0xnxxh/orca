@@ -222,6 +222,10 @@ export class SshPtyOutputIntake {
     return this.sourceObligations.remoteHooks
   }
 
+  getAcceptedSourceCheckpoints(providerGeneration: number) {
+    return this.sourceObligations.acceptedCheckpoints(providerGeneration)
+  }
+
   getDebugSnapshot() {
     return {
       model: this.admission.getDebugSnapshot(),

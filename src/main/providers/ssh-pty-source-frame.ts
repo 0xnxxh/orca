@@ -1,6 +1,6 @@
 import type { SshPtyDataCallback } from './ssh-pty-provider-contract'
 
-type SshPtySourceFrame = NonNullable<Parameters<SshPtyDataCallback>[0]['source']>
+export type SshPtySourceFrame = NonNullable<Parameters<SshPtyDataCallback>[0]['source']>
 
 const SOURCE_KEYS = [
   'deliveryToken',
@@ -24,6 +24,7 @@ export function parseSshPtySourceFrame(
   const rawLength = params.rawLength
   const transformed = params.transformed === true
   if (
+    typeof params.data !== 'string' ||
     typeof params.deliveryToken !== 'string' ||
     params.deliveryToken.length === 0 ||
     !positiveSafeInteger(params.clientGeneration) ||
@@ -33,6 +34,7 @@ export function parseSshPtySourceFrame(
     sourceEndSu < sourceLengthSu ||
     typeof params.ptyIncarnation !== 'string' ||
     params.ptyIncarnation.length === 0 ||
+    (params.seq !== undefined && !nonNegativeSafeInteger(params.seq)) ||
     (transformed ? rawLength !== sourceLengthSu : data.length !== sourceLengthSu) ||
     (rawLength !== undefined && rawLength !== sourceLengthSu)
   ) {

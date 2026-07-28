@@ -11,53 +11,46 @@ import {
 import {
   assertNonNegativeSafeInteger,
   assertPositiveSafeInteger,
-  assertPtySourceAck,
   assertPtySourceIdentity
 } from '../shared/pty-source-credit-validation'
 import {
+  resolvePtySourceCreditLimits,
+  type PtySourceCreditLedgerOptions,
+  type PtySourceCreditLimits
+} from './pty-source-credit-limits'
+import {
   CLOSED_DELIVERY_TOMBSTONE_LIMIT,
+  acknowledgeDeliveryRecord,
   closeDeliveryGeneration,
   createAppendedSourceSpan,
   createDeliveryCancellation,
   createDeliveryRecord,
   createReplacementDeliveryRecord,
-  DEFAULT_AGGREGATE_RETAINED_SOURCE_SU,
-  DEFAULT_RETAINED_SOURCE_SU,
+  MAX_SOURCE_SPAN_DATA_BYTES,
   ptyOwnerKey,
-  reclaimCreditedSpans,
+  retainedDataBytesTotal,
+  retainedSpanTotal,
   retainedSourceTotal,
   sliceForSend,
   snapshotDeliveryRecord,
   type DeliveryRecord,
+  type PtySourceAckResult,
   type PtySourceAppendInput,
   type PtySourceSendReservation
 } from './pty-source-credit-record'
 
 export type { PtySourceSendReservation } from './pty-source-credit-record'
-
-export type PtySourceAckResult = 'advanced' | 'duplicate' | 'regression'
-
-export type PtySourceCreditLedgerOptions = {
-  maxRetainedSourceSu?: number
-  maxAggregateRetainedSourceSu?: number
-}
+export type { PtySourceCreditLedgerOptions } from './pty-source-credit-limits'
 
 export class RelayPtySourceCreditLedger {
   private readonly deliveries = new Map<string, DeliveryRecord>()
   private readonly upstreamOwnerByPty = new Map<string, string>()
   private readonly closedSnapshots = new Map<string, PtySourceDeliverySnapshot>()
-  private readonly maxRetainedSourceSu: number
-  private readonly maxAggregateRetainedSourceSu: number
+  private readonly limits: PtySourceCreditLimits
   private nextReservationId = 1
 
   constructor(options: PtySourceCreditLedgerOptions = {}) {
-    const maxRetainedSourceSu = options.maxRetainedSourceSu ?? DEFAULT_RETAINED_SOURCE_SU
-    assertPositiveSafeInteger(maxRetainedSourceSu, 'maxRetainedSourceSu')
-    const maxAggregateRetainedSourceSu =
-      options.maxAggregateRetainedSourceSu ?? DEFAULT_AGGREGATE_RETAINED_SOURCE_SU
-    assertPositiveSafeInteger(maxAggregateRetainedSourceSu, 'maxAggregateRetainedSourceSu')
-    this.maxRetainedSourceSu = maxRetainedSourceSu
-    this.maxAggregateRetainedSourceSu = maxAggregateRetainedSourceSu
+    this.limits = resolvePtySourceCreditLimits(options)
   }
 
   open(
@@ -85,14 +78,34 @@ export class RelayPtySourceCreditLedger {
   append(identity: PtySourceDeliveryIdentity, input: PtySourceAppendInput): PtySourceSpan {
     const record = this.requireActive(identity)
     const sourceEndSu = record.receivedEndSu + input.transform.rawLengthSu
-    if (sourceEndSu - record.creditedEndSu > this.maxRetainedSourceSu) {
+    const dataBytes = Buffer.byteLength(input.data, 'utf8')
+    if (dataBytes > MAX_SOURCE_SPAN_DATA_BYTES) {
+      throw new Error('PTY source span encoded-data budget exceeded')
+    }
+    if (sourceEndSu - record.creditedEndSu > this.limits.maxRetainedSourceSu) {
       throw new Error('PTY source retained-range budget exceeded')
     }
-    if (this.retainedSourceSu() + input.transform.rawLengthSu > this.maxAggregateRetainedSourceSu) {
+    if (
+      this.retainedSourceSu() + input.transform.rawLengthSu >
+      this.limits.maxAggregateRetainedSourceSu
+    ) {
       throw new Error('Aggregate PTY source retained-range budget exceeded')
+    }
+    if (record.retainedDataBytes + dataBytes > this.limits.maxRetainedDataBytes) {
+      throw new Error('PTY source retained encoded-data budget exceeded')
+    }
+    if (this.retainedDataBytes() + dataBytes > this.limits.maxAggregateRetainedDataBytes) {
+      throw new Error('Aggregate PTY source retained encoded-data budget exceeded')
+    }
+    if (record.spans.length + 1 > this.limits.maxRetainedSpans) {
+      throw new Error('PTY source retained-span budget exceeded')
+    }
+    if (this.retainedSpans() + 1 > this.limits.maxAggregateRetainedSpans) {
+      throw new Error('Aggregate PTY source retained-span budget exceeded')
     }
     const span = createAppendedSourceSpan(record, input)
     record.spans.push(span)
+    record.retainedDataBytes += dataBytes
     record.receivedEndSu = sourceEndSu
     return span
   }
@@ -133,6 +146,7 @@ export class RelayPtySourceCreditLedger {
       span
     })
     record.pendingSend = reservation
+    record.attemptedEndSu = span.sourceEndSu
     return reservation
   }
 
@@ -144,6 +158,7 @@ export class RelayPtySourceCreditLedger {
     record.pendingSend = null
     record.sentEndSu = reservation.span.sourceEndSu
     record.sentBoundaries.add(record.sentEndSu)
+    record.attemptedEndSu = null
   }
 
   rollbackSend(reservation: PtySourceSendReservation): void {
@@ -154,40 +169,12 @@ export class RelayPtySourceCreditLedger {
   }
 
   acknowledge(identity: PtySourceDeliveryIdentity, ack: PtySourceCreditAck): PtySourceAckResult {
-    assertPtySourceAck(ack)
     const record = this.requireDelivery(identity)
-    if (record.state === 'closed' || record.state === 'closing') {
-      throw new Error('PTY source ACK targets a closed delivery')
+    const result = acknowledgeDeliveryRecord(record, ack)
+    if (result === 'advanced') {
+      this.maybeClose(record)
     }
-    if (
-      ack.id !== record.identity.id ||
-      ack.clientGeneration !== record.identity.clientGeneration ||
-      ack.ownerGeneration !== record.identity.ownerGeneration ||
-      ack.deliveryToken !== record.identity.deliveryToken
-    ) {
-      throw new Error('PTY source ACK does not own this delivery')
-    }
-    if (ack.creditedEndSu > record.sentEndSu) {
-      throw new Error('PTY source ACK exceeds sent source credit')
-    }
-    if (ack.creditedEndSu === record.creditedEndSu) {
-      return 'duplicate'
-    }
-    if (ack.creditedEndSu < record.creditedEndSu) {
-      return 'regression'
-    }
-    if (!record.sentBoundaries.has(ack.creditedEndSu)) {
-      throw new Error('PTY source ACK does not match a committed send boundary')
-    }
-    record.creditedEndSu = ack.creditedEndSu
-    for (const boundary of record.sentBoundaries) {
-      if (boundary < record.creditedEndSu) {
-        record.sentBoundaries.delete(boundary)
-      }
-    }
-    reclaimCreditedSpans(record)
-    this.maybeClose(record)
-    return 'advanced'
+    return result
   }
 
   seal(identity: PtySourceDeliveryIdentity): void {
@@ -240,16 +227,16 @@ export class RelayPtySourceCreditLedger {
     windowSu: number
   ): Readonly<{ cancellation: PtySourceDeliveryCancellation; recovery: readonly PtySourceSpan[] }> {
     const old = this.requireDelivery(oldIdentity)
+    const replacementKey = ptySourceDeliveryKey(newIdentity)
+    if (this.deliveries.has(replacementKey) || this.closedSnapshots.has(replacementKey)) {
+      throw new Error('PTY source replacement token was already used')
+    }
     const replacement = createReplacementDeliveryRecord(
       old,
       newIdentity,
       acceptedSourceEndSu,
       windowSu
     )
-    const replacementKey = ptySourceDeliveryKey(newIdentity)
-    if (this.deliveries.has(replacementKey) || this.closedSnapshots.has(replacementKey)) {
-      throw new Error('PTY source replacement token was already used')
-    }
     this.upstreamOwnerByPty.delete(ptyOwnerKey(old.identity))
     this.deliveries.set(replacementKey, replacement)
     this.upstreamOwnerByPty.set(ptyOwnerKey(replacement.identity), replacementKey)
@@ -269,8 +256,22 @@ export class RelayPtySourceCreditLedger {
     throw new Error('Unknown or stale PTY source delivery')
   }
 
-  retainedSourceSu(): number {
-    return retainedSourceTotal(this.deliveries.values())
+  retainedSourceSu = (): number => retainedSourceTotal(this.deliveries.values())
+
+  retainedDataBytes = (): number => retainedDataBytesTotal(this.deliveries.values())
+
+  retainedSpans = (): number => retainedSpanTotal(this.deliveries.values())
+
+  retentionSnapshot(): Readonly<{
+    sourceSu: number
+    dataBytes: number
+    spans: number
+  }> {
+    return Object.freeze({
+      sourceSu: this.retainedSourceSu(),
+      dataBytes: this.retainedDataBytes(),
+      spans: this.retainedSpans()
+    })
   }
 
   private requireActive(identity: PtySourceDeliveryIdentity): DeliveryRecord {
@@ -303,6 +304,7 @@ export class RelayPtySourceCreditLedger {
     record.state = 'closed'
     record.pendingSend = null
     record.spans = []
+    record.retainedDataBytes = 0
     const key = ptySourceDeliveryKey(record.identity)
     const ownerKey = ptyOwnerKey(record.identity)
     if (this.upstreamOwnerByPty.get(ownerKey) === key) {

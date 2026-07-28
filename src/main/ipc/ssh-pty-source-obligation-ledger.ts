@@ -18,7 +18,6 @@ import type {
 } from './ssh-pty-source-obligation-contract'
 import { createSshPtySourceAckPublication } from './ssh-pty-source-ack-publication'
 import {
-  advanceSourceTerminalEnd,
   beginSourceExitTimeout,
   cancelOpenSourceObligations,
   closeAllSourceTokens,
@@ -34,6 +33,12 @@ import {
   type ReservationRecord,
   type TokenRecord
 } from './ssh-pty-source-obligation-state'
+import {
+  cancelSourceObligationTransfer,
+  commitSourceObligationTransfer,
+  modelAcceptedSourceEnd,
+  transitionOpenSourceObligation
+} from './ssh-pty-source-obligation-transitions'
 
 export type {
   SshPtySourceAckPublication,
@@ -148,32 +153,11 @@ export class SshPtySourceObligationLedger {
   }
 
   commitTransfer(spanId: string, consumer: SshPtySourceConsumerId): boolean {
-    const { token, span } = requireSourceSpan(this.spanOwners, spanId)
-    const current = span.obligations.get(consumer)
-    if (current?.state !== 'transferring') {
-      return false
-    }
-    span.obligations.set(
-      consumer,
-      Object.freeze({
-        state: 'transferred',
-        to: current.to,
-        reason: current.reason
-      })
-    )
-    advanceSourceTerminalEnd(token)
-    return true
+    return commitSourceObligationTransfer(this.spanOwners, spanId, consumer)
   }
 
   cancelTransfer(spanId: string, consumer: SshPtySourceConsumerId, reason: string): boolean {
-    const { token, span } = requireSourceSpan(this.spanOwners, spanId)
-    const current = span.obligations.get(consumer)
-    if (current?.state !== 'transferring') {
-      return false
-    }
-    span.obligations.set(consumer, Object.freeze({ state: 'canceled', reason }))
-    advanceSourceTerminalEnd(token)
-    return true
+    return cancelSourceObligationTransfer(this.spanOwners, spanId, consumer, reason)
   }
 
   queueAck(identity: PtySourceDeliveryIdentity): SshPtySourceAckPublication | null {
@@ -263,6 +247,10 @@ export class SshPtySourceObligationLedger {
     throw new Error('Unknown or stale SSH PTY source token')
   }
 
+  modelAcceptedEnd(identity: PtySourceDeliveryIdentity): number {
+    return modelAcceptedSourceEnd(this.requireToken(identity))
+  }
+
   obligation(spanId: string, consumer: SshPtySourceConsumerId): SshPtySourceObligationState {
     const obligation = requireSourceSpan(this.spanOwners, spanId).span.obligations.get(consumer)
     if (!obligation) {
@@ -280,13 +268,7 @@ export class SshPtySourceObligationLedger {
     consumer: SshPtySourceConsumerId,
     next: SshPtySourceObligationState
   ): boolean {
-    const { token, span } = requireSourceSpan(this.spanOwners, spanId)
-    if (span.obligations.get(consumer)?.state !== 'open') {
-      return false
-    }
-    span.obligations.set(consumer, next)
-    advanceSourceTerminalEnd(token)
-    return true
+    return transitionOpenSourceObligation(this.spanOwners, spanId, consumer, next)
   }
 
   private maybeClose(token: TokenRecord): void {

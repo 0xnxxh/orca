@@ -12,7 +12,9 @@ function createMockTransport(): MultiplexerTransport & {
   const written: Buffer[] = []
 
   return {
-    write: (data: Buffer) => written.push(data),
+    write: (data: Buffer) => {
+      written.push(data)
+    },
     onData: (cb) => dataCallbacks.push(cb),
     onClose: (cb) => closeCallbacks.push(cb),
     dataCallbacks,

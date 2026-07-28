@@ -1842,6 +1842,7 @@ export function registerPtyHandlers(
   let sshOutputIntake: SshPtyOutputIntake | null = null
   // Why: resuming a paused producer during exit can synchronously emit; those bytes must not queue behind pty:exit.
   const rendererExitingPtyIds = new Set<string>()
+  const rendererCreditBeforeExitByPty = new Map<string, boolean>()
   const rendererDeliveryRestoreNeededPtys = new Set<string>()
 
   function transitionHiddenRendererPtyDeliveryState(id: string, hidden: boolean) {
@@ -1927,10 +1928,17 @@ export function registerPtyHandlers(
     pauseProducer: (id) => tryGetProviderForPty(id)?.pauseProducer?.(id),
     resumeProducer: (id) => tryGetProviderForPty(id)?.resumeProducer?.(id)
   })
+  const sourceCreditPendingPtys = new Set<string>()
 
   function updateProducerFlowControl(id: string): void {
     if (!PRODUCER_FLOW_CONTROL_ENABLED) {
       return
+    }
+    if (sourceCreditPendingPtys.has(id)) {
+      if (pendingData.get(id)) {
+        return
+      }
+      sourceCreditPendingPtys.delete(id)
     }
     producerFlowControl.update(id, pendingData.get(id)?.data.length ?? 0)
   }
@@ -2009,6 +2017,7 @@ export function registerPtyHandlers(
       }
     }
     pendingData.clear()
+    sourceCreditPendingPtys.clear()
   }
 
   function readCurrentPtyRendererDeliveryDebugSnapshot(): PtyRendererDeliveryDebugSnapshot {
@@ -2856,6 +2865,12 @@ export function registerPtyHandlers(
     }
     rendererExitingPtyIds.add(payload.id)
     try {
+      if (!rendererCreditBeforeExitByPty.has(payload.id)) {
+        rendererCreditBeforeExitByPty.set(
+          payload.id,
+          getRendererInFlightCharsForPty(payload.id) > 0
+        )
+      }
       // Why flush before exit: the renderer tears down the terminal on pty:exit, so any batched output not yet flushed would be silently lost.
       const remaining = pendingData.delete(payload.id)
       clearFlushTimerIfIdle()
@@ -2893,6 +2908,7 @@ export function registerPtyHandlers(
 
   function finalizePtyExitForRenderer(payload: { id: string; code: number }): void {
     if (mainWindow.isDestroyed()) {
+      rendererCreditBeforeExitByPty.delete(payload.id)
       return
     }
     if (rendererExitingPtyIds.has(payload.id)) {
@@ -2900,9 +2916,13 @@ export function registerPtyHandlers(
     }
     rendererExitingPtyIds.add(payload.id)
     try {
-      const hadReleasableRendererCredit = getRendererInFlightCharsForPty(payload.id) > 0
+      const hadReleasableRendererCredit =
+        rendererCreditBeforeExitByPty.get(payload.id) ??
+        getRendererInFlightCharsForPty(payload.id) > 0
+      rendererCreditBeforeExitByPty.delete(payload.id)
       // Why resume a dead PTY (no-op): avoid leaving a stale paused mark behind for a reused id.
       producerFlowControl.release(payload.id)
+      sourceCreditPendingPtys.delete(payload.id)
       pendingOverflowMarkedPtys.delete(payload.id)
       rendererDeliveryRestoreNeededPtys.delete(payload.id)
       lastInputAtByPty.delete(payload.id)
@@ -3002,6 +3022,9 @@ export function registerPtyHandlers(
       markHiddenRendererResizeOutputDelivered(payload.id)
     }
     const overflowMarkedBeforeAppend = pendingOverflowMarkedPtys.has(payload.id)
+    if (projection?.desktopSpan) {
+      sourceCreditPendingPtys.add(payload.id)
+    }
     const pending = appendPendingPtyData(
       payload.id,
       pendingData.get(payload.id),
@@ -3148,12 +3171,12 @@ export function registerPtyHandlers(
     },
     publishSourceAck: publishSshPtySourceAck
   })
-  runtime?.setRemoteTerminalSourceRangeConsumerHooks(
+  runtime?.setRemoteTerminalSourceRangeConsumerHooks?.(
     sshOutputIntake.getRemoteSourceRangeConsumerHooks()
   )
   const cleanupSshOutputIntakeRegistry = installSshPtyOutputIntake(sshOutputIntake)
   sshOutputIntakeCleanup = () => {
-    runtime?.setRemoteTerminalSourceRangeConsumerHooks(null)
+    runtime?.setRemoteTerminalSourceRangeConsumerHooks?.(null)
     cleanupSshOutputIntakeRegistry()
   }
 

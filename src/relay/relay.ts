@@ -55,6 +55,7 @@ import { registerManagedHookInstaller } from './managed-hook-installer'
 import { registerRelayPluginHostCallHandlers } from './plugin-host-call-handler'
 import { DispatcherClientWriter } from './dispatcher-client-writer'
 import { SshPtyConsumerSessionAdapter } from './ssh-pty-consumer-session-adapter'
+import { RelayPtySourcePublication } from './relay-pty-source-publication'
 
 const DEFAULT_GRACE_MS = DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS * 1000
 const SOCK_NAME = 'relay.sock'
@@ -109,6 +110,7 @@ function parseArgs(argv: string[]): {
   endpointDir?: string
   logFile?: string
   credentialFile?: string
+  ptySourceCreditV1: boolean
 } {
   let graceTimeMs = DEFAULT_GRACE_MS
   let connectMode = false
@@ -118,6 +120,7 @@ function parseArgs(argv: string[]): {
   let endpointDir: string | undefined
   let logFile: string | undefined
   let credentialFile: string | undefined
+  let ptySourceCreditV1 = false
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--grace-time' && argv[i + 1]) {
       const parsed = Number.parseInt(argv[i + 1], 10)
@@ -144,6 +147,8 @@ function parseArgs(argv: string[]): {
     } else if (argv[i] === '--credential-file' && argv[i + 1]) {
       credentialFile = argv[i + 1]
       i++
+    } else if (argv[i] === '--pty-source-credit-v1') {
+      ptySourceCreditV1 = true
     }
   }
   if (!sockPath) {
@@ -157,7 +162,8 @@ function parseArgs(argv: string[]): {
     sockPath,
     endpointDir,
     logFile,
-    credentialFile
+    credentialFile,
+    ptySourceCreditV1
   }
 }
 
@@ -420,7 +426,8 @@ async function main(): Promise<void> {
     sockPath,
     endpointDir,
     logFile,
-    credentialFile
+    credentialFile,
+    ptySourceCreditV1
   } = parseArgs(process.argv)
   const endpointCredential = readEndpointCredential(credentialFile)
 
@@ -556,9 +563,16 @@ async function main(): Promise<void> {
   const ptyConsumerSessionAdapter = new SshPtyConsumerSessionAdapter(
     dispatcher,
     launchVersion,
-    (id, paused) => ptyHandler.setConsumerDeliveryPaused(id, paused)
+    (id, paused) => ptyHandler.setConsumerDeliveryPaused(id, paused),
+    (id) => ptyHandler.handleSourceCreditAvailable(id),
+    ptySourceCreditV1
   )
-  void ptyConsumerSessionAdapter
+  const ptySourcePublication = new RelayPtySourcePublication(
+    dispatcher,
+    ptyConsumerSessionAdapter,
+    (id) => ptyHandler.handleSourcePublicationCapacity(id)
+  )
+  ptyHandler.setSourcePublication(ptySourcePublication)
   const fsHandler = new FsHandler(dispatcher, context)
   const watchRegistry = fsHandler.getWatchRegistry()
   ptyHandler.setWorktreeRemovalCoordinator(watchRegistry)
@@ -741,6 +755,11 @@ async function main(): Promise<void> {
     memory: process.memoryUsage(),
     ptys: {
       active: ptyHandler.activePtyCount
+    },
+    ptySourceCredit: {
+      enabled: ptySourceCreditV1,
+      session: ptyConsumerSessionAdapter.getDebugSnapshot(),
+      publication: ptySourcePublication.getDebugSnapshot()
     },
     socket: {
       path: sockPath,

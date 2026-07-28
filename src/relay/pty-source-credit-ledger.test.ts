@@ -281,6 +281,29 @@ describe('RelayPtySourceCreditLedger', () => {
     })
   })
 
+  it('accepts an exact receiver checkpoint for a rolled-back send attempt', () => {
+    const ledger = new RelayPtySourceCreditLedger()
+    const oldOwner = identity()
+    const replacement = identity('token-2', {
+      clientGeneration: 4,
+      ownerGeneration: 5
+    })
+    ledger.open(oldOwner, 16)
+    append(ledger, oldOwner, 'abcdefgh')
+    const attempted = ledger.reserveNextSend(oldOwner, 4)!
+    ledger.rollbackSend(attempted)
+
+    const rotation = ledger.rotate(oldOwner, replacement, 4, 16)
+
+    expect(rotation.recovery.map((span) => span.data).join('')).toBe('efgh')
+    expect(rotation.cancellation).toMatchObject({ sentEndSu: 4, creditedEndSu: 0 })
+    expect(ledger.snapshot(replacement)).toMatchObject({
+      receivedEndSu: 8,
+      sentEndSu: 4,
+      creditedEndSu: 4
+    })
+  })
+
   it('generation-closes every retained token exactly once', () => {
     const ledger = new RelayPtySourceCreditLedger()
     const owner = identity()
@@ -309,6 +332,41 @@ describe('RelayPtySourceCreditLedger', () => {
 
     expect(() => append(ledger, second, 'xyz')).toThrow('Aggregate')
     expect(ledger.retainedSourceSu()).toBe(4)
+  })
+
+  it('bounds exact UTF-8 retained bytes for transformed spans', () => {
+    const ledger = new RelayPtySourceCreditLedger({
+      maxRetainedDataBytes: 7,
+      maxAggregateRetainedDataBytes: 7
+    })
+    const owner = identity()
+    ledger.open(owner, 8)
+
+    expect(() =>
+      ledger.append(owner, {
+        spanId: 'expanded',
+        data: '😀😀',
+        displayStart: 0,
+        displayEnd: 4,
+        splittable: false,
+        transform: { transformed: true, rawLengthSu: 1, scalarSafe: false }
+      })
+    ).toThrow('encoded-data')
+    expect(ledger.retentionSnapshot()).toEqual({ sourceSu: 0, dataBytes: 0, spans: 0 })
+  })
+
+  it('bounds retained frame metadata independently of source units', () => {
+    const ledger = new RelayPtySourceCreditLedger({
+      maxRetainedSpans: 2,
+      maxAggregateRetainedSpans: 2
+    })
+    const owner = identity()
+    ledger.open(owner, 8)
+    append(ledger, owner, 'a', 'span-a')
+    append(ledger, owner, 'b', 'span-b')
+
+    expect(() => append(ledger, owner, 'c', 'span-c')).toThrow('retained-span')
+    expect(ledger.retentionSnapshot()).toEqual({ sourceSu: 2, dataBytes: 2, spans: 2 })
   })
 
   it('bounds closed token tombstones', () => {

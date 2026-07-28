@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SshChannelMultiplexer, type MultiplexerTransport } from './ssh-channel-multiplexer'
-import { encodeFrame, encodeKeepAliveFrame, MessageType } from './relay-protocol'
+import { encodeFrame, encodeKeepAliveFrame, HEADER_LENGTH, MessageType } from './relay-protocol'
 
 type MockTransport = MultiplexerTransport & {
   data: (chunk: Buffer) => void
@@ -134,5 +134,60 @@ describe('SshChannelMultiplexer backpressure hardening', () => {
     vi.runAllTicks()
     vi.advanceTimersByTime(0)
     expect(seen).toEqual(Array.from({ length: 65 }, (_, index) => index))
+  })
+
+  it('keeps acknowledgements, cancellation, exit, requests, and responses ordered after drain', async () => {
+    mux.dispose()
+    const written: Buffer[] = []
+    let drain = (): void => {}
+    let deliver = (_data: Buffer): void => {}
+    transport = {
+      write: (data) => {
+        written.push(data)
+        return written.length !== 1
+      },
+      onDrain: (callback) => {
+        drain = callback
+      },
+      onData: (callback) => {
+        deliver = callback
+      },
+      onClose: vi.fn(),
+      pauseReads: vi.fn<() => void>(),
+      resumeReads: vi.fn<() => void>(),
+      data: vi.fn<(chunk: Buffer) => void>(),
+      written,
+      close: vi.fn()
+    }
+    mux = new SshChannelMultiplexer(transport)
+    mux.onRequest('client.control', () => ({ accepted: true }))
+    const controller = new AbortController()
+
+    mux.notify('pty.data', { id: 'pty-1', data: 'ordinary' })
+    mux.notify('pty.ackData', { acknowledgements: [] })
+    const request = mux.request('fs.scan', {}, { signal: controller.signal })
+    controller.abort()
+    mux.notify('pty.exit', { id: 'pty-1', code: 0 })
+    const remoteRequest = Buffer.from(
+      JSON.stringify({ jsonrpc: '2.0', id: 91, method: 'client.control' })
+    )
+    deliver(encodeFrame(MessageType.Regular, 1, 0, remoteRequest))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(written).toHaveLength(1)
+    drain()
+    const payloads = written.map((frame) =>
+      JSON.parse(frame.subarray(HEADER_LENGTH, HEADER_LENGTH + frame.readUInt32BE(9)).toString())
+    )
+    expect(payloads.map((payload) => payload.method ?? `response:${payload.id}`)).toEqual([
+      'pty.data',
+      'pty.ackData',
+      'fs.scan',
+      'rpc.cancel',
+      'pty.exit',
+      'response:91'
+    ])
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' })
   })
 })

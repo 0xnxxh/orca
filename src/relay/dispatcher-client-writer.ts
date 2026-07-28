@@ -59,6 +59,10 @@ export class DispatcherClientWriter {
     return this.sink.producerFrameCapacity
   }
 
+  get producerQueueCapacity(): number {
+    return this.admission.producerQueueCapacity
+  }
+
   canEnqueueProducer(bytes: number): boolean {
     return !this.closed && this.admission.canAdmitProducer(bytes, this.producerFrameCapacity)
   }
@@ -191,7 +195,10 @@ export class DispatcherClientWriter {
     if (!Number.isFinite(highWaterMark)) {
       return true
     }
-    return this.sink.writableLength + entry.estimatedBytes <= this.sink.producerFrameCapacity
+    return (
+      this.sink.writableLength + entry.estimatedBytes <= this.sink.producerFrameCapacity ||
+      this.sink.writableLength === 0
+    )
   }
 
   private writeEntry(entry: DispatcherWriterEntry): void {
@@ -303,9 +310,7 @@ export class DispatcherClientWriter {
     remove?.()
   }
 
-  private isIdle(): boolean {
-    return this.inFlight.size === 0 && this.admission.queuedEntries === 0
-  }
+  private isIdle = (): boolean => this.inFlight.size === 0 && this.admission.queuedEntries === 0
 
   private notifyIdle(): void {
     if (!this.isIdle()) {

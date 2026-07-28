@@ -9,10 +9,15 @@ import {
 import { toAppSshPtyId, toRelaySshPtyId } from './ssh-pty-id'
 import type { PtySpawnOptions, PtySpawnResult } from './types'
 import type { SshPtySpawnExitRaceTracker } from './ssh-pty-spawn-exit-race'
+import type {
+  PtySourceRecoveryRequest,
+  PtySourceRecoveryResult
+} from '../../shared/pty-source-recovery-contract'
 
 export type SshPtyAttachResult = {
   replay?: string
   incarnationId?: PtyIncarnationId
+  sourceRecovery?: PtySourceRecoveryResult
 }
 
 export function parseSshPtyAttachResult(value: unknown): SshPtyAttachResult {
@@ -22,7 +27,11 @@ export function parseSshPtyAttachResult(value: unknown): SshPtyAttachResult {
   if (typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Invalid SSH PTY attach response')
   }
-  const result = value as { replay?: unknown; incarnationId?: unknown }
+  const result = value as {
+    replay?: unknown
+    incarnationId?: unknown
+    sourceRecovery?: unknown
+  }
   if (result.replay !== undefined && typeof result.replay !== 'string') {
     throw new Error('Invalid SSH PTY attach replay')
   }
@@ -30,11 +39,59 @@ export function parseSshPtyAttachResult(value: unknown): SshPtyAttachResult {
     // Why: a present-but-invalid identity cannot safely fence delayed exits from a reused relay id.
     throw new Error('Invalid SSH PTY attach incarnation')
   }
+  const sourceRecovery = parseSourceRecoveryResult(result.sourceRecovery)
   return {
     ...(typeof result.replay === 'string' ? { replay: result.replay } : {}),
-    ...(isPtyIncarnationId(result.incarnationId) ? { incarnationId: result.incarnationId } : {})
+    ...(isPtyIncarnationId(result.incarnationId) ? { incarnationId: result.incarnationId } : {}),
+    ...(sourceRecovery ? { sourceRecovery } : {})
   }
 }
+
+function parseSourceRecoveryResult(value: unknown): PtySourceRecoveryResult | undefined {
+  if (value === undefined) {
+    return undefined
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Invalid SSH PTY source recovery response')
+  }
+  const input = value as Record<string, unknown>
+  if (input.status === 'restoreRequired' && typeof input.reason === 'string') {
+    return Object.freeze({ status: 'restoreRequired', reason: input.reason })
+  }
+  if (
+    input.status !== 'pending' ||
+    typeof input.deliveryToken !== 'string' ||
+    input.deliveryToken.length === 0 ||
+    typeof input.ptyIncarnation !== 'string' ||
+    input.ptyIncarnation.length === 0 ||
+    !positiveInteger(input.clientGeneration) ||
+    !positiveInteger(input.ownerGeneration) ||
+    !nonNegativeInteger(input.checkpointSourceEndSu) ||
+    !nonNegativeInteger(input.recoveryEndSu) ||
+    Number(input.recoveryEndSu) < Number(input.checkpointSourceEndSu)
+  ) {
+    throw new Error('Invalid SSH PTY source recovery response')
+  }
+  return Object.freeze({
+    status: 'pending',
+    deliveryToken: input.deliveryToken,
+    ptyIncarnation: input.ptyIncarnation,
+    clientGeneration: Number(input.clientGeneration),
+    ownerGeneration: Number(input.ownerGeneration),
+    checkpointSourceEndSu: Number(input.checkpointSourceEndSu),
+    recoveryEndSu: Number(input.recoveryEndSu)
+  })
+}
+
+function positiveInteger(value: unknown): boolean {
+  return Number.isSafeInteger(value) && Number(value) > 0
+}
+
+function nonNegativeInteger(value: unknown): boolean {
+  return Number.isSafeInteger(value) && Number(value) >= 0
+}
+
+export type { PtySourceRecoveryRequest }
 
 export async function reattachSshPtySession(args: {
   mux: SshChannelMultiplexer

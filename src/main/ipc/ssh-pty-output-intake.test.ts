@@ -239,6 +239,37 @@ describe('SshPtyOutputIntake', () => {
     expect(Object.isFrozen(projections[0]?.desktopSpan)).toBe(true)
   })
 
+  it('exports only the model-settled source boundary before generation close', async () => {
+    const harness = createHarness()
+    const receipt = harness.intake.acceptData(
+      event({
+        source: {
+          spanId: 'recovery-span-1',
+          clientGeneration: 3,
+          ownerGeneration: 4,
+          deliveryToken: 'delivery-token-1',
+          sourceStartSu: 10,
+          sourceEndSu: 14
+        }
+      })
+    )
+
+    expect(harness.intake.getAcceptedSourceCheckpoints(1)[0]?.acceptedSourceEndSu).toBe(10)
+    harness.completions[0]!.resolve()
+    await receipt
+    expect(harness.intake.getAcceptedSourceCheckpoints(1)).toEqual([
+      {
+        id: 'pty-1',
+        providerGeneration: 1,
+        clientGeneration: 3,
+        ownerGeneration: 4,
+        ptyIncarnation: 'incarnation-1',
+        deliveryToken: 'delivery-token-1',
+        acceptedSourceEndSu: 14
+      }
+    ])
+  })
+
   it('rolls back projection staging when model capture throws synchronously', async () => {
     const project = vi.fn()
     const harness = createHarness({

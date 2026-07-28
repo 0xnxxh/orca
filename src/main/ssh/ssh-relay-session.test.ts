@@ -30,6 +30,7 @@ vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
   acceptSshPtyOutputExit: vi.fn().mockResolvedValue(undefined),
   allocateSshPtyProviderGeneration: vi.fn(() => 41),
   closeSshPtyOutputGeneration: vi.fn(),
+  getSshPtyAcceptedSourceCheckpoints: vi.fn(() => []),
   installSshPtySourceAckPublisher: vi.fn(() => () => {})
 }))
 
@@ -44,6 +45,7 @@ vi.mock('./ssh-channel-multiplexer', () => {
       notifyWithSettlement = vi.fn()
       request = muxRequestMock
       onNotification = vi.fn().mockReturnValue(() => {})
+      onNotificationByMethod = vi.fn().mockReturnValue(() => {})
       onRequest = vi.fn().mockReturnValue(() => {})
       onDispose = vi.fn().mockReturnValue(() => {})
       dispose = vi.fn()
@@ -820,7 +822,7 @@ describe('SshRelaySession', () => {
 
     await session.establish(mockConn, 600)
 
-    expect(deployAndLaunchRelay).toHaveBeenCalledWith(mockConn, undefined, 600, 'target-1')
+    expect(deployAndLaunchRelay).toHaveBeenCalledWith(mockConn, undefined, 600, 'target-1', false)
   })
 
   it('restores the configured relay grace after establish', async () => {

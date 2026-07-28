@@ -115,7 +115,8 @@ export async function deployAndLaunchRelay(
   conn: SshConnection,
   onProgress?: (status: string) => void,
   graceTimeSeconds?: number,
-  relayInstanceId?: string
+  relayInstanceId?: string,
+  enablePtySourceCreditV1 = false
 ): Promise<RelayDeployResult> {
   let timeoutHandle: ReturnType<typeof setTimeout>
   // Why: Promise.race doesn't cancel its loser; abort so a contended install-lock waiter can't mutate the relay after this call times out.
@@ -134,6 +135,7 @@ export async function deployAndLaunchRelay(
         onProgress,
         graceTimeSeconds,
         relayInstanceId,
+        enablePtySourceCreditV1,
         deployAbortController.signal
       ),
       timeoutPromise
@@ -265,6 +267,7 @@ async function deployAndLaunchRelayInner(
   onProgress?: (status: string) => void,
   graceTimeSeconds?: number,
   relayInstanceId?: string,
+  enablePtySourceCreditV1 = false,
   deploySignal?: AbortSignal
 ): Promise<RelayDeployResult> {
   while (true) {
@@ -275,6 +278,7 @@ async function deployAndLaunchRelayInner(
         onProgress,
         graceTimeSeconds,
         relayInstanceId,
+        enablePtySourceCreditV1,
         deploySignal
       )
     } catch (err) {
@@ -292,6 +296,7 @@ async function deployAndLaunchRelayAttempt(
   onProgress?: (status: string) => void,
   graceTimeSeconds?: number,
   relayInstanceId?: string,
+  enablePtySourceCreditV1 = false,
   deploySignal?: AbortSignal
 ): Promise<RelayDeployResult> {
   onProgress?.('Detecting remote platform...')
@@ -414,6 +419,7 @@ async function deployAndLaunchRelayAttempt(
       nodePath,
       graceTimeSeconds,
       relayInstanceId,
+      enablePtySourceCreditV1,
       deploySignal
     )
     launchLivenessObserved = true
@@ -1161,6 +1167,7 @@ async function launchRelay(
   nodePath: string,
   graceTimeSeconds?: number,
   relayInstanceId?: string,
+  enablePtySourceCreditV1 = false,
   signal?: AbortSignal
 ): Promise<{
   transport: MultiplexerTransport
@@ -1209,7 +1216,8 @@ async function launchRelay(
         graceTime,
         activePipeMarkerPath,
         reconnectFallback: fallbackEndpoint,
-        credentialFile
+        credentialFile,
+        enablePtySourceCreditV1
       },
       signal
     )
@@ -1264,7 +1272,8 @@ async function launchRelay(
   const logFile = `${remoteDir}/relay.log`
   await writeRelayEndpointCredential(conn, hostPlatform, credentialFile, signal)
   // Why: --log-file lets the relay rotate relay.log in-process; the shell redirect stays to capture pre-JS boot/crash output.
-  const launchCmd = `cd ${escapedDir} && chmod 600 ${shellEscape(credentialFile)} && nohup ${escapedNode} relay.js --detached --grace-time ${graceTime} --sock-path ${shellEscape(sockFile)} --credential-file ${shellEscape(credentialFile)} --log-file ${shellEscape(logFile)} > ${shellEscape(logFile)} 2>&1 </dev/null &`
+  const sourceCreditFlag = enablePtySourceCreditV1 ? ' --pty-source-credit-v1' : ''
+  const launchCmd = `cd ${escapedDir} && chmod 600 ${shellEscape(credentialFile)} && nohup ${escapedNode} relay.js --detached${sourceCreditFlag} --grace-time ${graceTime} --sock-path ${shellEscape(sockFile)} --credential-file ${shellEscape(credentialFile)} --log-file ${shellEscape(logFile)} > ${shellEscape(logFile)} 2>&1 </dev/null &`
   const launchChannel = await conn.exec(launchCmd, { signal })
   launchChannel.on('data', () => {})
   launchChannel.on('error', () => {})
@@ -1428,6 +1437,7 @@ type WindowsRelayLaunchOptions = {
   graceTime: number
   activePipeMarkerPath: string
   credentialFile: string
+  enablePtySourceCreditV1: boolean
 } & WindowsRelayEndpoint & {
     reconnectFallback?: WindowsRelayEndpoint
   }
@@ -1510,7 +1520,8 @@ async function launchWindowsRelay(
       launchOpts.graceTime,
       logFile,
       errFile,
-      launchOpts.credentialFile
+      launchOpts.credentialFile,
+      launchOpts.enablePtySourceCreditV1
     ),
     { signal }
   )
@@ -1602,7 +1613,8 @@ function windowsRelayLaunchCommand(
   graceTime: number,
   logFile: string,
   errFile: string,
-  credentialFile: string
+  credentialFile: string,
+  enablePtySourceCreditV1 = false
 ): string {
   const relayScript = joinRemotePath(hostPlatform, remoteDir, 'relay.js')
   // Why: Windows sshd kills the exec channel's process tree on close; WMI re-parents the detached relay to survive.
@@ -1611,6 +1623,7 @@ function windowsRelayLaunchCommand(
     quoted(nodePath),
     quoted(relayScript),
     '--detached',
+    ...(enablePtySourceCreditV1 ? ['--pty-source-credit-v1'] : []),
     '--grace-time',
     String(graceTime),
     '--sock-path',

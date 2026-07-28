@@ -19,6 +19,7 @@ import { mapSshPtyProcessList } from './ssh-agent-session-process-list'
 import {
   parseSshPtyAttachResult,
   reattachSshPtySessionWithExitFence,
+  type PtySourceRecoveryRequest,
   type SshPtyAttachResult
 } from './ssh-pty-session-reattach'
 import { buildSshPtySpawnRequest } from './ssh-pty-spawn-request'
@@ -69,13 +70,9 @@ export class SshPtyProvider implements IPtyProvider {
 
   getConnectionId = (): string => this.connectionId
 
-  private toRelayPtyId(id: string): string {
-    return toRelaySshPtyId(this.connectionId, id)
-  }
+  private toRelayPtyId = (id: string): string => toRelaySshPtyId(this.connectionId, id)
 
-  private toAppPtyId(id: string): string {
-    return toAppSshPtyId(this.connectionId, id)
-  }
+  private toAppPtyId = (id: string): string => toAppSshPtyId(this.connectionId, id)
 
   async spawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
     if (opts.agentSessionEnsure && opts.sessionId) {
@@ -194,7 +191,8 @@ export class SshPtyProvider implements IPtyProvider {
 
   async attachForReconnect(
     id: string,
-    expected?: { paneKey?: string; tabId?: string }
+    expected?: { paneKey?: string; tabId?: string },
+    sourceRecovery?: PtySourceRecoveryRequest
   ): Promise<SshPtyAttachResult> {
     // Why: reconnect owns replay delivery so stale/duplicate attach results can
     // be filtered before they reach the renderer. The expected identity lets the
@@ -204,6 +202,7 @@ export class SshPtyProvider implements IPtyProvider {
       await this.mux.request('pty.attach', {
         id: this.toRelayPtyId(id),
         suppressReplayNotification: true,
+        ...(sourceRecovery ? { sourceRecovery } : {}),
         ...(expected?.paneKey ? { expectedPaneKey: expected.paneKey } : {}),
         ...(expected?.tabId ? { expectedTabId: expected.tabId } : {})
       })

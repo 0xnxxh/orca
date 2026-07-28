@@ -21,7 +21,7 @@ function fakeChild(): FakeChild {
       resume: ReturnType<typeof vi.fn>
     }
     stderr: EventEmitter
-    stdin: { write: ReturnType<typeof vi.fn> }
+    stdin: EventEmitter & { write: ReturnType<typeof vi.fn> }
     kill: ReturnType<typeof vi.fn>
   }
   child.stdout = Object.assign(new EventEmitter(), {
@@ -29,7 +29,7 @@ function fakeChild(): FakeChild {
     resume: vi.fn()
   })
   child.stderr = new EventEmitter()
-  child.stdin = { write: vi.fn(() => true) }
+  child.stdin = Object.assign(new EventEmitter(), { write: vi.fn(() => true) })
   child.kill = vi.fn()
   return child as unknown as FakeChild
 }
@@ -158,5 +158,26 @@ describe('waitForWslRelaySentinel', () => {
     expect(err.startup?.stderr).toBe('E_FAIL')
     expect(err.message).toContain('E_FAIL')
     expect(err.message).not.toContain(String.fromCharCode(0))
+  })
+
+  it('forwards write(false), callback settlement, and drain from WSL stdin', async () => {
+    const child = fakeChild()
+    const callback = vi.fn()
+    const drain = vi.fn()
+    const writeMock = child.stdin.write as ReturnType<typeof vi.fn>
+    writeMock.mockImplementation((_data, onWritten) => {
+      onWritten(null)
+      return false
+    })
+    const promise = waitForWslRelaySentinel(child)
+    emitStdout(child, RELAY_SENTINEL)
+    const transport = await promise
+
+    transport.onDrain?.(drain)
+    expect(transport.write(Buffer.from('frame'), callback)).toBe(false)
+    expect(callback).toHaveBeenCalledWith({ ok: true })
+    child.stdin.emit('drain')
+    expect(drain).toHaveBeenCalledOnce()
+    expect(transport.supportsWriteSettlement).toBe(true)
   })
 })

@@ -3,11 +3,13 @@ import { subscribeSshPtyNotifications } from './ssh-pty-notification-routing'
 
 type MockMux = {
   onNotification: ReturnType<typeof vi.fn>
+  request: ReturnType<typeof vi.fn>
 }
 
 function createSubscription() {
   const mux: MockMux = {
-    onNotification: vi.fn()
+    onNotification: vi.fn(),
+    request: vi.fn(async () => ({ canceled: true }))
   }
   const dataListeners = new Set<(payload: { id: string; data: string }) => void>()
   const replayListeners = new Set<(payload: { id: string; data: string }) => void>()
@@ -15,6 +17,7 @@ function createSubscription() {
   const livePtyIds = new Set<string>()
   const recordExit = vi.fn()
   const toAppPtyId = vi.fn((id: string) => `ssh:conn@@${id}`)
+  const resolvePtyIncarnation = vi.fn((id: string) => `incarnation:${id}`)
 
   subscribeSshPtyNotifications({
     mux: mux as never,
@@ -25,7 +28,7 @@ function createSubscription() {
     livePtyIds,
     recordExit,
     providerGeneration: 7,
-    resolvePtyIncarnation: (id) => `incarnation:${id}`
+    resolvePtyIncarnation
   })
 
   const handler = mux.onNotification.mock.calls[0]?.[0] as (
@@ -38,12 +41,14 @@ function createSubscription() {
 
   return {
     handler,
+    mux,
     toAppPtyId,
     dataListeners,
     replayListeners,
     exitListeners,
     livePtyIds,
-    recordExit
+    recordExit,
+    resolvePtyIncarnation
   }
 }
 
@@ -102,10 +107,12 @@ describe('subscribeSshPtyNotifications', () => {
     })
   })
 
-  it('derives exact source ranges and marks malformed negotiated frames', () => {
-    const { handler, dataListeners } = createSubscription()
+  it('derives exact immutable source ranges and cancels malformed frames without side effects', () => {
+    const { handler, mux, dataListeners, livePtyIds, toAppPtyId, resolvePtyIncarnation } =
+      createSubscription()
     const onData = vi.fn()
     dataListeners.add(onData)
+    livePtyIds.add('ssh:conn@@unrelated')
 
     handler('pty.data', {
       id: 'pty-1',
@@ -117,6 +124,11 @@ describe('subscribeSshPtyNotifications', () => {
       sourceEndSu: 14,
       sourceLengthSu: 4
     })
+    const acceptedSource = onData.mock.calls[0]?.[0].source
+    expect(Object.isFrozen(acceptedSource)).toBe(true)
+    const liveBeforeMalformed = new Set(livePtyIds)
+    toAppPtyId.mockClear()
+    resolvePtyIncarnation.mockClear()
     handler('pty.data', {
       id: 'pty-1',
       data: 'bad',
@@ -139,7 +151,256 @@ describe('subscribeSshPtyNotifications', () => {
         sourceEndSu: 14
       }
     })
-    expect(onData.mock.calls[1]?.[0]).toMatchObject({ sourceMalformed: true })
+    expect(onData).toHaveBeenCalledTimes(1)
+    expect(livePtyIds).toEqual(liveBeforeMalformed)
+    expect(toAppPtyId).not.toHaveBeenCalled()
+    expect(resolvePtyIncarnation).not.toHaveBeenCalled()
+    expect(mux.request).toHaveBeenCalledWith('pty.cancelDelivery', {
+      id: 'pty-1',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      deliveryToken: 'token-1'
+    })
+  })
+
+  it('keeps exact source incarnation independent from prior legacy delivery state', () => {
+    const { handler, dataListeners, resolvePtyIncarnation } = createSubscription()
+    const onData = vi.fn()
+    dataListeners.add(onData)
+    handler('pty.data', { id: 'pty-1', data: 'legacy' })
+    handler('pty.data', {
+      id: 'pty-1',
+      data: 'data',
+      ptyIncarnation: 'incarnation-1',
+      deliveryToken: 'token-1',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      sourceEndSu: 4,
+      sourceLengthSu: 4
+    })
+
+    expect(onData.mock.calls.map(([payload]) => payload.ptyIncarnation)).toEqual([
+      'incarnation:pty-1',
+      'incarnation-1'
+    ])
+    expect(resolvePtyIncarnation).toHaveBeenCalledTimes(2)
+  })
+
+  it('drops stale delivery generations without touching their PTY or unrelated PTYs', () => {
+    const { handler, mux, dataListeners, livePtyIds, toAppPtyId, resolvePtyIncarnation } =
+      createSubscription()
+    const onData = vi.fn()
+    dataListeners.add(onData)
+    livePtyIds.add('ssh:conn@@unrelated')
+
+    handler('pty.data', {
+      id: 'pty-1',
+      data: 'new',
+      ptyIncarnation: 'incarnation-1',
+      deliveryToken: 'token-new',
+      clientGeneration: 4,
+      ownerGeneration: 5,
+      sourceEndSu: 3,
+      sourceLengthSu: 3
+    })
+    const liveBeforeStale = new Set(livePtyIds)
+    toAppPtyId.mockClear()
+    resolvePtyIncarnation.mockClear()
+
+    handler('pty.data', {
+      id: 'pty-1',
+      data: 'old',
+      ptyIncarnation: 'incarnation-1',
+      deliveryToken: 'token-old',
+      clientGeneration: 3,
+      ownerGeneration: 4,
+      sourceEndSu: 6,
+      sourceLengthSu: 3
+    })
+
+    expect(onData).toHaveBeenCalledTimes(1)
+    expect(livePtyIds).toEqual(liveBeforeStale)
+    expect(toAppPtyId).not.toHaveBeenCalled()
+    expect(resolvePtyIncarnation).not.toHaveBeenCalled()
+    expect(mux.request).toHaveBeenCalledWith('pty.cancelDelivery', {
+      id: 'pty-1',
+      clientGeneration: 3,
+      ownerGeneration: 4,
+      deliveryToken: 'token-old'
+    })
+  })
+
+  it('rejects same-generation token changes and source discontinuities', () => {
+    const { handler, mux, dataListeners } = createSubscription()
+    const onData = vi.fn()
+    dataListeners.add(onData)
+    const sourceParams = {
+      id: 'pty-1',
+      ptyIncarnation: 'incarnation-1',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      sourceLengthSu: 3
+    }
+
+    handler('pty.data', {
+      ...sourceParams,
+      data: 'one',
+      deliveryToken: 'token-1',
+      sourceEndSu: 3
+    })
+    handler('pty.data', {
+      ...sourceParams,
+      data: 'two',
+      deliveryToken: 'token-2',
+      sourceEndSu: 6
+    })
+    handler('pty.data', {
+      ...sourceParams,
+      data: 'gap',
+      deliveryToken: 'token-1',
+      sourceEndSu: 9
+    })
+    handler('pty.data', {
+      ...sourceParams,
+      data: 'two',
+      deliveryToken: 'token-1',
+      sourceEndSu: 6
+    })
+
+    expect(onData.mock.calls.map((call) => call[0].data)).toEqual(['one', 'two'])
+    expect(mux.request).toHaveBeenCalledTimes(2)
+    expect(mux.request).toHaveBeenCalledWith('pty.cancelDelivery', {
+      id: 'pty-1',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      deliveryToken: 'token-2'
+    })
+    expect(mux.request).toHaveBeenCalledWith('pty.cancelDelivery', {
+      id: 'pty-1',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      deliveryToken: 'token-1'
+    })
+  })
+
+  it('accepts a strictly newer rotation, rejects late old data, and preserves new continuity', () => {
+    const { handler, mux, dataListeners } = createSubscription()
+    const onData = vi.fn()
+    dataListeners.add(onData)
+    const frame = (
+      data: string,
+      deliveryToken: string,
+      clientGeneration: number,
+      ownerGeneration: number,
+      sourceEndSu: number
+    ) => ({
+      id: 'pty-1',
+      data,
+      ptyIncarnation: 'incarnation-1',
+      deliveryToken,
+      clientGeneration,
+      ownerGeneration,
+      sourceEndSu,
+      sourceLengthSu: data.length
+    })
+
+    handler('pty.data', frame('old', 'token-old', 2, 3, 3))
+    handler('pty.data', frame('new', 'token-new', 3, 4, 13))
+    handler('pty.data', frame('old', 'token-old', 2, 3, 6))
+    handler('pty.data', frame('next', 'token-new', 3, 4, 17))
+
+    expect(onData.mock.calls.map((call) => call[0].data)).toEqual(['old', 'new', 'next'])
+    expect(mux.request).toHaveBeenCalledTimes(1)
+    expect(mux.request).toHaveBeenCalledWith('pty.cancelDelivery', {
+      id: 'pty-1',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      deliveryToken: 'token-old'
+    })
+  })
+
+  it.each([
+    ['client-only advance', 3, 3, 'token-client'],
+    ['owner-only advance', 2, 4, 'token-owner'],
+    ['crossed generations', 3, 2, 'token-crossed'],
+    ['replayed client generation', 1, 4, 'token-replayed'],
+    ['reused token on newer generations', 3, 4, 'token-current']
+  ])(
+    'rejects a %s without replacing the accepted continuity record',
+    (_case, clientGeneration, ownerGeneration, deliveryToken) => {
+      const { handler, mux, dataListeners, livePtyIds, toAppPtyId, resolvePtyIncarnation } =
+        createSubscription()
+      const onData = vi.fn()
+      dataListeners.add(onData)
+      const base = {
+        id: 'pty-1',
+        ptyIncarnation: 'incarnation-1',
+        sourceLengthSu: 3
+      }
+      handler('pty.data', {
+        ...base,
+        data: 'one',
+        deliveryToken: 'token-current',
+        clientGeneration: 2,
+        ownerGeneration: 3,
+        sourceEndSu: 3
+      })
+      const liveBeforeInvalid = new Set(livePtyIds)
+      toAppPtyId.mockClear()
+      resolvePtyIncarnation.mockClear()
+
+      handler('pty.data', {
+        ...base,
+        data: 'bad',
+        deliveryToken,
+        clientGeneration,
+        ownerGeneration,
+        sourceEndSu: 6
+      })
+      handler('pty.data', {
+        ...base,
+        data: 'two',
+        deliveryToken: 'token-current',
+        clientGeneration: 2,
+        ownerGeneration: 3,
+        sourceEndSu: 6
+      })
+
+      expect(onData.mock.calls.map((call) => call[0].data)).toEqual(['one', 'two'])
+      expect(livePtyIds).toEqual(liveBeforeInvalid)
+      expect(toAppPtyId).toHaveBeenCalledTimes(1)
+      expect(resolvePtyIncarnation).toHaveBeenCalledTimes(1)
+      expect(mux.request).toHaveBeenCalledWith('pty.cancelDelivery', {
+        id: 'pty-1',
+        clientGeneration,
+        ownerGeneration,
+        deliveryToken
+      })
+    }
+  )
+
+  it('does not cancel an incomplete malformed identity or mutate provider state', () => {
+    const { handler, mux, dataListeners, livePtyIds, toAppPtyId, resolvePtyIncarnation } =
+      createSubscription()
+    const onData = vi.fn()
+    dataListeners.add(onData)
+    livePtyIds.add('ssh:conn@@unrelated')
+
+    handler('pty.data', {
+      id: 'pty-1',
+      data: 'bad',
+      ptyIncarnation: 'incarnation-1',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      sourceEndSu: 3,
+      sourceLengthSu: 3
+    })
+
+    expect(onData).not.toHaveBeenCalled()
+    expect(livePtyIds).toEqual(new Set(['ssh:conn@@unrelated']))
+    expect(toAppPtyId).not.toHaveBeenCalled()
+    expect(resolvePtyIncarnation).not.toHaveBeenCalled()
+    expect(mux.request).not.toHaveBeenCalled()
   })
 
   it('ignores PTY methods with missing ids', () => {
@@ -150,5 +411,50 @@ describe('subscribeSshPtyNotifications', () => {
     expect(() => handler('pty.data', { data: 'orphan' })).not.toThrow()
     expect(toAppPtyId).not.toHaveBeenCalled()
     expect(onData).not.toHaveBeenCalled()
+  })
+
+  it('leaves recovery and cancellation control methods to their dedicated handlers', () => {
+    const {
+      handler,
+      mux,
+      toAppPtyId,
+      dataListeners,
+      replayListeners,
+      exitListeners,
+      livePtyIds,
+      recordExit,
+      resolvePtyIncarnation
+    } = createSubscription()
+    const onData = vi.fn()
+    const onReplay = vi.fn()
+    const onExit = vi.fn()
+    dataListeners.add(onData)
+    replayListeners.add(onReplay)
+    exitListeners.add(onExit)
+    livePtyIds.add('ssh:conn@@unrelated')
+
+    for (const method of [
+      'pty.recoveryData',
+      'pty.recoveryComplete',
+      'pty.restoreRequired',
+      'pty.deliveryCanceled'
+    ]) {
+      handler(method, {
+        id: 'pty-1',
+        data: 'control',
+        deliveryToken: 'token-1',
+        clientGeneration: 2,
+        ownerGeneration: 3
+      })
+    }
+
+    expect(toAppPtyId).not.toHaveBeenCalled()
+    expect(resolvePtyIncarnation).not.toHaveBeenCalled()
+    expect(recordExit).not.toHaveBeenCalled()
+    expect(onData).not.toHaveBeenCalled()
+    expect(onReplay).not.toHaveBeenCalled()
+    expect(onExit).not.toHaveBeenCalled()
+    expect(livePtyIds).toEqual(new Set(['ssh:conn@@unrelated']))
+    expect(mux.request).not.toHaveBeenCalled()
   })
 })

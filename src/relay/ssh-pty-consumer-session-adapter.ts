@@ -71,24 +71,37 @@ function requireIdentity(context: RequestContext): RelayClientSessionIdentity {
 export class SshPtyConsumerSessionAdapter {
   private readonly session: PtyConsumerSession
   private readonly sourceCredit: SshPtySourceCreditAdapter
+  private readonly pausedDeliveryByPty = new Map<string, PtySourceDeliveryIdentity>()
 
   constructor(
     dispatcher: RelayDispatcher,
     serverBuildId: string,
-    setDeliveryPaused?: (id: string, paused: boolean) => void
+    private readonly setDeliveryPaused?: (id: string, paused: boolean) => void,
+    onSourceCreditAvailable?: (id: string) => void,
+    sourceCreditEnabled = true
   ) {
-    this.sourceCredit = new SshPtySourceCreditAdapter((proof) =>
-      dispatcher.notifyControl('pty.deliveryCanceled', proof as unknown as Record<string, unknown>)
+    this.sourceCredit = new SshPtySourceCreditAdapter(
+      (proof) =>
+        dispatcher.notifyControl(
+          'pty.deliveryCanceled',
+          proof as unknown as Record<string, unknown>
+        ),
+      onSourceCreditAvailable
     )
     this.session = new PtyConsumerSession({
       serverBuildId,
-      outputFlowControl: { versions: [1], maxWindowSu: DEFAULT_PTY_SOURCE_WINDOW_SU }
+      ...(sourceCreditEnabled
+        ? { outputFlowControl: { versions: [1], maxWindowSu: DEFAULT_PTY_SOURCE_WINDOW_SU } }
+        : {})
     })
     dispatcher.onRequest(SSH_PTY_OPEN_CLIENT_METHOD, (params, context) =>
       this.openClient(params, context)
     )
     dispatcher.onClientDetached((clientId) => {
       const grant = this.session.activeGrant(String(clientId))
+      if (grant) {
+        this.clearPausedForGrant(grant)
+      }
       this.session.close(String(clientId))
       if (grant) {
         this.sourceCredit.retainOrCloseOnDetach(grant)
@@ -105,7 +118,21 @@ export class SshPtyConsumerSessionAdapter {
       ) {
         return
       }
-      setDeliveryPaused?.(params.id, params.paused)
+      if (grant.capabilities?.outputFlowControl) {
+        const token = typeof params.deliveryToken === 'string' ? params.deliveryToken : ''
+        const identity = this.sourceCredit.ownsDelivery(token, grant, params.id)
+        if (!identity) {
+          return
+        }
+        if (params.paused) {
+          this.pausedDeliveryByPty.set(params.id, identity)
+        } else if (this.pausedDeliveryByPty.get(params.id) !== identity) {
+          return
+        } else {
+          this.pausedDeliveryByPty.delete(params.id)
+        }
+      }
+      this.setDeliveryPaused?.(params.id, params.paused)
     })
     dispatcher.onNotification('pty.ackData', (params, context) => {
       this.sourceCredit.acknowledge(params, this.session.activeGrant(String(context.clientId)))
@@ -113,7 +140,13 @@ export class SshPtyConsumerSessionAdapter {
     dispatcher.onRequest('pty.cancelDelivery', async (params, context) =>
       this.sourceCredit.cancel(params, this.session.activeGrant(String(context.clientId)))
     )
-    dispatcher.onDisposed(() => this.sourceCredit.dispose())
+    dispatcher.onDisposed(() => {
+      for (const id of this.pausedDeliveryByPty.keys()) {
+        this.setDeliveryPaused?.(id, false)
+      }
+      this.pausedDeliveryByPty.clear()
+      this.sourceCredit.dispose()
+    })
   }
 
   openDelivery(
@@ -135,6 +168,7 @@ export class SshPtyConsumerSessionAdapter {
     newClientId: number,
     acceptedSourceEndSu: number
   ) {
+    this.clearPausedIdentity(oldIdentity)
     return this.sourceCredit.rotate(
       oldIdentity,
       this.session.activeGrant(String(newClientId)),
@@ -186,6 +220,29 @@ export class SshPtyConsumerSessionAdapter {
     return this.sourceCredit.snapshot(identity)
   }
 
+  cancelDelivery(identity: PtySourceDeliveryIdentity, reason: string): void {
+    this.clearPausedIdentity(identity)
+    this.sourceCredit.cancelIdentity(identity, reason)
+  }
+
+  getDebugSnapshot(): Readonly<{
+    deliveryTokens: number
+    graceTimers: number
+    sourceSu: number
+    dataBytes: number
+    spans: number
+  }> {
+    return this.sourceCredit.retentionSnapshot()
+  }
+
+  deliveryMode(clientId: number): 'source-owner' | 'legacy-owner' | 'subscriber' {
+    const grant = this.session.activeGrant(String(clientId))
+    if (grant?.role !== 'session-owner') {
+      return 'subscriber'
+    }
+    return grant.capabilities?.outputFlowControl ? 'source-owner' : 'legacy-owner'
+  }
+
   private async openClient(
     rawParams: Record<string, unknown>,
     context: RequestContext
@@ -215,5 +272,25 @@ export class SshPtyConsumerSessionAdapter {
       }
     })
     return admission.grant
+  }
+
+  private clearPausedIdentity(identity: PtySourceDeliveryIdentity): void {
+    if (this.pausedDeliveryByPty.get(identity.id) === identity) {
+      this.pausedDeliveryByPty.delete(identity.id)
+      this.setDeliveryPaused?.(identity.id, false)
+    }
+  }
+
+  private clearPausedForGrant(grant: Readonly<PtyConsumerSessionGrant>): void {
+    for (const [id, identity] of this.pausedDeliveryByPty) {
+      if (
+        identity.clientGeneration !== grant.clientGeneration ||
+        identity.ownerGeneration !== grant.ownerGeneration
+      ) {
+        continue
+      }
+      this.pausedDeliveryByPty.delete(id)
+      this.setDeliveryPaused?.(id, false)
+    }
   }
 }

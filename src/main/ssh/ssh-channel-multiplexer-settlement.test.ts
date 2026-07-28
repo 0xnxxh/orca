@@ -13,6 +13,7 @@ function transportHarness(): {
           settlements.push(onSettled)
         }
       },
+      supportsWriteSettlement: true,
       onData: vi.fn(),
       onClose: vi.fn()
     },
@@ -39,6 +40,7 @@ describe('SshChannelMultiplexer notification settlement', () => {
       write: () => {
         throw error
       },
+      supportsWriteSettlement: true,
       onData: vi.fn(),
       onClose: vi.fn()
     })
@@ -55,6 +57,7 @@ describe('SshChannelMultiplexer notification settlement', () => {
         onSettled?.({ ok: true })
         throw new Error('late throw')
       },
+      supportsWriteSettlement: true,
       onData: vi.fn(),
       onClose: vi.fn()
     })
@@ -63,5 +66,28 @@ describe('SshChannelMultiplexer notification settlement', () => {
     mux.notifyWithSettlement('pty.ackData', { acknowledgements: [] }, settled)
     expect(settled).toHaveBeenCalledOnce()
     expect(settled).toHaveBeenCalledWith({ ok: true })
+  })
+
+  it('fails an unsettled publication when the multiplexer is disposed', () => {
+    const close = vi.fn()
+    const mux = new SshChannelMultiplexer({
+      write: () => false,
+      supportsWriteSettlement: true,
+      onDrain: vi.fn(),
+      onData: vi.fn(),
+      onClose: vi.fn(),
+      close
+    })
+    const settled = vi.fn()
+
+    mux.notifyWithSettlement('pty.ackData', { acknowledgements: [] }, settled)
+    expect(settled).not.toHaveBeenCalled()
+    mux.dispose()
+
+    expect(settled).toHaveBeenCalledWith({
+      ok: false,
+      error: expect.objectContaining({ code: 'DISPOSED' })
+    })
+    expect(close).toHaveBeenCalledOnce()
   })
 })

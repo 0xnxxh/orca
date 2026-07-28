@@ -53,6 +53,12 @@ import {
   agentSessionOwnerBindingsEqual,
   ClaimedAgentPtyOwnerRegistry
 } from '../shared/claimed-agent-pty-owner'
+import type { RelayPtySourceOutput } from './relay-pty-source-output'
+import type { RelayPtySourcePublication } from './relay-pty-source-publication'
+import type {
+  PtySourceRecoveryRequest,
+  PtySourceRecoveryResult
+} from '../shared/pty-source-recovery-contract'
 import {
   AGENT_SESSION_CREATE_OPERATION_PROTOCOL_VERSION,
   AGENT_SESSION_EXECUTION_OWNER_PROTOCOL_VERSION,
@@ -77,6 +83,39 @@ function isMissingNodePtyNativeBinding(error: unknown): boolean {
     error instanceof Error &&
     /Failed to load native module: (?:conpty|pty)\.node(?:,|$)/.test(error.message)
   )
+}
+
+function parseSourceRecoveryRequest(value: unknown): PtySourceRecoveryRequest | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined
+  }
+  const input = value as Record<string, unknown>
+  if (input.status === 'checkpointUnavailable') {
+    return Object.freeze({ status: 'checkpointUnavailable' })
+  }
+  if (
+    input.status !== 'checkpoint' ||
+    typeof input.deliveryToken !== 'string' ||
+    input.deliveryToken.length === 0 ||
+    typeof input.ptyIncarnation !== 'string' ||
+    input.ptyIncarnation.length === 0 ||
+    !Number.isSafeInteger(input.clientGeneration) ||
+    Number(input.clientGeneration) <= 0 ||
+    !Number.isSafeInteger(input.ownerGeneration) ||
+    Number(input.ownerGeneration) <= 0 ||
+    !Number.isSafeInteger(input.acceptedSourceEndSu) ||
+    Number(input.acceptedSourceEndSu) < 0
+  ) {
+    return Object.freeze({ status: 'checkpointUnavailable' })
+  }
+  return Object.freeze({
+    status: 'checkpoint',
+    deliveryToken: input.deliveryToken,
+    ptyIncarnation: input.ptyIncarnation,
+    clientGeneration: Number(input.clientGeneration),
+    ownerGeneration: Number(input.ownerGeneration),
+    acceptedSourceEndSu: Number(input.acceptedSourceEndSu)
+  })
 }
 
 type ManagedPty = {
@@ -124,12 +163,10 @@ const AGENT_SESSION_CREATE_OPERATION_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/
 const AGENT_SESSION_CREATE_OPERATION_RETENTION_MS = 24 * 60 * 60 * 1000
 const AGENT_SESSION_CREATE_OPERATION_LIMIT = 4_096
 
-type PendingPtyOutput = {
+type PendingPtyOutput = RelayPtySourceOutput & {
   data: string
-  rawLength?: number
-  transformed?: boolean
-  seq?: number
   interactive?: boolean
+  sourceChunk?: RelayPtySourceOutput
 }
 
 type ManagedStartupCommand = {
@@ -317,6 +354,7 @@ export class PtyHandler {
   private pausedOutputPtys = new Set<string>()
   private consumerPausedOutputPtys = new Set<string>()
   private removeLegacyCapacityListener: (() => void) | null = null
+  private sourcePublication: RelayPtySourcePublication | null = null
   private lastInputAtByPty = new Map<string, number>()
   private interactiveOutputCharsByPty = new Map<string, number>()
   private pendingSpawnCount = 0
@@ -354,6 +392,22 @@ export class PtyHandler {
     }
     this.consumerPausedOutputPtys.delete(id)
     this.maybeResumePtyOutput(id)
+  }
+
+  setSourcePublication(publication: RelayPtySourcePublication): void {
+    this.sourcePublication = publication
+  }
+
+  handleSourceCreditAvailable(id: string): void {
+    this.sourcePublication?.onCreditAvailable(id)
+  }
+
+  handleSourcePublicationCapacity(id: string): void {
+    if (this.pendingOutputByPty.has(id)) {
+      this.scheduleOutputFlush(0)
+    }
+    this.maybeResumePtyOutput(id)
+    this.publishPendingExit(id)
   }
 
   private async loadPty(): Promise<typeof NodePty | null> {
@@ -645,7 +699,7 @@ export class PtyHandler {
 
   private registerHandlers(): void {
     this.dispatcher.onRequest('pty.spawn', (p, context) => this.spawn(p, context))
-    this.dispatcher.onRequest('pty.attach', (p) => this.attach(p))
+    this.dispatcher.onRequest('pty.attach', (p, context) => this.attach(p, context))
     this.dispatcher.onRequest('pty.shutdown', (p) => this.shutdown(p))
     this.dispatcher.onRequest('pty.sendSignal', (p) => this.sendSignal(p))
     this.dispatcher.onRequest('pty.getCwd', (p) => this.getCwd(p))
@@ -720,6 +774,21 @@ export class PtyHandler {
     meta: { rawLength?: number; transformed?: boolean; seq?: number } = {}
   ): void {
     const queue = this.pendingOutputByPty.get(id) ?? []
+    if (this.sourcePublication?.accepts(id)) {
+      queue.push({ data, ...meta })
+      this.pendingOutputByPty.set(id, queue)
+      if (queue.length === 1 && this.shouldSendInteractiveOutputNow(id, data)) {
+        queue[0].interactive = true
+        if (this.flushPtyOutput(id)) {
+          return
+        }
+      }
+      if (this.pendingProducerBytes(id) >= PTY_OUTPUT_PRODUCER_HIGH_BYTES) {
+        this.pausePtyOutput(id)
+      }
+      this.scheduleOutputFlush(PTY_OUTPUT_BATCH_INTERVAL_MS)
+      return
+    }
     const existing = queue.at(-1)
     if (meta.transformed === true) {
       if (queue.length === 0) {
@@ -839,16 +908,16 @@ export class PtyHandler {
         : chunk.length
     const chunkSeq =
       pending.seq === undefined ? undefined : pending.seq - (pending.data.length - chunk.length)
-    const published = this.publishPtyOutput(
-      id,
-      {
+    const sourceChunk =
+      pending.sourceChunk ??
+      ({
         data: chunk,
         ...(chunkSeq === undefined ? {} : { seq: chunkSeq }),
         ...(chunkRawLength === undefined ? {} : { rawLength: chunkRawLength }),
         ...(pending.transformed ? { transformed: true } : {})
-      },
-      pending.interactive === true
-    )
+      } satisfies RelayPtySourceOutput)
+    pending.sourceChunk = sourceChunk
+    const published = this.publishPtyOutput(id, sourceChunk, pending.interactive === true)
     if (!published) {
       this.pendingOutputByPty.set(id, queue)
       this.pausePtyOutput(id)
@@ -896,7 +965,14 @@ export class PtyHandler {
     this.interactiveOutputCharsByPty.delete(id)
   }
 
-  private publishPtyOutput(id: string, output: PendingPtyOutput, interactive: boolean): boolean {
+  private publishPtyOutput(
+    id: string,
+    output: RelayPtySourceOutput,
+    interactive: boolean
+  ): boolean {
+    if (this.sourcePublication?.accepts(id)) {
+      return this.sourcePublication.publish(id, output, interactive)
+    }
     if (this.dispatcher.tryNotifyPtyData) {
       return this.dispatcher.tryNotifyPtyData(
         {
@@ -925,6 +1001,13 @@ export class PtyHandler {
     }
     const exit = this.pendingExitByPty.get(id)
     if (!exit) {
+      return
+    }
+    if (this.sourcePublication?.accepts(id)) {
+      if (!this.sourcePublication.sealAndPublishExit(exit)) {
+        return
+      }
+      this.pendingExitByPty.delete(id)
       return
     }
     const published = this.dispatcher.tryNotifyPtyExit
@@ -1323,6 +1406,7 @@ export class PtyHandler {
           }
         : {})
     }
+    this.sourcePublication?.activate(id, managed.incarnationId, context)
     this.wireAndStore(managed)
     if (context?.isStale() && !params.agentSessionEnsure && !params.agentSessionCreateOperationId) {
       // Why: if the client reconnected while pty.spawn was in flight, the
@@ -1342,8 +1426,13 @@ export class PtyHandler {
   }
 
   private async attach(
-    params: Record<string, unknown>
-  ): Promise<{ incarnationId: string; replay?: string }> {
+    params: Record<string, unknown>,
+    context?: RequestContext
+  ): Promise<{
+    incarnationId: string
+    replay?: string
+    sourceRecovery?: PtySourceRecoveryResult
+  }> {
     const id = params.id as string
     const managed = this.ptys.get(id)
     // Why: after dispose, pty.kill is a POSIX no-op; treat disposed as not-found so failures aren't silent.
@@ -1377,6 +1466,26 @@ export class PtyHandler {
     }
 
     managed.startupIngress?.snapshotBarrier()
+    let sourceRecovery = parseSourceRecoveryRequest(params.sourceRecovery)
+    if (
+      sourceRecovery?.status === 'checkpoint' &&
+      this.sourcePublication &&
+      !(await this.sourcePublication.waitForPendingSend(id))
+    ) {
+      sourceRecovery = Object.freeze({ status: 'checkpointUnavailable' })
+    }
+    const activation = this.sourcePublication?.activate(
+      id,
+      managed.incarnationId,
+      context,
+      sourceRecovery
+    )
+    if (typeof activation === 'object') {
+      return { incarnationId: managed.incarnationId, sourceRecovery: activation }
+    }
+    if (activation === 'existing' && this.sourcePublication?.accepts(id)) {
+      return { incarnationId: managed.incarnationId }
+    }
 
     // Why: renderer hasn't registered replay handlers yet during spawn, so return to the caller instead of notifying too early.
     // Why: buffer intentionally NOT cleared after replay (client clears xterm first) so later restarts still replay full history.
@@ -1815,6 +1924,8 @@ export class PtyHandler {
     this.consumerPausedOutputPtys.clear()
     this.lastInputAtByPty.clear()
     this.interactiveOutputCharsByPty.clear()
+    this.sourcePublication?.dispose()
+    this.sourcePublication = null
     const results = await Promise.allSettled(
       [...this.ptys.values()].map((managed) =>
         this.disposePtyForRelayShutdown(managed, waitForPhysicalExit)

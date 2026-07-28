@@ -1,4 +1,5 @@
 import type {
+  PtySourceCreditAck,
   PtySourceDeliveryIdentity,
   PtySourceDeliveryCancellation,
   PtySourceDeliverySnapshot,
@@ -9,12 +10,18 @@ import { ptySourceSpanIsSplittable } from '../shared/pty-source-credit-contract'
 import {
   assertNonNegativeSafeInteger,
   assertPositiveSafeInteger,
+  assertPtySourceAck,
   assertPtySourceIdentity,
   assertPtySourceSpan
 } from '../shared/pty-source-credit-validation'
 
 export const DEFAULT_RETAINED_SOURCE_SU = 512 * 1024
 export const DEFAULT_AGGREGATE_RETAINED_SOURCE_SU = 48 * 1024 * 1024
+export const DEFAULT_RETAINED_DATA_BYTES = 2 * 1024 * 1024
+export const DEFAULT_AGGREGATE_RETAINED_DATA_BYTES = 64 * 1024 * 1024
+export const DEFAULT_RETAINED_SPANS = 1_024
+export const DEFAULT_AGGREGATE_RETAINED_SPANS = 64 * 1_024
+export const MAX_SOURCE_SPAN_DATA_BYTES = 1024 * 1024
 export const CLOSED_DELIVERY_TOMBSTONE_LIMIT = 256
 
 export type PtySourceSendReservation = Readonly<{
@@ -23,6 +30,8 @@ export type PtySourceSendReservation = Readonly<{
   span: PtySourceSpan
 }>
 
+export type PtySourceAckResult = 'advanced' | 'duplicate' | 'regression'
+
 export type DeliveryRecord = {
   identity: PtySourceDeliveryIdentity
   state: 'active' | 'sealed-unsettled' | 'closing' | 'closed'
@@ -30,9 +39,11 @@ export type DeliveryRecord = {
   receivedEndSu: number
   sentEndSu: number
   creditedEndSu: number
+  retainedDataBytes: number
   spans: PtySourceSpan[]
   sentBoundaries: Set<number>
   pendingSend: PtySourceSendReservation | null
+  attemptedEndSu: number | null
   exitPublished: boolean
   generationClosed: boolean
 }
@@ -53,9 +64,11 @@ export function createDeliveryRecord(
     receivedEndSu: checkpointSourceEndSu,
     sentEndSu: checkpointSourceEndSu,
     creditedEndSu: checkpointSourceEndSu,
+    retainedDataBytes: 0,
     spans: [],
     sentBoundaries: new Set([checkpointSourceEndSu]),
     pendingSend: null,
+    attemptedEndSu: null,
     exitPublished: false,
     generationClosed: false
   }
@@ -159,14 +172,68 @@ export function snapshotDeliveryRecord(record: DeliveryRecord): PtySourceDeliver
 
 export function reclaimCreditedSpans(record: DeliveryRecord): void {
   while (record.spans[0]?.sourceEndSu <= record.creditedEndSu) {
-    record.spans.shift()
+    record.retainedDataBytes -= Buffer.byteLength(record.spans.shift()!.data, 'utf8')
   }
+}
+
+export function acknowledgeDeliveryRecord(
+  record: DeliveryRecord,
+  ack: PtySourceCreditAck
+): PtySourceAckResult {
+  assertPtySourceAck(ack)
+  if (record.state === 'closed' || record.state === 'closing') {
+    throw new Error('PTY source ACK targets a closed delivery')
+  }
+  if (
+    ack.id !== record.identity.id ||
+    ack.clientGeneration !== record.identity.clientGeneration ||
+    ack.ownerGeneration !== record.identity.ownerGeneration ||
+    ack.deliveryToken !== record.identity.deliveryToken
+  ) {
+    throw new Error('PTY source ACK does not own this delivery')
+  }
+  if (ack.creditedEndSu > record.sentEndSu) {
+    throw new Error('PTY source ACK exceeds sent source credit')
+  }
+  if (ack.creditedEndSu === record.creditedEndSu) {
+    return 'duplicate'
+  }
+  if (ack.creditedEndSu < record.creditedEndSu) {
+    return 'regression'
+  }
+  if (!record.sentBoundaries.has(ack.creditedEndSu)) {
+    throw new Error('PTY source ACK does not match a committed send boundary')
+  }
+  record.creditedEndSu = ack.creditedEndSu
+  for (const boundary of record.sentBoundaries) {
+    if (boundary < record.creditedEndSu) {
+      record.sentBoundaries.delete(boundary)
+    }
+  }
+  reclaimCreditedSpans(record)
+  return 'advanced'
 }
 
 export function retainedSourceTotal(records: Iterable<DeliveryRecord>): number {
   let total = 0
   for (const record of records) {
     total += record.receivedEndSu - record.creditedEndSu
+  }
+  return total
+}
+
+export function retainedDataBytesTotal(records: Iterable<DeliveryRecord>): number {
+  let total = 0
+  for (const record of records) {
+    total += record.retainedDataBytes
+  }
+  return total
+}
+
+export function retainedSpanTotal(records: Iterable<DeliveryRecord>): number {
+  let total = 0
+  for (const record of records) {
+    total += record.spans.length
   }
   return total
 }
@@ -180,10 +247,12 @@ export function createReplacementDeliveryRecord(
   assertPtySourceIdentity(newIdentity)
   assertPositiveSafeInteger(windowSu, 'windowSu')
   assertNonNegativeSafeInteger(acceptedSourceEndSu, 'acceptedSourceEndSu')
+  const committedCheckpoint =
+    acceptedSourceEndSu <= old.sentEndSu && old.sentBoundaries.has(acceptedSourceEndSu)
+  const attemptedCheckpoint = acceptedSourceEndSu === old.attemptedEndSu
   if (
     acceptedSourceEndSu < old.creditedEndSu ||
-    acceptedSourceEndSu > old.sentEndSu ||
-    !old.sentBoundaries.has(acceptedSourceEndSu) ||
+    (!committedCheckpoint && !attemptedCheckpoint) ||
     old.pendingSend ||
     newIdentity.id !== old.identity.id ||
     newIdentity.ptyIncarnation !== old.identity.ptyIncarnation ||
@@ -191,12 +260,21 @@ export function createReplacementDeliveryRecord(
   ) {
     throw new Error('PTY source recovery checkpoint does not exactly cover the retained delivery')
   }
+  if (acceptedSourceEndSu > old.sentEndSu) {
+    old.sentEndSu = acceptedSourceEndSu
+    old.sentBoundaries.add(acceptedSourceEndSu)
+  }
+  old.attemptedEndSu = null
   const replacement = createDeliveryRecord(newIdentity, windowSu, acceptedSourceEndSu)
   replacement.receivedEndSu = old.receivedEndSu
   replacement.spans = old.spans
     .filter((span) => span.sourceEndSu > acceptedSourceEndSu)
     .map((span) => sliceAtSourceStart(span, Math.max(span.sourceStartSu, acceptedSourceEndSu)))
     .map((span) => Object.freeze({ ...span, ...replacement.identity }))
+  replacement.retainedDataBytes = replacement.spans.reduce(
+    (bytes, span) => bytes + Buffer.byteLength(span.data, 'utf8'),
+    0
+  )
   return replacement
 }
 

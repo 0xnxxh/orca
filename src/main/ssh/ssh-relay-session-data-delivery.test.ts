@@ -5,15 +5,23 @@ import { createMockDeps, mockDeploySuccess } from './ssh-relay-session-test-fixt
 const {
   acceptOutputDataMock,
   muxRequestMock,
+  onNotificationByMethodMock,
   notifyWithSettlementMock,
   openConsumerSessionMock,
-  pauseAdapterMock
+  pauseAdapterMock,
+  muxDisposeMock,
+  attachForReconnectMock,
+  ptyDataHandlerRef
 } = vi.hoisted(() => ({
   acceptOutputDataMock: vi.fn().mockResolvedValue(undefined),
   muxRequestMock: vi.fn(),
+  onNotificationByMethodMock: vi.fn(),
   notifyWithSettlementMock: vi.fn(),
   openConsumerSessionMock: vi.fn(),
-  pauseAdapterMock: vi.fn()
+  pauseAdapterMock: vi.fn(),
+  muxDisposeMock: vi.fn(),
+  attachForReconnectMock: vi.fn().mockResolvedValue({}),
+  ptyDataHandlerRef: { current: undefined as undefined | ((payload: unknown) => void) }
 }))
 
 vi.mock('./ssh-relay-deploy', () => ({ deployAndLaunchRelay: vi.fn() }))
@@ -25,6 +33,7 @@ vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
   acceptSshPtyOutputExit: vi.fn().mockResolvedValue(undefined),
   allocateSshPtyProviderGeneration: vi.fn(() => 23),
   closeSshPtyOutputGeneration: vi.fn(),
+  getSshPtyAcceptedSourceCheckpoints: vi.fn(() => []),
   installSshPtySourceAckPublisher: vi.fn(() => () => {})
 }))
 
@@ -34,9 +43,10 @@ vi.mock('./ssh-channel-multiplexer', () => ({
     notifyWithSettlement = notifyWithSettlementMock
     request = muxRequestMock
     onNotification = vi.fn().mockReturnValue(() => {})
+    onNotificationByMethod = onNotificationByMethodMock.mockImplementation(() => () => {})
     onRequest = vi.fn().mockReturnValue(() => {})
     onDispose = vi.fn().mockReturnValue(() => {})
-    dispose = vi.fn()
+    dispose = muxDisposeMock
     isDisposed = vi.fn().mockReturnValue(false)
   }
 }))
@@ -49,11 +59,14 @@ vi.mock('../providers/ssh-pty-provider', () => ({
   isSshPtyNotFoundError: vi.fn().mockReturnValue(false),
   isSshPtyIdentityMismatchError: vi.fn().mockReturnValue(false),
   SshPtyProvider: class MockSshPtyProvider {
-    onData = vi.fn().mockReturnValue(() => {})
+    onData = vi.fn().mockImplementation((handler) => {
+      ptyDataHandlerRef.current = handler
+      return () => {}
+    })
     onReplay = vi.fn().mockReturnValue(() => {})
     onExit = vi.fn().mockReturnValue(() => {})
     attach = vi.fn().mockResolvedValue(undefined)
-    attachForReconnect = vi.fn().mockResolvedValue({})
+    attachForReconnect = attachForReconnectMock
     setPtyDeliveryPauseAdapter = pauseAdapterMock
     dispose = vi.fn()
   }
@@ -77,6 +90,7 @@ vi.mock('../ipc/pty', () => ({
   clearPtyOwnershipForConnection: vi.fn(),
   clearProviderPtyState: vi.fn(),
   deletePtyOwnership: vi.fn(),
+  restorePtyIncarnation: vi.fn(),
   setPtyOwnership: vi.fn()
 }))
 
@@ -91,13 +105,18 @@ vi.mock('../providers/ssh-git-dispatch', () => ({
   unregisterSshGitProvider: vi.fn()
 }))
 
-const { registerSshPtyProvider } = await import('../ipc/pty')
+const { getSshPtyProvider, getPtyIdsForConnection, registerSshPtyProvider } =
+  await import('../ipc/pty')
 const { closeSshPtyOutputGeneration } = await import('../ipc/ssh-pty-output-intake-registry')
+const { getSshPtyAcceptedSourceCheckpoints } = await import('../ipc/ssh-pty-output-intake-registry')
 const { installSshPtySourceAckPublisher } = await import('../ipc/ssh-pty-output-intake-registry')
+const { deployAndLaunchRelay } = await import('./ssh-relay-deploy')
 
 describe('SshRelaySession data delivery', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    ptyDataHandlerRef.current = undefined
+    attachForReconnectMock.mockResolvedValue({})
     openConsumerSessionMock.mockImplementation(async (_mux, options) => ({
       mode: 'negotiated',
       clientInstanceId: options.clientInstanceId,
@@ -112,6 +131,36 @@ describe('SshRelaySession data delivery', () => {
     }))
     muxRequestMock.mockResolvedValue([])
     mockDeploySuccess()
+  })
+
+  it('transfers negotiated owner recovery exactly once across an explicit detach', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    vi.mocked(deployAndLaunchRelay).mockResolvedValue({
+      transport: { write: vi.fn(), onData: vi.fn(), onClose: vi.fn() },
+      platform: 'linux-x64',
+      serverBuildId: 'test-relay-build'
+    })
+    const first = new SshRelaySession('recovery-target', getMainWindow, mockStore, mockPortForward)
+
+    await first.establish(mockConn)
+    first.detach()
+    const second = new SshRelaySession('recovery-target', getMainWindow, mockStore, mockPortForward)
+    await second.establish(mockConn)
+
+    const firstOpen = openConsumerSessionMock.mock.calls[0]?.[1]
+    const recoveredOpen = openConsumerSessionMock.mock.calls[1]?.[1]
+    expect(recoveredOpen).toMatchObject({
+      clientInstanceId: firstOpen.clientInstanceId,
+      resume: { ownerGeneration: 1, ownerLease: 'test-owner-lease' }
+    })
+
+    second.dispose()
+    const fresh = new SshRelaySession('recovery-target', getMainWindow, mockStore, mockPortForward)
+    await fresh.establish(mockConn)
+    const freshOpen = openConsumerSessionMock.mock.calls[2]?.[1]
+    expect(freshOpen.clientInstanceId).not.toBe(firstOpen.clientInstanceId)
+    expect(freshOpen).not.toHaveProperty('resume')
+    fresh.dispose()
   })
 
   it('delivers empty transformed relay spans with raw sequence metadata', async () => {
@@ -321,6 +370,13 @@ describe('SshRelaySession data delivery', () => {
     expect(openConsumerSessionMock.mock.calls[0][1]).toMatchObject({
       outputFlowControl: { requestedWindowSu: 256 * 1024 }
     })
+    expect(deployAndLaunchRelay).toHaveBeenCalledWith(
+      mockConn,
+      undefined,
+      undefined,
+      'target-1',
+      true
+    )
     expect(notifyWithSettlementMock).toHaveBeenCalledWith('pty.ackData', batch, settled)
   })
 
@@ -343,5 +399,167 @@ describe('SshRelaySession data delivery', () => {
 
     expect(openConsumerSessionMock.mock.calls[0][1]).toHaveProperty('outputFlowControl')
     expect(openConsumerSessionMock.mock.calls[1][1]).not.toHaveProperty('outputFlowControl')
+    expect(deployAndLaunchRelay).toHaveBeenNthCalledWith(
+      1,
+      mockConn,
+      undefined,
+      undefined,
+      'target-1',
+      true
+    )
+    expect(deployAndLaunchRelay).toHaveBeenNthCalledWith(
+      2,
+      mockConn,
+      undefined,
+      undefined,
+      'target-1',
+      false
+    )
+  })
+
+  it('reattaches V1 from an exact checkpoint and quarantines live data until recoveryComplete', async () => {
+    let generation = 0
+    openConsumerSessionMock.mockImplementation(async (_mux, options) => {
+      generation++
+      return {
+        mode: 'negotiated',
+        clientInstanceId: options.clientInstanceId,
+        clientGeneration: generation,
+        ownerGeneration: generation,
+        ownerLease: `owner-lease-${generation}`,
+        outputFlowControl: { version: 1, windowSu: 256 * 1024 }
+      }
+    })
+    vi.mocked(getSshPtyAcceptedSourceCheckpoints).mockReturnValue([
+      {
+        id: 'ssh:target-1@@pty-1',
+        providerGeneration: 23,
+        clientGeneration: 1,
+        ownerGeneration: 1,
+        ptyIncarnation: 'incarnation-1',
+        deliveryToken: 'old-token',
+        acceptedSourceEndSu: 4
+      }
+    ])
+    const { mockConn, mockStore, mockPortForward, getMainWindow, mockWindow } = createMockDeps()
+    const session = new SshRelaySession(
+      'target-1',
+      getMainWindow,
+      mockStore,
+      mockPortForward,
+      undefined,
+      undefined,
+      () => true
+    )
+    await session.establish(mockConn)
+    vi.mocked(getPtyIdsForConnection).mockReturnValue(['ssh:target-1@@pty-1'])
+    vi.mocked(getSshPtyProvider).mockImplementation(
+      () => vi.mocked(registerSshPtyProvider).mock.calls.at(-1)?.[1]
+    )
+    let transferDisposedMux = false
+    attachForReconnectMock.mockImplementation(async () => {
+      const canceled = onNotificationByMethodMock.mock.calls.findLast(
+        ([method]) => method === 'pty.deliveryCanceled'
+      )?.[1] as ((params: Record<string, unknown>) => void) | undefined
+      const disposeCount = muxDisposeMock.mock.calls.length
+      canceled?.({
+        id: 'pty-1',
+        clientGeneration: 1,
+        ownerGeneration: 1,
+        ptyIncarnation: 'incarnation-1',
+        deliveryToken: 'old-token',
+        replacementDeliveryToken: 'new-token'
+      })
+      transferDisposedMux = muxDisposeMock.mock.calls.length !== disposeCount
+      queueMicrotask(() => {
+        ptyDataHandlerRef.current?.({
+          id: 'ssh:target-1@@pty-1',
+          data: 'reco',
+          providerGeneration: 23,
+          ptyIncarnation: 'incarnation-1',
+          sequenceChars: 4,
+          source: {
+            relayPtyId: 'pty-1',
+            spanId: 'new-token:4:8',
+            clientGeneration: 2,
+            ownerGeneration: 2,
+            deliveryToken: 'new-token',
+            sourceStartSu: 4,
+            sourceEndSu: 8
+          }
+        })
+        const complete = onNotificationByMethodMock.mock.calls.findLast(
+          ([method]) => method === 'pty.recoveryComplete'
+        )?.[1] as ((params: Record<string, unknown>) => void) | undefined
+        complete?.({
+          id: 'pty-1',
+          clientGeneration: 2,
+          ownerGeneration: 2,
+          ptyIncarnation: 'incarnation-1',
+          deliveryToken: 'new-token',
+          checkpointSourceEndSu: 4,
+          recoveryEndSu: 8
+        })
+        ptyDataHandlerRef.current?.({
+          id: 'ssh:target-1@@pty-1',
+          data: 'live',
+          providerGeneration: 23,
+          ptyIncarnation: 'incarnation-1',
+          sequenceChars: 4,
+          source: {
+            relayPtyId: 'pty-1',
+            spanId: 'new-token:8:12',
+            clientGeneration: 2,
+            ownerGeneration: 2,
+            deliveryToken: 'new-token',
+            sourceStartSu: 8,
+            sourceEndSu: 12
+          }
+        })
+      })
+      return {
+        incarnationId: 'incarnation-1',
+        sourceRecovery: {
+          status: 'pending',
+          clientGeneration: 2,
+          ownerGeneration: 2,
+          ptyIncarnation: 'incarnation-1',
+          deliveryToken: 'new-token',
+          checkpointSourceEndSu: 4,
+          recoveryEndSu: 8
+        }
+      }
+    })
+
+    await session.reconnect(mockConn)
+
+    expect(attachForReconnectMock).toHaveBeenCalledWith(
+      'pty-1',
+      undefined,
+      expect.objectContaining({
+        status: 'checkpoint',
+        deliveryToken: 'old-token',
+        acceptedSourceEndSu: 4
+      })
+    )
+    expect(acceptOutputDataMock.mock.calls.map(([payload]) => payload.data)).toEqual([
+      'reco',
+      'live'
+    ])
+    expect(transferDisposedMux).toBe(false)
+    expect(mockWindow.webContents.send).not.toHaveBeenCalledWith('pty:replay', expect.anything())
+
+    const closeCount = vi.mocked(closeSshPtyOutputGeneration).mock.calls.length
+    const canceled = onNotificationByMethodMock.mock.calls.findLast(
+      ([method]) => method === 'pty.deliveryCanceled'
+    )?.[1] as ((params: Record<string, unknown>) => void) | undefined
+    canceled?.({
+      id: 'pty-1',
+      clientGeneration: 1,
+      ownerGeneration: 1,
+      ptyIncarnation: 'incarnation-1',
+      deliveryToken: 'old-token'
+    })
+    expect(closeSshPtyOutputGeneration).toHaveBeenCalledTimes(closeCount)
   })
 })

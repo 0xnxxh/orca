@@ -1,27 +1,12 @@
+import type { DecodedFrame, FrameDecoderOptions } from '../shared/relay-frame-decoder-contract'
+export type { DecodedFrame, FrameDecoderOptions } from '../shared/relay-frame-decoder-contract'
+
 export const HEADER_LENGTH = 13
 export const MAX_MESSAGE_SIZE = 16 * 1024 * 1024
 export const FRAME_DECODER_MAX_FRAMES_PER_TURN = 64
 export const FRAME_DECODER_MAX_BYTES_PER_TURN = MAX_MESSAGE_SIZE + HEADER_LENGTH
 export const FRAME_DECODER_MAX_TURN_MS = 4,
   FRAME_DECODER_MAX_RETAINED_BYTES = 2 * (MAX_MESSAGE_SIZE + HEADER_LENGTH)
-
-export type DecodedFrame = {
-  type: number
-  id: number
-  ack: number
-  payload: Buffer
-}
-
-export type FrameDecoderOptions = {
-  maxFramesPerTurn?: number
-  maxBytesPerTurn?: number
-  maxTurnMs?: number
-  now?: () => number
-  schedule?: (callback: () => void) => unknown
-  cancelScheduled?: (handle: unknown) => void
-  pause?: () => void
-  resume?: () => void
-}
 
 export class FrameDecoder {
   private chunks: Buffer[] = []

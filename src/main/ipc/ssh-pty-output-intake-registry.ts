@@ -4,6 +4,7 @@ import type {
   SshPtyOutputExitEvent,
   SshPtyOutputReceipt
 } from './ssh-pty-output-intake-contract'
+import type { SshPtyAcceptedSourceCheckpoint } from './ssh-pty-output-source-obligations'
 import type { PtySourceCreditAckBatch } from '../../shared/pty-source-credit-contract'
 
 let installedIntake: SshPtyOutputIntake | null = null
@@ -45,6 +46,12 @@ export function acceptSshPtyOutputExit(event: SshPtyOutputExitEvent): Promise<vo
 
 export function closeSshPtyOutputGeneration(providerGeneration: number, reason: string): void {
   installedIntake?.closeGeneration(providerGeneration, reason)
+}
+
+export function getSshPtyAcceptedSourceCheckpoints(
+  providerGeneration: number
+): readonly SshPtyAcceptedSourceCheckpoint[] {
+  return installedIntake?.getAcceptedSourceCheckpoints(providerGeneration) ?? []
 }
 
 export function installSshPtySourceAckPublisher(

@@ -234,6 +234,43 @@ export class RelayDispatcher {
     )
   }
 
+  tryNotifyPtyDataToMatchingClients(
+    matchesClient: (clientId: number) => boolean,
+    params: Record<string, unknown>,
+    options: { interactive?: boolean } = {}
+  ): boolean {
+    if (this.disposed) {
+      return false
+    }
+    return this.tryPublishToClients(
+      this.activeClients().filter((client) => matchesClient(client.id)),
+      { jsonrpc: '2.0', method: 'pty.data', params },
+      options.interactive ? 'interactive' : 'ordinary'
+    )
+  }
+
+  tryNotifyPtyDataToClient(
+    clientId: number,
+    params: Record<string, unknown>,
+    onSettled: (result: SinkWriteSettlement) => void
+  ): boolean {
+    if (this.disposed) {
+      onSettled({ ok: false, error: new Error('Relay dispatcher is disposed') })
+      return false
+    }
+    const client = this.clients.get(clientId)
+    if (!client || client.closed) {
+      onSettled({ ok: false, error: new Error('Relay client is not connected') })
+      return false
+    }
+    return this.publishToClient(
+      client,
+      { jsonrpc: '2.0', method: 'pty.data', params },
+      'ordinary',
+      onSettled
+    )
+  }
+
   tryNotifyPtyExit(params: Record<string, unknown>): boolean {
     if (this.disposed) {
       return false
@@ -246,6 +283,42 @@ export class RelayDispatcher {
         params
       },
       'ordinary'
+    )
+  }
+
+  tryNotifyPtyExitToMatchingClients(
+    matchesClient: (clientId: number) => boolean,
+    params: Record<string, unknown>
+  ): boolean {
+    if (this.disposed) {
+      return false
+    }
+    return this.tryPublishToClients(
+      this.activeClients().filter((client) => matchesClient(client.id)),
+      { jsonrpc: '2.0', method: 'pty.exit', params },
+      'ordinary'
+    )
+  }
+
+  tryNotifyPtyExitToClient(
+    clientId: number,
+    params: Record<string, unknown>,
+    onSettled: (result: SinkWriteSettlement) => void
+  ): boolean {
+    if (this.disposed) {
+      onSettled({ ok: false, error: new Error('Relay dispatcher is disposed') })
+      return false
+    }
+    const client = this.clients.get(clientId)
+    if (!client || client.closed) {
+      onSettled({ ok: false, error: new Error('Relay client is not connected') })
+      return false
+    }
+    return this.publishToClient(
+      client,
+      { jsonrpc: '2.0', method: 'pty.exit', params },
+      'ordinary',
+      onSettled
     )
   }
 
@@ -806,7 +879,7 @@ export class RelayDispatcher {
 
   private publishBulkWhenAvailable(client: RelayClient, msg: JsonRpcNotification): Promise<void> {
     const bytes = this.estimateFrameBytes(msg)
-    if (bytes > client.writer.producerFrameCapacity) {
+    if (bytes > client.writer.producerQueueCapacity) {
       return Promise.reject(new Error('Relay bulk frame exceeds sink producer capacity'))
     }
     return new Promise<void>((resolve, reject) => {

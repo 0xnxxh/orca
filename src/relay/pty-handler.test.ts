@@ -1515,6 +1515,78 @@ describe('PtyHandler', () => {
     expect(dispatcher.notify).not.toHaveBeenCalledWith('pty.data', expect.anything())
   })
 
+  it('suppresses legacy replay after the V1 owner is already active', async () => {
+    let dataCallback: ((data: string) => void) | undefined
+    mockPtySpawn.mockReturnValue({
+      ...mockPtyInstance,
+      onData: vi.fn((cb: (data: string) => void) => {
+        dataCallback = cb
+      }),
+      onExit: vi.fn()
+    })
+    const spawn = await spawnPty()
+    dataCallback!('buffered output')
+    handler.setSourcePublication({
+      activate: vi.fn(() => 'existing'),
+      accepts: vi.fn(() => true),
+      publish: vi.fn(() => true),
+      dispose: vi.fn()
+    } as never)
+
+    const result = await attachPty({
+      id: 'pty-1',
+      suppressReplayNotification: true
+    })
+
+    expect(result).toEqual({ incarnationId: spawn.incarnationId })
+  })
+
+  it('requires restore when the V1 pending-send recovery fence expires', async () => {
+    const spawn = await spawnPty()
+    const waitForPendingSend = vi.fn().mockResolvedValue(false)
+    const activate = vi
+      .fn()
+      .mockReturnValue({ status: 'restoreRequired', reason: 'checkpointUnavailable' })
+    handler.setSourcePublication({
+      activate,
+      accepts: vi.fn(() => true),
+      waitForPendingSend,
+      dispose: vi.fn()
+    } as never)
+
+    const result = await dispatcher.callRequest(
+      'pty.attach',
+      {
+        id: spawn.id,
+        sourceRecovery: {
+          status: 'checkpoint',
+          deliveryToken: 'old-token',
+          ptyIncarnation: spawn.incarnationId,
+          clientGeneration: 1,
+          ownerGeneration: 1,
+          acceptedSourceEndSu: 0
+        }
+      },
+      {
+        clientId: 2,
+        isStale: () => false,
+        onResponseSettled: vi.fn()
+      } as never
+    )
+
+    expect(waitForPendingSend).toHaveBeenCalledWith(spawn.id)
+    expect(activate).toHaveBeenCalledWith(
+      spawn.id,
+      spawn.incarnationId,
+      expect.anything(),
+      Object.freeze({ status: 'checkpointUnavailable' })
+    )
+    expect(result).toEqual({
+      incarnationId: spawn.incarnationId,
+      sourceRecovery: { status: 'restoreRequired', reason: 'checkpointUnavailable' }
+    })
+  })
+
   it('notifies replay on normal attach', async () => {
     let dataCallback: ((data: string) => void) | undefined
     mockPtySpawn.mockReturnValue({
