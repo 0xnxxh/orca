@@ -50,15 +50,13 @@ async function readRecordedCodexPaneLanes(
   if (localPtyIds.length === 0) {
     return {}
   }
-  try {
-    const listRecordedPaneLanes = window.api.codexAccounts.listRecordedPaneLanes
-    if (typeof listRecordedPaneLanes !== 'function') {
-      return {}
-    }
-    return (await listRecordedPaneLanes({ ptyIds: localPtyIds }).catch(() => null)) ?? {}
-  } catch {
+  const listRecordedPaneLanes = window.api.codexAccounts.listRecordedPaneLanes
+  // Why the shape check: a preload older than this handler has no such method,
+  // and reaching that case must read as "no records", not as a scan failure.
+  if (typeof listRecordedPaneLanes !== 'function') {
     return {}
   }
+  return await listRecordedPaneLanes({ ptyIds: localPtyIds }).catch(() => ({}))
 }
 
 /**
