@@ -787,6 +787,48 @@ describe('fetchWorktrees', () => {
     expect(store.getState().tabsByWorktree[deleted.id]).toBeUndefined()
   })
 
+  // Why (#10562): "I can't reach the host" must never be read as "the worktree is
+  // gone". A disconnected SSH target has no authoritative scan, so it must not
+  // purge and must not kill anything on the far side.
+  it('never stops terminals for a disconnected SSH target', async () => {
+    const store = createTestStore()
+    const deleted = makeWorktree({ id: 'repo1::/p/deleted', repoId: 'repo1', path: '/p/deleted' })
+    const surviving = makeWorktree({ id: 'repo1::/p/surv', repoId: 'repo1', path: '/p/surv' })
+
+    store.setState({
+      repos: [
+        {
+          id: 'repo1',
+          path: '/p/repo1',
+          displayName: 'R',
+          badgeColor: '#000',
+          addedAt: 0,
+          connectionId: TEST_SSH_AUTHORITY.targetId
+        }
+      ],
+      // Why: the target dropped — no connected authority for this host.
+      sshConnectionStates: new Map([
+        [
+          TEST_SSH_AUTHORITY.targetId,
+          {
+            targetId: TEST_SSH_AUTHORITY.targetId,
+            status: 'disconnected',
+            error: null,
+            reconnectAttempt: 1
+          }
+        ]
+      ]),
+      worktreesByRepo: { repo1: [deleted, surviving] },
+      detectedWorktreesByRepo: { repo1: makeDetectedResult('repo1', [deleted, surviving]) },
+      tabsByWorktree: { [deleted.id]: [{ id: 'tab-d', worktreeId: deleted.id }] }
+    } as unknown as Partial<AppState>)
+
+    await store.getState().fetchWorktrees('repo1')
+
+    expect(mockApi.runtime.call).not.toHaveBeenCalled()
+    expect(store.getState().tabsByWorktree[deleted.id]).toBeDefined()
+  })
+
   it('coalesces fetchDetectedWorktrees with a matching fetchWorktrees refresh', async () => {
     const store = createTestStore()
     const refreshed = makeWorktree({
