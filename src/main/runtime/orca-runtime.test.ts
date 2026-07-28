@@ -31409,6 +31409,41 @@ describe('OrcaRuntimeService', () => {
     )
   })
 
+  // Why (#10562): the renderer purges its state regardless of the sweep result, so
+  // revalidating against a cached scan (30s TTL) that still lists an already-deleted
+  // directory would strand those PTYs permanently — nothing asks a second time.
+  it('revalidates against a fresh scan instead of a warm worktree-scan cache', async () => {
+    const deletedId = `${TEST_REPO_ID}::/tmp/deleted`
+    const localProvider = {
+      listProcesses: vi.fn(async () => [
+        { id: `${deletedId}@@deleted-session`, cwd: '/tmp/deleted', title: 'shell' }
+      ]),
+      shutdown: vi.fn(async () => {})
+    }
+    const runtime = new OrcaRuntimeService(store, undefined, {
+      getLocalProvider: () => localProvider as never
+    })
+
+    // Warm the scan cache while the worktree still exists.
+    vi.mocked(listWorktrees).mockResolvedValueOnce([
+      { path: '/tmp/deleted', head: 'abc', branch: 'd', isBare: false, isMainWorktree: false }
+    ])
+    await runtime.teardownMissingManagedWorktreeTerminals(`id:${TEST_REPO_ID}`, [deletedId])
+    expect(localProvider.shutdown).not.toHaveBeenCalled()
+
+    // The worktree is now gone; the cached scan must not mask that.
+    vi.mocked(listWorktrees).mockResolvedValue([])
+    const result = await runtime.teardownMissingManagedWorktreeTerminals(`id:${TEST_REPO_ID}`, [
+      deletedId
+    ])
+
+    expect(result).toEqual({ stoppedWorktreeIds: [deletedId] })
+    expect(localProvider.shutdown).toHaveBeenCalledWith(
+      `${deletedId}@@deleted-session`,
+      expect.objectContaining({ immediate: true })
+    )
+  })
+
   it('does not stop sessions after a non-authoritative revalidation', async () => {
     const localProvider = {
       listProcesses: vi.fn(async () => []),

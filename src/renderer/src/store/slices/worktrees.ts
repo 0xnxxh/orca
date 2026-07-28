@@ -633,6 +633,11 @@ function isRuntimeMethodNotFoundError(error: unknown): boolean {
   return error instanceof RuntimeRpcCallError && error.code === 'method_not_found'
 }
 
+// Why: teardown cannot ride the scan's coalescing (each caller has its own known-id
+// snapshot), so dedupe on the request it actually produces — identical fan-out
+// requests share one host sweep instead of re-scanning per caller.
+const missingWorktreeTeardownsInFlight = new Map<string, Promise<void>>()
+
 async function teardownMissingWorktreeTerminalsBestEffort(
   settings: AppState['settings'],
   repoId: string,
@@ -648,16 +653,38 @@ async function teardownMissingWorktreeTerminalsBestEffort(
   if (missingIds.length === 0) {
     return
   }
+  const target = getActiveRuntimeTarget(settings)
+  const normalizedConnectionId = connectionId ?? null
+  const key = [
+    target.kind === 'local' ? 'local' : `runtime:${target.environmentId}`,
+    repoId,
+    normalizedConnectionId ?? '',
+    [...missingIds].sort().join('\n')
+  ].join('\0')
+  const existing = missingWorktreeTeardownsInFlight.get(key)
+  if (existing) {
+    return existing
+  }
+  const teardown = (async () => {
+    try {
+      await callRuntimeRpc(
+        target,
+        'worktree.teardownMissingTerminals',
+        { repo: repoId, worktreeIds: missingIds, connectionId: normalizedConnectionId },
+        { timeoutMs: 30_000 }
+      )
+    } catch (error) {
+      if (!isRuntimeMethodNotFoundError(error)) {
+        console.warn(`Failed to stop terminals for missing worktrees in repo ${repoId}:`, error)
+      }
+    }
+  })()
+  missingWorktreeTeardownsInFlight.set(key, teardown)
   try {
-    await callRuntimeRpc(
-      getActiveRuntimeTarget(settings),
-      'worktree.teardownMissingTerminals',
-      { repo: repoId, worktreeIds: missingIds, connectionId: connectionId ?? null },
-      { timeoutMs: 30_000 }
-    )
-  } catch (error) {
-    if (!isRuntimeMethodNotFoundError(error)) {
-      console.warn(`Failed to stop terminals for missing worktrees in repo ${repoId}:`, error)
+    await teardown
+  } finally {
+    if (missingWorktreeTeardownsInFlight.get(key) === teardown) {
+      missingWorktreeTeardownsInFlight.delete(key)
     }
   }
 }
@@ -1075,35 +1102,40 @@ async function listDetectedWorktreesForRepoCoalesced(
       ? getRuntimeEnvironmentConnectionGeneration(target.environmentId)
       : null
   const existing = detectedWorktreeRefreshesInFlight.get(key)
-  if (existing) {
-    return existing
-  }
-  // Why: startup/event fan-out can request the same repo/host refresh many times at once; share only the scan promise so state-merge semantics stay local.
-  const refresh = listDetectedWorktreesForRepo(settings, repoId, {
-    reuseRecentCompatibilityFailure: options.reuseRecentCompatibilityFailure
-  })
-  detectedWorktreeRefreshesInFlight.set(key, refresh)
-  try {
-    const result = await refresh
-    if (
-      target.kind === 'environment' &&
-      (getEnvironmentSshStateGeneration(target.environmentId) !== connectionGeneration ||
-        getRuntimeEnvironmentConnectionGeneration(target.environmentId) !==
-          runtimeConnectionGeneration)
-    ) {
-      throw new Error('runtime_environment_generation_changed')
-    }
-    await teardownMissingWorktreeTerminalsBestEffort(
-      settings,
-      repoId,
-      options.connectionId,
-      options.knownWorktreeIds,
-      result
-    )
-    return result
-  } finally {
-    if (detectedWorktreeRefreshesInFlight.get(key) === refresh) {
-      detectedWorktreeRefreshesInFlight.delete(key)
+  // Why: the scan coalesces, but teardown must not — each caller carries its own
+  // known-id snapshot and purges its own state, so a caller that joined an
+  // in-flight scan would otherwise purge without ever stopping those terminals.
+  const result = existing ? await existing : await runCoalescedDetectedWorktreeScan()
+  await teardownMissingWorktreeTerminalsBestEffort(
+    settings,
+    repoId,
+    options.connectionId,
+    options.knownWorktreeIds,
+    result
+  )
+  return result
+
+  async function runCoalescedDetectedWorktreeScan(): Promise<DetectedWorktreeListResult> {
+    // Why: startup/event fan-out can request the same repo/host refresh many times at once; share only the scan promise so state-merge semantics stay local.
+    const refresh = listDetectedWorktreesForRepo(settings, repoId, {
+      reuseRecentCompatibilityFailure: options.reuseRecentCompatibilityFailure
+    })
+    detectedWorktreeRefreshesInFlight.set(key, refresh)
+    try {
+      const scanned = await refresh
+      if (
+        target.kind === 'environment' &&
+        (getEnvironmentSshStateGeneration(target.environmentId) !== connectionGeneration ||
+          getRuntimeEnvironmentConnectionGeneration(target.environmentId) !==
+            runtimeConnectionGeneration)
+      ) {
+        throw new Error('runtime_environment_generation_changed')
+      }
+      return scanned
+    } finally {
+      if (detectedWorktreeRefreshesInFlight.get(key) === refresh) {
+        detectedWorktreeRefreshesInFlight.delete(key)
+      }
     }
   }
 }

@@ -656,6 +656,82 @@ describe('fetchWorktrees', () => {
     expect(mockApi.worktrees.listDetected).toHaveBeenCalledTimes(1)
   })
 
+  // Why (#10562): the scan coalesces but each caller carries its own known-id
+  // snapshot, so a caller that joined an in-flight scan must still request
+  // teardown — otherwise it purges renderer state and strands live PTYs.
+  it('stops terminals for a caller that coalesced onto an in-flight scan', async () => {
+    const store = createTestStore()
+    const deleted = makeWorktree({ id: 'repo1::/p/deleted', repoId: 'repo1', path: '/p/deleted' })
+    const surviving = makeWorktree({ id: 'repo1::/p/surv', repoId: 'repo1', path: '/p/surv' })
+
+    // Caller A starts before hydration, so its known-id snapshot is empty.
+    store.setState({
+      repos: [{ id: 'repo1', path: '/p/repo1', displayName: 'R', badgeColor: '#000', addedAt: 0 }],
+      worktreesByRepo: {},
+      detectedWorktreesByRepo: {},
+      tabsByWorktree: {}
+    } as unknown as Partial<AppState>)
+
+    let releaseScan!: () => void
+    const scanStarted = new Promise<void>((resolve) => {
+      mockApi.worktrees.listDetected.mockImplementationOnce(async ({ repoId }) => {
+        resolve()
+        await new Promise<void>((release) => {
+          releaseScan = release
+        })
+        return makeDetectedResult(repoId, [surviving])
+      })
+    })
+
+    const callerA = store.getState().fetchDetectedWorktrees('repo1')
+    await scanStarted
+
+    // Hydration lands mid-scan: the renderer now owns `deleted` and its tabs.
+    store.setState({
+      worktreesByRepo: { repo1: [deleted, surviving] },
+      detectedWorktreesByRepo: { repo1: makeDetectedResult('repo1', [deleted, surviving]) },
+      tabsByWorktree: { [deleted.id]: [{ id: 'tab-d', worktreeId: deleted.id }] }
+    } as unknown as Partial<AppState>)
+
+    const callerB = store.getState().fetchWorktrees('repo1')
+    releaseScan()
+    await Promise.all([callerA, callerB])
+
+    // One shared scan, but the coalesced caller still asked the host to sweep.
+    expect(mockApi.worktrees.listDetected).toHaveBeenCalledTimes(1)
+    expect(mockApi.runtime.call).toHaveBeenCalledWith({
+      method: 'worktree.teardownMissingTerminals',
+      params: { repo: 'repo1', worktreeIds: [deleted.id], connectionId: null }
+    })
+    expect(store.getState().tabsByWorktree[deleted.id]).toBeUndefined()
+  })
+
+  // Why: teardown rides outside the scan coalescer, so identical fan-out requests
+  // must share one host sweep instead of re-scanning the host per caller.
+  it('shares one teardown sweep across identical concurrent refreshes', async () => {
+    const store = createTestStore()
+    const deleted = makeWorktree({ id: 'repo1::/p/deleted', repoId: 'repo1', path: '/p/deleted' })
+    const surviving = makeWorktree({ id: 'repo1::/p/surv', repoId: 'repo1', path: '/p/surv' })
+
+    store.setState({
+      repos: [{ id: 'repo1', path: '/p/repo1', displayName: 'R', badgeColor: '#000', addedAt: 0 }],
+      worktreesByRepo: { repo1: [deleted, surviving] },
+      detectedWorktreesByRepo: { repo1: makeDetectedResult('repo1', [deleted, surviving]) },
+      tabsByWorktree: { [deleted.id]: [{ id: 'tab-d', worktreeId: deleted.id }] }
+    } as unknown as Partial<AppState>)
+
+    mockApi.worktrees.listDetected.mockResolvedValueOnce(makeDetectedResult('repo1', [surviving]))
+
+    await Promise.all([
+      store.getState().fetchWorktrees('repo1'),
+      store.getState().fetchDetectedWorktrees('repo1'),
+      store.getState().fetchWorktrees('repo1')
+    ])
+
+    expect(mockApi.runtime.call).toHaveBeenCalledTimes(1)
+    expect(store.getState().tabsByWorktree[deleted.id]).toBeUndefined()
+  })
+
   it('coalesces fetchDetectedWorktrees with a matching fetchWorktrees refresh', async () => {
     const store = createTestStore()
     const refreshed = makeWorktree({

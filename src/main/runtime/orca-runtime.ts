@@ -18005,6 +18005,10 @@ export class OrcaRuntimeService {
     connectionId?: string | null
   ): Promise<{ stoppedWorktreeIds: string[] }> {
     const repo = await this.resolveRepoSelectorForConnection(repoSelector, connectionId)
+    // Why: killing PTYs must be proven against the host right now — a cached scan
+    // (30s TTL) can still list a directory git already dropped, and the renderer
+    // purges its state either way, so a stale miss strands those processes for good.
+    this.invalidateWorktreeScanCacheForRepo(repo.id)
     const detected = await this.listDetectedManagedWorktrees(`id:${repo.id}`, connectionId)
     if (!detected.authoritative) {
       return { stoppedWorktreeIds: [] }
