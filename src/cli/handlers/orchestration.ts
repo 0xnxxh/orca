@@ -91,6 +91,27 @@ function formatMessageReadOnlyTag(message: MessageSummary): string {
   return message.run_id === ORCHESTRATION_LEGACY_RUN_ID ? ' [legacy, read-only]' : ''
 }
 
+function isLegacyReadOnlyMessage(message: MessageSummary): boolean {
+  return message.run_id === ORCHESTRATION_LEGACY_RUN_ID
+}
+
+function formatLegacyAwareCheckMessages(messages: MessageSummary[]): string {
+  return messages
+    .map((message) => {
+      const lines = [
+        `${message.id}${formatMessageReadOnlyTag(message)} [${message.type ?? 'status'}] from=${message.from_handle} "${message.subject}"`
+      ]
+      if (message.body) {
+        lines.push(message.body)
+      }
+      if (message.payload) {
+        lines.push(`[payload] ${message.payload}`)
+      }
+      return lines.join('\n')
+    })
+    .join('\n\n')
+}
+
 type LifecycleSendRejection = {
   action: 'rejected'
   code: string
@@ -623,7 +644,9 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
     }
     printResult(result, json, (r) => {
       if (r.formatted) {
-        return r.formatted
+        return r.messages.some(isLegacyReadOnlyMessage)
+          ? formatLegacyAwareCheckMessages(r.messages)
+          : r.formatted
       }
       if (r.count === 0) {
         if (r.timedOut) {
