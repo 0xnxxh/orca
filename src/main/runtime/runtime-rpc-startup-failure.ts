@@ -62,8 +62,37 @@ function describeRuntimeRpcStartFailure(error: unknown): string {
     : `${normalized.slice(0, MAX_VISIBLE_CAUSE_LENGTH - 1)}…`
 }
 
+// Why: a bare "restart" is wrong for every class but address_in_use — perms, full disks and missing
+// dirs all survive a relaunch, so each class names the thing the user actually has to change.
+const GUIDANCE_BY_ERROR_CLASS: Readonly<
+  Record<RuntimeRpcStartErrorClass, { key: string; fallback: string }>
+> = {
+  permission_denied: {
+    key: 'runtimeRpc.startupFailure.guidance.permissionDenied',
+    fallback:
+      "Orca couldn't write its runtime file. Check permissions on Orca's data folder, then restart."
+  },
+  storage_unavailable: {
+    key: 'runtimeRpc.startupFailure.guidance.storageUnavailable',
+    fallback: 'Your disk may be full or read-only. Free up space, then restart Orca.'
+  },
+  invalid_path: {
+    key: 'runtimeRpc.startupFailure.guidance.invalidPath',
+    fallback: "Orca's data folder may be missing or moved. Restart Orca to recreate it."
+  },
+  address_in_use: {
+    key: 'runtimeRpc.startupFailure.guidance.addressInUse',
+    fallback: 'Another process may be holding the port. Restart Orca to try again.'
+  },
+  unknown: {
+    key: 'runtimeRpc.startupFailure.guidance.unknown',
+    fallback: 'Restart Orca to try again.'
+  }
+}
+
 function createRuntimeRpcStartupFailureDialogOptions(error: unknown): MessageBoxOptions {
   const cause = describeRuntimeRpcStartFailure(error)
+  const { key, fallback } = GUIDANCE_BY_ERROR_CLASS[classifyRuntimeRpcStartFailure(error)]
   return {
     type: 'error',
     buttons: [translateMain('runtimeRpc.startupFailure.continueButton', 'Continue without CLI')],
@@ -77,8 +106,8 @@ function createRuntimeRpcStartupFailureDialogOptions(error: unknown): MessageBox
     ),
     detail: translateMain(
       'runtimeRpc.startupFailure.detail',
-      'Orca will continue to work, but commands such as orca status, orca terminal, and orchestration are unavailable for this session. Restart Orca to try again.\n\nCause: {{cause}}',
-      { cause }
+      'Orca will continue to work, but commands such as orca status, orca terminal, and orchestration are unavailable for this session.\n\n{{guidance}}\n\nCause: {{cause}}',
+      { cause, guidance: translateMain(key, fallback) }
     )
   }
 }

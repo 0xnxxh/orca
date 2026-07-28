@@ -13,11 +13,17 @@ vi.mock('electron', () => ({
 }))
 
 vi.mock('../i18n/main-i18n', () => ({
+  // Why: substitute every supplied placeholder, not just {{cause}} — a mock that ignores one
+  // would leave a literal {{...}} in the detail and hide it from every assertion below.
   translateMain: (
     _key: string,
     fallback: string,
     options?: Readonly<Record<string, string>>
-  ): string => fallback.replace('{{cause}}', options?.cause ?? '')
+  ): string =>
+    Object.entries(options ?? {}).reduce(
+      (text, [name, value]) => text.replaceAll(`{{${name}}}`, value),
+      fallback
+    )
 }))
 
 vi.mock('../telemetry/client', () => ({
@@ -137,6 +143,33 @@ describe('runtime RPC startup failure reporting', () => {
         )
       })
     )
+  })
+
+  // Why: a bare "restart" is only true for address_in_use — the other classes need the user to
+  // change something, so each must reach the dialog with its own remediation.
+  it.each([
+    ['EACCES', "Check permissions on Orca's data folder"],
+    ['EPERM', "Check permissions on Orca's data folder"],
+    ['ENOSPC', 'Your disk may be full or read-only'],
+    ['EROFS', 'Your disk may be full or read-only'],
+    ['ENOENT', "Orca's data folder may be missing or moved"],
+    ['EADDRINUSE', 'Another process may be holding the port']
+  ] as const)('guides the user on how to fix %s', async (code, guidance) => {
+    const error = Object.assign(new Error('metadata write failed'), { code })
+
+    await showRuntimeRpcStartupFailureDialog(createParentWindow(), error)
+
+    const detail = showMessageBoxMock.mock.calls[0]?.[1]?.detail as string
+    expect(detail).toContain(guidance)
+    expect(detail).not.toContain('{{')
+  })
+
+  it('falls back to a plain restart when the cause is unrecognised', async () => {
+    await showRuntimeRpcStartupFailureDialog(createParentWindow(), new Error('mystery'))
+
+    const detail = showMessageBoxMock.mock.calls[0]?.[1]?.detail as string
+    expect(detail).toContain('Restart Orca to try again.')
+    expect(detail).not.toContain("Check permissions on Orca's data folder")
   })
 
   it('truncates a runaway cause instead of pasting it whole into the dialog', async () => {
