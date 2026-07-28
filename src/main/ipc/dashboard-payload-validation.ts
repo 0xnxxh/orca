@@ -10,6 +10,7 @@ import {
 const MAX_DASHBOARD_CARDS = 1_000
 const MAX_DASHBOARD_SUBAGENTS = 100
 const MAX_DASHBOARD_REPO_ICONS = 500
+const MAX_DASHBOARD_FILTER_OPTIONS = 500
 const MAX_ID_LENGTH = 4_096
 const MAX_LABEL_LENGTH = 1_024
 const DASHBOARD_BUCKETS = new Set(['attention', 'working', 'done', 'idle'])
@@ -56,7 +57,40 @@ export function isDashboardSnapshot(value: unknown): value is DashboardSnapshot 
     snapshot.cards.length <= MAX_DASHBOARD_CARDS &&
     snapshot.cards.every(isDashboardCard) &&
     (snapshot.showIdle === undefined || typeof snapshot.showIdle === 'boolean') &&
+    isDashboardFilterOptions(snapshot.filterOptions) &&
     isDashboardRepoIcons(snapshot.repoIconsByRepoId)
+  )
+}
+
+function isDashboardFilterOptions(value: unknown): boolean {
+  if (value === undefined) {
+    return true
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+  const options = value as Record<string, unknown>
+  return (
+    isDashboardFilterOptionList(options.projects) &&
+    isDashboardFilterOptionList(options.workspaceStatuses)
+  )
+}
+
+function isDashboardFilterOptionList(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length <= MAX_DASHBOARD_FILTER_OPTIONS &&
+    value.every((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return false
+      }
+      const option = entry as Record<string, unknown>
+      return (
+        isBoundedString(option.id, MAX_ID_LENGTH) &&
+        isBoundedString(option.label, MAX_LABEL_LENGTH, true) &&
+        isOptionalBoundedString(option.color, MAX_ID_LENGTH)
+      )
+    })
   )
 }
 

@@ -61,7 +61,8 @@ export function useAgentBucketCounts(): AgentBucketCounts {
         // generated-title gate is moot and the sidebar stays off settings.
         settings: null
       },
-      Date.now()
+      Date.now(),
+      { includeFilterOptions: false }
     )
     if (snapshot.cards.length === 0) {
       return EMPTY_COUNTS

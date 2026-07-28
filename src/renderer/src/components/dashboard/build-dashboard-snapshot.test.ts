@@ -89,6 +89,38 @@ function baseState(overrides: Partial<DashboardSnapshotState>): DashboardSnapsho
 }
 
 describe('buildDashboardSnapshot', () => {
+  it('publishes project and workspace-status filters without agent cards', () => {
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        repos: [
+          { id: 'r1', path: '/r1', displayName: 'Repo One', badgeColor: '#000' },
+          { id: 'r2', path: '/r2', displayName: 'Repo Two', badgeColor: '#000' }
+        ],
+        worktreesByRepo: {
+          r1: [worktree()],
+          r2: [worktree('w2', 'wt-two')]
+        },
+        workspaceStatuses: [
+          { id: 'planned', label: 'Planned', color: 'neutral' },
+          { id: 'active', label: 'Active', color: 'blue' }
+        ]
+      } as unknown as Partial<DashboardSnapshotState>),
+      NOW
+    )
+
+    expect(snapshot.cards).toEqual([])
+    expect(snapshot.filterOptions).toEqual({
+      projects: [
+        { id: 'r1', label: 'Repo One' },
+        { id: 'r2', label: 'Repo Two' }
+      ],
+      workspaceStatuses: [
+        { id: 'planned', label: 'Planned', color: 'neutral' },
+        { id: 'active', label: 'Active', color: 'blue' }
+      ]
+    })
+  })
+
   it('maps a live working agent to the working bucket with a resolved ptyId', () => {
     const snapshot = buildDashboardSnapshot(
       baseState({

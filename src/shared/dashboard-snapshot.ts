@@ -82,10 +82,24 @@ export type DashboardCard = {
   conversationName?: string
 }
 
+export type DashboardFilterOption = {
+  id: string
+  label: string
+  color?: string
+}
+
+export type DashboardFilterOptions = {
+  projects: DashboardFilterOption[]
+  workspaceStatuses: DashboardFilterOption[]
+}
+
 export type DashboardSnapshot = {
   generatedAt: number
   cards: DashboardCard[]
   showIdle?: boolean
+  /** Available filter dimensions are store-derived so zero-card projects and
+   *  statuses remain selectable. Optional for preload-version compatibility. */
+  filterOptions?: DashboardFilterOptions
   /** Icons for the repos the cards belong to. Keyed by repoId rather than
    *  carried per card: image icons are data URLs up to 400KB, and the snapshot
    *  is republished several times a second. Optional so a pop-out running
@@ -96,6 +110,7 @@ export type DashboardSnapshot = {
 export const EMPTY_DASHBOARD_SNAPSHOT: DashboardSnapshot = {
   generatedAt: 0,
   cards: [],
+  filterOptions: { projects: [], workspaceStatuses: [] },
   repoIconsByRepoId: {}
 }
 

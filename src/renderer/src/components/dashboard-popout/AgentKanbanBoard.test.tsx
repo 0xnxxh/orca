@@ -3,7 +3,11 @@
 import '@testing-library/jest-dom/vitest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import type { DashboardCard, DashboardSnapshot } from '../../../../shared/dashboard-snapshot'
+import type {
+  DashboardCard,
+  DashboardFilterOptions,
+  DashboardSnapshot
+} from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
 import { AgentKanbanBoard } from './AgentKanbanBoard'
 
@@ -79,6 +83,7 @@ function renderBoard(
   options: {
     showIdle?: boolean
     repoIconsByRepoId?: Record<string, RepoIcon | null>
+    filterOptions?: DashboardFilterOptions
   } = {}
 ): void {
   const snapshot: DashboardSnapshot = { generatedAt: 1, cards, ...options }
@@ -166,6 +171,20 @@ describe('AgentKanbanBoard', () => {
     expect(screen.getByText('first')).toBeInTheDocument()
     expect(screen.queryByText('second')).not.toBeInTheDocument()
     expect(screen.getByText('1 of 2 shown')).toBeInTheDocument()
+  })
+
+  it('offers store-derived project and status filters without cards', async () => {
+    renderBoard([], {
+      filterOptions: {
+        projects: [{ id: 'r1', label: 'Repo One' }],
+        workspaceStatuses: [{ id: 'planned', label: 'Planned', color: 'neutral' }]
+      }
+    })
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Filter/ }))
+
+    expect(await screen.findByText('Repo One')).toBeInTheDocument()
+    expect(screen.getByText('Planned')).toBeInTheDocument()
   })
 
   it('orders cards in a column by most recent bucket entry first', () => {

@@ -7,6 +7,7 @@ import type {
   DashboardSnapshot
 } from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
+import { DEFAULT_WORKSPACE_STATUSES } from '../../../../shared/workspace-statuses'
 import { parsePaneKey } from '../../../../shared/stable-pane-id'
 import { getAgentRowConversationName } from '../../../../shared/agent-row-conversation-name'
 import { migrationUnsupportedToAgentStatusEntry } from '@/lib/migration-unsupported-agent-entry'
@@ -105,7 +106,8 @@ function rowConversationName(
  */
 export function buildDashboardSnapshot(
   state: DashboardSnapshotState,
-  now: number
+  now: number,
+  options: { includeFilterOptions?: boolean } = {}
 ): DashboardSnapshot {
   const cards: DashboardCard[] = []
   const repoIconsByRepoId: Record<string, RepoIcon | null> = {}
@@ -122,6 +124,22 @@ export function buildDashboardSnapshot(
       }
     }
   }
+  const filterOptions =
+    options.includeFilterOptions === false
+      ? undefined
+      : {
+          projects: [...new Map(activeWorktrees.map(({ repo }) => [repo.id, repo])).values()].map(
+            (repo) => ({ id: repo.id, label: repo.displayName })
+          ),
+          workspaceStatuses: (state.workspaceStatuses && state.workspaceStatuses.length > 0
+            ? state.workspaceStatuses
+            : DEFAULT_WORKSPACE_STATUSES
+          ).map((status) => ({
+            id: status.id,
+            label: status.label,
+            color: status.color
+          }))
+        }
   let singletonOrchestration: ReturnType<typeof selectRuntimeAgentOrchestrationForWorktree> | null =
     null
   let orchestrationByWorktree: ReturnType<typeof selectRuntimeAgentOrchestrationBatch> | null = null
@@ -264,6 +282,7 @@ export function buildDashboardSnapshot(
     generatedAt: now,
     cards,
     showIdle: state.settings?.experimentalAgentDashboardShowIdle === true,
+    filterOptions,
     repoIconsByRepoId
   }
 }

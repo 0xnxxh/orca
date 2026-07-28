@@ -33,7 +33,11 @@ const SNAPSHOT = {
       askSummary: '{"question":"Proceed?"}'
     }
   ],
-  showIdle: false
+  showIdle: false,
+  filterOptions: {
+    projects: [{ id: 'repo-1', label: 'Orca' }],
+    workspaceStatuses: [{ id: 'in-review', label: 'In review', color: 'emerald' }]
+  }
 } satisfies DashboardSnapshot
 
 describe('dashboard payload validation', () => {
@@ -102,6 +106,29 @@ describe('dashboard payload validation', () => {
       })
     ).toBe(false)
     expect(isDashboardSnapshot({ ...SNAPSHOT, repoIconsByRepoId: [] })).toBe(false)
+  })
+
+  it('accepts bounded filter options independently of cards', () => {
+    expect(isDashboardSnapshot({ ...SNAPSHOT, cards: [] })).toBe(true)
+    expect(isDashboardSnapshot({ ...SNAPSHOT, filterOptions: undefined })).toBe(true)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        filterOptions: {
+          ...SNAPSHOT.filterOptions,
+          projects: [{ id: '', label: 'Invalid' }]
+        }
+      })
+    ).toBe(false)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        filterOptions: {
+          ...SNAPSHOT.filterOptions,
+          workspaceStatuses: [{ id: 'todo', label: 'x'.repeat(1_025) }]
+        }
+      })
+    ).toBe(false)
   })
 
   it('bounds the conversation name', () => {

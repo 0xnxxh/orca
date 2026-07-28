@@ -13,7 +13,11 @@ import { Input } from '@/components/ui/input'
 import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
 import { getWorkspaceStatusVisualMeta } from '../sidebar/workspace-status'
-import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
+import type {
+  DashboardCard,
+  DashboardFilterOption,
+  DashboardFilterOptions
+} from '../../../../shared/dashboard-snapshot'
 import {
   activeDashboardFilterCount,
   type DashboardFilters,
@@ -26,6 +30,7 @@ type FilterOption = { id: string; label: string; count: number; color?: string }
 
 type AgentDashboardToolbarProps = {
   cards: DashboardCard[]
+  filterOptions?: DashboardFilterOptions
   filteredCount: number
   query: string
   onQueryChange: (query: string) => void
@@ -45,8 +50,17 @@ function countBy(
   return counts
 }
 
-function workspaceStatusOptions(cards: DashboardCard[]): FilterOption[] {
+function workspaceStatusOptions(
+  cards: DashboardCard[],
+  configured: DashboardFilterOption[] | undefined
+): FilterOption[] {
   const counts = countBy(cards, (card) => card.workspaceStatusId ?? '')
+  if (configured) {
+    return configured.map((option) => ({
+      ...option,
+      count: counts.get(option.id) ?? 0
+    }))
+  }
   const options = new Map<string, FilterOption>()
   for (const card of cards) {
     if (!card.workspaceStatusId || options.has(card.workspaceStatusId)) {
@@ -62,8 +76,17 @@ function workspaceStatusOptions(cards: DashboardCard[]): FilterOption[] {
   return [...options.values()]
 }
 
-function projectOptions(cards: DashboardCard[]): FilterOption[] {
+function projectOptions(
+  cards: DashboardCard[],
+  configured: DashboardFilterOption[] | undefined
+): FilterOption[] {
   const counts = countBy(cards, (card) => card.repoId)
+  if (configured) {
+    return configured.map((option) => ({
+      ...option,
+      count: counts.get(option.id) ?? 0
+    }))
+  }
   const options = new Map<string, FilterOption>()
   for (const card of cards) {
     if (!options.has(card.repoId)) {
@@ -106,14 +129,15 @@ function OptionCount({ count }: { count: number }): React.JSX.Element {
 
 export function AgentDashboardToolbar({
   cards,
+  filterOptions,
   filteredCount,
   query,
   onQueryChange,
   filters,
   onFiltersChange
 }: AgentDashboardToolbarProps): React.JSX.Element {
-  const projects = projectOptions(cards)
-  const statuses = workspaceStatusOptions(cards)
+  const projects = projectOptions(cards, filterOptions?.projects)
+  const statuses = workspaceStatusOptions(cards, filterOptions?.workspaceStatuses)
   const reviewCounts = countBy(
     cards,
     (card) => card.review?.state ?? (card.hasReview ? 'unknown' : 'none')

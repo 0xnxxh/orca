@@ -249,6 +249,7 @@ export function AgentKanbanBoard({
         </div>
         <AgentDashboardToolbar
           cards={visibleCards}
+          filterOptions={snapshot.filterOptions}
           filteredCount={filteredCards.length}
           query={query}
           onQueryChange={setQuery}
