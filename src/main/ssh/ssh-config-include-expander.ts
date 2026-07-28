@@ -6,9 +6,12 @@ import {
   admitSshConfigIncludeDepth,
   appendSshConfigExpandedLine,
   createSshConfigExpansionBudget,
+  getSshConfigTruncationReasons,
   readSshConfigSourceFile,
+  recordSshConfigDrop,
   SSH_CONFIG_INCLUDE_LIMITS,
-  type SshConfigExpansionBudget
+  type SshConfigExpansionBudget,
+  type SshConfigTruncationReason
 } from './ssh-config-expansion-budget'
 
 type PathApi = SshConfigPathApi
@@ -25,7 +28,13 @@ type IncludeExpansionContext = {
 
 const TARGET_DEPENDENT_INCLUDE_TOKENS = new Set(['h', 'n', 'p', 'r', 'j', 'k', 'C'])
 
-export function expandSshConfigIncludes(configPath: string): string {
+export type SshConfigExpansion = {
+  content: string
+  /** Non-null when a ceiling dropped configuration, so callers can tell the user. */
+  truncatedBy: SshConfigTruncationReason[] | null
+}
+
+export function expandSshConfigIncludes(configPath: string): SshConfigExpansion {
   const home = homedir()
   const pathApi = getPathApi(configPath)
   const currentUser = getCurrentUser()
@@ -43,7 +52,10 @@ export function expandSshConfigIncludes(configPath: string): string {
 
   const expandedLines: string[] = []
   expandSshConfigFile(configPath, context, [], expandedLines)
-  return expandedLines.join('\n')
+  return {
+    content: expandedLines.join('\n'),
+    truncatedBy: getSshConfigTruncationReasons(context.budget)
+  }
 }
 
 function expandSshConfigFile(
@@ -163,12 +175,14 @@ function resolveIncludePaths(pattern: string, context: IncludeExpansionContext):
       SSH_CONFIG_INCLUDE_LIMITS.globMatches
     )
     if (result.patternTooDeep) {
+      recordSshConfigDrop(context.budget, 'glob-matches')
       console.warn(
         `[ssh] Include pattern "${absolutePattern}" has too many path segments; skipping`
       )
       return []
     }
     if (result.truncated) {
+      recordSshConfigDrop(context.budget, 'glob-matches')
       console.warn(
         `[ssh] Include pattern "${absolutePattern}" matched ${result.totalMatches} files; processing first ${SSH_CONFIG_INCLUDE_LIMITS.globMatches}`
       )
