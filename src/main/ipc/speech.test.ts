@@ -50,6 +50,7 @@ import {
   registerSpeechHandlers
 } from './speech'
 import {
+  MAX_ACTIVE_DESKTOP_DICTATION_LISTENERS,
   MAX_PENDING_DESKTOP_DICTATION_STARTS,
   MAX_SPEECH_AUDIO_CHUNK_BYTES,
   MAX_SPEECH_HOTWORD_BYTES,
@@ -330,6 +331,87 @@ describe('registerSpeechHandlers', () => {
     expect(firstWindow.off).toHaveBeenCalledWith('closed', expect.any(Function))
     await getHandler<SpeechStopHandler>('speech:stopDictation')({ sender: { id: 200 } }, 'session')
     expect(secondWindow.off).toHaveBeenCalledWith('closed', expect.any(Function))
+    expect(getActiveDesktopDictationListenerCountForTest()).toBe(0)
+  })
+
+  // Why: a same-owner restart shares the dictation the new listener just committed. Stopping
+  // it here would stop the session that replaced it, muting a mic the user just re-opened.
+  it('does not stop the dictation a same-owner restart just committed', async () => {
+    const stopDictation = vi.fn().mockResolvedValue(undefined)
+    getSpeechSttServiceMock.mockReturnValue({
+      startDictation: vi.fn().mockResolvedValue(undefined),
+      stopDictation
+    })
+    fromWebContentsMock.mockImplementation(() => ({
+      isDestroyed: vi.fn(() => false),
+      webContents: { send: vi.fn() },
+      once: vi.fn(),
+      off: vi.fn()
+    }))
+    registerSpeechHandlers({} as never)
+    const start = getHandler<SpeechStartHandler>('speech:startDictation')
+
+    await start({ sender: { id: 300 } }, 'model-1', undefined, 'session')
+    await start({ sender: { id: 300 } }, 'model-1', undefined, 'session')
+
+    expect(stopDictation).not.toHaveBeenCalled()
+  })
+
+  // Why: this is the regression. Reaching the listener cap used to drop only the map entry,
+  // leaving the evicted session's microphone recording with nothing able to stop it — and no
+  // 'stopped' event, so the renderer waits forever on a transcript that never arrives.
+  it('stops the dictation it evicts when the active-listener cap is reached', async () => {
+    const stopDictation = vi.fn().mockResolvedValue(undefined)
+    getSpeechSttServiceMock.mockReturnValue({
+      startDictation: vi.fn().mockResolvedValue(undefined),
+      stopDictation
+    })
+    fromWebContentsMock.mockImplementation(() => ({
+      isDestroyed: vi.fn(() => false),
+      webContents: { send: vi.fn() },
+      once: vi.fn(),
+      off: vi.fn()
+    }))
+    registerSpeechHandlers({} as never)
+    const start = getHandler<SpeechStartHandler>('speech:startDictation')
+
+    for (let index = 0; index < MAX_ACTIVE_DESKTOP_DICTATION_LISTENERS; index += 1) {
+      await start({ sender: { id: 400 + index } }, 'model-1', undefined, 'session')
+    }
+    expect(stopDictation).not.toHaveBeenCalled()
+
+    await start({ sender: { id: 999 } }, 'model-1', undefined, 'session')
+
+    // The oldest owner, not an arbitrary one: eviction order has to match insertion order.
+    expect(stopDictation).toHaveBeenCalledWith('desktop:400:session')
+    expect(getActiveDesktopDictationListenerCountForTest()).toBe(
+      MAX_ACTIVE_DESKTOP_DICTATION_LISTENERS
+    )
+  })
+
+  // Why: reset() runs on teardown. Leaving a live dictation behind keeps the microphone
+  // open past the point the process believes every session is gone.
+  it('stops every retained dictation when admission is reset', async () => {
+    const stopDictation = vi.fn().mockResolvedValue(undefined)
+    getSpeechSttServiceMock.mockReturnValue({
+      startDictation: vi.fn().mockResolvedValue(undefined),
+      stopDictation
+    })
+    fromWebContentsMock.mockImplementation(() => ({
+      isDestroyed: vi.fn(() => false),
+      webContents: { send: vi.fn() },
+      once: vi.fn(),
+      off: vi.fn()
+    }))
+    registerSpeechHandlers({} as never)
+    const start = getHandler<SpeechStartHandler>('speech:startDictation')
+    await start({ sender: { id: 500 } }, 'model-1', undefined, 'session')
+    await start({ sender: { id: 501 } }, 'model-1', undefined, 'session')
+
+    clearSpeechIpcAdmissionForTests()
+
+    expect(stopDictation).toHaveBeenCalledWith('desktop:500:session')
+    expect(stopDictation).toHaveBeenCalledWith('desktop:501:session')
     expect(getActiveDesktopDictationListenerCountForTest()).toBe(0)
   })
 })

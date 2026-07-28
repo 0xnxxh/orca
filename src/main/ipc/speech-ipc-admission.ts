@@ -14,7 +14,11 @@ const MIN_SPEECH_SAMPLE_RATE = 8_000
 const MAX_SPEECH_SAMPLE_RATE = 384_000
 const HOTWORD_LINE_SUFFIX = ' :2.0\n'
 
-export type DesktopDictationListener = { release: () => void }
+/**
+ * `release` detaches bookkeeping for a session that is already finished. `evict` must also
+ * stop the underlying dictation, because the cap can reclaim a session that is still running.
+ */
+export type DesktopDictationListener = { release: () => void; evict: () => void }
 
 function requireBoundedString(
   value: unknown,
@@ -118,9 +122,24 @@ export class SpeechIpcAdmission {
   commitListener(owner: string, listener: DesktopDictationListener): void {
     const previous = this.activeListeners.get(owner)
     if (!previous && this.activeListeners.size >= MAX_ACTIVE_DESKTOP_DICTATION_LISTENERS) {
-      this.activeListeners.values().next().value?.release()
+      // Why: the evicted session's microphone is still live. Dropping only the map entry
+      // would leave it recording with nothing left that can stop it, and no 'stopped'
+      // event — the renderer would wait on a transcript that never arrives.
+      const [evictedOwner, evicted] = this.activeListeners.entries().next().value ?? []
+      if (typeof evictedOwner === 'string') {
+        this.activeListeners.delete(evictedOwner)
+        // Why: a failed stop must not block admitting the session that displaced it,
+        // or one wedged session would deny dictation to everyone behind it.
+        try {
+          evicted?.evict()
+        } catch {
+          // Best effort: the entry is gone, so the cap is honored regardless.
+        }
+      }
     }
     this.activeListeners.set(owner, listener)
+    // Not `evict`: a same-owner replacement shares the dictation the new listener just
+    // committed, so stopping it here would stop the session that is replacing it.
     previous?.release()
   }
 
@@ -136,10 +155,17 @@ export class SpeechIpcAdmission {
 
   reset(): void {
     this.pendingStarts.clear()
-    for (const listener of Array.from(this.activeListeners.values())) {
-      listener.release()
-    }
+    const listeners = Array.from(this.activeListeners.values())
     this.activeListeners.clear()
+    for (const listener of listeners) {
+      // Why: reset runs during teardown, when the speech service may already be gone.
+      // One session failing to stop must not strand the sessions after it in the list.
+      try {
+        listener.evict()
+      } catch {
+        // Best effort: the map is already cleared, so nothing is retained either way.
+      }
+    }
   }
 
   get pendingStartCount(): number {

@@ -48,6 +48,7 @@ vi.mock('fs/promises', () => ({
 import { registerFilesystemMutationHandlers } from './filesystem-mutations'
 import {
   EXTERNAL_IMPORT_MAX_SOURCE_PATHS,
+  EXTERNAL_IMPORT_MAX_TREE_DEPTH,
   EXTERNAL_IMPORT_MAX_TREE_ENTRIES,
   REMOTE_IMPORT_MAX_FILE_BYTES
 } from './filesystem-external-import-limits'
@@ -686,6 +687,45 @@ describe('fs:importExternalPaths', () => {
         ]
       }
     ])
+  })
+
+  // Why: the depth constant can be pinned by a unit test while the walker never consults it.
+  // Deleting assertExternalImportTreeDepth from the traversal keeps those tests green, so a
+  // deeply nested drop would recurse until the stack overflows. This drives the real walker.
+  it('fails a runtime upload staging whose tree is nested past the depth limit', async () => {
+    const sourcePath = '/tmp/dropped/deep'
+    const resolvedPath = path.resolve(sourcePath)
+    const overLimitDepth = EXTERNAL_IMPORT_MAX_TREE_DEPTH + 1
+    lstatMock.mockImplementation(async () => ({
+      size: 0,
+      ino: 1,
+      dev: 1,
+      isFile: () => false,
+      isDirectory: () => true,
+      isSymbolicLink: () => false
+    }))
+    // Every level holds one directory, so the walk only terminates at the depth ceiling.
+    readdirMock.mockImplementation(async (p: string) =>
+      path.relative(resolvedPath, p).split(path.sep).filter(Boolean).length < overLimitDepth
+        ? [
+            {
+              name: 'nested',
+              isDirectory: () => true,
+              isSymbolicLink: () => false,
+              isFile: () => false
+            }
+          ]
+        : []
+    )
+
+    const result = (await handlers.get('fs:stageExternalPathsForRuntimeUpload')!(null, {
+      sourcePaths: [sourcePath]
+    })) as { sources: { status: string; reason?: string }[] }
+
+    expect(result.sources[0]).toMatchObject({
+      status: 'failed',
+      reason: 'External import tree exceeds 256 nested directory levels'
+    })
   })
 
   it('skips runtime upload directories with nested symlinks during the staging traversal', async () => {

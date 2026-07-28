@@ -58,12 +58,19 @@ describe('external filesystem import limits', () => {
     expect(budget.entries).toBe(EXTERNAL_IMPORT_MAX_TREE_ENTRIES)
   })
 
-  it('accepts the exact depth and per-path boundaries', () => {
-    const budget = createExternalImportTreeBudget()
-    expect(() => assertExternalImportTreeDepth(EXTERNAL_IMPORT_MAX_TREE_DEPTH)).not.toThrow()
-    expect(() => assertExternalImportTreeDepth(EXTERNAL_IMPORT_MAX_TREE_DEPTH + 1)).toThrow(
+  // Why the literal 256 rather than the constant: seeding the assertion from
+  // EXTERNAL_IMPORT_MAX_TREE_DEPTH makes `MAX + 1` throw at any value, so the test passes
+  // even when the constant is raised to MAX_SAFE_INTEGER — i.e. when it is no bound at all.
+  it('rejects the 257th nested directory level', () => {
+    expect(EXTERNAL_IMPORT_MAX_TREE_DEPTH).toBe(256)
+    expect(() => assertExternalImportTreeDepth(256)).not.toThrow()
+    expect(() => assertExternalImportTreeDepth(257)).toThrow(
       'External import tree exceeds 256 nested directory levels'
     )
+  })
+
+  it('accepts the exact depth and per-path boundaries', () => {
+    const budget = createExternalImportTreeBudget()
     expect(() =>
       admitExternalImportTreeEntry(
         budget,

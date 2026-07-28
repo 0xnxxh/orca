@@ -147,7 +147,18 @@ export function registerSpeechHandlers(store: Store): void {
         window.off('closed', cleanupOnWindowClosed)
         speechAdmission.deleteListenerIfCurrent(owner, sessionListener)
       }
-      const sessionListener = { release: cleanupSessionListener }
+      // Why: the listener cap can reclaim this session while its microphone is still open.
+      // Stop the dictation on the way out so the service emits 'stopped' and the renderer's
+      // pending transcript resolves, instead of waiting on a session nothing will finish.
+      const sessionListener = {
+        release: cleanupSessionListener,
+        evict: (): void => {
+          cleanupSessionListener()
+          void getSpeechSttService(store)
+            .stopDictation(owner)
+            .catch(() => undefined)
+        }
+      }
       window.once('closed', cleanupOnWindowClosed)
 
       try {
