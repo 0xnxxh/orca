@@ -280,7 +280,7 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
     expect(renders[0]).toMatchObject({ transcriptLoading: true, ids: [] })
   })
 
-  it('reports loading on the commit that still carries the previous session’s messages', async () => {
+  it('never hands out the previous session’s messages under the new session id', async () => {
     const subscribe: RpcClient['subscribe'] = vi.fn((_method, params, onData) => {
       if ((params as { sessionId: string }).sessionId === 'session-a') {
         onData({ type: 'snapshot', messages: [message('a-1')], hasMore: false })
@@ -293,12 +293,16 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
       renderer?.update(createElement(Harness, { client, sessionId: 'session-b' }))
     )
 
-    // The effect resets the list a commit later, so this render hands out
-    // session-a's transcript under session-b's identity.
-    const staleRender = renders.find(
+    // The effect that resets the list lands a commit later, so `messages` still
+    // holds session-a's transcript here — it must never surface under b, and b
+    // must read as loading until its own read settles.
+    const leaked = renders.find(
       (entry) => entry.sessionId === 'session-b' && entry.ids.includes('a-1')
     )
-    expect(staleRender).toBeDefined()
-    expect(staleRender?.transcriptLoading).toBe(true)
+    expect(leaked).toBeUndefined()
+    expect(renders.find((entry) => entry.sessionId === 'session-b')).toMatchObject({
+      transcriptLoading: true,
+      ids: []
+    })
   })
 })
