@@ -11,6 +11,7 @@ import {
   readMobileReviewTerminalSendAccepted,
   readMobileReviewTerminalTabs
 } from './mobile-diff-review-rpc'
+import { healMobileNativeChatStaleInput } from './mobile-native-chat-stale-input'
 import type { ReviewScreenState, SendSheetState } from './mobile-diff-review-screen-model'
 
 type SendActionsInput = {
@@ -73,6 +74,13 @@ export function useMobileDiffReviewSendActions(input: SendActionsInput) {
     async (terminal: string, comments: readonly DiffComment[]) => {
       if (!client || connState !== 'connected') {
         throw new Error('Waiting for desktop...')
+      }
+      // The stale marker is keyed by terminal handle, not by surface, so an image
+      // paste orphaned on this terminal by native chat would be submitted along
+      // with these notes (#10228). No device token is threaded here — this send
+      // carries none either.
+      if (!(await healMobileNativeChatStaleInput({ client, terminal, deviceToken: null }))) {
+        throw new Error('Failed to send notes')
       }
       const response = await client.sendRequest('terminal.send', {
         terminal,
