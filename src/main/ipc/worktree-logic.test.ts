@@ -74,6 +74,21 @@ describe('sanitizeWorktreeName', () => {
     expect(sanitizeWorktreeName('feat: 中文 (v2)')).toBe('feat-中文-v2')
   })
 
+  it('uses a git-safe fallback when a name contains only emoji', () => {
+    expect(sanitizeWorktreeName('🚀')).toBe('workspace')
+    expect(sanitizeWorktreeName('👩‍💻✨')).toBe('workspace')
+    expect(sanitizeWorktreeName('🇯🇵')).toBe('workspace')
+    expect(sanitizeWorktreeName('1️⃣')).toBe('1')
+  })
+
+  it('keeps readable text while removing emoji from branch and path names', () => {
+    expect(sanitizeWorktreeName('Ship it 🚀')).toBe('Ship-it')
+  })
+
+  it('does not treat arbitrary punctuation as a workspace name', () => {
+    expect(() => sanitizeWorktreeName('!!!')).toThrow('Invalid worktree name')
+  })
+
   it('throws for empty name', () => {
     expect(() => sanitizeWorktreeName('')).toThrow('Invalid worktree name')
   })
@@ -84,6 +99,11 @@ describe('sanitizeWorktreeName', () => {
 })
 
 describe('sanitizeWorktreeDisplayName', () => {
+  it('preserves emoji in display names', () => {
+    expect(sanitizeWorktreeDisplayName('  Ship it 🚀  ')).toBe('Ship it 🚀')
+    expect(sanitizeWorktreeDisplayName('👩‍💻')).toBe('👩‍💻')
+  })
+
   it('keeps readable punctuation while collapsing unsafe controls and whitespace', () => {
     expect(sanitizeWorktreeDisplayName('  Fix: login / callback\n\tregression\u0000  ')).toBe(
       'Fix: login / callback regression'

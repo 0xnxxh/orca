@@ -37,11 +37,21 @@ export function sanitizeWorktreeName(input: string): string {
     .replace(/\.{2,}/g, '.')
     .replace(/^[.-]+|[.-]+$/g, '')
 
+  if (!sanitized && containsEmoji(input)) {
+    return 'workspace'
+  }
+
   if (!sanitized || sanitized === '.' || sanitized === '..') {
     throw new Error('Invalid worktree name')
   }
 
   return sanitized
+}
+
+function containsEmoji(input: string): boolean {
+  return /[\p{Emoji_Presentation}\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u.test(
+    input
+  )
 }
 
 export function sanitizeWorktreeDisplayName(input: string): string | undefined {

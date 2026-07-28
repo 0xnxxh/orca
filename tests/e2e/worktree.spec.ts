@@ -152,6 +152,45 @@ test.describe('Create Workspace', () => {
     }
   })
 
+  test('creates an emoji-named worktree with a safe git branch', async ({ orcaPage }) => {
+    const workspaceName = '🚀🧪✨'
+
+    try {
+      await orcaPage.getByRole('button', { name: 'New workspace', exact: true }).click()
+
+      const dialog = orcaPage.getByRole('dialog', { name: /Create (Workspace|Worktree)/i })
+      await expect(dialog).toBeVisible()
+      await expect(dialog.locator('[data-workspace-name-input="true"]')).toBeVisible()
+
+      const nameInput = dialog.getByPlaceholder(/Type a name/i)
+      await nameInput.fill(workspaceName)
+
+      const createButton = dialog.getByRole('button', { name: /Create (Workspace|Worktree)/i })
+      await expect(createButton).toBeEnabled()
+      await createButton.click()
+
+      await expect(dialog).toBeHidden({ timeout: 15_000 })
+      await expect(orcaPage.getByRole('option', { name: new RegExp(workspaceName) })).toBeVisible({
+        timeout: 10_000
+      })
+
+      const branch = await orcaPage.evaluate((displayName) => {
+        const worktrees = Object.values(window.__store!.getState().worktreesByRepo).flat()
+        return worktrees.find((worktree) => worktree.displayName === displayName)?.branch ?? null
+      }, workspaceName)
+      expect(branch).not.toBeNull()
+      expect(branch).not.toMatch(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/u)
+    } finally {
+      await orcaPage
+        .evaluate(() => {
+          window.__store?.getState().closeModal()
+        })
+        .catch(() => {
+          /* page may already be torn down */
+        })
+    }
+  })
+
   test('shows a failed workspace entry when worktree creation fails', async ({ orcaPage }) => {
     await orcaPage.evaluate(() => {
       const store = window.__store
