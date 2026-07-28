@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
     pendingStartupByTabId: {} as Record<string, unknown>,
     settings: {} as Record<string, unknown>
   },
-  exemptTabIds: new Set<string>()
+  exemptTabIds: new Set<string>(),
+  exemptSelectCalls: 0
 }))
 
 vi.mock('../../store', () => ({
@@ -18,7 +19,10 @@ vi.mock('../../store', () => ({
 vi.mock('./terminal-parked-tab-watchers', () => ({
   canWatcherCoverParkedTerminalTab: () => true,
   disposeParkedTerminalWatchersForWorktree: vi.fn(),
-  isEvictionExemptTerminalTab: (tab: { id: string }) => mocks.exemptTabIds.has(tab.id),
+  selectEvictionExemptTerminalTabIds: (_worktreeId: string, tabs: readonly { id: string }[]) => {
+    mocks.exemptSelectCalls += 1
+    return new Set(tabs.filter((tab) => mocks.exemptTabIds.has(tab.id)).map((tab) => tab.id))
+  },
   syncParkedTerminalTabWatchers: vi.fn()
 }))
 
@@ -56,6 +60,7 @@ describe('useTerminalTabColdParking measure-clock contract', () => {
   afterEach(() => {
     vi.useRealTimers()
     mocks.exemptTabIds = new Set()
+    mocks.exemptSelectCalls = 0
   })
 
   // Why: the worktree layer preserves hiddenSince through a background-measure
@@ -66,37 +71,37 @@ describe('useTerminalTabColdParking measure-clock contract', () => {
       (args: ReturnType<typeof hookArgs>) => useTerminalTabColdParking(args),
       { initialProps: hookArgs(false) }
     )
-    expect(result.current.size).toBe(0)
+    expect(result.current.parkedTerminalTabIds.size).toBe(0)
 
     // Past hot-retain: tab-1 holds the last-active exemption, tab-2 parks.
     act(() => {
       vi.advanceTimersByTime(TERMINAL_TAB_HOT_RETAIN_MS + 1)
     })
-    expect(result.current).toEqual(new Set(['tab-2']))
+    expect(result.current.parkedTerminalTabIds).toEqual(new Set(['tab-2']))
 
     // A measure window reveals every tab but must not clear the hidden clock.
     act(() => {
       rerender(hookArgs(true))
     })
-    expect(result.current.size).toBe(0)
+    expect(result.current.parkedTerminalTabIds.size).toBe(0)
     act(() => {
       vi.advanceTimersByTime(3_000)
       rerender(hookArgs(false))
     })
 
     // Measure just ended: the cool-down vetoes an instant re-park (the thrash).
-    expect(result.current.size).toBe(0)
+    expect(result.current.parkedTerminalTabIds.size).toBe(0)
     act(() => {
       vi.advanceTimersByTime(TERMINAL_TAB_COLD_PARK_DELAY_MS - 1)
     })
-    expect(result.current.size).toBe(0)
+    expect(result.current.parkedTerminalTabIds.size).toBe(0)
 
     // One cool-down later tab-2 re-parks — proving hiddenSince survived the
     // measure (a cleared clock would demand a fresh 15-minute hot-retain).
     act(() => {
       vi.advanceTimersByTime(2)
     })
-    expect(result.current).toEqual(new Set(['tab-2']))
+    expect(result.current.parkedTerminalTabIds).toEqual(new Set(['tab-2']))
   })
 
   // Why: a measure window also ends when the user opens the worktree; the
@@ -111,12 +116,12 @@ describe('useTerminalTabColdParking measure-clock contract', () => {
     act(() => {
       vi.advanceTimersByTime(TERMINAL_TAB_HOT_RETAIN_MS + 1)
     })
-    expect(result.current).toEqual(new Set(['tab-2']))
+    expect(result.current.parkedTerminalTabIds).toEqual(new Set(['tab-2']))
 
     act(() => {
       rerender(hookArgs(true))
     })
-    expect(result.current.size).toBe(0)
+    expect(result.current.parkedTerminalTabIds.size).toBe(0)
 
     // Measure ends because the worktree went visible: tab-2 is still hidden
     // (no active group assignment) and re-parks on this very pass.
@@ -124,7 +129,7 @@ describe('useTerminalTabColdParking measure-clock contract', () => {
       vi.advanceTimersByTime(3_000)
       rerender({ ...hookArgs(false), isWorktreeActive: true })
     })
-    expect(result.current).toEqual(new Set(['tab-2']))
+    expect(result.current.parkedTerminalTabIds).toEqual(new Set(['tab-2']))
   })
 
   // Why: force-park is the only park that can contain unrestorable ptys, so its
@@ -136,13 +141,32 @@ describe('useTerminalTabColdParking measure-clock contract', () => {
         useTerminalTabColdParking(args),
       { initialProps: { ...hookArgs(false), coldParkTerminalPanes: true, isForceParked: true } }
     )
-    expect(result.current).toEqual(new Set(['tab-2']))
+    expect(result.current.parkedTerminalTabIds).toEqual(new Set(['tab-2']))
 
     // The carve-out is scoped to force-parks: an ordinary worktree park has no
     // exempt tabs to protect, so it evicts both.
     act(() => {
       rerender({ ...hookArgs(false), coldParkTerminalPanes: true, isForceParked: false })
     })
-    expect(result.current).toEqual(new Set(['tab-1', 'tab-2']))
+    expect(result.current.parkedTerminalTabIds).toEqual(new Set(['tab-1', 'tab-2']))
+  })
+
+  // Why: resolving an exemption re-reads the store and walks the layout tree per
+  // tab, so an unrelated re-render must not repeat that work.
+  it('resolves eviction exemptions once per force-park input change', () => {
+    mocks.exemptTabIds = new Set(['tab-1'])
+    const stableArgs = { ...hookArgs(false), coldParkTerminalPanes: true, isForceParked: true }
+    const { result, rerender } = renderHook(
+      (args: typeof stableArgs) => useTerminalTabColdParking(args),
+      { initialProps: stableArgs }
+    )
+    expect(result.current.parkedTerminalTabIds).toEqual(new Set(['tab-2']))
+    const callsAfterFirstRender = mocks.exemptSelectCalls
+
+    act(() => {
+      rerender({ ...stableArgs, isWorktreeActive: false })
+    })
+    expect(mocks.exemptSelectCalls).toBe(callsAfterFirstRender)
+    expect(result.current.parkedTerminalTabIds).toEqual(new Set(['tab-2']))
   })
 })

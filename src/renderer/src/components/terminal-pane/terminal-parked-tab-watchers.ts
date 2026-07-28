@@ -137,6 +137,26 @@ export function isEvictionExemptTerminalTab(
 }
 
 /**
+ * Eviction-exempt tab ids for one worktree's tabs, resolved in a single pass.
+ *
+ * Why: each isEvictionExemptTerminalTab call re-reads the store and can walk the
+ * layout tree, so render and watcher-sync consume a memoized set instead of
+ * re-asking per tab on every unrelated re-render.
+ */
+export function selectEvictionExemptTerminalTabIds(
+  worktreeId: string,
+  tabs: readonly ParkableTerminalTabModel[]
+): ReadonlySet<string> {
+  const exemptTabIds = new Set<string>()
+  for (const tab of tabs) {
+    if (isEvictionExemptTerminalTab(tab, worktreeId)) {
+      exemptTabIds.add(tab.id)
+    }
+  }
+  return exemptTabIds
+}
+
+/**
  * Whether parked byte watchers can fully cover this tab's PTYs (every candidate
  * has a park-restorable PTY on a valid leaf). Hosts must refuse to park a tab
  * that fails this check, or bell/title/completion side effects silently drop.

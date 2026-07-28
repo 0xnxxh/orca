@@ -101,6 +101,7 @@ import {
   getParkedTerminalWatcherTabIds,
   isEvictionExemptTerminalTab,
   pruneParkedTerminalWatchers,
+  selectEvictionExemptTerminalTabIds,
   shouldDeferParkedPtyExitTabClose,
   syncParkedTerminalTabWatchers
 } from './terminal-parked-tab-watchers'
@@ -843,6 +844,17 @@ describe('terminal-parked-tab-watchers', () => {
         { ptyId: 'ssh:conn-1@@pty-1', paneId: 2, leafId: SECOND_LEAF_ID, drivesTabTitle: false }
       ])
       expect(isEvictionExemptTerminalTab({ id: TAB_ID, ptyId: null }, WORKTREE_ID)).toBe(false)
+    })
+  })
+
+  describe('selectEvictionExemptTerminalTabIds', () => {
+    it('collects only the exempt tabs of one worktree in a single pass', () => {
+      expect(
+        selectEvictionExemptTerminalTabIds(WORKTREE_ID, [
+          { id: TAB_ID, ptyId: 'pty-local-detached' },
+          { id: 'tab-restorable', ptyId: PTY_ID }
+        ])
+      ).toEqual(new Set([TAB_ID]))
     })
   })
 })

@@ -104,8 +104,8 @@ import { useColdParkedTerminalPresentation } from './terminal-pane/use-cold-park
 import {
   canWatcherCoverParkedTerminalTab,
   disposeAllParkedTerminalWatchers,
-  isEvictionExemptTerminalTab,
   pruneParkedTerminalWatchers,
+  selectEvictionExemptTerminalTabIds,
   shouldDeferParkedPtyExitTabClose,
   syncParkedTerminalTabWatchers
 } from './terminal-pane/terminal-parked-tab-watchers'
@@ -172,7 +172,7 @@ const EDITOR_TAB_CONTENT_TYPES = new Set<TabContentType>([
 
 type TerminalStoreSnapshot = ReturnType<typeof useAppStore.getState>
 
-function haveSameWorktreeIds(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+function haveSameIdSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   if (left.size !== right.size) {
     return false
   }
@@ -784,6 +784,13 @@ function Terminal(): React.JSX.Element | null {
   const [forceParkedTerminalWorktreeIds, setForceParkedTerminalWorktreeIds] = useState<
     ReadonlySet<string>
   >(() => new Set())
+  // Why state, resolved in the parking pass: each exemption re-reads the store
+  // and walks the layout/capture candidates, so the render gate and watcher
+  // sync consume one set per force-park verdict instead of re-asking per tab on
+  // every unrelated Terminal render.
+  const [evictionExemptTerminalTabIds, setEvictionExemptTerminalTabIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set())
   // Why a ref: eviction captures buffers exactly once per force-park episode, before the unmount render.
   const forceParkedCaptureDoneRef = useRef(new Set<string>())
   // Tab restriction for targeted background mounts (wake/resume); a worktree absent from this map mounts all its tabs.
@@ -1025,7 +1032,13 @@ function Terminal(): React.JSX.Element | null {
       }
     }
     const repos = useAppStore.getState().repos
+    const nextEvictionExemptTabIds = new Set<string>()
     for (const worktreeId of forceParkedWorktreeIds) {
+      const forceParkedTabs = tabsByWorktree[worktreeId] ?? []
+      const exemptTabIds = selectEvictionExemptTerminalTabIds(worktreeId, forceParkedTabs)
+      for (const tabId of exemptTabIds) {
+        nextEvictionExemptTabIds.add(tabId)
+      }
       if (!capturedForceParked.has(worktreeId)) {
         // Why: serialize buffers while the panes still exist (same registry sleep
         // uses), so SSH classes whose reveal has no local snapshot still show
@@ -1037,17 +1050,16 @@ function Terminal(): React.JSX.Element | null {
         // Eviction-exempt tabs never unmount (per-tab exclusion), so they need
         // no pre-unmount capture — skipping spares a serialize+setTabLayout
         // walk on live panes per force-park episode.
-        const worktreeTabs = tabsByWorktree[worktreeId] ?? []
-        const evictableTabIds = selectForceParkEvictableTabIds(worktreeTabs, (tab) =>
-          isEvictionExemptTerminalTab(tab, worktreeId)
+        const evictableTabIds = selectForceParkEvictableTabIds(forceParkedTabs, (tab) =>
+          exemptTabIds.has(tab.id)
         )
         // Why logged: an all-exempt force-park frees no heap at all (daemon
         // fail-open makes every local pty exempt), so the budget only holds
         // while this stays rare — make the degenerate case observable.
-        if (evictableTabIds.length === 0 && worktreeTabs.length > 0) {
+        if (evictableTabIds.length === 0 && forceParkedTabs.length > 0) {
           warnTerminalLifecycleAnomaly('retention force-park freed no panes', {
             worktreeId,
-            reason: `exemptTabs=${worktreeTabs.length}`
+            reason: `exemptTabs=${forceParkedTabs.length}`
           })
         }
         // Why conditional: a tab whose pane was mid-remount registered no
@@ -1059,12 +1071,15 @@ function Terminal(): React.JSX.Element | null {
       nextParkedTerminalWorktreeIds.add(worktreeId)
     }
     setParkedTerminalWorktreeIds((current) =>
-      haveSameWorktreeIds(current, nextParkedTerminalWorktreeIds)
+      haveSameIdSet(current, nextParkedTerminalWorktreeIds)
         ? current
         : nextParkedTerminalWorktreeIds
     )
     setForceParkedTerminalWorktreeIds((current) =>
-      haveSameWorktreeIds(current, forceParkedWorktreeIds) ? current : forceParkedWorktreeIds
+      haveSameIdSet(current, forceParkedWorktreeIds) ? current : forceParkedWorktreeIds
+    )
+    setEvictionExemptTerminalTabIds((current) =>
+      haveSameIdSet(current, nextEvictionExemptTabIds) ? current : nextEvictionExemptTabIds
     )
     const retentionTtlEligibleIds = new Set(
       retentionBudgetCandidates
@@ -1296,13 +1311,9 @@ function Terminal(): React.JSX.Element | null {
             // Why the exempt exclusion: force-park keeps eviction-exempt tabs'
             // panes mounted (a remount would orphan their live pty) — same
             // per-tab carve-out as Activity portals, so no watcher owns them.
-            if (
-              !activityTerminalPortal &&
-              !(
-                forceParkedTerminalWorktreeIds.has(workspace.id) &&
-                isEvictionExemptTerminalTab(tab, workspace.id)
-              )
-            ) {
+            // The set is resolved in the force-park pass and holds only those
+            // worktrees' tabs.
+            if (!activityTerminalPortal && !evictionExemptTerminalTabIds.has(tab.id)) {
               parkedTabIds.add(tab.id)
             }
           }
@@ -1340,7 +1351,7 @@ function Terminal(): React.JSX.Element | null {
     activeTabIdByWorktree,
     anyMountedWorktreeHasLayout,
     backgroundMountRevision,
-    forceParkedTerminalWorktreeIds,
+    evictionExemptTerminalTabIds,
     getEffectiveLayoutForWorktree,
     groupsByWorktree,
     effectiveParkedTerminalWorktreeIds,
@@ -2409,10 +2420,7 @@ function Terminal(): React.JSX.Element | null {
                         if (
                           shouldColdParkTerminalPanes &&
                           !isActivityPortalTab &&
-                          !(
-                            forceParkedTerminalWorktreeIds.has(workspace.id) &&
-                            isEvictionExemptTerminalTab(tab, workspace.id)
-                          )
+                          !evictionExemptTerminalTabIds.has(tab.id)
                         ) {
                           return null
                         }

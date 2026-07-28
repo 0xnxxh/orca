@@ -27,7 +27,7 @@ import { getTerminalParkingPolicyOverrides } from './terminal-parking-e2e-overri
 import {
   canWatcherCoverParkedTerminalTab,
   disposeParkedTerminalWatchersForWorktree,
-  isEvictionExemptTerminalTab,
+  selectEvictionExemptTerminalTabIds,
   syncParkedTerminalTabWatchers
 } from './terminal-parked-tab-watchers'
 
@@ -35,6 +35,8 @@ type TerminalOverlayTabAssignment = {
   groupId: string
   isActiveInGroup: boolean
 }
+
+const EMPTY_TAB_IDS: ReadonlySet<string> = new Set()
 
 function haveSameTerminalTabIds(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   if (left.size !== right.size) {
@@ -244,6 +246,15 @@ export function useTerminalTabColdParking(args: {
     worktreeId
   ])
 
+  // Why memoized: resolving an exemption re-reads the store and walks the
+  // layout tree per tab, so recompute only when the force-park verdict or the
+  // tabs change — not on every assignment/park-set change below.
+  const evictionExemptTerminalTabIds = useMemo(
+    () =>
+      isForceParked ? selectEvictionExemptTerminalTabIds(worktreeId, terminalTabs) : EMPTY_TAB_IDS,
+    [isForceParked, terminalTabs, worktreeId]
+  )
+
   // Why: the rendered park verdict — worktree-level park (prop from
   // Terminal.tsx) or per-tab cold park, never portal-hosted tabs. Render and
   // the watcher-sync effect must share this exact set so watcher lifecycle
@@ -264,8 +275,8 @@ export function useTerminalTabColdParking(args: {
         // Why: a force-parked worktree's eviction-exempt tabs keep their
         // mounted panes — a remount would orphan their live pty. Scoped to
         // force-parks: ordinary parks never contain exempt tabs (eligibility
-        // requires every tab restorable).
-        !(isForceParked && isEvictionExemptTerminalTab(terminalTab, worktreeId)) &&
+        // requires every tab restorable, so the memo is empty for them).
+        !evictionExemptTerminalTabIds.has(terminalTab.id) &&
         // Why: the hidden-measuring startup probe needs mounted panes; gate
         // here too so the reveal lands in the same render that starts it.
         !shouldMeasureHiddenWorktree
@@ -290,7 +301,7 @@ export function useTerminalTabColdParking(args: {
     coldParkTerminalPanes,
     coldParkedTerminalTabIds,
     activationDeferredMountTabIds,
-    isForceParked,
+    evictionExemptTerminalTabIds,
     isWorktreeActive,
     shouldMeasureHiddenWorktree,
     terminalTabs,

@@ -20,6 +20,11 @@ import {
 // stay mounted through a force-park at any age, so a fleet-wide daemon
 // fail-open can leave the budget freeing nothing; Terminal.tsx logs that
 // degenerate case rather than pretending the bound held.
+// Also NOT covered: per-pane scrollback size. Hidden-pane scrollback demotion
+// was intentionally removed (C1 slice C) — the bound is worktree count + TTL
+// only, so a spared worktree (last-active, exempt tabs) can hold full 50k-row
+// scrollback indefinitely. Accepted tradeoff: high-scrollback users rely on
+// unmount eviction, not demotion.
 export const TERMINAL_HIDDEN_WORKTREE_RETENTION_LIMIT = 12
 export const TERMINAL_HIDDEN_WORKTREE_RETENTION_TTL_MS = 45 * 60_000
 
