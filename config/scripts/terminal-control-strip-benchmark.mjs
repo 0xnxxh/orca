@@ -34,7 +34,12 @@ const PRODUCTION_SOURCE = readFileSync(
 for (const marker of [
   'export function stripTerminalControl(data: string): string',
   'strippedInBlock === CONTROL_DENSITY_FALLBACK_COUNT',
-  'output += withoutAnsi.slice(runStart, index)'
+  'output += withoutAnsi.slice(runStart, index)',
+  // Retuning either density constant changes which fixtures sit above/below the trigger, so
+  // pin the literals rather than the names: a silent retune would leave the sub-threshold
+  // fixture measuring a boundary that no longer exists.
+  'const CONTROL_DENSITY_BLOCK_CODE_UNITS = 64',
+  'const CONTROL_DENSITY_FALLBACK_COUNT = 32'
 ]) {
   if (!PRODUCTION_SOURCE.includes(marker)) {
     throw new Error(`terminal-control-stripping.ts no longer contains \`${marker}\``)
@@ -58,6 +63,9 @@ const INCOMPLETE_ANSI_ESCAPE_RE = new RegExp(
 const HISTORY_LIMIT = 300
 const SCAN_LIMIT = 4096
 const SAMPLE_ID_LENGTH = 24
+// Mirrors terminal-control-stripping.ts; the marker guard above fails if either is retuned.
+const CONTROL_DENSITY_BLOCK_CODE_UNITS = 64
+const CONTROL_DENSITY_FALLBACK_COUNT = 32
 const ITERATIONS = Number(process.env.ORCA_STRIP_BENCH_ITERATIONS ?? '501')
 let resultChecksum = 0
 let validatedPairs = 0
@@ -157,6 +165,26 @@ function makeTuiFixture(length, sampleId, strippedControl) {
   return text + 'x'.repeat(length - text.length)
 }
 
+// 31 controls per 64-unit block: one below the fallback trigger, so the adaptive path keeps
+// slice-run bookkeeping on a shape dense enough to lose to the per-character legacy. This is the
+// worst surviving case; it exists so the narrowed adverse window stays visible instead of hiding
+// behind the 50% fixture, where the fallback fires and wins.
+function makeSubThresholdDenseFixture(length, sampleId, strippedControl) {
+  const id = fixedSampleId(sampleId)
+  const units = []
+  for (let index = 0; index < length; index += 1) {
+    const blockOffset = index % CONTROL_DENSITY_BLOCK_CODE_UNITS
+    if (index < id.length) {
+      units.push(id[index])
+    } else if (blockOffset % 2 === 1 && blockOffset < (CONTROL_DENSITY_FALLBACK_COUNT - 1) * 2) {
+      units.push(strippedControl)
+    } else {
+      units.push(String.fromCharCode(97 + (index % 26)))
+    }
+  }
+  return units.join('')
+}
+
 function makeDenseFixture(length, sampleId, strippedControl) {
   const prefix = `\x1b[35m${fixedSampleId(sampleId)}`
   const suffix = '\x1b[0m'
@@ -235,6 +263,11 @@ const fixtures = [
     label: `${SCAN_LIMIT} scan ${denseControlPercent}% C0`,
     length: SCAN_LIMIT,
     make: (sampleId, control) => makeDenseFixture(SCAN_LIMIT, sampleId, control)
+  },
+  {
+    label: `${SCAN_LIMIT} scan 31/block C0`,
+    length: SCAN_LIMIT,
+    make: (sampleId, control) => makeSubThresholdDenseFixture(SCAN_LIMIT, sampleId, control)
   }
 ]
 
@@ -254,6 +287,11 @@ const selectorFixtures = [
   {
     label: 'routine TUI',
     data: makeTuiFixture(SCAN_LIMIT, 'selector', '\x01'),
+    expected: -1
+  },
+  {
+    label: '31/block never triggers',
+    data: makeSubThresholdDenseFixture(SCAN_LIMIT, 'selector', '\x01'),
     expected: -1
   }
 ]
@@ -285,6 +323,8 @@ for (const fixture of fixtures) {
     `${pad(fixture.label, 25)} ${pad(`${(perChar * 1000).toFixed(1)} us`, 11)} ${pad(`${(sliceRuns * 1000).toFixed(1)} us`, 12)} ${pad(`${(adaptive * 1000).toFixed(1)} us`, 11)} ${pad(`${(perChar / adaptive).toFixed(2)}x`, 10)} ${pad(`${(sliceRuns / adaptive).toFixed(2)}x`, 9)}`
   )
 }
-console.log(`\nvalidated=${validatedPairs} measured pairs, result checksum=${resultChecksum >>> 0}`)
+console.log(
+  `\nvalidated=${validatedPairs} measured rotations, result checksum=${resultChecksum >>> 0}`
+)
 console.log(`selector checks=${selectorFixtures.length}`)
 console.log('Production calls are bounded to 4096, 4096, 300, and 301 code units.')

@@ -7,6 +7,7 @@ import {
 import { TERMINAL_STREAM_CHUNK_BYTES } from '../../../shared/terminal-multiplex-flow-control'
 import { measureClipboardTextByteLength } from '../../../shared/clipboard-text'
 import {
+  TERMINAL_STREAM_BYTE_PROBE_CODE_UNITS,
   exceedsTerminalStreamChunkBytes,
   iterateTerminalOutputFrameChunks,
   type TerminalOutputFrameChunk,
@@ -250,7 +251,7 @@ describe('iterateTerminalOutputFrameChunks equivalence with the pre-optimization
   })
 
   it('matches when probe boundaries bisect or surround surrogate pairs', () => {
-    const probe = 8 * 1024
+    const probe = TERMINAL_STREAM_BYTE_PROBE_CODE_UNITS
     for (const offset of [-2, -1, 0, 1, 2]) {
       const pairStart = probe + offset
       const prefix = 'a'.repeat(pairStart)

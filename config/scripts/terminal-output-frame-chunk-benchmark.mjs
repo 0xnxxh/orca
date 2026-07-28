@@ -422,7 +422,7 @@ for (const fixture of gateFixtures) {
   }
   const { previousMs, boundedMs } = measureGateInterleaved(fixture.data)
   console.log(
-    `${pad(fixture.label, 34)} ${pad(bounded ? 'miss' : 'fit', 8)} ${pad(`${(previousMs * 1000).toFixed(2)} us`, 12)} ${pad(`${(boundedMs * 1000).toFixed(2)} us`, 11)} ${pad(`${(previousMs / boundedMs).toFixed(2)}x`, 9)}`
+    `${pad(fixture.label, 34)} ${pad(bounded ? 'miss' : 'fit', 8)} ${pad(`${(previousMs * 1000).toFixed(2)} us`, 12)} ${pad(`${(boundedMs * 1000).toFixed(2)} us`, 11)} ${pad(boundedMs > 0 ? `${(previousMs / boundedMs).toFixed(2)}x` : 'n/a', 9)}`
   )
 }
 console.log(`gate fixtures=${gateFixtures.length}, checksum=${gateChecksum >>> 0}`)

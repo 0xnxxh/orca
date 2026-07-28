@@ -19,7 +19,7 @@ export type TerminalOutputFrameChunk = {
   opcode?: TerminalStreamOpcode
 }
 
-const TERMINAL_STREAM_BYTE_PROBE_CODE_UNITS = 8 * 1024
+export const TERMINAL_STREAM_BYTE_PROBE_CODE_UNITS = 8 * 1024
 const MAX_UTF8_BYTES_PER_CODE_UNIT = 3
 
 export function exceedsTerminalStreamChunkBytes(data: string): boolean {
