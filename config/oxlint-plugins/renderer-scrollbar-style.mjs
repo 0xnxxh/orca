@@ -11,6 +11,11 @@ const VERTICAL_SCROLL_CLASSES = new Set([
 ])
 const VERTICAL_SCROLL_STYLE_VALUES = new Set(['auto', 'scroll'])
 
+function withoutImportantModifier(className) {
+  const withoutPrefix = className.startsWith('!') ? className.slice(1) : className
+  return withoutPrefix.endsWith('!') ? withoutPrefix.slice(0, -1) : withoutPrefix
+}
+
 export function plainClassName(token) {
   const normalizedToken = token.startsWith('!') ? token.slice(1) : token
   const parts = []
@@ -32,8 +37,7 @@ export function plainClassName(token) {
   }
 
   parts.push(currentPart)
-  const className = parts.at(-1) ?? ''
-  return className.startsWith('!') ? className.slice(1) : className
+  return withoutImportantModifier(parts.at(-1) ?? '')
 }
 
 function classTokenParts(token) {
@@ -55,7 +59,7 @@ function classTokenParts(token) {
     }
   }
 
-  return { className: plainClassName(token), variants: variants.filter(Boolean) }
+  return { className: withoutImportantModifier(currentPart), variants: variants.filter(Boolean) }
 }
 
 function classTokens(text) {

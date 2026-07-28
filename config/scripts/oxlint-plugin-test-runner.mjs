@@ -1,10 +1,14 @@
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 
-const oxlintPath = path.resolve('node_modules/oxlint/bin/oxlint')
+const oxlintPackageDirectory = path.dirname(
+  createRequire(import.meta.url).resolve('oxlint/package.json')
+)
+const oxlintPath = path.join(oxlintPackageDirectory, 'bin', 'oxlint')
 
 export function runOxlintPluginOnSource({
   pluginName,

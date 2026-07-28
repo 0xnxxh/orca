@@ -19,6 +19,10 @@ function lintSource(source) {
 const violations = [
   ['unstyled class', 'export const X = () => <div className="max-h-64 overflow-y-auto" />'],
   [
+    'unstyled suffix-important class',
+    'export const X = () => <div className="max-h-64 overflow-y-auto!" />'
+  ],
+  [
     'unknown scrollbar class',
     'export const X = () => <div className="overflow-auto scrollbar-none" />'
   ],
@@ -54,6 +58,10 @@ const accepted = [
   [
     'styled vertical class',
     'export const X = () => <div className="overflow-auto scrollbar-sleek" />'
+  ],
+  [
+    'styled suffix-important classes',
+    'export const X = () => <div className="overflow-y-auto! scrollbar-sleek!" />'
   ],
   [
     'same composer literal',
@@ -99,7 +107,9 @@ describe('renderer scrollbar style Oxlint plugin', () => {
     ['md:overflow-y-auto', 'overflow-y-auto'],
     ['[&:hover]:overflow-y-auto', 'overflow-y-auto'],
     ['md:!scrollbar-editor', 'scrollbar-editor'],
-    ['!scrollbar-editor', 'scrollbar-editor']
+    ['!scrollbar-editor', 'scrollbar-editor'],
+    ['overflow-y-auto!', 'overflow-y-auto'],
+    ['md:scrollbar-editor!', 'scrollbar-editor']
   ])('normalizes %s', (token, expected) => {
     expect(plainClassName(token)).toBe(expected)
   })
