@@ -27,12 +27,34 @@ import type {
 import type { ReadClipboardTextOptions } from '../shared/clipboard-text'
 import type { AppIdentity } from '../shared/app-identity'
 import type {
+  HostQualifiedDetectedWorktreeResult,
+  LegacyDetectedWorktreeRequest,
+  ListDetectedWorktreesArgs,
+  ProviderRequestId
+} from '../shared/detected-worktree-provider-contract'
+import type {
+  HostRepoCatalogSnapshot,
+  ListReposForExecutionHostArgs
+} from '../shared/host-repo-catalog-contract'
+import type {
+  HostLineageSnapshot,
+  ListDesktopLineageForHostArgs
+} from '../shared/host-lineage-contract'
+import type {
   WriteTerminalRenderDesyncEvidenceArgs,
   WriteTerminalRenderDesyncEvidenceResult
 } from '../shared/terminal-render-desync-evidence'
 import type { MobileRelayStatus } from '../shared/mobile-relay-status'
 import type { MobilePairingConnectionMode } from '../shared/mobile-pairing-connection-mode'
-import type { SshMutationExpectation } from '../shared/ssh-types'
+import type {
+  SshMutationExpectation,
+  SshConnectionState,
+  SshConfigImportResult,
+  SshTargetAddResult,
+  SshTarget,
+  PortForwardEntry,
+  EnrichedDetectedPort
+} from '../shared/ssh-types'
 import type {
   CreateLocalOrcaProfileArgs,
   CreateLocalOrcaProfileResult,
@@ -260,10 +282,8 @@ import type {
 import type { SetupScriptImportCandidate } from '../shared/setup-script-imports'
 import type { GitHistoryOptions, GitHistoryResult } from '../shared/git-history'
 import type { PublicKnownRuntimeEnvironment } from '../shared/runtime-environments'
-import type {
-  EphemeralVmRecipeDoctorResult,
-  EphemeralVmRecipeResultWarning
-} from '../shared/ephemeral-vm-recipes'
+import type { EphemeralVmRecipeDoctorResult } from '../shared/ephemeral-vm-recipes'
+import type { EphemeralVmRecipeResultWarning } from '../shared/ephemeral-vm-recipe-diagnostics'
 import type { EphemeralVmRuntimeRecord } from '../shared/ephemeral-vm-runtimes'
 import type { RuntimeAccessGrant } from '../shared/runtime-access-grants'
 import type { RuntimeRpcResponse } from '../shared/runtime-rpc-envelope'
@@ -431,14 +451,6 @@ import type {
   WorkspacePortScanResult
 } from '../shared/workspace-ports'
 import type { GhAuthDiagnostic } from '../shared/github-auth-types'
-import type {
-  SshConnectionState,
-  SshConfigImportResult,
-  SshTargetAddResult,
-  SshTarget,
-  PortForwardEntry,
-  EnrichedDetectedPort
-} from '../shared/ssh-types'
 import type {
   CodexUsageBreakdownKind,
   CodexUsageBreakdownRow,
@@ -1159,6 +1171,7 @@ export type PreloadApi = {
   }
   repos: {
     list: () => Promise<Repo[]>
+    listForExecutionHost?: (args: ListReposForExecutionHostArgs) => Promise<HostRepoCatalogSnapshot>
     // Why: error union matches the IPC handler's return shape; renderer callers branch on `'error' in result`.
     add: (args: {
       path: string
@@ -1344,7 +1357,13 @@ export type PreloadApi = {
   }
   worktrees: {
     list: (args: { repoId: string }) => Promise<Worktree[]>
-    listDetected: (args: { repoId: string }) => Promise<DetectedWorktreeListResult>
+    listDetected: {
+      (
+        args: ListDetectedWorktreesArgs
+      ): Promise<HostQualifiedDetectedWorktreeResult | DetectedWorktreeListResult>
+      (args: LegacyDetectedWorktreeRequest): Promise<DetectedWorktreeListResult>
+    }
+    cancelListDetected?: (args: { providerRequestId: ProviderRequestId }) => Promise<void>
     listAll: () => Promise<Worktree[]>
     create: (args: CreateWorktreeArgs) => Promise<CreateWorktreeResult>
     /** Two-phase progress for a background `create`, correlated by `creationId`. The remote/runtime
@@ -1394,6 +1413,7 @@ export type PreloadApi = {
       lineage: Record<string, WorktreeLineage>
       workspaceLineage?: Record<string, WorkspaceLineage>
     }>
+    listLineageForHost?: (args: ListDesktopLineageForHostArgs) => Promise<HostLineageSnapshot>
     updateLineage: (args: {
       worktreeId: string
       parentWorktreeId?: string

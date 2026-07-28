@@ -356,6 +356,7 @@
           "0708ed89f1": "Claude",
           "fc80296033": "Devin",
           "da41abbdd4": "Ante",
+          "060d152fb5": "Trae",
           "mimo_code_label": "MiMo Code"
         },
         "skill": {
@@ -701,6 +702,7 @@
         "60428567b4": "Local terminal reveal is unavailable while a remote runtime is active",
         "f8aaf2bde3": "Workspace uploaded",
         "2fe88c2e06": "Remote workspace sync unavailable",
+        "workspaceChangedOnAnotherDevice": "Workspace changed on another device",
         "2ec42e1c52": "No remote workspace yet",
         "88214a785b": "Workspace sync waited for local session hydration and timed out",
         "4f78ba5885": "Workspace synced",
@@ -11416,16 +11418,25 @@
             "searchGitLab": "Search GitLab MRs and issues",
             "searchBranches": "Search branches",
             "searchLinear": "Search Linear issues",
-            "workspaceName": "Workspace name"
+            "workspaceName": "Workspace name",
+            "emoji": "Emoji"
           },
           "ProjectHostSetupCombobox": {
             "empty": "No hosts are ready for this project.",
             "placeholder": "Choose host"
           },
           "ProjectCombobox": {
-            "search": "Search projects...",
             "empty": "No projects match your search.",
-            "addProject": "Add a new project"
+            "addProject": "Add a new project",
+            "label": "Project",
+            "browse": "Browse projects",
+            "listLabel": "Projects",
+            "noProjects": "No projects yet."
+          },
+          "RunTargetCombobox": {
+            "listLabel": "Run targets",
+            "label": "Run on",
+            "browse": "Browse run targets"
           }
         }
       },
@@ -12011,7 +12022,24 @@
             "orchestration": {
               "OrchestrationPage": {
                 "30b509a467": "2 children",
-                "862605d066": "2 child workspaces"
+                "862605d066": "2 child workspaces",
+                "coordinatorName": "redesign auth flow",
+                "childPr1Name": "PR 1/2: migrate users.sql",
+                "childPr2Name": "PR 2/2: withSession middleware"
+              },
+              "types": {
+                "coordinatorInitial": "Splitting auth rewrite into 2 PRs…",
+                "codexInitial": "Writing the users table migration…",
+                "claudeInitial": "Sketching withSession middleware…",
+                "codexBeat1": "Adding the email_verified column…",
+                "claudeBeat1": "Wiring withSession middleware…",
+                "coordinatorBeat1": "PR 1/2 ready",
+                "coordinatorBeat2": "PR 2/2 ready"
+              },
+              "steps": {
+                "name": "Orchestration",
+                "subtitle": "Orchestration",
+                "description": "Enable agents to manage and coordinate Orca workspaces to execute larger tasks."
               },
               "StatusesPage": {
                 "2f549fc0ba": "src/auth/session.test.ts",
@@ -12299,6 +12327,7 @@
           "4cc7b83ffe": "Filter files...",
           "21783df79f": "Collapse file tree",
           "481e63ca52": "Files",
+          "resizeFileTree": "Resize file tree",
           "d5ac717d65": "uncommitted",
           "39b6b9e4e4": "Committed on Branch"
         },
@@ -12930,6 +12959,9 @@
           "bb7f599ee7": "Open Settings",
           "2d5b9fabf9": "Microphone access denied. Grant access in system settings, then restart Orca.",
           "5d2c3e7ae3": "No speech detected."
+        },
+        "DictationIndicator": {
+          "335e1bc6cb": "Stop dictation"
         }
       },
       "dashboard": {
@@ -13345,9 +13377,11 @@
           "d90981f766": "Time",
           "6b914c5fbb": "Day",
           "233b8c94b6": "Cadence",
-          "b08ccb4d06": "hourly",
-          "8cc026fd73": "weekly",
-          "c3e39e17cf": "custom"
+          "55b2ef82a4": "Hourly",
+          "f0202f3a89": "Daily",
+          "57e83307d0": "Weekdays",
+          "837d902bba": "Weekly",
+          "ddba78647e": "Custom cron"
         },
         "AutomationSessionField": {
           "f3c76dce51": "Reuse",

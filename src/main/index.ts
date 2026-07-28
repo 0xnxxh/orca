@@ -20,7 +20,15 @@ import { StatsCollector, initStatsPath } from './stats/collector'
 import { ClaudeUsageStore, initClaudeUsagePath } from './claude-usage/store'
 import { CodexUsageStore, initCodexUsagePath } from './codex-usage/store'
 import { OpenCodeUsageStore, initOpenCodeUsagePath } from './opencode-usage/store'
-import { killAllPty } from './ipc/pty'
+import {
+  killAllPty,
+  clearProviderPtyState,
+  getPtyIdForPaneKey,
+  registerPaneKeyTeardownListener,
+  getLocalPtyProvider,
+  getSshPtyProvider,
+  registerHeadlessPtyRuntime
+} from './ipc/pty'
 import { initDaemonPtyProvider, disconnectDaemon, shutdownDaemon } from './daemon/daemon-init'
 import { closeAllWatchers } from './ipc/filesystem-watcher'
 import { disposeWorktreeBaseDirectoryWatchers } from './ipc/worktree-base-directory-watcher'
@@ -157,6 +165,7 @@ import {
   setTrayAttention,
   type SystemTrayOptions
 } from './tray/system-tray'
+import { createMacAppActivationHandler } from './window/macos-app-activation'
 import { focusExistingMainWindow } from './window/focus-existing-window'
 import { notifyMainWindowBecameVisible } from './window/main-window-visibility'
 import { CodexAccountService } from './codex-accounts/service'
@@ -203,14 +212,6 @@ import { setDefaultWslDistroOverride } from './git/runner'
 import { getRepoIdFromWorktreeId } from '../shared/worktree-id'
 import { parseWorkspaceKey } from '../shared/workspace-scope'
 import { setMigrationUnsupportedPtyListener } from './agent-hooks/migration-unsupported-pty-state'
-import {
-  clearProviderPtyState,
-  getPtyIdForPaneKey,
-  registerPaneKeyTeardownListener,
-  getLocalPtyProvider,
-  getSshPtyProvider,
-  registerHeadlessPtyRuntime
-} from './ipc/pty'
 import { AgentBrowserBridge } from './browser/agent-browser-bridge'
 import { EmulatorBridge } from './emulator/emulator-bridge'
 import { browserCertificateTrustController, browserManager } from './browser/browser-manager'
@@ -556,6 +557,11 @@ function focusExistingWindow(): void {
 function requestDesktopActivation(): void {
   desktopActivationGate.requestActivation()
 }
+
+const handleMacAppActivation = createMacAppActivationHandler({
+  getWindow: () => mainWindow,
+  requestActivation: requestDesktopActivation
+})
 
 function getDesktopWindowStatus(): RuntimeDesktopWindowStatus {
   const state = desktopActivationGate.getState()
@@ -1843,7 +1849,7 @@ function shouldSuppressCodexAutoApprovalSyntheticTitleFromHook(args: {
   )
 }
 
-app.whenReady().then(async () => {
+void app.whenReady().then(async () => {
   logStartupMilestone('app-ready')
   // Why: install certificate decisions before any webview or headless window issues its first TLS request.
   app.on(
@@ -2602,7 +2608,7 @@ app.whenReady().then(async () => {
   })
 
   startTerminalRuntimeStartupServices()
-  app.on('activate', requestDesktopActivation)
+  app.on('activate', handleMacAppActivation)
 
   if (serveOptions) {
     // Why: give managed WSL launchers a brief chance to migrate before headless PTYs go live, without slow repairs withholding all RPC readiness.
