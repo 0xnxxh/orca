@@ -478,7 +478,12 @@ iPhone 17 Pro Simulator verifies Session-origin changed-file handoff,
 standalone Review, and both isolation probes. The Pixel 9 Pro API 36 emulator
 now verifies those paths in the same fresh app session as Agent History scopes,
 preview, filtering, synthetic-resume rejection, and native-touch resume.
-Provider-neutral History and PR compatibility redirects are present. Close the
+The iPhone fixture also captures native and hosted Tasks and Session from the
+same disposable runtime: Tasks passes at 0.022% changed pixels / 0.084 mean
+channel difference / 0.000016 vertical-title delta, and Session passes at
+0.800% / 1.693 / 0.000366 within the 3% / 4 / 0.005 budgets. Provider-neutral
+History and PR compatibility redirects are present. The non-embedded Tasks
+toolbar icon's missing native accessibility label remains open. Close the
 remaining native-versus-hosted interaction matrix.
 
 The interrupted-transcript versus hook-status mismatch and a real structured

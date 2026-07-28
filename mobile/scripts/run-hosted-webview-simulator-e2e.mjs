@@ -17,6 +17,10 @@ import {
   waitForVisibleHostedWebView
 } from './hosted-webview-cdp-session.mjs'
 import { captureNativeAgentHistoryBaseline } from './hosted-ios-agent-history-parity.mjs'
+import {
+  captureHostedCoreRouteParity,
+  captureNativeCoreRouteBaselines
+} from './hosted-ios-core-route-parity.mjs'
 import { verifyHostedAgentHistoryJourney } from './hosted-ios-agent-history-journey.mjs'
 import { openHostedIosHybridRoute } from './hosted-ios-hybrid-route-handoff.mjs'
 import { verifyHostedNativeTerminalSettingsHandoff } from './hosted-ios-native-settings-handoff.mjs'
@@ -95,6 +99,18 @@ async function main() {
     const nativeOnboarding = await evidenceStep('native onboarding', () =>
       completeHostedIosNativeOnboarding(emulator, expectedWorkspace, options.timeoutMs)
     )
+    const nativeCoreRoutes =
+      options.securityOnly || options.nativeSettingsOnly || options.sourceControlOnly
+        ? null
+        : await evidenceStep('native Tasks and Session baselines', () =>
+            captureNativeCoreRouteBaselines({
+              deviceUdid,
+              emulator,
+              expectedWorkspace,
+              runtimeDirectory,
+              timeoutMs: options.timeoutMs
+            })
+          )
     const nativeAgentHistory =
       options.securityOnly || options.nativeSettingsOnly || options.sourceControlOnly
         ? null
@@ -117,6 +133,22 @@ async function main() {
       expectedText: 'Orca Desktop',
       timeoutMs: options.timeoutMs
     })
+    const hostedCoreRoutes =
+      options.securityOnly || options.nativeSettingsOnly || options.sourceControlOnly
+        ? null
+        : await evidenceStep('hosted Tasks and Session parity', () =>
+            captureHostedCoreRouteParity({
+              deviceUdid,
+              discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
+              emulator,
+              expectedWorkspace,
+              nativeBaselines: nativeCoreRoutes,
+              runtimeDirectory,
+              timeoutMs: options.timeoutMs,
+              workspaceDocument
+            })
+          )
+    const activeWorkspaceDocument = hostedCoreRoutes?.workspaceDocument ?? workspaceDocument
     const historyEvidence =
       options.securityOnly || options.sourceControlOnly
         ? null
@@ -125,7 +157,7 @@ async function main() {
               verifyNativeSettingsJourney({
                 discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
                 emulator,
-                workspaceDocument,
+                workspaceDocument: activeWorkspaceDocument,
                 expectedWorkspace,
                 timeoutMs: options.timeoutMs
               })
@@ -137,7 +169,7 @@ async function main() {
                 emulator,
                 nativeAgentHistory,
                 runtimeDirectory,
-                workspaceDocument,
+                workspaceDocument: activeWorkspaceDocument,
                 expectedWorkspace,
                 timeoutMs: options.timeoutMs
               })
@@ -170,6 +202,7 @@ async function main() {
             return verifyHostedSourceControlReviewJourney({
               discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
               emulator,
+              expectedSessionDiffText: options.sourceControlOnly ? '2 tabs' : '3 tabs',
               sessionDocument,
               timeoutMs: options.timeoutMs
             })
@@ -214,6 +247,7 @@ async function main() {
           navigationIsolation,
           nativeOnboarding,
           agentHistory: historyEvidence,
+          coreRouteParity: hostedCoreRoutes?.evidence ?? null,
           sourceControlReview
         },
         null,

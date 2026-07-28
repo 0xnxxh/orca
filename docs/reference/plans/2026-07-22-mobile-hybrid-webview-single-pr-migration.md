@@ -2092,6 +2092,15 @@ accessibility finding remains open. This is not completion of the phone/tablet,
 shell-state, route,
 screen-reader, or physical-device matrix.
 
+The same deterministic fixture now captures the unchanged native and hosted
+Tasks and Session presentations from one disposable Desktop runtime. Tasks
+passes at 0.022% changed pixels, 0.084 mean channel difference, and 0.000016
+vertical-title delta. Session passes at 0.800%, 1.693, and 0.000366
+respectively, within the 3%, 4, and 0.005 budgets. The existing non-embedded
+Tasks toolbar icon has no native accessibility label, so the fixture locates
+its row from the accessible Filter control and preserves the current UI. That
+missing label remains part of the full accessibility gate.
+
 The Pixel 9 Pro API 36 emulator now exercises that same hosted Agent History
 presentation in a freshly installed paired app. Workspace/Project/All scopes,
 lazy preview, search/no-match/clear, synthetic privileged-resume rejection, and
@@ -2322,8 +2331,9 @@ feature UI.
   overwrite those native records.
 - Add deterministic native-versus-web screenshot and interaction fixtures for
   phone, tablet, portrait, landscape, loading, offline, error, and populated
-  states. Populated Agent History portrait now passes the first calibrated
-  pixel and vertical safe-area fixture; the remainder of the matrix stays open.
+  states. Populated Tasks and Session portrait plus Agent History portrait and
+  landscape now pass calibrated pixel and vertical safe-area fixtures; the
+  remainder of the matrix stays open.
 - After every rebase, reconcile upstream mobile presentation changes through
   the shared source and rerun the parity fixtures; do not preserve an older
   forked snapshot for the web runtime.
@@ -2385,6 +2395,10 @@ independently renders standalone Review with its existing controls. The same
 run passes private-origin network and navigation isolation. The exact Pixel 9
 Pro API 36 arm64 Debug APK passes the matching route journey and isolation
 corpus after a fresh build/install, with a clean native bridge log audit.
+After Agent History resumes a second Session tab, the full iOS journey now
+asserts that the changed file creates the third tab. Native iOS route taps
+prefer the accessibility control and retry the measured WebView point after a
+silent WebKit miss.
 
 ### 10. Adapt remaining host features and native capabilities
 

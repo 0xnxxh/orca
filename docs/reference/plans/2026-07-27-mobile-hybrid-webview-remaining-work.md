@@ -43,10 +43,25 @@ search/no-match/clear flow, rejection of synthetic privileged activation, and
 native-touch resume into a second Session tab before continuing through Source
 Control and Review.
 
-The migration is rebased onto `origin/main` at `0404f27b3`. Post-rebase
-validation passes 551 mobile files / 3,286 tests with 2 expected skips and
+The iPhone 17 Pro / iOS 26.5 Simulator now captures the unchanged native and
+hosted Tasks and Session screens from one disposable Desktop runtime. Tasks
+passes at 0.022% changed pixels, 0.084 mean channel difference, and 0.000016
+vertical-title delta. Session passes at 0.800%, 1.693, and 0.000366
+respectively, within the 3%, 4, and 0.005 budgets. The same fresh exact-app run
+passes Agent History portrait/landscape parity, Desktop restart and recovery,
+native-touch resume, a third Session diff tab, standalone Review, and both
+isolation probes.
+
+The existing non-embedded Tasks toolbar icon has no native accessibility label.
+The fixture locates its unchanged row from the accessible Filter control and
+uses the existing icon position. This is recorded as an accessibility finding,
+not treated as a reason to change product UI inside the migration.
+
+The migration is rebased onto `origin/main` at `0404f27b3`. Current post-rebase
+validation passes 552 mobile files / 3,291 tests with 2 expected skips and
 3,770 root files / 39,212 tests with 62 expected skips. All project typechecks,
-root/mobile/mobile-web lint, reliability gates, and the max-lines ratchet pass.
+root/mobile/mobile-web lint, reliability gates, changed-file and full-mobile
+formatting, localization, and the max-lines ratchet pass.
 The independently verified React Native Web package is
 `f852d8525d2b0e20d79262d74ce3ef74bfa73c3e55b95176bfb1b467beafae61`:
 49 assets, 9,330,210 raw bytes, and 2,697,838 gzip bytes.

@@ -3,7 +3,10 @@ import {
   waitForVisibleHostedWebView
 } from './hosted-webview-cdp-session.mjs'
 import { readHostedWebViewControlPoint } from './hosted-webview-control-point.mjs'
-import { tapHostedIosPoint } from './hosted-ios-emulator-accessibility.mjs'
+import {
+  tapHostedIosAccessibilityControl,
+  tapHostedIosPoint
+} from './hosted-ios-emulator-accessibility.mjs'
 import { navigateHostedWebViewRoute } from './hosted-webview-route-navigation.mjs'
 
 export async function verifyHostedSourceControlReviewJourney({
@@ -12,7 +15,7 @@ export async function verifyHostedSourceControlReviewJourney({
   sessionDocument,
   timeoutMs,
   expectedSessionDiffText = '2 tabs',
-  tapPoint = tapHostedIosPoint
+  tapPoint = tapHostedJourneyPoint
 }) {
   const sourceControl = await journeyStep('wait for Source Control route', () =>
     openSourceControlRoute({
@@ -38,18 +41,14 @@ export async function verifyHostedSourceControlReviewJourney({
   if (!changedFileLabel) {
     throw new Error('Source Control has no changed file available for Review.')
   }
-  const changedFilePoint = await journeyStep(`measure ${changedFileLabel}`, () =>
-    readHostedWebViewControlPoint(sourceControl, changedFileLabel)
-  )
-  await journeyStep(`tap ${changedFileLabel}`, () =>
-    tapPoint(emulator, changedFilePoint, changedFileLabel)
-  )
   const sessionDiff = await journeyStep('wait for Session diff route', () =>
-    waitForVisibleHostedWebView({
+    openSessionDiffRoute({
       discoveryUrl,
+      emulator,
       expectedText: expectedSessionDiffText,
-      expectedHrefIncludes: '/session/',
-      requireInteractiveControls: false,
+      label: changedFileLabel,
+      sourceControl,
+      tapPoint,
       timeoutMs
     })
   )
@@ -80,6 +79,17 @@ export async function verifyHostedSourceControlReviewJourney({
   }
 }
 
+async function tapHostedJourneyPoint(emulator, point, label, attempt = 0) {
+  if (label && attempt === 0) {
+    try {
+      return await tapHostedIosAccessibilityControl(emulator, label, 5_000)
+    } catch {
+      // WebKit can omit a descendant while refreshing its accessibility tree.
+    }
+  }
+  return tapHostedIosPoint(emulator, point)
+}
+
 async function openSourceControlRoute({
   discoveryUrl,
   emulator,
@@ -91,7 +101,7 @@ async function openSourceControlRoute({
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const point = await readHostedWebViewControlPoint(sessionDocument, 'Open source control')
-      await tapPoint(emulator, point, 'Open source control')
+      await tapPoint(emulator, point, 'Open source control', attempt)
       return await waitForVisibleHostedWebView({
         discoveryUrl,
         expectedText: 'Source Control',
@@ -103,6 +113,47 @@ async function openSourceControlRoute({
     }
   }
   throw lastError
+}
+
+async function openSessionDiffRoute({
+  discoveryUrl,
+  emulator,
+  expectedText,
+  label,
+  sourceControl,
+  tapPoint,
+  timeoutMs
+}) {
+  let lastError = new Error('Session diff route did not open')
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const point = await readHostedWebViewControlPoint(sourceControl, label)
+      await tapPoint(emulator, point, label, attempt)
+    } catch (error) {
+      lastError = error
+      continue
+    }
+    try {
+      return await waitForSessionDiff(discoveryUrl, expectedText, Math.min(timeoutMs, 3_000))
+    } catch (error) {
+      lastError = error
+    }
+    const transitioned = await waitForSessionDiff(discoveryUrl, '', 1_000).catch(() => null)
+    if (transitioned) {
+      return waitForSessionDiff(discoveryUrl, expectedText, timeoutMs)
+    }
+  }
+  throw lastError
+}
+
+function waitForSessionDiff(discoveryUrl, expectedText, timeoutMs) {
+  return waitForVisibleHostedWebView({
+    discoveryUrl,
+    expectedText,
+    expectedHrefIncludes: '/session/',
+    requireInteractiveControls: false,
+    timeoutMs
+  })
 }
 
 async function waitForChangedFileState(document, timeoutMs) {

@@ -11,9 +11,9 @@
   the production hosted broker/client contract, and reconnect pass a real
   Docker transport journey; hosted workspace, session, and native-chat reads
   and production package delivery also cross the real mobile Relay client and
-  E2EE stack through a protocol-compatible local cell; the first automated
-  native-versus-hosted populated-screen gate now passes Agent History on the
-  iPhone 17 Pro Simulator; the hosted Session now hands Terminal Settings to the
+  E2EE stack through a protocol-compatible local cell; automated
+  native-versus-hosted populated-screen gates now pass Tasks, Session, and
+  Agent History on the iPhone 17 Pro Simulator; the hosted Session now hands Terminal Settings to the
   existing native route and returns to the identical hosted session; native-chat
   deadlines and gesture-gated image attachments preserve the unchanged composer
   through opaque shell-owned references; the Android API 36 emulator now stages
@@ -107,10 +107,10 @@ to the existing RPC behavior. Named page schemas and broker grants now cover
 repository/settings/trust/provider/SSH/agent/hook/capability reads with opaque
 repository and SSH authority; source search, base resolution, create
 operations, native revalidation, and the complete web adapter now pass focused
-round-trip tests. Populated Agent History now passes deterministic native-versus-
-hosted screenshot and interaction parity in portrait and landscape; the
-remaining routes, shell states, tablet/device classes, and accessibility
-matrix remain open.
+round-trip tests. Populated Tasks and Session now pass deterministic
+native-versus-hosted portrait screenshot and interaction parity, and Agent
+History passes in portrait and landscape; the remaining routes, shell states,
+tablet/device classes, and accessibility matrix remain open.
 The unchanged session route now receives snapshot, subscription, blank-terminal
 creation, activation, and close behavior through `HostSessionTabOperations`;
 native retains the existing RPC mapping while the hosted route uses only the
@@ -407,6 +407,14 @@ Source Control and Review journey. Session-origin changed files open a second
 Session diff tab, standalone Review retains its existing controls, and the same
 run passes the private-origin network and navigation isolation probes.
 
+The same simulator now captures native and hosted Tasks and Session from one
+disposable Desktop fixture. Tasks passes at 0.022% changed pixels, 0.084 mean
+channel difference, and 0.000016 vertical-title delta. Session passes at
+0.800%, 1.693, and 0.000366 respectively, within the 3%, 4, and 0.005 budgets.
+The complete cached-app run also passes Agent History portrait/landscape,
+Desktop restart/recovery, synthetic-resume rejection, native-touch resume, a
+third Session diff tab, standalone Review, and both isolation probes.
+
 The exact Pixel 9 Pro API 36 arm64 Debug APK now passes the same journey after a
 fresh native build and install. Android accessibility opens the unchanged
 Source Control hub and changed-file action, Session retains the second diff tab,
@@ -416,8 +424,9 @@ escaped traffic and a clean native bridge log audit.
 
 **Next action:** Complete the remaining parity inventory and cutover cleanup
 before expanding the external validation matrix.
-Extend the deterministic native-versus-hosted screenshot fixture beyond the
-passing populated Agent History portrait case. The authoritative shared RNW
+Extend the deterministic native-versus-hosted screenshot fixture across the
+remaining populated routes, shell states, tablet/device classes, and
+accessibility matrix. The authoritative shared RNW
 route is now governed by a separate reviewed ceiling of 10 MiB total, 3 MiB
 gzip, 9.5 MiB of scripts, 256 KiB of styles, and 64 assets. The earlier 8 MiB /
 2 MiB / 7.5 MiB ceilings held before the existing Mermaid presentation was
@@ -2444,4 +2453,9 @@ copy.
 | 2026-07-28 | Complete | The Pixel 9 Pro API 36 route gate now seeds a disposable Agent History fixture and passes Workspace/Project/All scopes, lazy preview, search/no-match/clear, synthetic privileged-resume rejection, and native-touch resume into a second Session tab. The same app session then opens Source Control, a third changed-file Session tab, standalone Review, both isolation probes, and a clean bridge log audit.                        |
 | 2026-07-28 | Complete | Rebased both migration commits without conflict onto current `origin/main` at `0404f27b3`. The branch is two commits ahead and zero behind.                                                                                                                                                                                                                                                                                             |
 | 2026-07-28 | Complete | Final validation passes 551 mobile files / 3,286 tests with 2 expected skips and 3,770 root files / 39,212 tests with 62 expected skips. Root/mobile/RNW typechecks, lint, formatting, reliability gates, localization, max-lines, the verified 49-asset RNW package, and the rebuilt Android journey all pass.                                                                                                                         |
+| 2026-07-28 | Complete | A cached exact-app iPhone 17 Pro / iOS 26.5 Simulator run captured native and hosted Tasks and Session from the same fixture. Tasks passed at 0.022% changed pixels / 0.084 mean channel difference / 0.000016 vertical-title delta; Session passed at 0.800% / 1.693 / 0.000366 against 3% / 4 / 0.005 budgets.                                                                                                                        |
+| 2026-07-28 | Complete | The same iOS run passed Agent History portrait/landscape parity, forced Desktop restart and E2EE recovery, synthetic-resume rejection, native-touch resume, Source Control, a third changed-file Session tab, standalone Review, and private-origin network/navigation isolation.                                                                                                                                                       |
+| 2026-07-28 | Finding  | The existing non-embedded Tasks toolbar icon has no native accessibility label. The parity driver uses the accessible Filter row to locate the unchanged icon; full VoiceOver review remains open. Source Control native taps now prefer platform accessibility and retry a measured point after a silent WebKit miss, and the full journey asserts the correct third diff tab.                                                         |
+| 2026-07-28 | Complete | A fresh iOS native build/install passed the complete exact-app journey with the final parity and route-settling driver: Tasks, Session, Agent History portrait/landscape, Desktop restart/recovery, native-touch resume, third diff tab, standalone Review, and both private-origin isolation probes.                                                                                                                                   |
+| 2026-07-28 | Complete | Post-slice validation passes 552 mobile files / 3,291 tests with 2 expected skips and 3,770 root files / 39,212 tests with 62 expected skips. All three typechecks, root/mobile/RNW lint, reliability, localization, max-lines, changed-file and full-mobile formatting, and diff hygiene pass; fetched `origin/main` remains `0404f27b3`.                                                                                              |
 | 2026-07-28 | Next     | Complete the remaining parity inventory and cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                  |

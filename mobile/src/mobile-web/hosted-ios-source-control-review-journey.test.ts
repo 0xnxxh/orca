@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   navigateRoute: vi.fn(),
   readControlPoint: vi.fn(),
   readState: vi.fn(),
+  tapAccessibilityControl: vi.fn(),
   tapPoint: vi.fn(),
   waitForDocument: vi.fn()
 }))
@@ -18,6 +19,7 @@ vi.mock('../../scripts/hosted-webview-control-point.mjs', () => ({
 }))
 
 vi.mock('../../scripts/hosted-ios-emulator-accessibility.mjs', () => ({
+  tapHostedIosAccessibilityControl: mocks.tapAccessibilityControl,
   tapHostedIosPoint: mocks.tapPoint
 }))
 
@@ -34,6 +36,7 @@ describe('hosted iOS Source Control and Review journey', () => {
       .mockResolvedValueOnce({ x: 0.4, y: 0.2 })
       .mockResolvedValueOnce({ x: 0.5, y: 0.4 })
     mocks.navigateRoute.mockResolvedValue(undefined)
+    mocks.tapAccessibilityControl.mockResolvedValue(undefined)
     mocks.tapPoint.mockResolvedValue(undefined)
     mocks.waitForDocument
       .mockResolvedValueOnce({
@@ -85,18 +88,19 @@ describe('hosted iOS Source Control and Review journey', () => {
       sessionDocument,
       'Open source control'
     )
-    expect(mocks.tapPoint).toHaveBeenNthCalledWith(
+    expect(mocks.tapAccessibilityControl).toHaveBeenNthCalledWith(
       1,
       emulator,
-      { x: 0.4, y: 0.2 },
-      'Open source control'
+      'Open source control',
+      5_000
     )
-    expect(mocks.tapPoint).toHaveBeenNthCalledWith(
+    expect(mocks.tapAccessibilityControl).toHaveBeenNthCalledWith(
       2,
       emulator,
-      { x: 0.5, y: 0.4 },
-      'Open changed file mobile/app/index.tsx'
+      'Open changed file mobile/app/index.tsx',
+      5_000
     )
+    expect(mocks.tapPoint).not.toHaveBeenCalled()
     expect(mocks.navigateRoute).toHaveBeenCalledWith(
       { href: 'orca-mobile-web://build/h/host/session/workspace?name=repo' },
       '/h/host/review/workspace?scope=all&name=repo'
@@ -125,6 +129,101 @@ describe('hosted iOS Source Control and Review journey', () => {
     expect(mocks.waitForDocument).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({ expectedText: '3 tabs' })
+    )
+  })
+
+  it('falls back to measured points when WebKit omits accessibility descendants', async () => {
+    mocks.tapAccessibilityControl.mockRejectedValue(new Error('missing descendant'))
+
+    await verifyHostedSourceControlReviewJourney({
+      discoveryUrl: 'http://127.0.0.1:9222',
+      emulator: { deviceUdid: 'simulator' },
+      sessionDocument: {
+        href: 'orca-mobile-web://build/h/host/session/workspace'
+      },
+      timeoutMs: 30_000
+    })
+
+    expect(mocks.tapPoint).toHaveBeenNthCalledWith(1, expect.anything(), {
+      x: 0.4,
+      y: 0.2
+    })
+    expect(mocks.tapPoint).toHaveBeenNthCalledWith(2, expect.anything(), {
+      x: 0.5,
+      y: 0.4
+    })
+  })
+
+  it('falls back to a measured point when an accessibility tap silently misses', async () => {
+    mocks.readControlPoint
+      .mockReset()
+      .mockResolvedValueOnce({ x: 0.4, y: 0.2 })
+      .mockResolvedValueOnce({ x: 0.5, y: 0.4 })
+      .mockResolvedValueOnce({ x: 0.5, y: 0.4 })
+    mocks.waitForDocument
+      .mockReset()
+      .mockResolvedValueOnce({
+        href: 'orca-mobile-web://build/h/host/source-control/workspace?name=repo&origin=session'
+      })
+      .mockRejectedValueOnce(new Error('route unchanged'))
+      .mockRejectedValueOnce(new Error('route unchanged'))
+      .mockResolvedValueOnce({
+        href: 'orca-mobile-web://build/h/host/session/workspace?name=repo'
+      })
+      .mockResolvedValueOnce({
+        href: 'orca-mobile-web://build/h/host/review/workspace'
+      })
+
+    await verifyHostedSourceControlReviewJourney({
+      discoveryUrl: 'http://127.0.0.1:9222',
+      emulator: { deviceUdid: 'simulator' },
+      sessionDocument: {
+        href: 'orca-mobile-web://build/h/host/session/workspace'
+      },
+      timeoutMs: 30_000
+    })
+
+    expect(mocks.tapAccessibilityControl).toHaveBeenCalledTimes(2)
+    expect(mocks.tapPoint).toHaveBeenCalledWith(expect.anything(), {
+      x: 0.5,
+      y: 0.4
+    })
+  })
+
+  it('waits for tab state after the route changes', async () => {
+    const sessionDocument = {
+      href: 'orca-mobile-web://build/h/host/session/workspace?name=repo'
+    }
+    mocks.waitForDocument
+      .mockReset()
+      .mockResolvedValueOnce({
+        href: 'orca-mobile-web://build/h/host/source-control/workspace?name=repo&origin=session'
+      })
+      .mockRejectedValueOnce(new Error('tab count pending'))
+      .mockResolvedValueOnce(sessionDocument)
+      .mockResolvedValueOnce(sessionDocument)
+      .mockResolvedValueOnce({
+        href: 'orca-mobile-web://build/h/host/review/workspace'
+      })
+
+    await verifyHostedSourceControlReviewJourney({
+      discoveryUrl: 'http://127.0.0.1:9222',
+      emulator: { deviceUdid: 'simulator' },
+      sessionDocument: {
+        href: 'orca-mobile-web://build/h/host/session/workspace'
+      },
+      timeoutMs: 30_000
+    })
+
+    expect(mocks.tapAccessibilityControl).toHaveBeenCalledTimes(2)
+    expect(mocks.tapPoint).not.toHaveBeenCalled()
+    expect(mocks.waitForDocument).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ expectedText: '' })
+    )
+    expect(mocks.waitForDocument).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({ expectedText: '2 tabs' })
     )
   })
 })
