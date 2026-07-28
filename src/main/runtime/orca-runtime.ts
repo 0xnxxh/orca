@@ -166,7 +166,8 @@ import type {
   TuiAgent,
   WorkspaceCreateTelemetrySource,
   WorkspaceSessionState,
-  DirEntry
+  DirEntry,
+  GitStatusResult
 } from '../../shared/types'
 import { assertWorktreeUnlockedForRemoval } from '../../shared/worktree-removal'
 import {
@@ -299,7 +300,6 @@ import {
   normalizeRuntimePathForComparison
 } from '../../shared/cross-platform-path'
 import type { GitProviderStatusOptions } from '../providers/git-provider-status-options'
-import type { GitStatusResult } from '../../shared/types'
 import {
   listFolderWorkspaceChildRepos,
   matchFolderWorkspaceChildRepo,
