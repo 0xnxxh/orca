@@ -193,6 +193,7 @@ export function buildDashboardSnapshot(
       // resolution stays off the board's hot path for every other row.
       const terminalInput = ptyId
         ? resolveDashboardCardTerminalInput(state, {
+            ptyId,
             worktreeId,
             paneKey: routingPaneKey,
             cwd: row.tab.startupCwd ?? worktree.path,

@@ -1,12 +1,15 @@
 import type { AppState } from '@/store/types'
 import type { DashboardCardTerminalInput } from '../../../../shared/dashboard-snapshot'
 import type { TuiAgent } from '../../../../shared/types'
+import { toRuntimeExecutionHostId, toSshExecutionHostId } from '../../../../shared/execution-host'
+import { parseAppSshPtyId } from '../../../../shared/ssh-pty-id'
 import { getConnectionIdFromState } from '@/lib/connection-context'
 import { getExecutionHostIdForWorktree } from '@/lib/worktree-runtime-owner'
 import { shouldDisableKittyKeyboardForTerminal } from '@/lib/pane-manager/terminal-keyboard-protocol'
 import { isLocalNativeWindowsConpty } from '@/lib/pane-manager/windows-pty-compatibility'
 import { resolveTerminalInputHostPlatform } from '@/components/terminal-pane/terminal-input-host-platform'
 import { resolveWindowsShiftEnterEncodingForPane } from '@/components/terminal-pane/terminal-windows-shift-enter'
+import { getRemoteRuntimePtyEnvironmentId } from '@/runtime/runtime-terminal-stream'
 
 /** Store slices the pane's own input helpers read. */
 export type DashboardCardTerminalInputState = Pick<
@@ -65,6 +68,7 @@ function withHydratedSlices(
 export function resolveDashboardCardTerminalInput(
   partialState: Partial<DashboardCardTerminalInputState>,
   args: {
+    ptyId: string
     worktreeId: string
     paneKey: string
     /** Worktree path — decides WSL vs native Windows for a local pty. */
@@ -77,20 +81,34 @@ export function resolveDashboardCardTerminalInput(
   }
 ): DashboardCardTerminalInput {
   const state = withHydratedSlices(partialState)
+  const sshPty = parseAppSshPtyId(args.ptyId)
+  const runtimeEnvironmentId = getRemoteRuntimePtyEnvironmentId(args.ptyId)
+  const connectionId =
+    sshPty?.connectionId ??
+    (runtimeEnvironmentId ? null : getConnectionIdFromState(state, args.worktreeId))
+  const executionHostId = sshPty
+    ? toSshExecutionHostId(sshPty.connectionId)
+    : runtimeEnvironmentId
+      ? toRuntimeExecutionHostId(runtimeEnvironmentId)
+      : getExecutionHostIdForWorktree(state, args.worktreeId)
   const windowsPtyContext = {
     userAgent: args.userAgent,
     osRelease: args.osRelease,
-    connectionId: getConnectionIdFromState(state, args.worktreeId),
+    connectionId,
     cwd: args.cwd,
     shellOverride: args.shellOverride,
-    executionHostId: getExecutionHostIdForWorktree(state, args.worktreeId)
+    executionHostId
   }
   return {
     hostPlatform: resolveTerminalInputHostPlatform({
       clientPlatform: args.clientPlatform,
       state,
       worktreeId: args.worktreeId,
-      transport: null
+      transport: {
+        getConnectionId: () => connectionId,
+        getPtyId: () => args.ptyId,
+        getExecutionHostId: () => executionHostId
+      }
     }),
     localWindowsConpty: isLocalNativeWindowsConpty(windowsPtyContext),
     ...(args.osRelease === undefined ? {} : { osRelease: args.osRelease }),

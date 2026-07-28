@@ -7,6 +7,7 @@ import {
 } from './dashboard-card-terminal-input'
 
 const MAC_ARGS = {
+  ptyId: 'pty-1',
   worktreeId: 'wt-1',
   paneKey: 'tab-1:00000000-0000-4000-8000-000000000001',
   cwd: '/Users/dev/repo',
@@ -76,6 +77,31 @@ describe('resolveDashboardCardTerminalInput', () => {
       sshConnectionStates: new Map([['conn-1', { remotePlatform: 'win32' }]])
     } as unknown as Partial<DashboardCardTerminalInputState>)
     expect(resolveDashboardCardTerminalInput(state, MAC_ARGS).hostPlatform).toBe('win32')
+  })
+
+  it("keeps the live SSH PTY's host after the worktree owner changes", () => {
+    const state = stateWith({
+      sshConnectionStates: new Map([['conn-live', { remotePlatform: 'win32' }]])
+    } as unknown as Partial<DashboardCardTerminalInputState>)
+    const profile = resolveDashboardCardTerminalInput(state, {
+      ...MAC_ARGS,
+      ptyId: 'ssh:conn-live@@pty-1'
+    })
+    expect(profile.hostPlatform).toBe('win32')
+    expect(profile.localWindowsConpty).toBe(false)
+  })
+
+  it("keeps the live runtime PTY's host after the worktree owner changes", () => {
+    const state = stateWith({
+      runtimeStatusByEnvironmentId: new Map([['env-live', { status: { hostPlatform: 'linux' } }]])
+    } as unknown as Partial<DashboardCardTerminalInputState>)
+    const profile = resolveDashboardCardTerminalInput(state, {
+      ...WINDOWS_ARGS,
+      ptyId: 'remote:env-live@@pty-1'
+    })
+    expect(profile.hostPlatform).toBe('linux')
+    expect(profile.localWindowsConpty).toBe(false)
+    expect(profile.kittyKeyboardAdvertised).toBe(true)
   })
 
   it('degrades to client-OS routing when the store has not hydrated', () => {

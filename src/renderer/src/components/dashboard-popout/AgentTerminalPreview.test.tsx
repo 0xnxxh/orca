@@ -33,6 +33,10 @@ const terminalHarness = vi.hoisted(() => ({
 }))
 
 const platformState = vi.hoisted(() => ({ value: 'linux' }))
+const storeState = vi.hoisted(() => ({
+  settings: null,
+  keybindings: {} as Record<string, string[]>
+}))
 
 const imeHarness = vi.hoisted(() => ({
   forwarders: [] as {
@@ -134,9 +138,8 @@ vi.mock('@/components/terminal-pane/terminal-ime-input-source', () => ({
   }
 }))
 vi.mock('@/store', () => {
-  const state = { settings: null, keybindings: {} }
-  const useAppStore = (selector: (s: typeof state) => unknown): unknown => selector(state)
-  useAppStore.getState = (): typeof state => state
+  const useAppStore = (selector: (s: typeof storeState) => unknown): unknown => selector(storeState)
+  useAppStore.getState = (): typeof storeState => storeState
   return { useAppStore }
 })
 
@@ -157,6 +160,7 @@ describe('AgentTerminalPreview', () => {
     terminalHarness.instances.length = 0
     terminalHarness.userInputListener = null
     platformState.value = 'linux'
+    storeState.keybindings = {}
     imeHarness.forwarders.length = 0
     imeHarness.trackers.length = 0
     imeHarness.claimResult = false
@@ -394,6 +398,55 @@ describe('AgentTerminalPreview', () => {
     expect(keydown.defaultPrevented).toBe(true)
     expect(terminal.input).not.toHaveBeenCalled()
     expect(input).not.toHaveBeenCalled()
+  })
+
+  it('keeps a native input-source chord from inserting text into the preview', async () => {
+    storeState.keybindings = { 'terminal.switchInputSource': ['Shift+Space'] }
+    const view = render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    const terminal = terminalHarness.instances[0]!
+    await waitFor(() => expect(terminal.customKeyHandler).not.toBeNull())
+
+    const keydown = new KeyboardEvent('keydown', {
+      key: ' ',
+      code: 'Space',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    expect(terminal.customKeyHandler!(keydown)).toBe(false)
+    expect(keydown.defaultPrevented).toBe(false)
+
+    const keypress = new KeyboardEvent('keypress', {
+      key: ' ',
+      bubbles: true,
+      cancelable: true
+    })
+    window.dispatchEvent(keypress)
+    expect(keypress.defaultPrevented).toBe(true)
+
+    const beforeInput = new InputEvent('beforeinput', {
+      data: ' ',
+      inputType: 'insertText',
+      bubbles: true,
+      cancelable: true
+    })
+    window.dispatchEvent(beforeInput)
+    expect(beforeInput.defaultPrevented).toBe(true)
+
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', code: 'Space', bubbles: true }))
+    const unarmedBeforeInput = new InputEvent('beforeinput', {
+      data: ' ',
+      inputType: 'insertText',
+      bubbles: true,
+      cancelable: true
+    })
+    window.dispatchEvent(unarmedBeforeInput)
+    expect(unarmedBeforeInput.defaultPrevented).toBe(false)
+    expect(terminal.input).not.toHaveBeenCalled()
+    expect(input).not.toHaveBeenCalled()
+
+    view.unmount()
   })
 
   it('defers Option chords to xterm once the TUI negotiates kitty keyboard mode', async () => {

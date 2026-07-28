@@ -3,6 +3,7 @@ import { getShortcutPlatform } from '@/lib/shortcut-platform'
 import { keybindingMatchesAction } from '../../../../shared/keybindings'
 import { useAppStore } from '@/store'
 import { prefetchLayoutBaseCharacters } from '@/lib/keyboard-layout/layout-base-character'
+import { createTerminalNativeOnlyShortcutTracker } from '@/components/terminal-pane/terminal-native-only-shortcut'
 import {
   resolvePreviewShortcutAction,
   type PreviewShortcutContext
@@ -29,6 +30,7 @@ export function installPreviewTerminalKeyHandler(args: {
   const { terminal } = args
   const platform = getShortcutPlatform()
   const consumedClipboardKeys = new Set<string>()
+  const nativeOnlyShortcutTracker = createTerminalNativeOnlyShortcutTracker()
   const consumeEvent = (event: KeyboardEvent): false => {
     event.preventDefault()
     event.stopPropagation()
@@ -50,6 +52,26 @@ export function installPreviewTerminalKeyHandler(args: {
   }
   const onWindowBlur = (): void => {
     optionKeyLocation = 0
+    nativeOnlyShortcutTracker.clear()
+  }
+  const onNativeOnlyShortcutCompanion = (event: KeyboardEvent): void => {
+    if (!nativeOnlyShortcutTracker.consumeCompanion(event)) {
+      return
+    }
+    if (event.type === 'keypress') {
+      event.preventDefault()
+    }
+    event.stopImmediatePropagation()
+  }
+  const onNativeOnlyBeforeInput = (event: Event): void => {
+    if (
+      !(event instanceof InputEvent) ||
+      !nativeOnlyShortcutTracker.shouldSuppressBeforeInput(event)
+    ) {
+      return
+    }
+    event.preventDefault()
+    event.stopImmediatePropagation()
   }
   if (platform === 'darwin') {
     // Why: kitty Option-chord encoding resolves base keys through the async
@@ -58,6 +80,9 @@ export function installPreviewTerminalKeyHandler(args: {
   }
   window.addEventListener('keydown', onModifierDown, true)
   window.addEventListener('keyup', onModifierUp, true)
+  window.addEventListener('keypress', onNativeOnlyShortcutCompanion, true)
+  window.addEventListener('keyup', onNativeOnlyShortcutCompanion, true)
+  window.addEventListener('beforeinput', onNativeOnlyBeforeInput, true)
   window.addEventListener('blur', onWindowBlur)
 
   terminal.attachCustomKeyEventHandler((event) => {
@@ -75,6 +100,7 @@ export function installPreviewTerminalKeyHandler(args: {
       }
       return true
     }
+    nativeOnlyShortcutTracker.prepareKeyDown(event)
     const keybindings = useAppStore.getState().keybindings
     if (keybindingMatchesAction('terminal.copySelection', event, platform, keybindings)) {
       const keyIdentity = event.code || event.key
@@ -123,7 +149,8 @@ export function installPreviewTerminalKeyHandler(args: {
         return consumeEvent(event)
       case 'switchInputSource':
         // Why: the OS owns this chord — block xterm without preventing the default.
-        event.stopPropagation()
+        nativeOnlyShortcutTracker.armKeyDown(event)
+        event.stopImmediatePropagation()
         return false
       // Why: pane-scoped chords have no target in a preview dialog. Swallow them
       // — a pane never sends these bytes to the shell, and xterm would encode
@@ -147,6 +174,9 @@ export function installPreviewTerminalKeyHandler(args: {
   return () => {
     window.removeEventListener('keydown', onModifierDown, true)
     window.removeEventListener('keyup', onModifierUp, true)
+    window.removeEventListener('keypress', onNativeOnlyShortcutCompanion, true)
+    window.removeEventListener('keyup', onNativeOnlyShortcutCompanion, true)
+    window.removeEventListener('beforeinput', onNativeOnlyBeforeInput, true)
     window.removeEventListener('blur', onWindowBlur)
   }
 }
