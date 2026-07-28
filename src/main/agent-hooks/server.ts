@@ -1990,12 +1990,13 @@ export class AgentHookServer {
       const reconciledAt = stateChanged
         ? Math.max(Date.now(), enriched.receivedAt + 1)
         : enriched.receivedAt
-      this.state.lastStatusByPaneKey.set(paneKey, {
+      const reconciled: EnrichedAgentHookEventPayload = {
         ...enriched,
         receivedAt: reconciledAt,
         stateStartedAt: stateChanged ? reconciledAt : enriched.stateStartedAt,
         payload: { ...enriched.payload, state, subagents }
-      })
+      }
+      this.state.lastStatusByPaneKey.set(paneKey, reconciled)
     }
     if (changedPanes > 0) {
       this.scheduleStatusPersist()
