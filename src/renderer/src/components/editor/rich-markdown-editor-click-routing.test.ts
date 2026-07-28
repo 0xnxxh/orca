@@ -14,8 +14,8 @@ beforeEach(() => {
   openHttpLinkMock.mockReset()
 })
 
-// Why: markdown-preview-links.test.ts pins the preview half with the same options
-// shape, so together they stop one file's link routing two ways.
+// Why: the preview deliberately routes differently; this pins the editor side so a
+// future "make them consistent" change cannot land silently.
 function clickExternalLinkWithShift(sourceOwner: HttpLinkSourceOwner, isMac = true): boolean {
   const href = 'https://example.com/docs'
   const view = {
@@ -52,11 +52,12 @@ function clickExternalLinkWithShift(sourceOwner: HttpLinkSourceOwner, isMac = tr
 }
 
 describe('rich markdown editor Shift+modifier click on external links', () => {
-  it('defers the destination to openHttpLink instead of forcing the system browser', () => {
+  // Why: intentionally NOT the preview's behavior — this path hands the link to the
+  // client OS, so it must keep forcing the system browser even when inverting is on.
+  it('forces the system browser rather than following the invert setting', () => {
     expect(clickExternalLinkWithShift({ kind: 'local' })).toBe(true)
     expect(openHttpLinkMock).toHaveBeenCalledWith('https://example.com/docs', {
-      worktreeId: 'wt-1',
-      modifierHeld: true,
+      forceSystemBrowser: true,
       sourceOwner: { kind: 'local' }
     })
   })
@@ -66,21 +67,18 @@ describe('rich markdown editor Shift+modifier click on external links', () => {
   it('uses the Ctrl chord off macOS', () => {
     expect(clickExternalLinkWithShift({ kind: 'local' }, false)).toBe(true)
     expect(openHttpLinkMock).toHaveBeenCalledWith('https://example.com/docs', {
-      worktreeId: 'wt-1',
-      modifierHeld: true,
+      forceSystemBrowser: true,
       sourceOwner: { kind: 'local' }
     })
   })
 
-  // Why: the owner has to survive the hop; openHttpLink is what then refuses to put
-  // a non-local source in Orca (enforced in http-link-routing.test.ts, not here).
   it('forwards a non-local source owner untouched', () => {
     const sourceOwner = { kind: 'ssh', connectionId: 'conn-1' } as HttpLinkSourceOwner
 
     expect(clickExternalLinkWithShift(sourceOwner)).toBe(true)
     expect(openHttpLinkMock).toHaveBeenCalledWith(
       'https://example.com/docs',
-      expect.objectContaining({ modifierHeld: true, sourceOwner })
+      expect.objectContaining({ forceSystemBrowser: true, sourceOwner })
     )
   })
 })

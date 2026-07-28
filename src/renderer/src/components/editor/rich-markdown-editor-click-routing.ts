@@ -129,7 +129,6 @@ export function handleRichMarkdownEditorClick({
       runtimeEnvironmentId,
       sourceOwner,
       settings,
-      worktreeId,
       worktreeRoot
     })
     return true
@@ -185,7 +184,6 @@ function getClickedLinkHref(view: EditorView, pos: number): string {
 function openMarkdownLinkInClientOs({
   href,
   filePath,
-  worktreeId,
   worktreeRoot,
   runtimeEnvironmentId,
   sourceOwner,
@@ -193,7 +191,6 @@ function openMarkdownLinkInClientOs({
 }: {
   href: string
   filePath: string
-  worktreeId: string
   worktreeRoot: string | null
   runtimeEnvironmentId?: string | null
   sourceOwner: HttpLinkSourceOwner
@@ -207,9 +204,9 @@ function openMarkdownLinkInClientOs({
     return
   }
   if (classified.kind === 'external') {
-    // Why: same escape hatch as the markdown preview of this very file — routing must
-    // not depend on which of the two views the link was clicked in.
-    openHttpLink(classified.url, { worktreeId, modifierHeld: true, sourceOwner })
+    // Why: deliberate divergence from the preview — this path hands the link to the
+    // client OS unconditionally, so it does not follow the invert setting.
+    openHttpLink(classified.url, { forceSystemBrowser: true, sourceOwner })
     return
   }
   if (classified.kind === 'anchor') {
