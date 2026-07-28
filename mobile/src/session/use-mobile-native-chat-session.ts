@@ -60,12 +60,23 @@ export function useMobileNativeChatSession(args: {
   // identity it describes so a just-switched tab is never judged by the
   // previous tab's transcript — the effect that clears `messages` is passive
   // and lands a commit late.
-  const [read, setRead] = useState<{ identity: string; status: MobileNativeChatStatus } | null>(
-    null
-  )
+  const [read, setRead] = useState<{
+    client: RpcClient
+    identity: string
+    status: MobileNativeChatStatus
+  } | null>(null)
+  // Drop it the moment its subscription stops being the live one — identity and
+  // client are the effect's only inputs, so together they catch every re-run.
+  // Without this a toggle out of chat view and back (agent null, then the same
+  // identity again) would resurface a settled 'ready' over an emptied list.
+  let current = read
+  if (current !== null && (current.identity !== identity || current.client !== client)) {
+    current = null
+    setRead(null)
+  }
   // A settled read only counts while the props still call for one: losing the
   // client/agent/session means idle or waiting-session outranks it outright.
-  const settled = initialStatus === 'loading' && read?.identity === identity ? read : null
+  const settled = initialStatus === 'loading' ? current : null
   const status = settled ? settled.status : initialStatus
   const [error, setError] = useState<string | undefined>(undefined)
   const [hasMore, setHasMore] = useState(false)
@@ -141,7 +152,7 @@ export function useMobileNativeChatSession(args: {
           return
         }
         if (applied.kind === 'error') {
-          setRead({ identity, status: 'error' })
+          setRead({ client, identity, status: 'error' })
           setError(applied.error)
           return
         }
@@ -160,7 +171,7 @@ export function useMobileNativeChatSession(args: {
           setLoadingEarlier(false)
           beforeOffsetRef.current = null
         }
-        setRead({ identity, status: 'ready' })
+        setRead({ client, identity, status: 'ready' })
       }
     )
 

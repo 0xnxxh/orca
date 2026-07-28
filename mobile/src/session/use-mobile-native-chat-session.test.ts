@@ -221,7 +221,12 @@ describe('useMobileNativeChatSession', () => {
 
 describe('useMobileNativeChatSession transcriptLoading', () => {
   let renderer: ReactTestRenderer | null = null
-  const renders: { sessionId: string | null; transcriptLoading: boolean; ids: string[] }[] = []
+  const renders: {
+    sessionId: string | null
+    transcriptLoading: boolean
+    status: string
+    ids: string[]
+  }[] = []
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -235,20 +240,23 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
 
   function Harness({
     client,
-    sessionId
+    sessionId,
+    agent = 'claude'
   }: {
     client: RpcClient | null
     sessionId: string | null
+    agent?: string | null
   }): null {
     const session = useMobileNativeChatSession({
       client,
-      agent: 'claude',
+      agent,
       sessionId,
       transcriptPath: null
     })
     renders.push({
       sessionId,
       transcriptLoading: session.transcriptLoading,
+      status: session.status,
       ids: session.messages.map((entry) => entry.id)
     })
     return null
@@ -278,6 +286,50 @@ describe('useMobileNativeChatSession transcriptLoading', () => {
     await mountAt({ subscribe } as unknown as RpcClient, 'session-a')
 
     expect(renders[0]).toMatchObject({ transcriptLoading: true, ids: [] })
+  })
+
+  it('re-reads instead of resurfacing a settled read when the same identity returns', async () => {
+    // Leaving chat view nulls the agent, then returning restores the identity a
+    // settled read already matched — but its list was cleared, so trusting it
+    // would report 'ready' over an empty transcript.
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      onData({ type: 'snapshot', messages: [message('a-1')], hasMore: false })
+      return () => {}
+    })
+    const client = { subscribe } as unknown as RpcClient
+    await mountAt(client, 'session-a')
+    expect(renders.at(-1)).toMatchObject({ status: 'ready', transcriptLoading: false })
+
+    // Toggle out to the terminal view, then back.
+    await act(async () =>
+      renderer?.update(createElement(Harness, { client, sessionId: 'session-a', agent: null }))
+    )
+    renders.length = 0
+    await act(async () =>
+      renderer?.update(createElement(Harness, { client, sessionId: 'session-a', agent: 'claude' }))
+    )
+
+    expect(renders[0]).toMatchObject({ status: 'loading', transcriptLoading: true, ids: [] })
+  })
+
+  it('re-reads instead of resurfacing a settled read after a reconnect', async () => {
+    // A reconnect swaps the client without moving the identity; the effect
+    // re-subscribes and clears the list, so the old outcome must not stand.
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      onData({ type: 'snapshot', messages: [message('a-1')], hasMore: false })
+      return () => {}
+    })
+    const client = { subscribe } as unknown as RpcClient
+    await mountAt(client, 'session-a')
+    expect(renders.at(-1)).toMatchObject({ status: 'ready' })
+
+    const reconnected = { subscribe: vi.fn(() => () => {}) } as unknown as RpcClient
+    renders.length = 0
+    await act(async () =>
+      renderer?.update(createElement(Harness, { client: reconnected, sessionId: 'session-a' }))
+    )
+
+    expect(renders[0]).toMatchObject({ status: 'loading', transcriptLoading: true, ids: [] })
   })
 
   it('never hands out the previous session’s messages under the new session id', async () => {
