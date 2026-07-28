@@ -1,5 +1,8 @@
 import { statSync } from 'node:fs'
 import { readNodeFileSyncWithinLimit } from '../../shared/memory-safety/node-bounded-file-reader'
+import type { SshConfigTruncationReason } from '../../shared/ssh-types'
+
+export type { SshConfigTruncationReason }
 
 export const SSH_CONFIG_INCLUDE_LIMITS = {
   expandedBytes: 16 * 1024 * 1024,
@@ -13,6 +16,7 @@ export const SSH_CONFIG_INCLUDE_LIMITS = {
 
 export type SshConfigExpansionBudget = {
   cache: Map<string, string>
+  droppedReasons: Set<SshConfigTruncationReason>
   expandedBytes: number
   expandedLines: number
   fileCount: number
@@ -24,6 +28,7 @@ export type SshConfigExpansionBudget = {
 export function createSshConfigExpansionBudget(): SshConfigExpansionBudget {
   return {
     cache: new Map(),
+    droppedReasons: new Set(),
     expandedBytes: 0,
     expandedLines: 0,
     fileCount: 0,
@@ -31,6 +36,26 @@ export function createSshConfigExpansionBudget(): SshConfigExpansionBudget {
     sourceBytes: 0,
     warnedLimits: new Set()
   }
+}
+
+/**
+ * Reasons the expansion dropped configuration, or null when nothing was dropped.
+ * Sorted so the value is stable to compare and assert against.
+ */
+export function getSshConfigTruncationReasons(
+  budget: SshConfigExpansionBudget
+): SshConfigTruncationReason[] | null {
+  if (budget.droppedReasons.size === 0) {
+    return null
+  }
+  return [...budget.droppedReasons].sort()
+}
+
+export function recordSshConfigDrop(
+  budget: SshConfigExpansionBudget,
+  reason: SshConfigTruncationReason
+): void {
+  budget.droppedReasons.add(reason)
 }
 
 export function admitSshConfigIncludeDepth(
@@ -87,7 +112,7 @@ export function readSshConfigSourceFile(
     )
     return null
   }
-  const fileBytes = getReadableRegularFileBytes(filePath)
+  const fileBytes = getReadableRegularFileBytes(filePath, budget)
   if (fileBytes === null || !hasSourceCapacity(budget, fileBytes)) {
     return null
   }
@@ -98,10 +123,11 @@ export function readSshConfigSourceFile(
       SSH_CONFIG_INCLUDE_LIMITS.fileBytes
     ).buffer.toString('utf-8')
     const actualBytes = Buffer.byteLength(content, 'utf8')
-    if (
-      actualBytes > SSH_CONFIG_INCLUDE_LIMITS.fileBytes ||
-      !hasSourceCapacity(budget, actualBytes)
-    ) {
+    if (actualBytes > SSH_CONFIG_INCLUDE_LIMITS.fileBytes) {
+      recordSshConfigDrop(budget, 'file-bytes')
+      return null
+    }
+    if (!hasSourceCapacity(budget, actualBytes)) {
       return null
     }
     budget.cache.set(filePath, content)
@@ -125,14 +151,19 @@ function hasSourceCapacity(budget: SshConfigExpansionBudget, fileBytes: number):
   return false
 }
 
-function getReadableRegularFileBytes(filePath: string): number | null {
+function getReadableRegularFileBytes(
+  filePath: string,
+  budget: SshConfigExpansionBudget
+): number | null {
   try {
     const stats = statSync(filePath)
     if (!stats.isFile()) {
+      // Not a capacity drop: a non-regular include is skipped by OpenSSH too.
       console.warn(`[ssh] Skipping SSH config include "${filePath}": not a regular file`)
       return null
     }
     if (stats.size > SSH_CONFIG_INCLUDE_LIMITS.fileBytes) {
+      recordSshConfigDrop(budget, 'file-bytes')
       console.warn(
         `[ssh] Skipping SSH config include "${filePath}": size ${stats.size} exceeds ${SSH_CONFIG_INCLUDE_LIMITS.fileBytes} bytes`
       )
@@ -144,7 +175,14 @@ function getReadableRegularFileBytes(filePath: string): number | null {
   }
 }
 
-function warnOnce(budget: SshConfigExpansionBudget, key: string, message: string): void {
+// Every ceiling that drops configuration reports through here, so recording the
+// reason alongside the warning keeps the caller-visible set complete by construction.
+function warnOnce(
+  budget: SshConfigExpansionBudget,
+  key: SshConfigTruncationReason,
+  message: string
+): void {
+  recordSshConfigDrop(budget, key)
   if (budget.warnedLimits.has(key)) {
     return
   }
