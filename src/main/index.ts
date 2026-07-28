@@ -1091,6 +1091,9 @@ function openMainWindow(): BrowserWindow {
     onQuitAborted: () => {
       isQuitting = false
       clearExpectedRendererReload()
+      if (mainWindow) {
+        initTccPromptNotice(mainWindow)
+      }
     },
     onRendererProcessGone: (details, webContentsId) => {
       recordProcessGoneCrash(
@@ -2736,6 +2739,9 @@ app.whenReady().then(async () => {
     }
   })
 })
+
+// Why: app.exit() skips Electron quit events, so keep its log child from surviving forced exits.
+process.once('exit', stopTccPromptNotice)
 
 app.on('before-quit', () => {
   // Why: `log stream` ignores a closed stdout, so it outlives quit unless killed here.
