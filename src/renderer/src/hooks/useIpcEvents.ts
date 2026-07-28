@@ -118,8 +118,13 @@ import {
   createFloatingWorkspaceTerminalTab,
   isEmptyFloatingWorkspacePanelVisible,
   isFloatingWorkspacePanelFocused,
+  resolveFloatingWorkspaceBrowserWorkspaceId,
   switchFloatingWorkspaceTab
 } from '@/lib/floating-workspace-terminal-actions'
+import {
+  dispatchFloatingWorkspaceGuestClose,
+  dispatchFloatingWorkspaceGuestSelectIndex
+} from '@/lib/floating-workspace-guest-bridge'
 import {
   observeAgentHookCompletionForNotification,
   resetAgentHookCompletionNotificationCoordinators,
@@ -2499,6 +2504,27 @@ export function useIpcEvents(): void {
           }
           closeActiveBrowserTab()
         }
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onCloseFloatingItem(({ sourceId }) => {
+        // Main forwards the guest's browser *page* id; resolve it to the owning live floating
+        // browser workspace (the id space the panel closes by), then hand off to the mounted
+        // panel's own close closure (pin guard + reclaim intent). Stale id = no-op.
+        const workspaceId = resolveFloatingWorkspaceBrowserWorkspaceId(
+          useAppStore.getState(),
+          sourceId
+        )
+        if (!workspaceId) {
+          return
+        }
+        dispatchFloatingWorkspaceGuestClose({ sourceId: workspaceId })
+      })
+    )
+    unsubs.push(
+      window.api.ui.onSelectFloatingIndex(({ index }) => {
+        dispatchFloatingWorkspaceGuestSelectIndex({ index })
       })
     )
 
