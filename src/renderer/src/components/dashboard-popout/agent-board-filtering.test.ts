@@ -29,8 +29,9 @@ function card(overrides: Partial<DashboardCard>): DashboardCard {
 }
 
 describe('agent board filtering', () => {
-  it('searches messages, review numbers, and subagent names', () => {
+  it('searches visible names, messages, review numbers, and subagent names', () => {
     const cards = [
+      card({ paneKey: 'conversation', conversationName: 'Sparse-checkout parser' }),
       card({ paneKey: 'messages', lastAgentMessage: 'Relay authentication repaired' }),
       card({ paneKey: 'review', review: { number: 11012, state: 'open' } }),
       card({
@@ -39,6 +40,9 @@ describe('agent board filtering', () => {
       })
     ]
 
+    expect(filterDashboardCards(cards, 'sparse-checkout', EMPTY_DASHBOARD_FILTERS)[0].paneKey).toBe(
+      'conversation'
+    )
     expect(filterDashboardCards(cards, 'authentication', EMPTY_DASHBOARD_FILTERS)[0].paneKey).toBe(
       'messages'
     )

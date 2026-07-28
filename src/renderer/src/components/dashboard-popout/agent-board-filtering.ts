@@ -23,6 +23,7 @@ function cardSearchText(card: DashboardCard): string {
     card.worktreeName,
     card.repoName,
     card.agentType,
+    card.conversationName,
     card.task,
     card.lastUserMessage,
     card.lastAgentMessage,
