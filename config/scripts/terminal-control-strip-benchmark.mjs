@@ -1,6 +1,49 @@
 #!/usr/bin/env node
-// Mirrors the complete pre/post stripTerminalControl paths at their production size caps.
+// Compares legacy, slice-run, and production-adaptive control stripping.
+import { spawnSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
+import nodeModule from 'node:module'
 import { performance } from 'node:perf_hooks'
+import { fileURLToPath } from 'node:url'
+
+if (!process.execArgv.includes('--experimental-transform-types')) {
+  const result = spawnSync(
+    process.execPath,
+    ['--experimental-transform-types', '--no-warnings', import.meta.filename],
+    { stdio: 'inherit' }
+  )
+  process.exit(result.status ?? 1)
+}
+
+nodeModule.registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier.startsWith('.') && !/\.[cm]?[jt]s$/.test(specifier) && context.parentURL) {
+      const candidate = new URL(`${specifier}.ts`, context.parentURL)
+      if (existsSync(fileURLToPath(candidate))) {
+        return { url: candidate.href, shortCircuit: true }
+      }
+    }
+    return nextResolve(specifier, context)
+  }
+})
+
+const PRODUCTION_SOURCE = readFileSync(
+  new URL('../../src/shared/terminal-control-stripping.ts', import.meta.url),
+  'utf8'
+)
+for (const marker of [
+  'export function stripTerminalControl(data: string): string',
+  'strippedInBlock === CONTROL_DENSITY_FALLBACK_COUNT',
+  'output += withoutAnsi.slice(runStart, index)'
+]) {
+  if (!PRODUCTION_SOURCE.includes(marker)) {
+    throw new Error(`terminal-control-stripping.ts no longer contains \`${marker}\``)
+  }
+}
+
+const { stripTerminalControl: stripAdaptive } = await import(
+  new URL('../../src/shared/terminal-control-stripping.ts', import.meta.url).href
+)
 
 const ESC = String.fromCharCode(0x1b)
 const BEL = String.fromCharCode(0x07)
@@ -75,6 +118,25 @@ function stripSliceRuns(data) {
   return runStart === 0 ? withoutAnsi : output + withoutAnsi.slice(runStart)
 }
 
+function adaptiveFallbackIndex(data) {
+  const withoutAnsi = data.replace(ANSI_ESCAPE_RE, '').replace(INCOMPLETE_ANSI_ESCAPE_RE, '')
+  let strippedInBlock = 0
+  let blockEnd = 64
+  for (let index = 0; index < withoutAnsi.length; index += 1) {
+    if (index === blockEnd) {
+      strippedInBlock = 0
+      blockEnd += 64
+    }
+    if (isStrippedCode(withoutAnsi.charCodeAt(index))) {
+      strippedInBlock += 1
+      if (strippedInBlock === 32) {
+        return index
+      }
+    }
+  }
+  return -1
+}
+
 function fixedSampleId(sampleId) {
   return `sample:${sampleId}`.padEnd(SAMPLE_ID_LENGTH, '_').slice(0, SAMPLE_ID_LENGTH)
 }
@@ -120,33 +182,35 @@ function consumeOutput(output) {
   resultChecksum ^= output.charCodeAt(Math.floor(output.length / 2))
 }
 
-function recordPair(fixture, sampleId, perCharFirst, samples) {
-  const perCharFixture = fixture.make(sampleId, perCharFirst ? '\x01' : '\x02')
-  const sliceRunsFixture = fixture.make(sampleId, perCharFirst ? '\x02' : '\x01')
-  if (
-    perCharFixture === sliceRunsFixture ||
-    perCharFixture.length !== fixture.length ||
-    sliceRunsFixture.length !== fixture.length
-  ) {
+const IMPLEMENTATIONS = [
+  ['perChar', stripPerChar, '\x01'],
+  ['sliceRuns', stripSliceRuns, '\x02'],
+  ['adaptive', stripAdaptive, '\x03']
+]
+
+function recordRotation(fixture, sampleId, lead, samples) {
+  const inputs = IMPLEMENTATIONS.map(([name, strip, control]) => ({
+    name,
+    strip,
+    input: fixture.make(sampleId, control)
+  }))
+  if (inputs.some(({ input }) => input.length !== fixture.length)) {
     throw new Error(`invalid inputs for ${fixture.label}, sample ${sampleId}`)
   }
-  let perCharResult
-  let sliceRunsResult
-  if (perCharFirst) {
-    perCharResult = measure(stripPerChar, perCharFixture)
-    sliceRunsResult = measure(stripSliceRuns, sliceRunsFixture)
-  } else {
-    sliceRunsResult = measure(stripSliceRuns, sliceRunsFixture)
-    perCharResult = measure(stripPerChar, perCharFixture)
+  const results = new Map()
+  for (let offset = 0; offset < inputs.length; offset += 1) {
+    const entry = inputs[(lead + offset) % inputs.length]
+    results.set(entry.name, measure(entry.strip, entry.input))
   }
-  if (perCharResult.output !== sliceRunsResult.output) {
+  const outputs = [...results.values()].map(({ output }) => output)
+  if (new Set(outputs).size !== 1) {
     throw new Error(`strip mismatch for ${fixture.label}, sample ${sampleId}`)
   }
-  consumeOutput(perCharResult.output)
-  consumeOutput(sliceRunsResult.output)
+  for (const [name, result] of results) {
+    consumeOutput(result.output)
+    samples[name].push(result.elapsed)
+  }
   validatedPairs += 1
-  samples.perChar.push(perCharResult.elapsed)
-  samples.sliceRuns.push(sliceRunsResult.elapsed)
 }
 
 const denseBodyLength = SCAN_LIMIT - '\x1b[35m'.length - SAMPLE_ID_LENGTH - '\x1b[0m'.length
@@ -174,29 +238,53 @@ const fixtures = [
   }
 ]
 
+const selectorFixtures = [
+  { label: '31 controls', data: `${'\x01'.repeat(31)}${'a'.repeat(33)}`, expected: -1 },
+  { label: '32 controls', data: `${'\x01'.repeat(32)}${'a'.repeat(32)}`, expected: 31 },
+  {
+    label: 'block reset at 64',
+    data: `${'\x01'.repeat(31)}${'a'.repeat(33)}${'\x01'.repeat(32)}`,
+    expected: 95
+  },
+  {
+    label: 'late dense block',
+    data: `${'a'.repeat(64 * 3)}${'\x01'.repeat(32)}tail`,
+    expected: 223
+  },
+  {
+    label: 'routine TUI',
+    data: makeTuiFixture(SCAN_LIMIT, 'selector', '\x01'),
+    expected: -1
+  }
+]
+for (const fixture of selectorFixtures) {
+  const actual = adaptiveFallbackIndex(fixture.data)
+  if (actual !== fixture.expected) {
+    throw new Error(`${fixture.label} fallback index ${actual}, expected ${fixture.expected}`)
+  }
+}
+
 const pad = (value, width) => String(value).padStart(width)
 console.log('Complete stripTerminalControl path. Lower is better.')
+console.log(`iterations=${ITERATIONS} (${ITERATIONS * 3} rotated samples/implementation, median)`)
 console.log(
-  `iterations=${ITERATIONS} (${ITERATIONS * 2} first-touch samples/implementation, counterbalanced median)`
-)
-console.log(
-  `${pad('fixture', 25)} ${pad('per-char', 11)} ${pad('slice runs', 12)} ${pad('speedup', 9)}`
+  `${pad('fixture', 25)} ${pad('per-char', 11)} ${pad('slice runs', 12)} ${pad('adaptive', 11)} ${pad('vs legacy', 10)} ${pad('vs slice', 9)}`
 )
 
 for (const fixture of fixtures) {
-  const samples = { perChar: [], sliceRuns: [] }
+  const samples = { perChar: [], sliceRuns: [], adaptive: [] }
   for (let index = 0; index < ITERATIONS; index += 1) {
-    const orders = index % 2 === 0 ? [true, false] : [false, true]
-    for (const perCharFirst of orders) {
-      const orderLabel = perCharFirst ? 'per-first' : 'slice-first'
-      recordPair(fixture, `${index}:${orderLabel}`, perCharFirst, samples)
+    for (let lead = 0; lead < IMPLEMENTATIONS.length; lead += 1) {
+      recordRotation(fixture, `${index}:lead-${lead}`, lead, samples)
     }
   }
   const perChar = median(samples.perChar)
   const sliceRuns = median(samples.sliceRuns)
+  const adaptive = median(samples.adaptive)
   console.log(
-    `${pad(fixture.label, 25)} ${pad(`${(perChar * 1000).toFixed(1)} us`, 11)} ${pad(`${(sliceRuns * 1000).toFixed(1)} us`, 12)} ${pad(`${(perChar / sliceRuns).toFixed(2)}x`, 9)}`
+    `${pad(fixture.label, 25)} ${pad(`${(perChar * 1000).toFixed(1)} us`, 11)} ${pad(`${(sliceRuns * 1000).toFixed(1)} us`, 12)} ${pad(`${(adaptive * 1000).toFixed(1)} us`, 11)} ${pad(`${(perChar / adaptive).toFixed(2)}x`, 10)} ${pad(`${(sliceRuns / adaptive).toFixed(2)}x`, 9)}`
   )
 }
 console.log(`\nvalidated=${validatedPairs} measured pairs, result checksum=${resultChecksum >>> 0}`)
+console.log(`selector checks=${selectorFixtures.length}`)
 console.log('Production calls are bounded to 4096, 4096, 300, and 301 code units.')
