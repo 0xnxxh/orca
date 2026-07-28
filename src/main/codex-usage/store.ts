@@ -1,7 +1,13 @@
 /* eslint-disable max-lines -- Why: this store owns Codex analytics persistence, scan policy, and renderer query semantics. Keeping them together prevents the Codex range/scope rules from drifting away from the scanner’s event model. */
 import { app } from 'electron'
 import { dirname, join } from 'node:path'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
+import {
+  durableWriteTempPath,
+  removeStaleDurableWriteTempFiles,
+  writeFileDurableIfCurrent
+} from '../durable-file-write'
 import type {
   CodexUsageBreakdownKind,
   CodexUsageBreakdownRow,
@@ -366,10 +372,16 @@ export class CodexUsageStore {
   private state: CodexUsagePersistedState
   private readonly store: Store
   private scanPromise: Promise<void> | null = null
+  // Why: multi-MB usage JSON must not block the Electron main thread; generation vetoes superseded renames.
+  private writeGeneration = 0
+  // Why serialize: two overlapping async writes can both veto themselves, leaving nothing on disk.
+  private pendingWrite: Promise<void> = Promise.resolve()
 
   constructor(store: Store) {
     this.store = store
     this.state = this.load()
+    // Why: a crash between write and rename orphans a 60 MB temp file; reclaim once per launch.
+    void removeStaleDurableWriteTempFiles(getCodexUsageFile())
   }
 
   private load(): CodexUsagePersistedState {
@@ -393,20 +405,36 @@ export class CodexUsageStore {
     }
   }
 
-  private writeToDisk(): void {
-    const usageFile = getCodexUsageFile()
-    const dir = dirname(usageFile)
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true })
+  private writeToDisk(): Promise<void> {
+    // Why: snapshot synchronously so a concurrent setEnabled/scan cannot tear the JSON mid-stringify.
+    const payload = JSON.stringify(this.state)
+    const generation = ++this.writeGeneration
+    const write = this.pendingWrite.then(() => this.commitToDisk(payload, generation))
+    // Why: keep the queue usable after a failure — the awaiting caller still sees the rejection.
+    this.pendingWrite = write.catch((error: unknown) => {
+      console.error('[codex-usage] Failed to persist usage cache:', error)
+    })
+    return write
+  }
+
+  private async commitToDisk(payload: string, generation: number): Promise<void> {
+    // Why: a newer snapshot is already queued behind this one, so writing 60 MB here would be wasted.
+    if (generation !== this.writeGeneration) {
+      return
     }
-    const tmpFile = `${usageFile}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
-    writeFileSync(tmpFile, JSON.stringify(this.state), 'utf-8')
-    renameSync(tmpFile, usageFile)
+    const usageFile = getCodexUsageFile()
+    await mkdir(dirname(usageFile), { recursive: true }).catch(() => {})
+    await writeFileDurableIfCurrent(
+      durableWriteTempPath(usageFile),
+      usageFile,
+      payload,
+      () => generation === this.writeGeneration
+    )
   }
 
   async setEnabled(enabled: boolean): Promise<CodexUsageScanState> {
     this.state.scanState.enabled = enabled
-    this.writeToDisk()
+    await this.writeToDisk()
     return this.getScanState()
   }
 
@@ -456,7 +484,8 @@ export class CodexUsageStore {
 
     this.state.scanState.lastScanStartedAt = Date.now()
     this.state.scanState.lastScanError = null
-    // Why: start-only writes rewrite the full usage cache before scan results change.
+    // Why no write here: persisting scan-start would rewrite the whole multi-MB cache before a single
+    // result changed. The completion/failure write below persists the same fields.
 
     this.scanPromise = (async () => {
       try {
@@ -473,10 +502,10 @@ export class CodexUsageStore {
         this.state.worktreeFingerprint = worktreeFingerprint
         this.state.scanState.lastScanCompletedAt = Date.now()
         this.state.scanState.lastScanError = null
-        this.writeToDisk()
+        await this.writeToDisk()
       } catch (error) {
         this.state.scanState.lastScanError = error instanceof Error ? error.message : String(error)
-        this.writeToDisk()
+        await this.writeToDisk()
       } finally {
         this.scanPromise = null
       }

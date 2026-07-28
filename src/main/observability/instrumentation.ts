@@ -207,6 +207,18 @@ export async function withWorktreeSpan<T>(
   )
 }
 
+/** Wrap one stage of a worktree removal. Children share the parent's `kind` so `kind`-filtered
+ *  views keep the whole tree, and `worktree.flow` separates the folder/remote/local removal paths. */
+export async function withWorktreeRemoveStageSpan<T>(
+  stage: string,
+  flow: 'folder' | 'remote' | 'local',
+  fn: () => Promise<T>
+): Promise<T> {
+  return withSpan(`worktree.remove.${stage}`, fn, {
+    attributes: { kind: 'worktree', 'worktree.flow': flow }
+  })
+}
+
 export type PtySpanArgs = {
   readonly stage: 'spawn' | 'exit' | 'recover'
   readonly shell?: string

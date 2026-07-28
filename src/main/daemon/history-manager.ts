@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, writeFileSync, existsSync, rmSync, unlinkSync } from 'node:fs'
+import { mkdirSync, writeFileSync, existsSync, unlinkSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { getHistorySessionDirName } from './history-paths'
 import {
   fingerprintTerminalHistorySession,
@@ -275,11 +276,11 @@ export class HistoryManager {
       this.recoveryFreezes.delete(sessionId)
     }
     await this.mutations.wait(sessionId)
-    rmSync(join(this.basePath, getHistorySessionDirName(sessionId)), {
-      recursive: true,
-      force: true
-    })
-    removeTerminalHistoryQuarantines(this.basePath, sessionId)
+    const sessionDir = join(this.basePath, getHistorySessionDirName(sessionId))
+    // Why async: session trees reach hundreds of MB and this runs on the Electron main thread for every
+    // terminal a worktree delete tears down.
+    await rm(sessionDir, { recursive: true, force: true })
+    await removeTerminalHistoryQuarantines(this.basePath, sessionId)
   }
 
   isSessionDisabled(sessionId: string): boolean {

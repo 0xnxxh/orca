@@ -486,4 +486,34 @@ describe('HistoryManager', () => {
       }
     )
   })
+
+  describe('large session cleanup responsiveness', () => {
+    it('deletes a large session tree without stalling the event loop', async () => {
+      const sessionId = 'bulky'
+      await mgr.openSession(sessionId, { cwd: '/tmp', cols: 80, rows: 24 })
+      const sessionDir = join(dir, getHistorySessionDirName(sessionId))
+      // Enough entries that a synchronous recursive rm is unmistakable in the timer gaps.
+      for (let i = 0; i < 3_000; i++) {
+        writeFileSync(join(sessionDir, `chunk-${i}.log`), `payload-${i}`)
+      }
+
+      // Why: removeSession runs in the Electron main process, so the probe is main-thread lag, not duration.
+      let maxGapMs = 0
+      let previousTickAt = performance.now()
+      const ticker = setInterval(() => {
+        const now = performance.now()
+        maxGapMs = Math.max(maxGapMs, now - previousTickAt)
+        previousTickAt = now
+      }, 2)
+      try {
+        previousTickAt = performance.now()
+        await mgr.removeSession(sessionId)
+      } finally {
+        clearInterval(ticker)
+      }
+
+      expect(existsSync(sessionDir)).toBe(false)
+      expect(maxGapMs).toBeLessThan(30)
+    })
+  })
 })

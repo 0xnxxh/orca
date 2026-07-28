@@ -115,6 +115,7 @@ import { RpcDispatcher } from './rpc/dispatcher'
 import type { RpcRequest } from './rpc/core'
 import { TERMINAL_METHODS } from './rpc/methods/terminal'
 import { beginWatcherInstall } from '../ipc/watcher-removal-gate'
+import { WATCHER_REMOVAL_DRAIN_BUDGET_MS } from '../ipc/watcher-removal-drain'
 import {
   _resetTerminalViewAttributesForTest,
   setTerminalViewAttributes
@@ -400,7 +401,7 @@ vi.mock('../git/worktree', () => ({
   forceDeleteLocalBranch: forceDeleteLocalBranchMock
 }))
 
-vi.mock('../terminal-history', () => ({
+vi.mock('../terminal-history-deletion', () => ({
   deleteWorktreeHistoryDir: deleteWorktreeHistoryDirMock
 }))
 
@@ -36588,6 +36589,37 @@ describe('OrcaRuntimeService', () => {
     finishRetry()
   })
 
+  it('proceeds when a wedged install never releases the removal fence', async () => {
+    vi.useFakeTimers()
+    // Held across the whole acquire — models a native subscribe that ignores abort and never settles.
+    const wedgedInstall = beginWatcherInstall(TEST_WORKTREE_PATH)
+    try {
+      const runtime = createRuntime()
+
+      let acquired = false
+      const acquiring = runtime.acquireFileWatcherRemoval(TEST_WORKTREE_PATH).then((gate) => {
+        acquired = true
+        return gate
+      })
+      await vi.advanceTimersByTimeAsync(WATCHER_REMOVAL_DRAIN_BUDGET_MS - 1)
+      expect(acquired).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(1)
+      const gate = await acquiring
+      expect(acquired).toBe(true)
+      expect(closeLocalWatcherForWorktreePathMock).toHaveBeenCalledTimes(2)
+
+      // The fence must not stay armed: releasing the gate re-admits installs under this root.
+      await gate.finish(true)
+      const finishRetry = beginWatcherInstall(TEST_WORKTREE_PATH)
+      finishRetry()
+    } finally {
+      // Why: the gate's install count is module-global; leaving it armed would stall later suites.
+      wedgedInstall()
+      vi.useRealTimers()
+    }
+  })
+
   it('recovers forced Windows runtime long-path removal and keeps skipped-hook warnings', async () => {
     setPlatform('win32')
     const runtime = createWorktreeRemovalRuntime()
@@ -37177,7 +37209,10 @@ describe('OrcaRuntimeService', () => {
       await expect(runtime.removeManagedWorktree(worktreeId, true)).resolves.toEqual({})
 
       await expect(lstat(orphanPath)).rejects.toMatchObject({ code: 'ENOENT' })
-      expect(closeLocalWatcherForWorktreePathMock).toHaveBeenCalledWith(orphanPath)
+      expect(closeLocalWatcherForWorktreePathMock).toHaveBeenCalledWith(
+        orphanPath,
+        expect.objectContaining({ remainingMs: expect.any(Function) })
+      )
       expect(removeWorktree).not.toHaveBeenCalled()
       expect(removeWorktreeMeta).toHaveBeenCalledWith(worktreeId)
       expect(deleteWorktreeHistoryDirMock).toHaveBeenCalledWith(worktreeId)

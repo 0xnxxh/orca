@@ -23,6 +23,11 @@ import {
   WatcherChildCapacityError
 } from './parcel-watcher-child-registry'
 import { beginWatcherInstall, isWatcherRemovalInProgressError } from './watcher-removal-gate'
+import {
+  createWatcherRemovalDeadline,
+  drainBeforeWatcherRemoval,
+  type WatcherRemovalDeadline
+} from './watcher-removal-drain'
 // Why: suppress high-churn dirs at the watcher level (separate from the File Explorer display filter, which only hides rows).
 import { WATCHER_IGNORE_DIRS, buildParcelWatcherIgnoreOptions } from './filesystem-watcher-ignore'
 
@@ -780,7 +785,10 @@ function unsubscribe(worktreePath: string, senderId: number): void {
   }
 }
 
-export async function closeLocalWatcherForWorktreePath(worktreePath: string): Promise<void> {
+export async function closeLocalWatcherForWorktreePath(
+  worktreePath: string,
+  deadline: WatcherRemovalDeadline = createWatcherRemovalDeadline()
+): Promise<void> {
   const { key: rootKey } = localWatcherRoot(worktreePath)
   const suspended = suspendedLocalWatcherListeners.get(rootKey) ?? {
     worktreePath,
@@ -814,10 +822,31 @@ export async function closeLocalWatcherForWorktreePath(worktreePath: string): Pr
     inFlight.cancelled = true
     inFlight.abortController.abort()
   }
-  await pendingLocalInstallPromises.get(rootKey)
+  // Why: abort alone is not enough if the native subscribe never settles; bound so delete cannot hang the app.
+  const pendingInstall = pendingLocalInstallPromises.get(rootKey)
+  const installDrain = await drainBeforeWatcherRemoval(
+    pendingInstall,
+    deadline,
+    `local watcher install for ${rootKey}`
+  )
+  if (installDrain === 'timeout') {
+    // Why: an abandoned install never runs its own cleanup, so leaving these entries would make every
+    // later watch of this root queue behind the same wedged promise. Identity-checked so a late settle
+    // can't evict a newer install.
+    if (pendingLocalInstallPromises.get(rootKey) === pendingInstall) {
+      pendingLocalInstallPromises.delete(rootKey)
+    }
+    if (inFlight && inFlightLocalInstalls.get(rootKey) === inFlight) {
+      inFlightLocalInstalls.delete(rootKey)
+    }
+  }
   const pendingUnsubscribes = pendingLocalUnsubscribesByRoot.get(rootKey)
   if (pendingUnsubscribes) {
-    await Promise.all(Array.from(pendingUnsubscribes))
+    await drainBeforeWatcherRemoval(
+      Promise.all(Array.from(pendingUnsubscribes)),
+      deadline,
+      `local watcher unsubscribe for ${rootKey}`
+    )
   }
   if (failedLocalUnsubscribes.has(rootKey)) {
     throw failedLocalUnsubscribes.get(rootKey)
