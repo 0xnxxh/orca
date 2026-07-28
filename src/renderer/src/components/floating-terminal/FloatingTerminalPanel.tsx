@@ -291,13 +291,10 @@ export function FloatingTerminalPanel({
   // listener never resolves) can reach the same split-aware pane-close authority directly (F2/F-feas).
   // Its ref callbacks are cached per tab id so a parent render doesn't hand TerminalPane a new
   // function identity, which would make React detach (dropping the handle) and re-attach every render.
-  const terminalPaneRegistryRef = useRef<TerminalPaneHandleRegistry<TerminalPaneHandle> | null>(
-    null
+  // useState lazy init (not null-guarded ref write) keeps render pure for react-doctor.
+  const [terminalPaneRegistry] = useState(() =>
+    createTerminalPaneHandleRegistry<TerminalPaneHandle>()
   )
-  if (!terminalPaneRegistryRef.current) {
-    terminalPaneRegistryRef.current = createTerminalPaneHandleRegistry<TerminalPaneHandle>()
-  }
-  const terminalPaneRegistry = terminalPaneRegistryRef.current
   const doubleTapDetectorRef = useRef<ModifierDoubleTapDetector | null>(null)
   if (!doubleTapDetectorRef.current) {
     doubleTapDetectorRef.current = new ModifierDoubleTapDetector()
