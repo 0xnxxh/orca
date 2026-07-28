@@ -2807,6 +2807,7 @@ function createSkillsApi(): NonNullable<Partial<PreloadApi>['skills']> {
         schemaVersion: 1,
         installations: [],
         eligibleUpdateNames: [],
+        scanIssues: [],
         scannedAt: Date.now()
       }),
     // Why: with no local skill homes there is nothing to update, so the run rail
