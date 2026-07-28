@@ -129,6 +129,7 @@ const resolveLocalGitUsernameMock = vi.hoisted(() => vi.fn(async () => ''))
 vi.mock('../ipc/worktree-symlinks', () => ({
   createWorktreeCopiedPaths: vi.fn(),
   createWorktreeLinkedPaths: vi.fn(),
+  createWorktreeSharedPaths: vi.fn(),
   findExistingWorktreeSymlinkPaths: findExistingWorktreeSymlinkPathsMock,
   removeWorktreeLinkedPaths: removeWorktreeLinkedPathsMock
 }))
