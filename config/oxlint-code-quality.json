@@ -26,12 +26,7 @@
     "import/no-cycle": ["warn", { "maxDepth": 3 }],
     "import/no-duplicates": "warn",
     "import/no-self-import": "warn",
-    "no-fallthrough": "warn",
-    "no-loop-func": "warn",
-    "no-unmodified-loop-condition": "warn",
-    "promise/no-multiple-resolved": "warn",
-    "react/no-unstable-nested-components": "warn",
-    "react/react-compiler": "warn"
+    "no-fallthrough": "warn"
   },
   "overrides": [
     {
@@ -49,9 +44,7 @@
       "rules": {
         "vitest/no-conditional-tests": "warn",
         "vitest/no-focused-tests": "warn",
-        "vitest/no-identical-title": "warn",
-        "vitest/valid-expect": "warn",
-        "vitest/valid-title": "warn"
+        "vitest/no-identical-title": "warn"
       }
     },
     {
