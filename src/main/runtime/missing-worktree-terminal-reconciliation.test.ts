@@ -97,4 +97,83 @@ describe('stopMissingWorktreeTerminals', () => {
     expect(result).toEqual({ stoppedWorktreeIds: [deletedId] })
     expect(runtime.stopTerminalsForWorktree).toHaveBeenCalledWith(deletedId)
   })
+
+  // Why: an agent cleaning up workspaces deletes many at once. Enumerating the
+  // host once per missing worktree is O(N) relay round-trips carrying O(N^2)
+  // rows — on SSH that stalls teardown for minutes.
+  it('enumerates the host once for the whole sweep', async () => {
+    const ids = Array.from({ length: 25 }, (_, index) => `repo-1::/workspace/wt-${index}`)
+    const provider = createProvider(ids.map((id) => `${id}@@session`))
+
+    const result = await stopMissingWorktreeTerminals(
+      { ...localRepo, connectionId: 'ssh-1' },
+      ids,
+      [],
+      { runtime: createRuntime(), getLocalProvider: () => null, getSshProvider: () => provider }
+    )
+
+    expect(result.stoppedWorktreeIds).toHaveLength(ids.length)
+    expect(provider.listProcesses).toHaveBeenCalledTimes(1)
+    expect(provider.shutdown).toHaveBeenCalledTimes(ids.length)
+  })
+
+  // Why: real providers put listProcesses/shutdown on the prototype and use `this`;
+  // batching them behind a wrapper must not break that binding.
+  it('keeps provider method binding intact while batching', async () => {
+    class PrototypeProvider {
+      listCalls = 0
+      shutdownCalls: string[] = []
+      private readonly sessions: { id: string; cwd: string; title: string }[]
+      constructor(sessionIds: string[]) {
+        this.sessions = sessionIds.map((id) => ({ id, cwd: '/workspace', title: 'shell' }))
+      }
+      async listProcesses(): Promise<{ id: string; cwd: string; title: string }[]> {
+        this.listCalls += 1
+        return this.sessions
+      }
+      async shutdown(sessionId: string): Promise<void> {
+        this.shutdownCalls.push(sessionId)
+      }
+    }
+    const ids = ['repo-1::/workspace/a', 'repo-1::/workspace/b', 'repo-1::/workspace/c']
+    const provider = new PrototypeProvider(ids.map((id) => `${id}@@session`))
+
+    const result = await stopMissingWorktreeTerminals(
+      { ...localRepo, connectionId: 'ssh-1' },
+      ids,
+      [],
+      {
+        runtime: createRuntime(),
+        getLocalProvider: () => null,
+        getSshProvider: () => provider as unknown as IPtyProvider
+      }
+    )
+
+    expect(result.stoppedWorktreeIds).toHaveLength(ids.length)
+    expect(provider.listCalls).toBe(1)
+    expect(provider.shutdownCalls).toHaveLength(ids.length)
+  })
+
+  // Why: caching a rejected scan would let one transient failure suppress
+  // teardown for every remaining worktree in the sweep.
+  it('does not reuse a failed process scan', async () => {
+    const ids = ['repo-1::/workspace/a', 'repo-1::/workspace/b']
+    const listProcesses = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('relay dropped'))
+      .mockResolvedValue([{ id: `${ids[1]}@@session`, cwd: '/workspace', title: 'shell' }])
+    const provider = { listProcesses, shutdown: vi.fn(async () => {}) } as unknown as IPtyProvider
+
+    await stopMissingWorktreeTerminals({ ...localRepo, connectionId: 'ssh-1' }, ids, [], {
+      runtime: createRuntime(),
+      getLocalProvider: () => null,
+      getSshProvider: () => provider
+    })
+
+    expect(listProcesses.mock.calls.length).toBeGreaterThan(1)
+    expect(provider.shutdown).toHaveBeenCalledWith(
+      `${ids[1]}@@session`,
+      expect.objectContaining({ immediate: true })
+    )
+  })
 })
