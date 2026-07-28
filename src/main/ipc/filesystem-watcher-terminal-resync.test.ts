@@ -38,13 +38,33 @@ const OVERFLOW_PAYLOAD = {
   events: [{ kind: 'overflow', absolutePath: WORKTREE_PATH }]
 }
 
-function createSender(id: number): {
+type MockSender = {
   isDestroyed: () => boolean
   send: ReturnType<typeof vi.fn>
   once: ReturnType<typeof vi.fn>
   id: number
-} {
-  return { isDestroyed: () => false, send: vi.fn(), once: vi.fn(), id }
+  destroy: () => void
+}
+
+function createSender(id: number): MockSender {
+  let destroyed = false
+  const destroyedHandlers: (() => void)[] = []
+  return {
+    isDestroyed: () => destroyed,
+    send: vi.fn(),
+    once: vi.fn((event: string, handler: () => void) => {
+      if (event === 'destroyed') {
+        destroyedHandlers.push(handler)
+      }
+    }),
+    id,
+    destroy: () => {
+      destroyed = true
+      for (const handler of destroyedHandlers) {
+        handler()
+      }
+    }
+  }
 }
 
 describe('remote filesystem watcher terminal retry resync', () => {
@@ -269,14 +289,7 @@ describe('remote filesystem watcher terminal retry resync', () => {
   it('cancels a terminal retry when its renderer is destroyed', async () => {
     vi.useFakeTimers()
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-    let destroyed = false
-    const destroyedHandlers: (() => void)[] = []
-    const sender = {
-      isDestroyed: () => destroyed,
-      send: vi.fn(),
-      once: vi.fn((_event: string, handler: () => void) => destroyedHandlers.push(handler)),
-      id: 1
-    }
+    const sender = createSender(1)
     let terminalError: TerminalErrorHandler = () => {}
     const watchMock = vi.fn().mockImplementation((_path, _events, options) => {
       terminalError = options.onTerminalError
@@ -286,8 +299,7 @@ describe('remote filesystem watcher terminal retry resync', () => {
 
     await handlers['fs:watchWorktree']({ sender }, ARGS)
     terminalError(new Error('relay watcher died'))
-    destroyed = true
-    destroyedHandlers[0]?.()
+    sender.destroy()
     await vi.advanceTimersByTimeAsync(60 * 60_000)
 
     expect(watchMock).toHaveBeenCalledTimes(1)

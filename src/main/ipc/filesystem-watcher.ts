@@ -1289,10 +1289,10 @@ function handleRemoteWatcherTerminalError(
     return
   }
   remoteWatchers.delete(key)
-  console.warn(`[filesystem-watcher] SSH watcher terminated for ${key}:`, error)
   if (remoteWatchersClosed || suspendedRemoteWatcherListeners.has(key)) {
     return
   }
+  console.warn(`[filesystem-watcher] SSH watcher terminated for ${key}:`, error)
   const startedAt = Date.now()
   for (const listener of state.listeners.values()) {
     scheduleRemoteWatcherRetry(listener, connectionId, worktreePath, startedAt, true)
