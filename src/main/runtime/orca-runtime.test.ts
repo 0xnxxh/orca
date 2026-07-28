@@ -31389,7 +31389,10 @@ describe('OrcaRuntimeService', () => {
     const runtime = new OrcaRuntimeService(store, undefined, {
       getLocalProvider: () => localProvider as never
     })
-    vi.spyOn(runtime, 'listDetectedManagedWorktrees').mockResolvedValue({
+    vi.spyOn(
+      runtime as unknown as { listDetectedWorktreesForResolvedRepo: () => unknown },
+      'listDetectedWorktreesForResolvedRepo'
+    ).mockResolvedValue({
       repoId: TEST_REPO_ID,
       authoritative: true,
       source: 'git',
@@ -31455,7 +31458,10 @@ describe('OrcaRuntimeService', () => {
     const runtime = new OrcaRuntimeService(store, undefined, {
       getLocalProvider: () => localProvider as never
     })
-    vi.spyOn(runtime, 'listDetectedManagedWorktrees').mockResolvedValue({
+    vi.spyOn(
+      runtime as unknown as { listDetectedWorktreesForResolvedRepo: () => unknown },
+      'listDetectedWorktreesForResolvedRepo'
+    ).mockResolvedValue({
       repoId: TEST_REPO_ID,
       authoritative: false,
       source: 'metadata-fallback',
@@ -31467,6 +31473,47 @@ describe('OrcaRuntimeService', () => {
     ])
 
     expect(localProvider.listProcesses).not.toHaveBeenCalled()
+  })
+
+  // Why: an explicit connection identity only narrows the selector, it must not
+  // change the grammar. Treating the selector as a bare repo id made every
+  // `path:`/`name:` selector fail repo_not_found on this path alone.
+  it('resolves non-id selectors when a connection identity is supplied', async () => {
+    const deletedId = `${TEST_REPO_ID}::/tmp/deleted`
+    const localProvider = {
+      listProcesses: vi.fn(async () => [
+        { id: `${deletedId}@@deleted-session`, cwd: '/tmp/deleted', title: 'shell' }
+      ]),
+      shutdown: vi.fn(async () => {})
+    }
+    const localRepo = store.getRepos()[0]
+    const runtime = new OrcaRuntimeService(
+      { ...store, getRepos: () => [localRepo, { ...localRepo, connectionId: 'ssh-1' }] } as never,
+      undefined,
+      { getLocalProvider: () => localProvider as never }
+    )
+    vi.spyOn(
+      runtime as unknown as { listDetectedWorktreesForResolvedRepo: () => unknown },
+      'listDetectedWorktreesForResolvedRepo'
+    ).mockResolvedValue({
+      repoId: TEST_REPO_ID,
+      authoritative: true,
+      source: 'git',
+      worktrees: []
+    })
+
+    // `path:` is ambiguous across the two rows; connectionId null selects the local one.
+    const result = await runtime.teardownMissingManagedWorktreeTerminals(
+      `path:${localRepo.path}`,
+      [deletedId],
+      null
+    )
+
+    expect(result).toEqual({ stoppedWorktreeIds: [deletedId] })
+    expect(localProvider.shutdown).toHaveBeenCalledWith(
+      `${deletedId}@@deleted-session`,
+      expect.objectContaining({ immediate: true })
+    )
   })
 
   it('uses the connection-scoped repo when local and SSH repo ids collide', async () => {
@@ -31495,7 +31542,10 @@ describe('OrcaRuntimeService', () => {
           connectionId === 'ssh-1' ? (sshProvider as never) : undefined
       }
     )
-    vi.spyOn(runtime, 'listDetectedManagedWorktrees').mockResolvedValue({
+    vi.spyOn(
+      runtime as unknown as { listDetectedWorktreesForResolvedRepo: () => unknown },
+      'listDetectedWorktreesForResolvedRepo'
+    ).mockResolvedValue({
       repoId: TEST_REPO_ID,
       authoritative: true,
       source: 'git',
