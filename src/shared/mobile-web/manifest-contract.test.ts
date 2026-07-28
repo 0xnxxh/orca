@@ -61,6 +61,16 @@ describe('mobile web manifest contract', () => {
     expect(MobileWebManifestSchema.safeParse(manifest).success).toBe(false)
   })
 
+  it('rejects hashes and build IDs with trailing data', () => {
+    const build = validManifest()
+    build.buildId += '\n'
+    expect(MobileWebManifestSchema.safeParse(build).success).toBe(false)
+
+    const asset = validManifest()
+    asset.assets[2]!.sha256 += '\n'
+    expect(MobileWebManifestSchema.safeParse(asset).success).toBe(false)
+  })
+
   it.each(['../index.html', '/index.html', 'assets//app.js', 'assets\\app.js', 'a%2Fb.js'])(
     'rejects unsafe asset path %s',
     (path) => {

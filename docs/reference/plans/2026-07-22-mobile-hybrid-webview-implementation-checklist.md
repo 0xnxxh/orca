@@ -434,8 +434,8 @@ route is now governed by a separate reviewed ceiling of 10 MiB total, 3 MiB
 gzip, 9.5 MiB of scripts, 256 KiB of styles, and 64 assets. The earlier 8 MiB /
 2 MiB / 7.5 MiB ceilings held before the existing Mermaid presentation was
 moved off its network-loaded executable. The current verified package is
-`f852d8525d2b0e20d79262d74ce3ef74bfa73c3e55b95176bfb1b467beafae61`,
-9,330,210 bytes / 2,697,838 bytes gzip across 49 assets. The lifecycle and
+`b17ead7a3c85071f5cfc45dd695bd457e37a49c4895ad3ac979689ca2a13805f`,
+9,281,663 bytes / 2,684,764 bytes gzip across 49 assets. The lifecycle and
 prompt-card live evidence used earlier packages; the current package
 additionally carries the locally bundled Mermaid engine and preserves
 ambiguous hosted mutation outcomes.
@@ -1545,10 +1545,17 @@ copy.
   predicate. A mirrored TypeScript, Swift, and Kotlin corpus rejects empty,
   absolute, traversal, repeated-separator, percent-encoded, query, fragment,
   backslash, non-ASCII, overlong, and trailing-newline paths while accepting
-  only the reviewed relative form. The packager and verifier now consume one
-  document-CSP contract, and source tests require the iOS and Android response
-  policies to match its exact directive sequence. Broader generated mutation,
-  MIME/CSP behavior, and persisted-cache metadata fuzzing remains open.
+  only the reviewed relative form. Shared application SHA-256, Git object ID,
+  bridge/session ID, domain token, and base64 schemas now also require
+  full-string matches through one protocol-token contract. The directly loaded
+  manifest contract applies the same exact hash rule without adding a runtime
+  dependency to the Node packager. This closes the trailing-newline ambiguity
+  in terminal input, bridge envelopes, package chunks, revisions, and native
+  Swift hashes; Kotlin already used full-string matching. The packager and
+  verifier now consume one document-CSP contract, and source tests require the
+  iOS and Android response policies to match its exact directive sequence.
+  Broader generated mutation, MIME/CSP behavior, and persisted-cache metadata
+  fuzzing remains open.
 - [ ] Fuzz bridge envelopes, schemas, sizes, IDs, ordering, cancellation, and
       subscription lifecycle.
 - [ ] Attempt cross-host, cross-build, cross-workspace, and cross-session races.
@@ -1760,6 +1767,15 @@ Kotlin corpus: 2 shared files / 57 tests, the Swift native fault executable,
 and the refreshed Android module suite across 76 Gradle tasks. Node/mobile
 typechecks, lint, formatting, max-lines, and diff hygiene also pass. The change
 does not alter RNW package content.
+
+The exact protocol-token slice passes all 24 shared mobile-web contract files /
+187 tests, including trailing-data regressions for manifest/package hashes,
+bridge identifiers, terminal identifiers/input base64, Git object IDs, and
+base64url tokens. The mirrored Swift/Kotlin SHA corpus passes the Swift native
+fault executable and refreshed 76-task Android suite. Node/mobile typechecks,
+lint, formatting, max-lines, and diff hygiene pass. The rebuilt production RNW
+package verifies as `b17ead7a3c85071f5cfc45dd695bd457e37a49c4895ad3ac979689ca2a13805f`:
+49 assets, 9,281,663 raw bytes, and 2,684,764 gzip bytes.
 
 | Date       | Workstream              | Evidence                                                                                                                                                                                                                    | Result                                                                                                                                                                                            |
 | ---------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

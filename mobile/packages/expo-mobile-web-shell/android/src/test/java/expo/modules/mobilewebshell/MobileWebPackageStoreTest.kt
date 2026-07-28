@@ -89,6 +89,20 @@ class MobileWebPackageStoreTest {
   }
 
   @Test
+  fun acceptsOnlyExactSha256Tokens() {
+    val invalid = listOf(
+      "",
+      "a".repeat(63),
+      "a".repeat(65),
+      "${"a".repeat(64)}\n",
+      "A".repeat(64)
+    )
+
+    invalid.forEach { assertFalse(it, isMobileWebSha256(it)) }
+    assertEquals(true, isMobileWebSha256("a".repeat(64)))
+  }
+
+  @Test
   fun rejectsQuotedNumericManifestFieldsBeforeCreatingAStage() {
     val root = temporary.newFolder()
     val store = MobileWebPackageStore(root)

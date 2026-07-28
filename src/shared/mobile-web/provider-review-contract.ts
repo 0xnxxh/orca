@@ -3,6 +3,7 @@ import {
   MobileWebRelativePathSchema,
   MobileWebWorkspaceIdSchema
 } from './bridge-operation-contract'
+import { isMobileWebGitObjectId } from './protocol-token-contract'
 import { MobileWebGitRefNameSchema } from './source-control-history-contract'
 
 export const MOBILE_WEB_PROVIDER_REVIEW_COMMENT_LIMIT = 32
@@ -23,9 +24,7 @@ export const MobileWebProviderReviewProviderSchema = z.enum([
   'gitea'
 ])
 
-export const MobileWebProviderReviewHeadSchema = z
-  .string()
-  .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i)
+export const MobileWebProviderReviewHeadSchema = z.string().refine(isMobileWebGitObjectId)
 
 const MobileWebProviderReviewIdentityShape = {
   workspaceId: MobileWebWorkspaceIdSchema,

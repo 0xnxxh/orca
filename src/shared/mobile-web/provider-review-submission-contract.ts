@@ -8,6 +8,7 @@ import {
   MobileWebProviderReviewHeadSchema,
   MobileWebProviderReviewProviderSchema
 } from './provider-review-contract'
+import { isMobileWebBase64UrlIdentifier } from './protocol-token-contract'
 import { MobileWebGitRefNameSchema } from './source-control-history-contract'
 
 export const MOBILE_WEB_PROVIDER_REVIEW_SUBMISSION_COMMENT_LIMIT = 32
@@ -22,7 +23,7 @@ export const MobileWebProviderReviewSubmissionActionSchema = z.enum([
 
 export const MobileWebProviderReviewQueuedCommentSchema = z
   .object({
-    id: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/),
+    id: z.string().refine((value) => isMobileWebBase64UrlIdentifier(value, 16, 64)),
     path: MobileWebRelativePathSchema,
     line: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     startLine: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
@@ -43,7 +44,7 @@ export const MobileWebProviderReviewSubmissionPayloadSchema = z
     provider: MobileWebProviderReviewProviderSchema,
     reviewNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     expectedReviewHead: MobileWebProviderReviewHeadSchema,
-    submissionId: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/),
+    submissionId: z.string().refine((value) => isMobileWebBase64UrlIdentifier(value, 16, 64)),
     action: MobileWebProviderReviewSubmissionActionSchema,
     summary: z.string().trim().max(MOBILE_WEB_PROVIDER_REVIEW_SUBMISSION_SUMMARY_MAX_CHARACTERS),
     comments: z
@@ -81,10 +82,10 @@ export const MobileWebProviderReviewSubmissionResultSchema = z
     provider: MobileWebProviderReviewProviderSchema,
     reviewNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     expectedReviewHead: MobileWebProviderReviewHeadSchema,
-    submissionId: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/),
+    submissionId: z.string().refine((value) => isMobileWebBase64UrlIdentifier(value, 16, 64)),
     action: MobileWebProviderReviewSubmissionActionSchema,
     submittedCommentIds: z
-      .array(z.string().regex(/^[A-Za-z0-9_-]{16,64}$/))
+      .array(z.string().refine((value) => isMobileWebBase64UrlIdentifier(value, 16, 64)))
       .max(MOBILE_WEB_PROVIDER_REVIEW_SUBMISSION_COMMENT_LIMIT),
     outcome: z.literal('completed')
   })

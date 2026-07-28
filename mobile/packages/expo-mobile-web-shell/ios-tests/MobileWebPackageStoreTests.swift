@@ -14,6 +14,7 @@ enum MobileWebPackageStoreTests {
     try stagesAndReadsExactGeneration(root: root.appendingPathComponent("verified"))
     try rejectsMalformedManifests(root: root.appendingPathComponent("manifests"))
     acceptsOnlyExactCanonicalAssetPaths()
+    acceptsOnlyExactSha256Tokens()
     try rejectsQuotedNumericManifestFields(root: root.appendingPathComponent("scalar-types"))
     try rejectsBooleanNumericManifestFields(root: root.appendingPathComponent("boolean-types"))
     try rejectsOversizedManifestInput(root: root.appendingPathComponent("manifest-limit"))
@@ -118,6 +119,19 @@ enum MobileWebPackageStoreTests {
 
     precondition(invalid.allSatisfy { !isSafeMobileWebAssetPath($0) })
     precondition(valid.allSatisfy(isSafeMobileWebAssetPath))
+  }
+
+  private static func acceptsOnlyExactSha256Tokens() {
+    let invalid = [
+      "",
+      String(repeating: "a", count: 63),
+      String(repeating: "a", count: 65),
+      "\(String(repeating: "a", count: 64))\n",
+      String(repeating: "A", count: 64),
+    ]
+
+    precondition(invalid.allSatisfy { !isMobileWebSha256($0) })
+    precondition(isMobileWebSha256(String(repeating: "a", count: 64)))
   }
 
   private static func rejectsQuotedNumericManifestFields(root: URL) throws {

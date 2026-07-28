@@ -3,6 +3,7 @@ import {
   MobileWebRelativePathSchema,
   MobileWebWorkspaceIdSchema
 } from './bridge-operation-contract'
+import { isMobileWebGitObjectId, isMobileWebSha256 } from './protocol-token-contract'
 
 export const MOBILE_WEB_SOURCE_CONTROL_BRANCH_LIMIT = 128
 export const MOBILE_WEB_SOURCE_CONTROL_HISTORY_DEFAULT_LIMIT = 50
@@ -14,7 +15,7 @@ export const MOBILE_WEB_SOURCE_CONTROL_COMPARE_MAX_ENTRIES = 4_000
 export const MOBILE_WEB_SOURCE_CONTROL_HISTORY_RESPONSE_MAX_BYTES = 192 * 1024
 export const MOBILE_WEB_SOURCE_CONTROL_COMPARE_RESPONSE_MAX_BYTES = 192 * 1024
 
-export const MobileWebGitObjectIdSchema = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i)
+export const MobileWebGitObjectIdSchema = z.string().refine(isMobileWebGitObjectId)
 
 export const MobileWebGitRefNameSchema = z
   .string()
@@ -105,10 +106,7 @@ export const MobileWebSourceControlBranchComparePayloadSchema = z
       .min(1)
       .max(MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT)
       .default(MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT),
-    expectedRevision: z
-      .string()
-      .regex(/^[a-f0-9]{64}$/)
-      .optional()
+    expectedRevision: z.string().refine(isMobileWebSha256).optional()
   })
   .strict()
 
@@ -140,7 +138,7 @@ export const MobileWebSourceControlBranchCompareResultSchema = z
     changedFiles: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     commitsAhead: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     status: z.enum(['ready', 'invalid-base', 'unborn-head', 'no-merge-base', 'error']),
-    revision: z.string().regex(/^[a-f0-9]{64}$/),
+    revision: z.string().refine(isMobileWebSha256),
     offset: z.number().int().min(0).max(MOBILE_WEB_SOURCE_CONTROL_COMPARE_MAX_ENTRIES),
     totalEntries: z.number().int().min(0).max(MOBILE_WEB_SOURCE_CONTROL_COMPARE_MAX_ENTRIES),
     entries: z

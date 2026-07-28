@@ -1072,8 +1072,8 @@ Current validation passes mobile and mobile-web typechecks and lints,
 changed-file formatting, max-lines and diff hygiene, and 561 mobile files /
 3,322 tests with 2 expected skips. The independently verified production
 package
-`9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`
-contains 49 assets and verifies at 9,280,463 raw bytes / 2,684,481 gzip bytes.
+`b17ead7a3c85071f5cfc45dd695bd457e37a49c4895ad3ac979689ca2a13805f`
+contains 49 assets and verifies at 9,281,663 raw bytes / 2,684,764 gzip bytes.
 The complete cached-app iOS journey passes Workspace, Accounts, Tasks, Session,
 Files/Preview, Agent History portrait/landscape, Desktop restart and E2EE
 recovery, native-touch resume, Source Control, a third Session diff tab,
@@ -2104,9 +2104,9 @@ The authoritative route now has a separately reviewed ceiling of 10 MiB total,
 from 8 MiB / 2 MiB / 7.5 MiB only after the legacy Mermaid CDN executable was
 replaced by the locally bundled, network-denied engine needed by both native
 and RNW without forking the existing UI. Boundary tests reject every
-measurement above its ceiling. The current 49-asset package is 9,280,463 bytes
-/ 2,684,481 bytes gzip and build
-`9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`.
+measurement above its ceiling. The current 49-asset package is 9,281,663 bytes
+/ 2,684,764 bytes gzip and build
+`b17ead7a3c85071f5cfc45dd695bd457e37a49c4895ad3ac979689ca2a13805f`.
 `build:mobile-web` and release resource mapping therefore select the RNW
 package; the original 2 MiB ceiling continues to govern only the isolated Vite
 infrastructure fixture. Workspace snapshots now page through
@@ -2726,10 +2726,14 @@ hash-shaped JSON numbers fail with
 exact asset-path predicate. A mirrored TypeScript, Swift, and Kotlin corpus
 rejects empty, absolute, traversal, repeated-separator, percent-encoded, query,
 fragment, backslash, non-ASCII, overlong, and trailing-newline paths while
-accepting the reviewed relative form. The RNW packager and verifier consume one
-document-CSP contract, and source tests require both native response policies
-to match its exact directive sequence. Generated mutation and the remaining
-MIME/CSP/cache corpus are still required.
+accepting the reviewed relative form. Shared application SHA-256, Git object
+ID, bridge/session ID, domain token, and base64 schemas also require full-string
+matches through one protocol-token contract. The directly loaded manifest
+contract applies the same exact hash rule locally, and the mirrored native SHA
+corpus enforces it on Swift and Kotlin. The RNW packager and verifier consume
+one document-CSP contract, and source tests require both native response
+policies to match its exact directive sequence. Generated mutation and the
+remaining MIME/CSP/cache corpus are still required.
 
 ## App Store Gate
 

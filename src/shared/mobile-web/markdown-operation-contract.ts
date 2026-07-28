@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { MOBILE_MARKDOWN_EDIT_MAX_BYTES } from '../mobile-markdown-document'
 import { MobileWebRelativePathSchema } from './file-operation-contract'
+import { isMobileWebBase64 } from './protocol-token-contract'
 import { MobileWebWorkspaceIdSchema } from './workspace-operation-contract'
 
 export const MOBILE_WEB_MARKDOWN_CONTENT_MAX_BASE64_CHARACTERS =
@@ -9,8 +10,7 @@ export const MOBILE_WEB_MARKDOWN_CONTENT_MAX_BASE64_CHARACTERS =
 const MobileWebMarkdownBase64Schema = z
   .string()
   .max(MOBILE_WEB_MARKDOWN_CONTENT_MAX_BASE64_CHARACTERS)
-  .regex(/^[A-Za-z0-9+/]*={0,2}$/)
-  .refine((value) => value.length % 4 === 0, 'Invalid base64')
+  .refine(isMobileWebBase64, 'Invalid base64')
 
 const MobileWebMarkdownTargetShape = {
   workspaceId: MobileWebWorkspaceIdSchema,

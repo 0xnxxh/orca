@@ -140,6 +140,22 @@ describe('mobile web terminal output contract', () => {
     expect(MobileWebTerminalOutputEventSchema.safeParse(output({ endSequence: 14 })).success).toBe(
       false
     )
+    expect(
+      MobileWebTerminalRequestSchema.safeParse({
+        operation: 'input',
+        streamId: STREAM_ID,
+        sequence: 1,
+        data: `${base64Bytes(1)}\n`
+      }).success
+    ).toBe(false)
+    expect(
+      MobileWebTerminalRequestSchema.safeParse({
+        operation: 'input',
+        streamId: `${STREAM_ID}\n`,
+        sequence: 1,
+        data: base64Bytes(1)
+      }).success
+    ).toBe(false)
   })
 
   it('detects duplicate and missing byte ranges instead of skipping them', () => {

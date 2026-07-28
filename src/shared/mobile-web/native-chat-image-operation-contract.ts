@@ -1,12 +1,15 @@
 import { z } from 'zod'
 import { MobileWebNativeChatTargetShape } from './native-chat-target-contract'
+import { matchesMobileWebProtocolToken } from './protocol-token-contract'
 
 export const MOBILE_WEB_NATIVE_CHAT_IMAGE_LIMIT = 16
 export const MOBILE_WEB_NATIVE_CHAT_IMAGE_PREVIEW_MAX_CHARACTERS = 256 * 1024
 
 export const MobileWebNativeChatImageIdSchema = z
   .string()
-  .regex(/^native_chat_image_[a-z0-9]+_[a-f0-9]{32}$/)
+  .refine((value) =>
+    matchesMobileWebProtocolToken(value, /^native_chat_image_[a-z0-9]+_[a-f0-9]{32}$/)
+  )
 
 export const MobileWebNativeChatAttachImagePayloadSchema = z
   .object({

@@ -180,7 +180,7 @@ final class MobileWebPackageStore {
         bytes.base64EncodedString() == dataBase64,
         !bytes.isEmpty,
         bytes.count <= chunkByteLimit,
-        isSha256(chunkSha256),
+        isMobileWebSha256(chunkSha256),
         sha256Hex(bytes) == chunkSha256
       else {
         throw MobileWebStoreError("mobile_web_stage_chunk_invalid")
@@ -267,7 +267,7 @@ final class MobileWebPackageStore {
       let hostKey = try validatedHostKey(hostIdentity)
       let hostRoot = try cacheRoot().appendingPathComponent(hostKey, isDirectory: true)
       if let buildId {
-        guard isSha256(buildId) else {
+        guard isMobileWebSha256(buildId) else {
           throw MobileWebStoreError("mobile_web_generation_invalid")
         }
         return try openVerifiedSession(
@@ -485,7 +485,7 @@ final class MobileWebPackageStore {
         == Set(["schemaVersion", "buildId", "bridge", "entrypoint", "totalBytes", "assets"]),
       strictJsonInt(manifest["schemaVersion"]) == 1,
       let buildId = manifest["buildId"] as? String,
-      isSha256(buildId),
+      isMobileWebSha256(buildId),
       sha256Hex(Data(canonicalManifestJson.utf8)) == buildId,
       let bridge = manifest["bridge"] as? [String: Any],
       Set(bridge.keys) == Set(["minimum", "testedThrough"]),
@@ -522,7 +522,7 @@ final class MobileWebPackageStore {
         let contentType = value["contentType"] as? String,
         let role = value["role"] as? String,
         isSafeMobileWebAssetPath(path),
-        isSha256(hash),
+        isMobileWebSha256(hash),
         length > 0,
         length <= assetByteLimit,
         records[path] == nil,
@@ -611,7 +611,9 @@ final class MobileWebPackageStore {
     do {
       let data = try Data(contentsOf: hostRoot.appendingPathComponent("activation.json"))
       let activation = try JSONDecoder().decode(MobileWebActivationRecord.self, from: data)
-      guard isSha256(activation.active), activation.previous == nil || isSha256(activation.previous!)
+      guard
+        isMobileWebSha256(activation.active),
+        activation.previous == nil || isMobileWebSha256(activation.previous!)
       else {
         throw MobileWebStoreError("mobile_web_activation_invalid")
       }
@@ -705,7 +707,7 @@ final class MobileWebPackageStore {
     let hostRoots = try fileManager.contentsOfDirectory(
       at: cacheRoot,
       includingPropertiesForKeys: [.isDirectoryKey]
-    ).filter { isSha256($0.lastPathComponent) }
+    ).filter { isMobileWebSha256($0.lastPathComponent) }
     var candidates = [MobileWebCacheGenerationCandidate]()
     for hostRoot in hostRoots {
       let generationsRoot = hostRoot.appendingPathComponent("generations", isDirectory: true)
@@ -713,7 +715,7 @@ final class MobileWebPackageStore {
         let generationRoots = try? fileManager.contentsOfDirectory(
           at: generationsRoot,
           includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey]
-        ).filter({ isSha256($0.lastPathComponent) })
+        ).filter({ isMobileWebSha256($0.lastPathComponent) })
       else { continue }
       let buildIds = Set(generationRoots.map(\.lastPathComponent))
       var protected = Set(
@@ -756,7 +758,7 @@ final class MobileWebPackageStore {
       )
     else { return }
     do {
-      for hostRoot in hostRoots where isSha256(hostRoot.lastPathComponent) {
+      for hostRoot in hostRoots where isMobileWebSha256(hostRoot.lastPathComponent) {
         let stagingRoot = hostRoot.appendingPathComponent("staging", isDirectory: true)
         if let stagedRoots = try? fileManager.contentsOfDirectory(
           at: stagingRoot,
@@ -902,8 +904,8 @@ private func jsonObject(_ value: String) throws -> Any {
   try JSONSerialization.jsonObject(with: Data(value.utf8), options: [.fragmentsAllowed])
 }
 
-private func isSha256(_ value: String) -> Bool {
-  value.range(of: sha256Pattern, options: .regularExpression) != nil
+func isMobileWebSha256(_ value: String) -> Bool {
+  value.range(of: sha256Pattern, options: .regularExpression) == value.startIndex..<value.endIndex
 }
 
 private func strictJsonInt(_ value: Any?) -> Int? {

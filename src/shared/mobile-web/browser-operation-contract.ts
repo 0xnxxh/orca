@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { isMobileWebBase64 } from './protocol-token-contract'
 import { MobileWebWorkspaceIdSchema } from './workspace-operation-contract'
 
 export const MOBILE_WEB_BROWSER_PAGE_ID_MAX_LENGTH = 512
@@ -135,7 +136,7 @@ const MobileWebBrowserFrameChunkSchema = z
       .string()
       .min(1)
       .max(MOBILE_WEB_BROWSER_FRAME_CHUNK_BASE64_MAX_LENGTH)
-      .regex(/^[A-Za-z0-9+/]*={0,2}$/)
+      .refine(isMobileWebBase64)
   })
   .strict()
   .superRefine((event, context) => {

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { isMobileWebBase64, isMobileWebSha256 } from './protocol-token-contract'
 import { MobileWebWorkspaceIdSchema } from './workspace-operation-contract'
 
 export const MOBILE_WEB_FILE_LIST_LIMIT = 32
@@ -90,7 +91,7 @@ export const MobileWebFileDirectoryResultSchema = z
   .object({
     workspaceId: MobileWebWorkspaceIdSchema,
     relativePath: MobileWebDirectoryPathSchema,
-    revision: z.string().regex(/^[a-f0-9]{64}$/),
+    revision: z.string().refine(isMobileWebSha256),
     entries: z.array(MobileWebFileDirectoryEntrySchema).max(MOBILE_WEB_FILE_DIRECTORY_LIMIT),
     truncated: z.boolean()
   })
@@ -141,11 +142,7 @@ export type MobileWebFileChunkResult = Omit<MobileWebFileChunkWireResult, 'conte
 }
 
 function boundedBase64Schema(maximum: number) {
-  return z
-    .string()
-    .max(maximum)
-    .regex(/^[A-Za-z0-9+/]*={0,2}$/)
-    .refine((value) => value.length % 4 === 0, 'Invalid base64')
+  return z.string().max(maximum).refine(isMobileWebBase64, 'Invalid base64')
 }
 
 function decodedBase64Length(value: string): number {

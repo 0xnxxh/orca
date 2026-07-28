@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { MobileWebWorkspaceIdSchema } from './bridge-operation-contract'
+import { isMobileWebGitObjectId } from './protocol-token-contract'
 import { MobileWebSourceControlStatusEntrySchema } from './source-control-operation-contract'
 
 export const MOBILE_WEB_SOURCE_CONTROL_MUTATION_LIMIT = 32
@@ -15,10 +16,7 @@ export const MobileWebSourceControlMutationEntrySchema =
     conflictStatus: true
   })
 
-const ExpectedHeadSchema = z
-  .string()
-  .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i)
-  .nullable()
+const ExpectedHeadSchema = z.string().refine(isMobileWebGitObjectId).nullable()
 
 const MutationPayloadShape = {
   workspaceId: MobileWebWorkspaceIdSchema,

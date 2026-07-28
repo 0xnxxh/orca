@@ -3,6 +3,7 @@ import {
   MobileWebRelativePathSchema,
   MobileWebWorkspaceIdSchema
 } from './bridge-operation-contract'
+import { isMobileWebBase64, isMobileWebSha256 } from './protocol-token-contract'
 
 export const MOBILE_WEB_FILE_EDIT_MAX_BYTES = 128 * 1024
 export const MOBILE_WEB_FILE_EDIT_MAX_BASE64_CHARACTERS =
@@ -17,7 +18,7 @@ export const MobileWebFileWritePayloadSchema = z
   .object({
     workspaceId: MobileWebWorkspaceIdSchema,
     relativePath: MobileWebRelativePathSchema,
-    expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
+    expectedRevision: z.string().refine(isMobileWebSha256),
     contentBase64: MobileWebFileEditBase64Schema
   })
   .strict()
@@ -26,7 +27,7 @@ export const MobileWebFileWriteResultSchema = z
   .object({
     workspaceId: MobileWebWorkspaceIdSchema,
     relativePath: MobileWebRelativePathSchema,
-    revision: z.string().regex(/^[a-f0-9]{64}$/),
+    revision: z.string().refine(isMobileWebSha256),
     byteLength: z.number().int().nonnegative().max(MOBILE_WEB_FILE_EDIT_MAX_BYTES),
     outcome: z.literal('updated')
   })
@@ -36,10 +37,7 @@ export type MobileWebFileWritePayload = z.infer<typeof MobileWebFileWritePayload
 export type MobileWebFileWriteResult = z.infer<typeof MobileWebFileWriteResultSchema>
 
 function isBoundedBase64(value: string): boolean {
-  if (
-    value.length % 4 !== 0 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
-  ) {
+  if (!isMobileWebBase64(value)) {
     return false
   }
   const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0

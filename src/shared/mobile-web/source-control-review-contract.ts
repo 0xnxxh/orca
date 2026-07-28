@@ -5,6 +5,7 @@ import {
   MobileWebDiffRowSchema
 } from './source-control-operation-contract'
 import { MobileWebRelativePathSchema } from './file-operation-contract'
+import { isMobileWebGitObjectId, isMobileWebSha256 } from './protocol-token-contract'
 import { MobileWebWorkspaceIdSchema } from './workspace-operation-contract'
 
 export const MOBILE_WEB_REVIEW_COMMENT_LIMIT = 64
@@ -12,8 +13,8 @@ export const MOBILE_WEB_REVIEW_FILE_STATE_LIMIT = 128
 export const MOBILE_WEB_REVIEW_COMMENT_MAX_CHARACTERS = 8_192
 export const MOBILE_WEB_REVIEW_TERMINAL_TEXT_MAX_CHARACTERS = 96 * 1_024
 
-const RevisionSchema = z.string().regex(/^[a-f0-9]{64}$/)
-const ObjectIdSchema = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i)
+const RevisionSchema = z.string().refine(isMobileWebSha256)
+const ObjectIdSchema = z.string().refine(isMobileWebGitObjectId)
 const TimestampSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const ReviewScopeSchema = z.enum(['unstaged', 'staged', 'branch'])
 const DiffIdentitySchema = z.string().min(1).max(512)

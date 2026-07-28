@@ -52,7 +52,7 @@ const MobileWebAssetPathSchema = z
 export const MobileWebAssetSchema = z
   .object({
     path: MobileWebAssetPathSchema,
-    sha256: z.string().regex(SHA256_PATTERN),
+    sha256: z.string().refine(isMobileWebSha256),
     byteLength: z.number().int().positive().max(MOBILE_WEB_MAX_ASSET_BYTES),
     contentType: MobileWebContentTypeSchema,
     role: MobileWebAssetRoleSchema
@@ -74,7 +74,7 @@ const MobileWebBridgeRangeSchema = z
 export const MobileWebManifestSchema = z
   .object({
     schemaVersion: z.literal(MOBILE_WEB_MANIFEST_SCHEMA_VERSION),
-    buildId: z.string().regex(SHA256_PATTERN),
+    buildId: z.string().refine(isMobileWebSha256),
     bridge: MobileWebBridgeRangeSchema,
     entrypoint: MobileWebAssetPathSchema,
     totalBytes: z.number().int().positive().max(MOBILE_WEB_MAX_PACKAGE_BYTES),
@@ -110,6 +110,10 @@ export function isMobileWebAssetPath(path: string): boolean {
     return false
   }
   return path.split('/').every((segment) => segment !== '.' && segment !== '..')
+}
+
+function isMobileWebSha256(value: string): boolean {
+  return SHA256_PATTERN.exec(value)?.[0] === value
 }
 
 export function serializeMobileWebManifestForBuildId(manifest: MobileWebManifest): string {

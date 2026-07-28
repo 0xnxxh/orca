@@ -506,6 +506,12 @@ cover the full string rather than ending before a trailing newline. The
 mirrored native/shared corpus rejects empty, absolute, traversal,
 repeated-separator, percent-encoded, query, fragment, backslash, non-ASCII,
 overlong, and trailing-newline paths.
+The shared protocol-token contract likewise requires exact SHA-256, Git object
+ID, fixed/ranged base64url, canonical base64, and domain-token matches. The
+directly loaded manifest contract applies the same exact hash rule locally.
+Bridge envelopes, terminal streams, package delivery, file content,
+source-control revisions, and provider-review contracts consume full-string
+predicates rather than newline-permissive end-anchored Zod regexes.
 
 ## Next Inventory Action
 
@@ -564,7 +570,7 @@ forking the shared presentation. Source Control measures 0.736% changed pixels
 nested syntax text follows the native effective font.
 
 The interrupted-transcript versus hook-status mismatch and a real structured
-prompt response pass Host 37 Simulator replay. Current package `9ed8c7f7…`
+prompt response pass Host 37 Simulator replay. Current package `b17ead7a…`
 also carries the network-denied local Mermaid engine and its WebKit-compatible
 token-bound parent/frame handoff. Classic SSH
 transcript authority and reconnect now pass a real Docker provider journey

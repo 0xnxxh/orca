@@ -95,8 +95,8 @@ validation passes 552 mobile files / 3,291 tests with 2 expected skips and
 root/mobile/mobile-web lint, reliability gates, changed-file and full-mobile
 formatting, localization, and the max-lines ratchet pass.
 The independently verified React Native Web package is
-`9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`:
-49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes. The current mobile
+`b17ead7a3c85071f5cfc45dd695bd457e37a49c4895ad3ac979689ca2a13805f`:
+49 assets, 9,281,663 raw bytes, and 2,684,764 gzip bytes. The current mobile
 suite passes 568 files / 3,373 tests with 2 expected skips. Mobile and
 mobile-web typechecks and lints, changed-file formatting, max-lines, package
 verification, and diff hygiene pass. The repository-wide formatter still
@@ -169,6 +169,10 @@ Manifest and package-RPC schemas now share one exact asset-path predicate. A
 mirrored TypeScript, Swift, and Kotlin corpus rejects empty, absolute,
 traversal, repeated-separator, percent-encoded, query, fragment, backslash,
 non-ASCII, overlong, and trailing-newline paths.
+Shared application SHA-256, Git object ID, bridge/session ID, domain token, and
+base64 schemas now require full-string matches through one protocol-token
+contract. The directly loaded manifest applies the same exact hash rule
+locally, and the mirrored native SHA corpus enforces it on Swift and Kotlin.
 The remaining security work below is release-app corpus testing, fuzzing,
 cross-scope races, privacy/authorization audit, and independent review.
 
@@ -217,8 +221,10 @@ cross-scope races, privacy/authorization audit, and independent review.
       percent-encoded or query-bearing asset requests. One document-CSP contract
       now drives packaging/verification and exact native source parity.
       Manifest and package RPC reuse one exact path predicate, and the same
-      18-case path corpus passes in TypeScript, Swift, and Kotlin. A fresh
-      exact-app rerun, generated mutation, and the other listed boundaries
+      18-case path corpus passes in TypeScript, Swift, and Kotlin. All shared
+      hash, Git object, bridge/session ID, domain token, and base64 schemas also
+      require exact full-string matches; native Swift/Kotlin SHA corpora pass. A
+      fresh exact-app rerun, generated mutation, and the other listed boundaries
       remain.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,
       reconnect, process-loss, and host-removal races.

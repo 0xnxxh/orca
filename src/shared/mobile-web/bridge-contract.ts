@@ -6,6 +6,7 @@ import {
   MOBILE_WEB_BRIDGE_MAX_PENDING_REQUESTS
 } from './bridge-limits'
 import { MOBILE_WEB_BRIDGE_PROTOCOL_VERSION } from './bridge-protocol-version'
+import { isMobileWebBase64UrlIdentifier, isMobileWebSha256 } from './protocol-token-contract'
 import {
   isMobileWebBridgeOperation,
   MobileWebBridgeCapabilitySchema,
@@ -27,10 +28,6 @@ export {
   MOBILE_WEB_BRIDGE_MAX_SUBSCRIPTIONS
 } from './bridge-limits'
 export { MOBILE_WEB_BRIDGE_PROTOCOL_VERSION } from './bridge-protocol-version'
-
-const BUILD_ID_PATTERN = /^[a-f0-9]{64}$/
-const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/
-const MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/
 
 const MobileWebBridgeOperationShape = {
   capability: MobileWebBridgeCapabilitySchema,
@@ -57,10 +54,10 @@ export const MobileWebBridgeErrorCodeSchema = z.enum([
   'internal'
 ])
 
-const ShellSessionIdSchema = z.string().regex(SESSION_ID_PATTERN)
-const BuildIdSchema = z.string().regex(BUILD_ID_PATTERN)
-const RequestIdSchema = z.string().regex(MESSAGE_ID_PATTERN)
-const SubscriptionIdSchema = z.string().regex(MESSAGE_ID_PATTERN)
+const ShellSessionIdSchema = z.string().refine((value) => isMobileWebBase64UrlIdentifier(value, 43))
+const BuildIdSchema = z.string().refine(isMobileWebSha256)
+const RequestIdSchema = z.string().refine((value) => isMobileWebBase64UrlIdentifier(value, 22))
+const SubscriptionIdSchema = z.string().refine((value) => isMobileWebBase64UrlIdentifier(value, 22))
 const SequenceSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 
 const PageEnvelopeSchema = z.object({

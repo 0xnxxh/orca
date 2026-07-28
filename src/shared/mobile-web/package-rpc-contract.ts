@@ -4,6 +4,7 @@ import {
   MobileWebManifestSchema,
   isMobileWebAssetPath
 } from './manifest-contract'
+import { isMobileWebBase64, isMobileWebSha256 } from './protocol-token-contract'
 
 export const MOBILE_WEB_PACKAGE_MAX_CONCURRENT_READS = 4
 export const MOBILE_WEB_PACKAGE_MAX_IN_FLIGHT_BYTES =
@@ -25,8 +26,6 @@ export const MOBILE_WEB_PACKAGE_ERROR_CODES = [
   'mobile_web_package_cancelled'
 ] as const
 
-const SHA256_PATTERN = /^[a-f0-9]{64}$/
-const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
 const AssetPathSchema = z
   .string()
   .refine(isMobileWebAssetPath, 'Asset path must be normalized and relative')
@@ -40,7 +39,7 @@ export const MobileWebPackageManifestResponseSchema = z
 
 export const MobileWebPackageAssetParamsSchema = z
   .object({
-    buildId: z.string().regex(SHA256_PATTERN),
+    buildId: z.string().refine(isMobileWebSha256),
     path: AssetPathSchema,
     offset: z.number().int().nonnegative()
   })
@@ -48,12 +47,16 @@ export const MobileWebPackageAssetParamsSchema = z
 
 export const MobileWebPackageAssetChunkSchema = z
   .object({
-    buildId: z.string().regex(SHA256_PATTERN),
+    buildId: z.string().refine(isMobileWebSha256),
     path: AssetPathSchema,
     offset: z.number().int().nonnegative(),
     byteLength: z.number().int().positive().max(MOBILE_WEB_PACKAGE_CHUNK_BYTES),
-    sha256: z.string().regex(SHA256_PATTERN),
-    dataBase64: z.string().min(4).max(MOBILE_WEB_PACKAGE_CHUNK_BASE64_CHARS).regex(BASE64_PATTERN),
+    sha256: z.string().refine(isMobileWebSha256),
+    dataBase64: z
+      .string()
+      .min(4)
+      .max(MOBILE_WEB_PACKAGE_CHUNK_BASE64_CHARS)
+      .refine(isMobileWebBase64),
     eof: z.boolean()
   })
   .strict()

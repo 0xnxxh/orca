@@ -64,6 +64,16 @@ describe('mobile web package RPC contract', () => {
     )
   })
 
+  it.each([
+    ['build ID', { buildId: `${BUILD_ID}\n` }],
+    ['chunk hash', { sha256: `${'c'.repeat(64)}\n` }],
+    ['base64 data', { dataBase64: `${Buffer.from('abc').toString('base64')}\n` }]
+  ])('rejects trailing data in %s', (_case, mutation) => {
+    expect(
+      MobileWebPackageAssetChunkSchema.safeParse({ ...validChunk(), ...mutation }).success
+    ).toBe(false)
+  })
+
   it('rejects encoded data beyond the exact chunk ceiling', () => {
     const chunk = validChunk()
     chunk.byteLength = 48 * 1024

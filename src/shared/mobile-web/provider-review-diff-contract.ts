@@ -7,6 +7,7 @@ import {
   MobileWebProviderReviewHeadSchema,
   MobileWebProviderReviewProviderSchema
 } from './provider-review-contract'
+import { isMobileWebSha256 } from './protocol-token-contract'
 import { MobileWebGitRefNameSchema } from './source-control-history-contract'
 import {
   MOBILE_WEB_DIFF_MAX_ROWS,
@@ -38,10 +39,7 @@ export const MobileWebProviderReviewDiffPayloadSchema = z
       .min(1)
       .max(MOBILE_WEB_DIFF_PAGE_LIMIT)
       .default(MOBILE_WEB_DIFF_PAGE_LIMIT),
-    expectedRevision: z
-      .string()
-      .regex(/^[a-f0-9]{64}$/)
-      .optional(),
+    expectedRevision: z.string().refine(isMobileWebSha256).optional(),
     focusLine: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional()
   })
   .strict()
@@ -64,7 +62,7 @@ const MobileWebProviderReviewTextDiffResultSchema = z
   .object({
     ...MobileWebProviderReviewDiffResultIdentityShape,
     kind: z.literal('text'),
-    revision: z.string().regex(/^[a-f0-9]{64}$/),
+    revision: z.string().refine(isMobileWebSha256),
     offset: z.number().int().min(0).max(MOBILE_WEB_DIFF_MAX_ROWS),
     totalRows: z.number().int().min(0).max(MOBILE_WEB_DIFF_MAX_ROWS),
     rows: z.array(MobileWebDiffRowSchema).max(MOBILE_WEB_DIFF_PAGE_LIMIT),

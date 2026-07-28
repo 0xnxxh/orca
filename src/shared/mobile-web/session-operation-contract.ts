@@ -5,6 +5,7 @@ import {
   MobileWebNativeChatLaunchAgentSchema,
   MobileWebNativeChatSessionIdSchema
 } from './native-chat-operation-contract'
+import { matchesMobileWebProtocolToken } from './protocol-token-contract'
 import { MobileWebWorkspaceIdSchema } from './workspace-operation-contract'
 
 export const MOBILE_WEB_SESSION_TAB_LIMIT = 200
@@ -21,7 +22,7 @@ const MobileWebSessionAgentSchema = z
   .string()
   .min(1)
   .max(64)
-  .regex(/^[a-z0-9-]+$/)
+  .refine((value) => matchesMobileWebProtocolToken(value, /^[a-z0-9-]+$/))
 export const MobileWebSessionCreateAgentPayloadSchema = z
   .object({
     workspaceId: MobileWebWorkspaceIdSchema,
@@ -52,7 +53,7 @@ const MobileWebSessionLanguageSchema = z
   .string()
   .min(1)
   .max(64)
-  .regex(/^[A-Za-z0-9_+.-]+$/)
+  .refine((value) => matchesMobileWebProtocolToken(value, /^[A-Za-z0-9_+.-]+$/))
 
 export const MobileWebSessionTabSchema = z.discriminatedUnion('type', [
   z

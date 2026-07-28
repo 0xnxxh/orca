@@ -6,13 +6,14 @@ import {
   MAX_QUICK_COMMAND_TERMINAL_TEXT_LENGTH,
   MAX_QUICK_COMMANDS
 } from '../terminal-quick-command-limits'
+import { matchesMobileWebProtocolToken } from './protocol-token-contract'
 import { MobileWebWorkspaceIdSchema } from './workspace-operation-contract'
 
 const MobileWebQuickCommandAgentSchema = z
   .string()
   .min(1)
   .max(64)
-  .regex(/^[a-z0-9-]+$/)
+  .refine((value) => matchesMobileWebProtocolToken(value, /^[a-z0-9-]+$/))
 const MobileWebQuickCommandScopeSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('global') }).strict(),
   z

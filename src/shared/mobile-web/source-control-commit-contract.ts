@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { MobileWebWorkspaceIdSchema } from './bridge-operation-contract'
+import { isMobileWebGitObjectId } from './protocol-token-contract'
 import { MobileWebSourceControlMutationEntrySchema } from './source-control-mutation-contract'
 
 export const MOBILE_WEB_COMMIT_MESSAGE_MAX_CHARACTERS = 10_000
@@ -7,7 +8,7 @@ export const MOBILE_WEB_COMMIT_RESULT_ERROR_MAX_CHARACTERS = 2_000
 export const MOBILE_WEB_COMMIT_AGENT_LABEL_MAX_CHARACTERS = 160
 export const MOBILE_WEB_COMMIT_STAGED_ENTRY_LIMIT = 64
 
-const FullGitObjectIdSchema = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i)
+const FullGitObjectIdSchema = z.string().refine(isMobileWebGitObjectId)
 
 export const MobileWebSourceControlCommitEntrySchema =
   MobileWebSourceControlMutationEntrySchema.extend({

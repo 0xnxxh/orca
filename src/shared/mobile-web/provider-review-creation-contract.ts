@@ -1,6 +1,7 @@
 import { z } from 'zod'
-import { MobileWebWorkspaceIdSchema } from './workspace-operation-contract'
+import { isMobileWebGitObjectId } from './protocol-token-contract'
 import { MobileWebGitRefNameSchema } from './source-control-history-contract'
+import { MobileWebWorkspaceIdSchema } from './workspace-operation-contract'
 
 const ProviderSchema = z.enum([
   'github',
@@ -11,7 +12,7 @@ const ProviderSchema = z.enum([
   'unsupported'
 ])
 const CreatableProviderSchema = ProviderSchema.exclude(['unsupported'])
-const HeadSchema = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i)
+const HeadSchema = z.string().refine(isMobileWebGitObjectId)
 const ReviewNumberSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 const HttpsUrlSchema = z
   .string()

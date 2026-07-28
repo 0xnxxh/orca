@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { MobileWebRelativePathSchema } from './file-operation-contract'
+import { isMobileWebGitObjectId, isMobileWebSha256 } from './protocol-token-contract'
 import { MobileWebWorkspaceIdSchema } from './workspace-operation-contract'
 
 export const MOBILE_WEB_SOURCE_CONTROL_STATUS_LIMIT = 64
@@ -58,10 +59,7 @@ export const MobileWebSourceControlStatusResultSchema = z
   .object({
     workspaceId: MobileWebWorkspaceIdSchema,
     branch: z.string().min(1).max(240).optional(),
-    head: z
-      .string()
-      .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i)
-      .optional(),
+    head: z.string().refine(isMobileWebGitObjectId).optional(),
     conflictOperation: z.enum(['merge', 'rebase', 'cherry-pick', 'unknown']),
     entries: z
       .array(MobileWebSourceControlStatusEntrySchema)
@@ -83,10 +81,7 @@ export const MobileWebSourceControlDiffPayloadSchema = z
       .min(1)
       .max(MOBILE_WEB_DIFF_PAGE_LIMIT)
       .default(MOBILE_WEB_DIFF_PAGE_LIMIT),
-    expectedRevision: z
-      .string()
-      .regex(/^[a-f0-9]{64}$/)
-      .optional()
+    expectedRevision: z.string().refine(isMobileWebSha256).optional()
   })
   .strict()
 
@@ -115,7 +110,7 @@ const MobileWebSourceControlTextDiffResultSchema = z
   .object({
     ...MobileWebSourceControlDiffIdentityShape,
     kind: z.literal('text'),
-    revision: z.string().regex(/^[a-f0-9]{64}$/),
+    revision: z.string().refine(isMobileWebSha256),
     offset: z.number().int().min(0).max(MOBILE_WEB_DIFF_MAX_ROWS),
     totalRows: z.number().int().min(0).max(MOBILE_WEB_DIFF_MAX_ROWS),
     rows: z.array(MobileWebDiffRowSchema).max(MOBILE_WEB_DIFF_PAGE_LIMIT),

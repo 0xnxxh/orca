@@ -133,7 +133,7 @@ internal class MobileWebPackageStore internal constructor(
       bytes.isNotEmpty() &&
         bytes.size <= CHUNK_BYTE_LIMIT &&
         Base64.getEncoder().encodeToString(bytes) == dataBase64 &&
-        SHA256_PATTERN.matches(chunkSha256) &&
+        isMobileWebSha256(chunkSha256) &&
         sha256Hex(bytes) == chunkSha256
     ) { "mobile_web_stage_chunk_invalid" }
     val file = assetFile(stage.root, path)
@@ -193,7 +193,7 @@ internal class MobileWebPackageStore internal constructor(
     val hostKey = validatedHostKey(hostIdentity)
     val hostRoot = File(cacheRoot, hostKey)
     if (buildId != null) {
-      require(SHA256_PATTERN.matches(buildId)) { "mobile_web_generation_invalid" }
+      require(isMobileWebSha256(buildId)) { "mobile_web_generation_invalid" }
       return openVerifiedSession(hostKey, hostRoot, buildId, bridgeVersion)
     }
     val activation = readActivation(hostRoot)
@@ -351,7 +351,7 @@ internal class MobileWebPackageStore internal constructor(
     ) { "mobile_web_stage_manifest_invalid" }
     val buildId = strictJsonString(manifest, "buildId") ?: ""
     require(
-      SHA256_PATTERN.matches(buildId) &&
+      isMobileWebSha256(buildId) &&
         sha256Hex(canonicalManifestJson.toByteArray(Charsets.UTF_8)) == buildId
     ) { "mobile_web_stage_manifest_invalid" }
     val expected = JSONObject(manifestJson).apply { remove("buildId") }
@@ -377,7 +377,7 @@ internal class MobileWebPackageStore internal constructor(
       val role = strictJsonString(value, "role") ?: ""
       require(
         isSafeMobileWebAssetPath(path) &&
-          SHA256_PATTERN.matches(hash) &&
+          isMobileWebSha256(hash) &&
           length in 1..ASSET_BYTE_LIMIT &&
           path !in assets &&
           (previousPath?.let { it < path } ?: true) &&
@@ -438,7 +438,7 @@ internal class MobileWebPackageStore internal constructor(
     } else {
       null
     }
-    require(SHA256_PATTERN.matches(active) && (previous == null || SHA256_PATTERN.matches(previous)))
+    require(isMobileWebSha256(active) && (previous == null || isMobileWebSha256(previous)))
     active to previous
   } catch (_: Exception) {
     throw IllegalArgumentException("mobile_web_activation_invalid")
@@ -504,10 +504,10 @@ internal class MobileWebPackageStore internal constructor(
 
   private fun evictionCandidates(): List<MobileWebCacheGenerationCandidate> =
     cacheRoot.listFiles()
-      ?.filter { it.isDirectory && SHA256_PATTERN.matches(it.name) }
+      ?.filter { it.isDirectory && isMobileWebSha256(it.name) }
       ?.flatMap { hostRoot ->
         val generationRoots = File(hostRoot, "generations").listFiles()
-          ?.filter { it.isDirectory && SHA256_PATTERN.matches(it.name) }
+          ?.filter { it.isDirectory && isMobileWebSha256(it.name) }
           .orEmpty()
         val buildIds = generationRoots.map { it.name }.toSet()
         val protected = sessions.values
@@ -541,7 +541,7 @@ internal class MobileWebPackageStore internal constructor(
     try {
       val liveStageRoots = stages.values.mapTo(mutableSetOf()) { it.root.canonicalPath }
       cacheRoot.listFiles()
-        ?.filter { it.isDirectory && SHA256_PATTERN.matches(it.name) }
+        ?.filter { it.isDirectory && isMobileWebSha256(it.name) }
         ?.forEach { hostRoot ->
           File(hostRoot, "staging").listFiles()?.forEach { stagedRoot ->
             if (stagedRoot.canonicalPath !in liveStageRoots) {
@@ -619,6 +619,8 @@ internal fun isSafeMobileWebAssetPath(path: String): Boolean =
     !path.contains('#') &&
     SAFE_PATH_PATTERN.matches(path) &&
     path.split('/').all { it != "." && it != ".." }
+
+internal fun isMobileWebSha256(value: String): Boolean = SHA256_PATTERN.matches(value)
 
 private fun isValidAssetMetadata(
   path: String,

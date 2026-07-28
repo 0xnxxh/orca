@@ -4,6 +4,7 @@ import {
   MobileWebRelativePathSchema,
   MobileWebWorkspaceIdSchema
 } from './bridge-operation-contract'
+import { isMobileWebBase64, isMobileWebBase64UrlIdentifier } from './protocol-token-contract'
 
 export const MOBILE_WEB_TERMINAL_PATH_MAX_CHARACTERS = 1024
 export const MOBILE_WEB_TERMINAL_ARTIFACT_MAX_RECORDS = 32
@@ -11,7 +12,9 @@ export const MOBILE_WEB_TERMINAL_ARTIFACT_TTL_MS = 2 * 60 * 1000
 export const MOBILE_WEB_TERMINAL_ARTIFACT_TEXT_MAX_BYTES = 1024 * 1024
 export const MOBILE_WEB_TERMINAL_ARTIFACT_RASTER_MAX_BYTES = 2 * 1024 * 1024
 
-const TerminalArtifactTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/)
+const TerminalArtifactTokenSchema = z
+  .string()
+  .refine((value) => isMobileWebBase64UrlIdentifier(value, 43))
 const TerminalTabIdSchema = z.string().min(1).max(512)
 const TerminalLocationSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).nullable()
 const TerminalArtifactDisplayNameSchema = z
@@ -34,8 +37,7 @@ const TerminalPathTextSchema = z
 const TerminalArtifactBase64Schema = z
   .string()
   .max(Math.ceil(MOBILE_WEB_FILE_CHUNK_MAX_BYTES / 3) * 4)
-  .regex(/^[A-Za-z0-9+/]*={0,2}$/)
-  .refine((value) => value.length % 4 === 0, 'Invalid base64')
+  .refine(isMobileWebBase64, 'Invalid base64')
   .refine(hasCanonicalBase64Padding, 'Non-canonical base64')
 
 export const MobileWebTerminalPathResolvePayloadSchema = z

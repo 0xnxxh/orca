@@ -1,5 +1,10 @@
 import { z } from 'zod'
 import { MobileWebBridgeErrorCodeSchema } from './bridge-contract'
+import {
+  isMobileWebBase64,
+  isMobileWebBase64UrlIdentifier,
+  isMobileWebSha256
+} from './protocol-token-contract'
 
 export const MOBILE_WEB_TERMINAL_MAX_INPUT_BYTES = 16 * 1024
 export const MOBILE_WEB_TERMINAL_MAX_OUTPUT_BATCH_BYTES = 64 * 1024
@@ -7,15 +12,11 @@ export const MOBILE_WEB_TERMINAL_SNAPSHOT_CHUNK_BYTES = 48 * 1024
 export const MOBILE_WEB_TERMINAL_MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024
 export const MOBILE_WEB_TERMINAL_MAX_OUTSTANDING_BYTES = 256 * 1024
 
-const SHA256_PATTERN = /^[a-f0-9]{64}$/
-const STREAM_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/
-const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
-
-const StreamIdSchema = z.string().regex(STREAM_ID_PATTERN)
+const StreamIdSchema = z.string().refine((value) => isMobileWebBase64UrlIdentifier(value, 22))
 const SequenceSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const WorkspaceIdSchema = z.string().min(1).max(512)
 const TabIdSchema = z.string().min(1).max(512)
-const SnapshotIdSchema = z.string().regex(STREAM_ID_PATTERN)
+const SnapshotIdSchema = z.string().refine((value) => isMobileWebBase64UrlIdentifier(value, 22))
 const ViewportSchema = z
   .object({
     cols: z.number().int().min(2).max(1_000),
@@ -171,7 +172,7 @@ const SnapshotStartEventSchema = z
     viewport: ViewportSchema,
     totalBytes: z.number().int().nonnegative().max(MOBILE_WEB_TERMINAL_MAX_SNAPSHOT_BYTES),
     throughSequence: SequenceSchema,
-    sha256: z.string().regex(SHA256_PATTERN),
+    sha256: z.string().refine(isMobileWebSha256),
     truncated: z.boolean(),
     source: z.enum(['host-model', 'renderer'])
   })
@@ -199,7 +200,7 @@ const SnapshotEndEventSchema = z
     snapshotId: SnapshotIdSchema,
     totalBytes: z.number().int().nonnegative().max(MOBILE_WEB_TERMINAL_MAX_SNAPSHOT_BYTES),
     throughSequence: SequenceSchema,
-    sha256: z.string().regex(SHA256_PATTERN)
+    sha256: z.string().refine(isMobileWebSha256)
   })
   .strict()
 
@@ -306,6 +307,6 @@ function boundedBase64Schema(maxBytes: number): z.ZodType<string> {
   return z
     .string()
     .min(4)
-    .regex(BASE64_PATTERN)
+    .refine(isMobileWebBase64)
     .refine((value) => decodedBase64Length(value) <= maxBytes, 'Decoded data exceeds byte limit')
 }

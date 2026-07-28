@@ -139,6 +139,18 @@ describe('mobile web bridge page contract', () => {
     ).toBe(false)
     expect(
       MobileWebBridgePageMessageSchema.safeParse(
+        pageRequest({ shellSessionId: `${SHELL_SESSION_ID}\n` })
+      ).success
+    ).toBe(false)
+    expect(
+      MobileWebBridgePageMessageSchema.safeParse(pageRequest({ buildId: `${BUILD_ID}\n` })).success
+    ).toBe(false)
+    expect(
+      MobileWebBridgePageMessageSchema.safeParse(pageRequest({ requestId: `${REQUEST_ID}\n` }))
+        .success
+    ).toBe(false)
+    expect(
+      MobileWebBridgePageMessageSchema.safeParse(
         pageRequest({
           mode: 'subscription',
           subscriptionId: REQUEST_ID

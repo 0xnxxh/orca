@@ -1,11 +1,12 @@
 import { z } from 'zod'
+import { isMobileWebSha256 } from './protocol-token-contract'
 
 export const MobileWebCreationRepoIdSchema = z.string().min(1).max(128)
 const EmptyPayloadSchema = z.object({}).strict()
 
 const TrustedHookEntrySchema = z
   .object({
-    contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    contentHash: z.string().refine(isMobileWebSha256),
     approvedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
   })
   .strict()
@@ -114,7 +115,7 @@ export const MobileWebCreationRepoHooksResultSchema = z
     setupRunPolicy: z.enum(['ask', 'run-by-default', 'skip-by-default']).optional(),
     setupTrust: z
       .object({
-        contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+        contentHash: z.string().refine(isMobileWebSha256),
         scriptContent: z.string().max(64 * 1024)
       })
       .strict()
@@ -164,7 +165,7 @@ export const MobileWebCreationPersistTrustPayloadSchema = z
   .object({
     trust: MobileWebCreationTrustedHooksResultSchema,
     repoId: MobileWebCreationRepoIdSchema,
-    contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    contentHash: z.string().refine(isMobileWebSha256),
     alwaysTrust: z.boolean()
   })
   .strict()
