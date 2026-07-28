@@ -45,6 +45,23 @@ describe('SSH provider authority', () => {
     expect(isCurrentSshProviderAuthority(getSshProviderAuthority('ssh-a'))).toBe(true)
   })
 
+  it('checks unknown authority without allocating provider state', () => {
+    const sequence = (authority: ReturnType<typeof getSshProviderAuthority>): number =>
+      Number.parseInt(authority.providerEpoch.split('-').at(-1) ?? '', 36)
+    const before = getSshProviderAuthority('before-probe')
+
+    expect(
+      isCurrentSshProviderAuthority({
+        targetId: 'unknown-target',
+        providerEpoch: 'untrusted-epoch' as typeof before.providerEpoch,
+        connectionGeneration: 0
+      })
+    ).toBe(false)
+
+    const after = getSshProviderAuthority('after-probe')
+    expect(sequence(after) - sequence(before)).toBe(1)
+  })
+
   it('aborts every old-authority provider request once with target isolation', () => {
     const authorityA = getSshProviderAuthority('ssh-a')
     const authorityB = getSshProviderAuthority('ssh-b')

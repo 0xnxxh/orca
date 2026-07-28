@@ -106,7 +106,7 @@ import {
 import { getGitCloneFailureMessage } from '../../shared/git-clone-failure-message'
 import { prepareLocalWorktreeRootForRepo } from '../worktree-root-preparation'
 import { runWithGitReadCacheInvalidation } from '../git/status'
-import { SSH_PROVIDER_EPOCH_MAX_UTF8_BYTES } from '../../shared/ssh-retained-payload-admission'
+import { isAdmissibleDirectSshAuthority } from '../../shared/ssh-retained-payload-admission'
 import { isCurrentSshProviderAuthority } from '../ssh/ssh-provider-authority'
 
 // Why: `method` is the IPC entry point the user took, not what they added (never path/URL/name); repos:create → 'folder_picker'.
@@ -132,18 +132,7 @@ function hasValidCatalogSshAuthority(
   if (!('expectedAuthority' in args)) {
     return false
   }
-  const authority = args.expectedAuthority
-  return (
-    authority !== null &&
-    typeof authority === 'object' &&
-    typeof authority.targetId === 'string' &&
-    authority.targetId.length > 0 &&
-    typeof authority.providerEpoch === 'string' &&
-    authority.providerEpoch.length > 0 &&
-    Buffer.byteLength(authority.providerEpoch, 'utf8') <= SSH_PROVIDER_EPOCH_MAX_UTF8_BYTES &&
-    Number.isSafeInteger(authority.connectionGeneration) &&
-    authority.connectionGeneration >= 0
-  )
+  return isAdmissibleDirectSshAuthority(args.expectedAuthority)
 }
 
 function repoHostContradictsConnection(repo: Repo): boolean {

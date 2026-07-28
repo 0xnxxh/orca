@@ -134,8 +134,12 @@ export function rotateSshProviderAuthority(targetId: string): DirectSshAuthority
 }
 
 export function isCurrentSshProviderAuthority(authority: DirectSshAuthority): boolean {
-  const current = getSshProviderAuthority(authority.targetId)
-  return authoritiesEqual(current, authority)
+  const current = authorityByTarget.get(authority.targetId)
+  return (
+    current !== undefined &&
+    current.connectionGeneration === getSshConnectionGeneration(authority.targetId) &&
+    authoritiesEqual(current, authority)
+  )
 }
 
 export function resetSshProviderAuthorities(): void {

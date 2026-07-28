@@ -9,7 +9,8 @@ import {
   SSH_DETECTED_PORT_PROCESS_NAME_MAX_UTF8_BYTES,
   SSH_PROVIDER_EPOCH_MAX_UTF8_BYTES,
   SSH_RETAINED_IDENTIFIER_MAX_UTF8_BYTES,
-  admitSshConnectionStateForAuthorityReconciliation
+  admitSshConnectionStateForAuthorityReconciliation,
+  isAdmissibleDirectSshAuthority
 } from './ssh-retained-payload-admission'
 
 describe('SSH retained payload admission', () => {
@@ -61,6 +62,36 @@ describe('SSH retained payload admission', () => {
         'ssh-a'
       )
     ).toBeNull()
+  })
+
+  it('admits only bounded complete direct SSH authority', () => {
+    expect(
+      isAdmissibleDirectSshAuthority({
+        targetId: 'ssh-a',
+        providerEpoch: 'provider-a',
+        connectionGeneration: 3
+      })
+    ).toBe(true)
+    expect(
+      isAdmissibleDirectSshAuthority({
+        targetId: 'ssh-a',
+        providerEpoch: 'provider-a'
+      })
+    ).toBe(false)
+    expect(
+      isAdmissibleDirectSshAuthority({
+        targetId: 'x'.repeat(SSH_RETAINED_IDENTIFIER_MAX_UTF8_BYTES + 1),
+        providerEpoch: 'provider-a',
+        connectionGeneration: 3
+      })
+    ).toBe(false)
+    expect(
+      isAdmissibleDirectSshAuthority({
+        targetId: 'ssh-a',
+        providerEpoch: 'x'.repeat(SSH_PROVIDER_EPOCH_MAX_UTF8_BYTES + 1),
+        connectionGeneration: 3
+      })
+    ).toBe(false)
   })
 
   it('normalizes only partial authority for bounded reconciliation', () => {

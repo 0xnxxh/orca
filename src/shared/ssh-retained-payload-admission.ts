@@ -1,4 +1,5 @@
 import type {
+  DirectSshAuthority,
   EnrichedDetectedPort,
   SshConnectionState,
   SshConnectionStatus,
@@ -33,6 +34,18 @@ export function isSshRetainedIdentifier(value: unknown): value is string {
     !measureUtf8ByteLength(value, {
       stopAfterBytes: SSH_RETAINED_IDENTIFIER_MAX_UTF8_BYTES
     }).exceededLimit
+  )
+}
+
+export function isAdmissibleDirectSshAuthority(value: unknown): value is DirectSshAuthority {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+  const authority = value as Record<string, unknown>
+  return (
+    isSshRetainedIdentifier(authority.targetId) &&
+    isSshProviderEpoch(authority.providerEpoch) &&
+    isNonNegativeSafeInteger(authority.connectionGeneration)
   )
 }
 

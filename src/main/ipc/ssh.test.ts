@@ -1549,6 +1549,56 @@ describe('SSH IPC handlers', () => {
     expect(mockDeployAndLaunchRelay).toHaveBeenCalledTimes(1)
   })
 
+  it('replaces a stale shared connect after authority rotates without disconnect', async () => {
+    const target: SshTarget = {
+      id: 'ssh-1',
+      label: 'Server',
+      host: 'example.com',
+      port: 22,
+      username: 'deploy'
+    }
+    let resolveStaleConnect!: (connection: unknown) => void
+    mockSshStore.getTarget.mockReturnValue(target)
+    mockSshStore.addTarget.mockReturnValue(target)
+    mockConnectionManager.connect
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveStaleConnect = resolve
+        })
+      )
+      .mockResolvedValueOnce({})
+    mockConnectionManager.getState.mockReturnValue({
+      targetId: 'ssh-1',
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0
+    })
+
+    const staleConnect = handlers.get('ssh:connect')!(null, {
+      targetId: 'ssh-1'
+    }) as Promise<SshConnectionState>
+    const sharedStaleConnect = handlers.get('ssh:connect')!(null, {
+      targetId: 'ssh-1'
+    }) as Promise<SshConnectionState>
+    await vi.waitFor(() => expect(mockConnectionManager.connect).toHaveBeenCalledTimes(1))
+
+    mockSshStore.lastRepoReadoptions = [
+      { oldTargetId: 'ssh-1', newTargetId: 'ssh-new', repoIds: ['repo-1'] }
+    ]
+    await handlers.get('ssh:addTarget')!(null, { target })
+    const freshConnect = handlers.get('ssh:connect')!(null, {
+      targetId: 'ssh-1'
+    }) as Promise<SshConnectionState>
+    await vi.waitFor(() => expect(mockConnectionManager.connect).toHaveBeenCalledTimes(2))
+
+    resolveStaleConnect({})
+
+    await expect(staleConnect).rejects.toThrow('SSH connection attempt was cancelled')
+    await expect(sharedStaleConnect).rejects.toThrow('SSH connection attempt was cancelled')
+    await expect(freshConnect).resolves.toMatchObject({ targetId: 'ssh-1', status: 'connected' })
+    expect(mockDeployAndLaunchRelay).toHaveBeenCalledTimes(1)
+  })
+
   it('ssh:terminateSessions preserves tracking when relay shutdown fails', async () => {
     const target: SshTarget = {
       id: 'ssh-1',

@@ -1358,10 +1358,10 @@ export type PreloadApi = {
   worktrees: {
     list: (args: { repoId: string }) => Promise<Worktree[]>
     listDetected: {
-      (args: LegacyDetectedWorktreeRequest): Promise<DetectedWorktreeListResult>
       (
         args: ListDetectedWorktreesArgs
       ): Promise<HostQualifiedDetectedWorktreeResult | DetectedWorktreeListResult>
+      (args: LegacyDetectedWorktreeRequest): Promise<DetectedWorktreeListResult>
     }
     cancelListDetected?: (args: { providerRequestId: ProviderRequestId }) => Promise<void>
     listAll: () => Promise<Worktree[]>

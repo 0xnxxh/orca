@@ -1,6 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type { PreloadApi } from './api-types'
 import type { SshConnectionState, SshProviderEpoch } from '../shared/ssh-types'
+import type {
+  HostQualifiedDetectedWorktreeResult,
+  ListDetectedWorktreesArgs
+} from '../shared/detected-worktree-provider-contract'
+import type { DetectedWorktreeListResult } from '../shared/types'
+
+function listDetectedVariableTypeProbe(api: PreloadApi, args: ListDetectedWorktreesArgs) {
+  return api.worktrees.listDetected(args)
+}
 
 const { exposeInMainWorld, invoke, on, removeListener, send, sendSync } = vi.hoisted(() => ({
   exposeInMainWorld: vi.fn(),
@@ -51,6 +60,12 @@ describe('native preload SSH authority forwarding', () => {
     } else {
       Reflect.deleteProperty(process, 'contextIsolated')
     }
+  })
+
+  it('retains host-qualified outcomes for variable-form detected-worktree requests', () => {
+    expectTypeOf(listDetectedVariableTypeProbe).returns.toEqualTypeOf<
+      Promise<HostQualifiedDetectedWorktreeResult | DetectedWorktreeListResult>
+    >()
   })
 
   it('forwards full-pair get and push states without cloning away authority', async () => {

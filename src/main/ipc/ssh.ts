@@ -849,7 +849,12 @@ export function registerSshHandlers(
     // Why: serialize concurrent ssh:connect for the same target; interleaved connects otherwise leak the first session.
     const existing = connectInFlight.get(targetId)
     if (existing) {
-      return existing.promise
+      if (isCurrentConnectAttempt(targetId, existing.authority)) {
+        return existing.promise
+      }
+      if (connectInFlight.get(targetId) === existing) {
+        connectInFlight.delete(targetId)
+      }
     }
     if (!isCurrentSshProviderAuthority(observedAuthority)) {
       throw connectCancelledError()

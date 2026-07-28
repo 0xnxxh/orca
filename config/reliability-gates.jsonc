@@ -3894,24 +3894,54 @@
           ]
         },
         {
+          "file": "src/main/ipc/repos-remote.test.ts",
+          "assertions": [
+            "host-qualified repo catalogs require one consistent execution host and complete current SSH authority",
+            "contradictory, partial, mismatched, stale, and runtime-owned catalog requests fail closed"
+          ]
+        },
+        {
+          "file": "src/main/ipc/ssh.test.ts",
+          "assertions": [
+            "concurrent same-authority connects share one provider attempt",
+            "authority rotation replaces a stale in-flight connect and stale completion cannot clobber the fresh session"
+          ]
+        },
+        {
+          "file": "src/main/ipc/worktrees.test.ts",
+          "assertions": [
+            "host-qualified lineage excludes other SSH and runtime owners and rejects ambiguous or contradictory provenance",
+            "one lineage request snapshots repo, folder, and group catalogs once and memoizes repeated owner resolution"
+          ]
+        },
+        {
+          "file": "src/main/runtime/public-ssh-state.test.ts",
+          "assertions": [
+            "public SSH state preserves the complete provider epoch and connection generation pair"
+          ]
+        },
+        {
           "file": "src/main/ssh/ssh-provider-authority.test.ts",
           "assertions": [
             "provider epoch and connection generation rotate as one exact authority pair",
-            "provider resolution rejects stale or incomplete authority"
+            "provider resolution rejects stale or incomplete authority",
+            "unknown-target currency probes reject without allocating provider authority state"
           ]
         },
         {
           "file": "src/preload/ssh-authority-forwarding.test.ts",
           "assertions": [
             "full authority crosses Electron IPC without loss",
-            "partial authority becomes unknown for bounded reconciliation and malformed full authority is dropped"
+            "partial authority becomes unknown for bounded reconciliation and malformed full authority is dropped",
+            "variable-form host-qualified worktree requests retain fail-closed outcomes in their return type"
           ]
         },
         {
           "file": "src/shared/ssh-retained-payload-admission.test.ts",
           "assertions": [
             "retained connection states reject partial or malformed authority",
-            "only partial compatibility authority can normalize to unknown for bounded direct-SSH reconciliation"
+            "only partial compatibility authority can normalize to unknown for bounded direct-SSH reconciliation",
+            "shared direct SSH authority admission requires bounded identifiers and a non-negative safe generation"
           ]
         },
         {
@@ -3919,6 +3949,19 @@
           "assertions": [
             "retained runtime snapshots and live events preserve the full pair",
             "partial runtime authority is rejected before it reaches environment state"
+          ]
+        },
+        {
+          "file": "src/renderer/src/runtime/runtime-environment-ssh-state.test.ts",
+          "assertions": [
+            "runtime-owned SSH state remains isolated by environment and rejects partial retained authority",
+            "in-flight hydration cannot resurrect disconnected or removed runtime environments"
+          ]
+        },
+        {
+          "file": "src/shared/ssh-types.test.ts",
+          "assertions": [
+            "SSH connection state carries the provider epoch and connection generation authority pair"
           ]
         },
         {

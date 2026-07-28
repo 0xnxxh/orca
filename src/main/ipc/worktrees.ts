@@ -53,7 +53,7 @@ import type {
   HostLineageSnapshot,
   ListDesktopLineageForHostArgs
 } from '../../shared/host-lineage-contract'
-import { SSH_PROVIDER_EPOCH_MAX_UTF8_BYTES } from '../../shared/ssh-retained-payload-admission'
+import { isAdmissibleDirectSshAuthority } from '../../shared/ssh-retained-payload-admission'
 import {
   applyMetadataFallbackVisibility,
   buildKnownOrcaWorkspaceLayouts,
@@ -1199,18 +1199,7 @@ async function listDetectedWorktreesForCapturedRepo(
 function hasValidDirectSshAuthority(
   args: DirectSshDetectedWorktreeRequest
 ): args is DirectSshDetectedWorktreeRequest {
-  const authority = args.expectedAuthority
-  return (
-    authority !== null &&
-    typeof authority === 'object' &&
-    typeof authority.targetId === 'string' &&
-    authority.targetId.length > 0 &&
-    typeof authority.providerEpoch === 'string' &&
-    authority.providerEpoch.length > 0 &&
-    Buffer.byteLength(authority.providerEpoch, 'utf8') <= SSH_PROVIDER_EPOCH_MAX_UTF8_BYTES &&
-    Number.isSafeInteger(authority.connectionGeneration) &&
-    authority.connectionGeneration >= 0
-  )
+  return isAdmissibleDirectSshAuthority(args.expectedAuthority)
 }
 
 function hasValidLineageSshAuthority(
@@ -1219,23 +1208,58 @@ function hasValidLineageSshAuthority(
   if (!('expectedAuthority' in args)) {
     return false
   }
-  const authority = args.expectedAuthority
-  return (
-    authority !== null &&
-    typeof authority === 'object' &&
-    typeof authority.targetId === 'string' &&
-    authority.targetId.length > 0 &&
-    typeof authority.providerEpoch === 'string' &&
-    authority.providerEpoch.length > 0 &&
-    Buffer.byteLength(authority.providerEpoch, 'utf8') <= SSH_PROVIDER_EPOCH_MAX_UTF8_BYTES &&
-    Number.isSafeInteger(authority.connectionGeneration) &&
-    authority.connectionGeneration >= 0
-  )
+  return isAdmissibleDirectSshAuthority(args.expectedAuthority)
 }
 
 type LineageOwner =
   | { status: 'owned'; hostId: ExecutionHostId }
   | { status: 'ambiguous' | 'contradictory' | 'runtime' }
+
+type LineageFolder = ReturnType<Store['getFolderWorkspaces']>[number]
+type LineageGroup = ReturnType<Store['getProjectGroups']>[number]
+
+type LineageResolutionContext = {
+  store: Store
+  repos: Repo[]
+  groups: LineageGroup[]
+  reposById: Map<string, Repo[]>
+  foldersById: Map<string, LineageFolder[]>
+  groupsById: Map<string, LineageGroup[]>
+  groupSubtreeIdsByRoot: Map<string, Set<string>>
+  worktreeOwners: Map<string, LineageOwner>
+  folderOwners: Map<string, LineageOwner>
+  workspaceOwners: Map<string, LineageOwner>
+}
+
+function indexLineageEntriesById<T extends { id: string }>(
+  entries: readonly T[]
+): Map<string, T[]> {
+  const index = new Map<string, T[]>()
+  for (const entry of entries) {
+    const matching = index.get(entry.id) ?? []
+    matching.push(entry)
+    index.set(entry.id, matching)
+  }
+  return index
+}
+
+function createLineageResolutionContext(store: Store): LineageResolutionContext {
+  const repos = store.getRepos()
+  const folders = store.getFolderWorkspaces()
+  const groups = store.getProjectGroups()
+  return {
+    store,
+    repos,
+    groups,
+    reposById: indexLineageEntriesById(repos),
+    foldersById: indexLineageEntriesById(folders),
+    groupsById: indexLineageEntriesById(groups),
+    groupSubtreeIdsByRoot: new Map(),
+    worktreeOwners: new Map(),
+    folderOwners: new Map(),
+    workspaceOwners: new Map()
+  }
+}
 
 function resolveRepoLineageOwner(repo: Repo): LineageOwner {
   const explicit = repo.executionHostId ? parseExecutionHostId(repo.executionHostId) : null
@@ -1254,62 +1278,77 @@ function resolveRepoLineageOwner(repo: Repo): LineageOwner {
     : { status: 'owned', hostId }
 }
 
-function resolveWorktreeLineageOwner(store: Store, worktreeId: string): LineageOwner {
+function resolveWorktreeLineageOwner(
+  context: LineageResolutionContext,
+  worktreeId: string
+): LineageOwner {
+  const cached = context.worktreeOwners.get(worktreeId)
+  if (cached) {
+    return cached
+  }
+  const remember = (owner: LineageOwner): LineageOwner => {
+    context.worktreeOwners.set(worktreeId, owner)
+    return owner
+  }
   let repoId: string
   try {
     repoId = parseWorktreeId(worktreeId).repoId
   } catch {
-    return { status: 'ambiguous' }
+    return remember({ status: 'ambiguous' })
   }
-  const repos = store.getRepos().filter((repo) => repo.id === repoId)
-  const meta = store.getWorktreeMeta(worktreeId)
+  const repos = context.reposById.get(repoId) ?? []
+  const meta = context.store.getWorktreeMeta(worktreeId)
   const runtimeOwnerEnvironmentId = (
     meta as (WorktreeMeta & { runtimeOwnerEnvironmentId?: string }) | undefined
   )?.runtimeOwnerEnvironmentId?.trim()
   if (runtimeOwnerEnvironmentId) {
-    return { status: 'runtime' }
+    return remember({ status: 'runtime' })
   }
   if (meta?.hostId) {
     const explicitHost = parseExecutionHostId(meta.hostId)
     if (!explicitHost) {
-      return { status: 'ambiguous' }
+      return remember({ status: 'ambiguous' })
     }
     if (explicitHost.kind === 'runtime') {
-      return { status: 'runtime' }
+      return remember({ status: 'runtime' })
     }
     const matchingRepos = repos.filter((repo) => {
       const owner = resolveRepoLineageOwner(repo)
       return owner.status === 'owned' && owner.hostId === explicitHost.id
     })
     if (matchingRepos.length === 1) {
-      return { status: 'owned', hostId: explicitHost.id }
+      return remember({ status: 'owned', hostId: explicitHost.id })
     }
-    return matchingRepos.length > 1
-      ? { status: 'ambiguous' }
-      : { status: repos.length > 0 ? 'contradictory' : 'ambiguous' }
+    return remember(
+      matchingRepos.length > 1
+        ? { status: 'ambiguous' }
+        : { status: repos.length > 0 ? 'contradictory' : 'ambiguous' }
+    )
   }
   if (repos.length !== 1) {
-    return { status: 'ambiguous' }
+    return remember({ status: 'ambiguous' })
   }
-  return resolveRepoLineageOwner(repos[0])
+  return remember(resolveRepoLineageOwner(repos[0]))
 }
 
 function getFolderLineageCandidateRepos(
-  store: Store,
-  folder: ReturnType<Store['getFolderWorkspaces']>[number]
+  context: LineageResolutionContext,
+  folder: LineageFolder
 ): Repo[] {
-  const groups = store.getProjectGroups()
-  const groupIds = getProjectGroupSubtreeIds(groups, folder.projectGroupId)
-  const repos = store.getRepos()
-  const grouped = repos.filter(
+  let groupIds = context.groupSubtreeIdsByRoot.get(folder.projectGroupId)
+  if (!groupIds) {
+    groupIds = getProjectGroupSubtreeIds(context.groups, folder.projectGroupId)
+    context.groupSubtreeIdsByRoot.set(folder.projectGroupId, groupIds)
+  }
+  const grouped = context.repos.filter(
     (repo) => typeof repo.projectGroupId === 'string' && groupIds.has(repo.projectGroupId)
   )
-  const pathRepos = repos.filter(
+  const pathRepos = context.repos.filter(
     (repo) =>
       !(typeof repo.projectGroupId === 'string' && groupIds.has(repo.projectGroupId)) &&
       isPathInsideOrEqual(folder.folderPath, repo.path)
   )
-  const group = groups.find((entry) => entry.id === folder.projectGroupId)
+  const group = context.groupsById.get(folder.projectGroupId)?.[0]
   const connectionId = folder.connectionId ?? group?.connectionId ?? null
   return connectionId
     ? [...grouped, ...pathRepos.filter((repo) => (repo.connectionId ?? null) === connectionId)]
@@ -1325,17 +1364,26 @@ function getFolderLineageCandidateRepos(
       : pathRepos
 }
 
-function resolveFolderLineageOwner(store: Store, folderWorkspaceId: string): LineageOwner {
-  const folders = store
-    .getFolderWorkspaces()
-    .filter((workspace) => workspace.id === folderWorkspaceId)
+function resolveFolderLineageOwner(
+  context: LineageResolutionContext,
+  folderWorkspaceId: string
+): LineageOwner {
+  const cached = context.folderOwners.get(folderWorkspaceId)
+  if (cached) {
+    return cached
+  }
+  const remember = (owner: LineageOwner): LineageOwner => {
+    context.folderOwners.set(folderWorkspaceId, owner)
+    return owner
+  }
+  const folders = context.foldersById.get(folderWorkspaceId) ?? []
   if (folders.length !== 1) {
-    return { status: 'ambiguous' }
+    return remember({ status: 'ambiguous' })
   }
   const folder = folders[0]
-  const groups = store.getProjectGroups().filter((group) => group.id === folder.projectGroupId)
+  const groups = context.groupsById.get(folder.projectGroupId) ?? []
   if (groups.length !== 1) {
-    return { status: 'ambiguous' }
+    return remember({ status: 'ambiguous' })
   }
   const group = groups[0]
   const hosts = new Set<ExecutionHostId>()
@@ -1348,34 +1396,44 @@ function resolveFolderLineageOwner(store: Store, folderWorkspaceId: string): Lin
   if (group.executionHostId) {
     const parsed = parseExecutionHostId(group.executionHostId)
     if (!parsed) {
-      return { status: 'ambiguous' }
+      return remember({ status: 'ambiguous' })
     }
     hosts.add(parsed.id)
   }
-  for (const repo of getFolderLineageCandidateRepos(store, folder)) {
+  for (const repo of getFolderLineageCandidateRepos(context, folder)) {
     const owner = resolveRepoLineageOwner(repo)
     if (owner.status !== 'owned') {
-      return owner
+      return remember(owner)
     }
     hosts.add(owner.hostId)
   }
   if (hosts.size > 1) {
-    return { status: 'contradictory' }
+    return remember({ status: 'contradictory' })
   }
   const hostId = [...hosts][0] ?? LOCAL_EXECUTION_HOST_ID
-  return parseExecutionHostId(hostId)?.kind === 'runtime'
-    ? { status: 'runtime' }
-    : { status: 'owned', hostId }
+  return remember(
+    parseExecutionHostId(hostId)?.kind === 'runtime'
+      ? { status: 'runtime' }
+      : { status: 'owned', hostId }
+  )
 }
 
-function resolveWorkspaceLineageOwner(store: Store, workspaceKey: string): LineageOwner {
-  const workspace = parseWorkspaceKey(workspaceKey)
-  if (!workspace) {
-    return { status: 'ambiguous' }
+function resolveWorkspaceLineageOwner(
+  context: LineageResolutionContext,
+  workspaceKey: string
+): LineageOwner {
+  const cached = context.workspaceOwners.get(workspaceKey)
+  if (cached) {
+    return cached
   }
-  return workspace.type === 'worktree'
-    ? resolveWorktreeLineageOwner(store, workspace.worktreeId)
-    : resolveFolderLineageOwner(store, workspace.folderWorkspaceId)
+  const workspace = parseWorkspaceKey(workspaceKey)
+  const owner = !workspace
+    ? { status: 'ambiguous' as const }
+    : workspace.type === 'worktree'
+      ? resolveWorktreeLineageOwner(context, workspace.worktreeId)
+      : resolveFolderLineageOwner(context, workspace.folderWorkspaceId)
+  context.workspaceOwners.set(workspaceKey, owner)
+  return owner
 }
 
 function filterLineageForHost(
@@ -1385,11 +1443,12 @@ function filterLineageForHost(
   worktreeLineageById: Record<string, WorktreeLineage>
   workspaceLineageByChildKey: Record<string, WorkspaceLineage>
 } | null {
+  const context = createLineageResolutionContext(store)
   const worktreeLineageById: Record<string, WorktreeLineage> = {}
   const workspaceLineageByChildKey: Record<string, WorkspaceLineage> = {}
   for (const [worktreeId, lineage] of Object.entries(store.getAllWorktreeLineage())) {
-    const child = resolveWorktreeLineageOwner(store, worktreeId)
-    const parent = resolveWorktreeLineageOwner(store, lineage.parentWorktreeId)
+    const child = resolveWorktreeLineageOwner(context, worktreeId)
+    const parent = resolveWorktreeLineageOwner(context, lineage.parentWorktreeId)
     if (child.status === 'ambiguous' || child.status === 'contradictory') {
       return null
     }
@@ -1412,8 +1471,8 @@ function filterLineageForHost(
     }
   }
   for (const [childKey, lineage] of Object.entries(store.getAllWorkspaceLineage())) {
-    const child = resolveWorkspaceLineageOwner(store, childKey)
-    const parent = resolveWorkspaceLineageOwner(store, lineage.parentWorkspaceKey)
+    const child = resolveWorkspaceLineageOwner(context, childKey)
+    const parent = resolveWorkspaceLineageOwner(context, lineage.parentWorkspaceKey)
     if (child.status === 'ambiguous' || child.status === 'contradictory') {
       return null
     }

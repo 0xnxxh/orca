@@ -3129,6 +3129,45 @@ describe('registerWorktreeHandlers', () => {
     expect(store.removeWorktreeLineage).not.toHaveBeenCalled()
   })
 
+  it('snapshots lineage catalogs once and memoizes repeated owner resolution', async () => {
+    const worktreeIds = Array.from(
+      { length: 101 },
+      (_, index) => `repo-1::/workspace/repo-${index}`
+    )
+    const lineage = Object.fromEntries(
+      worktreeIds.slice(1).map((worktreeId, index) => [
+        worktreeId,
+        {
+          worktreeId,
+          worktreeInstanceId: `child-${index}`,
+          parentWorktreeId: worktreeIds[index],
+          parentWorktreeInstanceId: `parent-${index}`,
+          origin: 'cli',
+          capture: { source: 'cwd-context', confidence: 'inferred' },
+          createdAt: index
+        }
+      ])
+    )
+    store.getAllWorktreeLineage.mockReturnValue(lineage)
+    store.getRepos.mockClear()
+    store.getFolderWorkspaces.mockClear()
+    store.getProjectGroups.mockClear()
+    store.getWorktreeMeta.mockClear()
+
+    const result = await handlers['worktrees:listLineageForHost'](ipcEvent, {
+      executionHostId: 'local'
+    })
+
+    expect(result).toMatchObject({ authoritative: true })
+    expect(
+      Object.keys((result as { worktreeLineageById: Record<string, unknown> }).worktreeLineageById)
+    ).toHaveLength(100)
+    expect(store.getRepos).toHaveBeenCalledOnce()
+    expect(store.getFolderWorkspaces).toHaveBeenCalledOnce()
+    expect(store.getProjectGroups).toHaveBeenCalledOnce()
+    expect(store.getWorktreeMeta).toHaveBeenCalledTimes(101)
+  })
+
   it('preserves ambiguous legacy lineage instead of guessing among duplicate repo owners', async () => {
     const child = 'duplicate::/child'
     const parent = 'duplicate::/parent'
