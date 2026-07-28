@@ -478,19 +478,19 @@ final class MobileWebPackageStore {
       let canonical = try jsonObject(canonicalManifestJson) as? [String: Any],
       Set(manifest.keys)
         == Set(["schemaVersion", "buildId", "bridge", "entrypoint", "totalBytes", "assets"]),
-      manifest["schemaVersion"] as? Int == 1,
+      strictJsonInt(manifest["schemaVersion"]) == 1,
       let buildId = manifest["buildId"] as? String,
       isSha256(buildId),
       sha256Hex(Data(canonicalManifestJson.utf8)) == buildId,
       let bridge = manifest["bridge"] as? [String: Any],
       Set(bridge.keys) == Set(["minimum", "testedThrough"]),
-      let bridgeMinimum = bridge["minimum"] as? Int,
-      let bridgeTestedThrough = bridge["testedThrough"] as? Int,
+      let bridgeMinimum = strictJsonInt(bridge["minimum"]),
+      let bridgeTestedThrough = strictJsonInt(bridge["testedThrough"]),
       bridgeMinimum > 0,
       bridgeMinimum <= bridgeTestedThrough,
       bridgeTestedThrough <= 65_535,
       let entrypoint = manifest["entrypoint"] as? String,
-      let declaredTotalBytes = manifest["totalBytes"] as? Int,
+      let declaredTotalBytes = strictJsonInt(manifest["totalBytes"]),
       declaredTotalBytes > 0,
       declaredTotalBytes <= 32 * 1024 * 1024,
       let assets = manifest["assets"] as? [[String: Any]],
@@ -513,7 +513,7 @@ final class MobileWebPackageStore {
         Set(value.keys) == Set(["path", "sha256", "byteLength", "contentType", "role"]),
         let path = value["path"] as? String,
         let hash = value["sha256"] as? String,
-        let length = value["byteLength"] as? Int,
+        let length = strictJsonInt(value["byteLength"]),
         let contentType = value["contentType"] as? String,
         let role = value["role"] as? String,
         isSafeAssetPath(path),
@@ -895,6 +895,16 @@ private func jsonObject(_ value: String) throws -> Any {
 
 private func isSha256(_ value: String) -> Bool {
   value.range(of: sha256Pattern, options: .regularExpression) != nil
+}
+
+private func strictJsonInt(_ value: Any?) -> Int? {
+  guard
+    let number = value as? NSNumber,
+    CFGetTypeID(number) != CFBooleanGetTypeID()
+  else {
+    return nil
+  }
+  return Int(exactly: number.doubleValue)
 }
 
 private func isSafeAssetPath(_ path: String) -> Bool {

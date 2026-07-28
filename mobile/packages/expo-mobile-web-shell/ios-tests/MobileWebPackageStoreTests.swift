@@ -14,6 +14,7 @@ enum MobileWebPackageStoreTests {
     try stagesAndReadsExactGeneration(root: root.appendingPathComponent("verified"))
     try rejectsMalformedManifests(root: root.appendingPathComponent("manifests"))
     try rejectsQuotedNumericManifestFields(root: root.appendingPathComponent("scalar-types"))
+    try rejectsBooleanNumericManifestFields(root: root.appendingPathComponent("boolean-types"))
     try deletesInterruptedStage(root: root.appendingPathComponent("interrupted"))
     try rejectsIncompleteAndCorruptGeneration(root: root.appendingPathComponent("corrupt"))
     try activatesAndRecoversPreviousGeneration(root: root.appendingPathComponent("rollback"))
@@ -105,6 +106,38 @@ enum MobileWebPackageStoreTests {
       try packageFixture { $0["totalBytes"] = String(valid.bytes.count) },
       try packageFixture { manifest in
         mutateAsset(&manifest) { $0["byteLength"] = String(valid.bytes.count) }
+      },
+    ]
+    for fixture in invalid {
+      precondition(
+        throwsError {
+          _ = try store.beginStage(
+            hostIdentity: "paired-host",
+            manifestJson: fixture.manifest,
+            canonicalManifestJson: fixture.canonical
+          )
+        }
+      )
+    }
+  }
+
+  private static func rejectsBooleanNumericManifestFields(root: URL) throws {
+    let store = MobileWebPackageStore(cacheRoot: root)
+    let invalid = [
+      try packageFixture { $0["schemaVersion"] = true },
+      try packageFixture { manifest in
+        var bridge = manifest["bridge"] as! [String: Any]
+        bridge["minimum"] = true
+        manifest["bridge"] = bridge
+      },
+      try packageFixture { manifest in
+        var bridge = manifest["bridge"] as! [String: Any]
+        bridge["testedThrough"] = true
+        manifest["bridge"] = bridge
+      },
+      try packageFixture { $0["totalBytes"] = true },
+      try packageFixture { manifest in
+        mutateAsset(&manifest) { $0["byteLength"] = true }
       },
     ]
     for fixture in invalid {

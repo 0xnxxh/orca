@@ -202,9 +202,10 @@ cross-scope races, privacy/authorization audit, and independent review.
       testing.
 - [ ] Fuzz manifests, chunks, paths, MIME types, CSP, cache metadata, bridge
       envelopes, limits, ordering, cancellation, and subscriptions. The
-      five-case TypeScript/Swift/Kotlin quoted-numeric manifest corpus passes
-      after removing Android `JSONObject.optInt` coercion; generated mutation
-      and the other listed boundaries remain.
+      ten-case TypeScript/Swift/Kotlin quoted/Boolean numeric manifest corpus
+      passes after removing Android `JSONObject.optInt` string coercion and iOS
+      `NSNumber`/`CFBoolean` integer bridging; generated mutation and the other
+      listed boundaries remain.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,
       reconnect, process-loss, and host-removal races.
 - [ ] Verify no credential or privileged host identity reaches URLs, DOM state,

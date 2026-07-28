@@ -90,6 +90,33 @@ class MobileWebPackageStoreTest {
   }
 
   @Test
+  fun rejectsBooleanNumericManifestFieldsBeforeCreatingAStage() {
+    val root = temporary.newFolder()
+    val store = MobileWebPackageStore(root)
+    val invalid = listOf(
+      packageFixture { _, manifest -> manifest.put("schemaVersion", true) },
+      packageFixture { _, manifest ->
+        manifest.getJSONObject("bridge").put("minimum", true)
+      },
+      packageFixture { _, manifest ->
+        manifest.getJSONObject("bridge").put("testedThrough", true)
+      },
+      packageFixture { _, manifest -> manifest.put("totalBytes", true) },
+      packageFixture(mutateAsset = { asset -> asset.put("byteLength", true) })
+    )
+
+    invalid.forEach { fixture ->
+      val error = assertThrows(IllegalArgumentException::class.java) {
+        store.beginStage("paired-host", fixture.manifest, fixture.canonical)
+      }
+      assertEquals("mobile_web_stage_manifest_invalid", error.message)
+    }
+    assertFalse(
+      root.walkTopDown().any { it.name == "staging" && it.listFiles()?.isNotEmpty() == true }
+    )
+  }
+
+  @Test
   fun deletesAnInterruptedStageWhenTheStoreRestarts() {
     val root = temporary.newFolder()
     val firstStore = MobileWebPackageStore(root)

@@ -487,7 +487,7 @@ IDs, and unrelated provider state never enter the page result.
 
 | Contract                         | Status                                          | Source                                                                                                                                                    |
 | -------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Multi-asset manifest v1          | Implemented and focused-test passing            | `src/shared/mobile-web/manifest-contract.ts`; TypeScript, Swift, and Kotlin reject quoted numeric scalar confusion before staging                         |
+| Multi-asset manifest v1          | Implemented and focused-test passing            | `src/shared/mobile-web/manifest-contract.ts`; TypeScript, Swift, and Kotlin reject quoted/Boolean numeric scalar confusion before staging                 |
 | Manifest resource bounds         | Implemented, measured, and focused-test passing | 48 KiB chunks, 10 MiB/asset, 32 MiB/package, 256 assets; shared, Desktop, Swift, and Kotlin limits are regression-checked, and RNW has a 10 MiB CI budget |
 | Bridge envelope and capabilities | Implemented and focused-test passing            | `src/shared/mobile-web/bridge-contract.ts`; bounded native-chat schemas and remaining operation payload schemas                                           |
 | Terminal stream                  | Implemented and focused-test passing            | `src/shared/mobile-web/terminal-stream-contract.ts`; broker adapter and real-stream validation remain                                                     |

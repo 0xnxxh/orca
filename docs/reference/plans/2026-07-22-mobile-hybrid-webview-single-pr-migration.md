@@ -2708,11 +2708,12 @@ Both runs also pass network/navigation isolation; Android records zero sentinel
 observations and no native bridge error. This does not replace physical-device,
 store-signed release, fuzz, or independent adversarial evidence.
 
-A mirrored TypeScript, Swift, and Kotlin manifest corpus also rejects quoted
-numeric schema, bridge, total-byte, and asset-byte fields before native staging.
-The corpus found Android `JSONObject.optInt` coercion; the native parser now
-requires exact JSON scalar types. Generated mutation and the remaining
-chunk/path/MIME/CSP/cache corpus are still required.
+A mirrored TypeScript, Swift, and Kotlin manifest corpus also rejects quoted and
+Boolean numeric schema, bridge, total-byte, and asset-byte fields before native
+staging. The corpus found Android `JSONObject.optInt` string coercion and iOS
+`NSNumber`/`CFBoolean` integer bridging; both native parsers now require exact
+JSON scalar types. Generated mutation and the remaining chunk/path/MIME/CSP/cache
+corpus are still required.
 
 ## App Store Gate
 
