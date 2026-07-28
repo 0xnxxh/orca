@@ -63,11 +63,8 @@ export function AgentTerminalPreview({
   // Why: keys and appearance must read live values without remounting the
   // terminal (a remount reconnects the pty and repaints from a new snapshot).
   const settingsRef = useRef(settings)
-  settingsRef.current = settings
   const macOptionAsAltRef = useRef(macOptionAsAlt)
-  macOptionAsAltRef.current = macOptionAsAlt
   const terminalInputRef = useRef(terminalInput)
-  terminalInputRef.current = terminalInput
   const { terminalTheme, terminalMode } = useMemo(() => {
     if (!settings) {
       return { terminalTheme: null, terminalMode: 'dark' as const }
@@ -82,6 +79,15 @@ export function AgentTerminalPreview({
   // A null snapshot means no serializer knows this pty (it died or was never
   // spawned this session) — say so instead of painting a silent blank terminal.
   const [ptyGone, setPtyGone] = useState(false)
+
+  // Why: refs are seeded at first render and refreshed on commit — assigning
+  // during render trips react-compiler. Every consumer reads them from an event
+  // or a post-await continuation, never during a render pass.
+  useEffect(() => {
+    settingsRef.current = settings
+    macOptionAsAltRef.current = macOptionAsAlt
+    terminalInputRef.current = terminalInput
+  }, [settings, macOptionAsAlt, terminalInput])
 
   useEffect(() => {
     setPtyGone(false)
