@@ -16,7 +16,6 @@ import {
 } from './helpers/store'
 import { attachRepoAndOpenTerminal, createRestartSession } from './helpers/orca-restart'
 import { RuntimeClient } from '../../src/cli/runtime/client'
-import { RuntimeRpcFailureError } from '../../src/cli/runtime/types'
 import type {
   RuntimeTerminalClose,
   RuntimeTerminalListResult,
@@ -74,7 +73,12 @@ test('durable whole-tab close removes a split tab across restart', async (// oxl
             })
             return true
           } catch (error) {
-            if (error instanceof RuntimeRpcFailureError && error.code === 'terminal_not_found') {
+            if (
+              typeof error === 'object' &&
+              error !== null &&
+              'code' in error &&
+              error.code === 'terminal_not_found'
+            ) {
               return false
             }
             throw error
