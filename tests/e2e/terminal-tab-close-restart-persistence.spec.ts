@@ -2,11 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import type { ElectronApplication } from '@stablyai/playwright-test'
 import { test, expect } from './helpers/orca-app'
 import { TEST_REPO_PATH_FILE } from './global-setup'
-import {
-  waitForActivePaneHookDescriptor,
-  waitForActiveTerminalManager,
-  waitForPaneCount
-} from './helpers/terminal'
+import { waitForActiveTerminalManager, waitForPaneCount } from './helpers/terminal'
 import {
   ensureTerminalVisible,
   getActiveTabId,
@@ -59,39 +55,28 @@ test('durable whole-tab close removes a split tab across restart', async (// oxl
     }
     expect(await getWorktreeTabs(firstLaunch.page, worktreeId)).toHaveLength(1)
 
-    const pane = await waitForActivePaneHookDescriptor(firstLaunch.page)
     const client = new RuntimeClient(session.userDataDir, 30_000)
-    let active: Awaited<ReturnType<typeof client.call<{ terminal: { handle: string } }>>> | null =
-      null
+    let activeHandle: string | null = null
     await expect
       .poll(
         async () => {
-          try {
-            active = await client.call<{ terminal: { handle: string } }>('terminal.resolvePane', {
-              paneKey: pane.paneKey,
-              worktreeId: pane.worktreeId
-            })
-            return true
-          } catch (error) {
-            if (
-              typeof error === 'object' &&
-              error !== null &&
-              'code' in error &&
-              error.code === 'terminal_not_found'
-            ) {
-              return false
-            }
-            throw error
-          }
+          const listed = await client.call<RuntimeTerminalListResult>('terminal.list', {
+            worktree: `id:${worktreeId}`
+          })
+          const matching = listed.result.terminals.filter(
+            (terminal) => terminal.worktreeId === worktreeId && terminal.tabId === closedTabId
+          )
+          activeHandle = matching.length === 1 ? (matching[0]?.handle ?? null) : null
+          return matching.length
         },
-        { message: 'Active renderer pane did not become resolvable by the owning runtime' }
+        { message: 'Closed-tab candidate did not become uniquely runtime-visible' }
       )
-      .toBe(true)
-    if (!active) {
-      throw new Error('Active renderer pane resolution completed without a terminal')
+      .toBe(1)
+    if (!activeHandle) {
+      throw new Error('Closed-tab candidate became visible without a terminal handle')
     }
     const split = await client.call<{ split: RuntimeTerminalSplit }>('terminal.split', {
-      terminal: active.result.terminal.handle,
+      terminal: activeHandle,
       direction: 'vertical'
     })
     expect(split.result.split.tabId).toBe(closedTabId)
