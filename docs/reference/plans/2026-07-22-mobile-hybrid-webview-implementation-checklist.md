@@ -1713,7 +1713,13 @@ copy.
   activated `bb86b378…`, removed the corrupt generation, and rendered the
   bridge-enabled cached reconnect UI while Desktop was unavailable. The other
   scenarios and external-device matrix remain.
-- [ ] Document Desktop web-package rollback and native store-rollout rollback.
+- [x] Document Desktop web-package rollback and native store-rollout rollback.
+      The
+      [production rollback runbook](../mobile-hybrid-webview-rollback.md)
+      separates package and native incidents, requires the Desktop to stop
+      serving a rejected build, maps every host-scoped recovery action, forbids
+      manual cache mutation, defines privacy-safe diagnostics, and retains the
+      physical-device/store-signed release drills as open gates.
 - [ ] Run final full CI and packaged release builds.
 - [ ] Confirm no production names or imports still contain `prototype`.
 
@@ -2635,4 +2641,6 @@ and diff hygiene pass. A fresh production RNW build remains
 | 2026-07-28 | Complete | The obsolete standalone renderer-based mobile-web presentation, its Vite-only package path, and 12,621 lines of duplicate UI/tests are removed. Production bridge clients and transport state remain, and a boundary test prevents renderer UI from returning. The authoritative RNW package remains `b17ead7a…`: 49 assets, 9,281,663 raw bytes, and 2,684,764 gzip bytes.                                                             |
 | 2026-07-28 | Complete | Post-removal validation passes 568 mobile files / 3,375 tests with 2 expected skips and 3,752 root files / 39,218 tests with 62 expected skips. Root/mobile/mobile-web lint, node/mobile/mobile-web typechecks, reliability, localization, max-lines, changed-file formatting, package verification, and diff hygiene pass. The packaged-resource fixture now matches the required safe-area viewport contract.                         |
 | 2026-07-28 | Complete | The first production bridge release policy is frozen at exact v2. Production packaging imports the shared range, additive features stay on v2 through capability negotiation, and a future floor cannot retire until its replacement has shipped in at least two stable mobile releases and the supported shell minimum advances.                                                                                                       |
+| 2026-07-28 | Complete | The production rollback runbook now distinguishes bad Desktop packages from native-shell/store incidents, maps automatic and manual host-scoped recovery, requires corrected release artifacts rather than cache mutation, defines privacy-safe support evidence, and preserves final physical/store-signed drills as open release gates.                                                                                               |
+| 2026-07-28 | Complete | Post-runbook validation passes 569 mobile files / 3,378 tests with 2 expected skips. Mobile and mobile-web typechecks/lints, reliability, max-lines, formatting, diff hygiene, and the unchanged `b17ead7a…` 49-asset package verification pass.                                                                                                                                                                                        |
 | 2026-07-28 | Next     | Complete the remaining gated cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                                 |

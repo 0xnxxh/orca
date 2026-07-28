@@ -197,6 +197,15 @@ the exact v2 protocol, additive features use capability negotiation instead of
 version bumps, and Desktop must retain a bridge floor for at least two stable
 mobile releases containing its replacement before the supported shell minimum
 can advance. Packaging consumes the shared policy directly.
+The production rollback runbook now separates Desktop package incidents from
+native-shell/store incidents, requires corrected verified release artifacts,
+maps every host-scoped recovery action, forbids manual cache mutation, and
+defines privacy-safe support evidence. Final physical-device and store-signed
+rollback drills remain open below.
+Post-runbook validation passes 569 mobile files / 3,378 tests with 2 expected
+skips. Mobile and mobile-web typechecks/lints, reliability, max-lines,
+formatting, diff hygiene, and the unchanged `b17ead7a…` package verification
+pass.
 The remaining security work below is release-app corpus testing, fuzzing,
 cross-scope races, privacy/authorization audit, and independent review.
 
@@ -214,7 +223,6 @@ cross-scope races, privacy/authorization audit, and independent review.
 - [ ] Remove superseded prototype contracts, package generation, RPC names,
       cache, bridge code, and fixtures.
 - [ ] Confirm production source and imports contain no `prototype` names.
-- [ ] Document Desktop web-package rollback and native store-rollout rollback.
 
 ## 3. Automated Integration Gates
 

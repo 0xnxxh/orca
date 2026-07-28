@@ -2813,16 +2813,28 @@ assessment.
   atomically promote a compatible verified previous generation. Explicit build
   opens remain fail-closed.
 - For a functional regression that does not crash, ship known-good web assets
-  in a new Desktop release or revert the Desktop release. The matching package
-  then stages normally.
+  in a corrected, higher-version Desktop release. Exact restored content may
+  reproduce its earlier content-addressed build ID; any package or manifest
+  change produces a new build ID.
+- Stop the affected Desktop rollout and stop serving the rejected build ID.
+  Rejection is process/session state, not a durable revocation mechanism.
+- Never edit native `activation.json` or cached generation assets. Use the
+  host-scoped recovery controls and verified release artifacts.
 
 ### Native-shell rollback
 
 A defect in the asset origin, credential broker, native bridge, audio/picker
 module, or store-installed recovery UI cannot be fixed by desktop-served web
-assets. Halt the phased store rollout, use the store's supported release
-controls, and submit a corrected native build. This residual store dependency is
-part of Option B.
+assets. Halt the phased store rollout and submit a corrected, higher-version
+native build. Store rollout controls limit additional exposure but do not
+reliably downgrade devices that already installed a bad binary. Keep the native
+workspace fallback until the gated cutover permits its removal. This residual
+store dependency is part of Option B.
+
+The
+[production rollback runbook](../mobile-hybrid-webview-rollback.md)
+defines incident classification, containment, recovery controls, privacy-safe
+diagnostics, and the physical/store-signed drills required before cutover.
 
 ## Observability and Diagnostics
 

@@ -533,6 +533,15 @@ must ship natively first, retain v2 for at least two stable mobile releases, and
 wait for the supported store-shell minimum to advance before Desktop raises
 the package floor.
 
+The
+[production rollback runbook](../mobile-hybrid-webview-rollback.md)
+now freezes the operator boundary as well: Desktop incidents require a verified
+corrected Desktop artifact that stops serving the rejected package, native
+incidents require store containment and a corrected native release, and
+host-scoped recovery never relies on manual activation or cache-file mutation.
+The final physical-device and store-signed rollback drills remain release
+evidence rather than inventory completion.
+
 ## Next Inventory Action
 
 The dedicated hosted Files, Preview, Source Control, Review, and Agent History
