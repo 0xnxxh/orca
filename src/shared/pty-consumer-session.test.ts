@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR,
   PtyConsumerSession,
   type PtyConsumerAuthentication,
   type PtyConsumerSessionHello
@@ -37,6 +38,22 @@ function createSession(options: { now?: () => number } = {}): PtyConsumerSession
 }
 
 describe('PtyConsumerSession', () => {
+  it('types a resume against a fresh relay without weakening other owner refusals', () => {
+    const session = createSession()
+
+    expect(() =>
+      session.admit(
+        ownerHello({ resume: { ownerGeneration: 1, ownerLease: 'stale' } }),
+        auth('connection-1')
+      )
+    ).toThrow(
+      expect.objectContaining({
+        code: PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR,
+        message: expect.stringContaining('stale')
+      })
+    )
+  })
+
   it('activates an authenticated owner only after its publication fence', () => {
     const session = createSession()
     const first = session.admit(ownerHello(), auth('connection-1'))

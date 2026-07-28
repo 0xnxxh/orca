@@ -71,6 +71,7 @@ type MuxInternals = {
   disposeHandlers: unknown[]
   lastReceivedAt: number
   unackedTimestamps: Map<number, number>
+  writerSaturated: boolean
 }
 
 function getMuxInternals(instance: SshChannelMultiplexer): MuxInternals {
@@ -328,6 +329,43 @@ describe('SshChannelMultiplexer', () => {
       // the link dead (no-data + oldest-unacked both exceed the 20s window).
       expect(mux.isDisposed()).toBe(false)
       vi.advanceTimersByTime(25_000)
+      expect(mux.isDisposed()).toBe(true)
+    })
+
+    it('suppresses false death while locally saturated and rebases both clocks on drain', () => {
+      mux.dispose()
+      let drain = (): void => {}
+      const written: Buffer[] = []
+      const saturatedTransport: MultiplexerTransport = {
+        write: (data) => {
+          written.push(data)
+          return false
+        },
+        supportsWriteSettlement: true,
+        onDrain: (callback) => {
+          drain = callback
+        },
+        onData: vi.fn(),
+        onClose: vi.fn()
+      }
+      mux = new SshChannelMultiplexer(saturatedTransport)
+
+      vi.advanceTimersByTime(5_000)
+      expect(getMuxInternals(mux).writerSaturated).toBe(true)
+      vi.advanceTimersByTime(25_000)
+      expect(mux.isDisposed()).toBe(false)
+      expect(written).toHaveLength(1)
+
+      drain()
+      const resumedAt = Date.now()
+      const internals = getMuxInternals(mux)
+      expect(internals.writerSaturated).toBe(false)
+      expect(internals.lastReceivedAt).toBe(resumedAt)
+      expect(new Set(internals.unackedTimestamps.values())).toEqual(new Set([resumedAt]))
+
+      vi.advanceTimersByTime(20_000)
+      expect(mux.isDisposed()).toBe(false)
+      vi.advanceTimersByTime(5_000)
       expect(mux.isDisposed()).toBe(true)
     })
   })

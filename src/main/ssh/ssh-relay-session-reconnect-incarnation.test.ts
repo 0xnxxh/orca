@@ -138,6 +138,72 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     vi.mocked(getPtyIdsForConnection).mockReturnValue([])
   })
 
+  it('bounds fifty reattaches to eight workers without slow or failed sibling head-of-line delay', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+    await session.establish(mockConn)
+    vi.clearAllMocks()
+    mockDeploySuccess()
+
+    const ptyIds = Array.from({ length: 50 }, (_, index) => `pty-${index}`)
+    let active = 0
+    let peakActive = 0
+    const attempts = new Map<string, number>()
+    const mockAttach = vi.fn((id: string) => {
+      attempts.set(id, (attempts.get(id) ?? 0) + 1)
+      if (id === 'pty-0') {
+        return new Promise<void>(() => {})
+      }
+      if (id === 'pty-1') {
+        return Promise.reject(new Error('isolated attach failure'))
+      }
+      active++
+      peakActive = Math.max(peakActive, active)
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          active--
+          resolve()
+        }, 100)
+      })
+    })
+    vi.mocked(getSshPtyProvider).mockReturnValue({
+      attachForReconnect: mockAttach,
+      dispose: vi.fn()
+    } as unknown as ReturnType<typeof getSshPtyProvider>)
+    vi.mocked(getPtyIdsForConnection).mockReturnValue(ptyIds)
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0)
+    vi.useFakeTimers()
+
+    try {
+      const reconnect = session.reconnect(mockConn)
+      await vi.advanceTimersByTimeAsync(750)
+
+      expect(
+        vi
+          .mocked(mockStore.markSshRemotePtyLease)
+          .mock.calls.filter(([, , state]) => state === 'attached')
+          .map(([, id]) => id)
+      ).toHaveLength(48)
+      expect(peakActive).toBeLessThanOrEqual(8)
+
+      await vi.advanceTimersByTimeAsync(20_000)
+      await reconnect
+
+      expect(mockAttach).toHaveBeenCalledTimes(52)
+      expect(attempts.get('pty-0')).toBe(2)
+      expect(attempts.get('pty-1')).toBe(2)
+      expect(session.getState()).toBe('ready')
+      expect(mockStore.markSshRemotePtyLease).not.toHaveBeenCalledWith(
+        'target-1',
+        expect.any(String),
+        'expired'
+      )
+    } finally {
+      vi.useRealTimers()
+      random.mockRestore()
+    }
+  })
+
   it('restores and persists exact incarnation proof from reconnect attach', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
     const incarnationId = 'incarnation-reconnect'

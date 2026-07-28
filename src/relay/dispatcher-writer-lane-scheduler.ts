@@ -28,13 +28,13 @@ export class DispatcherWriterLaneScheduler {
     if (legacyResponse && canWriteControl(legacyResponse)) {
       return admission.shift('legacy-response')
     }
-    const bulk = admission.peek('bulk')
+    const bulk = admission.peek('fixed-bulk') ?? admission.peek('bulk')
     if (
       bulk &&
       this.producerWritesSinceBulk >= PRODUCER_WRITES_BEFORE_BULK &&
       canWriteProducer(bulk)
     ) {
-      return admission.shift('bulk')
+      return admission.shift(bulk.lane)
     }
     const ordinary = admission.peek('ordinary')
     if (
@@ -44,7 +44,7 @@ export class DispatcherWriterLaneScheduler {
     ) {
       return admission.shift('ordinary')
     }
-    for (const lane of ['interactive', 'ordinary', 'bulk'] as const) {
+    for (const lane of ['interactive', 'ordinary', 'fixed-bulk', 'bulk'] as const) {
       const candidate = admission.peek(lane)
       if (candidate && canWriteProducer(candidate)) {
         return admission.shift(lane)
@@ -54,7 +54,7 @@ export class DispatcherWriterLaneScheduler {
   }
 
   recordWrite(lane: DispatcherWriterLane): void {
-    if (lane === 'bulk') {
+    if (lane === 'bulk' || lane === 'fixed-bulk') {
       this.producerWritesSinceBulk = 0
     } else if (lane === 'interactive' || lane === 'ordinary') {
       this.producerWritesSinceBulk = Math.min(

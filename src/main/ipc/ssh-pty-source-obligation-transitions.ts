@@ -56,6 +56,19 @@ export function cancelSourceObligationTransfer(
   return true
 }
 
+export function rollbackSourceObligationTransfer(
+  spanOwners: ReadonlyMap<string, TokenRecord>,
+  spanId: string,
+  consumer: SshPtySourceConsumerId
+): boolean {
+  const { span } = requireSourceSpan(spanOwners, spanId)
+  if (span.obligations.get(consumer)?.state !== 'transferring') {
+    return false
+  }
+  span.obligations.set(consumer, Object.freeze({ state: 'open' }))
+  return true
+}
+
 export function modelAcceptedSourceEnd(token: TokenRecord): number {
   let acceptedEndSu = token.ackPublishedEndSu
   for (const record of token.spans) {

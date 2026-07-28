@@ -70,6 +70,44 @@ describe('SshMultiplexerTransportWriter', () => {
     expect(failed).not.toHaveBeenCalled()
   })
 
+  it('allows one coalesced liveness bypass per saturated write settlement', () => {
+    const harness = transportHarness([false, true, true, true])
+    const writer = new SshMultiplexerTransportWriter(harness.transport, vi.fn())
+
+    writer.enqueue(Buffer.from('ordinary-1'), 'ordinary')
+    writer.enqueue(Buffer.from('ordinary-2'), 'ordinary')
+    expect(writer.enqueue(Buffer.from('liveness-1'), 'liveness')).toBe(true)
+    expect(writer.enqueue(Buffer.from('liveness-coalesced'), 'liveness')).toBe(false)
+    expect(harness.writes.map(String)).toEqual(['ordinary-1', 'liveness-1'])
+
+    harness.callbacks[1]({ ok: true })
+    expect(writer.enqueue(Buffer.from('liveness-2'), 'liveness')).toBe(true)
+    expect(harness.writes.map(String)).toEqual(['ordinary-1', 'liveness-1', 'liveness-2'])
+
+    harness.drain()
+    expect(harness.writes.map(String)).toEqual([
+      'ordinary-1',
+      'liveness-1',
+      'liveness-2',
+      'ordinary-2'
+    ])
+    writer.dispose()
+  })
+
+  it('reports saturated epochs and their drain boundary exactly once', () => {
+    const harness = transportHarness([false])
+    const saturation = vi.fn()
+    const writer = new SshMultiplexerTransportWriter(harness.transport, vi.fn(), saturation)
+
+    writer.enqueue(Buffer.from('ordinary'), 'ordinary')
+    writer.enqueue(Buffer.from('queued'), 'ordinary')
+    expect(saturation.mock.calls).toEqual([[true]])
+
+    harness.drain()
+    expect(saturation.mock.calls).toEqual([[true], [false]])
+    writer.dispose()
+  })
+
   it('keeps a full ordinary lane from consuming the control reserve', () => {
     const harness = transportHarness([false, true, true])
     const writer = new SshMultiplexerTransportWriter(harness.transport, vi.fn())

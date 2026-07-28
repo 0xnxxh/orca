@@ -38,6 +38,7 @@ import {
   type PtySourceAppendInput,
   type PtySourceSendReservation
 } from './pty-source-credit-record'
+import { chargedPtyRetainedStringBytes } from '../shared/pty-retained-string-memory'
 
 export type { PtySourceSendReservation } from './pty-source-credit-record'
 export type { PtySourceCreditLedgerOptions } from './pty-source-credit-limits'
@@ -78,8 +79,9 @@ export class RelayPtySourceCreditLedger {
   append(identity: PtySourceDeliveryIdentity, input: PtySourceAppendInput): PtySourceSpan {
     const record = this.requireActive(identity)
     const sourceEndSu = record.receivedEndSu + input.transform.rawLengthSu
-    const dataBytes = Buffer.byteLength(input.data, 'utf8')
-    if (dataBytes > MAX_SOURCE_SPAN_DATA_BYTES) {
+    const encodedDataBytes = Buffer.byteLength(input.data, 'utf8')
+    const retainedDataBytes = chargedPtyRetainedStringBytes(input.data)
+    if (encodedDataBytes > MAX_SOURCE_SPAN_DATA_BYTES) {
       throw new Error('PTY source span encoded-data budget exceeded')
     }
     if (sourceEndSu - record.creditedEndSu > this.limits.maxRetainedSourceSu) {
@@ -91,10 +93,10 @@ export class RelayPtySourceCreditLedger {
     ) {
       throw new Error('Aggregate PTY source retained-range budget exceeded')
     }
-    if (record.retainedDataBytes + dataBytes > this.limits.maxRetainedDataBytes) {
+    if (record.retainedDataBytes + retainedDataBytes > this.limits.maxRetainedDataBytes) {
       throw new Error('PTY source retained encoded-data budget exceeded')
     }
-    if (this.retainedDataBytes() + dataBytes > this.limits.maxAggregateRetainedDataBytes) {
+    if (this.retainedDataBytes() + retainedDataBytes > this.limits.maxAggregateRetainedDataBytes) {
       throw new Error('Aggregate PTY source retained encoded-data budget exceeded')
     }
     if (record.spans.length + 1 > this.limits.maxRetainedSpans) {
@@ -105,7 +107,7 @@ export class RelayPtySourceCreditLedger {
     }
     const span = createAppendedSourceSpan(record, input)
     record.spans.push(span)
-    record.retainedDataBytes += dataBytes
+    record.retainedDataBytes += retainedDataBytes
     record.receivedEndSu = sourceEndSu
     return span
   }

@@ -41,6 +41,27 @@ function frame(id: number, payload = `${id}`): Buffer {
 }
 
 describe('relay FrameDecoder bounded turns', () => {
+  it('retains at most one maximum frame plus one MiB of partial input', () => {
+    expect(FRAME_DECODER_MAX_RETAINED_BYTES).toBe(MAX_MESSAGE_SIZE + HEADER_LENGTH + 1024 * 1024)
+    const maximumFrame = encodeFrame(MessageType.Regular, 1, 0, Buffer.alloc(MAX_MESSAGE_SIZE))
+    const acceptedError = vi.fn()
+    const accepted = new FrameDecoder(vi.fn(), acceptedError)
+
+    accepted.feed(Buffer.concat([maximumFrame, Buffer.alloc(1024 * 1024)]))
+
+    expect(acceptedError).not.toHaveBeenCalled()
+    expect(accepted.drain()).toHaveLength(1024 * 1024)
+
+    const excessError = vi.fn()
+    const excess = new FrameDecoder(vi.fn(), excessError)
+    excess.feed(Buffer.concat([maximumFrame, Buffer.alloc(1024 * 1024 + 1)]))
+
+    expect(excessError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('retained-input') })
+    )
+    expect(excess.drain()).toHaveLength(0)
+  })
+
   it('fails closed when one delivered chunk exceeds retained-input capacity', () => {
     const onError = vi.fn()
     const decoder = new FrameDecoder(vi.fn(), onError)

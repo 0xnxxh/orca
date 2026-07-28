@@ -13,7 +13,7 @@ export type MultiplexerTransport = {
   close?: () => void
 }
 
-export type MultiplexerWriterLane = 'ordinary' | 'control'
+export type MultiplexerWriterLane = 'ordinary' | 'control' | 'liveness'
 
 type WriterEntry = {
   data: Buffer
@@ -53,11 +53,13 @@ export class SshMultiplexerTransportWriter {
   private drainObservedDuringWrite = false
   private pumping = false
   private closed = false
+  private livenessOutstanding = false
   private removeDrainListener: (() => void) | null = null
 
   constructor(
     private readonly transport: MultiplexerTransport,
-    private readonly onFailure: (error: Error) => void
+    private readonly onFailure: (error: Error) => void,
+    private readonly onSaturationChange: (saturated: boolean) => void = () => {}
   ) {
     if (transport.onDrain) {
       const remove = transport.onDrain(() => this.handleDrain())
@@ -75,6 +77,9 @@ export class SshMultiplexerTransportWriter {
       settle({ ok: false, error: new Error('Multiplexer writer is closed') })
       return false
     }
+    if (lane === 'liveness' && this.livenessOutstanding) {
+      return false
+    }
     const admissionError = this.admissionError(data.length, lane)
     if (admissionError) {
       settle({ ok: false, error: admissionError })
@@ -83,8 +88,12 @@ export class SshMultiplexerTransportWriter {
     }
     const entry = { data, lane, onSettled: settle, settled: false }
     this.retain(entry)
-    this.queue.push(entry)
-    this.pump()
+    if (lane === 'liveness' && this.saturated) {
+      this.writeEntry(entry)
+    } else {
+      this.queue.push(entry)
+      this.pump()
+    }
     return true
   }
 
@@ -156,7 +165,7 @@ export class SshMultiplexerTransportWriter {
         if (!this.transport.onDrain) {
           throw new Error('Multiplexer transport returned write(false) without drain support')
         }
-        this.saturated = !this.drainObservedDuringWrite
+        this.setSaturated(!this.drainObservedDuringWrite)
         if (this.transport.supportsWriteSettlement !== true && this.saturated) {
           this.settleOnDrain.add(entry)
         } else if (this.transport.supportsWriteSettlement !== true) {
@@ -201,7 +210,7 @@ export class SshMultiplexerTransportWriter {
     if (!this.saturated) {
       return
     }
-    this.saturated = false
+    this.setSaturated(false)
     for (const entry of Array.from(this.settleOnDrain)) {
       this.release(entry, { ok: true })
     }
@@ -216,6 +225,9 @@ export class SshMultiplexerTransportWriter {
     } else {
       this.controlBytes += entry.data.length
       this.controlFrames++
+    }
+    if (entry.lane === 'liveness') {
+      this.livenessOutstanding = true
     }
   }
 
@@ -233,7 +245,18 @@ export class SshMultiplexerTransportWriter {
       this.controlBytes -= entry.data.length
       this.controlFrames--
     }
+    if (entry.lane === 'liveness') {
+      this.livenessOutstanding = false
+    }
     entry.onSettled(result)
+  }
+
+  private setSaturated(saturated: boolean): void {
+    if (this.saturated === saturated) {
+      return
+    }
+    this.saturated = saturated
+    this.onSaturationChange(saturated)
   }
 
   private fail(error: Error): void {

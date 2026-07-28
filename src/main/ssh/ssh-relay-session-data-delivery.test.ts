@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR } from '../../shared/pty-consumer-session'
 import { SshRelaySession } from './ssh-relay-session'
 import { createMockDeps, mockDeploySuccess } from './ssh-relay-session-test-fixtures'
 
@@ -34,7 +35,9 @@ vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
   allocateSshPtyProviderGeneration: vi.fn(() => 23),
   closeSshPtyOutputGeneration: vi.fn(),
   getSshPtyAcceptedSourceCheckpoints: vi.fn(() => []),
-  installSshPtySourceAckPublisher: vi.fn(() => () => {})
+  installSshPtySourceAckPublisher: vi.fn(() => () => {}),
+  installSshPtySourceCancellationPublisher: vi.fn(() => () => {}),
+  applySshPtySourceCancellationProof: vi.fn()
 }))
 
 vi.mock('./ssh-channel-multiplexer', () => ({
@@ -105,9 +108,17 @@ vi.mock('../providers/ssh-git-dispatch', () => ({
   unregisterSshGitProvider: vi.fn()
 }))
 
-const { getSshPtyProvider, getPtyIdsForConnection, registerSshPtyProvider } =
-  await import('../ipc/pty')
+const {
+  clearProviderPtyState,
+  clearPtyOwnershipForConnection,
+  deletePtyOwnership,
+  getSshPtyProvider,
+  getPtyIdsForConnection,
+  registerSshPtyProvider,
+  setPtyOwnership
+} = await import('../ipc/pty')
 const { closeSshPtyOutputGeneration } = await import('../ipc/ssh-pty-output-intake-registry')
+const { applySshPtySourceCancellationProof } = await import('../ipc/ssh-pty-output-intake-registry')
 const { getSshPtyAcceptedSourceCheckpoints } = await import('../ipc/ssh-pty-output-intake-registry')
 const { installSshPtySourceAckPublisher } = await import('../ipc/ssh-pty-output-intake-registry')
 const { deployAndLaunchRelay } = await import('./ssh-relay-deploy')
@@ -117,6 +128,8 @@ describe('SshRelaySession data delivery', () => {
     vi.clearAllMocks()
     ptyDataHandlerRef.current = undefined
     attachForReconnectMock.mockResolvedValue({})
+    vi.mocked(getPtyIdsForConnection).mockReturnValue([])
+    vi.mocked(getSshPtyAcceptedSourceCheckpoints).mockReturnValue([])
     openConsumerSessionMock.mockImplementation(async (_mux, options) => ({
       mode: 'negotiated',
       clientInstanceId: options.clientInstanceId,
@@ -132,6 +145,122 @@ describe('SshRelaySession data delivery', () => {
     muxRequestMock.mockResolvedValue([])
     mockDeploySuccess()
   })
+
+  async function runRecoverySequence(args: {
+    targetId: string
+    recoveryEndSu: number
+    recoveryFrame?: readonly [startSu: number, endSu: number]
+    liveFrame?: readonly [startSu: number, endSu: number]
+  }) {
+    muxRequestMock.mockImplementation(async (method) =>
+      method === 'pty.cancelDelivery'
+        ? { canceled: true, sentEndSu: args.recoveryEndSu, creditedEndSu: 4 }
+        : []
+    )
+    let generation = 0
+    openConsumerSessionMock.mockImplementation(async (_mux, options) => ({
+      mode: 'negotiated',
+      clientInstanceId: options.clientInstanceId,
+      clientGeneration: ++generation,
+      ownerGeneration: generation,
+      ownerLease: `owner-lease-${generation}`,
+      outputFlowControl: { version: 1, windowSu: 256 * 1024 }
+    }))
+    vi.mocked(getSshPtyAcceptedSourceCheckpoints).mockReturnValue([
+      {
+        id: `ssh:${args.targetId}@@pty-1`,
+        providerGeneration: 23,
+        clientGeneration: 1,
+        ownerGeneration: 1,
+        ptyIncarnation: 'incarnation-1',
+        deliveryToken: 'old-token',
+        acceptedSourceEndSu: 4
+      }
+    ])
+    const deps = createMockDeps()
+    const session = new SshRelaySession(
+      args.targetId,
+      deps.getMainWindow,
+      deps.mockStore,
+      deps.mockPortForward,
+      undefined,
+      undefined,
+      () => true
+    )
+    await session.establish(deps.mockConn)
+    vi.mocked(getPtyIdsForConnection).mockReturnValue([`ssh:${args.targetId}@@pty-1`])
+    vi.mocked(getSshPtyProvider).mockImplementation(
+      () => vi.mocked(registerSshPtyProvider).mock.calls.at(-1)?.[1]
+    )
+    attachForReconnectMock.mockImplementation(async () => {
+      queueMicrotask(() => {
+        if (args.recoveryFrame) {
+          const [sourceStartSu, sourceEndSu] = args.recoveryFrame
+          ptyDataHandlerRef.current?.({
+            id: `ssh:${args.targetId}@@pty-1`,
+            data: 'recovery',
+            providerGeneration: 23,
+            ptyIncarnation: 'incarnation-1',
+            sequenceChars: sourceEndSu - sourceStartSu,
+            source: {
+              relayPtyId: 'pty-1',
+              spanId: `new-token:${sourceStartSu}:${sourceEndSu}`,
+              clientGeneration: 2,
+              ownerGeneration: 2,
+              deliveryToken: 'new-token',
+              sourceStartSu,
+              sourceEndSu
+            }
+          })
+        }
+        const complete = onNotificationByMethodMock.mock.calls.findLast(
+          ([method]) => method === 'pty.recoveryComplete'
+        )?.[1] as ((params: Record<string, unknown>) => void) | undefined
+        complete?.({
+          id: 'pty-1',
+          clientGeneration: 2,
+          ownerGeneration: 2,
+          ptyIncarnation: 'incarnation-1',
+          deliveryToken: 'new-token',
+          checkpointSourceEndSu: 4,
+          recoveryEndSu: args.recoveryEndSu
+        })
+        if (args.liveFrame) {
+          const [sourceStartSu, sourceEndSu] = args.liveFrame
+          ptyDataHandlerRef.current?.({
+            id: `ssh:${args.targetId}@@pty-1`,
+            data: 'live',
+            providerGeneration: 23,
+            ptyIncarnation: 'incarnation-1',
+            sequenceChars: sourceEndSu - sourceStartSu,
+            source: {
+              relayPtyId: 'pty-1',
+              spanId: `new-token:${sourceStartSu}:${sourceEndSu}`,
+              clientGeneration: 2,
+              ownerGeneration: 2,
+              deliveryToken: 'new-token',
+              sourceStartSu,
+              sourceEndSu
+            }
+          })
+        }
+      })
+      return {
+        incarnationId: 'incarnation-1',
+        sourceRecovery: {
+          status: 'pending',
+          clientGeneration: 2,
+          ownerGeneration: 2,
+          ptyIncarnation: 'incarnation-1',
+          deliveryToken: 'new-token',
+          checkpointSourceEndSu: 4,
+          recoveryEndSu: args.recoveryEndSu
+        }
+      }
+    })
+    await session.reconnect(deps.mockConn)
+    return { ...deps, session }
+  }
 
   it('transfers negotiated owner recovery exactly once across an explicit detach', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
@@ -161,6 +290,86 @@ describe('SshRelaySession data delivery', () => {
     expect(freshOpen.clientInstanceId).not.toBe(firstOpen.clientInstanceId)
     expect(freshOpen).not.toHaveProperty('resume')
     fresh.dispose()
+  })
+
+  it('clears stale owner recovery and retries a fresh same-build relay once without resume', async () => {
+    const targetId = 'fresh-relay-retry'
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    vi.mocked(deployAndLaunchRelay).mockResolvedValue({
+      transport: { write: vi.fn(), onData: vi.fn(), onClose: vi.fn() },
+      platform: 'linux-x64',
+      serverBuildId: 'test-relay-build'
+    })
+    vi.mocked(getSshPtyAcceptedSourceCheckpoints).mockReturnValue([
+      {
+        id: `ssh:${targetId}@@pty-1`,
+        providerGeneration: 23,
+        clientGeneration: 1,
+        ownerGeneration: 1,
+        ptyIncarnation: 'incarnation-1',
+        deliveryToken: 'old-token',
+        acceptedSourceEndSu: 4
+      }
+    ])
+    const first = new SshRelaySession(
+      targetId,
+      getMainWindow,
+      mockStore,
+      mockPortForward,
+      undefined,
+      undefined,
+      () => true
+    )
+    await first.establish(mockConn)
+    first.detach()
+
+    openConsumerSessionMock
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Owner recovery lease is stale'), {
+          code: PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR
+        })
+      )
+      .mockImplementationOnce(async (_mux, options) => ({
+        mode: 'negotiated',
+        clientInstanceId: options.clientInstanceId,
+        clientGeneration: 1,
+        ownerGeneration: 1,
+        ownerLease: 'fresh-owner-lease',
+        outputFlowControl: { version: 1, windowSu: 256 * 1024 }
+      }))
+    vi.mocked(getPtyIdsForConnection).mockReturnValue([`ssh:${targetId}@@pty-1`])
+    vi.mocked(getSshPtyProvider).mockImplementation(
+      () => vi.mocked(registerSshPtyProvider).mock.calls.at(-1)?.[1]
+    )
+    attachForReconnectMock.mockResolvedValue({
+      incarnationId: 'incarnation-1',
+      sourceRecovery: { status: 'restoreRequired', reason: 'checkpointUnavailable' }
+    })
+    const second = new SshRelaySession(
+      targetId,
+      getMainWindow,
+      mockStore,
+      mockPortForward,
+      undefined,
+      undefined,
+      () => true
+    )
+    const openCallCountBeforeRetry = openConsumerSessionMock.mock.calls.length
+
+    await second.establish(mockConn)
+
+    const retryCalls = openConsumerSessionMock.mock.calls
+      .slice(openCallCountBeforeRetry)
+      .map(([, options]) => options)
+    expect(retryCalls).toHaveLength(2)
+    expect(retryCalls[0]).toHaveProperty('resume')
+    expect(retryCalls[1]).not.toHaveProperty('resume')
+    expect(attachForReconnectMock).toHaveBeenCalledWith(
+      'pty-1',
+      undefined,
+      Object.freeze({ status: 'checkpointUnavailable' })
+    )
+    second.dispose()
   })
 
   it('delivers empty transformed relay spans with raw sequence metadata', async () => {
@@ -474,17 +683,33 @@ describe('SshRelaySession data delivery', () => {
       queueMicrotask(() => {
         ptyDataHandlerRef.current?.({
           id: 'ssh:target-1@@pty-1',
-          data: 'reco',
+          data: 're',
           providerGeneration: 23,
           ptyIncarnation: 'incarnation-1',
-          sequenceChars: 4,
+          sequenceChars: 2,
           source: {
             relayPtyId: 'pty-1',
-            spanId: 'new-token:4:8',
+            spanId: 'new-token:4:6',
             clientGeneration: 2,
             ownerGeneration: 2,
             deliveryToken: 'new-token',
             sourceStartSu: 4,
+            sourceEndSu: 6
+          }
+        })
+        ptyDataHandlerRef.current?.({
+          id: 'ssh:target-1@@pty-1',
+          data: 'co',
+          providerGeneration: 23,
+          ptyIncarnation: 'incarnation-1',
+          sequenceChars: 2,
+          source: {
+            relayPtyId: 'pty-1',
+            spanId: 'new-token:6:8',
+            clientGeneration: 2,
+            ownerGeneration: 2,
+            deliveryToken: 'new-token',
+            sourceStartSu: 6,
             sourceEndSu: 8
           }
         })
@@ -543,7 +768,8 @@ describe('SshRelaySession data delivery', () => {
       })
     )
     expect(acceptOutputDataMock.mock.calls.map(([payload]) => payload.data)).toEqual([
-      'reco',
+      're',
+      'co',
       'live'
     ])
     expect(transferDisposedMux).toBe(false)
@@ -561,5 +787,60 @@ describe('SshRelaySession data delivery', () => {
       deliveryToken: 'old-token'
     })
     expect(closeSshPtyOutputGeneration).toHaveBeenCalledTimes(closeCount)
+  })
+
+  it.each([
+    ['gap', [5, 8] as const],
+    ['overlap', [3, 8] as const],
+    ['incomplete suffix', [4, 6] as const],
+    ['missing body', undefined]
+  ])('rejects %s recovery without destroying the physical PTY or lease', async (label, frame) => {
+    const targetId = `invalid-recovery-${label.replace(' ', '-')}`
+    const { mockStore, mockWindow } = await runRecoverySequence({
+      targetId,
+      recoveryEndSu: 8,
+      ...(frame ? { recoveryFrame: frame } : {})
+    })
+
+    expect(acceptOutputDataMock).not.toHaveBeenCalled()
+    expect(muxRequestMock).toHaveBeenCalledWith('pty.cancelDelivery', {
+      id: 'pty-1',
+      clientGeneration: 2,
+      ownerGeneration: 2,
+      deliveryToken: 'new-token'
+    })
+    expect(applySshPtySourceCancellationProof).toHaveBeenCalledWith(
+      {
+        id: `ssh:${targetId}@@pty-1`,
+        code: -1,
+        providerGeneration: 23,
+        ptyIncarnation: 'incarnation-1'
+      },
+      { sentEndSu: 8, creditedEndSu: 4 }
+    )
+    expect(mockStore.markSshRemotePtyLease).toHaveBeenCalledWith(targetId, 'pty-1', 'detached')
+    expect(mockStore.markSshRemotePtyLease).not.toHaveBeenCalledWith(targetId, 'pty-1', 'expired')
+    expect(mockStore.markSshRemotePtyLeases).not.toHaveBeenCalled()
+    expect(clearProviderPtyState).not.toHaveBeenCalled()
+    expect(clearPtyOwnershipForConnection).not.toHaveBeenCalled()
+    expect(deletePtyOwnership).not.toHaveBeenCalled()
+    expect(setPtyOwnership).not.toHaveBeenCalled()
+    expect(muxDisposeMock).not.toHaveBeenCalledWith('shutdown')
+    expect(mockWindow.webContents.send).not.toHaveBeenCalledWith('pty:exit', expect.anything())
+  })
+
+  it('accepts empty recovery only when the checkpoint equals the recovery end', async () => {
+    const { mockStore } = await runRecoverySequence({
+      targetId: 'empty-recovery',
+      recoveryEndSu: 4,
+      liveFrame: [4, 8]
+    })
+
+    expect(acceptOutputDataMock.mock.calls.map(([payload]) => payload.data)).toEqual(['live'])
+    expect(mockStore.markSshRemotePtyLease).toHaveBeenCalledWith(
+      'empty-recovery',
+      'pty-1',
+      'attached'
+    )
   })
 })

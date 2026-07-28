@@ -54,6 +54,7 @@ import {
   isWindowsRemoteHost,
   joinRemotePath,
   normalizeRemoteHome,
+  remoteBasename,
   validateRemoteHome,
   type RemoteHostPlatform
 } from './ssh-remote-platform'
@@ -73,6 +74,10 @@ import {
   MAX_SSH_RELAY_GRACE_PERIOD_SECONDS,
   MIN_SSH_RELAY_GRACE_PERIOD_SECONDS
 } from '../../shared/ssh-types'
+import {
+  assertSshPtySourceCreditRelayLaunchPolicy,
+  SshPtySourceCreditRestartRequiredError
+} from './ssh-pty-source-credit-rollout'
 
 export type RelayDeployResult = {
   transport: MultiplexerTransport
@@ -106,6 +111,37 @@ function execHostCommand(
     timeoutMs: options?.timeoutMs,
     signal: options?.signal
   })
+}
+
+function sourceCreditPolicyPath(
+  hostPlatform: RemoteHostPlatform,
+  remoteDir: string,
+  endpoint: string
+): string {
+  return joinRemotePath(
+    hostPlatform,
+    remoteDir,
+    `${remoteBasename(endpoint, hostPlatform)}.pty-source-credit-policy`
+  )
+}
+
+async function assertExistingRelaySourceCreditPolicy(
+  conn: SshConnection,
+  hostPlatform: RemoteHostPlatform,
+  policyPath: string,
+  enabled: boolean,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!enabled) {
+    return
+  }
+  const command = isWindowsRemoteHost(hostPlatform)
+    ? powerShellCommand(
+        `if (Test-Path -LiteralPath ${powerShellLiteral(policyPath)} -PathType Leaf) { Get-Content -LiteralPath ${powerShellLiteral(policyPath)} -Raw -ErrorAction SilentlyContinue }`
+      )
+    : `test -f ${shellEscape(policyPath)} && cat ${shellEscape(policyPath)} || true`
+  const policy = (await execHostCommand(conn, hostPlatform, command, { signal })).trim()
+  assertSshPtySourceCreditRelayLaunchPolicy(enabled, policy)
 }
 
 /**
@@ -1191,18 +1227,21 @@ async function launchRelay(
   const sockFile = relayEndpointForHost(hostPlatform, remoteDir, sockName)
   const endpointDir = relayHookEndpointDirForHost(hostPlatform, remoteDir, sockFile)
   const credentialFile = joinRemotePath(hostPlatform, remoteDir, `${sockName}.credential`)
+  const sourceCreditPolicyFile = sourceCreditPolicyPath(hostPlatform, remoteDir, sockFile)
 
   if (isWindowsRemoteHost(hostPlatform)) {
     const activePipeMarkerPath = windowsActivePipeMarkerPath(hostPlatform, remoteDir, sockName)
-    const activeEndpoint = (await readWindowsActiveRelayEndpoint(
+    const discoveredActiveEndpoint = await readWindowsActiveRelayEndpoint(
       conn,
       hostPlatform,
       remoteDir,
       activePipeMarkerPath,
       signal
-    )) ?? {
+    )
+    const activeEndpoint = discoveredActiveEndpoint ?? {
       sockPath: sockFile,
-      endpointDir
+      endpointDir,
+      sourceCreditPolicyFile
     }
     const fallbackEndpoint = buildWindowsRelayFallbackEndpoint(hostPlatform, remoteDir, sockName)
     const launched = await launchWindowsRelay(
@@ -1213,6 +1252,7 @@ async function launchRelay(
         nodePath,
         sockPath: activeEndpoint.sockPath,
         endpointDir: activeEndpoint.endpointDir,
+        sourceCreditPolicyFile: activeEndpoint.sourceCreditPolicyFile,
         graceTime,
         activePipeMarkerPath,
         reconnectFallback: fallbackEndpoint,
@@ -1233,6 +1273,13 @@ async function launchRelay(
     )
     console.warn(`[ssh-relay] Socket probe result: "${probeOutput.trim()}"`)
     if (probeOutput.trim() === 'ALIVE') {
+      await assertExistingRelaySourceCreditPolicy(
+        conn,
+        hostPlatform,
+        sourceCreditPolicyFile,
+        enablePtySourceCreditV1,
+        signal
+      )
       console.log('[ssh-relay] Existing relay socket found, attempting reconnect...')
       try {
         const channel = await conn.exec(
@@ -1260,6 +1307,9 @@ async function launchRelay(
       }
     }
   } catch (err) {
+    if (err instanceof SshPtySourceCreditRestartRequiredError) {
+      throw err
+    }
     if (isUnconfirmedSshCommandTermination(err)) {
       throw err
     }
@@ -1273,7 +1323,8 @@ async function launchRelay(
   await writeRelayEndpointCredential(conn, hostPlatform, credentialFile, signal)
   // Why: --log-file lets the relay rotate relay.log in-process; the shell redirect stays to capture pre-JS boot/crash output.
   const sourceCreditFlag = enablePtySourceCreditV1 ? ' --pty-source-credit-v1' : ''
-  const launchCmd = `cd ${escapedDir} && chmod 600 ${shellEscape(credentialFile)} && nohup ${escapedNode} relay.js --detached${sourceCreditFlag} --grace-time ${graceTime} --sock-path ${shellEscape(sockFile)} --credential-file ${shellEscape(credentialFile)} --log-file ${shellEscape(logFile)} > ${shellEscape(logFile)} 2>&1 </dev/null &`
+  const sourceCreditPolicy = enablePtySourceCreditV1 ? 'v1' : 'off'
+  const launchCmd = `cd ${escapedDir} && printf '%s\\n' ${shellEscape(sourceCreditPolicy)} > ${shellEscape(sourceCreditPolicyFile)} && chmod 600 ${shellEscape(credentialFile)} ${shellEscape(sourceCreditPolicyFile)} && nohup ${escapedNode} relay.js --detached${sourceCreditFlag} --grace-time ${graceTime} --sock-path ${shellEscape(sockFile)} --credential-file ${shellEscape(credentialFile)} --log-file ${shellEscape(logFile)} > ${shellEscape(logFile)} 2>&1 </dev/null &`
   const launchChannel = await conn.exec(launchCmd, { signal })
   launchChannel.on('data', () => {})
   launchChannel.on('error', () => {})
@@ -1371,7 +1422,8 @@ function buildWindowsRelayFallbackEndpoint(
   const sockPath = relayEndpointForHost(hostPlatform, remoteDir, fallbackSockName)
   return {
     sockPath,
-    endpointDir: relayHookEndpointDirForHost(hostPlatform, remoteDir, sockPath)
+    endpointDir: relayHookEndpointDirForHost(hostPlatform, remoteDir, sockPath),
+    sourceCreditPolicyFile: sourceCreditPolicyPath(hostPlatform, remoteDir, sockPath)
   }
 }
 
@@ -1399,7 +1451,8 @@ async function readWindowsActiveRelayEndpoint(
   }
   return {
     sockPath,
-    endpointDir: relayHookEndpointDirForHost(hostPlatform, remoteDir, sockPath)
+    endpointDir: relayHookEndpointDirForHost(hostPlatform, remoteDir, sockPath),
+    sourceCreditPolicyFile: sourceCreditPolicyPath(hostPlatform, remoteDir, sockPath)
   }
 }
 
@@ -1429,6 +1482,7 @@ async function rememberWindowsActiveRelayEndpoint(
 type WindowsRelayEndpoint = {
   sockPath: string
   endpointDir: string
+  sourceCreditPolicyFile: string
 }
 
 type WindowsRelayLaunchOptions = {
@@ -1450,6 +1504,13 @@ async function launchWindowsRelay(
 ): Promise<{ transport: MultiplexerTransport; nodePath: string; sockPath: string }> {
   let launchOpts = opts
   if ((await probeWindowsRelayPipe(conn, hostPlatform, opts, signal)) === 'READY') {
+    await assertExistingRelaySourceCreditPolicy(
+      conn,
+      hostPlatform,
+      opts.sourceCreditPolicyFile,
+      opts.enablePtySourceCreditV1,
+      signal
+    )
     try {
       const transport = await connectWindowsRelay(conn, hostPlatform, opts, signal)
       await rememberWindowsActiveRelayEndpoint(
@@ -1482,6 +1543,13 @@ async function launchWindowsRelay(
     launchOpts !== opts &&
     (await probeWindowsRelayPipe(conn, hostPlatform, launchOpts, signal)) === 'READY'
   ) {
+    await assertExistingRelaySourceCreditPolicy(
+      conn,
+      hostPlatform,
+      launchOpts.sourceCreditPolicyFile,
+      launchOpts.enablePtySourceCreditV1,
+      signal
+    )
     try {
       const transport = await connectWindowsRelay(conn, hostPlatform, launchOpts, signal)
       await rememberWindowsActiveRelayEndpoint(
@@ -1521,6 +1589,7 @@ async function launchWindowsRelay(
       logFile,
       errFile,
       launchOpts.credentialFile,
+      launchOpts.sourceCreditPolicyFile,
       launchOpts.enablePtySourceCreditV1
     ),
     { signal }
@@ -1614,6 +1683,7 @@ function windowsRelayLaunchCommand(
   logFile: string,
   errFile: string,
   credentialFile: string,
+  sourceCreditPolicyFile: string,
   enablePtySourceCreditV1 = false
 ): string {
   const relayScript = joinRemotePath(hostPlatform, remoteDir, 'relay.js')
@@ -1644,7 +1714,9 @@ function windowsRelayLaunchCommand(
     nodePath,
     remoteDir,
     [
+      `Set-Content -LiteralPath ${powerShellLiteral(sourceCreditPolicyFile)} -Value ${powerShellLiteral(enablePtySourceCreditV1 ? 'v1' : 'off')} -NoNewline`,
       `& icacls.exe ${powerShellLiteral(credentialFile)} /inheritance:r /grant:r "$($env:USERNAME):(R,W)" | Out-Null`,
+      `& icacls.exe ${powerShellLiteral(sourceCreditPolicyFile)} /inheritance:r /grant:r "$($env:USERNAME):(R,W)" | Out-Null`,
       `$result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ${powerShellLiteral(wmiCommandLine)}; CurrentDirectory = ${powerShellLiteral(remoteDir)} }`,
       `if ($result.ReturnValue -ne 0) { throw "Win32_Process.Create failed with $($result.ReturnValue)" }`
     ].join('; ')

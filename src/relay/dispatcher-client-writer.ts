@@ -59,8 +59,8 @@ export class DispatcherClientWriter {
     return this.sink.producerFrameCapacity
   }
 
-  get producerQueueCapacity(): number {
-    return this.admission.producerQueueCapacity
+  get fixedFrameCapacity(): number {
+    return this.sink.frameCapacity('fixed-bulk', this.saturated)
   }
 
   canEnqueueProducer(bytes: number): boolean {
@@ -96,7 +96,7 @@ export class DispatcherClientWriter {
       onSettled: onceDispatcherWriterSettlement(onSettled),
       settled: false
     }
-    const admission = this.admission.admit(entry, this.producerFrameCapacity)
+    const admission = this.admission.admit(entry, this.sink.frameCapacity(lane, this.saturated))
     if (!admission.accepted) {
       if (admission.error) {
         entry.onSettled({ ok: false, error: admission.error })

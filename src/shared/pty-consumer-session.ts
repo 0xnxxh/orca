@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import {
   PTY_CONSUMER_OWNER_GRACE_MS,
   PTY_CONSUMER_SESSION_PROTOCOL_VERSION,
+  PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR,
   type PtyConsumerAuthentication,
   type PtyConsumerSessionAdmission,
   type PtyConsumerSessionGrant,
@@ -244,7 +245,9 @@ export class PtyConsumerSession {
     const current = this.owner
     if (!current) {
       if (hello.resume) {
-        throw new Error('Owner recovery lease is stale')
+        throw Object.assign(new Error('Owner recovery lease is stale'), {
+          code: PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR
+        })
       }
       return this.newOwner(hello, authentication, null)
     }

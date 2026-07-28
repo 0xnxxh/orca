@@ -1,4 +1,5 @@
 import {
+  ptySourceDeliveryKey,
   samePtySourceDelivery,
   type PtySourceDeliveryIdentity,
   type PtySourceSpan
@@ -22,9 +23,20 @@ export type SshPtySourceObligationTransition = Readonly<{
   reason: string
 }>
 
+type TerminalWaiter = {
+  resolve: () => void
+  reject: (error: Error) => void
+}
+
+type TerminalWaiterGroup = {
+  identity: PtySourceDeliveryIdentity
+  waiters: Set<TerminalWaiter>
+}
+
 export class SshPtySourceObligationCoordinator {
   private readonly ledger: SshPtySourceObligationLedger
   private readonly acknowledgements: SshPtySourceAckCoalescer
+  private readonly terminalWaiters = new Map<string, TerminalWaiterGroup>()
   private disposed = false
 
   constructor(options: SshPtySourceAckCoalescerOptions) {
@@ -56,7 +68,11 @@ export class SshPtySourceObligationCoordinator {
   }
 
   rollbackCommitted(reservation: SshPtySourceAdmissionReservation): boolean {
-    return this.ledger.rollbackCommitted(reservation)
+    const rolledBack = this.ledger.rollbackCommitted(reservation)
+    if (rolledBack) {
+      this.maybeResolveTerminal(reservation.span)
+    }
+    return rolledBack
   }
 
   settle(transition: SshPtySourceObligationTransition): boolean {
@@ -89,13 +105,36 @@ export class SshPtySourceObligationCoordinator {
     return changed
   }
 
+  rollbackTransfer(transition: SshPtySourceObligationTransition): boolean {
+    this.requireSpanIdentity(transition)
+    return this.ledger.rollbackTransfer(transition.spanId, transition.consumer)
+  }
+
   seal(identity: PtySourceDeliveryIdentity): void {
+    if (this.ledger.snapshot(identity).state === 'sealed-unsettled') {
+      return
+    }
     this.ledger.seal(identity)
   }
 
   markExitPublished(identity: PtySourceDeliveryIdentity): void {
     this.queueEligibleAck(identity)
     this.ledger.markExitPublished(identity)
+  }
+
+  whenTerminal(identity: PtySourceDeliveryIdentity): Promise<void> {
+    if (this.isTerminal(identity)) {
+      return Promise.resolve()
+    }
+    const key = ptySourceDeliveryKey(identity)
+    let group = this.terminalWaiters.get(key)
+    if (!group) {
+      group = { identity: Object.freeze({ ...identity }), waiters: new Set() }
+      this.terminalWaiters.set(key, group)
+    }
+    return new Promise((resolve, reject) => {
+      group!.waiters.add({ resolve, reject })
+    })
   }
 
   beginExitTimeout(identity: PtySourceDeliveryIdentity) {
@@ -106,10 +145,26 @@ export class SshPtySourceObligationCoordinator {
     identity: PtySourceDeliveryIdentity,
     proof: Readonly<{ sentEndSu: number; creditedEndSu: number }>
   ): void {
+    const snapshot = this.ledger.snapshot(identity)
+    if (
+      snapshot.state === 'closed' &&
+      snapshot.receivedEndSu === proof.sentEndSu &&
+      snapshot.ackPublishedEndSu === proof.creditedEndSu
+    ) {
+      return
+    }
     this.ledger.applyCancellationProof(identity, proof)
+    this.rejectWaiters(
+      (group) => samePtySourceDelivery(group.identity, identity),
+      new Error('ssh_source_delivery_canceled')
+    )
   }
 
   closeGeneration(providerGeneration: number, reason: string): number {
+    this.rejectWaiters(
+      (group) => group.identity.providerGeneration === providerGeneration,
+      new Error(reason)
+    )
     const closed = this.ledger.closeGeneration(providerGeneration, reason)
     this.acknowledgements.cancelGeneration(providerGeneration, reason)
     return closed
@@ -131,6 +186,10 @@ export class SshPtySourceObligationCoordinator {
     return this.ledger.spanIdentity(spanId)
   }
 
+  hasRetainedSpan(spanId: string): boolean {
+    return this.ledger.hasRetainedSpan(spanId)
+  }
+
   flushAcknowledgements(): void {
     this.acknowledgements.flush()
   }
@@ -140,6 +199,7 @@ export class SshPtySourceObligationCoordinator {
       return
     }
     this.disposed = true
+    this.rejectWaiters(() => true, new Error(reason ?? 'SSH PTY source obligations disposed'))
     this.ledger.closeAll(reason ?? 'SSH PTY source obligation coordinator disposed')
     this.acknowledgements.dispose(reason)
   }
@@ -148,6 +208,41 @@ export class SshPtySourceObligationCoordinator {
     const publication = this.ledger.queueAck(identity)
     if (publication) {
       this.acknowledgements.enqueue(publication)
+    }
+    this.maybeResolveTerminal(identity)
+  }
+
+  private isTerminal(identity: PtySourceDeliveryIdentity): boolean {
+    const snapshot = this.ledger.snapshot(identity)
+    return (
+      snapshot.obligationsTerminalEndSu === snapshot.receivedEndSu &&
+      snapshot.ackQueuedEndSu === snapshot.receivedEndSu
+    )
+  }
+
+  private maybeResolveTerminal(identity: PtySourceDeliveryIdentity): void {
+    if (!this.isTerminal(identity)) {
+      return
+    }
+    const group = this.terminalWaiters.get(ptySourceDeliveryKey(identity))
+    if (!group) {
+      return
+    }
+    this.terminalWaiters.delete(ptySourceDeliveryKey(identity))
+    for (const waiter of group.waiters) {
+      waiter.resolve()
+    }
+  }
+
+  private rejectWaiters(predicate: (group: TerminalWaiterGroup) => boolean, error: Error): void {
+    for (const [key, group] of this.terminalWaiters) {
+      if (!predicate(group)) {
+        continue
+      }
+      this.terminalWaiters.delete(key)
+      for (const waiter of group.waiters) {
+        waiter.reject(error)
+      }
     }
   }
 

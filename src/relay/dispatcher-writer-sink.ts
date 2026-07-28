@@ -1,5 +1,6 @@
 import {
   relayWriterControlReserve,
+  type DispatcherWriterLane,
   type DispatcherWriterSettlement
 } from './dispatcher-writer-admission'
 
@@ -45,6 +46,13 @@ export class DispatcherWriterSink {
       return Number.MAX_SAFE_INTEGER
     }
     return Math.max(0, this.highWaterMark - relayWriterControlReserve(this.highWaterMark))
+  }
+
+  frameCapacity(lane: DispatcherWriterLane, producerBlocked = false): number {
+    if (lane === 'fixed-bulk') {
+      return !producerBlocked && this.writableLength === 0 ? Number.MAX_SAFE_INTEGER : 0
+    }
+    return this.producerFrameCapacity
   }
 
   registerDrain(callback: () => void): { registered: boolean; remove: () => void } {

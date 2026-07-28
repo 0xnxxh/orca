@@ -876,6 +876,8 @@ export class PtyHandler {
     const desiredChars = pending.transformed
       ? pending.data.length
       : Math.min(pending.data.length, PTY_OUTPUT_FLUSH_CHUNK_CHARS)
+    const sourceOnlyEmission =
+      pending.transformed === true && pending.data.length === 0 && (pending.rawLength ?? 0) > 0
     const paramsWithoutData = {
       id,
       ...(pending.seq === undefined ? {} : { seq: pending.seq }),
@@ -894,7 +896,10 @@ export class PtyHandler {
     ) {
       chunkChars--
     }
-    if (chunkChars <= 0 || (pending.transformed && chunkChars !== pending.data.length)) {
+    if (
+      (!sourceOnlyEmission && chunkChars <= 0) ||
+      (pending.transformed && chunkChars !== pending.data.length)
+    ) {
       this.pendingOutputByPty.set(id, queue)
       this.pausePtyOutput(id)
       return false
@@ -1137,7 +1142,9 @@ export class PtyHandler {
     }
     const existing = this.agentSessionCreateOperations.get(operationId)
     if (existing) {
-      return await existing
+      const result = await existing
+      this.sourcePublication?.activate(result.id, result.incarnationId, context)
+      return result
     }
     if (this.agentSessionCreateOperations.size >= AGENT_SESSION_CREATE_OPERATION_LIMIT) {
       throw new Error('agent_session_operation_capacity')

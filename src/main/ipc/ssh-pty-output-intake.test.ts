@@ -376,6 +376,65 @@ describe('SshPtyOutputIntake', () => {
     expect(harness.order).toEqual(['model:aaaa', 'project:aaaa', 'exit'])
   })
 
+  it('admits queued pre-exit source spans before sealing the token', async () => {
+    const harness = createHarness({}, { exitBarrierMs: 1000 })
+    const first = harness.intake.acceptData(
+      event({
+        source: {
+          spanId: 'span-1',
+          clientGeneration: 2,
+          ownerGeneration: 3,
+          deliveryToken: 'token-1',
+          sourceStartSu: 0,
+          sourceEndSu: 4
+        }
+      })
+    )
+    const second = harness.intake.acceptData(
+      event({
+        data: 'bbbb',
+        source: {
+          spanId: 'span-2',
+          clientGeneration: 2,
+          ownerGeneration: 3,
+          deliveryToken: 'token-1',
+          sourceStartSu: 4,
+          sourceEndSu: 8
+        }
+      })
+    )
+    const exit = harness.intake.acceptExit({
+      id: 'pty-1',
+      code: 0,
+      providerGeneration: 1,
+      ptyIncarnation: 'incarnation-1'
+    })
+
+    harness.completions[0]!.resolve()
+    await first
+    harness.completions[1]!.resolve()
+    await Promise.all([second, exit])
+    expect(harness.order).toEqual([
+      'model:aaaa',
+      'project:aaaa',
+      'model:bbbb',
+      'project:bbbb',
+      'exit'
+    ])
+  })
+
+  it('does not pump queued model work after a running completion fails', async () => {
+    const harness = createHarness()
+    const first = harness.intake.acceptData(event({ data: 'first' }))
+    const queued = harness.intake.acceptData(event({ data: 'queued' }))
+
+    harness.completions[0]!.reject(new Error('emulator failed'))
+    await expect(first).rejects.toThrow('emulator failed')
+    await expect(queued).rejects.toThrow('ssh_model_admission_completion_failed')
+    expect(harness.order).toEqual(['model:first', 'project:first'])
+    expect(harness.completions).toHaveLength(1)
+  })
+
   it('retains exited delivery until published renderer projections settle', async () => {
     const harness = createHarness({}, { exitBarrierMs: 1000 })
     const dataReceipt = harness.intake.acceptData(event())
@@ -408,8 +467,57 @@ describe('SshPtyOutputIntake', () => {
     expect(harness.intake.getDebugSnapshot().projection.records).toBe(0)
   })
 
+  it('retains exit until a required remote source consumer settles', async () => {
+    const harness = createHarness({}, { exitBarrierMs: 1000 })
+    const remote = harness.intake.getRemoteSourceRangeConsumerHooks()
+    const stream = {
+      ptyId: 'pty-1',
+      consumerId: 'remote-1',
+      streamGeneration: 'stream-1'
+    }
+    expect(remote.attach(stream)).toBe(true)
+    const dataReceipt = harness.intake.acceptData(
+      event({
+        source: {
+          spanId: 'span-1',
+          clientGeneration: 2,
+          ownerGeneration: 3,
+          deliveryToken: 'token-1',
+          sourceStartSu: 0,
+          sourceEndSu: 4
+        }
+      })
+    )
+    harness.completions[0]!.resolve()
+    const receipt = await dataReceipt
+
+    let exited = false
+    const exitReceipt = harness.intake
+      .acceptExit({
+        id: 'pty-1',
+        code: 0,
+        providerGeneration: 1,
+        ptyIncarnation: 'incarnation-1'
+      })
+      .then(() => {
+        exited = true
+      })
+    await Promise.resolve()
+    expect(exited).toBe(false)
+
+    remote.settle(stream, [receipt.projection.desktopSpan!])
+    await exitReceipt
+    expect(harness.order.at(-1)).toBe('exit')
+    expect(harness.dependencies.closeProvider).not.toHaveBeenCalled()
+  })
+
   it('keeps timed-out exit projections until generation-close proof', async () => {
-    const harness = createHarness({}, { exitBarrierMs: 1 })
+    const harness = createHarness(
+      {
+        cancelSourceDelivery: () => Promise.reject(new Error('cancel transport failed'))
+      },
+      { exitBarrierMs: 1, exitCancellationProofMs: 10 }
+    )
     const dataReceipt = harness.intake.acceptData(event())
     harness.completions[0]!.resolve()
     const receipt = await dataReceipt
@@ -426,12 +534,65 @@ describe('SshPtyOutputIntake', () => {
         providerGeneration: 1,
         ptyIncarnation: 'incarnation-1'
       })
-    ).rejects.toThrow('ssh_exit_barrier_timeout')
-    expect(harness.dependencies.closeProvider).toHaveBeenCalledWith(1, 'ssh-exit-barrier-timeout')
+    ).rejects.toThrow('ssh_source_cancellation_identity_unavailable')
+    expect(harness.dependencies.closeProvider).toHaveBeenCalledWith(
+      1,
+      'ssh-exit-cancellation-proof-failed'
+    )
     expect(harness.intake.getDebugSnapshot().projection.records).toBe(1)
 
     harness.intake.closeGeneration(1, 'provider-closed')
     expect(harness.intake.getDebugSnapshot().projection.records).toBe(0)
+  })
+
+  it('cancels only the timed-out source delivery and keeps the provider usable', async () => {
+    const cancelSourceDelivery = vi.fn(async () => ({ sentEndSu: 4, creditedEndSu: 0 }))
+    const harness = createHarness(
+      { cancelSourceDelivery },
+      { exitBarrierMs: 1, exitCancellationProofMs: 100 }
+    )
+    const remote = harness.intake.getRemoteSourceRangeConsumerHooks()
+    const stream = {
+      ptyId: 'pty-1',
+      consumerId: 'remote-1',
+      streamGeneration: 'stream-1'
+    }
+    remote.attach(stream)
+    const dataReceipt = harness.intake.acceptData(
+      event({
+        source: {
+          spanId: 'span-1',
+          clientGeneration: 2,
+          ownerGeneration: 3,
+          deliveryToken: 'token-1',
+          sourceStartSu: 0,
+          sourceEndSu: 4
+        }
+      })
+    )
+    harness.completions[0]!.resolve()
+    await dataReceipt
+
+    await harness.intake.acceptExit({
+      id: 'pty-1',
+      code: 0,
+      providerGeneration: 1,
+      ptyIncarnation: 'incarnation-1'
+    })
+    expect(cancelSourceDelivery).toHaveBeenCalledWith(1, {
+      id: 'pty-1',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      deliveryToken: 'token-1'
+    })
+    expect(harness.dependencies.closeProvider).not.toHaveBeenCalled()
+    expect(harness.order.at(-1)).toBe('exit')
+
+    const sibling = harness.intake.acceptData(
+      event({ id: 'pty-2', ptyIncarnation: 'incarnation-2' })
+    )
+    harness.completions[1]!.resolve()
+    await expect(sibling).resolves.toMatchObject({ ptyId: 'pty-2' })
   })
 
   it('rejects late same-generation data after ordered exit cleanup', async () => {

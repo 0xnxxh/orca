@@ -9,7 +9,9 @@ import type { DesktopProjectionSpan } from './ssh-pty-legacy-projection'
 import type {
   SshPtyOutputDataEvent,
   SshPtyOutputExitEvent,
-  SshPtyOutputIntakeDependencies
+  SshPtyOutputIntakeDependencies,
+  SshPtySourceCancellationProof,
+  SshPtySourceCancellationRequest
 } from './ssh-pty-output-intake-contract'
 import { SshPtyRemoteSourceRangeConsumers } from './ssh-pty-remote-source-range-consumers'
 import type { SshPtySourceAdmissionReservation } from './ssh-pty-source-obligation-contract'
@@ -133,8 +135,39 @@ export class SshPtyOutputSourceObligations {
     }
   }
 
+  whenPtyTerminal(event: SshPtyOutputExitEvent): Promise<void> {
+    const identity = this.identityByPty.get(this.ptyKey(event))
+    return identity ? this.coordinator.whenTerminal(identity) : Promise.resolve()
+  }
+
+  async cancelPty(
+    event: SshPtyOutputExitEvent,
+    cancel: (request: SshPtySourceCancellationRequest) => Promise<SshPtySourceCancellationProof>
+  ): Promise<boolean> {
+    const identity = this.identityByPty.get(this.ptyKey(event))
+    if (!identity) {
+      return false
+    }
+    const request = this.coordinator.beginExitTimeout(identity)
+    const proof = await cancel(request)
+    this.coordinator.applyCancellationProof(identity, proof)
+    return true
+  }
+
+  applyCancellationProof(
+    event: SshPtyOutputExitEvent,
+    proof: SshPtySourceCancellationProof
+  ): boolean {
+    const identity = this.identityByPty.get(this.ptyKey(event))
+    if (!identity) {
+      return false
+    }
+    this.coordinator.applyCancellationProof(identity, proof)
+    return true
+  }
+
   closeGeneration(providerGeneration: number, reason: string): void {
-    this.remoteConsumers.closeGeneration(providerGeneration)
+    this.remoteConsumers.closeGeneration(providerGeneration, reason)
     this.coordinator.closeGeneration(providerGeneration, reason)
     const prefix = `${providerGeneration}\0`
     for (const key of this.openedTokens) {

@@ -5,6 +5,18 @@ import type {
 } from './ssh-pty-model-admission-contract'
 import type { PtySourceCreditAckBatch } from '../../shared/pty-source-credit-contract'
 
+export type SshPtySourceCancellationRequest = Readonly<{
+  id: string
+  clientGeneration: number
+  ownerGeneration: number
+  deliveryToken: string
+}>
+
+export type SshPtySourceCancellationProof = Readonly<{
+  sentEndSu: number
+  creditedEndSu: number
+}>
+
 export type SshPtyOutputDataEvent = Readonly<{
   id: string
   data: string
@@ -52,8 +64,13 @@ export type SshPtyOutputIntakeDependencies = {
     batch: PtySourceCreditAckBatch,
     onSettled: (result: { ok: true } | { ok: false; error: Error }) => void
   ) => void
+  cancelSourceDelivery?: (
+    providerGeneration: number,
+    request: SshPtySourceCancellationRequest
+  ) => Promise<SshPtySourceCancellationProof>
 }
 
 export type SshPtyOutputIntakeOptions = SshPtyModelAdmissionOptions & {
   exitBarrierMs?: number
+  exitCancellationProofMs?: number
 }

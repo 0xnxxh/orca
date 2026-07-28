@@ -159,7 +159,11 @@ import {
 } from './pty-hidden-delivery-gate'
 import { PtyPendingDataDrainQueue, type PendingPtyData } from './pty-pending-data-drain-queue'
 import { SshPtyOutputIntake } from './ssh-pty-output-intake'
-import { installSshPtyOutputIntake, publishSshPtySourceAck } from './ssh-pty-output-intake-registry'
+import {
+  cancelSshPtySourceDelivery,
+  installSshPtyOutputIntake,
+  publishSshPtySourceAck
+} from './ssh-pty-output-intake-registry'
 import type { LegacySshProjectionSemantics } from './ssh-pty-legacy-projection'
 import {
   clearNativeWindowsConptyPty,
@@ -3169,7 +3173,8 @@ export function registerPtyHandlers(
         }
       }
     },
-    publishSourceAck: publishSshPtySourceAck
+    publishSourceAck: publishSshPtySourceAck,
+    cancelSourceDelivery: cancelSshPtySourceDelivery
   })
   runtime?.setRemoteTerminalSourceRangeConsumerHooks?.(
     sshOutputIntake.getRemoteSourceRangeConsumerHooks()

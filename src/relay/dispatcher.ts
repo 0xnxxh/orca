@@ -863,11 +863,14 @@ export class RelayDispatcher {
   private publishToClient(
     client: RelayClient,
     msg: JsonRpcNotification,
-    lane: 'interactive' | 'ordinary' | 'bulk',
+    lane: 'interactive' | 'ordinary' | 'fixed-bulk' | 'bulk',
     onSettled: (result: SinkWriteSettlement) => void = () => {}
   ): boolean {
     const bytes = this.estimateFrameBytes(msg)
-    if (!client.writer.canEnqueueProducer(bytes)) {
+    const fixedBlocked =
+      lane === 'fixed-bulk' &&
+      (client.writer.retainedProducerBytes > 0 || bytes > client.writer.fixedFrameCapacity)
+    if (fixedBlocked || (lane !== 'fixed-bulk' && !client.writer.canEnqueueProducer(bytes))) {
       return false
     }
     const leases = this.publicationLedger.tryReserve([{ clientKey: this.clientKey(client), bytes }])
@@ -879,8 +882,12 @@ export class RelayDispatcher {
 
   private publishBulkWhenAvailable(client: RelayClient, msg: JsonRpcNotification): Promise<void> {
     const bytes = this.estimateFrameBytes(msg)
-    if (bytes > client.writer.producerQueueCapacity) {
+    const lane = msg.method === 'fs.streamChunk' ? 'fixed-bulk' : 'bulk'
+    if (bytes > DEFAULT_PRODUCER_QUEUE_MAX_BYTES) {
       return Promise.reject(new Error('Relay bulk frame exceeds sink producer capacity'))
+    }
+    if (lane === 'bulk' && bytes > client.writer.producerFrameCapacity) {
+      return Promise.reject(new Error('Relay bulk frame exceeds sink frame capacity'))
     }
     return new Promise<void>((resolve, reject) => {
       let removeCapacityListener: (() => void) | null = null
@@ -895,7 +902,7 @@ export class RelayDispatcher {
           return
         }
         if (
-          this.publishToClient(client, msg, 'bulk', (result) => {
+          this.publishToClient(client, msg, lane, (result) => {
             finish()
             if (result.ok || this.disposed || client.closed) {
               resolve()
@@ -917,14 +924,14 @@ export class RelayDispatcher {
   private enqueueLeasedFrame(
     client: RelayClient,
     msg: JsonRpcNotification,
-    lane: 'interactive' | 'ordinary' | 'bulk',
+    lane: 'interactive' | 'ordinary' | 'fixed-bulk' | 'bulk',
     lease: LegacyPublicationLease,
     onSettled: (result: SinkWriteSettlement) => void = () => {}
   ): boolean {
     const accepted = this.enqueueFrame(client, msg, lane, (result) => {
       lease.release()
-      this.notifyLegacyCapacityIfLow()
       onSettled(result)
+      this.notifyLegacyCapacityIfLow()
     })
     if (!accepted) {
       lease.release()

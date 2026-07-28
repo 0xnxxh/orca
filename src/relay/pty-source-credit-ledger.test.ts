@@ -355,6 +355,66 @@ describe('RelayPtySourceCreditLedger', () => {
     expect(ledger.retentionSnapshot()).toEqual({ sourceSu: 0, dataBytes: 0, spans: 0 })
   })
 
+  it('charges UTF-16 storage and one record per retained source frame', () => {
+    const ledger = new RelayPtySourceCreditLedger({
+      maxRetainedDataBytes: 391,
+      maxAggregateRetainedDataBytes: 391
+    })
+    const owner = identity()
+    ledger.open(owner, 8)
+    append(ledger, owner, '\u0000'.repeat(64), 'utf16-heavy')
+
+    expect(ledger.retentionSnapshot()).toEqual({ sourceSu: 64, dataBytes: 256, spans: 1 })
+    expect(() => append(ledger, owner, 'a'.repeat(8), 'fragment')).toThrow('retained encoded-data')
+    expect(ledger.retentionSnapshot()).toEqual({ sourceSu: 64, dataBytes: 256, spans: 1 })
+  })
+
+  it('enforces per-PTY and aggregate source, charged-byte, and frame caps across fragments', () => {
+    const limits = {
+      maxRetainedSourceSu: 6,
+      maxAggregateRetainedSourceSu: 9,
+      maxRetainedDataBytes: 500,
+      maxAggregateRetainedDataBytes: 700,
+      maxRetainedSpans: 2,
+      maxAggregateRetainedSpans: 3
+    }
+    const first = identity('token-a')
+    const second = identity('token-b', {
+      id: 'pty-2',
+      ptyIncarnation: 'incarnation-2'
+    })
+    const ledger = new RelayPtySourceCreditLedger(limits)
+    ledger.open(first, 8)
+    ledger.open(second, 8)
+    append(ledger, first, 'aa', 'first-a')
+    append(ledger, first, 'bb', 'first-b')
+    append(ledger, second, 'cc', 'second-a')
+
+    expect(ledger.retentionSnapshot()).toEqual({
+      sourceSu: 6,
+      dataBytes: 396,
+      spans: 3
+    })
+    expect(() => append(ledger, first, 'c', 'first-frame-cap')).toThrow('retained-span')
+    expect(() => append(ledger, second, 'dddd', 'aggregate-source-cap')).toThrow('Aggregate')
+
+    const byteLimited = new RelayPtySourceCreditLedger({
+      ...limits,
+      maxRetainedSourceSu: 200,
+      maxAggregateRetainedSourceSu: 300,
+      maxAggregateRetainedSpans: 10,
+      maxRetainedSpans: 10,
+      maxAggregateRetainedDataBytes: 650
+    })
+    byteLimited.open(first, 8)
+    byteLimited.open(second, 8)
+    append(byteLimited, first, '\u0000'.repeat(64), 'first-utf16')
+    append(byteLimited, second, '\u0000'.repeat(64), 'second-utf16')
+    expect(() => append(byteLimited, second, '\u0000'.repeat(8), 'aggregate-byte-cap')).toThrow(
+      'Aggregate'
+    )
+  })
+
   it('bounds retained frame metadata independently of source units', () => {
     const ledger = new RelayPtySourceCreditLedger({
       maxRetainedSpans: 2,
@@ -366,7 +426,7 @@ describe('RelayPtySourceCreditLedger', () => {
     append(ledger, owner, 'b', 'span-b')
 
     expect(() => append(ledger, owner, 'c', 'span-c')).toThrow('retained-span')
-    expect(ledger.retentionSnapshot()).toEqual({ sourceSu: 2, dataBytes: 2, spans: 2 })
+    expect(ledger.retentionSnapshot()).toEqual({ sourceSu: 2, dataBytes: 260, spans: 2 })
   })
 
   it('bounds closed token tombstones', () => {

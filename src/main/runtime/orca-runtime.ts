@@ -18,6 +18,8 @@ import type { TerminalOscColorQueryReplyColors } from '../../shared/terminal-osc
 import type { TerminalOutputSourceRange } from '../../shared/terminal-output-source-range'
 import type {
   RemoteTerminalSourceRangeConsumerHooks,
+  RemoteTerminalSourceRangeReplacementPublication,
+  RemoteTerminalSourceRangeReplacementReservation,
   RemoteTerminalSourceRangeStreamIdentity
 } from './remote-terminal-source-range-consumer'
 import {
@@ -8887,12 +8889,37 @@ export class OrcaRuntimeService {
     this.remoteTerminalSourceRangeConsumerHooks?.settle(identity, ranges)
   }
 
-  transferRemoteTerminalSourceRanges(
+  reserveRemoteTerminalSourceRangeReplacement(
     identity: RemoteTerminalSourceRangeStreamIdentity,
-    ranges: readonly TerminalOutputSourceRange[],
+    requiredSeq: number,
     reason: string
-  ): void {
-    this.remoteTerminalSourceRangeConsumerHooks?.transfer(identity, ranges, reason)
+  ): RemoteTerminalSourceRangeReplacementReservation | null {
+    return (
+      this.remoteTerminalSourceRangeConsumerHooks?.reserveReplacement(
+        identity,
+        requiredSeq,
+        reason
+      ) ?? null
+    )
+  }
+
+  commitRemoteTerminalSourceRangeReplacement(
+    reservation: RemoteTerminalSourceRangeReplacementReservation,
+    publication: RemoteTerminalSourceRangeReplacementPublication
+  ): boolean {
+    return (
+      this.remoteTerminalSourceRangeConsumerHooks?.commitReplacement(reservation, publication) ??
+      false
+    )
+  }
+
+  rollbackRemoteTerminalSourceRangeReplacement(
+    reservation: RemoteTerminalSourceRangeReplacementReservation,
+    reason: string
+  ): boolean {
+    return (
+      this.remoteTerminalSourceRangeConsumerHooks?.rollbackReplacement(reservation, reason) ?? false
+    )
   }
 
   cancelRemoteTerminalSourceRanges(

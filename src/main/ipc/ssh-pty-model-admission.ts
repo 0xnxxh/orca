@@ -9,10 +9,8 @@ import {
   admissionKeyId,
   canReserveAdmission,
   cancelAdmissionGeneration,
-  pressureHasAdmissionKey,
   retainedBytes,
   resolveAdmissionIdleWaiters,
-  takePausedGeneration,
   type AdmissionCharge,
   type AdmissionEntry,
   type PtyUsage
@@ -21,6 +19,7 @@ import {
   resolveSshPtyModelAdmissionLimits,
   type SshPtyModelAdmissionLimits
 } from './ssh-pty-model-admission-limits'
+import { SshPtyModelAdmissionPressure } from './ssh-pty-model-admission-pressure'
 
 export type {
   SshPtyModelAdmissionKey,
@@ -30,23 +29,22 @@ export type {
 
 export class SshPtyModelAdmission {
   private readonly limits: SshPtyModelAdmissionLimits
-  private readonly pauseProvider: (key: SshPtyModelAdmissionKey) => boolean
-  private readonly resumeProvider: (key: SshPtyModelAdmissionKey) => void
   private readonly closeProvider: (providerGeneration: number, reason: string) => void
   private readonly usageByPty = new Map<string, PtyUsage>()
-  private readonly pressure: AdmissionEntry[] = []
-  private readonly pausedKeys = new Map<string, SshPtyModelAdmissionKey>()
+  private readonly pressure: SshPtyModelAdmissionPressure
   private readonly idleWaiters = new Map<string, Set<() => void>>()
   private readonly closingGenerations = new Set<number>()
   private globalSourceUnits = 0
   private globalBytes = 0
-  private pressureBytes = 0
   private disposed = false
 
   constructor(options: SshPtyModelAdmissionOptions = {}) {
     this.limits = resolveSshPtyModelAdmissionLimits(options)
-    this.pauseProvider = options.pauseProvider ?? (() => false)
-    this.resumeProvider = options.resumeProvider ?? (() => {})
+    this.pressure = new SshPtyModelAdmissionPressure({
+      limits: this.limits,
+      pauseProvider: options.pauseProvider ?? (() => false),
+      resumeProvider: options.resumeProvider ?? (() => {})
+    })
     this.closeProvider = options.closeProvider ?? (() => {})
   }
 
@@ -72,45 +70,65 @@ export class SshPtyModelAdmission {
         reject,
         state: 'queued'
       }
-      if (this.canReserve(key, charge) && !pressureHasAdmissionKey(this.pressure, key)) {
+      if (this.canReserve(key, charge) && !this.pressure.has(key)) {
         this.reserveAndQueue(entry)
         return
       }
-      this.admitPressure(entry)
+      if (!this.pressure.admit(entry)) {
+        entry.reject(admissionError('ssh_model_admission_pressure_exhausted'))
+        this.closeProvider(entry.key.providerGeneration, 'model-admission-pressure')
+      }
     })
   }
 
   closeGeneration(providerGeneration: number, reason = 'provider-generation-closed'): void {
     this.closingGenerations.add(providerGeneration)
     const error = admissionError(reason)
-    this.pressureBytes -= cancelAdmissionGeneration({
-      pressure: this.pressure,
-      usageByPty: this.usageByPty,
-      idleWaiters: this.idleWaiters,
-      providerGeneration,
-      error,
-      release: (key, charge) => this.release(key, charge)
-    })
-    for (const key of takePausedGeneration(this.pausedKeys, providerGeneration)) {
-      try {
-        this.resumeProvider(key)
-      } catch {}
-    }
+    this.pressure.cancelGeneration(providerGeneration, (pressure) =>
+      cancelAdmissionGeneration({
+        pressure,
+        usageByPty: this.usageByPty,
+        idleWaiters: this.idleWaiters,
+        providerGeneration,
+        error,
+        release: (key, charge) => this.release(key, charge)
+      })
+    )
     const generationPrefix = `${providerGeneration}\0`
     for (const id of this.idleWaiters.keys()) {
       if (id.startsWith(generationPrefix)) {
-        resolveAdmissionIdleWaiters(this.usageByPty, this.pressure, this.idleWaiters, id)
+        resolveAdmissionIdleWaiters(this.usageByPty, this.pressure.values, this.idleWaiters, id)
       }
     }
+  }
+
+  cancelPty(key: SshPtyModelAdmissionKey, reason: string): void {
+    const id = admissionKeyId(key)
+    const error = admissionError(reason)
+    this.pressure.cancelPty(key, error, () => {
+      const usage = this.usageByPty.get(id)
+      if (usage) {
+        const canceled = [...usage.queued, ...(usage.running ? [usage.running] : [])]
+        usage.queued = []
+        usage.running = null
+        for (const entry of canceled) {
+          if (entry.state === 'settled') {
+            continue
+          }
+          entry.state = 'settled'
+          this.release(entry.key, entry.charge)
+          entry.reject(error)
+        }
+        this.usageByPty.delete(id)
+      }
+    })
+    resolveAdmissionIdleWaiters(this.usageByPty, this.pressure.values, this.idleWaiters, id)
   }
 
   whenIdle(key: SshPtyModelAdmissionKey): Promise<void> {
     const id = admissionKeyId(key)
     const usage = this.usageByPty.get(id)
-    const hasPressure = this.pressure.some(
-      (entry) =>
-        entry.key.providerGeneration === key.providerGeneration && entry.key.ptyId === key.ptyId
-    )
+    const hasPressure = this.pressure.has(key)
     if ((!usage || (!usage.running && usage.queued.length === 0)) && !hasPressure) {
       return Promise.resolve()
     }
@@ -135,7 +153,7 @@ export class SshPtyModelAdmission {
         generations.add(entry.key.providerGeneration)
       }
     }
-    for (const entry of this.pressure) {
+    for (const entry of this.pressure.values) {
       generations.add(entry.key.providerGeneration)
     }
     for (const generation of generations) {
@@ -147,9 +165,9 @@ export class SshPtyModelAdmission {
     return {
       sourceUnits: this.globalSourceUnits,
       bytes: this.globalBytes,
-      pressureFrames: this.pressure.length,
-      pressureBytes: this.pressureBytes,
-      pausedPtys: this.pausedKeys.size
+      pressureFrames: this.pressure.frameCount,
+      pressureBytes: this.pressure.bytes,
+      pausedPtys: this.pressure.pausedPtyCount
     }
   }
 
@@ -181,33 +199,13 @@ export class SshPtyModelAdmission {
     this.startNext(id, usage)
   }
 
-  private admitPressure(entry: AdmissionEntry): void {
-    const id = admissionKeyId(entry.key)
-    const paused = this.pausedKeys.has(id) || this.pauseProvider(entry.key)
-    if (paused) {
-      this.pausedKeys.set(id, entry.key)
-    }
-    if (
-      !paused ||
-      this.pressure.length >= this.limits.pressureMaxFrames ||
-      this.pressureBytes + entry.charge.bytes > this.limits.pressureMaxBytes
-    ) {
-      entry.reject(admissionError('ssh_model_admission_pressure_exhausted'))
-      this.closeProvider(entry.key.providerGeneration, 'model-admission-pressure')
-      return
-    }
-    entry.state = 'pressure'
-    this.pressure.push(entry)
-    this.pressureBytes += entry.charge.bytes
-  }
-
   private startNext(id: string, usage: PtyUsage): void {
     if (usage.running) {
       return
     }
     const entry = usage.queued.shift()
     if (!entry) {
-      this.maybeResumeAndPromote()
+      this.promotePressureAndResumeProvider()
       return
     }
     usage.running = entry
@@ -233,11 +231,22 @@ export class SshPtyModelAdmission {
         })
       },
       (error) => {
-        if (this.finishEntry(id, usage, entry)) {
-          entry.reject(error instanceof Error ? error : new Error(String(error)))
-        }
+        this.failEntry(id, usage, entry, error instanceof Error ? error : new Error(String(error)))
       }
     )
+  }
+
+  private failEntry(id: string, usage: PtyUsage, entry: AdmissionEntry, error: Error): void {
+    if (entry.state !== 'running' || usage.running !== entry) {
+      return
+    }
+    this.closingGenerations.add(entry.key.providerGeneration)
+    usage.running = null
+    entry.state = 'settled'
+    this.release(entry.key, entry.charge)
+    entry.reject(error)
+    this.closeGeneration(entry.key.providerGeneration, 'ssh_model_admission_completion_failed')
+    this.cleanupUsage(id, usage)
   }
 
   private finishEntry(id: string, usage: PtyUsage, entry: AdmissionEntry): boolean {
@@ -256,7 +265,7 @@ export class SshPtyModelAdmission {
     if (!usage.running && usage.queued.length === 0 && usage.sourceUnits === 0) {
       this.usageByPty.delete(id)
     }
-    resolveAdmissionIdleWaiters(this.usageByPty, this.pressure, this.idleWaiters, id)
+    resolveAdmissionIdleWaiters(this.usageByPty, this.pressure.values, this.idleWaiters, id)
   }
 
   private release(key: SshPtyModelAdmissionKey, charge: AdmissionCharge): void {
@@ -267,49 +276,18 @@ export class SshPtyModelAdmission {
     }
     this.globalSourceUnits = Math.max(0, this.globalSourceUnits - charge.sourceUnits)
     this.globalBytes = Math.max(0, this.globalBytes - charge.bytes)
-    this.maybeResumeAndPromote()
+    this.promotePressureAndResumeProvider()
   }
 
-  private maybeResumeAndPromote(): void {
-    if (this.disposed) {
-      return
-    }
-    for (let index = 0; index < this.pressure.length; ) {
-      const entry = this.pressure[index]!
-      const hasEarlierEntryForPty = this.pressure
-        .slice(0, index)
-        .some((earlier) => admissionKeyId(earlier.key) === admissionKeyId(entry.key))
-      if (hasEarlierEntryForPty || !this.canReserve(entry.key, entry.charge)) {
-        index++
-        continue
-      }
-      this.pressure.splice(index, 1)
-      this.pressureBytes -= entry.charge.bytes
-      this.reserveAndQueue(entry)
-    }
-    if (
-      this.globalSourceUnits > this.limits.globalLowSourceUnits ||
-      this.globalBytes > this.limits.globalLowBytes
-    ) {
-      return
-    }
-    for (const [id, key] of this.pausedKeys) {
-      const usage = this.usageByPty.get(id)
-      const stillPressured = this.pressure.some(
-        (entry) =>
-          entry.key.providerGeneration === key.providerGeneration && entry.key.ptyId === key.ptyId
-      )
-      if (
-        stillPressured ||
-        (usage?.sourceUnits ?? 0) > this.limits.perPtyLowSourceUnits ||
-        (usage?.bytes ?? 0) > this.limits.perPtyLowBytes
-      ) {
-        continue
-      }
-      this.pausedKeys.delete(id)
-      try {
-        this.resumeProvider(key)
-      } catch {}
-    }
+  private promotePressureAndResumeProvider(): void {
+    this.pressure.promoteAndResume({
+      usageByPty: this.usageByPty,
+      disposed: this.disposed,
+      canReserve: (entry) => this.canReserve(entry.key, entry.charge),
+      reserve: (entry) => this.reserveAndQueue(entry),
+      isBelowGlobalLowWatermark: () =>
+        this.globalSourceUnits <= this.limits.globalLowSourceUnits &&
+        this.globalBytes <= this.limits.globalLowBytes
+    })
   }
 }

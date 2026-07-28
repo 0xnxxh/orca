@@ -37,6 +37,7 @@ import {
   cancelSourceObligationTransfer,
   commitSourceObligationTransfer,
   modelAcceptedSourceEnd,
+  rollbackSourceObligationTransfer,
   transitionOpenSourceObligation
 } from './ssh-pty-source-obligation-transitions'
 
@@ -160,6 +161,10 @@ export class SshPtySourceObligationLedger {
     return cancelSourceObligationTransfer(this.spanOwners, spanId, consumer, reason)
   }
 
+  rollbackTransfer(spanId: string, consumer: SshPtySourceConsumerId): boolean {
+    return rollbackSourceObligationTransfer(this.spanOwners, spanId, consumer)
+  }
+
   queueAck(identity: PtySourceDeliveryIdentity): SshPtySourceAckPublication | null {
     const token = this.requireToken(identity)
     if (token.obligationsTerminalEndSu <= token.ackQueuedEndSu) {
@@ -261,6 +266,10 @@ export class SshPtySourceObligationLedger {
 
   spanIdentity(spanId: string): PtySourceSpan {
     return requireSourceSpan(this.spanOwners, spanId).span.span
+  }
+
+  hasRetainedSpan(spanId: string): boolean {
+    return this.spanOwners.has(spanId)
   }
 
   private transitionOpen(

@@ -198,14 +198,15 @@ export class SshPtyProvider implements IPtyProvider {
     // be filtered before they reach the renderer. The expected identity lets the
     // relay reject a cross-generation id collision instead of reattaching this
     // lease to a different pane's freshly spawned PTY.
+    const params = {
+      id: this.toRelayPtyId(id),
+      suppressReplayNotification: true,
+      ...(sourceRecovery ? { sourceRecovery } : {}),
+      ...(expected?.paneKey ? { expectedPaneKey: expected.paneKey } : {}),
+      ...(expected?.tabId ? { expectedTabId: expected.tabId } : {})
+    }
     const result = parseSshPtyAttachResult(
-      await this.mux.request('pty.attach', {
-        id: this.toRelayPtyId(id),
-        suppressReplayNotification: true,
-        ...(sourceRecovery ? { sourceRecovery } : {}),
-        ...(expected?.paneKey ? { expectedPaneKey: expected.paneKey } : {}),
-        ...(expected?.tabId ? { expectedTabId: expected.tabId } : {})
-      })
+      await this.mux.request('pty.attach', params, { timeoutMs: 10_000 })
     )
     this.outputState.rememberPtyIncarnation(this.toRelayPtyId(id), result.incarnationId)
     return result

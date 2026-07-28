@@ -725,7 +725,7 @@ describe('SshRelaySession', () => {
     })
   })
 
-  it('routes transient reattach failures through relay-lost retry handling', async () => {
+  it('retries transient reattach failure without tearing down provider registration', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
     const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
     const onRelayLost = vi.fn()
@@ -741,11 +741,17 @@ describe('SshRelaySession', () => {
       dispose: vi.fn()
     } as unknown as ReturnType<typeof getSshPtyProvider>)
     vi.mocked(getPtyIdsForConnection).mockReturnValue(['pty-live'])
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0)
 
-    await session.reconnect(mockConn)
+    try {
+      await session.reconnect(mockConn)
+    } finally {
+      random.mockRestore()
+    }
 
-    expect(mockAttach).toHaveBeenCalledWith('pty-live')
-    expect(onRelayLost).toHaveBeenCalledWith('target-1')
+    expect(mockAttach).toHaveBeenCalledTimes(2)
+    expect(onRelayLost).not.toHaveBeenCalled()
+    expect(session.getState()).toBe('ready')
     expect(mockStore.markSshRemotePtyLease).not.toHaveBeenCalledWith(
       'target-1',
       'pty-live',

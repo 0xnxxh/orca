@@ -484,6 +484,7 @@ describe('deployAndLaunchRelay', () => {
 
     expect(launchCommand).toContain(`--grace-time ${DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS}`)
     expect(launchCommand).not.toContain('--pty-source-credit-v1')
+    expect(launchCommand).toContain("printf '%s\\n' 'off'")
   })
 
   it('allows an unlimited SSH disconnect grace window', async () => {
@@ -504,6 +505,7 @@ describe('deployAndLaunchRelay', () => {
 
     expect(launchCommand).toContain('--grace-time 0')
     expect(launchCommand).toContain('--pty-source-credit-v1')
+    expect(launchCommand).toContain("printf '%s\\n' 'v1'")
   })
 
   it('clamps configured SSH disconnect grace to the seven-day maximum', async () => {
@@ -770,6 +772,8 @@ describe('deployAndLaunchRelay', () => {
     )
     expect(launchScript).toContain('--endpoint-dir')
     expect(launchScript).toContain('--pty-source-credit-v1')
+    expect(launchScript).toContain('.pty-source-credit-policy')
+    expect(launchScript).toContain("-Value 'v1'")
     expect(launchScript).not.toContain('\\\\.\\pipe\\agent-hooks')
     const waitScript = decodedScripts.find((script) => script.includes('deadline=Date.now()')) ?? ''
     expect(waitScript).toContain('setTimeout(attempt,intervalMs)')

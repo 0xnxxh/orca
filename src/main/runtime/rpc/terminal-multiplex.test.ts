@@ -33,6 +33,7 @@ function stubRuntime(overrides: Partial<OrcaRuntimeService> = {}): OrcaRuntimeSe
     isPtyResizeDrivenRemotely: vi.fn().mockReturnValue(false),
     getRemoteDesktopFitHold: vi.fn().mockReturnValue({ mode: 'desktop-fit', cols: 120, rows: 40 }),
     isRemoteDesktopViewerOwner: vi.fn().mockReturnValue(false),
+    getPtyOutputSequence: vi.fn().mockReturnValue(0),
     ...overrides
   } as OrcaRuntimeService
 }
@@ -138,15 +139,145 @@ function sendDesktopMultiplexSubscribe(
 }
 
 describe('terminal multiplex RPC', () => {
+  it.each(['headless', 'renderer'] as const)(
+    'commits a source-range replacement only after the %s snapshot publishes',
+    async (source) => {
+      const reservation = {
+        reservationId: 'replacement-1',
+        identity: {
+          ptyId: 'pty-1',
+          consumerId: 'multiplex:conn-desktop-first-paint:7',
+          streamGeneration: 'generation'
+        },
+        requiredSeq: 0
+      }
+      const reserve = vi.fn(() => reservation)
+      const commit = vi.fn(() => true)
+      const rollback = vi.fn(() => true)
+      const harness = startDesktopMultiplexSubscribe({
+        attachRemoteTerminalSourceRangeConsumer: vi.fn(() => true),
+        reserveRemoteTerminalSourceRangeReplacement: reserve,
+        commitRemoteTerminalSourceRangeReplacement: commit,
+        rollbackRemoteTerminalSourceRangeReplacement: rollback,
+        cancelRemoteTerminalSourceRanges: vi.fn(),
+        serializeTerminalBuffer: vi
+          .fn()
+          .mockResolvedValue({ data: 'snapshot', cols: 120, rows: 40, source, seq: 4 })
+      })
+      await vi.waitFor(() => expect(harness.handlers.has(0)).toBe(true))
+      harness.handlers.get(0)?.(
+        decodeTerminalStreamFrame(
+          encodeTerminalStreamFrame({
+            opcode: TerminalStreamOpcode.Subscribe,
+            streamId: 0,
+            seq: 1,
+            payload: encodeTerminalStreamJson({
+              streamId: 7,
+              terminal: 'terminal-1',
+              client: { id: 'desktop-1', type: 'desktop' },
+              capabilities: { ackOutput: 1, ackOutputSourceRanges: 1 }
+            })
+          })
+        )!
+      )
+
+      await vi.waitFor(() => expect(commit).toHaveBeenCalledOnce())
+      expect(reserve).toHaveBeenCalledWith(expect.any(Object), 0, 'initial-snapshot')
+      expect(commit).toHaveBeenCalledWith(reservation, { source, seq: 4 })
+      expect(rollback).not.toHaveBeenCalled()
+      const snapshotEndIndex = harness.binaryFrames.findIndex(
+        (bytes) => decodeTerminalStreamFrame(bytes)?.opcode === TerminalStreamOpcode.SnapshotEnd
+      )
+      expect(snapshotEndIndex).toBeGreaterThanOrEqual(0)
+      harness.cleanups.get('terminal-multiplex:conn-desktop-first-paint')?.()
+      await harness.dispatchPromise
+    }
+  )
+
+  it('rolls back replacement admission when snapshot publication is refused', async () => {
+    const reservation = {
+      reservationId: 'replacement-1',
+      identity: {
+        ptyId: 'pty-1',
+        consumerId: 'multiplex:conn-desktop-first-paint:7',
+        streamGeneration: 'generation'
+      },
+      requiredSeq: 0
+    }
+    const commit = vi.fn(() => true)
+    const rollback = vi.fn(() => true)
+    const harness = startDesktopMultiplexSubscribe(
+      {
+        attachRemoteTerminalSourceRangeConsumer: vi.fn(() => true),
+        reserveRemoteTerminalSourceRangeReplacement: vi.fn(() => reservation),
+        commitRemoteTerminalSourceRangeReplacement: commit,
+        rollbackRemoteTerminalSourceRangeReplacement: rollback,
+        cancelRemoteTerminalSourceRanges: vi.fn(),
+        serializeTerminalBuffer: vi.fn().mockResolvedValue({
+          data: 'snapshot',
+          cols: 120,
+          rows: 40,
+          source: 'headless',
+          seq: 4
+        })
+      },
+      undefined,
+      (bytes) => decodeTerminalStreamFrame(bytes)?.opcode !== TerminalStreamOpcode.SnapshotEnd
+    )
+    await vi.waitFor(() => expect(harness.handlers.has(0)).toBe(true))
+    harness.handlers.get(0)?.(
+      decodeTerminalStreamFrame(
+        encodeTerminalStreamFrame({
+          opcode: TerminalStreamOpcode.Subscribe,
+          streamId: 0,
+          seq: 1,
+          payload: encodeTerminalStreamJson({
+            streamId: 7,
+            terminal: 'terminal-1',
+            client: { id: 'desktop-1', type: 'desktop' },
+            capabilities: { ackOutput: 1, ackOutputSourceRanges: 1 }
+          })
+        })
+      )!
+    )
+
+    await harness.dispatchPromise
+    expect(commit).not.toHaveBeenCalled()
+    expect(rollback).toHaveBeenCalledWith(reservation, 'initial-snapshot-unpublished')
+  })
+
+  it('keeps legacy multiplex clients outside source replacement admission', async () => {
+    const attach = vi.fn(() => true)
+    const reserve = vi.fn()
+    const harness = startDesktopMultiplexSubscribe({
+      attachRemoteTerminalSourceRangeConsumer: attach,
+      reserveRemoteTerminalSourceRangeReplacement: reserve
+    })
+    await vi.waitFor(() => expect(harness.handlers.has(0)).toBe(true))
+    sendDesktopMultiplexSubscribe(harness.handlers)
+    await vi.waitFor(() =>
+      expect(
+        harness.messages.some((message) => JSON.parse(message).result?.type === 'subscribed')
+      ).toBe(true)
+    )
+
+    expect(attach).not.toHaveBeenCalled()
+    expect(reserve).not.toHaveBeenCalled()
+    harness.cleanups.get('terminal-multiplex:conn-desktop-first-paint')?.()
+    await harness.dispatchPromise
+  })
+
   it('settles negotiated source ranges only at accepted encoded boundaries', async () => {
     let dataListener: ((data: string, meta?: RuntimeTerminalDataMeta) => void) | null = null
     const settle = vi.fn()
-    const transfer = vi.fn()
+    const cancel = vi.fn()
     const harness = startDesktopMultiplexSubscribe({
       attachRemoteTerminalSourceRangeConsumer: vi.fn(() => true),
       settleRemoteTerminalSourceRanges: settle,
-      transferRemoteTerminalSourceRanges: transfer,
-      cancelRemoteTerminalSourceRanges: vi.fn(),
+      reserveRemoteTerminalSourceRangeReplacement: vi.fn(() => null),
+      commitRemoteTerminalSourceRangeReplacement: vi.fn(() => false),
+      rollbackRemoteTerminalSourceRangeReplacement: vi.fn(() => false),
+      cancelRemoteTerminalSourceRanges: cancel,
       subscribeToTerminalData: vi.fn((_ptyId, listener) => {
         dataListener = listener
         return vi.fn()
@@ -263,7 +394,7 @@ describe('terminal multiplex RPC', () => {
         })
       )!
     )
-    expect(transfer).toHaveBeenCalledWith(expect.any(Object), [], 'stream-detached')
+    expect(cancel).toHaveBeenCalledWith(expect.any(Object), [], 'stream-detached')
   })
 
   it.each(['refuses', 'throws'] as const)(

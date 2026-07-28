@@ -4,6 +4,7 @@ export type DispatcherWriterLane =
   | 'legacy-response'
   | 'interactive'
   | 'ordinary'
+  | 'fixed-bulk'
   | 'bulk'
 
 export type DispatcherWriterSettlement = { ok: true } | { ok: false; error: Error }
@@ -53,6 +54,7 @@ export class DispatcherWriterAdmission {
     'legacy-response': [],
     interactive: [],
     ordinary: [],
+    'fixed-bulk': [],
     bulk: []
   }
   private controlBytes = 0
@@ -66,18 +68,13 @@ export class DispatcherWriterAdmission {
     return this.producerBytes
   }
 
-  get producerQueueCapacity(): number {
-    return this.producerQueueMaxBytes
-  }
-
   get queuedEntries(): number {
     return Object.values(this.queues).reduce((total, queue) => total + queue.length, 0)
   }
 
   canAdmitProducer(bytes: number, producerFrameCapacity: number): boolean {
     return (
-      bytes <= Math.max(producerFrameCapacity, this.producerQueueMaxBytes) &&
-      this.producerBytes + bytes <= this.producerQueueMaxBytes
+      bytes <= producerFrameCapacity && this.producerBytes + bytes <= this.producerQueueMaxBytes
     )
   }
 
@@ -95,6 +92,9 @@ export class DispatcherWriterAdmission {
       this.producerBytes += entry.estimatedBytes
       this.queues[entry.lane].push(entry)
       return { accepted: true }
+    }
+    if (entry.lane === 'fixed-bulk' && this.producerBytes > 0) {
+      return { accepted: false }
     }
     if (!this.canAdmitProducer(entry.estimatedBytes, producerFrameCapacity)) {
       return { accepted: false }

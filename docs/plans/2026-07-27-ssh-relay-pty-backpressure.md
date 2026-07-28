@@ -2,14 +2,16 @@
 
 Date: 2026-07-27
 
-Status: architecture reviewed; incremental implementation plan ready
+Status: architecture reviewed; SSH V1 implementation complete behind an
+experimental startup gate; final branch/CI validation pending
 
-Baseline: `origin/main` at `0edc95fa35e4b6e403e116d4e224ad35329b0159`
-after rebasing this design on 2026-07-27
+Historical unbounded baseline: `badf91101babf96fa09cb79a8294f7e23b9f081c`
+(the implementation branch parent). The final validation record is updated
+after rebasing this PR onto current `origin/main`.
 
 ## Scope
 
-This plan bounds SSH relay PTY output from the native PTY through the relay
+This implemented design bounds SSH relay PTY output from the native PTY through the relay
 dispatcher, SSH channel or relay socket, Electron main process, and renderer
 parser. It covers:
 
@@ -24,6 +26,50 @@ commit `1500a92904` is design input only; it must not be cherry-picked. This
 work does not change PTY input semantics, terminal-model interpretation, or
 file/Git payload semantics. It does change replay transport, SSH producer
 pause wiring, and bulk frame admission where they share the dispatcher sink.
+
+## Implemented architecture and evidence boundary
+
+The architecture review approved one shared semantic
+`PtyConsumerSession` state machine with an SSH-specific transport adapter.
+It did not approve a universal wire protocol. In this PR:
+
+- `PtyConsumerSession` owns authenticated client/owner generations, lease
+  recovery, capability intersection, and grant publication commit/rollback.
+- `SshPtyConsumerSessionAdapter` binds those semantics to the existing
+  authenticated relay connection and the first framed `pty.openClient`
+  request. The relay dispatcher remains the only sink-publication authority.
+- The relay source ledger owns immutable source spans, outstanding source
+  credit, token rotation, sealed exit, and cancellation proof. The dispatcher
+  writer owns byte admission, priorities, `write(false)`, callbacks, and drain.
+- `SshRelaySession` owns grant/reconnect state, bounded recovery quarantine,
+  exact recovery fencing, and cumulative ACK publication through the main SSH
+  mux.
+- The main SSH intake owns one atomic admission across the model, desktop
+  projection, and required remote consumers. Model completion and consumer
+  terminality make ACKs eligible; only the mux write callback publishes them.
+- Desktop and remote replacement transactions carry immutable span identity.
+  Reserve happens before publication, commit requires the exact
+  generation/sequence fence, and failure or stale publication rolls back
+  without credit.
+
+The implementation is intentionally scoped:
+
+| Surface                                     | State in this PR                                        | Evidence                                                                                           |
+| ------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Same-build direct SSH/deployed relay, V1 on | implemented                                             | deterministic relay/main contracts plus macOS-hosted Docker OpenSSH                                |
+| Same-build SSH, V1 off                      | implemented bounded legacy mode                         | deterministic rollout and writer contracts                                                         |
+| Reconnect/owner recovery                    | implemented                                             | exact contiguous recovery, stale-owner one-shot retry, eight-wide reattach tests, Docker reconnect |
+| Headed/headless remote consumers            | source-range reserve/commit/rollback implemented        | deterministic runtime/main seam only; no live paired-runtime claim                                 |
+| WSL stdio and Windows named pipe/ConPTY     | shared transport paths preserved                        | deterministic/common-contract evidence only; no physical run                                       |
+| Local provider and local daemon             | unchanged                                               | outside SSH V1 negotiation; existing behavior only                                                 |
+| Folder workspace                            | no `.git` dependency added                              | code-path review only; no dedicated live fixture                                                   |
+| Prior-version/mixed-version peers           | fail-closed or version-scoped legacy behavior preserved | deterministic rollout/deploy contracts; no live old binary                                         |
+| Ubuntu 20.04/glibc 2.31                     | no native dependency added                              | cross-target relay build only; no physical packaging run                                           |
+
+Docker SSH proves the Linux SSH provider and deployed-relay topology. It does
+not prove headed or headless paired-runtime behavior, WSL, Windows ConPTY or
+named pipes, local daemon/provider behavior, folder workspaces, prior-version
+processes, mixed-version clients, or the Ubuntu 20.04 packaging floor.
 
 ## Verified baseline and migration boundary
 
@@ -213,6 +259,20 @@ ship independently. A relay-only `pty.getCapabilities` followed by
 `pty.negotiateClient` is rejected because it would create a second readiness
 authority beside the existing authenticated handshakes.
 
+The 2026-07-28 architecture/terminal review closed its three blocking
+findings as follows:
+
+| Finding                                                                   | Implemented resolution                                                                                                                                                   |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Exited delivery removed while uncredited spans remain                     | Native exit seals the token; logical state survives until cumulative ACK, exact transfer, token-scoped cancellation proof, or generation close.                          |
+| Terminal obligations depended circularly on ACK publication               | Obligation terminality advances `obligationsTerminalEndSu`; the coalescer independently queues `ackQueuedEndSu`; only mux write settlement advances `ackPublishedEndSu`. |
+| Desktop projection admission lacked immutable range identity and rollback | Model, source span, projection range, and scanner snapshot reserve atomically; pre-commit failure rolls back, while post-commit replacement transfers with proof.        |
+
+Later adversarial review also required exact recovery continuity, stale-attempt
+isolation, startup-latched rollout semantics, and idempotent remote detach
+after token reclamation. Those are incorporated in the activation, lifecycle,
+cleanup, tests, and rollout sections below.
+
 The common state machine accepts only:
 
 - an authenticated principal and owner-eligibility decision from the adapter;
@@ -259,20 +319,17 @@ the semantic fields, and calls the fence.
 
 The reviewed decision preserves the existing connection machinery:
 
-| Path                                 | Authentication and identity                                                                                | Shared-session binding                                                                                    |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Local in-process provider            | trusted main-process construction                                                                          | instantiate semantics directly; no RPC or capability probe                                                |
-| Local daemon                         | token-authenticated `HelloMessage`, stable `clientId`, paired control/stream sockets, and `daemonIdentity` | control hello stores an optional offer; stream hello response publishes the grant after pairing           |
-| SSH relay socket/named pipe          | private endpoint credential validated by `--connect` before its sentinel                                   | first framed `pty.openClient` carries the optional offer; its response is the provider-readiness fence    |
-| Direct SSH stdio and WSL child stdio | launch-bound ephemeral nonce consumed by the relay adapter                                                 | first framed `pty.openClient` proves the nonce and carries the offer; its response is the readiness fence |
-| Remote-runtime server                | paired-device/E2EE identity and connection ID                                                              | adapt `terminal.multiplex` subscriptions; never issue SSH owner leases                                    |
+| Path                                    | Authentication and identity                                                                                | Binding in this PR                                                            |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Local in-process provider               | trusted main-process construction                                                                          | unchanged; it does not negotiate SSH V1                                       |
+| Local daemon                            | token-authenticated `HelloMessage`, stable `clientId`, paired control/stream sockets, and `daemonIdentity` | unchanged; an exact-version daemon remains outside the SSH wire contract      |
+| SSH relay socket/named pipe             | existing authenticated relay endpoint and dispatcher client identity                                       | first framed `pty.openClient`; response settlement is the readiness fence     |
+| Primary relay stdio and WSL child stdio | no authenticated dispatcher principal in this PR                                                           | bounded legacy transport only; an unproved client cannot become session owner |
+| Remote-runtime server                   | paired-device/E2EE identity and connection ID                                                              | source-range reserve/commit/rollback only; never receives an SSH owner lease  |
 
-Current direct stdio and WSL have a one-way sentinel, not a bidirectional
-pre-dispatch handshake. The reviewed SSH binding therefore chooses one
-mandatory post-sentinel `pty.openClient` request for every SSH adapter; there
-is no remaining readiness-vs-request choice. After extracting the exact
-sentinel and residue, main sends this as the first framed request and prohibits
-spawn, attach, or ordinary dispatch until its response validates. The relay
+The implemented owner path is the authenticated detached relay endpoint used
+by the SSH provider. After extracting the exact sentinel and residue, main
+sends `pty.openClient` before spawn, attach, or ordinary dispatch. The relay
 adapter queues later decoded frames behind the session response's write
 callback, so an eager next request cannot race activation. Main marks the
 provider ready only after receiving the valid response.
@@ -281,29 +338,24 @@ Detached `--connect` first reads the version-scoped endpoint credential and
 authenticates its Unix-socket/named-pipe bridge before emitting its sentinel.
 The adapter converts that proof into a principal and
 `allowSessionOwner = true`; `pty.openClient` carries no secret to the generic
-RPC handler. Direct ssh2, system SSH, and WSL launches receive a safely quoted
-one-use nonce from their existing platform-specific command builder. The
-pre-dispatch adapter consumes and strips the nonce from `pty.openClient`; a
-manual relay without valid proof is subscriber-only. The nonce expires on the
-first accepted open or process exit.
+RPC handler. The primary relay stdin/stdout dispatcher identity remains
+explicitly unproved and therefore subscriber-only; there is no launch nonce in
+this implementation. WSL child stdio shares the bounded decoder/writer
+transport changes but does not negotiate an SSH V1 owner in this PR. A manual
+relay without the version-scoped endpoint credential is also subscriber-only.
 
 The review compared sentinel extension and the single request against one
 readiness authority, no first-spawn race, authenticated owner replacement,
 response publication fencing, reconnect idempotency, exact residue transfer,
-and deterministic testability. The single request wins because it works with
-the current one-way sentinel on ssh2, system SSH, and WSL. A separate
-capability probe, two-step negotiation, and a generic cross-transport wire API
-are not approved.
+and deterministic testability. The single request wins for the authenticated
+deployed-relay bridge. A separate capability probe, two-step negotiation, and
+a generic cross-transport wire API are not approved.
 
-The daemon adapter preserves its current sequential connection order. The
-control hello is authenticated and answered immediately with daemon identity;
-an optional offer is only pending state keyed by that authenticated
-`clientId`. The later stream hello proves the socket pair, applies the common
-state transition once, and may return the grant in its response. The client
-does not mark the daemon connected until that response. An implementation
-changes the daemon protocol version as usual, so an exact-version prior daemon
-continues independently rather than partially interpreting the optional
-fields.
+The local daemon adapter is deliberately not changed in this PR. Its existing
+sequential control/stream hello, authentication, exact-version fencing, and
+prior-version isolation remain authoritative. Reusing the semantic state
+machine there is a later design decision and is not required to ship the SSH
+bound.
 
 The optional V1 offer is present only when the main rollout gate is on. The
 server intersects the offer with its supported versions and clamps
@@ -338,10 +390,10 @@ transport client and installed generation. `pty.attach` must receive request
 context just as `pty.spawn` does. Spawn failure, identity mismatch, stale
 context, and response cancellation create no active V1 subscription. A legacy
 spawn/attach returns the current identity/replay shape and creates only the
-bounded transport subscription above—no token or source coordinate. During
-kill-switch rotation, an old V1 token may be closing while its replacement
-legacy transport subscription is opening, but no legacy token exists and no
-live token changes mode.
+bounded transport subscription above—no token or source coordinate. The
+startup-latched mode never rotates a live V1 token into legacy service; normal
+shutdown closes the old token before a restarted gate-off main opens a bounded
+legacy connection.
 
 Session ownership is granted by the authenticated session hello, not
 constructor-assigned:
@@ -378,16 +430,16 @@ other than the one installed by its synchronous response hook. The constructor
 stdout client is never implicitly a session owner. Production launches
 detached on POSIX and Windows, invalidates stdout, and connects the desktop
 bridge through `attachClient` over the versioned Unix socket or named pipe.
-Direct stdio receives owner authority only from its launch-bound session hello.
+Unproved direct stdio remains subscriber-only.
 
 Capability support and rollout enablement are separate. Fresh POSIX and
 Windows launches receive a safely quoted
 `--pty-output-flow-control=v1|off` argument controlling advertisement. A new
 main may decline V1 from an already-running detached relay even if it still
-advertises it. Disabling the main gate rotates current tokens with the bounded
-cancel/reattach procedure below; it never silently changes a live token's
-semantics. Sink drain, writer ordering, decoder bounds, and header-ACK
-hardening are correctness fixes and are not disabled by this gate.
+advertises it. Changing the gate requires a main-process restart and never
+changes a live token's semantics. Sink drain, writer ordering, decoder bounds,
+and header-ACK hardening are correctness fixes and are not disabled by this
+gate.
 
 Production deployment does not form arbitrary mixed-build main/relay pairs.
 `computeRemoteRelayDir` content-hash-scopes the install directory and its
@@ -401,7 +453,7 @@ diagnostic `unsupported-version-skew`, not a rollout cohort.
 The reachable upgrade skew is an orphaned prior-version daemon in its old
 version directory with live PTYs while the new main connects to a new endpoint.
 It retains its old behavior until its own grace/cleanup completes and is not
-reachable by the new main's kill switch. Upgrade diagnostics enumerate these
+reachable by the new main's startup gate. Upgrade diagnostics enumerate these
 versioned orphan processes; V1 neither adopts their PTYs nor claims to bound
 their memory.
 
@@ -668,6 +720,25 @@ Notification-style `pty.replay` remains only for unsupported
 direct/manual compatibility clients; it is targeted, producer-admitted rather
 than control-queued, never broadcast, and returns `restoreRequired` instead of
 writing a body that cannot fit current non-reserved capacity.
+
+Main quarantines the entire candidate recovery transaction until it can prove
+the fence. The first source-bearing recovery range must start at the accepted
+checkpoint, every later range must be exactly contiguous, and the final end
+must equal `recoveryEndSu`. Empty recovery is valid only when the checkpoint
+already equals `recoveryEndSu`; main retains that end as the required start of
+the first later live frame even after activation. The first live frame and
+every successor must also be exactly contiguous. Gap, overlap, incomplete
+suffix, missing body, bad empty recovery, or bad live handoff reaches neither
+the model nor desktop projection.
+
+A failed or stale recovery attempt cancels only its own replacement token.
+It never sends cancellation on a newer mux, clears a newer checkpoint, shuts
+down the physical PTY/process, deletes PTY ownership, or expires the owner
+lease. A valid token-scoped cancellation proof is applied locally when it
+matches; otherwise the lease remains detached and retryable. A fresh relay
+that no longer retains the cached owner returns typed error `-32041`; main
+clears only the cached owner/checkpoints and retries `pty.openClient` exactly
+once without `resume`.
 
 `pty.serialize` follows the same rule: its response is a bounded stream marker,
 snapshot chunks use the producer-owned bulk lane, and a completion fence ends
@@ -1231,6 +1302,17 @@ replacement owner and atomically transfer every remaining mapping; otherwise
 cancel that consumer and its bounded stream. Old stream generations cannot
 settle new mappings.
 
+The main registry stores the immutable source identity with each admitted
+remote mapping, not only its `spanId`. A replacement reservation moves the
+named consumer obligations to `transferring`; only an accepted headed or
+headless `SnapshotEnd` publication at or beyond the reservation's required
+sequence commits them. Stale generation, failed publication, disconnect, or
+explicit rollback restores the original live-stream obligation. If
+token-scoped cancellation proof has already reclaimed the authoritative span,
+late ACK, detach, rollback, and replacement commit prune the cached mapping
+and become idempotent no-ops; they never dereference reclaimed state or create
+credit.
+
 The stall policy is deliberately split. Desktop-only parse failure reaches its
 bounded projection cap, transfers to model restore, and lets upstream credit
 continue. A stalled model receipt or attached lossless remote has no automatic
@@ -1256,18 +1338,22 @@ explicit/connection-close proof. The transaction creates the replacement
 owner before marking source `transferring`; only exact recovery-complete
 coverage terminally transfers it.
 
-| Event                                                 | Mandatory transition                                                                                                                           |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| model accepts; desktop/mobile parses                  | settle that consumer                                                                                                                           |
-| hidden thinning, empty transform, pending-cap salvage | preserve ordered terminal facts/scanner state, then transfer desktop to model and emit restore marker                                          |
-| renderer reload/destroy/send failure/heal             | transfer all desktop obligations to model before clearing queue/accounting                                                                     |
-| pane closes while provider/token remains live         | transfer recoverable views, then request token cancel if no required consumer remains                                                          |
-| PTY exit                                              | relay seals token; main retains prior receipts/projections/remotes; runtime/renderer exit only after terminality or bounded cancellation proof |
-| provider replacement/reconnect                        | close old client generation; transfer only exact ranges proven by replacement recovery, otherwise cancel and restore                           |
-| relay `pty.deliveryCanceled`                          | without replacement, cancel matching remainder and restore; with replacement, enter `transferring` pending coverage                            |
-| same-client token supersession                        | create replacement first, transfer exact covered remainder after recovery, cancel any uncovered range                                          |
-| explicit live-token reset/kill switch                 | `pty.cancelDelivery` response proves relay cancellation before local discard; failure closes the provider transport                            |
-| relay/client dispose                                  | relay cancels token/cursors; main cancels only after close-generation proof                                                                    |
+| Event                                                 | Mandatory transition                                                                                                                               |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| model accepts; desktop/mobile parses                  | settle that consumer                                                                                                                               |
+| hidden thinning, empty transform, pending-cap salvage | preserve ordered terminal facts/scanner state, then transfer desktop to model and emit restore marker                                              |
+| renderer reload/destroy/send failure/heal             | transfer all desktop obligations to model before clearing queue/accounting                                                                         |
+| pane closes while provider/token remains live         | transfer recoverable views, then request token cancel if no required consumer remains                                                              |
+| PTY exit                                              | relay seals token; main retains prior receipts/projections/remotes; runtime/renderer exit only after terminality or bounded cancellation proof     |
+| provider replacement/reconnect                        | close old client generation; transfer only exact ranges proven by replacement recovery, otherwise cancel and restore                               |
+| relay `pty.deliveryCanceled`                          | without replacement, cancel matching remainder and restore; with replacement, enter `transferring` pending coverage                                |
+| same-client token supersession                        | create replacement first, transfer exact covered remainder after recovery, cancel any uncovered range                                              |
+| empty or non-empty recovery completion                | require checkpoint-to-`recoveryEndSu` continuity, retain that live-start anchor after activation, then admit only an exactly contiguous live frame |
+| stale/overlapping recovery attempt                    | cancel only that attempt's token; never mutate the replacement mux, checkpoint, PTY ownership, physical process, or owner lease                    |
+| remote snapshot replacement                           | reserve immutable span IDs/ranges, commit only after current-generation `SnapshotEnd` coverage, otherwise roll back                                |
+| late remote detach after token cancellation           | prune already-reclaimed mappings and detach idempotently without dereference or new credit                                                         |
+| explicit live-token reset                             | `pty.cancelDelivery` response proves relay cancellation before local discard; failure closes the provider transport                                |
+| relay/client dispose                                  | relay cancels token/cursors; main cancels only after close-generation proof                                                                        |
 
 There is no “abandon live token” transition. A main-side path that cannot prove
 settlement, transfer, or relay cancellation must keep the ledger or close the
@@ -1330,7 +1416,10 @@ main token span:
 main receive token:
   unseen --beforeResolve--> receiving-activation
   receiving-activation --validated response/no recovery--> active
-  receiving-activation --source-ranged recovery + complete fence--> active
+  receiving-activation --quarantine exact checkpoint..recoveryEnd + complete fence-->
+    active(expectedLiveStart = recoveryEnd)
+  active --first/next live starts at expectedLiveStart--> active(advance expectedLiveStart)
+  receiving-activation|active --gap/overlap/bad fence--> canceling-only-this-token
   active --pty.exit--> exit-sealed
   exit-sealed --prior model/projection/remote terminal--> exit-ack-queued
   exit-ack-queued --runtime + renderer exit cleanup--> exited-awaiting-ack-publication
@@ -1339,6 +1428,12 @@ main receive token:
   canceling-exited-token --token cancellation proof--> closed(restore-required)
   canceling-exited-token --proof cannot publish--> closing-provider
   receiving-activation|active --overflow/cancel/close--> closed
+
+remote projection replacement:
+  live --reserve immutable spans + required SnapshotEnd seq--> transferring
+  transferring --current generation SnapshotEnd covers required seq--> transferred
+  transferring --stale/failure/disconnect--> live(rollback)
+  live|transferring --authoritative token already canceled--> detached(prune cached spans)
 ```
 
 ```ts
@@ -1423,6 +1518,25 @@ function onAckWriteSettled(token: DeliveryToken, endSu: number, result: SinkWrit
   token.ackPublishedEndSu = Math.max(token.ackPublishedEndSu, endSu)
   reclaimPublishedPrefix(token)
   maybeCloseSealedDelivery(token)
+}
+
+function finishRecovery(candidate: RecoveryCandidate, fence: RecoveryComplete): void {
+  const expectedStart = candidate.checkpointSourceEndSu
+  const recoveredEnd = validateExactContiguousQuarantine(candidate.frames, expectedStart)
+  if (recoveredEnd !== fence.recoveryEndSu) {
+    cancelReplacementTokenOnly(candidate.identity, 'recovery-coverage-mismatch')
+    return
+  }
+  commitQuarantinedRecovery(candidate)
+  installLiveStartAnchor(candidate.identity, fence.recoveryEndSu)
+}
+
+function replaceRemoteConsumer(stream: RemoteStream, requiredSeq: number): void {
+  const reservation = remoteRanges.reserveImmutableSpans(stream, requiredSeq)
+  publishSnapshotEnd(stream).then(
+    (publication) => remoteRanges.commitIfCurrentAndCovered(reservation, publication),
+    (error) => remoteRanges.rollback(reservation, error)
+  )
 }
 ```
 
@@ -1572,6 +1686,16 @@ wall-clock fingerprint can suppress legitimate identical output, while the
 source checkpoint is authoritative. Exit before reattach may still synthesize
 `code: -1` after `notFound`; retaining remote exit tombstones is a separate
 behavior change and is not required for the memory bound.
+
+Recovery receipt is transactional. Main retains quarantined recovery bodies,
+the candidate mux, token, checkpoint, and `recoveryEndSu` until the exact
+completion fence validates. It commits no partial body to the model. On
+failure it requests cancellation only through the candidate mux and accepts
+only matching proof; a stale attempt may not touch current mux state. After a
+successful empty recovery it keeps `recoveryEndSu` as a live continuity anchor
+until the first live frame arrives. Failure marks the existing PTY lease
+detached and retryable rather than deleting ownership or terminating the
+physical process.
 
 For an operation-ID spawn replay, physical result lookup completes first; the
 current request then creates and fences a new subscription as specified above.
@@ -1727,12 +1851,12 @@ without parsing logs.
 
 ## Incremental implementation map
 
-Do not implement this design as one architectural rewrite. Each slice below is
-independently reviewable, keeps legacy framing valid, and must land with its
-own deterministic oracle. Later slices may revise file placement, but not the
-semantic boundaries or invariants.
+This PR implemented the design as the independently testable layers below,
+without replacing local/daemon protocols or requiring every deployment
+topology to enable V1. The slices remain useful review and rollback
+boundaries even though they ship in one PR.
 
-### Slice 1: hostile-header and accounting hardening
+### Slice 1: hostile-header and accounting hardening — implemented
 
 - In `src/main/ssh/ssh-channel-multiplexer.ts`, clamp header ACKs and delete
   only present timestamp keys; cap retained timestamps.
@@ -1740,7 +1864,7 @@ semantic boundaries or invariants.
   and liveness rebasing.
 - No relay, daemon, runtime, or provider protocol change.
 
-### Slice 2: bounded decoder turns
+### Slice 2: bounded decoder turns — implemented
 
 - In both relay protocol decoders, bound frames and time per turn, preserve a
   synchronous first handshake frame, pause reads during continuation, and
@@ -1750,7 +1874,7 @@ semantic boundaries or invariants.
 - No PTY credit or session negotiation; prior-version peers keep the same
   frame format.
 
-### Slice 3: one drain-aware legacy writer
+### Slice 3: one drain-aware legacy writer — implemented
 
 - Add a concretely named dispatcher writer owning ordinary, bulk, control,
   sentinel, residue, and `--connect` bridge bytes.
@@ -1780,7 +1904,7 @@ semantic boundaries or invariants.
   and detached relay socket/named-pipe clients without changing the wire. The
   separate local terminal daemon is not exercised or changed.
 
-### Slice 4: bounded main SSH intake
+### Slice 4: bounded main SSH intake — implemented
 
 - Make `SshRelaySession.wireUpPtyEvents` hand each event exactly once to a
   main-only intake under `src/main/ipc/`; SSH no longer bypasses the existing
@@ -1801,7 +1925,7 @@ semantic boundaries or invariants.
 - Extend the existing Docker ACK-stall test only for behavior this slice
   implements: direct SSH/deployed relay/desktop intake and active typing.
 
-### Slice 5a: SSH session semantics
+### Slice 5a: SSH session semantics — implemented for SSH
 
 - Add the transport-neutral `PtyConsumerSession` state machine and only the SSH
   readiness adapter decision above.
@@ -1811,7 +1935,7 @@ semantic boundaries or invariants.
 - Local in-process, daemon hello, and remote-runtime adapters reuse semantics
   only when their own changes need it; they are not prerequisites for SSH V1.
 
-### Slice 5b: direct SSH source credit
+### Slice 5b: direct SSH source credit — implemented
 
 - Add the relay immutable span ledger/scheduler and tokenized cumulative ACKs
   for one direct SSH desktop/model consumer path.
@@ -1820,7 +1944,7 @@ semantic boundaries or invariants.
   implementation.
 - Gate the feature and retain exact same-build legacy behavior.
 
-### Slice 5c: exit, reconnect, and replay
+### Slice 5c: exit, reconnect, and replay — implemented
 
 - Add sealed-unsettled exit, cancellation proofs, owner reconnect grace,
   token replacement, and exact transfer.
@@ -1830,7 +1954,7 @@ semantic boundaries or invariants.
 - Do not enable reconnect V1 until late-ACK, timeout, supersession, and
   generation-close oracles pass.
 
-### Slice 5d: required remote consumers
+### Slice 5d: required remote consumers — deterministic seam implemented
 
 - Map remote `terminal.multiplex` encoded-byte ACK frames to accepted source
   ranges without changing its transport authentication or granting it an SSH
@@ -1843,17 +1967,17 @@ semantic boundaries or invariants.
 - Extend the extracted `terminal-output-frame-chunks.ts` seam with immutable
   composite mapping input while preserving `694363805`'s code-unit scanner,
   allocation profile, sequence rounding, and equivalence benchmark.
-- Add headed paired-server first, then headless `orca serve`; neither is
-  inferred from Docker SSH.
+- Live headed paired-server and headless `orca serve` validation remains
+  required before claiming those topologies; neither is inferred from Docker
+  SSH.
 - Keep best-effort remote streams outside upstream obligations.
 
-### Slice 5e: remaining adapters and rollout
+### Slice 5e: remaining adapters and rollout — deliberately deferred
 
-- Adapt local in-process and daemon hello only if shared session semantics
-  materially reduce their own lifecycle duplication; neither must adopt SSH
-  framing or source credit for the SSH release.
-- Add WSL, Windows ConPTY/named-pipe, local daemon/provider, folder workspace,
-  mixed-version, and prior-version-orphan evidence separately.
+- Local in-process and daemon hello remain unchanged; neither adopts SSH
+  framing or source credit in this PR.
+- WSL, Windows ConPTY/named-pipe, local daemon/provider, folder workspace,
+  mixed-version, and prior-version-orphan live evidence remains separate.
 - Promote reliability-gate provider coverage only for topologies with recorded
   executable evidence.
 
@@ -1863,7 +1987,28 @@ native dependencies, or a per-file lint exception.
 
 ## Tests
 
-### Unit and property tests
+The checklist below is the normative matrix, not a claim that every physical
+topology ran. The executable implementation evidence in this PR is:
+
+- shared session negotiation, grant publication, stale-owner recovery, source
+  ledger, ACK queue/publication separation, and cancellation proof contracts;
+- relay writer admission/drain/liveness, zero-display source publication,
+  operation-ID retry activation, fixed-size filesystem compatibility,
+  capacity-aware Git/PTY slicing, decoder caps, and token rotation;
+- main model admission, desktop identity/rollback, exit barriers, remote
+  reserve/commit/rollback, token cancellation, exact recovery continuity,
+  eight-wide reconnect, retention budgets, rollout latching, and deploy policy;
+- the four-test Docker OpenSSH/deployed-relay suite for source-window plateau,
+  concurrent typing, fixed-size filesystem/Git churn, and owner reconnect.
+
+The deterministic recovery seam specifically covers an empty recovery followed
+by a gapped live frame, overlapping reconnect attempts, late frames after
+cancel, typed stale-owner retry, and the negative assertions that no physical
+PTY shutdown, provider-state clear, ownership delete, or lease expiry occurs.
+The remote-consumer seam covers token cancellation followed by late detach and
+replacement commit, proving reclaimed span IDs are pruned idempotently.
+
+### Normative unit and property matrix
 
 - accept monotonic cumulative ACKs and reject duplicates, regressions,
   over-credit, invalid numbers, wrong clients, wrong PTYs, and stale tokens;
@@ -2025,24 +2170,23 @@ one last chunk to prove the transient overshoot bound.
 
 ### Integration and E2E
 
-The existing `tests/e2e/ssh-docker-relay-perf.spec.ts` is baseline evidence,
-not V1 evidence. Its ACK-stall case holds desktop renderer ACKs, builds
-main-to-renderer pressure, and checks active typing responsiveness through
-direct SSH and the deployed relay. It does not saturate relay stdout/socket
-writable queues, pause the remote PTY, exercise source-credit ACKs, prove model
-admission bounds, or create a paired Orca runtime.
+`tests/e2e/ssh-docker-relay-perf.spec.ts` now contains V1 evidence for the
+implemented Linux SSH/deployed-relay path. With
+`ORCA_SSH_PTY_SOURCE_CREDIT_V1=1`, it:
 
-Add Docker assertions only after the corresponding runtime slice exists:
+1. stalls desktop ACK and observes an exact 256 Ki-source-unit negotiated
+   plateau while a second SSH PTY remains responsive;
+2. preserves fixed `STREAM_CHUNK_SIZE` filesystem semantics and completes Git
+   churn without corruption while active typing stays within budget;
+3. reconnects the negotiated owner lease and proves the existing SSH
+   workspace terminal remains usable;
+4. retains the direct typing latency control.
 
-1. Slice 3 saturates actual direct-SSH/deployed-relay stdio or socket output,
-   proves `write(false)` stops later ordinary frames, writable length
-   plateaus, control progresses, and interactive echo stays bounded.
-2. Slice 4 stalls main model admission and desktop ACKs independently, proves
-   charged intake plateaus, and preserves the current active-typing oracle.
-3. Slices 5b/5c exhaust the negotiated source window, exercise sealed-exit late
-   ACK and cancellation, reconnects a new owner generation, rejects stale
-   ACKs, and verifies exact model/renderer output.
-4. A separate concurrent bulk case proves the writer reserve and completion.
+Writer `write(false)`/drain, callback failure, liveness bypass, decoder
+scheduling, sealed exit, stale ACK, exact recovery, and remote replacement are
+proved at deterministic unit/service seams. The Docker suite does not force
+the main-to-relay sink to remain saturated beyond the health deadline, does
+not prove paired-runtime behavior, and must not be cited for those claims.
 
 Docker SSH proves the Linux SSH provider/relay path only. It must never be
 reported as headed paired-server, headless `orca serve`, remote-runtime
@@ -2068,21 +2212,22 @@ adopt their PTYs, or claim the new main bounds their memory. Keep any new
 native artifact compatible with Ubuntu 20.04/glibc 2.31; this design itself
 adds none.
 
-The current
-`terminal-performance.output-backpressure-budget` reliability gate is
-experimental and partial. It lists local, daemon, SSH, and remote-runtime
-providers, but `coveredProviders` is empty and its executable evidence is
-local macOS main-to-renderer/runtime behavior. Slice 3 adds relay
-write/drain evidence, Slice 4 adds SSH intake/model admission, Slices 5b/5c add
-source-credit lifecycle, and Slices 5d/5e add topology-specific runs before any
-provider is marked covered. This documentation PR does not change or promote
-that gate and does not claim unimplemented runtime behavior was exercised.
+The
+`terminal-performance.output-backpressure-budget` reliability gate remains
+`experimental` and `partial`. Its `coveredProviders: ["ssh"]` means the
+deterministic direct-SSH contracts plus the macOS-hosted Docker
+OpenSSH/deployed-relay run described above. It does not cover every SSH host
+platform and does not mark local, daemon, remote-runtime, headed, headless,
+WSL, Windows, folder-workspace, prior-version, mixed-version, or Ubuntu 20.04
+packaging topologies as executed.
 
 ## Rollout
 
-Land V1 behind a main runtime gate and a relay advertisement launch policy.
-Tests and development enable both. Main never negotiates merely because a
-long-lived relay advertises; its gate is the final authority. Fresh POSIX and
+V1 is behind a main-process startup gate and a persisted per-endpoint relay
+launch policy. `ORCA_SSH_PTY_SOURCE_CREDIT_V1` is read once when the main
+process starts; it is not a live kill switch. Tests and development enable the
+gate before startup. Main never negotiates merely because a long-lived relay
+advertises; its startup-latched gate is the final authority. Fresh POSIX and
 Windows launch commands carry the explicit advertisement argument rather than
 assuming a local environment variable reaches the remote process.
 
@@ -2092,15 +2237,16 @@ independently. Same-build gate-off sessions use the bounded legacy writer but
 do not wait for V1 credit. A prior-version orphan remains governed by its own
 binary and cleanup.
 
-Rollout stages:
+Implementation and rollout stages:
 
-1. land Slices 1-4 independently under legacy framing, with each narrow
-   reliability oracle green before the next slice;
-2. add Slices 5a-5c behind the main gate and relay advertisement, initially in
-   unit/service contracts and direct Docker SSH only;
-3. add Slices 5d/5e for headed paired, headless, WSL, Windows, local-daemon,
-   local-provider, and folder-workspace evidence before marking those
-   providers/topologies covered;
+1. Slices 1-4 are implemented under legacy-compatible framing with narrow
+   reliability oracles.
+2. Slices 5a-5c are implemented behind the startup gate and relay launch
+   policy with unit/service contracts and direct Docker SSH evidence.
+3. Slice 5d's remote source-range transaction is implemented at deterministic
+   main/runtime seams. Live headed paired, headless, WSL, Windows,
+   local-daemon, local-provider, and folder-workspace evidence remains future
+   work before those topologies are marked covered.
 4. run an internal same-build canary comparing gate-off and V1 sink,
    model-admission, latency, sealed-exit, recovery, and reconnect metrics while
    separately counting orphan prior-version daemons;
@@ -2109,27 +2255,25 @@ Rollout stages:
    fallback and versioned-orphan cleanup stay healthy through the supported
    upgrade window.
 
-Kill-switch behavior is explicit:
+Rollback behavior is explicit:
 
-1. Disable the main gate to stop all new V1 negotiations against the
-   same-build detached relay.
-2. For each live token, stop new desktop membership changes, flush eligible
-   cumulative ACKs, and retain
-   `obligationsTerminalEndSu`/`ackQueuedEndSu`/`ackPublishedEndSu` until their
-   callbacks settle. Send `pty.cancelDelivery` for every remaining active or
-   sealed-unsettled token and wait up to 10 seconds for cancellation proof.
-3. Reattach the same PTYs in bounded waves without requesting V1. Failure to
-   prove cancellation closes/reconnects the client so relay generation cleanup
-   is the proof; local ledgers and desktop range identities are not discarded
-   earlier.
-4. Changing the relay launch policy affects fresh processes. Replacing a
-   long-lived remote relay is required only to remove its implementation or
-   advertisement, not to make a gated main decline the feature.
+1. Change the environment/launch setting, then restart the main process. The
+   existing process keeps its original mode until shutdown.
+2. Shutdown performs the normal token-scoped cancellation/exit cleanup; it
+   does not rotate live V1 tokens into legacy mode in place.
+3. On the next connection, gate-off omits the V1 offer and accepts same-build
+   bounded legacy service. Gate-on requires a V1-launched endpoint.
+4. If a persisted detached endpoint was launched gate-off, an off-to-on
+   connection fails with reset/reconnect guidance rather than silently
+   downgrading. Resetting that endpoint and reconnecting launches it with the
+   new policy.
+5. A gate-off client remains compatible with a same-build V1-capable relay
+   because omission of the offer selects bounded legacy behavior.
 
-Rollback never mutates a live token into legacy mode. The remote process may
-remain alive throughout a successful cancel/reattach rotation. An orphaned
-prior-version daemon is outside this sequence and is only observed until its
-own version-scoped cleanup.
+The remote process may remain alive only when its persisted launch policy is
+compatible with the new startup mode. An orphaned prior-version daemon is
+outside this sequence and is only observed until its own version-scoped
+cleanup.
 
 Release criteria:
 
@@ -2165,7 +2309,8 @@ Release criteria:
   truncation.
 - Content-hashed endpoints make mixed production binaries unreachable. The
   real upgrade skew is an orphaned prior-version daemon outside the new main's
-  kill switch; V1 reports but cannot adopt, cancel, or retroactively bound it.
+  startup-gated endpoint; V1 reports but cannot adopt, cancel, or retroactively
+  bound it.
 - Preserving the real exit code for a PTY that exits before any new client
   reattaches would require attach-visible tombstone retention. V1 documents and
   tests the existing synthetic `-1` fallback instead of coupling that separate

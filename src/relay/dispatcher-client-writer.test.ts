@@ -300,24 +300,35 @@ describe('DispatcherClientWriter', () => {
     expect(sink.accepted[1].data).toBe('cancel')
   })
 
-  it('admits one bounded producer frame larger than an empty native sink window', () => {
+  it('enforces the encoded HWM-minus-reserve limit for splittable producers', () => {
     const sink = new FakeSink()
     sink.highWaterMark = 4096
     sink.saturateNext = true
     const writer = createWriter(sink, vi.fn(), 8192)
+
+    expect(writer.producerFrameCapacity).toBe(3072)
+    expect(writer.enqueue('bulk', () => Buffer.alloc(3073), 3073)).toBe(false)
+    expect(writer.enqueue('bulk', () => Buffer.alloc(3072), 3072)).toBe(true)
+  })
+
+  it('admits only one indivisible fixed filesystem frame before drain', () => {
+    const sink = new FakeSink()
+    sink.highWaterMark = 4096
+    sink.saturateNext = true
+    const writer = createWriter(sink, vi.fn(), 16_384)
     const oversized = 'x'.repeat(5000)
 
     expect(writer.producerFrameCapacity).toBe(3072)
-    const first = enqueue(writer, 'bulk', oversized)
-    enqueue(writer, 'ordinary', 'after-drain')
-    expect(writer.enqueue('bulk', () => Buffer.alloc(8193), 8193)).toBe(false)
+    expect(writer.enqueue('fixed-bulk', () => Buffer.from(oversized), 5000)).toBe(true)
+    expect(writer.enqueue('fixed-bulk', () => Buffer.from(oversized), 5000)).toBe(false)
+    expect(writer.enqueue('control', () => Buffer.from('cancel'), 6)).toBe(true)
     expect(sink.accepted.map((write) => write.data)).toEqual([oversized])
 
+    sink.writableLength = 0
     sink.accepted[0].settle({ ok: true })
-    expect(first).toHaveBeenCalledWith({ ok: true })
-    expect(sink.accepted).toHaveLength(1)
+    expect(writer.enqueue('fixed-bulk', () => Buffer.from(oversized), 5000)).toBe(false)
     sink.drain()
-    expect(sink.accepted.map((write) => write.data)).toEqual([oversized, 'after-drain'])
+    expect(sink.accepted.map((write) => write.data)).toEqual([oversized, 'cancel'])
   })
 
   it('gives independent writers progress when one client stays saturated', () => {

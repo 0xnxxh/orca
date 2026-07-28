@@ -35,6 +35,8 @@ export type RelayPtySourcePublicationCounters = {
   exitRolledBack: number
 }
 
+const PTY_SOURCE_FRAME_MAX_SU = 16 * 1024
+
 export function onceSinkSettlement(
   callback: (result: SinkWriteSettlement) => void
 ): (result: SinkWriteSettlement) => void {
@@ -153,7 +155,27 @@ export class RelayPtySourceSendScheduler {
       })
       return
     }
-    const reservation = this.session.reserveSourceSend(record.identity)
+    const snapshot = this.session.sourceDeliverySnapshot(record.identity)
+    const encodedDataBudget = this.dispatcher.producerDataBudget(
+      'pty.data',
+      {
+        id: record.identity.id,
+        rawLength: PTY_SOURCE_FRAME_MAX_SU,
+        transformed: false,
+        deliveryToken: record.identity.deliveryToken,
+        clientGeneration: record.identity.clientGeneration,
+        ownerGeneration: record.identity.ownerGeneration,
+        ptyIncarnation: record.identity.ptyIncarnation,
+        sourceEndSu: snapshot.receivedEndSu,
+        sourceLengthSu: PTY_SOURCE_FRAME_MAX_SU
+      },
+      record.clientId
+    )
+    const maxSourceSu = Math.min(
+      PTY_SOURCE_FRAME_MAX_SU,
+      Math.max(1, Math.floor(Math.max(0, encodedDataBudget - 32) / 6))
+    )
+    const reservation = this.session.reserveSourceSend(record.identity, maxSourceSu)
     if (!reservation) {
       return
     }

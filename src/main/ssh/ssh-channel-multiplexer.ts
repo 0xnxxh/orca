@@ -61,6 +61,7 @@ export class SshChannelMultiplexer {
   private connectionHealthTimer: ReturnType<typeof setInterval> | null = null
   private disposed = false
   private decoderReadPaused = false
+  private writerSaturated = false
 
   // Track the oldest unacked outgoing message timestamp
   private unackedTimestamps = new Map<number, number>()
@@ -71,8 +72,10 @@ export class SshChannelMultiplexer {
 
   constructor(transport: MultiplexerTransport) {
     this.transport = transport
-    this.writer = new SshMultiplexerTransportWriter(transport, (error) =>
-      this.handleProtocolError(error)
+    this.writer = new SshMultiplexerTransportWriter(
+      transport,
+      (error) => this.handleProtocolError(error),
+      (saturated) => this.handleWriterSaturationChange(saturated)
     )
 
     this.decoder = new FrameDecoder(
@@ -369,10 +372,13 @@ export class SshChannelMultiplexer {
     if (this.disposed) {
       return
     }
-    const seq = this.nextOutgoingSeq++
+    const seq = this.nextOutgoingSeq
     const frame = encodeKeepAliveFrame(seq, this.highestReceivedSeq)
+    if (!this.writer.enqueue(frame, 'liveness')) {
+      return
+    }
+    this.nextOutgoingSeq++
     this.trackOutgoingTimestamp(seq, true)
-    this.writer.enqueue(frame, 'control')
   }
 
   private handleFrame(frame: DecodedFrame): void {
@@ -528,7 +534,7 @@ export class SshChannelMultiplexer {
 
       this.sendKeepAlive()
 
-      if (this.disposed || resumedAfterWake || this.decoderReadPaused) {
+      if (this.disposed || resumedAfterWake || this.decoderReadPaused || this.writerSaturated) {
         return
       }
 
@@ -587,6 +593,13 @@ export class SshChannelMultiplexer {
       this.transport.resumeReads?.()
     } catch (error) {
       this.handleProtocolError(error)
+    }
+  }
+
+  private handleWriterSaturationChange(saturated: boolean): void {
+    this.writerSaturated = saturated
+    if (!saturated && !this.disposed) {
+      this.rebaseHealthClocks(Date.now())
     }
   }
 

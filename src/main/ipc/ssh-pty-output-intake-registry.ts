@@ -2,7 +2,9 @@ import type { SshPtyOutputIntake } from './ssh-pty-output-intake'
 import type {
   SshPtyOutputDataEvent,
   SshPtyOutputExitEvent,
-  SshPtyOutputReceipt
+  SshPtyOutputReceipt,
+  SshPtySourceCancellationProof,
+  SshPtySourceCancellationRequest
 } from './ssh-pty-output-intake-contract'
 import type { SshPtyAcceptedSourceCheckpoint } from './ssh-pty-output-source-obligations'
 import type { PtySourceCreditAckBatch } from '../../shared/pty-source-credit-contract'
@@ -10,11 +12,16 @@ import type { PtySourceCreditAckBatch } from '../../shared/pty-source-credit-con
 let installedIntake: SshPtyOutputIntake | null = null
 let nextProviderGeneration = 1
 const sourceAckPublishers = new Map<number, SshPtySourceAckPublisher>()
+const sourceCancellationPublishers = new Map<number, SshPtySourceCancellationPublisher>()
 
 type SshPtySourceAckPublisher = (
   batch: PtySourceCreditAckBatch,
   onSettled: (result: { ok: true } | { ok: false; error: Error }) => void
 ) => void
+
+type SshPtySourceCancellationPublisher = (
+  request: SshPtySourceCancellationRequest
+) => Promise<SshPtySourceCancellationProof>
 
 export function allocateSshPtyProviderGeneration(): number {
   return nextProviderGeneration++
@@ -80,6 +87,38 @@ export function publishSshPtySourceAck(
     return
   }
   publisher(batch, onSettled)
+}
+
+export function installSshPtySourceCancellationPublisher(
+  providerGeneration: number,
+  cancel: SshPtySourceCancellationPublisher
+): () => void {
+  if (sourceCancellationPublishers.has(providerGeneration)) {
+    throw new Error('ssh_source_cancellation_publisher_duplicate_generation')
+  }
+  sourceCancellationPublishers.set(providerGeneration, cancel)
+  return () => {
+    if (sourceCancellationPublishers.get(providerGeneration) === cancel) {
+      sourceCancellationPublishers.delete(providerGeneration)
+    }
+  }
+}
+
+export function cancelSshPtySourceDelivery(
+  providerGeneration: number,
+  request: SshPtySourceCancellationRequest
+): Promise<SshPtySourceCancellationProof> {
+  const publisher = sourceCancellationPublishers.get(providerGeneration)
+  return publisher
+    ? publisher(request)
+    : Promise.reject(new Error('ssh_source_cancellation_publisher_unavailable'))
+}
+
+export function applySshPtySourceCancellationProof(
+  event: SshPtyOutputExitEvent,
+  proof: SshPtySourceCancellationProof
+): boolean {
+  return installedIntake?.applySourceCancellationProof(event, proof) ?? false
 }
 
 function outputIntakeUnavailableError(): Error {

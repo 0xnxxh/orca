@@ -3,6 +3,7 @@ import {
   type LegacySshProjectionSemantics
 } from './ssh-pty-legacy-projection'
 import { SshPtyModelAdmission } from './ssh-pty-model-admission'
+import { SshPtyOutputExitDeadline } from './ssh-pty-output-exit-deadline'
 import { settleSshPtyOutputExit } from './ssh-pty-output-exit'
 import { SshPtyOutputGenerationGuard } from './ssh-pty-output-generation-guard'
 import {
@@ -16,7 +17,7 @@ import type {
   SshPtyOutputIntakeOptions,
   SshPtyOutputReceipt
 } from './ssh-pty-output-intake-contract'
-import { outputIntakeError, type SshPtyExitBarrier } from './ssh-pty-output-intake-validation'
+import { outputIntakeError } from './ssh-pty-output-intake-validation'
 
 export type {
   SshPtyOutputDataEvent,
@@ -31,8 +32,7 @@ export class SshPtyOutputIntake {
   private readonly sourceObligations: SshPtyOutputSourceObligations
   private readonly generationGuard = new SshPtyOutputGenerationGuard(() => this.disposed)
   private readonly admission: SshPtyModelAdmission
-  private readonly exitBarrierMs: number
-  private readonly exitBarriersByGeneration = new Map<number, Set<SshPtyExitBarrier>>()
+  private readonly exitDeadline: SshPtyOutputExitDeadline
   private disposed = false
 
   constructor(
@@ -44,7 +44,6 @@ export class SshPtyOutputIntake {
       onSettled: (span) => this.sourceObligations.settleDesktop(span, 'renderer-parse'),
       onTransferred: (span, reason) => this.sourceObligations.transferDesktop(span, reason)
     })
-    this.exitBarrierMs = options.exitBarrierMs ?? 30_000
     this.admission = new SshPtyModelAdmission({
       ...options,
       pauseProvider: (key) =>
@@ -53,6 +52,14 @@ export class SshPtyOutputIntake {
         this.dependencies.resumeProvider?.(key.providerGeneration, key.ptyId),
       closeProvider: (providerGeneration, reason) =>
         this.dependencies.closeProvider?.(providerGeneration, reason)
+    })
+    this.exitDeadline = new SshPtyOutputExitDeadline({
+      admission: this.admission,
+      projections: this.projections,
+      sourceObligations: this.sourceObligations,
+      intake: this.dependencies,
+      barrierMs: options.exitBarrierMs,
+      cancellationProofMs: options.exitCancellationProofMs
     })
   }
 
@@ -141,7 +148,9 @@ export class SshPtyOutputIntake {
             'model-admission-failed'
           )
         }
-        this.dependencies.closeProvider?.(event.providerGeneration, 'model-admission-failed')
+        if ((error as { code?: unknown }).code !== 'ssh_exit_delivery_canceled') {
+          this.dependencies.closeProvider?.(event.providerGeneration, 'model-admission-failed')
+        }
         throw error
       }
     )
@@ -149,8 +158,7 @@ export class SshPtyOutputIntake {
 
   async acceptExit(event: SshPtyOutputExitEvent): Promise<void> {
     this.generationGuard.sealExit(event)
-    this.sourceObligations.sealPty(event)
-    await this.withExitDeadline(event.providerGeneration, this.finishExit(event))
+    await this.exitDeadline.wait(event, this.finishExit(event))
   }
 
   private async finishExit(event: SshPtyOutputExitEvent): Promise<void> {
@@ -160,6 +168,8 @@ export class SshPtyOutputIntake {
       projections: this.projections,
       dependencies: this.dependencies,
       validateGeneration: () => this.generationGuard.validate(event),
+      afterAdmissionIdle: () => this.sourceObligations.sealPty(event),
+      waitForSourceTerminal: () => this.sourceObligations.whenPtyTerminal(event),
       beforeFinalize: () => this.sourceObligations.markExitPublished(event)
     })
   }
@@ -196,14 +206,7 @@ export class SshPtyOutputIntake {
     this.dependencies.onGenerationClosed?.(providerGeneration, reason)
     this.projections.closeGeneration(providerGeneration, reason)
     this.sourceObligations.closeGeneration(providerGeneration, reason)
-    const barriers = this.exitBarriersByGeneration.get(providerGeneration)
-    if (barriers) {
-      for (const barrier of barriers) {
-        clearTimeout(barrier.timer)
-        barrier.reject(outputIntakeError(reason))
-      }
-      this.exitBarriersByGeneration.delete(providerGeneration)
-    }
+    this.exitDeadline.closeGeneration(providerGeneration, outputIntakeError(reason))
   }
 
   dispose(): void {
@@ -226,55 +229,19 @@ export class SshPtyOutputIntake {
     return this.sourceObligations.acceptedCheckpoints(providerGeneration)
   }
 
+  applySourceCancellationProof(
+    event: SshPtyOutputExitEvent,
+    proof: Readonly<{ sentEndSu: number; creditedEndSu: number }>
+  ): boolean {
+    return this.sourceObligations.applyCancellationProof(event, proof)
+  }
+
   getDebugSnapshot() {
     return {
       model: this.admission.getDebugSnapshot(),
       projection: this.projections.getDebugSnapshot(),
       source: this.sourceObligations.getDebugSnapshot(),
-      exitBarriers: Array.from(this.exitBarriersByGeneration.values()).reduce(
-        (total, barriers) => total + barriers.size,
-        0
-      )
-    }
-  }
-
-  private withExitDeadline(providerGeneration: number, promise: Promise<void>): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const barrier: SshPtyExitBarrier = {
-        timer: setTimeout(() => {
-          this.removeExitBarrier(providerGeneration, barrier)
-          this.dependencies.closeProvider?.(providerGeneration, 'ssh-exit-barrier-timeout')
-          reject(outputIntakeError('ssh_exit_barrier_timeout'))
-        }, this.exitBarrierMs),
-        reject
-      }
-      barrier.timer.unref?.()
-      let barriers = this.exitBarriersByGeneration.get(providerGeneration)
-      if (!barriers) {
-        barriers = new Set()
-        this.exitBarriersByGeneration.set(providerGeneration, barriers)
-      }
-      barriers.add(barrier)
-      void promise.then(
-        () => {
-          clearTimeout(barrier.timer)
-          this.removeExitBarrier(providerGeneration, barrier)
-          resolve()
-        },
-        (error) => {
-          clearTimeout(barrier.timer)
-          this.removeExitBarrier(providerGeneration, barrier)
-          reject(error)
-        }
-      )
-    })
-  }
-
-  private removeExitBarrier(providerGeneration: number, barrier: SshPtyExitBarrier): void {
-    const barriers = this.exitBarriersByGeneration.get(providerGeneration)
-    barriers?.delete(barrier)
-    if (barriers?.size === 0) {
-      this.exitBarriersByGeneration.delete(providerGeneration)
+      exitBarriers: this.exitDeadline.activeBarriers
     }
   }
 }

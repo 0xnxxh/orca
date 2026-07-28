@@ -14,6 +14,7 @@ import {
   assertPtySourceIdentity,
   assertPtySourceSpan
 } from '../shared/pty-source-credit-validation'
+import { chargedPtyRetainedStringBytes } from '../shared/pty-retained-string-memory'
 
 export const DEFAULT_RETAINED_SOURCE_SU = 512 * 1024
 export const DEFAULT_AGGREGATE_RETAINED_SOURCE_SU = 48 * 1024 * 1024
@@ -172,7 +173,7 @@ export function snapshotDeliveryRecord(record: DeliveryRecord): PtySourceDeliver
 
 export function reclaimCreditedSpans(record: DeliveryRecord): void {
   while (record.spans[0]?.sourceEndSu <= record.creditedEndSu) {
-    record.retainedDataBytes -= Buffer.byteLength(record.spans.shift()!.data, 'utf8')
+    record.retainedDataBytes -= chargedPtyRetainedStringBytes(record.spans.shift()!.data)
   }
 }
 
@@ -272,7 +273,7 @@ export function createReplacementDeliveryRecord(
     .map((span) => sliceAtSourceStart(span, Math.max(span.sourceStartSu, acceptedSourceEndSu)))
     .map((span) => Object.freeze({ ...span, ...replacement.identity }))
   replacement.retainedDataBytes = replacement.spans.reduce(
-    (bytes, span) => bytes + Buffer.byteLength(span.data, 'utf8'),
+    (bytes, span) => bytes + chargedPtyRetainedStringBytes(span.data),
     0
   )
   return replacement

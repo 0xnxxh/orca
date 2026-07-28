@@ -6,17 +6,36 @@ export type RemoteTerminalSourceRangeStreamIdentity = Readonly<{
   streamGeneration: string
 }>
 
+export type RemoteTerminalSourceRangeReplacementReservation = Readonly<{
+  reservationId: string
+  identity: RemoteTerminalSourceRangeStreamIdentity
+  requiredSeq: number
+}>
+
+export type RemoteTerminalSourceRangeReplacementPublication = Readonly<{
+  source: 'headless' | 'renderer'
+  seq: number
+}>
+
 export type RemoteTerminalSourceRangeConsumerHooks = {
   attach: (identity: RemoteTerminalSourceRangeStreamIdentity) => boolean
   settle: (
     identity: RemoteTerminalSourceRangeStreamIdentity,
     ranges: readonly TerminalOutputSourceRange[]
   ) => void
-  transfer: (
+  reserveReplacement: (
     identity: RemoteTerminalSourceRangeStreamIdentity,
-    ranges: readonly TerminalOutputSourceRange[],
+    requiredSeq: number,
     reason: string
-  ) => void
+  ) => RemoteTerminalSourceRangeReplacementReservation | null
+  commitReplacement: (
+    reservation: RemoteTerminalSourceRangeReplacementReservation,
+    publication: RemoteTerminalSourceRangeReplacementPublication
+  ) => boolean
+  rollbackReplacement: (
+    reservation: RemoteTerminalSourceRangeReplacementReservation,
+    reason: string
+  ) => boolean
   cancel: (
     identity: RemoteTerminalSourceRangeStreamIdentity,
     ranges: readonly TerminalOutputSourceRange[],

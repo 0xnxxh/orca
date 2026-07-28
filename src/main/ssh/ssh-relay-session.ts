@@ -42,9 +42,11 @@ import {
   acceptSshPtyOutputData,
   acceptSshPtyOutputExit,
   allocateSshPtyProviderGeneration,
+  applySshPtySourceCancellationProof,
   closeSshPtyOutputGeneration,
   getSshPtyAcceptedSourceCheckpoints,
-  installSshPtySourceAckPublisher
+  installSshPtySourceAckPublisher,
+  installSshPtySourceCancellationPublisher
 } from '../ipc/ssh-pty-output-intake-registry'
 import type { SshPtyAcceptedSourceCheckpoint } from '../ipc/ssh-pty-output-source-obligations'
 import {
@@ -71,6 +73,7 @@ import {
 import type { Store } from '../persistence'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 import { DEFAULT_PTY_SOURCE_WINDOW_SU } from '../../shared/pty-source-credit-contract'
+import { PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR } from '../../shared/pty-consumer-session'
 import { runRemoteOrcaCli } from './ssh-remote-orca-cli'
 import { toSshExecutionHostId, type ExecutionHostId } from '../../shared/execution-host'
 import { isTerminalLeafId, makePaneKey } from '../../shared/stable-pane-id'
@@ -85,25 +88,31 @@ import type {
   PtySourceRecoveryPending,
   PtySourceRecoveryRequest
 } from '../../shared/pty-source-recovery-contract'
+import { SshPtyRecoveryRetentionBudget } from './ssh-pty-recovery-retention-budget'
 
 export type RelaySessionState = 'idle' | 'deploying' | 'ready' | 'reconnecting' | 'disposed'
 
 type SshPtyExitPayload = Parameters<SshPtyExitCallback>[0]
 type SshPtyDataPayload = Parameters<SshPtyDataCallback>[0]
-const SSH_PTY_RECOVERY_QUARANTINE_MAX_BYTES = DEFAULT_PTY_SOURCE_WINDOW_SU * 8
-const SSH_PTY_RECOVERY_QUARANTINE_MAX_FRAMES = 1_024
+type SshPtyLease = ReturnType<Store['getSshRemotePtyLeases']>[number]
+const SSH_PTY_REATTACH_MAX_CONCURRENCY = 8
+const SSH_PTY_REATTACH_ATTEMPT_TIMEOUT_MS = 10_000
+const SSH_PTY_REATTACH_RETRY_MIN_DELAY_MS = 50
+const SSH_PTY_REATTACH_RETRY_JITTER_MS = 200
 type PendingPtyReattach = {
+  mux: SshChannelMultiplexer
+  providerGeneration: number
+  retentionKey: string
   exits: SshPtyExitPayload[]
   queuedData: SshPtyDataPayload[]
+  recoveryData: SshPtyDataPayload[]
   liveData: SshPtyDataPayload[]
   recovery?: PtySourceRecoveryPending
   recoveryComplete?: PtySourceRecoveryComplete
+  nextRecoverySourceSu?: number
   replacementDeliveryToken?: string
   restoreRequired?: string
   recoveryWaiters: Set<() => void>
-  recoveryAdmissions: Promise<unknown>[]
-  queuedBytes: number
-  queuedFrames: number
   livePassthrough: boolean
   activated: boolean
 }
@@ -236,8 +245,10 @@ export class SshRelaySession {
   private hostPlatform: RemoteHostPlatform | null = null
   private remoteCliBridgeEnv: RemoteCliBridgeEnv | null = null
   private pendingPtyReattaches = new Map<string, PendingPtyReattach>()
+  private readonly ptyRecoveryRetention = new SshPtyRecoveryRetentionBudget()
   private activePtyProviderGeneration: number | null = null
   private sourceAckPublisherCleanup: (() => void) | null = null
+  private sourceCancellationPublisherCleanup: (() => void) | null = null
   private ptyRecoveryNotificationCleanups: (() => void)[] = []
   private readonly sourceIdentityByRelayPtyId = new Map<
     string,
@@ -246,8 +257,10 @@ export class SshRelaySession {
       clientGeneration: number
       ownerGeneration: number
       ptyIncarnation: string
+      nextSourceSu?: number
     }>
   >()
+  private readonly blockedSourceDeliveryKeys = new Set<string>()
   private readonly ptyConsumerClientInstanceId: string
   private ptyConsumerSessionState: SshPtyConsumerSessionState | null = null
 
@@ -393,23 +406,7 @@ export class SshRelaySession {
       this.mux = mux
       const ownsAttempt = (): boolean => this.mux === mux && !this.isDisposed()
 
-      const previousOwner = this.negotiatedPtyConsumerOwner(serverBuildId)
-      this.ptyConsumerSessionState = await openSshPtyConsumerSession(mux, {
-        clientInstanceId: this.ptyConsumerClientInstanceId,
-        expectedServerBuildId: serverBuildId,
-        allowSameBuildLegacyFallback: true,
-        ...(this.isPtySourceCreditEnabled()
-          ? { outputFlowControl: { requestedWindowSu: DEFAULT_PTY_SOURCE_WINDOW_SU } }
-          : {}),
-        ...(previousOwner
-          ? {
-              resume: {
-                ownerGeneration: previousOwner.ownerGeneration,
-                ownerLease: previousOwner.ownerLease
-              }
-            }
-          : {})
-      })
+      this.ptyConsumerSessionState = await this.openPtyConsumerSession(mux, serverBuildId)
       this.rememberPtyConsumerRecovery(serverBuildId)
 
       await mux.request('session.resolveHome', { path: '~' })
@@ -433,7 +430,7 @@ export class SshRelaySession {
       }
 
       // Why: explicit disconnect keeps PTY ownership, so a later manual connect must reattach those remote PTYs.
-      await this.reattachKnownPtys(ownsAttempt)
+      await this.reattachKnownPtys(mux, ownsAttempt)
 
       if (!ownsAttempt()) {
         throw new Error('Session disposed during establish')
@@ -529,23 +526,7 @@ export class SshRelaySession {
         !abortController.signal.aborted &&
         !this.isDisposed()
 
-      const previousOwner = this.negotiatedPtyConsumerOwner(serverBuildId)
-      this.ptyConsumerSessionState = await openSshPtyConsumerSession(mux, {
-        clientInstanceId: this.ptyConsumerClientInstanceId,
-        expectedServerBuildId: serverBuildId,
-        allowSameBuildLegacyFallback: true,
-        ...(this.isPtySourceCreditEnabled()
-          ? { outputFlowControl: { requestedWindowSu: DEFAULT_PTY_SOURCE_WINDOW_SU } }
-          : {}),
-        ...(previousOwner
-          ? {
-              resume: {
-                ownerGeneration: previousOwner.ownerGeneration,
-                ownerLease: previousOwner.ownerLease
-              }
-            }
-          : {})
-      })
+      this.ptyConsumerSessionState = await this.openPtyConsumerSession(mux, serverBuildId)
       this.rememberPtyConsumerRecovery(serverBuildId)
       if (!ownsAttempt()) {
         if (!mux.isDisposed()) {
@@ -584,7 +565,7 @@ export class SshRelaySession {
         return
       }
 
-      await this.reattachKnownPtys(ownsAttempt)
+      await this.reattachKnownPtys(mux, ownsAttempt)
 
       if (!ownsAttempt()) {
         return
@@ -743,6 +724,8 @@ export class SshRelaySession {
     }
     this.sourceAckPublisherCleanup?.()
     this.sourceAckPublisherCleanup = null
+    this.sourceCancellationPublisherCleanup?.()
+    this.sourceCancellationPublisherCleanup = null
     if (consumerOwnerState?.outputFlowControl) {
       this.sourceAckPublisherCleanup = installSshPtySourceAckPublisher(
         providerGeneration,
@@ -752,6 +735,26 @@ export class SshRelaySession {
             batch as unknown as Record<string, unknown>,
             onSettled
           )
+      )
+      this.sourceCancellationPublisherCleanup = installSshPtySourceCancellationPublisher(
+        providerGeneration,
+        async (request) => {
+          const result = (await mux.request('pty.cancelDelivery', {
+            ...request,
+            id: toRelaySshPtyId(this.targetId, request.id)
+          })) as Record<string, unknown>
+          if (
+            result.canceled !== true ||
+            !Number.isSafeInteger(result.sentEndSu) ||
+            !Number.isSafeInteger(result.creditedEndSu)
+          ) {
+            throw new Error('ssh_source_cancellation_proof_invalid')
+          }
+          return {
+            sentEndSu: result.sentEndSu as number,
+            creditedEndSu: result.creditedEndSu as number
+          }
+        }
       )
     }
     this.activePtyProviderGeneration = providerGeneration
@@ -796,7 +799,7 @@ export class SshRelaySession {
     )
     registerSshGitProvider(this.targetId, gitProvider)
 
-    this.wireUpPtyEvents(ptyProvider)
+    this.wireUpPtyEvents(ptyProvider, mux, providerGeneration)
     this.wireUpAgentHookEvents(mux)
     this.wireUpRemoteWorkspaceEvents(mux)
     return true
@@ -811,6 +814,48 @@ export class SshRelaySession {
     return !serverBuildId || recovery?.serverBuildId === serverBuildId
       ? (recovery?.owner ?? null)
       : null
+  }
+
+  private async openPtyConsumerSession(
+    mux: SshChannelMultiplexer,
+    serverBuildId: string | undefined
+  ): Promise<SshPtyConsumerSessionState> {
+    const previousOwner = this.negotiatedPtyConsumerOwner(serverBuildId)
+    const options = {
+      clientInstanceId: this.ptyConsumerClientInstanceId,
+      expectedServerBuildId: serverBuildId,
+      allowSameBuildLegacyFallback: true,
+      ...(this.isPtySourceCreditEnabled()
+        ? { outputFlowControl: { requestedWindowSu: DEFAULT_PTY_SOURCE_WINDOW_SU } }
+        : {})
+    }
+    try {
+      return await openSshPtyConsumerSession(mux, {
+        ...options,
+        ...(previousOwner
+          ? {
+              resume: {
+                ownerGeneration: previousOwner.ownerGeneration,
+                ownerLease: previousOwner.ownerLease
+              }
+            }
+          : {})
+      })
+    } catch (error) {
+      if (
+        !previousOwner ||
+        (error as { code?: unknown }).code !== PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR
+      ) {
+        throw error
+      }
+      const recovery = ptyConsumerRecoveryByTarget.get(this.targetId)
+      if (recovery) {
+        delete recovery.owner
+        recovery.checkpointsByAppPtyId.clear()
+      }
+      this.ptyConsumerSessionState = null
+      return openSshPtyConsumerSession(mux, options)
+    }
   }
 
   private rememberPtyConsumerRecovery(serverBuildId: string | undefined): void {
@@ -1092,6 +1137,8 @@ export class SshRelaySession {
     }
     this.sourceAckPublisherCleanup?.()
     this.sourceAckPublisherCleanup = null
+    this.sourceCancellationPublisherCleanup?.()
+    this.sourceCancellationPublisherCleanup = null
     if (this.mux && !this.mux.isDisposed()) {
       this.mux.dispose(reason)
     }
@@ -1117,12 +1164,14 @@ export class SshRelaySession {
     unregisterSshFilesystemProvider(this.targetId)
     unregisterSshGitProvider(this.targetId)
     this.sourceIdentityByRelayPtyId.clear()
+    this.blockedSourceDeliveryKeys.clear()
     for (const pending of this.pendingPtyReattaches.values()) {
       for (const resolve of pending.recoveryWaiters) {
         resolve()
       }
     }
     this.pendingPtyReattaches.clear()
+    this.ptyRecoveryRetention.clear()
   }
 
   // Why: back-compat for old relays that gate FS ops on registered roots; removable post-cutover (docs/relay-fs-allowlist-removal.md).
@@ -1194,8 +1243,19 @@ export class SshRelaySession {
     }
   }
 
-  private wireUpPtyEvents(ptyProvider: SshPtyProvider): void {
+  private wireUpPtyEvents(
+    ptyProvider: SshPtyProvider,
+    mux: SshChannelMultiplexer,
+    providerGeneration: number
+  ): void {
     ptyProvider.onData((payload) => {
+      if (
+        this.mux !== mux ||
+        this.activePtyProviderGeneration !== providerGeneration ||
+        payload.providerGeneration !== providerGeneration
+      ) {
+        return
+      }
       const pending = this.pendingPtyReattaches.get(payload.id)
       if (pending && this.negotiatedPtyConsumerOwner()?.outputFlowControl) {
         if (pending.livePassthrough) {
@@ -1208,12 +1268,22 @@ export class SshRelaySession {
       void this.acceptPtyData(payload).catch(() => {})
     })
     ptyProvider.onReplay((payload) => {
+      if (this.mux !== mux || this.activePtyProviderGeneration !== providerGeneration) {
+        return
+      }
       const win = this.getMainWindow()
       if (win && !win.isDestroyed()) {
         win.webContents.send('pty:replay', payload)
       }
     })
     ptyProvider.onExit((payload) => {
+      if (
+        this.mux !== mux ||
+        this.activePtyProviderGeneration !== providerGeneration ||
+        payload.providerGeneration !== providerGeneration
+      ) {
+        return
+      }
       const pendingReattach = this.pendingPtyReattaches.get(payload.id)
       if (pendingReattach && !pendingReattach.activated) {
         // Why: attach response and exit can share one transport batch, before incarnation restoration runs.
@@ -1229,12 +1299,21 @@ export class SshRelaySession {
 
   private acceptPtyData(payload: SshPtyDataPayload): Promise<unknown> {
     const consumerOwner = this.negotiatedPtyConsumerOwner()
+    const offeredSource = payload.source
+    if (
+      offeredSource &&
+      this.blockedSourceDeliveryKeys.has(
+        this.sourceDeliveryKey(payload.providerGeneration, offeredSource)
+      )
+    ) {
+      return Promise.resolve()
+    }
     if (
       consumerOwner?.outputFlowControl &&
-      (!payload.source ||
+      (!offeredSource ||
         payload.sourceMalformed ||
-        payload.source.clientGeneration !== consumerOwner.clientGeneration ||
-        payload.source.ownerGeneration !== consumerOwner.ownerGeneration)
+        offeredSource.clientGeneration !== consumerOwner.clientGeneration ||
+        offeredSource.ownerGeneration !== consumerOwner.ownerGeneration)
     ) {
       closeSshPtyOutputGeneration(
         payload.providerGeneration,
@@ -1243,13 +1322,31 @@ export class SshRelaySession {
       this.mux?.dispose('connection_lost')
       return Promise.reject(new Error('ssh_source_frame_malformed_or_missing'))
     }
-    const source = consumerOwner?.outputFlowControl ? payload.source : undefined
+    const source = consumerOwner?.outputFlowControl ? offeredSource : undefined
     if (source) {
+      const current = this.sourceIdentityByRelayPtyId.get(source.relayPtyId)
+      if (
+        source.sourceEndSu <= source.sourceStartSu ||
+        (current &&
+          (current.deliveryToken !== source.deliveryToken ||
+            current.clientGeneration !== source.clientGeneration ||
+            current.ownerGeneration !== source.ownerGeneration ||
+            current.ptyIncarnation !== payload.ptyIncarnation ||
+            (current.nextSourceSu !== undefined && current.nextSourceSu !== source.sourceStartSu)))
+      ) {
+        closeSshPtyOutputGeneration(
+          payload.providerGeneration,
+          'ssh_source_frame_stale_or_non_contiguous'
+        )
+        this.mux?.dispose('connection_lost')
+        return Promise.reject(new Error('ssh_source_frame_stale_or_non_contiguous'))
+      }
       this.sourceIdentityByRelayPtyId.set(source.relayPtyId, {
         deliveryToken: source.deliveryToken,
         clientGeneration: source.clientGeneration,
         ownerGeneration: source.ownerGeneration,
-        ptyIncarnation: payload.ptyIncarnation
+        ptyIncarnation: payload.ptyIncarnation,
+        nextSourceSu: source.sourceEndSu
       })
     }
     const rawLength = payload.sequenceChars ?? payload.data.length
@@ -1266,12 +1363,13 @@ export class SshRelaySession {
   }
 
   private quarantineReattachData(pending: PendingPtyReattach, payload: SshPtyDataPayload): void {
-    pending.queuedBytes += Buffer.byteLength(payload.data, 'utf8')
-    pending.queuedFrames++
-    if (
-      pending.queuedBytes > SSH_PTY_RECOVERY_QUARANTINE_MAX_BYTES ||
-      pending.queuedFrames > SSH_PTY_RECOVERY_QUARANTINE_MAX_FRAMES
-    ) {
+    if (pending.restoreRequired) {
+      return
+    }
+    const sourceSu = payload.source
+      ? payload.source.sourceEndSu - payload.source.sourceStartSu
+      : (payload.sequenceChars ?? payload.data.length)
+    if (!this.ptyRecoveryRetention.tryRetain(pending.retentionKey, payload.data, sourceSu)) {
       pending.restoreRequired = 'recoveryQuarantineCapacityExceeded'
       this.wakeRecovery(pending)
       return
@@ -1288,13 +1386,20 @@ export class SshRelaySession {
   }
 
   private admitRecoveryData(pending: PendingPtyReattach, payload: SshPtyDataPayload): void {
+    if (pending.restoreRequired) {
+      return
+    }
     const recovery = pending.recovery
+    const nextSourceSu = pending.nextRecoverySourceSu
     if (
       !recovery ||
       !payload.source ||
+      nextSourceSu === undefined ||
       payload.source.deliveryToken !== recovery.deliveryToken ||
       payload.source.clientGeneration !== recovery.clientGeneration ||
       payload.source.ownerGeneration !== recovery.ownerGeneration ||
+      payload.source.sourceStartSu !== nextSourceSu ||
+      payload.source.sourceEndSu <= payload.source.sourceStartSu ||
       payload.source.sourceEndSu > recovery.recoveryEndSu ||
       payload.ptyIncarnation !== recovery.ptyIncarnation
     ) {
@@ -1302,13 +1407,8 @@ export class SshRelaySession {
       this.wakeRecovery(pending)
       return
     }
-    const admission = this.acceptPtyData(payload).catch((error) => {
-      pending.restoreRequired =
-        error instanceof Error ? error.message : 'recoveryIntakeAdmissionFailed'
-      this.wakeRecovery(pending)
-      throw error
-    })
-    pending.recoveryAdmissions.push(admission)
+    pending.nextRecoverySourceSu = payload.source.sourceEndSu
+    pending.recoveryData.push(payload)
   }
 
   private installPtyRecoveryNotifications(mux: SshChannelMultiplexer): void {
@@ -1317,9 +1417,12 @@ export class SshRelaySession {
     }
     this.ptyRecoveryNotificationCleanups = [
       mux.onNotificationByMethod('pty.recoveryComplete', (params) => {
+        if (this.mux !== mux) {
+          return
+        }
         const id = typeof params.id === 'string' ? toAppSshPtyId(this.targetId, params.id) : ''
         const pending = this.pendingPtyReattaches.get(id)
-        if (!pending) {
+        if (!pending || pending.mux !== mux) {
           return
         }
         const complete = parseRecoveryComplete(params)
@@ -1331,9 +1434,12 @@ export class SshRelaySession {
         this.wakeRecovery(pending)
       }),
       mux.onNotificationByMethod('pty.restoreRequired', (params) => {
+        if (this.mux !== mux) {
+          return
+        }
         const id = typeof params.id === 'string' ? toAppSshPtyId(this.targetId, params.id) : ''
         const pending = this.pendingPtyReattaches.get(id)
-        if (!pending) {
+        if (!pending || pending.mux !== mux) {
           return
         }
         pending.restoreRequired =
@@ -1341,6 +1447,9 @@ export class SshRelaySession {
         this.wakeRecovery(pending)
       }),
       mux.onNotificationByMethod('pty.deliveryCanceled', (params) => {
+        if (this.mux !== mux) {
+          return
+        }
         const id = typeof params.id === 'string' ? params.id : ''
         const identity = this.sourceIdentityByRelayPtyId.get(id)
         if (
@@ -1355,7 +1464,7 @@ export class SshRelaySession {
         const replacementDeliveryToken =
           typeof params.replacementDeliveryToken === 'string' ? params.replacementDeliveryToken : ''
         const pending = this.pendingPtyReattaches.get(toAppSshPtyId(this.targetId, id))
-        if (pending) {
+        if (pending?.mux === mux) {
           if (
             replacementDeliveryToken.length === 0 ||
             replacementDeliveryToken === identity.deliveryToken
@@ -1379,10 +1488,35 @@ export class SshRelaySession {
           return
         }
         const generation = this.activePtyProviderGeneration
-        if (generation !== null) {
-          closeSshPtyOutputGeneration(generation, 'ssh_source_delivery_canceled')
+        if (
+          generation !== null &&
+          Number.isSafeInteger(params.sentEndSu) &&
+          Number.isSafeInteger(params.creditedEndSu)
+        ) {
+          try {
+            applySshPtySourceCancellationProof(
+              {
+                id: toAppSshPtyId(this.targetId, id),
+                code: -1,
+                providerGeneration: generation,
+                ptyIncarnation: identity.ptyIncarnation
+              },
+              {
+                sentEndSu: params.sentEndSu as number,
+                creditedEndSu: params.creditedEndSu as number
+              }
+            )
+            this.blockedSourceDeliveryKeys.add(
+              this.sourceDeliveryKey(generation, {
+                relayPtyId: id,
+                ...identity
+              })
+            )
+            this.sourceIdentityByRelayPtyId.delete(id)
+          } catch {
+            /* Invalid proof retains the active token identity. */
+          }
         }
-        mux.dispose('connection_lost')
       })
     ]
   }
@@ -1435,7 +1569,10 @@ export class SshRelaySession {
     }
   }
 
-  private async reattachKnownPtys(shouldContinue: () => boolean): Promise<void> {
+  private async reattachKnownPtys(
+    mux: SshChannelMultiplexer,
+    shouldContinue: () => boolean
+  ): Promise<void> {
     const activeLeases = this.store
       .getSshRemotePtyLeases(this.targetId)
       .filter((lease) => lease.state !== 'terminated' && lease.state !== 'expired')
@@ -1460,142 +1597,285 @@ export class SshRelaySession {
       ])
     )
     const ptyProvider = getSshPtyProvider(this.targetId) as SshPtyProvider | undefined
-    if (!ptyProvider) {
+    const providerGeneration = this.activePtyProviderGeneration
+    if (!ptyProvider || providerGeneration === null || this.mux !== mux) {
       return
     }
-    for (const ptyId of ptyIds) {
+    let nextPtyIndex = 0
+    const worker = async (): Promise<void> => {
+      while (shouldContinue()) {
+        const ptyId = ptyIds[nextPtyIndex++]
+        if (ptyId === undefined) {
+          return
+        }
+        try {
+          await this.reattachKnownPty({
+            ptyProvider,
+            ptyId,
+            activeLeaseByPtyId,
+            expectedIdentityByPtyId,
+            mux,
+            providerGeneration,
+            shouldContinue
+          })
+        } catch (error) {
+          console.warn(
+            `[ssh-relay-session] PTY ${ptyId} reattach processing failed for ${this.targetId}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          )
+        }
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(SSH_PTY_REATTACH_MAX_CONCURRENCY, ptyIds.length) }, worker)
+    )
+  }
+
+  private async reattachKnownPty(args: {
+    ptyProvider: SshPtyProvider
+    ptyId: string
+    activeLeaseByPtyId: Map<string, SshPtyLease>
+    expectedIdentityByPtyId: Map<string, ExpectedPtyIdentity>
+    mux: SshChannelMultiplexer
+    providerGeneration: number
+    shouldContinue: () => boolean
+  }): Promise<void> {
+    const {
+      ptyProvider,
+      ptyId,
+      activeLeaseByPtyId,
+      expectedIdentityByPtyId,
+      mux,
+      providerGeneration,
+      shouldContinue
+    } = args
+    const appPtyId = toAppSshPtyId(this.targetId, ptyId)
+    const pendingReattach: PendingPtyReattach = {
+      mux,
+      providerGeneration,
+      retentionKey: `${providerGeneration}\0${appPtyId}\0${randomUUID()}`,
+      exits: [],
+      queuedData: [],
+      recoveryData: [],
+      liveData: [],
+      recoveryWaiters: new Set(),
+      livePassthrough: false,
+      activated: false
+    }
+    this.pendingPtyReattaches.set(appPtyId, pendingReattach)
+    try {
+      const recoveryRequest = this.sourceRecoveryRequest(appPtyId)
+      const attachResult = await this.attachPtyWithRetry(
+        ptyProvider,
+        ptyId,
+        expectedIdentityByPtyId.get(ptyId),
+        recoveryRequest,
+        shouldContinue
+      )
       if (!shouldContinue()) {
         return
       }
-      const appPtyId = toAppSshPtyId(this.targetId, ptyId)
-      const pendingReattach: PendingPtyReattach = {
-        exits: [],
-        queuedData: [],
-        liveData: [],
-        recoveryWaiters: new Set(),
-        recoveryAdmissions: [],
-        queuedBytes: 0,
-        queuedFrames: 0,
-        livePassthrough: false,
-        activated: false
-      }
-      this.pendingPtyReattaches.set(appPtyId, pendingReattach)
-      try {
-        const expectedIdentity = expectedIdentityByPtyId.get(ptyId)
-        const recoveryRequest = this.sourceRecoveryRequest(appPtyId)
-        const attachResult =
-          (expectedIdentity
-            ? recoveryRequest
-              ? await ptyProvider.attachForReconnect(ptyId, expectedIdentity, recoveryRequest)
-              : await ptyProvider.attachForReconnect(ptyId, expectedIdentity)
-            : recoveryRequest
-              ? await ptyProvider.attachForReconnect(ptyId, undefined, recoveryRequest)
-              : await ptyProvider.attachForReconnect(ptyId)) ?? {}
-        if (!shouldContinue()) {
-          return
-        }
-        const exitDuringAttach = pendingReattach.exits.find(
-          (exit) =>
-            !exit.incarnationId ||
-            !attachResult.incarnationId ||
-            exit.incarnationId === attachResult.incarnationId
-        )
-        if (exitDuringAttach) {
-          if (attachResult.incarnationId) {
-            restorePtyIncarnation(appPtyId, attachResult.incarnationId)
-            this.runtime?.acceptPtyIncarnationForExit(appPtyId, attachResult.incarnationId)
-          }
-          await this.acceptPtyExit(exitDuringAttach)
-          continue
-        }
-        if (
-          recoveryRequest &&
-          !(await this.finishSourceRecovery(
-            ptyProvider,
-            ptyId,
-            appPtyId,
-            attachResult,
-            recoveryRequest,
-            pendingReattach,
-            shouldContinue
-          ))
-        ) {
-          continue
-        }
-        setPtyOwnership(appPtyId, this.targetId)
+      const exitDuringAttach = pendingReattach.exits.find(
+        (exit) =>
+          !exit.incarnationId ||
+          !attachResult.incarnationId ||
+          exit.incarnationId === attachResult.incarnationId
+      )
+      if (exitDuringAttach) {
         if (attachResult.incarnationId) {
           restorePtyIncarnation(appPtyId, attachResult.incarnationId)
-          const lease = activeLeaseByPtyId.get(ptyId)
-          if (lease?.worktreeId && lease.tabId && lease.leafId) {
-            this.runtime?.registerPty(appPtyId, lease.worktreeId, this.targetId, {
-              tabId: lease.tabId,
-              leafId: lease.leafId,
-              incarnationId: attachResult.incarnationId
-            })
-            // Why: reconnect may be the first new-relay response that can backfill exact exit fencing.
-            try {
-              this.store.persistPtyBinding({
-                worktreeId: lease.worktreeId,
-                tabId: lease.tabId,
-                leafId: lease.leafId,
-                ptyId: appPtyId,
-                incarnationId: attachResult.incarnationId
-              })
-            } catch (error) {
-              // Why: this backfill improves future fencing but must not disconnect an already-live relay PTY.
-              console.error('[ssh-relay-session] Failed to persist reconnect incarnation:', error)
-            }
-          } else {
-            this.runtime?.onPtySpawned(appPtyId, attachResult.incarnationId, {
-              awaitsRegistration: false
-            })
-          }
+          this.runtime?.acceptPtyIncarnationForExit(appPtyId, attachResult.incarnationId)
         }
-        this.store.markSshRemotePtyLease(this.targetId, ptyId, 'attached')
-        pendingReattach.activated = true
-        const exitAfterActivation = pendingReattach.exits.find(
-          (exit) =>
-            !exit.incarnationId ||
-            !attachResult.incarnationId ||
-            exit.incarnationId === attachResult.incarnationId
-        )
-        if (exitAfterActivation) {
-          await this.acceptPtyExit(exitAfterActivation)
-          continue
-        }
-        if (!recoveryRequest) {
-          this.forwardReattachReplay(appPtyId, attachResult.replay ?? '')
-        }
-      } catch (err) {
-        if (!isSshPtyNotFoundError(err)) {
-          throw err
-        }
-        if (isSshPtyIdentityMismatchError(err)) {
-          console.warn(
-            `[ssh-relay-session] Ignoring stale PTY ${ptyId} for ${this.targetId} after relay identity mismatch: ${
-              err instanceof Error ? err.message : String(err)
-            }`
-          )
-          continue
-        }
-        console.warn(
-          `[ssh-relay-session] Dropping stale PTY ${ptyId} for ${this.targetId} after relay reattach failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        )
-        clearProviderPtyState(appPtyId)
-        deletePtyOwnership(appPtyId)
-        this.store.markSshRemotePtyLease(this.targetId, ptyId, 'expired')
-        // Why: reattach failure means the remote process is gone; tell the renderer to clear the stale pane.
-        const win = this.getMainWindow()
-        if (win && !win.isDestroyed()) {
-          win.webContents.send('pty:exit', { id: appPtyId, code: -1 })
-        }
-      } finally {
-        if (this.pendingPtyReattaches.get(appPtyId) === pendingReattach) {
-          this.pendingPtyReattaches.delete(appPtyId)
-        }
+        await this.acceptPtyExit(exitDuringAttach)
+        return
       }
+      if (
+        recoveryRequest &&
+        !(await this.finishSourceRecovery(
+          ptyId,
+          appPtyId,
+          attachResult,
+          recoveryRequest,
+          pendingReattach,
+          shouldContinue
+        ))
+      ) {
+        return
+      }
+      if (!shouldContinue() || !this.ownsPtyRecoveryAttempt(appPtyId, pendingReattach)) {
+        return
+      }
+      setPtyOwnership(appPtyId, this.targetId)
+      if (attachResult.incarnationId) {
+        restorePtyIncarnation(appPtyId, attachResult.incarnationId)
+        this.restoreReattachedPtyRuntime(
+          appPtyId,
+          attachResult.incarnationId,
+          activeLeaseByPtyId.get(ptyId)
+        )
+      }
+      this.store.markSshRemotePtyLease(this.targetId, ptyId, 'attached')
+      pendingReattach.activated = true
+      const exitAfterActivation = pendingReattach.exits.find(
+        (exit) =>
+          !exit.incarnationId ||
+          !attachResult.incarnationId ||
+          exit.incarnationId === attachResult.incarnationId
+      )
+      if (exitAfterActivation) {
+        await this.acceptPtyExit(exitAfterActivation)
+        return
+      }
+      if (!recoveryRequest) {
+        this.forwardReattachReplay(appPtyId, attachResult.replay ?? '')
+      }
+    } catch (error) {
+      if (!shouldContinue()) {
+        return
+      }
+      this.handlePtyReattachFailure(ptyId, appPtyId, pendingReattach, error)
+    } finally {
+      if (this.pendingPtyReattaches.get(appPtyId) === pendingReattach) {
+        this.pendingPtyReattaches.delete(appPtyId)
+      }
+      this.ptyRecoveryRetention.release(pendingReattach.retentionKey)
+    }
+  }
+
+  private restoreReattachedPtyRuntime(
+    appPtyId: string,
+    incarnationId: string,
+    lease: SshPtyLease | undefined
+  ): void {
+    if (lease?.worktreeId && lease.tabId && lease.leafId) {
+      this.runtime?.registerPty(appPtyId, lease.worktreeId, this.targetId, {
+        tabId: lease.tabId,
+        leafId: lease.leafId,
+        incarnationId
+      })
+      try {
+        this.store.persistPtyBinding({
+          worktreeId: lease.worktreeId,
+          tabId: lease.tabId,
+          leafId: lease.leafId,
+          ptyId: appPtyId,
+          incarnationId
+        })
+      } catch (error) {
+        console.error('[ssh-relay-session] Failed to persist reconnect incarnation:', error)
+      }
+      return
+    }
+    this.runtime?.onPtySpawned(appPtyId, incarnationId, { awaitsRegistration: false })
+  }
+
+  private async attachPtyWithRetry(
+    ptyProvider: SshPtyProvider,
+    ptyId: string,
+    expectedIdentity: ExpectedPtyIdentity | undefined,
+    recoveryRequest: PtySourceRecoveryRequest | undefined,
+    shouldContinue: () => boolean
+  ): Promise<SshPtyAttachResult> {
+    let lastError: unknown
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!shouldContinue()) {
+        throw lastError ?? new Error('PTY reattach attempt is no longer current')
+      }
+      try {
+        return await this.attachPtyWithDeadline(
+          ptyProvider,
+          ptyId,
+          expectedIdentity,
+          recoveryRequest
+        )
+      } catch (error) {
+        lastError = error
+        if (!shouldContinue() || isSshPtyNotFoundError(error) || attempt === 1) {
+          throw error
+        }
+        await this.waitForPtyReattachRetry()
+      }
+    }
+    throw lastError
+  }
+
+  private async attachPtyWithDeadline(
+    ptyProvider: SshPtyProvider,
+    ptyId: string,
+    expectedIdentity: ExpectedPtyIdentity | undefined,
+    recoveryRequest: PtySourceRecoveryRequest | undefined
+  ): Promise<SshPtyAttachResult> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(
+          new Error(`PTY reattach attempt timed out after ${SSH_PTY_REATTACH_ATTEMPT_TIMEOUT_MS}ms`)
+        )
+      }, SSH_PTY_REATTACH_ATTEMPT_TIMEOUT_MS)
+      timer.unref?.()
+    })
+    try {
+      const attach = expectedIdentity
+        ? recoveryRequest
+          ? ptyProvider.attachForReconnect(ptyId, expectedIdentity, recoveryRequest)
+          : ptyProvider.attachForReconnect(ptyId, expectedIdentity)
+        : recoveryRequest
+          ? ptyProvider.attachForReconnect(ptyId, undefined, recoveryRequest)
+          : ptyProvider.attachForReconnect(ptyId)
+      return (await Promise.race([attach, timeout])) ?? {}
+    } finally {
+      if (timer) {
+        clearTimeout(timer)
+      }
+    }
+  }
+
+  private async waitForPtyReattachRetry(): Promise<void> {
+    const delayMs =
+      SSH_PTY_REATTACH_RETRY_MIN_DELAY_MS +
+      Math.floor(Math.random() * (SSH_PTY_REATTACH_RETRY_JITTER_MS + 1))
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, delayMs)
+      timer.unref?.()
+    })
+  }
+
+  private handlePtyReattachFailure(
+    ptyId: string,
+    appPtyId: string,
+    pending: PendingPtyReattach,
+    error: unknown
+  ): void {
+    if (!isSshPtyNotFoundError(error)) {
+      pending.restoreRequired = 'reattachAttemptsExhausted'
+      this.wakeRecovery(pending)
+      console.warn(
+        `[ssh-relay-session] Leaving PTY ${ptyId} detached for ${this.targetId} after bounded reattach attempts failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+      return
+    }
+    if (isSshPtyIdentityMismatchError(error)) {
+      console.warn(
+        `[ssh-relay-session] Ignoring stale PTY ${ptyId} for ${this.targetId} after relay identity mismatch: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+      return
+    }
+    console.warn(
+      `[ssh-relay-session] Dropping stale PTY ${ptyId} for ${this.targetId} after relay reattach failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    )
+    clearProviderPtyState(appPtyId)
+    deletePtyOwnership(appPtyId)
+    this.store.markSshRemotePtyLease(this.targetId, ptyId, 'expired')
+    const win = this.getMainWindow()
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('pty:exit', { id: appPtyId, code: -1 })
     }
   }
 
@@ -1620,7 +1900,6 @@ export class SshRelaySession {
   }
 
   private async finishSourceRecovery(
-    ptyProvider: SshPtyProvider,
     relayPtyId: string,
     appPtyId: string,
     attachResult: SshPtyAttachResult,
@@ -1642,15 +1921,20 @@ export class SshRelaySession {
       (pending.replacementDeliveryToken !== undefined &&
         pending.replacementDeliveryToken !== recovery.deliveryToken)
     ) {
-      await this.resetPtyAfterRecoveryFailure(ptyProvider, relayPtyId, appPtyId)
+      if (!shouldContinue() || !this.ownsPtyRecoveryAttempt(appPtyId, pending)) {
+        return false
+      }
+      await this.abandonPtySourceRecovery(relayPtyId, appPtyId, pending)
       return false
     }
     pending.recovery = recovery
+    pending.nextRecoverySourceSu = recovery.checkpointSourceEndSu
     this.sourceIdentityByRelayPtyId.set(relayPtyId, {
       deliveryToken: recovery.deliveryToken,
       clientGeneration: recovery.clientGeneration,
       ownerGeneration: recovery.ownerGeneration,
-      ptyIncarnation: recovery.ptyIncarnation
+      ptyIncarnation: recovery.ptyIncarnation,
+      nextSourceSu: recovery.checkpointSourceEndSu
     })
     for (const payload of pending.queuedData.splice(0)) {
       this.admitRecoveryData(pending, payload)
@@ -1666,19 +1950,50 @@ export class SshRelaySession {
       complete.ownerGeneration !== recovery.ownerGeneration ||
       complete.ptyIncarnation !== recovery.ptyIncarnation ||
       complete.checkpointSourceEndSu !== recovery.checkpointSourceEndSu ||
-      complete.recoveryEndSu !== recovery.recoveryEndSu
+      complete.recoveryEndSu !== recovery.recoveryEndSu ||
+      pending.nextRecoverySourceSu !== recovery.recoveryEndSu
     ) {
-      await this.resetPtyAfterRecoveryFailure(ptyProvider, relayPtyId, appPtyId)
+      if (!shouldContinue() || !this.ownsPtyRecoveryAttempt(appPtyId, pending)) {
+        return false
+      }
+      await this.abandonPtySourceRecovery(relayPtyId, appPtyId, pending)
       return false
     }
+    let nextLiveSourceSu = recovery.recoveryEndSu
+    for (const payload of pending.liveData) {
+      if (
+        !payload.source ||
+        payload.source.deliveryToken !== recovery.deliveryToken ||
+        payload.source.clientGeneration !== recovery.clientGeneration ||
+        payload.source.ownerGeneration !== recovery.ownerGeneration ||
+        payload.source.sourceStartSu !== nextLiveSourceSu ||
+        payload.source.sourceEndSu <= payload.source.sourceStartSu ||
+        payload.ptyIncarnation !== recovery.ptyIncarnation
+      ) {
+        if (!shouldContinue() || !this.ownsPtyRecoveryAttempt(appPtyId, pending)) {
+          return false
+        }
+        await this.abandonPtySourceRecovery(relayPtyId, appPtyId, pending)
+        return false
+      }
+      nextLiveSourceSu = payload.source.sourceEndSu
+    }
     try {
-      await Promise.all(pending.recoveryAdmissions)
+      for (const payload of pending.recoveryData) {
+        await this.acceptPtyData(payload)
+      }
       for (const payload of pending.liveData) {
         await this.acceptPtyData(payload)
       }
       pending.livePassthrough = true
     } catch {
-      await this.resetPtyAfterRecoveryFailure(ptyProvider, relayPtyId, appPtyId)
+      if (!shouldContinue() || !this.ownsPtyRecoveryAttempt(appPtyId, pending)) {
+        return false
+      }
+      await this.abandonPtySourceRecovery(relayPtyId, appPtyId, pending)
+      return false
+    }
+    if (!shouldContinue() || !this.ownsPtyRecoveryAttempt(appPtyId, pending)) {
       return false
     }
     const acceptedSourceEndSu = pending.liveData.reduce(
@@ -1704,7 +2019,7 @@ export class SshRelaySession {
     pending: PendingPtyReattach,
     shouldContinue: () => boolean
   ): Promise<void> {
-    const deadline = Date.now() + 30_000
+    const deadline = Date.now() + SSH_PTY_REATTACH_ATTEMPT_TIMEOUT_MS
     while (
       shouldContinue() &&
       !pending.recoveryComplete &&
@@ -1732,25 +2047,125 @@ export class SshRelaySession {
     }
   }
 
-  private async resetPtyAfterRecoveryFailure(
-    ptyProvider: SshPtyProvider,
+  private async abandonPtySourceRecovery(
     relayPtyId: string,
-    appPtyId: string
+    appPtyId: string,
+    pending: PendingPtyReattach
   ): Promise<void> {
-    try {
-      await ptyProvider.shutdown(appPtyId, { immediate: true, deadlineMs: Date.now() + 5_000 })
-    } catch {
-      /* The recovery fence already prevents stale output activation. */
+    if (!this.ownsPtyRecoveryAttempt(appPtyId, pending)) {
+      return
     }
-    clearProviderPtyState(appPtyId)
-    deletePtyOwnership(appPtyId)
-    this.sourceIdentityByRelayPtyId.delete(relayPtyId)
+    const recovery = pending.recovery
+    const { mux, providerGeneration } = pending
+    if (recovery && !mux.isDisposed()) {
+      const cancellationRequest = {
+        id: relayPtyId,
+        clientGeneration: recovery.clientGeneration,
+        ownerGeneration: recovery.ownerGeneration,
+        deliveryToken: recovery.deliveryToken
+      }
+      this.blockedSourceDeliveryKeys.add(
+        this.sourceDeliveryKey(providerGeneration, {
+          relayPtyId,
+          deliveryToken: recovery.deliveryToken,
+          clientGeneration: recovery.clientGeneration,
+          ownerGeneration: recovery.ownerGeneration
+        })
+      )
+      try {
+        const result = (await mux.request('pty.cancelDelivery', cancellationRequest)) as Record<
+          string,
+          unknown
+        >
+        if (
+          result.canceled !== true ||
+          !Number.isSafeInteger(result.sentEndSu) ||
+          !Number.isSafeInteger(result.creditedEndSu)
+        ) {
+          throw new Error('ssh_source_cancellation_proof_invalid')
+        }
+        if (!this.ownsPtyRecoveryAttempt(appPtyId, pending)) {
+          return
+        }
+        const identity = this.sourceIdentityByRelayPtyId.get(relayPtyId)
+        if (identity && !this.sameSourceDelivery(identity, recovery)) {
+          return
+        }
+        if (identity) {
+          applySshPtySourceCancellationProof(
+            {
+              id: appPtyId,
+              code: -1,
+              providerGeneration,
+              ptyIncarnation: recovery.ptyIncarnation
+            },
+            {
+              sentEndSu: result.sentEndSu as number,
+              creditedEndSu: result.creditedEndSu as number
+            }
+          )
+        }
+      } catch (error) {
+        console.warn(
+          `[ssh-relay-session] Failed to cancel replacement delivery for ${relayPtyId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+        return
+      }
+    }
+    if (!this.ownsPtyRecoveryAttempt(appPtyId, pending)) {
+      return
+    }
+    const identity = this.sourceIdentityByRelayPtyId.get(relayPtyId)
+    if (!identity || !recovery || this.sameSourceDelivery(identity, recovery)) {
+      this.sourceIdentityByRelayPtyId.delete(relayPtyId)
+    }
     ptyConsumerRecoveryByTarget.get(this.targetId)?.checkpointsByAppPtyId.delete(appPtyId)
     ptyConsumerRecoveryByTarget.get(this.targetId)?.checkpointsByAppPtyId.delete(relayPtyId)
-    this.store.markSshRemotePtyLease(this.targetId, relayPtyId, 'expired')
-    const win = this.getMainWindow()
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('pty:exit', { id: appPtyId, code: -1 })
-    }
+    this.store.markSshRemotePtyLease(this.targetId, relayPtyId, 'detached')
+  }
+
+  private ownsPtyRecoveryAttempt(appPtyId: string, pending: PendingPtyReattach): boolean {
+    return (
+      this.pendingPtyReattaches.get(appPtyId) === pending &&
+      this.mux === pending.mux &&
+      this.activePtyProviderGeneration === pending.providerGeneration &&
+      !pending.mux.isDisposed()
+    )
+  }
+
+  private sameSourceDelivery(
+    left: Readonly<{
+      deliveryToken: string
+      clientGeneration: number
+      ownerGeneration: number
+      ptyIncarnation: string
+    }>,
+    right: Readonly<{
+      deliveryToken: string
+      clientGeneration: number
+      ownerGeneration: number
+      ptyIncarnation: string
+    }>
+  ): boolean {
+    return (
+      left.deliveryToken === right.deliveryToken &&
+      left.clientGeneration === right.clientGeneration &&
+      left.ownerGeneration === right.ownerGeneration &&
+      left.ptyIncarnation === right.ptyIncarnation
+    )
+  }
+
+  private sourceDeliveryKey(
+    providerGeneration: number,
+    source: Readonly<{
+      relayPtyId?: string
+      deliveryToken: string
+      clientGeneration: number
+      ownerGeneration: number
+    }>
+  ): string {
+    return `${providerGeneration}\0${source.relayPtyId ?? ''}\0${source.clientGeneration}\0${source.ownerGeneration}\0${source.deliveryToken}`
   }
 }

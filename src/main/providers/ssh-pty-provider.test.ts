@@ -684,10 +684,14 @@ describe('SshPtyProvider', () => {
       replay: 'restored output',
       incarnationId: 'incarnation-reconnect'
     })
-    expect(mux.request).toHaveBeenCalledWith('pty.attach', {
-      id: 'pty-1',
-      suppressReplayNotification: true
-    })
+    expect(mux.request).toHaveBeenCalledWith(
+      'pty.attach',
+      {
+        id: 'pty-1',
+        suppressReplayNotification: true
+      },
+      { timeoutMs: 10_000 }
+    )
   })
 
   it('keeps missing incarnation compatible with an old relay', async () => {
@@ -712,12 +716,16 @@ describe('SshPtyProvider', () => {
       tabId: 'tab-a'
     })
 
-    expect(mux.request).toHaveBeenCalledWith('pty.attach', {
-      id: 'pty-1',
-      suppressReplayNotification: true,
-      expectedPaneKey: 'tab-a:leaf-a',
-      expectedTabId: 'tab-a'
-    })
+    expect(mux.request).toHaveBeenCalledWith(
+      'pty.attach',
+      {
+        id: 'pty-1',
+        suppressReplayNotification: true,
+        expectedPaneKey: 'tab-a:leaf-a',
+        expectedTabId: 'tab-a'
+      },
+      { timeoutMs: 10_000 }
+    )
   })
 
   it('write sends pty.data notification', () => {

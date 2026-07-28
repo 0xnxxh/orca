@@ -49,7 +49,11 @@ describe('RelayPtySourcePublication', () => {
     dispatcher = null
   })
 
-  async function createHarness(windowSu = 4, settleSourceImmediately = true) {
+  async function createHarness(
+    windowSu = 4,
+    settleSourceImmediately = true,
+    highWaterMark?: number
+  ) {
     const writes: Buffer[] = []
     const sourceSettlements: ((result: SinkWriteSettlement) => void)[] = []
     dispatcher = new RelayDispatcher(
@@ -66,7 +70,15 @@ describe('RelayPtySourcePublication', () => {
         }
         return true
       },
-      { supportsWriteCallback: true },
+      {
+        supportsWriteCallback: true,
+        ...(highWaterMark
+          ? {
+              writableLength: () => 0,
+              writableHighWaterMark: () => highWaterMark
+            }
+          : {})
+      },
       endpointIdentity
     )
     let publication: RelayPtySourcePublication
@@ -135,6 +147,27 @@ describe('RelayPtySourcePublication', () => {
       harness.writes.map(notification).filter((frame) => frame?.method === 'pty.data')
     ).toHaveLength(2)
     await flushRequests()
+  })
+
+  it('slices source frames to the encoded HWM-minus-reserve capacity', async () => {
+    const highWaterMark = 4096
+    const harness = await createHarness(10_000, true, highWaterMark)
+    const payload = '\u0000'.repeat(4000)
+
+    expect(harness.publication.publish('pty-1', { data: payload }, false)).toBe(true)
+    for (let turn = 0; turn < 4; turn++) {
+      await flushRequests()
+    }
+
+    const frames = harness.writes.filter((buffer) => notification(buffer)?.method === 'pty.data')
+    expect(frames.length).toBeGreaterThan(1)
+    expect(Math.max(...frames.map((buffer) => buffer.length))).toBeLessThanOrEqual(3072)
+    expect(
+      frames
+        .map(notification)
+        .map((frame) => frame!.params.data)
+        .join('')
+    ).toBe(payload)
   })
 
   it('keeps mixed legacy and V1 clients on distinct frame authority', async () => {
