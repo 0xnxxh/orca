@@ -1,5 +1,6 @@
 /* oxlint-disable max-lines -- Why: terminal RPC methods are co-located for discoverability; splitting would scatter related handlers across files. */
 import { z } from 'zod'
+import { randomUUID } from 'node:crypto'
 import {
   InvalidArgumentError,
   defineMethod,
@@ -19,6 +20,7 @@ import {
 } from '../../../../shared/terminal-stream-protocol'
 import {
   iterateTerminalOutputFrameChunks,
+  sliceTerminalOutputSourceRanges,
   type TerminalOutputFrameChunk,
   type TerminalOutputMeta
 } from '../terminal-output-frame-chunks'
@@ -61,6 +63,12 @@ import {
   TERMINAL_OUTPUT_BATCH_MAX_BYTES
 } from '../../../../shared/terminal-multiplex-flow-control'
 import { drainTerminalMultiplexRoundRobin } from '../terminal-multiplex-round-robin'
+import type { TerminalSourceRangeLedger } from '../terminal-source-range-ledger'
+import { TerminalSourceRangeRegistry } from '../terminal-source-range-registry'
+import {
+  sameTerminalOutputSourceIdentity,
+  type TerminalOutputSourceRange
+} from '../../../../shared/terminal-output-source-range'
 
 const REQUESTED_SNAPSHOT_BYTE_BUDGET = 2 * 1024 * 1024
 const TERMINAL_OUTPUT_FLUSH_MS = 5
@@ -112,6 +120,10 @@ type TerminalMultiplexStream = {
   client: TerminalViewportClient | undefined
   isMobile: boolean
   ackOutput: boolean
+  ackOutputSourceRanges: boolean
+  streamGeneration: string
+  sourceRangeLedger: TerminalSourceRangeLedger | null
+  sourceRangeConsumerAttached: boolean
   ackInFlightBytes: number
   ackWindowBytes: number
   supportsDesktopViewportClaims: boolean
@@ -157,6 +169,7 @@ function createTerminalOutputBatcher(onFlush: (data: string, meta?: TerminalOutp
   let lastSeq: number | undefined
   let pendingCwd: string | undefined
   let pendingRawLength = 0
+  let pendingSourceRanges: TerminalOutputSourceRange[] = []
   let timer: ReturnType<typeof setTimeout> | null = null
 
   const clearTimer = (): void => {
@@ -174,10 +187,13 @@ function createTerminalOutputBatcher(onFlush: (data: string, meta?: TerminalOutp
     }
     const data = chunks.length === 1 ? chunks[0]! : chunks.join('')
     const meta =
-      typeof lastSeq === 'number' || pendingCwd !== undefined
+      typeof lastSeq === 'number' || pendingCwd !== undefined || pendingSourceRanges.length > 0
         ? {
             ...(typeof lastSeq === 'number' ? { seq: lastSeq, rawLength: pendingRawLength } : {}),
-            ...(pendingCwd !== undefined ? { cwd: pendingCwd } : {})
+            ...(pendingCwd !== undefined ? { cwd: pendingCwd } : {}),
+            ...(pendingSourceRanges.length > 0
+              ? { sourceRanges: Object.freeze(pendingSourceRanges.slice()) }
+              : {})
           }
         : undefined
     chunks = []
@@ -185,6 +201,7 @@ function createTerminalOutputBatcher(onFlush: (data: string, meta?: TerminalOutp
     lastSeq = undefined
     pendingCwd = undefined
     pendingRawLength = 0
+    pendingSourceRanges = []
     onFlush(data, meta)
   }
 
@@ -199,12 +216,26 @@ function createTerminalOutputBatcher(onFlush: (data: string, meta?: TerminalOutp
         onFlush(data, { ...meta, rawLength, transformed: true })
         return
       }
+      const nextSourceRanges = meta?.sourceRanges ?? []
+      const lastSourceRange = pendingSourceRanges.at(-1)
+      const firstNextSourceRange = nextSourceRanges[0]
+      if (
+        chunks.length > 0 &&
+        (pendingSourceRanges.length > 0 !== nextSourceRanges.length > 0 ||
+          (lastSourceRange &&
+            firstNextSourceRange &&
+            (!sameTerminalOutputSourceIdentity(lastSourceRange, firstNextSourceRange) ||
+              lastSourceRange.displayEnd !== firstNextSourceRange.displayStart)))
+      ) {
+        flush()
+      }
       if (meta?.cwd !== undefined) {
         flush()
         pendingCwd = meta.cwd
       }
       chunks.push(data)
       pendingRawLength += rawLength
+      pendingSourceRanges.push(...nextSourceRanges)
       const remainingBudget = Math.max(1, TERMINAL_OUTPUT_BATCH_MAX_BYTES - bytes)
       const measurement = measureTerminalStreamByteLength(data, {
         stopAfterBytes: remainingBudget
@@ -231,6 +262,7 @@ function createTerminalOutputBatcher(onFlush: (data: string, meta?: TerminalOutp
       chunks = []
       bytes = 0
       pendingRawLength = 0
+      pendingSourceRanges = []
     }
   }
 }
@@ -380,22 +412,38 @@ function appendPendingMultiplexOutput(
 function getOutputAfterSnapshotSeq(
   chunk: TerminalOutputChunk,
   snapshotSeq: number | undefined
-): string | null {
+): TerminalOutputChunk | null {
   if (
     typeof snapshotSeq !== 'number' ||
     typeof chunk.meta?.seq !== 'number' ||
     typeof chunk.meta.rawLength !== 'number'
   ) {
-    return chunk.data
+    return chunk
   }
   if (chunk.meta.seq <= snapshotSeq) {
     return null
   }
   const chunkStartSeq = chunk.meta.seq - chunk.meta.rawLength
   if (chunkStartSeq >= snapshotSeq) {
-    return chunk.data
+    return chunk
   }
-  return chunk.data.slice(snapshotSeq - chunkStartSeq)
+  if (chunk.meta.transformed) {
+    return null
+  }
+  const offset = snapshotSeq - chunkStartSeq
+  return {
+    data: chunk.data.slice(offset),
+    bytes: chunk.bytes,
+    meta: {
+      ...chunk.meta,
+      rawLength: chunk.meta.rawLength - offset,
+      sourceRanges: sliceTerminalOutputSourceRanges(
+        chunk.meta.sourceRanges,
+        offset,
+        chunk.data.length
+      )
+    }
+  }
 }
 
 function stripSnapshotBoundaryQuerySuffixes(
@@ -953,14 +1001,24 @@ const TerminalMultiplexSubscribeFrame = TerminalHandle.extend({
   capabilities: z
     .object({
       ackOutput: z.literal(1).optional(),
+      ackOutputSourceRanges: z.literal(1).optional(),
       desktopViewportClaims: z.literal(1).optional()
     })
     .optional()
 })
 
-const TerminalMultiplexAckFrame = z.object({
-  bytes: z.number().int().nonnegative()
-})
+const TerminalMultiplexLegacyAckFrame = z
+  .object({
+    bytes: z.number().int().nonnegative()
+  })
+  .strict()
+
+const TerminalMultiplexSourceRangeAckFrame = z
+  .object({
+    streamGeneration: z.string().min(1),
+    ackedEndByte: z.number().int().nonnegative()
+  })
+  .strict()
 
 const TerminalMultiplexSnapshotRequestFrame = z.object({
   requestId: z.number().int().positive().optional(),
@@ -1514,6 +1572,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
       let closed = false
       let cursor = 0
       const streams = new Map<number, TerminalMultiplexStream>()
+      const sourceRangeRegistry = new TerminalSourceRangeRegistry()
       const pendingPtyWaitControllers = new Map<number, Set<AbortController>>()
       let ackTotalInFlightBytes = 0
       let ackTotalWindowBytes = TERMINAL_MULTIPLEX_ACK_TOTAL_INITIAL_WINDOW_BYTES
@@ -1526,9 +1585,11 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         streamId: number,
         opcode: TerminalStreamOpcode,
         payload: Uint8Array<ArrayBufferLike> = new Uint8Array(),
-        seq?: number
+        seq?: number,
+        onRejected?: () => void
       ): boolean => {
         if (closed) {
+          onRejected?.()
           return false
         }
         // Why: a seq-less Output chunk must carry sentinel 0, not the control-frame cursor, or it poisons the client's frame-drop tracker.
@@ -1540,10 +1601,12 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             encodeTerminalStreamFrame({ opcode, streamId, seq: resolvedSeq, payload })
           )
         } catch {
+          onRejected?.()
           closeMultiplex()
           return false
         }
         if (sent === false) {
+          onRejected?.()
           // Why: false means the transport discarded this frame; reconnect is the only available retry boundary with an authoritative snapshot.
           closeMultiplex()
           return false
@@ -1577,20 +1640,40 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         }
         return (
           stream.ackInFlightBytes + bytes <= stream.ackWindowBytes &&
-          ackTotalInFlightBytes + bytes <= ackTotalWindowBytes
+          ackTotalInFlightBytes + bytes <= ackTotalWindowBytes &&
+          (!stream.ackOutputSourceRanges || stream.sourceRangeLedger?.canAccept(bytes) === true)
         )
       }
       const sendAckGatedOutput = (
         stream: TerminalMultiplexStream,
         chunk: TerminalOutputFrameChunk
       ): boolean => {
+        const prepared = stream.ackOutputSourceRanges
+          ? stream.sourceRangeLedger?.prepareAccept(
+              chunk.bytes.byteLength,
+              chunk.displayLength,
+              chunk.sourceRanges ?? []
+            )
+          : undefined
+        if (stream.ackOutputSourceRanges && prepared?.status !== 'ready') {
+          if (prepared?.status !== 'capacity') {
+            detachStream(stream.streamId, true)
+          }
+          return false
+        }
+        const admission = prepared?.status === 'ready' ? prepared.admission : undefined
         const sent = sendFrame(
           stream.streamId,
           chunk.opcode ?? TerminalStreamOpcode.Output,
           chunk.bytes,
-          chunk.seq
+          chunk.seq,
+          admission?.rollback
         )
         if (!sent) {
+          return false
+        }
+        if (admission && !admission.commit()) {
+          detachStream(stream.streamId, true)
           return false
         }
         if (stream.ackOutput) {
@@ -1735,6 +1818,63 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         ackTotalInFlightBytes = Math.max(0, ackTotalInFlightBytes - acknowledged)
         flushAllAckPendingOutput()
       }
+      const acknowledgeSourceRanges = (
+        stream: TerminalMultiplexStream,
+        streamGeneration: string,
+        ackedEndByte: number
+      ): void => {
+        if (!stream.ackOutputSourceRanges) {
+          return
+        }
+        const result = stream.sourceRangeLedger?.acknowledge(streamGeneration, ackedEndByte)
+        if (!result) {
+          return
+        }
+        if (result.status !== 'accepted') {
+          return
+        }
+        if (result.settled.length > 0) {
+          runtime.settleRemoteTerminalSourceRanges(
+            {
+              ptyId: stream.ptyId,
+              consumerId: stream.remoteDesktopSubscriptionKey,
+              streamGeneration: stream.streamGeneration
+            },
+            result.settled
+          )
+        }
+        acknowledgeOutput(stream, result.acknowledgedBytes)
+      }
+      const detachSourceRangeConsumer = (stream: TerminalMultiplexStream, reason: string): void => {
+        if (!stream.sourceRangeConsumerAttached) {
+          return
+        }
+        stream.sourceRangeConsumerAttached = false
+        const ledger = stream.sourceRangeLedger
+        stream.sourceRangeLedger = null
+        if (!ledger) {
+          return
+        }
+        const identity = {
+          ptyId: stream.ptyId,
+          consumerId: stream.remoteDesktopSubscriptionKey,
+          streamGeneration: stream.streamGeneration
+        }
+        const transfer = ledger.beginTransfer()
+        const ranges = transfer.frames.flatMap((frame) => frame.sourceRanges)
+        try {
+          runtime.transferRemoteTerminalSourceRanges(identity, ranges, reason)
+          transfer.commit()
+        } catch {
+          transfer.rollback()
+          const cancellation = ledger.beginTransfer()
+          try {
+            runtime.cancelRemoteTerminalSourceRanges(identity, ranges, `${reason}-transfer-failed`)
+          } finally {
+            cancellation.commit()
+          }
+        }
+      }
       const detachStream = (
         streamId: number,
         emitEnd: boolean,
@@ -1746,6 +1886,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         }
         stream.outputBatcher.flush()
         stream.outputBatcher.dispose()
+        detachSourceRangeConsumer(stream, 'stream-detached')
         ackTotalInFlightBytes = Math.max(0, ackTotalInFlightBytes - stream.ackInFlightBytes)
         stream.ackInFlightBytes = 0
         stream.ackPendingOutput = []
@@ -1827,11 +1968,21 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           return
         }
         if (frame.opcode === TerminalStreamOpcode.Ack) {
-          const parsed = TerminalMultiplexAckFrame.safeParse(
-            decodeTerminalStreamJson<unknown>(frame.payload) ?? {}
-          )
-          if (parsed.success) {
-            acknowledgeOutput(stream, parsed.data.bytes)
+          const payload = decodeTerminalStreamJson<unknown>(frame.payload) ?? {}
+          if (stream.ackOutputSourceRanges) {
+            const parsed = TerminalMultiplexSourceRangeAckFrame.safeParse(payload)
+            if (parsed.success) {
+              acknowledgeSourceRanges(
+                stream,
+                parsed.data.streamGeneration,
+                parsed.data.ackedEndByte
+              )
+            }
+          } else {
+            const parsed = TerminalMultiplexLegacyAckFrame.safeParse(payload)
+            if (parsed.success) {
+              acknowledgeOutput(stream, parsed.data.bytes)
+            }
           }
           return
         }
@@ -2024,12 +2175,12 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
                 // high-water, so covered bytes would render twice; tagged
                 // snapshots feed a side consumer and the live view still
                 // needs every buffered chunk.
-                const uncoveredData =
+                const uncovered =
                   typeof requestId === 'number'
-                    ? chunk.data
+                    ? chunk
                     : getOutputAfterSnapshotSeq(chunk, sentSnapshotOutputSeq)
-                if (uncoveredData) {
-                  stream.outputBatcher.push(uncoveredData, chunk.meta)
+                if (uncovered) {
+                  stream.outputBatcher.push(uncovered.data, uncovered.meta)
                 }
               }
             }
@@ -2140,6 +2291,23 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         detachStream(request.streamId, false)
 
         const ptyId = leaf.ptyId
+        const remoteDesktopSubscriptionKey = `multiplex:${connectionId}:${request.streamId}`
+        const streamGeneration = randomUUID()
+        const requestedSourceRangeConsumer =
+          request.capabilities?.ackOutput === 1 && request.capabilities?.ackOutputSourceRanges === 1
+        const sourceRangeLedger = requestedSourceRangeConsumer
+          ? sourceRangeRegistry.open(streamGeneration)
+          : null
+        const sourceRangeConsumerAttached =
+          sourceRangeLedger !== null &&
+          runtime.attachRemoteTerminalSourceRangeConsumer({
+            ptyId,
+            consumerId: remoteDesktopSubscriptionKey,
+            streamGeneration
+          })
+        if (!sourceRangeConsumerAttached) {
+          sourceRangeLedger?.close()
+        }
         const stream: TerminalMultiplexStream = {
           streamId: request.streamId,
           terminal: request.terminal,
@@ -2147,13 +2315,17 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           client: request.client,
           isMobile,
           ackOutput: request.capabilities?.ackOutput === 1,
+          ackOutputSourceRanges: sourceRangeConsumerAttached,
+          streamGeneration,
+          sourceRangeLedger: sourceRangeConsumerAttached ? sourceRangeLedger : null,
+          sourceRangeConsumerAttached,
           ackInFlightBytes: 0,
           ackWindowBytes: TERMINAL_MULTIPLEX_ACK_STREAM_INITIAL_WINDOW_BYTES,
           supportsDesktopViewportClaims: request.capabilities?.desktopViewportClaims === 1,
           desktopClaimTail: Promise.resolve(true),
           registeredRemoteDesktopDriver: false,
           // Why: streamId is client-local, so key the width floor by connectionId or two connections sharing stream 1 for one PTY clobber each other's floor.
-          remoteDesktopSubscriptionKey: `multiplex:${connectionId}:${request.streamId}`,
+          remoteDesktopSubscriptionKey,
           pendingRemoteDesktopViewport: null,
           buffering: true,
           ackPendingOutput: [],
@@ -2273,6 +2445,12 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             rows: serialized?.rows ?? size?.rows,
             displayMode,
             seq: layoutSeq,
+            ...(stream.ackOutputSourceRanges
+              ? {
+                  streamGeneration: stream.streamGeneration,
+                  capabilities: { ackOutputSourceRanges: 1 as const }
+                }
+              : {}),
             truncated:
               initialOutputOverflowed ||
               (serialized ? read.truncated : isTerminalReadPayloadIncomplete(read))
@@ -2299,9 +2477,9 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           const pendingOutput = stream.pendingOutput.splice(0)
           if (!initialOutputOverflowed) {
             for (const chunk of pendingOutput) {
-              const uncoveredData = getOutputAfterSnapshotSeq(chunk, snapshotOutputSeq)
-              if (uncoveredData) {
-                stream.outputBatcher.push(uncoveredData, chunk.meta)
+              const uncovered = getOutputAfterSnapshotSeq(chunk, snapshotOutputSeq)
+              if (uncovered) {
+                stream.outputBatcher.push(uncovered.data, uncovered.meta)
               }
             }
           }
@@ -2982,9 +3160,9 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             if (stableRendererSnapshot?.data.length) {
               serialized = stableRendererSnapshot
               const trailingOutput = pendingOutput.flatMap((item) => {
-                const data = getOutputAfterSnapshotSeq(item, stableRendererSnapshot.seq)
+                const output = getOutputAfterSnapshotSeq(item, stableRendererSnapshot.seq)
                 const seq = item.meta?.seq
-                return data && typeof seq === 'number' ? [{ data, seq }] : []
+                return output && typeof seq === 'number' ? [{ data: output.data, seq }] : []
               })
               runtime.replaceHeadlessTerminalFromRendererSnapshotForRecovery(
                 ptyId,
@@ -3118,8 +3296,9 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         }
         if (!initialOutputOverflowed) {
           for (const item of bufferedOutput) {
-            let uncoveredData = getOutputAfterSnapshotSeq(item, snapshotOutputSeq)
-            let uncoveredMeta = item.meta
+            const uncovered = getOutputAfterSnapshotSeq(item, snapshotOutputSeq)
+            let uncoveredData = uncovered?.data ?? null
+            let uncoveredMeta = uncovered?.meta
             if (
               uncoveredData &&
               uncoveredData !== item.data &&

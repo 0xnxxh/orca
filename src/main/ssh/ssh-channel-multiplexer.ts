@@ -16,7 +16,10 @@ import {
 } from './relay-protocol'
 
 export type MultiplexerTransport = {
-  write: (data: Buffer) => void
+  write: (
+    data: Buffer,
+    onSettled?: (result: { ok: true } | { ok: false; error: Error }) => void
+  ) => void
   onData: (cb: (data: Buffer) => void) => void
   onClose: (cb: () => void) => void
   pauseReads?: () => void
@@ -246,6 +249,25 @@ export class SshChannelMultiplexer {
     this.sendMessage(msg)
   }
 
+  notifyWithSettlement(
+    method: string,
+    params: Record<string, unknown> | undefined,
+    onSettled: (result: { ok: true } | { ok: false; error: Error }) => void
+  ): void {
+    if (this.disposed) {
+      onSettled({ ok: false, error: new Error('Multiplexer disposed') })
+      return
+    }
+    this.sendMessage(
+      {
+        jsonrpc: '2.0',
+        method,
+        ...(params !== undefined ? { params } : {})
+      },
+      onSettled
+    )
+  }
+
   /**
    * Send a fresh keepalive and resolve true when any frame arrives before the
    * timeout. Used on system resume to distinguish a link that survived sleep
@@ -330,13 +352,30 @@ export class SshChannelMultiplexer {
 
   // ── Private ───────────────────────────────────────────────────────
 
-  private sendMessage(msg: JsonRpcMessage): void {
+  private sendMessage(
+    msg: JsonRpcMessage,
+    onSettled?: (result: { ok: true } | { ok: false; error: Error }) => void
+  ): void {
     const seq = this.nextOutgoingSeq++
     const frame = encodeJsonRpcFrame(msg, seq, this.highestReceivedSeq)
     this.trackOutgoingTimestamp(seq, false)
+    let writeSettled = false
+    const settleWrite = onSettled
+      ? (result: { ok: true } | { ok: false; error: Error }): void => {
+          if (writeSettled) {
+            return
+          }
+          writeSettled = true
+          onSettled(result)
+        }
+      : undefined
     try {
-      this.transport.write(frame)
+      this.transport.write(frame, settleWrite)
     } catch (err) {
+      settleWrite?.({
+        ok: false,
+        error: err instanceof Error ? err : new Error(String(err))
+      })
       // Why: a remote reboot can make the SSH channel's stdin throw EPIPE
       // from a timer/request path. Scope it to this mux instead of letting
       // the Electron main process treat it as an uncaught exception.

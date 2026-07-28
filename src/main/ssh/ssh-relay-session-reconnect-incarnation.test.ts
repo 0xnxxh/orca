@@ -20,12 +20,14 @@ vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
   acceptSshPtyOutputData: vi.fn().mockResolvedValue(undefined),
   acceptSshPtyOutputExit: acceptOutputExitMock,
   allocateSshPtyProviderGeneration: vi.fn(() => 17),
-  closeSshPtyOutputGeneration: vi.fn()
+  closeSshPtyOutputGeneration: vi.fn(),
+  installSshPtySourceAckPublisher: vi.fn(() => () => {})
 }))
 vi.mock('./ssh-relay-deploy-helpers', () => ({ execCommand: vi.fn().mockResolvedValue('') }))
 vi.mock('./ssh-channel-multiplexer', () => ({
   SshChannelMultiplexer: class MockSshChannelMultiplexer {
     notify = vi.fn()
+    notifyWithSettlement = vi.fn()
     request = muxRequestMock
     onNotification = vi.fn().mockReturnValue(() => {})
     onRequest = vi.fn().mockReturnValue(() => {})

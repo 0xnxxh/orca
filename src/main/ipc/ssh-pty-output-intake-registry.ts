@@ -4,9 +4,16 @@ import type {
   SshPtyOutputExitEvent,
   SshPtyOutputReceipt
 } from './ssh-pty-output-intake-contract'
+import type { PtySourceCreditAckBatch } from '../../shared/pty-source-credit-contract'
 
 let installedIntake: SshPtyOutputIntake | null = null
 let nextProviderGeneration = 1
+const sourceAckPublishers = new Map<number, SshPtySourceAckPublisher>()
+
+type SshPtySourceAckPublisher = (
+  batch: PtySourceCreditAckBatch,
+  onSettled: (result: { ok: true } | { ok: false; error: Error }) => void
+) => void
 
 export function allocateSshPtyProviderGeneration(): number {
   return nextProviderGeneration++
@@ -38,6 +45,34 @@ export function acceptSshPtyOutputExit(event: SshPtyOutputExitEvent): Promise<vo
 
 export function closeSshPtyOutputGeneration(providerGeneration: number, reason: string): void {
   installedIntake?.closeGeneration(providerGeneration, reason)
+}
+
+export function installSshPtySourceAckPublisher(
+  providerGeneration: number,
+  publish: SshPtySourceAckPublisher
+): () => void {
+  if (sourceAckPublishers.has(providerGeneration)) {
+    throw new Error('ssh_source_ack_publisher_duplicate_generation')
+  }
+  sourceAckPublishers.set(providerGeneration, publish)
+  return () => {
+    if (sourceAckPublishers.get(providerGeneration) === publish) {
+      sourceAckPublishers.delete(providerGeneration)
+    }
+  }
+}
+
+export function publishSshPtySourceAck(
+  providerGeneration: number,
+  batch: PtySourceCreditAckBatch,
+  onSettled: (result: { ok: true } | { ok: false; error: Error }) => void
+): void {
+  const publisher = sourceAckPublishers.get(providerGeneration)
+  if (!publisher) {
+    onSettled({ ok: false, error: new Error('ssh_source_ack_publisher_unavailable') })
+    return
+  }
+  publisher(batch, onSettled)
 }
 
 function outputIntakeUnavailableError(): Error {

@@ -41,7 +41,8 @@ import {
   acceptSshPtyOutputData,
   acceptSshPtyOutputExit,
   allocateSshPtyProviderGeneration,
-  closeSshPtyOutputGeneration
+  closeSshPtyOutputGeneration,
+  installSshPtySourceAckPublisher
 } from '../ipc/ssh-pty-output-intake-registry'
 import {
   registerSshFilesystemProvider,
@@ -66,13 +67,15 @@ import {
 } from '../../shared/ssh-types'
 import type { Store } from '../persistence'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
+import { DEFAULT_PTY_SOURCE_WINDOW_SU } from '../../shared/pty-source-credit-contract'
 import { runRemoteOrcaCli } from './ssh-remote-orca-cli'
 import { toSshExecutionHostId, type ExecutionHostId } from '../../shared/execution-host'
 import { isTerminalLeafId, makePaneKey } from '../../shared/stable-pane-id'
 import { isValidTerminalTabId } from '../../shared/terminal-tab-id'
 import {
   openSshPtyConsumerSession,
-  type SshPtyConsumerOwnerState
+  type SshPtyConsumerOwnerState,
+  type SshPtyConsumerSessionState
 } from './ssh-pty-consumer-session'
 
 export type RelaySessionState = 'idle' | 'deploying' | 'ready' | 'reconnecting' | 'disposed'
@@ -112,20 +115,12 @@ function expectedIdentityForLease(lease: {
   }
 }
 
-type ForwardedReplayFingerprint = {
-  fingerprint: string
-  deliveredAt: number
-}
-
 export type SshRelayAiVaultHostInfo = {
   targetId: string
   executionHostId: ExecutionHostId
   remoteHome: string
   hostPlatform: RemoteHostPlatform
 }
-
-const RECONNECT_REPLAY_DUPLICATE_WINDOW_MS = 1000
-const REPLAY_FINGERPRINT_EDGE_CHARS = 128
 
 function normalizeRelayGracePeriodSeconds(graceTimeSeconds: number | undefined): number {
   const raw = graceTimeSeconds ?? DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS
@@ -156,11 +151,11 @@ export class SshRelaySession {
   private currentConnection: SshConnection | null = null
   private hostPlatform: RemoteHostPlatform | null = null
   private remoteCliBridgeEnv: RemoteCliBridgeEnv | null = null
-  private forwardedReattachReplayByPty = new Map<string, ForwardedReplayFingerprint>()
   private pendingPtyReattaches = new Map<string, PendingPtyReattach>()
   private activePtyProviderGeneration: number | null = null
+  private sourceAckPublisherCleanup: (() => void) | null = null
   private readonly ptyConsumerClientInstanceId = randomUUID()
-  private ptyConsumerOwnerState: SshPtyConsumerOwnerState | null = null
+  private ptyConsumerSessionState: SshPtyConsumerSessionState | null = null
 
   constructor(
     readonly targetId: string,
@@ -172,7 +167,8 @@ export class SshRelaySession {
       targetId: string,
       ports: DetectedPort[],
       platform: string
-    ) => void
+    ) => void,
+    private readonly isPtySourceCreditEnabled: () => boolean = () => false
   ) {}
 
   refreshEnvironment(
@@ -295,14 +291,19 @@ export class SshRelaySession {
       this.mux = mux
       const ownsAttempt = (): boolean => this.mux === mux && !this.isDisposed()
 
-      this.ptyConsumerOwnerState = await openSshPtyConsumerSession(mux, {
+      const previousOwner = this.negotiatedPtyConsumerOwner()
+      this.ptyConsumerSessionState = await openSshPtyConsumerSession(mux, {
         clientInstanceId: this.ptyConsumerClientInstanceId,
         expectedServerBuildId: serverBuildId,
-        ...(this.ptyConsumerOwnerState
+        allowSameBuildLegacyFallback: true,
+        ...(this.isPtySourceCreditEnabled()
+          ? { outputFlowControl: { requestedWindowSu: DEFAULT_PTY_SOURCE_WINDOW_SU } }
+          : {}),
+        ...(previousOwner
           ? {
               resume: {
-                ownerGeneration: this.ptyConsumerOwnerState.ownerGeneration,
-                ownerLease: this.ptyConsumerOwnerState.ownerLease
+                ownerGeneration: previousOwner.ownerGeneration,
+                ownerLease: previousOwner.ownerLease
               }
             }
           : {})
@@ -419,14 +420,19 @@ export class SshRelaySession {
         !abortController.signal.aborted &&
         !this.isDisposed()
 
-      this.ptyConsumerOwnerState = await openSshPtyConsumerSession(mux, {
+      const previousOwner = this.negotiatedPtyConsumerOwner()
+      this.ptyConsumerSessionState = await openSshPtyConsumerSession(mux, {
         clientInstanceId: this.ptyConsumerClientInstanceId,
         expectedServerBuildId: serverBuildId,
-        ...(this.ptyConsumerOwnerState
+        allowSameBuildLegacyFallback: true,
+        ...(this.isPtySourceCreditEnabled()
+          ? { outputFlowControl: { requestedWindowSu: DEFAULT_PTY_SOURCE_WINDOW_SU } }
+          : {}),
+        ...(previousOwner
           ? {
               resume: {
-                ownerGeneration: this.ptyConsumerOwnerState.ownerGeneration,
-                ownerLease: this.ptyConsumerOwnerState.ownerLease
+                ownerGeneration: previousOwner.ownerGeneration,
+                ownerLease: previousOwner.ownerLease
               }
             }
           : {})
@@ -597,7 +603,7 @@ export class SshRelaySession {
       this.remoteCliBridgeEnv ?? undefined,
       providerGeneration
     )
-    const consumerOwnerState = this.ptyConsumerOwnerState
+    const consumerOwnerState = this.negotiatedPtyConsumerOwner()
     if (consumerOwnerState) {
       ptyProvider.setPtyDeliveryPauseAdapter?.(({ id, providerGeneration: generation, paused }) => {
         if (
@@ -614,6 +620,19 @@ export class SshRelaySession {
           ownerGeneration: consumerOwnerState.ownerGeneration
         })
       })
+    }
+    this.sourceAckPublisherCleanup?.()
+    this.sourceAckPublisherCleanup = null
+    if (consumerOwnerState?.outputFlowControl) {
+      this.sourceAckPublisherCleanup = installSshPtySourceAckPublisher(
+        providerGeneration,
+        (batch, onSettled) =>
+          mux.notifyWithSettlement(
+            'pty.ackData',
+            batch as unknown as Record<string, unknown>,
+            onSettled
+          )
+      )
     }
     this.activePtyProviderGeneration = providerGeneration
     registerSshPtyProvider(this.targetId, ptyProvider)
@@ -660,6 +679,11 @@ export class SshRelaySession {
     this.wireUpAgentHookEvents(mux)
     this.wireUpRemoteWorkspaceEvents(mux)
     return true
+  }
+
+  private negotiatedPtyConsumerOwner(): SshPtyConsumerOwnerState | null {
+    const state = this.ptyConsumerSessionState
+    return state && state.mode !== 'legacy-fallback' ? (state as SshPtyConsumerOwnerState) : null
   }
 
   private configureRelayGraceTime(
@@ -905,14 +929,16 @@ export class SshRelaySession {
     this.muxDisposeCleanup = null
     this.muxNotificationCleanup?.()
     this.muxNotificationCleanup = null
-    if (this.mux && !this.mux.isDisposed()) {
-      this.mux.dispose(reason)
-    }
-    this.mux = null
     if (this.activePtyProviderGeneration !== null) {
       closeSshPtyOutputGeneration(this.activePtyProviderGeneration, reason)
       this.activePtyProviderGeneration = null
     }
+    this.sourceAckPublisherCleanup?.()
+    this.sourceAckPublisherCleanup = null
+    if (this.mux && !this.mux.isDisposed()) {
+      this.mux.dispose(reason)
+    }
+    this.mux = null
 
     if (reason === 'shutdown') {
       clearPtyOwnershipForConnection(this.targetId)
@@ -1006,6 +1032,22 @@ export class SshRelaySession {
 
   private wireUpPtyEvents(ptyProvider: SshPtyProvider): void {
     ptyProvider.onData((payload) => {
+      const consumerOwner = this.negotiatedPtyConsumerOwner()
+      if (
+        consumerOwner?.outputFlowControl &&
+        (!payload.source ||
+          payload.sourceMalformed ||
+          payload.source.clientGeneration !== consumerOwner.clientGeneration ||
+          payload.source.ownerGeneration !== consumerOwner.ownerGeneration)
+      ) {
+        closeSshPtyOutputGeneration(
+          payload.providerGeneration,
+          'ssh_source_frame_malformed_or_missing'
+        )
+        this.mux?.dispose('connection_lost')
+        return
+      }
+      const source = consumerOwner?.outputFlowControl ? payload.source : undefined
       const rawLength = payload.sequenceChars ?? payload.data.length
       void acceptSshPtyOutputData({
         id: payload.id,
@@ -1014,7 +1056,8 @@ export class SshRelaySession {
         ptyIncarnation: payload.ptyIncarnation,
         rawLength,
         transformed: payload.transformed === true,
-        ...(typeof payload.seq === 'number' ? { sequence: payload.seq } : {})
+        ...(typeof payload.seq === 'number' ? { sequence: payload.seq } : {}),
+        ...(source ? { source } : {})
       }).catch(() => {})
     })
     ptyProvider.onReplay((payload) => {
@@ -1053,7 +1096,6 @@ export class SshRelaySession {
     const relayPtyId = toRelaySshPtyId(this.targetId, payload.id)
     clearProviderPtyState(payload.id)
     deletePtyOwnership(payload.id)
-    this.forwardedReattachReplayByPty.delete(payload.id)
     this.store.markSshRemotePtyLease(this.targetId, relayPtyId, 'terminated')
     if (deliveryHandled) {
       return
@@ -1065,26 +1107,8 @@ export class SshRelaySession {
     }
   }
 
-  private replayFingerprint(data: string): string {
-    const head = data.slice(0, REPLAY_FINGERPRINT_EDGE_CHARS)
-    const tail = data.slice(-REPLAY_FINGERPRINT_EDGE_CHARS)
-    return `${data.length}:${head}:${tail}`
-  }
-
-  private shouldForwardReattachReplay(appPtyId: string, data: string): boolean {
-    const now = Date.now()
-    const fingerprint = this.replayFingerprint(data)
-    const previous = this.forwardedReattachReplayByPty.get(appPtyId)
-    this.forwardedReattachReplayByPty.set(appPtyId, { fingerprint, deliveredAt: now })
-    return (
-      !previous ||
-      previous.fingerprint !== fingerprint ||
-      now - previous.deliveredAt > RECONNECT_REPLAY_DUPLICATE_WINDOW_MS
-    )
-  }
-
   private forwardReattachReplay(appPtyId: string, data: string): void {
-    if (!data || !this.shouldForwardReattachReplay(appPtyId, data)) {
+    if (!data) {
       return
     }
     const win = this.getMainWindow()
@@ -1201,7 +1225,6 @@ export class SshRelaySession {
         )
         clearProviderPtyState(appPtyId)
         deletePtyOwnership(appPtyId)
-        this.forwardedReattachReplayByPty.delete(appPtyId)
         this.store.markSshRemotePtyLease(this.targetId, ptyId, 'expired')
         // Why: reattach failure means the remote process is gone; tell the renderer to clear the stale pane.
         const win = this.getMainWindow()

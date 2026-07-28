@@ -202,6 +202,43 @@ describe('SshPtyOutputIntake', () => {
     })
   })
 
+  it('commits an immutable desktop source identity through projection admission', async () => {
+    const projections: LegacySshProjectionSemantics[] = []
+    const harness = createHarness({
+      project: (_event, projection) => projections.push(projection)
+    })
+    const receipt = harness.intake.acceptData(
+      event({
+        source: {
+          spanId: 'span-1',
+          clientGeneration: 2,
+          ownerGeneration: 3,
+          deliveryToken: 'token-1',
+          sourceStartSu: 10,
+          sourceEndSu: 14
+        }
+      })
+    )
+    harness.completions[0]!.resolve()
+
+    await receipt
+    expect(projections[0]?.desktopSpan).toMatchObject({
+      spanId: 'span-1',
+      projectionSemanticsId: projections[0]?.identity.projectionSemanticsId,
+      providerGeneration: 1,
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      ptyIncarnation: 'incarnation-1',
+      deliveryToken: 'token-1',
+      sourceStartSu: 10,
+      sourceEndSu: 14,
+      displayStart: 0,
+      displayEnd: 4,
+      transform: { transformed: false, rawLengthSu: 4, scalarSafe: true }
+    })
+    expect(Object.isFrozen(projections[0]?.desktopSpan)).toBe(true)
+  })
+
   it('rolls back projection staging when model capture throws synchronously', async () => {
     const project = vi.fn()
     const harness = createHarness({
@@ -218,6 +255,65 @@ describe('SshPtyOutputIntake', () => {
       records: 0
     })
     expect(harness.dependencies.closeProvider).toHaveBeenCalledWith(1, 'model-admission-failed')
+  })
+
+  it('rolls back projection staging when source reservation validation fails', async () => {
+    const harness = createHarness()
+    const source = {
+      spanId: 'duplicate',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      deliveryToken: 'token-1',
+      sourceStartSu: 0,
+      sourceEndSu: 4
+    }
+    const first = harness.intake.acceptData(event({ source }))
+    harness.completions[0]!.resolve()
+    await first
+    await expect(
+      harness.intake.acceptData(
+        event({
+          source: { ...source, sourceStartSu: 4, sourceEndSu: 8 }
+        })
+      )
+    ).rejects.toThrow('duplicate')
+    expect(harness.intake.getDebugSnapshot().projection).toMatchObject({
+      rolledBack: 1,
+      records: 1
+    })
+  })
+
+  it('rolls back committed source and scanner facts when model capture throws', async () => {
+    let attempts = 0
+    const harness = createHarness({
+      acceptModel: (accepted) => {
+        attempts++
+        if (attempts === 1) {
+          throw new Error('model reservation failed')
+        }
+        return {
+          sequence: accepted.rawLength,
+          completion: Promise.resolve()
+        }
+      }
+    })
+    const source = {
+      spanId: 'span-1',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      deliveryToken: 'token-1',
+      sourceStartSu: 0,
+      sourceEndSu: 5
+    }
+    await expect(
+      harness.intake.acceptData(event({ data: '\x1b[?20', rawLength: 5, source }))
+    ).rejects.toThrow('model reservation failed')
+
+    const retry = await harness.intake.acceptData(
+      event({ data: '\x1b[?20', rawLength: 5, source: { ...source, spanId: 'span-2' } })
+    )
+    expect(retry.projection.identity.displayStart).toBe(0)
+    expect(retry.projection.beforeScanner).toEqual({ tail: '', pendingSubscribe: false })
   })
 
   it('rejects stale provider generations without model capture', async () => {

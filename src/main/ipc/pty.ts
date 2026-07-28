@@ -159,7 +159,7 @@ import {
 } from './pty-hidden-delivery-gate'
 import { PtyPendingDataDrainQueue, type PendingPtyData } from './pty-pending-data-drain-queue'
 import { SshPtyOutputIntake } from './ssh-pty-output-intake'
-import { installSshPtyOutputIntake } from './ssh-pty-output-intake-registry'
+import { installSshPtyOutputIntake, publishSshPtySourceAck } from './ssh-pty-output-intake-registry'
 import type { LegacySshProjectionSemantics } from './ssh-pty-legacy-projection'
 import {
   clearNativeWindowsConptyPty,
@@ -3080,7 +3080,7 @@ export function registerPtyHandlers(
   sshOutputIntakeCleanup?.()
   sshOutputIntake = new SshPtyOutputIntake({
     getModelSequence: (id) => runtime?.getPtyOutputSequence(id) ?? 0,
-    acceptModel: (event) => {
+    acceptModel: (event, projection) => {
       if (!runtime) {
         throw new Error('SSH PTY output requires the main terminal model')
       }
@@ -3089,7 +3089,8 @@ export function registerPtyHandlers(
         event.data,
         Date.now(),
         event.rawLength,
-        event.transformed
+        event.transformed,
+        projection.desktopSpan ? [projection.desktopSpan] : undefined
       )
     },
     project: (event, projection) =>
@@ -3144,9 +3145,17 @@ export function registerPtyHandlers(
           pendingOverflowMarkedPtys.delete(id)
         }
       }
-    }
+    },
+    publishSourceAck: publishSshPtySourceAck
   })
-  sshOutputIntakeCleanup = installSshPtyOutputIntake(sshOutputIntake)
+  runtime?.setRemoteTerminalSourceRangeConsumerHooks(
+    sshOutputIntake.getRemoteSourceRangeConsumerHooks()
+  )
+  const cleanupSshOutputIntakeRegistry = installSshPtyOutputIntake(sshOutputIntake)
+  sshOutputIntakeCleanup = () => {
+    runtime?.setRemoteTerminalSourceRangeConsumerHooks(null)
+    cleanupSshOutputIntakeRegistry()
+  }
 
   async function shutdownProviderAndDetectExit(
     provider: IPtyProvider,

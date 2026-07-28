@@ -15,6 +15,11 @@ import { parseFileUriPathParts } from '../daemon/osc7-file-uri'
 import type { AgentStatus } from '../../shared/agent-detection'
 import type { TerminalOscLinkRange } from '../../shared/terminal-osc-link-ranges'
 import type { TerminalOscColorQueryReplyColors } from '../../shared/terminal-osc-color-reply'
+import type { TerminalOutputSourceRange } from '../../shared/terminal-output-source-range'
+import type {
+  RemoteTerminalSourceRangeConsumerHooks,
+  RemoteTerminalSourceRangeStreamIdentity
+} from './remote-terminal-source-range-consumer'
 import {
   createTerminalTitleTracker,
   stripBrailleSpinnerGlyphs,
@@ -1422,6 +1427,14 @@ export type RuntimePtyDataAdmission = Readonly<{
   completion: Promise<void>
 }>
 
+export type RuntimeTerminalDataMeta = Readonly<{
+  seq?: number
+  rawLength?: number
+  transformed?: boolean
+  cwd?: string
+  sourceRanges?: readonly TerminalOutputSourceRange[]
+}>
+
 type RuntimeVisibleTerminalState = {
   lines: string[]
   isAlternateScreen: boolean
@@ -2599,13 +2612,10 @@ export class OrcaRuntimeService {
   // without polling. Keyed by ptyId for O(1) lookup per data event.
   private dataListeners = new Map<
     string,
-    Set<
-      (
-        data: string,
-        meta?: { seq?: number; rawLength?: number; transformed?: boolean; cwd?: string }
-      ) => void
-    >
+    Set<(data: string, meta?: RuntimeTerminalDataMeta) => void>
   >()
+  private remoteTerminalSourceRangeConsumerHooks: RemoteTerminalSourceRangeConsumerHooks | null =
+    null
   // Why: startup draft paste can subscribe after the agent already emitted its
   // ready marker. Keep a bounded raw buffer so fast startup output is replayed.
   private recentPtyOutputById = new Map<string, RecentPtyOutputBuffer>()
@@ -7724,12 +7734,21 @@ export class OrcaRuntimeService {
     data: string,
     at: number,
     sequenceChars = data.length,
-    transformed = false
+    transformed = false,
+    sourceRanges?: readonly TerminalOutputSourceRange[]
   ): RuntimePtyDataAdmission {
     let completion: Promise<void> | null = null
-    const sequence = this.onPtyData(ptyId, data, at, sequenceChars, transformed, (receipt) => {
-      completion = receipt
-    })
+    const sequence = this.onPtyData(
+      ptyId,
+      data,
+      at,
+      sequenceChars,
+      transformed,
+      (receipt) => {
+        completion = receipt
+      },
+      sourceRanges
+    )
     if (!completion) {
       throw new Error('PTY model admission receipt was not captured')
     }
@@ -7742,7 +7761,8 @@ export class OrcaRuntimeService {
     at: number,
     sequenceChars = data.length,
     transformed = false,
-    captureModelReceipt?: (completion: Promise<void>) => void
+    captureModelReceipt?: (completion: Promise<void>) => void,
+    sourceRanges?: readonly TerminalOutputSourceRange[]
   ): number {
     const outputSequence = (this.ptyOutputSequenceById.get(ptyId) ?? 0) + sequenceChars
     this.ptyOutputSequenceById.set(ptyId, outputSequence)
@@ -7969,7 +7989,8 @@ export class OrcaRuntimeService {
         seq: outputSequence,
         rawLength: sequenceChars,
         ...(transformed ? { transformed: true } : {}),
-        ...(cwdChanged && cwd !== null ? { cwd } : {})
+        ...(cwdChanged && cwd !== null ? { cwd } : {}),
+        ...(sourceRanges && sourceRanges.length > 0 ? { sourceRanges } : {})
       }
       for (const listener of listeners) {
         try {
@@ -8842,12 +8863,44 @@ export class OrcaRuntimeService {
 
   subscribeToTerminalData(
     ptyId: string,
-    listener: (
-      data: string,
-      meta?: { seq?: number; rawLength?: number; transformed?: boolean; cwd?: string }
-    ) => void
+    listener: (data: string, meta?: RuntimeTerminalDataMeta) => void
   ): () => void {
     return addListenerToMap(this.dataListeners, ptyId, listener)
+  }
+
+  setRemoteTerminalSourceRangeConsumerHooks(
+    hooks: RemoteTerminalSourceRangeConsumerHooks | null
+  ): void {
+    this.remoteTerminalSourceRangeConsumerHooks = hooks
+  }
+
+  attachRemoteTerminalSourceRangeConsumer(
+    identity: RemoteTerminalSourceRangeStreamIdentity
+  ): boolean {
+    return this.remoteTerminalSourceRangeConsumerHooks?.attach(identity) ?? false
+  }
+
+  settleRemoteTerminalSourceRanges(
+    identity: RemoteTerminalSourceRangeStreamIdentity,
+    ranges: readonly TerminalOutputSourceRange[]
+  ): void {
+    this.remoteTerminalSourceRangeConsumerHooks?.settle(identity, ranges)
+  }
+
+  transferRemoteTerminalSourceRanges(
+    identity: RemoteTerminalSourceRangeStreamIdentity,
+    ranges: readonly TerminalOutputSourceRange[],
+    reason: string
+  ): void {
+    this.remoteTerminalSourceRangeConsumerHooks?.transfer(identity, ranges, reason)
+  }
+
+  cancelRemoteTerminalSourceRanges(
+    identity: RemoteTerminalSourceRangeStreamIdentity,
+    ranges: readonly TerminalOutputSourceRange[],
+    reason: string
+  ): void {
+    this.remoteTerminalSourceRangeConsumerHooks?.cancel(identity, ranges, reason)
   }
 
   /** Set by pty IPC: fires when a PTY gains/loses remote view subscribers so

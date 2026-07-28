@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { RpcDispatcher } from './dispatcher'
 import type { RpcRequest } from './core'
-import type { OrcaRuntimeService } from '../orca-runtime'
+import type { OrcaRuntimeService, RuntimeTerminalDataMeta } from '../orca-runtime'
 import { TERMINAL_METHODS } from './methods/terminal'
 import type { RuntimeTerminalWait } from '../../../shared/runtime-types'
 import {
@@ -138,6 +138,134 @@ function sendDesktopMultiplexSubscribe(
 }
 
 describe('terminal multiplex RPC', () => {
+  it('settles negotiated source ranges only at accepted encoded boundaries', async () => {
+    let dataListener: ((data: string, meta?: RuntimeTerminalDataMeta) => void) | null = null
+    const settle = vi.fn()
+    const transfer = vi.fn()
+    const harness = startDesktopMultiplexSubscribe({
+      attachRemoteTerminalSourceRangeConsumer: vi.fn(() => true),
+      settleRemoteTerminalSourceRanges: settle,
+      transferRemoteTerminalSourceRanges: transfer,
+      cancelRemoteTerminalSourceRanges: vi.fn(),
+      subscribeToTerminalData: vi.fn((_ptyId, listener) => {
+        dataListener = listener
+        return vi.fn()
+      })
+    })
+    await vi.waitFor(() => expect(harness.handlers.has(0)).toBe(true))
+    harness.handlers.get(0)?.(
+      decodeTerminalStreamFrame(
+        encodeTerminalStreamFrame({
+          opcode: TerminalStreamOpcode.Subscribe,
+          streamId: 0,
+          seq: 1,
+          payload: encodeTerminalStreamJson({
+            streamId: 7,
+            terminal: 'terminal-1',
+            client: { id: 'desktop-1', type: 'desktop' },
+            capabilities: { ackOutput: 1, ackOutputSourceRanges: 1 }
+          })
+        })
+      )!
+    )
+    await vi.waitFor(() => expect(dataListener).not.toBeNull())
+    await vi.waitFor(() =>
+      expect(
+        harness.messages
+          .map((message) => JSON.parse(message).result)
+          .find((event) => event?.type === 'subscribed')
+      ).toBeDefined()
+    )
+    const subscribed = harness.messages
+      .map((message) => JSON.parse(message).result)
+      .find((event) => event?.type === 'subscribed')
+    expect(subscribed).toMatchObject({
+      capabilities: { ackOutputSourceRanges: 1 },
+      streamGeneration: expect.any(String)
+    })
+
+    const emitData = dataListener as unknown as (
+      data: string,
+      meta?: RuntimeTerminalDataMeta
+    ) => void
+    emitData('ab', {
+      seq: 2,
+      rawLength: 2,
+      sourceRanges: [
+        {
+          id: 'pty-1',
+          spanId: 'span-1',
+          providerGeneration: 5,
+          clientGeneration: 2,
+          ownerGeneration: 3,
+          ptyIncarnation: 'incarnation-1',
+          deliveryToken: 'token-1',
+          sourceStartSu: 0,
+          sourceEndSu: 2,
+          displayStart: 0,
+          displayEnd: 2,
+          splittable: true,
+          transform: { transformed: false, rawLengthSu: 2, scalarSafe: true }
+        }
+      ]
+    })
+    await vi.waitFor(() =>
+      expect(
+        harness.binaryFrames.some(
+          (bytes) => decodeTerminalStreamFrame(bytes)?.opcode === TerminalStreamOpcode.Output
+        )
+      ).toBe(true)
+    )
+    const output = harness.binaryFrames
+      .map(decodeTerminalStreamFrame)
+      .find((frame) => frame?.opcode === TerminalStreamOpcode.Output)!
+    const acknowledge = (payload: unknown): void => {
+      harness.handlers.get(7)?.(
+        decodeTerminalStreamFrame(
+          encodeTerminalStreamFrame({
+            opcode: TerminalStreamOpcode.Ack,
+            streamId: 7,
+            seq: 2,
+            payload: encodeTerminalStreamJson(payload)
+          })
+        )!
+      )
+    }
+
+    acknowledge({
+      streamGeneration: subscribed.streamGeneration,
+      ackedEndByte: output.payload.byteLength - 1
+    })
+    acknowledge({
+      streamGeneration: subscribed.streamGeneration,
+      ackedEndByte: output.payload.byteLength + 1
+    })
+    acknowledge({ bytes: output.payload.byteLength })
+    acknowledge({ epoch: 'notification', watermark: output.payload.byteLength })
+    acknowledge({ streamGeneration: 'stale', ackedEndByte: output.payload.byteLength })
+    expect(settle).not.toHaveBeenCalled()
+
+    acknowledge({
+      streamGeneration: subscribed.streamGeneration,
+      ackedEndByte: output.payload.byteLength
+    })
+    expect(settle).toHaveBeenCalledWith(
+      expect.objectContaining({ streamGeneration: subscribed.streamGeneration }),
+      [expect.objectContaining({ spanId: 'span-1', sourceStartSu: 0, sourceEndSu: 2 })]
+    )
+    harness.handlers.get(7)?.(
+      decodeTerminalStreamFrame(
+        encodeTerminalStreamFrame({
+          opcode: TerminalStreamOpcode.Unsubscribe,
+          streamId: 7,
+          seq: 3,
+          payload: new Uint8Array()
+        })
+      )!
+    )
+    expect(transfer).toHaveBeenCalledWith(expect.any(Object), [], 'stream-detached')
+  })
+
   it.each(['refuses', 'throws'] as const)(
     'closes without reserving ACK debt when the transport %s an output frame',
     async (failureMode) => {

@@ -4,6 +4,11 @@ import {
 } from './ssh-pty-legacy-projection'
 import { SshPtyModelAdmission } from './ssh-pty-model-admission'
 import { settleSshPtyOutputExit } from './ssh-pty-output-exit'
+import { SshPtyOutputGenerationGuard } from './ssh-pty-output-generation-guard'
+import {
+  SshPtyOutputSourceObligations,
+  type SshPtyOutputSourceReservation
+} from './ssh-pty-output-source-obligations'
 import type {
   SshPtyOutputDataEvent,
   SshPtyOutputExitEvent,
@@ -11,12 +16,7 @@ import type {
   SshPtyOutputIntakeOptions,
   SshPtyOutputReceipt
 } from './ssh-pty-output-intake-contract'
-import {
-  outputIntakeError,
-  sshPtyGenerationKey,
-  validOutputLength,
-  type SshPtyExitBarrier
-} from './ssh-pty-output-intake-validation'
+import { outputIntakeError, type SshPtyExitBarrier } from './ssh-pty-output-intake-validation'
 
 export type {
   SshPtyOutputDataEvent,
@@ -27,13 +27,11 @@ export type {
 } from './ssh-pty-output-intake-contract'
 
 export class SshPtyOutputIntake {
-  private readonly projections = new SshPtyLegacyProjectionLedger()
+  private readonly projections: SshPtyLegacyProjectionLedger
+  private readonly sourceObligations: SshPtyOutputSourceObligations
+  private readonly generationGuard = new SshPtyOutputGenerationGuard(() => this.disposed)
   private readonly admission: SshPtyModelAdmission
   private readonly exitBarrierMs: number
-  private readonly latestGenerationByPty = new Map<string, number>()
-  private readonly incarnationByPty = new Map<string, string>()
-  private readonly sealedPtys = new Set<string>()
-  private readonly closedGenerations = new Set<number>()
   private readonly exitBarriersByGeneration = new Map<number, Set<SshPtyExitBarrier>>()
   private disposed = false
 
@@ -41,6 +39,11 @@ export class SshPtyOutputIntake {
     private readonly dependencies: SshPtyOutputIntakeDependencies,
     options: SshPtyOutputIntakeOptions = {}
   ) {
+    this.sourceObligations = new SshPtyOutputSourceObligations(dependencies.publishSourceAck)
+    this.projections = new SshPtyLegacyProjectionLedger({
+      onSettled: (span) => this.sourceObligations.settleDesktop(span, 'renderer-parse'),
+      onTransferred: (span, reason) => this.sourceObligations.transferDesktop(span, reason)
+    })
     this.exitBarrierMs = options.exitBarrierMs ?? 30_000
     this.admission = new SshPtyModelAdmission({
       ...options,
@@ -55,11 +58,12 @@ export class SshPtyOutputIntake {
 
   acceptData(event: SshPtyOutputDataEvent): Promise<SshPtyOutputReceipt> {
     try {
-      this.validateDataEvent(event)
+      this.generationGuard.validateData(event)
     } catch (error) {
       return Promise.reject(error)
     }
     let projection: LegacySshProjectionSemantics | undefined
+    let sourceReservation: SshPtyOutputSourceReservation | undefined
     const receipt = this.admission.accept(
       { ptyId: event.id, providerGeneration: event.providerGeneration },
       event.data,
@@ -73,16 +77,44 @@ export class SshPtyOutputIntake {
           data: event.data,
           sequenceEnd: expectedSequence,
           rawLength: event.rawLength,
-          transformed: event.transformed
+          transformed: event.transformed,
+          source: event.source
         })
-        let model: { sequence: number; completion: Promise<void> }
         try {
-          model = this.dependencies.acceptModel(event)
+          if (reservation.semantics.desktopSpan) {
+            sourceReservation = this.sourceObligations.reserve(
+              event,
+              reservation.semantics.desktopSpan
+            )
+          }
         } catch (error) {
           this.projections.rollback(reservation)
           throw error
         }
-        projection = this.projections.commit(reservation)
+        try {
+          projection = this.projections.commit(reservation)
+          if (sourceReservation) {
+            this.sourceObligations.commit(sourceReservation, event.id)
+          }
+        } catch (error) {
+          if (sourceReservation) {
+            this.sourceObligations.rollback(sourceReservation)
+          }
+          if (!this.projections.rollbackCommitted(reservation)) {
+            this.projections.rollback(reservation)
+          }
+          throw error
+        }
+        let model: { sequence: number; completion: Promise<void> }
+        try {
+          model = this.dependencies.acceptModel(event, projection)
+        } catch (error) {
+          if (sourceReservation) {
+            this.sourceObligations.rollback(sourceReservation)
+          }
+          this.projections.rollbackCommitted(reservation)
+          throw error
+        }
         try {
           this.dependencies.project(event, projection)
         } catch {
@@ -96,6 +128,9 @@ export class SshPtyOutputIntake {
       (modelReceipt) => {
         if (!projection) {
           throw outputIntakeError('ssh_projection_receipt_missing')
+        }
+        if (sourceReservation) {
+          this.sourceObligations.settleModel(sourceReservation.span)
         }
         return Object.freeze({ ...modelReceipt, projection })
       },
@@ -113,12 +148,8 @@ export class SshPtyOutputIntake {
   }
 
   async acceptExit(event: SshPtyOutputExitEvent): Promise<void> {
-    this.validateGeneration(event)
-    const sealKey = sshPtyGenerationKey(event.id, event.providerGeneration)
-    if (this.sealedPtys.has(sealKey)) {
-      throw outputIntakeError('ssh_output_duplicate_exit')
-    }
-    this.sealedPtys.add(sealKey)
+    this.generationGuard.sealExit(event)
+    this.sourceObligations.sealPty(event)
     await this.withExitDeadline(event.providerGeneration, this.finishExit(event))
   }
 
@@ -128,7 +159,8 @@ export class SshPtyOutputIntake {
       admission: this.admission,
       projections: this.projections,
       dependencies: this.dependencies,
-      validateGeneration: () => this.validateGeneration(event)
+      validateGeneration: () => this.generationGuard.validate(event),
+      beforeFinalize: () => this.sourceObligations.markExitPublished(event)
     })
   }
 
@@ -159,10 +191,11 @@ export class SshPtyOutputIntake {
   }
 
   closeGeneration(providerGeneration: number, reason: string): void {
-    this.closedGenerations.add(providerGeneration)
+    this.generationGuard.closeGeneration(providerGeneration)
     this.admission.closeGeneration(providerGeneration, reason)
     this.dependencies.onGenerationClosed?.(providerGeneration, reason)
     this.projections.closeGeneration(providerGeneration, reason)
+    this.sourceObligations.closeGeneration(providerGeneration, reason)
     const barriers = this.exitBarriersByGeneration.get(providerGeneration)
     if (barriers) {
       for (const barrier of barriers) {
@@ -171,19 +204,6 @@ export class SshPtyOutputIntake {
       }
       this.exitBarriersByGeneration.delete(providerGeneration)
     }
-    for (const [ptyId, generation] of this.latestGenerationByPty) {
-      if (generation === providerGeneration) {
-        this.latestGenerationByPty.delete(ptyId)
-        this.incarnationByPty.delete(ptyId)
-        this.sealedPtys.delete(sshPtyGenerationKey(ptyId, generation))
-      }
-    }
-    const generationPrefix = `${providerGeneration}\0`
-    for (const key of this.sealedPtys) {
-      if (key.startsWith(generationPrefix)) {
-        this.sealedPtys.delete(key)
-      }
-    }
   }
 
   dispose(): void {
@@ -191,69 +211,26 @@ export class SshPtyOutputIntake {
       return
     }
     this.disposed = true
-    for (const generation of new Set(this.latestGenerationByPty.values())) {
+    for (const generation of this.generationGuard.activeGenerations()) {
       this.closeGeneration(generation, 'ssh_output_intake_disposed')
     }
     this.admission.dispose()
+    this.sourceObligations.dispose()
+  }
+
+  getRemoteSourceRangeConsumerHooks() {
+    return this.sourceObligations.remoteHooks
   }
 
   getDebugSnapshot() {
     return {
       model: this.admission.getDebugSnapshot(),
       projection: this.projections.getDebugSnapshot(),
+      source: this.sourceObligations.getDebugSnapshot(),
       exitBarriers: Array.from(this.exitBarriersByGeneration.values()).reduce(
         (total, barriers) => total + barriers.size,
         0
       )
-    }
-  }
-
-  private validateDataEvent(event: SshPtyOutputDataEvent): void {
-    if (this.disposed) {
-      throw outputIntakeError('ssh_output_intake_disposed')
-    }
-    if (
-      !event.id ||
-      !event.ptyIncarnation ||
-      !Number.isSafeInteger(event.providerGeneration) ||
-      event.providerGeneration <= 0 ||
-      !validOutputLength(event.rawLength) ||
-      (event.transformed && event.rawLength < 0)
-    ) {
-      throw outputIntakeError('ssh_output_invalid_event')
-    }
-    this.validateGeneration(event)
-    if (this.sealedPtys.has(sshPtyGenerationKey(event.id, event.providerGeneration))) {
-      throw outputIntakeError('ssh_output_after_exit')
-    }
-  }
-
-  private validateGeneration(event: {
-    id: string
-    providerGeneration: number
-    ptyIncarnation: string
-  }): void {
-    if (this.disposed) {
-      throw outputIntakeError('ssh_output_intake_disposed')
-    }
-    if (this.closedGenerations.has(event.providerGeneration)) {
-      throw outputIntakeError('ssh_output_stale_generation')
-    }
-    const generation = this.latestGenerationByPty.get(event.id)
-    if (generation !== undefined && event.providerGeneration < generation) {
-      throw outputIntakeError('ssh_output_stale_generation')
-    }
-    const incarnation = this.incarnationByPty.get(event.id)
-    if (
-      generation === event.providerGeneration &&
-      incarnation !== undefined &&
-      incarnation !== event.ptyIncarnation
-    ) {
-      throw outputIntakeError('ssh_output_stale_incarnation')
-    }
-    if (generation === undefined || event.providerGeneration > generation) {
-      this.latestGenerationByPty.set(event.id, event.providerGeneration)
-      this.incarnationByPty.set(event.id, event.ptyIncarnation)
     }
   }
 

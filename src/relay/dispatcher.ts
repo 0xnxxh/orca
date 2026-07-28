@@ -89,6 +89,7 @@ export class RelayDispatcher {
   private readonly publicationLedger = new LegacyRelayPublicationLedger()
   private pendingRelayRequests = new Map<number, PendingRelayRequest>()
   private clientDetachListeners = new Set<(clientId: number) => void>()
+  private disposeListeners = new Set<() => void>()
   private legacyCapacityListeners = new Set<() => void>()
   private publicationTransactionDepth = 0
   private deferredLegacyCapacity = false
@@ -163,6 +164,11 @@ export class RelayDispatcher {
   onClientDetached(listener: (clientId: number) => void): () => void {
     this.clientDetachListeners.add(listener)
     return () => this.clientDetachListeners.delete(listener)
+  }
+
+  onDisposed(listener: () => void): () => void {
+    this.disposeListeners.add(listener)
+    return () => this.disposeListeners.delete(listener)
   }
 
   onLegacyPtyCapacity(listener: () => void): () => void {
@@ -331,6 +337,26 @@ export class RelayDispatcher {
     )
   }
 
+  notifyControl(method: string, params?: Record<string, unknown>): void {
+    if (this.disposed) {
+      return
+    }
+    const msg: JsonRpcNotification = {
+      jsonrpc: '2.0',
+      method,
+      ...(params !== undefined ? { params } : {})
+    }
+    for (const client of this.activeClients()) {
+      if (!this.enqueueFrame(client, msg, 'control')) {
+        this.closeClient(
+          client,
+          new Error('Relay control publication capacity exceeded'),
+          client !== this.primaryClient
+        )
+      }
+    }
+  }
+
   /**
    * Bulk-lane notification: sends are serialized per client and the promise
    * resolves only after the sink accepted the frame (backpressure), so bulk
@@ -450,6 +476,10 @@ export class RelayDispatcher {
       listener()
     }
     this.legacyCapacityListeners.clear()
+    for (const listener of Array.from(this.disposeListeners)) {
+      listener()
+    }
+    this.disposeListeners.clear()
   }
 
   private createClient(

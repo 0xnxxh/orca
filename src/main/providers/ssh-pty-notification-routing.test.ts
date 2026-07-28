@@ -102,6 +102,46 @@ describe('subscribeSshPtyNotifications', () => {
     })
   })
 
+  it('derives exact source ranges and marks malformed negotiated frames', () => {
+    const { handler, dataListeners } = createSubscription()
+    const onData = vi.fn()
+    dataListeners.add(onData)
+
+    handler('pty.data', {
+      id: 'pty-1',
+      data: 'data',
+      ptyIncarnation: 'incarnation-1',
+      deliveryToken: 'token-1',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      sourceEndSu: 14,
+      sourceLengthSu: 4
+    })
+    handler('pty.data', {
+      id: 'pty-1',
+      data: 'bad',
+      ptyIncarnation: 'incarnation-1',
+      deliveryToken: 'token-1',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      sourceEndSu: 17,
+      sourceLengthSu: 4
+    })
+
+    expect(onData.mock.calls[0]?.[0]).toMatchObject({
+      source: {
+        relayPtyId: 'pty-1',
+        spanId: 'token-1:10:14',
+        clientGeneration: 2,
+        ownerGeneration: 3,
+        deliveryToken: 'token-1',
+        sourceStartSu: 10,
+        sourceEndSu: 14
+      }
+    })
+    expect(onData.mock.calls[1]?.[0]).toMatchObject({ sourceMalformed: true })
+  })
+
   it('ignores PTY methods with missing ids', () => {
     const { handler, toAppPtyId, dataListeners } = createSubscription()
     const onData = vi.fn()

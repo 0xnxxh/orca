@@ -214,7 +214,11 @@ export function waitForSentinel(
           pendingAfterSentinel = afterSentinel
         }
         const transport: MultiplexerTransport = {
-          write: (buf: Buffer) => channel.stdin.write(buf),
+          write: (buf: Buffer, onSettled) => {
+            channel.stdin.write(buf, (error?: Error | null) => {
+              onSettled?.(error ? { ok: false, error } : { ok: true })
+            })
+          },
           onData: (cb) => {
             dataCallbacks.push(cb)
             // Why: deliver buffered post-sentinel data to the first

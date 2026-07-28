@@ -3,6 +3,7 @@ import type {
   Mode2031ReplyScanState
 } from '../../shared/terminal-color-scheme-protocol'
 import { INITIAL_MODE_2031_REPLY_SCAN_STATE } from '../../shared/terminal-color-scheme-protocol'
+import type { TerminalOutputSourceRange } from '../../shared/terminal-output-source-range'
 
 export type LegacySshProjectionIdentity = Readonly<{
   projectionSemanticsId: string
@@ -18,10 +19,22 @@ export type LegacySshProjectionIdentity = Readonly<{
 
 export type LegacySshProjectionSemantics = Readonly<{
   identity: LegacySshProjectionIdentity
+  desktopSpan?: DesktopProjectionSpan
   beforeScanner: Readonly<Mode2031ReplyScanState>
   afterScanner: Readonly<Mode2031ReplyScanState>
   decision: Mode2031ReplyDecision
 }>
+
+export type DesktopProjectionSpan = Readonly<
+  TerminalOutputSourceRange & {
+    projectionSemanticsId: string
+    transform: Readonly<{
+      transformed: boolean
+      rawLengthSu: number
+      scalarSafe: boolean
+    }>
+  }
+>
 
 export type ProjectionState = 'reserved' | 'committed' | 'published'
 
@@ -121,6 +134,34 @@ export function requireProjectionRecord(
     throw projectionError('ssh_projection_reservation_missing')
   }
   return record
+}
+
+export function rollbackCommittedProjectionRecord(
+  records: Map<string, ProjectionRecord>,
+  idsByPty: Map<string, string[]>,
+  cursors: Map<string, PtyProjectionCursor>,
+  reservation: LegacySshProjectionReservation
+): string | null {
+  const id = reservation.semantics.identity.projectionSemanticsId
+  const record = records.get(id)
+  if (!record || record.state !== 'committed') {
+    return null
+  }
+  const { identity, beforeScanner } = record.semantics
+  const cursor = cursors.get(identity.ptyId)
+  if (
+    idsByPty.get(identity.ptyId)?.at(-1) !== id ||
+    !cursor ||
+    cursor.providerGeneration !== identity.providerGeneration ||
+    cursor.ptyIncarnation !== identity.ptyIncarnation ||
+    cursor.displayEnd !== identity.displayEnd
+  ) {
+    return null
+  }
+  cursor.displayEnd = identity.displayStart
+  cursor.scanner = { ...beforeScanner }
+  reclaimProjectionRecord(records, idsByPty, id, identity.ptyId)
+  return identity.ptyId
 }
 
 export function closeProjectionPty(

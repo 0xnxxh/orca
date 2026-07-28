@@ -5,6 +5,7 @@ import type {
   SshPtyExitCallback,
   SshPtyReplayCallback
 } from './ssh-pty-provider-contract'
+import { parseSshPtySourceFrame } from './ssh-pty-source-frame'
 
 export type { SshPtyDataCallback, SshPtyExitCallback, SshPtyReplayCallback }
 
@@ -55,15 +56,22 @@ export function subscribeSshPtyNotifications(args: {
       }
       return
     }
+    const data = typeof params.data === 'string' ? params.data : ''
+    const sourceFrame = parseSshPtySourceFrame(params, data, relayPtyId)
     for (const listener of args.dataListeners) {
       listener({
         id,
-        data: params.data as string,
+        data,
         providerGeneration: args.providerGeneration,
-        ptyIncarnation: args.resolvePtyIncarnation(relayPtyId, params.incarnationId),
+        ptyIncarnation: args.resolvePtyIncarnation(
+          relayPtyId,
+          params.ptyIncarnation ?? params.incarnationId
+        ),
         ...(typeof params.rawLength === 'number' ? { sequenceChars: params.rawLength } : {}),
         ...(params.transformed === true ? { transformed: true } : {}),
-        ...(typeof params.seq === 'number' ? { seq: params.seq } : {})
+        ...(typeof params.seq === 'number' ? { seq: params.seq } : {}),
+        ...(sourceFrame.source ? { source: sourceFrame.source } : {}),
+        ...(sourceFrame.malformed ? { sourceMalformed: true } : {})
       })
     }
   })

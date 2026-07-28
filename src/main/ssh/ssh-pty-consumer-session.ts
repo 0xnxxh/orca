@@ -2,17 +2,31 @@ import {
   PTY_CONSUMER_SESSION_PROTOCOL_VERSION,
   type PtyConsumerSessionGrant
 } from '../../shared/pty-consumer-session'
+import { DEFAULT_PTY_SOURCE_WINDOW_SU } from '../../shared/pty-source-credit-contract'
 import type { SshChannelMultiplexer } from './ssh-channel-multiplexer'
 
 export const SSH_PTY_OPEN_CLIENT_METHOD = 'pty.openClient'
 export const SSH_PTY_OPEN_CLIENT_TIMEOUT_MS = 10_000
 
 export type SshPtyConsumerOwnerState = {
+  mode: 'negotiated'
   clientInstanceId: string
   clientGeneration: number
   ownerGeneration: number
   ownerLease: string
+  outputFlowControl?: {
+    version: 1
+    windowSu: number
+  }
 }
+
+export type SshPtyLegacyFallbackState = {
+  mode: 'legacy-fallback'
+  clientInstanceId: string
+  serverBuildId: string
+}
+
+export type SshPtyConsumerSessionState = SshPtyConsumerOwnerState | SshPtyLegacyFallbackState
 
 export type OpenSshPtyConsumerSessionOptions = {
   clientInstanceId: string
@@ -21,6 +35,7 @@ export type OpenSshPtyConsumerSessionOptions = {
   outputFlowControl?: {
     requestedWindowSu: number
   }
+  allowSameBuildLegacyFallback?: boolean
 }
 
 function validateGrant(
@@ -73,32 +88,56 @@ function validateGrant(
 export async function openSshPtyConsumerSession(
   mux: SshChannelMultiplexer,
   options: OpenSshPtyConsumerSessionOptions
-): Promise<SshPtyConsumerOwnerState> {
-  const result = await mux.request(
-    SSH_PTY_OPEN_CLIENT_METHOD,
-    {
-      protocolVersion: PTY_CONSUMER_SESSION_PROTOCOL_VERSION,
-      clientInstanceId: options.clientInstanceId,
-      requestedRole: 'session-owner',
-      ...(options.resume ? { resume: options.resume } : {}),
-      ...(options.outputFlowControl
-        ? {
-            capabilities: {
-              outputFlowControl: {
-                versions: [1],
-                requestedWindowSu: options.outputFlowControl.requestedWindowSu
+): Promise<SshPtyConsumerSessionState> {
+  let result: unknown
+  try {
+    result = await mux.request(
+      SSH_PTY_OPEN_CLIENT_METHOD,
+      {
+        protocolVersion: PTY_CONSUMER_SESSION_PROTOCOL_VERSION,
+        clientInstanceId: options.clientInstanceId,
+        requestedRole: 'session-owner',
+        ...(options.resume ? { resume: options.resume } : {}),
+        ...(options.outputFlowControl
+          ? {
+              capabilities: {
+                outputFlowControl: {
+                  versions: [1],
+                  requestedWindowSu: options.outputFlowControl.requestedWindowSu
+                }
               }
             }
-          }
-        : {})
-    },
-    { timeoutMs: SSH_PTY_OPEN_CLIENT_TIMEOUT_MS }
-  )
+          : {})
+      },
+      { timeoutMs: SSH_PTY_OPEN_CLIENT_TIMEOUT_MS }
+    )
+  } catch (error) {
+    const code = (error as { code?: unknown })?.code
+    if (
+      code === -32601 &&
+      options.allowSameBuildLegacyFallback === true &&
+      typeof options.expectedServerBuildId === 'string' &&
+      options.expectedServerBuildId.length > 0
+    ) {
+      return Object.freeze({
+        mode: 'legacy-fallback',
+        clientInstanceId: options.clientInstanceId,
+        serverBuildId: options.expectedServerBuildId
+      })
+    }
+    throw error
+  }
   const grant = validateGrant(result, options)
   return {
+    mode: 'negotiated',
     clientInstanceId: options.clientInstanceId,
     clientGeneration: grant.clientGeneration,
     ownerGeneration: grant.ownerGeneration!,
-    ownerLease: grant.ownerLease!
+    ownerLease: grant.ownerLease!,
+    ...(grant.capabilities?.outputFlowControl
+      ? { outputFlowControl: grant.capabilities.outputFlowControl }
+      : {})
   }
 }
+
+export const SSH_PTY_SOURCE_WINDOW_SU = DEFAULT_PTY_SOURCE_WINDOW_SU

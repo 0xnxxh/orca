@@ -32,6 +32,7 @@ describe('openSshPtyConsumerSession', () => {
         expectedServerBuildId: 'build-a'
       })
     ).resolves.toEqual({
+      mode: 'negotiated',
       clientInstanceId: 'client-a',
       clientGeneration: 3,
       ownerGeneration: 7,
@@ -99,5 +100,41 @@ describe('openSshPtyConsumerSession', () => {
         expectedServerBuildId: 'build-a'
       })
     ).rejects.toThrow('unoffered')
+  })
+
+  it('uses explicit token-free fallback only for same-build method-not-found', async () => {
+    const error = Object.assign(new Error('Method not found: pty.openClient'), { code: -32601 })
+    const request = vi.fn().mockRejectedValue(error)
+    const mux = { request } as unknown as SshChannelMultiplexer
+
+    await expect(
+      openSshPtyConsumerSession(mux, {
+        clientInstanceId: 'client-a',
+        expectedServerBuildId: 'build-a',
+        allowSameBuildLegacyFallback: true,
+        outputFlowControl: { requestedWindowSu: 64 }
+      })
+    ).resolves.toEqual({
+      mode: 'legacy-fallback',
+      clientInstanceId: 'client-a',
+      serverBuildId: 'build-a'
+    })
+  })
+
+  it.each([
+    Object.assign(new Error('timeout'), { code: 'TIMEOUT' }),
+    Object.assign(new Error('auth failed'), { code: -32000 }),
+    Object.assign(new Error('method missing'), { code: -32601 })
+  ])('does not downgrade an unproved or non-method-not-found error', async (error) => {
+    const request = vi.fn().mockRejectedValue(error)
+    const mux = { request } as unknown as SshChannelMultiplexer
+
+    await expect(
+      openSshPtyConsumerSession(mux, {
+        clientInstanceId: 'client-a',
+        expectedServerBuildId: 'build-a',
+        allowSameBuildLegacyFallback: error.code !== -32601
+      })
+    ).rejects.toBe(error)
   })
 })

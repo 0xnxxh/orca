@@ -17,6 +17,16 @@ export type SshPtyDataCallback = (payload: {
   sequenceChars?: number
   transformed?: boolean
   seq?: number
+  source?: Readonly<{
+    relayPtyId: string
+    spanId: string
+    clientGeneration: number
+    ownerGeneration: number
+    deliveryToken: string
+    sourceStartSu: number
+    sourceEndSu: number
+  }>
+  sourceMalformed?: boolean
 }) => void
 export type SshPtyReplayCallback = (payload: { id: string; data: string }) => void
 export type SshPtyExitCallback = (payload: {

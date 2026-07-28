@@ -4,7 +4,16 @@ import {
   type PtyConsumerSessionGrant,
   type PtyConsumerSessionHello
 } from '../shared/pty-consumer-session'
+import { DEFAULT_PTY_SOURCE_WINDOW_SU } from '../shared/pty-source-credit-contract'
+import type {
+  PtySourceDeliveryIdentity,
+  PtySourceDeliverySnapshot,
+  PtySourceSpan,
+  PtySourceTransform
+} from '../shared/pty-source-credit-contract'
 import type { RelayClientSessionIdentity, RelayDispatcher, RequestContext } from './dispatcher'
+import type { PtySourceSendReservation } from './pty-source-credit-ledger'
+import { SshPtySourceCreditAdapter } from './ssh-pty-source-credit-adapter'
 
 export const SSH_PTY_OPEN_CLIENT_METHOD = 'pty.openClient'
 
@@ -61,17 +70,30 @@ function requireIdentity(context: RequestContext): RelayClientSessionIdentity {
 
 export class SshPtyConsumerSessionAdapter {
   private readonly session: PtyConsumerSession
+  private readonly sourceCredit: SshPtySourceCreditAdapter
 
   constructor(
     dispatcher: RelayDispatcher,
     serverBuildId: string,
     setDeliveryPaused?: (id: string, paused: boolean) => void
   ) {
-    this.session = new PtyConsumerSession({ serverBuildId })
+    this.sourceCredit = new SshPtySourceCreditAdapter((proof) =>
+      dispatcher.notifyControl('pty.deliveryCanceled', proof as unknown as Record<string, unknown>)
+    )
+    this.session = new PtyConsumerSession({
+      serverBuildId,
+      outputFlowControl: { versions: [1], maxWindowSu: DEFAULT_PTY_SOURCE_WINDOW_SU }
+    })
     dispatcher.onRequest(SSH_PTY_OPEN_CLIENT_METHOD, (params, context) =>
       this.openClient(params, context)
     )
-    dispatcher.onClientDetached((clientId) => this.session.close(String(clientId)))
+    dispatcher.onClientDetached((clientId) => {
+      const grant = this.session.activeGrant(String(clientId))
+      this.session.close(String(clientId))
+      if (grant) {
+        this.sourceCredit.retainOrCloseOnDetach(grant)
+      }
+    })
     dispatcher.onNotification('pty.setDeliveryPaused', (params, context) => {
       const grant = this.session.activeGrant(String(context.clientId))
       if (
@@ -85,6 +107,83 @@ export class SshPtyConsumerSessionAdapter {
       }
       setDeliveryPaused?.(params.id, params.paused)
     })
+    dispatcher.onNotification('pty.ackData', (params, context) => {
+      this.sourceCredit.acknowledge(params, this.session.activeGrant(String(context.clientId)))
+    })
+    dispatcher.onRequest('pty.cancelDelivery', async (params, context) =>
+      this.sourceCredit.cancel(params, this.session.activeGrant(String(context.clientId)))
+    )
+    dispatcher.onDisposed(() => this.sourceCredit.dispose())
+  }
+
+  openDelivery(
+    clientId: number,
+    id: string,
+    ptyIncarnation: string,
+    checkpointSourceEndSu = 0
+  ): PtySourceDeliveryIdentity | null {
+    return this.sourceCredit.open(
+      this.session.activeGrant(String(clientId)),
+      id,
+      ptyIncarnation,
+      checkpointSourceEndSu
+    )
+  }
+
+  rotateDelivery(
+    oldIdentity: PtySourceDeliveryIdentity,
+    newClientId: number,
+    acceptedSourceEndSu: number
+  ) {
+    return this.sourceCredit.rotate(
+      oldIdentity,
+      this.session.activeGrant(String(newClientId)),
+      acceptedSourceEndSu
+    )
+  }
+
+  appendSource(
+    identity: PtySourceDeliveryIdentity,
+    input: Readonly<{
+      spanId: string
+      data: string
+      displayStart: number
+      displayEnd: number
+      splittable: boolean
+      transform: PtySourceTransform
+    }>
+  ): PtySourceSpan {
+    return this.sourceCredit.append(identity, input)
+  }
+
+  reserveSourceSend(
+    identity: PtySourceDeliveryIdentity,
+    maxSourceSu?: number
+  ): PtySourceSendReservation | null {
+    return this.sourceCredit.reserveSend(identity, maxSourceSu)
+  }
+
+  commitSourceSend(reservation: PtySourceSendReservation): void {
+    this.sourceCredit.commitSend(reservation)
+  }
+
+  rollbackSourceSend(reservation: PtySourceSendReservation): void {
+    this.sourceCredit.rollbackSend(reservation)
+  }
+
+  sealDelivery(identity: PtySourceDeliveryIdentity): void {
+    this.sourceCredit.seal(identity)
+  }
+
+  settleExitPublication(
+    identity: PtySourceDeliveryIdentity,
+    result: { ok: true } | { ok: false; error: Error }
+  ): void {
+    this.sourceCredit.settleExit(identity, result)
+  }
+
+  sourceDeliverySnapshot(identity: PtySourceDeliveryIdentity): PtySourceDeliverySnapshot {
+    return this.sourceCredit.snapshot(identity)
   }
 
   private async openClient(

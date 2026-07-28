@@ -3,6 +3,7 @@ import type {
   SshPtyModelAdmissionOptions,
   SshPtyModelAdmissionReceipt
 } from './ssh-pty-model-admission-contract'
+import type { PtySourceCreditAckBatch } from '../../shared/pty-source-credit-contract'
 
 export type SshPtyOutputDataEvent = Readonly<{
   id: string
@@ -12,6 +13,15 @@ export type SshPtyOutputDataEvent = Readonly<{
   rawLength: number
   transformed: boolean
   sequence?: number
+  source?: Readonly<{
+    relayPtyId?: string
+    spanId: string
+    clientGeneration: number
+    ownerGeneration: number
+    deliveryToken: string
+    sourceStartSu: number
+    sourceEndSu: number
+  }>
 }>
 
 export type SshPtyOutputExitEvent = Readonly<{
@@ -26,7 +36,10 @@ export type SshPtyOutputReceipt = SshPtyModelAdmissionReceipt &
 
 export type SshPtyOutputIntakeDependencies = {
   getModelSequence: (id: string) => number
-  acceptModel: (event: SshPtyOutputDataEvent) => { sequence: number; completion: Promise<void> }
+  acceptModel: (
+    event: SshPtyOutputDataEvent,
+    projection: LegacySshProjectionSemantics
+  ) => { sequence: number; completion: Promise<void> }
   project: (event: SshPtyOutputDataEvent, projection: LegacySshProjectionSemantics) => void
   prepareExit: (event: SshPtyOutputExitEvent) => void
   finalizeExit: (event: SshPtyOutputExitEvent) => void
@@ -34,6 +47,11 @@ export type SshPtyOutputIntakeDependencies = {
   resumeProvider?: (providerGeneration: number, id: string) => void
   closeProvider?: (providerGeneration: number, reason: string) => void
   onGenerationClosed?: (providerGeneration: number, reason: string) => void
+  publishSourceAck?: (
+    providerGeneration: number,
+    batch: PtySourceCreditAckBatch,
+    onSettled: (result: { ok: true } | { ok: false; error: Error }) => void
+  ) => void
 }
 
 export type SshPtyOutputIntakeOptions = SshPtyModelAdmissionOptions & {

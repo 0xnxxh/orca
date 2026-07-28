@@ -17,6 +17,17 @@ function reserve(
   })
 }
 
+function source(sourceStartSu: number, sourceEndSu: number, deliveryToken = 'token-1') {
+  return {
+    spanId: `span-${sourceStartSu}`,
+    clientGeneration: 2,
+    ownerGeneration: 4,
+    deliveryToken,
+    sourceStartSu,
+    sourceEndSu
+  }
+}
+
 describe('SshPtyLegacyProjectionLedger', () => {
   it('rolls back scanner and display reservations before commit', () => {
     const ledger = new SshPtyLegacyProjectionLedger()
@@ -124,5 +135,88 @@ describe('SshPtyLegacyProjectionLedger', () => {
       displayStart: 0
     })
     expect(ledger.getDebugSnapshot()).toMatchObject({ records: 1, cursors: 1 })
+  })
+
+  it('keeps split publication attached to one immutable desktop span', () => {
+    const settled: unknown[] = []
+    const ledger = new SshPtyLegacyProjectionLedger({
+      onSettled: (span) => settled.push(span)
+    })
+    const projection = ledger.commit(
+      reserve(ledger, {
+        data: 'abcd',
+        rawLength: 4,
+        sequenceEnd: 4,
+        source: source(0, 4)
+      })
+    )
+    const id = projection.identity.projectionSemanticsId
+
+    ledger.publishPrefix([id], 2, 2)
+    ledger.settlePublishedPrefix('pty-1', 2)
+    expect(settled).toEqual([])
+    ledger.publishPrefix([id], 2, 2)
+    ledger.settlePublishedPrefix('pty-1', 2)
+
+    expect(settled).toEqual([
+      expect.objectContaining({
+        spanId: 'span-0',
+        projectionSemanticsId: id,
+        sourceStartSu: 0,
+        sourceEndSu: 4,
+        displayStart: 0,
+        displayEnd: 4
+      })
+    ])
+  })
+
+  it('preserves scanner and display facts after transfer and delivery-token replacement', () => {
+    const transferred: unknown[] = []
+    const ledger = new SshPtyLegacyProjectionLedger({
+      onTransferred: (span) => transferred.push(span)
+    })
+    const partial = ledger.commit(
+      reserve(ledger, {
+        data: '\x1b[?20',
+        rawLength: 5,
+        sequenceEnd: 5,
+        source: source(0, 5)
+      })
+    )
+    ledger.transfer([partial.identity.projectionSemanticsId], 'renderer-reload')
+    const continuation = reserve(ledger, {
+      data: '31h',
+      rawLength: 3,
+      sequenceEnd: 8,
+      source: source(5, 8, 'token-2')
+    })
+
+    expect(continuation.semantics.identity.displayStart).toBe(5)
+    expect(continuation.semantics.beforeScanner.tail).toBe('\x1b[?20')
+    expect(continuation.semantics.decision).toBe('subscribed')
+    expect(transferred).toEqual([
+      expect.objectContaining({
+        deliveryToken: 'token-1',
+        sourceStartSu: 0,
+        sourceEndSu: 5
+      })
+    ])
+  })
+
+  it('leaves a projection intact when its terminal transition cannot commit', () => {
+    const ledger = new SshPtyLegacyProjectionLedger({
+      onTransferred: () => {
+        throw new Error('replacement unavailable')
+      }
+    })
+    const projection = ledger.commit(reserve(ledger, { source: source(0, 3) }))
+
+    expect(() =>
+      ledger.transfer([projection.identity.projectionSemanticsId], 'renderer-reload')
+    ).toThrow('replacement unavailable')
+    expect(ledger.getDebugSnapshot()).toMatchObject({
+      transferred: 0,
+      records: 1
+    })
   })
 })

@@ -7,7 +7,9 @@ import {
   reclaimProjectionRecord,
   resetProjectionCursorForGap,
   requireProjectionRecord,
+  rollbackCommittedProjectionRecord,
   scannerSnapshot,
+  type DesktopProjectionSpan,
   type LegacySshProjectionDebugSnapshot,
   type LegacySshProjectionReservation,
   type LegacySshProjectionSemantics,
@@ -20,12 +22,22 @@ import {
   SshPtyProjectionTerminality,
   unpublishedProjectionIds
 } from './ssh-pty-projection-terminality'
+import {
+  publishLegacyProjectionPrefix,
+  settlePublishedLegacyProjectionPrefix
+} from './ssh-pty-legacy-projection-publication'
 
 export type {
+  DesktopProjectionSpan,
   LegacySshProjectionIdentity,
   LegacySshProjectionReservation,
   LegacySshProjectionSemantics
 } from './ssh-pty-legacy-projection-record'
+
+export type SshPtyLegacyProjectionLedgerOptions = {
+  onSettled?: (span: DesktopProjectionSpan, reason: string) => void
+  onTransferred?: (span: DesktopProjectionSpan, reason: string) => void
+}
 
 export class SshPtyLegacyProjectionLedger {
   private nextId = 1
@@ -37,6 +49,8 @@ export class SshPtyLegacyProjectionLedger {
   private transferredCount = 0
   private rolledBackCount = 0
 
+  constructor(private readonly options: SshPtyLegacyProjectionLedgerOptions = {}) {}
+
   reserve(args: {
     ptyId: string
     providerGeneration: number
@@ -45,6 +59,15 @@ export class SshPtyLegacyProjectionLedger {
     sequenceEnd: number
     rawLength: number
     transformed: boolean
+    source?: Readonly<{
+      relayPtyId?: string
+      spanId: string
+      clientGeneration: number
+      ownerGeneration: number
+      deliveryToken: string
+      sourceStartSu: number
+      sourceEndSu: number
+    }>
   }): LegacySshProjectionReservation {
     const cursor = getOrCreateProjectionCursor(this.cursorByPty, args, (generation) =>
       this.transferGeneration(generation, 'provider-generation-replaced')
@@ -70,6 +93,25 @@ export class SshPtyLegacyProjectionLedger {
     })
     const semantics = Object.freeze({
       identity,
+      ...(args.source
+        ? {
+            desktopSpan: Object.freeze({
+              ...args.source,
+              id: args.source.relayPtyId ?? args.ptyId,
+              projectionSemanticsId,
+              providerGeneration: args.providerGeneration,
+              ptyIncarnation: args.ptyIncarnation,
+              displayStart: identity.displayStart,
+              displayEnd: identity.displayEnd,
+              splittable: !args.transformed,
+              transform: Object.freeze({
+                transformed: args.transformed,
+                rawLengthSu: args.rawLength,
+                scalarSafe: !args.transformed
+              })
+            })
+          }
+        : {}),
       beforeScanner: scannerSnapshot(cursor.scanner),
       afterScanner: scannerSnapshot(scan.state),
       decision: scan.decision
@@ -123,87 +165,39 @@ export class SshPtyLegacyProjectionLedger {
     return true
   }
 
+  rollbackCommitted(reservation: LegacySshProjectionReservation): boolean {
+    const ptyId = rollbackCommittedProjectionRecord(
+      this.records,
+      this.idsByPty,
+      this.cursorByPty,
+      reservation
+    )
+    if (!ptyId) {
+      return false
+    }
+    this.rolledBackCount++
+    resolveProjectionTerminality(this.terminality, this.records, this.idsByPty, ptyId)
+    return true
+  }
+
   publishPrefix(ids: readonly string[], displayChars: number, accountingChars: number): void {
-    let displayRemaining = Math.max(0, displayChars)
-    let accountingRemaining = Math.max(0, accountingChars)
-    for (const id of ids) {
-      const record = this.records.get(id)
-      if (!record) {
-        continue
-      }
-      const displayLength =
-        record.semantics.identity.displayEnd - record.semantics.identity.displayStart
-      const unpublishedDisplay = displayLength - record.publishedDisplay
-      const unpublishedAccounting = record.semantics.identity.rawLength - record.publishedAccounting
-      if (displayLength === 0 && unpublishedAccounting > 0) {
-        const publishAccounting = Math.min(accountingRemaining, unpublishedAccounting)
-        if (publishAccounting !== unpublishedAccounting) {
-          throw projectionError('ssh_projection_indivisible_split')
-        }
-        record.publishedAccounting += publishAccounting
-        record.state = 'published'
-        accountingRemaining -= publishAccounting
-        continue
-      }
-      if (unpublishedDisplay <= 0) {
-        continue
-      }
-      const publishDisplay = Math.min(displayRemaining, unpublishedDisplay)
-      if (publishDisplay <= 0) {
-        break
-      }
-      const indivisible = record.semantics.identity.transformed
-      if (indivisible && publishDisplay !== unpublishedDisplay) {
-        throw projectionError('ssh_projection_indivisible_split')
-      }
-      const publishAccounting =
-        publishDisplay === unpublishedDisplay
-          ? Math.min(accountingRemaining, unpublishedAccounting)
-          : publishDisplay
-      record.publishedDisplay += publishDisplay
-      record.publishedAccounting += publishAccounting
-      record.state = 'published'
-      displayRemaining -= publishDisplay
-      accountingRemaining -= publishAccounting
-    }
-    if (displayRemaining !== 0 || accountingRemaining !== 0) {
-      throw projectionError('ssh_projection_publish_range_mismatch')
-    }
+    publishLegacyProjectionPrefix(this.records, ids, displayChars, accountingChars)
   }
 
   settlePublishedPrefix(ptyId: string, accountingChars: number): number {
-    let remaining = Math.max(0, accountingChars)
-    let settled = 0
-    for (const id of this.idsByPty.get(ptyId)?.slice() ?? []) {
-      const record = this.records.get(id)
-      if (!record) {
-        continue
-      }
-      const available = record.publishedAccounting - record.settledAccounting
-      if (available <= 0) {
-        continue
-      }
-      const take = Math.min(remaining, available)
-      record.settledAccounting += take
-      settled += take
-      remaining -= take
-      if (
-        record.settledAccounting === record.semantics.identity.rawLength &&
-        record.publishedDisplay ===
-          record.semantics.identity.displayEnd - record.semantics.identity.displayStart
-      ) {
-        this.settledCount++
-        reclaimProjectionRecord(this.records, this.idsByPty, id, ptyId)
-      }
-      if (remaining === 0) {
-        break
-      }
-    }
+    const result = settlePublishedLegacyProjectionPrefix(
+      this.records,
+      this.idsByPty,
+      ptyId,
+      accountingChars,
+      this.options.onSettled
+    )
+    this.settledCount += result.completed
     resolveProjectionTerminality(this.terminality, this.records, this.idsByPty, ptyId)
-    return settled
+    return result.settled
   }
 
-  transfer(ids: readonly string[], _reason: string): number {
+  transfer(ids: readonly string[], reason: string): number {
     let transferred = 0
     const touchedPtys = new Set<string>()
     for (const id of ids.slice()) {
@@ -211,8 +205,11 @@ export class SshPtyLegacyProjectionLedger {
       if (!record || record.state === 'reserved') {
         continue
       }
-      this.transferredCount++
       const ptyId = record.semantics.identity.ptyId
+      if (record.semantics.desktopSpan) {
+        this.options.onTransferred?.(record.semantics.desktopSpan, reason)
+      }
+      this.transferredCount++
       reclaimProjectionRecord(this.records, this.idsByPty, id, ptyId)
       touchedPtys.add(ptyId)
       transferred++
