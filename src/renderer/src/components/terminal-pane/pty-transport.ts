@@ -764,16 +764,21 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         const resultLaunchAgent = isTuiAgent(spawnResult.launchAgent)
           ? spawnResult.launchAgent
           : undefined
+        const retireFreshSpawn = async (): Promise<void> => {
+          if (!spawnResult.isReattach && !spawnResult.coldRestore) {
+            await window.api.pty.kill(spawnResult.id)
+          }
+        }
 
         // Why: on destroy mid-connect, kill only a fresh spawn — killing a reattached session (owned by the tab lifecycle) loses a live shell.
         if (destroyed) {
-          if (!options.sessionId) {
-            window.api.pty.kill(spawnResult.id)
-          }
+          await retireFreshSpawn()
           return
         }
 
         if (options.admitPtyId && !options.admitPtyId(spawnResult.id)) {
+          // Why: a rejected session-expired fallback has no owner to retire its newly created process.
+          await retireFreshSpawn()
           return spawnResult
         }
 

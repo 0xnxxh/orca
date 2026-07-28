@@ -3713,7 +3713,7 @@
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/startup/ssh-startup-reconnect.test.ts src/renderer/src/lib/resolved-worktree-execution-host.test.ts src/renderer/src/components/terminal/background-terminal-worktree-mount.test.ts src/renderer/src/runtime/sync-runtime-graph-scheduling.test.ts src/renderer/src/components/terminal-pane/use-terminal-pane-lifecycle.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts src/renderer/src/runtime/remote-runtime-session-tabs-inflight.test.ts src/renderer/src/runtime/web-session-terminal-handle-events.test.ts src/renderer/src/store/slices/terminal-pty-identity-replacement.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/pty-transport.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-recovery-state.test.ts src/renderer/src/components/terminal-pane/TerminalRemoteRuntimeReconnectBanner.test.tsx src/renderer/src/components/terminal-pane/terminal-remote-runtime-recovery-ui-state.test.ts src/shared/remote-runtime-socket-liveness.test.ts src/shared/remote-runtime-shared-control-connection.test.ts src/shared/remote-runtime-shared-control-socket-generation.test.ts src/shared/remote-runtime-client-error-classification.test.ts src/main/runtime/rpc/remote-runtime-server-heartbeat.test.ts src/main/runtime/rpc/methods/terminal-create-idempotency.test.ts src/main/runtime/orca-runtime-terminal-create-idempotency.test.ts",
-        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/store/slices/direct-ssh-terminal-retry.test.ts src/renderer/src/store/slices/direct-ssh-pane-detach-ledger.test.ts src/renderer/src/store/slices/direct-ssh-terminal-recovery.test.ts src/renderer/src/store/slices/direct-ssh-terminal-workspace-scope.test.ts src/renderer/src/store/slices/terminals-hydration.test.ts src/renderer/src/hooks/direct-ssh-reconnect-coordinator.test.ts src/renderer/src/hooks/direct-ssh-host-hydration.test.ts src/renderer/src/hooks/direct-ssh-state-routing.test.ts src/renderer/src/hooks/remote-workspace-target-sync.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/terminal-pane-tab-detach.test.ts --reporter=dot",
+        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/store/slices/direct-ssh-terminal-retry.test.ts src/renderer/src/store/slices/direct-ssh-pane-detach-ledger.test.ts src/renderer/src/store/slices/direct-ssh-terminal-recovery.test.ts src/renderer/src/store/slices/direct-ssh-terminal-workspace-scope.test.ts src/renderer/src/store/slices/terminals-hydration.test.ts src/renderer/src/store/slices/repos-ssh-host-reconciliation.test.ts src/renderer/src/hooks/direct-ssh-reconnect-coordinator.test.ts src/renderer/src/hooks/direct-ssh-host-hydration.test.ts src/renderer/src/hooks/direct-ssh-state-routing.test.ts src/renderer/src/hooks/remote-workspace-target-sync.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/terminal-pane-tab-detach.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/repos-remote.test.ts src/main/ipc/ssh.test.ts src/main/ipc/worktrees.test.ts src/main/runtime/public-ssh-state.test.ts src/main/ssh/ssh-connection-manager.test.ts src/main/ssh/ssh-connection.test.ts src/main/ssh/ssh-provider-authority.test.ts src/preload/ssh-authority-forwarding.test.ts src/renderer/src/runtime/runtime-client-events.test.ts src/renderer/src/runtime/runtime-environment-ssh-state.test.ts src/shared/ssh-retained-payload-admission.test.ts src/shared/ssh-types.test.ts --reporter=dot",
         "pnpm exec electron-vite build --mode e2e",
         "SKIP_BUILD=1 pnpm exec playwright test tests/e2e/terminal-cold-activation-deferral.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
@@ -3747,6 +3747,7 @@
         "src/renderer/src/store/slices/direct-ssh-terminal-recovery.test.ts",
         "src/renderer/src/store/slices/direct-ssh-terminal-workspace-scope.test.ts",
         "src/renderer/src/store/slices/terminals-hydration.test.ts",
+        "src/renderer/src/store/slices/repos-ssh-host-reconciliation.test.ts",
         "src/renderer/src/hooks/direct-ssh-reconnect-coordinator.test.ts",
         "src/renderer/src/hooks/direct-ssh-host-hydration.test.ts",
         "src/renderer/src/hooks/direct-ssh-state-routing.test.ts",
@@ -3986,7 +3987,14 @@
           "file": "src/renderer/src/store/slices/terminals-hydration.test.ts",
           "assertions": [
             "target-scoped hydration and reconnect preserve sibling SSH and runtime tabs, PTY indexes, runtime ownership, and active selection",
+            "authoritative target-tab deletion prunes only that tab's retry, live-binding, and retry-history ledgers",
             "a snapshot PTY from another SSH host is rejected from the target scope"
+          ]
+        },
+        {
+          "file": "src/renderer/src/store/slices/repos-ssh-host-reconciliation.test.ts",
+          "assertions": [
+            "a provider result becomes stale when same-ID repo ownership turns malformed or contradictory during the await"
           ]
         },
         {
@@ -4028,7 +4036,8 @@
           "file": "src/renderer/src/components/terminal-pane/pty-transport.test.ts",
           "assertions": [
             "admission rejection precedes buffered final-frame and exit publication",
-            "abandoning an obsolete reattach drops its data, replay, write-unavailable, and exit handlers without killing the durable PTY"
+            "abandoning an obsolete reattach drops its data, replay, write-unavailable, and exit handlers without killing the durable PTY",
+            "a rejected or destroyed fresh session fallback settles retirement before it can publish handlers, shutdown refusal is reported as unknown, and reattach remains non-destructive"
           ]
         },
         {
@@ -4079,10 +4088,10 @@
           "date": "2026-07-28",
           "runner": "local",
           "platform": "macos",
-          "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/store/slices/direct-ssh-terminal-retry.test.ts src/renderer/src/store/slices/direct-ssh-pane-detach-ledger.test.ts src/renderer/src/store/slices/direct-ssh-terminal-recovery.test.ts src/renderer/src/store/slices/direct-ssh-terminal-workspace-scope.test.ts src/renderer/src/store/slices/terminals-hydration.test.ts src/renderer/src/hooks/direct-ssh-reconnect-coordinator.test.ts src/renderer/src/hooks/direct-ssh-host-hydration.test.ts src/renderer/src/hooks/direct-ssh-state-routing.test.ts src/renderer/src/hooks/remote-workspace-target-sync.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/terminal-pane-tab-detach.test.ts --reporter=dot",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/store/slices/direct-ssh-terminal-retry.test.ts src/renderer/src/store/slices/direct-ssh-pane-detach-ledger.test.ts src/renderer/src/store/slices/direct-ssh-terminal-recovery.test.ts src/renderer/src/store/slices/direct-ssh-terminal-workspace-scope.test.ts src/renderer/src/store/slices/terminals-hydration.test.ts src/renderer/src/store/slices/repos-ssh-host-reconciliation.test.ts src/renderer/src/hooks/direct-ssh-reconnect-coordinator.test.ts src/renderer/src/hooks/direct-ssh-host-hydration.test.ts src/renderer/src/hooks/direct-ssh-state-routing.test.ts src/renderer/src/hooks/remote-workspace-target-sync.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/terminal-pane-tab-detach.test.ts --reporter=dot",
           "result": "passed",
-          "durationSeconds": 15.53,
-          "summary": "Eleven direct SSH files and 637 tests passed, including exact lease revalidation after asynchronous SSH preparation, primary-exit continuation gaps, pending-only and live null-PTY two-sided split-detach authority, delayed post-success sibling admission, and stale-authority provider retirement."
+          "durationSeconds": 15.8,
+          "summary": "Twelve direct SSH files and 647 tests passed, including exact lease revalidation after asynchronous SSH preparation, primary-exit continuation gaps, pending-only and live null-PTY two-sided split-detach authority, delayed post-success sibling admission, stale-authority provider retirement, late ownership-provenance rejection, and deleted-tab ledger pruning."
         },
         {
           "date": "2026-07-28",
@@ -4090,8 +4099,8 @@
           "platform": "macos",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/pty-transport.test.ts",
           "result": "passed",
-          "durationSeconds": 1.76,
-          "summary": "All 87 transport tests passed, including pre-publication admission rejection and handler-complete non-destructive detach for obsolete SSH reattach transports."
+          "durationSeconds": 1.48,
+          "summary": "All 90 transport tests passed, including pre-publication admission rejection, handler-complete non-destructive detach for obsolete SSH reattach transports, settled retirement of rejected or destroyed fresh fallbacks, and reported shutdown refusal."
         },
         {
           "date": "2026-07-28",

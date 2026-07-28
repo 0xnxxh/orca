@@ -861,6 +861,16 @@ function targetScopedWorkspaceHydrationPatch(
       ...(session.tabsByWorktree[workspaceKey] ?? []).map((tab) => tab.id)
     ])
   )
+  const retainedTargetTabIds = new Set(
+    [...workspaceKeys].flatMap((workspaceKey) =>
+      (hydrated.tabsByWorktree[workspaceKey] ?? []).map((tab) => tab.id)
+    )
+  )
+  const deletedTargetTabIds = new Set(
+    [...workspaceKeys]
+      .flatMap((workspaceKey) => (state.tabsByWorktree[workspaceKey] ?? []).map((tab) => tab.id))
+      .filter((tabId) => !retainedTargetTabIds.has(tabId))
+  )
   const pendingReconnectPtyIdByTabId = replaceHydratedRecordKeys(
     state.pendingReconnectPtyIdByTabId,
     {},
@@ -938,6 +948,21 @@ function targetScopedWorkspaceHydrationPatch(
     ),
     pendingReconnectPtyIdByTabId,
     everActivatedWorktreeIds,
+    directSshPaneRetryByTabId: replaceHydratedRecordKeys(
+      state.directSshPaneRetryByTabId,
+      {},
+      deletedTargetTabIds
+    ),
+    directSshLivePtyBindingByTabId: replaceHydratedRecordKeys(
+      state.directSshLivePtyBindingByTabId,
+      {},
+      deletedTargetTabIds
+    ),
+    directSshPaneRetryHistoryByTabId: replaceHydratedRecordKeys(
+      state.directSshPaneRetryHistoryByTabId,
+      {},
+      deletedTargetTabIds
+    ),
     ptyIdsByTabId: replaceHydratedRecordKeys(
       state.ptyIdsByTabId,
       hydrated.ptyIdsByTabId,

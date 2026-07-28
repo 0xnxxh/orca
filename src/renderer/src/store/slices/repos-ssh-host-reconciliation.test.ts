@@ -337,6 +337,42 @@ describe('SSH repo host reconciliation', () => {
     expect(store.getState().detectedWorktreesByRepo[repoId]).toBeUndefined()
   })
 
+  it.each([
+    ['contradictory', { ...directSshRepo('ssh-old'), connectionId: 'ssh-new' }],
+    [
+      'malformed',
+      { ...directSshRepo('ssh-old'), executionHostId: 'ssh:%' as Repo['executionHostId'] }
+    ],
+    ['empty explicit host', { ...directSshRepo('ssh-old'), executionHostId: '' }],
+    ['empty connection', { ...directSshRepo('ssh-old'), connectionId: ' ' }]
+  ])('rejects a late worktree response when repo owner provenance becomes %s', async (_, owner) => {
+    const staleWorktree = directSshWorktree('ssh-old', 'stale')
+    const oldAuthority = directSshAuthority('ssh-old')
+    let providerRequest!: ListDetectedWorktreesArgs
+    let resolveOldWorktrees!: (value: HostQualifiedDetectedWorktreeResult) => void
+    const oldWorktrees = new Promise<HostQualifiedDetectedWorktreeResult>((resolve) => {
+      resolveOldWorktrees = resolve
+    })
+    worktreesListDetected.mockImplementationOnce((request: ListDetectedWorktreesArgs) => {
+      providerRequest = request
+      return oldWorktrees
+    })
+    const store = createTestStore()
+    store.setState({
+      repos: [directSshRepo('ssh-old')],
+      sshConnectionStates: new Map([['ssh-old', connectedSshState(oldAuthority)]])
+    })
+
+    const staleFetch = store.getState().fetchWorktrees(repoId)
+    await vi.waitFor(() => expect(worktreesListDetected).toHaveBeenCalledOnce())
+    store.setState({ repos: [owner as Repo] })
+    resolveOldWorktrees(qualifiedWorktreeResult(providerRequest, staleWorktree))
+    await expect(staleFetch).resolves.toBe(false)
+
+    expect(store.getState().worktreesByRepo[repoId]).toBeUndefined()
+    expect(store.getState().detectedWorktreesByRepo[repoId]).toBeUndefined()
+  })
+
   it('preserves a forgettable SSH ghost when a local repo shares its UUID', async () => {
     const localRepo: Repo = {
       ...directSshRepo('ssh-old'),

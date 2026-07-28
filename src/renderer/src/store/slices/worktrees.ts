@@ -442,7 +442,30 @@ function repoHasExactlyOneExecutionHostOwner(
   if (repoOwners.length === 0) {
     return ownerWasMissingAtStart
   }
-  return repoOwners.filter((repo) => getRepoExecutionHostId(repo) === hostId).length === 1
+  const ownerHostIds = repoOwners.map((repo) => {
+    const hasExplicitHost = repo.executionHostId !== null && repo.executionHostId !== undefined
+    const explicitHost = hasExplicitHost ? parseExecutionHostId(repo.executionHostId) : null
+    if (hasExplicitHost && !explicitHost) {
+      return null
+    }
+    const rawConnectionId = repo.connectionId
+    const hasConnection = rawConnectionId !== null && rawConnectionId !== undefined
+    const connectionId = hasConnection ? rawConnectionId.trim() : null
+    if (hasConnection && !connectionId) {
+      return null
+    }
+    if (!connectionId || explicitHost?.kind === 'runtime') {
+      return explicitHost?.id ?? LOCAL_EXECUTION_HOST_ID
+    }
+    if (explicitHost && explicitHost.id !== toSshExecutionHostId(connectionId)) {
+      return null
+    }
+    return explicitHost?.id ?? toSshExecutionHostId(connectionId)
+  })
+  return (
+    ownerHostIds.every((ownerHostId) => ownerHostId !== null) &&
+    ownerHostIds.filter((ownerHostId) => ownerHostId === hostId).length === 1
+  )
 }
 
 function toVisibleWorktrees(

@@ -93,6 +93,7 @@ globalThis.window = { api: mockApi }
 
 import type { WorkspaceSessionState } from '../../../../shared/types'
 import type { SshProviderEpoch } from '../../../../shared/ssh-types'
+import type { DirectSshPaneRetryAttemptId } from './direct-ssh-terminal-recovery-types'
 import {
   FLOATING_TERMINAL_WORKTREE_ID,
   getDefaultWorkspaceSession
@@ -712,12 +713,15 @@ describe('hydrateWorkspaceSession', () => {
     expect(canGoBackWorktreeHistory(store.getState())).toBe(true)
   })
 
-  it('hydrates and reconnects one SSH target without mutating sibling or runtime state', async () => {
+  it('hydrates and reconnects one SSH target without mutating unrelated state', async () => {
     const store = createTestStore()
     const targetWorktreeId = 'repo-a::/target'
     const siblingWorktreeId = 'repo-b::/sibling'
+    const localWorktreeId = 'repo-local::/local'
     const runtimeWorktreeId = 'repo-runtime::/runtime'
+    const folderWorktreeId = folderWorkspaceKey('folder-1')
     const targetTab = makeTab({ id: 'tab-target', worktreeId: targetWorktreeId, ptyId: null })
+    const deletedTargetTab = makeTab({ id: 'tab-target-deleted', worktreeId: targetWorktreeId })
     const siblingTab = makeTab({
       id: 'tab-sibling',
       worktreeId: siblingWorktreeId,
@@ -728,14 +732,30 @@ describe('hydrateWorkspaceSession', () => {
       worktreeId: runtimeWorktreeId,
       ptyId: 'runtime:env@@pty-runtime'
     })
+    const localTab = makeTab({ id: 'tab-local', worktreeId: localWorktreeId, ptyId: null })
+    const folderTab = makeTab({ id: 'tab-folder', worktreeId: folderWorktreeId, ptyId: null })
     const siblingTabs = [siblingTab]
     const runtimeTabs = [runtimeTab]
+    const [localTabs, folderTabs] = [[localTab], [folderTab]]
     const runtimeOwners = { [runtimeWorktreeId]: 'runtime:env' as const }
     const authority = {
       targetId: 'target-a',
       providerEpoch: 'epoch-a' as SshProviderEpoch,
       connectionGeneration: 7
     }
+    const ledgerTabs = [targetTab, deletedTargetTab, siblingTab]
+    const retry = {
+      attemptId: 'attempt' as DirectSshPaneRetryAttemptId,
+      authority,
+      tabGeneration: 0,
+      startedAt: 0
+    }
+    const retryByTabId = Object.fromEntries(ledgerTabs.map((tab) => [tab.id, retry]))
+    const liveBinding = { ...retry, ptyId: 'ssh:target-a@@pty-ledger' }
+    const liveByTabId = Object.fromEntries(ledgerTabs.map((tab) => [tab.id, liveBinding]))
+    const historyByTabId = Object.fromEntries(
+      ledgerTabs.map((tab) => [tab.id, { authority, attemptedAt: [0] }])
+    )
     seedStore(store, {
       workspaceSessionReady: true,
       repos: [
@@ -747,9 +767,11 @@ describe('hydrateWorkspaceSession', () => {
         'repo-b': [makeWorktree({ id: siblingWorktreeId, repoId: 'repo-b', path: '/sibling' })]
       },
       tabsByWorktree: {
-        [targetWorktreeId]: [targetTab],
+        [targetWorktreeId]: [targetTab, deletedTargetTab],
         [siblingWorktreeId]: siblingTabs,
-        [runtimeWorktreeId]: runtimeTabs
+        [localWorktreeId]: localTabs,
+        [runtimeWorktreeId]: runtimeTabs,
+        [folderWorktreeId]: folderTabs
       },
       ptyIdsByTabId: {
         [targetTab.id]: [],
@@ -760,6 +782,9 @@ describe('hydrateWorkspaceSession', () => {
       activeWorktreeId: siblingWorktreeId,
       activeTabId: siblingTab.id,
       restoredRuntimeHostIdByWorkspaceSessionKey: runtimeOwners,
+      directSshPaneRetryByTabId: retryByTabId,
+      directSshLivePtyBindingByTabId: liveByTabId,
+      directSshPaneRetryHistoryByTabId: historyByTabId,
       sshConnectionStates: new Map([
         [
           authority.targetId,
@@ -801,7 +826,9 @@ describe('hydrateWorkspaceSession', () => {
     })
 
     expect(store.getState().tabsByWorktree[siblingWorktreeId]).toBe(siblingTabs)
+    expect(store.getState().tabsByWorktree[localWorktreeId]).toBe(localTabs)
     expect(store.getState().tabsByWorktree[runtimeWorktreeId]).toBe(runtimeTabs)
+    expect(store.getState().tabsByWorktree[folderWorktreeId]).toBe(folderTabs)
     expect(store.getState().ptyIdsByTabId[siblingTab.id]).toEqual([siblingTab.ptyId])
     expect(store.getState().ptyIdsByTabId[runtimeTab.id]).toEqual([runtimeTab.ptyId])
     expect(store.getState().restoredRuntimeHostIdByWorkspaceSessionKey).toBe(runtimeOwners)
@@ -809,6 +836,19 @@ describe('hydrateWorkspaceSession', () => {
     expect(store.getState().pendingReconnectPtyIdByTabId).toEqual({
       [targetTab.id]: 'ssh:target-a@@pty-a'
     })
+    const retainedLedgerTabIds = ledgerTabs
+      .filter((tab) => tab.id !== deletedTargetTab.id)
+      .map((tab) => tab.id)
+      .sort()
+    expect(Object.keys(store.getState().directSshPaneRetryByTabId).sort()).toEqual(
+      retainedLedgerTabIds
+    )
+    expect(Object.keys(store.getState().directSshLivePtyBindingByTabId).sort()).toEqual(
+      retainedLedgerTabIds
+    )
+    expect(Object.keys(store.getState().directSshPaneRetryHistoryByTabId).sort()).toEqual(
+      retainedLedgerTabIds
+    )
 
     await store.getState().reconnectPersistedTerminals(undefined, {
       directSshAuthority: authority,
