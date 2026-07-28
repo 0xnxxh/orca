@@ -50,6 +50,7 @@ describe('Session History session drag data', () => {
       command: "cd '/repo' && claude --resume session-1",
       sessionFilePath: '/Users/ada/.claude/projects/-repo/session-1.jsonl',
       codexHome: '/Users/ada/Library/Application Support/orca/codex-runtime-home/home',
+      sessionCwd: '/repo',
       env: { ANTHROPIC_BASE_URL: 'https://claude.example.test' },
       envToDelete: ['CODEX_HOME', 'ORCA_CODEX_HOME'],
       launchConfig: {

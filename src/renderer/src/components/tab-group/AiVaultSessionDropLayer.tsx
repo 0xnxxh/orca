@@ -10,15 +10,21 @@ import {
   AI_VAULT_SESSION_DRAG_START_EVENT,
   clearAiVaultSessionDragData,
   hasAiVaultSessionDragData,
-  readAiVaultSessionDragData
+  readAiVaultSessionDragData,
+  type AiVaultSessionDragPayload
 } from '@/lib/ai-vault-session-drag'
-import { getAiVaultAgentProviderSession } from '@/lib/ai-vault-resume-command'
+import {
+  buildAiVaultResumeStartupForWorktree,
+  getAiVaultAgentProviderSession,
+  type AiVaultResumeStartup
+} from '@/lib/ai-vault-resume-command'
 import { launchAiVaultSessionInNewTab } from '@/lib/launch-ai-vault-session'
+import { aiVaultSessionNeedsResumePreparation } from '@/lib/ai-vault-session-resume-preparation'
 import { useAppStore } from '@/store'
 import { resolveDropZone } from './tab-drop-zone'
 import type { TabDropZone } from './useTabDragSplit'
 import { translate } from '@/i18n/i18n'
-import { isLegacySharedCodexHome } from '../../../../shared/ai-vault-resume-preparation'
+import type { AiVaultPrepareSessionResumeResult } from '../../../../shared/ai-vault-resume-preparation'
 
 type PaneDropTarget = {
   groupId: string
@@ -48,6 +54,30 @@ function getZoneOverlayStyle(rect: DOMRect, layerRect: DOMRect, zone: TabDropZon
 
 function containsPoint(rect: DOMRect, x: number, y: number): boolean {
   return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+}
+
+function buildRepinnedDropStartup(
+  payload: AiVaultSessionDragPayload,
+  substituteCodexHome: string,
+  worktreeId: string
+): AiVaultResumeStartup | null {
+  if (!payload.sessionCwd || !payload.sessionFilePath) {
+    return null
+  }
+  const state = useAppStore.getState()
+  return buildAiVaultResumeStartupForWorktree({
+    state,
+    worktreeId,
+    session: {
+      agent: payload.agent,
+      sessionId: payload.sessionId,
+      cwd: payload.sessionCwd,
+      codexHome: substituteCodexHome,
+      executionHostId: payload.sessionExecutionHostId,
+      filePath: payload.sessionFilePath
+    },
+    commandOverride: state.settings?.agentCmdOverrides?.[payload.agent]
+  })
 }
 
 function resolvePaneDropTarget(
@@ -210,21 +240,32 @@ export default function AiVaultSessionDropLayer({
         )
       }
       const preparation =
-        payload.agent === 'codex' &&
-        isLegacySharedCodexHome(payload.codexHome ?? null) &&
         payload.sessionFilePath &&
         payload.sessionExecutionHostId &&
-        payload.codexHome !== undefined
+        payload.codexHome !== undefined &&
+        aiVaultSessionNeedsResumePreparation({
+          agent: payload.agent,
+          codexHome: payload.codexHome,
+          executionHostId: payload.sessionExecutionHostId
+        })
           ? window.api.aiVault.prepareSessionResume({
               agent: payload.agent,
               filePath: payload.sessionFilePath,
               executionHostId: payload.sessionExecutionHostId,
               codexHome: payload.codexHome
             })
-          : Promise.resolve({ useRealCodexHome: false })
+          : Promise.resolve<AiVaultPrepareSessionResumeResult>({ useRealCodexHome: false })
       void preparation
         .then((result) => {
-          const startup = result.useRealCodexHome ? payload.realHomeStartup : payload
+          const startup = result.useRealCodexHome
+            ? payload.realHomeStartup
+            : result.substituteCodexHome
+              ? // Why: the drag payload's command pins the recorded home, so a
+                // repin must rebuild; without a payload cwd the prebuilt
+                // command still resumes, just without the repin.
+                (buildRepinnedDropStartup(payload, result.substituteCodexHome, worktreeId) ??
+                payload)
+              : payload
           if (!startup) {
             throw new Error('Orca could not prepare this legacy Codex session. Retry resume.')
           }

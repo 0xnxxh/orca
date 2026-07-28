@@ -18,6 +18,9 @@ export type AiVaultSessionDragPayload = {
   sessionFilePath?: string
   sessionExecutionHostId?: ExecutionHostId
   codexHome?: string | null
+  // Why: a per-account repin at drop time rebuilds the startup, which needs the
+  // session cwd; absent (older payloads) the drop falls back to the prebuilt command.
+  sessionCwd?: string
   // Why: drag/drop resume must preserve planned env mutations/default args, not just the command.
   env?: Record<string, string>
   envToDelete?: string[]
@@ -91,6 +94,7 @@ function isSerializedPayload(value: unknown): value is SerializedAiVaultSessionD
     (payload.codexHome === undefined ||
       payload.codexHome === null ||
       isNonEmptyString(payload.codexHome)) &&
+    (payload.sessionCwd === undefined || isNonEmptyString(payload.sessionCwd)) &&
     (payload.env === undefined || isStringRecord(payload.env)) &&
     (payload.envToDelete === undefined || isEnvDeletionList(payload.envToDelete)) &&
     (payload.launchConfig === undefined || isLaunchConfig(payload.launchConfig)) &&
@@ -163,6 +167,7 @@ export function readAiVaultSessionDragData(
       sessionFilePath,
       sessionExecutionHostId,
       codexHome,
+      sessionCwd,
       env,
       envToDelete,
       launchConfig,
@@ -176,6 +181,7 @@ export function readAiVaultSessionDragData(
       ...(sessionFilePath ? { sessionFilePath } : {}),
       ...(sessionExecutionHostId ? { sessionExecutionHostId } : {}),
       ...(codexHome !== undefined ? { codexHome } : {}),
+      ...(sessionCwd ? { sessionCwd } : {}),
       ...(env ? { env } : {}),
       ...(envToDelete ? { envToDelete } : {}),
       ...(launchConfig ? { launchConfig } : {}),
