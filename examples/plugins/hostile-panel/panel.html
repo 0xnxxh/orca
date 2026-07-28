@@ -32,7 +32,10 @@
         document.title = 'probes:' + results.children.length
       }
       function markNavigationInvocation(name) {
-        Object.defineProperty(document, '__orcaNavigationProbeInvoked:' + name, { value: true })
+        var marker = document.createElement('meta')
+        marker.dataset.navigationProbeInvoked = name
+        marker.content = 'true'
+        document.head.appendChild(marker)
       }
 
       // Probe 1: fetch() exfiltration — must be blocked by connect-src 'none'.
