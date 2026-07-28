@@ -8,23 +8,23 @@ import {
   type TerminalColdParkPolicyOverrides
 } from './terminal-hidden-view-parking'
 
-// Why these sizes (C1): a retained hidden pane costs a measured ~2.5MB of V8
-// heap at the 5k-row default scrollback and ~19MB at 50k (plus per-pane
-// queues), not the ~4-5MB per WORKTREE the warm cap assumed — so un-parkable
-// worktrees (pty classes parking can't restore) get a retention budget: at most
-// 12 stay mounted while hidden and none past 45 minutes, evicted
-// least-recently-hidden first via force-park. The TTL is absolute: the
-// last-active exemption bounds the cap, never the clock.
+// Why these sizes: a retained hidden pane costs a measured ~2.5MB of V8 heap
+// at the 5k-row default scrollback and ~19MB at 50k (plus per-pane queues),
+// not the ~4-5MB per WORKTREE the warm cap assumed — so un-parkable worktrees
+// (pty classes parking can't restore) get a retention budget: at most 12 stay
+// mounted while hidden and none past 45 minutes, evicted least-recently-hidden
+// first via force-park. The TTL is absolute: the last-active exemption bounds
+// the cap, never the clock.
 // NOT covered by this bound: eviction-exempt TABS (isEvictionExemptTerminalPty
 // — live local ptys a remount would respawn, orphaning the shell). Their panes
 // stay mounted through a force-park at any age, so a fleet-wide daemon
 // fail-open can leave the budget freeing nothing; Terminal.tsx logs that
 // degenerate case rather than pretending the bound held.
 // Also NOT covered: per-pane scrollback size. Hidden-pane scrollback demotion
-// was intentionally removed (C1 slice C) — the bound is worktree count + TTL
-// only, so a spared worktree (last-active, exempt tabs) can hold full 50k-row
-// scrollback indefinitely. Accepted tradeoff: high-scrollback users rely on
-// unmount eviction, not demotion.
+// was intentionally removed — the bound is worktree count + TTL only, so a
+// spared worktree (last-active, exempt tabs) can hold full 50k-row scrollback
+// indefinitely. Accepted tradeoff: high-scrollback users rely on unmount
+// eviction, not demotion.
 export const TERMINAL_HIDDEN_WORKTREE_RETENTION_LIMIT = 12
 export const TERMINAL_HIDDEN_WORKTREE_RETENTION_TTL_MS = 45 * 60_000
 
