@@ -935,8 +935,8 @@ copy.
       and SSH cases. A selected 2,808,983-byte simulator photo reached a
       shell-owned host temp file. The exact cached app also passes real iOS
       first-use denial and post-grant revocation without terminal output or a
-      hosted page-text marker. Selected document upload also passes. Interruption
-      and physical-device evidence remain device/topology validation work.
+      hosted page-text marker. Selected document upload and picker interruption
+      also pass. Physical-device evidence remains device/topology validation work.
       Camera remains part of the existing native QR-pairing route; there is no
       current attachment-camera action to migrate.
 - [~] Implement draft and session persistence with host/build isolation.
@@ -1355,6 +1355,9 @@ copy.
   Session/workspace while rotating the private origin and opaque workspace
   authority. Attach after revocation shows `Photo permission denied`, leaves
   terminal output unchanged, and exposes no privileged page markers.
+  Backgrounding while the real picker is open preserves the picker; foreground
+  return exposes the same Cancel control, and explicit cancellation returns to
+  the same Session with private origin and opaque authority retained.
   Physical-device and exact-app live native-chat image evidence remain. Camera
   is currently native QR pairing only; the unchanged attachment UI has no
   camera action. On the Pixel 9 Pro API 36 emulator, the unchanged Attach
@@ -1431,8 +1434,10 @@ copy.
   terminations: the native Settings handoff restores the same semantic
   Session/workspace, private origin and opaque workspace authority rotate after
   each restart, the existing denial toast appears, terminal output stays
-  unchanged, and both isolation probes pass. Physical-device behavior remains
-  open.
+  unchanged, and both isolation probes pass. The real iOS picker also survives
+  Home/foreground, then explicit Cancel returns to the same Session without
+  rotating private origin or opaque workspace authority. Physical-device
+  behavior remains open.
 - [~] Verify every privileged native action has the intended user mediation.
   Clipboard writes, external links, settings handoff, account selection/reset,
   workspace creation, agent-history resume, image picking, speech control, and
@@ -2076,6 +2081,7 @@ copy.
 | 2026-07-28 | iOS Photos denial       | Reset Orca's Photos permission before launch, tapped unchanged Attach, denied the real system prompt, and inspected the hosted Session plus Desktop terminal                                                                | Passed automatically on iPhone 17 Pro; existing toast appeared, terminal output stayed unchanged, no image/path marker appeared in page text, and both isolation probes passed                    |
 | 2026-07-28 | Photos denial tests     | Full mobile suite, both typechecks, mobile/RNW lint, changed-file formatting, max-lines, reliability, RNW package verification, and diff hygiene                                                                            | Passed; 564 files / 3,331 tests with 2 expected skips; focused device-input harness covers 3 files / 9 tests                                                                                      |
 | 2026-07-28 | iOS Photos revocation   | Granted Photos, cancelled the real picker, revoked Photos, and recovered the hosted route after iOS terminated the app for both transitions                                                                                 | Passed on iPhone 17 Pro; semantic Session/workspace retained, origin and opaque authority rotated twice, denial and terminal/page isolation held, and network/navigation isolation passed         |
+| 2026-07-28 | iOS picker interruption | Backgrounded from the real Photos picker, foregrounded Orca, observed the picker resume, cancelled explicitly, and continued through revocation                                                                             | Passed on iPhone 17 Pro; Session, private origin, and opaque authority stayed unchanged across interruption, with terminal/page and both isolation probes clean                                   |
 | 2026-07-27 | Android audio defect    | Queued 64,000 PCM bytes through the linked native module, then paused and resumed during playback                                                                                                                           | Reproduced; the original engine wrote only 8,730 bytes because a pause-induced zero write discarded the tail                                                                                      |
 | 2026-07-27 | Android audio repair    | Partial-write drain, pause gate, zero-progress retry, cancellation, and invalid-result Kotlin tests; Debug APK rebuild and Release Kotlin compile                                                                           | Passed; 75 unit-test tasks, 571 Debug assembly tasks, and 367 Release compile tasks                                                                                                               |
 | 2026-07-27 | Android audio E2E       | Reinstalled the repaired Debug APK and probed `ExpoTwoWayAudio` through the live Hermes inspector during Pause/Resume/Stop                                                                                                  | Passed; 64,000 queued bytes equaled 64,000 written bytes, peak output volume was 0.6661, and `isPlaying` was false after Stop                                                                     |
@@ -2531,4 +2537,6 @@ copy.
 | 2026-07-28 | Complete | Cached iPhone 17 Pro / iOS 26.5 grants Photos, opens and cancels the real picker, revokes the grant, and survives both platform process terminations through the existing native Settings handoff. The same semantic Session/workspace returns while private origin and opaque authority rotate after each restart; revoked Attach shows the existing denial toast with unchanged terminal output and no privileged page markers.       |
 | 2026-07-28 | Complete | The focused `--photos-revocation-only` journey passes network and navigation isolation after recovery. The full security journey retains the same stage, and contract coverage requires both recovery documents and optional evidence reporting to remain valid when unrelated stages are skipped.                                                                                                                                      |
 | 2026-07-28 | Complete | Photos-revocation validation passes 568 mobile files / 3,366 tests with 2 expected skips, both typechecks and lints, changed-file formatting, 55 reliability gates, max-lines, package verification, and diff hygiene. RNW remains `9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`: 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes.                                                                        |
+| 2026-07-28 | Complete | The exact iPhone 17 Pro / iOS 26.5 Photos picker remains presented across Home/foreground. Explicit Cancel returns to the same hosted Session while private origin and opaque workspace authority remain unchanged; the journey then completes post-grant revocation, denial, terminal/page isolation, and network/navigation isolation.                                                                                                |
+| 2026-07-28 | Complete | Picker-interruption validation passes 568 mobile files / 3,371 tests with 2 expected skips, both typechecks and lints, changed-file formatting, 55 reliability gates, max-lines, package verification, and diff hygiene. RNW remains `9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`: 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes.                                                                      |
 | 2026-07-28 | Next     | Complete the remaining parity inventory and cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                  |

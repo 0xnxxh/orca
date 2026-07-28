@@ -1,5 +1,6 @@
 import {
   tapHostedIosAccessibilityControl,
+  tapHostedIosAccessibilityControlAtLastOccurrence,
   waitForHostedIosAccessibilityLabelToDisappear,
   waitForHostedIosAccessibilityControlMatch
 } from './hosted-ios-emulator-accessibility.mjs'
@@ -18,7 +19,8 @@ export async function openHostedIosHybridRoute(
   timeoutMs,
   waitForControl = waitForHostedIosAccessibilityControlMatch,
   tapControl = tapHostedIosAccessibilityControl,
-  waitForLabelToDisappear = waitForHostedIosAccessibilityLabelToDisappear
+  waitForLabelToDisappear = waitForHostedIosAccessibilityLabelToDisappear,
+  tapLastControl = tapHostedIosAccessibilityControlAtLastOccurrence
 ) {
   const deadline = Date.now() + timeoutMs
   for (let transition = 0; transition < NATIVE_ROUTE_CONTROLS.length; transition += 1) {
@@ -29,7 +31,8 @@ export async function openHostedIosHybridRoute(
       control.label,
       deadline,
       tapControl,
-      waitForLabelToDisappear
+      waitForLabelToDisappear,
+      tapLastControl
     )
     if (control.label === 'Open settings') {
       await tapUntilControlLeaves(
@@ -37,7 +40,8 @@ export async function openHostedIosHybridRoute(
         'Open hybrid workspace UI',
         deadline,
         tapControl,
-        waitForLabelToDisappear
+        waitForLabelToDisappear,
+        tapLastControl
       )
       return
     }
@@ -50,18 +54,18 @@ async function tapUntilControlLeaves(
   label,
   deadline,
   tapControl,
-  waitForLabelToDisappear
+  waitForLabelToDisappear,
+  tapLastControl
 ) {
-  let lastError = new Error(`${label} did not leave after activation`)
   for (let attempt = 0; attempt < 3; attempt++) {
     const remainingMs = Math.max(1_000, deadline - Date.now())
     await tapControl(emulator, label, remainingMs)
     try {
       await waitForLabelToDisappear(emulator, label, Math.min(remainingMs, 5_000))
       return
-    } catch (error) {
-      lastError = error
-    }
+    } catch {}
   }
-  throw lastError
+  const remainingMs = Math.max(1_000, deadline - Date.now())
+  await tapLastControl(emulator, label, remainingMs)
+  await waitForLabelToDisappear(emulator, label, Math.min(remainingMs, 5_000))
 }

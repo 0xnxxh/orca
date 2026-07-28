@@ -145,6 +145,13 @@ unchanged Attach shows `Photo permission denied`, Desktop terminal output stays
 unchanged, no privileged marker enters page text, and the network/navigation
 isolation probes pass.
 
+The same focused journey now covers picker interruption. Sending the real
+Photos picker to Home and foregrounding Orca resumes that picker rather than
+cancelling it. Explicit Cancel returns to the same hosted Session with the
+private origin and opaque workspace authority retained. The journey then
+completes revocation with unchanged terminal output, no privileged page marker,
+and both isolation probes passing.
+
 A focused exact-app iPhone 17 Pro / iOS 26.5 run now also copies the existing
 48×48 PNG through Photos, accepts the real iOS paste privacy prompt from the
 unchanged Paste control, and requires a shell-owned host temp path in the

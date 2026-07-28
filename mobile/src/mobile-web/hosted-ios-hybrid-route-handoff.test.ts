@@ -85,4 +85,31 @@ describe('hosted iOS hybrid route handoff', () => {
       'Open hybrid workspace UI'
     ])
   })
+
+  it('falls back to the last matching native control', async () => {
+    const emulator = { deviceUdid: 'simulator' }
+    const waitForControl = vi.fn().mockResolvedValue({ label: 'Back to hosts' })
+    const tapControl = vi.fn().mockResolvedValue({ x: 0.5, y: 0.5 })
+    const tapLastControl = vi.fn().mockResolvedValue({ x: 0.5, y: 0.5 })
+    const waitForLabelToDisappear = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('still visible'))
+      .mockRejectedValueOnce(new Error('still visible'))
+      .mockRejectedValueOnce(new Error('still visible'))
+      .mockResolvedValue(undefined)
+
+    await expect(
+      openHostedIosHybridRoute(
+        emulator,
+        10_000,
+        waitForControl,
+        tapControl,
+        waitForLabelToDisappear,
+        tapLastControl
+      )
+    ).rejects.toThrow('Could not reach native Settings')
+
+    expect(tapControl).toHaveBeenCalledTimes(8)
+    expect(tapLastControl).toHaveBeenCalledOnce()
+  })
 })

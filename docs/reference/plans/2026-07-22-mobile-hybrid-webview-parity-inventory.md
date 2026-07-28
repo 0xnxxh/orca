@@ -429,8 +429,9 @@ hosted page text. A focused exact-app gate now grants and revokes Photos across
 the two iOS process terminations, restores the same semantic Session/workspace
 through the native Settings handoff, rotates private origin and opaque authority
 after each restart, and preserves denial, terminal/page isolation, and both
-network/navigation probes. Interruption and physical-device evidence remain
-open.
+network/navigation probes. The real picker also resumes after Home/foreground;
+explicit Cancel returns to the same Session with private origin and opaque
+authority retained. Physical-device evidence remains open.
 Camera is native QR pairing only; the existing attachment UI has no camera
 action. The live run did not observe terminal Enter execution after the photo
 upload. Long-pressing the same unchanged control opens the native iOS document
@@ -558,9 +559,9 @@ a protocol-compatible local cell. The UX-state and accessibility/input
 ownership inventories are now frozen, including accurate incompatible-build
 fallback copy and shell alert/live-region semantics. Complete live
 waiting/loading/error, ambiguous-delivery, file-opening, production cloud Relay
-with realistic latency/reconnect. Complete interruption and physical-device
-attachment evidence after the selected-photo, selected-document, first-use
-denial, and post-grant revocation paths proven on iOS Simulator.
+with realistic latency/reconnect. Complete physical-device attachment evidence
+after the selected-photo, selected-document, first-use denial, post-grant
+revocation, and picker-interruption paths proven on iOS Simulator.
 Keep camera validation scoped to the existing native QR-pairing route rather
 than inventing an attachment action. Add
 deterministic native-versus-hosted Tasks and session fixtures beyond the

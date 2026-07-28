@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  backgroundHostedIosMobileApp,
   grantHostedIosPhotosPermission,
   launchHostedIosMobileApp,
   revokeHostedIosPhotosPermission,
@@ -34,6 +35,7 @@ const revokedDocument = {
 function createOperations() {
   return {
     activateWorkspace: vi.fn().mockResolvedValue(undefined),
+    backgroundApp: vi.fn().mockResolvedValue(undefined),
     dismissDeveloperMenu: vi.fn().mockResolvedValue(false),
     grantPermission: vi.fn().mockResolvedValue(undefined),
     launchApp: vi.fn().mockResolvedValue(undefined),
@@ -50,6 +52,7 @@ function createOperations() {
     tapPoint: vi.fn().mockResolvedValue(undefined),
     wait: vi.fn().mockResolvedValue(undefined),
     waitForControl: vi.fn().mockResolvedValue({ label: 'Cancel', x: 0.9, y: 0.1 }),
+    waitForPickerDismissal: vi.fn().mockResolvedValue(undefined),
     waitForDocument: vi
       .fn()
       .mockResolvedValueOnce(grantedDocument)
@@ -90,6 +93,14 @@ describe('hosted iOS Photos permission revocation', () => {
     ])
   })
 
+  it('backgrounds through the emulator Home button', async () => {
+    const runCommand = vi.fn().mockResolvedValue(undefined)
+
+    await backgroundHostedIosMobileApp(args.emulator, runCommand)
+
+    expect(runCommand).toHaveBeenCalledWith(args.emulator, ['button', 'home'])
+  })
+
   it('opens under a grant, revokes, and denies without changing terminal output', async () => {
     const operations = createOperations()
 
@@ -100,7 +111,11 @@ describe('hosted iOS Photos permission revocation', () => {
         grantPermissionPrompt: 'not-shown',
         grantSessionRecovery: 'session-retained',
         grantWorkspaceAuthorityRotated: true,
+        interruptionPrivateOrigin: 'retained',
+        interruptionSessionRecovery: 'session-retained',
+        interruptionWorkspaceAuthority: 'retained',
         permissionState: 'revoked-after-grant',
+        pickerInterruption: 'resumed-then-cancelled',
         pickerCancelControl: { label: 'Cancel', x: 0.9, y: 0.1 },
         privilegedPageMarkers: 'absent',
         revokedAttachControlPoint: { x: 0.75, y: 0.9 },
@@ -109,6 +124,7 @@ describe('hosted iOS Photos permission revocation', () => {
         revocationWorkspaceAuthorityRotated: true,
         route: revokedDocument.href,
         routeRestored: true,
+        resumedPickerControl: { label: 'Cancel', x: 0.9, y: 0.1 },
         terminalOutput: 'unchanged',
         toast: 'Photo permission denied'
       },
@@ -116,8 +132,11 @@ describe('hosted iOS Photos permission revocation', () => {
     })
     expect(operations.grantPermission).toHaveBeenCalledWith('simulator')
     expect(operations.revokePermission).toHaveBeenCalledWith('simulator')
-    expect(operations.launchApp).toHaveBeenCalledTimes(2)
-    expect(operations.dismissDeveloperMenu).toHaveBeenCalledTimes(2)
+    expect(operations.backgroundApp).toHaveBeenCalledOnce()
+    expect(operations.backgroundApp).toHaveBeenCalledWith(args.emulator)
+    expect(operations.waitForPickerDismissal).toHaveBeenCalledWith(args.emulator, 'Cancel', 5_000)
+    expect(operations.launchApp).toHaveBeenCalledTimes(3)
+    expect(operations.dismissDeveloperMenu).toHaveBeenCalledTimes(3)
     expect(operations.tapControl).toHaveBeenNthCalledWith(
       1,
       args.emulator,
@@ -135,6 +154,7 @@ describe('hosted iOS Photos permission revocation', () => {
       ['Cancel', 'Allow Full Access'],
       10_000
     )
+    expect(operations.waitForControl).toHaveBeenCalledWith(args.emulator, ['Cancel'], 5_000)
     expect(operations.readTerminal).toHaveBeenCalledTimes(2)
   })
 
@@ -168,6 +188,7 @@ describe('hosted iOS Photos permission revocation', () => {
       x: 0.9,
       y: 0.1
     })
+    expect(operations.backgroundApp).toHaveBeenCalledWith(args.emulator)
   })
 
   it('rejects a private origin reused across the grant restart', async () => {
@@ -192,6 +213,61 @@ describe('hosted iOS Photos permission revocation', () => {
     )
   })
 
+  it('rejects private origin replacement across picker interruption', async () => {
+    const operations = createOperations()
+    const replacedOrigin = {
+      href: grantedDocument.href.replace('://grant-restart/', '://interruption-restart/')
+    }
+    operations.waitForDocument
+      .mockReset()
+      .mockResolvedValueOnce(grantedDocument)
+      .mockResolvedValueOnce(replacedOrigin)
+
+    await expect(verifyHostedIosPhotoPermissionRevocation(args, operations)).rejects.toThrow(
+      'picker interruption authority did not match session-retained recovery'
+    )
+  })
+
+  it('rejects opaque authority replacement across picker interruption', async () => {
+    const operations = createOperations()
+    const replacedAuthority = {
+      href: grantedDocument.href.replace('/grant-workspace?', '/interrupted-workspace?')
+    }
+    operations.waitForDocument
+      .mockReset()
+      .mockResolvedValueOnce(grantedDocument)
+      .mockResolvedValueOnce(replacedAuthority)
+
+    await expect(verifyHostedIosPhotoPermissionRevocation(args, operations)).rejects.toThrow(
+      'picker interruption authority did not match session-retained recovery'
+    )
+  })
+
+  it('requires rotated authority when picker interruption needs route handoff', async () => {
+    const operations = createOperations()
+    const workspaceDocument = { href: 'orca-mobile-web://workspace/h/host' }
+    const interruptedDocument = {
+      href: grantedDocument.href
+        .replace('://grant-restart/', '://interruption-restart/')
+        .replace('/grant-workspace?', '/interrupted-workspace?')
+    }
+    operations.waitForDocument
+      .mockReset()
+      .mockResolvedValueOnce(grantedDocument)
+      .mockRejectedValueOnce(new Error('session not retained'))
+      .mockResolvedValueOnce(workspaceDocument)
+      .mockResolvedValueOnce(interruptedDocument)
+      .mockResolvedValueOnce(revokedDocument)
+
+    const result = await verifyHostedIosPhotoPermissionRevocation(args, operations)
+
+    expect(result.evidence).toMatchObject({
+      interruptionPrivateOrigin: 'rotated',
+      interruptionSessionRecovery: 'hybrid-route-handoff',
+      interruptionWorkspaceAuthority: 'rotated'
+    })
+  })
+
   it('reopens the experimental hybrid route after permission-triggered termination', async () => {
     const operations = createOperations()
     const workspaceDocument = { href: 'orca-mobile-web://workspace/h/host' }
@@ -209,6 +285,7 @@ describe('hosted iOS Photos permission revocation', () => {
 
     expect(result.evidence).toMatchObject({
       grantSessionRecovery: 'hybrid-route-handoff',
+      interruptionSessionRecovery: 'session-retained',
       revocationSessionRecovery: 'hybrid-route-handoff',
       routeRestored: true
     })

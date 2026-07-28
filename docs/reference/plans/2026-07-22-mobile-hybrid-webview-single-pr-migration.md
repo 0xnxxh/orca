@@ -715,9 +715,11 @@ through the native Settings handoff. Each recovery retained the same semantic
 Session/workspace while rotating the private origin and opaque workspace
 authority. Revoked Attach showed the existing denial toast, terminal output
 stayed unchanged, no privileged page marker appeared, and both isolation probes
-passed. Background interruption and physical-device evidence remain open.
-Camera is currently owned by the native QR-pairing route; the existing
-attachment UI has no camera action to migrate.
+passed. The real picker also remains presented across Home/foreground; explicit
+Cancel returns to the same Session while private origin and opaque authority
+remain unchanged. Physical-device evidence remains open. Camera is currently
+owned by the native QR-pairing route; the existing attachment UI has no camera
+action to migrate.
 
 The following persistence checkpoint leaves the existing native-chat composer
 unchanged and injects `HostSessionChatDraftOperations` below it. Native and

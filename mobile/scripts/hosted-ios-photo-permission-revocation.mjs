@@ -1,8 +1,10 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import {
+  runHostedIosEmulatorCommand,
   tapHostedIosAccessibilityControl,
   tapHostedIosPoint,
+  waitForHostedIosAccessibilityLabelToDisappear,
   waitForHostedIosAccessibilityControlMatch
 } from './hosted-ios-emulator-accessibility.mjs'
 import {
@@ -37,6 +39,13 @@ export async function launchHostedIosMobileApp(deviceUdid, runCommand = execFile
   await runCommand('xcrun', ['simctl', 'launch', deviceUdid, MOBILE_APP_BUNDLE_ID])
 }
 
+export async function backgroundHostedIosMobileApp(
+  emulator,
+  runCommand = runHostedIosEmulatorCommand
+) {
+  await runCommand(emulator, ['button', 'home'])
+}
+
 export async function verifyHostedIosPhotoPermissionRevocation(
   {
     deviceUdid,
@@ -55,12 +64,15 @@ export async function verifyHostedIosPhotoPermissionRevocation(
   const grantPermission = operations.grantPermission ?? grantHostedIosPhotosPermission
   const revokePermission = operations.revokePermission ?? revokeHostedIosPhotosPermission
   const launchApp = operations.launchApp ?? launchHostedIosMobileApp
+  const backgroundApp = operations.backgroundApp ?? backgroundHostedIosMobileApp
   const dismissDeveloperMenu =
     operations.dismissDeveloperMenu ?? dismissEmulatorDeveloperMenuIfPresent
   const openHybridRoute = operations.openHybridRoute ?? openHostedIosHybridRoute
   const activateWorkspace = operations.activateWorkspace ?? activateHostedWorkspaceRow
   const tapControl = operations.tapControl ?? tapHostedIosAccessibilityControl
   const waitForControl = operations.waitForControl ?? waitForHostedIosAccessibilityControlMatch
+  const waitForPickerDismissal =
+    operations.waitForPickerDismissal ?? waitForHostedIosAccessibilityLabelToDisappear
   const tapPoint = operations.tapPoint ?? tapHostedIosPoint
   const readState = operations.readState ?? readHostedWebViewState
   const waitForDocument = operations.waitForDocument ?? waitForVisibleHostedWebView
@@ -111,9 +123,40 @@ export async function verifyHostedIosPhotoPermissionRevocation(
     )
   }
   const pickerCancelControl = pickerControl
-  await tapPoint(emulator, pickerCancelControl)
-  activeSessionDocument = await waitForSessionDocument(discoveryUrl, timeoutMs, waitForDocument)
+  await backgroundApp(emulator)
+  await wait(500)
+  await launchApp(deviceUdid)
+  const resumedPickerControl = await waitForControl(
+    emulator,
+    PICKER_CANCEL_LABELS,
+    Math.min(timeoutMs, 5_000)
+  )
+  await tapPoint(emulator, resumedPickerControl)
+  await waitForPickerDismissal(emulator, 'Cancel', Math.min(timeoutMs, 5_000))
+  const interruptedSession = await restoreHostedIosSessionAfterLaunch({
+    activateWorkspace,
+    discoveryUrl,
+    dismissDeveloperMenu,
+    emulator,
+    expectedWorkspace,
+    openHybridRoute,
+    timeoutMs,
+    waitForDocument
+  })
+  activeSessionDocument = interruptedSession.document
   assertSameSessionRoute(sessionDocument, activeSessionDocument)
+  const interruptionPrivateOriginRetained =
+    hostedPrivateOrigin(grantedSession.document.href) ===
+    hostedPrivateOrigin(activeSessionDocument.href)
+  const interruptionWorkspaceAuthorityRetained =
+    hostedWorkspaceAuthority(grantedSession.document.href) ===
+    hostedWorkspaceAuthority(activeSessionDocument.href)
+  assertInterruptionAuthorityLifecycle(
+    interruptedSession.recovery,
+    interruptionPrivateOriginRetained,
+    interruptionWorkspaceAuthorityRetained
+  )
+  assertNoPrivilegedPageMarkers(await readState(activeSessionDocument))
 
   await revokePermission(deviceUdid)
   await launchApp(deviceUdid)
@@ -164,10 +207,17 @@ export async function verifyHostedIosPhotoPermissionRevocation(
       grantPermissionPrompt,
       grantSessionRecovery: grantedSession.recovery,
       grantWorkspaceAuthorityRotated,
+      interruptionPrivateOrigin: interruptionPrivateOriginRetained ? 'retained' : 'rotated',
+      interruptionSessionRecovery: interruptedSession.recovery,
+      interruptionWorkspaceAuthority: interruptionWorkspaceAuthorityRetained
+        ? 'retained'
+        : 'rotated',
       permissionState: 'revoked-after-grant',
+      pickerInterruption: 'resumed-then-cancelled',
       pickerCancelControl,
       privilegedPageMarkers: 'absent',
       revokedAttachControlPoint,
+      resumedPickerControl,
       revocationPrivateOriginRotated,
       revocationSessionRecovery: revokedSession.recovery,
       revocationWorkspaceAuthorityRotated,
@@ -308,6 +358,20 @@ function assertPrivateOriginRotated(rotated, lifecycleStage) {
 function assertWorkspaceAuthorityRotated(rotated, lifecycleStage) {
   if (!rotated) {
     throw new Error(`Photos permission ${lifecycleStage} reused opaque workspace authority`)
+  }
+}
+
+function assertInterruptionAuthorityLifecycle(
+  recovery,
+  privateOriginRetained,
+  workspaceAuthorityRetained
+) {
+  const expectedRetained = recovery === 'session-retained'
+  if (
+    privateOriginRetained !== expectedRetained ||
+    workspaceAuthorityRetained !== expectedRetained
+  ) {
+    throw new Error(`Photos picker interruption authority did not match ${recovery} recovery`)
   }
 }
 
