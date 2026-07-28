@@ -241,6 +241,7 @@ type TerminalPaneProps = {
   showSplitButton?: boolean
   onPtyExit: (ptyId: string) => void
   onCloseTab: () => void
+  onInitialRenderSettled?: () => void
 }
 
 type TerminalQuickCommandEditorDialogProps = {
@@ -283,7 +284,8 @@ export default function TerminalPane({
   isolatedPaneKey = null,
   showSplitButton = true,
   onPtyExit,
-  onCloseTab
+  onCloseTab,
+  onInitialRenderSettled
 }: TerminalPaneProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const managerRef = useRef<PaneManager | null>(null)
@@ -312,6 +314,8 @@ export default function TerminalPane({
   const isRendererVisible = isVisible && isWorktreeActive
   const isVisibleRef = useRef(isRendererVisible)
   isVisibleRef.current = isRendererVisible
+  const onInitialRenderSettledRef = useRef(onInitialRenderSettled)
+  onInitialRenderSettledRef.current = onInitialRenderSettled
   const sshReconnectTargetId = useAppStore((store) => {
     const connectionId = getConnectionIdFromState(store, worktreeId)
     // Why: runtime-owned SSH targets are internal plumbing users can't connect to, so a reconnect prompt would mislead.
@@ -1451,7 +1455,8 @@ export default function TerminalPane({
     setPaneCount,
     setPaneLayoutRevision,
     resolveExternalPaneDropTarget,
-    onExternalPaneDrop: handleExternalPaneDrop
+    onExternalPaneDrop: handleExternalPaneDrop,
+    onInitialRenderSettledRef
   })
 
   useEffect(() => {
@@ -1675,6 +1680,11 @@ export default function TerminalPane({
     ]
   )
 
+  // Why leaf bindings are a dep: a parked or deferred tab mounts with no
+  // transport, so a queued restart has no ptyId to match on the mount pass. The
+  // reconnected PTY rewrites this map when it binds — `ptyIdsByTabId` does not,
+  // because a restored id is already listed there before the pane ever mounts.
+  const panePtyLayoutBindings = savedLayout.ptyIdsByLeafId
   useEffect(() => {
     const manager = managerRef.current
     if (!manager) {
@@ -1691,7 +1701,12 @@ export default function TerminalPane({
         handleRestartCodexPane(pane.id)
       }
     }
-  }, [consumePendingCodexPaneRestart, handleRestartCodexPane, pendingCodexPaneRestartIds])
+  }, [
+    consumePendingCodexPaneRestart,
+    handleRestartCodexPane,
+    panePtyLayoutBindings,
+    pendingCodexPaneRestartIds
+  ])
 
   useTerminalFontZoom({ isActive, containerRef, managerRef, paneFontSizesRef, settingsRef })
 
