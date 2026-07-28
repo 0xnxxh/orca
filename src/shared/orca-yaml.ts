@@ -56,7 +56,7 @@ function normalizeSharedDirectories(value: unknown): string[] {
       /^[a-zA-Z]:/.test(normalized) ||
       segments.includes('..') ||
       segments.includes('') ||
-      segments[0] === '.git'
+      segments.includes('.git')
     ) {
       continue
     }

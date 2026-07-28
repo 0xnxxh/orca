@@ -5,6 +5,7 @@ import {
   type LocalProjectWorktreeGitOptions
 } from '../project-runtime-git-options'
 import { splitWorktreeId } from '../../shared/worktree-id'
+import type { Repo } from '../../shared/types'
 
 function comparableLocalPath(value: string): string {
   const normalized = resolve(value)
@@ -34,6 +35,26 @@ function hasRegisteredWorktreeMetaForRepo(
   return false
 }
 
+export function getLocalRepoForRegisteredWorktree(
+  store: Store,
+  worktreePath: string,
+  resolvedWorktreePath: string
+): Repo | undefined {
+  if (typeof store.getRepos !== 'function') {
+    return undefined
+  }
+
+  const candidatePaths = getCandidateLocalWorktreePaths(worktreePath, resolvedWorktreePath)
+  return store
+    .getRepos()
+    .find(
+      (repo) =>
+        !repo.connectionId &&
+        (candidatePaths.has(comparableLocalPath(repo.path)) ||
+          hasRegisteredWorktreeMetaForRepo(store, repo.id, candidatePaths))
+    )
+}
+
 export function getLocalGitOptionsForRegisteredWorktree(
   store: Store,
   worktreePath: string,
@@ -43,19 +64,11 @@ export function getLocalGitOptionsForRegisteredWorktree(
     return {}
   }
 
-  const candidatePaths = getCandidateLocalWorktreePaths(worktreePath, resolvedWorktreePath)
-  for (const repo of store.getRepos()) {
-    if (repo.connectionId) {
-      continue
-    }
-    if (
-      candidatePaths.has(comparableLocalPath(repo.path)) ||
-      hasRegisteredWorktreeMetaForRepo(store, repo.id, candidatePaths)
-    ) {
-      // Why: file discovery must use the same resolved runtime as project git,
-      // terminals, and agents even when the worktree path is a Windows path.
-      return getLocalProjectWorktreeGitOptions(store, repo)
-    }
+  const repo = getLocalRepoForRegisteredWorktree(store, worktreePath, resolvedWorktreePath)
+  if (repo) {
+    // Why: file discovery must use the same resolved runtime as project git,
+    // terminals, and agents even when the worktree path is a Windows path.
+    return getLocalProjectWorktreeGitOptions(store, repo)
   }
   return {}
 }

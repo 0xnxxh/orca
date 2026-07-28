@@ -324,6 +324,7 @@ describe('parseOrcaYaml', () => {
         '    - /etc',
         '    - .git',
         '    - .git/hooks',
+        '    - cache/.git/hooks',
         '    - node_modules'
       ].join('\n')
     )

@@ -1,10 +1,12 @@
 import { execFileSync } from 'node:child_process'
 import { lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { devNull, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  clearConfiguredWorktreeSharedDirectoriesCacheForTests,
   getConfiguredWorktreeSharedDirectories,
+  getWorktreeSharedLinkPaths,
   resolveWorktreeSharedDirectories
 } from './worktree-shared-directories'
 import {
@@ -14,7 +16,15 @@ import {
 import { assertWorktreeCleanForRemoval } from './worktree'
 
 const git = (args: string[], cwd: string): void => {
-  execFileSync('git', args, { cwd, stdio: 'ignore' })
+  execFileSync('git', args, {
+    cwd,
+    stdio: 'ignore',
+    env: {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: devNull,
+      GIT_CONFIG_SYSTEM: devNull
+    }
+  })
 }
 
 describe('resolveWorktreeSharedDirectories', () => {
@@ -26,6 +36,7 @@ describe('resolveWorktreeSharedDirectories', () => {
   }
 
   beforeEach(() => {
+    clearConfiguredWorktreeSharedDirectoriesCacheForTests()
     repo = mkdtempSync(join(tmpdir(), 'orca-shared-dirs-'))
     git(['init', '-q'], repo)
     git(['config', 'user.email', 'test@example.com'], repo)
@@ -132,6 +143,7 @@ describe('getConfiguredWorktreeSharedDirectories', () => {
   let repo: string
 
   beforeEach(() => {
+    clearConfiguredWorktreeSharedDirectoriesCacheForTests()
     repo = mkdtempSync(join(tmpdir(), 'orca-shared-dirs-config-'))
   })
 
@@ -150,11 +162,40 @@ describe('getConfiguredWorktreeSharedDirectories', () => {
     expect(getConfiguredWorktreeSharedDirectories(repo)).toEqual(['node_modules', '.cache'])
   })
 
+  it('combines live per-user paths with cached repo configuration', () => {
+    writeFileSync(join(repo, 'orca.yaml'), 'worktree:\n  sharedDirectories:\n    - node_modules\n')
+
+    expect(getWorktreeSharedLinkPaths({ path: repo, symlinkPaths: ['.cache'] })).toEqual([
+      '.cache',
+      'node_modules'
+    ])
+  })
+
   it('returns [] when orca.yaml is absent or has no worktree key', () => {
     expect(getConfiguredWorktreeSharedDirectories(repo)).toEqual([])
 
     writeFileSync(join(repo, 'orca.yaml'), 'scripts:\n  setup: pnpm install\n')
+    clearConfiguredWorktreeSharedDirectoriesCacheForTests()
     expect(getConfiguredWorktreeSharedDirectories(repo)).toEqual([])
+  })
+
+  it('caches repeated status polls but refreshes changed configuration', () => {
+    vi.useFakeTimers()
+    try {
+      writeFileSync(
+        join(repo, 'orca.yaml'),
+        'worktree:\n  sharedDirectories:\n    - node_modules\n'
+      )
+      expect(getConfiguredWorktreeSharedDirectories(repo)).toEqual(['node_modules'])
+
+      writeFileSync(join(repo, 'orca.yaml'), 'worktree:\n  sharedDirectories:\n    - .cache\n')
+
+      expect(getConfiguredWorktreeSharedDirectories(repo)).toEqual(['node_modules'])
+      vi.advanceTimersByTime(30_001)
+      expect(getConfiguredWorktreeSharedDirectories(repo)).toEqual(['.cache'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

@@ -8,6 +8,12 @@ import type { Repo } from '../../shared/types'
 // Why: a fresh worktree has no node_modules/.cache, and copying them is slow and
 // duplicates disk; `orca.yaml` names the ones every worktree should share instead.
 
+const CONFIGURED_SHARED_DIRECTORIES_CACHE_TTL_MS = 30_000
+const configuredSharedDirectoriesByRepoPath = new Map<
+  string,
+  { directories: string[]; expiresAt: number }
+>()
+
 /** The configured `worktree.sharedDirectories` names, before any existence or
  *  gitignore filtering.
  *
@@ -16,7 +22,22 @@ import type { Repo } from '../../shared/types'
  *  worktree's symlink, so Git reports that symlink as untracked. Removal has to
  *  tolerate and unlink it, and the resolver would have already dropped it. */
 export function getConfiguredWorktreeSharedDirectories(repoPath: string): string[] {
-  return loadHooks(repoPath)?.worktree?.sharedDirectories ?? []
+  const cached = configuredSharedDirectoriesByRepoPath.get(repoPath)
+  const now = Date.now()
+  if (cached && cached.expiresAt > now) {
+    return cached.directories
+  }
+  const configured = loadHooks(repoPath)?.worktree?.sharedDirectories ?? []
+  configuredSharedDirectoriesByRepoPath.set(repoPath, {
+    directories: configured,
+    expiresAt: now + CONFIGURED_SHARED_DIRECTORIES_CACHE_TTL_MS
+  })
+  return configured
+}
+
+/** Reset the process cache between tests. */
+export function clearConfiguredWorktreeSharedDirectoriesCacheForTests(): void {
+  configuredSharedDirectoriesByRepoPath.clear()
 }
 
 /** Every path Orca may have symlinked into a worktree: the per-user Worktree
