@@ -65,6 +65,7 @@ describe('runtime RPC startup failure reporting', () => {
     ['EADDRINUSE', 'address_in_use'],
     ['ENOSPC', 'storage_unavailable'],
     ['EROFS', 'storage_unavailable'],
+    ['EINVAL', 'invalid_path'],
     ['ENOENT', 'invalid_path'],
     ['ENAMETOOLONG', 'invalid_path'],
     ['unexpected', 'unknown']
@@ -152,7 +153,9 @@ describe('runtime RPC startup failure reporting', () => {
     ['EPERM', "Check permissions on Orca's data folder"],
     ['ENOSPC', 'Your disk may be full or read-only'],
     ['EROFS', 'Your disk may be full or read-only'],
-    ['ENOENT', "Orca's data folder may be missing or moved"],
+    ['EINVAL', 'at a path that is too long'],
+    ['ENAMETOOLONG', 'at a path that is too long'],
+    ['ENOENT', "Orca's data folder may be missing"],
     ['EADDRINUSE', 'Another process may be holding the port']
   ] as const)('guides the user on how to fix %s', async (code, guidance) => {
     const error = Object.assign(new Error('metadata write failed'), { code })

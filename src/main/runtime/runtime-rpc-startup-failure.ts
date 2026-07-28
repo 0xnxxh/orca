@@ -78,7 +78,8 @@ const GUIDANCE_BY_ERROR_CLASS: Readonly<
   },
   invalid_path: {
     key: 'runtimeRpc.startupFailure.guidance.invalidPath',
-    fallback: "Orca's data folder may be missing or moved. Restart Orca to recreate it."
+    fallback:
+      "Orca's data folder may be missing, moved, or at a path that is too long. Restore it or use a shorter path, then restart Orca."
   },
   address_in_use: {
     key: 'runtimeRpc.startupFailure.guidance.addressInUse',
