@@ -90,6 +90,26 @@ describe('startup ordering', () => {
     expect(startIndex).toBeGreaterThan(attachIndex)
   })
 
+  it('attaches renderer services before starting the TCC prompt watcher', () => {
+    const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const attachIndex = source.indexOf('attachMainWindowServices(')
+    const tccNoticeIndex = source.indexOf('initTccPromptNotice(window', attachIndex)
+    const quitAbortStart = source.indexOf('onQuitAborted:')
+    const quitAbortEnd = source.indexOf('onRendererProcessGone:', quitAbortStart)
+
+    expect(attachIndex).toBeGreaterThanOrEqual(0)
+    expect(tccNoticeIndex).toBeGreaterThan(attachIndex)
+    expect(source.slice(tccNoticeIndex, tccNoticeIndex + 120)).toContain(
+      'deferWatchUntilReadyToShow: true'
+    )
+    expect(source.slice(quitAbortStart, quitAbortEnd)).not.toContain('initTccPromptNotice')
+    expect(source).toContain("process.once('exit', stopTccPromptNotice)")
+    const willQuitStart = source.indexOf("app.on('will-quit'")
+    const windowAllClosedStart = source.indexOf("app.on('window-all-closed'", willQuitStart)
+    expect(source.slice(willQuitStart, windowAllClosedStart)).toContain('stopTccPromptNotice()')
+    expect(source.slice(0, willQuitStart)).not.toContain('stopTccPromptNoticeForQuit')
+  })
+
   it('starts the automation scheduler before headless serve reports ready', () => {
     const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
     const serveStart = source.indexOf('if (serveOptions) {')

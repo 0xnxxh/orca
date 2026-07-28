@@ -26,8 +26,11 @@ export function dashboardSnapshotInputsChanged(
     state.ptyIdsByTabId !== previousState.ptyIdsByTabId ||
     state.runtimePaneTitlesByTabId !== previousState.runtimePaneTitlesByTabId ||
     state.acknowledgedAgentsByPaneKey !== previousState.acknowledgedAgentsByPaneKey ||
-    // Why: tabAutoGenerateTitle decides whether cards may show generated names.
+    state.hostedReviewCache !== previousState.hostedReviewCache ||
+    state.prCache !== previousState.prCache ||
+    // Why: settings controls idle visibility and generated conversation names.
     state.settings !== previousState.settings ||
+    state.workspaceStatuses !== previousState.workspaceStatuses ||
     // Why: freshness can change a bucket without replacing any backing map.
     state.agentStatusEpoch !== previousState.agentStatusEpoch
   )
