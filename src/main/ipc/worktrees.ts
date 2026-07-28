@@ -15,6 +15,7 @@ import { getProjectHostSetupWorktreeMeta } from '../../shared/project-host-setup
 import { getProjectGroupSubtreeIds } from '../../shared/project-groups'
 import { projectResolvedWorktreeLineage } from '../../shared/resolved-worktree-lineage'
 import { isPathInsideOrEqual, isWindowsAbsolutePathLike } from '../../shared/cross-platform-path'
+import { mapWithConcurrency } from '../../shared/map-with-concurrency'
 import { deleteWorktreeHistoryDir } from '../terminal-history'
 import type {
   AutomationWorkspaceProvenance,
@@ -77,7 +78,6 @@ import {
 } from '../github/pr-head-tracking-ref'
 import { pruneWorktreePRRefreshAliases } from '../github/pr-refresh-coordinator'
 import { resolveGitHubReviewHeadRemote } from '../github/review-head-remote'
-import { listRepoWorktrees } from '../repo-worktrees'
 import { getSshGitProvider, requireSshGitProvider } from '../providers/ssh-git-dispatch'
 import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import {
@@ -233,26 +233,6 @@ import {
 
 const WORKTREE_ARCHIVE_HOOK_TIMEOUT_MS = 120_000
 const WORKTREE_LIST_ALL_CONCURRENCY = 8
-
-async function mapWithConcurrency<T, R>(
-  items: readonly T[],
-  limit: number,
-  fn: (item: T) => Promise<R>
-): Promise<R[]> {
-  const results: R[] = []
-  let nextIndex = 0
-  const workerCount = Math.min(limit, items.length)
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (nextIndex < items.length) {
-        const index = nextIndex
-        nextIndex += 1
-        results[index] = await fn(items[index])
-      }
-    })
-  )
-  return results
-}
 
 function removeWorktreeMetadataAndTransientState(store: Store, worktreeId: string): void {
   // Why: worktree IDs are path-derived and reusable; drop process-local caches before the same ID can map to a new workspace.
@@ -507,118 +487,9 @@ const loggedWorktreeListFailures = new Set<string>()
 const loggedMalformedWorktreeMetaKeys = new Set<string>()
 export const DETECTED_WORKTREE_PROVIDER_TIMEOUT_MS = 30_000
 export const LINEAGE_HYDRATION_TIMEOUT_MS = 5_000
-// Why: absorb renderer polling bursts while bounding external worktree-change lag to one short refresh window.
-const DETECTED_WORKTREE_SCAN_CACHE_TTL_MS = 5_000
-
-type DetectedWorktreeScanCacheEntry = {
-  expiresAt: number
-  worktrees: GitWorktreeInfo[]
-}
-
-type DetectedWorktreeScan = {
-  invalidated: boolean
-  promise: Promise<GitWorktreeInfo[]>
-}
-
-type DetectedWorktreeScanResult = {
-  gitWorktrees: GitWorktreeInfo[]
-  fresh: boolean
-}
-
-const detectedWorktreeScanCache = new Map<string, DetectedWorktreeScanCacheEntry>()
-const detectedWorktreeScanInFlight = new Map<string, DetectedWorktreeScan>()
-
-function invalidateDetectedWorktreeScanCache(repoId: string): void {
-  const keyPrefix = `${repoId}\0`
-  for (const key of new Set([
-    ...detectedWorktreeScanCache.keys(),
-    ...detectedWorktreeScanInFlight.keys()
-  ])) {
-    if (!key.startsWith(keyPrefix)) {
-      continue
-    }
-    detectedWorktreeScanCache.delete(key)
-    const inFlight = detectedWorktreeScanInFlight.get(key)
-    if (inFlight) {
-      // Why: the detached scan keeps this token so later scans settle without making an older result fresh again.
-      inFlight.invalidated = true
-      detectedWorktreeScanInFlight.delete(key)
-    }
-  }
-}
-
-registerWorktreeChangeInvalidator(invalidateDetectedWorktreeScanCache)
-
-export function __resetDetectedWorktreeScanCacheForTests(): void {
-  // Why: pending scans across a test reset must not repopulate the cache and leak state into the next test.
-  for (const scan of detectedWorktreeScanInFlight.values()) {
-    scan.invalidated = true
-  }
-  detectedWorktreeScanCache.clear()
-  detectedWorktreeScanInFlight.clear()
-}
-
-export function __getDetectedWorktreeScanCacheStatsForTests(): {
-  cacheSize: number
-  inFlightSize: number
-} {
-  return {
-    cacheSize: detectedWorktreeScanCache.size,
-    inFlightSize: detectedWorktreeScanInFlight.size
-  }
-}
-
-async function listDetectedGitWorktrees(
-  store: Store,
-  repo: Repo
-): Promise<DetectedWorktreeScanResult> {
-  const localWorktreeGitOptions = getLocalProjectWorktreeGitOptions(store, repo)
-  if (repo.connectionId || isFolderRepo(repo)) {
-    return {
-      gitWorktrees: await listRepoWorktrees(repo, localWorktreeGitOptions),
-      fresh: true
-    }
-  }
-
-  const cacheKey = getDetectedWorktreeScanCacheKey(repo.id, localWorktreeGitOptions)
-  const cached = detectedWorktreeScanCache.get(cacheKey)
-  if (cached && cached.expiresAt > Date.now()) {
-    return { gitWorktrees: cached.worktrees, fresh: false }
-  }
-
-  const inFlight = detectedWorktreeScanInFlight.get(cacheKey)
-  if (inFlight) {
-    return { gitWorktrees: await inFlight.promise, fresh: false }
-  }
-
-  const scan: DetectedWorktreeScan = {
-    invalidated: false,
-    promise: listRepoWorktrees(repo, localWorktreeGitOptions)
-  }
-  detectedWorktreeScanInFlight.set(cacheKey, scan)
-  try {
-    const gitWorktrees = await scan.promise
-    // Why: a create/remove notification can invalidate mid-scan; don't let that stale scan repopulate the cache afterward.
-    if (!scan.invalidated) {
-      detectedWorktreeScanCache.set(cacheKey, {
-        worktrees: gitWorktrees,
-        expiresAt: Date.now() + DETECTED_WORKTREE_SCAN_CACHE_TTL_MS
-      })
-    }
-    return { gitWorktrees, fresh: !scan.invalidated }
-  } finally {
-    if (detectedWorktreeScanInFlight.get(cacheKey) === scan) {
-      detectedWorktreeScanInFlight.delete(cacheKey)
-    }
-  }
-}
-
-function getDetectedWorktreeScanCacheKey(
-  repoId: string,
-  localWorktreeGitOptions: { wslDistro?: string } = {}
-): string {
-  return `${repoId}\0${localWorktreeGitOptions.wslDistro ?? 'host'}`
-}
+// Why: runtime owns caching and invalidation; detection only tightens its normal cache age.
+const DETECTED_WORKTREE_SCAN_MAX_CACHE_AGE_MS = 5_000
+let unregisterDetectedWorktreeScanInvalidator: (() => void) | undefined
 
 function warnOnce(keySet: Set<string>, key: string, message: string, error?: unknown): void {
   if (!shouldEmitBoundedWarning(keySet, key)) {
@@ -1109,6 +980,7 @@ function isCapturedRepoCurrent(
 
 async function listDetectedWorktreesForCapturedRepo(
   store: Store,
+  runtime: OrcaRuntimeService,
   repo: Repo,
   isCurrent: () => boolean,
   capturedProvider = repo.connectionId ? getSshGitProvider(repo.connectionId) : undefined,
@@ -1124,7 +996,8 @@ async function listDetectedWorktreesForCapturedRepo(
 
   try {
     let gitWorktrees: GitWorktreeInfo[]
-    let freshScan = true
+    let shouldUpdateKnownWorktreeState = true
+    let scanSucceeded = true
     if (isFolderRepo(repo)) {
       if (!isCurrent()) {
         return null
@@ -1171,9 +1044,13 @@ async function listDetectedWorktreesForCapturedRepo(
         signal: providerAbort?.signal
       })
     } else {
-      const scan = await listDetectedGitWorktrees(store, repo)
-      gitWorktrees = scan.gitWorktrees
-      freshScan = scan.fresh
+      const scan = await runtime.listRepoWorktreesForDetection(
+        repo,
+        DETECTED_WORKTREE_SCAN_MAX_CACHE_AGE_MS
+      )
+      gitWorktrees = scan.kind === 'success' ? scan.worktrees : scan.fallbackWorktrees
+      shouldUpdateKnownWorktreeState = scan.kind === 'success' && scan.origin === 'scan'
+      scanSucceeded = scan.kind === 'success'
     }
     const aborted = abortedResult()
     if (aborted) {
@@ -1191,15 +1068,15 @@ async function listDetectedWorktreesForCapturedRepo(
         worktrees: []
       }
     }
-    if (freshScan) {
+    if (shouldUpdateKnownWorktreeState) {
       rememberLocalWorktreeRoots(store, repo, gitWorktrees)
       pruneLineageForMissingRepoWorktrees(store, repo, gitWorktrees)
     }
     loggedWorktreeListFailures.delete(`${repo.id}:${repo.path}`)
     return {
       repoId: repo.id,
-      authoritative: true,
-      source: 'git',
+      authoritative: scanSucceeded,
+      source: scanSucceeded ? 'git' : 'metadata-fallback',
       worktrees: buildDetectedGitWorktrees(store, repo, gitWorktrees)
     }
   } catch (err) {
@@ -1622,6 +1499,7 @@ async function listDesktopLineageForHost(
 
 async function listHostQualifiedDetectedWorktrees(
   store: Store,
+  runtime: OrcaRuntimeService,
   args: ListDetectedWorktreesArgs,
   providerAbort?: { signal: AbortSignal; status: () => 'canceled' | 'timed-out' }
 ): Promise<HostQualifiedDetectedWorktreeResult> {
@@ -1693,6 +1571,7 @@ async function listHostQualifiedDetectedWorktrees(
   }
   const result = await listDetectedWorktreesForCapturedRepo(
     store,
+    runtime,
     repo,
     isCurrent,
     provider,
@@ -1741,6 +1620,10 @@ export function registerWorktreeHandlers(
   options?: { onWorktreeLifecycle?: (event: RuntimeWorktreeLifecycleEvent) => void }
 ): void {
   const detectedWorktreeCancellations = createSenderScopedRequestCancellations()
+  unregisterDetectedWorktreeScanInvalidator?.()
+  unregisterDetectedWorktreeScanInvalidator = registerWorktreeChangeInvalidator((repoId) => {
+    runtime.invalidateRepoWorktreeScan(repoId)
+  })
   // Remove previously registered handlers so re-register works when macOS re-activates and creates a new window.
   ipcMain.removeHandler('worktrees:listAll')
   ipcMain.removeHandler('worktrees:list')
@@ -1775,7 +1658,7 @@ export function registerWorktreeHandlers(
     const results = await mapWithConcurrency(repos, WORKTREE_LIST_ALL_CONCURRENCY, async (repo) => {
       try {
         let gitWorktrees
-        let freshScan = true
+        let shouldUpdateKnownWorktreeState = true
         if (isFolderRepo(repo)) {
           return listVisibleFolderWorkspaces(store, repo)
         } else if (repo.connectionId) {
@@ -1801,11 +1684,14 @@ export function registerWorktreeHandlers(
             return listDisconnectedSshWorktrees(store, repo, sshWorktreeMetaIndex)
           }
         } else {
-          const scan = await listDetectedGitWorktrees(store, repo)
-          gitWorktrees = scan.gitWorktrees
-          freshScan = scan.fresh
+          const scan = await runtime.listRepoWorktreesForDetection(
+            repo,
+            DETECTED_WORKTREE_SCAN_MAX_CACHE_AGE_MS
+          )
+          gitWorktrees = scan.kind === 'success' ? scan.worktrees : scan.fallbackWorktrees
+          shouldUpdateKnownWorktreeState = scan.kind === 'success' && scan.origin === 'scan'
         }
-        if (freshScan) {
+        if (shouldUpdateKnownWorktreeState) {
           rememberLocalWorktreeRoots(store, repo, gitWorktrees)
           pruneLineageForMissingRepoWorktrees(store, repo, gitWorktrees)
         }
@@ -1839,7 +1725,7 @@ export function registerWorktreeHandlers(
 
     try {
       let gitWorktrees
-      let freshScan = true
+      let shouldUpdateKnownWorktreeState = true
       if (isFolderRepo(repo)) {
         return listVisibleFolderWorkspaces(store, repo)
       } else if (repo.connectionId) {
@@ -1865,11 +1751,14 @@ export function registerWorktreeHandlers(
           return listDisconnectedSshWorktrees(store, repo, sshWorktreeMetaIndex)
         }
       } else {
-        const scan = await listDetectedGitWorktrees(store, repo)
-        gitWorktrees = scan.gitWorktrees
-        freshScan = scan.fresh
+        const scan = await runtime.listRepoWorktreesForDetection(
+          repo,
+          DETECTED_WORKTREE_SCAN_MAX_CACHE_AGE_MS
+        )
+        gitWorktrees = scan.kind === 'success' ? scan.worktrees : scan.fallbackWorktrees
+        shouldUpdateKnownWorktreeState = scan.kind === 'success' && scan.origin === 'scan'
       }
-      if (freshScan) {
+      if (shouldUpdateKnownWorktreeState) {
         rememberLocalWorktreeRoots(store, repo, gitWorktrees)
         pruneLineageForMissingRepoWorktrees(store, repo, gitWorktrees)
       }
@@ -1933,6 +1822,7 @@ export function registerWorktreeHandlers(
         try {
           const providerResult = listHostQualifiedDetectedWorktrees(
             store,
+            runtime,
             args,
             controller
               ? {
@@ -1968,6 +1858,7 @@ export function registerWorktreeHandlers(
         : undefined
       const result = await listDetectedWorktreesForCapturedRepo(
         store,
+        runtime,
         repo,
         () =>
           isCapturedRepoCurrent(store, repo) &&
