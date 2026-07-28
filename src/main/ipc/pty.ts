@@ -167,6 +167,12 @@ import { setTerminalViewAttributes } from '../runtime/terminal-view-attribute-st
 import { validateTerminalViewAttributes } from '../../shared/terminal-view-attributes'
 import type { PtyModelRestoreReason } from '../../shared/pty-model-restore-marker'
 import type { CodexAccountSelectionTarget } from '../codex-accounts/runtime-selection'
+import {
+  forgetCodexPaneAccount,
+  recordCodexPaneAccount
+} from '../codex/codex-pane-account-registry'
+import { resolveCodexPaneLaunchAccount } from '../codex/codex-pane-launch-account'
+import { getSystemCodexHomePath } from '../codex/codex-home-paths'
 import { isCodexSystemDefaultRealHomeEnabled } from '../codex/codex-real-home-flag'
 import { isHostCodexHomeForWsl, isWslCodexHomeForHost } from '../pty/codex-home-wsl-env'
 import { buildConfiguredProxyEnv, type NetworkProxySettings } from '../../shared/network-proxy'
@@ -833,6 +839,40 @@ function getCompatibleSelectedCodexHomePath(
     : selectedCodexHomePath
 }
 
+// Why: CODEX_HOME is fixed in a shell's environment at spawn and the daemon
+// keeps that shell alive across app restarts, so the launch account is the only
+// way to tell later that a pane still runs Codex as the previously selected
+// account. A reattach inherits that baked environment rather than choosing one,
+// so re-recording it under the current selection would erase the very evidence
+// that the pane is stale.
+function recordCodexPaneAccountForSpawn(args: {
+  ptyId: string | undefined
+  isDaemonHostSpawn: boolean
+  isReattach: boolean
+  pinnedByResume: boolean
+  launchCodexHomePath: string | null
+  target: CodexAccountSelectionTarget
+  settings: GlobalSettings | undefined
+}): void {
+  if (!args.ptyId || !args.isDaemonHostSpawn || args.isReattach) {
+    return
+  }
+  const record = args.settings
+    ? resolveCodexPaneLaunchAccount({
+        pinnedByResume: args.pinnedByResume,
+        launchCodexHomePath: args.launchCodexHomePath,
+        systemCodexHomePath: getSystemCodexHomePath(),
+        settings: args.settings,
+        target: args.target
+      })
+    : null
+  if (!record) {
+    forgetCodexPaneAccount(args.ptyId)
+    return
+  }
+  recordCodexPaneAccount(args.ptyId, record)
+}
+
 function readEnvWithProcessFallback(
   baseEnv: Record<string, string>,
   key: string
@@ -1310,6 +1350,10 @@ export function clearProviderPtyState(
 ): void {
   if (!opts.preserveAgentSessionOwners) {
     agentSessionOwners.release(id)
+    // Why: the launch-account record outlives the app, so only a real teardown
+    // may drop it — a disconnect that can reconnect is not a death, and a reused
+    // id must never inherit a dead pane's Codex account.
+    forgetCodexPaneAccount(id)
   }
   // Why: OpenCode and Pi both allocate PTY-scoped runtime state outside the
   // node-pty process table. Centralizing provider cleanup avoids drift where a
@@ -3748,6 +3792,15 @@ export function registerPtyHandlers(
         if (effectiveSessionAppId !== undefined && effectiveSessionAppId !== result.id) {
           ptySizes.delete(effectiveSessionAppId)
         }
+        recordCodexPaneAccountForSpawn({
+          ptyId: result.id,
+          isDaemonHostSpawn,
+          isReattach: result.isReattach === true,
+          pinnedByResume: Boolean(codexResumeHome),
+          launchCodexHomePath: selectedCodexHomePath,
+          target: codexSelectionTarget,
+          settings: getSettings?.()
+        })
         if (hostSessionBinding) {
           try {
             const binding = {
@@ -4777,6 +4830,15 @@ export function registerPtyHandlers(
         spawnTiming.log(result.id, {
           daemon: isDaemonHostSpawn,
           reattach: result.isReattach ?? false
+        })
+        recordCodexPaneAccountForSpawn({
+          ptyId: result.id,
+          isDaemonHostSpawn,
+          isReattach: result.isReattach === true,
+          pinnedByResume: Boolean(codexResumeHome),
+          launchCodexHomePath: selectedCodexHomePath,
+          target: codexSelectionTarget,
+          settings: getSettings?.()
         })
         ptyOwnership.set(result.id, args.connectionId ?? null)
         if (result.incarnationId) {

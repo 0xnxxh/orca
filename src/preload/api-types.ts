@@ -2335,6 +2335,14 @@ export type PreloadApi = {
       runtime?: 'host' | 'wsl'
       wslDistro?: string | null
     }) => Promise<CodexRateLimitAccountsState>
+    /** Live PTYs whose baked CODEX_HOME still points at a deselected account. */
+    listStalePanes: (args: {
+      ptyIds: string[]
+    }) => Promise<
+      { ptyId: string; launchAccountId: string | null; activeAccountId: string | null }[]
+    >
+    /** Drops launch records so a dismissed prompt stays dismissed across restarts. */
+    forgetStalePanes: (args: { ptyIds: string[] }) => Promise<void>
   }
   claudeAccounts: {
     list: () => Promise<ClaudeRateLimitAccountsState>

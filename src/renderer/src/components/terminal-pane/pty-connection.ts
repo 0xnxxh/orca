@@ -5,6 +5,7 @@ import type { IBuffer, IDisposable } from '@xterm/xterm'
 import { resolveCursorAgentImeAnchor } from '@/lib/pane-manager/terminal-ime-anchor'
 import { detectAgentStatusFromTitle, agentTypeToIconAgent, isClaudeAgent } from '@/lib/agent-status'
 import { resolvePaneTitleDecision } from './terminal-title-evidence'
+import { blocksCodexPaneInput } from '../codex-restart-notice-state'
 import { resolveLiveAgentStatusConnectionRouting } from '@/lib/agent-status-connection-ownership'
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { useAppStore } from '@/store'
@@ -134,6 +135,9 @@ import {
   registerPtyTitleSource
 } from './pty-buffer-serializer'
 import { inspectRuntimeTerminalProcess } from '@/runtime/runtime-terminal-inspection'
+// Why: a restored pane's stale-account prompt can only be raised once a PTY is
+// actually attached — nothing is inspectable while the session hydrates.
+import { notifyCodexPaneBoundForStaleSweep } from '@/lib/codex-stale-pane-sweep'
 import { getRemoteRuntimePtyEnvironmentId } from '@/runtime/runtime-terminal-stream'
 import {
   discardTerminalOutput,
@@ -826,12 +830,20 @@ function isCodexPaneStale(args: {
   if (!hasCodexRestartNotices(codexRestartNoticeByPtyId)) {
     return false
   }
-  if (args.panePtyId && codexRestartNoticeByPtyId[args.panePtyId]) {
-    return true
+  // Why: a bound pane's own record is the last word — its ptyId is exactly the
+  // shell its keystrokes reach. `tab.ptyId` holds one sibling's id, not this
+  // pane's, so in a split tab consulting it would kill this pane's keyboard over
+  // that sibling's notice, with no prompt on screen once the sibling is answered.
+  if (args.panePtyId) {
+    return blocksCodexPaneInput(codexRestartNoticeByPtyId[args.panePtyId])
   }
 
+  // Why: only an unbound pane needs the tab's persisted id. Both transports
+  // refuse writes while their pty binding is null, so a keystroke here arms
+  // recovery — a coarser signal than a bound pane's own record, but the tab's id
+  // is the only evidence available of which shell this pane is about to own.
   const tab = (state.tabsByWorktree[args.worktreeId] ?? []).find((entry) => entry.id === args.tabId)
-  if (tab?.ptyId && codexRestartNoticeByPtyId[tab.ptyId]) {
+  if (tab?.ptyId && blocksCodexPaneInput(codexRestartNoticeByPtyId[tab.ptyId])) {
     return true
   }
 
@@ -2824,6 +2836,7 @@ export function connectPanePty(
     registerSideEffectFactConsumerForPty(ptyId)
     syncHiddenRendererPtyDelivery()
     deps.syncPanePtyLayoutBinding(pane.id, ptyId)
+    notifyCodexPaneBoundForStaleSweep(ptyId)
     const tabPtyIds = useAppStore.getState().ptyIdsByTabId?.[deps.tabId] ?? []
     if (options.updateTabPtyId !== 'if-missing' || !tabPtyIds.includes(ptyId)) {
       if (options.replacePtyId) {
@@ -7397,6 +7410,7 @@ export function connectPanePty(
       registerSideEffectFactConsumerForPty(ptyId)
       syncHiddenRendererPtyDelivery()
       deps.syncPanePtyLayoutBinding(pane.id, ptyId)
+      notifyCodexPaneBoundForStaleSweep(ptyId)
       deps.updateTabPtyId(deps.tabId, ptyId)
       agentCompletionCoordinator.startProcessTracking()
       sampleVisiblePaneForegroundAgent()

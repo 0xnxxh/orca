@@ -60,7 +60,9 @@ const {
   setMigrationUnsupportedPtyMock,
   clearMigrationUnsupportedPtyMock,
   clearMigrationUnsupportedPtysForPaneKeyMock,
-  clearPaneKeyAliasesForPtyMock
+  clearPaneKeyAliasesForPtyMock,
+  recordCodexPaneAccountMock,
+  forgetCodexPaneAccountMock
 } = vi.hoisted(() => ({
   handleMock: vi.fn(),
   onMock: vi.fn(),
@@ -92,7 +94,9 @@ const {
   setMigrationUnsupportedPtyMock: vi.fn(),
   clearMigrationUnsupportedPtyMock: vi.fn(),
   clearMigrationUnsupportedPtysForPaneKeyMock: vi.fn(),
-  clearPaneKeyAliasesForPtyMock: vi.fn()
+  clearPaneKeyAliasesForPtyMock: vi.fn(),
+  recordCodexPaneAccountMock: vi.fn(),
+  forgetCodexPaneAccountMock: vi.fn()
 }))
 
 vi.mock('electron', () => ({
@@ -194,6 +198,11 @@ vi.mock('../agent-hooks/migration-unsupported-pty-state', () => ({
   setMigrationUnsupportedPty: setMigrationUnsupportedPtyMock,
   clearMigrationUnsupportedPty: clearMigrationUnsupportedPtyMock,
   clearMigrationUnsupportedPtysForPaneKey: clearMigrationUnsupportedPtysForPaneKeyMock
+}))
+
+vi.mock('../codex/codex-pane-account-registry', () => ({
+  recordCodexPaneAccount: recordCodexPaneAccountMock,
+  forgetCodexPaneAccount: forgetCodexPaneAccountMock
 }))
 import { LocalPtyProvider } from '../providers/local-pty-provider'
 import { makePaneKey } from '../../shared/stable-pane-id'
@@ -350,6 +359,8 @@ describe('registerPtyHandlers', () => {
     clearMigrationUnsupportedPtyMock.mockReset()
     clearMigrationUnsupportedPtysForPaneKeyMock.mockReset()
     clearPaneKeyAliasesForPtyMock.mockReset()
+    recordCodexPaneAccountMock.mockReset()
+    forgetCodexPaneAccountMock.mockReset()
     mainWindow.webContents.on.mockReset()
     mainWindow.webContents.send.mockReset()
     mainWindow.webContents.removeListener.mockReset()
@@ -13756,6 +13767,249 @@ describe('registerPtyHandlers', () => {
       { value: 900, generation: 'continued' },
       7
     )
+  })
+
+  it('records the launch Codex account for a fresh spawn but not for a reattach', async () => {
+    const spawn = vi
+      .fn()
+      .mockResolvedValueOnce({ id: 'pty-fresh' })
+      .mockResolvedValueOnce({ id: 'pty-reattached', isReattach: true })
+    setLocalPtyProvider({
+      spawn,
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      shutdown: vi.fn(),
+      onData: vi.fn(() => vi.fn()),
+      onExit: vi.fn(() => vi.fn()),
+      listProcesses: vi.fn(async () => []),
+      getForegroundProcess: vi.fn(async () => null)
+    } as never)
+    const getSettings = vi.fn().mockReturnValue({ activeCodexManagedAccountId: 'account-a' })
+    registerPtyHandlers(mainWindow as never, undefined, undefined, getSettings as never)
+
+    await handlers.get('pty:spawn')!(null, { cols: 80, rows: 24 })
+    await handlers.get('pty:spawn')!(null, { cols: 80, rows: 24, sessionId: 'pty-reattached' })
+
+    // Why: a reattached shell keeps the CODEX_HOME baked in at its original
+    // spawn, so re-recording it under the current selection would erase the only
+    // evidence that the pane is stale.
+    expect(recordCodexPaneAccountMock.mock.calls).toEqual([
+      ['pty-fresh', { selectionKey: 'host', accountId: 'account-a' }]
+    ])
+  })
+
+  it('records the origin account a resumed Codex pane is pinned to', async () => {
+    setLocalPtyProvider({
+      spawn: vi.fn(async () => ({ id: 'pty-resumed' })),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      shutdown: vi.fn(),
+      onData: vi.fn(() => vi.fn()),
+      onExit: vi.fn(() => vi.fn()),
+      listProcesses: vi.fn(async () => []),
+      getForegroundProcess: vi.fn(async () => null)
+    } as never)
+    const getSettings = vi.fn().mockReturnValue({
+      activeCodexManagedAccountId: 'account-b',
+      codexManagedAccounts: [
+        { id: 'account-a', managedHomePath: '/managed/origin/home' },
+        { id: 'account-b', managedHomePath: '/managed/current/home' }
+      ]
+    })
+    registerPtyHandlers(
+      mainWindow as never,
+      undefined,
+      vi.fn(() => '/managed/current/home'),
+      getSettings as never,
+      undefined,
+      undefined,
+      { prepareCodexSessionResume: async () => ({ codexHomePath: '/managed/origin/home' }) }
+    )
+
+    await handlers.get('pty:spawn')!(null, {
+      cols: 80,
+      rows: 24,
+      command: 'codex resume session-a',
+      launchAgent: 'codex',
+      resumeProviderSession: {
+        key: 'session_id',
+        id: 'session-a',
+        transcriptPath: '/managed/origin/home/sessions/2026/07/20/rollout-a.jsonl'
+      }
+    })
+
+    // Why: the resume deliberately overrides the selection, so the pane really
+    // is on account-a. Recording that is what makes the restart prompt appear.
+    expect(recordCodexPaneAccountMock.mock.calls).toEqual([
+      ['pty-resumed', { selectionKey: 'host', accountId: 'account-a' }]
+    ])
+    expect(forgetCodexPaneAccountMock).not.toHaveBeenCalled()
+  })
+
+  it('leaves a resumed Codex pane unattributed when no account owns its home', async () => {
+    setLocalPtyProvider({
+      spawn: vi.fn(async () => ({ id: 'pty-resumed' })),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      shutdown: vi.fn(),
+      onData: vi.fn(() => vi.fn()),
+      onExit: vi.fn(() => vi.fn()),
+      listProcesses: vi.fn(async () => []),
+      getForegroundProcess: vi.fn(async () => null)
+    } as never)
+    const getSettings = vi.fn().mockReturnValue({
+      activeCodexManagedAccountId: 'account-b',
+      codexManagedAccounts: [{ id: 'account-b', managedHomePath: '/managed/current/home' }]
+    })
+    registerPtyHandlers(
+      mainWindow as never,
+      undefined,
+      vi.fn(() => '/managed/current/home'),
+      getSettings as never,
+      undefined,
+      undefined,
+      { prepareCodexSessionResume: async () => ({ codexHomePath: '/managed/shared-mirror/home' }) }
+    )
+
+    await handlers.get('pty:spawn')!(null, {
+      cols: 80,
+      rows: 24,
+      command: 'codex resume session-a',
+      launchAgent: 'codex',
+      resumeProviderSession: {
+        key: 'session_id',
+        id: 'session-a',
+        transcriptPath: '/managed/shared-mirror/home/sessions/2026/07/20/rollout-a.jsonl'
+      }
+    })
+
+    // Why: an unowned home cannot be named, so guessing here would raise a
+    // restart notice that blocks a correctly-signed-in pane's input.
+    expect(recordCodexPaneAccountMock).not.toHaveBeenCalled()
+    expect(forgetCodexPaneAccountMock).toHaveBeenCalledWith('pty-resumed')
+  })
+
+  // Why: the runtime controller is the CLI/relay resume path, and it repeats the
+  // same recording call the ipc handler makes. Without its own coverage a revert
+  // there is invisible.
+  it('records the origin account for a resumed Codex pane spawned by the runtime controller', async () => {
+    type RuntimeSpawnController = {
+      spawn(args: Record<string, unknown>): Promise<{ id: string }>
+    }
+    setLocalPtyProvider({
+      spawn: vi.fn(async () => ({ id: 'pty-runtime-resumed' })),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      shutdown: vi.fn(),
+      onData: vi.fn(() => vi.fn()),
+      onExit: vi.fn(() => vi.fn()),
+      listProcesses: vi.fn(async () => []),
+      getForegroundProcess: vi.fn(async () => null)
+    } as never)
+    const runtime = {
+      setPtyController: vi.fn(),
+      registerPty: vi.fn(),
+      noteTerminalSpawnCommand: vi.fn(),
+      onPtySpawned: vi.fn(),
+      onPtyExit: vi.fn(),
+      onPtyData: vi.fn()
+    }
+    const getSettings = vi.fn().mockReturnValue({
+      activeCodexManagedAccountId: 'account-b',
+      codexManagedAccounts: [
+        { id: 'account-a', managedHomePath: '/managed/origin/home' },
+        { id: 'account-b', managedHomePath: '/managed/current/home' }
+      ]
+    })
+    handlers.clear()
+    registerPtyHandlers(
+      mainWindow as never,
+      runtime as never,
+      vi.fn(() => '/managed/current/home'),
+      getSettings as never,
+      undefined,
+      undefined,
+      { prepareCodexSessionResume: async () => ({ codexHomePath: '/managed/origin/home' }) }
+    )
+    const controller = runtime.setPtyController.mock.calls[0]?.[0] as RuntimeSpawnController
+
+    await controller.spawn({
+      cols: 80,
+      rows: 24,
+      worktreeId: 'wt-runtime',
+      command: 'codex resume session-a',
+      launchAgent: 'codex',
+      resumeProviderSession: {
+        key: 'session_id',
+        id: 'session-a',
+        transcriptPath: '/managed/origin/home/sessions/2026/07/20/rollout-a.jsonl'
+      }
+    })
+
+    expect(recordCodexPaneAccountMock.mock.calls).toEqual([
+      ['pty-runtime-resumed', { selectionKey: 'host', accountId: 'account-a' }]
+    ])
+    expect(forgetCodexPaneAccountMock).not.toHaveBeenCalled()
+  })
+
+  it('leaves a runtime-controller resumed Codex pane unattributed when no account owns its home', async () => {
+    type RuntimeSpawnController = {
+      spawn(args: Record<string, unknown>): Promise<{ id: string }>
+    }
+    setLocalPtyProvider({
+      spawn: vi.fn(async () => ({ id: 'pty-runtime-resumed' })),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      shutdown: vi.fn(),
+      onData: vi.fn(() => vi.fn()),
+      onExit: vi.fn(() => vi.fn()),
+      listProcesses: vi.fn(async () => []),
+      getForegroundProcess: vi.fn(async () => null)
+    } as never)
+    const runtime = {
+      setPtyController: vi.fn(),
+      registerPty: vi.fn(),
+      noteTerminalSpawnCommand: vi.fn(),
+      onPtySpawned: vi.fn(),
+      onPtyExit: vi.fn(),
+      onPtyData: vi.fn()
+    }
+    const getSettings = vi.fn().mockReturnValue({
+      activeCodexManagedAccountId: 'account-b',
+      codexManagedAccounts: [{ id: 'account-b', managedHomePath: '/managed/current/home' }]
+    })
+    handlers.clear()
+    registerPtyHandlers(
+      mainWindow as never,
+      runtime as never,
+      vi.fn(() => '/managed/current/home'),
+      getSettings as never,
+      undefined,
+      undefined,
+      { prepareCodexSessionResume: async () => ({ codexHomePath: '/managed/shared-mirror/home' }) }
+    )
+    const controller = runtime.setPtyController.mock.calls[0]?.[0] as RuntimeSpawnController
+
+    await controller.spawn({
+      cols: 80,
+      rows: 24,
+      worktreeId: 'wt-runtime',
+      command: 'codex resume session-a',
+      launchAgent: 'codex',
+      resumeProviderSession: {
+        key: 'session_id',
+        id: 'session-a',
+        transcriptPath: '/managed/shared-mirror/home/sessions/2026/07/20/rollout-a.jsonl'
+      }
+    })
+
+    expect(recordCodexPaneAccountMock).not.toHaveBeenCalled()
+    expect(forgetCodexPaneAccountMock).toHaveBeenCalledWith('pty-runtime-resumed')
   })
 
   it('seeds cold restore at recovered dimensions with a legacy dimensionless fallback', async () => {

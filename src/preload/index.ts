@@ -1992,7 +1992,14 @@ const api = {
       accountId: string | null
       runtime?: 'host' | 'wsl'
       wslDistro?: string | null
-    }): Promise<unknown> => ipcRenderer.invoke('codexAccounts:select', args)
+    }): Promise<unknown> => ipcRenderer.invoke('codexAccounts:select', args),
+    listStalePanes: (args: {
+      ptyIds: string[]
+    }): Promise<
+      { ptyId: string; launchAccountId: string | null; activeAccountId: string | null }[]
+    > => ipcRenderer.invoke('codexAccounts:listStalePanes', args),
+    forgetStalePanes: (args: { ptyIds: string[] }): Promise<void> =>
+      ipcRenderer.invoke('codexAccounts:forgetStalePanes', args)
   },
 
   claudeAccounts: {
