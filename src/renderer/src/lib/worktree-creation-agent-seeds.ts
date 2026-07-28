@@ -79,8 +79,18 @@ export function seedAgentTabStateAfterWorktreeCreate(args: {
   queueHookCommandsForFirstWorktreeTab({
     worktreeId,
     deliver: (state, firstTerminalTabId) => {
-      const mirroredTabId = resolveLaunchAgentTabId(state, { ...args, agent }) ?? firstTerminalTabId
-      applyAgentTabSeeds(request, agent, mirroredTabId)
+      const mirroredTabId = resolveLaunchAgentTabId(state, { ...args, agent })
+      if (mirroredTabId) {
+        applyAgentTabSeeds(request, agent, mirroredTabId)
+        return
+      }
+      // Why: same invariant as the synchronous branch — never seed a tab that
+      // runs no agent. The queue entry is consumed before delivery (no retry),
+      // so accept the first mirrored tab only when it is the worktree's only
+      // one and therefore unambiguously the agent's.
+      if ((state.tabsByWorktree[worktreeId] ?? []).length === 1) {
+        applyAgentTabSeeds(request, agent, firstTerminalTabId)
+      }
     }
   })
 }

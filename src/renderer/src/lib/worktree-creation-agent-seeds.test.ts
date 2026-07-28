@@ -156,6 +156,26 @@ describe('seedAgentTabStateAfterWorktreeCreate', () => {
     expect(seededTabIds()).toEqual(['mirror-agent'])
   })
 
+  it('drops the deferred seed when the mirrored tabs are ambiguous', () => {
+    // Repo default tabs mirror together and none is stamped: `tabs[0]` here is
+    // "dev server". Seeding it would be withheld from mobile by the agent check
+    // and ignored on desktop — the same invariant the synchronous path holds.
+    setTabs([])
+
+    seedAgentTabStateAfterWorktreeCreate({
+      request,
+      worktreeId: 'wt-1',
+      primaryTabId: null,
+      startupTerminalTabId: undefined,
+      backendSpawned: false
+    })
+
+    setTabs([{ id: 'mirror-dev-server' }, { id: 'mirror-logs' }])
+
+    expect(mocks.seedNativeChatLaunchDraftForAgentTab).not.toHaveBeenCalled()
+    expect(mocks.seedNativeChatAppliedSessionOptions).not.toHaveBeenCalled()
+  })
+
   it('seeds session options but no draft without launch draft context', () => {
     setTabs([{ id: 'tab-1' }])
 
