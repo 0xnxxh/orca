@@ -2648,6 +2648,7 @@ export type PreloadApi = {
     download: () => Promise<void>
     quitAndInstall: () => Promise<void>
     dismissNudge: () => Promise<void>
+    dismissAvailableUpdate: () => Promise<void>
     onStatus: (callback: (status: UpdateStatus) => void) => () => void
     onClearDismissal: (callback: () => void) => () => void
   }

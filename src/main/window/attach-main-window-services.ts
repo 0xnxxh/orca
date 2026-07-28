@@ -36,6 +36,7 @@ import {
   getUpdateStatus,
   quitAndInstall,
   setupAutoUpdater,
+  dismissAvailableUpdate,
   dismissNudge,
   type UpdateInstallMode
 } from '../updater'
@@ -492,6 +493,7 @@ export function registerUpdaterHandlers(_store: Store): void {
   ipcMain.removeHandler('updater:download')
   ipcMain.removeHandler('updater:quitAndInstall')
   ipcMain.removeHandler('updater:dismissNudge')
+  ipcMain.removeHandler('updater:dismissAvailableUpdate')
 
   ipcMain.handle('updater:getStatus', () => getUpdateStatus())
   ipcMain.handle('updater:getVersion', () => app.getVersion())
@@ -502,4 +504,5 @@ export function registerUpdaterHandlers(_store: Store): void {
   ipcMain.handle('updater:download', () => downloadUpdate())
   ipcMain.handle('updater:quitAndInstall', () => quitAndInstall())
   ipcMain.handle('updater:dismissNudge', () => dismissNudge())
+  ipcMain.handle('updater:dismissAvailableUpdate', () => dismissAvailableUpdate())
 }
