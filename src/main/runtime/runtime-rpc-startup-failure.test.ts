@@ -30,11 +30,21 @@ import {
   showRuntimeRpcStartupFailureDialog
 } from './runtime-rpc-startup-failure'
 
-function createParentWindow(visible = true): Electron.BrowserWindow {
+type FakeParentWindow = Electron.BrowserWindow & EventEmitter
+
+function createParentWindow(visible = true, destroyed = false): FakeParentWindow {
   return Object.assign(new EventEmitter(), {
-    isDestroyed: () => false,
+    isDestroyed: () => destroyed,
     isVisible: () => visible
-  }) as unknown as Electron.BrowserWindow
+  }) as unknown as FakeParentWindow
+}
+
+// Why: the dialog is deferred behind an await, so a synchronous "not called yet" assertion
+// would pass even if the deferral were deleted; drain the microtask queue first.
+function flushMicrotasks(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve)
+  })
 }
 
 describe('runtime RPC startup failure reporting', () => {
@@ -58,6 +68,21 @@ describe('runtime RPC startup failure reporting', () => {
     expect(classifyRuntimeRpcStartFailure(error)).toBe(expected)
   })
 
+  it('classifies a code carried on a wrapped cause', () => {
+    const error = new Error('failed to publish orca-runtime.json', {
+      cause: Object.assign(new Error('read-only volume'), { code: 'EROFS' })
+    })
+
+    expect(classifyRuntimeRpcStartFailure(error)).toBe('storage_unavailable')
+  })
+
+  it('survives a self-referential cause chain', () => {
+    const error: Error & { cause?: unknown } = new Error('cyclic')
+    error.cause = error
+
+    expect(classifyRuntimeRpcStartFailure(error)).toBe('unknown')
+  })
+
   it('records a privacy-safe telemetry event', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const error = Object.assign(new Error('/Users/private/orca-runtime.json'), { code: 'EACCES' })
@@ -67,7 +92,7 @@ describe('runtime RPC startup failure reporting', () => {
     expect(trackMock).toHaveBeenCalledWith('runtime_rpc_start_failed', {
       error_class: 'permission_denied'
     })
-    expect(trackMock.mock.calls[0]).not.toContainEqual(expect.stringContaining('/Users/private'))
+    expect(JSON.stringify(trackMock.mock.calls)).not.toContain('/Users/private')
     consoleError.mockRestore()
   })
 
@@ -105,6 +130,15 @@ describe('runtime RPC startup failure reporting', () => {
     )
   })
 
+  it('truncates a runaway cause instead of pasting it whole into the dialog', async () => {
+    await showRuntimeRpcStartupFailureDialog(createParentWindow(), new Error('x'.repeat(900)))
+
+    const detail = showMessageBoxMock.mock.calls[0]?.[1]?.detail as string
+    const cause = detail.slice(detail.indexOf('Cause: ') + 'Cause: '.length)
+    expect(cause).toHaveLength(500)
+    expect(cause.endsWith('…')).toBe(true)
+  })
+
   it('waits until the app window is visible', async () => {
     const parentWindow = createParentWindow(false)
     const reporting = showRuntimeRpcStartupFailureDialog(
@@ -112,11 +146,38 @@ describe('runtime RPC startup failure reporting', () => {
       new Error('metadata write failed')
     )
 
+    await flushMicrotasks()
     expect(showMessageBoxMock).not.toHaveBeenCalled()
     parentWindow.emit('show')
     await reporting
 
     expect(showMessageBoxMock).toHaveBeenCalledOnce()
+    expect(parentWindow.listenerCount('show')).toBe(0)
+    expect(parentWindow.listenerCount('closed')).toBe(0)
+  })
+
+  it('never shows a dialog against an already destroyed window', async () => {
+    const parentWindow = createParentWindow(false, true)
+
+    await showRuntimeRpcStartupFailureDialog(parentWindow, new Error('metadata write failed'))
+
+    expect(showMessageBoxMock).not.toHaveBeenCalled()
+    expect(parentWindow.listenerCount('show')).toBe(0)
+  })
+
+  it('drops the pending dialog and its listeners when the window closes first', async () => {
+    const parentWindow = createParentWindow(false)
+    const reporting = showRuntimeRpcStartupFailureDialog(
+      parentWindow,
+      new Error('metadata write failed')
+    )
+
+    parentWindow.emit('closed')
+    await reporting
+
+    expect(showMessageBoxMock).not.toHaveBeenCalled()
+    expect(parentWindow.listenerCount('show')).toBe(0)
+    expect(parentWindow.listenerCount('closed')).toBe(0)
   })
 
   it('logs instead of rejecting if Electron cannot show the dialog', async () => {
