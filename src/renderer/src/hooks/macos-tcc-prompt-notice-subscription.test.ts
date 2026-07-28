@@ -1,11 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { subscribeToMacosTccPromptNotice } from './macos-tcc-prompt-notice-subscription'
+import {
+  dismissMacosTccPromptNotice,
+  subscribeToMacosTccPromptNotice
+} from './macos-tcc-prompt-notice-subscription'
 
 afterEach(() => {
   vi.restoreAllMocks()
 })
 
 describe('subscribeToMacosTccPromptNotice', () => {
+  it('contains synchronous and rejected dismissal failures', async () => {
+    const synchronousFailure = vi.fn(() => {
+      throw new Error('renderer closing')
+    })
+    const rejectedFailure = vi.fn().mockRejectedValue(new Error('ipc unavailable'))
+
+    await expect(
+      dismissMacosTccPromptNotice({ dismiss: synchronousFailure })
+    ).resolves.toBeUndefined()
+    await expect(dismissMacosTccPromptNotice({ dismiss: rejectedFailure })).resolves.toBeUndefined()
+  })
+
   it('delivers a threshold retained before the renderer subscribed', async () => {
     const onNotice = vi.fn()
     const acknowledgePending = vi.fn().mockResolvedValue(undefined)

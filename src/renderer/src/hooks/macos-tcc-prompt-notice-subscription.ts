@@ -7,6 +7,17 @@ type MacosTccPromptNoticeApi = {
   consumePending?: () => Promise<TccPromptNoticeClaim | null>
   acknowledgePending?: (claimId: number) => Promise<void>
   releasePending?: (claimId: number) => Promise<void>
+  dismiss?: () => Promise<void>
+}
+
+export async function dismissMacosTccPromptNotice(
+  api: Pick<MacosTccPromptNoticeApi, 'dismiss'> | undefined
+): Promise<void> {
+  try {
+    await api?.dismiss?.()
+  } catch {
+    // Why: renderer teardown must not turn a best-effort dismissal into an unhandled error.
+  }
 }
 
 export function subscribeToMacosTccPromptNotice(
