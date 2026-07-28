@@ -5404,9 +5404,7 @@ describe('registerWorktreeHandlers', () => {
       ref: 'refs/remotes/origin/main',
       base: 'origin/main'
     }
-    runtimeStub.resolveRemoteTrackingBase.mockImplementation(async (_repoPath, baseBranch) =>
-      baseBranch === 'origin/main' ? remoteBase : null
-    )
+    runtimeStub.resolveRemoteTrackingBase.mockResolvedValue(remoteBase)
     runtimeStub.hasRemoteTrackingRef.mockResolvedValue(false)
     listWorktreesMock.mockResolvedValue([
       {
