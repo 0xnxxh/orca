@@ -210,8 +210,10 @@ cross-scope races, privacy/authorization audit, and independent review.
       rejects numeric active/previous hashes with the same stable error on both
       platforms. Both native stores cap each raw manifest at 256 KiB before JSON
       parsing. Android now requires the exact root document URL and rejects
-      percent-encoded or query-bearing asset requests; a fresh exact-app rerun,
-      generated mutation, and the other listed boundaries remain.
+      percent-encoded or query-bearing asset requests. One document-CSP contract
+      now drives packaging/verification and exact native source parity; a fresh
+      exact-app rerun, generated mutation, and the other listed boundaries
+      remain.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,
       reconnect, process-loss, and host-removal races.
 - [ ] Verify no credential or privileged host identity reaches URLs, DOM state,

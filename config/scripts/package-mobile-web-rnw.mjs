@@ -7,6 +7,7 @@ import {
   MobileWebManifestSchema,
   serializeMobileWebManifestForBuildId
 } from '../../src/shared/mobile-web/manifest-contract.ts'
+import { mobileWebDocumentCsp } from '../../src/shared/mobile-web/document-csp.ts'
 import { MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH } from '../../src/shared/mobile-web/markdown-editor-csp.ts'
 
 const args = parseArgs(process.argv.slice(2))
@@ -154,22 +155,7 @@ function replaceReferences(source, replacements) {
 }
 
 function mobileWebDocument({ scriptPath, stylePath }) {
-  const csp = [
-    "default-src 'none'",
-    `script-src 'self' ${MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH}`,
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self'",
-    "connect-src 'none'",
-    "media-src 'none'",
-    "object-src 'none'",
-    'frame-src data:',
-    'child-src data:',
-    "worker-src 'none'",
-    "base-uri 'none'",
-    "form-action 'none'",
-    "frame-ancestors 'none'"
-  ].join('; ')
+  const csp = mobileWebDocumentCsp(MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH)
   return `<!doctype html>
 <html lang="en">
   <head>

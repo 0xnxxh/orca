@@ -10,8 +10,8 @@ private let mobileWebCsp = [
   "script-src 'self' 'sha256-1U6xDmOrcY3IC5LxY6dRlxDPeS9l4iILlzMspyz5qlY='",
   // Why: React Native Web emits runtime style elements and attributes for the existing mobile UI.
   "style-src 'self' 'unsafe-inline'",
-  "font-src 'self'",
   "img-src 'self' data: blob:",
+  "font-src 'self'",
   "connect-src 'none'",
   "media-src 'none'",
   "object-src 'none'",

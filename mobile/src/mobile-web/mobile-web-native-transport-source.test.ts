@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { MOBILE_WEB_BRIDGE_MAX_MESSAGE_BYTES } from '../../../src/shared/mobile-web/bridge-contract'
+import { mobileWebDocumentCspDirectives } from '../../../src/shared/mobile-web/document-csp'
 import { MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH } from '../../../src/shared/mobile-web/markdown-editor-csp'
 
 const iosSource = readFileSync(
@@ -138,6 +139,9 @@ describe('mobile web native bridge transport', () => {
   })
 
   it('allows only opaque data frames for the shared rich Markdown editor', () => {
+    const expected = mobileWebDocumentCspDirectives(MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH)
+    expect(nativeCspDirectives(iosSource, 'mobileWebCsp')).toEqual(expected)
+    expect(nativeCspDirectives(androidSource, 'MOBILE_WEB_CSP')).toEqual(expected)
     for (const source of [iosSource, androidSource]) {
       expect(source).toContain('"frame-src data:"')
       expect(source).toContain('"child-src data:"')
@@ -164,3 +168,16 @@ describe('mobile web native bridge transport', () => {
     expect(androidSource).toContain('!request.isForMainFrame && url.scheme == "data"')
   })
 })
+
+function nativeCspDirectives(source: string, declaration: string): string[] {
+  const kotlinStart = source.indexOf(`${declaration} = listOf(`)
+  const swiftStart = source.indexOf(`${declaration} = [`)
+  const opening = kotlinStart >= 0 ? kotlinStart : swiftStart
+  const closing = source.indexOf(kotlinStart >= 0 ? ').joinToString' : '].joined', opening)
+  if (opening < 0 || closing < 0) {
+    return []
+  }
+  return [...source.slice(opening, closing).matchAll(/^\s*"([^"]+)",?$/gm)].map(
+    (match) => match[1]!
+  )
+}

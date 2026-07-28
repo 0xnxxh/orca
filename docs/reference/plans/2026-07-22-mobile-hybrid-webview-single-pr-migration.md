@@ -2722,8 +2722,10 @@ that encoded ceiling before invoking their native decoders and cap each raw
 manifest document at 256 KiB before JSON parsing. Native activation metadata
 likewise requires string-typed active and previous hashes on both platforms;
 hash-shaped JSON numbers fail with
-`mobile_web_activation_invalid`. Generated mutation and the remaining
-path/MIME/CSP/cache corpus are still required.
+`mobile_web_activation_invalid`. The RNW packager and verifier consume one
+document-CSP contract, and source tests require both native response policies
+to match its exact directive sequence. Generated mutation and the remaining
+path/MIME/CSP behavior/cache corpus are still required.
 
 ## App Store Gate
 

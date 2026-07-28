@@ -6,6 +6,7 @@ import {
   MobileWebManifestSchema,
   serializeMobileWebManifestForBuildId
 } from '../../src/shared/mobile-web/manifest-contract.ts'
+import { mobileWebDocumentCspDirectives } from '../../src/shared/mobile-web/document-csp.ts'
 import { MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH } from '../../src/shared/mobile-web/markdown-editor-csp.ts'
 import {
   MOBILE_WEB_RNW_BUILD_BUDGET,
@@ -76,23 +77,9 @@ const html = await readFile(path.join(outputRoot, manifest.entrypoint), 'utf8')
 if (!/<meta\s+name=["']viewport["'][^>]*\bviewport-fit=cover\b/i.test(html)) {
   throw new Error('RNW document must expose native safe-area insets')
 }
-const requiredCsp = [
-  "default-src 'none'",
-  `script-src 'self' ${MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH}`,
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
-  "font-src 'self'",
-  "connect-src 'none'",
-  "media-src 'none'",
-  "object-src 'none'",
-  'frame-src data:',
-  'child-src data:',
-  "worker-src 'none'",
-  "base-uri 'none'",
-  "form-action 'none'",
-  "frame-ancestors 'none'"
-]
-for (const directive of requiredCsp) {
+for (const directive of mobileWebDocumentCspDirectives(
+  MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH
+)) {
   if (!html.includes(directive)) {
     throw new Error(`RNW CSP is missing: ${directive}`)
   }

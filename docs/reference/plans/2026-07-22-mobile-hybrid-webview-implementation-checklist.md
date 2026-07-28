@@ -1541,8 +1541,10 @@ copy.
   They also cap each raw manifest document at 256 KiB before JSON parsing.
   Native activation records also require exact string-typed active/previous
   hashes; numeric hash-shaped values fail with the same stable error on iOS and
-  Android. Broader generated mutation, path/MIME/CSP, and persisted-cache
-  metadata fuzzing remains open.
+  Android. The packager and verifier now consume one document-CSP contract, and
+  source tests require the iOS and Android response policies to match its exact
+  directive sequence. Broader generated mutation, path/MIME/CSP behavior, and
+  persisted-cache metadata fuzzing remains open.
 - [ ] Fuzz bridge envelopes, schemas, sizes, IDs, ordering, cancellation, and
       subscription lifecycle.
 - [ ] Attempt cross-host, cross-build, cross-workspace, and cross-session races.
@@ -2576,4 +2578,5 @@ copy.
 | 2026-07-28 | Complete | Mirrored 65,537-character native chunk regressions pass the Swift fault executable and the refreshed Android module suite across 76 Gradle tasks. No RNW package content changed.                                                                                                                                                                                                                                                       |
 | 2026-07-28 | Finding  | Native manifest parsing enforced asset count and field bounds only after parsing both supplied JSON documents. Swift and Kotlin now reject either raw manifest above 256 KiB before handing it to `JSONSerialization` or `JSONObject`.                                                                                                                                                                                                  |
 | 2026-07-28 | Complete | Mirrored oversized primary/canonical manifest regressions pass the Swift fault executable and the refreshed Android module suite across 76 Gradle tasks. No staging directory is created for the rejected Android inputs.                                                                                                                                                                                                               |
+| 2026-07-28 | Complete | The RNW packager, build verifier, iOS response policy, and Android response policy now share one exact document-CSP contract. Focused packager/native-source tests pass, and a fresh production RNW build retains build `9ed8c7f7…`, 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes.                                                                                                                                          |
 | 2026-07-28 | Next     | Complete the remaining parity inventory and cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                  |
