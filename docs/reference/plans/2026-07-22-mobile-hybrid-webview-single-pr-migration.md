@@ -689,7 +689,11 @@ photo and created a 2,808,983-byte shell-owned host temp PNG through the same
 unchanged hosted control. Two focused files / 9 tests cover accepted,
 cancelled, permission-denied, too-large, floating-workspace, and SSH execution
 authority. Terminal Enter execution after the live upload was not observable,
-so it is not claimed. Live text/image paste, document selection, camera,
+so it is not claimed. A later exact cached-app run seeded
+`ORCA_HOSTED_CLIPBOARD_TEXT_PASTE`, activated the unchanged Paste control
+through a native accessibility tap, accepted the real iOS paste privacy prompt,
+and required the exact marker in the temporary Desktop terminal before passing
+both isolation probes. Live clipboard-image paste, document selection, camera,
 denial/revocation, background interruption, Android, and physical-device
 evidence remain open. Long-pressing the same unchanged control opened the
 native iOS document picker and Cancel returned cleanly; selected-document

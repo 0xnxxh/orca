@@ -97,7 +97,7 @@ formatting, localization, and the max-lines ratchet pass.
 The independently verified React Native Web package is
 `9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`:
 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes. The current mobile
-suite passes 561 files / 3,322 tests with 2 expected skips. Mobile and
+suite passes 562 files / 3,325 tests with 2 expected skips. Mobile and
 mobile-web typechecks and lints, changed-file formatting, max-lines, package
 verification, and diff hygiene pass. The repository-wide formatter still
 reports 19 unrelated baseline files, so changed-file formatting is the
@@ -112,6 +112,15 @@ Native-chat tool input is normalized before schema parsing and delivery to a
 adversarial corpus now covers filenames, diff lines, task/provider fields,
 bounded errors, terminal-link policy, and the remaining intentional sanitized
 HTML/Markdown/Mermaid sinks.
+
+The worktree-local dev runtime now passes a fresh exact-app iPhone 17 Pro
+security rerun without the production-runtime `host_forbidden` mismatch. The
+same exact cached app seeds the simulator pasteboard, enters the unchanged
+Session UI, activates its existing Paste control through a native accessibility
+tap, accepts the real iOS paste privacy prompt, and requires the exact
+`ORCA_HOSTED_CLIPBOARD_TEXT_PASTE` marker in the temporary Desktop terminal.
+The successful run used two bounded activation attempts and then passed the
+private-origin network and navigation isolation probes.
 
 ## 1. Finish Hosted Feature Parity
 

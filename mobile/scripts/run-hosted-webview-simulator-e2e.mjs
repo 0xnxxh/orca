@@ -38,6 +38,7 @@ import { openHostedIosHybridRoute } from './hosted-ios-hybrid-route-handoff.mjs'
 import { verifyHostedNativeTerminalSettingsHandoff } from './hosted-ios-native-settings-handoff.mjs'
 import { verifyHostedSourceControlReviewJourney } from './hosted-ios-source-control-review-journey.mjs'
 import { captureNativeSourceControlReviewBaselines } from './hosted-ios-source-control-review-parity.mjs'
+import { verifyHostedIosTerminalClipboardPaste } from './hosted-ios-terminal-clipboard-paste.mjs'
 import { completeHostedIosNativeOnboarding } from './hosted-ios-native-onboarding.mjs'
 import { activateHostedWorkspaceRow } from './hosted-webview-workspace-activation.mjs'
 import { resolveHostedWebViewRuntimeDirectory } from './hosted-webview-runtime-directory.mjs'
@@ -213,6 +214,21 @@ async function main() {
       expectedText: 'Orca Desktop',
       timeoutMs: options.timeoutMs
     })
+    const terminalClipboardPaste = options.securityOnly
+      ? await evidenceStep('hosted terminal clipboard text paste', () =>
+          verifyHostedIosTerminalClipboardPaste({
+            deviceUdid,
+            discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
+            emulator,
+            expectedWorkspace,
+            orcaCli: orcaSelection.command,
+            pairingRuntimeUserDataPath: path.join(runtimeDirectory, 'paired-host', 'userData'),
+            timeoutMs: options.timeoutMs,
+            workspaceDocument,
+            worktree
+          })
+        )
+      : null
     const hostedWorkspace =
       options.securityOnly ||
       options.filesPreviewOnly ||
@@ -353,14 +369,16 @@ async function main() {
             })
           })
     const securityDocument =
-      options.accountsOnly || options.securityOnly || options.filesPreviewOnly
-        ? parityWorkspaceDocument
-        : await waitForVisibleHostedWebView({
-            discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
-            expectedText: options.nativeSettingsOnly ? 'Mobile Emulator' : 'reviewed',
-            expectedHrefIncludes: options.nativeSettingsOnly ? '/session/' : '/review/',
-            timeoutMs: options.timeoutMs
-          })
+      options.securityOnly && terminalClipboardPaste
+        ? terminalClipboardPaste.sessionDocument
+        : options.accountsOnly || options.filesPreviewOnly
+          ? parityWorkspaceDocument
+          : await waitForVisibleHostedWebView({
+              discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
+              expectedText: options.nativeSettingsOnly ? 'Mobile Emulator' : 'reviewed',
+              expectedHrefIncludes: options.nativeSettingsOnly ? '/session/' : '/review/',
+              timeoutMs: options.timeoutMs
+            })
     const networkIsolation = await evidenceStep('network isolation probe', () =>
       verifyHostedWebViewNetworkIsolation({
         document: securityDocument,
@@ -392,6 +410,7 @@ async function main() {
           networkIsolation,
           navigationIsolation,
           nativeOnboarding,
+          terminalClipboardPaste: terminalClipboardPaste?.evidence ?? null,
           workspaceParity: hostedWorkspace,
           accountsParity: hostedAccounts?.evidence ?? null,
           agentHistory: historyEvidence,
