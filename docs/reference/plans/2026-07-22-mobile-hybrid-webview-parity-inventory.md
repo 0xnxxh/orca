@@ -380,19 +380,19 @@ not by itself prove that React Native Web, WKWebView, Android WebView, and nativ
 controls expose identical platform behavior. The required ownership and
 validation boundary is:
 
-| Area                              | Required migration behavior                                                                                                                                                                        | Current evidence and remaining validation                                                                                                                           |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| VoiceOver and TalkBack            | Preserve existing labels, roles, states, reading order, headings, and actionable names; shell-owned loading uses polite live regions and failures/warnings use alerts                              | Shell/host-picker source contracts exist; live VoiceOver and TalkBack traversals remain open                                                                        |
-| Focus and route transitions       | Preserve current initial focus, modal focus containment, Back behavior, keyboard dismissal, and focus after route/session/process restoration                                                      | Shared route/component source and the hosted Rename viewport recovery pass; deterministic focus fixtures remain open                                                |
-| Software keyboard                 | Preserve existing input modes, accessory controls, submit/dismiss behavior, safe-area avoidance, and viewport restoration without WebView auto-zoom                                                | iOS document disables input auto-zoom and hosted Rename passed on Simulator; full route matrix remains open                                                         |
-| Hardware keyboard                 | Preserve platform modifier handling, Tab/Shift-Tab order, Enter/Escape behavior, and terminal/browser key routing without taking the wrong input floor                                             | Browser Tab-key behavior passed on Simulator; hardware-keyboard validation on iOS/Android remains open                                                              |
-| IME composition                   | Keep composition events intact until commit, serialize committed terminal input once, and never split or duplicate composed text across bridge requests                                            | Existing input controller and bounded ordering adapter are reused; emulator/physical IME composition evidence remains open                                          |
-| Dictation and audio               | Keep permission, recording, interruption, cancellation, and audio-session ownership native; insert only the final bounded transcript through typed operations                                      | iOS Simulator dictation setup/download/record/process/insertion passes; interruption, device, and Android evidence remains open                                     |
-| Gesture-gated capabilities        | Observe the gesture natively, issue no reusable token to the page, consume the lease once, and bind the action to the active host/build/session                                                    | Broker/native-authority tests cover capability leases; live denial/expiry and assistive-touch paths remain open                                                     |
-| Selection, copy, paste, and links | Preserve current selection handles/actions and route clipboard/picker/external-link work through gesture-gated shell operations                                                                    | Terminal selection/copy, text paste with the real iOS privacy prompt, and internal/external links pass on Simulator; image paste and document selection remain open |
-| Rotation and responsive layout    | Reuse current phone/tablet responsive component source, preserve route/view state, and recompute safe areas and terminal/browser geometry                                                          | Portrait/landscape and background/foreground pass on iPhone Simulator; tablet, foldable, and physical-device evidence remains open                                  |
-| Reduced motion                    | Preserve the current reduced-motion response and avoid shell-only decorative animation; recovery state changes must remain understandable without animation                                        | No new shell animation was introduced; live reduced-motion audit remains open                                                                                       |
-| Text zoom and Dynamic Type        | Preserve existing mobile text-scale preferences and readable control/layout behavior; hosted document zoom policy must prevent accidental form auto-zoom without blocking intentional user scaling | Terminal text-scale contracts and iOS input auto-zoom prevention exist; Dynamic Type and accessibility-zoom matrix remains open                                     |
+| Area                              | Required migration behavior                                                                                                                                                                        | Current evidence and remaining validation                                                                                                                                         |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| VoiceOver and TalkBack            | Preserve existing labels, roles, states, reading order, headings, and actionable names; shell-owned loading uses polite live regions and failures/warnings use alerts                              | Shell/host-picker source contracts exist; live VoiceOver and TalkBack traversals remain open                                                                                      |
+| Focus and route transitions       | Preserve current initial focus, modal focus containment, Back behavior, keyboard dismissal, and focus after route/session/process restoration                                                      | Shared route/component source and the hosted Rename viewport recovery pass; deterministic focus fixtures remain open                                                              |
+| Software keyboard                 | Preserve existing input modes, accessory controls, submit/dismiss behavior, safe-area avoidance, and viewport restoration without WebView auto-zoom                                                | iOS document disables input auto-zoom and hosted Rename passed on Simulator; full route matrix remains open                                                                       |
+| Hardware keyboard                 | Preserve platform modifier handling, Tab/Shift-Tab order, Enter/Escape behavior, and terminal/browser key routing without taking the wrong input floor                                             | Browser Tab-key behavior passed on Simulator; hardware-keyboard validation on iOS/Android remains open                                                                            |
+| IME composition                   | Keep composition events intact until commit, serialize committed terminal input once, and never split or duplicate composed text across bridge requests                                            | Existing input controller and bounded ordering adapter are reused; emulator/physical IME composition evidence remains open                                                        |
+| Dictation and audio               | Keep permission, recording, interruption, cancellation, and audio-session ownership native; insert only the final bounded transcript through typed operations                                      | iOS Simulator dictation setup/download/record/process/insertion passes; interruption, device, and Android evidence remains open                                                   |
+| Gesture-gated capabilities        | Observe the gesture natively, issue no reusable token to the page, consume the lease once, and bind the action to the active host/build/session                                                    | Broker/native-authority tests cover capability leases; live denial/expiry and assistive-touch paths remain open                                                                   |
+| Selection, copy, paste, and links | Preserve current selection handles/actions and route clipboard/picker/external-link work through gesture-gated shell operations                                                                    | Terminal selection/copy, text paste with the real iOS privacy prompt, selected-document upload, and internal/external links pass on Simulator; clipboard-image paste remains open |
+| Rotation and responsive layout    | Reuse current phone/tablet responsive component source, preserve route/view state, and recompute safe areas and terminal/browser geometry                                                          | Portrait/landscape and background/foreground pass on iPhone Simulator; tablet, foldable, and physical-device evidence remains open                                                |
+| Reduced motion                    | Preserve the current reduced-motion response and avoid shell-only decorative animation; recovery state changes must remain understandable without animation                                        | No new shell animation was introduced; live reduced-motion audit remains open                                                                                                     |
+| Text zoom and Dynamic Type        | Preserve existing mobile text-scale preferences and readable control/layout behavior; hosted document zoom policy must prevent accidental form auto-zoom without blocking intentional user scaling | Terminal text-scale contracts and iOS input auto-zoom prevention exist; Dynamic Type and accessibility-zoom matrix remains open                                                   |
 
 ## Cross-Cutting Inventory Status
 
@@ -420,12 +420,15 @@ first-use Photos prompt from unchanged Attach, shows the existing denial toast,
 retains the exact Session, leaves Desktop terminal output unchanged, and
 shows no image data or `orca-paste-` marker in hosted page text. Focused
 contracts separately require a status-only result. Clipboard-image paste,
-selected-document upload, post-grant revocation, interruption, and
-physical-device evidence remain open. Camera is native QR pairing only; the
-existing attachment UI has no camera action. The live run did not observe
-terminal Enter execution after the upload.
-Long-pressing the same unchanged control opened the native iOS document picker
-and Cancel returned cleanly; selected-document upload remains open.
+post-grant revocation, interruption, and physical-device evidence remain open.
+Camera is native QR pairing only; the existing attachment UI has no camera
+action. The live run did not observe terminal Enter execution after the photo
+upload. Long-pressing the same unchanged control opens the native iOS document
+picker. A deterministic Files selection now uploads a 123-byte PNG through
+shell-owned host authority, injects only the host temp path into the terminal,
+and matches the source SHA-256
+`dec4a91731905b9e8ed450a6c46931258528fc034fcfc64d95b0b23264f8e9d4`.
+The filename, bytes, digest, and temp path remain absent from hosted page state.
 
 Native-chat composer drafts now cross a named persistence operations seam
 without changing composer JSX or behavior. Hosted code sends only opaque
@@ -545,9 +548,10 @@ a protocol-compatible local cell. The UX-state and accessibility/input
 ownership inventories are now frozen, including accurate incompatible-build
 fallback copy and shell alert/live-region semantics. Complete live
 waiting/loading/error, ambiguous-delivery, file-opening, production cloud Relay
-with realistic latency/reconnect. Complete selected-document upload,
-post-grant revocation, interruption, and physical-device attachment evidence
-after the selected-photo and first-use denial paths proven on iOS Simulator.
+with realistic latency/reconnect. Complete post-grant revocation, interruption,
+clipboard-image paste, and physical-device attachment evidence after the
+selected-photo, selected-document, and first-use denial paths proven on iOS
+Simulator.
 Keep camera validation scoped to the existing native QR-pairing route rather
 than inventing an attachment action. Add
 deterministic native-versus-hosted Tasks and session fixtures beyond the

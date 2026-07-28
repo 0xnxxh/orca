@@ -45,6 +45,8 @@ export async function verifyHostedIosPhotoPermissionDenial(
   const readState = operations.readState ?? readHostedWebViewState
   const waitForDocument = operations.waitForDocument ?? waitForVisibleHostedWebView
   const readTerminal = operations.readTerminal ?? readHostedRuntimeTerminalSnapshot
+  const wait = operations.wait ?? delay
+  await wait(500)
   const beforeTerminal = await readTerminal({
     orcaCli,
     pairingRuntimeUserDataPath,
@@ -87,15 +89,19 @@ export async function verifyHostedIosPhotoPermissionDenial(
     requireInteractiveControls: false,
     timeoutMs
   })
-  await delay(500)
+  await wait(500)
   const afterTerminal = await readTerminal({
     orcaCli,
     pairingRuntimeUserDataPath,
     terminalHandle,
     worktree
   })
-  if (JSON.stringify(afterTerminal) !== JSON.stringify(beforeTerminal)) {
-    throw new Error('Photo permission denial changed the Desktop terminal')
+  const beforeText = beforeTerminal.join('')
+  const afterText = afterTerminal.join('')
+  if (afterText !== beforeText) {
+    throw new Error(
+      `Photo permission denial changed the Desktop terminal: before=${JSON.stringify(beforeText.slice(-240))} after=${JSON.stringify(afterText.slice(-240))}`
+    )
   }
 
   return {

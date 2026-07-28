@@ -1342,16 +1342,18 @@ copy.
   healing, and release paths pass focused tests. The exact cached iPhone app
   now denies the real first-use Photos prompt, shows `Photo permission denied`,
   keeps terminal output unchanged, and shows neither image data nor a temp path
-  marker in hosted page text. Selected document upload, permission revocation
-  after a grant, physical-device, and exact-app live native-chat image evidence
-  remain. Camera is currently native QR pairing only; the unchanged attachment
-  UI has no camera action. On the Pixel 9 Pro API 36 emulator, the unchanged Attach
-  control opens the real Android Photos picker. Sending the picker to Home and
-  bringing Orca back cancels the pending operation cleanly while retaining the
-  exact hosted session; no selected path or bytes enter the page. Accepted
-  selection also passes: the shell uploaded a 579-byte PNG to its own host temp
-  path, injected only that shell-owned path into the Desktop terminal, and an
-  independent SHA-256 check matched the source exactly.
+  marker in hosted page text. Selected document upload now passes on iPhone
+  Simulator with an independently verified 123-byte PNG and no privileged page
+  state. Permission revocation after a grant, physical-device, and exact-app
+  live native-chat image evidence remain. Camera is currently native QR pairing
+  only; the unchanged attachment UI has no camera action. On the Pixel 9 Pro API
+  36 emulator, the unchanged Attach control opens the real Android Photos
+  picker. Sending the picker to Home and bringing Orca back cancels the pending
+  operation cleanly while retaining the exact hosted session; no selected path
+  or bytes enter the page. Accepted selection also passes: the shell uploaded a
+  579-byte PNG to its own host temp path, injected only that shell-owned path
+  into the Desktop terminal, and an independent SHA-256 check matched the source
+  exactly.
 - [~] Implement microphone, dictation, and two-way audio lifecycle. The
   unchanged mic controls and setup drawer use a strict typed subscription and
   shell-owned speech authority. Raw PCM never enters hosted JavaScript;
@@ -2005,7 +2007,7 @@ copy.
 | 2026-07-24 | Web packaging           | Exact-source RNW package after SSH transcript authority and hosted call-site updates                                                                                                                                        | `31e01f57…`; 49 assets; 7,819,381 B / 1,680,417 B gzip                                                                                                                                            |
 | 2026-07-24 | Attachments             | Hosted unchanged Attach hook, bounded result feedback, picker cancellation, local/SSH upload authority                                                                                                                      | 2 focused files / 9 tests passed                                                                                                                                                                  |
 | 2026-07-24 | Attachments E2E         | Selected a seeded photo through the native iOS picker from the unchanged hosted session                                                                                                                                     | Shell created a 2,808,983-byte host temp PNG; terminal Enter execution was not observed                                                                                                           |
-| 2026-07-24 | Attachment picker       | Long-pressed the unchanged Attach control to open the native iOS document picker and cancelled                                                                                                                              | Passed; selected-document upload remains open                                                                                                                                                     |
+| 2026-07-24 | Attachment picker       | Long-pressed the unchanged Attach control to open the native iOS document picker and cancelled                                                                                                                              | Initial cancellation pass; selected-document upload completed July 28                                                                                                                             |
 | 2026-07-24 | Chat persistence        | Host/build/workspace/tab-isolated shell storage, authority resolution, adapters, hydration, coalescing, and teardown flush                                                                                                  | 6 focused mobile files / 41 tests plus 19 root bridge-contract tests passed                                                                                                                       |
 | 2026-07-24 | Bridge limits           | Shared 640 KiB envelope, 600 KiB operation, 40 KiB reserve, native-source drift, production-grant, and worst-case UTF-8 clipboard checks                                                                                    | 20 root bridge tests and 4 focused mobile tests passed                                                                                                                                            |
 | 2026-07-24 | Native iOS build        | Full Debug iPhone Simulator build with the 640 KiB Swift transport ceiling and local signing                                                                                                                                | Passed; `** BUILD SUCCEEDED **`                                                                                                                                                                   |
@@ -2504,4 +2506,7 @@ copy.
 | 2026-07-28 | Finding  | Repository-wide formatting still reports 19 unrelated baseline files; every migration-owned changed file passes formatting.                                                                                                                                                                                                                                                                                                             |
 | 2026-07-28 | Complete | The exact cached iPhone app reset only Orca's Photos permission, entered the unchanged hosted Session, tapped existing Attach, and denied the real system prompt. The existing denial toast appeared, terminal output stayed unchanged, no image data or `orca-paste-` marker appeared in hosted page text, and both isolation probes passed without manual intervention.                                                               |
 | 2026-07-28 | Complete | Photos-denial validation passes 564 mobile files / 3,331 tests with 2 expected skips and 3 focused files / 9 tests. Typechecks, lint, formatting, max-lines, reliability, package verification, and diff hygiene pass. Changed-code scans find zero native/type-aware issues and no React Doctor finding in this slice; 41 migration-wide findings pre-exist.                                                                           |
+| 2026-07-28 | Complete | The exact cached iPhone 17 Pro / iOS 26.5 app long-pressed unchanged Attach, opened Files, and selected the seeded `orca-document-upload-fixture.png`. Native touch plus the existing RNW responder activated the real picker; a Files-specific thumbnail hit point made selection deterministic without product UI changes.                                                                                                            |
+| 2026-07-28 | Complete | Shell-owned authority uploaded the selected 123-byte PNG and injected only its `orca-paste-…png` host temp path into the Desktop terminal. Independent size and SHA-256 verification matched `dec4a91731905b9e8ed450a6c46931258528fc034fcfc64d95b0b23264f8e9d4`; filename, bytes, digest, and temp path were absent from hosted page state. Photos denial and both isolation probes passed in the same unattended run.                  |
+| 2026-07-28 | Complete | Document-upload validation passes 566 mobile files / 3,345 tests with 2 expected skips and 6 focused files / 31 tests. Mobile and RNW typechecks/lints, mobile and plan formatting, reliability, max-lines, package verification, and diff hygiene pass. RNW remains `9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`: 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes.                                      |
 | 2026-07-28 | Next     | Complete the remaining parity inventory and cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                  |

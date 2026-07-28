@@ -25,6 +25,7 @@ function createOperations() {
     readTerminal: vi.fn().mockResolvedValue(['ORCA_HOSTED_CLIPBOARD_TEXT_PASTE']),
     tapControl: vi.fn().mockResolvedValue({ x: 0.75, y: 0.9 }),
     tapPoint: vi.fn().mockResolvedValue(undefined),
+    wait: vi.fn().mockResolvedValue(undefined),
     waitForDocument: vi.fn().mockResolvedValue(args.sessionDocument),
     waitForPrompt: vi.fn().mockResolvedValue({
       label: 'Don’t Allow',
@@ -119,5 +120,14 @@ describe('hosted iOS Photos permission denial', () => {
     await expect(verifyHostedIosPhotoPermissionDenial(args, operations)).rejects.toThrow(
       'changed the Desktop terminal'
     )
+  })
+
+  it('accepts terminal row reflow when the character stream is unchanged', async () => {
+    const operations = createOperations()
+    operations.readTerminal
+      .mockResolvedValueOnce(['ORCA_HOSTED_', 'CLIPBOARD_TEXT_PASTE'])
+      .mockResolvedValueOnce(['ORCA_HOSTED_CLIPBOARD_', 'TEXT_PASTE'])
+
+    await expect(verifyHostedIosPhotoPermissionDenial(args, operations)).resolves.toBeDefined()
   })
 })

@@ -60,6 +60,29 @@ export async function tapHostedIosAccessibilityControlByLabelPrefix(
   return point
 }
 
+export async function tapHostedIosAccessibilityControlByLabelPrefixAtPosition(
+  args,
+  labelPrefix,
+  position,
+  timeoutMs,
+  runCommand = runHostedIosEmulatorCommand
+) {
+  const point = await waitForHostedIosAccessibilityControlOccurrence(
+    args,
+    labelPrefix,
+    0,
+    timeoutMs,
+    runCommand,
+    (node) => node.label === labelPrefix || node.label?.startsWith(`${labelPrefix},`),
+    (frame) => ({
+      x: frame.x + frame.width * position.x,
+      y: frame.y + frame.height * position.y
+    })
+  )
+  await runCommand(args, ['tap', String(point.x), String(point.y)])
+  return point
+}
+
 export async function tapHostedIosAccessibilityControlStartingWith(
   args,
   labelPrefix,
@@ -183,7 +206,11 @@ async function waitForHostedIosAccessibilityControlOccurrence(
   occurrence,
   timeoutMs,
   runCommand,
-  matchesLabel = (node) => node.label === label || node.value === label
+  matchesLabel = (node) => node.label === label || node.value === label,
+  pointForFrame = (frame) => ({
+    x: frame.x + frame.width / 2,
+    y: frame.y + frame.height / 2
+  })
 ) {
   const deadline = Date.now() + timeoutMs
   let lastLabels = []
@@ -194,10 +221,7 @@ async function waitForHostedIosAccessibilityControlOccurrence(
       (node) => matchesLabel(node) && node.enabled !== false && isFiniteFrame(node.frame)
     )[occurrence]
     if (control) {
-      const point = {
-        x: control.frame.x + control.frame.width / 2,
-        y: control.frame.y + control.frame.height / 2
-      }
+      const point = pointForFrame(control.frame)
       if (isNormalizedPoint(point)) {
         return point
       }

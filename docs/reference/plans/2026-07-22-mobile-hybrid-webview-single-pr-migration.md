@@ -699,12 +699,14 @@ Attach control, observed the existing `Photo permission denied` toast, retained
 the exact Session, and proved the Desktop terminal output unchanged. Neither
 image data nor an `orca-paste-` marker appeared in hosted page text, and both
 isolation probes passed. Focused contracts separately require a status-only
-bridge result. Live clipboard-image paste, selected-document upload,
-permission revocation after a grant, background interruption, and
-physical-device evidence remain open. Long-pressing the same unchanged control
-opened the native iOS document picker and Cancel returned cleanly. Camera is
-currently owned by the native QR-pairing route; the existing attachment UI has
-no camera action to migrate.
+bridge result. A later exact-app run long-pressed the same unchanged control,
+opened Files, selected a deterministic 123-byte PNG, and required shell-owned
+host upload plus terminal path injection. Independent size and SHA-256 checks
+matched the source, while the filename, bytes, digest, and temp path remained
+absent from hosted page state. Live clipboard-image paste, permission
+revocation after a grant, background interruption, and physical-device evidence
+remain open. Camera is currently owned by the native QR-pairing route; the
+existing attachment UI has no camera action to migrate.
 
 The following persistence checkpoint leaves the existing native-chat composer
 unchanged and injects `HostSessionChatDraftOperations` below it. Native and
@@ -1005,9 +1007,11 @@ the unchanged hosted UI on iPhone Simulator: native owns the selected bytes,
 execution-host resolution, bounded upload, and terminal-ordered injection, while
 the page receives only bounded status. Real iOS first-use Photos denial now
 passes without upload, terminal mutation, or a hosted page-text marker. Selected
-document upload, permission revocation after a grant, and physical-device
-evidence remain. Camera remains in native QR pairing rather than the unchanged
-attachment UI. On the Pixel 9 Pro API
+document upload now also passes through unchanged Attach and the real Files
+picker: a 123-byte fixture reaches a shell-owned host temp path with matching
+SHA-256 and no filename, bytes, digest, or path in page state. Permission
+revocation after a grant and physical-device evidence remain. Camera remains
+in native QR pairing rather than the unchanged attachment UI. On the Pixel 9 Pro API
 36 emulator, the unchanged Attach control opens Android's real Photos picker.
 Backgrounding through Home and returning to Orca cancels the pending picker,
 retains the exact hosted session, and exposes no selected path or bytes to the
@@ -1971,6 +1975,10 @@ the system Photos picker and first-use denial prompt open from the unchanged
 Attach control. Denial preserves the Session, shows the existing toast, leaves
 Desktop terminal output unchanged, and shows no image/path marker in hosted
 page text. Focused contracts require the bridge result to contain status only.
+Long-pressing unchanged Attach now also selects a deterministic PNG from Files,
+uploads it through shell-owned host authority, and injects only the resulting
+host path into the terminal. Independent byte count and SHA-256 checks pass,
+and privileged file metadata and content remain outside hosted page state.
 The existing terminal JSX, styles, tab composition, input affordances, and view
 models were not replaced.
 

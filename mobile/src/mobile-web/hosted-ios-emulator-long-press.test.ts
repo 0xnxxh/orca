@@ -38,7 +38,7 @@ describe('hosted iOS emulator long press', () => {
 
     const gesture = JSON.parse(runCommand.mock.calls[1]?.[1][1] as string)
     expect(runCommand.mock.calls[1]?.[1][0]).toBe('gesture')
-    expect(gesture).toHaveLength(32)
+    expect(gesture).toHaveLength(62)
     expect(gesture[0]).toEqual({ type: 'begin', x: 0.5, y: 0.25 })
     expect(gesture.at(-1)).toEqual({ type: 'end', x: 0.5, y: 0.25 })
   })

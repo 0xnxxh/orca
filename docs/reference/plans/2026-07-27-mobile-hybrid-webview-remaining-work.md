@@ -97,7 +97,7 @@ formatting, localization, and the max-lines ratchet pass.
 The independently verified React Native Web package is
 `9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`:
 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes. The current mobile
-suite passes 564 files / 3,331 tests with 2 expected skips. Mobile and
+suite passes 566 files / 3,345 tests with 2 expected skips. Mobile and
 mobile-web typechecks and lints, changed-file formatting, max-lines, package
 verification, and diff hygiene pass. The repository-wide formatter still
 reports 19 unrelated baseline files, so changed-file formatting is the
@@ -128,8 +128,14 @@ the real iOS prompt from the unchanged Attach control. The existing
 Desktop terminal output remains unchanged, no image data or `orca-paste-` path
 marker appears in hosted page text, and both isolation probes pass. Focused
 contract tests separately require the bridge result to contain status only.
-Permission revocation after a prior grant, clipboard-image paste, and
-selected-document upload remain open.
+The same exact-app journey now long-presses unchanged Attach, opens Files,
+selects a deterministic 123-byte PNG, and requires the shell-owned host upload
+to inject its temp path through the terminal stream. Independent size and
+SHA-256 checks match the source; the filename, bytes, digest, and host path are
+absent from hosted page state. The picker uses native touch plus the existing
+React Native Web responder because physical WebKit touch alone does not
+reliably dispatch the shared long-press handler on iOS 26.5. Permission
+revocation after a prior grant and clipboard-image paste remain open.
 
 ## 1. Finish Hosted Feature Parity
 

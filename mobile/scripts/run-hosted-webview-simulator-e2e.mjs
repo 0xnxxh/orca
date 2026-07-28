@@ -380,7 +380,7 @@ async function main() {
           })
     const securityDocument =
       options.securityOnly && terminalDeviceInput
-        ? terminalDeviceInput.photoPermissionDenial.sessionDocument
+        ? terminalDeviceInput.documentUpload.sessionDocument
         : options.accountsOnly || options.filesPreviewOnly
           ? parityWorkspaceDocument
           : await waitForVisibleHostedWebView({
@@ -420,6 +420,7 @@ async function main() {
           networkIsolation,
           navigationIsolation,
           nativeOnboarding,
+          documentUpload: terminalDeviceInput?.documentUpload.evidence ?? null,
           photoPermissionDenial: terminalDeviceInput?.photoPermissionDenial.evidence ?? null,
           terminalClipboardPaste: terminalDeviceInput?.terminalClipboardPaste.evidence ?? null,
           workspaceParity: hostedWorkspace,

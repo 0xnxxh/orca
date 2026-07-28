@@ -4,6 +4,7 @@ import {
   tapHostedIosAccessibilityControl,
   tapHostedIosAccessibilityControlAtOccurrence,
   tapHostedIosAccessibilityControlByLabelPrefix,
+  tapHostedIosAccessibilityControlByLabelPrefixAtPosition,
   tapHostedIosAccessibilityControlStartingWith,
   waitForHostedIosAccessibilityControl,
   waitForHostedIosAccessibilityControlByLabelPrefix,
@@ -107,6 +108,36 @@ describe('hosted iOS emulator accessibility controls', () => {
       tapHostedIosAccessibilityControlByLabelPrefix(emulator, 'mobile-rearch', 1_000, runCommand)
     ).resolves.toEqual({ x: 0.5, y: 0.25 })
     expect(runCommand).toHaveBeenLastCalledWith(emulator, ['tap', '0.5', '0.25'])
+  })
+
+  it('taps a relative position within a composite native control', async () => {
+    const runCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stderr: '',
+        stdout: JSON.stringify({
+          ok: true,
+          result: [
+            {
+              label: 'orca-document-upload-fixture, Image',
+              enabled: true,
+              frame: { x: 0.1, y: 0.2, width: 0.2, height: 0.4 }
+            }
+          ]
+        })
+      })
+      .mockResolvedValueOnce({ stderr: '', stdout: JSON.stringify({ ok: true }) })
+
+    await expect(
+      tapHostedIosAccessibilityControlByLabelPrefixAtPosition(
+        emulator,
+        'orca-document-upload-fixture',
+        { x: 0.5, y: 0.25 },
+        1_000,
+        runCommand
+      )
+    ).resolves.toEqual({ x: 0.2, y: 0.30000000000000004 })
+    expect(runCommand).toHaveBeenLastCalledWith(emulator, ['tap', '0.2', '0.30000000000000004'])
   })
 
   it('targets a dynamic control whose label starts with a stable action prefix', async () => {
