@@ -13,21 +13,28 @@ export function subscribeToMacosTccPromptNotice(
   api: MacosTccPromptNoticeApi | undefined,
   onNotice: (payload: TccPromptNoticePayload) => void
 ): () => void {
-  const releaseClaim = (claimId: number): void => {
-    void api?.releasePending?.(claimId).catch(() => {})
+  const releaseClaim = async (claimId: number): Promise<boolean> => {
+    if (!api?.releasePending) {
+      return false
+    }
+    try {
+      await api.releasePending(claimId)
+      return true
+    } catch {
+      return false
+    }
   }
-  const showNotice = (payload: TccPromptNoticePayload, claimId?: number): boolean => {
+  const showNotice = (payload: TccPromptNoticePayload): boolean => {
     try {
       onNotice(payload)
       return true
     } catch (error) {
-      if (claimId !== undefined) {
-        releaseClaim(claimId)
-      }
       console.error('[macos-tcc-prompts] Failed to show notice:', error)
       return false
     }
   }
+  // Why: one retry recovers transient toast setup without spinning on a persistent renderer fault.
+  let displayRetryAvailable = true
   const consume = (fallback?: TccPromptNoticePayload): void => {
     if (!api?.consumePending) {
       if (fallback) {
@@ -39,15 +46,26 @@ export function subscribeToMacosTccPromptNotice(
       (pending) => {
         if (pending) {
           const claimId = pending.claimId
-          if (!showNotice({ promptCount: pending.promptCount }, claimId)) {
+          if (!showNotice({ promptCount: pending.promptCount })) {
+            if (typeof claimId === 'number') {
+              const shouldRetry = displayRetryAvailable
+              displayRetryAvailable = false
+              void releaseClaim(claimId).then((released) => {
+                if (released && shouldRetry) {
+                  consume()
+                }
+              })
+            }
             return
           }
           if (typeof claimId === 'number') {
             if (!api.acknowledgePending) {
-              releaseClaim(claimId)
+              void releaseClaim(claimId)
               return
             }
-            void api.acknowledgePending(claimId).catch(() => releaseClaim(claimId))
+            void api.acknowledgePending(claimId).catch(() => {
+              void releaseClaim(claimId)
+            })
           }
         }
       },

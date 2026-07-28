@@ -82,27 +82,73 @@ describe('subscribeToMacosTccPromptNotice', () => {
     expect(acknowledgePending).toHaveBeenCalledWith(9)
   })
 
-  it('releases the exact claim when showing the notice throws', async () => {
+  it('retries once after releasing a transient failed display', async () => {
     const error = new Error('toast unavailable')
     const acknowledgePending = vi.fn().mockResolvedValue(undefined)
+    const consumePending = vi
+      .fn()
+      .mockResolvedValueOnce({ claimId: 10, promptCount: 3 })
+      .mockResolvedValueOnce({ claimId: 11, promptCount: 3 })
     const releasePending = vi.fn().mockResolvedValue(undefined)
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const onNotice = vi.fn().mockImplementationOnce(() => {
+      throw error
+    })
 
     subscribeToMacosTccPromptNotice(
       {
         acknowledgePending,
-        consumePending: vi.fn().mockResolvedValue({ claimId: 10, promptCount: 3 }),
+        consumePending,
+        releasePending
+      },
+      onNotice
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(consumePending).toHaveBeenCalledTimes(2)
+    expect(onNotice).toHaveBeenCalledTimes(2)
+    expect(releasePending).toHaveBeenCalledWith(10)
+    expect(acknowledgePending).toHaveBeenCalledWith(11)
+    expect(consoleError).toHaveBeenCalledWith('[macos-tcc-prompts] Failed to show notice:', error)
+  })
+
+  it('bounds persistent display failures and release rejection', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const consumePending = vi
+      .fn()
+      .mockResolvedValueOnce({ claimId: 20, promptCount: 3 })
+      .mockResolvedValueOnce({ claimId: 21, promptCount: 3 })
+    const releasePending = vi.fn().mockResolvedValue(undefined)
+    subscribeToMacosTccPromptNotice(
+      {
+        acknowledgePending: vi.fn(),
+        consumePending,
         releasePending
       },
       () => {
-        throw error
+        throw new Error('persistent failure')
       }
     )
-    await Promise.resolve()
+    await new Promise((resolve) => setImmediate(resolve))
 
-    expect(acknowledgePending).not.toHaveBeenCalled()
-    expect(releasePending).toHaveBeenCalledWith(10)
-    expect(consoleError).toHaveBeenCalledWith('[macos-tcc-prompts] Failed to show notice:', error)
+    expect(consumePending).toHaveBeenCalledTimes(2)
+    expect(releasePending).toHaveBeenCalledTimes(2)
+
+    const rejectedRelease = vi.fn().mockRejectedValue(new Error('ipc unavailable'))
+    const rejectedConsume = vi.fn().mockResolvedValue({ claimId: 22, promptCount: 3 })
+    subscribeToMacosTccPromptNotice(
+      {
+        consumePending: rejectedConsume,
+        releasePending: rejectedRelease
+      },
+      () => {
+        throw new Error('display failure')
+      }
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(rejectedConsume).toHaveBeenCalledOnce()
+    expect(rejectedRelease).toHaveBeenCalledWith(22)
   })
 
   it('releases the claim when acknowledgement fails or is unavailable', async () => {
