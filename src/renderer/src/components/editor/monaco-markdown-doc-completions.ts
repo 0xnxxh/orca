@@ -18,11 +18,18 @@ type CompletionScope = {
 export const MARKDOWN_COMPLETION_MAX_MODELS = 256
 export const MARKDOWN_COMPLETION_MAX_SCOPES = 32
 export const MARKDOWN_COMPLETION_MAX_RETAINED_BYTES = 64 * 1024 * 1024
+/** A refill is a closure and a key, not a document snapshot — cheap enough to outnumber scopes. */
+export const MARKDOWN_COMPLETION_MAX_REFILLS = 512
 
 let provider: IDisposable | null = null
 let providerMonaco: MonacoApi | null = null
 const scopeKeyByModel = new Map<string, string>()
 const completionScopes = new Map<string, CompletionScope>()
+// Why: eviction can drop a scope whose editor is still mounted. Without a way to
+// re-supply, that editor offers zero completions until an unrelated prop changes.
+// The callback re-runs the editor's own update, so a miss behaves like a cache miss
+// rather than a permanent failure. It survives eviction and is removed on unmount.
+const refillByModel = new Map<string, () => void>()
 let retainedBytes = 0
 
 function deleteCompletionScope(scopeKey: string, scope: CompletionScope): void {
@@ -69,7 +76,27 @@ function enforceCompletionRetentionLimits(): void {
 function clearCompletionRetention(): void {
   scopeKeyByModel.clear()
   completionScopes.clear()
+  refillByModel.clear()
   retainedBytes = 0
+}
+
+/**
+ * Documents for a model, re-fetching once from the owning editor if a retention limit
+ * evicted them. Returns an empty list only when the model truly has no documents.
+ */
+function getCompletionDocuments(modelKey: string): MarkdownDocument[] {
+  const cached = completionScopes.get(scopeKeyByModel.get(modelKey) ?? '')?.documents
+  if (cached) {
+    return cached
+  }
+  const refill = refillByModel.get(modelKey)
+  if (!refill) {
+    return []
+  }
+  refill()
+  // Re-read rather than trusting the refill: it can legitimately decline to store
+  // (non-markdown model, or a document set over the listing limit).
+  return completionScopes.get(scopeKeyByModel.get(modelKey) ?? '')?.documents ?? []
 }
 
 export function ensureMarkdownDocCompletionProvider(monaco: MonacoApi): void {
@@ -94,8 +121,7 @@ export function ensureMarkdownDocCompletionProvider(monaco: MonacoApi): void {
         return { suggestions: [] }
       }
 
-      const scopeKey = scopeKeyByModel.get(model.uri.toString())
-      const documents = scopeKey ? (completionScopes.get(scopeKey)?.documents ?? []) : []
+      const documents = getCompletionDocuments(model.uri.toString())
       const suffix = line.slice(position.column - 1)
       const range = {
         startLineNumber: position.lineNumber,
@@ -148,8 +174,27 @@ export function setMarkdownDocCompletionDocuments(
   enforceCompletionRetentionLimits()
 }
 
+/**
+ * Register how to re-supply this model's documents after an eviction. The editor owns the
+ * array either way, so holding the closure retains nothing the editor was not already
+ * retaining. Call `clearMarkdownDocCompletionDocuments` on unmount to release it.
+ */
+export function setMarkdownDocCompletionRefill(modelKey: string, refill: () => void): void {
+  // Re-insert so recency ordering reflects the latest mount, matching the eviction order.
+  refillByModel.delete(modelKey)
+  refillByModel.set(modelKey, refill)
+  while (refillByModel.size > MARKDOWN_COMPLETION_MAX_REFILLS) {
+    const oldest = refillByModel.keys().next().value
+    if (typeof oldest !== 'string') {
+      break
+    }
+    refillByModel.delete(oldest)
+  }
+}
+
 export function clearMarkdownDocCompletionDocuments(modelKey: string): void {
   removeModel(modelKey)
+  refillByModel.delete(modelKey)
 }
 
 export function getMarkdownCompletionRetentionForTests(): {
@@ -162,6 +207,14 @@ export function getMarkdownCompletionRetentionForTests(): {
     scopes: completionScopes.size,
     retainedBytes
   }
+}
+
+export function getMarkdownCompletionDocumentsForTests(modelKey: string): MarkdownDocument[] {
+  return getCompletionDocuments(modelKey)
+}
+
+export function getMarkdownCompletionRefillCountForTests(): number {
+  return refillByModel.size
 }
 
 export function resetMarkdownCompletionRetentionForTests(): void {
