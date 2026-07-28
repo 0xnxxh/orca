@@ -119,7 +119,11 @@ describe('useDashboardPopoutBridge', () => {
       'terminalLayoutsByTabId',
       'ptyIdsByTabId',
       'runtimePaneTitlesByTabId',
-      'acknowledgedAgentsByPaneKey'
+      'acknowledgedAgentsByPaneKey',
+      'hostedReviewCache',
+      'prCache',
+      'settings',
+      'workspaceStatuses'
     ] as const
     for (const key of referenceInputs) {
       expect(

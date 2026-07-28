@@ -3,6 +3,7 @@ import type {
   DashboardBucket,
   DashboardCard,
   DashboardCardDotState,
+  DashboardCardSubagent,
   DashboardSnapshot
 } from '../../../../shared/dashboard-snapshot'
 import { parsePaneKey } from '../../../../shared/stable-pane-id'
@@ -27,6 +28,10 @@ import {
   selectLivePtyIdsForWorktree,
   selectRuntimePaneTitlesForWorktree
 } from '../sidebar/worktree-card-status-inputs'
+import {
+  resolveDashboardCardContext,
+  type DashboardCardContextState
+} from './dashboard-card-context'
 
 /** The store slices the snapshot builder reads. Kept as a Pick so unit tests
  *  can pass a partial store without constructing the whole AppState. */
@@ -43,15 +48,15 @@ export type DashboardSnapshotState = Pick<
   | 'ptyIdsByTabId'
   | 'runtimePaneTitlesByTabId'
   | 'acknowledgedAgentsByPaneKey'
->
+> &
+  DashboardCardContextState
 
 function bucketForState(state: DashboardAgentRow['state']): DashboardBucket {
   switch (state) {
     case 'working':
       return 'working'
-    // 'done' folds into Idle — it's only reported when a completion hook fires,
-    // so it's not a reliable standalone column. The card keeps a done dot.
     case 'done':
+      return 'done'
     case 'idle':
       return 'idle'
     // blocked | waiting — the agent needs the user.
@@ -143,6 +148,31 @@ export function buildDashboardSnapshot(
         now
       })
     )
+    const subagentsByParentPaneKey = new Map<string, DashboardCardSubagent[]>()
+    for (const row of rows) {
+      if (row.rowSource !== 'subagent') {
+        continue
+      }
+      const parentPaneKey = row.entry.orchestration?.parentPaneKey
+      if (!parentPaneKey) {
+        continue
+      }
+      const subagent: DashboardCardSubagent = {
+        id: row.paneKey,
+        name:
+          nonEmpty(row.entry.orchestration?.displayName) ??
+          nonEmpty(row.entry.prompt) ??
+          row.agentType,
+        dotState: row.state
+      }
+      const existing = subagentsByParentPaneKey.get(parentPaneKey)
+      if (existing) {
+        existing.push(subagent)
+      } else {
+        subagentsByParentPaneKey.set(parentPaneKey, [subagent])
+      }
+    }
+    const context = resolveDashboardCardContext(state, repo, worktree)
 
     for (const row of rows) {
       // Child rows have no pane of their own; the board lists top-level agents.
@@ -183,6 +213,12 @@ export function buildDashboardSnapshot(
         leafId,
         repoName: repo.displayName,
         worktreeName: worktree.displayName,
+        workspaceStatusId: context.workspaceStatus.id,
+        workspaceStatusLabel: context.workspaceStatus.label,
+        workspaceStatusColor: context.workspaceStatus.color,
+        hasReview: context.hasReview || context.review !== undefined,
+        review: context.review,
+        subagents: subagentsByParentPaneKey.get(row.paneKey),
         lastUserMessage: isTitleDerived ? undefined : nonEmpty(row.entry.prompt),
         lastAgentMessage: isTitleDerived ? undefined : nonEmpty(row.entry.lastAssistantMessage),
         startedAt: row.startedAt,
@@ -198,5 +234,9 @@ export function buildDashboardSnapshot(
     }
   }
 
-  return { generatedAt: now, cards }
+  return {
+    generatedAt: now,
+    cards,
+    showIdle: state.settings?.experimentalAgentDashboardShowIdle === true
+  }
 }

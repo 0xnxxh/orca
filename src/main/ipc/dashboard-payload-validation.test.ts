@@ -20,13 +20,20 @@ const SNAPSHOT = {
       leafId: 'leaf-1',
       repoName: 'Orca',
       worktreeName: 'Dashboard',
+      workspaceStatusId: 'in-review',
+      workspaceStatusLabel: 'In review',
+      workspaceStatusColor: 'emerald',
+      hasReview: true,
+      review: { number: 11012, state: 'open' },
+      subagents: [{ id: 'child-1', name: 'Review loop', dotState: 'working' }],
       startedAt: 1_699_999_000_000,
       finishedAt: null,
       stateChangedAt: 1_699_999_500_000,
       unseen: true,
       askSummary: '{"question":"Proceed?"}'
     }
-  ]
+  ],
+  showIdle: false
 } satisfies DashboardSnapshot
 
 describe('dashboard payload validation', () => {
@@ -46,6 +53,18 @@ describe('dashboard payload validation', () => {
       isDashboardSnapshot({
         ...SNAPSHOT,
         cards: [{ ...SNAPSHOT.cards[0], lastAgentMessage: 'x'.repeat(8_001) }]
+      })
+    ).toBe(false)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        cards: [{ ...SNAPSHOT.cards[0], review: { number: 0, state: 'open' } }]
+      })
+    ).toBe(false)
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        cards: [{ ...SNAPSHOT.cards[0], subagents: [{ id: '', name: 'bad', dotState: 'idle' }] }]
       })
     ).toBe(false)
   })

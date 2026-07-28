@@ -188,7 +188,7 @@ describe('buildDashboardSnapshot', () => {
     expect(snapshot.cards[0].dotState).toBe('idle')
   })
 
-  it('folds retained done agents into the idle bucket, keeping a done dot', () => {
+  it('routes retained done agents to the done bucket', () => {
     const donePaneKey = makePaneKey(TAB_ID, GONE_LEAF_ID)
     const snapshot = buildDashboardSnapshot(
       baseState({
@@ -206,7 +206,53 @@ describe('buildDashboardSnapshot', () => {
     )
     const done = snapshot.cards.find((c) => c.dotState === 'done')
     expect(done).toBeDefined()
-    expect(done?.bucket).toBe('idle')
+    expect(done?.bucket).toBe('done')
+  })
+
+  it('includes collapsed subagents and workspace status metadata on the parent card', () => {
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        workspaceStatuses: [
+          { id: 'todo', label: 'Todo', color: 'neutral' },
+          { id: 'reviewing', label: 'Reviewing', color: 'emerald' }
+        ],
+        worktreesByRepo: {
+          r1: [{ ...worktree(), workspaceStatus: 'reviewing' }]
+        },
+        agentStatusByPaneKey: {
+          [PANE_KEY]: entry({
+            subagents: [
+              {
+                id: 'child-1',
+                state: 'working',
+                startedAt: NOW - 1000,
+                description: 'Review loop'
+              }
+            ]
+          })
+        }
+      }),
+      NOW
+    )
+
+    expect(snapshot.cards).toHaveLength(1)
+    expect(snapshot.cards[0]).toMatchObject({
+      workspaceStatusId: 'reviewing',
+      workspaceStatusLabel: 'Reviewing',
+      workspaceStatusColor: 'emerald',
+      subagents: [{ name: 'Review loop', dotState: 'working' }]
+    })
+  })
+
+  it('relays the idle-column setting in the serialized snapshot', () => {
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        settings: { experimentalAgentDashboardShowIdle: true } as never
+      }),
+      NOW
+    )
+
+    expect(snapshot.showIdle).toBe(true)
   })
 
   it('attaches batched runtime orchestration metadata to dashboard rows', () => {

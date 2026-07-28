@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
 import { i18n } from '@/i18n/i18n'
@@ -82,6 +82,30 @@ describe('AgentKanbanCard', () => {
     )
     expect(screen.getByTestId('state-dot')).toBeInTheDocument()
     expect(container.querySelector('.lucide-message-circle-question-mark')).toBeNull()
+  })
+
+  it('shows review metadata and expands grouped subagents without opening the terminal', () => {
+    const onOpenTerminal = vi.fn()
+    render(
+      <AgentKanbanCard
+        card={card({
+          review: { number: 11012, state: 'open' },
+          subagents: [
+            { id: 'child-1', name: 'Review loop', dotState: 'working' },
+            { id: 'child-2', name: 'Smoke tests', dotState: 'done' }
+          ]
+        })}
+        now={2_000}
+        onOpenTerminal={onOpenTerminal}
+      />
+    )
+
+    expect(screen.getByText('#11012')).toBeInTheDocument()
+    expect(screen.queryByText('Review loop')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '2 subagents' }))
+    expect(screen.getByText('Review loop')).toBeInTheDocument()
+    expect(screen.getByText('Smoke tests')).toBeInTheDocument()
+    expect(onOpenTerminal).not.toHaveBeenCalled()
   })
 
   it('skips structured-clone rerenders until visible card data or its age changes', () => {

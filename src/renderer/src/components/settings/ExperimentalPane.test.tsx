@@ -142,7 +142,7 @@ describe('ExperimentalPane', () => {
 
     expect(settings.experimentalAgentDashboardPopout).toBe(false)
     expect(markup).toContain('Agent Dashboard')
-    expect(markup).toContain('monitor attention, working, and idle agents')
+    expect(markup).toContain('Monitor agents that need you, are working, or are done')
     expect(getExperimentalPaneSearchEntries().map((entry) => entry.title)).toContain(
       'Agent Dashboard'
     )

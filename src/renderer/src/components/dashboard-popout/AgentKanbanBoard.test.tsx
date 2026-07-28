@@ -70,8 +70,8 @@ function card(overrides: Partial<DashboardCard>): DashboardCard {
   }
 }
 
-function renderBoard(cards: DashboardCard[]): void {
-  const snapshot: DashboardSnapshot = { generatedAt: 1, cards }
+function renderBoard(cards: DashboardCard[], showIdle = false): void {
+  const snapshot: DashboardSnapshot = { generatedAt: 1, cards, showIdle }
   render(<AgentKanbanBoard snapshot={snapshot} />)
 }
 
@@ -89,29 +89,49 @@ describe('AgentKanbanBoard', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders the three fixed columns in order', () => {
+  it('renders the three default columns in order', () => {
     renderBoard([])
-    const headers = screen.getAllByText(/Needs You|Working|Idle/)
-    expect(headers.map((h) => h.textContent)).toEqual(['Needs You', 'Working', 'Idle'])
+    const headers = screen.getAllByText(/Needs You|Working|Done/)
+    expect(headers.map((h) => h.textContent)).toEqual(['Needs You', 'Working', 'Done'])
   })
 
   it('places cards in their bucket column and counts them', () => {
     renderBoard([
       card({ bucket: 'attention', worktreeName: 'a1' }),
       card({ bucket: 'attention', worktreeName: 'a2' }),
-      card({ bucket: 'idle', worktreeName: 'i1' })
+      card({ bucket: 'done', worktreeName: 'd1' })
     ])
     const cards = screen.getAllByTestId('card')
     expect(cards).toHaveLength(3)
     expect(cards.filter((c) => c.dataset.bucket === 'attention')).toHaveLength(2)
-    expect(within(document.body).getByText('i1').dataset.bucket).toBe('idle')
+    expect(within(document.body).getByText('d1').dataset.bucket).toBe('done')
     expect(screen.getByText('3 total')).toBeTruthy()
   })
 
   it('shows "None" for empty columns', () => {
     renderBoard([card({ bucket: 'working' })])
-    // attention and idle are empty → two "None" placeholders.
+    // attention and done are empty → two "None" placeholders.
     expect(screen.getAllByText('None')).toHaveLength(2)
+  })
+
+  it('shows the idle column only when enabled', () => {
+    renderBoard([card({ bucket: 'idle', worktreeName: 'quiet-agent' })], true)
+
+    expect(screen.getByText('Idle')).toBeInTheDocument()
+    expect(screen.getByText('quiet-agent')).toBeInTheDocument()
+  })
+
+  it('searches agent content and reports the visible result count', () => {
+    renderBoard([
+      card({ worktreeName: 'first', task: 'repair relay authentication' }),
+      card({ worktreeName: 'second', task: 'update dashboard layout' })
+    ])
+
+    fireEvent.change(screen.getByLabelText('Search agents'), { target: { value: 'relay' } })
+
+    expect(screen.getByText('first')).toBeInTheDocument()
+    expect(screen.queryByText('second')).not.toBeInTheDocument()
+    expect(screen.getByText('1 of 2 shown')).toBeInTheDocument()
   })
 
   it('orders cards in a column by most recent bucket entry first', () => {
@@ -166,14 +186,14 @@ describe('AgentKanbanBoard', () => {
   })
 
   it('keeps the terminal dialog open across bucket moves and card removal', () => {
-    const agent = card({ paneKey: 'pk-1', bucket: 'idle', worktreeName: 'wt1' })
+    const agent = card({ paneKey: 'pk-1', bucket: 'done', worktreeName: 'wt1' })
     const { rerender } = render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} />)
     expect(screen.getByTestId('terminal-dialog').dataset.open).toBe('false')
 
     fireEvent.click(screen.getByTestId('card'))
     expect(screen.getByTestId('terminal-dialog').dataset.open).toBe('true')
 
-    // Sending a message flips the agent idle → working; the dialog must
+    // Sending a message flips the agent done → working; the dialog must
     // follow the card to its new bucket instead of closing.
     const moved = { ...agent, bucket: 'working' as const, dotState: 'working' as const }
     rerender(<AgentKanbanBoard snapshot={{ generatedAt: 2, cards: [moved] }} />)
@@ -188,7 +208,7 @@ describe('AgentKanbanBoard', () => {
   })
 
   it('relays a seen-ack when a dialog opens and when the open agent changes state', () => {
-    const agent = card({ paneKey: 'pk-ack', bucket: 'idle', unseen: true })
+    const agent = card({ paneKey: 'pk-ack', bucket: 'done', unseen: true })
     const { rerender } = render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} />)
     // unseen comes straight from the snapshot (the shared ack map).
     expect(screen.getByTestId('card').dataset.unseen).toBe('true')

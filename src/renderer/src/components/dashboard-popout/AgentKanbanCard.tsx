@@ -1,12 +1,20 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MessageCircleQuestion } from 'lucide-react'
+import {
+  ChevronRight,
+  GitMerge,
+  GitPullRequest,
+  GitPullRequestClosed,
+  GitPullRequestDraft,
+  MessageCircleQuestion
+} from 'lucide-react'
 import { AgentIcon } from '@/lib/agent-catalog'
 import { agentTypeToIconAgent, formatAgentTypeLabel } from '@/lib/agent-status'
 import { AgentStateDot } from '@/components/AgentStateDot'
 import { cn } from '@/lib/utils'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
 import { translate } from '@/i18n/i18n'
+import { getWorkspaceStatusVisualMeta } from '../sidebar/workspace-status'
 
 /** Compact "started N ago" (the card is glanceable — coarse units are fine). */
 function formatStartedAgo(startedAt: number, now: number): string {
@@ -49,11 +57,68 @@ function sameCard(a: DashboardCard, b: DashboardCard): boolean {
     a.leafId === b.leafId &&
     a.repoName === b.repoName &&
     a.worktreeName === b.worktreeName &&
+    a.workspaceStatusId === b.workspaceStatusId &&
+    a.workspaceStatusLabel === b.workspaceStatusLabel &&
+    a.workspaceStatusColor === b.workspaceStatusColor &&
+    a.hasReview === b.hasReview &&
+    a.review?.number === b.review?.number &&
+    a.review?.state === b.review?.state &&
+    JSON.stringify(a.subagents) === JSON.stringify(b.subagents) &&
     a.startedAt === b.startedAt &&
     a.finishedAt === b.finishedAt &&
     a.stateChangedAt === b.stateChangedAt &&
     a.unseen === b.unseen &&
     a.askSummary === b.askSummary
+  )
+}
+
+const REVIEW_PRESENTATION = {
+  open: {
+    icon: GitPullRequest,
+    className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+  },
+  draft: {
+    icon: GitPullRequestDraft,
+    className: 'border-border bg-muted/60 text-muted-foreground'
+  },
+  merged: {
+    icon: GitMerge,
+    className: 'border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300'
+  },
+  closed: {
+    icon: GitPullRequestClosed,
+    className: 'border-destructive/30 bg-destructive/10 text-destructive'
+  }
+} as const
+
+function ReviewPill({ card }: { card: DashboardCard }): React.JSX.Element | null {
+  if (!card.review) {
+    return null
+  }
+  const presentation = REVIEW_PRESENTATION[card.review.state]
+  const Icon = presentation.icon
+  const title = (() => {
+    switch (card.review.state) {
+      case 'open':
+        return translate('dashboardPopout.card.review.open', 'Open review')
+      case 'draft':
+        return translate('dashboardPopout.card.review.draft', 'Draft review')
+      case 'merged':
+        return translate('dashboardPopout.card.review.merged', 'Merged review')
+      case 'closed':
+        return translate('dashboardPopout.card.review.closed', 'Closed review')
+    }
+  })()
+  return (
+    <span
+      title={title}
+      className={cn(
+        'inline-flex shrink-0 items-center gap-0.5 rounded-full border px-1 py-px text-[10px] leading-none tabular-nums',
+        presentation.className
+      )}
+    >
+      <Icon className="size-2.5" aria-hidden />#{card.review.number}
+    </span>
   )
 }
 
@@ -70,80 +135,127 @@ type AgentKanbanCardProps = {
 export const AgentKanbanCard = memo(
   function AgentKanbanCard({ card, now, onOpenTerminal }: AgentKanbanCardProps): React.JSX.Element {
     useTranslation()
+    const [subagentsOpen, setSubagentsOpen] = useState(false)
+    const workspaceStatusMeta =
+      card.workspaceStatusId && card.workspaceStatusLabel
+        ? getWorkspaceStatusVisualMeta({
+            id: card.workspaceStatusId,
+            label: card.workspaceStatusLabel,
+            color: card.workspaceStatusColor
+          })
+        : null
 
     return (
-      <button
-        type="button"
-        onClick={() => onOpenTerminal(card)}
+      <div
         // Why: a stable per-agent view-transition-name lets the browser morph
         // the card from its old column to its new one when its bucket changes.
         // paneKey has ':'/'/' which aren't valid in a custom-ident, so slugify.
         style={{ viewTransitionName: `agentcard-${card.paneKey.replace(/[^a-zA-Z0-9]/g, '-')}` }}
         className={cn(
           'group flex w-full flex-col gap-1.5 rounded-lg border border-border/60 bg-card p-2.5 text-left',
-          'transition-colors hover:border-border hover:bg-accent/40',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
+          'transition-colors hover:border-border hover:bg-accent/40'
         )}
       >
-        <div className="flex items-center gap-1.5">
-          {/* Why: a bare <svg> flex item shrinks with the row — long worktree names squashed the icon. */}
-          <span className="inline-flex shrink-0">
-            <AgentIcon agent={agentTypeToIconAgent(card.agentType)} size={14} />
-          </span>
-          <span
-            // Why: same unvisited treatment as the sidebar's DashboardAgentRow —
-            // bold+bright until acked, normal+muted after — so both surfaces
-            // read identically (the ack map is shared).
-            className={cn(
-              'truncate text-[12.5px]',
-              card.unseen ? 'font-semibold text-foreground' : 'font-normal text-muted-foreground'
-            )}
-          >
-            {card.worktreeName}
-          </span>
-          {/* The summary pill already carries the attention glyph. */}
-          {card.askSummary ? null : <AgentStateDot state={card.dotState} className="ml-auto" />}
-        </div>
+        <button
+          type="button"
+          onClick={() => onOpenTerminal(card)}
+          className="flex w-full flex-col gap-1.5 text-left focus-visible:rounded-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        >
+          <div className="flex w-full items-center gap-1.5">
+            <span className="inline-flex shrink-0">
+              <AgentIcon agent={agentTypeToIconAgent(card.agentType)} size={14} />
+            </span>
+            <span
+              className={cn(
+                'truncate text-[12.5px]',
+                card.unseen ? 'font-semibold text-foreground' : 'font-normal text-muted-foreground'
+              )}
+            >
+              {card.worktreeName}
+            </span>
+            {card.askSummary ? null : <AgentStateDot state={card.dotState} className="ml-auto" />}
+          </div>
 
-        {card.lastUserMessage || card.lastAgentMessage ? (
-          <div className="flex flex-col gap-0.5">
-            {card.lastUserMessage ? (
-              <div className="line-clamp-1 text-[11px] leading-snug text-muted-foreground">
-                <span className="font-medium text-foreground/45">
-                  {translate('dashboardPopout.card.you', 'You')}
-                </span>{' '}
-                {card.lastUserMessage}
+          {card.lastUserMessage || card.lastAgentMessage ? (
+            <div className="flex w-full flex-col gap-0.5">
+              {card.lastUserMessage ? (
+                <div className="line-clamp-1 text-[11px] leading-snug text-muted-foreground">
+                  <span className="font-medium text-foreground/45">
+                    {translate('dashboardPopout.card.you', 'You')}
+                  </span>{' '}
+                  {card.lastUserMessage}
+                </div>
+              ) : null}
+              {card.lastAgentMessage ? (
+                <div className="line-clamp-2 text-xs leading-snug text-foreground/90">
+                  <span className="font-medium text-foreground/45">
+                    {formatAgentTypeLabel(card.agentType)}
+                  </span>{' '}
+                  {card.lastAgentMessage}
+                </div>
+              ) : null}
+            </div>
+          ) : card.task ? (
+            <div className="line-clamp-2 w-full text-xs leading-snug text-foreground/90">
+              {card.task}
+            </div>
+          ) : null}
+
+          {card.askSummary ? (
+            <div className="flex w-full items-start gap-1 rounded-md bg-amber-500/10 px-1.5 py-1 text-[11px] text-amber-600 dark:text-amber-400">
+              <MessageCircleQuestion className="mt-px size-3 shrink-0" aria-hidden />
+              <span className="line-clamp-2">{card.askSummary}</span>
+            </div>
+          ) : null}
+        </button>
+
+        {card.subagents?.length ? (
+          <>
+            <button
+              type="button"
+              aria-expanded={subagentsOpen}
+              onClick={() => setSubagentsOpen((open) => !open)}
+              className="flex items-center gap-1 text-[10.5px] text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            >
+              <ChevronRight
+                className={cn('size-3 transition-transform', subagentsOpen && 'rotate-90')}
+              />
+              {translate('dashboardPopout.card.subagents', '{{count}} subagents', {
+                count: card.subagents.length
+              })}
+            </button>
+            {subagentsOpen ? (
+              <div className="ml-1 flex flex-col gap-1 border-l border-border pl-2">
+                {card.subagents.map((subagent) => (
+                  <div
+                    key={subagent.id}
+                    className="flex items-center gap-1.5 py-0.5 text-[11px] text-muted-foreground"
+                  >
+                    <AgentStateDot state={subagent.dotState} />
+                    <span className="truncate">{subagent.name}</span>
+                  </div>
+                ))}
               </div>
             ) : null}
-            {card.lastAgentMessage ? (
-              <div className="line-clamp-2 text-xs leading-snug text-foreground/90">
-                <span className="font-medium text-foreground/45">
-                  {formatAgentTypeLabel(card.agentType)}
-                </span>{' '}
-                {card.lastAgentMessage}
-              </div>
-            ) : null}
-          </div>
-        ) : card.task ? (
-          <div className="line-clamp-2 text-xs leading-snug text-foreground/90">{card.task}</div>
-        ) : null}
-
-        {card.askSummary ? (
-          <div className="flex items-start gap-1 rounded-md bg-amber-500/10 px-1.5 py-1 text-[11px] text-amber-600 dark:text-amber-400">
-            <MessageCircleQuestion className="mt-px size-3 shrink-0" aria-hidden />
-            <span className="line-clamp-2">{card.askSummary}</span>
-          </div>
+          </>
         ) : null}
 
         <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          {workspaceStatusMeta ? (
+            <span
+              className={cn('size-2 shrink-0 rounded-full', workspaceStatusMeta.swatch)}
+              title={card.workspaceStatusLabel}
+            />
+          ) : null}
           <span className="truncate font-mono">{card.repoName}</span>
+          <ReviewPill card={card} />
           {displayTimestamp(card) > 0 ? (
             <span className="ml-auto shrink-0 tabular-nums">
               {formatStartedAgo(displayTimestamp(card), now)}
             </span>
           ) : null}
         </div>
-      </button>
+      </div>
     )
   },
   (previous, next) =>
