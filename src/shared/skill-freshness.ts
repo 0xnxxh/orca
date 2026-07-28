@@ -81,6 +81,8 @@ export type SkillFreshnessInstallation = {
   currentPackageDigest: string
   currentAppVersion: string
   observedPackageDigest: string | null
+  /** Git tree sha of the observed bytes; lets the post-run verdict match disk against the updater's lock. */
+  observedGitTreeSha?: string | null
   errorCategory: string | null
 }
 
@@ -112,8 +114,12 @@ export type SkillFreshnessScanIssue = {
 // every installed skill. It is still listed in Details, like the other bounds.
 const SKILL_SCAN_ATTENTION_REASONS = new Set<SkillFreshnessScanIssueReason>(['io-error'])
 
+export function isSkillScanAttentionReason(reason: SkillFreshnessScanIssueReason): boolean {
+  return SKILL_SCAN_ATTENTION_REASONS.has(reason)
+}
+
 export function isSkillScanIssueNeedingAttention(issue: SkillFreshnessScanIssue): boolean {
-  return SKILL_SCAN_ATTENTION_REASONS.has(issue.reason)
+  return isSkillScanAttentionReason(issue.reason)
 }
 
 // Why: these are the bounds that end the walk rather than skip one folder. They are
