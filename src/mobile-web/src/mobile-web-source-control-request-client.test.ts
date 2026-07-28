@@ -134,7 +134,9 @@ describe('mobile web source-control request client', () => {
     const branchHarness = createHarness()
     const branch = branchHarness.client.sourceControlBranchCompare({
       workspaceId: 'workspace-1',
-      baseRef: 'main'
+      baseRef: 'main',
+      offset: 0,
+      limit: 128
     })
     branchHarness.client.receive(
       response('A'.repeat(22), {
@@ -146,7 +148,11 @@ describe('mobile web source-control request client', () => {
         mergeBase: 'a'.repeat(40),
         changedFiles: 0,
         status: 'ready',
+        revision: 'c'.repeat(64),
+        offset: 0,
+        totalEntries: 0,
         entries: [],
+        nextOffset: null,
         truncated: false
       })
     )

@@ -1020,20 +1020,31 @@ stale terminal input with Ctrl+U. The standalone React Native Web packager reads
 the protocol version from a browser-pure shared module, and the bridge protocol
 is version 2.
 
+The final Source Control scale checkpoint preserves the same native Review
+presentation for a real 1,294-file comparison. Desktop `git.branchCompare`
+responses are revision-consistent pages of at most 128 entries, with the
+existing response-byte budget and a 4,000-entry aggregate ceiling. The hosted
+adapter assembles all pages and rejects a revision change instead of mixing
+snapshots. Native and hosted both render `0/1294 reviewed`, the same first file,
+and the same diff. The packaged RNW document opts into native safe-area insets,
+and nested syntax text keeps the effective native font behavior. On iPhone 17
+Pro Simulator, Source Control passes at 0.736% changed pixels / 0.910 mean
+channel difference and Review at 2.134% / 1.947, within the 3% / 4 budgets.
+
 Current validation passes mobile and mobile-web typechecks and lints, mobile
-formatting, max-lines and diff hygiene, 517 mobile files / 3,150 tests with 2
-expected skips, Android native unit/Debug/Release compilation, and the
-independent RNW verifier. The most recent full root run passes 3,548 files /
-37,404 tests with 60 skips. Focused package/session/broker faults pass 43 mobile
-tests; bridge/channel faults pass 52 root tests; the Swift cache executable and
-all 16 Android native store tests pass. Production package
-`bb86b378f0aa0285b07793558d27647411bf61185b12af8b10682df23969c97e`
-contains 49 assets and verifies at 9,179,679 raw bytes / 2,663,276 gzip bytes.
-Full root lint reaches only an unrelated baseline localization-coverage failure
-for six unchanged `Ghostty` search keywords; migration-owned lint is green.
-This evidence does not close the complete Android matrix, physical-device,
-independent-security, performance, signed release-package, physical/final
-rollback, cloud Relay, or App Review gates.
+formatting, max-lines and diff hygiene, 557 mobile files / 3,312 tests with 2
+expected skips, and 17 directly affected root tests. The independently verified
+production package
+`190a35ea6c3e53ffa099afba9da1103acbbd8d1b165bf1c0e19391e6d026c2c1`
+contains 49 assets and verifies at 9,333,750 raw bytes / 2,698,592 gzip bytes.
+The complete cached-app iOS journey passes Workspace, Accounts, Tasks, Session,
+Files/Preview, Agent History portrait/landscape, Desktop restart and E2EE
+recovery, native-touch resume, Source Control, a third Session diff tab,
+standalone Review, and both private-origin isolation probes. Repository-wide
+formatting still reports 19 unrelated baseline files; all migration-owned files
+are formatted. This evidence does not close physical-device,
+independent-security, sustained-performance, signed release-package,
+physical/final rollback, production cloud Relay, or App Review gates.
 
 The earlier `77708ed1…` checkpoint also proved that a host-created terminal
 appeared through the subscription and disappeared after close without a refresh,

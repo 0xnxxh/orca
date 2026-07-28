@@ -105,6 +105,75 @@ describe('web host diff review client', () => {
     ).resolves.toMatchObject({ ok: false, error: { message: 'Source control action failed' } })
   })
 
+  it('assembles every revision-bound branch comparison page for the unchanged Review UI', async () => {
+    const bridge = bridgeClient()
+    const firstEntries = Array.from({ length: 128 }, (_, index) => ({
+      relativePath: `src/file-${index}.ts`,
+      status: 'modified'
+    }))
+    bridge.sourceControlBranchCompare = vi
+      .fn()
+      .mockResolvedValueOnce(branchComparePage(firstEntries, 0, 128))
+      .mockResolvedValueOnce(
+        branchComparePage([{ relativePath: 'src/file-128.ts', status: 'added' }], 128, null)
+      )
+    const client = webHostDiffReviewClient(
+      bridge as unknown as MobileWebBridgeClient,
+      'workspace-1'
+    )
+
+    const response = await client.sendRequest('git.branchCompare', {
+      worktree: 'id:workspace-1',
+      baseRef: 'main'
+    })
+
+    expect(response).toMatchObject({
+      ok: true,
+      result: {
+        summary: { baseRef: 'main', changedFiles: 129 },
+        entries: [
+          { path: 'src/file-0.ts', status: 'modified' },
+          ...Array.from({ length: 127 }, (_, index) => ({
+            path: `src/file-${index + 1}.ts`,
+            status: 'modified'
+          })),
+          { path: 'src/file-128.ts', status: 'added' }
+        ]
+      }
+    })
+    expect(bridge.sourceControlBranchCompare).toHaveBeenNthCalledWith(2, {
+      workspaceId: 'workspace-1',
+      baseRef: 'main',
+      offset: 128,
+      limit: 128,
+      expectedRevision: revision
+    })
+  })
+
+  it('rejects a stale branch comparison page instead of mixing Review queues', async () => {
+    const bridge = bridgeClient()
+    bridge.sourceControlBranchCompare = vi
+      .fn()
+      .mockResolvedValueOnce(
+        branchComparePage([{ relativePath: 'src/app.ts', status: 'modified' }], 0, 1)
+      )
+      .mockResolvedValueOnce({
+        ...branchComparePage([{ relativePath: 'src/next.ts', status: 'modified' }], 1, null),
+        revision: 'b'.repeat(64)
+      })
+    const client = webHostDiffReviewClient(
+      bridge as unknown as MobileWebBridgeClient,
+      'workspace-1'
+    )
+
+    await expect(
+      client.sendRequest('git.branchCompare', {
+        worktree: 'id:workspace-1',
+        baseRef: 'main'
+      })
+    ).resolves.toMatchObject({ ok: false, error: { message: 'Source control action failed' } })
+  })
+
   it('maps shell metadata, session tabs, diff opening, and terminal send locally', async () => {
     const bridge = bridgeClient()
     const client = webHostDiffReviewClient(
@@ -232,6 +301,7 @@ function bridgeClient() {
         reviewState: payload.reviewState
       })
     ),
+    sourceControlBranchCompare: vi.fn(),
     sourceControlReviewDiff: vi.fn(),
     sourceControlReviewOpen: vi.fn().mockResolvedValue(null),
     sourceControlReviewTerminalSend: vi.fn().mockResolvedValue({ accepted: true }),
@@ -257,6 +327,29 @@ function bridgeClient() {
       tabId: 'tab-2',
       created: true
     })
+  }
+}
+
+function branchComparePage(
+  entries: { relativePath: string; status: 'modified' | 'added' }[],
+  offset: number,
+  nextOffset: number | null
+) {
+  return {
+    workspaceId: 'workspace-1',
+    baseRef: 'main',
+    compareRef: 'HEAD',
+    baseOid: 'a'.repeat(40),
+    headOid: 'b'.repeat(40),
+    mergeBase: 'a'.repeat(40),
+    changedFiles: 129,
+    status: 'ready' as const,
+    revision,
+    offset,
+    totalEntries: 129,
+    entries,
+    nextOffset,
+    truncated: false
   }
 }
 

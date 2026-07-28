@@ -160,6 +160,7 @@ describe('mobile web source-control history operations', () => {
     expect('entries' in compare && compare.entries.length).toBeLessThan(
       MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT
     )
+    expect('nextOffset' in compare && compare.nextOffset).not.toBeNull()
     expect('truncated' in compare && compare.truncated).toBe(true)
   })
 
@@ -206,11 +207,89 @@ describe('mobile web source-control history operations', () => {
       baseRef: 'main',
       changedFiles: entries.length,
       commitsAhead: 3,
+      totalEntries: entries.length,
       truncated: true
     })
     expect(result.entries).toHaveLength(MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT)
+    expect(result.nextOffset).toBe(MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT)
     expect(JSON.stringify(result)).not.toContain('/private/repository')
     expect(JSON.stringify(result)).not.toContain('errorMessage')
+
+    const continuation = await executeMobileWebSourceControlHistoryOperation({
+      operation: 'branchCompare',
+      payload: {
+        workspaceId: 'workspace-1',
+        baseRef: 'main',
+        offset: result.nextOffset,
+        expectedRevision: result.revision
+      },
+      client,
+      workspaceAuthority
+    })
+    if (!('baseOid' in continuation)) {
+      throw new Error('Expected branch comparison continuation')
+    }
+    expect(continuation).toMatchObject({
+      revision: result.revision,
+      offset: MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT,
+      entries: [{ relativePath: `src/file-${entries.length - 1}.ts` }],
+      nextOffset: null
+    })
+  })
+
+  it('rejects a branch comparison continuation after the host revision changes', async () => {
+    const entries = Array.from(
+      { length: MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT + 1 },
+      (_, index) => ({ path: `src/file-${index}.ts`, status: 'modified' })
+    )
+    const client = rpcClient({
+      summary: {
+        baseOid: OID_A,
+        compareRef: 'feature/mobile',
+        headOid: OID_B,
+        mergeBase: OID_A,
+        changedFiles: entries.length,
+        status: 'ready'
+      },
+      entries
+    })
+    const first = await executeMobileWebSourceControlHistoryOperation({
+      operation: 'branchCompare',
+      payload: { workspaceId: 'workspace-1', baseRef: 'main' },
+      client,
+      workspaceAuthority
+    })
+    if (!('baseOid' in first) || first.nextOffset === null) {
+      throw new Error('Expected branch comparison page')
+    }
+    vi.mocked(client.sendRequest).mockResolvedValueOnce({
+      ok: true,
+      result: {
+        summary: {
+          baseOid: OID_A,
+          compareRef: 'feature/mobile',
+          headOid: 'c'.repeat(40),
+          mergeBase: OID_A,
+          changedFiles: entries.length,
+          status: 'ready'
+        },
+        entries
+      }
+    })
+
+    await expect(
+      executeMobileWebSourceControlHistoryOperation({
+        operation: 'branchCompare',
+        payload: {
+          workspaceId: 'workspace-1',
+          baseRef: 'main',
+          offset: first.nextOffset,
+          expectedRevision: first.revision
+        },
+        client,
+        workspaceAuthority
+      })
+    ).rejects.toMatchObject({ code: 'conflict' })
   })
 
   it('requires a full commit ID and returns request-bound comparison identity', async () => {

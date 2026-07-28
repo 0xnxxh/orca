@@ -79,6 +79,7 @@ describe('RNW mobile web packager', () => {
     expect(document).not.toContain("script-src 'self' 'unsafe-inline'")
     expect(document).not.toContain('<style')
     expect(document).toContain('maximum-scale=1,user-scalable=no')
+    expect(document).toContain('viewport-fit=cover')
     expect(manifest.assets).toHaveLength(4)
 
     const packageAssets = new MobileWebPackageAssets({ resolveRoot: () => output })

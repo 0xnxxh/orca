@@ -89,6 +89,9 @@ describe('mobile web source-control history contract', () => {
       mergeBase: OID,
       changedFiles: MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT,
       status: 'ready',
+      revision: 'c'.repeat(64),
+      offset: 0,
+      totalEntries: MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT,
       entries: Array.from(
         { length: MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT },
         (_, index) => ({
@@ -96,6 +99,7 @@ describe('mobile web source-control history contract', () => {
           status: 'modified'
         })
       ),
+      nextOffset: null,
       truncated: false
     }
     expect(MobileWebSourceControlBranchCompareResultSchema.safeParse(result).success).toBe(true)

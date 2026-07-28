@@ -4,8 +4,10 @@ import {
   tapHostedIosAccessibilityControl,
   tapHostedIosAccessibilityControlAtOccurrence,
   tapHostedIosAccessibilityControlByLabelPrefix,
+  tapHostedIosAccessibilityControlStartingWith,
   waitForHostedIosAccessibilityControl,
   waitForHostedIosAccessibilityControlByLabelPrefix,
+  waitForHostedIosAccessibilityControlEndingWith,
   waitForHostedIosAccessibilityLabelToDisappear
 } from '../../scripts/hosted-ios-emulator-accessibility.mjs'
 
@@ -107,6 +109,35 @@ describe('hosted iOS emulator accessibility controls', () => {
     expect(runCommand).toHaveBeenLastCalledWith(emulator, ['tap', '0.5', '0.25'])
   })
 
+  it('targets a dynamic control whose label starts with a stable action prefix', async () => {
+    const runCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stderr: '',
+        stdout: JSON.stringify({
+          ok: true,
+          result: [
+            {
+              label: 'Open changed file mobile/app/index.tsx',
+              enabled: true,
+              frame: { x: 0.1, y: 0.3, width: 0.8, height: 0.1 }
+            }
+          ]
+        })
+      })
+      .mockResolvedValueOnce({ stderr: '', stdout: JSON.stringify({ ok: true }) })
+
+    await expect(
+      tapHostedIosAccessibilityControlStartingWith(
+        emulator,
+        'Open changed file ',
+        1_000,
+        runCommand
+      )
+    ).resolves.toEqual({ x: 0.5, y: 0.35 })
+    expect(runCommand).toHaveBeenLastCalledWith(emulator, ['tap', '0.5', '0.35'])
+  })
+
   it('reads a composite native row point without tapping it', async () => {
     const runCommand = vi.fn().mockResolvedValueOnce({
       stderr: '',
@@ -131,6 +162,26 @@ describe('hosted iOS emulator accessibility controls', () => {
       )
     ).resolves.toEqual({ x: 0.5, y: 0.25 })
     expect(runCommand).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits for a dynamic count by its stable suffix', async () => {
+    const runCommand = vi.fn().mockResolvedValueOnce({
+      stderr: '',
+      stdout: JSON.stringify({
+        ok: true,
+        result: [
+          {
+            label: '128 on branch',
+            enabled: true,
+            frame: { x: 0.6, y: 0.3, width: 0.3, height: 0.1 }
+          }
+        ]
+      })
+    })
+
+    await expect(
+      waitForHostedIosAccessibilityControlEndingWith(emulator, ' on branch', 1_000, runCommand)
+    ).resolves.toEqual({ x: 0.75, y: 0.35 })
   })
 
   it('rejects an invalid accessibility response', async () => {

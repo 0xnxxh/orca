@@ -60,6 +60,22 @@ export async function tapHostedIosAccessibilityControlByLabelPrefix(
   return point
 }
 
+export async function tapHostedIosAccessibilityControlStartingWith(
+  args,
+  labelPrefix,
+  timeoutMs,
+  runCommand = runHostedIosEmulatorCommand
+) {
+  const point = await waitForHostedIosAccessibilityControlStartingWith(
+    args,
+    labelPrefix,
+    timeoutMs,
+    runCommand
+  )
+  await runCommand(args, ['tap', String(point.x), String(point.y)])
+  return point
+}
+
 export async function waitForHostedIosAccessibilityControlByLabelPrefix(
   args,
   labelPrefix,
@@ -73,6 +89,38 @@ export async function waitForHostedIosAccessibilityControlByLabelPrefix(
     timeoutMs,
     runCommand,
     (node) => node.label === labelPrefix || node.label?.startsWith(`${labelPrefix},`)
+  )
+}
+
+export async function waitForHostedIosAccessibilityControlStartingWith(
+  args,
+  labelPrefix,
+  timeoutMs,
+  runCommand = runHostedIosEmulatorCommand
+) {
+  return waitForHostedIosAccessibilityControlOccurrence(
+    args,
+    labelPrefix,
+    0,
+    timeoutMs,
+    runCommand,
+    (node) => node.label?.startsWith(labelPrefix) || node.value?.startsWith(labelPrefix)
+  )
+}
+
+export async function waitForHostedIosAccessibilityControlEndingWith(
+  args,
+  labelSuffix,
+  timeoutMs,
+  runCommand = runHostedIosEmulatorCommand
+) {
+  return waitForHostedIosAccessibilityControlOccurrence(
+    args,
+    labelSuffix,
+    0,
+    timeoutMs,
+    runCommand,
+    (node) => node.label?.endsWith(labelSuffix) || node.value?.endsWith(labelSuffix)
   )
 }
 

@@ -131,7 +131,7 @@ export function useMobileWebSourceControlRepository(args: {
       const request =
         selection.kind === 'branch'
           ? client.sourceControlBranchCompare(
-              { workspaceId, baseRef: selection.id },
+              { workspaceId, baseRef: selection.id, offset: 0, limit: 128 },
               { signal: controller.signal }
             )
           : client.sourceControlCommitCompare(

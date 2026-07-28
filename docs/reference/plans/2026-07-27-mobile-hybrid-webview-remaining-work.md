@@ -79,20 +79,29 @@ hosted mount the unchanged `HostScreen` and pass at 0.879% changed pixels,
 3% / 4 / 0.005 budgets. The complete journey captures this screen before
 Accounts and the rest of the route matrix.
 
+The unchanged Source Control and Review screens now also have scale-correct
+parity evidence against the real 1,294-file branch comparison. The Desktop
+serves revision-consistent pages of at most 128 entries with a 4,000-entry
+aggregate ceiling, and the hosted adapter assembles those pages without
+changing the presentation. Native and hosted both show `0/1294 reviewed`, the
+same first file, and the same diff. Source Control passes at 0.736% changed
+pixels and 0.910 mean channel difference; Review passes at 2.134% and 1.947,
+within the 3% / 4 budgets. The packaged document opts into native safe-area
+insets, and nested syntax text retains the native effective font behavior.
+
 The migration is rebased onto `origin/main` at `0404f27b3`. Current post-rebase
 validation passes 552 mobile files / 3,291 tests with 2 expected skips and
 3,770 root files / 39,212 tests with 62 expected skips. All project typechecks,
 root/mobile/mobile-web lint, reliability gates, changed-file and full-mobile
 formatting, localization, and the max-lines ratchet pass.
 The independently verified React Native Web package is
-`9e5e807523e8b917fef68f221cc1fd2e1a16dbe07d7077e717238eed17003b52`:
-49 assets, 9,330,604 raw bytes, and 2,697,919 gzip bytes. The current mobile
-suite passes 555 files / 3,301 tests with 2 expected skips; all project
-typechecks and repository-wide quality gates pass. A fresh root-suite attempt
-hit an unrelated 30-second timeout in
-`project-view-wrapper-source-context-boundary.test.ts` and was interrupted
-under concurrent test load; that exact file passes alone, so the prior complete
-root-suite checkpoint above remains authoritative.
+`190a35ea6c3e53ffa099afba9da1103acbbd8d1b165bf1c0e19391e6d026c2c1`:
+49 assets, 9,333,750 raw bytes, and 2,698,592 gzip bytes. The current mobile
+suite passes 557 files / 3,312 tests with 2 expected skips. The four directly
+affected root suites pass 17 tests; mobile and mobile-web typechecks and lints,
+full mobile and changed-file formatting, max-lines, package verification, and
+diff hygiene pass. The repository-wide formatter still reports 19 unrelated
+baseline files, so changed-file formatting is the migration-owned gate.
 
 ## 1. Finish Hosted Feature Parity
 

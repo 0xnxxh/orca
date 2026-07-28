@@ -6,6 +6,78 @@ const WORKSPACE_ID = 'workspace-page-1'
 const HEAD = 'a'.repeat(40)
 
 describe('web host provider review requests', () => {
+  it('probes GitHub repository eligibility without requiring an existing review', async () => {
+    const bridge = bridgeClient()
+    bridge.providerReview.mockResolvedValue({
+      workspaceId: WORKSPACE_ID,
+      observedHead: HEAD,
+      branch: 'main',
+      review: null
+    })
+    const client = webHostSourceControlClient(
+      bridge as unknown as MobileWebBridgeClient,
+      WORKSPACE_ID
+    )
+
+    const response = await client.sendRequest('github.repoSlug', {})
+
+    expect(response).toMatchObject({
+      ok: true,
+      result: { owner: 'paired-host', repo: 'workspace' }
+    })
+    expect(bridge.providerReview).not.toHaveBeenCalled()
+    expect(bridge.providerReviewCreationEligibility).toHaveBeenCalledWith({
+      workspaceId: WORKSPACE_ID,
+      expectedHead: HEAD,
+      expectedBranch: 'main'
+    })
+  })
+
+  it('coalesces the PR chip and creation-action eligibility probes', async () => {
+    const bridge = bridgeClient()
+    bridge.providerReviewCreationEligibility.mockResolvedValue({
+      workspaceId: WORKSPACE_ID,
+      observedHead: HEAD,
+      branch: 'main',
+      provider: 'github',
+      review: null,
+      canCreate: false,
+      blockedReason: 'auth_required',
+      nextAction: 'authenticate',
+      reviewLookupOutcome: 'unavailable'
+    })
+    const client = webHostSourceControlClient(
+      bridge as unknown as MobileWebBridgeClient,
+      WORKSPACE_ID
+    )
+
+    const [slug, eligibility] = await Promise.all([
+      client.sendRequest('github.repoSlug', {}),
+      client.sendRequest('hostedReview.getCreationEligibility', {})
+    ])
+
+    expect(slug).toMatchObject({
+      ok: true,
+      result: { owner: 'paired-host', repo: 'workspace' }
+    })
+    expect(eligibility).toMatchObject({
+      ok: true,
+      result: { provider: 'github', blockedReason: 'auth_required' }
+    })
+    expect(bridge.providerReviewCreationEligibility).toHaveBeenCalledTimes(1)
+
+    const review = await client.sendRequest('hostedReview.forBranch', {
+      branch: 'main'
+    })
+
+    expect(review).toMatchObject({ ok: true, result: null })
+    await expect(client.sendRequest('github.prForBranch', {})).resolves.toMatchObject({
+      ok: true,
+      result: null
+    })
+    expect(bridge.providerReview).not.toHaveBeenCalled()
+  })
+
   it('projects one provider review into the unchanged PR presentation', async () => {
     const bridge = bridgeClient()
     const client = webHostSourceControlClient(
@@ -188,6 +260,17 @@ function bridgeClient() {
         canComment: true,
         allowedSubmissionActions: ['comment']
       }
+    }),
+    providerReviewCreationEligibility: vi.fn().mockResolvedValue({
+      workspaceId: WORKSPACE_ID,
+      observedHead: HEAD,
+      branch: 'main',
+      provider: 'github',
+      review: null,
+      canCreate: false,
+      blockedReason: 'dirty',
+      nextAction: 'commit',
+      reviewLookupOutcome: 'not_found'
     }),
     providerMutateReview: vi.fn(),
     providerManageReview: vi.fn(),

@@ -3,6 +3,13 @@ import type {
   MobileWebProviderReview,
   MobileWebProviderReviewResult
 } from '../../../src/shared/mobile-web/provider-review-contract'
+import type { WebHostProviderReviewEligibilityCache } from './web-host-provider-review-creation'
+import {
+  createWebHostProviderReviewCache,
+  loadWebHostProviderReview,
+  readWebHostGitHubRepositoryEligibility,
+  type WebHostProviderReviewCache
+} from './web-host-provider-review-loader'
 import {
   handleWebHostProviderReviewMutation,
   WEB_HOST_PROVIDER_REVIEW_MUTATION_METHODS
@@ -10,15 +17,7 @@ import {
 
 type RequestParams = Record<string, unknown>
 
-export type WebHostProviderReviewCache = {
-  key: string | null
-  result: MobileWebProviderReviewResult | null
-  commentIds: Map<number, string>
-}
-
-export function createWebHostProviderReviewCache(): WebHostProviderReviewCache {
-  return { key: null, result: null, commentIds: new Map() }
-}
+export { createWebHostProviderReviewCache, type WebHostProviderReviewCache }
 
 export async function handleWebHostProviderReviewRequest(args: {
   client: MobileWebBridgeClient
@@ -26,21 +25,20 @@ export async function handleWebHostProviderReviewRequest(args: {
   method: string
   params: RequestParams
   cache: WebHostProviderReviewCache
+  eligibilityCache: WebHostProviderReviewEligibilityCache
 }): Promise<unknown | typeof WEB_HOST_PROVIDER_REVIEW_UNHANDLED> {
-  const { client, workspaceId, method, params, cache } = args
+  const { client, workspaceId, method, params, cache, eligibilityCache } = args
   if (
     !PROVIDER_READ_METHODS.has(method) &&
     !WEB_HOST_PROVIDER_REVIEW_MUTATION_METHODS.has(method)
   ) {
     return WEB_HOST_PROVIDER_REVIEW_UNHANDLED
   }
-  const loaded = await loadProviderReview(client, workspaceId, cache)
-  const review = loaded.review
   if (method === 'github.repoSlug') {
-    return review && review.provider !== 'github'
-      ? null
-      : { owner: 'paired-host', repo: 'workspace' }
+    return readWebHostGitHubRepositoryEligibility(client, workspaceId, eligibilityCache)
   }
+  const loaded = await loadWebHostProviderReview(client, workspaceId, cache, eligibilityCache)
+  const review = loaded.review
   if (method === 'hostedReview.forBranch') {
     return review ? hostedReviewSummary(review) : null
   }
@@ -82,33 +80,6 @@ const PROVIDER_READ_METHODS = new Set([
   'github.prCheckDetails',
   'github.listAssignableUsers'
 ])
-
-async function loadProviderReview(
-  client: MobileWebBridgeClient,
-  workspaceId: string,
-  cache: WebHostProviderReviewCache
-): Promise<MobileWebProviderReviewResult> {
-  const status = await client.sourceControlStatus({ workspaceId, limit: 64 })
-  if (!status.head || !status.branch) {
-    throw new Error('conflict')
-  }
-  const key = `${status.head}\0${status.branch}`
-  if (cache.key === key && cache.result) {
-    return cache.result
-  }
-  const result = await client.providerReview({
-    workspaceId,
-    expectedHead: status.head,
-    expectedBranch: status.branch
-  })
-  cache.key = key
-  cache.result = result
-  cache.commentIds.clear()
-  result.review?.comments.forEach((comment, index) => {
-    cache.commentIds.set(index + 1, comment.id)
-  })
-  return result
-}
 
 function hostedReviewSummary(review: MobileWebProviderReview) {
   return {

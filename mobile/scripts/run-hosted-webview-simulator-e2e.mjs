@@ -37,6 +37,7 @@ import { verifyHostedAgentHistoryJourney } from './hosted-ios-agent-history-jour
 import { openHostedIosHybridRoute } from './hosted-ios-hybrid-route-handoff.mjs'
 import { verifyHostedNativeTerminalSettingsHandoff } from './hosted-ios-native-settings-handoff.mjs'
 import { verifyHostedSourceControlReviewJourney } from './hosted-ios-source-control-review-journey.mjs'
+import { captureNativeSourceControlReviewBaselines } from './hosted-ios-source-control-review-parity.mjs'
 import { completeHostedIosNativeOnboarding } from './hosted-ios-native-onboarding.mjs'
 import { activateHostedWorkspaceRow } from './hosted-webview-workspace-activation.mjs'
 import { resolveHostedWebViewRuntimeDirectory } from './hosted-webview-runtime-directory.mjs'
@@ -164,6 +165,21 @@ async function main() {
         ? null
         : await evidenceStep('native Files and Preview baselines', () =>
             captureNativeFilesPreviewBaselines({
+              deviceUdid,
+              emulator,
+              expectedWorkspace,
+              runtimeDirectory,
+              timeoutMs: options.timeoutMs
+            })
+          )
+    const nativeSourceControlReview =
+      options.accountsOnly ||
+      options.securityOnly ||
+      options.filesPreviewOnly ||
+      options.nativeSettingsOnly
+        ? null
+        : await evidenceStep('native Source Control and Review baselines', () =>
+            captureNativeSourceControlReviewBaselines({
               deviceUdid,
               emulator,
               expectedWorkspace,
@@ -326,9 +342,12 @@ async function main() {
               timeoutMs: options.timeoutMs
             })
             return verifyHostedSourceControlReviewJourney({
+              deviceUdid,
               discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
               emulator,
               expectedSessionDiffText: options.sourceControlOnly ? '2 tabs' : '3 tabs',
+              nativeBaselines: nativeSourceControlReview,
+              runtimeDirectory,
               sessionDocument,
               timeoutMs: options.timeoutMs
             })

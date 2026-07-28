@@ -1,4 +1,9 @@
 import type { MobileWebBridgeClient } from '../../../src/mobile-web/src/mobile-web-bridge-client'
+import {
+  MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT,
+  MOBILE_WEB_SOURCE_CONTROL_COMPARE_MAX_ENTRIES,
+  type MobileWebSourceControlBranchCompareResult
+} from '../../../src/shared/mobile-web/source-control-history-contract'
 import { MOBILE_WEB_SOURCE_CONTROL_STATUS_LIMIT } from '../../../src/shared/mobile-web/source-control-operation-contract'
 
 type RequestParams = Record<string, unknown>
@@ -55,7 +60,7 @@ export async function readWebHostSourceControlRequest(args: {
   }
   if (method === 'git.branchCompare') {
     const baseRef = requiredString(params.baseRef)
-    return branchCompareResult(await client.sourceControlBranchCompare({ workspaceId, baseRef }))
+    return branchCompareResult(await readWebHostBranchCompare(client, workspaceId, baseRef))
   }
   if (method === 'git.commitCompare') {
     const commitId = requiredString(params.commitId)
@@ -101,6 +106,52 @@ function branchCompareResult(
       status: result.status
     },
     entries: result.entries.map(compareEntry)
+  }
+}
+
+async function readWebHostBranchCompare(
+  client: MobileWebBridgeClient,
+  workspaceId: string,
+  baseRef: string
+): Promise<MobileWebSourceControlBranchCompareResult> {
+  const entries: MobileWebSourceControlBranchCompareResult['entries'] = []
+  let offset = 0
+  let expectedRevision: string | undefined
+  let expectedTotalEntries: number | undefined
+  for (;;) {
+    const page = await client.sourceControlBranchCompare({
+      workspaceId,
+      baseRef,
+      offset,
+      limit: MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT,
+      ...(expectedRevision ? { expectedRevision } : {})
+    })
+    if (expectedRevision && page.revision !== expectedRevision) {
+      throw new Error('conflict')
+    }
+    expectedRevision = page.revision
+    if (
+      (expectedTotalEntries !== undefined && page.totalEntries !== expectedTotalEntries) ||
+      entries.length + page.entries.length > MOBILE_WEB_SOURCE_CONTROL_COMPARE_MAX_ENTRIES ||
+      entries.length + page.entries.length > page.totalEntries
+    ) {
+      throw new Error('invalid_message')
+    }
+    expectedTotalEntries = page.totalEntries
+    entries.push(...page.entries)
+    if (page.nextOffset === null) {
+      if (entries.length !== expectedTotalEntries) {
+        throw new Error('invalid_message')
+      }
+      return { ...page, offset: 0, totalEntries: entries.length, entries }
+    }
+    if (
+      page.nextOffset !== offset + page.entries.length ||
+      page.nextOffset > MOBILE_WEB_SOURCE_CONTROL_COMPARE_MAX_ENTRIES
+    ) {
+      throw new Error('invalid_message')
+    }
+    offset = page.nextOffset
   }
 }
 

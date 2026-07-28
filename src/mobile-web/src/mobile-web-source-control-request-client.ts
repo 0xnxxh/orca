@@ -142,7 +142,11 @@ export class MobileWebSourceControlRequestClient {
         options
       )
       .then((result) => {
-        if (result.baseRef !== payload.baseRef) {
+        if (
+          result.baseRef !== payload.baseRef ||
+          result.offset !== payload.offset ||
+          (payload.expectedRevision && result.revision !== payload.expectedRevision)
+        ) {
           throw new MobileWebBridgeClientError('invalid_message', false)
         }
         return matchingIdentity(payload, result)

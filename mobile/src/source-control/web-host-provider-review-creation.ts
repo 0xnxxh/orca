@@ -1,12 +1,23 @@
 import type { MobileWebBridgeClient } from '../../../src/mobile-web/src/mobile-web-bridge-client'
+import type { MobileWebProviderReviewEligibilityResult } from '../../../src/shared/mobile-web/provider-review-creation-contract'
 
 type RequestParams = Record<string, unknown>
+
+export type WebHostProviderReviewEligibilityCache = {
+  pending: Map<string, Promise<MobileWebProviderReviewEligibilityResult>>
+  settled: Map<string, MobileWebProviderReviewEligibilityResult>
+}
+
+export function createWebHostProviderReviewEligibilityCache(): WebHostProviderReviewEligibilityCache {
+  return { pending: new Map(), settled: new Map() }
+}
 
 export async function handleWebHostProviderReviewCreation(args: {
   client: MobileWebBridgeClient
   workspaceId: string
   method: string
   params: RequestParams
+  eligibilityCache: WebHostProviderReviewEligibilityCache
 }): Promise<unknown | typeof WEB_HOST_PROVIDER_REVIEW_CREATION_UNHANDLED> {
   if (
     args.method !== 'hostedReview.getCreationEligibility' &&
@@ -28,11 +39,14 @@ export async function handleWebHostProviderReviewCreation(args: {
     expectedBranch: status.branch
   }
   if (args.method === 'hostedReview.getCreationEligibility') {
-    const result = await args.client.providerReviewCreationEligibility({
-      ...identity,
-      ...(args.params.base === null || args.params.base === undefined
-        ? {}
-        : { base: requiredString(args.params.base) })
+    const result = await loadWebHostProviderReviewEligibility({
+      client: args.client,
+      identity,
+      base:
+        args.params.base === null || args.params.base === undefined
+          ? undefined
+          : requiredString(args.params.base),
+      cache: args.eligibilityCache
     })
     const {
       workspaceId: _workspaceId,
@@ -72,6 +86,53 @@ export async function handleWebHostProviderReviewCreation(args: {
 export const WEB_HOST_PROVIDER_REVIEW_CREATION_UNHANDLED = Symbol(
   'provider-review-creation-unhandled'
 )
+
+export async function loadWebHostProviderReviewEligibility(args: {
+  client: MobileWebBridgeClient
+  identity: {
+    workspaceId: string
+    expectedHead: string
+    expectedBranch: string
+  }
+  base?: string
+  cache: WebHostProviderReviewEligibilityCache
+}): Promise<MobileWebProviderReviewEligibilityResult> {
+  const key = `${args.identity.expectedHead}\0${args.identity.expectedBranch}\0${args.base ?? ''}`
+  const pending = args.cache.pending.get(key)
+  if (pending) {
+    return pending
+  }
+  const request = args.client.providerReviewCreationEligibility({
+    ...args.identity,
+    ...(args.base === undefined ? {} : { base: args.base })
+  })
+  args.cache.pending.set(key, request)
+  try {
+    const result = await request
+    if (args.base === undefined) {
+      args.cache.settled.clear()
+      args.cache.settled.set(key, result)
+    }
+    return result
+  } finally {
+    if (args.cache.pending.get(key) === request) {
+      args.cache.pending.delete(key)
+    }
+  }
+}
+
+export function takeWebHostProviderReviewEligibility(
+  cache: WebHostProviderReviewEligibilityCache,
+  identity: {
+    expectedHead: string
+    expectedBranch: string
+  }
+): MobileWebProviderReviewEligibilityResult | null {
+  const key = `${identity.expectedHead}\0${identity.expectedBranch}\0`
+  const result = cache.settled.get(key) ?? null
+  cache.settled.delete(key)
+  return result
+}
 
 function requiredProvider(
   value: unknown

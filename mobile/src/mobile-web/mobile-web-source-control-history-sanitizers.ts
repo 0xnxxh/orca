@@ -1,6 +1,7 @@
 import {
   MOBILE_WEB_SOURCE_CONTROL_BRANCH_LIMIT,
   MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT,
+  MOBILE_WEB_SOURCE_CONTROL_COMPARE_MAX_ENTRIES,
   MOBILE_WEB_SOURCE_CONTROL_COMPARE_RESPONSE_MAX_BYTES,
   MOBILE_WEB_SOURCE_CONTROL_HISTORY_RESPONSE_MAX_BYTES,
   MobileWebGitObjectIdSchema,
@@ -11,6 +12,7 @@ import {
   MobileWebSourceControlCompareEntrySchema,
   MobileWebSourceControlHistoryResultSchema,
   type MobileWebSourceControlBranchCompareResult,
+  type MobileWebSourceControlBranchComparePayload,
   type MobileWebSourceControlBranchesResult,
   type MobileWebSourceControlCommitCompareResult,
   type MobileWebSourceControlCompareEntry,
@@ -18,6 +20,10 @@ import {
   type MobileWebSourceControlHistoryResult
 } from '../../../src/shared/mobile-web/source-control-history-contract'
 import { MobileWebBrokerError } from './mobile-web-broker-error'
+import {
+  mobileWebBranchCompareRevision,
+  mobileWebCompareEntryPage
+} from './mobile-web-source-control-compare-page'
 import {
   sanitizeMobileWebHistoryItem,
   sanitizeMobileWebHistoryRef
@@ -99,19 +105,18 @@ export function sanitizeMobileWebHistory(
 
 export function sanitizeMobileWebBranchCompare(
   result: unknown,
-  workspaceId: string,
-  baseRef: string
+  payload: MobileWebSourceControlBranchComparePayload
 ): MobileWebSourceControlBranchCompareResult {
   const summary = compareSummary(result)
-  const sanitized = sanitizeCompareEntries(result)
+  const sanitized = sanitizeCompareEntries(result, MOBILE_WEB_SOURCE_CONTROL_COMPARE_MAX_ENTRIES)
   const changedFiles = Math.max(
     sanitized.reportedCount,
     safeNonnegativeInteger(summary.changedFiles)
   )
   const commitsAhead = optionalNonnegativeInteger(summary.commitsAhead)
-  return MobileWebSourceControlBranchCompareResultSchema.parse({
-    workspaceId,
-    baseRef,
+  const snapshot = {
+    workspaceId: payload.workspaceId,
+    baseRef: payload.baseRef,
     compareRef: boundedString(summary.compareRef, 240) ?? 'HEAD',
     baseOid: sanitizeObjectId(summary.baseOid),
     headOid: sanitizeObjectId(summary.headOid),
@@ -119,8 +124,30 @@ export function sanitizeMobileWebBranchCompare(
     changedFiles,
     ...(commitsAhead === undefined ? {} : { commitsAhead }),
     status: branchCompareStatus(summary.status),
-    entries: sanitized.entries,
+    totalEntries: sanitized.entries.length,
     truncated: sanitized.truncated || changedFiles > sanitized.entries.length
+  }
+  const revision = mobileWebBranchCompareRevision(snapshot, sanitized.entries)
+  if (payload.expectedRevision && payload.expectedRevision !== revision) {
+    throw new MobileWebBrokerError('conflict')
+  }
+  const entries = mobileWebCompareEntryPage(
+    snapshot,
+    sanitized.entries,
+    payload.offset,
+    payload.limit
+  )
+  const nextOffset =
+    payload.offset + entries.length < sanitized.entries.length
+      ? payload.offset + entries.length
+      : null
+  return MobileWebSourceControlBranchCompareResultSchema.parse({
+    ...snapshot,
+    revision,
+    offset: payload.offset,
+    entries,
+    nextOffset,
+    truncated: snapshot.truncated || nextOffset !== null
   })
 }
 
@@ -130,7 +157,11 @@ export function sanitizeMobileWebCommitCompare(
   commitId: string
 ): MobileWebSourceControlCommitCompareResult {
   const summary = compareSummary(result)
-  const sanitized = sanitizeCompareEntries(result)
+  const sanitized = sanitizeCompareEntries(
+    result,
+    MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT,
+    true
+  )
   const changedFiles = Math.max(
     sanitized.reportedCount,
     safeNonnegativeInteger(summary.changedFiles)
@@ -149,7 +180,11 @@ export function sanitizeMobileWebCommitCompare(
   })
 }
 
-function sanitizeCompareEntries(result: unknown): {
+function sanitizeCompareEntries(
+  result: unknown,
+  limit: number,
+  enforceResponseBudget = false
+): {
   entries: MobileWebSourceControlCompareEntry[]
   reportedCount: number
   truncated: boolean
@@ -158,32 +193,29 @@ function sanitizeCompareEntries(result: unknown): {
     throw new MobileWebBrokerError('host_error')
   }
   const entries: MobileWebSourceControlCompareEntry[] = []
-  let retainedBytes = 0
   let droppedByBudget = false
-  for (const candidate of result.entries.slice(0, MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT)) {
+  for (const candidate of result.entries.slice(0, limit)) {
     const entry = sanitizeCompareEntry(candidate)
     if (!entry) {
       continue
     }
-    const nextBytes = encodedByteLength(entry) + 1
     if (
-      retainedBytes + nextBytes >
-      MOBILE_WEB_SOURCE_CONTROL_COMPARE_RESPONSE_MAX_BYTES - 8 * 1024
+      enforceResponseBudget &&
+      encodedByteLength([...entries, entry]) >
+        MOBILE_WEB_SOURCE_CONTROL_COMPARE_RESPONSE_MAX_BYTES - 8 * 1024
     ) {
       droppedByBudget = true
       break
     }
-    retainedBytes += nextBytes
     entries.push(entry)
   }
   return {
     entries,
     reportedCount: result.entries.length,
     truncated:
-      result.entries.length > MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT ||
+      result.entries.length > limit ||
       droppedByBudget ||
-      entries.length <
-        Math.min(result.entries.length, MOBILE_WEB_SOURCE_CONTROL_COMPARE_ENTRY_LIMIT)
+      entries.length < Math.min(result.entries.length, limit)
   }
 }
 

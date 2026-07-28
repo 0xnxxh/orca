@@ -7,11 +7,18 @@ import {
   tapHostedIosAccessibilityControl,
   tapHostedIosPoint
 } from './hosted-ios-emulator-accessibility.mjs'
+import {
+  captureHostedSourceControlReviewScreen,
+  sourceControlReviewParityEvidence
+} from './hosted-ios-source-control-review-parity.mjs'
 import { navigateHostedWebViewRoute } from './hosted-webview-route-navigation.mjs'
 
 export async function verifyHostedSourceControlReviewJourney({
+  deviceUdid,
   discoveryUrl,
   emulator,
+  nativeBaselines,
+  runtimeDirectory,
   sessionDocument,
   timeoutMs,
   expectedSessionDiffText = '2 tabs',
@@ -26,7 +33,7 @@ export async function verifyHostedSourceControlReviewJourney({
       tapPoint
     })
   )
-  const sourceState = await journeyStep('read populated Source Control state', () =>
+  let sourceState = await journeyStep('read populated Source Control state', () =>
     waitForChangedFileState(sourceControl, timeoutMs)
   )
   for (const label of ['Changes', 'Pull Request', 'Commits', 'Refresh source control']) {
@@ -41,6 +48,24 @@ export async function verifyHostedSourceControlReviewJourney({
   if (!changedFileLabel) {
     throw new Error('Source Control has no changed file available for Review.')
   }
+  if (nativeBaselines) {
+    sourceState = await journeyStep('wait for stable Source Control parity state', () =>
+      waitForSourceControlParityState(sourceControl, timeoutMs, sourceState)
+    )
+  }
+  const hostedSourceControl = nativeBaselines
+    ? await journeyStep('capture Source Control parity', () =>
+        captureHostedSourceControlReviewScreen({
+          deviceUdid,
+          document: sourceControl,
+          nativeBaseline: nativeBaselines.sourceControl,
+          runtimeDirectory,
+          screenshotName: 'hosted-source-control-portrait.png',
+          title: 'Source Control',
+          timeoutMs
+        })
+      )
+    : null
   const sessionDiff = await journeyStep('wait for Session diff route', () =>
     openSessionDiffRoute({
       discoveryUrl,
@@ -69,13 +94,37 @@ export async function verifyHostedSourceControlReviewJourney({
       throw new Error(`Review is missing ${label}.`)
     }
   }
+  const hostedReview = nativeBaselines
+    ? await journeyStep('capture Review parity', () =>
+        captureHostedSourceControlReviewScreen({
+          deviceUdid,
+          document: review,
+          nativeBaseline: nativeBaselines.review,
+          runtimeDirectory,
+          screenshotName: 'hosted-review-portrait.png',
+          title: 'Changes',
+          timeoutMs
+        })
+      )
+    : null
 
   return {
     sourceControlRoute: sourceState.href,
     sourceControlSegments: ['Changes', 'Pull Request', 'Commits'],
     sessionDiffRoute: sessionDiff.href,
     reviewRoute: reviewState.href,
-    reviewControls: ['Back', 'Open review actions']
+    reviewControls: ['Back', 'Open review actions'],
+    ...(hostedSourceControl && hostedReview
+      ? {
+          parityFixture: {
+            sourceControl: sourceControlReviewParityEvidence(
+              nativeBaselines.sourceControl,
+              hostedSourceControl
+            ),
+            review: sourceControlReviewParityEvidence(nativeBaselines.review, hostedReview)
+          }
+        }
+      : {})
   }
 }
 
@@ -167,6 +216,22 @@ async function waitForChangedFileState(document, timeoutMs) {
     await delay(250)
   }
   return state ?? readHostedWebViewState(document)
+}
+
+async function waitForSourceControlParityState(document, timeoutMs, initialState) {
+  const deadline = Date.now() + timeoutMs
+  let state = initialState
+  while (Date.now() < deadline) {
+    if (
+      state.bodyText.includes('Create pull request') &&
+      /\b\d+ on branch\b/.test(state.bodyText)
+    ) {
+      return state
+    }
+    await delay(250)
+    state = await readHostedWebViewState(document)
+  }
+  throw new Error('Source Control did not settle its branch and pull-request state.')
 }
 
 function standaloneReviewRoute(sourceControlHref) {

@@ -1,4 +1,4 @@
-import { StyleSheet, Text, type TextStyle } from 'react-native'
+import { Platform, StyleSheet, Text, type TextStyle } from 'react-native'
 import type { MobileSyntaxSegment, MobileSyntaxTokenKind } from '../session/mobile-file-syntax'
 import { colors } from '../theme/mobile-theme'
 
@@ -6,13 +6,19 @@ export function MobileSyntaxSegments({ segments }: { segments: MobileSyntaxSegme
   return (
     <>
       {segments.map((segment, index) => (
-        <Text key={`${index}:${segment.kind}`} style={syntaxTokenStyles[segment.kind]}>
+        <Text
+          key={`${index}:${segment.kind}`}
+          style={[webSyntaxTextStyle, syntaxTokenStyles[segment.kind]]}
+        >
           {segment.text}
         </Text>
       ))}
     </>
   )
 }
+
+// Why: nested native Text resolves to the system face while RNW otherwise inherits the mono parent.
+const webSyntaxTextStyle = Platform.OS === 'web' ? { fontFamily: 'System' } : undefined
 
 const syntaxTokenStyles: Record<MobileSyntaxTokenKind, TextStyle> = StyleSheet.create({
   plain: {

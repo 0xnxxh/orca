@@ -18,6 +18,7 @@ import {
   WEB_HOST_PROVIDER_REVIEW_UNHANDLED
 } from './web-host-provider-review-requests'
 import {
+  createWebHostProviderReviewEligibilityCache,
   handleWebHostProviderReviewCreation,
   WEB_HOST_PROVIDER_REVIEW_CREATION_UNHANDLED
 } from './web-host-provider-review-creation'
@@ -27,6 +28,7 @@ export function webHostSourceControlClient(
   workspaceId: string
 ): RpcClient {
   const providerReviewCache = createWebHostProviderReviewCache()
+  const providerReviewEligibilityCache = createWebHostProviderReviewEligibilityCache()
   return {
     async sendRequest(method, input) {
       if (!matchesBoundWorkspace(input, workspaceId)) {
@@ -46,7 +48,8 @@ export function webHostSourceControlClient(
           client: bridgeClient,
           workspaceId,
           method,
-          params
+          params,
+          eligibilityCache: providerReviewEligibilityCache
         })
         if (creation !== WEB_HOST_PROVIDER_REVIEW_CREATION_UNHANDLED) {
           return creation
@@ -56,7 +59,8 @@ export function webHostSourceControlClient(
           workspaceId,
           method,
           params,
-          cache: providerReviewCache
+          cache: providerReviewCache,
+          eligibilityCache: providerReviewEligibilityCache
         })
         if (provider !== WEB_HOST_PROVIDER_REVIEW_UNHANDLED) {
           return provider

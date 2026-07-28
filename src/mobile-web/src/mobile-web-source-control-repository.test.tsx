@@ -25,7 +25,7 @@ describe('MobileWebSourceControlRepository', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Compare feature/mobile' }))
     expect(await screen.findByText('src/branch.ts')).toBeDefined()
     expect(client.sourceControlBranchCompare).toHaveBeenCalledWith(
-      { workspaceId: 'workspace-1', baseRef: 'feature/mobile' },
+      { workspaceId: 'workspace-1', baseRef: 'feature/mobile', offset: 0, limit: 128 },
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
 

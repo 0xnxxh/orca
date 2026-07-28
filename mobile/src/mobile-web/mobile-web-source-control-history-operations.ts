@@ -76,7 +76,7 @@ export async function executeMobileWebSourceControlHistoryOperation(args: {
     if (!response.ok) {
       throw new MobileWebBrokerError('host_error')
     }
-    return sanitizeMobileWebBranchCompare(response.result, payload.workspaceId, payload.baseRef)
+    return sanitizeMobileWebBranchCompare(response.result, payload)
   }
 
   const payload = MobileWebSourceControlCommitComparePayloadSchema.parse(args.payload)

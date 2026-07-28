@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
+  captureParityScreen: vi.fn(),
   navigateRoute: vi.fn(),
+  parityEvidence: vi.fn(),
   readControlPoint: vi.fn(),
   readState: vi.fn(),
   tapAccessibilityControl: vi.fn(),
@@ -27,6 +29,11 @@ vi.mock('../../scripts/hosted-webview-route-navigation.mjs', () => ({
   navigateHostedWebViewRoute: mocks.navigateRoute
 }))
 
+vi.mock('../../scripts/hosted-ios-source-control-review-parity.mjs', () => ({
+  captureHostedSourceControlReviewScreen: mocks.captureParityScreen,
+  sourceControlReviewParityEvidence: mocks.parityEvidence
+}))
+
 import { verifyHostedSourceControlReviewJourney } from '../../scripts/hosted-ios-source-control-review-journey.mjs'
 
 describe('hosted iOS Source Control and Review journey', () => {
@@ -36,6 +43,12 @@ describe('hosted iOS Source Control and Review journey', () => {
       .mockResolvedValueOnce({ x: 0.4, y: 0.2 })
       .mockResolvedValueOnce({ x: 0.5, y: 0.4 })
     mocks.navigateRoute.mockResolvedValue(undefined)
+    mocks.captureParityScreen
+      .mockResolvedValueOnce({ screenshot: '/tmp/hosted-source-control.png' })
+      .mockResolvedValueOnce({ screenshot: '/tmp/hosted-review.png' })
+    mocks.parityEvidence
+      .mockReturnValueOnce({ screen: 'source-control' })
+      .mockReturnValueOnce({ screen: 'review' })
     mocks.tapAccessibilityControl.mockResolvedValue(undefined)
     mocks.tapPoint.mockResolvedValue(undefined)
     mocks.waitForDocument
@@ -51,7 +64,7 @@ describe('hosted iOS Source Control and Review journey', () => {
     mocks.readState
       .mockResolvedValueOnce({
         href: 'orca-mobile-web://build/h/host/source-control/workspace?name=repo&origin=session',
-        bodyText: 'Source Control Changes Pull Request Commits',
+        bodyText: 'Source Control Changes Pull Request Commits Create pull request 128 on branch',
         labels: ['Refresh source control', 'Open changed file mobile/app/index.tsx']
       })
       .mockResolvedValueOnce({
@@ -130,6 +143,44 @@ describe('hosted iOS Source Control and Review journey', () => {
       2,
       expect.objectContaining({ expectedText: '3 tabs' })
     )
+  })
+
+  it('captures strict Source Control and Review parity when native baselines are provided', async () => {
+    const result = await verifyHostedSourceControlReviewJourney({
+      deviceUdid: 'simulator',
+      discoveryUrl: 'http://127.0.0.1:9222',
+      emulator: { deviceUdid: 'simulator' },
+      nativeBaselines: {
+        sourceControl: { screenshot: '/tmp/native-source-control.png' },
+        review: { screenshot: '/tmp/native-review.png' }
+      },
+      runtimeDirectory: '/tmp/parity',
+      sessionDocument: {
+        href: 'orca-mobile-web://build/h/host/session/workspace'
+      },
+      timeoutMs: 30_000
+    })
+
+    expect(mocks.captureParityScreen).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        deviceUdid: 'simulator',
+        screenshotName: 'hosted-source-control-portrait.png',
+        title: 'Source Control'
+      })
+    )
+    expect(mocks.captureParityScreen).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        deviceUdid: 'simulator',
+        screenshotName: 'hosted-review-portrait.png',
+        title: 'Changes'
+      })
+    )
+    expect(result.parityFixture).toEqual({
+      sourceControl: { screen: 'source-control' },
+      review: { screen: 'review' }
+    })
   })
 
   it('falls back to measured points when WebKit omits accessibility descendants', async () => {

@@ -73,6 +73,9 @@ if (JSON.stringify(actualPaths) !== JSON.stringify(declaredPaths)) {
 }
 
 const html = await readFile(path.join(outputRoot, manifest.entrypoint), 'utf8')
+if (!/<meta\s+name=["']viewport["'][^>]*\bviewport-fit=cover\b/i.test(html)) {
+  throw new Error('RNW document must expose native safe-area insets')
+}
 const requiredCsp = [
   "default-src 'none'",
   `script-src 'self' ${MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH}`,
