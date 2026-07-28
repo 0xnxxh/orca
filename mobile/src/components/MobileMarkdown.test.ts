@@ -73,6 +73,20 @@ describe('parseMobileMarkdown', () => {
     expect(normalizeMobileMarkdownPreviewHtml('Promise<Result> in prose')).toBe(
       'Promise<Result> in prose'
     )
+    expect(normalizeMobileMarkdownPreviewHtml('Promise<Array<string>> in prose')).toBe(
+      'Promise<Array<string>> in prose'
+    )
+    expect(normalizeMobileMarkdownPreviewHtml('Map<string, Array<number>> in prose')).toBe(
+      'Map<string, Array<number>> in prose'
+    )
+    expect(normalizeMobileMarkdownPreviewHtml('type Box<T = string> = { value: T }')).toBe(
+      'type Box<T = string> = { value: T }'
+    )
+    expect(
+      normalizeMobileMarkdownPreviewHtml(
+        'type Box<T extends object, Value = string> = { value: Value }'
+      )
+    ).toBe('type Box<T extends object, Value = string> = { value: Value }')
     expect(normalizeMobileMarkdownPreviewHtml('a<b=c>')).toBe('a<b=c>')
     expect(normalizeMobileMarkdownPreviewHtml('<T> is a type parameter')).toBe(
       '<T> is a type parameter'
@@ -146,12 +160,14 @@ describe('parseMobileMarkdown', () => {
       'Logo done'
     )
     expect(normalizeMobileMarkdownPreviewHtml('Logo<svg=invalid>Hi')).toBe('LogoHi')
+    expect(normalizeMobileMarkdownPreviewHtml('Logo<SVG=invalid>Hi')).toBe('LogoHi')
     expect(normalizeMobileMarkdownPreviewHtml('Logo<path=invalid>Hi')).toBe('LogoHi')
     expect(normalizeMobileMarkdownPreviewHtml('Logo<p=invalid>Hi')).toBe('LogoHi')
     expect(normalizeMobileMarkdownPreviewHtml('Logo<strong=invalid>Hi')).toBe('LogoHi')
     expect(normalizeMobileMarkdownPreviewHtml('Logo<math=invalid>Hi')).toBe('LogoHi')
     expect(normalizeMobileMarkdownPreviewHtml('Logo<foo=invalid>Hi')).toBe('LogoHi')
     expect(normalizeMobileMarkdownPreviewHtml('Logo<my-widget=invalid>Hi')).toBe('LogoHi')
+    expect(normalizeMobileMarkdownPreviewHtml('Logo<my-widget disabled>Hi')).toBe('LogoHi')
     expect(normalizeMobileMarkdownPreviewHtml('<svg=invalid><path/>')).toBe('')
     expect(normalizeMobileMarkdownPreviewHtml('Logo<my-widget=invalid>Hi</my-widget> done')).toBe(
       'LogoHi done'
@@ -159,6 +175,7 @@ describe('parseMobileMarkdown', () => {
     expect(normalizeMobileMarkdownPreviewHtml('<SVG><PATH/></SVG>')).toBe('')
     expect(normalizeMobileMarkdownPreviewHtml('Logo<svg>Hi<path>there')).toBe('LogoHithere')
     expect(normalizeMobileMarkdownPreviewHtml('Logo<p>Hi')).toBe('LogoHi')
+    expect(normalizeMobileMarkdownPreviewHtml('Logo<B>Hi')).toBe('LogoHi')
     expect(normalizeMobileMarkdownPreviewHtml('Logo<strong>Hi')).toBe('LogoHi')
     expect(normalizeMobileMarkdownPreviewHtml('Logo<center>Hi <font>there <marquee>now')).toBe(
       'LogoHi there now'

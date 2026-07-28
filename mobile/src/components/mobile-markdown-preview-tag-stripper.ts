@@ -246,43 +246,66 @@ export function stripMobileMarkdownMarkupTags(value: string): string {
       nameEnd += 1
     }
 
+    const previousChar = value[start - 1]
+    const name = value.slice(nameStart, nameEnd)
+    const lowerName = name.toLowerCase()
     const end = findMobileMarkdownMarkupTagEnd(value, nameEnd)
     if (end < 0) {
       if (end === -2) {
         return output + value.slice(start)
       }
+      const nestedStart = value.indexOf('<', nameEnd)
+      const isNestedGeneric =
+        Boolean(previousChar && /\w/.test(previousChar)) &&
+        !isClosing &&
+        !/[-:]/.test(name) &&
+        !knownMarkupTagNames.has(lowerName) &&
+        !closingTagNames.has(lowerName)
+      if (isNestedGeneric && nestedStart >= 0) {
+        output += value.slice(start, nestedStart)
+        cursor = nestedStart
+        continue
+      }
       cursor = nextNestedMarkupCursor(value, start)
       continue
     }
 
-    const previousChar = value[start - 1]
     const suffixStart = value[nameEnd] ?? ''
-    const name = value.slice(nameStart, nameEnd)
-    const lowerName = name.toLowerCase()
+    const isKnownMarkup = knownMarkupTagNames.has(lowerName)
+    const canPreserveOpening = !isClosing && !closingTagNames.has(lowerName)
     const isAutolink =
       /^<[A-Za-z][A-Za-z0-9+.-]+:[^\s<>]*>$/.test(value.slice(start, end + 1)) &&
       nameEnd < end &&
-      !closingTagNames.has(lowerName)
+      canPreserveOpening
     const isComparisonAngleText =
       name.length === 1 &&
       suffixStart === '=' &&
       Boolean(previousChar && /\w/.test(previousChar)) &&
       !/\w/.test(value[start - 2] ?? '') &&
-      !closingTagNames.has(lowerName)
+      canPreserveOpening
     const isGeneric =
       Boolean(previousChar && /\w/.test(previousChar)) &&
-      !isClosing &&
+      canPreserveOpening &&
       nameEnd === end &&
       !/[-:]/.test(name) &&
-      !knownMarkupTagNames.has(lowerName) &&
-      !closingTagNames.has(lowerName)
+      !isKnownMarkup
     const isTypeParameter =
-      !isClosing && nameEnd === end && /^[A-Z]$/.test(name) && !closingTagNames.has(lowerName)
+      canPreserveOpening && nameEnd === end && /^[A-Z]$/.test(name) && !isKnownMarkup
+    const tagSuffix = value.slice(nameEnd, end)
+    const hasGenericDefault =
+      /^\s*=/.test(tagSuffix) || /^\s*(?:extends\b|,)[\s\S]*=/.test(tagSuffix)
+    const isGenericDefault =
+      Boolean(previousChar && /\w/.test(previousChar)) &&
+      canPreserveOpening &&
+      /^[A-Z][A-Za-z0-9]*$/.test(name) &&
+      !isKnownMarkup &&
+      hasGenericDefault &&
+      !/\/\s*$/.test(tagSuffix)
     const isUnpairedPlaceholder =
-      !isClosing &&
-      !closingTagNames.has(lowerName) &&
-      !knownMarkupTagNames.has(lowerName) &&
+      canPreserveOpening &&
+      !isKnownMarkup &&
       isPlaceholderSuffix(value, nameEnd, end) &&
+      (!name.includes('-') || tagSuffix.trim().length === 0) &&
       !name.includes(':')
 
     if (
@@ -290,6 +313,7 @@ export function stripMobileMarkdownMarkupTags(value: string): string {
       isComparisonAngleText ||
       isGeneric ||
       isTypeParameter ||
+      isGenericDefault ||
       isUnpairedPlaceholder
     ) {
       output += value.slice(start, end + 1)
