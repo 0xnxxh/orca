@@ -12,6 +12,7 @@ import java.security.SecureRandom
 import java.util.Base64
 
 private const val CHUNK_BYTE_LIMIT = 48 * 1024
+private const val CHUNK_BASE64_CHARACTER_LIMIT = ((CHUNK_BYTE_LIMIT + 2) / 3) * 4
 private const val ASSET_BYTE_LIMIT = 10 * 1024 * 1024
 private val SHA256_PATTERN = Regex("^[a-f0-9]{64}$")
 private val SAFE_PATH_PATTERN = Regex("^[A-Za-z0-9._/-]+$")
@@ -119,6 +120,9 @@ internal class MobileWebPackageStore internal constructor(
     val asset = stage.manifest.assets[path]
       ?: throw IllegalArgumentException("mobile_web_stage_asset_unknown")
     require(path !in stage.finishedPaths) { "mobile_web_stage_asset_unknown" }
+    require(dataBase64.length <= CHUNK_BASE64_CHARACTER_LIMIT) {
+      "mobile_web_stage_chunk_invalid"
+    }
     val bytes = try {
       Base64.getDecoder().decode(dataBase64)
     } catch (_: IllegalArgumentException) {

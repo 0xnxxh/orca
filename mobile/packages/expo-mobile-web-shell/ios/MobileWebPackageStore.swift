@@ -3,6 +3,7 @@ import Foundation
 import Security
 
 private let chunkByteLimit = 48 * 1024
+private let chunkBase64CharacterLimit = ((chunkByteLimit + 2) / 3) * 4
 private let assetByteLimit = 10 * 1024 * 1024
 private let sha256Pattern = "^[a-f0-9]{64}$"
 private let safePathPattern = "^[A-Za-z0-9._/-]+$"
@@ -173,6 +174,7 @@ final class MobileWebPackageStore {
         throw MobileWebStoreError("mobile_web_stage_asset_unknown")
       }
       guard
+        dataBase64.utf8.count <= chunkBase64CharacterLimit,
         let bytes = Data(base64Encoded: dataBase64),
         bytes.base64EncodedString() == dataBase64,
         !bytes.isEmpty,

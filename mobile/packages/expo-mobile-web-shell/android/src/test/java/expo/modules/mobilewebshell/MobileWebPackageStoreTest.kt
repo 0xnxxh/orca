@@ -140,6 +140,27 @@ class MobileWebPackageStoreTest {
   }
 
   @Test
+  fun rejectsOversizedEncodedChunksBeforeDecoding() {
+    val root = temporary.newFolder()
+    val store = MobileWebPackageStore(root)
+    val fixture = packageFixture()
+    val stageId = store.beginStage("paired-host", fixture.manifest, fixture.canonical)
+
+    val error = assertThrows(IllegalArgumentException::class.java) {
+      store.writeAssetChunk(
+        stageId,
+        "index.html",
+        0,
+        "A".repeat(65_537),
+        sha256Hex(fixture.bytes)
+      )
+    }
+
+    assertEquals("mobile_web_stage_chunk_invalid", error.message)
+    store.abortStage(stageId)
+  }
+
+  @Test
   fun rejectsIncompleteStagesAndCorruptionOnOpenAndRead() {
     val root = temporary.newFolder()
     val store = MobileWebPackageStore(root)

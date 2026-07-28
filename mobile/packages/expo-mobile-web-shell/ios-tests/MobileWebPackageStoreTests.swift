@@ -16,6 +16,7 @@ enum MobileWebPackageStoreTests {
     try rejectsQuotedNumericManifestFields(root: root.appendingPathComponent("scalar-types"))
     try rejectsBooleanNumericManifestFields(root: root.appendingPathComponent("boolean-types"))
     try deletesInterruptedStage(root: root.appendingPathComponent("interrupted"))
+    try rejectsOversizedEncodedChunks(root: root.appendingPathComponent("chunk-limit"))
     try rejectsIncompleteAndCorruptGeneration(root: root.appendingPathComponent("corrupt"))
     try activatesAndRecoversPreviousGeneration(root: root.appendingPathComponent("rollback"))
     try fallsBackFromCorruptActiveGeneration(root: root.appendingPathComponent("corrupt-active"))
@@ -184,6 +185,29 @@ enum MobileWebPackageStoreTests {
         )
       }
     )
+  }
+
+  private static func rejectsOversizedEncodedChunks(root: URL) throws {
+    let store = MobileWebPackageStore(cacheRoot: root)
+    let fixture = try packageFixture()
+    let stageId = try store.beginStage(
+      hostIdentity: "paired-host",
+      manifestJson: fixture.manifest,
+      canonicalManifestJson: fixture.canonical
+    )
+
+    precondition(
+      throwsCode("mobile_web_stage_chunk_invalid") {
+        try store.writeAssetChunk(
+          stageId: stageId,
+          path: "index.html",
+          offset: 0,
+          dataBase64: String(repeating: "A", count: 65_537),
+          chunkSha256: sha256Hex(fixture.bytes)
+        )
+      }
+    )
+    store.abortStage(stageId: stageId)
   }
 
   private static func rejectsIncompleteAndCorruptGeneration(root: URL) throws {

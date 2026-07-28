@@ -205,12 +205,12 @@ cross-scope races, privacy/authorization audit, and independent review.
       ten-case TypeScript/Swift/Kotlin quoted/Boolean numeric manifest corpus
       passes after removing Android `JSONObject.optInt` string coercion and iOS
       `NSNumber`/`CFBoolean` integer bridging. Chunk base64 is capped at 65,536
-      characters and its bounded request/chunk mutation corpus passes. Native
-      activation metadata rejects numeric active/previous hashes with the same
-      stable error on both platforms. Android now requires the exact root
-      document URL and rejects percent-encoded or query-bearing asset requests;
-      a fresh exact-app rerun, generated mutation, and the other listed
-      boundaries remain.
+      characters in the shared schema and both native stores before decode; its
+      bounded request/chunk mutation corpus passes. Native activation metadata
+      rejects numeric active/previous hashes with the same stable error on both
+      platforms. Android now requires the exact root document URL and rejects
+      percent-encoded or query-bearing asset requests; a fresh exact-app rerun,
+      generated mutation, and the other listed boundaries remain.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,
       reconnect, process-loss, and host-removal races.
 - [ ] Verify no credential or privileged host identity reaches URLs, DOM state,
