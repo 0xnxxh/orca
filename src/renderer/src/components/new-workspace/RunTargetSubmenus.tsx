@@ -36,6 +36,7 @@ export function RecipesSubmenuRow({
   onArm: () => void
   onSelectRecipe: (recipeId: string) => void
 }): React.JSX.Element {
+  const [hoveredKey, setHoveredKey] = React.useState<string | null>(null)
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverAnchor asChild>
@@ -63,17 +64,23 @@ export function RecipesSubmenuRow({
         className={SUBMENU_CONTENT}
         onOpenAutoFocus={(event) => event.preventDefault()}
       >
-        <div role="listbox" aria-label={getEphemeralVmLabel()}>
+        {/* Why: submenu rows track their own hover — without it they were the
+            only rows in either picker that never highlighted under the pointer. */}
+        <div
+          role="listbox"
+          aria-label={getEphemeralVmLabel()}
+          onMouseLeave={() => setHoveredKey(null)}
+        >
           {recipes.map((recipe) => (
             <RunTargetRow
               key={recipe.id}
               icon={<Cloud className="size-3.5 shrink-0 text-muted-foreground" />}
               label={recipe.name}
               detail={getRecipeDetail(recipe)}
-              armed={false}
+              armed={hoveredKey === recipe.id}
               current={recipe.id === selectedRecipeId}
               optionId={undefined}
-              onArm={() => {}}
+              onArm={() => setHoveredKey(recipe.id)}
               onCommit={() => onSelectRecipe(recipe.id)}
             />
           ))}
@@ -104,6 +111,7 @@ export function AddHostSubmenuRow({
   onAddSshHost?: () => void
   onAddRemoteServer?: () => void
 }): React.JSX.Element {
+  const [hoveredKey, setHoveredKey] = React.useState<string | null>(null)
   const addHostLabel = translate('auto.components.NewWorkspaceComposerCard.addHost', 'Add host')
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -138,7 +146,7 @@ export function AddHostSubmenuRow({
         className={SUBMENU_CONTENT}
         onOpenAutoFocus={(event) => event.preventDefault()}
       >
-        <div role="listbox" aria-label={addHostLabel}>
+        <div role="listbox" aria-label={addHostLabel} onMouseLeave={() => setHoveredKey(null)}>
           {onAddSshHost ? (
             <RunTargetRow
               icon={<Server className="size-3.5 shrink-0 text-muted-foreground" />}
@@ -150,10 +158,10 @@ export function AddHostSubmenuRow({
                 'auto.components.NewWorkspaceComposerCard.addSshHostHint',
                 'Use an existing machine over SSH'
               )}
-              armed={false}
+              armed={hoveredKey === 'ssh'}
               current={false}
               optionId={undefined}
-              onArm={() => {}}
+              onArm={() => setHoveredKey('ssh')}
               onCommit={onAddSshHost}
             />
           ) : null}
@@ -168,10 +176,10 @@ export function AddHostSubmenuRow({
                 'auto.components.NewWorkspaceComposerCard.addRemoteOrcaServerHint',
                 'Pair another Orca runtime'
               )}
-              armed={false}
+              armed={hoveredKey === 'remote'}
               current={false}
               optionId={undefined}
-              onArm={() => {}}
+              onArm={() => setHoveredKey('remote')}
               onCommit={onAddRemoteServer}
             />
           ) : null}

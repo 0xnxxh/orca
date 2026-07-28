@@ -1,7 +1,6 @@
 import React from 'react'
 import { AlertTriangle, ChevronRight, LoaderCircle, Monitor, Server } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { ShortcutKeyCombo } from '@/components/ShortcutKeyCombo'
 import { cn } from '@/lib/utils'
 import { LOCAL_EXECUTION_HOST_ID, type ExecutionHostId } from '../../../../shared/execution-host'
 import { ProjectOptionDetail } from './ProjectComboboxRow'
@@ -85,10 +84,6 @@ export function RunTargetRow({
       {submenu ? (
         <span className="flex h-8 shrink-0 items-center pl-1.5">
           <ChevronRight className="size-3.5 text-muted-foreground" />
-        </span>
-      ) : armed ? (
-        <span className="flex h-8 shrink-0 items-center pl-1.5 text-muted-foreground">
-          <ShortcutKeyCombo keys={['↵']} keyCapClassName="min-w-5 px-1 py-0 text-[10px]" />
         </span>
       ) : null}
     </div>

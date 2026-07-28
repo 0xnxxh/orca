@@ -1,7 +1,6 @@
 import React from 'react'
 import { FolderOpen } from 'lucide-react'
 import { RepoBadgeMark } from '@/components/repo/RepoBadgeLabel'
-import { ShortcutKeyCombo } from '@/components/ShortcutKeyCombo'
 import { cn } from '@/lib/utils'
 import type { NewWorkspaceProjectOption } from '@/lib/new-workspace-project-options'
 import { splitDetailForElision } from './project-combobox-matching'
@@ -142,14 +141,6 @@ export function ProjectOptionRow({
           ambiguous ? 'text-foreground/80' : 'text-muted-foreground'
         )}
       />
-      {/* Takes space only while armed, so an unarmed row spends its full width
-          on the path and the cap visibly claims it back on hover. */}
-      {armed ? (
-        // A key cap is a chip, not text, so it centres on the row.
-        <span className="flex h-8 shrink-0 items-center pl-1.5 text-muted-foreground">
-          <ShortcutKeyCombo keys={['↵']} keyCapClassName="min-w-5 px-1 py-0 text-[10px]" />
-        </span>
-      ) : null}
     </div>
   )
 }
