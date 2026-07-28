@@ -90,6 +90,7 @@ describe('mobile web native capability round trip', () => {
     await expect(client.native.clipboardWrite('selected text')).resolves.toEqual({
       confirmation: 'in-app'
     })
+    await expect(client.native.openExternal('javascript:alert(1)')).rejects.toThrow()
     await expect(client.native.openExternal('https://example.com')).resolves.toBeNull()
     await expect(client.native.terminalTextScaleUpdate(1.5)).resolves.toBeNull()
     await expect(
@@ -101,6 +102,7 @@ describe('mobile web native capability round trip', () => {
     expect(hapticFeedback).toHaveBeenCalledWith('selection')
     expect(clipboardWrite).toHaveBeenCalledWith('selected text')
     expect(openExternal).toHaveBeenCalledWith('https://example.com')
+    expect(openExternal).not.toHaveBeenCalledWith('javascript:alert(1)')
     expect(terminalTextScaleUpdate).toHaveBeenCalledWith(1.5)
     expect(terminalCustomKeysUpdate).toHaveBeenCalledWith([
       { id: 'custom-2', label: 'Test', bytes: 'pnpm test\r', enter: false }

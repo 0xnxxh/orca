@@ -120,6 +120,21 @@ for (const asset of manifest.assets.filter((candidate) => candidate.role === 'sc
   ) {
     throw new Error(`RNW executable contains page-owned persistence: ${asset.path}`)
   }
+  for (const symbol of [
+    'NATIVE_MOBILE_PR_SHELL_OPERATIONS',
+    'NATIVE_HOST_SOURCE_CONTROL_FEEDBACK',
+    'NATIVE_HOST_DIFF_REVIEW_DEVICE_OPERATIONS',
+    'ProtocolBlockScreen',
+    'navigator.clipboard',
+    'ClipboardPasteButton',
+    'launchImageLibraryAsync',
+    'getDocumentAsync',
+    'ImageManipulator'
+  ]) {
+    if (source.includes(symbol)) {
+      throw new Error(`RNW executable contains native fallback authority: ${symbol}`)
+    }
+  }
 }
 
 console.log(

@@ -201,6 +201,13 @@ exact native workspace, tab, terminal, agent, provider session, and transcript;
 synchronization revokes handles that disappear or change, and client/broker
 replacement clears the authority.
 
+Current Desktop mobile responses already clip tool-call input. The native
+WebView broker now independently normalizes it before schema parsing and
+delivery to a 4,000-character, 100-node, 20-item, five-level budget with
+128-character keys and cycle handling. This preserves supported question,
+command, and file inputs while bounding older-host or adversarial structures
+before response serialization.
+
 Before every chat mutation, native reloads `session.tabs.list` and verifies
 that complete identity. A mismatch revokes the handle before any terminal
 write. Mutation delivery is `accepted`, `rejected`, or `unknown`; logical
@@ -519,7 +526,7 @@ forking the shared presentation. Source Control measures 0.736% changed pixels
 nested syntax text follows the native effective font.
 
 The interrupted-transcript versus hook-status mismatch and a real structured
-prompt response pass Host 37 Simulator replay. Current package `190a35ea…`
+prompt response pass Host 37 Simulator replay. Current package `9ed8c7f7…`
 also carries the network-denied local Mermaid engine and its WebKit-compatible
 token-bound parent/frame handoff. Classic SSH
 transcript authority and reconnect now pass a real Docker provider journey

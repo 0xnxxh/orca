@@ -17,6 +17,9 @@ export function webHostScreenShellOperations(
       void requireClient().navigationRoute({ destination: 'hostPicker' })
     },
     navigateFromHostList,
+    async openExternalUrl(url) {
+      await requireClient().native.openExternal(url)
+    },
     reconnect() {
       return client
         ? client.navigationReconnect().then(() => undefined)

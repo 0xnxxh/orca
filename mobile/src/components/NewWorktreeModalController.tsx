@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from 'react'
 
 import type { HostWorkspaceCreationOperations } from '../worktree/host-workspace-creation-operations'
+import type { HostScreenShellOperations } from '../worktree/host-screen-shell-operations'
 import { NewWorktreeModal } from './NewWorktreeModal'
 
 export type NewWorktreeModalControllerHandle = {
@@ -13,6 +14,7 @@ type Props = {
   hostId?: string
   existingWorktreePaths?: readonly string[]
   existingWorktrees?: readonly { repoId: string; branch: string }[]
+  openExternalUrl: HostScreenShellOperations['openExternalUrl']
   onVisibleChange?: (visible: boolean) => void
   onRouteVisibleChange: (visible: boolean) => void
   onCreated: (worktreeId: string, name: string) => void
@@ -26,6 +28,7 @@ export const NewWorktreeModalController = forwardRef<NewWorktreeModalControllerH
       hostId,
       existingWorktreePaths,
       existingWorktrees,
+      openExternalUrl,
       onVisibleChange,
       onRouteVisibleChange,
       onCreated
@@ -61,6 +64,7 @@ export const NewWorktreeModalController = forwardRef<NewWorktreeModalControllerH
         hostId={hostId}
         existingWorktreePaths={existingWorktreePaths}
         existingWorktrees={existingWorktrees}
+        openExternalUrl={openExternalUrl}
         onCreated={onCreated}
         onClose={close}
       />

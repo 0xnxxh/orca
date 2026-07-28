@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import { useForceReconnect, useHostClient } from '../transport/client-context'
+import { DEFAULT_HOST_DIFF_REVIEW_DEVICE_OPERATIONS } from './default-host-diff-review-device-operations'
 import type { HostDiffReviewBinding } from './host-diff-review-binding'
-import { NATIVE_HOST_DIFF_REVIEW_DEVICE_OPERATIONS } from './native-host-diff-review-device-operations'
 
 export function useHostDiffReviewBinding(
   hostId: string,
@@ -23,6 +23,6 @@ export function useHostDiffReviewBinding(
     client: binding?.client ?? nativeHost.client,
     connectionState: binding?.connectionState ?? nativeHost.state,
     reconnect,
-    device: binding?.device ?? NATIVE_HOST_DIFF_REVIEW_DEVICE_OPERATIONS
+    device: binding?.device ?? DEFAULT_HOST_DIFF_REVIEW_DEVICE_OPERATIONS
   }
 }

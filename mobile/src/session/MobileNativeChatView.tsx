@@ -110,6 +110,7 @@ type Props = {
   /** Open a worktree file tapped in agent markdown. */
   onOpenFile?: (relativePath: string) => void
   onOpenLink?: (url: string) => void
+  onCopyText?: (text: string) => Promise<unknown>
   /** Pixels to lift the composer by when the soft keyboard is open. The route
    *  owns keyboard tracking (the app uses manual lift, not KeyboardAvoidingView). */
   keyboardInset?: number
@@ -158,6 +159,7 @@ export function MobileNativeChatView({
   onRespondPermission,
   onOpenFile,
   onOpenLink,
+  onCopyText,
   keyboardInset = 0
 }: Props): React.JSX.Element {
   const insets = useSafeAreaInsets()
@@ -257,9 +259,10 @@ export function MobileNativeChatView({
         onScrollToMessage={onScrollToMessage}
         onOpenFile={onOpenFile}
         onOpenLink={onOpenLink}
+        onCopyText={onCopyText}
       />
     ),
-    [pendingIds, toolsExpanded, fontScale, onScrollToMessage, onOpenFile, onOpenLink]
+    [pendingIds, toolsExpanded, fontScale, onScrollToMessage, onOpenFile, onOpenLink, onCopyText]
   )
 
   const emptyState = mobileNativeChatEmptyState(status, agent ?? null, error)

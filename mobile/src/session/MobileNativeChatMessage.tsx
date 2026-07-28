@@ -1,6 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { Image, Pressable, Text, View } from 'react-native'
-import * as Clipboard from 'expo-clipboard'
 import { ArrowUp, ChevronDown, Copy, SquareChevronRight } from 'lucide-react-native'
 import type { NativeChatBlock, NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { MobileMarkdown } from '../components/MobileMarkdown'
@@ -292,7 +291,8 @@ function MobileNativeChatMessageImpl({
   messageIndex,
   onScrollToMessage,
   onOpenFile,
-  onOpenLink
+  onOpenLink,
+  onCopyText
 }: {
   message: NativeChatMessage
   queued?: boolean
@@ -305,6 +305,7 @@ function MobileNativeChatMessageImpl({
   onScrollToMessage?: (index: number) => void
   onOpenFile?: (relativePath: string) => void
   onOpenLink?: (url: string) => void
+  onCopyText?: (text: string) => Promise<unknown>
 }): React.JSX.Element {
   const isUser = message.role === 'user'
   const isReasoning = message.role === 'reasoning'
@@ -325,12 +326,12 @@ function MobileNativeChatMessageImpl({
   // an inverted (filled accent) bubble so they stand apart from agent prose.
   const { prose, tools } = splitNativeChatBlocks(message.blocks)
 
-  const handleCopy = (): void => {
+  const handleCopy = async (): Promise<void> => {
     const text = nativeChatMessageText(message.blocks)
-    if (!text) {
+    if (!text || !onCopyText) {
       return
     }
-    void Clipboard.setStringAsync(text)
+    await onCopyText(text)
     setCopied(true)
     if (copyTimer.current) {
       clearTimeout(copyTimer.current)
@@ -343,7 +344,7 @@ function MobileNativeChatMessageImpl({
   const controls =
     isAgent && !queued ? (
       <AgentControls
-        onCopy={handleCopy}
+        onCopy={() => void handleCopy().catch(() => {})}
         onScrollToTop={
           onScrollToMessage && messageIndex !== undefined
             ? () => onScrollToMessage(messageIndex)

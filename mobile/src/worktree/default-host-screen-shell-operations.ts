@@ -3,6 +3,7 @@ import { usePathname, useRouter } from 'expo-router'
 import { leaveHostRoute } from '../host-route-exit'
 import { useCloseHost, useForceReconnect } from '../transport/client-context'
 import { removeHostAndCloseClient } from '../transport/host-removal-lifecycle'
+import { MOBILE_WEB_NATIVE_CAPABILITY_AUTHORITY } from '../mobile-web/mobile-web-native-capability-authority'
 import { navigateFromHostScreenList } from './host-screen-route-navigation'
 import type { HostScreenShellOperations } from './host-screen-shell-operations'
 
@@ -28,6 +29,9 @@ export function useDefaultHostScreenShellOperations(args: {
           embedded: args.embedded,
           hostId: args.hostId
         })
+      },
+      openExternalUrl(url: string) {
+        return MOBILE_WEB_NATIVE_CAPABILITY_AUTHORITY.openExternal(url)
       },
       reconnect() {
         return args.hostId ? forceReconnectHost(args.hostId) : Promise.resolve()

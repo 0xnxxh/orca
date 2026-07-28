@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { usePathname, useRouter } from 'expo-router'
 import { HostScreen } from '../app/h/[hostId]/index'
-import { HostProtocolGatesProvider } from '../src/components/HostProtocolGate'
+import { HostProtocolGatesProvider } from '../src/components/host-protocol-gates-context'
 import { useMobileWebNativeShell } from '../../src/mobile-web/src/native-shell-channel'
 import { webHostWorkspaceOperations } from '../src/worktree/web-host-workspace-operations'
 import { webHostWorkspaceCreationOperations } from '../src/worktree/web-host-workspace-creation-operations'

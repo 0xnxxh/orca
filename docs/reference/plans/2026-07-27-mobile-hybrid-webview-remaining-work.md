@@ -95,13 +95,23 @@ validation passes 552 mobile files / 3,291 tests with 2 expected skips and
 root/mobile/mobile-web lint, reliability gates, changed-file and full-mobile
 formatting, localization, and the max-lines ratchet pass.
 The independently verified React Native Web package is
-`190a35ea6c3e53ffa099afba9da1103acbbd8d1b165bf1c0e19391e6d026c2c1`:
-49 assets, 9,333,750 raw bytes, and 2,698,592 gzip bytes. The current mobile
-suite passes 557 files / 3,312 tests with 2 expected skips. The four directly
-affected root suites pass 17 tests; mobile and mobile-web typechecks and lints,
-full mobile and changed-file formatting, max-lines, package verification, and
-diff hygiene pass. The repository-wide formatter still reports 19 unrelated
-baseline files, so changed-file formatting is the migration-owned gate.
+`9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`:
+49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes. The current mobile
+suite passes 561 files / 3,322 tests with 2 expected skips. Mobile and
+mobile-web typechecks and lints, changed-file formatting, max-lines, package
+verification, and diff hygiene pass. The repository-wide formatter still
+reports 19 unrelated baseline files, so changed-file formatting is the
+migration-owned gate.
+
+The latest native-authority audit keeps the unchanged UI but removes hosted
+fallback access to Expo clipboard, image/document pickers, haptics, and direct
+external-link opening. Native routes receive platform-resolved adapters;
+hosted routes fail closed or use the gesture-gated capability bridge.
+Native-chat tool input is normalized before schema parsing and delivery to a
+4,000-character, 100-node, 20-item, five-level budget. A deterministic
+adversarial corpus now covers filenames, diff lines, task/provider fields,
+bounded errors, terminal-link policy, and the remaining intentional sanitized
+HTML/Markdown/Mermaid sinks.
 
 ## 1. Finish Hosted Feature Parity
 
@@ -131,8 +141,10 @@ baseline files, so changed-file formatting is the migration-owned gate.
 
 ## 4. Security Gates
 
-- [ ] Complete the remaining XSS corpus across filenames, diffs, terminal
-      links, provider/task fields, errors, HTML, SVG, Markdown, and Mermaid.
+- [ ] Run the deterministic filename, diff, terminal-link, provider/task,
+      bounded-error, HTML, SVG, Markdown, and Mermaid corpus through the exact
+      release app on both platforms and complete independent live interaction
+      testing.
 - [ ] Fuzz manifests, chunks, paths, MIME types, CSP, cache metadata, bridge
       envelopes, limits, ordering, cancellation, and subscriptions.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,

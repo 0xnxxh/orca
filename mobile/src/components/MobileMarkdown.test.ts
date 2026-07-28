@@ -340,6 +340,10 @@ describe('mobile Markdown external links', () => {
       new URL('../files/MobileFilePreviewScreen.tsx', import.meta.url),
       'utf8'
     )
+    const workspaceSourceField = readFileSync(
+      new URL('./SmartWorkspaceSourceField.tsx', import.meta.url),
+      'utf8'
+    )
 
     expect(markdownSource).toContain('onOpenLink?.(externalUrl)')
     expect(markdownSource).not.toContain('Linking.openURL')
@@ -348,5 +352,7 @@ describe('mobile Markdown external links', () => {
     expect(filePreviewSource).toContain('operations?.openExternalUrl(url)')
     expect(filePreviewSource).toContain('onOpenLink={handleOpenExternalUrl}')
     expect(filePreviewSource).not.toContain('MOBILE_WEB_NATIVE_CAPABILITY_AUTHORITY')
+    expect(workspaceSourceField).toContain('onOpenExternalUrl(selection.url)')
+    expect(workspaceSourceField).not.toContain('Linking.openURL')
   })
 })

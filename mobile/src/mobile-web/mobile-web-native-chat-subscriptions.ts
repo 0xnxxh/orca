@@ -9,6 +9,7 @@ import type { RpcClient } from '../transport/rpc-client'
 import { MobileWebBrokerError } from './mobile-web-broker-error'
 import type { MobileWebNativeChatAuthority } from './mobile-web-native-chat-authority'
 import { resolveFreshMobileWebNativeChatBinding } from './mobile-web-native-chat-binding'
+import { sanitizeMobileWebNativeChatMessages } from './mobile-web-native-chat-tool-input'
 import type { MobileWebWorkspaceAuthority } from './mobile-web-workspace-authority'
 
 type SubscriptionRecord = {
@@ -178,7 +179,7 @@ function sanitizeEvent(value: unknown): MobileWebNativeChatEvent | null {
         : value.type === 'snapshot' || value.type === 'replacement' || value.type === 'appended'
           ? {
               type: value.type,
-              messages: value.messages,
+              messages: sanitizeMobileWebNativeChatMessages(value.messages),
               ...(typeof value.hasMore === 'boolean' ? { hasMore: value.hasMore } : {}),
               ...(safeOffset(value.beforeOffset) === undefined
                 ? {}

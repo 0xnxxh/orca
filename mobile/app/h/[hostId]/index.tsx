@@ -45,7 +45,7 @@ import { buildWorktreeNavigationActions } from '../../../src/agent-history/workt
 import { floatingWorkspaceSessionPath } from '../../../src/session/floating-workspace'
 import { ConfirmModal } from '../../../src/components/ConfirmModal'
 import { BottomDrawer } from '../../../src/components/BottomDrawer'
-import { useHostProtocolGates } from '../../../src/components/HostProtocolGate'
+import { useHostProtocolGates } from '../../../src/components/host-protocol-gates-context'
 import { AuthFailedBanner } from '../../../src/components/AuthFailedBanner'
 import { HostRouteNoticeBanner } from '../../../src/components/HostRouteNoticeBanner'
 import { visibleHostRouteNotice } from '../../../src/host-route-notice'
@@ -1375,6 +1375,7 @@ export function HostScreen({
         hostId={hostId}
         existingWorktreePaths={existingWorktreePaths}
         existingWorktrees={worktrees}
+        openExternalUrl={shellOperations.openExternalUrl}
         onVisibleChange={(visible) => {
           newWorktreeModalVisibleRef.current = visible
         }}

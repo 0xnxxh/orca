@@ -2,14 +2,15 @@ import * as Clipboard from 'expo-clipboard'
 import * as ExpoCrypto from 'expo-crypto'
 import { Linking, Platform } from 'react-native'
 import type { CodexResetCreditExpectedScope } from '../../../src/shared/codex-reset-credit-scope'
-import type {
-  MobileWebClipboardAvailability,
-  MobileWebClipboardWriteResult,
-  MobileWebHapticKind,
-  MobileWebTerminalAccessoryPreferences,
-  MobileWebTerminalCustomKey,
-  MobileWebTerminalPreferences,
-  MobileWebTerminalTextScale
+import {
+  normalizeMobileWebExternalUrl,
+  type MobileWebClipboardAvailability,
+  type MobileWebClipboardWriteResult,
+  type MobileWebHapticKind,
+  type MobileWebTerminalAccessoryPreferences,
+  type MobileWebTerminalCustomKey,
+  type MobileWebTerminalPreferences,
+  type MobileWebTerminalTextScale
 } from '../../../src/shared/mobile-web/native-operation-contract'
 import {
   triggerEdgeBump,
@@ -121,7 +122,11 @@ export function createMobileWebNativeCapabilityAuthority(
       return { confirmation: Platform.OS === 'ios' ? 'in-app' : 'system' }
     },
     async openExternal(url) {
-      await Linking.openURL(url)
+      const externalUrl = normalizeMobileWebExternalUrl(url)
+      if (!externalUrl) {
+        throw new Error('Unsupported external URL')
+      }
+      await Linking.openURL(externalUrl)
     },
     async terminalPreferences() {
       const [textScale, autocompleteEnabled, linkOpenMode] = await Promise.all([

@@ -1405,8 +1405,10 @@ copy.
   Clipboard writes, external links, settings handoff, account selection/reset,
   workspace creation, agent-history resume, image picking, speech control, and
   terminal attachment/input operations consume the same foreground-aware native
-  gesture authority. A complete operation-by-operation audit and adversarial
-  runtime matrix remain open.
+  gesture authority. The hosted RNW graph now receives platform-resolved,
+  fail-closed defaults for clipboard, image/document picking, haptics, and PR
+  shell actions; chat copy and workspace links use injected shell operations.
+  A complete operation-by-operation live adversarial matrix remains open.
 - [ ] Close every remaining item in the feature-parity inventory.
 
 ## 11. Security and Adversarial Review
@@ -1477,10 +1479,11 @@ copy.
   malicious `click` directive created no accessible link and made zero sentinel
   requests, and invalid source returned the typed error that maps to the
   unchanged raw-source fallback. Focused document and package-budget boundaries
-  pass. The exact Orca app route, native nested component, Android,
-  physical-device, Release, filenames/diffs, terminal links, task/provider
-  fields outside Markdown, error messages, broader live adversarial interaction,
-  and independent review remain open.
+  pass. A deterministic corpus now proves bounded filenames, diff lines,
+  task/provider fields, and errors remain inert React Native text, and existing
+  terminal-link tests reject unsupported targets. The exact Orca app route,
+  native nested component, Android, physical-device, Release, broader live
+  adversarial interaction, and independent review remain open.
 - [ ] Fuzz manifest, chunks, asset paths, MIME types, CSP, and cache metadata.
 - [ ] Fuzz bridge envelopes, schemas, sizes, IDs, ordering, cancellation, and
       subscription lifecycle.
@@ -1494,7 +1497,12 @@ copy.
 - [ ] Verify Desktop repeats authorization for every mutation.
 - [ ] Verify cache and bridge identity use the paired cryptographic identity,
       not endpoint or display name.
-- [ ] Verify all resource limits apply before allocation and during assembly.
+- [~] Verify all resource limits apply before allocation and during assembly.
+  Native-chat tool input is now normalized before schema parsing, delivery, and
+  response accounting to 4,000 characters, 100 nodes, 20 collection items,
+  128-character keys, and five levels of nesting. Manifest, task-table,
+  workspace, source-control, file, terminal, browser-frame, and package limits
+  have focused coverage; full fuzzing and sustained allocation evidence remain.
 - [ ] Complete an independent threat-model and adversarial review.
 - [ ] Resolve every high-severity finding before cutover.
 
@@ -2468,5 +2476,8 @@ copy.
 | 2026-07-28 | Complete | Hosted `git.branchCompare` now returns revision-consistent pages of at most 128 entries with the existing byte budget and a 4,000-entry aggregate ceiling. The page adapter assembles every page and rejects changed revisions, so native and hosted Review both show all 1,294 files, the same first file, and the same diff.                                                                                                          |
 | 2026-07-28 | Complete | The unchanged Source Control and Review screens pass the cached iPhone 17 Pro journey against the 1,294-file comparison. Source Control measures 0.736% changed pixels / 0.910 mean channel difference; Review measures 2.134% / 1.947 against 3% / 4 budgets. The packaged document exposes native safe-area insets and nested syntax text retains native font behavior.                                                               |
 | 2026-07-28 | Complete | Final slice validation passes 557 mobile files / 3,312 tests with 2 expected skips and 4 directly affected root files / 17 tests. Mobile and RNW typechecks/lints, full mobile and changed-file formatting, max-lines, package verification, and diff hygiene pass. Package `190a35ea6c3e53ffa099afba9da1103acbbd8d1b165bf1c0e19391e6d026c2c1` contains 49 assets, 9,333,750 raw bytes, and 2,698,592 gzip bytes.                       |
+| 2026-07-28 | Complete | Hosted RNW no longer receives default Expo clipboard, picker, haptic, PR-shell, or direct external-link authority. Platform-resolved native adapters preserve the unchanged mobile behavior; hosted adapters fail closed or use the gesture-gated authenticated shell bridge. The package verifier rejects the reviewed native fallback symbols.                                                                                        |
+| 2026-07-28 | Complete | Native-chat tool input is bounded before schema parsing and response accounting. Focused tests cover strings, keys, width, nodes, depth, cycles, and supported inputs. The host-content corpus covers filenames, diffs, task/provider fields, bounded errors, and text-only presentation sinks.                                                                                                                                         |
+| 2026-07-28 | Complete | Security-slice validation passes 561 mobile files / 3,322 tests with 2 expected skips, mobile and RNW typechecks/lints, changed-file formatting, max-lines, RNW package verification, and diff hygiene. Package `9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde` contains 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes.                                                                                   |
 | 2026-07-28 | Finding  | Repository-wide formatting still reports 19 unrelated baseline files; every migration-owned changed file passes formatting.                                                                                                                                                                                                                                                                                                             |
 | 2026-07-28 | Next     | Complete the remaining parity inventory and cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                  |

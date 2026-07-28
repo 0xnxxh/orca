@@ -63,6 +63,7 @@ import type {
   NewWorkspaceRepository,
   NewWorkspaceRuntimeSettings
 } from '../worktree/host-workspace-creation-operations'
+import type { HostScreenShellOperations } from '../worktree/host-screen-shell-operations'
 
 type Repo = NewWorkspaceRepository
 
@@ -114,6 +115,7 @@ type Props = {
   // what the suggestion logic must dedupe against.
   existingWorktreePaths?: readonly string[]
   existingWorktrees?: readonly { repoId: string; branch: string }[]
+  openExternalUrl: HostScreenShellOperations['openExternalUrl']
   onCreated: (worktreeId: string, name: string) => void
   onClose: () => void
 }
@@ -124,6 +126,7 @@ export function NewWorktreeModal({
   hostId,
   existingWorktreePaths,
   existingWorktrees,
+  openExternalUrl,
   onCreated,
   onClose
 }: Props) {
@@ -152,6 +155,7 @@ export function NewWorktreeModal({
       hostId={hostId}
       existingWorktreePaths={existingWorktreePaths}
       existingWorktrees={existingWorktrees}
+      openExternalUrl={openExternalUrl}
       onCreated={onCreated}
       onClose={onClose}
     />
@@ -164,6 +168,7 @@ function NewWorktreeModalContent({
   hostId,
   existingWorktreePaths,
   existingWorktrees,
+  openExternalUrl,
   onCreated,
   onClose
 }: Props) {
@@ -755,6 +760,7 @@ function NewWorktreeModalContent({
               label={selectedRepoIsGit ? "Name or 'Create From'" : 'Workspace name'}
               disabled={sshGate.requiresConnection}
               interactive={formSheetInteractive}
+              onOpenExternalUrl={openExternalUrl}
               onBeforeOpen={() => setError('')}
               onOpenDrawer={openSourceDrawer}
             />

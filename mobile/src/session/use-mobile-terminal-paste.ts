@@ -1,15 +1,8 @@
 import { useCallback, type RefObject } from 'react'
-import * as Clipboard from 'expo-clipboard'
 import type { TerminalModes } from '../terminal/terminal-webview-contract'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
-import {
-  buildMobileImagePastePayload,
-  prepareMobileClipboardImageBase64,
-  saveMobileClipboardImageAsTempFile
-} from './mobile-clipboard-image'
-import { resizeMobileClipboardImage } from './mobile-clipboard-image-resizer'
-import { buildMobileTerminalClipboardTextPayload } from './mobile-terminal-clipboard-text'
+import { defaultMobileTerminalPastePayload } from './default-mobile-terminal-paste-payload'
 import type { HostSessionTerminalOperations } from './host-session-terminal-operations'
 
 type UseMobileTerminalPasteOptions = {
@@ -86,25 +79,14 @@ export function useMobileTerminalPaste({
         }
         return
       }
-      const text = await Clipboard.getStringAsync()
-      let payload: string | null = null
-      if (text.length > 0) {
-        payload = buildMobileTerminalClipboardTextPayload(
-          text,
-          ptyModesRef.current.get(targetHandle)
-        )
-      } else {
-        const image = await Clipboard.getImageAsync({ format: 'png' })
-        if (!image) {
-          refreshCanPaste()
-          return
-        }
-        const connectionId = await getActiveWorktreeConnectionId()
-        const base64 = await prepareMobileClipboardImageBase64(image, resizeMobileClipboardImage)
-        const imagePath = await saveMobileClipboardImageAsTempFile(client, base64, {
-          connectionId
-        })
-        payload = buildMobileImagePastePayload(imagePath)
+      const payload = await defaultMobileTerminalPastePayload({
+        client,
+        connectionId: getActiveWorktreeConnectionId,
+        modes: ptyModesRef.current.get(targetHandle)
+      })
+      if (!payload) {
+        refreshCanPaste()
+        return
       }
 
       const wrappedBytes = new TextEncoder().encode(payload).byteLength

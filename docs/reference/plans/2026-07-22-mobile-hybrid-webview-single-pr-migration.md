@@ -1031,12 +1031,12 @@ and nested syntax text keeps the effective native font behavior. On iPhone 17
 Pro Simulator, Source Control passes at 0.736% changed pixels / 0.910 mean
 channel difference and Review at 2.134% / 1.947, within the 3% / 4 budgets.
 
-Current validation passes mobile and mobile-web typechecks and lints, mobile
-formatting, max-lines and diff hygiene, 557 mobile files / 3,312 tests with 2
-expected skips, and 17 directly affected root tests. The independently verified
-production package
-`190a35ea6c3e53ffa099afba9da1103acbbd8d1b165bf1c0e19391e6d026c2c1`
-contains 49 assets and verifies at 9,333,750 raw bytes / 2,698,592 gzip bytes.
+Current validation passes mobile and mobile-web typechecks and lints,
+changed-file formatting, max-lines and diff hygiene, and 561 mobile files /
+3,322 tests with 2 expected skips. The independently verified production
+package
+`9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`
+contains 49 assets and verifies at 9,280,463 raw bytes / 2,684,481 gzip bytes.
 The complete cached-app iOS journey passes Workspace, Accounts, Tasks, Session,
 Files/Preview, Agent History portrait/landscape, Desktop restart and E2EE
 recovery, native-touch resume, Source Control, a third Session diff tab,
@@ -1492,6 +1492,22 @@ CSP rather than a looser native-only policy. Its Markdown renderer accepts only
 HTTP(S) links and base64 raster `data:` images; script, raw HTML, SVG,
 event-handler, and active-scheme corpus cases remain inert. The rest of the
 repository-content corpus remains a merge gate.
+
+Non-document host content stays on React Native text surfaces. Strict schemas
+bound filenames, diff rows, task/provider fields, and error messages; a
+deterministic script/event-handler corpus verifies those paths contain no HTML
+sink. Terminal links accept only the reviewed HTTP(S)/file targets. Native-chat
+tool-call input is normalized before schema parsing or response accounting to
+4,000 characters, 100 nodes, 20 items per collection, 128 characters per key,
+and five levels of nesting. This duplicates the current Desktop mobile-client
+projection at the WebView trust boundary so an older or compromised host cannot
+force unbounded traversal or serialization.
+
+Hosted presentation code also receives no default Expo clipboard, picker,
+haptic, or direct-link authority. Platform-resolved adapters preserve the
+native behavior while hosted adapters fail closed or call the authenticated,
+gesture-gated shell capability. The RNW verifier rejects these native fallback
+symbols in the packaged executable.
 
 Remote provider avatars are not an exception to the network policy. GitHub task
 list, detail, assignable-user, review, comment, Project-assignee, and
@@ -2041,9 +2057,9 @@ The authoritative route now has a separately reviewed ceiling of 10 MiB total,
 from 8 MiB / 2 MiB / 7.5 MiB only after the legacy Mermaid CDN executable was
 replaced by the locally bundled, network-denied engine needed by both native
 and RNW without forking the existing UI. Boundary tests reject every
-measurement above its ceiling. The current 49-asset package is 9,328,523 bytes
-/ 2,697,136 bytes gzip and build
-`4b7df7d47a9b949b788c9f88bac5f68e8b18eb1ea7c615e16ebc4be126c8d07d`.
+measurement above its ceiling. The current 49-asset package is 9,280,463 bytes
+/ 2,684,481 bytes gzip and build
+`9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`.
 `build:mobile-web` and release resource mapping therefore select the RNW
 package; the original 2 MiB ceiling continues to govern only the isolated Vite
 infrastructure fixture. Workspace snapshots now page through

@@ -4728,6 +4728,7 @@ export function SessionScreen({
                   onOpenLink={(url) => {
                     void sessionDeviceOperations?.openExternalUrl(url).catch(() => {})
                   }}
+                  onCopyText={copyTextToDevice}
                   keyboardInset={keyboardLift}
                 />
                 {toastMessage && (

@@ -28,6 +28,7 @@ import {
   executeMobileWebNativeChatTerminalOperation,
   isMobileWebNativeChatTerminalOperation
 } from './mobile-web-native-chat-terminal-operations'
+import { sanitizeMobileWebNativeChatMessages } from './mobile-web-native-chat-tool-input'
 
 export async function executeMobileWebNativeChatOperation(args: {
   operation: string
@@ -69,7 +70,7 @@ export async function executeMobileWebNativeChatOperation(args: {
       throw new MobileWebBrokerError('host_error')
     }
     return MobileWebNativeChatReadResultSchema.parse({
-      messages: response.result.messages,
+      messages: sanitizeMobileWebNativeChatMessages(response.result.messages),
       hasMore: response.result.hasMore === true,
       ...(safeOffset(response.result.beforeOffset) === undefined
         ? {}
