@@ -1349,9 +1349,24 @@ describe('SshGitProvider', () => {
     mux.requestTracked.mockReturnValue(tracked)
 
     expect(provider.listWorktreesTracked('/home/user/repo')).toBe(tracked)
-    expect(mux.requestTracked).toHaveBeenCalledWith('git.listWorktrees', {
-      repoPath: '/home/user/repo'
-    })
+    expect(mux.requestTracked).toHaveBeenCalledWith(
+      'git.listWorktrees',
+      { repoPath: '/home/user/repo' },
+      { signal: undefined }
+    )
+  })
+
+  it('listWorktreesTracked forwards the caller signal so the relay can cancel', () => {
+    const controller = new AbortController()
+    mux.requestTracked.mockReturnValue({ result: Promise.resolve([]), settled: Promise.resolve() })
+
+    provider.listWorktreesTracked('/home/user/repo', { signal: controller.signal })
+
+    expect(mux.requestTracked).toHaveBeenCalledWith(
+      'git.listWorktrees',
+      { repoPath: '/home/user/repo' },
+      { signal: controller.signal }
+    )
   })
 
   it('addWorktree sends git.addWorktree request', async () => {

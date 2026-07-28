@@ -39,6 +39,9 @@ export type MethodNotificationHandler = (params: Record<string, unknown>) => voi
 export type RequestHandler = (params: Record<string, unknown>) => Promise<unknown> | unknown
 
 const REQUEST_TIMEOUT_MS = 30_000
+// Why: relay-side teardown trails the response by a hair, so wait briefly for `rpc.settled`
+// before assuming the peer never sends one (old relays) and releasing the caller's resources.
+const TRACKED_SETTLEMENT_GRACE_MS = 5_000
 // Why: a tick gap far beyond the interval means the process was paused
 // (system sleep, App Nap timer throttling) — not that the link is dead (#7773).
 const WAKE_GAP_MS = KEEPALIVE_SEND_MS * 3
@@ -47,6 +50,7 @@ export class SshChannelMultiplexer {
   private decoder: FrameDecoder
   private transport: MultiplexerTransport
   private nextRequestId = 1
+  private nextSettlementToken = 1
   private nextOutgoingSeq = 1
   private highestReceivedSeq = 0
   private highestAckedBySelf = 0
@@ -237,17 +241,36 @@ export class SshChannelMultiplexer {
         settled: Promise.resolve()
       }
     }
-    const token = `${Date.now().toString(36)}-${this.nextRequestId.toString(36)}-${Math.random()
+    const token = `${Date.now().toString(36)}-${(this.nextSettlementToken++).toString(36)}-${Math.random()
       .toString(36)
       .slice(2)}`
+    let graceTimer: ReturnType<typeof setTimeout> | null = null
+    let finishSettlement = (): void => {}
     const settled = new Promise<void>((resolve) => {
-      this.trackedSettlementWaiters.set(token, resolve)
+      finishSettlement = () => {
+        if (graceTimer) {
+          clearTimeout(graceTimer)
+          graceTimer = null
+        }
+        this.trackedSettlementWaiters.delete(token)
+        resolve()
+      }
+      this.trackedSettlementWaiters.set(token, finishSettlement)
     })
     const result = this.request(
       method,
       { ...params, __orcaSettlementToken: token },
       options
     ) as Promise<T>
+    // Why: a relay that predates rpc.settled never answers the token. Bound the wait once the
+    // request itself is done, or a scan-gate permit would be held for the mux's lifetime.
+    const armSettlementGrace = (): void => {
+      if (graceTimer || !this.trackedSettlementWaiters.has(token)) {
+        return
+      }
+      graceTimer = setTimeout(finishSettlement, TRACKED_SETTLEMENT_GRACE_MS)
+    }
+    void result.then(armSettlementGrace, armSettlementGrace)
     return { result, settled }
   }
 

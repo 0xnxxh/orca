@@ -31393,26 +31393,34 @@ describe('OrcaRuntimeService', () => {
       .mockReturnValueOnce(currentHostScan.promise)
 
     await withPlatform('win32', async () => {
-      const runtime = new OrcaRuntimeService(runtimeStore as never)
-      const first = runtime.listDetectedManagedWorktrees(`id:${TEST_REPO_ID}`)
-      await Promise.resolve()
+      try {
+        const runtime = new OrcaRuntimeService(runtimeStore as never)
+        const first = runtime.listDetectedManagedWorktrees(`id:${TEST_REPO_ID}`)
+        await Promise.resolve()
 
-      runtimeDefault = { kind: 'wsl', distro: 'Ubuntu' }
-      const second = runtime.listDetectedManagedWorktrees(`id:${TEST_REPO_ID}`)
-      await Promise.resolve()
+        runtimeDefault = { kind: 'wsl', distro: 'Ubuntu' }
+        const second = runtime.listDetectedManagedWorktrees(`id:${TEST_REPO_ID}`)
+        await Promise.resolve()
 
-      runtimeDefault = { kind: 'windows-host' }
-      const third = runtime.listDetectedManagedWorktrees(`id:${TEST_REPO_ID}`)
-      await Promise.resolve()
-      expect(listWorktrees).toHaveBeenCalledTimes(3)
+        runtimeDefault = { kind: 'windows-host' }
+        const third = runtime.listDetectedManagedWorktrees(`id:${TEST_REPO_ID}`)
+        await Promise.resolve()
+        expect(listWorktrees).toHaveBeenCalledTimes(3)
 
-      currentHostScan.resolve([makeWorktreeInfo(TEST_WORKTREE_PATH)])
-      await third
-      wslScan.resolve([])
-      hostScan.resolve([])
-      await Promise.all([first, second])
-      await runtime.listDetectedManagedWorktrees(`id:${TEST_REPO_ID}`)
-      expect(listWorktrees).toHaveBeenCalledTimes(3)
+        currentHostScan.resolve([makeWorktreeInfo(TEST_WORKTREE_PATH)])
+        await third
+        wslScan.resolve([])
+        hostScan.resolve([])
+        await Promise.all([first, second])
+        await runtime.listDetectedManagedWorktrees(`id:${TEST_REPO_ID}`)
+        expect(listWorktrees).toHaveBeenCalledTimes(3)
+      } finally {
+        // Why: a failed assertion would otherwise leave these scans pending and hold
+        // the runtime's in-flight cache entries for the rest of the file.
+        hostScan.resolve([])
+        wslScan.resolve([])
+        currentHostScan.resolve([])
+      }
     })
   })
 
@@ -38177,29 +38185,45 @@ describe('resolveWorktreeScanCacheTtlMs', () => {
     ).toBe(BASE_TTL_MS)
   })
 
-  it('keeps direct agent-scratch scans fresh', () => {
+  // Why: a small idle fleet leaves ordinary repos on the base TTL, so a scratch
+  // result is attributable to the scratch branch rather than the budget stretch.
+  const smallIdleFleet = { scannedRepoCount: 12, activeRepoIds: new Set<string>() }
+
+  it('parks idle agent-scratch roots on the long scratch TTL', () => {
     expect(
-      resolveWorktreeScanCacheTtlMs({
-        path: '/Users/dev/.codex-tmp/foragent-capsule-b1-repo-zP9Az6',
-        connectionId: ''
-      })
-    ).toBe(BASE_TTL_MS)
+      resolveWorktreeScanCacheTtlMs(
+        {
+          id: 'scratch-codex',
+          path: '/Users/dev/.codex-tmp/foragent-capsule-b1-repo-zP9Az6',
+          connectionId: ''
+        },
+        smallIdleFleet
+      )
+    ).toBe(SCRATCH_TTL_MS)
     expect(
-      resolveWorktreeScanCacheTtlMs({
-        path: '/Users/dev/.claude/skills/obsidian-second-brain',
-        connectionId: ''
-      })
-    ).toBe(BASE_TTL_MS)
+      resolveWorktreeScanCacheTtlMs(
+        {
+          id: 'scratch-skill',
+          path: '/Users/dev/.claude/skills/obsidian-second-brain',
+          connectionId: ''
+        },
+        smallIdleFleet
+      )
+    ).toBe(SCRATCH_TTL_MS)
   })
 
   it('never extends the TTL for SSH repos', () => {
     // Why: scratch classification reads local path conventions; a remote path
     // that merely looks similar must keep normal freshness.
     expect(
-      resolveWorktreeScanCacheTtlMs({
-        path: '/home/dev/.codex-tmp/capsule',
-        connectionId: 'ssh-1'
-      })
+      resolveWorktreeScanCacheTtlMs(
+        {
+          id: 'ssh-scratch-lookalike',
+          path: '/home/dev/.codex-tmp/capsule',
+          connectionId: 'ssh-1'
+        },
+        smallIdleFleet
+      )
     ).toBe(BASE_TTL_MS)
   })
 
@@ -38503,7 +38527,7 @@ describe('worktree scan fan-out', () => {
     }
   })
 
-  it('shares a completed SSH result until its relay resources settle', async () => {
+  it('reuses a failed SSH scan across callers until its relay resources settle', async () => {
     const remoteRepo = {
       ...buildRepos(1)[0]!,
       connectionId: 'ssh-shared-settlement'

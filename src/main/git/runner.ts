@@ -41,6 +41,10 @@ import {
 } from '../../shared/wsl-login-shell-command'
 import { UNTRANSLATED_GIT_OUTPUT_ENV } from '../../shared/git-output-locale'
 import { endSubprocessStdin } from '../../shared/subprocess-stdin-write'
+import {
+  settleSubprocessTreeAfterExit as settleSpawnedCommandTreeAfterExit,
+  terminateSubprocessTreeAndWait as terminateSpawnedCommandTreeAndWait
+} from '../../shared/process-tree-settlement'
 // Re-exported for existing importers; lightweight consumers should import from './exec-error' to avoid this heavy module.
 import { extractExecError, parseRetryAfterMs } from './exec-error'
 export { extractExecError, parseRetryAfterMs }
@@ -309,13 +313,6 @@ function createAbortError(): Error {
 }
 
 const WINDOWS_TREE_KILL_WAIT_MS = 2_000
-const POSIX_TREE_KILL_GRACE_MS = 1_000
-
-function hasSpawnedCommandExited(child: ChildProcess): boolean {
-  return child.exitCode !== undefined
-    ? child.exitCode !== null
-    : child.signalCode !== undefined && child.signalCode !== null
-}
 
 function killSpawnedCommandTree(child: ChildProcess): Promise<void> {
   const pid = child.pid
@@ -365,119 +362,6 @@ function killSpawnedCommandTree(child: ChildProcess): Promise<void> {
     }, WINDOWS_TREE_KILL_WAIT_MS)
     killer.unref()
   })
-}
-
-function terminateSpawnedCommandTreeAndWait(
-  child: ChildProcess,
-  leaderAlreadyClosed = false
-): Promise<void> {
-  const pid = child.pid
-  if (!pid) {
-    return new Promise(() => {})
-  }
-  if (process.platform === 'win32') {
-    return new Promise((resolve) => {
-      let childClosed = leaderAlreadyClosed || hasSpawnedCommandExited(child)
-      let treeKilled = false
-      const finish = (): void => {
-        if (childClosed && treeKilled) {
-          resolve()
-        }
-      }
-      child.once('close', () => {
-        childClosed = true
-        finish()
-      })
-      const killer = spawn('taskkill', ['/pid', String(pid), '/t', '/f'], {
-        stdio: 'ignore',
-        windowsHide: true
-      })
-      killer.once('close', (code) => {
-        treeKilled = code === 0
-        finish()
-      })
-      killer.once('error', () => {
-        // An unconfirmed tree remains gate-owned until runtime restart.
-      })
-    })
-  }
-  return new Promise((resolve) => {
-    let leaderClosed = leaderAlreadyClosed || hasSpawnedCommandExited(child)
-    let groupConfirmedGone = false
-    let settled = false
-    let forceTimer: NodeJS.Timeout | null = null
-    const groupGone = (): boolean => {
-      try {
-        process.kill(-pid, 0)
-        return false
-      } catch (error) {
-        return (error as NodeJS.ErrnoException).code === 'ESRCH'
-      }
-    }
-    const confirmGroupGone = (): boolean => {
-      groupConfirmedGone ||= groupGone()
-      return groupConfirmedGone
-    }
-    const finish = (): boolean => {
-      if (leaderClosed && groupConfirmedGone) {
-        settled = true
-        if (forceTimer) {
-          clearTimeout(forceTimer)
-        }
-        resolve()
-        return true
-      }
-      return false
-    }
-    const poll = (): void => {
-      if (settled) {
-        return
-      }
-      if (confirmGroupGone()) {
-        finish()
-        return
-      }
-      setTimeout(poll, 25).unref()
-    }
-    child.once('close', () => {
-      leaderClosed = true
-      confirmGroupGone()
-      finish()
-    })
-    try {
-      process.kill(-pid, 'SIGTERM')
-    } catch {
-      // The group may already be gone; the close/group checks decide settlement.
-    }
-    forceTimer = setTimeout(() => {
-      if (confirmGroupGone()) {
-        finish()
-        return
-      }
-      try {
-        process.kill(-pid, 'SIGKILL')
-      } catch {
-        // The group may already be gone.
-      }
-      poll()
-    }, POSIX_TREE_KILL_GRACE_MS)
-    forceTimer.unref()
-  })
-}
-
-function settleSpawnedCommandTreeAfterExit(child: ChildProcess): Promise<void> {
-  const pid = child.pid
-  if (!pid || process.platform === 'win32') {
-    return Promise.resolve()
-  }
-  try {
-    process.kill(-pid, 0)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
-      return Promise.resolve()
-    }
-  }
-  return terminateSpawnedCommandTreeAndWait(child, true)
 }
 
 type ExecFileCaptureOptions = Omit<ExecFileOptions, 'timeout'> & {
@@ -584,22 +468,16 @@ function execFileCapture(
           }
           finish(error, stdout, stderr)
         }
-        if (
-          error &&
-          options.settleProcessTree &&
-          (error as NodeJS.ErrnoException).code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' &&
-          child
-        ) {
-          terminating = true
-          void terminateSpawnedCommandTreeAndWait(child).then(() => {
-            terminating = false
-            finish(error, stdout, stderr)
-          })
-          return
-        }
         if (options.settleProcessTree && child) {
+          // Why: a maxbuffer abort leaves the tree running, so it needs a kill; a natural
+          // exit only needs its group drained.
+          const overflowed =
+            !!error && (error as NodeJS.ErrnoException).code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
           terminating = true
-          void settleSpawnedCommandTreeAfterExit(child).then(() => {
+          const settle = overflowed
+            ? terminateSpawnedCommandTreeAndWait(child)
+            : settleSpawnedCommandTreeAfterExit(child)
+          void settle.then(() => {
             terminating = false
             complete()
           })

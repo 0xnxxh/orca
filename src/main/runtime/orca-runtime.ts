@@ -30954,7 +30954,13 @@ function withTimeoutFactory<T>(
       }
     }
     timeout = setTimeout(() => {
-      onTimeout?.()
+      // Why: onTimeout runs abort listeners; a throw here would escape the timer as an
+      // uncaught exception instead of resolving the caller's fallback.
+      try {
+        onTimeout?.()
+      } catch (error) {
+        console.warn('[runtime] worktree scan timeout handler failed', error)
+      }
       resolveFallback()
     }, timeoutMs)
     promise.then((value) => resolve(value), resolveFallback)

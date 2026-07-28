@@ -15,6 +15,21 @@ import {
 
 const originalPlatform = process.platform
 
+// Why: a live ChildProcess reports null exit fields, not undefined; exit detection reads both.
+function createLiveChild(pid?: number): EventEmitter & {
+  pid?: number
+  exitCode: number | null
+  signalCode: NodeJS.Signals | null
+  kill: ReturnType<typeof vi.fn>
+} {
+  return Object.assign(new EventEmitter(), {
+    pid,
+    exitCode: null,
+    signalCode: null,
+    kill: vi.fn()
+  })
+}
+
 afterEach(() => {
   Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
   vi.mocked(ChildProcessModule.execFile).mockReset()
@@ -41,7 +56,7 @@ describe('terminateRelaySubprocessTree', () => {
 describe('terminateRelaySubprocessTreeAndWait', () => {
   it('waits for both Windows taskkill and child close', async () => {
     Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
-    const child = Object.assign(new EventEmitter(), { pid: 12345 })
+    const child = createLiveChild(12345)
     const killer = new EventEmitter()
     vi.mocked(ChildProcessModule.spawn).mockReturnValue(
       killer as unknown as ChildProcessModule.ChildProcess
@@ -61,15 +76,94 @@ describe('terminateRelaySubprocessTreeAndWait', () => {
     await pending
     expect(ChildProcessModule.spawn).toHaveBeenCalledWith(
       'taskkill',
-      ['/pid', '12345', '/T', '/F'],
+      ['/pid', '12345', '/t', '/f'],
       expect.objectContaining({ stdio: 'ignore', windowsHide: true })
     )
+  })
+
+  it('settles immediately when the spawn produced no pid', async () => {
+    const child = createLiveChild()
+
+    await expect(
+      terminateRelaySubprocessTreeAndWait(child as unknown as ChildProcessModule.ChildProcess)
+    ).resolves.toBeUndefined()
+    expect(ChildProcessModule.spawn).not.toHaveBeenCalled()
+  })
+
+  it('falls back to a direct kill when Windows taskkill errors', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    const child = createLiveChild(12345)
+    const killer = new EventEmitter()
+    vi.mocked(ChildProcessModule.spawn).mockReturnValue(
+      killer as unknown as ChildProcessModule.ChildProcess
+    )
+
+    const pending = terminateRelaySubprocessTreeAndWait(
+      child as unknown as ChildProcessModule.ChildProcess
+    )
+    killer.emit('error', new Error('taskkill is not recognized'))
+    expect(child.kill).toHaveBeenCalled()
+
+    child.emit('close', 0)
+    await expect(pending).resolves.toBeUndefined()
+  })
+
+  it('gives up on a bounded deadline when Windows taskkill exits non-zero', async () => {
+    vi.useFakeTimers()
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    const child = createLiveChild(12345)
+    const killer = new EventEmitter()
+    vi.mocked(ChildProcessModule.spawn).mockReturnValue(
+      killer as unknown as ChildProcessModule.ChildProcess
+    )
+    let settled = false
+
+    const pending = terminateRelaySubprocessTreeAndWait(
+      child as unknown as ChildProcessModule.ChildProcess
+    ).then(() => {
+      settled = true
+    })
+    killer.emit('close', 1)
+    await vi.advanceTimersByTimeAsync(1_999)
+    expect(settled).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(1)
+    await pending
+    expect(child.kill).toHaveBeenCalled()
+  })
+
+  it('releases a POSIX group that survives SIGKILL past the poll deadline', async () => {
+    vi.useFakeTimers()
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'linux' })
+    const child = createLiveChild(12345)
+    const killSpy = vi.spyOn(process, 'kill').mockReturnValue(true)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let settled = false
+    try {
+      const pending = terminateRelaySubprocessTreeAndWait(
+        child as unknown as ChildProcessModule.ChildProcess
+      ).then(() => {
+        settled = true
+      })
+
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(killSpy).toHaveBeenCalledWith(-12345, 'SIGKILL')
+      await vi.advanceTimersByTimeAsync(9_975)
+      expect(settled).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(25)
+      await pending
+      expect(warn).toHaveBeenCalled()
+    } finally {
+      killSpy.mockRestore()
+      warn.mockRestore()
+    }
   })
 
   it('does not SIGKILL when a POSIX group disappears during grace', async () => {
     vi.useFakeTimers()
     Object.defineProperty(process, 'platform', { configurable: true, value: 'linux' })
-    const child = Object.assign(new EventEmitter(), { pid: 12345 })
+    const child = createLiveChild(12345)
     const killSpy = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
       if (signal === 0) {
         throw Object.assign(new Error('group gone'), { code: 'ESRCH' })
@@ -104,7 +198,7 @@ describe('terminateRelaySubprocessTreeAndWait', () => {
   it('settles remaining descendants after a natural POSIX leader close', async () => {
     vi.useFakeTimers()
     Object.defineProperty(process, 'platform', { configurable: true, value: 'linux' })
-    const child = Object.assign(new EventEmitter(), { pid: 12345 })
+    const child = createLiveChild(12345)
     let killed = false
     const killSpy = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
       if (signal === 'SIGKILL') {

@@ -21,6 +21,14 @@ function abortError(): Error {
   return error
 }
 
+/** Keep the async contract: failures reject `result` instead of throwing at the call site. */
+function failedOperation<T>(error: unknown): TrackedWorktreeScanOperation<T> {
+  const result = Promise.reject<T>(error)
+  // Why: a caller may consume only `settled`; an unconsumed rejection would surface as unhandled.
+  void result.catch(() => {})
+  return { result, settled: Promise.resolve() }
+}
+
 export class WorktreeScanGate {
   private active = 0
   private readonly waiters: GateWaiter[] = []
@@ -40,12 +48,16 @@ export class WorktreeScanGate {
     acquisitionSignal?: AbortSignal
   ): TrackedWorktreeScanOperation<T> {
     if (acquisitionSignal?.aborted) {
-      const rejected = Promise.reject(abortError())
-      return { result: rejected, settled: Promise.resolve() }
+      return failedOperation<T>(abortError())
     }
     if (this.active < this.limit) {
       this.active += 1
-      return this.startOperation(start, this.createRelease())
+      const release = this.createRelease()
+      try {
+        return this.startOperation(start, release)
+      } catch (error) {
+        return failedOperation<T>(error)
+      }
     }
     const acquisition = this.acquire(acquisitionSignal)
     const operation = acquisition.then((release) => {

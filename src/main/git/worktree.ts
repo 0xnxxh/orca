@@ -781,6 +781,10 @@ async function listWorktreesUnshared(
     const worktrees = await readTranslatedWorktreeGraph(repoPath, options)
     return annotateSparseCheckoutStatus(worktrees, options)
   } catch (err) {
+    // Why: a cancelled scan is not an empty repo; swallowing it would cache "no worktrees".
+    if ((err as Error | null)?.name === 'AbortError') {
+      throw err
+    }
     if (getErrorCode(err) === 'ENOENT') {
       try {
         await stat(repoPath)

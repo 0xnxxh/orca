@@ -2049,6 +2049,27 @@ describe('GitHandler', () => {
       })
     })
 
+    it('leaves a cancelled scan unclassified even when the root is missing', async () => {
+      // Why: an abort observed nothing about the root, so reporting it missing would
+      // send the client into the long missing-repo backoff on a self-inflicted cancel.
+      const missingPath = path.join(tmpDir, 'missing-repo')
+      const controller = new AbortController()
+      vi.spyOn(handler as unknown as GitSpyTarget, 'git').mockImplementation(async () => {
+        controller.abort()
+        throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+      })
+
+      const scan = dispatcher.callRequest(
+        'git.listWorktrees',
+        { repoPath: missingPath },
+        { isStale: () => false, signal: controller.signal }
+      )
+      await expect(scan).rejects.toThrow('aborted')
+      await expect(scan).rejects.not.toMatchObject({
+        data: { worktreeScanRootMissing: true }
+      })
+    })
+
     it('propagates required main-worktree normalization failures', async () => {
       const gitSpy = vi
         .spyOn(handler as unknown as GitSpyTarget, 'git')

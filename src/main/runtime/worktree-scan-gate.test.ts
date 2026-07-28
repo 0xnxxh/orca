@@ -80,6 +80,32 @@ describe('WorktreeScanGate', () => {
     await expect(second).resolves.toBe(2)
   })
 
+  it('rejects instead of throwing when start fails on the free-permit path', async () => {
+    const gate = new WorktreeScanGate(1)
+    const tracked = gate.runTracked<number>(() => {
+      throw new Error('spawn failed')
+    })
+
+    await expect(tracked.result).rejects.toThrow('spawn failed')
+    await expect(tracked.settled).resolves.toBeUndefined()
+    // Why: the permit must come back, or one synchronous failure wedges the gate.
+    await expect(gate.run(() => ({ result: Promise.resolve(2) }))).resolves.toBe(2)
+  })
+
+  it('rejects and releases the permit when start fails on the queued path', async () => {
+    const gate = new WorktreeScanGate(1)
+    const active = deferred<number>()
+    const first = gate.run(() => ({ result: active.promise }))
+    const queued = gate.run<number>(() => {
+      throw new Error('spawn failed')
+    })
+
+    active.resolve(1)
+    await expect(first).resolves.toBe(1)
+    await expect(queued).rejects.toThrow('spawn failed')
+    await expect(gate.run(() => ({ result: Promise.resolve(3) }))).resolves.toBe(3)
+  })
+
   it('exposes result and resource lifetimes to the scan owner', async () => {
     const gate = new WorktreeScanGate(1)
     const settlement = deferred<void>()

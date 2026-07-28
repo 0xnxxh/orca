@@ -216,6 +216,27 @@ describe('SshChannelMultiplexer', () => {
       expect(settled).toBe(true)
     })
 
+    it('releases tracked settlement when the peer never sends rpc.settled', async () => {
+      // Why: relays older than rpc.settled answer the result and nothing else; without a
+      // bound the caller's scan permit would be held for the mux's lifetime.
+      const tracked = mux.requestTracked<{ ok: boolean }>('git.listWorktrees', {
+        repoPath: '/repo'
+      })
+      let settled = false
+      void tracked.settled.then(() => {
+        settled = true
+      })
+
+      transport.dataCallbacks[0](makeResponseFrame(1, { ok: true }, 1))
+      await expect(tracked.result).resolves.toEqual({ ok: true })
+      expect(settled).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(5_000)
+      await tracked.settled
+      expect(settled).toBe(true)
+      expect(getMuxInternals(mux).trackedSettlementWaiters.size).toBe(0)
+    })
+
     it('assigns unique request IDs', async () => {
       void mux.request('method1').catch(() => {})
       void mux.request('method2').catch(() => {})

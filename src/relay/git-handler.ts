@@ -1496,7 +1496,7 @@ export class GitHandler {
     const tracked = typeof params.__orcaSettlementToken === 'string'
     const git: GitExec = tracked
       ? (args, cwd) => this.gitWorktreeScan(args, cwd, context?.signal)
-      : (args, cwd) => this.git(args, cwd, { signal: context?.signal })
+      : (args, cwd, opts) => this.git(args, cwd, { ...opts, signal: context?.signal })
     try {
       return await this.gitCapabilities.runWithFallback(
         'worktree-list-z',
@@ -1522,6 +1522,11 @@ export class GitHandler {
         isUnsupportedWorktreeListZError
       )
     } catch (error) {
+      // Why: a cancelled scan observed nothing about the root; classifying it would report a
+      // missing root the client never verified.
+      if ((error as { name?: string } | null)?.name === 'AbortError') {
+        throw error
+      }
       let classifiedError = error
       try {
         await lstat(expandTilde(repoPath))

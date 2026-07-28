@@ -28,6 +28,8 @@ type MockChildProcess = EventEmitter & {
   pid: number
   kill: ReturnType<typeof vi.fn>
   unref?: ReturnType<typeof vi.fn>
+  exitCode: number | null
+  signalCode: NodeJS.Signals | null
 }
 
 function createMockChildProcess(pid: number): MockChildProcess {
@@ -36,6 +38,9 @@ function createMockChildProcess(pid: number): MockChildProcess {
   child.stderr = new EventEmitter()
   child.pid = pid
   child.kill = vi.fn()
+  // Why: a live ChildProcess reports null, not undefined — exit detection reads both.
+  child.exitCode = null
+  child.signalCode = null
   return child
 }
 
