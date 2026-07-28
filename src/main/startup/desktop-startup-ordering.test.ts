@@ -11,8 +11,13 @@ describe('startup ordering', () => {
     // Why: anchor on the destructure head only — the settled-result variable's name is not the
     // contract, and pinning it turns a rename into a cryptic `expected -1` failure here.
     const desktopStart = source.indexOf('const [win')
-    const desktopEnd = source.indexOf('// Why: the macOS notification permission dialog')
+    // Why: anchor on code, not a comment — the previous comment anchor was silently reworded, so
+    // this was -1 and sliced to EOF, letting the assertions below pass against never-run code.
+    const desktopEnd = source.indexOf("win.once('show'", desktopStart)
     const desktopStartup = source.slice(desktopStart, desktopEnd)
+
+    expect(desktopStart).toBeGreaterThanOrEqual(0)
+    expect(desktopEnd).toBeGreaterThan(desktopStart)
 
     expect(attachBlock).toContain('awaitLocalPtyStartup: () => localPtyStartupReady')
     expect(attachBlock).toContain(
