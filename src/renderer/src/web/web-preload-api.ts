@@ -2791,7 +2791,14 @@ function createSkillsApi(): NonNullable<Partial<PreloadApi>['skills']> {
         installations: [],
         eligibleUpdateNames: [],
         scannedAt: Date.now()
-      })
+      }),
+    // Why: with no local skill homes there is nothing to update, so the run rail
+    // reports a permanently idle state rather than spawning anything.
+    startUpdateRun: () => Promise.resolve({ started: false as const, reason: 'invalid-names' }),
+    cancelUpdateRun: () => Promise.resolve(),
+    acknowledgeUpdateRun: () => Promise.resolve(),
+    getUpdateRun: () => Promise.resolve({ state: 'idle' as const }),
+    onUpdateRun: () => () => {}
   }
 }
 

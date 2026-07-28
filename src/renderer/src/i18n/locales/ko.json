@@ -3366,6 +3366,22 @@
                 "rssDescription": "상주 집합 크기(RSS)의 합계입니다. 공유되거나 별칭으로 매핑된 페이지가 여러 프로세스에 포함될 수 있습니다."
               }
             }
+          },
+          "SkillUpdateStatusSegment": {
+            "runningLabel": "Updating skills",
+            "runningOne": "Updating {{value0}}…",
+            "runningMany": "Updating {{value0}} skills…",
+            "runningAria": "Skills updating. Click to open details.",
+            "successLabel": "Skills updated",
+            "successOne": "Updated {{value0}}",
+            "successMany": "Updated {{value0}} skills",
+            "successAria": "Skills updated. Click to open details.",
+            "errorLabel": "Update failed",
+            "errorTooltip": "Skill update failed — click to see details",
+            "errorAria": "Skill update failed. Click to open details.",
+            "stoppingLabel": "Stopping update",
+            "stoppingTooltip": "Stopping the skill update…",
+            "stoppingAria": "Stopping the skill update. Click to open details."
           }
         }
       },
@@ -3776,13 +3792,29 @@
           "updateMany": "스킬 {{value0}}개를 안전하게 업데이트할 수 있습니다",
           "success": "설치된 Orca 스킬이 모두 최신 상태입니다.",
           "attention": "일부 설치된 Orca 스킬은 자동으로 업데이트할 수 없습니다.",
-          "attentionDescription": "각 항목을 업데이트할 수 없는 이유는 업데이트 세부 정보를 열어 확인하세요.",
-          "details": "업데이트 세부 정보",
-          "terminalTitle": "Orca 스킬 업데이트",
-          "terminalDescription": "미리 입력된 명령을 검토한 후 Enter 키를 눌러 실행하세요.",
-          "terminalAria": "Orca 스킬 업데이트 터미널",
           "checkNow": "지금 확인",
-          "close": "닫기"
+          "close": "닫기",
+          "blockedOne": "1 skill can't be updated automatically.",
+          "blockedMany": "{{value0}} skills can't be updated automatically.",
+          "runningOne": "Updating 1 skill…",
+          "runningMany": "Updating {{value0}} skills…",
+          "runningDescription": "You can close this window — it keeps running in the background.",
+          "progressAria": "Updating skills",
+          "updatedOne": "Updated 1 skill",
+          "updatedMany": "Updated {{value0}} skills",
+          "updatedPartial": "Updated {{value0}} of {{value1}} skills",
+          "errorTitle": "The update didn't finish",
+          "retry": "Retry",
+          "copyCommand": "Copy command",
+          "copied": "Copied",
+          "showLog": "Show log",
+          "updating": "Updating…",
+          "updateActionOne": "Update 1 skill",
+          "updateActionMany": "Update {{value0}} skills",
+          "done": "Done",
+          "stop": "Stop",
+          "stopping": "Stopping…",
+          "stoppingHeadline": "Stopping the update…"
         },
         "SkillFreshnessStatusPill": {
           "updateAvailable": "업데이트 가능",
@@ -3790,6 +3822,13 @@
           "installed": "설치됨",
           "details": "Details",
           "needsAttention": "Needs attention"
+        },
+        "SkillUpdateResultRows": {
+          "stillOutdated": "Still out of date after the update ran."
+        },
+        "SkillUpdateRow": {
+          "oneLocation": "1 location",
+          "manyLocations": "{{value0}} locations"
         }
       },
       "sidebar": {
