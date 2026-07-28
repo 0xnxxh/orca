@@ -14,6 +14,7 @@ import {
   findExistingWorktreeSymlinkPaths
 } from '../ipc/worktree-symlinks'
 import { assertWorktreeCleanForRemoval } from './worktree'
+import { getStatus } from './status'
 
 const git = (args: string[], cwd: string): void => {
   execFileSync('git', args, {
@@ -248,6 +249,24 @@ describe('shared directories and worktree removal', () => {
     await expect(
       assertWorktreeCleanForRemoval(worktree, false, { ignoredUntrackedPaths: ignoredLinkedPaths })
     ).resolves.toBeUndefined()
+  })
+
+  // Why: the halves are tested apart — resolver output here, a hardcoded
+  // `['node_modules']` in the status tests. This pins the seam between them, so a
+  // resolver that ever returns a differently-spelled path can't leave the link
+  // showing as a phantom untracked row.
+  it('leaves status clean when the resolved directory is fed back as a shared link', async () => {
+    await createWorktreeSharedPaths(
+      primary,
+      worktree,
+      await resolveWorktreeSharedDirectories(primary)
+    )
+
+    const status = await getStatus(worktree, {
+      sharedLinkPaths: getWorktreeSharedLinkPaths({ path: primary })
+    })
+
+    expect(status.entries).toEqual([])
   })
 
   it('still refuses removal for real untracked changes next to a shared directory', async () => {
