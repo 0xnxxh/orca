@@ -11381,7 +11381,8 @@
             "searchGitLab": "GitLab MR 및 이슈 검색",
             "searchBranches": "브랜치 검색",
             "searchLinear": "Linear 이슈 검색",
-            "workspaceName": "워크스페이스 이름"
+            "workspaceName": "워크스페이스 이름",
+            "emoji": "Emoji"
           },
           "ProjectHostSetupCombobox": {
             "empty": "이 프로젝트에 준비된 호스트가 없습니다.",

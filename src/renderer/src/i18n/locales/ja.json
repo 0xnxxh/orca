@@ -11381,7 +11381,8 @@
             "searchGitLab": "GitLab MR と Issue を検索",
             "searchBranches": "ブランチを検索",
             "searchLinear": "Linear Issue を検索",
-            "workspaceName": "ワークスペース名"
+            "workspaceName": "ワークスペース名",
+            "emoji": "Emoji"
           },
           "ProjectHostSetupCombobox": {
             "empty": "No hosts are ready for this project.",
