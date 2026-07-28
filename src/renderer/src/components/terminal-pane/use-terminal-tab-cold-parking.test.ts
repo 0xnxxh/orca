@@ -16,13 +16,16 @@ vi.mock('../../store', () => ({
   useAppStore: (selector: (state: unknown) => unknown) => selector(mocks.storeState)
 }))
 
-vi.mock('./terminal-parked-tab-watchers', () => ({
-  canWatcherCoverParkedTerminalTab: () => true,
-  disposeParkedTerminalWatchersForWorktree: vi.fn(),
+vi.mock('./terminal-eviction-exempt-tabs', () => ({
   selectEvictionExemptTerminalTabIds: (_worktreeId: string, tabs: readonly { id: string }[]) => {
     mocks.exemptSelectCalls += 1
     return new Set(tabs.filter((tab) => mocks.exemptTabIds.has(tab.id)).map((tab) => tab.id))
-  },
+  }
+}))
+
+vi.mock('./terminal-parked-tab-watchers', () => ({
+  canWatcherCoverParkedTerminalTab: () => true,
+  disposeParkedTerminalWatchersForWorktree: vi.fn(),
   syncParkedTerminalTabWatchers: vi.fn()
 }))
 

@@ -101,11 +101,11 @@ import { captureForceParkedWorktreeBuffers } from './terminal-pane/force-park-bu
 import { warnTerminalLifecycleAnomaly } from './terminal-pane/terminal-lifecycle-diagnostics'
 import { getTerminalParkingPolicyOverrides } from './terminal-pane/terminal-parking-e2e-overrides'
 import { useColdParkedTerminalPresentation } from './terminal-pane/use-cold-parked-terminal-presentation'
+import { selectEvictionExemptTerminalTabIds } from './terminal-pane/terminal-eviction-exempt-tabs'
 import {
   canWatcherCoverParkedTerminalTab,
   disposeAllParkedTerminalWatchers,
   pruneParkedTerminalWatchers,
-  selectEvictionExemptTerminalTabIds,
   shouldDeferParkedPtyExitTabClose,
   syncParkedTerminalTabWatchers
 } from './terminal-pane/terminal-parked-tab-watchers'

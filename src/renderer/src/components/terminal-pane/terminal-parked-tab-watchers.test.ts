@@ -93,15 +93,17 @@ vi.mock('@/store', () => ({
 }))
 
 import {
+  isEvictionExemptTerminalTab,
+  selectEvictionExemptTerminalTabIds
+} from './terminal-eviction-exempt-tabs'
+import {
   canWatcherCoverParkedTerminalTab,
   captureParkedTerminalPaneCandidates,
   disposeParkedTerminalWatchersForPtyIds,
   disposeParkedTerminalWatchersForWorktree,
   fallbackParkedPaneCandidates,
   getParkedTerminalWatcherTabIds,
-  isEvictionExemptTerminalTab,
   pruneParkedTerminalWatchers,
-  selectEvictionExemptTerminalTabIds,
   shouldDeferParkedPtyExitTabClose,
   syncParkedTerminalTabWatchers
 } from './terminal-parked-tab-watchers'

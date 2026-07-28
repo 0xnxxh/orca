@@ -21,7 +21,6 @@ import {
   isParkRestorableTerminalPty,
   type TerminalParkRestorePolicy
 } from './terminal-hidden-view-parking'
-import { isEvictionExemptTerminalPty } from './terminal-hidden-worktree-retention'
 import {
   resolveTabTitleAfterPaneClose,
   shouldClearLaunchAgentForClosedPane
@@ -85,7 +84,7 @@ export function fallbackParkedPaneCandidates(
 }
 
 // Why: start path and eligibility check must resolve identical candidates, or a tab passes the check then starts uncoverable.
-function resolveParkedTerminalPaneCandidates(
+export function resolveParkedTerminalPaneCandidates(
   tab: ParkableTerminalTabModel,
   state: ParkedPaneFallbackState
 ): ParkedTerminalPaneCapture[] {
@@ -105,55 +104,6 @@ function parkRestorePolicyFromState(state: {
   settings: { terminalSshViewParking?: boolean } | null
 }): TerminalParkRestorePolicy {
   return { sshParkingEnabled: state.settings?.terminalSshViewParking !== false }
-}
-
-/**
- * Whether force-park must keep this tab's panes mounted: ANY of its pane PTYs is
- * one a remount could not reattach. Resolved from the same pane candidates as
- * canWatcherCoverParkedTerminalTab — tab.ptyId is only the first leaf's PTY, so
- * a split tab whose SECOND leaf holds the unrestorable PTY fails coverage (and
- * so becomes a retention candidate) yet would otherwise look exempt-free and
- * unmount, orphaning that live shell. tab.ptyId stays in the union in case pane
- * resolution misses it (no layout, no capture).
- *
- * Accepted residual: detection is per pane but retention is per TAB — the whole
- * PaneManager stays mounted, so one exempt leaf also pins its restorable split
- * siblings, and the retention budget cannot bound exempt tabs. Capping them is
- * not an option (eviction orphans the live shell); the real fix is making those
- * pty classes reattachable. Sibling TABS are unaffected — the worktree-level
- * veto was removed (selectRetentionForceParkedTerminalWorktrees never consults
- * tab exemptions).
- */
-export function isEvictionExemptTerminalTab(
-  tab: ParkableTerminalTabModel,
-  worktreeId: string
-): boolean {
-  if (isEvictionExemptTerminalPty(tab.ptyId, worktreeId)) {
-    return true
-  }
-  return resolveParkedTerminalPaneCandidates(tab, useAppStore.getState()).some((pane) =>
-    isEvictionExemptTerminalPty(pane.ptyId, worktreeId)
-  )
-}
-
-/**
- * Eviction-exempt tab ids for one worktree's tabs, resolved in a single pass.
- *
- * Why: each isEvictionExemptTerminalTab call re-reads the store and can walk the
- * layout tree, so render and watcher-sync consume a memoized set instead of
- * re-asking per tab on every unrelated re-render.
- */
-export function selectEvictionExemptTerminalTabIds(
-  worktreeId: string,
-  tabs: readonly ParkableTerminalTabModel[]
-): ReadonlySet<string> {
-  const exemptTabIds = new Set<string>()
-  for (const tab of tabs) {
-    if (isEvictionExemptTerminalTab(tab, worktreeId)) {
-      exemptTabIds.add(tab.id)
-    }
-  }
-  return exemptTabIds
 }
 
 /**

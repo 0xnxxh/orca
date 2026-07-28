@@ -24,10 +24,10 @@ import {
   type ParkVerdictFlipRecord
 } from './terminal-park-verdict-flip-telemetry'
 import { getTerminalParkingPolicyOverrides } from './terminal-parking-e2e-overrides'
+import { selectEvictionExemptTerminalTabIds } from './terminal-eviction-exempt-tabs'
 import {
   canWatcherCoverParkedTerminalTab,
   disposeParkedTerminalWatchersForWorktree,
-  selectEvictionExemptTerminalTabIds,
   syncParkedTerminalTabWatchers
 } from './terminal-parked-tab-watchers'
 
