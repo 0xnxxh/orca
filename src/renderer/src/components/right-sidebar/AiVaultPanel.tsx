@@ -48,7 +48,8 @@ import {
 } from './ai-vault-host-scope'
 import { usePersistedAiVaultViewOptions } from './use-persisted-ai-vault-view-options'
 import { AgentSessionContinuationDialog } from '@/components/agent-session-continuation/AgentSessionContinuationDialog'
-import { blockingAiVaultScanIssue } from './ai-vault-scan-issue-state'
+import { skippedAiVaultTranscriptCount } from './ai-vault-scan-issue-state'
+import { AiVaultScanIssueBanners } from './AiVaultScanIssueBanners'
 
 export default function AiVaultPanel(): React.JSX.Element {
   const activeWorktreeId = useActiveWorktreeId()
@@ -144,7 +145,7 @@ export default function AiVaultPanel(): React.JSX.Element {
     scopePaths,
     executionHostScope
   )
-  const blockingScanIssue = blockingAiVaultScanIssue(scanResult)
+  const skippedTranscriptCount = skippedAiVaultTranscriptCount(scanResult)
   // Deliberately blind to the active repo/worktree: rebuilding these ~500-entry
   // maps on every worktree switch is what made switching visibly slow (#10841 era).
   const sessionProjectById = useMemo(
@@ -337,16 +338,14 @@ export default function AiVaultPanel(): React.JSX.Element {
         </div>
       ) : null}
 
-      {blockingScanIssue ? (
-        <div className="border-b border-sidebar-border px-3 py-2 text-xs text-destructive">
-          {blockingScanIssue.message}
-        </div>
-      ) : scanResult && scanResult.issues.length > 0 ? (
+      <AiVaultScanIssueBanners scanResult={scanResult} />
+
+      {skippedTranscriptCount > 0 ? (
         <div className="border-b border-sidebar-border px-3 py-1.5 text-[11px] text-muted-foreground">
           {translate(
             'auto.components.right.sidebar.AiVaultPanel.transcriptsSkipped',
             '{{count}} transcript skipped',
-            { count: scanResult.issues.length }
+            { count: skippedTranscriptCount }
           )}
         </div>
       ) : null}
