@@ -2001,6 +2001,43 @@ describe('SSH IPC handlers', () => {
     expect(mockConnectionManager.disconnect).toHaveBeenCalledWith('ssh-1')
   })
 
+  it('retires the captured session when reset forward teardown fails', async () => {
+    const target: SshTarget = {
+      id: 'ssh-1',
+      label: 'Server',
+      host: 'example.com',
+      port: 22,
+      username: 'deploy'
+    }
+    const conn = {}
+    mockSshStore.getTarget.mockReturnValue(target)
+    mockConnectionManager.connect.mockResolvedValue(conn)
+    mockConnectionManager.getConnection.mockReturnValue(conn)
+    mockConnectionManager.getState.mockReturnValue({
+      targetId: 'ssh-1',
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0
+    })
+
+    await handlers.get('ssh:connect')!(null, { targetId: 'ssh-1' })
+    mockPortForwardManager.removeAllForwards.mockRejectedValueOnce(
+      new Error('forward teardown failed')
+    )
+
+    await expect(handlers.get('ssh:resetRelay')!(null, { targetId: 'ssh-1' })).rejects.toThrow(
+      'forward teardown failed'
+    )
+    expect(mockMux.dispose).toHaveBeenCalledWith('connection_lost')
+    expect(mockForceStopRelayForTarget).not.toHaveBeenCalled()
+
+    await handlers.get('ssh:resetRelay')!(null, { targetId: 'ssh-1' })
+
+    expect(mockPortForwardManager.removeAllForwards).toHaveBeenCalledTimes(1)
+    expect(mockForceStopRelayForTarget).toHaveBeenCalledWith(conn, 'ssh-1')
+    expect(mockConnectionManager.disconnect).toHaveBeenCalledWith('ssh-1')
+  })
+
   it('ssh:resetRelay waits for an in-flight connect before tearing down the session', async () => {
     const target: SshTarget = {
       id: 'ssh-1',

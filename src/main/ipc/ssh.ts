@@ -1170,11 +1170,8 @@ export function registerSshHandlers(
     rotateSshProviderAuthority(targetId)
     const session = activeSessions.get(targetId)
     if (session) {
-      await portForwardManager!.removeAllForwards(targetId)
       // Why: detach() not dispose() — reset has its own stale-lease semantics below that dispose()'s clean-termination recording would hide.
-      session.detach()
-      activeSessions.delete(targetId)
-      clearRelayLostBackoff(targetId)
+      await teardownActiveSshSession(targetId, (capturedSession) => capturedSession.detach())
     }
 
     const existingConn = connectionManager!.getConnection(targetId)
