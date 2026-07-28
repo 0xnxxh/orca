@@ -32,7 +32,9 @@ it('rejects a fresh SSH PTY whose exit shares the spawn response batch', async (
   expect(exitListener).toHaveBeenCalledWith({
     id: 'ssh:conn-1@@pty-raced',
     code: 0,
-    incarnationId: 'incarnation-raced'
+    incarnationId: 'incarnation-raced',
+    providerGeneration: expect.any(Number),
+    ptyIncarnation: 'incarnation-raced'
   })
   mux.request.mockResolvedValue({ id: 'pty-next', incarnationId: 'incarnation-next' })
   await expect(provider.spawn({ cols: 80, rows: 24 })).resolves.toMatchObject({

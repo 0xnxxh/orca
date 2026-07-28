@@ -23,7 +23,9 @@ function createSubscription() {
     replayListeners: replayListeners as never,
     exitListeners: exitListeners as never,
     livePtyIds,
-    recordExit
+    recordExit,
+    providerGeneration: 7,
+    resolvePtyIncarnation: (id) => `incarnation:${id}`
   })
 
   const handler = mux.onNotification.mock.calls[0]?.[0] as (
@@ -70,6 +72,8 @@ describe('subscribeSshPtyNotifications', () => {
     expect(onData).toHaveBeenCalledWith({
       id: 'ssh:conn@@pty-1',
       data: 'hello',
+      providerGeneration: 7,
+      ptyIncarnation: 'incarnation:pty-1',
       sequenceChars: 5,
       seq: 9
     })
@@ -92,6 +96,8 @@ describe('subscribeSshPtyNotifications', () => {
     expect(onExit).toHaveBeenCalledWith({
       id: 'ssh:conn@@pty-1',
       code: 0,
+      providerGeneration: 7,
+      ptyIncarnation: 'incarnation:pty-1',
       incarnationId: 'incarnation-1'
     })
   })

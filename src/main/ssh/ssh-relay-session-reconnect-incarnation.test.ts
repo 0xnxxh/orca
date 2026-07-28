@@ -2,9 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SshRelaySession } from './ssh-relay-session'
 import { createMockDeps, mockDeploySuccess } from './ssh-relay-session-test-fixtures'
 
-const { muxRequestMock } = vi.hoisted(() => ({ muxRequestMock: vi.fn() }))
+const { acceptOutputExitMock, muxRequestMock } = vi.hoisted(() => ({
+  acceptOutputExitMock: vi.fn().mockResolvedValue(undefined),
+  muxRequestMock: vi.fn()
+}))
 
 vi.mock('./ssh-relay-deploy', () => ({ deployAndLaunchRelay: vi.fn() }))
+vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
+  acceptSshPtyOutputData: vi.fn().mockResolvedValue(undefined),
+  acceptSshPtyOutputExit: acceptOutputExitMock,
+  allocateSshPtyProviderGeneration: vi.fn(() => 17),
+  closeSshPtyOutputGeneration: vi.fn()
+}))
 vi.mock('./ssh-relay-deploy-helpers', () => ({ execCommand: vi.fn().mockResolvedValue('') }))
 vi.mock('./ssh-channel-multiplexer', () => ({
   SshChannelMultiplexer: class MockSshChannelMultiplexer {
@@ -85,14 +94,26 @@ function detachedLease() {
   }
 }
 
-function emitExitDuringAttach(payload: { id: string; code: number; incarnationId?: string }): void {
+function emitExitDuringAttach(payload: {
+  id: string
+  code: number
+  incarnationId?: string
+  providerGeneration?: number
+  ptyIncarnation?: string
+}): void {
   const registeredProvider = vi.mocked(registerSshPtyProvider).mock.calls[0]?.[1] as unknown as {
     onExit: ReturnType<typeof vi.fn>
   }
   const exitHandler = registeredProvider.onExit.mock.calls[0]?.[0] as
     | ((exit: typeof payload) => void)
     | undefined
-  queueMicrotask(() => exitHandler?.(payload))
+  queueMicrotask(() =>
+    exitHandler?.({
+      providerGeneration: 17,
+      ptyIncarnation: payload.incarnationId ?? `legacy:${payload.id}`,
+      ...payload
+    })
+  )
 }
 
 describe('SshRelaySession reconnect incarnation ordering', () => {
@@ -175,7 +196,13 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
 
     await session.establish(mockConn)
 
-    expect(runtime.onPtyExit).toHaveBeenCalledWith(APP_PTY_ID, 0, incarnationId)
+    expect(acceptOutputExitMock).toHaveBeenCalledWith({
+      id: APP_PTY_ID,
+      code: 0,
+      providerGeneration: 17,
+      ptyIncarnation: incarnationId
+    })
+    expect(runtime.onPtyExit).not.toHaveBeenCalled()
     expect(runtime.acceptPtyIncarnationForExit).toHaveBeenCalledWith(APP_PTY_ID, incarnationId)
     expect(runtime.registerPty).not.toHaveBeenCalled()
     expect(restorePtyIncarnation).toHaveBeenCalledWith(APP_PTY_ID, incarnationId)

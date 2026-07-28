@@ -1417,6 +1417,11 @@ type RuntimeHeadlessTerminal = {
   writeChain: Promise<void>
 }
 
+export type RuntimePtyDataAdmission = Readonly<{
+  sequence: number
+  completion: Promise<void>
+}>
+
 type RuntimeVisibleTerminalState = {
   lines: string[]
   isAlternateScreen: boolean
@@ -7714,12 +7719,30 @@ export class OrcaRuntimeService {
    * Handles incoming data from a PTY process, running agent detection,
    * updating terminal tail buffers, and triggering foreground agent refreshes.
    */
-  onPtyData(
+  acceptPtyDataBounded(
     ptyId: string,
     data: string,
     at: number,
     sequenceChars = data.length,
     transformed = false
+  ): RuntimePtyDataAdmission {
+    let completion: Promise<void> | null = null
+    const sequence = this.onPtyData(ptyId, data, at, sequenceChars, transformed, (receipt) => {
+      completion = receipt
+    })
+    if (!completion) {
+      throw new Error('PTY model admission receipt was not captured')
+    }
+    return Object.freeze({ sequence, completion })
+  }
+
+  onPtyData(
+    ptyId: string,
+    data: string,
+    at: number,
+    sequenceChars = data.length,
+    transformed = false,
+    captureModelReceipt?: (completion: Promise<void>) => void
   ): number {
     const outputSequence = (this.ptyOutputSequenceById.get(ptyId) ?? 0) + sequenceChars
     this.ptyOutputSequenceById.set(ptyId, outputSequence)
@@ -7758,7 +7781,13 @@ export class OrcaRuntimeService {
     // applyTrackedPtyTitle) in byte order, superseding main's inline
     // extractLastOscTitleForPty block (#7880/#7852 title/status semantics are
     // preserved via the tracker + detectAgentStatusFromTitle path).
-    this.trackHeadlessTerminalData(ptyId, data, outputSequence, forwardQueryReplies)
+    const modelCompletion = this.trackHeadlessTerminalData(
+      ptyId,
+      data,
+      outputSequence,
+      forwardQueryReplies
+    )
+    captureModelReceipt?.(modelCompletion)
 
     const pty = this.getOrCreatePtyWorktreeRecord(ptyId)
     const ptyTailBefore = pty
@@ -9278,19 +9307,17 @@ export class OrcaRuntimeService {
     data: string,
     outputSequence: number,
     forwardQueryReplies = false
-  ): void {
+  ): Promise<void> {
     const state = this.getOrCreateHeadlessTerminal(ptyId)
-    state.writeChain = state.writeChain
-      .then(async () => {
-        // Why: the ingestion-time ownership decision is closed over this
-        // chain link; async scheduling cannot retroactively change it.
-        await state.emulator.write(data, { forwardQueryReplies })
-        state.outputSequence = outputSequence
-      })
-      .catch(() => {
-        // Best-effort state tracking; live streaming must continue even if
-        // xterm rejects a malformed or raced write during shutdown.
-      })
+    const completion = state.writeChain.then(async () => {
+      // Why: the ingestion-time ownership decision is closed over this
+      // chain link; async scheduling cannot retroactively change it.
+      await state.emulator.write(data, { forwardQueryReplies })
+      state.outputSequence = outputSequence
+    })
+    // Legacy callers remain best-effort; bounded SSH admission observes the raw receipt.
+    state.writeChain = completion.catch(() => {})
+    return completion
   }
 
   /** Shared factory for the per-PTY runtime emulators (seed, hydration, and

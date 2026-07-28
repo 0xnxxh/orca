@@ -11,6 +11,8 @@ export type RemoteCliBridgeEnv = {
 export type SshPtyDataCallback = (payload: {
   id: string
   data: string
+  providerGeneration: number
+  ptyIncarnation: string
   sequenceChars?: number
   transformed?: boolean
   seq?: number
@@ -19,5 +21,13 @@ export type SshPtyReplayCallback = (payload: { id: string; data: string }) => vo
 export type SshPtyExitCallback = (payload: {
   id: string
   code: number
+  providerGeneration: number
+  ptyIncarnation: string
   incarnationId?: PtyIncarnationId
+}) => void
+
+export type SshPtyDeliveryPauseAdapter = (args: {
+  id: string
+  providerGeneration: number
+  paused: boolean
 }) => void

@@ -16,6 +16,8 @@ export function subscribeSshPtyNotifications(args: {
   exitListeners: Set<SshPtyExitCallback>
   livePtyIds: Set<string>
   recordExit: (relayPtyId: string, incarnationId: unknown) => void
+  providerGeneration: number
+  resolvePtyIncarnation: (relayPtyId: string, incarnationId?: unknown) => string
 }): () => void {
   return args.mux.onNotification((method, params) => {
     // Why: mux delivers every method to generic handlers; non-PTY payloads
@@ -30,12 +32,15 @@ export function subscribeSshPtyNotifications(args: {
     const relayPtyId = params.id
     const id = args.toAppPtyId(relayPtyId)
     if (method === 'pty.exit') {
+      const ptyIncarnation = args.resolvePtyIncarnation(relayPtyId, params.incarnationId)
       args.recordExit(relayPtyId, params.incarnationId)
       args.livePtyIds.delete(id)
       for (const listener of args.exitListeners) {
         listener({
           id,
           code: params.code as number,
+          providerGeneration: args.providerGeneration,
+          ptyIncarnation,
           ...(isPtyIncarnationId(params.incarnationId)
             ? { incarnationId: params.incarnationId }
             : {})
@@ -54,6 +59,8 @@ export function subscribeSshPtyNotifications(args: {
       listener({
         id,
         data: params.data as string,
+        providerGeneration: args.providerGeneration,
+        ptyIncarnation: args.resolvePtyIncarnation(relayPtyId, params.incarnationId),
         ...(typeof params.rawLength === 'number' ? { sequenceChars: params.rawLength } : {}),
         ...(params.transformed === true ? { transformed: true } : {}),
         ...(typeof params.seq === 'number' ? { seq: params.seq } : {})

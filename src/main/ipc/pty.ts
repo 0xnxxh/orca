@@ -158,6 +158,9 @@ import {
   unmarkHiddenRendererPty
 } from './pty-hidden-delivery-gate'
 import { PtyPendingDataDrainQueue, type PendingPtyData } from './pty-pending-data-drain-queue'
+import { SshPtyOutputIntake } from './ssh-pty-output-intake'
+import { installSshPtyOutputIntake } from './ssh-pty-output-intake-registry'
+import type { LegacySshProjectionSemantics } from './ssh-pty-legacy-projection'
 import {
   clearNativeWindowsConptyPty,
   isNativeWindowsLocalPtySpawn,
@@ -1467,6 +1470,7 @@ let rendererDidStartLoadingHandler: (() => void) | null = null
 
 // Why: Restart daemon must re-bind provider→renderer listeners after replaceDaemonProvider swaps localProvider, else subscribers stay bound to the disposed adapter and new PTY data silently drops.
 let rebindProviderListeners: (() => void) | null = null
+let sshOutputIntakeCleanup: (() => void) | null = null
 
 export function rebindLocalProviderListeners(): void {
   rebindProviderListeners?.()
@@ -1835,6 +1839,7 @@ export function registerPtyHandlers(
     },
     () => isHiddenPtyDeliveryGateEnabled(getSettings?.())
   )
+  let sshOutputIntake: SshPtyOutputIntake | null = null
   // Why: resuming a paused producer during exit can synchronously emit; those bytes must not queue behind pty:exit.
   const rendererExitingPtyIds = new Set<string>()
   const rendererDeliveryRestoreNeededPtys = new Set<string>()
@@ -1995,6 +2000,14 @@ export function registerPtyHandlers(
   }
 
   function clearPendingPtyData(): void {
+    for (const pending of pendingData.values()) {
+      if (pending.projectionAdmissionIds) {
+        sshOutputIntake?.transferProjections(
+          pending.projectionAdmissionIds,
+          'renderer-lifecycle-reset'
+        )
+      }
+    }
     pendingData.clear()
   }
 
@@ -2260,6 +2273,9 @@ export function registerPtyHandlers(
       accounting.lastAckAtMs = Date.now()
     }
     rendererInFlightTotalChars = Math.max(0, rendererInFlightTotalChars - acknowledged)
+    if (acknowledged > 0) {
+      sshOutputIntake?.settleProjectionPrefix(id, acknowledged)
+    }
     return acknowledged
   }
 
@@ -2331,6 +2347,12 @@ export function registerPtyHandlers(
       // Why drop pending: everything at/before markerSeq comes from the snapshot, so flushing pre-marker bytes would double-paint the restore.
       const pending = pendingData.get(id)
       if (pending) {
+        if (pending.projectionAdmissionIds) {
+          sshOutputIntake?.transferProjections(
+            pending.projectionAdmissionIds,
+            'renderer-delivery-writeoff'
+          )
+        }
         pendingDroppedChars += pending.data.length
         deletePendingPtyData(id)
         pendingOverflowMarkedPtys.delete(id)
@@ -2360,7 +2382,11 @@ export function registerPtyHandlers(
     return writtenOff
   }
 
-  function sendPtyDataToRenderer(id: string, payload: PtyDataPayload): boolean {
+  function sendPtyDataToRenderer(
+    id: string,
+    payload: PtyDataPayload,
+    projectionAdmissionIds?: readonly string[]
+  ): boolean {
     const charCount = getPtyPayloadCharCount(payload)
     const accounting = rendererDeliveryAccountingByPty.get(id)
     const hadAccounting = accounting !== undefined
@@ -2395,12 +2421,26 @@ export function registerPtyHandlers(
         }
       }
       rendererDeliveryRestoreNeededPtys.add(id)
+      if (projectionAdmissionIds) {
+        sshOutputIntake?.transferProjections(projectionAdmissionIds, 'renderer-send-failed')
+      }
       mainDeliveryBreadcrumbs.record('pty-data-send-failed', {
         id: redactPtyIdForDiagnostics(id),
         chars: charCount
       })
       console.error('[pty] renderer data send failed; payload will not be retried', error)
       return false
+    }
+    if (projectionAdmissionIds) {
+      try {
+        sshOutputIntake?.publishProjectionPrefix(
+          projectionAdmissionIds,
+          payload.data.length,
+          charCount
+        )
+      } catch {
+        sshOutputIntake?.transferProjections(projectionAdmissionIds, 'projection-publish-failed')
+      }
     }
     if (rendererDeliveryRestoreNeededPtys.has(id)) {
       try {
@@ -2516,6 +2556,9 @@ export function registerPtyHandlers(
       pendingOverflowMarkedPtys.add(id)
     }
     pendingDroppedChars += pending.data.length
+    if (pending.projectionAdmissionIds) {
+      sshOutputIntake?.transferProjections(pending.projectionAdmissionIds, 'pending-cap')
+    }
     const mode2031 = scanDroppedMode2031Data(pending.data, INITIAL_MODE_2031_REPLY_SCAN_STATE)
     // Why no trimmed content tail: a mid-stream gap would corrupt the pane; the droppedOutput sentinel repaints from the snapshot and realigns by sequence (only query bytes ride along).
     return {
@@ -2534,10 +2577,14 @@ export function registerPtyHandlers(
     preservesSeq: boolean,
     containsBackgroundOutput: boolean,
     rawLength = data.length,
-    transformed = false
+    transformed = false,
+    projectionSemanticsId?: string
   ): PendingPtyData {
     // Why stay dropped at O(1): once over the cap the restore sentinel supersedes interim bytes; queries still get carved out (bounded) so replies survive the whole episode.
     if (existing?.droppedOutput === true) {
+      if (projectionSemanticsId) {
+        sshOutputIntake?.transferProjections([projectionSemanticsId], 'pending-cap')
+      }
       const mode2031 = scanDroppedMode2031Data(
         data,
         existing.droppedMode2031ScanState ?? INITIAL_MODE_2031_REPLY_SCAN_STATE
@@ -2562,7 +2609,8 @@ export function registerPtyHandlers(
         ...(typeof startSeq === 'number' ? { startSeq } : {}),
         ...(rawLength !== data.length ? { rawLength } : {}),
         ...(transformed ? { transformed: true } : {}),
-        ...(nextContainsBackgroundOutput ? { containsBackgroundOutput: true } : {})
+        ...(nextContainsBackgroundOutput ? { containsBackgroundOutput: true } : {}),
+        ...(projectionSemanticsId ? { projectionAdmissionIds: [projectionSemanticsId] } : {})
       })
     }
     const existingRawLength = existing.rawLength ?? existing.data.length
@@ -2571,7 +2619,15 @@ export function registerPtyHandlers(
       ...(!preservesSeq || existing.transformed || transformed
         ? { rawLength: existingRawLength + rawLength, transformed: true as const }
         : {}),
-      ...(nextContainsBackgroundOutput ? { containsBackgroundOutput: true } : {})
+      ...(nextContainsBackgroundOutput ? { containsBackgroundOutput: true } : {}),
+      ...((existing.projectionAdmissionIds?.length ?? 0) > 0 || projectionSemanticsId
+        ? {
+            projectionAdmissionIds: [
+              ...(existing.projectionAdmissionIds ?? []),
+              ...(projectionSemanticsId ? [projectionSemanticsId] : [])
+            ]
+          }
+        : {})
     }
     if (typeof existing.startSeq === 'number') {
       next.startSeq = existing.startSeq
@@ -2656,6 +2712,9 @@ export function registerPtyHandlers(
           pendingOverflowMarkedPtys.delete(id)
           updateProducerFlowControl(id)
           const drop = recordHiddenRendererPtyDataDrop(id, pending.data.length)
+          if (pending.projectionAdmissionIds) {
+            sshOutputIntake?.transferProjections(pending.projectionAdmissionIds, 'hidden-drop')
+          }
           warnIfDroppingHiddenBytesForVisiblePty(id, pending.data.length)
           if (drop.shouldEmitRestoreMarker) {
             sendModelRestoreNeededMarker(id, 'hidden-drop', runtime?.getPtyOutputSequence(id))
@@ -2671,11 +2730,15 @@ export function registerPtyHandlers(
           updateProducerFlowControl(id)
           // Why droppedOutput sentinel: pending-cap drop means the pane must repaint from the snapshot, not continue a gapped stream (data = carved query bytes only).
           if (
-            !sendPtyDataToRenderer(id, {
+            !sendPtyDataToRenderer(
               id,
-              data: pending.data + getDroppedMode2031RendererData(pending),
-              droppedOutput: true
-            })
+              {
+                id,
+                data: pending.data + getDroppedMode2031RendererData(pending),
+                droppedOutput: true
+              },
+              pending.projectionAdmissionIds
+            )
           ) {
             sendFailed = true
             break
@@ -2695,6 +2758,9 @@ export function registerPtyHandlers(
           if (pending.containsBackgroundOutput === true) {
             nextPending.containsBackgroundOutput = true
           }
+          if (pending.projectionAdmissionIds) {
+            nextPending.projectionAdmissionIds = pending.projectionAdmissionIds
+          }
           pendingData.replaceWithRemainder(selection, nextPending)
         } else {
           pendingData.remove(selection)
@@ -2711,7 +2777,8 @@ export function registerPtyHandlers(
               pending.containsBackgroundOutput,
               pending.rawLength,
               pending.transformed
-            )
+            ),
+            pending.projectionAdmissionIds
           )
         ) {
           sendFailed = true
@@ -2792,11 +2859,15 @@ export function registerPtyHandlers(
       if (remaining) {
         if (remaining.droppedOutput === true) {
           // Sentinel entry: only salvaged query bytes remain; keep the flag so the renderer knows the span was dropped.
-          sendPtyDataToRenderer(payload.id, {
-            id: payload.id,
-            data: remaining.data,
-            droppedOutput: true
-          })
+          sendPtyDataToRenderer(
+            payload.id,
+            {
+              id: payload.id,
+              data: remaining.data,
+              droppedOutput: true
+            },
+            remaining.projectionAdmissionIds
+          )
         } else {
           sendPtyDataToRenderer(
             payload.id,
@@ -2807,10 +2878,12 @@ export function registerPtyHandlers(
               remaining.containsBackgroundOutput,
               remaining.rawLength,
               remaining.transformed
-            )
+            ),
+            remaining.projectionAdmissionIds
           )
         }
       }
+      sshOutputIntake?.transferPtyProjections(payload.id, 'pty-exit')
       // Why resume a dead PTY (no-op): avoid leaving a stale paused mark behind for a reused id.
       producerFlowControl.release(payload.id)
       pendingOverflowMarkedPtys.delete(payload.id)
@@ -2844,6 +2917,212 @@ export function registerPtyHandlers(
       mainWindow.webContents.send('pty:spawned', { id })
     }
   }
+
+  function acceptPtyDataForRenderer(
+    payload: {
+      id: string
+      data: string
+      sequenceChars?: number
+      transformed?: boolean
+    },
+    outputSeq: number | undefined,
+    projection?: LegacySshProjectionSemantics
+  ): void {
+    const rawLength = payload.sequenceChars ?? payload.data.length
+    const preservesSeq = !payload.transformed && rawLength === payload.data.length
+    const startSeq = typeof outputSeq === 'number' ? Math.max(0, outputSeq - rawLength) : undefined
+    const projectionId = projection?.identity.projectionSemanticsId
+    if (mainWindow.isDestroyed()) {
+      if (projectionId) {
+        sshOutputIntake?.transferProjections([projectionId], 'renderer-destroyed')
+      }
+      if (flushTimer) {
+        clearTimeout(flushTimer)
+        flushTimer = null
+      }
+      producerFlowControl.releaseAll()
+      clearDeliveryResyncProbe()
+      clearPendingPtyData()
+      pendingOverflowMarkedPtys.clear()
+      rendererDeliveryAccountingByPty.clear()
+      rendererInFlightTotalChars = 0
+      clearDispatcherReadyWatchdog()
+      return
+    }
+    if (rendererExitingPtyIds.has(payload.id)) {
+      if (projectionId) {
+        sshOutputIntake?.transferProjections([projectionId], 'pty-exiting')
+      }
+      return
+    }
+    if (shouldDropHiddenRendererPtyData(payload.id, getSettings?.())) {
+      if (projectionId) {
+        sshOutputIntake?.transferProjections([projectionId], 'hidden-drop')
+      }
+      const droppedChars = projection ? rawLength : payload.data.length
+      const drop = recordHiddenRendererPtyDataDrop(payload.id, droppedChars)
+      warnIfDroppingHiddenBytesForVisiblePty(payload.id, droppedChars)
+      if (drop.shouldEmitRestoreMarker) {
+        sendModelRestoreNeededMarker(payload.id, 'hidden-drop', outputSeq)
+      }
+      return
+    }
+    if (payload.data.length === 0 && !payload.transformed) {
+      if (projectionId) {
+        sshOutputIntake?.transferProjections([projectionId], 'empty-projection')
+      }
+      return
+    }
+    const containsBackgroundOutput =
+      rendererPtyIsKnownHidden(payload.id) || ptyHasHiddenRendererResizeOutput(payload.id)
+    if (containsBackgroundOutput) {
+      markHiddenRendererResizeOutputDelivered(payload.id)
+    }
+    const overflowMarkedBeforeAppend = pendingOverflowMarkedPtys.has(payload.id)
+    const pending = appendPendingPtyData(
+      payload.id,
+      pendingData.get(payload.id),
+      payload.data,
+      startSeq,
+      preservesSeq,
+      containsBackgroundOutput,
+      rawLength,
+      payload.transformed === true,
+      projectionId
+    )
+    const shouldEmitPendingCapRestoreMarker =
+      pending.droppedOutput === true &&
+      !overflowMarkedBeforeAppend &&
+      pendingOverflowMarkedPtys.has(payload.id)
+    const nextData = pending.data + getDroppedMode2031RendererData(pending)
+    const isInteractiveOutput = shouldSendInteractiveOutputNow(
+      payload.id,
+      nextData,
+      performance.now()
+    )
+    if (isInteractiveOutput && rendererPtyDispatcherReady) {
+      if (!canSendPtyDataToRenderer(payload.id, { interactive: true })) {
+        setPendingPtyData(payload.id, pending)
+        if (shouldEmitPendingCapRestoreMarker) {
+          sendModelRestoreNeededMarker(payload.id, 'pending-cap', outputSeq)
+        }
+        updateProducerFlowControl(payload.id)
+        requestDeliveryResyncForGatedPty()
+        return
+      }
+      deletePendingPtyData(payload.id)
+      clearFlushTimerIfIdle()
+      if (shouldEmitPendingCapRestoreMarker) {
+        sendModelRestoreNeededMarker(payload.id, 'pending-cap', outputSeq)
+      }
+      pendingOverflowMarkedPtys.delete(payload.id)
+      try {
+        sendPtyDataToRenderer(
+          payload.id,
+          {
+            id: payload.id,
+            data: nextData,
+            ...(typeof pending.startSeq === 'number'
+              ? {
+                  seq: pending.startSeq + (pending.rawLength ?? nextData.length),
+                  rawLength: pending.rawLength ?? nextData.length
+                }
+              : {}),
+            ...(pending.transformed ? { transformed: true } : {}),
+            ...(pending.containsBackgroundOutput === true ? { background: true } : {}),
+            ...(pending.droppedOutput === true ? { droppedOutput: true } : {})
+          },
+          pending.projectionAdmissionIds
+        )
+      } finally {
+        updateProducerFlowControl(payload.id)
+      }
+      return
+    }
+    setPendingPtyData(payload.id, pending)
+    if (shouldEmitPendingCapRestoreMarker) {
+      sendModelRestoreNeededMarker(payload.id, 'pending-cap', outputSeq)
+    }
+    updateProducerFlowControl(payload.id)
+    if (
+      !canSendPtyDataToRenderer(payload.id, { interactive: activeRendererPtys.has(payload.id) })
+    ) {
+      requestDeliveryResyncForGatedPty()
+    }
+    if (!flushTimer) {
+      schedulePendingDataFlush(PTY_BATCH_INTERVAL_MS)
+    }
+  }
+
+  sshOutputIntakeCleanup?.()
+  sshOutputIntake = new SshPtyOutputIntake({
+    getModelSequence: (id) => runtime?.getPtyOutputSequence(id) ?? 0,
+    acceptModel: (event) => {
+      if (!runtime) {
+        throw new Error('SSH PTY output requires the main terminal model')
+      }
+      return runtime.acceptPtyDataBounded(
+        event.id,
+        event.data,
+        Date.now(),
+        event.rawLength,
+        event.transformed
+      )
+    },
+    project: (event, projection) =>
+      acceptPtyDataForRenderer(
+        {
+          id: event.id,
+          data: event.data,
+          sequenceChars: event.rawLength,
+          transformed: event.transformed
+        },
+        projection.identity.sequenceEnd,
+        projection
+      ),
+    finalizeExit: (event) => {
+      runtime?.onPtyExit(event.id, event.code, event.ptyIncarnation)
+      sendPtyExitToRenderer(event)
+    },
+    pauseProvider: (_generation, id) => {
+      const provider = tryGetProviderForPty(id) as
+        | (IPtyProvider & { hasPtyDeliveryPauseAdapter?: () => boolean })
+        | undefined
+      if (!provider?.hasPtyDeliveryPauseAdapter?.()) {
+        return false
+      }
+      provider.pauseProducer?.(id)
+      return true
+    },
+    resumeProvider: (_generation, id) => tryGetProviderForPty(id)?.resumeProducer?.(id),
+    closeProvider: (generation, reason) => {
+      for (const provider of sshProviders.values()) {
+        if ((provider as { providerGeneration?: number }).providerGeneration === generation) {
+          ;(
+            provider as IPtyProvider & { closeOutputIntake?: (reason: string) => void }
+          ).closeOutputIntake?.(reason)
+          return
+        }
+      }
+    },
+    onGenerationClosed: (providerGeneration) => {
+      for (const id of pendingData.keys()) {
+        const pending = pendingData.get(id)
+        if (
+          pending?.projectionAdmissionIds &&
+          sshOutputIntake?.hasProjectionFromGeneration(
+            pending.projectionAdmissionIds,
+            providerGeneration
+          )
+        ) {
+          pendingData.delete(id)
+          updateProducerFlowControl(id)
+          pendingOverflowMarkedPtys.delete(id)
+        }
+      }
+    }
+  })
+  sshOutputIntakeCleanup = installSshPtyOutputIntake(sshOutputIntake)
 
   async function shutdownProviderAndDetectExit(
     provider: IPtyProvider,
@@ -2928,120 +3207,7 @@ export function registerPtyHandlers(
       const outputSeq = isLocalProvider
         ? runtime?.getPtyOutputSequence(payload.id)
         : runtime?.onPtyData(payload.id, payload.data, Date.now(), rawLength, payload.transformed)
-      const rendererData = payload.data
-      const preservesSeq = !payload.transformed && rawLength === payload.data.length
-      const startSeq =
-        typeof outputSeq === 'number' ? Math.max(0, outputSeq - rawLength) : undefined
-      if (mainWindow.isDestroyed()) {
-        // Why clear the flush timer: macOS app re-activation otherwise leaks orphaned timers from the previous window's registration.
-        if (flushTimer) {
-          clearTimeout(flushTimer)
-          flushTimer = null
-        }
-        producerFlowControl.releaseAll()
-        clearDeliveryResyncProbe()
-        clearPendingPtyData()
-        pendingOverflowMarkedPtys.clear()
-        rendererDeliveryAccountingByPty.clear()
-        rendererInFlightTotalChars = 0
-        clearDispatcherReadyWatchdog()
-        return
-      }
-      if (rendererExitingPtyIds.size > 0 && rendererExitingPtyIds.has(payload.id)) {
-        return
-      }
-      const settings = getSettings?.()
-      // Why drop before the interactive bypass: runtime already ingested the chunk, so gated PTYs skip both renderer paths and reveal restores from the snapshot.
-      if (shouldDropHiddenRendererPtyData(payload.id, settings)) {
-        const drop = recordHiddenRendererPtyDataDrop(payload.id, payload.data.length)
-        warnIfDroppingHiddenBytesForVisiblePty(payload.id, payload.data.length)
-        if (drop.shouldEmitRestoreMarker) {
-          sendModelRestoreNeededMarker(payload.id, 'hidden-drop', outputSeq)
-        }
-        return
-      }
-      if (rendererData.length === 0 && !payload.transformed) {
-        return
-      }
-      const containsBackgroundOutput =
-        rendererPtyIsKnownHidden(payload.id) || ptyHasHiddenRendererResizeOutput(payload.id)
-      if (containsBackgroundOutput) {
-        markHiddenRendererResizeOutputDelivered(payload.id)
-      }
-      const existing = pendingData.get(payload.id)
-      const overflowMarkedBeforeAppend = pendingOverflowMarkedPtys.has(payload.id)
-      const pending = appendPendingPtyData(
-        payload.id,
-        existing,
-        rendererData,
-        startSeq,
-        preservesSeq,
-        containsBackgroundOutput,
-        rawLength,
-        payload.transformed === true
-      )
-      const shouldEmitPendingCapRestoreMarker =
-        pending.droppedOutput === true &&
-        !overflowMarkedBeforeAppend &&
-        pendingOverflowMarkedPtys.has(payload.id)
-      const nextData = pending.data + getDroppedMode2031RendererData(pending)
-      const isInteractiveOutput = shouldSendInteractiveOutputNow(
-        payload.id,
-        nextData,
-        performance.now()
-      )
-      // Why gate the fast path on the handshake too: else boot-window keystroke echo is sent into a listener-less page and pins the gate.
-      if (isInteractiveOutput && rendererPtyDispatcherReady) {
-        // Why the reserve: keep input echo from being pinned behind unrelated bulk output; it's bounded and the per-PTY cap still prevents an active TUI runaway.
-        if (!canSendPtyDataToRenderer(payload.id, { interactive: true })) {
-          setPendingPtyData(payload.id, pending)
-          if (shouldEmitPendingCapRestoreMarker) {
-            sendModelRestoreNeededMarker(payload.id, 'pending-cap', outputSeq)
-          }
-          updateProducerFlowControl(payload.id)
-          requestDeliveryResyncForGatedPty()
-          return
-        }
-        deletePendingPtyData(payload.id)
-        clearFlushTimerIfIdle()
-        if (shouldEmitPendingCapRestoreMarker) {
-          sendModelRestoreNeededMarker(payload.id, 'pending-cap', outputSeq)
-        }
-        pendingOverflowMarkedPtys.delete(payload.id)
-        // Why immediate: agent TUIs redraw small prompt regions per keystroke; the throughput batch timer would add visible input latency.
-        try {
-          sendPtyDataToRenderer(payload.id, {
-            id: payload.id,
-            data: nextData,
-            ...(typeof pending.startSeq === 'number'
-              ? {
-                  seq: pending.startSeq + (pending.rawLength ?? nextData.length),
-                  rawLength: pending.rawLength ?? nextData.length
-                }
-              : {}),
-            ...(pending.transformed ? { transformed: true } : {}),
-            ...(pending.containsBackgroundOutput === true ? { background: true } : {}),
-            ...(pending.droppedOutput === true ? { droppedOutput: true } : {})
-          })
-        } finally {
-          updateProducerFlowControl(payload.id)
-        }
-        return
-      }
-      setPendingPtyData(payload.id, pending)
-      if (shouldEmitPendingCapRestoreMarker) {
-        sendModelRestoreNeededMarker(payload.id, 'pending-cap', outputSeq)
-      }
-      updateProducerFlowControl(payload.id)
-      // Why probe on data arrival (not flush skips): new output for a fully gated PTY is the moment stuck delivery becomes observable.
-      if (
-        !canSendPtyDataToRenderer(payload.id, { interactive: activeRendererPtys.has(payload.id) })
-      ) {
-        requestDeliveryResyncForGatedPty()
-      }
-      if (!flushTimer) {
-        schedulePendingDataFlush(PTY_BATCH_INTERVAL_MS)
-      }
+      acceptPtyDataForRenderer(payload, outputSeq)
     })
     localExitUnsub = localProvider.onExit((payload) => {
       if (!isCurrentPtyExit(payload)) {
@@ -5623,6 +5789,9 @@ export function registerPtyHandlers(
       const pending = pendingData.get(args.id)
       if (pending && transition.droppable) {
         pendingData.delete(args.id)
+        if (pending.projectionAdmissionIds) {
+          sshOutputIntake?.transferProjections(pending.projectionAdmissionIds, 'hidden-drop')
+        }
         updateProducerFlowControl(args.id)
         pendingOverflowMarkedPtys.delete(args.id)
         const drop = recordHiddenRendererPtyDataDrop(args.id, pending.data.length)

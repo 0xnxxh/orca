@@ -2,9 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SshRelaySession } from './ssh-relay-session'
 import { createMockDeps, mockDeploySuccess } from './ssh-relay-session-test-fixtures'
 
-const { muxRequestMock } = vi.hoisted(() => ({ muxRequestMock: vi.fn() }))
+const { acceptOutputDataMock, muxRequestMock } = vi.hoisted(() => ({
+  acceptOutputDataMock: vi.fn().mockResolvedValue(undefined),
+  muxRequestMock: vi.fn()
+}))
 
 vi.mock('./ssh-relay-deploy', () => ({ deployAndLaunchRelay: vi.fn() }))
+vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
+  acceptSshPtyOutputData: acceptOutputDataMock,
+  acceptSshPtyOutputExit: vi.fn().mockResolvedValue(undefined),
+  allocateSshPtyProviderGeneration: vi.fn(() => 23),
+  closeSshPtyOutputGeneration: vi.fn()
+}))
 
 vi.mock('./ssh-channel-multiplexer', () => ({
   SshChannelMultiplexer: class MockSshChannelMultiplexer {
@@ -95,18 +104,28 @@ describe('SshRelaySession data delivery', () => {
       data: string
       sequenceChars?: number
       transformed?: boolean
+      providerGeneration: number
+      ptyIncarnation: string
     }) => void
 
-    onData({ id: 'ssh-pty-1', data: '', sequenceChars: 9, transformed: true })
-
-    expect(runtime.onPtyData).toHaveBeenCalledWith('ssh-pty-1', '', expect.any(Number), 9, true)
-    expect(mockWindow.webContents.send).toHaveBeenCalledWith('pty:data', {
+    onData({
       id: 'ssh-pty-1',
       data: '',
       sequenceChars: 9,
       transformed: true,
-      seq: 17,
-      rawLength: 9
+      providerGeneration: 23,
+      ptyIncarnation: 'incarnation-1'
     })
+
+    expect(acceptOutputDataMock).toHaveBeenCalledWith({
+      id: 'ssh-pty-1',
+      data: '',
+      providerGeneration: 23,
+      ptyIncarnation: 'incarnation-1',
+      rawLength: 9,
+      transformed: true
+    })
+    expect(runtime.onPtyData).not.toHaveBeenCalled()
+    expect(mockWindow.webContents.send).not.toHaveBeenCalledWith('pty:data', expect.anything())
   })
 })

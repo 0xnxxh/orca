@@ -37,10 +37,11 @@ import {
   isCurrentPtyExit
 } from '../ipc/pty'
 import {
-  recordHiddenRendererPtyDataDrop,
-  shouldDropHiddenRendererPtyData
-} from '../ipc/pty-hidden-delivery-gate'
-import type { PtyModelRestoreNeededEvent } from '../../shared/pty-model-restore-marker'
+  acceptSshPtyOutputData,
+  acceptSshPtyOutputExit,
+  allocateSshPtyProviderGeneration,
+  closeSshPtyOutputGeneration
+} from '../ipc/ssh-pty-output-intake-registry'
 import {
   registerSshFilesystemProvider,
   unregisterSshFilesystemProvider,
@@ -151,6 +152,7 @@ export class SshRelaySession {
   private remoteCliBridgeEnv: RemoteCliBridgeEnv | null = null
   private forwardedReattachReplayByPty = new Map<string, ForwardedReplayFingerprint>()
   private pendingPtyReattaches = new Map<string, PendingPtyReattach>()
+  private activePtyProviderGeneration: number | null = null
 
   constructor(
     readonly targetId: string,
@@ -532,7 +534,14 @@ export class SshRelaySession {
 
     this.wireUpRemoteOrcaCli(mux)
 
-    const ptyProvider = new SshPtyProvider(this.targetId, mux, this.remoteCliBridgeEnv ?? undefined)
+    const providerGeneration = allocateSshPtyProviderGeneration()
+    const ptyProvider = new SshPtyProvider(
+      this.targetId,
+      mux,
+      this.remoteCliBridgeEnv ?? undefined,
+      providerGeneration
+    )
+    this.activePtyProviderGeneration = providerGeneration
     registerSshPtyProvider(this.targetId, ptyProvider)
 
     const connection = this.requireReadyConnection()
@@ -826,6 +835,10 @@ export class SshRelaySession {
       this.mux.dispose(reason)
     }
     this.mux = null
+    if (this.activePtyProviderGeneration !== null) {
+      closeSshPtyOutputGeneration(this.activePtyProviderGeneration, reason)
+      this.activePtyProviderGeneration = null
+    }
 
     if (reason === 'shutdown') {
       clearPtyOwnershipForConnection(this.targetId)
@@ -920,38 +933,15 @@ export class SshRelaySession {
   private wireUpPtyEvents(ptyProvider: SshPtyProvider): void {
     ptyProvider.onData((payload) => {
       const rawLength = payload.sequenceChars ?? payload.data.length
-      const seq = this.runtime?.onPtyData(
-        payload.id,
-        payload.data,
-        Date.now(),
+      void acceptSshPtyOutputData({
+        id: payload.id,
+        data: payload.data,
+        providerGeneration: payload.providerGeneration,
+        ptyIncarnation: payload.ptyIncarnation,
         rawLength,
-        payload.transformed
-      )
-      const win = this.getMainWindow()
-      if (!win || win.isDestroyed()) {
-        return
-      }
-      // Why: hidden-delivery gate parity with ipc/pty.ts — latch model-restore out-of-band, never an in-band pty:data sentinel (OSC-9999-only chunks strip to empty).
-      const store = this.store as { getSettings?: Store['getSettings'] }
-      if (shouldDropHiddenRendererPtyData(payload.id, store.getSettings?.())) {
-        const drop = recordHiddenRendererPtyDataDrop(payload.id, rawLength)
-        if (drop.shouldEmitRestoreMarker) {
-          win.webContents.send('pty:modelRestoreNeeded', {
-            id: payload.id,
-            reason: 'hidden-drop',
-            ...(typeof seq === 'number' ? { markerSeq: seq } : {})
-          } satisfies PtyModelRestoreNeededEvent)
-        }
-        return
-      }
-      if (payload.data.length > 0 || payload.transformed) {
-        win.webContents.send('pty:data', {
-          ...payload,
-          ...(typeof seq === 'number' ? { seq } : {}),
-          rawLength,
-          ...(payload.transformed ? { transformed: true } : {})
-        })
-      }
+        transformed: payload.transformed === true,
+        ...(typeof payload.seq === 'number' ? { sequence: payload.seq } : {})
+      }).catch(() => {})
     })
     ptyProvider.onReplay((payload) => {
       const win = this.getMainWindow()
@@ -969,16 +959,31 @@ export class SshRelaySession {
       if (!isCurrentPtyExit(payload)) {
         return
       }
-      this.retireExitedPty(payload)
+      void this.acceptPtyExit(payload).catch(() => {})
     })
   }
 
-  private retireExitedPty(payload: SshPtyExitPayload): void {
+  private async acceptPtyExit(payload: SshPtyExitPayload): Promise<void> {
+    await acceptSshPtyOutputExit({
+      id: payload.id,
+      code: payload.code,
+      providerGeneration: payload.providerGeneration,
+      ptyIncarnation: payload.ptyIncarnation
+    })
+    if (isCurrentPtyExit(payload)) {
+      this.retireExitedPty(payload, true)
+    }
+  }
+
+  private retireExitedPty(payload: SshPtyExitPayload, deliveryHandled = false): void {
     const relayPtyId = toRelaySshPtyId(this.targetId, payload.id)
     clearProviderPtyState(payload.id)
     deletePtyOwnership(payload.id)
     this.forwardedReattachReplayByPty.delete(payload.id)
     this.store.markSshRemotePtyLease(this.targetId, relayPtyId, 'terminated')
+    if (deliveryHandled) {
+      return
+    }
     this.runtime?.onPtyExit(payload.id, payload.code, payload.incarnationId)
     const win = this.getMainWindow()
     if (win && !win.isDestroyed()) {
@@ -1069,7 +1074,7 @@ export class SshRelaySession {
             restorePtyIncarnation(appPtyId, attachResult.incarnationId)
             this.runtime?.acceptPtyIncarnationForExit(appPtyId, attachResult.incarnationId)
           }
-          this.retireExitedPty(exitDuringAttach)
+          await this.acceptPtyExit(exitDuringAttach)
           continue
         }
         setPtyOwnership(appPtyId, this.targetId)
