@@ -2,7 +2,8 @@ export const HEADER_LENGTH = 13
 export const MAX_MESSAGE_SIZE = 16 * 1024 * 1024
 export const FRAME_DECODER_MAX_FRAMES_PER_TURN = 64
 export const FRAME_DECODER_MAX_BYTES_PER_TURN = MAX_MESSAGE_SIZE + HEADER_LENGTH
-export const FRAME_DECODER_MAX_TURN_MS = 4
+export const FRAME_DECODER_MAX_TURN_MS = 4,
+  FRAME_DECODER_MAX_RETAINED_BYTES = 2 * (MAX_MESSAGE_SIZE + HEADER_LENGTH)
 
 export type DecodedFrame = {
   type: number
@@ -68,6 +69,12 @@ export class FrameDecoder {
     const buf = Buffer.isBuffer(chunk)
       ? chunk
       : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)
+    const retained = this.bufferedLength + buf.length
+    if (retained > FRAME_DECODER_MAX_RETAINED_BYTES) {
+      this.reset()
+      this.onError(new Error(`Frame decoder retained-input limit exceeded: ${retained}`))
+      return
+    }
     if (buf.length > 0) {
       this.chunks.push(buf)
       this.bufferedLength += buf.length
@@ -126,8 +133,7 @@ export class FrameDecoder {
           this.discardBytes(HEADER_LENGTH)
           this.oversizedPayloadBytesRemaining = length
           bytes += HEADER_LENGTH
-          const error = new Error(`Frame payload too large: ${length} bytes — discarded`)
-          this.onError(error)
+          this.onError(new Error(`Frame payload too large: ${length} bytes — discarded`))
           continue
         }
         const totalLength = HEADER_LENGTH + length

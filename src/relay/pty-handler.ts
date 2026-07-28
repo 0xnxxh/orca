@@ -315,6 +315,7 @@ export class PtyHandler {
   private pendingOutputByPty = new Map<string, PendingPtyOutput[]>()
   private pendingExitByPty = new Map<string, { id: string; code: number; incarnationId: string }>()
   private pausedOutputPtys = new Set<string>()
+  private consumerPausedOutputPtys = new Set<string>()
   private removeLegacyCapacityListener: (() => void) | null = null
   private lastInputAtByPty = new Map<string, number>()
   private interactiveOutputCharsByPty = new Map<string, number>()
@@ -343,6 +344,16 @@ export class PtyHandler {
     this.registerHandlers()
     this.removeLegacyCapacityListener =
       this.dispatcher.onLegacyPtyCapacity?.(() => this.handleLegacyCapacity()) ?? null
+  }
+
+  setConsumerDeliveryPaused(id: string, paused: boolean): void {
+    if (paused) {
+      this.consumerPausedOutputPtys.add(id)
+      this.pausePtyOutput(id)
+      return
+    }
+    this.consumerPausedOutputPtys.delete(id)
+    this.maybeResumePtyOutput(id)
   }
 
   private async loadPty(): Promise<typeof NodePty | null> {
@@ -587,6 +598,7 @@ export class PtyHandler {
       this.clearStartupCommandTimer(managed)
       this.releaseRelayIngress(managed)
       this.pausedOutputPtys.delete(managed.id)
+      this.consumerPausedOutputPtys.delete(managed.id)
       this.flushPtyOutput(managed.id)
       this.pendingExitByPty.set(managed.id, {
         id: managed.id,
@@ -874,6 +886,7 @@ export class PtyHandler {
     this.pendingOutputByPty.delete(id)
     this.pendingExitByPty.delete(id)
     this.pausedOutputPtys.delete(id)
+    this.consumerPausedOutputPtys.delete(id)
     this.clearPtyInputState(id)
     this.clearOutputFlushTimerIfIdle()
   }
@@ -946,6 +959,7 @@ export class PtyHandler {
   private maybeResumePtyOutput(id: string): void {
     if (
       !this.pausedOutputPtys.has(id) ||
+      this.consumerPausedOutputPtys.has(id) ||
       this.pendingProducerBytes(id) > PTY_OUTPUT_PRODUCER_LOW_BYTES ||
       this.dispatcher.legacyRetentionBelowLowWater === false
     ) {
@@ -1798,6 +1812,7 @@ export class PtyHandler {
     this.pendingOutputByPty.clear()
     this.pendingExitByPty.clear()
     this.pausedOutputPtys.clear()
+    this.consumerPausedOutputPtys.clear()
     this.lastInputAtByPty.clear()
     this.interactiveOutputCharsByPty.clear()
     const results = await Promise.allSettled(

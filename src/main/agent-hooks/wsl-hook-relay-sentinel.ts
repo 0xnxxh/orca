@@ -143,6 +143,8 @@ export function waitForWslRelaySentinel(
           }
         },
         onClose: (cb) => closeCallbacks.push(cb),
+        pauseReads: () => child.stdout.pause(),
+        resumeReads: () => child.stdout.resume(),
         close: () => child.kill()
       }
       resolve(transport)

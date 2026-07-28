@@ -37,6 +37,20 @@ export type RequestContext = {
   clientId: number
   isStale: () => boolean
   signal?: AbortSignal
+  sessionIdentity?: RelayClientSessionIdentity
+  onResponseSettled?: (handler: (result: SinkWriteSettlement) => void) => void
+}
+
+export type RelayClientSessionIdentity = {
+  principal: string
+  authenticated: boolean
+  allowSessionOwner: boolean
+  authenticationKind: 'unproved' | 'launch-nonce' | 'endpoint-credential'
+}
+
+export type RelayClientSourceOptions = {
+  pauseReads?: () => void
+  resumeReads?: () => void
 }
 
 export type MethodHandler = (
@@ -55,6 +69,7 @@ type RelayClient = {
   highestReceivedSeq: number
   generation: number
   closed: boolean
+  sessionIdentity: RelayClientSessionIdentity
 }
 
 type PendingRelayRequest = {
@@ -83,8 +98,13 @@ export class RelayDispatcher {
   private nextClientId = 1
   private nextRequestId = 1
 
-  constructor(write: RelayClientWrite, sinkOptions?: RelayClientSinkOptions) {
-    this.primaryClient = this.createClient(write, sinkOptions)
+  constructor(
+    write: RelayClientWrite,
+    sinkOptions?: RelayClientSinkOptions,
+    sessionIdentity?: RelayClientSessionIdentity,
+    sourceOptions?: RelayClientSourceOptions
+  ) {
+    this.primaryClient = this.createClient(write, sinkOptions, sessionIdentity, sourceOptions)
     this.clients.set(this.primaryClient.id, this.primaryClient)
     this.startKeepalive()
   }
@@ -105,8 +125,13 @@ export class RelayDispatcher {
   }
 
   // Why: seq numbers and request ids are per SSH channel, so each attached client needs independent protocol state.
-  attachClient(write: RelayClientWrite, sinkOptions?: RelayClientSinkOptions): number {
-    const client = this.createClient(write, sinkOptions)
+  attachClient(
+    write: RelayClientWrite,
+    sinkOptions?: RelayClientSinkOptions,
+    sessionIdentity?: RelayClientSessionIdentity,
+    sourceOptions?: RelayClientSourceOptions
+  ): number {
+    const client = this.createClient(write, sinkOptions, sessionIdentity, sourceOptions)
     this.clients.set(client.id, client)
     return client.id
   }
@@ -427,7 +452,12 @@ export class RelayDispatcher {
     this.legacyCapacityListeners.clear()
   }
 
-  private createClient(write: RelayClientWrite, sinkOptions?: RelayClientSinkOptions): RelayClient {
+  private createClient(
+    write: RelayClientWrite,
+    sinkOptions?: RelayClientSinkOptions,
+    sessionIdentity?: RelayClientSessionIdentity,
+    sourceOptions?: RelayClientSourceOptions
+  ): RelayClient {
     const id = this.nextClientId++
     const client = {
       id,
@@ -437,9 +467,19 @@ export class RelayDispatcher {
       nextOutgoingSeq: 1,
       highestReceivedSeq: 0,
       generation: 0,
-      closed: false
+      closed: false,
+      sessionIdentity: sessionIdentity ?? {
+        principal: `unproved:${id}`,
+        authenticated: false,
+        allowSessionOwner: false,
+        authenticationKind: 'unproved'
+      }
     } satisfies RelayClient
-    client.decoder = new FrameDecoder((frame) => this.handleFrame(client, frame))
+    client.decoder = new FrameDecoder(
+      (frame) => this.handleFrame(client, frame),
+      (error) => this.closeClient(client, error, client !== this.primaryClient),
+      { pause: sourceOptions?.pauseReads, resume: sourceOptions?.resumeReads }
+    )
     client.writer = this.createWriter(client, write, sinkOptions)
     return client
   }
@@ -519,25 +559,57 @@ export class RelayDispatcher {
       client.id,
       req.id
     )
+    const responseSettledHandlers = new Set<(result: SinkWriteSettlement) => void>()
+    let responseSettled = false
+    const settleResponse = (result: SinkWriteSettlement): void => {
+      if (responseSettled) {
+        return
+      }
+      responseSettled = true
+      for (const callback of responseSettledHandlers) {
+        try {
+          callback(result)
+        } catch (err) {
+          process.stderr.write(
+            `[relay] Response settlement callback failed: ${err instanceof Error ? err.message : String(err)}\n`
+          )
+        }
+      }
+      responseSettledHandlers.clear()
+    }
     const context: RequestContext = {
       clientId: client.id,
       isStale: () =>
         client.generation !== gen || !this.clients.has(client.id) || abortController.signal.aborted,
-      signal: abortController.signal
+      signal: abortController.signal,
+      sessionIdentity: client.sessionIdentity,
+      onResponseSettled: (handler) => {
+        if (responseSettled) {
+          throw new Error('Response settlement callback registered after settlement')
+        }
+        responseSettledHandlers.add(handler)
+      }
     }
     try {
       const result = await handler(req.params ?? {}, context)
       if (context.isStale()) {
+        settleResponse({ ok: false, error: new Error('Relay request became stale') })
         return
       }
-      this.sendResponse(client, req.id, result)
+      this.sendResponse(client, req.id, result, undefined, settleResponse)
     } catch (err) {
       if (context.isStale()) {
+        settleResponse({ ok: false, error: new Error('Relay request became stale') })
         return
       }
       const message = err instanceof Error ? err.message : String(err)
       const code = (err as { code?: number }).code ?? -32000
-      this.sendResponse(client, req.id, undefined, { code, message })
+      this.sendResponse(client, req.id, undefined, { code, message }, (result) => {
+        settleResponse({
+          ok: false,
+          error: result.ok ? new Error(message) : result.error
+        })
+      })
     } finally {
       this.requestAborts.delete(abortKey)
     }
@@ -555,7 +627,11 @@ export class RelayDispatcher {
       const gen = client.generation
       handler(notif.params ?? {}, {
         clientId: client.id,
-        isStale: () => client.generation !== gen || !this.clients.has(client.id)
+        isStale: () => client.generation !== gen || !this.clients.has(client.id),
+        sessionIdentity: client.sessionIdentity,
+        onResponseSettled: () => {
+          throw new Error('Notifications do not have response publication fences')
+        }
       })
     }
   }
@@ -564,8 +640,9 @@ export class RelayDispatcher {
     client: RelayClient,
     id: number,
     result?: unknown,
-    error?: { code: number; message: string; data?: unknown }
-  ): void {
+    error?: { code: number; message: string; data?: unknown },
+    onSettled: (result: SinkWriteSettlement) => void = () => {}
+  ): boolean {
     const msg: JsonRpcResponse = {
       jsonrpc: '2.0',
       id,
@@ -573,7 +650,8 @@ export class RelayDispatcher {
     }
     const estimatedBytes = this.estimateFrameBytes(msg)
     const lane = estimatedBytes > DISPATCHER_CONTROL_QUEUE_MAX_BYTES ? 'legacy-response' : 'control'
-    if (!this.enqueueFrame(client, msg, lane)) {
+    const accepted = this.enqueueFrame(client, msg, lane, onSettled)
+    if (!accepted) {
       this.closeClient(
         client,
         new Error(
@@ -582,6 +660,7 @@ export class RelayDispatcher {
         client !== this.primaryClient
       )
     }
+    return accepted
   }
 
   private enqueueFrame(
@@ -665,6 +744,9 @@ export class RelayDispatcher {
       }
       for (let index = 0; index < clients.length; index++) {
         if (!this.enqueueLeasedFrame(clients[index], msg, lane, leases[index])) {
+          if (this.disposed || clients[index].closed) {
+            continue
+          }
           for (let remaining = index; remaining < leases.length; remaining++) {
             leases[remaining].release()
           }

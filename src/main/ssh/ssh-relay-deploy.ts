@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { randomBytes } from 'node:crypto'
 /* eslint-disable max-lines -- Why: one cohesive contract (version detect, install-locked deploy, native-deps probe, launch, GC); splitting risks install/GC drift. */
 import { existsSync } from 'node:fs'
 import { app } from 'electron'
@@ -75,12 +76,14 @@ import {
 
 export type RelayDeployResult = {
   transport: MultiplexerTransport
+  serverBuildId?: string
   platform: RelayPlatform
   hostPlatform?: RemoteHostPlatform
   remoteHome?: string
   remoteRelayDir?: string
   nodePath?: string
   sockPath?: string
+  credentialFile?: string
 }
 
 class RelayDirectoryGcConflictError extends Error {
@@ -434,12 +437,14 @@ async function deployAndLaunchRelayAttempt(
 
   return {
     transport: launched.transport,
+    serverBuildId: fullVersion,
     platform,
     hostPlatform,
     remoteHome,
     remoteRelayDir,
     nodePath: launched.nodePath,
-    sockPath: launched.sockPath
+    sockPath: launched.sockPath,
+    credentialFile: launched.credentialFile
   }
 }
 
@@ -1157,7 +1162,12 @@ async function launchRelay(
   graceTimeSeconds?: number,
   relayInstanceId?: string,
   signal?: AbortSignal
-): Promise<{ transport: MultiplexerTransport; nodePath: string; sockPath: string }> {
+): Promise<{
+  transport: MultiplexerTransport
+  nodePath: string
+  sockPath: string
+  credentialFile: string
+}> {
   // Why: graceTimeSeconds comes from user-editable SshTarget config; floor+clamp to an integer prevents shell injection if the type ever loosened.
   const requestedGraceTime = Math.floor(graceTimeSeconds ?? DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS)
   const graceTime =
@@ -1173,6 +1183,7 @@ async function launchRelay(
   const sockName = relaySocketNameForInstanceId(relayInstanceId)
   const sockFile = relayEndpointForHost(hostPlatform, remoteDir, sockName)
   const endpointDir = relayHookEndpointDirForHost(hostPlatform, remoteDir, sockFile)
+  const credentialFile = joinRemotePath(hostPlatform, remoteDir, `${sockName}.credential`)
 
   if (isWindowsRemoteHost(hostPlatform)) {
     const activePipeMarkerPath = windowsActivePipeMarkerPath(hostPlatform, remoteDir, sockName)
@@ -1187,7 +1198,7 @@ async function launchRelay(
       endpointDir
     }
     const fallbackEndpoint = buildWindowsRelayFallbackEndpoint(hostPlatform, remoteDir, sockName)
-    return launchWindowsRelay(
+    const launched = await launchWindowsRelay(
       conn,
       hostPlatform,
       {
@@ -1197,10 +1208,12 @@ async function launchRelay(
         endpointDir: activeEndpoint.endpointDir,
         graceTime,
         activePipeMarkerPath,
-        reconnectFallback: fallbackEndpoint
+        reconnectFallback: fallbackEndpoint,
+        credentialFile
       },
       signal
     )
+    return { ...launched, credentialFile }
   }
 
   // Why: after a restart the relay may still be alive in its grace period; --connect to its socket preserves PTY state and scrollback.
@@ -1215,12 +1228,12 @@ async function launchRelay(
       console.log('[ssh-relay] Existing relay socket found, attempting reconnect...')
       try {
         const channel = await conn.exec(
-          `cd ${escapedDir} && ${escapedNode} relay.js --connect --sock-path ${shellEscape(sockFile)}`,
+          `cd ${escapedDir} && ${escapedNode} relay.js --connect --sock-path ${shellEscape(sockFile)} --credential-file ${shellEscape(credentialFile)}`,
           { signal }
         )
         const transport = await waitForSentinel(channel, signal)
         console.log('[ssh-relay] Reconnected to existing relay via socket')
-        return { transport, nodePath, sockPath: sockFile }
+        return { transport, nodePath, sockPath: sockFile, credentialFile }
       } catch (err) {
         signal?.throwIfAborted()
         console.warn(
@@ -1249,8 +1262,9 @@ async function launchRelay(
   // Why: relay must outlive the SSH connection so PTY sessions survive app restarts — nohup + </dev/null + & detach it from the exec channel.
   // Why: execCommand would block on channel close that backgrounded children never allow; fire-and-forget via conn.exec, the socket poll detects readiness.
   const logFile = `${remoteDir}/relay.log`
+  await writeRelayEndpointCredential(conn, hostPlatform, credentialFile, signal)
   // Why: --log-file lets the relay rotate relay.log in-process; the shell redirect stays to capture pre-JS boot/crash output.
-  const launchCmd = `cd ${escapedDir} && nohup ${escapedNode} relay.js --detached --grace-time ${graceTime} --sock-path ${shellEscape(sockFile)} --log-file ${shellEscape(logFile)} > ${shellEscape(logFile)} 2>&1 </dev/null &`
+  const launchCmd = `cd ${escapedDir} && chmod 600 ${shellEscape(credentialFile)} && nohup ${escapedNode} relay.js --detached --grace-time ${graceTime} --sock-path ${shellEscape(sockFile)} --credential-file ${shellEscape(credentialFile)} --log-file ${shellEscape(logFile)} > ${shellEscape(logFile)} 2>&1 </dev/null &`
   const launchChannel = await conn.exec(launchCmd, { signal })
   launchChannel.on('data', () => {})
   launchChannel.on('error', () => {})
@@ -1300,10 +1314,25 @@ async function launchRelay(
 
   // Why: backgrounded relay's stdout goes to a log file, not the exec channel; --connect bridges this channel to its Unix socket.
   const channel = await conn.exec(
-    `cd ${escapedDir} && ${escapedNode} relay.js --connect --sock-path ${shellEscape(sockFile)}`,
+    `cd ${escapedDir} && ${escapedNode} relay.js --connect --sock-path ${shellEscape(sockFile)} --credential-file ${shellEscape(credentialFile)}`,
     { signal }
   )
-  return { transport: await waitForSentinel(channel, signal), nodePath, sockPath: sockFile }
+  return {
+    transport: await waitForSentinel(channel, signal),
+    nodePath,
+    sockPath: sockFile,
+    credentialFile
+  }
+}
+
+async function writeRelayEndpointCredential(
+  conn: SshConnection,
+  hostPlatform: RemoteHostPlatform,
+  credentialFile: string,
+  signal?: AbortSignal
+): Promise<void> {
+  const credential = randomBytes(32).toString('base64url')
+  await writeRelayFile(conn, hostPlatform, credentialFile, credential, { signal })
 }
 
 function waitForRelayPoll(delayMs: number, signal?: AbortSignal): Promise<void> {
@@ -1398,6 +1427,7 @@ type WindowsRelayLaunchOptions = {
   nodePath: string
   graceTime: number
   activePipeMarkerPath: string
+  credentialFile: string
 } & WindowsRelayEndpoint & {
     reconnectFallback?: WindowsRelayEndpoint
   }
@@ -1467,6 +1497,7 @@ async function launchWindowsRelay(
 
   const logFile = joinRemotePath(hostPlatform, launchOpts.remoteDir, 'relay.log')
   const errFile = joinRemotePath(hostPlatform, launchOpts.remoteDir, 'relay.err.log')
+  await writeRelayEndpointCredential(conn, hostPlatform, launchOpts.credentialFile, signal)
   await execHostCommand(
     conn,
     hostPlatform,
@@ -1478,7 +1509,8 @@ async function launchWindowsRelay(
       launchOpts.endpointDir,
       launchOpts.graceTime,
       logFile,
-      errFile
+      errFile,
+      launchOpts.credentialFile
     ),
     { signal }
   )
@@ -1529,11 +1561,18 @@ async function connectWindowsRelay(
     remoteDir: string
     nodePath: string
     sockPath: string
+    credentialFile: string
   },
   signal?: AbortSignal
 ): Promise<MultiplexerTransport> {
   const channel = await conn.exec(
-    windowsRelayConnectCommand(hostPlatform, opts.nodePath, opts.remoteDir, opts.sockPath),
+    windowsRelayConnectCommand(
+      hostPlatform,
+      opts.nodePath,
+      opts.remoteDir,
+      opts.sockPath,
+      opts.credentialFile
+    ),
     { wrapCommand: false, signal }
   )
   return waitForSentinel(channel, signal)
@@ -1543,13 +1582,14 @@ function windowsRelayConnectCommand(
   hostPlatform: RemoteHostPlatform,
   nodePath: string,
   remoteDir: string,
-  sockPath: string
+  sockPath: string,
+  credentialFile: string
 ): string {
   return commandWithNodePath(
     hostPlatform,
     nodePath,
     remoteDir,
-    `& ${powerShellLiteral(nodePath)} relay.js --connect --sock-path ${powerShellLiteral(sockPath)}`
+    `& ${powerShellLiteral(nodePath)} relay.js --connect --sock-path ${powerShellLiteral(sockPath)} --credential-file ${powerShellLiteral(credentialFile)}`
   )
 }
 
@@ -1561,7 +1601,8 @@ function windowsRelayLaunchCommand(
   endpointDir: string,
   graceTime: number,
   logFile: string,
-  errFile: string
+  errFile: string,
+  credentialFile: string
 ): string {
   const relayScript = joinRemotePath(hostPlatform, remoteDir, 'relay.js')
   // Why: Windows sshd kills the exec channel's process tree on close; WMI re-parents the detached relay to survive.
@@ -1574,6 +1615,8 @@ function windowsRelayLaunchCommand(
     String(graceTime),
     '--sock-path',
     quoted(sockPath),
+    '--credential-file',
+    quoted(credentialFile),
     '--endpoint-dir',
     quoted(endpointDir),
     // Why: --log-file owns rotation; shell redirects still capture pre-JS boot/crash output.
@@ -1588,6 +1631,7 @@ function windowsRelayLaunchCommand(
     nodePath,
     remoteDir,
     [
+      `& icacls.exe ${powerShellLiteral(credentialFile)} /inheritance:r /grant:r "$($env:USERNAME):(R,W)" | Out-Null`,
       `$result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ${powerShellLiteral(wmiCommandLine)}; CurrentDirectory = ${powerShellLiteral(remoteDir)} }`,
       `if ($result.ReturnValue -ne 0) { throw "Win32_Process.Create failed with $($result.ReturnValue)" }`
     ].join('; ')

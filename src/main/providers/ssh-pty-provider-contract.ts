@@ -5,6 +5,7 @@ export type RemoteCliBridgeEnv = {
   relayDir: string
   nodePath: string
   sockPath: string
+  credentialFile?: string
   pathDelimiter?: ':' | ';'
 }
 

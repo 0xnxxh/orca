@@ -513,6 +513,35 @@ describe('RelayDispatcher', () => {
     }
   })
 
+  it('does not retry accepted clients when a later broadcast member closes reentrantly', () => {
+    const primary: string[] = []
+    const secondary: string[] = []
+    let secondaryId = 0
+    const readData = (frame: Buffer): string => {
+      const message = JSON.parse(decodeFirstFrame(frame).payload.toString()) as JsonRpcNotification
+      return String(message.params?.data)
+    }
+    const dispatcher = new RelayDispatcher((frame) => {
+      primary.push(readData(frame))
+      if (secondaryId !== 0) {
+        dispatcher.detachClient(secondaryId)
+      }
+      return true
+    })
+    secondaryId = dispatcher.attachClient((frame) => {
+      secondary.push(readData(frame))
+      return true
+    })
+
+    try {
+      expect(dispatcher.tryNotifyPtyData({ id: 'pty-1', data: 'once' })).toBe(true)
+      expect(primary).toEqual(['once'])
+      expect(secondary).toEqual([])
+    } finally {
+      dispatcher.dispose()
+    }
+  })
+
   describe('notifyBulk (bulk lane backpressure)', () => {
     it('resolves immediately when the sink accepts the frame', async () => {
       const frames: Buffer[] = []

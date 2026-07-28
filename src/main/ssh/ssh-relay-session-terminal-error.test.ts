@@ -15,6 +15,15 @@ vi.mock('./ssh-relay-deploy', () => ({
   deployAndLaunchRelay: vi.fn()
 }))
 
+vi.mock('./ssh-pty-consumer-session', () => ({
+  openSshPtyConsumerSession: vi.fn(async (_mux, options) => ({
+    clientInstanceId: options.clientInstanceId,
+    clientGeneration: 1,
+    ownerGeneration: 1,
+    ownerLease: 'test-owner-lease'
+  }))
+}))
+
 vi.mock('./ssh-channel-multiplexer', () => {
   return {
     SshChannelMultiplexer: class MockSshChannelMultiplexer {

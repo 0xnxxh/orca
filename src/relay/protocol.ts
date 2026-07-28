@@ -7,7 +7,8 @@ import {
   MAX_MESSAGE_SIZE,
   FRAME_DECODER_MAX_FRAMES_PER_TURN,
   FRAME_DECODER_MAX_BYTES_PER_TURN,
-  FRAME_DECODER_MAX_TURN_MS
+  FRAME_DECODER_MAX_TURN_MS,
+  FRAME_DECODER_MAX_RETAINED_BYTES
 } from './relay-frame-decoder'
 
 export {
@@ -16,7 +17,8 @@ export {
   MAX_MESSAGE_SIZE,
   FRAME_DECODER_MAX_FRAMES_PER_TURN,
   FRAME_DECODER_MAX_BYTES_PER_TURN,
-  FRAME_DECODER_MAX_TURN_MS
+  FRAME_DECODER_MAX_TURN_MS,
+  FRAME_DECODER_MAX_RETAINED_BYTES
 }
 export type { DecodedFrame, FrameDecoderOptions } from './relay-frame-decoder'
 
@@ -34,7 +36,7 @@ export const MessageType = {
 // to refuse mismatched-version --connect bridges that would otherwise drive a
 // stale daemon.
 export type HandshakeMessage =
-  | { type: 'orca-relay-handshake'; version: string }
+  | { type: 'orca-relay-handshake'; version: string; endpointCredential?: string }
   | { type: 'orca-relay-handshake-ok'; version: string }
   | { type: 'orca-relay-handshake-mismatch'; expected: string; got: string }
 

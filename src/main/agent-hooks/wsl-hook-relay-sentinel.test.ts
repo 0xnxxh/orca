@@ -16,12 +16,18 @@ type FakeChild = ChildProcessWithoutNullStreams & { kill: ReturnType<typeof vi.f
 
 function fakeChild(): FakeChild {
   const child = new EventEmitter() as EventEmitter & {
-    stdout: EventEmitter
+    stdout: EventEmitter & {
+      pause: ReturnType<typeof vi.fn>
+      resume: ReturnType<typeof vi.fn>
+    }
     stderr: EventEmitter
     stdin: { write: ReturnType<typeof vi.fn> }
     kill: ReturnType<typeof vi.fn>
   }
-  child.stdout = new EventEmitter()
+  child.stdout = Object.assign(new EventEmitter(), {
+    pause: vi.fn(),
+    resume: vi.fn()
+  })
   child.stderr = new EventEmitter()
   child.stdin = { write: vi.fn(() => true) }
   child.kill = vi.fn()
@@ -62,6 +68,10 @@ describe('waitForWslRelaySentinel', () => {
     const transport = await promise
     expect(typeof transport.write).toBe('function')
     expect(typeof transport.onData).toBe('function')
+    transport.pauseReads?.()
+    transport.resumeReads?.()
+    expect(child.stdout.pause).toHaveBeenCalledOnce()
+    expect(child.stdout.resume).toHaveBeenCalledOnce()
   })
 
   it('resolves past leading garbage and hands trailing bytes to onData', async () => {

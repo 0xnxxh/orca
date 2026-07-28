@@ -115,6 +115,7 @@ function makeMockConnection(): SshConnection {
       stdout: { on: vi.fn() },
       close: vi.fn()
     }),
+    writeFile: vi.fn().mockResolvedValue(undefined),
     sftp: vi.fn().mockResolvedValue({
       mkdir: vi.fn((_p: string, cb: (err: Error | null) => void) => cb(null)),
       createWriteStream: vi.fn().mockReturnValue({

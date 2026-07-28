@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   FrameDecoder,
+  FRAME_DECODER_MAX_RETAINED_BYTES,
   HEADER_LENGTH,
   MAX_MESSAGE_SIZE,
   MessageType,
@@ -40,6 +41,18 @@ function frame(id: number, payload = `${id}`): Buffer {
 }
 
 describe('FrameDecoder bounded turns', () => {
+  it('fails closed when one delivered chunk exceeds retained-input capacity', () => {
+    const onError = vi.fn()
+    const decoder = new FrameDecoder(vi.fn(), onError)
+
+    decoder.feed(Buffer.alloc(FRAME_DECODER_MAX_RETAINED_BYTES + 1))
+
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('retained-input') })
+    )
+    expect(decoder.drain()).toHaveLength(0)
+  })
+
   it('emits the first frame synchronously and preserves order through self-pause', () => {
     const scheduler = createScheduler()
     const seen: number[] = []

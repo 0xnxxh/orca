@@ -233,6 +233,8 @@ export function waitForSentinel(
               cb()
             }
           },
+          pauseReads: () => channel.pause(),
+          resumeReads: () => channel.resume(),
           close: () => {
             channel.close()
           }

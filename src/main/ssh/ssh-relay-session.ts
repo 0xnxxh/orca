@@ -1,6 +1,7 @@
 /* oxlint-disable max-lines */
 // Why: single authority for all relay lifecycle state per SSH target (previously scattered across module Maps/Sets with duplicated paths).
 
+import { randomUUID } from 'node:crypto'
 import type { BrowserWindow } from 'electron'
 import { deployAndLaunchRelay } from './ssh-relay-deploy'
 import { execCommand } from './ssh-relay-deploy-helpers'
@@ -69,6 +70,10 @@ import { runRemoteOrcaCli } from './ssh-remote-orca-cli'
 import { toSshExecutionHostId, type ExecutionHostId } from '../../shared/execution-host'
 import { isTerminalLeafId, makePaneKey } from '../../shared/stable-pane-id'
 import { isValidTerminalTabId } from '../../shared/terminal-tab-id'
+import {
+  openSshPtyConsumerSession,
+  type SshPtyConsumerOwnerState
+} from './ssh-pty-consumer-session'
 
 export type RelaySessionState = 'idle' | 'deploying' | 'ready' | 'reconnecting' | 'disposed'
 
@@ -81,6 +86,7 @@ type RemoteCliBridgeEnv = {
   relayDir: string
   nodePath: string
   sockPath: string
+  credentialFile?: string
   hostPlatform: RemoteHostPlatform
   pathDelimiter?: ':' | ';'
 }
@@ -153,6 +159,8 @@ export class SshRelaySession {
   private forwardedReattachReplayByPty = new Map<string, ForwardedReplayFingerprint>()
   private pendingPtyReattaches = new Map<string, PendingPtyReattach>()
   private activePtyProviderGeneration: number | null = null
+  private readonly ptyConsumerClientInstanceId = randomUUID()
+  private ptyConsumerOwnerState: SshPtyConsumerOwnerState | null = null
 
   constructor(
     readonly targetId: string,
@@ -251,8 +259,16 @@ export class SshRelaySession {
     this.currentConnection = conn
 
     try {
-      const { transport, remoteHome, remoteRelayDir, nodePath, sockPath, hostPlatform } =
-        await deployAndLaunchRelay(conn, undefined, graceTimeSeconds, this.targetId)
+      const {
+        transport,
+        serverBuildId,
+        remoteHome,
+        remoteRelayDir,
+        nodePath,
+        sockPath,
+        credentialFile,
+        hostPlatform
+      } = await deployAndLaunchRelay(conn, undefined, graceTimeSeconds, this.targetId)
       this.hostPlatform = hostPlatform ?? null
       this.remoteCliBridgeEnv =
         remoteHome && remoteRelayDir && nodePath && sockPath && hostPlatform
@@ -262,6 +278,7 @@ export class SshRelaySession {
               relayDir: remoteRelayDir,
               nodePath,
               sockPath,
+              ...(credentialFile ? { credentialFile } : {}),
               hostPlatform,
               pathDelimiter: hostPlatform.pathDelimiter
             }
@@ -278,7 +295,19 @@ export class SshRelaySession {
       this.mux = mux
       const ownsAttempt = (): boolean => this.mux === mux && !this.isDisposed()
 
-      // Why: round-trip the relay before registering providers so a closed --connect bridge fails fast instead of leaving a 'ready' session on a dead mux.
+      this.ptyConsumerOwnerState = await openSshPtyConsumerSession(mux, {
+        clientInstanceId: this.ptyConsumerClientInstanceId,
+        expectedServerBuildId: serverBuildId,
+        ...(this.ptyConsumerOwnerState
+          ? {
+              resume: {
+                ownerGeneration: this.ptyConsumerOwnerState.ownerGeneration,
+                ownerLease: this.ptyConsumerOwnerState.ownerLease
+              }
+            }
+          : {})
+      })
+
       await mux.request('session.resolveHome', { path: '~' })
 
       const registered = await this.registerProviders(mux, ownsAttempt)
@@ -350,8 +379,16 @@ export class SshRelaySession {
     this.teardownProviders('connection_lost')
 
     try {
-      const { transport, remoteHome, remoteRelayDir, nodePath, sockPath, hostPlatform } =
-        await deployAndLaunchRelay(conn, undefined, graceTimeSeconds, this.targetId)
+      const {
+        transport,
+        serverBuildId,
+        remoteHome,
+        remoteRelayDir,
+        nodePath,
+        sockPath,
+        credentialFile,
+        hostPlatform
+      } = await deployAndLaunchRelay(conn, undefined, graceTimeSeconds, this.targetId)
       this.hostPlatform = hostPlatform ?? null
       this.remoteCliBridgeEnv =
         remoteHome && remoteRelayDir && nodePath && sockPath && hostPlatform
@@ -361,6 +398,7 @@ export class SshRelaySession {
               relayDir: remoteRelayDir,
               nodePath,
               sockPath,
+              ...(credentialFile ? { credentialFile } : {}),
               hostPlatform,
               pathDelimiter: hostPlatform.pathDelimiter
             }
@@ -381,7 +419,25 @@ export class SshRelaySession {
         !abortController.signal.aborted &&
         !this.isDisposed()
 
-      // Why: same health check as establish() — round-trip the relay before registering providers so a dead --connect bridge fails fast.
+      this.ptyConsumerOwnerState = await openSshPtyConsumerSession(mux, {
+        clientInstanceId: this.ptyConsumerClientInstanceId,
+        expectedServerBuildId: serverBuildId,
+        ...(this.ptyConsumerOwnerState
+          ? {
+              resume: {
+                ownerGeneration: this.ptyConsumerOwnerState.ownerGeneration,
+                ownerLease: this.ptyConsumerOwnerState.ownerLease
+              }
+            }
+          : {})
+      })
+      if (!ownsAttempt()) {
+        if (!mux.isDisposed()) {
+          mux.dispose()
+        }
+        return
+      }
+
       await mux.request('session.resolveHome', { path: '~' })
       if (!ownsAttempt()) {
         if (!mux.isDisposed()) {
@@ -541,6 +597,24 @@ export class SshRelaySession {
       this.remoteCliBridgeEnv ?? undefined,
       providerGeneration
     )
+    const consumerOwnerState = this.ptyConsumerOwnerState
+    if (consumerOwnerState) {
+      ptyProvider.setPtyDeliveryPauseAdapter?.(({ id, providerGeneration: generation, paused }) => {
+        if (
+          generation !== providerGeneration ||
+          this.activePtyProviderGeneration !== providerGeneration ||
+          this.mux !== mux
+        ) {
+          return
+        }
+        mux.notify('pty.setDeliveryPaused', {
+          id,
+          paused,
+          clientGeneration: consumerOwnerState.clientGeneration,
+          ownerGeneration: consumerOwnerState.ownerGeneration
+        })
+      })
+    }
     this.activePtyProviderGeneration = providerGeneration
     registerSshPtyProvider(this.targetId, ptyProvider)
 

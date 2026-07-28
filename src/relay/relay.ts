@@ -10,7 +10,7 @@
 
 import { createServer, createConnection, type Socket, type Server } from 'node:net'
 import { join } from 'node:path'
-import { unlinkSync, existsSync, statSync } from 'node:fs'
+import { unlinkSync, existsSync, statSync, readFileSync, chmodSync } from 'node:fs'
 import {
   RELAY_SENTINEL,
   FrameDecoder,
@@ -54,6 +54,7 @@ import { shouldReadRemoteCliStdin } from './remote-cli-stdin'
 import { registerManagedHookInstaller } from './managed-hook-installer'
 import { registerRelayPluginHostCallHandlers } from './plugin-host-call-handler'
 import { DispatcherClientWriter } from './dispatcher-client-writer'
+import { SshPtyConsumerSessionAdapter } from './ssh-pty-consumer-session-adapter'
 
 const DEFAULT_GRACE_MS = DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS * 1000
 const SOCK_NAME = 'relay.sock'
@@ -107,6 +108,7 @@ function parseArgs(argv: string[]): {
   sockPath: string
   endpointDir?: string
   logFile?: string
+  credentialFile?: string
 } {
   let graceTimeMs = DEFAULT_GRACE_MS
   let connectMode = false
@@ -115,6 +117,7 @@ function parseArgs(argv: string[]): {
   let sockPath = ''
   let endpointDir: string | undefined
   let logFile: string | undefined
+  let credentialFile: string | undefined
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--grace-time' && argv[i + 1]) {
       const parsed = Number.parseInt(argv[i + 1], 10)
@@ -138,18 +141,44 @@ function parseArgs(argv: string[]): {
     } else if (argv[i] === '--log-file' && argv[i + 1]) {
       logFile = argv[i + 1]
       i++
+    } else if (argv[i] === '--credential-file' && argv[i + 1]) {
+      credentialFile = argv[i + 1]
+      i++
     }
   }
   if (!sockPath) {
     sockPath = join(process.cwd(), SOCK_NAME)
   }
-  return { graceTimeMs, connectMode, detached, cliMode, sockPath, endpointDir, logFile }
+  return {
+    graceTimeMs,
+    connectMode,
+    detached,
+    cliMode,
+    sockPath,
+    endpointDir,
+    logFile,
+    credentialFile
+  }
+}
+
+function readEndpointCredential(credentialFile: string | undefined): string | undefined {
+  if (!credentialFile) {
+    return undefined
+  }
+  const credential = readFileSync(credentialFile, 'utf8').trim()
+  if (!/^[A-Za-z0-9_-]{32,256}$/.test(credential)) {
+    throw new Error('Relay endpoint credential is missing or invalid')
+  }
+  if (process.platform !== 'win32') {
+    chmodSync(credentialFile, 0o600)
+  }
+  return credential
 }
 
 // ── Connect mode ─────────────────────────────────────────────────────
 // Why: --connect bridges a new SSH channel's stdin/stdout to the existing relay's socket so the client keeps talking to the process that owns the live PTYs.
 
-function runConnectMode(sockPath: string): void {
+function runConnectMode(sockPath: string, endpointCredential?: string): void {
   const myVersion = readLaunchVersion()
   const sock = createConnection({ path: sockPath })
   const stdoutWriter = new DispatcherClientWriter(
@@ -180,48 +209,53 @@ function runConnectMode(sockPath: string): void {
 
   sock.on('connect', () => {
     clearTimeout(connectTimeout)
-    runConnectHandshake(sock, myVersion, {
-      onAccepted: (leftover: Buffer) => {
-        stdoutWriter.enqueue('control', () => Buffer.from(RELAY_SENTINEL), RELAY_SENTINEL.length)
-        if (leftover.length > 0) {
-          stdoutWriter.enqueue('control', () => leftover, leftover.length)
-        }
-        process.stdin.pipe(sock)
-        sock.on('data', (data: Buffer) => {
-          sock.pause()
-          let offset = 0
-          const writeNext = (): void => {
-            if (offset >= data.length) {
-              sock.resume()
-              return
-            }
-            const bytes = Math.min(stdoutWriter.producerFrameCapacity, data.length - offset)
-            if (bytes <= 0) {
-              stdoutWriter.close(new Error('Relay stdout has no producer capacity'))
-              return
-            }
-            const chunk = data.subarray(offset, offset + bytes)
-            if (
-              !stdoutWriter.enqueue(
-                'ordinary',
-                () => chunk,
-                chunk.length,
-                (result) => {
-                  if (!result.ok) {
-                    return
-                  }
-                  offset += bytes
-                  writeNext()
-                }
-              )
-            ) {
-              stdoutWriter.close(new Error('Relay stdout bridge capacity exceeded'))
-            }
+    runConnectHandshake(
+      sock,
+      myVersion,
+      {
+        onAccepted: (leftover: Buffer) => {
+          stdoutWriter.enqueue('control', () => Buffer.from(RELAY_SENTINEL), RELAY_SENTINEL.length)
+          if (leftover.length > 0) {
+            stdoutWriter.enqueue('control', () => leftover, leftover.length)
           }
-          writeNext()
-        })
-      }
-    })
+          process.stdin.pipe(sock)
+          sock.on('data', (data: Buffer) => {
+            sock.pause()
+            let offset = 0
+            const writeNext = (): void => {
+              if (offset >= data.length) {
+                sock.resume()
+                return
+              }
+              const bytes = Math.min(stdoutWriter.producerFrameCapacity, data.length - offset)
+              if (bytes <= 0) {
+                stdoutWriter.close(new Error('Relay stdout has no producer capacity'))
+                return
+              }
+              const chunk = data.subarray(offset, offset + bytes)
+              if (
+                !stdoutWriter.enqueue(
+                  'ordinary',
+                  () => chunk,
+                  chunk.length,
+                  (result) => {
+                    if (!result.ok) {
+                      return
+                    }
+                    offset += bytes
+                    writeNext()
+                  }
+                )
+              ) {
+                stdoutWriter.close(new Error('Relay stdout bridge capacity exceeded'))
+              }
+            }
+            writeNext()
+          })
+        }
+      },
+      endpointCredential
+    )
   })
 
   // Why: Node swallows EPIPE on stdout, so the bridge would zombie and drop frames; exit on stdout error so the relay enters grace promptly.
@@ -241,7 +275,11 @@ function runConnectMode(sockPath: string): void {
   })
 }
 
-async function runOrcaCliMode(sockPath: string, argv: string[]): Promise<void> {
+async function runOrcaCliMode(
+  sockPath: string,
+  argv: string[],
+  endpointCredential?: string
+): Promise<void> {
   const myVersion = readLaunchVersion()
   const stdin = shouldReadRemoteCliStdin(argv) ? await readOrcaCliStdin() : undefined
   const sock = createConnection({ path: sockPath })
@@ -335,17 +373,22 @@ async function runOrcaCliMode(sockPath: string, argv: string[]): Promise<void> {
 
   sock.on('connect', () => {
     clearTimeout(connectTimeout)
-    runConnectHandshake(sock, myVersion, {
-      onAccepted: (leftover) => {
-        if (leftover.length > 0) {
-          decoder.feed(leftover)
+    runConnectHandshake(
+      sock,
+      myVersion,
+      {
+        onAccepted: (leftover) => {
+          if (leftover.length > 0) {
+            decoder.feed(leftover)
+          }
+          sock.on('data', (chunk) =>
+            decoder.feed(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+          )
+          sendRequest()
         }
-        sock.on('data', (chunk) =>
-          decoder.feed(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
-        )
-        sendRequest()
-      }
-    })
+      },
+      endpointCredential
+    )
   })
 
   sock.on('error', (err) => {
@@ -369,17 +412,29 @@ async function readOrcaCliStdin(): Promise<string | undefined> {
 // ── Normal mode ──────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  const { graceTimeMs, connectMode, detached, cliMode, sockPath, endpointDir, logFile } = parseArgs(
-    process.argv
-  )
+  const {
+    graceTimeMs,
+    connectMode,
+    detached,
+    cliMode,
+    sockPath,
+    endpointDir,
+    logFile,
+    credentialFile
+  } = parseArgs(process.argv)
+  const endpointCredential = readEndpointCredential(credentialFile)
 
   if (connectMode) {
-    runConnectMode(sockPath)
+    runConnectMode(sockPath, endpointCredential)
     return
   }
   if (cliMode) {
     const marker = process.argv.indexOf('--orca-cli')
-    await runOrcaCliMode(sockPath, marker >= 0 ? process.argv.slice(marker + 1) : [])
+    await runOrcaCliMode(
+      sockPath,
+      marker >= 0 ? process.argv.slice(marker + 1) : [],
+      endpointCredential
+    )
     return
   }
 
@@ -464,8 +519,11 @@ async function main(): Promise<void> {
         stdoutDrainWaiters.add(cb)
         return () => stdoutDrainWaiters.delete(cb)
       }
-    }
+    },
+    undefined,
+    { pauseReads: () => process.stdin.pause(), resumeReads: () => process.stdin.resume() }
   )
+  const launchVersion = readLaunchVersion()
 
   const context = new RelayContext()
 
@@ -495,6 +553,12 @@ async function main(): Promise<void> {
   })
 
   const ptyHandler = new PtyHandler(dispatcher, graceTimeMs)
+  const ptyConsumerSessionAdapter = new SshPtyConsumerSessionAdapter(
+    dispatcher,
+    launchVersion,
+    (id, paused) => ptyHandler.setConsumerDeliveryPaused(id, paused)
+  )
+  void ptyConsumerSessionAdapter
   const fsHandler = new FsHandler(dispatcher, context)
   const watchRegistry = fsHandler.getWatchRegistry()
   ptyHandler.setWorktreeRemovalCoordinator(watchRegistry)
@@ -663,7 +727,6 @@ async function main(): Promise<void> {
 
   const socketClients = new Map<Socket, number>()
   let socketServer: Server | null = null
-  const launchVersion = readLaunchVersion()
   const startedAt = Date.now()
   let acceptedSocketConnections = 0
   let hasAcceptedSocketClient = false
@@ -748,6 +811,16 @@ async function main(): Promise<void> {
           sockDrainWaiters.add(cb)
           return () => sockDrainWaiters.delete(cb)
         }
+      },
+      {
+        principal: `relay-endpoint:${launchVersion}`,
+        authenticated: endpointCredential !== undefined,
+        allowSessionOwner: endpointCredential !== undefined,
+        authenticationKind: endpointCredential ? 'endpoint-credential' : 'unproved'
+      },
+      {
+        pauseReads: () => sock.pause(),
+        resumeReads: () => sock.resume()
       }
     )
     socketClients.set(sock, clientId)
@@ -766,7 +839,11 @@ async function main(): Promise<void> {
   async function startSocketServer(): Promise<Server> {
     const server = createServer((sock) => {
       // Why: pre-dispatcher version handshake — see relay-handshake.ts.
-      setupDaemonHandshake(sock, { launchVersion, onAccepted: attachAcceptedSocket })
+      setupDaemonHandshake(sock, {
+        launchVersion,
+        endpointCredential,
+        onAccepted: attachAcceptedSocket
+      })
 
       // Why: destroy on 'end' (FIN from --connect's dying channel) so the 'close' handler fires promptly and the daemon enters grace.
       sock.on('end', () => {
