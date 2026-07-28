@@ -856,19 +856,23 @@ describe('useNativeChatLiveSession — notFound retry (#8401)', () => {
     expect(latest?.messages.map((m) => m.id)).toContain('a-early')
   })
 
-  it("still reports the loading readPhase while a live 'working' hook masks the status", async () => {
-    // `status` is not a truthful read-in-flight signal: live work outranks it.
-    // The launch-draft baseline must never be snapshotted on that empty list.
+  it('still reports the loading readPhase once live content unmasks the status', async () => {
+    // `status` is not a truthful read-in-flight signal: content landing
+    // mid-retry outranks the spinner, so status leaves 'loading' while the read
+    // is still in flight. The launch-draft baseline must never be snapshotted
+    // on that partial list, so consumers need the raw phase instead.
     vi.useFakeTimers()
-    useAppStore.setState({
-      agentStatusByPaneKey: { [PANE]: { state: 'working', stateStartedAt: 1 } as never }
-    })
     const transport = getMockTransport('env-1', { autoSnapshot: false })
     transport.readSession.mockResolvedValue({ error: 'No transcript found', notFound: true })
 
     await render({ paneKey: PANE, agent: AGENT, sessionId: SESSION, runtimeEnvironmentId: 'env-1' })
 
-    expect(latest?.status).toBe('working')
+    // The user's own turn arrives on the watcher before the read settles.
+    await act(async () => {
+      transport.emit({ type: 'appended', messages: [user('u-live', 'hi')] })
+    })
+
+    expect(latest?.status).not.toBe('loading')
     expect(latest?.readPhase).toBe('loading')
   })
 
