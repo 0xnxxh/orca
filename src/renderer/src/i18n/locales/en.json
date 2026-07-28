@@ -14304,7 +14304,7 @@
       "label": "Filter",
       "project": "Project",
       "workspaceStatus": "Workspace status",
-      "reviewStatus": "Review status",
+      "reviewStatus": "PR / MR status",
       "clearAll": "Clear all filters"
     },
     "search": {

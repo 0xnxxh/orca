@@ -254,7 +254,7 @@ export function AgentDashboardToolbar({
             })}
             <DropdownMenuSeparator />
             <DropdownMenuLabel>
-              {translate('dashboardPopout.filters.reviewStatus', 'Review status')}
+              {translate('dashboardPopout.filters.reviewStatus', 'PR / MR status')}
             </DropdownMenuLabel>
             {REVIEW_OPTIONS.map((option) => (
               <DropdownMenuCheckboxItem

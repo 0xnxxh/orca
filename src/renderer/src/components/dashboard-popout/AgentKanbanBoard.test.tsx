@@ -185,6 +185,7 @@ describe('AgentKanbanBoard', () => {
 
     expect(await screen.findByText('Repo One')).toBeInTheDocument()
     expect(screen.getByText('Planned')).toBeInTheDocument()
+    expect(screen.getByText('PR / MR status')).toBeInTheDocument()
   })
 
   it('orders cards in a column by most recent bucket entry first', () => {
