@@ -8,7 +8,11 @@ vi.mock('../memory/pty-registry', () => ({
   listRegisteredPtys: listRegisteredPtysMock
 }))
 
-import { killAllProcessesForWorktree, WORKTREE_PROCESS_SWEEP_TIMEOUT_MS } from './worktree-teardown'
+import {
+  killAllProcessesForWorktree,
+  WORKTREE_PROCESS_SWEEP_TIMEOUT_MS,
+  WORKTREE_TEARDOWN_RPC_MARGIN_MS
+} from './worktree-teardown'
 import type { IPtyProvider, PtyProcessInfo } from '../providers/types'
 import { DaemonPtyAdapter } from '../daemon/daemon-pty-adapter'
 
@@ -601,6 +605,55 @@ describe('killAllProcessesForWorktree', () => {
 
       await failure
       expect(localProvider.shutdown).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // Why (#10484 fallout, measured on native Windows): the daemon's agent-kill path
+  // runs a whole-process-table identity query (0.7-3.6s observed) plus a forced
+  // tree kill (0.7-3.0s observed) per teardown burst, so the kill RPC can exhaust
+  // its bound after the PTY has already died. The recheck that exists to absolve
+  // that PTY (#10106) then inherits only the leftover margin, and a daemon
+  // round-trip that outlives it is scored as "still running" — failing a delete
+  // whose processes are all gone.
+  it('does not fail destructive teardown when the physical-exit recheck outlives the reserved RPC margin', async () => {
+    vi.useFakeTimers()
+    try {
+      const sessionId = 'w1@@abcd1234'
+      // The daemon really did kill the PTY; only its acknowledgement was late.
+      let ptyAlive = true
+      const RECHECK_RPC_MS = WORKTREE_TEARDOWN_RPC_MARGIN_MS + 400
+
+      const localProvider = createProviderStub(async () => {
+        await new Promise((resolve) => setTimeout(resolve, RECHECK_RPC_MS))
+        return ptyAlive ? [{ id: sessionId, cwd: '/tmp/w1', title: 'shell' }] : []
+      })
+      ;(localProvider.shutdown as ReturnType<typeof vi.fn>).mockImplementation(
+        async (_id: string, opts: { deadlineMs?: number }) => {
+          // Model the adapter's bounded kill RPC: it rejects exactly at the RPC
+          // deadline, having already terminated the process.
+          await new Promise((resolve) =>
+            setTimeout(resolve, Math.max(1, (opts?.deadlineMs ?? 0) - Date.now()))
+          )
+          ptyAlive = false
+          throw new Error('Request kill timed out')
+        }
+      )
+      listRegisteredPtysMock.mockReturnValue([])
+
+      const teardown = killAllProcessesForWorktree('w1', {
+        localProvider,
+        requirePhysicalStop: true,
+        timeoutMs: WORKTREE_PROCESS_SWEEP_TIMEOUT_MS
+      })
+
+      await vi.advanceTimersByTimeAsync(WORKTREE_PROCESS_SWEEP_TIMEOUT_MS + RECHECK_RPC_MS * 3)
+
+      // The PTY is provably gone, so the sweep must not report a stop failure.
+      await expect(teardown).resolves.toMatchObject({ providerStopped: 0 })
+      // The recheck must actually have asked, not been cut off before it could.
+      expect(localProvider.listProcesses).toHaveBeenCalledTimes(2)
     } finally {
       vi.useRealTimers()
     }

@@ -30,6 +30,16 @@ export const WORKTREE_PROCESS_SWEEP_TIMEOUT_MS = 10_000
 // failure actually left a live PTY before the outer sweep deadline.
 export const WORKTREE_TEARDOWN_RPC_MARGIN_MS = 500
 
+// Why: the recheck below is a provider round-trip, and scoping it to whatever is
+// left of the sweep deadline starves it exactly when it is needed. A Windows
+// agent kill spends seconds in the root-identity process query plus the tree
+// kill (0.7-3.6s and 0.7-3.0s measured on a loaded host), so the stop RPC can
+// exhaust its bound after the process already died — leaving the recheck less
+// than one round-trip, resolving it "cannot tell", and failing a delete whose
+// PTYs are all gone. Give it a window of its own, still hard-bounded so
+// destructive removal cannot hang (#9516).
+export const WORKTREE_TEARDOWN_VERIFY_BUDGET_MS = 3_000
+
 // Absolute deadline (epoch ms) threaded into provider RPCs on the destructive
 // path; each RPC leaf converts it to the remaining time when it actually issues,
 // so sequential RPCs share one budget without any relative-timeout bookkeeping.
@@ -152,8 +162,7 @@ export async function killAllProcessesForWorktree(
     )
     const failedPtyIds = stopResults.filter(([, stopped]) => !stopped).map(([ptyId]) => ptyId)
     const failedPtysExited =
-      failedPtyIds.length === 0 ||
-      (await verifyFailedPtysExited(failedPtyIds, deps.localProvider, deadline))
+      failedPtyIds.length === 0 || (await verifyFailedPtysExited(failedPtyIds, deps.localProvider))
     if (!failedPtysExited) {
       throw new Error(`Failed to physically stop every PTY for worktree: ${worktreeId}`)
     }
@@ -167,13 +176,15 @@ export async function killAllProcessesForWorktree(
 
 async function verifyFailedPtysExited(
   failedPtyIds: readonly string[],
-  provider: IPtyProvider,
-  deadline: number
+  provider: IPtyProvider
 ): Promise<boolean> {
+  // Why: measured from here, not from the sweep deadline the stop phase just
+  // consumed — a recheck with no budget left cannot absolve an already-dead PTY.
+  const verifyDeadline = Date.now() + WORKTREE_TEARDOWN_VERIFY_BUDGET_MS
   const sessions = await settleBeforeDeadline(
-    () => provider.listProcesses({ deadlineMs: deadline }),
+    () => provider.listProcesses({ deadlineMs: verifyDeadline }),
     null,
-    deadline
+    verifyDeadline
   ).catch(() => null)
   if (!sessions) {
     return false
