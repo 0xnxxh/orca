@@ -10,7 +10,7 @@ describe('browser settings search copy', () => {
     const linkRoutingEntry = getBrowserPaneSearchEntries({ isMac: true }).find(
       (entry) => entry.title === 'Link Routing'
     )
-    expect(linkRoutingEntry?.description).toBe(getBrowserLinkRoutingDescription())
+    expect(linkRoutingEntry?.description).toBe(getBrowserLinkRoutingDescription({ isMac: true }))
     expect(linkRoutingEntry?.keywords).toContain('cmd')
     expect(linkRoutingEntry?.keywords).not.toContain('ctrl')
 
@@ -24,15 +24,26 @@ describe('browser settings search copy', () => {
     const linkRoutingEntry = getBrowserPaneSearchEntries({ isMac: false }).find(
       (entry) => entry.title === 'Link Routing'
     )
-    expect(linkRoutingEntry?.description).toBe(getBrowserLinkRoutingDescription())
+    expect(linkRoutingEntry?.description).toBe(getBrowserLinkRoutingDescription({ isMac: false }))
     expect(linkRoutingEntry?.keywords).toContain('ctrl')
     expect(linkRoutingEntry?.keywords).not.toContain('cmd')
   })
 
-  // Why: the modifier can now invert, so no fixed sentence here is true in every
-  // state — the nested row owns that claim and states the live destination.
-  it('leaves the modifier claim to the nested row', () => {
-    const description = getBrowserLinkRoutingDescription()
+  // Why: shipping the opt-in must not reword this row for anyone who never enables
+  // it, so the default output has to stay byte-identical to the pre-feature copy.
+  it('keeps the pre-feature wording while inverting is off', () => {
+    expect(getBrowserLinkRoutingDescription({ isMac: true })).toBe(
+      "Open http(s) links in Orca's built-in browser — from the terminal, markdown, and the editor. ⇧⌘-click always uses your system browser."
+    )
+    expect(getBrowserLinkRoutingDescription({ isMac: false })).toContain(
+      'Shift+Ctrl+click always uses your system browser.'
+    )
+  })
+
+  // Why: "always" would be a lie once the chord can land in Orca, so the nested row
+  // takes over the claim.
+  it('drops the modifier claim once inverting is on', () => {
+    const description = getBrowserLinkRoutingDescription({ isMac: true }, true)
     expect(description).not.toContain('click')
     expect(description).not.toContain('system browser')
   })

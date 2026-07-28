@@ -16,10 +16,17 @@ function getDefaultBrowserShortcutPlatform(): BrowserShortcutPlatform {
   }
 }
 
-// Why: no fixed modifier sentence is true in every state once inverting exists, so
-// the nested row states the chord instead — it knows the live destination.
-export function getBrowserLinkRoutingDescription(): string {
-  return "Open http(s) links in Orca's built-in browser — from the terminal, markdown, and the editor."
+// Why: "always" stops being true once inverting is on, so only then does the nested
+// row take over the chord sentence — with it off this reads exactly as it always has.
+export function getBrowserLinkRoutingDescription(
+  platform: BrowserShortcutPlatform = getDefaultBrowserShortcutPlatform(),
+  modifierInverts = false
+): string {
+  const base =
+    "Open http(s) links in Orca's built-in browser — from the terminal, markdown, and the editor."
+  return modifierInverts
+    ? base
+    : `${base} ${platform.isMac ? '⇧⌘-click' : 'Shift+Ctrl+click'} always uses your system browser.`
 }
 
 export function getBrowserPaneSearchEntries(
@@ -94,7 +101,7 @@ export function getBrowserPaneSearchEntries(
     },
     {
       title: translate('auto.components.settings.browser.search.5cb082b3e3', 'Link Routing'),
-      description: getBrowserLinkRoutingDescription(),
+      description: getBrowserLinkRoutingDescription(platform),
       keywords: [
         ...translateSearchKeyword('auto.components.settings.browser.search.2d2d995c58', 'browser'),
         ...translateSearchKeyword('auto.components.settings.browser.search.44d14df30d', 'preview'),
