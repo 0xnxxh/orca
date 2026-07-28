@@ -291,7 +291,7 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
         ) : null}
 
         {rows.length > 0 ? (
-          <div className="min-w-0">
+          <div className={`min-w-0 ${isRunning ? '' : 'border-t border-border/60'}`}>
             <TooltipProvider>
               {rows.map((row) => (
                 <SkillUpdateRow key={row.group.name} group={row.group} state={row.state} />
