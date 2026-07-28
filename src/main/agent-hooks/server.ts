@@ -1986,8 +1986,14 @@ export class AgentHookServer {
         enriched.payload.state === 'working' && !claudeRosterHasWorkingSubagent(roster)
           ? 'done'
           : enriched.payload.state
+      const stateChanged = state !== enriched.payload.state
+      const reconciledAt = stateChanged
+        ? Math.max(Date.now(), enriched.receivedAt + 1)
+        : enriched.receivedAt
       this.state.lastStatusByPaneKey.set(paneKey, {
         ...enriched,
+        receivedAt: reconciledAt,
+        stateStartedAt: stateChanged ? reconciledAt : enriched.stateStartedAt,
         payload: { ...enriched.payload, state, subagents }
       })
     }

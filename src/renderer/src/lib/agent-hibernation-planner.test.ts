@@ -554,7 +554,7 @@ describe('agent sleep planner', () => {
     ).toEqual([`tab-1:${LEAF}`, `tab-1:${OTHER_LEAF}`])
   })
 
-  it('becomes eligible once a phantom subagent stops gating the pane working', () => {
+  it('restarts the idle window once a phantom subagent stops gating the pane working', () => {
     // Why: a restored subagent row holds a finished lead at 'working', which is
     // the one state hibernation never accepts — reaping it is what unlocks it.
     const gated = entry({
@@ -565,9 +565,14 @@ describe('agent sleep planner', () => {
       []
     )
 
-    const reaped = entry({ state: 'done' })
+    const reaped = entry({ state: 'done', updatedAt: NOW, stateStartedAt: NOW })
     expect(
       plannedPaneKeys(snapshot({ agentStatusByPaneKey: { [reaped.paneKey]: reaped } }))
+    ).toEqual([])
+
+    const idleReaped = entry({ state: 'done' })
+    expect(
+      plannedPaneKeys(snapshot({ agentStatusByPaneKey: { [idleReaped.paneKey]: idleReaped } }))
     ).toEqual([`tab-1:${LEAF}`])
 
     // Why: reaping only clears the child gate — a draft typed into the composer
@@ -575,8 +580,10 @@ describe('agent sleep planner', () => {
     expect(
       plannedPaneKeys(
         snapshot({
-          agentStatusByPaneKey: { [reaped.paneKey]: reaped },
-          lastTerminalInputAtByPaneKey: { [reaped.paneKey]: reaped.stateStartedAt + 1 }
+          agentStatusByPaneKey: { [idleReaped.paneKey]: idleReaped },
+          lastTerminalInputAtByPaneKey: {
+            [idleReaped.paneKey]: idleReaped.stateStartedAt + 1
+          }
         })
       )
     ).toEqual([])

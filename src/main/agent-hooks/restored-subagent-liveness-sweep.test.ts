@@ -29,6 +29,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -37,6 +38,7 @@ afterEach(() => {
  *  behind when the child's SubagentStop is lost while Orca is down. */
 async function restartWithInFlightSubagent(options?: {
   connectionId?: string
+  state?: 'working' | 'waiting'
   subagents?: AgentSubagentSnapshot[]
   additionalPaneKey?: string
 }): Promise<AgentHookServer> {
@@ -48,7 +50,7 @@ async function restartWithInFlightSubagent(options?: {
     worktreeId: 'wt-1',
     connectionId: options?.connectionId ?? null,
     payload: {
-      state: 'working',
+      state: options?.state ?? 'working',
       prompt: 'review the PR',
       agentType: 'claude',
       subagents: options?.subagents ?? [WORKING_CHILD]
@@ -61,7 +63,7 @@ async function restartWithInFlightSubagent(options?: {
       worktreeId: 'wt-1',
       connectionId: options.connectionId ?? null,
       payload: {
-        state: 'working',
+        state: options.state ?? 'working',
         prompt: 'review the PR',
         agentType: 'claude',
         subagents: options.subagents ?? [WORKING_CHILD]
@@ -112,10 +114,19 @@ describe('restored subagent liveness sweep', () => {
     const server = await restartWithInFlightSubagent()
     try {
       expect(paneStatus(server)).toEqual({ state: 'working', subagents: [WORKING_CHILD] })
+      const previous = server.getStatusSnapshotForPane(PANE)[0]
+      const previousReceivedAt = previous?.receivedAt ?? 0
+      const reconciledAt = previousReceivedAt + 1
+      const now = vi.spyOn(Date, 'now').mockReturnValue(previousReceivedAt)
 
       expect(await sweepWith(server, { persistedPtyIdByPaneKey: { [PANE]: PTY } })).toBe(1)
 
       expect(paneStatus(server)).toEqual({ state: 'done', subagents: undefined })
+      expect(server.getStatusSnapshotForPane(PANE)[0]).toMatchObject({
+        receivedAt: reconciledAt,
+        stateStartedAt: reconciledAt
+      })
+      now.mockRestore()
     } finally {
       server.stop()
     }
@@ -132,6 +143,24 @@ describe('restored subagent liveness sweep', () => {
       ).toBe(0)
 
       expect(paneStatus(server)).toEqual({ state: 'working', subagents: [WORKING_CHILD] })
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('preserves timing when reaping rows does not change the lead state', async () => {
+    const server = await restartWithInFlightSubagent({ state: 'waiting' })
+    try {
+      const previous = server.getStatusSnapshotForPane(PANE)[0]
+
+      expect(await sweepWith(server, { persistedPtyIdByPaneKey: { [PANE]: PTY } })).toBe(1)
+
+      expect(server.getStatusSnapshotForPane(PANE)[0]).toMatchObject({
+        state: 'waiting',
+        subagents: undefined,
+        receivedAt: previous?.receivedAt,
+        stateStartedAt: previous?.stateStartedAt
+      })
     } finally {
       server.stop()
     }
