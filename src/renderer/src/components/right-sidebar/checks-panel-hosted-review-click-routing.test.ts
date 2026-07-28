@@ -82,6 +82,17 @@ describe('checks panel hosted review modifier hint destination', () => {
     )
   })
 
+  // Why: inverting is inert while links already open in Orca — both meanings of the
+  // modifier land on the system browser, so checking inverts first would misname it.
+  it('names the system browser when inverting is on and links already open in Orca', () => {
+    expect(
+      resolveChecksPanelHostedReviewModifierDestination(
+        { openLinksInApp: true, openLinksInAppModifierInverts: true },
+        true
+      )
+    ).toBe('system-browser')
+  })
+
   // Why: this is the gesture the invert setting adds — without it the hint stays hidden
   // and the only way to reach Orca from this button is undiscoverable.
   it('names Orca when inverting is on and links open externally', () => {
