@@ -3,7 +3,11 @@ import { existsSync, statSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import os from 'node:os'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, type Tray } from 'electron'
-import { initTccPromptNotice, stopTccPromptNotice } from './macos-tcc-prompt-notice'
+import {
+  initTccPromptNotice,
+  stopTccPromptNotice,
+  stopTccPromptNoticeForQuit
+} from './macos-tcc-prompt-notice'
 import { electronApp, is } from '@electron-toolkit/utils'
 import {
   Store,
@@ -2743,9 +2747,9 @@ app.whenReady().then(async () => {
 // Why: app.exit() skips Electron quit events, so keep its log child from surviving forced exits.
 process.once('exit', stopTccPromptNotice)
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   // Why: `log stream` ignores a closed stdout, so it outlives quit unless killed here.
-  stopTccPromptNotice()
+  stopTccPromptNoticeForQuit(event, () => mainWindow)
   if (isQuittingForUpdate()) {
     recordUpdaterLifecycle('before_quit_allowed', undefined, {
       message: 'before-quit allowed for update install'
