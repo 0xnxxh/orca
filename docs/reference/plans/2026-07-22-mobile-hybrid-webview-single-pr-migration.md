@@ -709,9 +709,15 @@ unchanged Paste, and required only the shell-owned host path in the terminal.
 The 411-byte Photos encoding matched decoded RGBA SHA-256
 `a2773eaed936229595e49669b8705cb179a6a004a48a4d8304d6ee2710ab26b9`;
 filename, path, digest, encoded prefix, and `data:image/` stayed out of page
-state. Permission revocation after a grant, background interruption, and
-physical-device evidence remain open. Camera is currently owned by the native
-QR-pairing route; the existing attachment UI has no camera action to migrate.
+state. A later focused gate granted Photos, opened and cancelled the real
+picker, revoked the grant, and recovered from both iOS process terminations
+through the native Settings handoff. Each recovery retained the same semantic
+Session/workspace while rotating the private origin and opaque workspace
+authority. Revoked Attach showed the existing denial toast, terminal output
+stayed unchanged, no privileged page marker appeared, and both isolation probes
+passed. Background interruption and physical-device evidence remain open.
+Camera is currently owned by the native QR-pairing route; the existing
+attachment UI has no camera action to migrate.
 
 The following persistence checkpoint leaves the existing native-chat composer
 unchanged and injects `HostSessionChatDraftOperations` below it. Native and
@@ -1015,11 +1021,14 @@ passes without upload, terminal mutation, or a hosted page-text marker. Selected
 document upload now also passes through unchanged Attach and the real Files
 picker: a 123-byte fixture reaches a shell-owned host temp path with matching
 SHA-256 and no filename, bytes, digest, or path in page state. Permission
-revocation after a grant and physical-device evidence remain. Clipboard-image
-paste also passes on iPhone Simulator with Photos-owned copy, real paste
-privacy, decoded-pixel identity, terminal-only path injection, and no
-privileged page marker. Camera remains in native QR pairing rather than the
-unchanged attachment UI. On the Pixel 9 Pro API
+revocation after a grant now also passes across the two iOS process
+terminations, preserving semantic route identity while rotating private origin
+and opaque authority and retaining denial plus terminal/page/network/navigation
+isolation. Physical-device evidence remains. Clipboard-image paste also passes
+on iPhone Simulator with Photos-owned copy, real paste privacy, decoded-pixel
+identity, terminal-only path injection, and no privileged page marker. Camera
+remains in native QR pairing rather than the unchanged attachment UI. On the
+Pixel 9 Pro API
 36 emulator, the unchanged Attach control opens Android's real Photos picker.
 Backgrounding through Home and returning to Orca cancels the pending picker,
 retains the exact hosted session, and exposes no selected path or bytes to the

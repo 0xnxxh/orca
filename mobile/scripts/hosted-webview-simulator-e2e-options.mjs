@@ -1,7 +1,7 @@
 import process from 'node:process'
 
 const usage =
-  'Usage: node scripts/run-hosted-webview-simulator-e2e.mjs [--device <name|udid>] [--timeout-ms <ms>] [--accounts-only] [--security-only] [--clipboard-image-only] [--files-preview-only] [--native-settings-only] [--source-control-only] [--skip-native-build]'
+  'Usage: node scripts/run-hosted-webview-simulator-e2e.mjs [--device <name|udid>] [--timeout-ms <ms>] [--accounts-only] [--security-only] [--clipboard-image-only] [--photos-revocation-only] [--files-preview-only] [--native-settings-only] [--source-control-only] [--skip-native-build]'
 
 export function parseHostedWebViewSimulatorE2eOptions(args) {
   const parsed = {
@@ -10,6 +10,7 @@ export function parseHostedWebViewSimulatorE2eOptions(args) {
     device: 'iPhone 17 Pro',
     filesPreviewOnly: false,
     nativeSettingsOnly: false,
+    photosRevocationOnly: false,
     securityOnly: false,
     skipNativeBuild: false,
     sourceControlOnly: false,
@@ -28,6 +29,8 @@ export function parseHostedWebViewSimulatorE2eOptions(args) {
       parsed.securityOnly = true
     } else if (args[index] === '--clipboard-image-only') {
       parsed.clipboardImageOnly = true
+    } else if (args[index] === '--photos-revocation-only') {
+      parsed.photosRevocationOnly = true
     } else if (args[index] === '--files-preview-only') {
       parsed.filesPreviewOnly = true
     } else if (args[index] === '--native-settings-only') {
@@ -53,11 +56,12 @@ export function parseHostedWebViewSimulatorE2eOptions(args) {
       parsed.securityOnly,
       parsed.filesPreviewOnly,
       parsed.nativeSettingsOnly,
+      parsed.photosRevocationOnly,
       parsed.sourceControlOnly
     ].filter(Boolean).length > 1
   ) {
     throw new Error('Focused journey options are mutually exclusive')
   }
-  parsed.securityOnly ||= parsed.clipboardImageOnly
+  parsed.securityOnly ||= parsed.clipboardImageOnly || parsed.photosRevocationOnly
   return parsed
 }

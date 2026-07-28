@@ -234,7 +234,7 @@ async function main() {
       ? await evidenceStep('hosted terminal device input journey', () =>
           verifyHostedIosTerminalInputJourney(
             { ...securityJourney, expectedWorkspace, workspaceDocument },
-            options.clipboardImageOnly
+            options
           )
         )
       : null
@@ -379,7 +379,9 @@ async function main() {
           })
     const securityDocument =
       options.securityOnly && terminalDeviceInput
-        ? terminalDeviceInput.terminalClipboardImagePaste.sessionDocument
+        ? (terminalDeviceInput.terminalClipboardImagePaste?.sessionDocument ??
+          terminalDeviceInput.photoPermissionRevocation?.sessionDocument ??
+          terminalDeviceInput.terminalClipboardPaste.sessionDocument)
         : options.accountsOnly || options.filesPreviewOnly
           ? parityWorkspaceDocument
           : await waitForVisibleHostedWebView({
@@ -421,8 +423,10 @@ async function main() {
           nativeOnboarding,
           documentUpload: terminalDeviceInput?.documentUpload?.evidence ?? null,
           photoPermissionDenial: terminalDeviceInput?.photoPermissionDenial?.evidence ?? null,
+          photoPermissionRevocation:
+            terminalDeviceInput?.photoPermissionRevocation?.evidence ?? null,
           terminalClipboardImagePaste:
-            terminalDeviceInput?.terminalClipboardImagePaste.evidence ?? null,
+            terminalDeviceInput?.terminalClipboardImagePaste?.evidence ?? null,
           terminalClipboardPaste: terminalDeviceInput?.terminalClipboardPaste.evidence ?? null,
           workspaceParity: hostedWorkspace,
           accountsParity: hostedAccounts?.evidence ?? null,

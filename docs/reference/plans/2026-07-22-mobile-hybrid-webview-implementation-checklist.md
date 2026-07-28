@@ -934,11 +934,11 @@ copy.
       accepted, cancelled, permission-denied, too-large, floating-workspace,
       and SSH cases. A selected 2,808,983-byte simulator photo reached a
       shell-owned host temp file. The exact cached app also passes real iOS
-      first-use denial without terminal output or a hosted page-text marker. Selected
-      document upload, permission revocation after a grant, interruption, and
-      physical-device evidence remain device/topology validation work. Camera
-      remains part of the existing native QR-pairing route; there is no current
-      attachment-camera action to migrate.
+      first-use denial and post-grant revocation without terminal output or a
+      hosted page-text marker. Selected document upload also passes. Interruption
+      and physical-device evidence remain device/topology validation work.
+      Camera remains part of the existing native QR-pairing route; there is no
+      current attachment-camera action to migrate.
 - [~] Implement draft and session persistence with host/build isolation.
   Native-chat drafts now hydrate, coalesce writes, flush on tab/route teardown,
   and clear after accepted delivery through a named native/web operations seam.
@@ -1349,16 +1349,21 @@ copy.
   keeps terminal output unchanged, and shows neither image data nor a temp path
   marker in hosted page text. Selected document upload now passes on iPhone
   Simulator with an independently verified 123-byte PNG and no privileged page
-  state. Permission revocation after a grant, physical-device, and exact-app
-  live native-chat image evidence remain. Camera is currently native QR pairing
-  only; the unchanged attachment UI has no camera action. On the Pixel 9 Pro API
-  36 emulator, the unchanged Attach control opens the real Android Photos
-  picker. Sending the picker to Home and bringing Orca back cancels the pending
-  operation cleanly while retaining the exact hosted session; no selected path
-  or bytes enter the page. Accepted selection also passes: the shell uploaded a
-  579-byte PNG to its own host temp path, injected only that shell-owned path
-  into the Desktop terminal, and an independent SHA-256 check matched the source
-  exactly.
+  state. The same exact app now grants Photos access, opens and cancels the real
+  picker, revokes the grant, and recovers from iOS terminating the process after
+  each permission transition. Both recoveries retain the same semantic
+  Session/workspace while rotating the private origin and opaque workspace
+  authority. Attach after revocation shows `Photo permission denied`, leaves
+  terminal output unchanged, and exposes no privileged page markers.
+  Physical-device and exact-app live native-chat image evidence remain. Camera
+  is currently native QR pairing only; the unchanged attachment UI has no
+  camera action. On the Pixel 9 Pro API 36 emulator, the unchanged Attach
+  control opens the real Android Photos picker. Sending the picker to Home and
+  bringing Orca back cancels the pending operation cleanly while retaining the
+  exact hosted session; no selected path or bytes enter the page. Accepted
+  selection also passes: the shell uploaded a 579-byte PNG to its own host temp
+  path, injected only that shell-owned path into the Desktop terminal, and an
+  independent SHA-256 check matched the source exactly.
 - [~] Implement microphone, dictation, and two-way audio lifecycle. The
   unchanged mic controls and setup drawer use a strict typed subscription and
   shell-owned speech authority. Raw PCM never enters hosted JavaScript;
@@ -1422,7 +1427,11 @@ copy.
   session and process, and permits a second recording after foreground return.
   The exact iPhone Simulator now also passes first-use Photos denial through
   the unchanged Attach control without upload, terminal mutation, or page
-  leakage. Photos revocation after a grant and physical-device behavior remain
+  leakage. It also passes post-grant Photos revocation across both iOS process
+  terminations: the native Settings handoff restores the same semantic
+  Session/workspace, private origin and opaque workspace authority rotate after
+  each restart, the existing denial toast appears, terminal output stays
+  unchanged, and both isolation probes pass. Physical-device behavior remains
   open.
 - [~] Verify every privileged native action has the intended user mediation.
   Clipboard writes, external links, settings handoff, account selection/reset,
@@ -2066,6 +2075,7 @@ copy.
 | 2026-07-27 | Android image upload    | Accepted the unchanged Attach picker, uploaded the selected PNG through shell-owned host authority, and injected its temp path into the Desktop terminal                                                                    | Passed; 579 bytes and SHA-256 `058144d94ecb1faea3a6af708ddf25e1e204a492d6011d30b38c1f95cc3933e6` matched exactly                                                                                  |
 | 2026-07-28 | iOS Photos denial       | Reset Orca's Photos permission before launch, tapped unchanged Attach, denied the real system prompt, and inspected the hosted Session plus Desktop terminal                                                                | Passed automatically on iPhone 17 Pro; existing toast appeared, terminal output stayed unchanged, no image/path marker appeared in page text, and both isolation probes passed                    |
 | 2026-07-28 | Photos denial tests     | Full mobile suite, both typechecks, mobile/RNW lint, changed-file formatting, max-lines, reliability, RNW package verification, and diff hygiene                                                                            | Passed; 564 files / 3,331 tests with 2 expected skips; focused device-input harness covers 3 files / 9 tests                                                                                      |
+| 2026-07-28 | iOS Photos revocation   | Granted Photos, cancelled the real picker, revoked Photos, and recovered the hosted route after iOS terminated the app for both transitions                                                                                 | Passed on iPhone 17 Pro; semantic Session/workspace retained, origin and opaque authority rotated twice, denial and terminal/page isolation held, and network/navigation isolation passed         |
 | 2026-07-27 | Android audio defect    | Queued 64,000 PCM bytes through the linked native module, then paused and resumed during playback                                                                                                                           | Reproduced; the original engine wrote only 8,730 bytes because a pause-induced zero write discarded the tail                                                                                      |
 | 2026-07-27 | Android audio repair    | Partial-write drain, pause gate, zero-progress retry, cancellation, and invalid-result Kotlin tests; Debug APK rebuild and Release Kotlin compile                                                                           | Passed; 75 unit-test tasks, 571 Debug assembly tasks, and 367 Release compile tasks                                                                                                               |
 | 2026-07-27 | Android audio E2E       | Reinstalled the repaired Debug APK and probed `ExpoTwoWayAudio` through the live Hermes inspector during Pause/Resume/Stop                                                                                                  | Passed; 64,000 queued bytes equaled 64,000 written bytes, peak output volume was 0.6661, and `isPlaying` was false after Stop                                                                     |
@@ -2518,4 +2528,7 @@ copy.
 | 2026-07-28 | Complete | The clipboard-image gate found no filename, temp path, pixel digest, encoded prefix, or `data:image/` marker in hosted page text. Network and navigation isolation passed. A focused `--clipboard-image-only` journey keeps this proof independent of unrelated native picker timing while the full security journey retains all stages.                                                                                                |
 | 2026-07-28 | Finding  | The iPhone 17 Pro Max accessibility export omitted unchanged Attach while still exposing its adjacent mic in the chained journey. Clipboard-image copy itself was feasible there; the exact live proof completed on the established iPhone 17 Pro parity device. Large-device and physical VoiceOver coverage remains in the accessibility gate.                                                                                        |
 | 2026-07-28 | Complete | Clipboard-image validation passes 567 mobile files / 3,353 tests with 2 expected skips. Mobile and RNW typechecks/lints, full mobile and plan formatting, 55 reliability gates, max-lines, package verification, and diff hygiene pass. RNW remains `9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`: 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes.                                                       |
+| 2026-07-28 | Complete | Cached iPhone 17 Pro / iOS 26.5 grants Photos, opens and cancels the real picker, revokes the grant, and survives both platform process terminations through the existing native Settings handoff. The same semantic Session/workspace returns while private origin and opaque authority rotate after each restart; revoked Attach shows the existing denial toast with unchanged terminal output and no privileged page markers.       |
+| 2026-07-28 | Complete | The focused `--photos-revocation-only` journey passes network and navigation isolation after recovery. The full security journey retains the same stage, and contract coverage requires both recovery documents and optional evidence reporting to remain valid when unrelated stages are skipped.                                                                                                                                      |
+| 2026-07-28 | Complete | Photos-revocation validation passes 568 mobile files / 3,366 tests with 2 expected skips, both typechecks and lints, changed-file formatting, 55 reliability gates, max-lines, package verification, and diff hygiene. RNW remains `9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`: 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes.                                                                        |
 | 2026-07-28 | Next     | Complete the remaining parity inventory and cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                  |

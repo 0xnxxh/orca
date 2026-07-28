@@ -123,7 +123,7 @@ export async function verifyHostedIosPhotoPermissionDenial(
   }
 }
 
-function terminalJourneyPayload(snapshot) {
+export function terminalJourneyPayload(snapshot) {
   const text = snapshot.join('')
   const markerIndex = text.indexOf(CLIPBOARD_MARKER)
   return markerIndex === -1 ? text : text.slice(markerIndex)

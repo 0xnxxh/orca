@@ -59,4 +59,30 @@ describe('hosted iOS hybrid route handoff', () => {
       'Open hybrid workspace UI'
     ])
   })
+
+  it('retries a silently ignored native navigation tap', async () => {
+    const emulator = { deviceUdid: 'simulator' }
+    const waitForControl = vi.fn().mockResolvedValue({ label: 'Open settings' })
+    const tapControl = vi.fn().mockResolvedValue({ x: 0.5, y: 0.5 })
+    const waitForLabelToDisappear = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('still visible'))
+      .mockRejectedValueOnce(new Error('still visible'))
+      .mockResolvedValue(undefined)
+
+    await openHostedIosHybridRoute(
+      emulator,
+      10_000,
+      waitForControl,
+      tapControl,
+      waitForLabelToDisappear
+    )
+
+    expect(tapControl.mock.calls.map((call) => call[1])).toEqual([
+      'Open settings',
+      'Open settings',
+      'Open settings',
+      'Open hybrid workspace UI'
+    ])
+  })
 })

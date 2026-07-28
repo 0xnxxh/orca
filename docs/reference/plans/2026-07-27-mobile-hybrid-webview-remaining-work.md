@@ -134,8 +134,16 @@ to inject its temp path through the terminal stream. Independent size and
 SHA-256 checks match the source; the filename, bytes, digest, and host path are
 absent from hosted page state. The picker uses native touch plus the existing
 React Native Web responder because physical WebKit touch alone does not
-reliably dispatch the shared long-press handler on iOS 26.5. Permission
-revocation after a prior grant remains open.
+reliably dispatch the shared long-press handler on iOS 26.5.
+
+Post-grant Photos revocation now passes in a focused exact-app journey. iOS
+terminates Orca after the grant and again after revocation; the harness
+re-enters through the existing native Settings handoff and requires the same
+semantic Session/workspace after each restart. The private WebView origin and
+shell-issued opaque workspace authority rotate both times. After revocation,
+unchanged Attach shows `Photo permission denied`, Desktop terminal output stays
+unchanged, no privileged marker enters page text, and the network/navigation
+isolation probes pass.
 
 A focused exact-app iPhone 17 Pro / iOS 26.5 run now also copies the existing
 48×48 PNG through Photos, accepts the real iOS paste privacy prompt from the

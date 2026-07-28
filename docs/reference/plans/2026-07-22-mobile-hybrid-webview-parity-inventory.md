@@ -370,7 +370,7 @@ repository data is current.
 | Repeated process loss                     | Reject the failing build and recover the previous healthy generation; if none exists, remount with an explicit unavailable-recovery warning instead of a blank screen               | Recovery unit contracts exist; repeated-loss live validation remains open                                                                 |
 | Host switch, unpair, or stale route       | Revoke the prior session and streams before switching; resolve persisted workspace identity freshly; fall back to a safe host/workspace route when stale                            | Cold-resume, host-removal, broker-lifecycle, and opaque-navigation tests                                                                  |
 | Feature loading, empty, and partial data  | Preserve the existing route/component state and copy. Web adapters return bounded typed projections and must not reinterpret partial data as complete                               | Exact-source RNW route imports and focused adapter tests; deterministic native-versus-hosted fixtures remain open                         |
-| Permission denied, cancelled, or revoked  | Preserve current inline/native permission flows, return stable capability outcomes, and never expose platform permission objects or raw errors to the page                          | Real iOS Photos first-use denial and Android microphone denial pass; post-grant revocation and broader capability matrix remain open      |
+| Permission denied, cancelled, or revoked  | Preserve current inline/native permission flows, return stable capability outcomes, and never expose platform permission objects or raw errors to the page                          | Real iOS Photos denial/revocation and Android microphone denial/revocation pass; broader capability matrix remains open                   |
 | Operation-specific failure                | Preserve the existing surface’s inline/toast/retry behavior while mapping raw Desktop/native errors to stable bridge errors                                                         | Stable error schemas and multiple route adapter tests; full per-surface interaction matrix remains open                                   |
 
 ## Accessibility and Input Inventory
@@ -425,8 +425,12 @@ injects only the shell-owned host path into the terminal, and independently
 matches the 411-byte result's decoded RGBA SHA-256
 `a2773eaed936229595e49669b8705cb179a6a004a48a4d8304d6ee2710ab26b9`.
 No filename, path, pixel digest, encoded prefix, or `data:image/` marker reaches
-hosted page text. Post-grant revocation, interruption, and physical-device
-evidence remain open.
+hosted page text. A focused exact-app gate now grants and revokes Photos across
+the two iOS process terminations, restores the same semantic Session/workspace
+through the native Settings handoff, rotates private origin and opaque authority
+after each restart, and preserves denial, terminal/page isolation, and both
+network/navigation probes. Interruption and physical-device evidence remain
+open.
 Camera is native QR pairing only; the existing attachment UI has no camera
 action. The live run did not observe terminal Enter execution after the photo
 upload. Long-pressing the same unchanged control opens the native iOS document
@@ -554,10 +558,9 @@ a protocol-compatible local cell. The UX-state and accessibility/input
 ownership inventories are now frozen, including accurate incompatible-build
 fallback copy and shell alert/live-region semantics. Complete live
 waiting/loading/error, ambiguous-delivery, file-opening, production cloud Relay
-with realistic latency/reconnect. Complete post-grant revocation, interruption,
-and physical-device attachment evidence after the
-selected-photo, selected-document, and first-use denial paths proven on iOS
-Simulator.
+with realistic latency/reconnect. Complete interruption and physical-device
+attachment evidence after the selected-photo, selected-document, first-use
+denial, and post-grant revocation paths proven on iOS Simulator.
 Keep camera validation scoped to the existing native QR-pairing route rather
 than inventing an attachment action. Add
 deterministic native-versus-hosted Tasks and session fixtures beyond the

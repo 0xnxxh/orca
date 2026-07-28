@@ -4,7 +4,8 @@ const mocks = vi.hoisted(() => ({
   verifyClipboardImagePaste: vi.fn(),
   verifyDocumentUpload: vi.fn(),
   verifyClipboardPaste: vi.fn(),
-  verifyPhotoDenial: vi.fn()
+  verifyPhotoDenial: vi.fn(),
+  verifyPhotoRevocation: vi.fn()
 }))
 
 vi.mock('../../scripts/hosted-ios-document-upload.mjs', () => ({
@@ -18,6 +19,9 @@ vi.mock('../../scripts/hosted-ios-terminal-clipboard-image-paste.mjs', () => ({
 }))
 vi.mock('../../scripts/hosted-ios-photo-permission-denial.mjs', () => ({
   verifyHostedIosPhotoPermissionDenial: mocks.verifyPhotoDenial
+}))
+vi.mock('../../scripts/hosted-ios-photo-permission-revocation.mjs', () => ({
+  verifyHostedIosPhotoPermissionRevocation: mocks.verifyPhotoRevocation
 }))
 
 import {
@@ -51,6 +55,10 @@ describe('hosted iOS terminal device-input journey', () => {
       evidence: { toast: 'Photo permission denied' },
       sessionDocument: { href: 'session-after-photo-denial' }
     }
+    const photoPermissionRevocation = {
+      evidence: { permissionState: 'revoked-after-grant' },
+      sessionDocument: { href: 'session-after-photo-revocation' }
+    }
     const documentUpload = {
       evidence: { terminalPathInjected: true },
       sessionDocument: { href: 'session-after-document-upload' }
@@ -62,6 +70,7 @@ describe('hosted iOS terminal device-input journey', () => {
     mocks.verifyClipboardPaste.mockResolvedValue(terminalClipboardPaste)
     mocks.verifyClipboardImagePaste.mockResolvedValue(terminalClipboardImagePaste)
     mocks.verifyPhotoDenial.mockResolvedValue(photoPermissionDenial)
+    mocks.verifyPhotoRevocation.mockResolvedValue(photoPermissionRevocation)
     mocks.verifyDocumentUpload.mockResolvedValue(documentUpload)
 
     await expect(
@@ -72,6 +81,7 @@ describe('hosted iOS terminal device-input journey', () => {
     ).resolves.toEqual({
       documentUpload,
       photoPermissionDenial,
+      photoPermissionRevocation,
       terminalClipboardImagePaste,
       terminalClipboardPaste
     })
@@ -90,9 +100,14 @@ describe('hosted iOS terminal device-input journey', () => {
       sessionDocument: terminalClipboardPaste.sessionDocument,
       terminalHandle: 'terminal-handle'
     })
-    expect(mocks.verifyClipboardImagePaste).toHaveBeenCalledWith({
+    expect(mocks.verifyPhotoRevocation).toHaveBeenCalledWith({
       ...args,
       sessionDocument: photoPermissionDenial.sessionDocument,
+      terminalHandle: 'terminal-handle'
+    })
+    expect(mocks.verifyClipboardImagePaste).toHaveBeenCalledWith({
+      ...args,
+      sessionDocument: photoPermissionRevocation.sessionDocument,
       terminalHandle: 'terminal-handle'
     })
     expect(removeFixture).toHaveBeenCalledWith(documentFixture.destinationPath)
@@ -116,7 +131,9 @@ describe('hosted iOS terminal device-input journey', () => {
     mocks.verifyClipboardPaste.mockResolvedValue(terminalClipboardPaste)
     mocks.verifyClipboardImagePaste.mockResolvedValue(terminalClipboardImagePaste)
 
-    await expect(verifyHostedIosTerminalInputJourney(args, true)).resolves.toEqual({
+    await expect(
+      verifyHostedIosTerminalInputJourney(args, { clipboardImageOnly: true })
+    ).resolves.toEqual({
       terminalClipboardImagePaste,
       terminalClipboardPaste
     })
@@ -127,5 +144,40 @@ describe('hosted iOS terminal device-input journey', () => {
     })
     expect(mocks.verifyDocumentUpload).not.toHaveBeenCalled()
     expect(mocks.verifyPhotoDenial).not.toHaveBeenCalled()
+    expect(mocks.verifyPhotoRevocation).not.toHaveBeenCalled()
+  })
+
+  it('runs Photos revocation without unrelated picker stages', async () => {
+    const args = {
+      deviceUdid: 'simulator',
+      emulator: {},
+      worktree: '/repo/mobile-rearch',
+      workspaceDocument: { href: 'workspace' }
+    }
+    const terminalClipboardPaste = {
+      evidence: { terminalHandle: 'terminal-handle' },
+      sessionDocument: { href: 'session' }
+    }
+    const photoPermissionRevocation = {
+      evidence: { permissionState: 'revoked-after-grant' },
+      sessionDocument: { href: 'session-after-photo-revocation' }
+    }
+    mocks.verifyClipboardPaste.mockResolvedValue(terminalClipboardPaste)
+    mocks.verifyPhotoRevocation.mockResolvedValue(photoPermissionRevocation)
+
+    await expect(
+      verifyHostedIosTerminalInputJourney(args, { photosRevocationOnly: true })
+    ).resolves.toEqual({
+      photoPermissionRevocation,
+      terminalClipboardPaste
+    })
+    expect(mocks.verifyPhotoRevocation).toHaveBeenCalledWith({
+      ...args,
+      sessionDocument: terminalClipboardPaste.sessionDocument,
+      terminalHandle: 'terminal-handle'
+    })
+    expect(mocks.verifyDocumentUpload).not.toHaveBeenCalled()
+    expect(mocks.verifyPhotoDenial).not.toHaveBeenCalled()
+    expect(mocks.verifyClipboardImagePaste).not.toHaveBeenCalled()
   })
 })

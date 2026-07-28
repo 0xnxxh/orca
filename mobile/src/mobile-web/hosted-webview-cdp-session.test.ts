@@ -519,6 +519,12 @@ describe('hosted WebView CDP target selection', () => {
     expect(simulatorHarnessSource).toContain(
       "await evidenceStep('hosted terminal device input journey'"
     )
+    expect(simulatorHarnessSource).toContain(
+      'terminalDeviceInput.photoPermissionRevocation?.sessionDocument'
+    )
+    expect(simulatorHarnessSource).toContain(
+      'terminalDeviceInput?.terminalClipboardImagePaste?.evidence'
+    )
     expect(simulatorHarnessSource).toContain("await evidenceStep('Photos permission reset'")
     expect(simulatorHarnessSource).toContain('await clearHostedIosWebViewSecurityProbe(deviceUdid)')
     expect(simulatorAppBuildSource).toContain("'xcodebuild'")

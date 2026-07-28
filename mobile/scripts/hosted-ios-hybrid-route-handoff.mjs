@@ -24,13 +24,44 @@ export async function openHostedIosHybridRoute(
   for (let transition = 0; transition < NATIVE_ROUTE_CONTROLS.length; transition += 1) {
     const remainingMs = Math.max(1_000, deadline - Date.now())
     const control = await waitForControl(emulator, NATIVE_ROUTE_CONTROLS, remainingMs)
-    await tapControl(emulator, control.label, remainingMs)
-    await waitForLabelToDisappear(emulator, control.label, remainingMs)
+    await tapUntilControlLeaves(
+      emulator,
+      control.label,
+      deadline,
+      tapControl,
+      waitForLabelToDisappear
+    )
     if (control.label === 'Open settings') {
-      await tapControl(emulator, 'Open hybrid workspace UI', remainingMs)
-      await waitForLabelToDisappear(emulator, 'Open hybrid workspace UI', remainingMs)
+      await tapUntilControlLeaves(
+        emulator,
+        'Open hybrid workspace UI',
+        deadline,
+        tapControl,
+        waitForLabelToDisappear
+      )
       return
     }
   }
   throw new Error('Could not reach native Settings before the hybrid route handoff')
+}
+
+async function tapUntilControlLeaves(
+  emulator,
+  label,
+  deadline,
+  tapControl,
+  waitForLabelToDisappear
+) {
+  let lastError = new Error(`${label} did not leave after activation`)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const remainingMs = Math.max(1_000, deadline - Date.now())
+    await tapControl(emulator, label, remainingMs)
+    try {
+      await waitForLabelToDisappear(emulator, label, Math.min(remainingMs, 5_000))
+      return
+    } catch (error) {
+      lastError = error
+    }
+  }
+  throw lastError
 }

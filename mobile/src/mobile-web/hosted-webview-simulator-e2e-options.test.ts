@@ -9,6 +9,7 @@ describe('hosted WebView simulator E2E options', () => {
       device: 'iPhone 17 Pro',
       filesPreviewOnly: false,
       nativeSettingsOnly: false,
+      photosRevocationOnly: false,
       securityOnly: false,
       skipNativeBuild: false,
       sourceControlOnly: false,
@@ -42,12 +43,22 @@ describe('hosted WebView simulator E2E options', () => {
     })
   })
 
+  it('maps the Photos revocation journey onto focused security setup', () => {
+    expect(parseHostedWebViewSimulatorE2eOptions(['--photos-revocation-only'])).toMatchObject({
+      photosRevocationOnly: true,
+      securityOnly: true
+    })
+  })
+
   it('rejects mutually exclusive focused journeys', () => {
     expect(() =>
       parseHostedWebViewSimulatorE2eOptions(['--accounts-only', '--source-control-only'])
     ).toThrow('mutually exclusive')
     expect(() =>
       parseHostedWebViewSimulatorE2eOptions(['--clipboard-image-only', '--security-only'])
+    ).toThrow('mutually exclusive')
+    expect(() =>
+      parseHostedWebViewSimulatorE2eOptions(['--clipboard-image-only', '--photos-revocation-only'])
     ).toThrow('mutually exclusive')
   })
 
