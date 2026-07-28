@@ -5665,7 +5665,7 @@
           "agentDashboard": {
             "title": "エージェント ダッシュボード",
             "description": "ワークツリーエージェントを監視するカンバンボード。ウィンドウ内またはポップアウトで表示できます。",
-            "copy": "左サイドバーにエージェント ダッシュボードのエントリを追加します。開くと、注意中・作業中・アイドルのエージェントを監視し、ライブターミナルにジャンプできます。",
+            "copy": "左サイドバーにエージェント ダッシュボードのエントリを追加します。対応が必要なエージェント、作業中のエージェント、完了したエージェントを監視し、必要に応じてアイドル状態のエージェントも表示できます。",
             "toggleLabel": "エージェント ダッシュボードの切り替え",
             "modeLabel": "開き方",
             "modeCopy": "ダッシュボードをサイドバー横のウィンドウ内ボードまたは別のポップアウトウィンドウとして表示します。",
@@ -14239,7 +14239,8 @@
       "attention": "Needs You",
       "working": "Working",
       "idle": "Idle",
-      "empty": "None"
+      "empty": "None",
+      "done": "完了"
     },
     "title": "Agents",
     "total": "{{count}} total",
@@ -14250,7 +14251,15 @@
         "minutes": "{{count}}分",
         "hours": "{{count}}時間",
         "days": "{{count}}日"
-      }
+      },
+      "review": {
+        "open": "オープン中のレビュー",
+        "draft": "下書きのレビュー",
+        "merged": "マージ済みのレビュー",
+        "closed": "クローズ済みのレビュー"
+      },
+      "subagents_one": "{{count}} 個のサブエージェント",
+      "subagents_other": "{{count}} 個のサブエージェント"
     },
     "terminal": {
       "closed": "No live terminal — this agent's pane has closed.",
@@ -14258,8 +14267,36 @@
       "close": "Close"
     },
     "close": "Close dashboard",
-    "settings": "エージェント ダッシュボード設定",
-    "settingsTooltip": "ボード設定"
+    "settingsTooltip": "ボード設定",
+    "filters": {
+      "remove": "{{label}} フィルターを削除",
+      "active": "フィルター",
+      "clear": "クリア",
+      "review": {
+        "open": "オープン",
+        "draft": "下書き",
+        "merged": "マージ済み",
+        "closed": "クローズ済み",
+        "none": "レビューなし"
+      },
+      "reviewChip": "レビュー: {{state}}",
+      "label": "フィルター",
+      "project": "プロジェクト",
+      "workspaceStatus": "ワークスペースのステータス",
+      "reviewStatus": "PR / MR ステータス",
+      "clearAll": "すべてのフィルターをクリア"
+    },
+    "search": {
+      "placeholder": "ワークツリー、プロジェクト、エージェントを検索…",
+      "label": "エージェントを検索",
+      "clear": "検索をクリア",
+      "results": "{{total}} 件中 {{shown}} 件を表示"
+    },
+    "settingsLabel": "エージェント ダッシュボード設定",
+    "settings": {
+      "showIdle": "アイドル状態のエージェントを表示",
+      "showIdleCopy": "完了を報告せずに30分間停止しているエージェントを含めます。デフォルトでは非表示です。"
+    }
   },
   "dashboard": {
     "sidebar": {
