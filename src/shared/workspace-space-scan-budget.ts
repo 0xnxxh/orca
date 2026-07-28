@@ -19,10 +19,17 @@ export type WorkspaceSpaceScanBudget = {
   limits: WorkspaceSpaceScanLimits
 }
 
+function formatLiveStateLimit(bytes: number): string {
+  const mebibytes = bytes / (1024 * 1024)
+  return mebibytes >= 1
+    ? `${Math.round(mebibytes * 10) / 10} MiB`
+    : `${bytes.toLocaleString('en-US')} bytes`
+}
+
 export class WorkspaceSpaceScanCapacityError extends Error {
-  constructor() {
+  constructor(limits: WorkspaceSpaceScanLimits) {
     super(
-      'Workspace is too large to scan safely (limit: 100,000 entries or 64 MiB of live scan state)'
+      `Workspace is too large to scan safely (limit: ${limits.maxEntries.toLocaleString('en-US')} entries or ${formatLiveStateLimit(limits.maxRetainedBytes)} of live scan state)`
     )
     this.name = 'WorkspaceSpaceScanCapacityError'
   }
@@ -62,7 +69,7 @@ export function retainWorkspaceSpaceScanEntry(
     budget.entries >= budget.limits.maxEntries ||
     retainedBytes > budget.limits.maxRetainedBytes
   ) {
-    throw new WorkspaceSpaceScanCapacityError()
+    throw new WorkspaceSpaceScanCapacityError(budget.limits)
   }
   budget.entries += 1
   budget.retainedBytes = retainedBytes

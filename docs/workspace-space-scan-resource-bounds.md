@@ -59,6 +59,15 @@ The slot is global to one Resource Manager scan, not per repository. This change
 full-tree traversal count from six to one. Cancellation rejects queued admissions and stops the
 active child process through the existing `AbortSignal`.
 
+### Remote fallback admission
+
+The desktop-side request-by-request SSH fallback runs its traversal inside the desktop main
+process, so its budget is charged against Orca's heap rather than the remote host. Repository and
+worktree concurrency alone would let six of these traversals hold six independent budgets at once.
+A second scan-wide limiter admits at most two, capping aggregate admission at 2 × 64 MiB instead of
+6 × 64 MiB. Bulk relay scans stay outside this limiter: their traversal memory lives on the remote
+host, one hard capacity per request.
+
 ### Fixed-worker portable traversal
 
 Use `scanWorkspaceSpaceEntryTree` for desktop local fallback, desktop remote-provider fallback, and
@@ -158,6 +167,7 @@ This would make Resource Manager under-report the directories users most often w
 The deterministic regression measurements are:
 
 - peak simultaneous local `du` calls across repositories: exactly one;
+- peak simultaneous desktop-side SSH fallback traversals across repositories: at most two;
 - portable traversal live entry jobs: no more than its configured worker count;
 - portable entries held at once: at most 100,000 per worktree;
 - estimated live portable state: at most 64 MiB per worktree; an ordinary 76,788-entry worktree
@@ -171,7 +181,10 @@ record counts and identifiers rather than raw paths or directory trees.
 ## Test Plan
 
 - Desktop integration: force the portable path over its entry budget and assert an unavailable row.
-- Relay integration: force the portable path over its entry budget and assert a capacity failure.
+- Relay integration: force the portable path over its entry budget and assert a capacity failure on
+  both the Windows/portable and POSIX `du` entry points.
+- Remote fallback concurrency: hold six SSH fallback traversals across two repositories and assert
+  no more than two run at once.
 - Concurrency: start local worktrees from two repositories, hold the first `du`, and assert the
   second does not start until the first completes.
 - Shared traversal: verify worker peak, source order, exact-limit success, over-limit failure, deep
@@ -201,10 +214,7 @@ record counts and identifiers rather than raw paths or directory trees.
   repositories this can delay remote repositories behind serialized local work, even though remote
   scans never contend for the local disk.
 - Remote hosts can still process concurrent worktrees, but each relay request has an independent
-  hard capacity and remote concurrency does not contend with the user's local disk. The desktop-side
-  request-by-request SSH fallback is not covered by the local slot, so up to six of its traversals
-  can run at once, each with an independent budget, inside the desktop main process. Live accounting
-  keeps the realistic total in the tens of MiB.
+  hard capacity and remote concurrency does not contend with the user's local disk.
 
 ## Validation
 

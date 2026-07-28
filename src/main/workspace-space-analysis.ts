@@ -35,14 +35,24 @@ import { createFolderWorktree, listRepoWorktrees } from './repo-worktrees'
 import { mergeWorktree } from './ipc/worktree-logic'
 import { getLocalProjectWorktreeGitOptions } from './project-runtime-git-options'
 
+const REPO_SCAN_CONCURRENCY = 2
 const WORKTREE_SCAN_CONCURRENCY = 3
 const LOCAL_WORKTREE_SCAN_CONCURRENCY = 1
+// Why: the SSH compatibility walker traverses inside the desktop main process
+// and each traversal carries its own admission budget, so repo × worktree
+// concurrency would otherwise stack six independent budgets on this heap.
+const REMOTE_FALLBACK_SCAN_CONCURRENCY = 2
 const LOCAL_FS_CONCURRENCY = 48
 const REMOTE_FS_CONCURRENCY = 10
 const DU_TIMEOUT_MS = 120_000
 const DU_MAX_BUFFER_BYTES = 16 * 1024 * 1024
 
 type AsyncLimiter = <T>(task: () => Promise<T>) => Promise<T>
+
+type WorkspaceSpaceScanLimiters = {
+  localWorktree: AsyncLimiter
+  remoteFallbackTraversal: AsyncLimiter
+}
 
 type ScanStats = WorkspaceSpaceEntryScan
 
@@ -598,6 +608,7 @@ async function scanRemoteWorktree(
   worktree: Worktree,
   scannedAt: number,
   provider: IFilesystemProvider,
+  fallbackTraversalLimit: AsyncLimiter,
   signal?: AbortSignal
 ): Promise<WorkspaceSpaceWorktree> {
   try {
@@ -618,11 +629,8 @@ async function scanRemoteWorktree(
       }
     }
 
-    const root = await scanRemoteEntry(
-      worktree.path,
-      basenameFilesystemPath(worktree.path),
-      provider,
-      signal
+    const root = await fallbackTraversalLimit(() =>
+      scanRemoteEntry(worktree.path, basenameFilesystemPath(worktree.path), provider, signal)
     )
     const compact = compactWorkspaceSpaceItems((root.children ?? []).map(toWorkspaceSpaceItem))
     return createScannedWorktreeRow(repo, worktree, scannedAt, {
@@ -701,7 +709,7 @@ async function scanRepo(
   repo: Repo,
   scannedAt: number,
   store: Store,
-  localWorktreeLimit: AsyncLimiter,
+  limiters: WorkspaceSpaceScanLimiters,
   progress: WorkspaceSpaceProgressState,
   options: WorkspaceSpaceAnalyzeOptions
 ): Promise<RepoScanResult> {
@@ -762,7 +770,14 @@ async function scanRepo(
     )
     const row: WorkspaceSpaceWorktree = repo.connectionId
       ? remoteProvider
-        ? await scanRemoteWorktree(repo, worktree, scannedAt, remoteProvider, options.signal)
+        ? await scanRemoteWorktree(
+            repo,
+            worktree,
+            scannedAt,
+            remoteProvider,
+            limiters.remoteFallbackTraversal,
+            options.signal
+          )
         : createUnavailableWorktreeRow(
             repo,
             worktree,
@@ -770,7 +785,9 @@ async function scanRepo(
             'unavailable',
             `SSH filesystem for "${repo.connectionId}" is not connected.`
           )
-      : await localWorktreeLimit(() => scanLocalWorktree(repo, worktree, scannedAt, options.signal))
+      : await limiters.localWorktree(() =>
+          scanLocalWorktree(repo, worktree, scannedAt, options.signal)
+        )
     reportProgress(
       progress,
       { scannedWorktreeCount: progress.scannedWorktreeCount + 1 },
@@ -825,9 +842,12 @@ export async function analyzeWorkspaceSpace(
     currentWorktreeDisplayName: null
   }
   options.onProgress?.({ ...progress })
-  const localWorktreeLimit = createAsyncLimiter(LOCAL_WORKTREE_SCAN_CONCURRENCY, options.signal)
-  const repoResults = await mapWithConcurrency(reposToScan, 2, (repo) =>
-    scanRepo(repo, scannedAt, store, localWorktreeLimit, progress, options)
+  const limiters: WorkspaceSpaceScanLimiters = {
+    localWorktree: createAsyncLimiter(LOCAL_WORKTREE_SCAN_CONCURRENCY, options.signal),
+    remoteFallbackTraversal: createAsyncLimiter(REMOTE_FALLBACK_SCAN_CONCURRENCY, options.signal)
+  }
+  const repoResults = await mapWithConcurrency(reposToScan, REPO_SCAN_CONCURRENCY, (repo) =>
+    scanRepo(repo, scannedAt, store, limiters, progress, options)
   )
   throwIfAborted(options.signal)
   const repos = repoResults.map((result) => result.summary)
