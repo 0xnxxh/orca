@@ -67,15 +67,19 @@ function userTurn(id: string, timestamp: number | null): NativeChatMessage {
   return { id, role: 'user', blocks: [{ type: 'text', text: id }], timestamp, source: 'transcript' }
 }
 
-function renderSignal(messages: NativeChatMessage[]) {
+type SignalProps = { messages: NativeChatMessage[]; transcriptLoading?: boolean }
+
+function renderSignal(messages: NativeChatMessage[], transcriptLoading = false) {
+  const initialProps: SignalProps = { messages, transcriptLoading }
   return renderHook(
-    (props: { messages: NativeChatMessage[] }) =>
+    (props: SignalProps) =>
       useNativeChatLaunchDraftSignal({
         terminalTabId: 'tab-1',
         agent: 'claude',
-        messages: props.messages
+        messages: props.messages,
+        transcriptLoading: props.transcriptLoading === true
       }),
-    { initialProps: { messages } }
+    { initialProps }
   )
 }
 
@@ -111,6 +115,40 @@ describe('useNativeChatLaunchDraftSignal', () => {
 
     rerender({ messages: [userTurn('u7', SEEDED_AT - 900_000), tail] })
     expect(result.current.launchDraftResolved).toBe(false)
+  })
+
+  it('does not resolve when a loading transcript backfills older history', () => {
+    // The baseline must not be snapshotted on the empty in-flight list: the
+    // backfill itself would then push the count above it and silently drop a
+    // seed the user never saw.
+    const { result, rerender } = renderSignal([], true)
+    expect(result.current.launchDraftResolved).toBe(false)
+
+    rerender({
+      messages: [
+        userTurn('u1', SEEDED_AT - 900_000),
+        userTurn('u2', SEEDED_AT - 800_000),
+        userTurn('u3', SEEDED_AT - 700_000)
+      ],
+      transcriptLoading: false
+    })
+
+    expect(result.current.launchDraftResolved).toBe(false)
+    expect(result.current.launchDraft).not.toBeNull()
+  })
+
+  it('still resolves a genuinely new turn after that backfilled history', () => {
+    const history = [userTurn('u1', SEEDED_AT - 900_000), userTurn('u2', SEEDED_AT - 800_000)]
+    const { result, rerender } = renderSignal([], true)
+
+    rerender({ messages: history, transcriptLoading: false })
+    expect(result.current.launchDraftResolved).toBe(false)
+
+    rerender({
+      messages: [...history, userTurn('u3', SEEDED_AT - 799_000)],
+      transcriptLoading: false
+    })
+    expect(result.current.launchDraftResolved).toBe(true)
   })
 
   it('ignores a draft seeded for another agent', () => {
