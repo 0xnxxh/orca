@@ -181,6 +181,28 @@ describe('tcc prompt notice threshold', () => {
     }
   })
 
+  it('retains the threshold and stops watching when renderer delivery throws', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const mainWindow = createWindowStub()
+    mainWindow.webContents.send.mockImplementation(() => {
+      throw new Error('renderer unavailable')
+    })
+    try {
+      initTccPromptNotice(mainWindow as never)
+      expect(() => {
+        for (let i = 0; i < TCC_PROMPT_NOTICE_THRESHOLD; i += 1) {
+          watchOptions[0].onPrompt()
+        }
+      }).not.toThrow()
+
+      expect(watchStop).toHaveBeenCalledOnce()
+      expect(consumePendingTccPromptNotice(1)).toEqual({ claimId: 1, promptCount: 3 })
+    } finally {
+      Object.defineProperty(process, 'platform', platform!)
+    }
+  })
+
   it('does not respawn the watcher for a persisted pending threshold', () => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')
     Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })

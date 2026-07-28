@@ -133,6 +133,17 @@ function trackMainWindow(mainWindow: BrowserWindow): void {
   })
 }
 
+function sendTccPromptNotice(mainWindow: BrowserWindow, payload: TccPromptNoticePayload): void {
+  if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+    return
+  }
+  try {
+    mainWindow.webContents.send(TCC_PROMPT_NOTICE_CHANNEL, payload)
+  } catch {
+    // Why: the durable renderer pull recovers a send lost during renderer teardown.
+  }
+}
+
 export function initTccPromptNotice(mainWindow: BrowserWindow): void {
   if (process.platform !== 'darwin') {
     return
@@ -146,7 +157,7 @@ export function initTccPromptNotice(mainWindow: BrowserWindow): void {
     return
   }
   if (tally.promptCount >= TCC_PROMPT_NOTICE_THRESHOLD) {
-    mainWindow.webContents.send(TCC_PROMPT_NOTICE_CHANNEL, {
+    sendTccPromptNotice(mainWindow, {
       promptCount: tally.promptCount
     })
     return
@@ -159,8 +170,8 @@ export function initTccPromptNotice(mainWindow: BrowserWindow): void {
         return
       }
       const target = mainWindowRef
-      if (target && !target.isDestroyed() && !target.webContents.isDestroyed()) {
-        target.webContents.send(TCC_PROMPT_NOTICE_CHANNEL, payload)
+      if (target) {
+        sendTccPromptNotice(target, payload)
       }
       // Why: pending state is renderer-acknowledged, so the log child can stop at threshold.
       stopTccPromptNotice()

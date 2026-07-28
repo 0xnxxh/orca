@@ -226,6 +226,14 @@ function registerTccPromptNoticeHandlers(mainWindow: BrowserWindow): void {
   ipcMain.removeHandler(releaseChannel)
   ipcMain.removeHandler(dismissChannel)
   const mainWebContents = mainWindow.webContents
+  const releaseOwnerClaim = (): void => releasePendingTccPromptNotice(handlerToken)
+  // Why: a renderer reload/crash destroys its claim callbacks without closing the BrowserWindow.
+  mainWebContents.on('did-start-loading', () => {
+    if (mainWebContents.isLoadingMainFrame()) {
+      releaseOwnerClaim()
+    }
+  })
+  mainWebContents.on('render-process-gone', releaseOwnerClaim)
   const ownsNotice = (event: IpcMainInvokeEvent): boolean =>
     !mainWindow.isDestroyed() && !mainWebContents.isDestroyed() && event.sender === mainWebContents
   ipcMain.handle(consumeChannel, (event) =>
@@ -251,7 +259,7 @@ function registerTccPromptNoticeHandlers(mainWindow: BrowserWindow): void {
     if (activeTccPromptHandlerToken !== handlerToken) {
       return
     }
-    releasePendingTccPromptNotice(handlerToken)
+    releaseOwnerClaim()
     ipcMain.removeHandler(consumeChannel)
     ipcMain.removeHandler(acknowledgeChannel)
     ipcMain.removeHandler(releaseChannel)

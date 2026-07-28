@@ -119,6 +119,7 @@ type MainWindowStub = {
   webContents: {
     id?: number
     isDestroyed?: MockFn
+    isLoadingMainFrame: MockFn
     on: MockFn
     send?: MockFn
     reload?: MockFn
@@ -136,7 +137,9 @@ type RuntimeStub = {
   markGraphUnavailable: MockFn
 }
 
-function createMainWindow(extraWebContents: { on?: MockFn; send?: MockFn } = {}): MainWindowStub {
+function createMainWindow(
+  extraWebContents: { isLoadingMainFrame?: MockFn; on?: MockFn; send?: MockFn } = {}
+): MainWindowStub {
   return {
     id: 1,
     isDestroyed: vi.fn(() => false),
@@ -145,6 +148,7 @@ function createMainWindow(extraWebContents: { on?: MockFn; send?: MockFn } = {})
     webContents: {
       id: 1,
       isDestroyed: vi.fn(() => false),
+      isLoadingMainFrame: vi.fn(() => true),
       on: vi.fn(),
       reload: vi.fn(),
       session: {
@@ -368,6 +372,34 @@ describe('attachMainWindowServices', () => {
 
     handler?.({ sender: mainWindow.webContents }, 7)
     expect(releasePendingTccPromptNoticeMock).toHaveBeenCalledWith(expect.any(Number), 7)
+  })
+
+  it('releases the owner claim when the main renderer reloads or crashes', () => {
+    const mainWindow = createMainWindow()
+    attachMainWindowServices(mainWindow as never, createStore(), createRuntime() as never)
+    const handlers = (event: string): (() => void)[] =>
+      mainWindow.webContents.on.mock.calls
+        .filter(([name]) => name === event)
+        .map(([, handler]) => handler as () => void)
+
+    releasePendingTccPromptNoticeMock.mockClear()
+    mainWindow.webContents.isLoadingMainFrame.mockReturnValue(false)
+    for (const handler of handlers('did-start-loading')) {
+      handler()
+    }
+    expect(releasePendingTccPromptNoticeMock).not.toHaveBeenCalled()
+
+    mainWindow.webContents.isLoadingMainFrame.mockReturnValue(true)
+    for (const handler of handlers('did-start-loading')) {
+      handler()
+    }
+    expect(releasePendingTccPromptNoticeMock).toHaveBeenCalledOnce()
+
+    releasePendingTccPromptNoticeMock.mockClear()
+    for (const handler of handlers('render-process-gone')) {
+      handler()
+    }
+    expect(releasePendingTccPromptNoticeMock).toHaveBeenCalledOnce()
   })
 
   it('removes the TCC handlers when the owning window closes', () => {
