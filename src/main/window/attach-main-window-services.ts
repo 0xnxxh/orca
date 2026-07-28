@@ -135,6 +135,7 @@ export function attachMainWindowServices(
   registerFileDropRelay(mainWindow)
   // Why: handler only — initTccPromptNotice spawns a `log stream` child, so it is
   // started from the app bootstrap instead of here, which unit tests call directly.
+  ipcMain.removeHandler('macosTccPrompts:dismiss')
   ipcMain.handle('macosTccPrompts:dismiss', () => {
     dismissTccPromptNotice()
   })

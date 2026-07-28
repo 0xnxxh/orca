@@ -289,6 +289,15 @@ describe('attachMainWindowServices', () => {
     expect(store.flush).toHaveBeenCalledTimes(1)
   })
 
+  it('replaces the TCC dismiss handler when the main window is reattached', () => {
+    attachMainWindowServices(createMainWindow() as never, createStore(), createRuntime() as never)
+    attachMainWindowServices(createMainWindow() as never, createStore(), createRuntime() as never)
+
+    const channel = 'macosTccPrompts:dismiss'
+    expect(removeHandlerMock.mock.calls.filter(([value]) => value === channel)).toHaveLength(2)
+    expect(handleMock.mock.calls.filter(([value]) => value === channel)).toHaveLength(2)
+  })
+
   it('ignores app reload requests from non-main webContents', async () => {
     const onBeforeRendererReload = vi.fn()
     const mainWindow = createMainWindow()

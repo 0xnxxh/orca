@@ -62,7 +62,7 @@ export function handleTccPromptForTests(): TccPromptNoticePayload | null {
 }
 
 function recordPrompt(): TccPromptNoticePayload | null {
-  if (tally.dismissed) {
+  if (tally.dismissed || tally.notified) {
     return null
   }
   tally = { ...tally, promptCount: tally.promptCount + 1 }
@@ -85,19 +85,25 @@ export function dismissTccPromptNotice(): void {
 }
 
 export function initTccPromptNotice(mainWindow: BrowserWindow): void {
-  if (process.platform !== 'darwin' || watch) {
+  if (process.platform !== 'darwin') {
+    return
+  }
+  if (watch) {
+    mainWindowRef = mainWindow
+    return
+  }
+  tally = loadTally()
+  if (tally.dismissed || tally.notified) {
     return
   }
   mainWindowRef = mainWindow
-  tally = loadTally()
-  if (tally.dismissed) {
-    return
-  }
   watch = new MacosTccPromptWatch({
     onPrompt: () => {
       const payload = recordPrompt()
-      if (payload) {
-        mainWindowRef?.webContents.send(TCC_PROMPT_NOTICE_CHANNEL, payload)
+      const target = mainWindowRef
+      if (payload && target && !target.isDestroyed() && !target.webContents.isDestroyed()) {
+        target.webContents.send(TCC_PROMPT_NOTICE_CHANNEL, payload)
+        stopTccPromptNotice()
       }
     }
   })
