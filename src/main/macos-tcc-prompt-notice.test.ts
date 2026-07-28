@@ -54,16 +54,11 @@ beforeEach(() => {
 })
 
 describe('tcc prompt notice threshold', () => {
-  it('stays silent until the third dialog, then fires exactly once', () => {
-    expect(handleTccPromptForTests()).toBeNull()
-    expect(handleTccPromptForTests()).toBeNull()
-
-    const payload = handleTccPromptForTests()
-    expect(payload).toEqual({
+  it('fires on the first dialog, then stays silent', () => {
+    expect(handleTccPromptForTests()).toEqual({
       promptCount: TCC_PROMPT_NOTICE_THRESHOLD
     })
 
-    // Why: a recurring prompt loop must not produce a toast per dialog.
     expect(handleTccPromptForTests()).toBeNull()
     expect(handleTccPromptForTests()).toBeNull()
   })
@@ -109,7 +104,10 @@ describe('tcc prompt notice threshold', () => {
     expect(consumePendingTccPromptNotice(2)).toBeNull()
     expect(writeFileAtomically).toHaveBeenCalledOnce()
     const [, contents] = writeFileAtomically.mock.calls.at(-1) as [string, string]
-    expect(JSON.parse(contents)).toMatchObject({ promptCount: 3, notified: true })
+    expect(JSON.parse(contents)).toMatchObject({
+      promptCount: TCC_PROMPT_NOTICE_THRESHOLD,
+      notified: true
+    })
   })
 
   it('releases an unacknowledged claim for a replacement renderer', () => {
@@ -123,11 +121,14 @@ describe('tcc prompt notice threshold', () => {
     releasePendingTccPromptNotice(1, oldClaim!.claimId)
     const replacementClaim = consumePendingTccPromptNotice(2)
 
-    expect(oldClaim).toEqual({ claimId: 1, promptCount: 3 })
-    expect(replacementClaim).toEqual({ claimId: 2, promptCount: 3 })
+    expect(oldClaim).toEqual({ claimId: 1, promptCount: TCC_PROMPT_NOTICE_THRESHOLD })
+    expect(replacementClaim).toEqual({ claimId: 2, promptCount: TCC_PROMPT_NOTICE_THRESHOLD })
     acknowledgePendingTccPromptNotice(1, oldClaim!.claimId)
     releasePendingTccPromptNotice(2)
-    expect(consumePendingTccPromptNotice(3)).toEqual({ claimId: 3, promptCount: 3 })
+    expect(consumePendingTccPromptNotice(3)).toEqual({
+      claimId: 3,
+      promptCount: TCC_PROMPT_NOTICE_THRESHOLD
+    })
   })
 
   it('invalidates an outstanding claim when the user dismisses the notice', () => {
@@ -262,7 +263,10 @@ describe('tcc prompt notice threshold', () => {
       }).not.toThrow()
       expect(mainWindow.webContents.send).not.toHaveBeenCalled()
       expect(watchStop).toHaveBeenCalledTimes(1)
-      expect(consumePendingTccPromptNotice(1)).toEqual({ claimId: 1, promptCount: 3 })
+      expect(consumePendingTccPromptNotice(1)).toEqual({
+        claimId: 1,
+        promptCount: TCC_PROMPT_NOTICE_THRESHOLD
+      })
     } finally {
       Object.defineProperty(process, 'platform', platform!)
     }
@@ -284,17 +288,20 @@ describe('tcc prompt notice threshold', () => {
       }).not.toThrow()
 
       expect(watchStop).toHaveBeenCalledOnce()
-      expect(consumePendingTccPromptNotice(1)).toEqual({ claimId: 1, promptCount: 3 })
+      expect(consumePendingTccPromptNotice(1)).toEqual({
+        claimId: 1,
+        promptCount: TCC_PROMPT_NOTICE_THRESHOLD
+      })
     } finally {
       Object.defineProperty(process, 'platform', platform!)
     }
   })
 
-  it('does not respawn the watcher for a persisted pending threshold', () => {
+  it('delivers a tally persisted below the old threshold without respawning the watcher', () => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')
     Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
     readTallyFile.mockReturnValue(
-      JSON.stringify({ promptCount: 3, notified: false, dismissed: false })
+      JSON.stringify({ promptCount: 2, notified: false, dismissed: false })
     )
     try {
       const mainWindow = createWindowStub()
@@ -302,10 +309,10 @@ describe('tcc prompt notice threshold', () => {
 
       expect(watchStart).not.toHaveBeenCalled()
       expect(mainWindow.webContents.send).toHaveBeenCalledWith('macosTccPrompts:threshold', {
-        promptCount: 3
+        promptCount: 2
       })
       expect(mainWindow.once).not.toHaveBeenCalled()
-      expect(consumePendingTccPromptNotice(1)).toEqual({ claimId: 1, promptCount: 3 })
+      expect(consumePendingTccPromptNotice(1)).toEqual({ claimId: 1, promptCount: 2 })
     } finally {
       Object.defineProperty(process, 'platform', platform!)
     }
