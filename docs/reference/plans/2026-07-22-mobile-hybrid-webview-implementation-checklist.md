@@ -1478,14 +1478,17 @@ copy.
   iOS additionally rejects download navigation and non-displayable responses,
   permits only the exact active private main document, and limits subframe
   responses to displayable `data:` documents needed by the sandboxed shared
-  Markdown editor. The exact-app Android gate likewise retains the private
-  document, blocks popup and service-worker creation, attempts the redirect
-  subframe, download, and external scheme, and records no final sentinel
-  observation. The probe waits for the hosted bridge-ready marker because an
-  external-scheme main-frame attempt at the earliest document-start instant
-  interrupted Chromium's React Native Web bootstrap even though native policy
-  rejected the navigation. Physical-device, production-store-signed runtime,
-  and independent-review evidence remain open.
+  Markdown editor. Android now matches the exact root-document rule and rejects
+  query-bearing or percent-encoded asset requests instead of mapping arbitrary
+  same-origin main-frame paths back to the document. The exact-app Android gate
+  likewise retains the private document, blocks popup and service-worker
+  creation, attempts the redirect subframe, download, and external scheme, and
+  records no final sentinel observation. The probe waits for the hosted
+  bridge-ready marker because an external-scheme main-frame attempt at the
+  earliest document-start instant interrupted Chromium's React Native Web
+  bootstrap even though native policy rejected the navigation. A post-change
+  exact-app rerun, physical-device, production-store-signed runtime, and
+  independent-review evidence remain open.
 - [x] Verify only active manifest-declared executable assets can run. DEBUG-only
       probes in the exact iOS and Android hosted WebViews locate the active
       content-addressed RNW script, request a different same-origin 64-hex script,
@@ -2565,4 +2568,6 @@ copy.
 | 2026-07-28 | Complete | Package-request/chunk validation passes 1 shared file / 14 tests and the unchanged downloader passes 1 mobile file / 14 tests. Existing request-path/base64/length coverage is retained alongside the new chunk corpus. Node/mobile typechecks, changed-file lint/formatting, max-lines, and diff hygiene pass.                                                                                                                         |
 | 2026-07-28 | Finding  | Android activation metadata used coercive `JSONObject.optString`, so a 64-digit JSON number could become a hash-shaped active or previous build ID. Both native stores now require string-typed hashes and normalize malformed activation metadata to `mobile_web_activation_invalid`.                                                                                                                                                  |
 | 2026-07-28 | Complete | Mirrored numeric active/previous regressions pass the native Swift fault executable and the refreshed Android module suite across 76 Gradle tasks. Mobile formatting, max-lines, and diff hygiene pass. No RNW package content changed.                                                                                                                                                                                                 |
+| 2026-07-28 | Finding  | Android main-frame navigation accepted any same-origin path or query with the active session fragment and mapped it back to `index.html`, unlike iOS's exact root-document allowlist. Android now requires the exact root path with no query and rejects percent-encoded or query-bearing intercepted asset URLs.                                                                                                                       |
+| 2026-07-28 | Complete | The strict root-route source contract passes the full 568-file / 3,373-test mobile suite with 2 expected skips, and the refreshed Android native module passes 76 Gradle tasks. A fresh exact-app emulator rerun remains part of the broader navigation gate.                                                                                                                                                                           |
 | 2026-07-28 | Next     | Complete the remaining parity inventory and cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                  |

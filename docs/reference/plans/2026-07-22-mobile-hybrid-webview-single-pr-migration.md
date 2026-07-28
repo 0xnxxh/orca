@@ -1634,7 +1634,10 @@ iOS also cancels download navigation, rejects responses that cannot be
 displayed, permits only the exact active private document in the main frame, and
 limits subframe responses to displayable `data:` documents. Android matches the
 RNW CSP, disables platform network loads, rejects non-active-origin requests and
-popup windows, and installs a reporting no-op download listener. Its probe is
+popup windows, and installs a reporting no-op download listener. Android also
+requires the exact root main-document path with no query and rejects
+percent-encoded or query-bearing intercepted asset requests; arbitrary
+same-origin main-frame paths are never remapped to the document. Its probe is
 guarded by both `BuildConfig.DEBUG` and the debuggable application flag, accepts
 only a validated loopback port and canonical UUID token, and is installed for
 `orca-mobile-web://` with the AndroidX document-start API. Execution waits for

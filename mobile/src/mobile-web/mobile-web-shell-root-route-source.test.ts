@@ -39,11 +39,15 @@ describe('mobile web shell root route', () => {
   it('loads the Android package document at the router root without widening navigation', () => {
     expect(androidShellViewSource).toContain('webView.loadUrl("$MOBILE_WEB_ORIGIN/#$sessionId")')
     expect(androidShellViewSource).toContain(
-      'val path = if (request.isForMainFrame || requestPath.isEmpty()) "index.html" else requestPath'
+      'val path = if (requestPath.isEmpty()) "index.html" else requestPath'
     )
     expect(androidShellViewSource).toContain(
       '(url.fragment == null || (request.isForMainFrame && url.fragment == sessionId))'
     )
+    expect(androidShellViewSource).toContain("!url.encodedPath.orEmpty().contains('%')")
+    expect(androidShellViewSource).toContain('url.path == "/"')
+    expect(androidShellViewSource).toContain('url.encodedPath == "/"')
+    expect(androidShellViewSource).toContain('url.query == null')
     expect(androidShellViewSource).toContain('url.fragment == activeSessionId')
     expect(androidPackageStoreSource).toContain('"url" to "$MOBILE_WEB_ORIGIN/#$sessionId"')
   })

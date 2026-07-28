@@ -232,10 +232,12 @@ internal class MobileWebShellView(
         sessionId != null &&
         isMobileWebOrigin(url) &&
         (url.fragment == null || (request.isForMainFrame && url.fragment == sessionId)) &&
+        url.query == null &&
+        !url.encodedPath.orEmpty().contains('%') &&
         url.toString().length <= 8 * 1024
     ) { "mobile_web_asset_request_invalid" }
     val requestPath = url.path.orEmpty().trimStart('/')
-    val path = if (request.isForMainFrame || requestPath.isEmpty()) "index.html" else requestPath
+    val path = if (requestPath.isEmpty()) "index.html" else requestPath
     val asset = packageStore.readAsset(sessionId, path)
     val contentTypeParts = asset.contentType.split("; charset=", limit = 2)
     val headers = mutableMapOf(
@@ -257,6 +259,9 @@ internal class MobileWebShellView(
   private fun isAllowedDocumentUrl(url: Uri): Boolean =
       activeSessionId != null &&
       isMobileWebOrigin(url) &&
+      url.path == "/" &&
+      url.encodedPath == "/" &&
+      url.query == null &&
       url.fragment == activeSessionId &&
       url.toString().length <= 8 * 1024
 
