@@ -38,13 +38,33 @@ describe('electron-builder config', () => {
         '!skill-stubs{,/**/*}',
         '!resources/skills/**',
         '!tests{,/**/*}',
+        '!examples{,/**/*}',
         '!pr-evidence{,/**/*}',
         '!Casks{,/**/*}',
-        '!{AGENTS.md,CLAUDE.md,DEVELOPING.md,bundle-size-progress.md}',
+        '!{AGENTS.md,CLAUDE.md,DEVELOPING.md,bundle-size-progress.md,ORCHESTRATION_IMPLEMENTATION_CHECKLIST.md,ORCHESTRATION_STRUCTURED_OUTPUT_DESIGN.md}',
         '!out/**/*.test.js',
         '!resources/plugins/launch/**'
       ])
     )
+  })
+
+  // Why: `files` is an all-negation list, so electron-builder's default `**/*`
+  // packs anything without an explicit `!` entry. examples/ landed without one
+  // and shipped hostile-panel — the adversarial fixture the panel containment
+  // tests point at — into 1.4.160-rc.3's app.asar. Assert the exclusion by the
+  // repo paths that must never ship, so adding a new example cannot re-break it.
+  it('keeps plugin authoring examples out of app.asar', () => {
+    const negatedDirs = new Set(
+      electronBuilderConfig.files
+        .filter((pattern) => pattern.startsWith('!'))
+        .map((pattern) => pattern.slice(1).replace(/\{.*$/, '').replace(/\/.*$/, ''))
+    )
+    for (const shippedOnlyForAuthoring of [
+      'examples/plugins/hostile-panel/panel.html',
+      'examples/plugins/hello-orca/main.mjs'
+    ]) {
+      expect(negatedDirs).toContain(shippedOnlyForAuthoring.split('/')[0])
+    }
   })
 
   it('keeps runtime resources available through extraResources', () => {
