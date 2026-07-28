@@ -41,8 +41,14 @@ export function convergableSkillNames(
     // revision older than the registry) is not evidence of anything, and gating on it
     // would withhold updates that would have worked.
     const lockNamesAKnownRevision = revisions.some((entry) => entry.gitTreeSha === lockHash)
+    // `diskTreeShas` drops digests that match no known revision, so requiring every
+    // observed digest to resolve is what keeps `every` honest: without it, one stale
+    // copy beside one unidentifiable copy would gate the name off the resolved half
+    // alone, contradicting the unknown-stays-eligible rule above.
+    const everyPlacementResolved = diskTreeShas.length === digests.length
     if (
       lockNamesAKnownRevision &&
+      everyPlacementResolved &&
       diskTreeShas.length > 0 &&
       diskTreeShas.every((sha) => sha !== lockHash)
     ) {

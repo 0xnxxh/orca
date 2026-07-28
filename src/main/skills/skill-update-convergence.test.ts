@@ -101,6 +101,20 @@ describe('convergableSkillNames', () => {
     expect([...result]).toEqual(['orca-cli'])
   })
 
+  // Why: `diskTreeShas` silently drops digests that match no known revision, so a
+  // stale copy sitting beside an unidentifiable one must NOT gate the name — the
+  // unknown half could be anything, including a copy the command would converge.
+  it('keeps a skill when one placement is stale but another is unidentifiable', () => {
+    const result = convergableSkillNames(
+      [placement('orca-cli', 'digest-pre-stub'), placement('orca-cli', 'digest-unknown')],
+      new Map([['orca-cli', '091d9bcc']]),
+      {
+        'orca-cli': [revision('digest-pre-stub', 'f3727995'), revision('digest-stub', '091d9bcc')]
+      }
+    )
+    expect([...result]).toEqual(['orca-cli'])
+  })
+
   it('judges each locked skill independently', () => {
     const result = convergableSkillNames(
       [placement('orca-linear', 'digest-pre-stub'), placement('orca-cli', 'digest-installed')],
