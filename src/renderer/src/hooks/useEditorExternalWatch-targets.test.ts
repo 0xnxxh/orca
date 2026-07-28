@@ -63,10 +63,14 @@ describe('getEditorExternalWatchTargets', () => {
     rightSidebarExplorerView?: EditorExternalWatchTargetState['rightSidebarExplorerView']
     gitStatusHugeByWorktree?: EditorExternalWatchTargetState['gitStatusHugeByWorktree']
     sshConnectionStates?: EditorExternalWatchTargetState['sshConnectionStates']
+    folderWorkspaces?: EditorExternalWatchTargetState['folderWorkspaces']
+    projectGroups?: EditorExternalWatchTargetState['projectGroups']
   }): EditorExternalWatchTargetState => ({
     openFiles: args.openFiles ?? [],
     worktreesByRepo: { [args.repo.id]: [args.worktree] },
     repos: [args.repo],
+    folderWorkspaces: args.folderWorkspaces ?? [],
+    projectGroups: args.projectGroups ?? [],
     activeWorktreeId: args.activeWorktreeId ?? null,
     rightSidebarOpen: args.rightSidebarOpen ?? false,
     rightSidebarTab: args.rightSidebarTab ?? 'explorer',
@@ -336,6 +340,161 @@ describe('getEditorExternalWatchTargets', () => {
         worktreePath: '/repo-restored/worktree',
         connectionId: undefined,
         runtimeEnvironmentId: 'env-1'
+      }
+    ])
+  })
+
+  const makeFolderWorkspace = (
+    id: string,
+    folderPath: string,
+    projectGroupId = 'group-1',
+    connectionId: string | null = null
+  ): EditorExternalWatchTargetState['folderWorkspaces'][number] =>
+    ({
+      id,
+      projectGroupId,
+      name: id,
+      folderPath,
+      connectionId
+    }) as EditorExternalWatchTargetState['folderWorkspaces'][number]
+
+  const makeProjectGroup = (
+    id: string,
+    connectionId: string | null = null
+  ): EditorExternalWatchTargetState['projectGroups'][number] =>
+    ({ id, name: id, connectionId }) as EditorExternalWatchTargetState['projectGroups'][number]
+
+  it('watches a folder workspace opened from the editor even though it is not in worktreesByRepo', () => {
+    const repo = makeRepo('repo-folder-open')
+    const worktree = makeWorktree(repo.id, 'wt-folder-open')
+    const folderWorkspace = makeFolderWorkspace('fw-1', '/folders/proj')
+    const openFile = {
+      ...makeOpenFile('folder:fw-1'),
+      id: 'folder-file'
+    }
+
+    expect(
+      getEditorExternalWatchTargets(
+        makeState({
+          repo,
+          worktree,
+          openFiles: [openFile],
+          folderWorkspaces: [folderWorkspace],
+          projectGroups: [makeProjectGroup('group-1')]
+        })
+      ).targets
+    ).toEqual([
+      {
+        worktreeId: 'folder:fw-1',
+        worktreePath: '/folders/proj',
+        connectionId: undefined,
+        runtimeEnvironmentId: null
+      }
+    ])
+  })
+
+  it('watches the active folder workspace for the Explorer sidebar', () => {
+    const repo = makeRepo('repo-folder-sidebar')
+    const worktree = makeWorktree(repo.id, 'wt-folder-sidebar')
+    const folderWorkspace = makeFolderWorkspace('fw-2', '/folders/sidebar-proj')
+
+    expect(
+      getEditorExternalWatchTargets(
+        makeState({
+          repo,
+          worktree,
+          activeWorktreeId: 'folder:fw-2',
+          rightSidebarOpen: true,
+          rightSidebarTab: 'explorer',
+          rightSidebarExplorerView: 'files',
+          folderWorkspaces: [folderWorkspace],
+          projectGroups: [makeProjectGroup('group-1')]
+        })
+      ).targets
+    ).toEqual([
+      {
+        worktreeId: 'folder:fw-2',
+        worktreePath: '/folders/sidebar-proj',
+        connectionId: undefined,
+        runtimeEnvironmentId: null
+      }
+    ])
+  })
+
+  it('routes a remote folder workspace through its own connection, falling back to the group', () => {
+    const repo = makeRepo('repo-folder-remote')
+    const worktree = makeWorktree(repo.id, 'wt-folder-remote')
+
+    expect(
+      getEditorExternalWatchTargets(
+        makeState({
+          repo,
+          worktree,
+          openFiles: [{ ...makeOpenFile('folder:fw-own'), id: 'own-conn-file' }],
+          folderWorkspaces: [makeFolderWorkspace('fw-own', '/folders/own', 'group-1', 'ssh-own')],
+          projectGroups: [makeProjectGroup('group-1', 'ssh-group')]
+        })
+      ).targets[0]?.connectionId
+    ).toBe('ssh-own')
+
+    expect(
+      getEditorExternalWatchTargets(
+        makeState({
+          repo,
+          worktree,
+          openFiles: [{ ...makeOpenFile('folder:fw-inherit'), id: 'inherit-conn-file' }],
+          folderWorkspaces: [
+            makeFolderWorkspace('fw-inherit', '/folders/inherit', 'group-1', null)
+          ],
+          projectGroups: [makeProjectGroup('group-1', 'ssh-group')]
+        })
+      ).targets[0]?.connectionId
+    ).toBe('ssh-group')
+  })
+
+  it('drops a folder-workspace target whose workspace is no longer known', () => {
+    const repo = makeRepo('repo-folder-missing')
+    const worktree = makeWorktree(repo.id, 'wt-folder-missing')
+
+    expect(
+      getEditorExternalWatchTargets(
+        makeState({
+          repo,
+          worktree,
+          openFiles: [{ ...makeOpenFile('folder:fw-gone'), id: 'gone-file' }],
+          folderWorkspaces: [],
+          projectGroups: [makeProjectGroup('group-1')]
+        })
+      ).targets
+    ).toEqual([])
+  })
+
+  it('recomputes targets when folderWorkspaces changes identity', () => {
+    const repo = makeRepo('repo-folder-memo')
+    const worktree = makeWorktree(repo.id, 'wt-folder-memo')
+    const openFiles = [{ ...makeOpenFile('folder:fw-memo'), id: 'memo-file' }]
+    const projectGroups = [makeProjectGroup('group-1')]
+
+    const before = getEditorExternalWatchTargets(
+      makeState({ repo, worktree, openFiles, folderWorkspaces: [], projectGroups })
+    )
+    expect(before.targets).toEqual([])
+
+    const after = getEditorExternalWatchTargets(
+      makeState({
+        repo,
+        worktree,
+        openFiles,
+        folderWorkspaces: [makeFolderWorkspace('fw-memo', '/folders/memo')],
+        projectGroups
+      })
+    )
+    expect(after.targets).toEqual([
+      {
+        worktreeId: 'folder:fw-memo',
+        worktreePath: '/folders/memo',
+        connectionId: undefined,
+        runtimeEnvironmentId: null
       }
     ])
   })
