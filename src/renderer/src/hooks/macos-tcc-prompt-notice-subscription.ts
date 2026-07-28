@@ -13,6 +13,16 @@ export function subscribeToMacosTccPromptNotice(
   api: MacosTccPromptNoticeApi | undefined,
   onNotice: (payload: TccPromptNoticePayload) => void
 ): () => void {
+  const pullPending = (): Promise<TccPromptNoticeClaim | null> => {
+    if (!api?.consumePending) {
+      return Promise.resolve(null)
+    }
+    try {
+      return api.consumePending()
+    } catch (error) {
+      return Promise.reject(error)
+    }
+  }
   const releaseClaim = async (claimId: number): Promise<boolean> => {
     if (!api?.releasePending) {
       return false
@@ -22,6 +32,19 @@ export function subscribeToMacosTccPromptNotice(
       return true
     } catch {
       return false
+    }
+  }
+  const acknowledgeClaim = (claimId: number): void => {
+    if (!api?.acknowledgePending) {
+      void releaseClaim(claimId)
+      return
+    }
+    try {
+      void api.acknowledgePending(claimId).catch(() => {
+        void releaseClaim(claimId)
+      })
+    } catch {
+      void releaseClaim(claimId)
     }
   }
   const showNotice = (payload: TccPromptNoticePayload): boolean => {
@@ -42,7 +65,7 @@ export function subscribeToMacosTccPromptNotice(
       }
       return
     }
-    void api.consumePending().then(
+    void pullPending().then(
       (pending) => {
         if (pending) {
           const claimId = pending.claimId
@@ -59,13 +82,7 @@ export function subscribeToMacosTccPromptNotice(
             return
           }
           if (typeof claimId === 'number') {
-            if (!api.acknowledgePending) {
-              void releaseClaim(claimId)
-              return
-            }
-            void api.acknowledgePending(claimId).catch(() => {
-              void releaseClaim(claimId)
-            })
+            acknowledgeClaim(claimId)
           }
         }
       },

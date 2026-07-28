@@ -177,6 +177,53 @@ describe('subscribeToMacosTccPromptNotice', () => {
     expect(unavailableRelease).toHaveBeenCalledWith(12)
   })
 
+  it('falls back to live delivery when consuming throws synchronously', async () => {
+    const listenerState: { listener?: (payload: { promptCount: number }) => void } = {}
+    const onNotice = vi.fn()
+    const consumePending = vi.fn(() => {
+      throw new Error('ipc unavailable')
+    })
+
+    expect(() =>
+      subscribeToMacosTccPromptNotice(
+        {
+          consumePending,
+          onThreshold: (listener) => {
+            listenerState.listener = listener
+            return vi.fn()
+          }
+        },
+        onNotice
+      )
+    ).not.toThrow()
+
+    listenerState.listener?.({ promptCount: 3 })
+    await Promise.resolve()
+
+    expect(consumePending).toHaveBeenCalledTimes(2)
+    expect(onNotice).toHaveBeenCalledWith({ promptCount: 3 })
+  })
+
+  it('releases the claim when acknowledgement throws synchronously', async () => {
+    const releasePending = vi.fn().mockResolvedValue(undefined)
+    const onNotice = vi.fn()
+
+    subscribeToMacosTccPromptNotice(
+      {
+        acknowledgePending: vi.fn(() => {
+          throw new Error('ipc unavailable')
+        }),
+        consumePending: vi.fn().mockResolvedValue({ claimId: 13, promptCount: 3 }),
+        releasePending
+      },
+      onNotice
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(onNotice).toHaveBeenCalledOnce()
+    expect(releasePending).toHaveBeenCalledWith(13)
+  })
+
   it('keeps live delivery with an older preload that has no consume API', () => {
     const listenerState: { listener?: (payload: { promptCount: number }) => void } = {}
     const onNotice = vi.fn()
