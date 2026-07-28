@@ -16,6 +16,7 @@ import {
 } from './helpers/store'
 import { attachRepoAndOpenTerminal, createRestartSession } from './helpers/orca-restart'
 import { RuntimeClient } from '../../src/cli/runtime/client'
+import { RuntimeRpcFailureError } from '../../src/cli/runtime/types'
 import type {
   RuntimeTerminalClose,
   RuntimeTerminalListResult,
@@ -61,9 +62,30 @@ test('durable whole-tab close removes a split tab across restart', async (// oxl
 
     const pane = await waitForActivePaneHookDescriptor(firstLaunch.page)
     const client = new RuntimeClient(session.userDataDir, 30_000)
-    const active = await client.call<{ terminal: { handle: string } }>('terminal.resolvePane', {
-      paneKey: pane.paneKey
-    })
+    let active: Awaited<ReturnType<typeof client.call<{ terminal: { handle: string } }>>> | null =
+      null
+    await expect
+      .poll(
+        async () => {
+          try {
+            active = await client.call<{ terminal: { handle: string } }>('terminal.resolvePane', {
+              paneKey: pane.paneKey,
+              worktreeId: pane.worktreeId
+            })
+            return true
+          } catch (error) {
+            if (error instanceof RuntimeRpcFailureError && error.code === 'terminal_not_found') {
+              return false
+            }
+            throw error
+          }
+        },
+        { message: 'Active renderer pane did not become resolvable by the owning runtime' }
+      )
+      .toBe(true)
+    if (!active) {
+      throw new Error('Active renderer pane resolution completed without a terminal')
+    }
     const split = await client.call<{ split: RuntimeTerminalSplit }>('terminal.split', {
       terminal: active.result.terminal.handle,
       direction: 'vertical'
