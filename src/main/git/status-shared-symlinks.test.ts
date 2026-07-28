@@ -123,6 +123,20 @@ describe('getStatus shared symlink exclusion', () => {
     ])
   })
 
+  // Why: these are the names a byte-for-byte path comparison is most likely to
+  // get wrong — a space breaks naive whitespace splitting, and non-ASCII is what
+  // Git C-quotes unless the reader opts out.
+  it('drops shared symlinks whose names have a space or non-ASCII characters', async () => {
+    const names = ['my shared dir', 'ライブラリ']
+    for (const name of names) {
+      symlinkSync(join(primary, 'node_modules'), join(worktree, name), 'dir')
+    }
+
+    const status = await getStatus(worktree, { sharedLinkPaths: ['node_modules', ...names] })
+
+    expect(status.entries).toEqual([])
+  })
+
   it('keeps a symlink at a path that was never declared shared', async () => {
     symlinkSync(join(primary, 'node_modules'), join(worktree, 'vendor'), 'dir')
 

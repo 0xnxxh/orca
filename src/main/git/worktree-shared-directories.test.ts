@@ -269,6 +269,64 @@ describe('shared directories and worktree removal', () => {
     expect(status.entries).toEqual([])
   })
 
+  // Why: `-z` output is NUL-delimited and `.trim()` leaves interior NULs, so the
+  // raw stdout reached the user as `?? node_modules<NUL>?? precious.txt<NUL>` —
+  // raw control bytes in a message, listing the very link this feature exists to
+  // suppress. The error must name only what the user can actually act on.
+  it('reports only genuine blockers in the removal error, with no NUL bytes', async () => {
+    await createWorktreeSharedPaths(
+      primary,
+      worktree,
+      await resolveWorktreeSharedDirectories(primary)
+    )
+    writeFileSync(join(worktree, 'precious.txt'), 'unsaved work')
+
+    const removal = assertWorktreeCleanForRemoval(worktree, false, {
+      ignoredUntrackedPaths: await findExistingWorktreeSymlinkPaths(
+        worktree,
+        getConfiguredWorktreeSharedDirectories(primary)
+      )
+    })
+
+    await expect(removal).rejects.toThrow('uncommitted or untracked')
+    // Why an exact match: it proves both halves at once — no interior NUL, and
+    // the tolerated `node_modules` link absent from what the user is told to fix.
+    await expect(removal).rejects.toMatchObject({ stdout: '?? precious.txt' })
+  })
+
+  // Why `-z` is used at all: Git C-quotes non-ASCII paths under `--porcelain`,
+  // so a byte-for-byte comparison against the configured entry would miss and the
+  // link would read as a blocker. A space alone is not quoted but is the case a
+  // naive whitespace split would break.
+  it('tolerates shared directories whose names have a space or non-ASCII characters', async () => {
+    const names = ['my shared dir', 'ライブラリ']
+    for (const name of names) {
+      mkdirSync(join(primary, name))
+    }
+    writeFileSync(join(primary, '.gitignore'), `node_modules/\n${names.join('\n')}\n`)
+    writeFileSync(
+      join(primary, 'orca.yaml'),
+      `worktree:\n  sharedDirectories:\n${names.map((name) => `    - ${name}`).join('\n')}\n`
+    )
+    clearConfiguredWorktreeSharedDirectoriesCacheForTests()
+
+    await createWorktreeSharedPaths(
+      primary,
+      worktree,
+      await resolveWorktreeSharedDirectories(primary)
+    )
+
+    const ignoredLinkedPaths = await findExistingWorktreeSymlinkPaths(
+      worktree,
+      getConfiguredWorktreeSharedDirectories(primary)
+    )
+
+    expect(ignoredLinkedPaths).toEqual(expect.arrayContaining(names))
+    await expect(
+      assertWorktreeCleanForRemoval(worktree, false, { ignoredUntrackedPaths: ignoredLinkedPaths })
+    ).resolves.toBeUndefined()
+  })
+
   it('still refuses removal for real untracked changes next to a shared directory', async () => {
     await createWorktreeSharedPaths(
       primary,
