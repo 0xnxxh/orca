@@ -1,44 +1,48 @@
-import { parseAppSshPtyId } from '../../shared/ssh-pty-id'
-
-/** How long after startup the sweep runs. Terminal restore binds panes to their
- *  daemon sessions in a burst right after launch; waiting keeps a pane that is
- *  simply not reattached yet from reading as one whose agent process is gone. */
-export const RESTORED_SUBAGENT_LIVENESS_SWEEP_DELAY_MS = 2 * 60 * 1000
+import {
+  LOCAL_EXECUTION_HOST_ID,
+  parseExecutionHostId,
+  toSshExecutionHostId,
+  type ExecutionHostId
+} from '../../shared/execution-host'
+import type { FolderWorkspace, ProjectGroup } from '../../shared/types'
+import { getRepoIdFromWorktreeId } from '../../shared/worktree-id'
+import { parseWorkspaceKey } from '../../shared/workspace-scope'
 
 export type RestoredSubagentLivenessSweepDeps = {
-  /** Live local PTY session ids, or null when the inventory could not be read —
-   *  an unavailable listing is not evidence that anything exited. */
-  listLiveLocalPtyIds: () => Promise<readonly string[] | null>
+  /** Targeted provider liveness, or null when the provider cannot prove either state. */
+  hasLiveLocalPty: (ptyId: string) => boolean | null
+  isLocalExecutionHost: (worktreeId: string | undefined) => boolean
   /** PTY bound to this pane in the current session, if it has one. */
   getBoundPtyIdForPaneKey: (paneKey: string) => string | undefined
   /** PTY this pane was bound to when the session was last persisted; covers panes
    *  whose surviving daemon session has not been reattached yet. */
   getPersistedPtyIdForPaneKey: (paneKey: string) => string | undefined
-  reap: (isLocalPaneAgentLive: (paneKey: string) => boolean) => number
+  reap: (
+    isLocalExecutionHost: (worktreeId: string | undefined) => boolean,
+    isLocalPaneAgentLive: (paneKey: string) => boolean
+  ) => number
 }
 
-/** Cross-check restored Claude subagent rows against the live local PTY inventory
- *  and drop the ones no agent process can still be running. Panes launched over
- *  SSH resolve as live unconditionally: their agent runs on the remote host and
- *  can never appear here, so scanning for it would prune every live remote row. */
-export async function sweepRestoredSubagentsWithoutLiveAgent(
+/** Drop restored rows only when the owning host is local and its provider proves
+ *  the exact PTY absent. */
+export function sweepRestoredSubagentsWithoutLiveAgent(
   deps: RestoredSubagentLivenessSweepDeps
-): Promise<number> {
-  const liveIds = await deps.listLiveLocalPtyIds()
-  if (!liveIds) {
-    return 0
-  }
-  const livePtyIds = new Set(liveIds)
-  return deps.reap((paneKey) => {
-    const ptyId = deps.getBoundPtyIdForPaneKey(paneKey) ?? deps.getPersistedPtyIdForPaneKey(paneKey)
-    if (!ptyId) {
-      return false
+): number {
+  return deps.reap(
+    (worktreeId) => deps.isLocalExecutionHost(worktreeId),
+    (paneKey) => {
+      const ptyId =
+        deps.getBoundPtyIdForPaneKey(paneKey) ?? deps.getPersistedPtyIdForPaneKey(paneKey)
+      if (!ptyId) {
+        return false
+      }
+      try {
+        return deps.hasLiveLocalPty(ptyId) !== false
+      } catch {
+        return true
+      }
     }
-    if (parseAppSshPtyId(ptyId)) {
-      return true
-    }
-    return livePtyIds.has(ptyId)
-  })
+  )
 }
 
 /** Index the persisted terminal layouts as `paneKey -> ptyId`. Layout leaves are
@@ -56,4 +60,56 @@ export function indexPersistedPaneKeyPtyIds(
     }
   }
   return byPaneKey
+}
+
+type AgentWorkspaceExecutionHostDeps = {
+  getRepo: (repoId: string) => ExecutionHostOwner | null | undefined
+  getFolderWorkspace: (
+    folderWorkspaceId: string
+  ) => Pick<FolderWorkspace, 'projectGroupId' | 'connectionId'> | null | undefined
+  getProjectGroups: () => readonly Pick<ProjectGroup, 'id' | 'connectionId' | 'executionHostId'>[]
+}
+
+type ExecutionHostOwner = {
+  connectionId?: string | null
+  executionHostId?: string | null
+}
+
+function resolveDeclaredExecutionHost(owner: ExecutionHostOwner): ExecutionHostId | null {
+  if (owner.executionHostId?.trim()) {
+    return parseExecutionHostId(owner.executionHostId)?.id ?? null
+  }
+  const connectionId = owner.connectionId?.trim()
+  return connectionId ? toSshExecutionHostId(connectionId) : LOCAL_EXECUTION_HOST_ID
+}
+
+/** Resolve persisted workspace ownership; unknown provenance is not local authority. */
+export function resolveAgentWorkspaceExecutionHostId(
+  workspaceId: string | undefined,
+  deps: AgentWorkspaceExecutionHostDeps
+): ExecutionHostId | null {
+  if (!workspaceId) {
+    return null
+  }
+  const scope = parseWorkspaceKey(workspaceId)
+  if (scope?.type === 'folder') {
+    const workspace = deps.getFolderWorkspace(scope.folderWorkspaceId)
+    const group = workspace
+      ? deps.getProjectGroups().find((candidate) => candidate.id === workspace.projectGroupId)
+      : undefined
+    if (!workspace || !group) {
+      return null
+    }
+    return resolveDeclaredExecutionHost({
+      connectionId: workspace.connectionId ?? group.connectionId,
+      executionHostId: group.executionHostId
+    })
+  }
+  const worktreeId = scope?.type === 'worktree' ? scope.worktreeId : workspaceId
+  const repo = deps.getRepo(getRepoIdFromWorktreeId(worktreeId))
+  return repo ? resolveDeclaredExecutionHost(repo) : null
+}
+
+export function isLocalExecutionHost(hostId: string | null | undefined): boolean {
+  return parseExecutionHostId(hostId)?.kind === 'local'
 }

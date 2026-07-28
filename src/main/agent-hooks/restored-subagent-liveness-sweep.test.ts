@@ -8,6 +8,8 @@ import { toAppSshPtyId } from '../../shared/ssh-pty-id'
 import { AgentHookServer } from './server'
 import {
   indexPersistedPaneKeyPtyIds,
+  isLocalExecutionHost,
+  resolveAgentWorkspaceExecutionHostId,
   sweepRestoredSubagentsWithoutLiveAgent
 } from './restored-subagent-liveness-sweep'
 
@@ -62,18 +64,22 @@ async function restartWithInFlightSubagent(options?: {
 function sweepWith(
   server: AgentHookServer,
   overrides: {
-    livePtyIds?: readonly string[] | null
+    hasLiveLocalPty?: (ptyId: string) => boolean | null
+    executionHostId?: string | null
     boundPtyIdByPaneKey?: Record<string, string>
     persistedPtyIdByPaneKey?: Record<string, string>
   } = {}
-): Promise<number> {
+): number {
   return sweepRestoredSubagentsWithoutLiveAgent({
-    listLiveLocalPtyIds: async () =>
-      overrides.livePtyIds === undefined ? [] : overrides.livePtyIds,
+    hasLiveLocalPty: overrides.hasLiveLocalPty ?? (() => false),
+    isLocalExecutionHost: () =>
+      isLocalExecutionHost(
+        overrides.executionHostId === undefined ? 'local' : overrides.executionHostId
+      ),
     getBoundPtyIdForPaneKey: (paneKey) => overrides.boundPtyIdByPaneKey?.[paneKey],
     getPersistedPtyIdForPaneKey: (paneKey) => overrides.persistedPtyIdByPaneKey?.[paneKey],
-    reap: (isLocalPaneAgentLive) =>
-      server.reapRestoredClaudeSubagentsWithoutLiveAgent(isLocalPaneAgentLive)
+    reap: (isLocalHost, isLocalPaneAgentLive) =>
+      server.reapRestoredClaudeSubagentsWithoutLiveAgent(isLocalHost, isLocalPaneAgentLive)
   })
 }
 
@@ -91,7 +97,7 @@ describe('restored subagent liveness sweep', () => {
     try {
       expect(paneStatus(server)).toEqual({ state: 'working', subagents: [WORKING_CHILD] })
 
-      await expect(sweepWith(server, { persistedPtyIdByPaneKey: { [PANE]: PTY } })).resolves.toBe(1)
+      expect(sweepWith(server, { persistedPtyIdByPaneKey: { [PANE]: PTY } })).toBe(1)
 
       expect(paneStatus(server)).toEqual({ state: 'done', subagents: undefined })
     } finally {
@@ -102,9 +108,12 @@ describe('restored subagent liveness sweep', () => {
   it('keeps a seed whose pane still has a live local PTY', async () => {
     const server = await restartWithInFlightSubagent()
     try {
-      await expect(
-        sweepWith(server, { livePtyIds: [PTY], persistedPtyIdByPaneKey: { [PANE]: PTY } })
-      ).resolves.toBe(0)
+      expect(
+        sweepWith(server, {
+          hasLiveLocalPty: (ptyId) => ptyId === PTY,
+          persistedPtyIdByPaneKey: { [PANE]: PTY }
+        })
+      ).toBe(0)
 
       expect(paneStatus(server)).toEqual({ state: 'working', subagents: [WORKING_CHILD] })
     } finally {
@@ -112,13 +121,13 @@ describe('restored subagent liveness sweep', () => {
     }
   })
 
-  it('keeps a seed whose PTY is bound in this session but not listed yet', async () => {
+  it('uses targeted liveness for a PTY bound in this runtime', async () => {
     const server = await restartWithInFlightSubagent()
     try {
-      await expect(
-        sweepWith(server, { livePtyIds: [PTY], boundPtyIdByPaneKey: { [PANE]: PTY } })
-      ).resolves.toBe(0)
+      const hasLiveLocalPty = vi.fn((ptyId: string) => ptyId === PTY)
+      expect(sweepWith(server, { hasLiveLocalPty, boundPtyIdByPaneKey: { [PANE]: PTY } })).toBe(0)
 
+      expect(hasLiveLocalPty).toHaveBeenCalledExactlyOnceWith(PTY)
       expect(paneStatus(server).state).toBe('working')
     } finally {
       server.stop()
@@ -129,9 +138,12 @@ describe('restored subagent liveness sweep', () => {
     const sshPtyId = toAppSshPtyId('conn-1', PTY)
     const server = await restartWithInFlightSubagent()
     try {
-      await expect(
-        sweepWith(server, { livePtyIds: [], persistedPtyIdByPaneKey: { [PANE]: sshPtyId } })
-      ).resolves.toBe(0)
+      expect(
+        sweepWith(server, {
+          executionHostId: 'ssh:conn-1',
+          persistedPtyIdByPaneKey: { [PANE]: sshPtyId }
+        })
+      ).toBe(0)
 
       expect(paneStatus(server)).toEqual({ state: 'working', subagents: [WORKING_CHILD] })
     } finally {
@@ -142,7 +154,7 @@ describe('restored subagent liveness sweep', () => {
   it('never reaps a relay-owned pane even with no local PTY at all', async () => {
     const server = await restartWithInFlightSubagent({ connectionId: 'conn-1' })
     try {
-      await expect(sweepWith(server)).resolves.toBe(0)
+      expect(sweepWith(server)).toBe(0)
 
       expect(paneStatus(server).state).toBe('working')
     } finally {
@@ -150,10 +162,34 @@ describe('restored subagent liveness sweep', () => {
     }
   })
 
-  it('does nothing when the PTY inventory cannot be read', async () => {
+  it('never reaps a runtime-hosted pane from the desktop local provider', async () => {
+    const server = await restartWithInFlightSubagent()
+    const hasLiveLocalPty = vi.fn(() => false)
+    try {
+      expect(
+        sweepWith(server, {
+          executionHostId: 'runtime:ephemeral-vm-1',
+          hasLiveLocalPty,
+          persistedPtyIdByPaneKey: { [PANE]: 'remote:ephemeral-vm-1@@pty-1' }
+        })
+      ).toBe(0)
+
+      expect(hasLiveLocalPty).not.toHaveBeenCalled()
+      expect(paneStatus(server).state).toBe('working')
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('does nothing when targeted PTY liveness is unknown', async () => {
     const server = await restartWithInFlightSubagent()
     try {
-      await expect(sweepWith(server, { livePtyIds: null })).resolves.toBe(0)
+      expect(
+        sweepWith(server, {
+          hasLiveLocalPty: () => null,
+          persistedPtyIdByPaneKey: { [PANE]: PTY }
+        })
+      ).toBe(0)
 
       expect(paneStatus(server).state).toBe('working')
     } finally {
@@ -176,7 +212,7 @@ describe('restored subagent liveness sweep', () => {
         }
       })
 
-      await expect(sweepWith(server)).resolves.toBe(0)
+      expect(sweepWith(server)).toBe(0)
       expect(paneStatus(server).state).toBe('working')
     } finally {
       server.stop()
@@ -195,7 +231,7 @@ describe('restored subagent liveness sweep', () => {
         payload: { state: 'working', prompt: 'still going', agentType: 'claude' }
       })
 
-      await sweepWith(server)
+      sweepWith(server)
 
       expect(paneStatus(server, makePaneKey('tab-2', LEAF)).state).toBe('working')
     } finally {
@@ -203,20 +239,18 @@ describe('restored subagent liveness sweep', () => {
     }
   })
 
-  it('reports zero and leaves state alone when the listing throws', async () => {
+  it('reports zero and leaves state alone when targeted liveness throws', async () => {
     const server = await restartWithInFlightSubagent()
-    const listLiveLocalPtyIds = vi.fn(async () => {
+    const hasLiveLocalPty = vi.fn(() => {
       throw new Error('daemon unreachable')
     })
     try {
-      await expect(
-        sweepRestoredSubagentsWithoutLiveAgent({
-          listLiveLocalPtyIds,
-          getBoundPtyIdForPaneKey: () => undefined,
-          getPersistedPtyIdForPaneKey: () => undefined,
-          reap: (probe) => server.reapRestoredClaudeSubagentsWithoutLiveAgent(probe)
+      expect(
+        sweepWith(server, {
+          hasLiveLocalPty,
+          persistedPtyIdByPaneKey: { [PANE]: PTY }
         })
-      ).rejects.toThrow('daemon unreachable')
+      ).toBe(0)
 
       expect(paneStatus(server).state).toBe('working')
     } finally {
@@ -234,5 +268,55 @@ describe('indexPersistedPaneKeyPtyIds', () => {
         'tab-3': {}
       })
     ).toEqual(new Map([[PANE, PTY]]))
+  })
+})
+
+describe('resolveAgentWorkspaceExecutionHostId', () => {
+  const localRepo = {
+    id: 'local-repo',
+    connectionId: null,
+    executionHostId: 'local' as const
+  }
+  const runtimeRepo = {
+    id: 'runtime-repo',
+    connectionId: null,
+    executionHostId: 'runtime:ephemeral-vm-1' as const
+  }
+  const futureHostRepo = {
+    id: 'future-repo',
+    connectionId: null,
+    executionHostId: 'container:future-host'
+  }
+  const deps = {
+    getRepo: (repoId: string) =>
+      [localRepo, runtimeRepo, futureHostRepo].find((candidate) => candidate.id === repoId),
+    getFolderWorkspace: (id: string) =>
+      id === 'folder-runtime' ? { projectGroupId: 'group-runtime', connectionId: null } : undefined,
+    getProjectGroups: () => [
+      {
+        id: 'group-runtime',
+        connectionId: null,
+        executionHostId: 'runtime:ephemeral-vm-1'
+      }
+    ]
+  }
+
+  it('positively identifies local ownership and rejects runtime hosts', () => {
+    expect(resolveAgentWorkspaceExecutionHostId('local-repo::/repo', deps)).toBe('local')
+    expect(resolveAgentWorkspaceExecutionHostId('runtime-repo::/repo', deps)).toBe(
+      'runtime:ephemeral-vm-1'
+    )
+    expect(resolveAgentWorkspaceExecutionHostId('folder:folder-runtime', deps)).toBe(
+      'runtime:ephemeral-vm-1'
+    )
+    expect(resolveAgentWorkspaceExecutionHostId('future-repo::/repo', deps)).toBeNull()
+    expect(isLocalExecutionHost('local')).toBe(true)
+    expect(isLocalExecutionHost('runtime:ephemeral-vm-1')).toBe(false)
+  })
+
+  it('treats missing workspace provenance as unknown', () => {
+    expect(resolveAgentWorkspaceExecutionHostId('missing::/repo', deps)).toBeNull()
+    expect(resolveAgentWorkspaceExecutionHostId(undefined, deps)).toBeNull()
+    expect(isLocalExecutionHost(null)).toBe(false)
   })
 })

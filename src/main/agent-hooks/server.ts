@@ -1929,13 +1929,11 @@ export class AgentHookServer {
    *  gates the pane 'working' for the rest of its life and hibernation, which
    *  requires 'done', can never reclaim the agent's heap.
    *
-   *  `isLocalPaneAgentLive` is only consulted for panes whose binding is local
-   *  (`connectionId === null`): a remote/SSH agent runs on the far host and can
-   *  never appear in a local process index, so scanning for it would prune every
-   *  live remote binding. Panes that have produced hook traffic in this runtime are
-   *  skipped as well — their rows are backed by the process that is talking to us.
-   *  Returns the number of panes changed. */
+   *  Both the execution host and relay binding must prove local ownership before
+   *  targeted PTY liveness is consulted. Panes that reported in this runtime are
+   *  also skipped. Returns the number of panes changed. */
   reapRestoredClaudeSubagentsWithoutLiveAgent(
+    isLocalExecutionHost: (worktreeId: string | undefined) => boolean,
     isLocalPaneAgentLive: (paneKey: string) => boolean
   ): number {
     let changedPanes = 0
@@ -1944,6 +1942,7 @@ export class AgentHookServer {
       if (
         enriched.payload.agentType !== 'claude' ||
         enriched.connectionId !== null ||
+        !isLocalExecutionHost(enriched.worktreeId) ||
         this.runtimeObservedStatusPaneKeys.has(paneKey) ||
         isLocalPaneAgentLive(paneKey)
       ) {
