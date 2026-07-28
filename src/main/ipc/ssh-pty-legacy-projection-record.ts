@@ -113,32 +113,6 @@ export function requireProjectionRecord(
   return record
 }
 
-export function rollbackUnpublishedProjection(
-  records: Map<string, ProjectionRecord>,
-  cursors: ReadonlyMap<string, PtyProjectionCursor>,
-  idsByPty: Map<string, string[]>,
-  id: string
-): boolean {
-  const record = records.get(id)
-  if (!record || record.state !== 'committed') {
-    return false
-  }
-  const { identity, beforeScanner } = record.semantics
-  const cursor = cursors.get(identity.ptyId)
-  if (
-    !cursor ||
-    cursor.providerGeneration !== identity.providerGeneration ||
-    cursor.ptyIncarnation !== identity.ptyIncarnation ||
-    cursor.displayEnd !== identity.displayEnd
-  ) {
-    return false
-  }
-  cursor.displayEnd = identity.displayStart
-  cursor.scanner = { ...beforeScanner }
-  reclaimProjectionRecord(records, idsByPty, id, identity.ptyId)
-  return true
-}
-
 export function closeProjectionPty(
   cursors: Map<string, PtyProjectionCursor>,
   ptyId: string,

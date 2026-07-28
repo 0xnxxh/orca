@@ -195,8 +195,9 @@ describe('SshPtyOutputIntake', () => {
     harness.completions[1]!.resolve()
     await next
     expect(projections[1]).toMatchObject({
-      identity: { displayStart: 0 },
-      beforeScanner: { tail: '', pendingSubscribe: false }
+      identity: { displayStart: 5 },
+      beforeScanner: { tail: '\x1b[?20', pendingSubscribe: false },
+      decision: 'subscribed'
     })
   })
 
@@ -319,8 +320,10 @@ describe('SshPtyOutputIntake', () => {
     await expect(queued).rejects.toThrow('provider-closed')
     await expect(exit).rejects.toThrow('provider-closed')
     await expect(harness.intake.acceptData(event())).rejects.toThrow('ssh_output_stale_generation')
+    await expect(running).rejects.toThrow('provider-closed')
+    expect(harness.intake.getDebugSnapshot().model).toMatchObject({ sourceUnits: 0, bytes: 0 })
     harness.completions[0]!.resolve()
-    await expect(running).rejects.toThrow('ssh_model_admission_generation_closed')
+    await Promise.resolve()
     expect(harness.intake.getDebugSnapshot().exitBarriers).toBe(0)
   })
 
@@ -343,7 +346,8 @@ describe('SshPtyOutputIntake', () => {
 
     await expect(pressured).rejects.toThrow('provider-closed')
     expect(harness.dependencies.resumeProvider).toHaveBeenCalledWith(1, 'pty-1')
+    await expect(running).rejects.toThrow('provider-closed')
     harness.completions[0]!.resolve()
-    await expect(running).rejects.toThrow('ssh_model_admission_generation_closed')
+    await Promise.resolve()
   })
 })

@@ -8,11 +8,11 @@ import {
   admissionError,
   admissionKeyId,
   canReserveAdmission,
+  cancelAdmissionGeneration,
   pressureHasAdmissionKey,
   retainedBytes,
   resolveAdmissionIdleWaiters,
   takePausedGeneration,
-  takePressureEntriesForGeneration,
   type AdmissionCharge,
   type AdmissionEntry,
   type PtyUsage
@@ -83,26 +83,14 @@ export class SshPtyModelAdmission {
   closeGeneration(providerGeneration: number, reason = 'provider-generation-closed'): void {
     this.closingGenerations.add(providerGeneration)
     const error = admissionError(reason)
-    for (const entry of takePressureEntriesForGeneration(this.pressure, providerGeneration)) {
-      this.pressureBytes -= entry.charge.bytes
-      entry.reject(error)
-    }
-    for (const [id, usage] of this.usageByPty) {
-      const queued = usage.queued.filter(
-        (entry) => entry.key.providerGeneration === providerGeneration
-      )
-      usage.queued = usage.queued.filter(
-        (entry) => entry.key.providerGeneration !== providerGeneration
-      )
-      for (const entry of queued) {
-        this.release(entry.key, entry.charge)
-        entry.reject(error)
-      }
-      if (!usage.running && usage.queued.length === 0 && usage.sourceUnits === 0) {
-        this.usageByPty.delete(id)
-      }
-      resolveAdmissionIdleWaiters(this.usageByPty, this.pressure, this.idleWaiters, id)
-    }
+    this.pressureBytes -= cancelAdmissionGeneration({
+      pressure: this.pressure,
+      usageByPty: this.usageByPty,
+      idleWaiters: this.idleWaiters,
+      providerGeneration,
+      error,
+      release: (key, charge) => this.release(key, charge)
+    })
     for (const key of takePausedGeneration(this.pausedKeys, providerGeneration)) {
       try {
         this.resumeProvider(key)
@@ -228,35 +216,42 @@ export class SshPtyModelAdmission {
     try {
       execution = entry.run()
     } catch (error) {
-      this.finishEntry(id, usage, entry)
-      entry.reject(error instanceof Error ? error : new Error(String(error)))
+      if (this.finishEntry(id, usage, entry)) {
+        entry.reject(error instanceof Error ? error : new Error(String(error)))
+      }
       return
     }
     void execution.completion.then(
       () => {
-        this.finishEntry(id, usage, entry)
-        if (this.closingGenerations.has(entry.key.providerGeneration)) {
-          entry.reject(admissionError('ssh_model_admission_generation_closed'))
-        } else {
-          entry.resolve({
-            ptyId: entry.key.ptyId,
-            providerGeneration: entry.key.providerGeneration,
-            sequence: execution.sequence
-          })
+        if (!this.finishEntry(id, usage, entry)) {
+          return
         }
+        entry.resolve({
+          ptyId: entry.key.ptyId,
+          providerGeneration: entry.key.providerGeneration,
+          sequence: execution.sequence
+        })
       },
       (error) => {
-        this.finishEntry(id, usage, entry)
-        entry.reject(error instanceof Error ? error : new Error(String(error)))
+        if (this.finishEntry(id, usage, entry)) {
+          entry.reject(error instanceof Error ? error : new Error(String(error)))
+        }
       }
     )
   }
 
-  private finishEntry(id: string, usage: PtyUsage, entry: AdmissionEntry): void {
-    if (usage.running === entry) {
-      usage.running = null
+  private finishEntry(id: string, usage: PtyUsage, entry: AdmissionEntry): boolean {
+    if (entry.state !== 'running' || usage.running !== entry) {
+      return false
     }
+    usage.running = null
+    entry.state = 'settled'
     this.release(entry.key, entry.charge)
+    this.cleanupUsage(id, usage)
+    return true
+  }
+
+  private cleanupUsage(id: string, usage: PtyUsage): void {
     this.startNext(id, usage)
     if (!usage.running && usage.queued.length === 0 && usage.sourceUnits === 0) {
       this.usageByPty.delete(id)
@@ -276,6 +271,9 @@ export class SshPtyModelAdmission {
   }
 
   private maybeResumeAndPromote(): void {
+    if (this.disposed) {
+      return
+    }
     for (let index = 0; index < this.pressure.length; ) {
       const entry = this.pressure[index]!
       const hasEarlierEntryForPty = this.pressure
@@ -309,7 +307,9 @@ export class SshPtyModelAdmission {
         continue
       }
       this.pausedKeys.delete(id)
-      this.resumeProvider(key)
+      try {
+        this.resumeProvider(key)
+      } catch {}
     }
   }
 }

@@ -9,7 +9,6 @@ import {
   projectionError,
   reclaimProjectionRecord,
   requireProjectionRecord,
-  rollbackUnpublishedProjection,
   scannerSnapshot,
   type LegacySshProjectionDebugSnapshot,
   type LegacySshProjectionReservation,
@@ -212,15 +211,8 @@ export class SshPtyLegacyProjectionLedger {
     return transferred
   }
 
-  transferUnpublished(id: string, _reason: string): boolean {
-    const transferred = rollbackUnpublishedProjection(
-      this.records,
-      this.cursorByPty,
-      this.idsByPty,
-      id
-    )
-    this.transferredCount += Number(transferred)
-    return transferred
+  transferUnpublished(id: string, reason: string): boolean {
+    return this.transfer([id], reason) === 1
   }
 
   transferGeneration(providerGeneration: number, reason: string): number {

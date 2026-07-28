@@ -12,7 +12,7 @@ export type AdmissionEntry = {
   run: () => { sequence: number; completion: Promise<void> }
   resolve: (receipt: SshPtyModelAdmissionReceipt) => void
   reject: (error: Error) => void
-  state: 'queued' | 'running' | 'pressure'
+  state: 'queued' | 'running' | 'pressure' | 'settled'
 }
 
 export type PtyUsage = AdmissionCharge & {
@@ -72,6 +72,47 @@ export function takePressureEntriesForGeneration(
     }
   }
   return removed
+}
+
+export function cancelAdmissionGeneration(args: {
+  pressure: AdmissionEntry[]
+  usageByPty: Map<string, PtyUsage>
+  idleWaiters: Map<string, Set<() => void>>
+  providerGeneration: number
+  error: Error
+  release: (key: SshPtyModelAdmissionKey, charge: AdmissionCharge) => void
+}): number {
+  let pressureBytes = 0
+  for (const entry of takePressureEntriesForGeneration(args.pressure, args.providerGeneration)) {
+    pressureBytes += entry.charge.bytes
+    entry.state = 'settled'
+    entry.reject(args.error)
+  }
+  for (const [id, usage] of args.usageByPty) {
+    const canceled = usage.queued.filter(
+      (entry) => entry.key.providerGeneration === args.providerGeneration
+    )
+    usage.queued = usage.queued.filter(
+      (entry) => entry.key.providerGeneration !== args.providerGeneration
+    )
+    if (usage.running?.key.providerGeneration === args.providerGeneration) {
+      canceled.push(usage.running)
+      usage.running = null
+    }
+    for (const entry of canceled) {
+      if (entry.state === 'settled') {
+        continue
+      }
+      entry.state = 'settled'
+      args.release(entry.key, entry.charge)
+      entry.reject(args.error)
+    }
+    if (!usage.running && usage.queued.length === 0 && usage.sourceUnits === 0) {
+      args.usageByPty.delete(id)
+    }
+    resolveAdmissionIdleWaiters(args.usageByPty, args.pressure, args.idleWaiters, id)
+  }
+  return pressureBytes
 }
 
 export function takePausedGeneration(
