@@ -119,6 +119,24 @@ describe('useDashboardPopoutBridge', () => {
     expect(mocks.subscribeStore).not.toHaveBeenCalled()
   })
 
+  // The whole lazy design exists so an enabled-but-closed pop-out costs nothing:
+  // a live subscriber would rebuild a cross-worktree snapshot on store writes.
+  it('subscribes to the store only while the pop-out is open', async () => {
+    await act(async () => root.render(<Harness enabled />))
+
+    expect(mocks.onPopoutOpenChanged).toHaveBeenCalledTimes(1)
+    expect(mocks.subscribeStore).not.toHaveBeenCalled()
+
+    await act(async () => mocks.onPopoutOpenChanged.mock.calls[0][0](true))
+
+    expect(mocks.subscribeStore).toHaveBeenCalledTimes(1)
+    const unsubscribe = mocks.subscribeStore.mock.results[0]?.value as () => void
+
+    await act(async () => mocks.onPopoutOpenChanged.mock.calls[0][0](false))
+
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
+
   it('ignores unrelated store writes while retaining every snapshot input', () => {
     const previousState = makeSnapshotWatchState()
     expect(dashboardSnapshotInputsChanged({ ...previousState }, previousState)).toBe(false)
@@ -237,6 +255,10 @@ describe('useDashboardPopoutBridge repo icon publishing', () => {
       )
     )
   }
+  const notifyUnrelatedStoreWrite = (): void => {
+    const previousState = makeSnapshotWatchState()
+    act(() => mocks.subscribeStore.mock.calls[0][0]({ ...previousState }, previousState))
+  }
   const mountAndOpen = async (): Promise<void> => {
     await act(async () => root.render(<Harness enabled />))
     setPopoutOpen(true)
@@ -253,6 +275,18 @@ describe('useDashboardPopoutBridge repo icon publishing', () => {
     expect(mocks.publishSnapshot).toHaveBeenCalledTimes(2)
     expect(lastPublished()).not.toHaveProperty('repoIconsByRepoId')
     expect(lastPublished().generatedAt).toBe(now)
+  })
+
+  it('skips the republish when a store write touches no snapshot input', async () => {
+    await mountAndOpen()
+    expect(mocks.publishSnapshot).toHaveBeenCalledTimes(1)
+
+    // Past the throttle, so an ungated write would publish on the leading edge
+    // rather than silently parking on the trailing timer.
+    now += PAST_THROTTLE_MS
+    notifyUnrelatedStoreWrite()
+
+    expect(mocks.publishSnapshot).toHaveBeenCalledTimes(1)
   })
 
   // A burst collapses onto the trailing timer, so that edge carries most of the
