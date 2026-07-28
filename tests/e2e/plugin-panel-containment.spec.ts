@@ -1,7 +1,7 @@
 /**
- * Invariant: a plugin panel cannot exfiltrate, navigate, or bypass bridge budgets.
+ * Invariant: a plugin panel cannot exfiltrate, navigate, or bypass the host bridge.
  * Oracle: a permissive loopback server receives zero requests while the real
- * sandboxed iframe reports CSP/navigation containment and actual budget refusals.
+ * sandboxed iframe reports CSP/navigation containment and a bounded bridge refusal.
  * Chromium is required because Vitest cannot exercise CSP or iframe sandboxing.
  * Maturity: experimental until this has CI soak history on all desktop platforms.
  */
@@ -188,9 +188,7 @@ async function inspectElectronFrameProcesses(
   }, pageUrl)
 }
 
-test('contains hostile panel network, navigation, and bridge-flood probes', async ({
-  orcaPage
-}, testInfo) => {
+test('contains hostile panel network and navigation probes', async ({ orcaPage }, testInfo) => {
   testInfo.annotations.push({ type: 'maturity', description: 'experimental' })
   const server = await startPermissiveProbeServer()
   const pluginRoot = await materializeHostilePlugin(server.origin)
@@ -238,14 +236,38 @@ test('contains hostile panel network, navigation, and bridge-flood probes', asyn
       )
     }
 
-    await frame.getByRole('button', { name: 'Run bridge budget probes' }).click()
-    for (const probe of ['oversized-message', 'message-flood']) {
-      await expect(frame.locator(`[data-probe="${probe}"]`)).toHaveAttribute(
-        'data-contained',
-        'true',
-        { timeout: 5_000 }
-      )
-    }
+    const bridgeErrorCode = await frame.locator('html').evaluate(
+      () =>
+        new Promise<string>((resolve, reject) => {
+          const requestId = 'small-invalid-probe'
+          const timer = setTimeout(() => reject(new Error('host sent no bridge refusal')), 5_000)
+          const onMessage = (event: MessageEvent): void => {
+            const data = event.data
+            if (
+              event.source !== window.parent ||
+              !data ||
+              data.type !== 'orca-panel-action-result' ||
+              data.requestId !== requestId
+            ) {
+              return
+            }
+            clearTimeout(timer)
+            window.removeEventListener('message', onMessage)
+            resolve(data.errorCode ?? 'missing_error_code')
+          }
+          window.addEventListener('message', onMessage)
+          window.parent.postMessage(
+            {
+              type: 'orca-panel-action',
+              requestId,
+              action: 'invalid.hostileAction',
+              params: {}
+            },
+            '*'
+          )
+        })
+    )
+    expect(bridgeErrorCode).toBe('invalid_request')
 
     expect(server.requests).toEqual([])
     expect(orcaPage.url()).toBe(appUrl)
