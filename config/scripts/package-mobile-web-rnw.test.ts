@@ -4,6 +4,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MobileWebPackageAssets } from '../../src/main/runtime/rpc/mobile-web-package-assets'
+import { MOBILE_WEB_PACKAGE_BRIDGE_RANGE } from '../../src/shared/mobile-web/bridge-release-policy'
 import { MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH } from '../../src/shared/mobile-web/markdown-editor-csp'
 import { MobileWebManifestSchema } from '../../src/shared/mobile-web/manifest-contract'
 
@@ -81,6 +82,7 @@ describe('RNW mobile web packager', () => {
     expect(document).toContain('maximum-scale=1,user-scalable=no')
     expect(document).toContain('viewport-fit=cover')
     expect(manifest.assets).toHaveLength(4)
+    expect(manifest.bridge).toEqual(MOBILE_WEB_PACKAGE_BRIDGE_RANGE)
 
     const packageAssets = new MobileWebPackageAssets({ resolveRoot: () => output })
     await expect(packageAssets.getManifest()).resolves.toMatchObject({

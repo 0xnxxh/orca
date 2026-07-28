@@ -192,6 +192,11 @@ and mobile-web lint; node, mobile, and mobile-web typechecks; reliability,
 localization, max-lines, formatting, package verification, and diff hygiene
 pass. The packaged-resource fixture now includes the same required safe-area
 viewport contract as the production document.
+The first production bridge policy is now frozen: packages and the shell use
+the exact v2 protocol, additive features use capability negotiation instead of
+version bumps, and Desktop must retain a bridge floor for at least two stable
+mobile releases containing its replacement before the supported shell minimum
+can advance. Packaging consumes the shared policy directly.
 The remaining security work below is release-app corpus testing, fuzzing,
 cross-scope races, privacy/authorization audit, and independent review.
 

@@ -652,6 +652,12 @@ recovery, or physical-device gates.
       capability, and typed parameters in every request.
 - [x] Return typed results or stable error codes with matching session/ID.
 - [x] Negotiate exact capabilities, bridge version, and per-operation limits.
+- [x] Freeze the first production bridge release policy. The shell and package
+      use exact protocol v2. Additive features remain on v2 through capability
+      negotiation. A future incompatible protocol must ship in the native shell
+      first, retain the prior floor for at least two stable mobile releases, and
+      cannot raise the Desktop package floor until the supported store-shell
+      minimum advances.
 - [x] Reject malformed JSON, unknown fields, unsupported versions, and unknown
       capabilities. Missing protocol versions are `invalid_message`; explicit
       out-of-range versions remain `unsupported_version`. Native-to-page inbox
@@ -711,8 +717,10 @@ recovery, or physical-device gates.
 - [~] Test newer shell/older page and older shell/newer page degradation.
   Download and native cache/session boundaries now reject shell versions
   below `minimum` or above `testedThrough` before staging, opening, or
-  recovery. Shared, hook, Swift/Kotlin source-drift, and native compile
-  checks pass; the real multi-binary compatibility matrix remains open.
+  recovery. Production packaging consumes the exact v2 release policy, and a
+  drift test freezes the two-stable-release floor retention rule. Shared, hook,
+  Swift/Kotlin source-drift, and native compile checks pass; the real
+  multi-binary compatibility matrix remains open.
 - [x] Cancel all pending bridge work before host switch, removal, or WebView
       replacement. Authenticated Desktop client replacement first cancels every
       pending broker request, so a delayed result from the retired client
@@ -2626,4 +2634,5 @@ and diff hygiene pass. A fresh production RNW build remains
 | 2026-07-28 | Complete | Mirrored oversized persisted-file faults pass the Swift executable and Android 76-task module suite. Shared contracts pass 24 files / 203 tests; native source parity passes 1 file / 4 tests; all relevant typechecks, lints, formatting, max-lines, and diff hygiene pass.                                                                                                                                                            |
 | 2026-07-28 | Complete | The obsolete standalone renderer-based mobile-web presentation, its Vite-only package path, and 12,621 lines of duplicate UI/tests are removed. Production bridge clients and transport state remain, and a boundary test prevents renderer UI from returning. The authoritative RNW package remains `b17ead7a…`: 49 assets, 9,281,663 raw bytes, and 2,684,764 gzip bytes.                                                             |
 | 2026-07-28 | Complete | Post-removal validation passes 568 mobile files / 3,375 tests with 2 expected skips and 3,752 root files / 39,218 tests with 62 expected skips. Root/mobile/mobile-web lint, node/mobile/mobile-web typechecks, reliability, localization, max-lines, changed-file formatting, package verification, and diff hygiene pass. The packaged-resource fixture now matches the required safe-area viewport contract.                         |
-| 2026-07-28 | Next     | Complete compatibility release policy and the remaining gated cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                |
+| 2026-07-28 | Complete | The first production bridge release policy is frozen at exact v2. Production packaging imports the shared range, additive features stay on v2 through capability negotiation, and a future floor cannot retire until its replacement has shipped in at least two stable mobile releases and the supported shell minimum advances.                                                                                                       |
+| 2026-07-28 | Next     | Complete the remaining gated cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                                 |

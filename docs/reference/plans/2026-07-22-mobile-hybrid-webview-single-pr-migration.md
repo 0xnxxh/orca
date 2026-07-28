@@ -1731,6 +1731,17 @@ prevents a store-installed bridge upgrade from loading an older cached page
 into a health-timeout loop. Capability grants still provide feature-level
 degradation within a compatible bridge protocol range.
 
+The first production release uses exact bridge protocol v2: generated packages
+declare `minimum: 2` and `testedThrough: 2`, and the shell parses v2 envelopes.
+Additive operations remain on v2 and degrade through capability negotiation
+rather than widening the manifest range. An incompatible protocol must ship in
+the native shell before Desktop can require it. Desktop retains the prior
+bridge floor until the replacement has shipped in at least two stable mobile
+releases and Orca's supported store-shell minimum has advanced beyond that
+floor. A manifest may advertise multiple versions only after the page and shell
+have real multi-version parsers and binary-matrix coverage; numeric range alone
+does not establish compatibility.
+
 There is no `rpc.call(method, params)` or `native.invoke(name, value)` escape
 hatch. Capabilities are concrete domain contracts such as
 `workspace.snapshot`, `terminal.subscribe`, `file.pick`, or
@@ -2887,8 +2898,6 @@ signed Option A design separately.
   and review UI on the lowest-storage supported devices?
 - Which pure models and components can be shared without coupling the mobile
   build to Electron or desktop window assumptions?
-- What bridge version range will the first production shell support, and how
-  long will Desktop continue building packages for that floor?
 - Does the native-broker terminal path meet physical-device latency and battery
   budgets, including Relay and SSH? A negative answer fails this design rather
   than silently adding a durable credential to the page.

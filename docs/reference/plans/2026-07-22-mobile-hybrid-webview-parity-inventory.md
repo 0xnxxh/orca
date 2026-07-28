@@ -495,7 +495,7 @@ IDs, and unrelated provider state never enter the page result.
 | Terminal stream                  | Implemented and focused-test passing            | `src/shared/mobile-web/terminal-stream-contract.ts`; broker adapter and real-stream validation remain                                        |
 | Shell navigation events          | Implemented and focused-test passing            | Strict opaque routes with monotonic sequence, shell-session/build context, and one-shot restore                                              |
 | Stable bridge errors             | Implemented and focused-test passing            | Strict stable enum; response/error schemas reject raw Desktop/native messages                                                                |
-| Shell compatibility range        | Partial                                         | Manifest range and exact v1 envelopes exist; supported-version release policy remains                                                        |
+| Shell compatibility range        | Implemented and policy frozen                   | Exact v2 package/shell contract; capability-based additive changes; two-stable-release floor retention before supported-minimum advancement  |
 | Bridge request/subscription caps | Implemented and focused-test passing            | 640 KiB envelope, 64 pending requests, 32 subscriptions, per-operation byte/concurrency/rate grants                                          |
 | Package read concurrency         | Implemented and focused-test passing            | Four concurrent 48 KiB reads / 192 KiB in flight per connection                                                                              |
 | Terminal stream memory           | Implemented and focused-test passing            | 16 KiB input, 64 KiB output batch, 256 KiB outstanding, 2 MiB snapshot                                                                       |
@@ -527,6 +527,11 @@ source-control, and review presentation is also removed with its Vite-only
 package path. A production-source boundary requires `src/mobile-web/` to remain
 renderer-independent, while the authoritative RNW package still verifies as
 build `b17ead7a…`.
+The first production shell and package use exact bridge v2. Additive operations
+remain compatible through negotiated capabilities. Any incompatible successor
+must ship natively first, retain v2 for at least two stable mobile releases, and
+wait for the supported store-shell minimum to advance before Desktop raises
+the package floor.
 
 ## Next Inventory Action
 
