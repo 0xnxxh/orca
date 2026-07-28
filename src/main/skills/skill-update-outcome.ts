@@ -34,22 +34,6 @@ export function skillUpdateFailedNames(
     }
     // `newer-known` counts as landed: the CLI pulls from the source repo, which
     // can be ahead of the revision this build ships in its manifest.
-    //
-    // `outdated` is not a failed run either. `skills update` compares its lock's
-    // recorded hash against the source and never reads disk, so when the lock has
-    // advanced past the installed bytes it reports "up to date", exits 0, and
-    // writes nothing. The copy is left intact — a recognised older revision, not
-    // a broken one — and no amount of retrying converges it. Calling that an
-    // error invented a failure the CLI never reported and armed a Retry that
-    // provably could not succeed. The freshness badge still marks the copy
-    // not-current, so this only stops the run being blamed for it.
-    //
-    // A genuinely botched write is still caught: a half-written bundle hashes to
-    // `unrecognized`, a wholly-degraded or removed copy leaves no convergent
-    // placement, and process-level failure surfaces through the spawn error.
-    return convergent.some(
-      (entry) =>
-        entry.status !== 'current' && entry.status !== 'newer-known' && entry.status !== 'outdated'
-    )
+    return convergent.some((entry) => entry.status !== 'current' && entry.status !== 'newer-known')
   })
 }
