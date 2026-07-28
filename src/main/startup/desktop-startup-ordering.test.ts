@@ -16,6 +16,9 @@ describe('startup ordering', () => {
     const desktopEnd = source.indexOf("win.once('show'", desktopStart)
     const desktopStartup = source.slice(desktopStart, desktopEnd)
 
+    // Why: bound every anchor, not just the desktop pair — an unresolved one slices to EOF.
+    expect(attachStart).toBeGreaterThanOrEqual(0)
+    expect(attachEnd).toBeGreaterThan(attachStart)
     expect(desktopStart).toBeGreaterThanOrEqual(0)
     expect(desktopEnd).toBeGreaterThan(desktopStart)
 
