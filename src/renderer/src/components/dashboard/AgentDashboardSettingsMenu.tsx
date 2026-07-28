@@ -121,7 +121,9 @@ export function AgentDashboardSettingsMenu({
           </span>
           <SettingsSwitch
             checked={showIdle}
-            onChange={() => updateSettings({ experimentalAgentDashboardShowIdle: !showIdle })}
+            onChange={() => {
+              void updateSettings({ experimentalAgentDashboardShowIdle: !showIdle })
+            }}
             ariaLabel={translate('dashboardPopout.settings.showIdle', 'Show idle agents')}
           />
         </div>
