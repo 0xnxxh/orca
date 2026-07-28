@@ -8,6 +8,8 @@ import {
 export const MOBILE_WEB_PACKAGE_MAX_CONCURRENT_READS = 4
 export const MOBILE_WEB_PACKAGE_MAX_IN_FLIGHT_BYTES =
   MOBILE_WEB_PACKAGE_MAX_CONCURRENT_READS * MOBILE_WEB_PACKAGE_CHUNK_BYTES
+export const MOBILE_WEB_PACKAGE_CHUNK_BASE64_CHARS =
+  Math.ceil(MOBILE_WEB_PACKAGE_CHUNK_BYTES / 3) * 4
 
 export const MOBILE_WEB_PACKAGE_ERROR_CODES = [
   'mobile_web_package_unavailable',
@@ -55,7 +57,7 @@ export const MobileWebPackageAssetChunkSchema = z
     offset: z.number().int().nonnegative(),
     byteLength: z.number().int().positive().max(MOBILE_WEB_PACKAGE_CHUNK_BYTES),
     sha256: z.string().regex(SHA256_PATTERN),
-    dataBase64: z.string().min(4).regex(BASE64_PATTERN),
+    dataBase64: z.string().min(4).max(MOBILE_WEB_PACKAGE_CHUNK_BASE64_CHARS).regex(BASE64_PATTERN),
     eof: z.boolean()
   })
   .strict()

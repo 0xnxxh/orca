@@ -1531,8 +1531,11 @@ copy.
   Boolean schema, bridge, total-byte, and asset-byte integers before staging. It
   removed Android `JSONObject.optInt` string coercion and iOS
   `NSNumber`/`CFBoolean` integer bridging so both native validators require exact
-  JSON scalar types. Broader generated mutation, chunk/path/MIME/CSP, and
-  persisted-cache metadata fuzzing remains open.
+  JSON scalar types. The shared chunk envelope now caps encoded data at the
+  exact 65,536-character representation of 48 KiB and rejects oversized,
+  type-confused, noncanonical, length-mismatched, and extra-field responses.
+  Broader generated mutation, path/MIME/CSP, and persisted-cache metadata
+  fuzzing remains open.
 - [ ] Fuzz bridge envelopes, schemas, sizes, IDs, ordering, cancellation, and
       subscription lifecycle.
 - [ ] Attempt cross-host, cross-build, cross-workspace, and cross-session races.
@@ -2556,4 +2559,6 @@ copy.
 | 2026-07-28 | Complete | Manifest scalar hardening passes 1 shared contract file / 20 tests, the native Swift fault executable, and the refreshed Android module suite across 76 Gradle tasks. Node typecheck, changed TypeScript lint/formatting, max-lines, and diff hygiene pass. No RNW package content changed.                                                                                                                                                   |
 | 2026-07-28 | Finding  | Foundation bridges JSON `true` through `NSNumber`, and Swift `as? Int` accepted it as `1`; Boolean schema, bridge, total-byte, and asset-byte fields could therefore pass iOS native parsing. The store now excludes `CFBoolean` and accepts only integral JSON numbers. The mirrored five-case Boolean corpus passes in TypeScript, Swift, and Kotlin before staging.                                                                            |
 | 2026-07-28 | Complete | The combined ten-case manifest scalar corpus passes 1 shared contract file / 25 tests, the native Swift fault executable, and the refreshed Android module suite across 76 Gradle tasks. Node typecheck, changed TypeScript lint/formatting, max-lines, and diff hygiene pass. No RNW package content changed.                                                                                                                              |
+| 2026-07-28 | Finding  | The shared package chunk schema bounded decoded bytes but not the encoded `dataBase64` string before canonical decoding. It now enforces the exact 65,536-character ceiling for 48 KiB, and a focused corpus covers the ceiling plus quoted/Boolean numeric fields, non-Boolean EOF, unknown fields, noncanonical base64, and decoded-length mismatch.                                                                                         |
+| 2026-07-28 | Complete | Package-request/chunk validation passes 1 shared file / 14 tests and the unchanged downloader passes 1 mobile file / 14 tests. Existing request-path/base64/length coverage is retained alongside the new chunk corpus. Node/mobile typechecks, changed-file lint/formatting, max-lines, and diff hygiene pass.                                                                                                                               |
 | 2026-07-28 | Next     | Complete the remaining parity inventory and cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                  |

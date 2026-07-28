@@ -2712,8 +2712,10 @@ A mirrored TypeScript, Swift, and Kotlin manifest corpus also rejects quoted and
 Boolean numeric schema, bridge, total-byte, and asset-byte fields before native
 staging. The corpus found Android `JSONObject.optInt` string coercion and iOS
 `NSNumber`/`CFBoolean` integer bridging; both native parsers now require exact
-JSON scalar types. Generated mutation and the remaining chunk/path/MIME/CSP/cache
-corpus are still required.
+JSON scalar types. The shared chunk envelope also caps base64 at the exact
+65,536-character encoding of 48 KiB and rejects type confusion, noncanonical
+encoding, decoded-length mismatch, and extra fields. Generated mutation and the
+remaining path/MIME/CSP/cache corpus are still required.
 
 ## App Store Gate
 

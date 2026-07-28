@@ -204,8 +204,9 @@ cross-scope races, privacy/authorization audit, and independent review.
       envelopes, limits, ordering, cancellation, and subscriptions. The
       ten-case TypeScript/Swift/Kotlin quoted/Boolean numeric manifest corpus
       passes after removing Android `JSONObject.optInt` string coercion and iOS
-      `NSNumber`/`CFBoolean` integer bridging; generated mutation and the other
-      listed boundaries remain.
+      `NSNumber`/`CFBoolean` integer bridging. Chunk base64 is capped at 65,536
+      characters and its bounded request/chunk mutation corpus passes; generated
+      mutation and the other listed boundaries remain.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,
       reconnect, process-loss, and host-removal races.
 - [ ] Verify no credential or privileged host identity reaches URLs, DOM state,
