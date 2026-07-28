@@ -16,6 +16,7 @@ import { HeadlessEmulator } from './headless-emulator'
 import { getHistorySessionDirName } from './history-paths'
 import type { HistoryReader } from './history-reader'
 import type { SubprocessHandle } from './session'
+import type { PendingOutputRecord } from './types'
 import type { DaemonFileLog } from './daemon-file-log'
 import type * as DaemonHealthModule from './daemon-health'
 import { getDaemonSocketPath } from './daemon-spawner'
@@ -1881,11 +1882,18 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       function makeCooldownHarness(takeResult: {
         overflowed: boolean
         appendResult?: 'ok' | 'needs-checkpoint'
+        checkpointResult?: 'committed' | 'retryable' | 'unavailable'
+        snapshotRecords?: PendingOutputRecord[]
       }): CooldownInternals {
         historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
         const request = vi.fn(async (_type: string, payload: Record<string, unknown>) => {
           if (payload.includeSnapshot === true) {
-            return { records: [], seq: 2, overflowed: false, snapshot: { cols: 80, rows: 24 } }
+            return {
+              records: takeResult.snapshotRecords ?? [],
+              seq: 2,
+              overflowed: false,
+              snapshot: { cols: 80, rows: 24 }
+            }
           }
           return {
             records: [{ kind: 'output', data: 'x' }],
@@ -1897,7 +1905,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         const internals = historyAdapter as unknown as CooldownInternals
         internals.client = { request, disconnect: vi.fn() }
         internals.historyManager = {
-          checkpoint: vi.fn(async () => 'committed' as const),
+          checkpoint: vi.fn(async () => takeResult.checkpointResult ?? 'committed'),
           appendIncrements: vi.fn(async () => takeResult.appendResult ?? 'ok'),
           dispose: vi.fn(async () => {})
         }
@@ -1958,6 +1966,26 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         await expect(internals.checkpointSessions(['capped'])).resolves.toEqual(new Set(['capped']))
         expect(internals.historyManager.checkpoint).toHaveBeenCalledTimes(1)
         expect(internals.sessionsNeedingFullCheckpoint.has('capped')).toBe(false)
+      })
+
+      it('defers a teardown checkpoint that fails to serialize and drops its held tail', async () => {
+        const internals = makeCooldownHarness({
+          overflowed: false,
+          checkpointResult: 'retryable',
+          // Held shell-ready bytes ride out with the teardown snapshot (Session.prepareForFinalSnapshot).
+          snapshotRecords: [{ kind: 'output', data: 'held tail' }]
+        })
+
+        await expect(
+          internals.checkpointSessions(['sleeping'], { final: true, teardown: true })
+        ).resolves.toEqual(new Set())
+
+        expect(internals.historyManager.checkpoint).toHaveBeenCalledTimes(1)
+        expect(internals.sessionsNeedingFullCheckpoint.has('sleeping')).toBe(true)
+        // Why the tail must not be appended: the output this take drained went into the failed snapshot, so the tail
+        // would land at a contiguous seq over that hole and pass the log's gap detection.
+        expect(internals.historyManager.appendIncrements).not.toHaveBeenCalled()
+        expect(internals.lastFullCheckpointAt.has('sleeping')).toBe(false)
       })
     })
 

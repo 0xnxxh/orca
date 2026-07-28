@@ -1792,6 +1792,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
     if (take?.snapshot && this.historyManager) {
       const checkpoint = await this.historyManager.checkpoint(sessionId, take.snapshot)
       if (checkpoint !== 'committed') {
+        // Why take.records is dropped, not appended: the pending output this take drained went into the snapshot that
+        // failed to land, so appending the held tail at the next contiguous seq would splice it over that hole and
+        // defeat the log's seq-gap detection. A stale prefix beats an undetectable hole.
         return checkpoint
       }
       this.lastFullCheckpointAt.set(sessionId, Date.now())

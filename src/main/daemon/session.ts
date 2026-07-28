@@ -146,6 +146,8 @@ export class Session {
       // the authoritative responder and a daemon reply would race ahead and clobber it. See HeadlessEmulator.
     })
     // Why: seed recovery must precede listener registration; shells can emit their prompt synchronously once onData subscribes.
+    // Why the every() short-circuit is safe: writeSync only fails emulator-wide (disposed / no sync write API), so later
+    // chunks could not land either — and writing them past a dropped chunk would seed a torn stream.
     this._historySeeded =
       opts.historySeedChunks === undefined
         ? undefined
