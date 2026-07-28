@@ -78,8 +78,7 @@ function AgentIconLabel({
 }): React.JSX.Element {
   return (
     <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
-      {/* Why: Geist's visible glyphs sit high in their line box, so lift marks to their optical center. */}
-      <span className="inline-flex size-3.5 -translate-y-px shrink-0 items-center justify-center [&_img]:size-3.5 [&_svg]:size-3.5!">
+      <span className="inline-flex size-3.5 shrink-0 items-center justify-center [&_img]:size-3.5 [&_svg]:size-3.5!">
         {icon}
       </span>
       <span className="truncate leading-none">{label}</span>
@@ -105,10 +104,7 @@ function renderItem({
       className="items-center gap-2 px-3 py-1.5"
     >
       <Check
-        className={cn(
-          'size-4 -translate-y-px shrink-0 text-foreground',
-          isChecked ? 'opacity-100' : 'opacity-0'
-        )}
+        className={cn('size-4 shrink-0 text-foreground', isChecked ? 'opacity-100' : 'opacity-0')}
       />
       <AgentIconLabel icon={icon} label={label} />
     </CommandItem>
@@ -324,7 +320,7 @@ export default function AgentCombobox({
                 }
               />
             )}
-            <ChevronsUpDown className="size-3.5 -translate-y-px shrink-0 opacity-50" />
+            <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
         <PopoverContent
