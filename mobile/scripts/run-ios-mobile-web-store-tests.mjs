@@ -34,6 +34,10 @@ try {
     ),
     join(
       mobileRoot,
+      'packages/expo-mobile-web-shell/ios-tests/MobileWebCacheCleanupBoundaryTests.swift'
+    ),
+    join(
+      mobileRoot,
       'packages/expo-mobile-web-shell/ios-tests/MobileWebPackageStoreProcessInterruptionTests.swift'
     ),
     join(mobileRoot, 'packages/expo-mobile-web-shell/ios-tests/MobileWebPackageStoreTests.swift'),

@@ -39,20 +39,25 @@ private func requireMobileWebRegularFile(
   within cacheRoot: URL,
   errorCode: String
 ) throws {
+  guard isMobileWebUnlinkedPath(url, within: cacheRoot) else {
+    throw MobileWebStoreError(errorCode)
+  }
+  let values = try url.resourceValues(forKeys: [.isRegularFileKey])
+  guard values.isRegularFile == true else {
+    throw MobileWebStoreError(errorCode)
+  }
+}
+
+func isMobileWebUnlinkedPath(_ url: URL, within cacheRoot: URL) -> Bool {
   let root = cacheRoot.standardizedFileURL
   let file = url.standardizedFileURL
   let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
-  guard file.path.hasPrefix(prefix) else {
-    throw MobileWebStoreError(errorCode)
-  }
+  guard file.path.hasPrefix(prefix) else { return false }
   let relativePath = String(file.path.dropFirst(prefix.count))
   let resolvedRoot = root.resolvingSymlinksInPath().standardizedFileURL
   let expected = relativePath.split(separator: "/").reduce(resolvedRoot) { parent, component in
     parent.appendingPathComponent(String(component), isDirectory: false)
   }
   let resolvedFile = file.resolvingSymlinksInPath().standardizedFileURL
-  let values = try resolvedFile.resourceValues(forKeys: [.isRegularFileKey])
-  guard resolvedFile.path == expected.standardizedFileURL.path, values.isRegularFile == true else {
-    throw MobileWebStoreError(errorCode)
-  }
+  return resolvedFile.path == expected.standardizedFileURL.path
 }

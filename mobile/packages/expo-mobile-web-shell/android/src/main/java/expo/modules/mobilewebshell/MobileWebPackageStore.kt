@@ -112,7 +112,7 @@ internal class MobileWebPackageStore internal constructor(
         require(file.createNewFile()) { "mobile_web_stage_create_failed" }
       }
     } catch (error: Exception) {
-      stageRoot.deleteRecursively()
+      removeMobileWebCacheTree(stageRoot, cacheRoot)
       throw storageException(error, "mobile_web_stage_create_failed")
     }
     stages[stageId] = MobileWebStageRecord(hostKey, stageRoot, manifest, reservedByteLength)
@@ -188,7 +188,9 @@ internal class MobileWebPackageStore internal constructor(
     try {
       if (destination.exists()) {
         verifyCommittedGeneration(destination, stage.manifest)
-        require(stage.root.deleteRecursively()) { "mobile_web_stage_cleanup_failed" }
+        require(removeMobileWebCacheTree(stage.root, cacheRoot)) {
+          "mobile_web_stage_cleanup_failed"
+        }
       } else {
         require(stage.root.renameTo(destination)) { "mobile_web_generation_commit_failed" }
       }
@@ -201,7 +203,7 @@ internal class MobileWebPackageStore internal constructor(
 
   @Synchronized
   fun abortStage(stageId: String) {
-    stages.remove(stageId)?.root?.deleteRecursively()
+    stages.remove(stageId)?.root?.let { removeMobileWebCacheTree(it, cacheRoot) }
   }
 
   @Synchronized
@@ -333,7 +335,9 @@ internal class MobileWebPackageStore internal constructor(
     stages.entries.removeAll { it.value.hostKey == hostKey }
     sessions.entries.removeAll { it.value.hostKey == hostKey }
     val hostRoot = File(cacheRoot, hostKey)
-    require(!hostRoot.exists() || hostRoot.deleteRecursively()) { "mobile_web_host_cleanup_failed" }
+    require(removeMobileWebCacheTree(hostRoot, cacheRoot)) {
+      "mobile_web_host_cleanup_failed"
+    }
   }
 
   private fun parseManifest(
@@ -497,7 +501,9 @@ internal class MobileWebPackageStore internal constructor(
     val retained = (sessionBuilds + listOfNotNull(active, previous)).toSet()
     File(hostRoot, "generations").listFiles()?.forEach { child ->
       if (child.name !in retained) {
-        require(child.deleteRecursively()) { "mobile_web_generation_cleanup_failed" }
+        require(removeMobileWebCacheTree(child, cacheRoot)) {
+          "mobile_web_generation_cleanup_failed"
+        }
       }
     }
   }
@@ -523,7 +529,9 @@ internal class MobileWebPackageStore internal constructor(
       projectedGlobalBytes = projectedGlobalBytes
     ) ?: throw IllegalArgumentException("mobile_web_cache_quota_exceeded")
     plan.forEach { candidate ->
-      require(candidate.root.deleteRecursively()) { "mobile_web_cache_quota_exceeded" }
+      require(removeMobileWebCacheTree(candidate.root, cacheRoot)) {
+        "mobile_web_cache_quota_exceeded"
+      }
     }
 
     val reservedFreeBytes = allStageReservations + requestedBytes
@@ -535,10 +543,18 @@ internal class MobileWebPackageStore internal constructor(
 
   private fun evictionCandidates(): List<MobileWebCacheGenerationCandidate> =
     cacheRoot.listFiles()
-      ?.filter { it.isDirectory && isMobileWebSha256(it.name) }
+      ?.filter {
+        it.isDirectory &&
+          isMobileWebSha256(it.name) &&
+          isMobileWebUnlinkedPath(it, cacheRoot)
+      }
       ?.flatMap { hostRoot ->
         val generationRoots = File(hostRoot, "generations").listFiles()
-          ?.filter { it.isDirectory && isMobileWebSha256(it.name) }
+          ?.filter {
+            it.isDirectory &&
+              isMobileWebSha256(it.name) &&
+              isMobileWebUnlinkedPath(it, cacheRoot)
+          }
           .orEmpty()
         val buildIds = generationRoots.map { it.name }.toSet()
         val protected = sessions.values
@@ -570,19 +586,32 @@ internal class MobileWebPackageStore internal constructor(
 
   private fun cleanupOrphanedWrites() {
     try {
-      val liveStageRoots = stages.values.mapTo(mutableSetOf()) { it.root.canonicalPath }
+      val liveStageRoots = stages.values.mapTo(mutableSetOf()) { it.root.absoluteFile.path }
       cacheRoot.listFiles()
-        ?.filter { it.isDirectory && isMobileWebSha256(it.name) }
+        ?.filter { isMobileWebSha256(it.name) }
         ?.forEach { hostRoot ->
+          if (!isMobileWebUnlinkedPath(hostRoot, cacheRoot)) {
+            require(removeMobileWebCacheTree(hostRoot, cacheRoot)) {
+              "mobile_web_cache_cleanup_failed"
+            }
+            return@forEach
+          }
           File(hostRoot, "staging").listFiles()?.forEach { stagedRoot ->
-            if (stagedRoot.canonicalPath !in liveStageRoots) {
-              require(stagedRoot.deleteRecursively()) { "mobile_web_cache_cleanup_failed" }
+            if (
+              stagedRoot.absoluteFile.path !in liveStageRoots ||
+              !isMobileWebUnlinkedPath(stagedRoot, cacheRoot)
+            ) {
+              require(removeMobileWebCacheTree(stagedRoot, cacheRoot)) {
+                "mobile_web_cache_cleanup_failed"
+              }
             }
           }
           hostRoot.listFiles()
             ?.filter { it.name.startsWith("activation-") && it.extension == "tmp" }
             ?.forEach { temporary ->
-              require(temporary.delete()) { "mobile_web_cache_cleanup_failed" }
+              require(removeMobileWebCacheTree(temporary, cacheRoot)) {
+                "mobile_web_cache_cleanup_failed"
+              }
             }
         }
     } catch (error: Exception) {
@@ -591,9 +620,7 @@ internal class MobileWebPackageStore internal constructor(
   }
 
   private fun logicalByteLength(root: File): Long {
-    if (!root.exists()) return 0
-    if (root.isFile) return root.length()
-    return root.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    return mobileWebCacheLogicalByteLength(root, cacheRoot)
   }
 
   private fun validatedHostKey(hostIdentity: String): String {

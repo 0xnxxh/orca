@@ -2831,6 +2831,13 @@ assessment.
 - Never edit native `activation.json` or cached generation assets. Use the
   host-scoped recovery controls and verified release artifacts.
 
+Native cache deletion is boundary checked as strictly as cache reads. Android
+does not use `File.deleteRecursively()` for staged, generation, eviction,
+activation-temp, or host cleanup because it follows directory symlinks. Both
+stores remove a linked entry itself, never its target, and remove dangling host
+links even though ordinary existence checks follow links. Quota measurement and
+eviction ignore linked trees.
+
 ### Native-shell rollback
 
 A defect in the asset origin, credential broker, native bridge, audio/picker

@@ -32,6 +32,9 @@ enum MobileWebPackageStoreTests {
     try MobileWebCacheFileBoundaryTests.run(
       root: root.appendingPathComponent("cache-file-boundary")
     )
+    try MobileWebCacheCleanupBoundaryTests.run(
+      root: root.appendingPathComponent("cache-cleanup-boundary")
+    )
     try rejectsLowStorage(root: root.appendingPathComponent("low-storage"))
     try evictsUnprotectedGeneration(root: root.appendingPathComponent("eviction"))
     try evictsAnotherHostForGlobalQuota(root: root.appendingPathComponent("global-eviction"))

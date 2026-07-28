@@ -481,7 +481,8 @@ final class MobileWebPackageStore {
         sessions.removeValue(forKey: sessionId)
       }
       let root = try cacheRoot().appendingPathComponent(hostKey, isDirectory: true)
-      if fileManager.fileExists(atPath: root.path) {
+      let isSymbolicLink = (try? fileManager.destinationOfSymbolicLink(atPath: root.path)) != nil
+      if fileManager.fileExists(atPath: root.path) || isSymbolicLink {
         try fileManager.removeItem(at: root)
       }
     }
@@ -802,7 +803,9 @@ final class MobileWebPackageStore {
           includingPropertiesForKeys: [.isDirectoryKey]
         ) {
           for stagedRoot in stagedRoots
-          where !liveStageRoots.contains(stagedRoot.standardizedFileURL.path) {
+          where !liveStageRoots.contains(stagedRoot.standardizedFileURL.path)
+            || !isMobileWebUnlinkedPath(stagedRoot, within: cacheRoot)
+          {
             try fileManager.removeItem(at: stagedRoot)
           }
         }

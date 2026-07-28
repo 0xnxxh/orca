@@ -221,6 +221,18 @@ Primary/canonical manifests and activation metadata now pass the same exact
 JSON grammar before platform parsing. Literal and escaped-equivalent duplicate
 keys, nested duplicates, trailing tokens, malformed scalars, and nesting beyond
 32 levels fail consistently in the mirrored native corpora.
+Cache cleanup now uses a cache-root-boundary deletion path on Android instead
+of `File.deleteRecursively()`, which followed a staged directory symlink during
+the fault probe and removed an external sentinel. Cleanup, abort, duplicate
+commit, unused-generation removal, quota eviction, host removal, and activation
+temp cleanup no longer follow linked trees. Quota accounting and eviction also
+ignore linked generations. Mirrored iOS/Android faults cover direct and nested
+orphan links, live stages replaced by links, host-subtree links, and dangling
+host links; the dangling probe also closed an iOS `fileExists` removal skip.
+The iOS native fault executable, Android Debug unit/Release Kotlin gates,
+569-file mobile suite, mobile/mobile-web typechecks and lints, reliability,
+max-lines, focused formatting, diff hygiene, and unchanged `b17ead7a…` package
+verification pass after the cleanup repair.
 The remaining security work below is release-app corpus testing, fuzzing,
 cross-scope races, privacy/authorization audit, and independent review.
 
@@ -278,9 +290,12 @@ cross-scope races, privacy/authorization audit, and independent review.
       symlinks, directories, and missing files before opening bytes. A fresh
       exact-JSON preflight also rejects duplicate decoded keys, trailing
       tokens, malformed scalars, and more than 32 nesting levels across primary
-      manifests, canonical manifests, and activation metadata. A fresh
-      exact-app rerun, further generated mutation, cache mutation/cleanup
-      faults, and the other listed boundaries remain.
+      manifests, canonical manifests, and activation metadata. Native cleanup
+      faults now reject direct, nested, host-subtree, generation, and dangling
+      symlink traversal without touching external sentinels; Android quota
+      accounting ignores linked external bytes. A fresh exact-app rerun,
+      further generated mutation, concurrent cache mutation, and the other
+      listed boundaries remain.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,
       reconnect, process-loss, and host-removal races.
 - [ ] Verify no credential or privileged host identity reaches URLs, DOM state,
