@@ -885,6 +885,7 @@ import {
   registerTerminalViewAttributesApplier
 } from './terminal-view-attribute-store'
 import { killAllProcessesForWorktree, teardownRpcDeadline } from './worktree-teardown'
+import { stopMissingWorktreeTerminals } from './missing-worktree-terminal-reconciliation'
 import {
   MobileNotificationReplayBuffer,
   type ReplayableMobileNotification
@@ -17944,8 +17945,11 @@ export class OrcaRuntimeService {
     }
   }
 
-  async listDetectedManagedWorktrees(repoSelector: string): Promise<DetectedWorktreeListResult> {
-    const repo = await this.resolveRepoSelector(repoSelector)
+  async listDetectedManagedWorktrees(
+    repoSelector: string,
+    connectionId?: string | null
+  ): Promise<DetectedWorktreeListResult> {
+    const repo = await this.resolveRepoSelectorForConnection(repoSelector, connectionId)
     const store = this.requireStore()
     if (isFolderRepo(repo)) {
       const worktrees = listRuntimeFolderWorkspaces(store, repo)
@@ -17993,6 +17997,50 @@ export class OrcaRuntimeService {
       source: scan.ok ? 'git' : 'metadata-fallback',
       worktrees: projectResolvedWorktreeLineage(detected, store.getAllWorktreeLineage?.() ?? {})
     }
+  }
+
+  async teardownMissingManagedWorktreeTerminals(
+    repoSelector: string,
+    knownWorktreeIds: readonly string[],
+    connectionId?: string | null
+  ): Promise<{ stoppedWorktreeIds: string[] }> {
+    const repo = await this.resolveRepoSelectorForConnection(repoSelector, connectionId)
+    const detected = await this.listDetectedManagedWorktrees(`id:${repo.id}`, connectionId)
+    if (!detected.authoritative) {
+      return { stoppedWorktreeIds: [] }
+    }
+    return stopMissingWorktreeTerminals(
+      repo,
+      knownWorktreeIds,
+      detected.worktrees.map((worktree) => worktree.id),
+      {
+        runtime: this,
+        getLocalProvider: () => this.getLocalProvider(),
+        getSshProvider: (connectionId) => this.getSshProviderFn?.(connectionId),
+        onPtyStopped: this.onPtyStopped ?? undefined
+      }
+    )
+  }
+
+  private resolveRepoSelectorForConnection(
+    repoSelector: string,
+    connectionId?: string | null
+  ): Promise<Repo> {
+    if (connectionId === undefined) {
+      return this.resolveRepoSelector(repoSelector)
+    }
+    const repoId = repoSelector.startsWith('id:') ? repoSelector.slice(3) : repoSelector
+    const matches = this.requireStore()
+      .getRepos()
+      .filter(
+        (repo) =>
+          repo.id === repoId &&
+          (repo.connectionId?.trim() || null) === (connectionId?.trim() || null)
+      )
+    if (matches.length !== 1) {
+      throw new Error(matches.length > 1 ? 'selector_ambiguous' : 'repo_not_found')
+    }
+    return Promise.resolve(matches[0])
   }
 
   private isRuntimeWorktreeVisible(

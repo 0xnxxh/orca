@@ -633,6 +633,35 @@ function isRuntimeMethodNotFoundError(error: unknown): boolean {
   return error instanceof RuntimeRpcCallError && error.code === 'method_not_found'
 }
 
+async function teardownMissingWorktreeTerminalsBestEffort(
+  settings: AppState['settings'],
+  repoId: string,
+  connectionId: string | null | undefined,
+  knownWorktreeIds: readonly string[],
+  detected: DetectedWorktreeListResult
+): Promise<void> {
+  if (!detected.authoritative || knownWorktreeIds.length === 0) {
+    return
+  }
+  const detectedIds = new Set(detected.worktrees.map((worktree) => worktree.id))
+  const missingIds = knownWorktreeIds.filter((worktreeId) => !detectedIds.has(worktreeId))
+  if (missingIds.length === 0) {
+    return
+  }
+  try {
+    await callRuntimeRpc(
+      getActiveRuntimeTarget(settings),
+      'worktree.teardownMissingTerminals',
+      { repo: repoId, worktreeIds: missingIds, connectionId: connectionId ?? null },
+      { timeoutMs: 30_000 }
+    )
+  } catch (error) {
+    if (!isRuntimeMethodNotFoundError(error)) {
+      console.warn(`Failed to stop terminals for missing worktrees in repo ${repoId}:`, error)
+    }
+  }
+}
+
 // Why: a mobile-scope web pairing is denied worktree/repo RPCs (else silently empty workspaces); surface one deduped toast (stable id) instead of spamming per-repo.
 const RUNTIME_SCOPE_FORBIDDEN_TOAST_ID = 'runtime-scope-forbidden'
 
@@ -1003,6 +1032,8 @@ function detectedWorktreeRefreshKey(
   repoId: string,
   options: {
     executionHostId: ExecutionHostId
+    connectionId?: string | null
+    knownWorktreeIds: readonly string[]
     requireAuthoritative?: boolean
     reuseRecentCompatibilityFailure?: boolean
   }
@@ -1029,6 +1060,8 @@ async function listDetectedWorktreesForRepoCoalesced(
   repoId: string,
   options: {
     executionHostId: ExecutionHostId
+    connectionId?: string | null
+    knownWorktreeIds: readonly string[]
     requireAuthoritative?: boolean
     reuseRecentCompatibilityFailure?: boolean
   }
@@ -1060,6 +1093,13 @@ async function listDetectedWorktreesForRepoCoalesced(
     ) {
       throw new Error('runtime_environment_generation_changed')
     }
+    await teardownMissingWorktreeTerminalsBestEffort(
+      settings,
+      repoId,
+      options.connectionId,
+      options.knownWorktreeIds,
+      result
+    )
     return result
   } finally {
     if (detectedWorktreeRefreshesInFlight.get(key) === refresh) {
@@ -2373,10 +2413,18 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       const hostId = repoHostId(ownerState, repoId)
       const ownerWasMissingAtStart = !ownerState.repos.some((repo) => repo.id === repoId)
       const setup = getProjectHostSetupForRepoHost(ownerState, repoId, hostId)
+      const repoOwner = findRepoForHost(ownerState.repos, repoId, {
+        hostId,
+        settings: ownerState.settings
+      })
       const result = await listDetectedWorktreesForRepoCoalesced(
         settingsForRepoOwner(ownerState, repoId, hostId),
         repoId,
-        { executionHostId: hostId }
+        {
+          executionHostId: hostId,
+          connectionId: repoOwner?.connectionId,
+          knownWorktreeIds: getKnownWorktreeIdsForPurge(ownerState, repoId, hostId)
+        }
       )
       set((s) => {
         if (!repoHasExecutionHost(s, repoId, hostId, ownerWasMissingAtStart)) {
@@ -2421,6 +2469,10 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         : repoHostId(ownerState, repoId, options?.executionHostId)
       const ownerWasMissingAtStart = repoOwners.length === 0
       const setup = getProjectHostSetupForRepoHost(ownerState, repoId, hostId)
+      const repoOwner = findRepoForHost(ownerState.repos, repoId, {
+        hostId,
+        settings: ownerState.settings
+      })
       const ownerSettings = settingsForRepoOwner(ownerState, repoId, hostId)
       const settings =
         useLocalOwner && ownerSettings?.activeRuntimeEnvironmentId
@@ -2428,6 +2480,8 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           : ownerSettings
       const detected = await listDetectedWorktreesForRepoCoalesced(settings, repoId, {
         executionHostId: hostId,
+        connectionId: repoOwner?.connectionId,
+        knownWorktreeIds: getKnownWorktreeIdsForPurge(ownerState, repoId, hostId),
         requireAuthoritative: options?.requireAuthoritative
       })
       if (options?.requireAuthoritative && !detected.authoritative) {
@@ -2578,6 +2632,8 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           const settings = settingsForKnownRepoOwner(requestStartedState.settings, r)
           const detected = await listDetectedWorktreesForRepoCoalesced(settings, r.id, {
             executionHostId: hostId,
+            connectionId: r.connectionId,
+            knownWorktreeIds: getKnownWorktreeIdsForPurge(requestStartedState, r.id, hostId),
             reuseRecentCompatibilityFailure: true
           })
           let incoming = toVisibleWorktrees(detected, hostId, setup)
@@ -2663,7 +2719,12 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           const detected = await listDetectedWorktreesForRepoCoalesced(
             settingsForKnownRepoOwner(requestStartedState.settings, r),
             r.id,
-            { executionHostId: hostId, reuseRecentCompatibilityFailure: true }
+            {
+              executionHostId: hostId,
+              connectionId: r.connectionId,
+              knownWorktreeIds: getKnownWorktreeIdsForPurge(requestStartedState, r.id, hostId),
+              reuseRecentCompatibilityFailure: true
+            }
           )
           let incoming = toVisibleWorktrees(detected, hostId, setup)
           const latestState = get()
