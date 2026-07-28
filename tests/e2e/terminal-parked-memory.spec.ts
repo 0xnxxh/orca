@@ -7,7 +7,6 @@ import {
   ensureTerminalVisible,
   getActiveTabId,
   getAllWorktreeIds,
-  getWorktreeTabs,
   switchToWorktree,
   waitForActiveWorktree,
   waitForSessionReady
@@ -485,10 +484,10 @@ function formatRetentionSample(label: string, sample: RetentionMemorySample): st
   ].join(' ')
 }
 
-// Why rewrite only tab.ptyId: park-restorability and eviction-exemption are
-// decided from it alone, so a remote-runtime-shaped id makes the worktree
-// un-parkable AND non-exempt while terminalLayoutsByTabId keeps binding the
-// panes to their real local transports.
+// Why rewrite only tab.ptyId: canPark* eligibility is decided from it, so a
+// remote-runtime-shaped id makes the worktree un-parkable. Layout leaf maps
+// stay on real local transports so live panes keep their bindings; watcher
+// coverage may still read those locals, but eligibility already fails.
 async function stageUnparkableWorktreeTabs(page: Page, worktreeId: string): Promise<number> {
   return page.evaluate(
     ({ worktreeId, prefix }) => {
@@ -515,9 +514,8 @@ async function stageUnparkableWorktreeTabs(page: Page, worktreeId: string): Prom
   )
 }
 
-// Why: a live pane can call updateTabPtyId with its real local id after we rewrite
-// tab.ptyId, so a visible-stage of remote:… can race back to park-restorable. Poll
-// until every tab still carries the un-parkable prefix before relying on it.
+// Why: bind/reconcile can rewrite tab.ptyId after staging. Poll so ordinary
+// parking cannot regain park-restorable eligibility mid control-arm wait.
 async function waitForUnparkableWorktreeTabs(page: Page, worktreeId: string): Promise<void> {
   await expect
     .poll(
@@ -679,22 +677,22 @@ test.describe('Terminal hidden worktree retention budget', () => {
         .toBe(decoyWorktreeId)
       await ensureTerminalVisible(orcaPage)
       await waitForActiveTerminalManager(orcaPage, 30_000)
-      const decoyTabIds = (await getWorktreeTabs(orcaPage, decoyWorktreeId)).map((tab) => tab.id)
-      expect(decoyTabIds.length).toBeGreaterThan(0)
-      // Why assert before hide: if the decoy pane never mounted, the later
-      // "stays mounted" control arm is a false failure of the budget path.
-      expect(await countMountedPaneManagers(orcaPage, decoyTabIds)).toBe(decoyTabIds.length)
+      // Why the active snapshot (not getWorktreeTabs alone): only tabs that
+      // actually bound a PaneManager can prove retention; empty/deferred ids
+      // would make the control arm look like a budget failure.
+      const decoySnapshot = await waitForPaneIdentitySnapshot(orcaPage, 1)
+      const decoyTabIds = [decoySnapshot.tabId]
+      expect(await countMountedPaneManagers(orcaPage, decoyTabIds)).toBe(1)
 
       // Leaving the terminal view hides BOTH worktrees while keeping them
       // mounted (App.tsx hides the workbench, it does not unmount it).
       await orcaPage.evaluate(() => {
         window.__store?.getState().setActiveView('tasks')
       })
-      // Why stage AFTER hide: while a pane is visible/active, bind/updateTabPtyId
-      // can rewrite our remote: fake id back to the live local transport, so the
-      // decoy looks park-restorable and ordinary parking unmounts it during the
-      // control arm. Staging (and re-staging the victim) only once both are
-      // hidden keeps the un-parkable classification stable for the wait below.
+      // Why stage AFTER hide: while a pane is visible/active, bind can rewrite
+      // our remote: fake ids back onto tab/layout state, so the decoy looks
+      // park-restorable and ordinary parking unmounts it during the control
+      // arm. Staging only once both are hidden keeps classification stable.
       await stageUnparkableWorktreeTabs(orcaPage, victimWorktreeId)
       await stageUnparkableWorktreeTabs(orcaPage, decoyWorktreeId)
       await waitForUnparkableWorktreeTabs(orcaPage, victimWorktreeId)
@@ -703,8 +701,8 @@ test.describe('Terminal hidden worktree retention budget', () => {
       const victimTabIds = victimTabs.map((tab) => tab.tabId)
       expect(victimTabIds).toHaveLength(RETENTION_TAB_COUNT)
       // Control arm: stay hidden past the ordinary parking window with budget
-      // still off. Re-stage inside the poll so a late updateTabPtyId cannot
-      // flip a tab back to park-restorable and unmount mid-wait.
+      // still off. Re-stage inside the poll so a late bind cannot restore
+      // park-restorable+coverable ids and unmount mid-wait.
       const controlArmStartedAt = Date.now()
       await expect
         .poll(
@@ -717,24 +715,7 @@ test.describe('Terminal hidden worktree retention budget', () => {
             return {
               victimMounted,
               decoyMounted,
-              heldLongEnough,
-              unparkable:
-                (await orcaPage.evaluate(
-                  ({ worktreeIds, prefix }) =>
-                    worktreeIds.every((worktreeId) => {
-                      const tabs = window.__store?.getState().tabsByWorktree[worktreeId] ?? []
-                      return (
-                        tabs.length > 0 &&
-                        tabs.every(
-                          (tab) => typeof tab.ptyId === 'string' && tab.ptyId.startsWith(prefix)
-                        )
-                      )
-                    }),
-                  {
-                    worktreeIds: [victimWorktreeId, decoyWorktreeId],
-                    prefix: UNPARKABLE_PTY_PREFIX
-                  }
-                )) === true
+              heldLongEnough
             }
           },
           {
@@ -745,10 +726,11 @@ test.describe('Terminal hidden worktree retention budget', () => {
         )
         .toEqual({
           victimMounted: RETENTION_TAB_COUNT,
-          decoyMounted: decoyTabIds.length,
-          heldLongEnough: true,
-          unparkable: true
+          decoyMounted: 1,
+          heldLongEnough: true
         })
+      await waitForUnparkableWorktreeTabs(orcaPage, victimWorktreeId)
+      await waitForUnparkableWorktreeTabs(orcaPage, decoyWorktreeId)
 
       const before = await readRetentionMemorySample(orcaPage)
       expect(before.bufferMb).toBeGreaterThan(MIN_STAGED_BUFFER_MB)
