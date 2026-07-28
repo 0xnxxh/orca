@@ -60,7 +60,7 @@ export function useMobileGitRequests({ client, connState, worktreeId }: Params) 
       }
       const status = await sendGitRequest<MobileGitStatusResult>('git.status')
       if (!status.upstreamStatus) {
-        throw new Error('Branch status unavailable', { cause: err })
+        throw new Error('Branch status unavailable')
       }
       return status.upstreamStatus
     }

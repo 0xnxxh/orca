@@ -41,7 +41,7 @@ async function requiredExec(execGit: GitExec, args: string[], label: string): Pr
     const { stdout } = await execGit(args, { maxBuffer: MAX_PULL_REQUEST_CONTEXT_BYTES })
     return stdout.trim()
   } catch (error) {
-    throw new Error(`${label}: ${summarizeGitError(error)}`, { cause: error })
+    throw new Error(`${label}: ${summarizeGitError(error)}`)
   }
 }
 

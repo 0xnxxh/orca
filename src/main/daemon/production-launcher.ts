@@ -211,8 +211,7 @@ async function rejectAfterChildCleanup(child: ChildProcess, launchError: unknown
   } catch (cleanupError) {
     throw new AggregateError(
       [launchError, cleanupError],
-      'Daemon launch and child cleanup both failed',
-      { cause: cleanupError }
+      'Daemon launch and child cleanup both failed'
     )
   }
   throw launchError

@@ -134,7 +134,7 @@ export class OpenCodeSqliteWorkerClient {
       return value as AiVaultSession | null
     } catch (err) {
       if (err instanceof OpenCodeSqliteWorkerUnavailableError) {
-        throw new Error('OpenCode SQLite background scanner could not start.', { cause: err })
+        throw new Error('OpenCode SQLite background scanner could not start.')
       }
       // Reject only this session; the scanner turns the throw into a scan issue.
       throw err instanceof Error ? err : new Error(String(err))

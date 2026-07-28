@@ -29,6 +29,6 @@ export async function gitSyncForkDefaultBranch(
       { expectedUpstream }
     )
   } catch (error) {
-    throw new Error(normalizeGitErrorMessage(error, 'push'), { cause: error })
+    throw new Error(normalizeGitErrorMessage(error, 'push'))
   }
 }

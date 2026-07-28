@@ -62,7 +62,7 @@ function readJsonFile(path, label) {
     return JSON.parse(readFileSync(path, 'utf8'))
   } catch (error) {
     throw new Error(
-      `[verify-packaged-plugin-resources] invalid ${label} at ${path}: ${error instanceof Error ? error.message : String(error)}`, { cause: error }
+      `[verify-packaged-plugin-resources] invalid ${label} at ${path}: ${error instanceof Error ? error.message : String(error)}`
     )
   }
 }

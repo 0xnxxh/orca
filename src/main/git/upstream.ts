@@ -68,6 +68,6 @@ export async function getUpstreamStatus(
     }
     // Why: parity with gitPush/gitPull/gitFetch — normalize before crossing
     // the IPC boundary so renderers don't see execFile stderr preambles or local paths.
-    throw new Error(normalizeGitErrorMessage(error, 'upstream'), { cause: error })
+    throw new Error(normalizeGitErrorMessage(error, 'upstream'))
   }
 }

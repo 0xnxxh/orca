@@ -56,7 +56,7 @@ export async function listQuickOpenFiles(
       if (!isQuickOpenReaddirBudgetError(err)) {
         throw err
       }
-      throw new Error(await buildInstallRgMessage(err), { cause: err })
+      throw new Error(await buildInstallRgMessage(err))
     }
   }
 

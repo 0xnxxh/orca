@@ -28,9 +28,7 @@
     "import/no-self-import": "warn",
     "no-fallthrough": "warn",
     "no-loop-func": "warn",
-    "no-promise-executor-return": "warn",
     "no-unmodified-loop-condition": "warn",
-    "preserve-caught-error": "warn",
     "promise/no-multiple-resolved": "warn",
     "react/no-unstable-nested-components": "warn",
     "react/react-compiler": "warn"

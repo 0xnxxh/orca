@@ -418,9 +418,7 @@ function docker(args, options = {}) {
       stderr: String(error.stderr ?? error.message)
     }
     if (!options.allowFailure) {
-      throw new Error(`docker ${args[0]} failed:\n${result.stderr}\n${result.stdout}`, {
-        cause: error
-      })
+      throw new Error(`docker ${args[0]} failed:\n${result.stderr}\n${result.stdout}`)
     }
     return result
   }

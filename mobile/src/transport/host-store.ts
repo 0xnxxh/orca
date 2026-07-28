@@ -186,7 +186,7 @@ async function readStoredHostsForMutation(): Promise<StoredHostProfile[]> {
     if (error instanceof Error && error.message === 'host list storage unreadable') {
       throw error
     }
-    throw new Error('host list storage unreadable', { cause: error })
+    throw new Error('host list storage unreadable')
   }
 }
 

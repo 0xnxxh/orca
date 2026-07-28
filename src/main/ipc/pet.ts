@@ -277,10 +277,7 @@ export function registerPetHandlers(): void {
       }
       manifest = applyCodexPetDefaults(PetManifestSchema.parse(JSON.parse(raw)))
     } catch (error) {
-      throw new Error(
-        `Invalid pet.json: ${error instanceof Error ? error.message : 'parse error'}`,
-        { cause: error }
-      )
+      throw new Error(`Invalid pet.json: ${error instanceof Error ? error.message : 'parse error'}`)
     }
 
     // Why: spritesheetPath is bundle-relative and attacker-controlled — reject absolute/escaping paths (and symlinks) so a bundle can't reach outside.

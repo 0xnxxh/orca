@@ -20,7 +20,7 @@ export async function assertTerminalAgentSendable(
       agentStatus = await options.runtime.getTerminalAgentStatus(options.handle)
     } catch (error) {
       if (isTerminalAgentStatusNotWritable(error)) {
-        throw new Error('terminal_guard_not_writable', { cause: error })
+        throw new Error('terminal_guard_not_writable')
       }
       throw error
     }

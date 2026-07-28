@@ -29,7 +29,7 @@ async function reserveLocalFile(localPath: string, localName: string): Promise<v
     await handle.close()
   } catch (error) {
     if (isEEXIST(error)) {
-      throw new Error(`Remote entries map to the same local name '${localName}'`, { cause: error })
+      throw new Error(`Remote entries map to the same local name '${localName}'`)
     }
     throw error
   }

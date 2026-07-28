@@ -57,8 +57,7 @@ export function verifyPackageCliBin({
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
       throw new Error(
-        `compiled CLI package boundary is missing: ${path.relative(projectDir, outPackageJsonPath)}`,
-        { cause: error }
+        `compiled CLI package boundary is missing: ${path.relative(projectDir, outPackageJsonPath)}`
       )
     }
     throw error

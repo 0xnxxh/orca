@@ -787,9 +787,7 @@ export async function initDaemonPtyProvider(
     try {
       await cleanupFailedDaemonAdoption(newSpawner, newAdapter, legacyAdapters)
     } catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], 'Daemon adoption and cleanup both failed', {
-        cause: cleanupError
-      })
+      throw new AggregateError([error, cleanupError], 'Daemon adoption and cleanup both failed')
     }
     throw error
   }
@@ -976,9 +974,7 @@ async function runRestartDaemon(): Promise<RestartDaemonResult> {
     // Previous provider stays module-authoritative until the swap; restore its renderer bindings when adoption fails.
     rebindLocalProviderListeners()
     if (cleanupError) {
-      throw new AggregateError([error, cleanupError], 'Daemon restart and cleanup both failed', {
-        cause: error
-      })
+      throw new AggregateError([error, cleanupError], 'Daemon restart and cleanup both failed')
     }
     throw error
   }

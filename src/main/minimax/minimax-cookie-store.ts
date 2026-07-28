@@ -155,7 +155,7 @@ export function readMiniMaxSessionCookie(): string | null {
     return cachedMiniMaxCookie
   } catch (error) {
     console.error('[minimax] failed to decode/decrypt session cookie', error)
-    throw new Error('MiniMax session cookie could not be decrypted', { cause: error })
+    throw new Error('MiniMax session cookie could not be decrypted')
   }
 }
 

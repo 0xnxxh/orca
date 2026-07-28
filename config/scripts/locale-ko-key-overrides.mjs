@@ -11,7 +11,7 @@ try {
   parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf8'))
 } catch (error) {
   // Name the file: a bare JSON.parse SyntaxError doesn't say which file failed.
-  throw new Error(`Failed to load ${path.basename(jsonPath)}: ${error.message}`, { cause: error })
+  throw new Error(`Failed to load ${path.basename(jsonPath)}: ${error.message}`)
 }
 
 export const KO_KEY_OVERRIDES = parsed

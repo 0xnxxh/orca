@@ -126,9 +126,7 @@ export async function recoverLocalWindowsWorktreeRemoval(
   try {
     await removeLocalWorktreePath(args.canonicalWorktreePath, args.localWorktreeGitOptions)
   } catch (error) {
-    throw new Error(formatWorktreeRemovalError(error, args.canonicalWorktreePath, args.force), {
-      cause: error
-    })
+    throw new Error(formatWorktreeRemovalError(error, args.canonicalWorktreePath, args.force))
   }
   return removeRequiredGitWorktreeRegistration(args, args.force)
 }

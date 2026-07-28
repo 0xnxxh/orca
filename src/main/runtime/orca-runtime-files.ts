@@ -645,7 +645,7 @@ export class RuntimeFileCommands {
         isENOENT(error) ||
         (connectionId && RuntimeFileCommands.isRemoteNotFoundErrorMessage(error))
       ) {
-        throw new Error(`ENOENT: no such file or directory, open '${filePath}'`, { cause: error })
+        throw new Error(`ENOENT: no such file or directory, open '${filePath}'`)
       }
       throw error
     }
@@ -2284,7 +2284,7 @@ async function openLocalTerminalArtifactGrant(
     return await open(grant.absolutePath, flags | OPEN_NOFOLLOW)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ELOOP') {
-      throw new Error('terminal_file_grant_stale', { cause: error })
+      throw new Error('terminal_file_grant_stale')
     }
     throw error
   }

@@ -131,7 +131,7 @@ async function openVerifiedTerminalArtifact(
     return await open(filePath, flags | OPEN_NOFOLLOW)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ELOOP') {
-      throw new Error('terminal_file_grant_stale', { cause: error })
+      throw new Error('terminal_file_grant_stale')
     }
     throw error
   }

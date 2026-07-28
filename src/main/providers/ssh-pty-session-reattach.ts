@@ -74,9 +74,7 @@ export async function reattachSshPtySession(args: {
       const mismatchMarker = isSshPtyIdentityMismatchError(error)
         ? ` ${SSH_PTY_IDENTITY_MISMATCH_ERROR}`
         : ''
-      throw new Error(`${SSH_SESSION_EXPIRED_ERROR}: ${relaySessionId}${mismatchMarker}`, {
-        cause: error
-      })
+      throw new Error(`${SSH_SESSION_EXPIRED_ERROR}: ${relaySessionId}${mismatchMarker}`)
     }
     throw error
   }

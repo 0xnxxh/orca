@@ -826,7 +826,7 @@ export class GitHandler {
         return { hasUpstream: false, ahead: 0, behind: 0 }
       }
       // Why: match fetch/push/pull normalization so execFile preamble and local paths don't leak to the renderer.
-      throw new Error(normalizeGitErrorMessage(error, 'upstream'), { cause: error })
+      throw new Error(normalizeGitErrorMessage(error, 'upstream'))
     }
   }
 
@@ -861,7 +861,7 @@ export class GitHandler {
         await this.git(['fetch', '--prune'], worktreePath)
       } catch (error) {
         // Why: normalize like local gitFetch so SSH users get actionable messages, not raw stderr (may embed credentials).
-        throw new Error(normalizeGitErrorMessage(error, 'fetch'), { cause: error })
+        throw new Error(normalizeGitErrorMessage(error, 'fetch'))
       }
     } finally {
       this.clearGitMutationReadCaches()
@@ -892,7 +892,7 @@ export class GitHandler {
           { expectedUpstream }
         )
       } catch (error) {
-        throw new Error(normalizeGitErrorMessage(error, 'push'), { cause: error })
+        throw new Error(normalizeGitErrorMessage(error, 'push'))
       } finally {
         clearTimeout(timeout)
         context?.signal?.removeEventListener('abort', abortFromContext)
@@ -944,7 +944,7 @@ export class GitHandler {
         )
       } catch (error) {
         // Why: create-worktree needs a write-capable fetch that generic git.exec rejects; narrow RPC keeps the allowlist tight.
-        throw new Error(normalizeGitErrorMessage(error, 'fetch'), { cause: error })
+        throw new Error(normalizeGitErrorMessage(error, 'fetch'))
       }
     } finally {
       this.clearGitMutationReadCaches()
@@ -1001,11 +1001,10 @@ export class GitHandler {
         // Why: a timeout kill has no git stderr; name it so the client can classify it as transient.
         if (isExecKilledError(error)) {
           throw new Error(
-            `Fetching refs/merge-requests/${mergeRequestIid}/head from "${remote}" timed out.`,
-            { cause: error }
+            `Fetching refs/merge-requests/${mergeRequestIid}/head from "${remote}" timed out.`
           )
         }
-        throw new Error(normalizeGitErrorMessage(error, 'fetch'), { cause: error })
+        throw new Error(normalizeGitErrorMessage(error, 'fetch'))
       }
     } finally {
       this.clearGitMutationReadCaches()
@@ -1038,11 +1037,9 @@ export class GitHandler {
       } catch (error) {
         // Why: a timeout kill has no git stderr; name it so the client can classify it as transient.
         if (isExecKilledError(error)) {
-          throw new Error(`Fetching refs/pull/${prNumber}/head from "${remote}" timed out.`, {
-            cause: error
-          })
+          throw new Error(`Fetching refs/pull/${prNumber}/head from "${remote}" timed out.`)
         }
-        throw new Error(normalizeGitErrorMessage(error, 'fetch'), { cause: error })
+        throw new Error(normalizeGitErrorMessage(error, 'fetch'))
       }
     } finally {
       this.clearGitMutationReadCaches()
@@ -1070,7 +1067,7 @@ export class GitHandler {
         await this.git(args, worktreePath)
       } catch (error) {
         // Why: mirror local gitPush normalization so SSH users get "non-fast-forward / pull first" guidance instead of raw git stderr.
-        throw new Error(normalizeGitErrorMessage(error, 'push'), { cause: error })
+        throw new Error(normalizeGitErrorMessage(error, 'push'))
       }
     } finally {
       this.clearGitMutationReadCaches()
@@ -1108,7 +1105,7 @@ export class GitHandler {
         await runPullWithDivergenceFallback(pullArgs, runPull)
       } catch (error) {
         // Why: mirror local gitPull normalization so SSH users get actionable messages instead of raw git stderr.
-        throw new Error(normalizeGitErrorMessage(error, 'pull'), { cause: error })
+        throw new Error(normalizeGitErrorMessage(error, 'pull'))
       }
     } finally {
       this.clearGitMutationReadCaches()
@@ -1136,7 +1133,7 @@ export class GitHandler {
         )
         await this.git(['pull', '--rebase', source.remoteName, source.branchName], worktreePath)
       } catch (error) {
-        throw new Error(normalizeGitErrorMessage(error, 'pull'), { cause: error })
+        throw new Error(normalizeGitErrorMessage(error, 'pull'))
       }
     } finally {
       this.clearGitMutationReadCaches()
@@ -1306,7 +1303,7 @@ export class GitHandler {
         await this.git(['check-ref-format', '--branch', newBranch], worktreePath)
         await this.git(['branch', '-m', newBranch], worktreePath)
       } catch (error) {
-        throw new Error(normalizeGitErrorMessage(error), { cause: error })
+        throw new Error(normalizeGitErrorMessage(error))
       }
     })
   }

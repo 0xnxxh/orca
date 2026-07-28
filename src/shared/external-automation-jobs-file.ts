@@ -27,8 +27,7 @@ export async function readExternalAutomationJobsFile(
   } catch (error) {
     if (error instanceof NodeFileReadTooLargeError) {
       throw new Error(
-        `External automation jobs file exceeds the ${EXTERNAL_AUTOMATION_JOBS_FILE_MAX_BYTES / 1024 / 1024} MiB memory limit: ${filePath}`,
-        { cause: error }
+        `External automation jobs file exceeds the ${EXTERNAL_AUTOMATION_JOBS_FILE_MAX_BYTES / 1024 / 1024} MiB memory limit: ${filePath}`
       )
     }
     throw error

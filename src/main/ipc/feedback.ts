@@ -105,7 +105,7 @@ async function postFeedback(
     // Why: Electron and Node use different AbortError messages. Normalize our
     // client deadline so support logs explain which request budget expired.
     if (controller.signal.aborted) {
-      throw new Error(`request timed out after ${timeoutMs / 1000} seconds`, { cause: error })
+      throw new Error(`request timed out after ${timeoutMs / 1000} seconds`)
     }
     throw error
   } finally {

@@ -207,7 +207,7 @@ export async function gitPush(
     ]
     await gitExecFileAsync(args, gitOptionsForWorktree(worktreePath, options))
   } catch (error) {
-    throw new Error(normalizeGitErrorMessage(error, 'push'), { cause: error })
+    throw new Error(normalizeGitErrorMessage(error, 'push'))
   }
 }
 
@@ -245,7 +245,7 @@ async function gitPullWithArgs(
   try {
     await runPullWithDivergenceFallback(pullArgs, runPull)
   } catch (error) {
-    throw new Error(normalizeGitErrorMessage(error, 'pull'), { cause: error })
+    throw new Error(normalizeGitErrorMessage(error, 'pull'))
   }
 }
 
@@ -288,7 +288,7 @@ export async function gitPullRebaseFromBase(
         gitOptionsForWorktree(worktreePath, options)
       )
     } catch (error) {
-      throw new Error(normalizeGitErrorMessage(error, 'pull'), { cause: error })
+      throw new Error(normalizeGitErrorMessage(error, 'pull'))
     }
   })
 }
@@ -309,6 +309,6 @@ export async function gitFetch(
     }
     await gitExecFileAsync(['fetch', '--prune'], gitOptionsForWorktree(worktreePath, options))
   } catch (error) {
-    throw new Error(normalizeGitErrorMessage(error, 'fetch'), { cause: error })
+    throw new Error(normalizeGitErrorMessage(error, 'fetch'))
   }
 }

@@ -33,8 +33,7 @@ export class PluginKillListStore {
         return null
       }
       throw new Error(
-        `cached plugin kill list is invalid: ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error }
+        `cached plugin kill list is invalid: ${error instanceof Error ? error.message : String(error)}`
       )
     }
   }

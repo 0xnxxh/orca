@@ -2239,7 +2239,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
     } catch (err) {
       console.error('Failed to create folder workspace:', err)
       const { title, description } = formatFolderWorkspaceCreateError(err)
-      throw new Error(`${title}. ${description}`, { cause: err })
+      throw new Error(`${title}. ${description}`)
     }
   },
 

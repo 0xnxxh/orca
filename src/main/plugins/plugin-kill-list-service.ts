@@ -130,8 +130,7 @@ export async function fetchPluginKillList(
     return pluginKillListSchema.parse(JSON.parse(new TextDecoder().decode(bytes)))
   } catch (error) {
     throw new Error(
-      `invalid plugin kill-list response: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error }
+      `invalid plugin kill-list response: ${error instanceof Error ? error.message : String(error)}`
     )
   }
 }

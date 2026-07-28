@@ -38,11 +38,8 @@ import { validateGitPushTarget } from '../git/push-target-validation'
 import { assertGitPushTargetShape } from '../../shared/git-push-target-validation'
 import { gitExecFileAsync } from '../git/runner'
 import { parseGitHubOwnerRepo } from '../github/gh-utils'
-import type {
-  OrcaRuntimeService,
-  RemoteFetchResult,
-  RemoteTrackingBase
-} from '../runtime/orca-runtime'
+import type { OrcaRuntimeService } from '../runtime/orca-runtime'
+import type { RemoteFetchResult, RemoteTrackingBase } from '../runtime/orca-runtime'
 import { getProjectHostSetupWorktreeMeta } from '../../shared/project-host-setup-projection'
 import {
   buildPosixRunnerScript,
@@ -1764,8 +1761,7 @@ export async function createRemoteWorktree(
     ) {
       // Why: only OLD relays (pre-allowlist-removal) throw these; surface an upgrade message. Remove after version floor moves (docs/relay-fs-allowlist-removal.md).
       throw new Error(
-        `Older relay reported an authorization error; please reconnect to deploy the latest relay. (${err.message})`,
-        { cause: err }
+        `Older relay reported an authorization error; please reconnect to deploy the latest relay. (${err.message})`
       )
     }
     throw err

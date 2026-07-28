@@ -69,9 +69,7 @@ export function parseSignatureJson(stdout) {
   try {
     return JSON.parse(trimmed)
   } catch (error) {
-    throw new Error(`PowerShell returned malformed signature JSON: ${error.message}`, {
-      cause: error
-    })
+    throw new Error(`PowerShell returned malformed signature JSON: ${error.message}`)
   }
 }
 

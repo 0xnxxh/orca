@@ -443,7 +443,7 @@ async function downloadRemoteFileViaPreview(
     })
   } catch (error) {
     if (isUnsupportedRemotePreviewDownload(error)) {
-      throw new Error(REMOTE_DOWNLOAD_UPDATE_REQUIRED_MESSAGE, { cause: error })
+      throw new Error(REMOTE_DOWNLOAD_UPDATE_REQUIRED_MESSAGE)
     }
     throw error
   }

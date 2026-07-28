@@ -202,8 +202,7 @@ export async function assertInteractiveTerminal(
   } catch (error) {
     const diagnostic = await captureNestedTerminalRouteDiagnostic(client, repoId)
     throw new Error(
-      `${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostic)}`,
-      { cause: error }
+      `${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostic)}`
     )
   }
   let ptyId: string
@@ -212,8 +211,7 @@ export async function assertInteractiveTerminal(
   } catch (error) {
     const diagnostic = await captureNestedTerminalRouteDiagnostic(client, repoId)
     throw new Error(
-      `${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostic)}`,
-      { cause: error }
+      `${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostic)}`
     )
   }
   if (options.waitForReconnectReady) {
@@ -244,8 +242,7 @@ export async function assertInteractiveTerminal(
     } catch (error) {
       const diagnostic = await captureNestedTerminalRouteDiagnostic(client, repoId)
       throw new Error(
-        `${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostic)}`,
-        { cause: error }
+        `${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostic)}`
       )
     }
     ptyId = await waitForActivePanePtyId(client.page, 30_000)
