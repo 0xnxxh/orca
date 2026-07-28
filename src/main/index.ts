@@ -557,6 +557,13 @@ function requestDesktopActivation(): void {
   desktopActivationGate.requestActivation()
 }
 
+function requestDesktopActivationForAppEvent(): void {
+  // Why: re-focusing an existing macOS 26 window can race its scene-backed Space transition.
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    requestDesktopActivation()
+  }
+}
+
 function getDesktopWindowStatus(): RuntimeDesktopWindowStatus {
   const state = desktopActivationGate.getState()
   return state === 'ready' ? 'openable' : state
@@ -2602,7 +2609,7 @@ app.whenReady().then(async () => {
   })
 
   startTerminalRuntimeStartupServices()
-  app.on('activate', requestDesktopActivation)
+  app.on('activate', requestDesktopActivationForAppEvent)
 
   if (serveOptions) {
     // Why: give managed WSL launchers a brief chance to migrate before headless PTYs go live, without slow repairs withholding all RPC readiness.
