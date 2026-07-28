@@ -153,6 +153,79 @@ describe('remote filesystem watcher terminal retry resync', () => {
     expect(sender.send).toHaveBeenCalledTimes(1)
   })
 
+  it('aborts an in-flight terminal retry when a replacement provider registers', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const sender = createSender(1)
+    let terminalError: TerminalErrorHandler = () => {}
+    let retrySignal: AbortSignal | undefined
+    let resolveRetry: (unwatch: () => void) => void = () => {}
+    const retryInstall = new Promise<() => void>((resolve) => {
+      resolveRetry = resolve
+    })
+    const retryUnwatch = vi.fn()
+    const staleWatch = vi
+      .fn()
+      .mockImplementationOnce((_path, _events, options) => {
+        terminalError = options.onTerminalError
+        return Promise.resolve(vi.fn())
+      })
+      .mockImplementationOnce((_path, _events, options) => {
+        retrySignal = options.signal
+        return retryInstall
+      })
+    const replacementWatch = vi.fn().mockResolvedValue(vi.fn())
+    getSshFilesystemProviderMock.mockReturnValue({ watch: staleWatch })
+
+    await handlers['fs:watchWorktree']({ sender }, ARGS)
+    terminalError(new Error('old relay watcher died'))
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(staleWatch).toHaveBeenCalledTimes(2)
+
+    getSshFilesystemProviderMock.mockReturnValue({ watch: replacementWatch })
+    for (const listener of providerRegistrationListeners) {
+      listener('conn-1')
+    }
+    expect(retrySignal?.aborted).toBe(true)
+
+    resolveRetry(retryUnwatch)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(retryUnwatch).toHaveBeenCalledTimes(1)
+    expect(replacementWatch).toHaveBeenCalledTimes(1)
+    expect(sender.send).toHaveBeenCalledTimes(1)
+    expect(sender.send).toHaveBeenCalledWith('fs:changed', OVERFLOW_PAYLOAD)
+  })
+
+  it('coalesces repeated terminal recovery resyncs with a trailing refresh', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const sender = createSender(1)
+    const terminalErrors: TerminalErrorHandler[] = []
+    const watchMock = vi.fn().mockImplementation((_path, _events, options) => {
+      terminalErrors.push(options.onTerminalError)
+      return Promise.resolve(vi.fn())
+    })
+    getSshFilesystemProviderMock.mockReturnValue({ watch: watchMock })
+
+    await handlers['fs:watchWorktree']({ sender }, ARGS)
+    terminalErrors[0]?.(new Error('first watcher failure'))
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(sender.send).toHaveBeenCalledTimes(1)
+
+    terminalErrors[1]?.(new Error('second watcher failure'))
+    await vi.advanceTimersByTimeAsync(1_000)
+    terminalErrors[2]?.(new Error('third watcher failure'))
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(watchMock).toHaveBeenCalledTimes(4)
+    expect(sender.send).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(sender.send).toHaveBeenCalledTimes(2)
+    expect(sender.send).toHaveBeenLastCalledWith('fs:changed', OVERFLOW_PAYLOAD)
+  })
+
   it('cancels a terminal retry when the last owner unwatches', async () => {
     vi.useFakeTimers()
     vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -167,6 +240,26 @@ describe('remote filesystem watcher terminal retry resync', () => {
     await handlers['fs:watchWorktree']({ sender }, ARGS)
     terminalError(new Error('relay watcher died'))
     handlers['fs:unwatchWorktree']({ sender }, ARGS)
+    await vi.advanceTimersByTimeAsync(60 * 60_000)
+
+    expect(watchMock).toHaveBeenCalledTimes(1)
+    expect(sender.send).not.toHaveBeenCalled()
+  })
+
+  it('cancels a terminal retry when removal forgets the watcher snapshot', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const sender = createSender(1)
+    let terminalError: TerminalErrorHandler = () => {}
+    const watchMock = vi.fn().mockImplementation((_path, _events, options) => {
+      terminalError = options.onTerminalError
+      return Promise.resolve(vi.fn())
+    })
+    getSshFilesystemProviderMock.mockReturnValue({ watch: watchMock })
+
+    await handlers['fs:watchWorktree']({ sender }, ARGS)
+    terminalError(new Error('relay watcher died'))
+    forgetRemoteWatcherRemovalSnapshot('conn-1', WORKTREE_PATH)
     await vi.advanceTimersByTimeAsync(60 * 60_000)
 
     expect(watchMock).toHaveBeenCalledTimes(1)
