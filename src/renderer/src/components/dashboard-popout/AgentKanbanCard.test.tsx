@@ -187,7 +187,10 @@ describe('AgentKanbanCard', () => {
 
   it('skips structured-clone rerenders until visible card data or its age changes', () => {
     const onOpenTerminal = vi.fn()
-    const initial = card({ startedAt: 1_000 })
+    const initial = card({
+      startedAt: 1_000,
+      subagents: [{ id: 'child-1', name: 'Review loop', dotState: 'working' }]
+    })
     const repoIcon: RepoIcon = { type: 'lucide', name: 'Rocket' }
     const { rerender } = render(
       <TooltipProvider>
@@ -206,7 +209,7 @@ describe('AgentKanbanCard', () => {
     rerender(
       <TooltipProvider>
         <AgentKanbanCard
-          card={{ ...initial }}
+          card={{ ...initial, subagents: initial.subagents?.map((subagent) => ({ ...subagent })) }}
           repoIcon={{ ...repoIcon }}
           now={62_000}
           onOpenTerminal={onOpenTerminal}
@@ -218,7 +221,7 @@ describe('AgentKanbanCard', () => {
     rerender(
       <TooltipProvider>
         <AgentKanbanCard
-          card={{ ...initial }}
+          card={{ ...initial, subagents: initial.subagents?.map((subagent) => ({ ...subagent })) }}
           repoIcon={{ ...repoIcon }}
           now={121_500}
           onOpenTerminal={onOpenTerminal}

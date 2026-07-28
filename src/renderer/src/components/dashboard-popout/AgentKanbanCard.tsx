@@ -44,6 +44,21 @@ function displayTimestamp(card: DashboardCard): number {
   return card.finishedAt ?? card.startedAt
 }
 
+function sameSubagents(a: DashboardCard['subagents'], b: DashboardCard['subagents']): boolean {
+  if (a === b) {
+    return true
+  }
+  if (!a || !b || a.length !== b.length) {
+    return false
+  }
+  return a.every(
+    (subagent, index) =>
+      subagent.id === b[index].id &&
+      subagent.name === b[index].name &&
+      subagent.dotState === b[index].dotState
+  )
+}
+
 function sameCard(a: DashboardCard, b: DashboardCard): boolean {
   return (
     a.paneKey === b.paneKey &&
@@ -66,7 +81,7 @@ function sameCard(a: DashboardCard, b: DashboardCard): boolean {
     a.hasReview === b.hasReview &&
     a.review?.number === b.review?.number &&
     a.review?.state === b.review?.state &&
-    JSON.stringify(a.subagents) === JSON.stringify(b.subagents) &&
+    sameSubagents(a.subagents, b.subagents) &&
     a.startedAt === b.startedAt &&
     a.finishedAt === b.finishedAt &&
     a.stateChangedAt === b.stateChangedAt &&

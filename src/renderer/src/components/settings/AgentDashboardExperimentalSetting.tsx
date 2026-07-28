@@ -56,7 +56,7 @@ export function AgentDashboardExperimentalSetting({
         />
       </div>
       {enabled ? (
-        <div className="ml-4 border-l border-border pl-4">
+        <div className="ml-4 space-y-3 border-l border-border pl-4">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 shrink space-y-0.5">
               <Label>
@@ -96,6 +96,27 @@ export function AgentDashboardExperimentalSetting({
                   )
                 }
               ]}
+            />
+          </div>
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 shrink space-y-0.5">
+              <Label>{translate('dashboardPopout.settings.showIdle', 'Show idle agents')}</Label>
+              <p className="text-xs text-muted-foreground">
+                {translate(
+                  'dashboardPopout.settings.showIdleCopy',
+                  'Include agents that have gone quiet for 30 minutes without reporting completion. Hidden by default.'
+                )}
+              </p>
+            </div>
+            <SettingsSwitch
+              checked={settings.experimentalAgentDashboardShowIdle === true}
+              ariaLabel={translate('dashboardPopout.settings.showIdle', 'Show idle agents')}
+              onChange={() =>
+                updateSettings({
+                  experimentalAgentDashboardShowIdle:
+                    settings.experimentalAgentDashboardShowIdle !== true
+                })
+              }
             />
           </div>
         </div>
