@@ -226,6 +226,14 @@ native-shell/store incidents, requires corrected verified release artifacts,
 maps every host-scoped recovery action, forbids manual cache mutation, and
 defines privacy-safe support evidence. Final physical-device and store-signed
 rollback drills remain open below.
+The canonical architecture reference and mobile developer README now document
+the shared React Native UI, native/Desktop/hosted ownership, authenticated
+package flow, private origins, capability bridge, compatibility policy, gated
+rollout, emulator workflow, privacy-safe support intake, troubleshooting, and
+recovery. The rollback runbook cross-links the same boundaries.
+All six changed Markdown files pass formatting and relative-link resolution;
+the rollback/runbook contract passes three focused tests, the installed Orca
+CLI confirms the documented emulator commands, and diff hygiene passes.
 Post-runbook validation passes 569 mobile files / 3,378 tests with 2 expected
 skips. Mobile and mobile-web typechecks/lints, reliability, max-lines,
 formatting, diff hygiene, and the unchanged `b17ead7a…` package verification
@@ -287,8 +295,6 @@ cross-scope races, privacy/authorization audit, and independent review.
 
 - [ ] Run packaged Desktop delivery on macOS, Windows, Linux, and headless
       runtimes.
-- [ ] Update the design, architecture, mobile developer, support, privacy,
-      troubleshooting, and recovery documentation.
 
 ## 3. Security Gates
 

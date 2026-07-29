@@ -88,7 +88,7 @@ At the end of every implementation session:
 | Device and topology validation     | In progress          | Physical phones/tablets and production cloud Relay   |
 | App Store validation               | Not started          | Production submission, not TestFlight                |
 | Cutover and cleanup                | Gated                | Default flip, Experimental entry, native fallback    |
-| Release evidence and documentation | In progress          | Packaged releases, support docs, and PR artifacts    |
+| Release evidence and documentation | In progress          | Packaged releases and final PR artifacts             |
 
 **Current workstream:** Complete the external validation and release gates.
 The runtime adapters behind the unchanged React Native mobile UI are
@@ -1751,8 +1751,20 @@ copy.
 
 ## 15. Release Evidence and Documentation
 
-- [ ] Update the architecture and mobile developer documentation.
-- [ ] Update support, privacy, troubleshooting, and recovery documentation.
+- [x] Update the architecture and mobile developer documentation. The
+      [canonical architecture reference](../mobile-hybrid-webview-architecture.md)
+      records final ownership, build/delivery flow, shared-UI preservation,
+      private-origin and bridge boundaries, compatibility, rollout, and
+      developer commands. `mobile/README.md` now describes the same architecture,
+      shared-screen workflow, package build, emulator launcher, and validation
+      paths.
+- [x] Update support, privacy, troubleshooting, and recovery documentation. The
+      canonical reference defines privacy-safe diagnostic intake, incident
+      escalation, common recovery decisions, and the retained release gates.
+      The
+      [production rollback runbook](../mobile-hybrid-webview-rollback.md)
+      cross-links that model and remains authoritative for Desktop-package and
+      native-store incidents.
 - [~] Add safe diagnostic fields for build, bridge, cache, activation, and
   terminal resync state. The native in-memory store and existing Copy
   diagnostics action now report bridge version, a 12-character build prefix,
@@ -2705,4 +2717,6 @@ and diff hygiene pass. A fresh production RNW build remains
 | 2026-07-29 | Complete | Final rebase is complete on `origin/main` at `c8dba6d72`; the branch is 39 commits ahead and zero behind. RNW package `7c7c673deb74e158cdfb99b1ca536fd88cd3ab5dac4eb8db78c43ca12f6ce31d` verifies with 50 assets, 9,290,968 raw bytes, and 2,688,499 gzip bytes.                                                                                                                                                                          |
 | 2026-07-29 | Complete | A clean app reinstall and exact unpacked macOS arm64 → Docker SSH → iOS WKWebView journey pass in 1.9 minutes. The paste harness retries one missed activation and stops after the first captured request; two focused tests, format, lint, and Node typecheck pass. Package identity, terminal mutation, remote native chat, disconnect retention, provider reattachment, and recovery pass.                                             |
 | 2026-07-29 | Complete | The full root suite passes 3,818 files / 39,968 tests with 62 expected skips. Complete lint, native/type-aware audits, 55 reliability gates, localization, max-lines, typecheck, formatting, and diff hygiene pass.                                                                                                                                                                                                                       |
+| 2026-07-29 | Complete | The canonical hybrid architecture reference and updated mobile developer README now document the shared React Native UI, native/Desktop/hosted ownership, authenticated package flow, private origins, capability bridge, compatibility policy, gated rollout, emulator workflow, privacy-safe support intake, troubleshooting, and recovery. The rollback runbook cross-links the same boundaries.                                       |
+| 2026-07-29 | Complete | Documentation validation passes formatting across all six changed Markdown files, resolution of every relative Markdown link, the rollback/runbook contract suite with 3 tests, and diff hygiene. The installed Orca CLI confirms the documented emulator `list`, `attach`, `ax`, and `tap` commands.                                                                                                                                     |
 | 2026-07-29 | Next     | Execute the physical-device, topology, security, performance, packaged-release, rollback, and App Store gates.                                                                                                                                                                                                                                                                                                                            |

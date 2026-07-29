@@ -12,6 +12,8 @@
   [`2026-07-27-mobile-hybrid-webview-remaining-work.md`](./2026-07-27-mobile-hybrid-webview-remaining-work.md)
 - **Feature-parity inventory:**
   [`2026-07-22-mobile-hybrid-webview-parity-inventory.md`](./2026-07-22-mobile-hybrid-webview-parity-inventory.md)
+- **Canonical architecture and operations:**
+  [`../mobile-hybrid-webview-architecture.md`](../mobile-hybrid-webview-architecture.md)
 
 ## Decision Summary
 
@@ -2634,8 +2636,12 @@ silent WebKit miss.
 
 ### 13. Final documentation and release evidence
 
-- Update architecture, support, privacy, App Review, diagnostics, and developer
-  documentation.
+- The
+  [canonical architecture reference](../mobile-hybrid-webview-architecture.md),
+  `mobile/README.md`, and the
+  [rollback runbook](../mobile-hybrid-webview-rollback.md) now document
+  architecture, shared-UI development, support, privacy, diagnostics,
+  troubleshooting, recovery, and App Review preparation.
 - Attach feature-parity results, physical-device benchmarks, security findings,
   screenshots, review notes, and rollback drill output to the PR.
 
@@ -2898,6 +2904,10 @@ The
 [production rollback runbook](../mobile-hybrid-webview-rollback.md)
 defines incident classification, containment, recovery controls, privacy-safe
 diagnostics, and the physical/store-signed drills required before cutover.
+The
+[canonical architecture reference](../mobile-hybrid-webview-architecture.md)
+defines the corresponding ownership, package, bridge, compatibility,
+developer, support, and privacy model.
 
 ## Observability and Diagnostics
 

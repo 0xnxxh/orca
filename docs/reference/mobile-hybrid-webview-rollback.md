@@ -4,6 +4,11 @@ This runbook covers production rollback for Orca's Desktop-served React Native
 Web package and the store-installed mobile shell. It does not replace the final
 release-candidate rollback drills.
 
+See the
+[hybrid architecture reference](./mobile-hybrid-webview-architecture.md) for
+the package, trust, cache, bridge, compatibility, privacy, and support
+boundaries used by this runbook.
+
 ## Safety Invariants
 
 - Treat Desktop web-package rollback and native-shell rollback as separate
