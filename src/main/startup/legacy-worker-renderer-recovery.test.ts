@@ -89,4 +89,29 @@ describe('legacy worker renderer recovery', () => {
     await expect(reportedError).resolves.toBe(recoveryError)
     expect(reconcile).toHaveBeenCalledTimes(2)
   })
+
+  it('contains initial recovery rejection and still retries when the provider becomes ready', async () => {
+    const initialError = new Error('initial recovery failed')
+    let resolveProvider!: () => void
+    const providerReady = new Promise<void>((resolve) => {
+      resolveProvider = resolve
+    })
+    const reconcile = vi.fn().mockRejectedValueOnce(initialError).mockResolvedValueOnce(undefined)
+    const onDeferredRecoveryError = vi.fn()
+
+    await expect(
+      recoverLegacyWorkerTerminalsForRendererStartup({
+        firstWindowStartupServicesReady: Promise.resolve(),
+        managedWslCliStartupBarrierReady: Promise.resolve(),
+        localPtyProviderStartupReady: providerReady,
+        reconcile,
+        onDeferredRecoveryError
+      })
+    ).resolves.toBeUndefined()
+
+    expect(onDeferredRecoveryError).toHaveBeenCalledWith(initialError)
+    expect(reconcile).toHaveBeenCalledTimes(1)
+    resolveProvider()
+    await vi.waitFor(() => expect(reconcile).toHaveBeenCalledTimes(2))
+  })
 })

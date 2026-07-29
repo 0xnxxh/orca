@@ -73,10 +73,12 @@ describe('startup ordering', () => {
     expect(desktopStartup).not.toContain('await managedWslCliReconciliationReady')
     expect(barrier).toContain('managedWslCliStartupBarrierReady')
     expect(barrier).not.toContain('managedWslCliReconciliationReady')
+    expect(barrier).toContain("ipcMain.handle('app:recoverLegacyWorkerTerminalsForRendererStartup'")
     expect(barrier).toContain('recoverLegacyWorkerTerminalsForRendererStartup({')
     expect(barrier).toContain('localPtyProviderStartupReady,')
+    expect(barrier).toContain('await runtime?.refreshRestoredOrchestrationAuthority()')
     expect(barrier).toContain(
-      'reconcile: () => runtime?.reconcileLegacyWorkerTerminals({ materializeRenderer: true })'
+      'return runtime?.reconcileLegacyWorkerTerminals({ materializeRenderer: true })'
     )
   })
 

@@ -52,8 +52,25 @@ export const ORCHESTRATION_RUN_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.runUse',
     params: RunUseParams,
-    handler: (params, { runtime, legacyCoordinatorAuthority }) => {
+    handler: (
+      params,
+      {
+        runtime,
+        legacyCoordinatorAuthority,
+        orchestrationCompatibilityCallerAuthority: callerAuthority
+      }
+    ) => {
       const paneKey = requireCallerPane(runtime, params.from)
+      if (
+        params.takeoverLegacy &&
+        (callerAuthority?.terminalHandle !== params.from || callerAuthority.paneKey !== paneKey)
+      ) {
+        throw new OrchestrationError(
+          'legacy_read_only',
+          'Legacy takeover must be invoked by the live coordinator agent terminal it will bind. No effects were applied.',
+          { effectsApplied: false }
+        )
+      }
       const db = runtime.getOrchestrationDb()
       const priorRun = db.getCurrentRunForPane(paneKey)
       const run = db.bindRun({

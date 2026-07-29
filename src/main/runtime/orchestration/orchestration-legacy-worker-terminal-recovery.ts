@@ -4,6 +4,7 @@ import type { LegacyWorkerTerminalRecoveryRow } from './types'
 
 export type LegacyWorkerTerminalRecoveryCandidate = {
   dispatchId: string
+  dispatchStatus: LegacyWorkerTerminalRecoveryRow['dispatch_status']
   contractVersion: number
   taskId: string
   worktreeId: string
@@ -82,6 +83,7 @@ export function planLegacyWorkerTerminalRecovery(
     }
     parsedCandidates.push({
       dispatchId: row.dispatch_id,
+      dispatchStatus: row.dispatch_status,
       contractVersion: row.contract_version,
       taskId: row.task_id,
       worktreeId,

@@ -2,6 +2,7 @@ import type { RpcRequest } from './core'
 import type { OrcaRuntimeService } from '../orca-runtime'
 import { OrchestrationError } from '../orchestration/orchestration-error'
 import { formatMessageBanner } from '../orchestration/formatter'
+import { ORCHESTRATION_MESSAGE_WAIT_DEFAULT_TIMEOUT_MS } from '../../../shared/orchestration-message-wait-timeout'
 import type { LegacyCompatibilityAuthority } from './orchestration-legacy-authority'
 import {
   operationIdentity,
@@ -67,7 +68,8 @@ export async function handleLegacyCheck(args: {
       ? db.getLegacyMailHistory({ principalId: principal.id, types: typeFilter })
       : db.getLegacyMailPage({ principalId: principal.id, types: typeFilter })
   let page = read()
-  const deadline = Date.now() + Math.max(params.timeoutMs ?? 0, 0)
+  const deadline =
+    Date.now() + Math.max(params.timeoutMs ?? ORCHESTRATION_MESSAGE_WAIT_DEFAULT_TIMEOUT_MS, 0)
   while (page.messages.length === 0 && params.wait && !signal?.aborted && Date.now() < deadline) {
     if (principal.role === 'coordinator' && db.hasPendingCurrentDelivery(principal.run_id)) {
       break

@@ -99,6 +99,12 @@ describe('OrchestrationDb legacy contract storage', () => {
       run_id: adoptedRunId,
       delivery_contract: 'legacy_direct'
     })
+    for (const messageId of fixture.malformedRejectionMessageIds) {
+      expect(db.getMessageById(messageId)).toMatchObject({
+        run_id: adoptedRunId,
+        delivery_contract: 'legacy_direct'
+      })
+    }
     expect(
       sqlite.prepare('SELECT * FROM deliveries WHERE id = ?').get(fixture.legacyDeliveryId)
     ).toMatchObject({ run_id: adoptedRunId, status: 'fenced' })

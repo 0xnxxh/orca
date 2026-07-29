@@ -17,6 +17,7 @@ export type LegacyStorageCutoverFixture = {
   legacyDeliveryId: string
   rejectionMessageId: string
   lookalikeMessageId: string
+  malformedRejectionMessageIds: string[]
 }
 
 export function createLegacyStorageCutoverFixture(): {
@@ -104,8 +105,56 @@ export function createLegacyStorageCutoverFixture(): {
     from: 'term_legacy_worker',
     to: 'term_legacy_coord',
     subject: 'Ordinary legacy mail',
-    payload: JSON.stringify({ '.orcaLifecycleRejection': 'not an audit marker' })
+    payload: JSON.stringify({
+      userData: { _orcaLifecycleRejection: { code: 'not-a-top-level-audit-marker' } }
+    })
   })
+  const malformedRejections = [
+    first.insertMessage({
+      from: 'term_legacy_worker',
+      to: 'term_legacy_coord',
+      subject: 'Invalid JSON marker',
+      payload: '{"_orcaLifecycleRejection":'
+    }),
+    first.insertMessage({
+      from: 'term_legacy_worker',
+      to: 'term_legacy_coord',
+      subject: 'Array marker',
+      payload: JSON.stringify({ _orcaLifecycleRejection: [] })
+    }),
+    first.insertMessage({
+      from: 'term_legacy_worker',
+      to: 'term_legacy_coord',
+      subject: 'String marker',
+      payload: JSON.stringify({ _orcaLifecycleRejection: 'migration' })
+    }),
+    first.insertMessage({
+      from: 'term_legacy_worker',
+      to: 'term_legacy_coord',
+      subject: 'Incomplete marker',
+      payload: JSON.stringify({ _orcaLifecycleRejection: { code: 'migration' } })
+    }),
+    first.insertMessage({
+      from: 'term_legacy_worker',
+      to: 'term_legacy_coord',
+      subject: 'Non-string marker fields',
+      payload: JSON.stringify({ _orcaLifecycleRejection: { code: 19, reason: false } })
+    }),
+    first.insertMessage({
+      from: 'term_legacy_worker',
+      to: 'term_legacy_coord',
+      subject: 'Array root',
+      payload: JSON.stringify([
+        { _orcaLifecycleRejection: { code: 'migration', reason: 'nested' } }
+      ])
+    }),
+    first.insertMessage({
+      from: 'term_legacy_worker',
+      to: 'term_legacy_coord',
+      subject: 'String root',
+      payload: JSON.stringify('_orcaLifecycleRejection')
+    })
+  ]
   first.close()
 
   const raw = new Database(dbPath)
@@ -117,6 +166,15 @@ export function createLegacyStorageCutoverFixture(): {
        ) VALUES (?, ?, 0, ?, 'outstanding')`
     )
     .run(legacyDeliveryId, LEGACY_RUN_ID, JSON.stringify([legacyMessages[0].id]))
+  raw
+    .prepare("UPDATE messages SET delivery_contract = 'legacy_direct' WHERE id = ?")
+    .run(rejection.id)
+  const seedAuditOnly = raw.prepare(
+    "UPDATE messages SET delivery_contract = 'audit_only' WHERE id = ?"
+  )
+  for (const message of [lookalike, ...malformedRejections]) {
+    seedAuditOnly.run(message.id)
+  }
   raw.exec(`
     DROP INDEX IF EXISTS idx_messages_delivery_contract;
     DROP TABLE legacy_mail_receipts;
@@ -141,7 +199,8 @@ export function createLegacyStorageCutoverFixture(): {
       legacyQuestionId: question.message.id,
       legacyDeliveryId,
       rejectionMessageId: rejection.id,
-      lookalikeMessageId: lookalike.id
+      lookalikeMessageId: lookalike.id,
+      malformedRejectionMessageIds: malformedRejections.map((message) => message.id)
     }
   }
 }

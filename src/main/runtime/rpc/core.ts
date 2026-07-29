@@ -1,7 +1,7 @@
 // Why: single boundary between raw RPC frames and OrcaRuntimeService; keeps schema, handler, and result type on one object.
 import { ZodError, type ZodType } from 'zod'
 import type { TerminalStreamFrame } from '../../../shared/terminal-stream-protocol'
-import type { OrcaRuntimeService } from '../orca-runtime'
+import type { OrcaRuntimeService, OrchestrationCompatibilityCallerAuthority } from '../orca-runtime'
 import type {
   DeviceCredentialInstalled,
   PairingGetEndpointsParams,
@@ -92,6 +92,7 @@ export type RpcContext = {
   legacyCoordinatorRunId?: string
   legacyCoordinatorAuthority?: LegacyCoordinatorAuthorityProof
   revalidateLegacyCoordinator?: () => string
+  orchestrationCompatibilityCallerAuthority?: OrchestrationCompatibilityCallerAuthority
   // Why: federation pins the authenticated saved-environment caller without exposing its token to handlers or storage.
   authenticatedCallerFingerprint?: string
   pairing?: PairingRpcContext

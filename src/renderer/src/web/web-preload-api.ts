@@ -544,6 +544,7 @@ function createWebPreloadApi(): Partial<PreloadApi> {
         writeJson(UI_STORAGE_KEY, mergeWebUIState(readLocalWebUIState(), ui))
       },
       awaitFirstWindowStartupServices: () => Promise.resolve(),
+      recoverLegacyWorkerTerminalsForRendererStartup: () => Promise.resolve(),
       startupDiagnostic: () => Promise.resolve(),
       getKeyboardInputSourceId: () => Promise.resolve(null),
       setUnreadDockBadgeCount: () => Promise.resolve(),

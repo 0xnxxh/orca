@@ -52,7 +52,8 @@ describe('AgentHookServer authority evidence', () => {
       server.attestCompatibilityAuthority({
         paneKey: PANE_KEY,
         launchTokenHash: createHash('sha256').update('launch-before-restart').digest('hex'),
-        connectionId: 'ssh-target'
+        connectionId: 'ssh-target',
+        terminalProvenance: 'restored'
       })
     ).toEqual({ paneKey: PANE_KEY, source: 'hydrated_commitment' })
 
@@ -84,7 +85,16 @@ describe('AgentHookServer authority evidence', () => {
       server.attestCompatibilityAuthority({
         paneKey: PANE_KEY,
         launchTokenHash: createHash('sha256').update('launch-before-restart').digest('hex'),
-        connectionId: 'ssh-target'
+        connectionId: 'ssh-target',
+        terminalProvenance: 'restored'
+      })
+    ).toBeNull()
+    expect(
+      server.attestCompatibilityAuthority({
+        paneKey: PANE_KEY,
+        launchTokenHash: createHash('sha256').update('launch-before-restart').digest('hex'),
+        connectionId: 'ssh-target',
+        terminalProvenance: 'current_runtime'
       })
     ).toBeNull()
 
@@ -92,9 +102,18 @@ describe('AgentHookServer authority evidence', () => {
       server.attestCompatibilityAuthority({
         paneKey: PANE_KEY,
         launchTokenHash: createHash('sha256').update('launch-after-restart').digest('hex'),
-        connectionId: 'ssh-target'
+        connectionId: 'ssh-target',
+        terminalProvenance: 'restored'
       })
     ).toBeNull()
+    expect(
+      server.attestCompatibilityAuthority({
+        paneKey: PANE_KEY,
+        launchTokenHash: createHash('sha256').update('launch-after-restart').digest('hex'),
+        connectionId: 'ssh-target',
+        terminalProvenance: 'current_runtime'
+      })
+    ).toEqual({ paneKey: PANE_KEY, source: 'current_hook' })
 
     server.ingestRemote(
       {
@@ -111,7 +130,8 @@ describe('AgentHookServer authority evidence', () => {
       server.attestCompatibilityAuthority({
         paneKey: PANE_KEY,
         launchTokenHash: createHash('sha256').update('launch-before-restart').digest('hex'),
-        connectionId: 'ssh-target'
+        connectionId: 'ssh-target',
+        terminalProvenance: 'restored'
       })
     ).toEqual({ paneKey: PANE_KEY, source: 'current_hook' })
 
@@ -129,7 +149,8 @@ describe('AgentHookServer authority evidence', () => {
       server.attestCompatibilityAuthority({
         paneKey: PANE_KEY,
         launchTokenHash: createHash('sha256').update('launch-before-restart').digest('hex'),
-        connectionId: 'ssh-target'
+        connectionId: 'ssh-target',
+        terminalProvenance: 'restored'
       })
     ).toBeNull()
 
@@ -141,7 +162,8 @@ describe('AgentHookServer authority evidence', () => {
       server.attestCompatibilityAuthority({
         paneKey: PANE_KEY,
         launchTokenHash: createHash('sha256').update('launch-before-restart').digest('hex'),
-        connectionId: 'ssh-target'
+        connectionId: 'ssh-target',
+        terminalProvenance: 'restored'
       })
     ).toEqual({ paneKey: PANE_KEY, source: 'hydrated_commitment' })
 
@@ -152,7 +174,8 @@ describe('AgentHookServer authority evidence', () => {
       server.attestCompatibilityAuthority({
         paneKey: PANE_KEY,
         launchTokenHash: createHash('sha256').update('launch-before-restart').digest('hex'),
-        connectionId: 'ssh-target'
+        connectionId: 'ssh-target',
+        terminalProvenance: 'restored'
       })
     ).toBeNull()
   })
@@ -192,7 +215,8 @@ describe('AgentHookServer authority evidence', () => {
       server.attestCompatibilityAuthority({
         paneKey: PANE_KEY,
         launchTokenHash,
-        connectionId: 'ssh-target'
+        connectionId: 'ssh-target',
+        terminalProvenance: 'restored'
       })
     ).toEqual({ paneKey: PANE_KEY, source: 'current_hook' })
   })

@@ -296,4 +296,5 @@ export type CoordinatorRun = {
   poll_interval_ms: number
   created_at: string
   completed_at: string | null
+  scheduler_lost_at: string | null
 }

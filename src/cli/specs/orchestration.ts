@@ -20,7 +20,7 @@ export const ORCHESTRATION_COMMAND_SPECS: CommandSpec[] = [
       'orca orchestration run-use --id <run_id> [--from <handle>] [--takeover-legacy] [--json]',
     allowedFlags: [...GLOBAL_FLAGS, 'id', 'from', 'takeover-legacy', 'retry-request'],
     notes: [
-      '--takeover-legacy explicitly replaces an unavailable legacy coordinator while preserving live worker assignments.'
+      '--takeover-legacy must run in the live coordinator agent terminal it binds; it preserves existing worker assignments.'
     ]
   },
   {

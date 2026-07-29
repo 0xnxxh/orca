@@ -1,179 +1,23 @@
 import { createHash } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ORCHESTRATION_CONTRACT_VERSION } from '../../../shared/protocol-version'
-import type { OrchestrationCompatibilityEvidence } from '../../../shared/orchestration-compatibility-evidence'
-import Database from '../../sqlite/sync-database'
-import { OrcaRuntimeService } from '../orca-runtime'
-import { OrchestrationDb } from '../orchestration/db'
-import type { RpcRequest, RpcResponse } from './core'
-import { RpcDispatcher } from './dispatcher'
-import { ORCHESTRATION_METHODS } from './methods/orchestration'
-
-const WORKER_HANDLE = 'term_legacy_worker'
-const WORKER_PANE = 'tab_worker:33333333-3333-4333-8333-333333333333'
-const COORDINATOR_HANDLE = 'term_legacy_coord'
-const COORDINATOR_PANE = 'tab_coord:44444444-4444-4444-8444-444444444444'
-
-type Transport = 'dispatch' | 'websocket'
-
-type Harness = {
-  db: OrchestrationDb
-  dispatcher: RpcDispatcher
-  runtime: OrcaRuntimeService
-  adoptedRunId: string
-  taskId: string
-  dispatchId: string
-  notify: ReturnType<typeof vi.spyOn>
-  verify: ReturnType<typeof vi.spyOn>
-}
-
-const tempDirs: string[] = []
-const databases: OrchestrationDb[] = []
+import type Database from '../../sqlite/sync-database'
+import {
+  cleanupLegacyCompatibilityDispatcherHarnesses,
+  COORDINATOR_HANDLE,
+  COORDINATOR_PANE,
+  counts,
+  createHarness,
+  escalationParams,
+  evidence,
+  invoke,
+  request,
+  WORKER_HANDLE,
+  WORKER_PANE
+} from './orchestration-legacy-compatibility-dispatcher-test-fixture'
 
 afterEach(() => {
-  for (const database of databases.splice(0)) {
-    database.close()
-  }
-  for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true })
-  }
+  cleanupLegacyCompatibilityDispatcherHarnesses()
 })
-
-function createHarness(): Harness {
-  const dir = mkdtempSync(join(tmpdir(), 'orca-legacy-dispatcher-'))
-  tempDirs.push(dir)
-  const dbPath = join(dir, 'orchestration.db')
-  const before = new OrchestrationDb(dbPath)
-  const task = before.createTask({
-    spec: 'legacy assignment',
-    createdByTerminalHandle: COORDINATOR_HANDLE
-  })
-  const dispatch = before.createDispatchContext(task.id, WORKER_HANDLE, WORKER_PANE)
-  before.close()
-
-  const raw = new Database(dbPath)
-  raw.exec(`
-    UPDATE dispatch_contexts SET process_incarnation = 'process-1';
-    DROP INDEX IF EXISTS idx_messages_delivery_contract;
-    DROP TABLE legacy_mail_receipts;
-    DROP TABLE legacy_operation_receipts;
-    DROP TABLE legacy_compatibility_principals;
-    DROP TABLE legacy_adoptions;
-  `)
-  raw.pragma('user_version = 18')
-  raw.close()
-
-  const db = new OrchestrationDb(dbPath)
-  databases.push(db)
-  const adoptedRunId = db.getLegacyAdoption()?.adopted_run_id as string
-  const runtime = new OrcaRuntimeService()
-  runtime.setOrchestrationDb(db)
-  vi.spyOn(runtime, 'getTerminalPaneKey').mockImplementation((handle) =>
-    handle === COORDINATOR_HANDLE ? COORDINATOR_PANE : handle === WORKER_HANDLE ? WORKER_PANE : null
-  )
-  const verify = vi
-    .spyOn(runtime, 'verifyOrchestrationCompatibilityCaller')
-    .mockImplementation((evidence) => {
-      const validWorker =
-        evidence?.terminalHandle === WORKER_HANDLE && evidence.paneKey === WORKER_PANE
-      const validCoordinator =
-        evidence?.terminalHandle === COORDINATOR_HANDLE && evidence.paneKey === COORDINATOR_PANE
-      if ((!validWorker && !validCoordinator) || !evidence?.launchToken) {
-        return null
-      }
-      return {
-        hostScope: { kind: 'local', hostId: 'local' },
-        terminalHandle: evidence.terminalHandle as string,
-        paneKey: evidence.paneKey as string,
-        processIncarnation: 'process-1',
-        launchTokenHash: createHash('sha256').update(evidence.launchToken).digest('hex')
-      }
-    })
-  const notify = vi.spyOn(runtime, 'notifyMessageArrived').mockImplementation(() => {})
-  return {
-    db,
-    dispatcher: new RpcDispatcher({ runtime, methods: ORCHESTRATION_METHODS }),
-    runtime,
-    adoptedRunId,
-    taskId: task.id,
-    dispatchId: dispatch.id,
-    notify,
-    verify
-  }
-}
-
-function evidence(
-  role: 'worker' | 'coordinator',
-  valid = true
-): OrchestrationCompatibilityEvidence {
-  const worker = role === 'worker'
-  return {
-    terminalHandle: worker ? WORKER_HANDLE : COORDINATOR_HANDLE,
-    paneKey: valid ? (worker ? WORKER_PANE : COORDINATOR_PANE) : 'tab_wrong:wrong-leaf',
-    launchToken: `${role}-token`
-  }
-}
-
-function request(
-  method: string,
-  params: unknown,
-  proof: OrchestrationCompatibilityEvidence,
-  invocationId: string
-): RpcRequest {
-  return {
-    id: `rpc_${invocationId}`,
-    authToken: 'caller-token',
-    method,
-    params,
-    orchestrationContractVersion: ORCHESTRATION_CONTRACT_VERSION,
-    orchestrationRequestId: invocationId,
-    compatibilityInvocationId: invocationId,
-    orchestrationCompatibilityEvidence: proof
-  }
-}
-
-async function invoke(
-  dispatcher: RpcDispatcher,
-  rpcRequest: RpcRequest,
-  transport: Transport
-): Promise<RpcResponse> {
-  if (transport === 'dispatch') {
-    return await dispatcher.dispatch(rpcRequest)
-  }
-  const replies: string[] = []
-  await dispatcher.dispatchStreaming(rpcRequest, (reply) => replies.push(reply))
-  expect(replies).toHaveLength(1)
-  return JSON.parse(replies[0]) as RpcResponse
-}
-
-function counts(db: OrchestrationDb): Record<string, number> {
-  const sqlite = (db as unknown as { db: Database.Database }).db
-  return Object.fromEntries(
-    [
-      'messages',
-      'legacy_compatibility_principals',
-      'legacy_operation_receipts',
-      'legacy_mail_receipts',
-      'mutation_receipts'
-    ].map((table) => [
-      table,
-      (sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count
-    ])
-  )
-}
-
-function escalationParams(harness: Harness) {
-  return {
-    from: WORKER_HANDLE,
-    to: COORDINATOR_HANDLE,
-    subject: 'Blocked',
-    type: 'escalation',
-    payload: JSON.stringify({ taskId: harness.taskId, dispatchId: harness.dispatchId })
-  }
-}
 
 describe('legacy compatibility through RpcDispatcher', () => {
   it('rejects malformed current-contract input before compatibility attestation', async () => {
@@ -470,6 +314,64 @@ describe('legacy compatibility through RpcDispatcher', () => {
     const secondId = (second as { result: { messageId: string } }).result.messageId
     expect(replayId).toBe(firstId)
     expect(secondId).not.toBe(firstId)
+    expect(harness.db.getMessageById(firstId)?.type).toBe('decision_gate')
+
+    const coordinatorCheck = await harness.dispatcher.dispatch(
+      request(
+        'orchestration.check',
+        {
+          terminal: COORDINATOR_HANDLE,
+          types: 'worker_done,escalation,decision_gate',
+          format: true
+        },
+        evidence('coordinator'),
+        'coordinator-check-decision-gates'
+      )
+    )
+    expect(coordinatorCheck).toMatchObject({
+      ok: true,
+      result: {
+        messages: [
+          { id: firstId, type: 'decision_gate' },
+          { id: secondId, type: 'decision_gate' }
+        ],
+        count: 2
+      }
+    })
+    expect((coordinatorCheck as { result: { formatted: string } }).result.formatted).toContain(
+      `orca orchestration reply --id ${firstId}`
+    )
+  })
+
+  it('keeps the normal wait budget when legacy check omits timeout', async () => {
+    const harness = createHarness()
+    const waitForMessage = vi
+      .spyOn(harness.runtime, 'waitForMessage')
+      .mockResolvedValue('timed_out')
+    let clockReads = 0
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => {
+      clockReads += 1
+      return clockReads === 1 ? 0 : clockReads === 2 ? 1 : 120_001
+    })
+
+    try {
+      const response = await harness.dispatcher.dispatch(
+        request(
+          'orchestration.check',
+          { terminal: WORKER_HANDLE, wait: true },
+          evidence('worker'),
+          'legacy-check-default-timeout'
+        )
+      )
+
+      expect(response).toMatchObject({
+        ok: true,
+        result: { messages: [], count: 0, timedOut: true }
+      })
+      expect(waitForMessage).toHaveBeenCalledOnce()
+    } finally {
+      now.mockRestore()
+    }
   })
 
   it('does not infer an outcome for a current Dispatch when legacy adoption exists', async () => {
@@ -677,6 +579,75 @@ describe('legacy compatibility through RpcDispatcher', () => {
         }
       }
     })
+  })
+
+  it('rejects a legacy coordinator reply outside the adopted Run with zero effects', async () => {
+    const harness = createHarness()
+    const unrelatedRun = harness.db.createRun({
+      objective: 'unrelated current work',
+      coordinatorHandle: 'term_unrelated_coord',
+      coordinatorPaneKey: 'tab_unrelated_coord:55555555-5555-4555-8555-555555555555'
+    })
+    const unrelated = harness.db.insertMessage({
+      runId: unrelatedRun.id,
+      from: 'term_unrelated_worker',
+      to: `run:${unrelatedRun.id}`,
+      subject: 'Unrelated current status',
+      deliveryContract: 'current_delivery'
+    })
+    const before = counts(harness.db)
+
+    const response = await harness.dispatcher.dispatch(
+      request(
+        'orchestration.reply',
+        {
+          id: unrelated.id,
+          body: 'Forged cross-Run reply',
+          from: COORDINATOR_HANDLE,
+          run: harness.adoptedRunId
+        },
+        evidence('coordinator'),
+        'cross-run-reply'
+      )
+    )
+
+    expect(response).toMatchObject({
+      ok: false,
+      error: {
+        code: 'request_mismatch',
+        data: { effectsApplied: false }
+      }
+    })
+    expect(counts(harness.db)).toEqual(before)
+    expect(harness.db.getMessageById(unrelated.id)?.read).toBe(0)
+    expect(harness.notify).not.toHaveBeenCalled()
+  })
+
+  it('keeps explicit adopted Run task inspection available to unrelated callers', async () => {
+    const harness = createHarness()
+    const before = counts(harness.db)
+    const response = await harness.dispatcher.dispatch(
+      request(
+        'orchestration.taskList',
+        { run: harness.adoptedRunId, callerTerminalHandle: 'term_unrelated' },
+        {
+          terminalHandle: 'term_unrelated',
+          paneKey: 'tab_unrelated:55555555-5555-4555-8555-555555555555',
+          launchToken: 'unrelated-token'
+        },
+        'explicit-adopted-run-inspection'
+      )
+    )
+
+    expect(response).toMatchObject({
+      ok: true,
+      result: {
+        runId: harness.adoptedRunId,
+        tasks: [expect.objectContaining({ id: harness.taskId })]
+      }
+    })
+    expect(counts(harness.db)).toEqual(before)
+    expect(harness.verify).not.toHaveBeenCalled()
   })
 
   it.each(['dispatch', 'websocket'] as const)(

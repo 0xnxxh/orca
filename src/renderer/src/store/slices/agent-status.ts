@@ -140,7 +140,10 @@ export type AgentStatusSlice = {
   /** Exact pane authorities retired while sibling panes in the tab stay live. */
   recentlyRetiredAgentStatusPaneKeys: Record<string, true>
 
-  retireAgentPaneAuthority: (paneKey: string) => void
+  retireAgentPaneAuthority: (
+    paneKey: string,
+    options?: { preserveSleepingAgentSession?: boolean }
+  ) => void
   transferAgentPaneAuthority: (args: {
     fromPaneKey: string
     toPaneKey: string
@@ -1224,7 +1227,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
     recentlyRetiredAgentStatusPaneKeys: {},
     scheduleAgentStatusFreshness: () => freshness.schedule(),
 
-    retireAgentPaneAuthority: (paneKey) => {
+    retireAgentPaneAuthority: (paneKey, options) => {
       const ownerPaneKey = resolveAgentPaneAuthorityKey(paneKey)
       const retiredPaneKeys = retireAgentPaneAuthorityAliases(paneKey)
       const retiredPaneKeySet = new Set(retiredPaneKeys)
@@ -1252,10 +1255,9 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
             retiredPaneKeySet
           ),
           retainedAgentsByPaneKey: removePaneKeys(s.retainedAgentsByPaneKey, retiredPaneKeySet),
-          sleepingAgentSessionsByPaneKey: removePaneKeys(
-            s.sleepingAgentSessionsByPaneKey,
-            retiredPaneKeySet
-          ),
+          sleepingAgentSessionsByPaneKey: options?.preserveSleepingAgentSession
+            ? s.sleepingAgentSessionsByPaneKey
+            : removePaneKeys(s.sleepingAgentSessionsByPaneKey, retiredPaneKeySet),
           agentLaunchConfigByPaneKey: removePaneKeys(
             s.agentLaunchConfigByPaneKey,
             retiredPaneKeySet
@@ -1571,12 +1573,12 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           existingProviderSession: existingRecord?.providerSession,
           providerSessionChanged: false
         })
+        const existingRecordMatchesProviderSession =
+          existingRecord?.agent === agent &&
+          agentProviderSessionsEqual(agent, existingRecord.providerSession, providerSession)
         const launchConfig =
           (registryMatches ? registryEntry?.launchConfig : undefined) ??
-          (existingRecord?.agent === agent &&
-          agentProviderSessionsEqual(agent, existingRecord.providerSession, providerSession)
-            ? existingRecord.launchConfig
-            : undefined)
+          (existingRecordMatchesProviderSession ? existingRecord.launchConfig : undefined)
         const record: SleepingAgentSessionRecord = {
           paneKey,
           ...(tabId ? { tabId } : {}),
@@ -1599,6 +1601,10 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
               ? { connectionId: existingRecord.connectionId }
               : {}),
           ...(launchConfig ? { launchConfig: copyLaunchConfig(launchConfig) } : {}),
+          ...(existingRecordMatchesProviderSession &&
+          existingRecord.automaticResumeBlockedBy === 'legacy-orchestration-worker'
+            ? { automaticResumeBlockedBy: 'legacy-orchestration-worker' }
+            : {}),
           origin: 'live'
         }
         removedLiveStatus = existingStatus !== undefined

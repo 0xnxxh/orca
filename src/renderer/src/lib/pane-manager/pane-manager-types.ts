@@ -26,7 +26,7 @@ export type PaneSpawnHints = {
 export type ClosedPaneInfo = {
   paneId: number
   leafId: TerminalLeafId
-  reason?: 'close' | 'detach'
+  reason?: 'close' | 'detach' | 'retire'
 }
 
 export type PaneExternalDropTarget = {

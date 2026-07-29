@@ -109,6 +109,25 @@ function addLifecycleRejectionMarker(payload: string | null, code: string, reaso
   })
 }
 
+function hasLifecycleRejectionMarker(payload: string | null): boolean {
+  try {
+    const value: unknown = JSON.parse(payload ?? 'null')
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return false
+    }
+    const marker = (value as Record<string, unknown>)._orcaLifecycleRejection
+    return Boolean(
+      marker &&
+      typeof marker === 'object' &&
+      !Array.isArray(marker) &&
+      typeof (marker as Record<string, unknown>).code === 'string' &&
+      typeof (marker as Record<string, unknown>).reason === 'string'
+    )
+  } catch {
+    return false
+  }
+}
+
 const SQLITE_UTC_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/
 
 function exposeUtcTimestamp(timestamp: string | null): string | null {
@@ -194,8 +213,8 @@ export const LEGACY_RUN_ID = ORCHESTRATION_LEGACY_RUN_ID
 export const LEGACY_CONTRACT_VERSION = 0
 export const CURRENT_CONTRACT_VERSION = ORCHESTRATION_CONTRACT_VERSION
 
-// Schema versions: v2 'heartbeat'+last_heartbeat_at, v3 delivered_at, v4 task-creator terminal, v5 task_title/display_name, v6 pane identity, v7 lightweight Runs, v8 crash-safe Run deliveries, v9 durable question threads, v10 Dispatch capabilities, v11 durable mutation receipts, v12 composed worker state, v18 post-v6 version-skew repair, v19 adopted legacy Runs and compatibility receipts.
-const SCHEMA_VERSION = 19
+// Schema versions: v2 'heartbeat'+last_heartbeat_at, v3 delivered_at, v4 task-creator terminal, v5 task_title/display_name, v6 pane identity, v7 lightweight Runs, v8 crash-safe Run deliveries, v9 durable question threads, v10 Dispatch capabilities, v11 durable mutation receipts, v12 composed worker state, v18 post-v6 version-skew repair, v19 adopted legacy Runs and compatibility receipts, v20 legacy question backfill, v21 legacy scheduler-loss provenance.
+const SCHEMA_VERSION = 21
 
 function hardenOrchestrationDatabaseFiles(dbPath: string | ':memory:'): void {
   if (dbPath === ':memory:' || process.platform === 'win32') {
@@ -463,7 +482,8 @@ export class OrchestrationDb {
         coordinator_handle  TEXT NOT NULL,
         poll_interval_ms    INTEGER NOT NULL DEFAULT 2000,
         created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-        completed_at        TEXT
+        completed_at        TEXT,
+        scheduler_lost_at   TEXT
       );
     `)
     this.createUndeliveredInboxIndexIfPossible()
@@ -809,6 +829,12 @@ export class OrchestrationDb {
       if (current < 19) {
         this.migrateLegacyContractStorage()
       }
+      if (current < 20) {
+        this.backfillLegacyQuestionThreads()
+      }
+      if (current < 21) {
+        this.migrateLegacySchedulerLossProvenance()
+      }
       this.createUndeliveredInboxIndexIfPossible()
 
       this.db.pragma(`user_version = ${SCHEMA_VERSION}`)
@@ -899,17 +925,164 @@ export class OrchestrationDb {
          WHERE run_id = ? AND capability_hash IS NULL`
       )
       .run(LEGACY_CONTRACT_VERSION, LEGACY_RUN_ID)
+    this.classifyLegacyMessageContracts(LEGACY_RUN_ID, false)
+    this.ensureLegacySchedulerLossColumn()
+    this.adoptLegacyRunIfNeeded()
+  }
+
+  private classifyLegacyMessageContracts(runId: string, adoptedOnly: boolean): void {
+    const contractFilter = adoptedOnly
+      ? " AND delivery_contract IN ('legacy_direct', 'audit_only')"
+      : ''
     this.db
       .prepare(
-        `UPDATE messages
-         SET delivery_contract = CASE
-           WHEN instr(payload, '"_orcaLifecycleRejection"') > 0 THEN 'audit_only'
-           ELSE 'legacy_direct'
-         END
-         WHERE run_id = ?`
+        `UPDATE messages SET delivery_contract = 'legacy_direct'
+         WHERE run_id = ?${contractFilter}`
       )
-      .run(LEGACY_RUN_ID)
+      .run(runId)
+    const rows = this.db
+      .prepare(`SELECT id, payload FROM messages WHERE run_id = ?${contractFilter}`)
+      .all(runId) as { id: string; payload: string | null }[]
+    const markAuditOnly = this.db.prepare(
+      "UPDATE messages SET delivery_contract = 'audit_only' WHERE id = ? AND run_id = ?"
+    )
+    for (const row of rows) {
+      if (hasLifecycleRejectionMarker(row.payload)) {
+        markAuditOnly.run(row.id, runId)
+      }
+    }
+  }
+
+  private migrateLegacySchedulerLossProvenance(): void {
+    this.ensureLegacySchedulerLossColumn()
     this.adoptLegacyRunIfNeeded()
+    const adoption = this.getLegacyAdoption()
+    if (adoption) {
+      this.classifyLegacyMessageContracts(adoption.adopted_run_id, true)
+    }
+  }
+
+  private ensureLegacySchedulerLossColumn(): void {
+    if (!this.hasColumn('coordinator_runs', 'scheduler_lost_at')) {
+      this.db.exec('ALTER TABLE coordinator_runs ADD COLUMN scheduler_lost_at TEXT')
+    }
+  }
+
+  private backfillLegacyQuestionThreads(): void {
+    const messages = this.db
+      .prepare(
+        `SELECT id, run_id, from_handle, to_handle, payload, created_at, sequence
+         FROM messages
+         WHERE type = 'decision_gate'
+           AND delivery_contract IN ('legacy_direct', 'current_delivery')
+         ORDER BY sequence`
+      )
+      .all() as {
+      id: string
+      run_id: string
+      from_handle: string
+      to_handle: string
+      payload: string | null
+      created_at: string
+      sequence: number
+    }[]
+    const getDispatch = this.db.prepare(
+      'SELECT id, run_id, task_id FROM dispatch_contexts WHERE id = ? AND contract_version = ?'
+    )
+    const getDispatchesForLegacyQuestion = this.db.prepare(
+      `SELECT id, run_id, task_id
+       FROM dispatch_contexts
+       WHERE contract_version = ? AND assignee_handle = ?
+         AND (? IS NULL OR task_id = ?)
+         AND created_at <= ?
+         AND (completed_at IS NULL OR completed_at >= ?)
+       ORDER BY rowid
+       LIMIT 2`
+    )
+    const getAnswer = this.db.prepare(
+      `SELECT id, body, created_at
+       FROM messages
+       WHERE run_id = ?
+         AND thread_id = ?
+         AND delivery_contract IN ('legacy_direct', 'current_delivery')
+         AND from_handle = ?
+         AND to_handle IN (?, ?)
+         AND sequence > ?
+       ORDER BY sequence
+       LIMIT 1`
+    )
+    const insert = this.db.prepare(
+      `INSERT OR IGNORE INTO question_threads (
+         message_id, run_id, dispatch_id, asker_handle, status,
+         answer_message_id, answer_body, created_at, answered_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    for (const message of messages) {
+      let payload: { taskId?: unknown; dispatchId?: unknown }
+      try {
+        payload = JSON.parse(message.payload ?? '{}') as {
+          taskId?: unknown
+          dispatchId?: unknown
+        }
+      } catch {
+        continue
+      }
+      const inferredDispatches =
+        typeof payload.dispatchId === 'string'
+          ? []
+          : (getDispatchesForLegacyQuestion.all(
+              LEGACY_CONTRACT_VERSION,
+              message.from_handle,
+              typeof payload.taskId === 'string' ? payload.taskId : null,
+              typeof payload.taskId === 'string' ? payload.taskId : null,
+              message.created_at,
+              message.created_at
+            ) as { id: string; run_id: string; task_id: string }[])
+      const dispatch =
+        typeof payload.dispatchId === 'string'
+          ? (getDispatch.get(payload.dispatchId, LEGACY_CONTRACT_VERSION) as
+              | { id: string; run_id: string; task_id: string }
+              | undefined)
+          : inferredDispatches.length === 1
+            ? inferredDispatches[0]
+            : undefined
+      if (
+        !dispatch ||
+        (typeof payload.taskId === 'string' && payload.taskId !== dispatch.task_id) ||
+        (message.run_id !== LEGACY_RUN_ID && message.run_id !== dispatch.run_id)
+      ) {
+        continue
+      }
+      const answer = getAnswer.get(
+        message.run_id,
+        message.id,
+        message.to_handle,
+        message.from_handle,
+        `dispatch:${dispatch.id}`,
+        message.sequence
+      ) as { id: string; body: string; created_at: string } | undefined
+      insert.run(
+        message.id,
+        dispatch.run_id,
+        dispatch.id,
+        message.from_handle,
+        answer ? 'answered' : 'pending',
+        answer?.id ?? null,
+        answer?.body ?? null,
+        message.created_at,
+        answer?.created_at ?? null
+      )
+    }
+    const adoption = this.getLegacyAdoption()
+    const coordinator = adoption
+      ? this.getLegacyCoordinatorPrincipal(adoption.adopted_run_id)
+      : undefined
+    if (adoption && coordinator?.status === 'revoked') {
+      this.promoteLegacyCoordinatorMailForTakeover(
+        adoption.adopted_run_id,
+        coordinator.terminal_handle
+      )
+    }
   }
 
   private adoptLegacyRunIfNeeded(): void {
@@ -946,6 +1119,23 @@ export class OrchestrationDb {
          ) VALUES (?, ?, 1)`
       )
       .run(LEGACY_RUN_ID, adoptedRunId)
+    this.db
+      .prepare(
+        `UPDATE coordinator_runs
+         SET status = 'failed',
+             completed_at = COALESCE(
+               completed_at,
+               (SELECT adopted_at FROM legacy_adoptions WHERE source_run_id = ?)
+             ),
+             scheduler_lost_at = (
+               SELECT adopted_at FROM legacy_adoptions WHERE source_run_id = ?
+             )
+         WHERE status = 'running'
+           AND julianday(created_at) <= julianday((
+             SELECT adopted_at FROM legacy_adoptions WHERE source_run_id = ?
+           ))`
+      )
+      .run(LEGACY_RUN_ID, LEGACY_RUN_ID, LEGACY_RUN_ID)
 
     this.db
       .prepare(
@@ -1222,6 +1412,20 @@ export class OrchestrationDb {
         this.db.exec('COMMIT')
         return { principal: existing, duplicate: true }
       }
+      if (
+        params.role === 'coordinator' &&
+        !this.resolveLegacyCoordinatorCandidate({
+          runId: params.runId,
+          terminalHandle: params.terminalHandle,
+          paneKey: params.paneKey
+        })
+      ) {
+        throw new OrchestrationError(
+          'legacy_read_only',
+          'This retained legacy coordinator no longer has lifecycle authority. No effects were applied.',
+          { effectsApplied: false }
+        )
+      }
 
       const id = generateId('legacy_principal')
       this.db
@@ -1371,7 +1575,27 @@ export class OrchestrationDb {
     if (!params.terminalHandle || !params.paneKey) {
       return undefined
     }
-    if (!this.isLegacyCoordinatorHandle(params.runId, params.terminalHandle)) {
+    const run = this.getRunRaw(params.runId)
+    const principal = this.getLegacyCoordinatorPrincipal(params.runId)
+    if (principal) {
+      if (
+        principal.status !== 'committed' ||
+        principal.terminal_handle !== params.terminalHandle ||
+        !isEquivalentPaneKey(principal.pane_key, params.paneKey) ||
+        (run?.coordinator_pane_key !== null &&
+          (run?.coordinator_handle !== principal.terminal_handle ||
+            !isEquivalentPaneKey(run.coordinator_pane_key, principal.pane_key)))
+      ) {
+        return undefined
+      }
+      return { terminalHandle: params.terminalHandle, paneKey: params.paneKey }
+    }
+    // Why: the first current binding durably fences uncommitted legacy processes.
+    if (
+      !run ||
+      run.coordinator_pane_key !== null ||
+      this.getUniqueLegacyCoordinatorHandle(params.runId) !== params.terminalHandle
+    ) {
       return undefined
     }
     return { terminalHandle: params.terminalHandle, paneKey: params.paneKey }
@@ -1379,36 +1603,10 @@ export class OrchestrationDb {
 
   isLegacyCoordinatorHandle(runId: string, terminalHandle: string): boolean {
     const principal = this.getLegacyCoordinatorPrincipal(runId)
-    if (principal?.terminal_handle === terminalHandle) {
-      return true
+    if (principal) {
+      return principal.terminal_handle === terminalHandle
     }
-    return Boolean(
-      this.db
-        .prepare(
-          `SELECT 1 FROM (
-           SELECT created_by_terminal_handle AS handle
-           FROM tasks
-           WHERE run_id = ? AND created_by_terminal_handle IS NOT NULL
-           UNION ALL
-           SELECT m.to_handle AS handle
-           FROM messages m
-           INNER JOIN dispatch_contexts d
-             ON d.run_id = m.run_id AND d.contract_version = ?
-            AND (m.from_handle = d.assignee_handle OR m.from_handle = 'dispatch:' || d.id)
-           WHERE m.run_id = ? AND m.delivery_contract = 'legacy_direct'
-           UNION ALL
-           SELECT m.from_handle AS handle
-           FROM messages m
-           INNER JOIN dispatch_contexts d
-             ON d.run_id = m.run_id AND d.contract_version = ?
-            AND (m.to_handle = d.assignee_handle OR m.to_handle = 'dispatch:' || d.id)
-           WHERE m.run_id = ? AND m.delivery_contract = 'legacy_direct'
-         )
-         WHERE handle = ?
-         LIMIT 1`
-        )
-        .get(runId, LEGACY_CONTRACT_VERSION, runId, LEGACY_CONTRACT_VERSION, runId, terminalHandle)
-    )
+    return this.getUniqueLegacyCoordinatorHandle(runId) === terminalHandle
   }
 
   findLegacyWorkerCompletion(params: {
@@ -1774,16 +1972,36 @@ export class OrchestrationDb {
     try {
       const principal = this.requireLegacyMailPrincipal(params.principalId, 'worker')
       const question = this.getQuestionRaw(params.questionId)
+      const source = this.getMessageById(params.questionId)
       const answer = this.getMessageById(params.answerMessageId)
+      const dispatch = principal.dispatch_id
+        ? this.getDispatchContextById(principal.dispatch_id)
+        : undefined
+      const exactLegacyAnswer =
+        answer?.delivery_contract === 'legacy_direct' &&
+        (answer.to_handle === principal.terminal_handle ||
+          answer.to_handle === `dispatch:${principal.dispatch_id}`)
+      const adoption = this.getLegacyAdoption()
+      const exactTakenOverAnswer =
+        adoption?.adopted_run_id === principal.run_id &&
+        dispatch?.run_id === principal.run_id &&
+        dispatch.contract_version === LEGACY_CONTRACT_VERSION &&
+        source?.run_id === principal.run_id &&
+        source.from_handle === principal.terminal_handle &&
+        source.to_handle === `run:${principal.run_id}` &&
+        source.delivery_contract === 'current_delivery' &&
+        answer?.run_id === principal.run_id &&
+        answer?.delivery_contract === 'current_delivery' &&
+        answer.from_handle === `run:${principal.run_id}` &&
+        answer.to_handle === `dispatch:${principal.dispatch_id}` &&
+        answer.thread_id === question?.message_id
       if (
         !question ||
         !answer ||
         question.run_id !== principal.run_id ||
         question.dispatch_id !== principal.dispatch_id ||
         question.answer_message_id !== params.answerMessageId ||
-        answer.delivery_contract !== 'legacy_direct' ||
-        (answer.to_handle !== principal.terminal_handle &&
-          answer.to_handle !== `dispatch:${principal.dispatch_id}`)
+        (!exactLegacyAnswer && !exactTakenOverAnswer)
       ) {
         throw new OrchestrationError(
           'request_mismatch',
@@ -1924,12 +2142,20 @@ export class OrchestrationDb {
       const retainedCoordinatorHandle =
         coordinatorPrincipal?.terminal_handle ??
         run.coordinator_handle ??
-        this.getUniqueLegacyTaskCreatorHandle(params.runId)
+        this.getUniqueLegacyCoordinatorHandle(params.runId)
       const takeoverAlreadyApplied = Boolean(
         params.takeoverLegacy &&
         sameBinding &&
         run.coordinator_handle === params.coordinatorHandle &&
         coordinatorPrincipal?.status !== 'committed'
+      )
+      const replacesLegacyCoordinator = Boolean(
+        adoptedRun &&
+        !provenLegacyBinding &&
+        retainedCoordinatorHandle &&
+        (params.takeoverLegacy ||
+          retainedCoordinatorHandle !== params.coordinatorHandle ||
+          !sameBinding)
       )
       if (params.takeoverLegacy && !adoptedRun) {
         throw new OrchestrationError(
@@ -1978,7 +2204,7 @@ export class OrchestrationDb {
           )
           .run(params.coordinatorHandle, params.coordinatorPaneKey, params.runId)
         this.fenceOutstandingDelivery(params.runId)
-        if (params.takeoverLegacy) {
+        if (params.takeoverLegacy || replacesLegacyCoordinator) {
           this.promoteLegacyCoordinatorMailForTakeover(params.runId, retainedCoordinatorHandle)
         }
       }
@@ -2082,22 +2308,129 @@ export class OrchestrationDb {
              read = 0 OR EXISTS(
                SELECT 1 FROM question_threads q
                WHERE q.message_id = messages.id AND q.status = 'pending'
+             ) OR EXISTS(
+               SELECT 1
+               FROM legacy_mail_receipts r
+               INNER JOIN legacy_compatibility_principals p
+                 ON p.id = r.principal_id
+               WHERE r.message_id = messages.id
+                 AND r.acknowledged_at IS NULL
+                 AND p.run_id = messages.run_id
+                 AND p.role = 'coordinator'
+                 AND p.terminal_handle = ?
+             ) OR (
+               read = 1
+               AND NOT EXISTS(
+                 SELECT 1 FROM legacy_compatibility_principals p
+                 WHERE p.run_id = messages.run_id AND p.role = 'coordinator'
+               )
+               AND EXISTS(
+                 SELECT 1 FROM dispatch_contexts d
+                 WHERE d.run_id = messages.run_id
+                   AND d.contract_version = ?
+                   AND d.status IN ('pending', 'dispatched')
+                   AND messages.created_at >= d.created_at
+                   AND (
+                     messages.from_handle = d.assignee_handle OR
+                     messages.from_handle = 'dispatch:' || d.id
+                   )
+               )
              )
            )`
       )
-      .run(`run:${runId}`, runId, retainedCoordinatorHandle, LEGACY_CONTRACT_VERSION)
+      .run(
+        `run:${runId}`,
+        runId,
+        retainedCoordinatorHandle,
+        LEGACY_CONTRACT_VERSION,
+        retainedCoordinatorHandle,
+        LEGACY_CONTRACT_VERSION
+      )
   }
 
-  private getUniqueLegacyTaskCreatorHandle(runId: string): string | null {
-    const rows = this.db
+  private getUniqueLegacyCoordinatorHandle(runId: string): string | null {
+    const adoption = this.getLegacyAdoption()
+    if (!adoption || adoption.adopted_run_id !== runId) {
+      return null
+    }
+    const workerHandles = new Set(
+      (
+        this.db
+          .prepare(
+            `SELECT DISTINCT assignee_handle AS handle
+             FROM dispatch_contexts
+             WHERE run_id = ? AND contract_version = ?
+               AND assignee_handle IS NOT NULL
+             UNION
+             SELECT DISTINCT terminal_handle AS handle
+             FROM legacy_compatibility_principals
+             WHERE run_id = ? AND role = 'worker'
+               AND status IN ('committed', 'settled')`
+          )
+          .all(runId, LEGACY_CONTRACT_VERSION, runId) as { handle: string }[]
+      ).map((row) => row.handle)
+    )
+    const durableRows = this.db
       .prepare(
-        `SELECT DISTINCT created_by_terminal_handle AS handle
-         FROM tasks
-         WHERE run_id = ? AND created_by_terminal_handle IS NOT NULL
-         LIMIT 2`
+        `SELECT coordinator_handle AS handle
+         FROM coordinator_runs
+         WHERE scheduler_lost_at = ?
+         UNION
+         SELECT created_by_terminal_handle AS handle
+         FROM tasks t
+         WHERE t.run_id = ? AND t.created_by_terminal_handle IS NOT NULL
+           AND t.created_at <= ?
+           AND EXISTS(
+             SELECT 1 FROM dispatch_contexts d
+             WHERE d.task_id = t.id AND d.run_id = t.run_id
+               AND d.contract_version = ?
+           )`
       )
-      .all(runId) as { handle: string }[]
-    return rows.length === 1 ? (rows[0]?.handle ?? null) : null
+      .all(adoption.adopted_at, runId, adoption.adopted_at, LEGACY_CONTRACT_VERSION) as {
+      handle: string
+    }[]
+    if (durableRows.some((row) => workerHandles.has(row.handle))) {
+      return null
+    }
+    const candidates = new Set(durableRows.map((row) => row.handle))
+    const mailRows = this.db
+      .prepare(
+        `SELECT m.to_handle AS handle
+         FROM messages m
+         INNER JOIN dispatch_contexts d
+           ON d.run_id = m.run_id AND d.contract_version = ?
+          AND (m.from_handle = d.assignee_handle OR m.from_handle = 'dispatch:' || d.id)
+         WHERE m.run_id = ? AND m.delivery_contract = 'legacy_direct'
+           AND m.created_at <= ?
+         UNION
+         SELECT m.from_handle AS handle
+         FROM messages m
+         INNER JOIN dispatch_contexts d
+           ON d.run_id = m.run_id AND d.contract_version = ?
+          AND (m.to_handle = d.assignee_handle OR m.to_handle = 'dispatch:' || d.id)
+         WHERE m.run_id = ? AND m.delivery_contract = 'legacy_direct'
+           AND m.created_at <= ?`
+      )
+      .all(
+        LEGACY_CONTRACT_VERSION,
+        runId,
+        adoption.adopted_at,
+        LEGACY_CONTRACT_VERSION,
+        runId,
+        adoption.adopted_at
+      ) as {
+      handle: string
+    }[]
+    for (const row of mailRows) {
+      if (
+        !workerHandles.has(row.handle) &&
+        !row.handle.startsWith('dispatch:') &&
+        !row.handle.startsWith('run:')
+      ) {
+        candidates.add(row.handle)
+      }
+    }
+    return candidates.size === 1 ? ([...candidates][0] ?? null) : null
   }
 
   private requireCurrentConsumer(runId: string, consumerGeneration: number): RunRow {
@@ -2591,7 +2924,7 @@ export class OrchestrationDb {
           to: delivery.to,
           subject: 'Question',
           body: params.question,
-          type: 'question',
+          type: delivery.contract === 'legacy_direct' ? 'decision_gate' : 'question',
           payload: JSON.stringify({
             taskId: dispatch.task_id,
             dispatchId,
@@ -2725,11 +3058,7 @@ export class OrchestrationDb {
   ): { to: string; contract: MessageDeliveryContract } {
     const run = this.getRunRaw(runId)
     const principal = this.getLegacyCoordinatorPrincipal(runId)
-    const takenOver =
-      run?.coordinator_handle !== null &&
-      (principal?.status === 'revoked' ||
-        (run?.coordinator_handle !== undefined &&
-          run.coordinator_handle !== retainedCoordinatorHandle))
+    const takenOver = run?.coordinator_handle !== null && principal?.status !== 'committed'
     return takenOver
       ? { to: `run:${runId}`, contract: 'current_delivery' }
       : { to: retainedCoordinatorHandle, contract: 'legacy_direct' }
@@ -3872,6 +4201,60 @@ export class OrchestrationDb {
          ORDER BY dc.rowid`
       )
       .all() as LegacyWorkerTerminalRecoveryRow[]
+  }
+
+  reconcileMissingWorkerTerminal(dispatchId: string, reason: string): WorkerDispatchRow {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const dispatch = this.getDispatchContextById(dispatchId)
+      const worker = this.getWorkerDispatch(dispatchId)
+      if (!dispatch || !worker) {
+        throw new OrchestrationError('dispatch_not_found', `Dispatch ${dispatchId} was not found.`)
+      }
+      if (['succeeded', 'failed', 'stopped', 'abandoned'].includes(worker.state)) {
+        this.db.exec('COMMIT')
+        return worker
+      }
+
+      const activeDispatch = dispatch.status === 'pending' || dispatch.status === 'dispatched'
+      const stopWasPending = worker.state === 'stopping' || worker.state === 'stop_unknown'
+      if (activeDispatch) {
+        const failureCount = dispatch.failure_count + 1
+        const dispatchStatus: DispatchStatus = failureCount >= 3 ? 'circuit_broken' : 'failed'
+        this.db
+          .prepare(
+            `UPDATE dispatch_contexts
+             SET status = ?, failure_count = ?, last_failure = ?,
+                 completed_at = datetime('now'),
+                 capability_revoked_at = COALESCE(capability_revoked_at, datetime('now'))
+             WHERE id = ? AND status IN ('pending', 'dispatched')`
+          )
+          .run(dispatchStatus, failureCount, reason, dispatchId)
+        if (!stopWasPending) {
+          const taskStatus: TaskStatus = dispatchStatus === 'circuit_broken' ? 'failed' : 'ready'
+          this.db
+            .prepare(
+              `UPDATE tasks
+               SET status = ?, completed_at = CASE WHEN ? = 'failed' THEN datetime('now') ELSE NULL END
+               WHERE id = ? AND status IN ('dispatched', 'blocked')`
+            )
+            .run(taskStatus, taskStatus, dispatch.task_id)
+        }
+        this.closeQuestionsForDispatch(dispatchId)
+      }
+      this.db
+        .prepare(
+          `UPDATE worker_dispatches
+           SET state = ?, stage = 'terminal_missing', last_error = ?, updated_at = datetime('now')
+           WHERE dispatch_id = ?`
+        )
+        .run(stopWasPending ? 'stopped' : 'abandoned', reason, dispatchId)
+      this.db.exec('COMMIT')
+      return this.getWorkerDispatch(dispatchId) as WorkerDispatchRow
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
   }
 
   getFederatedDispatch(dispatchId: string): FederatedDispatchRow | undefined {

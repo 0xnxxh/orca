@@ -488,6 +488,8 @@ const api = {
     },
     awaitFirstWindowStartupServices: (): Promise<void> =>
       ipcRenderer.invoke('app:awaitFirstWindowStartupServices'),
+    recoverLegacyWorkerTerminalsForRendererStartup: (): Promise<void> =>
+      ipcRenderer.invoke('app:recoverLegacyWorkerTerminalsForRendererStartup'),
     startupDiagnostic: (event: string, details?: Record<string, unknown>): Promise<void> =>
       startupDiagnosticsEnabled
         ? ipcRenderer.invoke('app:startupDiagnostic', event, details)
@@ -4645,11 +4647,19 @@ const api = {
       return () => ipcRenderer.removeListener('agentStatus:migrationUnsupportedClear', listener)
     },
     onLegacyWorkerTerminalRecovery: (
-      callback: (data: { paneKey: string; resolution: 'adopted' | 'exited' }) => void
+      callback: (data: {
+        paneKey: string
+        resolution: 'adopted' | 'exited' | 'rolled_back'
+        ptyId?: string
+      }) => void
     ): (() => void) => {
       const listener = (
         _event: Electron.IpcRendererEvent,
-        data: { paneKey: string; resolution: 'adopted' | 'exited' }
+        data: {
+          paneKey: string
+          resolution: 'adopted' | 'exited' | 'rolled_back'
+          ptyId?: string
+        }
       ) => callback(data)
       ipcRenderer.on('agentStatus:legacyWorkerTerminalRecovery', listener)
       return () => ipcRenderer.removeListener('agentStatus:legacyWorkerTerminalRecovery', listener)

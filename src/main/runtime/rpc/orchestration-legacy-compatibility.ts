@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto'
 import type { LegacyCoordinatorAuthorityProof, RpcRequest } from './core'
-import type { OrcaRuntimeService } from '../orca-runtime'
+import type { OrcaRuntimeService, OrchestrationCompatibilityCallerAuthority } from '../orca-runtime'
 import { LegacyCompatibilityAuthority } from './orchestration-legacy-authority'
 import { handleLegacyLifecycleSend } from './orchestration-legacy-lifecycle'
 import { handleLegacyCheck, handleLegacyReply } from './orchestration-legacy-mail'
@@ -31,10 +32,12 @@ export type LegacyCompatibilityRoute =
       handled: false
       params?: unknown
       legacyCoordinatorAuthority?: LegacyCoordinatorAuthorityProof
+      orchestrationCompatibilityCallerAuthority?: OrchestrationCompatibilityCallerAuthority
     }
 
 export type LegacyCoordinatorInvocation = Readonly<{
   authority: LegacyCoordinatorAuthorityProof
+  mutationCallerFingerprint: string
   revalidate: () => string
 }>
 
@@ -64,10 +67,19 @@ export class OrchestrationLegacyCompatibility {
     }
     const values = params as Record<string, unknown>
     if (request.method === 'orchestration.runUse' && values.takeoverLegacy === true) {
-      return { handled: false }
+      const callerAuthority = this.runtime.verifyOrchestrationCompatibilityCaller(
+        request.orchestrationCompatibilityEvidence
+      )
+      return {
+        handled: false,
+        ...(callerAuthority ? { orchestrationCompatibilityCallerAuthority: callerAuthority } : {})
+      }
     }
     const requestedRunId =
       request.method === 'orchestration.runUse' ? stringValue(values.id) : stringValue(values.run)
+    if (request.method === 'orchestration.taskList' && requestedRunId) {
+      return { handled: false }
+    }
     const authority = this.coordinatorAuthority.resolve(request, requestedRunId)
     return authority
       ? {
@@ -92,6 +104,7 @@ export class OrchestrationLegacyCompatibility {
     return authority
       ? {
           authority,
+          mutationCallerFingerprint: legacyCoordinatorMutationCallerFingerprint(authority),
           revalidate: () => this.revalidateCoordinatorAuthority(request, authority)
         }
       : undefined
@@ -138,6 +151,18 @@ export class OrchestrationLegacyCompatibility {
     }
     return undefined
   }
+}
+
+function legacyCoordinatorMutationCallerFingerprint(
+  authority: LegacyCoordinatorAuthorityProof
+): string {
+  return createHash('sha256')
+    .update(
+      ['legacy-coordinator-v1', authority.runId, authority.terminalHandle, authority.paneKey].join(
+        '\0'
+      )
+    )
+    .digest('hex')
 }
 
 function stringValue(value: unknown): string | undefined {

@@ -972,6 +972,8 @@ export type AppApi = {
   /** Resolves when the daemon PTY provider and hook receiver have either
    *  started or failed open for the first BrowserWindow. */
   awaitFirstWindowStartupServices: () => Promise<void>
+  /** Reconciles legacy worker authority around persisted terminal reconnect. */
+  recoverLegacyWorkerTerminalsForRendererStartup: () => Promise<void>
   /** Emits a startup benchmark marker when ORCA_STARTUP_DIAGNOSTICS is enabled. */
   startupDiagnostic: (event: string, details?: Record<string, unknown>) => Promise<void>
   /** macOS active input mode, or layout ID when no IME is selected (e.g. `com.apple.keylayout.PolishPro`).
@@ -3515,7 +3517,11 @@ export type PreloadApi = {
     onMigrationUnsupported: (callback: (entry: MigrationUnsupportedPtyEntry) => void) => () => void
     onMigrationUnsupportedClear: (callback: (data: { ptyId: string }) => void) => () => void
     onLegacyWorkerTerminalRecovery: (
-      callback: (data: { paneKey: string; resolution: 'adopted' | 'exited' }) => void
+      callback: (data: {
+        paneKey: string
+        resolution: 'adopted' | 'exited' | 'rolled_back'
+        ptyId?: string
+      }) => void
     ) => () => void
     getMigrationUnsupportedSnapshot: () => Promise<MigrationUnsupportedPtyEntry[]>
     /** Drop a paneKey from the main-process hook cache and on-disk last-status file. Fire-and-forget. */

@@ -22,13 +22,14 @@ export class OrchestrationMutationExecutor {
   async run(
     request: RpcRequest,
     params: unknown,
-    invoke: (mutation?: DurableMutationInvocation) => Promise<unknown> | unknown
+    invoke: (mutation?: DurableMutationInvocation) => Promise<unknown> | unknown,
+    callerFingerprintOverride?: string
   ): Promise<unknown> {
     const requestId = request.orchestrationRequestId
     if (!requestId || !isOrchestrationMutation(request.method, params)) {
       return await invoke()
     }
-    const callerFingerprint = authenticatedCallerFingerprint(request)
+    const callerFingerprint = callerFingerprintOverride ?? authenticatedCallerFingerprint(request)
     const payloadHash = createHash('sha256')
       .update(JSON.stringify(canonicalize({ method: request.method, params })))
       .digest('hex')

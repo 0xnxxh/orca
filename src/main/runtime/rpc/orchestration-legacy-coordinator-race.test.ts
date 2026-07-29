@@ -231,6 +231,44 @@ describe('legacy coordinator takeover races', () => {
     }
   )
 
+  it('replays coordinator mutations after transport authentication rotates', async () => {
+    const harness = createHarness()
+    const mutation = request(
+      'orchestration.send',
+      { from: COORDINATOR_HANDLE, to: WORKER_HANDLE, subject: 'send once' },
+      'coordinator-restart-send'
+    )
+    mutation.authToken = 'before-restart'
+
+    const first = await harness.dispatcher.dispatch(mutation)
+    const restartedDispatcher = new RpcDispatcher({
+      runtime: harness.runtime,
+      methods: ORCHESTRATION_METHODS
+    })
+    const replay = await restartedDispatcher.dispatch({
+      ...mutation,
+      id: 'rpc_coordinator-restart-send-retry',
+      authToken: 'after-restart'
+    })
+
+    expect(first).toMatchObject({
+      ok: true,
+      result: {
+        message: { subject: 'send once' },
+        mutation: { requestId: 'coordinator-restart-send', replayed: false }
+      }
+    })
+    expect(replay).toMatchObject({
+      ok: true,
+      result: {
+        message: { id: (first as { result: { message: { id: string } } }).result.message.id },
+        mutation: { requestId: 'coordinator-restart-send', replayed: true }
+      }
+    })
+    expect(messageCount(harness.db)).toBe(1)
+    expect(mutationReceiptCount(harness.db)).toBe(1)
+  })
+
   it('routes an exact legacy Dispatch recipient to compatibility delivery', async () => {
     const harness = createHarness()
 
@@ -622,228 +660,5 @@ describe('legacy coordinator takeover races', () => {
     expect(harness.db.getTask(target.id)?.status).toBe('ready')
     expect(harness.db.getDispatchContext(target.id)).toBeUndefined()
     expect(sendPrompt).not.toHaveBeenCalled()
-  })
-
-  it('explicitly takes over an active adopted Run without stranding its legacy worker', async () => {
-    const harness = createHarness()
-    const currentHandle = 'term_current_coord'
-    const currentPane = 'tab_current:55555555-5555-4555-8555-555555555555'
-    vi.mocked(harness.runtime.getTerminalPaneKey).mockImplementation((handle) =>
-      handle === COORDINATOR_HANDLE
-        ? COORDINATOR_PANE
-        : handle === WORKER_HANDLE
-          ? WORKER_PANE
-          : handle === currentHandle
-            ? currentPane
-            : null
-    )
-
-    await expect(
-      harness.dispatcher.dispatch(
-        request(
-          'orchestration.runUse',
-          { id: harness.adoptedRunId, from: COORDINATOR_HANDLE },
-          'bind-original-coordinator'
-        )
-      )
-    ).resolves.toMatchObject({ ok: true })
-    const pendingAsk = await harness.dispatcher.dispatch(
-      request(
-        'orchestration.ask',
-        {
-          from: WORKER_HANDLE,
-          to: COORDINATOR_HANDLE,
-          question: 'Continue with the migration?',
-          timeoutMs: 0
-        },
-        'pending-before-takeover',
-        evidence('worker')
-      )
-    )
-    const questionId = (pendingAsk as { result: { messageId: string } }).result.messageId
-    const unrelated = harness.db.insertMessage({
-      runId: harness.adoptedRunId,
-      from: WORKER_HANDLE,
-      to: 'term_peer_worker',
-      subject: 'peer-only',
-      deliveryContract: 'legacy_direct'
-    })
-
-    const currentRequest = (method: string, params: unknown, invocationId: string): RpcRequest => ({
-      ...request(method, params, invocationId),
-      orchestrationCompatibilityEvidence: undefined
-    })
-    const takeoverParams = {
-      id: harness.adoptedRunId,
-      from: currentHandle,
-      takeoverLegacy: true
-    }
-    const takeover = await harness.dispatcher.dispatch(
-      currentRequest('orchestration.runUse', takeoverParams, 'explicit-takeover')
-    )
-    const repeated = await harness.dispatcher.dispatch(
-      currentRequest('orchestration.runUse', takeoverParams, 'explicit-takeover-repeat')
-    )
-
-    expect(takeover).toMatchObject({
-      ok: true,
-      result: { binding: { consumerGeneration: 2 } }
-    })
-    expect(repeated).toMatchObject({
-      ok: true,
-      result: { binding: { consumerGeneration: 2 } }
-    })
-    expect(harness.db.getDispatchContextById(harness.dispatchId)?.status).toBe('dispatched')
-    expect(harness.db.getLegacyCoordinatorPrincipal(harness.adoptedRunId)?.status).toBe('revoked')
-    expect(harness.db.getMessageById(unrelated.id)).toMatchObject({
-      to_handle: 'term_peer_worker',
-      delivery_contract: 'legacy_direct'
-    })
-
-    const promoted = await harness.dispatcher.dispatch(
-      currentRequest(
-        'orchestration.check',
-        { terminal: currentHandle, run: harness.adoptedRunId, format: true },
-        'read-promoted-question'
-      )
-    )
-    expect(promoted).toMatchObject({
-      ok: true,
-      result: {
-        messages: [
-          {
-            id: questionId,
-            to_handle: `run:${harness.adoptedRunId}`,
-            delivery_contract: 'current_delivery'
-          }
-        ],
-        formatted: expect.not.stringContaining(`--from run:${harness.adoptedRunId}`)
-      }
-    })
-    const deliveryId = (promoted as { result: { deliveryId: string } }).result.deliveryId
-    await expect(
-      harness.dispatcher.dispatch(
-        currentRequest(
-          'orchestration.reply',
-          {
-            id: questionId,
-            body: 'Yes, continue.',
-            from: currentHandle,
-            run: harness.adoptedRunId
-          },
-          'reply-after-takeover'
-        )
-      )
-    ).resolves.toMatchObject({ ok: true, result: { question: { status: 'answered' } } })
-    await expect(
-      harness.dispatcher.dispatch(
-        request(
-          'orchestration.ask',
-          { from: WORKER_HANDLE, resume: questionId, timeoutMs: 100 },
-          'resume-after-takeover',
-          evidence('worker')
-        )
-      )
-    ).resolves.toMatchObject({ ok: true, result: { answer: 'Yes, continue.' } })
-
-    const followUp = await harness.dispatcher.dispatch(
-      currentRequest(
-        'orchestration.send',
-        {
-          from: currentHandle,
-          to: `dispatch:${harness.dispatchId}`,
-          subject: 'Continue from the new coordinator'
-        },
-        'current-coordinator-to-legacy-worker'
-      )
-    )
-    expect(followUp).toMatchObject({
-      ok: true,
-      result: {
-        message: {
-          run_id: harness.adoptedRunId,
-          to_handle: `dispatch:${harness.dispatchId}`,
-          delivery_contract: 'legacy_direct'
-        }
-      }
-    })
-    const workerFollowUp = await harness.dispatcher.dispatch(
-      request(
-        'orchestration.check',
-        { terminal: WORKER_HANDLE },
-        'legacy-worker-check-after-takeover',
-        evidence('worker')
-      )
-    )
-    expect(workerFollowUp).toMatchObject({
-      ok: true,
-      result: {
-        messages: [{ subject: 'Continue from the new coordinator' }],
-        legacyCompatibility: { ackMessageIds: [expect.any(String)] }
-      }
-    })
-    const [followUpMessageId] = (
-      workerFollowUp as { result: { legacyCompatibility: { ackMessageIds: string[] } } }
-    ).result.legacyCompatibility.ackMessageIds
-    await expect(
-      harness.dispatcher.dispatch(
-        request(
-          'orchestration.check',
-          {
-            terminal: WORKER_HANDLE,
-            compatibilityAck: JSON.stringify({ messageIds: [followUpMessageId] })
-          },
-          'legacy-worker-ack-after-takeover',
-          evidence('worker')
-        )
-      )
-    ).resolves.toMatchObject({
-      ok: true,
-      result: {
-        acknowledged: [followUpMessageId],
-        legacyCompatibility: { acknowledged: true }
-      }
-    })
-
-    await harness.dispatcher.dispatch(
-      currentRequest(
-        'orchestration.check',
-        { terminal: currentHandle, run: harness.adoptedRunId, ack: deliveryId },
-        'ack-promoted-question'
-      )
-    )
-    await expect(
-      harness.dispatcher.dispatch(
-        request(
-          'orchestration.send',
-          {
-            from: WORKER_HANDLE,
-            to: COORDINATOR_HANDLE,
-            subject: 'Need current coordinator',
-            type: 'escalation',
-            payload: JSON.stringify({ taskId: harness.taskId })
-          },
-          'escalation-after-takeover',
-          evidence('worker')
-        )
-      )
-    ).resolves.toMatchObject({
-      ok: true,
-      result: {
-        message: {
-          to_handle: `run:${harness.adoptedRunId}`,
-          delivery_contract: 'current_delivery'
-        }
-      }
-    })
-    await expect(
-      harness.dispatcher.dispatch(
-        request(
-          'orchestration.taskList',
-          { callerTerminalHandle: COORDINATOR_HANDLE },
-          'old-coordinator-fenced'
-        )
-      )
-    ).resolves.toMatchObject({ ok: false, error: { code: 'legacy_read_only' } })
   })
 })

@@ -105,6 +105,10 @@ import { verifyTerminalRevealIdentity } from '@/lib/terminal-reveal-identity'
 import { getLinearIssueWorkspaceName } from '../../../shared/workspace-name'
 import type { RuntimeClientEvent } from '../../../shared/runtime-client-events'
 import { applyHostWorktreeTerminalSleepState } from '@/components/terminal-pane/pty-shutdown-exit-deferral'
+import {
+  resolveLegacyWorkerTerminalRecoveryAction,
+  rollbackLegacyWorkerTerminalSurfaceInStore
+} from './legacy-worker-terminal-recovery-event'
 import type { AppState } from '../store/types'
 import { guardPinnedTabClose, resolvePinnedTabLabel } from '../store/pinned-tab-close-guard'
 import {
@@ -3362,8 +3366,16 @@ export function useIpcEvents(): void {
       unsubs.push(unsubscribeMigrationUnsupportedClear)
     }
     const unsubscribeLegacyWorkerTerminalRecovery =
-      window.api.agentStatus.onLegacyWorkerTerminalRecovery?.(({ paneKey }) => {
-        useAppStore.getState().clearSleepingAgentSession(paneKey)
+      window.api.agentStatus.onLegacyWorkerTerminalRecovery?.((event) => {
+        const action = resolveLegacyWorkerTerminalRecoveryAction(event)
+        if (action.kind === 'rollback-surface') {
+          window.dispatchEvent(
+            new CustomEvent(CLOSE_TERMINAL_PANE_EVENT, { detail: action.detail })
+          )
+          rollbackLegacyWorkerTerminalSurfaceInStore(useAppStore.getState(), action.detail)
+        } else if (action.kind === 'clear-sleeping') {
+          useAppStore.getState().clearSleepingAgentSession(action.paneKey)
+        }
       })
     if (unsubscribeLegacyWorkerTerminalRecovery) {
       unsubs.push(unsubscribeLegacyWorkerTerminalRecovery)

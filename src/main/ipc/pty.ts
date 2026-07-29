@@ -3367,10 +3367,35 @@ export function registerPtyHandlers(
             })
           : { shellOverride: undefined, terminalWindowsWslDistro: null }
       const daemonShellOverride = terminalRuntimeOptions.shellOverride
+      const isDaemonHostSpawn =
+        !args.connectionId &&
+        !(provider instanceof LocalPtyProvider) &&
+        !routesFreshSpawnsToLocalProvider(provider)
+      const callerRequestedSessionId = args.sessionId?.trim()
+      const requestedSessionId =
+        callerRequestedSessionId ??
+        (isDaemonHostSpawn && args.agentSessionCreateOperationId
+          ? ptySessionIdForAgentCreateOperation(args.worktreeId, args.agentSessionCreateOperationId)
+          : undefined)
+      const sessionId =
+        requestedSessionId ?? (isDaemonHostSpawn ? mintPtySessionId(args.worktreeId) : undefined)
+      const effectiveSessionRelayId =
+        sessionId !== undefined ? getRelayPtyId(args.connectionId, sessionId) : undefined
+      const effectiveSessionAppId =
+        sessionId !== undefined ? getAppPtyId(args.connectionId, sessionId) : undefined
+      const isMintedSessionId = callerRequestedSessionId === undefined && isDaemonHostSpawn
+      const expectedWslDistro = !args.connectionId
+        ? (resolveWslSessionContext({
+            cwd,
+            sessionId,
+            shellOverride: terminalRuntimeOptions.shellOverride,
+            terminalWindowsWslDistro: terminalRuntimeOptions.terminalWindowsWslDistro
+          })?.distro ?? null)
+        : null
       const codexSelectionTarget = getCodexSelectionTargetForPty(
         daemonShellOverride,
         cwd,
-        terminalRuntimeOptions.terminalWindowsWslDistro ?? null
+        expectedWslDistro
       )
       const codexResumePreparation = prepareCodexResumeHome({
         connectionId: args.connectionId,
@@ -3398,31 +3423,6 @@ export function registerPtyHandlers(
         )
       }
 
-      const isDaemonHostSpawn =
-        !args.connectionId &&
-        !(provider instanceof LocalPtyProvider) &&
-        !routesFreshSpawnsToLocalProvider(provider)
-      const callerRequestedSessionId = args.sessionId?.trim()
-      const requestedSessionId =
-        callerRequestedSessionId ??
-        (isDaemonHostSpawn && args.agentSessionCreateOperationId
-          ? ptySessionIdForAgentCreateOperation(args.worktreeId, args.agentSessionCreateOperationId)
-          : undefined)
-      const sessionId =
-        requestedSessionId ?? (isDaemonHostSpawn ? mintPtySessionId(args.worktreeId) : undefined)
-      const effectiveSessionRelayId =
-        sessionId !== undefined ? getRelayPtyId(args.connectionId, sessionId) : undefined
-      const effectiveSessionAppId =
-        sessionId !== undefined ? getAppPtyId(args.connectionId, sessionId) : undefined
-      const isMintedSessionId = callerRequestedSessionId === undefined && isDaemonHostSpawn
-      const expectedWslDistro = !args.connectionId
-        ? (resolveWslSessionContext({
-            cwd,
-            sessionId,
-            shellOverride: terminalRuntimeOptions.shellOverride,
-            terminalWindowsWslDistro: terminalRuntimeOptions.terminalWindowsWslDistro
-          })?.distro ?? null)
-        : null
       const shouldPersistHostSessionBinding = args.persistHostSessionBinding === true
       let hostSessionBinding: {
         store: NonNullable<typeof store>
@@ -3497,7 +3497,7 @@ export function registerPtyHandlers(
           launchAgent: isTuiAgent(args.launchAgent) ? args.launchAgent : undefined,
           shellPath: daemonShellOverride ?? process.env.COMSPEC,
           isWsl: shouldSkipCodexHomeEnvForWindowsShell(daemonShellOverride, cwd),
-          wslDistro: codexSelectionTarget.runtime === 'wsl' ? codexSelectionTarget.wslDistro : null,
+          wslDistro: codexSelectionTarget.runtime === 'wsl' ? expectedWslDistro : null,
           agentStatusHooksEnabled: isAgentStatusHooksEnabled(getSettings?.()),
           networkProxySettings: getSettings?.(),
           deferGitConfigGuardToDaemon: provider.supportsGitCredentialGuardHost?.(sessionId) === true
@@ -3505,7 +3505,7 @@ export function registerPtyHandlers(
         stampWslOrchestrationCompatibilityHost(
           env,
           runtime?.getOrchestrationCompatibilityHostId?.(),
-          codexSelectionTarget.runtime === 'wsl' ? codexSelectionTarget.wslDistro : null
+          codexSelectionTarget.runtime === 'wsl' ? expectedWslDistro : null
         )
         promoteAgentTeamsShimPath(env, requestedAgentTeamsPath)
       }
@@ -3606,8 +3606,7 @@ export function registerPtyHandlers(
       }
       if (process.platform === 'win32' && !args.connectionId) {
         spawnOptions.shellOverride = terminalRuntimeOptions.shellOverride
-        spawnOptions.terminalWindowsWslDistro =
-          terminalRuntimeOptions.terminalWindowsWslDistro ?? null
+        spawnOptions.terminalWindowsWslDistro = expectedWslDistro
         spawnOptions.terminalWindowsPowerShellImplementation = getSettings
           ? (getSettings()?.terminalWindowsPowerShellImplementation ?? 'auto')
           : undefined
@@ -4466,24 +4465,6 @@ export function registerPtyHandlers(
             })
           : { shellOverride: args.shellOverride, terminalWindowsWslDistro: null }
       const initialShellOverride = terminalRuntimeOptions.shellOverride
-      const initialSelectionTarget = getCodexSelectionTargetForPty(
-        initialShellOverride,
-        cwd,
-        terminalRuntimeOptions.terminalWindowsWslDistro ?? null
-      )
-      const claudeAuth =
-        isClaudeLaunch && prepareClaudeAuth ? await prepareClaudeAuth(initialSelectionTarget) : null
-      spawnTiming.mark('auth')
-      if (isClaudeLaunch && isClaudeAuthSwitchInProgress()) {
-        throw new Error('A Claude account switch is in progress. Try again after it finishes.')
-      }
-      if (claudeAuth?.stripAuthEnv && hasClaudeAuthEnvConflict(args.env)) {
-        throw new Error(
-          'This Claude launch defines explicit Anthropic auth environment variables. Remove those overrides before using a managed Claude account.'
-        )
-      }
-      // Why: the daemon-backed provider skips LocalPtyProvider's buildSpawnEnv, so assemble the same host-local env here for parity.
-      // Safety: skip entirely for SSH — every injection is a loopback secret or a local path that leaks or misleads on the remote host.
       const isDaemonHostSpawn =
         !args.connectionId &&
         !(provider instanceof LocalPtyProvider) &&
@@ -4510,6 +4491,24 @@ export function registerPtyHandlers(
             terminalWindowsWslDistro: terminalRuntimeOptions.terminalWindowsWslDistro
           })?.distro ?? null)
         : null
+      const initialSelectionTarget = getCodexSelectionTargetForPty(
+        initialShellOverride,
+        cwd,
+        expectedWslDistro
+      )
+      const claudeAuth =
+        isClaudeLaunch && prepareClaudeAuth ? await prepareClaudeAuth(initialSelectionTarget) : null
+      spawnTiming.mark('auth')
+      if (isClaudeLaunch && isClaudeAuthSwitchInProgress()) {
+        throw new Error('A Claude account switch is in progress. Try again after it finishes.')
+      }
+      if (claudeAuth?.stripAuthEnv && hasClaudeAuthEnvConflict(args.env)) {
+        throw new Error(
+          'This Claude launch defines explicit Anthropic auth environment variables. Remove those overrides before using a managed Claude account.'
+        )
+      }
+      // Why: the daemon-backed provider skips LocalPtyProvider's buildSpawnEnv, so assemble the same host-local env here for parity.
+      // Safety: skip entirely for SSH — every injection is a loopback secret or a local path that leaks or misleads on the remote host.
       const startupTerminalColorQueryReplyColors = getStartupTerminalColorQueryReplyColors(args)
       // Why: forward pane env to SSH only when the relay hook path is enabled, or a newer relay could emit statuses this build can't route.
       const sshSourceEnv = stripRemotePaneEnvWhenHooksDisabled(args.connectionId, args.env)
@@ -4619,7 +4618,7 @@ export function registerPtyHandlers(
       const codexSelectionTarget = getCodexSelectionTargetForPty(
         effectiveShellOverride,
         cwd,
-        terminalRuntimeOptions.terminalWindowsWslDistro ?? null
+        expectedWslDistro
       )
       const codexResumePreparation = prepareCodexResumeHome({
         connectionId: args.connectionId,
@@ -4685,8 +4684,7 @@ export function registerPtyHandlers(
             launchAgent: isTuiAgent(args.launchAgent) ? args.launchAgent : undefined,
             shellPath: effectiveShellOverride ?? process.env.COMSPEC,
             isWsl: shouldSkipCodexHomeEnvForWindowsShell(effectiveShellOverride, cwd),
-            wslDistro:
-              codexSelectionTarget.runtime === 'wsl' ? codexSelectionTarget.wslDistro : null,
+            wslDistro: codexSelectionTarget.runtime === 'wsl' ? expectedWslDistro : null,
             agentStatusHooksEnabled: isAgentStatusHooksEnabled(getSettings?.()),
             networkProxySettings: getSettings?.(),
             deferGitConfigGuardToDaemon:
@@ -4695,7 +4693,7 @@ export function registerPtyHandlers(
           stampWslOrchestrationCompatibilityHost(
             env,
             runtime?.getOrchestrationCompatibilityHostId?.(),
-            codexSelectionTarget.runtime === 'wsl' ? codexSelectionTarget.wslDistro : null
+            codexSelectionTarget.runtime === 'wsl' ? expectedWslDistro : null
           )
           promoteAgentTeamsShimPath(env, requestedAgentTeamsPath)
         } catch (err) {
@@ -4783,8 +4781,7 @@ export function registerPtyHandlers(
       }
       if (process.platform === 'win32' && !args.connectionId) {
         // Why: the renderer models PowerShell as one shell family; thread the implementation choice so both PTY paths resolve the same executable.
-        spawnOptions.terminalWindowsWslDistro =
-          terminalRuntimeOptions.terminalWindowsWslDistro ?? null
+        spawnOptions.terminalWindowsWslDistro = expectedWslDistro
         spawnOptions.terminalWindowsPowerShellImplementation = getSettings
           ? (getSettings()?.terminalWindowsPowerShellImplementation ?? 'auto')
           : undefined

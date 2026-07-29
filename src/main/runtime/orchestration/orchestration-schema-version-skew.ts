@@ -3,6 +3,7 @@ import type Database from '../../sqlite/sync-database'
 const POST_V6_COLUMNS = [
   ['messages', 'run_id'],
   ['messages', 'delivery_contract'],
+  ['coordinator_runs', 'scheduler_lost_at'],
   ['tasks', 'run_id'],
   ['dispatch_contexts', 'run_id'],
   ['dispatch_contexts', 'contract_version'],

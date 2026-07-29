@@ -72,6 +72,13 @@ function createLegacyRuntime() {
        VALUES ('run_legacy_local', ?, 1)`
     )
     .run(run.id)
+  sqlite
+    .prepare(
+      `UPDATE runs
+       SET coordinator_handle = NULL, coordinator_pane_key = NULL, consumer_generation = 0
+       WHERE id = ?`
+    )
+    .run(run.id)
 
   const runtime = new OrcaRuntimeService()
   runtime.setOrchestrationDb(db)
@@ -115,7 +122,7 @@ function createLegacyRuntime() {
     }
   })
   vi.spyOn(runtime, 'notifyMessageArrived').mockImplementation(() => {})
-  return { db, runtime, run, dispatch }
+  return { db, runtime, run: db.getRun(run.id)!, dispatch }
 }
 
 describe('legacy SSH orchestration fallback', () => {

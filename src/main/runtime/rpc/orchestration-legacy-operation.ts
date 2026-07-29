@@ -164,7 +164,10 @@ export function supportedLegacyHints(
   principal: LegacyCompatibilityPrincipalRow,
   cliCommand: 'orca' | 'orca-ide' | 'orca-dev'
 ): string[] {
-  if (principal.role !== 'coordinator' || message.type !== 'question') {
+  if (
+    principal.role !== 'coordinator' ||
+    (message.type !== 'question' && message.type !== 'decision_gate')
+  ) {
     return []
   }
   return [

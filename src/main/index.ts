@@ -729,12 +729,19 @@ if (hasSingleInstanceLock) {
   headlessBrowserDisplayAvailable = ensureVirtualDisplayForHeadlessServe({ isServeMode })
 }
 
-ipcMain.handle('app:awaitFirstWindowStartupServices', () =>
+ipcMain.handle('app:awaitFirstWindowStartupServices', async () => {
+  await Promise.all([firstWindowStartupServicesReady, managedWslCliStartupBarrierReady])
+})
+
+ipcMain.handle('app:recoverLegacyWorkerTerminalsForRendererStartup', () =>
   recoverLegacyWorkerTerminalsForRendererStartup({
     firstWindowStartupServicesReady,
     managedWslCliStartupBarrierReady,
     localPtyProviderStartupReady,
-    reconcile: () => runtime?.reconcileLegacyWorkerTerminals({ materializeRenderer: true }),
+    reconcile: async () => {
+      await runtime?.refreshRestoredOrchestrationAuthority()
+      return runtime?.reconcileLegacyWorkerTerminals({ materializeRenderer: true })
+    },
     onDeferredRecoveryError: (error) => {
       console.warn('[orchestration] legacy worker provider-ready recovery failed', error)
     }
@@ -2222,6 +2229,8 @@ void app.whenReady().then(async () => {
       agentHookServer.getStatusSnapshotForPane(paneKey),
     attestAgentHookCompatibilityAuthority: (candidate) =>
       agentHookServer.attestCompatibilityAuthority(candidate),
+    retireAgentHookCompatibilityAuthority: (paneKey) =>
+      agentHookServer.retirePaneAuthority(paneKey),
     canRecoverPersistentLocalPtys: () => getDaemonProvider() !== null,
     // Why: source codex-home here (runs in window AND serve) so aiVault.listSessions includes managed-Codex sessions; registerCoreHandlers is window-only.
     getAdditionalAiVaultCodexHomePaths: () =>
@@ -2681,6 +2690,7 @@ void app.whenReady().then(async () => {
       store,
       prepareCodexSessionResumeForLaunch
     )
+    await runtime.refreshRestoredOrchestrationAuthority()
     await runtime.reconcileLegacyWorkerTerminals()
     // Why: headless servers can't mount <webview> panes; use offscreen WebContents, gated on a real display so browser.headless.v1 stays honest.
     if (headlessBrowserDisplayAvailable) {

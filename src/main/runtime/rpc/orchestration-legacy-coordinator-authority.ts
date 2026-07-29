@@ -31,6 +31,18 @@ export class LegacyCoordinatorAuthority {
     })
     if (!candidate) {
       if (request.orchestrationCompatibilityEvidence) {
+        const caller = this.runtime.verifyOrchestrationCompatibilityCaller(
+          request.orchestrationCompatibilityEvidence
+        )
+        const run = db.getRun(adoption.adopted_run_id)
+        if (
+          caller &&
+          run?.coordinator_handle === caller.terminalHandle &&
+          run.coordinator_pane_key &&
+          equivalentLegacyPaneKey(run.coordinator_pane_key, caller.paneKey)
+        ) {
+          return undefined
+        }
         throw legacyCoordinatorReadOnly()
       }
       return undefined

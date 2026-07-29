@@ -1033,6 +1033,17 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         throw new Error(`Message not found: ${params.id}`)
       }
       if (
+        legacyCoordinatorRunId &&
+        (original.run_id !== legacyCoordinatorRunId ||
+          (params.run !== undefined && params.run !== legacyCoordinatorRunId))
+      ) {
+        throw new OrchestrationError(
+          'request_mismatch',
+          `Message ${params.id} does not belong to this adopted Run.`,
+          { effectsApplied: false }
+        )
+      }
+      if (
         original.run_id === ORCHESTRATION_LEGACY_RUN_ID ||
         original.delivery_contract === 'legacy_direct' ||
         original.delivery_contract === 'audit_only'
@@ -1267,8 +1278,13 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         }
       }
 
-      const assigneePaneKey = runtime.getTerminalPaneKey(to) ?? undefined
-      const processIncarnation = runtime.getTerminalProcessIncarnation(to) ?? undefined
+      const dispatchAuthority = runtime.getOrchestrationDispatchAuthority(to)
+      const assigneePaneKey =
+        dispatchAuthority?.paneKey ?? runtime.getTerminalPaneKey(to) ?? undefined
+      const processIncarnation =
+        dispatchAuthority?.processIncarnation ??
+        runtime.getTerminalProcessIncarnation(to) ??
+        undefined
       if (params.inject && (!assigneePaneKey || !processIncarnation)) {
         throw new OrchestrationError(
           'stable_pane_required',
@@ -1277,7 +1293,12 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
       }
 
       revalidateLegacyCoordinator?.()
-      const ctx = db.createDispatchContext(params.task, to, assigneePaneKey)
+      const ctx = db.createDispatchContext(
+        params.task,
+        to,
+        assigneePaneKey,
+        dispatchAuthority?.launchTokenHash ?? undefined
+      )
       const dispatchCapability = params.inject
         ? db.mintDispatchCapability({
             dispatchId: ctx.id,

@@ -17,7 +17,6 @@ export async function recoverLegacyWorkerTerminalsForRendererStartup(
     options.firstWindowStartupServicesReady,
     options.managedWslCliStartupBarrierReady
   ])
-  await options.reconcile()
   void providerStartupResult
     .then(async (result) => {
       if (!result.ok) {
@@ -26,4 +25,9 @@ export async function recoverLegacyWorkerTerminalsForRendererStartup(
       await options.reconcile()
     })
     .catch(options.onDeferredRecoveryError)
+  try {
+    await options.reconcile()
+  } catch (error) {
+    options.onDeferredRecoveryError(error)
+  }
 }

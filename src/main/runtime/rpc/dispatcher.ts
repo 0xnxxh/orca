@@ -1,10 +1,4 @@
-// Why: the dispatcher is the one place that knows how to turn a validated
-// RPC request into a response envelope. Splitting it from the transport
-// makes it unit-testable without spinning up a socket, and keeps
-// runtime-rpc.ts focused on framing/auth/connection bookkeeping.
 import {
-  ZodError,
-  InvalidArgumentError,
   buildRegistry,
   formatZodError,
   isStreamingMethod,
@@ -16,14 +10,7 @@ import {
 } from './core'
 
 import type { FeatureInteractionId } from '../../../shared/feature-interactions'
-import {
-  computerErrorData,
-  errorResponse,
-  mapBrowserError,
-  mapEmulatorError,
-  mapRuntimeError,
-  successResponse
-} from './errors'
+import { errorResponse, successResponse } from './errors'
 import { ALL_RPC_METHODS } from './methods'
 import { emulatorProbe, emulatorProbeError } from '../../emulator/emulator-probe'
 import type { OrcaRuntimeService } from '../orca-runtime'
@@ -37,6 +24,7 @@ import { orchestrationMigrationFence } from './orchestration-contract-fence'
 import { recordRuntimeFeatureInteraction } from './runtime-feature-interaction'
 import { OrchestrationLegacyCompatibility } from './orchestration-legacy-compatibility'
 import type { RpcDispatchStreamingOptions } from './dispatcher-stream-options'
+import { invalidArgumentResponse, mapDispatcherError } from './dispatcher-error-response'
 
 export type DispatcherOptions = { runtime: OrcaRuntimeService; methods?: readonly RpcAnyMethod[] }
 
@@ -75,9 +63,6 @@ export class RpcDispatcher {
       return parsedParams.error
     }
 
-    // Why: streaming methods are not supported over one-shot transports like
-    // Unix sockets. They require a reply function that can be called multiple
-    // times, which is only available via dispatchStreaming.
     if (isStreamingMethod(method)) {
       return errorResponse(
         request.id,
@@ -111,15 +96,23 @@ export class RpcDispatcher {
           signal: options?.signal,
           requestId: request.id,
           orchestrationCapability: request.orchestrationCapability,
-          authenticatedCallerFingerprint: authenticatedCallerFingerprint(request),
+          authenticatedCallerFingerprint:
+            mutation?.identity.callerFingerprint ?? authenticatedCallerFingerprint(request),
           recordMutationReceipt: mutation?.recordReceipt,
           orchestrationMutation: mutation?.identity,
           legacyCoordinatorRunId,
           legacyCoordinatorAuthority: legacyCoordinator?.authority,
-          revalidateLegacyCoordinator: legacyCoordinator?.revalidate
+          revalidateLegacyCoordinator: legacyCoordinator?.revalidate,
+          orchestrationCompatibilityCallerAuthority:
+            compatibility.orchestrationCompatibilityCallerAuthority
         })
       }
-      const result = await this.orchestrationMutations.run(request, effectiveParams, invoke)
+      const result = await this.orchestrationMutations.run(
+        request,
+        effectiveParams,
+        invoke,
+        legacyCoordinator?.mutationCallerFingerprint
+      )
       recordRuntimeFeatureInteraction(
         this.runtime,
         request.method,
@@ -132,7 +125,7 @@ export class RpcDispatcher {
       if (request.method.startsWith('emulator.')) {
         emulatorProbeError(`rpc ${request.method}`, error, { params: request.params })
       }
-      return this.mapError(request, meta, error)
+      return mapDispatcherError(request, meta, error)
     }
   }
 
@@ -195,7 +188,8 @@ export class RpcDispatcher {
             clientKind: options?.clientKind,
             clientCapabilities: options?.clientCapabilities,
             orchestrationCapability: request.orchestrationCapability,
-            authenticatedCallerFingerprint: authenticatedCallerFingerprint(request),
+            authenticatedCallerFingerprint:
+              mutation?.identity.callerFingerprint ?? authenticatedCallerFingerprint(request),
             recordMutationReceipt: mutation?.recordReceipt,
             orchestrationMutation: mutation?.identity,
             pairing: options?.pairing,
@@ -203,10 +197,17 @@ export class RpcDispatcher {
             registerBinaryStreamHandler: options?.registerBinaryStreamHandler,
             legacyCoordinatorRunId,
             legacyCoordinatorAuthority: legacyCoordinator?.authority,
-            revalidateLegacyCoordinator: legacyCoordinator?.revalidate
+            revalidateLegacyCoordinator: legacyCoordinator?.revalidate,
+            orchestrationCompatibilityCallerAuthority:
+              compatibility.orchestrationCompatibilityCallerAuthority
           })
         }
-        const result = await this.orchestrationMutations.run(request, effectiveParams, invoke)
+        const result = await this.orchestrationMutations.run(
+          request,
+          effectiveParams,
+          invoke,
+          legacyCoordinator?.mutationCallerFingerprint
+        )
         recordRuntimeFeatureInteraction(
           this.runtime,
           request.method,
@@ -216,7 +217,7 @@ export class RpcDispatcher {
         )
         reply(JSON.stringify(successResponse(request.id, meta, result)))
       } catch (error) {
-        reply(JSON.stringify(this.mapError(request, meta, error)))
+        reply(JSON.stringify(mapDispatcherError(request, meta, error)))
       }
       return
     }
@@ -262,7 +263,7 @@ export class RpcDispatcher {
         request.params
       )
     } catch (error) {
-      reply(JSON.stringify(this.mapError(request, meta, error)))
+      reply(JSON.stringify(mapDispatcherError(request, meta, error)))
     }
   }
 
@@ -278,45 +279,10 @@ export class RpcDispatcher {
     const result = method.params.safeParse(rawParams)
     if (!result.success) {
       return {
-        error: this.invalidArgumentResponse(request, meta, formatZodError(result.error))
+        error: invalidArgumentResponse(request, meta, formatZodError(result.error))
       }
     }
     return { value: result.data }
-  }
-
-  private mapError(request: RpcRequest, meta: RpcEnvelopeMeta, error: unknown): RpcResponse {
-    if (error instanceof ZodError) {
-      return this.invalidArgumentResponse(request, meta, formatZodError(error))
-    }
-    if (error instanceof InvalidArgumentError) {
-      return this.invalidArgumentResponse(request, meta, error.message)
-    }
-
-    // Why: browser methods throw BrowserError with a structured `code`;
-    // every other runtime error has a plain-message code. Routing by method
-    // prefix keeps the mapping a single decision rather than a per-method
-    // flag callers must remember to set.
-    if (request.method.startsWith('browser.')) {
-      return mapBrowserError(request.id, meta, error)
-    }
-    if (request.method.startsWith('emulator.')) {
-      return mapEmulatorError(request.id, meta, error)
-    }
-    return mapRuntimeError(request.id, meta, error)
-  }
-
-  private invalidArgumentResponse(
-    request: RpcRequest,
-    meta: RpcEnvelopeMeta,
-    message: string
-  ): RpcResponse {
-    return errorResponse(
-      request.id,
-      meta,
-      'invalid_argument',
-      message,
-      request.method.startsWith('computer.') ? computerErrorData('invalid_argument') : undefined
-    )
   }
 
   private meta(): RpcEnvelopeMeta {
