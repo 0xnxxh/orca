@@ -72,7 +72,7 @@ describe('Activity portal readiness subscription churn', () => {
     expect(renders).toBeLessThanOrEqual(31)
 
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 30))
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
     })
     expect(status).toBe('unavailable')
     expect(renders).toBeLessThanOrEqual(32)

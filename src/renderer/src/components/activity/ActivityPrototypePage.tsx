@@ -55,7 +55,10 @@ import {
   reconcileActivityPortalThreads,
   resolveActivityPortalSwap
 } from './activity-portal-thread-reconciliation'
-import { createActivityPortalReadinessLatch } from './activity-portal-readiness-oscillation'
+import {
+  createActivityPortalReadinessLatch,
+  type ActivityPortalReadinessStatus
+} from './activity-portal-readiness-oscillation'
 import type { Repo, TerminalTab, Worktree } from '../../../../shared/types'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import {
@@ -136,7 +139,7 @@ type ActivityThreadGroup = {
 type ActivityTerminalPortalReadiness = {
   target: HTMLElement | null
   paneKey: string | null
-  status: 'loading' | 'ready' | 'unavailable'
+  status: ActivityPortalReadinessStatus
 }
 
 type ActivityTerminalPortalDomStatus = {
@@ -363,7 +366,6 @@ export function useActivityTerminalPortalStatus(
       updateReadiness('loading')
     }
 
-    updateReadiness('loading')
     checkReadiness()
 
     const observer = new MutationObserver(checkReadiness)
