@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   FrameDecoder,
+  FrameDecoderContinuationError,
   FRAME_DECODER_MAX_RETAINED_BYTES,
   HEADER_LENGTH,
   MAX_MESSAGE_SIZE,
@@ -156,6 +157,47 @@ describe('FrameDecoder bounded turns', () => {
     expect(resume).toHaveBeenCalledTimes(1)
     decoder.reset()
     expect(resume).toHaveBeenCalledTimes(1)
+  })
+
+  it('contains a throwing continuation, resets residue, and reports one typed error', () => {
+    const scheduler = createScheduler()
+    const seen: number[] = []
+    const onError = vi.fn()
+    const pause = vi.fn()
+    const resume = vi.fn()
+    const decoder = new FrameDecoder(
+      (decoded) => {
+        if (decoded.id === 2) {
+          throw new Error('frame owner failed')
+        }
+        seen.push(decoded.id)
+      },
+      onError,
+      {
+        maxFramesPerTurn: 1,
+        schedule: scheduler.schedule,
+        cancelScheduled: scheduler.cancel,
+        pause,
+        resume
+      }
+    )
+
+    decoder.feed(Buffer.concat([frame(1), frame(2), frame(3)]))
+    expect(() => scheduler.runNext()).not.toThrow()
+
+    expect(seen).toEqual([1])
+    expect(onError).toHaveBeenCalledExactlyOnceWith(expect.any(FrameDecoderContinuationError))
+    expect(onError.mock.calls[0]?.[0]).toMatchObject({
+      name: 'FrameDecoderContinuationError',
+      cause: expect.objectContaining({ message: 'frame owner failed' })
+    })
+    expect(pause).toHaveBeenCalledTimes(1)
+    expect(resume).toHaveBeenCalledTimes(1)
+    expect(scheduler.pending()).toBe(0)
+    expect(decoder.drain()).toHaveLength(0)
+
+    decoder.feed(frame(4))
+    expect(seen).toEqual([1, 4])
   })
 
   it('keeps reads active for partial frames and incrementally discards oversized payloads', () => {

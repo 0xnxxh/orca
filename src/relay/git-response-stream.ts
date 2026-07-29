@@ -119,10 +119,14 @@ export class GitResponseStreamRegistry {
     const base64Budget =
       dispatcher.producerDataBudget?.(
         'git.responseChunk',
-        { streamId, seq: 0 },
+        { streamId, seq: payload.length },
         context.clientId
       ) ?? Number.MAX_SAFE_INTEGER
-    const sinkChunkBytes = Math.max(1, Math.floor(Math.max(0, base64Budget - 32) / 4) * 3)
+    const sinkChunkBytes = Math.floor(Math.max(0, base64Budget) / 4) * 3
+    if (sinkChunkBytes === 0) {
+      this.streams.delete(streamId)
+      throw new Error('Git response stream has no encoded producer capacity')
+    }
     const chunks = encodeChunks(payload, Math.min(GIT_RESPONSE_CHUNK_SIZE, sinkChunkBytes))
     // Why: kick the pump off the response task so the client sees the sentinel
     // (and can subscribe/reassemble) before the first chunk frame arrives.

@@ -813,8 +813,8 @@ export class PtyHandler {
     const pending: PendingPtyOutput = existing && !existing.transformed ? existing : { data: '' }
     const previousLength = pending.data.length
     pending.data += data
-    if (existing?.rawLength !== undefined || meta.rawLength !== undefined) {
-      pending.rawLength = (existing?.rawLength ?? previousLength) + (meta.rawLength ?? data.length)
+    if (pending.rawLength !== undefined || meta.rawLength !== undefined) {
+      pending.rawLength = (pending.rawLength ?? previousLength) + (meta.rawLength ?? data.length)
     }
     if (meta.seq !== undefined) {
       pending.seq = meta.seq

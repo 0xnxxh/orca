@@ -3,6 +3,7 @@
 
 import {
   FrameDecoder,
+  FrameDecoderContinuationError,
   HEADER_LENGTH,
   MAX_MESSAGE_SIZE,
   FRAME_DECODER_MAX_FRAMES_PER_TURN,
@@ -13,6 +14,7 @@ import {
 
 export {
   FrameDecoder,
+  FrameDecoderContinuationError,
   HEADER_LENGTH,
   MAX_MESSAGE_SIZE,
   FRAME_DECODER_MAX_FRAMES_PER_TURN,

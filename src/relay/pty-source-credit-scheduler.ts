@@ -51,7 +51,13 @@ export class RelayPtySourceCreditScheduler {
       if (!identity) {
         continue
       }
-      const reservation = this.ledger.reserveNextSend(identity, maxSourceSu - admittedSu)
+      let reservation: PtySourceSendReservation | null
+      try {
+        reservation = this.ledger.reserveNextSend(identity, maxSourceSu - admittedSu)
+      } catch {
+        this.identities.delete(key)
+        continue
+      }
       this.enqueue(identity)
       if (!reservation) {
         continue

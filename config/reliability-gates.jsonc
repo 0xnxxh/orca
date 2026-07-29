@@ -3110,6 +3110,7 @@
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime-path-candidate-history.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/orca-runtime-tail-wait-memo.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/providers/ssh-pty-provider.test.ts src/main/ssh/ssh-relay-session.test.ts src/main/ssh/ssh-relay-session-data-delivery.test.ts src/main/ssh/ssh-relay-session-incarnation.test.ts src/main/ssh/ssh-relay-session-reconnect-incarnation.test.ts src/main/ssh/ssh-relay-session-terminal-error.test.ts src/main/ssh/ssh-pty-recovery-retention-budget.test.ts src/main/ssh/relay-protocol-backpressure.test.ts src/relay/protocol-backpressure.test.ts src/relay/pty-source-credit-ledger.test.ts src/relay/pty-source-credit-scheduler.test.ts src/relay/relay-pty-source-publication.test.ts src/relay/ssh-pty-source-credit-adapter.test.ts --reporter=dot",
+        "pnpm exec vitest run --config config/vitest.config.ts src/relay/git-response-stream-ownership.test.ts src/relay/pty-handler.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/providers/ssh-pty-notification-routing.test.ts src/main/providers/ssh-pty-provider-agent-session-create-operation.test.ts src/main/providers/ssh-pty-provider-exit-race.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/relay/relay-pty-source-recovery-interleavings.test.ts src/relay/relay-pty-source-recovery-completion.test.ts src/relay/relay-pty-source-restore-retry.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/relay/dispatcher.test.ts src/relay/pty-handler-source-publication.test.ts --reporter=dot",
@@ -3139,6 +3140,8 @@
         "src/main/ssh/ssh-pty-recovery-retention-budget.test.ts",
         "src/main/ssh/relay-protocol-backpressure.test.ts",
         "src/relay/protocol-backpressure.test.ts",
+        "src/relay/git-response-stream-ownership.test.ts",
+        "src/relay/pty-handler.test.ts",
         "src/relay/pty-source-credit-ledger.test.ts",
         "src/relay/pty-source-credit-scheduler.test.ts",
         "src/relay/relay-pty-source-publication.test.ts",
@@ -3244,6 +3247,24 @@
           ]
         },
         {
+          "file": "src/relay/pty-source-credit-scheduler.test.ts",
+          "assertions": [
+            "one rejecting delivery is removed after one reservation attempt while prior and later peer reservations remain committed without head-of-line blocking"
+          ]
+        },
+        {
+          "file": "src/relay/git-response-stream-ownership.test.ts",
+          "assertions": [
+            "an 8-byte encoded producer capacity emits exactly two 6-byte payload chunks and one end call while the first bulk write is saturated"
+          ]
+        },
+        {
+          "file": "src/relay/pty-handler.test.ts",
+          "assertions": [
+            "a fresh plain pending entry after transformed source-only output omits inherited rawLength and completes in exactly three admission calls"
+          ]
+        },
+        {
           "file": "src/relay/dispatcher.test.ts",
           "assertions": [
             "a saturated gate-off primary remains required backpressure and is never detached as an additional subscriber"
@@ -3280,13 +3301,15 @@
         {
           "file": "src/main/ssh/relay-protocol-backpressure.test.ts",
           "assertions": [
-            "main SSH decoder accepts one maximum frame plus 1 MiB partial input and rejects one extra byte"
+            "main SSH decoder accepts one maximum frame plus 1 MiB partial input and rejects one extra byte",
+            "a throwing continuation clears retained input, releases one pause epoch, and publishes one typed ownership error"
           ]
         },
         {
           "file": "src/relay/protocol-backpressure.test.ts",
           "assertions": [
-            "relay decoder accepts one maximum frame plus 1 MiB partial input and rejects one extra byte"
+            "relay decoder accepts one maximum frame plus 1 MiB partial input and rejects one extra byte",
+            "a throwing continuation clears retained input, releases one pause epoch, and publishes one typed ownership error"
           ]
         },
         {
@@ -3439,8 +3462,17 @@
           "platform": "macos",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/providers/ssh-pty-provider.test.ts src/main/ssh/ssh-relay-session.test.ts src/main/ssh/ssh-relay-session-data-delivery.test.ts src/main/ssh/ssh-relay-session-incarnation.test.ts src/main/ssh/ssh-relay-session-reconnect-incarnation.test.ts src/main/ssh/ssh-relay-session-terminal-error.test.ts src/main/ssh/ssh-pty-recovery-retention-budget.test.ts src/main/ssh/relay-protocol-backpressure.test.ts src/relay/protocol-backpressure.test.ts src/relay/pty-source-credit-ledger.test.ts src/relay/pty-source-credit-scheduler.test.ts src/relay/relay-pty-source-publication.test.ts src/relay/ssh-pty-source-credit-adapter.test.ts --reporter=dot",
           "result": "passed",
-          "durationSeconds": 10.46,
-          "summary": "Thirteen deterministic SSH relay/session/source/decoder files passed 173 tests, including a one-shot fresh retry driven by the real state-machine stale-owner error; no live topology was exercised."
+          "durationSeconds": 6.02,
+          "summary": "Thirteen deterministic SSH relay/session/source/decoder files passed 176 tests, including state-machine-driven stale-owner fallback, scheduler rejection isolation, and typed decoder-continuation containment; no live topology was exercised."
+        },
+        {
+          "date": "2026-07-28",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/relay/git-response-stream-ownership.test.ts src/relay/pty-handler.test.ts --reporter=dot",
+          "result": "passed",
+          "durationSeconds": 11.81,
+          "summary": "Two deterministic relay stream and PTY batching files passed 120 tests, including exact encoded chunk capacity and transformed-to-plain metadata isolation."
         },
         {
           "date": "2026-07-28",

@@ -1288,6 +1288,58 @@ describe('PtyHandler', () => {
     ).resolves.toEqual({ replay: 'prompt', incarnationId: expect.any(String) })
   })
 
+  it('does not carry transformed raw length into the next plain pending entry', async () => {
+    await handler.dispose({ waitForPhysicalExit: false })
+    const admitted: Record<string, unknown>[] = []
+    let hasCapacity = false
+    const tryNotifyPtyData = vi.fn((params: Record<string, unknown>) => {
+      if (hasCapacity) {
+        admitted.push(params)
+      }
+      return hasCapacity
+    })
+    Object.assign(dispatcher, {
+      onLegacyPtyCapacity: vi.fn(() => vi.fn()),
+      tryNotifyPtyData,
+      tryNotifyPtyExit: vi.fn(() => true),
+      legacyRetentionBelowLowWater: true
+    })
+    handler = new PtyHandler(dispatcher as unknown as RelayDispatcher)
+    let dataCallback: ((data: string) => void) | undefined
+    mockPtySpawn.mockReturnValue({
+      ...mockPtyInstance,
+      onData: vi.fn((callback: (data: string) => void) => {
+        dataCallback = callback
+      }),
+      onExit: vi.fn()
+    })
+    await dispatcher.callRequest('pty.spawn', {
+      startupIngressVersion: PTY_STARTUP_INGRESS_VERSION,
+      startupIngress: {
+        colors: { foreground: '#2e3434', background: '#ffffff' },
+        deadlineMs: 5_000
+      }
+    })
+
+    const query = '\x1b]10;?\x07'
+    dataCallback?.(query)
+    dataCallback?.('fresh')
+    hasCapacity = true
+    await vi.runAllTimersAsync()
+
+    expect(tryNotifyPtyData).toHaveBeenCalledTimes(3)
+    expect(admitted).toEqual([
+      {
+        id: 'pty-1',
+        data: '',
+        rawLength: query.length,
+        seq: query.length,
+        transformed: true
+      },
+      { id: 'pty-1', data: 'fresh' }
+    ])
+  })
+
   it('leaves startup queries untouched for an unsupported relay capability version', async () => {
     const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
     Object.defineProperty(process, 'platform', { configurable: true, value: 'linux' })
