@@ -89,12 +89,12 @@ not prove headed or headless paired-runtime behavior, WSL, Windows ConPTY or
 named pipes, local daemon/provider behavior, folder workspaces, prior-version
 processes, mixed-version clients, or the Ubuntu 20.04 packaging floor.
 
-The exact-current-code Docker rerun rebuilt the E2E main bundle and all relay
-targets immediately before execution. It is bound to code commit
-`5611bb45b51abe0b35d5bedc66124f158cfdcdc7`, tree
-`8e85c3afedec23f94cb3ff89b75c378ddd0e4ec7`, main bundle SHA-256
-`cbaf4e997d74bbe0ae1179bc20e52b122c60f0b56ee49ca607e12ae4125a4342`,
-and Linux-x64 relay SHA-256
+The final exact-code Docker rerun rebuilt the E2E main bundle and all relay
+targets immediately before execution. It is bound to implementation commit
+`7327640d3a2b1f0d6aa11a3e8c0fc2dea7f63c8d`, tree
+`137109283b5d72015b243d0ebe30edee52525e9c`, main bundle SHA-256
+`c1b3bfcfef07638ff35bfa19422dc5b67df582c6fe8e353c61f0a218de70d4bf`,
+and deployed Linux-x64 relay SHA-256
 `a7438fc47c4da0223ceaafab621086e14b6cdee427f53a3bf2e710fa99bcf2e6`.
 No additional live topology proof is inferred from that run.
 
@@ -378,7 +378,15 @@ failures without widening the approved topology:
 | A superseded transfer lost its cancellation authority                        | Keep the outer lease unsettled until transfer ownership is verified; a stale transfer can still roll back and request cancellation for its exact token.                              |
 | Recovery proof watermark skipped rejected or post-restore frames             | Observe every exact-token private frame before retention or restore checks and reject any cancellation proof whose sent end is below that immutable high-water.                      |
 | Canceled-token tombstones grew once per token                                | Retain only the latest ordered canceled token per relay PTY, replace it on later cancellation, and clear it at exact next-activation, PTY-exit, or provider-teardown boundaries.     |
+| Reconnect checkpoint raced a running raw model callback                      | Freeze the exact provider-generation/PTy admission, cancel only queued work, and await the bounded running callback before exporting a checkpoint.                                   |
+| Migration-owned callback failure closed the shared provider                  | Contain failure to the exact migrating PTY, reset only its model, preserve siblings and transport, and retain the ordinary generation-fatal policy outside migration.                |
 | Closed-generation telemetry omitted active gaps                              | Compact exact closed ranges and expose the count of allocated but unclosed provider generations below the closed high-water.                                                         |
+
+The final exact-implementation-head architecture/lifecycle review was clean
+across 27 files and 296 tests. The transport/topology review confirmed the
+exact-PTY containment fix and found no remaining code blocker; its sole
+evidence finding was the stale artifact record replaced by the
+provenance-bound build and Docker run above.
 
 The common state machine accepts only:
 
@@ -2500,13 +2508,13 @@ at exactly 262,144 held source units; fixed-size filesystem/Git churn was
 141.2/151.5 ms with 95 bulk reads; reconnect completed in 16.0 seconds. All
 other live topologies remain separate.
 
-After the final lifecycle fixes and rebase, `electron-vite build --mode e2e`
-and `pnpm run build:relay` produced the exact artifact hashes recorded above.
-The four-case Docker command then passed in 1.0 minute: direct typing was
-3.7/109.1 ms median/worst; ACK-stalled typing was 5.1/109.7 ms at exactly
-262,144 held source units; fixed-size filesystem/Git churn was 144.9/153.2 ms
-with 104 bulk reads; reconnect completed in 15.8 seconds. This is direct
-SSH/deployed Linux relay evidence only.
+After the exact-PTY migration-failure containment fix,
+`electron-vite build --mode e2e` and `pnpm run build:relay` produced the exact
+artifact hashes recorded above. The four-case Docker command then passed in
+1.0 minute: direct typing was 4.1/107.6 ms median/worst; ACK-stalled typing was
+3.5/4.2 ms at exactly 262,144 held source units; fixed-size filesystem/Git
+churn was 140.5/147.8 ms with 108 bulk reads; reconnect completed in
+15.4 seconds. This is direct SSH/deployed Linux relay evidence only.
 
 At the current working tree, the source/intake slice passed 12 files and 205
 tests, the provider/session slice passed 16 files and 192 tests, and this
@@ -2828,7 +2836,9 @@ Implementation and rollout stages:
 4. Current-head deterministic reconciliation and focused integrated-fix checks
    are complete. The isolated reconnect and final four-case direct-SSH Docker
    runs, full repository typecheck, and full lint/reliability suite are green;
-   final exact-head review remains before merge readiness.
+   final exact-implementation-head architecture and transport reviews found no
+   code blocker, and the transport review's stale-provenance finding is closed
+   by the exact artifact record above.
 5. Run an internal same-build canary comparing gate-off and V1 sink,
    model-admission, latency, sealed-exit, recovery, and reconnect metrics while
    separately counting orphan prior-version daemons;
