@@ -3407,7 +3407,10 @@ function manuallyDisconnectedResponse(
     ok: false,
     error: {
       code: 'runtime_manually_disconnected',
-      message: 'Runtime environment is manually disconnected.'
+      message: translate(
+        'auto.web.webPreloadApi.runtimeEnvironmentManuallyDisconnected',
+        'Runtime environment is manually disconnected.'
+      )
     },
     _meta: { runtimeId: environment.runtimeId }
   }
