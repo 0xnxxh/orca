@@ -42,6 +42,7 @@ import {
   type MobileWebNativeChatSendResult,
   type MobileWebNativeChatStopPayload
 } from '../../shared/mobile-web/native-chat-operation-contract'
+import { MobileWebBridgeClientError } from './mobile-web-bridge-client-error'
 import type { MobileWebOneShotRequestClient } from './mobile-web-one-shot-request-client'
 import type { MobileWebBridgeRequestOptions } from './mobile-web-bridge-request-state'
 
@@ -49,13 +50,25 @@ export class MobileWebNativeChatRequestClient {
   constructor(private readonly requests: MobileWebOneShotRequestClient) {}
 
   read(payload: MobileWebNativeChatReadPayload): Promise<MobileWebNativeChatReadResult> {
-    return this.requests.request(
-      'nativeChat',
-      'read',
-      payload,
-      MobileWebNativeChatReadPayloadSchema,
-      MobileWebNativeChatReadResultSchema
-    )
+    return this.requests
+      .request(
+        'nativeChat',
+        'read',
+        payload,
+        MobileWebNativeChatReadPayloadSchema,
+        MobileWebNativeChatReadResultSchema
+      )
+      .then((result) => {
+        if (
+          result.messages.length > payload.limit ||
+          (result.hasMore &&
+            (result.beforeOffset === undefined ||
+              (payload.beforeOffset !== undefined && result.beforeOffset >= payload.beforeOffset)))
+        ) {
+          throw new MobileWebBridgeClientError('invalid_message', false)
+        }
+        return result
+      })
   }
 
   sendMessage(

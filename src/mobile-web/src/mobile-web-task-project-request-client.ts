@@ -25,6 +25,7 @@ import {
   type MobileWebTaskProjectRef,
   type MobileWebTaskProjectResolvePayload
 } from '../../shared/mobile-web/task-project-read-contract'
+import { MobileWebBridgeClientError } from './mobile-web-bridge-client-error'
 import type { MobileWebOneShotRequestClient } from './mobile-web-one-shot-request-client'
 import type { ZodType } from 'zod'
 import {
@@ -72,13 +73,20 @@ export class MobileWebTaskProjectRequestClient {
   constructor(protected readonly requests: MobileWebOneShotRequestClient) {}
 
   listProjects(payload: { host: string }) {
-    return this.requests.request(
-      'task',
-      'listProjects',
-      payload,
-      MobileWebTaskProjectListPayloadSchema,
-      MobileWebTaskProjectListResultSchema
-    )
+    return this.requests
+      .request(
+        'task',
+        'listProjects',
+        payload,
+        MobileWebTaskProjectListPayloadSchema,
+        MobileWebTaskProjectListResultSchema
+      )
+      .then((result) => {
+        if (result.projects.some((project) => project.host !== payload.host)) {
+          throw new MobileWebBridgeClientError('invalid_message', false)
+        }
+        return result
+      })
   }
 
   listProjectViews(payload: MobileWebTaskProjectRef) {
@@ -92,23 +100,40 @@ export class MobileWebTaskProjectRequestClient {
   }
 
   resolveProjectRef(payload: MobileWebTaskProjectResolvePayload) {
-    return this.requests.request(
-      'task',
-      'resolveProjectRef',
-      payload,
-      MobileWebTaskProjectResolvePayloadSchema,
-      MobileWebTaskProjectResolveResultSchema
-    )
+    return this.requests
+      .request(
+        'task',
+        'resolveProjectRef',
+        payload,
+        MobileWebTaskProjectResolvePayloadSchema,
+        MobileWebTaskProjectResolveResultSchema
+      )
+      .then((result) => {
+        if (result.host !== undefined && result.host !== payload.host) {
+          throw new MobileWebBridgeClientError('invalid_message', false)
+        }
+        return result
+      })
   }
 
   projectTablePage(payload: MobileWebTaskProjectTablePayload) {
-    return this.requests.request(
-      'task',
-      'projectTable',
-      payload,
-      MobileWebTaskProjectTablePayloadSchema,
-      MobileWebTaskProjectTablePageResultSchema
-    )
+    return this.requests
+      .request(
+        'task',
+        'projectTable',
+        payload,
+        MobileWebTaskProjectTablePayloadSchema,
+        MobileWebTaskProjectTablePageResultSchema
+      )
+      .then((result) => {
+        if (
+          (result.project && !sameProject(result.project, payload)) ||
+          (result.selectedView && result.selectedView.id !== payload.viewId)
+        ) {
+          throw new MobileWebBridgeClientError('invalid_message', false)
+        }
+        return result
+      })
   }
 
   loadProjectItemDetail(payload: MobileWebTaskProjectItemDetailPayload) {
@@ -284,4 +309,16 @@ export class MobileWebTaskProjectRequestClient {
       MobileWebTaskProjectCommentAddResultSchema
     )
   }
+}
+
+function sameProject(
+  result: { owner: string; ownerType: string; number: number; host?: string },
+  payload: MobileWebTaskProjectTablePayload
+): boolean {
+  return (
+    result.owner === payload.owner &&
+    result.ownerType === payload.ownerType &&
+    result.number === payload.number &&
+    (result.host ?? 'github.com') === (payload.host ?? 'github.com')
+  )
 }

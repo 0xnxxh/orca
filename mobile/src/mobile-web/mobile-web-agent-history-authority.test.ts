@@ -16,12 +16,14 @@ describe('mobile web agent-history authority', () => {
     expect(firstHandle).not.toContain(first.id)
     expect(firstHandle).not.toContain(first.filePath)
     expect(authority.hostSession(firstHandle)).toEqual(first)
+    expect(() => authority.assertSession(firstHandle, first)).not.toThrow()
 
     const refreshed = { ...first, title: 'Refreshed title' }
     authority.synchronize([refreshed])
 
     expect(authority.pageHandle(first.id)).toBe(firstHandle)
     expect(authority.hostSession(firstHandle)).toEqual(refreshed)
+    expect(() => authority.assertSession(firstHandle, first)).toThrow('conflict')
     expect(() => authority.hostSession(secondHandle)).toThrow()
   })
 
@@ -34,6 +36,7 @@ describe('mobile web agent-history authority', () => {
     authority.clear()
 
     expect(() => authority.hostSession(handle)).toThrow()
+    expect(() => authority.assertSession(handle, value)).toThrow('not_found')
   })
 
   it('rejects an invalid random-byte source', () => {

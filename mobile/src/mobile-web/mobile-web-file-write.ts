@@ -25,6 +25,7 @@ export async function executeMobileWebFileWrite(
   } catch {
     throw new MobileWebBrokerError('conflict')
   }
+  workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
   const response = await client.sendRequest('files.writeIfUnchanged', {
     worktree: `id:${hostWorkspaceId}`,
     relativePath: payload.relativePath,

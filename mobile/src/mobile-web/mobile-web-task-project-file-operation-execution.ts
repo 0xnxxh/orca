@@ -47,6 +47,7 @@ export async function executeMobileWebTaskProjectFileOperation(args: {
     identifiers.repoId,
     fresh.item
   )
+  args.targetAuthority.assertGitHubProjectTarget(identifiers.targetId, target)
   const operations = nativeHostTaskProjectFileOperations(args.client)
   if (args.operation === 'refreshProjectChecks') {
     const payload = MobileWebTaskProjectChecksPayloadSchema.parse(args.payload)

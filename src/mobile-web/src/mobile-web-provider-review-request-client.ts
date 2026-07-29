@@ -86,6 +86,7 @@ export class MobileWebProviderReviewRequestClient {
           result.reviewNumber !== payload.reviewNumber ||
           result.reviewHead !== payload.expectedReviewHead ||
           result.path !== payload.path ||
+          (result.kind === 'text' && result.rows.length > payload.limit) ||
           !diffPageMatchesPayload(result, payload)
         ) {
           throw new MobileWebBridgeClientError('invalid_message', false)

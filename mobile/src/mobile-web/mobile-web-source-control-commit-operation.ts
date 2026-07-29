@@ -17,6 +17,7 @@ export async function executeMobileWebSourceControlCommit(
   const payload = MobileWebSourceControlCommitPayloadSchema.parse(input)
   const hostWorkspaceId = workspaceAuthority.hostWorkspaceId(payload.workspaceId)
   await assertFreshMobileWebCommitSnapshot(client, payload, hostWorkspaceId)
+  workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
   const response = await client.sendRequest('git.commit', {
     worktree: `id:${hostWorkspaceId}`,
     message: payload.message.trim()

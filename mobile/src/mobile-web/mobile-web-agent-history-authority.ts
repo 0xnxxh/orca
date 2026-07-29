@@ -44,6 +44,12 @@ export class MobileWebAgentHistoryAuthority {
     return session
   }
 
+  assertSession(handle: string, expected: AiVaultSession): void {
+    if (JSON.stringify(this.hostSession(handle)) !== JSON.stringify(expected)) {
+      throw new MobileWebBrokerError('conflict')
+    }
+  }
+
   clear(): void {
     this.handleByHostSessionId.clear()
     this.hostSessionByHandle.clear()

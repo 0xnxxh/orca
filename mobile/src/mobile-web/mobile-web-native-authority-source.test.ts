@@ -18,4 +18,11 @@ describe('mobile web native authority source boundaries', () => {
     expect(chatMessage).toContain('await onCopyText(text)')
     expect(chatMessage).not.toContain('expo-clipboard')
   })
+
+  it('keys hosted native state to paired cryptographic identity', () => {
+    const hybridRoute = readFileSync(new URL('../../app/hybrid.tsx', import.meta.url), 'utf8')
+
+    expect(hybridRoute).toContain('hostIdentity: selectedHost.publicKeyB64')
+    expect(hybridRoute).not.toContain('hostIdentity: selectedHost.id')
+  })
 })

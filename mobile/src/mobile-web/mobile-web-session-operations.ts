@@ -144,6 +144,7 @@ export async function executeMobileWebSessionOperation(args: {
     if (!selectedAgent) {
       throw new MobileWebBrokerError('invalid_request')
     }
+    args.workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
     const response = await args.client.sendRequest('session.tabs.createTerminal', {
       worktree: `id:${hostWorkspaceId}`,
       agent: selectedAgent.agent,

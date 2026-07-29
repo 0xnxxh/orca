@@ -94,6 +94,7 @@ async function checkoutBranch(
   ) {
     throw new MobileWebBrokerError('conflict')
   }
+  workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
   await requireSuccessfulWrite(
     client.sendRequest('git.checkout', {
       worktree: `id:${hostWorkspaceId}`,
@@ -118,6 +119,7 @@ async function fetchRepository(
   const payload = MobileWebSourceControlFetchPayloadSchema.parse(input)
   const hostWorkspaceId = workspaceAuthority.hostWorkspaceId(payload.workspaceId)
   const previous = await preflightIdentity(client, payload, hostWorkspaceId)
+  workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
   await requireSuccessfulWrite(
     client.sendRequest('git.fetch', { worktree: `id:${hostWorkspaceId}` })
   )
@@ -142,6 +144,7 @@ async function pullRepository(
   ) {
     throw new MobileWebBrokerError('conflict')
   }
+  workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
   await requireSuccessfulWrite(
     client.sendRequest(payload.strategy === 'fast-forward' ? 'git.fastForward' : 'git.pull', {
       worktree: `id:${hostWorkspaceId}`
@@ -167,6 +170,7 @@ async function pushRepository(
   ) {
     throw new MobileWebBrokerError('conflict')
   }
+  workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
   await requireSuccessfulWrite(
     client.sendRequest('git.push', {
       worktree: `id:${hostWorkspaceId}`,
@@ -188,6 +192,7 @@ async function rebaseRepository(
   if (previous.baseRef !== payload.baseRef) {
     throw new MobileWebBrokerError('conflict')
   }
+  workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
   await requireSuccessfulWrite(
     client.sendRequest('git.rebaseFromBase', {
       worktree: `id:${hostWorkspaceId}`,
@@ -208,6 +213,7 @@ async function abortConflictOperation(
   if (previous.conflictOperation !== payload.conflictOperation) {
     throw new MobileWebBrokerError('conflict')
   }
+  workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
   await requireSuccessfulWrite(
     client.sendRequest(
       payload.conflictOperation === 'merge' ? 'git.abortMerge' : 'git.abortRebase',

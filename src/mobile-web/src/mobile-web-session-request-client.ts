@@ -38,6 +38,7 @@ import {
   type MobileWebQuickCommandSnapshotPayload,
   type MobileWebQuickCommandSnapshotResult
 } from '../../shared/mobile-web/session-quick-command-contract'
+import { MobileWebBridgeClientError } from './mobile-web-bridge-client-error'
 import type { MobileWebOneShotRequestClient } from './mobile-web-one-shot-request-client'
 
 export class MobileWebSessionRequestClient {
@@ -56,33 +57,45 @@ export class MobileWebSessionRequestClient {
   }
 
   snapshot(payload: MobileWebSessionSnapshotPayload): Promise<MobileWebSessionSnapshotResult> {
-    return this.requests.request(
-      'session',
-      'snapshot',
-      payload,
-      MobileWebSessionSnapshotPayloadSchema,
-      MobileWebSessionSnapshotResultSchema
-    )
+    return this.requests
+      .request(
+        'session',
+        'snapshot',
+        payload,
+        MobileWebSessionSnapshotPayloadSchema,
+        MobileWebSessionSnapshotResultSchema
+      )
+      .then((result) => matchingWorkspace(payload, result))
   }
 
   activate(payload: MobileWebSessionTabActionPayload): Promise<MobileWebSessionSnapshotResult> {
-    return this.requests.request(
-      'session',
-      'activate',
-      payload,
-      MobileWebSessionTabActionPayloadSchema,
-      MobileWebSessionSnapshotResultSchema
-    )
+    return this.requests
+      .request(
+        'session',
+        'activate',
+        payload,
+        MobileWebSessionTabActionPayloadSchema,
+        MobileWebSessionSnapshotResultSchema
+      )
+      .then((result) => {
+        matchingWorkspace(payload, result)
+        if (result.activeTabId !== payload.tabId) {
+          throw new MobileWebBridgeClientError('invalid_message', false)
+        }
+        return result
+      })
   }
 
   create(payload: MobileWebSessionCreatePayload): Promise<MobileWebSessionCreateResult> {
-    return this.requests.request(
-      'session',
-      'create',
-      payload,
-      MobileWebSessionCreatePayloadSchema,
-      MobileWebSessionCreateResultSchema
-    )
+    return this.requests
+      .request(
+        'session',
+        'create',
+        payload,
+        MobileWebSessionCreatePayloadSchema,
+        MobileWebSessionCreateResultSchema
+      )
+      .then((result) => matchingWorkspace(payload, result))
   }
 
   agentOptions(
@@ -98,13 +111,15 @@ export class MobileWebSessionRequestClient {
   }
 
   createAgent(payload: MobileWebSessionCreateAgentPayload): Promise<MobileWebSessionCreateResult> {
-    return this.requests.request(
-      'session',
-      'createAgent',
-      payload,
-      MobileWebSessionCreateAgentPayloadSchema,
-      MobileWebSessionCreateResultSchema
-    )
+    return this.requests
+      .request(
+        'session',
+        'createAgent',
+        payload,
+        MobileWebSessionCreateAgentPayloadSchema,
+        MobileWebSessionCreateResultSchema
+      )
+      .then((result) => matchingWorkspace(payload, result))
   }
 
   quickCommands(
@@ -134,34 +149,56 @@ export class MobileWebSessionRequestClient {
   createQuickCommand(
     payload: MobileWebQuickCommandLaunchPayload
   ): Promise<MobileWebQuickCommandLaunchResult> {
-    return this.requests.request(
-      'session',
-      'createQuickCommand',
-      payload,
-      MobileWebQuickCommandLaunchPayloadSchema,
-      MobileWebQuickCommandLaunchResultSchema
-    )
+    return this.requests
+      .request(
+        'session',
+        'createQuickCommand',
+        payload,
+        MobileWebQuickCommandLaunchPayloadSchema,
+        MobileWebQuickCommandLaunchResultSchema
+      )
+      .then((result) => matchingWorkspace(payload, result))
   }
 
   createBrowser(
     payload: MobileWebSessionBrowserCreatePayload
   ): Promise<MobileWebSessionBrowserCreateResult> {
-    return this.requests.request(
-      'session',
-      'createBrowser',
-      payload,
-      MobileWebSessionBrowserCreatePayloadSchema,
-      MobileWebSessionBrowserCreateResultSchema
-    )
+    return this.requests
+      .request(
+        'session',
+        'createBrowser',
+        payload,
+        MobileWebSessionBrowserCreatePayloadSchema,
+        MobileWebSessionBrowserCreateResultSchema
+      )
+      .then((result) => matchingWorkspace(payload, result))
   }
 
   close(payload: MobileWebSessionTabActionPayload): Promise<MobileWebSessionCloseResult> {
-    return this.requests.request(
-      'session',
-      'close',
-      payload,
-      MobileWebSessionTabActionPayloadSchema,
-      MobileWebSessionCloseResultSchema
-    )
+    return this.requests
+      .request(
+        'session',
+        'close',
+        payload,
+        MobileWebSessionTabActionPayloadSchema,
+        MobileWebSessionCloseResultSchema
+      )
+      .then((result) => {
+        matchingWorkspace(payload, result)
+        if (result.tabId !== payload.tabId) {
+          throw new MobileWebBridgeClientError('invalid_message', false)
+        }
+        return result
+      })
   }
+}
+
+function matchingWorkspace<TResult extends { workspaceId: string }>(
+  payload: { workspaceId: string },
+  result: TResult
+): TResult {
+  if (result.workspaceId !== payload.workspaceId) {
+    throw new MobileWebBridgeClientError('invalid_message', false)
+  }
+  return result
 }

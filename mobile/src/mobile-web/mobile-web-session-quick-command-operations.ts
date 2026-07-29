@@ -39,6 +39,7 @@ export async function executeMobileWebSessionQuickCommandOperation(args: {
     const hostWorkspaceId = args.workspaceAuthority.hostWorkspaceId(payload.workspaceId)
     const commands = await readQuickCommands(args.client)
     const mutation = hostMutation(payload.mutation, commands, hostWorkspaceId, payload.workspaceId)
+    args.workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
     const response = await args.client.sendRequest('settings.updateTerminalQuickCommands', {
       mutation
     })
@@ -62,7 +63,8 @@ export async function executeMobileWebSessionQuickCommandOperation(args: {
       command,
       hostWorkspaceId,
       pageWorkspaceId: payload.workspaceId,
-      requestId: args.requestId
+      requestId: args.requestId,
+      workspaceAuthority: args.workspaceAuthority
     })
   }
   throw new MobileWebBrokerError('unsupported_capability')
@@ -162,6 +164,7 @@ async function launchQuickCommand(args: {
   hostWorkspaceId: string
   pageWorkspaceId: string
   requestId: string
+  workspaceAuthority: MobileWebWorkspaceAuthority
 }) {
   const createParams: Record<string, unknown> = {
     worktree: `id:${args.hostWorkspaceId}`,
@@ -192,6 +195,7 @@ async function launchQuickCommand(args: {
       successToast: `${args.command.label.trim() || 'Quick command'} inserted`
     }
   }
+  args.workspaceAuthority.assertHostWorkspaceBinding(args.pageWorkspaceId, args.hostWorkspaceId)
   const response = await args.client.sendRequest('session.tabs.createTerminal', createParams)
   if (!response.ok || typeof (response.result as { tab?: { id?: unknown } }).tab?.id !== 'string') {
     throw new MobileWebBrokerError('host_error')

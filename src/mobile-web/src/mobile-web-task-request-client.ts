@@ -49,6 +49,7 @@ import {
   type MobileWebTaskGitLabTodosPayload,
   type MobileWebTaskLinearListPayload
 } from '../../shared/mobile-web/task-list-contract'
+import { MobileWebBridgeClientError } from './mobile-web-bridge-client-error'
 import type { MobileWebOneShotRequestClient } from './mobile-web-one-shot-request-client'
 import { MobileWebTaskProviderRequestClient } from './mobile-web-task-provider-request-client'
 
@@ -118,13 +119,15 @@ export class MobileWebTaskRequestClient extends MobileWebTaskProviderRequestClie
   }
 
   listGitHub(payload: MobileWebTaskGitHubListPayload) {
-    return this.requests.request(
-      'task',
-      'listGitHub',
-      payload,
-      MobileWebTaskGitHubListPayloadSchema,
-      MobileWebTaskGitHubListResultSchema
-    )
+    return this.requests
+      .request(
+        'task',
+        'listGitHub',
+        payload,
+        MobileWebTaskGitHubListPayloadSchema,
+        MobileWebTaskGitHubListResultSchema
+      )
+      .then((result) => matchingItemLimit(payload.limit, result))
   }
 
   countGitHub(payload: MobileWebTaskGitHubCountPayload) {
@@ -138,13 +141,15 @@ export class MobileWebTaskRequestClient extends MobileWebTaskProviderRequestClie
   }
 
   listGitLab(payload: MobileWebTaskGitLabListPayload) {
-    return this.requests.request(
-      'task',
-      'listGitLab',
-      payload,
-      MobileWebTaskGitLabListPayloadSchema,
-      MobileWebTaskGitLabListResultSchema
-    )
+    return this.requests
+      .request(
+        'task',
+        'listGitLab',
+        payload,
+        MobileWebTaskGitLabListPayloadSchema,
+        MobileWebTaskGitLabListResultSchema
+      )
+      .then((result) => matchingItemLimit(payload.perPage, result))
   }
 
   listGitLabTodos(payload: MobileWebTaskGitLabTodosPayload) {
@@ -158,13 +163,15 @@ export class MobileWebTaskRequestClient extends MobileWebTaskProviderRequestClie
   }
 
   listLinear(payload: MobileWebTaskLinearListPayload) {
-    return this.requests.request(
-      'task',
-      'listLinear',
-      payload,
-      MobileWebTaskLinearListPayloadSchema,
-      MobileWebTaskLinearListResultSchema
-    )
+    return this.requests
+      .request(
+        'task',
+        'listLinear',
+        payload,
+        MobileWebTaskLinearListPayloadSchema,
+        MobileWebTaskLinearListResultSchema
+      )
+      .then((result) => matchingItemLimit(payload.limit, result))
   }
 
   listGitHubLabels(payload: { repoId: string }) {
@@ -208,12 +215,29 @@ export class MobileWebTaskRequestClient extends MobileWebTaskProviderRequestClie
   }
 
   loadLinearDetail(payload: MobileWebTaskLinearDetailPayload) {
-    return this.requests.request(
-      'task',
-      'loadLinearDetail',
-      payload,
-      MobileWebTaskLinearDetailPayloadSchema,
-      MobileWebTaskLinearDetailResultSchema
-    )
+    return this.requests
+      .request(
+        'task',
+        'loadLinearDetail',
+        payload,
+        MobileWebTaskLinearDetailPayloadSchema,
+        MobileWebTaskLinearDetailResultSchema
+      )
+      .then((result) => {
+        if (result.issue.targetId !== payload.targetId) {
+          throw new MobileWebBridgeClientError('invalid_message', false)
+        }
+        return result
+      })
   }
+}
+
+function matchingItemLimit<TResult extends { items: unknown[] }>(
+  limit: number,
+  result: TResult
+): TResult {
+  if (result.items.length > limit) {
+    throw new MobileWebBridgeClientError('invalid_message', false)
+  }
+  return result
 }

@@ -150,6 +150,7 @@ async function executeMutation(
     expectedHead: payload.expectedHead,
     entries: payload.entries
   })
+  workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
 
   const relativePaths = payload.entries.map((entry) => entry.relativePath)
   const bulk = relativePaths.length > 1

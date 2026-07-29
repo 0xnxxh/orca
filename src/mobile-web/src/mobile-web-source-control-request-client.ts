@@ -72,7 +72,12 @@ export class MobileWebSourceControlRequestClient {
         MobileWebSourceControlStatusResultSchema,
         options
       )
-      .then((result) => matchingIdentity(payload, result))
+      .then((result) => {
+        if (result.entries.length > payload.limit) {
+          throw new MobileWebBridgeClientError('invalid_message', false)
+        }
+        return matchingIdentity(payload, result)
+      })
   }
 
   diff(
@@ -89,7 +94,15 @@ export class MobileWebSourceControlRequestClient {
         options
       )
       .then((result) => {
-        if (result.relativePath !== payload.relativePath || result.area !== payload.area) {
+        if (
+          result.relativePath !== payload.relativePath ||
+          result.area !== payload.area ||
+          (result.kind === 'text' &&
+            (result.offset !== payload.offset ||
+              result.rows.length > payload.limit ||
+              (payload.expectedRevision !== undefined &&
+                result.revision !== payload.expectedRevision)))
+        ) {
           throw new MobileWebBridgeClientError('invalid_message', false)
         }
         return matchingIdentity(payload, result)
@@ -125,7 +138,12 @@ export class MobileWebSourceControlRequestClient {
         MobileWebSourceControlHistoryResultSchema,
         options
       )
-      .then((result) => matchingIdentity(payload, result))
+      .then((result) => {
+        if (result.limit !== payload.limit || result.items.length > payload.limit) {
+          throw new MobileWebBridgeClientError('invalid_message', false)
+        }
+        return matchingIdentity(payload, result)
+      })
   }
 
   branchCompare(
@@ -145,6 +163,7 @@ export class MobileWebSourceControlRequestClient {
         if (
           result.baseRef !== payload.baseRef ||
           result.offset !== payload.offset ||
+          result.entries.length > payload.limit ||
           (payload.expectedRevision && result.revision !== payload.expectedRevision)
         ) {
           throw new MobileWebBridgeClientError('invalid_message', false)

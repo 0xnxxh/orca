@@ -65,7 +65,7 @@ export class MobileWebFileRequestClient {
         MobileWebFileListResultSchema,
         options
       )
-      .then((result) => matchingWorkspace(payload.workspaceId, result))
+      .then((result) => matchingFileList(payload, result))
   }
 
   search(
@@ -81,7 +81,7 @@ export class MobileWebFileRequestClient {
         MobileWebFileListResultSchema,
         options
       )
-      .then((result) => matchingWorkspace(payload.workspaceId, result))
+      .then((result) => matchingFileList(payload, result))
   }
 
   directory(
@@ -97,7 +97,12 @@ export class MobileWebFileRequestClient {
         MobileWebFileDirectoryResultSchema,
         options
       )
-      .then((result) => matchingFile(payload, result))
+      .then((result) => {
+        if (result.entries.length > payload.limit) {
+          throw new MobileWebBridgeClientError('invalid_message', false)
+        }
+        return matchingFile(payload, result)
+      })
   }
 
   read(
@@ -143,7 +148,7 @@ export class MobileWebFileRequestClient {
       )
       .then(decodeMobileWebFileChunk)
       .then((result) => {
-        if (result.offset !== payload.offset) {
+        if (result.offset !== payload.offset || result.bytesRead > payload.length) {
           throw new MobileWebBridgeClientError('invalid_message', false)
         }
         return matchingFile(payload, result)
@@ -257,6 +262,16 @@ function matchingWorkspace<TResult extends { workspaceId: string }>(
     throw new MobileWebBridgeClientError('invalid_message', false)
   }
   return result
+}
+
+function matchingFileList(
+  payload: MobileWebFileListPayload | MobileWebFileSearchPayload,
+  result: MobileWebFileListResult
+): MobileWebFileListResult {
+  if (result.files.length > payload.limit) {
+    throw new MobileWebBridgeClientError('invalid_message', false)
+  }
+  return matchingWorkspace(payload.workspaceId, result)
 }
 
 function matchingFile<

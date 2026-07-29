@@ -55,7 +55,9 @@ export function sessionSubscriptionSetup(
     capability: 'session',
     payload,
     payloadSchema: MobileWebSessionSubscribePayloadSchema,
-    eventSchema: MobileWebSessionSnapshotResultSchema,
+    eventSchema: MobileWebSessionSnapshotResultSchema.refine(
+      (event) => event.workspaceId === payload.workspaceId
+    ),
     onEvent: (value) => onEvent(value as MobileWebSessionSnapshotResult),
     onError
   }

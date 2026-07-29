@@ -105,6 +105,12 @@ export class MobileWebTaskTargetAuthority {
     throw new MobileWebBrokerError('not_found')
   }
 
+  assertHostedTarget(pageId: string, expected: MobileWebHostedTaskTarget): void {
+    if (hostedTargetKey(this.resolveHosted(pageId)) !== hostedTargetKey(expected)) {
+      throw new MobileWebBrokerError('conflict')
+    }
+  }
+
   registerLinear(target: MobileWebLinearTaskTarget): string {
     const key = `linear:${JSON.stringify(target)}`
     const current = this.pageIdByTargetKey.get(key)
@@ -128,6 +134,12 @@ export class MobileWebTaskTargetAuthority {
     return { ...target }
   }
 
+  assertLinearTarget(pageId: string, expected: MobileWebLinearTaskTarget): void {
+    if (linearTargetKey(this.resolveLinear(pageId)) !== linearTargetKey(expected)) {
+      throw new MobileWebBrokerError('conflict')
+    }
+  }
+
   registerGitHubProject(target: MobileWebGitHubProjectTaskTarget): string {
     return this.register(`github-project:${JSON.stringify(target)}`, target)
   }
@@ -138,6 +150,12 @@ export class MobileWebTaskTargetAuthority {
       throw new MobileWebBrokerError('not_found')
     }
     return { ...target }
+  }
+
+  assertGitHubProjectTarget(pageId: string, expected: MobileWebGitHubProjectTaskTarget): void {
+    if (projectTargetKey(this.resolveGitHubProject(pageId)) !== projectTargetKey(expected)) {
+      throw new MobileWebBrokerError('conflict')
+    }
   }
 
   clear(): void {
@@ -191,4 +209,16 @@ function copyGitLabTarget(target: MobileWebGitLabTaskTarget): MobileWebGitLabTas
     ...target,
     projectRef: target.projectRef ? { ...target.projectRef } : undefined
   }
+}
+
+function hostedTargetKey(target: MobileWebHostedTaskTarget): string {
+  return `${target.provider}:${JSON.stringify(target)}`
+}
+
+function linearTargetKey(target: MobileWebLinearTaskTarget): string {
+  return JSON.stringify(target)
+}
+
+function projectTargetKey(target: MobileWebGitHubProjectTaskTarget): string {
+  return JSON.stringify(target)
 }

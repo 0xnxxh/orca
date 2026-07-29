@@ -20,6 +20,7 @@ import {
   type MobileWebTaskLinearSubIssuePayload,
   type MobileWebTaskLinearWorkspacePayload
 } from '../../shared/mobile-web/task-linear-contract'
+import { MobileWebBridgeClientError } from './mobile-web-bridge-client-error'
 import type { MobileWebOneShotRequestClient } from './mobile-web-one-shot-request-client'
 import { MobileWebTaskItemRequestClient } from './mobile-web-task-item-request-client'
 
@@ -85,13 +86,20 @@ export class MobileWebTaskLinearRequestClient extends MobileWebTaskItemRequestCl
   }
 
   loadLinearIssue(payload: { targetId: string }) {
-    return this.requests.request(
-      'task',
-      'loadLinearIssue',
-      payload,
-      MobileWebTaskLinearTargetPayloadSchema,
-      MobileWebTaskLinearIssueResultSchema
-    )
+    return this.requests
+      .request(
+        'task',
+        'loadLinearIssue',
+        payload,
+        MobileWebTaskLinearTargetPayloadSchema,
+        MobileWebTaskLinearIssueResultSchema
+      )
+      .then((result) => {
+        if (result.issue.targetId !== payload.targetId) {
+          throw new MobileWebBridgeClientError('invalid_message', false)
+        }
+        return result
+      })
   }
 
   createLinearSubIssue(payload: MobileWebTaskLinearSubIssuePayload) {

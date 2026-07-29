@@ -45,6 +45,7 @@ export async function executeMobileWebBrowserOperation(args: {
         x: payload.x,
         y: payload.y
       })
+      assertTarget(payload, target, args.workspaceAuthority, args.browserAuthority)
       await requireRequest(args.client, 'browser.mouseWheel', {
         ...target,
         dx: payload.dx,
@@ -65,15 +66,18 @@ export async function executeMobileWebBrowserOperation(args: {
       { timeoutMs: 5_000 }
     )
     if (!click.ok && payload.modifiers.length === 0) {
+      assertTarget(payload, target, args.workspaceAuthority, args.browserAuthority)
       await requireRequest(args.client, 'browser.mouseMove', {
         ...target,
         x: payload.x,
         y: payload.y
       })
+      assertTarget(payload, target, args.workspaceAuthority, args.browserAuthority)
       await requireRequest(args.client, 'browser.mouseDown', {
         ...target,
         button: payload.button
       })
+      assertTarget(payload, target, args.workspaceAuthority, args.browserAuthority)
       await requireRequest(args.client, 'browser.mouseUp', {
         ...target,
         button: payload.button
@@ -112,6 +116,18 @@ export async function executeMobileWebBrowserOperation(args: {
     return MobileWebBrowserCommandResultSchema.parse(null)
   }
   throw new MobileWebBrokerError('unsupported_capability')
+}
+
+function assertTarget(
+  payload: { workspaceId: string; pageId: string },
+  expected: { worktree: string; page: string },
+  workspaceAuthority: MobileWebWorkspaceAuthority,
+  browserAuthority: MobileWebBrowserAuthority
+): void {
+  const current = resolveTarget(payload, workspaceAuthority, browserAuthority)
+  if (current.worktree !== expected.worktree || current.page !== expected.page) {
+    throw new MobileWebBrokerError('conflict')
+  }
 }
 
 function resolveTarget(

@@ -80,10 +80,22 @@ export class MobileWebAgentHistoryResume {
         hostTerminalWindowsShell: readMobileRuntimeTerminalWindowsShell(hostStatus),
         settings: metadata.settings
       })
-      await resumeAiVaultSessionInTerminal(args.client, target.worktreeId, {
-        ...launch,
-        clientMutationId: this.mutationRegistry.claim(session.id)
-      })
+      const assertCurrent = () => {
+        args.workspaceAuthority.assertHostWorkspaceBinding(
+          args.payload.workspaceId,
+          activeWorktreeId
+        )
+        args.agentHistoryAuthority.assertSession(args.payload.sessionHandle, session)
+      }
+      await resumeAiVaultSessionInTerminal(
+        args.client,
+        target.worktreeId,
+        {
+          ...launch,
+          clientMutationId: this.mutationRegistry.claim(session.id)
+        },
+        assertCurrent
+      )
       this.mutationRegistry.releaseOnSuccess(session.id)
       const targetWorktree = metadata.worktrees.find(
         (worktree) => worktree.worktreeId === target.worktreeId

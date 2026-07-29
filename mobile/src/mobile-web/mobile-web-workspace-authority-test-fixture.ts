@@ -8,14 +8,12 @@ export function createMobileWebWorkspaceAuthorityFixture(
   authority.synchronize([{ workspaceId: hostWorkspaceId, repoId: 'repo-1' }])
   const generatedPageWorkspaceId = authority.pageWorkspaceId(hostWorkspaceId)
   if (pageWorkspaceId !== generatedPageWorkspaceId) {
-    return {
-      hostWorkspaceId: (candidate: string) => {
-        if (candidate !== pageWorkspaceId) {
-          throw new Error('not_found')
-        }
-        return hostWorkspaceId
+    authority.hostWorkspaceId = (candidate: string) => {
+      if (candidate !== pageWorkspaceId) {
+        throw new Error('not_found')
       }
-    } as MobileWebWorkspaceAuthority
+      return hostWorkspaceId
+    }
   }
   return authority
 }

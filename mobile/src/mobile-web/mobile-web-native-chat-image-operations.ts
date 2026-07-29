@@ -8,7 +8,10 @@ import {
 import { pasteMobileNativeChatImagePaths } from '../session/mobile-native-chat-image-send'
 import type { RpcClient } from '../transport/rpc-client'
 import { MobileWebBrokerError } from './mobile-web-broker-error'
-import { resolveFreshMobileWebNativeChatPageBinding } from './mobile-web-native-chat-binding'
+import {
+  assertCurrentMobileWebNativeChatPageBinding,
+  resolveFreshMobileWebNativeChatPageBinding
+} from './mobile-web-native-chat-binding'
 import { validateMobileWebNativeChatDeadline } from './mobile-web-native-chat-deadline'
 import type { MobileWebNativeChatAuthority } from './mobile-web-native-chat-authority'
 import type { MobileWebWorkspaceAuthority } from './mobile-web-workspace-authority'
@@ -49,6 +52,12 @@ export async function executeMobileWebNativeChatImageOperation(args: {
     if (prepared.status !== 'accepted') {
       return MobileWebNativeChatAttachImageResultSchema.parse({ status: prepared.status })
     }
+    assertCurrentMobileWebNativeChatPageBinding(
+      args,
+      payload.workspaceId,
+      payload.sessionId,
+      binding
+    )
     return MobileWebNativeChatAttachImageResultSchema.parse({
       status: 'accepted',
       attachment: {
@@ -81,7 +90,14 @@ export async function executeMobileWebNativeChatImageOperation(args: {
         terminal: binding.hostTerminalId!,
         deviceToken: args.terminalClientId,
         imagePaths,
-        deadline: payload.deadline
+        deadline: payload.deadline,
+        assertCurrent: () =>
+          assertCurrentMobileWebNativeChatPageBinding(
+            args,
+            payload.workspaceId,
+            payload.sessionId,
+            binding
+          )
       })
     })
   }

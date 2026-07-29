@@ -159,7 +159,7 @@ export default function HybridScreen() {
       isActive: () => activeSessionIdRef.current === current.sessionId,
       postMessage: postToWeb,
       nativeAuthority: createMobileWebNativeCapabilityAuthority({
-        hostIdentity: selectedHost.id,
+        hostIdentity: selectedHost.publicKeyB64,
         buildIdentity: current.buildId
       }),
       navigationAuthority: {

@@ -16,7 +16,10 @@ import { isTerminalSendRpcAccepted } from '../terminal/terminal-send-rpc-respons
 import type { RpcClient } from '../transport/rpc-client'
 import { isRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import { isLogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
-import { resolveFreshMobileWebNativeChatPageBinding } from './mobile-web-native-chat-binding'
+import {
+  assertCurrentMobileWebNativeChatPageBinding,
+  resolveFreshMobileWebNativeChatPageBinding
+} from './mobile-web-native-chat-binding'
 import { validateMobileWebNativeChatDeadline } from './mobile-web-native-chat-deadline'
 import type { MobileWebNativeChatAuthority } from './mobile-web-native-chat-authority'
 import type { MobileWebWorkspaceAuthority } from './mobile-web-workspace-authority'
@@ -47,7 +50,8 @@ export async function executeMobileWebNativeChatTerminalOperation(args: {
         true,
         args.terminalClientId,
         payload.deadline,
-        payload.clearInputFirst
+        payload.clearInputFirst === true,
+        () => assertCurrentBinding(args, payload, binding)
       )
     )
   }
@@ -60,7 +64,8 @@ export async function executeMobileWebNativeChatTerminalOperation(args: {
       terminal: binding.hostTerminalId!,
       deviceToken: args.terminalClientId,
       imagePaths: [],
-      deadline: payload.deadline
+      deadline: payload.deadline,
+      assertCurrent: () => assertCurrentBinding(args, payload, binding)
     })
     return MobileWebNativeChatPrepareCommitResultSchema.parse({ prepared })
   }
@@ -75,7 +80,9 @@ export async function executeMobileWebNativeChatTerminalOperation(args: {
         payload.text,
         payload.enter,
         args.terminalClientId,
-        payload.deadline
+        payload.deadline,
+        false,
+        () => assertCurrentBinding(args, payload, binding)
       )
     )
   }
@@ -89,7 +96,9 @@ export async function executeMobileWebNativeChatTerminalOperation(args: {
       String.fromCharCode(27),
       true,
       args.terminalClientId,
-      payload.deadline
+      payload.deadline,
+      false,
+      () => assertCurrentBinding(args, payload, binding)
     )
   )
 }
@@ -117,12 +126,14 @@ async function sendTerminal(
   enter: boolean,
   clientId: string,
   deadline: number,
-  clearInputFirst = false
+  clearInputFirst: boolean,
+  assertCurrent: () => void
 ): Promise<MobileNativeChatSendOutcome> {
   const timeoutMs = deadline - Date.now()
   if (timeoutMs < MOBILE_NATIVE_CHAT_MIN_WRITE_TIMEOUT_MS) {
     return 'rejected'
   }
+  assertCurrent()
   try {
     const response = await client.sendRequest(
       'terminal.send',
@@ -140,6 +151,17 @@ async function sendTerminal(
       ? 'unknown'
       : 'rejected'
   }
+}
+
+function assertCurrentBinding(
+  args: {
+    workspaceAuthority: MobileWebWorkspaceAuthority
+    nativeChatAuthority: MobileWebNativeChatAuthority
+  },
+  payload: { workspaceId: string; sessionId: string },
+  binding: Awaited<ReturnType<typeof resolveTerminalBinding>>
+): void {
+  assertCurrentMobileWebNativeChatPageBinding(args, payload.workspaceId, payload.sessionId, binding)
 }
 
 function sendResult(outcome: MobileWebNativeChatSendResult['outcome']) {

@@ -34,11 +34,13 @@ export async function updateMobileWebSourceControlReviewMetadata(args: {
   expectedRevision: string
   comments: MobileWebSourceControlReviewComment[]
   reviewState: MobileWebSourceControlReviewState
+  assertCurrent: () => void
 }): Promise<MobileWebSourceControlReviewMetadataResult> {
   const current = await readMobileWebSourceControlReviewMetadata(args)
   if (current.revision !== args.expectedRevision) {
     throw new MobileWebBrokerError('conflict')
   }
+  args.assertCurrent()
   // worktree.set has no CAS; another writer can still win after this preflight.
   const response = await args.client.sendRequest('worktree.set', {
     worktree: `id:${args.hostWorkspaceId}`,

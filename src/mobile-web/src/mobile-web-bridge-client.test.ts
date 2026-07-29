@@ -214,6 +214,37 @@ describe('mobile web bridge client', () => {
       id: 'S'.repeat(22)
     })
   })
+
+  it('retires a session subscription on a cross-workspace event', async () => {
+    const messages: MobileWebBridgePageMessage[] = []
+    const ids = ['Q'.repeat(22), 'S'.repeat(22)]
+    const onEvent = vi.fn()
+    const onError = vi.fn()
+    const client = new MobileWebBridgeClient({
+      context: CONTEXT,
+      grants: [sessionSubscriptionGrant()],
+      postMessage: (message) => {
+        messages.push(message)
+        return true
+      },
+      createRequestId: () => ids.shift() ?? 'Z'.repeat(22)
+    })
+    const subscription = client.sessionSubscribe({ workspaceId: 'workspace-1' }, onEvent, onError)
+    client.receive(subscriptionResponse())
+    await subscription.ready
+
+    client.receive(subscriptionEvent(0, 1, 'workspace-2'))
+
+    expect(onEvent).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'invalid_message', retryable: false })
+    )
+    expect(messages.at(-1)).toMatchObject({
+      type: 'cancel',
+      target: 'subscription',
+      id: 'S'.repeat(22)
+    })
+  })
 })
 
 function createHarness(options: { timeout?: number } = {}) {
@@ -275,7 +306,8 @@ function subscriptionResponse(): Extract<MobileWebBridgeShellMessage, { type: 'r
 
 function subscriptionEvent(
   sequence: number,
-  snapshotVersion: number
+  snapshotVersion: number,
+  workspaceId = 'workspace-1'
 ): Extract<MobileWebBridgeShellMessage, { type: 'event' }> {
   return {
     version: MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
@@ -285,7 +317,7 @@ function subscriptionEvent(
     subscriptionId: 'S'.repeat(22),
     sequence,
     payload: {
-      workspaceId: 'workspace-1',
+      workspaceId,
       publicationEpoch: 'epoch-1',
       snapshotVersion,
       activeTabId: null,

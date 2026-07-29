@@ -19,14 +19,22 @@ describe('mobile web workspace authority', () => {
     expect(`${first}${second}${repo}`).not.toContain('private')
     expect(authority.hostWorkspaceId(first)).toBe('repo::/private/worktree')
     expect(authority.hostRepoId(repo)).toBe('/private/repo')
+    expect(() =>
+      authority.assertHostWorkspaceBinding(first, 'repo::/private/worktree')
+    ).not.toThrow()
+    expect(() => authority.assertHostRepoBinding(repo, '/private/repo')).not.toThrow()
 
     authority.synchronize([{ workspaceId: 'repo::C:\\private\\second', repoId: '/private/repo' }])
     expect(() => authority.hostWorkspaceId(first)).toThrow('not_found')
+    expect(() => authority.assertHostWorkspaceBinding(first, 'repo::/private/worktree')).toThrow(
+      'not_found'
+    )
     expect(authority.pageWorkspaceId('repo::C:\\private\\second')).toBe(second)
     expect(authority.pageRepoId('/private/repo')).toBe(repo)
 
     authority.synchronizeRepositories([])
     expect(() => authority.hostRepoId(repo)).toThrow('not_found')
+    expect(() => authority.assertHostRepoBinding(repo, '/private/repo')).toThrow('not_found')
   })
 
   it('revokes every mapping when the shell session is cleared', () => {

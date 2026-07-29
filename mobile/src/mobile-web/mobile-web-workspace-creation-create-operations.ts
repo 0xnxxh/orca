@@ -41,6 +41,8 @@ export async function executeMobileWebWorkspaceCreationCreateOperation(args: {
     const capabilities = await operations.readRuntimeCapabilities()
     const hostRepoId = args.authority.hostRepoId(payload.targetRepoId)
     const selection = await authoritativeSelection(payload.selection, operations, args.authority)
+    args.authority.assertHostRepoBinding(payload.targetRepoId, hostRepoId)
+    assertSelectionRepoBinding(payload.selection, selection, args.authority)
     const result = await operations.createWorkspaceFromSource({
       ...payload,
       selection,
@@ -54,6 +56,23 @@ export async function executeMobileWebWorkspaceCreationCreateOperation(args: {
     return presentCreatedWorkspace(result, hostRepoId, args.authority)
   }
   throw new MobileWebBrokerError('unsupported_capability')
+}
+
+function assertSelectionRepoBinding(
+  pageSelection: MobileWebCreationSelection,
+  hostSelection: MobileComposerCreateSelection,
+  authority: MobileWebWorkspaceAuthority
+): void {
+  if (pageSelection.kind === 'work-item' && pageSelection.item.provider !== 'linear') {
+    if (
+      hostSelection.kind !== 'work-item' ||
+      hostSelection.item.provider === 'linear' ||
+      !hostSelection.item.repoId
+    ) {
+      throw new MobileWebBrokerError('conflict')
+    }
+    authority.assertHostRepoBinding(pageSelection.item.repoId, hostSelection.item.repoId)
+  }
 }
 
 async function authoritativeSelection(

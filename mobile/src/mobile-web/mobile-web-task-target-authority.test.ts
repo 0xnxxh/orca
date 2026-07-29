@@ -28,6 +28,9 @@ describe('mobile web task target authority', () => {
       provider: 'github',
       ...gitHubTarget
     })
+    expect(() =>
+      authority.assertHostedTarget(gitHubPageId, { provider: 'github', ...gitHubTarget })
+    ).not.toThrow()
 
     const projectTarget = {
       owner: 'stablyai',
@@ -43,10 +46,22 @@ describe('mobile web task target authority', () => {
     const projectPageId = authority.registerGitHubProject(projectTarget)
     expect(projectPageId).not.toContain('stablyai')
     expect(authority.resolveGitHubProject(projectPageId)).toEqual(projectTarget)
+    expect(() => authority.assertGitHubProjectTarget(projectPageId, projectTarget)).not.toThrow()
+
+    const linearTarget = { issueId: 'linear-private', workspaceId: 'linear-workspace' }
+    const linearPageId = authority.registerLinear(linearTarget)
+    expect(() => authority.assertLinearTarget(linearPageId, linearTarget)).not.toThrow()
 
     authority.clear()
     expect(() => authority.resolveGitLab(pageId)).toThrow('not_found')
     expect(() => authority.resolveGitHub(gitHubPageId)).toThrow('not_found')
     expect(() => authority.resolveGitHubProject(projectPageId)).toThrow('not_found')
+    expect(() =>
+      authority.assertHostedTarget(gitHubPageId, { provider: 'github', ...gitHubTarget })
+    ).toThrow('not_found')
+    expect(() => authority.assertGitHubProjectTarget(projectPageId, projectTarget)).toThrow(
+      'not_found'
+    )
+    expect(() => authority.assertLinearTarget(linearPageId, linearTarget)).toThrow('not_found')
   })
 })

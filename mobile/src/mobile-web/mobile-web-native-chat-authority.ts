@@ -61,6 +61,18 @@ export class MobileWebNativeChatAuthority {
     return binding
   }
 
+  assertBinding(
+    hostWorkspaceId: string,
+    sessionId: string,
+    expected: Readonly<MobileWebHostNativeChatBinding>
+  ): void {
+    if (
+      nativeChatHostKey(this.resolve(hostWorkspaceId, sessionId)) !== nativeChatHostKey(expected)
+    ) {
+      throw new MobileWebBrokerError('conflict')
+    }
+  }
+
   revoke(sessionId: string): void {
     const binding = this.bindingBySessionId.get(sessionId)
     if (!binding) {

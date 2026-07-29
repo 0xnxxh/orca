@@ -111,11 +111,13 @@ export async function executeMobileWebTaskLinearOperation(args: {
     if (!states.some((state) => state.id === update.stateId)) {
       throw new MobileWebBrokerError('conflict')
     }
+    args.targetAuthority.assertLinearTarget(payload.targetId, target)
     await operations.updateState(hostTarget, update.stateId)
     return done()
   }
   if (args.operation === 'addLinearIssueComment') {
     const comment = MobileWebTaskLinearCommentPayloadSchema.parse(args.payload)
+    args.targetAuthority.assertLinearTarget(payload.targetId, target)
     return {
       handled: true,
       result: MobileWebTaskLinearCommentResultSchema.parse({
@@ -132,6 +134,7 @@ export async function executeMobileWebTaskLinearOperation(args: {
     }
   }
   const subIssue = MobileWebTaskLinearSubIssuePayloadSchema.parse(args.payload)
+  args.targetAuthority.assertLinearTarget(payload.targetId, target)
   const created = await operations.createSubIssue(hostTarget, subIssue.title)
   return {
     handled: true,

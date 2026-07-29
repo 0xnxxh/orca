@@ -4,7 +4,7 @@ import { MOBILE_MARKDOWN_EDIT_MAX_BYTES } from '../../../src/shared/mobile-markd
 import type { RpcClient } from '../transport/rpc-client'
 import type { MobileWebNativeCapabilityAuthority } from './mobile-web-native-capability-authority'
 import { executeMobileWebMarkdownOperation } from './mobile-web-markdown-operations'
-import type { MobileWebWorkspaceAuthority } from './mobile-web-workspace-authority'
+import { createMobileWebWorkspaceAuthorityFixture } from './mobile-web-workspace-authority-test-fixture'
 
 const PAGE_TARGET = {
   workspaceId: 'workspace-page',
@@ -12,12 +12,10 @@ const PAGE_TARGET = {
   relativePath: 'notes.md'
 }
 const HOST_WORKSPACE_ID = 'repo-1::/secret/worktree'
-const WORKSPACE_AUTHORITY = {
-  hostWorkspaceId: (workspaceId: string) => {
-    expect(workspaceId).toBe(PAGE_TARGET.workspaceId)
-    return HOST_WORKSPACE_ID
-  }
-} as MobileWebWorkspaceAuthority
+const WORKSPACE_AUTHORITY = createMobileWebWorkspaceAuthorityFixture(
+  PAGE_TARGET.workspaceId,
+  HOST_WORKSPACE_ID
+)
 
 describe('mobile web markdown operations', () => {
   it('re-resolves host authority and returns no host paths', async () => {

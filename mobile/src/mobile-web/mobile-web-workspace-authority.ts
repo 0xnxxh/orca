@@ -56,6 +56,12 @@ export class MobileWebWorkspaceAuthority {
     return hostRepoId
   }
 
+  assertHostRepoBinding(pageRepoId: string, expectedHostRepoId: string): void {
+    if (this.hostRepoId(pageRepoId) !== expectedHostRepoId) {
+      throw new MobileWebBrokerError('conflict')
+    }
+  }
+
   synchronizeRepositories(hostRepoIds: readonly string[]): void {
     const current = new Set(hostRepoIds)
     for (const [hostRepoId, pageRepoId] of this.pageRepoIdByHostId) {
@@ -94,6 +100,12 @@ export class MobileWebWorkspaceAuthority {
       throw new MobileWebBrokerError('not_found')
     }
     return hostWorkspaceId
+  }
+
+  assertHostWorkspaceBinding(pageWorkspaceId: string, expectedHostWorkspaceId: string): void {
+    if (this.hostWorkspaceId(pageWorkspaceId) !== expectedHostWorkspaceId) {
+      throw new MobileWebBrokerError('conflict')
+    }
   }
 
   registerWorkspace(hostWorkspaceId: string, hostRepoId: string): string {

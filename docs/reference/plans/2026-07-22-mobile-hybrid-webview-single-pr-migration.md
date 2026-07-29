@@ -192,6 +192,20 @@ prototype:
   Pending terminal and native-chat subscription setup rechecks request liveness
   after asynchronous host resolution, so cancellation, client replacement, and
   broker disposal cannot recreate authority afterward.
+- Every hosted mutation reauthorizes its exact workspace, repository, task
+  target, native-chat session, or Agent History session immediately before the
+  privileged Desktop write. Deterministic cross-scope races cover awaited file,
+  Markdown, Source Control, provider-review, task, workspace-creation, browser,
+  native-chat, and Agent History preflight; Agent History rechecks again between
+  terminal creation and command injection.
+- Page-side result admission supplements structural schemas with operation
+  correlation. A 25-case valid-shaped corpus rejects wrong workspace, tab,
+  repository, task target, project/provider host, account reset scope, speech
+  configuration, native-chat cursor, and request-specific collection limits.
+  Session subscription events are bound to the requested workspace.
+- Native package generations and hosted privileged-state namespaces use the
+  paired Desktop public key. Mutable profile IDs remain limited to
+  non-privileged navigation, diagnostics, and host selection.
 - Gesture-mediated native operations share one shell authority that consumes
   each native-observed touch once, rejects expired or future timestamps, clears
   pending authority whenever native `AppState` leaves foreground, and refuses a
@@ -2166,9 +2180,9 @@ The authoritative route now has a separately reviewed ceiling of 10 MiB total,
 from 8 MiB / 2 MiB / 7.5 MiB only after the legacy Mermaid CDN executable was
 replaced by the locally bundled, network-denied engine needed by both native
 and RNW without forking the existing UI. Boundary tests reject every
-measurement above its ceiling. The current 50-asset package is 9,295,457 bytes
-/ 2,690,208 bytes gzip and build
-`f293890e4cf1fd5f31c3d1fa3875a68d2697882331498cfdfdf2cbe48f4ac387`.
+measurement above its ceiling. The current 50-asset package is 9,299,540 bytes
+/ 2,691,263 bytes gzip and build
+`bcd9c95e3a1e416d82a240ff10ef311375d03cbc3210d44876c7bca896e093b7`.
 `build:mobile-web` and release resource mapping therefore select the RNW
 package; the original 2 MiB Vite-fixture ceiling is retired with that fixture.
 Workspace snapshots now page through
@@ -2819,6 +2833,13 @@ canonical manifest, and activation record to be one JSON value with unique
 decoded object keys and no more than 32 nesting levels. Mirrored corpora reject
 duplicate and escaped-equivalent keys, trailing tokens, malformed scalars, and
 excess depth consistently.
+
+The mutation-authorization audit and 25-case valid-shaped response corpus now
+cover the code-level authorization and response-correlation portions of this
+gate. Package and privileged native-state namespaces are tied to the paired
+Desktop public key. Exact release-app injection, broader live two-host races,
+sustained allocation testing, privacy review, and independent adversarial
+review remain required.
 
 ## App Store Gate
 

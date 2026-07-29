@@ -145,6 +145,7 @@ async function mutateProviderReview(
     throw new MobileWebBrokerError('conflict')
   }
   await assertCurrentRepositoryIdentity(client, hostWorkspaceId, payload)
+  workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
   return executeMobileWebProviderReviewMutation({
     client,
     repo,

@@ -27,7 +27,8 @@ export async function resolveFreshMobileWebNativeChatBinding(args: {
     args.nativeChatAuthority.revoke(args.sessionId)
     throw new MobileWebBrokerError('not_found')
   }
-  return binding
+  args.nativeChatAuthority.assertBinding(args.hostWorkspaceId, args.sessionId, binding)
+  return args.nativeChatAuthority.resolve(args.hostWorkspaceId, args.sessionId)
 }
 
 export function resolveFreshMobileWebNativeChatPageBinding(
@@ -47,6 +48,19 @@ export function resolveFreshMobileWebNativeChatPageBinding(
     nativeChatAuthority: args.nativeChatAuthority,
     requireTerminal
   })
+}
+
+export function assertCurrentMobileWebNativeChatPageBinding(
+  args: {
+    workspaceAuthority: MobileWebWorkspaceAuthority
+    nativeChatAuthority: MobileWebNativeChatAuthority
+  },
+  pageWorkspaceId: string,
+  sessionId: string,
+  binding: Readonly<MobileWebHostNativeChatBinding>
+): void {
+  args.workspaceAuthority.assertHostWorkspaceBinding(pageWorkspaceId, binding.hostWorkspaceId)
+  args.nativeChatAuthority.assertBinding(binding.hostWorkspaceId, sessionId, binding)
 }
 
 function isCurrentBinding(

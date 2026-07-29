@@ -28,6 +28,7 @@ export async function executeMobileWebTaskItemMutationOperation(args: {
       : MobileWebTaskItemMetadataPayloadSchema.parse(args.payload).targetId
   const target = args.targetAuthority.resolveHosted(targetId)
   await revalidateHostedTask(args.client, target)
+  args.targetAuthority.assertHostedTarget(targetId, target)
   const operations = nativeHostTaskItemMutationOperations(args.client)
   if (args.operation === 'updateHostedTaskStatus') {
     const payload = MobileWebTaskItemStatusPayloadSchema.parse(args.payload)

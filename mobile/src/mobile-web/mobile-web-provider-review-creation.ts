@@ -77,6 +77,7 @@ export async function createMobileWebProviderReview(args: {
     hostWorkspaceId
   )
   assertMobileWebRepositoryIdentity(repository, payload)
+  args.workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
   const response = await args.client.sendRequest('hostedReview.create', {
     repo: mobileRepoSelectorFromWorktreeId(hostWorkspaceId),
     worktree: `id:${hostWorkspaceId}`,
@@ -111,6 +112,7 @@ export async function generateMobileWebProviderReviewFields(args: {
     hostWorkspaceId
   )
   assertMobileWebRepositoryIdentity(repository, payload)
+  args.workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
   const response = await args.client.sendRequest('git.generatePullRequestFields', {
     worktree: `id:${hostWorkspaceId}`,
     base: payload.base,

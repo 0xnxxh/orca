@@ -39,8 +39,10 @@ export async function executeMobileWebTaskItemReviewOperation(args: {
   if (!OPERATIONS.has(args.operation)) {
     return { handled: false }
   }
-  const target = args.targetAuthority.resolveHosted(targetId(args.operation, args.payload))
+  const pageTargetId = targetId(args.operation, args.payload)
+  const target = args.targetAuthority.resolveHosted(pageTargetId)
   const details = await freshDetails(args.client, target)
+  args.targetAuthority.assertHostedTarget(pageTargetId, target)
   const operations = nativeHostTaskItemReviewOperations(args.client)
   if (args.operation === 'addHostedTaskComment') {
     const payload = MobileWebTaskItemCommentPayloadSchema.parse(args.payload)

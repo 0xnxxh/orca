@@ -50,6 +50,7 @@ export async function executeMobileWebProviderReviewSubmission(
   }
   const comments = retainedSubmissionComments(review.files, payload.comments)
   await assertCurrentRepositoryIdentity(client, hostWorkspaceId, payload)
+  workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
   const result = await submitProviderReview(client, repo, payload, details, comments)
   if (
     !result.ok ||

@@ -17,6 +17,11 @@ import { sanitizeMobileWebProviderReviewDetails } from './mobile-web-provider-re
 import type { MobileWebWorkspaceAuthority } from './mobile-web-workspace-authority'
 import { mobileRepoSelectorFromWorktreeId } from '../source-control/mobile-hosted-review-service'
 
+type MutationAuthority = {
+  revalidate: () => Promise<void>
+  assertCurrent: () => void
+}
+
 export async function executeMobileWebProviderReviewManagement(args: {
   payload: unknown
   client: RpcClient
@@ -42,8 +47,12 @@ export async function executeMobileWebProviderReviewManagement(args: {
   if (review.provider !== 'github') {
     throw new MobileWebBrokerError('unsupported_capability')
   }
-  await assertCurrentRepositoryIdentity(args.client, hostWorkspaceId, payload)
-  await executeGitHubManagement(args.client, repo, payload, details, review)
+  const authority: MutationAuthority = {
+    revalidate: () => assertCurrentRepositoryIdentity(args.client, hostWorkspaceId, payload),
+    assertCurrent: () =>
+      args.workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
+  }
+  await executeGitHubManagement(args.client, repo, payload, details, review, authority)
   return MobileWebProviderReviewManagementResultSchema.parse({
     workspaceId: payload.workspaceId,
     provider: payload.provider,
@@ -58,11 +67,12 @@ async function executeGitHubManagement(
   repo: string,
   payload: MobileWebProviderReviewManagementPayload,
   details: unknown,
-  review: MobileWebProviderReview
+  review: MobileWebProviderReview,
+  authority: MutationAuthority
 ): Promise<void> {
   const target = githubProviderReviewTarget(details)
   if (payload.action === 'merge') {
-    return runMutation(client, 'github.mergePR', {
+    return runAuthorizedMutation(authority, client, 'github.mergePR', {
       repo,
       prNumber: payload.reviewNumber,
       ...(payload.method ? { method: payload.method } : {}),
@@ -70,7 +80,7 @@ async function executeGitHubManagement(
     })
   }
   if (payload.action === 'setAutoMerge') {
-    return runMutation(client, 'github.setPRAutoMerge', {
+    return runAuthorizedMutation(authority, client, 'github.setPRAutoMerge', {
       repo,
       prNumber: payload.reviewNumber,
       enabled: payload.enabled,
@@ -79,7 +89,7 @@ async function executeGitHubManagement(
     })
   }
   if (payload.action === 'setState') {
-    return runMutation(client, 'github.updatePRState', {
+    return runAuthorizedMutation(authority, client, 'github.updatePRState', {
       repo,
       prNumber: payload.reviewNumber,
       updates: { state: payload.state },
@@ -88,7 +98,8 @@ async function executeGitHubManagement(
   }
   if (payload.action === 'requestReviewers' || payload.action === 'removeReviewers') {
     await assertAssignableReviewers(client, repo, payload.reviewers)
-    return runMutation(
+    return runAuthorizedMutation(
+      authority,
       client,
       payload.action === 'requestReviewers'
         ? 'github.requestPRReviewers'
@@ -100,7 +111,7 @@ async function executeGitHubManagement(
     if (payload.expectedReviewHead && payload.expectedReviewHead !== review.headSha) {
       throw new MobileWebBrokerError('conflict')
     }
-    return runMutation(client, 'github.rerunPRChecks', {
+    return runAuthorizedMutation(authority, client, 'github.rerunPRChecks', {
       repo,
       prNumber: payload.reviewNumber,
       ...(review.headSha ? { headSha: review.headSha } : {}),
@@ -109,17 +120,18 @@ async function executeGitHubManagement(
     })
   }
   if (payload.action === 'updateTitle') {
-    return runMutation(client, 'github.updatePRTitle', {
+    return runAuthorizedMutation(authority, client, 'github.updatePRTitle', {
       repo,
       prNumber: payload.reviewNumber,
       title: payload.title,
       ...target
     })
   }
-  return mutateConversationComment(client, payload, target.prRepo, review)
+  return mutateConversationComment(authority, client, payload, target.prRepo, review)
 }
 
 async function mutateConversationComment(
+  authority: MutationAuthority,
   client: RpcClient,
   payload: Extract<
     MobileWebProviderReviewManagementPayload,
@@ -135,7 +147,8 @@ async function mutateConversationComment(
   if (!comment || commentId === null || !prRepo) {
     throw new MobileWebBrokerError('conflict')
   }
-  return runMutation(
+  return runAuthorizedMutation(
+    authority,
     client,
     payload.action === 'updateConversationComment'
       ? 'github.project.updateIssueCommentBySlug'
@@ -165,6 +178,17 @@ async function assertAssignableReviewers(
   if (reviewers.some((reviewer) => !assignable.has(reviewer.toLowerCase()))) {
     throw new MobileWebBrokerError('conflict')
   }
+}
+
+async function runAuthorizedMutation(
+  authority: MutationAuthority,
+  client: RpcClient,
+  method: string,
+  params: Record<string, unknown>
+): Promise<void> {
+  await authority.revalidate()
+  authority.assertCurrent()
+  return runMutation(client, method, params)
 }
 
 async function runMutation(

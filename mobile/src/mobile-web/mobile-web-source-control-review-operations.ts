@@ -69,6 +69,8 @@ export async function executeMobileWebSourceControlReviewOperation(args: {
     return updateMobileWebSourceControlReviewMetadata({
       client: args.client,
       hostWorkspaceId,
+      assertCurrent: () =>
+        args.workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId),
       ...payload
     })
   }
@@ -95,6 +97,7 @@ export async function executeMobileWebSourceControlReviewOperation(args: {
     }
     const hostWorkspaceId = args.workspaceAuthority.hostWorkspaceId(payload.workspaceId)
     const terminal = await resolveMobileWebTerminal(args.client, hostWorkspaceId, payload.tabId)
+    args.workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
     const response = await args.client.sendRequest('terminal.send', {
       terminal,
       text: payload.text,

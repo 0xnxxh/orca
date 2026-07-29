@@ -19,7 +19,10 @@ import { MobileWebBrokerError } from './mobile-web-broker-error'
 import type { MobileWebNativeCapabilityAuthority } from './mobile-web-native-capability-authority'
 import type { MobileWebNativeChatAuthority } from './mobile-web-native-chat-authority'
 import type { MobileWebWorkspaceAuthority } from './mobile-web-workspace-authority'
-import { resolveFreshMobileWebNativeChatPageBinding } from './mobile-web-native-chat-binding'
+import {
+  assertCurrentMobileWebNativeChatPageBinding,
+  resolveFreshMobileWebNativeChatPageBinding
+} from './mobile-web-native-chat-binding'
 import {
   executeMobileWebNativeChatImageOperation,
   isMobileWebNativeChatImageOperation
@@ -106,6 +109,12 @@ export async function executeMobileWebNativeChatOperation(args: {
     if (!args.nativeAuthority.sessionChatPendingWrite) {
       throw new MobileWebBrokerError('unsupported_capability')
     }
+    assertCurrentMobileWebNativeChatPageBinding(
+      args,
+      payload.workspaceId,
+      payload.sessionId,
+      binding
+    )
     await args.nativeAuthority.sessionChatPendingWrite(
       binding.hostWorkspaceId,
       binding.hostTabId,
@@ -152,6 +161,12 @@ export async function executeMobileWebNativeChatOperation(args: {
     })
     const relativePath = resolvedWorktreePath(resolved)
     if (relativePath) {
+      assertCurrentMobileWebNativeChatPageBinding(
+        args,
+        payload.workspaceId,
+        payload.sessionId,
+        binding
+      )
       await args.client.sendRequest('files.open', {
         worktree: `id:${hostWorkspaceId}`,
         relativePath

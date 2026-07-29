@@ -28,6 +28,7 @@ import {
   type MobileWebCreationSshStateResult,
   type MobileWebCreationTrustedHooksResult
 } from '../../shared/mobile-web/workspace-creation-read-contract'
+import { MobileWebBridgeClientError } from './mobile-web-bridge-client-error'
 import type { MobileWebOneShotRequestClient } from './mobile-web-one-shot-request-client'
 
 export class MobileWebWorkspaceCreationRequestClient {
@@ -66,11 +67,19 @@ export class MobileWebWorkspaceCreationRequestClient {
   }
 
   sshState(payload: MobileWebCreationRepoPayload): Promise<MobileWebCreationSshStateResult> {
-    return this.repoRequest('creationSshState', payload, MobileWebCreationSshStateResultSchema)
+    return this.repoRequest<MobileWebCreationSshStateResult>(
+      'creationSshState',
+      payload,
+      MobileWebCreationSshStateResultSchema
+    ).then((result) => matchingRepoTarget(payload, result))
   }
 
   sshConnect(payload: MobileWebCreationRepoPayload): Promise<MobileWebCreationSshStateResult> {
-    return this.repoRequest('creationSshConnect', payload, MobileWebCreationSshStateResultSchema)
+    return this.repoRequest<MobileWebCreationSshStateResult>(
+      'creationSshConnect',
+      payload,
+      MobileWebCreationSshStateResultSchema
+    ).then((result) => matchingRepoTarget(payload, result))
   }
 
   detectAgents(payload: MobileWebCreationAgentDetectionPayload): Promise<string[]> {
@@ -109,7 +118,12 @@ export class MobileWebWorkspaceCreationRequestClient {
         MobileWebCreationRepoPayloadSchema,
         MobileWebCreationSparsePresetsResultSchema
       )
-      .then((result) => result.presets)
+      .then((result) => {
+        if (result.presets.some((preset) => preset.repoId !== payload.repoId)) {
+          throw new MobileWebBridgeClientError('invalid_message', false)
+        }
+        return result.presets
+      })
   }
 
   saveSparsePreset(payload: MobileWebCreationSparsePresetSavePayload) {
@@ -121,7 +135,18 @@ export class MobileWebWorkspaceCreationRequestClient {
         MobileWebCreationSparsePresetSavePayloadSchema,
         MobileWebCreationSparsePresetSaveResultSchema
       )
-      .then((result) => result.preset)
+      .then((result) => {
+        const preset = result.preset
+        if (
+          preset.repoId !== payload.repoId ||
+          (payload.id !== undefined && preset.id !== payload.id) ||
+          preset.name !== payload.name ||
+          !sameStrings(preset.directories, payload.directories)
+        ) {
+          throw new MobileWebBridgeClientError('invalid_message', false)
+        }
+        return preset
+      })
   }
 
   persistTrust(
@@ -171,4 +196,18 @@ export class MobileWebWorkspaceCreationRequestClient {
       resultSchema
     ) as Promise<TResult>
   }
+}
+
+function matchingRepoTarget<TResult extends { targetId: string }>(
+  payload: MobileWebCreationRepoPayload,
+  result: TResult
+): TResult {
+  if (result.targetId !== payload.repoId) {
+    throw new MobileWebBridgeClientError('invalid_message', false)
+  }
+  return result
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
 }

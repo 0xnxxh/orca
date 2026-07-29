@@ -60,6 +60,7 @@ export async function executeMobileWebTaskProjectMutationOperation(args: {
   const targetId = readTargetId(args.operation, args.payload)
   const target = args.targetAuthority.resolveGitHubProject(targetId)
   const fresh = await revalidateProjectTarget(args.client, target)
+  args.targetAuthority.assertGitHubProjectTarget(targetId, target)
   const operations = nativeHostTaskProjectMutationOperations(args.client)
   if (args.operation === 'updateProjectItem') {
     const payload = MobileWebTaskProjectItemUpdatePayloadSchema.parse(args.payload)
@@ -109,6 +110,7 @@ export async function executeMobileWebTaskProjectMutationOperation(args: {
     readRepoId(args.operation, args.payload),
     fresh.item
   )
+  args.targetAuthority.assertGitHubProjectTarget(targetId, target)
   if (fresh.item.type !== 'pr') {
     throw new MobileWebBrokerError('invalid_request')
   }
@@ -271,6 +273,7 @@ export async function revalidateProjectRepo(
   ) {
     throw new MobileWebBrokerError('not_found')
   }
+  authority.assertHostRepoBinding(pageRepoId, hostRepoId)
   return hostRepoId
 }
 

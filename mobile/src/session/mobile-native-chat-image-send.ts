@@ -26,10 +26,7 @@ type PasteImagesArgs = {
   /** Budget shared with the rest of the user action (the text body that follows, or
    *  the send this is healing for). Omit to open a fresh one for this paste alone. */
   readonly deadline?: number
-  /** Bytes for the leading clear. Defaults to a single Ctrl+U, which clears only
-   *  ONE logical line — callers holding a parked multi-line launch draft must
-   *  pass a burst, or its earlier lines survive and glue onto the message. */
-  readonly clearInput?: string
+  readonly assertCurrent?: () => void
 }
 
 /** Clears the agent's unsubmitted input line, then pastes each uploaded image
@@ -43,7 +40,7 @@ export async function pasteMobileNativeChatImagePaths({
   deviceToken,
   imagePaths,
   deadline: sharedDeadline,
-  clearInput
+  assertCurrent = () => {}
 }: PasteImagesArgs): Promise<boolean> {
   const mobileClient: MobileTerminalClient | null = deviceToken
     ? { id: deviceToken, type: 'mobile' }
@@ -64,6 +61,7 @@ export async function pasteMobileNativeChatImagePaths({
     if (remainingMs < MOBILE_NATIVE_CHAT_MIN_WRITE_TIMEOUT_MS) {
       return false
     }
+    assertCurrent()
     const response = await client.sendRequest(
       'terminal.send',
       {

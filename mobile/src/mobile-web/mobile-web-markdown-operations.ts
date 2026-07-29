@@ -50,6 +50,7 @@ export async function executeMobileWebMarkdownOperation(
   if (args.operation === 'markdownSave') {
     const payload = MobileWebMarkdownSavePayloadSchema.parse(args.payload)
     const hostWorkspaceId = await verifyMarkdownTarget(args, payload)
+    args.workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
     return saveMarkdown(args.client, payload, hostWorkspaceId)
   }
   if (args.operation === 'markdownDraftRead') {
@@ -81,6 +82,7 @@ export async function executeMobileWebMarkdownOperation(
     if (!args.nativeAuthority.sessionMarkdownDraftWrite) {
       throw new MobileWebBrokerError('unsupported_capability')
     }
+    args.workspaceAuthority.assertHostWorkspaceBinding(payload.workspaceId, hostWorkspaceId)
     await args.nativeAuthority.sessionMarkdownDraftWrite(
       hostWorkspaceId,
       payload.tabId,

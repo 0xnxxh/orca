@@ -104,17 +104,17 @@ insets, and nested syntax text retains the native effective font behavior.
 
 The migration is based on `origin/main` at `3f5328755`; the final rebase is
 complete and the branch is 44 commits ahead and zero behind. Post-rebase
-validation passes 573 mobile files / 3,427 tests with 2 expected skips. The
-latest complete root run remains 3,818 files / 39,968 tests with 62 expected
-skips; the earlier load-sensitive root timeouts did not recur. All project
-typechecks,
+validation now passes 576 mobile files / 3,440 tests with 2 expected skips. The
+latest root run passes 3,829 files / 40,205 tests with 70 expected skips except
+for one load-sensitive 30-second dynamic-import timeout; its isolated 2-test
+rerun passes in 4.69 seconds. All project typechecks,
 root/mobile/mobile-web lint and code-quality audits, 55 reliability gates,
 changed-file and full-mobile formatting, localization, the max-lines ratchet,
 and diff hygiene pass. React Doctor reports zero blocking errors across the
 migration without suppressions. The independently verified React Native Web
 package is
-`f293890e4cf1fd5f31c3d1fa3875a68d2697882331498cfdfdf2cbe48f4ac387`:
-50 assets, 9,295,457 raw bytes, and 2,690,208 gzip bytes.
+`bcd9c95e3a1e416d82a240ff10ef311375d03cbc3210d44876c7bca896e093b7`:
+50 assets, 9,299,540 raw bytes, and 2,691,263 gzip bytes.
 
 The immediately preceding `7c7c673d…` package passed the unpacked macOS arm64 →
 Docker SSH → actual iOS WKWebView journey from a clean app reinstall in 1.9
@@ -292,14 +292,39 @@ valid success envelopes with invalid payloads cross 157 exported result
 schemas; all eight subscription event schemas also retire invalid events.
 Pending terminal/native-chat subscriptions recheck request liveness after
 asynchronous resolution; focused races cover early unsubscribe, authenticated
-client replacement, disposal, and replay. The production package now verifies
-as `f293890e…`: 50 assets, 9,295,457 raw bytes, and 2,690,208 gzip bytes. The
-full mobile suite passes 574 files / 3,430 tests with 2 expected skips. The full
-root run has one unrelated 30-second dynamic-import timeout under load; its
-isolated 2-test rerun passes in 4.4 seconds.
+client replacement, disposal, and replay.
+
+The hosted mutation audit now reauthorizes the exact workspace, repository,
+task target, native-chat session, or Agent History session immediately before
+every privileged write. Deterministic races remove or replace that authority
+during awaited file, provider, Source Control, workspace-creation, browser,
+task, native-chat, and Agent History preflight and prove that no stale write or
+command injection follows. Agent History also rechecks between terminal
+creation and command injection.
+
+Package/cache namespaces and hosted drafts, pending deliveries, Markdown
+drafts, and reset-attempt journals now use the paired Desktop public key.
+Mutable profile IDs remain only for non-privileged navigation, diagnostics,
+and host selection.
+
+Page-side response admission now rejects 25 schema-valid semantic mutations:
+wrong workspace, tab, repository, task target, provider/project host, account
+reset scope, speech configuration, native-chat page cursor, and per-request
+collection ceiling. Session subscription events are also bound to the
+requested workspace. Existing Source Control, provider-review, file, and
+Markdown correlation remains in force.
+
+The production package now verifies as `bcd9c95e…`: 50 assets, 9,299,540 raw
+bytes, and 2,691,263 gzip bytes. The full mobile suite passes 576 files / 3,440
+tests with 2 expected skips. Mobile, mobile-web, and root typechecks; mobile and
+mobile-web lint; all 55 reliability gates; localization; max-lines; and package
+verification pass. The full root run passes 3,829 files / 40,205 tests with 70
+expected skips except for one unrelated 30-second dynamic-import timeout under
+load; its isolated 2-test rerun passes in 4.69 seconds.
+
 The remaining security work below is exact release-app corpus testing,
-operation-semantic response mutation, broader cross-scope mutation races,
-privacy/authorization audit, and independent review.
+concurrent cache mutation, broader live cross-scope races, privacy audit, and
+independent review.
 
 ## 1. Production Cutover and Cleanup
 
@@ -359,23 +384,26 @@ privacy/authorization audit, and independent review.
       subscription event schemas reject a generated valid-envelope payload
       corpus and retire invalid events. Pending subscription
       cancellation/client replacement/disposal races pass. A fresh exact-app
-      rerun, operation-semantic response mutation, concurrent cache mutation,
-      and the other listed boundaries remain.
+      rerun, concurrent cache mutation, and the other listed boundaries remain.
+      The page-side semantic corpus rejects 25 schema-valid cross-operation
+      identity, action, cursor, and request-specific-limit mutations.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,
       reconnect, process-loss, and host-removal races. Focused tests now reject
       a 15-pair stale session/build grid, retain replay protection across
       authenticated client replacement, revoke opaque workspace authority, and
       prevent late terminal subscription registration after cancellation,
-      replacement, or disposal. Broader live mutation and exact-app lifecycle
-      races remain.
+      replacement, or disposal. Deterministic preflight races now cover file,
+      Markdown, Source Control, provider review, task, native-chat, workspace
+      creation, browser, and Agent History mutations. Broader live mutation and
+      exact-app lifecycle races remain.
 - [ ] Verify no credential or privileged host identity reaches URLs, DOM state,
       page storage, cache assets, logs, diagnostics, analytics, or fixtures.
-- [ ] Verify Desktop reauthorizes every mutation and all resource limits apply
-      before allocation and during assembly. Persisted native manifests,
-      activation metadata, and assets now have pre-allocation read ceilings;
-      every bridge operation now has generated malformed-payload and
-      request-limit coverage. Valid-shaped response and sustained allocation
-      fuzzing remain.
+- [ ] Verify all resource limits apply before allocation and during assembly.
+      Persisted native manifests, activation metadata, and assets have
+      pre-allocation read ceilings; every bridge operation has generated
+      malformed-payload and request-limit coverage. Page-side result admission
+      repeats request-specific collection and chunk limits. Sustained
+      allocation fuzzing remains.
 - [ ] Complete an independent threat-model and adversarial review.
 - [ ] Resolve every high-severity security finding.
 

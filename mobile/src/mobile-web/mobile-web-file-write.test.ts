@@ -7,11 +7,12 @@ import {
 import type { RpcClient } from '../transport/rpc-client'
 import { executeMobileWebFileWrite } from './mobile-web-file-write'
 import { MOBILE_WEB_PRODUCTION_GRANTS } from './mobile-web-production-grants'
-import type { MobileWebWorkspaceAuthority } from './mobile-web-workspace-authority'
+import { createMobileWebWorkspaceAuthorityFixture } from './mobile-web-workspace-authority-test-fixture'
 
-const IDENTITY_WORKSPACE_AUTHORITY = {
-  hostWorkspaceId: (workspaceId: string) => workspaceId
-} as MobileWebWorkspaceAuthority
+const IDENTITY_WORKSPACE_AUTHORITY = createMobileWebWorkspaceAuthorityFixture(
+  'repo-1::/workspace',
+  'repo-1::/workspace'
+)
 
 describe('mobile web conflict-safe file write', () => {
   it('captures local mutation ownership and returns only stable file identity', async () => {

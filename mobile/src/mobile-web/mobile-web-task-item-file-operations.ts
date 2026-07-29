@@ -38,10 +38,10 @@ export async function executeMobileWebTaskItemFileOperation(args: {
   if (!OPERATIONS.has(args.operation)) {
     return { handled: false }
   }
-  const target = requirePullRequest(
-    args.targetAuthority.resolveGitHub(targetId(args.operation, args.payload))
-  )
+  const pageTargetId = targetId(args.operation, args.payload)
+  const target = requirePullRequest(args.targetAuthority.resolveGitHub(pageTargetId))
   const details = await nativeHostTaskDetailOperations(args.client).loadGitHub(target)
+  args.targetAuthority.assertHostedTarget(pageTargetId, target)
   const operations = nativeHostTaskItemFileOperations(args.client)
   if (args.operation === 'refreshHostedTaskChecks') {
     return {

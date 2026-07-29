@@ -22,6 +22,7 @@ import {
   type MobileWebCreationLinearIssue
 } from '../../shared/mobile-web/workspace-creation-source-contract'
 import { MobileWebCreationRepoPayloadSchema } from '../../shared/mobile-web/workspace-creation-read-contract'
+import { MobileWebBridgeClientError } from './mobile-web-bridge-client-error'
 import type { MobileWebOneShotRequestClient } from './mobile-web-one-shot-request-client'
 
 export class MobileWebWorkspaceCreationSourceRequestClient {
@@ -33,7 +34,7 @@ export class MobileWebWorkspaceCreationSourceRequestClient {
       { repoId, query },
       MobileWebCreationRepoQueryPayloadSchema,
       MobileWebCreationGitHubSearchResultSchema
-    ).then((result) => result.items)
+    ).then((result) => matchingRepoItems(repoId, result.items))
   }
 
   searchGitLab(
@@ -46,7 +47,7 @@ export class MobileWebWorkspaceCreationSourceRequestClient {
       { repoId, query, state },
       MobileWebCreationGitLabSearchPayloadSchema,
       MobileWebCreationGitLabSearchResultSchema
-    ).then((result) => result.items)
+    ).then((result) => matchingRepoItems(repoId, result.items))
   }
 
   searchLinear(
@@ -85,7 +86,7 @@ export class MobileWebWorkspaceCreationSourceRequestClient {
       { repoId, number },
       MobileWebCreationGitHubLookupPayloadSchema,
       MobileWebCreationGitHubLookupResultSchema
-    ).then((result) => result.item)
+    ).then((result) => matchingLookup(result.item, { repoId, number }))
   }
 
   lookupGitHubRepo(payload: {
@@ -99,7 +100,7 @@ export class MobileWebWorkspaceCreationSourceRequestClient {
       payload,
       MobileWebCreationGitHubRepoLookupPayloadSchema,
       MobileWebCreationGitHubLookupResultSchema
-    ).then((result) => result.item)
+    ).then((result) => matchingLookup(result.item, payload))
   }
 
   lookupGitLab(payload: {
@@ -114,7 +115,13 @@ export class MobileWebWorkspaceCreationSourceRequestClient {
       payload,
       MobileWebCreationGitLabLookupPayloadSchema,
       MobileWebCreationGitLabLookupResultSchema
-    ).then((result) => result.item)
+    ).then((result) =>
+      matchingLookup(result.item, {
+        repoId: payload.repoId,
+        number: payload.iid,
+        type: payload.type
+      })
+    )
   }
 
   resolvePrBase(payload: {
@@ -155,4 +162,29 @@ export class MobileWebWorkspaceCreationSourceRequestClient {
   ): Promise<TResult> {
     return this.requests.request('workspace', operation, payload, payloadSchema, resultSchema)
   }
+}
+
+function matchingRepoItems<TItem extends { repoId: string }>(
+  repoId: string,
+  items: TItem[]
+): TItem[] {
+  if (items.some((item) => item.repoId !== repoId)) {
+    throw new MobileWebBridgeClientError('invalid_message', false)
+  }
+  return items
+}
+
+function matchingLookup<
+  TItem extends { repoId: string; number: number; type: string },
+  TPayload extends { repoId: string; number: number; type?: string }
+>(item: TItem | null, payload: TPayload): TItem | null {
+  if (
+    item &&
+    (item.repoId !== payload.repoId ||
+      item.number !== payload.number ||
+      (payload.type !== undefined && item.type !== payload.type))
+  ) {
+    throw new MobileWebBridgeClientError('invalid_message', false)
+  }
+  return item
 }

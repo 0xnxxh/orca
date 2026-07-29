@@ -24,6 +24,7 @@ describe('mobile web native chat authority', () => {
     expect(sessionId).not.toContain('provider-session-a')
     expect(sessionId).not.toContain('transcript')
     expect(authority.resolve('workspace-a', sessionId)).toEqual(binding())
+    expect(() => authority.assertBinding('workspace-a', sessionId, binding())).not.toThrow()
     expect(() => authority.resolve('workspace-b', sessionId)).toThrow('not_found')
   })
 
@@ -53,6 +54,7 @@ describe('mobile web native chat authority', () => {
     authority.clear()
 
     expect(() => authority.resolve('workspace-a', sessionId)).toThrow('not_found')
+    expect(() => authority.assertBinding('workspace-a', sessionId, binding())).toThrow('not_found')
   })
 
   it('keeps image paths opaque and scoped to one workspace session', () => {
