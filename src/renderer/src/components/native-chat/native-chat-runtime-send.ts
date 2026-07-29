@@ -63,6 +63,8 @@ export type NativeChatSendHandle = {
   cancel: () => void
   /** Time after which every scheduled write has fired and the handle can drop. */
   settleAfterMs: number
+  /** Actual completion, which can outlive the nominal schedule if the renderer stalls. */
+  settled?: Promise<void>
 }
 
 type RuntimeSettings = ReturnType<typeof getSettingsForAgentTabRuntimeOwner>
@@ -97,7 +99,13 @@ function clearThenWrite(
     return
   }
   delay(NATIVE_CHAT_CLEAR_CONFIRM_MS, () => {
-    if (!confirmCleared()) {
+    let cleared = false
+    try {
+      cleared = confirmCleared()
+    } catch {
+      // An unreadable terminal is unconfirmed; the maximal clear remains safe.
+    }
+    if (!cleared) {
       sendRuntimePtyInput(settings, ptyId, AGENT_TUI_CLEAR_INPUT_MAX)
     }
     writeBody()
@@ -130,15 +138,17 @@ export function sendNativeChatMessage(
       if (isCancelled()) {
         return
       }
-      delay(NATIVE_CHAT_SUBMIT_DELAY_MS + clearConfirmDurationMs(options), () => {
-        sendRuntimePtyInput(settings, ptyId, NATIVE_CHAT_SUBMIT)
-        markSubmitted()
-      })
       clearThenWrite(settings, ptyId, options, delay, () => {
         if (isCancelled()) {
           return
         }
         sendRuntimePtyInput(settings, ptyId, buildNativeChatPasteBytes(text))
+        // Schedule from the actual body write: an overdue clear-confirm callback
+        // must not collapse the required body-to-Enter gap after a renderer stall.
+        delay(NATIVE_CHAT_SUBMIT_DELAY_MS, () => {
+          sendRuntimePtyInput(settings, ptyId, NATIVE_CHAT_SUBMIT)
+          markSubmitted()
+        })
       })
     },
     {
@@ -225,16 +235,6 @@ export function sendNativeChatMessageWithImageAttachments(
       if (isCancelled()) {
         return
       }
-      const clearConfirmMs = clearConfirmDurationMs(options)
-      if (trimmedText.length > 0) {
-        delay(clearConfirmMs + NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS, () => {
-          sendRuntimePtyInput(settings, ptyId, buildNativeChatPasteBytes(text))
-        })
-      }
-      delay(durationMs, () => {
-        sendRuntimePtyInput(settings, ptyId, NATIVE_CHAT_SUBMIT)
-        markSubmitted()
-      })
       clearThenWrite(settings, ptyId, options, delay, () => {
         if (isCancelled()) {
           return
@@ -242,6 +242,20 @@ export function sendNativeChatMessageWithImageAttachments(
         for (const imagePath of imagePaths) {
           sendRuntimePtyInput(settings, ptyId, buildNativeChatImagePasteBytes(imagePath))
         }
+        if (trimmedText.length > 0) {
+          delay(NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS, () => {
+            sendRuntimePtyInput(settings, ptyId, buildNativeChatPasteBytes(text))
+            delay(NATIVE_CHAT_SUBMIT_DELAY_MS, () => {
+              sendRuntimePtyInput(settings, ptyId, NATIVE_CHAT_SUBMIT)
+              markSubmitted()
+            })
+          })
+          return
+        }
+        delay(NATIVE_CHAT_SUBMIT_DELAY_MS, () => {
+          sendRuntimePtyInput(settings, ptyId, NATIVE_CHAT_SUBMIT)
+          markSubmitted()
+        })
       })
     },
     {

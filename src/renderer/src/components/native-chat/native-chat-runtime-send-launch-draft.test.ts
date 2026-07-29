@@ -69,6 +69,37 @@ describe('sendNativeChatMessage with a parked multi-line draft', () => {
     expect(writes()).toEqual([clearInput, buildNativeChatPasteBytes('edited'), NATIVE_CHAT_SUBMIT])
   })
 
+  it('preserves the body-to-Enter gap when the renderer stalls past both nominal deadlines', async () => {
+    vi.useRealTimers()
+    const writeTimes = new Map<string, number>()
+    sendRuntimePtyInput.mockImplementation((_settings, _pty, bytes: string) => {
+      writeTimes.set(bytes, performance.now())
+      return true
+    })
+    sendNativeChatMessage(SETTINGS, PTY, 'edited', {
+      clearInput: buildAgentTuiClearInputForText(DRAFT),
+      confirmCleared: () => true
+    })
+    sendNativeChatMessage(SETTINGS, PTY, 'queued')
+
+    const blockedUntil =
+      performance.now() + NATIVE_CHAT_CLEAR_CONFIRM_MS + NATIVE_CHAT_SUBMIT_DELAY_MS + 50
+    while (performance.now() < blockedUntil) {
+      // Simulate a renderer long task delaying both nominal deadlines.
+    }
+
+    await vi.waitFor(() => expect(writeTimes.has(NATIVE_CHAT_SUBMIT)).toBe(true), {
+      timeout: NATIVE_CHAT_SUBMIT_DELAY_MS + 1_000
+    })
+    await vi.waitFor(() => expect(writeTimes.has(buildNativeChatPasteBytes('queued'))).toBe(true))
+    expect(
+      writeTimes.get(NATIVE_CHAT_SUBMIT)! - writeTimes.get(buildNativeChatPasteBytes('edited'))!
+    ).toBeGreaterThanOrEqual(NATIVE_CHAT_SUBMIT_DELAY_MS - 20)
+    expect(writes().indexOf(NATIVE_CHAT_SUBMIT)).toBeLessThan(
+      writes().indexOf(buildNativeChatPasteBytes('queued'))
+    )
+  })
+
   it('widens to a maximal burst when the draft is still observed on the line', () => {
     const clearInput = buildAgentTuiClearInputForText(DRAFT)
     sendNativeChatMessage(SETTINGS, PTY, 'edited', {
