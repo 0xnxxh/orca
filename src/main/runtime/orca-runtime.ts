@@ -1027,6 +1027,7 @@ type RuntimeStore = {
   removeWorkspaceLineage?: Store['removeWorkspaceLineage']
   getGitHubCache: Store['getGitHubCache']
   getWorkspaceSession?: Store['getWorkspaceSession']
+  getWorkspaceSessionHostIds?: Store['getWorkspaceSessionHostIds']
   setWorkspaceSession?: Store['setWorkspaceSession']
   flushOrThrow?: Store['flushOrThrow']
   persistPtyBinding?: Store['persistPtyBinding']
@@ -3585,32 +3586,43 @@ export class OrcaRuntimeService {
     >()
     const changedHostIds = new Set<ExecutionHostId>()
     for (const blocked of plan.blockedPanes) {
-      const hostId = this.getWorkspaceSessionHostIdForWorktree(blocked.worktreeId)
-      let state = sessions.get(hostId)
-      if (!state) {
-        const current = store.getWorkspaceSession(hostId)
-        if (!current) {
+      let hostIds: ExecutionHostId[]
+      try {
+        hostIds = [this.getWorkspaceSessionHostIdForWorktree(blocked.worktreeId)]
+      } catch (error) {
+        console.warn('[orchestration] legacy worker resume fence owner is unavailable', {
+          worktreeId: blocked.worktreeId,
+          error
+        })
+        hostIds = store.getWorkspaceSessionHostIds?.() ?? [LOCAL_EXECUTION_HOST_ID]
+      }
+      for (const hostId of hostIds) {
+        let state = sessions.get(hostId)
+        if (!state) {
+          const current = store.getWorkspaceSession(hostId)
+          if (!current) {
+            continue
+          }
+          state = { current, next: structuredClone(current) }
+          sessions.set(hostId, state)
+        }
+        const record = state.next.sleepingAgentSessionsByPaneKey?.[blocked.paneKey]
+        if (
+          !record ||
+          !runtimeWorktreeIdsEqual(record.worktreeId, blocked.worktreeId) ||
+          record.automaticResumeBlockedBy === 'legacy-orchestration-worker'
+        ) {
           continue
         }
-        state = { current, next: structuredClone(current) }
-        sessions.set(hostId, state)
-      }
-      const record = state.next.sleepingAgentSessionsByPaneKey?.[blocked.paneKey]
-      if (
-        !record ||
-        !runtimeWorktreeIdsEqual(record.worktreeId, blocked.worktreeId) ||
-        record.automaticResumeBlockedBy === 'legacy-orchestration-worker'
-      ) {
-        continue
-      }
-      state.next.sleepingAgentSessionsByPaneKey = {
-        ...state.next.sleepingAgentSessionsByPaneKey,
-        [blocked.paneKey]: {
-          ...record,
-          automaticResumeBlockedBy: 'legacy-orchestration-worker'
+        state.next.sleepingAgentSessionsByPaneKey = {
+          ...state.next.sleepingAgentSessionsByPaneKey,
+          [blocked.paneKey]: {
+            ...record,
+            automaticResumeBlockedBy: 'legacy-orchestration-worker'
+          }
         }
+        changedHostIds.add(hostId)
       }
-      changedHostIds.add(hostId)
     }
     const changed = [...sessions].filter(([hostId]) => changedHostIds.has(hostId))
     if (changed.length === 0) {
@@ -3981,8 +3993,20 @@ export class OrcaRuntimeService {
   }
 
   private getWorkspaceSessionHostIdForWorktree(worktreeId: string): ExecutionHostId {
-    const repo = this.store?.getRepo?.(getRepoIdFromWorktreeId(worktreeId))
-    return repo ? getRepoExecutionHostId(repo) : 'local'
+    const scope = parseWorkspaceKey(worktreeId)
+    if (scope?.type === 'folder') {
+      const workspace = this.store
+        ?.getFolderWorkspaces?.()
+        .find((entry) => entry.id === scope.folderWorkspaceId)
+      if (!workspace) {
+        throw new Error('folder_workspace_not_found')
+      }
+      const connectionId = this.resolveFolderWorkspaceConnectionId(workspace)
+      return connectionId ? toSshExecutionHostId(connectionId) : LOCAL_EXECUTION_HOST_ID
+    }
+    const resolvedWorktreeId = scope?.type === 'worktree' ? scope.worktreeId : worktreeId
+    const repo = this.store?.getRepo?.(getRepoIdFromWorktreeId(resolvedWorktreeId))
+    return repo ? getRepoExecutionHostId(repo) : LOCAL_EXECUTION_HOST_ID
   }
 
   private getWorkspaceSessionForWorktree(worktreeId: string): WorkspaceSessionState | null {

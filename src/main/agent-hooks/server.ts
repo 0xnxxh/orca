@@ -1441,13 +1441,17 @@ export class AgentHookServer {
     const clearedStatusPaneKeys = new Set<string>()
     for (const [legacyPaneKey, entry] of this.legacyPaneKeyAliases) {
       if (entry.ptyId === ptyId) {
-        this.revokeHydratedAuthorityForPaneKeys(new Set([legacyPaneKey, entry.stablePaneKey]))
+        const shouldClearStablePaneKey =
+          options?.shouldClearStablePaneKey?.(entry.stablePaneKey) ?? true
+        const revokedPaneKeys = new Set([legacyPaneKey])
+        if (shouldClearStablePaneKey) {
+          revokedPaneKeys.add(entry.stablePaneKey)
+        }
+        this.revokeHydratedAuthorityForPaneKeys(revokedPaneKeys)
         this.legacyPaneKeyAliases.delete(legacyPaneKey)
         clearPaneCacheState(this.state, legacyPaneKey)
         this.currentAuthorityObservations.delete(legacyPaneKey)
         this.promptSentDedupeByPaneKey.delete(legacyPaneKey)
-        const shouldClearStablePaneKey =
-          options?.shouldClearStablePaneKey?.(entry.stablePaneKey) ?? true
         if (shouldClearStablePaneKey && this.state.lastStatusByPaneKey.has(entry.stablePaneKey)) {
           statusChanged = true
           clearedStatusPaneKeys.add(entry.stablePaneKey)

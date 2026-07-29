@@ -156,4 +156,44 @@ describe('AgentHookServer authority evidence', () => {
       })
     ).toBeNull()
   })
+
+  it('preserves hydrated authority when stale alias cleanup does not own the stable pane', async () => {
+    const server = new AgentHookServer()
+    servers.push(server)
+    const launchToken = 'launch-before-restart'
+    const launchTokenHash = createHash('sha256').update(launchToken).digest('hex')
+    const hydrated = {
+      paneKey: PANE_KEY,
+      launchToken,
+      tabId: 'tab-authority',
+      worktreeId: 'repo::before',
+      connectionId: 'ssh-target',
+      payload: { state: 'working', prompt: 'before', agentType: 'codex' },
+      receivedAt: 100,
+      stateStartedAt: 100
+    } satisfies AgentHookEventPayload & { receivedAt: number; stateStartedAt: number }
+    server._getStateForTests().lastStatusByPaneKey.set(PANE_KEY, hydrated)
+    server.registerPaneKeyAlias('tab-authority:0', PANE_KEY, 'old-pty')
+    await server.start()
+    server.ingestRemote(
+      {
+        paneKey: PANE_KEY,
+        launchToken,
+        tabId: 'tab-authority',
+        worktreeId: 'repo::current',
+        payload: { state: 'working', prompt: 'current', agentType: 'codex' }
+      },
+      'ssh-target'
+    )
+
+    server.clearPaneKeyAliasesForPty('old-pty', { shouldClearStablePaneKey: () => false })
+
+    expect(
+      server.attestCompatibilityAuthority({
+        paneKey: PANE_KEY,
+        launchTokenHash,
+        connectionId: 'ssh-target'
+      })
+    ).toEqual({ paneKey: PANE_KEY, source: 'current_hook' })
+  })
 })
