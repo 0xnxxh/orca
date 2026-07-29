@@ -13,5 +13,9 @@ export function resolveOpenCodeStorageDirectory(
   environment: NodeJS.ProcessEnv = process.env,
   homeDirectory = homedir()
 ): string {
-  return join(resolveOpenCodeDataDirectory(environment, homeDirectory), 'storage')
+  const configDirectory = environment.OPENCODE_CONFIG_DIR?.trim()
+  return join(
+    configDirectory || resolveOpenCodeDataDirectory(environment, homeDirectory),
+    'storage'
+  )
 }

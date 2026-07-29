@@ -38,9 +38,24 @@ describe('resolveOpenCodeDataDirectory', () => {
     }
   )
 
-  it('derives legacy storage from the same data directory', () => {
-    expect(resolveOpenCodeStorageDirectory({}, '/users/test')).toBe(
-      join('/users/test', '.local', 'share', 'opencode', 'storage')
-    )
+  it('prefers OPENCODE_CONFIG_DIR for legacy storage', () => {
+    expect(
+      resolveOpenCodeStorageDirectory(
+        {
+          OPENCODE_CONFIG_DIR: ' /custom/config ',
+          XDG_DATA_HOME: '/custom/data'
+        },
+        '/users/test'
+      )
+    ).toBe(join('/custom/config', 'storage'))
+  })
+
+  it('derives legacy storage from the data directory without a config override', () => {
+    expect(
+      resolveOpenCodeStorageDirectory(
+        { OPENCODE_CONFIG_DIR: ' ', XDG_DATA_HOME: '/custom/data' },
+        '/users/test'
+      )
+    ).toBe(join('/custom/data', 'opencode', 'storage'))
   })
 })
