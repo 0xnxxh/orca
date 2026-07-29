@@ -60,10 +60,14 @@ describe('plugin skill candidate scan', () => {
     expect(result.issues).toEqual([{ path: root, reason: 'entry-limit', errorCode: null }])
   })
 
-  it('stops at the entry budget while resolving declared skill roots', async () => {
-    // Why: a declared root costs a resolve before it can be rejected, and a root that does
-    // not exist reads no dirent at all — so the dirent guard never sees a manifest that
-    // spends the whole scan on missing paths. Only this guard bounds that.
+  // Why: a declared root costs a resolve before it can be rejected, and a root that does
+  // not exist reads no dirent at all — so the dirent guard never sees a manifest that
+  // spends the whole scan on missing paths. Only the resolve guard bounds that, and only
+  // this shape lets its threshold be read off the entry count instead of assumed.
+  async function createManifestWithMissingSkillRoots(): Promise<{
+    root: string
+    candidate: string
+  }> {
     const root = await mkdtemp(join(tmpdir(), 'orca-plugin-entry-limit-declared-'))
     temporaryDirectories.push(root)
     // Why: the manifest sits under a vendor directory, not at the scan root, so the
@@ -77,17 +81,41 @@ describe('plugin skill candidate scan', () => {
       '{"skills":["./a-skills","./missing-one","./missing-two"]}\n'
     )
     await writeFile(join(candidate, 'SKILL.md'), '# Orca CLI\n')
+    return { root, candidate }
+  }
 
-    // Budget: the root's dirent, the vendor's two, a-skills', the skill's, and the first
-    // declared root.
+  // Why: the scan reads exactly eight entries here — the root's dirent, the vendor's two,
+  // a-skills' and its skill's, then one resolve per declared root. Both budgets below are
+  // stated against that count so each guard's threshold is asserted, not just its firing.
+  const DECLARED_ROOT_SCAN_ENTRIES = 8
+
+  it('stops at the entry budget while resolving declared skill roots', async () => {
+    const { root, candidate } = await createManifestWithMissingSkillRoots()
+
+    // Why: one short of the full count, so only the last declared root's resolve crosses
+    // it. A guard that admitted that root would run the scan to completion and report
+    // nothing, which is what makes the issue below an assertion on the threshold.
     const result = await scanKnownPluginSkillCandidates(root, new Set(['orca-cli']), {
-      maximumEntries: 6
+      maximumEntries: DECLARED_ROOT_SCAN_ENTRIES - 1
     })
 
     // Why: the declared root that exists was fully walked, so the bound is being crossed by
     // a resolve of the roots after it — not by the dirent loop stopping the scan early.
     expect(result.candidates).toEqual([{ name: 'orca-cli', path: candidate }])
     expect(result.issues).toEqual([{ path: root, reason: 'entry-limit', errorCode: null }])
+  })
+
+  it('resolves the last declared skill root when the entry budget is exactly spent', async () => {
+    const { root, candidate } = await createManifestWithMissingSkillRoots()
+
+    const result = await scanKnownPluginSkillCandidates(root, new Set(['orca-cli']), {
+      maximumEntries: DECLARED_ROOT_SCAN_ENTRIES
+    })
+
+    // Why: a budget the scan fits inside is not a truncation. Firing one entry early would
+    // pin the same unclearable attention #10918 did, on a scan that missed nothing.
+    expect(result.candidates).toEqual([{ name: 'orca-cli', path: candidate }])
+    expect(result.issues).toEqual([])
   })
 
   it('completes a real-shaped Codex cache without reporting coverage issues', async () => {
