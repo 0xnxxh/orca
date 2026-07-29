@@ -202,6 +202,142 @@ describe('resolveAiVaultSessionWorktreeInfo', () => {
       worktreeId: worktree.id
     })
   })
+
+  it('matches an NFD workspace path to an NFC transcript cwd', () => {
+    // macOS yields NFD on disk while Claude Code records cwd in NFC (#10832).
+    // The projection precomputes its matchers, so the fold has to survive that.
+    const nfcPath = '/repo/프로젝트'
+    const worktree = makeWorktree({
+      id: `repo-1::${nfcPath.normalize('NFD')}`,
+      displayName: '',
+      path: nfcPath.normalize('NFD')
+    })
+
+    expect(
+      resolveAiVaultSessionWorktreeInfo({
+        session: { ...baseSession, cwd: `${nfcPath}/src` },
+        worktrees: [worktree],
+        activeWorktreeId: null
+      })
+    ).toMatchObject({
+      status: 'active',
+      worktreeId: worktree.id
+    })
+  })
+
+  it('matches an NFD transcript cwd to an NFC workspace path', () => {
+    const nfcPath = '/repo/café'
+    const worktree = makeWorktree({
+      id: `repo-1::${nfcPath}`,
+      displayName: '',
+      path: nfcPath
+    })
+
+    expect(
+      resolveAiVaultSessionWorktreeInfo({
+        session: { ...baseSession, cwd: `${nfcPath}/src`.normalize('NFD') },
+        worktrees: [worktree],
+        activeWorktreeId: null
+      })
+    ).toMatchObject({
+      status: 'active',
+      worktreeId: worktree.id
+    })
+  })
+
+  it('does not treat a sibling sharing a path prefix as the owner', () => {
+    // Guards the candidate matcher's boundary: '/repo/orca-sibling' must not
+    // match under '/repo/orca'.
+    const worktree = makeWorktree()
+    const sibling = makeWorktree({
+      id: 'repo-1::/repo/orca-sibling',
+      displayName: 'sibling',
+      path: '/repo/orca-sibling'
+    })
+
+    expect(
+      resolveAiVaultSessionWorktreeInfo({
+        session: { ...baseSession, cwd: '/repo/orca-sibling/src' },
+        worktrees: [worktree, sibling],
+        activeWorktreeId: null
+      })
+    ).toMatchObject({ worktreeId: sibling.id })
+  })
+
+  it('prefers the deepest owning worktree when workspaces nest', () => {
+    // The single-pass max must reproduce the old sort: longest comparison path
+    // wins, and 'current-path' breaks a tie against 'prior-path'.
+    const outer = makeWorktree({
+      id: 'repo-1::/repo/orca',
+      displayName: 'outer',
+      path: '/repo/orca'
+    })
+    const inner = makeWorktree({
+      id: 'repo-1::/repo/orca/packages/app',
+      displayName: 'inner',
+      path: '/repo/orca/packages/app'
+    })
+
+    expect(
+      resolveAiVaultSessionWorktreeInfo({
+        session: { ...baseSession, cwd: '/repo/orca/packages/app/src' },
+        worktrees: [outer, inner],
+        activeWorktreeId: null
+      })
+    ).toMatchObject({ worktreeId: inner.id })
+  })
+
+  it('prefers a current path over another worktree holding it as a prior path', () => {
+    const current = makeWorktree({
+      id: 'repo-1::/repo/orca',
+      displayName: 'current',
+      path: '/repo/orca'
+    })
+    const renamed = makeWorktree({
+      id: 'repo-1::/repo/orca-renamed',
+      displayName: 'renamed',
+      path: '/repo/orca-renamed',
+      priorWorktreeIds: ['repo-1::/repo/orca']
+    })
+
+    expect(
+      resolveAiVaultSessionWorktreeInfo({
+        session: baseSession,
+        worktrees: [renamed, current],
+        activeWorktreeId: null
+      })
+    ).toMatchObject({ worktreeId: current.id })
+  })
+
+  it('resolves a large workspace set without rebuilding candidates per session', () => {
+    // Regression for the ~1s workspace-switch stall (#10841): resolving each
+    // session used to rebuild and re-normalize every candidate, making the
+    // panel O(sessions x worktrees) on path normalization. Times a fan-out
+    // rather than counting calls so it fails on any return to that shape.
+    const worktrees = Array.from({ length: 1200 }, (_, i) =>
+      makeWorktree({
+        id: `repo-1::/repo/w${i}`,
+        displayName: `w${i}`,
+        path: `/repo/w${i}`
+      })
+    )
+    const sessions = Array.from({ length: 400 }, (_, i) => ({
+      ...baseSession,
+      id: `codex:session-${i}`,
+      cwd: `/repo/w${i % worktrees.length}/src`
+    }))
+
+    const startedAt = performance.now()
+    const resolved = sessions.map((session) =>
+      resolveAiVaultSessionWorktreeInfo({ session, worktrees, activeWorktreeId: null })
+    )
+    const elapsedMs = performance.now() - startedAt
+
+    expect(resolved.every((info) => info?.status === 'active')).toBe(true)
+    // Was ~350ms+ before the fix and ~10ms after; the bound is loose enough to
+    // stay quiet on a slow CI box while still catching the quadratic shape.
+    expect(elapsedMs).toBeLessThan(150)
+  })
 })
 
 describe('canJumpToAiVaultSessionWorktree', () => {
