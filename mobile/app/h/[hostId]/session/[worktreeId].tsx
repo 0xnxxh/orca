@@ -51,7 +51,7 @@ import type { RpcClient } from '../../../../src/transport/rpc-client'
 import { loadHosts } from '../../../../src/transport/host-store'
 import { startRuntimeCapabilityProbe } from '../../../../src/transport/runtime-capability-probe'
 import {
-  loadTerminalAutocompleteEnabled,
+  loadTerminalAutocompletePreference,
   loadTerminalLinkOpenMode,
   loadTerminalTextScale,
   HOST_DOCK_MIN_WIDTH,
@@ -131,6 +131,11 @@ import {
   getTerminalCommandKeyboardType,
   getTerminalLiveInputKeyboardType
 } from '../../../../src/terminal/terminal-keyboard-type'
+import {
+  getTerminalImeInputProps,
+  isTerminalAutocorrectEnabled,
+  type TerminalAutocompletePreference
+} from '../../../../src/terminal/terminal-ime-input-props'
 import { normalizeTerminalTextInput } from '../../../../src/terminal/terminal-text-input-normalization'
 import {
   appendBufferedDictation,
@@ -895,7 +900,8 @@ export default function SessionScreen() {
   // Why: baseline terminal zoom reloaded on focus so a Settings → Terminal change applies in place (panes stay mounted).
   const [terminalTextScale, setTerminalTextScale] = useState(1)
   // Why: terminal command-bar autocomplete opt-in, reloaded on focus so a Settings → Terminal toggle takes effect on return.
-  const [autocompleteEnabled, setAutocompleteEnabled] = useState(false)
+  const [autocompletePref, setAutocompletePref] = useState<TerminalAutocompletePreference>('unset')
+  const commandAutocorrect = isTerminalAutocorrectEnabled('command', Platform.OS, autocompletePref)
   const [terminalLinkOpenMode, setTerminalLinkOpenMode] =
     useState<MobileTerminalLinkOpenMode>('orca-browser')
   const [liveInputCapture, setLiveInputCapture] = useState('')
@@ -2773,9 +2779,9 @@ export default function SessionScreen() {
   useFocusEffect(
     useCallback(() => {
       let active = true
-      void loadTerminalAutocompleteEnabled().then((enabled) => {
+      void loadTerminalAutocompletePreference().then((preference) => {
         if (active) {
-          setAutocompleteEnabled(enabled)
+          setAutocompletePref(preference)
         }
       })
       return () => {
@@ -5018,8 +5024,8 @@ export default function SessionScreen() {
                       placeholder=""
                       showSoftInputOnFocus
                       autoCapitalize="none"
-                      autoCorrect={false}
-                      spellCheck={false}
+                      // Why: a hardcoded false here becomes Android's NO_SUGGESTIONS inputType, which Samsung Keyboard answers by killing IME composition (#6995).
+                      {...getTerminalImeInputProps('live', Platform.OS, autocompletePref)}
                       smartInsertDelete={false}
                       // Why: iOS textContentType overrides autoComplete and can narrow the keyboard; keep IME switching available.
                       autoComplete="off"
@@ -5037,7 +5043,7 @@ export default function SessionScreen() {
                       // Why: Android caches IME inputType at mount, so toggling autocomplete must remount there; iOS updates in place.
                       key={
                         Platform.OS === 'android'
-                          ? autocompleteEnabled
+                          ? commandAutocorrect
                             ? 'cmd-input-ac-on'
                             : 'cmd-input-ac-off'
                           : 'cmd-input'
@@ -5049,15 +5055,11 @@ export default function SessionScreen() {
                       placeholder="Type a command…"
                       placeholderTextColor={colors.textMuted}
                       autoCapitalize="none"
-                      autoCorrect={autocompleteEnabled}
-                      spellCheck={autocompleteEnabled}
+                      {...getTerminalImeInputProps('command', Platform.OS, autocompletePref)}
                       smartInsertDelete={false}
                       // Why: not autofill content, but keyboard must stay default so non-Latin IMEs remain selectable.
                       autoComplete="off"
-                      keyboardType={getTerminalCommandKeyboardType(
-                        Platform.OS,
-                        autocompleteEnabled
-                      )}
+                      keyboardType={getTerminalCommandKeyboardType(Platform.OS, commandAutocorrect)}
                       returnKeyType="send"
                       editable={canSend}
                       onSubmitEditing={() => void handleSend()}

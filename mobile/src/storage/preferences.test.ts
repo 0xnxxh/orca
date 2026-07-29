@@ -11,7 +11,7 @@ import {
   loadDisabledTerminalLiveInputHandles,
   loadHostSidebarWidth,
   loadPushNotificationsEnabled,
-  loadTerminalAutocompleteEnabled,
+  loadTerminalAutocompletePreference,
   loadTerminalLinkOpenMode,
   readPushNotificationsPreference,
   readDisabledTerminalLiveInputHandlesPreference,
@@ -318,27 +318,27 @@ describe('terminal autocomplete preference', () => {
     vi.mocked(AsyncStorage.setItem).mockReset()
   })
 
-  it('defaults to disabled when unset', async () => {
+  it('reports unset when nothing is persisted, so the per-platform default applies', async () => {
     vi.mocked(AsyncStorage.getItem).mockResolvedValue(null)
 
-    await expect(loadTerminalAutocompleteEnabled()).resolves.toBe(false)
+    await expect(loadTerminalAutocompletePreference()).resolves.toBe('unset')
     expect(AsyncStorage.getItem).toHaveBeenCalledWith('orca:terminalAutocompleteEnabled')
   })
 
-  it('loads enabled only from the persisted true value', async () => {
+  it('keeps an explicit choice distinguishable from unset', async () => {
     vi.mocked(AsyncStorage.getItem).mockResolvedValue('true')
 
-    await expect(loadTerminalAutocompleteEnabled()).resolves.toBe(true)
+    await expect(loadTerminalAutocompletePreference()).resolves.toBe('on')
 
     vi.mocked(AsyncStorage.getItem).mockResolvedValue('false')
 
-    await expect(loadTerminalAutocompleteEnabled()).resolves.toBe(false)
+    await expect(loadTerminalAutocompletePreference()).resolves.toBe('off')
   })
 
-  it('falls back to disabled when storage cannot be read', async () => {
+  it('falls back to unset when storage cannot be read', async () => {
     vi.mocked(AsyncStorage.getItem).mockRejectedValue(new Error('storage unavailable'))
 
-    await expect(loadTerminalAutocompleteEnabled()).resolves.toBe(false)
+    await expect(loadTerminalAutocompletePreference()).resolves.toBe('unset')
   })
 
   it('persists the selected value', async () => {

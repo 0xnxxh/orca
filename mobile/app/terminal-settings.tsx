@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { View, Text, StyleSheet, Pressable, Switch } from 'react-native'
+import { Platform, View, Text, StyleSheet, Pressable, Switch } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import Animated, {
@@ -18,11 +18,12 @@ import { PickerModal, type PickerOption } from '../src/components/PickerModal'
 import { TerminalShortcutSettings } from '../src/components/TerminalShortcutSettings'
 import { setTerminalAutoRestoreFitMsForHost } from '../src/terminal/terminal-auto-restore-fit-state'
 import {
-  loadTerminalAutocompleteEnabled,
+  loadTerminalAutocompletePreference,
   loadTerminalTextScale,
   saveTerminalAutocompleteEnabled,
   saveTerminalTextScale
 } from '../src/storage/preferences'
+import { isTerminalAutocorrectEnabled } from '../src/terminal/terminal-ime-input-props'
 
 type RestoreValue = 'indefinite' | '60s' | '5m' | '30m'
 
@@ -155,15 +156,19 @@ export default function TerminalSettingsScreen() {
     void saveTerminalTextScale(opt.scale)
   }, [])
 
-  const [autocompleteEnabled, setAutocompleteEnabled] = useState(false)
+  // Why: the switch must show what the command bar actually does, so an unset
+  // preference resolves through the same per-platform default the input uses.
+  const [autocompleteEnabled, setAutocompleteEnabled] = useState(() =>
+    isTerminalAutocorrectEnabled('command', Platform.OS, 'unset')
+  )
   // Why: a fast toggle before the initial load resolves must win — otherwise the
   // delayed read would clobber the user's choice with the stored (stale) value.
   const userToggledAutocompleteRef = useRef(false)
   useEffect(() => {
     let stale = false
-    void loadTerminalAutocompleteEnabled().then((enabled) => {
+    void loadTerminalAutocompletePreference().then((preference) => {
       if (!stale && !userToggledAutocompleteRef.current) {
-        setAutocompleteEnabled(enabled)
+        setAutocompleteEnabled(isTerminalAutocorrectEnabled('command', Platform.OS, preference))
       }
     })
     return () => {
@@ -329,9 +334,9 @@ export default function TerminalSettingsScreen() {
         <Text style={[styles.groupHeading, styles.inputGroupGap]}>KEYBOARD INPUT</Text>
         <Text style={styles.groupDescription}>
           Enable phone-style autocomplete, autocorrect, and spelling suggestions in the terminal
-          command bar. Off by default so the keyboard never rewrites commands, flags, or paths.
-          Direct keyboard input (when keys go straight to the terminal) always sends raw keystrokes,
-          so suggestions don&apos;t apply there.
+          command bar. {Platform.OS === 'ios' ? 'On' : 'Off'} by default. Direct keyboard input
+          (when keys go straight to the terminal) always sends raw keystrokes, so suggestions
+          don&apos;t apply there.
         </Text>
         <View style={[styles.section, styles.sectionTopGap]}>
           <View style={styles.row}>

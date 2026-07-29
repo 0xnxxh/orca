@@ -1,4 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import {
+  parseTerminalAutocompletePreference,
+  type TerminalAutocompletePreference
+} from '../terminal/terminal-ime-input-props'
 
 const PINS_PREFIX = 'orca:pins:'
 const NOTIF_KEY = 'orca:pushNotificationsEnabled'
@@ -63,15 +67,14 @@ export async function saveTerminalTextScale(scale: number): Promise<void> {
 
 const AUTOCOMPLETE_KEY = 'orca:terminalAutocompleteEnabled'
 
-// Why: terminal command inputs default to autocorrect/suggestions OFF so the
-// keyboard never mangles commands, flags, or paths. Users who want phone-style
-// typing opt in via Settings → Terminal; the choice persists locally per device.
-export async function loadTerminalAutocompleteEnabled(): Promise<boolean> {
+// Why: unset must stay distinguishable from an explicit off — the default is
+// per-platform (see isTerminalAutocorrectEnabled), but an explicit choice in
+// Settings → Terminal wins everywhere and persists locally per device.
+export async function loadTerminalAutocompletePreference(): Promise<TerminalAutocompletePreference> {
   try {
-    const raw = await AsyncStorage.getItem(AUTOCOMPLETE_KEY)
-    return raw === 'true'
+    return parseTerminalAutocompletePreference(await AsyncStorage.getItem(AUTOCOMPLETE_KEY))
   } catch {
-    return false
+    return 'unset'
   }
 }
 
