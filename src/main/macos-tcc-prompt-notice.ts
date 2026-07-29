@@ -57,6 +57,10 @@ function loadTally(): TccPromptTally {
   try {
     const parsed = JSON.parse(readFileSync(tallyPath(), 'utf-8')) as Partial<TccPromptTally>
     const dismissed = parsed.dismissed === true
+    if (!dismissed && typeof parsed.acknowledgedAfterClose !== 'boolean') {
+      // Why: a legacy tally only proves a past prompt, not that Full Disk Access is still missing.
+      return { ...EMPTY_TALLY }
+    }
     const acknowledgedAfterClose = parsed.acknowledgedAfterClose === true
     return {
       promptCount: typeof parsed.promptCount === 'number' ? parsed.promptCount : 0,

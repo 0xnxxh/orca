@@ -302,32 +302,43 @@ describe('tcc prompt notice threshold', () => {
     }
   })
 
-  it('delivers a tally persisted below the old threshold without respawning the watcher', () => {
+  it.each([
+    { promptCount: 2, notified: false },
+    { promptCount: 1, notified: true }
+  ])('requires a fresh detection for a legacy tally: $promptCount/$notified', (persisted) => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')
     Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
-    readTallyFile.mockReturnValue(
-      JSON.stringify({ promptCount: 2, notified: false, dismissed: false })
-    )
+    readTallyFile.mockReturnValue(JSON.stringify({ ...persisted, dismissed: false }))
     try {
       const mainWindow = createWindowStub()
       initTccPromptNotice(mainWindow as never)
 
-      expect(watchStart).not.toHaveBeenCalled()
+      expect(watchStart).toHaveBeenCalledOnce()
+      expect(mainWindow.webContents.send).not.toHaveBeenCalled()
+      expect(consumePendingTccPromptNotice(1)).toBeNull()
+
+      watchOptions[0].onPrompt()
+
       expect(mainWindow.webContents.send).toHaveBeenCalledWith('macosTccPrompts:threshold', {
-        promptCount: 2
+        promptCount: 1
       })
-      expect(mainWindow.once).not.toHaveBeenCalled()
-      expect(consumePendingTccPromptNotice(1)).toEqual({ claimId: 1, promptCount: 2 })
+      expect(watchStop).toHaveBeenCalledOnce()
+      expect(consumePendingTccPromptNotice(1)).toEqual({ claimId: 1, promptCount: 1 })
     } finally {
       Object.defineProperty(process, 'platform', platform!)
     }
   })
 
-  it('replays a legacy optimistic acknowledgement without respawning the watcher', () => {
+  it('replays an unclosed notice from the new delivery contract', () => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')
     Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
     readTallyFile.mockReturnValue(
-      JSON.stringify({ promptCount: 1, notified: true, dismissed: false })
+      JSON.stringify({
+        promptCount: 1,
+        notified: false,
+        dismissed: false,
+        acknowledgedAfterClose: false
+      })
     )
     try {
       const mainWindow = createWindowStub()
