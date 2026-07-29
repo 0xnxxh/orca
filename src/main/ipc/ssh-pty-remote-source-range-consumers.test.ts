@@ -394,7 +394,7 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
     expect(consumers.requiredConsumers('pty-1')).toEqual([])
   })
 
-  it('idempotently commits and prunes a replacement after proof reclaims its covered spans', () => {
+  it('rejects and rolls back a replacement after proof reclaims its covered spans', () => {
     const ledger = createCoordinator()
     const consumers = new SshPtyRemoteSourceRangeConsumers(ledger)
     const stream = { ptyId: 'pty-1', consumerId: 'consumer-1', streamGeneration: 'stream-1' }
@@ -406,14 +406,44 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
     ])
     ledger.commit(reservation)
     consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers, 4)
-    const replacement = consumers.hooks.reserveReplacement(stream, 4, 'initial-snapshot')
+    const recoveredIdentity = {
+      ...identity,
+      clientGeneration: 3,
+      ownerGeneration: 4,
+      deliveryToken: 'token-2'
+    }
+    ledger.open(recoveredIdentity, 4)
+    const recovered = ledger.reserve(
+      recoveredIdentity,
+      span('span-2', {
+        ...recoveredIdentity,
+        sourceStartSu: 4,
+        sourceEndSu: 8,
+        displayStart: 4,
+        displayEnd: 8
+      }),
+      ['model', ...consumers.requiredConsumers('pty-1')]
+    )
+    ledger.commit(recovered)
+    consumers.trackSpan('pty-1', 'span-2', recovered.requiredConsumers, 8)
+    const replacement = consumers.hooks.reserveReplacement(stream, 8, 'initial-snapshot')
     ledger.seal(identity)
     ledger.beginExitTimeout(identity)
     ledger.applyCancellationProof(identity, { sentEndSu: 4, creditedEndSu: 0 })
 
-    expect(consumers.hooks.commitReplacement(replacement!, { source: 'headless', seq: 4 })).toBe(
-      true
-    )
+    const queuedOutput = ['covered-output', 'surviving-output']
+    const committed = consumers.hooks.commitReplacement(replacement!, {
+      source: 'headless',
+      seq: 8
+    })
+    if (committed) {
+      queuedOutput.splice(0)
+    }
+
+    expect(committed).toBe(false)
+    expect(queuedOutput).toEqual(['covered-output', 'surviving-output'])
+    expect(consumers.hooks.rollbackReplacement(replacement!, 'commit-rejected')).toBe(true)
+    expect(ledger.obligation('span-2', 'remote:consumer-1').state).toBe('open')
     expect(consumers.hooks.rollbackReplacement(replacement!, 'commit-rejected')).toBe(false)
     expect(() => consumers.hooks.cancel(stream, [], 'stream-detached')).not.toThrow()
     expect(consumers.requiredConsumers('pty-1')).toEqual([])

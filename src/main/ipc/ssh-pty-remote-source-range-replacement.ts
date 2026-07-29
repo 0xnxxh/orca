@@ -112,7 +112,7 @@ export class SshPtyRemoteSourceRangeReplacements {
       record.spans.some(({ source, transferState }) => {
         const { spanId } = source
         if (!this.coordinator.hasRetainedSpan(spanId)) {
-          return false
+          return true
         }
         return this.coordinator.obligation(spanId, record.consumer) !== transferState
       })

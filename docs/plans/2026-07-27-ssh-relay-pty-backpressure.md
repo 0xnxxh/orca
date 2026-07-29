@@ -60,7 +60,7 @@ implemented. In this PR:
 - Desktop and remote replacement transactions carry immutable span identity.
   Reserve happens before publication, commit requires the exact
   generation/sequence fence, and failure, stale publication, or already
-  reclaimed spans roll back or prune idempotently without credit.
+  reclaimed spans reject commit and roll back idempotently without credit.
 - Relay `restoreRequired` cancellation retains its exact delivery record until
   the metadata response settles, then retires only that record so a retry can
   mint a fresh token. Main exit timeout obtains cancellation proof before
@@ -2516,7 +2516,8 @@ and a proved token-local failure causes no physical PTY shutdown, ownership
 delete, or lease expiry.
 The remote-consumer seam covers partial cumulative ACK, safe higher-generation
 token rotation, and token cancellation followed by late detach/replacement
-commit, proving reclaimed span IDs are pruned idempotently.
+commit, proving reclaimed span IDs reject commit, preserve rollback ownership,
+and are then cleaned up idempotently.
 
 ### Normative unit and property matrix
 
