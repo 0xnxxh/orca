@@ -39,6 +39,10 @@ import type {
 } from '../../../../shared/types'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import { clampMarkdownTocPanelWidth } from '../../../../shared/markdown-toc-panel-width'
+import {
+  clampCombinedDiffFileTreeWidth,
+  COMBINED_DIFF_FILE_TREE_DEFAULT_WIDTH
+} from '../../../../shared/combined-diff-file-tree-width'
 import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
 import type { RemoteOpKind } from '@/components/right-sidebar/source-control-primary-action'
 import { invalidateAutomaticPushTargetUpstreamStatusCache } from '@/components/right-sidebar/push-target-upstream-refresh-cache'
@@ -316,9 +320,13 @@ export type PendingEditorReveal = {
 export type PendingEditorFocusRequest = {
   fileId: string
   worktreeId: string
+  viewStateId: string
+  expiresAt: number
   token: number
 }
 
+// Why: allow slow SSH mounts without leaving an unrelated future remount armed indefinitely.
+const EDITOR_FOCUS_REQUEST_TTL_MS = 30_000
 let nextEditorFocusRequestToken = 0
 
 const pendingEditorLineRevealFrameIds = new Set<number>()
@@ -400,6 +408,10 @@ export type EditorSlice = {
   // Markdown table of contents panel sizing
   markdownTocPanelWidth: number
   setMarkdownTocPanelWidth: (width: number) => void
+
+  // Combined diff file tree sizing
+  combinedDiffFileTreeWidth: number
+  setCombinedDiffFileTreeWidth: (width: number) => void
 
   // Right sidebar
   rightSidebarOpen: boolean
@@ -1430,6 +1442,17 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       markdownTocPanelWidth: clampMarkdownTocPanelWidth(width, undefined, s.markdownTocPanelWidth)
     })),
 
+  // Combined diff file tree sizing
+  combinedDiffFileTreeWidth: COMBINED_DIFF_FILE_TREE_DEFAULT_WIDTH,
+  setCombinedDiffFileTreeWidth: (width) =>
+    set((s) => ({
+      combinedDiffFileTreeWidth: clampCombinedDiffFileTreeWidth(
+        width,
+        undefined,
+        s.combinedDiffFileTreeWidth
+      )
+    })),
+
   // Right sidebar
   rightSidebarOpen: false,
   rightSidebarWidth: 280,
@@ -1660,18 +1683,6 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         resolveEditorOpenTargetGroupId(s, worktreeId, options?.targetGroupId) ?? undefined
       editorItemTargetGroupId = targetGroupId
       const activeResult = buildEditorActiveResult(s, worktreeId, id)
-      // Why: the renderer may mount asynchronously after the opening control
-      // receives DOM focus, so carry the user's explicit focus handoff by file.
-      const focusRequestUpdate = options?.focusEditor
-        ? {
-            pendingEditorFocusRequest: {
-              fileId: id,
-              worktreeId,
-              token: ++nextEditorFocusRequestToken
-            }
-          }
-        : {}
-
       if (existing) {
         // If opening as non-preview, also pin the existing tab
         const updatedPreview = isPreview ? existing.isPreview : false
@@ -1702,7 +1713,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
           refreshExternalSshProvenance ||
           existing.fileContentReloadNonce !== fileContentReloadNonce
         if (!needsExistingUpdate) {
-          return { ...activeResult, ...focusRequestUpdate }
+          return activeResult
         }
         // Why: `readOnly` is intentionally NOT in this override map — it's sticky, so `...f` preserves the tab's own read-only state.
         return {
@@ -1734,8 +1745,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
                 }
               : f
           ),
-          ...activeResult,
-          ...focusRequestUpdate
+          ...activeResult
         }
       }
 
@@ -1813,8 +1823,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
             recentlyClosedEditorTabsByWorktree: nextRecentlyClosed,
             recentlyClosedTabKindsByWorktree: nextRecentlyClosedKinds,
             ...previewTabBarUpdate,
-            ...activeResult,
-            ...focusRequestUpdate
+            ...activeResult
           }
         }
       }
@@ -1854,11 +1863,10 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
           }
         ],
         ...tabBarUpdate,
-        ...activeResult,
-        ...focusRequestUpdate
+        ...activeResult
       }
     })
-    void openWorkspaceEditorItem(
+    const editorItemViewStateId = openWorkspaceEditorItem(
       get(),
       editorItemFileId,
       editorItemWorktreeId,
@@ -1867,6 +1875,17 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       options?.preview ?? false,
       editorItemTargetGroupId
     )
+    if (options?.focusEditor) {
+      set({
+        pendingEditorFocusRequest: {
+          fileId: editorItemFileId,
+          worktreeId: editorItemWorktreeId,
+          viewStateId: editorItemViewStateId,
+          expiresAt: Date.now() + EDITOR_FOCUS_REQUEST_TTL_MS,
+          token: ++nextEditorFocusRequestToken
+        }
+      })
+    }
   },
 
   openNewMarkdownInActiveWorkspace: async (groupId) => {

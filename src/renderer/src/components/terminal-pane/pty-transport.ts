@@ -18,6 +18,7 @@ import {
   ptyExitHandlers,
   ptyTeardownHandlers,
   ptyShutdownLifecycleHandlers,
+  ptyWriteUnavailableHandlers,
   ensurePtyDispatcher,
   getEagerPtyBufferHandle,
   isPtyDataHandlerShutdownPending
@@ -525,7 +526,11 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
   // Why: a new pane can attach to the same ptyId before the old instance's detach() runs; track owned handlers so unregister never deletes the live one.
   const ownedDataAndReplayHandlers = new Map<
     string,
-    { data: (data: string, meta?: PtyDataMeta) => void; replay: (data: string) => void }
+    {
+      data: (data: string, meta?: PtyDataMeta) => void
+      replay: (data: string) => void
+      writeUnavailable: () => void
+    }
   >()
   const ownedExitHandlers = new Map<string, (code: number) => void>()
 
@@ -552,6 +557,9 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       }
       if (ptyReplayHandlers.get(id) === owned.replay) {
         ptyReplayHandlers.delete(id)
+      }
+      if (ptyWriteUnavailableHandlers.get(id) === owned.writeUnavailable) {
+        ptyWriteUnavailableHandlers.delete(id)
       }
     }
     ownedDataAndReplayHandlers.delete(id)
@@ -584,7 +592,20 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       )
     }
     ptyDataHandlers.set(id, dataHandler)
-    ownedDataAndReplayHandlers.set(id, { data: dataHandler, replay: replayHandler })
+    // Guard like the data/replay handlers: a transport that rebinds to a new id without
+    // detaching leaves this entry behind, and a fan-out for the stale id would otherwise
+    // remount a healthy pane.
+    const writeUnavailable = (): void => {
+      if (ptyId === id) {
+        storedCallbacks.onWriteUnavailable?.()
+      }
+    }
+    ptyWriteUnavailableHandlers.set(id, writeUnavailable)
+    ownedDataAndReplayHandlers.set(id, {
+      data: dataHandler,
+      replay: replayHandler,
+      writeUnavailable
+    })
     if (!isPtyDataHandlerShutdownPending(id)) {
       drainPreHandlerPtyData(id, dataHandler)
       drainRolledBackPtyShutdownData(id)
@@ -675,6 +696,9 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       }
 
       if (options.sessionId && hasPreHandlerPtyExit(options.sessionId)) {
+        if (options.admitPtyId && !options.admitPtyId(options.sessionId)) {
+          return { id: options.sessionId } satisfies PtyConnectResult
+        }
         // Why: deliver the exited parked session's buffered final frame/exit before spawn, so the dead incarnation can't orphan a fresh shell reusing its id.
         ptyId = options.sessionId
         connected = true
@@ -740,13 +764,22 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         const resultLaunchAgent = isTuiAgent(spawnResult.launchAgent)
           ? spawnResult.launchAgent
           : undefined
+        const retireFreshSpawn = async (): Promise<void> => {
+          if (!spawnResult.isReattach && !spawnResult.coldRestore) {
+            await window.api.pty.kill(spawnResult.id)
+          }
+        }
 
         // Why: on destroy mid-connect, kill only a fresh spawn — killing a reattached session (owned by the tab lifecycle) loses a live shell.
         if (destroyed) {
-          if (!options.sessionId) {
-            window.api.pty.kill(spawnResult.id)
-          }
+          await retireFreshSpawn()
           return
+        }
+
+        if (options.admitPtyId && !options.admitPtyId(spawnResult.id)) {
+          // Why: a rejected session-expired fallback has no owner to retire its newly created process.
+          await retireFreshSpawn()
+          return spawnResult
         }
 
         ptyId = spawnResult.id
@@ -772,6 +805,8 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         if (spawnResult.isReattach || spawnResult.coldRestore || spawnResult.sessionExpired) {
           return {
             id: spawnResult.id,
+            // Why: recovery needs to distinguish an attach that ignored startup intent from a fresh spawn that ran it.
+            ...(spawnResult.isReattach ? { isReattach: true } : {}),
             ...(resultLaunchAgent ? { launchAgent: resultLaunchAgent } : {}),
             ...(spawnResult.launchConfig ? { launchConfig: spawnResult.launchConfig } : {}),
             snapshot: spawnResult.snapshot,
@@ -781,17 +816,26 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
             sessionExpired: spawnResult.sessionExpired,
             coldRestore: spawnResult.coldRestore,
             replay: spawnResult.replay,
-            pendingEscapeTailAnsi: spawnResult.pendingEscapeTailAnsi
+            pendingEscapeTailAnsi: spawnResult.pendingEscapeTailAnsi,
+            // Why: the cold-restore path re-runs the launch command, so it needs the
+            // same "main declined the resume" signal the fresh-spawn path gets.
+            ...(spawnResult.agentResumeUnavailable ? { agentResumeUnavailable: true as const } : {})
           } satisfies PtyConnectResult
         }
-        if (resultLaunchAgent || spawnResult.launchConfig || spawnResult.startupCwdFallback) {
+        if (
+          resultLaunchAgent ||
+          spawnResult.launchConfig ||
+          spawnResult.startupCwdFallback ||
+          spawnResult.agentResumeUnavailable
+        ) {
           return {
             id: spawnResult.id,
             ...(resultLaunchAgent ? { launchAgent: resultLaunchAgent } : {}),
             ...(spawnResult.launchConfig ? { launchConfig: spawnResult.launchConfig } : {}),
             ...(spawnResult.startupCwdFallback
               ? { startupCwdFallback: spawnResult.startupCwdFallback }
-              : {})
+              : {}),
+            ...(spawnResult.agentResumeUnavailable ? { agentResumeUnavailable: true as const } : {})
           } satisfies PtyConnectResult
         }
         return spawnResult.id
@@ -901,12 +945,16 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       }
     },
 
-    detach() {
+    detach(options) {
       clearAccumulatedState()
       inputWriteQueue.clear()
       if (ptyId) {
         // Why: on remount keep the exit observer alive so a shell dying in the gap still clears stale tab/leaf bindings before reattach.
-        unregisterPtyDataAndStatusHandlers(ptyId)
+        if (options?.preserveExitObserver === false) {
+          unregisterPtyHandlers(ptyId)
+        } else {
+          unregisterPtyDataAndStatusHandlers(ptyId)
+        }
       }
       connected = false
       ptyId = null

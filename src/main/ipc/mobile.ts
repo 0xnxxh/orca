@@ -1,6 +1,5 @@
 import { app, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 import { networkInterfaces } from 'node:os'
-import QRCode from 'qrcode'
 import type { RuntimeAccessGrant } from '../../shared/runtime-access-grants'
 import type { MobilePairingConnectionMode } from '../../shared/mobile-pairing-connection-mode'
 import { isTailnetIPv4Address } from '../../shared/tailnet-address'
@@ -27,6 +26,10 @@ function isUsableIPv6Address(address: string): boolean {
   return !/^fe[89ab][0-9a-f]:/i.test(address)
 }
 
+function isProxyFakeIpIPv4Address(address: string): boolean {
+  return /^198\.(?:18|19)\./.test(address)
+}
+
 // Why: the WebSocket transport advertises 0.0.0.0 as its endpoint, which isn't
 // connectable from a mobile device. We enumerate all non-internal IPv4 and
 // (non-link-local) IPv6 addresses so the user can choose which one to advertise
@@ -45,6 +48,10 @@ function getNetworkInterfaces(): NetworkInterface[] {
         continue
       }
       if (addr.family === 'IPv4') {
+        // 198.18.0.0/15 proxy fake IPs are only routable inside the desktop proxy.
+        if (isProxyFakeIpIPv4Address(addr.address)) {
+          continue
+        }
         result.push({ name, address: addr.address })
       } else if (addr.family === 'IPv6' && isUsableIPv6Address(addr.address)) {
         result.push({ name, address: addr.address })
@@ -137,6 +144,9 @@ export function registerMobileHandlers(
         return { available: false as const }
       }
 
+      // Why dynamic: pairing is the only consumer, so launch should not parse
+      // the qrcode bundle for users who never pair a device.
+      const { default: QRCode } = await import('qrcode')
       const qrDataUrl = await QRCode.toDataURL(offer.pairingUrl, {
         errorCorrectionLevel: 'M',
         margin: 2,
