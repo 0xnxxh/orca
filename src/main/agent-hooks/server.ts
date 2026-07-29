@@ -2190,7 +2190,8 @@ export class AgentHookServer {
    *  also skipped. Returns the number of panes changed. */
   async reapRestoredClaudeSubagentsWithoutLiveAgent(
     isLocalExecutionHost: (worktreeId: string | undefined) => boolean,
-    isLocalPaneAgentLive: (paneKey: string) => Promise<boolean>
+    isLocalPaneAgentLive: (paneKey: string) => Promise<boolean>,
+    isLocalPaneLivenessEvidenceCurrent: (paneKey: string) => boolean
   ): Promise<number> {
     const candidates: { paneKey: string; entry: EnrichedAgentHookEventPayload }[] = []
     for (const [paneKey, entry] of this.state.lastStatusByPaneKey) {
@@ -2221,6 +2222,7 @@ export class AgentHookServer {
       const { paneKey, entry: enriched } = candidate
       if (
         liveness[index] ||
+        !isLocalPaneLivenessEvidenceCurrent(paneKey) ||
         this.state.lastStatusByPaneKey.get(paneKey) !== enriched ||
         this.runtimeObservedStatusPaneKeys.has(paneKey) ||
         !isLocalExecutionHost(enriched.worktreeId)

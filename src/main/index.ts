@@ -800,8 +800,12 @@ async function reapRestoredSubagentsWithoutLiveAgent(): Promise<void> {
       ),
     getBoundPtyIdForPaneKey: getPtyIdForPaneKey,
     getPersistedPtyIdForPaneKey: (paneKey) => persistedPtyIdByPaneKey.get(paneKey),
-    reap: (isLocalHost, isLocalPaneAgentLive) =>
-      agentHookServer.reapRestoredClaudeSubagentsWithoutLiveAgent(isLocalHost, isLocalPaneAgentLive)
+    reap: (isLocalHost, isLocalPaneAgentLive, isLocalPaneLivenessEvidenceCurrent) =>
+      agentHookServer.reapRestoredClaudeSubagentsWithoutLiveAgent(
+        isLocalHost,
+        isLocalPaneAgentLive,
+        isLocalPaneLivenessEvidenceCurrent
+      )
   })
 }
 

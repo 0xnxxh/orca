@@ -19,7 +19,8 @@ export type RestoredSubagentLivenessSweepDeps = {
   getPersistedPtyIdForPaneKey: (paneKey: string) => string | undefined
   reap: (
     isLocalExecutionHost: (worktreeId: string | undefined) => boolean,
-    isLocalPaneAgentLive: (paneKey: string) => Promise<boolean>
+    isLocalPaneAgentLive: (paneKey: string) => Promise<boolean>,
+    isLocalPaneLivenessEvidenceCurrent: (paneKey: string) => boolean
   ) => Promise<number>
 }
 
@@ -29,10 +30,12 @@ export async function sweepRestoredSubagentsWithoutLiveAgent(
   deps: RestoredSubagentLivenessSweepDeps
 ): Promise<number> {
   const probesByPtyId = new Map<string, Promise<boolean | null>>()
+  const boundPtyIdAtProbeByPaneKey = new Map<string, string | undefined>()
   return await deps.reap(
     (worktreeId) => deps.isLocalExecutionHost(worktreeId),
     async (paneKey) => {
       const boundPtyId = deps.getBoundPtyIdForPaneKey(paneKey)
+      boundPtyIdAtProbeByPaneKey.set(paneKey, boundPtyId)
       const ptyId = boundPtyId ?? deps.getPersistedPtyIdForPaneKey(paneKey)
       if (!ptyId) {
         return true
@@ -50,7 +53,10 @@ export async function sweepRestoredSubagentsWithoutLiveAgent(
       } catch {
         return true
       }
-    }
+    },
+    (paneKey) =>
+      !boundPtyIdAtProbeByPaneKey.has(paneKey) ||
+      deps.getBoundPtyIdForPaneKey(paneKey) === boundPtyIdAtProbeByPaneKey.get(paneKey)
   )
 }
 

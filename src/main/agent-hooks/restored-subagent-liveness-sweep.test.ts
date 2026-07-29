@@ -96,8 +96,12 @@ function sweepWith(
       ),
     getBoundPtyIdForPaneKey: (paneKey) => overrides.boundPtyIdByPaneKey?.[paneKey],
     getPersistedPtyIdForPaneKey: (paneKey) => overrides.persistedPtyIdByPaneKey?.[paneKey],
-    reap: (isLocalHost, isLocalPaneAgentLive) =>
-      server.reapRestoredClaudeSubagentsWithoutLiveAgent(isLocalHost, isLocalPaneAgentLive)
+    reap: (isLocalHost, isLocalPaneAgentLive, isLocalPaneLivenessEvidenceCurrent) =>
+      server.reapRestoredClaudeSubagentsWithoutLiveAgent(
+        isLocalHost,
+        isLocalPaneAgentLive,
+        isLocalPaneLivenessEvidenceCurrent
+      )
   })
 }
 
@@ -397,6 +401,37 @@ describe('restored subagent liveness sweep', () => {
 
       expect(await sweep).toBe(0)
       expect(paneStatus(server).state).toBe('working')
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('keeps a same-id rebind that lands after its probe but before the batch settles', async () => {
+    const otherPane = makePaneKey('tab-2', LEAF)
+    const otherPty = 'wt-1__pty-2'
+    const server = await restartWithInFlightSubagent({ additionalPaneKey: otherPane })
+    const boundPtyIdByPaneKey: Record<string, string> = {}
+    let resolveOtherProbe!: (live: boolean | null) => void
+    const probeLiveLocalPty = vi.fn((ptyId: string) =>
+      ptyId === PTY
+        ? Promise.resolve(false)
+        : new Promise<boolean | null>((resolve) => {
+            resolveOtherProbe = resolve
+          })
+    )
+    try {
+      const sweep = sweepWith(server, {
+        probeLiveLocalPty,
+        boundPtyIdByPaneKey,
+        persistedPtyIdByPaneKey: { [PANE]: PTY, [otherPane]: otherPty }
+      })
+      await vi.waitFor(() => expect(probeLiveLocalPty).toHaveBeenCalledTimes(2))
+      boundPtyIdByPaneKey[PANE] = PTY
+      resolveOtherProbe(false)
+
+      expect(await sweep).toBe(1)
+      expect(paneStatus(server).state).toBe('working')
+      expect(paneStatus(server, otherPane).state).toBe('done')
     } finally {
       server.stop()
     }
