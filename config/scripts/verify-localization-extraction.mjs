@@ -34,10 +34,7 @@ export function compareExtraction(extractedCatalog, englishCatalog) {
   const dynamicDefaults = [...extracted.entries()]
     .filter(([, value]) => value.length === 0)
     .map(([key]) => key)
-  const missingFromEnglish = [...extracted.entries()]
-    .filter(([, value]) => value.length > 0)
-    .map(([key]) => key)
-    .filter((key) => !english.has(key))
+  const missingFromEnglish = [...extracted.keys()].filter((key) => !english.has(key))
   const orphans = [...english.keys()].filter((key) => !extracted.has(key))
   const fallbackDrift = []
   const placeholderMismatches = []

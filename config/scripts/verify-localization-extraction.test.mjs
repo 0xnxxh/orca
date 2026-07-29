@@ -25,6 +25,12 @@ describe('verify-localization-extraction', () => {
     expect(result.placeholderMismatches).toEqual([])
   })
 
+  it('rejects undeclared keys even when their defaults are dynamic', () => {
+    const result = compareExtraction({ menu: { dynamic: '' } }, {})
+
+    expect(result.missingFromEnglish).toEqual(['menu.dynamic'])
+  })
+
   it('rejects missing English declarations and incompatible placeholders', () => {
     const result = compareExtraction(
       {
