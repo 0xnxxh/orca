@@ -42,6 +42,14 @@ try {
     ),
     join(
       mobileRoot,
+      'packages/expo-mobile-web-shell/ios-tests/MobileWebPackageStoreGeneratedMutationTests.swift'
+    ),
+    join(
+      mobileRoot,
+      'packages/expo-mobile-web-shell/ios-tests/MobileWebPackageStoreConcurrencyTests.swift'
+    ),
+    join(
+      mobileRoot,
       'packages/expo-mobile-web-shell/ios-tests/MobileWebPackageStoreProcessInterruptionTests.swift'
     ),
     join(mobileRoot, 'packages/expo-mobile-web-shell/ios-tests/MobileWebPackageStoreTests.swift'),

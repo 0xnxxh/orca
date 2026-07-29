@@ -150,8 +150,8 @@ prototype:
   inventory entry, and fixtures are removed. The production `/hybrid` route,
   production bridge clients, native fallback, and Experimental Settings entry
   remain intentionally until the external cutover gates pass.
-- The branch is rebased onto `origin/main` at `c8dba6d72`; it is 39 commits
-  ahead and zero behind. Upstream
+- The branch is rebased onto `origin/main` at `c8dba6d72` and remains zero
+  behind. Upstream
   native-chat launch-draft, transcript identity, loading, reconnect, and
   orchestration behavior is retained in both native and hosted adapters.
 
@@ -163,6 +163,13 @@ prototype:
   before native staging; each native store verifies it again and rejects
   malformed metadata, incomplete/corrupt generations, wrong-host opens, and
   corruption discovered after a session has opened with bounded errors.
+- Mirrored native generated tests reject 1,152 malformed manifests, chunks,
+  offsets, paths, and SHA-256 tokens per platform. Both stores pass 24
+  concurrent distinct-host package lifecycles, 24 duplicate-generation commits,
+  and 24 same-host open/read/activate/close flows. Android package code remains
+  compatible with minSdk 24 by using the API-8 platform base64 codec, and
+  optional WebView message/document-start features fail closed behind explicit
+  availability checks.
 - The native shell negotiates only `workspace.snapshot`, `workspace.activate`,
   `session.snapshot`, `session.subscribe`, `session.create`,
   `session.activate`, `session.close`, the eight bounded `terminal.*`

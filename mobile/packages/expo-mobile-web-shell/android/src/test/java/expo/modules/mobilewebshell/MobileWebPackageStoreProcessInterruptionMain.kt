@@ -148,7 +148,7 @@ object MobileWebPackageStoreProcessInterruptionMain {
   }
 
   private fun store(root: File): MobileWebPackageStore =
-    MobileWebPackageStore(
+    jvmMobileWebPackageStore(
       root,
       replaceActivation = { source, destination ->
         java.nio.file.Files.move(

@@ -24,14 +24,15 @@ internal fun installMobileWebDebugIsolationProbe(
     intent.getStringExtra(NETWORK_PROBE_PORT_EXTRA),
     intent.getStringExtra(NETWORK_PROBE_TOKEN_EXTRA)
   ) ?: return
-  require(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-    "mobile_web_debug_isolation_probe_unavailable"
+  if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+    WebViewCompat.addDocumentStartJavaScript(
+      webView,
+      script,
+      setOf(MOBILE_WEB_ORIGIN)
+    )
+  } else {
+    throw IllegalStateException("mobile_web_debug_isolation_probe_unavailable")
   }
-  WebViewCompat.addDocumentStartJavaScript(
-    webView,
-    script,
-    setOf(MOBILE_WEB_ORIGIN)
-  )
 }
 
 internal fun createMobileWebDebugIsolationProbeScript(

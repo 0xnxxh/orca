@@ -2,6 +2,7 @@ package expo.modules.mobilewebshell
 
 import android.content.Context
 import android.system.Os
+import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -9,7 +10,6 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.security.MessageDigest
 import java.security.SecureRandom
-import java.util.Base64
 
 private const val CHUNK_BYTE_LIMIT = 48 * 1024
 private const val CHUNK_BASE64_CHARACTER_LIMIT = ((CHUNK_BYTE_LIMIT + 2) / 3) * 4
@@ -69,7 +69,9 @@ private data class MobileWebSessionRecord(
 internal class MobileWebPackageStore internal constructor(
   private val cacheRoot: File,
   private val availableStorageBytes: (File) -> Long = { it.usableSpace },
-  private val replaceActivation: (source: File, destination: File) -> Unit = ::replaceActivationFile
+  private val replaceActivation: (source: File, destination: File) -> Unit = ::replaceActivationFile,
+  private val decodeBase64: (String) -> ByteArray = ::decodeAndroidBase64,
+  private val encodeBase64: (ByteArray) -> String = ::encodeAndroidBase64
 ) {
   internal constructor(context: Context) : this(File(context.noBackupFilesDir, "OrcaMobileWeb"))
 
@@ -135,14 +137,14 @@ internal class MobileWebPackageStore internal constructor(
       "mobile_web_stage_chunk_invalid"
     }
     val bytes = try {
-      Base64.getDecoder().decode(dataBase64)
+      decodeBase64(dataBase64)
     } catch (_: IllegalArgumentException) {
       throw IllegalArgumentException("mobile_web_stage_chunk_invalid")
     }
     require(
       bytes.isNotEmpty() &&
         bytes.size <= CHUNK_BYTE_LIMIT &&
-        Base64.getEncoder().encodeToString(bytes) == dataBase64 &&
+        encodeBase64(bytes) == dataBase64 &&
         isMobileWebSha256(chunkSha256) &&
         sha256Hex(bytes) == chunkSha256
     ) { "mobile_web_stage_chunk_invalid" }
@@ -717,8 +719,13 @@ private fun sha256Hex(bytes: ByteArray): String =
 private fun randomIdentifier(): String {
   val bytes = ByteArray(32)
   SecureRandom().nextBytes(bytes)
-  return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+  return bytes.joinToString("") { "%02x".format(it) }
 }
+
+private fun decodeAndroidBase64(value: String): ByteArray = Base64.decode(value, Base64.NO_WRAP)
+
+private fun encodeAndroidBase64(bytes: ByteArray): String =
+  Base64.encodeToString(bytes, Base64.NO_WRAP)
 
 private fun replaceActivationFile(source: File, destination: File) {
   Os.rename(source.path, destination.path)

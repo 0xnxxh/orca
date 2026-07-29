@@ -1585,9 +1585,18 @@ copy.
   stable generation and activation errors. Every persisted read now also
   requires a regular descendant of the native cache root. A mirrored corpus
   rejects outside-root files, file and ancestor-directory symlinks,
-  directories, and missing files with the requested stable error. Broader
-  generated mutation, CSP behavior, and cache mutation/cleanup fuzzing remains
-  open. Both native stores now preflight the primary manifest, canonical
+  directories, and missing files with the requested stable error. Each native
+  store now rejects 256 generated malformed manifests, 256 noncanonical base64
+  chunks, 128 invalid offsets, 256 invalid asset paths, and 256 invalid SHA-256
+  tokens: 1,152 deterministic generated cases per platform. Each store also
+  passes 24 concurrent full stage/open/read/activate flows on distinct hosts,
+  24 duplicate-generation commits, and 24 same-host
+  open/read/activate/close flows. Android now uses its API-8 platform base64
+  codec instead of the API-26 Java codec, emits secure 64-character hex stage
+  IDs, and guards optional WebView features before registration or removal;
+  Android lint reports zero errors. Broader CSP behavior and cache
+  metadata/cleanup mutation fuzzing remain open. Both native stores now
+  preflight the primary manifest, canonical
   manifest, and activation metadata with a single-document, unique-decoded-key,
   32-level JSON grammar before platform parsing. Mirrored mutations reject
   literal and escaped-equivalent duplicate keys, trailing tokens, malformed
@@ -1845,6 +1854,13 @@ refreshed 76-task Android suite. Both typechecks, lint, formatting, max-lines,
 and diff hygiene pass. A fresh production RNW build remains
 `b17ead7a3c85071f5cfc45dd695bd457e37a49c4895ad3ac979689ca2a13805f`:
 49 assets, 9,281,663 raw bytes, and 2,684,764 gzip bytes.
+
+The native generated-mutation and concurrency slice passes 1,152 generated
+rejections and 72 concurrent cache flows per platform. The complete iOS
+fault executable and all 37 Android module tests pass. Android lint reports zero
+errors after replacing API-26-only base64 calls and guarding optional WebView
+features; Swift format lint, mobile lint/typecheck/format, max-lines, and diff
+hygiene also pass.
 
 | Date       | Workstream              | Evidence                                                                                                                                                                                                                    | Result                                                                                                                                                                                            |
 | ---------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2719,4 +2735,6 @@ and diff hygiene pass. A fresh production RNW build remains
 | 2026-07-29 | Complete | The full root suite passes 3,818 files / 39,968 tests with 62 expected skips. Complete lint, native/type-aware audits, 55 reliability gates, localization, max-lines, typecheck, formatting, and diff hygiene pass.                                                                                                                                                                                                                       |
 | 2026-07-29 | Complete | The canonical hybrid architecture reference and updated mobile developer README now document the shared React Native UI, native/Desktop/hosted ownership, authenticated package flow, private origins, capability bridge, compatibility policy, gated rollout, emulator workflow, privacy-safe support intake, troubleshooting, and recovery. The rollback runbook cross-links the same boundaries.                                       |
 | 2026-07-29 | Complete | Documentation validation passes formatting across all six changed Markdown files, resolution of every relative Markdown link, the rollback/runbook contract suite with 3 tests, and diff hygiene. The installed Orca CLI confirms the documented emulator `list`, `attach`, `ax`, and `tap` commands.                                                                                                                                     |
-| 2026-07-29 | Next     | Execute the physical-device, topology, security, performance, packaged-release, rollback, and App Store gates.                                                                                                                                                                                                                                                                                                                            |
+| 2026-07-29 | Finding  | Android package staging used `java.util.Base64`, which is unavailable below API 26 despite the app's minSdk 24. Optional AndroidX WebView message and document-start APIs were also removed or registered without lint-recognized availability guards.                                                                                                                                                                                    |
+| 2026-07-29 | Complete | Android now uses its API-8 base64 codec, secure hex stage IDs, and guarded optional WebView features. The mirrored native corpus passes 1,152 generated rejections and 72 concurrent cache flows per platform; the iOS fault suite, 37 Android tests, zero-error Android lint, mobile lint/typecheck/format, max-lines, and diff hygiene pass.                                                                                            |
+| 2026-07-29 | Next     | Fuzz bridge envelopes and subscription lifecycle, then execute cross-host/build/workspace/session and replay races before the remaining physical-device, topology, performance, packaged-release, rollback, and App Store gates.                                                                                                                                                                                                          |

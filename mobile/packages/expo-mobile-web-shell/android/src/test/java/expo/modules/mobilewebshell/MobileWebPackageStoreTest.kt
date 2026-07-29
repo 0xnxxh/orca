@@ -22,7 +22,7 @@ class MobileWebPackageStoreTest {
   @Test
   fun stagesAndReadsOnlyTheExactVerifiedGeneration() {
     val root = temporary.newFolder()
-    val store = MobileWebPackageStore(root)
+    val store = jvmMobileWebPackageStore(root)
     val fixture = packageFixture()
 
     stagePackage(store, "paired-host", fixture)
@@ -41,7 +41,7 @@ class MobileWebPackageStoreTest {
   @Test
   fun rejectsMalformedManifestIdentityPathMimeAndTotalsBeforeCreatingAStage() {
     val root = temporary.newFolder()
-    val store = MobileWebPackageStore(root)
+    val store = jvmMobileWebPackageStore(root)
     val valid = packageFixture()
     val duplicateCanonical = valid.canonical.dropLast(1) + ""","schemaVersion":1}"""
     val duplicateBuildId = sha256Hex(duplicateCanonical.toByteArray())
@@ -149,7 +149,7 @@ class MobileWebPackageStoreTest {
   @Test
   fun rejectsQuotedNumericManifestFieldsBeforeCreatingAStage() {
     val root = temporary.newFolder()
-    val store = MobileWebPackageStore(root)
+    val store = jvmMobileWebPackageStore(root)
     val valid = packageFixture()
     val invalid = listOf(
       packageFixture { _, manifest -> manifest.put("schemaVersion", "1") },
@@ -179,7 +179,7 @@ class MobileWebPackageStoreTest {
   @Test
   fun rejectsBooleanNumericManifestFieldsBeforeCreatingAStage() {
     val root = temporary.newFolder()
-    val store = MobileWebPackageStore(root)
+    val store = jvmMobileWebPackageStore(root)
     val invalid = listOf(
       packageFixture { _, manifest -> manifest.put("schemaVersion", true) },
       packageFixture { _, manifest ->
@@ -206,7 +206,7 @@ class MobileWebPackageStoreTest {
   @Test
   fun rejectsOversizedManifestInputBeforeParsing() {
     val root = temporary.newFolder()
-    val store = MobileWebPackageStore(root)
+    val store = jvmMobileWebPackageStore(root)
     val fixture = packageFixture()
 
     listOf(
@@ -224,13 +224,13 @@ class MobileWebPackageStoreTest {
   @Test
   fun deletesAnInterruptedStageWhenTheStoreRestarts() {
     val root = temporary.newFolder()
-    val firstStore = MobileWebPackageStore(root)
+    val firstStore = jvmMobileWebPackageStore(root)
     val fixture = packageFixture()
     val stageId = firstStore.beginStage("paired-host", fixture.manifest, fixture.canonical)
     val stagingRoot = File(root, "${sha256Hex("paired-host".toByteArray())}/staging")
 
     assertEquals(1, stagingRoot.listFiles()?.size)
-    MobileWebPackageStore(root)
+    jvmMobileWebPackageStore(root)
 
     assertFalse(stagingRoot.listFiles()?.isNotEmpty() == true)
     assertThrows(IllegalArgumentException::class.java) {
@@ -247,7 +247,7 @@ class MobileWebPackageStoreTest {
   @Test
   fun rejectsOversizedEncodedChunksBeforeDecoding() {
     val root = temporary.newFolder()
-    val store = MobileWebPackageStore(root)
+    val store = jvmMobileWebPackageStore(root)
     val fixture = packageFixture()
     val stageId = store.beginStage("paired-host", fixture.manifest, fixture.canonical)
 
@@ -268,7 +268,7 @@ class MobileWebPackageStoreTest {
   @Test
   fun rejectsIncompleteStagesAndCorruptionOnOpenAndRead() {
     val root = temporary.newFolder()
-    val store = MobileWebPackageStore(root)
+    val store = jvmMobileWebPackageStore(root)
     val fixture = packageFixture()
     val stageId = store.beginStage("paired-host", fixture.manifest, fixture.canonical)
 
@@ -396,7 +396,7 @@ class MobileWebPackageStoreTest {
   @Test
   fun rejectsLowStorageBeforeCreatingAStage() {
     val root = temporary.newFolder()
-    val store = MobileWebPackageStore(
+    val store = jvmMobileWebPackageStore(
       root,
       availableStorageBytes = { MOBILE_WEB_MINIMUM_FREE_STORAGE_BYTES }
     )
@@ -445,7 +445,7 @@ class MobileWebPackageStoreTest {
     RandomAccessFile(File(staleRoot, "stale.bin"), "rw").use {
       it.setLength(MOBILE_WEB_GLOBAL_CACHE_BYTE_LIMIT)
     }
-    val store = MobileWebPackageStore(root)
+    val store = jvmMobileWebPackageStore(root)
     val fixture = packageFixture()
 
     val stageId = store.beginStage("paired-host", fixture.manifest, fixture.canonical)
@@ -457,7 +457,7 @@ class MobileWebPackageStoreTest {
   @Test
   fun removesOnlyTheSelectedHostCacheSessionsAndStages() {
     val root = temporary.newFolder()
-    val store = MobileWebPackageStore(root)
+    val store = jvmMobileWebPackageStore(root)
     val removed = packageFixture(content = "<!doctype html><title>Removed</title>")
     val retained = packageFixture(content = "<!doctype html><title>Retained</title>")
     stagePackage(store, "removed-host", removed)
@@ -525,7 +525,7 @@ class MobileWebPackageStoreTest {
   }
 
   private fun testStore(root: File): MobileWebPackageStore =
-    MobileWebPackageStore(
+    jvmMobileWebPackageStore(
       root,
       replaceActivation = { source, destination ->
         java.nio.file.Files.move(

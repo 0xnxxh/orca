@@ -38,6 +38,12 @@ enum MobileWebPackageStoreTests {
     try MobileWebCacheWriteBoundaryTests.run(
       root: root.appendingPathComponent("cache-write-boundary")
     )
+    try MobileWebPackageStoreGeneratedMutationTests.run(
+      root: root.appendingPathComponent("generated-mutation")
+    )
+    try MobileWebPackageStoreConcurrencyTests.run(
+      root: root.appendingPathComponent("concurrency")
+    )
     try rejectsLowStorage(root: root.appendingPathComponent("low-storage"))
     try evictsUnprotectedGeneration(root: root.appendingPathComponent("eviction"))
     try evictsAnotherHostForGlobalQuota(root: root.appendingPathComponent("global-eviction"))

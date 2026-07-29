@@ -546,6 +546,12 @@ live-stage-replacement links plus host-subtree and dangling host links preserve
 external sentinels on both native stores. Staged-asset and activation-host
 writes reject linked paths before opening them. Atomic activation replacement
 replaces an in-cache file link without changing its external target.
+The mirrored native generated corpus rejects 1,152 malformed manifest, chunk,
+offset, path, and SHA-256 cases per platform. Both stores also pass 72
+concurrent cache flows spanning distinct hosts, duplicate generation
+commits, and same-host open/read/activation. Android uses the API-8 platform
+base64 codec at the minSdk 24 boundary and guards optional WebView features
+before registration or removal; its module lint reports zero errors.
 The standalone renderer-based workspace, session, files, terminal,
 source-control, and review presentation is also removed with its Vite-only
 package path. A production-source boundary requires `src/mobile-web/` to remain

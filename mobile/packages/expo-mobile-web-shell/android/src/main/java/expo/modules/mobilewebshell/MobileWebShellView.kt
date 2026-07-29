@@ -102,21 +102,13 @@ internal class MobileWebShellView(
       return
     }
     if (sessionId == activeSessionId) return
-    WebViewCompat.removeWebMessageListener(webView, MOBILE_WEB_BRIDGE_NAME)
+    removeBridgeMessageListener()
+    addBridgeMessageListener()
     activeSessionId = sessionId
     webView.stopLoading()
     attachWebView()
     visibility = View.VISIBLE
     webView.visibility = View.VISIBLE
-    require(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-      "mobile_web_bridge_origin_enforcement_unavailable"
-    }
-    WebViewCompat.addWebMessageListener(
-      webView,
-      MOBILE_WEB_BRIDGE_NAME,
-      setOf(MOBILE_WEB_ORIGIN),
-      OriginLockedMessageListener()
-    )
     onLoadState(mapOf("state" to "loading"))
     webView.loadUrl("$MOBILE_WEB_ORIGIN/#$sessionId")
   }
@@ -126,7 +118,7 @@ internal class MobileWebShellView(
   }
 
   fun deactivateSessionView() {
-    WebViewCompat.removeWebMessageListener(webView, MOBILE_WEB_BRIDGE_NAME)
+    removeBridgeMessageListener()
     activeSessionId = null
     webView.stopLoading()
     visibility = View.INVISIBLE
@@ -160,9 +152,28 @@ internal class MobileWebShellView(
   }
 
   override fun onDetachedFromWindow() {
-    WebViewCompat.removeWebMessageListener(webView, MOBILE_WEB_BRIDGE_NAME)
+    removeBridgeMessageListener()
     webView.stopLoading()
     super.onDetachedFromWindow()
+  }
+
+  private fun removeBridgeMessageListener() {
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+      WebViewCompat.removeWebMessageListener(webView, MOBILE_WEB_BRIDGE_NAME)
+    }
+  }
+
+  private fun addBridgeMessageListener() {
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+      WebViewCompat.addWebMessageListener(
+        webView,
+        MOBILE_WEB_BRIDGE_NAME,
+        setOf(MOBILE_WEB_ORIGIN),
+        OriginLockedMessageListener()
+      )
+    } else {
+      throw IllegalStateException("mobile_web_bridge_origin_enforcement_unavailable")
+    }
   }
 
   private inner class OriginLockedMessageListener : WebViewCompat.WebMessageListener {

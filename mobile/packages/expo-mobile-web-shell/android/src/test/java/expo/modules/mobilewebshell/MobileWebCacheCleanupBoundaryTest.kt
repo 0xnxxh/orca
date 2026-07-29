@@ -28,7 +28,7 @@ class MobileWebCacheCleanupBoundaryTest {
     val orphanLink = File(stagingRoot, "orphan")
     Files.createSymbolicLink(orphanLink.toPath(), externalRoot.toPath())
 
-    val store = MobileWebPackageStore(cacheRoot)
+    val store = jvmMobileWebPackageStore(cacheRoot)
     assertTrue(sentinel.exists())
     assertFalse(Files.exists(orphanLink.toPath(), LinkOption.NOFOLLOW_LINKS))
 
@@ -50,7 +50,7 @@ class MobileWebCacheCleanupBoundaryTest {
     File(orphanRoot, "local").writeText("remove")
     Files.createSymbolicLink(File(orphanRoot, "external").toPath(), externalRoot.toPath())
 
-    MobileWebPackageStore(cacheRoot)
+    jvmMobileWebPackageStore(cacheRoot)
 
     assertTrue(sentinel.exists())
     assertFalse(orphanRoot.exists())
@@ -62,7 +62,7 @@ class MobileWebCacheCleanupBoundaryTest {
     val externalRoot = temporary.newFolder("external-live")
     val sentinel = File(externalRoot, "sentinel").apply { writeText("keep") }
     val fixture = packageFixture()
-    val store = MobileWebPackageStore(cacheRoot)
+    val store = jvmMobileWebPackageStore(cacheRoot)
     val firstStage = store.beginStage("live-host", fixture.first, fixture.second)
     val hostRoot = File(cacheRoot, sha256Hex("live-host".toByteArray()))
     val stageRoot = requireNotNull(File(hostRoot, "staging").listFiles()?.single())
@@ -103,7 +103,7 @@ class MobileWebCacheCleanupBoundaryTest {
       hostRoot.toPath(),
       File(temporary.root, "missing-target").toPath()
     )
-    val store = MobileWebPackageStore(cacheRoot)
+    val store = jvmMobileWebPackageStore(cacheRoot)
 
     store.removeHost("dangling-host")
 

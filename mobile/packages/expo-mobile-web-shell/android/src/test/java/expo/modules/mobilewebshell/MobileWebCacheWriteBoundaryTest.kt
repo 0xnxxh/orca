@@ -112,7 +112,7 @@ class MobileWebCacheWriteBoundaryTest {
     MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
   private fun testStore(root: File): MobileWebPackageStore =
-    MobileWebPackageStore(
+    jvmMobileWebPackageStore(
       root,
       replaceActivation = { source, destination ->
         Files.move(
