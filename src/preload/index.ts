@@ -55,6 +55,7 @@ import type {
   BrowserViewportOverride,
   CustomPet,
   FsChangedPayload,
+  FilesystemPathFlavor,
   GetRateLimitResult,
   GitHubPRRefreshCandidate,
   GitHubPRRefreshEvent,
@@ -3944,6 +3945,8 @@ const api = {
     }): Promise<string | null> => ipcRenderer.invoke('clipboard:saveImageAsTempFile', args),
     writeClipboardText: (text: string): Promise<void> =>
       ipcRenderer.invoke('clipboard:writeText', text),
+    writeTerminalClipboardText: (text: string): Promise<void> =>
+      ipcRenderer.invoke('clipboard:writeTerminalText', text),
     writeSelectionClipboardText: (text: string): Promise<void> =>
       ipcRenderer.invoke('clipboard:writeSelectionText', text),
     writeClipboardImage: (dataUrl: string): Promise<void> =>
@@ -4449,6 +4452,7 @@ const api = {
     }): Promise<{
       entries: { name: string; isDirectory: boolean }[]
       resolvedPath: string
+      pathFlavor: FilesystemPathFlavor
     }> => ipcRenderer.invoke('ssh:browseDir', args),
 
     onCredentialRequest: (

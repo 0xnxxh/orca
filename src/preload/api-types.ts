@@ -127,6 +127,7 @@ import type {
   CustomPet,
   DetectedWorktreeListResult,
   DirEntry,
+  FilesystemPathFlavor,
   ForceDeleteWorktreeBranchResult,
   FsChangedPayload,
   GhosttyImportPreview,
@@ -3219,6 +3220,7 @@ export type PreloadApi = {
       runtimeEnvironmentId?: string | null
     }) => Promise<string | null>
     writeClipboardText: (text: string) => Promise<void>
+    writeTerminalClipboardText: (text: string) => Promise<void>
     writeSelectionClipboardText: (text: string) => Promise<void>
     writeClipboardImage: (dataUrl: string) => Promise<void>
     performNativePaste: (options?: { mode?: 'paste' | 'paste-and-match-style' }) => void
@@ -3399,6 +3401,7 @@ export type PreloadApi = {
     browseDir: (args: { targetId: string; dirPath: string }) => Promise<{
       entries: { name: string; isDirectory: boolean }[]
       resolvedPath: string
+      pathFlavor: FilesystemPathFlavor
     }>
     onCredentialRequest: (
       callback: (data: {
