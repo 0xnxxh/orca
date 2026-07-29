@@ -13,6 +13,7 @@ vi.mock('@/runtime/runtime-terminal-inspection', () => ({
 import {
   NATIVE_CHAT_CLEAR_CONFIRM_MS,
   NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT,
+  NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS,
   NATIVE_CHAT_SUBMIT_DELAY_MS,
   resetNativeChatPtySendQueuesForTests,
   sendNativeChatMessage,
@@ -103,6 +104,25 @@ describe('sendNativeChatMessage with a parked multi-line draft', () => {
       NATIVE_CHAT_SUBMIT_DELAY_MS + NATIVE_CHAT_CLEAR_CONFIRM_MS
     )
   })
+
+  it('submits before a queued send starts after clear confirmation', async () => {
+    const clearInput = buildAgentTuiClearInputForText(DRAFT)
+    sendNativeChatMessage(SETTINGS, PTY, 'first', {
+      clearInput,
+      confirmCleared: () => true
+    })
+    sendNativeChatMessage(SETTINGS, PTY, 'second')
+
+    await vi.advanceTimersByTimeAsync(NATIVE_CHAT_CLEAR_CONFIRM_MS + NATIVE_CHAT_SUBMIT_DELAY_MS)
+
+    expect(writes()).toEqual([
+      clearInput,
+      buildNativeChatPasteBytes('first'),
+      NATIVE_CHAT_SUBMIT,
+      NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT,
+      buildNativeChatPasteBytes('second')
+    ])
+  })
 })
 
 describe('image sends with a parked multi-line draft', () => {
@@ -121,5 +141,24 @@ describe('image sends with a parked multi-line draft', () => {
     })
     vi.advanceTimersByTime(10_000)
     expect(writes().filter((write) => write === clearInput)).toHaveLength(1)
+  })
+
+  it('submits the image send before a queued message starts', async () => {
+    const clearInput = buildAgentTuiClearInputForText(DRAFT)
+    sendNativeChatMessageWithImageAttachments(SETTINGS, PTY, 'caption', ['/tmp/a.png'], {
+      clearInput,
+      confirmCleared: () => true
+    })
+    sendNativeChatMessage(SETTINGS, PTY, 'second')
+
+    await vi.advanceTimersByTimeAsync(
+      NATIVE_CHAT_CLEAR_CONFIRM_MS +
+        NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS +
+        NATIVE_CHAT_SUBMIT_DELAY_MS
+    )
+
+    expect(writes().indexOf(NATIVE_CHAT_SUBMIT)).toBeLessThan(
+      writes().indexOf(NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT)
+    )
   })
 })

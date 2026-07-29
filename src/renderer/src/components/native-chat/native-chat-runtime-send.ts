@@ -130,15 +130,15 @@ export function sendNativeChatMessage(
       if (isCancelled()) {
         return
       }
+      delay(NATIVE_CHAT_SUBMIT_DELAY_MS + clearConfirmDurationMs(options), () => {
+        sendRuntimePtyInput(settings, ptyId, NATIVE_CHAT_SUBMIT)
+        markSubmitted()
+      })
       clearThenWrite(settings, ptyId, options, delay, () => {
         if (isCancelled()) {
           return
         }
         sendRuntimePtyInput(settings, ptyId, buildNativeChatPasteBytes(text))
-        delay(NATIVE_CHAT_SUBMIT_DELAY_MS, () => {
-          sendRuntimePtyInput(settings, ptyId, NATIVE_CHAT_SUBMIT)
-          markSubmitted()
-        })
       })
     },
     {
@@ -225,6 +225,16 @@ export function sendNativeChatMessageWithImageAttachments(
       if (isCancelled()) {
         return
       }
+      const clearConfirmMs = clearConfirmDurationMs(options)
+      if (trimmedText.length > 0) {
+        delay(clearConfirmMs + NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS, () => {
+          sendRuntimePtyInput(settings, ptyId, buildNativeChatPasteBytes(text))
+        })
+      }
+      delay(durationMs, () => {
+        sendRuntimePtyInput(settings, ptyId, NATIVE_CHAT_SUBMIT)
+        markSubmitted()
+      })
       clearThenWrite(settings, ptyId, options, delay, () => {
         if (isCancelled()) {
           return
@@ -232,20 +242,6 @@ export function sendNativeChatMessageWithImageAttachments(
         for (const imagePath of imagePaths) {
           sendRuntimePtyInput(settings, ptyId, buildNativeChatImagePasteBytes(imagePath))
         }
-        if (trimmedText.length > 0) {
-          delay(NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS, () => {
-            sendRuntimePtyInput(settings, ptyId, buildNativeChatPasteBytes(text))
-          })
-          delay(NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS + NATIVE_CHAT_SUBMIT_DELAY_MS, () => {
-            sendRuntimePtyInput(settings, ptyId, NATIVE_CHAT_SUBMIT)
-            markSubmitted()
-          })
-          return
-        }
-        delay(NATIVE_CHAT_SUBMIT_DELAY_MS, () => {
-          sendRuntimePtyInput(settings, ptyId, NATIVE_CHAT_SUBMIT)
-          markSubmitted()
-        })
       })
     },
     {
