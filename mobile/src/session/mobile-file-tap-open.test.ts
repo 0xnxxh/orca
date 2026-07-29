@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { HostSessionTerminalFileTarget } from './host-session-terminal-file-operations'
 import { openMobileTerminalFileTap } from './mobile-terminal-file-tap-open'
 
-function createOperations(targets: Array<HostSessionTerminalFileTarget | null>) {
+function createOperations(targets: (HostSessionTerminalFileTarget | null)[]) {
   return {
     resolveTerminalPath: vi.fn(async () => targets.shift()),
     openWorktreeFile: vi.fn(async () => {})

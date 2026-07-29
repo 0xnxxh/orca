@@ -71,10 +71,10 @@ export class MobileSessionMarkdownDocLifecycle {
     }
   }
 
-  close(tabId: string, updateDocs: MobileMarkdownDocUpdater): void {
+  close(tabId: string, docs: Map<string, MarkdownDocState>): Map<string, MarkdownDocState> {
     this.liveTabIdentityById.delete(tabId)
     this.activeRequestIdByTabId.delete(tabId)
-    updateDocs((current) => removeMarkdownDoc(current, tabId))
+    return removeMarkdownDoc(docs, tabId)
   }
 
   reset(): void {

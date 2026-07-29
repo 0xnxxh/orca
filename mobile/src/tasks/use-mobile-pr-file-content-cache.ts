@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import type { GitHubPRFileContents, GitHubRepositoryIdentity } from '../../../src/shared/types'
 import {
   MobilePrFileContentCache,
@@ -28,6 +28,12 @@ type MobileProjectPrScopeRepo = { id?: unknown } | null
 
 type MobilePrFileContentLoad = () => Promise<unknown>
 type MobilePrFileContentErrorSetter = (message: string) => void
+type MobilePrFileContentCacheView = {
+  activeScope: string | null
+  cache: MobilePrFileContentCache
+  snapshot: ReturnType<MobilePrFileContentCache['snapshot']>
+  loadingPath: string | null
+}
 
 export function createMobileItemPrFileContentScope(
   item: MobilePrScopeTaskItem,
@@ -98,23 +104,17 @@ export function useMobilePrFileContentCache(activeScope: string | null): {
   ) => Promise<void>
   loadingPath: string | null
 } {
-  const [cache] = useState(() => new MobilePrFileContentCache())
-  const [snapshot, setSnapshot] = useState(() => cache.snapshot())
-  const [loadingPath, setLoadingPath] = useState<string | null>(null)
+  const [view, setView] = useState(() => createMobilePrFileContentCacheView(activeScope))
+  let currentView = view
+  if (view.activeScope !== activeScope) {
+    currentView = createMobilePrFileContentCacheView(activeScope)
+    setView(currentView)
+  }
+  const { cache } = currentView
   const clear = useCallback(() => {
-    cache.clear()
-    setSnapshot(cache.snapshot())
-    setLoadingPath(null)
-  }, [cache])
-
-  useEffect(() => {
-    if (activeScope === null) {
-      clear()
-    } else if (cache.activateScope(activeScope)) {
-      setSnapshot(cache.snapshot())
-      setLoadingPath(null)
-    }
-  }, [activeScope, cache, clear])
+    const next = createMobilePrFileContentCacheView(activeScope)
+    setView((current) => (current.cache === cache ? next : current))
+  }, [activeScope, cache])
 
   const load = useCallback(
     async (
@@ -126,14 +126,19 @@ export function useMobilePrFileContentCache(activeScope: string | null): {
       const key = createMobilePrFileContentKey(file)
       const selection = cache.select(scope, key)
       if (selection.scopeChanged) {
-        setSnapshot(cache.snapshot())
+        const snapshot = cache.snapshot()
+        setView((current) => (current.cache === cache ? { ...current, snapshot } : current))
       }
       if (selection.contents) {
-        setLoadingPath(null)
+        setView((current) =>
+          current.cache === cache ? { ...current, loadingPath: null } : current
+        )
         return
       }
       const token = cache.beginRequest(scope, key)
-      setLoadingPath(file.path)
+      setView((current) =>
+        current.cache === cache ? { ...current, loadingPath: file.path } : current
+      )
       setError('')
       try {
         const result = await loadContents()
@@ -147,15 +152,24 @@ export function useMobilePrFileContentCache(activeScope: string | null): {
         if (commit === 'too-large') {
           setError('File too large for mobile preview.')
         } else {
-          setSnapshot(cache.snapshot())
+          const snapshot = cache.snapshot()
+          setView((current) => (current.cache === cache ? { ...current, snapshot } : current))
         }
-        setLoadingPath((current) => (current === file.path ? null : current))
+        setView((current) =>
+          current.cache === cache && current.loadingPath === file.path
+            ? { ...current, loadingPath: null }
+            : current
+        )
       } catch (error) {
         if (!cache.rejectRequest(token)) {
           return
         }
         setError(error instanceof Error ? error.message : 'Failed to load file contents')
-        setLoadingPath((current) => (current === file.path ? null : current))
+        setView((current) =>
+          current.cache === cache && current.loadingPath === file.path
+            ? { ...current, loadingPath: null }
+            : current
+        )
       }
     },
     [cache]
@@ -163,9 +177,24 @@ export function useMobilePrFileContentCache(activeScope: string | null): {
 
   return {
     clear,
-    contents: getMobilePrFileContentsForScope(snapshot, activeScope),
+    contents: getMobilePrFileContentsForScope(currentView.snapshot, activeScope),
     load,
-    loadingPath
+    loadingPath: currentView.loadingPath
+  }
+}
+
+function createMobilePrFileContentCacheView(
+  activeScope: string | null
+): MobilePrFileContentCacheView {
+  const cache = new MobilePrFileContentCache()
+  if (activeScope) {
+    cache.activateScope(activeScope)
+  }
+  return {
+    activeScope,
+    cache,
+    snapshot: cache.snapshot(),
+    loadingPath: null
   }
 }
 

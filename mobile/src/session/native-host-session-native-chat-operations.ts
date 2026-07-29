@@ -34,8 +34,8 @@ export function nativeHostSessionNativeChatOperations(
       }
       const response = await client.sendRequest('repo.list')
       const repos = response.ok
-        ? ((response.result as { repos?: Array<{ id: string; connectionId?: string | null }> })
-            .repos ?? [])
+        ? ((response.result as { repos?: { id: string; connectionId?: string | null }[] }).repos ??
+          [])
         : []
       const repo = repos.find(
         (candidate) => candidate.id === getRepoIdFromMobileWorktreeId(workspaceId)

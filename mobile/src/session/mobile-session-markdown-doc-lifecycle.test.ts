@@ -69,7 +69,7 @@ describe('mobile session markdown document lifecycle', () => {
     })
 
     const pending = lifecycle.load(tab, updateDocs, () => read)
-    lifecycle.close(tab.id, updateDocs)
+    docs = lifecycle.close(tab.id, docs)
     resolveRead(readyDoc('late payload'))
     await pending
 

@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer'
+import { Buffer } from 'buffer/'
 import { describe, expect, it, vi } from 'vitest'
 import { MOBILE_MARKDOWN_EDIT_MAX_BYTES } from '../../../src/shared/mobile-markdown-document'
 import type { RpcClient } from '../transport/rpc-client'

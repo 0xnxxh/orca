@@ -24,7 +24,9 @@ export function useMobileSessionMarkdownDrafts(args: {
     [operations]
   )
   const tabsRef = useRef(tabs)
-  tabsRef.current = tabs
+  useEffect(() => {
+    tabsRef.current = tabs
+  }, [tabs])
 
   useEffect(() => () => coordinator?.dispose(), [coordinator])
 
@@ -72,7 +74,7 @@ export function useMobileSessionMarkdownDrafts(args: {
       ) {
         continue
       }
-      coordinator.observe(
+      coordinator.scheduleSave(
         markdownTarget(workspaceId, tab),
         doc.isDirty ? { content: doc.localContent, baseVersion: doc.baseVersion } : null
       )

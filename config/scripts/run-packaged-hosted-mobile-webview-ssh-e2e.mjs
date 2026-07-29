@@ -9,7 +9,9 @@ if (process.platform !== 'darwin') {
 
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 if (process.env.SKIP_BUILD !== '1') {
-  run(pnpm, ['run', 'build:desktop'])
+  // Why: the packaged E2E fixture seeds its disposable repo through the test-only renderer store.
+  const e2eBuildEnv = { ...process.env, VITE_EXPOSE_STORE: 'true' }
+  run(pnpm, ['run', 'build:desktop'], e2eBuildEnv)
   run(pnpm, ['run', 'ensure:electron-runtime'])
   run(pnpm, [
     'exec',

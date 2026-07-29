@@ -14,7 +14,7 @@ export class MobileWebOneShotResponseDrop {
     this.enabled = operationKey === NATIVE_CHAT_SEND_OPERATION
   }
 
-  observe(message: MobileWebBridgePageMessage): void {
+  recordRequest(message: MobileWebBridgePageMessage): void {
     if (
       !this.enabled ||
       this.dropped ||

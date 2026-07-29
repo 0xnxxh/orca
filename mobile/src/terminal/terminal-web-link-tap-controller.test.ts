@@ -4,7 +4,7 @@ import { createTerminalWebLinkTapController } from './terminal-web-link-tap-cont
 
 function tapHarness(hasSelection = false) {
   let selection = hasSelection
-  const listeners = new Map<string, Array<(event: never) => void>>()
+  const listeners = new Map<string, ((event: never) => void)[]>()
   const container = {
     addEventListener(type: string, listener: (event: never) => void) {
       listeners.set(type, [...(listeners.get(type) ?? []), listener])

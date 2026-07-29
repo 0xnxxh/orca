@@ -40,7 +40,9 @@ export const TerminalWebView = forwardRef<TerminalWebViewHandle, TerminalWebView
     const textZoomRef = useRef<ReturnType<typeof createTerminalWebTextZoomController> | null>(null)
     const rendererRef = useRef<ReturnType<typeof createTerminalWebRendererRecovery> | null>(null)
     const propsRef = useRef(props)
-    propsRef.current = props
+    useEffect(() => {
+      propsRef.current = props
+    }, [props])
 
     useEffect(() => {
       const container = containerRef.current

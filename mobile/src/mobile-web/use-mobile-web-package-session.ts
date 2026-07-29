@@ -103,17 +103,9 @@ export function useMobileWebPackageSession({
     const cacheActivationStartedAt = Date.now()
     void ExpoMobileWebShell.openSession(host.publicKeyB64, null, MOBILE_WEB_BRIDGE_PROTOCOL_VERSION)
       .then(async (cached) => {
-        if (!disposed && !ownedSessionRef.current) {
-          await publishSession(
-            cached,
-            hostEpoch,
-            host.id,
-            'verified-cache',
-            cacheActivationStartedAt
-          )
-        } else {
-          await ExpoMobileWebShell.closeSession(cached.sessionId).catch(() => {})
-        }
+        await (!disposed && !ownedSessionRef.current
+          ? publishSession(cached, hostEpoch, host.id, 'verified-cache', cacheActivationStartedAt)
+          : ExpoMobileWebShell.closeSession(cached.sessionId).catch(() => {}))
       })
       .catch(() => {
         if (!disposed && hostEpochRef.current === hostEpoch && !ownedSessionRef.current) {

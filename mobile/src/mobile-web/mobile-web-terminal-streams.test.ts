@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer'
+import { Buffer } from 'buffer/'
 import { describe, expect, it, vi } from 'vitest'
 import type { MobileWebTerminalEvent } from '../../../src/shared/mobile-web/terminal-stream-contract'
 import type { RpcClient } from '../transport/rpc-client'
@@ -465,9 +465,9 @@ describe('MobileWebTerminalStreams', () => {
 
 function createHarness() {
   const sentFrames: TerminalStreamFrame[] = []
-  const events: Array<{ sequence: number; event: MobileWebTerminalEvent }> = []
+  const events: { sequence: number; event: MobileWebTerminalEvent }[] = []
   const resyncReasons: string[] = []
-  const flowMetrics: Array<{ ackLagMs: number | undefined; outstandingBytes: number }> = []
+  const flowMetrics: { ackLagMs: number | undefined; outstandingBytes: number }[] = []
   let nowMs = 1_000
   let emitMultiplex = (_result: unknown): void => {}
   let emitFrame = (_frame: TerminalStreamFrame): boolean => false

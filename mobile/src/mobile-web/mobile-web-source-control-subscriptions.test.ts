@@ -146,7 +146,7 @@ function createHarness(authority = workspaceAuthority) {
     listener = nextListener
     return unsubscribe
   })
-  const events: Array<{ subscriptionId: string; sequence: number; event: unknown }> = []
+  const events: { subscriptionId: string; sequence: number; event: unknown }[] = []
   const subscriptions = new MobileWebSourceControlSubscriptions({
     isActive: () => true,
     workspaceAuthority: authority,

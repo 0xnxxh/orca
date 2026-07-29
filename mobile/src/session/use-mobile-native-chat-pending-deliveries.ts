@@ -55,7 +55,9 @@ export function useMobileNativeChatPendingDeliveries(args: {
     Record<string, MobileNativeChatPendingMessage[]>
   >({})
   const pendingBySessionRef = useRef(pendingBySession)
-  pendingBySessionRef.current = pendingBySession
+  useEffect(() => {
+    pendingBySessionRef.current = pendingBySession
+  }, [pendingBySession])
   const editVersionRef = useRef<Record<string, number>>({})
   const hydratedKeysRef = useRef(new Set<string>())
   const nextMessageIdRef = useRef(0)
@@ -156,7 +158,7 @@ export function useMobileNativeChatPendingDeliveries(args: {
       pendingKey,
       normalizedText,
       baselineOccurrences: countUserTextOccurrences(messages, normalizedText),
-      baselineTailMessageId: messages[messages.length - 1]?.id ?? null,
+      baselineTailMessageId: messages.at(-1)?.id ?? null,
       pendingTarget
     }),
     [messages, pendingKey, pendingTarget]

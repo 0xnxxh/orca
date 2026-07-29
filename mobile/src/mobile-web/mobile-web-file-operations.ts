@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer'
+import { Buffer } from 'buffer/'
 import {
   MOBILE_WEB_FILE_CHUNK_MAX_BYTES,
   MOBILE_WEB_FILE_CONTENT_MAX_BYTES,
@@ -285,7 +285,9 @@ function truncateUtf8(content: string, encoded: Buffer): string {
   if (encoded.byteLength <= MOBILE_WEB_FILE_CONTENT_MAX_BYTES) {
     return content
   }
-  let truncated = encoded.subarray(0, MOBILE_WEB_FILE_CONTENT_MAX_BYTES).toString('utf8')
+  let truncated = Buffer.from(encoded.subarray(0, MOBILE_WEB_FILE_CONTENT_MAX_BYTES)).toString(
+    'utf8'
+  )
   while (Buffer.byteLength(truncated, 'utf8') > MOBILE_WEB_FILE_CONTENT_MAX_BYTES) {
     truncated = truncated.slice(0, -1)
   }

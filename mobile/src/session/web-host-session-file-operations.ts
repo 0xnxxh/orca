@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer'
+import { Buffer } from 'buffer/'
 import { buildImageDataUri } from '../../../src/shared/image-data-uri'
 import {
   MOBILE_WEB_DIFF_MAX_ROWS,

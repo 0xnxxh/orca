@@ -132,7 +132,7 @@ export function NewWorktreeModal({
 }: Props) {
   const openEpochRef = useRef(0)
   const wasVisibleRef = useRef(false)
-  const operationsEpochRef = useRef({ operations, epoch: 0 })
+  const [operationsEpoch, setOperationsEpoch] = useState({ operations, epoch: 0 })
 
   // Why: each drawer opening is a fresh form session; remounting resets local
   // form state before paint instead of clearing it in a visible-prop Effect.
@@ -140,16 +140,16 @@ export function NewWorktreeModal({
     openEpochRef.current += 1
   }
   wasVisibleRef.current = visible
-  if (operationsEpochRef.current.operations !== operations) {
-    operationsEpochRef.current = {
+  if (operationsEpoch.operations !== operations) {
+    setOperationsEpoch({
       operations,
-      epoch: operationsEpochRef.current.epoch + 1
-    }
+      epoch: operationsEpoch.epoch + 1
+    })
   }
 
   return (
     <NewWorktreeModalContent
-      key={`${openEpochRef.current}:${operationsEpochRef.current.epoch}`}
+      key={`${openEpochRef.current}:${operationsEpoch.epoch}`}
       visible={visible}
       operations={operations}
       hostId={hostId}

@@ -88,10 +88,7 @@ export function snapTerminalTextScale(value: number): MobileWebTerminalTextScale
 }
 
 function clampTextScale(value: number): number {
-  return Math.max(
-    TERMINAL_TEXT_SCALES[0],
-    Math.min(TERMINAL_TEXT_SCALES[TERMINAL_TEXT_SCALES.length - 1], value)
-  )
+  return Math.max(TERMINAL_TEXT_SCALES[0], Math.min(TERMINAL_TEXT_SCALES.at(-1)!, value))
 }
 
 function touchDistance(left: Touch, right: Touch): number {

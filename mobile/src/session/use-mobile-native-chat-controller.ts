@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, type MutableRefObject } from 'react'
 import { useMobileSessionViewMode } from './use-mobile-session-view-mode'
 import { type MobileNativeChatTab, resolveMobileNativeChat } from './mobile-native-chat-eligibility'
 import type {
@@ -83,16 +83,17 @@ export function useMobileNativeChatController(args: {
     currentResolution: currentChatResolution,
     retained: disconnectRetentionRef.current
   })
-  disconnectRetentionRef.current = retainedChat.retained
+  useEffect(() => {
+    disconnectRetentionRef.current = retainedChat.retained
+  }, [retainedChat.retained])
   const activeChatResolution = retainedChat.resolution
   const showNativeChat = activeChatResolution != null
   const showNativeChatRef = useRef(showNativeChat)
-  const activeChatAgent = activeChatResolution?.agent ?? null
-  const activeChatAgentRef = useRef<string | null>(activeChatAgent)
-  useLayoutEffect(() => {
+  const activeChatAgentRef = useRef<string | null>(activeChatResolution?.agent ?? null)
+  useEffect(() => {
     showNativeChatRef.current = showNativeChat
-    activeChatAgentRef.current = activeChatAgent
-  }, [activeChatAgent, showNativeChat])
+    activeChatAgentRef.current = activeChatResolution?.agent ?? null
+  }, [activeChatResolution?.agent, showNativeChat])
 
   const activeChatSessionId = activeChatResolution?.sessionId ?? null
   const activeTerminalId = activeHandleRef.current
@@ -121,7 +122,9 @@ export function useMobileNativeChatController(args: {
     ]
   )
   const nativeChatTargetRef = useRef(nativeChatTarget)
-  nativeChatTargetRef.current = nativeChatTarget
+  useEffect(() => {
+    nativeChatTargetRef.current = nativeChatTarget
+  }, [nativeChatTarget])
   const nativeChatSession = useMobileNativeChatSession({
     operations,
     workspaceId: worktreeId,

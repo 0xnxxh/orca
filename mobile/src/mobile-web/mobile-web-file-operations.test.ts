@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { Buffer } from 'buffer'
+import { Buffer } from 'buffer/'
 import { MOBILE_WEB_FILE_CONTENT_MAX_BYTES } from '../../../src/shared/mobile-web/bridge-operation-contract'
 import type { RpcClient } from '../transport/rpc-client'
 import { executeMobileWebFileOperation } from './mobile-web-file-operations'

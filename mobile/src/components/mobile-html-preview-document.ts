@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer'
+import { Buffer } from 'buffer/'
 
 export const MOBILE_HTML_PREVIEW_MESSAGE_CHANNEL = 'orca-mobile-html-preview'
 export const MOBILE_HTML_PREVIEW_SCRIPT_CSP_HASH =

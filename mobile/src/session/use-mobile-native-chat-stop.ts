@@ -23,11 +23,13 @@ export function useMobileNativeChatStop(args: {
     enabled: args.enabled,
     streamIdentity: args.streamIdentity
   })
-  activeRouteRef.current = {
-    operations: args.operations,
-    enabled: args.enabled,
-    streamIdentity: args.streamIdentity
-  }
+  useEffect(() => {
+    activeRouteRef.current = {
+      operations: args.operations,
+      enabled: args.enabled,
+      streamIdentity: args.streamIdentity
+    }
+  }, [args.enabled, args.operations, args.streamIdentity])
 
   const cancelSecondEscape = useCallback(() => {
     if (timerRef.current) {

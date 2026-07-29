@@ -42,7 +42,8 @@ export async function waitForHostedIosAccessibilityControl(
 export async function readHostedIosAccessibilityNodes(
   args: HostedIosEmulatorCommandOptions
 ): Promise<HostedIosAccessibilityNode[]> {
-  const deadline = Date.now() + 15_000
+  // Why: one serve-sim AX timeout can consume the command's 30-second boundary.
+  const deadline = Date.now() + 45_000
   let didRestartController = false
   while (true) {
     try {

@@ -91,7 +91,10 @@ export default function HybridScreen() {
     shellSessionId: session?.sessionId,
     selectHost
   })
-  activeSessionIdRef.current = session?.sessionId
+
+  useEffect(() => {
+    activeSessionIdRef.current = session?.sessionId
+  }, [session?.sessionId])
 
   useFocusEffect(
     useCallback(() => {
@@ -251,7 +254,9 @@ export default function HybridScreen() {
       grants: [...MOBILE_WEB_PRODUCTION_GRANTS]
     })
   }, [handleHealthTimeout, lastConnectedAt, postToWeb, reconnectAttempts, session, state])
-  postInitRef.current = postInit
+  useEffect(() => {
+    postInitRef.current = postInit
+  }, [postInit])
 
   useEffect(() => {
     brokerRef.current?.updateConnectionState(mobileWebBridgeConnectionState(state))
@@ -283,7 +288,7 @@ export default function HybridScreen() {
       if (!parsed.ok) {
         return
       }
-      responseDropRef.current.observe(parsed.value)
+      responseDropRef.current.recordRequest(parsed.value)
       if (parsed.value.type === 'ready') {
         await postInit()
         if (activeSessionIdRef.current === current.sessionId) {

@@ -21,6 +21,10 @@ function createFrameToken(): string {
 }
 
 export function MermaidDiagram({ source, base }: Props) {
+  return <MermaidDiagramFrame key={source} source={source} base={base} />
+}
+
+function MermaidDiagramFrame({ source, base }: Props) {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const frameToken = useMemo(createFrameToken, [])
   const [height, setHeight] = useState(0)
@@ -32,11 +36,6 @@ export function MermaidDiagram({ source, base }: Props) {
         : '',
     [frameToken, source]
   )
-
-  useEffect(() => {
-    setHeight(0)
-    setFailed(source.length > MERMAID_DIAGRAM_MAX_SOURCE_CHARACTERS)
-  }, [source])
 
   useEffect(() => {
     const receiveMessage = (event: MessageEvent<unknown>) => {

@@ -198,33 +198,27 @@ function TableBlock({
 
 function Inline({ text, base }: { text: string; base: number }) {
   const shell = useMobilePrShellOperations()
-  const tokens = useMemo<InlineToken[]>(() => {
-    try {
-      return parseInline(text)
-    } catch {
-      return [{ kind: 'text', text }]
-    }
-  }, [text])
+  const tokens = useMemo(() => keyedInlineTokens(parseInlineSafely(text)), [text])
   return (
     <>
-      {tokens.map((token, i) => {
+      {tokens.map(({ key, token }) => {
         if (token.kind === 'bold') {
           return (
-            <Text key={i} style={styles.bold}>
+            <Text key={key} style={styles.bold}>
               {token.text}
             </Text>
           )
         }
         if (token.kind === 'italic') {
           return (
-            <Text key={i} style={styles.italic}>
+            <Text key={key} style={styles.italic}>
               {token.text}
             </Text>
           )
         }
         if (token.kind === 'code') {
           return (
-            <Text key={i} style={[styles.codeInline, { fontSize: base - 1 }]}>
+            <Text key={key} style={[styles.codeInline, { fontSize: base - 1 }]}>
               {token.text}
             </Text>
           )
@@ -232,7 +226,7 @@ function Inline({ text, base }: { text: string; base: number }) {
         if (token.kind === 'link') {
           return (
             <Text
-              key={i}
+              key={key}
               style={styles.link}
               onPress={() => {
                 if (isAllowedMarkdownLinkUrl(token.url)) {
@@ -244,10 +238,27 @@ function Inline({ text, base }: { text: string; base: number }) {
             </Text>
           )
         }
-        return <Text key={i}>{token.text}</Text>
+        return <Text key={key}>{token.text}</Text>
       })}
     </>
   )
+}
+
+function parseInlineSafely(text: string): InlineToken[] {
+  try {
+    return parseInline(text)
+  } catch {
+    return [{ kind: 'text', text }]
+  }
+}
+
+function keyedInlineTokens(tokens: InlineToken[]): { key: string; token: InlineToken }[] {
+  let sourceOffset = 0
+  return tokens.map((token) => {
+    const key = `${sourceOffset}:${token.kind}`
+    sourceOffset += token.text.length
+    return { key, token }
+  })
 }
 
 const styles = StyleSheet.create({

@@ -11,7 +11,7 @@ import {
   isPrimaryTerminalWebLinkPointer
 } from './terminal-web-link-tap-controller'
 
-function lineFromCells(cells: Array<{ chars: string; width: number }>) {
+function lineFromCells(cells: { chars: string; width: number }[]) {
   return {
     length: cells.length,
     getCell: (col: number) => ({

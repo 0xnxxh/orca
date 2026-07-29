@@ -1,4 +1,4 @@
-import { useRef, type MutableRefObject } from 'react'
+import { useEffect, useRef, type MutableRefObject } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 
@@ -14,6 +14,8 @@ export function useMobileWebBridgeRuntimeRef(
   sessionId: string | undefined
 ): MutableRefObject<MobileWebBridgeRuntime> {
   const runtimeRef = useRef<MobileWebBridgeRuntime>({ client, state, sessionId })
-  runtimeRef.current = { client, state, sessionId }
+  useEffect(() => {
+    runtimeRef.current = { client, state, sessionId }
+  }, [client, sessionId, state])
   return runtimeRef
 }

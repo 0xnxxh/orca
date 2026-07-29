@@ -15,20 +15,20 @@ const CONTEXT = {
 describe('MobileWebOneShotResponseDrop', () => {
   it('drops exactly one response for an observed native-chat send', () => {
     const drop = new MobileWebOneShotResponseDrop('nativeChat.sendMessage')
-    drop.observe(request('A', 'nativeChat', 'sendMessage'))
+    drop.recordRequest(request('A', 'nativeChat', 'sendMessage'))
 
     expect(drop.shouldDrop(response('A'))).toBe(true)
 
-    drop.observe(request('B', 'nativeChat', 'sendMessage'))
+    drop.recordRequest(request('B', 'nativeChat', 'sendMessage'))
     expect(drop.shouldDrop(response('B'))).toBe(false)
   })
 
   it('does not affect unrelated requests, events, or disabled builds', () => {
     const drop = new MobileWebOneShotResponseDrop('nativeChat.sendMessage')
-    drop.observe(request('A', 'nativeChat', 'read'))
+    drop.recordRequest(request('A', 'nativeChat', 'read'))
     expect(drop.shouldDrop(response('A'))).toBe(false)
 
-    drop.observe(request('B', 'nativeChat', 'sendMessage'))
+    drop.recordRequest(request('B', 'nativeChat', 'sendMessage'))
     expect(
       drop.shouldDrop({
         ...CONTEXT,
@@ -40,7 +40,7 @@ describe('MobileWebOneShotResponseDrop', () => {
     ).toBe(false)
 
     const disabled = new MobileWebOneShotResponseDrop(undefined)
-    disabled.observe(request('C', 'nativeChat', 'sendMessage'))
+    disabled.recordRequest(request('C', 'nativeChat', 'sendMessage'))
     expect(disabled.shouldDrop(response('C'))).toBe(false)
   })
 })

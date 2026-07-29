@@ -17,11 +17,7 @@ import {
   displayNameFromPreviewPath,
   type MobileFilePreviewRouteState
 } from './mobile-file-preview-route'
-import {
-  previewSourceFromRoute,
-  sourceKeyForPreview,
-  sourceRevisionForPreview
-} from './mobile-file-preview-source'
+import { previewSourceFromRoute, sourceKeyForPreview } from './mobile-file-preview-source'
 import { normalizeMobileFilePreviewLineColumn } from './mobile-file-preview-line-column'
 import {
   hasUnsavedMobileTerminalArtifactDraft,
@@ -76,15 +72,41 @@ export function MobileFilePreviewScreen({
   const savedContentRef = useRef(savedContent)
   const draftSourceKeyRef = useRef<string | null>(null)
   const { width, height } = useWindowDimensions()
-  const routePreviewSourceCandidate = previewParams ? previewSourceFromRoute(previewParams) : null
-  const routePreviewSourceRevision = sourceRevisionForPreview(routePreviewSourceCandidate)
-  const routePreviewSourceRef = useRef(routePreviewSourceCandidate)
-  const routePreviewSourceRevisionRef = useRef(routePreviewSourceRevision)
-  if (routePreviewSourceRevisionRef.current !== routePreviewSourceRevision) {
-    routePreviewSourceRef.current = routePreviewSourceCandidate
-    routePreviewSourceRevisionRef.current = routePreviewSourceRevision
-  }
-  const routePreviewSource = routePreviewSourceRef.current
+  const routeWorktreeId = previewParams?.worktreeId
+  const routeSource = previewParams?.source
+  const routeRelativePath = previewParams?.relativePath
+  const routeAbsolutePath = previewParams?.absolutePath
+  const routeGrantId = previewParams?.grantId
+  const routeTerminal = previewParams?.terminal
+  const routePathText = previewParams?.pathText
+  const routeCwd = previewParams?.cwd
+  const routePreviewSource = useMemo(
+    () =>
+      previewHostId && routeWorktreeId
+        ? previewSourceFromRoute({
+            hostId: previewHostId,
+            worktreeId: routeWorktreeId,
+            source: routeSource,
+            relativePath: routeRelativePath,
+            absolutePath: routeAbsolutePath,
+            grantId: routeGrantId,
+            terminal: routeTerminal,
+            pathText: routePathText,
+            cwd: routeCwd
+          })
+        : null,
+    [
+      previewHostId,
+      routeAbsolutePath,
+      routeCwd,
+      routeGrantId,
+      routePathText,
+      routeRelativePath,
+      routeSource,
+      routeTerminal,
+      routeWorktreeId
+    ]
+  )
   const [previewSource, setPreviewSource] = useState<MobileFilePreviewSource | null>(
     routePreviewSource
   )

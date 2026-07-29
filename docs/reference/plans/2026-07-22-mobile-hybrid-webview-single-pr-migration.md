@@ -2,7 +2,7 @@
 
 - **Status:** Core implementation complete; validation and cutover gates remain open
 - **Date:** July 22, 2026
-- **Last updated:** July 28, 2026
+- **Last updated:** July 29, 2026
 - **Target:** One long-lived pull request, gated before cutover
 - **Related decision:**
   [`2026-07-13-mobile-ota-update-infrastructure.html`](./2026-07-13-mobile-ota-update-infrastructure.html)
@@ -148,9 +148,9 @@ prototype:
   inventory entry, and fixtures are removed. The production `/hybrid` route,
   production bridge clients, native fallback, and Experimental Settings entry
   remain intentionally until the external cutover gates pass.
-- The branch is rebased onto `origin/main` at `f790d9cbe`; upstream
-  native-chat launch-draft, transcript identity, loading, and reconnect
-  behavior is retained in both native and hosted adapters.
+- The branch is rebased onto `origin/main` at `0660ad9d6`; upstream
+  native-chat launch-draft, transcript identity, loading, reconnect, and
+  orchestration behavior is retained in both native and hosted adapters.
 
 - Desktop emits a deterministic content-addressed multi-asset build and serves
   its manifest and bounded chunks through explicit mobile RPC methods.
@@ -1089,19 +1089,25 @@ and nested syntax text keeps the effective native font behavior. On iPhone 17
 Pro Simulator, Source Control passes at 0.736% changed pixels / 0.910 mean
 channel difference and Review at 2.134% / 1.947, within the 3% / 4 budgets.
 
-Current validation passes all project typechecks, root/mobile/mobile-web lint
-and code-quality audits, changed-file and full-mobile formatting, localization,
-max-lines and diff hygiene, 55 reliability gates, and 568 mobile files / 3,411
-tests with 2 expected skips. The independently verified production
-package
-`a5df600309b3a452158ee0563395c807da061719f1365dde86114d42b43e936c`
-contains 50 assets and verifies at 9,290,009 raw bytes / 2,688,232 gzip bytes.
+Current validation passes 570 mobile files / 3,418 tests with 2 expected skips
+and 3,817 root files / 39,966 tests with 62 expected skips. The earlier
+load-sensitive root timeouts do not recur in the latest complete run. All
+project typechecks, root/mobile/mobile-web lint and code-quality audits,
+changed-file formatting, localization, max-lines and diff hygiene, and 55
+reliability gates pass. React Doctor reports zero blocking errors across the
+migration without suppressions. The independently verified production package
+`072e5f3cc1bd508e02efe8e0f3706d061fed561ed71e4af640b821d863716aef`
+contains 50 assets and verifies at 9,290,968 raw bytes / 2,688,498 gzip bytes.
+That exact package passes the unpacked macOS arm64 → Docker SSH → actual iOS
+WKWebView journey in 2.1 minutes. Authenticated RPC returned the packaged
+build with no checkout-output fallback; the unchanged mobile UI mutated the
+remote terminal, rendered a remote native-chat transcript, retained it during
+provider loss, and rendered the appended assistant message after reconnect.
 The complete cached-app iOS journey passes Workspace, Accounts, Tasks, Session,
 Files/Preview, Agent History portrait/landscape, Desktop restart and E2EE
 recovery, native-touch resume, Source Control, a third Session diff tab,
-standalone Review, and both private-origin isolation probes. Repository-wide
-formatting still reports 19 unrelated baseline files; all migration-owned files
-are formatted. This evidence does not close physical-device,
+standalone Review, and both private-origin isolation probes. All
+migration-owned files are formatted. This evidence does not close physical-device,
 independent-security, sustained-performance, signed release-package,
 physical/final rollback, production cloud Relay, or App Review gates.
 

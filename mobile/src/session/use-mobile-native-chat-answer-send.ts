@@ -64,7 +64,9 @@ export function useMobileNativeChatAnswerSend(args: {
   const { operations, enabled, targetRef, agentRef, sessionId, streamIdentity, onSendError } = args
   const generationRef = useRef(0)
   const activeRouteRef = useRef({ operations, enabled, sessionId, streamIdentity })
-  activeRouteRef.current = { operations, enabled, sessionId, streamIdentity }
+  useEffect(() => {
+    activeRouteRef.current = { operations, enabled, sessionId, streamIdentity }
+  }, [enabled, operations, sessionId, streamIdentity])
   const delaysRef = useRef<
     Set<{ timer: ReturnType<typeof setTimeout>; resolve: (completed: boolean) => void }>
   >(new Set())

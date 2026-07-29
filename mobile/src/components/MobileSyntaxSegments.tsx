@@ -3,16 +3,18 @@ import type { MobileSyntaxSegment, MobileSyntaxTokenKind } from '../session/mobi
 import { colors } from '../theme/mobile-theme'
 
 export function MobileSyntaxSegments({ segments }: { segments: MobileSyntaxSegment[] }) {
+  let sourceOffset = 0
   return (
     <>
-      {segments.map((segment, index) => (
-        <Text
-          key={`${index}:${segment.kind}`}
-          style={[webSyntaxTextStyle, syntaxTokenStyles[segment.kind]]}
-        >
-          {segment.text}
-        </Text>
-      ))}
+      {segments.map((segment) => {
+        const key = `${sourceOffset}:${segment.kind}`
+        sourceOffset += segment.text.length
+        return (
+          <Text key={key} style={[webSyntaxTextStyle, syntaxTokenStyles[segment.kind]]}>
+            {segment.text}
+          </Text>
+        )
+      })}
     </>
   )
 }

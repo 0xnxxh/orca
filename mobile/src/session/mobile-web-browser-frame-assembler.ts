@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer'
+import { Buffer } from 'buffer/'
 import {
   MOBILE_WEB_BROWSER_FRAME_MAX_IMAGE_BYTES,
   type MobileWebBrowserFrameChunk

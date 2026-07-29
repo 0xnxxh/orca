@@ -35,6 +35,8 @@ export function useMobileWebNavigationIntentHandoff(options: {
   showWarning: (warning: string) => void
 }): void {
   const [intent, setIntent] = useState<MobileWebNavigationIntent | null>(null)
+  const activeIntent =
+    intent && MOBILE_WEB_NAVIGATION_INTENTS.isCurrent(intent.sequence) ? intent : null
 
   useEffect(
     () =>
@@ -54,17 +56,17 @@ export function useMobileWebNavigationIntentHandoff(options: {
     ) {
       return
     }
-    MOBILE_WEB_NAVIGATION_INTENTS.consume(intent.sequence)
-    setIntent(null)
-    options.selectHost(undefined)
+    if (MOBILE_WEB_NAVIGATION_INTENTS.consume(intent.sequence)) {
+      options.selectHost(undefined)
+    }
   }, [intent, options.hosts, options.hostsLoading, options.selectHost])
 
   useEffect(() => {
     const context = options.shellContext
     if (
-      !intent ||
+      !activeIntent ||
       !context ||
-      options.selectedHostId !== intent.hostId ||
+      options.selectedHostId !== activeIntent.hostId ||
       options.connectionState !== 'connected' ||
       options.pageReadySessionId !== context.sessionId ||
       options.brokerSessionId !== context.sessionId
@@ -78,34 +80,34 @@ export function useMobileWebNavigationIntentHandoff(options: {
     let cancelled = false
     void (async () => {
       try {
-        const route = await resolveIntentRoute(intent, broker)
+        const route = await resolveIntentRoute(activeIntent, broker)
         if (
           cancelled ||
-          !MOBILE_WEB_NAVIGATION_INTENTS.isCurrent(intent.sequence) ||
+          !MOBILE_WEB_NAVIGATION_INTENTS.isCurrent(activeIntent.sequence) ||
           options.getBroker() !== broker
         ) {
           return
         }
         if (route.kind === 'workspaceList' || route.kind === 'session') {
           options.rememberRoute(route)
-          options.onNavigationResolved?.(intent, route)
+          options.onNavigationResolved?.(activeIntent, route)
         }
         await options.postMessage({
           version: MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
           type: 'navigation',
           shellSessionId: context.sessionId,
           buildId: context.buildId,
-          sequence: intent.sequence,
+          sequence: activeIntent.sequence,
           route
         })
-        if (!cancelled && MOBILE_WEB_NAVIGATION_INTENTS.consume(intent.sequence)) {
+        if (!cancelled && MOBILE_WEB_NAVIGATION_INTENTS.consume(activeIntent.sequence)) {
           setIntent(null)
         }
       } catch (error) {
-        if (!cancelled && MOBILE_WEB_NAVIGATION_INTENTS.consume(intent.sequence)) {
+        if (!cancelled && MOBILE_WEB_NAVIGATION_INTENTS.consume(activeIntent.sequence)) {
           setIntent(null)
           options.showWarning(
-            `${navigationIntentFailureSubject(intent.source)} could not be verified (${mobileWebBridgeErrorCode(error)}).`
+            `${navigationIntentFailureSubject(activeIntent.source)} could not be verified (${mobileWebBridgeErrorCode(error)}).`
           )
         }
       }
@@ -114,7 +116,7 @@ export function useMobileWebNavigationIntentHandoff(options: {
       cancelled = true
     }
   }, [
-    intent,
+    activeIntent,
     options.brokerSessionId,
     options.connectionState,
     options.getBroker,

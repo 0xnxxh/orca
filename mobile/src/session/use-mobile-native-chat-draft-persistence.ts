@@ -14,7 +14,9 @@ export function useMobileNativeChatDraftPersistence(args: {
   const editVersionRef = useRef<Record<string, number>>({})
   const hydratedKeysRef = useRef(new Set<string>())
   const draftsRef = useRef(drafts)
-  draftsRef.current = drafts
+  useEffect(() => {
+    draftsRef.current = drafts
+  }, [drafts])
 
   const markDraftEdited = useCallback(() => {
     if (!draftKey) {

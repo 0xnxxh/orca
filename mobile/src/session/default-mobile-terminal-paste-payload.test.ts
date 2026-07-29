@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import * as Clipboard from 'expo-clipboard'
+import type * as MobileClipboardImageModule from './mobile-clipboard-image'
 import { saveMobileClipboardImageAsTempFile } from './mobile-clipboard-image'
 import { defaultMobileTerminalPastePayload } from './default-mobile-terminal-paste-payload'
 
@@ -8,7 +9,7 @@ vi.mock('expo-clipboard', () => ({
   getImageAsync: vi.fn()
 }))
 vi.mock('./mobile-clipboard-image', async (loadOriginal) => {
-  const original = await loadOriginal<typeof import('./mobile-clipboard-image')>()
+  const original = await loadOriginal<typeof MobileClipboardImageModule>()
   return {
     ...original,
     prepareMobileClipboardImageBase64: vi.fn(),

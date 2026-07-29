@@ -45,7 +45,7 @@ export function createMobileInboundFrameQueue(options: {
   const maxBufferedBytes = options.maxBufferedBytes ?? MOBILE_INBOUND_MAX_BUFFERED_BYTES
   const maxBufferedFrames = options.maxBufferedFrames ?? MOBILE_INBOUND_MAX_BUFFERED_FRAMES
   const memoryLedger = options.memoryLedger ?? processMobileInboundMemoryLedger
-  const queue: Array<PendingFrame | undefined> = []
+  const queue: (PendingFrame | undefined)[] = []
   let queueHead = 0
   let retainedBytes = 0
   let retainedFrames = 0

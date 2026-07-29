@@ -56,7 +56,7 @@ describe('hosted Android mobile web cache evidence', () => {
   })
 })
 
-function activationExecutor(records: Array<[string, { active: string; previous?: string }]>) {
+function activationExecutor(records: [string, { active: string; previous?: string }][]) {
   return vi.fn(async (_command: string, args: string[]) => {
     if (args.includes('find')) {
       return records.map(([path]) => path).join('\n')

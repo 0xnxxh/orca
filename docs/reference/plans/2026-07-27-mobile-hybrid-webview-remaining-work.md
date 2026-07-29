@@ -1,7 +1,7 @@
 # Mobile Hybrid WebView Remaining Work
 
 - **Status:** Core implementation complete; validation and gated cutover remain
-- **Last updated:** July 28, 2026
+- **Last updated:** July 29, 2026
 - **Detailed evidence archive:**
   [`2026-07-22-mobile-hybrid-webview-implementation-checklist.md`](./2026-07-22-mobile-hybrid-webview-implementation-checklist.md)
 - **Migration design:**
@@ -102,26 +102,28 @@ pixels and 0.910 mean channel difference; Review passes at 2.134% and 1.947,
 within the 3% / 4 budgets. The packaged document opts into native safe-area
 insets, and nested syntax text retains the native effective font behavior.
 
-The migration is rebased onto `origin/main` at `f790d9cbe`, 37 commits ahead
-and zero behind. Post-rebase validation passes 568 mobile files / 3,411 tests
-with 2 expected skips. Two complete root runs each reached 3,801 passing files
-and then reported unrelated timeout/timer failures; the three affected files
-pass all 34 tests in isolated reruns. The immediately preceding full root run
-passes 3,803 files / 39,832 tests with 62 expected skips. All project
-typechecks, root/mobile/mobile-web lint and code-quality audits, 55 reliability
-gates, changed-file and full-mobile formatting, localization, the max-lines
-ratchet, and diff hygiene pass. The independently verified React Native Web
+The migration is based on `origin/main` at `0660ad9d6` with the final rebase
+pending after this validation batch. Post-rebase validation passes 570 mobile
+files / 3,418 tests with 2 expected skips and 3,817 root files / 39,966 tests
+with 62 expected skips. The earlier load-sensitive root timeouts do not recur
+in the latest complete run. All project typechecks,
+root/mobile/mobile-web lint and code-quality audits, 55 reliability gates,
+changed-file and full-mobile formatting, localization, the max-lines ratchet,
+and diff hygiene pass. React Doctor reports zero blocking errors across the
+migration without suppressions. The independently verified React Native Web
 package is
-`a5df600309b3a452158ee0563395c807da061719f1365dde86114d42b43e936c`:
-50 assets, 9,290,009 raw bytes, and 2,688,232 gzip bytes.
+`072e5f3cc1bd508e02efe8e0f3706d061fed561ed71e4af640b821d863716aef`:
+50 assets, 9,290,968 raw bytes, and 2,688,498 gzip bytes.
 
 That exact package now passes the unpacked macOS arm64 → Docker SSH → actual
 iOS WKWebView journey in 2.1 minutes. Authenticated RPC returned the packaged
 build with no checkout-output fallback; the unchanged mobile UI mutated the
 remote terminal, rendered a remote native-chat transcript, retained it during
 provider loss, and rendered the appended assistant message after reconnect.
-The harness uses the existing opaque clipboard-paste capability and Enter
-accessory, so it does not depend on the simulator's keyboard layout.
+The harness seeds the pasteboard before Session snapshots clipboard
+availability, uses the existing opaque clipboard-paste capability and Enter
+accessory, and retries one bounded serve-sim accessibility timeout. It does not
+depend on or change the simulator's keyboard layout.
 
 The latest native-authority audit keeps the unchanged UI but removes hosted
 fallback access to Expo clipboard, image/document pickers, haptics, and direct

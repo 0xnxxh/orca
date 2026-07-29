@@ -446,6 +446,10 @@ export function MobileBrowserPane({
       }
       return
     }
+    const target = pageParams()
+    if (!target) {
+      return
+    }
     busyRef.current = true
     setBusy(true)
     let startupTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
@@ -461,10 +465,6 @@ export function MobileBrowserPane({
         clearTimeout(startupTimer)
         startupTimer = null
       }
-    }
-    const target = pageParams()
-    if (!target) {
-      return
     }
     const unsubscribe = operations.subscribe(target, streamRequest, {
       onEvent: (event) => {

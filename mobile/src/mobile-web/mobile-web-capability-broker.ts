@@ -198,11 +198,9 @@ export class MobileWebCapabilityBroker {
         return
       }
       this.pending.delete(request.requestId)
-      if (mobileWebEncodedByteLength(payload) > grant.limits.maxResponseBytes) {
-        await this.messages.error(request.requestId, 'unavailable', false)
-      } else {
-        await this.messages.success(request.requestId, payload)
-      }
+      await (mobileWebEncodedByteLength(payload) > grant.limits.maxResponseBytes
+        ? this.messages.error(request.requestId, 'unavailable', false)
+        : this.messages.success(request.requestId, payload))
     } catch (error) {
       this.subscriptions.cancelByRequest(request.requestId)
       this.terminalStreams.cancelByRequest(request.requestId, this.options.getClient())

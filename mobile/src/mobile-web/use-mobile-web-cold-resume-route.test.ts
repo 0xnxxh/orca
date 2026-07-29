@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import { createElement } from 'react'
+import { createElement, useEffect } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HostProfile } from '../transport/types'
@@ -142,7 +142,10 @@ function Harness({
   options: Parameters<typeof useMobileWebColdResumeRoute>[0]
   capture: (binding: MobileWebColdResumeRouteBinding) => void
 }) {
-  capture(useMobileWebColdResumeRoute(hookOptions))
+  const binding = useMobileWebColdResumeRoute(hookOptions)
+  useEffect(() => {
+    capture(binding)
+  }, [binding, capture])
   return null
 }
 

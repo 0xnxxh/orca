@@ -83,7 +83,7 @@ function nativeAssetMetadata(
   source: string,
   declaration: string,
   language: 'swift' | 'kotlin'
-): Array<{ extension: string; contentType: string; role: string }> {
+): { extension: string; contentType: string; role: string }[] {
   const start = source.indexOf(declaration)
   const end = source.indexOf(language === 'swift' ? '\n]\n' : '\n)\n', start)
   if (start < 0 || end < 0) {

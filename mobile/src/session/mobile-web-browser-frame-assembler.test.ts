@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer'
+import { Buffer } from 'buffer/'
 import { describe, expect, it } from 'vitest'
 import type { MobileWebBrowserFrameChunk } from '../../../src/shared/mobile-web/browser-operation-contract'
 import { MobileWebBrowserFrameAssembler } from './mobile-web-browser-frame-assembler'

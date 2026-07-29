@@ -50,7 +50,10 @@ export default function RootLayout() {
     null
   )
   notificationNavigationResolverRef.current ??= new LatestNotificationNavigationResolver()
-  pathnameRef.current = pathname
+
+  useEffect(() => {
+    pathnameRef.current = pathname
+  }, [pathname])
 
   useEffect(() => {
     // Why: pairing publication is journaled across process death; startup must

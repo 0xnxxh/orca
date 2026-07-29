@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer'
+import { Buffer } from 'buffer/'
 import { sha256 } from '@noble/hashes/sha256'
 import {
   MOBILE_WEB_FILE_EDIT_MAX_BYTES,

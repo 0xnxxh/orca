@@ -89,11 +89,9 @@ export function MobileDictationSetupSheet({
       setBusy(model.id)
       setError(null)
       try {
-        if (operations) {
-          await operations.downloadModel(model.id)
-        } else {
-          await downloadDictationModel(client as RpcClient, model.id)
-        }
+        await (operations
+          ? operations.downloadModel(model.id)
+          : downloadDictationModel(client as RpcClient, model.id))
         await refreshSetup()
       } catch (err) {
         onErrorFeedback()

@@ -136,7 +136,7 @@ function logInfo(message) {
 function createBackpressuredLineWriter(source, target, color) {
   let waitingForDrain = false
   return (line) => {
-    const accepted = target.write(color + line + colors.reset + '\n')
+    const accepted = target.write(`${color}${line}${colors.reset}\n`)
     if (accepted || waitingForDrain) {
       return
     }

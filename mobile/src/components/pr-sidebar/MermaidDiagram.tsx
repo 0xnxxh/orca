@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { WebView } from 'react-native-webview'
 import { buildMermaidDiagramDocument } from './mermaid-diagram-document'
 import {
@@ -13,6 +13,10 @@ type Props = {
 }
 
 export function MermaidDiagram({ source, base }: Props) {
+  return <MermaidDiagramFrame key={source} source={source} base={base} />
+}
+
+function MermaidDiagramFrame({ source, base }: Props) {
   const [height, setHeight] = useState(0)
   const [failed, setFailed] = useState(source.length > MERMAID_DIAGRAM_MAX_SOURCE_CHARACTERS)
   const html = useMemo(
@@ -22,10 +26,6 @@ export function MermaidDiagram({ source, base }: Props) {
         : '',
     [source]
   )
-  useEffect(() => {
-    setHeight(0)
-    setFailed(source.length > MERMAID_DIAGRAM_MAX_SOURCE_CHARACTERS)
-  }, [source])
 
   return (
     <MermaidDiagramPresentation

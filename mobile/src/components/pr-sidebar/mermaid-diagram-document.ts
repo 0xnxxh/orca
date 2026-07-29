@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer'
+import { Buffer } from 'buffer/'
 import {
   MERMAID_WEBVIEW_ENGINE_GZIP_BASE64,
   MERMAID_WEBVIEW_ENGINE_CSP_HASH

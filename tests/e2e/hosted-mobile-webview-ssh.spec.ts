@@ -37,6 +37,7 @@ import {
 } from './helpers/hosted-ios-mobile-launcher'
 import { waitForHostedIosAccessibilityControl } from './helpers/hosted-ios-accessibility'
 import { sendHostedIosPastedTerminalCommand } from './helpers/hosted-ios-pasted-terminal-command'
+import { writeHostedIosSimulatorPasteboard } from '../../mobile/scripts/hosted-ios-terminal-clipboard-paste.mjs'
 import { openHostedIosLongPressAction } from './helpers/hosted-ios-long-press'
 import {
   findHostedIosInspectorPort,
@@ -120,12 +121,6 @@ test.describe('Hosted mobile WebView over Docker SSH', () => {
         expectedText: REMOTE_WORKSPACE,
         timeoutMs: 120_000
       })
-      await openHostedIosWorkspace({
-        discoveryUrl,
-        repoText: REMOTE_WORKSPACE,
-        timeoutMs: 90_000,
-        workspaceText: REMOTE_WORKTREE
-      })
       writeDockerSshNativeChatTranscript(target, [
         { id: 'u-1', role: 'user', text: 'remote hello' }
       ])
@@ -134,6 +129,14 @@ test.describe('Hosted mobile WebView over Docker SSH', () => {
         `touch ${REMOTE_PROOF_PATH}`,
         dockerSshNativeChatPublicationCommand()
       ].join('; ')}; `
+      // Why: Session snapshots clipboard availability on mount.
+      await writeHostedIosSimulatorPasteboard(deviceUdid, terminalJourneyCommand)
+      await openHostedIosWorkspace({
+        discoveryUrl,
+        repoText: REMOTE_WORKSPACE,
+        timeoutMs: 90_000,
+        workspaceText: REMOTE_WORKTREE
+      })
       await sendHostedIosTerminalCommand({
         command: terminalJourneyCommand,
         discoveryUrl,

@@ -1,4 +1,4 @@
-import { Buffer } from 'buffer'
+import { Buffer } from 'buffer/'
 import { sha256 } from '@noble/hashes/sha256'
 import { serializeMobileWebManifestForBuildId } from '../../../src/shared/mobile-web/manifest-contract'
 import type {

@@ -172,8 +172,8 @@ export function terminalWebLinksForLine(
 function unlinkedLineSegments(
   lineText: string,
   links: TerminalWebLink[]
-): Array<{ text: string; startIndex: number }> {
-  const segments: Array<{ text: string; startIndex: number }> = []
+): { text: string; startIndex: number }[] {
+  const segments: { text: string; startIndex: number }[] = []
   let startIndex = 0
   for (const link of [...links].sort((left, right) => left.startIndex - right.startIndex)) {
     if (link.startIndex > startIndex) {

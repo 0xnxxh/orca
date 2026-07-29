@@ -2,6 +2,7 @@ import { requireNativeViewManager } from 'expo-modules-core'
 import {
   createElement,
   forwardRef,
+  useEffect,
   useImperativeHandle,
   useRef,
   type ComponentType,
@@ -34,9 +35,11 @@ const ExpoMobileWebShellView = forwardRef<MobileWebShellViewRef, MobileWebShellV
   function ExpoMobileWebShellView(props, forwardedRef) {
     const nativeRef = useRef<MobileWebShellViewRef>(null)
     const lastSessionIdRef = useRef<string | null>(null)
-    if (props.sessionId) {
-      lastSessionIdRef.current = props.sessionId
-    }
+    useEffect(() => {
+      if (props.sessionId) {
+        lastSessionIdRef.current = props.sessionId
+      }
+    }, [props.sessionId])
 
     useImperativeHandle(
       forwardedRef,

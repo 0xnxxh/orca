@@ -62,7 +62,7 @@ export class MobileSessionMarkdownDraftCoordinator {
     }
   }
 
-  observe(target: HostSessionMarkdownTarget, draft: ObservedDraft): void {
+  scheduleSave(target: HostSessionMarkdownTarget, draft: ObservedDraft): void {
     const key = targetKey(target)
     if (!this.hydrated.has(key) || draftsEqual(this.lastObserved.get(key), draft)) {
       return

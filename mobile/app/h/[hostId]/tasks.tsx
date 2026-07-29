@@ -5733,21 +5733,19 @@ export default function MobileTasksScreen({
           comment.path &&
           typeof comment.line === 'number' &&
           typeof comment.id === 'number'
-        if (canUseReviewReply) {
-          await taskProjectMutationOperations.replyReviewComment(target, repo.id, {
-            commentId: comment.id as number,
-            body,
-            ...(comment.threadId ? { threadId: comment.threadId } : {}),
-            path: comment.path as string,
-            line: comment.line as number
-          })
-        } else {
-          await taskProjectMutationOperations.addConversationComment(
-            target,
-            repo.id,
-            `@${commentAuthor(comment)} ${body}`
-          )
-        }
+        await (canUseReviewReply
+          ? taskProjectMutationOperations.replyReviewComment(target, repo.id, {
+              commentId: comment.id as number,
+              body,
+              ...(comment.threadId ? { threadId: comment.threadId } : {}),
+              path: comment.path as string,
+              line: comment.line as number
+            })
+          : taskProjectMutationOperations.addConversationComment(
+              target,
+              repo.id,
+              `@${commentAuthor(comment)} ${body}`
+            ))
         const reply: DetailComment = {
           id: `local-${Date.now()}`,
           body,
@@ -7022,20 +7020,18 @@ export default function MobileTasksScreen({
           comment.path &&
           typeof comment.line === 'number' &&
           typeof comment.id === 'number'
-        if (canUseReviewReply) {
-          await taskItemReviewOperations.replyReviewComment(taskItemMutationTarget(item), {
-            commentId: comment.id as number,
-            body,
-            ...(comment.threadId ? { threadId: comment.threadId } : {}),
-            path: comment.path as string,
-            line: comment.line as number
-          })
-        } else {
-          await taskItemReviewOperations.addComment(
-            taskItemMutationTarget(item),
-            `@${commentAuthor(comment)} ${body}`
-          )
-        }
+        await (canUseReviewReply
+          ? taskItemReviewOperations.replyReviewComment(taskItemMutationTarget(item), {
+              commentId: comment.id as number,
+              body,
+              ...(comment.threadId ? { threadId: comment.threadId } : {}),
+              path: comment.path as string,
+              line: comment.line as number
+            })
+          : taskItemReviewOperations.addComment(
+              taskItemMutationTarget(item),
+              `@${commentAuthor(comment)} ${body}`
+            ))
         const reply: DetailComment = {
           id: `local-${Date.now()}`,
           body,

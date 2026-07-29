@@ -847,6 +847,8 @@ type SessionScreenProps = {
   nativeHostBinding?: boolean
 }
 
+export { SessionScreen as default }
+
 export function SessionScreen({
   sessionTabOperations: sessionTabOperationsProp,
   sessionQuickCommandOperations: sessionQuickCommandOperationsProp,
@@ -1226,7 +1228,9 @@ export function SessionScreen({
     sendLiveTerminalInputRef,
     setLiveInputCapture
   })
-  sessionTerminalOperationsRef.current = sessionTerminalOperations
+  useEffect(() => {
+    sessionTerminalOperationsRef.current = sessionTerminalOperations
+  }, [sessionTerminalOperations])
   const canSend =
     connState === 'connected' &&
     sessionTerminalOperations != null &&
@@ -4101,13 +4105,9 @@ export function SessionScreen({
         }
         if (tab.type === 'markdown') {
           await clearMarkdownDraft(tab).catch(() => {})
-          markdownDocLifecycleRef.current.close(tab.id, (update) => {
-            setMarkdownDocs((current) => {
-              const next = update(current)
-              markdownDocsRef.current = next
-              return next
-            })
-          })
+          const nextDocs = markdownDocLifecycleRef.current.close(tab.id, markdownDocsRef.current)
+          markdownDocsRef.current = nextDocs
+          setMarkdownDocs(nextDocs)
           markdownSaveSeqRef.current.delete(tab.id)
           markdownSaveInFlightRef.current.delete(tab.id)
         }
@@ -5369,5 +5369,3 @@ export function SessionScreen({
     </View>
   )
 }
-
-export default SessionScreen

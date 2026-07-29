@@ -79,7 +79,7 @@ describe('mobile session markdown draft coordinator', () => {
       10
     )
     coordinator.markEdited(TARGET)
-    coordinator.observe(TARGET, { content: 'draft', baseVersion: 'v1' })
+    coordinator.scheduleSave(TARGET, { content: 'draft', baseVersion: 'v1' })
     await vi.advanceTimersByTimeAsync(10)
 
     const clearing = coordinator.clear(TARGET)

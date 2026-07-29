@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcResponse } from '../transport/types'
-import { MobileWebBrokerError } from './mobile-web-broker-error'
+import type { MobileWebBrokerError } from './mobile-web-broker-error'
 import type { MobileWebSpeechAuthority } from './mobile-web-speech-authority'
 import { executeMobileWebSpeechOperation } from './mobile-web-speech-operations'
 

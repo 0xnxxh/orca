@@ -6,7 +6,7 @@ import {
   type MobileWebWorkspaceSnapshotResult,
   type MobileWebWorkspaceSummary
 } from '../../../src/shared/mobile-web/bridge-operation-contract'
-import { MobileWebWorkspaceAuthority } from './mobile-web-workspace-authority'
+import type { MobileWebWorkspaceAuthority } from './mobile-web-workspace-authority'
 
 const MOBILE_WEB_WORKSPACE_AGENT_LIMIT = 16
 

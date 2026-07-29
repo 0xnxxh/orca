@@ -62,7 +62,7 @@ export function useHostedMobileDictation(
       setStatus('idle')
     }, reportError)
     void subscription.ready.catch(() => undefined)
-    return subscription.unsubscribe
+    return () => subscription.unsubscribe()
   }, [operations, reportError])
 
   const start = useCallback(async () => {
