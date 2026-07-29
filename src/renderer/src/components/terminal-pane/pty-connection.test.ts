@@ -14003,12 +14003,21 @@ describe('connectPanePty', () => {
       const getMainBufferSnapshot = window.api.pty.getMainBufferSnapshot as unknown as ReturnType<
         typeof vi.fn
       >
-      getMainBufferSnapshot.mockResolvedValue({
+      const promotedSnapshot = {
         data: 'promoted snapshot\r\n',
         cols: 100,
         rows: 30,
         seq: 64
-      })
+      }
+      const promotedSnapshotResolver: {
+        current: ((snapshot: typeof promotedSnapshot) => void) | null
+      } = { current: null }
+      getMainBufferSnapshot.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            promotedSnapshotResolver.current = resolve
+          })
+      )
 
       const pane = createPane(1)
       const manager = createManager(1, 1)
@@ -14036,6 +14045,9 @@ describe('connectPanePty', () => {
 
       expect(blockingRestore).not.toHaveBeenCalled()
       expect(getMainBufferSnapshot).toHaveBeenCalledWith('pty-id', { scrollbackRows: 5000 })
+      expect(promotedSnapshotResolver.current).not.toBeNull()
+      promotedSnapshotResolver.current?.(promotedSnapshot)
+      await flushAsyncTicks(20)
       expect(pane.terminal.write).toHaveBeenCalledWith(
         expect.stringContaining('promoted snapshot'),
         expect.any(Function)
