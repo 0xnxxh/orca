@@ -87,7 +87,8 @@ type QueueEntry = {
   foregroundCoalesceTimer: ReturnType<typeof setTimeout> | null
 }
 
-const BACKGROUND_FLUSH_DELAY_MS = 50
+// Why: two 60 Hz frames coalesce pane bursts without carrying them into a third frame.
+const BACKGROUND_FLUSH_DELAY_MS = 32
 const BACKGROUND_DRAIN_INTERVAL_MS = 16
 const HIGH_PRIORITY_DRAIN_INTERVAL_MS = 4
 const BACKGROUND_CHUNK_CHARS = 16 * 1024

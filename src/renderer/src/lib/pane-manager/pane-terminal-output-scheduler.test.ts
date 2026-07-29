@@ -610,7 +610,9 @@ describe('pane terminal output scheduler', () => {
     writeTerminalOutput(terminal, 'b', { foreground: false })
 
     expect(terminal.write).not.toHaveBeenCalled()
-    vi.advanceTimersByTime(50)
+    vi.advanceTimersByTime(31)
+    expect(terminal.write).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
 
     expect(terminal.write).toHaveBeenCalledTimes(1)
     expect(terminal.write).toHaveBeenCalledWith('ab', expect.any(Function))
@@ -637,7 +639,7 @@ describe('pane terminal output scheduler', () => {
       onParsed
     })
 
-    vi.advanceTimersByTime(50)
+    vi.advanceTimersByTime(32)
 
     expect(writes).toEqual(['hidden redraw'])
     expect(onParsed).not.toHaveBeenCalled()
@@ -668,7 +670,7 @@ describe('pane terminal output scheduler', () => {
       onParsed
     })
 
-    vi.advanceTimersByTime(50)
+    vi.advanceTimersByTime(32)
 
     expect(writes.map((data) => data.length)).toEqual([16 * 1024, 4 * 1024])
     // Why 2: every slice now carries a completion callback (it settles the
@@ -1115,7 +1117,7 @@ describe('pane terminal output scheduler', () => {
     writeTerminalOutput(terminal, 'b', { foreground: false, beforeWrite })
 
     expect(beforeWrite).not.toHaveBeenCalled()
-    vi.advanceTimersByTime(50)
+    vi.advanceTimersByTime(32)
 
     expect(beforeWrite).toHaveBeenCalledTimes(1)
     expect(beforeWrite).toHaveBeenCalledWith('ab')
@@ -1199,7 +1201,7 @@ describe('pane terminal output scheduler', () => {
       writeTerminalOutput(terminal, `pane-${index}`, { foreground: false })
     })
 
-    vi.advanceTimersByTime(50)
+    vi.advanceTimersByTime(32)
     expect(terminals[0].write).toHaveBeenCalledWith('pane-0', expect.any(Function))
     expect(terminals[1].write).toHaveBeenCalledWith('pane-1', expect.any(Function))
     expect(terminals[2].write).not.toHaveBeenCalled()
@@ -1243,7 +1245,7 @@ describe('pane terminal output scheduler', () => {
     writeTerminalOutput(terminals[1], 'pane-1', { foreground: false })
     writeTerminalOutput(terminals[2], 'pane-2', { foreground: false })
 
-    vi.advanceTimersByTime(50)
+    vi.advanceTimersByTime(32)
     expect(terminals[0].write).toHaveBeenCalledTimes(1)
     expect(terminals[1].write).toHaveBeenCalledWith('pane-1', expect.any(Function))
     expect(terminals[2].write).not.toHaveBeenCalled()
@@ -1310,7 +1312,7 @@ describe('pane terminal output scheduler', () => {
       writeTerminalOutput(terminal, chunk, { foreground: false })
     }
 
-    vi.advanceTimersByTime(50)
+    vi.advanceTimersByTime(32)
     vi.advanceTimersByTime(16)
 
     expect(terminal.write).toHaveBeenCalledTimes(4)
