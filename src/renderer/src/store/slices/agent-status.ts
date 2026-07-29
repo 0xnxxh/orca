@@ -1776,10 +1776,15 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         const orchestration =
           payloadMergedOrchestration ?? runtimeMergedOrchestration ?? completedFallbackOrchestration
         // Why: waiting/blocked are still the same resumable turn; child permission hooks omit the root session id.
+        // Completing a turn does not end the provider session either — the TUI stays alive and resumable at its
+        // prompt — so `done` must carry the id through, including done→done (OSC 9999 repaints and reconnect
+        // snapshot replays both re-deliver a metadata-less `done` onto an already-done row). Without that, every
+        // surface keyed on the id — mobile Chat UI transcripts, the resumable recovery anchor below — loses the
+        // session while the agent sits idle, which is precisely when it is read (#10630). Only a new turn
+        // (done→working) still drops it, so a reused pane cannot inherit a finished session.
         const canReuseExistingProviderSession =
           existing?.agentType === identity.agentType &&
-          existing.state !== 'done' &&
-          payload.state !== 'done'
+          (existing.state !== 'done' || payload.state === 'done')
         const providerSession =
           metadata?.providerSession ??
           (canReuseExistingProviderSession ? existing.providerSession : undefined)
