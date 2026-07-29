@@ -5,6 +5,7 @@ import { LogicalClientCutoverError } from '../transport/stable-logical-rpc-clien
 import {
   MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS,
   openMobileNativeChatSendBudget,
+  clearMobileNativeChatInput,
   sendMobileNativeChatMessage,
   sendMobileNativeChatMessageWithOutcome
 } from './mobile-native-chat-send'
@@ -287,7 +288,54 @@ describe('sendMobileNativeChatMessage', () => {
   })
 })
 
-describe('clearing a parked multi-line launch draft', () => {
+describe('clearMobileNativeChatInput', () => {
+  const accepted = {
+    id: 'request',
+    ok: true,
+    result: { send: { accepted: true } },
+    _meta: { runtimeId: 'runtime' }
+  }
+  const params = (client: RpcClient) =>
+    vi.mocked(client.sendRequest).mock.calls[0]![1] as { text: string; enter: boolean }
+
+  it('writes the burst as its OWN non-submitting write', async () => {
+    // Bundling the burst into the body write reached the agent as LITERAL Ctrl+U
+    // text and the parked draft concatenated (observed live).
+    const client = clientWithResponse(accepted)
+    const clearInput = buildAgentTuiClearInputForText('Linked Linear issue: ABC-123\nhttps://x')
+    await expect(
+      clearMobileNativeChatInput({ client, terminal: 'term', clearInput })
+    ).resolves.toBe(true)
+    expect(params(client)).toMatchObject({ text: clearInput, enter: false })
+  })
+
+  it('reports failure when the host rejects the clear', async () => {
+    const client = clientWithResponse({
+      id: 'request',
+      ok: true,
+      result: { send: { accepted: false } },
+      _meta: { runtimeId: 'runtime' }
+    })
+    await expect(
+      clearMobileNativeChatInput({ client, terminal: 'term', clearInput: '\x15' })
+    ).resolves.toBe(false)
+  })
+
+  it('refuses to start an underfunded clear rather than half-clearing', async () => {
+    const client = clientWithResponse(accepted)
+    await expect(
+      clearMobileNativeChatInput({
+        client,
+        terminal: 'term',
+        clearInput: '\x15',
+        deadline: Date.now() + 10
+      })
+    ).resolves.toBe(false)
+    expect(client.sendRequest).not.toHaveBeenCalled()
+  })
+})
+
+describe('the body write never carries a multi-line burst', () => {
   const accepted = {
     id: 'request',
     ok: true,
@@ -297,37 +345,7 @@ describe('clearing a parked multi-line launch draft', () => {
   const sentText = (client: RpcClient): string =>
     (vi.mocked(client.sendRequest).mock.calls[0]![1] as { text: string }).text
 
-  it('uses the caller-sized burst instead of one Ctrl+U', async () => {
-    // One Ctrl+U kills only the LAST line, so the draft's earlier lines would
-    // survive and glue onto this message.
-    const client = clientWithResponse(accepted)
-    const clearInput = buildAgentTuiClearInputForText('Linked Linear issue: ABC-123\nhttps://x')
-    await sendMobileNativeChatMessage({
-      client,
-      terminal: 'term',
-      text: 'hello',
-      clearInputFirst: true,
-      clearInput
-    })
-    expect(sentText(client)).toBe(`${clearInput}hello`)
-    expect(sentText(client)).not.toBe(`\x15hello`)
-  })
-
-  it('rides the clear in the SAME write as the body so nothing can land between', async () => {
-    const client = clientWithResponse(accepted)
-    const clearInput = buildAgentTuiClearInputForText('a\nb')
-    await sendMobileNativeChatMessage({
-      client,
-      terminal: 'term',
-      text: 'body',
-      clearInputFirst: true,
-      clearInput
-    })
-    expect(client.sendRequest).toHaveBeenCalledTimes(1)
-    expect(sentText(client).endsWith('body')).toBe(true)
-  })
-
-  it('falls back to a single Ctrl+U when no draft is parked', async () => {
+  it('still prefixes only a single Ctrl+U when asked to clear first', async () => {
     const client = clientWithResponse(accepted)
     await sendMobileNativeChatMessage({
       client,
@@ -339,14 +357,12 @@ describe('clearing a parked multi-line launch draft', () => {
   })
 
   it('never prefixes a clear when the caller already pasted (image sends)', async () => {
-    // A second clear here would wipe the image that was just pasted.
     const client = clientWithResponse(accepted)
     await sendMobileNativeChatMessage({
       client,
       terminal: 'term',
       text: 'caption',
-      clearInputFirst: false,
-      clearInput: buildAgentTuiClearInputForText('a\nb')
+      clearInputFirst: false
     })
     expect(sentText(client)).toBe('caption')
   })

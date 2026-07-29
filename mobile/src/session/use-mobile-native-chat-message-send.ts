@@ -1,6 +1,7 @@
 import { useCallback, type MutableRefObject } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
 import {
+  clearMobileNativeChatInput,
   openMobileNativeChatSendBudget,
   sendMobileNativeChatMessageWithOutcome,
   type MobileNativeChatSendOutcome
@@ -105,22 +106,47 @@ export function useMobileNativeChatMessageSend(args: {
       // slack — the user can also have typed into the TUI line directly, so that
       // line count is a lower bound. Mobile cannot read the agent's screen, so
       // there is no empty-line observable to confirm against here; the upper
-      // bound plus the atomic clear+body write is what makes it safe.
+      // bound plus the host's write acceptance is what makes it safe.
+      //
+      // The burst goes out as its OWN write: bundled into the body write it
+      // arrived as literal Ctrl+U text and the draft concatenated (see
+      // clearMobileNativeChatInput). A rejected clear aborts the send rather
+      // than pasting on top of an uncleared line.
       const seededLaunchDraft = readSeededLaunchDraft()
+      if (seededLaunchDraft) {
+        const cleared = await clearMobileNativeChatInput({
+          client,
+          terminal: handle,
+          clearInput: buildAgentTuiClearInputForText(seededLaunchDraft),
+          deadline,
+          ...(deviceTokenRef.current
+            ? { mobileClient: { id: deviceTokenRef.current, type: 'mobile' } }
+            : {})
+        })
+        if (!cleared) {
+          if (syncComposer) {
+            restoreRejectedDraft(origin, text)
+          }
+          onSendError('Message not sent')
+          return 'rejected'
+        }
+      }
       const outcome = await sendMobileNativeChatMessageWithOutcome({
         client,
         terminal: handle,
         text,
-        ...(seededLaunchDraft
-          ? { clearInput: buildAgentTuiClearInputForText(seededLaunchDraft) }
-          : {}),
         // Why: pre-clear only when nothing was deliberately pasted first. The heal
         // above fires only for terminals a mobile image paste marked, so a desktop
         // launch-draft prefill parked on the input line would otherwise glue onto
         // this message. An image send already led its own paste with Ctrl+U, and a
         // second one here would wipe the image it just pasted (desktop's image path
         // likewise clears once, before the paste, and never again).
-        clearInputFirst: !images?.length,
+        //
+        // Also skipped once the dedicated clear above ran: the line is already
+        // empty, and a Ctrl+U written immediately before body text in the SAME
+        // write reaches the agent as a literal control character rather than a
+        // keypress (observed live as a stray \x15 heading the received message).
+        clearInputFirst: !images?.length && !seededLaunchDraft,
         deadline,
         ...(deviceTokenRef.current
           ? { mobileClient: { id: deviceTokenRef.current, type: 'mobile' } }

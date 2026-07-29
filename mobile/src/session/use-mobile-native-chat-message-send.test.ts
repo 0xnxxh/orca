@@ -6,8 +6,10 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sendWithOutcome = vi.fn()
+const clearInputWrite = vi.fn()
 vi.mock('./mobile-native-chat-send', () => ({
   sendMobileNativeChatMessageWithOutcome: (...args: unknown[]) => sendWithOutcome(...args),
+  clearMobileNativeChatInput: (...args: unknown[]) => clearInputWrite(...args),
   openMobileNativeChatSendBudget: () => Date.now() + 15_000,
   MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS: 15_000,
   MOBILE_NATIVE_CHAT_MIN_WRITE_TIMEOUT_MS: 2_000
@@ -49,13 +51,17 @@ describe('useMobileNativeChatMessageSend', () => {
     })
   }
 
-  const sentArgs = (): { clearInput?: string; clearInputFirst?: boolean } =>
-    sendWithOutcome.mock.calls[0]![0] as { clearInput?: string; clearInputFirst?: boolean }
+  const sentArgs = (): { clearInputFirst?: boolean } =>
+    sendWithOutcome.mock.calls[0]![0] as { clearInputFirst?: boolean }
+  const clearArgs = (): { clearInput?: string } =>
+    (clearInputWrite.mock.calls[0]?.[0] ?? {}) as { clearInput?: string }
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     sendWithOutcome.mockReset()
     sendWithOutcome.mockResolvedValue('accepted')
+    clearInputWrite.mockReset()
+    clearInputWrite.mockResolvedValue(true)
   })
   afterEach(() => {
     act(() => {
@@ -70,15 +76,58 @@ describe('useMobileNativeChatMessageSend', () => {
     await act(async () => {
       await api!.send('hello')
     })
-    expect(sentArgs().clearInput).toBe(buildAgentTuiClearInputForText(DRAFT))
+    expect(clearArgs().clearInput).toBe(buildAgentTuiClearInputForText(DRAFT))
   })
 
-  it('sends no clearInput at all when nothing is parked on the line', async () => {
+  it('issues the burst as its OWN write, before the body', async () => {
+    // Bundled into the body write it arrived as literal Ctrl+U text.
+    mount(() => DRAFT)
+    await act(async () => {
+      await api!.send('hello')
+    })
+    expect(clearInputWrite).toHaveBeenCalledTimes(1)
+    expect(sendWithOutcome).toHaveBeenCalledTimes(1)
+    expect(clearInputWrite.mock.invocationCallOrder[0]).toBeLessThan(
+      sendWithOutcome.mock.invocationCallOrder[0]!
+    )
+  })
+
+  it('aborts without sending the body when the clear is rejected', async () => {
+    // Sending on top of an uncleared line is exactly the concatenation bug.
+    clearInputWrite.mockResolvedValue(false)
+    mount(() => DRAFT)
+    let result: boolean | undefined
+    await act(async () => {
+      result = await api!.send('hello')
+    })
+    expect(result).toBe(false)
+    expect(sendWithOutcome).not.toHaveBeenCalled()
+  })
+
+  it('drops the body write\u2019s own Ctrl+U prefix once the dedicated clear ran', async () => {
+    // A Ctrl+U written immediately before body text in the SAME write arrives as
+    // a literal control character, so it would head the received message.
+    mount(() => DRAFT)
+    await act(async () => {
+      await api!.send('hello')
+    })
+    expect(sentArgs().clearInputFirst).toBe(false)
+  })
+
+  it('keeps the single-Ctrl+U prefix when no dedicated clear ran', async () => {
     mount(() => null)
     await act(async () => {
       await api!.send('hello')
     })
-    expect(sentArgs().clearInput).toBeUndefined()
+    expect(sentArgs().clearInputFirst).toBe(true)
+  })
+
+  it('writes no clear at all when nothing is parked on the line', async () => {
+    mount(() => null)
+    await act(async () => {
+      await api!.send('hello')
+    })
+    expect(clearInputWrite).not.toHaveBeenCalled()
   })
 
   it('reads the draft at send time, so a retired seed stops widening the clear', async () => {
@@ -92,9 +141,8 @@ describe('useMobileNativeChatMessageSend', () => {
       await api!.send('second')
     })
     expect(sendWithOutcome.mock.calls[1]![0]).toMatchObject({ clearInputFirst: true })
-    expect(
-      (sendWithOutcome.mock.calls[1]![0] as { clearInput?: string }).clearInput
-    ).toBeUndefined()
+    expect(clearInputWrite).toHaveBeenCalledTimes(1)
+    expect(sendWithOutcome.mock.calls[0]![0]).toMatchObject({ clearInputFirst: false })
   })
 
   it('still skips the pre-clear for an image send, which pasted its own first', async () => {
