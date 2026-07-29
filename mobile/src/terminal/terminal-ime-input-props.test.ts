@@ -166,6 +166,13 @@ describe('getTerminalImeRemountKey', () => {
   })
 })
 
+// These tests scan source text ON PURPOSE — please don't "fix" them by extracting the
+// matched expressions into variables. The module above is pure and fully unit-tested; what
+// it cannot prove is that the route still *calls* it. Rendering the real screen isn't a
+// viable alternative (a 5k-line route behind navigation, RPC and native deps), so these
+// guard the wiring instead. They are deliberately narrow: a rename or reflow SHOULD fail
+// here and be re-pinned. Known gap: swapping the argument for a different value of the same
+// type would still pass — the unit tests above own correctness, these only own the hookup.
 describe('session route IME wiring', () => {
   // Element-scoped, not file-scoped: ~20 other mobile fields legitimately hardcode
   // autoCorrect={false}, and this route has non-terminal inputs of its own.
