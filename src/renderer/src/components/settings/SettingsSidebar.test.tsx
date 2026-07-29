@@ -72,6 +72,12 @@ function renderSidebar(
                 installStatus: 'up-to-date'
               },
               {
+                id: 'voice-loading',
+                title: 'Voice Loading',
+                icon: Mic,
+                installStatus: 'checking'
+              },
+              {
                 id: 'linear',
                 title: 'Linear',
                 icon: GitBranch,
@@ -144,6 +150,7 @@ describe('SettingsSidebar', () => {
     expect(markup).not.toContain('Not installed')
     expect(markup).not.toContain('Installed')
     expect(markup).not.toContain('Up to date')
+    expect(markup).not.toContain('Checking...')
     expect(markup).toContain('Update available')
     expect(markup).toContain('Review skill')
     expect(markup).toContain('Optional')
