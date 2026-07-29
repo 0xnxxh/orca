@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
@@ -8,6 +8,10 @@ import process from 'node:process'
 import { promisify } from 'node:util'
 import { startCdpServer } from 'inspect-webkit'
 import { resolveEmulatorOrcaCli } from './emulator-orca-cli-selection.mjs'
+import {
+  createHostedAdversarialRepositoryFixture,
+  removeHostedAdversarialRepositoryFixture
+} from './hosted-adversarial-repository-fixture.mjs'
 import { stopHostedChildProcess } from './hosted-child-process-shutdown.mjs'
 import { parseHostedWebViewSimulatorE2eOptions } from './hosted-webview-simulator-e2e-options.mjs'
 import {
@@ -25,6 +29,10 @@ import { verifyHostedWebViewExecutableIsolation } from './hosted-webview-executa
 import { verifyHostedWebViewPrivacyIsolation } from './hosted-webview-privacy-isolation.mjs'
 import { captureNativeAgentHistoryBaseline } from './hosted-ios-agent-history-parity.mjs'
 import {
+  createHostedIosAdversarialContentInspector,
+  registerHostedIosAdversarialRepository
+} from './hosted-ios-adversarial-content.mjs'
+import {
   captureHostedCoreRouteParity,
   captureNativeCoreRouteBaselines
 } from './hosted-ios-core-route-parity.mjs'
@@ -38,6 +46,10 @@ import {
 } from './hosted-ios-workspace-parity.mjs'
 import { verifyHostedAgentHistoryJourney } from './hosted-ios-agent-history-journey.mjs'
 import { openHostedIosHybridRoute } from './hosted-ios-hybrid-route-handoff.mjs'
+import {
+  startHostedIosMobileLauncher,
+  waitForHostedIosMobileLauncher
+} from './hosted-ios-mobile-launcher.mjs'
 import { verifyHostedNativeTerminalSettingsHandoff } from './hosted-ios-native-settings-handoff.mjs'
 import { verifyHostedSourceControlReviewJourney } from './hosted-ios-source-control-review-journey.mjs'
 import { captureNativeSourceControlReviewBaselines } from './hosted-ios-source-control-review-parity.mjs'
@@ -56,7 +68,6 @@ import { hostedIosSimulatorAppPreparation } from './hosted-ios-simulator-app-pre
 
 const execFileAsync = promisify(execFile)
 const worktree = path.resolve(import.meta.dirname, '../..')
-const launcherPath = path.join(worktree, 'mobile', 'scripts', 'start-emulator.mjs')
 const options = parseHostedWebViewSimulatorE2eOptions(process.argv.slice(2))
 const runtimeDirectory = resolveHostedWebViewRuntimeDirectory({
   worktree,
@@ -81,7 +92,12 @@ async function main() {
   let networkProbe = null
   let emulatorController = null
   let nativeAppPath = null
+  let adversarialFixture = null
+  let adversarialInspector = null
   try {
+    if (options.adversarialContent) {
+      adversarialFixture = await createHostedAdversarialRepositoryFixture()
+    }
     networkProbe = await startHostedIosWebViewSecurityProbe()
     await bootSimulator(deviceUdid)
     emulatorController = await startHostedIosEmulatorController({
@@ -97,8 +113,14 @@ async function main() {
         resetHostedIosPhotosPermission(deviceUdid)
       )
     }
-    launcher = startMobileLauncher(deviceUdid, emulatorController.userData)
-    await waitForLauncher(launcher, options.timeoutMs)
+    launcher = startHostedIosMobileLauncher({
+      deviceUdid,
+      emulatorControlUserDataPath: emulatorController.userData,
+      orcaCli: orcaSelection.command,
+      runtimeDirectory,
+      worktree
+    })
+    await waitForHostedIosMobileLauncher(launcher, options.timeoutMs)
     const emulator = {
       deviceUdid,
       orcaCli: orcaSelection.command,
@@ -109,6 +131,20 @@ async function main() {
     const nativeOnboarding = await evidenceStep('native onboarding', () =>
       completeHostedIosNativeOnboarding(emulator, expectedWorkspace, options.timeoutMs)
     )
+    if (adversarialFixture) {
+      await evidenceStep('adversarial repository registration', () =>
+        registerHostedIosAdversarialRepository({
+          fixture: adversarialFixture,
+          orcaCli: orcaSelection.command,
+          pairingRuntimeUserDataPath: path.join(runtimeDirectory, 'paired-host', 'userData')
+        })
+      )
+      adversarialInspector = createHostedIosAdversarialContentInspector({
+        emulator,
+        fixture: adversarialFixture,
+        timeoutMs: options.timeoutMs
+      })
+    }
     const nativeWorkspace =
       options.securityOnly ||
       options.filesPreviewOnly ||
@@ -140,6 +176,7 @@ async function main() {
           )
     const nativeCoreRoutes =
       options.accountsOnly ||
+      options.adversarialContent ||
       options.securityOnly ||
       options.filesPreviewOnly ||
       options.nativeSettingsOnly ||
@@ -171,6 +208,7 @@ async function main() {
           )
     const nativeSourceControlReview =
       options.accountsOnly ||
+      options.adversarialContent ||
       options.securityOnly ||
       options.filesPreviewOnly ||
       options.nativeSettingsOnly
@@ -211,6 +249,11 @@ async function main() {
       expectedText: 'Orca Desktop',
       timeoutMs: options.timeoutMs
     })
+    const workspacePrivacyIsolation = options.adversarialContent
+      ? await evidenceStep('workspace privacy isolation probe', () =>
+          verifyHostedWebViewPrivacyIsolation({ document: workspaceDocument })
+        )
+      : null
     const securityJourney = {
       deviceUdid,
       discoveryUrl,
@@ -339,13 +382,13 @@ async function main() {
             if (options.sourceControlOnly) {
               await activateHostedWorkspaceRow(
                 workspaceDocument,
-                expectedWorkspace,
+                adversarialFixture?.workspaceRowName ?? expectedWorkspace,
                 activateHostedWebViewControl,
                 options.timeoutMs,
                 () =>
                   waitForVisibleHostedWebView({
                     discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
-                    expectedText: 'Orca Desktop',
+                    expectedText: adversarialFixture?.workspaceRowName ?? 'Orca Desktop',
                     timeoutMs: options.timeoutMs
                   })
               )
@@ -363,11 +406,17 @@ async function main() {
               emulator,
               expectedSessionDiffText: options.sourceControlOnly ? '2 tabs' : '3 tabs',
               nativeBaselines: nativeSourceControlReview,
+              inspectChangedContent: adversarialInspector?.inspect,
               runtimeDirectory,
               sessionDocument,
               timeoutMs: options.timeoutMs
             })
           })
+    const adversarialContent = adversarialInspector
+      ? await evidenceStep('adversarial filename and diff presentation', () =>
+          adversarialInspector.evidence()
+        )
+      : null
     const securityDocument =
       options.securityOnly && terminalDeviceInput
         ? (terminalDeviceInput.terminalClipboardImagePaste?.sessionDocument ??
@@ -399,9 +448,11 @@ async function main() {
         probeId: networkProbe.token
       })
     )
-    const privacyIsolation = await evidenceStep('privacy isolation probe', () =>
-      verifyHostedWebViewPrivacyIsolation({ document: securityDocument })
-    )
+    const privacyIsolation =
+      workspacePrivacyIsolation ??
+      (await evidenceStep('privacy isolation probe', () =>
+        verifyHostedWebViewPrivacyIsolation({ document: securityDocument })
+      ))
     await delay(500)
     if (networkProbe.observations.length > 0) {
       throw new Error(
@@ -436,7 +487,8 @@ async function main() {
           agentHistory: historyEvidence,
           coreRouteParity: hostedCoreRoutes?.evidence ?? null,
           filesPreviewParity: hostedFilesPreview?.evidence ?? null,
-          sourceControlReview
+          sourceControlReview,
+          adversarialContent
         },
         null,
         2
@@ -445,6 +497,9 @@ async function main() {
   } finally {
     inspector?.stop()
     await stopHostedChildProcess(launcher)
+    if (adversarialFixture) {
+      await removeHostedAdversarialRepositoryFixture(adversarialFixture)
+    }
     await emulatorController?.stop()
     await clearHostedIosWebViewSecurityProbe(deviceUdid)
     await networkProbe?.stop()
@@ -514,64 +569,6 @@ async function bootSimulator(deviceUdid) {
     await execFileAsync('xcrun', ['simctl', 'boot', deviceUdid])
   }
   await execFileAsync('xcrun', ['simctl', 'bootstatus', deviceUdid, '-b'])
-}
-
-function startMobileLauncher(deviceUdid, emulatorControlUserDataPath) {
-  return spawn(
-    process.execPath,
-    [launcherPath, '--worktree', worktree, '--device', deviceUdid, '--wait-for-ready'],
-    {
-      cwd: worktree,
-      env: {
-        ...process.env,
-        ORCA_CLI: orcaSelection.command,
-        ORCA_E2E_MOBILE_AUTO_SELECT_PAIRED_HOST: '1',
-        ORCA_E2E_MOBILE_AGENT_HISTORY_FIXTURE: '1',
-        ORCA_E2E_MOBILE_RUN_DIRECTORY: path.join(runtimeDirectory, 'paired-host'),
-        ORCA_E2E_MOBILE_RESTART_HOLD_MS: '2000',
-        ORCA_E2E_MOBILE_EMULATOR_CONTROL_USER_DATA_PATH: emulatorControlUserDataPath
-      },
-      stdio: ['ignore', 'pipe', 'pipe']
-    }
-  )
-}
-
-function waitForLauncher(child, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    let outputTail = ''
-    let settled = false
-    const timer = setTimeout(() => {
-      finish(new Error(`Mobile launcher timed out.\n${outputTail}`))
-    }, timeoutMs)
-    const consume = (chunk, target) => {
-      const text = String(chunk)
-      target.write(text)
-      outputTail = (outputTail + text).slice(-32 * 1024)
-      if (outputTail.includes('Setup complete!')) {
-        finish()
-      }
-    }
-    const finish = (error) => {
-      if (settled) {
-        return
-      }
-      settled = true
-      clearTimeout(timer)
-      child.off('exit', handleExit)
-      if (error) {
-        reject(error)
-      } else {
-        resolve()
-      }
-    }
-    const handleExit = (code) => {
-      finish(new Error(`Mobile launcher exited with code ${code}.\n${outputTail}`))
-    }
-    child.stdout.on('data', (chunk) => consume(chunk, process.stdout))
-    child.stderr.on('data', (chunk) => consume(chunk, process.stderr))
-    child.once('error', finish)
-    child.once('exit', handleExit)
-  })
 }
 
 function findAvailableLoopbackPort() {

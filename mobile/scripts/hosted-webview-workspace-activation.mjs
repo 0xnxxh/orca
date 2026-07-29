@@ -19,6 +19,13 @@ export async function activateHostedWorkspaceRow(
         activeDocument = await resolveDocument()
         continue
       }
+      if (isMissingControl(error) && resolveDocument) {
+        const resolvedDocument = await resolveDocument()
+        if (resolvedDocument.href !== activeDocument.href) {
+          return
+        }
+        activeDocument = resolvedDocument
+      }
       if (!isMissingControl(error)) {
         throw error
       }
@@ -33,7 +40,8 @@ async function activateHostedWorkspaceRowOnce(document, workspaceName, activateC
   try {
     await activateControl(document, {
       kind: 'label',
-      value: `Open ${workspaceName}`
+      value: `Open ${workspaceName}`,
+      reveal: true
     })
     return
   } catch (error) {
@@ -46,7 +54,8 @@ async function activateHostedWorkspaceRowOnce(document, workspaceName, activateC
       kind: 'text',
       value: workspaceName,
       ignoreCase: true,
-      occurrence: 1
+      occurrence: 1,
+      reveal: true
     })
   } catch (error) {
     if (!isMissingControl(error)) {
@@ -55,7 +64,8 @@ async function activateHostedWorkspaceRowOnce(document, workspaceName, activateC
     await activateControl(document, {
       kind: 'text',
       value: workspaceName,
-      ignoreCase: true
+      ignoreCase: true,
+      reveal: true
     })
     await delay(250)
     try {
@@ -63,7 +73,8 @@ async function activateHostedWorkspaceRowOnce(document, workspaceName, activateC
         kind: 'text',
         value: workspaceName,
         ignoreCase: true,
-        occurrence: 1
+        occurrence: 1,
+        reveal: true
       })
     } catch (fallbackError) {
       if (isStaleDocument(fallbackError)) {

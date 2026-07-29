@@ -176,20 +176,24 @@ export async function stopHostedAndroidApp(adb) {
   await runAndroidAdb(adb, ['shell', 'am', 'force-stop', packageName]).catch(() => {})
 }
 
-export function findHostedAndroidBridgeLogFailures(logcat) {
-  return logcat
-    .split(/\r?\n/u)
-    .filter((line) =>
-      /FATAL EXCEPTION|Call to function 'ExpoMobileWebShell\.[^']+' has been rejected|mobile_web_shell_view_unavailable|Cannot convert .* to a Kotlin type|ClassCastException.*MobileWebShellView/iu.test(
-        line
-      )
+export function findHostedAndroidBridgeLogFailures(logcat, appPid) {
+  return logcat.split(/\r?\n/u).filter((line) => {
+    const fatal = /FATAL EXCEPTION/iu.test(line)
+    if (fatal && appPid && !line.includes(`(${appPid})`)) {
+      return false
+    }
+    return /FATAL EXCEPTION|Call to function 'ExpoMobileWebShell\.[^']+' has been rejected|mobile_web_shell_view_unavailable|Cannot convert .* to a Kotlin type|ClassCastException.*MobileWebShellView/iu.test(
+      line
     )
+  })
 }
 
 export async function assertHostedAndroidBridgeLogClean(adb) {
-  const failures = findHostedAndroidBridgeLogFailures(
-    await runAndroidAdb(adb, ['logcat', '-d', '-v', 'brief'])
-  )
+  const [logcat, appPid] = await Promise.all([
+    runAndroidAdb(adb, ['logcat', '-d', '-v', 'brief']),
+    runAndroidAdb(adb, ['shell', 'pidof', packageName])
+  ])
+  const failures = findHostedAndroidBridgeLogFailures(logcat, appPid)
   if (failures.length > 0) {
     throw new Error(`Android bridge emitted errors:\n${failures.slice(0, 16).join('\n')}`)
   }

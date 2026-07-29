@@ -1,11 +1,12 @@
 import process from 'node:process'
 
 const usage =
-  'Usage: node scripts/run-hosted-webview-simulator-e2e.mjs [--device <name|udid>] [--timeout-ms <ms>] [--expected-build <sha256>] [--accounts-only] [--security-only] [--isolation-only] [--clipboard-image-only] [--photos-revocation-only] [--files-preview-only] [--native-settings-only] [--source-control-only] [--skip-native-build] [--reuse-native-install]'
+  'Usage: node scripts/run-hosted-webview-simulator-e2e.mjs [--device <name|udid>] [--timeout-ms <ms>] [--expected-build <sha256>] [--accounts-only] [--security-only] [--isolation-only] [--clipboard-image-only] [--photos-revocation-only] [--files-preview-only] [--native-settings-only] [--source-control-only] [--adversarial-content] [--skip-native-build] [--reuse-native-install]'
 
 export function parseHostedWebViewSimulatorE2eOptions(args) {
   const parsed = {
     accountsOnly: false,
+    adversarialContent: false,
     clipboardImageOnly: false,
     device: 'iPhone 17 Pro',
     expectedBuild: undefined,
@@ -44,6 +45,8 @@ export function parseHostedWebViewSimulatorE2eOptions(args) {
       parsed.nativeSettingsOnly = true
     } else if (args[index] === '--source-control-only') {
       parsed.sourceControlOnly = true
+    } else if (args[index] === '--adversarial-content') {
+      parsed.adversarialContent = true
     } else if (args[index] === '--skip-native-build') {
       parsed.skipNativeBuild = true
     } else if (args[index] === '--reuse-native-install') {
@@ -67,6 +70,7 @@ export function parseHostedWebViewSimulatorE2eOptions(args) {
   if (
     [
       parsed.accountsOnly,
+      parsed.adversarialContent,
       parsed.clipboardImageOnly,
       parsed.isolationOnly,
       parsed.securityOnly,
@@ -80,5 +84,6 @@ export function parseHostedWebViewSimulatorE2eOptions(args) {
   }
   parsed.securityOnly ||=
     parsed.clipboardImageOnly || parsed.isolationOnly || parsed.photosRevocationOnly
+  parsed.sourceControlOnly ||= parsed.adversarialContent
   return parsed
 }

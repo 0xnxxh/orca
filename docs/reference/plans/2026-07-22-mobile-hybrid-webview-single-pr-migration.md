@@ -150,7 +150,7 @@ prototype:
   inventory entry, and fixtures are removed. The production `/hybrid` route,
   production bridge clients, native fallback, and Experimental Settings entry
   remain intentionally until the external cutover gates pass.
-- The 57-commit branch is rebased onto `origin/main` at `fa449bc0e` and remains
+- The 58-commit branch is rebased onto `origin/main` at `4543bb6826` and remains
   zero behind. Upstream
   native-chat launch-draft, transcript identity, loading, reconnect, and
   orchestration behavior is retained in both native and hosted adapters.
@@ -207,6 +207,13 @@ prototype:
 - Native package generations and hosted privileged-state namespaces use the
   paired Desktop public key. Mutable profile IDs remain limited to
   non-privileged navigation, diagnostics, and host selection.
+- A disposable hostile repository now exercises the real Source Control,
+  Session diff, and Review routes. The exact iPhone 17 Pro / iOS 26.5 Simulator
+  app and Pixel 9 Pro API 36 arm64 Debug app render an `<img onerror>` filename
+  and changed diff line literally, create no matching image, leave both
+  execution sentinels unset, and retain network/navigation/executable and
+  privacy isolation. The hosted URL carries only the broker-issued opaque
+  workspace authority.
 - Gesture-mediated native operations share one shell authority that consumes
   each native-observed touch once, rejects expired or future timestamps, clears
   pending authority whenever native `AppState` leaves foreground, and refuses a
@@ -1134,15 +1141,14 @@ and nested syntax text keeps the effective native font behavior. On iPhone 17
 Pro Simulator, Source Control passes at 0.736% changed pixels / 0.910 mean
 channel difference and Review at 2.134% / 1.947, within the 3% / 4 budgets.
 
-Current validation passes 570 mobile files / 3,418 tests with 2 expected skips
-and 3,818 root files / 39,968 tests with 62 expected skips. The earlier
-load-sensitive root timeouts do not recur in the latest complete run. All
-project typechecks, root/mobile/mobile-web lint and code-quality audits,
-changed-file formatting, localization, max-lines and diff hygiene, and 55
+Current validation passes 589 mobile files / 3,511 tests with 2 expected skips
+and 3,854 root files / 40,508 tests with 71 expected skips. All project
+typechecks, root/mobile/mobile-web lint and code-quality audits, changed-file
+formatting, localization, max-lines and diff hygiene, and the current 56
 reliability gates pass. React Doctor reports zero blocking errors across the
 migration without suppressions. The independently verified production package
-`7c7c673deb74e158cdfb99b1ca536fd88cd3ab5dac4eb8db78c43ca12f6ce31d`
-contains 50 assets and verifies at 9,290,968 raw bytes / 2,688,499 gzip bytes.
+`3c0f364f9cb6f1785d1d08fdeb81ca5367b091706c24d124374a88578839e745`
+contains 50 assets and verifies at 9,135,273 raw bytes / 2,644,558 gzip bytes.
 That exact package passes the unpacked macOS arm64 → Docker SSH → actual iOS
 WKWebView journey from a clean app reinstall in 1.9 minutes. Authenticated RPC
 returned the packaged build with no checkout-output fallback; the unchanged
@@ -2816,6 +2822,17 @@ remains intact.
 Both runs also pass network/navigation isolation; Android records zero sentinel
 observations and no native bridge error. This does not replace physical-device,
 store-signed release, fuzz, or independent adversarial evidence.
+
+The same exact emulator apps now pass the first live repository-content
+injection slice. A disposable Git repository presents a hostile
+`<img onerror>` filename and changed line through Source Control, the active
+Session diff tab, and standalone Review. Both platforms render both payloads as
+literal text, create no matching image node, leave the filename and content
+execution sentinels unset, and pass executable, network, navigation, DOM,
+storage, cookie, log, and process-exit inspection applicable to the platform.
+This closes live filename/diff evidence only; the remaining HTML, SVG/image,
+Markdown, Mermaid, terminal-link, task/provider, bounded-error, physical-device,
+release-runtime, and independent-review corpus remains required.
 
 A mirrored TypeScript, Swift, and Kotlin manifest corpus also rejects quoted and
 Boolean numeric schema, bridge, total-byte, and asset-byte fields before native

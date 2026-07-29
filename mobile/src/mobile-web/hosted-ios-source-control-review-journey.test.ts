@@ -122,6 +122,7 @@ describe('hosted iOS Source Control and Review journey', () => {
 
   it('accepts a platform-specific native tap implementation', async () => {
     const tapPoint = vi.fn().mockResolvedValue(undefined)
+    const inspectChangedContent = vi.fn().mockResolvedValue(undefined)
 
     await verifyHostedSourceControlReviewJourney({
       discoveryUrl: 'http://127.0.0.1:9222',
@@ -130,6 +131,7 @@ describe('hosted iOS Source Control and Review journey', () => {
         href: 'orca-mobile-web://build/h/host/session/workspace'
       },
       expectedSessionDiffText: '3 tabs',
+      inspectChangedContent,
       timeoutMs: 30_000,
       tapPoint
     })
@@ -138,6 +140,11 @@ describe('hosted iOS Source Control and Review journey', () => {
     expect(tapPoint.mock.calls.map((call) => call[2])).toEqual([
       'Open source control',
       'Open changed file mobile/app/index.tsx'
+    ])
+    expect(inspectChangedContent.mock.calls.map((call) => call[0].phase)).toEqual([
+      'sourceControl',
+      'sessionDiff',
+      'review'
     ])
     expect(mocks.waitForDocument).toHaveBeenNthCalledWith(
       2,

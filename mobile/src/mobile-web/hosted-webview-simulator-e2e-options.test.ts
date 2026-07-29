@@ -5,6 +5,7 @@ describe('hosted WebView simulator E2E options', () => {
   it('retains bounded defaults', () => {
     expect(parseHostedWebViewSimulatorE2eOptions([])).toEqual({
       accountsOnly: false,
+      adversarialContent: false,
       clipboardImageOnly: false,
       device: 'iPhone 17 Pro',
       expectedBuild: undefined,
@@ -77,6 +78,13 @@ describe('hosted WebView simulator E2E options', () => {
     expect(parseHostedWebViewSimulatorE2eOptions(['--isolation-only'])).toMatchObject({
       isolationOnly: true,
       securityOnly: true
+    })
+  })
+
+  it('maps adversarial content onto the focused Source Control journey', () => {
+    expect(parseHostedWebViewSimulatorE2eOptions(['--adversarial-content'])).toMatchObject({
+      adversarialContent: true,
+      sourceControlOnly: true
     })
   })
 

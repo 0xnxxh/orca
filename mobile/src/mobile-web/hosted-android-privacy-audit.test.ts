@@ -50,18 +50,20 @@ describe('hosted Android privacy audit', () => {
       [
         'ws://10.0.2.2:8081/message?device=Pixel%209%20-%2016%20-%20API%2036&app=com.stably.orca.mobile&clientid=BridgelessDevSupportManager',
         'ws://10.0.2.2:8081/message?device=Pixel%209%20-%2016%20-%20API%2036&app=com.stably.orca.mobile&clientid=DevLauncherBridgelessDevSupportManager',
+        'ws://10.0.2.2:57999/message?device=Pixel%209&app=com.stably.orca.mobile&clientid=BridgelessDevSupportManager',
         'ws://127.0.0.1:53250/socket-probe'
       ].join('\n'),
-      { devServerPort: 8081, probePort: 53250 }
+      { devServerPort: 57999, probePort: 53250 }
     )
 
-    expect(evidence.expectedDebugWebSocketUrls).toBe(3)
+    expect(evidence.expectedDebugWebSocketUrls).toBe(4)
     expect(evidence.counts.webSocketUrl).toBe(0)
   })
 
   it.each([
     'ws://10.0.2.2:8081/message?device=Pixel&app=com.stably.orca.mobile&clientid=BridgelessDevSupportManager&token=secret',
     'ws://10.0.2.2:8081/message?device=Pixel&app=other&clientid=BridgelessDevSupportManager',
+    'ws://10.0.2.2:8082/message?device=Pixel&app=com.stably.orca.mobile&clientid=BridgelessDevSupportManager',
     'wss://127.0.0.1:53250/socket-probe',
     'ws://127.0.0.1:53250/socket-probe?token=secret'
   ])('rejects mutated debug WebSocket %s', (url) => {

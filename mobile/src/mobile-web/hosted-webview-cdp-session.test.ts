@@ -296,13 +296,16 @@ describe('hosted WebView CDP target selection', () => {
         { webSocketDebuggerUrl: 'ws://127.0.0.1/devtools/page/current' },
         'Agent Session History',
         fakeCdpConstructor(socket),
-        { ignoreCase: true, occurrence: 1 }
+        { ignoreCase: true, occurrence: 1, reveal: true }
       )
     ).resolves.toEqual({ x: 0.25, y: 0.125 })
     expect(socket.evaluations[0]?.params.expression).toContain('getBoundingClientRect')
     expect(socket.evaluations[0]?.params.expression).toContain("style.visibility !== 'hidden'")
     expect(socket.evaluations[0]?.params.expression).toContain('toLocaleLowerCase')
     expect(socket.evaluations[0]?.params.expression).toContain('matches[1]')
+    expect(socket.evaluations[0]?.params.expression).toContain(
+      "scrollIntoView({ block: 'nearest', inline: 'nearest' })"
+    )
   })
 
   it('rejects incomplete adversarial navigation evidence', async () => {

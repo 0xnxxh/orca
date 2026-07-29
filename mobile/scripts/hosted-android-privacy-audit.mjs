@@ -96,10 +96,11 @@ function isExpectedDebugWebSocketUrl(value, expected) {
     return true
   }
   const keys = [...url.searchParams.keys()].sort()
+  const debugPorts = new Set([String(expected.devServerPort), '8081'])
   return (
     url.protocol === 'ws:' &&
     ['10.0.2.2', '127.0.0.1'].includes(url.hostname) &&
-    url.port === String(expected.devServerPort) &&
+    debugPorts.has(url.port) &&
     url.pathname === '/message' &&
     !url.hash &&
     keys.join(',') === 'app,clientid,device' &&

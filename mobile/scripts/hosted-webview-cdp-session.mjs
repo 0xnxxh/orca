@@ -236,7 +236,7 @@ export async function readHostedWebViewTextPoint(
         rect.left < innerWidth;
     };
     const matches = Array.from(document.querySelectorAll('body *')).filter((candidate) =>
-      candidate.children.length === 0 && isVisible(candidate) && (
+      candidate.children.length === 0 && (${options.reveal === true} || isVisible(candidate)) && (
         ${
           options.ignoreCase === true
             ? "String(candidate.textContent ?? '').trim().toLocaleLowerCase()"
@@ -246,6 +246,9 @@ export async function readHostedWebViewTextPoint(
     );
     const element = matches[${options.occurrence ?? 0}];
     if (!element) return '';
+    if (${options.reveal === true}) {
+      element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
     const rect = element.getBoundingClientRect();
     const screenWidth = Number(screen.width);
     const screenHeight = Number(screen.height);

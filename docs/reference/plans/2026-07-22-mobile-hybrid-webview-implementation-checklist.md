@@ -1279,8 +1279,13 @@ copy.
       operations resolve the current execution owner inside Desktop; real SSH
       and Relay compositions pass, while the broader release topology matrix
       remains a validation gate.
-- [ ] Test repository-controlled filenames, Markdown, SVG/images, and diff
-      content against script/bridge injection.
+- [~] Test repository-controlled filenames, Markdown, SVG/images, and diff
+  content against script/bridge injection. A disposable repository now
+  drives a hostile `<img onerror>` filename and changed diff line through
+  Source Control, Session diff, and Review in the exact iOS Simulator and
+  Android Debug emulator apps. Both render the payloads literally without
+  creating an image or setting either execution sentinel. Markdown,
+  SVG/image, physical-device, and release-runtime coverage remains.
 - [ ] Test large file counts, large diffs, binary files, conflicts, detached
       state, missing upstream, and provider failures.
 - [ ] Complete physical-device diff/file performance validation.
@@ -1575,9 +1580,15 @@ copy.
   unchanged raw-source fallback. Focused document and package-budget boundaries
   pass. A deterministic corpus now proves bounded filenames, diff lines,
   task/provider fields, and errors remain inert React Native text, and existing
-  terminal-link tests reject unsupported targets. The exact Orca app route,
-  native nested component, Android, physical-device, Release, broader live
-  adversarial interaction, and independent review remain open.
+  terminal-link tests reject unsupported targets. A disposable hostile
+  repository now passes its `<img onerror>` filename and changed diff line
+  through the exact Source Control, Session diff, and Review routes on iPhone
+  17 Pro / iOS 26.5 Simulator and Pixel 9 Pro API 36 arm64 Debug. Both render
+  the payloads literally, create no matching image, leave both execution
+  sentinels unset, and retain network/navigation/executable and privacy
+  isolation. Exact-app HTML, SVG/image, Markdown, Mermaid, terminal-link,
+  task/provider, bounded-error, physical-device, Release, broader live
+  interaction, and independent review remain open.
 - [~] Fuzz manifest, chunks, asset paths, MIME types, CSP, and cache metadata.
   A mirrored TypeScript, Swift, and Kotlin scalar-type corpus rejects quoted and
   Boolean schema, bridge, total-byte, and asset-byte integers before staging. It
@@ -1959,11 +1970,8 @@ gates, max-lines, localization, formatting, diff hygiene, and production
 package verification pass. The current privacy-hardening package is
 `3c0f364f9cb6f1785d1d08fdeb81ca5367b091706c24d124374a88578839e745`:
 50 assets, 9,135,273 raw bytes, and 2,644,558 gzip bytes. The full mobile suite
-passes 588 files / 3,499 tests with 2 expected skips. The latest full root run
-from before the final upstream rebases passes 3,839 files / 40,326 tests with 71
-expected skips except for one unrelated load-sensitive remote-runtime socket
-setup failure; its complete one-test file passes in a 194-millisecond isolated
-rerun.
+passes 589 files / 3,511 tests with 2 expected skips. The latest full root run
+passes 3,854 files / 40,508 tests with 71 expected skips.
 
 | Date       | Workstream              | Evidence                                                                                                                                                                                                                    | Result                                                                                                                                                                                            |
 | ---------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2359,6 +2367,10 @@ rerun.
 | 2026-07-27 | RNW package             | Exact-source production build and independent verifier after the Source Control/Review repair and lint-safe bridge extraction                                                                                               | Passed; build `4b7df7d47a9b949b788c9f88bac5f68e8b18eb1ea7c615e16ebc4be126c8d07d`, 49 assets, 9,328,523 raw bytes, and 2,697,136 gzip bytes                                                        |
 | 2026-07-27 | iOS Source Control      | Exact hosted app opened Source Control from Session, opened a changed file as a second Session diff tab, then exercised standalone Review                                                                                   | Passed on iPhone 17 Pro Simulator; existing segments and review controls retained; network and navigation isolation probes passed                                                                 |
 | 2026-07-27 | Final validation pass   | Full mobile/root suites; mobile, RNW, Node, CLI, and renderer typechecks; full mobile/RNW lint; root reliability/max-lines/skill/localization-catalog phases; focused bridge/provider coverage                              | Passed; mobile 544 files / 3,248 tests with 2 skips; root 3,551 files / 37,420 tests with 60 skips; 56 focused tests; root localization coverage retains the recorded unrelated `Ghostty` finding |
+| 2026-07-29 | Adversarial content     | Disposable hostile filename and diff through exact Source Control, active Session diff, and standalone Review on iOS 26.5 Simulator and Android API 36 emulator                                                             | Passed; both payloads render literally, zero injected images, both execution sentinels unset, and network/navigation/executable/privacy audits green                                              |
+| 2026-07-29 | Focused validation      | Adversarial fixture/inspection, route hooks, workspace activation, CDP reveal, Android privacy/log filtering, and focused-option coverage                                                                                   | Passed; 7 files / 78 tests                                                                                                                                                                        |
+| 2026-07-29 | Full validation         | Mobile/root suites, all project typechecks, root/mobile/mobile-web lint and code-quality audits, reliability, localization, max-lines, formatting, package verification, and diff hygiene                                   | Passed; mobile 589 files / 3,511 tests with 2 skips; root 3,854 files / 40,508 tests with 71 skips; build `3c0f364f…` remains 50 assets / 9,135,273 raw / 2,644,558 gzip bytes                    |
+| 2026-07-29 | Rebase                  | Rebased all 58 migration commits onto `origin/main` at `4543bb6826`; branch divergence `0/58`; rebuilt and independently verified the hosted package                                                                        | Passed without conflicts; exact build remains `3c0f364f…`, 50 assets, 9,135,273 raw bytes, and 2,644,558 gzip bytes                                                                               |
 
 ## Status and Decision Log
 
@@ -2883,3 +2895,8 @@ rerun.
 | 2026-07-29 | Complete | The exact Pixel 9 Pro API 36 arm64 Debug app passes private-origin DOM/History, page-storage/cookie, network/navigation/executable isolation, fresh `logcat`, and `ApplicationExitInfo` review. The 11,459-byte document and 975,464-byte log slice contain zero privileged marker or unexpected WebSocket URL; the sentinel records zero escaped request and Android records no new crash/native-crash/ANR/initialization/resource failure. Two focused files / 28 tests cover shared iOS/Android markers, Android exit/debug-URL mutations, and live-gate integration.                                  |
 | 2026-07-29 | Complete | Post-audit validation passes 588 mobile files / 3,499 tests with 2 expected skips; all project typechecks; root/mobile/mobile-web lint and code-quality audits; 56 reliability gates; localization; max-lines; full-mobile formatting; changed-code quality; React Doctor with zero new migration findings; exact `3c0f364f…` package verification; and diff hygiene.                                                                                                                                                                                                                                     |
 | 2026-07-29 | Complete | Rebased all 56 migration commits without conflict onto `origin/main` at `fa449bc0e`; documentation reconciliation leaves the branch 57 commits ahead and zero behind. The exact `3c0f364f…` package rebuild remains 50 assets / 9,135,273 raw / 2,644,558 gzip bytes. Post-rebase validation passes 588 mobile files / 3,499 tests with 2 expected skips, all project typechecks, root/mobile/mobile-web lint and code-quality audits, 56 reliability gates, formatting, package verification, and diff hygiene.                                                                                          |
+| 2026-07-29 | Complete | A disposable Git fixture now places `000-<img src=x onerror=…>.tsx` and a hostile changed line into the unchanged hosted Source Control, Session diff, and Review presentation. The broker supplies the opaque page workspace authority; raw Desktop workspace identity never enters the hosted URL.                                                                                                                                                                                                                                                                                                      |
+| 2026-07-29 | Complete | Exact iPhone 17 Pro / iOS 26.5 Simulator and Pixel 9 Pro API 36 arm64 Debug runs render both hostile payloads literally, create zero injected images, leave both execution markers unset, and pass network/navigation/executable isolation. iOS reports empty Local Storage, Session Storage, and cookies; Android reports zero privacy markers, sentinel observations, and new failure exit records.                                                                                                                                                                                                     |
+| 2026-07-29 | Finding  | The first post-rebase root run shared the machine with package, lint, and typecheck jobs and hit the known 30-second `ProjectViewWrapper` dynamic-import timeout. Its isolated file passes 2/2 in 5.5 seconds, and the subsequent standalone full root run passes completely.                                                                                                                                                                                                                                                                                                                             |
+| 2026-07-29 | Complete | Rebased all 58 migration commits without conflict onto `origin/main` at `4543bb6826`; the branch is zero behind. Post-rebase validation passes 589 mobile files / 3,511 tests with 2 expected skips and 3,854 root files / 40,508 tests with 71 expected skips. All project typechecks, root/mobile/mobile-web lint and code-quality audits, 56 reliability gates, localization, max-lines, full-mobile and plan formatting, exact `3c0f364f…` package verification, and diff hygiene pass.                                                                                                               |
+| 2026-07-29 | Next     | Finish the live HTML, SVG/image, Markdown, Mermaid, terminal-link, task/provider, and bounded-error corpus, then continue cross-host/workspace lifecycle races, sustained allocation fuzzing, independent review, and the external device/release gates.                                                                                                                                                                                                                                                                                                                                                  |

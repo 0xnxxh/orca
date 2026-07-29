@@ -22,6 +22,7 @@ export async function verifyHostedSourceControlReviewJourney({
   sessionDocument,
   timeoutMs,
   expectedSessionDiffText = '2 tabs',
+  inspectChangedContent,
   tapPoint = tapHostedJourneyPoint
 }) {
   const sourceControl = await journeyStep('wait for Source Control route', () =>
@@ -47,6 +48,11 @@ export async function verifyHostedSourceControlReviewJourney({
   )
   if (!changedFileLabel) {
     throw new Error('Source Control has no changed file available for Review.')
+  }
+  if (inspectChangedContent) {
+    await journeyStep('inspect Source Control content', () =>
+      inspectChangedContent({ phase: 'sourceControl', document: sourceControl })
+    )
   }
   if (nativeBaselines) {
     sourceState = await journeyStep('wait for stable Source Control parity state', () =>
@@ -77,6 +83,11 @@ export async function verifyHostedSourceControlReviewJourney({
       timeoutMs
     })
   )
+  if (inspectChangedContent) {
+    await journeyStep('inspect Session diff content', () =>
+      inspectChangedContent({ phase: 'sessionDiff', document: sessionDiff })
+    )
+  }
   await journeyStep('open standalone Review route', () =>
     navigateHostedWebViewRoute(sessionDiff, standaloneReviewRoute(sourceState.href))
   )
@@ -93,6 +104,11 @@ export async function verifyHostedSourceControlReviewJourney({
     if (!reviewState.labels.includes(label)) {
       throw new Error(`Review is missing ${label}.`)
     }
+  }
+  if (inspectChangedContent) {
+    await journeyStep('inspect Review content', () =>
+      inspectChangedContent({ phase: 'review', document: review })
+    )
   }
   const hostedReview = nativeBaselines
     ? await journeyStep('capture Review parity', () =>
@@ -150,7 +166,7 @@ async function openSourceControlRoute({
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const point = await readHostedWebViewControlPoint(sessionDocument, 'Open source control')
-      await tapPoint(emulator, point, 'Open source control', attempt)
+      await tapPoint(emulator, point, 'Open source control', attempt, sessionDocument)
       return await waitForVisibleHostedWebView({
         discoveryUrl,
         expectedText: 'Source Control',
@@ -177,7 +193,7 @@ async function openSessionDiffRoute({
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const point = await readHostedWebViewControlPoint(sourceControl, label)
-      await tapPoint(emulator, point, label, attempt)
+      await tapPoint(emulator, point, label, attempt, sourceControl)
     } catch (error) {
       lastError = error
       continue

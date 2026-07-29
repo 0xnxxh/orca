@@ -7,6 +7,11 @@ import { promisify } from 'node:util'
 import { resolveEmulatorOrcaCli } from './emulator-orca-cli-selection.mjs'
 import { verifyHostedAndroidAgentHistoryJourney } from './hosted-android-agent-history-journey.mjs'
 import {
+  createHostedAdversarialRepositoryFixture,
+  HOSTED_ADVERSARIAL_CONTENT_MARKER,
+  removeHostedAdversarialRepositoryFixture
+} from './hosted-adversarial-repository-fixture.mjs'
+import {
   readHostedAndroidExitInfo,
   verifyHostedAndroidPrivacyAudit
 } from './hosted-android-privacy-audit.mjs'
@@ -38,6 +43,10 @@ import {
 } from './hosted-webview-cdp-session.mjs'
 import { verifyHostedWebViewExecutableIsolation } from './hosted-webview-executable-isolation.mjs'
 import { verifyHostedWebViewPrivacyIsolation } from './hosted-webview-privacy-isolation.mjs'
+import {
+  captureHostedWebViewAdversarialObservation,
+  hostedWebViewAdversarialContentObservations
+} from './hosted-webview-adversarial-content.mjs'
 import { resolveHostedWebViewRuntimeDirectory } from './hosted-webview-runtime-directory.mjs'
 import { activateHostedWorkspaceRow } from './hosted-webview-workspace-activation.mjs'
 import { verifyHostedSourceControlReviewJourney } from './hosted-ios-source-control-review-journey.mjs'
@@ -72,6 +81,7 @@ async function main() {
   let probe
   let inspector
   let exitInfoBaseline
+  let adversarialFixture
   const reversePorts = new Set()
   try {
     await stage('Android emulator', () => runAndroidAdb(adb, ['get-state']))
@@ -81,6 +91,12 @@ async function main() {
     )
     if (!options.skipNativeBuild) {
       await stage('Android debug app build', () => buildHostedAndroidDebugApp({ adb, androidDir }))
+    }
+    if (options.adversarialContent) {
+      adversarialFixture = await stage(
+        'adversarial repository fixture',
+        createHostedAdversarialRepositoryFixture
+      )
     }
     probe = await stage('network isolation sentinel', startHostedWebViewSecurityProbe)
     runtime = await stage('temporary paired desktop runtime', () =>
@@ -94,9 +110,12 @@ async function main() {
         logSuccess: () => {}
       })
     )
-    runtime.env.ORCA_E2E_MOBILE_AGENT_HISTORY_FIXTURE = '1'
+    if (!options.adversarialContent) {
+      runtime.env.ORCA_E2E_MOBILE_AGENT_HISTORY_FIXTURE = '1'
+    }
+    const testWorkspace = adversarialFixture?.root ?? worktree
     await stage('test workspace registration', () =>
-      registerWorktreeForPairingRuntime(runtime, worktree, {
+      registerWorktreeForPairingRuntime(runtime, testWorkspace, {
         orca: runOrca,
         logStep: () => {},
         logSuccess: () => {}
@@ -134,7 +153,8 @@ async function main() {
         timeoutMs: options.timeoutMs
       })
     )
-    const expectedWorkspace = path.basename(worktree)
+    const expectedWorkspace = path.basename(testWorkspace)
+    const workspaceRowName = adversarialFixture?.workspaceRowName ?? expectedWorkspace
     const workspaceDocument = await stage('hosted workspace data', () =>
       waitForVisibleHostedWebView({
         discoveryUrl,
@@ -142,23 +162,20 @@ async function main() {
         timeoutMs: options.timeoutMs
       })
     )
-    let privacyIsolation = null
-    if (options.securityOnly) {
-      privacyIsolation = await stage('workspace privacy isolation probe', () =>
-        verifyHostedWebViewPrivacyIsolation({ document: workspaceDocument })
-      )
-    }
+    const privacyIsolation = await stage('workspace privacy isolation probe', () =>
+      verifyHostedWebViewPrivacyIsolation({ document: workspaceDocument })
+    )
     await stage('workspace activation', async () => {
       try {
         await activateHostedWorkspaceRow(
           workspaceDocument,
-          expectedWorkspace,
+          workspaceRowName,
           (document, target) => activateAndroidWorkspaceControl(emulator, document, target),
           Math.min(options.timeoutMs, 15_000),
           () =>
             waitForVisibleHostedWebView({
               discoveryUrl,
-              expectedText: 'Orca Desktop',
+              expectedText: workspaceRowName,
               timeoutMs: options.timeoutMs
             })
         )
@@ -194,29 +211,69 @@ async function main() {
       })
     )
     let agentHistory = null
+    let adversarialContent = null
+    const adversarialObservations = []
     let sourceControlReview = null
     let isolationDocument = sessionDocument
     if (!options.securityOnly) {
-      const agentHistoryResult = await stage('Agent History journey', () =>
-        verifyHostedAndroidAgentHistoryJourney({
-          discoveryUrl,
-          emulator,
-          sessionDocument,
-          timeoutMs: options.timeoutMs
-        })
-      )
-      const { returnedSessionDocument, ...evidence } = agentHistoryResult
-      agentHistory = evidence
+      let sourceSessionDocument = sessionDocument
+      if (!options.adversarialContent) {
+        const agentHistoryResult = await stage('Agent History journey', () =>
+          verifyHostedAndroidAgentHistoryJourney({
+            discoveryUrl,
+            emulator,
+            sessionDocument,
+            timeoutMs: options.timeoutMs
+          })
+        )
+        const { returnedSessionDocument, ...evidence } = agentHistoryResult
+        agentHistory = evidence
+        sourceSessionDocument = returnedSessionDocument
+      }
       sourceControlReview = await stage('Source Control and Review journey', () =>
         verifyHostedSourceControlReviewJourney({
           discoveryUrl,
           emulator,
-          sessionDocument: returnedSessionDocument,
-          expectedSessionDiffText: '3 tabs',
+          sessionDocument: sourceSessionDocument,
+          expectedSessionDiffText: options.adversarialContent ? '2 tabs' : '3 tabs',
+          inspectChangedContent: options.adversarialContent
+            ? async ({ document, phase }) => {
+                if (phase === 'sessionDiff') {
+                  await activateAndroidAdversarialDiffTab(
+                    emulator,
+                    document,
+                    adversarialFixture.filename
+                  )
+                }
+                adversarialObservations.push(
+                  await captureHostedWebViewAdversarialObservation({
+                    document,
+                    expectedMarker:
+                      phase === 'sessionDiff' ? HOSTED_ADVERSARIAL_CONTENT_MARKER : undefined,
+                    timeoutMs: Math.min(options.timeoutMs, 15_000)
+                  })
+                )
+              }
+            : undefined,
           timeoutMs: options.timeoutMs,
           tapPoint: tapHostedAndroidJourneyControl
         })
       )
+      if (options.adversarialContent) {
+        adversarialContent = await stage('adversarial filename and diff presentation', () => {
+          try {
+            return hostedWebViewAdversarialContentObservations(adversarialObservations)
+          } catch (error) {
+            const states = adversarialObservations.map(({ state }) => ({
+              bodyText: state.bodyText.slice(0, 1024),
+              labels: state.labels.slice(0, 16)
+            }))
+            throw new Error(
+              `${error instanceof Error ? error.message : String(error)}. States ${JSON.stringify(states)}`
+            )
+          }
+        })
+      }
       isolationDocument = await waitForVisibleHostedWebView({
         discoveryUrl,
         expectedText: 'reviewed',
@@ -243,9 +300,6 @@ async function main() {
         probeId: probe.token
       })
     )
-    privacyIsolation ??= await stage('privacy isolation probe', () =>
-      verifyHostedWebViewPrivacyIsolation({ document: isolationDocument })
-    )
     await delay(500)
     if (probe.observations.length > 0) {
       throw new Error(
@@ -269,6 +323,7 @@ async function main() {
           pid: inspector.pid,
           workspace: expectedWorkspace,
           agentHistory,
+          adversarialContent,
           sourceControlReview,
           networkIsolation,
           navigationIsolation,
@@ -292,6 +347,9 @@ async function main() {
     await metro?.stop()
     await runtime?.stop({ shutdownDaemon: true })
     await probe?.stop()
+    if (adversarialFixture) {
+      await removeHostedAdversarialRepositoryFixture(adversarialFixture)
+    }
   }
 }
 
@@ -335,6 +393,14 @@ async function activateAndroidWorkspaceControl(emulator, document, target) {
   if (target.kind !== 'text') {
     return activateHostedWebViewControl(document, target)
   }
+  if (target.reveal) {
+    await readHostedWebViewTextPoint(document, target.value, undefined, {
+      ignoreCase: target.ignoreCase,
+      occurrence: target.occurrence,
+      reveal: true
+    })
+    await delay(250)
+  }
   const point = await readHostedWebViewTextPoint(document, target.value, undefined, {
     ignoreCase: target.ignoreCase,
     occurrence: target.occurrence
@@ -342,15 +408,24 @@ async function activateAndroidWorkspaceControl(emulator, document, target) {
   await tapHostedAndroidPoint(emulator, point)
 }
 
-async function tapHostedAndroidJourneyControl(emulator, point, label) {
-  if (label) {
+async function tapHostedAndroidJourneyControl(emulator, point, label, attempt = 0, document) {
+  if (label && attempt === 0) {
     try {
       return await tapHostedAndroidAccessibilityControl(emulator, label, 5_000)
     } catch {
       // Chromium may omit a WebView descendant during an accessibility-tree refresh.
     }
   }
+  if (label && attempt > 0 && document) {
+    return activateHostedWebViewControl(document, { kind: 'label', value: label, reveal: true })
+  }
   return tapHostedAndroidPoint(emulator, point)
+}
+
+async function activateAndroidAdversarialDiffTab(emulator, document, filename) {
+  const point = await readHostedWebViewTextPoint(document, filename)
+  await tapHostedAndroidPoint(emulator, point)
+  await delay(250)
 }
 
 async function proveSentinelReachability(command, probe) {
@@ -388,6 +463,7 @@ function parseOptions(args) {
   const result = {
     adb: null,
     apk: defaultApk,
+    adversarialContent: false,
     securityOnly: false,
     skipNativeBuild: false,
     timeoutMs: 90_000
@@ -400,6 +476,8 @@ function parseOptions(args) {
       result.adb = requireValue(args, ++index, option)
     } else if (option === '--apk') {
       result.apk = path.resolve(requireValue(args, ++index, option))
+    } else if (option === '--adversarial-content') {
+      result.adversarialContent = true
     } else if (option === '--skip-native-build') {
       result.skipNativeBuild = true
     } else if (option === '--security-only') {
@@ -412,6 +490,9 @@ function parseOptions(args) {
   }
   if (!Number.isInteger(result.timeoutMs) || result.timeoutMs < 1_000) {
     throw new Error('--timeout-ms must be an integer of at least 1000')
+  }
+  if (result.adversarialContent && result.securityOnly) {
+    throw new Error('--adversarial-content and --security-only are mutually exclusive')
   }
   return result
 }

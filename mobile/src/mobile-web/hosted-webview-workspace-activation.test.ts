@@ -11,11 +11,12 @@ describe('hosted WebView workspace activation', () => {
     expect(activate).toHaveBeenCalledOnce()
     expect(activate).toHaveBeenCalledWith(document, {
       kind: 'label',
-      value: 'Open mobile-rearch'
+      value: 'Open mobile-rearch',
+      reveal: true
     })
   })
 
-  it('retains grouped-list text expansion for older row markup', async () => {
+  it('reveals a grouped text row when accessible row labels are absent', async () => {
     const missing = new Error('Hosted WebView control was not found: mobile-rearch')
     const activate = vi
       .fn()
@@ -33,7 +34,8 @@ describe('hosted WebView workspace activation', () => {
         kind: 'text',
         value: 'mobile-rearch',
         ignoreCase: true,
-        occurrence: 1
+        occurrence: 1,
+        reveal: true
       }
     )
     expect(activate).toHaveBeenNthCalledWith(
@@ -42,7 +44,8 @@ describe('hosted WebView workspace activation', () => {
       {
         kind: 'text',
         value: 'mobile-rearch',
-        ignoreCase: true
+        ignoreCase: true,
+        reveal: true
       }
     )
     expect(activate).toHaveBeenNthCalledWith(
@@ -52,7 +55,8 @@ describe('hosted WebView workspace activation', () => {
         kind: 'text',
         value: 'mobile-rearch',
         ignoreCase: true,
-        occurrence: 1
+        occurrence: 1,
+        reveal: true
       }
     )
   })
@@ -74,7 +78,8 @@ describe('hosted WebView workspace activation', () => {
     expect(resolveDocument).toHaveBeenCalledOnce()
     expect(activate).toHaveBeenLastCalledWith(replacement, {
       kind: 'label',
-      value: 'Open mobile-rearch'
+      value: 'Open mobile-rearch',
+      reveal: true
     })
   })
 
@@ -95,7 +100,8 @@ describe('hosted WebView workspace activation', () => {
     expect(resolveDocument).toHaveBeenCalledOnce()
     expect(activate).toHaveBeenLastCalledWith(replacement, {
       kind: 'label',
-      value: 'Open mobile-rearch'
+      value: 'Open mobile-rearch',
+      reveal: true
     })
   })
 
@@ -113,10 +119,10 @@ describe('hosted WebView workspace activation', () => {
     await activateHostedWorkspaceRow({}, 'mobile-rearch', activate, 1_000)
 
     expect(activate).toHaveBeenCalledTimes(6)
-    expect(activate).toHaveBeenLastCalledWith({}, expect.objectContaining({ occurrence: 1 }))
+    expect(activate).toHaveBeenLastCalledWith({}, expect.objectContaining({ reveal: true }))
   })
 
-  it('accepts navigation after activating the only text row', async () => {
+  it('accepts activation of the only matching text row', async () => {
     const missing = new Error('Hosted WebView control was not found: mobile-rearch')
     const stale = new Error('WebKit CDP connection closed')
     const activate = vi
@@ -129,5 +135,28 @@ describe('hosted WebView workspace activation', () => {
     await activateHostedWorkspaceRow({}, 'mobile-rearch', activate)
 
     expect(activate).toHaveBeenCalledTimes(4)
+  })
+
+  it('accepts an SPA route transition after the activated row disappears', async () => {
+    const missing = new Error('Hosted WebView control was not found: mobile-rearch')
+    const activate = vi
+      .fn()
+      .mockRejectedValueOnce(missing)
+      .mockRejectedValueOnce(missing)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(missing)
+    const resolveDocument = vi.fn().mockResolvedValue({
+      href: 'https://orca-mobile-web.invalid/h/host/session/workspace'
+    })
+
+    await activateHostedWorkspaceRow(
+      { href: 'https://orca-mobile-web.invalid/h/host' },
+      'mobile-rearch',
+      activate,
+      1_000,
+      resolveDocument
+    )
+
+    expect(resolveDocument).toHaveBeenCalledOnce()
   })
 })

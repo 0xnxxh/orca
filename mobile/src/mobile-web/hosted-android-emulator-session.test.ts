@@ -22,4 +22,15 @@ describe('hosted Android emulator session', () => {
       `)
     ).toEqual([])
   })
+
+  it('ignores automation-process fatals while retaining app-process fatals', () => {
+    const logcat = `
+      E/AndroidRuntime(20196): FATAL EXCEPTION: UiAutomation
+      E/AndroidRuntime(20200): FATAL EXCEPTION: main
+    `
+
+    expect(findHostedAndroidBridgeLogFailures(logcat, '20200')).toEqual([
+      '      E/AndroidRuntime(20200): FATAL EXCEPTION: main'
+    ])
+  })
 })

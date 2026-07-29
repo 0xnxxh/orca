@@ -56,6 +56,17 @@ search/no-match/clear flow, rejection of synthetic privileged activation, and
 native-touch resume into a second Session tab before continuing through Source
 Control and Review.
 
+A disposable repository now drives a hostile filename and changed diff line
+through the real Source Control, Session diff, and Review routes. The exact
+iPhone 17 Pro / iOS 26.5 Simulator app and Pixel 9 Pro API 36 arm64 Debug app
+both render the `<img onerror>` payloads literally, create no matching image,
+leave both execution sentinels unset, and pass the existing
+network/navigation/executable and privacy audits. The fixture uses only the
+broker-issued opaque page workspace authority; raw Desktop workspace identity
+never enters the hosted URL. HTML, SVG/image, Markdown, Mermaid, terminal-link,
+task/provider, bounded-error, physical-device, release-runtime, and independent
+review coverage remain open.
+
 The iPhone 17 Pro / iOS 26.5 Simulator now captures the unchanged native and
 hosted Tasks and Session screens from one disposable Desktop runtime. Tasks
 passes at 0.022% changed pixels, 0.084 mean channel difference, and 0.000016
@@ -102,13 +113,11 @@ pixels and 0.910 mean channel difference; Review passes at 2.134% and 1.947,
 within the 3% / 4 budgets. The packaged document opts into native safe-area
 insets, and nested syntax text retains the native effective font behavior.
 
-The migration is based on `origin/main` at `fa449bc0e`; the final rebase is
-complete and the branch is 57 commits ahead and zero behind. Post-rebase
-validation now passes 588 mobile files / 3,499 tests with 2 expected skips. The
-latest full root run from before the final upstream rebases passes
-3,839 files / 40,326 tests with 71 expected skips except for one unrelated
-load-sensitive remote-runtime socket setup failure; its complete one-test file
-passes in a 194-millisecond isolated rerun. All project typechecks,
+The migration is based on `origin/main` at `4543bb6826`; the final rebase is
+complete and the branch is 58 commits ahead and zero behind. Post-rebase
+validation plus the hostile-content slice now passes 589 mobile files / 3,511
+tests with 2 expected skips. The latest full root run passes 3,854 files /
+40,508 tests with 71 expected skips. All project typechecks,
 root/mobile/mobile-web lint and code-quality audits, 56 reliability gates,
 changed-file and full-mobile formatting, localization, the max-lines ratchet,
 and diff hygiene pass. React Doctor reports zero new migration findings. The
@@ -315,13 +324,11 @@ requested workspace. Existing Source Control, provider-review, file, and
 Markdown correlation remains in force.
 
 The production package now verifies as `3c0f364f…`: 50 assets, 9,135,273 raw
-bytes, and 2,644,558 gzip bytes. The full mobile suite passes 588 files / 3,499
+bytes, and 2,644,558 gzip bytes. The full mobile suite passes 589 files / 3,511
 tests with 2 expected skips. All project typechecks; root, mobile, and
 mobile-web lint; all 56 reliability gates; localization; max-lines; formatting;
-and package verification pass. The latest full root run from before the final
-upstream rebases passes 3,839 files / 40,326 tests with 71 expected skips except
-for one unrelated load-sensitive remote-runtime socket setup failure; its
-complete one-test file passes in a 194-millisecond isolated rerun.
+and package verification pass. The latest full root run passes 3,854 files /
+40,508 tests with 71 expected skips.
 
 The mirrored native package-store suites now pass 120 concurrent cache flows per
 platform. The expanded same-host matrix covers competing distinct generations,
@@ -396,7 +403,13 @@ remain open.
 - [ ] Run the deterministic filename, diff, terminal-link, provider/task,
       bounded-error, HTML, SVG, Markdown, and Mermaid corpus through the exact
       release app on both platforms and complete independent live interaction
-      testing.
+      testing. Disposable hostile filename and diff fixtures now pass through
+      Source Control, Session diff, and Review in the exact cached iOS
+      Simulator app and Android Debug emulator app. Both platforms render the
+      payloads literally, create no injected image, leave execution sentinels
+      unset, and retain network/navigation/executable and privacy isolation.
+      The remaining sinks, physical devices, release builds, and independent
+      interaction review remain open.
 - [ ] Fuzz manifests, chunks, paths, MIME types, CSP, cache metadata, bridge
       envelopes, limits, ordering, cancellation, and subscriptions. The
       ten-case TypeScript/Swift/Kotlin quoted/Boolean numeric manifest corpus
