@@ -27,6 +27,7 @@ type PageRequest = Extract<MobileWebBridgePageMessage, { type: 'request' }>
 
 export type MobileWebCapabilityExecutionDependencies = {
   request: PageRequest
+  isRequestActive: () => boolean
   connectedClient: () => RpcClient
   terminalClientId: string
   nativeAuthority: MobileWebNativeCapabilityAuthority

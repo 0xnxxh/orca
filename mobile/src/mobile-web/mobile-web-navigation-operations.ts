@@ -21,32 +21,41 @@ export async function executeMobileWebNavigationOperation(args: {
   payload: unknown
   authority: MobileWebNavigationAuthority | undefined
 }): Promise<null> {
-  if (!args.authority) {
-    throw new MobileWebBrokerError('unavailable')
-  }
   if (args.operation === 'route') {
     const payload = MobileWebNavigationRoutePayloadSchema.parse(args.payload)
-    if (payload.destination === 'terminalSettings' && !args.authority.consumeRecentUserGesture()) {
+    const authority = requireAuthority(args.authority)
+    if (payload.destination === 'terminalSettings' && !authority.consumeRecentUserGesture()) {
       throw new MobileWebBrokerError('permission_required')
     }
-    await args.authority.route(payload.destination, args.requestId)
+    await authority.route(payload.destination, args.requestId)
     return null
   }
   if (args.operation === 'reconnect') {
     MobileWebNavigationReconnectPayloadSchema.parse(args.payload)
-    if (!args.authority.consumeRecentUserGesture()) {
+    const authority = requireAuthority(args.authority)
+    if (!authority.consumeRecentUserGesture()) {
       throw new MobileWebBrokerError('permission_required')
     }
-    await args.authority.reconnect()
+    await authority.reconnect()
     return null
   }
   if (args.operation === 'removeHost') {
     MobileWebNavigationRemoveHostPayloadSchema.parse(args.payload)
-    if (!args.authority.consumeRecentUserGesture()) {
+    const authority = requireAuthority(args.authority)
+    if (!authority.consumeRecentUserGesture()) {
       throw new MobileWebBrokerError('permission_required')
     }
-    await args.authority.removeHost()
+    await authority.removeHost()
     return null
   }
   throw new MobileWebBrokerError('unsupported_capability')
+}
+
+function requireAuthority(
+  authority: MobileWebNavigationAuthority | undefined
+): MobileWebNavigationAuthority {
+  if (!authority) {
+    throw new MobileWebBrokerError('unavailable')
+  }
+  return authority
 }

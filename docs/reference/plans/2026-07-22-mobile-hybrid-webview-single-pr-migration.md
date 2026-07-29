@@ -170,12 +170,10 @@ prototype:
   compatible with minSdk 24 by using the API-8 platform base64 codec, and
   optional WebView message/document-start features fail closed behind explicit
   availability checks.
-- The native shell negotiates only `workspace.snapshot`, `workspace.activate`,
-  `session.snapshot`, `session.subscribe`, `session.create`,
-  `session.activate`, `session.close`, the eight bounded `terminal.*`
-  operations, `file.list`, `file.search`, `file.read`, and
-  `native.hapticSelection`. The page has no generic RPC or native invocation
-  path.
+- The native shell negotiates only the named operations in the production
+  grant registry across workspace, session, terminal, file, source-control,
+  review, task, account, browser, speech, native-chat, navigation, and narrow
+  native capabilities. The page has no generic RPC or native invocation path.
 - The bridge enforces version/build/session envelopes, shared Zod schemas,
   operation-specific byte/concurrency/rate limits, duplicate-ID rejection,
   stable errors, cancellation, monotonic event sequences, serialized delivery,
@@ -183,6 +181,13 @@ prototype:
   windows so long-lived sessions do not exhaust request or subscription IDs.
   Desktop client replacement cancels pending work before new authority is
   installed, and native inbox delivery rejects frame-originated messages.
+- Raw bridge documents now pass the same unique-decoded-key, paired-surrogate,
+  single-document, 32-level JSON grammar before `JSON.parse` and Zod. A
+  generated corpus rejects eight malformed payload shapes and one oversized
+  request for each of the 162 production grants before host/native access.
+  Pending terminal and native-chat subscription setup rechecks request liveness
+  after asynchronous host resolution, so cancellation, client replacement, and
+  broker disposal cannot recreate authority afterward.
 - Gesture-mediated native operations share one shell authority that consumes
   each native-observed touch once, rejects expired or future timestamps, clears
   pending authority whenever native `AppState` leaves foreground, and refuses a
@@ -2157,9 +2162,9 @@ The authoritative route now has a separately reviewed ceiling of 10 MiB total,
 from 8 MiB / 2 MiB / 7.5 MiB only after the legacy Mermaid CDN executable was
 replaced by the locally bundled, network-denied engine needed by both native
 and RNW without forking the existing UI. Boundary tests reject every
-measurement above its ceiling. The current 49-asset package is 9,281,663 bytes
-/ 2,684,764 bytes gzip and build
-`b17ead7a3c85071f5cfc45dd695bd457e37a49c4895ad3ac979689ca2a13805f`.
+measurement above its ceiling. The current 50-asset package is 9,295,070 bytes
+/ 2,690,115 bytes gzip and build
+`2441ad60ec4b02a9a26bb33c672748ddd542497b303e58e028eefbd703e613c9`.
 `build:mobile-web` and release resource mapping therefore select the RNW
 package; the original 2 MiB Vite-fixture ceiling is retired with that fixture.
 Workspace snapshots now page through

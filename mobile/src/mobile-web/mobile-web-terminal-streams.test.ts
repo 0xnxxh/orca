@@ -33,7 +33,8 @@ describe('MobileWebTerminalStreams', () => {
       requestId: 'request-1',
       subscriptionId: SUBSCRIPTION_ID,
       payload: subscribePayload(),
-      client: harness.client
+      client: harness.client,
+      isRequestActive: () => true
     })
 
     harness.emitMultiplex({ type: 'ready' })
@@ -137,7 +138,8 @@ describe('MobileWebTerminalStreams', () => {
       requestId: 'request-2',
       subscriptionId: SUBSCRIPTION_ID,
       payload: subscribePayload(),
-      client: harness.client
+      client: harness.client,
+      isRequestActive: () => true
     })
     harness.emitMultiplex({ type: 'ready' })
     const subscribe = harness.sentFrames.at(-1)!
@@ -170,7 +172,8 @@ describe('MobileWebTerminalStreams', () => {
       requestId: 'request-resync',
       subscriptionId: SUBSCRIPTION_ID,
       payload: subscribePayload(),
-      client: harness.client
+      client: harness.client,
+      isRequestActive: () => true
     })
     harness.emitMultiplex({ type: 'ready' })
     const hostStreamId = decodeTerminalStreamJson<Record<string, unknown>>(
@@ -212,7 +215,8 @@ describe('MobileWebTerminalStreams', () => {
       requestId: 'request-query',
       subscriptionId: SUBSCRIPTION_ID,
       payload: subscribePayload(),
-      client: harness.client
+      client: harness.client,
+      isRequestActive: () => true
     })
     harness.emitMultiplex({ type: 'ready' })
     const subscribe = harness.sentFrames.at(-1)!
@@ -252,7 +256,8 @@ describe('MobileWebTerminalStreams', () => {
       requestId: 'request-device-input',
       subscriptionId: SUBSCRIPTION_ID,
       payload: subscribePayload(),
-      client: harness.client
+      client: harness.client,
+      isRequestActive: () => true
     })
     harness.emitMultiplex({ type: 'ready' })
     const subscribe = harness.sentFrames.at(-1)!
@@ -301,7 +306,8 @@ describe('MobileWebTerminalStreams', () => {
       requestId: 'request-actions',
       subscriptionId: SUBSCRIPTION_ID,
       payload: subscribePayload(),
-      client: harness.client
+      client: harness.client,
+      isRequestActive: () => true
     })
 
     await harness.streams.handle(
@@ -341,7 +347,8 @@ describe('MobileWebTerminalStreams', () => {
       requestId: 'request-revoked',
       subscriptionId: SUBSCRIPTION_ID,
       payload: subscribePayload(),
-      client: harness.client
+      client: harness.client,
+      isRequestActive: () => true
     })
     harness.emitMultiplex({ type: 'ready' })
     const hostStreamId = decodeTerminalStreamJson<Record<string, unknown>>(
@@ -375,7 +382,8 @@ describe('MobileWebTerminalStreams', () => {
         visible: false,
         leaseOnly: true
       },
-      client: harness.client
+      client: harness.client,
+      isRequestActive: () => true
     })
 
     expect(harness.client.subscribe).toHaveBeenCalledWith(
@@ -451,7 +459,8 @@ describe('MobileWebTerminalStreams', () => {
         visible: false,
         leaseOnly: true
       },
-      client: harness.client
+      client: harness.client,
+      isRequestActive: () => true
     })
 
     harness.emitLease(hostEvent)

@@ -44,6 +44,7 @@ export class MobileWebNativeChatSubscriptions {
     subscriptionId: string
     payload: unknown
     client: RpcClient
+    isRequestActive: () => boolean
   }): Promise<void> {
     const payload = MobileWebNativeChatSubscribePayloadSchema.parse(args.payload)
     if (
@@ -59,6 +60,9 @@ export class MobileWebNativeChatSubscriptions {
       sessionId: payload.sessionId,
       nativeChatAuthority: this.options.nativeChatAuthority
     })
+    if (!args.isRequestActive()) {
+      throw new MobileWebBrokerError('cancelled')
+    }
     const record: SubscriptionRecord = {
       requestId: args.requestId,
       operationKey: 'nativeChat.subscribe',

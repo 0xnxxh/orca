@@ -153,7 +153,8 @@ export async function executeMobileWebCapabilityRequest(
       requestId: request.requestId,
       subscriptionId: request.subscriptionId,
       payload: request.payload,
-      client: args.connectedClient()
+      client: args.connectedClient(),
+      isRequestActive: args.isRequestActive
     })
     return null
   }

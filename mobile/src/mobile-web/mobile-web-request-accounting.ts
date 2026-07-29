@@ -65,3 +65,15 @@ export function mobileWebPendingForOperation(
   }
   return count
 }
+
+export function mobileWebPendingRequestForSubscription(
+  pending: Iterable<[string, { subscriptionId?: string }]>,
+  subscriptionId: string
+): string | null {
+  for (const [requestId, request] of pending) {
+    if (request.subscriptionId === subscriptionId) {
+      return requestId
+    }
+  }
+  return null
+}

@@ -57,7 +57,8 @@ describe('mobile web native chat subscriptions', () => {
         sessionId,
         limit: 40
       },
-      client
+      client,
+      isRequestActive: () => true
     })
     emit({
       type: 'snapshot',
@@ -97,5 +98,66 @@ describe('mobile web native chat subscriptions', () => {
 
     expect(unsubscribe).toHaveBeenCalledOnce()
     expect(postEvent).toHaveBeenCalledOnce()
+  })
+
+  it('does not register after the owning bridge request is cancelled', async () => {
+    const workspaceAuthority = new MobileWebWorkspaceAuthority((length) => new Uint8Array(length))
+    workspaceAuthority.synchronize([{ workspaceId: 'workspace-1', repoId: 'repo-1' }])
+    const nativeChatAuthority = new MobileWebNativeChatAuthority((length) => new Uint8Array(length))
+    const sessionId = nativeChatAuthority.register({
+      hostWorkspaceId: 'workspace-1',
+      hostTabId: 'tab-1',
+      hostTerminalId: 'terminal-1',
+      agent: 'claude',
+      providerSessionId: 'provider-session-1'
+    })
+    let resolveTabs: (value: { ok: true; result: unknown }) => void = () => {}
+    const sendRequest = vi.fn(
+      () =>
+        new Promise<{ ok: true; result: unknown }>((resolve) => {
+          resolveTabs = resolve
+        })
+    )
+    const subscribe = vi.fn()
+    const subscriptions = new MobileWebNativeChatSubscriptions({
+      isActive: () => true,
+      postEvent: vi.fn(),
+      nativeChatAuthority,
+      workspaceAuthority
+    })
+    let active = true
+    const pending = subscriptions.start({
+      requestId: 'request-1',
+      subscriptionId: 'subscription-1',
+      payload: {
+        workspaceId: workspaceAuthority.pageWorkspaceId('workspace-1'),
+        sessionId,
+        limit: 40
+      },
+      client: { sendRequest, subscribe } as unknown as RpcClient,
+      isRequestActive: () => active
+    })
+
+    await vi.waitFor(() => expect(sendRequest).toHaveBeenCalledOnce())
+    active = false
+    resolveTabs({
+      ok: true,
+      result: {
+        tabs: [
+          {
+            type: 'terminal',
+            id: 'tab-1',
+            terminal: 'terminal-1',
+            agentStatus: {
+              agentType: 'claude',
+              providerSession: { id: 'provider-session-1' }
+            }
+          }
+        ]
+      }
+    })
+
+    await expect(pending).rejects.toThrow('cancelled')
+    expect(subscribe).not.toHaveBeenCalled()
   })
 })

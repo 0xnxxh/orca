@@ -27,12 +27,13 @@ import {
   mobileWebAgentHistoryContinuation,
   mobileWebOperationKey,
   mobileWebPendingForOperation,
+  mobileWebPendingRequestForSubscription,
   mobileWebRequestExpectsSubscription,
   mobileWebWorkspaceSnapshotContinuation
 } from './mobile-web-request-accounting'
 
 type PageRequest = Extract<MobileWebBridgePageMessage, { type: 'request' }>
-type PendingRequest = { operationKey: string; cancelled: boolean }
+type PendingRequest = { operationKey: string; subscriptionId?: string; cancelled: boolean }
 export { MOBILE_WEB_PRODUCTION_GRANTS } from './mobile-web-production-grants'
 
 export class MobileWebCapabilityBroker {
@@ -189,11 +190,12 @@ export class MobileWebCapabilityBroker {
 
     const pending: PendingRequest = {
       operationKey: mobileWebOperationKey(request),
+      ...(request.mode === 'subscription' ? { subscriptionId: request.subscriptionId } : {}),
       cancelled: false
     }
     this.pending.set(request.requestId, pending)
     try {
-      const payload = await this.execute(request)
+      const payload = await this.execute(request, () => this.isPending(request.requestId, pending))
       if (!this.isPending(request.requestId, pending)) {
         return
       }
@@ -217,9 +219,10 @@ export class MobileWebCapabilityBroker {
     }
   }
 
-  private async execute(request: PageRequest): Promise<unknown> {
+  private async execute(request: PageRequest, isRequestActive: () => boolean): Promise<unknown> {
     return executeMobileWebCapabilityRequest({
       request,
+      isRequestActive,
       connectedClient: () => this.connectedClient(),
       terminalClientId: this.options.terminalClientId,
       nativeAuthority: this.options.nativeAuthority,
@@ -264,7 +267,8 @@ export class MobileWebCapabilityBroker {
       const requestId =
         this.subscriptions.cancel(id) ??
         this.terminalStreams.cancel(id, this.options.getClient()) ??
-        this.speechAuthority.cancelSubscription(id)
+        this.speechAuthority.cancelSubscription(id) ??
+        mobileWebPendingRequestForSubscription(this.pending, id)
       if (requestId) {
         const pending = this.pending.get(requestId)
         if (pending) {

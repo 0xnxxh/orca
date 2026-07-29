@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import {
   MOBILE_WEB_BRIDGE_MAX_GRANTS,
-  MOBILE_WEB_BRIDGE_MAX_MESSAGE_BYTES,
   MOBILE_WEB_BRIDGE_MAX_OPERATION_BYTES,
   MOBILE_WEB_BRIDGE_MAX_PENDING_REQUESTS
 } from './bridge-limits'
@@ -12,6 +11,11 @@ import {
   MobileWebBridgeCapabilitySchema,
   type MobileWebBridgeCapability
 } from './bridge-operation-registry'
+import {
+  parseMobileWebBridgeMessage,
+  type MobileWebBridgeMessageContext,
+  type MobileWebBridgeMessageParseResult
+} from './bridge-message-parser'
 import { MobileWebWorkspaceIdSchema } from './workspace-operation-contract'
 
 export {
@@ -228,61 +232,21 @@ export type MobileWebBridgeShellMessage = z.infer<typeof MobileWebBridgeShellMes
 export type MobileWebNavigationRoute = z.infer<typeof MobileWebNavigationRouteSchema>
 export type MobileWebResumeRoute = z.infer<typeof MobileWebResumeRouteSchema>
 
-export type MobileWebBridgeMessageContext = {
-  shellSessionId: string
-  buildId: string
-}
-
-export type MobileWebBridgeParseResult<T> =
-  | { ok: true; value: T }
-  | { ok: false; error: MobileWebBridgeErrorCode }
+export type { MobileWebBridgeMessageContext } from './bridge-message-parser'
+export type MobileWebBridgeParseResult<T> = MobileWebBridgeMessageParseResult<T>
 
 export function parseMobileWebBridgePageMessage(
   raw: string,
   expected: MobileWebBridgeMessageContext
 ): MobileWebBridgeParseResult<MobileWebBridgePageMessage> {
-  return parseBridgeMessage(raw, expected, MobileWebBridgePageMessageSchema)
+  return parseMobileWebBridgeMessage(raw, expected, MobileWebBridgePageMessageSchema)
 }
 
 export function parseMobileWebBridgeShellMessage(
   raw: string,
   expected: MobileWebBridgeMessageContext
 ): MobileWebBridgeParseResult<MobileWebBridgeShellMessage> {
-  return parseBridgeMessage(raw, expected, MobileWebBridgeShellMessageSchema)
-}
-
-function parseBridgeMessage<T extends MobileWebBridgeMessageContext>(
-  raw: string,
-  expected: MobileWebBridgeMessageContext,
-  schema: z.ZodType<T>
-): MobileWebBridgeParseResult<T> {
-  if (new TextEncoder().encode(raw).byteLength > MOBILE_WEB_BRIDGE_MAX_MESSAGE_BYTES) {
-    return { ok: false, error: 'too_large' }
-  }
-  let value: unknown
-  try {
-    value = JSON.parse(raw)
-  } catch {
-    return { ok: false, error: 'invalid_message' }
-  }
-  if (
-    isRecord(value) &&
-    'version' in value &&
-    value.version !== MOBILE_WEB_BRIDGE_PROTOCOL_VERSION
-  ) {
-    return { ok: false, error: 'unsupported_version' }
-  }
-  const parsed = schema.safeParse(value)
-  if (!parsed.success) {
-    return { ok: false, error: 'invalid_message' }
-  }
-  if (
-    parsed.data.shellSessionId !== expected.shellSessionId ||
-    parsed.data.buildId !== expected.buildId
-  ) {
-    return { ok: false, error: 'stale_session' }
-  }
-  return { ok: true, value: parsed.data }
+  return parseMobileWebBridgeMessage(raw, expected, MobileWebBridgeShellMessageSchema)
 }
 
 function validateRequestOperation(
@@ -329,8 +293,4 @@ function validateUniqueGrants(
     }
     seen.add(key)
   })
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

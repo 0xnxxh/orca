@@ -549,7 +549,7 @@ recovery, or physical-device gates.
       RNW artifact. The retired Vite entry, package plugin/verifier, duplicate
       workspace/session/files/source-control UI, and UI-only tests are removed.
       Production bridge clients and transport tests remain. The rebuilt package
-      retains build `b17ead7a…`.
+      now verifies as build `2441ad60…`.
 
 ## 3. Production Package Delivery RPC
 
@@ -1601,10 +1601,27 @@ copy.
   32-level JSON grammar before platform parsing. Mirrored mutations reject
   literal and escaped-equivalent duplicate keys, trailing tokens, malformed
   scalars, and excess nesting.
-- [ ] Fuzz bridge envelopes, schemas, sizes, IDs, ordering, cancellation, and
-      subscription lifecycle.
-- [ ] Attempt cross-host, cross-build, cross-workspace, and cross-session races.
-- [ ] Attempt replay after host switch, removal, process loss, and reconnect.
+- [~] Fuzz bridge envelopes, schemas, sizes, IDs, ordering, cancellation, and
+  subscription lifecycle. Raw page and shell messages now require a
+  unique-decoded-key, paired-surrogate, single-document, 32-level JSON grammar
+  before `JSON.parse` and Zod. The deterministic operation corpus rejects eight
+  malformed payload shapes and one oversized request across all 162 production
+  grants: 1,458 cases before host RPC, native access, or subscription setup.
+  Existing ordered-event/sequence-gap coverage plus new pending-subscription
+  races cover cancellation, client replacement, and broker disposal. Exact
+  release-app injection and broader valid-shaped mutation/response fuzzing
+  remain.
+- [~] Attempt cross-host, cross-build, cross-workspace, and cross-session races.
+  A 15-pair stale session/build grid fails closed, client replacement revokes
+  existing opaque workspace authority, and pending terminal resolution cannot
+  register against a replacement client or disposed broker. Broader concurrent
+  mutation races across two live hosts/workspaces remain.
+- [~] Attempt replay after host switch, removal, process loss, and reconnect.
+  Request replay protection now has explicit coverage across authenticated
+  Desktop client replacement; disposed sessions suppress late responses and
+  late subscription registration, while recovered native package sessions use
+  a new random shell-session ID. Exact-app host-removal, reconnect, and process
+  loss replay injection remain.
 - [~] Attempt capability calls without gesture, permission, foreground state,
   negotiated support, or correct origin. Focused operation tests reject missing
   gestures, and the native gesture authority now rejects and revokes touches
@@ -1861,6 +1878,22 @@ fault executable and all 37 Android module tests pass. Android lint reports zero
 errors after replacing API-26-only base64 calls and guarding optional WebView
 features; Swift format lint, mobile lint/typecheck/format, max-lines, and diff
 hygiene also pass.
+
+The bridge mutation and lifecycle slice rejects ambiguous raw JSON before
+schema traversal, runs 1,458 generated operation payload/size cases across all
+162 production grants, and closes three validation-order gaps in account,
+speech/native, and navigation operations. Four broker race cases plus focused
+native-chat coverage prove early unsubscribe, authenticated client
+replacement, broker disposal, and replay do not register late host resources.
+Focused root tests pass 4 files / 163 tests and mobile tests pass 8 files / 55
+tests. The full mobile suite passes 572 files / 3,425 tests with 2 expected
+skips. A full root run passes 3,825 files / 40,143 tests with 9 file and 70 test
+skips; one unrelated 30-second dynamic-import timeout passes 2/2 in a
+4.4-second isolated rerun. Mobile/root/RNW typechecks, mobile/shared lint,
+max-lines, formatting, diff hygiene, and production package verification pass.
+The rebuilt package is
+`2441ad60ec4b02a9a26bb33c672748ddd542497b303e58e028eefbd703e613c9`:
+50 assets, 9,295,070 raw bytes, and 2,690,115 gzip bytes.
 
 | Date       | Workstream              | Evidence                                                                                                                                                                                                                    | Result                                                                                                                                                                                            |
 | ---------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2738,4 +2771,10 @@ hygiene also pass.
 | 2026-07-29 | Finding  | Android package staging used `java.util.Base64`, which is unavailable below API 26 despite the app's minSdk 24. Optional AndroidX WebView message and document-start APIs were also removed or registered without lint-recognized availability guards.                                                                                                                                                                                    |
 | 2026-07-29 | Complete | Android now uses its API-8 base64 codec, secure hex stage IDs, and guarded optional WebView features. The mirrored native corpus passes 1,152 generated rejections and 72 concurrent cache flows per platform; the iOS fault suite, 37 Android tests, zero-error Android lint, mobile lint/typecheck/format, max-lines, and diff hygiene pass.                                                                                            |
 | 2026-07-29 | Complete | Rebased all 42 migration commits without conflicts onto `origin/main` at `76b6c137c`; the branch is zero behind. Post-rebase iOS native faults, all 37 Android module tests, zero-error Android lint, root/mobile typechecks, mobile lint/format, max-lines, and diff hygiene pass.                                                                                                                                                       |
-| 2026-07-29 | Next     | Fuzz bridge envelopes and subscription lifecycle, then execute cross-host/build/workspace/session and replay races before the remaining physical-device, topology, performance, packaged-release, rollback, and App Store gates.                                                                                                                                                                                                          |
+| 2026-07-29 | Finding  | Generated bridge operation fuzzing found that account subscription payloads were not parsed and malformed speech/native/navigation requests reached gesture or authority checks before schema validation.                                                                                                                                                                                                                                 |
+| 2026-07-29 | Complete | Raw bridge JSON now rejects duplicate decoded keys, malformed/lone surrogates, trailing content, and nesting beyond 32 levels before parsing. All 162 production grants reject eight malformed payload shapes and an oversized request before host/native access: 1,458 generated cases. Account, speech/native, and navigation validation ordering is closed.                                                                            |
+| 2026-07-29 | Complete | Pending terminal/native-chat subscriptions recheck broker request liveness after asynchronous host resolution. Four broker race cases cover early unsubscribe, authenticated client replacement, disposal, and replay; stale shell/build context coverage spans 15 pairings. Focused root tests pass 4 files / 163 tests and mobile tests pass 8 files / 55 tests.                                                                        |
+| 2026-07-29 | Complete | Mobile/root/RNW typechecks, mobile/shared lint, max-lines, formatting, diff hygiene, and RNW packaging pass. Build `2441ad60ec4b02a9a26bb33c672748ddd542497b303e58e028eefbd703e613c9` verifies with 50 assets, 9,295,070 raw bytes, and 2,690,115 gzip bytes.                                                                                                                                                                             |
+| 2026-07-29 | Complete | The full mobile suite passes 572 files / 3,425 tests with 2 expected skips.                                                                                                                                                                                                                                                                                                                                                               |
+| 2026-07-29 | Finding  | A full root run passes 3,825 files / 40,143 tests with 9 file and 70 test skips, but one unrelated `ProjectViewWrapper` dynamic-import boundary test reaches its 30-second timeout under full-suite load. Its isolated rerun passes 2/2 in 4.4 seconds.                                                                                                                                                                                   |
+| 2026-07-29 | Next     | Complete valid-shaped bridge response and live cross-host/workspace mutation races, then audit Desktop mutation reauthorization and paired cryptographic identity use before independent review and the remaining external release gates.                                                                                                                                                                                                 |

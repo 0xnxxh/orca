@@ -89,25 +89,28 @@ export async function executeMobileWebNativeCapabilityOperation(args: {
     await args.authority.sessionChatDraftWrite(hostWorkspaceId, hostTabId, payload.text)
     return null
   }
-  requireRecentUserGesture(args.consumeRecentUserGesture)
   if (args.operation === 'clipboardWrite') {
     const payload = MobileWebClipboardWritePayloadSchema.parse(args.payload)
+    requireRecentUserGesture(args.consumeRecentUserGesture)
     return MobileWebClipboardWriteResultSchema.parse(
       await args.authority.clipboardWrite(payload.text)
     )
   }
   if (args.operation === 'openExternal') {
     const payload = MobileWebOpenExternalPayloadSchema.parse(args.payload)
+    requireRecentUserGesture(args.consumeRecentUserGesture)
     await args.authority.openExternal(payload.url)
     return null
   }
   if (args.operation === 'terminalTextScaleUpdate') {
     const payload = MobileWebTerminalTextScaleUpdatePayloadSchema.parse(args.payload)
+    requireRecentUserGesture(args.consumeRecentUserGesture)
     await args.authority.terminalTextScaleUpdate(payload.textScale)
     return null
   }
   if (args.operation === 'terminalCustomKeysUpdate') {
     const payload = MobileWebTerminalCustomKeysUpdatePayloadSchema.parse(args.payload)
+    requireRecentUserGesture(args.consumeRecentUserGesture)
     if (!args.authority.terminalCustomKeysUpdate) {
       throw new MobileWebBrokerError('unavailable')
     }

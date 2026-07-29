@@ -64,6 +64,7 @@ export class MobileWebTerminalStreams {
     subscriptionId: string
     payload: unknown
     client: RpcClient
+    isRequestActive: () => boolean
   }): Promise<void> {
     const request = MobileWebTerminalRequestSchema.parse(args.payload)
     if (request.operation !== 'subscribe') {
@@ -77,6 +78,9 @@ export class MobileWebTerminalStreams {
     }
     const hostWorkspaceId = this.options.workspaceAuthority.hostWorkspaceId(request.workspaceId)
     const terminal = await resolveMobileWebTerminal(args.client, hostWorkspaceId, request.tabId)
+    if (!args.isRequestActive()) {
+      throw new MobileWebBrokerError('cancelled')
+    }
     if (request.leaseOnly) {
       if (request.visible) {
         throw new MobileWebBrokerError('invalid_request')

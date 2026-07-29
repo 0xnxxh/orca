@@ -281,8 +281,22 @@ keys and values. Mirrored corpora also prove the exact 32-level acceptance and
 The 569-file mobile suite, typechecks, lints, reliability, max-lines, focused
 formatting, diff hygiene, and unchanged `b17ead7a…` package verification remain
 green after the parser repair.
-The remaining security work below is release-app corpus testing, fuzzing,
-cross-scope races, privacy/authorization audit, and independent review.
+Raw bridge messages now pass an exact unique-decoded-key, paired-surrogate,
+single-document, 32-level JSON grammar before parsing. A generated corpus
+rejects eight malformed payload shapes and one oversized request for each of
+the 162 production grants: 1,458 cases before host RPC, native access, or
+subscription setup. It closed account subscription parsing plus
+speech/native/navigation validation-order gaps. Pending terminal/native-chat
+subscriptions recheck request liveness after asynchronous resolution; focused
+races cover early unsubscribe, authenticated client replacement, disposal, and
+replay. The production package now verifies as `2441ad60…`: 50 assets,
+9,295,070 raw bytes, and 2,690,115 gzip bytes. The full mobile suite passes 572
+files / 3,425 tests with 2 expected skips. The full root run has one unrelated
+30-second dynamic-import timeout under load; its isolated 2-test rerun passes
+in 4.4 seconds.
+The remaining security work below is exact release-app corpus testing,
+valid-shaped response fuzzing, broader cross-scope mutation races,
+privacy/authorization audit, and independent review.
 
 ## 1. Production Cutover and Cleanup
 
@@ -335,16 +349,27 @@ cross-scope races, privacy/authorization audit, and independent review.
       writes also reject linked parents, while atomic activation replacement
       preserves an external file behind an in-cache link. Exact JSON now rejects
       unpaired Unicode surrogate escapes and has explicit depth-edge coverage.
-      A fresh exact-app rerun, further generated mutation, concurrent cache
-      mutation, and the other listed boundaries remain.
+      Raw bridge JSON now rejects duplicate decoded keys, trailing content,
+      unpaired surrogates, and excess depth. All 162 production grants reject
+      eight malformed payload shapes and an oversized request before authority
+      access. Pending subscription cancellation/client replacement/disposal
+      races pass. A fresh exact-app rerun, valid-shaped response mutation,
+      concurrent cache mutation, and the other listed boundaries remain.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,
-      reconnect, process-loss, and host-removal races.
+      reconnect, process-loss, and host-removal races. Focused tests now reject
+      a 15-pair stale session/build grid, retain replay protection across
+      authenticated client replacement, revoke opaque workspace authority, and
+      prevent late terminal subscription registration after cancellation,
+      replacement, or disposal. Broader live mutation and exact-app lifecycle
+      races remain.
 - [ ] Verify no credential or privileged host identity reaches URLs, DOM state,
       page storage, cache assets, logs, diagnostics, analytics, or fixtures.
 - [ ] Verify Desktop reauthorizes every mutation and all resource limits apply
       before allocation and during assembly. Persisted native manifests,
       activation metadata, and assets now have pre-allocation read ceilings;
-      bridge and full generated allocation fuzzing remain.
+      every bridge operation now has generated malformed-payload and
+      request-limit coverage. Valid-shaped response and sustained allocation
+      fuzzing remain.
 - [ ] Complete an independent threat-model and adversarial review.
 - [ ] Resolve every high-severity security finding.
 

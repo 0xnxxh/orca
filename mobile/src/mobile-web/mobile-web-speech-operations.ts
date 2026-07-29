@@ -1,5 +1,7 @@
 import {
   MobileWebSpeechCancelPayloadSchema,
+  MobileWebSpeechConfigurePayloadSchema,
+  MobileWebSpeechModelActionPayloadSchema,
   MobileWebSpeechStartPayloadSchema,
   MobileWebSpeechStopPayloadSchema
 } from '../../../src/shared/mobile-web/speech-operation-contract'
@@ -24,14 +26,17 @@ export async function executeMobileWebSpeechOperation(args: {
     return loadMobileWebSpeechSetup(args.client, args.payload)
   }
   if (args.operation === 'downloadModel') {
+    MobileWebSpeechModelActionPayloadSchema.parse(args.payload)
     requireRecentUserGesture(args.consumeRecentUserGesture)
     return downloadMobileWebSpeechModel(args.client, args.payload)
   }
   if (args.operation === 'deleteModel') {
+    MobileWebSpeechModelActionPayloadSchema.parse(args.payload)
     requireRecentUserGesture(args.consumeRecentUserGesture)
     return deleteMobileWebSpeechModel(args.client, args.payload)
   }
   if (args.operation === 'configure') {
+    MobileWebSpeechConfigurePayloadSchema.parse(args.payload)
     requireRecentUserGesture(args.consumeRecentUserGesture)
     return configureMobileWebSpeech(args.client, args.payload)
   }
