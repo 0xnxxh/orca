@@ -84,6 +84,7 @@ type MessageSummary = {
   type?: string
   body?: string
   payload?: string | null
+  priority?: string
   read?: number
 }
 
@@ -95,17 +96,37 @@ function isLegacyReadOnlyMessage(message: MessageSummary): boolean {
   return message.run_id === ORCHESTRATION_LEGACY_RUN_ID
 }
 
+function formatMessagePriorityTag(message: MessageSummary): string {
+  return message.priority === 'urgent' ? ' [URGENT]' : message.priority === 'high' ? ' [HIGH]' : ''
+}
+
+function formatQuotedMessageField(label: string, value: string): string {
+  return `[${label}]\n${value
+    .split('\n')
+    .map((line) => `  ${line}`)
+    .join('\n')}`
+}
+
 function formatLegacyAwareCheckMessages(messages: MessageSummary[]): string {
   return messages
     .map((message) => {
+      const legacyReadOnly = isLegacyReadOnlyMessage(message)
       const lines = [
-        `${message.id}${formatMessageReadOnlyTag(message)} [${message.type ?? 'status'}] from=${message.from_handle} "${message.subject}"`
+        `${message.id}${formatMessageReadOnlyTag(message)}${formatMessagePriorityTag(message)} [${message.type ?? 'status'}] from=${message.from_handle}`,
+        formatQuotedMessageField('subject', message.subject)
       ]
+      if (legacyReadOnly) {
+        lines.push('[Inspection only: reply and acknowledgment are unavailable.]')
+      }
       if (message.body) {
-        lines.push(message.body)
+        lines.push(formatQuotedMessageField('body', message.body))
       }
       if (message.payload) {
-        lines.push(`[payload] ${message.payload}`)
+        lines.push(formatQuotedMessageField('payload', message.payload))
+      }
+      if (!legacyReadOnly) {
+        const fromFlag = message.to_handle ? ` --from ${message.to_handle}` : ''
+        lines.push(`[Reply: orca orchestration reply --id ${message.id}${fromFlag} --body "..."]`)
       }
       return lines.join('\n')
     })
@@ -644,11 +665,19 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
         }
       }
     }
+    if (flags.has('format') && result.result.messages.some(isLegacyReadOnlyMessage)) {
+      // Why: formatted is one opaque batch with untrusted bodies, so selective banner parsing cannot safely remove legacy actions.
+      result = {
+        ...result,
+        result: {
+          ...result.result,
+          formatted: formatLegacyAwareCheckMessages(result.result.messages)
+        }
+      }
+    }
     printResult(result, json, (r) => {
       if (r.formatted) {
-        return r.messages.some(isLegacyReadOnlyMessage)
-          ? formatLegacyAwareCheckMessages(r.messages)
-          : r.formatted
+        return r.formatted
       }
       if (r.count === 0) {
         if (r.timedOut) {
