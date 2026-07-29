@@ -11,22 +11,22 @@ final class AgentSessionOwnershipTests: XCTestCase {
     func testUnauthenticatedConnectionCannotClaimOrRetainAgent() {
         var ownership = AgentSessionOwnership()
 
-        XCTAssertFalse(ownership.registerConnection(12, authenticated: false))
+        XCTAssertEqual(ownership.registerConnection(12, authenticated: false), .rejected)
         XCTAssertFalse(ownership.disconnect(12))
     }
 
     func testLastAuthenticatedDisconnectTerminatesAgent() {
         var ownership = AgentSessionOwnership()
 
-        XCTAssertTrue(ownership.registerConnection(12, authenticated: true))
+        XCTAssertEqual(ownership.registerConnection(12, authenticated: true), .claimed)
         XCTAssertTrue(ownership.disconnect(12))
     }
 
     func testAgentWaitsForEveryAuthenticatedConnectionToClose() {
         var ownership = AgentSessionOwnership()
 
-        XCTAssertTrue(ownership.registerConnection(12, authenticated: true))
-        XCTAssertFalse(ownership.registerConnection(13, authenticated: true))
+        XCTAssertEqual(ownership.registerConnection(12, authenticated: true), .claimed)
+        XCTAssertEqual(ownership.registerConnection(13, authenticated: true), .joined)
         XCTAssertFalse(ownership.disconnect(12))
         XCTAssertTrue(ownership.disconnect(13))
     }
@@ -34,8 +34,17 @@ final class AgentSessionOwnershipTests: XCTestCase {
     func testDuplicateRegistrationDoesNotRetainAgent() {
         var ownership = AgentSessionOwnership()
 
-        XCTAssertTrue(ownership.registerConnection(12, authenticated: true))
-        XCTAssertFalse(ownership.registerConnection(12, authenticated: true))
+        XCTAssertEqual(ownership.registerConnection(12, authenticated: true), .claimed)
+        XCTAssertEqual(ownership.registerConnection(12, authenticated: true), .joined)
         XCTAssertTrue(ownership.disconnect(12))
+    }
+
+    func testReleasedSessionCannotBeReclaimed() {
+        var ownership = AgentSessionOwnership()
+
+        XCTAssertEqual(ownership.registerConnection(12, authenticated: true), .claimed)
+        XCTAssertTrue(ownership.disconnect(12))
+        XCTAssertEqual(ownership.registerConnection(13, authenticated: true), .rejected)
+        XCTAssertFalse(ownership.disconnect(13))
     }
 }
