@@ -8,11 +8,11 @@ import { MacosTccPromptWatch } from './macos-tcc-prompt-watch'
 /**
  * Surfaces Full Disk Access guidance only to users macOS is actually prompting
  * (#9756), instead of nudging every Mac user. Counts Orca-attributed TCC
- * dialogs across launches and tells the renderer once the third one lands.
+ * dialogs across launches and tells the renderer when the first one lands.
  */
 
-/** Why: one dialog is normal and two is bad luck; three means it is recurring for this user. */
-export const TCC_PROMPT_NOTICE_THRESHOLD = 3
+/** Why: the first detected dialog identifies an affected user; the notice remains one-time. */
+export const TCC_PROMPT_NOTICE_THRESHOLD = 1
 
 /** Why: preserve detection when Electron never emits `ready-to-show` without competing with startup. */
 export const TCC_PROMPT_WATCH_START_FALLBACK_MS = 10_000

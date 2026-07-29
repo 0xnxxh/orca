@@ -86,6 +86,26 @@ export type SkillFreshnessInstallation = {
   errorCategory: string | null
 }
 
+/**
+ * Whether a copy is wrong in a way running the update would not resolve.
+ *
+ * Shared so the badge and the review dialog cannot disagree about what counts: the
+ * badge points at the dialog for the explanation, so a copy that turns the badge
+ * amber must also produce a row there. An out-of-date copy the command converges is
+ * ordinary work, not a problem, and a plugin's own copy of a same-named skill is the
+ * vendor's business rather than the user's drift.
+ */
+export function isSkillCopyNeedingAttention(installation: SkillFreshnessInstallation): boolean {
+  return (
+    installation.status !== 'current' &&
+    !(installation.status === 'unrecognized' && installation.topology === 'plugin-cache') &&
+    !(
+      SUPPORTED_GLOBAL_SKILL_TOPOLOGIES.has(installation.topology) &&
+      installation.status === 'outdated'
+    )
+  )
+}
+
 export type SkillFreshnessScanIssueReason =
   | 'depth-limit'
   | 'entry-limit'
