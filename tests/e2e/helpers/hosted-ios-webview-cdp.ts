@@ -102,7 +102,9 @@ export async function sendHostedIosTerminalCommand(args: {
   command: string
   discoveryUrl: string
   timeoutMs: number
-  sendCommand: (command: string) => Promise<void>
+  sendCommand: (
+    command: string
+  ) => Promise<{ expected: string; requireCarriageReturn: boolean } | void>
 }): Promise<void> {
   await waitForHostedIosEvaluation(
     args.discoveryUrl,
@@ -116,12 +118,17 @@ export async function sendHostedIosTerminalCommand(args: {
     hostedIosTerminalInputCaptureInstallExpression,
     (value) => value === 'installed'
   )
-  await args.sendCommand(args.command)
+  const expectedCapture = (await args.sendCommand(args.command)) ?? {
+    expected: args.command,
+    requireCarriageReturn: true
+  }
   await waitForHostedIosEvaluation(
     args.discoveryUrl,
     args.timeoutMs,
     hostedIosTerminalInputCaptureExpression,
-    (value) => value.includes(args.command) && value.includes('\r')
+    (value) =>
+      value.includes(expectedCapture.expected) &&
+      (!expectedCapture.requireCarriageReturn || value.includes('\r'))
   )
 }
 

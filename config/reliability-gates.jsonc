@@ -2980,6 +2980,15 @@
           "result": "passed",
           "durationSeconds": 84,
           "summary": "The Desktop runtime resolved build c24ff987… through the actual unpacked macOS Resources directory with no checkout-output fallback; authenticated package RPC, unchanged iOS WKWebView presentation, Docker SSH terminal mutation, provider loss, and native-chat recovery all passed."
+        },
+        {
+          "date": "2026-07-28",
+          "runner": "local",
+          "platform": "macos",
+          "command": "SKIP_BUILD=1 pnpm run test:e2e:hosted-mobile-webview:ssh:packaged",
+          "result": "passed",
+          "durationSeconds": 126,
+          "summary": "The current unpacked macOS arm64 package resolved build a5df600309b3a452158ee0563395c807da061719f1365dde86114d42b43e936c through authenticated RPC with no checkout fallback. The actual iOS WKWebView used the unchanged opaque clipboard-paste and Enter controls to mutate Docker SSH, rendered the remote native-chat transcript, retained it across provider loss, and rendered the appended assistant message after reconnect."
         }
       ],
       "runtimeBudget": {
@@ -3006,7 +3015,7 @@
       "knownGaps": [
         "Docker SSH proves the SSH provider and relay subprocess path, not the paired mobile cloud Relay transport.",
         "The real transport run uses a Linux Docker target from macOS; Windows, WSL, Android, and physical mobile devices are not exercised.",
-        "Native-chat subscription rendering after SSH reconnect is contract-tested below the existing unchanged UI but is not asserted in the actual mobile WebView by this gate."
+        "The packaged proof uses an unsigned unpacked macOS arm64 artifact; signed release, Linux, Windows, and headless package evidence remains open."
       ],
       "demotionRule": "Demote or quarantine if an authority mismatch can read a transcript, transport loss can fall back to a local path, provider reads become unbounded, reconnect appends are lost, or the real SSH journey flakes without a product or harness bug."
     },

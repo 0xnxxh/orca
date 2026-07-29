@@ -31,13 +31,13 @@ import {
   pairAndOpenHostedIosRoute,
   runHostedIosEmulatorCommand,
   resolveHostedIosSimulatorUdid,
-  sendHostedIosBufferedCommand,
   startHostedIosMobileLauncher,
   stopHostedIosMobileLauncher,
-  waitForHostedIosAccessibilityControl,
   waitForHostedIosMobileLauncher
 } from './helpers/hosted-ios-mobile-launcher'
-import { sendHostedIosLongPress } from './helpers/hosted-ios-long-press'
+import { waitForHostedIosAccessibilityControl } from './helpers/hosted-ios-accessibility'
+import { sendHostedIosPastedTerminalCommand } from './helpers/hosted-ios-pasted-terminal-command'
+import { openHostedIosLongPressAction } from './helpers/hosted-ios-long-press'
 import {
   findHostedIosInspectorPort,
   openHostedIosWorkspace,
@@ -130,16 +130,19 @@ test.describe('Hosted mobile WebView over Docker SSH', () => {
         { id: 'u-1', role: 'user', text: 'remote hello' }
       ])
       writeDockerSshNativeChatPublisher(target)
-      const terminalJourneyCommand = [
+      const terminalJourneyCommand = `${[
         `touch ${REMOTE_PROOF_PATH}`,
         dockerSshNativeChatPublicationCommand()
-      ].join('; ')
+      ].join('; ')}; `
       await sendHostedIosTerminalCommand({
         command: terminalJourneyCommand,
         discoveryUrl,
         timeoutMs: 30_000,
         sendCommand: (command) =>
-          sendHostedIosBufferedCommand({ deviceUdid, orcaCli, userDataDir, worktree }, command)
+          sendHostedIosPastedTerminalCommand(
+            { deviceUdid, discoveryUrl, orcaCli, userDataDir, worktree },
+            command
+          )
       })
       await expect
         .poll(
@@ -169,11 +172,11 @@ test.describe('Hosted mobile WebView over Docker SSH', () => {
         20_000
       )
       const emulator = { deviceUdid, orcaCli, userDataDir, worktree }
-      await sendHostedIosLongPress(emulator, terminalTabControl)
-      const chatAction = await waitForHostedIosAccessibilityControl(
-        emulator,
-        'Switch to chat view',
-        10_000
+      const chatAction = await openHostedIosLongPressAction(
+        { ...emulator, discoveryUrl },
+        terminalTabControl,
+        'Terminal 1',
+        'Switch to chat view'
       )
       await runHostedIosEmulatorCommand(emulator, [
         'tap',

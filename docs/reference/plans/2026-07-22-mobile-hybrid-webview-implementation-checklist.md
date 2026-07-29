@@ -532,15 +532,17 @@ recovery, or physical-device gates.
   Electron packaging now selects `out/mobile-web-rnw` for every desktop
   platform and `afterPack` verifies the copied resource tree with the
   production package verifier. An actual unpacked macOS arm64 app passed with
-  build `c24ff987…`; Linux, Windows, headless, and signed release artifacts
-  remain unverified.
+  build `a5df6003…`, 50 assets, 9,290,009 raw bytes, and 2,688,232 gzip
+  bytes; Linux, Windows, headless, and signed release artifacts remain
+  unverified.
 - [x] Verify packaged lookup works outside the source checkout and through the
       Desktop-to-SSH execution topology. The packaged gate makes the unpacked
       app's `Resources` directory both `process.resourcesPath` and the Desktop
       cwd, so the source-output fallback is absent. The authenticated package
-      RPC returned build `c24ff987…`, then the actual iOS WKWebView rendered the
-      unchanged Docker SSH workspace, mutated its remote terminal, and
-      recovered native chat across SSH disconnect/reconnect.
+      RPC returned build `a5df6003…`, then the actual iOS WKWebView rendered
+      the unchanged Docker SSH workspace, mutated its remote terminal, and
+      recovered native chat across SSH disconnect/reconnect. The exact
+      iPhone 17 Pro / iOS 26.5 Simulator run passed in 2.1 minutes.
 - [x] Replace the Vite validation presentation with the React Native Web build
       and remove equivalent `src/mobile-web/` UI components. The existing mobile
       UI packages deterministically through the production asset format.
@@ -2691,4 +2693,6 @@ and diff hygiene pass. A fresh production RNW build remains
 | 2026-07-28 | Complete | RNW package `a5df600309b3a452158ee0563395c807da061719f1365dde86114d42b43e936c` verifies with 50 assets, 9,290,009 raw bytes, and 2,688,232 gzip bytes after the final navigation and upstream native-chat integration.                                                                                                                                                                                                                  |
 | 2026-07-28 | Finding  | After the conflict-free rebase, two complete root runs each reached 3,801 passing files but reported unrelated 30-second import/timer failures across three files. Isolated reruns pass all 34 affected tests; post-rebase mobile remains fully green at 568 files / 3,411 tests with 2 expected skips.                                                                                                                                 |
 | 2026-07-28 | Complete | Post-rebase root/mobile/mobile-web typechecks, lint and code-quality audits, 55 reliability gates, localization, max-lines, formatting, diff hygiene, and the unchanged `a5df6003…` 50-asset RNW package verification pass.                                                                                                                                                                                                             |
+| 2026-07-28 | Finding  | The simulator's Korean input source made `orca emulator type` unsuitable for shell commands, while newline-bearing clipboard content remained buffered by the remote shell's bracketed-paste mode. The packaged journey now activates the unchanged native-shell `clipboardPaste` capability and existing Enter accessory without changing keyboard preferences or exposing clipboard text to the hosted page.                                                                                       |
+| 2026-07-28 | Complete | `SKIP_BUILD=1 pnpm run test:e2e:hosted-mobile-webview:ssh:packaged` passed in 2.1 minutes against unpacked macOS arm64 Resources build `a5df600309b3a452158ee0563395c807da061719f1365dde86114d42b43e936c`. Authenticated package identity, actual iOS WKWebView presentation, Docker SSH terminal mutation, remote native-chat publication, disconnect retention, PTY/provider reattachment, and appended transcript recovery all passed. |
 | 2026-07-28 | Next     | Execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                                                                                    |

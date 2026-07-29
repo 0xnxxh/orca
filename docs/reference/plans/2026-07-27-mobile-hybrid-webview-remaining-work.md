@@ -115,6 +115,14 @@ package is
 `a5df600309b3a452158ee0563395c807da061719f1365dde86114d42b43e936c`:
 50 assets, 9,290,009 raw bytes, and 2,688,232 gzip bytes.
 
+That exact package now passes the unpacked macOS arm64 → Docker SSH → actual
+iOS WKWebView journey in 2.1 minutes. Authenticated RPC returned the packaged
+build with no checkout-output fallback; the unchanged mobile UI mutated the
+remote terminal, rendered a remote native-chat transcript, retained it during
+provider loss, and rendered the appended assistant message after reconnect.
+The harness uses the existing opaque clipboard-paste capability and Enter
+accessory, so it does not depend on the simulator's keyboard layout.
+
 The latest native-authority audit keeps the unchanged UI but removes hosted
 fallback access to Expo clipboard, image/document pickers, haptics, and direct
 external-link opening. Native routes receive platform-resolved adapters;

@@ -3,11 +3,14 @@ import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { dismissEmulatorDeveloperMenuBeforePairing } from '../../../mobile/scripts/emulator-developer-menu-dismissal.mjs'
 import { openHostedIosHybridRoute } from '../../../mobile/scripts/hosted-ios-hybrid-route-handoff.mjs'
 import {
-  runHostedIosEmulatorCommand,
-  type HostedIosEmulatorCommandOptions
-} from './hosted-ios-emulator-command'
+  readHostedIosAccessibilityNodes,
+  waitForHostedIosAccessibilityControl,
+  type HostedIosAccessibilityNode
+} from './hosted-ios-accessibility'
+import { runHostedIosEmulatorCommand } from './hosted-ios-emulator-command'
 
 export {
   runHostedIosEmulatorCommand,
@@ -22,14 +25,6 @@ type HostedIosMobileLauncherOptions = {
   orcaCli: string
   userDataDir: string
   worktree: string
-}
-
-type AccessibilityNode = {
-  children?: AccessibilityNode[]
-  enabled?: boolean
-  frame?: { height?: number; width?: number; x?: number; y?: number }
-  label?: string
-  value?: string
 }
 
 export async function resolveHostedIosSimulatorUdid(requested: string): Promise<string> {
@@ -138,28 +133,11 @@ export async function pairAndOpenHostedIosRoute(args: {
     await execFileAsync('xcrun', ['simctl', 'openurl', deviceUdid, pairingUrl])
     await delay(2_000)
   }
+  await dismissEmulatorDeveloperMenuBeforePairing(args, 20_000)
   const pairControl = await waitForHostedIosAccessibilityControl(args, 'Pair', 20_000)
   await runHostedIosEmulatorCommand(args, ['tap', String(pairControl.x), String(pairControl.y)])
   await waitForPairingCompletion(args, 45_000)
   await openHostedIosHybridRoute(args, 45_000)
-}
-
-export async function sendHostedIosBufferedCommand(
-  args: HostedIosEmulatorCommandOptions,
-  command: string
-): Promise<void> {
-  const modeControl = await waitForHostedIosAccessibilityControl(
-    args,
-    'Switch to buffered command input',
-    20_000
-  )
-  await runHostedIosEmulatorCommand(args, ['tap', String(modeControl.x), String(modeControl.y)])
-  const inputControl = await waitForHostedIosAccessibilityControl(args, 'Type a command…', 20_000)
-  await runHostedIosEmulatorCommand(args, ['tap', String(inputControl.x), String(inputControl.y)])
-  await delay(250)
-  await runHostedIosEmulatorCommand(args, ['type', command])
-  const sendControl = await waitForHostedIosAccessibilityControl(args, 'Send command', 20_000)
-  await runHostedIosEmulatorCommand(args, ['tap', String(sendControl.x), String(sendControl.y)])
 }
 
 export async function stopHostedIosMobileLauncher(child: ChildProcess | null): Promise<void> {
@@ -182,31 +160,6 @@ function hostedIosRunDirectory(worktree: string): string {
   return path.join('/tmp', `orca-mobile-webview-ssh-e2e-${key}`)
 }
 
-export async function waitForHostedIosAccessibilityControl(
-  args: HostedIosEmulatorCommandOptions,
-  label: string,
-  timeoutMs: number
-): Promise<{ x: number; y: number }> {
-  const deadline = Date.now() + timeoutMs
-  let lastLabels: string[] = []
-  while (Date.now() < deadline) {
-    const nodes = await readAccessibilityNodes(args)
-    lastLabels = accessibilityLabels(nodes)
-    const control = nodes.find((node) => {
-      const matches = node.label === label || node.value === label
-      return matches && node.enabled !== false && node.frame && isFiniteFrame(node.frame)
-    })
-    if (control?.frame) {
-      return {
-        x: control.frame.x! + control.frame.width! / 2,
-        y: control.frame.y! + control.frame.height! / 2
-      }
-    }
-    await delay(250)
-  }
-  throw new Error(`${label} was not accessible. Last labels: ${summarizeLabels(lastLabels)}`)
-}
-
 async function waitForPairingCompletion(
   args: Parameters<typeof pairAndOpenHostedIosRoute>[0],
   timeoutMs: number
@@ -214,7 +167,7 @@ async function waitForPairingCompletion(
   const deadline = Date.now() + timeoutMs
   let lastLabels: string[] = []
   while (Date.now() < deadline) {
-    const first = await readAccessibilityNodes(args)
+    const first = await readHostedIosAccessibilityNodes(args)
     lastLabels = accessibilityLabels(first)
     const error = lastLabels.find(
       (label) =>
@@ -227,7 +180,7 @@ async function waitForPairingCompletion(
     }
     if (!hasPairingStage(lastLabels)) {
       await delay(500)
-      const confirmationLabels = accessibilityLabels(await readAccessibilityNodes(args))
+      const confirmationLabels = accessibilityLabels(await readHostedIosAccessibilityNodes(args))
       if (!hasPairingStage(confirmationLabels)) {
         return
       }
@@ -238,43 +191,7 @@ async function waitForPairingCompletion(
   throw new Error(`Mobile pairing did not complete. Last labels: ${summarizeLabels(lastLabels)}`)
 }
 
-async function readAccessibilityNodes(
-  args: Parameters<typeof pairAndOpenHostedIosRoute>[0]
-): Promise<AccessibilityNode[]> {
-  const { stdout } = await runHostedIosEmulatorCommand(args, ['ax'])
-  const response = JSON.parse(stdout) as { ok?: unknown; result?: unknown }
-  if (response.ok !== true || !Array.isArray(response.result)) {
-    throw new Error('Orca emulator returned an invalid accessibility response')
-  }
-  return flattenAccessibilityNodes(response.result.filter(isAccessibilityNode))
-}
-
-function flattenAccessibilityNodes(roots: AccessibilityNode[]): AccessibilityNode[] {
-  const result: AccessibilityNode[] = []
-  const pending = [...roots]
-  while (pending.length > 0 && result.length < 2_000) {
-    const node = pending.shift()!
-    result.push(node)
-    if (Array.isArray(node.children)) {
-      pending.push(...node.children.filter(isAccessibilityNode))
-    }
-  }
-  return result
-}
-
-function isAccessibilityNode(value: unknown): value is AccessibilityNode {
-  return Boolean(value && typeof value === 'object')
-}
-
-function isFiniteFrame(
-  frame: NonNullable<AccessibilityNode['frame']>
-): frame is { height: number; width: number; x: number; y: number } {
-  return [frame.x, frame.y, frame.width, frame.height].every(
-    (value) => typeof value === 'number' && Number.isFinite(value)
-  )
-}
-
-function accessibilityLabels(nodes: AccessibilityNode[]): string[] {
+function accessibilityLabels(nodes: HostedIosAccessibilityNode[]): string[] {
   return nodes.flatMap((node) =>
     [node.label, node.value].filter((value): value is string => Boolean(value))
   )

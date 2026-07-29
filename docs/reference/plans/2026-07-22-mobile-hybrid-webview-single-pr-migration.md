@@ -1089,12 +1089,13 @@ and nested syntax text keeps the effective native font behavior. On iPhone 17
 Pro Simulator, Source Control passes at 0.736% changed pixels / 0.910 mean
 channel difference and Review at 2.134% / 1.947, within the 3% / 4 budgets.
 
-Current validation passes mobile and mobile-web typechecks and lints,
-changed-file formatting, max-lines and diff hygiene, and 561 mobile files /
-3,322 tests with 2 expected skips. The independently verified production
+Current validation passes all project typechecks, root/mobile/mobile-web lint
+and code-quality audits, changed-file and full-mobile formatting, localization,
+max-lines and diff hygiene, 55 reliability gates, and 568 mobile files / 3,411
+tests with 2 expected skips. The independently verified production
 package
-`b17ead7a3c85071f5cfc45dd695bd457e37a49c4895ad3ac979689ca2a13805f`
-contains 49 assets and verifies at 9,281,663 raw bytes / 2,684,764 gzip bytes.
+`a5df600309b3a452158ee0563395c807da061719f1365dde86114d42b43e936c`
+contains 50 assets and verifies at 9,290,009 raw bytes / 2,688,232 gzip bytes.
 The complete cached-app iOS journey passes Workspace, Accounts, Tasks, Session,
 Files/Preview, Agent History portrait/landscape, Desktop restart and E2EE
 recovery, native-touch resume, Source Control, a third Session diff tab,
@@ -1316,18 +1317,21 @@ Electron `afterPack` now runs the production package verifier against the
 copied `<resources>/mobile-web` tree, so a missing, corrupt, non-content-
 addressed, over-budget, or CSP-invalid resource fails packaging rather than
 surviving until runtime. An actual unpacked macOS arm64 package verified build
-`c24ff987…` from `Orca.app/Contents/Resources/mobile-web` with 49 assets,
-7,878,100 raw bytes, and 1,695,710 gzip bytes. That run was unsigned and lacked
+`a5df6003…` from `Orca.app/Contents/Resources/mobile-web` with 50 assets,
+9,290,009 raw bytes, and 2,688,232 gzip bytes. That run was unsigned and lacked
 the unrelated optional macOS notification-status helper; Linux, Windows,
 headless, and signed-release artifacts remain open.
 A separate packaged-topology gate replaces the Desktop test process's
 `process.resourcesPath` and cwd with that unpacked app `Resources` directory,
 leaving no checkout output fallback. The authenticated mobile package RPC
-returned `c24ff987…`, after which the actual iOS WKWebView rendered the
+returned `a5df6003…`, after which the actual iOS WKWebView rendered the
 unchanged Docker SSH workspace, mutated the remote terminal, retained native
-chat through provider loss, and rendered the recovered remote transcript. This
-closes packaged Desktop-to-SSH lookup on unpacked macOS without claiming
-Linux, Windows, headless, signed-release, Android, or physical-device evidence.
+chat through provider loss, and rendered the recovered remote transcript. The
+2.1-minute run used the unchanged native clipboard-paste and Enter accessories,
+so terminal automation is independent of the simulator keyboard layout while
+clipboard contents remain opaque to the hosted page. This closes packaged
+Desktop-to-SSH lookup on unpacked macOS without claiming Linux, Windows,
+headless, signed-release, Android, or physical-device evidence.
 Production shell, package, page, and shared-contract sources now use only
 production module names and `mobileWeb.package.*` RPC methods. A recursive
 source-boundary test rejects prototype imports, symbols, contracts, or RPC

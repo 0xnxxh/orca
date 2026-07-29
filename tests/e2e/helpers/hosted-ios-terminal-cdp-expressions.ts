@@ -1,3 +1,5 @@
+export const HOSTED_IOS_TERMINAL_CLIPBOARD_PASTE_CAPTURE = '__ORCA_CLIPBOARD_PASTE__'
+
 export const hostedIosTerminalReadyExpression = `(() => {
   const focusTarget = document.querySelector(
     '[aria-label="Show keyboard for live terminal input"]'
@@ -26,6 +28,12 @@ export const hostedIosTerminalInputCaptureInstallExpression = `(() => {
         typeof message?.payload?.data === 'string'
       ) {
         captured.push(message.payload.data)
+      } else if (
+        message?.type === 'request' &&
+        message?.capability === 'terminal' &&
+        message?.operation === 'clipboardPaste'
+      ) {
+        captured.push(btoa(${JSON.stringify(HOSTED_IOS_TERMINAL_CLIPBOARD_PASTE_CAPTURE)}))
       }
     } catch {}
     original(value)
