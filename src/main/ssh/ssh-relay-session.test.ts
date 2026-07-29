@@ -35,8 +35,10 @@ vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
   })),
   closeSshPtyOutputGeneration: vi.fn(),
   getSshPtyAcceptedSourceCheckpoints: vi.fn(() => []),
+  applySshPtySourceCancellationProof: vi.fn(() => true),
   applySshPtySourceRecoveryCancellationProof: vi.fn(() => true),
-  installSshPtySourceAckPublisher: vi.fn(() => () => {})
+  installSshPtySourceAckPublisher: vi.fn(() => () => {}),
+  installSshPtySourceCancellationPublisher: vi.fn(() => () => {})
 }))
 
 vi.mock('./ssh-relay-deploy-helpers', () => ({
@@ -133,16 +135,9 @@ describe('SshRelaySession', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     openConsumerSessionMock.mockImplementation(async (_mux, options) => ({
-      mode: 'negotiated',
+      mode: 'legacy-fallback',
       clientInstanceId: options.clientInstanceId,
-      clientGeneration: 1,
-      ownerGeneration: 1,
-      ownerLease: 'test-owner-lease',
-      ...(options.outputFlowControl
-        ? {
-            outputFlowControl: { version: 1, windowSu: options.outputFlowControl.requestedWindowSu }
-          }
-        : {})
+      serverBuildId: 'test-relay-build'
     }))
     delete process.env.ORCA_FEATURE_REMOTE_AGENT_HOOKS
     muxRequestMock.mockReset()
@@ -833,7 +828,7 @@ describe('SshRelaySession', () => {
 
     await session.establish(mockConn, 600)
 
-    expect(deployAndLaunchRelay).toHaveBeenCalledWith(mockConn, undefined, 600, 'target-1', false)
+    expect(deployAndLaunchRelay).toHaveBeenCalledWith(mockConn, undefined, 600, 'target-1')
   })
 
   it('restores the configured relay grace after establish', async () => {

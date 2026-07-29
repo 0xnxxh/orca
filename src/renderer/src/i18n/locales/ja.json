@@ -6995,10 +6995,7 @@
           "4a342f44c1": "詳細接続",
           "e9609ddca6": "プロキシ、ジャンプホスト、接続の再利用",
           "8c922dffba": "より速いセットアップのため SSH 接続を再利用",
-          "53e9aabfc0": "利用可能な場合は OpenSSH の多重化を使用します。独自の SSH 制限があるホストではオフにしてください。",
-          "ptySourceCreditV1Label": "Bounded terminal output (experimental)",
-          "ptySourceCreditV1Description": "Limits buffered terminal output and improves recovery when this SSH target reconnects.",
-          "ptySourceCreditV1Toggle": "Toggle bounded terminal output"
+          "53e9aabfc0": "利用可能な場合は OpenSSH の多重化を使用します。独自の SSH 制限があるホストではオフにしてください。"
         },
         "TasksPane": {
           "3a72b9745e": "[タスク] ページとサイドバーのショートカットに表示するタスク プロバイダーを選択します。",

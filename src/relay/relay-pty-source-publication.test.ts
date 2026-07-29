@@ -599,38 +599,6 @@ describe('RelayPtySourcePublication', () => {
     ).toEqual(['pty.data', 'pty.exit'])
   })
 
-  it('keeps gate-off same-build sessions on legacy capability omission', async () => {
-    const writes: Buffer[] = []
-    dispatcher = new RelayDispatcher(
-      (data, onSettled) => {
-        writes.push(Buffer.from(data))
-        onSettled({ ok: true })
-        return true
-      },
-      { supportsWriteCallback: true },
-      endpointIdentity
-    )
-    new SshPtyConsumerSessionAdapter(dispatcher, 'build-a', undefined, undefined, false)
-    dispatcher.feed(
-      requestFrame(1, 'pty.openClient', {
-        protocolVersion: 1,
-        clientInstanceId: 'client-1',
-        requestedRole: 'session-owner',
-        capabilities: { outputFlowControl: { versions: [1], requestedWindowSu: 4 } }
-      })
-    )
-    await flushRequests()
-
-    expect(
-      writes
-        .map((buffer) => {
-          const length = buffer.readUInt32BE(9)
-          return JSON.parse(buffer.subarray(13, 13 + length).toString('utf8')).result
-        })
-        .find(Boolean)
-    ).not.toHaveProperty('capabilities')
-  })
-
   it('settles the recovery fence before sending buffered live output', async () => {
     const harness = await createHarness(4)
     harness.publication.publish('pty-1', { data: 'abcdefgh' }, false)

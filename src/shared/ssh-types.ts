@@ -53,8 +53,6 @@ export type SshTarget = {
   /** Reuse a system OpenSSH connection across setup commands. Undefined means
    *  enabled; false is an explicit per-target compatibility opt-out. */
   systemSshConnectionReuse?: boolean
-  /** Experimental per-target opt-in to cumulative SSH PTY source credit. */
-  experimentalPtySourceCreditV1?: boolean
 }
 
 /** Public target identity safe to mirror to a paired client. */

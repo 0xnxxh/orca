@@ -2,9 +2,9 @@
 
 Date: 2026-07-27
 
-Status: architecture gate closed and exact SSH V1 wire/API implemented behind
-an experimental per-target SSH setting; integrated lifecycle fixes reconciled
-at current HEAD; live topology gaps remain explicit below
+Status: architecture gate closed and exact SSH V1 wire/API implemented
+always-on for new SSH sessions; integrated lifecycle fixes reconciled at
+the current working tree; live topology gaps remain explicit below
 
 Historical unbounded baseline: `badf91101babf96fa09cb79a8294f7e23b9f081c`
 (the implementation branch parent). The implementation was rebased onto
@@ -21,7 +21,7 @@ parser. It covers:
 - relay stdout and socket drain handling;
 - per-client isolation, fairness, ordering, and cleanup;
 - bounded frame decoding on both sides of the relay protocol;
-- memory budgets, diagnostics, compatibility, tests, and rollout.
+- memory budgets, diagnostics, compatibility, tests, and deployment.
 
 The sidebar reconnect fix in `9d3ae3adc7` is out of scope. The non-ancestor
 commit `1500a92904` is design input only; it must not be cherry-picked. This
@@ -72,17 +72,17 @@ implemented. In this PR:
 
 The implementation is intentionally scoped:
 
-| Surface                                     | State in this PR                                        | Evidence                                                                                         |
-| ------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Same-build direct SSH/deployed relay, V1 on | implemented                                             | current-head deterministic contracts plus provenance-bound macOS-hosted Docker OpenSSH           |
-| Same-build SSH, V1 off                      | implemented bounded legacy mode                         | deterministic rollout and writer contracts                                                       |
-| Reconnect/owner recovery                    | implemented                                             | exact contiguous recovery, fail-closed cancellation, eight-wide reattach tests, Docker reconnect |
-| Headed/headless remote consumers            | source-range rotation/replacement implemented           | deterministic runtime/main seam only; no live paired-runtime claim                               |
-| WSL stdio and Windows named pipe/ConPTY     | shared transport paths preserved                        | deterministic/common-contract evidence only; no physical run                                     |
-| Local provider and local daemon             | unchanged                                               | outside SSH V1 negotiation; existing behavior only                                               |
-| Folder workspace                            | no `.git` dependency added                              | code-path review only; no dedicated live fixture                                                 |
-| Prior-version/mixed-version peers           | fail-closed or version-scoped legacy behavior preserved | deterministic rollout/deploy contracts; no live old binary                                       |
-| Ubuntu 20.04/glibc 2.31                     | no native dependency added                              | cross-target relay build only; no physical packaging run                                         |
+| Surface                                     | State in this PR                                          | Evidence                                                                                         |
+| ------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Same-build direct SSH/deployed relay, V1    | implemented; every session offers and relay advertises V1 | current-working-tree deterministic contracts plus provenance-bound macOS-hosted Docker OpenSSH   |
+| Capability/method-not-found legacy fallback | implemented bounded legacy compatibility                  | deterministic negotiation and writer contracts                                                   |
+| Reconnect/owner recovery                    | implemented                                               | exact contiguous recovery, fail-closed cancellation, eight-wide reattach tests, Docker reconnect |
+| Headed/headless remote consumers            | source-range rotation/replacement implemented             | deterministic runtime/main seam only; no live paired-runtime claim                               |
+| WSL stdio and Windows named pipe/ConPTY     | shared transport paths preserved                          | deterministic/common-contract evidence only; no physical run                                     |
+| Local provider and local daemon             | unchanged                                                 | outside SSH V1 negotiation; existing behavior only                                               |
+| Folder workspace                            | no `.git` dependency added                                | code-path review only; no dedicated live fixture                                                 |
+| Prior-version/mixed-version peers           | fail-closed or version-scoped legacy behavior preserved   | deterministic negotiation/deploy contracts; no live old binary                                   |
+| Ubuntu 20.04/glibc 2.31                     | no native dependency added                                | cross-target relay build only; no physical packaging run                                         |
 
 Docker SSH proves the Linux SSH provider and deployed-relay topology. It does
 not prove headed or headless paired-runtime behavior, WSL, Windows ConPTY or
@@ -332,7 +332,7 @@ Decision: `PtyConsumerSession` is a shared semantic state machine, not a
 universal transport protocol. The architecture gate is closed and is no
 longer waiting for exact wire/API names: the SSH adapter implements
 `sourceActivation`, source-bearing `pty.data`, `pty.recoveryComplete`,
-cumulative `pty.ackData`, and token-scoped cancellation. Current-head
+cumulative `pty.ackData`, and token-scoped cancellation. Current-working-tree
 deterministic validation is an engineering gate; unexecuted live topologies
 remain separate promotion gates. A relay-only
 `pty.getCapabilities` followed by `pty.negotiateClient` remains rejected
@@ -349,9 +349,9 @@ findings as follows:
 | Desktop projection admission lacked immutable range identity and rollback | Model, source span, projection range, and scanner snapshot reserve atomically; pre-commit failure rolls back, while post-commit replacement transfers with proof.        |
 
 Later adversarial review also required exact recovery continuity, stale-attempt
-isolation, session-latched rollout semantics, and idempotent remote detach
+isolation, session-grant fallback semantics, and idempotent remote detach
 after token reclamation. Those are incorporated in the activation, lifecycle,
-cleanup, tests, and rollout sections below.
+cleanup, tests, and compatibility sections below.
 
 The final 2026-07-28 architecture/terminal re-review found and closed three
 additional interleavings:
@@ -362,7 +362,7 @@ additional interleavings:
 | Recovery-response cancellation authority ended at enqueue rather than writer settlement | The request remains cancellation-authoritative until its response settles; retry reuses the same provisional replacement identity instead of creating an unfenced owner.               |
 | Snapshot replacement transferred every pending remote span at one sequence fence        | Each immutable span retains its model-sequence end; replacement transfers only spans covered by the authoritative `SnapshotEnd`, while trailing spans remain live and replay in order. |
 
-Current-head adversarial reconciliation closed these additional integrated
+Current-working-tree adversarial reconciliation closed these additional integrated
 failures without widening the approved topology:
 
 | Finding                                                                      | Implemented resolution                                                                                                                                                               |
@@ -482,13 +482,21 @@ prior-version isolation remain authoritative. Reusing the semantic state
 machine there is a later design decision and is not required to ship the SSH
 bound.
 
-The optional V1 offer is present only when the SSH session's captured rollout
-selection is on. The server intersects the offer with its supported versions
-and clamps `windowSu`; omission selects bounded legacy delivery while still
-establishing the role and generation. When V1 was offered, main accepts only a
-returned version it offered and a finite safe integer satisfying
-`0 < windowSu <= requestedWindowSu`. An absent or invalid V1 grant closes that
-connection attempt rather than silently downgrading it.
+Every new SSH session offers V1, and every relay from the same build advertises
+V1. The server intersects the offer with its supported versions and clamps
+`windowSu`; an older client that omits the capability receives bounded legacy
+delivery while still establishing the role and generation. Main accepts only
+a returned version it offered and a finite safe integer satisfying
+`0 < windowSu <= requestedWindowSu`. An absent or invalid V1 grant after
+`pty.openClient` succeeds closes that connection attempt rather than silently
+downgrading it.
+
+For compatibility with a legacy relay that does not implement
+`pty.openClient`, main permits token-free bounded legacy delivery only for the
+narrow same-build-validated JSON-RPC method-not-found result. Other errors,
+missing grants after a successful method call, and unproved version skew fail
+closed. This fallback does not change the normal same-build contract: the
+session offers V1 and the relay advertises and grants it.
 
 “Bounded legacy” is transport backpressure, not a hidden source-credit mode.
 It creates no delivery token, source window, or cumulative ACK obligation, and
@@ -507,7 +515,7 @@ and projection work. Transport close cancels the connection's retained
 publications and reconnect uses the existing replay/restore behavior. It may
 pause all legacy subscribers behind one slow connection because legacy mode
 has no authenticated source-owner role, but it neither drops output nor grows
-without bound. These mechanics remain enabled when the target's V1 option is off.
+without bound. These mechanics remain available to negotiated legacy peers.
 
 The session hello creates no PTY token. A later V1 spawn/attach returns a fresh
 `deliveryToken` and creates a subscription only for the authenticated
@@ -515,10 +523,9 @@ transport client and installed generation. `pty.attach` must receive request
 context just as `pty.spawn` does. Spawn failure, identity mismatch, stale
 context, and response cancellation create no active V1 subscription. A legacy
 spawn/attach returns the current identity/replay shape and creates only the
-bounded transport subscription above—no token or source coordinate. The
-session-latched mode never rotates a live V1 token into legacy service; normal
-disconnect closes the old token before a new gate-off session opens a bounded
-legacy connection.
+bounded transport subscription above—no token or source coordinate. A live V1
+token never rotates into legacy service; disconnect closes it before any
+separately negotiated legacy fallback connection can open.
 
 Session ownership is granted by the authenticated session hello, not
 constructor-assigned:
@@ -560,31 +567,26 @@ launches detach on POSIX and Windows, invalidate stdout, and connect the
 desktop bridge through `attachClient` over the versioned Unix socket or named
 pipe. Unproved direct stdio remains subscriber-only.
 
-Capability support and rollout enablement are separate. Each `SshRelaySession`
-captures its target's `experimentalPtySourceCreditV1` selection at construction;
-`ORCA_SSH_PTY_SOURCE_CREDIT_V1=0|1` remains an explicit process-startup-latched
-CI/development override. Fresh POSIX and Windows gate-on launches receive the
-safely quoted `--pty-source-credit-v1` flag; gate-off omits it. The endpoint's
-persisted `.pty-source-credit-policy` records `v1` or `off` and fences
-incompatible reuse. A new main may still decline V1 from an already-running
-capable relay. Editing a target never changes a live session or its automatic
-reconnects; a later explicit connection captures the new selection. Sink drain,
-writer ordering, decoder bounds, and header-ACK hardening are correctness fixes
-and are not disabled by this gate.
+Capability support is negotiated on every SSH session. `SshRelaySession`
+always offers V1 during initial connection and automatic reconnect, and POSIX
+and Windows relays always advertise it as an unconditional capability. Sink
+drain, writer ordering, decoder bounds, and header-ACK hardening remain
+unconditional correctness fixes.
 
 Production deployment does not form arbitrary mixed-build main/relay pairs.
 `computeRemoteRelayDir` content-hash-scopes the install directory and its
 socket/named-pipe endpoint, and the `.version` handshake is a second fence, so
-the desktop bridge and daemon reached at that endpoint share a build. Reachable
-same-build modes are session-granted V1 and target-gated legacy. A missing
-mandatory session grant fails readiness. Protocol tolerance for unknown fields
-remains for direct/manual relay launches, but an absent session contract is
-diagnostic `unsupported-version-skew`, not a rollout cohort.
+the desktop bridge and daemon reached at that endpoint share a build. The
+normal same-build mode is session-granted V1. A missing mandatory session grant
+fails readiness except for the narrow method-not-found compatibility fallback
+above. Protocol tolerance for unknown fields remains for direct/manual relay
+launches, but an absent session contract outside that fallback is diagnostic
+`unsupported-version-skew`, not a deployment cohort.
 
 The reachable upgrade skew is an orphaned prior-version daemon in its old
 version directory with live PTYs while the new main connects to a new endpoint.
 It retains its old behavior until its own grace/cleanup completes and is not
-reachable by a new session's rollout selection. Upgrade diagnostics enumerate
+reachable by a new same-build session. Upgrade diagnostics enumerate
 these versioned orphan processes; V1 neither adopts their PTYs nor claims to
 bound their memory.
 
@@ -730,7 +732,7 @@ notification before the token record is forgotten:
 ```
 
 It covers supersession, activation/exit timeout, reconnect-grace expiry, and
-policy cancellation. `remainingStartSu == creditedEndSu` and
+explicit delivery cancellation. `remainingStartSu == creditedEndSu` and
 `remainingEndSu == sentEndSu` state the exact source interval still unsettled
 at the relay. If the sink cannot drain the proof, its generation close is the
 proof. Without a replacement, main cancels the matching remaining obligations
@@ -1071,7 +1073,7 @@ the `source-owner` and reserve each remaining client separately. If one
 additional subscriber cannot reserve bounded writer/publication capacity,
 close only that client and continue the healthy subscriber and source-owner
 sends; never pause or tear down the native PTY solely for that projection. A
-gate-off primary is different: it remains a required bounded-legacy
+legacy-fallback primary is different: it remains a required bounded-legacy
 backpressure participant and is not evicted for saturation. Constructor
 position still grants no session-owner role.
 
@@ -1371,9 +1373,9 @@ ackPublishedEndSu <= ackQueuedEndSu <= obligationsTerminalEndSu
 
 Only `SshPtyOutputDelivery` may call the V1 cumulative ACK coalescer. The
 generic `IPtyProvider.acknowledgeDataEvent(id, delta)` API remains for local
-and daemon behavior. Legacy SSH may still emit its current delta during
-migration, but the relay ignores it and no legacy bound depends on it; it is a
-hard no-op for negotiated V1 PTYs. At every shared `pty:ackData`, resync, heal,
+and daemon behavior. Legacy-fallback SSH may still emit its current delta, but
+the relay ignores it and no legacy bound depends on it; it is a hard no-op for
+negotiated V1 PTYs. At every shared `pty:ackData`, resync, heal,
 write-off, drop, salvage, and reload call site, V1 routes renderer display
 progress through
 `SshPtyLegacyProjectionLedger`: parsing settles exact mapped source ranges and
@@ -2267,9 +2269,10 @@ logging terminal contents or raw PTY IDs:
 - closed provider-generation range count and active gaps;
 - reconnect attach wave latency, per-PTY retry/failure, token supersession,
   relay-initiated cancellation proof, and time-to-last-success;
-- same-build negotiated and disabled-by-main sessions, unsupported manual
-  version skew, and discovered orphan prior-version daemons, keyed by relay
-  build/version rather than legacy ACK traffic.
+- same-build V1 grants, capability omissions from legacy clients,
+  method-not-found fallbacks, unsupported manual version skew, and discovered
+  orphan prior-version daemons, keyed by relay build/version rather than
+  legacy ACK traffic.
 
 Rate-limit warnings by connection and reason. Log thresholds and state
 transitions, never data. Add an E2E-only snapshot request so tests can assert
@@ -2279,9 +2282,9 @@ without parsing logs.
 ## Incremental implementation map
 
 This PR implemented the design as the independently testable layers below,
-without replacing local/daemon protocols or requiring every deployment
-topology to enable V1. The slices remain useful review and rollback
-boundaries even though they ship in one PR.
+without replacing local/daemon protocols or claiming live evidence for every
+deployment topology. The slices remain useful review boundaries even though
+they ship in one PR.
 
 ### Slice 1: hostile-header and accounting hardening — implemented
 
@@ -2377,7 +2380,8 @@ boundaries even though they ship in one PR.
 - Reuse Slice 4's projection identities and transactional admission. Separate
   obligations terminal, ACK queued, and ACK published state from the first
   implementation.
-- Gate the feature and retain exact same-build legacy behavior.
+- Offer V1 on every new session while retaining bounded legacy compatibility
+  for capability-omitting clients and method-not-found relays.
 
 ### Slice 5c: exit, reconnect, and replay — implemented
 
@@ -2396,8 +2400,8 @@ boundaries even though they ship in one PR.
 - `SshPtyModelAdmission` retains generation-fatal callback handling except when
   the exact key is actively migrating; `SshPtyOutputIntake` uses the same key
   to keep provider close from escaping that migration owner.
-- Reconnect V1 remains under the session-latched target gate; its late-ACK, timeout,
-  supersession, and generation-close deterministic oracles pass.
+- Reconnect always re-offers V1; its late-ACK, timeout, supersession, and
+  generation-close deterministic oracles pass.
 
 ### Slice 5d: required remote consumers — deterministic seam implemented
 
@@ -2476,8 +2480,9 @@ recorded evidence include:
   capacity-aware Git/PTY slicing, decoder caps, and token rotation;
 - main model admission, desktop identity/rollback, exit barriers, remote
   reserve/commit/rollback, token cancellation, exact recovery continuity,
-  eight-wide reconnect, retention budgets, rollout latching, and deploy policy;
-- current-head restore-response retirement, fail-closed recovery cancellation,
+  eight-wide reconnect, retention budgets, unconditional negotiation, and
+  deployment;
+- current-working-tree restore-response retirement, fail-closed recovery cancellation,
   partial remote ACK, higher-generation token rotation, reclaimed-span
   idempotence, three-lane mux fairness, provisional claim gating, and
   generation-fenced exit proof ordering plus bounded exact generation closure;
@@ -2593,10 +2598,12 @@ and are then cleaned up idempotently.
   unimplemented, direct-stdio/WSL has deterministic common-transport evidence
   only, and remote-runtime source mapping is implemented at a deterministic
   seam but unexecuted in a live paired topology;
-- verify SSH session-owner election with V1 requested and with session-granted
-  same-build legacy, invalid/stale credential or lease rejection, 30-second
-  lease expiry, and atomic reconnect generation transfer through POSIX sockets
-  and Windows named pipes; prove constructor stdout, WSL child stdio, and an
+- verify every new SSH session and reconnect offers V1 and every same-build
+  relay advertises and grants it; separately verify a capability-omitting old
+  client remains token-free and the narrow method-not-found relay fallback is
+  bounded; cover invalid/stale credential or lease rejection, 30-second lease
+  expiry, and atomic reconnect generation transfer through POSIX sockets and
+  Windows named pipes; prove constructor stdout, WSL child stdio, and an
   unproved plain socket are never elected, and cover POSIX `0600` plus Windows
   current-user ACLs;
 - verify split shell/SFTP home discovery, per-launch marker creation under the
@@ -2751,9 +2758,10 @@ and are then cleaned up idempotently.
   and input fairness;
 - fuzz frame boundaries, JSON sizes, reconnect timing, transport data during a
   decoder continuation, and scalar-safe Unicode splits;
-- exercise same-build negotiated and main-disabled modes, reject a manually
-  mismatched `.version`, and identify—but do not adopt or kill—an orphaned
-  prior-version daemon;
+- exercise unconditional same-build V1 negotiation, old-client capability
+  omission, and method-not-found fallback; reject a manually mismatched
+  `.version`, and identify—but do not adopt or kill—an orphaned prior-version
+  daemon;
 - verify the session grant rejects unrequested versions and zero, negative,
   excessive, non-finite, or unsafe windows.
 
@@ -2764,8 +2772,8 @@ one last chunk to prove the transient overshoot bound.
 ### Integration and E2E
 
 `tests/e2e/ssh-docker-relay-perf.spec.ts` now contains V1 evidence for the
-implemented Linux SSH/deployed-relay path. The test harness uses the
-`ORCA_SSH_PTY_SOURCE_CREDIT_V1=1` all-target override and:
+implemented Linux SSH/deployed-relay path. The test harness exercises the
+normal deployment and connection path with no override and:
 
 1. stalls desktop ACK and observes an exact 256 Ki-source-unit negotiated
    plateau while a second SSH PTY remains responsive;
@@ -2816,70 +2824,47 @@ WSL, Windows, folder-workspace, prior-version, mixed-version, or Ubuntu 20.04
 packaging topologies as executed. The WSL stdin write/callback/drain contract
 is deterministic adapter evidence only, not a physical WSL run.
 
-## Rollout
+## Compatibility and release validation
 
-V1 is behind `Bounded terminal output (experimental)` in each SSH target's
-Advanced settings and a persisted per-endpoint relay launch policy. Missing or
-false target state selects legacy mode. `ORCA_SSH_PTY_SOURCE_CREDIT_V1=0|1`
-is latched when the process loads the rollout module and explicitly overrides
-every target for CI, development, and emergency rollback. Main never negotiates
-merely because a long-lived relay advertises; the immutable selection captured
-by a new `SshRelaySession` is final for that session and all of its automatic
-reconnects. Fresh POSIX and Windows gate-on launch commands carry
-`--pty-source-credit-v1`; gate-off omits it, and the persisted endpoint policy
-records the selected mode.
+Every new SSH session and automatic reconnect offers V1. Every relay from the
+same build advertises and grants V1, so the normal deployment path always uses
+source credit. Sink drain, the reserved writer lane, stdout serialization,
+bounded decoder work, bulk admission, and hostile header-ACK hardening are
+also unconditional.
 
-Sink drain, the reserved writer lane, stdout serialization, bounded decoder
-work, bulk admission, and hostile header-ACK hardening remain enabled
-independently. Same-build gate-off sessions use the bounded legacy writer but
-do not wait for V1 credit. A prior-version orphan remains governed by its own
-binary and cleanup.
+Compatibility behavior is explicit:
 
-Implementation and rollout stages:
+1. An old client that omits the V1 capability remains token-free and uses the
+   bounded legacy writer.
+2. A new main may use bounded legacy delivery only when the same-build
+   compatibility check accepts JSON-RPC method-not-found for
+   `pty.openClient`.
+3. A successful `pty.openClient` response without the offered V1 grant, an
+   invalid grant, or another request error fails closed rather than silently
+   downgrading.
+4. Disconnect performs normal token-scoped cancellation and exit cleanup; it
+   never rotates a live V1 token into legacy mode in place.
+5. A prior-version orphan remains governed by its own version-scoped binary and
+   cleanup. The new main reports but does not adopt, kill, or claim to bound it.
+
+Implementation and validation status:
 
 1. Slices 1-4 are implemented under legacy-compatible framing with narrow
    reliability oracles.
-2. Slices 5a-5c are implemented behind the per-target gate and relay launch
-   policy with unit/service contracts and prior direct Docker SSH evidence.
+2. Slices 5a-5c implement unconditional V1 offer/advertisement, source credit,
+   exit, and reconnect with unit/service contracts and direct Docker SSH
+   evidence.
 3. Slices 5d-5e implement remote source-range transactions and the final
    lifecycle reconciliation at deterministic main/runtime/provider/relay
    seams. Live headed paired, headless, WSL, Windows, local-daemon,
    local-provider, and folder-workspace evidence remains future work before
    those topologies are marked covered.
-4. Current-head deterministic reconciliation and focused integrated-fix checks
+4. Current-working-tree deterministic reconciliation and focused integrated-fix checks
    are complete. The isolated reconnect and final four-case direct-SSH Docker
    runs, full repository typecheck, and full lint/reliability suite are green;
    final exact-implementation-head architecture and transport reviews found no
    code blocker, and the transport review's stale-provenance finding is closed
    by the exact artifact record above.
-5. Run an internal same-build per-target canary comparing gate-off and V1 sink,
-   model-admission, latency, sealed-exit, recovery, and reconnect metrics while
-   separately counting orphan prior-version daemons;
-6. Default on only after zero ordering/data-loss failures and stable memory
-   plateaus for one release cycle; remove the per-target opt-in only after
-   same-build legacy fallback and versioned-orphan cleanup stay healthy through
-   the supported upgrade window.
-
-Rollback behavior is explicit:
-
-1. Change the target's Advanced setting, then explicitly disconnect and
-   reconnect that target. Existing sessions and automatic reconnects keep
-   their captured mode.
-2. Disconnect performs the normal token-scoped cancellation/exit cleanup; it
-   does not rotate live V1 tokens into legacy mode in place.
-3. On the next connection, gate-off omits the V1 offer and accepts same-build
-   bounded legacy service. Gate-on requires a V1-launched endpoint.
-4. If a persisted detached endpoint was launched gate-off, an off-to-on
-   connection fails with reset/reconnect guidance rather than silently
-   downgrading. Resetting that endpoint and reconnecting launches it with the
-   new policy.
-5. A gate-off client remains compatible with a same-build V1-capable relay
-   because omission of the offer selects bounded legacy behavior.
-
-The remote process may remain alive only when its persisted launch policy is
-compatible with the new session selection. An orphaned prior-version daemon is
-outside this sequence and is only observed until its own version-scoped
-cleanup.
 
 Release criteria:
 
@@ -2892,8 +2877,9 @@ Release criteria:
   decoder tasks, or paused PTYs;
 - no false dead-link reconnect across a 30-minute saturated/self-paused run;
 - bounded time-to-last-reattach with one injected per-PTY failure;
-- same-build gate modes, manual mismatch rejection, orphan reporting, and
-  Linux/macOS/Windows/WSL smoke tests pass.
+- unconditional same-build V1 negotiation, bounded legacy compatibility,
+  manual mismatch rejection, orphan reporting, and Linux/macOS/Windows/WSL
+  smoke tests pass.
 
 ## Calibrated findings and non-goals
 

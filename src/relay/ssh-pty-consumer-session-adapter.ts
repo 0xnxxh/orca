@@ -77,8 +77,7 @@ export class SshPtyConsumerSessionAdapter {
     dispatcher: RelayDispatcher,
     serverBuildId: string,
     private readonly setDeliveryPaused?: (id: string, paused: boolean) => void,
-    onSourceCreditAvailable?: (id: string) => void,
-    sourceCreditEnabled = true
+    onSourceCreditAvailable?: (id: string) => void
   ) {
     this.sourceCredit = new SshPtySourceCreditAdapter(
       (proof) =>
@@ -90,9 +89,7 @@ export class SshPtyConsumerSessionAdapter {
     )
     this.session = new PtyConsumerSession({
       serverBuildId,
-      ...(sourceCreditEnabled
-        ? { outputFlowControl: { versions: [1], maxWindowSu: DEFAULT_PTY_SOURCE_WINDOW_SU } }
-        : {})
+      outputFlowControl: { versions: [1], maxWindowSu: DEFAULT_PTY_SOURCE_WINDOW_SU }
     })
     dispatcher.onRequest(SSH_PTY_OPEN_CLIENT_METHOD, (params, context) =>
       this.openClient(params, context)

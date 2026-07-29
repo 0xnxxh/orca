@@ -214,19 +214,9 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     }
   })
 
-  it('keeps source-credit selection immutable through reconnect', async () => {
+  it('offers source credit through reconnect', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
-    let sourceCreditEnabled = true
-    const session = new SshRelaySession(
-      'target-1',
-      getMainWindow,
-      mockStore,
-      mockPortForward,
-      undefined,
-      undefined,
-      () => sourceCreditEnabled
-    )
-    sourceCreditEnabled = false
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
 
     await session.establish(mockConn)
     await session.reconnect(mockConn)
@@ -236,16 +226,14 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
       mockConn,
       undefined,
       undefined,
-      'target-1',
-      true
+      'target-1'
     )
     expect(deployAndLaunchRelay).toHaveBeenNthCalledWith(
       2,
       mockConn,
       undefined,
       undefined,
-      'target-1',
-      true
+      'target-1'
     )
     expect(openConsumerSessionMock).toHaveBeenCalledTimes(2)
     for (const [, options] of openConsumerSessionMock.mock.calls) {

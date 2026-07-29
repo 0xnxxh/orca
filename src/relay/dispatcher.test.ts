@@ -542,9 +542,9 @@ describe('RelayDispatcher', () => {
     }
   })
 
-  it('keeps a saturated gate-off primary as required backpressure', () => {
+  it('keeps a saturated legacy primary as required backpressure', () => {
     const callbacks: ((result: SinkWriteSettlement) => void)[] = []
-    const gateOffDispatcher = new RelayDispatcher(
+    const legacyDispatcher = new RelayDispatcher(
       (_data, settle) => {
         callbacks.push(settle)
         return false
@@ -556,13 +556,13 @@ describe('RelayDispatcher', () => {
       }
     )
     const detached = vi.fn()
-    gateOffDispatcher.onClientDetached(detached)
+    legacyDispatcher.onClientDetached(detached)
     const payload = 'x'.repeat(128 * 1024)
     let admitted = 0
 
     try {
       while (
-        gateOffDispatcher.tryNotifyPtyDataToMatchingClients(() => true, {
+        legacyDispatcher.tryNotifyPtyDataToMatchingClients(() => true, {
           id: 'pty-1',
           data: payload
         })
@@ -575,13 +575,13 @@ describe('RelayDispatcher', () => {
       expect(callbacks).toHaveLength(1)
       expect(detached).not.toHaveBeenCalled()
       expect(
-        gateOffDispatcher.tryNotifyPtyDataToMatchingClients(() => true, {
+        legacyDispatcher.tryNotifyPtyDataToMatchingClients(() => true, {
           id: 'pty-1',
           data: payload
         })
       ).toBe(false)
     } finally {
-      gateOffDispatcher.dispose()
+      legacyDispatcher.dispose()
     }
   })
 

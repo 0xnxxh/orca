@@ -62,7 +62,6 @@ export function buildSshTargetSavePayload(form: EditingTarget): SshTargetSavePay
     port,
     username,
     relayGracePeriodSeconds: graceSeconds,
-    ...(form.experimentalPtySourceCreditV1 ? { experimentalPtySourceCreditV1: true } : {}),
     ...(identityFile ? { identityFile } : {}),
     ...(proxyCommand ? { proxyCommand } : {}),
     ...(jumpHost ? { jumpHost } : {}),
@@ -81,7 +80,6 @@ export function buildSshTargetSavePayload(form: EditingTarget): SshTargetSavePay
         proxyCommand,
         jumpHost,
         systemSshConnectionReuse,
-        experimentalPtySourceCreditV1: form.experimentalPtySourceCreditV1 || undefined,
         source: 'manual'
       }
     }

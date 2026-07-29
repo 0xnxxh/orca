@@ -473,7 +473,7 @@ describe('deployAndLaunchRelay', () => {
     expect(resolveRemoteNodePath).toHaveBeenCalledTimes(2)
   })
 
-  it('defaults fresh relays to keep-alive-until-reset', async () => {
+  it('defaults fresh relays to keep-alive-until-reset without rollout artifacts', async () => {
     const conn = makeMockConnection()
     const mockExecCommand = vi.mocked(execCommand)
     mockExecCommand.mockResolvedValueOnce('__ORCA_REMOTE_PLATFORM__ Linux x86_64')
@@ -491,7 +491,7 @@ describe('deployAndLaunchRelay', () => {
 
     expect(launchCommand).toContain(`--grace-time ${DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS}`)
     expect(launchCommand).not.toContain('--pty-source-credit-v1')
-    expect(launchCommand).toContain("printf '%s\\n' 'off'")
+    expect(launchCommand).not.toContain('.pty-source-credit-policy')
   })
 
   it('allows an unlimited SSH disconnect grace window', async () => {
@@ -503,7 +503,7 @@ describe('deployAndLaunchRelay', () => {
     queueLaunchNamespaceAndDeadSocketProbe()
     mockExecCommand.mockResolvedValueOnce('READY')
 
-    await deployAndLaunchRelay(conn, undefined, 0, 'target-a', true)
+    await deployAndLaunchRelay(conn, undefined, 0, 'target-a')
 
     const launchCommand = vi
       .mocked(conn.exec)
@@ -511,8 +511,8 @@ describe('deployAndLaunchRelay', () => {
       .find((cmd) => cmd.includes('--detached'))
 
     expect(launchCommand).toContain('--grace-time 0')
-    expect(launchCommand).toContain('--pty-source-credit-v1')
-    expect(launchCommand).toContain("printf '%s\\n' 'v1'")
+    expect(launchCommand).not.toContain('--pty-source-credit-v1')
+    expect(launchCommand).not.toContain('.pty-source-credit-policy')
   })
 
   it('clamps configured SSH disconnect grace to the seven-day maximum', async () => {
@@ -762,7 +762,7 @@ describe('deployAndLaunchRelay', () => {
       .mockResolvedValueOnce('READY') // named pipe poll
       .mockResolvedValueOnce('') // persist active pipe marker
 
-    const result = await deployAndLaunchRelay(conn, undefined, 300, 'target-a', true)
+    const result = await deployAndLaunchRelay(conn, undefined, 300, 'target-a')
 
     expect(result.platform).toBe('win32-x64')
     expect(result.remoteHome).toBe('C:/Users/me user')
@@ -781,9 +781,8 @@ describe('deployAndLaunchRelay', () => {
       '"C:/Users/me user/.orca-remote/relay-0.1.0+abcdef012345/agent-hooks/orca-relay-'
     )
     expect(launchScript).toContain('--endpoint-dir')
-    expect(launchScript).toContain('--pty-source-credit-v1')
-    expect(launchScript).toContain('.pty-source-credit-policy')
-    expect(launchScript).toContain("-Value 'v1'")
+    expect(launchScript).not.toContain('--pty-source-credit-v1')
+    expect(launchScript).not.toContain('.pty-source-credit-policy')
     expect(launchScript).not.toContain('\\\\.\\pipe\\agent-hooks')
     const waitScript = decodedScripts.find((script) => script.includes('deadline=Date.now()')) ?? ''
     expect(waitScript).toContain('setTimeout(attempt,intervalMs)')

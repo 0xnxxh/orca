@@ -195,10 +195,7 @@ describe('SshRelaySession recovery race fencing', () => {
       targetId,
       deps.getMainWindow,
       deps.mockStore,
-      deps.mockPortForward,
-      undefined,
-      undefined,
-      () => true
+      deps.mockPortForward
     )
     await session.establish(deps.mockConn)
     vi.mocked(getPtyIdsForConnection).mockReturnValue([`ssh:${targetId}@@pty-1`])

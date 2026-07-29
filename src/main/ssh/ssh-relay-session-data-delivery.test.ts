@@ -196,10 +196,7 @@ describe('SshRelaySession data delivery', () => {
       args.targetId,
       deps.getMainWindow,
       deps.mockStore,
-      deps.mockPortForward,
-      undefined,
-      undefined,
-      () => true
+      deps.mockPortForward
     )
     await session.establish(deps.mockConn)
     vi.mocked(getPtyIdsForConnection).mockReturnValue([`ssh:${args.targetId}@@pty-1`])
@@ -325,15 +322,7 @@ describe('SshRelaySession data delivery', () => {
         acceptedSourceEndSu: 4
       }
     ])
-    const first = new SshRelaySession(
-      targetId,
-      getMainWindow,
-      mockStore,
-      mockPortForward,
-      undefined,
-      undefined,
-      () => true
-    )
+    const first = new SshRelaySession(targetId, getMainWindow, mockStore, mockPortForward)
     await first.establish(mockConn)
     first.detach()
 
@@ -355,15 +344,7 @@ describe('SshRelaySession data delivery', () => {
       incarnationId: 'incarnation-1',
       sourceRecovery: { status: 'restoreRequired', reason: 'checkpointUnavailable' }
     })
-    const second = new SshRelaySession(
-      targetId,
-      getMainWindow,
-      mockStore,
-      mockPortForward,
-      undefined,
-      undefined,
-      () => true
-    )
+    const second = new SshRelaySession(targetId, getMainWindow, mockStore, mockPortForward)
     const openCallCountBeforeRetry = openConsumerSessionMock.mock.calls.length
 
     await second.establish(mockConn)
@@ -403,7 +384,25 @@ describe('SshRelaySession data delivery', () => {
       transformed?: boolean
       providerGeneration: number
       ptyIncarnation: string
+      source: {
+        relayPtyId: string
+        spanId: string
+        clientGeneration: number
+        ownerGeneration: number
+        deliveryToken: string
+        sourceStartSu: number
+        sourceEndSu: number
+      }
     }) => void
+    const source = {
+      relayPtyId: 'pty-1',
+      spanId: 'token-1:0:9',
+      clientGeneration: 1,
+      ownerGeneration: 1,
+      deliveryToken: 'token-1',
+      sourceStartSu: 0,
+      sourceEndSu: 9
+    }
 
     onData({
       id: 'ssh-pty-1',
@@ -411,7 +410,8 @@ describe('SshRelaySession data delivery', () => {
       sequenceChars: 9,
       transformed: true,
       providerGeneration: 23,
-      ptyIncarnation: 'incarnation-1'
+      ptyIncarnation: 'incarnation-1',
+      source
     })
 
     expect(acceptOutputDataMock).toHaveBeenCalledWith({
@@ -420,7 +420,8 @@ describe('SshRelaySession data delivery', () => {
       providerGeneration: 23,
       ptyIncarnation: 'incarnation-1',
       rawLength: 9,
-      transformed: true
+      transformed: true,
+      source
     })
     expect(runtime.onPtyData).not.toHaveBeenCalled()
     expect(mockWindow.webContents.send).not.toHaveBeenCalledWith('pty:data', expect.anything())
@@ -428,15 +429,7 @@ describe('SshRelaySession data delivery', () => {
 
   it('forwards negotiated source identity to the bounded intake exactly once', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
-    const session = new SshRelaySession(
-      'target-1',
-      getMainWindow,
-      mockStore,
-      mockPortForward,
-      undefined,
-      undefined,
-      () => true
-    )
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
     await session.establish(mockConn)
     const ptyProvider = vi.mocked(registerSshPtyProvider).mock.calls[0]?.[1] as unknown as {
       onData: ReturnType<typeof vi.fn>
@@ -482,15 +475,7 @@ describe('SshRelaySession data delivery', () => {
 
   it('rejects missing negotiated source identity before main admission', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
-    const session = new SshRelaySession(
-      'target-1',
-      getMainWindow,
-      mockStore,
-      mockPortForward,
-      undefined,
-      undefined,
-      () => true
-    )
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
     await session.establish(mockConn)
     const provider = vi.mocked(registerSshPtyProvider).mock.calls[0]?.[1] as unknown as {
       onData: ReturnType<typeof vi.fn>
@@ -512,6 +497,11 @@ describe('SshRelaySession data delivery', () => {
   })
 
   it('keeps unoffered source metadata out of legacy intake', async () => {
+    openConsumerSessionMock.mockImplementationOnce(async (_mux, options) => ({
+      mode: 'legacy-fallback',
+      clientInstanceId: options.clientInstanceId,
+      serverBuildId: 'test-relay-build'
+    }))
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
     const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
     await session.establish(mockConn)
@@ -554,21 +544,13 @@ describe('SshRelaySession data delivery', () => {
 
     expect(session.getState()).toBe('ready')
     expect(pauseAdapterMock).not.toHaveBeenCalled()
-    expect(openConsumerSessionMock.mock.calls[0][1]).not.toHaveProperty('outputFlowControl')
+    expect(openConsumerSessionMock.mock.calls[0][1]).toHaveProperty('outputFlowControl')
     expect(installSshPtySourceAckPublisher).not.toHaveBeenCalled()
   })
 
   it('publishes negotiated ACK batches through mux settlement', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
-    const session = new SshRelaySession(
-      'target-1',
-      getMainWindow,
-      mockStore,
-      mockPortForward,
-      undefined,
-      undefined,
-      () => true
-    )
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
     await session.establish(mockConn)
     const publish = vi.mocked(installSshPtySourceAckPublisher).mock.calls[0]?.[1]
     const settled = vi.fn()
@@ -589,30 +571,14 @@ describe('SshRelaySession data delivery', () => {
     expect(openConsumerSessionMock.mock.calls[0][1]).toMatchObject({
       outputFlowControl: { requestedWindowSu: 256 * 1024 }
     })
-    expect(deployAndLaunchRelay).toHaveBeenCalledWith(
-      mockConn,
-      undefined,
-      undefined,
-      'target-1',
-      true
-    )
+    expect(deployAndLaunchRelay).toHaveBeenCalledWith(mockConn, undefined, undefined, 'target-1')
     expect(notifyWithSettlementMock).toHaveBeenCalledWith('pty.ackData', batch, settled)
   })
 
-  it('keeps the captured V1 selection through reconnect negotiation', async () => {
-    let enabled = true
+  it('offers V1 through reconnect negotiation', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
-    const session = new SshRelaySession(
-      'target-1',
-      getMainWindow,
-      mockStore,
-      mockPortForward,
-      undefined,
-      undefined,
-      () => enabled
-    )
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
     await session.establish(mockConn)
-    enabled = false
 
     await session.reconnect(mockConn)
 
@@ -623,16 +589,14 @@ describe('SshRelaySession data delivery', () => {
       mockConn,
       undefined,
       undefined,
-      'target-1',
-      true
+      'target-1'
     )
     expect(deployAndLaunchRelay).toHaveBeenNthCalledWith(
       2,
       mockConn,
       undefined,
       undefined,
-      'target-1',
-      true
+      'target-1'
     )
   })
 
@@ -661,15 +625,7 @@ describe('SshRelaySession data delivery', () => {
       }
     ])
     const { mockConn, mockStore, mockPortForward, getMainWindow, mockWindow } = createMockDeps()
-    const session = new SshRelaySession(
-      'target-1',
-      getMainWindow,
-      mockStore,
-      mockPortForward,
-      undefined,
-      undefined,
-      () => true
-    )
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
     await session.establish(mockConn)
     vi.mocked(getPtyIdsForConnection).mockReturnValue(['ssh:target-1@@pty-1'])
     vi.mocked(getSshPtyProvider).mockImplementation(

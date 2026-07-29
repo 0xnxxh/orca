@@ -1548,7 +1548,7 @@ describe('Store', () => {
     expect(updatedTarget).not.toHaveProperty('systemSshConnectionReuse')
   })
 
-  it('persists only explicit SSH terminal source-credit opt-ins', async () => {
+  it('drops retired per-target SSH terminal source-credit selections', async () => {
     const store = await createStore()
     store.addSshTarget({
       id: 'ssh-source-credit-on',
@@ -1557,32 +1557,15 @@ describe('Store', () => {
       port: 22,
       username: 'dev',
       experimentalPtySourceCreditV1: true
-    })
-    store.addSshTarget({
-      id: 'ssh-source-credit-off',
-      label: 'Legacy host',
-      host: 'legacy.example.com',
-      port: 22,
-      username: 'dev',
-      experimentalPtySourceCreditV1: false
-    })
+    } as never)
 
-    expect(store.getSshTarget('ssh-source-credit-on')?.experimentalPtySourceCreditV1).toBe(true)
-    expect(store.getSshTarget('ssh-source-credit-off')).not.toHaveProperty(
+    expect(store.getSshTarget('ssh-source-credit-on')).not.toHaveProperty(
       'experimentalPtySourceCreditV1'
     )
-
     store.flush()
     const persisted = readDataFile() as { sshTargets?: Record<string, unknown>[] }
-    const enabled = persisted.sshTargets?.find((target) => target.id === 'ssh-source-credit-on')
-    const disabled = persisted.sshTargets?.find((target) => target.id === 'ssh-source-credit-off')
-    expect(enabled?.experimentalPtySourceCreditV1).toBe(true)
-    expect(disabled).not.toHaveProperty('experimentalPtySourceCreditV1')
-
-    const updated = store.updateSshTarget('ssh-source-credit-on', {
-      experimentalPtySourceCreditV1: undefined
-    })
-    expect(updated).not.toHaveProperty('experimentalPtySourceCreditV1')
+    const target = persisted.sshTargets?.find((entry) => entry.id === 'ssh-source-credit-on')
+    expect(target).not.toHaveProperty('experimentalPtySourceCreditV1')
   })
 
   it('upserts ~/.ssh/config through the real store: rotated port updates in place and persists', async () => {
@@ -1600,15 +1583,12 @@ describe('Store', () => {
     expect(inserted).toHaveLength(1)
     expect(inserted[0]?.source).toBe('ssh-config')
     expect(inserted[0]?.port).toBe(2200)
-    store.updateSshTarget('ssh-cfg-1', { experimentalPtySourceCreditV1: true })
-
     // Rotated port: upsert updates the same target in place and normalizeSshTarget must keep `source` (no false re-derive into a permanently-dirty state).
     sshConfigHostsToTargetsMock.mockReturnValue(candidate(2222, 'ssh-cfg-2'))
     const changed = sshStore.importFromSshConfig()
     expect(changed).toHaveLength(1)
     expect(changed[0]?.port).toBe(2222)
     expect(changed[0]?.source).toBe('ssh-config')
-    expect(changed[0]?.experimentalPtySourceCreditV1).toBe(true)
 
     // A third identical sync is a no-op — repeated auto-sync on every pane open writes nothing.
     expect(sshStore.importFromSshConfig()).toHaveLength(0)
@@ -1620,14 +1600,12 @@ describe('Store', () => {
     expect(clusterTargets).toHaveLength(1)
     expect(clusterTargets[0]?.port).toBe(2222)
     expect(clusterTargets[0]?.source).toBe('ssh-config')
-    expect(clusterTargets[0]?.experimentalPtySourceCreditV1).toBe(true)
 
     // Survives a fresh load from the same data file.
     const reloaded = await createStore()
     const reloadedCluster = reloaded.getSshTargets().find((t) => t.configHost === 'cluster')
     expect(reloadedCluster?.port).toBe(2222)
     expect(reloadedCluster?.source).toBe('ssh-config')
-    expect(reloadedCluster?.experimentalPtySourceCreditV1).toBe(true)
   })
 
   it('drops malformed migration-unsupported PTY entries on load', async () => {

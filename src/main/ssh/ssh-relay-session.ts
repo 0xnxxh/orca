@@ -282,7 +282,6 @@ export class SshRelaySession {
   >()
   private readonly retiredSourceDeliveries = new SshPtyRetiredSourceDeliveries()
   private readonly ptyConsumerClientInstanceId: string
-  private readonly ptySourceCreditEnabled: boolean
   private ptyConsumerSessionState: SshPtyConsumerSessionState | null = null
 
   constructor(
@@ -295,11 +294,9 @@ export class SshRelaySession {
       targetId: string,
       ports: DetectedPort[],
       platform: string
-    ) => void,
-    isPtySourceCreditEnabled: () => boolean = () => false
+    ) => void
   ) {
     this.ptyConsumerClientInstanceId = ptyConsumerRecoveryForTarget(targetId).clientInstanceId
-    this.ptySourceCreditEnabled = isPtySourceCreditEnabled()
   }
 
   refreshEnvironment(
@@ -395,13 +392,7 @@ export class SshRelaySession {
         sockPath,
         credentialFile,
         hostPlatform
-      } = await deployAndLaunchRelay(
-        conn,
-        undefined,
-        graceTimeSeconds,
-        this.targetId,
-        this.ptySourceCreditEnabled
-      )
+      } = await deployAndLaunchRelay(conn, undefined, graceTimeSeconds, this.targetId)
       this.hostPlatform = hostPlatform ?? null
       this.remoteCliBridgeEnv =
         remoteHome && remoteRelayDir && nodePath && sockPath && hostPlatform
@@ -516,13 +507,7 @@ export class SshRelaySession {
         sockPath,
         credentialFile,
         hostPlatform
-      } = await deployAndLaunchRelay(
-        conn,
-        undefined,
-        graceTimeSeconds,
-        this.targetId,
-        this.ptySourceCreditEnabled
-      )
+      } = await deployAndLaunchRelay(conn, undefined, graceTimeSeconds, this.targetId)
       this.hostPlatform = hostPlatform ?? null
       this.remoteCliBridgeEnv =
         remoteHome && remoteRelayDir && nodePath && sockPath && hostPlatform
@@ -857,9 +842,7 @@ export class SshRelaySession {
       clientInstanceId: this.ptyConsumerClientInstanceId,
       expectedServerBuildId: serverBuildId,
       allowSameBuildLegacyFallback: true,
-      ...(this.ptySourceCreditEnabled
-        ? { outputFlowControl: { requestedWindowSu: DEFAULT_PTY_SOURCE_WINDOW_SU } }
-        : {})
+      outputFlowControl: { requestedWindowSu: DEFAULT_PTY_SOURCE_WINDOW_SU }
     }
     try {
       return await openSshPtyConsumerSession(mux, {

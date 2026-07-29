@@ -26,8 +26,10 @@ vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
   })),
   closeSshPtyOutputGeneration: vi.fn(),
   getSshPtyAcceptedSourceCheckpoints: vi.fn(() => []),
+  applySshPtySourceCancellationProof: vi.fn(() => true),
   applySshPtySourceRecoveryCancellationProof: vi.fn(() => true),
-  installSshPtySourceAckPublisher: vi.fn(() => () => {})
+  installSshPtySourceAckPublisher: vi.fn(() => () => {}),
+  installSshPtySourceCancellationPublisher: vi.fn(() => () => {})
 }))
 vi.mock('./ssh-relay-deploy-helpers', () => ({ execCommand: vi.fn().mockResolvedValue('') }))
 vi.mock('./ssh-channel-multiplexer', () => ({

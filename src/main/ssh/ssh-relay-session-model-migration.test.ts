@@ -174,10 +174,7 @@ describe('SshRelaySession model migration', () => {
       targetId,
       deps.getMainWindow,
       deps.mockStore,
-      deps.mockPortForward,
-      undefined,
-      undefined,
-      () => true
+      deps.mockPortForward
     )
     await session.establish(deps.mockConn)
     vi.mocked(getPtyIdsForConnection).mockReturnValue([appPtyId])
@@ -228,10 +225,7 @@ describe('SshRelaySession model migration', () => {
       targetId,
       deps.getMainWindow,
       deps.mockStore,
-      deps.mockPortForward,
-      undefined,
-      undefined,
-      () => true
+      deps.mockPortForward
     )
     await session.establish(deps.mockConn)
     vi.mocked(getPtyIdsForConnection).mockReturnValue([appPtyId])

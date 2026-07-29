@@ -1113,6 +1113,7 @@ function backfillLegacyAutomationContexts(
 type LegacySshTarget = SshTarget & {
   remoteWorkspaceSyncEnabled?: unknown
   remoteWorkspaceSyncGracePeriodSeconds?: unknown
+  experimentalPtySourceCreditV1?: unknown
 }
 
 // Why: old targets predate configHost; default to label-based lookup so imported SSH aliases still resolve via ssh -G.
@@ -1122,7 +1123,6 @@ function normalizeSshTarget(t: SshTarget): SshTarget {
   const currentGracePeriodSeconds = target.relayGracePeriodSeconds
   const legacyGracePeriodSeconds = target.remoteWorkspaceSyncGracePeriodSeconds
   const systemSshConnectionReuse = target.systemSshConnectionReuse
-  const experimentalPtySourceCreditV1 = target.experimentalPtySourceCreditV1
   // Why: remote sync now follows the SSH relay lifecycle, so retired per-target sync/grace fields are dropped at disk load.
   delete target.remoteWorkspaceSyncEnabled
   delete target.remoteWorkspaceSyncGracePeriodSeconds
@@ -1147,9 +1147,6 @@ function normalizeSshTarget(t: SshTarget): SshTarget {
   }
   if (systemSshConnectionReuse === false) {
     normalized.systemSshConnectionReuse = false
-  }
-  if (experimentalPtySourceCreditV1 === true) {
-    normalized.experimentalPtySourceCreditV1 = true
   }
   return normalized
 }
@@ -6260,9 +6257,6 @@ export class Store {
     }
     if (!Object.hasOwn(normalized, 'systemSshConnectionReuse')) {
       delete target.systemSshConnectionReuse
-    }
-    if (!Object.hasOwn(normalized, 'experimentalPtySourceCreditV1')) {
-      delete target.experimentalPtySourceCreditV1
     }
     this.scheduleSave()
     return { ...target }
