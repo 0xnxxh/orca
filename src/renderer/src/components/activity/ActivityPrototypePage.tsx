@@ -140,7 +140,6 @@ type ActivityTerminalPortalReadiness = {
 }
 
 type ActivityTerminalPortalDomStatus = {
-  hasSelectedRoot: boolean
   ready: boolean
   unavailable: boolean
 }
@@ -256,7 +255,7 @@ function getSelectedActivityTerminalPortalStatus(
 ): ActivityTerminalPortalDomStatus {
   const parsed = parsePaneKey(paneKey)
   if (!parsed) {
-    return { hasSelectedRoot: false, ready: false, unavailable: true }
+    return { ready: false, unavailable: true }
   }
   let selectedRoot: HTMLElement | null = null
   for (const candidate of target.querySelectorAll<HTMLElement>('[data-terminal-tab-id]')) {
@@ -266,12 +265,12 @@ function getSelectedActivityTerminalPortalStatus(
     }
   }
   if (!selectedRoot) {
-    return { hasSelectedRoot: false, ready: false, unavailable: false }
+    return { ready: false, unavailable: false }
   }
 
   const { foundAnyPane, pane: selectedPane } = findActivityTerminalPane(selectedRoot, parsed.leafId)
   if (!selectedPane) {
-    return { hasSelectedRoot: true, ready: false, unavailable: foundAnyPane }
+    return { ready: false, unavailable: foundAnyPane }
   }
 
   const unavailable = hasInlineDisplayNoneBetween(selectedPane, selectedRoot)
@@ -283,7 +282,6 @@ function getSelectedActivityTerminalPortalStatus(
     selectedPane.querySelector<HTMLElement>('[data-pty-id]') !== null
   const hasXtermScreen = selectedPane.querySelector<HTMLElement>('.xterm-screen') !== null
   return {
-    hasSelectedRoot: true,
     ready: isVisibleRoot && !hasUnisolatedSibling && hasPtyBinding && hasXtermScreen,
     unavailable
   }
@@ -301,74 +299,67 @@ export function useActivityTerminalPortalStatus(
   })
 
   useLayoutEffect(() => {
-    if (!target || !paneKey) {
-      setReadiness((prev) =>
-        prev.target === null && prev.paneKey === null && prev.status === 'loading'
-          ? prev
-          : { target: null, paneKey: null, status: 'loading' }
-      )
-      return
-    }
-    if (forceUnavailable) {
-      setReadiness((prev) =>
-        prev.target === target && prev.paneKey === paneKey && prev.status === 'unavailable'
-          ? prev
-          : { target, paneKey, status: 'unavailable' }
-      )
-      return
+    let disposed = false
+    let readinessFrame: number | null = null
+    let pendingStatus: ActivityTerminalPortalReadiness['status'] | null = null
+
+    // Why: subscription churn can otherwise chain layout-effect updates past React's root-wide limit.
+    const scheduleReadiness = (status: ActivityTerminalPortalReadiness['status']): void => {
+      if (disposed) {
+        return
+      }
+      pendingStatus = status
+      if (readinessFrame !== null) {
+        return
+      }
+      readinessFrame = requestAnimationFrame(() => {
+        readinessFrame = null
+        const nextStatus = pendingStatus
+        pendingStatus = null
+        if (disposed || nextStatus === null) {
+          return
+        }
+        setReadiness((prev) =>
+          prev.target === target && prev.paneKey === paneKey && prev.status === nextStatus
+            ? prev
+            : { target, paneKey, status: nextStatus }
+        )
+      })
     }
 
-    let disposed = false
-    let readyFrame: number | null = null
-    let sawUnreadySelectedRoot = false
-    // Why: scoped to this subscription, so it resets whenever target/paneKey change.
+    const disposeFrame = (): void => {
+      disposed = true
+      if (readinessFrame !== null) {
+        cancelAnimationFrame(readinessFrame)
+        readinessFrame = null
+      }
+    }
+
+    if (!target || !paneKey) {
+      scheduleReadiness('loading')
+      return disposeFrame
+    }
+    if (forceUnavailable) {
+      scheduleReadiness('unavailable')
+      return disposeFrame
+    }
+
     const readinessLatch = createActivityPortalReadinessLatch()
 
     const updateReadiness = (status: ActivityTerminalPortalReadiness['status']): void => {
-      const latched = readinessLatch.next(status)
-      setReadiness((prev) =>
-        prev.target === target && prev.paneKey === paneKey && prev.status === latched
-          ? prev
-          : { target, paneKey, status: latched }
-      )
-    }
-
-    const cancelReadyFrame = (): void => {
-      if (readyFrame !== null) {
-        cancelAnimationFrame(readyFrame)
-        readyFrame = null
-      }
+      scheduleReadiness(readinessLatch.next(status))
     }
 
     const checkReadiness = (): void => {
       const status = getSelectedActivityTerminalPortalStatus(target, paneKey)
       if (status.unavailable) {
-        cancelReadyFrame()
         updateReadiness('unavailable')
         return
       }
       if (status.ready) {
-        if (!sawUnreadySelectedRoot) {
-          cancelReadyFrame()
-          updateReadiness('ready')
-          return
-        }
-        if (readyFrame !== null) {
-          return
-        }
-        // Why: PTY id can appear before xterm paints replayed output; wait one frame so Activity's cover hides the blank frame.
-        readyFrame = requestAnimationFrame(() => {
-          readyFrame = null
-          if (!disposed && getSelectedActivityTerminalPortalStatus(target, paneKey).ready) {
-            updateReadiness('ready')
-          }
-        })
+        updateReadiness('ready')
         return
       }
-      if (status.hasSelectedRoot) {
-        sawUnreadySelectedRoot = true
-      }
-      cancelReadyFrame()
       updateReadiness('loading')
     }
 
@@ -384,8 +375,7 @@ export function useActivityTerminalPortalStatus(
     })
 
     return () => {
-      disposed = true
-      cancelReadyFrame()
+      disposeFrame()
       observer.disconnect()
     }
   }, [target, paneKey, forceUnavailable])

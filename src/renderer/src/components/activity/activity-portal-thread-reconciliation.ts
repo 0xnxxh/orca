@@ -10,10 +10,7 @@ export type ActivityPortalReconciliation<TThread extends ActivityPortalThreadRef
   stagedThread: TThread | null
 }
 
-/**
- * Picks which thread the Activity portal shows now (visible) and which one is
- * warmed up in the inactive slot (staged).
- */
+/** Picks the visible and staged Activity portal threads. */
 export function reconcileActivityPortalThreads<TThread extends ActivityPortalThreadRef>(args: {
   selectedThread: TThread | null
   displayedThread: TThread | null
@@ -21,11 +18,7 @@ export function reconcileActivityPortalThreads<TThread extends ActivityPortalThr
   displayedHasLiveTab: boolean
 }): ActivityPortalReconciliation<TThread> {
   const { selectedThread, displayedThread, selectedHasLiveTab, displayedHasLiveTab } = args
-  // Why worktree+tab, not paneKey: Terminal mounts one TerminalPane per
-  // (worktree, tab) and routes it by worktree+tab, so a same-tab staged
-  // descriptor never gets a pane and its readiness never leaves 'loading' —
-  // no swap arm fires and the old pane sticks. Same tab swaps in place via
-  // isolatedPaneKey instead of staging.
+  // Why: same-tab panes share one TerminalPane and swap through isolatedPaneKey, not staging.
   const displayedIsSelectedTerminal = Boolean(
     selectedThread &&
     displayedThread &&
@@ -57,13 +50,7 @@ export type ActivityPortalSwap =
   | { kind: 'settle-visible'; paneKey: string }
   | null
 
-/**
- * Decides how displayedPaneKey advances for one commit.
- *
- * Why 'unavailable' counts as settled: a stale or unresolvable pane must still
- * hand the slot over, otherwise the previous terminal stays on screen under the
- * newly selected row and the readiness pass retries forever.
- */
+/** Decides how displayedPaneKey advances for one commit. */
 export function resolveActivityPortalSwap<TThread extends ActivityPortalThreadRef>(args: {
   selectedThread: TThread | null
   selectedHasLiveTab: boolean

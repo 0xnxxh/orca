@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 import { act, useLayoutEffect, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -30,10 +30,10 @@ const thread = (tabId: string, leafId: string): ActivityPortalThreadRef => ({
   tab: { id: tabId }
 })
 
-// Two panes of the SAME tab: one TerminalPane, swapped in place by isolatedPaneKey.
+// Same-tab panes share one TerminalPane and swap via isolatedPaneKey.
 const PANE_A = thread(TAB_ID, LEAF_A)
 const PANE_B = thread(TAB_ID, LEAF_B)
-// A different tab: a genuinely separate TerminalPane, so staging applies.
+// Cross-tab panes use separate TerminalPanes, so staging applies.
 const PANE_C = thread(OTHER_TAB_ID, LEAF_C)
 
 let root: Root
@@ -43,13 +43,40 @@ afterEach(() => {
     root?.unmount()
   })
   document.body.replaceChildren()
+  vi.unstubAllGlobals()
 })
 
-/**
- * Models the DOM one portaled TerminalPane emits: a tab root holding every leaf
- * of the tab, with `applyExpandedLayoutTo` hiding the non-isolated siblings
- * inline. Readiness only reports 'ready' when the wanted leaf is the unhidden one.
- */
+function installAnimationFrameController(): {
+  flush: () => Promise<void>
+  pending: () => number
+} {
+  let nextFrameId = 1
+  const callbacks = new Map<number, FrameRequestCallback>()
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback): number => {
+    const frameId = nextFrameId
+    nextFrameId += 1
+    callbacks.set(frameId, callback)
+    return frameId
+  })
+  vi.stubGlobal('cancelAnimationFrame', (frameId: number): void => {
+    callbacks.delete(frameId)
+  })
+  return {
+    async flush() {
+      const queued = Array.from(callbacks.values())
+      callbacks.clear()
+      await act(async () => {
+        for (const callback of queued) {
+          callback(performance.now())
+        }
+        await Promise.resolve()
+      })
+    },
+    pending: () => callbacks.size
+  }
+}
+
+// Models the tab-root DOM and sibling hiding emitted by a portaled TerminalPane.
 function renderPortaledTerminalPane(target: HTMLElement, tabId: string, leafIds: string[]): void {
   const isolatedLeafId = leafIds[0]
   const tabRoot = document.createElement('div')
@@ -71,17 +98,12 @@ function renderPortaledTerminalPane(target: HTMLElement, tabId: string, leafIds:
   target.replaceChildren(tabRoot)
 }
 
-/**
- * Drives the whole Activity portal loop against the real collaborators:
- * reconcile -> publish descriptors -> Terminal's routing -> the readiness hook
- * -> swap. Everything runs in useLayoutEffect, React's SYNC lane, which is the
- * lane that increments nestedUpdateCount toward the #185 throw at 50.
- */
-function runActivityPortalPage(args: {
+// Exercises reconciliation, routing, readiness, and swapping on React's sync lane.
+async function runActivityPortalPage(args: {
   selectedThread: ActivityPortalThreadRef
   initialDisplayed: ActivityPortalThreadRef
   leafIdsByTabId: Record<string, string[]>
-}): { displayedPaneKey: string | null; renders: number } {
+}): Promise<{ displayedPaneKey: string | null; renders: number }> {
   const { selectedThread, initialDisplayed, leafIdsByTabId } = args
   const slotEls = {
     primary: document.createElement('div'),
@@ -132,9 +154,7 @@ function runActivityPortalPage(args: {
       })
     }
 
-    // Why: Terminal mounts one TerminalPane per (worktree, tab) and resolves its
-    // portal target with worktree+tab only -- reproduced here so the test feels
-    // the same routing the crash did.
+    // Match Terminal's one-pane-per-(worktree, tab) routing.
     useLayoutEffect(() => {
       slotEls.primary.replaceChildren()
       slotEls.secondary.replaceChildren()
@@ -183,42 +203,36 @@ function runActivityPortalPage(args: {
       if (swap?.kind === 'settle-visible') {
         setDisplayed(swap.paneKey)
       }
-      // Why these deps: mirror ActivityPrototypePage's swap effect, so a
-      // convergence failure here means the page fails to converge too.
+      // Mirror ActivityPrototypePage's swap dependencies.
     }, [inactiveSlotId, stagedStatus, stagedThread, visibleStatus, visibleThread])
     return null
   }
 
   root = createRoot(document.createElement('div'))
-  act(() => {
+  await act(async () => {
     root.render(<ActivityPortalPage />)
+    await new Promise((resolve) => setTimeout(resolve, 40))
   })
   return { displayedPaneKey, renders }
 }
 
 describe('Activity portal pane switching', () => {
-  it('converges on a newly selected pane of the tab already on screen', () => {
-    // Why this shape: staging a same-tab pane would need a second TerminalPane
-    // for one (worktree, tab), which Terminal never mounts -- the staged slot
-    // would stay empty, its readiness would stay 'loading', no swap arm would
-    // fire, and Activity would show the old pane under the new row forever.
-    const run = (): { displayedPaneKey: string | null; renders: number } =>
+  it('converges on a newly selected pane of the tab already on screen', async () => {
+    // Same-tab staging would wait forever for a second TerminalPane that never mounts.
+    const run = (): Promise<{ displayedPaneKey: string | null; renders: number }> =>
       runActivityPortalPage({
         selectedThread: PANE_B,
         initialDisplayed: PANE_A,
         leafIdsByTabId: { [TAB_ID]: [LEAF_A, LEAF_B] }
       })
 
-    let result: { displayedPaneKey: string | null; renders: number } | null = null
-    expect(() => {
-      result = run()
-    }).not.toThrow()
-    expect(result!.displayedPaneKey).toBe(PANE_B.paneKey)
-    expect(result!.renders).toBeLessThan(50)
+    const result = await run()
+    expect(result.displayedPaneKey).toBe(PANE_B.paneKey)
+    expect(result.renders).toBeLessThan(50)
   })
 
-  it('stages and swaps when the selected pane belongs to a different tab', () => {
-    const result = runActivityPortalPage({
+  it('stages and swaps when the selected pane belongs to a different tab', async () => {
+    const result = await runActivityPortalPage({
       selectedThread: PANE_C,
       initialDisplayed: PANE_A,
       leafIdsByTabId: { [TAB_ID]: [LEAF_A, LEAF_B], [OTHER_TAB_ID]: [LEAF_C] }
@@ -227,19 +241,12 @@ describe('Activity portal pane switching', () => {
     expect(result.renders).toBeLessThan(50)
   })
 
-  /**
-   * Defense in depth, driven through the real hook so the assertion covers the
-   * production wiring and not just the latch module: if any DOM conflation makes
-   * 'ready' unreachable while 'unavailable' stays reachable, useActivityTerminal-
-   * PortalStatus must stop the sync-lane churn. nestedUpdateCount is global per
-   * root, so an unbounded spin surfaces in any unrelated component -- the reason
-   * this cluster appeared under four different error boundaries.
-   */
+  // Drive the latch through production wiring because React's nested-update limit is root-wide.
   it('bounds a readiness oscillation driven through the real portal-status hook', async () => {
+    const frames = installAnimationFrameController()
     const target = document.createElement('div')
     document.body.append(target)
-    // Hidden leaf -> 'unavailable'; nothing hidden -> 'loading' (an unhidden
-    // sibling suppresses 'ready'). 'ready' is unreachable, so the pair spins.
+    // Alternate hidden and ambiguous DOM states so ready remains unreachable.
     const buildRoot = (hiddenLeafId: string | null): void => {
       const tabRoot = document.createElement('div')
       tabRoot.dataset.terminalTabId = TAB_ID
@@ -262,17 +269,14 @@ describe('Activity portal pane switching', () => {
 
     let renders = 0
     const statuses: ActivityPortalReadinessStatus[] = []
-    // Why a hard cap: an unlatched spin never settles, so `act` would hang until
-    // the suite timeout instead of failing on the assertion below. Stop feeding
-    // the loop past the cap so the test fails fast and legibly.
+    // Stop feeding an unlatched spin so failure is immediate and legible.
     const RENDER_CAP = 50
 
     function ActivityTerminalSlot(): null {
       renders += 1
       const status = useActivityTerminalPortalStatus(target, PANE_A.paneKey)
       statuses.push(status)
-      // Models Terminal re-applying the opposite isolation, which the hook's
-      // MutationObserver then reports back as the opposite readiness.
+      // Reapply opposite isolation so MutationObserver reports opposite readiness.
       useLayoutEffect(() => {
         if (renders > RENDER_CAP) {
           return
@@ -289,23 +293,20 @@ describe('Activity portal pane switching', () => {
     root = createRoot(document.createElement('div'))
     await act(async () => {
       root.render(<ActivityTerminalSlot />)
-      await new Promise((resolve) => setTimeout(resolve, 60))
     })
+    for (let frame = 0; frame < 20 && frames.pending() > 0; frame += 1) {
+      await frames.flush()
+    }
+    const settledRenders = renders
+    await frames.flush()
 
-    // Latched: the hook stops emitting new states well before React's 50-deep
-    // sync-update throw, and stays parked on 'unavailable'.
     expect(renders).toBeLessThanOrEqual(RENDER_CAP)
+    expect(renders).toBe(settledRenders)
+    expect(frames.pending()).toBe(0)
     expect(statuses.at(-1)).toBe('unavailable')
   })
 
-  /**
-   * The latch's one user-facing risk: pinning "Terminal unavailable" over a
-   * terminal that churned during a slow attach and then genuinely came up. The
-   * latch only rewrites the hook's output, never the DOM probe, so a real
-   * 'ready' still arrives and releases it. Asserted through the real hook
-   * because the subscription is rebuilt only on target/paneKey change.
-   */
-  it('releases a latched readiness once the terminal genuinely attaches', async () => {
+  it('releases a latched readiness once the terminal attaches', async () => {
     const target = document.createElement('div')
     document.body.append(target)
     const buildRoot = (mode: 'hidden' | 'sibling' | 'ready'): void => {
@@ -351,14 +352,14 @@ describe('Activity portal pane switching', () => {
     root = createRoot(document.createElement('div'))
     await act(async () => {
       root.render(<ActivityTerminalSlot />)
-      await new Promise((resolve) => setTimeout(resolve, 60))
+      await new Promise((resolve) => setTimeout(resolve, 180))
     })
     expect(statuses.at(-1)).toBe('unavailable')
 
     churning = false
     await act(async () => {
       buildRoot('ready')
-      await new Promise((resolve) => setTimeout(resolve, 60))
+      await new Promise((resolve) => setTimeout(resolve, 40))
     })
     expect(statuses.at(-1)).toBe('ready')
   })
