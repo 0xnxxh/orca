@@ -90,12 +90,12 @@ named pipes, local daemon/provider behavior, folder workspaces, prior-version
 processes, mixed-version clients, or the Ubuntu 20.04 packaging floor.
 
 The final exact-code Docker rerun rebuilt the E2E main bundle and all relay
-targets immediately before execution. It is bound to implementation commit
-`bdeb9759d8827abf055eb0c06a0fc1a6afa37cf7`, tree
-`0037af6de877880c14555422dfd2c2b40881d5f8`, main bundle SHA-256
-`085fbdf1a37a22fcd2271d5af119f2870b652644bd8b13d0f74f056f03bb49a1`,
+targets from the current-main merge head. It is bound to implementation commit
+`adba3410fe4427ceb7525f3fdce2ec58973263a7`, tree
+`e43d87340666ca3a733bdb38007c24f95be3f219`, main bundle SHA-256
+`3c304ffc0618520e42bede9a52f72d4b7bb68cbfe543974f89e82a3c477c44b3`,
 and deployed Linux-x64 relay SHA-256
-`bebbe3a648bb9f85b026392006a1736c09192af6508443a04907a74c0f1de255`.
+`366cb7ccf2e4b388cc6f81a8f6055ab9fde57d2d91381767005c15908832e776`.
 No additional live topology proof is inferred from that run.
 
 ## Verified baseline and migration boundary
@@ -2524,13 +2524,13 @@ at exactly 262,144 held source units; fixed-size filesystem/Git churn was
 141.2/151.5 ms with 95 bulk reads; reconnect completed in 16.0 seconds. All
 other live topologies remain separate.
 
-After the exact-PTY migration-failure containment fix,
+After the exact-PTY migration-failure containment fix and current-main merge,
 `electron-vite build --mode e2e` and `pnpm run build:relay` produced the exact
 artifact hashes recorded above. The four-case Docker command then passed in
-58.5 seconds without a source-credit override: direct typing was 7.0/111.7 ms
-median/worst; ACK-stalled typing was 8.2/17.7 ms at exactly 262,144 held source
-units; fixed-size filesystem/Git churn was 148.8/159.5 ms with 95 bulk reads;
-reconnect completed in 14.6 seconds. This is direct SSH/deployed Linux relay
+56.7 seconds without a source-credit override: direct typing was 5.3/108.9 ms
+median/worst; ACK-stalled typing was 4.8/107.6 ms at exactly 262,144 held source
+units; fixed-size filesystem/Git churn was 152.0/173.3 ms with 84 bulk reads;
+reconnect completed in 14.3 seconds. This is direct SSH/deployed Linux relay
 evidence only.
 
 At the implementation commit above, the source/intake slice passed 12 files and 205
