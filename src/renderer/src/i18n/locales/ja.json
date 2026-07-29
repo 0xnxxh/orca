@@ -3863,7 +3863,7 @@
           "upToDate": "最新です",
           "installed": "インストール済み",
           "details": "Details",
-          "needsAttention": "Needs attention"
+          "needsAttention": "Review skill"
         },
         "SkillUpdateResultRows": {
           "stillOutdated": "Still out of date after the update ran."

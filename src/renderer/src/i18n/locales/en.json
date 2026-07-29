@@ -3893,7 +3893,7 @@
           "upToDate": "Up to date",
           "installed": "Installed",
           "details": "Details",
-          "needsAttention": "Needs attention"
+          "needsAttention": "Review skill"
         }
       },
       "sidebar": {

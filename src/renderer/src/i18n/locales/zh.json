@@ -3863,7 +3863,7 @@
           "upToDate": "已是最新",
           "installed": "已安装",
           "details": "Details",
-          "needsAttention": "Needs attention"
+          "needsAttention": "Review skill"
         },
         "SkillUpdateResultRows": {
           "stillOutdated": "Still out of date after the update ran."
