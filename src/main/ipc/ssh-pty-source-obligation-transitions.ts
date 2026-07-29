@@ -4,9 +4,25 @@ import type {
 } from './ssh-pty-source-obligation-contract'
 import {
   advanceSourceTerminalEnd,
+  cancelOpenSourceObligations,
   requireSourceSpan,
   type TokenRecord
 } from './ssh-pty-source-obligation-state'
+
+export function applySourceRecoveryCancellationProof(
+  token: TokenRecord,
+  proof: Readonly<{ sentEndSu: number; creditedEndSu: number }>
+): void {
+  if (
+    token.state !== 'active' ||
+    proof.sentEndSu < token.receivedEndSu ||
+    proof.creditedEndSu !== token.ackPublishedEndSu ||
+    proof.creditedEndSu > token.receivedEndSu
+  ) {
+    throw new Error('SSH PTY source recovery cancellation proof is stale or invalid')
+  }
+  cancelOpenSourceObligations(token, 'relay-recovery-cancellation-proof')
+}
 
 export function transitionOpenSourceObligation(
   spanOwners: ReadonlyMap<string, TokenRecord>,

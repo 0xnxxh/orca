@@ -121,6 +121,17 @@ export function applySshPtySourceCancellationProof(
   return installedIntake?.applySourceCancellationProof(event, proof) ?? false
 }
 
+export function applySshPtySourceRecoveryCancellationProof(
+  event: SshPtyOutputExitEvent,
+  proof: SshPtySourceCancellationProof
+): boolean {
+  if (!installedIntake) {
+    return false
+  }
+  installedIntake.applySourceRecoveryCancellationProof(event, proof)
+  return true
+}
+
 function outputIntakeUnavailableError(): Error {
   return Object.assign(new Error('ssh_output_intake_unavailable'), {
     code: 'ssh_output_intake_unavailable'

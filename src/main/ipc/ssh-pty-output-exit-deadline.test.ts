@@ -106,6 +106,8 @@ describe('SshPtyOutputExitDeadline', () => {
         source: { openedTokens: 0, ptyIdentities: 0 },
         exitBarriers: 0
       })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(harness.exits).toEqual(['exit'])
       expect(() =>
         harness.intake
           .getRemoteSourceRangeConsumerHooks()

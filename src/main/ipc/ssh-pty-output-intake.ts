@@ -162,10 +162,15 @@ export class SshPtyOutputIntake {
 
   async acceptExit(event: SshPtyOutputExitEvent): Promise<void> {
     this.generationGuard.sealExit(event)
-    await this.exitDeadline.wait(event, this.finishExit(event))
+    await this.exitDeadline.wait(event, (validateNormalExit) =>
+      this.finishExit(event, validateNormalExit)
+    )
   }
 
-  private async finishExit(event: SshPtyOutputExitEvent): Promise<void> {
+  private async finishExit(
+    event: SshPtyOutputExitEvent,
+    validateNormalExit: () => void
+  ): Promise<void> {
     await settleSshPtyOutputExit({
       event,
       admission: this.admission,
@@ -173,7 +178,7 @@ export class SshPtyOutputIntake {
       dependencies: this.dependencies,
       validateGeneration: () => {
         this.generationGuard.validate(event)
-        this.exitDeadline.validateNormalExit(event)
+        validateNormalExit()
       },
       prepareExit: () => this.exitDeadline.prepareExitOnce(event),
       afterAdmissionIdle: () => this.sourceObligations.sealPty(event),
@@ -248,11 +253,19 @@ export class SshPtyOutputIntake {
     return this.sourceObligations.applyCancellationProof(event, proof)
   }
 
+  applySourceRecoveryCancellationProof(
+    event: SshPtyOutputExitEvent,
+    proof: Readonly<{ sentEndSu: number; creditedEndSu: number }>
+  ): void {
+    this.sourceObligations.applyRecoveryCancellationProof(event, proof)
+  }
+
   getDebugSnapshot() {
     return {
       model: this.admission.getDebugSnapshot(),
       projection: this.projections.getDebugSnapshot(),
       source: this.sourceObligations.getDebugSnapshot(),
+      generation: this.generationGuard.getDebugSnapshot(),
       exitBarriers: this.exitDeadline.activeBarriers
     }
   }

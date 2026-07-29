@@ -4,6 +4,7 @@ import { createMockDeps, mockDeploySuccess } from './ssh-relay-session-test-fixt
 
 const {
   acceptOutputDataMock,
+  acceptOutputExitMock,
   muxRequestMock,
   onNotificationByMethodMock,
   openConsumerSessionMock,
@@ -12,9 +13,11 @@ const {
   sourceAckCleanupMock,
   sourceCancellationCleanupMock,
   attachForReconnectMock,
-  ptyDataHandlerRef
+  ptyDataHandlerRef,
+  ptyExitHandlerRef
 } = vi.hoisted(() => ({
   acceptOutputDataMock: vi.fn().mockResolvedValue(undefined),
+  acceptOutputExitMock: vi.fn().mockResolvedValue(undefined),
   muxRequestMock: vi.fn(),
   onNotificationByMethodMock: vi.fn(),
   openConsumerSessionMock: vi.fn(),
@@ -23,7 +26,8 @@ const {
   sourceAckCleanupMock: vi.fn(),
   sourceCancellationCleanupMock: vi.fn(),
   attachForReconnectMock: vi.fn().mockResolvedValue({}),
-  ptyDataHandlerRef: { current: undefined as undefined | ((payload: unknown) => void) }
+  ptyDataHandlerRef: { current: undefined as undefined | ((payload: unknown) => void) },
+  ptyExitHandlerRef: { current: undefined as undefined | ((payload: unknown) => void) }
 }))
 
 vi.mock('./ssh-relay-deploy', () => ({ deployAndLaunchRelay: vi.fn() }))
@@ -32,13 +36,14 @@ vi.mock('./ssh-pty-consumer-session', () => ({
 }))
 vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
   acceptSshPtyOutputData: acceptOutputDataMock,
-  acceptSshPtyOutputExit: vi.fn().mockResolvedValue(undefined),
+  acceptSshPtyOutputExit: acceptOutputExitMock,
   allocateSshPtyProviderGeneration: vi.fn(() => 23),
   closeSshPtyOutputGeneration: vi.fn(),
   getSshPtyAcceptedSourceCheckpoints: vi.fn(() => []),
   installSshPtySourceAckPublisher: vi.fn(() => sourceAckCleanupMock),
   installSshPtySourceCancellationPublisher: vi.fn(() => sourceCancellationCleanupMock),
-  applySshPtySourceCancellationProof: vi.fn(() => true)
+  applySshPtySourceCancellationProof: vi.fn(() => true),
+  applySshPtySourceRecoveryCancellationProof: vi.fn(() => true)
 }))
 vi.mock('./ssh-channel-multiplexer', () => ({
   SshChannelMultiplexer: class MockSshChannelMultiplexer {
@@ -62,7 +67,10 @@ vi.mock('../providers/ssh-pty-provider', () => ({
       return () => {}
     })
     onReplay = vi.fn().mockReturnValue(() => {})
-    onExit = vi.fn().mockReturnValue(() => {})
+    onExit = vi.fn().mockImplementation((handler) => {
+      ptyExitHandlerRef.current = handler
+      return () => {}
+    })
     attachForReconnect = attachForReconnectMock
     setPtyDeliveryPauseAdapter = vi.fn()
     dispose = ptyProviderDisposeMock
@@ -81,6 +89,7 @@ vi.mock('../ipc/pty', () => ({
   unregisterSshPtyProvider: vi.fn(),
   getSshPtyProvider: vi.fn().mockReturnValue({ dispose: vi.fn() }),
   getPtyIdsForConnection: vi.fn().mockReturnValue([]),
+  isCurrentPtyExit: vi.fn(() => true),
   clearPtyOwnershipForConnection: vi.fn(),
   clearProviderPtyState: vi.fn(),
   deletePtyOwnership: vi.fn(),
@@ -110,15 +119,19 @@ const {
 const { closeSshPtyOutputGeneration, getSshPtyAcceptedSourceCheckpoints } =
   await import('../ipc/ssh-pty-output-intake-registry')
 const { applySshPtySourceCancellationProof } = await import('../ipc/ssh-pty-output-intake-registry')
+const { applySshPtySourceRecoveryCancellationProof } =
+  await import('../ipc/ssh-pty-output-intake-registry')
 
 describe('SshRelaySession recovery race fencing', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     ptyDataHandlerRef.current = undefined
+    ptyExitHandlerRef.current = undefined
     attachForReconnectMock.mockResolvedValue({})
     vi.mocked(getPtyIdsForConnection).mockReturnValue([])
     vi.mocked(getSshPtyAcceptedSourceCheckpoints).mockReturnValue([])
     vi.mocked(applySshPtySourceCancellationProof).mockReturnValue(true)
+    vi.mocked(applySshPtySourceRecoveryCancellationProof).mockReturnValue(true)
     muxRequestMock.mockResolvedValue([])
     mockDeploySuccess()
   })
@@ -190,6 +203,197 @@ describe('SshRelaySession recovery race fencing', () => {
     )
     return { session, deps }
   }
+
+  it('publishes held recovery data before an exact exit without waiting for completion', async () => {
+    const targetId = 'exit-with-complete-private-body'
+    const { session, deps } = await prepareRecovery(targetId)
+    const recoveryActivationLease = { commit: vi.fn(), retire: vi.fn() }
+    const sourceActivationLease = {
+      commit: vi.fn(),
+      rollback: vi.fn(async () => true),
+      transferToRecovery: vi.fn((sink: (payload: unknown) => void) => {
+        sink({
+          id: `ssh:${targetId}@@pty-1`,
+          data: 'held',
+          providerGeneration: 23,
+          ptyIncarnation: 'incarnation-1',
+          sequenceChars: 4,
+          source: {
+            relayPtyId: 'pty-1',
+            spanId: 'new-token:4:8',
+            clientGeneration: 2,
+            ownerGeneration: 2,
+            deliveryToken: 'new-token',
+            sourceStartSu: 4,
+            sourceEndSu: 8
+          }
+        })
+        return recoveryActivationLease
+      })
+    }
+    attachForReconnectMock.mockImplementation(async () => {
+      ptyExitHandlerRef.current?.({
+        id: `ssh:${targetId}@@pty-1`,
+        code: 0,
+        providerGeneration: 23,
+        ptyIncarnation: 'incarnation-1',
+        incarnationId: 'incarnation-1'
+      })
+      return {
+        incarnationId: 'incarnation-1',
+        sourceRecovery: {
+          status: 'pending',
+          clientGeneration: 2,
+          ownerGeneration: 2,
+          ptyIncarnation: 'incarnation-1',
+          deliveryToken: 'new-token',
+          checkpointSourceEndSu: 4,
+          recoveryEndSu: 8
+        },
+        sourceActivationLease
+      }
+    })
+
+    await session.reconnect(deps.mockConn)
+
+    expect(acceptOutputDataMock).toHaveBeenCalledWith(expect.objectContaining({ data: 'held' }))
+    expect(acceptOutputExitMock).toHaveBeenCalledOnce()
+    expect(acceptOutputDataMock.mock.invocationCallOrder[0]).toBeLessThan(
+      acceptOutputExitMock.mock.invocationCallOrder[0]!
+    )
+    expect(sourceActivationLease.transferToRecovery).toHaveBeenCalledOnce()
+    expect(sourceActivationLease.rollback).not.toHaveBeenCalled()
+    expect(recoveryActivationLease.commit).toHaveBeenCalledOnce()
+    expect(recoveryActivationLease.retire).not.toHaveBeenCalled()
+    expect(muxRequestMock).not.toHaveBeenCalledWith('pty.cancelDelivery', expect.anything())
+    expect(setPtyOwnership).not.toHaveBeenCalled()
+    expect(deps.mockStore.markSshRemotePtyLease).not.toHaveBeenCalledWith(
+      targetId,
+      'pty-1',
+      'attached'
+    )
+  })
+
+  it('settles exact cancellation before publishing an exit with incomplete recovery data', async () => {
+    const targetId = 'exit-with-incomplete-private-body'
+    let settleCancellation: ((proof: unknown) => void) | undefined
+    muxRequestMock.mockImplementation((method) =>
+      method === 'pty.cancelDelivery'
+        ? new Promise((resolve) => {
+            settleCancellation = resolve
+          })
+        : Promise.resolve([])
+    )
+    const { session, deps } = await prepareRecovery(targetId)
+    const recoveryActivationLease = { commit: vi.fn(), retire: vi.fn() }
+    const sourceActivationLease = {
+      commit: vi.fn(),
+      rollback: vi.fn(async () => true),
+      transferToRecovery: vi.fn((sink: (payload: unknown) => void) => {
+        sink({
+          id: `ssh:${targetId}@@pty-1`,
+          data: 'partial',
+          providerGeneration: 23,
+          ptyIncarnation: 'incarnation-1',
+          sequenceChars: 2,
+          source: {
+            relayPtyId: 'pty-1',
+            spanId: 'new-token:4:6',
+            clientGeneration: 2,
+            ownerGeneration: 2,
+            deliveryToken: 'new-token',
+            sourceStartSu: 4,
+            sourceEndSu: 6
+          }
+        })
+        return recoveryActivationLease
+      })
+    }
+    attachForReconnectMock.mockImplementation(async () => {
+      ptyExitHandlerRef.current?.({
+        id: `ssh:${targetId}@@pty-1`,
+        code: 0,
+        providerGeneration: 23,
+        ptyIncarnation: 'incarnation-1',
+        incarnationId: 'incarnation-1'
+      })
+      return {
+        incarnationId: 'incarnation-1',
+        sourceRecovery: {
+          status: 'pending',
+          clientGeneration: 2,
+          ownerGeneration: 2,
+          ptyIncarnation: 'incarnation-1',
+          deliveryToken: 'new-token',
+          checkpointSourceEndSu: 4,
+          recoveryEndSu: 8
+        },
+        sourceActivationLease
+      }
+    })
+
+    const reconnect = session.reconnect(deps.mockConn)
+    await vi.waitFor(() =>
+      expect(muxRequestMock).toHaveBeenCalledWith('pty.cancelDelivery', {
+        id: 'pty-1',
+        clientGeneration: 2,
+        ownerGeneration: 2,
+        deliveryToken: 'new-token'
+      })
+    )
+    expect(acceptOutputExitMock).not.toHaveBeenCalled()
+
+    settleCancellation?.({ canceled: true, sentEndSu: 6, creditedEndSu: 4 })
+    await reconnect
+
+    expect(acceptOutputDataMock).not.toHaveBeenCalled()
+    expect(acceptOutputExitMock).toHaveBeenCalledOnce()
+    expect(recoveryActivationLease.commit).not.toHaveBeenCalled()
+    expect(recoveryActivationLease.retire).toHaveBeenCalledOnce()
+    expect(sourceActivationLease.rollback).not.toHaveBeenCalled()
+    expect(applySshPtySourceRecoveryCancellationProof).toHaveBeenCalledOnce()
+  })
+
+  it('awaits provisional cancellation proof before publishing an exact recovery exit', async () => {
+    const targetId = 'exit-before-recovery-identity'
+    let settleRollback: ((settled: boolean) => void) | undefined
+    const { session, deps } = await prepareRecovery(targetId)
+    const sourceActivationLease = {
+      commit: vi.fn(),
+      rollback: vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            settleRollback = resolve
+          })
+      ),
+      transferToRecovery: vi.fn()
+    }
+    attachForReconnectMock.mockImplementation(async () => {
+      ptyExitHandlerRef.current?.({
+        id: `ssh:${targetId}@@pty-1`,
+        code: 0,
+        providerGeneration: 23,
+        ptyIncarnation: 'incarnation-1',
+        incarnationId: 'incarnation-1'
+      })
+      return {
+        incarnationId: 'incarnation-1',
+        sourceRecovery: { status: 'restoreRequired', reason: 'checkpointUnavailable' },
+        sourceActivationLease
+      }
+    })
+
+    const reconnect = session.reconnect(deps.mockConn)
+    await vi.waitFor(() => expect(sourceActivationLease.rollback).toHaveBeenCalledOnce())
+    expect(acceptOutputExitMock).not.toHaveBeenCalled()
+
+    settleRollback?.(true)
+    await reconnect
+
+    expect(acceptOutputExitMock).toHaveBeenCalledOnce()
+    expect(sourceActivationLease.transferToRecovery).not.toHaveBeenCalled()
+    expect(sourceActivationLease.commit).not.toHaveBeenCalled()
+  })
 
   it('retains the empty recovery end as the first post-activation source anchor', async () => {
     const targetId = 'empty-recovery-gap'
@@ -306,9 +510,91 @@ describe('SshRelaySession recovery race fencing', () => {
     expect(muxDisposeMock).not.toHaveBeenCalledWith('shutdown')
   })
 
-  it.each(['publication', 'proof'] as const)(
+  it('rejects cancellation proof below capacity-rejected and later private frames', async () => {
+    const targetId = 'capacity-watermark'
+    muxRequestMock.mockImplementation(async (method) =>
+      method === 'pty.cancelDelivery' ? { canceled: true, sentEndSu: 8, creditedEndSu: 4 } : []
+    )
+    const { session, deps } = await prepareRecovery(targetId)
+    const recoveryActivationLease = { commit: vi.fn(), retire: vi.fn() }
+    const sourceActivationLease = {
+      commit: vi.fn(),
+      rollback: vi.fn(),
+      transferToRecovery: vi.fn((sink: (payload: unknown) => void) => {
+        sink({
+          id: `ssh:${targetId}@@pty-1`,
+          data: 'x'.repeat(2 * 1024 * 1024 + 1),
+          providerGeneration: 23,
+          ptyIncarnation: 'incarnation-1',
+          sequenceChars: 4,
+          source: {
+            relayPtyId: 'pty-1',
+            spanId: 'new-token:4:8',
+            clientGeneration: 2,
+            ownerGeneration: 2,
+            deliveryToken: 'new-token',
+            sourceStartSu: 4,
+            sourceEndSu: 8
+          }
+        })
+        sink({
+          id: `ssh:${targetId}@@pty-1`,
+          data: 'later',
+          providerGeneration: 23,
+          ptyIncarnation: 'incarnation-1',
+          sequenceChars: 4,
+          source: {
+            relayPtyId: 'pty-1',
+            spanId: 'new-token:8:12',
+            clientGeneration: 2,
+            ownerGeneration: 2,
+            deliveryToken: 'new-token',
+            sourceStartSu: 8,
+            sourceEndSu: 12
+          }
+        })
+        return recoveryActivationLease
+      })
+    }
+    attachForReconnectMock.mockResolvedValue({
+      incarnationId: 'incarnation-1',
+      sourceRecovery: {
+        status: 'pending',
+        clientGeneration: 2,
+        ownerGeneration: 2,
+        ptyIncarnation: 'incarnation-1',
+        deliveryToken: 'new-token',
+        checkpointSourceEndSu: 4,
+        recoveryEndSu: 12
+      },
+      sourceActivationLease
+    })
+
+    await session.reconnect(deps.mockConn)
+
+    expect(muxRequestMock).toHaveBeenCalledWith(
+      'pty.cancelDelivery',
+      expect.objectContaining({ deliveryToken: 'new-token' })
+    )
+    expect(vi.mocked(closeSshPtyOutputGeneration).mock.calls).toContainEqual([
+      23,
+      'ssh_source_recovery_cancellation_failed'
+    ])
+    expect(applySshPtySourceRecoveryCancellationProof).not.toHaveBeenCalled()
+    expect(recoveryActivationLease.commit).not.toHaveBeenCalled()
+    expect(recoveryActivationLease.retire).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['publication', undefined],
+    ['proof', { canceled: true, sentEndSu: 8, creditedEndSu: 4 }],
+    ['negative-end', { canceled: true, sentEndSu: -1, creditedEndSu: 4 }],
+    ['credited-ahead', { canceled: true, sentEndSu: 8, creditedEndSu: 9 }],
+    ['checkpoint-mismatch', { canceled: true, sentEndSu: 8, creditedEndSu: 3 }],
+    ['sent-before-private-end', { canceled: true, sentEndSu: 7, creditedEndSu: 4 }]
+  ] as const)(
     'closes one provider generation when recovery cancellation %s rejects',
-    async (failure) => {
+    async (failure, cancellationResult) => {
       const targetId = `cancel-${failure}-failure`
       muxRequestMock.mockImplementation(async (method) => {
         if (method !== 'pty.cancelDelivery') {
@@ -317,16 +603,21 @@ describe('SshRelaySession recovery race fencing', () => {
         if (failure === 'publication') {
           throw new Error('cancel publication failed')
         }
-        return { canceled: true, sentEndSu: 8, creditedEndSu: 4 }
+        return cancellationResult
       })
       if (failure === 'proof') {
-        vi.mocked(applySshPtySourceCancellationProof).mockImplementation(() => {
+        vi.mocked(applySshPtySourceRecoveryCancellationProof).mockImplementation(() => {
           throw new Error('cancel proof rejected')
         })
       }
       const { session, deps } = await prepareRecovery(targetId)
       const onRelayLost = vi.fn()
-      const activationLease = { commit: vi.fn(), rollback: vi.fn() }
+      const recoveryActivationLease = { commit: vi.fn(), retire: vi.fn() }
+      const activationLease = {
+        commit: vi.fn(),
+        rollback: vi.fn(),
+        transferToRecovery: vi.fn(() => recoveryActivationLease)
+      }
       session.setOnRelayLost(onRelayLost)
       let cleanupCountsBeforeFailure:
         | {
@@ -388,8 +679,11 @@ describe('SshRelaySession recovery race fencing', () => {
       expect(sourceCancellationCleanupMock.mock.calls).toHaveLength(before.cancellation + 1)
       expect(vi.mocked(unregisterSshPtyProvider).mock.calls).toHaveLength(before.unregister + 1)
       expect(unregisterSshPtyProvider).toHaveBeenLastCalledWith(targetId)
-      expect(activationLease.rollback).toHaveBeenCalledOnce()
+      expect(activationLease.transferToRecovery).toHaveBeenCalledOnce()
       expect(activationLease.commit).not.toHaveBeenCalled()
+      expect(activationLease.rollback).not.toHaveBeenCalled()
+      expect(recoveryActivationLease.commit).not.toHaveBeenCalled()
+      expect(recoveryActivationLease.retire).toHaveBeenCalledOnce()
       expect(onRelayLost).toHaveBeenCalledOnce()
       expect(session.getState()).toBe('reconnecting')
       expect(clearProviderPtyState).not.toHaveBeenCalled()
@@ -412,8 +706,18 @@ describe('SshRelaySession recovery race fencing', () => {
   it('keeps a stale overlapping recovery from canceling or mutating its replacement', async () => {
     const targetId = 'overlapping-recovery'
     const { session, deps } = await prepareRecovery(targetId)
-    const staleLease = { commit: vi.fn(), rollback: vi.fn() }
-    const replacementLease = { commit: vi.fn(), rollback: vi.fn() }
+    const staleRecoveryLease = { commit: vi.fn(), retire: vi.fn() }
+    const replacementRecoveryLease = { commit: vi.fn(), retire: vi.fn() }
+    const staleLease = {
+      commit: vi.fn(),
+      rollback: vi.fn(),
+      transferToRecovery: vi.fn(() => staleRecoveryLease)
+    }
+    const replacementLease = {
+      commit: vi.fn(),
+      rollback: vi.fn(),
+      transferToRecovery: vi.fn(() => replacementRecoveryLease)
+    }
     attachForReconnectMock.mockImplementation(async () => {
       const ownerGeneration = openConsumerSessionMock.mock.calls.length
       if (ownerGeneration === 3) {
@@ -466,10 +770,16 @@ describe('SshRelaySession recovery race fencing', () => {
     expect(deps.mockStore.markSshRemotePtyLease).toHaveBeenCalledTimes(1)
     expect(deps.mockStore.markSshRemotePtyLease).toHaveBeenCalledWith(targetId, 'pty-1', 'attached')
     expect(setPtyOwnership).toHaveBeenCalledTimes(1)
-    expect(staleLease.rollback).toHaveBeenCalledOnce()
+    expect(staleLease.transferToRecovery).toHaveBeenCalledOnce()
     expect(staleLease.commit).not.toHaveBeenCalled()
-    expect(replacementLease.commit).toHaveBeenCalledOnce()
+    expect(staleLease.rollback).not.toHaveBeenCalled()
+    expect(staleRecoveryLease.commit).not.toHaveBeenCalled()
+    expect(staleRecoveryLease.retire).toHaveBeenCalledOnce()
+    expect(replacementLease.transferToRecovery).toHaveBeenCalledOnce()
+    expect(replacementLease.commit).not.toHaveBeenCalled()
     expect(replacementLease.rollback).not.toHaveBeenCalled()
+    expect(replacementRecoveryLease.commit).toHaveBeenCalledOnce()
+    expect(replacementRecoveryLease.retire).not.toHaveBeenCalled()
     expect(clearProviderPtyState).not.toHaveBeenCalled()
     expect(clearPtyOwnershipForConnection).not.toHaveBeenCalled()
     expect(deletePtyOwnership).not.toHaveBeenCalled()

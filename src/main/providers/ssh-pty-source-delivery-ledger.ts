@@ -10,8 +10,10 @@ export type PendingSshPtySourceData = Readonly<{
 }>
 
 type SourceDeliveryLeaseState = {
-  phase: 'provisional' | 'committing' | 'committed' | 'retired'
+  phase: 'provisional' | 'recovery' | 'committing' | 'committed' | 'retired'
   pendingData: PendingSshPtySourceData[]
+  recoverySink?: (pending: PendingSshPtySourceData) => void
+  exited: boolean
 }
 
 type SourceDeliveryState = Readonly<{
@@ -21,9 +23,17 @@ type SourceDeliveryState = Readonly<{
   previous?: SourceDeliveryState
 }>
 
-export type SshPtyReceivingActivationLease = Readonly<{
+export type SshPtyRecoveryActivationLease = Readonly<{
+  commit: () => void
+  retire: () => void
+}>
+
+export type SshPtySourceDeliveryLease = Readonly<{
   commit: () => void
   rollback: () => Promise<boolean>
+  transferToRecovery: (
+    sink: (pending: PendingSshPtySourceData) => void
+  ) => SshPtyRecoveryActivationLease
 }>
 
 export class SshPtySourceDeliveryLedger {
@@ -34,10 +44,7 @@ export class SshPtySourceDeliveryLedger {
     private readonly publishData: (pending: PendingSshPtySourceData) => void
   ) {}
 
-  install(
-    relayPtyId: string,
-    activation: PtySourceReceivingActivation
-  ): SshPtyReceivingActivationLease {
+  install(relayPtyId: string, activation: PtySourceReceivingActivation): SshPtySourceDeliveryLease {
     if (!relayPtyId || activation.ptyIncarnation.length === 0) {
       throw new Error('ssh_source_receiving_activation_invalid')
     }
@@ -69,7 +76,9 @@ export class SshPtySourceDeliveryLedger {
       sourceEndSu: pending.source.sourceEndSu
     }) as SourceDeliveryState
     this.deliveryByPty.set(pending.relayPtyId, accepted)
-    if (accepted.lease.phase !== 'committed') {
+    if (accepted.lease.phase === 'recovery') {
+      accepted.lease.recoverySink?.(pending)
+    } else if (accepted.lease.phase !== 'committed') {
       accepted.lease.pendingData.push(pending)
     } else {
       this.publishData(pending)
@@ -78,8 +87,11 @@ export class SshPtySourceDeliveryLedger {
   }
 
   recordExit(relayPtyId: string): void {
-    if (this.deliveryByPty.get(relayPtyId)?.lease.phase === 'committed') {
+    const current = this.deliveryByPty.get(relayPtyId)
+    if (current?.lease.phase === 'committed') {
       this.deliveryByPty.delete(relayPtyId)
+    } else if (current) {
+      current.lease.exited = true
     }
   }
 
@@ -87,10 +99,11 @@ export class SshPtySourceDeliveryLedger {
     relayPtyId: string,
     activation: PtySourceReceivingActivation,
     previous: SourceDeliveryState | undefined
-  ): SshPtyReceivingActivationLease {
+  ): SshPtySourceDeliveryLease {
     const leaseState: SourceDeliveryLeaseState = {
       phase: 'provisional',
-      pendingData: []
+      pendingData: [],
+      exited: false
     }
     this.deliveryByPty.set(
       relayPtyId,
@@ -102,10 +115,11 @@ export class SshPtySourceDeliveryLedger {
       })
     )
     let settled = false
+    let transferInProgress = false
     let rollbackSettlement: Promise<boolean> | undefined
     return Object.freeze({
       commit: () => {
-        if (settled) {
+        if (settled || transferInProgress) {
           return
         }
         settled = true
@@ -115,13 +129,67 @@ export class SshPtySourceDeliveryLedger {
         if (rollbackSettlement) {
           return rollbackSettlement
         }
-        if (settled) {
+        if (settled || transferInProgress) {
           return Promise.resolve(false)
         }
         settled = true
         this.retire(relayPtyId, previous, leaseState)
         rollbackSettlement = settleExactSourceDeliveryCancellation(this.mux, relayPtyId, activation)
         return rollbackSettlement
+      },
+      transferToRecovery: (sink) => {
+        if (settled || transferInProgress || leaseState.phase !== 'provisional') {
+          throw new Error('ssh_source_receiving_activation_stale')
+        }
+        transferInProgress = true
+        try {
+          const recoveryLease = this.transferToRecovery(relayPtyId, leaseState, previous, sink)
+          settled = true
+          return recoveryLease
+        } finally {
+          transferInProgress = false
+        }
+      }
+    })
+  }
+
+  private transferToRecovery(
+    relayPtyId: string,
+    lease: SourceDeliveryLeaseState,
+    previous: SourceDeliveryState | undefined,
+    sink: (pending: PendingSshPtySourceData) => void
+  ): SshPtyRecoveryActivationLease {
+    if (this.deliveryByPty.get(relayPtyId)?.lease !== lease) {
+      this.retire(relayPtyId, previous, lease)
+      throw new Error('ssh_source_receiving_activation_stale')
+    }
+    lease.phase = 'recovery'
+    lease.recoverySink = sink
+    try {
+      while (lease.pendingData.length > 0) {
+        sink(lease.pendingData.shift()!)
+      }
+    } catch (error) {
+      this.retire(relayPtyId, previous, lease)
+      throw error
+    }
+    let settled = false
+    return Object.freeze({
+      commit: () => {
+        if (settled) {
+          return
+        }
+        settled = true
+        lease.recoverySink = undefined
+        this.commit(relayPtyId, lease)
+      },
+      retire: () => {
+        if (settled) {
+          return
+        }
+        settled = true
+        lease.recoverySink = undefined
+        this.retire(relayPtyId, previous, lease)
       }
     })
   }
@@ -138,6 +206,10 @@ export class SshPtySourceDeliveryLedger {
     }
     lease.phase = 'committed'
     const current = this.deliveryByPty.get(relayPtyId)
+    if (lease.exited && current?.lease === lease) {
+      this.deliveryByPty.delete(relayPtyId)
+      return
+    }
     if (current?.lease === lease && current.previous) {
       this.deliveryByPty.set(
         relayPtyId,
@@ -156,8 +228,13 @@ export class SshPtySourceDeliveryLedger {
     lease: SourceDeliveryLeaseState
   ): void {
     lease.phase = 'retired'
+    lease.recoverySink = undefined
     lease.pendingData.splice(0)
     if (this.deliveryByPty.get(relayPtyId)?.lease !== lease) {
+      return
+    }
+    if (lease.exited) {
+      this.deliveryByPty.delete(relayPtyId)
       return
     }
     const predecessor = activePredecessor(previous)
@@ -169,18 +246,19 @@ export class SshPtySourceDeliveryLedger {
   }
 }
 
-function settledReceivingActivationLease(): SshPtyReceivingActivationLease {
-  return Object.freeze({ commit: () => {}, rollback: async () => true })
+function settledReceivingActivationLease(): SshPtySourceDeliveryLease {
+  return Object.freeze({
+    commit: () => {},
+    rollback: async () => true,
+    transferToRecovery: () => Object.freeze({ commit: () => {}, retire: () => {} })
+  })
 }
 
-function activePredecessor(
-  previous: SourceDeliveryState | undefined
-): SourceDeliveryState | undefined {
-  let candidate = previous
-  while (candidate?.lease.phase === 'retired') {
-    candidate = candidate.previous
+function activePredecessor(previous?: SourceDeliveryState): SourceDeliveryState | undefined {
+  while (previous?.lease.phase === 'retired') {
+    previous = previous.previous
   }
-  return candidate
+  return previous
 }
 
 function sameReceivingActivation(
@@ -205,6 +283,7 @@ function acceptsSourceFrame(
   return Boolean(
     current &&
     current.lease.phase !== 'retired' &&
+    !current.lease.exited &&
     current.activation.ptyIncarnation === params.ptyIncarnation &&
     current.activation.deliveryToken === source.deliveryToken &&
     current.activation.clientGeneration === source.clientGeneration &&

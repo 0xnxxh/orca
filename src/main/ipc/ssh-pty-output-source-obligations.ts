@@ -179,6 +179,16 @@ export class SshPtyOutputSourceObligations {
     return true
   }
 
+  applyRecoveryCancellationProof(
+    event: SshPtyOutputExitEvent,
+    proof: SshPtySourceCancellationProof
+  ): void {
+    const identity = this.identityByPty.get(this.ptyKey(event))
+    if (identity) {
+      this.coordinator.applyRecoveryCancellationProof(identity, proof)
+    }
+  }
+
   closeGeneration(providerGeneration: number, reason: string): void {
     this.remoteConsumers.closeGeneration(providerGeneration, reason)
     this.coordinator.closeGeneration(providerGeneration, reason)

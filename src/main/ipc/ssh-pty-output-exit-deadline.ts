@@ -21,7 +21,6 @@ type SshPtyOutputExitDeadlineDependencies = Readonly<{
 
 export class SshPtyOutputExitDeadline {
   private readonly barriersByGeneration = new Map<number, Set<SshPtyExitBarrier>>()
-  private readonly cancellationOwnedExits = new Set<string>()
   private readonly preparedExits = new Set<string>()
   private readonly preparedExitReleases = new Map<string, () => void>()
   private readonly barrierMs: number
@@ -32,10 +31,18 @@ export class SshPtyOutputExitDeadline {
     this.cancellationProofMs = dependencies.cancellationProofMs ?? 10_000
   }
 
-  wait(event: SshPtyOutputExitEvent, promise: Promise<void>): Promise<void> {
+  wait(
+    event: SshPtyOutputExitEvent,
+    start: (validateNormalExit: () => void) => Promise<void>
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       let timeoutStarted = false
       let settled = false
+      const validateNormalExit = (): void => {
+        if (timeoutStarted) {
+          throw outputIntakeError('ssh_exit_delivery_canceled')
+        }
+      }
       const settle = (result: { ok: true } | { ok: false; error: Error }): void => {
         if (settled) {
           return
@@ -53,7 +60,6 @@ export class SshPtyOutputExitDeadline {
       const barrier: SshPtyExitBarrier = {
         timer: setTimeout(() => {
           timeoutStarted = true
-          this.cancellationOwnedExits.add(this.exitKey(event))
           void this.cancelTimedOutExit(event, barrier).then(
             () => settle({ ok: true }),
             (error) => {
@@ -77,6 +83,7 @@ export class SshPtyOutputExitDeadline {
         this.barriersByGeneration.set(event.providerGeneration, barriers)
       }
       barriers.add(barrier)
+      const promise = start(validateNormalExit)
       void promise.then(
         () => {
           if (!timeoutStarted) {
@@ -102,22 +109,11 @@ export class SshPtyOutputExitDeadline {
       this.barriersByGeneration.delete(providerGeneration)
     }
     const prefix = `${providerGeneration}\0`
-    for (const key of this.cancellationOwnedExits) {
-      if (key.startsWith(prefix)) {
-        this.cancellationOwnedExits.delete(key)
-      }
-    }
     for (const key of this.preparedExits) {
       if (key.startsWith(prefix)) {
         this.releasePreparedExitKey(key)
         this.preparedExits.delete(key)
       }
-    }
-  }
-
-  validateNormalExit(event: SshPtyOutputExitEvent): void {
-    if (this.cancellationOwnedExits.has(this.exitKey(event))) {
-      throw outputIntakeError('ssh_exit_delivery_canceled')
     }
   }
 

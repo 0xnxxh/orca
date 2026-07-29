@@ -34,6 +34,7 @@ import {
   type TokenRecord
 } from './ssh-pty-source-obligation-state'
 import {
+  applySourceRecoveryCancellationProof,
   cancelSourceObligationTransfer,
   commitSourceObligationTransfer,
   modelAcceptedSourceEnd,
@@ -220,6 +221,15 @@ export class SshPtySourceObligationLedger {
       throw new Error('SSH PTY source cancellation proof is stale or invalid')
     }
     cancelOpenSourceObligations(token, 'relay-cancellation-proof')
+    this.closeToken(token)
+  }
+
+  applyRecoveryCancellationProof(
+    identity: PtySourceDeliveryIdentity,
+    proof: Readonly<{ sentEndSu: number; creditedEndSu: number }>
+  ): void {
+    const token = this.requireToken(identity)
+    applySourceRecoveryCancellationProof(token, proof)
     this.closeToken(token)
   }
 

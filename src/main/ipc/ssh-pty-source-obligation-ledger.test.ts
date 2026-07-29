@@ -237,6 +237,31 @@ describe('SshPtySourceObligationLedger', () => {
     )
   })
 
+  it('applies recovery cancellation proof over a locally admitted prefix', () => {
+    const ledger = new SshPtySourceObligationLedger()
+    const owner = identity()
+    ledger.open(owner, 4)
+    commitSpan(ledger, owner, span(owner, 'recovery', 4, 'tail'), ['model'])
+
+    ledger.applyRecoveryCancellationProof(owner, { sentEndSu: 12, creditedEndSu: 4 })
+
+    expect(ledger.snapshot(owner)).toMatchObject({ state: 'closed', openSpans: 0 })
+  })
+
+  it('rejects recovery cancellation proof that misses local intake state', () => {
+    const ledger = new SshPtySourceObligationLedger()
+    const owner = identity()
+    ledger.open(owner, 4)
+    commitSpan(ledger, owner, span(owner, 'recovery', 4, 'tail'), ['model'])
+
+    expect(() =>
+      ledger.applyRecoveryCancellationProof(owner, { sentEndSu: 7, creditedEndSu: 4 })
+    ).toThrow('invalid')
+    expect(() =>
+      ledger.applyRecoveryCancellationProof(owner, { sentEndSu: 8, creditedEndSu: 5 })
+    ).toThrow('invalid')
+  })
+
   it('bounds closed-token tombstones and removes committed reservation indexes', () => {
     const ledger = new SshPtySourceObligationLedger()
     const owners = Array.from({ length: 300 }, (_, index) =>

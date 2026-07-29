@@ -160,6 +160,17 @@ export class SshPtySourceObligationCoordinator {
     )
   }
 
+  applyRecoveryCancellationProof(
+    identity: PtySourceDeliveryIdentity,
+    proof: Readonly<{ sentEndSu: number; creditedEndSu: number }>
+  ): void {
+    this.ledger.applyRecoveryCancellationProof(identity, proof)
+    this.rejectWaiters(
+      (group) => samePtySourceDelivery(group.identity, identity),
+      new Error('ssh_source_delivery_canceled')
+    )
+  }
+
   closeGeneration(providerGeneration: number, reason: string): number {
     this.rejectWaiters(
       (group) => group.identity.providerGeneration === providerGeneration,

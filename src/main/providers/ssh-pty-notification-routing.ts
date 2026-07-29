@@ -9,12 +9,19 @@ import type {
 import { parseSshPtySourceFrame } from './ssh-pty-source-frame'
 import {
   SshPtySourceDeliveryLedger,
-  type PendingSshPtySourceData,
-  type SshPtyReceivingActivationLease
+  type PendingSshPtySourceData
 } from './ssh-pty-source-delivery-ledger'
 
 export type { SshPtyDataCallback, SshPtyExitCallback, SshPtyReplayCallback }
-export type { SshPtyReceivingActivationLease } from './ssh-pty-source-delivery-ledger'
+export type SshPtyRecoveryActivationLease = Readonly<{
+  commit: () => void
+  retire: () => void
+}>
+export type SshPtyReceivingActivationLease = Readonly<{
+  commit: () => void
+  rollback: () => Promise<boolean>
+  transferToRecovery: (sink: SshPtyDataCallback) => SshPtyRecoveryActivationLease
+}>
 
 export type SshPtyNotificationSubscription = Readonly<{
   dispose: () => void
@@ -35,26 +42,30 @@ export function subscribeSshPtyNotifications(args: {
   providerGeneration: number
   resolvePtyIncarnation: (relayPtyId: string, incarnationId?: unknown) => string
 }): SshPtyNotificationSubscription {
-  const publishData = (pending: PendingSshPtySourceData): void => {
+  const toDataPayload = (pending: PendingSshPtySourceData): Parameters<SshPtyDataCallback>[0] => {
     const id = args.toAppPtyId(pending.relayPtyId)
     const ptyIncarnation = args.resolvePtyIncarnation(
       pending.relayPtyId,
       pending.params.ptyIncarnation ?? pending.params.incarnationId
     )
-    args.livePtyIds.add(id)
+    return {
+      id,
+      data: pending.data,
+      providerGeneration: args.providerGeneration,
+      ptyIncarnation: pending.source ? (pending.params.ptyIncarnation as string) : ptyIncarnation,
+      ...(typeof pending.params.rawLength === 'number'
+        ? { sequenceChars: pending.params.rawLength }
+        : {}),
+      ...(pending.params.transformed === true ? { transformed: true } : {}),
+      ...(typeof pending.params.seq === 'number' ? { seq: pending.params.seq } : {}),
+      ...(pending.source ? { source: pending.source } : {})
+    }
+  }
+  const publishData = (pending: PendingSshPtySourceData): void => {
+    const payload = toDataPayload(pending)
+    args.livePtyIds.add(payload.id)
     for (const listener of args.dataListeners) {
-      listener({
-        id,
-        data: pending.data,
-        providerGeneration: args.providerGeneration,
-        ptyIncarnation: pending.source ? (pending.params.ptyIncarnation as string) : ptyIncarnation,
-        ...(typeof pending.params.rawLength === 'number'
-          ? { sequenceChars: pending.params.rawLength }
-          : {}),
-        ...(pending.params.transformed === true ? { transformed: true } : {}),
-        ...(typeof pending.params.seq === 'number' ? { seq: pending.params.seq } : {}),
-        ...(pending.source ? { source: pending.source } : {})
-      })
+      listener(payload)
     }
   }
   const sourceDeliveries = new SshPtySourceDeliveryLedger(args.mux, publishData)
@@ -118,8 +129,15 @@ export function subscribeSshPtyNotifications(args: {
   })
   return Object.freeze({
     dispose,
-    installReceivingActivation: (relayPtyId, activation) =>
-      sourceDeliveries.install(relayPtyId, activation)
+    installReceivingActivation: (relayPtyId, activation) => {
+      const lease = sourceDeliveries.install(relayPtyId, activation)
+      return Object.freeze({
+        commit: lease.commit,
+        rollback: lease.rollback,
+        transferToRecovery: (sink: SshPtyDataCallback) =>
+          lease.transferToRecovery((pending) => sink(toDataPayload(pending)))
+      })
+    }
   })
 }
 

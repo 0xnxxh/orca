@@ -654,6 +654,59 @@ describe('SshPtyOutputIntake', () => {
     await expect(sibling).resolves.toMatchObject({ ptyId: 'pty-2' })
   })
 
+  it('accepts recovery cancellation proof before any replacement span is admitted', () => {
+    const harness = createHarness()
+
+    expect(() =>
+      harness.intake.applySourceRecoveryCancellationProof(
+        {
+          id: 'pty-1',
+          code: -1,
+          providerGeneration: 1,
+          ptyIncarnation: 'incarnation-1'
+        },
+        { sentEndSu: 8, creditedEndSu: 4 }
+      )
+    ).not.toThrow()
+    expect(harness.intake.getDebugSnapshot().source).toEqual({
+      openedTokens: 0,
+      ptyIdentities: 0
+    })
+  })
+
+  it('reclaims a partially admitted recovery prefix from authoritative proof', async () => {
+    const harness = createHarness()
+    const receipt = harness.intake.acceptData(
+      event({
+        source: {
+          spanId: 'recovery-span',
+          clientGeneration: 2,
+          ownerGeneration: 3,
+          deliveryToken: 'recovery-token',
+          sourceStartSu: 4,
+          sourceEndSu: 8
+        }
+      })
+    )
+    harness.completions[0]!.resolve()
+    await receipt
+
+    harness.intake.applySourceRecoveryCancellationProof(
+      {
+        id: 'pty-1',
+        code: -1,
+        providerGeneration: 1,
+        ptyIncarnation: 'incarnation-1'
+      },
+      { sentEndSu: 12, creditedEndSu: 4 }
+    )
+
+    expect(harness.intake.getDebugSnapshot().source).toEqual({
+      openedTokens: 0,
+      ptyIdentities: 0
+    })
+  })
+
   it('rejects late same-generation data after ordered exit cleanup', async () => {
     const harness = createHarness({}, { exitBarrierMs: 1000 })
     const first = harness.intake.acceptData(event())

@@ -4,12 +4,13 @@ import {
   sshPtyGenerationKey,
   validOutputLength
 } from './ssh-pty-output-intake-validation'
+import { SshPtyClosedGenerationRanges } from './ssh-pty-closed-generation-ranges'
 
 export class SshPtyOutputGenerationGuard {
   private readonly latestGenerationByPty = new Map<string, number>()
   private readonly incarnationByPty = new Map<string, string>()
   private readonly sealedPtys = new Set<string>()
-  private readonly closedGenerations = new Set<number>()
+  private readonly closedGenerations = new SshPtyClosedGenerationRanges()
 
   constructor(private readonly isDisposed: () => boolean) {}
 
@@ -93,5 +94,14 @@ export class SshPtyOutputGenerationGuard {
 
   activeGenerations(): ReadonlySet<number> {
     return new Set(this.latestGenerationByPty.values())
+  }
+
+  getDebugSnapshot() {
+    return {
+      closedRanges: this.closedGenerations.size,
+      activeGaps: this.closedGenerations.activeGaps,
+      activePtys: this.latestGenerationByPty.size,
+      sealedPtys: this.sealedPtys.size
+    }
   }
 }

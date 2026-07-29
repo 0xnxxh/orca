@@ -22,6 +22,7 @@ vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
   allocateSshPtyProviderGeneration: vi.fn(() => 31),
   closeSshPtyOutputGeneration: vi.fn(),
   getSshPtyAcceptedSourceCheckpoints: vi.fn(() => []),
+  applySshPtySourceRecoveryCancellationProof: vi.fn(() => true),
   installSshPtySourceAckPublisher: vi.fn(() => () => {})
 }))
 vi.mock('./ssh-relay-deploy-helpers', () => ({ execCommand: vi.fn().mockResolvedValue('') }))

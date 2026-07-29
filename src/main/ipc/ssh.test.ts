@@ -114,6 +114,7 @@ vi.mock('./ssh-pty-output-intake-registry', () => ({
     return () => ++generation
   })(),
   applySshPtySourceCancellationProof: vi.fn().mockReturnValue(false),
+  applySshPtySourceRecoveryCancellationProof: vi.fn().mockReturnValue(false),
   closeSshPtyOutputGeneration: vi.fn(),
   getSshPtyAcceptedSourceCheckpoints: vi.fn().mockReturnValue([]),
   installSshPtySourceAckPublisher: vi.fn().mockReturnValue(() => {}),

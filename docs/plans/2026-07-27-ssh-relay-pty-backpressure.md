@@ -8,7 +8,7 @@ HEAD; live topology gaps remain explicit below
 
 Historical unbounded baseline: `badf91101babf96fa09cb79a8294f7e23b9f081c`
 (the implementation branch parent). The implementation was rebased onto
-`origin/main@681c4ba458d28f2f9b527db1cb6b246baf7bf478`; final GitHub CI remains
+`origin/main@c8dba6d72caa60aeb663ec0cd525d0216e485f63`; final GitHub CI remains
 the merge gate.
 
 ## Scope
@@ -47,8 +47,9 @@ implemented. In this PR:
 - Spawn and attach responses carry immutable `sourceActivation` metadata. The
   main mux installs a provisional receive lease synchronously in
   `beforeResolve`; adjacent source notifications remain private to that lease
-  until provider validation commits, while rollback drops them and waits for
-  exact token-cancellation proof.
+  until spawn validation commits or a validated reconnect contract transfers
+  them into its private recovery quarantine. Rollback drops untransferred data
+  and waits for exact token-cancellation proof.
 - `SshRelaySession` owns grant/reconnect state, bounded recovery quarantine,
   exact recovery fencing, and cumulative ACK publication through the main SSH
   mux. Failed recovery-cancellation publication or proof closes the exact
@@ -73,7 +74,7 @@ The implementation is intentionally scoped:
 
 | Surface                                     | State in this PR                                        | Evidence                                                                                         |
 | ------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Same-build direct SSH/deployed relay, V1 on | implemented                                             | current-head deterministic relay/main contracts plus prior macOS-hosted Docker OpenSSH           |
+| Same-build direct SSH/deployed relay, V1 on | implemented                                             | current-head deterministic relay/main contracts; exact-current-artifact Docker rerun pending     |
 | Same-build SSH, V1 off                      | implemented bounded legacy mode                         | deterministic rollout and writer contracts                                                       |
 | Reconnect/owner recovery                    | implemented                                             | exact contiguous recovery, fail-closed cancellation, eight-wide reattach tests, Docker reconnect |
 | Headed/headless remote consumers            | source-range rotation/replacement implemented           | deterministic runtime/main seam only; no live paired-runtime claim                               |
@@ -88,9 +89,10 @@ not prove headed or headless paired-runtime behavior, WSL, Windows ConPTY or
 named pipes, local daemon/provider behavior, folder workspaces, prior-version
 processes, mixed-version clients, or the Ubuntu 20.04 packaging floor.
 
-The prior Docker evidence remains useful but predates the final lifecycle
-fixes. Current-head deterministic checks and document validation are listed
-below; no new live topology proof is inferred from them.
+The recorded Docker rerun used the private-recovery-transfer checkpoint. It
+predates the final exit-sealed recovery, exact private-watermark, and bounded
+retirement fixes, so it is not exact-current-artifact evidence. No additional
+live topology proof is inferred from that run.
 
 ## Verified baseline and migration boundary
 
@@ -211,8 +213,10 @@ renderer-only cap.
 5. A spawn/attach token remains `activating` until its metadata-only response
    crosses the relay sink fence. Main may receive source frames after its
    synchronous provisional install, but they remain lease-private and cannot
-   project until provider/claim/exit validation commits that lease. Recovery
-   remains fenced until all recovery `pty.data` and completion drain.
+   project. A validated reconnect contract transfers that lease into the
+   attempt's private recovery quarantine; final commit, model, and desktop
+   admission remain fenced until all recovery `pty.data` and the exact
+   completion fence agree.
 6. Data is ordered within a token. `pty.exit` follows every accepted data frame
    and cannot bypass the sink gate or activation fence. Publishing exit seals
    new data but does not retire an uncredited suffix.
@@ -244,7 +248,8 @@ renderer-only cap.
     no open span, token, writer callback, drain waiter, timer, cursor, or paused
     PTY. Recovery-cancellation publication failure or rejected proof fails
     closed by closing only the owning provider generation and disposing its
-    mux, provider, publishers, provisional lease, and registration once.
+    mux, provider, publishers, transferred activation state, and registration
+    once.
 14. All counters are finite safe integers. A transformed frame requires a
     valid `rawLength`; malformed, excessive, stale, and cross-client values
     cannot create credit or crash either process.
@@ -303,6 +308,17 @@ clientGeneration, ownerGeneration, ptyIncarnation, deliveryToken)`. Each
     source credit. Duplicate/closed ledger commits are no-ops; if cancellation
     proof already reclaimed a reserved span, source replacement commit rejects,
     rollback skips the absent span, and settle/detach prune cached mappings.
+29. Exact exit seals a provisional or private-recovery receive lease before
+    any later same-token frame can reserve or project. Exit publication waits
+    for the held contiguous prefix to admit or for cancellation proof whose
+    sent end covers every privately observed exact-token frame.
+30. Transfer does not consume rollback authority until the ledger proves the
+    lease is still current and installs the private recovery sink. A stale
+    transfer can still retire and cancel only its own token.
+31. Canceled-frame suppression retains at most one latest ordered delivery
+    identity per relay PTY. Transport ordering makes earlier token records
+    obsolete when a later cancellation is observed; exact next activation,
+    PTY exit, or provider teardown clears the remaining record.
 
 ## Protocol
 
@@ -354,6 +370,11 @@ failures without widening the approved topology:
 | Drain resumed the main mux's old ordinary FIFO ahead of control              | Select liveness, control, and ordinary from separate FIFO lanes; prioritize control after drain and force one ordinary write after four controls.                                    |
 | Same-turn source data escaped a provisional activation                       | Queue data privately under the provisional lease; commit publishes in order, while rollback drops it, restores only the active predecessor, and awaits exact cancellation proof.     |
 | Exit cancellation proof reclaimed spans before projection transfer           | Acquire proof first, transfer projections, commit proof, prepare/finalize once, and fence every post-proof step against provider-generation close.                                   |
+| Exit during private recovery could publish before held frames settled        | Seal the private lease immediately, wake the exact recovery fence, then either admit the ordered prefix before exit or retire it only after exact token-cancellation proof.          |
+| A superseded transfer lost its cancellation authority                        | Keep the outer lease unsettled until transfer ownership is verified; a stale transfer can still roll back and request cancellation for its exact token.                              |
+| Recovery proof watermark skipped rejected or post-restore frames             | Observe every exact-token private frame before retention or restore checks and reject any cancellation proof whose sent end is below that immutable high-water.                      |
+| Canceled-token tombstones grew once per token                                | Retain only the latest ordered canceled token per relay PTY, replace it on later cancellation, and clear it at exact next-activation, PTY-exit, or provider-teardown boundaries.     |
+| Closed-generation telemetry omitted active gaps                              | Compact exact closed ranges and expose the count of allocated but unclosed provider generations below the closed high-water.                                                         |
 
 The common state machine accepts only:
 
@@ -749,16 +770,25 @@ synchronous `beforeResolve(result)` hook in their pending-request record.
 `handleResponse` parses the whole response and provisionally installs
 `sourceActivation` before resolving the Promise. The lease captures the exact
 prior receive state, candidate token, and a private ordered list of same-turn
-source frames. Only after operation-ID result, incarnation, claimed-owner,
-attach identity, stale-attempt, and spawn/attach-exit validation succeeds does
-the provider commit it, publish the held frames in order, and update
-`livePtyIds`. Any failure first retires the candidate and drops its held data,
-restores only the nearest non-retired predecessor, then waits for a valid
-`pty.cancelDelivery` response from the originating mux. It cannot erase a
-newer revision or cancel a newer token. An identical already-committed
-activation is an idempotent no-op; an identical provisional activation is
-stale. Fresh-spawn rollback that cannot prove cancellation surfaces
-`execution_owner_unavailable` rather than claiming the old token retired.
+source frames. Spawn and non-recovery attach commit only after operation-ID
+result, incarnation, claimed-owner, attach identity, stale-attempt, and exit
+validation. Reconnect first validates the owner, incarnation, token,
+checkpoint, and recovery end, installs the exact private quarantine, then
+transfers the lease to its private sink before awaiting the body/completion
+fence. That transfer cannot update ordinary provider listeners or
+`livePtyIds`, and it cannot reach the model, runtime, desktop, or remote
+consumers. Final commit switches future exact-token frames to ordinary
+publication only after the body, fence, model admission, and activation
+validation succeed. Any failure before transfer
+retires the candidate and drops its held data, restores only the nearest
+non-retired predecessor, then waits for a valid `pty.cancelDelivery` response
+from the originating mux. After transfer, recovery cancellation or
+provider-generation close owns cleanup; rollback is no longer authoritative.
+It cannot erase a newer revision or cancel a newer token. An identical
+already-committed activation is an idempotent no-op; an identical provisional
+activation is stale. Fresh-spawn rollback that cannot prove cancellation
+surfaces `execution_owner_unavailable` rather than claiming the old token
+retired.
 
 The receive cursor starts at `checkpointSourceEndSu`, not
 `recoveryEndSu`. Source-bearing notifications for the installed identity may
@@ -766,6 +796,14 @@ then advance only contiguously. Frames through `recoveryEndSu` stay
 quarantined as recovery; later frames stay held until the exact completion
 fence commits. Unknown or mismatched source identities are rejected before
 `livePtyIds`, runtime, renderer, or source obligations change.
+
+Every exact-token private frame advances a monotonic observed-source high-water
+before quarantine retention or `restoreRequired` checks. If exact exit arrives,
+main wakes the recovery fence and seals the private lease immediately. It may
+publish exit only after the held contiguous prefix is admitted, or after
+`pty.cancelDelivery` proves `sentEndSu` covers that high-water and the accepted
+checkpoint remains the credited end. Capacity-rejected and post-restore frames
+therefore cannot disappear below the cancellation proof.
 
 Output produced while a token is activating is retained by its bounded shared
 cursor and can pause the native PTY; it is never sent early. Output arriving
@@ -853,8 +891,10 @@ cancellation or local proof application rejects, the session fails closed:
 it closes the exact provider generation with
 `ssh_source_recovery_cancellation_failed`, disposes that generation's mux,
 provider, ACK/cancellation publishers, provisional lease, and registration
-once, and reconnects without clearing physical PTY ownership. If the attempt
-is already stale, it performs no cleanup against the replacement. A fresh
+once when still provisional, or its transferred activation state after
+quarantine ownership begins, and reconnects without clearing physical PTY
+ownership. If the attempt is already stale, it performs no cleanup against the
+replacement. A fresh
 relay that no longer retains the cached owner returns typed error `-32041`;
 main clears only the cached owner/checkpoints and retries `pty.openClient`
 exactly once without `resume`.
@@ -1067,13 +1107,21 @@ again, then closes the projection. This order prevents proof commit from
 reclaiming a span before its published projection transfers.
 
 If provider-generation close wins while proof is pending, it rejects and
-removes the barrier plus its cancellation/preparation ownership; the late
+removes the barrier plus its preparation ownership; cancellation ownership is
+operation-local rather than retained in a process-lifetime tombstone. The late
 proof performs no transfer, commit, preparation, final exit, or projection
 close. If cancellation publication or proof fails while the barrier remains
 current, main closes the provider so generation cleanup proves cancellation;
 unrelated PTYs are not torn down on the ordinary successful timeout path. A
 late emulator callback cannot mutate the reset generation. Thus relay sink
 ordering and main asynchronous model ordering are both proved.
+
+Provider generations come from one process-wide monotonic allocator and are
+never reused. Main rejects closed generations through sorted, merged inclusive
+ranges rather than one retained entry per reconnect. Sequential closes compact
+to one range; out-of-order closes preserve exact live-generation gaps until
+those generations close, then merge. This keeps stale-generation rejection
+exact while retained range count follows live gaps instead of process uptime.
 
 ## Dispatcher and transport drain
 
@@ -1502,32 +1550,35 @@ explicit/connection-close proof. The transaction creates the replacement
 owner before marking source `transferring`; only exact recovery-complete
 coverage terminally transfers it.
 
-| Event                                                 | Mandatory transition                                                                                                                                                                      |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| spawn/attach response decoded                         | install provisional `sourceActivation` in synchronous `beforeResolve`; hold same-turn data privately, commit/publish after validation, or drop/restore and await exact cancellation proof |
-| invalid-checkpoint `restoreRequired`                  | keep the canceled relay record through response settlement; retire only the still-current record, wake capacity, and permit a fresh-token retry                                           |
-| model accepts; desktop/mobile parses                  | settle that consumer                                                                                                                                                                      |
-| hidden thinning, empty transform, pending-cap salvage | preserve ordered terminal facts/scanner state, then transfer desktop to model and emit restore marker                                                                                     |
-| renderer reload/destroy/send failure/heal             | transfer all desktop obligations to model before clearing queue/accounting                                                                                                                |
-| pane closes while provider/token remains live         | transfer recoverable views, then request token cancel if no required consumer remains                                                                                                     |
-| PTY exit                                              | relay seals token; main retains prior receipts/projections/remotes; runtime/renderer exit only after terminality or bounded cancellation proof                                            |
-| provider replacement/reconnect                        | close old client generation; transfer only exact ranges proven by replacement recovery, otherwise cancel and restore                                                                      |
-| relay `pty.deliveryCanceled`                          | without replacement, cancel matching remainder and restore; with replacement, enter `transferring` pending coverage                                                                       |
-| same-client token supersession                        | create replacement first, transfer exact covered remainder after recovery, cancel any uncovered range                                                                                     |
-| empty or non-empty recovery completion                | require checkpoint-to-`recoveryEndSu` continuity, retain that live-start anchor after activation, then admit only an exactly contiguous live frame                                        |
-| recovery completion lacks writer capacity             | retain range/fence state and retry on capacity; keep at most one admitted completion attempt                                                                                              |
-| stale/overlapping recovery attempt                    | cancel only that attempt's token; never mutate the replacement mux, checkpoint, PTY ownership, physical process, or owner lease                                                           |
-| current recovery cancellation publication/proof fails | close the exact provider generation and release its mux, provider, publishers, provisional lease, and registration once; retain physical PTY ownership for reconnect                      |
-| partial remote cumulative byte ACK                    | advance/release exact byte credit; retain the covering source frame and obligation until a complete recorded boundary                                                                     |
-| contiguous higher-generation source token             | keep the stream attached, bind later frames to the new identity, and preserve unsettled older-token frame mappings                                                                        |
-| remote snapshot replacement                           | reserve immutable span IDs/ranges, commit only after current-generation `SnapshotEnd` coverage, otherwise roll back                                                                       |
-| snapshot commit after proof reclaimed a span          | reject commit without dereference; rollback removes the exact reservation and skips absent spans; later settle/detach prunes cached mappings                                              |
-| remote ACK-pending overflow snapshot                  | reserve covered spans, publish, commit exact snapshot identity/sequence, then trim; rollback and detach on failure                                                                        |
-| late remote detach after token cancellation           | prune already-reclaimed mappings and detach idempotently without dereference or new credit                                                                                                |
-| exit timeout receives cancellation proof              | while generation-current, transfer projections, commit proof, prepare/finalize once, and close projection with generation checks between mutations                                        |
-| provider generation closes during exit proof          | reject/remove barrier ownership; a late proof cannot commit, prepare, finalize, or publish exit                                                                                           |
-| explicit live-token reset                             | `pty.cancelDelivery` response proves relay cancellation before local discard; failure closes the provider transport                                                                       |
-| relay/client dispose                                  | relay cancels token/cursors; main cancels only after close-generation proof                                                                                                               |
+| Event                                                 | Mandatory transition                                                                                                                                                                                                                                                                 |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| spawn/attach response decoded                         | install provisional `sourceActivation` in synchronous `beforeResolve`; hold same-turn data privately; spawn commits after full operation validation, while reconnect transfers into an exact private recovery quarantine after contract validation and commits after fence/admission |
+| invalid-checkpoint `restoreRequired`                  | keep the canceled relay record through response settlement; retire only the still-current record, wake capacity, and permit a fresh-token retry                                                                                                                                      |
+| model accepts; desktop/mobile parses                  | settle that consumer                                                                                                                                                                                                                                                                 |
+| hidden thinning, empty transform, pending-cap salvage | preserve ordered terminal facts/scanner state, then transfer desktop to model and emit restore marker                                                                                                                                                                                |
+| renderer reload/destroy/send failure/heal             | transfer all desktop obligations to model before clearing queue/accounting                                                                                                                                                                                                           |
+| pane closes while provider/token remains live         | transfer recoverable views, then request token cancel if no required consumer remains                                                                                                                                                                                                |
+| PTY exit                                              | relay seals token; main retains prior receipts/projections/remotes; runtime/renderer exit only after terminality or bounded cancellation proof                                                                                                                                       |
+| provider replacement/reconnect                        | close old client generation; transfer only exact ranges proven by replacement recovery, otherwise cancel and restore                                                                                                                                                                 |
+| relay `pty.deliveryCanceled`                          | without replacement, cancel matching remainder and restore; with replacement, enter `transferring` pending coverage                                                                                                                                                                  |
+| same-client token supersession                        | create replacement first, transfer exact covered remainder after recovery, cancel any uncovered range                                                                                                                                                                                |
+| empty or non-empty recovery completion                | require checkpoint-to-`recoveryEndSu` continuity, retain that live-start anchor after activation, then admit only an exactly contiguous live frame                                                                                                                                   |
+| exact exit during private recovery                    | wake the fence, reject later same-token admission, and publish exit only after the held prefix is admitted or exact cancellation proof retires it                                                                                                                                    |
+| recovery completion lacks writer capacity             | retain range/fence state and retry on capacity; keep at most one admitted completion attempt                                                                                                                                                                                         |
+| stale/overlapping recovery attempt                    | cancel only that attempt's token; never mutate the replacement mux, checkpoint, PTY ownership, physical process, or owner lease                                                                                                                                                      |
+| current recovery cancellation publication/proof fails | after quarantine ownership transfer, close the exact provider generation and release its mux, provider, publishers, and registration once; retain physical PTY ownership for reconnect                                                                                               |
+| partial remote cumulative byte ACK                    | advance/release exact byte credit; retain the covering source frame and obligation until a complete recorded boundary                                                                                                                                                                |
+| contiguous higher-generation source token             | keep the stream attached, bind later frames to the new identity, and preserve unsettled older-token frame mappings                                                                                                                                                                   |
+| remote snapshot replacement                           | reserve immutable span IDs/ranges, commit only after current-generation `SnapshotEnd` coverage, otherwise roll back                                                                                                                                                                  |
+| snapshot commit after proof reclaimed a span          | reject commit without dereference; rollback removes the exact reservation and skips absent spans; later settle/detach prunes cached mappings                                                                                                                                         |
+| remote ACK-pending overflow snapshot                  | reserve covered spans, publish, commit exact snapshot identity/sequence, then trim; rollback and detach on failure                                                                                                                                                                   |
+| late remote detach after token cancellation           | prune already-reclaimed mappings and detach idempotently without dereference or new credit                                                                                                                                                                                           |
+| exit timeout receives cancellation proof              | while generation-current, transfer projections, commit proof, prepare/finalize once, and close projection with generation checks between mutations                                                                                                                                   |
+| provider generation closes during exit proof          | reject/remove barrier ownership; a late proof cannot commit, prepare, finalize, or publish exit                                                                                                                                                                                      |
+| provider generations close over process lifetime      | merge exact closed ranges; preserve out-of-order live gaps and reject every closed generation without one tombstone per reconnect                                                                                                                                                    |
+| source tokens cancel repeatedly for one PTY           | retain only the latest ordered canceled token for that PTY; replace at the next cancellation and clear at the next activation, PTY exit, or provider teardown                                                                                                                        |
+| explicit live-token reset                             | `pty.cancelDelivery` response proves relay cancellation before local discard; failure closes the provider transport                                                                                                                                                                  |
+| relay/client dispose                                  | relay cancels token/cursors; main cancels only after close-generation proof                                                                                                                                                                                                          |
 
 There is no “abandon live token” transition. A main-side path that cannot prove
 settlement, transfer, or relay cancellation must keep the ledger or close the
@@ -1603,15 +1654,18 @@ main token span:
 main receive token:
   unseen --beforeResolve--> provisional(cursor = checkpointSourceEndSu, heldData = [])
   provisional --same-turn contiguous data--> provisional(append heldData; no projection)
-  provisional --all spawn/attach/exit validation-->
-    receiving-activation(commit lease, publish heldData in order)
-  provisional --validation failure-->
+  provisional --all spawn/non-recovery attach/exit validation-->
+    active(commit lease, publish heldData in order)
+  provisional --validated recovery contract + private quarantine installed-->
+    receiving-activation(transfer lease to private sink, route heldData by range)
+  provisional --pre-transfer validation failure-->
     rollback(drop heldData, restore active predecessor, request exact cancellation)
   rollback --valid cancellation response--> prior exact state
   rollback --publication/proof rejects--> fail operation(execution owner unavailable)
-  receiving-activation --validated response/no recovery--> active
   receiving-activation --quarantine exact checkpoint..recoveryEnd + complete fence-->
-    active(expectedLiveStart = recoveryEnd)
+    active(final commit, expectedLiveStart = recoveryEnd)
+  receiving-activation --exact exit-->
+    exit-sealed(admit held contiguous prefix or prove exact cancellation first)
   active --first/next live starts at expectedLiveStart--> active(advance expectedLiveStart)
   receiving-activation|active --gap/overlap/bad fence--> canceling-only-this-token
   active --pty.exit--> exit-sealed
@@ -1625,6 +1679,18 @@ main receive token:
     closed(reject barrier; late proof has no authority)
   acquiring-exit-cancellation-proof --proof cannot publish while current--> closing-provider
   receiving-activation|active --overflow/cancel/close--> closed
+
+main provider-generation guard:
+  open(g) --close--> closed-ranges(add [g, g], merge adjacent/overlapping)
+  event(g in closed-ranges) --> reject(stale generation)
+  event(g in an unclosed gap) --> validate PTY incarnation normally
+  diagnostics --> closed range count + allocated-unclosed IDs below high-water
+
+main canceled-source retirement:
+  none(pty) --cancel token T--> latest(pty, T)
+  latest(pty, T) --later ordered cancel U--> latest(pty, U)
+  latest(pty, T) --frame T--> drop
+  latest(pty, T) --next activation/PTY exit/provider teardown--> none(pty)
 
 remote source ledger:
   frame-open --partial cumulative byte ACK-->
@@ -1930,6 +1996,12 @@ transition:
 - roll back uncommitted receive-activation leases to their exact prior
   active predecessor, drop lease-private data, and await cancellation of only
   the provisional token through its originating mux;
+- after a validated recovery contract transfers the lease, retain held frames
+  only in that attempt's bounded quarantine and let cancellation proof or
+  provider-generation close own failure cleanup;
+- on exact exit, seal the private lease, wake its fence, and either admit the
+  held contiguous prefix or validate cancellation against the highest exact
+  frame observed before retention/restore decisions;
 - fail closed on the exact provider generation when a current recovery cannot
   publish cancellation or validate its proof; provisional spawn rollback
   failure instead surfaces execution ownership as unavailable;
@@ -1951,6 +2023,8 @@ transition:
   frames, and prune cached mappings whose authoritative spans were reclaimed;
 - reject and remove exit barriers plus cancellation/preparation ownership on
   provider-generation close so late proofs cannot publish final exit;
+- replace the latest canceled-token record per PTY on ordered cancellation and
+  clear it on exact next activation, PTY exit, or provider teardown;
 - release shared spans no longer referenced;
 - recompute native PTY pause state;
 - expire pending RPC ownership.
@@ -1993,6 +2067,12 @@ the candidate mux, token, checkpoint, and `recoveryEndSu` until the exact
 completion fence validates. It commits no partial body to the model. On
 failure it requests cancellation only through the candidate mux and accepts
 only matching proof; a stale attempt may not touch current mux state. A
+quarantine-only attempt may not yet have a main-intake token identity, so
+`SshRelaySession` first requires `canceled: true`, finite safe cumulative
+ends, `creditedEndSu` equal to the recovery checkpoint, and `sentEndSu`
+covering the highest exact-token source range observed privately. Only then is
+the intake's no-identity application an intentional no-op; malformed,
+under-covering, or checkpoint-mismatched proof fails closed. A
 current attempt whose cancellation publication or proof rejects closes the
 exact provider generation and its registered resources once, rather than
 leaving ambiguous authority. After a successful empty recovery it keeps
@@ -2143,6 +2223,7 @@ logging terminal contents or raw PTY IDs:
   callback duration, read-pause duration, liveness-timeout suppression,
   header-ACK timestamp depth/cap denials, and keepalive coalescing;
 - exit-barrier timeout count;
+- closed provider-generation range count and active gaps;
 - reconnect attach wave latency, per-PTY retry/failure, token supersession,
   relay-initiated cancellation proof, and time-to-last-success;
 - same-build negotiated and disabled-by-main sessions, unsupported manual
@@ -2306,10 +2387,20 @@ boundaries even though they ship in one PR.
   control first after drain, and guarantee ordinary progress after four
   controls.
 - Hold provisional activation data until provider/claim/exit validation
-  commits; rollback drops it, restores only the active predecessor, and awaits
-  exact cancellation proof.
+  commits for spawn, or until a validated reconnect contract installs its
+  private quarantine; rollback owns pre-transfer failure, while cancellation
+  proof or generation close owns post-transfer failure.
 - Acquire exit cancellation proof before projection transfer and proof commit;
   prepare/finalize once and fence every post-proof step by provider generation.
+- Keep timeout cancellation authority operation-local and compact monotonic
+  closed provider generations into exact merged ranges without weakening stale
+  event rejection.
+- Seal private recovery on exact exit, retain rollback authority through a
+  stale transfer, and include every exact-token private frame in the
+  cancellation-proof watermark.
+- Replace process-lifetime per-token blocking state with one latest ordered
+  cancellation record per relay PTY, cleared only at an exact lifecycle
+  boundary.
 
 ### Slice 5f: remaining topology validation and adapters — deliberately deferred
 
@@ -2341,7 +2432,7 @@ recorded evidence include:
 - current-head restore-response retirement, fail-closed recovery cancellation,
   partial remote ACK, higher-generation token rotation, reclaimed-span
   idempotence, three-lane mux fairness, provisional claim gating, and
-  generation-fenced exit proof ordering;
+  generation-fenced exit proof ordering plus bounded exact generation closure;
 - the four-test Docker OpenSSH/deployed-relay suite for source-window plateau,
   concurrent typing, fixed-size filesystem/Git churn, and owner reconnect.
 
@@ -2366,12 +2457,23 @@ churn was 148.1/161.1 ms with 93 bulk reads; owner reconnect completed in
 15.7 seconds. These measurements are direct SSH/deployed Linux relay evidence
 only.
 
-The Docker results predate the final adversarial lifecycle reconciliation and
-are not current-head proof for those races. The current-head deterministic
-commands below cover the integrated fixes; a direct Docker rerun and all other
-live topologies remain separate.
+The four-case Docker results predate the final adversarial lifecycle
+reconciliation and are not current-head proof for those races. On the earlier
+working tree, a deterministic test reproduced recovery completion becoming
+visible at source unit 4 while lease-held recovery ended at 8. After the
+validated contract began private quarantine ownership before awaiting the
+body, seven provider/session files passed 94 tests and the isolated deployed
+Linux relay/direct-SSH reconnect case passed in 17.7 seconds with 256 recovery
+frames plus post-reconnect terminal/filesystem proof. Against the same
+private-transfer artifact, the final four-case run passed in 1.1 minutes:
+direct typing was 6.2/7.4 ms median/worst; ACK-stalled typing was 5.5/16.3 ms
+at exactly 262,144 held source units; fixed-size filesystem/Git churn was
+141.2/151.5 ms with 95 bulk reads; reconnect completed in 16.0 seconds. All
+other live topologies remain separate.
 
-At current HEAD, this focused command passed 11 files and 134 tests:
+At the current working tree, the source/intake slice passed 12 files and 205
+tests, the provider/session slice passed 16 files and 192 tests, and this
+complementary lifecycle slice passed 13 files and 150 tests:
 
 ```bash
 pnpm exec vitest run --config config/vitest.config.ts \
@@ -2382,6 +2484,8 @@ pnpm exec vitest run --config config/vitest.config.ts \
   src/main/ssh/ssh-multiplexer-transport-writer.test.ts \
   src/main/ssh/ssh-channel-multiplexer-backpressure.test.ts \
   src/main/providers/ssh-pty-notification-routing.test.ts \
+  src/main/providers/ssh-pty-source-delivery-ledger.test.ts \
+  src/main/ssh/ssh-pty-retired-source-deliveries.test.ts \
   src/main/providers/ssh-pty-provider-agent-session-create-operation.test.ts \
   src/main/providers/ssh-pty-provider-exit-race.test.ts \
   src/main/ipc/ssh-pty-output-exit-deadline.test.ts \
@@ -2390,12 +2494,17 @@ pnpm exec vitest run --config config/vitest.config.ts \
 
 The deterministic recovery seam specifically covers an empty recovery followed
 by a gapped live frame, overlapping reconnect attempts, late frames after
-cancel, typed stale-owner retry, response-settled `restoreRequired` retirement,
-and fail-closed exact-generation cleanup. It also asserts that a proved
-token-local failure causes no physical PTY shutdown, ownership delete, or
-lease expiry. The remote-consumer seam covers partial cumulative ACK, safe
-higher-generation token rotation, and token cancellation followed by late
-detach/replacement commit, proving reclaimed span IDs are pruned idempotently.
+cancel, exact exit during private recovery, stale-transfer rollback authority,
+capacity-rejected and post-restore proof watermarks, typed stale-owner retry,
+response-settled `restoreRequired` retirement, completion arriving before
+lease-held body frames, and fail-closed exact-generation cleanup. A separate
+10,000-rotation oracle proves canceled-token retirement remains one record per
+PTY. Transferred recovery data remains private until body/fence validation,
+and a proved token-local failure causes no physical PTY shutdown, ownership
+delete, or lease expiry.
+The remote-consumer seam covers partial cumulative ACK, safe higher-generation
+token rotation, and token cancellation followed by late detach/replacement
+commit, proving reclaimed span IDs are pruned idempotently.
 
 ### Normative unit and property matrix
 
@@ -2444,10 +2553,12 @@ detach/replacement commit, proving reclaimed span IDs are pruned idempotently.
   producer-owned `pty.data` rather than control responses;
 - feed response, recovery, completion fence, and first live data in one decoder
   turn; prove synchronous `beforeResolve` installs a provisional cursor at
-  `checkpointSourceEndSu`, same-turn data remains unprojected until all
-  provider/claim/exit validation commits the lease, rollback drops held data,
-  restores only the active predecessor, awaits exact token-cancellation proof,
-  and exact gap spans reach the model once through `recoveryEndSu`;
+  `checkpointSourceEndSu`; deliver completion before lease-held frames, then
+  prove validated reconnect transfers those frames only into private
+  quarantine, routes ranges through `recoveryEndSu`, and projects them once
+  only after exact body/fence validation. Pre-transfer rollback drops held
+  data, restores only the active predecessor, and awaits exact
+  token-cancellation proof;
 - reject wrong-incarnation checkpoints and checkpoints below old credit or
   beyond retained live end; require a token-free `restoreRequired` response
   with no partial recovery or forward clamping; retain the canceled record
@@ -2501,8 +2612,8 @@ detach/replacement commit, proving reclaimed span IDs are pruned idempotently.
   gap ingestion;
 - reject recovery cancellation publication and local proof application while
   the attempt is current; prove the exact provider generation, mux, provider,
-  publishers, provisional lease, and registration close once, while unrelated
-  generations and physical PTY ownership remain untouched;
+  publishers, transferred activation, and registration close once, while
+  unrelated generations and physical PTY ownership remain untouched;
 - prove renderer ACK/heal/write-off on V1 settles/transfers via display ranges
   and emits no legacy `acknowledgeDataEvent` wire delta;
 - admit interleaved spans from two token generations and prove every desktop
@@ -2554,6 +2665,10 @@ detach/replacement commit, proving reclaimed span IDs are pruned idempotently.
   generation callbacks; close the generation while proof is pending and prove
   no final exit publishes, then separately make proof fail while current and
   prove only then the provider closes;
+- close 2,048 sequential provider generations and prove one retained exact
+  closed range rejects early, middle, and latest stale events; close out of
+  order and prove an unclosed older generation remains admissible until its own
+  close merges the gap;
 - verify round-robin progress across 50 continuously active PTYs;
 - verify spans are freed only after all divergent cursors advance, cancel, or
   transfer;
@@ -2670,8 +2785,9 @@ Implementation and rollout stages:
    local-provider, and folder-workspace evidence remains future work before
    those topologies are marked covered.
 4. Current-head deterministic reconciliation and focused integrated-fix checks
-   are complete. Full validation and a direct Docker rerun of the final
-   lifecycle diff remain required before promotion.
+   are complete. The isolated reconnect and final four-case direct-SSH Docker
+   runs, full repository typecheck, and full lint/reliability suite are green;
+   final exact-head review remains before merge readiness.
 5. Run an internal same-build canary comparing gate-off and V1 sink,
    model-admission, latency, sealed-exit, recovery, and reconnect metrics while
    separately counting orphan prior-version daemons;
