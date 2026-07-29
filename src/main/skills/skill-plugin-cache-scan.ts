@@ -8,7 +8,7 @@ import {
 } from '../../shared/skill-freshness'
 import { declaredPluginSkillRoots, isWithinRoot } from './skill-plugin-manifest-roots'
 
-const MAXIMUM_PLUGIN_SCAN_DEPTH = 9
+export const MAXIMUM_PLUGIN_SCAN_DEPTH = 9
 const MAXIMUM_DECLARED_SKILL_SCAN_DEPTH = 6
 // Why: a skill package's own payload (templates, fixtures, sample apps) is not a skill
 // tree, and it is what drives ordinary caches past the depth and entry bounds. Descend

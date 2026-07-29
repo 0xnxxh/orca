@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { isSkillScanIssueNeedingAttention } from '../../shared/skill-freshness'
 import {
   MAXIMUM_PLUGIN_SCAN_ATTENTION_ISSUES,
+  MAXIMUM_PLUGIN_SCAN_DEPTH,
   MAXIMUM_PLUGIN_SCAN_ISSUES,
   scanKnownPluginSkillCandidates
 } from './skill-plugin-cache-scan'
@@ -63,9 +64,13 @@ describe('plugin skill candidate scan', () => {
   it('stops walking the directory whose read crossed the entry budget', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-plugin-entry-limit-stop-'))
     temporaryDirectories.push(root)
-    // Nine levels puts the deepest directory exactly at the traversal depth bound, so its
-    // children are the first thing a walk that failed to stop would reject on depth.
-    const segments = Array.from({ length: 9 }, (_, index) => `level-${index}`)
+    // Why: read off the depth bound rather than hardcoded. The deepest directory has to
+    // sit exactly at it, so its children are the first thing a walk that failed to stop
+    // would reject on depth — one level shallower and the mutant walks them silently.
+    const segments = Array.from(
+      { length: MAXIMUM_PLUGIN_SCAN_DEPTH },
+      (_, index) => `level-${index}`
+    )
     await Promise.all(
       ['a', 'b'].map((name) => mkdir(join(root, ...segments, name), { recursive: true }))
     )
