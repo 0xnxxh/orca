@@ -292,6 +292,7 @@ export class SshPtyLegacyProjectionLedger {
         this.idsByPty.delete(ptyId)
       }
     }
+    this.terminality.closeGeneration(providerGeneration)
   }
 
   resetForGap(ptyId: string): void {

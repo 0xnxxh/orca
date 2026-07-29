@@ -93,4 +93,20 @@ export class SshPtyProjectionTerminality {
       this.waitersByPty.delete(ptyId)
     }
   }
+
+  closeGeneration(providerGeneration: number): void {
+    for (const [ptyId, waiters] of this.waitersByPty) {
+      const pending = waiters.filter((waiter) => waiter.providerGeneration !== providerGeneration)
+      for (const waiter of waiters) {
+        if (waiter.providerGeneration === providerGeneration) {
+          waiter.resolve()
+        }
+      }
+      if (pending.length > 0) {
+        this.waitersByPty.set(ptyId, pending)
+      } else {
+        this.waitersByPty.delete(ptyId)
+      }
+    }
+  }
 }

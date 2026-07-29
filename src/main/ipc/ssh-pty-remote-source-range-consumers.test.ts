@@ -16,7 +16,7 @@ const identity: PtySourceDeliveryIdentity = {
   deliveryToken: 'token-1'
 }
 
-function span(spanId: string): PtySourceSpan {
+function span(spanId: string, overrides: Partial<PtySourceSpan> = {}): PtySourceSpan {
   return {
     ...identity,
     spanId,
@@ -26,7 +26,8 @@ function span(spanId: string): PtySourceSpan {
     displayEnd: 4,
     data: 'data',
     splittable: true,
-    transform: { transformed: false, rawLengthSu: 4, scalarSafe: true }
+    transform: { transformed: false, rawLengthSu: 4, scalarSafe: true },
+    ...overrides
   }
 }
 
@@ -171,6 +172,78 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
 
     expect(ledger.obligation('span-1', 'remote:consumer-1')).toMatchObject({
       state: 'open'
+    })
+  })
+
+  it('rolls back every transfer when replacement reservation fails partway', () => {
+    const ledger = createCoordinator()
+    const consumers = new SshPtyRemoteSourceRangeConsumers(ledger)
+    const stream = { ptyId: 'pty-1', consumerId: 'consumer-1', streamGeneration: 'stream-1' }
+    ledger.open(identity)
+    consumers.hooks.attach(stream)
+    const first = ledger.reserve(identity, span('span-1'), [
+      'model',
+      ...consumers.requiredConsumers('pty-1')
+    ])
+    ledger.commit(first)
+    consumers.trackSpan('pty-1', 'span-1', first.requiredConsumers, 4)
+    const secondSpan = span('span-2', {
+      sourceStartSu: 4,
+      sourceEndSu: 8,
+      displayStart: 4,
+      displayEnd: 8
+    })
+    const second = ledger.reserve(identity, secondSpan, [
+      'model',
+      ...consumers.requiredConsumers('pty-1')
+    ])
+    ledger.commit(second)
+    consumers.trackSpan('pty-1', 'span-2', second.requiredConsumers, 8)
+    const beginTransfer = ledger.beginTransfer.bind(ledger)
+    vi.spyOn(ledger, 'beginTransfer').mockImplementation((transition, replacement) => {
+      if (transition.spanId === 'span-2') {
+        throw new Error('injected partial reserve failure')
+      }
+      return beginTransfer(transition, replacement)
+    })
+
+    expect(() => consumers.hooks.reserveReplacement(stream, 8, 'initial-snapshot')).toThrowError(
+      'injected partial reserve failure'
+    )
+    expect(ledger.obligation('span-1', 'remote:consumer-1').state).toBe('open')
+    expect(ledger.obligation('span-2', 'remote:consumer-1').state).toBe('open')
+  })
+
+  it('rejects a replacement whose exact transfer state changed before commit', () => {
+    const ledger = createCoordinator()
+    const consumers = new SshPtyRemoteSourceRangeConsumers(ledger)
+    const stream = { ptyId: 'pty-1', consumerId: 'consumer-1', streamGeneration: 'stream-1' }
+    ledger.open(identity)
+    consumers.hooks.attach(stream)
+    const sourceSpan = span('span-1')
+    const admission = ledger.reserve(identity, sourceSpan, [
+      'model',
+      ...consumers.requiredConsumers('pty-1')
+    ])
+    ledger.commit(admission)
+    consumers.trackSpan('pty-1', 'span-1', admission.requiredConsumers, 4)
+    const replacement = consumers.hooks.reserveReplacement(stream, 4, 'initial-snapshot')!
+    const transition = {
+      identity: sourceSpan,
+      spanId: sourceSpan.spanId,
+      consumer: 'remote:consumer-1' as const,
+      reason: 'concurrent-replacement'
+    }
+    expect(ledger.rollbackTransfer(transition)).toBe(true)
+    expect(ledger.beginTransfer(transition, 'remote:snapshot:consumer-1')).toBe(true)
+
+    expect(consumers.hooks.commitReplacement(replacement, { source: 'headless', seq: 4 })).toBe(
+      false
+    )
+    expect(consumers.hooks.rollbackReplacement(replacement, 'commit-rejected')).toBe(false)
+    expect(ledger.obligation('span-1', 'remote:consumer-1')).toMatchObject({
+      state: 'transferring',
+      reason: 'concurrent-replacement'
     })
   })
 
@@ -321,7 +394,7 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
     expect(consumers.requiredConsumers('pty-1')).toEqual([])
   })
 
-  it('rejects a replacement commit after cancellation proof reclaims its spans', () => {
+  it('idempotently commits and prunes a replacement after proof reclaims its covered spans', () => {
     const ledger = createCoordinator()
     const consumers = new SshPtyRemoteSourceRangeConsumers(ledger)
     const stream = { ptyId: 'pty-1', consumerId: 'consumer-1', streamGeneration: 'stream-1' }
@@ -339,9 +412,9 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
     ledger.applyCancellationProof(identity, { sentEndSu: 4, creditedEndSu: 0 })
 
     expect(consumers.hooks.commitReplacement(replacement!, { source: 'headless', seq: 4 })).toBe(
-      false
+      true
     )
-    expect(consumers.hooks.rollbackReplacement(replacement!, 'commit-rejected')).toBe(true)
+    expect(consumers.hooks.rollbackReplacement(replacement!, 'commit-rejected')).toBe(false)
     expect(() => consumers.hooks.cancel(stream, [], 'stream-detached')).not.toThrow()
     expect(consumers.requiredConsumers('pty-1')).toEqual([])
   })

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { SshPtyLegacyProjectionLedger } from './ssh-pty-legacy-projection'
+import { SshPtyProjectionTerminality } from './ssh-pty-projection-terminality'
 
 function reserve(
   ledger: SshPtyLegacyProjectionLedger,
@@ -29,6 +30,24 @@ function source(sourceStartSu: number, sourceEndSu: number, deliveryToken = 'tok
 }
 
 describe('SshPtyLegacyProjectionLedger', () => {
+  it('drains exact terminality waiters when their provider generation closes', async () => {
+    const terminality = new SshPtyProjectionTerminality()
+    const terminal = terminality.whenTerminal('pty-1', 3, 'incarnation-1', () => true)
+    let nextResolved = false
+    const next = terminality
+      .whenTerminal('pty-1', 4, 'incarnation-2', () => true)
+      .then(() => {
+        nextResolved = true
+      })
+
+    terminality.closeGeneration(3)
+
+    await expect(terminal).resolves.toBeUndefined()
+    expect(nextResolved).toBe(false)
+    terminality.closeGeneration(4)
+    await next
+  })
+
   it('rolls back scanner and display reservations before commit', () => {
     const ledger = new SshPtyLegacyProjectionLedger()
     const partial = reserve(ledger, { data: '\x1b[?20', rawLength: 5, sequenceEnd: 5 })

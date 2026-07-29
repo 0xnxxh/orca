@@ -14,6 +14,7 @@ import {
   encodeTerminalStreamJson,
   encodeTerminalStreamText
 } from '../../../shared/terminal-stream-protocol'
+import { TERMINAL_MULTIPLEX_ACK_STREAM_INITIAL_WINDOW_BYTES } from '../../../shared/terminal-multiplex-flow-control'
 import { SshPtyOutputIntake, type SshPtyOutputDataEvent } from '../../ipc/ssh-pty-output-intake'
 
 function stubRuntime(overrides: Partial<OrcaRuntimeService> = {}): OrcaRuntimeService {
@@ -598,7 +599,7 @@ describe('terminal multiplex RPC', () => {
     await harness.dispatchPromise
   })
 
-  it('settles negotiated source ranges only at accepted encoded boundaries', async () => {
+  it('keeps stale parsed source ACKs from releasing in-flight byte credit', async () => {
     let dataListener: ((data: string, meta?: RuntimeTerminalDataMeta) => void) | null = null
     const settle = vi.fn()
     const cancel = vi.fn()
@@ -704,8 +705,32 @@ describe('terminal multiplex RPC', () => {
     })
     acknowledge({ bytes: output.payload.byteLength })
     acknowledge({ epoch: 'notification', watermark: output.payload.byteLength })
+    const fillLength = TERMINAL_MULTIPLEX_ACK_STREAM_INITIAL_WINDOW_BYTES
+    emitData('x'.repeat(fillLength), {
+      seq: output.payload.byteLength + fillLength,
+      rawLength: fillLength,
+      sourceRanges: [sourceRange(output.payload.byteLength, output.payload.byteLength + fillLength)]
+    })
+    emitData('y'.repeat(64 * 1024), {
+      seq: output.payload.byteLength + fillLength + 64 * 1024,
+      rawLength: 64 * 1024,
+      sourceRanges: [
+        sourceRange(
+          output.payload.byteLength + fillLength,
+          output.payload.byteLength + fillLength + 64 * 1024
+        )
+      ]
+    })
+    const outputFramesBeforeStaleAck = harness.binaryFrames.filter(
+      (bytes) => decodeTerminalStreamFrame(bytes)?.opcode === TerminalStreamOpcode.Output
+    ).length
     acknowledge({ streamGeneration: 'stale', ackedEndByte: output.payload.byteLength })
     expect(settle).not.toHaveBeenCalled()
+    expect(
+      harness.binaryFrames.filter(
+        (bytes) => decodeTerminalStreamFrame(bytes)?.opcode === TerminalStreamOpcode.Output
+      )
+    ).toHaveLength(outputFramesBeforeStaleAck)
 
     acknowledge({
       streamGeneration: subscribed.streamGeneration,
@@ -725,7 +750,11 @@ describe('terminal multiplex RPC', () => {
         })
       )!
     )
-    expect(cancel).toHaveBeenCalledWith(expect.any(Object), [], 'stream-detached')
+    expect(cancel).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.arrayContaining([expect.objectContaining({ spanId: `span-2-${2 + fillLength}` })]),
+      'stream-detached'
+    )
   })
 
   it('keeps a lossless stream attached across partial ACK and source-token rotation', async () => {

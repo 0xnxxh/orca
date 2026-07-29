@@ -4,12 +4,20 @@ import type {
   RemoteTerminalSourceRangeStreamIdentity
 } from '../runtime/remote-terminal-source-range-consumer'
 import type { PtySourceSpan } from '../../shared/pty-source-credit-contract'
-import type { SshPtySourceConsumerId } from './ssh-pty-source-obligation-contract'
+import type {
+  SshPtySourceConsumerId,
+  SshPtySourceObligationState
+} from './ssh-pty-source-obligation-contract'
 import type { SshPtySourceObligationCoordinator } from './ssh-pty-source-obligation-coordinator'
+
+type ReplacementSpanRecord = Readonly<{
+  source: PtySourceSpan
+  transferState: SshPtySourceObligationState
+}>
 
 type ReplacementReservationRecord = {
   reservation: RemoteTerminalSourceRangeReplacementReservation
-  spans: readonly PtySourceSpan[]
+  spans: readonly ReplacementSpanRecord[]
   consumer: SshPtySourceConsumerId
   replacement: SshPtySourceConsumerId
   reason: string
@@ -47,9 +55,26 @@ export class SshPtyRemoteSourceRangeReplacements {
         throw new Error('ssh_remote_source_range_transfer_invalid')
       }
     }
-    for (const source of spans) {
-      const { spanId } = source
-      this.coordinator.beginTransfer({ identity: source, spanId, consumer, reason }, replacement)
+    const transferred: ReplacementSpanRecord[] = []
+    try {
+      for (const source of spans) {
+        const { spanId } = source
+        const transition = { identity: source, spanId, consumer, reason }
+        if (!this.coordinator.beginTransfer(transition, replacement)) {
+          throw new Error('ssh_remote_source_range_transfer_invalid')
+        }
+        const transferState = this.coordinator.obligation(spanId, consumer)
+        if (transferState.state !== 'transferring' || transferState.to !== replacement) {
+          this.coordinator.rollbackTransfer(transition)
+          throw new Error('ssh_remote_source_range_transfer_invalid')
+        }
+        transferred.push(Object.freeze({ source, transferState }))
+      }
+    } catch (error) {
+      for (const span of transferred.toReversed()) {
+        this.rollbackExactSpan(span, consumer, reason)
+      }
+      throw error
     }
     const reservation = Object.freeze({
       reservationId: `remote-source-replacement:${this.nextReservationId++}`,
@@ -58,7 +83,7 @@ export class SshPtyRemoteSourceRangeReplacements {
     })
     this.reservations.set(reservation.reservationId, {
       reservation,
-      spans: Object.freeze(spans),
+      spans: Object.freeze(transferred),
       consumer,
       replacement,
       reason
@@ -84,18 +109,21 @@ export class SshPtyRemoteSourceRangeReplacements {
       return false
     }
     if (
-      record.spans.some(({ spanId }) => {
+      record.spans.some(({ source, transferState }) => {
+        const { spanId } = source
         if (!this.coordinator.hasRetainedSpan(spanId)) {
-          return true
+          return false
         }
-        const obligation = this.coordinator.obligation(spanId, record.consumer)
-        return obligation.state !== 'transferring' || obligation.to !== record.replacement
+        return this.coordinator.obligation(spanId, record.consumer) !== transferState
       })
     ) {
       return false
     }
-    for (const source of record.spans) {
+    for (const { source } of record.spans) {
       const { spanId } = source
+      if (!this.coordinator.hasRetainedSpan(spanId)) {
+        continue
+      }
       if (
         !this.coordinator.commitTransfer({ identity: source, spanId, consumer: record.consumer })
       ) {
@@ -103,7 +131,7 @@ export class SshPtyRemoteSourceRangeReplacements {
       }
     }
     this.reservations.delete(reservation.reservationId)
-    onCommitted(record.spans.map(({ spanId }) => spanId))
+    onCommitted(record.spans.map(({ source }) => source.spanId))
     return true
   }
 
@@ -114,18 +142,12 @@ export class SshPtyRemoteSourceRangeReplacements {
     }
     this.reservations.delete(reservation.reservationId)
     let rolledBack = true
-    for (const source of record.spans) {
-      const { spanId } = source
+    for (const span of record.spans) {
+      const { spanId } = span.source
       if (!this.coordinator.hasRetainedSpan(spanId)) {
         continue
       }
-      rolledBack =
-        this.coordinator.rollbackTransfer({
-          identity: source,
-          spanId,
-          consumer: record.consumer,
-          reason
-        }) && rolledBack
+      rolledBack = this.rollbackExactSpan(span, record.consumer, reason) && rolledBack
     }
     return rolledBack
   }
@@ -144,11 +166,29 @@ export class SshPtyRemoteSourceRangeReplacements {
 
   closeGeneration(providerGeneration: number, reason: string): void {
     for (const record of Array.from(this.reservations.values())) {
-      if (
-        record.spans.some(({ providerGeneration: generation }) => generation === providerGeneration)
-      ) {
+      if (record.spans.some(({ source }) => source.providerGeneration === providerGeneration)) {
         this.rollback(record.reservation, `${reason}-replacement-aborted`)
       }
     }
+  }
+
+  private rollbackExactSpan(
+    span: ReplacementSpanRecord,
+    consumer: SshPtySourceConsumerId,
+    reason: string
+  ): boolean {
+    const { source, transferState } = span
+    if (
+      !this.coordinator.hasRetainedSpan(source.spanId) ||
+      this.coordinator.obligation(source.spanId, consumer) !== transferState
+    ) {
+      return false
+    }
+    return this.coordinator.rollbackTransfer({
+      identity: source,
+      spanId: source.spanId,
+      consumer,
+      reason
+    })
   }
 }
