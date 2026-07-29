@@ -407,10 +407,8 @@ export class CodexUsageStore {
   }
 
   private writeToDisk(): Promise<void> {
-    // Why: snapshot synchronously so a concurrent setEnabled/scan cannot tear the JSON mid-stringify.
-    const payload = JSON.stringify(this.state)
     const generation = ++this.writeGeneration
-    const write = this.pendingWrite.then(() => this.commitToDisk(payload, generation))
+    const write = this.pendingWrite.then(() => this.commitToDisk(generation))
     // Why: keep the queue usable after a failure — the awaiting caller still sees the rejection.
     this.pendingWrite = write.catch((error: unknown) => {
       console.error('[codex-usage] Failed to persist usage cache:', error)
@@ -418,11 +416,14 @@ export class CodexUsageStore {
     return write
   }
 
-  private async commitToDisk(payload: string, generation: number): Promise<void> {
+  private async commitToDisk(generation: number): Promise<void> {
     // Why: a newer snapshot is already queued behind this one, so writing 60 MB here would be wasted.
     if (generation !== this.writeGeneration) {
       return
     }
+    // Why stringify here and not at queue time: it blocks the main process for a multi-MB cache, and
+    // superseded generations must not pay for it. Synchronous, so no mutation can tear the JSON.
+    const payload = JSON.stringify(this.state)
     const usageFile = getCodexUsageFile()
     await mkdir(dirname(usageFile), { recursive: true }).catch(() => {})
     await writeFileDurableIfCurrent(

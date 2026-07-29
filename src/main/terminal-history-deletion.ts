@@ -58,6 +58,17 @@ function scheduleHistoryTreeRemoval(dir: string): void {
   pendingHistoryTreeRemovals.set(dir, removal)
 }
 
+/** Tombstone one history tree and queue its recursive removal off the caller's critical path.
+ *  Returns false when the rename failed, leaving the tree for a later GC pass to reclaim. */
+export function scheduleWorktreeHistoryTreeDeletion(dir: string, historyRoot: string): boolean {
+  const tombstone = tombstoneHistoryTree(dir, historyRoot)
+  if (!tombstone) {
+    return false
+  }
+  scheduleHistoryTreeRemoval(tombstone)
+  return true
+}
+
 /** Schedule tombstoned trees under one history root for async removal — the retry after a quit mid-rm. */
 export function schedulePendingHistoryTreeRemovals(historyRoot: string): void {
   const pendingRoot = getPendingDeleteRoot(historyRoot)
@@ -93,9 +104,7 @@ export function deleteWorktreeHistoryDir(worktreeId: string): void {
   const worktreeHash = hashWorktreeId(worktreeId)
   const historyRoot = getHistoryRoot()
   try {
-    const tombstone = tombstoneHistoryTree(join(historyRoot, worktreeHash), historyRoot)
-    if (tombstone) {
-      scheduleHistoryTreeRemoval(tombstone)
+    if (scheduleWorktreeHistoryTreeDeletion(join(historyRoot, worktreeHash), historyRoot)) {
       console.log(`[pty:history] Scheduled history delete for worktree ${worktreeId}`)
     }
   } catch (err) {
@@ -106,9 +115,6 @@ export function deleteWorktreeHistoryDir(worktreeId: string): void {
 
   // Also clean up WSL history for this worktree; listWslHistoryRoots is empty where WSL never ran.
   for (const distroRoot of listWslHistoryRoots()) {
-    const tombstone = tombstoneHistoryTree(join(distroRoot, worktreeHash), distroRoot)
-    if (tombstone) {
-      scheduleHistoryTreeRemoval(tombstone)
-    }
+    scheduleWorktreeHistoryTreeDeletion(join(distroRoot, worktreeHash), distroRoot)
   }
 }

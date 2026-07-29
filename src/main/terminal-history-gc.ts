@@ -1,11 +1,14 @@
 import { join } from 'node:path'
-import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import {
   getHistoryRoot,
   listWslHistoryRoots,
   PENDING_DELETE_DIR_NAME
 } from './terminal-history-paths'
-import { schedulePendingHistoryTreeRemovals } from './terminal-history-deletion'
+import {
+  schedulePendingHistoryTreeRemovals,
+  scheduleWorktreeHistoryTreeDeletion
+} from './terminal-history-deletion'
 
 // Why 5 minutes: GC runs ~10s after startup, and the live-worktree snapshot is
 // taken just before. A worktree created between the snapshot and GC execution
@@ -78,9 +81,12 @@ function gcScanRoot(
         }
 
         result.orphaned++
-        rmSync(entryPath, { recursive: true, force: true })
-        result.pruned++
-        console.log(`[pty:history:gc] Pruned orphaned history: ${meta.worktreeId}`)
+        // Why: a large orphaned tree recursive-rm'd here would stall the main process ~10s after
+        // launch — the same freeze the explicit-delete path already tombstones its way out of.
+        if (scheduleWorktreeHistoryTreeDeletion(entryPath, root)) {
+          result.pruned++
+          console.log(`[pty:history:gc] Pruned orphaned history: ${meta.worktreeId}`)
+        }
       }
     } catch {
       // Skip individual entries that fail.

@@ -860,7 +860,14 @@ export async function closeLocalWatcherForWorktreePath(
     clearTimeout(root.batch.timer)
   }
   watchedRoots.delete(rootKey)
-  await trackLocalUnsubscribe(rootKey, root)
+  // Why: the in-process Parcel fallback has no unsubscribe timeout of its own, so an unbounded await
+  // here would hang delete forever and hold the removal gate. The promise stays tracked in
+  // pendingLocalUnsubscribesByRoot, so a later close still observes its failure.
+  await drainBeforeWatcherRemoval(
+    trackLocalUnsubscribe(rootKey, root),
+    deadline,
+    `local watcher unsubscribe for ${rootKey}`
+  )
 }
 
 export async function restoreLocalWatcherAfterFailedRemoval(worktreePath: string): Promise<void> {

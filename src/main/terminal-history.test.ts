@@ -1,4 +1,5 @@
 import type * as FsPromises from 'node:fs/promises'
+import { sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
@@ -61,11 +62,11 @@ vi.mock('./wsl', () => ({
 
 import {
   resolveShellKind,
-  hashWorktreeId,
   ensureHistoryDir,
   injectHistoryEnv,
   updateHistFileForFallback
 } from './terminal-history'
+import { hashWorktreeId } from './terminal-history-paths'
 import {
   deleteWorktreeHistoryDir,
   flushPendingWorktreeHistoryDeletions
@@ -79,6 +80,8 @@ describe('terminal-history', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    // Why: clearAllMocks keeps implementations, so a throwing rename from one test would leak forward.
+    renameSyncMock.mockReset()
     getPathMock.mockReturnValue('/fake/userData')
     existsSyncMock.mockReturnValue(true)
     statSyncMock.mockReturnValue({ isDirectory: () => true, size: 100 })
@@ -372,12 +375,17 @@ describe('terminal-history', () => {
       const liveIds = new Set(['live-wt'])
       runHistoryGc(liveIds)
 
-      // Should only prune dir2 (dead-wt), not dir1 (live-wt)
-      expect(rmSyncMock).toHaveBeenCalledTimes(1)
-      expect(rmSyncMock).toHaveBeenCalledWith(expect.stringContaining('dir2'), {
-        recursive: true,
-        force: true
-      })
+      // Should only prune dir2 (dead-wt), not dir1 (live-wt), and never recursive-rm on the main thread.
+      expect(rmSyncMock).not.toHaveBeenCalled()
+      expect(renameSyncMock).toHaveBeenCalledTimes(1)
+      expect(renameSyncMock).toHaveBeenCalledWith(
+        expect.stringContaining('dir2'),
+        expect.stringContaining(`.pending-delete${sep}dir2.`)
+      )
+      expect(rmAsyncMock).toHaveBeenCalledWith(
+        expect.stringContaining(`.pending-delete${sep}dir2.`),
+        expect.objectContaining({ recursive: true, force: true })
+      )
     })
 
     it('skips recently-created directories to avoid TOCTOU race', () => {
@@ -403,6 +411,7 @@ describe('terminal-history', () => {
 
       // Should NOT prune because the directory is too young
       expect(rmSyncMock).not.toHaveBeenCalled()
+      expect(renameSyncMock).not.toHaveBeenCalled()
     })
 
     it('does not throw when history root does not exist', () => {

@@ -3,8 +3,6 @@ import { mkdirSync, existsSync, writeFileSync } from 'node:fs'
 import { parseWslPath, toLinuxPath } from './wsl'
 import { getHistoryRoot, getHistoryRootWsl, hashWorktreeId } from './terminal-history-paths'
 
-export { hashWorktreeId } from './terminal-history-paths'
-
 type ShellKind = 'zsh' | 'bash' | 'fish' | 'pwsh' | 'powershell' | 'cmd' | 'unknown'
 
 // ─── Shell Detection ───────────────────────────────────────────────

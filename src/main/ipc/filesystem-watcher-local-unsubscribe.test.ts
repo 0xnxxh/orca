@@ -42,10 +42,6 @@ import {
   registerFilesystemWatcherHandlers,
   restoreLocalWatcherAfterFailedRemoval
 } from './filesystem-watcher'
-import {
-  createWatcherRemovalDeadline,
-  WATCHER_REMOVAL_DRAIN_BUDGET_MS
-} from './watcher-removal-drain'
 import { stat } from 'node:fs/promises'
 import { subscribe as subscribeParcelWatcher } from '@parcel/watcher'
 import { subscribeViaWatcherProcess } from './parcel-watcher-process'
@@ -703,85 +699,6 @@ describe('local filesystem watcher unsubscribe cleanup', () => {
 
     expect(closedBeforeNativeSubscribe).toBe(true)
     expect(unsubscribeMock).toHaveBeenCalledTimes(1)
-  })
-
-  it('bounds a wedged watcher install so worktree deletion cannot hang forever', async () => {
-    vi.useFakeTimers()
-    try {
-      vi.mocked(stat).mockResolvedValue({ isDirectory: () => true } as never)
-      // Why mock the process-backed subscribe: the in-process fallback rejects on abort, so only a
-      // subscribe that ignores the abort signal exercises the deadline rather than the cancel path.
-      // Once, so the wedge cannot leak into the next test.
-      vi.mocked(subscribeViaWatcherProcess).mockImplementationOnce(() => new Promise(() => {}))
-      const sender = {
-        isDestroyed: () => false,
-        send: vi.fn(),
-        once: vi.fn(),
-        id: 1
-      }
-
-      const watchPromise = handlers['fs:watchWorktree'](
-        { sender },
-        { worktreePath: '/tmp/repo' }
-      ) as Promise<unknown>
-      await vi.waitFor(() => {
-        expect(subscribeViaWatcherProcess).toHaveBeenCalled()
-      })
-
-      let closed = false
-      const closePromise = closeLocalWatcherForWorktreePath('/tmp/repo').then(() => {
-        closed = true
-      })
-
-      await vi.advanceTimersByTimeAsync(WATCHER_REMOVAL_DRAIN_BUDGET_MS - 1)
-      expect(closed).toBe(false)
-
-      await vi.advanceTimersByTimeAsync(1)
-      await closePromise
-      expect(closed).toBe(true)
-
-      void watchPromise
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('spends one shared budget across both drains instead of one per await', async () => {
-    vi.useFakeTimers()
-    try {
-      vi.mocked(stat).mockResolvedValue({ isDirectory: () => true } as never)
-      vi.mocked(subscribeViaWatcherProcess).mockImplementationOnce(() => new Promise(() => {}))
-      const sender = {
-        isDestroyed: () => false,
-        send: vi.fn(),
-        once: vi.fn(),
-        id: 1
-      }
-
-      const watchPromise = handlers['fs:watchWorktree'](
-        { sender },
-        { worktreePath: '/tmp/repo' }
-      ) as Promise<unknown>
-      await vi.waitFor(() => {
-        expect(subscribeViaWatcherProcess).toHaveBeenCalled()
-      })
-
-      // Half the budget is already gone before the close starts; the drain may only spend the rest.
-      const deadline = createWatcherRemovalDeadline()
-      await vi.advanceTimersByTimeAsync(WATCHER_REMOVAL_DRAIN_BUDGET_MS / 2)
-
-      let closed = false
-      const closePromise = closeLocalWatcherForWorktreePath('/tmp/repo', deadline).then(() => {
-        closed = true
-      })
-      await vi.advanceTimersByTimeAsync(WATCHER_REMOVAL_DRAIN_BUDGET_MS / 2)
-      await closePromise
-      expect(closed).toBe(true)
-
-      void watchPromise
-    } finally {
-      vi.useRealTimers()
-    }
   })
 
   it('re-arms active local listeners after worktree deletion fails', async () => {

@@ -7225,11 +7225,16 @@ export class OrcaRuntimeService {
       await this.closeFileWatchersForRemoval(worktreePath, connectionId, deadline)
       // Why: a wedged install never releases its fence slot, so gate.ready can hang forever; the delete
       // must proceed instead, or the gate stays held and every later install under this root is rejected.
-      await drainBeforeWatcherRemoval(
+      const fenceDrain = await drainBeforeWatcherRemoval(
         gate.ready,
         deadline,
         `watcher install fence for ${worktreePath}`
       )
+      if (fenceDrain === 'timeout') {
+        // Why: a wedged install holds its fence slot for the process lifetime, so leaving it counted
+        // makes every later removal of this root burn the whole drain budget again.
+        gate.abandonPendingInstalls()
+      }
       await this.closeFileWatchersForRemoval(worktreePath, connectionId, deadline)
       let finished = false
       return {

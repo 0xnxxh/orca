@@ -36591,8 +36591,9 @@ describe('OrcaRuntimeService', () => {
 
   it('proceeds when a wedged install never releases the removal fence', async () => {
     vi.useFakeTimers()
-    // Held across the whole acquire — models a native subscribe that ignores abort and never settles.
-    const wedgedInstall = beginWatcherInstall(TEST_WORKTREE_PATH)
+    // Held across the whole acquire and never released — models a native subscribe that ignores abort
+    // and never settles. The removal must abandon the fence slot rather than leak it into later suites.
+    beginWatcherInstall(TEST_WORKTREE_PATH)
     try {
       const runtime = createRuntime()
 
@@ -36614,8 +36615,30 @@ describe('OrcaRuntimeService', () => {
       const finishRetry = beginWatcherInstall(TEST_WORKTREE_PATH)
       finishRetry()
     } finally {
-      // Why: the gate's install count is module-global; leaving it armed would stall later suites.
-      wedgedInstall()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not re-spend the drain budget on a removal after a wedged install was abandoned', async () => {
+    vi.useFakeTimers()
+    beginWatcherInstall(TEST_WORKTREE_PATH)
+    try {
+      const runtime = createRuntime()
+
+      const firstAcquiring = runtime.acquireFileWatcherRemoval(TEST_WORKTREE_PATH)
+      await vi.advanceTimersByTimeAsync(WATCHER_REMOVAL_DRAIN_BUDGET_MS)
+      await (await firstAcquiring).finish(true)
+
+      let secondAcquired = false
+      const secondAcquiring = runtime.acquireFileWatcherRemoval(TEST_WORKTREE_PATH).then((gate) => {
+        secondAcquired = true
+        return gate
+      })
+      await vi.advanceTimersByTimeAsync(1)
+
+      expect(secondAcquired).toBe(true)
+      await (await secondAcquiring).finish(true)
+    } finally {
       vi.useRealTimers()
     }
   })
