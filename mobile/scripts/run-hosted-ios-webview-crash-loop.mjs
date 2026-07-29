@@ -10,7 +10,9 @@ import {
   waitForVisibleHostedWebView
 } from './hosted-webview-cdp-session.mjs'
 import { readIosRollbackActivation, waitForIosActivation } from './hosted-ios-mobile-web-cache.mjs'
+import { verifyHostedIosPrivacyLogs } from './hosted-ios-privacy-log-audit.mjs'
 import { terminateHostedIosWebContent } from './hosted-ios-webcontent-process.mjs'
+import { verifyHostedWebViewPrivacyIsolation } from './hosted-webview-privacy-isolation.mjs'
 
 const execFileAsync = promisify(execFile)
 const bundleIdentifier = 'com.stably.orca.mobile'
@@ -95,6 +97,8 @@ async function main() {
       options.timeoutMs
     )
     const finalDocument = await readHostedWebViewState(document)
+    const privacy = await verifyHostedWebViewPrivacyIsolation({ document })
+    const privacyLogs = await verifyHostedIosPrivacyLogs({ deviceUdid, startedAt })
     if (Date.now() - startedAt >= 60_000) {
       throw new Error('iOS crash-loop drill exceeded the production failure window')
     }
@@ -112,7 +116,9 @@ async function main() {
           initial: { active: initial.active, previous: initial.previous },
           finalActivation,
           documents,
-          finalText: finalDocument.bodyText.slice(0, 240)
+          finalText: finalDocument.bodyText.slice(0, 240),
+          privacy,
+          privacyLogs
         },
         null,
         2
