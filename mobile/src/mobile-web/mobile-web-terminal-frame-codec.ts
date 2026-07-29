@@ -4,6 +4,8 @@ import {
   MOBILE_WEB_TERMINAL_MAX_OUTPUT_BATCH_BYTES,
   MOBILE_WEB_TERMINAL_MAX_SNAPSHOT_BYTES,
   MOBILE_WEB_TERMINAL_SNAPSHOT_CHUNK_BYTES,
+  MobileWebTerminalOscLinksSchema,
+  type MobileWebTerminalOscLinkRange,
   type MobileWebTerminalEvent
 } from '../../../src/shared/mobile-web/terminal-stream-contract'
 import {
@@ -18,12 +20,14 @@ export type HostSnapshot = {
   viewport: { cols: number; rows: number }
   truncated: boolean
   source: 'host-model' | 'renderer'
+  oscLinks?: MobileWebTerminalOscLinkRange[]
   chunks: Uint8Array[]
   totalBytes: number
 }
 
 export function startHostSnapshot(frame: TerminalStreamFrame): HostSnapshot | null {
   const value = decodeTerminalStreamJson<Record<string, unknown>>(frame.payload)
+  const oscLinks = MobileWebTerminalOscLinksSchema.safeParse(value?.oscLinks)
   if (
     !value ||
     typeof value.cols !== 'number' ||
@@ -33,7 +37,8 @@ export function startHostSnapshot(frame: TerminalStreamFrame): HostSnapshot | nu
     value.cols < 2 ||
     value.cols > 1_000 ||
     value.rows < 1 ||
-    value.rows > 1_000
+    value.rows > 1_000 ||
+    (value.oscLinks !== undefined && !oscLinks.success)
   ) {
     return null
   }
@@ -47,6 +52,7 @@ export function startHostSnapshot(frame: TerminalStreamFrame): HostSnapshot | nu
     viewport: { cols: value.cols, rows: value.rows },
     truncated: value.truncated === true || value.truncatedByByteBudget === true,
     source: value.source === 'renderer' ? 'renderer' : 'host-model',
+    ...(value.oscLinks !== undefined && oscLinks.success ? { oscLinks: oscLinks.data } : {}),
     chunks: [],
     totalBytes: 0
   }
@@ -80,7 +86,8 @@ export function finishHostSnapshot(
       throughSequence,
       sha256: hash,
       truncated: snapshot.truncated,
-      source: snapshot.source
+      source: snapshot.source,
+      ...(snapshot.oscLinks ? { oscLinks: snapshot.oscLinks } : {})
     }
   ]
   for (

@@ -572,7 +572,8 @@ final class MobileWebPackageStore {
     }
     guard
       totalBytes == declaredTotalBytes,
-      documentCount == 1,
+      (1...2).contains(documentCount),
+      entrypoint == "index.html",
       records[entrypoint] != nil,
       assets.contains(where: {
         $0["path"] as? String == entrypoint && $0["role"] as? String == "document"
@@ -1002,7 +1003,8 @@ func isValidMobileWebAssetMetadata(
     return false
   }
   if role == "document" {
-    return path == "index.html" && contentType == "text/html; charset=utf-8"
+    return (path == "index.html" || path == "mermaid-frame.html")
+      && contentType == "text/html; charset=utf-8"
   }
   let components = path.split(separator: "/")
   guard

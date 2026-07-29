@@ -26,6 +26,7 @@ export async function startHeadlessPairingRuntime({
   cwd,
   runDirectory,
   port,
+  environment,
   lanIpCandidates,
   logStep,
   logSuccess
@@ -59,6 +60,7 @@ export async function startHeadlessPairingRuntime({
       cwd,
       env: {
         ...process.env,
+        ...environment,
         ORCA_DEV_USER_DATA_PATH: userData,
         ORCA_E2E_USER_DATA_DIR: userData,
         ORCA_E2E_HOME_DIR: homeDir,
@@ -69,7 +71,14 @@ export async function startHeadlessPairingRuntime({
     }
   )
 
-  return await waitForPairingRuntime({ child, userData, homeDir, pairingAddress, logSuccess })
+  return await waitForPairingRuntime({
+    child,
+    environment,
+    userData,
+    homeDir,
+    pairingAddress,
+    logSuccess
+  })
 }
 
 export async function registerWorktreeForPairingRuntime(runtime, worktree, tools) {
@@ -110,7 +119,14 @@ export async function registerWorktreeForPairingRuntime(runtime, worktree, tools
   }
 }
 
-async function waitForPairingRuntime({ child, userData, homeDir, pairingAddress, logSuccess }) {
+async function waitForPairingRuntime({
+  child,
+  environment,
+  userData,
+  homeDir,
+  pairingAddress,
+  logSuccess
+}) {
   let output = ''
   let stderr = ''
   let resolved = false
@@ -156,6 +172,7 @@ async function waitForPairingRuntime({ child, userData, homeDir, pairingAddress,
       process: child,
       env: {
         ...process.env,
+        ...environment,
         ORCA_USER_DATA_PATH: userData,
         // Why: `orca-dev` derives its own profile and ignores ORCA_USER_DATA_PATH.
         ORCA_DEV_USER_DATA_PATH: userData

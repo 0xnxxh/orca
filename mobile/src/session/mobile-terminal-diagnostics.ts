@@ -28,6 +28,16 @@ export type MobileTerminalDiagnosticDetails = Readonly<
   Record<string, MobileTerminalDiagnosticValue>
 >
 
+type MobileTerminalDiagnosticRecord = {
+  event: MobileTerminalDiagnosticEvent
+  details: MobileTerminalDiagnosticDetails
+}
+
+type MobileTerminalDiagnosticGlobal = typeof globalThis & {
+  __orcaCaptureMobileTerminalDiagnostics?: boolean
+  __orcaMobileTerminalDiagnostics?: MobileTerminalDiagnosticRecord[]
+}
+
 type DiagnosticTab = {
   readonly id: string
   readonly type: string
@@ -47,11 +57,20 @@ export function logMobileTerminalDiagnostic(
   event: MobileTerminalDiagnosticEvent,
   details: MobileTerminalDiagnosticDetails = {}
 ): void {
+  const target = globalThis as MobileTerminalDiagnosticGlobal
   // Why: lifecycle diagnostics are intentionally available for HMR repros,
   // but high-frequency WebView events must not add production log overhead.
-  if (typeof __DEV__ !== 'undefined' && !__DEV__) {
+  if (
+    typeof __DEV__ !== 'undefined' &&
+    !__DEV__ &&
+    target.__orcaCaptureMobileTerminalDiagnostics !== true
+  ) {
     return
   }
+  target.__orcaMobileTerminalDiagnostics = [
+    ...(target.__orcaMobileTerminalDiagnostics ?? []).slice(-63),
+    { event, details }
+  ]
   // Keep this structured and content-free so users can safely share a filtered log.
   console.log(MOBILE_TERMINAL_DIAGNOSTIC_TAG, event, details)
 }
@@ -132,7 +151,8 @@ export class MobileTerminalDiagnostics {
       eventSeq,
       cols: typeof data.cols === 'number' ? data.cols : null,
       rows: typeof data.rows === 'number' ? data.rows : null,
-      serializedLength: typeof data.serialized === 'string' ? data.serialized.length : 0,
+      serializedLength: terminalDataLength(data.serialized),
+      oscLinkCount: Array.isArray(data.oscLinks) ? data.oscLinks.length : null,
       scrollbackRows: typeof data.scrollbackRows === 'number' ? data.scrollbackRows : null,
       truncated: data.truncated === true || data.truncatedByByteBudget === true
     })
@@ -175,7 +195,8 @@ export class MobileTerminalDiagnostics {
       eventSeq,
       cols: typeof data.cols === 'number' ? data.cols : null,
       rows: typeof data.rows === 'number' ? data.rows : null,
-      serializedLength: typeof data.serialized === 'string' ? data.serialized.length : 0,
+      serializedLength: terminalDataLength(data.serialized),
+      oscLinkCount: Array.isArray(data.oscLinks) ? data.oscLinks.length : null,
       hasRef
     })
   }
@@ -292,4 +313,12 @@ export class MobileTerminalDiagnostics {
       activeHandleReady: activeHandle !== null
     })
   }
+}
+
+function terminalDataLength(value: unknown): number {
+  return typeof value === 'string'
+    ? value.length
+    : value instanceof Uint8Array
+      ? value.byteLength
+      : 0
 }

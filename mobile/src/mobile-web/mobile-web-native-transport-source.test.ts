@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { MOBILE_WEB_BRIDGE_MAX_MESSAGE_BYTES } from '../../../src/shared/mobile-web/bridge-contract'
 import { mobileWebDocumentCspDirectives } from '../../../src/shared/mobile-web/document-csp'
 import { MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH } from '../../../src/shared/mobile-web/markdown-editor-csp'
+import { mobileWebMermaidFrameCspDirectives } from '../../../src/shared/mobile-web/mermaid-frame-document'
 
 const iosSource = readFileSync(
   new URL('../../packages/expo-mobile-web-shell/ios/MobileWebShellView.swift', import.meta.url),
@@ -29,6 +30,13 @@ const androidModuleSource = readFileSync(
   ),
   'utf8'
 )
+const androidBridgeUrlSource = readFileSync(
+  new URL(
+    '../../packages/expo-mobile-web-shell/android/src/main/java/expo/modules/mobilewebshell/MobileWebBridgeDocumentUrl.kt',
+    import.meta.url
+  ),
+  'utf8'
+)
 const viewRefSource = readFileSync(
   new URL('../../packages/expo-mobile-web-shell/src/ExpoMobileWebShellView.ts', import.meta.url),
   'utf8'
@@ -49,7 +57,12 @@ describe('mobile web native bridge transport', () => {
     expect(androidSource).toContain('!isMainFrame')
     expect(androidSource).toContain('setOf(MOBILE_WEB_ORIGIN)')
     expect(androidSource).toContain('!isMobileWebOrigin(sourceOrigin)')
-    expect(androidSource).toContain('!isAllowedDocumentUrl(documentUrl)')
+    expect(androidSource).toContain(
+      '!isAllowedMobileWebBridgeDocumentUrl(documentUrl.toString(), sessionId)'
+    )
+    expect(androidBridgeUrlSource).toContain('url.host == MOBILE_WEB_ORIGIN_HOST')
+    expect(androidBridgeUrlSource).toContain('url.fragment == sessionId')
+    expect(androidBridgeUrlSource).toContain('url.userInfo == null')
     expect(androidSource).toContain('request.isForMainFrame && isAllowedDocumentUrl(url)')
     expect(androidSource).toContain('return !allowed')
   })
@@ -138,19 +151,23 @@ describe('mobile web native bridge transport', () => {
     expect(androidSource).toContain('webView.visibility = View.VISIBLE')
   })
 
-  it('allows only opaque data frames for the shared rich Markdown editor', () => {
+  it('allows only reviewed data and private-origin embedded documents', () => {
     const expected = mobileWebDocumentCspDirectives(MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH)
     expect(nativeCspDirectives(iosSource, 'mobileWebCsp')).toEqual(expected)
     expect(nativeCspDirectives(androidSource, 'MOBILE_WEB_CSP')).toEqual(expected)
+    expect(nativeCspDirectives(iosSource, 'mobileWebMermaidFrameCsp')).toEqual(
+      mobileWebMermaidFrameCspDirectives()
+    )
+    expect(nativeCspDirectives(androidSource, 'MOBILE_WEB_MERMAID_FRAME_CSP')).toEqual(
+      mobileWebMermaidFrameCspDirectives()
+    )
     for (const source of [iosSource, androidSource]) {
-      expect(source).toContain('"frame-src data:"')
-      expect(source).toContain('"child-src data:"')
+      expect(source).toContain('"frame-src \'self\' data:"')
+      expect(source).toContain('"child-src \'self\' data:"')
       expect(source).toContain('"connect-src \'none\'"')
       expect(source).toContain('"worker-src \'none\'"')
       expect(source).toContain('"base-uri \'none\'"')
       expect(source).toContain('"form-action \'none\'"')
-      expect(source).not.toContain('"frame-src \'none\'"')
-      expect(source).not.toContain('"child-src \'none\'"')
       expect(source).not.toContain("\"script-src 'self' 'unsafe-inline'\"")
     }
     expect(iosSource).toContain(
@@ -165,7 +182,9 @@ describe('mobile web native bridge transport', () => {
     expect(androidSource).toContain('"img-src \'self\' data: blob:"')
     expect(iosSource).toContain('navigationAction.targetFrame?.isMainFrame == false')
     expect(iosSource).toContain('navigationAction.request.url?.scheme == "data"')
+    expect(iosSource).toContain('isAllowedEmbeddedDocumentUrl(navigationAction.request.url)')
     expect(androidSource).toContain('!request.isForMainFrame && url.scheme == "data"')
+    expect(androidSource).toContain('!request.isForMainFrame && isAllowedEmbeddedDocumentUrl(url)')
   })
 })
 

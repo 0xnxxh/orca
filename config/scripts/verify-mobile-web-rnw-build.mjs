@@ -9,6 +9,11 @@ import {
 import { mobileWebDocumentCspDirectives } from '../../src/shared/mobile-web/document-csp.ts'
 import { MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH } from '../../src/shared/mobile-web/markdown-editor-csp.ts'
 import {
+  MOBILE_WEB_MERMAID_FRAME_PATH,
+  MOBILE_WEB_MERMAID_FRAME_SCRIPT,
+  mobileWebMermaidFrameCspDirectives
+} from '../../src/shared/mobile-web/mermaid-frame-document.ts'
+import {
   MOBILE_WEB_RNW_BUILD_BUDGET,
   mobileWebRnwBuildBudgetFailures
 } from './mobile-web-rnw-build-budget.mjs'
@@ -32,14 +37,14 @@ for (const asset of manifest.assets) {
   if (sha256(bytes) !== asset.sha256) {
     throw new Error(`RNW asset hash mismatch: ${asset.path}`)
   }
-  if (asset.path !== 'index.html' && !contentAddressMatches(asset.path, asset.sha256)) {
+  if (asset.role !== 'document' && !contentAddressMatches(asset.path, asset.sha256)) {
     throw new Error(`RNW asset path is not content-addressed: ${asset.path}`)
   }
 }
 
 const roles = countRoles(manifest.assets)
-if (roles.document !== 1 || roles.script !== 1 || roles.style > 1) {
-  throw new Error('RNW package must contain one document, one script, and at most one style')
+if (roles.document !== 2 || roles.script !== 1 || roles.style > 1) {
+  throw new Error('RNW package must contain two documents, one script, and at most one style')
 }
 
 const scriptBytes = bytesForRole(manifest.assets, 'script')
@@ -96,6 +101,30 @@ for (const match of html.matchAll(/\b(?:src|href)=["']([^"']+)["']/g)) {
   if (!declaredPaths.includes(reference.slice(2))) {
     throw new Error(`RNW document references an undeclared asset: ${reference}`)
   }
+}
+
+const mermaidFrame = await readFile(path.join(outputRoot, MOBILE_WEB_MERMAID_FRAME_PATH), 'utf8')
+for (const directive of mobileWebMermaidFrameCspDirectives()) {
+  if (!mermaidFrame.includes(directive)) {
+    throw new Error(`RNW Mermaid frame CSP is missing: ${directive}`)
+  }
+}
+const mermaidScripts = [
+  ...mermaidFrame.matchAll(/<script(?<attributes>[^>]*)>(?<source>[\s\S]*?)<\/script>/gi)
+]
+if (
+  mermaidScripts.length !== 1 ||
+  mermaidScripts[0]?.groups?.attributes?.trim() !== '' ||
+  mermaidScripts[0]?.groups?.source !== MOBILE_WEB_MERMAID_FRAME_SCRIPT
+) {
+  throw new Error('RNW Mermaid frame must contain only the fixed inline renderer')
+}
+if (/\b(?:src|href)=["']/i.test(mermaidFrame)) {
+  throw new Error('RNW Mermaid frame must not reference external resources')
+}
+const mermaidPolicyFailure = mobileWebRnwExecutablePolicyFailure(MOBILE_WEB_MERMAID_FRAME_SCRIPT)
+if (mermaidPolicyFailure) {
+  throw new Error(`RNW Mermaid frame contains ${mermaidPolicyFailure}`)
 }
 
 for (const asset of manifest.assets.filter((candidate) => candidate.role === 'script')) {

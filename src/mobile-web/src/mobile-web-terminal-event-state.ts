@@ -2,6 +2,7 @@ import { sha256 } from '@noble/hashes/sha256'
 import {
   validateMobileWebTerminalOutputSequence,
   validateMobileWebTerminalSnapshotOffset,
+  type MobileWebTerminalOscLinkRange,
   type MobileWebTerminalEvent
 } from '../../shared/mobile-web/terminal-stream-contract'
 
@@ -12,6 +13,7 @@ type SnapshotState = {
   totalBytes: number
   throughSequence: number
   sha256: string
+  oscLinks?: MobileWebTerminalOscLinkRange[]
   nextOffset: number
   chunks: Uint8Array[]
 }
@@ -38,6 +40,7 @@ export type MobileWebTerminalEffect =
       throughSequence: number
       kind: 'initial' | 'resize' | 'resync'
       viewport: { cols: number; rows: number }
+      oscLinks?: MobileWebTerminalOscLinkRange[]
     }
   | { type: 'resized'; viewport: { cols: number; rows: number } }
   | { type: 'resync'; fromSequence: number; reason: 'gap' | 'overflow' }
@@ -76,6 +79,7 @@ export class MobileWebTerminalEventState {
         totalBytes: event.totalBytes,
         throughSequence: event.throughSequence,
         sha256: event.sha256,
+        ...(event.oscLinks ? { oscLinks: event.oscLinks } : {}),
         nextOffset: 0,
         chunks: []
       }
@@ -165,7 +169,8 @@ export class MobileWebTerminalEventState {
       data,
       throughSequence: snapshot.throughSequence,
       kind: snapshot.kind,
-      viewport: snapshot.viewport
+      viewport: snapshot.viewport,
+      ...(snapshot.oscLinks ? { oscLinks: snapshot.oscLinks } : {})
     }
   }
 }

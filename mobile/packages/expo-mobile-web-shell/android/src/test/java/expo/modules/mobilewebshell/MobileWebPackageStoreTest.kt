@@ -27,9 +27,12 @@ class MobileWebPackageStoreTest {
 
     stagePackage(store, "paired-host", fixture)
     val session = store.openSession("paired-host", fixture.buildId, 1)
-    val asset = store.readAsset(session.getValue("sessionId"), "index.html")
+    val sessionId = session.getValue("sessionId")
+    val asset = store.readAsset(sessionId, "index.html")
 
     assertEquals(fixture.buildId, session["buildId"])
+    assertEquals(43, sessionId.length)
+    assertEquals(true, Regex("[A-Za-z0-9_-]{43}").matches(sessionId))
     assertEquals("text/html; charset=utf-8", asset.contentType)
     assertArrayEquals(fixture.bytes, asset.bytes)
     val error = assertThrows(IllegalArgumentException::class.java) {
@@ -119,6 +122,7 @@ class MobileWebPackageStoreTest {
     val hash = "a".repeat(64)
     val valid = listOf(
       arrayOf("index.html", hash, "text/html; charset=utf-8", "document"),
+      arrayOf("mermaid-frame.html", hash, "text/html; charset=utf-8", "document"),
       arrayOf("assets/$hash.css", hash, "text/css; charset=utf-8", "style"),
       arrayOf("assets/$hash.js", hash, "text/javascript; charset=utf-8", "script"),
       arrayOf("assets/$hash.png", hash, "image/png", "image"),
@@ -133,6 +137,7 @@ class MobileWebPackageStoreTest {
       arrayOf("assets/$hash.png", hash, "image/png; charset=utf-8", "image"),
       arrayOf("assets/$hash.JS", hash, "text/javascript; charset=utf-8", "script"),
       arrayOf("assets/$hash.txt", hash, "text/plain; charset=utf-8", "document"),
+      arrayOf("other-frame.html", hash, "text/html; charset=utf-8", "document"),
       arrayOf("assets/$hash.js", "b".repeat(64), "text/javascript; charset=utf-8", "script"),
       arrayOf("index.html", hash, "text/html; charset=UTF-8", "document"),
       arrayOf("index.html", hash, "text/html; charset=utf-8", "document ")

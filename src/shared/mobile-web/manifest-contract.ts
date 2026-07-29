@@ -7,6 +7,8 @@ export const MOBILE_WEB_MAX_PACKAGE_BYTES = 32 * 1024 * 1024
 export const MOBILE_WEB_MAX_ASSET_COUNT = 256
 export const MOBILE_WEB_MAX_PATH_CHARS = 240
 export const MOBILE_WEB_MAX_BRIDGE_VERSION = 65_535
+export const MOBILE_WEB_ENTRYPOINT_PATH = 'index.html'
+export const MOBILE_WEB_EMBEDDED_DOCUMENT_PATHS = ['mermaid-frame.html'] as const
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/-]+$/
@@ -112,7 +114,13 @@ export function isMobileWebAssetMetadata(
     return false
   }
   if (role === 'document') {
-    return path === 'index.html' && contentType === 'text/html; charset=utf-8'
+    return (
+      (path === MOBILE_WEB_ENTRYPOINT_PATH ||
+        MOBILE_WEB_EMBEDDED_DOCUMENT_PATHS.includes(
+          path as (typeof MOBILE_WEB_EMBEDDED_DOCUMENT_PATHS)[number]
+        )) &&
+      contentType === 'text/html; charset=utf-8'
+    )
   }
   const match = CONTENT_ADDRESSED_PATH_PATTERN.exec(path)
   if (!match || match[0] !== path || match[1] !== sha256) {
@@ -178,10 +186,15 @@ function validateManifestRelationships(
     }
   })
 
-  if (documentCount !== 1 || !entrypointFound) {
+  if (
+    documentCount < 1 ||
+    documentCount > 1 + MOBILE_WEB_EMBEDDED_DOCUMENT_PATHS.length ||
+    manifest.entrypoint !== MOBILE_WEB_ENTRYPOINT_PATH ||
+    !entrypointFound
+  ) {
     context.addIssue({
       code: 'custom',
-      message: 'Manifest must contain exactly one document matching entrypoint',
+      message: 'Manifest must contain the fixed document entrypoint and only reserved documents',
       path: ['entrypoint']
     })
   }

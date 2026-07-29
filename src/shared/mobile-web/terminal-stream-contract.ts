@@ -5,6 +5,9 @@ import {
   isMobileWebBase64UrlIdentifier,
   isMobileWebSha256
 } from './protocol-token-contract'
+import { MobileWebTerminalOscLinksSchema } from './terminal-osc-link-contract'
+
+export * from './terminal-osc-link-contract'
 
 export const MOBILE_WEB_TERMINAL_MAX_INPUT_BYTES = 16 * 1024
 export const MOBILE_WEB_TERMINAL_MAX_OUTPUT_BATCH_BYTES = 64 * 1024
@@ -174,7 +177,8 @@ const SnapshotStartEventSchema = z
     throughSequence: SequenceSchema,
     sha256: z.string().refine(isMobileWebSha256),
     truncated: z.boolean(),
-    source: z.enum(['host-model', 'renderer'])
+    source: z.enum(['host-model', 'renderer']),
+    oscLinks: MobileWebTerminalOscLinksSchema.optional()
   })
   .strict()
 

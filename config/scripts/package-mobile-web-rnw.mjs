@@ -9,6 +9,11 @@ import {
 } from '../../src/shared/mobile-web/manifest-contract.ts'
 import { mobileWebDocumentCsp } from '../../src/shared/mobile-web/document-csp.ts'
 import { MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH } from '../../src/shared/mobile-web/markdown-editor-csp.ts'
+import {
+  MOBILE_WEB_MERMAID_FRAME_PATH,
+  buildMobileWebMermaidFrameDocument
+} from '../../src/shared/mobile-web/mermaid-frame-document.ts'
+import { colors } from '../../mobile/src/theme/mobile-theme.ts'
 import { assertMobileWebRnwExecutablePolicy } from './mobile-web-rnw-executable-policy.mjs'
 
 const args = parseArgs(process.argv.slice(2))
@@ -60,6 +65,15 @@ packaged.set(scriptPath, scriptBytes)
 const document = mobileWebDocument({ scriptPath, stylePath })
 const documentBytes = Buffer.from(document)
 packaged.set('index.html', documentBytes)
+const mermaidFrame = buildMobileWebMermaidFrameDocument({
+  theme: {
+    background: colors.bgRaised,
+    primary: colors.bgPanel,
+    text: colors.textPrimary,
+    line: colors.textSecondary
+  }
+})
+packaged.set(MOBILE_WEB_MERMAID_FRAME_PATH, Buffer.from(mermaidFrame))
 
 for (const [assetPath, bytes] of packaged) {
   await mkdir(path.dirname(path.join(outputRoot, assetPath)), { recursive: true })

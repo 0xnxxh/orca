@@ -25,6 +25,7 @@ vi.mock('./mobile-web-terminal-device-input-authority', () => ({
 const SUBSCRIPTION_ID = 'S'.repeat(22)
 const HOST_WORKSPACE_ID = 'repo::/secret/worktree'
 const PAGE_WORKSPACE_ID = `workspace_0_${'09'.repeat(16)}`
+const OSC_LINKS = [{ row: 0, startCol: 0, endCol: 7, uri: 'https://example.com/issue/1' }]
 
 describe('MobileWebTerminalStreams', () => {
   it('keeps the host handle native-only and translates snapshot, output, and ACK frames', async () => {
@@ -67,7 +68,8 @@ describe('MobileWebTerminalStreams', () => {
         cols: 80,
         rows: 24,
         cwd: '/secret/worktree',
-        source: 'renderer'
+        source: 'renderer',
+        oscLinks: OSC_LINKS
       })
     })
     harness.emitFrame({
@@ -102,7 +104,8 @@ describe('MobileWebTerminalStreams', () => {
     ])
     expect(harness.events[1]?.event).toMatchObject({
       type: 'snapshotStart',
-      snapshotId: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/)
+      snapshotId: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/),
+      oscLinks: OSC_LINKS
     })
     const output = harness.events.at(-1)!.event
     expect(output).toMatchObject({
@@ -190,6 +193,17 @@ describe('MobileWebTerminalStreams', () => {
       },
       harness.client
     )
+    harness.emitFrame({
+      opcode: TerminalStreamOpcode.SnapshotStart,
+      streamId: hostStreamId,
+      seq: 0,
+      payload: encodeTerminalStreamJson({
+        kind: 'scrollback',
+        cols: 80,
+        rows: 24,
+        oscLinks: [{ row: -1, startCol: 0, endCol: 1, uri: 'file:///invalid' }]
+      })
+    })
     harness.emitFrame({
       opcode: TerminalStreamOpcode.SnapshotChunk,
       streamId: hostStreamId,

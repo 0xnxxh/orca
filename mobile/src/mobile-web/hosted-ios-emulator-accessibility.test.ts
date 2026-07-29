@@ -7,6 +7,7 @@ import {
   tapHostedIosAccessibilityControlByLabelPrefix,
   tapHostedIosAccessibilityControlByLabelPrefixAtPosition,
   tapHostedIosAccessibilityControlStartingWith,
+  tapHostedIosPoint,
   waitForHostedIosAccessibilityControl,
   waitForHostedIosAccessibilityControlByLabelPrefix,
   waitForHostedIosAccessibilityControlEndingWith,
@@ -285,6 +286,49 @@ describe('hosted iOS emulator accessibility controls', () => {
       'kill',
       'attach',
       'ax'
+    ])
+    expect(runCommand).toHaveBeenNthCalledWith(3, emulator, ['attach', emulator.deviceUdid])
+  })
+
+  it('reattaches an explicit device before retrying a point tap', async () => {
+    const runCommand = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('emulator_no_active'))
+      .mockResolvedValue({ stderr: '', stdout: JSON.stringify({ ok: true }) })
+    const point = { x: 0.25, y: 0.75 }
+
+    await expect(tapHostedIosPoint(emulator, point, runCommand)).resolves.toEqual(point)
+    expect(runCommand.mock.calls.map(([, command]) => command[0])).toEqual([
+      'tap',
+      'kill',
+      'attach',
+      'tap'
+    ])
+    expect(runCommand).toHaveBeenNthCalledWith(3, emulator, ['attach', emulator.deviceUdid])
+  })
+
+  it('retries transient helper failures while reattaching a point tap', async () => {
+    let attachAttempts = 0
+    const runCommand = vi.fn(async (_args, command) => {
+      if (command[0] === 'tap' && runCommand.mock.calls.length === 1) {
+        throw new Error('emulator_no_active')
+      }
+      if (command[0] === 'attach' && attachAttempts++ === 0) {
+        throw new Error('emulator_helper_failed: stream endpoints unavailable')
+      }
+      return { stderr: '', stdout: JSON.stringify({ ok: true }) }
+    })
+
+    await expect(tapHostedIosPoint(emulator, { x: 0.25, y: 0.75 }, runCommand)).resolves.toEqual({
+      x: 0.25,
+      y: 0.75
+    })
+    expect(runCommand.mock.calls.map(([, command]) => command[0])).toEqual([
+      'tap',
+      'kill',
+      'attach',
+      'attach',
+      'tap'
     ])
   })
 

@@ -54,6 +54,22 @@ describe('mobile web manifest contract', () => {
     expect(MobileWebManifestSchema.safeParse(validManifest()).success).toBe(true)
   })
 
+  it('accepts only the reserved secondary document with the fixed entrypoint', () => {
+    const manifest = validManifest()
+    manifest.assets.push({
+      path: 'mermaid-frame.html',
+      sha256: 'e'.repeat(64),
+      byteLength: 10,
+      contentType: 'text/html; charset=utf-8',
+      role: 'document'
+    })
+    manifest.totalBytes += 10
+    expect(MobileWebManifestSchema.safeParse(manifest).success).toBe(true)
+
+    manifest.entrypoint = 'mermaid-frame.html'
+    expect(MobileWebManifestSchema.safeParse(manifest).success).toBe(false)
+  })
+
   it('rejects unknown fields at every object boundary', () => {
     expect(
       MobileWebManifestSchema.safeParse({ ...validManifest(), credential: 'do-not-accept' }).success
@@ -124,6 +140,7 @@ describe('mobile web manifest contract', () => {
 
   it.each([
     ['index.html', DOCUMENT_HASH, 'text/html; charset=utf-8', 'document'],
+    ['mermaid-frame.html', DOCUMENT_HASH, 'text/html; charset=utf-8', 'document'],
     [`assets/${SCRIPT_HASH}.css`, SCRIPT_HASH, 'text/css; charset=utf-8', 'style'],
     [`assets/${SCRIPT_HASH}.js`, SCRIPT_HASH, 'text/javascript; charset=utf-8', 'script'],
     [`assets/${SCRIPT_HASH}.png`, SCRIPT_HASH, 'image/png', 'image'],
@@ -145,6 +162,7 @@ describe('mobile web manifest contract', () => {
     [`assets/${SCRIPT_HASH}.png`, SCRIPT_HASH, 'image/png; charset=utf-8', 'image'],
     [`assets/${SCRIPT_HASH}.JS`, SCRIPT_HASH, 'text/javascript; charset=utf-8', 'script'],
     [`assets/${SCRIPT_HASH}.txt`, SCRIPT_HASH, 'text/plain; charset=utf-8', 'document'],
+    ['other-frame.html', DOCUMENT_HASH, 'text/html; charset=utf-8', 'document'],
     [`assets/${SCRIPT_HASH}.js`, STYLE_HASH, 'text/javascript; charset=utf-8', 'script'],
     ['index.html', DOCUMENT_HASH, 'text/html; charset=UTF-8', 'document'],
     ['index.html', DOCUMENT_HASH, 'text/html; charset=utf-8', 'document ']

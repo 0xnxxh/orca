@@ -4,6 +4,7 @@ import { MobileWebTerminalEventState } from './mobile-web-terminal-event-state'
 
 const STREAM_ID = 'S'.repeat(22)
 const SNAPSHOT_ID = 'N'.repeat(22)
+const OSC_LINKS = [{ row: 0, startCol: 0, endCol: 7, uri: 'file:///tmp/a.ts' }]
 
 describe('MobileWebTerminalEventState', () => {
   it('verifies a snapshot before replacing output and advances ordered writes', () => {
@@ -37,7 +38,8 @@ describe('MobileWebTerminalEventState', () => {
       throughSequence: 10,
       sha256: hash,
       truncated: false,
-      source: 'renderer'
+      source: 'renderer',
+      oscLinks: OSC_LINKS
     })
     state.apply({
       type: 'snapshotChunk',
@@ -60,7 +62,8 @@ describe('MobileWebTerminalEventState', () => {
       data: snapshot,
       throughSequence: 10,
       kind: 'initial',
-      viewport: { cols: 80, rows: 24 }
+      viewport: { cols: 80, rows: 24 },
+      oscLinks: OSC_LINKS
     })
 
     const output = new TextEncoder().encode('λ')

@@ -3,6 +3,7 @@ import WebKit
 
 private let mobileWebScheme = "orca-mobile-web"
 private let mobileWebBridgeHandler = "orcaBridge"
+private let mobileWebMermaidFramePath = "mermaid-frame.html"
 private let mobileWebMessageByteLimit = 640 * 1024
 private let mobileWebPendingMessageLimit = 32
 private let mobileWebCsp = [
@@ -15,12 +16,28 @@ private let mobileWebCsp = [
   "connect-src 'none'",
   "media-src 'none'",
   "object-src 'none'",
-  "frame-src data:",
-  "child-src data:",
+  "frame-src 'self' data:",
+  "child-src 'self' data:",
   "worker-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
   "frame-ancestors 'none'"
+].joined(separator: "; ")
+private let mobileWebMermaidFrameCsp = [
+  "default-src 'none'",
+  "script-src 'sha256-JHwlo5V7HtwqexHUhXguW04dF71kAVlQOX1QdtyCkjg=' blob:",
+  "style-src 'unsafe-inline'",
+  "img-src data:",
+  "font-src 'none'",
+  "connect-src 'none'",
+  "media-src 'none'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "child-src 'none'",
+  "worker-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'self'"
 ].joined(separator: "; ")
 private let mobileWebNetworkRules = """
   [
@@ -292,7 +309,8 @@ private final class MobileWebSchemeHandler: NSObject, WKURLSchemeHandler {
         "X-Content-Type-Options": "nosniff"
       ]
       if asset.isDocument {
-        headers["Content-Security-Policy"] = mobileWebCsp
+        headers["Content-Security-Policy"] =
+          path == mobileWebMermaidFramePath ? mobileWebMermaidFrameCsp : mobileWebCsp
       }
       guard let response = HTTPURLResponse(
         url: url,
@@ -484,7 +502,9 @@ final class MobileWebShellView: ExpoView, WKNavigationDelegate, WKUIDelegate,
       return
     }
     if navigationAction.targetFrame?.isMainFrame == false {
-      let allowed = navigationAction.request.url?.scheme == "data"
+      let allowed =
+        navigationAction.request.url?.scheme == "data"
+        || isAllowedEmbeddedDocumentUrl(navigationAction.request.url)
       if !allowed, let url = navigationAction.request.url {
         onNavigationBlocked(["url": String(url.absoluteString.prefix(2_048))])
       }
@@ -514,7 +534,9 @@ final class MobileWebShellView: ExpoView, WKNavigationDelegate, WKUIDelegate,
     if navigationResponse.isForMainFrame {
       allowed = isAllowedDocumentUrl(url) && navigationResponse.canShowMIMEType
     } else {
-      allowed = url?.scheme == "data" && navigationResponse.canShowMIMEType
+      allowed =
+        (url?.scheme == "data" || isAllowedEmbeddedDocumentUrl(url))
+        && navigationResponse.canShowMIMEType
     }
     if !allowed, let url {
       onNavigationBlocked(["url": String(url.absoluteString.prefix(2_048))])
@@ -561,6 +583,19 @@ final class MobileWebShellView: ExpoView, WKNavigationDelegate, WKUIDelegate,
       && url.query == nil
       && url.fragment == nil
       && !components.percentEncodedPath.contains("%")
+  }
+
+  private func isAllowedEmbeddedDocumentUrl(_ url: URL?) -> Bool {
+    guard
+      let url,
+      let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+    else { return false }
+    return url.scheme == mobileWebScheme
+      && url.host == activeSessionId
+      && url.path == "/\(mobileWebMermaidFramePath)"
+      && url.query == nil
+      && url.fragment == nil
+      && components.percentEncodedPath == "/\(mobileWebMermaidFramePath)"
   }
 
   private func finishNetworkBlockerInstallation(_ ready: Bool) {

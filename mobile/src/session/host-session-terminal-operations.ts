@@ -1,3 +1,5 @@
+import type { TerminalOscLinkRange } from '../terminal/terminal-osc-link-ranges'
+
 export type HostSessionTerminalData = string | Uint8Array
 
 export type HostSessionTerminalStreamEvent =
@@ -16,6 +18,7 @@ export type HostSessionTerminalStreamEvent =
       preserveScroll?: boolean
       throughSequence?: number
       displayMode?: 'auto' | 'desktop' | 'phone'
+      oscLinks?: TerminalOscLinkRange[]
       seq?: number
     }
   | {
@@ -31,6 +34,7 @@ export type HostSessionTerminalStreamEvent =
       serialized?: HostSessionTerminalData
       throughSequence?: number
       displayMode?: 'auto' | 'desktop' | 'phone'
+      oscLinks?: TerminalOscLinkRange[]
       seq?: number
     }
   | {

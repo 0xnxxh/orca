@@ -227,7 +227,9 @@ export class HeadlessEmulator {
     if (this.disposed) {
       return
     }
-    this.restoredOscLinks = []
+    if (cols !== this.terminal.cols) {
+      this.restoredOscLinks = []
+    }
     this.terminal.resize(cols, rows)
   }
 

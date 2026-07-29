@@ -240,10 +240,10 @@ describe('hosted WebView adversarial content', () => {
   })
 
   it('keeps the disposable corpus wired into the exact Android route gate', () => {
-    expect(androidHarnessSource).toContain('createHostedAdversarialRepositoryFixture')
+    expect(androidHarnessSource).toContain('createHostedAdversarialRuntimeFixture')
     expect(androidHarnessSource).toContain('captureHostedWebViewAdversarialObservation')
     expect(androidHarnessSource).toContain('hostedWebViewAdversarialContentObservations')
-    expect(androidHarnessSource).toContain('removeHostedAdversarialRepositoryFixture')
+    expect(androidHarnessSource).toContain('removeHostedAdversarialRuntimeFixture')
   })
 
   it('rejects conflicting Android security journeys before device access', async () => {
@@ -261,6 +261,6 @@ describe('hosted WebView adversarial content', () => {
   it('keeps the same disposable corpus wired into the exact iOS route gate', () => {
     expect(iosHarnessSource).toContain('registerHostedIosAdversarialRepository')
     expect(iosHarnessSource).toContain('createHostedIosAdversarialContentInspector')
-    expect(iosHarnessSource).toContain('removeHostedAdversarialRepositoryFixture')
+    expect(iosHarnessSource).toContain('removeHostedAdversarialRuntimeFixture')
   })
 })

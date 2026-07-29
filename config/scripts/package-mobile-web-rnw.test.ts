@@ -7,6 +7,10 @@ import { MobileWebPackageAssets } from '../../src/main/runtime/rpc/mobile-web-pa
 import { MOBILE_WEB_PACKAGE_BRIDGE_RANGE } from '../../src/shared/mobile-web/bridge-release-policy'
 import { MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH } from '../../src/shared/mobile-web/markdown-editor-csp'
 import { MobileWebManifestSchema } from '../../src/shared/mobile-web/manifest-contract'
+import {
+  MOBILE_WEB_MERMAID_FRAME_PATH,
+  MOBILE_WEB_MERMAID_FRAME_SCRIPT_CSP_HASH
+} from '../../src/shared/mobile-web/mermaid-frame-document'
 
 const execFileAsync = promisify(execFile)
 const temporaryRoots: string[] = []
@@ -68,6 +72,7 @@ describe('RNW mobile web packager', () => {
       'utf8'
     )
     const document = await readFile(path.join(output, 'index.html'), 'utf8')
+    const mermaidFrame = await readFile(path.join(output, MOBILE_WEB_MERMAID_FRAME_PATH), 'utf8')
     expect(script).not.toMatch(/\beval\s*\(|\bnew\s+Function\s*\(/)
     expect(script).not.toContain('/assets/icon.hash.png')
     expect(script).toMatch(/\.\/assets\/[a-f0-9]{64}\.png/)
@@ -81,7 +86,12 @@ describe('RNW mobile web packager', () => {
     expect(document).not.toContain('<style')
     expect(document).toContain('maximum-scale=1,user-scalable=no')
     expect(document).toContain('viewport-fit=cover')
-    expect(manifest.assets).toHaveLength(4)
+    expect(document).toContain("frame-src 'self' data:")
+    expect(mermaidFrame).toContain(`script-src ${MOBILE_WEB_MERMAID_FRAME_SCRIPT_CSP_HASH} blob:`)
+    expect(mermaidFrame).toContain("frame-ancestors 'self'")
+    expect(mermaidFrame).not.toContain(MOBILE_WEB_MERMAID_FRAME_PATH)
+    expect(manifest.assets).toHaveLength(5)
+    expect(manifest.assets.filter((asset) => asset.role === 'document')).toHaveLength(2)
     expect(manifest.bridge).toEqual(MOBILE_WEB_PACKAGE_BRIDGE_RANGE)
 
     const packageAssets = new MobileWebPackageAssets({ resolveRoot: () => output })

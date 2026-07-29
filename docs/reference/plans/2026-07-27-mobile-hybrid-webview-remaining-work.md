@@ -73,8 +73,10 @@ RNW image surface on both exact apps without exposing metadata, executing its
 marker, or making a request. Both exact apps also pass the live hostile
 terminal-link corpus: JavaScript links stay inert, no HTTP request occurs
 without a tap, and a native tap opens the allowlisted file target through the
-unchanged Session presentation. Mermaid, task/provider, bounded-error,
-physical-device, release-runtime, and independent review coverage remain open.
+unchanged Session presentation. The Android emulator additionally passes
+hostile Tasks provider text, a bounded provider error, and normal, malicious,
+and invalid Mermaid through the exact app. Physical-device, store-signed
+release-runtime, and independent review coverage remain open.
 
 The iPhone 17 Pro / iOS 26.5 Simulator now captures the unchanged native and
 hosted Tasks and Session screens from one disposable Desktop runtime. Tasks
@@ -426,8 +428,12 @@ remain open.
       sentinel. Both exact apps also pass the same hostile OSC-8 terminal
       corpus: JavaScript links stay inert, no untapped HTTP request reaches the
       sentinel, and a native tap opens the allowlisted repository file through
-      the unchanged Session UI. Mermaid, provider/task, bounded-error, physical
-      devices, release builds, and independent interaction review remain open.
+      the unchanged Session UI. The exact Android Debug app now also passes
+      hostile Tasks provider title/body, a bounded hostile provider error, and
+      normal/malicious/invalid Mermaid without an executable marker, escaped
+      request, bridge-log finding, or new process-exit finding. The emulator
+      corpus is complete; store-signed release apps, physical devices, and
+      independent interaction review remain open.
 - [ ] Fuzz manifests, chunks, paths, MIME types, CSP, cache metadata, bridge
       envelopes, limits, ordering, cancellation, and subscriptions. The
       ten-case TypeScript/Swift/Kotlin quoted/Boolean numeric manifest corpus

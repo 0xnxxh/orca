@@ -81,6 +81,7 @@ describe('hosted adversarial terminal links', () => {
         },
         {
           activateTerminal: vi.fn().mockResolvedValue(undefined),
+          enableDiagnostics: vi.fn().mockResolvedValue(undefined),
           readPoints: vi
             .fn()
             .mockResolvedValueOnce({
@@ -197,6 +198,7 @@ describe('hosted adversarial terminal links', () => {
       },
       {
         activateTerminal: vi.fn().mockResolvedValue(undefined),
+        enableDiagnostics: vi.fn().mockResolvedValue(undefined),
         readPoints,
         readState: vi.fn().mockResolvedValue({
           href: document.href,
@@ -214,6 +216,52 @@ describe('hosted adversarial terminal links', () => {
     expect(tapPoint).toHaveBeenCalledTimes(3)
   })
 
+  it('taps the duplicate file-link row after a missed native activation', async () => {
+    const document = { href: 'orca-mobile-web://build/h/host/session/workspace' }
+    const file = { x: 0.2, y: 0.7 }
+    const fileAlternate = { x: 0.2, y: 0.72 }
+    const tapPoint = vi.fn().mockResolvedValue(undefined)
+    const prepareFileTap = vi.fn().mockResolvedValue(undefined)
+
+    await verifyHostedAdversarialTerminalLinks(
+      {
+        discoveryUrl: 'http://127.0.0.1:9222',
+        document,
+        emulator: {},
+        positiveFilePath: '001-adversarial.md',
+        probe: { observations: [], port: 43210, token: 'PROBE-TOKEN' },
+        tapPoint,
+        timeoutMs: 30_000
+      },
+      {
+        activateTerminal: vi.fn().mockResolvedValue(undefined),
+        enableDiagnostics: vi.fn().mockResolvedValue(undefined),
+        prepareFileTap,
+        readPoints: vi.fn().mockResolvedValue({
+          file,
+          fileAlternate,
+          http: { x: 0.2, y: 0.6 },
+          javascript: { x: 0.2, y: 0.8 }
+        }),
+        readState: vi.fn().mockResolvedValue({
+          href: document.href,
+          javascriptMarkerPresent: false,
+          javascriptMarkerValue: null
+        }),
+        settle: vi.fn().mockResolvedValue(undefined),
+        waitForDocument: vi
+          .fn()
+          .mockRejectedValueOnce(new Error('missed'))
+          .mockResolvedValue(document),
+        writeLinks: vi.fn().mockResolvedValue('terminal-handle')
+      }
+    )
+
+    expect(tapPoint).toHaveBeenNthCalledWith(1, {}, file)
+    expect(tapPoint).toHaveBeenNthCalledWith(2, {}, fileAlternate)
+    expect(prepareFileTap).toHaveBeenCalledTimes(2)
+  })
+
   it('retries missed live terminal activations without changing the staged command', async () => {
     const inputCommand = vi.fn().mockResolvedValue(undefined)
     const waitForStage = vi
@@ -225,16 +273,18 @@ describe('hosted adversarial terminal links', () => {
       command: 'node .git/stage.cjs',
       terminalHandle: 'terminal-handle'
     }
+    const prepare = vi.fn().mockResolvedValue(prepared)
 
     await expect(
       stageHostedAdversarialTerminalLinksWithInput({ timeoutMs: 30_000 }, inputCommand, {
-        prepare: vi.fn().mockResolvedValue(prepared),
+        prepare,
         waitForStage
       })
     ).resolves.toBe('terminal-handle')
 
     expect(inputCommand).toHaveBeenCalledTimes(3)
     expect(inputCommand).toHaveBeenCalledWith(prepared.command)
+    expect(prepare).toHaveBeenCalledWith({ timeoutMs: 30_000 })
     expect(waitForStage).toHaveBeenCalledTimes(3)
     expect(waitForStage).toHaveBeenCalledWith(prepared, 5_000)
   })

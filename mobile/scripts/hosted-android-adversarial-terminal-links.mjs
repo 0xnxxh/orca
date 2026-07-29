@@ -64,6 +64,7 @@ export async function dismissHostedAndroidKeyboardIfShown(adb, runAdb = runAndro
 
 async function stageHostedAndroidAdversarialTerminalLinks(args, linkArgs, operations) {
   const activateTerminal = operations.activateTerminal ?? activateHostedWebViewControl
+  const dismissKeyboard = operations.dismissKeyboard ?? dismissHostedAndroidKeyboardIfShown
   const runAdb = operations.runAdb ?? runAndroidAdb
   const stageWithInput = operations.stageWithInput ?? stageHostedAdversarialTerminalLinksWithInput
   const tapControl = operations.tapControl ?? tapHostedAndroidAccessibilityControl
@@ -81,10 +82,9 @@ async function stageHostedAndroidAdversarialTerminalLinks(args, linkArgs, operat
       hostedAndroidAdversarialTerminalInputText(command)
     ])
     await runAdb(args.emulator.adb, ['shell', 'input', 'keyevent', 'KEYCODE_ENTER'])
+    await dismissKeyboard(args.emulator.adb, runAdb)
+    await delay(500)
   })
-  const dismissKeyboard = operations.dismissKeyboard ?? dismissHostedAndroidKeyboardIfShown
-  await dismissKeyboard(args.emulator.adb, runAdb)
-  await delay(500)
   return terminalHandle
 }
 

@@ -139,7 +139,8 @@ function applyWebTerminalEffect(
       rows: effect.viewport.rows,
       serialized: effect.data,
       preserveScroll: effect.kind === 'resize',
-      throughSequence: effect.throughSequence
+      throughSequence: effect.throughSequence,
+      ...(effect.oscLinks ? { oscLinks: effect.oscLinks } : {})
     })
   } else if (effect.type === 'resized') {
     onEvent({

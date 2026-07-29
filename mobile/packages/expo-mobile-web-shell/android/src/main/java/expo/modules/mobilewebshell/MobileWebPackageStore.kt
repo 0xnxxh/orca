@@ -415,7 +415,8 @@ internal class MobileWebPackageStore internal constructor(
     }
     require(
       totalBytes == declaredTotalBytes &&
-        documentCount == 1 &&
+        documentCount in 1..2 &&
+        entrypoint == "index.html" &&
         assets[entrypoint]?.role == "document"
     ) { "mobile_web_stage_manifest_invalid" }
     return MobileWebManifestRecord(
@@ -644,6 +645,15 @@ internal class MobileWebPackageStore internal constructor(
     "url" to "$MOBILE_WEB_ORIGIN/#$sessionId"
   )
 
+  private fun randomIdentifier(): String {
+    val bytes = ByteArray(32)
+    SecureRandom().nextBytes(bytes)
+    return encodeBase64(bytes)
+      .replace('+', '-')
+      .replace('/', '_')
+      .trimEnd('=')
+  }
+
   private fun requireStage(stageId: String): MobileWebStageRecord =
     stages[stageId] ?: throw IllegalArgumentException("mobile_web_stage_unknown")
 }
@@ -697,7 +707,8 @@ internal fun isValidMobileWebAssetMetadata(
 ): Boolean {
   if (!isSafeMobileWebAssetPath(path) || !isMobileWebSha256(hash)) return false
   if (role == "document") {
-    return path == "index.html" && contentType == "text/html; charset=utf-8"
+    return (path == "index.html" || path == "mermaid-frame.html") &&
+      contentType == "text/html; charset=utf-8"
   }
   val components = path.split('/')
   if (components.size != 2 || components[0] != "assets") return false
@@ -715,12 +726,6 @@ private fun strictJsonString(value: JSONObject, key: String): String? = value.op
 
 private fun sha256Hex(bytes: ByteArray): String =
   MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-
-private fun randomIdentifier(): String {
-  val bytes = ByteArray(32)
-  SecureRandom().nextBytes(bytes)
-  return bytes.joinToString("") { "%02x".format(it) }
-}
 
 private fun decodeAndroidBase64(value: String): ByteArray = Base64.decode(value, Base64.NO_WRAP)
 

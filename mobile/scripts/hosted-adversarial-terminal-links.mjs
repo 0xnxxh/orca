@@ -19,7 +19,6 @@ const execFileAsync = promisify(execFile)
 const terminalTitle = 'Mobile Emulator'
 const terminalScriptName = 'orca-mobile-terminal-links.cjs'
 const terminalJavaScriptMarker = '__ORCA_HOSTED_TERMINAL_LINK_EXECUTED__'
-const LIVE_STAGE_HOLD_MS = 60_000
 const LIVE_STAGE_ATTEMPTS = 3
 const LIVE_STAGE_ATTEMPT_TIMEOUT_MS = 5_000
 const NATIVE_LINK_ACTIVATION_ATTEMPTS = 3
@@ -50,7 +49,10 @@ export async function verifyHostedAdversarialTerminalLinks(
   const readState = operations.readState ?? readHostedTerminalLinkSecurityState
   const settle = operations.settle ?? delay
   const activateTerminal = operations.activateTerminal ?? activateHostedWebViewControl
+  const enableDiagnostics = operations.enableDiagnostics ?? enableHostedTerminalDiagnostics
+  const prepareFileTap = operations.prepareFileTap
 
+  await enableDiagnostics(document)
   const resolvedTerminalHandle = await writeLinks({
     orcaCli,
     pairingRuntimeUserDataPath,
@@ -66,6 +68,7 @@ export async function verifyHostedAdversarialTerminalLinks(
     document,
     emulator,
     positiveFilePath,
+    prepareFileTap,
     readPoints,
     tapPoint,
     timeoutMs,
@@ -101,6 +104,7 @@ async function openHostedAdversarialTerminalFileLink({
   document,
   emulator,
   positiveFilePath,
+  prepareFileTap,
   readPoints,
   tapPoint,
   timeoutMs,
@@ -110,7 +114,9 @@ async function openHostedAdversarialTerminalFileLink({
   let lastPoint
   for (let attempt = 0; attempt < NATIVE_LINK_ACTIVATION_ATTEMPTS; attempt += 1) {
     try {
-      lastPoint = (await readPoints(document)).file
+      await prepareFileTap?.()
+      const points = await readPoints(document)
+      lastPoint = attempt % 2 === 1 ? (points.fileAlternate ?? points.file) : points.file
       await tapPoint(emulator, lastPoint)
       return await waitForDocument({
         discoveryUrl,
@@ -123,11 +129,17 @@ async function openHostedAdversarialTerminalFileLink({
       lastError = error
     }
   }
-  const diagnostic = lastPoint
-    ? await describeHostedTerminalLinkPoint(document, lastPoint).catch(() => null)
-    : null
+  const diagnostic = await describeHostedTerminalLinkPoint(
+    document,
+    lastPoint ?? { x: 0.5, y: 0.5 }
+  ).catch(() => null)
+  const failure = lastError instanceof Error ? lastError.message.slice(0, 1_000) : String(lastError)
   throw new Error(
-    `Hosted terminal file link did not activate: ${JSON.stringify({ diagnostic, lastPoint })}`,
+    `Hosted terminal file link did not activate: ${JSON.stringify({
+      diagnostic,
+      failure,
+      lastPoint
+    })}`,
     { cause: lastError }
   )
 }
@@ -191,6 +203,7 @@ function hostedAdversarialTerminalLinkPayload(
 }
 
 export async function stageHostedAdversarialTerminalLinks({
+  absoluteScriptPath = false,
   orcaCli,
   pairingRuntimeUserDataPath,
   positiveFilePath,
@@ -201,6 +214,7 @@ export async function stageHostedAdversarialTerminalLinks({
   worktree
 }) {
   const prepared = await prepareHostedAdversarialTerminalLinks({
+    absoluteScriptPath,
     orcaCli,
     pairingRuntimeUserDataPath,
     positiveFilePath,
@@ -243,7 +257,7 @@ export async function stageHostedAdversarialTerminalLinksWithInput(
 ) {
   const prepare = operations.prepare ?? prepareHostedAdversarialTerminalLinks
   const waitForStage = operations.waitForStage ?? waitForStagedHostedAdversarialTerminalLinks
-  const prepared = await prepare({ ...args, holdOpen: true })
+  const prepared = await prepare(args)
   let lastError
   for (let attempt = 0; attempt < LIVE_STAGE_ATTEMPTS; attempt += 1) {
     await inputCommand(prepared.command)
@@ -258,7 +272,7 @@ export async function stageHostedAdversarialTerminalLinksWithInput(
 }
 
 async function prepareHostedAdversarialTerminalLinks({
-  holdOpen = false,
+  absoluteScriptPath = false,
   orcaCli,
   pairingRuntimeUserDataPath,
   positiveFilePath,
@@ -296,12 +310,9 @@ async function prepareHostedAdversarialTerminalLinks({
     positiveFilePath,
     stageMarker
   )
-  const hold = holdOpen ? `\nsetTimeout(() => {}, ${LIVE_STAGE_HOLD_MS})` : ''
-  await writeFile(
-    scriptPath,
-    `process.stdout.write(Buffer.from('${encoded}', 'base64'))${hold}\n`,
-    { mode: 0o600 }
-  )
+  const write = `process.stdout.write(Buffer.from('${encoded}', 'base64'))`
+  const script = `${write}\n`
+  await writeFile(scriptPath, script, { mode: 0o600 })
   await waitForTerminalTail({
     environment,
     orcaCli,
@@ -311,7 +322,9 @@ async function prepareHostedAdversarialTerminalLinks({
     worktree
   })
   return {
-    command: `node ${JSON.stringify(path.relative(worktree, scriptPath))}`,
+    command: `node ${JSON.stringify(
+      absoluteScriptPath ? scriptPath : path.relative(worktree, scriptPath)
+    )}`,
     environment,
     orcaCli,
     stageMarker,
@@ -345,6 +358,14 @@ async function readHostedTerminalLinkSecurityState(document) {
     javascriptMarkerValue: globalThis[${JSON.stringify(terminalJavaScriptMarker)}] ?? null
   })`
   return JSON.parse(await evaluateHostedDocumentWithRetry(document, expression, WebSocket))
+}
+
+export function enableHostedTerminalDiagnostics(document) {
+  return evaluateHostedDocumentWithRetry(
+    document,
+    `globalThis.__orcaCaptureMobileTerminalDiagnostics = true; 'enabled'`,
+    WebSocket
+  )
 }
 
 function repeatedOscRows(uri, label, finalSuffix = '') {

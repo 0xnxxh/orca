@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 const EMULATOR_COMMAND_TIMEOUT_MS = 30_000
 const EMULATOR_COMMAND_MAX_BYTES = 2 * 1024 * 1024
 const ACCESSIBILITY_NODE_LIMIT = 2_000
+const EMULATOR_REATTACH_ATTEMPTS = 3
 
 export async function tapHostedIosAccessibilityControl(
   args,
@@ -22,7 +23,16 @@ export async function tapHostedIosAccessibilityControl(
 }
 
 export async function tapHostedIosPoint(args, point, runCommand = runHostedIosEmulatorCommand) {
-  await runCommand(args, ['tap', String(point.x), String(point.y)])
+  const command = ['tap', String(point.x), String(point.y)]
+  try {
+    await runCommand(args, command)
+  } catch (error) {
+    if (!isMissingActiveEmulatorError(error)) {
+      throw error
+    }
+    await restartHostedIosEmulatorController(args, runCommand)
+    await runCommand(args, command)
+  }
   return point
 }
 
@@ -269,11 +279,11 @@ export async function waitForHostedIosAccessibilityLabelToDisappear(
 }
 
 export function runHostedIosEmulatorCommand(args, command) {
+  const deviceArgs = command[0] === 'attach' ? [] : ['--device', args.deviceUdid]
   const argv = [
     'emulator',
     ...command,
-    '--device',
-    args.deviceUdid,
+    ...deviceArgs,
     '--worktree',
     `path:${args.worktree}`,
     '--json'
@@ -380,16 +390,35 @@ export async function restartHostedIosEmulatorController(
   runCommand = runHostedIosEmulatorCommand
 ) {
   await runCommand(args, ['kill']).catch(() => {})
-  await runCommand(args, ['attach'])
+  let lastError
+  for (let attempt = 0; attempt < EMULATOR_REATTACH_ATTEMPTS; attempt += 1) {
+    await delay(250)
+    try {
+      await runCommand(args, ['attach', args.deviceUdid])
+      return
+    } catch (error) {
+      lastError = error
+      if (!isTransientAccessibilityReadError(error)) {
+        throw error
+      }
+    }
+  }
+  throw lastError
 }
 
 function isTransientAccessibilityReadError(error) {
   const message = error instanceof Error ? error.message : String(error)
   return (
+    isMissingActiveEmulatorError(error) ||
     message.includes('emulator_helper_failed') ||
     message.includes('request timed out') ||
     message.includes('emulator command timed out')
   )
+}
+
+function isMissingActiveEmulatorError(error) {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('emulator_no_active')
 }
 
 function accessibilityLabels(nodes) {

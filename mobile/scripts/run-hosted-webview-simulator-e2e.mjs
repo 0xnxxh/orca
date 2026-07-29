@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 
-import { execFile } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
-import { promisify } from 'node:util'
 import { startCdpServer } from 'inspect-webkit'
 import { resolveEmulatorOrcaCli } from './emulator-orca-cli-selection.mjs'
 import {
-  createHostedAdversarialRepositoryFixture,
-  removeHostedAdversarialRepositoryFixture
-} from './hosted-adversarial-repository-fixture.mjs'
+  createHostedAdversarialRuntimeFixture,
+  removeHostedAdversarialRuntimeFixture
+} from './hosted-adversarial-runtime-fixture.mjs'
+import {
+  verifyHostedAdversarialProviderReview,
+  verifyHostedAdversarialTasks
+} from './hosted-adversarial-provider-content.mjs'
 import { stopHostedChildProcess } from './hosted-child-process-shutdown.mjs'
 import { findAvailableHostedLoopbackPort } from './hosted-loopback-port.mjs'
 import { parseHostedWebViewSimulatorE2eOptions } from './hosted-webview-simulator-e2e-options.mjs'
@@ -32,6 +34,7 @@ import {
   createHostedIosAdversarialContentInspector,
   registerHostedIosAdversarialRepository
 } from './hosted-ios-adversarial-content.mjs'
+import { enableHostedTerminalDiagnostics } from './hosted-adversarial-terminal-links.mjs'
 import {
   captureHostedCoreRouteParity,
   captureNativeCoreRouteBaselines
@@ -45,13 +48,21 @@ import {
   captureNativeWorkspaceBaseline
 } from './hosted-ios-workspace-parity.mjs'
 import { verifyHostedAgentHistoryJourney } from './hosted-ios-agent-history-journey.mjs'
-import { verifyHostedIosAdversarialTerminalLinks } from './hosted-ios-adversarial-terminal-links.mjs'
+import {
+  alignHostedIosSessionPoint,
+  verifyHostedIosAdversarialTerminalLinks
+} from './hosted-ios-adversarial-terminal-links.mjs'
+import { tapHostedIosPoint } from './hosted-ios-emulator-accessibility.mjs'
 import { openHostedIosHybridRoute } from './hosted-ios-hybrid-route-handoff.mjs'
 import {
   startHostedIosMobileLauncher,
   waitForHostedIosMobileLauncher
 } from './hosted-ios-mobile-launcher.mjs'
-import { verifyHostedNativeTerminalSettingsHandoff } from './hosted-ios-native-settings-handoff.mjs'
+import { verifyHostedIosNativeSettingsJourney } from './hosted-ios-native-settings-journey.mjs'
+import {
+  bootHostedIosSimulator,
+  resolveHostedIosSimulatorUdid
+} from './hosted-ios-simulator-device.mjs'
 import { verifyHostedSourceControlReviewJourney } from './hosted-ios-source-control-review-journey.mjs'
 import { captureNativeSourceControlReviewBaselines } from './hosted-ios-source-control-review-parity.mjs'
 import { resetHostedIosPhotosPermission } from './hosted-ios-photo-permission-denial.mjs'
@@ -67,7 +78,6 @@ import {
 } from './hosted-ios-webview-security-probe.mjs'
 import { hostedIosSimulatorAppPreparation } from './hosted-ios-simulator-app-preparation.mjs'
 
-const execFileAsync = promisify(execFile)
 const worktree = path.resolve(import.meta.dirname, '../..')
 const options = parseHostedWebViewSimulatorE2eOptions(process.argv.slice(2))
 const runtimeDirectory = resolveHostedWebViewRuntimeDirectory({
@@ -87,7 +97,7 @@ async function main() {
     throw new Error('Hosted iOS WebView automation requires macOS and Xcode.')
   }
   mkdirSync(runtimeDirectory, { recursive: true, mode: 0o700 })
-  const deviceUdid = await resolveSimulatorUdid(options.device)
+  const deviceUdid = await resolveHostedIosSimulatorUdid(options.device)
   let launcher = null
   let inspector = null
   let networkProbe = null
@@ -95,16 +105,18 @@ async function main() {
   let nativeAppPath = null
   let adversarialFixture = null
   let adversarialInspector = null
+  let adversarialProviderContent = null
+  let adversarialSessionYOffset = 0
   let adversarialTerminalLinks = null
   let adversarialTerminalHandle = null
   try {
     networkProbe = await startHostedIosWebViewSecurityProbe()
     if (options.adversarialContent) {
-      adversarialFixture = await createHostedAdversarialRepositoryFixture({
+      adversarialFixture = await createHostedAdversarialRuntimeFixture({
         probePort: networkProbe.port
       })
     }
-    await bootSimulator(deviceUdid)
+    await bootHostedIosSimulator(deviceUdid)
     emulatorController = await startHostedIosEmulatorController({
       orcaCli: orcaSelection.command,
       runtimeDirectory,
@@ -121,6 +133,7 @@ async function main() {
     launcher = startHostedIosMobileLauncher({
       deviceUdid,
       emulatorControlUserDataPath: emulatorController.userData,
+      environment: adversarialFixture?.environment,
       orcaCli: orcaSelection.command,
       runtimeDirectory,
       worktree
@@ -256,11 +269,26 @@ async function main() {
       expectedText: 'Orca Desktop',
       timeoutMs: options.timeoutMs
     })
+    if (adversarialFixture) {
+      await enableHostedTerminalDiagnostics(workspaceDocument)
+    }
     const workspacePrivacyIsolation = options.adversarialContent
       ? await evidenceStep('workspace privacy isolation probe', () =>
           verifyHostedWebViewPrivacyIsolation({ document: workspaceDocument })
         )
       : null
+    if (adversarialFixture) {
+      const result = await evidenceStep('adversarial task and error presentation', () =>
+        verifyHostedAdversarialTasks({
+          activatePoint: (point) => tapHostedIosPoint(emulator, point),
+          discoveryUrl,
+          document: workspaceDocument,
+          timeoutMs: options.timeoutMs
+        })
+      )
+      adversarialProviderContent = { tasks: result.evidence, review: null }
+      workspaceDocument = result.workspaceDocument
+    }
     const securityJourney = {
       deviceUdid,
       discoveryUrl,
@@ -359,7 +387,7 @@ async function main() {
         ? null
         : options.nativeSettingsOnly
           ? await evidenceStep('native Terminal Settings journey', () =>
-              verifyNativeSettingsJourney({
+              verifyHostedIosNativeSettingsJourney({
                 discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
                 emulator,
                 workspaceDocument: parityWorkspaceDocument,
@@ -416,11 +444,12 @@ async function main() {
                   emulator,
                   positiveFilePath: adversarialFixture.repositoryFiles[0].filename,
                   probe: networkProbe,
-                  terminalHandle: adversarialTerminalHandle,
+                  stagedTerminalHandle: adversarialTerminalHandle,
                   worktree: adversarialFixture.root
                 })
               )
               adversarialTerminalLinks = result.evidence
+              adversarialSessionYOffset = result.yOffset
               sessionDocument = result.sessionDocument
             }
             return verifyHostedSourceControlReviewJourney({
@@ -434,8 +463,22 @@ async function main() {
                   : '3 tabs',
               nativeBaselines: nativeSourceControlReview,
               inspectChangedContent: adversarialInspector?.inspect,
+              inspectProviderContent: adversarialProviderContent
+                ? async ({ document }) => {
+                    adversarialProviderContent.review = await verifyHostedAdversarialProviderReview(
+                      {
+                        document,
+                        timeoutMs: options.timeoutMs
+                      }
+                    )
+                  }
+                : undefined,
               runtimeDirectory,
               sessionDocument,
+              transformPoint: adversarialInspector
+                ? (point, document) =>
+                    alignHostedIosSessionPoint(point, adversarialSessionYOffset, document)
+                : undefined,
               timeoutMs: options.timeoutMs
             })
           })
@@ -516,6 +559,7 @@ async function main() {
           filesPreviewParity: hostedFilesPreview?.evidence ?? null,
           sourceControlReview,
           adversarialContent,
+          adversarialProviderContent,
           adversarialTerminalLinks
         },
         null,
@@ -526,7 +570,7 @@ async function main() {
     inspector?.stop()
     await stopHostedChildProcess(launcher)
     if (adversarialFixture) {
-      await removeHostedAdversarialRepositoryFixture(adversarialFixture)
+      await removeHostedAdversarialRuntimeFixture(adversarialFixture)
     }
     await emulatorController?.stop()
     await clearHostedIosWebViewSecurityProbe(deviceUdid)
@@ -542,61 +586,6 @@ async function evidenceStep(label, run) {
       cause: error
     })
   }
-}
-
-async function verifyNativeSettingsJourney({
-  discoveryUrl,
-  emulator,
-  workspaceDocument,
-  expectedWorkspace,
-  timeoutMs
-}) {
-  await activateHostedWorkspaceRow(
-    workspaceDocument,
-    expectedWorkspace,
-    activateHostedWebViewControl,
-    timeoutMs,
-    () =>
-      waitForVisibleHostedWebView({
-        discoveryUrl,
-        expectedText: 'Orca Desktop',
-        timeoutMs
-      })
-  )
-  const sessionDocument = await waitForVisibleHostedWebView({
-    discoveryUrl,
-    expectedText: 'Mobile Emulator',
-    expectedHrefIncludes: '/session/',
-    timeoutMs
-  })
-  return verifyHostedNativeTerminalSettingsHandoff({
-    discoveryUrl,
-    emulator,
-    sessionDocument,
-    timeoutMs,
-    expectedSessionText: 'Mobile Emulator'
-  })
-}
-
-async function resolveSimulatorUdid(requested) {
-  const { stdout } = await execFileAsync('xcrun', ['simctl', 'list', 'devices', 'available', '-j'])
-  const devices = Object.values(JSON.parse(stdout).devices ?? {}).flat()
-  const matches = devices.filter((device) => device.udid === requested || device.name === requested)
-  const selected = matches.find((device) => device.state === 'Booted') ?? matches[0]
-  if (!selected?.udid) {
-    throw new Error(`No available iOS Simulator matched "${requested}".`)
-  }
-  return selected.udid
-}
-
-async function bootSimulator(deviceUdid) {
-  const { stdout } = await execFileAsync('xcrun', ['simctl', 'list', 'devices', 'available', '-j'])
-  const devices = Object.values(JSON.parse(stdout).devices ?? {}).flat()
-  const selected = devices.find((device) => device.udid === deviceUdid)
-  if (selected?.state !== 'Booted') {
-    await execFileAsync('xcrun', ['simctl', 'boot', deviceUdid])
-  }
-  await execFileAsync('xcrun', ['simctl', 'bootstatus', deviceUdid, '-b'])
 }
 
 function delay(ms) {

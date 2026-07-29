@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   describeHostedTerminalLinkPoint,
-  hostedTerminalLinkPointsFromGeometry
+  hostedTerminalLinkPointsFromGeometry,
+  readHostedTerminalLinkPoints
 } from '../../scripts/hosted-terminal-link-locator.mjs'
 
 const geometry = {
@@ -29,8 +30,44 @@ describe('hosted terminal link locator', () => {
     expect(hostedTerminalLinkPointsFromGeometry(geometry)).toEqual({
       javascript: { x: 0.0875, y: 0.530625 },
       file: { x: 0.0875, y: 0.606875 },
+      fileAlternate: { x: 0.0875, y: 0.6322916666666667 },
       http: { x: 0.0875, y: 0.683125 }
     })
+  })
+
+  it('uses rendered link rows when the cursor moved after staging', () => {
+    expect(
+      hostedTerminalLinkPointsFromGeometry({
+        ...geometry,
+        cursorTop: 20,
+        linkRows: { javascript: 4, file: 7, fileAlternate: 8, http: 10 }
+      })
+    ).toEqual({
+      javascript: { x: 0.0875, y: 0.301875 },
+      file: { x: 0.0875, y: 0.378125 },
+      fileAlternate: { x: 0.0875, y: 0.40354166666666663 },
+      http: { x: 0.0875, y: 0.454375 }
+    })
+  })
+
+  it('anchors the staged corpus to the viewport bottom when xterm is blurred', () => {
+    expect(hostedTerminalLinkPointsFromGeometry({ ...geometry, cursorTop: 0 })).toEqual({
+      javascript: { x: 0.0875, y: 0.683125 },
+      file: { x: 0.0875, y: 0.759375 },
+      fileAlternate: { x: 0.0875, y: 0.7847916666666666 },
+      http: { x: 0.0875, y: 0.835625 }
+    })
+  })
+
+  it('rejects an empty discovered xterm instead of tapping a guessed row', () => {
+    expect(() =>
+      hostedTerminalLinkPointsFromGeometry({
+        ...geometry,
+        cursorTop: 0,
+        linkRows: { javascript: null, file: null, fileAlternate: null, http: null },
+        xtermFound: true
+      })
+    ).toThrow('corpus is not present')
   })
 
   it('fails when the rendered cell geometry cannot describe the screen', () => {
@@ -56,5 +93,24 @@ describe('hosted terminal link locator', () => {
       clientY: 200,
       terminalHit: true
     })
+  })
+
+  it('reads rendered link rows from the visible xterm buffer', async () => {
+    const evaluate = async (_document: unknown, expression: string) => {
+      expect(expression).toContain('xterm.buffer.active')
+      return JSON.stringify({
+        ...geometry,
+        cursorTop: 0,
+        linkRows: { javascript: 4, file: 7, fileAlternate: 8, http: 10 }
+      })
+    }
+
+    await expect(readHostedTerminalLinkPoints({}, { evaluate })).resolves.toEqual(
+      hostedTerminalLinkPointsFromGeometry({
+        ...geometry,
+        cursorTop: 0,
+        linkRows: { javascript: 4, file: 7, fileAlternate: 8, http: 10 }
+      })
+    )
   })
 })

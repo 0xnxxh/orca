@@ -8,11 +8,15 @@ import { resolveEmulatorOrcaCli } from './emulator-orca-cli-selection.mjs'
 import { verifyHostedAndroidAdversarialTerminalLinks } from './hosted-android-adversarial-terminal-links.mjs'
 import { stageHostedAdversarialTerminalLinks } from './hosted-adversarial-terminal-links.mjs'
 import { verifyHostedAndroidAgentHistoryJourney } from './hosted-android-agent-history-journey.mjs'
+import { HOSTED_ADVERSARIAL_CONTENT_MARKER } from './hosted-adversarial-repository-fixture.mjs'
 import {
-  createHostedAdversarialRepositoryFixture,
-  HOSTED_ADVERSARIAL_CONTENT_MARKER,
-  removeHostedAdversarialRepositoryFixture
-} from './hosted-adversarial-repository-fixture.mjs'
+  createHostedAdversarialRuntimeFixture,
+  removeHostedAdversarialRuntimeFixture
+} from './hosted-adversarial-runtime-fixture.mjs'
+import {
+  verifyHostedAdversarialProviderReview,
+  verifyHostedAdversarialTasks
+} from './hosted-adversarial-provider-content.mjs'
 import {
   readHostedAndroidExitInfo,
   verifyHostedAndroidPrivacyAudit
@@ -98,7 +102,7 @@ async function main() {
     probe = await stage('network isolation sentinel', startHostedWebViewSecurityProbe)
     if (options.adversarialContent) {
       adversarialFixture = await stage('adversarial repository fixture', () =>
-        createHostedAdversarialRepositoryFixture({ probePort: probe.port })
+        createHostedAdversarialRuntimeFixture({ probePort: probe.port })
       )
     }
     runtime = await stage('temporary paired desktop runtime', () =>
@@ -106,6 +110,7 @@ async function main() {
         enabled: true,
         orcaCli,
         cwd: worktree,
+        environment: adversarialFixture?.environment,
         runDirectory: path.join(runtimeDirectory, 'paired-host'),
         lanIpCandidates: () => ['127.0.0.1'],
         logStep: () => {},
@@ -116,6 +121,15 @@ async function main() {
       runtime.env.ORCA_E2E_MOBILE_AGENT_HISTORY_FIXTURE = '1'
     }
     const testWorkspace = adversarialFixture?.root ?? worktree
+    if (adversarialFixture) {
+      await stage('provider error workspace registration', () =>
+        registerWorktreeForPairingRuntime(runtime, worktree, {
+          orca: runOrca,
+          logStep: () => {},
+          logSuccess: () => {}
+        })
+      )
+    }
     await stage('test workspace registration', () =>
       registerWorktreeForPairingRuntime(runtime, testWorkspace, {
         orca: runOrca,
@@ -170,7 +184,7 @@ async function main() {
     )
     const expectedWorkspace = path.basename(testWorkspace)
     const workspaceRowName = adversarialFixture?.workspaceRowName ?? expectedWorkspace
-    const workspaceDocument = await stage('hosted workspace data', () =>
+    let workspaceDocument = await stage('hosted workspace data', () =>
       waitForVisibleHostedWebView({
         discoveryUrl,
         expectedText: expectedWorkspace.toLocaleUpperCase(),
@@ -180,50 +194,63 @@ async function main() {
     const privacyIsolation = await stage('workspace privacy isolation probe', () =>
       verifyHostedWebViewPrivacyIsolation({ document: workspaceDocument })
     )
-    await stage('workspace activation', async () => {
-      try {
-        await activateHostedWorkspaceRow(
-          workspaceDocument,
-          workspaceRowName,
-          (document, target) => activateAndroidWorkspaceControl(emulator, document, target),
-          Math.min(options.timeoutMs, 15_000),
-          () =>
-            waitForVisibleHostedWebView({
+    let adversarialProviderContent = null
+    if (adversarialFixture) {
+      const result = await stage('adversarial task and error presentation', () =>
+        verifyHostedAdversarialTasks({
+          activatePoint: (point) => tapHostedAndroidPoint(emulator, point),
+          discoveryUrl,
+          document: workspaceDocument,
+          timeoutMs: options.timeoutMs
+        })
+      )
+      adversarialProviderContent = { tasks: result.evidence, review: null }
+      workspaceDocument = result.workspaceDocument
+    }
+    const sessionDocument = await stage(
+      'workspace activation and hosted Session route',
+      async () => {
+        let activeDocument = workspaceDocument
+        let lastError
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          if (!activeDocument.href.includes('/session/')) {
+            await activateHostedWorkspaceRow(
+              activeDocument,
+              workspaceRowName,
+              (document, target) => activateAndroidWorkspaceControl(emulator, document, target),
+              Math.min(options.timeoutMs, 15_000),
+              () =>
+                waitForVisibleHostedWebView({
+                  discoveryUrl,
+                  expectedText: workspaceRowName,
+                  timeoutMs: options.timeoutMs
+                })
+            )
+          }
+          try {
+            return await waitForVisibleHostedWebView({
               discoveryUrl,
-              expectedText: workspaceRowName,
+              expectedText: '1 tab',
+              expectedHrefIncludes: '/session/',
+              requireInteractiveControls: false,
+              timeoutMs: Math.min(options.timeoutMs, 15_000)
+            })
+          } catch (error) {
+            lastError = error
+            activeDocument = await waitForVisibleHostedWebView({
+              discoveryUrl,
+              expectedText: 'Orca Desktop',
               timeoutMs: options.timeoutMs
             })
-        )
-      } catch (error) {
-        let diagnostics = 'unavailable'
-        try {
-          const currentDocument = await waitForVisibleHostedWebView({
-            discoveryUrl,
-            expectedText: 'Orca Desktop',
-            timeoutMs: options.timeoutMs
-          })
-          const state = await readHostedWebViewState(currentDocument)
-          diagnostics = `labels=${JSON.stringify(state.labels)} bodyText=${JSON.stringify(
-            state.bodyText
-          )}`
-        } catch (diagnosticError) {
-          diagnostics = `unavailable: ${
-            diagnosticError instanceof Error ? diagnosticError.message : String(diagnosticError)
-          }`
+          }
         }
+        const state = await readHostedWebViewState(activeDocument)
         throw new Error(
-          `${error instanceof Error ? error.message : String(error)}. Diagnostics ${diagnostics}`
+          `${lastError instanceof Error ? lastError.message : String(lastError)}. Diagnostics labels=${JSON.stringify(
+            state.labels
+          )} bodyText=${JSON.stringify(state.bodyText)}`
         )
       }
-    })
-    const sessionDocument = await stage('hosted Session route', () =>
-      waitForVisibleHostedWebView({
-        discoveryUrl,
-        expectedText: '1 tab',
-        expectedHrefIncludes: '/session/',
-        requireInteractiveControls: false,
-        timeoutMs: options.timeoutMs
-      })
     )
     let agentHistory = null
     let adversarialContent = null
@@ -292,6 +319,14 @@ async function main() {
                 if (phase === 'review') {
                   adversarialReviewDocument = document
                 }
+              }
+            : undefined,
+          inspectProviderContent: adversarialProviderContent
+            ? async ({ document }) => {
+                adversarialProviderContent.review = await verifyHostedAdversarialProviderReview({
+                  document,
+                  timeoutMs: options.timeoutMs
+                })
               }
             : undefined,
           timeoutMs: options.timeoutMs,
@@ -368,6 +403,7 @@ async function main() {
           workspace: expectedWorkspace,
           agentHistory,
           adversarialContent,
+          adversarialProviderContent,
           adversarialTerminalLinks,
           sourceControlReview,
           networkIsolation,
@@ -393,7 +429,7 @@ async function main() {
     await runtime?.stop({ shutdownDaemon: true })
     await probe?.stop()
     if (adversarialFixture) {
-      await removeHostedAdversarialRepositoryFixture(adversarialFixture)
+      await removeHostedAdversarialRuntimeFixture(adversarialFixture)
     }
   }
 }

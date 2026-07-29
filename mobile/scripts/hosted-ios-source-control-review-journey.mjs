@@ -23,7 +23,9 @@ export async function verifyHostedSourceControlReviewJourney({
   timeoutMs,
   expectedSessionDiffText = '2 tabs',
   inspectChangedContent,
-  tapPoint = tapHostedJourneyPoint
+  inspectProviderContent,
+  tapPoint = tapHostedJourneyPoint,
+  transformPoint = retainHostedJourneyPoint
 }) {
   const sourceControl = await journeyStep('wait for Source Control route', () =>
     openSourceControlRoute({
@@ -31,7 +33,8 @@ export async function verifyHostedSourceControlReviewJourney({
       emulator,
       sessionDocument,
       timeoutMs,
-      tapPoint
+      tapPoint,
+      transformPoint
     })
   )
   let sourceState = await journeyStep('read populated Source Control state', () =>
@@ -41,6 +44,32 @@ export async function verifyHostedSourceControlReviewJourney({
     if (!sourceState.bodyText.includes(label) && !sourceState.labels.includes(label)) {
       throw new Error(`Source Control is missing ${label}.`)
     }
+  }
+  if (inspectProviderContent) {
+    await journeyStep('open provider review content', () =>
+      openSourceControlSegment({
+        document: sourceControl,
+        label: 'Pull Request',
+        tapPoint,
+        emulator,
+        transformPoint
+      })
+    )
+    await journeyStep('inspect provider review content', () =>
+      inspectProviderContent({ document: sourceControl })
+    )
+    await journeyStep('restore changed files segment', () =>
+      openSourceControlSegment({
+        document: sourceControl,
+        label: 'Changes',
+        tapPoint,
+        emulator,
+        transformPoint
+      })
+    )
+    sourceState = await journeyStep('restore changed Source Control state', () =>
+      waitForChangedFileState(sourceControl, timeoutMs)
+    )
   }
 
   const changedFileLabel = sourceState.labels.find((label) =>
@@ -80,7 +109,8 @@ export async function verifyHostedSourceControlReviewJourney({
       label: changedFileLabel,
       sourceControl,
       tapPoint,
-      timeoutMs
+      timeoutMs,
+      transformPoint
     })
   )
   if (inspectChangedContent) {
@@ -144,6 +174,12 @@ export async function verifyHostedSourceControlReviewJourney({
   }
 }
 
+async function openSourceControlSegment({ document, emulator, label, tapPoint, transformPoint }) {
+  const point = await readHostedWebViewControlPoint(document, label)
+  // Segment labels can have duplicate AX descendants, so target the measured control.
+  await tapPoint(emulator, transformPoint(point, document), label, 1, document)
+}
+
 async function tapHostedJourneyPoint(emulator, point, label, attempt = 0) {
   if (label && attempt === 0) {
     try {
@@ -160,13 +196,20 @@ async function openSourceControlRoute({
   emulator,
   sessionDocument,
   timeoutMs,
-  tapPoint
+  tapPoint,
+  transformPoint
 }) {
   let lastError = new Error('Source Control route did not open')
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const point = await readHostedWebViewControlPoint(sessionDocument, 'Open source control')
-      await tapPoint(emulator, point, 'Open source control', attempt, sessionDocument)
+      await tapPoint(
+        emulator,
+        transformPoint(point, sessionDocument),
+        'Open source control',
+        attempt,
+        sessionDocument
+      )
       return await waitForVisibleHostedWebView({
         discoveryUrl,
         expectedText: 'Source Control',
@@ -187,13 +230,14 @@ async function openSessionDiffRoute({
   label,
   sourceControl,
   tapPoint,
-  timeoutMs
+  timeoutMs,
+  transformPoint
 }) {
   let lastError = new Error('Session diff route did not open')
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const point = await readHostedWebViewControlPoint(sourceControl, label)
-      await tapPoint(emulator, point, label, attempt, sourceControl)
+      await tapPoint(emulator, transformPoint(point, sourceControl), label, attempt, sourceControl)
     } catch (error) {
       lastError = error
       continue
@@ -266,6 +310,10 @@ function standaloneReviewRoute(sourceControlHref) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function retainHostedJourneyPoint(point) {
+  return point
 }
 
 async function journeyStep(label, run) {

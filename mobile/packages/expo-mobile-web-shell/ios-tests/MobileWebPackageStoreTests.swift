@@ -188,6 +188,7 @@ enum MobileWebPackageStoreTests {
     let hash = String(repeating: "a", count: 64)
     let valid = [
       ("index.html", hash, "text/html; charset=utf-8", "document"),
+      ("mermaid-frame.html", hash, "text/html; charset=utf-8", "document"),
       ("assets/\(hash).css", hash, "text/css; charset=utf-8", "style"),
       ("assets/\(hash).js", hash, "text/javascript; charset=utf-8", "script"),
       ("assets/\(hash).png", hash, "image/png", "image"),
@@ -202,6 +203,7 @@ enum MobileWebPackageStoreTests {
       ("assets/\(hash).png", hash, "image/png; charset=utf-8", "image"),
       ("assets/\(hash).JS", hash, "text/javascript; charset=utf-8", "script"),
       ("assets/\(hash).txt", hash, "text/plain; charset=utf-8", "document"),
+      ("other-frame.html", hash, "text/html; charset=utf-8", "document"),
       (
         "assets/\(hash).js",
         String(repeating: "b", count: 64),

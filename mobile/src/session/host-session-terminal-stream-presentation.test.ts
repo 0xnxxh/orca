@@ -4,6 +4,8 @@ import type { HostSessionTerminalOperations } from './host-session-terminal-oper
 import { presentHostSessionTerminalStreamEvent } from './host-session-terminal-stream-presentation'
 import type { MobileTerminalDiagnostics } from './mobile-terminal-diagnostics'
 
+const OSC_LINKS = [{ row: 0, startCol: 0, endCol: 6, uri: 'file:///tmp/prompt.ts' }]
+
 describe('host session terminal stream presentation', () => {
   it('ACKs snapshots and output only after the existing terminal surface parses them', () => {
     const acknowledge = vi.fn()
@@ -19,6 +21,7 @@ describe('host session terminal stream presentation', () => {
         cols: 80,
         rows: 24,
         serialized: new Uint8Array([112, 114, 111, 109, 112, 116]),
+        oscLinks: OSC_LINKS,
         throughSequence: 6
       }
     })
@@ -28,7 +31,7 @@ describe('host session terminal stream presentation', () => {
       24,
       new Uint8Array([112, 114, 111, 109, 112, 116]),
       false,
-      undefined,
+      OSC_LINKS,
       expect.any(Function)
     )
     init.mock.calls[0]![5]()

@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { MOBILE_WEB_BRIDGE_OPERATIONS } from './bridge-contract'
 import {
   MOBILE_WEB_TERMINAL_MAX_INPUT_BYTES,
+  MOBILE_WEB_TERMINAL_MAX_OSC_LINKS,
+  MOBILE_WEB_TERMINAL_MAX_OSC_LINK_ROW,
+  MOBILE_WEB_TERMINAL_MAX_OSC_LINK_URI_CHARACTERS,
+  MOBILE_WEB_TERMINAL_MAX_OSC_LINK_URI_LENGTH,
   MOBILE_WEB_TERMINAL_MAX_OUTSTANDING_BYTES,
   MOBILE_WEB_TERMINAL_MAX_OUTPUT_BATCH_BYTES,
   MOBILE_WEB_TERMINAL_MAX_SNAPSHOT_BYTES,
   MOBILE_WEB_TERMINAL_SNAPSHOT_CHUNK_BYTES,
   MobileWebTerminalEventSchema,
+  MobileWebTerminalOscLinksSchema,
   MobileWebTerminalOutputEventSchema,
   MobileWebTerminalRequestSchema,
   MobileWebTerminalSnapshotChunkEventSchema,
@@ -202,7 +207,8 @@ describe('mobile web terminal snapshot and lifecycle contract', () => {
         throughSequence: 10,
         sha256: HASH,
         truncated: false,
-        source: 'host-model'
+        source: 'host-model',
+        oscLinks: [{ row: 0, startCol: 2, endCol: 5, uri: 'file:///tmp/a.ts' }]
       },
       {
         type: 'snapshotChunk',
@@ -258,6 +264,38 @@ describe('mobile web terminal snapshot and lifecycle contract', () => {
         offset: 0,
         data: base64Bytes(MOBILE_WEB_TERMINAL_SNAPSHOT_CHUNK_BYTES + 1)
       }).success
+    ).toBe(false)
+  })
+
+  it('bounds OSC link count, coordinates, URI length, aggregate size, and shape', () => {
+    const link = { row: 0, startCol: 2, endCol: 5, uri: 'file:///tmp/a.ts' }
+    expect(MobileWebTerminalOscLinksSchema.safeParse([link]).success).toBe(true)
+    expect(
+      MobileWebTerminalOscLinksSchema.safeParse(
+        Array.from({ length: MOBILE_WEB_TERMINAL_MAX_OSC_LINKS + 1 }, () => link)
+      ).success
+    ).toBe(false)
+    for (const invalid of [
+      { ...link, row: MOBILE_WEB_TERMINAL_MAX_OSC_LINK_ROW + 1 },
+      { ...link, startCol: 5, endCol: 5 },
+      { ...link, endCol: 1_001 },
+      { ...link, uri: 'x'.repeat(MOBILE_WEB_TERMINAL_MAX_OSC_LINK_URI_LENGTH + 1) },
+      { ...link, rawPath: '/secret' }
+    ]) {
+      expect(MobileWebTerminalOscLinksSchema.safeParse([invalid]).success).toBe(false)
+    }
+    const aggregateCount =
+      Math.floor(
+        MOBILE_WEB_TERMINAL_MAX_OSC_LINK_URI_CHARACTERS /
+          MOBILE_WEB_TERMINAL_MAX_OSC_LINK_URI_LENGTH
+      ) + 1
+    expect(
+      MobileWebTerminalOscLinksSchema.safeParse(
+        Array.from({ length: aggregateCount }, () => ({
+          ...link,
+          uri: 'x'.repeat(MOBILE_WEB_TERMINAL_MAX_OSC_LINK_URI_LENGTH)
+        }))
+      ).success
     ).toBe(false)
   })
 

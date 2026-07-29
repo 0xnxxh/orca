@@ -4,6 +4,9 @@ import type { MobileWebTerminalEvent } from '../../../src/shared/mobile-web/term
 import { webHostSessionTerminalOperations } from './web-host-session-terminal-operations'
 
 const STREAM_ID = 'S'.repeat(22)
+const SNAPSHOT_ID = 'N'.repeat(22)
+const EMPTY_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+const OSC_LINKS = [{ row: 0, startCol: 0, endCol: 7, uri: 'file:///tmp/a.ts' }]
 
 describe('web host session terminal operations', () => {
   it('adapts the strict opaque stream into the existing terminal presentation contract', async () => {
@@ -136,6 +139,56 @@ describe('web host session terminal operations', () => {
       { operation: 'rename', streamId: STREAM_ID, title: 'Build' },
       { operation: 'clear', streamId: STREAM_ID }
     ])
+  })
+
+  it('preserves snapshot OSC links for the existing terminal presentation', () => {
+    const harness = bridgeHarness()
+    const operations = webHostSessionTerminalOperations(harness.client)
+    const onEvent = vi.fn()
+    operations.subscribe(
+      {
+        workspaceId: 'workspace-page-1',
+        terminalId: 'tab-page-1',
+        clientId: null,
+        viewport: { cols: 90, rows: 30 },
+        visible: true,
+        capabilities: { terminalBinaryStream: 1 }
+      },
+      onEvent,
+      vi.fn()
+    )
+    harness.emit(subscribed())
+    harness.emit({
+      type: 'snapshotStart',
+      streamId: STREAM_ID,
+      snapshotId: SNAPSHOT_ID,
+      kind: 'initial',
+      viewport: { cols: 90, rows: 30 },
+      totalBytes: 0,
+      throughSequence: 0,
+      sha256: EMPTY_SHA256,
+      truncated: false,
+      source: 'host-model',
+      oscLinks: OSC_LINKS
+    })
+    harness.emit({
+      type: 'snapshotEnd',
+      streamId: STREAM_ID,
+      snapshotId: SNAPSHOT_ID,
+      totalBytes: 0,
+      throughSequence: 0,
+      sha256: EMPTY_SHA256
+    })
+
+    expect(onEvent).toHaveBeenLastCalledWith({
+      type: 'scrollback',
+      cols: 90,
+      rows: 30,
+      serialized: new Uint8Array(),
+      preserveScroll: false,
+      throughSequence: 0,
+      oscLinks: OSC_LINKS
+    })
   })
 })
 

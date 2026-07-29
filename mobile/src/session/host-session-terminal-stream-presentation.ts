@@ -115,6 +115,7 @@ function presentScrollback(
   updateTerminalCwdFromStreamEvent(context.handle, data, context.terminalCwds)
   const cols = (data.cols as number) || 80
   const rows = (data.rows as number) || 24
+  const serialized = hostSessionTerminalData(data.serialized)
   const ref = context.getTerminalRef(context.handle)
   if (!ref) {
     console.log('[fit][session] scrollback DROPPED — no terminal ref', {
@@ -126,7 +127,7 @@ function presentScrollback(
   ref.init(
     cols,
     rows,
-    hostSessionTerminalData(data.serialized),
+    serialized,
     false,
     isTerminalOscLinkRanges(data.oscLinks) ? data.oscLinks : undefined,
     hostSessionTerminalAcknowledgement(context.operations, context.handle, data.throughSequence)

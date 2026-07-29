@@ -5,6 +5,7 @@ import process from 'node:process'
 export function startHostedIosMobileLauncher({
   deviceUdid,
   emulatorControlUserDataPath,
+  environment,
   orcaCli,
   runtimeDirectory,
   worktree
@@ -23,6 +24,7 @@ export function startHostedIosMobileLauncher({
       cwd: worktree,
       env: {
         ...process.env,
+        ...environment,
         ORCA_CLI: orcaCli,
         ORCA_E2E_MOBILE_AUTO_SELECT_PAIRED_HOST: '1',
         ORCA_E2E_MOBILE_AGENT_HISTORY_FIXTURE: '1',

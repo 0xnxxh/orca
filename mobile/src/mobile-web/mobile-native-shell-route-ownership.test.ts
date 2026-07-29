@@ -64,6 +64,14 @@ describe('mobile native shell route ownership', () => {
     expect(hybridShell).toContain('void postInitRef.current()')
     expect(hybridShell).toContain('postInitRef.current = postInit')
   })
+
+  it('does not echo init after the hosted page acknowledges it', () => {
+    const readyBranch = hybridShell.match(
+      /if \(parsed\.value\.type === 'ready'\) \{([\s\S]*?)\} else if/
+    )?.[1]
+    expect(readyBranch).toContain('setPageReadySessionId(current.sessionId)')
+    expect(readyBranch).not.toContain('postInit')
+  })
 })
 
 function listRouteFiles(root: URL): string[] {

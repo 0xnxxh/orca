@@ -290,7 +290,7 @@ export default function HybridScreen() {
       }
       responseDropRef.current.recordRequest(parsed.value)
       if (parsed.value.type === 'ready') {
-        await postInit()
+        // `ready` acknowledges init; echoing init here starves the health frame.
         if (activeSessionIdRef.current === current.sessionId) {
           setPageReadySessionId(current.sessionId)
         }

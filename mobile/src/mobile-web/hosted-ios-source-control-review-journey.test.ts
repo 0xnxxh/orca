@@ -212,6 +212,68 @@ describe('hosted iOS Source Control and Review journey', () => {
     })
   })
 
+  it('uses measured native taps for duplicated Source Control segment labels', async () => {
+    const sourceState = {
+      href: 'orca-mobile-web://build/h/host/source-control/workspace?name=repo&origin=session',
+      bodyText: 'Source Control Changes Pull Request Commits Create pull request 128 on branch',
+      labels: ['Refresh source control', 'Open changed file mobile/app/index.tsx']
+    }
+    mocks.readControlPoint
+      .mockReset()
+      .mockResolvedValueOnce({ x: 0.4, y: 0.2 })
+      .mockResolvedValueOnce({ x: 0.6, y: 0.3 })
+      .mockResolvedValueOnce({ x: 0.3, y: 0.3 })
+      .mockResolvedValueOnce({ x: 0.5, y: 0.4 })
+    mocks.readState
+      .mockReset()
+      .mockResolvedValueOnce(sourceState)
+      .mockResolvedValueOnce(sourceState)
+      .mockResolvedValueOnce({
+        href: 'orca-mobile-web://build/h/host/review/workspace',
+        bodyText: 'reviewed',
+        labels: ['Back', 'Open review actions']
+      })
+
+    await verifyHostedSourceControlReviewJourney({
+      discoveryUrl: 'http://127.0.0.1:9222',
+      emulator: { deviceUdid: 'simulator' },
+      inspectProviderContent: vi.fn().mockResolvedValue(undefined),
+      sessionDocument: {
+        href: 'orca-mobile-web://build/h/host/session/workspace'
+      },
+      timeoutMs: 30_000
+    })
+
+    expect(mocks.tapPoint).toHaveBeenNthCalledWith(1, expect.anything(), {
+      x: 0.6,
+      y: 0.3
+    })
+    expect(mocks.tapPoint).toHaveBeenNthCalledWith(2, expect.anything(), {
+      x: 0.3,
+      y: 0.3
+    })
+  })
+
+  it('transforms only the measured fallback while retaining semantic activation', async () => {
+    const transformPoint = vi.fn((point) => ({ ...point, y: point.y + 0.1 }))
+    mocks.tapAccessibilityControl.mockRejectedValue(new Error('missing descendant'))
+
+    await verifyHostedSourceControlReviewJourney({
+      discoveryUrl: 'http://127.0.0.1:9222',
+      emulator: { deviceUdid: 'simulator' },
+      sessionDocument: {
+        href: 'orca-mobile-web://build/h/host/session/workspace'
+      },
+      timeoutMs: 30_000,
+      transformPoint
+    })
+
+    expect(mocks.tapAccessibilityControl).toHaveBeenCalledTimes(2)
+    expect(mocks.tapPoint.mock.calls[0][1]).toMatchObject({ x: 0.4 })
+    expect(mocks.tapPoint.mock.calls[0][1].y).toBeCloseTo(0.3)
+    expect(mocks.tapPoint.mock.calls[1][1]).toEqual({ x: 0.5, y: 0.5 })
+  })
+
   it('falls back to a measured point when an accessibility tap silently misses', async () => {
     mocks.readControlPoint
       .mockReset()

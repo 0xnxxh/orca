@@ -24,6 +24,7 @@ internal const val MOBILE_WEB_ORIGIN_SCHEME = "https"
 internal const val MOBILE_WEB_ORIGIN_HOST = "orca-mobile-web.invalid"
 internal const val MOBILE_WEB_ORIGIN = "$MOBILE_WEB_ORIGIN_SCHEME://$MOBILE_WEB_ORIGIN_HOST"
 private const val MOBILE_WEB_BRIDGE_NAME = "OrcaNative"
+private const val MOBILE_WEB_MERMAID_FRAME_PATH = "mermaid-frame.html"
 private const val MOBILE_WEB_MESSAGE_BYTE_LIMIT = 640 * 1024
 private const val MOBILE_WEB_PENDING_MESSAGE_LIMIT = 32
 private val MOBILE_WEB_CSP = listOf(
@@ -35,12 +36,28 @@ private val MOBILE_WEB_CSP = listOf(
   "connect-src 'none'",
   "media-src 'none'",
   "object-src 'none'",
-  "frame-src data:",
-  "child-src data:",
+  "frame-src 'self' data:",
+  "child-src 'self' data:",
   "worker-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
   "frame-ancestors 'none'"
+).joinToString("; ")
+private val MOBILE_WEB_MERMAID_FRAME_CSP = listOf(
+  "default-src 'none'",
+  "script-src 'sha256-JHwlo5V7HtwqexHUhXguW04dF71kAVlQOX1QdtyCkjg=' blob:",
+  "style-src 'unsafe-inline'",
+  "img-src data:",
+  "font-src 'none'",
+  "connect-src 'none'",
+  "media-src 'none'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "child-src 'none'",
+  "worker-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'self'"
 ).joinToString("; ")
 
 @SuppressLint("ViewConstructor", "SetJavaScriptEnabled")
@@ -190,7 +207,7 @@ internal class MobileWebShellView(
       if (
         !isMainFrame ||
         !isMobileWebOrigin(sourceOrigin) ||
-        !isAllowedDocumentUrl(documentUrl) ||
+        !isAllowedMobileWebBridgeDocumentUrl(documentUrl.toString(), sessionId) ||
         body.toByteArray(Charsets.UTF_8).size > MOBILE_WEB_MESSAGE_BYTE_LIMIT
       ) return
       onBridgeMessage(mapOf("data" to body))
@@ -205,6 +222,7 @@ internal class MobileWebShellView(
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
       val url = request.url
       if (!request.isForMainFrame && url.scheme == "data") return false
+      if (!request.isForMainFrame && isAllowedEmbeddedDocumentUrl(url)) return false
       val allowed = request.isForMainFrame && isAllowedDocumentUrl(url)
       if (!allowed) {
         onNavigationBlocked(mapOf("url" to url.toString().take(2_048)))
@@ -256,7 +274,10 @@ internal class MobileWebShellView(
       "Cache-Control" to "no-store",
       "X-Content-Type-Options" to "nosniff"
     )
-    if (asset.isDocument) headers["Content-Security-Policy"] = MOBILE_WEB_CSP
+    if (asset.isDocument) {
+      headers["Content-Security-Policy"] =
+        if (path == MOBILE_WEB_MERMAID_FRAME_PATH) MOBILE_WEB_MERMAID_FRAME_CSP else MOBILE_WEB_CSP
+    }
     return WebResourceResponse(
       contentTypeParts[0],
       contentTypeParts.getOrNull(1),
@@ -274,6 +295,15 @@ internal class MobileWebShellView(
       url.encodedPath == "/" &&
       url.query == null &&
       url.fragment == activeSessionId &&
+      url.toString().length <= 8 * 1024
+
+  private fun isAllowedEmbeddedDocumentUrl(url: Uri): Boolean =
+    activeSessionId != null &&
+      isMobileWebOrigin(url) &&
+      url.path == "/$MOBILE_WEB_MERMAID_FRAME_PATH" &&
+      url.encodedPath == "/$MOBILE_WEB_MERMAID_FRAME_PATH" &&
+      url.query == null &&
+      url.fragment == null &&
       url.toString().length <= 8 * 1024
 
   private fun blockedResponse(): WebResourceResponse = WebResourceResponse(

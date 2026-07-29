@@ -56,4 +56,27 @@ describe('mobile terminal diagnostics', () => {
     expect(log).toHaveBeenCalledTimes(2)
     log.mockRestore()
   })
+
+  it('records binary snapshot sizes without recording snapshot content', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const diagnostics = new MobileTerminalDiagnostics()
+
+    diagnostics.streamScrollback('terminal-1', 1, 2, {
+      serialized: new Uint8Array([1, 2, 3]),
+      oscLinks: [{ uri: 'credential-secret' }]
+    })
+
+    expect(log).toHaveBeenCalledWith('[terminal-diagnostic]', 'stream-scrollback', {
+      seq: 1,
+      eventSeq: 2,
+      cols: null,
+      rows: null,
+      serializedLength: 3,
+      oscLinkCount: 1,
+      scrollbackRows: null,
+      truncated: false
+    })
+    expect(JSON.stringify(log.mock.calls)).not.toContain('credential-secret')
+    log.mockRestore()
+  })
 })
