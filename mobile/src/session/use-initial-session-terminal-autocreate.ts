@@ -6,6 +6,10 @@ type InitialSessionTerminalAutoCreateState = {
   sawSessionTabs: boolean
 }
 
+/**
+ * Fresh auto-create bookkeeping. The route must re-create this on every worktree
+ * change, or a revisit inherits the previous workspace's `sawSessionTabs`.
+ */
 export function createInitialSessionAutoCreateState(): InitialSessionTerminalAutoCreateState {
   return { autoCreatedForWorktree: null, sawSessionTabs: false }
 }
@@ -81,6 +85,10 @@ export function useInitialSessionTerminalAutoCreate(
   ])
 }
 
+/**
+ * Tracks "tabs hydrated" per worktree so a reused route reports `false` until the
+ * new workspace's own snapshot lands, rather than inheriting the old one's.
+ */
 export function useWorktreeSessionTabsLoaded(
   worktreeId: string
 ): readonly [boolean, (loaded: boolean) => void] {
