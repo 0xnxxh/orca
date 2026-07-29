@@ -13,6 +13,7 @@ import {
 } from './bridge-operation-registry'
 import {
   parseMobileWebBridgeMessage,
+  parseMobileWebBridgeMessageDocument,
   type MobileWebBridgeMessageContext,
   type MobileWebBridgeMessageParseResult
 } from './bridge-message-parser'
@@ -247,6 +248,12 @@ export function parseMobileWebBridgeShellMessage(
   expected: MobileWebBridgeMessageContext
 ): MobileWebBridgeParseResult<MobileWebBridgeShellMessage> {
   return parseMobileWebBridgeMessage(raw, expected, MobileWebBridgeShellMessageSchema)
+}
+
+export function parseMobileWebBridgeInitialMessage(
+  raw: string
+): MobileWebBridgeParseResult<z.infer<typeof ShellInitSchema>> {
+  return parseMobileWebBridgeMessageDocument(raw, ShellInitSchema)
 }
 
 function validateRequestOperation(

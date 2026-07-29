@@ -113,8 +113,8 @@ changed-file and full-mobile formatting, localization, the max-lines ratchet,
 and diff hygiene pass. React Doctor reports zero blocking errors across the
 migration without suppressions. The independently verified React Native Web
 package is
-`1eccbb3a1b3722c6c5cae4544af8f157bd7e5a210ca74cff97f5c4b356943e6f`:
-50 assets, 9,295,416 raw bytes, and 2,690,230 gzip bytes.
+`f293890e4cf1fd5f31c3d1fa3875a68d2697882331498cfdfdf2cbe48f4ac387`:
+50 assets, 9,295,457 raw bytes, and 2,690,208 gzip bytes.
 
 The immediately preceding `7c7c673d…` package passed the unpacked macOS arm64 →
 Docker SSH → actual iOS WKWebView journey from a clean app reinstall in 1.9
@@ -282,21 +282,23 @@ keys and values. Mirrored corpora also prove the exact 32-level acceptance and
 The 569-file mobile suite, typechecks, lints, reliability, max-lines, focused
 formatting, diff hygiene, and unchanged `b17ead7a…` package verification remain
 green after the parser repair.
-Raw bridge messages now pass an exact unique-decoded-key, paired-surrogate,
-single-document, 32-level JSON grammar before parsing. A generated corpus
-rejects eight malformed payload shapes and one oversized request for each of
-the 162 production grants: 1,458 cases before host RPC, native access, or
-subscription setup. It closed account subscription parsing plus
-speech/native/navigation validation-order gaps. Pending terminal/native-chat
-subscriptions recheck request liveness after asynchronous resolution; focused
-races cover early unsubscribe, authenticated client replacement, disposal, and
-replay. The production package now verifies as `1eccbb3a…`: 50 assets,
-9,295,416 raw bytes, and 2,690,230 gzip bytes. The full mobile suite passes 573
-files / 3,427 tests with 2 expected skips. The full root run has one unrelated
-30-second dynamic-import timeout under load; its isolated 2-test rerun passes
-in 4.4 seconds.
+Raw bridge messages, including the first shell `init`, now pass an exact
+unique-decoded-key, paired-surrogate, single-document, 32-level JSON grammar
+before parsing. A generated corpus rejects eight malformed payload shapes and
+one oversized request for each of the 224 production grants: 2,016 cases before
+host RPC, native access, or subscription setup. It closed account subscription
+parsing plus speech/native/navigation validation-order gaps. More than 1,200
+valid success envelopes with invalid payloads cross 157 exported result
+schemas; all eight subscription event schemas also retire invalid events.
+Pending terminal/native-chat subscriptions recheck request liveness after
+asynchronous resolution; focused races cover early unsubscribe, authenticated
+client replacement, disposal, and replay. The production package now verifies
+as `f293890e…`: 50 assets, 9,295,457 raw bytes, and 2,690,208 gzip bytes. The
+full mobile suite passes 574 files / 3,430 tests with 2 expected skips. The full
+root run has one unrelated 30-second dynamic-import timeout under load; its
+isolated 2-test rerun passes in 4.4 seconds.
 The remaining security work below is exact release-app corpus testing,
-valid-shaped response fuzzing, broader cross-scope mutation races,
+operation-semantic response mutation, broader cross-scope mutation races,
 privacy/authorization audit, and independent review.
 
 ## 1. Production Cutover and Cleanup
@@ -351,11 +353,14 @@ privacy/authorization audit, and independent review.
       preserves an external file behind an in-cache link. Exact JSON now rejects
       unpaired Unicode surrogate escapes and has explicit depth-edge coverage.
       Raw bridge JSON now rejects duplicate decoded keys, trailing content,
-      unpaired surrogates, and excess depth. All 162 production grants reject
-      eight malformed payload shapes and an oversized request before authority
-      access. Pending subscription cancellation/client replacement/disposal
-      races pass. A fresh exact-app rerun, valid-shaped response mutation,
-      concurrent cache mutation, and the other listed boundaries remain.
+      unpaired surrogates, and excess depth, including during initial shell
+      setup. All 224 production grants reject eight malformed payload shapes
+      and an oversized request before authority access. The exported result and
+      subscription event schemas reject a generated valid-envelope payload
+      corpus and retire invalid events. Pending subscription
+      cancellation/client replacement/disposal races pass. A fresh exact-app
+      rerun, operation-semantic response mutation, concurrent cache mutation,
+      and the other listed boundaries remain.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,
       reconnect, process-loss, and host-removal races. Focused tests now reject
       a 15-pair stale session/build grid, retain replay protection across

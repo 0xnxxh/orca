@@ -8,9 +8,8 @@ import {
   type ReactNode
 } from 'react'
 import {
-  MOBILE_WEB_BRIDGE_MAX_MESSAGE_BYTES,
   MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
-  MobileWebBridgeShellMessageSchema,
+  parseMobileWebBridgeInitialMessage,
   parseMobileWebBridgeShellMessage,
   type MobileWebBridgeMessageContext,
   type MobileWebBridgePageMessage,
@@ -83,9 +82,6 @@ function useMobileWebNativeShellChannel(): MobileWebNativeShellState {
     let healthFrame = 0
     let interactiveFrame = 0
     const receive = (raw: string): void => {
-      if (new TextEncoder().encode(raw).byteLength > MOBILE_WEB_BRIDGE_MAX_MESSAGE_BYTES) {
-        return
-      }
       const init = parseInitialMessage(raw)
       if (init) {
         const nextContext = { shellSessionId: init.shellSessionId, buildId: init.buildId }
@@ -222,12 +218,8 @@ function useMobileWebNativeShellChannel(): MobileWebNativeShellState {
 }
 
 function parseInitialMessage(raw: string) {
-  try {
-    const parsed = MobileWebBridgeShellMessageSchema.safeParse(JSON.parse(raw) as unknown)
-    return parsed.success && parsed.data.type === 'init' ? parsed.data : null
-  } catch {
-    return null
-  }
+  const parsed = parseMobileWebBridgeInitialMessage(raw)
+  return parsed.ok ? parsed.value : null
 }
 
 function postPageMessage(message: MobileWebBridgePageMessage): boolean {

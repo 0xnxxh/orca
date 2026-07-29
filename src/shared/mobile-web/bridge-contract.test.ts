@@ -5,6 +5,7 @@ import {
   MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
   MobileWebBridgePageMessageSchema,
   MobileWebBridgeShellMessageSchema,
+  parseMobileWebBridgeInitialMessage,
   parseMobileWebBridgePageMessage,
   parseMobileWebBridgeShellMessage
 } from './bridge-contract'
@@ -224,6 +225,54 @@ describe('mobile web bridge shell contract', () => {
         grants: [operationGrant(), operationGrant({ capability: 'terminal', operation: 'input' })]
       }).success
     ).toBe(true)
+  })
+
+  it('applies exact JSON admission to the initial shell message', () => {
+    const initial = JSON.stringify({
+      version: MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
+      type: 'init',
+      shellSessionId: SHELL_SESSION_ID,
+      buildId: BUILD_ID,
+      connection: 'connected',
+      grants: [operationGrant()]
+    })
+    expect(parseMobileWebBridgeInitialMessage(initial)).toMatchObject({
+      ok: true,
+      value: { type: 'init', connection: 'connected' }
+    })
+
+    const duplicateConnection = initial.replace(
+      '"connection":"connected"',
+      '"connection":"offline","\\u0063onnection":"connected"'
+    )
+    expect(parseMobileWebBridgeInitialMessage(duplicateConnection)).toEqual({
+      ok: false,
+      error: 'invalid_message'
+    })
+    expect(
+      parseMobileWebBridgeInitialMessage(
+        initial.replace(`"${SHELL_SESSION_ID}"`, `"${String.fromCharCode(0xd800)}"`)
+      )
+    ).toEqual({ ok: false, error: 'invalid_message' })
+    expect(parseMobileWebBridgeInitialMessage(`${initial} trailing`)).toEqual({
+      ok: false,
+      error: 'invalid_message'
+    })
+    expect(
+      parseMobileWebBridgeInitialMessage(
+        JSON.stringify({
+          version: MOBILE_WEB_BRIDGE_PROTOCOL_VERSION + 1,
+          type: 'init',
+          shellSessionId: SHELL_SESSION_ID,
+          buildId: BUILD_ID,
+          connection: 'connected',
+          grants: []
+        })
+      )
+    ).toEqual({ ok: false, error: 'unsupported_version' })
+    expect(
+      parseMobileWebBridgeInitialMessage('x'.repeat(MOBILE_WEB_BRIDGE_MAX_MESSAGE_BYTES + 1))
+    ).toEqual({ ok: false, error: 'too_large' })
   })
 
   it('rejects unbounded or host-shaped resume routes', () => {

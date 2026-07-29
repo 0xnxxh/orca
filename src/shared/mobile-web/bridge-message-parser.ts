@@ -20,6 +20,23 @@ export function parseMobileWebBridgeMessage<T extends MobileWebBridgeMessageCont
   expected: MobileWebBridgeMessageContext,
   schema: z.ZodType<T>
 ): MobileWebBridgeMessageParseResult<T> {
+  const parsed = parseMobileWebBridgeMessageDocument(raw, schema)
+  if (!parsed.ok) {
+    return parsed
+  }
+  if (
+    parsed.value.shellSessionId !== expected.shellSessionId ||
+    parsed.value.buildId !== expected.buildId
+  ) {
+    return { ok: false, error: 'stale_session' }
+  }
+  return parsed
+}
+
+export function parseMobileWebBridgeMessageDocument<T>(
+  raw: string,
+  schema: z.ZodType<T>
+): MobileWebBridgeMessageParseResult<T> {
   if (new TextEncoder().encode(raw).byteLength > MOBILE_WEB_BRIDGE_MAX_MESSAGE_BYTES) {
     return { ok: false, error: 'too_large' }
   }
@@ -42,12 +59,6 @@ export function parseMobileWebBridgeMessage<T extends MobileWebBridgeMessageCont
   const parsed = schema.safeParse(value)
   if (!parsed.success) {
     return { ok: false, error: 'invalid_message' }
-  }
-  if (
-    parsed.data.shellSessionId !== expected.shellSessionId ||
-    parsed.data.buildId !== expected.buildId
-  ) {
-    return { ok: false, error: 'stale_session' }
   }
   return { ok: true, value: parsed.data }
 }

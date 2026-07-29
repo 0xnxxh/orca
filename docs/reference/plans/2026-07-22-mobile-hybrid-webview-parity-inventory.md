@@ -556,12 +556,15 @@ The standalone renderer-based workspace, session, files, terminal,
 source-control, and review presentation is also removed with its Vite-only
 package path. A production-source boundary requires `src/mobile-web/` to remain
 renderer-independent, while the authoritative RNW package still verifies as
-build `1eccbb3a…`.
-Raw bridge envelopes now pass an exact unique-key, paired-surrogate, bounded
-JSON grammar before schema parsing. The generated broker corpus rejects 1,458
-malformed or oversized requests across every production grant before host or
-native access, and pending terminal/native-chat setup cannot register after
-early cancellation, client replacement, or broker disposal.
+build `f293890e…`.
+Raw bridge envelopes, including initial shell setup, now pass an exact
+unique-key, paired-surrogate, bounded JSON grammar before schema parsing. The
+generated broker corpus rejects 2,016 malformed or oversized requests across
+all 224 production grants before host or native access. Valid response
+envelopes also cross 157 exported result schemas and all eight subscription
+event schemas with invalid payloads; requests fail closed and invalid events
+cancel their subscriptions. Pending terminal/native-chat setup cannot register
+after early cancellation, client replacement, or broker disposal.
 The first production shell and package use exact bridge v2. Additive operations
 remain compatible through negotiated capabilities. Any incompatible successor
 must ship natively first, retain v2 for at least two stable mobile releases, and
@@ -634,7 +637,7 @@ forking the shared presentation. Source Control measures 0.736% changed pixels
 nested syntax text follows the native effective font.
 
 The interrupted-transcript versus hook-status mismatch and a real structured
-prompt response pass Host 37 Simulator replay. Current package `1eccbb3a…`
+prompt response pass Host 37 Simulator replay. Current package `f293890e…`
 also carries the network-denied local Mermaid engine and its WebKit-compatible
 token-bound parent/frame handoff. Classic SSH
 transcript authority and reconnect now pass a real Docker provider journey

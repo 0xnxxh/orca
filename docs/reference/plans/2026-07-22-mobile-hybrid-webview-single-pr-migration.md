@@ -181,10 +181,14 @@ prototype:
   windows so long-lived sessions do not exhaust request or subscription IDs.
   Desktop client replacement cancels pending work before new authority is
   installed, and native inbox delivery rejects frame-originated messages.
-- Raw bridge documents now pass the same unique-decoded-key, paired-surrogate,
-  single-document, 32-level JSON grammar before `JSON.parse` and Zod. A
-  generated corpus rejects eight malformed payload shapes and one oversized
-  request for each of the 162 production grants before host/native access.
+- Raw bridge documents, including the first shell `init`, now pass the same
+  unique-decoded-key, paired-surrogate, single-document, 32-level JSON grammar
+  before `JSON.parse` and Zod. A generated corpus rejects eight malformed
+  payload shapes and one oversized request for each of the 224 production
+  grants before host/native access. Valid shell envelopes carrying invalid
+  response payloads also cross every exported result and subscription event
+  schema; one-shot requests fail closed and invalid events retire their
+  subscriptions.
   Pending terminal and native-chat subscription setup rechecks request liveness
   after asynchronous host resolution, so cancellation, client replacement, and
   broker disposal cannot recreate authority afterward.
@@ -2162,9 +2166,9 @@ The authoritative route now has a separately reviewed ceiling of 10 MiB total,
 from 8 MiB / 2 MiB / 7.5 MiB only after the legacy Mermaid CDN executable was
 replaced by the locally bundled, network-denied engine needed by both native
 and RNW without forking the existing UI. Boundary tests reject every
-measurement above its ceiling. The current 50-asset package is 9,295,416 bytes
-/ 2,690,230 bytes gzip and build
-`1eccbb3a1b3722c6c5cae4544af8f157bd7e5a210ca74cff97f5c4b356943e6f`.
+measurement above its ceiling. The current 50-asset package is 9,295,457 bytes
+/ 2,690,208 bytes gzip and build
+`f293890e4cf1fd5f31c3d1fa3875a68d2697882331498cfdfdf2cbe48f4ac387`.
 `build:mobile-web` and release resource mapping therefore select the RNW
 package; the original 2 MiB Vite-fixture ceiling is retired with that fixture.
 Workspace snapshots now page through

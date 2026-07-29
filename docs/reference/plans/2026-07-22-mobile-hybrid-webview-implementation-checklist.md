@@ -549,7 +549,7 @@ recovery, or physical-device gates.
       RNW artifact. The retired Vite entry, package plugin/verifier, duplicate
       workspace/session/files/source-control UI, and UI-only tests are removed.
       Production bridge clients and transport tests remain. The rebuilt package
-      now verifies as build `2441ad60…`.
+      now verifies as build `f293890e…`.
 
 ## 3. Production Package Delivery RPC
 
@@ -1604,13 +1604,16 @@ copy.
 - [~] Fuzz bridge envelopes, schemas, sizes, IDs, ordering, cancellation, and
   subscription lifecycle. Raw page and shell messages now require a
   unique-decoded-key, paired-surrogate, single-document, 32-level JSON grammar
-  before `JSON.parse` and Zod. The deterministic operation corpus rejects eight
-  malformed payload shapes and one oversized request across all 162 production
-  grants: 1,458 cases before host RPC, native access, or subscription setup.
-  Existing ordered-event/sequence-gap coverage plus new pending-subscription
-  races cover cancellation, client replacement, and broker disposal. Exact
-  release-app injection and broader valid-shaped mutation/response fuzzing
-  remain.
+  before `JSON.parse` and Zod, including for the initial shell message. The
+  deterministic operation corpus rejects eight malformed payload shapes and
+  one oversized request across all 224 production grants: 2,016 cases before
+  host RPC, native access, or subscription setup. Valid shell envelopes with
+  invalid payloads cross 157 exported result schemas and all eight subscription
+  event schemas; one-shot requests fail closed and invalid events cancel their
+  subscriptions. Existing ordered-event/sequence-gap coverage plus new
+  pending-subscription races cover cancellation, client replacement, and
+  broker disposal. Exact release-app injection and operation-semantic response
+  mutation remain.
 - [~] Attempt cross-host, cross-build, cross-workspace, and cross-session races.
   A 15-pair stale session/build grid fails closed, client replacement revokes
   existing opaque workspace authority, and pending terminal resolution cannot
@@ -1880,20 +1883,22 @@ features; Swift format lint, mobile lint/typecheck/format, max-lines, and diff
 hygiene also pass.
 
 The bridge mutation and lifecycle slice rejects ambiguous raw JSON before
-schema traversal, runs 1,458 generated operation payload/size cases across all
-162 production grants, and closes three validation-order gaps in account,
-speech/native, and navigation operations. Four broker race cases plus focused
-native-chat coverage prove early unsubscribe, authenticated client
-replacement, broker disposal, and replay do not register late host resources.
-Focused root tests pass 4 files / 163 tests and mobile tests pass 8 files / 55
-tests. The full mobile suite passes 572 files / 3,425 tests with 2 expected
+schema traversal, runs 2,016 generated operation payload/size cases across all
+224 production grants, and closes three validation-order gaps in account,
+speech/native, and navigation operations. Initial shell setup now uses that
+same parser. More than 1,200 valid success envelopes with invalid payloads
+cross 157 exported result schemas, and all eight subscription event schemas
+retire invalid events. Four broker race cases plus focused native-chat coverage
+prove early unsubscribe, authenticated client replacement, broker disposal,
+and replay do not register late host resources. Focused root tests pass 2 files
+/ 32 tests. The full mobile suite passes 574 files / 3,430 tests with 2 expected
 skips. A full root run passes 3,825 files / 40,143 tests with 9 file and 70 test
 skips; one unrelated 30-second dynamic-import timeout passes 2/2 in a
 4.4-second isolated rerun. Mobile/root/RNW typechecks, mobile/shared lint,
 max-lines, formatting, diff hygiene, and production package verification pass.
 The rebuilt package is
-`2441ad60ec4b02a9a26bb33c672748ddd542497b303e58e028eefbd703e613c9`:
-50 assets, 9,295,070 raw bytes, and 2,690,115 gzip bytes.
+`f293890e4cf1fd5f31c3d1fa3875a68d2697882331498cfdfdf2cbe48f4ac387`:
+50 assets, 9,295,457 raw bytes, and 2,690,208 gzip bytes.
 
 | Date       | Workstream              | Evidence                                                                                                                                                                                                                    | Result                                                                                                                                                                                            |
 | ---------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2780,3 +2785,7 @@ The rebuilt package is
 | 2026-07-29 | Next     | Complete valid-shaped bridge response and live cross-host/workspace mutation races, then audit Desktop mutation reauthorization and paired cryptographic identity use before independent review and the remaining external release gates.                                                                                                                                                                                                 |
 | 2026-07-28 | Complete | Rebased all 44 migration commits onto `origin/main` at `3f5328755`; the branch is zero behind. The only conflicts retained upstream endpoint redaction and `happy-dom` together with the migration transport limits and `hachure-fill` dependency.                                                                                                                                                                                        |
 | 2026-07-28 | Complete | Post-rebase mobile tests pass 573 files / 3,427 tests with 2 expected skips. Mobile/root/RNW typechecks, mobile lint, max-lines, diff hygiene, and RNW packaging pass. Build `1eccbb3a1b3722c6c5cae4544af8f157bd7e5a210ca74cff97f5c4b356943e6f` verifies with 50 assets, 9,295,416 raw bytes, and 2,690,230 gzip bytes.                                                                                                                   |
+| 2026-07-28 | Finding  | Initial shell setup still used direct `JSON.parse`, so duplicate decoded keys could collapse into an otherwise schema-valid `init` message before the exact bridge grammar ran.                                                                                                                                                                                                                                                           |
+| 2026-07-28 | Complete | Initial and subsequent shell messages now share byte-bounded exact JSON admission. A valid-envelope response corpus covers 157 exported result schemas with more than 1,200 invalid payload cases and all eight subscription event schemas; invalid results fail closed and invalid events retire their subscriptions. The 224 production grants now run 2,016 request corpus cases.                                                      |
+| 2026-07-28 | Complete | Focused root coverage passes 2 files / 32 tests and the full mobile suite passes 574 files / 3,430 tests with 2 expected skips. Root/RNW typechecks, mobile lint, max-lines, formatting, diff hygiene, and RNW packaging pass. Build `f293890e4cf1fd5f31c3d1fa3875a68d2697882331498cfdfdf2cbe48f4ac387` verifies with 50 assets, 9,295,457 raw bytes, and 2,690,208 gzip bytes.                                                           |
+| 2026-07-28 | Next     | Add operation-semantic response mutations and broader two-host/two-workspace mutation races, then audit Desktop mutation reauthorization and paired cryptographic identity use before independent review and external release gates.                                                                                                                                                                                                      |
