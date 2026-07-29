@@ -3228,6 +3228,7 @@ export function registerPtyHandlers(
         provider as (IPtyProvider & { closeOutputIntake?: (reason: string) => void }) | undefined
       )?.closeOutputIntake?.(reason)
     },
+    resetModelForMigration: (_generation, id) => runtime?.resetPtyModelAfterMigrationFailure(id),
     onGenerationClosed: (providerGeneration) => {
       for (const id of pendingData.keys()) {
         const pending = pendingData.get(id)

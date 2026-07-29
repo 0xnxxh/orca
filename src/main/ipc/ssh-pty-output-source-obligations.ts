@@ -226,6 +226,17 @@ export class SshPtyOutputSourceObligations {
     return Object.freeze(checkpoints)
   }
 
+  acceptedCheckpoint(key: {
+    ptyId: string
+    providerGeneration: number
+  }): SshPtyAcceptedSourceCheckpoint | null {
+    return (
+      this.acceptedCheckpoints(key.providerGeneration).find(
+        (checkpoint) => checkpoint.id === key.ptyId
+      ) ?? null
+    )
+  }
+
   dispose(): void {
     this.coordinator.dispose()
   }

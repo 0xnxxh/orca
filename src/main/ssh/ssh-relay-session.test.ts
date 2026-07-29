@@ -29,6 +29,10 @@ vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
   acceptSshPtyOutputData: acceptOutputDataMock,
   acceptSshPtyOutputExit: vi.fn().mockResolvedValue(undefined),
   allocateSshPtyProviderGeneration: vi.fn(() => 41),
+  beginSshPtyOutputGenerationMigration: vi.fn(() => ({
+    byPty: new Map(),
+    completion: Promise.resolve()
+  })),
   closeSshPtyOutputGeneration: vi.fn(),
   getSshPtyAcceptedSourceCheckpoints: vi.fn(() => []),
   applySshPtySourceRecoveryCancellationProof: vi.fn(() => true),

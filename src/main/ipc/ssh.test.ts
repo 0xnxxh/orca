@@ -113,6 +113,10 @@ vi.mock('./ssh-pty-output-intake-registry', () => ({
     let generation = 0
     return () => ++generation
   })(),
+  beginSshPtyOutputGenerationMigration: vi.fn(() => ({
+    byPty: new Map(),
+    completion: Promise.resolve()
+  })),
   applySshPtySourceCancellationProof: vi.fn().mockReturnValue(false),
   applySshPtySourceRecoveryCancellationProof: vi.fn().mockReturnValue(false),
   closeSshPtyOutputGeneration: vi.fn(),

@@ -83,6 +83,11 @@ export class SshPtyModelAdmissionPressure {
   }
 
   cancelPty(key: SshPtyModelAdmissionKey, error: Error, cancelReserved: () => void): void {
+    this.cancelQueuedPty(key, error)
+    cancelReserved()
+  }
+
+  cancelQueuedPty(key: SshPtyModelAdmissionKey, error: Error): void {
     const id = admissionKeyId(key)
     const canceled: AdmissionEntry[] = []
     for (let index = this.entries.length - 1; index >= 0; index--) {
@@ -91,7 +96,6 @@ export class SshPtyModelAdmissionPressure {
       }
     }
     this.rejectPressureEntries(canceled, error)
-    cancelReserved()
     const paused = this.pausedKeys.get(id)
     if (paused) {
       this.pausedKeys.delete(id)

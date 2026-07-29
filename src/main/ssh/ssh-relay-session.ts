@@ -45,12 +45,14 @@ import {
   allocateSshPtyProviderGeneration,
   applySshPtySourceCancellationProof,
   applySshPtySourceRecoveryCancellationProof,
+  beginSshPtyOutputGenerationMigration,
   closeSshPtyOutputGeneration,
   getSshPtyAcceptedSourceCheckpoints,
   installSshPtySourceAckPublisher,
   installSshPtySourceCancellationPublisher
 } from '../ipc/ssh-pty-output-intake-registry'
 import type { SshPtyAcceptedSourceCheckpoint } from '../ipc/ssh-pty-output-source-obligations'
+import type { SshPtyOutputMigrationResult } from '../ipc/ssh-pty-output-model-migration'
 import {
   registerSshFilesystemProvider,
   unregisterSshFilesystemProvider,
@@ -223,6 +225,7 @@ type PtyConsumerRecovery = {
   serverBuildId?: string
   owner?: SshPtyConsumerOwnerState
   checkpointsByAppPtyId: Map<string, SshPtyAcceptedSourceCheckpoint>
+  modelMigrationsByAppPtyId: Map<string, Promise<SshPtyOutputMigrationResult>>
 }
 
 const ptyConsumerRecoveryByTarget = new Map<string, PtyConsumerRecovery>()
@@ -236,7 +239,8 @@ function ptyConsumerRecoveryForTarget(targetId: string): PtyConsumerRecovery {
   const created = {
     clientInstanceId: randomUUID(),
     detached: false,
-    checkpointsByAppPtyId: new Map<string, SshPtyAcceptedSourceCheckpoint>()
+    checkpointsByAppPtyId: new Map<string, SshPtyAcceptedSourceCheckpoint>(),
+    modelMigrationsByAppPtyId: new Map<string, Promise<SshPtyOutputMigrationResult>>()
   }
   ptyConsumerRecoveryByTarget.set(targetId, created)
   return created
@@ -878,6 +882,17 @@ export class SshRelaySession {
       if (recovery) {
         delete recovery.owner
         recovery.checkpointsByAppPtyId.clear()
+        for (const [ptyId, migration] of recovery.modelMigrationsByAppPtyId) {
+          recovery.modelMigrationsByAppPtyId.set(
+            ptyId,
+            migration.then(() =>
+              Object.freeze({
+                status: 'checkpoint-unavailable' as const,
+                reason: 'completion-failed' as const
+              })
+            )
+          )
+        }
       }
       this.ptyConsumerSessionState = null
       return openSshPtyConsumerSession(mux, options)
@@ -896,7 +911,10 @@ export class SshRelaySession {
       serverBuildId,
       owner,
       checkpointsByAppPtyId:
-        previous?.checkpointsByAppPtyId ?? new Map<string, SshPtyAcceptedSourceCheckpoint>()
+        previous?.checkpointsByAppPtyId ?? new Map<string, SshPtyAcceptedSourceCheckpoint>(),
+      modelMigrationsByAppPtyId:
+        previous?.modelMigrationsByAppPtyId ??
+        new Map<string, Promise<SshPtyOutputMigrationResult>>()
     })
   }
 
@@ -1151,17 +1169,12 @@ export class SshRelaySession {
     }
     this.ptyRecoveryNotificationCleanups = []
     if (this.activePtyProviderGeneration !== null) {
+      const providerGeneration = this.activePtyProviderGeneration
       if (reason === 'connection_lost' && this.negotiatedPtyConsumerOwner()?.outputFlowControl) {
-        const recovery = ptyConsumerRecoveryByTarget.get(this.targetId)
-        if (recovery) {
-          for (const checkpoint of getSshPtyAcceptedSourceCheckpoints(
-            this.activePtyProviderGeneration
-          )) {
-            recovery.checkpointsByAppPtyId.set(checkpoint.id, checkpoint)
-          }
-        }
+        this.beginPtyModelMigration(providerGeneration, outputGenerationReason)
+      } else {
+        closeSshPtyOutputGeneration(providerGeneration, outputGenerationReason)
       }
-      closeSshPtyOutputGeneration(this.activePtyProviderGeneration, outputGenerationReason)
       this.activePtyProviderGeneration = null
     }
     this.sourceAckPublisherCleanup?.()
@@ -1728,7 +1741,7 @@ export class SshRelaySession {
     let sourceActivationLease: SshPtyAttachResult['sourceActivationLease']
     let recoveryActivationLease: SshPtyRecoveryActivationLease | undefined
     try {
-      const recoveryRequest = this.sourceRecoveryRequest(appPtyId)
+      const recoveryRequest = await this.sourceRecoveryRequest(appPtyId)
       const attachResult = await this.attachPtyWithRetry(
         ptyProvider,
         ptyId,
@@ -2025,11 +2038,24 @@ export class SshRelaySession {
     }
   }
 
-  private sourceRecoveryRequest(appPtyId: string): PtySourceRecoveryRequest | undefined {
+  private async sourceRecoveryRequest(
+    appPtyId: string
+  ): Promise<PtySourceRecoveryRequest | undefined> {
     if (!this.negotiatedPtyConsumerOwner()?.outputFlowControl) {
       return undefined
     }
-    const checkpoints = ptyConsumerRecoveryByTarget.get(this.targetId)?.checkpointsByAppPtyId
+    const recovery = ptyConsumerRecoveryByTarget.get(this.targetId)
+    const migration = recovery?.modelMigrationsByAppPtyId.get(appPtyId)
+    if (migration) {
+      const outcome = await migration
+      if (recovery?.modelMigrationsByAppPtyId.get(appPtyId) === migration) {
+        recovery.modelMigrationsByAppPtyId.delete(appPtyId)
+      }
+      if (outcome.status !== 'settled') {
+        return Object.freeze({ status: 'checkpointUnavailable' })
+      }
+    }
+    const checkpoints = recovery?.checkpointsByAppPtyId
     const relayPtyId = toRelaySshPtyId(this.targetId, appPtyId)
     const checkpoint = checkpoints?.get(appPtyId) ?? checkpoints?.get(relayPtyId)
     if (!checkpoint) {
@@ -2042,6 +2068,39 @@ export class SshRelaySession {
       ptyIncarnation: checkpoint.ptyIncarnation,
       deliveryToken: checkpoint.deliveryToken,
       acceptedSourceEndSu: checkpoint.acceptedSourceEndSu
+    })
+  }
+
+  private beginPtyModelMigration(providerGeneration: number, closeReason: string): void {
+    const recovery = ptyConsumerRecoveryByTarget.get(this.targetId)
+    if (!recovery) {
+      closeSshPtyOutputGeneration(providerGeneration, closeReason)
+      return
+    }
+    for (const checkpoint of getSshPtyAcceptedSourceCheckpoints(providerGeneration)) {
+      recovery.checkpointsByAppPtyId.set(checkpoint.id, checkpoint)
+    }
+    const migration = beginSshPtyOutputGenerationMigration(providerGeneration)
+    for (const [ptyId, result] of migration.byPty) {
+      const previous = recovery.modelMigrationsByAppPtyId.get(ptyId)
+      const fence = previous ? previous.then(() => result) : result
+      recovery.modelMigrationsByAppPtyId.set(ptyId, fence)
+      void fence.then((outcome) => {
+        const current = ptyConsumerRecoveryByTarget.get(this.targetId)
+        if (current?.modelMigrationsByAppPtyId.get(ptyId) !== fence) {
+          return
+        }
+        if (outcome.status === 'settled') {
+          current.checkpointsByAppPtyId.set(ptyId, outcome.checkpoint)
+        } else {
+          current.checkpointsByAppPtyId.delete(ptyId)
+          current.checkpointsByAppPtyId.delete(toRelaySshPtyId(this.targetId, ptyId))
+        }
+        current.modelMigrationsByAppPtyId.delete(ptyId)
+      })
+    }
+    void migration.completion.then(() => {
+      closeSshPtyOutputGeneration(providerGeneration, closeReason)
     })
   }
 

@@ -15,6 +15,7 @@ export type SshPtyModelAdmissionDebugSnapshot = Readonly<{
   pressureFrames: number
   pressureBytes: number
   pausedPtys: number
+  migratingPtys: number
 }>
 
 export type SshPtyModelAdmissionOptions = {

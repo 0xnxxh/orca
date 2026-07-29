@@ -8,6 +8,7 @@ import type {
 } from './ssh-pty-output-intake-contract'
 import type { SshPtyAcceptedSourceCheckpoint } from './ssh-pty-output-source-obligations'
 import type { PtySourceCreditAckBatch } from '../../shared/pty-source-credit-contract'
+import type { SshPtyOutputGenerationMigration } from './ssh-pty-output-model-migration'
 
 let installedIntake: SshPtyOutputIntake | null = null
 let nextProviderGeneration = 1
@@ -59,6 +60,17 @@ export function getSshPtyAcceptedSourceCheckpoints(
   providerGeneration: number
 ): readonly SshPtyAcceptedSourceCheckpoint[] {
   return installedIntake?.getAcceptedSourceCheckpoints(providerGeneration) ?? []
+}
+
+export function beginSshPtyOutputGenerationMigration(
+  providerGeneration: number
+): SshPtyOutputGenerationMigration {
+  return (
+    installedIntake?.beginGenerationMigration(providerGeneration) ?? {
+      byPty: new Map(),
+      completion: Promise.resolve()
+    }
+  )
 }
 
 export function installSshPtySourceAckPublisher(

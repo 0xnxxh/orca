@@ -58,6 +58,7 @@ export type SshPtyOutputIntakeDependencies = {
   pauseProvider?: (providerGeneration: number, id: string) => boolean
   resumeProvider?: (providerGeneration: number, id: string) => void
   closeProvider?: (providerGeneration: number, reason: string) => void
+  resetModelForMigration?: (providerGeneration: number, id: string) => void
   onGenerationClosed?: (providerGeneration: number, reason: string) => void
   publishSourceAck?: (
     providerGeneration: number,

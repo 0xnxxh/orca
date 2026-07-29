@@ -7,6 +7,11 @@ import { SshPtyOutputExitDeadline } from './ssh-pty-output-exit-deadline'
 import { settleSshPtyOutputExit } from './ssh-pty-output-exit'
 import { SshPtyOutputGenerationGuard } from './ssh-pty-output-generation-guard'
 import {
+  SshPtyOutputModelMigration,
+  type SshPtyOutputGenerationMigration,
+  type SshPtyTrackedModelAdmission
+} from './ssh-pty-output-model-migration'
+import {
   SshPtyOutputSourceObligations,
   type SshPtyOutputSourceReservation
 } from './ssh-pty-output-source-obligations'
@@ -32,6 +37,7 @@ export class SshPtyOutputIntake {
   private readonly sourceObligations: SshPtyOutputSourceObligations
   private readonly generationGuard = new SshPtyOutputGenerationGuard(() => this.disposed)
   private readonly admission: SshPtyModelAdmission
+  private readonly modelMigration: SshPtyOutputModelMigration
   private readonly exitDeadline: SshPtyOutputExitDeadline
   private disposed = false
 
@@ -53,6 +59,12 @@ export class SshPtyOutputIntake {
       closeProvider: (providerGeneration, reason) =>
         this.dependencies.closeProvider?.(providerGeneration, reason)
     })
+    this.modelMigration = new SshPtyOutputModelMigration(
+      this.admission,
+      this.sourceObligations,
+      (providerGeneration, ptyId) =>
+        this.dependencies.resetModelForMigration?.(providerGeneration, ptyId)
+    )
     this.exitDeadline = new SshPtyOutputExitDeadline({
       admission: this.admission,
       projections: this.projections,
@@ -71,71 +83,69 @@ export class SshPtyOutputIntake {
     }
     let projection: LegacySshProjectionSemantics | undefined
     let sourceReservation: SshPtyOutputSourceReservation | undefined
-    const receipt = this.admission.accept(
-      { ptyId: event.id, providerGeneration: event.providerGeneration },
-      event.data,
-      event.rawLength,
-      () => {
-        const expectedSequence = this.dependencies.getModelSequence(event.id) + event.rawLength
-        const reservation = this.projections.reserve({
-          ptyId: event.id,
-          providerGeneration: event.providerGeneration,
-          ptyIncarnation: event.ptyIncarnation,
-          data: event.data,
-          sequenceEnd: expectedSequence,
-          rawLength: event.rawLength,
-          transformed: event.transformed,
-          source: event.source
-        })
-        try {
-          if (reservation.semantics.desktopSpan) {
-            sourceReservation = this.sourceObligations.reserve(
-              event,
-              reservation.semantics.desktopSpan
-            )
-          }
-        } catch (error) {
-          this.projections.rollback(reservation)
-          throw error
+    const key = { ptyId: event.id, providerGeneration: event.providerGeneration }
+    const tracked: SshPtyTrackedModelAdmission = { key, started: false }
+    const receipt = this.admission.accept(key, event.data, event.rawLength, () => {
+      tracked.started = true
+      const expectedSequence = this.dependencies.getModelSequence(event.id) + event.rawLength
+      const reservation = this.projections.reserve({
+        ptyId: event.id,
+        providerGeneration: event.providerGeneration,
+        ptyIncarnation: event.ptyIncarnation,
+        data: event.data,
+        sequenceEnd: expectedSequence,
+        rawLength: event.rawLength,
+        transformed: event.transformed,
+        source: event.source
+      })
+      try {
+        if (reservation.semantics.desktopSpan) {
+          sourceReservation = this.sourceObligations.reserve(
+            event,
+            reservation.semantics.desktopSpan
+          )
         }
-        try {
-          projection = this.projections.commit(reservation)
-          if (sourceReservation) {
-            this.sourceObligations.commit(
-              sourceReservation,
-              event.id,
-              projection.identity.sequenceEnd
-            )
-          }
-        } catch (error) {
-          if (sourceReservation) {
-            this.sourceObligations.rollback(sourceReservation)
-          }
-          if (!this.projections.rollbackCommitted(reservation)) {
-            this.projections.rollback(reservation)
-          }
-          throw error
-        }
-        let model: { sequence: number; completion: Promise<void> }
-        try {
-          model = this.dependencies.acceptModel(event, projection)
-        } catch (error) {
-          if (sourceReservation) {
-            this.sourceObligations.rollback(sourceReservation)
-          }
-          this.projections.rollbackCommitted(reservation)
-          throw error
-        }
-        try {
-          this.dependencies.project(event, projection)
-        } catch {
-          const id = projection.identity.projectionSemanticsId
-          this.projections.transfer([id], 'projection-admission-failed')
-        }
-        return model
+      } catch (error) {
+        this.projections.rollback(reservation)
+        throw error
       }
-    )
-    return receipt.then(
+      try {
+        projection = this.projections.commit(reservation)
+        if (sourceReservation) {
+          this.sourceObligations.commit(
+            sourceReservation,
+            event.id,
+            projection.identity.sequenceEnd
+          )
+        }
+      } catch (error) {
+        if (sourceReservation) {
+          this.sourceObligations.rollback(sourceReservation)
+        }
+        if (!this.projections.rollbackCommitted(reservation)) {
+          this.projections.rollback(reservation)
+        }
+        throw error
+      }
+      let model: { sequence: number; completion: Promise<void> }
+      try {
+        model = this.dependencies.acceptModel(event, projection)
+      } catch (error) {
+        if (sourceReservation) {
+          this.sourceObligations.rollback(sourceReservation)
+        }
+        this.projections.rollbackCommitted(reservation)
+        throw error
+      }
+      try {
+        this.dependencies.project(event, projection)
+      } catch {
+        const id = projection.identity.projectionSemanticsId
+        this.projections.transfer([id], 'projection-admission-failed')
+      }
+      return model
+    })
+    const completion = receipt.then(
       (modelReceipt) => {
         if (!projection) {
           throw outputIntakeError('ssh_projection_receipt_missing')
@@ -152,12 +162,19 @@ export class SshPtyOutputIntake {
             'model-admission-failed'
           )
         }
-        if ((error as { code?: unknown }).code !== 'ssh_exit_delivery_canceled') {
+        const code = (error as { code?: unknown }).code
+        if (
+          code !== 'ssh_exit_delivery_canceled' &&
+          !(typeof code === 'string' && code.startsWith('ssh_model_migration_'))
+        ) {
           this.dependencies.closeProvider?.(event.providerGeneration, 'model-admission-failed')
         }
         throw error
       }
     )
+    tracked.completion = completion
+    this.modelMigration.track(tracked)
+    return completion
   }
 
   async acceptExit(event: SshPtyOutputExitEvent): Promise<void> {
@@ -244,6 +261,13 @@ export class SshPtyOutputIntake {
 
   getAcceptedSourceCheckpoints(providerGeneration: number) {
     return this.sourceObligations.acceptedCheckpoints(providerGeneration)
+  }
+
+  beginGenerationMigration(
+    providerGeneration: number,
+    timeoutMs?: number
+  ): SshPtyOutputGenerationMigration {
+    return this.modelMigration.beginGeneration(providerGeneration, timeoutMs)
   }
 
   applySourceCancellationProof(

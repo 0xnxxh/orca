@@ -19,6 +19,28 @@ function accept(admission: SshPtyModelAdmission, completion: Promise<void>) {
 }
 
 describe('SshPtyModelAdmission', () => {
+  it('freezes migration while retaining the running raw completion', async () => {
+    const runningCompletion = deferred()
+    const admission = new SshPtyModelAdmission()
+    const running = accept(admission, runningCompletion.promise)
+    const queued = accept(admission, Promise.resolve())
+
+    admission.beginMigration({ ptyId: 'pty-1', providerGeneration: 7 })
+
+    await expect(queued).rejects.toThrow('ssh_model_migration_queued_canceled')
+    expect(admission.getDebugSnapshot()).toMatchObject({ sourceUnits: 4 })
+    await expect(
+      admission.accept({ ptyId: 'pty-1', providerGeneration: 7 }, 'late', 4, () => ({
+        sequence: 8,
+        completion: Promise.resolve()
+      }))
+    ).rejects.toThrow('ssh_model_admission_migrating')
+
+    runningCompletion.resolve()
+    await expect(running).resolves.toMatchObject({ sequence: 4 })
+    expect(admission.getDebugSnapshot()).toMatchObject({ sourceUnits: 0, bytes: 0 })
+  })
+
   it('cancels a never-settling running entry when its generation closes', async () => {
     const admission = new SshPtyModelAdmission()
     const receipt = accept(admission, new Promise<void>(() => {}))

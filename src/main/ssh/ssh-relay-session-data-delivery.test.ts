@@ -15,6 +15,7 @@ const {
   pauseAdapterMock,
   muxDisposeMock,
   attachForReconnectMock,
+  beginMigrationMock,
   ptyDataHandlerRef
 } = vi.hoisted(() => ({
   acceptOutputDataMock: vi.fn().mockResolvedValue(undefined),
@@ -25,6 +26,10 @@ const {
   pauseAdapterMock: vi.fn(),
   muxDisposeMock: vi.fn(),
   attachForReconnectMock: vi.fn().mockResolvedValue({}),
+  beginMigrationMock: vi.fn(() => ({
+    byPty: new Map(),
+    completion: Promise.resolve()
+  })),
   ptyDataHandlerRef: { current: undefined as undefined | ((payload: unknown) => void) }
 }))
 
@@ -36,6 +41,7 @@ vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
   acceptSshPtyOutputData: acceptOutputDataMock,
   acceptSshPtyOutputExit: vi.fn().mockResolvedValue(undefined),
   allocateSshPtyProviderGeneration: vi.fn(() => 23),
+  beginSshPtyOutputGenerationMigration: beginMigrationMock,
   closeSshPtyOutputGeneration: vi.fn(),
   getSshPtyAcceptedSourceCheckpoints: vi.fn(() => []),
   installSshPtySourceAckPublisher: vi.fn(() => () => {}),

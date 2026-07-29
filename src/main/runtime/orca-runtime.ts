@@ -7727,6 +7727,11 @@ export class OrcaRuntimeService {
     }
   }
 
+  resetPtyModelAfterMigrationFailure(ptyId: string): void {
+    this.providerSnapshotPreferredPtys.add(ptyId)
+    this.disposeHeadlessTerminal(ptyId)
+  }
+
   /**
    * Handles incoming data from a PTY process, running agent detection,
    * updating terminal tail buffers, and triggering foreground agent refreshes.

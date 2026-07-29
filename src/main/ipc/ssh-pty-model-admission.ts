@@ -1,5 +1,4 @@
 import type {
-  SshPtyModelAdmissionDebugSnapshot,
   SshPtyModelAdmissionKey,
   SshPtyModelAdmissionOptions,
   SshPtyModelAdmissionReceipt
@@ -15,11 +14,13 @@ import {
   type AdmissionEntry,
   type PtyUsage
 } from './ssh-pty-model-admission-entry'
+import { resolveSshPtyModelAdmissionLimits } from './ssh-pty-model-admission-limits'
 import {
-  resolveSshPtyModelAdmissionLimits,
-  type SshPtyModelAdmissionLimits
-} from './ssh-pty-model-admission-limits'
+  beginSshPtyModelAdmissionMigration,
+  closeSshPtyModelAdmissionMigrations
+} from './ssh-pty-model-admission-migration'
 import { SshPtyModelAdmissionPressure } from './ssh-pty-model-admission-pressure'
+import { sshPtyModelAdmissionSnapshot } from './ssh-pty-model-admission-snapshot'
 
 export type {
   SshPtyModelAdmissionKey,
@@ -28,12 +29,13 @@ export type {
 } from './ssh-pty-model-admission-contract'
 
 export class SshPtyModelAdmission {
-  private readonly limits: SshPtyModelAdmissionLimits
+  private readonly limits: ReturnType<typeof resolveSshPtyModelAdmissionLimits>
   private readonly closeProvider: (providerGeneration: number, reason: string) => void
   private readonly usageByPty = new Map<string, PtyUsage>()
   private readonly pressure: SshPtyModelAdmissionPressure
   private readonly idleWaiters = new Map<string, Set<() => void>>()
   private readonly closingGenerations = new Set<number>()
+  private readonly migratingPtys = new Set<string>()
   private globalSourceUnits = 0
   private globalBytes = 0
   private disposed = false
@@ -59,6 +61,9 @@ export class SshPtyModelAdmission {
     }
     if (this.closingGenerations.has(key.providerGeneration)) {
       return Promise.reject(admissionError('ssh_model_admission_generation_closed'))
+    }
+    if (this.migratingPtys.has(admissionKeyId(key))) {
+      return Promise.reject(admissionError('ssh_model_admission_migrating'))
     }
     const charge = { sourceUnits, bytes: retainedBytes(data) }
     return new Promise((resolve, reject) => {
@@ -94,12 +99,26 @@ export class SshPtyModelAdmission {
         release: (key, charge) => this.release(key, charge)
       })
     )
+    closeSshPtyModelAdmissionMigrations(this.migratingPtys, providerGeneration)
     const generationPrefix = `${providerGeneration}\0`
     for (const id of this.idleWaiters.keys()) {
       if (id.startsWith(generationPrefix)) {
         resolveAdmissionIdleWaiters(this.usageByPty, this.pressure.values, this.idleWaiters, id)
       }
     }
+  }
+
+  beginMigration(key: SshPtyModelAdmissionKey): void {
+    beginSshPtyModelAdmissionMigration({
+      key,
+      migratingPtys: this.migratingPtys,
+      pressure: this.pressure,
+      usageByPty: this.usageByPty,
+      release: (entryKey, charge) => this.release(entryKey, charge),
+      cleanup: (id, usage) => this.cleanupUsage(id, usage)
+    })
+    const id = admissionKeyId(key)
+    resolveAdmissionIdleWaiters(this.usageByPty, this.pressure.values, this.idleWaiters, id)
   }
 
   cancelPty(key: SshPtyModelAdmissionKey, reason: string): void {
@@ -164,17 +183,19 @@ export class SshPtyModelAdmission {
     }
   }
 
-  getDebugSnapshot(): SshPtyModelAdmissionDebugSnapshot {
-    return {
-      sourceUnits: this.globalSourceUnits,
-      bytes: this.globalBytes,
-      pressureFrames: this.pressure.frameCount,
-      pressureBytes: this.pressure.bytes,
-      pausedPtys: this.pressure.pausedPtyCount
-    }
+  getDebugSnapshot() {
+    return sshPtyModelAdmissionSnapshot(
+      this.globalSourceUnits,
+      this.globalBytes,
+      this.pressure,
+      this.migratingPtys
+    )
   }
 
   private canReserve(key: SshPtyModelAdmissionKey, charge: AdmissionCharge): boolean {
+    if (this.migratingPtys.has(admissionKeyId(key))) {
+      return false
+    }
     return canReserveAdmission({
       key,
       charge,

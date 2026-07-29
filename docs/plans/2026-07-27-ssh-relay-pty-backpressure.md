@@ -815,14 +815,21 @@ after main's synchronous install but before authority commit is bounded by the
 provisional lease and is not visible to runtime, desktop, remote consumers, or
 `livePtyIds`. Main drops unknown-token notifications before any side effect.
 
-Before issuing attach or any same-client replacement, main serializes that
-`(providerGeneration, ptyIncarnation)` through a migration fence: freeze new
-old-token intake, cancel queued-but-unstarted model entries, await the one
-in-flight emulator callback, then record the last completed receipt. Every old
-callback also checks its captured token/generation before mutating checkpoint
-state. If the bounded migration deadline expires or the callback fails, reset
-that model generation and request `checkpointUnavailable`; recovery reports
-`restoreRequired` instead of replaying a guessed gap.
+Before issuing attach or any same-client replacement, main serializes each
+`(providerGeneration, appPtyId)` through a migration fence: freeze new
+old-generation intake, cancel queued-but-unstarted model entries, await the one
+in-flight emulator callback, then record the last completed receipt. A later
+overlapping reconnect preserves and awaits an earlier fence for the same PTY;
+an empty newer generation cannot expose the earlier checkpoint. Before the
+deadline, every old callback remains owned by its admission and generation
+until raw completion settles. Stale-owner retry invalidates the checkpoint
+value but retains the same fence, then requests restore after it settles. If
+the 10-second migration deadline expires or
+the callback fails, main cancels only that admission, detaches that PTY's old headless model,
+prefers provider/renderer snapshot restore, and requests
+`checkpointUnavailable`; recovery reports `restoreRequired` instead of
+replaying a guessed gap. Late raw completion stays on the detached model and
+cannot advance the canceled source checkpoint.
 
 Attach sends `sourceRecovery: { status: 'checkpoint', clientGeneration,
 ownerGeneration, ptyIncarnation, deliveryToken, acceptedSourceEndSu }`. A
@@ -2027,6 +2034,9 @@ transition:
   frames, and prune cached mappings whose authoritative spans were reclaimed;
 - reject and remove exit barriers plus cancellation/preparation ownership on
   provider-generation close so late proofs cannot publish final exit;
+- close each per-generation model-migration gate after its settlement, remove
+  its per-PTY fence and timer exactly once, and retain any earlier outstanding
+  per-PTY fence across an overlapping reconnect;
 - replace the latest canceled-token record per PTY on ordered cancellation and
   clear it on exact next activation, PTY exit, or provider teardown;
 - release shared spans no longer referenced;
@@ -2352,6 +2362,10 @@ boundaries even though they ship in one PR.
 - Adds a bounded source-range index beside the current
   `RecentPtyOutputBuffer`, preserving its append performance and legacy
   output.
+- `SshPtyOutputModelMigration` freezes exact generation/PTy admission,
+  `SshRelaySession` awaits the returned per-PTY Promise before constructing
+  `sourceRecovery`, and `OrcaRuntimeService` detaches only the failed PTY's old
+  headless model before snapshot-backed restore.
 - Reconnect V1 remains under the startup gate; its late-ACK, timeout,
   supersession, and generation-close deterministic oracles pass.
 
@@ -2619,10 +2633,6 @@ and are then cleaned up idempotently.
   `recovery pty.data -> pty.recoveryComplete`; prove both lifecycle fences
   remain behind their token's quarantined data, while a same-token cancellation
   proof bypasses only after atomically canceling that prefix;
-- reconnect and supersede with queued plus in-flight emulator work; prove the
-  migration fence either checkpoints after the final guarded receipt or times
-  out to a model-generation reset/restore, with no late mutation or duplicate
-  gap ingestion;
 - reject recovery cancellation publication and local proof application while
   the attempt is current; prove the exact provider generation, mux, provider,
   publishers, transferred activation, and registration close once, while
