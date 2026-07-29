@@ -102,7 +102,7 @@ describe('Branch source results', () => {
     expect(rows).toEqual([])
   })
 
-  it('hides branch results from a stale Branch-mode query', () => {
+  it('hides branch results after the input is cleared while a prior query is still held', () => {
     expect(
       getVisibleBranchResults({
         mode: 'branches',
@@ -113,6 +113,49 @@ describe('Branch source results', () => {
         branches: [{ refName: 'origin/feature', localBranchName: 'feature' }]
       })
     ).toEqual([])
+  })
+
+  it('keeps the last branch results while the user types ahead of the settled query', () => {
+    expect(
+      getVisibleBranchResults({
+        mode: 'branches',
+        value: 'featu',
+        selectedRepoId: 'repo-1',
+        resultRepoId: 'repo-1',
+        resultQuery: 'feat',
+        branches: [{ refName: 'origin/feature', localBranchName: 'feature' }]
+      })
+    ).toEqual([{ refName: 'origin/feature', localBranchName: 'feature' }])
+  })
+
+  it('uses stable cmdk values for typed-text actions', () => {
+    expect(
+      buildSmartWorkspaceSourceRows({
+        mode: 'smart',
+        value: 'refund-flow',
+        branches: [],
+        githubItems: [],
+        gitlabItems: [],
+        linearIssues: [],
+        gitlabAvailable: false,
+        linearAvailable: false,
+        resultLimit: 12
+      })[0]
+    ).toMatchObject({ kind: 'use-name', value: 'use-name', name: 'refund-flow' })
+
+    expect(
+      buildSmartWorkspaceSourceRows({
+        mode: 'branches',
+        value: 'new-branch',
+        branches: [],
+        githubItems: [],
+        gitlabItems: [],
+        linearIssues: [],
+        gitlabAvailable: false,
+        linearAvailable: false,
+        resultLimit: 12
+      })[0]
+    ).toMatchObject({ kind: 'create-branch', value: 'create-branch', name: 'new-branch' })
   })
 
   it('keeps matching empty-query branch results visible in Branch mode', () => {

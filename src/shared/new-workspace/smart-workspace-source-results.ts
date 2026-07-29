@@ -93,11 +93,15 @@ export function getVisibleBranchResults({
   if (!isSmartWorkspaceSourceQueryWithinLimit(value)) {
     return []
   }
-  const currentQuery = value.trim()
   if (mode !== 'branches' && mode !== 'smart') {
     return []
   }
-  if (!selectedRepoId || resultRepoId !== selectedRepoId || resultQuery !== currentQuery) {
+  if (!selectedRepoId || resultRepoId !== selectedRepoId || resultQuery === null) {
+    return []
+  }
+  // Why: hold the last settled branch list while the user types ahead — blanking
+  // on query mismatch flashed the dropdown empty between keystrokes.
+  if (value.trim() === '' && resultQuery !== '') {
     return []
   }
   return branches
@@ -130,7 +134,8 @@ export function buildSmartWorkspaceSourceRows({
   const trimmed = value.trim()
   const nextRows: SmartWorkspaceSourceRow[] = []
   if (trimmed && mode === 'smart') {
-    nextRows.push({ kind: 'use-name', value: `use-name-${trimmed}`, name: trimmed })
+    // Why: stable cmdk value — embedding the query remounted the row every keystroke.
+    nextRows.push({ kind: 'use-name', value: 'use-name', name: trimmed })
   }
   if (mode === 'text') {
     return nextRows
@@ -159,7 +164,7 @@ export function buildSmartWorkspaceSourceRows({
       (branch) => branch.refName === trimmed || branch.localBranchName === trimmed
     )
     if (trimmed && mode === 'branches' && !branchExactMatch) {
-      nextRows.push({ kind: 'create-branch', value: `create-branch-${trimmed}`, name: trimmed })
+      nextRows.push({ kind: 'create-branch', value: 'create-branch', name: trimmed })
     }
     nextRows.push(
       ...branches.map((branch) => ({

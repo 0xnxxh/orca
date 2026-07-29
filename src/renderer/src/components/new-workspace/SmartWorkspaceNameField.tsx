@@ -832,8 +832,8 @@ export default function SmartWorkspaceNameField({
       return
     }
     let stale = false
-    setBranches([])
-    setBranchResultsSource(null)
+    // Why: keep prior branch rows until this request settles; visibility already
+    // holds the last list while the user types ahead of the debounced query.
     setBranchesLoading(true)
     void searchRuntimeRepoBaseRefDetails(
       selectedRepoOwnerSettings,
@@ -1144,10 +1144,17 @@ export default function SmartWorkspaceNameField({
     ) ?? null
 
   const loading = githubLoading || gitlabLoading || branchesLoading || linearLoading
-  const ActiveInputIcon = mode === 'text' ? CaseSensitive : loading ? LoaderCircle : Search
+  // Why: only spin on first load — not on every in-flight refresh while rows stay visible.
+  const showSearchSpinner = loading && searchResultRows.length === 0
+  const ActiveInputIcon =
+    mode === 'text' ? CaseSensitive : showSearchSpinner ? LoaderCircle : Search
 
   const handleSelect = useCallback(
     (row: RowEntry) => {
+      // Why: provider rows can lag the live input; typed-name / create-branch stay safe.
+      if (isQueryStale && row.kind !== 'use-name' && row.kind !== 'create-branch') {
+        return
+      }
       if (row.kind === 'use-name' || row.kind === 'create-branch') {
         // Why: "create new branch" has no ref to base from, so it uses the typed-name path (default base).
         onValueChange(row.name)
@@ -1163,7 +1170,14 @@ export default function SmartWorkspaceNameField({
       }
       setOpen(false)
     },
-    [onBranchSelect, onGitHubItemSelect, onGitLabItemSelect, onLinearIssueSelect, onValueChange]
+    [
+      isQueryStale,
+      onBranchSelect,
+      onGitHubItemSelect,
+      onGitLabItemSelect,
+      onLinearIssueSelect,
+      onValueChange
+    ]
   )
 
   const applyEmojiReplacement = useCallback(
@@ -1413,7 +1427,14 @@ export default function SmartWorkspaceNameField({
       >
         <Command
           value={resolvedCommandValue}
-          onValueChange={setCommandValue}
+          onValueChange={(next) => {
+            // Why: cmdk re-emits when the item list reshapes; ignore while the query
+            // lags so the highlight cannot thrash mid-typing.
+            if (isQueryStale) {
+              return
+            }
+            setCommandValue(next)
+          }}
           shouldFilter={false}
           className="overflow-visible bg-transparent"
         >
@@ -1499,7 +1520,7 @@ export default function SmartWorkspaceNameField({
                   <ActiveInputIcon
                     className={cn(
                       'pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground',
-                      loading && mode !== 'text' && 'animate-spin'
+                      showSearchSpinner && mode !== 'text' && 'animate-spin'
                     )}
                   />
                   <Input
@@ -1588,12 +1609,19 @@ export default function SmartWorkspaceNameField({
                         }
                         if (open && rows.length > 0) {
                           const row = rows.find((entry) => entry.value === resolvedCommandValue)
-                          if (row) {
+                          if (
+                            row &&
+                            !(
+                              isQueryStale &&
+                              row.kind !== 'use-name' &&
+                              row.kind !== 'create-branch'
+                            )
+                          ) {
                             event.preventDefault()
                             handleSelect(row)
                             return
                           }
-                          // No highlighted row (e.g. cleared stale GitHub/Linear results); fall through to onPlainEnter so the keypress isn't inert.
+                          // No selectable row (stale provider arm); fall through to onPlainEnter.
                         }
                         onPlainEnter?.()
                       }
