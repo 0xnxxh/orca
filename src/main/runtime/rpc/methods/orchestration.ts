@@ -51,6 +51,10 @@ function parseRemoteWorkerPayload(payload: string | undefined): Record<string, u
   }
 }
 
+function isWorkerReportOutcome(value: unknown): value is 'succeeded' | 'failed' {
+  return value === 'succeeded' || value === 'failed'
+}
+
 const SendParams = z
   .object({
     to: OptionalString,
@@ -107,6 +111,9 @@ const CheckParams = z
     // Why: one-release RPC compatibility only; the public CLI uses --format because no terminal input is injected.
     inject: OptionalBoolean,
     ack: OptionalString,
+    compatibilityAck: OptionalString,
+    compatibilityQuestionAck: OptionalString,
+    compatibilityCliCommand: z.enum(['orca', 'orca-ide', 'orca-dev']).optional(),
     run: OptionalString,
     wait: OptionalBoolean,
     timeoutMs: OptionalFiniteNumber
@@ -205,7 +212,9 @@ const AskParams = z
     options: OptionalString,
     timeoutMs: OptionalFiniteNumber,
     from: OptionalString,
-    run: OptionalString
+    run: OptionalString,
+    compatibilityCliCommand: z.enum(['orca', 'orca-ide', 'orca-dev']).optional(),
+    compatibilityWindowsCommand: z.enum(['orca', 'orca-ide']).optional()
   })
   .superRefine((params, ctx) => {
     if ((params.question ? 1 : 0) + (params.resume ? 1 : 0) !== 1) {
@@ -241,6 +250,7 @@ function resolveRunScope(
     callerTerminalHandle?: string
     callerPaneKey?: string
     requireCurrentConsumer: boolean
+    legacyCoordinatorRunId?: string
   }
 ): RunRow {
   const db = runtime.getOrchestrationDb()
@@ -250,6 +260,9 @@ function resolveRunScope(
   }
 
   if (!params.requireCurrentConsumer && explicit) {
+    return explicit
+  }
+  if (explicit && params.legacyCoordinatorRunId === explicit.id) {
     return explicit
   }
   if (!params.callerTerminalHandle) {
@@ -463,6 +476,15 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         runId: params.run,
         payload: params.payload
       })
+      if (
+        params.type === 'worker_done' &&
+        !isWorkerReportOutcome(parseRemoteWorkerPayload(params.payload).outcome)
+      ) {
+        throw new OrchestrationError(
+          'invalid_argument',
+          'worker_done requires outcome=succeeded|failed for a current Dispatch.'
+        )
+      }
       if (params.to?.startsWith('task:')) {
         throw new OrchestrationError(
           'invalid_argument',
@@ -633,7 +655,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.check',
     params: CheckParams,
-    handler: async (params, { runtime, signal }) => {
+    handler: async (params, { runtime, signal, legacyCoordinatorRunId }) => {
       const db = runtime.getOrchestrationDb()
       const handle = params.terminal ?? 'unknown'
       const typeFilter = parseMessageTypes(params.types)
@@ -646,7 +668,8 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
           runId: params.run,
           callerTerminalHandle: handle,
           callerPaneKey: paneKey ?? undefined,
-          requireCurrentConsumer: true
+          requireCurrentConsumer: true,
+          legacyCoordinatorRunId
         })
         const generation = run.consumer_generation
         const address = `run:${run.id}`
@@ -911,13 +934,17 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.reply',
     params: ReplyParams,
-    handler: async (params, { runtime }) => {
+    handler: async (params, { runtime, legacyCoordinatorRunId }) => {
       const db = runtime.getOrchestrationDb()
       const original = db.getMessageById(params.id)
       if (!original) {
         throw new Error(`Message not found: ${params.id}`)
       }
-      if (original.run_id === ORCHESTRATION_LEGACY_RUN_ID) {
+      if (
+        original.run_id === ORCHESTRATION_LEGACY_RUN_ID ||
+        original.delivery_contract === 'legacy_direct' ||
+        original.delivery_contract === 'audit_only'
+      ) {
         throw new OrchestrationError(
           'legacy_read_only',
           'Legacy orchestration messages are inspect-only; no reply was applied.',
@@ -930,7 +957,8 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         const run = resolveRunScope(runtime, {
           runId: params.run ?? question.run_id,
           callerTerminalHandle: params.from,
-          requireCurrentConsumer: true
+          requireCurrentConsumer: true,
+          legacyCoordinatorRunId
         })
         const answered = db.answerQuestion({
           messageId: question.message_id,
@@ -993,7 +1021,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.taskCreate',
     params: TaskCreateParams,
-    handler: (params, { runtime }) => {
+    handler: (params, { runtime, legacyCoordinatorRunId }) => {
       const db = runtime.getOrchestrationDb()
       let deps: string[] | undefined
       if (params.deps) {
@@ -1017,7 +1045,8 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         runId: resolveRunScope(runtime, {
           runId: params.run,
           callerTerminalHandle: params.callerTerminalHandle,
-          requireCurrentConsumer: true
+          requireCurrentConsumer: true,
+          legacyCoordinatorRunId
         }).id
       })
       return { task }
@@ -1027,7 +1056,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.taskList',
     params: TaskListParams,
-    handler: (params, { runtime }) => {
+    handler: (params, { runtime, legacyCoordinatorRunId }) => {
       const db = runtime.getOrchestrationDb()
       const explicitRun = params.run ? db.getRun(params.run) : undefined
       const run =
@@ -1036,7 +1065,8 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
           : resolveRunScope(runtime, {
               runId: params.run,
               callerTerminalHandle: params.callerTerminalHandle,
-              requireCurrentConsumer: params.run === undefined
+              requireCurrentConsumer: params.run === undefined,
+              legacyCoordinatorRunId
             })
       // Why: listTasksWithDispatch adds assignee_handle + dispatch_id (NULL for non-dispatched), so legacy-shape consumers are unaffected.
       const joined = db.listTasksWithDispatch({
@@ -1063,12 +1093,13 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.taskUpdate',
     params: TaskUpdateParams,
-    handler: (params, { runtime }) => {
+    handler: (params, { runtime, legacyCoordinatorRunId }) => {
       const db = runtime.getOrchestrationDb()
       const run = resolveRunScope(runtime, {
         runId: params.run,
         callerTerminalHandle: params.callerTerminalHandle,
-        requireCurrentConsumer: true
+        requireCurrentConsumer: true,
+        legacyCoordinatorRunId
       })
       const existing = db.getTask(params.id)
       if (!existing || existing.run_id !== run.id) {
@@ -1088,7 +1119,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.dispatch',
     params: DispatchParams,
-    handler: async (params, { runtime }) => {
+    handler: async (params, { runtime, legacyCoordinatorRunId }) => {
       const db = runtime.getOrchestrationDb()
       const task = db.getTask(params.task)
       if (!task) {
@@ -1097,7 +1128,8 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
       const run = resolveRunScope(runtime, {
         runId: params.run,
         callerTerminalHandle: params.from,
-        requireCurrentConsumer: true
+        requireCurrentConsumer: true,
+        legacyCoordinatorRunId
       })
       if (task.run_id !== run.id) {
         throw new OrchestrationError(

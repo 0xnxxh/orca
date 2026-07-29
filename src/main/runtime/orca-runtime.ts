@@ -37,6 +37,10 @@ import {
 } from '../../shared/agent-status-types'
 import { indexAgentStatusRowsByPaneKey } from '../agent-hooks/agent-status-pane-index'
 import type {
+  AgentHookAuthorityAttestation,
+  AgentHookAuthorityEvidence
+} from '../agent-hooks/server'
+import type {
   AgentSessionClaimedSpawnResult,
   AgentSessionExecutionClaim,
   AgentSessionSurfaceBinding,
@@ -98,10 +102,18 @@ import { resolveWorktreeAddBaseRef } from '../../shared/worktree-base-ref'
 import { OrchestrationDb } from './orchestration/db'
 import { OrchestrationError } from './orchestration/orchestration-error'
 import {
+  planLegacyWorkerTerminalRecovery,
+  type LegacyWorkerTerminalRecoveryPlan
+} from './orchestration/orchestration-legacy-worker-terminal-recovery'
+import {
   buildObservedSetupCommand,
   createSetupCompletionScanner
 } from './orchestration/setup-completion-signal'
 import type { RuntimeOrchestrationEnvelope } from '../../shared/runtime-rpc-envelope'
+import type {
+  OrchestrationCompatibilityEvidence,
+  OrchestrationCompatibilityHostStamp
+} from '../../shared/orchestration-compatibility-evidence'
 import {
   isOrchestrationMutation,
   orchestrationMigrationData
@@ -1631,11 +1643,13 @@ type RuntimeNotifier = {
       splitFromLeafId?: string
       splitDirection?: 'horizontal' | 'vertical'
       splitTelemetrySource?: TerminalPaneSplitSource
+      focus?: boolean
     }
   ):
     | Promise<{ tabId: string; title?: string | null }>
     | { tabId: string; title?: string | null }
     | void
+  resolveLegacyWorkerTerminalRecovery?(paneKey: string, resolution: 'adopted' | 'exited'): void
   splitTerminal(
     tabId: string,
     paneRuntimeId: number,
@@ -1704,6 +1718,44 @@ type TerminalHandleRecord = {
   ptyId: string | null
   ptyGeneration: number
 }
+
+export type OrchestrationCompatibilityTerminalAuthority = {
+  runtimeId: string
+  terminalHandle: string
+  ptyId: string
+  processIncarnation: string | null
+  paneKey: string | null
+  launchTokenHash: string | null
+  hostScope:
+    | { kind: 'local'; hostId: 'local' }
+    | { kind: 'wsl'; hostId: 'local'; distro: string }
+    | { kind: 'ssh'; targetId: string }
+}
+
+export type OrchestrationCompatibilityAuthorityInputs = {
+  hydratedCommitments: readonly AgentHookAuthorityEvidence[]
+  currentObservations: readonly AgentHookAuthorityEvidence[]
+}
+
+export type LegacyWorkerTerminalRecoveryResult = {
+  blockedPaneCount: number
+  adoptedDispatchIds: string[]
+  exitedDispatchIds: string[]
+  deferredDispatchIds: string[]
+}
+
+export type OrchestrationCompatibilityCallerAuthority = Readonly<{
+  hostScope: OrchestrationCompatibilityTerminalAuthority['hostScope']
+  paneKey: string
+  terminalHandle: string
+  processIncarnation: string
+  launchTokenHash: string
+}>
+
+type OrchestrationCompatibilitySshAttachmentAuthority = Extract<
+  OrchestrationCompatibilityHostStamp,
+  { kind: 'ssh' }
+>
 
 type TerminalWaiter = {
   handle: string
@@ -2958,6 +3010,20 @@ export class OrcaRuntimeService {
   private readonly getAgentProviderSessionRowsForPaneFn:
     | ((paneKey: string) => AgentStatusIpcPayload[])
     | null
+  private readonly getHydratedAgentHookAuthorityFn:
+    | (() => readonly AgentHookAuthorityEvidence[])
+    | null
+  private readonly getCurrentAgentHookAuthorityFn:
+    | (() => readonly AgentHookAuthorityEvidence[])
+    | null
+  private readonly attestAgentHookCompatibilityAuthorityFn:
+    | ((candidate: {
+        paneKey: string
+        launchTokenHash: string
+        connectionId: string | null
+      }) => AgentHookAuthorityAttestation | null)
+    | null
+  private readonly canRecoverPersistentLocalPtysFn: () => boolean
   private readonly buildAgentHookPtyEnv: (() => Record<string, string>) | null
   private readonly getDesktopWindowStatusFn: () => RuntimeDesktopWindowStatus
   private readonly prepareAiVaultSessionResumeFn:
@@ -2965,7 +3031,14 @@ export class OrcaRuntimeService {
     | null
   private readonly agentSessionClaimSigner: AgentSessionClaimSigner
   private readonly agentSessionCreateOperations = new Map<string, AgentSessionCreateOperation>()
+  private readonly orchestrationCompatibilitySshAttachments = new Map<
+    string,
+    OrchestrationCompatibilitySshAttachmentAuthority
+  >()
   private sshRelayRecoveryGenerationByTargetId = new Map<string, number>()
+  private legacyWorkerTerminalRecoveryQueue: Promise<void> = Promise.resolve()
+  private legacyWorkerTerminalMaterializedPanes = new Set<string>()
+  private legacyWorkerRecoveredPtys = new Set<string>()
   private accountServices: RuntimeAccountServices | null = null
   private commitMessageAgentEnv: CommitMessageAgentEnvironmentResolvers | null = null
   private automationService: AutomationService | null = null
@@ -3000,6 +3073,14 @@ export class OrcaRuntimeService {
        *  only carrier of the provider session a transcript is addressed by. */
       getAgentProviderSessionSnapshot?: () => AgentStatusIpcPayload[]
       getAgentProviderSessionRowsForPane?: (paneKey: string) => AgentStatusIpcPayload[]
+      getHydratedAgentHookAuthority?: () => readonly AgentHookAuthorityEvidence[]
+      getCurrentAgentHookAuthority?: () => readonly AgentHookAuthorityEvidence[]
+      attestAgentHookCompatibilityAuthority?: (candidate: {
+        paneKey: string
+        launchTokenHash: string
+        connectionId: string | null
+      }) => AgentHookAuthorityAttestation | null
+      canRecoverPersistentLocalPtys?: () => boolean
       // Why: codex-home paths for the Agent Session History scan must be sourced
       // here, not via the window-only registerCoreHandlers path — that path never
       // runs under `orca serve`, so remote/SSH hosts would silently drop
@@ -3032,6 +3113,11 @@ export class OrcaRuntimeService {
     this.getAgentProviderSessionSnapshotFn =
       deps?.getAgentProviderSessionSnapshot ?? deps?.getAgentStatusSnapshot ?? null
     this.getAgentProviderSessionRowsForPaneFn = deps?.getAgentProviderSessionRowsForPane ?? null
+    this.getHydratedAgentHookAuthorityFn = deps?.getHydratedAgentHookAuthority ?? null
+    this.getCurrentAgentHookAuthorityFn = deps?.getCurrentAgentHookAuthority ?? null
+    this.attestAgentHookCompatibilityAuthorityFn =
+      deps?.attestAgentHookCompatibilityAuthority ?? null
+    this.canRecoverPersistentLocalPtysFn = deps?.canRecoverPersistentLocalPtys ?? (() => true)
     // Why: configure the shared AiVault scan cache from a serve-mode-reachable
     // seam so the aiVault.listSessions RPC includes managed-Codex + WSL sessions
     // even on headless `orca serve` hosts where registerCoreHandlers never runs.
@@ -3476,6 +3562,266 @@ export class OrcaRuntimeService {
     this._orchestrationDb = db
   }
 
+  private getLegacyWorkerTerminalRecoveryPlan(): LegacyWorkerTerminalRecoveryPlan {
+    try {
+      return planLegacyWorkerTerminalRecovery(
+        this.getOrchestrationDb().listLegacyWorkerTerminalRecoveryRows()
+      )
+    } catch (error) {
+      console.warn('[orchestration] failed to plan legacy worker terminal recovery', error)
+      return { blockedPanes: [], candidates: [], ambiguousDispatchIds: [] }
+    }
+  }
+
+  prepareLegacyWorkerTerminalRecovery(): LegacyWorkerTerminalRecoveryPlan {
+    const plan = this.getLegacyWorkerTerminalRecoveryPlan()
+    const store = this.store
+    const session = store?.getWorkspaceSession?.()
+    if (!store?.setWorkspaceSession || !store.flushOrThrow || !session) {
+      return plan
+    }
+    let next: WorkspaceSessionState | null = null
+    for (const blocked of plan.blockedPanes) {
+      const record = session.sleepingAgentSessionsByPaneKey?.[blocked.paneKey]
+      if (
+        !record ||
+        !runtimeWorktreeIdsEqual(record.worktreeId, blocked.worktreeId) ||
+        record.automaticResumeBlockedBy === 'legacy-orchestration-worker'
+      ) {
+        continue
+      }
+      next ??= structuredClone(session)
+      next.sleepingAgentSessionsByPaneKey = {
+        ...next.sleepingAgentSessionsByPaneKey,
+        [blocked.paneKey]: {
+          ...record,
+          automaticResumeBlockedBy: 'legacy-orchestration-worker'
+        }
+      }
+    }
+    if (!next) {
+      return plan
+    }
+    try {
+      store.setWorkspaceSession(next)
+      store.flushOrThrow()
+    } catch (error) {
+      console.warn('[orchestration] failed to persist legacy worker resume fence', error)
+    }
+    return plan
+  }
+
+  async reconcileLegacyWorkerTerminals(
+    options: { connectionId?: string; materializeRenderer?: boolean } = {}
+  ): Promise<LegacyWorkerTerminalRecoveryResult> {
+    let resolveResult!: (result: LegacyWorkerTerminalRecoveryResult) => void
+    let rejectResult!: (error: unknown) => void
+    const result = new Promise<LegacyWorkerTerminalRecoveryResult>((resolve, reject) => {
+      resolveResult = resolve
+      rejectResult = reject
+    })
+    const run = this.legacyWorkerTerminalRecoveryQueue.then(async () => {
+      try {
+        resolveResult(await this.reconcileLegacyWorkerTerminalsNow(options))
+      } catch (error) {
+        rejectResult(error)
+      }
+    })
+    this.legacyWorkerTerminalRecoveryQueue = run.catch(() => undefined)
+    return result
+  }
+
+  private persistLegacyWorkerTerminalRecoveryResolution(
+    candidate: LegacyWorkerTerminalRecoveryPlan['candidates'][number],
+    resolution: 'adopted' | 'exited'
+  ): boolean {
+    const store = this.store
+    const session = store?.getWorkspaceSession?.()
+    if (!store?.setWorkspaceSession || !store.flushOrThrow || !session) {
+      return false
+    }
+    const record = session.sleepingAgentSessionsByPaneKey?.[candidate.paneKey]
+    if (!record || !runtimeWorktreeIdsEqual(record.worktreeId, candidate.worktreeId)) {
+      return true
+    }
+    if (
+      resolution === 'exited' &&
+      record.automaticResumeBlockedBy !== 'legacy-orchestration-worker'
+    ) {
+      return true
+    }
+    const next = structuredClone(session)
+    if (resolution === 'adopted') {
+      delete next.sleepingAgentSessionsByPaneKey?.[candidate.paneKey]
+    } else {
+      const unblocked = { ...record }
+      delete unblocked.automaticResumeBlockedBy
+      next.sleepingAgentSessionsByPaneKey = {
+        ...next.sleepingAgentSessionsByPaneKey,
+        [candidate.paneKey]: unblocked
+      }
+    }
+    try {
+      store.setWorkspaceSession(next)
+      store.flushOrThrow()
+      return true
+    } catch (error) {
+      store.setWorkspaceSession(session)
+      console.warn('[orchestration] failed to persist legacy worker recovery resolution', {
+        dispatchId: candidate.dispatchId,
+        resolution,
+        error
+      })
+      return false
+    }
+  }
+
+  private async reconcileLegacyWorkerTerminalsNow(options: {
+    connectionId?: string
+    materializeRenderer?: boolean
+  }): Promise<LegacyWorkerTerminalRecoveryResult> {
+    const plan = this.prepareLegacyWorkerTerminalRecovery()
+    const adoptedDispatchIds: string[] = []
+    const exitedDispatchIds: string[] = []
+    const deferredDispatchIds = new Set(plan.ambiguousDispatchIds)
+    for (const candidate of plan.candidates) {
+      let workspace: TerminalWorkspaceLaunchScope
+      try {
+        workspace = await this.resolveTerminalWorkspaceLaunchScope(`id:${candidate.worktreeId}`)
+      } catch {
+        deferredDispatchIds.add(candidate.dispatchId)
+        continue
+      }
+      const sshPty = parseAppSshPtyId(candidate.ptyId)
+      if (workspace.connectionId) {
+        if (
+          options.connectionId !== workspace.connectionId ||
+          sshPty?.connectionId !== workspace.connectionId
+        ) {
+          deferredDispatchIds.add(candidate.dispatchId)
+          continue
+        }
+      } else if (
+        options.connectionId !== undefined ||
+        sshPty !== null ||
+        !this.canRecoverPersistentLocalPtysFn()
+      ) {
+        deferredDispatchIds.add(candidate.dispatchId)
+        continue
+      }
+      const resolvedWorkspace = workspace.folderWorkspace
+        ? this.folderWorkspaceToResolvedWorktree(workspace.folderWorkspace)
+        : await this.resolveWorktreeSelector(`id:${workspace.id}`)
+      const livePtyIds = await this.refreshPtyWorktreeRecordsFromController([resolvedWorkspace])
+      if (!livePtyIds) {
+        deferredDispatchIds.add(candidate.dispatchId)
+        continue
+      }
+      if (!livePtyIds.has(candidate.ptyId)) {
+        if (this.persistLegacyWorkerTerminalRecoveryResolution(candidate, 'exited')) {
+          this.notifier?.resolveLegacyWorkerTerminalRecovery?.(candidate.paneKey, 'exited')
+          exitedDispatchIds.push(candidate.dispatchId)
+        } else {
+          deferredDispatchIds.add(candidate.dispatchId)
+        }
+        continue
+      }
+      const controllerIdentity = this.controllerTerminalIdentityByPtyId.get(candidate.ptyId)
+      if (
+        controllerIdentity?.handle !== candidate.terminalHandle ||
+        controllerIdentity.incarnationId !== candidate.incarnationId
+      ) {
+        deferredDispatchIds.add(candidate.dispatchId)
+        continue
+      }
+      const session = this.store?.getWorkspaceSession?.()
+      const sessionWorktreeId = session
+        ? resolveTerminalSessionWorktreeId(session, candidate.worktreeId)
+        : null
+      const activeTabId = sessionWorktreeId
+        ? session?.activeTabIdByWorktree?.[sessionWorktreeId]
+        : undefined
+      const activeGroupId = sessionWorktreeId
+        ? session?.activeGroupIdByWorktree?.[sessionWorktreeId]
+        : undefined
+      try {
+        await this.adoptTerminalOrphans({
+          worktree: `id:${candidate.worktreeId}`,
+          expectedTopologyRevision: this.getTerminalTopologyRevision(candidate.worktreeId),
+          ...(activeTabId ? { activeTabId } : {}),
+          ...(activeGroupId ? { activeGroupId } : {}),
+          claims: [
+            {
+              terminal: candidate.terminalHandle,
+              ptyId: candidate.ptyId,
+              incarnationId: candidate.incarnationId,
+              tabId: candidate.tabId,
+              leafId: candidate.leafId
+            }
+          ]
+        })
+      } catch (error) {
+        console.warn('[orchestration] legacy worker terminal adoption deferred', {
+          dispatchId: candidate.dispatchId,
+          error
+        })
+        deferredDispatchIds.add(candidate.dispatchId)
+        continue
+      }
+      let rendererMaterialized =
+        options.materializeRenderer !== true ||
+        this.legacyWorkerTerminalMaterializedPanes.has(candidate.paneKey)
+      const pty = this.ptysById.get(candidate.ptyId)
+      if (
+        options.materializeRenderer &&
+        !rendererMaterialized &&
+        pty &&
+        this.notifier?.revealTerminalSession
+      ) {
+        for (let attempt = 0; attempt < 2 && !rendererMaterialized; attempt += 1) {
+          try {
+            await this.notifier.revealTerminalSession(candidate.worktreeId, {
+              ptyId: candidate.ptyId,
+              title: getLatestPtyTitle(pty) ?? pty.controllerTitle,
+              activate: false,
+              presentation: 'background',
+              tabId: candidate.tabId,
+              leafId: candidate.leafId,
+              focus: false
+            })
+            rendererMaterialized = true
+            this.legacyWorkerTerminalMaterializedPanes.add(candidate.paneKey)
+          } catch (error) {
+            if (attempt === 0) {
+              await new Promise<void>((resolve) => setTimeout(resolve, 100))
+              continue
+            }
+            console.warn('[orchestration] adopted legacy worker was not revealed', {
+              dispatchId: candidate.dispatchId,
+              error
+            })
+          }
+        }
+      }
+      if (
+        !rendererMaterialized ||
+        !this.persistLegacyWorkerTerminalRecoveryResolution(candidate, 'adopted')
+      ) {
+        deferredDispatchIds.add(candidate.dispatchId)
+        continue
+      }
+      this.legacyWorkerRecoveredPtys.add(candidate.ptyId)
+      this.notifier?.resolveLegacyWorkerTerminalRecovery?.(candidate.paneKey, 'adopted')
+      adoptedDispatchIds.push(candidate.dispatchId)
+    }
+    return {
+      blockedPaneCount: plan.blockedPanes.length,
+      adoptedDispatchIds,
+      exitedDispatchIds,
+      deferredDispatchIds: [...deferredDispatchIds]
+    }
+  }
+
   setAutomationService(service: AutomationService): void {
     this.automationService = service
   }
@@ -3832,7 +4178,13 @@ export class OrcaRuntimeService {
 
   notifySshRelayReady(targetId: string): void {
     const generation = this.bumpSshRelayRecoveryGeneration(targetId)
-    void this.publishRecoveredSshMobileSessionTabs(targetId, generation).catch((error) => {
+    void (async () => {
+      await this.reconcileLegacyWorkerTerminals({
+        connectionId: targetId,
+        materializeRenderer: this.notifier !== null
+      })
+      await this.publishRecoveredSshMobileSessionTabs(targetId, generation)
+    })().catch((error) => {
       if (this.sshRelayRecoveryGenerationByTargetId.get(targetId) !== generation) {
         return
       }
@@ -8722,6 +9074,7 @@ export class OrcaRuntimeService {
 
   private advancePtyLifecycleGeneration(ptyId: string): void {
     this.ptyLifecycleGenerationById.set(ptyId, this.nextPtyLifecycleGeneration++)
+    this.legacyWorkerRecoveredPtys.delete(ptyId)
     // Why: a provider response belongs to the process generation that issued
     // it; a respawn must neither reuse its frame nor join its in-flight call.
     this.providerBufferAcquisitionsByPtyId.delete(ptyId)
@@ -9630,11 +9983,14 @@ export class OrcaRuntimeService {
       return read
     }
     const blankFallback = shouldFallbackToVisibleTerminalSnapshot(read, opts)
+    const recoveredWorkerFallback =
+      read.tail.length === 0 && this.legacyWorkerRecoveredPtys.has(ptyId)
     const knownAlternateScreen = this.isTerminalAlternateScreen(ptyId)
     const providerModeUnknown =
       this.providerSnapshotPreferredPtys.has(ptyId) && !this.providerModeTrackersByPtyId.has(ptyId)
     if (
       !blankFallback &&
+      !recoveredWorkerFallback &&
       !providerModeUnknown &&
       !knownAlternateScreen &&
       !this.headlessTerminals.has(ptyId)
@@ -9642,7 +9998,12 @@ export class OrcaRuntimeService {
       return read
     }
     const visibleState = await this.readVisibleTerminalState(ptyId)
-    if (!blankFallback && !knownAlternateScreen && !visibleState?.isAlternateScreen) {
+    if (
+      !blankFallback &&
+      !recoveredWorkerFallback &&
+      !knownAlternateScreen &&
+      !visibleState?.isAlternateScreen
+    ) {
       return read
     }
     let lines = visibleState?.lines ?? []
@@ -9922,6 +10283,136 @@ export class OrcaRuntimeService {
       throw new Error('terminal_handle_stale')
     }
     return { ptyId: leaf.ptyId }
+  }
+
+  getOrchestrationCompatibilityHostId(): 'local' {
+    return 'local'
+  }
+
+  getOrchestrationCompatibilityAuthorityInputs(): OrchestrationCompatibilityAuthorityInputs {
+    return {
+      hydratedCommitments: this.getHydratedAgentHookAuthorityFn?.() ?? [],
+      currentObservations: this.getCurrentAgentHookAuthorityFn?.() ?? []
+    }
+  }
+
+  registerOrchestrationCompatibilitySshAttachment(
+    targetId: string,
+    connectionIncarnation: string
+  ): OrchestrationCompatibilitySshAttachmentAuthority {
+    const authority = Object.freeze({
+      kind: 'ssh' as const,
+      targetId,
+      connectionIncarnation,
+      attachmentId: randomUUID()
+    })
+    this.orchestrationCompatibilitySshAttachments.set(authority.attachmentId, authority)
+    return authority
+  }
+
+  releaseOrchestrationCompatibilitySshAttachment(attachmentId: string): void {
+    this.orchestrationCompatibilitySshAttachments.delete(attachmentId)
+  }
+
+  verifyOrchestrationCompatibilityCaller(
+    evidence: OrchestrationCompatibilityEvidence | null | undefined
+  ): OrchestrationCompatibilityCallerAuthority | null {
+    const terminalHandle =
+      typeof evidence?.terminalHandle === 'string' ? evidence.terminalHandle.trim() : ''
+    const claimedPaneKey = typeof evidence?.paneKey === 'string' ? evidence.paneKey.trim() : ''
+    const launchToken = typeof evidence?.launchToken === 'string' ? evidence.launchToken.trim() : ''
+    const host = evidence?.host
+    if (!terminalHandle || !claimedPaneKey || !launchToken) {
+      return null
+    }
+    const terminal = this.getOrchestrationDispatchAuthority(terminalHandle)
+    if (
+      !terminal?.processIncarnation ||
+      !terminal.paneKey ||
+      !this.orchestrationCompatibilityHostMatches(terminal.hostScope, host)
+    ) {
+      return null
+    }
+    const launchTokenHash = createHash('sha256').update(launchToken).digest('hex')
+    if (terminal.launchTokenHash && launchTokenHash !== terminal.launchTokenHash) {
+      return null
+    }
+    const attestation = this.attestAgentHookCompatibilityAuthorityFn?.({
+      paneKey: claimedPaneKey,
+      launchTokenHash,
+      connectionId: terminal.hostScope.kind === 'ssh' ? terminal.hostScope.targetId : null
+    })
+    if (!attestation || attestation.paneKey !== terminal.paneKey) {
+      return null
+    }
+    return Object.freeze({
+      hostScope: Object.freeze({ ...terminal.hostScope }),
+      paneKey: attestation.paneKey,
+      terminalHandle,
+      processIncarnation: terminal.processIncarnation,
+      launchTokenHash
+    })
+  }
+
+  private orchestrationCompatibilityHostMatches(
+    hostScope: OrchestrationCompatibilityTerminalAuthority['hostScope'],
+    host: OrchestrationCompatibilityHostStamp | undefined
+  ): boolean {
+    if (hostScope.kind === 'local') {
+      return host === undefined
+    }
+    if (hostScope.kind === 'wsl') {
+      return (
+        host?.kind === 'wsl' && host.hostId === hostScope.hostId && host.distro === hostScope.distro
+      )
+    }
+    if (host?.kind !== 'ssh' || host.targetId !== hostScope.targetId) {
+      return false
+    }
+    const authority = this.orchestrationCompatibilitySshAttachments.get(host.attachmentId)
+    return (
+      authority?.targetId === host.targetId &&
+      authority.connectionIncarnation === host.connectionIncarnation
+    )
+  }
+
+  getOrchestrationDispatchAuthority(
+    terminalHandle: string
+  ): OrchestrationCompatibilityTerminalAuthority | null {
+    let ptyId: string | null
+    try {
+      ptyId = this.resolveLiveLeafForHandle(terminalHandle)?.ptyId ?? null
+    } catch {
+      return null
+    }
+    if (!ptyId) {
+      return null
+    }
+    const pty = this.ptysById.get(ptyId)
+    if (!pty?.connected) {
+      return null
+    }
+    const hostScope = pty.connectionId
+      ? ({ kind: 'ssh', targetId: pty.connectionId } as const)
+      : pty.isWsl || pty.wslDistro
+        ? pty.wslDistro
+          ? ({ kind: 'wsl', hostId: 'local', distro: pty.wslDistro } as const)
+          : null
+        : ({ kind: 'local', hostId: 'local' } as const)
+    if (!hostScope) {
+      return null
+    }
+    return {
+      runtimeId: this.runtimeId,
+      terminalHandle,
+      ptyId,
+      processIncarnation: this.getTerminalProcessIncarnation(terminalHandle),
+      paneKey: pty.paneKey,
+      launchTokenHash: pty.launchToken
+        ? createHash('sha256').update(pty.launchToken).digest('hex')
+        : null,
+      hostScope
+    }
   }
 
   async resolveTerminalCwd(handle: string): Promise<string | null> {
@@ -13003,8 +13494,14 @@ export class OrcaRuntimeService {
     if (request.claims.length === 0) {
       throw new Error('terminal_orphan_claims_required')
     }
-    const worktree = await this.resolveWorktreeSelector(request.worktree)
-    const livePtyIds = await this.refreshPtyWorktreeRecordsFromController([worktree], worktree.id)
+    const workspace = await this.resolveTerminalWorkspaceLaunchScope(request.worktree)
+    const resolvedWorkspace = workspace.folderWorkspace
+      ? this.folderWorkspaceToResolvedWorktree(workspace.folderWorkspace)
+      : await this.resolveWorktreeSelector(`id:${workspace.id}`)
+    const livePtyIds = await this.refreshPtyWorktreeRecordsFromController(
+      [resolvedWorkspace],
+      workspace.id
+    )
     if (!livePtyIds) {
       throw new Error('terminal_liveness_unavailable')
     }
@@ -13013,26 +13510,22 @@ export class OrcaRuntimeService {
     if (!store?.setWorkspaceSession || !store.flushOrThrow || !session) {
       throw new Error('workspace_session_unavailable')
     }
-    const sessionWorktreeId = resolveTerminalSessionWorktreeId(session, worktree.id)
+    const sessionWorktreeId = resolveTerminalSessionWorktreeId(session, workspace.id)
     if (!sessionWorktreeId) {
       throw new Error('terminal_orphan_competing_owner')
     }
-    const repoId = getRepoIdFromWorktreeId(worktree.id)
-    const worktreeRepo = store.getRepo(repoId)
-    if (!worktreeRepo) {
-      throw new Error('terminal_orphan_owner_mismatch')
-    }
-    const worktreeConnectionId = worktreeRepo.connectionId ?? null
+    const repoId = getRepoIdFromWorktreeId(workspace.id)
+    const worktreeConnectionId = workspace.connectionId
     let worktreeWslDistro: string | null = null
-    if (!worktreeConnectionId) {
+    if (!worktreeConnectionId && workspace.repo) {
       try {
         worktreeWslDistro =
-          getLocalProjectWorktreeGitOptions(this.requireStore(), worktreeRepo).wslDistro ?? null
+          getLocalProjectWorktreeGitOptions(this.requireStore(), workspace.repo).wslDistro ?? null
       } catch {
         throw new Error('terminal_orphan_owner_mismatch')
       }
     }
-    const currentRevision = this.getTerminalTopologyRevision(worktree.id)
+    const currentRevision = this.getTerminalTopologyRevision(workspace.id)
     const seenPtyIds = new Set<string>()
     const seenPaneKeys = new Set<string>()
     const validated = request.claims.map((claim) => {
@@ -13058,7 +13551,7 @@ export class OrcaRuntimeService {
         throw new Error('terminal_orphan_stale')
       }
       if (
-        !runtimeWorktreeIdsEqual(pty.worktreeId, worktree.id) ||
+        !runtimeWorktreeIdsEqual(pty.worktreeId, workspace.id) ||
         !terminalOrphanExecutionOwnersEqual(
           { connectionId: worktreeConnectionId, wslDistro: worktreeWslDistro },
           {
@@ -13077,7 +13570,7 @@ export class OrcaRuntimeService {
       if (
         visualOwners.some(
           (owner) =>
-            !runtimeWorktreeIdsEqual(owner.worktreeId, worktree.id) ||
+            !runtimeWorktreeIdsEqual(owner.worktreeId, workspace.id) ||
             owner.tabId !== claim.tabId ||
             owner.leafId !== claim.leafId
         )
@@ -13126,16 +13619,16 @@ export class OrcaRuntimeService {
       const binding = persistedBinding(claim.ptyId)
       return (
         binding !== null &&
-        runtimeWorktreeIdsEqual(binding.worktreeId, worktree.id) &&
+        runtimeWorktreeIdsEqual(binding.worktreeId, workspace.id) &&
         binding.paneKey === paneKey &&
         session.terminalPtyIncarnationsByPaneKey?.[paneKey] === claim.incarnationId
       )
     })
-    if (isExactPersisted && sessionWorktreeId === worktree.id) {
+    if (isExactPersisted && sessionWorktreeId === workspace.id) {
       return {
         adopted: false,
         topologyRevision: currentRevision,
-        snapshot: await this.listMobileSessionTabs(`id:${worktree.id}`)
+        snapshot: await this.listMobileSessionTabs(`id:${workspace.id}`)
       }
     }
     if (currentRevision !== request.expectedTopologyRevision) {
@@ -13215,7 +13708,7 @@ export class OrcaRuntimeService {
       const existingBinding = persistedBinding(claim.ptyId)
       if (
         existingBinding &&
-        (!runtimeWorktreeIdsEqual(existingBinding.worktreeId, worktree.id) ||
+        (!runtimeWorktreeIdsEqual(existingBinding.worktreeId, workspace.id) ||
           existingBinding.paneKey !== paneKey)
       ) {
         throw new Error('terminal_orphan_competing_owner')
@@ -13229,14 +13722,14 @@ export class OrcaRuntimeService {
       if (
         graphOwner &&
         (graphOwner.ptyId !== claim.ptyId ||
-          !runtimeWorktreeIdsEqual(graphOwner.worktreeId, worktree.id))
+          !runtimeWorktreeIdsEqual(graphOwner.worktreeId, workspace.id))
       ) {
         throw new Error('terminal_orphan_surface_occupied')
       }
       if (
         Object.entries(session.tabsByWorktree).some(
           ([ownerWorktreeId, tabs]) =>
-            !runtimeWorktreeIdsEqual(ownerWorktreeId, worktree.id) &&
+            !runtimeWorktreeIdsEqual(ownerWorktreeId, workspace.id) &&
             tabs.some((tab) => tab.id === claim.tabId)
         )
       ) {
@@ -13254,7 +13747,7 @@ export class OrcaRuntimeService {
         )
         if (
           surfaceOwner &&
-          (snapshot.worktree !== worktree.id || surfaceOwner.ptyId !== claim.ptyId)
+          (snapshot.worktree !== workspace.id || surfaceOwner.ptyId !== claim.ptyId)
         ) {
           throw new Error('terminal_orphan_surface_occupied')
         }
@@ -13264,7 +13757,7 @@ export class OrcaRuntimeService {
         )
         if (
           owner &&
-          (snapshot.worktree !== worktree.id ||
+          (snapshot.worktree !== workspace.id ||
             owner.parentTabId !== claim.tabId ||
             owner.leafId !== claim.leafId)
         ) {
@@ -13274,8 +13767,8 @@ export class OrcaRuntimeService {
     }
 
     const next = structuredClone(session)
-    canonicalizeTerminalSessionWorktreeId(next, sessionWorktreeId, worktree.id)
-    const existingTabs = next.tabsByWorktree[worktree.id] ?? []
+    canonicalizeTerminalSessionWorktreeId(next, sessionWorktreeId, workspace.id)
+    const existingTabs = next.tabsByWorktree[workspace.id] ?? []
     const tabsById = new Map(existingTabs.map((tab) => [tab.id, tab]))
     for (const { claim, pty, paneKey } of validated) {
       let tab = tabsById.get(claim.tabId)
@@ -13285,7 +13778,7 @@ export class OrcaRuntimeService {
         tab = {
           id: claim.tabId,
           ptyId: claim.ptyId,
-          worktreeId: worktree.id,
+          worktreeId: workspace.id,
           title,
           defaultTitle: title,
           customTitle: null,
@@ -13339,12 +13832,12 @@ export class OrcaRuntimeService {
       }
     }
     const adoptedTabIds = [...new Set(validated.map(({ claim }) => claim.tabId))]
-    next.tabsByWorktree[worktree.id] = [...tabsById.values()]
+    next.tabsByWorktree[workspace.id] = [...tabsById.values()]
     const activeTabId =
       request.activeTabId && tabsById.has(request.activeTabId)
         ? request.activeTabId
         : (adoptedTabIds[0] ?? null)
-    const existingGroups = next.tabGroups?.[worktree.id] ?? []
+    const existingGroups = next.tabGroups?.[workspace.id] ?? []
     const targetGroupId =
       (request.activeGroupId && existingGroups.some((group) => group.id === request.activeGroupId)
         ? request.activeGroupId
@@ -13353,7 +13846,7 @@ export class OrcaRuntimeService {
       randomUUID()
     const proposedGroups = topologyGroups.map((group) => ({
       ...group,
-      worktreeId: worktree.id
+      worktreeId: workspace.id
     }))
     const groups =
       existingGroups.length === 0 && proposedGroups.length > 0
@@ -13388,14 +13881,14 @@ export class OrcaRuntimeService {
                   (proposed) => !existingGroups.some((group) => group.id === proposed.id)
                 )
               )
-          : [{ id: targetGroupId, worktreeId: worktree.id, activeTabId, tabOrder: adoptedTabIds }]
+          : [{ id: targetGroupId, worktreeId: workspace.id, activeTabId, tabOrder: adoptedTabIds }]
     const retainedGroups = groups.filter((group) => group.tabOrder.length > 0)
     next.tabGroups = {
       ...next.tabGroups,
-      [worktree.id]: retainedGroups
+      [workspace.id]: retainedGroups
     }
     const mergedGroupLayout = mergeTerminalOrphanGroupLayout({
-      existingLayout: next.tabGroupLayouts?.[worktree.id],
+      existingLayout: next.tabGroupLayouts?.[workspace.id],
       existingGroupIds: existingGroups.map((group) => group.id),
       proposedLayout: request.topology?.groupLayout,
       proposedGroupIds: proposedGroups.map((group) => group.id),
@@ -13404,7 +13897,7 @@ export class OrcaRuntimeService {
     if (mergedGroupLayout) {
       next.tabGroupLayouts = {
         ...next.tabGroupLayouts,
-        [worktree.id]: mergedGroupLayout
+        [workspace.id]: mergedGroupLayout
       }
     }
     const activeGroup =
@@ -13423,13 +13916,13 @@ export class OrcaRuntimeService {
         : activeGroup.activeTabId
     next.activeTabIdByWorktree = {
       ...next.activeTabIdByWorktree,
-      ...(convergedActiveTabId ? { [worktree.id]: convergedActiveTabId } : {})
+      ...(convergedActiveTabId ? { [workspace.id]: convergedActiveTabId } : {})
     }
     next.activeGroupIdByWorktree = {
       ...next.activeGroupIdByWorktree,
-      [worktree.id]: activeGroup.id
+      [workspace.id]: activeGroup.id
     }
-    const persisted = advanceTerminalTopologyRevision(next, worktree.id)
+    const persisted = advanceTerminalTopologyRevision(next, workspace.id)
     try {
       store.setWorkspaceSession(persisted)
       store.flushOrThrow()
@@ -13441,16 +13934,16 @@ export class OrcaRuntimeService {
       pty.tabId = claim.tabId
       pty.paneKey = paneKey
     }
-    this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktree.id, {
+    this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(workspace.id, {
       force: true,
       allowAttachedWindow: true,
       onlyRuntimeOwnedTerminals: true
     })
-    this.notifyMobileSessionTabsChanged(worktree.id)
+    this.notifyMobileSessionTabsChanged(workspace.id)
     return {
       adopted: true,
       topologyRevision: persisted.terminalTopologyRevisionByRepoId?.[repoId] ?? currentRevision + 1,
-      snapshot: await this.listMobileSessionTabs(`id:${worktree.id}`)
+      snapshot: await this.listMobileSessionTabs(`id:${workspace.id}`)
     }
   }
 

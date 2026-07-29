@@ -37,6 +37,7 @@ import {
 } from './orchestration-mutation-executor'
 import { orchestrationMigrationFence } from './orchestration-contract-fence'
 import { getRuntimeFeatureInteractionId } from './runtime-feature-interaction'
+import { OrchestrationLegacyCompatibility } from './orchestration-legacy-compatibility'
 
 export type DispatcherOptions = {
   runtime: OrcaRuntimeService
@@ -47,11 +48,13 @@ export class RpcDispatcher {
   private readonly runtime: OrcaRuntimeService
   private readonly registry: RpcRegistry
   private readonly orchestrationMutations: OrchestrationMutationExecutor
+  private readonly legacyOrchestration: OrchestrationLegacyCompatibility
 
   constructor({ runtime, methods = ALL_RPC_METHODS }: DispatcherOptions) {
     this.runtime = runtime
     this.registry = buildRegistry(methods)
     this.orchestrationMutations = new OrchestrationMutationExecutor(runtime)
+    this.legacyOrchestration = new OrchestrationLegacyCompatibility(runtime)
   }
 
   async dispatch(request: RpcRequest, options?: { signal?: AbortSignal }): Promise<RpcResponse> {
@@ -93,17 +96,27 @@ export class RpcDispatcher {
       emulatorProbe(`rpc ${request.method}`, request.params)
     }
     try {
+      const compatibility = await this.legacyOrchestration.tryHandle(
+        request,
+        parsedParams.value,
+        options?.signal
+      )
+      if (compatibility.handled) {
+        return successResponse(request.id, meta, compatibility.result)
+      }
+      const effectiveParams = compatibility.params ?? parsedParams.value
       const invoke = (mutation?: DurableMutationInvocation) =>
-        method.handler(parsedParams.value, {
+        method.handler(effectiveParams, {
           runtime: this.runtime,
           signal: options?.signal,
           requestId: request.id,
           orchestrationCapability: request.orchestrationCapability,
           authenticatedCallerFingerprint: authenticatedCallerFingerprint(request),
           recordMutationReceipt: mutation?.recordReceipt,
-          orchestrationMutation: mutation?.identity
+          orchestrationMutation: mutation?.identity,
+          legacyCoordinatorRunId: compatibility.legacyCoordinatorRunId
         })
-      const result = await this.orchestrationMutations.run(request, parsedParams.value, invoke)
+      const result = await this.orchestrationMutations.run(request, effectiveParams, invoke)
       this.recordRuntimeFeatureInteraction(request.method, result, undefined, request.params)
       return successResponse(request.id, meta, result)
     } catch (error) {
@@ -160,8 +173,18 @@ export class RpcDispatcher {
 
     if (!isStreamingMethod(method)) {
       try {
+        const compatibility = await this.legacyOrchestration.tryHandle(
+          request,
+          parsedParams.value,
+          options?.signal
+        )
+        if (compatibility.handled) {
+          reply(JSON.stringify(successResponse(request.id, meta, compatibility.result)))
+          return
+        }
+        const effectiveParams = compatibility.params ?? parsedParams.value
         const invoke = (mutation?: DurableMutationInvocation) =>
-          method.handler(parsedParams.value, {
+          method.handler(effectiveParams, {
             runtime: this.runtime,
             signal: options?.signal,
             requestId: request.id,
@@ -176,9 +199,10 @@ export class RpcDispatcher {
             orchestrationMutation: mutation?.identity,
             pairing: options?.pairing,
             sendBinary: options?.sendBinary,
-            registerBinaryStreamHandler: options?.registerBinaryStreamHandler
+            registerBinaryStreamHandler: options?.registerBinaryStreamHandler,
+            legacyCoordinatorRunId: compatibility.legacyCoordinatorRunId
           })
-        const result = await this.orchestrationMutations.run(request, parsedParams.value, invoke)
+        const result = await this.orchestrationMutations.run(request, effectiveParams, invoke)
         this.recordRuntimeFeatureInteraction(request.method, result, undefined, request.params)
         reply(JSON.stringify(successResponse(request.id, meta, result)))
       } catch (error) {
@@ -212,6 +236,7 @@ export class RpcDispatcher {
           pairedDeviceId: options?.pairedDeviceId,
           clientKind: options?.clientKind,
           clientCapabilities: options?.clientCapabilities,
+          orchestrationCapability: request.orchestrationCapability,
           pairing: options?.pairing,
           sendBinary: options?.sendBinary,
           registerBinaryStreamHandler: options?.registerBinaryStreamHandler

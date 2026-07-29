@@ -51,14 +51,15 @@ export const ORCHESTRATION_RUN_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.runUse',
     params: RunUseParams,
-    handler: (params, { runtime }) => {
+    handler: (params, { runtime, legacyCoordinatorRunId }) => {
       const paneKey = requireCallerPane(runtime, params.from)
       const db = runtime.getOrchestrationDb()
       const priorRun = db.getCurrentRunForPane(paneKey)
       const run = db.bindRun({
         runId: params.id,
         coordinatorHandle: params.from,
-        coordinatorPaneKey: paneKey
+        coordinatorPaneKey: paneKey,
+        allowLegacyCompatibility: legacyCoordinatorRunId === params.id
       })
       if (!run) {
         throw new OrchestrationError(

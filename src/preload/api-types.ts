@@ -3134,6 +3134,7 @@ export type PreloadApi = {
         title?: string
         ptyId?: string
         activate?: boolean
+        focus?: boolean
         presentation?: RuntimeTerminalPresentation
         tabId?: string
         leafId?: string
@@ -3514,6 +3515,9 @@ export type PreloadApi = {
     /** Listen for PTYs on a legacy numeric pane key that have registry-backed UUID pane proof. */
     onMigrationUnsupported: (callback: (entry: MigrationUnsupportedPtyEntry) => void) => () => void
     onMigrationUnsupportedClear: (callback: (data: { ptyId: string }) => void) => () => void
+    onLegacyWorkerTerminalRecovery: (
+      callback: (data: { paneKey: string; resolution: 'adopted' | 'exited' }) => void
+    ) => () => void
     getMigrationUnsupportedSnapshot: () => Promise<MigrationUnsupportedPtyEntry[]>
     /** Drop a paneKey from the main-process hook cache and on-disk last-status file. Fire-and-forget. */
     drop: (paneKey: string) => void

@@ -1888,6 +1888,7 @@ describe('useIpcEvents updater integration', () => {
             title?: string
             ptyId?: string
             activate?: boolean
+            focus?: boolean
             presentation?: 'background' | 'focused'
             tabId?: string
             leafId?: string
@@ -2036,6 +2037,7 @@ describe('useIpcEvents updater integration', () => {
               title?: string
               ptyId?: string
               activate?: boolean
+              focus?: boolean
               presentation?: 'background' | 'focused'
               tabId?: string
               leafId?: string
@@ -2723,6 +2725,35 @@ describe('useIpcEvents updater integration', () => {
     expect(setActiveTabType).not.toHaveBeenCalled()
     expect(setActiveTab).not.toHaveBeenCalled()
     expect(revealWorktreeInSidebar).not.toHaveBeenCalled()
+
+    createTab.mockClear()
+    setActiveView.mockClear()
+    setActiveWorktree.mockClear()
+    setActiveTabType.mockClear()
+    setActiveTab.mockClear()
+    revealWorktreeInSidebar.mockClear()
+    focusRuntimeTerminalSurface.mockClear()
+    focusTerminalTabSurface.mockClear()
+    createTerminalListenerRef.current({
+      worktreeId: 'wt-2',
+      ptyId: 'pty-recovery-bg',
+      activate: true,
+      focus: false,
+      tabId: 'tab-recovery-bg'
+    })
+
+    expect(createTab).toHaveBeenCalledWith('wt-2', undefined, undefined, {
+      initialPtyId: 'pty-recovery-bg',
+      activate: false,
+      id: 'tab-recovery-bg'
+    })
+    expect(setActiveView).not.toHaveBeenCalled()
+    expect(setActiveWorktree).not.toHaveBeenCalled()
+    expect(setActiveTabType).not.toHaveBeenCalled()
+    expect(setActiveTab).not.toHaveBeenCalled()
+    expect(revealWorktreeInSidebar).not.toHaveBeenCalled()
+    expect(focusRuntimeTerminalSurface).not.toHaveBeenCalled()
+    expect(focusTerminalTabSurface).not.toHaveBeenCalled()
 
     storeState.tabsByWorktree = {
       'wt-2': [{ id: 'tab-existing', ptyId: 'pty-bg', title: 'Terminal 1' }]
@@ -4933,6 +4964,9 @@ describe('useIpcEvents agent status snapshot integration', () => {
   function buildWindowApi(args: {
     onSet: (cb: (data: AgentStatusSetData) => void) => () => void
     onClear?: (cb: (data: AgentStatusClearIpcPayload) => void) => () => void
+    onLegacyWorkerTerminalRecovery?: (
+      cb: (data: { paneKey: string; resolution: 'adopted' | 'exited' }) => void
+    ) => () => void
     getSnapshot?: () => Promise<AgentStatusSetData[]>
     drop?: (paneKey: string) => void
     remoteWorkspace?: Record<string, unknown>
@@ -5044,6 +5078,8 @@ describe('useIpcEvents agent status snapshot integration', () => {
         agentStatus: {
           onSet: args.onSet,
           onClear: args.onClear ?? vi.fn(() => () => {}),
+          onLegacyWorkerTerminalRecovery:
+            args.onLegacyWorkerTerminalRecovery ?? vi.fn(() => () => {}),
           getSnapshot: args.getSnapshot ?? vi.fn(() => Promise.resolve([])),
           drop: args.drop ?? vi.fn()
         },
@@ -5196,6 +5232,54 @@ describe('useIpcEvents agent status snapshot integration', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.unstubAllGlobals()
+  })
+
+  it('reconciles adopted and exited legacy worker recovery without broad record cleanup', async () => {
+    const clearSleepingAgentSession = vi.fn()
+    const setSleepingAgentAutomaticResumeBlocked = vi.fn()
+    let listener:
+      | ((data: { paneKey: string; resolution: 'adopted' | 'exited' }) => void)
+      | undefined
+    const storeState = buildStoreState({
+      clearSleepingAgentSession,
+      setSleepingAgentAutomaticResumeBlocked
+    })
+
+    stubReactSyncEffect()
+    vi.doMock('../store', () => ({
+      useAppStore: {
+        subscribe: vi.fn(() => () => {}),
+        getState: () => storeState
+      }
+    }))
+    stubAuxiliaryModules()
+    vi.stubGlobal(
+      'window',
+      buildWindowApi({
+        onSet: () => () => {},
+        onLegacyWorkerTerminalRecovery: (callback) => {
+          listener = callback
+          return () => {}
+        }
+      })
+    )
+
+    const { useIpcEvents } = await import('./useIpcEvents')
+    useIpcEvents()
+    await Promise.resolve()
+    expect(listener).toBeTypeOf('function')
+
+    listener?.({ paneKey: 'tab-adopted:leaf-adopted', resolution: 'adopted' })
+    expect(clearSleepingAgentSession).toHaveBeenCalledWith('tab-adopted:leaf-adopted')
+    expect(setSleepingAgentAutomaticResumeBlocked).not.toHaveBeenCalled()
+
+    clearSleepingAgentSession.mockClear()
+    listener?.({ paneKey: 'tab-exited:leaf-exited', resolution: 'exited' })
+    expect(clearSleepingAgentSession).not.toHaveBeenCalled()
+    expect(setSleepingAgentAutomaticResumeBlocked).toHaveBeenCalledWith(
+      'tab-exited:leaf-exited',
+      false
+    )
   })
 
   it.each([

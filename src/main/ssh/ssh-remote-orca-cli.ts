@@ -1,5 +1,7 @@
 import type { CliStatusResult, RuntimeStatus } from '../../shared/runtime-types'
+import { randomUUID } from 'node:crypto'
 import type { RuntimeOrchestrationEnvelope } from '../../shared/runtime-rpc-envelope'
+import { readOrchestrationCompatibilityEvidence } from '../../shared/orchestration-compatibility-evidence'
 import { ORCHESTRATION_CONTRACT_VERSION } from '../../shared/protocol-version'
 import { RpcDispatcher } from '../runtime/rpc/dispatcher'
 import type { RpcResponse } from '../runtime/rpc/core'
@@ -96,7 +98,8 @@ async function runLegacyRemoteOrcaCli(
       parsed,
       request.env,
       request.stdin,
-      passthroughFailure.message
+      passthroughFailure.message,
+      request.runtimeAuthority
     )
     const formatted = json
       ? { stdout: `${JSON.stringify(response, null, 2)}\n`, stderr: '' }
@@ -134,9 +137,19 @@ async function dispatchRemoteCli(
   parsed: ParsedRemoteCli,
   env: Record<string, string>,
   stdin: string | undefined,
-  passthroughFailureReason: string
+  passthroughFailureReason: string,
+  runtimeAuthority: RemoteOrcaCliRequest['runtimeAuthority']
 ): Promise<RpcResponse> {
   const command = parsed.commandPath.join(' ')
+  const compatibilityInvocationId = randomUUID()
+  const inheritedEvidence = readOrchestrationCompatibilityEvidence(env)
+  const orchestrationCompatibilityEvidence = runtimeAuthority
+    ? { ...inheritedEvidence, host: runtimeAuthority }
+    : inheritedEvidence
+  const compatibilityEnvelope: RuntimeOrchestrationEnvelope = {
+    compatibilityInvocationId,
+    orchestrationCompatibilityEvidence
+  }
   const linearResponse = await tryDispatchRemoteLinearCli(dispatcher, parsed, env, stdin)
   if (linearResponse) {
     return linearResponse
@@ -187,33 +200,51 @@ async function dispatchRemoteCli(
           senderPaneKey: env.ORCA_PANE_KEY || undefined
         },
         {
+          ...compatibilityEnvelope,
           orchestrationCapability: optionalRemoteCliString(parsed.flags, 'dispatch-capability'),
           orchestrationRequestId: optionalRemoteCliString(parsed.flags, 'retry-request')
         }
       )
     }
     case 'orchestration check':
-      return await call(dispatcher, 'orchestration.check', {
-        terminal: resolveRemoteCliHandle(parsed.flags, env, 'terminal'),
-        terminalPaneKey: parsed.flags.has('terminal') ? undefined : env.ORCA_PANE_KEY || undefined,
-        unread: parsed.flags.has('unread') ? true : undefined,
-        all: parsed.flags.has('all') ? true : undefined,
-        types: optionalRemoteCliString(parsed.flags, 'types'),
-        inject: parsed.flags.has('inject') ? true : undefined,
-        wait: parsed.flags.has('wait') ? true : undefined,
-        timeoutMs: optionalRemoteCliNumber(parsed.flags, 'timeout-ms')
-      })
+      return await call(
+        dispatcher,
+        'orchestration.check',
+        {
+          terminal: resolveRemoteCliHandle(parsed.flags, env, 'terminal'),
+          terminalPaneKey: parsed.flags.has('terminal')
+            ? undefined
+            : env.ORCA_PANE_KEY || undefined,
+          unread: parsed.flags.has('unread') ? true : undefined,
+          all: parsed.flags.has('all') ? true : undefined,
+          types: optionalRemoteCliString(parsed.flags, 'types'),
+          inject: parsed.flags.has('inject') ? true : undefined,
+          wait: parsed.flags.has('wait') ? true : undefined,
+          timeoutMs: optionalRemoteCliNumber(parsed.flags, 'timeout-ms')
+        },
+        compatibilityEnvelope
+      )
     case 'orchestration reply':
-      return await call(dispatcher, 'orchestration.reply', {
-        id: requiredRemoteCliString(parsed.flags, 'id'),
-        body: requiredRemoteCliString(parsed.flags, 'body'),
-        from: resolveRemoteCliHandle(parsed.flags, env, 'from')
-      })
+      return await call(
+        dispatcher,
+        'orchestration.reply',
+        {
+          id: requiredRemoteCliString(parsed.flags, 'id'),
+          body: requiredRemoteCliString(parsed.flags, 'body'),
+          from: resolveRemoteCliHandle(parsed.flags, env, 'from')
+        },
+        compatibilityEnvelope
+      )
     case 'orchestration inbox':
-      return await call(dispatcher, 'orchestration.inbox', {
-        limit: optionalRemoteCliNumber(parsed.flags, 'limit'),
-        terminal: optionalRemoteCliString(parsed.flags, 'terminal')
-      })
+      return await call(
+        dispatcher,
+        'orchestration.inbox',
+        {
+          limit: optionalRemoteCliNumber(parsed.flags, 'limit'),
+          terminal: optionalRemoteCliString(parsed.flags, 'terminal')
+        },
+        compatibilityEnvelope
+      )
     default:
       // Why: only reachable when the full host CLI could not be launched;
       // include that root cause so users can fix the install instead of
@@ -239,6 +270,8 @@ async function call(
     orchestrationContractVersion: method.startsWith('orchestration.')
       ? ORCHESTRATION_CONTRACT_VERSION
       : undefined,
-    orchestrationRequestId: envelope?.orchestrationRequestId
+    orchestrationRequestId: envelope?.orchestrationRequestId,
+    compatibilityInvocationId: envelope?.compatibilityInvocationId,
+    orchestrationCompatibilityEvidence: envelope?.orchestrationCompatibilityEvidence
   })
 }

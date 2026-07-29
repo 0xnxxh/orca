@@ -233,6 +233,7 @@ export type AgentStatusSlice = {
   captureAllSleepingAgentSessions: (mode: AllAgentSessionCaptureMode) => void
   clearSleepingAgentSession: (paneKey: string) => void
   clearSleepingAgentSessionsByPaneKey: (paneKeys: readonly string[]) => void
+  setSleepingAgentAutomaticResumeBlocked: (paneKey: string, blocked: boolean) => void
   clearSleepingAgentSessionsByWorktree: (worktreeId: string) => void
   pruneSleepingAgentSessions: (validWorktreeIds: Set<string>) => void
 
@@ -2814,6 +2815,31 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
 
     clearSleepingAgentSession: (paneKey) => clearSleepingAgentSessionsByPaneKey([paneKey]),
     clearSleepingAgentSessionsByPaneKey,
+    setSleepingAgentAutomaticResumeBlocked: (paneKey, blocked) => {
+      set((s) => {
+        const current = s.sleepingAgentSessionsByPaneKey[paneKey]
+        if (
+          !current ||
+          (blocked
+            ? current.automaticResumeBlockedBy === 'legacy-orchestration-worker'
+            : current.automaticResumeBlockedBy === undefined)
+        ) {
+          return s
+        }
+        const next = { ...current }
+        if (blocked) {
+          next.automaticResumeBlockedBy = 'legacy-orchestration-worker'
+        } else {
+          delete next.automaticResumeBlockedBy
+        }
+        return {
+          sleepingAgentSessionsByPaneKey: {
+            ...s.sleepingAgentSessionsByPaneKey,
+            [paneKey]: next
+          }
+        }
+      })
+    },
 
     clearSleepingAgentSessionsByWorktree: (worktreeId) => {
       set((s) => {

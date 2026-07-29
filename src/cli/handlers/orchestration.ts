@@ -23,8 +23,7 @@ import type { NativeChatMessage } from '../../shared/native-chat-types'
 import type { RuntimeTerminalRead } from '../../shared/runtime-types'
 import {
   ORCHESTRATION_LEGACY_RUN_ID,
-  orchestrationMigrationData,
-  orchestrationSkillRecoveryData
+  orchestrationMigrationData
 } from '../../shared/orchestration-rpc-contract'
 
 // Why: 15 s is well under Claude Code's ~2 min Bash-tool silence budget while keeping log volume low. See design doc §3.4.
@@ -78,6 +77,7 @@ const TASK_STATUS_VALUES = [
 type MessageSummary = {
   id: string
   run_id?: string
+  delivery_contract?: 'legacy_direct' | 'current_delivery' | 'audit_only'
   from_handle: string
   to_handle?: string
   subject?: string
@@ -88,12 +88,22 @@ type MessageSummary = {
   read?: number
 }
 
-function formatMessageReadOnlyTag(message: MessageSummary): string {
-  return message.run_id === ORCHESTRATION_LEGACY_RUN_ID ? ' [legacy, read-only]' : ''
+function formatMessageReadOnlyTag(
+  message: MessageSummary,
+  legacyCompatibilityActive = false
+): string {
+  return isLegacyReadOnlyMessage(message, legacyCompatibilityActive) ? ' [legacy, read-only]' : ''
 }
 
-function isLegacyReadOnlyMessage(message: MessageSummary): boolean {
-  return message.run_id === ORCHESTRATION_LEGACY_RUN_ID
+function isLegacyReadOnlyMessage(
+  message: MessageSummary,
+  legacyCompatibilityActive = false
+): boolean {
+  return (
+    message.run_id === ORCHESTRATION_LEGACY_RUN_ID ||
+    (message.delivery_contract === 'legacy_direct' && !legacyCompatibilityActive) ||
+    message.delivery_contract === 'audit_only'
+  )
 }
 
 function formatMessagePriorityTag(message: MessageSummary): string {
@@ -121,13 +131,14 @@ function formatQuotedMessageField(label: string, value?: string): string {
 
 function formatLegacyAwareCheckMessages(
   messages: MessageSummary[],
-  checkedTerminal: string
+  checkedTerminal: string,
+  legacyCompatibilityActive = false
 ): string {
   return messages
     .map((message) => {
-      const legacyReadOnly = isLegacyReadOnlyMessage(message)
+      const legacyReadOnly = isLegacyReadOnlyMessage(message, legacyCompatibilityActive)
       const lines = [
-        `${message.id}${formatMessageReadOnlyTag(message)}${formatMessagePriorityTag(message)} [${message.type ?? 'status'}] from=${message.from_handle}`,
+        `${message.id}${formatMessageReadOnlyTag(message, legacyCompatibilityActive)}${formatMessagePriorityTag(message)} [${message.type ?? 'status'}] from=${message.from_handle}`,
         formatQuotedMessageField('subject', message.subject)
       ]
       if (legacyReadOnly) {
@@ -169,6 +180,70 @@ type OrchestrationSendResult =
       }
       lifecycle?: { action: 'completed' | 'failed' }
     }
+
+type LegacyCompatibilityResult = {
+  recovery?: boolean
+  readOnly?: boolean
+  ackMessageIds?: string[]
+  answerAcknowledgement?: {
+    questionId: string
+    answerMessageId: string
+  }
+  currentDelivery?: {
+    runId: string
+    checkCommand: string
+    ackCommand: string
+  }
+  resumeRequired?: boolean
+  resumeCommand?: string
+}
+
+function resolveCompatibilityCliCommand(): 'orca' | 'orca-ide' | 'orca-dev' {
+  const configured = process.env.ORCA_CLI_COMMAND
+  if (configured === 'orca' || configured === 'orca-ide' || configured === 'orca-dev') {
+    return configured
+  }
+  return process.platform === 'linux' ? 'orca-ide' : 'orca'
+}
+
+function formatCurrentDeliveryNotice(
+  delivery: LegacyCompatibilityResult['currentDelivery']
+): string {
+  if (!delivery) {
+    return ''
+  }
+  return (
+    `\n[CURRENT RUN MAIL WAITING]\n` +
+    `Read: ${delivery.checkCommand}\n` +
+    `Then acknowledge the delivery ID it prints: ${delivery.ackCommand}`
+  )
+}
+
+function resolvePackagedWindowsCompatibilityCommand(): 'orca' | 'orca-ide' | undefined {
+  if (process.env.ORCA_WINDOWS_PACKAGED_CLI_LAUNCHER !== '1') {
+    return undefined
+  }
+  const command = process.env.ORCA_CLI_COMMAND
+  if (command === 'orca' || command === 'orca-ide') {
+    return command
+  }
+  throw new RuntimeClientError(
+    'invalid_argument',
+    'The packaged Orca launcher did not provide a valid resume command. No question was created.'
+  )
+}
+
+async function flushStdout(): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    process.stdout.write('', (error) => {
+      if (error) {
+        reject(error)
+      } else {
+        resolve()
+      }
+    })
+  })
+}
 
 function getOptionalStructuredMessagePayload(
   flags: Map<string, string | boolean>
@@ -541,13 +616,6 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
       rejectLifecycleGroupRecipient(type, to)
     }
     const outcome = getOptionalStringFlag(flags, 'outcome')
-    if (type === 'worker_done' && outcome === undefined && !flags.has('payload')) {
-      throw new RuntimeClientError(
-        'invalid_argument',
-        'worker_done requires --outcome succeeded or --outcome failed. No effects were applied.',
-        orchestrationSkillRecoveryData()
-      )
-    }
     if (type !== 'worker_done' && outcome !== undefined) {
       throw new RuntimeClientError(
         'invalid_argument',
@@ -634,6 +702,7 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
       timedOut?: boolean
       cancelled?: boolean
       connectionLost?: boolean
+      legacyCompatibility?: LegacyCompatibilityResult
     }
     let result: Awaited<ReturnType<typeof client.call<CheckResult>>>
     try {
@@ -646,6 +715,7 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
         all: flags.has('all') ? true : undefined,
         types: getOptionalStringFlag(flags, 'types'),
         format: flags.has('format') ? true : undefined,
+        compatibilityCliCommand: resolveCompatibilityCliCommand(),
         run: getOptionalStringFlag(flags, 'run'),
         ack: getOptionalStringFlag(flags, 'ack'),
         wait: wait ? true : undefined,
@@ -682,39 +752,78 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
         }
       }
     }
-    if (flags.has('format') && result.result.messages.some(isLegacyReadOnlyMessage)) {
+    const compatibilityActive = Boolean(
+      result.result.legacyCompatibility && !result.result.legacyCompatibility.readOnly
+    )
+    if (
+      flags.has('format') &&
+      result.result.messages.some((message) =>
+        isLegacyReadOnlyMessage(message, compatibilityActive)
+      )
+    ) {
       // Why: formatted is one opaque batch with untrusted bodies, so selective banner parsing cannot safely remove legacy actions.
       result = {
         ...result,
         result: {
           ...result.result,
-          formatted: formatLegacyAwareCheckMessages(result.result.messages, terminal)
+          formatted: formatLegacyAwareCheckMessages(
+            result.result.messages,
+            terminal,
+            compatibilityActive
+          )
         }
       }
     }
     printResult(result, json, (r) => {
+      const legacyHeader = r.legacyCompatibility
+        ? r.legacyCompatibility.readOnly
+          ? '[LEGACY READ-ONLY]\n'
+          : r.legacyCompatibility.recovery
+            ? '[LEGACY RECOVERY REPLAY — MAY HAVE BEEN SEEN]\n'
+            : '[LEGACY COMPATIBILITY]\n'
+        : ''
+      const deliveryNotice = formatCurrentDeliveryNotice(r.legacyCompatibility?.currentDelivery)
       if (r.formatted) {
-        return r.formatted
+        return `${legacyHeader}${r.formatted}${deliveryNotice}`
       }
       if (r.count === 0) {
         if (r.timedOut) {
-          return 'Wait timed out; no messages were consumed.'
+          return `${legacyHeader}Wait timed out; no messages were consumed.${deliveryNotice}`
         }
         if (r.cancelled) {
-          return r.connectionLost
+          const cancelled = r.connectionLost
             ? 'Wait cancelled because the connection closed; no messages were consumed.'
             : 'Wait cancelled; no messages were consumed.'
+          return `${legacyHeader}${cancelled}${deliveryNotice}`
         }
-        return 'No messages.'
+        return `${legacyHeader}No messages.${deliveryNotice}`
       }
       const rendered = r.messages
         .map(
           (m) =>
-            `${m.id}${formatMessageReadOnlyTag(m)} [${m.type ?? 'status'}] from=${m.from_handle} "${m.subject}"`
+            `${m.id}${formatMessageReadOnlyTag(
+              m,
+              Boolean(r.legacyCompatibility && !r.legacyCompatibility.readOnly)
+            )} [${m.type ?? 'status'}] from=${m.from_handle} "${m.subject}"`
         )
         .join('\n')
-      return r.deliveryId ? `Delivery ${r.deliveryId}\n${rendered}` : rendered
+      const output = r.deliveryId ? `Delivery ${r.deliveryId}\n${rendered}` : rendered
+      return `${legacyHeader}${output}${deliveryNotice}`
     })
+    const compatibilityAck = result.result.legacyCompatibility?.ackMessageIds
+    if (compatibilityAck && compatibilityAck.length > 0) {
+      await flushStdout()
+      await client.call('orchestration.check', {
+        terminal,
+        compatibilityAck: JSON.stringify({
+          messageIds: compatibilityAck,
+          types: getOptionalStringFlag(flags, 'types')
+            ?.split(',')
+            .map((type) => type.trim())
+            .filter(Boolean)
+        })
+      })
+    }
   },
 
   'orchestration reply': async ({ flags, client, cwd, json }) => {
@@ -1034,6 +1143,8 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
       timeoutMs?: number
       cancelled?: boolean
       connectionLost?: boolean
+      answerMessageId?: string | null
+      legacyCompatibility?: LegacyCompatibilityResult
     }>(
       client,
       flags,
@@ -1045,7 +1156,9 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
         resume,
         options: getOptionalStringFlag(flags, 'options'),
         timeoutMs: parsedTimeoutMs === undefined ? undefined : timeoutMs,
-        from
+        from,
+        compatibilityCliCommand: resolveCompatibilityCliCommand(),
+        compatibilityWindowsCommand: resolvePackagedWindowsCompatibilityCommand()
       },
       // Why: extend past timeoutMs so the RPC transport's 60s default doesn't abort before the runtime's own timeout resolves.
       {
@@ -1056,8 +1169,24 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
     // Why: bypass printResult so --json emits a bare JSON object (no envelope) pipeable via `jq -r .answer`, unlike other verbs.
     if (json) {
       console.log(JSON.stringify(result.result))
+    } else if (result.result.legacyCompatibility?.resumeRequired) {
+      console.log(`Question ${result.result.messageId} committed.`)
+      console.log(`Resume with: ${result.result.legacyCompatibility.resumeCommand}`)
     } else if (result.result.answer !== null) {
       console.log(result.result.answer)
+    }
+    if (result.result.legacyCompatibility?.resumeRequired) {
+      await flushStdout()
+      process.exitCode = 75
+      return
+    }
+    const answerAck = result.result.legacyCompatibility?.answerAcknowledgement
+    if (answerAck && result.result.answer !== null) {
+      await flushStdout()
+      await client.call('orchestration.check', {
+        terminal: from,
+        compatibilityQuestionAck: JSON.stringify(answerAck)
+      })
     }
     if (result.result.timedOut) {
       if (!json) {

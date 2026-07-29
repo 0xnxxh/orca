@@ -181,9 +181,13 @@ const browserAutomationBootstrapLeaseByPageId = new Map<string, { token: string;
 function resolveTerminalPresentation(data: {
   presentation?: RuntimeTerminalPresentation
   activate?: boolean
+  focus?: boolean
 }): RuntimeTerminalPresentation | undefined {
   if (data.presentation) {
     return data.presentation
+  }
+  if (data.focus !== undefined) {
+    return data.focus ? 'focused' : 'background'
   }
   if (data.activate === true) {
     return 'focused'
@@ -1395,6 +1399,7 @@ export function useIpcEvents(): void {
           title,
           ptyId,
           activate,
+          focus,
           presentation,
           tabId,
           leafId,
@@ -1404,7 +1409,11 @@ export function useIpcEvents(): void {
         }) => {
           try {
             const store = useAppStore.getState()
-            const terminalPresentation = resolveTerminalPresentation({ presentation, activate })
+            const terminalPresentation = resolveTerminalPresentation({
+              presentation,
+              activate,
+              focus
+            })
             const shouldActivate = terminalPresentation === 'focused'
             const shouldSurfaceOwner = terminalPresentation !== 'background'
             if (shouldActivate) {
@@ -3337,6 +3346,18 @@ export function useIpcEvents(): void {
       })
     if (unsubscribeMigrationUnsupportedClear) {
       unsubs.push(unsubscribeMigrationUnsupportedClear)
+    }
+    const unsubscribeLegacyWorkerTerminalRecovery =
+      window.api.agentStatus.onLegacyWorkerTerminalRecovery?.(({ paneKey, resolution }) => {
+        const store = useAppStore.getState()
+        if (resolution === 'adopted') {
+          store.clearSleepingAgentSession(paneKey)
+          return
+        }
+        store.setSleepingAgentAutomaticResumeBlocked(paneKey, false)
+      })
+    if (unsubscribeLegacyWorkerTerminalRecovery) {
+      unsubs.push(unsubscribeLegacyWorkerTerminalRecovery)
     }
 
     // Why: main hook server is the durable source of truth; pull the snapshot only after tabs are ready so early startup pushes can be ignored, not buffered.

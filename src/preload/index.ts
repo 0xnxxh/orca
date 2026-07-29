@@ -3695,6 +3695,7 @@ const api = {
         title?: string
         ptyId?: string
         activate?: boolean
+        focus?: boolean
         presentation?: RuntimeTerminalPresentation
         tabId?: string
         leafId?: string
@@ -3719,6 +3720,7 @@ const api = {
           title?: string
           ptyId?: string
           activate?: boolean
+          focus?: boolean
           presentation?: RuntimeTerminalPresentation
           tabId?: string
           leafId?: string
@@ -4641,6 +4643,16 @@ const api = {
         callback(data)
       ipcRenderer.on('agentStatus:migrationUnsupportedClear', listener)
       return () => ipcRenderer.removeListener('agentStatus:migrationUnsupportedClear', listener)
+    },
+    onLegacyWorkerTerminalRecovery: (
+      callback: (data: { paneKey: string; resolution: 'adopted' | 'exited' }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { paneKey: string; resolution: 'adopted' | 'exited' }
+      ) => callback(data)
+      ipcRenderer.on('agentStatus:legacyWorkerTerminalRecovery', listener)
+      return () => ipcRenderer.removeListener('agentStatus:legacyWorkerTerminalRecovery', listener)
     },
     getMigrationUnsupportedSnapshot: (): Promise<MigrationUnsupportedPtyEntry[]> =>
       ipcRenderer.invoke('agentStatus:getMigrationUnsupportedSnapshot'),

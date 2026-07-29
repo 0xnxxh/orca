@@ -30,7 +30,12 @@ import {
   getSshPtyProvider,
   registerHeadlessPtyRuntime
 } from './ipc/pty'
-import { initDaemonPtyProvider, disconnectDaemon, shutdownDaemon } from './daemon/daemon-init'
+import {
+  initDaemonPtyProvider,
+  disconnectDaemon,
+  getDaemonProvider,
+  shutdownDaemon
+} from './daemon/daemon-init'
 import { closeAllWatchers } from './ipc/filesystem-watcher'
 import { disposeWorktreeBaseDirectoryWatchers } from './ipc/worktree-base-directory-watcher'
 import { registerCoreHandlers } from './ipc/register-core-handlers'
@@ -725,7 +730,12 @@ if (hasSingleInstanceLock) {
 
 ipcMain.handle('app:awaitFirstWindowStartupServices', async () => {
   // Why: restored WSL terminals get a bounded chance to receive launcher repairs before window rendering proceeds.
-  await Promise.all([firstWindowStartupServicesReady, managedWslCliStartupBarrierReady])
+  await Promise.all([
+    firstWindowStartupServicesReady,
+    localPtyProviderStartupReady,
+    managedWslCliStartupBarrierReady
+  ])
+  await runtime?.reconcileLegacyWorkerTerminals({ materializeRenderer: true })
 })
 
 // Why: the renderer pulls this once its ui:openSettings listener attaches, so a Settings request queued before mount isn't lost.
@@ -2207,6 +2217,11 @@ void app.whenReady().then(async () => {
     getAgentProviderSessionSnapshot: () => agentHookServer.getStatusSnapshot(),
     getAgentProviderSessionRowsForPane: (paneKey) =>
       agentHookServer.getStatusSnapshotForPane(paneKey),
+    getHydratedAgentHookAuthority: () => agentHookServer.getHydratedAuthorityCommitments(),
+    getCurrentAgentHookAuthority: () => agentHookServer.getCurrentAuthorityObservations(),
+    attestAgentHookCompatibilityAuthority: (candidate) =>
+      agentHookServer.attestCompatibilityAuthority(candidate),
+    canRecoverPersistentLocalPtys: () => getDaemonProvider() !== null,
     // Why: source codex-home here (runs in window AND serve) so aiVault.listSessions includes managed-Codex sessions; registerCoreHandlers is window-only.
     getAdditionalAiVaultCodexHomePaths: () =>
       codexRuntimeHome ? codexRuntimeHome.getHostCodexHomePathsForSessionDiscovery() : [],
@@ -2222,6 +2237,7 @@ void app.whenReady().then(async () => {
     orchestrationEnvironmentTransport
   })
   runtime = runtimeService
+  runtimeService.prepareLegacyWorkerTerminalRecovery()
   publishProviderSessionChanges(agentHookServer.getProviderSessionIdentities())
   browserManager.setBrowserGuestStateChangedListener((worktreeId) => {
     runtimeService.notifyMobileSessionTabsChanged(worktreeId)
@@ -2664,6 +2680,7 @@ void app.whenReady().then(async () => {
       store,
       prepareCodexSessionResumeForLaunch
     )
+    await runtime.reconcileLegacyWorkerTerminals()
     // Why: headless servers can't mount <webview> panes; use offscreen WebContents, gated on a real display so browser.headless.v1 stays honest.
     if (headlessBrowserDisplayAvailable) {
       runtime.setOffscreenBrowserBackend(new OffscreenBrowserBackend(browserManager))

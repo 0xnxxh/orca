@@ -140,7 +140,7 @@ import {
 } from '../agent-hooks/migration-unsupported-pty-state'
 import { parseWslPath } from '../wsl'
 import { mergePersistedWindowsPath } from '../pty/windows-environment-path'
-import { addOrcaWslInteropEnv } from '../pty/wsl-orca-env'
+import { addOrcaWslInteropEnv, stampWslOrchestrationCompatibilityHost } from '../pty/wsl-orca-env'
 import { PtyProducerFlowController } from './pty-producer-flow-control'
 import { beginTerminalInstall } from './watcher-removal-gate'
 import {
@@ -1787,6 +1787,11 @@ export function registerPtyHandlers(
         if (preAllocatedHandle) {
           env.ORCA_TERMINAL_HANDLE = preAllocatedHandle
         }
+        stampWslOrchestrationCompatibilityHost(
+          env,
+          runtime?.getOrchestrationCompatibilityHostId(),
+          ctx?.isWsl === true ? ctx.wslDistro : null
+        )
         if (ctx?.isWsl === true) {
           addOrcaWslInteropEnv(env)
         }
@@ -3497,6 +3502,11 @@ export function registerPtyHandlers(
           networkProxySettings: getSettings?.(),
           deferGitConfigGuardToDaemon: provider.supportsGitCredentialGuardHost?.(sessionId) === true
         })
+        stampWslOrchestrationCompatibilityHost(
+          env,
+          runtime?.getOrchestrationCompatibilityHostId(),
+          codexSelectionTarget.runtime === 'wsl' ? codexSelectionTarget.wslDistro : null
+        )
         promoteAgentTeamsShimPath(env, requestedAgentTeamsPath)
       }
 
@@ -4676,6 +4686,11 @@ export function registerPtyHandlers(
             deferGitConfigGuardToDaemon:
               provider.supportsGitCredentialGuardHost?.(effectiveSessionId) === true
           })
+          stampWslOrchestrationCompatibilityHost(
+            env,
+            runtime?.getOrchestrationCompatibilityHostId(),
+            codexSelectionTarget.runtime === 'wsl' ? codexSelectionTarget.wslDistro : null
+          )
           promoteAgentTeamsShimPath(env, requestedAgentTeamsPath)
         } catch (err) {
           // Why: buildPtyHostEnv has fs side-effects (Pi/OMP install); clear per-PTY state on throw, but only minted ids — caller ids may name existing PTYs.

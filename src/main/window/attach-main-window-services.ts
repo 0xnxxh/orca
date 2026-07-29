@@ -387,9 +387,12 @@ function registerRuntimeWindowLifecycle(
           ...(opts.splitDirection !== undefined ? { splitDirection: opts.splitDirection } : {}),
           ...(opts.splitTelemetrySource !== undefined
             ? { splitTelemetrySource: opts.splitTelemetrySource }
-            : {})
+            : {}),
+          ...(opts.focus !== undefined ? { focus: opts.focus } : {})
         })
       }),
+    resolveLegacyWorkerTerminalRecovery: (paneKey, resolution) =>
+      send('agentStatus:legacyWorkerTerminalRecovery', { paneKey, resolution }),
     splitTerminal: (tabId, paneRuntimeId, opts) => {
       send('ui:splitTerminal', {
         tabId,
