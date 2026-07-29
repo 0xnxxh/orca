@@ -1582,11 +1582,12 @@ export function useIpcEvents(): void {
               requestBackgroundTerminalWorktreeMount({ worktreeId, tabIds: [tab.id] })
             }
             if (requestId) {
+              // Why: attest the actual binding; recovery callers compare it with their expected identity.
               const identity =
                 ptyId && tabId && leafId
                   ? verifyTerminalRevealIdentity(useAppStore.getState(), {
                       worktreeId,
-                      tabId,
+                      tabId: tab.id,
                       leafId,
                       ptyId
                     })
