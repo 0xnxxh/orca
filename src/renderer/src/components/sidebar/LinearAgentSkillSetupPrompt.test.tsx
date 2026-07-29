@@ -344,7 +344,7 @@ describe('LinearAgentSkillSetupPrompt', () => {
       setupButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(document.body.textContent).toContain("wsl.exe -d 'Fedora' -- bash -lc 'npx skills add")
+    expect(document.body.textContent).toContain("bash -lc 'npx --yes skills add")
     expect(mocks.panelProps.at(-1)).toEqual(
       expect.objectContaining({
         installedCommand:

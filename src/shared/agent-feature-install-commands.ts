@@ -12,10 +12,11 @@ export function buildAgentFeatureSkillInstallCommand(skillNames: readonly string
   if (skillNames.length === 0) {
     throw new Error('At least one skill name is required.')
   }
-  // Why: `-y` because this command is pasted into a live terminal — with more than one
-  // agent installed the CLI stops on an agent-selection prompt the user cannot see coming,
-  // and closing the panel tears the session down mid-prompt.
-  return `npx skills add ${ORCA_SKILLS_REPOSITORY_URL} --skill ${skillNames.join(' ')} --global -y`
+  // Why: pasted into a live terminal, so any prompt strands the user and closing the panel
+  // kills the session mid-prompt. Both flags are load-bearing, as in the headless updater:
+  // `npx --yes` skips npm's install-this-package prompt (npx re-resolves `latest` every
+  // run, so a cold or stale cache prompts); `skills … -y` skips agent selection.
+  return `npx --yes skills add ${ORCA_SKILLS_REPOSITORY_URL} --skill ${skillNames.join(' ')} --global -y`
 }
 
 export function buildAgentFeatureSkillUpdateCommand(skillName: string): string {

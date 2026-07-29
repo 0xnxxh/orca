@@ -118,7 +118,7 @@ describe('CliSkillRuntimeSetup runtime helpers', () => {
   )
 
   // Expectations are pinned rather than rebuilt from the builder: this is the only
-  // coverage that the non-interactive `-y` reaches the Windows rewrite.
+  // coverage that both non-interactive flags reach the Windows rewrite.
   it('reinstalls Windows-host skill updates through the add path', () => {
     expect(
       buildSkillCommandForRuntime(
@@ -129,13 +129,15 @@ describe('CliSkillRuntimeSetup runtime helpers', () => {
         },
         'win32'
       )
-    ).toBe('npx skills add https://github.com/stablyai/orca --skill orchestration --global -y')
+    ).toBe(
+      'npx --yes skills add https://github.com/stablyai/orca --skill orchestration --global -y'
+    )
   })
 
   it('treats missing runtime as a Windows host fallback for skill updates', () => {
     expect(
       buildSkillCommandForRuntime('npx skills update orca-cli --global', undefined, 'win32')
-    ).toBe('npx skills add https://github.com/stablyai/orca --skill orca-cli --global -y')
+    ).toBe('npx --yes skills add https://github.com/stablyai/orca --skill orca-cli --global -y')
   })
 
   it('keeps non-Windows host skill updates on the update path', () => {
