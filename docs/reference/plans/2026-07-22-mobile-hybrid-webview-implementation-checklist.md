@@ -549,7 +549,7 @@ recovery, or physical-device gates.
       RNW artifact. The retired Vite entry, package plugin/verifier, duplicate
       workspace/session/files/source-control UI, and UI-only tests are removed.
       Production bridge clients and transport tests remain. The rebuilt package
-      now verifies as build `bcd9c95e…`.
+      now verifies as build `e0ad7c7d…`.
 
 ## 3. Production Package Delivery RPC
 
@@ -1475,8 +1475,15 @@ copy.
   packaging and independent verification rejects executable access to Web
   Storage, IndexedDB, CacheStorage, cookies, WebSQL, and origin-private
   filesystem/storage persistence. It permits inert storage keywords used by
-  the production syntax highlighter. The remaining URL, DOM/message, cache
-  metadata, log, diagnostic, analytics, crash-report, and fixture audit is
+  the production syntax highlighter and rejects macOS, Linux, and Windows
+  build-machine user paths. Hosted URL construction owns a fixed page-host
+  label and cannot accept a paired-host identifier. Browser state removes URL
+  userinfo, signed/OAuth query or fragment credentials, and host-local file
+  paths before entering the page; page-originated navigation rejects those
+  values and unsupported schemes. Native transport and shared-route logs now
+  drop endpoint, WebSocket/auth event values, repository identity, and raw
+  errors in favor of protocol/state/category fields. The remaining DOM/message,
+  cache metadata, diagnostic, analytics, crash-report, and fixture audit is
   still open.
 - [~] Verify the WebView cannot make network requests. Static iOS/Android CSP
   and native-origin controls are covered. Android also sets
@@ -1927,9 +1934,10 @@ passes 576 files / 3,440 tests with 2 expected skips. A full root run passes
 30-second dynamic-import timeout; its isolated 2-test rerun passes in 4.69
 seconds. Mobile/root/RNW typechecks, mobile/shared lint, all 55 reliability
 gates, max-lines, localization, formatting, diff hygiene, and production
-package verification pass. The rebuilt package is
-`bcd9c95e3a1e416d82a240ff10ef311375d03cbc3210d44876c7bca896e093b7`:
-50 assets, 9,299,540 raw bytes, and 2,691,263 gzip bytes.
+package verification pass. The latest privacy-hardening package is
+`e0ad7c7dbb2991f10945bf66b4786dc8efc82599ddea0652e4a95c9d0d554eba`:
+50 assets, 9,301,460 raw bytes, and 2,692,026 gzip bytes. The full mobile suite
+passes 580 files / 3,449 tests with 2 expected skips.
 
 | Date       | Workstream              | Evidence                                                                                                                                                                                                                    | Result                                                                                                                                                                                            |
 | ---------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2306,6 +2314,7 @@ package verification pass. The rebuilt package is
 | 2026-07-27 | Android corrupt cache   | Forged and activated corrupt `ffff…`, stopped Desktop, cold-opened the exact APK, and inspected cache plus the private document with the durable harness                                                                    | Passed; verified `48531616…` restored, forged generation removed, and bridge-ready workspace-list UI retained                                                                                     |
 | 2026-07-27 | Hosted storage boundary | Inert hosted AsyncStorage adapter, verifier rejection of executable `localStorage`, and terminal preference/accessory/custom-shortcut typed bridge operations                                                               | Passed; page-to-native shortcut read/write round trip and unchanged session adapter included in 7 focused files / 34 tests                                                                        |
 | 2026-07-28 | Page persistence        | Packaging and verification share rejection of runtime code generation plus Web Storage, IndexedDB, CacheStorage, cookie, WebSQL, and origin-private filesystem/storage access                                               | Focused policy/package/page-source tests pass; mobile and RNW typechecks, focused lint, max-lines, formatting, diff hygiene, and exact build `bcd9c95e…` verification pass                        |
+| 2026-07-28 | Privacy boundaries      | Fixed page-host label; credential/file-path URL sanitization and navigation rejection; build-path rejection; value-free transport, pairing, Tasks, clipboard, dictation, and terminal logs                                  | 23 focused root tests, 25 focused mobile tests, full 580-file mobile suite / 3,449 tests with 2 skips, typechecks, lint, max-lines, formatting, diff hygiene, and exact build `e0ad7c7d…` pass    |
 | 2026-07-27 | Android private origin  | Exact Debug APK at reserved HTTPS origin, main-frame fragment validation, hosted History API fragment retention, deliberate-red network/navigation corpus, and real routed terminal snapshot                                | Passed; `/h/.../session/...#<session>` retained, zero sentinel observations, bridge loaded one real tab, and fresh logcat had no prior exceptions                                                 |
 | 2026-07-27 | RNW package             | Exact-source build and independent verifier after hosted History API session binding                                                                                                                                        | Passed; build `8b5c9b64b4caa778603ff4e3845a7f3df9c6ed0f027560cd5447ed259ebbb0e8`, 49 assets, 9,178,634 raw bytes, 2,662,870 gzip bytes                                                            |
 | 2026-07-27 | Validation              | Focused bridge/origin/history tests, mobile and mobile-web typechecks/lints, max-lines ratchet, Android JVM/process tests, exact Debug assembly, and diff hygiene                                                           | Passed; 34 focused tests, 17 Android JVM tests, 577 Gradle tasks, and no new max-lines bypass                                                                                                     |
@@ -2826,4 +2835,5 @@ package verification pass. The rebuilt package is
 | 2026-07-28 | Finding  | The full root run passes 3,829 files / 40,205 tests with 70 expected skips but the unrelated `ProjectViewWrapper` dynamic-import boundary again reaches its 30-second timeout under full-suite load. Its isolated rerun passes 2/2 in 4.69 seconds.                                                                                                                                                                                                                                                                                                                                                       |
 | 2026-07-28 | Complete | Mirrored Swift and Kotlin package-store suites now pass 120 concurrent cache flows per platform. The added same-host matrix covers 16 competing distinct-generation commits, 16 live-session activation/cleanup flows with post-activation reads, and 16 interleaved commit/abort mutations; final activation retains at most active plus previous, and host removal leaves no cache subtree.                                                                                                                                                                                                             |
 | 2026-07-28 | Complete | Packaging and independent verification now share one executable policy that rejects runtime code generation and page-owned Web Storage, IndexedDB, CacheStorage, cookie, WebSQL, and origin-private filesystem/storage access while permitting inert syntax-highlighter keywords. Focused tests, typechecks, lint, max-lines, formatting, diff hygiene, and exact `bcd9c95e…` package verification pass.                                                                                                                                                                                                  |
-| 2026-07-28 | Next     | Continue the privacy audit across URLs, DOM/messages, cache metadata, logs, diagnostics, analytics, crash reports, and fixtures; then run exact release-app corpus injection, broader live two-host/topology races, and independent security review.                                                                                                                                                                                                                                                                                                                                                      |
+| 2026-07-28 | Complete | Hosted page URL construction no longer accepts a paired-host identifier. Browser results, events, and snapshots remove credentials and local file paths; hosted navigation rejects credential-bearing URLs. Packaging rejects build-machine paths. Mobile logs retain only reviewed protocol, state, count, and category fields. The full mobile suite passes 580 files / 3,449 tests with 2 skips, and build `e0ad7c7d…` verifies at 50 assets / 9,301,460 raw / 2,692,026 gzip bytes.                                                                                                                   |
+| 2026-07-28 | Next     | Continue the privacy audit across DOM/messages, cache metadata, diagnostics, analytics, crash reports, and fixtures; then run exact release-app corpus injection, broader live two-host/topology races, and independent security review.                                                                                                                                                                                                                                                                                                                                                                  |

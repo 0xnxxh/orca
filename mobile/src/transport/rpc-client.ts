@@ -279,7 +279,7 @@ export function connect(
     emitLog(
       'info',
       reconnectAttempt > 0 ? `Reconnecting (attempt ${reconnectAttempt + 1})` : 'Opening WebSocket',
-      redactSocketEndpoint(endpoint)
+      redactedWebSocketEndpoint(endpoint)
     )
 
     if (!processMobileOutboundMemoryBudget.canRegisterBufferedAmount()) {
@@ -455,8 +455,13 @@ export function connect(
             (!msg.ok && (msg.error as { code?: unknown } | undefined)?.code === 'unauthorized')
           ) {
             openingOutbound.acknowledgeAuthentication()
-            console.log('[net] e2ee auth FAILED', { msgType: msg.type, error: msg.error })
-            clearHandshakeTimer()
+            console.log('[net] e2ee auth FAILED', {
+              signal: msg.type === 'e2ee_error' ? 'e2ee_error' : 'unauthorized_response'
+            })
+            if (handshakeTimer) {
+              clearTimeout(handshakeTimer)
+              handshakeTimer = null
+            }
             handleAuthRejection('Unauthorized — pairing may be revoked')
           }
         }
@@ -586,6 +591,11 @@ export function connect(
         disposeActiveOutbound()
       }
       const e = event as { code?: number; reason?: string; wasClean?: boolean } | undefined
+      const closeCode =
+        typeof e?.code === 'number' && Number.isInteger(e.code) && e.code >= 0 && e.code <= 65_535
+          ? e.code
+          : undefined
+      const wasClean = typeof e?.wasClean === 'boolean' ? e.wasClean : undefined
       const closeAt = Date.now()
       // Why: time-since-construct classifies the failure — instant close = RST/unreachable, slow = SYN timeout/packet loss.
       const constructToCloseMs = currentWsOpenedAt != null ? closeAt - currentWsOpenedAt : null
@@ -595,9 +605,8 @@ export function connect(
       // Why: statically imported — a hot-reload bug came from a stale closure capturing a half-loaded module.
       const closeEvent = describeSocketEvent(event)
       console.log('[net] ws.onclose', {
-        code: e?.code,
-        reason: e?.reason,
-        wasClean: e?.wasClean,
+        code: closeCode,
+        wasClean,
         state,
         attempt: reconnectAttempt,
         intentionallyClosed,
@@ -605,9 +614,10 @@ export function connect(
         constructToCloseMs,
         aliveMs,
         inboundIdleMs,
-        eventKeys: closeEvent.keys,
-        eventStr: closeEvent.json
+        eventFields: closeEvent.fields
       })
+      lastWsClosedAt = closeAt
+      currentWsOpenedAt = null
       handleSocketClosed(openingWs, { closeCode })
     }
 
@@ -615,15 +625,11 @@ export function connect(
       if (isStaleRpcSocketEvent(ws, openingWs, 'error', state, reconnectAttempt)) {
         return
       }
-      // Why: RN surfaces the original network error here — onclose follows but its close code alone hides the cause.
-      const e = event as { message?: string } | undefined
       const errEvent = describeSocketEvent(event)
       console.log('[net] ws.onerror', {
-        message: e?.message,
         state,
         attempt: reconnectAttempt,
-        eventKeys: errEvent.keys,
-        eventStr: errEvent.json
+        eventFields: errEvent.fields
       })
     }
   }

@@ -3,18 +3,14 @@ import type {
   MobileWebResumeRoute
 } from '../../../src/shared/mobile-web/bridge-contract'
 
-export function mobileWebResumeRouteTarget(
-  route: MobileWebResumeRoute,
-  hostedHostId: string
-): string | null {
-  const target = mobileWebNavigationRouteTarget(route, hostedHostId)
+const HOSTED_PAGE_HOST_ID = 'paired-orca-desktop'
+
+export function mobileWebResumeRouteTarget(route: MobileWebResumeRoute): string | null {
+  const target = mobileWebNavigationRouteTarget(route)
   return target === '/' ? null : target
 }
 
-export function mobileWebNavigationRouteTarget(
-  route: MobileWebNavigationRoute,
-  hostedHostId: string
-): string {
+export function mobileWebNavigationRouteTarget(route: MobileWebNavigationRoute): string {
   if (route.kind === 'workspaceList') {
     return '/'
   }
@@ -22,14 +18,14 @@ export function mobileWebNavigationRouteTarget(
     const query = route.taskSource
       ? `?${new URLSearchParams({ taskSource: route.taskSource }).toString()}`
       : ''
-    return `/h/${encodeURIComponent(hostedHostId)}/tasks${query}`
+    return `/h/${HOSTED_PAGE_HOST_ID}/tasks${query}`
   }
   if (route.kind === 'accounts') {
-    return `/h/${encodeURIComponent(hostedHostId)}/accounts`
+    return `/h/${HOSTED_PAGE_HOST_ID}/accounts`
   }
   if (route.kind === 'newWorkspace') {
     return '/?action=newWorktree'
   }
   const query = new URLSearchParams({ name: route.workspaceName }).toString()
-  return `/h/${encodeURIComponent(hostedHostId)}/session/${encodeURIComponent(route.workspaceId)}?${query}`
+  return `/h/${HOSTED_PAGE_HOST_ID}/session/${encodeURIComponent(route.workspaceId)}?${query}`
 }

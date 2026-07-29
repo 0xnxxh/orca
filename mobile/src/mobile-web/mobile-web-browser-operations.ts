@@ -7,6 +7,7 @@ import {
   MobileWebBrowserPointerPayloadSchema,
   MobileWebBrowserTargetPayloadSchema
 } from '../../../src/shared/mobile-web/browser-operation-contract'
+import { mobileWebPageBrowserUrl } from '../../../src/shared/mobile-web/browser-url-privacy'
 import type { RpcClient } from '../transport/rpc-client'
 import type { MobileWebBrowserAuthority } from './mobile-web-browser-authority'
 import { MobileWebBrokerError } from './mobile-web-broker-error'
@@ -29,7 +30,7 @@ export async function executeMobileWebBrowserOperation(args: {
     )
     const result = requireResult(response)
     const parsed = MobileWebBrowserNavigateResultSchema.safeParse({
-      url: isRecord(result) && typeof result.url === 'string' ? result.url : ''
+      url: isRecord(result) ? mobileWebPageBrowserUrl(result.url) : 'about:blank'
     })
     if (!parsed.success) {
       throw new MobileWebBrokerError('host_error')

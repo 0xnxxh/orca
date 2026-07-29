@@ -23,6 +23,20 @@ describe('mobile web browser operation contract', () => {
       }).success
     ).toBe(false)
     expect(
+      MobileWebBrowserNavigatePayloadSchema.safeParse({
+        workspaceId: 'workspace-1',
+        pageId: 'browser-1',
+        url: 'https://example.com/callback?access_token=secret'
+      }).success
+    ).toBe(false)
+    expect(
+      MobileWebBrowserNavigatePayloadSchema.safeParse({
+        workspaceId: 'workspace-1',
+        pageId: 'browser-1',
+        url: 'file:///private/repository/secret.txt'
+      }).success
+    ).toBe(false)
+    expect(
       MobileWebBrowserPointerPayloadSchema.safeParse({
         workspaceId: 'workspace-1',
         pageId: 'browser-1',

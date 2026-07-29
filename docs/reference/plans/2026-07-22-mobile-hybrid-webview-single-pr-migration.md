@@ -339,8 +339,16 @@ operations. Packaging and independent verification share one executable policy
 that rejects runtime code generation and access to Web Storage, IndexedDB,
 CacheStorage, cookies, WebSQL, or origin-private filesystem/storage persistence.
 Bare storage keywords remain allowed because the production syntax highlighter
-contains inert keyword tables. Focused policy tests, page-to-native round trips,
-and the exact 9,299,540-byte production package pass.
+contains inert keyword tables. The same policy rejects macOS, Linux, and Windows
+build-machine user paths. Hosted URL construction owns its fixed page-host label
+and cannot accept a paired-host identifier. Browser results, events, and
+snapshots remove URL userinfo, signed/OAuth query or fragment credentials, and
+host-local file paths before entering the page; hosted navigation rejects those
+values and unsupported schemes. Native transport, pairing, Tasks, clipboard,
+dictation, and terminal error logs retain only reviewed protocol, state, count,
+and error-category fields rather than endpoint, event, repository, or error
+values. Focused policy tests, page-to-native round trips, and the exact
+9,301,460-byte production package pass.
 
 This proves the core Android Debug emulator and deliberate isolation slices.
 The separate locally signed Release gate now passes on a production `user`
@@ -2184,9 +2192,9 @@ The authoritative route now has a separately reviewed ceiling of 10 MiB total,
 from 8 MiB / 2 MiB / 7.5 MiB only after the legacy Mermaid CDN executable was
 replaced by the locally bundled, network-denied engine needed by both native
 and RNW without forking the existing UI. Boundary tests reject every
-measurement above its ceiling. The current 50-asset package is 9,299,540 bytes
-/ 2,691,263 bytes gzip and build
-`bcd9c95e3a1e416d82a240ff10ef311375d03cbc3210d44876c7bca896e093b7`.
+measurement above its ceiling. The current 50-asset package is 9,301,460 bytes
+/ 2,692,026 bytes gzip and build
+`e0ad7c7dbb2991f10945bf66b4786dc8efc82599ddea0652e4a95c9d0d554eba`.
 `build:mobile-web` and release resource mapping therefore select the RNW
 package; the original 2 MiB Vite-fixture ceiling is retired with that fixture.
 Workspace snapshots now page through

@@ -1,9 +1,13 @@
 import { z } from 'zod'
 import { isMobileWebBase64 } from './protocol-token-contract'
 import { MobileWebWorkspaceIdSchema } from './workspace-operation-contract'
+import {
+  isMobileWebPageBrowserNavigationUrl,
+  MOBILE_WEB_PAGE_BROWSER_URL_MAX_LENGTH
+} from './browser-url-privacy'
 
 export const MOBILE_WEB_BROWSER_PAGE_ID_MAX_LENGTH = 512
-export const MOBILE_WEB_BROWSER_URL_MAX_LENGTH = 4096
+export const MOBILE_WEB_BROWSER_URL_MAX_LENGTH = MOBILE_WEB_PAGE_BROWSER_URL_MAX_LENGTH
 export const MOBILE_WEB_BROWSER_FRAME_MAX_IMAGE_BYTES = 8 * 1024 * 1024
 export const MOBILE_WEB_BROWSER_FRAME_CHUNK_BYTES = 128 * 1024
 export const MOBILE_WEB_BROWSER_FRAME_MAX_CHUNKS = Math.ceil(
@@ -47,7 +51,7 @@ export const MobileWebBrowserNavigatePayloadSchema = MobileWebBrowserTargetSchem
     .string()
     .min(1)
     .max(MOBILE_WEB_BROWSER_URL_MAX_LENGTH)
-    .refine(isAllowedBrowserUrl, 'Unsupported browser URL')
+    .refine(isMobileWebPageBrowserNavigationUrl, 'Unsupported browser URL')
 }).strict()
 
 export const MobileWebBrowserTargetPayloadSchema = MobileWebBrowserTargetSchema
@@ -169,15 +173,3 @@ export type MobileWebBrowserKeyboardPayload = z.infer<typeof MobileWebBrowserKey
 export type MobileWebBrowserDialogPayload = z.infer<typeof MobileWebBrowserDialogPayloadSchema>
 export type MobileWebBrowserEvent = z.infer<typeof MobileWebBrowserEventSchema>
 export type MobileWebBrowserFrameChunk = Extract<MobileWebBrowserEvent, { type: 'frameChunk' }>
-
-function isAllowedBrowserUrl(value: string): boolean {
-  if (value === 'about:blank') {
-    return true
-  }
-  try {
-    const protocol = new URL(value).protocol
-    return protocol === 'http:' || protocol === 'https:' || protocol === 'file:'
-  } catch {
-    return false
-  }
-}

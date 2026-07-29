@@ -113,8 +113,8 @@ changed-file and full-mobile formatting, localization, the max-lines ratchet,
 and diff hygiene pass. React Doctor reports zero blocking errors across the
 migration without suppressions. The independently verified React Native Web
 package is
-`bcd9c95e3a1e416d82a240ff10ef311375d03cbc3210d44876c7bca896e093b7`:
-50 assets, 9,299,540 raw bytes, and 2,691,263 gzip bytes.
+`e0ad7c7dbb2991f10945bf66b4786dc8efc82599ddea0652e4a95c9d0d554eba`:
+50 assets, 9,301,460 raw bytes, and 2,692,026 gzip bytes.
 
 The immediately preceding `7c7c673d…` package passed the unpacked macOS arm64 →
 Docker SSH → actual iOS WKWebView journey from a clean app reinstall in 1.9
@@ -314,8 +314,8 @@ collection ceiling. Session subscription events are also bound to the
 requested workspace. Existing Source Control, provider-review, file, and
 Markdown correlation remains in force.
 
-The production package now verifies as `bcd9c95e…`: 50 assets, 9,299,540 raw
-bytes, and 2,691,263 gzip bytes. The full mobile suite passes 576 files / 3,440
+The production package now verifies as `e0ad7c7d…`: 50 assets, 9,301,460 raw
+bytes, and 2,692,026 gzip bytes. The full mobile suite passes 580 files / 3,449
 tests with 2 expected skips. Mobile, mobile-web, and root typechecks; mobile and
 mobile-web lint; all 55 reliability gates; localization; max-lines; and package
 verification pass. The full root run passes 3,829 files / 40,205 tests with 70
@@ -330,10 +330,15 @@ commit/abort mutations, bounded final retention, and host removal.
 Packaging and independent package verification now share one executable policy
 that rejects runtime code generation and page-owned Web Storage, IndexedDB,
 CacheStorage, cookie, WebSQL, and origin-private filesystem/storage access. It
-permits inert storage keywords required by the production syntax highlighter.
-Focused tests and exact build `bcd9c95e…` verification pass. The remaining
-security work below is exact release-app corpus testing, broader live
-cross-scope races, the rest of the privacy audit, and independent review.
+permits inert storage keywords required by the production syntax highlighter
+and rejects build-machine user paths. Hosted URL construction cannot accept a
+paired-host identity. Browser state removes credentials and host-local file
+paths before entering the page, and hosted navigation rejects credential-bearing
+URLs. Native transport and shared-route logging removes endpoint, WebSocket/auth
+event, repository, and raw error values. Focused tests and exact build
+`e0ad7c7d…` verification pass. The remaining security work below is exact
+release-app corpus testing, broader live cross-scope races, the rest of the
+privacy audit, and independent review.
 
 ## 1. Production Cutover and Cleanup
 
@@ -410,8 +415,12 @@ cross-scope races, the rest of the privacy audit, and independent review.
 - [ ] Verify no credential or privileged host identity reaches URLs, DOM state,
       page storage, cache assets, logs, diagnostics, analytics, or fixtures.
       Executable access to browser-owned persistence now fails during both
-      packaging and verification; URLs, DOM/messages, cache metadata, logs,
-      diagnostics, analytics, crash reports, and fixtures remain under audit.
+      packaging and verification. Hosted routes use a fixed page-host label, the
+      package rejects build-machine paths, browser state removes credential and
+      host-local file URLs, hosted navigation rejects credential-bearing URLs,
+      and reviewed mobile logs retain only protocol/state/category fields.
+      DOM/messages, cache metadata, remaining diagnostics, analytics, crash
+      reports, and fixtures remain under audit.
 - [ ] Verify all resource limits apply before allocation and during assembly.
       Persisted native manifests, activation metadata, and assets have
       pre-allocation read ceilings; every bridge operation has generated

@@ -16,6 +16,7 @@ import {
   loadMobileOnboardingSteps,
   mobileOnboardingDestination
 } from '../src/onboarding/mobile-onboarding-plan'
+import { mobileLogErrorKind } from '../src/diagnostics/mobile-log-error-kind'
 
 type Status = 'awaiting-confirm' | 'connecting' | 'error'
 
@@ -131,7 +132,7 @@ export default function PairConfirmScreen() {
       if (!mountedRef.current || !attemptIsCurrent) {
         return
       }
-      console.warn('[pair-confirm] connect failed', err)
+      console.warn('[pair-confirm] connect failed', { kind: mobileLogErrorKind(err) })
       setStatus('error')
       setErrorMessage(
         timedOut

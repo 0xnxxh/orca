@@ -284,7 +284,7 @@ describe('mobile web bridge round trip', () => {
           id: `browser_0_${'01'.repeat(16)}`,
           browserPageId: `browser_0_${'01'.repeat(16)}`,
           title: 'Review',
-          url: 'https://example.invalid/?credential=secret',
+          url: 'https://example.invalid/',
           loading: false,
           canGoBack: true,
           canGoForward: false,

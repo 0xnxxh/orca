@@ -33,6 +33,26 @@ describe('mobile web browser operations', () => {
     )
   })
 
+  it('removes credentials from the authoritative navigation result', async () => {
+    const { workspaceAuthority, browserAuthority, workspaceId, pageId } = authorities()
+    const sendRequest = vi.fn<RpcClient['sendRequest']>().mockResolvedValue({
+      ok: true,
+      result: {
+        url: 'https://user:password@example.com/callback?code=secret&tab=review#access_token=secret'
+      }
+    })
+
+    await expect(
+      executeMobileWebBrowserOperation({
+        operation: 'navigate',
+        payload: { workspaceId, pageId, url: 'https://example.com' },
+        client: { sendRequest } as unknown as RpcClient,
+        workspaceAuthority,
+        browserAuthority
+      })
+    ).resolves.toEqual({ url: 'https://example.com/callback?tab=review' })
+  })
+
   it('keeps pointer fallback native and rejects cross-workspace page handles', async () => {
     const { workspaceAuthority, browserAuthority, workspaceId, pageId } = authorities()
     const sendRequest = vi

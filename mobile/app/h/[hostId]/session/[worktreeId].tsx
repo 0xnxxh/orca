@@ -46,6 +46,7 @@ import {
 } from 'lucide-react-native'
 import type { RpcClient } from '../../../../src/transport/rpc-client'
 import { loadSessionNativeHostProfile } from '../../../../src/session/session-native-host-profile'
+import { mobileLogErrorKind } from '../../../../src/diagnostics/mobile-log-error-kind'
 import { persistSessionLastVisitedWorktree } from '../../../../src/session/session-last-visited-worktree'
 import { startRuntimeCapabilityRead } from '../../../../src/transport/runtime-capability-probe'
 import {
@@ -3529,11 +3530,9 @@ export function SessionScreen({
         terminalRefs.current.get(handle)?.cancelSelect()
       } catch (e) {
         triggerError()
-        const err = e as { name?: string; message?: string }
         // eslint-disable-next-line no-console
         console.warn('[mobile-clip] setString failed', {
-          name: err.name,
-          message: err.message
+          kind: mobileLogErrorKind(e)
         })
         showToast("Couldn't copy", 1500)
       }

@@ -2,6 +2,7 @@ import {
   MobileWebBrowserEventSchema,
   type MobileWebBrowserEvent
 } from '../../../src/shared/mobile-web/browser-operation-contract'
+import { mobileWebPageBrowserUrl } from '../../../src/shared/mobile-web/browser-url-privacy'
 
 export function sanitizeMobileWebBrowserEvent(value: unknown): MobileWebBrowserEvent | null {
   if (!isRecord(value)) {
@@ -12,7 +13,7 @@ export function sanitizeMobileWebBrowserEvent(value: unknown): MobileWebBrowserE
     return MobileWebBrowserEventSchema.parse({
       type: value.type,
       tab: {
-        url: boundedText(tab.url, 4096, 'about:blank'),
+        url: mobileWebPageBrowserUrl(tab.url),
         title: boundedText(tab.title, 240, ''),
         canGoBack: tab.canGoBack === true,
         canGoForward: tab.canGoForward === true

@@ -21,6 +21,7 @@ import type {
   UseMobileDictationOptions,
   UseMobileDictationResult
 } from './mobile-dictation-session-state'
+import { mobileLogErrorKind } from '../diagnostics/mobile-log-error-kind'
 
 export type { UseMobileDictationResult } from './mobile-dictation-session-state'
 
@@ -68,7 +69,9 @@ export function useNativeMobileDictation(
       } catch (err) {
         // Cleanup must keep going when native recording shutdown throws, or
         // the wake tag and dictation state would leak.
-        console.error('Failed to stop microphone recording', err)
+        console.error('Failed to stop microphone recording', {
+          kind: mobileLogErrorKind(err)
+        })
       }
       void keepAwakeOwner.release(dictationId ?? undefined).catch(() => undefined)
     },

@@ -37,6 +37,7 @@ import {
 } from '../../../src/transport/client-context-connection-metrics'
 import { classifyConnection } from '../../../src/transport/connection-health'
 import type { ConnectionState } from '../../../src/transport/types'
+import { mobileLogErrorKind } from '../../../src/diagnostics/mobile-log-error-kind'
 import { StatusDot } from '../../../src/components/StatusDot'
 import { ActionSheetModal } from '../../../src/components/ActionSheetModal'
 import { BottomDrawer } from '../../../src/components/BottomDrawer'
@@ -3271,11 +3272,10 @@ export default function MobileTasksScreen({
           } catch (err) {
             const isExpectedSshSkip = isGitHubWorkItemsSshRemoteRequiredError(err)
             const logWorkItemFetchFailure = isExpectedSshSkip ? console.log : console.warn
-            logWorkItemFetchFailure(
-              '[mobile tasks] failed to fetch github work items',
-              repo.id,
-              isExpectedSshSkip && err instanceof Error ? err.message : err
-            )
+            logWorkItemFetchFailure('[mobile tasks] failed to fetch github work items', {
+              expected: isExpectedSshSkip,
+              kind: mobileLogErrorKind(err)
+            })
             return {
               items: [] as Array<Extract<TaskItem, { provider: 'github' }>>,
               repoId: repo.id,
@@ -3331,11 +3331,10 @@ export default function MobileTasksScreen({
           } catch (err) {
             const isExpectedSshSkip = isGitHubWorkItemsSshRemoteRequiredError(err)
             const logWorkItemCountFailure = isExpectedSshSkip ? console.log : console.warn
-            logWorkItemCountFailure(
-              '[mobile tasks] failed to count github work items',
-              repo.id,
-              isExpectedSshSkip && err instanceof Error ? err.message : err
-            )
+            logWorkItemCountFailure('[mobile tasks] failed to count github work items', {
+              expected: isExpectedSshSkip,
+              kind: mobileLogErrorKind(err)
+            })
             return 0
           }
         }
@@ -3468,7 +3467,9 @@ export default function MobileTasksScreen({
                   )
                 }
               } catch (err) {
-                console.warn(`[mobile tasks] failed to fetch ${provider} work items`, repo.id, err)
+                console.warn(`[mobile tasks] failed to fetch ${provider} work items`, {
+                  kind: mobileLogErrorKind(err)
+                })
                 return {
                   items: [] as TaskItem[],
                   error: err instanceof Error ? err.message : 'Failed to load GitLab tasks'

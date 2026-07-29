@@ -88,6 +88,47 @@ describe('mobile web session snapshot', () => {
     ).toThrow('mobile_web_session_snapshot_invalid')
   })
 
+  it('removes browser URL credentials and local file paths', () => {
+    const authority = authorities()
+    const snapshot = mobileWebSessionSnapshot(
+      {
+        worktree: 'workspace-1',
+        publicationEpoch: 'epoch-1',
+        snapshotVersion: 2,
+        activeTabId: 'browser-1',
+        activeTabType: 'browser',
+        tabs: [
+          {
+            type: 'browser',
+            id: 'browser-1',
+            browserPageId: 'host-browser-1',
+            title: 'Private callback',
+            url: 'https://user:password@example.com/callback?token=secret&tab=review',
+            isActive: true
+          },
+          {
+            type: 'browser',
+            id: 'browser-2',
+            browserPageId: 'host-browser-2',
+            title: 'Local file',
+            url: 'file:///private/repository/secret.txt',
+            isActive: false
+          }
+        ]
+      },
+      'workspace-1',
+      'opaque-workspace',
+      authority.browser,
+      authority.nativeChat
+    )
+
+    expect(snapshot.tabs.map((tab) => ('url' in tab ? tab.url : null))).toEqual([
+      'https://example.com/callback?tab=review',
+      'file:///[redacted]'
+    ])
+    expect(JSON.stringify(snapshot)).not.toMatch(/password|token=|private\/repository/)
+  })
+
   it('projects only bounded chat state and hides host transcript authority', () => {
     const authority = authorities()
     const snapshot = mobileWebSessionSnapshot(

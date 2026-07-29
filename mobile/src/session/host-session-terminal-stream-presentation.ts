@@ -82,7 +82,6 @@ function dropStaleResize(
     const last = context.layoutSequences.get(context.handle)
     if (last != null && eventSequence < last && last - eventSequence <= 20) {
       console.log('[fit][session] DROP-stale-seq', {
-        handle: context.handle.slice(-8),
         type: data.type,
         eventSeq: eventSequence,
         lastSeq: last,
@@ -119,7 +118,6 @@ function presentScrollback(
   const ref = context.getTerminalRef(context.handle)
   if (!ref) {
     console.log('[fit][session] scrollback DROPPED — no terminal ref', {
-      handle: context.handle.slice(-8),
       cols,
       rows
     })
@@ -187,7 +185,6 @@ function presentOutput(
   const ref = context.getTerminalRef(context.handle)
   if (!ref) {
     console.log('[fit][session] data DROPPED — no terminal ref', {
-      handle: context.handle.slice(-8),
       chunkLen: hostSessionTerminalData(data.chunk).length,
       initialized: context.initializedHandles.has(context.handle)
     })
@@ -195,7 +192,6 @@ function presentOutput(
   }
   if (!context.initializedHandles.has(context.handle)) {
     console.log('[fit][session] data RECEIVED before scrollback', {
-      handle: context.handle.slice(-8),
       chunkLen: hostSessionTerminalData(data.chunk).length
     })
   }

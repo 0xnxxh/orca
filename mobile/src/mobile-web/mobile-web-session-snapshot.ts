@@ -12,6 +12,7 @@ import {
   type MobileWebSessionSnapshotResult,
   type MobileWebSessionTab
 } from '../../../src/shared/mobile-web/bridge-operation-contract'
+import { mobileWebPageBrowserUrl } from '../../../src/shared/mobile-web/browser-url-privacy'
 import type { MobileWebBrowserAuthority } from './mobile-web-browser-authority'
 import type {
   MobileWebHostNativeChatBinding,
@@ -159,7 +160,7 @@ function mobileWebSessionTab(
     id: browserPageId,
     type: 'browser',
     browserPageId,
-    url: boundedText(value.url, 4096, 'about:blank'),
+    url: mobileWebPageBrowserUrl(value.url),
     loading: value.loading === true,
     canGoBack: value.canGoBack === true,
     canGoForward: value.canGoForward === true

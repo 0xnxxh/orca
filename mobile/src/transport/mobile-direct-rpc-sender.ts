@@ -1,6 +1,7 @@
 import type { MobileDirectRpcOutbound } from './mobile-direct-rpc-outbound'
 import { stringifyMobileOutboundJson } from './mobile-outbound-json'
 import type { ConnectionState } from './types'
+import { mobileLogErrorKind } from '../diagnostics/mobile-log-error-kind'
 
 export function createMobileDirectRpcSender(args: {
   getOutbound: () => MobileDirectRpcOutbound | null
@@ -21,7 +22,9 @@ export function createMobileDirectRpcSender(args: {
           requestAcknowledgementKey(request)
         )
       } catch (error) {
-        console.warn('[net] outbound request rejected', error)
+        console.warn('[net] outbound request rejected', {
+          kind: mobileLogErrorKind(error)
+        })
         return false
       }
     }

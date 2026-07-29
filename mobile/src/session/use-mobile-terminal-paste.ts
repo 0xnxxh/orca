@@ -126,7 +126,13 @@ export function useMobileTerminalPaste({
       const err = e as { name?: string; message?: string }
       const isDisconnected = connState !== 'connected'
       // eslint-disable-next-line no-console
-      console.warn('[mobile-clip] paste failed', { name: err.name, message: err.message })
+      console.warn('[mobile-clip] paste failed', {
+        kind: isDisconnected
+          ? 'disconnected'
+          : err.message === 'Clipboard image is too large'
+            ? 'image-too-large'
+            : 'unknown'
+      })
       if (isDisconnected) {
         showToast('Paste failed (disconnected)', 1500)
       } else if (err.message === 'Clipboard image is too large') {

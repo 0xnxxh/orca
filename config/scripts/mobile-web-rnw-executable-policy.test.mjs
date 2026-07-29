@@ -18,6 +18,14 @@ describe('mobile web RNW executable policy', () => {
     expect(() => assertMobileWebRnwExecutablePolicy(source)).toThrow('page-owned persistence')
   })
 
+  it.each([
+    'const sourcePath="/Users/developer/orca/mobile/app.tsx"',
+    'const sourcePath="/home/runner/work/orca/mobile/app.tsx"',
+    String.raw`const sourcePath="C:\\Users\\builder\\orca\\mobile\\app.tsx"`
+  ])('rejects build environment paths: %s', (source) => {
+    expect(mobileWebRnwExecutablePolicyFailure(source)).toBe('build environment path disclosure')
+  })
+
   it('allows inert syntax-highlighter keyword strings', () => {
     expect(
       mobileWebRnwExecutablePolicyFailure('["document","localStorage","sessionStorage","module"]')

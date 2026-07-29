@@ -6,20 +6,24 @@ import {
 
 describe('mobile web route restoration', () => {
   it('keeps the workspace list as the default recovery route', () => {
-    expect(mobileWebResumeRouteTarget({ kind: 'workspaceList' }, 'paired-orca-desktop')).toBeNull()
+    expect(mobileWebResumeRouteTarget({ kind: 'workspaceList' })).toBeNull()
   })
 
-  it('restores only the opaque workspace handle and bounded display name', () => {
+  it('restores only the fixed page host label, opaque workspace handle, and display name', () => {
     expect(
-      mobileWebResumeRouteTarget(
-        {
-          kind: 'session',
-          workspaceId: 'opaque/workspace?one',
-          workspaceName: 'Feature & tests'
-        },
-        'paired-orca-desktop'
-      )
+      mobileWebResumeRouteTarget({
+        kind: 'session',
+        workspaceId: 'opaque/workspace?one',
+        workspaceName: 'Feature & tests'
+      })
     ).toBe('/h/paired-orca-desktop/session/opaque%2Fworkspace%3Fone?name=Feature+%26+tests')
+  })
+
+  it('cannot accept a paired host identity for a page URL', () => {
+    expect(mobileWebNavigationRouteTarget).toHaveLength(1)
+    expect(mobileWebNavigationRouteTarget({ kind: 'accounts' })).not.toContain(
+      'paired-host-public-key'
+    )
   })
 
   it.each([
@@ -31,6 +35,6 @@ describe('mobile web route restoration', () => {
     [{ kind: 'accounts' } as const, '/h/paired-orca-desktop/accounts'],
     [{ kind: 'newWorkspace' } as const, '/?action=newWorktree']
   ])('maps the typed native destination %s', (route, expected) => {
-    expect(mobileWebNavigationRouteTarget(route, 'paired-orca-desktop')).toBe(expected)
+    expect(mobileWebNavigationRouteTarget(route)).toBe(expected)
   })
 })
