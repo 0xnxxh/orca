@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   assertSshPtySourceCreditRelayLaunchPolicy,
   resolveSshPtySourceCreditV1Selection,
@@ -36,6 +36,25 @@ describe('SSH PTY source-credit rollout', () => {
         { [SSH_PTY_SOURCE_CREDIT_V1_ENV]: '1' }
       )
     ).toBe(true)
+  })
+
+  it('latches the default environment override when the module initializes', async () => {
+    const previous = process.env[SSH_PTY_SOURCE_CREDIT_V1_ENV]
+    try {
+      process.env[SSH_PTY_SOURCE_CREDIT_V1_ENV] = '1'
+      vi.resetModules()
+      const rollout = await import('./ssh-pty-source-credit-rollout')
+      process.env[SSH_PTY_SOURCE_CREDIT_V1_ENV] = '0'
+
+      expect(rollout.resolveSshPtySourceCreditV1Selection({})).toBe(true)
+    } finally {
+      if (previous === undefined) {
+        delete process.env[SSH_PTY_SOURCE_CREDIT_V1_ENV]
+      } else {
+        process.env[SSH_PTY_SOURCE_CREDIT_V1_ENV] = previous
+      }
+      vi.resetModules()
+    }
   })
 
   it('surfaces a deliberate restart action for a live off-to-on transition', () => {

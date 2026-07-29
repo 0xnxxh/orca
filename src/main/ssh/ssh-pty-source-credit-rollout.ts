@@ -7,11 +7,14 @@ function readSshPtySourceCreditV1Override(env: NodeJS.ProcessEnv): boolean | und
   return value === undefined ? undefined : value === '1'
 }
 
+const startupSshPtySourceCreditV1Override = readSshPtySourceCreditV1Override(process.env)
+
 export function resolveSshPtySourceCreditV1Selection(
   target: Pick<SshTarget, 'experimentalPtySourceCreditV1'>,
-  env: NodeJS.ProcessEnv = process.env
+  env?: NodeJS.ProcessEnv
 ): boolean {
-  return readSshPtySourceCreditV1Override(env) ?? target.experimentalPtySourceCreditV1 === true
+  const override = env ? readSshPtySourceCreditV1Override(env) : startupSshPtySourceCreditV1Override
+  return override ?? target.experimentalPtySourceCreditV1 === true
 }
 
 export class SshPtySourceCreditRestartRequiredError extends Error {

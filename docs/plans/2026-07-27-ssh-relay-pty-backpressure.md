@@ -562,15 +562,15 @@ pipe. Unproved direct stdio remains subscriber-only.
 
 Capability support and rollout enablement are separate. Each `SshRelaySession`
 captures its target's `experimentalPtySourceCreditV1` selection at construction;
-`ORCA_SSH_PTY_SOURCE_CREDIT_V1=0|1` remains an explicit CI/development
-override. Fresh POSIX and Windows gate-on launches receive the safely quoted
-`--pty-source-credit-v1` flag; gate-off omits it. The endpoint's persisted
-`.pty-source-credit-policy` records `v1` or `off` and fences incompatible
-reuse. A new main may still decline V1 from an already-running capable relay.
-Editing a target never changes a live session or its automatic reconnects; a
-later explicit connection captures the new selection. Sink drain, writer
-ordering, decoder bounds, and header-ACK hardening are correctness fixes and
-are not disabled by this gate.
+`ORCA_SSH_PTY_SOURCE_CREDIT_V1=0|1` remains an explicit process-startup-latched
+CI/development override. Fresh POSIX and Windows gate-on launches receive the
+safely quoted `--pty-source-credit-v1` flag; gate-off omits it. The endpoint's
+persisted `.pty-source-credit-policy` records `v1` or `off` and fences
+incompatible reuse. A new main may still decline V1 from an already-running
+capable relay. Editing a target never changes a live session or its automatic
+reconnects; a later explicit connection captures the new selection. Sink drain,
+writer ordering, decoder bounds, and header-ACK hardening are correctness fixes
+and are not disabled by this gate.
 
 Production deployment does not form arbitrary mixed-build main/relay pairs.
 `computeRemoteRelayDir` content-hash-scopes the install directory and its
@@ -2821,12 +2821,13 @@ is deterministic adapter evidence only, not a physical WSL run.
 V1 is behind `Bounded terminal output (experimental)` in each SSH target's
 Advanced settings and a persisted per-endpoint relay launch policy. Missing or
 false target state selects legacy mode. `ORCA_SSH_PTY_SOURCE_CREDIT_V1=0|1`
-explicitly overrides every target for CI, development, and emergency rollback.
-Main never negotiates merely because a long-lived relay advertises; the
-immutable selection captured by a new `SshRelaySession` is final for that
-session and all of its automatic reconnects. Fresh POSIX and Windows gate-on
-launch commands carry `--pty-source-credit-v1`; gate-off omits it, and the
-persisted endpoint policy records the selected mode.
+is latched when the process loads the rollout module and explicitly overrides
+every target for CI, development, and emergency rollback. Main never negotiates
+merely because a long-lived relay advertises; the immutable selection captured
+by a new `SshRelaySession` is final for that session and all of its automatic
+reconnects. Fresh POSIX and Windows gate-on launch commands carry
+`--pty-source-credit-v1`; gate-off omits it, and the persisted endpoint policy
+records the selected mode.
 
 Sink drain, the reserved writer lane, stdout serialization, bounded decoder
 work, bulk admission, and hostile header-ACK hardening remain enabled
