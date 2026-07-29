@@ -567,6 +567,7 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
       'MISSING\n', // rebuilt native process still cannot load
       '', // no persisted active pipe marker
       'WAITING',
+      '', // publish the per-launch credential
       '', // WMI relay launch
       'READY',
       '' // persist active pipe marker
@@ -661,6 +662,7 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
       'ORCA-NPTY-PROBE-OK\n',
       '', // rm probe stderr
       'DEAD',
+      '', // publish the per-launch credential
       'READY'
     ])
 
@@ -711,8 +713,8 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
       'MISSING', // re-probe after lock
       '', // SFTP-namespace install-owner marker (repair)
       { reject: 'npm ERR! network ETIMEDOUT' }, // npm install fails (offline)
-      '', // remote credential generation after degraded repair
       'DEAD',
+      '', // remote credential generation after degraded repair
       'READY'
     ])
 
@@ -739,8 +741,8 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
           sshChannelCloseConfirmed: false
         })
       )
-      .mockResolvedValueOnce('') // remote credential generation after degraded repair
       .mockResolvedValueOnce('DEAD')
+      .mockResolvedValueOnce('') // remote credential generation after degraded repair
       .mockResolvedValueOnce('READY')
 
     await deployAndLaunchRelay(conn)
@@ -886,8 +888,8 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
       '__ORCA_REMOTE_PLATFORM__ Linux x86_64',
       '/home/u',
       'MISSING',
-      '', // remote credential generation without a namespace marker
       'DEAD',
+      '', // remote credential generation without a namespace marker
       'READY'
     ])
 
@@ -910,6 +912,7 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
       'ORCA-NATIVE-DEPS-OK',
       '', // launch namespace marker
       'DEAD',
+      '', // publish the per-launch credential
       'READY'
     ])
 
@@ -934,6 +937,7 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
       'ORCA-NATIVE-DEPS-OK',
       '', // launch namespace marker
       'DEAD',
+      '', // publish the per-launch credential
       'READY'
     ])
 

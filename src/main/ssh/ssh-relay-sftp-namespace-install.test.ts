@@ -238,6 +238,7 @@ const POSIX_FIRST_INSTALL = [
   'ORCA-NPTY-PROBE-OK\n',
   '', // rm probe stderr
   'DEAD',
+  '', // publish the per-launch credential
   'READY'
 ]
 
@@ -253,6 +254,7 @@ const POSIX_REPAIR = [
   'ORCA-NPTY-PROBE-OK\n',
   '', // rm probe stderr
   'DEAD',
+  '', // publish the per-launch credential
   'READY'
 ]
 
@@ -262,6 +264,7 @@ const POSIX_HEALTHY_RECONNECT = [
   'ORCA-NATIVE-DEPS-OK',
   '', // per-launch namespace marker
   'DEAD',
+  '', // publish the per-launch credential
   'READY'
 ]
 
@@ -289,7 +292,7 @@ describe('relay install writes on a split SFTP namespace', () => {
     vi.restoreAllMocks()
   })
 
-  it('redirects every first-install write while shell commands keep the canonical path', async () => {
+  it('redirects every first-install artifact transfer while shell commands stay canonical', async () => {
     const conn = makeConnection(capture)
     feed(POSIX_FIRST_INSTALL)
 
@@ -298,8 +301,7 @@ describe('relay install writes on a split SFTP namespace', () => {
     expect(capture.uploadTargets).toEqual([SFTP_RELAY_DIR])
     expect(capture.writePaths).toEqual([
       `${SFTP_RELAY_DIR}/.version`,
-      `${SFTP_RELAY_DIR}/package.json`,
-      `${SFTP_RELAY_DIR}/relay.sock.credential`
+      `${SFTP_RELAY_DIR}/package.json`
     ])
     // Every shell command — mkdir, chmod, npm, launch — still names the shell path.
     for (const command of execCommands()) {
@@ -320,7 +322,7 @@ describe('relay install writes on a split SFTP namespace', () => {
     expect(markerCommands[0]).toContain(`${SHELL_RELAY_DIR}/.install-lock`)
   })
 
-  it('probes one shared marker for every write of an install', async () => {
+  it('probes one shared marker for every first-install artifact transfer', async () => {
     const conn = makeConnection(capture)
     feed(POSIX_FIRST_INSTALL)
 
@@ -329,8 +331,6 @@ describe('relay install writes on a split SFTP namespace', () => {
     const marker = issuedMarkerName()
     expect(marker).toMatch(MARKER_PATTERN)
     expect(capture.lstatCalls).toEqual([
-      `${SHELL_RELAY_DIR}/.install-lock/${marker}`,
-      `${SFTP_RELAY_DIR}/.install-lock/${marker}`,
       `${SHELL_RELAY_DIR}/.install-lock/${marker}`,
       `${SFTP_RELAY_DIR}/.install-lock/${marker}`,
       `${SHELL_RELAY_DIR}/.install-lock/${marker}`,
@@ -352,8 +352,7 @@ describe('relay install writes on a split SFTP namespace', () => {
     expect(capture.uploadTargets).toEqual([SHELL_RELAY_DIR])
     expect(capture.writePaths).toEqual([
       `${SHELL_RELAY_DIR}/.version`,
-      `${SHELL_RELAY_DIR}/package.json`,
-      `${SHELL_RELAY_DIR}/relay.sock.credential`
+      `${SHELL_RELAY_DIR}/package.json`
     ])
   })
 
@@ -389,14 +388,13 @@ describe('relay install writes on a split SFTP namespace', () => {
     expect(capture.uploadTargets).toEqual([SHELL_RELAY_DIR])
     expect(capture.writePaths).toEqual([
       `${SHELL_RELAY_DIR}/.version`,
-      `${SHELL_RELAY_DIR}/package.json`,
-      `${SHELL_RELAY_DIR}/relay.sock.credential`
+      `${SHELL_RELAY_DIR}/package.json`
     ])
     const marker = issuedMarkerName()
     const mappings = [...capture.uploadOptions, ...capture.writeOptions].map(
       (options) => options?.sftpNamespace
     )
-    expect(mappings).toHaveLength(4)
+    expect(mappings).toHaveLength(3)
     for (const mapping of mappings) {
       expect(mapping?.shellProbePath).toBe(`${SHELL_RELAY_DIR}/.install-lock/${marker}`)
       expect(mapping?.homeRelativeProbePath).toBe(`${RELAY_SUFFIX}/.install-lock/${marker}`)
@@ -404,8 +402,7 @@ describe('relay install writes on a split SFTP namespace', () => {
     expect(mappings.map((mapping) => mapping?.homeRelativePath)).toEqual([
       RELAY_SUFFIX,
       `${RELAY_SUFFIX}/.version`,
-      `${RELAY_SUFFIX}/package.json`,
-      `${RELAY_SUFFIX}/relay.sock.credential`
+      `${RELAY_SUFFIX}/package.json`
     ])
     expect(capture.realpathCalls).toEqual([])
   })
@@ -425,11 +422,10 @@ describe('relay install writes on a split SFTP namespace', () => {
     expect(capture.uploadTargets).toEqual([SHELL_RELAY_DIR])
     expect(capture.writePaths).toEqual([
       `${SHELL_RELAY_DIR}/.version`,
-      `${SHELL_RELAY_DIR}/package.json`,
-      `${SHELL_RELAY_DIR}/relay.sock.credential`
+      `${SHELL_RELAY_DIR}/package.json`
     ])
     const transferOptions = [...capture.uploadOptions, ...capture.writeOptions]
-    expect(transferOptions).toHaveLength(4)
+    expect(transferOptions).toHaveLength(3)
     for (const options of transferOptions) {
       expect(options?.sftpNamespace).toBeUndefined()
     }
@@ -530,36 +526,28 @@ describe('relay repair writes on a split SFTP namespace', () => {
     vi.restoreAllMocks()
   })
 
-  it('retains a healthy install marker through the shipping credential write', async () => {
+  it('publishes a healthy reconnect credential in the canonical shell namespace', async () => {
     const conn = makeConnection(capture, { transferMethods: true })
     feed(POSIX_HEALTHY_RECONNECT)
 
     await deployAndLaunchRelay(conn)
 
-    const marker = issuedMarkerName()
-    expect(capture.writePaths).toEqual([`${SHELL_RELAY_DIR}/relay.sock.credential`])
-    expect(capture.writeOptions[0]?.sftpNamespace).toEqual({
-      homeRelativePath: `${RELAY_SUFFIX}/relay.sock.credential`,
-      shellProbePath: `${SHELL_RELAY_DIR}/.install-lock/${marker}`,
-      homeRelativeProbePath: `${RELAY_SUFFIX}/.install-lock/${marker}`
-    })
-    expect(vi.mocked(conn.writeFile).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(abandonInstall).mock.invocationCallOrder[0]!
+    expect(capture.writePaths).toEqual([])
+    expect(execCommands().find((command) => command.includes('randomBytes'))).toContain(
+      `${SHELL_RELAY_DIR}/relay.sock.credential`
     )
   })
 
-  it('redirects a healthy installed reconnect through the fallback SFTP session', async () => {
+  it('does not redirect a healthy reconnect credential through fallback SFTP', async () => {
     const conn = makeConnection(capture)
     feed(POSIX_HEALTHY_RECONNECT)
 
     await deployAndLaunchRelay(conn)
 
-    const marker = issuedMarkerName()
-    expect(capture.writePaths).toEqual([`${SFTP_RELAY_DIR}/relay.sock.credential`])
-    expect(capture.lstatCalls).toEqual([
-      `${SHELL_RELAY_DIR}/.install-lock/${marker}`,
-      `${SFTP_RELAY_DIR}/.install-lock/${marker}`
-    ])
+    expect(capture.writePaths).toEqual([])
+    expect(execCommands().find((command) => command.includes('randomBytes'))).toContain(
+      `${SHELL_RELAY_DIR}/relay.sock.credential`
+    )
   })
 
   it.each(['busy', 'error'] as const)(
@@ -593,15 +581,17 @@ describe('relay repair writes on a split SFTP namespace', () => {
       SHELL_HOME,
       'ORCA-NATIVE-DEPS-OK',
       'DEAD',
+      '', // remote credential generation
       'READY'
     ])
 
     await deployAndLaunchRelay(conn)
 
     expect(conn.sftp).not.toHaveBeenCalled()
-    expect(execCommands().some((command) => command.includes('randomBytes'))).toBe(false)
-    expect(capture.writePaths).toEqual([`${SHELL_RELAY_DIR}/relay.sock.credential`])
-    expect(capture.writeOptions[0]?.sftpNamespace).toBeUndefined()
+    expect(execCommands().find((command) => command.includes('randomBytes'))).toContain(
+      `${SHELL_RELAY_DIR}/relay.sock.credential`
+    )
+    expect(capture.writePaths).toEqual([])
   })
 
   it('falls back to remote credential generation when a healthy marker is unavailable', async () => {
@@ -634,10 +624,7 @@ describe('relay repair writes on a split SFTP namespace', () => {
     expect(markerIndex).toBeGreaterThan(execCountAtLock)
     // The re-probe under the lock is the last exec before the marker.
     expect(commands[markerIndex - 1]).toContain('loadNativeModule')
-    expect(capture.writePaths).toEqual([
-      `${SFTP_RELAY_DIR}/package.json`,
-      `${SFTP_RELAY_DIR}/relay.sock.credential`
-    ])
+    expect(capture.writePaths).toEqual([`${SFTP_RELAY_DIR}/package.json`])
   })
 
   it('does not stamp a marker when repairing over system SSH', async () => {
@@ -660,14 +647,11 @@ describe('relay repair writes on a split SFTP namespace', () => {
 
     expect(execCommands().some((command) => MARKER_PATTERN.test(command))).toBe(false)
     expect(conn.sftp).not.toHaveBeenCalled()
-    expect(capture.writePaths).toEqual([
-      `${SHELL_RELAY_DIR}/package.json`,
+    expect(capture.writePaths).toEqual([`${SHELL_RELAY_DIR}/package.json`])
+    expect(capture.writeOptions).toEqual([expect.objectContaining({ sftpNamespace: undefined })])
+    expect(execCommands().find((command) => command.includes('randomBytes'))).toContain(
       `${SHELL_RELAY_DIR}/relay.sock.credential`
-    ])
-    expect(capture.writeOptions).toEqual([
-      expect.objectContaining({ sftpNamespace: undefined }),
-      expect.objectContaining({ sftpNamespace: undefined })
-    ])
+    )
   })
 
   it('degrades to shell paths when marker creation fails outright', async () => {
