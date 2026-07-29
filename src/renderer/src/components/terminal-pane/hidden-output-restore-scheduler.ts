@@ -113,12 +113,11 @@ function takeNextScheduledRestore(): {
     | {
         target: object
         entry: HiddenOutputRestoreEntry
-        priority: HiddenOutputRestorePriority
       }
     | undefined
   for (const [target, entry] of inactiveRestoreQueue) {
     const priority = resolveRestorePriority(entry.priority)
-    fallback ??= { target, entry, priority }
+    fallback ??= { target, entry }
     if (priority === 'active') {
       inactiveRestoreQueue.delete(target)
       return { target, entry, priority }
@@ -128,7 +127,7 @@ function takeNextScheduledRestore(): {
     return null
   }
   inactiveRestoreQueue.delete(fallback.target)
-  return fallback
+  return { ...fallback, priority: 'inactive' }
 }
 
 function drainInactiveRestoreQueue(): void {
