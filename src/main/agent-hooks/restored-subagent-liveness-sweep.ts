@@ -32,9 +32,8 @@ export async function sweepRestoredSubagentsWithoutLiveAgent(
   return await deps.reap(
     (worktreeId) => deps.isLocalExecutionHost(worktreeId),
     async (paneKey) => {
-      const resolvePtyId = (): string | undefined =>
-        deps.getBoundPtyIdForPaneKey(paneKey) ?? deps.getPersistedPtyIdForPaneKey(paneKey)
-      const ptyId = resolvePtyId()
+      const boundPtyId = deps.getBoundPtyIdForPaneKey(paneKey)
+      const ptyId = boundPtyId ?? deps.getPersistedPtyIdForPaneKey(paneKey)
       if (!ptyId) {
         return true
       }
@@ -45,7 +44,9 @@ export async function sweepRestoredSubagentsWithoutLiveAgent(
           probesByPtyId.set(ptyId, probe)
         }
         const live = await probe
-        return resolvePtyId() !== ptyId || live !== false
+        const currentBoundPtyId = deps.getBoundPtyIdForPaneKey(paneKey)
+        // Why: cold restore can rebind the persisted id while its absence probe is in flight.
+        return currentBoundPtyId !== boundPtyId || live !== false
       } catch {
         return true
       }

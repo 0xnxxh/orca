@@ -375,6 +375,33 @@ describe('restored subagent liveness sweep', () => {
     }
   })
 
+  it('keeps a pane that rebinds its persisted PTY while the probe is pending', async () => {
+    const server = await restartWithInFlightSubagent()
+    const boundPtyIdByPaneKey: Record<string, string> = {}
+    let resolveProbe!: (live: boolean | null) => void
+    const probeLiveLocalPty = vi.fn(
+      () =>
+        new Promise<boolean | null>((resolve) => {
+          resolveProbe = resolve
+        })
+    )
+    try {
+      const sweep = sweepWith(server, {
+        probeLiveLocalPty,
+        boundPtyIdByPaneKey,
+        persistedPtyIdByPaneKey: { [PANE]: PTY }
+      })
+      await vi.waitFor(() => expect(probeLiveLocalPty).toHaveBeenCalledExactlyOnceWith(PTY))
+      boundPtyIdByPaneKey[PANE] = PTY
+      resolveProbe(false)
+
+      expect(await sweep).toBe(0)
+      expect(paneStatus(server).state).toBe('working')
+    } finally {
+      server.stop()
+    }
+  })
+
   it('leaves a pane whose lead is genuinely mid-turn at working', async () => {
     const server = await restartWithInFlightSubagent()
     try {
