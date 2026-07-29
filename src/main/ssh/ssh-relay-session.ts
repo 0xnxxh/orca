@@ -99,6 +99,7 @@ const SSH_PTY_REATTACH_MAX_CONCURRENCY = 8
 const SSH_PTY_REATTACH_ATTEMPT_TIMEOUT_MS = 10_000
 const SSH_PTY_REATTACH_RETRY_MIN_DELAY_MS = 50
 const SSH_PTY_REATTACH_RETRY_JITTER_MS = 200
+const SSH_SOURCE_RECOVERY_CANCELLATION_FAILED = 'ssh_source_recovery_cancellation_failed'
 type PendingPtyReattach = {
   mux: SshChannelMultiplexer
   providerGeneration: number
@@ -181,6 +182,17 @@ function positiveSafeInteger(value: unknown): boolean {
 
 function nonNegativeSafeInteger(value: unknown): boolean {
   return Number.isSafeInteger(value) && Number(value) >= 0
+}
+
+function sourceRecoveryCancellationError(cause: unknown): Error {
+  return Object.assign(new Error(SSH_SOURCE_RECOVERY_CANCELLATION_FAILED), {
+    code: SSH_SOURCE_RECOVERY_CANCELLATION_FAILED,
+    cause
+  })
+}
+
+function isSourceRecoveryCancellationError(error: unknown): boolean {
+  return (error as { code?: unknown })?.code === SSH_SOURCE_RECOVERY_CANCELLATION_FAILED
 }
 
 export type SshRelayAiVaultHostInfo = {
@@ -444,7 +456,12 @@ export class SshRelaySession {
     } catch (err) {
       // Why: registerProviders can throw with a live mux and partial registration — tear everything down so a retry starts clean.
       if (!this.isDisposed()) {
-        this.teardownProviders('connection_lost')
+        this.teardownProviders(
+          'connection_lost',
+          isSourceRecoveryCancellationError(err)
+            ? SSH_SOURCE_RECOVERY_CANCELLATION_FAILED
+            : 'connection_lost'
+        )
         this._state = 'idle'
       }
       // Why: a version mismatch on first connect is terminal (deployed binary vs. a still-running legacy daemon); notify the callback but still rethrow.
@@ -579,7 +596,12 @@ export class SshRelaySession {
     } catch (err) {
       // Why: tear down a partially-registered mux so its keepalive/timeout timers don't keep running on a half-initialized session.
       if (this.abortController === abortController && !this.isDisposed()) {
-        this.teardownProviders('connection_lost')
+        this.teardownProviders(
+          'connection_lost',
+          isSourceRecoveryCancellationError(err)
+            ? SSH_SOURCE_RECOVERY_CANCELLATION_FAILED
+            : 'connection_lost'
+        )
       }
       // Why: version-mismatch is terminal — fire the typed callback and drop out of 'reconnecting' since backoff retry can't reconcile it.
       if (isRelayVersionMismatchError(err)) {
@@ -1112,7 +1134,10 @@ export class SshRelaySession {
     })
   }
 
-  private teardownProviders(reason: 'shutdown' | 'connection_lost'): void {
+  private teardownProviders(
+    reason: 'shutdown' | 'connection_lost',
+    outputGenerationReason: string = reason
+  ): void {
     this.muxDisposeCleanup?.()
     this.muxDisposeCleanup = null
     this.muxNotificationCleanup?.()
@@ -1132,7 +1157,7 @@ export class SshRelaySession {
           }
         }
       }
-      closeSshPtyOutputGeneration(this.activePtyProviderGeneration, reason)
+      closeSshPtyOutputGeneration(this.activePtyProviderGeneration, outputGenerationReason)
       this.activePtyProviderGeneration = null
     }
     this.sourceAckPublisherCleanup?.()
@@ -1619,6 +1644,9 @@ export class SshRelaySession {
             shouldContinue
           })
         } catch (error) {
+          if (isSourceRecoveryCancellationError(error)) {
+            throw error
+          }
           console.warn(
             `[ssh-relay-session] PTY ${ptyId} reattach processing failed for ${this.targetId}: ${
               error instanceof Error ? error.message : String(error)
@@ -1735,6 +1763,9 @@ export class SshRelaySession {
       sourceActivationLease?.commit()
       sourceActivationLease = undefined
     } catch (error) {
+      if (isSourceRecoveryCancellationError(error)) {
+        throw error
+      }
       if (!shouldContinue()) {
         return
       }
@@ -2105,7 +2136,7 @@ export class SshRelaySession {
           return
         }
         if (identity) {
-          applySshPtySourceCancellationProof(
+          const applied = applySshPtySourceCancellationProof(
             {
               id: appPtyId,
               code: -1,
@@ -2117,14 +2148,20 @@ export class SshRelaySession {
               creditedEndSu: result.creditedEndSu as number
             }
           )
+          if (!applied) {
+            throw new Error('ssh_source_cancellation_proof_rejected')
+          }
         }
       } catch (error) {
+        if (!this.ownsPtyRecoveryAttempt(appPtyId, pending)) {
+          return
+        }
         console.warn(
           `[ssh-relay-session] Failed to cancel replacement delivery for ${relayPtyId}: ${
             error instanceof Error ? error.message : String(error)
           }`
         )
-        return
+        throw sourceRecoveryCancellationError(error)
       }
     }
     if (!this.ownsPtyRecoveryAttempt(appPtyId, pending)) {

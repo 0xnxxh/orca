@@ -8,6 +8,9 @@ const {
   onNotificationByMethodMock,
   openConsumerSessionMock,
   muxDisposeMock,
+  ptyProviderDisposeMock,
+  sourceAckCleanupMock,
+  sourceCancellationCleanupMock,
   attachForReconnectMock,
   ptyDataHandlerRef
 } = vi.hoisted(() => ({
@@ -16,6 +19,9 @@ const {
   onNotificationByMethodMock: vi.fn(),
   openConsumerSessionMock: vi.fn(),
   muxDisposeMock: vi.fn(),
+  ptyProviderDisposeMock: vi.fn(),
+  sourceAckCleanupMock: vi.fn(),
+  sourceCancellationCleanupMock: vi.fn(),
   attachForReconnectMock: vi.fn().mockResolvedValue({}),
   ptyDataHandlerRef: { current: undefined as undefined | ((payload: unknown) => void) }
 }))
@@ -30,9 +36,9 @@ vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
   allocateSshPtyProviderGeneration: vi.fn(() => 23),
   closeSshPtyOutputGeneration: vi.fn(),
   getSshPtyAcceptedSourceCheckpoints: vi.fn(() => []),
-  installSshPtySourceAckPublisher: vi.fn(() => () => {}),
-  installSshPtySourceCancellationPublisher: vi.fn(() => () => {}),
-  applySshPtySourceCancellationProof: vi.fn()
+  installSshPtySourceAckPublisher: vi.fn(() => sourceAckCleanupMock),
+  installSshPtySourceCancellationPublisher: vi.fn(() => sourceCancellationCleanupMock),
+  applySshPtySourceCancellationProof: vi.fn(() => true)
 }))
 vi.mock('./ssh-channel-multiplexer', () => ({
   SshChannelMultiplexer: class MockSshChannelMultiplexer {
@@ -59,7 +65,7 @@ vi.mock('../providers/ssh-pty-provider', () => ({
     onExit = vi.fn().mockReturnValue(() => {})
     attachForReconnect = attachForReconnectMock
     setPtyDeliveryPauseAdapter = vi.fn()
-    dispose = vi.fn()
+    dispose = ptyProviderDisposeMock
   }
 }))
 vi.mock('../providers/ssh-filesystem-provider', () => ({
@@ -98,10 +104,12 @@ const {
   getSshPtyProvider,
   getPtyIdsForConnection,
   registerSshPtyProvider,
-  setPtyOwnership
+  setPtyOwnership,
+  unregisterSshPtyProvider
 } = await import('../ipc/pty')
 const { closeSshPtyOutputGeneration, getSshPtyAcceptedSourceCheckpoints } =
   await import('../ipc/ssh-pty-output-intake-registry')
+const { applySshPtySourceCancellationProof } = await import('../ipc/ssh-pty-output-intake-registry')
 
 describe('SshRelaySession recovery race fencing', () => {
   beforeEach(() => {
@@ -110,6 +118,7 @@ describe('SshRelaySession recovery race fencing', () => {
     attachForReconnectMock.mockResolvedValue({})
     vi.mocked(getPtyIdsForConnection).mockReturnValue([])
     vi.mocked(getSshPtyAcceptedSourceCheckpoints).mockReturnValue([])
+    vi.mocked(applySshPtySourceCancellationProof).mockReturnValue(true)
     muxRequestMock.mockResolvedValue([])
     mockDeploySuccess()
   })
@@ -296,6 +305,109 @@ describe('SshRelaySession recovery race fencing', () => {
     expect(deps.mockWindow.webContents.send).not.toHaveBeenCalledWith('pty:exit', expect.anything())
     expect(muxDisposeMock).not.toHaveBeenCalledWith('shutdown')
   })
+
+  it.each(['publication', 'proof'] as const)(
+    'closes one provider generation when recovery cancellation %s rejects',
+    async (failure) => {
+      const targetId = `cancel-${failure}-failure`
+      muxRequestMock.mockImplementation(async (method) => {
+        if (method !== 'pty.cancelDelivery') {
+          return []
+        }
+        if (failure === 'publication') {
+          throw new Error('cancel publication failed')
+        }
+        return { canceled: true, sentEndSu: 8, creditedEndSu: 4 }
+      })
+      if (failure === 'proof') {
+        vi.mocked(applySshPtySourceCancellationProof).mockImplementation(() => {
+          throw new Error('cancel proof rejected')
+        })
+      }
+      const { session, deps } = await prepareRecovery(targetId)
+      const onRelayLost = vi.fn()
+      const activationLease = { commit: vi.fn(), rollback: vi.fn() }
+      session.setOnRelayLost(onRelayLost)
+      let cleanupCountsBeforeFailure:
+        | {
+            generation: number
+            mux: number
+            provider: number
+            ack: number
+            cancellation: number
+            unregister: number
+          }
+        | undefined
+      attachForReconnectMock.mockImplementation(async () => {
+        cleanupCountsBeforeFailure = {
+          generation: vi.mocked(closeSshPtyOutputGeneration).mock.calls.length,
+          mux: muxDisposeMock.mock.calls.length,
+          provider: ptyProviderDisposeMock.mock.calls.length,
+          ack: sourceAckCleanupMock.mock.calls.length,
+          cancellation: sourceCancellationCleanupMock.mock.calls.length,
+          unregister: vi.mocked(unregisterSshPtyProvider).mock.calls.length
+        }
+        queueMicrotask(() => {
+          emitSourceFrame({
+            targetId,
+            token: 'new-token',
+            clientGeneration: 2,
+            ownerGeneration: 2,
+            sourceStartSu: 5,
+            sourceEndSu: 8
+          })
+        })
+        return {
+          incarnationId: 'incarnation-1',
+          sourceRecovery: {
+            status: 'pending',
+            clientGeneration: 2,
+            ownerGeneration: 2,
+            ptyIncarnation: 'incarnation-1',
+            deliveryToken: 'new-token',
+            checkpointSourceEndSu: 4,
+            recoveryEndSu: 8
+          },
+          sourceActivationLease: activationLease
+        }
+      })
+
+      await session.reconnect(deps.mockConn)
+
+      expect(cleanupCountsBeforeFailure).toBeDefined()
+      const before = cleanupCountsBeforeFailure!
+      expect(vi.mocked(closeSshPtyOutputGeneration).mock.calls).toHaveLength(before.generation + 1)
+      expect(closeSshPtyOutputGeneration).toHaveBeenLastCalledWith(
+        23,
+        'ssh_source_recovery_cancellation_failed'
+      )
+      expect(muxDisposeMock.mock.calls).toHaveLength(before.mux + 1)
+      expect(muxDisposeMock).toHaveBeenLastCalledWith('connection_lost')
+      expect(ptyProviderDisposeMock.mock.calls).toHaveLength(before.provider + 1)
+      expect(sourceAckCleanupMock.mock.calls).toHaveLength(before.ack + 1)
+      expect(sourceCancellationCleanupMock.mock.calls).toHaveLength(before.cancellation + 1)
+      expect(vi.mocked(unregisterSshPtyProvider).mock.calls).toHaveLength(before.unregister + 1)
+      expect(unregisterSshPtyProvider).toHaveBeenLastCalledWith(targetId)
+      expect(activationLease.rollback).toHaveBeenCalledOnce()
+      expect(activationLease.commit).not.toHaveBeenCalled()
+      expect(onRelayLost).toHaveBeenCalledOnce()
+      expect(session.getState()).toBe('reconnecting')
+      expect(clearProviderPtyState).not.toHaveBeenCalled()
+      expect(clearPtyOwnershipForConnection).not.toHaveBeenCalled()
+      expect(deletePtyOwnership).not.toHaveBeenCalled()
+      expect(deps.mockStore.markSshRemotePtyLease).not.toHaveBeenCalled()
+      expect(deps.mockWindow.webContents.send).not.toHaveBeenCalledWith(
+        'pty:exit',
+        expect.anything()
+      )
+      expect(muxDisposeMock).not.toHaveBeenCalledWith('shutdown')
+      expect(vi.mocked(closeSshPtyOutputGeneration).mock.calls).not.toContainEqual([
+        99,
+        expect.anything()
+      ])
+      expect(unregisterSshPtyProvider).not.toHaveBeenCalledWith('unrelated-target')
+    }
+  )
 
   it('keeps a stale overlapping recovery from canceling or mutating its replacement', async () => {
     const targetId = 'overlapping-recovery'

@@ -130,6 +130,7 @@ describe('SshRelaySession data delivery', () => {
     attachForReconnectMock.mockResolvedValue({})
     vi.mocked(getPtyIdsForConnection).mockReturnValue([])
     vi.mocked(getSshPtyAcceptedSourceCheckpoints).mockReturnValue([])
+    vi.mocked(applySshPtySourceCancellationProof).mockReturnValue(true)
     openConsumerSessionMock.mockImplementation(async (_mux, options) => ({
       mode: 'negotiated',
       clientInstanceId: options.clientInstanceId,
