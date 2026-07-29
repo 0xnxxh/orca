@@ -60,6 +60,29 @@ describe('plugin skill candidate scan', () => {
     expect(result.issues).toEqual([{ path: root, reason: 'entry-limit', errorCode: null }])
   })
 
+  it('stops walking the directory whose read crossed the entry budget', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-plugin-entry-limit-stop-'))
+    temporaryDirectories.push(root)
+    // Nine levels puts the deepest directory exactly at the traversal depth bound, so its
+    // children are the first thing a walk that failed to stop would reject on depth.
+    const segments = Array.from({ length: 9 }, (_, index) => `level-${index}`)
+    await Promise.all(
+      ['a', 'b'].map((name) => mkdir(join(root, ...segments, name), { recursive: true }))
+    )
+
+    // Budget: one dirent per level down to the deepest directory, plus the first of its
+    // two children — so the count is crossed on the second, with the first already read.
+    const result = await scanKnownPluginSkillCandidates(root, new Set(['orca-cli']), {
+      maximumEntries: segments.length + 1
+    })
+
+    // Why: the entries already read before the bound must not still be descended. A scan
+    // that keeps walking reports the leftovers as depth-truncated, which is a coverage
+    // failure the walk never observed — exactly the kind of unaccountable claim #10918 was.
+    expect(result.candidates).toEqual([])
+    expect(result.issues).toEqual([{ path: root, reason: 'entry-limit', errorCode: null }])
+  })
+
   // Why: a declared root costs a resolve before it can be rejected, and a root that does
   // not exist reads no dirent at all — so the dirent guard never sees a manifest that
   // spends the whole scan on missing paths. Only the resolve guard bounds that, and only
