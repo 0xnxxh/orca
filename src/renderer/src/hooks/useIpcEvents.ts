@@ -101,9 +101,14 @@ import { track } from '@/lib/telemetry'
 import { singlePaneLayoutSnapshot } from '@/store/slices/terminal-helpers'
 import { buildWorkspaceSessionPayload } from '@/lib/workspace-session'
 import { persistWorkspaceSessionByHost } from '@/lib/workspace-session-host-persistence'
+import { verifyTerminalRevealIdentity } from '@/lib/terminal-reveal-identity'
 import { getLinearIssueWorkspaceName } from '../../../shared/workspace-name'
 import type { RuntimeClientEvent } from '../../../shared/runtime-client-events'
 import { applyHostWorktreeTerminalSleepState } from '@/components/terminal-pane/pty-shutdown-exit-deferral'
+import {
+  resolveLegacyWorkerTerminalRecoveryAction,
+  rollbackLegacyWorkerTerminalSurfaceInStore
+} from './legacy-worker-terminal-recovery-event'
 import type { AppState } from '../store/types'
 import { guardPinnedTabClose, resolvePinnedTabLabel } from '../store/pinned-tab-close-guard'
 import {
@@ -181,9 +186,13 @@ const browserAutomationBootstrapLeaseByPageId = new Map<string, { token: string;
 function resolveTerminalPresentation(data: {
   presentation?: RuntimeTerminalPresentation
   activate?: boolean
+  focus?: boolean
 }): RuntimeTerminalPresentation | undefined {
   if (data.presentation) {
     return data.presentation
+  }
+  if (data.focus !== undefined) {
+    return data.focus ? 'focused' : 'background'
   }
   if (data.activate === true) {
     return 'focused'
@@ -1395,6 +1404,7 @@ export function useIpcEvents(): void {
           title,
           ptyId,
           activate,
+          focus,
           presentation,
           tabId,
           leafId,
@@ -1404,7 +1414,11 @@ export function useIpcEvents(): void {
         }) => {
           try {
             const store = useAppStore.getState()
-            const terminalPresentation = resolveTerminalPresentation({ presentation, activate })
+            const terminalPresentation = resolveTerminalPresentation({
+              presentation,
+              activate,
+              focus
+            })
             const shouldActivate = terminalPresentation === 'focused'
             const shouldSurfaceOwner = terminalPresentation !== 'background'
             if (shouldActivate) {
@@ -1567,11 +1581,24 @@ export function useIpcEvents(): void {
                 ...(launchAgent ? { launchAgent } : {})
               })
             }
+            if (ptyId && terminalPresentation === 'background') {
+              requestBackgroundTerminalWorktreeMount({ worktreeId, tabIds: [tab.id] })
+            }
             if (requestId) {
+              const identity =
+                ptyId && tabId && leafId
+                  ? verifyTerminalRevealIdentity(useAppStore.getState(), {
+                      worktreeId,
+                      tabId,
+                      leafId,
+                      ptyId
+                    })
+                  : undefined
               window.api.ui.replyTerminalCreate({
                 requestId,
                 tabId: tab.id,
-                title: title ?? tab.title
+                title: title ?? tab.title,
+                ...(identity ? { identity } : {})
               })
             }
           } catch (err) {
@@ -3337,6 +3364,21 @@ export function useIpcEvents(): void {
       })
     if (unsubscribeMigrationUnsupportedClear) {
       unsubs.push(unsubscribeMigrationUnsupportedClear)
+    }
+    const unsubscribeLegacyWorkerTerminalRecovery =
+      window.api.agentStatus.onLegacyWorkerTerminalRecovery?.((event) => {
+        const action = resolveLegacyWorkerTerminalRecoveryAction(event)
+        if (action.kind === 'rollback-surface') {
+          window.dispatchEvent(
+            new CustomEvent(CLOSE_TERMINAL_PANE_EVENT, { detail: action.detail })
+          )
+          rollbackLegacyWorkerTerminalSurfaceInStore(useAppStore.getState(), action.detail)
+        } else if (action.kind === 'clear-sleeping') {
+          useAppStore.getState().clearSleepingAgentSession(action.paneKey)
+        }
+      })
+    if (unsubscribeLegacyWorkerTerminalRecovery) {
+      unsubs.push(unsubscribeLegacyWorkerTerminalRecovery)
     }
 
     // Why: main hook server is the durable source of truth; pull the snapshot only after tabs are ready so early startup pushes can be ignored, not buffered.
