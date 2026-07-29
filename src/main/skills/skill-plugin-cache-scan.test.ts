@@ -29,10 +29,58 @@ describe('plugin skill candidate scan', () => {
       })
     )
 
-    const result = await scanKnownPluginSkillCandidates(root, new Set(['orca-cli']), 1)
+    const result = await scanKnownPluginSkillCandidates(root, new Set(['orca-cli']), {
+      maximumCandidates: 1
+    })
 
     expect(result.candidates).toHaveLength(1)
     expect(result.issues).toEqual([{ path: root, reason: 'candidate-limit', errorCode: null }])
+  })
+
+  it('stops at the entry budget and reports the truncation at the scan root', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-plugin-entry-limit-'))
+    temporaryDirectories.push(root)
+    await Promise.all(
+      ['one', 'two'].map(async (vendor) => {
+        await mkdir(join(root, vendor, 'orca-cli'), { recursive: true })
+        await writeFile(join(root, vendor, 'orca-cli', 'SKILL.md'), '# Orca CLI\n')
+      })
+    )
+
+    const result = await scanKnownPluginSkillCandidates(root, new Set(['orca-cli']), {
+      maximumEntries: 1
+    })
+
+    // Why: the walk ends before descending, so both real skills go unseen. The issue is
+    // all that stops the dialog reporting all-clear over a scan that never reached them.
+    expect(result.candidates).toEqual([])
+    expect(result.issues).toEqual([{ path: root, reason: 'entry-limit', errorCode: null }])
+  })
+
+  it('stops at the entry budget while resolving declared skill roots', async () => {
+    // Why: a declared root costs a resolve before it can be rejected, and a root that does
+    // not exist reads no dirent at all — so the dirent guard never sees a manifest that
+    // spends the whole scan on missing paths. Only this guard bounds that.
+    const root = await mkdtemp(join(tmpdir(), 'orca-plugin-entry-limit-declared-'))
+    temporaryDirectories.push(root)
+    const candidate = join(root, 'a-skills', 'orca-cli')
+    await mkdir(join(root, '.codex-plugin'), { recursive: true })
+    await mkdir(candidate, { recursive: true })
+    await writeFile(
+      join(root, '.codex-plugin', 'plugin.json'),
+      '{"skills":["./a-skills","./missing-one","./missing-two"]}\n'
+    )
+    await writeFile(join(candidate, 'SKILL.md'), '# Orca CLI\n')
+
+    // Budget: the root's two dirents, a-skills', the skill's, and the first declared root.
+    const result = await scanKnownPluginSkillCandidates(root, new Set(['orca-cli']), {
+      maximumEntries: 5
+    })
+
+    // Why: the declared root that exists was fully walked, so the bound is being crossed by
+    // a resolve of the roots after it — not by the dirent loop stopping the scan early.
+    expect(result.candidates).toEqual([{ name: 'orca-cli', path: candidate }])
+    expect(result.issues).toEqual([{ path: root, reason: 'entry-limit', errorCode: null }])
   })
 
   it('completes a real-shaped Codex cache without reporting coverage issues', async () => {
@@ -554,7 +602,9 @@ describe('plugin skill candidate scan', () => {
       })
     )
 
-    const result = await scanKnownPluginSkillCandidates(root, new Set(['orca-cli']), 1)
+    const result = await scanKnownPluginSkillCandidates(root, new Set(['orca-cli']), {
+      maximumCandidates: 1
+    })
 
     // Why: the deep trees above exist to spend the display budget, so assert it is full —
     // otherwise this passes with budget to spare and stops covering the case it is named
