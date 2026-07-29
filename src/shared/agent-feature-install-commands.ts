@@ -14,9 +14,11 @@ export function buildAgentFeatureSkillInstallCommand(skillNames: readonly string
   }
   // Why: pasted into a live terminal, so any prompt strands the user and closing the panel
   // kills the session mid-prompt. Both flags are load-bearing, as in the headless updater:
-  // `npx --yes` skips npm's install-this-package prompt (npx re-resolves `latest` every
-  // run, so a cold or stale cache prompts); `skills … -y` skips the CLI's own selects, which
-  // fire even for a single agent because `--global` targets the canonical dir plus the provider's.
+  // `npx --yes` skips npm's install-this-package prompt (npx re-resolves `latest` every run,
+  // so a cold or stale cache prompts); `skills … -y` skips the CLI's own, whose `Proceed with
+  // installation?` confirm is unconditional and whose install-method select fires even for a
+  // single agent, since the CLI always adds its universal `.agents/skills` target alongside
+  // the agent's own dir. Neither prompt is a consequence of `--global`.
   return `npx --yes skills add ${ORCA_SKILLS_REPOSITORY_URL} --skill ${skillNames.join(' ')} --global -y`
 }
 
