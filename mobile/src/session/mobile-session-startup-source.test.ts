@@ -45,8 +45,12 @@ describe('mobile session startup', () => {
     expect(autoCreateHookSource).toContain('stateRef.current.autoCreatedForWorktree === worktreeId')
     expect(autoCreateHookSource).toContain('stateRef.current.autoCreatedForWorktree = worktreeId')
     expect(autoCreateHookSource).toContain('newlyCreatedWorkspace && terminalsLoaded')
-    expect(autoCreateHookSource).toContain('consumeCreationRouteRef.current()')
-    expect(autoCreateHookSource).toContain('createTerminalRef.current()')
+    // Why: both callbacks are re-created every render, so the effect must reach them
+    // through useEffectEvent rather than deps or a render-time ref write.
+    expect(autoCreateHookSource).toContain('useEffectEvent(args.consumeCreationRoute)')
+    expect(autoCreateHookSource).toContain('useEffectEvent(args.createTerminal)')
+    expect(autoCreateHookSource).toContain('consumeCreationRoute()')
+    expect(autoCreateHookSource).toContain('createTerminal()')
   })
 
   it('arms the auto-create only until the route has published a tab (#9717)', () => {

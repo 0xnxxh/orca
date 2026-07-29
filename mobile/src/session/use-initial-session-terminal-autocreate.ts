@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, type MutableRefObject } from 'react'
+import { useEffect, useEffectEvent, useReducer, type RefObject } from 'react'
 import { shouldAutoCreateInitialSessionTerminal } from './initial-session-terminal'
 
 type InitialSessionTerminalAutoCreateState = {
@@ -18,7 +18,7 @@ type InitialSessionTerminalAutoCreateArgs = {
   visibleTabCount: number
   activeHandle: string | null
   createInFlight: boolean
-  stateRef: MutableRefObject<InitialSessionTerminalAutoCreateState>
+  stateRef: RefObject<InitialSessionTerminalAutoCreateState>
   worktreeId: string
   consumeCreationRoute: () => void
   createTerminal: () => void
@@ -42,15 +42,14 @@ export function useInitialSessionTerminalAutoCreate(
     stateRef,
     worktreeId
   } = args
-  const consumeCreationRouteRef = useRef(args.consumeCreationRoute)
-  consumeCreationRouteRef.current = args.consumeCreationRoute
-  // Why: the route re-creates `createTerminal` every render; a ref keeps it out of the deps.
-  const createTerminalRef = useRef(args.createTerminal)
-  createTerminalRef.current = args.createTerminal
+  // Why: the route re-creates both callbacks every render; useEffectEvent keeps them
+  // out of the deps without mutating a ref during render.
+  const consumeCreationRoute = useEffectEvent(args.consumeCreationRoute)
+  const createTerminal = useEffectEvent(args.createTerminal)
 
   useEffect(() => {
     if (newlyCreatedWorkspace && terminalsLoaded) {
-      consumeCreationRouteRef.current()
+      consumeCreationRoute()
     }
     if (
       !client ||
@@ -68,7 +67,7 @@ export function useInitialSessionTerminalAutoCreate(
       return
     }
     stateRef.current.autoCreatedForWorktree = worktreeId
-    createTerminalRef.current()
+    createTerminal()
   }, [
     activeHandle,
     client,

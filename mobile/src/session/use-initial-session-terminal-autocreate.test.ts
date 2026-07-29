@@ -1,4 +1,4 @@
-import { createElement, type MutableRefObject } from 'react'
+import { createElement, type RefObject } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -15,7 +15,7 @@ type HarnessProps = {
 
 describe('useInitialSessionTerminalAutoCreate', () => {
   let renderer: ReactTestRenderer | null = null
-  let stateRef: MutableRefObject<{
+  let stateRef: RefObject<{
     autoCreatedForWorktree: string | null
     sawSessionTabs: boolean
   }>
