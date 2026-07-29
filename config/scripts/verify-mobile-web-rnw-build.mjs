@@ -12,6 +12,7 @@ import {
   MOBILE_WEB_RNW_BUILD_BUDGET,
   mobileWebRnwBuildBudgetFailures
 } from './mobile-web-rnw-build-budget.mjs'
+import { mobileWebRnwExecutablePolicyFailure } from './mobile-web-rnw-executable-policy.mjs'
 const outputRoot = path.resolve(parseOutputRoot(process.argv.slice(2)))
 const manifestPath = path.join(outputRoot, 'manifest.json')
 const manifest = MobileWebManifestSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')))
@@ -99,13 +100,9 @@ for (const match of html.matchAll(/\b(?:src|href)=["']([^"']+)["']/g)) {
 
 for (const asset of manifest.assets.filter((candidate) => candidate.role === 'script')) {
   const source = assetBytes.get(asset.path).toString('utf8')
-  if (/\beval\s*\(|\bnew\s+Function\s*\(|sourceMappingURL/.test(source)) {
-    throw new Error(`RNW executable contains runtime code generation: ${asset.path}`)
-  }
-  if (
-    /\b(?:window\.)?localStorage\s*\.\s*(?:getItem|setItem|removeItem|clear|key)\b/.test(source)
-  ) {
-    throw new Error(`RNW executable contains page-owned persistence: ${asset.path}`)
+  const executablePolicyFailure = mobileWebRnwExecutablePolicyFailure(source)
+  if (executablePolicyFailure) {
+    throw new Error(`RNW executable contains ${executablePolicyFailure}: ${asset.path}`)
   }
   for (const symbol of [
     'NATIVE_MOBILE_PR_SHELL_OPERATIONS',

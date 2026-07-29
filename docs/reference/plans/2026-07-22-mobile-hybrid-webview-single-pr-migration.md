@@ -335,9 +335,12 @@ prior storage, History API, or intercepted-response exception.
 Residual shared-session persistence now stays shell-owned. The hosted export
 uses an inert AsyncStorage platform adapter, while terminal preferences,
 accessory layout, and custom shortcut reads/writes cross named bounded bridge
-operations. The independent package verifier rejects executable
-`localStorage` operations. Focused page-to-native round trips cover shortcut
-reads, gesture-gated updates, and the unchanged session adapter.
+operations. Packaging and independent verification share one executable policy
+that rejects runtime code generation and access to Web Storage, IndexedDB,
+CacheStorage, cookies, WebSQL, or origin-private filesystem/storage persistence.
+Bare storage keywords remain allowed because the production syntax highlighter
+contains inert keyword tables. Focused policy tests, page-to-native round trips,
+and the exact 9,299,540-byte production package pass.
 
 This proves the core Android Debug emulator and deliberate isolation slices.
 The separate locally signed Release gate now passes on a production `user`

@@ -9,6 +9,7 @@ import {
 } from '../../src/shared/mobile-web/manifest-contract.ts'
 import { mobileWebDocumentCsp } from '../../src/shared/mobile-web/document-csp.ts'
 import { MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH } from '../../src/shared/mobile-web/markdown-editor-csp.ts'
+import { assertMobileWebRnwExecutablePolicy } from './mobile-web-rnw-executable-policy.mjs'
 
 const args = parseArgs(process.argv.slice(2))
 const inputRoot = path.resolve(args.input ?? 'out/mobile-web-rnw-export')
@@ -116,9 +117,7 @@ function disableRuntimeCodeGeneration(source) {
 }
 
 function assertSafeExecutable(source) {
-  if (/\beval\s*\(|\bnew\s+Function\s*\(|sourceMappingURL/.test(source)) {
-    throw new Error('RNW executable still contains runtime code generation or a source map')
-  }
+  assertMobileWebRnwExecutablePolicy(source)
 }
 
 function assertNoExportAssetReferences(source, sourceFiles) {

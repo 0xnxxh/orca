@@ -327,8 +327,13 @@ platform. The expanded same-host matrix covers competing distinct generations,
 live-session activation and cleanup with post-activation reads, interleaved
 commit/abort mutations, bounded final retention, and host removal.
 
-The remaining security work below is exact release-app corpus testing, broader
-live cross-scope races, privacy audit, and independent review.
+Packaging and independent package verification now share one executable policy
+that rejects runtime code generation and page-owned Web Storage, IndexedDB,
+CacheStorage, cookie, WebSQL, and origin-private filesystem/storage access. It
+permits inert storage keywords required by the production syntax highlighter.
+Focused tests and exact build `bcd9c95e…` verification pass. The remaining
+security work below is exact release-app corpus testing, broader live
+cross-scope races, the rest of the privacy audit, and independent review.
 
 ## 1. Production Cutover and Cleanup
 
@@ -404,6 +409,9 @@ live cross-scope races, privacy audit, and independent review.
       exact-app lifecycle races remain.
 - [ ] Verify no credential or privileged host identity reaches URLs, DOM state,
       page storage, cache assets, logs, diagnostics, analytics, or fixtures.
+      Executable access to browser-owned persistence now fails during both
+      packaging and verification; URLs, DOM/messages, cache metadata, logs,
+      diagnostics, analytics, crash reports, and fixtures remain under audit.
 - [ ] Verify all resource limits apply before allocation and during assembly.
       Persisted native manifests, activation metadata, and assets have
       pre-allocation read ceilings; every bridge operation has generated
