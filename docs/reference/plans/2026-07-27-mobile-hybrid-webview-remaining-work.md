@@ -102,30 +102,31 @@ pixels and 0.910 mean channel difference; Review passes at 2.134% and 1.947,
 within the 3% / 4 budgets. The packaged document opts into native safe-area
 insets, and nested syntax text retains the native effective font behavior.
 
-The migration is based on `origin/main` at `c8dba6d72`; the final rebase is
-complete and the branch is 39 commits ahead and zero behind. Post-rebase
-validation passes 570 mobile files / 3,418 tests with 2 expected skips and
-3,818 root files / 39,968 tests with 62 expected skips. The earlier
-load-sensitive root timeouts do not recur in the latest complete run. All
-project typechecks,
+The migration is based on `origin/main` at `3f5328755`; the final rebase is
+complete and the branch is 44 commits ahead and zero behind. Post-rebase
+validation passes 573 mobile files / 3,427 tests with 2 expected skips. The
+latest complete root run remains 3,818 files / 39,968 tests with 62 expected
+skips; the earlier load-sensitive root timeouts did not recur. All project
+typechecks,
 root/mobile/mobile-web lint and code-quality audits, 55 reliability gates,
 changed-file and full-mobile formatting, localization, the max-lines ratchet,
 and diff hygiene pass. React Doctor reports zero blocking errors across the
 migration without suppressions. The independently verified React Native Web
 package is
-`7c7c673deb74e158cdfb99b1ca536fd88cd3ab5dac4eb8db78c43ca12f6ce31d`:
-50 assets, 9,290,968 raw bytes, and 2,688,499 gzip bytes.
+`1eccbb3a1b3722c6c5cae4544af8f157bd7e5a210ca74cff97f5c4b356943e6f`:
+50 assets, 9,295,416 raw bytes, and 2,690,230 gzip bytes.
 
-That exact package now passes the unpacked macOS arm64 → Docker SSH → actual
-iOS WKWebView journey from a clean app reinstall in 1.9 minutes. Authenticated
-RPC returned the packaged build with no checkout-output fallback; the unchanged
-mobile UI mutated the remote terminal, rendered a remote native-chat transcript,
-retained it during provider loss, and rendered the appended assistant message
-after reconnect. The harness seeds the pasteboard before Session snapshots
-clipboard availability, uses the existing opaque clipboard-paste capability
-and Enter accessory, retries one missed native activation, and stops after the
-first captured request. Two focused retry tests pass. It does not depend on or
-change the simulator's keyboard layout.
+The immediately preceding `7c7c673d…` package passed the unpacked macOS arm64 →
+Docker SSH → actual iOS WKWebView journey from a clean app reinstall in 1.9
+minutes. Authenticated RPC returned the packaged build with no checkout-output
+fallback; the unchanged mobile UI mutated the remote terminal, rendered a
+remote native-chat transcript, retained it during provider loss, and rendered
+the appended assistant message after reconnect. The harness seeds the
+pasteboard before Session snapshots clipboard availability, uses the existing
+opaque clipboard-paste capability and Enter accessory, retries one missed
+native activation, and stops after the first captured request. Two focused
+retry tests pass. It does not depend on or change the simulator's keyboard
+layout.
 
 The latest native-authority audit keeps the unchanged UI but removes hosted
 fallback access to Expo clipboard, image/document pickers, haptics, and direct
@@ -289,9 +290,9 @@ subscription setup. It closed account subscription parsing plus
 speech/native/navigation validation-order gaps. Pending terminal/native-chat
 subscriptions recheck request liveness after asynchronous resolution; focused
 races cover early unsubscribe, authenticated client replacement, disposal, and
-replay. The production package now verifies as `2441ad60…`: 50 assets,
-9,295,070 raw bytes, and 2,690,115 gzip bytes. The full mobile suite passes 572
-files / 3,425 tests with 2 expected skips. The full root run has one unrelated
+replay. The production package now verifies as `1eccbb3a…`: 50 assets,
+9,295,416 raw bytes, and 2,690,230 gzip bytes. The full mobile suite passes 573
+files / 3,427 tests with 2 expected skips. The full root run has one unrelated
 30-second dynamic-import timeout under load; its isolated 2-test rerun passes
 in 4.4 seconds.
 The remaining security work below is exact release-app corpus testing,

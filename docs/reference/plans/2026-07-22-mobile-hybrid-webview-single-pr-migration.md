@@ -150,8 +150,8 @@ prototype:
   inventory entry, and fixtures are removed. The production `/hybrid` route,
   production bridge clients, native fallback, and Experimental Settings entry
   remain intentionally until the external cutover gates pass.
-- The branch is rebased onto `origin/main` at `76b6c137c` and remains zero
-  behind. Upstream
+- The 44-commit branch is rebased onto `origin/main` at `3f5328755` and remains
+  zero behind. Upstream
   native-chat launch-draft, transcript identity, loading, reconnect, and
   orchestration behavior is retained in both native and hosted adapters.
 
@@ -2162,9 +2162,9 @@ The authoritative route now has a separately reviewed ceiling of 10 MiB total,
 from 8 MiB / 2 MiB / 7.5 MiB only after the legacy Mermaid CDN executable was
 replaced by the locally bundled, network-denied engine needed by both native
 and RNW without forking the existing UI. Boundary tests reject every
-measurement above its ceiling. The current 50-asset package is 9,295,070 bytes
-/ 2,690,115 bytes gzip and build
-`2441ad60ec4b02a9a26bb33c672748ddd542497b303e58e028eefbd703e613c9`.
+measurement above its ceiling. The current 50-asset package is 9,295,416 bytes
+/ 2,690,230 bytes gzip and build
+`1eccbb3a1b3722c6c5cae4544af8f157bd7e5a210ca74cff97f5c4b356943e6f`.
 `build:mobile-web` and release resource mapping therefore select the RNW
 package; the original 2 MiB Vite-fixture ceiling is retired with that fixture.
 Workspace snapshots now page through

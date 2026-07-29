@@ -556,7 +556,7 @@ The standalone renderer-based workspace, session, files, terminal,
 source-control, and review presentation is also removed with its Vite-only
 package path. A production-source boundary requires `src/mobile-web/` to remain
 renderer-independent, while the authoritative RNW package still verifies as
-build `2441ad60…`.
+build `1eccbb3a…`.
 Raw bridge envelopes now pass an exact unique-key, paired-surrogate, bounded
 JSON grammar before schema parsing. The generated broker corpus rejects 1,458
 malformed or oversized requests across every production grant before host or
@@ -634,7 +634,7 @@ forking the shared presentation. Source Control measures 0.736% changed pixels
 nested syntax text follows the native effective font.
 
 The interrupted-transcript versus hook-status mismatch and a real structured
-prompt response pass Host 37 Simulator replay. Current package `2441ad60…`
+prompt response pass Host 37 Simulator replay. Current package `1eccbb3a…`
 also carries the network-denied local Mermaid engine and its WebKit-compatible
 token-bound parent/frame handoff. Classic SSH
 transcript authority and reconnect now pass a real Docker provider journey
