@@ -80,7 +80,7 @@ type MessageSummary = {
   run_id?: string
   from_handle: string
   to_handle?: string
-  subject: string
+  subject?: string
   type?: string
   body?: string
   payload?: string | null
@@ -100,14 +100,29 @@ function formatMessagePriorityTag(message: MessageSummary): string {
   return message.priority === 'urgent' ? ' [URGENT]' : message.priority === 'high' ? ' [HIGH]' : ''
 }
 
-function formatQuotedMessageField(label: string, value: string): string {
-  return `[${label}]\n${value
+function escapeTerminalControlCharacters(value: string): string {
+  return [...value]
+    .map((character) => {
+      const code = character.charCodeAt(0)
+      if (character === '\n' || (code >= 0x20 && code < 0x7f) || code > 0x9f) {
+        return character
+      }
+      return `\\x${code.toString(16).padStart(2, '0')}`
+    })
+    .join('')
+}
+
+function formatQuotedMessageField(label: string, value?: string): string {
+  return `[${label}]\n${escapeTerminalControlCharacters(value ?? '')
     .split('\n')
     .map((line) => `  ${line}`)
     .join('\n')}`
 }
 
-function formatLegacyAwareCheckMessages(messages: MessageSummary[]): string {
+function formatLegacyAwareCheckMessages(
+  messages: MessageSummary[],
+  checkedTerminal: string
+): string {
   return messages
     .map((message) => {
       const legacyReadOnly = isLegacyReadOnlyMessage(message)
@@ -125,8 +140,10 @@ function formatLegacyAwareCheckMessages(messages: MessageSummary[]): string {
         lines.push(formatQuotedMessageField('payload', message.payload))
       }
       if (!legacyReadOnly) {
-        const fromFlag = message.to_handle ? ` --from ${message.to_handle}` : ''
-        lines.push(`[Reply: orca orchestration reply --id ${message.id}${fromFlag} --body "..."]`)
+        const replyFrom = message.to_handle ?? checkedTerminal
+        lines.push(
+          `[Reply: orca orchestration reply --id ${message.id} --from ${replyFrom} --body "..."]`
+        )
       }
       return lines.join('\n')
     })
@@ -671,7 +688,7 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
         ...result,
         result: {
           ...result.result,
-          formatted: formatLegacyAwareCheckMessages(result.result.messages)
+          formatted: formatLegacyAwareCheckMessages(result.result.messages, terminal)
         }
       }
     }

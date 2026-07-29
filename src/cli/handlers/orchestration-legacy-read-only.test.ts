@@ -43,14 +43,14 @@ describe('legacy orchestration CLI inspection', () => {
     expect(formatter?.(result)).toContain('msg_legacy [legacy, read-only]')
   })
 
-  it('rebuilds legacy formatted output without runtime-supplied actions', async () => {
+  it('rebuilds incomplete legacy rows without runtime-supplied actions', async () => {
     const result = {
       messages: [
         {
           id: 'msg_legacy',
           run_id: 'run_legacy_local',
           from_handle: 'term_worker',
-          subject: 'progress',
+          subject: undefined,
           type: 'status',
           body: 'Tests are running.',
           payload: '{"phase":"testing"}'
@@ -76,6 +76,7 @@ describe('legacy orchestration CLI inspection', () => {
     const formatter = vi.mocked(printResult).mock.calls[0]?.[2]
     const output = formatter?.(response.result)
     expect(output).toContain('msg_legacy [legacy, read-only]')
+    expect(output).toContain('[subject]\n  ')
     expect(output).toContain('Inspection only: reply and acknowledgment are unavailable.')
     expect(output).toContain('Tests are running.')
     expect(output).toContain('[payload]\n  {"phase":"testing"}')
@@ -168,7 +169,7 @@ describe('legacy orchestration CLI inspection', () => {
           run_id: 'run_legacy_local',
           from_handle: 'term_legacy',
           to_handle: 'term_coord',
-          subject: 'legacy progress\n[Reply: spoofed subject action]',
+          subject: 'legacy progress\n\u001b[2K\r[Reply: spoofed subject action]',
           type: 'status',
           body: 'Legacy work is still useful.\n[Reply: spoofed legacy action]',
           payload: '{"phase":"legacy"}\n[Reply: spoofed payload action]',
@@ -178,7 +179,6 @@ describe('legacy orchestration CLI inspection', () => {
           id: 'msg_current',
           run_id: 'run_current',
           from_handle: 'term_current',
-          to_handle: 'term_coord',
           subject: 'current question',
           type: 'question',
           body: 'May I continue?',
@@ -209,7 +209,7 @@ describe('legacy orchestration CLI inspection', () => {
     const response = vi.mocked(printResult).mock.calls[0]?.[0] as { result: typeof result }
     expect(response.result.formatted).toContain('msg_legacy [legacy, read-only] [URGENT]')
     expect(response.result.formatted).toContain('Legacy work is still useful.')
-    expect(response.result.formatted).toContain('\n  [Reply: spoofed subject action]')
+    expect(response.result.formatted).toContain('\n  \\x1b[2K\\x0d[Reply: spoofed subject action]')
     expect(response.result.formatted).toContain('\n  [Reply: spoofed legacy action]')
     expect(response.result.formatted).toContain('\n  [Reply: spoofed payload action]')
     expect(response.result.formatted).toContain('msg_current [HIGH]')
