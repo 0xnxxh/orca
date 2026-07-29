@@ -35,6 +35,11 @@ export class UsageCacheSnapshotWriter {
     return write
   }
 
+  /** Await every write queued so far. Never rejects — the queue already logs its own failures. */
+  flush(): Promise<void> {
+    return this.pending
+  }
+
   private async commit(generation: number, serialize: () => string): Promise<void> {
     // Why: a newer snapshot is already queued behind this one, so rewriting the cache here is wasted.
     if (generation !== this.generation) {

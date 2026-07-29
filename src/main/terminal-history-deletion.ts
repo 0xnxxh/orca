@@ -1,6 +1,6 @@
 import { basename, join } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, renameSync } from 'node:fs'
-import { rm } from 'node:fs/promises'
+import { removeHostTree } from './host-tree-removal'
 import {
   getHistoryRoot,
   hashWorktreeId,
@@ -9,6 +9,11 @@ import {
 } from './terminal-history-paths'
 
 const pendingHistoryTreeRemovals = new Map<string, Promise<void>>()
+// Why: a tombstone that fails once (Windows EBUSY under AV) would otherwise sit on disk for the whole
+// desktop session — only the next launch re-queues it. Bounded so a genuinely stuck tree stops retrying.
+export const HISTORY_TREE_REMOVAL_RETRY_DELAYS_MS = [30_000, 120_000]
+const historyTreeRemovalAttempts = new Map<string, number>()
+const historyTreeRemovalRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 function getPendingDeleteRoot(historyRoot: string): string {
   return join(historyRoot, PENDING_DELETE_DIR_NAME)
@@ -40,15 +45,42 @@ function tombstoneHistoryTree(dir: string, historyRoot: string): string | null {
   }
 }
 
+function scheduleHistoryTreeRemovalRetry(dir: string): void {
+  const attempt = historyTreeRemovalAttempts.get(dir) ?? 0
+  const retryDelayMs = HISTORY_TREE_REMOVAL_RETRY_DELAYS_MS[attempt]
+  if (retryDelayMs === undefined) {
+    // Out of in-process attempts: the tombstone stays on disk and the next startup drain re-queues it.
+    historyTreeRemovalAttempts.delete(dir)
+    return
+  }
+  historyTreeRemovalAttempts.set(dir, attempt + 1)
+  const timer = setTimeout(() => {
+    historyTreeRemovalRetryTimers.delete(dir)
+    scheduleHistoryTreeRemoval(dir)
+  }, retryDelayMs)
+  timer.unref?.()
+  historyTreeRemovalRetryTimers.set(dir, timer)
+}
+
 function scheduleHistoryTreeRemoval(dir: string): void {
   if (pendingHistoryTreeRemovals.has(dir)) {
     return
   }
-  const removal = rm(dir, { recursive: true, force: true })
+  // A rescan (GC / startup drain) hitting the same tombstone supersedes its pending retry.
+  const pendingRetry = historyTreeRemovalRetryTimers.get(dir)
+  if (pendingRetry) {
+    clearTimeout(pendingRetry)
+    historyTreeRemovalRetryTimers.delete(dir)
+  }
+  const removal = removeHostTree(dir)
+    .then(() => {
+      historyTreeRemovalAttempts.delete(dir)
+    })
     .catch((err: unknown) => {
       console.warn(
         `[pty:history] Failed to delete history dir: ${err instanceof Error ? err.message : String(err)}`
       )
+      scheduleHistoryTreeRemovalRetry(dir)
     })
     .finally(() => {
       if (pendingHistoryTreeRemovals.get(dir) === removal) {
@@ -92,11 +124,24 @@ export function scheduleAllPendingHistoryTreeRemovals(): void {
   }
 }
 
+/** Drop every armed retry timer so a fixture teardown cannot resurrect a removal. Tests only. */
+export function cancelPendingHistoryTreeRemovalRetries(): void {
+  for (const timer of historyTreeRemovalRetryTimers.values()) {
+    clearTimeout(timer)
+  }
+  historyTreeRemovalRetryTimers.clear()
+  historyTreeRemovalAttempts.clear()
+}
+
 /** Drain every history root's tombstones and await the in-flight removals. Tests only: production
  *  schedules the same drain from startup GC and headless serve without ever blocking on it. */
 export async function flushPendingWorktreeHistoryDeletions(): Promise<void> {
   scheduleAllPendingHistoryTreeRemovals()
-  await Promise.all(pendingHistoryTreeRemovals.values())
+  // Why loop: awaiting one snapshot of the map would return with a removal scheduled mid-batch still
+  // in flight. Each pass settles its batch and drains whatever was added while it ran.
+  while (pendingHistoryTreeRemovals.size > 0) {
+    await Promise.all(pendingHistoryTreeRemovals.values())
+  }
 }
 
 /** Delete the history directory for a removed worktree. Non-fatal; never blocks on recursive rm. */
@@ -114,7 +159,13 @@ export function deleteWorktreeHistoryDir(worktreeId: string): void {
   }
 
   // Also clean up WSL history for this worktree; listWslHistoryRoots is empty where WSL never ran.
-  for (const distroRoot of listWslHistoryRoots()) {
-    scheduleWorktreeHistoryTreeDeletion(join(distroRoot, worktreeHash), distroRoot)
+  try {
+    for (const distroRoot of listWslHistoryRoots()) {
+      scheduleWorktreeHistoryTreeDeletion(join(distroRoot, worktreeHash), distroRoot)
+    }
+  } catch (err) {
+    console.warn(
+      `[pty:history] Failed to schedule WSL history delete: ${err instanceof Error ? err.message : String(err)}`
+    )
   }
 }

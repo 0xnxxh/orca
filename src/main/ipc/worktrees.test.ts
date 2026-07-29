@@ -8243,6 +8243,11 @@ describe('registerWorktreeHandlers', () => {
     expect(removeWorktreeLinkedPathsMock).toHaveBeenCalledWith('/workspace/feature-wt', [
       'node_modules'
     ])
+    // Why order matters: linked-path deletion is destructive, so PTYs must release every handle
+    // before Windows or WSL filesystem cleanup starts (mirrors the runtime removal path).
+    expect(killAllProcessesForWorktreeMock.mock.invocationCallOrder[0]).toBeLessThan(
+      removeWorktreeLinkedPathsMock.mock.invocationCallOrder[0]
+    )
   })
 
   it('does not remove a worktree when watcher teardown cannot release it', async () => {

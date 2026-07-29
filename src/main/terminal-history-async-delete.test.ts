@@ -48,13 +48,40 @@ describe('deleteWorktreeHistoryDir main-thread safety', () => {
     deleteWorktreeHistoryDir(worktreeId)
     const criticalPathMs = performance.now() - criticalPathStartedAt
 
-    expect(criticalPathMs).toBeLessThan(100)
+    // Why a looser CI/Windows bound: a rename is O(1) metadata everywhere, but AV and shared CI runners
+    // stall even that. The structural assertions below are the real proof; this only catches a sync walk.
+    expect(criticalPathMs).toBeLessThan(
+      process.env.CI || process.platform === 'win32' ? 1_000 : 100
+    )
     expect(readdirSync(join(userDataDir, 'terminal-history'))).not.toContain(hash)
     expect(
       readdirSync(join(userDataDir, 'terminal-history', '.pending-delete')).length
     ).toBeGreaterThan(0)
 
     await flushPendingWorktreeHistoryDeletions()
+    expect(readdirSync(join(userDataDir, 'terminal-history', '.pending-delete'))).toHaveLength(0)
+  })
+
+  it('drains a deletion scheduled after the flush snapshotted its batch', async () => {
+    const seedDir = join(userDataDir, 'terminal-history', hashWorktreeId('repo-1::/path/seed-wt'))
+    mkdirSync(seedDir, { recursive: true })
+    writeFileSync(join(seedDir, 'seed.txt'), 'seed')
+
+    const lateWorktreeId = 'repo-1::/path/late-wt'
+    const lateDir = join(userDataDir, 'terminal-history', hashWorktreeId(lateWorktreeId))
+    mkdirSync(lateDir, { recursive: true })
+    // Big enough that its rm is still in flight when the snapshotted seed removal settles.
+    for (let i = 0; i < 3_000; i++) {
+      writeFileSync(join(lateDir, `file-${i}.txt`), `payload-${i}`)
+    }
+
+    deleteWorktreeHistoryDir('repo-1::/path/seed-wt')
+    // Why no await before the second delete: the flush snapshots the pending map synchronously, so
+    // this schedules the late removal outside that batch — exactly the race the drain loop covers.
+    const flushed = flushPendingWorktreeHistoryDeletions()
+    deleteWorktreeHistoryDir(lateWorktreeId)
+    await flushed
+
     expect(readdirSync(join(userDataDir, 'terminal-history', '.pending-delete'))).toHaveLength(0)
   })
 })

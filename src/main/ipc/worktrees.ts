@@ -2624,15 +2624,16 @@ export function registerWorktreeHandlers(
           )
           let removalCompleted = false
           try {
+            // Why: hold the watcher/terminal gate through Git and any recursive fallback so no late spawn recreates a native handle.
+            // Linked-path deletion is destructive too, so PTYs must release every handle before Windows or WSL filesystem cleanup starts.
+            await withWorktreeRemoveStageSpan('pty_sweep', 'local', async () => {
+              await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId)
+            })
+
             // Why: preflight only ignored these paths, not mutated them; keep watcher installs fenced through Git removal.
             if (linkedPaths.length > 0) {
               await removeWorktreeLinkedPaths(canonicalWorktreePath, linkedPaths)
             }
-
-            // Why: hold the watcher/terminal gate through Git and any recursive fallback so no late spawn recreates a native handle.
-            await withWorktreeRemoveStageSpan('pty_sweep', 'local', async () => {
-              await stopPtysForDestructiveWorktreeRemoval(runtime, args.worktreeId)
-            })
 
             try {
               const removeOptions = {

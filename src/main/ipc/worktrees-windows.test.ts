@@ -428,6 +428,10 @@ describe('registerWorktreeHandlers – Windows path handling', () => {
       })
     )
     expect(store.removeWorktreeMeta).toHaveBeenCalledWith('repo-1::C:/workspaces/improve-dashboard')
+    // Windows history lives under a path-derived hash, so scheduling must not regress on this path only.
+    expect(deleteWorktreeHistoryDirMock).toHaveBeenCalledWith(
+      'repo-1::C:/workspaces/improve-dashboard'
+    )
     expect(mainWindow.webContents.send).toHaveBeenCalledWith('worktrees:changed', {
       repoId: 'repo-1'
     })

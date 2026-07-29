@@ -188,6 +188,11 @@ export class OpenCodeUsageStore {
     return this.writer.write(() => JSON.stringify(this.state, null, 2))
   }
 
+  /** Await queued cache writes so quit does not drop the final snapshot. */
+  flush(): Promise<void> {
+    return this.writer.flush()
+  }
+
   async setEnabled(enabled: boolean): Promise<OpenCodeUsageScanState> {
     this.state.scanState.enabled = enabled
     await this.writeToDisk()

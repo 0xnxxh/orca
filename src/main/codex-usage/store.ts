@@ -402,6 +402,11 @@ export class CodexUsageStore {
     return this.writer.write(() => JSON.stringify(this.state))
   }
 
+  /** Await queued cache writes so quit does not drop the final snapshot. */
+  flush(): Promise<void> {
+    return this.writer.flush()
+  }
+
   async setEnabled(enabled: boolean): Promise<CodexUsageScanState> {
     this.state.scanState.enabled = enabled
     await this.writeToDisk()

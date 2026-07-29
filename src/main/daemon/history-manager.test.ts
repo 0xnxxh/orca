@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -11,6 +12,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { HistoryManager } from './history-manager'
+import { flushPendingSessionTreeRemovals } from './terminal-history-session-tombstone'
 import type { TerminalSnapshot, TerminalModes } from './types'
 import { getHistorySessionDirName } from './history-paths'
 import {
@@ -58,6 +60,8 @@ describe('HistoryManager', () => {
 
   afterEach(async () => {
     await mgr.dispose()
+    // Detached tombstone reclaims outlive the test that queued them; settle before the fixture goes.
+    await flushPendingSessionTreeRemovals()
     rmSync(dir, { recursive: true, force: true })
   })
 
@@ -488,44 +492,43 @@ describe('HistoryManager', () => {
   })
 
   describe('large session cleanup responsiveness', () => {
-    it('deletes a large session tree without stalling the event loop', async () => {
+    it('tombstones a large session tree instead of walking it on the teardown path', async () => {
       const sessionId = 'bulky'
       await mgr.openSession(sessionId, { cwd: '/tmp', cols: 80, rows: 24 })
       const sessionDir = join(dir, getHistorySessionDirName(sessionId))
-      // Enough entries that an async rm has to cycle the loop thousands of times to finish.
+      // Enough entries that a recursive walk would dominate removeSession's duration.
       for (let i = 0; i < 3_000; i++) {
         writeFileSync(join(sessionDir, `chunk-${i}.log`), `payload-${i}`)
       }
 
-      // Why a half-deleted tree and not a turn count: removeSession runs on the Electron main
-      // thread and the regression is a blocked loop, but any fixed turn threshold is a guess about
-      // Node/filesystem internals. Seeing the tree partially removed from a loop callback can only
-      // happen if the walk yields — a sync recursive rm goes from every entry to none with no turn
-      // in between, on any platform.
-      const initialEntries = readdirSync(sessionDir).length
-      let sawPartialTree = false
-      let sampling = true
-      const sampleTree = (): void => {
-        if (!sampling || sawPartialTree) {
-          return
-        }
-        try {
-          const remaining = readdirSync(sessionDir).length
-          sawPartialTree = remaining > 0 && remaining < initialEntries
-        } catch {
-          // Tree already gone; nothing left to sample.
-        }
-        setImmediate(sampleTree)
-      }
-      setImmediate(sampleTree)
-      try {
-        await mgr.removeSession(sessionId)
-      } finally {
-        sampling = false
-      }
+      // Why structural and not a turn count: worktree teardown awaits removeSession once per terminal,
+      // so the contract is that the awaited half only renames. The tree surviving under .pending-delete
+      // right after the await can only happen if the reclaim was detached.
+      await mgr.removeSession(sessionId)
 
       expect(existsSync(sessionDir)).toBe(false)
-      expect(sawPartialTree).toBe(true)
+      const tombstones = readdirSync(join(dir, '.pending-delete'))
+      expect(tombstones).toHaveLength(1)
+      expect(readdirSync(join(dir, '.pending-delete', tombstones[0])).length).toBeGreaterThan(0)
+
+      await flushPendingSessionTreeRemovals()
+      expect(readdirSync(join(dir, '.pending-delete'))).toHaveLength(0)
+    })
+
+    it('reclaims tombstones left by a quit mid-removal on the next construction', async () => {
+      const sessionId = 'leftover'
+      await mgr.openSession(sessionId, { cwd: '/tmp', cols: 80, rows: 24 })
+      await mgr.removeSession(sessionId)
+      await flushPendingSessionTreeRemovals()
+
+      const orphan = join(dir, '.pending-delete', 'orphaned-tombstone')
+      mkdirSync(orphan, { recursive: true })
+      writeFileSync(join(orphan, 'output.log'), 'stranded')
+
+      new HistoryManager(dir)
+      await flushPendingSessionTreeRemovals()
+
+      expect(existsSync(orphan)).toBe(false)
     })
   })
 })

@@ -8,7 +8,6 @@ import {
   unlinkSync,
   writeFileSync
 } from 'node:fs'
-import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { getHistorySessionDirName } from './history-paths'
 
@@ -89,15 +88,4 @@ export function quarantineTerminalHistorySession(
   const quarantineDir = join(ownerDir, randomUUID())
   renameSync(sessionDir, quarantineDir)
   return quarantineDir
-}
-
-/** Async by design: a quarantined generation is a full session tree, and this runs in the Electron main process. */
-export async function removeTerminalHistoryQuarantines(
-  basePath: string,
-  sessionId: string
-): Promise<void> {
-  await rm(getTerminalHistoryQuarantineOwnerDir(basePath, sessionId), {
-    recursive: true,
-    force: true
-  })
 }

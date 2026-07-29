@@ -26,6 +26,7 @@ import { beginWatcherInstall, isWatcherRemovalInProgressError } from './watcher-
 import {
   createWatcherRemovalDeadline,
   drainBeforeWatcherRemoval,
+  WATCHER_REMOVAL_FINAL_DRAIN_RESERVE_MS,
   type WatcherRemovalDeadline
 } from './watcher-removal-drain'
 // Why: suppress high-churn dirs at the watcher level (separate from the File Explorer display filter, which only hides rows).
@@ -77,6 +78,10 @@ const suspendedLocalWatcherListeners = new Map<
 let localWatchersClosed = false
 let localWatcherLifecycleGeneration = 0
 const failedLocalUnsubscribes = new Map<string, unknown>()
+// Why: a drain that timed out no longer gates the delete — Git removal already proceeded past it. Its
+// late failure must not fail-close a *later* close of the same root, which would leave that path
+// undeletable until the watcher process physically exits.
+const abandonedLocalUnsubscribes = new WeakSet<Promise<void>>()
 type LocalWatcherInstallToken = {
   cancelled: boolean
   listeners: Map<number, WebContents>
@@ -483,10 +488,19 @@ function trackLocalUnsubscribe(rootKey: string, root: WatchedRoot): Promise<void
   rootUnsubscribes.add(unsubscribePromise)
   // Why: swallow here to avoid unhandled rejections, but keep the original promise rejected so later destructive cleanup can fail closed.
   void unsubscribePromise.catch((error: unknown) => {
-    retainLocalWatcherPhysicalFailure(rootKey, error)
+    if (!abandonedLocalUnsubscribes.has(unsubscribePromise)) {
+      retainLocalWatcherPhysicalFailure(rootKey, error)
+    }
     console.error(`[filesystem-watcher] unsubscribe error for ${rootKey}:`, error)
   })
   return unsubscribePromise
+}
+
+/** Mark unsubscribes whose drain timed out so their late failures stay out of failedLocalUnsubscribes. */
+function abandonLocalUnsubscribes(promises: Iterable<Promise<void>>): void {
+  for (const promise of promises) {
+    abandonedLocalUnsubscribes.add(promise)
+  }
 }
 
 function retainLocalWatcherPhysicalFailure(rootKey: string, error: unknown): void {
@@ -827,7 +841,8 @@ export async function closeLocalWatcherForWorktreePath(
   const installDrain = await drainBeforeWatcherRemoval(
     pendingInstall,
     deadline,
-    `local watcher install for ${rootKey}`
+    `local watcher install for ${rootKey}`,
+    { reserveMs: WATCHER_REMOVAL_FINAL_DRAIN_RESERVE_MS }
   )
   if (installDrain === 'timeout') {
     // Why: an abandoned install never runs its own cleanup, so leaving these entries would make every
@@ -842,11 +857,24 @@ export async function closeLocalWatcherForWorktreePath(
   }
   const pendingUnsubscribes = pendingLocalUnsubscribesByRoot.get(rootKey)
   if (pendingUnsubscribes) {
-    await drainBeforeWatcherRemoval(
-      Promise.all(Array.from(pendingUnsubscribes)),
+    const draining = Array.from(pendingUnsubscribes)
+    const unsubscribeDrain = await drainBeforeWatcherRemoval(
+      // Why the per-promise catch: an already-abandoned unsubscribe belongs to a delete that finished
+      // without it; re-raising its rejection here would fail a later close on stale news.
+      Promise.all(
+        draining.map((unsubscribe) =>
+          abandonedLocalUnsubscribes.has(unsubscribe)
+            ? unsubscribe.catch(() => undefined)
+            : unsubscribe
+        )
+      ),
       deadline,
-      `local watcher unsubscribe for ${rootKey}`
+      `local watcher unsubscribe for ${rootKey}`,
+      { reserveMs: WATCHER_REMOVAL_FINAL_DRAIN_RESERVE_MS }
     )
+    if (unsubscribeDrain === 'timeout') {
+      abandonLocalUnsubscribes(draining)
+    }
   }
   if (failedLocalUnsubscribes.has(rootKey)) {
     throw failedLocalUnsubscribes.get(rootKey)
@@ -863,11 +891,15 @@ export async function closeLocalWatcherForWorktreePath(
   // Why: the in-process Parcel fallback has no unsubscribe timeout of its own, so an unbounded await
   // here would hang delete forever and hold the removal gate. The promise stays tracked in
   // pendingLocalUnsubscribesByRoot, so a later close still observes its failure.
-  await drainBeforeWatcherRemoval(
-    trackLocalUnsubscribe(rootKey, root),
+  const finalUnsubscribe = trackLocalUnsubscribe(rootKey, root)
+  const finalDrain = await drainBeforeWatcherRemoval(
+    finalUnsubscribe,
     deadline,
     `local watcher unsubscribe for ${rootKey}`
   )
+  if (finalDrain === 'timeout') {
+    abandonLocalUnsubscribes([finalUnsubscribe])
+  }
 }
 
 export async function restoreLocalWatcherAfterFailedRemoval(worktreePath: string): Promise<void> {

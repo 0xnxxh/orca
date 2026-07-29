@@ -43,8 +43,11 @@ import {
 } from './filesystem-watcher'
 import {
   createWatcherRemovalDeadline,
-  WATCHER_REMOVAL_DRAIN_BUDGET_MS
+  drainBeforeWatcherRemoval,
+  WATCHER_REMOVAL_DRAIN_BUDGET_MS,
+  WATCHER_REMOVAL_FINAL_DRAIN_RESERVE_MS
 } from './watcher-removal-drain'
+import { WatcherProcessFailure } from './parcel-watcher-process-failure'
 import { stat } from 'node:fs/promises'
 import { subscribe as subscribeParcelWatcher } from '@parcel/watcher'
 import { subscribeViaWatcherProcess } from './parcel-watcher-process'
@@ -101,7 +104,10 @@ describe('local filesystem watcher removal deadline', () => {
         closed = true
       })
 
-      await vi.advanceTimersByTimeAsync(WATCHER_REMOVAL_DRAIN_BUDGET_MS - 1)
+      // The install drain leaves the final unsubscribe its reserved tail slice.
+      await vi.advanceTimersByTimeAsync(
+        WATCHER_REMOVAL_DRAIN_BUDGET_MS - WATCHER_REMOVAL_FINAL_DRAIN_RESERVE_MS - 1
+      )
       expect(closed).toBe(false)
 
       await vi.advanceTimersByTimeAsync(1)
@@ -177,11 +183,89 @@ describe('local filesystem watcher removal deadline', () => {
       const closePromise = closeLocalWatcherForWorktreePath('/tmp/repo', deadline).then(() => {
         closed = true
       })
-      await vi.advanceTimersByTimeAsync(WATCHER_REMOVAL_DRAIN_BUDGET_MS / 2)
+      // Why assert mid-drain: without this a fresh (unshared) budget would also pass the final check.
+      await vi.advanceTimersByTimeAsync(
+        WATCHER_REMOVAL_DRAIN_BUDGET_MS / 2 - WATCHER_REMOVAL_FINAL_DRAIN_RESERVE_MS - 1
+      )
+      expect(closed).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(1)
       await closePromise
       expect(closed).toBe(true)
 
       void watchPromise
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not let an abandoned unsubscribe poison a later close of the same root', async () => {
+    vi.mocked(stat).mockResolvedValue({ isDirectory: () => true } as never)
+    let rejectUnsubscribe: (error: unknown) => void = () => {}
+    const unsubscribeMock = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectUnsubscribe = reject
+        })
+    )
+    vi.mocked(subscribeParcelWatcher).mockResolvedValue({ unsubscribe: unsubscribeMock } as never)
+    const sender = { isDestroyed: () => false, send: vi.fn(), once: vi.fn(), id: 1 }
+    await handlers['fs:watchWorktree']({ sender }, { worktreePath: '/tmp/repo' })
+
+    vi.useFakeTimers()
+    try {
+      const closePromise = closeLocalWatcherForWorktreePath('/tmp/repo')
+      await vi.advanceTimersByTimeAsync(WATCHER_REMOVAL_DRAIN_BUDGET_MS)
+      await expect(closePromise).resolves.toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+
+    // The delete this drain guarded already finished; a late native failure is stale news, and
+    // retaining it would leave this root permanently undeletable until the watcher process exits.
+    rejectUnsubscribe(
+      new WatcherProcessFailure(
+        'file watcher process did not exit after termination deadline',
+        'supervisor',
+        'process_unavailable',
+        new Promise<void>(() => {})
+      )
+    )
+    await vi.waitFor(() => expect(unsubscribeMock).toHaveBeenCalledTimes(1))
+
+    await expect(closeLocalWatcherForWorktreePath('/tmp/repo')).resolves.toBeUndefined()
+  })
+})
+
+describe('watcher removal drain budget', () => {
+  it('reserves a tail slice so a slow final unsubscribe is not abandoned at zero', async () => {
+    vi.useFakeTimers()
+    try {
+      const deadline = createWatcherRemovalDeadline()
+      const earlyDrain = drainBeforeWatcherRemoval(
+        new Promise(() => {}),
+        deadline,
+        'wedged early drain',
+        { reserveMs: WATCHER_REMOVAL_FINAL_DRAIN_RESERVE_MS }
+      )
+      await vi.advanceTimersByTimeAsync(
+        WATCHER_REMOVAL_DRAIN_BUDGET_MS - WATCHER_REMOVAL_FINAL_DRAIN_RESERVE_MS
+      )
+      await expect(earlyDrain).resolves.toBe('timeout')
+      expect(deadline.remainingMs()).toBe(WATCHER_REMOVAL_FINAL_DRAIN_RESERVE_MS)
+
+      let finishFinalUnsubscribe: () => void = () => {}
+      const finalDrain = drainBeforeWatcherRemoval(
+        new Promise<void>((resolve) => {
+          finishFinalUnsubscribe = resolve
+        }),
+        deadline,
+        'slow final unsubscribe'
+      )
+      await vi.advanceTimersByTimeAsync(WATCHER_REMOVAL_FINAL_DRAIN_RESERVE_MS - 1)
+      finishFinalUnsubscribe()
+
+      await expect(finalDrain).resolves.toBe('settled')
     } finally {
       vi.useRealTimers()
     }
