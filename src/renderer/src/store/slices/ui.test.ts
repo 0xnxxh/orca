@@ -1920,6 +1920,17 @@ describe('createUISlice hydratePersistedUI', () => {
 })
 
 describe('createUISlice settings navigation', () => {
+  it('accepts the setup guide target emitted by Settings navigation metadata', () => {
+    const store = createUIStore()
+
+    store.getState().openSettingsTarget({ pane: 'setup-guide', repoId: null })
+
+    expect(store.getState().settingsNavigationTarget).toEqual({
+      pane: 'setup-guide',
+      repoId: null
+    })
+  })
+
   it('rejects malformed settings targets before storing them', () => {
     const store = createUIStore()
     const openSettingsTarget = store.getState().openSettingsTarget as unknown as (

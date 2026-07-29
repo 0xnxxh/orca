@@ -38,6 +38,7 @@ const SETTINGS_NAV_TARGETS = [
   'agents',
   'orchestration',
   'linear',
+  'setup-guide',
   'servers',
   'mobile',
   'mobile-emulator',
