@@ -117,6 +117,36 @@ export function SshHostAdvancedFields({
             <div className="min-w-0 flex-1 space-y-0.5">
               <Label className="text-xs font-medium">
                 {translate(
+                  'auto.components.settings.SshTargetForm.ptySourceCreditV1Label',
+                  'Bounded terminal output (experimental)'
+                )}
+              </Label>
+              <p className="text-muted-foreground">
+                {translate(
+                  'auto.components.settings.SshTargetForm.ptySourceCreditV1Description',
+                  'Limits buffered terminal output and improves recovery when this SSH target reconnects.'
+                )}
+              </p>
+            </div>
+            <SettingsSwitch
+              checked={form.experimentalPtySourceCreditV1}
+              disabled={disabled}
+              onChange={() =>
+                onFormChange((f) => ({
+                  ...f,
+                  experimentalPtySourceCreditV1: !f.experimentalPtySourceCreditV1
+                }))
+              }
+              ariaLabel={translate(
+                'auto.components.settings.SshTargetForm.ptySourceCreditV1Toggle',
+                'Toggle bounded terminal output'
+              )}
+            />
+          </div>
+          <div className="flex items-start justify-between gap-4 py-1 text-xs">
+            <div className="min-w-0 flex-1 space-y-0.5">
+              <Label className="text-xs font-medium">
+                {translate(
                   'auto.components.settings.SshTargetForm.71fc546097',
                   'Keep terminals alive until reset'
                 )}

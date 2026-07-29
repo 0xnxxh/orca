@@ -1,13 +1,17 @@
+import type { SshTarget } from '../../shared/ssh-types'
+
 export const SSH_PTY_SOURCE_CREDIT_V1_ENV = 'ORCA_SSH_PTY_SOURCE_CREDIT_V1'
 
-function readSshPtySourceCreditV1Selection(env: NodeJS.ProcessEnv): boolean {
-  return env[SSH_PTY_SOURCE_CREDIT_V1_ENV] === '1'
+function readSshPtySourceCreditV1Override(env: NodeJS.ProcessEnv): boolean | undefined {
+  const value = env[SSH_PTY_SOURCE_CREDIT_V1_ENV]
+  return value === undefined ? undefined : value === '1'
 }
 
-const SSH_PTY_SOURCE_CREDIT_V1_STARTUP_SELECTION = readSshPtySourceCreditV1Selection(process.env)
-
-export function isSshPtySourceCreditV1Enabled(env?: NodeJS.ProcessEnv): boolean {
-  return env ? readSshPtySourceCreditV1Selection(env) : SSH_PTY_SOURCE_CREDIT_V1_STARTUP_SELECTION
+export function resolveSshPtySourceCreditV1Selection(
+  target: Pick<SshTarget, 'experimentalPtySourceCreditV1'>,
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  return readSshPtySourceCreditV1Override(env) ?? target.experimentalPtySourceCreditV1 === true
 }
 
 export class SshPtySourceCreditRestartRequiredError extends Error {

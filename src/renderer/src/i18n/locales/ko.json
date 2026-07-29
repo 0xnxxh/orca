@@ -6958,7 +6958,10 @@
           "4a342f44c1": "고급 연결",
           "e9609ddca6": "프록시, 점프 호스트, 연결 재사용",
           "8c922dffba": "더 빠른 설정을 위해 SSH 연결 재사용",
-          "53e9aabfc0": "사용 가능한 경우 OpenSSH 멀티플렉싱을 사용합니다. 사용자 지정 SSH 제한이 있는 호스트에서는 끄세요."
+          "53e9aabfc0": "사용 가능한 경우 OpenSSH 멀티플렉싱을 사용합니다. 사용자 지정 SSH 제한이 있는 호스트에서는 끄세요.",
+          "ptySourceCreditV1Label": "Bounded terminal output (experimental)",
+          "ptySourceCreditV1Description": "Limits buffered terminal output and improves recovery when this SSH target reconnects.",
+          "ptySourceCreditV1Toggle": "Toggle bounded terminal output"
         },
         "TasksPane": {
           "3a72b9745e": "작업 페이지와 사이드바 바로가기에 표시할 작업 제공자를 선택합니다.",

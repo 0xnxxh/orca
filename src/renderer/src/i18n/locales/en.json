@@ -7033,7 +7033,10 @@
           "4a342f44c1": "Advanced Connection",
           "e9609ddca6": "Proxy, jump host, and connection reuse",
           "8c922dffba": "Reuse SSH connection for faster setup",
-          "53e9aabfc0": "Uses OpenSSH multiplexing when available. Turn off for hosts with custom SSH restrictions."
+          "53e9aabfc0": "Uses OpenSSH multiplexing when available. Turn off for hosts with custom SSH restrictions.",
+          "ptySourceCreditV1Label": "Bounded terminal output (experimental)",
+          "ptySourceCreditV1Description": "Limits buffered terminal output and improves recovery when this SSH target reconnects.",
+          "ptySourceCreditV1Toggle": "Toggle bounded terminal output"
         },
         "TasksPane": {
           "3a72b9745e": "Choose which task providers appear in the Tasks page and sidebar shortcuts.",

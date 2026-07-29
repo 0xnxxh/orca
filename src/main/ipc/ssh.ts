@@ -7,7 +7,7 @@ import type { SshConnectionCallbacks } from '../ssh/ssh-connection'
 import { SshConnectionManager } from '../ssh/ssh-connection-manager'
 import type { SshChannelMultiplexer } from '../ssh/ssh-channel-multiplexer'
 import { SshRelaySession, type SshRelayAiVaultHostInfo } from '../ssh/ssh-relay-session'
-import { isSshPtySourceCreditV1Enabled } from '../ssh/ssh-pty-source-credit-rollout'
+import { resolveSshPtySourceCreditV1Selection } from '../ssh/ssh-pty-source-credit-rollout'
 import { SshPortForwardManager } from '../ssh/ssh-port-forward'
 import type {
   DetectedPort,
@@ -1023,7 +1023,7 @@ export function registerSshHandlers(
       portForwardManager!,
       currentRuntime,
       broadcastDetectedPortsFromCurrentWindow,
-      isSshPtySourceCreditV1Enabled
+      () => resolveSshPtySourceCreditV1Selection(target)
     )
     configureRelaySessionCallbacks(session)
     activeSessions.set(targetId, session)

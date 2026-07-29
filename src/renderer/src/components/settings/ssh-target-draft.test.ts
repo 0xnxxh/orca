@@ -4,6 +4,7 @@ import {
   applyParsedSshHostInput,
   getEditingTargetForSshTarget,
   getSshTargetDraftConnectionFields,
+  hasAdvancedConnectionValues,
   parseRelayGracePeriodSeconds,
   parseSshHostInput
 } from './ssh-target-draft'
@@ -214,6 +215,20 @@ describe('getEditingTargetForSshTarget', () => {
     })
 
     expect(draft.systemSshConnectionReuse).toBe(false)
+  })
+
+  it('preserves per-target bounded terminal output opt-ins while editing', () => {
+    const draft = getEditingTargetForSshTarget({
+      id: 'ssh-1',
+      label: 'Noisy build host',
+      host: 'build.example.com',
+      port: 22,
+      username: 'deploy',
+      experimentalPtySourceCreditV1: true
+    })
+
+    expect(draft.experimentalPtySourceCreditV1).toBe(true)
+    expect(hasAdvancedConnectionValues(draft)).toBe(true)
   })
 
   it('uses the default persistence for targets without an explicit grace period', () => {

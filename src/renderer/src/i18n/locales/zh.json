@@ -6958,7 +6958,10 @@
           "4a342f44c1": "高级连接",
           "e9609ddca6": "代理、跳板主机和连接复用",
           "8c922dffba": "复用 SSH 连接以加快设置",
-          "53e9aabfc0": "可用时使用 OpenSSH 多路复用。对于有自定义 SSH 限制的主机，请关闭此项。"
+          "53e9aabfc0": "可用时使用 OpenSSH 多路复用。对于有自定义 SSH 限制的主机，请关闭此项。",
+          "ptySourceCreditV1Label": "Bounded terminal output (experimental)",
+          "ptySourceCreditV1Description": "Limits buffered terminal output and improves recovery when this SSH target reconnects.",
+          "ptySourceCreditV1Toggle": "Toggle bounded terminal output"
         },
         "TasksPane": {
           "3a72b9745e": "选择要在“任务”页面和侧边栏快捷键中显示的任务提供商。",

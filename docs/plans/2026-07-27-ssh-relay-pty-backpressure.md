@@ -3,8 +3,8 @@
 Date: 2026-07-27
 
 Status: architecture gate closed and exact SSH V1 wire/API implemented behind
-an experimental startup gate; integrated lifecycle fixes reconciled at current
-HEAD; live topology gaps remain explicit below
+an experimental per-target SSH setting; integrated lifecycle fixes reconciled
+at current HEAD; live topology gaps remain explicit below
 
 Historical unbounded baseline: `badf91101babf96fa09cb79a8294f7e23b9f081c`
 (the implementation branch parent). The implementation was rebased onto
@@ -349,7 +349,7 @@ findings as follows:
 | Desktop projection admission lacked immutable range identity and rollback | Model, source span, projection range, and scanner snapshot reserve atomically; pre-commit failure rolls back, while post-commit replacement transfers with proof.        |
 
 Later adversarial review also required exact recovery continuity, stale-attempt
-isolation, startup-latched rollout semantics, and idempotent remote detach
+isolation, session-latched rollout semantics, and idempotent remote detach
 after token reclamation. Those are incorporated in the activation, lifecycle,
 cleanup, tests, and rollout sections below.
 
@@ -482,11 +482,11 @@ prior-version isolation remain authoritative. Reusing the semantic state
 machine there is a later design decision and is not required to ship the SSH
 bound.
 
-The optional V1 offer is present only when the main rollout gate is on. The
-server intersects the offer with its supported versions and clamps
-`windowSu`; omission selects bounded legacy delivery while still establishing
-the role and generation. When V1 was offered, main accepts only a returned
-version it offered and a finite safe integer satisfying
+The optional V1 offer is present only when the SSH session's captured rollout
+selection is on. The server intersects the offer with its supported versions
+and clamps `windowSu`; omission selects bounded legacy delivery while still
+establishing the role and generation. When V1 was offered, main accepts only a
+returned version it offered and a finite safe integer satisfying
 `0 < windowSu <= requestedWindowSu`. An absent or invalid V1 grant closes that
 connection attempt rather than silently downgrading it.
 
@@ -507,7 +507,7 @@ and projection work. Transport close cancels the connection's retained
 publications and reconnect uses the existing replay/restore behavior. It may
 pause all legacy subscribers behind one slow connection because legacy mode
 has no authenticated source-owner role, but it neither drops output nor grows
-without bound. These mechanics remain enabled when the V1 rollout gate is off.
+without bound. These mechanics remain enabled when the target's V1 option is off.
 
 The session hello creates no PTY token. A later V1 spawn/attach returns a fresh
 `deliveryToken` and creates a subscription only for the authenticated
@@ -516,8 +516,8 @@ context just as `pty.spawn` does. Spawn failure, identity mismatch, stale
 context, and response cancellation create no active V1 subscription. A legacy
 spawn/attach returns the current identity/replay shape and creates only the
 bounded transport subscription above—no token or source coordinate. The
-startup-latched mode never rotates a live V1 token into legacy service; normal
-shutdown closes the old token before a restarted gate-off main opens a bounded
+session-latched mode never rotates a live V1 token into legacy service; normal
+disconnect closes the old token before a new gate-off session opens a bounded
 legacy connection.
 
 Session ownership is granted by the authenticated session hello, not
@@ -560,20 +560,23 @@ launches detach on POSIX and Windows, invalidate stdout, and connect the
 desktop bridge through `attachClient` over the versioned Unix socket or named
 pipe. Unproved direct stdio remains subscriber-only.
 
-Capability support and rollout enablement are separate. Fresh POSIX and
-Windows gate-on launches receive the safely quoted
+Capability support and rollout enablement are separate. Each `SshRelaySession`
+captures its target's `experimentalPtySourceCreditV1` selection at construction;
+`ORCA_SSH_PTY_SOURCE_CREDIT_V1=0|1` remains an explicit CI/development
+override. Fresh POSIX and Windows gate-on launches receive the safely quoted
 `--pty-source-credit-v1` flag; gate-off omits it. The endpoint's persisted
 `.pty-source-credit-policy` records `v1` or `off` and fences incompatible
 reuse. A new main may still decline V1 from an already-running capable relay.
-Changing the gate requires a main-process restart and never changes a live
-token's semantics. Sink drain, writer ordering, decoder bounds, and header-ACK
-hardening are correctness fixes and are not disabled by this gate.
+Editing a target never changes a live session or its automatic reconnects; a
+later explicit connection captures the new selection. Sink drain, writer
+ordering, decoder bounds, and header-ACK hardening are correctness fixes and
+are not disabled by this gate.
 
 Production deployment does not form arbitrary mixed-build main/relay pairs.
 `computeRemoteRelayDir` content-hash-scopes the install directory and its
 socket/named-pipe endpoint, and the `.version` handshake is a second fence, so
 the desktop bridge and daemon reached at that endpoint share a build. Reachable
-same-build modes are session-granted V1 and main-gated legacy. A missing
+same-build modes are session-granted V1 and target-gated legacy. A missing
 mandatory session grant fails readiness. Protocol tolerance for unknown fields
 remains for direct/manual relay launches, but an absent session contract is
 diagnostic `unsupported-version-skew`, not a rollout cohort.
@@ -581,9 +584,9 @@ diagnostic `unsupported-version-skew`, not a rollout cohort.
 The reachable upgrade skew is an orphaned prior-version daemon in its old
 version directory with live PTYs while the new main connects to a new endpoint.
 It retains its old behavior until its own grace/cleanup completes and is not
-reachable by the new main's startup gate. Upgrade diagnostics enumerate these
-versioned orphan processes; V1 neither adopts their PTYs nor claims to bound
-their memory.
+reachable by a new session's rollout selection. Upgrade diagnostics enumerate
+these versioned orphan processes; V1 neither adopts their PTYs nor claims to
+bound their memory.
 
 Unknown fields are never capability proof. Place the transport-neutral state
 types with the narrowest shared session package, while relay/daemon/runtime
@@ -2385,7 +2388,7 @@ boundaries even though they ship in one PR.
 - `SshPtyModelAdmission` retains generation-fatal callback handling except when
   the exact key is actively migrating; `SshPtyOutputIntake` uses the same key
   to keep provider close from escaping that migration owner.
-- Reconnect V1 remains under the startup gate; its late-ACK, timeout,
+- Reconnect V1 remains under the session-latched target gate; its late-ACK, timeout,
   supersession, and generation-close deterministic oracles pass.
 
 ### Slice 5d: required remote consumers — deterministic seam implemented
@@ -2753,8 +2756,8 @@ one last chunk to prove the transient overshoot bound.
 ### Integration and E2E
 
 `tests/e2e/ssh-docker-relay-perf.spec.ts` now contains V1 evidence for the
-implemented Linux SSH/deployed-relay path. With
-`ORCA_SSH_PTY_SOURCE_CREDIT_V1=1`, it:
+implemented Linux SSH/deployed-relay path. The test harness uses the
+`ORCA_SSH_PTY_SOURCE_CREDIT_V1=1` all-target override and:
 
 1. stalls desktop ACK and observes an exact 256 Ki-source-unit negotiated
    plateau while a second SSH PTY remains responsive;
@@ -2807,14 +2810,15 @@ is deterministic adapter evidence only, not a physical WSL run.
 
 ## Rollout
 
-V1 is behind a main-process startup gate and a persisted per-endpoint relay
-launch policy. `ORCA_SSH_PTY_SOURCE_CREDIT_V1` is read once when the main
-process starts; it is not a live kill switch. Tests and development enable the
-gate before startup. Main never negotiates merely because a long-lived relay
-advertises; its startup-latched gate is the final authority. Fresh POSIX and
-Windows gate-on launch commands carry `--pty-source-credit-v1`; gate-off omits
-it, and the persisted endpoint policy records the selected mode rather than
-assuming a local environment variable reaches the remote process.
+V1 is behind `Bounded terminal output (experimental)` in each SSH target's
+Advanced settings and a persisted per-endpoint relay launch policy. Missing or
+false target state selects legacy mode. `ORCA_SSH_PTY_SOURCE_CREDIT_V1=0|1`
+explicitly overrides every target for CI, development, and emergency rollback.
+Main never negotiates merely because a long-lived relay advertises; the
+immutable selection captured by a new `SshRelaySession` is final for that
+session and all of its automatic reconnects. Fresh POSIX and Windows gate-on
+launch commands carry `--pty-source-credit-v1`; gate-off omits it, and the
+persisted endpoint policy records the selected mode.
 
 Sink drain, the reserved writer lane, stdout serialization, bounded decoder
 work, bulk admission, and hostile header-ACK hardening remain enabled
@@ -2826,7 +2830,7 @@ Implementation and rollout stages:
 
 1. Slices 1-4 are implemented under legacy-compatible framing with narrow
    reliability oracles.
-2. Slices 5a-5c are implemented behind the startup gate and relay launch
+2. Slices 5a-5c are implemented behind the per-target gate and relay launch
    policy with unit/service contracts and prior direct Docker SSH evidence.
 3. Slices 5d-5e implement remote source-range transactions and the final
    lifecycle reconciliation at deterministic main/runtime/provider/relay
@@ -2839,19 +2843,20 @@ Implementation and rollout stages:
    final exact-implementation-head architecture and transport reviews found no
    code blocker, and the transport review's stale-provenance finding is closed
    by the exact artifact record above.
-5. Run an internal same-build canary comparing gate-off and V1 sink,
+5. Run an internal same-build per-target canary comparing gate-off and V1 sink,
    model-admission, latency, sealed-exit, recovery, and reconnect metrics while
    separately counting orphan prior-version daemons;
 6. Default on only after zero ordering/data-loss failures and stable memory
-   plateaus for one release cycle; remove the flag only after same-build legacy
-   fallback and versioned-orphan cleanup stay healthy through the supported
-   upgrade window.
+   plateaus for one release cycle; remove the per-target opt-in only after
+   same-build legacy fallback and versioned-orphan cleanup stay healthy through
+   the supported upgrade window.
 
 Rollback behavior is explicit:
 
-1. Change the environment/launch setting, then restart the main process. The
-   existing process keeps its original mode until shutdown.
-2. Shutdown performs the normal token-scoped cancellation/exit cleanup; it
+1. Change the target's Advanced setting, then explicitly disconnect and
+   reconnect that target. Existing sessions and automatic reconnects keep
+   their captured mode.
+2. Disconnect performs the normal token-scoped cancellation/exit cleanup; it
    does not rotate live V1 tokens into legacy mode in place.
 3. On the next connection, gate-off omits the V1 offer and accepts same-build
    bounded legacy service. Gate-on requires a V1-launched endpoint.
@@ -2863,7 +2868,7 @@ Rollback behavior is explicit:
    because omission of the offer selects bounded legacy behavior.
 
 The remote process may remain alive only when its persisted launch policy is
-compatible with the new startup mode. An orphaned prior-version daemon is
+compatible with the new session selection. An orphaned prior-version daemon is
 outside this sequence and is only observed until its own version-scoped
 cleanup.
 

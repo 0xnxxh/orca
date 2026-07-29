@@ -52,6 +52,7 @@ describe('buildSshTargetSavePayload', () => {
       proxyCommand: 'cloudflared access ssh --hostname %h',
       jumpHost: 'bastion.example.com',
       systemSshConnectionReuse: false,
+      experimentalPtySourceCreditV1: true,
       relayKeepAliveUntilReset: false,
       relayGracePeriodSeconds: '600'
     })
@@ -67,12 +68,29 @@ describe('buildSshTargetSavePayload', () => {
       identityFile: '~/.ssh/appliance',
       proxyCommand: 'cloudflared access ssh --hostname %h',
       jumpHost: 'bastion.example.com',
-      systemSshConnectionReuse: false
+      systemSshConnectionReuse: false,
+      experimentalPtySourceCreditV1: true
     })
     expect(result.payload.updates).toMatchObject({
       source: 'manual',
-      systemSshConnectionReuse: false
+      systemSshConnectionReuse: false,
+      experimentalPtySourceCreditV1: true
     })
+  })
+
+  it('clears disabled per-target source credit on update', () => {
+    const result = buildSshTargetSavePayload({
+      ...EMPTY_FORM,
+      host: 'legacy.example.com',
+      experimentalPtySourceCreditV1: false
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      throw new Error(result.error)
+    }
+    expect(result.payload.target).not.toHaveProperty('experimentalPtySourceCreditV1')
+    expect(result.payload.updates).toHaveProperty('experimentalPtySourceCreditV1', undefined)
   })
 
   it('rejects invalid bounded relay timeouts', () => {

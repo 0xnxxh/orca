@@ -2,19 +2,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SshRelaySession } from './ssh-relay-session'
 import { createMockDeps, mockDeploySuccess } from './ssh-relay-session-test-fixtures'
 
-const { acceptOutputExitMock, muxRequestMock } = vi.hoisted(() => ({
+const { acceptOutputExitMock, muxRequestMock, openConsumerSessionMock } = vi.hoisted(() => ({
   acceptOutputExitMock: vi.fn().mockResolvedValue(undefined),
-  muxRequestMock: vi.fn()
+  muxRequestMock: vi.fn(),
+  openConsumerSessionMock: vi.fn(
+    async (_mux: unknown, options: { clientInstanceId: string; outputFlowControl?: unknown }) => ({
+      clientInstanceId: options.clientInstanceId,
+      clientGeneration: 1,
+      ownerGeneration: 1,
+      ownerLease: 'test-owner-lease'
+    })
+  )
 }))
 
 vi.mock('./ssh-relay-deploy', () => ({ deployAndLaunchRelay: vi.fn() }))
 vi.mock('./ssh-pty-consumer-session', () => ({
-  openSshPtyConsumerSession: vi.fn(async (_mux, options) => ({
-    clientInstanceId: options.clientInstanceId,
-    clientGeneration: 1,
-    ownerGeneration: 1,
-    ownerLease: 'test-owner-lease'
-  }))
+  openSshPtyConsumerSession: openConsumerSessionMock
 }))
 vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
   acceptSshPtyOutputData: vi.fn().mockResolvedValue(undefined),
@@ -27,7 +30,8 @@ vi.mock('../ipc/ssh-pty-output-intake-registry', () => ({
   closeSshPtyOutputGeneration: vi.fn(),
   getSshPtyAcceptedSourceCheckpoints: vi.fn(() => []),
   applySshPtySourceRecoveryCancellationProof: vi.fn(() => true),
-  installSshPtySourceAckPublisher: vi.fn(() => () => {})
+  installSshPtySourceAckPublisher: vi.fn(() => () => {}),
+  installSshPtySourceCancellationPublisher: vi.fn(() => () => {})
 }))
 vi.mock('./ssh-relay-deploy-helpers', () => ({ execCommand: vi.fn().mockResolvedValue('') }))
 vi.mock('./ssh-channel-multiplexer', () => ({
@@ -96,6 +100,7 @@ const {
   setPtyOwnership,
   restorePtyIncarnation
 } = await import('../ipc/pty')
+const { deployAndLaunchRelay } = await import('./ssh-relay-deploy')
 
 const APP_PTY_ID = 'ssh:target-1@@pty-live'
 const INCARNATION_LEAF_ID = '11111111-1111-4111-8111-111111111111'
@@ -206,6 +211,45 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     } finally {
       vi.useRealTimers()
       random.mockRestore()
+    }
+  })
+
+  it('keeps source-credit selection immutable through reconnect', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    let sourceCreditEnabled = true
+    const session = new SshRelaySession(
+      'target-1',
+      getMainWindow,
+      mockStore,
+      mockPortForward,
+      undefined,
+      undefined,
+      () => sourceCreditEnabled
+    )
+    sourceCreditEnabled = false
+
+    await session.establish(mockConn)
+    await session.reconnect(mockConn)
+
+    expect(deployAndLaunchRelay).toHaveBeenNthCalledWith(
+      1,
+      mockConn,
+      undefined,
+      undefined,
+      'target-1',
+      true
+    )
+    expect(deployAndLaunchRelay).toHaveBeenNthCalledWith(
+      2,
+      mockConn,
+      undefined,
+      undefined,
+      'target-1',
+      true
+    )
+    expect(openConsumerSessionMock).toHaveBeenCalledTimes(2)
+    for (const [, options] of openConsumerSessionMock.mock.calls) {
+      expect(options.outputFlowControl).toBeDefined()
     }
   })
 

@@ -1122,11 +1122,13 @@ function normalizeSshTarget(t: SshTarget): SshTarget {
   const currentGracePeriodSeconds = target.relayGracePeriodSeconds
   const legacyGracePeriodSeconds = target.remoteWorkspaceSyncGracePeriodSeconds
   const systemSshConnectionReuse = target.systemSshConnectionReuse
+  const experimentalPtySourceCreditV1 = target.experimentalPtySourceCreditV1
   // Why: remote sync now follows the SSH relay lifecycle, so retired per-target sync/grace fields are dropped at disk load.
   delete target.remoteWorkspaceSyncEnabled
   delete target.remoteWorkspaceSyncGracePeriodSeconds
   delete target.relayGracePeriodSeconds
   delete target.systemSshConnectionReuse
+  delete target.experimentalPtySourceCreditV1
   // Why: prefer the synced grace over stale relayGracePeriodSeconds so a user's "unlimited" (0) survives migration.
   const relayGracePeriodSeconds =
     legacySyncEnabled === true && typeof legacyGracePeriodSeconds === 'number'
@@ -1145,6 +1147,9 @@ function normalizeSshTarget(t: SshTarget): SshTarget {
   }
   if (systemSshConnectionReuse === false) {
     normalized.systemSshConnectionReuse = false
+  }
+  if (experimentalPtySourceCreditV1 === true) {
+    normalized.experimentalPtySourceCreditV1 = true
   }
   return normalized
 }
@@ -6255,6 +6260,9 @@ export class Store {
     }
     if (!Object.hasOwn(normalized, 'systemSshConnectionReuse')) {
       delete target.systemSshConnectionReuse
+    }
+    if (!Object.hasOwn(normalized, 'experimentalPtySourceCreditV1')) {
+      delete target.experimentalPtySourceCreditV1
     }
     this.scheduleSave()
     return { ...target }

@@ -282,6 +282,7 @@ export class SshRelaySession {
   >()
   private readonly retiredSourceDeliveries = new SshPtyRetiredSourceDeliveries()
   private readonly ptyConsumerClientInstanceId: string
+  private readonly ptySourceCreditEnabled: boolean
   private ptyConsumerSessionState: SshPtyConsumerSessionState | null = null
 
   constructor(
@@ -295,9 +296,10 @@ export class SshRelaySession {
       ports: DetectedPort[],
       platform: string
     ) => void,
-    private readonly isPtySourceCreditEnabled: () => boolean = () => false
+    isPtySourceCreditEnabled: () => boolean = () => false
   ) {
     this.ptyConsumerClientInstanceId = ptyConsumerRecoveryForTarget(targetId).clientInstanceId
+    this.ptySourceCreditEnabled = isPtySourceCreditEnabled()
   }
 
   refreshEnvironment(
@@ -398,7 +400,7 @@ export class SshRelaySession {
         undefined,
         graceTimeSeconds,
         this.targetId,
-        this.isPtySourceCreditEnabled()
+        this.ptySourceCreditEnabled
       )
       this.hostPlatform = hostPlatform ?? null
       this.remoteCliBridgeEnv =
@@ -519,7 +521,7 @@ export class SshRelaySession {
         undefined,
         graceTimeSeconds,
         this.targetId,
-        this.isPtySourceCreditEnabled()
+        this.ptySourceCreditEnabled
       )
       this.hostPlatform = hostPlatform ?? null
       this.remoteCliBridgeEnv =
@@ -855,7 +857,7 @@ export class SshRelaySession {
       clientInstanceId: this.ptyConsumerClientInstanceId,
       expectedServerBuildId: serverBuildId,
       allowSameBuildLegacyFallback: true,
-      ...(this.isPtySourceCreditEnabled()
+      ...(this.ptySourceCreditEnabled
         ? { outputFlowControl: { requestedWindowSu: DEFAULT_PTY_SOURCE_WINDOW_SU } }
         : {})
     }
