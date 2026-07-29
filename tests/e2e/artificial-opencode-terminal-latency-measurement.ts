@@ -50,6 +50,15 @@ function median(values: number[]): number {
   return sorted[Math.floor(sorted.length / 2)] ?? 0
 }
 
+function readLinuxCpuPressureWaitMicros(): number | null {
+  try {
+    const match = readFileSync('/proc/pressure/cpu', 'utf8').match(/^some\s+.*\btotal=(\d+)$/m)
+    return match ? Number(match[1]) : null
+  } catch {
+    return null
+  }
+}
+
 function readHostCpuSnapshot(): HostCpuSnapshot | null {
   if (process.platform !== 'linux') {
     return null
@@ -64,12 +73,9 @@ function readHostCpuSnapshot(): HostCpuSnapshot | null {
     if (!cpuFields || cpuFields.length < 4 || cpuFields.some((value) => !Number.isFinite(value))) {
       return null
     }
-    const pressureMatch = readFileSync('/proc/pressure/cpu', 'utf8').match(
-      /^some\s+.*\btotal=(\d+)$/m
-    )
     return {
       idleTicks: cpuFields[3] + (cpuFields[4] ?? 0),
-      pressureWaitMicros: pressureMatch ? Number(pressureMatch[1]) : null,
+      pressureWaitMicros: readLinuxCpuPressureWaitMicros(),
       totalTicks: cpuFields.reduce((total, value) => total + value, 0)
     }
   } catch {
