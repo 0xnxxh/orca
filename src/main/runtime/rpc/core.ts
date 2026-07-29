@@ -53,6 +53,14 @@ export type RpcRequest = {
   orchestrationCompatibilityEvidence?: OrchestrationCompatibilityEvidence
 }
 
+export type LegacyCoordinatorAuthorityProof = Readonly<{
+  runId: string
+  principalId: string | null
+  terminalHandle: string
+  paneKey: string
+  consumerGeneration: number
+}>
+
 export type RpcContext = {
   runtime: OrcaRuntimeService
   // Why: lets long-poll handlers release immediately on client disconnect instead of running down timeoutMs. See design doc §3.1.
@@ -82,6 +90,8 @@ export type RpcContext = {
   }
   // Why: only the compatibility authority router can set this trusted scope; user params cannot bypass Run consumer binding.
   legacyCoordinatorRunId?: string
+  legacyCoordinatorAuthority?: LegacyCoordinatorAuthorityProof
+  revalidateLegacyCoordinator?: () => string
   // Why: federation pins the authenticated saved-environment caller without exposing its token to handlers or storage.
   authenticatedCallerFingerprint?: string
   pairing?: PairingRpcContext

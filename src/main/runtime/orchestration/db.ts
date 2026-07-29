@@ -171,10 +171,10 @@ function legacyMessageMatchesQuestion(
   message: MessageRow,
   question: string,
   options: string[],
-  recipientHandle: string
+  recipientHandles: readonly string[]
 ): boolean {
   if (
-    message.to_handle !== recipientHandle ||
+    !recipientHandles.includes(message.to_handle) ||
     normalizeLegacyQuestionText(message.body) !== normalizeLegacyQuestionText(question)
   ) {
     return false
@@ -1212,6 +1212,13 @@ export class OrchestrationDb {
             `The ${params.role} compatibility principal is already committed to different proof.`
           )
         }
+        if (existing.status === 'revoked') {
+          throw new OrchestrationError(
+            'legacy_read_only',
+            `The ${params.role} compatibility principal has been revoked. No effects were applied.`,
+            { effectsApplied: false }
+          )
+        }
         this.db.exec('COMMIT')
         return { principal: existing, duplicate: true }
       }
@@ -1261,6 +1268,15 @@ export class OrchestrationDb {
          WHERE run_id = ? ORDER BY rowid`
       )
       .all(runId) as LegacyCompatibilityPrincipalRow[]
+  }
+
+  getLegacyCoordinatorPrincipal(runId: string): LegacyCompatibilityPrincipalRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM legacy_compatibility_principals
+         WHERE run_id = ? AND role = 'coordinator'`
+      )
+      .get(runId) as LegacyCompatibilityPrincipalRow | undefined
   }
 
   resolveLegacyCompatibilityPrincipalByIdentity(params: {
@@ -1362,6 +1378,10 @@ export class OrchestrationDb {
   }
 
   isLegacyCoordinatorHandle(runId: string, terminalHandle: string): boolean {
+    const principal = this.getLegacyCoordinatorPrincipal(runId)
+    if (principal?.terminal_handle === terminalHandle) {
+      return true
+    }
     return Boolean(
       this.db
         .prepare(
@@ -1403,18 +1423,24 @@ export class OrchestrationDb {
     if (!principal || principal.role !== 'worker' || !principal.dispatch_id) {
       throw new OrchestrationError('request_mismatch', 'Legacy worker principal was not found.')
     }
+    const runAddress = `run:${principal.run_id}`
     const rows = this.db
       .prepare(
         `SELECT * FROM messages
-         WHERE run_id = ? AND delivery_contract = 'legacy_direct'
-           AND from_handle = ? AND to_handle = ? AND type = 'worker_done'
+         WHERE run_id = ?
+           AND (
+             (delivery_contract = 'legacy_direct' AND to_handle = ?) OR
+             (delivery_contract = 'current_delivery' AND to_handle = ?)
+           )
+           AND from_handle = ? AND type = 'worker_done'
            AND subject = ? AND body = ? AND payload IS ?
          ORDER BY sequence`
       )
       .all(
         principal.run_id,
-        principal.terminal_handle,
         params.recipientHandle,
+        runAddress,
+        principal.terminal_handle,
         params.subject,
         params.body,
         params.payload
@@ -1444,10 +1470,11 @@ export class OrchestrationDb {
       this.db
         .prepare(
           `SELECT 1 FROM messages
-           WHERE run_id = ? AND delivery_contract = 'current_delivery' AND read = 0
+           WHERE run_id = ? AND to_handle = ?
+             AND delivery_contract = 'current_delivery' AND read = 0
            LIMIT 1`
         )
-        .get(runId)
+        .get(runId, `run:${runId}`)
     )
   }
 
@@ -1832,7 +1859,14 @@ export class OrchestrationDb {
     runId: string
     coordinatorHandle: string
     coordinatorPaneKey: string
-    allowLegacyCompatibility?: boolean
+    takeoverLegacy?: boolean
+    legacyCoordinatorAuthority?: {
+      runId: string
+      principalId: string | null
+      terminalHandle: string
+      paneKey: string
+      consumerGeneration: number
+    }
   }): RunRow | undefined {
     this.db.exec('BEGIN IMMEDIATE')
     try {
@@ -1845,30 +1879,95 @@ export class OrchestrationDb {
         run.coordinator_pane_key !== null &&
         isEquivalentPaneKey(run.coordinator_pane_key, params.coordinatorPaneKey)
       const adoption = this.getLegacyAdoption()
+      const adoptedRun = adoption?.adopted_run_id === params.runId
+      const legacyAuthority = params.legacyCoordinatorAuthority
+      const legacyPrincipalId = legacyAuthority?.principalId
+      const legacyPrincipal = legacyPrincipalId
+        ? this.getLegacyCompatibilityPrincipal(legacyPrincipalId)
+        : undefined
+      const provenLegacyBinding = Boolean(
+        adoptedRun &&
+        legacyAuthority &&
+        legacyAuthority.principalId !== null &&
+        legacyAuthority.runId === params.runId &&
+        legacyAuthority.consumerGeneration === run.consumer_generation &&
+        legacyPrincipal?.run_id === params.runId &&
+        legacyPrincipal.role === 'coordinator' &&
+        legacyPrincipal.status === 'committed' &&
+        legacyPrincipal.terminal_handle === legacyAuthority.terminalHandle &&
+        isEquivalentPaneKey(legacyPrincipal.pane_key, legacyAuthority.paneKey) &&
+        params.coordinatorHandle === legacyAuthority.terminalHandle &&
+        isEquivalentPaneKey(params.coordinatorPaneKey, legacyAuthority.paneKey)
+      )
+      if (legacyAuthority && !provenLegacyBinding) {
+        throw new OrchestrationError(
+          'legacy_read_only',
+          'This retained legacy coordinator no longer has lifecycle authority. No effects were applied.',
+          { effectsApplied: false }
+        )
+      }
       const activeLegacyAssignment =
-        adoption?.adopted_run_id === params.runId &&
+        adoptedRun &&
         Boolean(
           this.db
             .prepare(
               `SELECT 1 FROM dispatch_contexts
                WHERE run_id = ? AND contract_version = ?
                  AND status IN ('pending', 'dispatched')
-               UNION ALL
-               SELECT 1 FROM legacy_compatibility_principals
-               WHERE run_id = ? AND status = 'committed'
                LIMIT 1`
             )
-            .get(params.runId, LEGACY_CONTRACT_VERSION, params.runId)
+            .get(params.runId, LEGACY_CONTRACT_VERSION)
         )
-      if (activeLegacyAssignment && !sameBinding && !params.allowLegacyCompatibility) {
+      const coordinatorPrincipal = adoptedRun
+        ? this.getLegacyCoordinatorPrincipal(params.runId)
+        : undefined
+      const retainedCoordinatorHandle =
+        coordinatorPrincipal?.terminal_handle ??
+        run.coordinator_handle ??
+        this.getUniqueLegacyTaskCreatorHandle(params.runId)
+      const takeoverAlreadyApplied = Boolean(
+        params.takeoverLegacy &&
+        sameBinding &&
+        run.coordinator_handle === params.coordinatorHandle &&
+        coordinatorPrincipal?.status !== 'committed'
+      )
+      if (params.takeoverLegacy && !adoptedRun) {
+        throw new OrchestrationError(
+          'invalid_argument',
+          'Legacy takeover is only available for the automatically adopted Run.'
+        )
+      }
+      if (
+        activeLegacyAssignment &&
+        !sameBinding &&
+        !provenLegacyBinding &&
+        !params.takeoverLegacy
+      ) {
         throw new OrchestrationError(
           'consumer_fenced',
-          'This adopted Run still has a live legacy principal; only its attested coordinator may rebind it.',
-          { effectsApplied: false }
+          'This adopted Run still has live legacy work. Its attested coordinator may rebind it, or a current coordinator may explicitly use run-use --takeover-legacy.',
+          {
+            effectsApplied: false,
+            recoveryCommand: `orca orchestration run-use --id ${params.runId} --takeover-legacy`
+          }
         )
       }
       this.unbindOtherRunsForPane(params.coordinatorPaneKey, params.runId)
-      if (!sameBinding || run.coordinator_handle !== params.coordinatorHandle) {
+      if (
+        (params.takeoverLegacy && !takeoverAlreadyApplied) ||
+        !sameBinding ||
+        run.coordinator_handle !== params.coordinatorHandle
+      ) {
+        if (adoptedRun && (params.takeoverLegacy || !activeLegacyAssignment)) {
+          if (
+            coordinatorPrincipal?.status === 'committed' &&
+            (params.takeoverLegacy ||
+              coordinatorPrincipal.terminal_handle !== params.coordinatorHandle ||
+              !isEquivalentPaneKey(coordinatorPrincipal.pane_key, params.coordinatorPaneKey))
+          ) {
+            this.setLegacyCompatibilityPrincipalStatus(coordinatorPrincipal.id, 'revoked')
+          }
+        }
         this.db
           .prepare(
             `UPDATE runs
@@ -1879,6 +1978,9 @@ export class OrchestrationDb {
           )
           .run(params.coordinatorHandle, params.coordinatorPaneKey, params.runId)
         this.fenceOutstandingDelivery(params.runId)
+        if (params.takeoverLegacy) {
+          this.promoteLegacyCoordinatorMailForTakeover(params.runId, retainedCoordinatorHandle)
+        }
       }
       this.db.exec('COMMIT')
     } catch (error) {
@@ -1951,6 +2053,51 @@ export class OrchestrationDb {
         "UPDATE deliveries SET status = 'fenced' WHERE run_id = ? AND status = 'outstanding'"
       )
       .run(runId)
+  }
+
+  private promoteLegacyCoordinatorMailForTakeover(
+    runId: string,
+    retainedCoordinatorHandle: string | null
+  ): void {
+    if (!retainedCoordinatorHandle) {
+      return
+    }
+    this.db
+      .prepare(
+        `UPDATE messages
+         SET to_handle = ?, delivery_contract = 'current_delivery',
+             read = 0, delivered_at = NULL
+         WHERE run_id = ? AND delivery_contract = 'legacy_direct'
+           AND to_handle = ?
+           AND EXISTS(
+             SELECT 1 FROM dispatch_contexts d
+             WHERE d.run_id = messages.run_id
+               AND d.contract_version = ?
+               AND (
+                 messages.from_handle = d.assignee_handle OR
+                 messages.from_handle = 'dispatch:' || d.id
+               )
+           )
+           AND (
+             read = 0 OR EXISTS(
+               SELECT 1 FROM question_threads q
+               WHERE q.message_id = messages.id AND q.status = 'pending'
+             )
+           )`
+      )
+      .run(`run:${runId}`, runId, retainedCoordinatorHandle, LEGACY_CONTRACT_VERSION)
+  }
+
+  private getUniqueLegacyTaskCreatorHandle(runId: string): string | null {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT created_by_terminal_handle AS handle
+         FROM tasks
+         WHERE run_id = ? AND created_by_terminal_handle IS NOT NULL
+         LIMIT 2`
+      )
+      .all(runId) as { handle: string }[]
+    return rows.length === 1 ? (rows[0]?.handle ?? null) : null
   }
 
   private requireCurrentConsumer(runId: string, consumerGeneration: number): RunRow {
@@ -2269,12 +2416,20 @@ export class OrchestrationDb {
       let message = params.message.existingId
         ? this.getMessageById(params.message.existingId)
         : undefined
+      const delivery = this.resolveLegacyWorkerCoordinatorDelivery(
+        principal.run_id,
+        params.message.to
+      )
       if (params.message.existingId) {
+        const matchesOriginalLegacyRoute =
+          message?.delivery_contract === 'legacy_direct' && message.to_handle === params.message.to
+        const matchesCurrentRoute =
+          message?.delivery_contract === delivery.contract && message.to_handle === delivery.to
         if (
           !message ||
           message.run_id !== principal.run_id ||
-          message.delivery_contract !== 'legacy_direct' ||
-          message.to_handle !== params.message.to
+          message.from_handle !== principal.terminal_handle ||
+          (!matchesOriginalLegacyRoute && !matchesCurrentRoute)
         ) {
           throw new OrchestrationError(
             'request_mismatch',
@@ -2284,7 +2439,7 @@ export class OrchestrationDb {
       } else {
         message = this.insertMessage({
           from: principal.terminal_handle,
-          to: params.message.to,
+          to: delivery.to,
           subject: params.message.subject,
           body: params.message.body,
           type: params.message.type,
@@ -2292,7 +2447,7 @@ export class OrchestrationDb {
           payload: params.message.payload,
           senderPaneKey: principal.pane_key,
           runId: principal.run_id,
-          deliveryContract: 'legacy_direct'
+          deliveryContract: delivery.contract
         })
       }
 
@@ -2300,12 +2455,24 @@ export class OrchestrationDb {
       if (params.lifecycle.kind === 'heartbeat') {
         this.recordHeartbeat(dispatchId, params.lifecycle.at)
       } else if (params.lifecycle.kind === 'worker_report') {
-        settlement = this.settleWorkerReportInTransaction({
-          taskId: params.lifecycle.taskId,
-          dispatchId,
-          outcome: params.lifecycle.outcome,
-          result: params.lifecycle.result
-        })
+        const persistedOutcome =
+          params.message.existingId &&
+          dispatch.task_id === params.lifecycle.taskId &&
+          dispatch.status === 'completed'
+            ? 'succeeded'
+            : params.message.existingId &&
+                dispatch.task_id === params.lifecycle.taskId &&
+                dispatch.status === 'failed'
+              ? 'failed'
+              : undefined
+        settlement = persistedOutcome
+          ? { action: 'settled', outcome: persistedOutcome, duplicate: true }
+          : this.settleWorkerReportInTransaction({
+              taskId: params.lifecycle.taskId,
+              dispatchId,
+              outcome: params.lifecycle.outcome,
+              result: params.lifecycle.result
+            })
         if (settlement.action === 'rejected') {
           throw new OrchestrationError(settlement.code, settlement.reason)
         }
@@ -2380,24 +2547,36 @@ export class OrchestrationDb {
         )
       }
 
+      const existingQuestionId =
+        params.existingQuestionId &&
+        !this.db
+          .prepare(
+            `SELECT 1 FROM legacy_operation_receipts
+             WHERE principal_id = ? AND method = 'orchestration.ask' AND effect_id = ?
+             LIMIT 1`
+          )
+          .get(principal.id, params.existingQuestionId)
+          ? params.existingQuestionId
+          : undefined
       let question: QuestionRow
       let message: MessageRow
-      if (params.existingQuestionId) {
-        const existingQuestion = this.getQuestion(params.existingQuestionId)
-        const existingMessage = this.getMessageById(params.existingQuestionId)
+      const delivery = this.resolveLegacyWorkerCoordinatorDelivery(
+        principal.run_id,
+        params.recipientHandle
+      )
+      if (existingQuestionId) {
+        const existingQuestion = this.getQuestion(existingQuestionId)
+        const existingMessage = this.getMessageById(existingQuestionId)
         if (
           !existingQuestion ||
           !existingMessage ||
           existingQuestion.run_id !== principal.run_id ||
           existingQuestion.dispatch_id !== dispatchId ||
           existingQuestion.status !== 'pending' ||
-          existingMessage.delivery_contract !== 'legacy_direct' ||
-          !legacyMessageMatchesQuestion(
-            existingMessage,
-            params.question,
-            params.options ?? [],
-            params.recipientHandle
-          )
+          existingMessage.delivery_contract !== delivery.contract ||
+          !legacyMessageMatchesQuestion(existingMessage, params.question, params.options ?? [], [
+            delivery.to
+          ])
         ) {
           throw new OrchestrationError(
             'request_mismatch',
@@ -2409,7 +2588,7 @@ export class OrchestrationDb {
       } else {
         message = this.insertMessage({
           from: principal.terminal_handle,
-          to: params.recipientHandle,
+          to: delivery.to,
           subject: 'Question',
           body: params.question,
           type: 'question',
@@ -2421,7 +2600,7 @@ export class OrchestrationDb {
           }),
           senderPaneKey: principal.pane_key,
           runId: principal.run_id,
-          deliveryContract: 'legacy_direct'
+          deliveryContract: delivery.contract
         })
         this.db
           .prepare('UPDATE messages SET thread_id = ? WHERE id = ?')
@@ -2473,21 +2652,37 @@ export class OrchestrationDb {
     question: QuestionRow
     message: MessageRow
     answerAcknowledged: boolean
+    claimedByOperation: boolean
   }[] {
     const principal = this.requireCommittedLegacyPrincipal(params.principalId, 'worker')
+    const runAddress = `run:${principal.run_id}`
     const rows = this.db
       .prepare(
-        `SELECT q.*, m.id AS source_message_id
+        `SELECT q.*, m.id AS source_message_id,
+                EXISTS(
+                  SELECT 1 FROM legacy_operation_receipts lor
+                  WHERE lor.principal_id = ? AND lor.method = 'orchestration.ask'
+                    AND lor.effect_id = q.message_id
+                ) AS claimed_by_operation
          FROM question_threads q
          INNER JOIN messages m ON m.id = q.message_id
          WHERE q.run_id = ? AND q.dispatch_id = ?
-           AND m.delivery_contract = 'legacy_direct'
-           AND m.to_handle = ?
+           AND (
+             (m.delivery_contract = 'legacy_direct' AND m.to_handle = ?) OR
+             (m.delivery_contract = 'current_delivery' AND m.to_handle = ?)
+           )
          ORDER BY m.sequence
          LIMIT 501`
       )
-      .all(principal.run_id, principal.dispatch_id, params.recipientHandle) as (QuestionRow & {
+      .all(
+        principal.id,
+        principal.run_id,
+        principal.dispatch_id,
+        params.recipientHandle,
+        runAddress
+      ) as (QuestionRow & {
       source_message_id: string
+      claimed_by_operation: number
     })[]
     if (rows.length > 500) {
       throw new OrchestrationError(
@@ -2500,17 +2695,16 @@ export class OrchestrationDb {
         const message = this.getMessageById(row.source_message_id)
         return Boolean(
           message &&
-          legacyMessageMatchesQuestion(
-            message,
-            params.question,
-            params.options ?? [],
-            params.recipientHandle
-          )
+          legacyMessageMatchesQuestion(message, params.question, params.options ?? [], [
+            params.recipientHandle,
+            runAddress
+          ])
         )
       })
       .map((row) => ({
         question: exposeQuestionTimestamps(row),
         message: this.getMessageById(row.message_id) as MessageRow,
+        claimedByOperation: row.claimed_by_operation === 1,
         answerAcknowledged: row.answer_message_id
           ? Boolean(
               this.db
@@ -2523,6 +2717,22 @@ export class OrchestrationDb {
             )
           : false
       }))
+  }
+
+  private resolveLegacyWorkerCoordinatorDelivery(
+    runId: string,
+    retainedCoordinatorHandle: string
+  ): { to: string; contract: MessageDeliveryContract } {
+    const run = this.getRunRaw(runId)
+    const principal = this.getLegacyCoordinatorPrincipal(runId)
+    const takenOver =
+      run?.coordinator_handle !== null &&
+      (principal?.status === 'revoked' ||
+        (run?.coordinator_handle !== undefined &&
+          run.coordinator_handle !== retainedCoordinatorHandle))
+    return takenOver
+      ? { to: `run:${runId}`, contract: 'current_delivery' }
+      : { to: retainedCoordinatorHandle, contract: 'legacy_direct' }
   }
 
   commitLegacyReplyOperation(params: {
@@ -3658,11 +3868,10 @@ export class OrchestrationDb {
                 wd.agent_terminal_handle
          FROM dispatch_contexts dc
          INNER JOIN worker_dispatches wd ON wd.dispatch_id = dc.id
-         WHERE dc.contract_version = ?
-           AND wd.state IN ('starting', 'ready', 'start_unknown', 'stopping', 'stop_unknown')
+         WHERE wd.state IN ('starting', 'ready', 'start_unknown', 'stopping', 'stop_unknown')
          ORDER BY dc.rowid`
       )
-      .all(LEGACY_CONTRACT_VERSION) as LegacyWorkerTerminalRecoveryRow[]
+      .all() as LegacyWorkerTerminalRecoveryRow[]
   }
 
   getFederatedDispatch(dispatchId: string): FederatedDispatchRow | undefined {

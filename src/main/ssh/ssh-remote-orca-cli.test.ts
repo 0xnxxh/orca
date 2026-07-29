@@ -24,7 +24,6 @@ const LEGACY_FALLBACK_OPTIONS: HostCliPassthroughOptions = {
   userDataPath: '/host/user-data',
   entryExists: () => false
 }
-
 type FakeChild = EventEmitter & {
   stdout: EventEmitter
   stderr: EventEmitter

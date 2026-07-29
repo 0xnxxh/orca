@@ -86,10 +86,11 @@ export function formatMessageBanner(
   }
 
   if (authority === 'current') {
-    // Why: older shells can lack Orca's terminal identity environment.
-    lines.push(
-      `[Reply: orca orchestration reply --id ${msg.id} --from ${msg.to_handle} --body "..."]`
-    )
+    const explicitFrom =
+      msg.to_handle.startsWith('run:') || msg.to_handle.startsWith('dispatch:')
+        ? ''
+        : ` --from ${msg.to_handle}`
+    lines.push(`[Reply: orca orchestration reply --id ${msg.id}${explicitFrom} --body "..."]`)
   }
   lines.push(SEPARATOR)
 

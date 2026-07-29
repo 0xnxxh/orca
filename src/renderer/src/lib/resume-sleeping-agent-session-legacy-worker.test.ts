@@ -11,7 +11,7 @@ afterEach(() => {
 })
 
 describe('legacy worker sleeping-session recovery', () => {
-  it('keeps the session dormant until exited recovery removes only its resume block', () => {
+  it('never resumes a proven-exited legacy worker on workspace activation', () => {
     const record: SleepingAgentSessionRecord = {
       paneKey: 'tab-legacy:leaf-legacy',
       tabId: 'tab-legacy',
@@ -46,16 +46,8 @@ describe('legacy worker sleeping-session recovery', () => {
     expect(resumeSleepingAgentSessionsForWorktree('wt-legacy')).toBe(0)
     expect(useAppStore.getState().sleepingAgentSessionsByPaneKey[record.paneKey]).toBe(record)
 
-    useAppStore.getState().setSleepingAgentAutomaticResumeBlocked(record.paneKey, false)
-    const unblocked = useAppStore.getState().sleepingAgentSessionsByPaneKey[record.paneKey]
-    expect(unblocked).toMatchObject({
-      paneKey: record.paneKey,
-      providerSession: record.providerSession,
-      origin: 'live'
-    })
-    expect(unblocked?.automaticResumeBlockedBy).toBeUndefined()
-
-    expect(resumeSleepingAgentSessionsForWorktree('wt-legacy')).toBe(1)
+    useAppStore.getState().clearSleepingAgentSession(record.paneKey)
+    expect(resumeSleepingAgentSessionsForWorktree('wt-legacy')).toBe(0)
     expect(useAppStore.getState().sleepingAgentSessionsByPaneKey[record.paneKey]).toBeUndefined()
   })
 })

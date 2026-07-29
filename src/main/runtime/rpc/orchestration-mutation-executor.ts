@@ -55,6 +55,10 @@ export class OrchestrationMutationExecutor {
       : db.beginMutationReceipt(identity)
 
     if (begun.disposition === 'completed') {
+      const active = this.inFlight.get(key)
+      if (active) {
+        return attachMutationReceipt(await active, requestId, true)
+      }
       return attachMutationReceipt(JSON.parse(begun.row.receipt ?? 'null'), requestId, true)
     }
     if (begun.disposition === 'pending') {
@@ -100,6 +104,20 @@ export class OrchestrationMutationExecutor {
       this.inFlight.delete(key)
     }
   }
+}
+
+const executorsByRuntime = new WeakMap<OrcaRuntimeService, OrchestrationMutationExecutor>()
+
+export function getOrchestrationMutationExecutor(
+  runtime: OrcaRuntimeService
+): OrchestrationMutationExecutor {
+  const existing = executorsByRuntime.get(runtime)
+  if (existing) {
+    return existing
+  }
+  const executor = new OrchestrationMutationExecutor(runtime)
+  executorsByRuntime.set(runtime, executor)
+  return executor
 }
 
 export function authenticatedCallerFingerprint(request: RpcRequest): string {

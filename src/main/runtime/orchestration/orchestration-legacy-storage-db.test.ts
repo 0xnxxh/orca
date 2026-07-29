@@ -1,6 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { rmSync } from 'node:fs'
 import { afterEach, describe, expect, it } from 'vitest'
 import Database from '../../sqlite/sync-database'
 import {
@@ -9,21 +7,10 @@ import {
   LEGACY_RUN_ID,
   OrchestrationDb
 } from './db'
-
-type CutoverFixture = {
-  dbPath: string
-  currentRunId: string
-  unrelatedRunId: string
-  currentDispatchId: string
-  legacyTaskId: string
-  legacyDispatchId: string
-  legacyGateId: string
-  legacyMessageIds: string[]
-  legacyQuestionId: string
-  legacyDeliveryId: string
-  rejectionMessageId: string
-  lookalikeMessageId: string
-}
+import {
+  createLegacyStorageCutoverFixture,
+  type LegacyStorageCutoverFixture
+} from './orchestration-legacy-storage-test-fixture'
 
 describe('OrchestrationDb legacy contract storage', () => {
   let db: OrchestrationDb | undefined
@@ -38,129 +25,14 @@ describe('OrchestrationDb legacy contract storage', () => {
     }
   })
 
-  function createCutoverFixture(): CutoverFixture {
-    tempDir = mkdtempSync(join(tmpdir(), 'orca-legacy-storage-'))
-    const dbPath = join(tempDir, 'orchestration.db')
-    const first = new OrchestrationDb(dbPath)
-    const currentRun = first.createRun({
-      objective: 'Current work',
-      coordinatorHandle: 'term_current_coord',
-      coordinatorPaneKey: 'tab_current:11111111-1111-4111-8111-111111111111'
-    })
-    const currentTask = first.createTask({ spec: 'current', runId: currentRun.id })
-    const unrelatedRun = first.createRun({
-      objective: 'Unrelated current work',
-      coordinatorHandle: 'term_unrelated_coord',
-      coordinatorPaneKey: 'tab_unrelated:55555555-5555-4555-8555-555555555555'
-    })
-    const currentDispatch = first.createDispatchContext(
-      currentTask.id,
-      'term_current_worker',
-      'tab_current:22222222-2222-4222-9222-222222222222',
-      'current_launch_hash'
-    )
-    first.insertMessage({
-      runId: currentRun.id,
-      from: 'term_current_worker',
-      to: `run:${currentRun.id}`,
-      subject: 'current mail'
-    })
-
-    const legacyTask = first.createTask({
-      spec: 'legacy',
-      createdByTerminalHandle: 'term_legacy_coord'
-    })
-    first.createDispatchContext(
-      legacyTask.id,
-      'term_legacy_worker',
-      'tab_legacy:33333333-3333-4333-8333-333333333333'
-    )
-    const legacyGate = first.createGate({
-      taskId: legacyTask.id,
-      question: 'Retained gate?'
-    })
-    first.resolveGate(legacyGate.id, 'continue')
-    const retryDispatch = first.createDispatchContext(
-      legacyTask.id,
-      'term_legacy_worker',
-      'tab_legacy:33333333-3333-4333-8333-333333333333'
-    )
-    const legacyMessages = [
-      first.insertMessage({
-        from: 'term_legacy_coord',
-        to: 'term_legacy_worker',
-        subject: 'read worker mail'
-      }),
-      first.insertMessage({
-        from: 'term_legacy_worker',
-        to: 'term_legacy_coord',
-        subject: 'read coordinator mail'
-      }),
-      first.insertMessage({
-        from: 'term_legacy_coord',
-        to: 'term_legacy_worker',
-        subject: 'second worker page'
-      })
-    ]
-    first.markAsRead(legacyMessages.map((message) => message.id))
-    const question = first.createQuestion({
-      runId: LEGACY_RUN_ID,
-      dispatchId: retryDispatch.id,
-      askerHandle: 'term_legacy_worker',
-      question: 'Retained question?'
-    })
-    const rejection = first.insertMessage({
-      from: 'term_legacy_worker',
-      to: 'term_legacy_coord',
-      subject: 'Rejected heartbeat',
-      type: 'heartbeat',
-      payload: JSON.stringify({ _orcaLifecycleRejection: { code: 'migration', reason: 'cutover' } })
-    })
-    const lookalike = first.insertMessage({
-      from: 'term_legacy_worker',
-      to: 'term_legacy_coord',
-      subject: 'Ordinary legacy mail',
-      payload: JSON.stringify({ '.orcaLifecycleRejection': 'not an audit marker' })
-    })
-    first.close()
-
-    const raw = new Database(dbPath)
-    const legacyDeliveryId = 'delivery_legacy_outstanding'
-    raw
-      .prepare(
-        `INSERT INTO deliveries (
-           id, run_id, consumer_generation, message_ids, status
-         ) VALUES (?, ?, 0, ?, 'outstanding')`
-      )
-      .run(legacyDeliveryId, LEGACY_RUN_ID, JSON.stringify([legacyMessages[0].id]))
-    raw.exec(`
-      DROP INDEX IF EXISTS idx_messages_delivery_contract;
-      DROP TABLE legacy_mail_receipts;
-      DROP TABLE legacy_operation_receipts;
-      DROP TABLE legacy_compatibility_principals;
-      DROP TABLE legacy_adoptions;
-    `)
-    raw.pragma('user_version = 18')
-    raw.close()
-
-    return {
-      dbPath,
-      currentRunId: currentRun.id,
-      unrelatedRunId: unrelatedRun.id,
-      currentDispatchId: currentDispatch.id,
-      legacyTaskId: legacyTask.id,
-      legacyDispatchId: retryDispatch.id,
-      legacyGateId: legacyGate.id,
-      legacyMessageIds: legacyMessages.map((message) => message.id),
-      legacyQuestionId: question.message.id,
-      legacyDeliveryId,
-      rejectionMessageId: rejection.id,
-      lookalikeMessageId: lookalike.id
-    }
+  function createCutoverFixture(): LegacyStorageCutoverFixture {
+    const created = createLegacyStorageCutoverFixture()
+    tempDir = created.tempDir
+    return created.fixture
   }
 
   function openAdoptedFixture(): {
-    fixture: CutoverFixture
+    fixture: LegacyStorageCutoverFixture
     adoptedRunId: string
     workerPrincipalId: string
     coordinatorPrincipalId: string
@@ -411,13 +283,19 @@ describe('OrchestrationDb legacy contract storage', () => {
         coordinatorHandle: 'term_other',
         coordinatorPaneKey: 'tab_other:55555555-5555-4555-8555-555555555555'
       })
-    ).toThrow(/only its attested coordinator/)
+    ).toThrow(/attested coordinator may rebind/)
 
     const bound = db!.bindRun({
       runId: state.adoptedRunId,
       coordinatorHandle: 'term_legacy_coord',
       coordinatorPaneKey: 'tab_coord:44444444-4444-4444-8444-444444444444',
-      allowLegacyCompatibility: true
+      legacyCoordinatorAuthority: {
+        runId: state.adoptedRunId,
+        principalId: state.coordinatorPrincipalId,
+        terminalHandle: 'term_legacy_coord',
+        paneKey: 'tab_coord:44444444-4444-4444-8444-444444444444',
+        consumerGeneration: 0
+      }
     })
     expect(bound).toMatchObject({ coordinator_handle: 'term_legacy_coord' })
     expect(
@@ -427,6 +305,99 @@ describe('OrchestrationDb legacy contract storage', () => {
         coordinatorPaneKey: 'tab_coord:44444444-4444-4444-8444-444444444444'
       })
     ).toMatchObject({ coordinator_handle: 'term_legacy_coord' })
+  })
+
+  it.each([
+    ['generation', { consumerGeneration: 1 }],
+    ['principal', { principalId: 'legacy_principal_wrong' }],
+    ['handle', { terminalHandle: 'term_wrong' }],
+    ['pane', { paneKey: 'tab_wrong:99999999-9999-4999-8999-999999999999' }]
+  ] as const)('rejects stale legacy coordinator %s proof inside Run binding', (_label, patch) => {
+    const state = openAdoptedFixture()
+    const before = db!.getRun(state.adoptedRunId)
+
+    expect(() =>
+      db!.bindRun({
+        runId: state.adoptedRunId,
+        coordinatorHandle: 'term_legacy_coord',
+        coordinatorPaneKey: 'tab_coord:44444444-4444-4444-8444-444444444444',
+        legacyCoordinatorAuthority: {
+          runId: state.adoptedRunId,
+          principalId: state.coordinatorPrincipalId,
+          terminalHandle: 'term_legacy_coord',
+          paneKey: 'tab_coord:44444444-4444-4444-8444-444444444444',
+          consumerGeneration: 0,
+          ...patch
+        }
+      })
+    ).toThrow(/no longer has lifecycle authority/)
+    expect(db!.getRun(state.adoptedRunId)).toEqual(before)
+  })
+
+  it('revokes the legacy coordinator when a current coordinator takes over after settlement', () => {
+    const state = openAdoptedFixture()
+    db!.settleWorkerReport({
+      taskId: state.fixture.legacyTaskId,
+      dispatchId: state.fixture.legacyDispatchId,
+      outcome: 'succeeded',
+      result: 'done'
+    })
+
+    expect(
+      db!.bindRun({
+        runId: state.adoptedRunId,
+        coordinatorHandle: 'term_current_coord',
+        coordinatorPaneKey: 'tab_current:11111111-1111-4111-8111-111111111111'
+      })
+    ).toMatchObject({ coordinator_handle: 'term_current_coord' })
+    expect(db!.getLegacyCompatibilityPrincipal(state.coordinatorPrincipalId)?.status).toBe(
+      'revoked'
+    )
+    expect(() =>
+      db!.commitLegacyCompatibilityPrincipal({
+        runId: state.adoptedRunId,
+        role: 'coordinator',
+        hostScope: 'local:runtime_1',
+        terminalHandle: 'term_legacy_coord',
+        paneKey: 'tab_coord:44444444-4444-4444-8444-444444444444',
+        launchTokenHash: 'coord_launch_hash',
+        processIncarnation: 'process_coord'
+      })
+    ).toThrow(/revoked/)
+  })
+
+  it('promotes only mail addressed to the replaced legacy coordinator', () => {
+    const state = openAdoptedFixture()
+    const coordinatorMail = db!.insertMessage({
+      runId: state.adoptedRunId,
+      deliveryContract: 'legacy_direct',
+      from: 'term_legacy_worker',
+      to: 'term_legacy_coord',
+      subject: 'coordinator outcome'
+    })
+    const workerMail = db!.insertMessage({
+      runId: state.adoptedRunId,
+      deliveryContract: 'legacy_direct',
+      from: 'term_legacy_worker',
+      to: 'term_other_worker',
+      subject: 'worker-only guidance'
+    })
+
+    db!.bindRun({
+      runId: state.adoptedRunId,
+      coordinatorHandle: 'term_current_coord',
+      coordinatorPaneKey: 'tab_current:11111111-1111-4111-8111-111111111111',
+      takeoverLegacy: true
+    })
+
+    expect(db!.getMessageById(coordinatorMail.id)).toMatchObject({
+      to_handle: `run:${state.adoptedRunId}`,
+      delivery_contract: 'current_delivery'
+    })
+    expect(db!.getMessageById(workerMail.id)).toMatchObject({
+      to_handle: 'term_other_worker',
+      delivery_contract: 'legacy_direct'
+    })
   })
 
   it('commits legacy messages, lifecycle effects, and invocation receipts exactly once', () => {
@@ -506,6 +477,65 @@ describe('OrchestrationDb legacy contract storage', () => {
       settlement: { action: 'settled', outcome: 'succeeded', duplicate: true }
     })
     expect(db!.getLegacyCompatibilityPrincipal(state.workerPrincipalId)?.status).toBe('settled')
+  })
+
+  it('reconstructs a read pre-takeover completion through its original legacy route', () => {
+    const state = openAdoptedFixture()
+    const taskId = db!.getDispatchContextById(state.fixture.legacyDispatchId)!.task_id
+    const accepted = db!.insertMessage({
+      runId: state.adoptedRunId,
+      deliveryContract: 'legacy_direct',
+      from: 'term_legacy_worker',
+      to: 'term_legacy_coord',
+      subject: 'Completed',
+      body: 'accepted before takeover',
+      type: 'worker_done'
+    })
+    db!.markAsRead([accepted.id])
+    db!.settleWorkerReport({
+      taskId,
+      dispatchId: state.fixture.legacyDispatchId,
+      outcome: 'succeeded',
+      result: 'accepted before takeover'
+    })
+    db!.bindRun({
+      runId: state.adoptedRunId,
+      coordinatorHandle: 'term_current_coord',
+      coordinatorPaneKey: 'tab_current:11111111-1111-4111-8111-111111111111',
+      takeoverLegacy: true
+    })
+    const beforeIds = db!.getInbox(100).map((message) => message.id)
+
+    const reconstructed = db!.commitLegacyLifecycleOperation({
+      principalId: state.workerPrincipalId,
+      operationKey: 'read_completion_after_takeover',
+      method: 'orchestration.send',
+      payloadHash: 'read_completion_after_takeover_payload',
+      message: {
+        existingId: accepted.id,
+        to: 'term_legacy_coord',
+        subject: 'Completed',
+        body: 'accepted before takeover',
+        type: 'worker_done'
+      },
+      lifecycle: {
+        kind: 'worker_report',
+        taskId,
+        outcome: 'succeeded',
+        result: 'accepted before takeover'
+      }
+    })
+
+    expect(reconstructed).toMatchObject({
+      duplicate: false,
+      message: {
+        id: accepted.id,
+        to_handle: 'term_legacy_coord',
+        delivery_contract: 'legacy_direct'
+      },
+      settlement: { action: 'settled', outcome: 'succeeded', duplicate: true }
+    })
+    expect(db!.getInbox(100).map((message) => message.id)).toEqual(beforeIds)
   })
 
   it('rejects cross-cutover completion reconstruction for another recipient', () => {
@@ -624,6 +654,38 @@ describe('OrchestrationDb legacy contract storage', () => {
         options: ['yes ', ' no']
       })
     ).toHaveLength(2)
+
+    const inherited = db!.createQuestion({
+      runId: state.adoptedRunId,
+      dispatchId: state.fixture.legacyDispatchId,
+      askerHandle: 'term_legacy_worker',
+      question: 'Inherited?'
+    })
+    const sqlite = (db as unknown as { db: Database.Database }).db
+    sqlite
+      .prepare(
+        `UPDATE messages
+         SET from_handle = 'term_legacy_worker', to_handle = 'term_legacy_coord',
+             delivery_contract = 'legacy_direct'
+         WHERE id = ?`
+      )
+      .run(inherited.message.id)
+    const inheritedAsk = {
+      ...ask,
+      operationKey: 'ask_inherited_1',
+      payloadHash: 'ask_inherited_payload_1',
+      question: 'Inherited?',
+      options: [],
+      existingQuestionId: inherited.message.id
+    }
+    const adopted = db!.commitLegacyAskOperation(inheritedAsk)
+    const distinct = db!.commitLegacyAskOperation({
+      ...inheritedAsk,
+      operationKey: 'ask_inherited_2',
+      payloadHash: 'ask_inherited_payload_2'
+    })
+    expect(adopted.message.id).toBe(inherited.message.id)
+    expect(distinct.message.id).not.toBe(inherited.message.id)
 
     const reply = {
       principalId: state.coordinatorPrincipalId,

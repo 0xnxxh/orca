@@ -43,7 +43,22 @@ export type RemoteOrcaCliResult = {
   stdout: string
   stderr: string
   exitCode: number
+  postOutput?: RemoteOrcaCliPostOutput
 }
+
+export type RemoteOrcaCliPostOutput =
+  | {
+      kind: 'legacy_check_ack'
+      terminal: string
+      messageIds: string[]
+      types?: string[]
+    }
+  | {
+      kind: 'legacy_question_ack'
+      terminal: string
+      questionId: string
+      answerMessageId: string
+    }
 
 export type HostCliPassthroughOptions = {
   execPath?: string

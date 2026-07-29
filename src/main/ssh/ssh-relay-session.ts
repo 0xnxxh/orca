@@ -66,6 +66,10 @@ import {
 import type { Store } from '../persistence'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 import { runRemoteOrcaCli } from './ssh-remote-orca-cli'
+import {
+  acknowledgeRemoteOrcaCliPostOutput,
+  parseRemoteOrcaCliPostOutput
+} from './ssh-remote-orchestration-post-output'
 import { toSshExecutionHostId, type ExecutionHostId } from '../../shared/execution-host'
 import { isTerminalLeafId, makePaneKey } from '../../shared/stable-pane-id'
 import { isValidTerminalTabId } from '../../shared/terminal-tab-id'
@@ -711,6 +715,37 @@ export class SshRelaySession {
           ...(stdin !== undefined ? { stdin } : {}),
           runtimeAuthority
         })
+      } finally {
+        this.activeCompatibilityAttachmentIds.delete(runtimeAuthority.attachmentId)
+        this.runtime.releaseOrchestrationCompatibilitySshAttachment(runtimeAuthority.attachmentId)
+      }
+    })
+    mux.onRequest('orca.cli.postOutput', async (params) => {
+      if (!this.runtime) {
+        throw new Error('Orca runtime is unavailable')
+      }
+      const rawEnv = params.env
+      const env =
+        rawEnv && typeof rawEnv === 'object' && !Array.isArray(rawEnv)
+          ? Object.fromEntries(
+              Object.entries(rawEnv).filter(
+                (entry): entry is [string, string] =>
+                  typeof entry[0] === 'string' && typeof entry[1] === 'string'
+              )
+            )
+          : {}
+      const runtimeAuthority = this.runtime.registerOrchestrationCompatibilitySshAttachment(
+        this.targetId,
+        connectionIncarnation
+      )
+      this.activeCompatibilityAttachmentIds.add(runtimeAuthority.attachmentId)
+      try {
+        await acknowledgeRemoteOrcaCliPostOutput(this.runtime, {
+          postOutput: parseRemoteOrcaCliPostOutput(params.postOutput),
+          env,
+          runtimeAuthority
+        })
+        return { acknowledged: true }
       } finally {
         this.activeCompatibilityAttachmentIds.delete(runtimeAuthority.attachmentId)
         this.runtime.releaseOrchestrationCompatibilitySshAttachment(runtimeAuthority.attachmentId)

@@ -74,13 +74,26 @@ Legacy inspection remains available without consuming mail:
 
 ```bash
 orca orchestration run-list --json
+# run_legacy_local is an empty audit tombstone after adoption.
 orca orchestration run-show --id run_legacy_local --json
-orca orchestration task-list --run run_legacy_local --json
+# In run-list, find the ordinary Run whose objective is:
+# "Recovered orchestration work from a contract update"
+orca orchestration run-show --id <adopted_run_id> --json
+orca orchestration task-list --run <adopted_run_id> --json
 orca orchestration inbox --full --json
 orca orchestration check --terminal <legacy_handle> --peek --format --json
 orca terminal read --terminal <legacy_handle> --json
 orca terminal wait --terminal <legacy_handle> --for tui-idle --timeout-ms 60000 --json
 ```
+
+If the original coordinator is unavailable or cannot prove its retained authority, a current coordinator may explicitly take over the adopted Run:
+
+```bash
+orca orchestration run-use --id <adopted_run_id> --takeover-legacy --json
+orca orchestration check --run <adopted_run_id> --json
+```
+
+Takeover fences only the old coordinator, binds the current one, and moves pending worker mail into current Run Delivery. Live legacy workers keep their original Tasks, Dispatches, processes, filesystems, and old prompt commands; their later questions, escalations, and completion reports route to the current coordinator. Do not use takeover while the original coordinator is still actively coordinating, because its later lifecycle mutations are rejected.
 
 Do not launch a replacement editor merely because the desktop app or runtime was updated. If adoption cannot prove continuing authority, keep the original worker as the only editor until it reaches a stable handoff point, then use a new current Dispatch in a conflict-free placement for any remaining work.
 

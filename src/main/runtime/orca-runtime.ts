@@ -36,10 +36,7 @@ import {
   type AgentStatusEntry
 } from '../../shared/agent-status-types'
 import { indexAgentStatusRowsByPaneKey } from '../agent-hooks/agent-status-pane-index'
-import type {
-  AgentHookAuthorityAttestation,
-  AgentHookAuthorityEvidence
-} from '../agent-hooks/server'
+import type { AgentHookAuthorityAttestation } from '../agent-hooks/server'
 import type {
   AgentSessionClaimedSpawnResult,
   AgentSessionExecutionClaim,
@@ -110,6 +107,7 @@ import {
   createSetupCompletionScanner
 } from './orchestration/setup-completion-signal'
 import type { RuntimeOrchestrationEnvelope } from '../../shared/runtime-rpc-envelope'
+import type { TerminalRevealIdentity } from '../../shared/terminal-reveal-identity'
 import type {
   OrchestrationCompatibilityEvidence,
   OrchestrationCompatibilityHostStamp
@@ -1506,7 +1504,7 @@ type RuntimePtyController = {
   resize?(ptyId: string, cols: number, rows: number): boolean
   // Why: exact-id mobile polls should not enumerate every local and SSH PTY.
   hasPty?(ptyId: string): boolean | null
-  listProcesses?(): Promise<PtyProcessInfo[]>
+  listProcesses?(connectionId?: string | null): Promise<PtyProcessInfo[]>
   serializeBuffer?(
     ptyId: string,
     opts?: { scrollbackRows?: number; altScreenForcesZeroRows?: boolean }
@@ -1529,6 +1527,17 @@ type RuntimePtyController = {
   ): Promise<boolean>
   getSize?(ptyId: string): { cols: number; rows: number } | null
 }
+
+type PtyControllerTerminalIdentity = Readonly<{
+  handle: string
+  incarnationId: string
+  wslDistro?: string | null
+}>
+
+type PtyControllerInventory = Readonly<{
+  livePtyIds: ReadonlySet<string>
+  terminalIdentityByPtyId: ReadonlyMap<string, PtyControllerTerminalIdentity>
+}>
 
 type WorktreeStartupDraftPaste = {
   agent: TuiAgent
@@ -1645,10 +1654,14 @@ type RuntimeNotifier = {
       splitDirection?: 'horizontal' | 'vertical'
       splitTelemetrySource?: TerminalPaneSplitSource
       focus?: boolean
+      expectedProcessIdentity?: {
+        terminalHandle: string
+        incarnationId: string
+      }
     }
   ):
-    | Promise<{ tabId: string; title?: string | null }>
-    | { tabId: string; title?: string | null }
+    | Promise<{ tabId: string; title?: string | null; identity?: TerminalRevealIdentity }>
+    | { tabId: string; title?: string | null; identity?: TerminalRevealIdentity }
     | void
   resolveLegacyWorkerTerminalRecovery?(paneKey: string, resolution: 'adopted' | 'exited'): void
   splitTerminal(
@@ -1731,11 +1744,6 @@ export type OrchestrationCompatibilityTerminalAuthority = {
     | { kind: 'local'; hostId: 'local' }
     | { kind: 'wsl'; hostId: 'local'; distro: string }
     | { kind: 'ssh'; targetId: string }
-}
-
-export type OrchestrationCompatibilityAuthorityInputs = {
-  hydratedCommitments: readonly AgentHookAuthorityEvidence[]
-  currentObservations: readonly AgentHookAuthorityEvidence[]
 }
 
 export type LegacyWorkerTerminalRecoveryResult = {
@@ -2615,10 +2623,6 @@ export class OrcaRuntimeService {
   private handles = new Map<string, TerminalHandleRecord>()
   private handleByLeafKey = new Map<string, string>()
   private handleByPtyId = new Map<string, string>()
-  private controllerTerminalIdentityByPtyId = new Map<
-    string,
-    { handle: string; incarnationId: string; wslDistro?: string | null }
-  >()
   private detachedPreAllocatedLeaves = new Map<string, RuntimeLeafRecord>()
   private graphSyncCallbacks: (() => void)[] = []
   private waitersByHandle = new Map<string, Set<TerminalWaiter>>()
@@ -3011,12 +3015,6 @@ export class OrcaRuntimeService {
   private readonly getAgentProviderSessionRowsForPaneFn:
     | ((paneKey: string) => AgentStatusIpcPayload[])
     | null
-  private readonly getHydratedAgentHookAuthorityFn:
-    | (() => readonly AgentHookAuthorityEvidence[])
-    | null
-  private readonly getCurrentAgentHookAuthorityFn:
-    | (() => readonly AgentHookAuthorityEvidence[])
-    | null
   private readonly attestAgentHookCompatibilityAuthorityFn:
     | ((candidate: {
         paneKey: string
@@ -3038,7 +3036,17 @@ export class OrcaRuntimeService {
   >()
   private sshRelayRecoveryGenerationByTargetId = new Map<string, number>()
   private legacyWorkerTerminalRecoveryQueue: Promise<void> = Promise.resolve()
+  private legacyWorkerTerminalRecoveryRetries = new Map<
+    string,
+    {
+      attempt: number
+      connectionId?: string
+      materializeRenderer: boolean
+      timer: ReturnType<typeof setTimeout> | null
+    }
+  >()
   private legacyWorkerTerminalMaterializedPanes = new Set<string>()
+  private legacyWorkerTerminalIdentityReceiptPanes = new Set<string>()
   private legacyWorkerRecoveredPtys = new Set<string>()
   private accountServices: RuntimeAccountServices | null = null
   private commitMessageAgentEnv: CommitMessageAgentEnvironmentResolvers | null = null
@@ -3074,8 +3082,6 @@ export class OrcaRuntimeService {
        *  only carrier of the provider session a transcript is addressed by. */
       getAgentProviderSessionSnapshot?: () => AgentStatusIpcPayload[]
       getAgentProviderSessionRowsForPane?: (paneKey: string) => AgentStatusIpcPayload[]
-      getHydratedAgentHookAuthority?: () => readonly AgentHookAuthorityEvidence[]
-      getCurrentAgentHookAuthority?: () => readonly AgentHookAuthorityEvidence[]
       attestAgentHookCompatibilityAuthority?: (candidate: {
         paneKey: string
         launchTokenHash: string
@@ -3114,8 +3120,6 @@ export class OrcaRuntimeService {
     this.getAgentProviderSessionSnapshotFn =
       deps?.getAgentProviderSessionSnapshot ?? deps?.getAgentStatusSnapshot ?? null
     this.getAgentProviderSessionRowsForPaneFn = deps?.getAgentProviderSessionRowsForPane ?? null
-    this.getHydratedAgentHookAuthorityFn = deps?.getHydratedAgentHookAuthority ?? null
-    this.getCurrentAgentHookAuthorityFn = deps?.getCurrentAgentHookAuthority ?? null
     this.attestAgentHookCompatibilityAuthorityFn =
       deps?.attestAgentHookCompatibilityAuthority ?? null
     this.canRecoverPersistentLocalPtysFn = deps?.canRecoverPersistentLocalPtys ?? (() => true)
@@ -3659,6 +3663,70 @@ export class OrcaRuntimeService {
     return result
   }
 
+  private hasExactTerminalSurfaceIdentity(expected: {
+    worktreeId: string
+    tabId: string
+    leafId: string
+    ptyId: string
+    terminalHandle: string
+    incarnationId: string
+  }): boolean {
+    if (this.graphStatus !== 'ready') {
+      return false
+    }
+    const pty = this.ptysById.get(expected.ptyId)
+    if (
+      !pty?.connected ||
+      pty.incarnationId !== expected.incarnationId ||
+      pty.tabId !== expected.tabId ||
+      pty.paneKey !== makePaneKey(expected.tabId, expected.leafId) ||
+      !runtimeWorktreeIdsEqual(pty.worktreeId, expected.worktreeId) ||
+      this.handleByPtyId.get(expected.ptyId) !== expected.terminalHandle
+    ) {
+      return false
+    }
+    const tab = this.tabs.get(expected.tabId)
+    const leaf = this.leaves.get(this.getLeafKey(expected.tabId, expected.leafId))
+    const ptyLeaves = this.getLeavesForPty(expected.ptyId)
+    return (
+      Boolean(tab && runtimeWorktreeIdsEqual(tab.worktreeId, expected.worktreeId)) &&
+      Boolean(
+        leaf &&
+        leaf.ptyId === expected.ptyId &&
+        runtimeWorktreeIdsEqual(leaf.worktreeId, expected.worktreeId)
+      ) &&
+      ptyLeaves.length === 1 &&
+      ptyLeaves[0]?.tabId === expected.tabId &&
+      ptyLeaves[0]?.leafId === expected.leafId
+    )
+  }
+
+  private hasExactPersistedTerminalSurfaceIdentity(expected: {
+    worktreeId: string
+    tabId: string
+    leafId: string
+    ptyId: string
+    incarnationId: string
+  }): boolean {
+    const session = this.getWorkspaceSessionForWorktree(expected.worktreeId)
+    const sessionWorktreeId = session
+      ? resolveTerminalSessionWorktreeId(session, expected.worktreeId)
+      : null
+    if (!session || !sessionWorktreeId) {
+      return false
+    }
+    const tab = session.tabsByWorktree[sessionWorktreeId]?.find(
+      (candidate) => candidate.id === expected.tabId
+    )
+    const paneKey = makePaneKey(expected.tabId, expected.leafId)
+    return Boolean(
+      tab &&
+      session.terminalLayoutsByTabId[expected.tabId]?.ptyIdsByLeafId?.[expected.leafId] ===
+        expected.ptyId &&
+      session.terminalPtyIncarnationsByPaneKey?.[paneKey] === expected.incarnationId
+    )
+  }
+
   private persistLegacyWorkerTerminalRecoveryResolution(
     candidate: LegacyWorkerTerminalRecoveryPlan['candidates'][number],
     resolution: 'adopted' | 'exited'
@@ -3672,23 +3740,8 @@ export class OrcaRuntimeService {
     if (!record || !runtimeWorktreeIdsEqual(record.worktreeId, candidate.worktreeId)) {
       return true
     }
-    if (
-      resolution === 'exited' &&
-      record.automaticResumeBlockedBy !== 'legacy-orchestration-worker'
-    ) {
-      return true
-    }
     const next = structuredClone(session)
-    if (resolution === 'adopted') {
-      delete next.sleepingAgentSessionsByPaneKey?.[candidate.paneKey]
-    } else {
-      const unblocked = { ...record }
-      delete unblocked.automaticResumeBlockedBy
-      next.sleepingAgentSessionsByPaneKey = {
-        ...next.sleepingAgentSessionsByPaneKey,
-        [candidate.paneKey]: unblocked
-      }
-    }
+    delete next.sleepingAgentSessionsByPaneKey?.[candidate.paneKey]
     try {
       this.setWorkspaceSessionForWorktree(candidate.worktreeId, next)
       store.flushOrThrow()
@@ -3704,6 +3757,85 @@ export class OrcaRuntimeService {
     }
   }
 
+  private updateLegacyWorkerTerminalRecoveryRetry(
+    plan: LegacyWorkerTerminalRecoveryPlan,
+    deferredDispatchIds: ReadonlySet<string>,
+    options: { connectionId?: string; materializeRenderer?: boolean }
+  ): void {
+    const scopeKey = options.connectionId ? `ssh:${options.connectionId}` : 'local'
+    const hasDeferredWorker = plan.candidates.some((candidate) => {
+      const sshPty = parseAppSshPtyId(candidate.ptyId)
+      const inScope = options.connectionId
+        ? sshPty?.connectionId === options.connectionId
+        : sshPty === null
+      return inScope && deferredDispatchIds.has(candidate.dispatchId)
+    })
+    if (!hasDeferredWorker) {
+      this.cancelLegacyWorkerTerminalRecoveryRetry(scopeKey)
+      return
+    }
+    const existing = this.legacyWorkerTerminalRecoveryRetries.get(scopeKey)
+    const retry = existing ?? {
+      attempt: 0,
+      ...(options.connectionId ? { connectionId: options.connectionId } : {}),
+      materializeRenderer: options.materializeRenderer === true,
+      timer: null
+    }
+    retry.materializeRenderer ||= options.materializeRenderer === true
+    this.legacyWorkerTerminalRecoveryRetries.set(scopeKey, retry)
+    this.armLegacyWorkerTerminalRecoveryRetry(scopeKey, retry)
+  }
+
+  private cancelLegacyWorkerTerminalRecoveryRetry(scopeKey: string): void {
+    const retry = this.legacyWorkerTerminalRecoveryRetries.get(scopeKey)
+    if (retry?.timer) {
+      clearTimeout(retry.timer)
+    }
+    this.legacyWorkerTerminalRecoveryRetries.delete(scopeKey)
+  }
+
+  private getLegacyWorkerControllerPtyLiveness(
+    candidate: LegacyWorkerTerminalRecoveryPlan['candidates'][number]
+  ): boolean | null {
+    try {
+      return this.ptyController?.hasPty?.(candidate.ptyId) ?? null
+    } catch {
+      return null
+    }
+  }
+
+  private armLegacyWorkerTerminalRecoveryRetry(
+    scopeKey: string,
+    retry: {
+      attempt: number
+      connectionId?: string
+      materializeRenderer: boolean
+      timer: ReturnType<typeof setTimeout> | null
+    }
+  ): void {
+    if (retry.timer) {
+      return
+    }
+    const delayMs = Math.min(1_000 * 2 ** retry.attempt, 30_000)
+    retry.attempt += 1
+    retry.timer = setTimeout(() => {
+      retry.timer = null
+      void this.reconcileLegacyWorkerTerminals({
+        ...(retry.connectionId ? { connectionId: retry.connectionId } : {}),
+        materializeRenderer: retry.materializeRenderer
+      }).catch((error) => {
+        console.warn('[orchestration] worker terminal recovery retry failed', {
+          scope: scopeKey,
+          error
+        })
+        if (this.legacyWorkerTerminalRecoveryRetries.get(scopeKey) === retry) {
+          this.armLegacyWorkerTerminalRecoveryRetry(scopeKey, retry)
+        }
+      })
+    }, delayMs)
+    retry.timer.unref?.()
+  }
+
   private async reconcileLegacyWorkerTerminalsNow(options: {
     connectionId?: string
     materializeRenderer?: boolean
@@ -3712,142 +3844,251 @@ export class OrcaRuntimeService {
     const adoptedDispatchIds: string[] = []
     const exitedDispatchIds: string[] = []
     const deferredDispatchIds = new Set(plan.ambiguousDispatchIds)
-    for (const candidate of plan.candidates) {
-      let workspace: TerminalWorkspaceLaunchScope
-      try {
-        workspace = await this.resolveTerminalWorkspaceLaunchScope(`id:${candidate.worktreeId}`)
-      } catch {
-        deferredDispatchIds.add(candidate.dispatchId)
-        continue
+    const recoveryCandidatesByProvider = new Map<
+      string,
+      {
+        connectionId: string | null
+        entries: {
+          candidate: (typeof plan.candidates)[number]
+          workspace: TerminalWorkspaceLaunchScope
+          resolvedWorkspace: ResolvedWorktree
+        }[]
       }
-      const sshPty = parseAppSshPtyId(candidate.ptyId)
-      if (workspace.connectionId) {
-        if (
-          options.connectionId !== workspace.connectionId ||
-          sshPty?.connectionId !== workspace.connectionId
+    >()
+    for (const candidate of plan.candidates) {
+      try {
+        const workspace = await this.resolveTerminalWorkspaceLaunchScope(
+          `id:${candidate.worktreeId}`
+        )
+        const sshPty = parseAppSshPtyId(candidate.ptyId)
+        if (workspace.connectionId) {
+          if (
+            options.connectionId !== workspace.connectionId ||
+            sshPty?.connectionId !== workspace.connectionId
+          ) {
+            deferredDispatchIds.add(candidate.dispatchId)
+            continue
+          }
+        } else if (
+          options.connectionId !== undefined ||
+          sshPty !== null ||
+          !this.canRecoverPersistentLocalPtysFn()
         ) {
           deferredDispatchIds.add(candidate.dispatchId)
           continue
         }
-      } else if (
-        options.connectionId !== undefined ||
-        sshPty !== null ||
-        !this.canRecoverPersistentLocalPtysFn()
-      ) {
-        deferredDispatchIds.add(candidate.dispatchId)
-        continue
-      }
-      const resolvedWorkspace = workspace.folderWorkspace
-        ? this.folderWorkspaceToResolvedWorktree(workspace.folderWorkspace)
-        : await this.resolveWorktreeSelector(`id:${workspace.id}`)
-      const livePtyIds = await this.refreshPtyWorktreeRecordsFromController([resolvedWorkspace])
-      if (!livePtyIds) {
-        deferredDispatchIds.add(candidate.dispatchId)
-        continue
-      }
-      if (!livePtyIds.has(candidate.ptyId)) {
-        if (this.persistLegacyWorkerTerminalRecoveryResolution(candidate, 'exited')) {
-          this.notifier?.resolveLegacyWorkerTerminalRecovery?.(candidate.paneKey, 'exited')
-          exitedDispatchIds.push(candidate.dispatchId)
-        } else {
-          deferredDispatchIds.add(candidate.dispatchId)
+        const resolvedWorkspace = workspace.folderWorkspace
+          ? this.folderWorkspaceToResolvedWorktree(workspace.folderWorkspace)
+          : await this.resolveWorktreeSelector(`id:${workspace.id}`)
+        const connectionId = workspace.connectionId ?? null
+        const providerKey = connectionId === null ? 'local' : `ssh:${connectionId}`
+        const provider = recoveryCandidatesByProvider.get(providerKey) ?? {
+          connectionId,
+          entries: []
         }
-        continue
-      }
-      const controllerIdentity = this.controllerTerminalIdentityByPtyId.get(candidate.ptyId)
-      if (
-        controllerIdentity?.handle !== candidate.terminalHandle ||
-        controllerIdentity.incarnationId !== candidate.incarnationId
-      ) {
+        provider.entries.push({ candidate, workspace, resolvedWorkspace })
+        recoveryCandidatesByProvider.set(providerKey, provider)
+      } catch {
         deferredDispatchIds.add(candidate.dispatchId)
+      }
+    }
+    for (const provider of recoveryCandidatesByProvider.values()) {
+      const resolvedWorktrees = [
+        ...new Map(
+          provider.entries.map(({ resolvedWorkspace }) => [resolvedWorkspace.id, resolvedWorkspace])
+        ).values()
+      ]
+      const inventory = await this.refreshPtyWorktreeRecordsWithControllerInventory(
+        resolvedWorktrees,
+        null,
+        undefined,
+        provider.connectionId
+      )
+      if (!inventory) {
+        provider.entries.forEach(({ candidate }) => deferredDispatchIds.add(candidate.dispatchId))
         continue
       }
-      const session = this.getWorkspaceSessionForWorktree(candidate.worktreeId)
-      const sessionWorktreeId = session
-        ? resolveTerminalSessionWorktreeId(session, candidate.worktreeId)
-        : null
-      const activeTabId = sessionWorktreeId
-        ? session?.activeTabIdByWorktree?.[sessionWorktreeId]
-        : undefined
-      const activeGroupId = sessionWorktreeId
-        ? session?.activeGroupIdByWorktree?.[sessionWorktreeId]
-        : undefined
-      try {
-        await this.adoptTerminalOrphans({
-          worktree: `id:${candidate.worktreeId}`,
-          expectedTopologyRevision: this.getTerminalTopologyRevision(candidate.worktreeId),
-          ...(activeTabId ? { activeTabId } : {}),
-          ...(activeGroupId ? { activeGroupId } : {}),
-          claims: [
-            {
-              terminal: candidate.terminalHandle,
-              ptyId: candidate.ptyId,
-              incarnationId: candidate.incarnationId,
-              tabId: candidate.tabId,
-              leafId: candidate.leafId
-            }
-          ]
-        })
-      } catch (error) {
-        console.warn('[orchestration] legacy worker terminal adoption deferred', {
-          dispatchId: candidate.dispatchId,
-          error
-        })
-        deferredDispatchIds.add(candidate.dispatchId)
-        continue
-      }
-      let rendererMaterialized =
-        options.materializeRenderer !== true ||
-        this.legacyWorkerTerminalMaterializedPanes.has(candidate.paneKey)
-      const pty = this.ptysById.get(candidate.ptyId)
-      if (
-        options.materializeRenderer &&
-        !rendererMaterialized &&
-        pty &&
-        this.notifier?.revealTerminalSession
-      ) {
-        for (let attempt = 0; attempt < 2 && !rendererMaterialized; attempt += 1) {
+      for (const { candidate, workspace } of provider.entries) {
+        if (!inventory.livePtyIds.has(candidate.ptyId)) {
+          if (this.persistLegacyWorkerTerminalRecoveryResolution(candidate, 'exited')) {
+            this.notifier?.resolveLegacyWorkerTerminalRecovery?.(candidate.paneKey, 'exited')
+            exitedDispatchIds.push(candidate.dispatchId)
+          } else {
+            deferredDispatchIds.add(candidate.dispatchId)
+          }
+          continue
+        }
+        const controllerIdentity = inventory.terminalIdentityByPtyId.get(candidate.ptyId)
+        if (
+          controllerIdentity?.handle !== candidate.terminalHandle ||
+          controllerIdentity.incarnationId !== candidate.incarnationId
+        ) {
+          deferredDispatchIds.add(candidate.dispatchId)
+          continue
+        }
+        const controllerLiveness = this.getLegacyWorkerControllerPtyLiveness(candidate)
+        if (controllerLiveness === false) {
+          this.onPtyExit(candidate.ptyId, 0, candidate.incarnationId)
+          if (this.persistLegacyWorkerTerminalRecoveryResolution(candidate, 'exited')) {
+            this.notifier?.resolveLegacyWorkerTerminalRecovery?.(candidate.paneKey, 'exited')
+            exitedDispatchIds.push(candidate.dispatchId)
+          } else {
+            deferredDispatchIds.add(candidate.dispatchId)
+          }
+          continue
+        }
+        if (controllerLiveness === null) {
+          deferredDispatchIds.add(candidate.dispatchId)
+          continue
+        }
+        const session = this.getWorkspaceSessionForWorktree(candidate.worktreeId)
+        const sessionWorktreeId = session
+          ? resolveTerminalSessionWorktreeId(session, candidate.worktreeId)
+          : null
+        const activeTabId = sessionWorktreeId
+          ? session?.activeTabIdByWorktree?.[sessionWorktreeId]
+          : undefined
+        const activeGroupId = sessionWorktreeId
+          ? session?.activeGroupIdByWorktree?.[sessionWorktreeId]
+          : undefined
+        const exactSurfaceAlreadyPublished =
+          this.hasExactPersistedTerminalSurfaceIdentity(candidate) &&
+          this.hasExactTerminalSurfaceIdentity(candidate)
+        if (!exactSurfaceAlreadyPublished) {
           try {
-            await this.notifier.revealTerminalSession(candidate.worktreeId, {
-              ptyId: candidate.ptyId,
-              title: getLatestPtyTitle(pty) ?? pty.controllerTitle,
-              activate: false,
-              presentation: 'background',
-              tabId: candidate.tabId,
-              leafId: candidate.leafId,
-              focus: false
-            })
-            rendererMaterialized = true
-            this.legacyWorkerTerminalMaterializedPanes.add(candidate.paneKey)
+            await this.adoptTerminalOrphansFromInventory(
+              {
+                worktree: `id:${candidate.worktreeId}`,
+                expectedTopologyRevision: this.getTerminalTopologyRevision(candidate.worktreeId),
+                ...(activeTabId ? { activeTabId } : {}),
+                ...(activeGroupId ? { activeGroupId } : {}),
+                claims: [
+                  {
+                    terminal: candidate.terminalHandle,
+                    ptyId: candidate.ptyId,
+                    incarnationId: candidate.incarnationId,
+                    tabId: candidate.tabId,
+                    leafId: candidate.leafId
+                  }
+                ]
+              },
+              workspace,
+              inventory
+            )
           } catch (error) {
-            if (attempt === 0) {
-              await new Promise<void>((resolve) => setTimeout(resolve, 100))
-              continue
-            }
-            console.warn('[orchestration] adopted legacy worker was not revealed', {
+            console.warn('[orchestration] legacy worker terminal adoption deferred', {
               dispatchId: candidate.dispatchId,
               error
             })
+            deferredDispatchIds.add(candidate.dispatchId)
+            continue
           }
         }
+        let rendererMaterialized =
+          options.materializeRenderer !== true ||
+          this.legacyWorkerTerminalMaterializedPanes.has(candidate.paneKey)
+        const pty = this.ptysById.get(candidate.ptyId)
+        if (
+          options.materializeRenderer &&
+          !rendererMaterialized &&
+          pty &&
+          this.notifier?.revealTerminalSession
+        ) {
+          for (let attempt = 0; attempt < 2 && !rendererMaterialized; attempt += 1) {
+            try {
+              const reveal = await this.notifier.revealTerminalSession(candidate.worktreeId, {
+                ptyId: candidate.ptyId,
+                title: getLatestPtyTitle(pty) ?? pty.controllerTitle,
+                activate: false,
+                presentation: 'background',
+                tabId: candidate.tabId,
+                leafId: candidate.leafId,
+                focus: false,
+                expectedProcessIdentity: {
+                  terminalHandle: candidate.terminalHandle,
+                  incarnationId: candidate.incarnationId
+                }
+              })
+              if (reveal?.identity) {
+                const identity = reveal.identity
+                if (
+                  !runtimeWorktreeIdsEqual(identity.worktreeId, candidate.worktreeId) ||
+                  identity.tabId !== candidate.tabId ||
+                  identity.leafId !== candidate.leafId ||
+                  identity.ptyId !== candidate.ptyId
+                ) {
+                  throw new Error('terminal_reveal_identity_mismatch')
+                }
+                this.legacyWorkerTerminalIdentityReceiptPanes.add(candidate.paneKey)
+              }
+              rendererMaterialized = true
+              this.legacyWorkerTerminalMaterializedPanes.add(candidate.paneKey)
+            } catch (error) {
+              if (attempt === 0) {
+                await new Promise<void>((resolve) => setTimeout(resolve, 100))
+                continue
+              }
+              console.warn('[orchestration] adopted legacy worker was not revealed', {
+                dispatchId: candidate.dispatchId,
+                error
+              })
+            }
+          }
+        }
+        if (!rendererMaterialized) {
+          this.legacyWorkerTerminalMaterializedPanes.delete(candidate.paneKey)
+          this.legacyWorkerTerminalIdentityReceiptPanes.delete(candidate.paneKey)
+          deferredDispatchIds.add(candidate.dispatchId)
+          continue
+        }
+        if (
+          this.legacyWorkerTerminalIdentityReceiptPanes.has(candidate.paneKey) &&
+          !this.hasExactTerminalSurfaceIdentity({
+            worktreeId: candidate.worktreeId,
+            tabId: candidate.tabId,
+            leafId: candidate.leafId,
+            ptyId: candidate.ptyId,
+            terminalHandle: candidate.terminalHandle,
+            incarnationId: candidate.incarnationId
+          })
+        ) {
+          deferredDispatchIds.add(candidate.dispatchId)
+          continue
+        }
+        const postRevealLiveness = this.getLegacyWorkerControllerPtyLiveness(candidate)
+        if (postRevealLiveness === false) {
+          this.legacyWorkerTerminalMaterializedPanes.delete(candidate.paneKey)
+          this.legacyWorkerTerminalIdentityReceiptPanes.delete(candidate.paneKey)
+          this.onPtyExit(candidate.ptyId, 0, candidate.incarnationId)
+          if (this.persistLegacyWorkerTerminalRecoveryResolution(candidate, 'exited')) {
+            this.notifier?.resolveLegacyWorkerTerminalRecovery?.(candidate.paneKey, 'exited')
+            exitedDispatchIds.push(candidate.dispatchId)
+          } else {
+            deferredDispatchIds.add(candidate.dispatchId)
+          }
+          continue
+        }
+        if (postRevealLiveness === null) {
+          deferredDispatchIds.add(candidate.dispatchId)
+          continue
+        }
+        if (!this.persistLegacyWorkerTerminalRecoveryResolution(candidate, 'adopted')) {
+          deferredDispatchIds.add(candidate.dispatchId)
+          continue
+        }
+        this.legacyWorkerRecoveredPtys.add(candidate.ptyId)
+        this.notifier?.resolveLegacyWorkerTerminalRecovery?.(candidate.paneKey, 'adopted')
+        adoptedDispatchIds.push(candidate.dispatchId)
       }
-      if (
-        !rendererMaterialized ||
-        !this.persistLegacyWorkerTerminalRecoveryResolution(candidate, 'adopted')
-      ) {
-        deferredDispatchIds.add(candidate.dispatchId)
-        continue
-      }
-      this.legacyWorkerRecoveredPtys.add(candidate.ptyId)
-      this.notifier?.resolveLegacyWorkerTerminalRecovery?.(candidate.paneKey, 'adopted')
-      adoptedDispatchIds.push(candidate.dispatchId)
     }
-    return {
+    const result = {
       blockedPaneCount: plan.blockedPanes.length,
       adoptedDispatchIds,
       exitedDispatchIds,
       deferredDispatchIds: [...deferredDispatchIds]
     }
+    this.updateLegacyWorkerTerminalRecoveryRetry(plan, deferredDispatchIds, options)
+    return result
   }
 
   setAutomationService(service: AutomationService): void {
@@ -4213,6 +4454,9 @@ export class OrcaRuntimeService {
   notifySshStateChanged(targetId: string, state: SshConnectionState): void {
     this.bumpSshRelayRecoveryGeneration(targetId)
     this.invalidateSshWorktreeScanCache(targetId)
+    if (state.status !== 'connected') {
+      this.cancelLegacyWorkerTerminalRecoveryRetry(`ssh:${targetId}`)
+    }
     this.emitClientEvent({ type: 'sshStateChanged', targetId, state: getPublicSshState(state)! })
   }
 
@@ -10345,13 +10589,6 @@ export class OrcaRuntimeService {
     return 'local'
   }
 
-  getOrchestrationCompatibilityAuthorityInputs(): OrchestrationCompatibilityAuthorityInputs {
-    return {
-      hydratedCommitments: this.getHydratedAgentHookAuthorityFn?.() ?? [],
-      currentObservations: this.getCurrentAgentHookAuthorityFn?.() ?? []
-    }
-  }
-
   registerOrchestrationCompatibilitySshAttachment(
     targetId: string,
     connectionIncarnation: string
@@ -13554,13 +13791,24 @@ export class OrcaRuntimeService {
     const resolvedWorkspace = workspace.folderWorkspace
       ? this.folderWorkspaceToResolvedWorktree(workspace.folderWorkspace)
       : await this.resolveWorktreeSelector(`id:${workspace.id}`)
-    const livePtyIds = await this.refreshPtyWorktreeRecordsFromController(
+    const inventory = await this.refreshPtyWorktreeRecordsWithControllerInventory(
       [resolvedWorkspace],
-      workspace.id
+      workspace.id,
+      undefined,
+      workspace.connectionId ?? null
     )
-    if (!livePtyIds) {
+    if (!inventory) {
       throw new Error('terminal_liveness_unavailable')
     }
+    return this.adoptTerminalOrphansFromInventory(request, workspace, inventory)
+  }
+
+  private async adoptTerminalOrphansFromInventory(
+    request: RuntimeTerminalOrphanAdoptionRequest,
+    workspace: TerminalWorkspaceLaunchScope,
+    inventory: PtyControllerInventory
+  ): Promise<RuntimeTerminalOrphanAdoptionResult> {
+    const { livePtyIds, terminalIdentityByPtyId } = inventory
     const store = this.store
     const session = this.getWorkspaceSessionForWorktree(workspace.id)
     if (!store?.setWorkspaceSession || !store.flushOrThrow || !session) {
@@ -13593,7 +13841,7 @@ export class OrcaRuntimeService {
       seenPaneKeys.add(paneKey)
       const live = this.getLivePtyForHandle(claim.terminal)
       const pty = live?.pty
-      const controllerIdentity = this.controllerTerminalIdentityByPtyId.get(claim.ptyId)
+      const controllerIdentity = terminalIdentityByPtyId.get(claim.ptyId)
       if (
         !pty ||
         pty.ptyId !== claim.ptyId ||
@@ -13681,10 +13929,14 @@ export class OrcaRuntimeService {
       )
     })
     if (isExactPersisted && sessionWorktreeId === workspace.id) {
+      for (const { claim, pty, paneKey } of validated) {
+        pty.tabId = claim.tabId
+        pty.paneKey = paneKey
+      }
       return {
         adopted: false,
         topologyRevision: currentRevision,
-        snapshot: await this.listMobileSessionTabs(`id:${workspace.id}`)
+        snapshot: this.getTerminalOrphanAdoptionSnapshot(workspace.id)
       }
     }
     if (currentRevision !== request.expectedTopologyRevision) {
@@ -13999,8 +14251,17 @@ export class OrcaRuntimeService {
     return {
       adopted: true,
       topologyRevision: persisted.terminalTopologyRevisionByRepoId?.[repoId] ?? currentRevision + 1,
-      snapshot: await this.listMobileSessionTabs(`id:${workspace.id}`)
+      snapshot: this.getTerminalOrphanAdoptionSnapshot(workspace.id)
     }
+  }
+
+  private getTerminalOrphanAdoptionSnapshot(worktreeId: string): RuntimeMobileSessionTabsResult {
+    this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId, {
+      allowAttachedWindow: true,
+      onlyRuntimeOwnedTerminals: true
+    })
+    this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
+    return this.getMobileSessionTabsForWorktree(worktreeId)
   }
 
   private buildTerminalVisualLayouts(
@@ -26302,17 +26563,34 @@ export class OrcaRuntimeService {
     targetWorktreeId: string | null = null,
     deadline?: number
   ): Promise<Set<string> | null> {
+    const inventory = await this.refreshPtyWorktreeRecordsWithControllerInventory(
+      resolvedWorktrees,
+      targetWorktreeId,
+      deadline
+    )
+    return inventory ? new Set(inventory.livePtyIds) : null
+  }
+
+  private async refreshPtyWorktreeRecordsWithControllerInventory(
+    resolvedWorktrees: ResolvedWorktree[],
+    targetWorktreeId: string | null = null,
+    deadline?: number,
+    connectionId?: string | null
+  ): Promise<PtyControllerInventory | null> {
     if (targetWorktreeId === FLOATING_TERMINAL_WORKTREE_ID) {
       const targetedLiveness = this.refreshFloatingWorkspacePtyLiveness()
       if (targetedLiveness !== null) {
-        return targetedLiveness
+        return {
+          livePtyIds: targetedLiveness,
+          terminalIdentityByPtyId: new Map()
+        }
       }
     }
     if (!this.ptyController?.listProcesses) {
       return null
     }
     const sessionsResult = await withTimeoutResult(
-      this.ptyController.listProcesses(),
+      this.ptyController.listProcesses(connectionId),
       deadline === undefined
         ? PTY_CONTROLLER_LIST_TIMEOUT_MS
         : Math.max(1, Math.min(PTY_CONTROLLER_LIST_TIMEOUT_MS, deadline - Date.now()))
@@ -26322,10 +26600,7 @@ export class OrcaRuntimeService {
       return null
     }
     const sessions = sessionsResult.value
-    const controllerIdentityByPtyId = new Map<
-      string,
-      { handle: string; incarnationId: string; wslDistro?: string | null }
-    >()
+    const controllerIdentityByPtyId = new Map<string, PtyControllerTerminalIdentity>()
     const ptyIdByControllerHandle = new Map<string, string>()
     const ambiguousControllerPtyIds = new Set<string>()
     for (const session of sessions) {
@@ -26356,7 +26631,6 @@ export class OrcaRuntimeService {
     for (const ptyId of ambiguousControllerPtyIds) {
       controllerIdentityByPtyId.delete(ptyId)
     }
-    this.controllerTerminalIdentityByPtyId = controllerIdentityByPtyId
     const persistedWorktreeIdByPtyId = indexPersistedPtyWorktreeBindings(
       this.store?.getWorkspaceSession?.()
     )
@@ -26432,6 +26706,9 @@ export class OrcaRuntimeService {
       this.refreshPtyForegroundAgent(session.id)
     }
     for (const pty of this.ptysById.values()) {
+      if (connectionId !== undefined && pty.connectionId !== connectionId) {
+        continue
+      }
       if (!allLivePtyIds.has(pty.ptyId) && !this.leafExistsForPty(pty.ptyId)) {
         if (this.ptyController.hasPty?.(pty.ptyId) === true) {
           // Why: an SSH spawn can become addressable before an overlapping relay list includes it.
@@ -26451,7 +26728,10 @@ export class OrcaRuntimeService {
       }
     }
     this.pruneDisconnectedPtyRecords()
-    return targetWorktreeId ? selectedLivePtyIds : allLivePtyIds
+    return {
+      livePtyIds: targetWorktreeId ? selectedLivePtyIds : allLivePtyIds,
+      terminalIdentityByPtyId: controllerIdentityByPtyId
+    }
   }
 
   private refreshFloatingWorkspacePtyLiveness(): Set<string> | null {

@@ -300,6 +300,82 @@ describe('legacy compatibility through RpcDispatcher', () => {
     expect(harness.notify).toHaveBeenCalledOnce()
   })
 
+  it('replays an A-era completion without touching a newer current attempt', async () => {
+    const harness = createHarness()
+    const payload = JSON.stringify({
+      taskId: harness.taskId,
+      dispatchId: harness.dispatchId
+    })
+    const completion = harness.db.insertMessage({
+      runId: harness.adoptedRunId,
+      from: WORKER_HANDLE,
+      to: COORDINATOR_HANDLE,
+      subject: 'Failed: pinned A treated this as complete',
+      body: 'persisted result',
+      type: 'worker_done',
+      payload,
+      senderPaneKey: WORKER_PANE,
+      deliveryContract: 'legacy_direct'
+    })
+    harness.db.settleWorkerReport({
+      taskId: harness.taskId,
+      dispatchId: harness.dispatchId,
+      outcome: 'succeeded',
+      result: 'persisted result'
+    })
+    harness.db.commitLegacyCompatibilityPrincipal({
+      runId: harness.adoptedRunId,
+      dispatchId: harness.dispatchId,
+      role: 'worker',
+      hostScope: JSON.stringify({ kind: 'local', hostId: 'local' }),
+      terminalHandle: WORKER_HANDLE,
+      paneKey: WORKER_PANE,
+      launchTokenHash: createHash('sha256').update('worker-token').digest('hex'),
+      processIncarnation: 'process-1'
+    })
+    harness.db.updateTaskStatus(harness.taskId, 'ready')
+    const currentDispatch = harness.db.createDispatchContext(
+      harness.taskId,
+      'term_current_worker',
+      'tab_current_worker:77777777-7777-4777-8777-777777777777',
+      'current-launch-hash'
+    )
+    const currentTaskBefore = harness.db.getTask(harness.taskId)
+    const currentDispatchBefore = harness.db.getDispatchContextById(currentDispatch.id)
+    const before = counts(harness.db)
+
+    const response = await harness.dispatcher.dispatch(
+      request(
+        'orchestration.send',
+        {
+          from: WORKER_HANDLE,
+          to: COORDINATOR_HANDLE,
+          subject: completion.subject,
+          body: completion.body,
+          type: 'worker_done',
+          payload
+        },
+        evidence('worker'),
+        'reconstruct-pinned-a-completion'
+      )
+    )
+
+    expect(response).toMatchObject({
+      ok: true,
+      result: {
+        message: { id: completion.id },
+        lifecycle: { action: 'settled', outcome: 'succeeded', duplicate: true }
+      }
+    })
+    expect(harness.db.getTask(harness.taskId)).toEqual(currentTaskBefore)
+    expect(harness.db.getDispatchContextById(harness.dispatchId)?.status).toBe('completed')
+    expect(harness.db.getDispatchContextById(currentDispatch.id)).toEqual(currentDispatchBefore)
+    expect(counts(harness.db)).toEqual({
+      ...before,
+      legacy_operation_receipts: before.legacy_operation_receipts + 1
+    })
+  })
+
   it('rejects a legacy lifecycle recipient outside the adopted Run with zero effects', async () => {
     const harness = createHarness()
     const before = counts(harness.db)
@@ -365,6 +441,35 @@ describe('legacy compatibility through RpcDispatcher', () => {
     expect(counts(harness.db)).toEqual(before)
     expect(harness.verify).not.toHaveBeenCalled()
     expect(harness.notify).not.toHaveBeenCalled()
+  })
+
+  it('keeps distinct compatibility ask invocations on distinct questions', async () => {
+    const harness = createHarness()
+    const ask = {
+      from: WORKER_HANDLE,
+      to: COORDINATOR_HANDLE,
+      question: 'Same question?',
+      options: ['yes', 'no'],
+      timeoutMs: 1
+    }
+    const first = await harness.dispatcher.dispatch(
+      request('orchestration.ask', ask, evidence('worker'), 'ask-one')
+    )
+    const replay = await harness.dispatcher.dispatch(
+      request('orchestration.ask', ask, evidence('worker'), 'ask-one')
+    )
+    const second = await harness.dispatcher.dispatch(
+      request('orchestration.ask', ask, evidence('worker'), 'ask-two')
+    )
+
+    expect(first).toMatchObject({ ok: true, result: { legacyCompatibility: { replayed: false } } })
+    expect(replay).toMatchObject({ ok: true, result: { legacyCompatibility: { replayed: true } } })
+    expect(second).toMatchObject({ ok: true, result: { legacyCompatibility: { replayed: false } } })
+    const firstId = (first as { result: { messageId: string } }).result.messageId
+    const replayId = (replay as { result: { messageId: string } }).result.messageId
+    const secondId = (second as { result: { messageId: string } }).result.messageId
+    expect(replayId).toBe(firstId)
+    expect(secondId).not.toBe(firstId)
   })
 
   it('does not infer an outcome for a current Dispatch when legacy adoption exists', async () => {
@@ -524,6 +629,56 @@ describe('legacy compatibility through RpcDispatcher', () => {
     expect(harness.notify).not.toHaveBeenCalled()
   })
 
+  it('advertises only Run-addressed current delivery to a legacy coordinator', async () => {
+    const harness = createHarness()
+    harness.db.insertMessage({
+      runId: harness.adoptedRunId,
+      from: 'term_current_worker',
+      to: WORKER_HANDLE,
+      subject: 'worker-only current mail',
+      deliveryContract: 'current_delivery'
+    })
+    const workerOnly = await harness.dispatcher.dispatch(
+      request(
+        'orchestration.check',
+        { terminal: COORDINATOR_HANDLE },
+        evidence('coordinator'),
+        'worker-current-mail'
+      )
+    )
+    expect(workerOnly).toMatchObject({
+      ok: true,
+      result: { legacyCompatibility: { currentDelivery: undefined } }
+    })
+
+    harness.db.insertMessage({
+      runId: harness.adoptedRunId,
+      from: 'term_current_worker',
+      to: `run:${harness.adoptedRunId}`,
+      subject: 'Run current mail',
+      deliveryContract: 'current_delivery'
+    })
+    const runMail = await harness.dispatcher.dispatch(
+      request(
+        'orchestration.check',
+        { terminal: COORDINATOR_HANDLE },
+        evidence('coordinator'),
+        'run-current-mail'
+      )
+    )
+    expect(runMail).toMatchObject({
+      ok: true,
+      result: {
+        legacyCompatibility: {
+          currentDelivery: {
+            runId: harness.adoptedRunId,
+            checkCommand: expect.stringContaining(`--run ${harness.adoptedRunId}`)
+          }
+        }
+      }
+    })
+  })
+
   it.each(['dispatch', 'websocket'] as const)(
     '%s binds an attested coordinator once and rejects contradictory proof before binding',
     async (transport) => {
@@ -586,6 +741,44 @@ describe('legacy compatibility through RpcDispatcher', () => {
 
     expect(response).toMatchObject({ ok: false, error: { code: 'task_not_found' } })
     expect(harness.db.getRun(harness.adoptedRunId)?.consumer_generation).toBe(0)
+    expect(counts(harness.db)).toEqual(before)
+  })
+
+  it('rejects stale legacy coordinator proof after current takeover', async () => {
+    const harness = createHarness()
+    const principal = harness.db.commitLegacyCompatibilityPrincipal({
+      runId: harness.adoptedRunId,
+      role: 'coordinator',
+      hostScope: JSON.stringify({ kind: 'local', hostId: 'local' }),
+      terminalHandle: COORDINATOR_HANDLE,
+      paneKey: COORDINATOR_PANE,
+      launchTokenHash: createHash('sha256').update('coordinator-token').digest('hex'),
+      processIncarnation: 'process-1'
+    }).principal
+    harness.db.settleWorkerReport({
+      taskId: harness.taskId,
+      dispatchId: harness.dispatchId,
+      outcome: 'succeeded',
+      result: 'done'
+    })
+    harness.db.bindRun({
+      runId: harness.adoptedRunId,
+      coordinatorHandle: 'term_current_coord',
+      coordinatorPaneKey: 'tab_current:55555555-5555-4555-8555-555555555555'
+    })
+    expect(harness.db.getLegacyCompatibilityPrincipal(principal.id)?.status).toBe('revoked')
+    const before = counts(harness.db)
+
+    const response = await harness.dispatcher.dispatch(
+      request(
+        'orchestration.taskList',
+        {},
+        evidence('coordinator'),
+        'stale-coordinator-after-takeover'
+      )
+    )
+
+    expect(response).toMatchObject({ ok: false, error: { code: 'legacy_read_only' } })
     expect(counts(harness.db)).toEqual(before)
   })
 })

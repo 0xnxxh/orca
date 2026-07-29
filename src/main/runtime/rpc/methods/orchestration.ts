@@ -2,7 +2,12 @@
 import { z } from 'zod'
 import { defineMethod, type RpcMethod } from '../core'
 import { OptionalFiniteNumber, OptionalString, OptionalBoolean, requiredString } from '../schemas'
-import type { MessageType, MessagePriority, TaskStatus } from '../../orchestration/db'
+import {
+  LEGACY_CONTRACT_VERSION,
+  type MessageType,
+  type MessagePriority,
+  type TaskStatus
+} from '../../orchestration/db'
 import { MESSAGE_TYPES } from '../../orchestration/types'
 import { buildDispatchPreamble } from '../../orchestration/preamble'
 import { formatMessageBanner } from '../../orchestration/formatter'
@@ -379,6 +384,49 @@ function resolveMessageRun(
   return { run, dispatchId: dispatch?.id ?? dispatchId }
 }
 
+function legacyWorkerDeliveryContract(
+  runtime: OrcaRuntimeService,
+  runId: string | undefined,
+  recipient: string
+): 'legacy_direct' | undefined {
+  if (!runId) {
+    return undefined
+  }
+  if (!recipient.startsWith('dispatch:')) {
+    return runtime
+      .getOrchestrationDb()
+      .resolveLegacyWorkerCandidate({ runId, terminalHandle: recipient })
+      ? 'legacy_direct'
+      : undefined
+  }
+  const dispatch = runtime
+    .getOrchestrationDb()
+    .getDispatchContextById(recipient.slice('dispatch:'.length))
+  return dispatch?.run_id === runId &&
+    dispatch.contract_version === LEGACY_CONTRACT_VERSION &&
+    (dispatch.status === 'pending' || dispatch.status === 'dispatched')
+    ? 'legacy_direct'
+    : undefined
+}
+
+function interruptedAcknowledgedCheck(
+  runId: string,
+  acknowledged: string,
+  reason: 'consumer_fenced' | 'outcome_unknown' | 'waiter_exists'
+): Record<string, unknown> {
+  return {
+    runId,
+    deliveryId: null,
+    messages: [],
+    count: 0,
+    acknowledged,
+    timedOut: false,
+    cancelled: false,
+    connectionLost: false,
+    waitInterrupted: reason
+  }
+}
+
 function rejectFederatedExplicitTarget(params: { to?: string; run?: string }): void {
   if (params.to || params.run) {
     throw new OrchestrationError(
@@ -395,7 +443,10 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.send',
     params: SendParams,
-    handler: async (params, { runtime, orchestrationCapability }) => {
+    handler: async (
+      params,
+      { runtime, orchestrationCapability, legacyCoordinatorRunId, revalidateLegacyCoordinator }
+    ) => {
       const db = runtime.getOrchestrationDb()
       const from = params.from ?? 'unknown'
       // Why: caller-supplied pane fields are only compatibility metadata; lifecycle authority uses the runtime-observed pane plus capability.
@@ -536,6 +587,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
               'Coordinator-to-worker control mail cannot report worker lifecycle.'
             )
           }
+          revalidateLegacyCoordinator?.()
           const relay = db.enqueueFederationRelay({
             dispatchId,
             direction: 'to_worker',
@@ -562,6 +614,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
           }
         }
         // Point-to-point — existing single-recipient behavior
+        revalidateLegacyCoordinator?.()
         const msg = db.insertMessage({
           from,
           to,
@@ -572,7 +625,12 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
           threadId: params.threadId,
           payload: params.payload,
           senderPaneKey,
-          runId: routing.run?.id
+          runId: routing.run?.id,
+          deliveryContract: legacyWorkerDeliveryContract(
+            runtime,
+            routing.run?.id ?? legacyCoordinatorRunId,
+            to
+          )
         })
         const dispatch = routing.dispatchId
           ? db.getDispatchContextById(routing.dispatchId)
@@ -629,6 +687,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         throw new Error(`No recipients resolved for group address: ${to}`)
       }
 
+      revalidateLegacyCoordinator?.()
       const threadId = params.threadId ?? `thread_${Date.now()}`
       const messages = handles.map((handle) =>
         db.insertMessage({
@@ -641,7 +700,12 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
           threadId,
           payload: params.payload,
           senderPaneKey,
-          runId: routing.run?.id
+          runId: routing.run?.id,
+          deliveryContract: legacyWorkerDeliveryContract(
+            runtime,
+            routing.run?.id ?? legacyCoordinatorRunId,
+            handle
+          )
         })
       )
       for (const message of messages) {
@@ -655,7 +719,16 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.check',
     params: CheckParams,
-    handler: async (params, { runtime, signal, legacyCoordinatorRunId }) => {
+    handler: async (
+      params,
+      {
+        runtime,
+        signal,
+        legacyCoordinatorRunId,
+        revalidateLegacyCoordinator,
+        recordMutationReceipt
+      }
+    ) => {
       const db = runtime.getOrchestrationDb()
       const handle = params.terminal ?? 'unknown'
       const typeFilter = parseMessageTypes(params.types)
@@ -682,6 +755,11 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
               deliveryId: params.ack
             })
           : undefined
+        if (acknowledged) {
+          recordMutationReceipt?.(
+            interruptedAcknowledgedCheck(run.id, acknowledged.delivery.id, 'outcome_unknown')
+          )
+        }
         if (params.peek || params.all || params.unread === false) {
           const history = db.getRunMailboxHistory(run.id, 100, typeFilter)
           const messages =
@@ -745,14 +823,28 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
           signal,
           exclusive: true
         })
+        try {
+          revalidateLegacyCoordinator?.()
+        } catch (error) {
+          if (!acknowledged) {
+            throw error
+          }
+          return interruptedAcknowledgedCheck(run.id, acknowledged.delivery.id, 'consumer_fenced')
+        }
         const latestRun = db.getRun(run.id)
         if (!latestRun || latestRun.consumer_generation !== generation) {
+          if (acknowledged) {
+            return interruptedAcknowledgedCheck(run.id, acknowledged.delivery.id, 'consumer_fenced')
+          }
           throw new OrchestrationError(
             'consumer_fenced',
             'This mailbox consumer was replaced while waiting.'
           )
         }
         if (waitResult === 'waiter_exists') {
+          if (acknowledged) {
+            return interruptedAcknowledgedCheck(run.id, acknowledged.delivery.id, 'waiter_exists')
+          }
           throw new OrchestrationError(
             'waiter_exists',
             `Run ${run.id} already has an active actionable waiter.`
@@ -1119,7 +1211,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.dispatch',
     params: DispatchParams,
-    handler: async (params, { runtime, legacyCoordinatorRunId }) => {
+    handler: async (params, { runtime, legacyCoordinatorRunId, revalidateLegacyCoordinator }) => {
       const db = runtime.getOrchestrationDb()
       const task = db.getTask(params.task)
       if (!task) {
@@ -1184,6 +1276,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         )
       }
 
+      revalidateLegacyCoordinator?.()
       const ctx = db.createDispatchContext(params.task, to, assigneePaneKey)
       const dispatchCapability = params.inject
         ? db.mintDispatchCapability({

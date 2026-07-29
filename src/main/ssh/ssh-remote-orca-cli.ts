@@ -6,7 +6,6 @@ import { ORCHESTRATION_CONTRACT_VERSION } from '../../shared/protocol-version'
 import { RpcDispatcher } from '../runtime/rpc/dispatcher'
 import type { RpcResponse } from '../runtime/rpc/core'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
-import { formatRemoteCli } from './ssh-remote-cli-format'
 import {
   HostCliUnavailableError,
   runHostOrcaCliPassthrough,
@@ -26,9 +25,9 @@ import { buildRemoteCliError } from './ssh-remote-cli-error-response'
 import { getRemoteLinearHelp, tryDispatchRemoteLinearCli } from './ssh-remote-linear-cli'
 import {
   getRemoteOrchestrationPayload,
-  hasRemoteLifecycleRejection,
   resolveRemoteOrchestrationSender
 } from './ssh-remote-orchestration-send'
+import { formatInProcessRemoteCliResult } from './ssh-remote-cli-in-process-result'
 
 export type { RemoteOrcaCliRequest, RemoteOrcaCliResult } from './ssh-remote-cli-host-passthrough'
 
@@ -51,6 +50,7 @@ export async function runRemoteOrcaCli(
 ): Promise<RemoteOrcaCliResult> {
   const parsed = parseRemoteCliArgs(request.argv)
   const json = parsed.flags.has('json')
+  const command = parsed.commandPath.join(' ')
 
   const interactiveMessage = HOST_INTERACTIVE_COMMANDS[parsed.commandPath[0] ?? '']
   if (interactiveMessage) {
@@ -62,6 +62,17 @@ export async function runRemoteOrcaCli(
       }
     }
     return { stdout: '', stderr: `${interactiveMessage}\n`, exitCode: 1 }
+  }
+
+  if (command === 'orchestration check' || command === 'orchestration ask') {
+    // Why: compatibility ACKs must wait until relay stdout is observable; a host CLI child can only flush into main's capture pipe.
+    return await runLegacyRemoteOrcaCli(
+      runtime,
+      request,
+      parsed,
+      json,
+      new HostCliUnavailableError('output-ordered orchestration bridge required')
+    )
   }
 
   let passthroughFailure: HostCliUnavailableError | null = null
@@ -101,16 +112,7 @@ async function runLegacyRemoteOrcaCli(
       passthroughFailure.message,
       request.runtimeAuthority
     )
-    const formatted = json
-      ? { stdout: `${JSON.stringify(response, null, 2)}\n`, stderr: '' }
-      : formatRemoteCli(response)
-    return {
-      stdout: formatted.stdout,
-      stderr: formatted.stderr,
-      // Why: the legacy SSH bridge bypasses the local CLI handler that turns
-      // a persisted lifecycle rejection into an unsuccessful command.
-      exitCode: response.ok && !hasRemoteLifecycleRejection(response.result) ? 0 : 1
-    }
+    return formatInProcessRemoteCliResult(parsed, request.env, response, json)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     const code =
@@ -141,13 +143,17 @@ async function dispatchRemoteCli(
   runtimeAuthority: RemoteOrcaCliRequest['runtimeAuthority']
 ): Promise<RpcResponse> {
   const command = parsed.commandPath.join(' ')
-  const compatibilityInvocationId = randomUUID()
   const inheritedEvidence = readOrchestrationCompatibilityEvidence(env)
   const orchestrationCompatibilityEvidence = runtimeAuthority
     ? { ...inheritedEvidence, host: runtimeAuthority }
     : inheritedEvidence
   const compatibilityEnvelope: RuntimeOrchestrationEnvelope = {
-    compatibilityInvocationId,
+    compatibilityInvocationId: randomUUID(),
+    orchestrationRequestId:
+      optionalRemoteCliString(parsed.flags, 'retry-request') ??
+      (command === 'orchestration check' || command === 'orchestration ask'
+        ? randomUUID()
+        : undefined),
     orchestrationCompatibilityEvidence
   }
   const linearResponse = await tryDispatchRemoteLinearCli(dispatcher, parsed, env, stdin)
@@ -201,8 +207,7 @@ async function dispatchRemoteCli(
         },
         {
           ...compatibilityEnvelope,
-          orchestrationCapability: optionalRemoteCliString(parsed.flags, 'dispatch-capability'),
-          orchestrationRequestId: optionalRemoteCliString(parsed.flags, 'retry-request')
+          orchestrationCapability: optionalRemoteCliString(parsed.flags, 'dispatch-capability')
         }
       )
     }
@@ -215,14 +220,38 @@ async function dispatchRemoteCli(
           terminalPaneKey: parsed.flags.has('terminal')
             ? undefined
             : env.ORCA_PANE_KEY || undefined,
-          unread: parsed.flags.has('unread') ? true : undefined,
+          unread: parsed.flags.has('unread') ? true : parsed.flags.has('peek') ? false : undefined,
+          peek: parsed.flags.has('peek') ? true : undefined,
           all: parsed.flags.has('all') ? true : undefined,
           types: optionalRemoteCliString(parsed.flags, 'types'),
+          format: parsed.flags.has('format') ? true : undefined,
           inject: parsed.flags.has('inject') ? true : undefined,
+          compatibilityCliCommand: 'orca',
+          run: optionalRemoteCliString(parsed.flags, 'run'),
+          ack: optionalRemoteCliString(parsed.flags, 'ack'),
           wait: parsed.flags.has('wait') ? true : undefined,
           timeoutMs: optionalRemoteCliNumber(parsed.flags, 'timeout-ms')
         },
         compatibilityEnvelope
+      )
+    case 'orchestration ask':
+      return await call(
+        dispatcher,
+        'orchestration.ask',
+        {
+          to: optionalRemoteCliString(parsed.flags, 'to'),
+          question: optionalRemoteCliString(parsed.flags, 'question'),
+          resume: optionalRemoteCliString(parsed.flags, 'resume'),
+          options: optionalRemoteCliString(parsed.flags, 'options'),
+          timeoutMs: optionalRemoteCliNumber(parsed.flags, 'timeout-ms'),
+          from: resolveRemoteCliHandle(parsed.flags, env, 'from'),
+          run: optionalRemoteCliString(parsed.flags, 'run'),
+          compatibilityCliCommand: 'orca'
+        },
+        {
+          ...compatibilityEnvelope,
+          orchestrationCapability: optionalRemoteCliString(parsed.flags, 'dispatch-capability')
+        }
       )
     case 'orchestration reply':
       return await call(
@@ -271,7 +300,8 @@ async function call(
       ? ORCHESTRATION_CONTRACT_VERSION
       : undefined,
     orchestrationRequestId: envelope?.orchestrationRequestId,
-    compatibilityInvocationId: envelope?.compatibilityInvocationId,
+    compatibilityInvocationId:
+      envelope?.orchestrationRequestId ?? envelope?.compatibilityInvocationId,
     orchestrationCompatibilityEvidence: envelope?.orchestrationCompatibilityEvidence
   })
 }

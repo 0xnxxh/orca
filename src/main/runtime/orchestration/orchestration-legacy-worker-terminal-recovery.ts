@@ -4,6 +4,7 @@ import type { LegacyWorkerTerminalRecoveryRow } from './types'
 
 export type LegacyWorkerTerminalRecoveryCandidate = {
   dispatchId: string
+  contractVersion: number
   taskId: string
   worktreeId: string
   terminalHandle: string
@@ -16,7 +17,7 @@ export type LegacyWorkerTerminalRecoveryCandidate = {
 }
 
 export type LegacyWorkerTerminalRecoveryPlan = {
-  blockedPanes: { worktreeId: string; paneKey: string }[]
+  blockedPanes: { worktreeId: string; paneKey: string; contractVersion: number }[]
   candidates: LegacyWorkerTerminalRecoveryCandidate[]
   ambiguousDispatchIds: string[]
 }
@@ -48,14 +49,21 @@ function countCandidateKeys(
 export function planLegacyWorkerTerminalRecovery(
   rows: readonly LegacyWorkerTerminalRecoveryRow[]
 ): LegacyWorkerTerminalRecoveryPlan {
-  const blockedPanes = new Map<string, { worktreeId: string; paneKey: string }>()
+  const blockedPanes = new Map<
+    string,
+    { worktreeId: string; paneKey: string; contractVersion: number }
+  >()
   const parsedCandidates: LegacyWorkerTerminalRecoveryCandidate[] = []
   for (const row of rows) {
     const worktreeId = row.worktree_id?.trim()
     const paneKey = row.assignee_pane_key?.trim()
     const pane = paneKey ? parsePaneKey(paneKey) : null
     if (worktreeId && paneKey && pane) {
-      blockedPanes.set(`${worktreeId}\0${paneKey}`, { worktreeId, paneKey })
+      blockedPanes.set(`${worktreeId}\0${paneKey}`, {
+        worktreeId,
+        paneKey,
+        contractVersion: row.contract_version
+      })
     }
     const terminalHandle = row.assignee_handle?.trim()
     const workerHandle = row.agent_terminal_handle?.trim()
@@ -74,6 +82,7 @@ export function planLegacyWorkerTerminalRecovery(
     }
     parsedCandidates.push({
       dispatchId: row.dispatch_id,
+      contractVersion: row.contract_version,
       taskId: row.task_id,
       worktreeId,
       terminalHandle,

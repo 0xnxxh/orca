@@ -16,7 +16,10 @@ import {
 import { waitForActivePaneHookDescriptor, waitForActivePanePtyId } from './helpers/terminal'
 import { RuntimeClient } from '../../src/cli/runtime-client'
 import Database from '../../src/main/sqlite/sync-database'
-import { LEGACY_CONTRACT_VERSION } from '../../src/main/runtime/orchestration/db'
+import {
+  CURRENT_CONTRACT_VERSION,
+  LEGACY_CONTRACT_VERSION
+} from '../../src/main/runtime/orchestration/db'
 import { DEFAULT_LOCAL_ORCA_PROFILE_ID } from '../../src/shared/orca-profiles'
 import type { RuntimeTerminalListResult, RuntimeTerminalRead } from '../../src/shared/runtime-types'
 
@@ -200,6 +203,44 @@ function stripLegacyWorkerRendererBinding(
   writeFileSync(persistedDataPath(userDataDir), `${JSON.stringify(data, null, 2)}\n`, 'utf8')
 }
 
+function assertDispatchRemainsCurrent(
+  userDataDir: string,
+  input: {
+    dispatchId: string
+    terminalHandle: string
+    paneKey: string
+    processIncarnation: string
+    worktreeId: string
+  }
+): void {
+  const db = new Database(path.join(userDataDir, 'orchestration.db'))
+  try {
+    const authority = db
+      .prepare(
+        `SELECT dc.status AS dispatch_status, dc.assignee_handle, dc.assignee_pane_key,
+                dc.process_incarnation, dc.contract_version, dc.capability_hash,
+                wd.state AS worker_state, wd.worktree_id, wd.agent_terminal_handle
+         FROM dispatch_contexts dc
+         INNER JOIN worker_dispatches wd ON wd.dispatch_id = dc.id
+         WHERE dc.id = ?`
+      )
+      .get(input.dispatchId)
+    expect(authority).toEqual({
+      dispatch_status: 'dispatched',
+      assignee_handle: input.terminalHandle,
+      assignee_pane_key: input.paneKey,
+      process_incarnation: input.processIncarnation,
+      contract_version: CURRENT_CONTRACT_VERSION,
+      capability_hash: expect.any(String),
+      worker_state: 'ready',
+      worktree_id: input.worktreeId,
+      agent_terminal_handle: input.terminalHandle
+    })
+  } finally {
+    db.close()
+  }
+}
+
 function markDispatchAsPreUpdateLegacy(
   userDataDir: string,
   input: {
@@ -233,9 +274,9 @@ function markDispatchAsPreUpdateLegacy(
     })
     db.prepare(
       `UPDATE dispatch_contexts
-         SET contract_version = ?, capability_hash = NULL, capability_revoked_at = NULL,
-             launch_token_hash = NULL
-         WHERE id = ?`
+       SET contract_version = ?, capability_hash = NULL, capability_revoked_at = NULL,
+           launch_token_hash = NULL
+       WHERE id = ?`
     ).run(LEGACY_CONTRACT_VERSION, input.dispatchId)
   } finally {
     db.close()
@@ -248,285 +289,307 @@ test.afterAll(() => {
   rmSync(fakeCliDir, { recursive: true, force: true })
 })
 
-test('adopts one live legacy worker after restart without replaying resume', async (// oxlint-disable-next-line no-empty-pattern -- This lifecycle test owns both Electron launches and intentionally opts out of the default app fixture.
-{}, testInfo) => {
-  test.setTimeout(300_000)
-  const repoPath = existsSync(TEST_REPO_PATH_FILE)
-    ? readFileSync(TEST_REPO_PATH_FILE, 'utf8').trim()
-    : ''
-  test.skip(!repoPath || !existsSync(repoPath), 'Global setup did not produce a seeded test repo')
+for (const contractVersion of [LEGACY_CONTRACT_VERSION, CURRENT_CONTRACT_VERSION]) {
+  const contractLabel = contractVersion === LEGACY_CONTRACT_VERSION ? 'legacy' : 'current'
+  test(`adopts one live ${contractLabel} worker after restart without replaying resume`, async (// oxlint-disable-next-line no-empty-pattern -- This lifecycle test owns both Electron launches and intentionally opts out of the default app fixture.
+  {}, testInfo) => {
+    test.setTimeout(300_000)
+    rmSync(spawnLedgerPath, { force: true })
+    rmSync(interruptionLedgerPath, { force: true })
+    const repoPath = existsSync(TEST_REPO_PATH_FILE)
+      ? readFileSync(TEST_REPO_PATH_FILE, 'utf8').trim()
+      : ''
+    test.skip(!repoPath || !existsSync(repoPath), 'Global setup did not produce a seeded test repo')
 
-  const session = createRestartSession(testInfo, {
-    PATH: `${fakeCliDir}${path.delimiter}${process.env.PATH ?? ''}`,
-    ORCA_E2E_SPAWN_LEDGER: spawnLedgerPath,
-    ORCA_E2E_INTERRUPTION_LEDGER: interruptionLedgerPath
-  })
-  let firstApp: ElectronApplication | null = null
-  let secondApp: ElectronApplication | null = null
+    const session = createRestartSession(testInfo, {
+      PATH: `${fakeCliDir}${path.delimiter}${process.env.PATH ?? ''}`,
+      ORCA_E2E_SPAWN_LEDGER: spawnLedgerPath,
+      ORCA_E2E_INTERRUPTION_LEDGER: interruptionLedgerPath
+    })
+    let firstApp: ElectronApplication | null = null
+    let secondApp: ElectronApplication | null = null
 
-  try {
-    const first = await session.launch()
-    firstApp = first.app
-    const worktreeId = await attachRepoAndOpenTerminal(first.page, repoPath)
-    await waitForSessionReady(first.page)
-    await ensureTerminalVisible(first.page)
-    const coordinatorTabId = await getActiveTabId(first.page)
-    expect(coordinatorTabId).toBeTruthy()
-    await waitForActivePanePtyId(first.page)
-    const coordinatorPane = await waitForActivePaneHookDescriptor(first.page)
-    const firstClient = new RuntimeClient(session.userDataDir, 30_000, null, null)
-    const coordinator = await firstClient.call<{ terminal: { handle: string } }>(
-      'terminal.resolvePane',
-      { paneKey: coordinatorPane.paneKey }
-    )
-    const coordinatorTerminal = await firstClient.call<{
-      terminal: { worktreeId: string }
-    }>('terminal.show', { terminal: coordinator.result.terminal.handle })
-    await expect
-      .poll(async () => {
-        const listed = await firstClient.call<{ worktrees: { id: string }[] }>('worktree.list', {})
-        return listed.result.worktrees.some(
-          (candidate) => candidate.id === coordinatorTerminal.result.terminal.worktreeId
-        )
-      })
-      .toBe(true)
-    const run = await firstClient.call<{ run: { id: string } }>('orchestration.runCreate', {
-      objective: 'Legacy worker restart recovery',
-      from: coordinator.result.terminal.handle
-    })
-    const task = await firstClient.call<{ task: { id: string } }>('orchestration.taskCreate', {
-      spec: 'Respond ACK and remain idle',
-      run: run.result.run.id,
-      callerTerminalHandle: coordinator.result.terminal.handle
-    })
-    const started = await firstClient.call<{
-      effects: { kind: string; role?: string; id?: string }[]
-    }>('orchestration.workerStart', {
-      task: task.result.task.id,
-      from: coordinator.result.terminal.handle,
-      agent: 'codex',
-      timeoutMs: 15_000
-    })
-    const workerHandle = started.result.effects.find(
-      (effect) => effect.kind === 'terminal' && effect.role === 'agent'
-    )?.id
-    expect(workerHandle).toBeTruthy()
-
-    let worker = (
-      await firstClient.call<RuntimeTerminalListResult>('terminal.list')
-    ).result.terminals.find((terminal) => terminal.title === 'Codex Ready')
-    await expect
-      .poll(async () => {
-        const listed = await firstClient.call<RuntimeTerminalListResult>('terminal.list')
-        worker = listed.result.terminals.find((terminal) => terminal.title === 'Codex Ready')
-        return worker?.ptyId ?? null
-      })
-      .toBeTruthy()
-    expect(worker?.incarnationId).toBeTruthy()
-    const workerPaneKey = `${worker!.tabId}:${worker!.leafId}`
-    await expect
-      .poll(async () => {
-        const read = await firstClient.call<{ terminal: RuntimeTerminalRead }>('terminal.read', {
-          terminal: worker!.handle,
-          limit: 200
+    try {
+      const first = await session.launch()
+      firstApp = first.app
+      const worktreeId = await attachRepoAndOpenTerminal(first.page, repoPath)
+      await waitForSessionReady(first.page)
+      await ensureTerminalVisible(first.page)
+      const coordinatorTabId = await getActiveTabId(first.page)
+      expect(coordinatorTabId).toBeTruthy()
+      await waitForActivePanePtyId(first.page)
+      const coordinatorPane = await waitForActivePaneHookDescriptor(first.page)
+      const firstClient = new RuntimeClient(session.userDataDir, 30_000, null, null)
+      const coordinator = await firstClient.call<{ terminal: { handle: string } }>(
+        'terminal.resolvePane',
+        { paneKey: coordinatorPane.paneKey }
+      )
+      const coordinatorTerminal = await firstClient.call<{
+        terminal: { worktreeId: string }
+      }>('terminal.show', { terminal: coordinator.result.terminal.handle })
+      await expect
+        .poll(async () => {
+          const listed = await firstClient.call<{ worktrees: { id: string }[] }>(
+            'worktree.list',
+            {}
+          )
+          return listed.result.worktrees.some(
+            (candidate) => candidate.id === coordinatorTerminal.result.terminal.worktreeId
+          )
         })
-        return read.result.terminal.tail.join('\n')
+        .toBe(true)
+      const run = await firstClient.call<{ run: { id: string } }>('orchestration.runCreate', {
+        objective: 'Legacy worker restart recovery',
+        from: coordinator.result.terminal.handle
       })
-      .toContain('ACK')
-    const initialWorker = {
-      ptyId: worker!.ptyId,
-      incarnationId: worker!.incarnationId,
-      worktreeId: worker!.worktreeId,
-      tabId: worker!.tabId,
-      leafId: worker!.leafId
-    }
-    const initialDispatch = await firstClient.call<{
-      dispatch: {
-        id: string
-        task_id: string
-        assignee_handle: string
-        assignee_pane_key: string
-        process_incarnation: string
-      } | null
-    }>('orchestration.dispatchShow', { task: task.result.task.id })
-    expect(initialDispatch.result.dispatch).toEqual(
-      expect.objectContaining({
-        task_id: task.result.task.id,
-        assignee_pane_key: workerPaneKey,
-        process_incarnation: `${initialWorker.ptyId}:${initialWorker.incarnationId}`
+      const task = await firstClient.call<{ task: { id: string } }>('orchestration.taskCreate', {
+        spec: 'Respond ACK and remain idle',
+        run: run.result.run.id,
+        callerTerminalHandle: coordinator.result.terminal.handle
       })
-    )
-    const dispatchHandle = initialDispatch.result.dispatch!.assignee_handle
-    await expect.poll(() => readLedger(spawnLedgerPath)).toHaveLength(1)
-    const [initialSpawn] = readLedger(spawnLedgerPath)
-    expect(isProcessAlive(initialSpawn.pid)).toBe(true)
-    expect(readLedger(interruptionLedgerPath)).toEqual([])
+      const started = await firstClient.call<{
+        effects: { kind: string; role?: string; id?: string }[]
+      }>('orchestration.workerStart', {
+        task: task.result.task.id,
+        from: coordinator.result.terminal.handle,
+        agent: 'codex',
+        timeoutMs: 15_000
+      })
+      const workerHandle = started.result.effects.find(
+        (effect) => effect.kind === 'terminal' && effect.role === 'agent'
+      )?.id
+      expect(workerHandle).toBeTruthy()
 
-    const transcriptPath = session.seedCodexResumeRollout(PROVIDER_SESSION_ID, repoPath)
-    await first.page.evaluate(
-      ({ paneKey, tabId, worktreeId: workerWorktreeId, terminalHandle, transcript }) => {
-        window.__store?.getState().setAgentStatus(
-          paneKey,
-          { state: 'working', prompt: 'Respond ACK and remain idle', agentType: 'codex' },
-          'Codex Ready',
-          undefined,
-          { tabId, worktreeId: workerWorktreeId, terminalHandle },
-          {
-            providerSession: {
-              key: 'session_id',
-              id: 'e2e-legacy-orchestration-worker',
-              transcriptPath: transcript
-            },
-            launchConfig: {
-              agentCommand: 'codex',
-              agentArgs: '--dangerously-bypass-approvals-and-sandbox',
-              agentEnv: {}
-            }
-          }
-        )
-        window.__store?.getState().captureAllSleepingAgentSessions('quit')
-      },
-      {
-        paneKey: workerPaneKey,
-        tabId: worker!.tabId,
+      let worker = (
+        await firstClient.call<RuntimeTerminalListResult>('terminal.list')
+      ).result.terminals.find((terminal) => terminal.title === 'Codex Ready')
+      await expect
+        .poll(async () => {
+          const listed = await firstClient.call<RuntimeTerminalListResult>('terminal.list')
+          worker = listed.result.terminals.find((terminal) => terminal.title === 'Codex Ready')
+          return worker?.ptyId ?? null
+        })
+        .toBeTruthy()
+      expect(worker?.incarnationId).toBeTruthy()
+      const workerPaneKey = `${worker!.tabId}:${worker!.leafId}`
+      await expect
+        .poll(async () => {
+          const read = await firstClient.call<{ terminal: RuntimeTerminalRead }>('terminal.read', {
+            terminal: worker!.handle,
+            limit: 200
+          })
+          return read.result.terminal.tail.join('\n')
+        })
+        .toContain('ACK')
+      const initialWorker = {
+        ptyId: worker!.ptyId,
+        incarnationId: worker!.incarnationId,
         worktreeId: worker!.worktreeId,
-        terminalHandle: worker!.handle,
-        transcript: transcriptPath
+        tabId: worker!.tabId,
+        leafId: worker!.leafId
       }
-    )
-    await expect
-      .poll(() => hasPersistedResumeRecord(session.userDataDir, workerPaneKey), {
-        timeout: 30_000
-      })
-      .toBe(true)
-
-    await session.close(firstApp)
-    firstApp = null
-    expect(readLedger(spawnLedgerPath)).toEqual([initialSpawn])
-    expect(readLedger(interruptionLedgerPath)).toEqual([])
-    expect(isProcessAlive(initialSpawn.pid)).toBe(true)
-
-    stripLegacyWorkerRendererBinding(session.userDataDir, {
-      worktreeId,
-      coordinatorTabId: coordinatorTabId!,
-      workerTabId: worker!.tabId,
-      workerPaneKey
-    })
-    markDispatchAsPreUpdateLegacy(session.userDataDir, {
-      dispatchId: initialDispatch.result.dispatch!.id,
-      terminalHandle: dispatchHandle,
-      paneKey: workerPaneKey,
-      processIncarnation: `${initialWorker.ptyId}:${initialWorker.incarnationId}`,
-      worktreeId: initialWorker.worktreeId
-    })
-
-    const second = await session.launch()
-    secondApp = second.app
-    await waitForSessionReady(second.page)
-    expect(await waitForActiveWorktree(second.page)).toBe(worktreeId)
-    const secondClient = new RuntimeClient(session.userDataDir, 30_000, null, null)
-    let recovered = (
-      await secondClient.call<RuntimeTerminalListResult>('terminal.list')
-    ).result.terminals.find((terminal) => terminal.ptyId === initialWorker.ptyId)
-    await expect
-      .poll(async () => {
-        const listed = await secondClient.call<RuntimeTerminalListResult>('terminal.list')
-        const matches = listed.result.terminals.filter(
-          (terminal) => terminal.ptyId === initialWorker.ptyId
-        )
-        recovered = matches[0]
-        return matches
-      })
-      .toEqual([
+      const initialDispatch = await firstClient.call<{
+        dispatch: {
+          id: string
+          task_id: string
+          assignee_handle: string
+          assignee_pane_key: string
+          process_incarnation: string
+        } | null
+      }>('orchestration.dispatchShow', { task: task.result.task.id })
+      expect(initialDispatch.result.dispatch).toEqual(
         expect.objectContaining({
-          ...initialWorker,
-          connected: true,
-          writable: true
+          task_id: task.result.task.id,
+          assignee_pane_key: workerPaneKey,
+          process_incarnation: `${initialWorker.ptyId}:${initialWorker.incarnationId}`
         })
-      ])
+      )
+      const dispatchHandle = initialDispatch.result.dispatch!.assignee_handle
+      await expect.poll(() => readLedger(spawnLedgerPath)).toHaveLength(1)
+      const [initialSpawn] = readLedger(spawnLedgerPath)
+      expect(isProcessAlive(initialSpawn.pid)).toBe(true)
+      expect(readLedger(interruptionLedgerPath)).toEqual([])
 
-    const recoveredTab = second.page.locator(
-      `[data-testid="sortable-tab"][data-tab-id="${initialWorker.tabId}"]`
-    )
-    await expect(recoveredTab).toBeVisible()
-    await expect(recoveredTab).toHaveCount(1)
-    await expect(recoveredTab).toHaveAttribute('data-active', 'false')
-    await expect(
-      second.page.locator(`[data-testid="sortable-tab"][data-tab-id="${coordinatorTabId!}"]`)
-    ).toHaveAttribute('data-active', 'true')
-    await expect
-      .poll(async () => {
-        const read = await secondClient.call<{ terminal: RuntimeTerminalRead }>('terminal.read', {
-          terminal: recovered!.handle,
-          limit: 200
+      const transcriptPath = session.seedCodexResumeRollout(PROVIDER_SESSION_ID, repoPath)
+      await first.page.evaluate(
+        ({ paneKey, tabId, worktreeId: workerWorktreeId, terminalHandle, transcript }) => {
+          window.__store?.getState().setAgentStatus(
+            paneKey,
+            { state: 'working', prompt: 'Respond ACK and remain idle', agentType: 'codex' },
+            'Codex Ready',
+            undefined,
+            { tabId, worktreeId: workerWorktreeId, terminalHandle },
+            {
+              providerSession: {
+                key: 'session_id',
+                id: 'e2e-legacy-orchestration-worker',
+                transcriptPath: transcript
+              },
+              launchConfig: {
+                agentCommand: 'codex',
+                agentArgs: '--dangerously-bypass-approvals-and-sandbox',
+                agentEnv: {}
+              }
+            }
+          )
+          window.__store?.getState().captureAllSleepingAgentSessions('quit')
+        },
+        {
+          paneKey: workerPaneKey,
+          tabId: worker!.tabId,
+          worktreeId: worker!.worktreeId,
+          terminalHandle: worker!.handle,
+          transcript: transcriptPath
+        }
+      )
+      await expect
+        .poll(() => hasPersistedResumeRecord(session.userDataDir, workerPaneKey), {
+          timeout: 30_000
         })
-        return read.result.terminal.tail.join('\n')
-      })
-      .toContain('ACK')
+        .toBe(true)
 
-    const restoredRun = await secondClient.call<{ run: { id: string } }>('orchestration.runShow', {
-      id: run.result.run.id
-    })
-    expect(restoredRun.result.run.id).toBe(run.result.run.id)
-    const tasks = await secondClient.call<{ tasks: { id: string }[] }>('orchestration.taskList', {
-      run: run.result.run.id
-    })
-    expect(tasks.result.tasks).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: task.result.task.id })])
-    )
-    const recoveredDispatch = await secondClient.call<{
-      dispatch: {
-        id: string
-        task_id: string
-        assignee_handle: string
-        assignee_pane_key: string
-        process_incarnation: string
-        contract_version: number
-      } | null
-    }>('orchestration.dispatchShow', { task: task.result.task.id })
-    expect(recoveredDispatch.result.dispatch).toEqual(
-      expect.objectContaining({
-        id: initialDispatch.result.dispatch!.id,
-        task_id: task.result.task.id,
-        assignee_handle: dispatchHandle,
-        assignee_pane_key: workerPaneKey,
-        process_incarnation: `${initialWorker.ptyId}:${initialWorker.incarnationId}`,
-        contract_version: LEGACY_CONTRACT_VERSION
-      })
-    )
-    await expect
-      .poll(async () => ({
-        renderer: await readRendererRecoveryState(second.page, workerPaneKey, initialWorker.tabId),
-        persisted: hasPersistedResumeRecord(session.userDataDir, workerPaneKey)
-      }))
-      .toEqual({
-        renderer: { sleeping: false, resumeClaim: false, pendingStartup: false },
-        persisted: false
-      })
-    expect(readLedger(spawnLedgerPath)).toEqual([initialSpawn])
-    expect(readLedger(interruptionLedgerPath)).toEqual([])
-    expect(isProcessAlive(initialSpawn.pid)).toBe(true)
+      await session.close(firstApp)
+      firstApp = null
+      expect(readLedger(spawnLedgerPath)).toEqual([initialSpawn])
+      expect(readLedger(interruptionLedgerPath)).toEqual([])
+      expect(isProcessAlive(initialSpawn.pid)).toBe(true)
 
-    const otherWorktreeId = await switchToOtherWorktree(second.page, worktreeId)
-    expect(otherWorktreeId).toBeTruthy()
-    await switchToWorktree(second.page, worktreeId)
-    await expect(recoveredTab).toBeVisible()
-    await expect(recoveredTab).toHaveCount(1)
-    await expect(recoveredTab).toHaveAttribute('data-active', 'false')
-    await expect
-      .poll(async () => readRendererRecoveryState(second.page, workerPaneKey, initialWorker.tabId))
-      .toEqual({ sleeping: false, resumeClaim: false, pendingStartup: false })
-    expect(readLedger(spawnLedgerPath)).toEqual([initialSpawn])
-    expect(readLedger(interruptionLedgerPath)).toEqual([])
-    expect(isProcessAlive(initialSpawn.pid)).toBe(true)
-    await expect(second.page.locator('body')).not.toContainText('Conversation interrupted')
-  } finally {
-    if (secondApp) {
-      await session.close(secondApp).catch(() => undefined)
+      stripLegacyWorkerRendererBinding(session.userDataDir, {
+        worktreeId,
+        coordinatorTabId: coordinatorTabId!,
+        workerTabId: worker!.tabId,
+        workerPaneKey
+      })
+      const dispatchIdentity = {
+        dispatchId: initialDispatch.result.dispatch!.id,
+        terminalHandle: dispatchHandle,
+        paneKey: workerPaneKey,
+        processIncarnation: `${initialWorker.ptyId}:${initialWorker.incarnationId}`,
+        worktreeId: initialWorker.worktreeId
+      }
+      if (contractVersion === LEGACY_CONTRACT_VERSION) {
+        markDispatchAsPreUpdateLegacy(session.userDataDir, dispatchIdentity)
+      } else {
+        assertDispatchRemainsCurrent(session.userDataDir, dispatchIdentity)
+      }
+
+      const second = await session.launch()
+      secondApp = second.app
+      await waitForSessionReady(second.page)
+      expect(await waitForActiveWorktree(second.page)).toBe(worktreeId)
+      const secondClient = new RuntimeClient(session.userDataDir, 30_000, null, null)
+      let recovered = (
+        await secondClient.call<RuntimeTerminalListResult>('terminal.list')
+      ).result.terminals.find((terminal) => terminal.ptyId === initialWorker.ptyId)
+      await expect
+        .poll(async () => {
+          const listed = await secondClient.call<RuntimeTerminalListResult>('terminal.list')
+          const matches = listed.result.terminals.filter(
+            (terminal) => terminal.ptyId === initialWorker.ptyId
+          )
+          recovered = matches[0]
+          return matches
+        })
+        .toEqual([
+          expect.objectContaining({
+            ...initialWorker,
+            connected: true,
+            writable: true
+          })
+        ])
+
+      const recoveredTab = second.page.locator(
+        `[data-testid="sortable-tab"][data-tab-id="${initialWorker.tabId}"]`
+      )
+      await expect(recoveredTab).toBeVisible()
+      await expect(recoveredTab).toHaveCount(1)
+      await expect(recoveredTab).toHaveAttribute('data-active', 'false')
+      await expect(
+        second.page.locator(`[data-testid="sortable-tab"][data-tab-id="${coordinatorTabId!}"]`)
+      ).toHaveAttribute('data-active', 'true')
+      await expect
+        .poll(async () => {
+          const read = await secondClient.call<{ terminal: RuntimeTerminalRead }>('terminal.read', {
+            terminal: recovered!.handle,
+            limit: 200
+          })
+          return read.result.terminal.tail.join('\n')
+        })
+        .toContain('ACK')
+
+      const restoredRun = await secondClient.call<{ run: { id: string } }>(
+        'orchestration.runShow',
+        {
+          id: run.result.run.id
+        }
+      )
+      expect(restoredRun.result.run.id).toBe(run.result.run.id)
+      const tasks = await secondClient.call<{ tasks: { id: string }[] }>('orchestration.taskList', {
+        run: run.result.run.id
+      })
+      expect(tasks.result.tasks).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: task.result.task.id })])
+      )
+      const recoveredDispatch = await secondClient.call<{
+        dispatch: {
+          id: string
+          task_id: string
+          assignee_handle: string
+          assignee_pane_key: string
+          process_incarnation: string
+          contract_version: number
+        } | null
+      }>('orchestration.dispatchShow', { task: task.result.task.id })
+      expect(recoveredDispatch.result.dispatch).toEqual(
+        expect.objectContaining({
+          id: initialDispatch.result.dispatch!.id,
+          task_id: task.result.task.id,
+          assignee_handle: dispatchHandle,
+          assignee_pane_key: workerPaneKey,
+          process_incarnation: `${initialWorker.ptyId}:${initialWorker.incarnationId}`,
+          contract_version: contractVersion
+        })
+      )
+      await expect
+        .poll(async () => ({
+          renderer: await readRendererRecoveryState(
+            second.page,
+            workerPaneKey,
+            initialWorker.tabId
+          ),
+          persisted: hasPersistedResumeRecord(session.userDataDir, workerPaneKey)
+        }))
+        .toEqual({
+          renderer: { sleeping: false, resumeClaim: false, pendingStartup: false },
+          persisted: false
+        })
+      expect(readLedger(spawnLedgerPath)).toEqual([initialSpawn])
+      expect(readLedger(interruptionLedgerPath)).toEqual([])
+      expect(isProcessAlive(initialSpawn.pid)).toBe(true)
+
+      const otherWorktreeId = await switchToOtherWorktree(second.page, worktreeId)
+      expect(otherWorktreeId).toBeTruthy()
+      await switchToWorktree(second.page, worktreeId)
+      await expect(recoveredTab).toBeVisible()
+      await expect(recoveredTab).toHaveCount(1)
+      await expect(recoveredTab).toHaveAttribute('data-active', 'false')
+      await expect
+        .poll(async () =>
+          readRendererRecoveryState(second.page, workerPaneKey, initialWorker.tabId)
+        )
+        .toEqual({ sleeping: false, resumeClaim: false, pendingStartup: false })
+      expect(readLedger(spawnLedgerPath)).toEqual([initialSpawn])
+      expect(readLedger(interruptionLedgerPath)).toEqual([])
+      expect(isProcessAlive(initialSpawn.pid)).toBe(true)
+      await expect(second.page.locator('body')).not.toContainText('Conversation interrupted')
+    } finally {
+      if (secondApp) {
+        await session.close(secondApp).catch(() => undefined)
+      }
+      if (firstApp) {
+        await session.close(firstApp).catch(() => undefined)
+      }
+      await session.dispose()
     }
-    if (firstApp) {
-      await session.close(firstApp).catch(() => undefined)
-    }
-    await session.dispose()
-  }
-})
+  })
+}

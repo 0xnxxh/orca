@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { OrchestrationDb } from './db'
+import { CURRENT_CONTRACT_VERSION, OrchestrationDb } from './db'
 
 describe('OrchestrationDb worker Dispatch state', () => {
   let db: OrchestrationDb | undefined
@@ -44,6 +44,14 @@ describe('OrchestrationDb worker Dispatch state', () => {
       status: 'dispatched',
       assignee_handle: 'term_worker'
     })
+    expect(d.listLegacyWorkerTerminalRecoveryRows()).toEqual([
+      expect.objectContaining({
+        dispatch_id: started.dispatch.id,
+        contract_version: CURRENT_CONTRACT_VERSION,
+        worker_state: 'ready',
+        agent_terminal_handle: 'term_worker'
+      })
+    ])
   })
 
   it('commits worker-start mutation acceptance with the starting Dispatch', () => {

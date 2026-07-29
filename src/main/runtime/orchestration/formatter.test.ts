@@ -77,6 +77,14 @@ describe('formatMessageBanner', () => {
     )
   })
 
+  it('lets the CLI resolve the live sender for Run and Dispatch addresses', () => {
+    for (const to_handle of ['run:run_test', 'dispatch:dispatch_test']) {
+      const banner = formatMessageBanner(makeMessage({ to_handle }))
+      expect(banner).toContain('[Reply: orca orchestration reply --id msg_test1 --body "..."]')
+      expect(banner).not.toContain(`--from ${to_handle}`)
+    }
+  })
+
   it('marks legacy messages read-only without reply or acknowledgment affordances', () => {
     const banner = formatMessageBanner(
       makeMessage({ id: 'msg_legacy', run_id: 'run_legacy_local' })

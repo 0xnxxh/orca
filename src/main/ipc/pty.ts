@@ -4253,7 +4253,13 @@ export function registerPtyHandlers(
         return null
       }
     },
-    listProcesses: async () => {
+    listProcesses: async (connectionId) => {
+      if (connectionId === null) {
+        return localProvider.listProcesses()
+      }
+      if (connectionId !== undefined) {
+        return getProvider(connectionId).listProcesses()
+      }
       const providerSessions = await Promise.all([
         localProvider.listProcesses(),
         ...Array.from(sshProviders.values(), (provider) => provider.listProcesses())

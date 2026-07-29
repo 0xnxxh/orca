@@ -71,8 +71,15 @@ describe('orchestration skill guidance', () => {
     expect(migration).toContain(
       'It must not spawn, write, signal, stop, switch, focus, split, or inject a terminal.'
     )
-    expect(migration).toContain('task-list --run run_legacy_local')
+    expect(migration).not.toContain('task-list --run run_legacy_local')
+    expect(migration).toContain('run_legacy_local is an empty audit tombstone')
+    expect(migration).toContain('Recovered orchestration work from a contract update')
+    expect(migration).toContain('run-show --id <adopted_run_id>')
+    expect(migration).toContain('task-list --run <adopted_run_id>')
     expect(migration).toContain('Legacy inspection remains available without consuming mail')
+    expect(migration).toContain('run-use --id <adopted_run_id> --takeover-legacy')
+    expect(migration).toContain('Takeover fences only the old coordinator')
+    expect(migration).toContain('Live legacy workers keep their original Tasks, Dispatches')
     expect(migration).toContain(
       'keep the original worker as the only editor until it reaches a stable handoff point'
     )

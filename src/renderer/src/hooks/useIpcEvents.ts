@@ -101,6 +101,7 @@ import { track } from '@/lib/telemetry'
 import { singlePaneLayoutSnapshot } from '@/store/slices/terminal-helpers'
 import { buildWorkspaceSessionPayload } from '@/lib/workspace-session'
 import { persistWorkspaceSessionByHost } from '@/lib/workspace-session-host-persistence'
+import { verifyTerminalRevealIdentity } from '@/lib/terminal-reveal-identity'
 import { getLinearIssueWorkspaceName } from '../../../shared/workspace-name'
 import type { RuntimeClientEvent } from '../../../shared/runtime-client-events'
 import { applyHostWorktreeTerminalSleepState } from '@/components/terminal-pane/pty-shutdown-exit-deferral'
@@ -1576,11 +1577,24 @@ export function useIpcEvents(): void {
                 ...(launchAgent ? { launchAgent } : {})
               })
             }
+            if (ptyId && terminalPresentation === 'background') {
+              requestBackgroundTerminalWorktreeMount({ worktreeId, tabIds: [tab.id] })
+            }
             if (requestId) {
+              const identity =
+                ptyId && tabId && leafId
+                  ? verifyTerminalRevealIdentity(useAppStore.getState(), {
+                      worktreeId,
+                      tabId,
+                      leafId,
+                      ptyId
+                    })
+                  : undefined
               window.api.ui.replyTerminalCreate({
                 requestId,
                 tabId: tab.id,
-                title: title ?? tab.title
+                title: title ?? tab.title,
+                ...(identity ? { identity } : {})
               })
             }
           } catch (err) {
@@ -3348,13 +3362,8 @@ export function useIpcEvents(): void {
       unsubs.push(unsubscribeMigrationUnsupportedClear)
     }
     const unsubscribeLegacyWorkerTerminalRecovery =
-      window.api.agentStatus.onLegacyWorkerTerminalRecovery?.(({ paneKey, resolution }) => {
-        const store = useAppStore.getState()
-        if (resolution === 'adopted') {
-          store.clearSleepingAgentSession(paneKey)
-          return
-        }
-        store.setSleepingAgentAutomaticResumeBlocked(paneKey, false)
+      window.api.agentStatus.onLegacyWorkerTerminalRecovery?.(({ paneKey }) => {
+        useAppStore.getState().clearSleepingAgentSession(paneKey)
       })
     if (unsubscribeLegacyWorkerTerminalRecovery) {
       unsubs.push(unsubscribeLegacyWorkerTerminalRecovery)

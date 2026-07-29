@@ -29,7 +29,8 @@ describe('legacy worker terminal recovery planning', () => {
       blockedPanes: [
         {
           worktreeId: 'repo::/workspace',
-          paneKey: `tab-worker:${LEAF_ID}`
+          paneKey: `tab-worker:${LEAF_ID}`,
+          contractVersion: 0
         }
       ],
       candidates: [
@@ -50,7 +51,8 @@ describe('legacy worker terminal recovery planning', () => {
       blockedPanes: [
         {
           worktreeId: 'repo::/workspace',
-          paneKey: `tab-worker:${LEAF_ID}`
+          paneKey: `tab-worker:${LEAF_ID}`,
+          contractVersion: 0
         }
       ],
       candidates: [],

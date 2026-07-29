@@ -65,8 +65,9 @@ export async function handleLegacyAsk(args: {
         options,
         recipientHandle: recipient
       })
-      const pending = matches.filter((match) => match.question.status === 'pending')
-      const lostAnswer = matches.find(
+      const unclaimed = matches.filter((match) => !match.claimedByOperation)
+      const pending = unclaimed.filter((match) => match.question.status === 'pending')
+      const lostAnswer = unclaimed.find(
         (match) => match.question.status === 'answered' && !match.answerAcknowledged
       )
       if (lostAnswer) {
@@ -98,7 +99,7 @@ export async function handleLegacyAsk(args: {
     questionId = committed.question.message_id
     duplicate = committed.duplicate || Boolean(existingQuestionId)
     if (!duplicate) {
-      runtime.notifyMessageArrived(recipient, committed.message.type)
+      runtime.notifyMessageArrived(committed.message.to_handle, committed.message.type)
     }
   }
 

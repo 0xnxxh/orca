@@ -2220,8 +2220,6 @@ void app.whenReady().then(async () => {
     getAgentProviderSessionSnapshot: () => agentHookServer.getStatusSnapshot(),
     getAgentProviderSessionRowsForPane: (paneKey) =>
       agentHookServer.getStatusSnapshotForPane(paneKey),
-    getHydratedAgentHookAuthority: () => agentHookServer.getHydratedAuthorityCommitments(),
-    getCurrentAgentHookAuthority: () => agentHookServer.getCurrentAuthorityObservations(),
     attestAgentHookCompatibilityAuthority: (candidate) =>
       agentHookServer.attestCompatibilityAuthority(candidate),
     canRecoverPersistentLocalPtys: () => getDaemonProvider() !== null,

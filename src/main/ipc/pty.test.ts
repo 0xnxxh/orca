@@ -5374,6 +5374,37 @@ describe('registerPtyHandlers', () => {
     expect(listProcesses).not.toHaveBeenCalled()
   })
 
+  it('scopes runtime inventories to the requested provider', async () => {
+    const localList = vi
+      .spyOn(getLocalPtyProvider(), 'listProcesses')
+      .mockResolvedValue([{ id: 'local-pty', title: 'Local', cwd: '/local' }])
+    const sshAList = vi.fn(async () => [{ id: 'ssh-a-pty' }])
+    const sshBList = vi.fn(async () => {
+      throw new Error('ssh-b unavailable')
+    })
+    registerSshPtyProvider('ssh-a', { listProcesses: sshAList } as never)
+    registerSshPtyProvider('ssh-b', { listProcesses: sshBList } as never)
+    const runtime = { setPtyController: vi.fn() }
+    handlers.clear()
+    registerPtyHandlers(mainWindow as never, runtime as never)
+    const controller = runtime.setPtyController.mock.calls[0]?.[0] as {
+      listProcesses(connectionId?: string | null): Promise<{ id: string }[]>
+    }
+
+    await expect(controller.listProcesses(null)).resolves.toEqual([
+      { id: 'local-pty', title: 'Local', cwd: '/local' }
+    ])
+    expect(localList).toHaveBeenCalledOnce()
+    expect(sshAList).not.toHaveBeenCalled()
+    expect(sshBList).not.toHaveBeenCalled()
+
+    await expect(controller.listProcesses('ssh-a')).resolves.toEqual([{ id: 'ssh-a-pty' }])
+    expect(sshAList).toHaveBeenCalledOnce()
+    expect(sshBList).not.toHaveBeenCalled()
+
+    await expect(controller.listProcesses()).rejects.toThrow('ssh-b unavailable')
+  })
+
   it('returns unavailable runtime confirmation for unsupported or missing providers', async () => {
     registerSshPtyProvider('ssh-1', {} as never)
     setPtyOwnership('unsupported-pty', 'ssh-1')

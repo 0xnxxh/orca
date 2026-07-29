@@ -1,4 +1,4 @@
-import type { RpcRequest } from './core'
+import type { LegacyCoordinatorAuthorityProof, RpcRequest } from './core'
 import type { OrcaRuntimeService } from '../orca-runtime'
 import { LegacyCompatibilityAuthority } from './orchestration-legacy-authority'
 import { handleLegacyLifecycleSend } from './orchestration-legacy-lifecycle'
@@ -10,6 +10,7 @@ import type {
   LegacyReplyParams,
   LegacySendParams
 } from './orchestration-legacy-operation'
+import { LegacyCoordinatorAuthority } from './orchestration-legacy-coordinator-authority'
 
 const COORDINATOR_PREFLIGHT_METHODS = new Set([
   'orchestration.taskCreate',
@@ -19,19 +20,31 @@ const COORDINATOR_PREFLIGHT_METHODS = new Set([
   'orchestration.gateCreate',
   'orchestration.gateResolve',
   'orchestration.runUse',
+  'orchestration.send',
   'orchestration.check',
   'orchestration.reply'
 ])
 
 export type LegacyCompatibilityRoute =
   | { handled: true; result: unknown }
-  | { handled: false; params?: unknown; legacyCoordinatorRunId?: string }
+  | {
+      handled: false
+      params?: unknown
+      legacyCoordinatorAuthority?: LegacyCoordinatorAuthorityProof
+    }
+
+export type LegacyCoordinatorInvocation = Readonly<{
+  authority: LegacyCoordinatorAuthorityProof
+  revalidate: () => string
+}>
 
 export class OrchestrationLegacyCompatibility {
   private readonly authority: LegacyCompatibilityAuthority
+  private readonly coordinatorAuthority: LegacyCoordinatorAuthority
 
   constructor(private readonly runtime: OrcaRuntimeService) {
     this.authority = new LegacyCompatibilityAuthority(runtime)
+    this.coordinatorAuthority = new LegacyCoordinatorAuthority(runtime)
   }
 
   async tryHandle(
@@ -50,16 +63,38 @@ export class OrchestrationLegacyCompatibility {
       return { handled: false }
     }
     const values = params as Record<string, unknown>
+    if (request.method === 'orchestration.runUse' && values.takeoverLegacy === true) {
+      return { handled: false }
+    }
     const requestedRunId =
       request.method === 'orchestration.runUse' ? stringValue(values.id) : stringValue(values.run)
-    const runId = this.authority.resolveProvenCoordinatorScope(request, requestedRunId)
-    return runId
+    const authority = this.coordinatorAuthority.resolve(request, requestedRunId)
+    return authority
       ? {
           handled: false,
-          params: { ...values, run: runId },
-          legacyCoordinatorRunId: runId
+          params: { ...values, run: authority.runId },
+          legacyCoordinatorAuthority: authority
         }
       : { handled: false }
+  }
+
+  revalidateCoordinatorAuthority(
+    request: RpcRequest,
+    proof: LegacyCoordinatorAuthorityProof
+  ): string {
+    return this.coordinatorAuthority.revalidate(request, proof)
+  }
+
+  createCoordinatorInvocation(
+    request: RpcRequest,
+    authority?: LegacyCoordinatorAuthorityProof
+  ): LegacyCoordinatorInvocation | undefined {
+    return authority
+      ? {
+          authority,
+          revalidate: () => this.revalidateCoordinatorAuthority(request, authority)
+        }
+      : undefined
   }
 
   private async route(

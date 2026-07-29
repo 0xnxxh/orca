@@ -1,4 +1,3 @@
-import { parsePaneKey } from '../../../shared/stable-pane-id'
 import type { OrchestrationCompatibilityEvidence } from '../../../shared/orchestration-compatibility-evidence'
 import type {
   DispatchContextRow,
@@ -6,9 +5,14 @@ import type {
   LegacyPrincipalRole
 } from '../orchestration/types'
 import { OrchestrationError } from '../orchestration/orchestration-error'
-import type { OrcaRuntimeService } from '../orca-runtime'
+import type { OrcaRuntimeService, OrchestrationCompatibilityCallerAuthority } from '../orca-runtime'
 import { LEGACY_CONTRACT_VERSION } from '../orchestration/db'
 import type { RpcRequest } from './core'
+import {
+  equivalentLegacyPaneKey,
+  legacyCoordinatorReadOnly,
+  legacyReadOnlyError
+} from './orchestration-legacy-process-identity'
 
 export type LegacyPrincipalCandidate = {
   runId: string
@@ -22,8 +26,9 @@ export function resolveAttestedLegacyPrincipal(args: {
   runtime: OrcaRuntimeService
   evidence?: OrchestrationCompatibilityEvidence
   candidate: LegacyPrincipalCandidate
+  authority?: OrchestrationCompatibilityCallerAuthority
 }): LegacyCompatibilityPrincipalRow {
-  const authority = verifyAttestedLegacyCandidate(args)
+  const authority = args.authority ?? verifyAttestedLegacyCandidate(args)
   return args.runtime.getOrchestrationDb().commitLegacyCompatibilityPrincipal({
     runId: args.candidate.runId,
     dispatchId: args.candidate.dispatchId,
@@ -36,7 +41,7 @@ export function resolveAttestedLegacyPrincipal(args: {
   }).principal
 }
 
-function verifyAttestedLegacyCandidate(args: {
+export function verifyAttestedLegacyCandidate(args: {
   runtime: OrcaRuntimeService
   evidence?: OrchestrationCompatibilityEvidence
   candidate: LegacyPrincipalCandidate
@@ -44,7 +49,7 @@ function verifyAttestedLegacyCandidate(args: {
   const authority = args.runtime.verifyOrchestrationCompatibilityCaller(args.evidence)
   if (
     !authority ||
-    !equivalentPaneKey(args.candidate.paneKey, authority.paneKey) ||
+    !equivalentLegacyPaneKey(args.candidate.paneKey, authority.paneKey) ||
     args.candidate.terminalHandle !== authority.terminalHandle
   ) {
     throw legacyReadOnlyError()
@@ -221,37 +226,6 @@ export class LegacyCompatibilityAuthority {
     })
     return principal
   }
-
-  resolveProvenCoordinatorScope(request: RpcRequest, requestedRunId?: string): string | undefined {
-    const db = this.runtime.getOrchestrationDb()
-    const adoption = db.getLegacyAdoption()
-    const requestedRun = requestedRunId ?? adoption?.adopted_run_id
-    if (!adoption || requestedRun !== adoption.adopted_run_id) {
-      return undefined
-    }
-    const candidate = db.resolveLegacyCoordinatorCandidate({
-      runId: adoption.adopted_run_id,
-      terminalHandle: request.orchestrationCompatibilityEvidence?.terminalHandle,
-      paneKey: request.orchestrationCompatibilityEvidence?.paneKey
-    })
-    if (!candidate) {
-      if (request.orchestrationCompatibilityEvidence) {
-        throw legacyCoordinatorReadOnly()
-      }
-      return undefined
-    }
-    verifyAttestedLegacyCandidate({
-      runtime: this.runtime,
-      evidence: request.orchestrationCompatibilityEvidence,
-      candidate: {
-        runId: adoption.adopted_run_id,
-        role: 'coordinator',
-        terminalHandle: candidate.terminalHandle,
-        paneKey: candidate.paneKey
-      }
-    })
-    return adoption.adopted_run_id
-  }
 }
 
 function candidateFromDispatch(dispatch: DispatchContextRow): LegacyPrincipalCandidate {
@@ -280,32 +254,4 @@ function candidateFromPrincipal(
     terminalHandle: principal.terminal_handle,
     paneKey: principal.pane_key
   }
-}
-
-function equivalentPaneKey(a: string | null | undefined, b: string | null | undefined): boolean {
-  if (!a || !b) {
-    return false
-  }
-  if (a === b) {
-    return true
-  }
-  const aLeaf = parsePaneKey(a)?.leafId
-  const bLeaf = parsePaneKey(b)?.leafId
-  return Boolean(aLeaf && bLeaf && aLeaf === bLeaf)
-}
-
-function legacyReadOnlyError(): OrchestrationError {
-  return new OrchestrationError(
-    'legacy_read_only',
-    'This retained legacy assignment could not prove authority from its original live process. No effects were applied.',
-    { effectsApplied: false }
-  )
-}
-
-function legacyCoordinatorReadOnly(): OrchestrationError {
-  return new OrchestrationError(
-    'legacy_read_only',
-    'This retained legacy coordinator could not prove its original process identity. No effects were applied.',
-    { effectsApplied: false }
-  )
 }

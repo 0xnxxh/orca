@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { defineMethod, type RpcMethod } from '../core'
-import { OptionalString, requiredString } from '../schemas'
+import { OptionalBoolean, OptionalString, requiredString } from '../schemas'
 import type { OrcaRuntimeService } from '../../orca-runtime'
 import { OrchestrationError } from '../../orchestration/orchestration-error'
 
@@ -11,7 +11,8 @@ const RunCreateParams = z.object({
 
 const RunUseParams = z.object({
   id: requiredString('Missing --id'),
-  from: requiredString('Missing coordinator terminal')
+  from: requiredString('Missing coordinator terminal'),
+  takeoverLegacy: OptionalBoolean
 })
 
 const RunCurrentParams = z.object({ from: requiredString('Missing coordinator terminal') })
@@ -51,7 +52,7 @@ export const ORCHESTRATION_RUN_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.runUse',
     params: RunUseParams,
-    handler: (params, { runtime, legacyCoordinatorRunId }) => {
+    handler: (params, { runtime, legacyCoordinatorAuthority }) => {
       const paneKey = requireCallerPane(runtime, params.from)
       const db = runtime.getOrchestrationDb()
       const priorRun = db.getCurrentRunForPane(paneKey)
@@ -59,7 +60,8 @@ export const ORCHESTRATION_RUN_METHODS: RpcMethod[] = [
         runId: params.id,
         coordinatorHandle: params.from,
         coordinatorPaneKey: paneKey,
-        allowLegacyCompatibility: legacyCoordinatorRunId === params.id
+        takeoverLegacy: params.takeoverLegacy,
+        legacyCoordinatorAuthority
       })
       if (!run) {
         throw new OrchestrationError(

@@ -21,10 +21,14 @@ import type {
 } from '../../shared/orchestration-worker-output'
 import type { NativeChatMessage } from '../../shared/native-chat-types'
 import type { RuntimeTerminalRead } from '../../shared/runtime-types'
+import { orchestrationMigrationData } from '../../shared/orchestration-rpc-contract'
 import {
-  ORCHESTRATION_LEGACY_RUN_ID,
-  orchestrationMigrationData
-} from '../../shared/orchestration-rpc-contract'
+  formatMessageReadOnlyTag,
+  formatOrchestrationCheckText,
+  prepareOrchestrationCheckOutput,
+  type LegacyCompatibilityResult,
+  type OrchestrationMessageSummary as MessageSummary
+} from '../../shared/orchestration-check-output'
 
 // Why: 15 s is well under Claude Code's ~2 min Bash-tool silence budget while keeping log volume low. See design doc §3.4.
 const DEFAULT_KEEPALIVE_INTERVAL_MS = 15_000
@@ -74,93 +78,6 @@ const TASK_STATUS_VALUES = [
   'blocked'
 ] as const
 
-type MessageSummary = {
-  id: string
-  run_id?: string
-  delivery_contract?: 'legacy_direct' | 'current_delivery' | 'audit_only'
-  from_handle: string
-  to_handle?: string
-  subject?: string
-  type?: string
-  body?: string
-  payload?: string | null
-  priority?: string
-  read?: number
-}
-
-function formatMessageReadOnlyTag(
-  message: MessageSummary,
-  legacyCompatibilityActive = false
-): string {
-  return isLegacyReadOnlyMessage(message, legacyCompatibilityActive) ? ' [legacy, read-only]' : ''
-}
-
-function isLegacyReadOnlyMessage(
-  message: MessageSummary,
-  legacyCompatibilityActive = false
-): boolean {
-  return (
-    message.run_id === ORCHESTRATION_LEGACY_RUN_ID ||
-    (message.delivery_contract === 'legacy_direct' && !legacyCompatibilityActive) ||
-    message.delivery_contract === 'audit_only'
-  )
-}
-
-function formatMessagePriorityTag(message: MessageSummary): string {
-  return message.priority === 'urgent' ? ' [URGENT]' : message.priority === 'high' ? ' [HIGH]' : ''
-}
-
-function escapeTerminalControlCharacters(value: string): string {
-  return [...value]
-    .map((character) => {
-      const code = character.charCodeAt(0)
-      if (character === '\n' || (code >= 0x20 && code < 0x7f) || code > 0x9f) {
-        return character
-      }
-      return `\\x${code.toString(16).padStart(2, '0')}`
-    })
-    .join('')
-}
-
-function formatQuotedMessageField(label: string, value?: string): string {
-  return `[${label}]\n${escapeTerminalControlCharacters(value ?? '')
-    .split('\n')
-    .map((line) => `  ${line}`)
-    .join('\n')}`
-}
-
-function formatLegacyAwareCheckMessages(
-  messages: MessageSummary[],
-  checkedTerminal: string,
-  legacyCompatibilityActive = false
-): string {
-  return messages
-    .map((message) => {
-      const legacyReadOnly = isLegacyReadOnlyMessage(message, legacyCompatibilityActive)
-      const lines = [
-        `${message.id}${formatMessageReadOnlyTag(message, legacyCompatibilityActive)}${formatMessagePriorityTag(message)} [${message.type ?? 'status'}] from=${message.from_handle}`,
-        formatQuotedMessageField('subject', message.subject)
-      ]
-      if (legacyReadOnly) {
-        lines.push('[Inspection only: reply and acknowledgment are unavailable.]')
-      }
-      if (message.body) {
-        lines.push(formatQuotedMessageField('body', message.body))
-      }
-      if (message.payload) {
-        lines.push(formatQuotedMessageField('payload', message.payload))
-      }
-      if (!legacyReadOnly) {
-        const replyFrom = message.to_handle ?? checkedTerminal
-        lines.push(
-          `[Reply: orca orchestration reply --id ${message.id} --from ${replyFrom} --body "..."]`
-        )
-      }
-      return lines.join('\n')
-    })
-    .join('\n\n')
-}
-
 type LifecycleSendRejection = {
   action: 'rejected'
   code: string
@@ -181,42 +98,12 @@ type OrchestrationSendResult =
       lifecycle?: { action: 'completed' | 'failed' }
     }
 
-type LegacyCompatibilityResult = {
-  recovery?: boolean
-  readOnly?: boolean
-  ackMessageIds?: string[]
-  answerAcknowledgement?: {
-    questionId: string
-    answerMessageId: string
-  }
-  currentDelivery?: {
-    runId: string
-    checkCommand: string
-    ackCommand: string
-  }
-  resumeRequired?: boolean
-  resumeCommand?: string
-}
-
 function resolveCompatibilityCliCommand(): 'orca' | 'orca-ide' | 'orca-dev' {
   const configured = process.env.ORCA_CLI_COMMAND
   if (configured === 'orca' || configured === 'orca-ide' || configured === 'orca-dev') {
     return configured
   }
   return process.platform === 'linux' ? 'orca-ide' : 'orca'
-}
-
-function formatCurrentDeliveryNotice(
-  delivery: LegacyCompatibilityResult['currentDelivery']
-): string {
-  if (!delivery) {
-    return ''
-  }
-  return (
-    `\n[CURRENT RUN MAIL WAITING]\n` +
-    `Read: ${delivery.checkCommand}\n` +
-    `Then acknowledge the delivery ID it prints: ${delivery.ackCommand}`
-  )
 }
 
 function resolvePackagedWindowsCompatibilityCommand(): 'orca' | 'orca-ide' | undefined {
@@ -560,7 +447,8 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
       run: { id: string; objective: string; consumer_generation: number }
     }>(client, flags, 'orchestration.runUse', {
       id: getRequiredStringFlag(flags, 'id'),
-      from
+      from,
+      ...(flags.has('takeover-legacy') ? { takeoverLegacy: true } : {})
     })
     printResult(result, json, (r) => `Using Run ${r.run.id}: ${r.run.objective}`)
   },
@@ -715,6 +603,7 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
         all: flags.has('all') ? true : undefined,
         types: getOptionalStringFlag(flags, 'types'),
         format: flags.has('format') ? true : undefined,
+        inject: flags.has('inject') ? true : undefined,
         compatibilityCliCommand: resolveCompatibilityCliCommand(),
         run: getOptionalStringFlag(flags, 'run'),
         ack: getOptionalStringFlag(flags, 'ack'),
@@ -752,64 +641,11 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
         }
       }
     }
-    const compatibilityActive = Boolean(
-      result.result.legacyCompatibility && !result.result.legacyCompatibility.readOnly
-    )
-    if (
-      flags.has('format') &&
-      result.result.messages.some((message) =>
-        isLegacyReadOnlyMessage(message, compatibilityActive)
-      )
-    ) {
-      // Why: formatted is one opaque batch with untrusted bodies, so selective banner parsing cannot safely remove legacy actions.
-      result = {
-        ...result,
-        result: {
-          ...result.result,
-          formatted: formatLegacyAwareCheckMessages(
-            result.result.messages,
-            terminal,
-            compatibilityActive
-          )
-        }
-      }
+    result = {
+      ...result,
+      result: prepareOrchestrationCheckOutput(result.result, terminal, flags.has('format'))
     }
-    printResult(result, json, (r) => {
-      const legacyHeader = r.legacyCompatibility
-        ? r.legacyCompatibility.readOnly
-          ? '[LEGACY READ-ONLY]\n'
-          : r.legacyCompatibility.recovery
-            ? '[LEGACY RECOVERY REPLAY — MAY HAVE BEEN SEEN]\n'
-            : '[LEGACY COMPATIBILITY]\n'
-        : ''
-      const deliveryNotice = formatCurrentDeliveryNotice(r.legacyCompatibility?.currentDelivery)
-      if (r.formatted) {
-        return `${legacyHeader}${r.formatted}${deliveryNotice}`
-      }
-      if (r.count === 0) {
-        if (r.timedOut) {
-          return `${legacyHeader}Wait timed out; no messages were consumed.${deliveryNotice}`
-        }
-        if (r.cancelled) {
-          const cancelled = r.connectionLost
-            ? 'Wait cancelled because the connection closed; no messages were consumed.'
-            : 'Wait cancelled; no messages were consumed.'
-          return `${legacyHeader}${cancelled}${deliveryNotice}`
-        }
-        return `${legacyHeader}No messages.${deliveryNotice}`
-      }
-      const rendered = r.messages
-        .map(
-          (m) =>
-            `${m.id}${formatMessageReadOnlyTag(
-              m,
-              Boolean(r.legacyCompatibility && !r.legacyCompatibility.readOnly)
-            )} [${m.type ?? 'status'}] from=${m.from_handle} "${m.subject}"`
-        )
-        .join('\n')
-      const output = r.deliveryId ? `Delivery ${r.deliveryId}\n${rendered}` : rendered
-      return `${legacyHeader}${output}${deliveryNotice}`
-    })
+    printResult(result, json, (r) => formatOrchestrationCheckText(r, terminal))
     const compatibilityAck = result.result.legacyCompatibility?.ackMessageIds
     if (compatibilityAck && compatibilityAck.length > 0) {
       await flushStdout()

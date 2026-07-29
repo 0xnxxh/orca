@@ -16337,6 +16337,17 @@ describe('OrcaRuntimeService', () => {
       ['pty-shell', 'inc-shell', 'term_shell', 'Shell']
     ] as const
     const runtime = new OrcaRuntimeService({ ...runtimeStore, flushOrThrow: vi.fn() } as never)
+    const listProcesses = vi.fn(async () =>
+      processes.map(([id, incarnationId, terminalHandle, title]) => ({
+        id,
+        incarnationId,
+        terminalHandle,
+        title,
+        cwd: TEST_WORKTREE_PATH,
+        worktreeId: TEST_WORKTREE_ID,
+        wslDistro: null
+      }))
+    )
     runtime.setPtyController({
       write: (ptyId, data) => {
         writes.push([ptyId, data])
@@ -16345,16 +16356,7 @@ describe('OrcaRuntimeService', () => {
       resize,
       kill: () => true,
       getForegroundProcess: async () => null,
-      listProcesses: async () =>
-        processes.map(([id, incarnationId, terminalHandle, title]) => ({
-          id,
-          incarnationId,
-          terminalHandle,
-          title,
-          cwd: TEST_WORKTREE_PATH,
-          worktreeId: TEST_WORKTREE_ID,
-          wslDistro: null
-        }))
+      listProcesses
     })
     const before = await runtime.listTerminals(`id:${TEST_WORKTREE_ID}`)
     expect(before.terminals.map((terminal) => terminal.tabId)).toEqual(
@@ -16442,6 +16444,14 @@ describe('OrcaRuntimeService', () => {
       tail: ['legacy output']
     })
 
+    const inventoryCount = listProcesses.mock.calls.length
+    const agentPty = (
+      runtime as unknown as {
+        ptysById: Map<string, { tabId: string | null; paneKey: string | null }>
+      }
+    ).ptysById.get('pty-agent')!
+    agentPty.tabId = null
+    agentPty.paneKey = null
     const secondClient = await runtime.adoptTerminalOrphans({
       worktree: `id:${TEST_WORKTREE_ID}`,
       expectedTopologyRevision: 0,
@@ -16454,6 +16464,22 @@ describe('OrcaRuntimeService', () => {
       }))
     })
     expect(secondClient).toMatchObject({ adopted: false, topologyRevision: 1 })
+    expect(agentPty).toMatchObject({
+      tabId: 'tab-agent',
+      paneKey: makePaneKey('tab-agent', HEADLESS_LEAF_ID)
+    })
+    expect(listProcesses).toHaveBeenCalledTimes(inventoryCount + 1)
+    expect(listProcesses).toHaveBeenLastCalledWith(null)
+    expect(
+      (await runtime.listTerminals()).terminals.find((terminal) => terminal.ptyId === 'pty-agent')
+    ).toMatchObject({
+      handle: 'term_agent',
+      orphaned: false,
+      tabId: 'tab-agent',
+      leafId: HEADLESS_LEAF_ID
+    })
+    expect(listProcesses).toHaveBeenCalledTimes(inventoryCount + 2)
+    expect(listProcesses).toHaveBeenLastCalledWith(undefined)
     await expect(
       runtime.adoptTerminalOrphans({
         worktree: `id:${TEST_WORKTREE_ID}`,
@@ -16560,6 +16586,7 @@ describe('OrcaRuntimeService', () => {
       getForegroundProcess: async () => null,
       hasRendererSerializer: () => true,
       serializeBuffer,
+      hasPty: (ptyId) => ptyId === 'pty-legacy',
       listProcesses: async () => [
         {
           id: 'pty-legacy',
@@ -16606,7 +16633,11 @@ describe('OrcaRuntimeService', () => {
       presentation: 'background',
       tabId: 'legacy-worker',
       leafId: workerLeafId,
-      focus: false
+      focus: false,
+      expectedProcessIdentity: {
+        terminalHandle: 'term_legacy',
+        incarnationId
+      }
     })
     expect(resolveLegacyWorkerTerminalRecovery).toHaveBeenCalledWith(workerPaneKey, 'adopted')
     expect(write).not.toHaveBeenCalled()
@@ -16683,6 +16714,7 @@ describe('OrcaRuntimeService', () => {
       write: vi.fn(() => true),
       kill: vi.fn(() => true),
       getForegroundProcess: async () => null,
+      hasPty: (ptyId) => ptyId === 'pty-reveal-retry',
       listProcesses: async () => [
         {
           id: 'pty-reveal-retry',
@@ -16715,6 +16747,269 @@ describe('OrcaRuntimeService', () => {
     expect(getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]).toBeUndefined()
     expect(resolveLegacyWorkerTerminalRecovery).toHaveBeenCalledWith(workerPaneKey, 'adopted')
   })
+
+  function makePostRevealWorkerRecoveryHarness(hasPty: (ptyId: string) => boolean | null): {
+    runtime: OrcaRuntimeService
+    getSession: () => WorkspaceSessionState
+    workerPaneKey: string
+    ptyId: string
+    incarnationId: string
+    terminalHandle: string
+    revealTerminalSession: ReturnType<typeof vi.fn>
+    resolveLegacyWorkerTerminalRecovery: ReturnType<typeof vi.fn>
+  } {
+    const workerPaneKey = `legacy-post-reveal:${HEADLESS_LEAF_ID}`
+    const ptyId = 'pty-post-reveal'
+    const incarnationId = '45454545-4545-4545-8545-454545454545'
+    const terminalHandle = 'term_post_reveal'
+    const session: WorkspaceSessionState = {
+      ...getDefaultWorkspaceSession(),
+      tabsByWorktree: { [TEST_WORKTREE_ID]: [] },
+      sleepingAgentSessionsByPaneKey: {
+        [workerPaneKey]: {
+          paneKey: workerPaneKey,
+          tabId: 'legacy-post-reveal',
+          worktreeId: TEST_WORKTREE_ID,
+          agent: 'codex',
+          providerSession: { key: 'session_id', id: 'legacy-post-reveal-session' },
+          prompt: 'continue',
+          state: 'working',
+          capturedAt: 1,
+          updatedAt: 1,
+          origin: 'live'
+        }
+      }
+    }
+    const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(session)
+    const runtime = new OrcaRuntimeService(
+      { ...runtimeStore, flushOrThrow: vi.fn() } as never,
+      undefined,
+      { canRecoverPersistentLocalPtys: () => true }
+    )
+    runtime.setOrchestrationDb({
+      listLegacyWorkerTerminalRecoveryRows: () => [
+        {
+          dispatch_id: 'dispatch-post-reveal',
+          task_id: 'task-post-reveal',
+          dispatch_status: 'completed',
+          contract_version: 0,
+          assignee_handle: 'term_post_reveal',
+          assignee_pane_key: workerPaneKey,
+          process_incarnation: `${ptyId}:${incarnationId}`,
+          worker_state: 'ready',
+          worktree_id: TEST_WORKTREE_ID,
+          agent_terminal_handle: 'term_post_reveal'
+        }
+      ]
+    } as unknown as OrchestrationDb)
+    runtime.setPtyController({
+      write: vi.fn(() => true),
+      kill: vi.fn(() => true),
+      getForegroundProcess: async () => null,
+      hasPty,
+      listProcesses: async () => [
+        {
+          id: ptyId,
+          incarnationId,
+          terminalHandle: 'term_post_reveal',
+          title: 'Post-reveal worker',
+          cwd: TEST_WORKTREE_PATH,
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
+        }
+      ]
+    })
+    const revealTerminalSession = vi.fn().mockResolvedValue({ tabId: 'legacy-post-reveal' })
+    const resolveLegacyWorkerTerminalRecovery = vi.fn()
+    runtime.setNotifier({
+      revealTerminalSession,
+      resolveLegacyWorkerTerminalRecovery
+    } as never)
+    return {
+      runtime,
+      getSession,
+      workerPaneKey,
+      ptyId,
+      incarnationId,
+      terminalHandle,
+      revealTerminalSession,
+      resolveLegacyWorkerTerminalRecovery
+    }
+  }
+
+  it('keeps a revealed worker fenced until its exact renderer graph is published', async () => {
+    vi.useFakeTimers()
+    try {
+      const harness = makePostRevealWorkerRecoveryHarness(() => true)
+      const identity = {
+        worktreeId: TEST_WORKTREE_ID,
+        tabId: 'legacy-post-reveal',
+        leafId: HEADLESS_LEAF_ID,
+        ptyId: harness.ptyId
+      }
+      harness.revealTerminalSession.mockResolvedValue({
+        tabId: identity.tabId,
+        identity
+      })
+
+      await expect(
+        harness.runtime.reconcileLegacyWorkerTerminals({ materializeRenderer: true })
+      ).resolves.toMatchObject({
+        adoptedDispatchIds: [],
+        exitedDispatchIds: [],
+        deferredDispatchIds: ['dispatch-post-reveal']
+      })
+      expect(harness.revealTerminalSession).toHaveBeenCalledOnce()
+      expect(
+        harness.getSession().sleepingAgentSessionsByPaneKey?.[harness.workerPaneKey]
+      ).toBeDefined()
+      expect(harness.resolveLegacyWorkerTerminalRecovery).not.toHaveBeenCalled()
+
+      harness.runtime.attachWindow(1)
+      harness.runtime.syncWindowGraph(1, {
+        tabs: [
+          {
+            tabId: identity.tabId,
+            worktreeId: identity.worktreeId,
+            title: 'Post-reveal worker',
+            activeLeafId: identity.leafId,
+            layout: null
+          }
+        ],
+        leaves: [
+          {
+            tabId: identity.tabId,
+            worktreeId: identity.worktreeId,
+            leafId: identity.leafId,
+            paneRuntimeId: 1,
+            ptyId: identity.ptyId
+          }
+        ]
+      })
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      expect(harness.revealTerminalSession).toHaveBeenCalledOnce()
+      expect(
+        harness.getSession().sleepingAgentSessionsByPaneKey?.[harness.workerPaneKey]
+      ).toBeUndefined()
+      expect(harness.resolveLegacyWorkerTerminalRecovery).toHaveBeenCalledWith(
+        harness.workerPaneKey,
+        'adopted'
+      )
+      expect(
+        (await harness.runtime.listTerminals()).terminals.filter(
+          (terminal) => terminal.ptyId === identity.ptyId
+        )
+      ).toEqual([
+        expect.objectContaining({
+          handle: harness.terminalHandle,
+          incarnationId: harness.incarnationId,
+          orphaned: false,
+          worktreeId: identity.worktreeId,
+          tabId: identity.tabId,
+          leafId: identity.leafId
+        })
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retires the exact worker when it exits after renderer reveal', async () => {
+    const hasPty = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false)
+    const harness = makePostRevealWorkerRecoveryHarness(hasPty)
+
+    await expect(
+      harness.runtime.reconcileLegacyWorkerTerminals({ materializeRenderer: true })
+    ).resolves.toMatchObject({
+      adoptedDispatchIds: [],
+      exitedDispatchIds: ['dispatch-post-reveal'],
+      deferredDispatchIds: []
+    })
+
+    expect(hasPty).toHaveBeenCalledTimes(2)
+    expect(harness.revealTerminalSession).toHaveBeenCalledOnce()
+    expect(harness.getSession().tabsByWorktree[TEST_WORKTREE_ID]).toEqual([])
+    expect(
+      harness.getSession().sleepingAgentSessionsByPaneKey?.[harness.workerPaneKey]
+    ).toBeUndefined()
+    expect(
+      (
+        harness.runtime as unknown as {
+          ptysById: Map<string, { connected: boolean; incarnationId?: string }>
+        }
+      ).ptysById.get(harness.ptyId)
+    ).toMatchObject({ connected: false, incarnationId: '45454545-4545-4545-8545-454545454545' })
+    expect(harness.resolveLegacyWorkerTerminalRecovery).toHaveBeenCalledWith(
+      harness.workerPaneKey,
+      'exited'
+    )
+  })
+
+  it.each([
+    {
+      name: 'null',
+      makeHasPty: () =>
+        vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(null).mockReturnValue(true)
+    },
+    {
+      name: 'throw',
+      makeHasPty: () =>
+        vi
+          .fn()
+          .mockReturnValueOnce(true)
+          .mockImplementationOnce(() => {
+            throw new Error('provider unavailable')
+          })
+          .mockReturnValue(true)
+    }
+  ])(
+    'retries post-reveal $name liveness without duplicating the worker surface',
+    async ({ makeHasPty }) => {
+      vi.useFakeTimers()
+      try {
+        const hasPty = makeHasPty()
+        const harness = makePostRevealWorkerRecoveryHarness(hasPty)
+
+        await expect(
+          harness.runtime.reconcileLegacyWorkerTerminals({ materializeRenderer: true })
+        ).resolves.toMatchObject({
+          adoptedDispatchIds: [],
+          exitedDispatchIds: [],
+          deferredDispatchIds: ['dispatch-post-reveal']
+        })
+        expect(harness.revealTerminalSession).toHaveBeenCalledOnce()
+        expect(harness.getSession().tabsByWorktree[TEST_WORKTREE_ID]).toEqual([
+          expect.objectContaining({ id: 'legacy-post-reveal', ptyId: harness.ptyId })
+        ])
+        expect(
+          harness.getSession().sleepingAgentSessionsByPaneKey?.[harness.workerPaneKey]
+            ?.automaticResumeBlockedBy
+        ).toBe('legacy-orchestration-worker')
+
+        await vi.advanceTimersByTimeAsync(1_000)
+
+        expect(hasPty).toHaveBeenCalledTimes(4)
+        expect(harness.revealTerminalSession).toHaveBeenCalledOnce()
+        expect(harness.getSession().tabsByWorktree[TEST_WORKTREE_ID]).toEqual([
+          expect.objectContaining({ id: 'legacy-post-reveal', ptyId: harness.ptyId })
+        ])
+        expect(
+          harness.getSession().sleepingAgentSessionsByPaneKey?.[harness.workerPaneKey]
+        ).toBeUndefined()
+        expect(harness.resolveLegacyWorkerTerminalRecovery).toHaveBeenCalledWith(
+          harness.workerPaneKey,
+          'adopted'
+        )
+
+        await vi.advanceTimersByTimeAsync(30_000)
+        expect(hasPty).toHaveBeenCalledTimes(4)
+        expect(harness.revealTerminalSession).toHaveBeenCalledOnce()
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
 
   it('keeps the legacy worker resume fence in memory when persistence fails', async () => {
     const workerPaneKey = `legacy-worker:${HEADLESS_LEAF_ID}`
@@ -16768,6 +17063,7 @@ describe('OrcaRuntimeService', () => {
       write: vi.fn(() => true),
       kill: vi.fn(() => true),
       getForegroundProcess: async () => null,
+      hasPty: (ptyId) => ptyId === 'pty-persistence-failure',
       listProcesses: async () => [
         {
           id: 'pty-persistence-failure',
@@ -16804,8 +17100,9 @@ describe('OrcaRuntimeService', () => {
     warn.mockRestore()
   })
 
-  it('unblocks provider resume only after authoritative inventory proves the legacy PTY exited', async () => {
+  it('retires provider resume only after authoritative inventory proves the legacy PTY exited', async () => {
     const workerPaneKey = `legacy-worker:${HEADLESS_LEAF_ID}`
+    const secondWorkerPaneKey = `legacy-worker-two:${HEADLESS_SECOND_LEAF_ID}`
     const incarnationId = '33333333-3333-4333-8333-333333333333'
     const session: WorkspaceSessionState = {
       ...getDefaultWorkspaceSession(),
@@ -16817,6 +17114,18 @@ describe('OrcaRuntimeService', () => {
           worktreeId: TEST_WORKTREE_ID,
           agent: 'codex',
           providerSession: { key: 'session_id', id: 'legacy-codex-session' },
+          prompt: 'continue',
+          state: 'working',
+          capturedAt: 1,
+          updatedAt: 1,
+          origin: 'live'
+        },
+        [secondWorkerPaneKey]: {
+          paneKey: secondWorkerPaneKey,
+          tabId: 'legacy-worker-two',
+          worktreeId: TEST_WORKTREE_ID,
+          agent: 'codex',
+          providerSession: { key: 'session_id', id: 'legacy-codex-session-two' },
           prompt: 'continue',
           state: 'working',
           capturedAt: 1,
@@ -16844,17 +17153,50 @@ describe('OrcaRuntimeService', () => {
           worker_state: 'ready',
           worktree_id: TEST_WORKTREE_ID,
           agent_terminal_handle: 'term_exited'
+        },
+        {
+          dispatch_id: 'dispatch-exited-two',
+          task_id: 'task-exited-two',
+          dispatch_status: 'completed',
+          contract_version: 0,
+          assignee_handle: 'term_exited_two',
+          assignee_pane_key: secondWorkerPaneKey,
+          process_incarnation: `pty-exited-two:${incarnationId}`,
+          worker_state: 'ready',
+          worktree_id: TEST_WORKTREE_ID,
+          agent_terminal_handle: 'term_exited_two'
         }
       ]
     } as unknown as OrchestrationDb)
+    const listProcesses = vi.fn(async (connectionId?: string | null) => {
+      if (connectionId !== null) {
+        throw new Error('unrelated SSH inventory must not run')
+      }
+      return [
+        {
+          id: 'pty-exited-two',
+          incarnationId,
+          terminalHandle: 'term_exited_two',
+          title: 'Exited worker',
+          cwd: TEST_WORKTREE_PATH,
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
+        }
+      ]
+    })
     runtime.setPtyController({
       write: vi.fn(() => true),
       kill: vi.fn(() => true),
       getForegroundProcess: async () => null,
-      listProcesses: async () => []
+      hasPty: () => false,
+      listProcesses
     })
+    const revealTerminalSession = vi.fn()
     const resolveLegacyWorkerTerminalRecovery = vi.fn()
-    runtime.setNotifier({ resolveLegacyWorkerTerminalRecovery } as never)
+    runtime.setNotifier({
+      revealTerminalSession,
+      resolveLegacyWorkerTerminalRecovery
+    } as never)
 
     runtime.prepareLegacyWorkerTerminalRecovery()
     expect(
@@ -16863,16 +17205,27 @@ describe('OrcaRuntimeService', () => {
 
     await expect(runtime.reconcileLegacyWorkerTerminals()).resolves.toMatchObject({
       adoptedDispatchIds: [],
-      exitedDispatchIds: ['dispatch-exited'],
+      exitedDispatchIds: ['dispatch-exited', 'dispatch-exited-two'],
       deferredDispatchIds: []
     })
+    expect(getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]).toBeUndefined()
+    expect(getSession().sleepingAgentSessionsByPaneKey?.[secondWorkerPaneKey]).toBeUndefined()
+    expect(listProcesses).toHaveBeenCalledOnce()
+    expect(listProcesses).toHaveBeenCalledWith(null)
+    expect(getSession().tabsByWorktree[TEST_WORKTREE_ID]).toEqual([])
+    expect(revealTerminalSession).not.toHaveBeenCalled()
     expect(
-      getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]?.automaticResumeBlockedBy
-    ).toBeUndefined()
+      (
+        runtime as unknown as {
+          ptysById: Map<string, { connected: boolean }>
+        }
+      ).ptysById.get('pty-exited-two')
+    ).toMatchObject({ connected: false })
     expect(resolveLegacyWorkerTerminalRecovery).toHaveBeenCalledWith(workerPaneKey, 'exited')
+    expect(resolveLegacyWorkerTerminalRecovery).toHaveBeenCalledWith(secondWorkerPaneKey, 'exited')
   })
 
-  it('keeps provider resume fenced when authoritative PTY inventory is unavailable', async () => {
+  it('retries inventory and unknown liveness without revealing a ghost worker', async () => {
     const workerPaneKey = `legacy-worker:${HEADLESS_LEAF_ID}`
     const incarnationId = '55555555-5555-4555-8555-555555555555'
     const session: WorkspaceSessionState = {
@@ -16915,23 +17268,263 @@ describe('OrcaRuntimeService', () => {
         }
       ]
     } as unknown as OrchestrationDb)
+    const listProcesses = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('local provider unavailable'))
+      .mockResolvedValue([
+        {
+          id: 'pty-inventory-unavailable',
+          incarnationId,
+          terminalHandle: 'term_inventory_unavailable',
+          title: 'Recovered legacy worker',
+          cwd: TEST_WORKTREE_PATH,
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
+        }
+      ])
+    const hasPty = vi.fn().mockReturnValueOnce(null).mockReturnValue(true)
     runtime.setPtyController({
       write: vi.fn(() => true),
       kill: vi.fn(() => true),
-      getForegroundProcess: async () => null
+      getForegroundProcess: async () => null,
+      hasPty,
+      listProcesses
     })
+    const revealTerminalSession = vi.fn().mockResolvedValue({ tabId: 'legacy-worker' })
     const resolveLegacyWorkerTerminalRecovery = vi.fn()
-    runtime.setNotifier({ resolveLegacyWorkerTerminalRecovery } as never)
+    runtime.setNotifier({
+      revealTerminalSession,
+      resolveLegacyWorkerTerminalRecovery
+    } as never)
+
+    vi.useFakeTimers()
+    try {
+      await expect(
+        runtime.reconcileLegacyWorkerTerminals({ materializeRenderer: true })
+      ).resolves.toMatchObject({
+        adoptedDispatchIds: [],
+        exitedDispatchIds: [],
+        deferredDispatchIds: ['dispatch-inventory-unavailable']
+      })
+      expect(
+        getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]?.automaticResumeBlockedBy
+      ).toBe('legacy-orchestration-worker')
+      expect(resolveLegacyWorkerTerminalRecovery).not.toHaveBeenCalled()
+      expect(listProcesses).toHaveBeenCalledOnce()
+      expect(getSession().tabsByWorktree[TEST_WORKTREE_ID]).toEqual([])
+      expect(revealTerminalSession).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      expect(listProcesses).toHaveBeenCalledTimes(2)
+      expect(listProcesses.mock.calls).toEqual([[null], [null]])
+      expect(hasPty).toHaveBeenCalledOnce()
+      expect(getSession().tabsByWorktree[TEST_WORKTREE_ID]).toEqual([])
+      expect(revealTerminalSession).not.toHaveBeenCalled()
+      expect(
+        getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]?.automaticResumeBlockedBy
+      ).toBe('legacy-orchestration-worker')
+
+      await vi.advanceTimersByTimeAsync(2_000)
+
+      expect(listProcesses).toHaveBeenCalledTimes(3)
+      expect(hasPty).toHaveBeenCalledTimes(3)
+      expect(getSession().tabsByWorktree[TEST_WORKTREE_ID]).toEqual([
+        expect.objectContaining({ id: 'legacy-worker', ptyId: 'pty-inventory-unavailable' })
+      ])
+      expect(revealTerminalSession).toHaveBeenCalledOnce()
+      expect(getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]).toBeUndefined()
+      expect(resolveLegacyWorkerTerminalRecovery).toHaveBeenCalledWith(workerPaneKey, 'adopted')
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(listProcesses).toHaveBeenCalledTimes(3)
+      expect(revealTerminalSession).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cancels a coalesced SSH worker recovery retry when its provider disconnects', async () => {
+    vi.useFakeTimers()
+    try {
+      const runtime = new OrcaRuntimeService(store)
+      const reconcile = vi.spyOn(runtime, 'reconcileLegacyWorkerTerminals').mockResolvedValue({
+        blockedPaneCount: 1,
+        adoptedDispatchIds: [],
+        exitedDispatchIds: [],
+        deferredDispatchIds: []
+      })
+      const retryInternals = runtime as unknown as {
+        updateLegacyWorkerTerminalRecoveryRetry: (
+          plan: {
+            candidates: { dispatchId: string; ptyId: string }[]
+          },
+          deferredDispatchIds: ReadonlySet<string>,
+          options: { connectionId?: string; materializeRenderer?: boolean }
+        ) => void
+      }
+      const plan = {
+        candidates: [
+          {
+            dispatchId: 'dispatch-ssh-retry',
+            ptyId: 'ssh:ssh-retry@@pty-worker'
+          }
+        ]
+      }
+      const deferred = new Set(['dispatch-ssh-retry'])
+
+      retryInternals.updateLegacyWorkerTerminalRecoveryRetry(plan, deferred, {
+        connectionId: 'ssh-retry',
+        materializeRenderer: true
+      })
+      retryInternals.updateLegacyWorkerTerminalRecoveryRetry(plan, deferred, {
+        connectionId: 'ssh-retry',
+        materializeRenderer: true
+      })
+      runtime.notifySshStateChanged('ssh-retry', {
+        targetId: 'ssh-retry',
+        status: 'disconnected',
+        error: null,
+        reconnectAttempt: 0
+      })
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      expect(reconcile).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps live workers fenced without exact controller identity evidence', async () => {
+    const incarnationId = '56565656-5656-4656-8656-565656565656'
+    const cases = [
+      {
+        name: 'missing',
+        leafId: '11111111-1111-4111-8111-111111111111',
+        terminalHandle: 'term_missing'
+      },
+      {
+        name: 'ambiguous',
+        leafId: '22222222-2222-4222-8222-222222222222',
+        terminalHandle: 'term_ambiguous'
+      },
+      {
+        name: 'wrong-handle',
+        leafId: '33333333-3333-4333-8333-333333333333',
+        terminalHandle: 'term_wrong_handle'
+      },
+      {
+        name: 'wrong-incarnation',
+        leafId: '44444444-4444-4444-8444-444444444444',
+        terminalHandle: 'term_wrong_incarnation'
+      }
+    ] as const
+    const sleepingAgentSessionsByPaneKey = Object.fromEntries(
+      cases.map(({ name, leafId }) => {
+        const paneKey = `legacy-${name}:${leafId}`
+        return [
+          paneKey,
+          {
+            paneKey,
+            tabId: `legacy-${name}`,
+            worktreeId: TEST_WORKTREE_ID,
+            agent: 'codex',
+            providerSession: { key: 'session_id', id: `session-${name}` },
+            prompt: 'continue',
+            state: 'working',
+            capturedAt: 1,
+            updatedAt: 1,
+            origin: 'live'
+          }
+        ]
+      })
+    ) as WorkspaceSessionState['sleepingAgentSessionsByPaneKey']
+    const session: WorkspaceSessionState = {
+      ...getDefaultWorkspaceSession(),
+      tabsByWorktree: { [TEST_WORKTREE_ID]: [] },
+      sleepingAgentSessionsByPaneKey
+    }
+    const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(session)
+    const runtime = new OrcaRuntimeService(
+      { ...runtimeStore, flushOrThrow: vi.fn() } as never,
+      undefined,
+      { canRecoverPersistentLocalPtys: () => true }
+    )
+    runtime.setOrchestrationDb({
+      listLegacyWorkerTerminalRecoveryRows: () =>
+        cases.map(({ name, leafId, terminalHandle }) => ({
+          dispatch_id: `dispatch-${name}`,
+          task_id: `task-${name}`,
+          dispatch_status: 'completed',
+          contract_version: 0,
+          assignee_handle: terminalHandle,
+          assignee_pane_key: `legacy-${name}:${leafId}`,
+          process_incarnation: `pty-${name}:${incarnationId}`,
+          worker_state: 'ready',
+          worktree_id: TEST_WORKTREE_ID,
+          agent_terminal_handle: terminalHandle
+        }))
+    } as unknown as OrchestrationDb)
+    const listProcesses = vi.fn(async () => [
+      {
+        id: 'pty-missing',
+        title: 'Missing identity',
+        cwd: TEST_WORKTREE_PATH,
+        worktreeId: TEST_WORKTREE_ID
+      },
+      {
+        id: 'pty-ambiguous',
+        incarnationId,
+        terminalHandle: 'term_ambiguous',
+        title: 'Ambiguous identity',
+        cwd: TEST_WORKTREE_PATH,
+        worktreeId: TEST_WORKTREE_ID
+      },
+      {
+        id: 'pty-ambiguous-other',
+        incarnationId,
+        terminalHandle: 'term_ambiguous',
+        title: 'Ambiguous identity duplicate',
+        cwd: TEST_WORKTREE_PATH,
+        worktreeId: TEST_WORKTREE_ID
+      },
+      {
+        id: 'pty-wrong-handle',
+        incarnationId,
+        terminalHandle: 'term_other',
+        title: 'Wrong handle',
+        cwd: TEST_WORKTREE_PATH,
+        worktreeId: TEST_WORKTREE_ID
+      },
+      {
+        id: 'pty-wrong-incarnation',
+        incarnationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        terminalHandle: 'term_wrong_incarnation',
+        title: 'Wrong incarnation',
+        cwd: TEST_WORKTREE_PATH,
+        worktreeId: TEST_WORKTREE_ID
+      }
+    ])
+    runtime.setPtyController({
+      write: vi.fn(() => true),
+      kill: vi.fn(() => true),
+      getForegroundProcess: async () => null,
+      hasPty: (candidate) => candidate === 'pty-folder-legacy',
+      listProcesses
+    })
 
     await expect(runtime.reconcileLegacyWorkerTerminals()).resolves.toMatchObject({
       adoptedDispatchIds: [],
       exitedDispatchIds: [],
-      deferredDispatchIds: ['dispatch-inventory-unavailable']
+      deferredDispatchIds: cases.map(({ name }) => `dispatch-${name}`)
     })
-    expect(
-      getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]?.automaticResumeBlockedBy
-    ).toBe('legacy-orchestration-worker')
-    expect(resolveLegacyWorkerTerminalRecovery).not.toHaveBeenCalled()
+    expect(listProcesses).toHaveBeenCalledOnce()
+    expect(listProcesses).toHaveBeenCalledWith(null)
+    for (const { name, leafId } of cases) {
+      expect(
+        getSession().sleepingAgentSessionsByPaneKey?.[`legacy-${name}:${leafId}`]
+          ?.automaticResumeBlockedBy
+      ).toBe('legacy-orchestration-worker')
+    }
   })
 
   it('adopts an exact live legacy worker in a folder workspace', async () => {
@@ -16986,21 +17579,23 @@ describe('OrcaRuntimeService', () => {
         }
       ]
     } as unknown as OrchestrationDb)
+    const listProcesses = vi.fn(async () => [
+      {
+        id: 'pty-folder-legacy',
+        incarnationId,
+        terminalHandle: 'term_folder',
+        title: 'Folder worker',
+        cwd: folderPath,
+        worktreeId: TEST_FOLDER_WORKSPACE_KEY,
+        wslDistro: null
+      }
+    ])
     runtime.setPtyController({
       write: vi.fn(() => true),
       kill: vi.fn(() => true),
       getForegroundProcess: async () => null,
-      listProcesses: async () => [
-        {
-          id: 'pty-folder-legacy',
-          incarnationId,
-          terminalHandle: 'term_folder',
-          title: 'Folder worker',
-          cwd: folderPath,
-          worktreeId: TEST_FOLDER_WORKSPACE_KEY,
-          wslDistro: null
-        }
-      ]
+      hasPty: (candidate) => candidate === 'pty-folder-legacy',
+      listProcesses
     })
     const revealTerminalSession = vi.fn().mockResolvedValue({
       tabId: 'legacy-folder-worker'
@@ -17022,6 +17617,8 @@ describe('OrcaRuntimeService', () => {
       })
     )
     expect(getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]).toBeUndefined()
+    expect(listProcesses).toHaveBeenCalledOnce()
+    expect(listProcesses).toHaveBeenCalledWith(null)
     expect(revealTerminalSession).toHaveBeenCalledWith(TEST_FOLDER_WORKSPACE_KEY, {
       ptyId: 'pty-folder-legacy',
       title: 'Folder worker',
@@ -17029,7 +17626,11 @@ describe('OrcaRuntimeService', () => {
       presentation: 'background',
       tabId: 'legacy-folder-worker',
       leafId: HEADLESS_LEAF_ID,
-      focus: false
+      focus: false,
+      expectedProcessIdentity: {
+        terminalHandle: 'term_folder',
+        incarnationId
+      }
     })
   })
 
@@ -17101,21 +17702,23 @@ describe('OrcaRuntimeService', () => {
         }
       ]
     } as unknown as OrchestrationDb)
+    const listProcesses = vi.fn(async () => [
+      {
+        id: ptyId,
+        incarnationId,
+        terminalHandle: 'term_ssh_folder',
+        title: 'SSH folder worker',
+        cwd: folderPath,
+        worktreeId: TEST_FOLDER_WORKSPACE_KEY,
+        wslDistro: null
+      }
+    ])
     runtime.setPtyController({
       write: vi.fn(() => true),
       kill: vi.fn(() => true),
       getForegroundProcess: async () => null,
-      listProcesses: async () => [
-        {
-          id: ptyId,
-          incarnationId,
-          terminalHandle: 'term_ssh_folder',
-          title: 'SSH folder worker',
-          cwd: folderPath,
-          worktreeId: TEST_FOLDER_WORKSPACE_KEY,
-          wslDistro: null
-        }
-      ]
+      hasPty: (candidate) => candidate === ptyId,
+      listProcesses
     })
     const revealTerminalSession = vi.fn().mockResolvedValue({ tabId: 'legacy-ssh-folder-worker' })
     runtime.setNotifier({ revealTerminalSession } as never)
@@ -17149,6 +17752,8 @@ describe('OrcaRuntimeService', () => {
     expect(localSession.sleepingAgentSessionsByPaneKey?.[workerPaneKey]).toBeUndefined()
     expect(getWorkspaceSession).toHaveBeenCalledWith(`ssh:${connectionId}`)
     expect(setWorkspaceSession).toHaveBeenCalledWith(expect.any(Object), `ssh:${connectionId}`)
+    expect(listProcesses).toHaveBeenCalledOnce()
+    expect(listProcesses).toHaveBeenCalledWith(connectionId)
     expect(sshSession.tabsByWorktree[TEST_FOLDER_WORKSPACE_KEY]).toContainEqual(
       expect.objectContaining({
         id: 'legacy-ssh-folder-worker',
@@ -17163,7 +17768,11 @@ describe('OrcaRuntimeService', () => {
       presentation: 'background',
       tabId: 'legacy-ssh-folder-worker',
       leafId: HEADLESS_LEAF_ID,
-      focus: false
+      focus: false,
+      expectedProcessIdentity: {
+        terminalHandle: 'term_ssh_folder',
+        incarnationId
+      }
     })
   })
 
@@ -17321,6 +17930,7 @@ describe('OrcaRuntimeService', () => {
       write: vi.fn(() => true),
       kill: vi.fn(() => true),
       getForegroundProcess: async () => null,
+      hasPty: (candidate) => candidate === ptyId,
       listProcesses
     })
     const revealTerminalSession = vi.fn().mockResolvedValue({ tabId: 'legacy-ssh-worker' })
@@ -17365,12 +17975,29 @@ describe('OrcaRuntimeService', () => {
         exitedDispatchIds: [],
         deferredDispatchIds: []
       })
+      await expect(
+        runtime.adoptTerminalOrphans({
+          worktree: `id:${TEST_WORKTREE_ID}`,
+          expectedTopologyRevision: 0,
+          claims: [
+            {
+              terminal: 'term_ssh_legacy',
+              ptyId,
+              incarnationId,
+              tabId: 'legacy-ssh-worker',
+              leafId: HEADLESS_LEAF_ID
+            }
+          ]
+        })
+      ).resolves.toMatchObject({ adopted: false })
+      expect(listProcesses).toHaveBeenLastCalledWith(connectionId)
     } finally {
       unregisterSshGitProvider(connectionId)
     }
 
     expect(getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]).toBeUndefined()
     expect(setWorkspaceSession).toHaveBeenCalledWith(expect.any(Object), `ssh:${connectionId}`)
+    expect(listProcesses).toHaveBeenCalledTimes(2)
     expect(revealTerminalSession).toHaveBeenCalledWith(TEST_WORKTREE_ID, {
       ptyId,
       title: 'SSH legacy worker',
@@ -17378,7 +18005,11 @@ describe('OrcaRuntimeService', () => {
       presentation: 'background',
       tabId: 'legacy-ssh-worker',
       leafId: HEADLESS_LEAF_ID,
-      focus: false
+      focus: false,
+      expectedProcessIdentity: {
+        terminalHandle: 'term_ssh_legacy',
+        incarnationId
+      }
     })
   })
 
@@ -17445,21 +18076,23 @@ describe('OrcaRuntimeService', () => {
         }
       ]
     } as unknown as OrchestrationDb)
+    const listProcesses = vi.fn(async () => [
+      {
+        id: 'pty-wsl-legacy',
+        incarnationId,
+        terminalHandle: 'term_wsl_legacy',
+        title: 'WSL legacy worker',
+        cwd: TEST_WORKTREE_PATH,
+        worktreeId: TEST_WORKTREE_ID,
+        wslDistro: observedDistro
+      }
+    ])
     runtime.setPtyController({
       write: vi.fn(() => true),
       kill: vi.fn(() => true),
       getForegroundProcess: async () => null,
-      listProcesses: async () => [
-        {
-          id: 'pty-wsl-legacy',
-          incarnationId,
-          terminalHandle: 'term_wsl_legacy',
-          title: 'WSL legacy worker',
-          cwd: TEST_WORKTREE_PATH,
-          worktreeId: TEST_WORKTREE_ID,
-          wslDistro: observedDistro
-        }
-      ]
+      hasPty: (ptyId) => ptyId === 'pty-wsl-legacy',
+      listProcesses
     })
     const revealTerminalSession = vi.fn().mockResolvedValue({ tabId: 'legacy-wsl-worker' })
     runtime.setNotifier({ revealTerminalSession } as never)
@@ -17486,6 +18119,8 @@ describe('OrcaRuntimeService', () => {
     })
     expect(getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]).toBeUndefined()
     expect(revealTerminalSession).toHaveBeenCalledOnce()
+    expect(listProcesses).toHaveBeenCalledTimes(2)
+    expect(listProcesses.mock.calls).toEqual([[null], [null]])
   })
 
   it('restores orphan pane and group topology without replacing a newer host-owned tab', async () => {
