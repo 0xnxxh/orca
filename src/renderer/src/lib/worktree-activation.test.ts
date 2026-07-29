@@ -533,6 +533,42 @@ describe('ensureWorktreeHasInitialTerminal', () => {
     })
   })
 
+  // An argv-prefill launch carries the draft inside `command` and sets NO
+  // draftPrompt, so gating on draftPrompt alone lets it open in chat with
+  // nothing mirrored — an empty composer beside a filled TUI input.
+  it.each([
+    ['mirrorable', 'https://github.com/o/r/issues/12', { viewMode: 'chat' }],
+    ['multi-line', 'Review this\n\nhttps://github.com/o/r/issues/12', {}]
+  ])(
+    'gates a %s argv-prefill draft on launchDraftText alone',
+    (_label, launchDraftText, expectedViewMode) => {
+      const store = createMockStore({
+        settings: {
+          experimentalNativeChat: true,
+          openAgentTabsInChatByDefault: true
+        }
+      })
+
+      ensureWorktreeHasInitialTerminal(
+        store,
+        'wt-1',
+        {
+          command: `claude --prefill '${launchDraftText}'`,
+          launchAgent: 'claude',
+          launchDraftText
+        },
+        undefined,
+        undefined
+      )
+
+      expect(store.createTab).toHaveBeenCalledWith('wt-1', undefined, undefined, {
+        pendingActivationSpawn: true,
+        launchAgent: 'claude',
+        ...expectedViewMode
+      })
+    }
+  )
+
   it('opens the startup default tab in native chat when configured', () => {
     let createdIndex = 0
     const createTab = vi.fn(() => ({ id: `tab-${++createdIndex}` }))

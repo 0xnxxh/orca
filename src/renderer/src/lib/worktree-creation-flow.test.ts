@@ -697,6 +697,38 @@ describe('staged background worktree creation', () => {
     )
   })
 
+  it('carries launchDraftText into activation for an argv-prefill launch', async () => {
+    // Why: the draft rides inside `launchCommand` here, so the plan sets no
+    // draftPrompt — without launchDraftText the initial view-mode decision
+    // never sees a draft and opens chat on an unmirrorable one.
+    store.activeView = 'terminal'
+    store.activePendingCreationId = 'creation-1'
+    store.createWorktree.mockResolvedValueOnce({
+      worktree: { id: 'wt-1', repoId: 'repo-1', path: '/repo/wt-1' }
+    })
+    vi.mocked(activateAndRevealWorktree).mockReturnValueOnce({ primaryTabId: 'tab-1' })
+
+    continueBackgroundWorktreeCreation(
+      'creation-1',
+      makeRequest({
+        agent: 'claude',
+        startupPlan: {
+          agent: 'claude',
+          launchCommand: "claude --prefill 'https://github.com/o/r/issues/12'",
+          expectedProcess: 'claude',
+          followupPrompt: null,
+          launchConfig: { agentArgs: '', agentEnv: {} }
+        },
+        launchDraftPrompt: 'https://github.com/o/r/issues/12'
+      })
+    )
+
+    await vi.waitFor(() => expect(activateAndRevealWorktree).toHaveBeenCalled())
+    const startup = vi.mocked(activateAndRevealWorktree).mock.calls[0]?.[1]?.startup
+    expect(startup?.draftPrompt).toBeUndefined()
+    expect(startup?.launchDraftText).toBe('https://github.com/o/r/issues/12')
+  })
+
   it('does not seed a launch draft without draft launch context', async () => {
     store.activeView = 'terminal'
     store.activePendingCreationId = 'creation-1'

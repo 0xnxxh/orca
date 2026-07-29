@@ -83,10 +83,39 @@ export type WorktreeStartupPayload = {
   launchToken?: string
   launchAgent?: TuiAgent
   draftPrompt?: string
+  /**
+   * The unsent launch context, for the initial view-mode decision ONLY.
+   *
+   * Deliberately separate from `draftPrompt`, which drives the bracketed paste
+   * in pty-connection: an argv-prefill launch already carries the draft inside
+   * `command`, so reusing `draftPrompt` here would paste it a second time.
+   * Set this on every draft launch; set `draftPrompt` only for paste delivery.
+   */
+  launchDraftText?: string
   startupCommandDelivery?: StartupCommandDelivery
   initialAgentStatus?: { agent: TuiAgent; prompt: string }
   sessionOptions?: Record<string, SessionOptionValue>
   telemetry?: AgentStartedTelemetry
+}
+
+/**
+ * The unsent launch context a startup payload carries, whichever way the agent
+ * receives it: argv prefill sets only `launchDraftText`, post-ready paste sets
+ * `draftPrompt`. Gating on `draftPrompt` alone silently misses every
+ * argv-prefill launch.
+ */
+export function resolveStartupLaunchDraftText(
+  startup: Pick<WorktreeStartupPayload, 'draftPrompt' | 'launchDraftText'> | undefined
+): string | undefined {
+  return startup?.draftPrompt ?? startup?.launchDraftText
+}
+
+/** Shared by both tab-creation sites so the draft gate can't drift between them. */
+function draftViewModeProps(draftText: string | undefined): {
+  promptDelivery?: 'draft'
+  launchDraftText?: string
+} {
+  return draftText == null ? {} : { promptDelivery: 'draft', launchDraftText: draftText }
 }
 
 // Why: accept either a main-generated runner script or a plain TaskPage command string, so callers needn't synthesize a runner file.
@@ -551,10 +580,9 @@ export function ensureWorktreeHasInitialTerminal(
           launchAgent,
           ...initialAgentTabViewModeProps(store.settings ?? null, {
             agent: launchAgent,
-            promptDelivery: sequencedStartup?.draftPrompt != null ? 'draft' : undefined,
-            ...(sequencedStartup?.draftPrompt != null
-              ? { launchDraftText: sequencedStartup.draftPrompt }
-              : {}),
+            // Why: argv-prefill launches carry the draft in `command` and set no
+            // draftPrompt, so gating on draftPrompt alone misses them entirely.
+            ...draftViewModeProps(resolveStartupLaunchDraftText(sequencedStartup)),
             nativeChatTranscriptIsLocalReadable: isNativeChatTranscriptLocalReadable(
               getConnectionId(worktreeId)
             )
@@ -626,10 +654,9 @@ function applyDefaultTerminalTabs(
             launchAgent,
             ...initialAgentTabViewModeProps(store.settings ?? null, {
               agent: launchAgent,
-              promptDelivery: isStartupTab && startup?.draftPrompt != null ? 'draft' : undefined,
-              ...(isStartupTab && startup?.draftPrompt != null
-                ? { launchDraftText: startup.draftPrompt }
-                : {}),
+              ...draftViewModeProps(
+                isStartupTab ? resolveStartupLaunchDraftText(startup) : undefined
+              ),
               nativeChatTranscriptIsLocalReadable: isNativeChatTranscriptLocalReadable(
                 getConnectionId(worktreeId)
               )
