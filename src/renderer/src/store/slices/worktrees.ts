@@ -20,6 +20,7 @@ import type { RuntimeWorktreeListResult } from '../../../../shared/runtime-types
 import {
   findWorktreeById,
   applyWorktreeUpdates,
+  withoutErasedRequiredWorktreeFields,
   getRepoIdFromWorktreeId,
   type DirectSshWorktreeFetchOptions,
   type WorktreeFetchOptions,
@@ -705,8 +706,10 @@ function notifyRuntimeScopeForbiddenIfNeeded(error: unknown): boolean {
 function applyDetectedWorktreeUpdates(
   detectedWorktreesByRepo: AppState['detectedWorktreesByRepo'],
   worktreeId: string,
-  updates: Partial<WorktreeMeta>
+  rawUpdates: Partial<WorktreeMeta>
 ): AppState['detectedWorktreesByRepo'] {
+  // Why: mirrors applyWorktreeUpdates — detected rows feed the same palette.
+  const updates = withoutErasedRequiredWorktreeFields(rawUpdates)
   let changed = false
   const nextByRepo: AppState['detectedWorktreesByRepo'] = {}
 
