@@ -8,7 +8,7 @@ HEAD; live topology gaps remain explicit below
 
 Historical unbounded baseline: `badf91101babf96fa09cb79a8294f7e23b9f081c`
 (the implementation branch parent). The implementation was rebased onto
-`origin/main@c8dba6d72caa60aeb663ec0cd525d0216e485f63`; final GitHub CI remains
+`origin/main@d9fec8fd61d0349ae8cdf0eea594de7425db94c9`; final GitHub CI remains
 the merge gate.
 
 ## Scope
@@ -74,7 +74,7 @@ The implementation is intentionally scoped:
 
 | Surface                                     | State in this PR                                        | Evidence                                                                                         |
 | ------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Same-build direct SSH/deployed relay, V1 on | implemented                                             | current-head deterministic relay/main contracts; exact-current-artifact Docker rerun pending     |
+| Same-build direct SSH/deployed relay, V1 on | implemented                                             | current-head deterministic contracts plus provenance-bound macOS-hosted Docker OpenSSH           |
 | Same-build SSH, V1 off                      | implemented bounded legacy mode                         | deterministic rollout and writer contracts                                                       |
 | Reconnect/owner recovery                    | implemented                                             | exact contiguous recovery, fail-closed cancellation, eight-wide reattach tests, Docker reconnect |
 | Headed/headless remote consumers            | source-range rotation/replacement implemented           | deterministic runtime/main seam only; no live paired-runtime claim                               |
@@ -89,10 +89,14 @@ not prove headed or headless paired-runtime behavior, WSL, Windows ConPTY or
 named pipes, local daemon/provider behavior, folder workspaces, prior-version
 processes, mixed-version clients, or the Ubuntu 20.04 packaging floor.
 
-The recorded Docker rerun used the private-recovery-transfer checkpoint. It
-predates the final exit-sealed recovery, exact private-watermark, and bounded
-retirement fixes, so it is not exact-current-artifact evidence. No additional
-live topology proof is inferred from that run.
+The exact-current-code Docker rerun rebuilt the E2E main bundle and all relay
+targets immediately before execution. It is bound to code commit
+`5611bb45b51abe0b35d5bedc66124f158cfdcdc7`, tree
+`8e85c3afedec23f94cb3ff89b75c378ddd0e4ec7`, main bundle SHA-256
+`cbaf4e997d74bbe0ae1179bc20e52b122c60f0b56ee49ca607e12ae4125a4342`,
+and Linux-x64 relay SHA-256
+`a7438fc47c4da0223ceaafab621086e14b6cdee427f53a3bf2e710fa99bcf2e6`.
+No additional live topology proof is inferred from that run.
 
 ## Verified baseline and migration boundary
 
@@ -2470,6 +2474,14 @@ direct typing was 6.2/7.4 ms median/worst; ACK-stalled typing was 5.5/16.3 ms
 at exactly 262,144 held source units; fixed-size filesystem/Git churn was
 141.2/151.5 ms with 95 bulk reads; reconnect completed in 16.0 seconds. All
 other live topologies remain separate.
+
+After the final lifecycle fixes and rebase, `electron-vite build --mode e2e`
+and `pnpm run build:relay` produced the exact artifact hashes recorded above.
+The four-case Docker command then passed in 1.0 minute: direct typing was
+3.7/109.1 ms median/worst; ACK-stalled typing was 5.1/109.7 ms at exactly
+262,144 held source units; fixed-size filesystem/Git churn was 144.9/153.2 ms
+with 104 bulk reads; reconnect completed in 15.8 seconds. This is direct
+SSH/deployed Linux relay evidence only.
 
 At the current working tree, the source/intake slice passed 12 files and 205
 tests, the provider/session slice passed 16 files and 192 tests, and this

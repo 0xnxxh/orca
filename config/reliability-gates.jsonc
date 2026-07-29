@@ -3509,7 +3509,7 @@
           "summary": "Sixteen deterministic SSH relay/session/source/decoder files passed 192 tests, including exit-sealed private recovery, retained stale-transfer cancellation authority, exact private-frame proof watermarks, one retirement record across 10,000 same-PTY token rotations, stale-owner fallback, and scheduler rejection isolation; no live topology was exercised."
         },
         {
-          "date": "2026-07-28",
+          "date": "2026-07-29",
           "runner": "local",
           "platform": "macos",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/relay/git-response-stream-ownership.test.ts src/relay/pty-handler.test.ts --reporter=dot",
@@ -3559,8 +3559,8 @@
           "platform": "macos",
           "command": "ORCA_E2E_SSH_DOCKER=1 ORCA_SSH_PTY_SOURCE_CREDIT_V1=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/ssh-docker-relay-perf.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
           "result": "passed",
-          "durationSeconds": 66,
-          "summary": "All four deployed Linux relay/direct-SSH cases passed against one artifact: direct typing 6.2/7.4 ms median/worst, ACK-stalled typing 5.5/16.3 ms at exactly 262,144 held source units, fixed-size filesystem/Git churn 141.2/151.5 ms with 95 bulk reads, and owner-lease reconnect in 16.0 seconds."
+          "durationSeconds": 60,
+          "summary": "All four deployed Linux relay/direct-SSH cases passed after an exact-current E2E rebuild at code commit 5611bb45b51a/tree 8e85c3afedec: main bundle SHA-256 cbaf4e997d74bbe0ae1179bc20e52b122c60f0b56ee49ca607e12ae4125a4342 and Linux-x64 relay SHA-256 a7438fc47c4da0223ceaafab621086e14b6cdee427f53a3bf2e710fa99bcf2e6. Direct typing was 3.7/109.1 ms median/worst, ACK-stalled typing was 5.1/109.7 ms at exactly 262,144 held source units, fixed-size filesystem/Git churn was 144.9/153.2 ms with 104 bulk reads, and owner-lease reconnect completed in 15.8 seconds."
         },
         {
           "date": "2026-07-28",
