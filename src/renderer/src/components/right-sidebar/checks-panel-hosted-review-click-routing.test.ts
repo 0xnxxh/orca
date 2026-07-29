@@ -132,6 +132,21 @@ describe('checks panel hosted review modifier hint destination', () => {
     ).toBeNull()
   })
 
+  // Why: openHttpLink trims before treating a runtime as active, so a blank id must
+  // not suppress a hint for a click that still reaches Orca.
+  it('ignores a blank runtime id', () => {
+    expect(
+      resolveChecksPanelHostedReviewModifierDestination(
+        {
+          openLinksInApp: false,
+          openLinksInAppModifierInverts: true,
+          activeRuntimeEnvironmentId: '   '
+        },
+        true
+      )
+    ).toBe('orca')
+  })
+
   // Why: openHttpLink gates routing to Orca on a worktree id, so without one the
   // modifier lands in the system browser either way.
   it('stays silent without a worktree', () => {

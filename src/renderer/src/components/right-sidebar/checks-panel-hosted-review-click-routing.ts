@@ -38,7 +38,9 @@ export function resolveChecksPanelHostedReviewModifierDestination(
     | undefined,
   hasWorktree: boolean
 ): ChecksPanelHostedReviewModifierDestination {
-  if (!hasWorktree || settings?.activeRuntimeEnvironmentId) {
+  // Why: trim to match openHttpLink — an untrimmed check hides the hint on a blank
+  // runtime id while the click still routes to Orca.
+  if (!hasWorktree || settings?.activeRuntimeEnvironmentId?.trim()) {
     return null
   }
   if (settings?.openLinksInApp === true) {
