@@ -12,7 +12,10 @@ export function buildAgentFeatureSkillInstallCommand(skillNames: readonly string
   if (skillNames.length === 0) {
     throw new Error('At least one skill name is required.')
   }
-  return `npx skills add ${ORCA_SKILLS_REPOSITORY_URL} --skill ${skillNames.join(' ')} --global`
+  // Why: `-y` because this command is pasted into a live terminal — with more than one
+  // agent installed the CLI stops on an agent-selection prompt the user cannot see coming,
+  // and closing the panel tears the session down mid-prompt.
+  return `npx skills add ${ORCA_SKILLS_REPOSITORY_URL} --skill ${skillNames.join(' ')} --global -y`
 }
 
 export function buildAgentFeatureSkillUpdateCommand(skillName: string): string {

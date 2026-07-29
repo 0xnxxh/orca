@@ -7,6 +7,7 @@ import {
   LINEAR_TICKETS_SKILL_UPDATE_COMMAND,
   ORCA_LINEAR_SKILL_UPDATE_COMMAND,
   ORCA_CLI_ORCHESTRATION_SKILL_INSTALL_COMMAND,
+  ORCA_CLI_SKILL_INSTALL_COMMAND,
   ORCA_CLI_SKILL_UPDATE_COMMAND,
   ORCHESTRATION_SKILL_UPDATE_COMMAND
 } from './agent-feature-install-commands'
@@ -35,7 +36,27 @@ describe('agent feature skill commands', () => {
     expect(ORCA_LINEAR_SKILL_UPDATE_COMMAND).toBe('npx skills update orca-linear --global')
     expect(LINEAR_TICKETS_SKILL_UPDATE_COMMAND).toBe('npx skills update linear-tickets --global')
     expect(ORCA_CLI_ORCHESTRATION_SKILL_INSTALL_COMMAND).toBe(
-      buildAgentFeatureSkillInstallCommand(['orca-cli', 'orchestration'])
+      'npx skills add https://github.com/stablyai/orca --skill orca-cli orchestration --global -y'
+    )
+  })
+
+  it('builds install commands non-interactively so a pasted command never stops on a prompt', () => {
+    // Why: with more than one agent installed the CLI prompts for a target and the
+    // pasted command hangs, so `-y` is the fix and must not silently regress.
+    expect(buildAgentFeatureSkillInstallCommand(['orca-cli'])).toBe(
+      'npx skills add https://github.com/stablyai/orca --skill orca-cli --global -y'
+    )
+    expect(buildAgentFeatureSkillInstallCommand(['orca-cli', 'orchestration'])).toBe(
+      'npx skills add https://github.com/stablyai/orca --skill orca-cli orchestration --global -y'
+    )
+    expect(ORCA_CLI_SKILL_INSTALL_COMMAND).toBe(
+      'npx skills add https://github.com/stablyai/orca --skill orca-cli --global -y'
+    )
+  })
+
+  it('rejects an empty install skill list', () => {
+    expect(() => buildAgentFeatureSkillInstallCommand([])).toThrow(
+      'At least one skill name is required.'
     )
   })
 })
