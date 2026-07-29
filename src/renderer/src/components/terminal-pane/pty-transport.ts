@@ -76,6 +76,7 @@ export const MAX_PENDING_PTY_SIDE_EFFECTS = 512
 // Why: agent status is last-wins store state, but payloads can carry KB-scale prompt/tool strings;
 // carry only the newest few through eviction so a status flood cannot re-grow what it evicted.
 export const MAX_EVICTED_AGENT_STATUS_PAYLOAD_CARRY = 16
+const MAX_EVICTED_AGENT_TITLE_TRANSITION_CARRY = 3
 
 type PtyOutputCallbacks = Parameters<PtyTransport['connect']>[0]['callbacks']
 
@@ -218,7 +219,7 @@ export function createPtyOutputProcessor({
         continue
       }
       evictedAgentTitleTransitions.push({ phase, title })
-      if (evictedAgentTitleTransitions.length > 3) {
+      if (evictedAgentTitleTransitions.length > MAX_EVICTED_AGENT_TITLE_TRANSITION_CARRY) {
         evictedAgentTitleTransitions.shift()
       }
     }

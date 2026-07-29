@@ -56,6 +56,21 @@ describe('selectEvictionExemptTerminalTabLayoutKey', () => {
     )
   })
 
+  it('is stable across leaf-map insertion order', () => {
+    const first = layoutState({
+      [LEAF_ID]: PTY_ID,
+      [SECOND_LEAF_ID]: 'pty-local-detached'
+    })
+    const reversed = layoutState({
+      [SECOND_LEAF_ID]: 'pty-local-detached',
+      [LEAF_ID]: PTY_ID
+    })
+
+    expect(selectEvictionExemptTerminalTabLayoutKey(first, TABS)).toBe(
+      selectEvictionExemptTerminalTabLayoutKey(reversed, TABS)
+    )
+  })
+
   it('tolerates tabs with no persisted layout', () => {
     expect(selectEvictionExemptTerminalTabLayoutKey({ terminalLayoutsByTabId: {} }, TABS)).toBe(
       JSON.stringify([[TAB_ID, []]])
