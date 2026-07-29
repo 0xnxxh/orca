@@ -93,7 +93,9 @@ export class SshPtyProvider implements IPtyProvider {
           options: opts,
           exitRaceTracker: this.spawnExitRaces,
           installSourceActivation: (relayPtyId, activation) =>
-            this.outputState.installReceivingActivation(relayPtyId, activation)
+            this.outputState.installReceivingActivation(relayPtyId, activation),
+          rememberPtyIncarnation: (relayPtyId, incarnationId) =>
+            this.outputState.rememberPtyIncarnation(relayPtyId, incarnationId)
         })
         this.livePtyIds.add(result.id)
         result.sourceActivationLease?.commit()

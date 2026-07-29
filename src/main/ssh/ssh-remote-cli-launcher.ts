@@ -36,7 +36,11 @@ internal static class OrcaRemoteCliLauncher
             string nodePath = RequireEnvironmentVariable("ORCA_RELAY_NODE_PATH");
             string relayDirectory = RequireEnvironmentVariable("ORCA_RELAY_DIR");
             string socketPath = RequireEnvironmentVariable("ORCA_RELAY_SOCKET_PATH");
-            string credentialFile = RequireEnvironmentVariable("ORCA_RELAY_CREDENTIAL_FILE");
+            string credentialFile = Environment.GetEnvironmentVariable("ORCA_RELAY_CREDENTIAL_FILE");
+            if (String.IsNullOrEmpty(credentialFile))
+            {
+                credentialFile = socketPath + ".credential";
+            }
             string relayPath = Path.Combine(relayDirectory, "relay.js");
 
             if (!File.Exists(nodePath))

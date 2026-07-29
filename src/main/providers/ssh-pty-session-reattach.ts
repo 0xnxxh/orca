@@ -175,6 +175,7 @@ export async function reattachSshPtySession(args: {
   connectionId: string
   sessionId: string
   options: PtySpawnOptions
+  rememberPtyIncarnation?: (relayPtyId: string, incarnationId: unknown) => void
   installSourceActivation?: (
     relayPtyId: string,
     activation: PtySourceReceivingActivation
@@ -197,7 +198,8 @@ export async function reattachSshPtySession(args: {
         ...(expectedPaneKey ? { expectedPaneKey } : {}),
         ...(expectedTabId ? { expectedTabId } : {})
       },
-      installSourceActivation: args.installSourceActivation
+      installSourceActivation: args.installSourceActivation,
+      rememberPtyIncarnation: args.rememberPtyIncarnation
     })
     console.warn(
       `[ssh-pty] pty.attach succeeded for ${args.sessionId}, replay=${!!attachResult.replay}`

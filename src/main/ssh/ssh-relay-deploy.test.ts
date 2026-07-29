@@ -52,6 +52,10 @@ vi.mock('./ssh-remote-node-resolution', () => ({
   resolveRemoteNodePath: vi.fn().mockResolvedValue('/usr/bin/node')
 }))
 
+vi.mock('./ssh-relay-endpoint-credential', () => ({
+  writeRelayEndpointCredential: vi.fn().mockResolvedValue(undefined)
+}))
+
 // Why: the versioned-install modules shell out for install state, locking,
 // and GC. Stub them so deploy tests need no real SSH connection.
 vi.mock('./ssh-relay-versioned-install', () => ({
@@ -97,13 +101,11 @@ function decodePowerShellCommand(command: string): string | null {
   return match ? Buffer.from(match[1], 'base64').toString('utf16le') : null
 }
 
-function extractWindowsSockPath(script: string): string {
-  return /--sock-path\s+'([^']+)'/.exec(script)?.[1] ?? ''
-}
+const extractWindowsSockPath = (script: string): string =>
+  /--sock-path\s+'([^']+)'/.exec(script)?.[1] ?? ''
 
-function extractWindowsMarkerPath(script: string): string {
-  return /-LiteralPath\s+'([^']*\.windows-active-pipe[^']*)'/.exec(script)?.[1] ?? ''
-}
+const extractWindowsMarkerPath = (script: string): string =>
+  /-LiteralPath\s+'([^']*\.windows-active-pipe[^']*)'/.exec(script)?.[1] ?? ''
 
 function makeMockConnection(): SshConnection {
   return {

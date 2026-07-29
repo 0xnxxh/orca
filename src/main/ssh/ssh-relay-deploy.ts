@@ -1,5 +1,4 @@
 import { join } from 'node:path'
-import { randomBytes } from 'node:crypto'
 /* eslint-disable max-lines -- Why: one cohesive contract (version detect, install-locked deploy, native-deps probe, launch, GC); splitting risks install/GC drift. */
 import { existsSync } from 'node:fs'
 import { app } from 'electron'
@@ -11,11 +10,8 @@ import {
   execCommand,
   isUnconfirmedSshCommandTermination
 } from './ssh-relay-deploy-helpers'
-import {
-  uploadRelayDirectory,
-  writeRelayFile,
-  type RelayTransferOptions
-} from './ssh-relay-install-transfers'
+import { uploadRelayDirectory, writeRelayFile } from './ssh-relay-install-transfers'
+import { writeRelayEndpointCredential } from './ssh-relay-endpoint-credential'
 import {
   createRelayInstallMarkerCommand,
   createRelayInstallNamespace,
@@ -462,7 +458,6 @@ async function deployAndLaunchRelayAttempt(
       graceTimeSeconds,
       relayInstanceId,
       enablePtySourceCreditV1,
-      launchNamespace,
       deploySignal
     )
     launchLivenessObserved = true
@@ -1236,7 +1231,6 @@ async function launchRelay(
   graceTimeSeconds?: number,
   relayInstanceId?: string,
   enablePtySourceCreditV1 = false,
-  namespace?: RelayInstallNamespace,
   signal?: AbortSignal
 ): Promise<{
   transport: MultiplexerTransport
@@ -1354,10 +1348,7 @@ async function launchRelay(
   // Why: execCommand would block on channel close that backgrounded children never allow; fire-and-forget via conn.exec, the socket poll detects readiness.
   const logFile = `${remoteDir}/relay.log`
   await writeRelayEndpointCredential(conn, hostPlatform, nodePath, credentialFile, {
-    signal,
-    sftpNamespace: namespace
-      ? relaySftpNamespaceMapping(namespace, hostPlatform, remoteDir, `${sockName}.credential`)
-      : undefined
+    signal
   })
   // Why: --log-file lets the relay rotate relay.log in-process; the shell redirect stays to capture pre-JS boot/crash output.
   const sourceCreditFlag = enablePtySourceCreditV1 ? ' --pty-source-credit-v1' : ''
@@ -1421,31 +1412,6 @@ async function launchRelay(
     sockPath: sockFile,
     credentialFile
   }
-}
-
-async function writeRelayEndpointCredential(
-  conn: SshConnection,
-  hostPlatform: RemoteHostPlatform,
-  nodePath: string,
-  credentialFile: string,
-  options?: RelayTransferOptions
-): Promise<void> {
-  const usesSystemSsh = conn.usesSystemSshTransport?.() === true
-  if (!isWindowsRemoteHost(hostPlatform) && !usesSystemSsh && !options?.sftpNamespace) {
-    const script =
-      'const fs=require("fs"),crypto=require("crypto"),p=process.argv[1];' +
-      'fs.writeFileSync(p,crypto.randomBytes(32).toString("base64url"),{mode:0o600});' +
-      'fs.chmodSync(p,0o600)'
-    await execHostCommand(
-      conn,
-      hostPlatform,
-      `${shellEscape(nodePath)} -e ${shellEscape(script)} ${shellEscape(credentialFile)}`,
-      { signal: options?.signal }
-    )
-    return
-  }
-  const credential = randomBytes(32).toString('base64url')
-  await writeRelayFile(conn, hostPlatform, credentialFile, credential, options)
 }
 
 function waitForRelayPoll(delayMs: number, signal?: AbortSignal): Promise<void> {
