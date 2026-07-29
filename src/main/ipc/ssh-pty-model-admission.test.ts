@@ -65,6 +65,32 @@ describe('SshPtyModelAdmission', () => {
     expect(admission.getDebugSnapshot()).toMatchObject({ sourceUnits: 0, bytes: 0 })
   })
 
+  it('keeps non-migrating callback failure generation-fatal across sibling PTYs', async () => {
+    const admission = new SshPtyModelAdmission()
+    const failedCompletion = deferred()
+    const siblingCompletion = deferred()
+    const failed = accept(admission, failedCompletion.promise)
+    const sibling = admission.accept({ ptyId: 'pty-2', providerGeneration: 7 }, 'data', 4, () => ({
+      sequence: 4,
+      completion: siblingCompletion.promise
+    }))
+
+    failedCompletion.reject(new Error('emulator failed'))
+
+    await expect(failed).rejects.toThrow('emulator failed')
+    await expect(sibling).rejects.toThrow('ssh_model_admission_completion_failed')
+    await expect(
+      admission.accept({ ptyId: 'pty-3', providerGeneration: 7 }, 'data', 4, () => ({
+        sequence: 4,
+        completion: Promise.resolve()
+      }))
+    ).rejects.toThrow('ssh_model_admission_generation_closed')
+    expect(admission.getDebugSnapshot()).toMatchObject({ sourceUnits: 0, bytes: 0 })
+    siblingCompletion.resolve()
+    await Promise.resolve()
+    expect(admission.getDebugSnapshot()).toMatchObject({ sourceUnits: 0, bytes: 0 })
+  })
+
   it('resumes every paused provider generation exactly once on disposal', async () => {
     const resumeProvider = vi.fn()
     const admission = new SshPtyModelAdmission({

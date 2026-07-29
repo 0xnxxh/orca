@@ -824,12 +824,15 @@ an empty newer generation cannot expose the earlier checkpoint. Before the
 deadline, every old callback remains owned by its admission and generation
 until raw completion settles. Stale-owner retry invalidates the checkpoint
 value but retains the same fence, then requests restore after it settles. If
-the 10-second migration deadline expires or
-the callback fails, main cancels only that admission, detaches that PTY's old headless model,
-prefers provider/renderer snapshot restore, and requests
-`checkpointUnavailable`; recovery reports `restoreRequired` instead of
-replaying a guessed gap. Late raw completion stays on the detached model and
-cannot advance the canceled source checkpoint.
+the 10-second migration deadline expires or the callback fails, admission
+checks the exact active migration before its generation-fatal default. Main
+cancels only that admission, detaches that PTY's old headless model, prefers
+provider/renderer snapshot restore, and requests `checkpointUnavailable`;
+recovery reports `restoreRequired` instead of replaying a guessed gap. The
+shared mux, sibling PTYs, filesystem, and Git traffic remain live. Outside an
+active exact-PTY migration, the same callback failure still closes its provider
+generation. Late raw completion stays on the detached model and cannot advance
+the canceled source checkpoint.
 
 Attach sends `sourceRecovery: { status: 'checkpoint', clientGeneration,
 ownerGeneration, ptyIncarnation, deliveryToken, acceptedSourceEndSu }`. A
@@ -1413,9 +1416,11 @@ queued-but-unstarted entries and reject their receipts exactly once. An
 in-flight emulator callback owns its entry until completion or failure and
 must pass its captured token/generation check before committing. Reconnect and
 supersession use the migration fence above rather than letting that callback
-race a replacement checkpoint. The old Promise chain may remain as the
-per-PTY execution primitive only after each link is charged by this scheduler;
-it is no longer an unbounded owner.
+race a replacement checkpoint. Failure dispatch consults the exact
+`(providerGeneration, ptyId)` migration owner before invoking generation close;
+this does not suppress the ordinary non-migrating failure policy. The old
+Promise chain may remain as the per-PTY execution primitive only after each
+link is charged by this scheduler; it is no longer an unbounded owner.
 
 ### Desktop, mobile, web, and agent policy
 
@@ -2037,6 +2042,9 @@ transition:
 - close each per-generation model-migration gate after its settlement, remove
   its per-PTY fence and timer exactly once, and retain any earlier outstanding
   per-PTY fence across an overlapping reconnect;
+- on migration-owned callback failure, release only that PTY's admission
+  charge, timer, and tracked completion before reset/restore; do not close the
+  shared provider or sibling admissions;
 - replace the latest canceled-token record per PTY on ordered cancellation and
   clear it on exact next activation, PTY exit, or provider teardown;
 - release shared spans no longer referenced;
@@ -2366,6 +2374,9 @@ boundaries even though they ship in one PR.
   `SshRelaySession` awaits the returned per-PTY Promise before constructing
   `sourceRecovery`, and `OrcaRuntimeService` detaches only the failed PTY's old
   headless model before snapshot-backed restore.
+- `SshPtyModelAdmission` retains generation-fatal callback handling except when
+  the exact key is actively migrating; `SshPtyOutputIntake` uses the same key
+  to keep provider close from escaping that migration owner.
 - Reconnect V1 remains under the startup gate; its late-ACK, timeout,
   supersession, and generation-close deterministic oracles pass.
 
@@ -2528,6 +2539,13 @@ lease-held body frames, and fail-closed exact-generation cleanup. A separate
 PTY. Transferred recovery data remains private until body/fence validation,
 and a proved token-local failure causes no physical PTY shutdown, ownership
 delete, or lease expiry.
+The model-migration failure oracle uses two PTYs in one provider generation:
+one raw callback rejects under an active fence, returns
+`checkpointUnavailable`, resets one model, and releases its charge and timer;
+the sibling checkpoint, provider mux, filesystem/Git transport, and another
+provider generation remain live. A paired admission oracle proves the same
+failure without an active migration still closes the generation and rejects
+its sibling receipt.
 The remote-consumer seam covers partial cumulative ACK, safe higher-generation
 token rotation, and token cancellation followed by late detach/replacement
 commit, proving reclaimed span IDs reject commit, preserve rollback ownership,

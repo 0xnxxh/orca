@@ -15,18 +15,11 @@ import {
   type PtyUsage
 } from './ssh-pty-model-admission-entry'
 import { resolveSshPtyModelAdmissionLimits } from './ssh-pty-model-admission-limits'
-import {
-  beginSshPtyModelAdmissionMigration,
-  closeSshPtyModelAdmissionMigrations
-} from './ssh-pty-model-admission-migration'
+import * as modelAdmissionMigration from './ssh-pty-model-admission-migration'
 import { SshPtyModelAdmissionPressure } from './ssh-pty-model-admission-pressure'
 import { sshPtyModelAdmissionSnapshot } from './ssh-pty-model-admission-snapshot'
 
-export type {
-  SshPtyModelAdmissionKey,
-  SshPtyModelAdmissionOptions,
-  SshPtyModelAdmissionReceipt
-} from './ssh-pty-model-admission-contract'
+export type * from './ssh-pty-model-admission-contract'
 
 export class SshPtyModelAdmission {
   private readonly limits: ReturnType<typeof resolveSshPtyModelAdmissionLimits>
@@ -99,7 +92,10 @@ export class SshPtyModelAdmission {
         release: (key, charge) => this.release(key, charge)
       })
     )
-    closeSshPtyModelAdmissionMigrations(this.migratingPtys, providerGeneration)
+    modelAdmissionMigration.closeSshPtyModelAdmissionMigrations(
+      this.migratingPtys,
+      providerGeneration
+    )
     const generationPrefix = `${providerGeneration}\0`
     for (const id of this.idleWaiters.keys()) {
       if (id.startsWith(generationPrefix)) {
@@ -109,7 +105,7 @@ export class SshPtyModelAdmission {
   }
 
   beginMigration(key: SshPtyModelAdmissionKey): void {
-    beginSshPtyModelAdmissionMigration({
+    modelAdmissionMigration.beginSshPtyModelAdmissionMigration({
       key,
       migratingPtys: this.migratingPtys,
       pressure: this.pressure,
@@ -261,16 +257,18 @@ export class SshPtyModelAdmission {
   }
 
   private failEntry(id: string, usage: PtyUsage, entry: AdmissionEntry, error: Error): void {
-    if (entry.state !== 'running' || usage.running !== entry) {
-      return
-    }
-    this.closingGenerations.add(entry.key.providerGeneration)
-    usage.running = null
-    entry.state = 'settled'
-    this.release(entry.key, entry.charge)
-    entry.reject(error)
-    this.closeGeneration(entry.key.providerGeneration, 'ssh_model_admission_completion_failed')
-    this.cleanupUsage(id, usage)
+    modelAdmissionMigration.settleSshPtyModelAdmissionFailure({
+      id,
+      usage,
+      entry,
+      error,
+      migratingPtys: this.migratingPtys,
+      closingGenerations: this.closingGenerations,
+      release: (key, charge) => this.release(key, charge),
+      closeGeneration: (providerGeneration) =>
+        this.closeGeneration(providerGeneration, 'ssh_model_admission_completion_failed'),
+      cleanup: (entryId, entryUsage) => this.cleanupUsage(entryId, entryUsage)
+    })
   }
 
   private finishEntry(id: string, usage: PtyUsage, entry: AdmissionEntry): boolean {

@@ -93,4 +93,105 @@ describe('SshPtyOutputModelMigration', () => {
       vi.useRealTimers()
     }
   })
+
+  it('contains a running callback failure to its migrating PTY', async () => {
+    vi.useFakeTimers()
+    try {
+      const resetModelForMigration = vi.fn()
+      const harness = createHarness({ resetModelForMigration })
+      const sibling = harness.intake.acceptData(
+        event({
+          id: 'pty-sibling',
+          ptyIncarnation: 'incarnation-sibling',
+          source: {
+            spanId: 'span-sibling',
+            clientGeneration: 3,
+            ownerGeneration: 4,
+            deliveryToken: 'delivery-sibling',
+            sourceStartSu: 0,
+            sourceEndSu: 4
+          }
+        })
+      )
+      harness.completions[0]!.resolve()
+      await sibling
+      const failed = harness.intake.acceptData(
+        event({
+          id: 'pty-failed',
+          ptyIncarnation: 'incarnation-failed',
+          source: {
+            spanId: 'span-failed',
+            clientGeneration: 3,
+            ownerGeneration: 4,
+            deliveryToken: 'delivery-failed',
+            sourceStartSu: 0,
+            sourceEndSu: 4
+          }
+        })
+      )
+      const migration = harness.intake.beginGenerationMigration(1)
+
+      harness.completions[1]!.reject(new Error('emulator failed'))
+
+      await expect(failed).rejects.toMatchObject({
+        message: 'emulator failed',
+        code: 'ssh_model_migration_completion_failed'
+      })
+      await expect(migration.byPty.get('pty-failed')).resolves.toEqual({
+        status: 'checkpoint-unavailable',
+        reason: 'completion-failed'
+      })
+      await expect(migration.byPty.get('pty-sibling')).resolves.toMatchObject({
+        status: 'settled',
+        checkpoint: { id: 'pty-sibling', acceptedSourceEndSu: 4 }
+      })
+      await migration.completion
+      expect(resetModelForMigration).toHaveBeenCalledTimes(1)
+      expect(resetModelForMigration).toHaveBeenCalledWith(1, 'pty-failed')
+      expect(harness.dependencies.closeProvider).not.toHaveBeenCalled()
+      expect(harness.intake.getAcceptedSourceCheckpoints(1)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'pty-failed', acceptedSourceEndSu: 0 }),
+          expect.objectContaining({ id: 'pty-sibling', acceptedSourceEndSu: 4 })
+        ])
+      )
+      expect(harness.intake.getDebugSnapshot().model).toMatchObject({
+        sourceUnits: 0,
+        bytes: 0,
+        pressureFrames: 0,
+        migratingPtys: 2
+      })
+      expect(vi.getTimerCount()).toBe(0)
+
+      harness.completions[1]!.resolve()
+      await Promise.resolve()
+      expect(resetModelForMigration).toHaveBeenCalledTimes(1)
+      expect(harness.dependencies.closeProvider).not.toHaveBeenCalled()
+      expect(
+        harness.intake
+          .getAcceptedSourceCheckpoints(1)
+          .find((checkpoint) => checkpoint.id === 'pty-failed')?.acceptedSourceEndSu
+      ).toBe(0)
+
+      const unrelated = harness.intake.acceptData(
+        event({
+          id: 'pty-unrelated',
+          providerGeneration: 2,
+          ptyIncarnation: 'incarnation-unrelated'
+        })
+      )
+      harness.completions[2]!.resolve()
+      await expect(unrelated).resolves.toMatchObject({ providerGeneration: 2 })
+      expect(harness.dependencies.closeProvider).not.toHaveBeenCalled()
+      harness.intake.closeGeneration(1, 'connection_lost')
+      harness.intake.closeGeneration(2, 'connection_lost')
+      expect(harness.intake.getDebugSnapshot().model).toMatchObject({
+        sourceUnits: 0,
+        bytes: 0,
+        migratingPtys: 0
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

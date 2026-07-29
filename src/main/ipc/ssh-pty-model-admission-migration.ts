@@ -42,6 +42,41 @@ export function closeSshPtyModelAdmissionMigrations(
   }
 }
 
+export function settleSshPtyModelAdmissionFailure(args: {
+  id: string
+  usage: PtyUsage
+  entry: AdmissionEntry
+  error: Error
+  migratingPtys: ReadonlySet<string>
+  closingGenerations: Set<number>
+  release: (key: SshPtyModelAdmissionKey, charge: AdmissionCharge) => void
+  closeGeneration: (providerGeneration: number) => void
+  cleanup: (id: string, usage: PtyUsage) => void
+}): void {
+  if (args.entry.state !== 'running' || args.usage.running !== args.entry) {
+    return
+  }
+  const migrationOwnsFailure = args.migratingPtys.has(args.id)
+  if (!migrationOwnsFailure) {
+    args.closingGenerations.add(args.entry.key.providerGeneration)
+  }
+  args.usage.running = null
+  args.entry.state = 'settled'
+  args.release(args.entry.key, args.entry.charge)
+  args.entry.reject(migrationOwnsFailure ? migrationCompletionError(args.error) : args.error)
+  if (!migrationOwnsFailure) {
+    args.closeGeneration(args.entry.key.providerGeneration)
+  }
+  args.cleanup(args.id, args.usage)
+}
+
+function migrationCompletionError(cause: Error): Error {
+  return Object.assign(new Error(cause.message), {
+    code: 'ssh_model_migration_completion_failed',
+    cause
+  })
+}
+
 function cancelQueuedEntry(
   entry: AdmissionEntry,
   error: Error,
