@@ -1,13 +1,8 @@
 /* eslint-disable max-lines -- Why: this store is the single main-process owner for Claude usage persistence, scan gating, and query semantics. Keeping those policy decisions together avoids split-brain range/scope logic across multiple files. */
 import { app } from 'electron'
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdir } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import {
-  durableWriteTempPath,
-  removeStaleDurableWriteTempFiles,
-  writeFileDurableIfCurrent
-} from '../durable-file-write'
+import { join } from 'node:path'
+import { UsageCacheSnapshotWriter } from '../usage-cache-snapshot-writer'
 import type {
   ClaudeUsageBreakdownKind,
   ClaudeUsageBreakdownRow,
@@ -337,17 +332,13 @@ export class ClaudeUsageStore {
   private state: ClaudeUsagePersistedState
   private readonly store: Store
   private scanPromise: Promise<void> | null = null
-  // Why: multi-MB usage JSON must not block the Electron main thread; generation vetoes superseded renames.
-  private writeGeneration = 0
-  // Why serialize: two overlapping async writes can both veto themselves, leaving nothing on disk.
-  private pendingWrite: Promise<void> = Promise.resolve()
+  // Why: the 20 MB usage JSON must not block the Electron main thread; the writer serializes writes
+  // and vetoes superseded renames.
+  private readonly writer = new UsageCacheSnapshotWriter('[claude-usage]', getClaudeUsageFile)
 
   constructor(store: Store) {
     this.store = store
     this.state = this.load()
-    // Why: a crash between write and rename orphans a 20 MB temp file; reclaim once per launch.
-    // Seeding the write queue with it also orders the sweep ahead of the first write of this launch.
-    this.pendingWrite = removeStaleDurableWriteTempFiles(getClaudeUsageFile())
   }
 
   private load(): ClaudeUsagePersistedState {
@@ -389,33 +380,8 @@ export class ClaudeUsageStore {
   }
 
   private writeToDisk(): Promise<void> {
-    const generation = ++this.writeGeneration
-    const write = this.pendingWrite.then(() => this.commitToDisk(generation))
-    // Why: keep the queue usable after a failure — the awaiting caller still sees the rejection.
-    this.pendingWrite = write.catch((error: unknown) => {
-      console.error('[claude-usage] Failed to persist usage cache:', error)
-    })
-    return write
-  }
-
-  private async commitToDisk(generation: number): Promise<void> {
-    // Why: a newer snapshot is already queued behind this one, so writing 20 MB here would be wasted.
-    if (generation !== this.writeGeneration) {
-      return
-    }
-    // Why stringify here and not at queue time: it blocks the main process for a multi-MB cache, and
-    // superseded generations must not pay for it. Synchronous, so no mutation can tear the JSON.
     // Pretty-print preserved: humans inspect this analytics cache on disk.
-    const payload = JSON.stringify(this.state, null, 2)
-    const usageFile = getClaudeUsageFile()
-    await mkdir(dirname(usageFile), { recursive: true }).catch(() => {})
-    // Why: atomic temp-file + durable rename so a crash cannot leave a truncated analytics file.
-    await writeFileDurableIfCurrent(
-      durableWriteTempPath(usageFile),
-      usageFile,
-      payload,
-      () => generation === this.writeGeneration
-    )
+    return this.writer.write(() => JSON.stringify(this.state, null, 2))
   }
 
   async setEnabled(enabled: boolean): Promise<ClaudeUsageScanState> {

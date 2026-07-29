@@ -1,13 +1,8 @@
 /* eslint-disable max-lines -- Why: this store owns OpenCode analytics persistence, scan policy, and renderer query semantics. Keeping range/scope queries next to scan persistence prevents UI totals from drifting from the SQLite projection. */
 import { app } from 'electron'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdir } from 'node:fs/promises'
-import {
-  durableWriteTempPath,
-  removeStaleDurableWriteTempFiles,
-  writeFileDurableIfCurrent
-} from '../durable-file-write'
+import { UsageCacheSnapshotWriter } from '../usage-cache-snapshot-writer'
 import type {
   OpenCodeUsageBreakdownKind,
   OpenCodeUsageBreakdownRow,
@@ -158,17 +153,13 @@ export class OpenCodeUsageStore {
   private state: OpenCodeUsagePersistedState
   private readonly store: Store
   private scanPromise: Promise<void> | null = null
-  // Why: multi-MB usage JSON must not block the Electron main thread; generation vetoes superseded renames.
-  private writeGeneration = 0
-  // Why serialize: two overlapping async writes can both veto themselves, leaving nothing on disk.
-  private pendingWrite: Promise<void> = Promise.resolve()
+  // Why: the multi-MB usage JSON must not block the Electron main thread; the writer serializes
+  // writes and vetoes superseded renames.
+  private readonly writer = new UsageCacheSnapshotWriter('[opencode-usage]', getOpenCodeUsageFile)
 
   constructor(store: Store) {
     this.store = store
     this.state = this.load()
-    // Why: a crash between write and rename orphans a multi-MB temp file; reclaim once per launch.
-    // Seeding the write queue with it also orders the sweep ahead of the first write of this launch.
-    this.pendingWrite = removeStaleDurableWriteTempFiles(getOpenCodeUsageFile())
   }
 
   private load(): OpenCodeUsagePersistedState {
@@ -193,31 +184,8 @@ export class OpenCodeUsageStore {
   }
 
   private writeToDisk(): Promise<void> {
-    const generation = ++this.writeGeneration
-    const write = this.pendingWrite.then(() => this.commitToDisk(generation))
-    // Why: keep the queue usable after a failure — the awaiting caller still sees the rejection.
-    this.pendingWrite = write.catch((error: unknown) => {
-      console.error('[opencode-usage] Failed to persist usage cache:', error)
-    })
-    return write
-  }
-
-  private async commitToDisk(generation: number): Promise<void> {
-    // Why: a newer snapshot is already queued behind this one, so rewriting the cache here is wasted.
-    if (generation !== this.writeGeneration) {
-      return
-    }
-    // Why stringify here and not at queue time: it blocks the main process for a multi-MB cache, and
-    // superseded generations must not pay for it. Synchronous, so no mutation can tear the JSON.
-    const payload = JSON.stringify(this.state, null, 2)
-    const usageFile = getOpenCodeUsageFile()
-    await mkdir(dirname(usageFile), { recursive: true }).catch(() => {})
-    await writeFileDurableIfCurrent(
-      durableWriteTempPath(usageFile),
-      usageFile,
-      payload,
-      () => generation === this.writeGeneration
-    )
+    // Pretty-print preserved: humans inspect this analytics cache on disk.
+    return this.writer.write(() => JSON.stringify(this.state, null, 2))
   }
 
   async setEnabled(enabled: boolean): Promise<OpenCodeUsageScanState> {

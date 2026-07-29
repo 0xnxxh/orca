@@ -497,27 +497,35 @@ describe('HistoryManager', () => {
         writeFileSync(join(sessionDir, `chunk-${i}.log`), `payload-${i}`)
       }
 
-      // Why loop turns, not timer gaps: removeSession runs on the Electron main thread, and the
-      // regression is a blocked loop. Wall-clock gap bounds measure runner scheduling and flake;
-      // a turn count doesn't — a sync recursive rm yields exactly zero turns while it walks the
-      // tree, an async one yields one per libuv completion regardless of how fast the box is.
-      let loopTurns = 0
-      let counting = true
-      const countTurn = (): void => {
-        if (counting) {
-          loopTurns++
-          setImmediate(countTurn)
+      // Why a half-deleted tree and not a turn count: removeSession runs on the Electron main
+      // thread and the regression is a blocked loop, but any fixed turn threshold is a guess about
+      // Node/filesystem internals. Seeing the tree partially removed from a loop callback can only
+      // happen if the walk yields — a sync recursive rm goes from every entry to none with no turn
+      // in between, on any platform.
+      const initialEntries = readdirSync(sessionDir).length
+      let sawPartialTree = false
+      let sampling = true
+      const sampleTree = (): void => {
+        if (!sampling || sawPartialTree) {
+          return
         }
+        try {
+          const remaining = readdirSync(sessionDir).length
+          sawPartialTree = remaining > 0 && remaining < initialEntries
+        } catch {
+          // Tree already gone; nothing left to sample.
+        }
+        setImmediate(sampleTree)
       }
-      setImmediate(countTurn)
+      setImmediate(sampleTree)
       try {
         await mgr.removeSession(sessionId)
       } finally {
-        counting = false
+        sampling = false
       }
 
       expect(existsSync(sessionDir)).toBe(false)
-      expect(loopTurns).toBeGreaterThan(100)
+      expect(sawPartialTree).toBe(true)
     })
   })
 })
