@@ -7,6 +7,9 @@ import type {
 } from '../../../../shared/types'
 import WorkspaceKanbanStatusLane from './WorkspaceKanbanStatusLane'
 
+// Why: a fresh [] per render would defeat the memoized lane on empty lanes.
+const EMPTY_LANE_ITEMS: readonly Worktree[] = []
+
 type WorkspaceKanbanLaneGridProps = {
   statuses: readonly WorkspaceStatusDefinition[]
   worktreesByStatus: ReadonlyMap<WorkspaceStatus, readonly Worktree[]>
@@ -16,6 +19,7 @@ type WorkspaceKanbanLaneGridProps = {
   isResizingColumn: boolean
   dragOverStatus: WorkspaceStatus | null
   canCreateWorktree: boolean
+  renderCards: boolean
   selectedWorktreeIds: ReadonlySet<string>
   selectedWorktrees: readonly Worktree[]
   onDragOver: (event: React.DragEvent, statusId: string) => void
@@ -42,6 +46,7 @@ export default function WorkspaceKanbanLaneGrid({
   isResizingColumn,
   dragOverStatus,
   canCreateWorktree,
+  renderCards,
   selectedWorktreeIds,
   selectedWorktrees,
   onDragOver,
@@ -67,13 +72,14 @@ export default function WorkspaceKanbanLaneGrid({
         <WorkspaceKanbanStatusLane
           key={status.id}
           status={status}
-          items={worktreesByStatus.get(status.id) ?? []}
+          items={worktreesByStatus.get(status.id) ?? EMPTY_LANE_ITEMS}
           repoMap={repoMap}
           activeWorktreeId={activeWorktreeId}
           columnWidth={columnWidth}
           isResizingColumn={isResizingColumn}
           isDragTarget={dragOverStatus === status.id}
           canCreateWorktree={canCreateWorktree}
+          renderCards={renderCards}
           selectedWorktreeIds={selectedWorktreeIds}
           selectedWorktrees={selectedWorktrees}
           nativeDragEnabled={false}
