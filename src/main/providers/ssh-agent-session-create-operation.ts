@@ -141,7 +141,9 @@ export async function spawnFreshSshPty(args: {
     sourceActivationLease?.commit()
     return mappedResult
   } catch (error) {
-    sourceActivationLease?.rollback()
+    if (sourceActivationLease && !(await sourceActivationLease.rollback())) {
+      throw new Error('execution_owner_unavailable')
+    }
     throw error
   } finally {
     args.exitRaceTracker.finish(operation)

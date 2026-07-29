@@ -52,6 +52,9 @@ it('rejects a fresh SSH PTY whose exit shares the spawn response batch', async (
       })
       return result
     }
+    if (method === 'pty.cancelDelivery') {
+      return { canceled: true, sentEndSu: 4, creditedEndSu: 0 }
+    }
     return undefined
   })
 
@@ -66,7 +69,7 @@ it('rejects a fresh SSH PTY whose exit shares the spawn response batch', async (
     providerGeneration: expect.any(Number),
     ptyIncarnation: 'incarnation-raced'
   })
-  expect(dataListener).toHaveBeenCalledWith(expect.objectContaining({ data: 'data' }))
+  expect(dataListener).not.toHaveBeenCalled()
   expect(mux.request).toHaveBeenCalledWith('pty.cancelDelivery', {
     id: 'pty-raced',
     clientGeneration: 2,
@@ -146,6 +149,9 @@ it('returns a provisional source activation lease to reconnect authority', async
     }
   }
   mux.request.mockImplementation(async (method: string, _params, options) => {
+    if (method === 'pty.cancelDelivery') {
+      return { canceled: true, sentEndSu: 8, creditedEndSu: 4 }
+    }
     if (method !== 'pty.attach') {
       return undefined
     }
@@ -154,7 +160,7 @@ it('returns a provisional source activation lease to reconnect authority', async
   })
 
   const result = await provider.attachForReconnect('ssh:conn-1@@pty-1')
-  result.sourceActivationLease?.rollback()
+  await result.sourceActivationLease?.rollback()
 
   expect(Object.isFrozen(result.sourceActivation)).toBe(true)
   expect(mux.request).toHaveBeenCalledWith('pty.cancelDelivery', {
