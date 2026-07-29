@@ -73,7 +73,8 @@ function WorkspaceKanbanLaneCardList({
       getItemIds: () => itemIdsRef.current,
       getMeasurements: () => virtualizer.measurementsCache
     })
-  }, [scrollRef, virtualizer])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- virtualizer is a stable instance (useVirtualizer holds it in useState), and getMeasurements reads measurementsCache off it live.
+  }, [scrollRef])
 
   return (
     <div
