@@ -61,6 +61,10 @@ type SyntheticOpenCodeWindow = Window & {
 // counter still has a renderer-side producer.
 type TerminalPtyOutputDebugSnapshot = {
   hiddenRendererMode2031ReplyCount: number
+  activeHiddenRestoreCount: number
+  activeHiddenRestoreSnapshotMs: number
+  activeHiddenRestoreReplayMs: number
+  activeHiddenRestoreTotalMs: number
 }
 
 type TerminalOutputSchedulerDebugSnapshot = {

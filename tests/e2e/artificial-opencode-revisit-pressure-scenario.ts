@@ -28,7 +28,13 @@ type RevisitPressureMeasurement = {
 
 // Why: the renderer hidden-skip counters were deleted with the skip grammar;
 // only the mode-2031 fact-reply counter still exists renderer-side.
-type RevisitPressureDebug = { hiddenRendererMode2031ReplyCount: number }
+type RevisitPressureDebug = {
+  hiddenRendererMode2031ReplyCount: number
+  activeHiddenRestoreCount: number
+  activeHiddenRestoreSnapshotMs: number
+  activeHiddenRestoreReplayMs: number
+  activeHiddenRestoreTotalMs: number
+}
 
 type RevisitPressureSchedulerSnapshot = {
   peakQueuedChars: number
@@ -201,11 +207,18 @@ export async function runRendererBackpressureRevisitScenario<
     await deps.focusPane(orcaPage, revisitPane.paneKey)
     await sendToTerminal(orcaPage, revisitPane.ptyId, `printf '\\n${revisitMarker}\\n'\r`)
     const revisitLatencyMs = await waitForMarkerLatency(orcaPage, revisitMarker, 10_000)
+    const revisitDebug = await deps.readTerminalPtyOutputDebug(orcaPage)
     testInfo.annotations.push({
       type: 'opencode-main-pressure-worktree-revisit-marker',
       description: `panes=${panes.length + 1} revisit=${revisitLatencyMs.toFixed(
         1
-      )}ms heldAckChars=${ackGate?.heldAckChars ?? 0}`
+      )}ms heldAckChars=${ackGate?.heldAckChars ?? 0} activeRestores=${
+        revisitDebug?.activeHiddenRestoreCount ?? 0
+      } activeRestoreSnapshot=${(revisitDebug?.activeHiddenRestoreSnapshotMs ?? 0).toFixed(
+        1
+      )}ms activeRestoreReplay=${(revisitDebug?.activeHiddenRestoreReplayMs ?? 0).toFixed(
+        1
+      )}ms activeRestoreTotal=${(revisitDebug?.activeHiddenRestoreTotalMs ?? 0).toFixed(1)}ms`
     })
     // Why: this printf is measured after a worktree switch/focus while the
     // background panes are still ACK-gate-held, so it gets its own under-load
