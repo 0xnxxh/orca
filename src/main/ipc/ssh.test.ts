@@ -249,6 +249,8 @@ import {
   type SshTarget
 } from '../../shared/ssh-types'
 import { PTY_CONSUMER_SESSION_PROTOCOL_VERSION } from '../../shared/pty-consumer-session'
+import { DEFAULT_PTY_SOURCE_WINDOW_SU } from '../../shared/pty-source-credit-contract'
+import type { SshPtyDataCallback } from '../providers/ssh-pty-provider-contract'
 import {
   clearProviderPtyState,
   deletePtyOwnership,
@@ -259,6 +261,15 @@ import { assertSshMutationExpectation } from '../ssh/ssh-connection-generation'
 
 describe('SSH IPC handlers', () => {
   const relayBuildId = '0.1.0+ipc-test'
+  const ipcTestSource = {
+    relayPtyId: 'remote-pty',
+    spanId: 'ipc-test-delivery:0:5',
+    clientGeneration: 1,
+    ownerGeneration: 1,
+    deliveryToken: 'ipc-test-delivery',
+    sourceStartSu: 0,
+    sourceEndSu: 5
+  } as const
   const handlers = new Map<string, (_event: unknown, args: unknown) => unknown>()
   const mockStore = {
     getRepos: () => [],
@@ -373,7 +384,10 @@ describe('SSH IPC handlers', () => {
               clientGeneration: 1,
               role: 'session-owner',
               ownerGeneration: 1,
-              ownerLease: 'ipc-test-owner'
+              ownerLease: 'ipc-test-owner',
+              capabilities: {
+                outputFlowControl: { version: 1, windowSu: DEFAULT_PTY_SOURCE_WINDOW_SU }
+              }
             }
           : {}
       )
@@ -1122,14 +1136,7 @@ describe('SSH IPC handlers', () => {
     })
 
     await handlers.get('ssh:connect')!(null, { targetId: 'ssh-1' })
-    const onData = mockPtyProvider.onData.mock.calls[0]?.[0] as
-      | ((payload: {
-          id: string
-          data: string
-          providerGeneration: number
-          ptyIncarnation: string
-        }) => void)
-      | undefined
+    const onData = mockPtyProvider.onData.mock.calls[0]?.[0] as SshPtyDataCallback | undefined
     const onExit = mockPtyProvider.onExit.mock.calls[0]?.[0] as
       | ((payload: {
           id: string
@@ -1143,7 +1150,8 @@ describe('SSH IPC handlers', () => {
       id: 'remote-pty',
       data: 'hello',
       providerGeneration: mockPtyProvider.providerGeneration,
-      ptyIncarnation: 'ipc-test-pty'
+      ptyIncarnation: 'ipc-test-pty',
+      source: ipcTestSource
     })
     onExit?.({
       id: 'remote-pty',
@@ -1158,7 +1166,8 @@ describe('SSH IPC handlers', () => {
       providerGeneration: mockPtyProvider.providerGeneration,
       ptyIncarnation: 'ipc-test-pty',
       rawLength: 'hello'.length,
-      transformed: false
+      transformed: false,
+      source: ipcTestSource
     })
     expect(mockAcceptSshPtyOutputExit).toHaveBeenCalledWith({
       id: 'remote-pty',
@@ -1488,14 +1497,7 @@ describe('SSH IPC handlers', () => {
     })
 
     await handlers.get('ssh:connect')!(null, { targetId: 'ssh-1' })
-    const onData = mockPtyProvider.onData.mock.calls[0]?.[0] as
-      | ((payload: {
-          id: string
-          data: string
-          providerGeneration: number
-          ptyIncarnation: string
-        }) => void)
-      | undefined
+    const onData = mockPtyProvider.onData.mock.calls[0]?.[0] as SshPtyDataCallback | undefined
     const onExit = mockPtyProvider.onExit.mock.calls[0]?.[0] as
       | ((payload: {
           id: string
@@ -1525,7 +1527,8 @@ describe('SSH IPC handlers', () => {
       id: 'remote-pty',
       data: 'hello',
       providerGeneration: mockPtyProvider.providerGeneration,
-      ptyIncarnation: 'ipc-test-pty'
+      ptyIncarnation: 'ipc-test-pty',
+      source: ipcTestSource
     })
     onExit?.({
       id: 'remote-pty',
