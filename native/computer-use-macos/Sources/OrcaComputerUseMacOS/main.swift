@@ -3594,14 +3594,14 @@ private final class SocketListener: @unchecked Sendable {
         }
         let authorizedPeer = peerProcessId(fd).map(isAuthorizedAgentPeer) == true
         let decoder = JSONDecoder()
-        var registered = false
+        var registrationComplete = false
         while let line = readLine(from: fd) {
             guard let data = line.data(using: .utf8),
                   let request = try? decoder.decode(Request.self, from: data)
             else {
                 continue
             }
-            if !registered {
+            if !registrationComplete {
                 sessionLock.lock()
                 let registration = sessionOwnership.registerConnection(
                     fd,
@@ -3611,7 +3611,7 @@ private final class SocketListener: @unchecked Sendable {
                     )
                 )
                 sessionLock.unlock()
-                registered = registration != .rejected
+                registrationComplete = registration != .rejected
                 if registration == .claimed {
                     onSessionClaimed()
                 }

@@ -1,5 +1,6 @@
 public enum AgentSessionRegistration: Sendable, Equatable {
     case rejected
+    case sessionReleased
     case joined
     case claimed
 }
@@ -15,7 +16,8 @@ public struct AgentSessionOwnership: Sendable {
         _ connection: Int32,
         authenticated: Bool
     ) -> AgentSessionRegistration {
-        guard authenticated, !wasReleased else { return .rejected }
+        guard authenticated else { return .rejected }
+        guard !wasReleased else { return .sessionReleased }
         let inserted = authenticatedConnections.insert(connection).inserted
         guard inserted, !wasClaimed else { return .joined }
         wasClaimed = true

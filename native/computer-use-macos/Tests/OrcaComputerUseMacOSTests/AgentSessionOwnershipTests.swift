@@ -44,7 +44,7 @@ final class AgentSessionOwnershipTests: XCTestCase {
 
         XCTAssertEqual(ownership.registerConnection(12, authenticated: true), .claimed)
         XCTAssertTrue(ownership.disconnect(12))
-        XCTAssertEqual(ownership.registerConnection(13, authenticated: true), .rejected)
+        XCTAssertEqual(ownership.registerConnection(13, authenticated: true), .sessionReleased)
         XCTAssertFalse(ownership.disconnect(13))
     }
 }
