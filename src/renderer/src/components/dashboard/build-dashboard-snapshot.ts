@@ -14,6 +14,7 @@ import {
   resolveDashboardCardTerminalInput,
   type DashboardCardTerminalInputState
 } from './dashboard-card-terminal-input'
+import { readDashboardClientHost } from './dashboard-client-host'
 import { getAgentRowConversationName } from '../../../../shared/agent-row-conversation-name'
 import { migrationUnsupportedToAgentStatusEntry } from '@/lib/migration-unsupported-agent-entry'
 import { applyAgentRowLineage } from './agent-row-lineage'
@@ -60,14 +61,6 @@ export type DashboardSnapshotState = Pick<
 > &
   DashboardCardContextState &
   Partial<DashboardCardTerminalInputState>
-
-function readClientOsRelease(): string | undefined {
-  try {
-    return window.api?.platform?.get?.()?.osRelease
-  } catch {
-    return undefined
-  }
-}
 
 function bucketForState(state: DashboardAgentRow['state']): DashboardBucket {
   switch (state) {
@@ -136,13 +129,7 @@ export function buildDashboardSnapshot(
   options: { includeCardDetails?: boolean; includeFilterOptions?: boolean } = {}
 ): DashboardSnapshot {
   const cards: DashboardCard[] = []
-  const clientUserAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent
-  const clientPlatform = clientUserAgent.includes('Mac')
-    ? 'darwin'
-    : clientUserAgent.includes('Windows')
-      ? 'win32'
-      : 'linux'
-  const clientOsRelease = readClientOsRelease()
+  const clientHost = readDashboardClientHost()
   const repoIconsByRepoId: Record<string, RepoIcon | null> = {}
   const includeCardDetails = options.includeCardDetails !== false
   const generatedTitlesEnabled = state.settings?.tabAutoGenerateTitle === true
@@ -294,9 +281,9 @@ export function buildDashboardSnapshot(
               cwd: row.tab.startupCwd ?? worktree.path,
               shellOverride: row.tab.shellOverride,
               launchAgent: row.tab.launchAgent,
-              clientPlatform,
-              userAgent: clientUserAgent,
-              osRelease: clientOsRelease
+              clientPlatform: clientHost.platform,
+              userAgent: clientHost.userAgent,
+              osRelease: clientHost.osRelease
             })
           : null
       // Only repos that actually contribute a card ship their icon.
