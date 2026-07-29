@@ -11,6 +11,7 @@ export async function settleSshPtyOutputExit(args: {
   projections: SshPtyLegacyProjectionLedger
   dependencies: SshPtyOutputIntakeDependencies
   validateGeneration: () => void
+  prepareExit?: () => void
   afterAdmissionIdle?: () => void
   waitForSourceTerminal?: () => Promise<void>
   beforeFinalize?: () => void
@@ -21,6 +22,7 @@ export async function settleSshPtyOutputExit(args: {
     projections,
     dependencies,
     validateGeneration,
+    prepareExit,
     afterAdmissionIdle,
     waitForSourceTerminal,
     beforeFinalize
@@ -32,7 +34,11 @@ export async function settleSshPtyOutputExit(args: {
   validateGeneration()
   afterAdmissionIdle?.()
   try {
-    dependencies.prepareExit(event)
+    if (prepareExit) {
+      prepareExit()
+    } else {
+      dependencies.prepareExit(event)
+    }
   } catch (error) {
     projections.closePty(
       event.id,

@@ -171,7 +171,11 @@ export class SshPtyOutputIntake {
       admission: this.admission,
       projections: this.projections,
       dependencies: this.dependencies,
-      validateGeneration: () => this.generationGuard.validate(event),
+      validateGeneration: () => {
+        this.generationGuard.validate(event)
+        this.exitDeadline.validateNormalExit(event)
+      },
+      prepareExit: () => this.exitDeadline.prepareExitOnce(event),
       afterAdmissionIdle: () => this.sourceObligations.sealPty(event),
       waitForSourceTerminal: () => this.sourceObligations.whenPtyTerminal(event),
       beforeFinalize: () => this.sourceObligations.markExitPublished(event)

@@ -22,6 +22,11 @@ export type SshPtyOutputSourceReservation = Readonly<{
   span: PtySourceSpan
 }>
 
+export type SshPtySourceCancellationProofCommit = Readonly<{
+  identity: PtySourceDeliveryIdentity
+  proof: SshPtySourceCancellationProof
+}>
+
 export type SshPtyAcceptedSourceCheckpoint = Readonly<{
   id: string
   providerGeneration: number
@@ -145,18 +150,21 @@ export class SshPtyOutputSourceObligations {
     return identity ? this.coordinator.whenTerminal(identity) : Promise.resolve()
   }
 
-  async cancelPty(
+  async requestPtyCancellationProof(
     event: SshPtyOutputExitEvent,
     cancel: (request: SshPtySourceCancellationRequest) => Promise<SshPtySourceCancellationProof>
-  ): Promise<boolean> {
+  ): Promise<SshPtySourceCancellationProofCommit | null> {
     const identity = this.identityByPty.get(this.ptyKey(event))
     if (!identity) {
-      return false
+      return null
     }
     const request = this.coordinator.beginExitTimeout(identity)
     const proof = await cancel(request)
-    this.coordinator.applyCancellationProof(identity, proof)
-    return true
+    return Object.freeze({ identity, proof })
+  }
+
+  commitPtyCancellationProof(commit: SshPtySourceCancellationProofCommit): void {
+    this.coordinator.applyCancellationProof(commit.identity, commit.proof)
   }
 
   applyCancellationProof(

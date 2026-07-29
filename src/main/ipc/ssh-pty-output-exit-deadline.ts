@@ -5,7 +5,10 @@ import type {
   SshPtyOutputIntakeDependencies
 } from './ssh-pty-output-intake-contract'
 import { outputIntakeError, type SshPtyExitBarrier } from './ssh-pty-output-intake-validation'
-import type { SshPtyOutputSourceObligations } from './ssh-pty-output-source-obligations'
+import type {
+  SshPtyOutputSourceObligations,
+  SshPtySourceCancellationProofCommit
+} from './ssh-pty-output-source-obligations'
 
 type SshPtyOutputExitDeadlineDependencies = Readonly<{
   admission: SshPtyModelAdmission
@@ -18,6 +21,8 @@ type SshPtyOutputExitDeadlineDependencies = Readonly<{
 
 export class SshPtyOutputExitDeadline {
   private readonly barriersByGeneration = new Map<number, Set<SshPtyExitBarrier>>()
+  private readonly cancellationOwnedExits = new Set<string>()
+  private readonly preparedExits = new Set<string>()
   private readonly barrierMs: number
   private readonly cancellationProofMs: number
 
@@ -46,7 +51,8 @@ export class SshPtyOutputExitDeadline {
       const barrier: SshPtyExitBarrier = {
         timer: setTimeout(() => {
           timeoutStarted = true
-          void this.cancelTimedOutExit(event).then(
+          this.cancellationOwnedExits.add(this.exitKey(event))
+          void this.cancelTimedOutExit(event, barrier).then(
             () => settle({ ok: true }),
             (error) => {
               this.dependencies.intake.closeProvider?.(
@@ -86,14 +92,39 @@ export class SshPtyOutputExitDeadline {
 
   closeGeneration(providerGeneration: number, error: Error): void {
     const barriers = this.barriersByGeneration.get(providerGeneration)
-    if (!barriers) {
+    if (barriers) {
+      for (const barrier of barriers) {
+        clearTimeout(barrier.timer)
+        barrier.reject(error)
+      }
+      this.barriersByGeneration.delete(providerGeneration)
+    }
+    const prefix = `${providerGeneration}\0`
+    for (const key of this.cancellationOwnedExits) {
+      if (key.startsWith(prefix)) {
+        this.cancellationOwnedExits.delete(key)
+      }
+    }
+    for (const key of this.preparedExits) {
+      if (key.startsWith(prefix)) {
+        this.preparedExits.delete(key)
+      }
+    }
+  }
+
+  validateNormalExit(event: SshPtyOutputExitEvent): void {
+    if (this.cancellationOwnedExits.has(this.exitKey(event))) {
+      throw outputIntakeError('ssh_exit_delivery_canceled')
+    }
+  }
+
+  prepareExitOnce(event: SshPtyOutputExitEvent): void {
+    const key = this.exitKey(event)
+    if (this.preparedExits.has(key)) {
       return
     }
-    for (const barrier of barriers) {
-      clearTimeout(barrier.timer)
-      barrier.reject(error)
-    }
-    this.barriersByGeneration.delete(providerGeneration)
+    this.preparedExits.add(key)
+    this.dependencies.intake.prepareExit(event)
   }
 
   get activeBarriers(): number {
@@ -103,7 +134,10 @@ export class SshPtyOutputExitDeadline {
     )
   }
 
-  private async cancelTimedOutExit(event: SshPtyOutputExitEvent): Promise<void> {
+  private async cancelTimedOutExit(
+    event: SshPtyOutputExitEvent,
+    barrier: SshPtyExitBarrier
+  ): Promise<void> {
     const cancel = this.dependencies.intake.cancelSourceDelivery
     if (!cancel) {
       throw outputIntakeError('ssh_source_cancellation_publisher_unavailable')
@@ -113,22 +147,49 @@ export class SshPtyOutputExitDeadline {
       'ssh_exit_delivery_canceled'
     )
     this.dependencies.sourceObligations.sealPty(event)
-    const cancellation = this.dependencies.sourceObligations.cancelPty(event, (request) =>
-      cancel(event.providerGeneration, request)
+    const cancellation = this.dependencies.sourceObligations.requestPtyCancellationProof(
+      event,
+      (request) => cancel(event.providerGeneration, request)
     )
-    const canceled = await this.withCancellationProofDeadline(cancellation)
-    if (!canceled) {
+    let commit: SshPtySourceCancellationProofCommit | null
+    try {
+      commit = await this.withCancellationProofDeadline(cancellation)
+    } catch (error) {
+      if (!this.isActive(event.providerGeneration, barrier)) {
+        return
+      }
+      throw error
+    }
+    if (!this.isActive(event.providerGeneration, barrier)) {
+      return
+    }
+    if (!commit) {
       throw outputIntakeError('ssh_source_cancellation_identity_unavailable')
     }
     this.dependencies.projections.transferPty(event.id, 'ssh-exit-delivery-canceled')
-    this.dependencies.intake.prepareExit(event)
+    this.dependencies.sourceObligations.commitPtyCancellationProof(commit)
+    this.prepareExitOnce(event)
+    if (!this.isActive(event.providerGeneration, barrier)) {
+      return
+    }
     this.dependencies.intake.finalizeExit(event)
+    if (!this.isActive(event.providerGeneration, barrier)) {
+      return
+    }
     this.dependencies.projections.closePty(
       event.id,
       event.providerGeneration,
       event.ptyIncarnation,
       'ssh-exit-delivery-canceled'
     )
+  }
+
+  private isActive(providerGeneration: number, barrier: SshPtyExitBarrier): boolean {
+    return this.barriersByGeneration.get(providerGeneration)?.has(barrier) ?? false
+  }
+
+  private exitKey(event: SshPtyOutputExitEvent): string {
+    return `${event.providerGeneration}\0${event.id}\0${event.ptyIncarnation}`
   }
 
   private withCancellationProofDeadline<T>(promise: Promise<T>): Promise<T> {
