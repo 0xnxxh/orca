@@ -14,6 +14,9 @@
 ; DAEMON_HOST_EXE_NAME and LOCAL_HOST_ROOT_NAME in
 ; src/main/daemon/daemon-host-relocation.ts.
 
+!include "getProcessInfo.nsh"
+Var pid
+
 !macro customCheckAppRunning
   ${if} ${isUpdated}
     ; Why: an A-era packaged CLI may still hold Orca.exe while its exact native launcher waits.
@@ -25,6 +28,7 @@
       Quit
     ${endIf}
   ${else}
+    !insertmacro IS_POWERSHELL_AVAILABLE
     !insertmacro _CHECK_APP_RUNNING
   ${endIf}
 !macroend
