@@ -63,7 +63,11 @@ both render the `<img onerror>` payloads literally, create no matching image,
 leave both execution sentinels unset, and pass the existing
 network/navigation/executable and privacy audits. The fixture uses only the
 broker-issued opaque page workspace authority; raw Desktop workspace identity
-never enters the hosted URL. HTML, SVG/image, Markdown, Mermaid, terminal-link,
+never enters the hosted URL. The same exact apps traverse the unchanged
+Files/Preview UI with hostile Markdown, HTML, and SVG files. Markdown preview
+and source plus HTML/SVG source remain inert, create no injected
+`data-orca-adversarial` element, leave all execution sentinels unset, and make
+zero loopback-sentinel requests. Image rendering, Mermaid, terminal-link,
 task/provider, bounded-error, physical-device, release-runtime, and independent
 review coverage remain open.
 
@@ -408,8 +412,12 @@ remain open.
       Simulator app and Android Debug emulator app. Both platforms render the
       payloads literally, create no injected image, leave execution sentinels
       unset, and retain network/navigation/executable and privacy isolation.
-      The remaining sinks, physical devices, release builds, and independent
-      interaction review remain open.
+      Both exact apps now also traverse hostile repository Markdown, HTML, and
+      SVG through Files/Preview. Markdown preview/source and HTML/SVG source
+      stay inert, create no injected element, leave all execution markers
+      unset, and make zero sentinel requests. Image rendering, Mermaid,
+      terminal-link, provider/task, bounded-error, physical devices, release
+      builds, and independent interaction review remain open.
 - [ ] Fuzz manifests, chunks, paths, MIME types, CSP, cache metadata, bridge
       envelopes, limits, ordering, cancellation, and subscriptions. The
       ten-case TypeScript/Swift/Kotlin quoted/Boolean numeric manifest corpus

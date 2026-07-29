@@ -95,10 +95,12 @@ async function main() {
   let adversarialFixture = null
   let adversarialInspector = null
   try {
-    if (options.adversarialContent) {
-      adversarialFixture = await createHostedAdversarialRepositoryFixture()
-    }
     networkProbe = await startHostedIosWebViewSecurityProbe()
+    if (options.adversarialContent) {
+      adversarialFixture = await createHostedAdversarialRepositoryFixture({
+        probePort: networkProbe.port
+      })
+    }
     await bootSimulator(deviceUdid)
     emulatorController = await startHostedIosEmulatorController({
       orcaCli: orcaSelection.command,

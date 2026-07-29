@@ -47,6 +47,7 @@ import {
   captureHostedWebViewAdversarialObservation,
   hostedWebViewAdversarialContentObservations
 } from './hosted-webview-adversarial-content.mjs'
+import { inspectHostedWebViewAdversarialFiles } from './hosted-webview-adversarial-files.mjs'
 import { resolveHostedWebViewRuntimeDirectory } from './hosted-webview-runtime-directory.mjs'
 import { activateHostedWorkspaceRow } from './hosted-webview-workspace-activation.mjs'
 import { verifyHostedSourceControlReviewJourney } from './hosted-ios-source-control-review-journey.mjs'
@@ -92,13 +93,12 @@ async function main() {
     if (!options.skipNativeBuild) {
       await stage('Android debug app build', () => buildHostedAndroidDebugApp({ adb, androidDir }))
     }
+    probe = await stage('network isolation sentinel', startHostedWebViewSecurityProbe)
     if (options.adversarialContent) {
-      adversarialFixture = await stage(
-        'adversarial repository fixture',
-        createHostedAdversarialRepositoryFixture
+      adversarialFixture = await stage('adversarial repository fixture', () =>
+        createHostedAdversarialRepositoryFixture({ probePort: probe.port })
       )
     }
-    probe = await stage('network isolation sentinel', startHostedWebViewSecurityProbe)
     runtime = await stage('temporary paired desktop runtime', () =>
       startHeadlessPairingRuntime({
         enabled: true,
@@ -212,6 +212,7 @@ async function main() {
     )
     let agentHistory = null
     let adversarialContent = null
+    let adversarialReviewDocument = null
     const adversarialObservations = []
     let sourceControlReview = null
     let isolationDocument = sessionDocument
@@ -253,6 +254,9 @@ async function main() {
                     timeoutMs: Math.min(options.timeoutMs, 15_000)
                   })
                 )
+                if (phase === 'review') {
+                  adversarialReviewDocument = document
+                }
               }
             : undefined,
           timeoutMs: options.timeoutMs,
@@ -260,9 +264,14 @@ async function main() {
         })
       )
       if (options.adversarialContent) {
-        adversarialContent = await stage('adversarial filename and diff presentation', () => {
+        adversarialContent = await stage('adversarial filename and diff presentation', async () => {
           try {
-            return hostedWebViewAdversarialContentObservations(adversarialObservations)
+            return await inspectAndroidAdversarialContent({
+              document: adversarialReviewDocument,
+              fixture: adversarialFixture,
+              observations: adversarialObservations,
+              timeoutMs: options.timeoutMs
+            })
           } catch (error) {
             const states = adversarialObservations.map(({ state }) => ({
               bodyText: state.bodyText.slice(0, 1024),
@@ -350,6 +359,20 @@ async function main() {
     if (adversarialFixture) {
       await removeHostedAdversarialRepositoryFixture(adversarialFixture)
     }
+  }
+}
+
+async function inspectAndroidAdversarialContent({ document, fixture, observations, timeoutMs }) {
+  if (!document) {
+    throw new Error('Hosted Android adversarial Review document is unavailable')
+  }
+  return {
+    ...hostedWebViewAdversarialContentObservations(observations),
+    ...(await inspectHostedWebViewAdversarialFiles({
+      document,
+      fixture,
+      timeoutMs
+    }))
   }
 }
 

@@ -11,19 +11,29 @@ export const HOSTED_ADVERSARIAL_CONTENT_MARKER = 'ORCA_ADVERSARIAL_CONTENT'
 export const HOSTED_ADVERSARIAL_WORKSPACE_ROW = 'orca-adversarial-row'
 export const HOSTED_ADVERSARIAL_FILENAME = `000-<img src=x onerror=globalThis.${HOSTED_ADVERSARIAL_FILENAME_MARKER}=1>.tsx`
 export const HOSTED_ADVERSARIAL_CONTENT = `<img src=x onerror="globalThis.${HOSTED_ADVERSARIAL_CONTENT_MARKER}=1">`
+export const HOSTED_ADVERSARIAL_MARKDOWN_FILENAME = '001-adversarial.md'
+export const HOSTED_ADVERSARIAL_HTML_FILENAME = '002-adversarial.html'
+export const HOSTED_ADVERSARIAL_SVG_FILENAME = '003-adversarial.svg'
+export const HOSTED_ADVERSARIAL_MARKDOWN_MARKER = 'ORCA_ADVERSARIAL_MARKDOWN'
+export const HOSTED_ADVERSARIAL_HTML_MARKER = 'ORCA_ADVERSARIAL_HTML'
+export const HOSTED_ADVERSARIAL_SVG_MARKER = 'ORCA_ADVERSARIAL_SVG'
 
-export async function createHostedAdversarialRepositoryFixture() {
+export async function createHostedAdversarialRepositoryFixture({ probePort } = {}) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), fixturePrefix)))
   try {
     await git(root, ['init', '-q'])
     await git(root, ['config', 'user.name', 'Orca Mobile Test'])
     await git(root, ['config', 'user.email', 'mobile-test@orca.invalid'])
     await writeFile(path.join(root, 'README.md'), 'Adversarial mobile fixture\n')
+    const repositoryFiles = hostedAdversarialRepositoryFiles(probePort)
+    for (const file of repositoryFiles) {
+      await writeFile(path.join(root, file.filename), file.content)
+    }
     const blobSource = path.join(root, '.orca-adversarial-content')
     await writeFile(blobSource, `${HOSTED_ADVERSARIAL_CONTENT}\n`)
     const blob = await git(root, ['hash-object', '-w', blobSource])
     await rm(blobSource)
-    await git(root, ['add', 'README.md'])
+    await git(root, ['add', 'README.md', ...repositoryFiles.map(({ filename }) => filename)])
     await git(root, [
       'update-index',
       '--add',
@@ -39,7 +49,8 @@ export async function createHostedAdversarialRepositoryFixture() {
       workspaceName: path.basename(root),
       workspaceRowName: HOSTED_ADVERSARIAL_WORKSPACE_ROW,
       filename: HOSTED_ADVERSARIAL_FILENAME,
-      content: HOSTED_ADVERSARIAL_CONTENT
+      content: HOSTED_ADVERSARIAL_CONTENT,
+      repositoryFiles
     }
   } catch (error) {
     await removeHostedAdversarialRepositoryFixture({ root })
@@ -61,4 +72,31 @@ export async function readHostedAdversarialRepositoryContent(fixture) {
 async function git(cwd, args) {
   const { stdout } = await execFileAsync('git', args, { cwd, encoding: 'utf8', timeout: 30_000 })
   return stdout.trim()
+}
+
+function hostedAdversarialRepositoryFiles(probePort) {
+  const probeOrigin = `http://127.0.0.1:${probePort ?? 9}`
+  return [
+    {
+      filename: HOSTED_ADVERSARIAL_MARKDOWN_FILENAME,
+      marker: HOSTED_ADVERSARIAL_MARKDOWN_MARKER,
+      content: `# \`${HOSTED_ADVERSARIAL_MARKDOWN_MARKER}\`
+
+<img data-orca-adversarial="markdown" alt="${HOSTED_ADVERSARIAL_MARKDOWN_MARKER}" src="${probeOrigin}/markdown-image" onerror="globalThis.${HOSTED_ADVERSARIAL_MARKDOWN_MARKER}=1">
+<svg data-orca-adversarial="markdown-svg" onload="globalThis.${HOSTED_ADVERSARIAL_MARKDOWN_MARKER}=1"><foreignObject>unsafe</foreignObject></svg>
+[active](javascript:globalThis.${HOSTED_ADVERSARIAL_MARKDOWN_MARKER}=1)
+![network](${probeOrigin}/markdown-link)
+`
+    },
+    {
+      filename: HOSTED_ADVERSARIAL_HTML_FILENAME,
+      marker: HOSTED_ADVERSARIAL_HTML_MARKER,
+      content: `<section data-orca-adversarial="html"><p>${HOSTED_ADVERSARIAL_HTML_MARKER}</p><img src="${probeOrigin}/html-image" onerror="globalThis.${HOSTED_ADVERSARIAL_HTML_MARKER}=1"><svg onload="globalThis.${HOSTED_ADVERSARIAL_HTML_MARKER}=1"><foreignObject>unsafe</foreignObject></svg><script>globalThis.${HOSTED_ADVERSARIAL_HTML_MARKER}=1</script></section>\n`
+    },
+    {
+      filename: HOSTED_ADVERSARIAL_SVG_FILENAME,
+      marker: HOSTED_ADVERSARIAL_SVG_MARKER,
+      content: `<svg data-orca-adversarial="svg" xmlns="http://www.w3.org/2000/svg" onload="globalThis.${HOSTED_ADVERSARIAL_SVG_MARKER}=1"><text>${HOSTED_ADVERSARIAL_SVG_MARKER}</text><image href="${probeOrigin}/svg-image" onerror="globalThis.${HOSTED_ADVERSARIAL_SVG_MARKER}=1"/><foreignObject><script>globalThis.${HOSTED_ADVERSARIAL_SVG_MARKER}=1</script></foreignObject></svg>\n`
+    }
+  ]
 }

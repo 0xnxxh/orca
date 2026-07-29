@@ -6,6 +6,7 @@ import {
   captureHostedWebViewAdversarialObservation,
   hostedWebViewAdversarialContentObservations
 } from './hosted-webview-adversarial-content.mjs'
+import { inspectHostedWebViewAdversarialFiles } from './hosted-webview-adversarial-files.mjs'
 import { readHostedWebViewTextPoint } from './hosted-webview-cdp-session.mjs'
 import { tapHostedIosPoint } from './hosted-ios-emulator-accessibility.mjs'
 import { registerWorktreeForPairingRuntime } from './start-emulator-pairing-runtime.mjs'
@@ -41,6 +42,7 @@ export async function registerHostedIosAdversarialRepository(
 
 export function createHostedIosAdversarialContentInspector({ emulator, fixture, timeoutMs }) {
   const observations = []
+  let reviewDocument
   return {
     async inspect({ document, phase }) {
       if (phase === 'sessionDiff') {
@@ -55,9 +57,22 @@ export function createHostedIosAdversarialContentInspector({ emulator, fixture, 
           timeoutMs: Math.min(timeoutMs, 15_000)
         })
       )
+      if (phase === 'review') {
+        reviewDocument = document
+      }
     },
-    evidence() {
-      return hostedWebViewAdversarialContentObservations(observations)
+    async evidence() {
+      if (!reviewDocument) {
+        throw new Error('Hosted iOS adversarial Review document is unavailable')
+      }
+      return {
+        ...hostedWebViewAdversarialContentObservations(observations),
+        ...(await inspectHostedWebViewAdversarialFiles({
+          document: reviewDocument,
+          fixture,
+          timeoutMs
+        }))
+      }
     }
   }
 }

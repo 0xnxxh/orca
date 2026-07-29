@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -9,6 +11,12 @@ import {
   HOSTED_ADVERSARIAL_CONTENT_MARKER,
   HOSTED_ADVERSARIAL_FILENAME,
   HOSTED_ADVERSARIAL_FILENAME_MARKER,
+  HOSTED_ADVERSARIAL_HTML_FILENAME,
+  HOSTED_ADVERSARIAL_HTML_MARKER,
+  HOSTED_ADVERSARIAL_MARKDOWN_FILENAME,
+  HOSTED_ADVERSARIAL_MARKDOWN_MARKER,
+  HOSTED_ADVERSARIAL_SVG_FILENAME,
+  HOSTED_ADVERSARIAL_SVG_MARKER,
   HOSTED_ADVERSARIAL_WORKSPACE_ROW,
   readHostedAdversarialRepositoryContent,
   removeHostedAdversarialRepositoryFixture
@@ -18,6 +26,7 @@ import {
   hostedWebViewAdversarialContentObservations,
   verifyHostedWebViewAdversarialContent
 } from '../../scripts/hosted-webview-adversarial-content.mjs'
+import { hostedAdversarialFileExecutionEvidence } from '../../scripts/hosted-webview-adversarial-files.mjs'
 
 const execFileAsync = promisify(execFile)
 const fixtures: Array<Awaited<ReturnType<typeof createHostedAdversarialRepositoryFixture>>> = []
@@ -39,7 +48,7 @@ afterEach(async () => {
 
 describe('hosted WebView adversarial content', () => {
   it('creates one disposable hostile filename and diff', async () => {
-    const fixture = await createHostedAdversarialRepositoryFixture()
+    const fixture = await createHostedAdversarialRepositoryFixture({ probePort: 54321 })
     fixtures.push(fixture)
 
     const status = await execFileAsync('git', ['status', '--short'], {
@@ -61,6 +70,21 @@ describe('hosted WebView adversarial content', () => {
     })
     expect(branch.stdout.trim()).toBe(HOSTED_ADVERSARIAL_WORKSPACE_ROW)
     expect(fixture.workspaceRowName).toBe(HOSTED_ADVERSARIAL_WORKSPACE_ROW)
+    expect(fixture.repositoryFiles.map(({ filename }) => filename)).toEqual([
+      HOSTED_ADVERSARIAL_MARKDOWN_FILENAME,
+      HOSTED_ADVERSARIAL_HTML_FILENAME,
+      HOSTED_ADVERSARIAL_SVG_FILENAME
+    ])
+    expect(fixture.repositoryFiles.map(({ marker }) => marker)).toEqual([
+      HOSTED_ADVERSARIAL_MARKDOWN_MARKER,
+      HOSTED_ADVERSARIAL_HTML_MARKER,
+      HOSTED_ADVERSARIAL_SVG_MARKER
+    ])
+    for (const file of fixture.repositoryFiles) {
+      expect(await readFile(path.join(fixture.root, file.filename), 'utf8')).toBe(file.content)
+      expect(file.content).toContain(file.marker)
+      expect(file.content).toContain('http://127.0.0.1:54321/')
+    }
   })
 
   it('accepts literal markers without created elements or execution', () => {
@@ -188,6 +212,24 @@ describe('hosted WebView adversarial content', () => {
         }
       ])
     ).toThrow('content executed')
+  })
+
+  it('rejects malformed repository-file execution evidence', () => {
+    expect(
+      hostedAdversarialFileExecutionEvidence({
+        markers: [false, false, false],
+        injectedElementCount: 0
+      })
+    ).toEqual({
+      injectedElementCount: 0,
+      repositoryFileScriptMarkersExecuted: false
+    })
+    expect(() =>
+      hostedAdversarialFileExecutionEvidence({
+        markers: [false, 'false', false],
+        injectedElementCount: 0
+      })
+    ).toThrow('repository file executed')
   })
 
   it('keeps the disposable corpus wired into the exact Android route gate', () => {

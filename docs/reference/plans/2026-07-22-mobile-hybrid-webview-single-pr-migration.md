@@ -1613,6 +1613,17 @@ HTTP(S) links and base64 raster `data:` images; script, raw HTML, SVG,
 event-handler, and active-scheme corpus cases remain inert. The rest of the
 repository-content corpus remains a merge gate.
 
+The exact cached iPhone 17 Pro / iOS 26.5 Simulator app and Pixel 9 Pro API 36
+arm64 Debug app now carry hostile repository Markdown, HTML, and SVG through
+the unchanged Files/Preview routes. Markdown preview and source plus HTML/SVG
+source remain inert, create no injected `data-orca-adversarial` element, leave
+all execution sentinels unset, and make zero requests to a deliberate loopback
+sentinel. Both runs retain the outer private-origin network, navigation,
+executable, and privacy isolation gates. This closes only those exact-app
+emulator sinks; image rendering, Mermaid, terminal-link, task/provider,
+bounded-error, physical-device, Release, and independent-review coverage remain
+open.
+
 Non-document host content stays on React Native text surfaces. Strict schemas
 bound filenames, diff rows, task/provider fields, and error messages; a
 deterministic script/event-handler corpus verifies those paths contain no HTML
