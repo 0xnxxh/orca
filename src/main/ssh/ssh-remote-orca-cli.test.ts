@@ -80,6 +80,7 @@ describe('runRemoteOrcaCli', () => {
           }
         }
       }),
+      getLegacyAdoption: vi.fn(() => undefined),
       getActiveDispatchForIdentity: vi.fn(() => undefined),
       getCurrentRunForPane: vi.fn(() => undefined),
       findActiveRemoteAttachmentForPane: vi.fn(() => undefined)
