@@ -1789,7 +1789,7 @@ export function registerPtyHandlers(
         }
         stampWslOrchestrationCompatibilityHost(
           env,
-          runtime?.getOrchestrationCompatibilityHostId(),
+          runtime?.getOrchestrationCompatibilityHostId?.(),
           ctx?.isWsl === true ? ctx.wslDistro : null
         )
         if (ctx?.isWsl === true) {
@@ -3504,7 +3504,7 @@ export function registerPtyHandlers(
         })
         stampWslOrchestrationCompatibilityHost(
           env,
-          runtime?.getOrchestrationCompatibilityHostId(),
+          runtime?.getOrchestrationCompatibilityHostId?.(),
           codexSelectionTarget.runtime === 'wsl' ? codexSelectionTarget.wslDistro : null
         )
         promoteAgentTeamsShimPath(env, requestedAgentTeamsPath)
@@ -4688,7 +4688,7 @@ export function registerPtyHandlers(
           })
           stampWslOrchestrationCompatibilityHost(
             env,
-            runtime?.getOrchestrationCompatibilityHostId(),
+            runtime?.getOrchestrationCompatibilityHostId?.(),
             codexSelectionTarget.runtime === 'wsl' ? codexSelectionTarget.wslDistro : null
           )
           promoteAgentTeamsShimPath(env, requestedAgentTeamsPath)
