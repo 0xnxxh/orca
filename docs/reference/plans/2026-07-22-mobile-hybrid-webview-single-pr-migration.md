@@ -1619,10 +1619,12 @@ the unchanged Files/Preview routes. Markdown preview and source plus HTML/SVG
 source remain inert, create no injected `data-orca-adversarial` element, leave
 all execution sentinels unset, and make zero requests to a deliberate loopback
 sentinel. Both runs retain the outer private-origin network, navigation,
-executable, and privacy isolation gates. This closes only those exact-app
-emulator sinks; image rendering, Mermaid, terminal-link, task/provider,
-bounded-error, physical-device, Release, and independent-review coverage remain
-open.
+executable, and privacy isolation gates. A valid 1×1 PNG whose `tEXt` metadata
+contains script-shaped content and the same sentinel URL also decodes through
+the real RNW image surface on both apps without exposing metadata, executing
+its marker, or making a request. This closes only those exact-app emulator
+sinks; Mermaid, terminal-link, task/provider, bounded-error, physical-device,
+Release, and independent-review coverage remain open.
 
 Non-document host content stays on React Native text surfaces. Strict schemas
 bound filenames, diff rows, task/provider fields, and error messages; a

@@ -67,9 +67,12 @@ never enters the hosted URL. The same exact apps traverse the unchanged
 Files/Preview UI with hostile Markdown, HTML, and SVG files. Markdown preview
 and source plus HTML/SVG source remain inert, create no injected
 `data-orca-adversarial` element, leave all execution sentinels unset, and make
-zero loopback-sentinel requests. Image rendering, Mermaid, terminal-link,
-task/provider, bounded-error, physical-device, release-runtime, and independent
-review coverage remain open.
+zero loopback-sentinel requests. A valid 1×1 PNG whose `tEXt` metadata carries
+script-shaped content and the same sentinel URL also decodes through the real
+RNW image surface on both exact apps without exposing metadata, executing its
+marker, or making a request. Mermaid, terminal-link, task/provider,
+bounded-error, physical-device, release-runtime, and independent review
+coverage remain open.
 
 The iPhone 17 Pro / iOS 26.5 Simulator now captures the unchanged native and
 hosted Tasks and Session screens from one disposable Desktop runtime. Tasks
@@ -415,9 +418,11 @@ remain open.
       Both exact apps now also traverse hostile repository Markdown, HTML, and
       SVG through Files/Preview. Markdown preview/source and HTML/SVG source
       stay inert, create no injected element, leave all execution markers
-      unset, and make zero sentinel requests. Image rendering, Mermaid,
-      terminal-link, provider/task, bounded-error, physical devices, release
-      builds, and independent interaction review remain open.
+      unset, and make zero sentinel requests. Both exact apps also decode a
+      valid 1×1 PNG carrying hostile `tEXt` metadata through the RNW image
+      surface without exposing metadata, executing its marker, or reaching the
+      sentinel. Mermaid, terminal-link, provider/task, bounded-error, physical
+      devices, release builds, and independent interaction review remain open.
 - [ ] Fuzz manifests, chunks, paths, MIME types, CSP, cache metadata, bridge
       envelopes, limits, ordering, cancellation, and subscriptions. The
       ten-case TypeScript/Swift/Kotlin quoted/Boolean numeric manifest corpus

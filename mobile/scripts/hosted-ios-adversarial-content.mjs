@@ -46,14 +46,19 @@ export function createHostedIosAdversarialContentInspector({ emulator, fixture, 
   return {
     async inspect({ document, phase }) {
       if (phase === 'sessionDiff') {
-        const point = await readHostedWebViewTextPoint(document, fixture.filename)
-        await tapHostedIosPoint(emulator, point)
-        await delay(250)
+        observations.push(
+          await captureHostedIosAdversarialDiff({
+            document,
+            emulator,
+            filename: fixture.filename,
+            timeoutMs
+          })
+        )
+        return
       }
       observations.push(
         await captureHostedWebViewAdversarialObservation({
           document,
-          expectedMarker: phase === 'sessionDiff' ? HOSTED_ADVERSARIAL_CONTENT_MARKER : undefined,
           timeoutMs: Math.min(timeoutMs, 15_000)
         })
       )
@@ -75,6 +80,25 @@ export function createHostedIosAdversarialContentInspector({ emulator, fixture, 
       }
     }
   }
+}
+
+async function captureHostedIosAdversarialDiff({ document, emulator, filename, timeoutMs }) {
+  let lastError = new Error('Hosted iOS adversarial diff tab did not activate')
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const point = await readHostedWebViewTextPoint(document, filename)
+    await tapHostedIosPoint(emulator, point)
+    await delay(250)
+    try {
+      return await captureHostedWebViewAdversarialObservation({
+        document,
+        expectedMarker: HOSTED_ADVERSARIAL_CONTENT_MARKER,
+        timeoutMs: Math.min(timeoutMs, 5_000)
+      })
+    } catch (error) {
+      lastError = error
+    }
+  }
+  throw lastError
 }
 
 function delay(ms) {

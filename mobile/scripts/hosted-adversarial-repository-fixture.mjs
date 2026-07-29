@@ -3,6 +3,7 @@ import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { deflateSync } from 'node:zlib'
 
 const execFileAsync = promisify(execFile)
 const fixturePrefix = 'orca-mobile-adversarial.'
@@ -14,9 +15,11 @@ export const HOSTED_ADVERSARIAL_CONTENT = `<img src=x onerror="globalThis.${HOST
 export const HOSTED_ADVERSARIAL_MARKDOWN_FILENAME = '001-adversarial.md'
 export const HOSTED_ADVERSARIAL_HTML_FILENAME = '002-adversarial.html'
 export const HOSTED_ADVERSARIAL_SVG_FILENAME = '003-adversarial.svg'
+export const HOSTED_ADVERSARIAL_IMAGE_FILENAME = '004-adversarial.png'
 export const HOSTED_ADVERSARIAL_MARKDOWN_MARKER = 'ORCA_ADVERSARIAL_MARKDOWN'
 export const HOSTED_ADVERSARIAL_HTML_MARKER = 'ORCA_ADVERSARIAL_HTML'
 export const HOSTED_ADVERSARIAL_SVG_MARKER = 'ORCA_ADVERSARIAL_SVG'
+export const HOSTED_ADVERSARIAL_IMAGE_MARKER = 'ORCA_ADVERSARIAL_IMAGE'
 
 export async function createHostedAdversarialRepositoryFixture({ probePort } = {}) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), fixturePrefix)))
@@ -97,6 +100,49 @@ function hostedAdversarialRepositoryFiles(probePort) {
       filename: HOSTED_ADVERSARIAL_SVG_FILENAME,
       marker: HOSTED_ADVERSARIAL_SVG_MARKER,
       content: `<svg data-orca-adversarial="svg" xmlns="http://www.w3.org/2000/svg" onload="globalThis.${HOSTED_ADVERSARIAL_SVG_MARKER}=1"><text>${HOSTED_ADVERSARIAL_SVG_MARKER}</text><image href="${probeOrigin}/svg-image" onerror="globalThis.${HOSTED_ADVERSARIAL_SVG_MARKER}=1"/><foreignObject><script>globalThis.${HOSTED_ADVERSARIAL_SVG_MARKER}=1</script></foreignObject></svg>\n`
+    },
+    {
+      filename: HOSTED_ADVERSARIAL_IMAGE_FILENAME,
+      marker: HOSTED_ADVERSARIAL_IMAGE_MARKER,
+      content: hostedAdversarialPng(probeOrigin)
     }
   ]
+}
+
+function hostedAdversarialPng(probeOrigin) {
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(1, 0)
+  ihdr.writeUInt32BE(1, 4)
+  ihdr[8] = 8
+  ihdr[9] = 6
+  const metadata = Buffer.from(
+    `Comment\0<img src="${probeOrigin}/png-metadata" onerror="globalThis.${HOSTED_ADVERSARIAL_IMAGE_MARKER}=1">`
+  )
+  return Buffer.concat([
+    Buffer.from('89504e470d0a1a0a', 'hex'),
+    pngChunk('IHDR', ihdr),
+    pngChunk('tEXt', metadata),
+    pngChunk('IDAT', deflateSync(Buffer.from([0, 70, 120, 190, 255]))),
+    pngChunk('IEND', Buffer.alloc(0))
+  ])
+}
+
+function pngChunk(type, data) {
+  const typeBytes = Buffer.from(type, 'ascii')
+  const length = Buffer.alloc(4)
+  length.writeUInt32BE(data.length)
+  const checksum = Buffer.alloc(4)
+  checksum.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])))
+  return Buffer.concat([length, typeBytes, data, checksum])
+}
+
+function crc32(bytes) {
+  let crc = 0xffffffff
+  for (const byte of bytes) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0
 }

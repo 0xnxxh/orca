@@ -13,6 +13,8 @@ import {
   HOSTED_ADVERSARIAL_FILENAME_MARKER,
   HOSTED_ADVERSARIAL_HTML_FILENAME,
   HOSTED_ADVERSARIAL_HTML_MARKER,
+  HOSTED_ADVERSARIAL_IMAGE_FILENAME,
+  HOSTED_ADVERSARIAL_IMAGE_MARKER,
   HOSTED_ADVERSARIAL_MARKDOWN_FILENAME,
   HOSTED_ADVERSARIAL_MARKDOWN_MARKER,
   HOSTED_ADVERSARIAL_SVG_FILENAME,
@@ -73,17 +75,20 @@ describe('hosted WebView adversarial content', () => {
     expect(fixture.repositoryFiles.map(({ filename }) => filename)).toEqual([
       HOSTED_ADVERSARIAL_MARKDOWN_FILENAME,
       HOSTED_ADVERSARIAL_HTML_FILENAME,
-      HOSTED_ADVERSARIAL_SVG_FILENAME
+      HOSTED_ADVERSARIAL_SVG_FILENAME,
+      HOSTED_ADVERSARIAL_IMAGE_FILENAME
     ])
     expect(fixture.repositoryFiles.map(({ marker }) => marker)).toEqual([
       HOSTED_ADVERSARIAL_MARKDOWN_MARKER,
       HOSTED_ADVERSARIAL_HTML_MARKER,
-      HOSTED_ADVERSARIAL_SVG_MARKER
+      HOSTED_ADVERSARIAL_SVG_MARKER,
+      HOSTED_ADVERSARIAL_IMAGE_MARKER
     ])
     for (const file of fixture.repositoryFiles) {
-      expect(await readFile(path.join(fixture.root, file.filename), 'utf8')).toBe(file.content)
-      expect(file.content).toContain(file.marker)
-      expect(file.content).toContain('http://127.0.0.1:54321/')
+      const content = await readFile(path.join(fixture.root, file.filename))
+      expect(content).toEqual(Buffer.from(file.content))
+      expect(content.includes(file.marker)).toBe(true)
+      expect(content.includes('http://127.0.0.1:54321/')).toBe(true)
     }
   })
 
@@ -217,7 +222,7 @@ describe('hosted WebView adversarial content', () => {
   it('rejects malformed repository-file execution evidence', () => {
     expect(
       hostedAdversarialFileExecutionEvidence({
-        markers: [false, false, false],
+        markers: [false, false, false, false],
         injectedElementCount: 0
       })
     ).toEqual({
@@ -226,7 +231,7 @@ describe('hosted WebView adversarial content', () => {
     })
     expect(() =>
       hostedAdversarialFileExecutionEvidence({
-        markers: [false, 'false', false],
+        markers: [false, 'false', false, false],
         injectedElementCount: 0
       })
     ).toThrow('repository file executed')

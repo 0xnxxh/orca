@@ -2,6 +2,8 @@ import { WebSocket } from 'ws'
 import {
   HOSTED_ADVERSARIAL_HTML_FILENAME,
   HOSTED_ADVERSARIAL_HTML_MARKER,
+  HOSTED_ADVERSARIAL_IMAGE_FILENAME,
+  HOSTED_ADVERSARIAL_IMAGE_MARKER,
   HOSTED_ADVERSARIAL_MARKDOWN_FILENAME,
   HOSTED_ADVERSARIAL_MARKDOWN_MARKER,
   HOSTED_ADVERSARIAL_SVG_FILENAME,
@@ -18,7 +20,8 @@ const executionExpression = `JSON.stringify({
   markers: [
     Boolean(globalThis.${HOSTED_ADVERSARIAL_MARKDOWN_MARKER}),
     Boolean(globalThis.${HOSTED_ADVERSARIAL_HTML_MARKER}),
-    Boolean(globalThis.${HOSTED_ADVERSARIAL_SVG_MARKER})
+    Boolean(globalThis.${HOSTED_ADVERSARIAL_SVG_MARKER}),
+    Boolean(globalThis.${HOSTED_ADVERSARIAL_IMAGE_MARKER})
   ],
   injectedElementCount: document.querySelectorAll('[data-orca-adversarial]').length
 })`
@@ -63,6 +66,12 @@ export async function inspectHostedWebViewAdversarialFiles({
   await openPreview(document, svg.filename, timeoutMs, WebSocketCtor)
   await waitForText(document, svg.content.trim(), timeoutMs, WebSocketCtor)
   await assertNoAdversarialExecution(document, WebSocketCtor)
+  await returnToFiles(document, timeoutMs, WebSocketCtor)
+
+  const image = fileFixture(fixture, HOSTED_ADVERSARIAL_IMAGE_FILENAME)
+  await openPreview(document, image.filename, timeoutMs, WebSocketCtor)
+  await waitForAdversarialImage(document, image.filename, timeoutMs, WebSocketCtor)
+  await assertNoAdversarialExecution(document, WebSocketCtor)
 
   await navigateHostedWebViewRoute(document, reviewRoute, WebSocketCtor)
   await waitForRoute(document, '/review/', 'reviewed', timeoutMs, WebSocketCtor)
@@ -71,6 +80,8 @@ export async function inspectHostedWebViewAdversarialFiles({
     markdownSourceRenderedAsText: true,
     htmlSourceRenderedAsText: true,
     svgSourceRenderedAsText: true,
+    imageMetadataInert: true,
+    imageRendered: true,
     injectedElementCount: 0,
     repositoryFileScriptMarkersExecuted: false
   }
@@ -105,13 +116,49 @@ async function assertNoAdversarialExecution(document, WebSocketCtor) {
 export function hostedAdversarialFileExecutionEvidence(result) {
   if (
     !Array.isArray(result?.markers) ||
-    result.markers.length !== 3 ||
+    result.markers.length !== 4 ||
     result.markers.some((marker) => marker !== false) ||
     result.injectedElementCount !== 0
   ) {
     throw new Error(`Hosted adversarial repository file executed: ${JSON.stringify(result)}`)
   }
   return { injectedElementCount: 0, repositoryFileScriptMarkersExecuted: false }
+}
+
+async function waitForAdversarialImage(document, filename, timeoutMs, WebSocketCtor) {
+  const label = `${filename} image`
+  const expression = `(() => {
+    const root = Array.from(document.querySelectorAll('[aria-label]')).find(
+      (candidate) => candidate.getAttribute('aria-label') === ${JSON.stringify(label)}
+    );
+    const image = root?.querySelector('img');
+    const background = Array.from(root?.children ?? []).some(
+      (candidate) => getComputedStyle(candidate).backgroundImage.includes('data:image/png;base64,')
+    );
+    return JSON.stringify({
+      background,
+      complete: image?.complete === true,
+      dataSource: String(image?.src ?? '').startsWith('data:image/png;base64,'),
+      height: Number(image?.naturalHeight ?? 0),
+      width: Number(image?.naturalWidth ?? 0)
+    });
+  })()`
+  const deadline = Date.now() + Math.min(timeoutMs, 15_000)
+  let result
+  while (Date.now() < deadline) {
+    result = JSON.parse(await evaluateHostedDocumentWithRetry(document, expression, WebSocketCtor))
+    if (
+      result.background === true &&
+      result.complete === true &&
+      result.dataSource === true &&
+      result.height === 1 &&
+      result.width === 1
+    ) {
+      return
+    }
+    await delay(250)
+  }
+  throw new Error(`Hosted adversarial image did not render: ${JSON.stringify(result)}`)
 }
 
 async function waitForLabel(document, expected, timeoutMs, WebSocketCtor) {
