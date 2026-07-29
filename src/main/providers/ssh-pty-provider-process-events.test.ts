@@ -13,7 +13,7 @@ function createMockMux(): MockMultiplexer {
   return {
     request: vi.fn().mockResolvedValue(undefined),
     notify: vi.fn(),
-    onNotification: vi.fn(),
+    onNotification: vi.fn().mockReturnValue(vi.fn()),
     dispose: vi.fn(),
     isDisposed: vi.fn().mockReturnValue(false)
   }
