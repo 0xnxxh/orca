@@ -1920,6 +1920,18 @@ describe('createUISlice hydratePersistedUI', () => {
 })
 
 describe('createUISlice settings navigation', () => {
+  it('rejects malformed settings targets before storing them', () => {
+    const store = createUIStore()
+    const openSettingsTarget = store.getState().openSettingsTarget as unknown as (
+      target: unknown
+    ) => void
+
+    expect(() => openSettingsTarget({ page: 'orchestration' })).toThrowError(
+      'openSettingsTarget received an invalid navigation target'
+    )
+    expect(store.getState().settingsNavigationTarget).toBeNull()
+  })
+
   it('prefetches the restored default task source when provider settings drifted', () => {
     const store = createUIStore()
     const prefetchWorkItems = vi.fn()
