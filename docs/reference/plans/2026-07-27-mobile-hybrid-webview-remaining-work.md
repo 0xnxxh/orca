@@ -322,9 +322,13 @@ verification pass. The full root run passes 3,829 files / 40,205 tests with 70
 expected skips except for one unrelated 30-second dynamic-import timeout under
 load; its isolated 2-test rerun passes in 4.69 seconds.
 
-The remaining security work below is exact release-app corpus testing,
-concurrent cache mutation, broader live cross-scope races, privacy audit, and
-independent review.
+The mirrored native package-store suites now pass 120 concurrent cache flows per
+platform. The expanded same-host matrix covers competing distinct generations,
+live-session activation and cleanup with post-activation reads, interleaved
+commit/abort mutations, bounded final retention, and host removal.
+
+The remaining security work below is exact release-app corpus testing, broader
+live cross-scope races, privacy audit, and independent review.
 
 ## 1. Production Cutover and Cleanup
 
@@ -383,8 +387,10 @@ independent review.
       and an oversized request before authority access. The exported result and
       subscription event schemas reject a generated valid-envelope payload
       corpus and retire invalid events. Pending subscription
-      cancellation/client replacement/disposal races pass. A fresh exact-app
-      rerun, concurrent cache mutation, and the other listed boundaries remain.
+      cancellation/client replacement/disposal races pass. Mirrored Swift and
+      Kotlin stores pass 120 concurrent cache flows, including same-host
+      generation, activation/cleanup, commit/abort, and removal mutations. A
+      fresh exact-app rerun and the other listed boundaries remain.
       The page-side semantic corpus rejects 25 schema-valid cross-operation
       identity, action, cursor, and request-specific-limit mutations.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,

@@ -164,12 +164,13 @@ prototype:
   malformed metadata, incomplete/corrupt generations, wrong-host opens, and
   corruption discovered after a session has opened with bounded errors.
 - Mirrored native generated tests reject 1,152 malformed manifests, chunks,
-  offsets, paths, and SHA-256 tokens per platform. Both stores pass 24
-  concurrent distinct-host package lifecycles, 24 duplicate-generation commits,
-  and 24 same-host open/read/activate/close flows. Android package code remains
-  compatible with minSdk 24 by using the API-8 platform base64 codec, and
-  optional WebView message/document-start features fail closed behind explicit
-  availability checks.
+  offsets, paths, and SHA-256 tokens per platform. Both stores pass 120
+  concurrent cache flows: distinct-host lifecycles, duplicate commits,
+  competing same-host generations, live-session activation and cleanup, and
+  interleaved commit/abort mutations. Android package code remains compatible
+  with minSdk 24 by using the API-8 platform base64 codec, and optional WebView
+  message/document-start features fail closed behind explicit availability
+  checks.
 - The native shell negotiates only the named operations in the production
   grant registry across workspace, session, terminal, file, source-control,
   review, task, account, browser, speech, native-chat, navigation, and narrow

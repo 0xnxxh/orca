@@ -63,6 +63,80 @@ class MobileWebPackageStoreConcurrencyTest {
     assertFalse(staging.listFiles()?.isNotEmpty() == true)
   }
 
+  @Test
+  fun preservesCompetingLiveGenerationsDuringConcurrentActivation() {
+    val root = temporary.newFolder()
+    val store = concurrencyStore(root)
+    val failures = ConcurrentLinkedQueue<Throwable>()
+    val fixtures = (0 until 16).map {
+      concurrencyFixture("<title>generation-$it</title>")
+    }
+
+    runConcurrent(fixtures.size, failures) { index ->
+      concurrencyStagePackage(store, "generation-host", fixtures[index])
+    }
+    assertTrue(failures.joinToString("\n") { it.stackTraceToString() }, failures.isEmpty())
+
+    val sessions = fixtures.map { store.openSession("generation-host", it.buildId, 1) }
+    runConcurrent(sessions.size, failures) { index ->
+      val sessionId = sessions[index].getValue("sessionId")
+      assertArrayEquals(fixtures[index].bytes, store.readAsset(sessionId, "index.html").bytes)
+      assertEquals(fixtures[index].buildId, store.markSessionHealthy(sessionId))
+      assertArrayEquals(fixtures[index].bytes, store.readAsset(sessionId, "index.html").bytes)
+    }
+    assertTrue(failures.joinToString("\n") { it.stackTraceToString() }, failures.isEmpty())
+
+    val active = store.openSession("generation-host", null, 1)
+    val activeBuildId = active.getValue("buildId")
+    val activeFixture = fixtures.first { it.buildId == activeBuildId }
+    assertArrayEquals(
+      activeFixture.bytes,
+      store.readAsset(active.getValue("sessionId"), "index.html").bytes
+    )
+    sessions.forEach { store.closeSession(it.getValue("sessionId")) }
+    assertEquals(activeBuildId, store.markSessionHealthy(active.getValue("sessionId")))
+    val generations = File(
+      root,
+      "${concurrencySha256("generation-host".toByteArray())}/generations"
+    )
+    assertTrue(generations.listFiles().orEmpty().size <= 2)
+    store.closeSession(active.getValue("sessionId"))
+  }
+
+  @Test
+  fun serializesConcurrentCommitAndAbortMutations() {
+    val root = temporary.newFolder()
+    val store = concurrencyStore(root)
+    val failures = ConcurrentLinkedQueue<Throwable>()
+    val fixtures = (0 until 16).map { concurrencyFixture("<title>stage-$it</title>") }
+    val stages = fixtures.map { store.beginStage("stage-host", it.manifest, it.canonical) }
+
+    runConcurrent(stages.size, failures) { index ->
+      if (index % 2 == 0) {
+        concurrencyFinishStage(store, stages[index], fixtures[index])
+      } else {
+        store.abortStage(stages[index])
+      }
+    }
+    assertTrue(failures.joinToString("\n") { it.stackTraceToString() }, failures.isEmpty())
+
+    fixtures.forEachIndexed { index, fixture ->
+      if (index % 2 == 0) {
+        val session = store.openSession("stage-host", fixture.buildId, 1)
+        assertArrayEquals(
+          fixture.bytes,
+          store.readAsset(session.getValue("sessionId"), "index.html").bytes
+        )
+        store.closeSession(session.getValue("sessionId"))
+      } else {
+        assertTrue(runCatching { store.openSession("stage-host", fixture.buildId, 1) }.isFailure)
+      }
+    }
+    store.removeHost("stage-host")
+    val hostRoot = File(root, concurrencySha256("stage-host".toByteArray()))
+    assertFalse(hostRoot.exists())
+  }
+
   private fun runConcurrent(
     count: Int,
     failures: ConcurrentLinkedQueue<Throwable>,
@@ -97,6 +171,14 @@ class MobileWebPackageStoreConcurrencyTest {
     fixture: ConcurrencyFixture
   ) {
     val stageId = store.beginStage(host, fixture.manifest, fixture.canonical)
+    concurrencyFinishStage(store, stageId, fixture)
+  }
+
+  private fun concurrencyFinishStage(
+    store: MobileWebPackageStore,
+    stageId: String,
+    fixture: ConcurrencyFixture
+  ) {
     store.writeAssetChunk(
       stageId,
       "index.html",

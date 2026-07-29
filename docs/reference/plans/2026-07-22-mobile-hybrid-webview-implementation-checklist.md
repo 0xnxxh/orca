@@ -1894,11 +1894,12 @@ and diff hygiene pass. A fresh production RNW build remains
 49 assets, 9,281,663 raw bytes, and 2,684,764 gzip bytes.
 
 The native generated-mutation and concurrency slice passes 1,152 generated
-rejections and 72 concurrent cache flows per platform. The complete iOS
-fault executable and all 37 Android module tests pass. Android lint reports zero
-errors after replacing API-26-only base64 calls and guarding optional WebView
-features; Swift format lint, mobile lint/typecheck/format, max-lines, and diff
-hygiene also pass.
+rejections and 120 concurrent cache flows per platform. The expanded matrix
+adds competing same-host distinct generations, live-session activation and
+cleanup, and interleaved commit/abort mutations. The complete iOS fault
+executable and Android module tests pass. Android lint reports zero errors after
+replacing API-26-only base64 calls and guarding optional WebView features; Swift
+format lint, mobile lint/typecheck/format, max-lines, and diff hygiene also pass.
 
 The bridge mutation and lifecycle slice rejects ambiguous raw JSON before
 schema traversal, runs 2,016 generated operation payload/size cases across all
@@ -2815,4 +2816,5 @@ package verification pass. The rebuilt package is
 | 2026-07-28 | Complete | Every hosted mutation reauthorizes its exact workspace, repository, task target, native-chat session, or Agent History session immediately before its privileged write. Three deterministic race suites revoke authority during awaited preflight across file, Markdown, Source Control, provider review, task, native-chat, workspace creation, browser, and Agent History operations. Privileged state is keyed by the paired Desktop public key.                                                                                                                                                       |
 | 2026-07-28 | Complete | A 25-case schema-valid semantic response corpus rejects cross-workspace/tab/repository/target/host/scope/configuration/cursor results and per-request collection overruns. Session events are workspace-bound. All 18 mobile-web files / 90 tests, 10 focused mobile files / 48 tests, the full 576-file mobile suite / 3,440 tests with 2 expected skips, all typechecks/lints/55 reliability gates, max-lines, localization, and package verification pass. Build `bcd9c95e3a1e416d82a240ff10ef311375d03cbc3210d44876c7bca896e093b7` contains 50 assets, 9,299,540 raw bytes, and 2,691,263 gzip bytes. |
 | 2026-07-28 | Finding  | The full root run passes 3,829 files / 40,205 tests with 70 expected skips but the unrelated `ProjectViewWrapper` dynamic-import boundary again reaches its 30-second timeout under full-suite load. Its isolated rerun passes 2/2 in 4.69 seconds.                                                                                                                                                                                                                                                                                                                                                       |
-| 2026-07-28 | Next     | Run exact release-app corpus injection, concurrent cache mutation, privacy audit, broader live two-host/topology races, and independent security review before the remaining physical-device, packaged-release, rollback, and App Store gates.                                                                                                                                                                                                                                                                                                                                                            |
+| 2026-07-28 | Complete | Mirrored Swift and Kotlin package-store suites now pass 120 concurrent cache flows per platform. The added same-host matrix covers 16 competing distinct-generation commits, 16 live-session activation/cleanup flows with post-activation reads, and 16 interleaved commit/abort mutations; final activation retains at most active plus previous, and host removal leaves no cache subtree.                                                                                                                                                                                                             |
+| 2026-07-28 | Next     | Run exact release-app corpus injection, privacy audit, broader live two-host/topology races, and independent security review before the remaining physical-device, packaged-release, rollback, and App Store gates.                                                                                                                                                                                                                                                                                                                                                                                       |
