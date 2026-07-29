@@ -72,6 +72,7 @@ export function indexPersistedPaneKeyPtyIds(
 
 type AgentWorkspaceExecutionHostDeps = {
   getRepo: (repoId: string) => ExecutionHostOwner | null | undefined
+  getWorktreeMeta: (worktreeId: string) => { hostId?: string | null } | null | undefined
   getFolderWorkspace: (
     folderWorkspaceId: string
   ) => Pick<FolderWorkspace, 'projectGroupId' | 'connectionId'> | null | undefined
@@ -114,6 +115,10 @@ export function resolveAgentWorkspaceExecutionHostId(
     })
   }
   const worktreeId = scope?.type === 'worktree' ? scope.worktreeId : workspaceId
+  const declaredWorktreeHost = deps.getWorktreeMeta(worktreeId)?.hostId?.trim()
+  if (declaredWorktreeHost) {
+    return parseExecutionHostId(declaredWorktreeHost)?.id ?? null
+  }
   const repo = deps.getRepo(getRepoIdFromWorktreeId(worktreeId))
   return repo ? resolveDeclaredExecutionHost(repo) : null
 }

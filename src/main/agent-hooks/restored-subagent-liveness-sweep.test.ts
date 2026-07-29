@@ -446,6 +446,18 @@ describe('resolveAgentWorkspaceExecutionHostId', () => {
   const deps = {
     getRepo: (repoId: string) =>
       [localRepo, runtimeRepo, futureHostRepo].find((candidate) => candidate.id === repoId),
+    getWorktreeMeta: (worktreeId: string) => {
+      if (worktreeId === 'local-repo::/runtime-worktree') {
+        return { hostId: 'runtime:worktree-owner' }
+      }
+      if (worktreeId === 'runtime-repo::/local-worktree') {
+        return { hostId: 'local' }
+      }
+      if (worktreeId === 'local-repo::/future-worktree') {
+        return { hostId: 'container:future-host' }
+      }
+      return undefined
+    },
     getFolderWorkspace: (id: string) =>
       id === 'folder-runtime' ? { projectGroupId: 'group-runtime', connectionId: null } : undefined,
     getProjectGroups: () => [
@@ -465,7 +477,14 @@ describe('resolveAgentWorkspaceExecutionHostId', () => {
     expect(resolveAgentWorkspaceExecutionHostId('folder:folder-runtime', deps)).toBe(
       'runtime:ephemeral-vm-1'
     )
+    expect(resolveAgentWorkspaceExecutionHostId('local-repo::/runtime-worktree', deps)).toBe(
+      'runtime:worktree-owner'
+    )
+    expect(resolveAgentWorkspaceExecutionHostId('runtime-repo::/local-worktree', deps)).toBe(
+      'local'
+    )
     expect(resolveAgentWorkspaceExecutionHostId('future-repo::/repo', deps)).toBeNull()
+    expect(resolveAgentWorkspaceExecutionHostId('local-repo::/future-worktree', deps)).toBeNull()
     expect(isLocalExecutionHost('local')).toBe(true)
     expect(isLocalExecutionHost('runtime:ephemeral-vm-1')).toBe(false)
   })
