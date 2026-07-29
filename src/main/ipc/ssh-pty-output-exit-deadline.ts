@@ -23,6 +23,7 @@ export class SshPtyOutputExitDeadline {
   private readonly barriersByGeneration = new Map<number, Set<SshPtyExitBarrier>>()
   private readonly cancellationOwnedExits = new Set<string>()
   private readonly preparedExits = new Set<string>()
+  private readonly preparedExitReleases = new Map<string, () => void>()
   private readonly barrierMs: number
   private readonly cancellationProofMs: number
 
@@ -41,6 +42,7 @@ export class SshPtyOutputExitDeadline {
         }
         settled = true
         clearTimeout(barrier.timer)
+        this.releasePreparedExit(event)
         this.remove(event.providerGeneration, barrier)
         if (result.ok) {
           resolve()
@@ -107,6 +109,7 @@ export class SshPtyOutputExitDeadline {
     }
     for (const key of this.preparedExits) {
       if (key.startsWith(prefix)) {
+        this.releasePreparedExitKey(key)
         this.preparedExits.delete(key)
       }
     }
@@ -123,8 +126,11 @@ export class SshPtyOutputExitDeadline {
     if (this.preparedExits.has(key)) {
       return
     }
+    const release = this.dependencies.intake.prepareExit(event)
     this.preparedExits.add(key)
-    this.dependencies.intake.prepareExit(event)
+    if (release) {
+      this.preparedExitReleases.set(key, release)
+    }
   }
 
   get activeBarriers(): number {
@@ -190,6 +196,21 @@ export class SshPtyOutputExitDeadline {
 
   private exitKey(event: SshPtyOutputExitEvent): string {
     return `${event.providerGeneration}\0${event.id}\0${event.ptyIncarnation}`
+  }
+
+  private releasePreparedExit(event: SshPtyOutputExitEvent): void {
+    const key = this.exitKey(event)
+    this.preparedExits.delete(key)
+    this.releasePreparedExitKey(key)
+  }
+
+  private releasePreparedExitKey(key: string): void {
+    const release = this.preparedExitReleases.get(key)
+    if (!release) {
+      return
+    }
+    this.preparedExitReleases.delete(key)
+    release()
   }
 
   private withCancellationProofDeadline<T>(promise: Promise<T>): Promise<T> {

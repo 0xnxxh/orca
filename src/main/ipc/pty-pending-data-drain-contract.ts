@@ -10,6 +10,7 @@ export type PendingPtyData = {
   droppedMode2031Data?: string
   droppedMode2031ScanState?: Mode2031ReplyScanState
   projectionAdmissionIds?: readonly string[]
+  projectionAdmissionsTransferred?: true
 }
 
 export type PtyPendingDataDrainDisposition = 'active' | 'background' | 'blocked'

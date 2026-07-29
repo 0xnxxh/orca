@@ -467,6 +467,65 @@ describe('SshPtyOutputIntake', () => {
     expect(harness.intake.getDebugSnapshot().projection.records).toBe(0)
   })
 
+  it('owns renderer exit preparation through finalization and duplicate rejection', async () => {
+    const releaseRendererExit = vi.fn()
+    const harness = createHarness({
+      prepareExit: vi.fn(() => releaseRendererExit)
+    })
+    const dataReceipt = harness.intake.acceptData(event())
+    harness.completions[0]!.resolve()
+    const receipt = await dataReceipt
+    harness.intake.publishProjectionPrefix(
+      [receipt.projection.identity.projectionSemanticsId],
+      4,
+      4
+    )
+    const exitEvent = {
+      id: 'pty-1',
+      code: 0,
+      providerGeneration: 1,
+      ptyIncarnation: 'incarnation-1'
+    }
+    const exit = harness.intake.acceptExit(exitEvent)
+    await Promise.resolve()
+
+    expect(releaseRendererExit).not.toHaveBeenCalled()
+    await expect(harness.intake.acceptExit(exitEvent)).rejects.toThrow('ssh_output_duplicate_exit')
+    expect(releaseRendererExit).not.toHaveBeenCalled()
+
+    harness.intake.settleProjectionPrefix('pty-1', 4)
+    await exit
+    expect(releaseRendererExit).toHaveBeenCalledOnce()
+  })
+
+  it('releases renderer exit preparation when generation close aborts finalization', async () => {
+    const releaseRendererExit = vi.fn()
+    const harness = createHarness({
+      prepareExit: vi.fn(() => releaseRendererExit)
+    })
+    const dataReceipt = harness.intake.acceptData(event())
+    harness.completions[0]!.resolve()
+    const receipt = await dataReceipt
+    harness.intake.publishProjectionPrefix(
+      [receipt.projection.identity.projectionSemanticsId],
+      4,
+      4
+    )
+    const exit = harness.intake.acceptExit({
+      id: 'pty-1',
+      code: 0,
+      providerGeneration: 1,
+      ptyIncarnation: 'incarnation-1'
+    })
+    await Promise.resolve()
+
+    harness.intake.closeGeneration(1, 'provider-replaced')
+
+    await expect(exit).rejects.toThrow('provider-replaced')
+    expect(releaseRendererExit).toHaveBeenCalledOnce()
+    expect(harness.order).not.toContain('exit')
+  })
+
   it('retains exit until a required remote source consumer settles', async () => {
     const harness = createHarness({}, { exitBarrierMs: 1000 })
     const remote = harness.intake.getRemoteSourceRangeConsumerHooks()
@@ -627,7 +686,9 @@ describe('SshPtyOutputIntake', () => {
   })
 
   it('closes the provider when exit finalization fails', async () => {
+    const releaseRendererExit = vi.fn()
     const harness = createHarness({
+      prepareExit: () => releaseRendererExit,
       finalizeExit: () => {
         throw new Error('renderer exit send failed')
       }
@@ -642,6 +703,7 @@ describe('SshPtyOutputIntake', () => {
       })
     ).rejects.toThrow('renderer exit send failed')
     expect(harness.dependencies.closeProvider).toHaveBeenCalledWith(1, 'pty-exit-finalize-failed')
+    expect(releaseRendererExit).toHaveBeenCalledOnce()
   })
 
   it('cancels queued work and exit waiters on generation cleanup', async () => {

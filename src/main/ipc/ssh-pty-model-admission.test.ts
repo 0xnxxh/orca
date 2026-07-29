@@ -43,6 +43,37 @@ describe('SshPtyModelAdmission', () => {
     expect(admission.getDebugSnapshot()).toMatchObject({ sourceUnits: 0, bytes: 0 })
   })
 
+  it('resumes every paused provider generation exactly once on disposal', async () => {
+    const resumeProvider = vi.fn()
+    const admission = new SshPtyModelAdmission({
+      perPtyHighSourceUnits: 4,
+      perPtyHighBytes: 1024,
+      globalHighSourceUnits: 4,
+      globalHighBytes: 1024,
+      pressureMaxFrames: 1,
+      pressureMaxBytes: 1024,
+      pauseProvider: () => true,
+      resumeProvider
+    })
+    const running = accept(admission, new Promise<void>(() => {}))
+    const pressured = accept(admission, Promise.resolve())
+    const rejected = admission.accept({ ptyId: 'pty-2', providerGeneration: 8 }, 'data', 4, () => ({
+      sequence: 4,
+      completion: Promise.resolve()
+    }))
+
+    await expect(rejected).rejects.toThrow('ssh_model_admission_pressure_exhausted')
+    admission.dispose()
+    admission.dispose()
+
+    await expect(running).rejects.toThrow('ssh_model_admission_disposed')
+    await expect(pressured).rejects.toThrow('ssh_model_admission_disposed')
+    expect(resumeProvider.mock.calls).toEqual([
+      [{ ptyId: 'pty-1', providerGeneration: 7 }],
+      [{ ptyId: 'pty-2', providerGeneration: 8 }]
+    ])
+  })
+
   it.each(['resolve', 'reject'] as const)(
     'ignores a late completion %s after cancellation',
     async (settle) => {

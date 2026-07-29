@@ -23,6 +23,7 @@ import {
   unpublishedProjectionIds
 } from './ssh-pty-projection-terminality'
 import {
+  hasUnpublishedLegacyProjection,
   publishLegacyProjectionPrefix,
   settlePublishedLegacyProjectionPrefix
 } from './ssh-pty-legacy-projection-publication'
@@ -301,6 +302,10 @@ export class SshPtyLegacyProjectionLedger {
 
   get(id: string): LegacySshProjectionSemantics | undefined {
     return this.records.get(id)?.semantics
+  }
+
+  hasUnpublished(id: string): boolean {
+    return hasUnpublishedLegacyProjection(this.records, id)
   }
 
   getDebugSnapshot(): LegacySshProjectionDebugSnapshot {

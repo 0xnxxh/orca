@@ -156,6 +156,9 @@ export class SshPtyModelAdmission {
     for (const entry of this.pressure.values) {
       generations.add(entry.key.providerGeneration)
     }
+    for (const generation of this.pressure.pausedProviderGenerations) {
+      generations.add(generation)
+    }
     for (const generation of generations) {
       this.closeGeneration(generation, 'ssh_model_admission_disposed')
     }

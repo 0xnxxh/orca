@@ -247,7 +247,11 @@ import { resolveWindowsShellLaunchArgs } from '../providers/windows-shell-args'
 import { _resetWslCachesForTests, _setWslCachesForTests } from '../wsl'
 import { wslHookRelayManager } from '../agent-hooks/wsl-hook-relay-manager'
 import { acquireWatcherRemovalGate } from './watcher-removal-gate'
-import { acceptSshPtyOutputData } from './ssh-pty-output-intake-registry'
+import {
+  acceptSshPtyOutputData,
+  acceptSshPtyOutputExit,
+  closeSshPtyOutputGeneration
+} from './ssh-pty-output-intake-registry'
 
 // Why: Windows resolves a bare PowerShell name to an absolute exe before ConPTY, else CreateProcessW fails with error 5 (PR #6537 / #5161).
 const RESOLVED_WINDOWS_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
@@ -450,7 +454,8 @@ describe('registerPtyHandlers', () => {
       'ssh-reattach-1',
       'ssh-reattach-fail',
       'ssh-reattach-ok',
-      'ssh-runtime-env'
+      'ssh-runtime-env',
+      'ssh-generation-replacement'
     ]) {
       unregisterSshPtyProvider(leakedConnectionId)
     }
@@ -11533,6 +11538,130 @@ describe('registerPtyHandlers', () => {
       errorSpy.mockRestore()
       vi.useRealTimers()
     }
+  })
+
+  it('pauses and resumes the exact SSH provider generation across reconnect replacement', async () => {
+    vi.useFakeTimers()
+    const completion = makeDeferred()
+    let sequence = 0
+    let captures = 0
+    const runtime = {
+      setPtyController: vi.fn(),
+      setRemoteTerminalSourceRangeConsumerHooks: vi.fn(),
+      getPtyOutputSequence: vi.fn(() => sequence),
+      acceptPtyDataBounded: vi.fn((_id: string, _data: string, _at: number, rawLength: number) => {
+        sequence += rawLength
+        captures++
+        return {
+          sequence,
+          completion: captures === 1 ? completion.promise : Promise.resolve()
+        }
+      })
+    }
+    const original = {
+      providerGeneration: 41,
+      hasPtyDeliveryPauseAdapter: () => true,
+      pauseProducer: vi.fn(),
+      resumeProducer: vi.fn()
+    }
+    const replacement = {
+      providerGeneration: 42,
+      hasPtyDeliveryPauseAdapter: () => true,
+      pauseProducer: vi.fn(),
+      resumeProducer: vi.fn()
+    }
+    const id = 'ssh:ssh-generation-replacement@@relay-pty'
+    const receipts: Promise<unknown>[] = []
+
+    try {
+      registerPtyHandlers(mainWindow as never, runtime as never)
+      registerSshPtyProvider('ssh-generation-replacement', original as never)
+      const running = acceptSshPtyOutputData({
+        id,
+        data: 'a'.repeat(256 * 1024),
+        providerGeneration: 41,
+        ptyIncarnation: 'incarnation-41',
+        rawLength: 256 * 1024,
+        transformed: false
+      })
+      receipts.push(running)
+      registerSshPtyProvider('ssh-generation-replacement', replacement as never)
+      const pressured = acceptSshPtyOutputData({
+        id,
+        data: 'b',
+        providerGeneration: 41,
+        ptyIncarnation: 'incarnation-41',
+        rawLength: 1,
+        transformed: false
+      })
+      receipts.push(pressured)
+
+      expect(original.pauseProducer).toHaveBeenCalledWith(id)
+      expect(replacement.pauseProducer).not.toHaveBeenCalled()
+
+      completion.resolve()
+      await Promise.all([running, pressured])
+      expect(original.resumeProducer).toHaveBeenCalledWith(id)
+      expect(replacement.resumeProducer).not.toHaveBeenCalled()
+    } finally {
+      completion.resolve()
+      await Promise.allSettled(receipts)
+      closeSshPtyOutputGeneration(41, 'test-cleanup')
+      unregisterSshPtyProvider('ssh-generation-replacement')
+    }
+  })
+
+  it('rejects local data while an SSH renderer exit waits for projection settlement', async () => {
+    const provider = installObservableDaemonTestProvider()
+    let sequence = 0
+    const runtime = {
+      setPtyController: vi.fn(),
+      setRemoteTerminalSourceRangeConsumerHooks: vi.fn(),
+      getPtyOutputSequence: vi.fn(() => sequence),
+      acceptPtyDataBounded: vi.fn((_id: string, _data: string, _at: number, rawLength: number) => {
+        sequence += rawLength
+        return { sequence, completion: Promise.resolve() }
+      }),
+      onPtyData: vi.fn(),
+      onPtyExit: vi.fn()
+    }
+    const id = 'ssh:exit-data-race@@relay-pty'
+
+    registerPtyHandlers(mainWindow as never, runtime as never)
+    mainWindow.webContents.send.mockClear()
+    await acceptSshPtyOutputData({
+      id,
+      data: 'before-exit',
+      providerGeneration: 51,
+      ptyIncarnation: 'incarnation-51',
+      rawLength: 'before-exit'.length,
+      transformed: false
+    })
+    const exit = acceptSshPtyOutputExit({
+      id,
+      code: 0,
+      providerGeneration: 51,
+      ptyIncarnation: 'incarnation-51'
+    })
+    await Promise.resolve()
+
+    provider.emitData(id, 'must-not-follow-exit')
+    expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty:data', {
+      id,
+      data: 'must-not-follow-exit'
+    })
+
+    getPtyAckDataListener()(null, { id, processedChars: 'before-exit'.length })
+    await exit
+    expect(mainWindow.webContents.send.mock.calls.at(-1)).toEqual([
+      'pty:exit',
+      {
+        id,
+        code: 0,
+        providerGeneration: 51,
+        ptyIncarnation: 'incarnation-51'
+      }
+    ])
   })
 
   it('resumes a paused producer when the PTY exits before draining', async () => {

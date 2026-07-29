@@ -45,6 +45,10 @@ export class SshPtyModelAdmissionPressure {
     return this.pausedKeys.size
   }
 
+  get pausedProviderGenerations(): ReadonlySet<number> {
+    return new Set(Array.from(this.pausedKeys.values(), (key) => key.providerGeneration))
+  }
+
   has(key: SshPtyModelAdmissionKey): boolean {
     return pressureHasAdmissionKey(this.entries, key)
   }

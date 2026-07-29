@@ -11,6 +11,7 @@ type ExitDeadlineHarness = Readonly<{
   intake: SshPtyOutputIntake
   dependencies: SshPtyOutputIntakeDependencies
   cancelSourceDelivery: ReturnType<typeof vi.fn>
+  releaseExit: ReturnType<typeof vi.fn>
   exits: string[]
 }>
 
@@ -24,12 +25,13 @@ function createHarness(
   cancelSourceDelivery: NonNullable<SshPtyOutputIntakeDependencies['cancelSourceDelivery']>
 ): ExitDeadlineHarness {
   const exits: string[] = []
+  const releaseExit = vi.fn()
   const cancellation = vi.fn(cancelSourceDelivery)
   const dependencies: SshPtyOutputIntakeDependencies = {
     getModelSequence: () => 0,
     acceptModel: (event) => ({ sequence: event.rawLength, completion: Promise.resolve() }),
     project: vi.fn(),
-    prepareExit: vi.fn(),
+    prepareExit: vi.fn(() => releaseExit),
     finalizeExit: () => exits.push('exit'),
     pauseProvider: vi.fn(() => true),
     resumeProvider: vi.fn(),
@@ -43,6 +45,7 @@ function createHarness(
     }),
     dependencies,
     cancelSourceDelivery: cancellation,
+    releaseExit,
     exits
   }
 }
@@ -96,6 +99,7 @@ describe('SshPtyOutputExitDeadline', () => {
       expect(harness.cancelSourceDelivery).toHaveBeenCalledOnce()
       expect(harness.dependencies.closeProvider).not.toHaveBeenCalled()
       expect(harness.dependencies.prepareExit).toHaveBeenCalledOnce()
+      expect(harness.releaseExit).toHaveBeenCalledOnce()
       expect(harness.exits).toEqual(['exit'])
       expect(harness.intake.getDebugSnapshot()).toMatchObject({
         projection: { records: 0 },

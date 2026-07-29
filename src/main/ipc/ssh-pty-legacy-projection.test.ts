@@ -170,11 +170,14 @@ describe('SshPtyLegacyProjectionLedger', () => {
       })
     )
     const id = projection.identity.projectionSemanticsId
+    expect(ledger.hasUnpublished(id)).toBe(true)
 
     ledger.publishPrefix([id], 2, 2)
+    expect(ledger.hasUnpublished(id)).toBe(true)
     ledger.settlePublishedPrefix('pty-1', 2)
     expect(settled).toEqual([])
     ledger.publishPrefix([id], 2, 2)
+    expect(ledger.hasUnpublished(id)).toBe(false)
     ledger.settlePublishedPrefix('pty-1', 2)
 
     expect(settled).toEqual([

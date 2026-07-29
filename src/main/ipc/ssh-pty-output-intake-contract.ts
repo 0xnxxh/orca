@@ -53,7 +53,7 @@ export type SshPtyOutputIntakeDependencies = {
     projection: LegacySshProjectionSemantics
   ) => { sequence: number; completion: Promise<void> }
   project: (event: SshPtyOutputDataEvent, projection: LegacySshProjectionSemantics) => void
-  prepareExit: (event: SshPtyOutputExitEvent) => void
+  prepareExit: (event: SshPtyOutputExitEvent) => void | (() => void)
   finalizeExit: (event: SshPtyOutputExitEvent) => void
   pauseProvider?: (providerGeneration: number, id: string) => boolean
   resumeProvider?: (providerGeneration: number, id: string) => void

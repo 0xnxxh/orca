@@ -208,6 +208,10 @@ export class SshPtyOutputIntake {
     )
   }
 
+  hasUnpublishedProjection(id: string): boolean {
+    return this.projections.hasUnpublished(id)
+  }
+
   closeGeneration(providerGeneration: number, reason: string): void {
     this.generationGuard.closeGeneration(providerGeneration)
     this.admission.closeGeneration(providerGeneration, reason)

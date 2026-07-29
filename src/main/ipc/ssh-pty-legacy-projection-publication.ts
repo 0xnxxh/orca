@@ -57,6 +57,22 @@ export function publishLegacyProjectionPrefix(
   }
 }
 
+export function hasUnpublishedLegacyProjection(
+  records: ReadonlyMap<string, ProjectionRecord>,
+  id: string
+): boolean {
+  const record = records.get(id)
+  if (!record || record.state === 'reserved') {
+    return false
+  }
+  const displayLength =
+    record.semantics.identity.displayEnd - record.semantics.identity.displayStart
+  return (
+    record.publishedDisplay < displayLength ||
+    record.publishedAccounting < record.semantics.identity.rawLength
+  )
+}
+
 export function settlePublishedLegacyProjectionPrefix(
   records: Map<string, ProjectionRecord>,
   idsByPty: Map<string, string[]>,
