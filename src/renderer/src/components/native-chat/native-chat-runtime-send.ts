@@ -49,7 +49,7 @@ export type NativeChatSendOptions = {
   /** Bytes that empty the agent's input line. Defaults to a single Ctrl+U. */
   clearInput?: string
   /**
-   * Observed check that the input line is now free of the injected draft.
+   * Observed check that the input line is now empty.
    * Supplied only for launch-draft replacement; when it reports "not cleared"
    * the send widens to a maximal burst before writing the body rather than
    * pasting on top of residue.
@@ -107,27 +107,6 @@ function clearThenWrite(
 /** Extra time a send needs when it stops to confirm the clear before the body. */
 function clearConfirmDurationMs(options?: NativeChatSendOptions): number {
   return options?.confirmCleared ? NATIVE_CHAT_CLEAR_CONFIRM_MS : 0
-}
-
-/**
- * Submit what the agent's input line ALREADY holds — Enter and nothing else.
- *
- * Used when the composer still holds exactly the launch draft Orca injected, so
- * the TUI buffer is already the message. No clear and no paste means nothing can
- * concatenate and a multi-line draft submits as one turn for free (measured: a
- * bare CR submits a multi-line buffer whole on both agents).
- */
-export function submitNativeChatDraftInPlace(
-  settings: RuntimeSettings,
-  ptyId: string
-): NativeChatSendHandle {
-  return enqueueNativeChatPtySend(ptyId, 0, ({ isCancelled, markSubmitted }) => {
-    if (isCancelled()) {
-      return
-    }
-    sendRuntimePtyInput(settings, ptyId, NATIVE_CHAT_SUBMIT)
-    markSubmitted()
-  })
 }
 
 /**

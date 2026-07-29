@@ -1,5 +1,5 @@
 // Send-path behaviour when a launch-context draft is still parked on the agent's
-// TUI input line: submit-in-place, the multi-line clear, and the confirm step.
+// TUI input line: the multi-line clear and its confirmation step.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -16,8 +16,7 @@ import {
   NATIVE_CHAT_SUBMIT_DELAY_MS,
   resetNativeChatPtySendQueuesForTests,
   sendNativeChatMessage,
-  sendNativeChatMessageWithImageAttachments,
-  submitNativeChatDraftInPlace
+  sendNativeChatMessageWithImageAttachments
 } from './native-chat-runtime-send'
 import { buildNativeChatPasteBytes, NATIVE_CHAT_SUBMIT } from './native-chat-send'
 import {
@@ -40,20 +39,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   resetNativeChatPtySendQueuesForTests()
-})
-
-describe('submitNativeChatDraftInPlace', () => {
-  it('writes ONLY the submit key — no clear, no body', () => {
-    // The buffer already holds the message, so anything else would either wipe
-    // it or paste a second copy alongside it.
-    submitNativeChatDraftInPlace(SETTINGS, PTY)
-    expect(writes()).toEqual([NATIVE_CHAT_SUBMIT])
-  })
-
-  it('does not write the clear byte at all', () => {
-    submitNativeChatDraftInPlace(SETTINGS, PTY)
-    expect(writes()).not.toContain(NATIVE_CHAT_CLEAR_UNSUBMITTED_INPUT)
-  })
 })
 
 describe('sendNativeChatMessage with a parked multi-line draft', () => {

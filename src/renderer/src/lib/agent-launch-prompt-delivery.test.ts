@@ -33,9 +33,8 @@ describe('seedNativeChatLaunchDraftForAgentTab', () => {
 
   it('mirrors multi-line text — the majority of real drafts', () => {
     // A Linear draft is always `Linked Linear issue: …\n<url>\n`, so rejecting
-    // newlines made EVERY Linear launch invisible in chat. The send path no
-    // longer pastes on top of the prefill (it submits the buffer in place, or
-    // clears every line first), so there is nothing left to glue.
+    // newlines made every Linear launch invisible in chat. Send now clears every
+    // parked line first, so there is nothing left to glue.
     const text = 'Linked Linear issue: STA-1234\nhttps://linear.app/o/issue/STA-1234\n'
     seedNativeChatLaunchDraftForAgentTab({ tabId: 'linear-tab', agent: 'codex', text })
 

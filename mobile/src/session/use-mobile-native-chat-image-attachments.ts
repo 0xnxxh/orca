@@ -361,6 +361,7 @@ export function useMobileNativeChatImageAttachments({
       enabled,
       onError,
       onSendError,
+      readSeededLaunchDraft,
       scopeKey,
       sleep
     ]

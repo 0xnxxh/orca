@@ -12,10 +12,7 @@ export function seedNativeChatLaunchDraftForAgentTab(args: {
   agent: TuiAgent
   text: string
 }): void {
-  // Multi-line drafts mirror too: the chat send no longer pastes on top of the
-  // parked prefill. It submits the TUI buffer in place when the composer still
-  // holds exactly what was injected, and otherwise clears every line before its
-  // body (agent-tui-input-clear.ts), so earlier lines cannot glue onto the message.
+  // Multi-line drafts are safe because chat clears every parked line before send.
   if (args.text.trim().length === 0 || !isNativeChatSupportedAgent(args.agent)) {
     return
   }

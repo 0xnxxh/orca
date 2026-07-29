@@ -113,7 +113,7 @@ export function useMobileNativeChatMessageSend(args: {
       // clearMobileNativeChatInput). A rejected clear aborts the send rather
       // than pasting on top of an uncleared line.
       const seededLaunchDraft = readSeededLaunchDraft()
-      if (seededLaunchDraft) {
+      if (seededLaunchDraft && !images?.length) {
         const cleared = await clearMobileNativeChatInput({
           client,
           terminal: handle,

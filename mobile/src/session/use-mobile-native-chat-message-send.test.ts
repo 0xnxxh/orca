@@ -145,12 +145,13 @@ describe('useMobileNativeChatMessageSend', () => {
     expect(sendWithOutcome.mock.calls[0]![0]).toMatchObject({ clearInputFirst: false })
   })
 
-  it('still skips the pre-clear for an image send, which pasted its own first', async () => {
+  it('does not clear an image send after the image was pasted', async () => {
     // A second clear here would wipe the image that was just pasted.
     mount(() => DRAFT)
     await act(async () => {
       await api!.send('caption', ['file:///a.png'])
     })
+    expect(clearInputWrite).not.toHaveBeenCalled()
     expect(sentArgs().clearInputFirst).toBe(false)
   })
 })
