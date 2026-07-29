@@ -42,7 +42,7 @@ describe('agent feature skill commands', () => {
 
   it('builds install commands non-interactively so a pasted command never stops on a prompt', () => {
     // Why: a pasted command hangs on npm's install-this-package prompt and on the
-    // CLI's agent selection, so both `npx --yes` and `-y` must not silently regress.
+    // CLI's own install selects, so both `npx --yes` and `-y` must not silently regress.
     expect(buildAgentFeatureSkillInstallCommand(['orca-cli'])).toBe(
       'npx --yes skills add https://github.com/stablyai/orca --skill orca-cli --global -y'
     )
