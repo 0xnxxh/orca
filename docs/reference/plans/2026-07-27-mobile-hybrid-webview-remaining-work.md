@@ -102,10 +102,10 @@ pixels and 0.910 mean channel difference; Review passes at 2.134% and 1.947,
 within the 3% / 4 budgets. The packaged document opts into native safe-area
 insets, and nested syntax text retains the native effective font behavior.
 
-The migration is based on `origin/main` at `a7c8b8e07`; the final rebase is
-complete and the branch is 55 commits ahead and zero behind. Post-rebase
+The migration is based on `origin/main` at `fa449bc0e`; the final rebase is
+complete and the branch is 57 commits ahead and zero behind. Post-rebase
 validation now passes 588 mobile files / 3,499 tests with 2 expected skips. The
-latest full root run from immediately before the final one-commit rebase passes
+latest full root run from before the final upstream rebases passes
 3,839 files / 40,326 tests with 71 expected skips except for one unrelated
 load-sensitive remote-runtime socket setup failure; its complete one-test file
 passes in a 194-millisecond isolated rerun. All project typechecks,
@@ -318,10 +318,10 @@ The production package now verifies as `3c0f364f…`: 50 assets, 9,135,273 raw
 bytes, and 2,644,558 gzip bytes. The full mobile suite passes 588 files / 3,499
 tests with 2 expected skips. All project typechecks; root, mobile, and
 mobile-web lint; all 56 reliability gates; localization; max-lines; formatting;
-and package verification pass. The latest full root run from immediately before
-the final one-commit rebase passes 3,839 files / 40,326 tests with 71 expected
-skips except for one unrelated load-sensitive remote-runtime socket setup
-failure; its complete one-test file passes in a 194-millisecond isolated rerun.
+and package verification pass. The latest full root run from before the final
+upstream rebases passes 3,839 files / 40,326 tests with 71 expected skips except
+for one unrelated load-sensitive remote-runtime socket setup failure; its
+complete one-test file passes in a 194-millisecond isolated rerun.
 
 The mirrored native package-store suites now pass 120 concurrent cache flows per
 platform. The expanded same-host matrix covers competing distinct generations,
