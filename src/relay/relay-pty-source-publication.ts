@@ -8,6 +8,7 @@ import type { PtySourceReceivingActivation } from '../shared/pty-source-receivin
 import {
   createPtySourceReceivingActivation,
   pendingPtySourceRecoveryResult,
+  registerCanceledPtySourceRetirement,
   registerPtySourceActivationSettlement,
   samePtySourceRecoveryRequest
 } from './relay-pty-source-activation'
@@ -294,8 +295,7 @@ export class RelayPtySourcePublication {
     current.restoreRequired = true
     current.activating = false
     this.sender.wakeSendWaiters(current)
-    current.recoveryCheckpointSourceEndSu = null
-    current.recoveryEndSu = null
+    registerCanceledPtySourceRetirement(current, context, this.deliveries, this.onCapacity)
     return this.publishRestoreRequired(id, context, reason)
   }
 

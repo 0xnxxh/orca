@@ -56,6 +56,23 @@ export function registerPtySourceActivationSettlement(options: {
   })
 }
 
+export function registerCanceledPtySourceRetirement(
+  record: RelayPtySourceDeliveryRecord,
+  context: RequestContext,
+  deliveries: Map<string, RelayPtySourceDeliveryRecord>,
+  onCapacity: (id: string) => void
+): void {
+  record.recoveryCheckpointSourceEndSu = null
+  record.recoveryEndSu = null
+  context.onResponseSettled!(() => {
+    if (deliveries.get(record.identity.id) !== record) {
+      return
+    }
+    deliveries.delete(record.identity.id)
+    onCapacity(record.identity.id)
+  })
+}
+
 export function pendingPtySourceRecoveryResult(
   record: RelayPtySourceDeliveryRecord
 ): PtySourceRecoveryResult {
