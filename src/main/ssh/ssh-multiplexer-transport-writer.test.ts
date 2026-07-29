@@ -47,7 +47,51 @@ function transportHarness(writeResults: (boolean | void)[]): WriterHarness {
 }
 
 describe('SshMultiplexerTransportWriter', () => {
-  it('preserves FIFO order and waits for drain after write(false)', () => {
+  it('selects queued control before ordinary backlog at the drain boundary', () => {
+    const harness = transportHarness([false, true, true, true])
+    const writer = new SshMultiplexerTransportWriter(harness.transport, vi.fn())
+
+    writer.enqueue(Buffer.from('ordinary-1'), 'ordinary')
+    writer.enqueue(Buffer.from('ordinary-2'), 'ordinary')
+    writer.enqueue(Buffer.from('ordinary-3'), 'ordinary')
+    writer.enqueue(Buffer.from('control'), 'control')
+
+    expect(harness.writes.map(String)).toEqual(['ordinary-1'])
+    harness.drain()
+    expect(harness.writes.map(String)).toEqual([
+      'ordinary-1',
+      'control',
+      'ordinary-2',
+      'ordinary-3'
+    ])
+    writer.dispose()
+  })
+
+  it('preserves FIFO within each lane and prevents ordinary starvation', () => {
+    const harness = transportHarness([false, ...Array<boolean>(8).fill(true)])
+    const writer = new SshMultiplexerTransportWriter(harness.transport, vi.fn())
+
+    writer.enqueue(Buffer.from('ordinary-1'), 'ordinary')
+    writer.enqueue(Buffer.from('ordinary-2'), 'ordinary')
+    for (let index = 1; index <= 6; index++) {
+      writer.enqueue(Buffer.from(`control-${index}`), 'control')
+    }
+
+    harness.drain()
+    expect(harness.writes.map(String)).toEqual([
+      'ordinary-1',
+      'control-1',
+      'control-2',
+      'control-3',
+      'control-4',
+      'ordinary-2',
+      'control-5',
+      'control-6'
+    ])
+    writer.dispose()
+  })
+
+  it('waits for drain and settles each write once', () => {
     const harness = transportHarness([false, true, true])
     const failed = vi.fn()
     const writer = new SshMultiplexerTransportWriter(harness.transport, failed)

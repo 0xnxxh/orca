@@ -1,4 +1,5 @@
 import { HEADER_LENGTH, MAX_MESSAGE_SIZE } from './relay-protocol'
+import { SshMultiplexerWriterLaneScheduler } from './ssh-multiplexer-writer-lane-scheduler'
 
 export type MultiplexerWriteSettlement = { ok: true } | { ok: false; error: Error }
 
@@ -41,7 +42,7 @@ function onceSettlement(
 }
 
 export class SshMultiplexerTransportWriter {
-  private readonly queue: WriterEntry[] = []
+  private readonly scheduler = new SshMultiplexerWriterLaneScheduler<WriterEntry>()
   private readonly inFlight = new Set<WriterEntry>()
   private readonly settleOnDrain = new Set<WriterEntry>()
   private ordinaryBytes = 0
@@ -91,7 +92,7 @@ export class SshMultiplexerTransportWriter {
     if (lane === 'liveness' && this.saturated) {
       this.writeEntry(entry)
     } else {
-      this.queue.push(entry)
+      this.scheduler.enqueue(entry, lane)
       this.pump()
     }
     return true
@@ -105,7 +106,7 @@ export class SshMultiplexerTransportWriter {
     this.saturated = false
     this.removeDrainListener?.()
     this.removeDrainListener = null
-    for (const entry of this.queue.splice(0)) {
+    for (const entry of this.scheduler.clear()) {
       this.release(entry, { ok: false, error })
     }
     for (const entry of Array.from(this.inFlight)) {
@@ -133,7 +134,7 @@ export class SshMultiplexerTransportWriter {
     this.pumping = true
     try {
       while (!this.closed && !this.saturated) {
-        const entry = this.queue.shift()
+        const entry = this.scheduler.select()
         if (!entry) {
           return
         }
