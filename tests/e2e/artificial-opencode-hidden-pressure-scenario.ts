@@ -7,6 +7,7 @@ import {
   type HiddenPressureOutputMode,
   writePressureOutputScript
 } from './artificial-opencode-hidden-pressure-script'
+import { waitForMarkerLatency } from './artificial-opencode-pane-interactions'
 import {
   ensureTerminalVisible,
   getActiveWorktreeId,
@@ -16,7 +17,6 @@ import {
   waitForSessionReady
 } from './helpers/store'
 import {
-  getTerminalContent,
   sendToTerminal,
   waitForActivePanePtyId,
   waitForActiveTerminalManager
@@ -83,11 +83,8 @@ type HiddenPressureAckGate = {
   heldAckChars: number
 }
 
-// Why: restore still has to finish promptly, but parallel Electron workers on
-// Linux CI can overshoot the 1s product target without a responsiveness regression.
-// Main relaxed this to 4s for drain-plus-poll overhead on loaded OSS runners; this
-// branch keeps a far stricter budget with only a small margin for the whole-buffer
-// serialize-poll overhead (seen at ~1.5s), so a genuinely slow restore is still caught.
+// Why: keep a runtime backstop so loaded CI still emits the measurement;
+// saved perf reports enforce the stricter 1s product budget.
 const MAX_HIDDEN_RESTORE_LATENCY_MS = 2_000
 // Why: Phase-4 hidden-delivery gate contract — hidden PTY bytes are dropped in
 // main after model ingestion, so renderer-delivery pressure must stay FAR
@@ -269,12 +266,7 @@ async function measureHiddenOutputRestoreLatency(
 ): Promise<number> {
   const restoreStart = performance.now()
   await switchToWorktree(orcaPage, worktreeId)
-  await expect
-    .poll(() => getTerminalContent(orcaPage, 20_000), {
-      timeout: 20_000,
-      message: 'Hidden PTY output was not restored from main buffer on return'
-    })
-    .toContain(`OPENCODE_PRESSURE_DONE_${runId}_`)
+  await waitForMarkerLatency(orcaPage, `OPENCODE_PRESSURE_DONE_${runId}_`, 20_000)
   return performance.now() - restoreStart
 }
 
