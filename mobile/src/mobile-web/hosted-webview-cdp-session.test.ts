@@ -602,6 +602,7 @@ describe('hosted WebView CDP target selection', () => {
       'terminalDeviceInput?.terminalClipboardImagePaste?.evidence'
     )
     expect(simulatorHarnessSource).toContain('verifyHostedWebViewExecutableIsolation')
+    expect(simulatorHarnessSource).toContain('verifyHostedWebViewPrivacyIsolation')
     expect(simulatorHarnessSource).toContain("await evidenceStep('Photos permission reset'")
     expect(simulatorHarnessSource).toContain('await clearHostedIosWebViewSecurityProbe(deviceUdid)')
     expect(simulatorAppBuildSource).toContain("'xcodebuild'")
@@ -623,6 +624,7 @@ describe('hosted WebView CDP target selection', () => {
     expect(androidSecurityHarnessSource).toContain('verifyHostedWebViewNetworkIsolation')
     expect(androidSecurityHarnessSource).toContain('verifyHostedWebViewNavigationIsolation')
     expect(androidSecurityHarnessSource).toContain('verifyHostedWebViewExecutableIsolation')
+    expect(androidSecurityHarnessSource).toContain('verifyHostedWebViewPrivacyIsolation')
     expect(androidSecurityHarnessSource).toContain('probe.observations.length > 0')
   })
 

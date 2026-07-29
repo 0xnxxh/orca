@@ -315,7 +315,7 @@ requested workspace. Existing Source Control, provider-review, file, and
 Markdown correlation remains in force.
 
 The production package now verifies as `8f452c7b…`: 50 assets, 9,134,984 raw
-bytes, and 2,644,462 gzip bytes. The full mobile suite passes 582 files / 3,453
+bytes, and 2,644,462 gzip bytes. The full mobile suite passes 583 files / 3,462
 tests with 2 expected skips. All project typechecks; root, mobile, and
 mobile-web lint; all 55 reliability gates; localization; max-lines; formatting;
 and package verification pass. The post-rebase full root run passes 3,839 files
@@ -343,8 +343,17 @@ graph aliases native client and host-store modules to inert implementations by
 exact resolved path; the unchanged UI remains while token storage, pairing
 cleanup, and logical-client authority leave the package. Focused tests and exact
 build `8f452c7b…` verification pass. The remaining security work below is exact
-release-app corpus testing, broader live cross-scope races, remaining DOM/crash
-report review, and independent review.
+release-app corpus testing, broader live cross-scope races, Android live
+privacy and native crash-report review, and independent review.
+
+A focused final-package iPhone 17 Pro / iOS 26.5 Simulator run now separates
+WebView isolation from unrelated native picker automation. The actual WKWebView
+passes network, navigation, popup, service-worker, download, external-scheme,
+and unmanifested-script isolation. Its private URL has no credentials or query;
+the 11,668-byte live DOM and History state contain zero privileged marker; Local
+Storage, Session Storage, and cookies are empty. A 12,238,623-byte, ten-minute
+Orca unified-log slice contains zero privileged-field, token-storage,
+native-authority, private-origin URL, WebSocket URL, or fixture marker.
 
 ## 1. Production Cutover and Cleanup
 
@@ -431,8 +440,9 @@ report review, and independent review.
       only reviewed hashes, IDs, and private-origin URLs. Hosted package
       resolution removes native token storage, pairing cleanup, and logical
       transport authority. Package policy rejects telemetry SDK/domain and
-      fixture-environment markers. Exact-app DOM inspection and native crash
-      report review remain.
+      fixture-environment markers. Exact-app iOS DOM, History, page-storage,
+      cookie, and unified-log inspection now passes. Equivalent Android live
+      privacy inspection and native crash-report review remain.
 - [ ] Verify all resource limits apply before allocation and during assembly.
       Persisted native manifests, activation metadata, and assets have
       pre-allocation read ceilings; every bridge operation has generated

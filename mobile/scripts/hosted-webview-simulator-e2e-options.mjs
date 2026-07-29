@@ -1,7 +1,7 @@
 import process from 'node:process'
 
 const usage =
-  'Usage: node scripts/run-hosted-webview-simulator-e2e.mjs [--device <name|udid>] [--timeout-ms <ms>] [--accounts-only] [--security-only] [--clipboard-image-only] [--photos-revocation-only] [--files-preview-only] [--native-settings-only] [--source-control-only] [--skip-native-build]'
+  'Usage: node scripts/run-hosted-webview-simulator-e2e.mjs [--device <name|udid>] [--timeout-ms <ms>] [--accounts-only] [--security-only] [--isolation-only] [--clipboard-image-only] [--photos-revocation-only] [--files-preview-only] [--native-settings-only] [--source-control-only] [--skip-native-build]'
 
 export function parseHostedWebViewSimulatorE2eOptions(args) {
   const parsed = {
@@ -9,6 +9,7 @@ export function parseHostedWebViewSimulatorE2eOptions(args) {
     clipboardImageOnly: false,
     device: 'iPhone 17 Pro',
     filesPreviewOnly: false,
+    isolationOnly: false,
     nativeSettingsOnly: false,
     photosRevocationOnly: false,
     securityOnly: false,
@@ -27,6 +28,8 @@ export function parseHostedWebViewSimulatorE2eOptions(args) {
       parsed.accountsOnly = true
     } else if (args[index] === '--security-only') {
       parsed.securityOnly = true
+    } else if (args[index] === '--isolation-only') {
+      parsed.isolationOnly = true
     } else if (args[index] === '--clipboard-image-only') {
       parsed.clipboardImageOnly = true
     } else if (args[index] === '--photos-revocation-only') {
@@ -53,6 +56,7 @@ export function parseHostedWebViewSimulatorE2eOptions(args) {
     [
       parsed.accountsOnly,
       parsed.clipboardImageOnly,
+      parsed.isolationOnly,
       parsed.securityOnly,
       parsed.filesPreviewOnly,
       parsed.nativeSettingsOnly,
@@ -62,6 +66,7 @@ export function parseHostedWebViewSimulatorE2eOptions(args) {
   ) {
     throw new Error('Focused journey options are mutually exclusive')
   }
-  parsed.securityOnly ||= parsed.clipboardImageOnly || parsed.photosRevocationOnly
+  parsed.securityOnly ||=
+    parsed.clipboardImageOnly || parsed.isolationOnly || parsed.photosRevocationOnly
   return parsed
 }

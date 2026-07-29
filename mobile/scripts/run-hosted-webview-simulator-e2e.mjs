@@ -22,6 +22,7 @@ import {
   waitForVisibleHostedWebView
 } from './hosted-webview-cdp-session.mjs'
 import { verifyHostedWebViewExecutableIsolation } from './hosted-webview-executable-isolation.mjs'
+import { verifyHostedWebViewPrivacyIsolation } from './hosted-webview-privacy-isolation.mjs'
 import { captureNativeAgentHistoryBaseline } from './hosted-ios-agent-history-parity.mjs'
 import {
   captureHostedCoreRouteParity,
@@ -232,14 +233,15 @@ async function main() {
       timeoutMs: options.timeoutMs,
       worktree
     }
-    const terminalDeviceInput = options.securityOnly
-      ? await evidenceStep('hosted terminal device input journey', () =>
-          verifyHostedIosTerminalInputJourney(
-            { ...securityJourney, expectedWorkspace, workspaceDocument },
-            options
+    const terminalDeviceInput =
+      options.securityOnly && !options.isolationOnly
+        ? await evidenceStep('hosted terminal device input journey', () =>
+            verifyHostedIosTerminalInputJourney(
+              { ...securityJourney, expectedWorkspace, workspaceDocument },
+              options
+            )
           )
-        )
-      : null
+        : null
     const hostedWorkspace =
       options.securityOnly ||
       options.filesPreviewOnly ||
@@ -384,7 +386,7 @@ async function main() {
         ? (terminalDeviceInput.terminalClipboardImagePaste?.sessionDocument ??
           terminalDeviceInput.photoPermissionRevocation?.sessionDocument ??
           terminalDeviceInput.terminalClipboardPaste.sessionDocument)
-        : options.accountsOnly || options.filesPreviewOnly
+        : options.accountsOnly || options.filesPreviewOnly || options.isolationOnly
           ? parityWorkspaceDocument
           : await waitForVisibleHostedWebView({
               discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
@@ -410,6 +412,9 @@ async function main() {
         probeId: networkProbe.token
       })
     )
+    const privacyIsolation = await evidenceStep('privacy isolation probe', () =>
+      verifyHostedWebViewPrivacyIsolation({ document: securityDocument })
+    )
     await delay(500)
     if (networkProbe.observations.length > 0) {
       throw new Error(
@@ -429,6 +434,7 @@ async function main() {
           networkIsolation,
           navigationIsolation,
           executableIsolation,
+          privacyIsolation,
           nativeOnboarding,
           documentUpload: terminalDeviceInput?.documentUpload?.evidence ?? null,
           photoPermissionDenial: terminalDeviceInput?.photoPermissionDenial?.evidence ?? null,

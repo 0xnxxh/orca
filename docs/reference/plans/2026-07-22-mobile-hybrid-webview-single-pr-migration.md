@@ -2863,6 +2863,17 @@ codes. The production executable policy rejects telemetry SDK/domain markers,
 test-fixture environment markers, and native credential-authority
 implementations.
 
+A focused exact-app iPhone 17 Pro / iOS 26.5 Simulator run now exercises those
+privacy boundaries independently from picker automation. The actual WKWebView
+retains its private origin with no credentials or query, and its 11,668-byte
+live DOM plus History state contain no credential, paired-host, fixture, token
+storage, or native-authority marker. Local Storage, Session Storage, and cookies
+are empty. Network, navigation, popup, service-worker, download, external-scheme,
+and undeclared-script probes all fail closed while the declared application and
+document remain active. A 12,238,623-byte, ten-minute Orca unified-log slice
+contains zero privileged-field, token-storage, native-authority, private-origin
+URL, WebSocket URL, or fixture marker.
+
 The mutation-authorization audit and 25-case valid-shaped response corpus now
 cover the code-level authorization and response-correlation portions of this
 gate. Package and privileged native-state namespaces are tied to the paired
