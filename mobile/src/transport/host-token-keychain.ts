@@ -55,13 +55,12 @@ async function loadGeneration(): Promise<number> {
   return cachedGeneration
 }
 
+// Why: reads only walk back from the recorded generation, so a token stored under a generation
+// we failed to record would be unreachable on the next launch. Let the failure propagate and
+// cache only after the record is durable, so callers can decline to write under it.
 async function commitGeneration(generation: number): Promise<void> {
+  await AsyncStorage.setItem(GENERATION_STORAGE_KEY, String(generation))
   cachedGeneration = generation
-  try {
-    await AsyncStorage.setItem(GENERATION_STORAGE_KEY, String(generation))
-  } catch {
-    // Why: the token is already written under this generation; losing the record only costs extra read probes.
-  }
 }
 
 export async function readHostTokenFromKeychain(tokenKey: string): Promise<string | null> {
@@ -103,11 +102,17 @@ export async function writeHostTokenToKeychain(tokenKey: string, token: string):
   if (rotated > MAX_GENERATION) {
     throw firstError
   }
-  // Why: commit the new generation only after the write under it lands, so a failed rotation doesn't retire a working service.
+  // Why: record the rotation before storing under it, so the token can never land under a
+  // generation reads won't probe. Advancing early is safe because reads walk back through every
+  // older service; the worst case is one spent generation and one extra probe per miss.
+  try {
+    await commitGeneration(rotated)
+  } catch {
+    throw firstError
+  }
   await SecureStore.setItemAsync(tokenKey, token, optionsForGeneration(rotated)).catch(() => {
     throw firstError
   })
-  await commitGeneration(rotated)
 }
 
 export async function deleteHostTokenFromKeychain(tokenKey: string): Promise<void> {

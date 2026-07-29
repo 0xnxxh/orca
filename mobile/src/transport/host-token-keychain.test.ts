@@ -102,12 +102,54 @@ describe('host token keychain', () => {
     expect(generationRecord).toBe('1')
   })
 
-  it('keeps the working service when a rotated write also fails, and surfaces the original error', async () => {
+  it('surfaces the original error when a rotated write also fails', async () => {
     secureStoreMock.setItemAsync.mockRejectedValue(ENCRYPT_REJECTION)
 
     await expect(writeHostTokenToKeychain(TOKEN_KEY, 'token')).rejects.toBe(ENCRYPT_REJECTION)
-    // Why: retiring a service on a rotation that didn't help would strand readable tokens for nothing.
+  })
+
+  it('never stores a token under a generation it could not durably record', async () => {
+    // Why: reads only walk back from the recorded generation, so a token written under an
+    // unrecorded one is silently unreachable after a relaunch and the host vanishes.
+    asyncStorageMock.setItem.mockRejectedValue(new Error('storage full'))
+    secureStoreMock.setItemAsync.mockImplementation(
+      async (_k: string, _v: string, options: Options) => {
+        if (serviceOf(options) === undefined) {
+          throw ENCRYPT_REJECTION
+        }
+      }
+    )
+
+    await expect(writeHostTokenToKeychain(TOKEN_KEY, 'token')).rejects.toBe(ENCRYPT_REJECTION)
+
+    const rotatedWrites = secureStoreMock.setItemAsync.mock.calls.filter(
+      (call) => serviceOf(call[2] as Options) !== undefined
+    )
+    expect(rotatedWrites).toHaveLength(0)
     expect(generationRecord).toBeNull()
+  })
+
+  it('records the rotation before storing the token so a relaunch can still find it', async () => {
+    const order: string[] = []
+    asyncStorageMock.setItem.mockImplementation(async (key: string, raw: string) => {
+      if (key === GENERATION_KEY) {
+        generationRecord = raw
+        order.push(`record:${raw}`)
+      }
+    })
+    secureStoreMock.setItemAsync.mockImplementation(
+      async (_k: string, _v: string, options: Options) => {
+        const service = serviceOf(options)
+        if (service === undefined) {
+          throw ENCRYPT_REJECTION
+        }
+        order.push(`store:${service}`)
+      }
+    )
+
+    await writeHostTokenToKeychain(TOKEN_KEY, 'token')
+
+    expect(order).toEqual(['record:1', 'store:orca.host-tokens.v1'])
   })
 
   it('reads through the rotated service once a rotation has been committed', async () => {
