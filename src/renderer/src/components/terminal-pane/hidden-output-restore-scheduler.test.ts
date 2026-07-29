@@ -57,6 +57,38 @@ describe('hidden output restore scheduler', () => {
     expect(activeRestore).toHaveBeenCalledTimes(1)
   })
 
+  it('waits for every active restore before draining inactive panes', async () => {
+    let settleFirst: (() => void) | undefined
+    let settleSecond: (() => void) | undefined
+    const inactiveRestore = vi.fn()
+    const firstActiveRestore = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          settleFirst = resolve
+        })
+    )
+    const secondActiveRestore = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          settleSecond = resolve
+        })
+    )
+
+    scheduleHiddenOutputRestore({}, inactiveRestore, 'inactive')
+    scheduleHiddenOutputRestore({}, firstActiveRestore, 'active')
+    scheduleHiddenOutputRestore({}, secondActiveRestore, 'active')
+    await vi.advanceTimersByTimeAsync(160)
+    expect(inactiveRestore).not.toHaveBeenCalled()
+
+    settleFirst?.()
+    await vi.advanceTimersByTimeAsync(160)
+    expect(inactiveRestore).not.toHaveBeenCalled()
+
+    settleSecond?.()
+    await vi.advanceTimersByTimeAsync(16)
+    expect(inactiveRestore).toHaveBeenCalledTimes(1)
+  })
+
   it('can cancel pending inactive restores', () => {
     const target = {}
     const requestRestore = vi.fn()
@@ -66,5 +98,51 @@ describe('hidden output restore scheduler', () => {
     vi.runOnlyPendingTimers()
 
     expect(requestRestore).not.toHaveBeenCalled()
+  })
+
+  it('releases active priority when its target is canceled', async () => {
+    const activeTarget = {}
+    const activeRestore = vi.fn(() => new Promise<void>(() => undefined))
+    const inactiveRestore = vi.fn()
+
+    scheduleHiddenOutputRestore(activeTarget, activeRestore, 'active')
+    scheduleHiddenOutputRestore({}, inactiveRestore, 'inactive')
+    cancelScheduledHiddenOutputRestore(activeTarget)
+    await vi.advanceTimersByTimeAsync(16)
+
+    expect(inactiveRestore).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores completion from a superseded active restore', async () => {
+    const activeTarget = {}
+    let settleFirst: (() => void) | undefined
+    let settleSecond: (() => void) | undefined
+    const inactiveRestore = vi.fn()
+
+    scheduleHiddenOutputRestore(
+      activeTarget,
+      () =>
+        new Promise<void>((resolve) => {
+          settleFirst = resolve
+        }),
+      'active'
+    )
+    scheduleHiddenOutputRestore(
+      activeTarget,
+      () =>
+        new Promise<void>((resolve) => {
+          settleSecond = resolve
+        }),
+      'active'
+    )
+    scheduleHiddenOutputRestore({}, inactiveRestore, 'inactive')
+
+    settleFirst?.()
+    await vi.advanceTimersByTimeAsync(160)
+    expect(inactiveRestore).not.toHaveBeenCalled()
+
+    settleSecond?.()
+    await vi.advanceTimersByTimeAsync(16)
+    expect(inactiveRestore).toHaveBeenCalledTimes(1)
   })
 })

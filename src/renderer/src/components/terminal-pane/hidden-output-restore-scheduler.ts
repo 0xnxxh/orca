@@ -1,6 +1,6 @@
 type HiddenOutputRestorePriority = 'active' | 'inactive'
 
-type HiddenOutputRestoreRequest = () => void
+type HiddenOutputRestoreRequest = () => void | Promise<void>
 
 type HiddenOutputRestoreEntry = {
   requestRestore: HiddenOutputRestoreRequest
@@ -11,6 +11,8 @@ type HiddenOutputRestoreEntry = {
 const INACTIVE_RESTORE_INTERVAL_MS = 16
 
 const inactiveRestoreQueue = new Map<object, HiddenOutputRestoreEntry>()
+// Why: overlapping deep replays can starve the active pane the user is returning to.
+const activeRestoreTokensByTarget = new Map<object, object>()
 let inactiveRestoreTimer: ReturnType<typeof setTimeout> | null = null
 
 function clearInactiveRestoreTimer(): void {
@@ -22,14 +24,48 @@ function clearInactiveRestoreTimer(): void {
 }
 
 function scheduleInactiveRestoreDrain(): void {
-  if (inactiveRestoreTimer !== null || inactiveRestoreQueue.size === 0) {
+  if (
+    inactiveRestoreTimer !== null ||
+    activeRestoreTokensByTarget.size > 0 ||
+    inactiveRestoreQueue.size === 0
+  ) {
     return
   }
   inactiveRestoreTimer = setTimeout(drainInactiveRestoreQueue, INACTIVE_RESTORE_INTERVAL_MS)
 }
 
+function finishActiveRestore(target: object, token: object): void {
+  if (activeRestoreTokensByTarget.get(target) !== token) {
+    return
+  }
+  activeRestoreTokensByTarget.delete(target)
+  scheduleInactiveRestoreDrain()
+}
+
+function runActiveRestore(target: object, requestRestore: HiddenOutputRestoreRequest): void {
+  const token = {}
+  activeRestoreTokensByTarget.set(target, token)
+  try {
+    const completion = requestRestore()
+    if (completion) {
+      void completion.then(
+        () => finishActiveRestore(target, token),
+        () => finishActiveRestore(target, token)
+      )
+      return
+    }
+  } catch (error) {
+    finishActiveRestore(target, token)
+    throw error
+  }
+  finishActiveRestore(target, token)
+}
+
 function drainInactiveRestoreQueue(): void {
   inactiveRestoreTimer = null
+  if (activeRestoreTokensByTarget.size > 0) {
+    return
+  }
   const next = inactiveRestoreQueue.entries().next()
   if (next.done) {
     return
@@ -47,7 +83,7 @@ export function scheduleHiddenOutputRestore(
 ): void {
   if (priority === 'active') {
     cancelScheduledHiddenOutputRestore(target)
-    requestRestore()
+    runActiveRestore(target, requestRestore)
     return
   }
   inactiveRestoreQueue.set(target, { requestRestore })
@@ -56,12 +92,17 @@ export function scheduleHiddenOutputRestore(
 
 export function cancelScheduledHiddenOutputRestore(target: object): void {
   inactiveRestoreQueue.delete(target)
+  const activeToken = activeRestoreTokensByTarget.get(target)
+  if (activeToken) {
+    finishActiveRestore(target, activeToken)
+  }
   if (inactiveRestoreQueue.size === 0) {
     clearInactiveRestoreTimer()
   }
 }
 
 export function resetHiddenOutputRestoreSchedulerForTests(): void {
+  activeRestoreTokensByTarget.clear()
   inactiveRestoreQueue.clear()
   clearInactiveRestoreTimer()
 }

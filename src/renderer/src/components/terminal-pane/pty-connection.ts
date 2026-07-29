@@ -7048,6 +7048,16 @@ export function connectPanePty(
         }
         cancelScheduledHiddenOutputRestore(pane.terminal)
         hiddenOutputRestoreScheduled = false
+        let restoreRequested = false
+        scheduleHiddenOutputRestore(
+          pane.terminal,
+          () => {
+            restoreRequested = requestHiddenOutputRestoreIfNeeded({ bypassScheduler: true })
+            return hiddenOutputRestoreInFlight ?? undefined
+          },
+          priority
+        )
+        return restoreRequested
       }
       clearHiddenOutputRestoreDeferredRetryTimer()
       hiddenOutputRestoreRetryDeferred = false
