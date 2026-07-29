@@ -20,6 +20,7 @@ import type { RuntimeWorktreeListResult } from '../../../../shared/runtime-types
 import {
   findWorktreeById,
   applyWorktreeUpdates,
+  withoutErasedRequiredWorktreeFields,
   getRepoIdFromWorktreeId,
   type DirectSshWorktreeFetchOptions,
   type WorktreeFetchOptions,
@@ -56,6 +57,7 @@ import { requestVirtualizedScrollAnchorRecord } from '@/hooks/requestVirtualized
 import { forgetAgentHibernationTabOutput } from '@/lib/agent-hibernation-output-activity'
 import { forgetForegroundTerminalTabs } from '@/lib/foreground-terminal-tabs'
 import { forgetAgentStartupDeliveriesForTabs } from '@/lib/agent-startup-delivery-guards'
+import { forgetAgentPaneAuthorityAliasesByTabIds } from './agent-pane-authority'
 import { branchName } from '@/lib/git-utils'
 import { markInputQuietSchedulerInput, scheduleAfterInputQuiet } from '@/lib/input-quiet-scheduler'
 import { clearSessionCommitDraftForWorktree } from '@/lib/source-control-commit-draft-session'
@@ -705,8 +707,10 @@ function notifyRuntimeScopeForbiddenIfNeeded(error: unknown): boolean {
 function applyDetectedWorktreeUpdates(
   detectedWorktreesByRepo: AppState['detectedWorktreesByRepo'],
   worktreeId: string,
-  updates: Partial<WorktreeMeta>
+  rawUpdates: Partial<WorktreeMeta>
 ): AppState['detectedWorktreesByRepo'] {
+  // Why: mirrors applyWorktreeUpdates — detected rows feed the same palette.
+  const updates = withoutErasedRequiredWorktreeFields(rawUpdates)
   let changed = false
   const nextByRepo: AppState['detectedWorktreesByRepo'] = {}
 
@@ -2293,6 +2297,9 @@ function buildWorktreePurgeState(s: AppState, worktreeIds: string[]): Partial<Ap
   // Why: same rationale for doomed tabs' foreground last-seen timestamps and agent-startup delivery guards — retired tab ids never recur.
   forgetForegroundTerminalTabs(doomedTabIds)
   forgetAgentStartupDeliveriesForTabs(doomedTabIds)
+  // Why: pane-authority aliases outlive the store maps they route to, so a purged
+  // tab would leave a permanent entry pointing at a pane that no longer exists.
+  forgetAgentPaneAuthorityAliasesByTabIds(doomedTabIds)
   // Why: per-page browser maps are keyed by page id, so collect every page of a doomed workspace to evict here (the authoritative-scan reconcile skips closeBrowserTab's cleanup).
   for (const workspaceId of doomedBrowserWorkspaceIds) {
     for (const page of s.browserPagesByWorkspace[workspaceId] ?? []) {
@@ -2479,6 +2486,7 @@ function buildWorktreePurgeState(s: AppState, worktreeIds: string[]): Partial<Ap
     runtimePaneTitlesByTabId: omitByTabId(s.runtimePaneTitlesByTabId),
     automaticAgentResumeClaimsByTabId: omitByTabId(s.automaticAgentResumeClaimsByTabId),
     nativeChatLaunchPromptByTabId: omitByTabId(s.nativeChatLaunchPromptByTabId),
+    nativeChatLaunchDraftByTabId: omitByTabId(s.nativeChatLaunchDraftByTabId),
     // Why: bulk/hydration purge runs no terminal teardown, so it must drop the per-tab pane-expand flags itself.
     expandedPaneByTabId: omitByTabId(s.expandedPaneByTabId),
     canExpandPaneByTabId: omitByTabId(s.canExpandPaneByTabId),
@@ -3863,6 +3871,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           ...s.automaticAgentResumeClaimsByTabId
         }
         const nextNativeChatLaunchPromptByTabId = { ...s.nativeChatLaunchPromptByTabId }
+        const nextNativeChatLaunchDraftByTabId = { ...s.nativeChatLaunchDraftByTabId }
         // Why: closeTab deletes these per-tab maps but removeWorktree missed them, leaking a split pane's expand flags.
         const nextExpandedPaneByTabId = { ...s.expandedPaneByTabId }
         const nextCanExpandPaneByTabId = { ...s.canExpandPaneByTabId }
@@ -3872,6 +3881,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           delete nextRuntimePaneTitlesByTabId[tabId]
           delete nextAutomaticAgentResumeClaimsByTabId[tabId]
           delete nextNativeChatLaunchPromptByTabId[tabId]
+          delete nextNativeChatLaunchDraftByTabId[tabId]
           delete nextExpandedPaneByTabId[tabId]
           delete nextCanExpandPaneByTabId[tabId]
         }
@@ -4003,6 +4013,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           runtimePaneTitlesByTabId: nextRuntimePaneTitlesByTabId,
           automaticAgentResumeClaimsByTabId: nextAutomaticAgentResumeClaimsByTabId,
           nativeChatLaunchPromptByTabId: nextNativeChatLaunchPromptByTabId,
+          nativeChatLaunchDraftByTabId: nextNativeChatLaunchDraftByTabId,
           terminalLayoutsByTabId: nextLayouts,
           expandedPaneByTabId: nextExpandedPaneByTabId,
           canExpandPaneByTabId: nextCanExpandPaneByTabId,
