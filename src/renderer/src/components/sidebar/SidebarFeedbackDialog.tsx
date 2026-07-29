@@ -80,8 +80,8 @@ export function SidebarFeedbackDialog({
   // the dialog unmounts as well as when an attachment is removed.
   React.useEffect(() => clearImages, [clearImages])
 
-  const imageCountRef = useRef(0)
-  imageCountRef.current = images.length
+  const imageCount = images.length
+
   // Why: committed state lags the in-flight reads, so batches still being read
   // count against capacity — otherwise two quick pastes both see room for four.
   const pendingImageReadsRef = useRef(0)
@@ -91,7 +91,10 @@ export function SidebarFeedbackDialog({
       if (files.length === 0) {
         return
       }
-      const existingCount = imageCountRef.current + pendingImageReadsRef.current
+      // Why: read the committed count from the closure rather than a ref. A ref
+      // synced in an effect can still be stale-low right after an add, which
+      // over-accepts and gets the whole submission rejected by the main process.
+      const existingCount = imageCount + pendingImageReadsRef.current
       pendingImageReadsRef.current += files.length
       void readFeedbackImageFiles(files, existingCount).then(
         ({ images: added, errors }) => {
@@ -121,7 +124,7 @@ export function SidebarFeedbackDialog({
         }
       )
     },
-    [mountedRef]
+    [imageCount, mountedRef]
   )
 
   const handleRemoveImage = React.useCallback((id: string) => {
