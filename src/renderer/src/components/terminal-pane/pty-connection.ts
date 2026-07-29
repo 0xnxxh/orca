@@ -7070,10 +7070,11 @@ export function connectPanePty(
                 ) {
                   return
                 }
-                requestHiddenOutputRestoreIfNeeded({
+                const restoreRequested = requestHiddenOutputRestoreIfNeeded({
                   bypassScheduler: true,
                   debugPriority: priority
                 })
+                return restoreRequested ? (hiddenOutputRestoreInFlight ?? undefined) : undefined
               },
               priority
             )

@@ -44,6 +44,28 @@ describe('hidden output restore scheduler', () => {
     expect(secondRestore).toHaveBeenCalledTimes(1)
   })
 
+  it('waits for an inactive restore to finish before starting the next', async () => {
+    let settleFirst: (() => void) | undefined
+    const firstRestore = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          settleFirst = resolve
+        })
+    )
+    const secondRestore = vi.fn()
+
+    scheduleHiddenOutputRestore({}, firstRestore, 'inactive')
+    scheduleHiddenOutputRestore({}, secondRestore, 'inactive')
+
+    await vi.advanceTimersByTimeAsync(160)
+    expect(firstRestore).toHaveBeenCalledTimes(1)
+    expect(secondRestore).not.toHaveBeenCalled()
+
+    settleFirst?.()
+    await vi.advanceTimersByTimeAsync(16)
+    expect(secondRestore).toHaveBeenCalledTimes(1)
+  })
+
   it('cancels pending inactive restore when a target is promoted', () => {
     const target = {}
     const inactiveRestore = vi.fn()
@@ -98,6 +120,45 @@ describe('hidden output restore scheduler', () => {
     vi.runOnlyPendingTimers()
 
     expect(requestRestore).not.toHaveBeenCalled()
+  })
+
+  it('releases a canceled inactive slot and ignores its stale completion', async () => {
+    const firstTarget = {}
+    let settleFirst: (() => void) | undefined
+    let settleSecond: (() => void) | undefined
+    const firstRestore = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          settleFirst = resolve
+        })
+    )
+    const secondRestore = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          settleSecond = resolve
+        })
+    )
+    const thirdRestore = vi.fn()
+
+    scheduleHiddenOutputRestore(firstTarget, firstRestore, 'inactive')
+    scheduleHiddenOutputRestore({}, secondRestore, 'inactive')
+    scheduleHiddenOutputRestore({}, thirdRestore, 'inactive')
+    await vi.advanceTimersByTimeAsync(16)
+
+    cancelScheduledHiddenOutputRestore(firstTarget)
+    await vi.advanceTimersByTimeAsync(16)
+
+    expect(firstRestore).toHaveBeenCalledTimes(1)
+    expect(secondRestore).toHaveBeenCalledTimes(1)
+    expect(thirdRestore).not.toHaveBeenCalled()
+
+    settleFirst?.()
+    await vi.advanceTimersByTimeAsync(160)
+    expect(thirdRestore).not.toHaveBeenCalled()
+
+    settleSecond?.()
+    await vi.advanceTimersByTimeAsync(16)
+    expect(thirdRestore).toHaveBeenCalledTimes(1)
   })
 
   it('releases active priority when its target is canceled', async () => {
