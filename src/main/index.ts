@@ -137,6 +137,7 @@ import {
 import { maybeRedirectAppImageCliLaunch } from './startup/appimage-cli-redirect'
 import { maybeRedirectPackagedCliEntryLaunch } from './startup/packaged-cli-entry-redirect'
 import { startFirstWindowStartupServices } from './startup/first-window-startup-services'
+import { recoverLegacyWorkerTerminalsForRendererStartup } from './startup/legacy-worker-renderer-recovery'
 import { createWslCliReconciliationStartupBarrier } from './startup/wsl-cli-reconciliation-startup-barrier'
 import { getDevInstanceIdentity } from './startup/dev-instance-identity'
 import { hydrateShellPath, mergePathSegments } from './startup/hydrate-shell-path'
@@ -728,15 +729,17 @@ if (hasSingleInstanceLock) {
   headlessBrowserDisplayAvailable = ensureVirtualDisplayForHeadlessServe({ isServeMode })
 }
 
-ipcMain.handle('app:awaitFirstWindowStartupServices', async () => {
-  // Why: restored WSL terminals get a bounded chance to receive launcher repairs before window rendering proceeds.
-  await Promise.all([
+ipcMain.handle('app:awaitFirstWindowStartupServices', () =>
+  recoverLegacyWorkerTerminalsForRendererStartup({
     firstWindowStartupServicesReady,
+    managedWslCliStartupBarrierReady,
     localPtyProviderStartupReady,
-    managedWslCliStartupBarrierReady
-  ])
-  await runtime?.reconcileLegacyWorkerTerminals({ materializeRenderer: true })
-})
+    reconcile: () => runtime?.reconcileLegacyWorkerTerminals({ materializeRenderer: true }),
+    onDeferredRecoveryError: (error) => {
+      console.warn('[orchestration] legacy worker provider-ready recovery failed', error)
+    }
+  })
+)
 
 // Why: the renderer pulls this once its ui:openSettings listener attaches, so a Settings request queued before mount isn't lost.
 ipcMain.handle('ui:consumePendingOpenSettings', (event) =>
