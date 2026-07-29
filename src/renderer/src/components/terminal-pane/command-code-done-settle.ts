@@ -17,7 +17,10 @@ type CommandCodeDoneSettleExecutor = (normalizedPrompt: string) => void
 const executorByPaneKey = new Map<string, CommandCodeDoneSettleExecutor>()
 const timerByPaneKey = new Map<string, ReturnType<typeof setTimeout>>()
 
-/** Registers the current writer for this pane; returns its release. */
+/** Registers the current writer for this pane; returns its release.
+ *  Last registrant wins by design: park and reveal each hand the pane to a new
+ *  owner while the predecessor is still registered, so refusing the overwrite
+ *  would leave the row with an owner that can no longer write it. */
 export function setCommandCodeDoneSettleExecutor(
   paneKey: string,
   execute: CommandCodeDoneSettleExecutor

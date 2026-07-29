@@ -1031,6 +1031,9 @@ function Terminal(): React.JSX.Element | null {
         capturedForceParked.delete(id)
       }
     }
+    // Why getState and not a dep: this read happens in the same pass that
+    // unmounts the panes, so it is the current catalog; re-running on a later
+    // repos change could not re-capture buffers whose panes are already gone.
     const repos = useAppStore.getState().repos
     const nextEvictionExemptTabIds = new Set<string>()
     for (const worktreeId of forceParkedWorktreeIds) {

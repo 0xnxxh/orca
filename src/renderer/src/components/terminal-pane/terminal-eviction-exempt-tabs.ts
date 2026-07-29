@@ -60,3 +60,28 @@ export function selectEvictionExemptTerminalTabIds(
   }
   return exemptTabIds
 }
+
+type EvictionExemptTabLayoutState = {
+  terminalLayoutsByTabId: Record<string, { ptyIdsByLeafId?: Record<string, string> } | undefined>
+}
+
+/**
+ * Memo key over the store half of an exemption verdict: a split add or a
+ * re-minted leaf pty changes the layout's pane PTYs without changing the tabs
+ * array, and a memo keyed on tabs alone would keep serving an exempt set that
+ * misses the new pane — force-park would unmount it and orphan a live shell.
+ */
+export function selectEvictionExemptTerminalTabLayoutKey(
+  state: EvictionExemptTabLayoutState,
+  tabs: readonly ParkableTerminalTabModel[]
+): string {
+  return tabs
+    .map((tab) => {
+      const ptyIdsByLeafId = state.terminalLayoutsByTabId[tab.id]?.ptyIdsByLeafId ?? {}
+      const leafPtys = Object.entries(ptyIdsByLeafId)
+        .map(([leafId, ptyId]) => `${leafId}:${ptyId}`)
+        .join(',')
+      return `${tab.id}=${leafPtys}`
+    })
+    .join('|')
+}

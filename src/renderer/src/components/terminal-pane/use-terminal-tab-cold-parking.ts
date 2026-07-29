@@ -24,7 +24,10 @@ import {
   type ParkVerdictFlipRecord
 } from './terminal-park-verdict-flip-telemetry'
 import { getTerminalParkingPolicyOverrides } from './terminal-parking-e2e-overrides'
-import { selectEvictionExemptTerminalTabIds } from './terminal-eviction-exempt-tabs'
+import {
+  selectEvictionExemptTerminalTabIds,
+  selectEvictionExemptTerminalTabLayoutKey
+} from './terminal-eviction-exempt-tabs'
 import {
   canWatcherCoverParkedTerminalTab,
   disposeParkedTerminalWatchersForWorktree,
@@ -246,13 +249,21 @@ export function useTerminalTabColdParking(args: {
     worktreeId
   ])
 
+  // Why subscribed: the exemption also reads layout leaf PTYs, which change
+  // without a terminalTabs change (split added, pty re-minted); gated on
+  // isForceParked so only force-parked worktrees build the key per store change.
+  const evictionExemptLayoutKey = useAppStore((state) =>
+    isForceParked ? selectEvictionExemptTerminalTabLayoutKey(state, terminalTabs) : ''
+  )
   // Why memoized: resolving an exemption re-reads the store and walks the
-  // layout tree per tab, so recompute only when the force-park verdict or the
-  // tabs change — not on every assignment/park-set change below.
+  // layout tree per tab, so recompute only when the force-park verdict, the
+  // tabs, or their layout PTYs change — not on every assignment/park-set change
+  // below.
   const evictionExemptTerminalTabIds = useMemo(
     () =>
       isForceParked ? selectEvictionExemptTerminalTabIds(worktreeId, terminalTabs) : EMPTY_TAB_IDS,
-    [isForceParked, terminalTabs, worktreeId]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the layout key encodes the store fields the selector re-reads internally.
+    [evictionExemptLayoutKey, isForceParked, terminalTabs, worktreeId]
   )
 
   // Why: the rendered park verdict — worktree-level park (prop from

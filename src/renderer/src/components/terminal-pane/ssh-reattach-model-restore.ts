@@ -54,6 +54,9 @@ export function decideSshReattachPaintSource(args: {
   }
   // Why the escape tail is excluded: a dangling mid-escape is not content — a
   // model holding only one paints a blank pane, which this gate forbids.
+  // Accepted cost: a session that wrote only control-sequence preamble before
+  // parking always falls back to relay; the gate cannot tell it apart from a
+  // model that never received content, and relay replays that preamble anyway.
   const contentLength = (args.snapshot.scrollbackAnsi?.length ?? 0) + args.snapshot.data.length
   return contentLength === 0 ? 'relay-replay' : 'main-model-snapshot'
 }

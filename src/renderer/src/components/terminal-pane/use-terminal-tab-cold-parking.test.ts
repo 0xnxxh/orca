@@ -6,7 +6,8 @@ import type { TerminalTab } from '../../../../shared/types'
 const mocks = vi.hoisted(() => ({
   storeState: {
     pendingStartupByTabId: {} as Record<string, unknown>,
-    settings: {} as Record<string, unknown>
+    settings: {} as Record<string, unknown>,
+    terminalLayoutsByTabId: {} as Record<string, { ptyIdsByLeafId?: Record<string, string> }>
   },
   exemptTabIds: new Set<string>(),
   exemptSelectCalls: 0
@@ -20,7 +21,16 @@ vi.mock('./terminal-eviction-exempt-tabs', () => ({
   selectEvictionExemptTerminalTabIds: (_worktreeId: string, tabs: readonly { id: string }[]) => {
     mocks.exemptSelectCalls += 1
     return new Set(tabs.filter((tab) => mocks.exemptTabIds.has(tab.id)).map((tab) => tab.id))
-  }
+  },
+  selectEvictionExemptTerminalTabLayoutKey: (
+    state: typeof mocks.storeState,
+    tabs: readonly { id: string }[]
+  ) =>
+    tabs
+      .map(
+        (tab) => `${tab.id}=${JSON.stringify(state.terminalLayoutsByTabId[tab.id]?.ptyIdsByLeafId)}`
+      )
+      .join('|')
 }))
 
 vi.mock('./terminal-parked-tab-watchers', () => ({
@@ -64,6 +74,7 @@ describe('useTerminalTabColdParking measure-clock contract', () => {
     vi.useRealTimers()
     mocks.exemptTabIds = new Set()
     mocks.exemptSelectCalls = 0
+    mocks.storeState.terminalLayoutsByTabId = {}
   })
 
   // Why: the worktree layer preserves hiddenSince through a background-measure
@@ -152,6 +163,34 @@ describe('useTerminalTabColdParking measure-clock contract', () => {
       rerender({ ...hookArgs(false), coldParkTerminalPanes: true, isForceParked: false })
     })
     expect(result.current.parkedTerminalTabIds).toEqual(new Set(['tab-1', 'tab-2']))
+  })
+
+  // Why: a split lands in the layout store, not in terminalTabs — a memo keyed
+  // on the tabs alone would keep serving a set that misses the new pane and
+  // unmount the live shell it should have exempted.
+  it('re-resolves exemptions when only the layout PTYs change', () => {
+    const stableArgs = { ...hookArgs(false), coldParkTerminalPanes: true, isForceParked: true }
+    const { result, rerender } = renderHook(
+      (args: typeof stableArgs) => useTerminalTabColdParking(args),
+      { initialProps: stableArgs }
+    )
+    expect(result.current.parkedTerminalTabIds).toEqual(new Set(['tab-1', 'tab-2']))
+
+    // Same tabs, same verdict: nothing the memo can see has moved yet.
+    mocks.exemptTabIds = new Set(['tab-1'])
+    act(() => {
+      rerender(stableArgs)
+    })
+    expect(result.current.parkedTerminalTabIds).toEqual(new Set(['tab-1', 'tab-2']))
+
+    // The split's leaf pty lands in the layout store and re-keys the memo.
+    mocks.storeState.terminalLayoutsByTabId = {
+      'tab-1': { ptyIdsByLeafId: { 'leaf-2': 'pty-local-detached' } }
+    }
+    act(() => {
+      rerender(stableArgs)
+    })
+    expect(result.current.parkedTerminalTabIds).toEqual(new Set(['tab-2']))
   })
 
   // Why: resolving an exemption re-reads the store and walks the layout tree per
