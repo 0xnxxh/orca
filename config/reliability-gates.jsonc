@@ -3096,24 +3096,26 @@
       "providers": ["local", "daemon", "ssh", "remote-runtime"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["ssh"],
-      "coverageNotes": "Local macOS evidence covers main-process pending-output caps, runtime path-provenance history reuse, saturated-tail wait detection, direct-SSH source retention/accounting, decoder input bounds, and bounded reconnect scheduling through deterministic unit contracts. A joined main/runtime oracle exercises renderer-sourced headed semantics and headless-model snapshot semantics without launching a live paired server. Separately, a macOS-hosted Docker OpenSSH run exercises only the deployed Linux relay and direct SSH provider, with an exact 256 KiB source-credit plateau, concurrent PTY typing, fixed-size filesystem frames, Git churn, and owner-lease reconnect. Neither deterministic topology labels nor Docker SSH constitute live headed desktop or headless orca serve pairing evidence; local/daemon, prior-version daemons, WSL, Windows named pipes/ConPTY, folder workspaces, and mixed-version clients also remain uncovered.",
+      "coverageNotes": "Local macOS evidence covers main-process pending-output caps, runtime path-provenance history reuse, saturated-tail wait detection, direct-SSH source retention/accounting, decoder input bounds, bounded reconnect scheduling, and WSL stdio transport settlement through deterministic unit contracts. A joined main/runtime oracle exercises renderer-sourced headed semantics and headless-model snapshot semantics without launching a live paired server. Separately, a macOS-hosted Docker OpenSSH run exercises only the deployed Linux relay and direct SSH provider, with an exact 256 KiB source-credit plateau, concurrent PTY typing, fixed-size filesystem frames, Git churn, and owner-lease reconnect. Neither deterministic topology labels nor Docker SSH constitute live headed desktop, headless orca serve, or physical WSL evidence; local/daemon, prior-version daemons, Windows named pipes/ConPTY, folder workspaces, and mixed-version clients also remain uncovered.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/6836",
         "https://github.com/stablyai/orca/pull/6858",
         "https://github.com/stablyai/orca/pull/7002",
         "https://github.com/stablyai/orca/pull/7054"
       ],
-      "invariant": "High-volume terminal output must stay bounded across daemon socket writes, SSH relay writer/decoder/source retention/reconnect, main model and projection admission, runtime metadata, detectors, and tail checks, main-to-renderer in-flight bytes, renderer scheduler queues, and hidden-output restore without starving focused input. Negotiated SSH spans remain exact and contiguous through exit, cancellation, recovery, desktop projection, and required remote replacement.",
-      "oracle": "The current executable slice injects main-process renderer backlog pressure, then asserts unchanged path-provenance history reuse for pathless output, ordinary terminal-wait detection without a joined-tail allocation and with full prompt-family continuity, per-PTY and total pending-output caps, preserved sequenced-tail metadata, active-pending protection ahead of background trimming, and ACK-gated in-flight bounds. The joined source-intake/multiplex oracle blocks renderer or headless serialization, admits one snapshot-covered span and one trailing span, requires replacement reservation only after the authoritative sequence is known, advances upstream ACK eligibility exactly to the covered boundary after SnapshotEnd, and delivers then ACKs the trailing span through the ordinary live path without cancellation. Direct-SSH contracts additionally prove one-write ownership across write(false)/drain, liveness rebasing, failed-exit retention through late ACK or exact recovery, response-settlement cancellation authority, token-scoped exit cancellation, exact checkpoint-to-recoveryEnd continuity, stale-owner one-shot retry, no physical PTY teardown on recovery failure, 16 MiB-plus-1 MiB decoder caps, charged per-PTY/session retention budgets, and eight-wide isolated reattach. The live Electron perf oracle adds hidden-output floods, renderer scheduler queue depth, dropped-output-zero normal scenarios, and active key latency budgets before promotion.",
+      "invariant": "High-volume terminal output must stay bounded across daemon socket writes, SSH relay writer/decoder/source retention/reconnect, main model and projection admission, runtime metadata, detectors, and tail checks, main-to-renderer in-flight bytes, renderer scheduler queues, and hidden-output restore without starving focused input. Negotiated SSH spans remain exact and contiguous through activation, exit, cancellation, recovery, desktop projection, and required remote replacement; additional subscribers cannot stall the owner, while the required legacy primary retains backpressure.",
+      "oracle": "The current executable slice injects main-process renderer backlog pressure, then asserts unchanged path-provenance history reuse for pathless output, ordinary terminal-wait detection without a joined-tail allocation and with full prompt-family continuity, per-PTY and total pending-output caps, preserved sequenced-tail metadata, active-pending protection ahead of background trimming, and ACK-gated in-flight bounds. The joined source-intake/multiplex oracle blocks renderer or headless serialization, admits one snapshot-covered span and one trailing span, requires replacement reservation only after the authoritative sequence is known, advances upstream ACK eligibility exactly to the covered boundary after SnapshotEnd, and delivers then ACKs the trailing span through the ordinary live path without cancellation. Direct-SSH contracts additionally prove activation-response settlement before the first source frame, exact early-ACK reservation through send settlement or same-token retry, recovery-completion settlement before live admission, isolated saturated-subscriber eviction with healthy owner liveness, preserved gate-off primary backpressure, one-write ownership across write(false)/drain, liveness rebasing, failed-exit retention through late ACK or exact recovery, response-settlement cancellation authority, token-scoped exit cancellation, exact checkpoint-to-recoveryEnd continuity, stale-owner one-shot retry, no physical PTY teardown on recovery failure, 16 MiB-plus-1 MiB decoder caps, charged per-PTY/session retention budgets, and eight-wide isolated reattach. The live Electron perf oracle adds hidden-output floods, renderer scheduler queue depth, dropped-output-zero normal scenarios, and active key latency budgets before promotion.",
       "commands": [
         "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/pty.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime-path-candidate-history.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/orca-runtime-tail-wait-memo.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/providers/ssh-pty-provider.test.ts src/main/ssh/ssh-relay-session.test.ts src/main/ssh/ssh-relay-session-data-delivery.test.ts src/main/ssh/ssh-relay-session-incarnation.test.ts src/main/ssh/ssh-relay-session-reconnect-incarnation.test.ts src/main/ssh/ssh-relay-session-terminal-error.test.ts src/main/ssh/ssh-pty-recovery-retention-budget.test.ts src/main/ssh/relay-protocol-backpressure.test.ts src/relay/protocol-backpressure.test.ts src/relay/pty-source-credit-ledger.test.ts src/relay/pty-source-credit-scheduler.test.ts src/relay/relay-pty-source-publication.test.ts src/relay/ssh-pty-source-credit-adapter.test.ts --reporter=dot",
-        "pnpm exec vitest run --config config/vitest.config.ts src/relay/relay-pty-source-recovery-interleavings.test.ts --reporter=dot",
+        "pnpm exec vitest run --config config/vitest.config.ts src/relay/relay-pty-source-recovery-interleavings.test.ts src/relay/relay-pty-source-recovery-completion.test.ts --reporter=dot",
+        "pnpm exec vitest run --config config/vitest.config.ts src/relay/dispatcher.test.ts src/relay/pty-handler-source-publication.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/ssh/ssh-relay-session-recovery-races.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/ssh-pty-remote-source-range-consumers.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/shared/pty-consumer-session.test.ts src/main/ipc/ssh-pty-output-intake.test.ts src/main/ipc/ssh-pty-remote-source-range-consumers.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/main/ssh/ssh-multiplexer-transport-writer.test.ts src/main/ssh/ssh-channel-multiplexer.test.ts src/main/ssh/ssh-pty-source-credit-rollout.test.ts src/main/ssh/ssh-relay-deploy.test.ts src/relay/dispatcher-client-writer.test.ts --reporter=dot",
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/agent-hooks/wsl-hook-relay-sentinel.test.ts --reporter=dot",
         "ORCA_E2E_SSH_DOCKER=1 ORCA_SSH_PTY_SOURCE_CREDIT_V1=1 pnpm exec playwright test tests/e2e/ssh-docker-relay-perf.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1"
       ],
       "testFiles": [
@@ -3135,6 +3137,9 @@
         "src/relay/pty-source-credit-scheduler.test.ts",
         "src/relay/relay-pty-source-publication.test.ts",
         "src/relay/relay-pty-source-recovery-interleavings.test.ts",
+        "src/relay/relay-pty-source-recovery-completion.test.ts",
+        "src/relay/dispatcher.test.ts",
+        "src/relay/pty-handler-source-publication.test.ts",
         "src/relay/ssh-pty-source-credit-adapter.test.ts",
         "src/shared/pty-consumer-session.test.ts",
         "src/main/ipc/ssh-pty-output-intake.test.ts",
@@ -3145,6 +3150,7 @@
         "src/main/ssh/ssh-pty-source-credit-rollout.test.ts",
         "src/main/ssh/ssh-relay-deploy.test.ts",
         "src/relay/dispatcher-client-writer.test.ts",
+        "src/main/agent-hooks/wsl-hook-relay-sentinel.test.ts",
         "tests/e2e/ssh-docker-relay-perf.spec.ts"
       ],
       "assertionRefs": [
@@ -3202,8 +3208,22 @@
         {
           "file": "src/relay/pty-source-credit-ledger.test.ts",
           "assertions": [
+            "an exact early cumulative ACK reserves eligibility without advancing credit before send settlement and survives only an exact same-token retry",
             "source retention charges max UTF-8 or UTF-16 storage plus one record",
             "fragmented multi-PTY source, charged-byte, and frame caps bind independently"
+          ]
+        },
+        {
+          "file": "src/relay/dispatcher.test.ts",
+          "assertions": [
+            "a saturated gate-off primary remains required backpressure and is never detached as an additional subscriber"
+          ]
+        },
+        {
+          "file": "src/relay/pty-handler-source-publication.test.ts",
+          "assertions": [
+            "immutable spawn and attach activation identity settles before the first source frame in the response/data interleaving",
+            "one saturated additional subscriber is bounded and detached without pausing the native PTY or negotiated owner"
           ]
         },
         {
@@ -3211,7 +3231,14 @@
           "assertions": [
             "failed exit publication retains sealed delivery for late cumulative ACK and exact token recovery",
             "exact owner recovery republishes exit without reopening source admission",
+            "a failed recovery-completion frame rolls back its fence and the next exact owner republishes it before live admission",
             "request cancellation remains authoritative through writer settlement and retry returns the same replacement recovery identity"
+          ]
+        },
+        {
+          "file": "src/relay/relay-pty-source-recovery-completion.test.ts",
+          "assertions": [
+            "unadmitted recovery completion retries once writer capacity returns, stays single-flight, and releases its bounded capacity listener"
           ]
         },
         {
@@ -3287,6 +3314,12 @@
             "encoded producer frames stay below high-water-minus-reserve capacity",
             "one fixed-size filesystem compatibility frame is admitted only on an empty sink",
             "control remains reserved while producer retention stays bounded"
+          ]
+        },
+        {
+          "file": "src/main/agent-hooks/wsl-hook-relay-sentinel.test.ts",
+          "assertions": [
+            "WSL stdin forwards write(false), callback settlement, and drain without claiming a live WSL topology"
           ]
         },
         {

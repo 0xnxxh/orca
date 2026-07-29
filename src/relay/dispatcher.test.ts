@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { RelayDispatcher } from './dispatcher'
+import { RelayDispatcher, type SinkWriteSettlement } from './dispatcher'
 import {
   encodeJsonRpcFrame,
   encodeKeepAliveFrame,
@@ -539,6 +539,49 @@ describe('RelayDispatcher', () => {
       expect(secondary).toEqual([])
     } finally {
       dispatcher.dispose()
+    }
+  })
+
+  it('keeps a saturated gate-off primary as required backpressure', () => {
+    const callbacks: ((result: SinkWriteSettlement) => void)[] = []
+    const gateOffDispatcher = new RelayDispatcher(
+      (_data, settle) => {
+        callbacks.push(settle)
+        return false
+      },
+      {
+        supportsWriteCallback: true,
+        writableLength: () => 128 * 1024,
+        writableHighWaterMark: () => 4 * 1024 * 1024
+      }
+    )
+    const detached = vi.fn()
+    gateOffDispatcher.onClientDetached(detached)
+    const payload = 'x'.repeat(128 * 1024)
+    let admitted = 0
+
+    try {
+      while (
+        gateOffDispatcher.tryNotifyPtyDataToMatchingClients(() => true, {
+          id: 'pty-1',
+          data: payload
+        })
+      ) {
+        admitted++
+      }
+
+      expect(admitted).toBeGreaterThan(0)
+      expect(admitted).toBeLessThan(20)
+      expect(callbacks).toHaveLength(1)
+      expect(detached).not.toHaveBeenCalled()
+      expect(
+        gateOffDispatcher.tryNotifyPtyDataToMatchingClients(() => true, {
+          id: 'pty-1',
+          data: payload
+        })
+      ).toBe(false)
+    } finally {
+      gateOffDispatcher.dispose()
     }
   })
 

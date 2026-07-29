@@ -4,7 +4,9 @@ import type {
   PtySourceRecoveryRequest,
   PtySourceRecoveryResult
 } from '../shared/pty-source-recovery-contract'
+import type { PtySourceReceivingActivation } from '../shared/pty-source-receiving-activation'
 import {
+  createPtySourceReceivingActivation,
   pendingPtySourceRecoveryResult,
   registerPtySourceActivationSettlement,
   samePtySourceRecoveryRequest
@@ -131,9 +133,18 @@ export class RelayPtySourcePublication {
     if (!current || identity !== current.identity) {
       this.counters.opened++
     }
+    const activationSnapshot = this.session.sourceDeliverySnapshot(identity)
+    const activationCheckpointSourceEndSu =
+      recoveryCheckpointSourceEndSu ?? activationSnapshot.sentEndSu
+    const activationRecoveryEndSu = recoveryEndSu ?? activationSnapshot.receivedEndSu
     const record: RelayPtySourceDeliveryRecord = {
       clientId: context.clientId,
       identity,
+      sourceActivation: createPtySourceReceivingActivation(
+        identity,
+        activationCheckpointSourceEndSu,
+        activationRecoveryEndSu
+      ),
       displayEnd,
       activating: true,
       activationRecoveryRequest:
@@ -148,6 +159,7 @@ export class RelayPtySourcePublication {
       sendWaiters: new Set(),
       recoveryCheckpointSourceEndSu,
       recoveryEndSu,
+      recoveryCompletionPending: false,
       restoreRequired: false,
       rotationPending: false
     }
@@ -161,12 +173,25 @@ export class RelayPtySourcePublication {
 
   accepts = (id: string): boolean => this.deliveries.has(id)
 
+  receivingActivation(id: string, clientId: number): PtySourceReceivingActivation | undefined {
+    const record = this.deliveries.get(id)
+    return record?.clientId === clientId && !record.restoreRequired
+      ? record.sourceActivation
+      : undefined
+  }
+
   waitForPendingSend = (id: string, timeoutMs = 5_000): Promise<boolean> =>
     this.sender.waitForPendingSend(id, timeoutMs)
 
   publish(id: string, output: RelayPtySourceOutput, interactive: boolean): boolean {
     const record = this.deliveries.get(id)
-    if (!record || record.sealed || record.restoreRequired || record.rotationPending) {
+    if (
+      !record ||
+      record.sealed ||
+      record.recoveryEndSu !== null ||
+      record.restoreRequired ||
+      record.rotationPending
+    ) {
       return false
     }
     if (!output.sourceAccepted) {
@@ -193,7 +218,7 @@ export class RelayPtySourcePublication {
       record.displayEnd += output.data.length
     }
     if (
-      !this.dispatcher.tryNotifyPtyDataToMatchingClients(
+      !this.dispatcher.projectPtyDataToMatchingClients(
         (clientId) => this.session.deliveryMode(clientId) !== 'source-owner',
         {
           id,

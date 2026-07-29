@@ -13,11 +13,22 @@ import type {
   PtySourceRecoveryRequest,
   PtySourceRecoveryResult
 } from '../../shared/pty-source-recovery-contract'
+import {
+  parsePtySourceReceivingActivation,
+  type PtySourceReceivingActivation
+} from '../../shared/pty-source-receiving-activation'
+import type { SshPtyReceivingActivationLease } from './ssh-pty-notification-routing'
 
 export type SshPtyAttachResult = {
   replay?: string
   incarnationId?: PtyIncarnationId
   sourceRecovery?: PtySourceRecoveryResult
+  sourceActivation?: PtySourceReceivingActivation
+  sourceActivationLease?: SshPtyReceivingActivationLease
+}
+
+type SshPtyReattachResult = PtySpawnResult & {
+  sourceActivationLease?: SshPtyReceivingActivationLease
 }
 
 export function parseSshPtyAttachResult(value: unknown): SshPtyAttachResult {
@@ -31,6 +42,7 @@ export function parseSshPtyAttachResult(value: unknown): SshPtyAttachResult {
     replay?: unknown
     incarnationId?: unknown
     sourceRecovery?: unknown
+    sourceActivation?: unknown
   }
   if (result.replay !== undefined && typeof result.replay !== 'string') {
     throw new Error('Invalid SSH PTY attach replay')
@@ -40,10 +52,61 @@ export function parseSshPtyAttachResult(value: unknown): SshPtyAttachResult {
     throw new Error('Invalid SSH PTY attach incarnation')
   }
   const sourceRecovery = parseSourceRecoveryResult(result.sourceRecovery)
+  const sourceActivation = parsePtySourceReceivingActivation(result.sourceActivation)
+  const activation =
+    sourceActivation ?? (sourceRecovery?.status === 'pending' ? sourceRecovery : undefined)
+  if (
+    activation &&
+    (!isPtyIncarnationId(result.incarnationId) ||
+      activation.ptyIncarnation !== result.incarnationId ||
+      (sourceRecovery?.status === 'pending' && !sameSourceActivation(activation, sourceRecovery)))
+  ) {
+    throw new Error('Invalid SSH PTY source activation identity')
+  }
   return {
     ...(typeof result.replay === 'string' ? { replay: result.replay } : {}),
     ...(isPtyIncarnationId(result.incarnationId) ? { incarnationId: result.incarnationId } : {}),
-    ...(sourceRecovery ? { sourceRecovery } : {})
+    ...(sourceRecovery ? { sourceRecovery } : {}),
+    ...(activation ? { sourceActivation: activation } : {})
+  }
+}
+
+export async function requestSshPtyAttach(args: {
+  mux: SshChannelMultiplexer
+  relayPtyId: string
+  params: Record<string, unknown>
+  timeoutMs?: number
+  commitSourceActivation?: boolean
+  installSourceActivation?: (
+    relayPtyId: string,
+    activation: PtySourceReceivingActivation
+  ) => SshPtyReceivingActivationLease
+  rememberPtyIncarnation?: (relayPtyId: string, incarnationId: unknown) => void
+}): Promise<SshPtyAttachResult> {
+  let activationLease: SshPtyReceivingActivationLease | undefined
+  const installFromResult = (result: SshPtyAttachResult): void => {
+    if (!activationLease && result.sourceActivation && args.installSourceActivation) {
+      activationLease = args.installSourceActivation(args.relayPtyId, result.sourceActivation)
+    }
+  }
+  try {
+    const rawResult = await args.mux.request('pty.attach', args.params, {
+      ...(args.timeoutMs === undefined ? {} : { timeoutMs: args.timeoutMs }),
+      beforeResolve: (value) => installFromResult(parseSshPtyAttachResult(value))
+    })
+    const result = parseSshPtyAttachResult(rawResult)
+    installFromResult(result)
+    args.rememberPtyIncarnation?.(args.relayPtyId, result.incarnationId)
+    if (args.commitSourceActivation) {
+      activationLease?.commit()
+    }
+    return {
+      ...result,
+      ...(activationLease ? { sourceActivationLease: activationLease } : {})
+    }
+  } catch (error) {
+    activationLease?.rollback()
+    throw error
   }
 }
 
@@ -91,6 +154,20 @@ function nonNegativeInteger(value: unknown): boolean {
   return Number.isSafeInteger(value) && Number(value) >= 0
 }
 
+function sameSourceActivation(
+  left: PtySourceReceivingActivation,
+  right: PtySourceReceivingActivation
+): boolean {
+  return (
+    left.clientGeneration === right.clientGeneration &&
+    left.ownerGeneration === right.ownerGeneration &&
+    left.ptyIncarnation === right.ptyIncarnation &&
+    left.deliveryToken === right.deliveryToken &&
+    left.checkpointSourceEndSu === right.checkpointSourceEndSu &&
+    left.recoveryEndSu === right.recoveryEndSu
+  )
+}
+
 export type { PtySourceRecoveryRequest }
 
 export async function reattachSshPtySession(args: {
@@ -98,23 +175,30 @@ export async function reattachSshPtySession(args: {
   connectionId: string
   sessionId: string
   options: PtySpawnOptions
-}): Promise<PtySpawnResult> {
+  installSourceActivation?: (
+    relayPtyId: string,
+    activation: PtySourceReceivingActivation
+  ) => SshPtyReceivingActivationLease
+}): Promise<SshPtyReattachResult> {
   const relaySessionId = toRelaySshPtyId(args.connectionId, args.sessionId)
   console.warn(`[ssh-pty] spawn() called with sessionId=${args.sessionId}, attempting pty.attach`)
   try {
     // Why: expected pane identity prevents a reused relay id from attaching the wrong shell.
     const expectedPaneKey = args.options.paneKey ?? args.options.env?.ORCA_PANE_KEY
     const expectedTabId = args.options.tabId ?? args.options.env?.ORCA_TAB_ID
-    const attachResult = parseSshPtyAttachResult(
-      await args.mux.request('pty.attach', {
+    const attachResult = await requestSshPtyAttach({
+      mux: args.mux,
+      relayPtyId: relaySessionId,
+      params: {
         id: relaySessionId,
         cols: args.options.cols,
         rows: args.options.rows,
         suppressReplayNotification: true,
         ...(expectedPaneKey ? { expectedPaneKey } : {}),
         ...(expectedTabId ? { expectedTabId } : {})
-      })
-    )
+      },
+      installSourceActivation: args.installSourceActivation
+    })
     console.warn(
       `[ssh-pty] pty.attach succeeded for ${args.sessionId}, replay=${!!attachResult.replay}`
     )
@@ -122,7 +206,11 @@ export async function reattachSshPtySession(args: {
       id: toAppSshPtyId(args.connectionId, relaySessionId),
       isReattach: true,
       ...(attachResult.replay ? { replay: attachResult.replay } : {}),
-      ...(attachResult.incarnationId ? { incarnationId: attachResult.incarnationId } : {})
+      ...(attachResult.incarnationId ? { incarnationId: attachResult.incarnationId } : {}),
+      ...(attachResult.sourceActivation ? { sourceActivation: attachResult.sourceActivation } : {}),
+      ...(attachResult.sourceActivationLease
+        ? { sourceActivationLease: attachResult.sourceActivationLease }
+        : {})
     }
   } catch (error) {
     // Why: an expired relay lease must be surfaced distinctly so the renderer clears its binding.
@@ -141,10 +229,11 @@ export async function reattachSshPtySessionWithExitFence(
   args: Parameters<typeof reattachSshPtySession>[0] & {
     exitRaceTracker: SshPtySpawnExitRaceTracker
   }
-): Promise<PtySpawnResult> {
+): Promise<SshPtyReattachResult> {
   const operation = args.exitRaceTracker.begin()
+  let result: SshPtyReattachResult | undefined
   try {
-    const result = await reattachSshPtySession(args)
+    result = await reattachSshPtySession(args)
     const relayPtyId = toRelaySshPtyId(args.connectionId, result.id)
     if (
       args.exitRaceTracker.didMatchingExitArrive(operation, {
@@ -155,6 +244,9 @@ export async function reattachSshPtySessionWithExitFence(
       throw new Error('agent_session_exited_during_start')
     }
     return result
+  } catch (error) {
+    result?.sourceActivationLease?.rollback()
+    throw error
   } finally {
     args.exitRaceTracker.finish(operation)
   }

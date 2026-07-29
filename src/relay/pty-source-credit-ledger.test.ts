@@ -170,6 +170,61 @@ describe('RelayPtySourceCreditLedger', () => {
     expect(ledger.snapshot(owner).creditedEndSu).toBe(0)
   })
 
+  it('reserves an exact early ACK until the matching send settles', () => {
+    const ledger = new RelayPtySourceCreditLedger()
+    const owner = identity()
+    ledger.open(owner, 4)
+    append(ledger, owner, 'data')
+    const pending = ledger.reserveNextSend(owner)!
+
+    expect(
+      ledger.acknowledge(owner, {
+        id: owner.id,
+        clientGeneration: owner.clientGeneration,
+        ownerGeneration: owner.ownerGeneration,
+        deliveryToken: owner.deliveryToken,
+        creditedEndSu: 4
+      })
+    ).toBe('reserved')
+    expect(ledger.snapshot(owner)).toMatchObject({ sentEndSu: 0, creditedEndSu: 0 })
+
+    ledger.commitSend(pending)
+    expect(ledger.snapshot(owner)).toMatchObject({ sentEndSu: 4, creditedEndSu: 4 })
+    expect(ledger.retentionSnapshot()).toEqual({ sourceSu: 0, dataBytes: 0, spans: 0 })
+  })
+
+  it('retains reserved credit across an exact same-token send retry', () => {
+    const ledger = new RelayPtySourceCreditLedger()
+    const owner = identity()
+    ledger.open(owner, 4)
+    append(ledger, owner, 'data')
+    const failed = ledger.reserveNextSend(owner)!
+    ledger.acknowledge(owner, {
+      id: owner.id,
+      clientGeneration: owner.clientGeneration,
+      ownerGeneration: owner.ownerGeneration,
+      deliveryToken: owner.deliveryToken,
+      creditedEndSu: 4
+    })
+
+    ledger.rollbackSend(failed)
+    expect(
+      ledger.acknowledge(owner, {
+        id: owner.id,
+        clientGeneration: owner.clientGeneration,
+        ownerGeneration: owner.ownerGeneration,
+        deliveryToken: owner.deliveryToken,
+        creditedEndSu: 4
+      })
+    ).toBe('reserved')
+    expect(ledger.reserveNextSend(owner, 3)).toBeNull()
+    const retry = ledger.reserveNextSend(owner)!
+    ledger.commitSend(retry)
+
+    expect(ledger.snapshot(owner)).toMatchObject({ sentEndSu: 4, creditedEndSu: 4 })
+    expect(ledger.retentionSnapshot()).toEqual({ sourceSu: 0, dataBytes: 0, spans: 0 })
+  })
+
   it('keeps sealed-unsettled state until exit and suffix ACK are both published', () => {
     const ledger = new RelayPtySourceCreditLedger()
     const owner = identity()

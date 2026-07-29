@@ -1,5 +1,6 @@
 import type { SshChannelMultiplexer } from '../ssh/ssh-channel-multiplexer'
 import { isPtyIncarnationId } from '../../shared/pty-incarnation'
+import type { PtySourceReceivingActivation } from '../../shared/pty-source-receiving-activation'
 import type {
   SshPtyDataCallback,
   SshPtyExitCallback,
@@ -10,14 +11,24 @@ import { parseSshPtySourceFrame, type SshPtySourceFrame } from './ssh-pty-source
 export type { SshPtyDataCallback, SshPtyExitCallback, SshPtyReplayCallback }
 
 type SourceDeliveryState = Readonly<{
-  clientGeneration: number
-  ownerGeneration: number
-  ptyIncarnation: string
-  deliveryToken: string
+  activation: PtySourceReceivingActivation
   sourceEndSu: number
+  revision: number
+  provisional: boolean
 }>
 
-type SourceDeliveryOrder = 'continuation' | 'rotation' | 'invalid'
+export type SshPtyReceivingActivationLease = Readonly<{
+  commit: () => void
+  rollback: () => void
+}>
+
+export type SshPtyNotificationSubscription = Readonly<{
+  dispose: () => void
+  installReceivingActivation: (
+    relayPtyId: string,
+    activation: PtySourceReceivingActivation
+  ) => SshPtyReceivingActivationLease
+}>
 
 export function subscribeSshPtyNotifications(args: {
   mux: SshChannelMultiplexer
@@ -29,9 +40,10 @@ export function subscribeSshPtyNotifications(args: {
   recordExit: (relayPtyId: string, incarnationId: unknown) => void
   providerGeneration: number
   resolvePtyIncarnation: (relayPtyId: string, incarnationId?: unknown) => string
-}): () => void {
+}): SshPtyNotificationSubscription {
   const sourceDeliveryByPty = new Map<string, SourceDeliveryState>()
-  return args.mux.onNotification((method, params) => {
+  let nextSourceDeliveryRevision = 1
+  const dispose = args.mux.onNotification((method, params) => {
     // Why: mux delivers every method to generic handlers; non-PTY payloads
     // (workspace.changed, fs.changed, …) have no `id` and must not reach
     // toAppPtyId → startsWith.
@@ -47,7 +59,9 @@ export function subscribeSshPtyNotifications(args: {
       const ptyIncarnation = args.resolvePtyIncarnation(relayPtyId, params.incarnationId)
       args.recordExit(relayPtyId, params.incarnationId)
       args.livePtyIds.delete(id)
-      sourceDeliveryByPty.delete(relayPtyId)
+      if (!sourceDeliveryByPty.get(relayPtyId)?.provisional) {
+        sourceDeliveryByPty.delete(relayPtyId)
+      }
       for (const listener of args.exitListeners) {
         listener({
           id,
@@ -98,6 +112,96 @@ export function subscribeSshPtyNotifications(args: {
       })
     }
   })
+  return Object.freeze({
+    dispose,
+    installReceivingActivation: (relayPtyId, activation) =>
+      installReceivingActivation(
+        args.mux,
+        sourceDeliveryByPty,
+        relayPtyId,
+        activation,
+        nextSourceDeliveryRevision++
+      )
+  })
+}
+
+function installReceivingActivation(
+  mux: SshChannelMultiplexer,
+  sourceDeliveryByPty: Map<string, SourceDeliveryState>,
+  relayPtyId: string,
+  activation: PtySourceReceivingActivation,
+  revision: number
+): SshPtyReceivingActivationLease {
+  if (!relayPtyId || activation.ptyIncarnation.length === 0) {
+    throw new Error('ssh_source_receiving_activation_invalid')
+  }
+  const previous = sourceDeliveryByPty.get(relayPtyId)
+  if (previous && sameReceivingActivation(previous.activation, activation)) {
+    if (previous.provisional) {
+      throw new Error('ssh_source_receiving_activation_stale')
+    }
+    return settledReceivingActivationLease()
+  }
+  if (
+    previous &&
+    (activation.clientGeneration <= previous.activation.clientGeneration ||
+      activation.ownerGeneration <= previous.activation.ownerGeneration ||
+      activation.deliveryToken === previous.activation.deliveryToken)
+  ) {
+    throw new Error('ssh_source_receiving_activation_stale')
+  }
+  const installed = Object.freeze({
+    activation,
+    sourceEndSu: activation.checkpointSourceEndSu,
+    revision,
+    provisional: true
+  })
+  sourceDeliveryByPty.set(relayPtyId, installed)
+  let settled = false
+  return Object.freeze({
+    commit: () => {
+      if (settled) {
+        return
+      }
+      settled = true
+      const current = sourceDeliveryByPty.get(relayPtyId)
+      if (current?.revision === revision) {
+        sourceDeliveryByPty.set(relayPtyId, Object.freeze({ ...current, provisional: false }))
+      }
+    },
+    rollback: () => {
+      if (settled) {
+        return
+      }
+      settled = true
+      if (sourceDeliveryByPty.get(relayPtyId)?.revision === revision) {
+        if (previous) {
+          sourceDeliveryByPty.set(relayPtyId, previous)
+        } else {
+          sourceDeliveryByPty.delete(relayPtyId)
+        }
+      }
+      cancelExactSourceDelivery(mux, relayPtyId, activation)
+    }
+  })
+}
+
+function settledReceivingActivationLease(): SshPtyReceivingActivationLease {
+  return Object.freeze({ commit: () => {}, rollback: () => {} })
+}
+
+function sameReceivingActivation(
+  left: PtySourceReceivingActivation,
+  right: PtySourceReceivingActivation
+): boolean {
+  return (
+    left.clientGeneration === right.clientGeneration &&
+    left.ownerGeneration === right.ownerGeneration &&
+    left.ptyIncarnation === right.ptyIncarnation &&
+    left.deliveryToken === right.deliveryToken &&
+    left.checkpointSourceEndSu === right.checkpointSourceEndSu &&
+    left.recoveryEndSu === right.recoveryEndSu
+  )
 }
 
 function acceptSourceDelivery(
@@ -106,61 +210,32 @@ function acceptSourceDelivery(
   params: Record<string, unknown>,
   source: SshPtySourceFrame
 ): boolean {
-  const ptyIncarnation = params.ptyIncarnation as string
   const current = sourceDeliveryByPty.get(relayPtyId)
-  if (current) {
-    const order = sourceDeliveryOrder(current, source)
-    const incarnationMatches = current.ptyIncarnation === ptyIncarnation
-    if (!incarnationMatches || order === 'invalid') {
-      return false
-    }
-    if (
-      order === 'continuation' &&
-      (current.deliveryToken !== source.deliveryToken ||
-        current.sourceEndSu !== source.sourceStartSu)
-    ) {
-      return false
-    }
-    if (order === 'rotation' && current.deliveryToken === source.deliveryToken) {
-      return false
-    }
+  if (
+    !current ||
+    current.activation.ptyIncarnation !== params.ptyIncarnation ||
+    current.activation.deliveryToken !== source.deliveryToken ||
+    current.activation.clientGeneration !== source.clientGeneration ||
+    current.activation.ownerGeneration !== source.ownerGeneration ||
+    current.sourceEndSu !== source.sourceStartSu
+  ) {
+    return false
   }
   sourceDeliveryByPty.set(
     relayPtyId,
-    Object.freeze({
-      clientGeneration: source.clientGeneration,
-      ownerGeneration: source.ownerGeneration,
-      ptyIncarnation,
-      deliveryToken: source.deliveryToken,
-      sourceEndSu: source.sourceEndSu
-    })
+    Object.freeze({ ...current, sourceEndSu: source.sourceEndSu })
   )
   return true
-}
-
-function sourceDeliveryOrder(
-  current: SourceDeliveryState,
-  source: SshPtySourceFrame
-): SourceDeliveryOrder {
-  if (
-    source.clientGeneration === current.clientGeneration &&
-    source.ownerGeneration === current.ownerGeneration
-  ) {
-    return 'continuation'
-  }
-  if (
-    source.clientGeneration > current.clientGeneration &&
-    source.ownerGeneration > current.ownerGeneration
-  ) {
-    return 'rotation'
-  }
-  return 'invalid'
 }
 
 function cancelExactSourceDelivery(
   mux: SshChannelMultiplexer,
   relayPtyId: string,
-  params: Record<string, unknown>
+  params: {
+    deliveryToken?: unknown
+    clientGeneration?: unknown
+    ownerGeneration?: unknown
+  }
 ): void {
   if (
     typeof params.deliveryToken !== 'string' ||

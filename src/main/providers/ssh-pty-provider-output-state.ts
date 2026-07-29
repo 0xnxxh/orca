@@ -5,7 +5,12 @@ import type {
   SshPtyExitCallback,
   SshPtyReplayCallback
 } from './ssh-pty-provider-contract'
-import { subscribeSshPtyNotifications } from './ssh-pty-notification-routing'
+import {
+  subscribeSshPtyNotifications,
+  type SshPtyNotificationSubscription,
+  type SshPtyReceivingActivationLease
+} from './ssh-pty-notification-routing'
+import type { PtySourceReceivingActivation } from '../../shared/pty-source-receiving-activation'
 
 export class SshPtyProviderOutputState {
   private readonly dataListeners = new Set<SshPtyDataCallback>()
@@ -15,7 +20,7 @@ export class SshPtyProviderOutputState {
   private readonly pausedRelayPtyIds = new Set<string>()
   private deliveryPauseAdapter: SshPtyDeliveryPauseAdapter | null = null
   private legacyIncarnationSerial = 1
-  private unsubscribeNotifications: (() => void) | null
+  private subscription: SshPtyNotificationSubscription | null
 
   constructor(
     private readonly providerGeneration: number,
@@ -26,7 +31,7 @@ export class SshPtyProviderOutputState {
       recordExit: (relayPtyId: string, incarnationId: unknown) => void
     }
   ) {
-    this.unsubscribeNotifications = subscribeSshPtyNotifications({
+    this.subscription = subscribeSshPtyNotifications({
       ...args,
       dataListeners: this.dataListeners,
       replayListeners: this.replayListeners,
@@ -44,8 +49,8 @@ export class SshPtyProviderOutputState {
 
   dispose(): void {
     this.resumePausedDeliveries()
-    this.unsubscribeNotifications?.()
-    this.unsubscribeNotifications = null
+    this.subscription?.dispose()
+    this.subscription = null
     this.dataListeners.clear()
     this.replayListeners.clear()
     this.exitListeners.clear()
@@ -92,6 +97,16 @@ export class SshPtyProviderOutputState {
       return
     }
     this.deliveryPauseAdapter({ id, providerGeneration: this.providerGeneration, paused: false })
+  }
+
+  installReceivingActivation(
+    relayPtyId: string,
+    activation: PtySourceReceivingActivation
+  ): SshPtyReceivingActivationLease {
+    if (!this.subscription) {
+      throw new Error('ssh_source_receiving_activation_disposed')
+    }
+    return this.subscription.installReceivingActivation(relayPtyId, activation)
   }
 
   rememberPtyIncarnation(relayPtyId: string, incarnationId: unknown): void {

@@ -1,5 +1,4 @@
 import type {
-  PtySourceCreditAck,
   PtySourceDeliveryIdentity,
   PtySourceDeliveryCancellation,
   PtySourceDeliverySnapshot,
@@ -10,7 +9,6 @@ import { ptySourceSpanIsSplittable } from '../shared/pty-source-credit-contract'
 import {
   assertNonNegativeSafeInteger,
   assertPositiveSafeInteger,
-  assertPtySourceAck,
   assertPtySourceIdentity,
   assertPtySourceSpan
 } from '../shared/pty-source-credit-validation'
@@ -31,8 +29,6 @@ export type PtySourceSendReservation = Readonly<{
   span: PtySourceSpan
 }>
 
-export type PtySourceAckResult = 'advanced' | 'duplicate' | 'regression'
-
 export type DeliveryRecord = {
   identity: PtySourceDeliveryIdentity
   state: 'active' | 'sealed-unsettled' | 'closing' | 'closed'
@@ -44,6 +40,7 @@ export type DeliveryRecord = {
   spans: PtySourceSpan[]
   sentBoundaries: Set<number>
   pendingSend: PtySourceSendReservation | null
+  reservedAckEndSu: number | null
   attemptedEndSu: number | null
   exitPublished: boolean
   generationClosed: boolean
@@ -69,6 +66,7 @@ export function createDeliveryRecord(
     spans: [],
     sentBoundaries: new Set([checkpointSourceEndSu]),
     pendingSend: null,
+    reservedAckEndSu: null,
     attemptedEndSu: null,
     exitPublished: false,
     generationClosed: false
@@ -169,50 +167,6 @@ export function snapshotDeliveryRecord(record: DeliveryRecord): PtySourceDeliver
     exitPublished: record.exitPublished,
     generationClosed: record.generationClosed
   })
-}
-
-export function reclaimCreditedSpans(record: DeliveryRecord): void {
-  while (record.spans[0]?.sourceEndSu <= record.creditedEndSu) {
-    record.retainedDataBytes -= chargedPtyRetainedStringBytes(record.spans.shift()!.data)
-  }
-}
-
-export function acknowledgeDeliveryRecord(
-  record: DeliveryRecord,
-  ack: PtySourceCreditAck
-): PtySourceAckResult {
-  assertPtySourceAck(ack)
-  if (record.state === 'closed' || record.state === 'closing') {
-    throw new Error('PTY source ACK targets a closed delivery')
-  }
-  if (
-    ack.id !== record.identity.id ||
-    ack.clientGeneration !== record.identity.clientGeneration ||
-    ack.ownerGeneration !== record.identity.ownerGeneration ||
-    ack.deliveryToken !== record.identity.deliveryToken
-  ) {
-    throw new Error('PTY source ACK does not own this delivery')
-  }
-  if (ack.creditedEndSu > record.sentEndSu) {
-    throw new Error('PTY source ACK exceeds sent source credit')
-  }
-  if (ack.creditedEndSu === record.creditedEndSu) {
-    return 'duplicate'
-  }
-  if (ack.creditedEndSu < record.creditedEndSu) {
-    return 'regression'
-  }
-  if (!record.sentBoundaries.has(ack.creditedEndSu)) {
-    throw new Error('PTY source ACK does not match a committed send boundary')
-  }
-  record.creditedEndSu = ack.creditedEndSu
-  for (const boundary of record.sentBoundaries) {
-    if (boundary < record.creditedEndSu) {
-      record.sentBoundaries.delete(boundary)
-    }
-  }
-  reclaimCreditedSpans(record)
-  return 'advanced'
 }
 
 export function retainedSourceTotal(records: Iterable<DeliveryRecord>): number {

@@ -139,6 +139,167 @@ function sendDesktopMultiplexSubscribe(
   )
 }
 
+function sendDesktopSourceRangeSubscribe(
+  handlers: Map<number, (frame: NonNullable<ReturnType<typeof decodeTerminalStreamFrame>>) => void>
+) {
+  handlers.get(0)?.(
+    decodeTerminalStreamFrame(
+      encodeTerminalStreamFrame({
+        opcode: TerminalStreamOpcode.Subscribe,
+        streamId: 0,
+        seq: 1,
+        payload: encodeTerminalStreamJson({
+          streamId: 7,
+          terminal: 'terminal-1',
+          client: { id: 'desktop-1', type: 'desktop' },
+          capabilities: { ackOutput: 1, ackOutputSourceRanges: 1 }
+        })
+      })
+    )!
+  )
+}
+
+function sourceRange(start: number, end: number) {
+  return {
+    id: 'pty-1',
+    spanId: `span-${start}-${end}`,
+    providerGeneration: 5,
+    clientGeneration: 2,
+    ownerGeneration: 3,
+    ptyIncarnation: 'incarnation-1',
+    deliveryToken: 'token-1',
+    sourceStartSu: start,
+    sourceEndSu: end,
+    displayStart: start,
+    displayEnd: end,
+    splittable: true,
+    transform: { transformed: false, rawLengthSu: end - start, scalarSafe: true }
+  } as const
+}
+
+async function acknowledgeSourceRangeOverflow(
+  harness: ReturnType<typeof startDesktopMultiplexSubscribe>,
+  dataListener: (data: string, meta?: RuntimeTerminalDataMeta) => void,
+  data: string,
+  acknowledge: 'all' | 'first' = 'all'
+) {
+  await vi.waitFor(() =>
+    expect(
+      harness.messages.some((message) => JSON.parse(message).result?.type === 'subscribed')
+    ).toBe(true)
+  )
+  const subscribed = harness.messages
+    .map((message) => JSON.parse(message).result)
+    .find((event) => event?.type === 'subscribed')
+  harness.binaryFrames.splice(0)
+  dataListener(data, {
+    seq: data.length,
+    rawLength: data.length,
+    sourceRanges: [sourceRange(0, data.length)]
+  })
+  const outputFrames = harness.binaryFrames
+    .map(decodeTerminalStreamFrame)
+    .filter((frame) => frame?.opcode === TerminalStreamOpcode.Output)
+  const acceptedEndByte = outputFrames.reduce(
+    (total, frame) => total + (frame?.payload.byteLength ?? 0),
+    0
+  )
+  const ackedEndByte =
+    acknowledge === 'first' ? (outputFrames[0]?.payload.byteLength ?? 0) : acceptedEndByte
+  expect(ackedEndByte).toBeGreaterThan(0)
+  harness.handlers.get(7)?.(
+    decodeTerminalStreamFrame(
+      encodeTerminalStreamFrame({
+        opcode: TerminalStreamOpcode.Ack,
+        streamId: 7,
+        seq: 2,
+        payload: encodeTerminalStreamJson({
+          streamGeneration: subscribed.streamGeneration,
+          ackedEndByte
+        })
+      })
+    )!
+  )
+  return { acceptedEndByte, ackedEndByte, streamGeneration: subscribed.streamGeneration }
+}
+
+type OverflowRecoverySnapshot = {
+  data: string
+  cols: number
+  rows: number
+  source?: 'headless' | 'renderer'
+  seq?: number
+}
+
+function startSourceRangeOverflowHarness(options: {
+  recover: () => Promise<OverflowRecoverySnapshot>
+  commit?: () => boolean
+  onFrame?: (frame: NonNullable<ReturnType<typeof decodeTerminalStreamFrame>>) => boolean | void
+}) {
+  let dataListener: ((data: string, meta?: RuntimeTerminalDataMeta) => void) | undefined
+  const lifecycle: string[] = []
+  const reserve = vi.fn((identity, requiredSeq: number, reason: string) => {
+    if (reason !== 'ack-pending-overflow') {
+      return null
+    }
+    lifecycle.push('reserve')
+    return Object.freeze({
+      reservationId: 'overflow-replacement',
+      identity: Object.freeze({ ...identity }),
+      requiredSeq
+    })
+  })
+  const commit = vi.fn(() => {
+    lifecycle.push('commit')
+    return options.commit?.() ?? true
+  })
+  const rollback = vi.fn(() => {
+    lifecycle.push('rollback')
+    return true
+  })
+  const cancel = vi.fn(() => {
+    lifecycle.push('cancel')
+  })
+  const harness = startDesktopMultiplexSubscribe(
+    {
+      attachRemoteTerminalSourceRangeConsumer: vi.fn(() => true),
+      settleRemoteTerminalSourceRanges: vi.fn(),
+      reserveRemoteTerminalSourceRangeReplacement: reserve,
+      commitRemoteTerminalSourceRangeReplacement: commit,
+      rollbackRemoteTerminalSourceRangeReplacement: rollback,
+      cancelRemoteTerminalSourceRanges: cancel,
+      serializeTerminalBuffer: vi
+        .fn()
+        .mockResolvedValueOnce({
+          data: 'initial snapshot',
+          cols: 120,
+          rows: 40,
+          source: 'headless',
+          seq: 0
+        })
+        .mockImplementationOnce(options.recover),
+      subscribeToTerminalData: vi.fn((_ptyId, listener) => {
+        dataListener = listener
+        return vi.fn()
+      })
+    },
+    undefined,
+    (bytes) => {
+      const frame = decodeTerminalStreamFrame(bytes)
+      return frame ? options.onFrame?.(frame) : undefined
+    }
+  )
+  return {
+    ...harness,
+    lifecycle,
+    reserve,
+    commit,
+    rollback,
+    cancel,
+    getDataListener: () => dataListener
+  }
+}
+
 describe('terminal multiplex RPC', () => {
   it.each(['headless', 'renderer'] as const)(
     'commits a source-range replacement only after the %s snapshot publishes',
@@ -413,7 +574,7 @@ describe('terminal multiplex RPC', () => {
 
     await harness.dispatchPromise
     expect(commit).not.toHaveBeenCalled()
-    expect(rollback).toHaveBeenCalledWith(reservation, 'initial-snapshot-unpublished')
+    expect(rollback).toHaveBeenCalledWith(reservation, 'stream-detached-replacement-aborted')
   })
 
   it('keeps legacy multiplex clients outside source replacement admission', async () => {
@@ -1925,6 +2086,282 @@ describe('terminal multiplex RPC', () => {
 
     runtime.cleanupSubscription('terminal-multiplex:conn-ack-shared-budget')
     await dispatchPromise
+  })
+
+  it('replaces UTF-8-expanded overflow ranges before publishing the trailing live range', async () => {
+    let resolveRecovery: (snapshot: OverflowRecoverySnapshot) => void = () => {}
+    const harness = startSourceRangeOverflowHarness({
+      recover: () =>
+        new Promise<OverflowRecoverySnapshot>((resolve) => {
+          resolveRecovery = resolve
+        })
+    })
+    await vi.waitFor(() => expect(harness.handlers.has(0)).toBe(true))
+    sendDesktopSourceRangeSubscribe(harness.handlers)
+    await vi.waitFor(() => expect(harness.getDataListener()).toBeDefined())
+
+    const flooded = '界'.repeat(1024 * 1024)
+    const credit = await acknowledgeSourceRangeOverflow(
+      harness,
+      harness.getDataListener()!,
+      flooded,
+      'first'
+    )
+    await vi.waitFor(() => expect(harness.runtime.serializeTerminalBuffer).toHaveBeenCalledTimes(2))
+    const trailing = 'trailing-live'
+    harness.getDataListener()!(trailing, {
+      seq: flooded.length + trailing.length,
+      rawLength: trailing.length,
+      sourceRanges: [sourceRange(flooded.length, flooded.length + trailing.length)]
+    })
+    resolveRecovery({
+      data: 'authoritative snapshot',
+      cols: 120,
+      rows: 40,
+      source: 'headless',
+      seq: flooded.length
+    })
+
+    await vi.waitFor(() => expect(harness.commit).toHaveBeenCalledOnce())
+    expect(harness.reserve).toHaveBeenLastCalledWith(
+      expect.objectContaining({ streamGeneration: expect.any(String) }),
+      flooded.length,
+      'ack-pending-overflow'
+    )
+    expect(harness.lifecycle).toEqual(['reserve', 'commit'])
+    const recoveryFrames = harness.binaryFrames.map(decodeTerminalStreamFrame)
+    const snapshotEnd = recoveryFrames.findLastIndex(
+      (frame) => frame?.opcode === TerminalStreamOpcode.SnapshotEnd
+    )
+    const trailingOutput = recoveryFrames.findIndex(
+      (frame, index) =>
+        index > snapshotEnd &&
+        frame?.opcode === TerminalStreamOpcode.Output &&
+        decodeTerminalStreamText(frame.payload) === trailing
+    )
+    expect(snapshotEnd).toBeGreaterThanOrEqual(0)
+    expect(trailingOutput).toBeGreaterThan(snapshotEnd)
+    expect(harness.rollback).not.toHaveBeenCalled()
+    const trailingBytes = recoveryFrames[trailingOutput]!.payload.byteLength
+    harness.handlers.get(7)?.(
+      decodeTerminalStreamFrame(
+        encodeTerminalStreamFrame({
+          opcode: TerminalStreamOpcode.Ack,
+          streamId: 7,
+          seq: 3,
+          payload: encodeTerminalStreamJson({
+            streamGeneration: credit.streamGeneration,
+            ackedEndByte: credit.acceptedEndByte + trailingBytes
+          })
+        })
+      )!
+    )
+    expect(harness.runtime.settleRemoteTerminalSourceRanges).toHaveBeenLastCalledWith(
+      expect.any(Object),
+      [sourceRange(flooded.length, flooded.length + trailing.length)]
+    )
+
+    harness.cleanups.get('terminal-multiplex:conn-desktop-first-paint')?.()
+    await harness.dispatchPromise
+  })
+
+  it('rolls back overflow replacement before detaching on partial frame publication', async () => {
+    let recoveryStarted = false
+    const harness = startSourceRangeOverflowHarness({
+      recover: async () => ({
+        data: 'authoritative snapshot',
+        cols: 120,
+        rows: 40,
+        source: 'headless',
+        seq: 3 * 1024 * 1024
+      }),
+      onFrame: (frame) => {
+        if (frame.opcode === TerminalStreamOpcode.SnapshotStart) {
+          recoveryStarted =
+            decodeTerminalStreamJson<{ reason?: string }>(frame.payload)?.reason ===
+            'ack-pending-overflow'
+        }
+        if (recoveryStarted && frame.opcode === TerminalStreamOpcode.SnapshotChunk) {
+          return false
+        }
+        return undefined
+      }
+    })
+    await vi.waitFor(() => expect(harness.handlers.has(0)).toBe(true))
+    sendDesktopSourceRangeSubscribe(harness.handlers)
+    await vi.waitFor(() => expect(harness.getDataListener()).toBeDefined())
+
+    const flooded = 'x'.repeat(3 * 1024 * 1024)
+    await acknowledgeSourceRangeOverflow(harness, harness.getDataListener()!, flooded)
+    await harness.dispatchPromise
+
+    expect(harness.commit).not.toHaveBeenCalled()
+    expect(harness.rollback).toHaveBeenCalledOnce()
+    expect(harness.lifecycle).toEqual(['reserve', 'rollback', 'cancel'])
+  })
+
+  it('rolls back overflow replacement before generic detach when commit rejects', async () => {
+    const flooded = 'x'.repeat(3 * 1024 * 1024)
+    const harness = startSourceRangeOverflowHarness({
+      recover: async () => ({
+        data: 'authoritative snapshot',
+        cols: 120,
+        rows: 40,
+        source: 'renderer',
+        seq: flooded.length
+      }),
+      commit: () => false
+    })
+    await vi.waitFor(() => expect(harness.handlers.has(0)).toBe(true))
+    sendDesktopSourceRangeSubscribe(harness.handlers)
+    await vi.waitFor(() => expect(harness.getDataListener()).toBeDefined())
+
+    await acknowledgeSourceRangeOverflow(harness, harness.getDataListener()!, flooded)
+    await vi.waitFor(() => expect(harness.cancel).toHaveBeenCalledOnce())
+
+    expect(harness.commit).toHaveBeenCalledOnce()
+    expect(harness.rollback).toHaveBeenCalledOnce()
+    expect(harness.lifecycle).toEqual(['reserve', 'commit', 'rollback', 'cancel'])
+    harness.cleanups.get('terminal-multiplex:conn-desktop-first-paint')?.()
+    await harness.dispatchPromise
+  })
+
+  it('rolls back a held overflow replacement when its stream detaches', async () => {
+    const flooded = 'x'.repeat(3 * 1024 * 1024)
+    let harness: ReturnType<typeof startSourceRangeOverflowHarness>
+    harness = startSourceRangeOverflowHarness({
+      recover: async () => ({
+        data: 'authoritative snapshot',
+        cols: 120,
+        rows: 40,
+        source: 'headless',
+        seq: flooded.length
+      }),
+      onFrame: (frame) => {
+        if (
+          frame.opcode !== TerminalStreamOpcode.SnapshotStart ||
+          decodeTerminalStreamJson<{ reason?: string }>(frame.payload)?.reason !==
+            'ack-pending-overflow'
+        ) {
+          return
+        }
+        harness.handlers.get(7)?.(
+          decodeTerminalStreamFrame(
+            encodeTerminalStreamFrame({
+              opcode: TerminalStreamOpcode.Unsubscribe,
+              streamId: 7,
+              seq: 3,
+              payload: new Uint8Array()
+            })
+          )!
+        )
+      }
+    })
+    await vi.waitFor(() => expect(harness.handlers.has(0)).toBe(true))
+    sendDesktopSourceRangeSubscribe(harness.handlers)
+    await vi.waitFor(() => expect(harness.getDataListener()).toBeDefined())
+
+    await acknowledgeSourceRangeOverflow(harness, harness.getDataListener()!, flooded)
+    await vi.waitFor(() => expect(harness.handlers.has(7)).toBe(false))
+
+    expect(harness.commit).not.toHaveBeenCalled()
+    expect(harness.rollback).toHaveBeenCalledOnce()
+    expect(harness.lifecycle).toEqual(['reserve', 'rollback', 'cancel'])
+    harness.cleanups.get('terminal-multiplex:conn-desktop-first-paint')?.()
+    await harness.dispatchPromise
+  })
+
+  it('rolls back overflow replacement before a same-slot generation succeeds it', async () => {
+    const flooded = 'x'.repeat(3 * 1024 * 1024)
+    let harness: ReturnType<typeof startSourceRangeOverflowHarness>
+    harness = startSourceRangeOverflowHarness({
+      recover: async () => ({
+        data: 'authoritative snapshot',
+        cols: 120,
+        rows: 40,
+        source: 'headless',
+        seq: flooded.length
+      }),
+      onFrame: (frame) => {
+        if (
+          frame.opcode !== TerminalStreamOpcode.SnapshotStart ||
+          decodeTerminalStreamJson<{ reason?: string }>(frame.payload)?.reason !==
+            'ack-pending-overflow'
+        ) {
+          return
+        }
+        harness.handlers.get(0)?.(
+          decodeTerminalStreamFrame(
+            encodeTerminalStreamFrame({
+              opcode: TerminalStreamOpcode.Subscribe,
+              streamId: 0,
+              seq: 3,
+              payload: encodeTerminalStreamJson({
+                streamId: 7,
+                terminal: 'terminal-1',
+                client: { id: 'desktop-2', type: 'desktop' },
+                capabilities: { ackOutput: 1, ackOutputSourceRanges: 1 }
+              })
+            })
+          )!
+        )
+      }
+    })
+    await vi.waitFor(() => expect(harness.handlers.has(0)).toBe(true))
+    sendDesktopSourceRangeSubscribe(harness.handlers)
+    await vi.waitFor(() => expect(harness.getDataListener()).toBeDefined())
+
+    await acknowledgeSourceRangeOverflow(harness, harness.getDataListener()!, flooded)
+    await vi.waitFor(() =>
+      expect(
+        harness.messages.filter((message) => JSON.parse(message).result?.type === 'subscribed')
+          .length
+      ).toBe(2)
+    )
+
+    expect(harness.commit).not.toHaveBeenCalled()
+    expect(harness.rollback).toHaveBeenCalledOnce()
+    expect(harness.lifecycle.slice(0, 3)).toEqual(['reserve', 'rollback', 'cancel'])
+    harness.cleanups.get('terminal-multiplex:conn-desktop-first-paint')?.()
+    await harness.dispatchPromise
+  })
+
+  it('does not publish or trim overflow output without serialized source identity', async () => {
+    const flooded = 'x'.repeat(3 * 1024 * 1024)
+    const harness = startSourceRangeOverflowHarness({
+      recover: async () => ({
+        data: 'unattributed snapshot',
+        cols: 120,
+        rows: 40,
+        seq: flooded.length
+      })
+    })
+    await vi.waitFor(() => expect(harness.handlers.has(0)).toBe(true))
+    sendDesktopSourceRangeSubscribe(harness.handlers)
+    await vi.waitFor(() => expect(harness.getDataListener()).toBeDefined())
+    const frameCount = harness.binaryFrames.length
+
+    await acknowledgeSourceRangeOverflow(harness, harness.getDataListener()!, flooded)
+    await vi.waitFor(() => expect(harness.cancel).toHaveBeenCalledOnce())
+
+    expect(harness.reserve.mock.calls.some((call) => call[2] === 'ack-pending-overflow')).toBe(
+      false
+    )
+    expect(harness.commit).not.toHaveBeenCalled()
+    expect(harness.rollback).not.toHaveBeenCalled()
+    expect(
+      harness.binaryFrames
+        .slice(frameCount)
+        .map(decodeTerminalStreamFrame)
+        .some(
+          (frame) =>
+            frame?.opcode === TerminalStreamOpcode.SnapshotStart &&
+            decodeTerminalStreamJson<{ reason?: string }>(frame.payload)?.reason ===
+              'ack-pending-overflow'
+        )
+    ).toBe(false)
+    harness.cleanups.get('terminal-multiplex:conn-desktop-first-paint')?.()
+    await harness.dispatchPromise
   })
 
   it('caps stalled ACK output and snapshots before resuming retained tail frames', async () => {

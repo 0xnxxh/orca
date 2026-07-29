@@ -26,8 +26,15 @@ export type { MultiplexerTransport, MultiplexerWriteSettlement }
 type PendingRequest = {
   resolve: (result: unknown) => void
   reject: (error: Error) => void
+  beforeResolve?: (result: unknown) => void
   timer: ReturnType<typeof setTimeout>
   cleanup: () => void
+}
+
+export type SshMultiplexerRequestOptions = {
+  signal?: AbortSignal
+  timeoutMs?: number
+  beforeResolve?: (result: unknown) => void
 }
 
 export type NotificationHandler = (method: string, params: Record<string, unknown>) => void
@@ -173,7 +180,7 @@ export class SshChannelMultiplexer {
   async request(
     method: string,
     params?: Record<string, unknown>,
-    options?: { signal?: AbortSignal; timeoutMs?: number }
+    options?: SshMultiplexerRequestOptions
   ): Promise<unknown> {
     if (this.disposed) {
       throw new Error('Multiplexer disposed')
@@ -230,7 +237,13 @@ export class SshChannelMultiplexer {
       if (options?.signal) {
         options.signal.addEventListener('abort', onAbort, { once: true })
       }
-      this.pendingRequests.set(id, { resolve, reject, timer, cleanup })
+      this.pendingRequests.set(id, {
+        resolve,
+        reject,
+        beforeResolve: options?.beforeResolve,
+        timer,
+        cleanup
+      })
       this.sendMessage(msg)
     })
   }
@@ -474,7 +487,12 @@ export class SshChannelMultiplexer {
       Object.defineProperty(err, 'data', { value: msg.error.data })
       pending.reject(err)
     } else {
-      pending.resolve(msg.result)
+      try {
+        pending.beforeResolve?.(msg.result)
+        pending.resolve(msg.result)
+      } catch (error) {
+        pending.reject(error instanceof Error ? error : new Error(String(error)))
+      }
     }
   }
 

@@ -341,6 +341,7 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
     expect(consumers.hooks.commitReplacement(replacement!, { source: 'headless', seq: 4 })).toBe(
       false
     )
+    expect(consumers.hooks.rollbackReplacement(replacement!, 'commit-rejected')).toBe(true)
     expect(() => consumers.hooks.cancel(stream, [], 'stream-detached')).not.toThrow()
     expect(consumers.requiredConsumers('pty-1')).toEqual([])
   })

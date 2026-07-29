@@ -149,6 +149,48 @@ describe('RelayPtySourcePublication', () => {
     await flushRequests()
   })
 
+  it('settles a reentrant cumulative ACK only after the matching writer callback', async () => {
+    const harness = await createHarness(4, false)
+    expect(harness.publication.publish('pty-1', { data: 'abcdefgh' }, false)).toBe(true)
+    const first = harness.writes.map(notification).find((frame) => frame?.method === 'pty.data')!
+
+    dispatcher!.feed(
+      encodeJsonRpcFrame(
+        {
+          jsonrpc: '2.0',
+          method: 'pty.ackData',
+          params: {
+            acknowledgements: [
+              {
+                id: 'pty-1',
+                clientGeneration: first.params.clientGeneration,
+                ownerGeneration: first.params.ownerGeneration,
+                deliveryToken: first.params.deliveryToken,
+                creditedEndSu: 4
+              }
+            ]
+          }
+        },
+        2,
+        0
+      )
+    )
+    expect(harness.publication.getDebugSnapshot()).toMatchObject({
+      outstandingSourceUnits: 0,
+      sendCommitted: 0
+    })
+
+    harness.sourceSettlements[0]({ ok: true })
+
+    expect(
+      harness.writes.map(notification).filter((frame) => frame?.method === 'pty.data')
+    ).toHaveLength(2)
+    expect(harness.publication.getDebugSnapshot()).toMatchObject({
+      outstandingSourceUnits: 0,
+      sendCommitted: 1
+    })
+  })
+
   it('slices source frames to the encoded HWM-minus-reserve capacity', async () => {
     const highWaterMark = 4096
     const harness = await createHarness(10_000, true, highWaterMark)
@@ -233,9 +275,87 @@ describe('RelayPtySourcePublication', () => {
     ).toHaveLength(2)
   })
 
-  it('rolls back a failed source write without advancing the sent window', async () => {
+  it('detaches only a saturated subscriber while the V1 owner stays live', async () => {
+    const harness = await createHarness(8)
+    const detached: number[] = []
+    const saturatedWrites: Buffer[] = []
+    const healthyWrites: Buffer[] = []
+    const heldSettlements: ((result: SinkWriteSettlement) => void)[] = []
+    dispatcher!.onClientDetached((clientId) => detached.push(clientId))
+    const saturatedId = dispatcher!.attachClient(
+      (data, onSettled) => {
+        saturatedWrites.push(Buffer.from(data))
+        heldSettlements.push(onSettled)
+        return false
+      },
+      {
+        supportsWriteCallback: true,
+        writableLength: () => 128 * 1024,
+        writableHighWaterMark: () => 4 * 1024 * 1024
+      }
+    )
+    const healthyId = dispatcher!.attachClient(
+      (data, onSettled) => {
+        healthyWrites.push(Buffer.from(data))
+        onSettled({ ok: true })
+        return true
+      },
+      { supportsWriteCallback: true }
+    )
+    const saturatedPayload = 's'.repeat(128 * 1024)
+    let admitted = 0
+    while (
+      dispatcher!.tryNotifyPtyDataToClient(
+        saturatedId,
+        { id: 'saturated', data: saturatedPayload },
+        () => {}
+      )
+    ) {
+      admitted++
+    }
+
+    expect(admitted).toBeGreaterThan(0)
+    expect(admitted).toBeLessThan(20)
+    expect(harness.publication.publish('pty-1', { data: saturatedPayload }, false)).toBe(true)
+
+    expect(detached).toEqual([saturatedId])
+    expect(detached).not.toContain(healthyId)
+    expect(saturatedWrites).toHaveLength(1)
+    expect(heldSettlements).toHaveLength(1)
+    expect(
+      healthyWrites.map(notification).filter((frame) => frame?.method === 'pty.data')
+    ).toHaveLength(1)
+    expect(
+      harness.writes.map(notification).filter((frame) => frame?.method === 'pty.data')
+    ).toHaveLength(1)
+    expect(harness.publication.getDebugSnapshot()).toMatchObject({ sendCommitted: 1 })
+  })
+
+  it('keeps an early ACK retryable when its source write fails', async () => {
     const harness = await createHarness(4, false)
-    harness.publication.publish('pty-1', { data: 'data' }, false)
+    harness.publication.publish('pty-1', { data: 'abcdefgh' }, false)
+    const first = harness.writes.map(notification).find((frame) => frame?.method === 'pty.data')!
+    dispatcher!.feed(
+      encodeJsonRpcFrame(
+        {
+          jsonrpc: '2.0',
+          method: 'pty.ackData',
+          params: {
+            acknowledgements: [
+              {
+                id: 'pty-1',
+                clientGeneration: first.params.clientGeneration,
+                ownerGeneration: first.params.ownerGeneration,
+                deliveryToken: first.params.deliveryToken,
+                creditedEndSu: 4
+              }
+            ]
+          }
+        },
+        2,
+        0
+      )
+    )
     harness.sourceSettlements[0]({ ok: false, error: new Error('socket write failed') })
 
     expect(harness.publication.getDebugSnapshot()).toMatchObject({
@@ -243,6 +363,10 @@ describe('RelayPtySourcePublication', () => {
       sendCommitted: 0,
       sendRolledBack: 1
     })
+    expect(
+      harness.writes.map(notification).filter((frame) => frame?.method === 'pty.data')
+    ).toHaveLength(1)
+    expect(harness.adapter.getDebugSnapshot()).toMatchObject({ deliveryTokens: 1, sourceSu: 8 })
   })
 
   it('fences idle publication and pumping before the wait continuation', async () => {
@@ -507,7 +631,7 @@ describe('RelayPtySourcePublication', () => {
     ).not.toHaveProperty('capabilities')
   })
 
-  it('settles retained recovery before the fence and publishes later live output after it', async () => {
+  it('settles the recovery fence before sending buffered live output', async () => {
     const harness = await createHarness(4)
     harness.publication.publish('pty-1', { data: 'abcdefgh' }, false)
     const firstData = harness.writes
@@ -518,11 +642,15 @@ describe('RelayPtySourcePublication', () => {
 
     const recoveredWrites: Buffer[] = []
     const recoverySettlements: ((result: SinkWriteSettlement) => void)[] = []
+    const completionSettlements: ((result: SinkWriteSettlement) => void)[] = []
     const recoveredClientId = dispatcher!.attachClient(
       (data, onSettled) => {
         recoveredWrites.push(Buffer.from(data))
-        if (notification(data)?.method === 'pty.data') {
+        const method = notification(data)?.method
+        if (method === 'pty.data') {
           recoverySettlements.push(onSettled)
+        } else if (method === 'pty.recoveryComplete') {
+          completionSettlements.push(onSettled)
         } else {
           onSettled({ ok: true })
         }
@@ -570,15 +698,39 @@ describe('RelayPtySourcePublication', () => {
       recoveryEndSu: 8
     })
     activationSettlements[0]({ ok: true })
-    harness.publication.publish('pty-1', { data: 'ijkl' }, false)
+    expect(harness.publication.publish('pty-1', { data: 'ijkl' }, false)).toBe(false)
 
     expect(
       recoveredWrites.map(notification).filter((frame) => frame?.method === 'pty.recoveryComplete')
     ).toHaveLength(0)
-    recoverySettlements[0]({ ok: true })
     const recoveredData = recoveredWrites
       .map(notification)
       .find((frame) => frame?.method === 'pty.data')!
+    harness.adapter.appendSource(
+      {
+        id: 'pty-1',
+        providerGeneration: 1,
+        clientGeneration: Number(recoveredData.params.clientGeneration),
+        ownerGeneration: Number(recoveredData.params.ownerGeneration),
+        ptyIncarnation: String(recoveredData.params.ptyIncarnation),
+        deliveryToken: String(recoveredData.params.deliveryToken)
+      },
+      {
+        spanId: 'buffered-live',
+        data: 'ijkl',
+        displayStart: 8,
+        displayEnd: 12,
+        splittable: true,
+        transform: { transformed: false, rawLengthSu: 4, scalarSafe: true }
+      }
+    )
+    recoverySettlements[0]({ ok: true })
+    expect(
+      recoveredWrites
+        .map(notification)
+        .filter((frame): frame is NonNullable<typeof frame> => frame !== null)
+        .map((frame) => frame.method)
+    ).toEqual(['pty.deliveryCanceled', 'pty.data', 'pty.recoveryComplete'])
     dispatcher!.feedClient(
       recoveredClientId,
       encodeJsonRpcFrame(
@@ -601,13 +753,25 @@ describe('RelayPtySourcePublication', () => {
         0
       )
     )
+    expect(harness.publication.publish('pty-1', { data: 'ijkl' }, false)).toBe(false)
+    expect(
+      recoveredWrites
+        .map(notification)
+        .filter((frame): frame is NonNullable<typeof frame> => frame !== null)
+        .map((frame) => frame.method)
+    ).toEqual(['pty.deliveryCanceled', 'pty.data', 'pty.recoveryComplete'])
 
+    completionSettlements[0]({ ok: true })
     expect(
       recoveredWrites
         .map(notification)
         .filter((frame): frame is NonNullable<typeof frame> => frame !== null)
         .map((frame) => frame.method)
     ).toEqual(['pty.deliveryCanceled', 'pty.data', 'pty.recoveryComplete', 'pty.data'])
+    expect(recoveredWrites.map(notification).at(-1)?.params).toMatchObject({
+      data: 'ijkl',
+      sourceEndSu: 12
+    })
     await flushRequests()
   })
 })

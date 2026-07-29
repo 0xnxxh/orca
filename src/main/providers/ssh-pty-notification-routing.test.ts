@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { subscribeSshPtyNotifications } from './ssh-pty-notification-routing'
+import type { PtySourceReceivingActivation } from '../../shared/pty-source-receiving-activation'
 
 type MockMux = {
   onNotification: ReturnType<typeof vi.fn>
@@ -19,7 +20,7 @@ function createSubscription() {
   const toAppPtyId = vi.fn((id: string) => `ssh:conn@@${id}`)
   const resolvePtyIncarnation = vi.fn((id: string) => `incarnation:${id}`)
 
-  subscribeSshPtyNotifications({
+  const subscription = subscribeSshPtyNotifications({
     mux: mux as never,
     toAppPtyId,
     dataListeners: dataListeners as never,
@@ -48,8 +49,24 @@ function createSubscription() {
     exitListeners,
     livePtyIds,
     recordExit,
-    resolvePtyIncarnation
+    resolvePtyIncarnation,
+    installReceivingActivation: subscription.installReceivingActivation
   }
+}
+
+function sourceActivation(
+  overrides: Partial<PtySourceReceivingActivation> = {}
+): PtySourceReceivingActivation {
+  return Object.freeze({
+    status: 'pending',
+    clientGeneration: 2,
+    ownerGeneration: 3,
+    ptyIncarnation: 'incarnation-1',
+    deliveryToken: 'token-1',
+    checkpointSourceEndSu: 0,
+    recoveryEndSu: 0,
+    ...overrides
+  })
 }
 
 describe('subscribeSshPtyNotifications', () => {
@@ -108,11 +125,22 @@ describe('subscribeSshPtyNotifications', () => {
   })
 
   it('derives exact immutable source ranges and cancels malformed frames without side effects', () => {
-    const { handler, mux, dataListeners, livePtyIds, toAppPtyId, resolvePtyIncarnation } =
-      createSubscription()
+    const {
+      handler,
+      mux,
+      dataListeners,
+      livePtyIds,
+      toAppPtyId,
+      resolvePtyIncarnation,
+      installReceivingActivation
+    } = createSubscription()
     const onData = vi.fn()
     dataListeners.add(onData)
     livePtyIds.add('ssh:conn@@unrelated')
+    installReceivingActivation(
+      'pty-1',
+      sourceActivation({ checkpointSourceEndSu: 10, recoveryEndSu: 14 })
+    )
 
     handler('pty.data', {
       id: 'pty-1',
@@ -164,10 +192,15 @@ describe('subscribeSshPtyNotifications', () => {
   })
 
   it('keeps exact source incarnation independent from prior legacy delivery state', () => {
-    const { handler, dataListeners, resolvePtyIncarnation } = createSubscription()
+    const { handler, dataListeners, resolvePtyIncarnation, installReceivingActivation } =
+      createSubscription()
     const onData = vi.fn()
     dataListeners.add(onData)
     handler('pty.data', { id: 'pty-1', data: 'legacy' })
+    installReceivingActivation(
+      'pty-1',
+      sourceActivation({ checkpointSourceEndSu: 0, recoveryEndSu: 4 })
+    )
     handler('pty.data', {
       id: 'pty-1',
       data: 'data',
@@ -187,11 +220,27 @@ describe('subscribeSshPtyNotifications', () => {
   })
 
   it('drops stale delivery generations without touching their PTY or unrelated PTYs', () => {
-    const { handler, mux, dataListeners, livePtyIds, toAppPtyId, resolvePtyIncarnation } =
-      createSubscription()
+    const {
+      handler,
+      mux,
+      dataListeners,
+      livePtyIds,
+      toAppPtyId,
+      resolvePtyIncarnation,
+      installReceivingActivation
+    } = createSubscription()
     const onData = vi.fn()
     dataListeners.add(onData)
     livePtyIds.add('ssh:conn@@unrelated')
+    installReceivingActivation(
+      'pty-1',
+      sourceActivation({
+        clientGeneration: 4,
+        ownerGeneration: 5,
+        deliveryToken: 'token-new',
+        recoveryEndSu: 3
+      })
+    )
 
     handler('pty.data', {
       id: 'pty-1',
@@ -231,7 +280,7 @@ describe('subscribeSshPtyNotifications', () => {
   })
 
   it('rejects same-generation token changes and source discontinuities', () => {
-    const { handler, mux, dataListeners } = createSubscription()
+    const { handler, mux, dataListeners, installReceivingActivation } = createSubscription()
     const onData = vi.fn()
     dataListeners.add(onData)
     const sourceParams = {
@@ -241,6 +290,7 @@ describe('subscribeSshPtyNotifications', () => {
       ownerGeneration: 3,
       sourceLengthSu: 3
     }
+    installReceivingActivation('pty-1', sourceActivation({ recoveryEndSu: 3 }))
 
     handler('pty.data', {
       ...sourceParams,
@@ -284,7 +334,7 @@ describe('subscribeSshPtyNotifications', () => {
   })
 
   it('accepts a strictly newer rotation, rejects late old data, and preserves new continuity', () => {
-    const { handler, mux, dataListeners } = createSubscription()
+    const { handler, mux, dataListeners, installReceivingActivation } = createSubscription()
     const onData = vi.fn()
     dataListeners.add(onData)
     const frame = (
@@ -304,7 +354,21 @@ describe('subscribeSshPtyNotifications', () => {
       sourceLengthSu: data.length
     })
 
+    installReceivingActivation(
+      'pty-1',
+      sourceActivation({ deliveryToken: 'token-old', recoveryEndSu: 3 })
+    )
     handler('pty.data', frame('old', 'token-old', 2, 3, 3))
+    installReceivingActivation(
+      'pty-1',
+      sourceActivation({
+        clientGeneration: 3,
+        ownerGeneration: 4,
+        deliveryToken: 'token-new',
+        checkpointSourceEndSu: 10,
+        recoveryEndSu: 13
+      })
+    )
     handler('pty.data', frame('new', 'token-new', 3, 4, 13))
     handler('pty.data', frame('old', 'token-old', 2, 3, 6))
     handler('pty.data', frame('next', 'token-new', 3, 4, 17))
@@ -328,8 +392,15 @@ describe('subscribeSshPtyNotifications', () => {
   ])(
     'rejects a %s without replacing the accepted continuity record',
     (_case, clientGeneration, ownerGeneration, deliveryToken) => {
-      const { handler, mux, dataListeners, livePtyIds, toAppPtyId, resolvePtyIncarnation } =
-        createSubscription()
+      const {
+        handler,
+        mux,
+        dataListeners,
+        livePtyIds,
+        toAppPtyId,
+        resolvePtyIncarnation,
+        installReceivingActivation
+      } = createSubscription()
       const onData = vi.fn()
       dataListeners.add(onData)
       const base = {
@@ -337,6 +408,10 @@ describe('subscribeSshPtyNotifications', () => {
         ptyIncarnation: 'incarnation-1',
         sourceLengthSu: 3
       }
+      installReceivingActivation(
+        'pty-1',
+        sourceActivation({ deliveryToken: 'token-current', recoveryEndSu: 3 })
+      )
       handler('pty.data', {
         ...base,
         data: 'one',
@@ -401,6 +476,187 @@ describe('subscribeSshPtyNotifications', () => {
     expect(toAppPtyId).not.toHaveBeenCalled()
     expect(resolvePtyIncarnation).not.toHaveBeenCalled()
     expect(mux.request).not.toHaveBeenCalled()
+  })
+
+  it('accepts non-empty recovery from the activation checkpoint', () => {
+    const { handler, dataListeners, installReceivingActivation } = createSubscription()
+    const onData = vi.fn()
+    dataListeners.add(onData)
+    installReceivingActivation(
+      'pty-1',
+      sourceActivation({ checkpointSourceEndSu: 4, recoveryEndSu: 8 })
+    )
+
+    handler('pty.data', {
+      id: 'pty-1',
+      data: 'next',
+      ptyIncarnation: 'incarnation-1',
+      deliveryToken: 'token-1',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      sourceEndSu: 8,
+      sourceLengthSu: 4
+    })
+
+    expect(onData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: 'next',
+        source: expect.objectContaining({ sourceStartSu: 4, sourceEndSu: 8 })
+      })
+    )
+  })
+
+  it('rejects a stale activation without disturbing current continuity', () => {
+    const { handler, dataListeners, installReceivingActivation } = createSubscription()
+    const onData = vi.fn()
+    dataListeners.add(onData)
+    installReceivingActivation('pty-1', sourceActivation({ recoveryEndSu: 3 })).commit()
+
+    expect(() =>
+      installReceivingActivation(
+        'pty-1',
+        sourceActivation({
+          clientGeneration: 1,
+          ownerGeneration: 4,
+          deliveryToken: 'token-stale',
+          checkpointSourceEndSu: 3,
+          recoveryEndSu: 3
+        })
+      )
+    ).toThrow('ssh_source_receiving_activation_stale')
+
+    handler('pty.data', {
+      id: 'pty-1',
+      data: 'one',
+      ptyIncarnation: 'incarnation-1',
+      deliveryToken: 'token-1',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      sourceEndSu: 3,
+      sourceLengthSu: 3
+    })
+    expect(onData).toHaveBeenCalledOnce()
+  })
+
+  it('rolls back after provisional frames and cancels only that activation', () => {
+    const { handler, mux, dataListeners, installReceivingActivation } = createSubscription()
+    const onData = vi.fn()
+    dataListeners.add(onData)
+    const lease = installReceivingActivation(
+      'pty-1',
+      sourceActivation({ checkpointSourceEndSu: 4, recoveryEndSu: 8 })
+    )
+    handler('pty.data', {
+      id: 'pty-1',
+      data: 'next',
+      ptyIncarnation: 'incarnation-1',
+      deliveryToken: 'token-1',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      sourceEndSu: 8,
+      sourceLengthSu: 4
+    })
+
+    lease.rollback()
+
+    expect(onData).toHaveBeenCalledOnce()
+    expect(mux.request).toHaveBeenCalledWith('pty.cancelDelivery', {
+      id: 'pty-1',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      deliveryToken: 'token-1'
+    })
+  })
+
+  it('restores the exact prior cursor when a replacement rolls back after frames', () => {
+    const { handler, dataListeners, installReceivingActivation } = createSubscription()
+    const onData = vi.fn()
+    dataListeners.add(onData)
+    installReceivingActivation('pty-1', sourceActivation({ deliveryToken: 'token-old' })).commit()
+    handler('pty.data', {
+      id: 'pty-1',
+      data: 'pre',
+      ptyIncarnation: 'incarnation-1',
+      deliveryToken: 'token-old',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      sourceEndSu: 3,
+      sourceLengthSu: 3
+    })
+    const replacement = installReceivingActivation(
+      'pty-1',
+      sourceActivation({
+        clientGeneration: 3,
+        ownerGeneration: 4,
+        deliveryToken: 'token-new',
+        checkpointSourceEndSu: 3,
+        recoveryEndSu: 3
+      })
+    )
+    handler('pty.data', {
+      id: 'pty-1',
+      data: 'new',
+      ptyIncarnation: 'incarnation-1',
+      deliveryToken: 'token-new',
+      clientGeneration: 3,
+      ownerGeneration: 4,
+      sourceEndSu: 6,
+      sourceLengthSu: 3
+    })
+
+    replacement.rollback()
+    handler('pty.data', {
+      id: 'pty-1',
+      data: 'old',
+      ptyIncarnation: 'incarnation-1',
+      deliveryToken: 'token-old',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      sourceEndSu: 6,
+      sourceLengthSu: 3
+    })
+
+    expect(onData.mock.calls.map(([payload]) => payload.data)).toEqual(['pre', 'new', 'old'])
+  })
+
+  it('does not let an older lease rollback replace a newer activation', () => {
+    const { handler, mux, dataListeners, installReceivingActivation } = createSubscription()
+    const onData = vi.fn()
+    dataListeners.add(onData)
+    const older = installReceivingActivation('pty-1', sourceActivation())
+    const newer = installReceivingActivation(
+      'pty-1',
+      sourceActivation({
+        clientGeneration: 3,
+        ownerGeneration: 4,
+        deliveryToken: 'token-new'
+      })
+    )
+
+    older.rollback()
+    handler('pty.data', {
+      id: 'pty-1',
+      data: 'new',
+      ptyIncarnation: 'incarnation-1',
+      deliveryToken: 'token-new',
+      clientGeneration: 3,
+      ownerGeneration: 4,
+      sourceEndSu: 3,
+      sourceLengthSu: 3
+    })
+    newer.commit()
+
+    expect(onData).toHaveBeenCalledWith(expect.objectContaining({ data: 'new' }))
+    expect(mux.request).toHaveBeenCalledWith('pty.cancelDelivery', {
+      id: 'pty-1',
+      clientGeneration: 2,
+      ownerGeneration: 3,
+      deliveryToken: 'token-1'
+    })
+    expect(mux.request).not.toHaveBeenCalledWith(
+      'pty.cancelDelivery',
+      expect.objectContaining({ deliveryToken: 'token-new' })
+    )
   })
 
   it('ignores PTY methods with missing ids', () => {

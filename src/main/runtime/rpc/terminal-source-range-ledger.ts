@@ -3,18 +3,16 @@ import {
   type TerminalOutputSourceRange
 } from '../../../shared/terminal-output-source-range'
 import {
+  canPlanTerminalSourceRangeReplacement,
   freezeTerminalOutputSourceRanges,
+  replaceTerminalSourceRangeFrames,
+  type TerminalSourceRangeFrame,
   validateTerminalSourceRangeFrame
 } from './terminal-source-range-validation'
 
-export const TERMINAL_SOURCE_RANGE_STREAM_MAX_BYTES = 2 * 1024 * 1024
+export type { TerminalSourceRangeFrame } from './terminal-source-range-validation'
 
-export type TerminalSourceRangeFrame = Readonly<{
-  encodedStartByte: number
-  encodedEndByte: number
-  displayLength: number
-  sourceRanges: readonly TerminalOutputSourceRange[]
-}>
+export const TERMINAL_SOURCE_RANGE_STREAM_MAX_BYTES = 2 * 1024 * 1024
 
 export type TerminalSourceRangeAckResult =
   | {
@@ -95,7 +93,8 @@ export class TerminalSourceRangeLedger {
   prepareAccept(
     encodedBytes: number,
     displayLength: number,
-    sourceRanges: readonly TerminalOutputSourceRange[]
+    sourceRanges: readonly TerminalOutputSourceRange[],
+    outputSeq?: number
   ): TerminalSourceRangeAdmissionResult {
     if (!this.canAccept(encodedBytes)) {
       return { status: 'capacity' }
@@ -131,6 +130,7 @@ export class TerminalSourceRangeLedger {
       encodedStartByte: this.acceptedEndByte,
       encodedEndByte: this.acceptedEndByte + encodedBytes,
       displayLength,
+      ...(typeof outputSeq === 'number' ? { outputSeq } : {}),
       sourceRanges: ranges
     })
     let finished = false
@@ -172,9 +172,10 @@ export class TerminalSourceRangeLedger {
   accept(
     encodedBytes: number,
     displayLength: number,
-    sourceRanges: readonly TerminalOutputSourceRange[]
+    sourceRanges: readonly TerminalOutputSourceRange[],
+    outputSeq?: number
   ): TerminalSourceRangeFrame | null {
-    const prepared = this.prepareAccept(encodedBytes, displayLength, sourceRanges)
+    const prepared = this.prepareAccept(encodedBytes, displayLength, sourceRanges, outputSeq)
     if (prepared.status !== 'ready' || !prepared.admission.commit()) {
       return null
     }
@@ -221,6 +222,24 @@ export class TerminalSourceRangeLedger {
     this.retainedBytes -= releasedBytes
     this.budget.release(releasedBytes)
     return { status: 'accepted', acknowledgedBytes, settled: Object.freeze(settled) }
+  }
+
+  planSourceRangeReplacement(snapshotSeq: number): Readonly<{ commit: () => void }> | null {
+    const unavailable = this.closed || this.transferring || this.pending
+    if (unavailable || !canPlanTerminalSourceRangeReplacement(this.frames, snapshotSeq)) {
+      return null
+    }
+    const replacement = replaceTerminalSourceRangeFrames(this.frames, snapshotSeq)
+    let committed = false
+    return Object.freeze({
+      commit: () => {
+        if (committed || this.closed) {
+          return
+        }
+        committed = true
+        Object.assign(this, replacement)
+      }
+    })
   }
 
   beginTransfer(): TerminalSourceRangeTransfer {

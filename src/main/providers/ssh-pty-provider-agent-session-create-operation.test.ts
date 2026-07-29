@@ -35,14 +35,19 @@ describe('SSH fresh agent-session create operations', () => {
       signal: undefined,
       timeoutMs: 5_000
     })
-    expect(request).toHaveBeenNthCalledWith(2, 'pty.spawn', {
-      cols: 80,
-      rows: 24,
-      cwd: undefined,
-      env: { POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD: 'true' },
-      command: 'codex',
-      agentSessionCreateOperationId: 'a'.repeat(43)
-    })
+    expect(request).toHaveBeenNthCalledWith(
+      2,
+      'pty.spawn',
+      {
+        cols: 80,
+        rows: 24,
+        cwd: undefined,
+        env: { POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD: 'true' },
+        command: 'codex',
+        agentSessionCreateOperationId: 'a'.repeat(43)
+      },
+      expect.objectContaining({ beforeResolve: expect.any(Function) })
+    )
   })
 
   it('does not downgrade after structured dispatch reaches an old relay', async () => {
@@ -70,13 +75,18 @@ describe('SSH fresh agent-session create operations', () => {
       })
     ).resolves.toMatchObject({ id: 'ssh:conn-1@@pty-legacy' })
 
-    expect(request).toHaveBeenNthCalledWith(1, 'pty.spawn', {
-      cols: 80,
-      rows: 24,
-      cwd: undefined,
-      env: { POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD: 'true' },
-      command: 'codex'
-    })
+    expect(request).toHaveBeenNthCalledWith(
+      1,
+      'pty.spawn',
+      {
+        cols: 80,
+        rows: 24,
+        cwd: undefined,
+        env: { POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD: 'true' },
+        command: 'codex'
+      },
+      expect.objectContaining({ beforeResolve: expect.any(Function) })
+    )
   })
 
   it('re-probes a negative capability after an in-place relay upgrade', async () => {

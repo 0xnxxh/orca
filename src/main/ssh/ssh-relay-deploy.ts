@@ -11,7 +11,11 @@ import {
   execCommand,
   isUnconfirmedSshCommandTermination
 } from './ssh-relay-deploy-helpers'
-import { uploadRelayDirectory, writeRelayFile } from './ssh-relay-install-transfers'
+import {
+  uploadRelayDirectory,
+  writeRelayFile,
+  type RelayTransferOptions
+} from './ssh-relay-install-transfers'
 import {
   createRelayInstallMarkerCommand,
   createRelayInstallNamespace,
@@ -368,6 +372,7 @@ async function deployAndLaunchRelayAttempt(
 
   let ownsInstallLock = false
   let launchGcClaimToken: string | undefined
+  let launchNamespace: RelayInstallNamespace | undefined
   if (alreadyInstalled) {
     const launchFence = await repairInstalledNativeDeps(
       conn,
@@ -380,6 +385,7 @@ async function deployAndLaunchRelayAttempt(
     )
     ownsInstallLock = launchFence.ownsInstallLock
     launchGcClaimToken = launchFence.gcClaimToken
+    launchNamespace = launchFence.sftpNamespace
     deploySignal?.throwIfAborted()
   } else {
     // Why: serialize concurrent first-installs via a host-native exclusive lock; the loser polls to re-check installed or steal a stale lock.
@@ -392,7 +398,7 @@ async function deployAndLaunchRelayAttempt(
           signal: deploySignal
         }))
       ) {
-        const installNamespace = createInstallNamespaceIfSupported(
+        launchNamespace = createInstallNamespaceIfSupported(
           conn,
           hostPlatform,
           homeRelativeRelayDir
@@ -407,7 +413,7 @@ async function deployAndLaunchRelayAttempt(
           fullVersion,
           hostPlatform,
           deploySignal,
-          installNamespace
+          launchNamespace
         )
         console.log('[ssh-relay] Upload complete')
 
@@ -421,7 +427,7 @@ async function deployAndLaunchRelayAttempt(
           nodePath,
           deploySignal,
           [],
-          installNamespace
+          launchNamespace
         )
         console.log('[ssh-relay] Native deps installed')
 
@@ -456,6 +462,7 @@ async function deployAndLaunchRelayAttempt(
       graceTimeSeconds,
       relayInstanceId,
       enablePtySourceCreditV1,
+      launchNamespace,
       deploySignal
     )
     launchLivenessObserved = true
@@ -639,7 +646,11 @@ async function repairInstalledNativeDeps(
   nodePath: string,
   homeRelativeRelayDir: string,
   signal?: AbortSignal
-): Promise<{ ownsInstallLock: boolean; gcClaimToken?: string }> {
+): Promise<{
+  ownsInstallLock: boolean
+  gcClaimToken?: string
+  sftpNamespace?: RelayInstallNamespace
+}> {
   const initialProbe = await probeRequiredNativeDeps(
     conn,
     remoteDir,
@@ -674,7 +685,27 @@ async function repairInstalledNativeDeps(
       : undefined
   if (initialProbe.available) {
     // Why: even a healthy reconnect stays fenced until launch liveness is observable, or cross-version GC can rename after this probe.
-    return { ownsInstallLock: lockResult === 'acquired', gcClaimToken }
+    if (lockResult !== 'acquired') {
+      return { ownsInstallLock: false, gcClaimToken }
+    }
+    try {
+      return {
+        ownsInstallLock: true,
+        sftpNamespace: await createRelayLaunchNamespace(
+          conn,
+          hostPlatform,
+          remoteDir,
+          homeRelativeRelayDir,
+          signal
+        )
+      }
+    } catch (err) {
+      signal?.throwIfAborted()
+      console.warn(
+        `[ssh-relay] Launch namespace marker is unconfirmed at ${remoteDir}; retaining the install lock`
+      )
+      return { ownsInstallLock: !isUnconfirmedSshCommandTermination(err) }
+    }
   }
 
   // Why: an already-installed relay can launch degraded, so native-deps repair is best-effort — lock contention and failures must not abort the connection.
@@ -688,9 +719,10 @@ async function repairInstalledNativeDeps(
   try {
     // Why: older complete relay dirs predate @parcel/watcher; re-probe under the lock so only one reconnect mutates the dir.
     const probe = await probeRequiredNativeDeps(conn, remoteDir, hostPlatform, nodePath, signal)
+    let repairNamespace: RelayInstallNamespace | undefined
     if (!probe.available) {
       // Why: only stamp ownership once the locked recheck proves this connection is the one about to write.
-      const repairNamespace = await createRepairInstallMarker(
+      repairNamespace = await createRelayLaunchNamespace(
         conn,
         hostPlatform,
         remoteDir,
@@ -709,7 +741,7 @@ async function repairInstalledNativeDeps(
       )
       await finalizeInstall(conn, remoteDir, hostPlatform, { signal, releaseLock: false })
     }
-    return { ownsInstallLock: true }
+    return { ownsInstallLock: true, sftpNamespace: repairNamespace }
   } catch (err) {
     const terminationUnconfirmed = isUnconfirmedSshCommandTermination(err)
     // Why: hold a confirmed-failure lock through degraded launch so GC can't move the relay before liveness is visible.
@@ -724,10 +756,10 @@ async function repairInstalledNativeDeps(
 }
 
 /**
- * Stamp this connection as the install owner during repair. Marker creation is
- * best-effort: without it the writes simply keep using the shell path.
+ * Stamp this connection as the launch writer while it owns the install lock.
+ * Confirmed marker failures fall back to shell-path credential generation.
  */
-async function createRepairInstallMarker(
+async function createRelayLaunchNamespace(
   conn: SshConnection,
   hostPlatform: RemoteHostPlatform,
   remoteDir: string,
@@ -1204,6 +1236,7 @@ async function launchRelay(
   graceTimeSeconds?: number,
   relayInstanceId?: string,
   enablePtySourceCreditV1 = false,
+  namespace?: RelayInstallNamespace,
   signal?: AbortSignal
 ): Promise<{
   transport: MultiplexerTransport
@@ -1320,7 +1353,12 @@ async function launchRelay(
   // Why: relay must outlive the SSH connection so PTY sessions survive app restarts — nohup + </dev/null + & detach it from the exec channel.
   // Why: execCommand would block on channel close that backgrounded children never allow; fire-and-forget via conn.exec, the socket poll detects readiness.
   const logFile = `${remoteDir}/relay.log`
-  await writeRelayEndpointCredential(conn, hostPlatform, credentialFile, signal)
+  await writeRelayEndpointCredential(conn, hostPlatform, nodePath, credentialFile, {
+    signal,
+    sftpNamespace: namespace
+      ? relaySftpNamespaceMapping(namespace, hostPlatform, remoteDir, `${sockName}.credential`)
+      : undefined
+  })
   // Why: --log-file lets the relay rotate relay.log in-process; the shell redirect stays to capture pre-JS boot/crash output.
   const sourceCreditFlag = enablePtySourceCreditV1 ? ' --pty-source-credit-v1' : ''
   const sourceCreditPolicy = enablePtySourceCreditV1 ? 'v1' : 'off'
@@ -1388,11 +1426,26 @@ async function launchRelay(
 async function writeRelayEndpointCredential(
   conn: SshConnection,
   hostPlatform: RemoteHostPlatform,
+  nodePath: string,
   credentialFile: string,
-  signal?: AbortSignal
+  options?: RelayTransferOptions
 ): Promise<void> {
+  const usesSystemSsh = conn.usesSystemSshTransport?.() === true
+  if (!isWindowsRemoteHost(hostPlatform) && !usesSystemSsh && !options?.sftpNamespace) {
+    const script =
+      'const fs=require("fs"),crypto=require("crypto"),p=process.argv[1];' +
+      'fs.writeFileSync(p,crypto.randomBytes(32).toString("base64url"),{mode:0o600});' +
+      'fs.chmodSync(p,0o600)'
+    await execHostCommand(
+      conn,
+      hostPlatform,
+      `${shellEscape(nodePath)} -e ${shellEscape(script)} ${shellEscape(credentialFile)}`,
+      { signal: options?.signal }
+    )
+    return
+  }
   const credential = randomBytes(32).toString('base64url')
-  await writeRelayFile(conn, hostPlatform, credentialFile, credential, { signal })
+  await writeRelayFile(conn, hostPlatform, credentialFile, credential, options)
 }
 
 function waitForRelayPoll(delayMs: number, signal?: AbortSignal): Promise<void> {
@@ -1575,7 +1628,13 @@ async function launchWindowsRelay(
 
   const logFile = joinRemotePath(hostPlatform, launchOpts.remoteDir, 'relay.log')
   const errFile = joinRemotePath(hostPlatform, launchOpts.remoteDir, 'relay.err.log')
-  await writeRelayEndpointCredential(conn, hostPlatform, launchOpts.credentialFile, signal)
+  await writeRelayEndpointCredential(
+    conn,
+    hostPlatform,
+    launchOpts.nodePath,
+    launchOpts.credentialFile,
+    { signal }
+  )
   await execHostCommand(
     conn,
     hostPlatform,

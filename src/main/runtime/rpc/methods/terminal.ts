@@ -1663,7 +1663,8 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           ? stream.sourceRangeLedger?.prepareAccept(
               chunk.bytes.byteLength,
               chunk.displayLength,
-              chunk.sourceRanges ?? []
+              chunk.sourceRanges ?? [],
+              chunk.seq
             )
           : undefined
         if (stream.ackOutputSourceRanges && prepared?.status !== 'ready') {
@@ -1719,6 +1720,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           return
         }
         stream.ackRecoverySnapshotInFlight = true
+        let replacement: RemoteTerminalSourceRangeReplacementReservation | null = null
         try {
           const serialized = await serializeBudgetedRequestedSnapshot(runtime, stream.ptyId, 0)
           if (closed || streams.get(stream.streamId) !== stream) {
@@ -1727,21 +1729,75 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           if (!serialized) {
             throw new Error('Remote terminal recovery snapshot unavailable.')
           }
+          if (
+            stream.ackOutputSourceRanges &&
+            (serialized.source === undefined || typeof serialized.seq !== 'number')
+          ) {
+            throw new Error('Remote terminal recovery snapshot source identity unavailable.')
+          }
+          if (
+            stream.ackOutputSourceRanges &&
+            serialized.source !== undefined &&
+            typeof serialized.seq === 'number'
+          ) {
+            replacement = runtime.reserveRemoteTerminalSourceRangeReplacement(
+              {
+                ptyId: stream.ptyId,
+                consumerId: stream.remoteDesktopSubscriptionKey,
+                streamGeneration: stream.streamGeneration
+              },
+              serialized.seq,
+              'ack-pending-overflow'
+            )
+            stream.sourceRangeReplacement = replacement
+          }
           const displayMode = runtime.getMobileDisplayMode(stream.ptyId)
-          // Why: dropped ACK-pending output breaks live replay; send a fresh snapshot before resuming output.
-          sendSnapshotFrames((opcode, payload) => sendFrame(stream.streamId, opcode, payload), {
-            kind: 'scrollback',
-            cols: serialized.cols,
-            rows: serialized.rows,
-            displayMode,
-            reason: 'ack-pending-overflow',
-            seq: serialized.seq,
-            source: serialized.source,
-            truncatedByByteBudget: serialized.truncatedByByteBudget,
-            data: serialized.data
-          })
+          const publication = sendSnapshotFrames(
+            (opcode, payload) =>
+              !closed &&
+              streams.get(stream.streamId) === stream &&
+              sendFrame(stream.streamId, opcode, payload),
+            {
+              kind: 'scrollback',
+              cols: serialized.cols,
+              rows: serialized.rows,
+              displayMode,
+              reason: 'ack-pending-overflow',
+              seq: serialized.seq,
+              source: serialized.source,
+              truncatedByByteBudget: serialized.truncatedByByteBudget,
+              data: serialized.data
+            }
+          )
+          if (!publication.published) {
+            throw new Error('Remote terminal recovery snapshot was not published.')
+          }
+          if (closed || streams.get(stream.streamId) !== stream) {
+            throw new Error('Remote terminal recovery snapshot stream detached.')
+          }
+          const localReplacement = replacement
+            ? typeof serialized.seq === 'number'
+              ? stream.sourceRangeLedger?.planSourceRangeReplacement(serialized.seq)
+              : null
+            : null
+          if (replacement && !localReplacement) {
+            throw new Error('Remote terminal recovery source ledger replacement unavailable.')
+          }
+          if (
+            replacement &&
+            (!serialized.source ||
+              typeof serialized.seq !== 'number' ||
+              !runtime.commitRemoteTerminalSourceRangeReplacement(replacement, {
+                source: serialized.source,
+                seq: serialized.seq
+              }))
+          ) {
+            throw new Error('Remote terminal recovery snapshot replacement was not accepted.')
+          }
+          localReplacement?.commit()
+          stream.sourceRangeReplacement = null
+          replacement = null
           if (typeof serialized.seq === 'number') {
-            // Why: chunks queued before the snapshot serialized are already in it; replaying them would duplicate output.
             const snapshotSeq = serialized.seq
             const retained = stream.ackPendingOutput.filter(
               (chunk) => !(typeof chunk.seq === 'number' && chunk.seq <= snapshotSeq)
@@ -1754,11 +1810,23 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           }
           stream.ackPendingOutputOverflowed = false
         } catch (error) {
+          if (replacement) {
+            if (stream.sourceRangeReplacement === replacement) {
+              stream.sourceRangeReplacement = null
+              runtime.rollbackRemoteTerminalSourceRangeReplacement(
+                replacement,
+                'ack-pending-overflow-unpublished'
+              )
+            }
+            replacement = null
+          }
+          if (closed || streams.get(stream.streamId) !== stream) {
+            return
+          }
           sendStreamError(
             stream.streamId,
             error instanceof Error ? error.message : 'Remote terminal recovery snapshot failed.'
           )
-          // Why: retrying the same failed recovery from finally creates an unbounded error loop.
           detachStream(stream.streamId, true)
         } finally {
           if (streams.get(stream.streamId) === stream) {
@@ -1887,6 +1955,14 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         const stream = streams.get(streamId)
         if (!stream) {
           return
+        }
+        const replacement = stream.sourceRangeReplacement
+        stream.sourceRangeReplacement = null
+        if (replacement) {
+          runtime.rollbackRemoteTerminalSourceRangeReplacement(
+            replacement,
+            'stream-detached-replacement-aborted'
+          )
         }
         stream.outputBatcher.flush()
         stream.outputBatcher.dispose()

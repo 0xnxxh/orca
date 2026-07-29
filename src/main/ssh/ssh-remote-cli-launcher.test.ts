@@ -29,6 +29,7 @@ describe('SSH remote Orca CLI launcher', () => {
       relayDir: 'C:/Users/me user/.orca-remote/relay-v1',
       nodePath: 'C:/Program Files/nodejs/node.exe',
       sockPath: '\\\\.\\pipe\\orca-relay-123',
+      credentialFile: 'C:/Users/me user/.orca-remote/relay-v1/relay.sock.credential',
       hostPlatform: getRemoteHostPlatform('win32-x64')
     })
   }
@@ -83,11 +84,13 @@ describe('SSH remote Orca CLI launcher', () => {
       const binDir = join(root, 'bin').replaceAll('\\', '/')
       const relayDir = join(root, 'relay').replaceAll('\\', '/')
       const sockPath = '\\\\.\\pipe\\orca-relay-test'
+      const credentialFile = `${relayDir}/relay.sock.credential`
       const plan = createRemoteCliInstallPlan({
         binDir,
         relayDir,
         nodePath: process.execPath,
         sockPath,
+        credentialFile,
         hostPlatform: getRemoteHostPlatform('win32-x64')
       })
       for (const file of plan.files) {
@@ -127,7 +130,8 @@ describe('SSH remote Orca CLI launcher', () => {
             ...process.env,
             ORCA_RELAY_NODE_PATH: process.execPath,
             ORCA_RELAY_DIR: relayDir,
-            ORCA_RELAY_SOCKET_PATH: sockPath
+            ORCA_RELAY_SOCKET_PATH: sockPath,
+            ORCA_RELAY_CREDENTIAL_FILE: credentialFile
           }
         }
       )
@@ -136,6 +140,8 @@ describe('SSH remote Orca CLI launcher', () => {
       expect(JSON.parse(launched.stdout)).toEqual([
         '--sock-path',
         sockPath,
+        '--credential-file',
+        credentialFile,
         '--orca-cli',
         'orchestration',
         'send',
@@ -161,6 +167,7 @@ describe('SSH remote Orca CLI launcher', () => {
         relayDir: join(root, 'relay').replaceAll('\\', '/'),
         nodePath: process.execPath,
         sockPath: '\\\\.\\pipe\\orca-relay-test',
+        credentialFile: join(root, 'relay', 'relay.sock.credential').replaceAll('\\', '/'),
         hostPlatform: getRemoteHostPlatform('win32-x64')
       })
       for (const file of plan.files) {

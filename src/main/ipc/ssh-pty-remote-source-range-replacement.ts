@@ -92,7 +92,6 @@ export class SshPtyRemoteSourceRangeReplacements {
         return obligation.state !== 'transferring' || obligation.to !== record.replacement
       })
     ) {
-      this.reservations.delete(reservation.reservationId)
       return false
     }
     for (const source of record.spans) {

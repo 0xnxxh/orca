@@ -10,14 +10,10 @@ import type {
   SshPtyReplayCallback
 } from './ssh-pty-provider-contract'
 import { SshPtyProviderOutputState } from './ssh-pty-provider-output-state'
-import { validateClaimedSshSpawn } from './ssh-agent-session-claim-validation'
-import {
-  assertSshAgentSessionCreateResult,
-  requestSshAgentSessionCreate
-} from './ssh-agent-session-create-operation'
+import { spawnFreshSshPty } from './ssh-agent-session-create-operation'
 import { mapSshPtyProcessList } from './ssh-agent-session-process-list'
 import {
-  parseSshPtyAttachResult,
+  requestSshPtyAttach,
   reattachSshPtySessionWithExitFence,
   type PtySourceRecoveryRequest,
   type SshPtyAttachResult
@@ -88,15 +84,25 @@ export class SshPtyProvider implements IPtyProvider {
       }
     }
     if (opts.sessionId) {
-      const result = await reattachSshPtySessionWithExitFence({
-        mux: this.mux,
-        connectionId: this.connectionId,
-        sessionId: opts.sessionId,
-        options: opts,
-        exitRaceTracker: this.spawnExitRaces
-      })
-      this.livePtyIds.add(result.id)
-      return result
+      let result: Awaited<ReturnType<typeof reattachSshPtySessionWithExitFence>> | undefined
+      try {
+        result = await reattachSshPtySessionWithExitFence({
+          mux: this.mux,
+          connectionId: this.connectionId,
+          sessionId: opts.sessionId,
+          options: opts,
+          exitRaceTracker: this.spawnExitRaces,
+          installSourceActivation: (relayPtyId, activation) =>
+            this.outputState.installReceivingActivation(relayPtyId, activation)
+        })
+        this.livePtyIds.add(result.id)
+        result.sourceActivationLease?.commit()
+        const { sourceActivationLease: _lease, ...spawnResult } = result
+        return spawnResult
+      } catch (error) {
+        result?.sourceActivationLease?.rollback()
+        throw error
+      }
     }
 
     const supportsCreateOperation = opts.agentSessionCreateOperationId
@@ -109,66 +115,22 @@ export class SshPtyProvider implements IPtyProvider {
       // Why: host routing owns legacy selection; a changed relay must not downgrade after dispatch.
       throw new Error('execution_owner_unavailable')
     }
-    const operation = this.spawnExitRaces.begin()
-    try {
-      const result = await requestSshAgentSessionCreate({
-        mux: this.mux,
-        operationId: opts.agentSessionCreateOperationId,
-        signal: opts.signal,
-        params: buildSshPtySpawnRequest({
-          options: opts,
-          remoteCliBridgeEnv: this.remoteCliBridgeEnv,
-          supportsCreateOperation
-        })
-      })
-      if (opts.agentSessionCreateOperationId) {
-        assertSshAgentSessionCreateResult(result)
-      }
-      const spawnResult = result as PtySpawnResult
-      if (this.spawnExitRaces.didMatchingExitArrive(operation, spawnResult)) {
-        // Why: relay notification can share the response batch; no controller registration may follow.
-        throw Object.assign(new Error('agent_session_exited_during_start'), {
-          agentSessionOperationOutcome: 'unknown' as const
-        })
-      }
-      const claimed = spawnResult.agentSessionEnsure
-      if (opts.agentSessionEnsure) {
-        const validation = validateClaimedSshSpawn(spawnResult, opts.agentSessionEnsure)
-        if (!validation.valid) {
-          if (validation.cleanup === 'created' && typeof spawnResult.id === 'string') {
-            try {
-              // Why: immediate relay shutdown resolves only after physical exit;
-              // a best-effort graceful request cannot prove the duplicate is gone.
-              await this.mux.request('pty.shutdown', { id: spawnResult.id, immediate: true })
-            } catch {
-              throw new Error('execution_owner_unavailable')
-            }
-          }
-          throw new Error(validation.error)
-        }
-      }
-      const id = this.toAppPtyId(spawnResult.id)
-      this.outputState.rememberPtyIncarnation(spawnResult.id, spawnResult.incarnationId)
-      this.livePtyIds.add(id)
-      return {
-        ...spawnResult,
-        id,
-        ...(claimed
-          ? {
-              agentSessionEnsure: {
-                ...claimed,
-                owner: {
-                  ...claimed.owner,
-                  ptyId: this.toAppPtyId(claimed.owner.ptyId)
-                }
-              }
-            }
-          : {}),
-        ...(opts.sessionId ? { sessionExpired: true } : {})
-      }
-    } finally {
-      this.spawnExitRaces.finish(operation)
-    }
+    return await spawnFreshSshPty({
+      mux: this.mux,
+      options: opts,
+      params: buildSshPtySpawnRequest({
+        options: opts,
+        remoteCliBridgeEnv: this.remoteCliBridgeEnv,
+        supportsCreateOperation
+      }),
+      exitRaceTracker: this.spawnExitRaces,
+      installSourceActivation: (id, activation) =>
+        this.outputState.installReceivingActivation(id, activation),
+      rememberPtyIncarnation: (id, incarnation) =>
+        this.outputState.rememberPtyIncarnation(id, incarnation),
+      acceptLivePty: (id) => this.livePtyIds.add(id),
+      toAppPtyId: this.toAppPtyId
+    })
   }
 
   async supportsAgentSessionClaims(options: { signal?: AbortSignal } = {}): Promise<boolean> {
@@ -186,7 +148,17 @@ export class SshPtyProvider implements IPtyProvider {
   }
 
   async attach(id: string): Promise<void> {
-    await this.mux.request('pty.attach', { id: this.toRelayPtyId(id) })
+    const relayPtyId = this.toRelayPtyId(id)
+    await requestSshPtyAttach({
+      mux: this.mux,
+      relayPtyId,
+      params: { id: relayPtyId },
+      commitSourceActivation: true,
+      installSourceActivation: (ptyId, activation) =>
+        this.outputState.installReceivingActivation(ptyId, activation),
+      rememberPtyIncarnation: (ptyId, incarnationId) =>
+        this.outputState.rememberPtyIncarnation(ptyId, incarnationId)
+    })
   }
 
   async attachForReconnect(
@@ -205,11 +177,17 @@ export class SshPtyProvider implements IPtyProvider {
       ...(expected?.paneKey ? { expectedPaneKey: expected.paneKey } : {}),
       ...(expected?.tabId ? { expectedTabId: expected.tabId } : {})
     }
-    const result = parseSshPtyAttachResult(
-      await this.mux.request('pty.attach', params, { timeoutMs: 10_000 })
-    )
-    this.outputState.rememberPtyIncarnation(this.toRelayPtyId(id), result.incarnationId)
-    return result
+    const relayPtyId = this.toRelayPtyId(id)
+    return await requestSshPtyAttach({
+      mux: this.mux,
+      relayPtyId,
+      params,
+      timeoutMs: 10_000,
+      installSourceActivation: (ptyId, activation) =>
+        this.outputState.installReceivingActivation(ptyId, activation),
+      rememberPtyIncarnation: (ptyId, incarnationId) =>
+        this.outputState.rememberPtyIncarnation(ptyId, incarnationId)
+    })
   }
 
   write(id: string, data: string): void {

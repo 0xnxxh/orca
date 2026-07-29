@@ -3,12 +3,30 @@ import type {
   PtySourceRecoveryRequest,
   PtySourceRecoveryResult
 } from '../shared/pty-source-recovery-contract'
+import type { PtySourceReceivingActivation } from '../shared/pty-source-receiving-activation'
+import type { PtySourceDeliveryIdentity } from '../shared/pty-source-credit-contract'
 import type { RequestContext } from './dispatcher'
 import type {
   RelayPtySourceDeliveryRecord,
   RelayPtySourceSendScheduler
 } from './relay-pty-source-send-scheduler'
 import type { SshPtyConsumerSessionAdapter } from './ssh-pty-consumer-session-adapter'
+
+export function createPtySourceReceivingActivation(
+  identity: PtySourceDeliveryIdentity,
+  checkpointSourceEndSu: number,
+  recoveryEndSu: number
+): PtySourceReceivingActivation {
+  return Object.freeze({
+    status: 'pending',
+    clientGeneration: identity.clientGeneration,
+    ownerGeneration: identity.ownerGeneration,
+    ptyIncarnation: identity.ptyIncarnation,
+    deliveryToken: identity.deliveryToken,
+    checkpointSourceEndSu,
+    recoveryEndSu
+  })
+}
 
 export function registerPtySourceActivationSettlement(options: {
   id: string

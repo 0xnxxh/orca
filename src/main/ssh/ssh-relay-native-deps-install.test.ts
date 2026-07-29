@@ -711,6 +711,7 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
       'MISSING', // re-probe after lock
       '', // SFTP-namespace install-owner marker (repair)
       { reject: 'npm ERR! network ETIMEDOUT' }, // npm install fails (offline)
+      '', // remote credential generation after degraded repair
       'DEAD',
       'READY'
     ])
@@ -738,6 +739,7 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
           sshChannelCloseConfirmed: false
         })
       )
+      .mockResolvedValueOnce('') // remote credential generation after degraded repair
       .mockResolvedValueOnce('DEAD')
       .mockResolvedValueOnce('READY')
 
@@ -880,7 +882,14 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
     vi.mocked(isRelayAlreadyInstalled).mockResolvedValue(true)
     vi.mocked(tryAcquireRelayRepairLock).mockResolvedValueOnce(lockResult)
     const conn = makeMockConnection(sftpCapture)
-    feed(['__ORCA_REMOTE_PLATFORM__ Linux x86_64', '/home/u', 'MISSING', 'DEAD', 'READY'])
+    feed([
+      '__ORCA_REMOTE_PLATFORM__ Linux x86_64',
+      '/home/u',
+      'MISSING',
+      '', // remote credential generation without a namespace marker
+      'DEAD',
+      'READY'
+    ])
 
     await deployAndLaunchRelay(conn)
 
@@ -899,6 +908,7 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
       '__ORCA_REMOTE_PLATFORM__ Linux x86_64',
       '/home/u',
       'ORCA-NATIVE-DEPS-OK',
+      '', // launch namespace marker
       'DEAD',
       'READY'
     ])
@@ -922,6 +932,7 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
       '__ORCA_REMOTE_PLATFORM__ Linux x86_64',
       '/home/u',
       'ORCA-NATIVE-DEPS-OK',
+      '', // launch namespace marker
       'DEAD',
       'READY'
     ])

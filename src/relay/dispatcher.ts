@@ -249,6 +249,21 @@ export class RelayDispatcher {
     )
   }
 
+  projectPtyDataToMatchingClients(
+    matchesClient: (clientId: number) => boolean,
+    params: Record<string, unknown>,
+    options: { interactive?: boolean } = {}
+  ): boolean {
+    if (this.disposed) {
+      return false
+    }
+    return this.projectToClients(
+      this.activeClients().filter((client) => matchesClient(client.id)),
+      { jsonrpc: '2.0', method: 'pty.data', params },
+      options.interactive ? 'interactive' : 'ordinary'
+    )
+  }
+
   tryNotifyPtyDataToClient(
     clientId: number,
     params: Record<string, unknown>,
@@ -294,6 +309,20 @@ export class RelayDispatcher {
       return false
     }
     return this.tryPublishToClients(
+      this.activeClients().filter((client) => matchesClient(client.id)),
+      { jsonrpc: '2.0', method: 'pty.exit', params },
+      'ordinary'
+    )
+  }
+
+  projectPtyExitToMatchingClients(
+    matchesClient: (clientId: number) => boolean,
+    params: Record<string, unknown>
+  ): boolean {
+    if (this.disposed) {
+      return false
+    }
+    return this.projectToClients(
       this.activeClients().filter((client) => matchesClient(client.id)),
       { jsonrpc: '2.0', method: 'pty.exit', params },
       'ordinary'
@@ -392,21 +421,33 @@ export class RelayDispatcher {
   }
 
   notifyClient(clientId: number, method: string, params?: Record<string, unknown>): void {
+    this.tryNotifyClient(clientId, method, params)
+  }
+
+  tryNotifyClient(
+    clientId: number,
+    method: string,
+    params?: Record<string, unknown>,
+    onSettled: (result: SinkWriteSettlement) => void = () => {}
+  ): boolean {
     if (this.disposed) {
-      return
+      onSettled({ ok: false, error: new Error('Relay dispatcher is disposed') })
+      return false
     }
     const client = this.clients.get(clientId)
     if (!client || client.closed) {
-      return
+      onSettled({ ok: false, error: new Error('Relay client is not connected') })
+      return false
     }
-    this.enqueueFrame(
+    return this.enqueueFrame(
       client,
       {
         jsonrpc: '2.0',
         method,
         ...(params !== undefined ? { params } : {})
       },
-      'control'
+      'control',
+      onSettled
     )
   }
 
@@ -868,6 +909,26 @@ export class RelayDispatcher {
         }
       }
       return true
+    })
+  }
+
+  private projectToClients(
+    clients: readonly RelayClient[],
+    msg: JsonRpcNotification,
+    lane: 'interactive' | 'ordinary'
+  ): boolean {
+    return this.runPublicationTransaction(() => {
+      for (const client of clients) {
+        if (client.closed || this.publishToClient(client, msg, lane)) {
+          continue
+        }
+        this.closeClient(
+          client,
+          new Error('Relay PTY subscriber projection capacity exceeded'),
+          client !== this.primaryClient
+        )
+      }
+      return !this.disposed
     })
   }
 

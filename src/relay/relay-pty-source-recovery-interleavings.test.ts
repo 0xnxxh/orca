@@ -355,4 +355,169 @@ describe('relay PTY source recovery interleavings', () => {
     expect(responseResult(recoveredWrites, 4)?.sourceRecovery).toEqual(firstRecovery)
     expect(publication.getDebugSnapshot()).toMatchObject({ active: 1, activating: 0 })
   })
+
+  it('rolls back a failed recovery fence and republishes it for the next exact owner', async () => {
+    const primaryWrites: Buffer[] = []
+    dispatcher = new RelayDispatcher(
+      (data, settle) => {
+        primaryWrites.push(Buffer.from(data))
+        settle({ ok: true })
+        return true
+      },
+      { supportsWriteCallback: true },
+      endpointIdentity
+    )
+    let publication: RelayPtySourcePublication
+    const adapter = new SshPtyConsumerSessionAdapter(dispatcher, 'build-a', undefined, (id) =>
+      publication.onCreditAvailable(id)
+    )
+    publication = new RelayPtySourcePublication(dispatcher, adapter, () => {})
+    dispatcher.feed(
+      requestFrame(1, 'pty.openClient', {
+        protocolVersion: 1,
+        clientInstanceId: 'client-1',
+        requestedRole: 'session-owner',
+        capabilities: { outputFlowControl: { versions: [1], requestedWindowSu: 4 } }
+      })
+    )
+    await flushRequests()
+    const firstActivation: ((result: SinkWriteSettlement) => void)[] = []
+    publication.activate('pty-1', 'incarnation-1', {
+      clientId: 1,
+      isStale: () => false,
+      sessionIdentity: endpointIdentity,
+      onResponseSettled: (callback) => firstActivation.push(callback)
+    })
+    firstActivation[0]({ ok: true })
+    publication.publish('pty-1', { data: 'abcdefgh' }, false)
+    const firstData = primaryWrites.map(message).find((entry) => entry?.method === 'pty.data')!
+      .params as Record<string, unknown>
+    const firstGrant = responseResult(primaryWrites, 1)!
+    dispatcher.invalidateClient()
+
+    const recoveredWrites: Buffer[] = []
+    let recoveryDataSettlement: ((result: SinkWriteSettlement) => void) | undefined
+    let failedCompletionSettlement: ((result: SinkWriteSettlement) => void) | undefined
+    const recoveredClientId = dispatcher.attachClient(
+      (data, settle) => {
+        recoveredWrites.push(Buffer.from(data))
+        const method = message(data)?.method
+        if (method === 'pty.data') {
+          recoveryDataSettlement = settle
+        } else if (method === 'pty.recoveryComplete') {
+          failedCompletionSettlement = settle
+        } else {
+          settle({ ok: true })
+        }
+        return true
+      },
+      { supportsWriteCallback: true },
+      endpointIdentity
+    )
+    dispatcher.feedClient(
+      recoveredClientId,
+      requestFrame(2, 'pty.openClient', {
+        protocolVersion: 1,
+        clientInstanceId: 'client-1',
+        requestedRole: 'session-owner',
+        resume: {
+          ownerGeneration: firstGrant.ownerGeneration,
+          ownerLease: firstGrant.ownerLease
+        },
+        capabilities: { outputFlowControl: { versions: [1], requestedWindowSu: 4 } }
+      })
+    )
+    await flushRequests()
+    const recoveredGrant = responseResult(recoveredWrites, 2)!
+    const recoveredActivation: ((result: SinkWriteSettlement) => void)[] = []
+    publication.activate(
+      'pty-1',
+      'incarnation-1',
+      {
+        clientId: recoveredClientId,
+        isStale: () => false,
+        sessionIdentity: endpointIdentity,
+        onResponseSettled: (callback) => recoveredActivation.push(callback)
+      },
+      {
+        status: 'checkpoint',
+        deliveryToken: String(firstData.deliveryToken),
+        clientGeneration: Number(firstData.clientGeneration),
+        ownerGeneration: Number(firstData.ownerGeneration),
+        ptyIncarnation: 'incarnation-1',
+        acceptedSourceEndSu: 4
+      }
+    )
+    recoveredActivation[0]({ ok: true })
+    recoveryDataSettlement!({ ok: true })
+    const recoveredData = recoveredWrites
+      .map(message)
+      .find((entry) => entry?.method === 'pty.data')!.params as Record<string, unknown>
+    expect(publication.publish('pty-1', { data: 'live' }, false)).toBe(false)
+
+    failedCompletionSettlement!({ ok: false, error: new Error('completion write failed') })
+
+    const replacementWrites: Buffer[] = []
+    let replacementCompletionSettlement: ((result: SinkWriteSettlement) => void) | undefined
+    const replacementClientId = dispatcher.attachClient(
+      (data, settle) => {
+        replacementWrites.push(Buffer.from(data))
+        if (message(data)?.method === 'pty.recoveryComplete') {
+          replacementCompletionSettlement = settle
+        } else {
+          settle({ ok: true })
+        }
+        return true
+      },
+      { supportsWriteCallback: true },
+      endpointIdentity
+    )
+    dispatcher.feedClient(
+      replacementClientId,
+      requestFrame(3, 'pty.openClient', {
+        protocolVersion: 1,
+        clientInstanceId: 'client-1',
+        requestedRole: 'session-owner',
+        resume: {
+          ownerGeneration: recoveredGrant.ownerGeneration,
+          ownerLease: recoveredGrant.ownerLease
+        },
+        capabilities: { outputFlowControl: { versions: [1], requestedWindowSu: 4 } }
+      })
+    )
+    await flushRequests()
+    const replacementActivation: ((result: SinkWriteSettlement) => void)[] = []
+    expect(
+      publication.activate(
+        'pty-1',
+        'incarnation-1',
+        {
+          clientId: replacementClientId,
+          isStale: () => false,
+          sessionIdentity: endpointIdentity,
+          onResponseSettled: (callback) => replacementActivation.push(callback)
+        },
+        {
+          status: 'checkpoint',
+          deliveryToken: String(recoveredData.deliveryToken),
+          clientGeneration: Number(recoveredData.clientGeneration),
+          ownerGeneration: Number(recoveredData.ownerGeneration),
+          ptyIncarnation: 'incarnation-1',
+          acceptedSourceEndSu: 8
+        }
+      )
+    ).toMatchObject({ status: 'pending', checkpointSourceEndSu: 8, recoveryEndSu: 8 })
+    replacementActivation[0]({ ok: true })
+    expect(publication.publish('pty-1', { data: 'live' }, false)).toBe(false)
+
+    replacementCompletionSettlement!({ ok: true })
+    expect(publication.publish('pty-1', { data: 'live' }, false)).toBe(true)
+    expect(
+      replacementWrites.map(message).filter((entry) => entry?.method === 'pty.recoveryComplete')
+    ).toHaveLength(1)
+    expect(
+      replacementWrites.map(message).filter((entry) => entry?.method === 'pty.data')
+    ).toHaveLength(1)
+    expect(adapter.getDebugSnapshot()).toMatchObject({ deliveryTokens: 1, sourceSu: 4 })
+  })
 })

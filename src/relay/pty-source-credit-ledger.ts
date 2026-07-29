@@ -20,7 +20,6 @@ import {
 } from './pty-source-credit-limits'
 import {
   CLOSED_DELIVERY_TOMBSTONE_LIMIT,
-  acknowledgeDeliveryRecord,
   closeDeliveryGeneration,
   createAppendedSourceSpan,
   createDeliveryCancellation,
@@ -34,10 +33,16 @@ import {
   sliceForSend,
   snapshotDeliveryRecord,
   type DeliveryRecord,
-  type PtySourceAckResult,
   type PtySourceAppendInput,
   type PtySourceSendReservation
 } from './pty-source-credit-record'
+import {
+  acknowledgeDeliveryRecord,
+  commitPtySourceSend,
+  reservedPtySourceSendLength,
+  rollbackPtySourceSend,
+  type PtySourceAckResult
+} from './pty-source-credit-settlement'
 import { chargedPtyRetainedStringBytes } from '../shared/pty-retained-string-memory'
 
 export type { PtySourceSendReservation } from './pty-source-credit-record'
@@ -134,7 +139,11 @@ export class RelayPtySourceCreditLedger {
     if (!containing) {
       throw new Error('PTY source delivery cursor is not covered by the retained ledger')
     }
-    const available = Math.min(remainingWindowSu, maxSourceSu)
+    const reservedLengthSu = reservedPtySourceSendLength(record, remainingWindowSu, maxSourceSu)
+    if (reservedLengthSu === null) {
+      return null
+    }
+    const available = reservedLengthSu ?? Math.min(remainingWindowSu, maxSourceSu)
     if (
       (!ptySourceSpanIsSplittable(containing) || containing.transform.transformed) &&
       containing.sourceEndSu - record.sentEndSu > available
@@ -154,20 +163,14 @@ export class RelayPtySourceCreditLedger {
 
   commitSend(reservation: PtySourceSendReservation): void {
     const record = this.requireDelivery(reservation.identity)
-    if (record.pendingSend !== reservation) {
-      throw new Error('PTY source send reservation is stale')
+    if (commitPtySourceSend(record, reservation)) {
+      this.maybeClose(record)
     }
-    record.pendingSend = null
-    record.sentEndSu = reservation.span.sourceEndSu
-    record.sentBoundaries.add(record.sentEndSu)
-    record.attemptedEndSu = null
   }
 
   rollbackSend(reservation: PtySourceSendReservation): void {
     const record = this.requireDelivery(reservation.identity)
-    if (record.pendingSend === reservation) {
-      record.pendingSend = null
-    }
+    rollbackPtySourceSend(record, reservation)
   }
 
   acknowledge(identity: PtySourceDeliveryIdentity, ack: PtySourceCreditAck): PtySourceAckResult {

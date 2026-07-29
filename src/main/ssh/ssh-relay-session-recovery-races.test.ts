@@ -300,6 +300,8 @@ describe('SshRelaySession recovery race fencing', () => {
   it('keeps a stale overlapping recovery from canceling or mutating its replacement', async () => {
     const targetId = 'overlapping-recovery'
     const { session, deps } = await prepareRecovery(targetId)
+    const staleLease = { commit: vi.fn(), rollback: vi.fn() }
+    const replacementLease = { commit: vi.fn(), rollback: vi.fn() }
     attachForReconnectMock.mockImplementation(async () => {
       const ownerGeneration = openConsumerSessionMock.mock.calls.length
       if (ownerGeneration === 3) {
@@ -328,7 +330,8 @@ describe('SshRelaySession recovery race fencing', () => {
           deliveryToken: ownerGeneration === 2 ? 'stale-token' : 'replacement-token',
           checkpointSourceEndSu: 4,
           recoveryEndSu: 4
-        }
+        },
+        sourceActivationLease: ownerGeneration === 2 ? staleLease : replacementLease
       }
     })
 
@@ -351,6 +354,10 @@ describe('SshRelaySession recovery race fencing', () => {
     expect(deps.mockStore.markSshRemotePtyLease).toHaveBeenCalledTimes(1)
     expect(deps.mockStore.markSshRemotePtyLease).toHaveBeenCalledWith(targetId, 'pty-1', 'attached')
     expect(setPtyOwnership).toHaveBeenCalledTimes(1)
+    expect(staleLease.rollback).toHaveBeenCalledOnce()
+    expect(staleLease.commit).not.toHaveBeenCalled()
+    expect(replacementLease.commit).toHaveBeenCalledOnce()
+    expect(replacementLease.rollback).not.toHaveBeenCalled()
     expect(clearProviderPtyState).not.toHaveBeenCalled()
     expect(clearPtyOwnershipForConnection).not.toHaveBeenCalled()
     expect(deletePtyOwnership).not.toHaveBeenCalled()

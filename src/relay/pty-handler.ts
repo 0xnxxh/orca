@@ -59,6 +59,7 @@ import type {
   PtySourceRecoveryRequest,
   PtySourceRecoveryResult
 } from '../shared/pty-source-recovery-contract'
+import type { PtySourceReceivingActivation } from '../shared/pty-source-receiving-activation'
 import {
   AGENT_SESSION_CREATE_OPERATION_PROTOCOL_VERSION,
   AGENT_SESSION_EXECUTION_OWNER_PROTOCOL_VERSION,
@@ -157,6 +158,7 @@ type RelayAgentSessionCreateResult = {
   incarnationId: string
   replay?: string
   agentSessionEnsure?: unknown
+  sourceActivation?: PtySourceReceivingActivation
 }
 
 const AGENT_SESSION_CREATE_OPERATION_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/
@@ -1147,7 +1149,10 @@ export class PtyHandler {
     if (existing) {
       const result = await existing
       this.sourcePublication?.activate(result.id, result.incarnationId, context)
-      return result
+      const sourceActivation =
+        context && this.sourcePublication?.receivingActivation?.(result.id, context.clientId)
+      const { sourceActivation: _staleActivation, ...stableResult } = result
+      return { ...stableResult, ...(sourceActivation ? { sourceActivation } : {}) }
     }
     if (this.agentSessionCreateOperations.size >= AGENT_SESSION_CREATE_OPERATION_LIMIT) {
       throw new Error('agent_session_operation_capacity')
@@ -1254,10 +1259,14 @@ export class PtyHandler {
       }
       managed.agentSessionOwners = this.agentSessionOwners.listForPty(managed.id)
       const adoptedReplay = result.disposition === 'adopted' ? managed.buffered.read() : ''
+      this.sourcePublication?.activate(managed.id, managed.incarnationId, context)
+      const sourceActivation =
+        context && this.sourcePublication?.receivingActivation?.(managed.id, context.clientId)
       return {
         id: managed.id,
         incarnationId: managed.incarnationId,
         agentSessionEnsure: result,
+        ...(sourceActivation ? { sourceActivation } : {}),
         ...(adoptedReplay ? { replay: adoptedReplay } : {})
       }
     } catch (error) {
@@ -1277,7 +1286,11 @@ export class PtyHandler {
     params: Record<string, unknown>,
     context?: RequestContext,
     onPhysicalSpawnCommitted?: () => void
-  ): Promise<{ id: string; incarnationId: string }> {
+  ): Promise<{
+    id: string
+    incarnationId: string
+    sourceActivation?: PtySourceReceivingActivation
+  }> {
     const pty = await this.loadPty()
     if (!pty) {
       throw new Error(formatNodePtyUnavailableMessage(process.platform))
@@ -1417,6 +1430,8 @@ export class PtyHandler {
         : {})
     }
     this.sourcePublication?.activate(id, managed.incarnationId, context)
+    const sourceActivation =
+      context && this.sourcePublication?.receivingActivation?.(id, context.clientId)
     this.wireAndStore(managed)
     if (context?.isStale() && !params.agentSessionEnsure && !params.agentSessionCreateOperationId) {
       // Why: if the client reconnected while pty.spawn was in flight, the
@@ -1432,7 +1447,11 @@ export class PtyHandler {
           : STARTUP_COMMAND_WRITE_DELAY_MS
       )
     }
-    return { id, incarnationId: managed.incarnationId }
+    return {
+      id,
+      incarnationId: managed.incarnationId,
+      ...(sourceActivation ? { sourceActivation } : {})
+    }
   }
 
   private async attach(
@@ -1442,6 +1461,7 @@ export class PtyHandler {
     incarnationId: string
     replay?: string
     sourceRecovery?: PtySourceRecoveryResult
+    sourceActivation?: PtySourceReceivingActivation
   }> {
     const id = params.id as string
     const managed = this.ptys.get(id)
@@ -1490,11 +1510,20 @@ export class PtyHandler {
       context,
       sourceRecovery
     )
+    const sourceActivation =
+      context && this.sourcePublication?.receivingActivation?.(id, context.clientId)
     if (typeof activation === 'object') {
-      return { incarnationId: managed.incarnationId, sourceRecovery: activation }
+      return {
+        incarnationId: managed.incarnationId,
+        sourceRecovery: activation,
+        ...(sourceActivation ? { sourceActivation } : {})
+      }
     }
     if (activation === 'existing' && this.sourcePublication?.accepts(id)) {
-      return { incarnationId: managed.incarnationId }
+      return {
+        incarnationId: managed.incarnationId,
+        ...(sourceActivation ? { sourceActivation } : {})
+      }
     }
 
     // Why: renderer hasn't registered replay handlers yet during spawn, so return to the caller instead of notifying too early.
@@ -1506,11 +1535,18 @@ export class PtyHandler {
       this.clearOutputFlushTimerIfIdle()
       this.maybeResumePtyOutput(id)
       if (params.suppressReplayNotification) {
-        return { incarnationId: managed.incarnationId, replay }
+        return {
+          incarnationId: managed.incarnationId,
+          replay,
+          ...(sourceActivation ? { sourceActivation } : {})
+        }
       }
       this.dispatcher.notify('pty.replay', { id, data: replay })
     }
-    return { incarnationId: managed.incarnationId }
+    return {
+      incarnationId: managed.incarnationId,
+      ...(sourceActivation ? { sourceActivation } : {})
+    }
   }
 
   private writeData(params: Record<string, unknown>): void {

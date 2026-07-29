@@ -37,7 +37,7 @@ export function sealAndPublishPtySourceExit(options: {
     return false
   }
   if (!record.legacyExitAccepted) {
-    record.legacyExitAccepted = dispatcher.tryNotifyPtyExitToMatchingClients(
+    record.legacyExitAccepted = dispatcher.projectPtyExitToMatchingClients(
       (clientId) => session.deliveryMode(clientId) !== 'source-owner',
       params
     )

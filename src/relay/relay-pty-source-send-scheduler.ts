@@ -1,15 +1,18 @@
 import type { PtySourceDeliveryIdentity } from '../shared/pty-source-credit-contract'
 import type { PtySourceRecoveryCheckpoint } from '../shared/pty-source-recovery-contract'
+import type { PtySourceReceivingActivation } from '../shared/pty-source-receiving-activation'
 import type { RelayDispatcher, SinkWriteSettlement } from './dispatcher'
 import {
   PTY_SOURCE_SCHEDULER_MAX_FRAMES,
   PTY_SOURCE_SCHEDULER_MAX_SU
 } from './pty-source-credit-scheduler'
 import type { SshPtyConsumerSessionAdapter } from './ssh-pty-consumer-session-adapter'
+import { completePtySourceRecovery } from './relay-pty-source-recovery-completion'
 
 export type RelayPtySourceDeliveryRecord = {
   clientId: number
   identity: PtySourceDeliveryIdentity
+  sourceActivation: PtySourceReceivingActivation
   displayEnd: number
   activating: boolean
   activationRecoveryRequest: PtySourceRecoveryCheckpoint | null
@@ -23,6 +26,7 @@ export type RelayPtySourceDeliveryRecord = {
   sendWaiters: Set<() => void>
   recoveryCheckpointSourceEndSu: number | null
   recoveryEndSu: number | null
+  recoveryCompletionPending: boolean
   restoreRequired: boolean
   rotationPending: boolean
 }
@@ -53,13 +57,21 @@ export function onceSinkSettlement(
 }
 
 export class RelayPtySourceSendScheduler {
+  private readonly removeCompletionCapacityListener: () => void
+
   constructor(
     private readonly dispatcher: RelayDispatcher,
     private readonly session: SshPtyConsumerSessionAdapter,
     private readonly deliveries: Map<string, RelayPtySourceDeliveryRecord>,
     private readonly counters: RelayPtySourcePublicationCounters,
     private readonly onCapacity: (id: string) => void
-  ) {}
+  ) {
+    this.removeCompletionCapacityListener = dispatcher.onLegacyPtyCapacity(() => {
+      for (const record of deliveries.values()) {
+        this.completeRecoveryIfReady(record)
+      }
+    })
+  }
 
   async waitForPendingSend(id: string, timeoutMs = 5_000): Promise<boolean> {
     const record = this.deliveries.get(id)
@@ -122,6 +134,7 @@ export class RelayPtySourceSendScheduler {
   }
 
   dispose(): void {
+    this.removeCompletionCapacityListener()
     for (const record of this.deliveries.values()) {
       this.session.cancelDelivery(record.identity, 'source-publication-disposed')
       this.wakeSendWaiters(record)
@@ -138,6 +151,13 @@ export class RelayPtySourceSendScheduler {
       record.rotationPending ||
       this.deliveries.get(record.identity.id) !== record
     ) {
+      return
+    }
+    if (
+      record.recoveryEndSu !== null &&
+      this.session.sourceDeliverySnapshot(record.identity).sentEndSu >= record.recoveryEndSu
+    ) {
+      this.completeRecoveryIfReady(record)
       return
     }
     if (
@@ -228,30 +248,17 @@ export class RelayPtySourceSendScheduler {
   }
 
   completeRecoveryIfReady(record: RelayPtySourceDeliveryRecord): void {
-    const recoveryEndSu = record.recoveryEndSu
-    const checkpointSourceEndSu = record.recoveryCheckpointSourceEndSu
-    if (
-      record.activating ||
-      record.sending ||
-      recoveryEndSu === null ||
-      checkpointSourceEndSu === null
-    ) {
-      return
-    }
-    const snapshot = this.session.sourceDeliverySnapshot(record.identity)
-    if (snapshot.sentEndSu < recoveryEndSu) {
-      return
-    }
-    record.recoveryEndSu = null
-    record.recoveryCheckpointSourceEndSu = null
-    this.dispatcher.notifyClient(record.clientId, 'pty.recoveryComplete', {
-      id: record.identity.id,
-      clientGeneration: record.identity.clientGeneration,
-      ownerGeneration: record.identity.ownerGeneration,
-      ptyIncarnation: record.identity.ptyIncarnation,
-      deliveryToken: record.identity.deliveryToken,
-      checkpointSourceEndSu,
-      recoveryEndSu
+    completePtySourceRecovery({
+      record,
+      deliveries: this.deliveries,
+      dispatcher: this.dispatcher,
+      session: this.session,
+      onCompleted: (id) => {
+        this.onCapacity(id)
+        if (this.deliveries.get(id) === record) {
+          this.pump(record)
+        }
+      }
     })
   }
 

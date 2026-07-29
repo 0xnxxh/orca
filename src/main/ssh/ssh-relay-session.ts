@@ -1664,6 +1664,7 @@ export class SshRelaySession {
       activated: false
     }
     this.pendingPtyReattaches.set(appPtyId, pendingReattach)
+    let sourceActivationLease: SshPtyAttachResult['sourceActivationLease']
     try {
       const recoveryRequest = this.sourceRecoveryRequest(appPtyId)
       const attachResult = await this.attachPtyWithRetry(
@@ -1673,6 +1674,7 @@ export class SshRelaySession {
         recoveryRequest,
         shouldContinue
       )
+      sourceActivationLease = attachResult.sourceActivationLease
       if (!shouldContinue()) {
         return
       }
@@ -1730,12 +1732,15 @@ export class SshRelaySession {
       if (!recoveryRequest) {
         this.forwardReattachReplay(appPtyId, attachResult.replay ?? '')
       }
+      sourceActivationLease?.commit()
+      sourceActivationLease = undefined
     } catch (error) {
       if (!shouldContinue()) {
         return
       }
       this.handlePtyReattachFailure(ptyId, appPtyId, pendingReattach, error)
     } finally {
+      sourceActivationLease?.rollback()
       if (this.pendingPtyReattaches.get(appPtyId) === pendingReattach) {
         this.pendingPtyReattaches.delete(appPtyId)
       }
@@ -1807,8 +1812,10 @@ export class SshRelaySession {
     recoveryRequest: PtySourceRecoveryRequest | undefined
   ): Promise<SshPtyAttachResult> {
     let timer: ReturnType<typeof setTimeout> | undefined
+    let timedOut = false
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
+        timedOut = true
         reject(
           new Error(`PTY reattach attempt timed out after ${SSH_PTY_REATTACH_ATTEMPT_TIMEOUT_MS}ms`)
         )
@@ -1823,7 +1830,13 @@ export class SshRelaySession {
         : recoveryRequest
           ? ptyProvider.attachForReconnect(ptyId, undefined, recoveryRequest)
           : ptyProvider.attachForReconnect(ptyId)
-      return (await Promise.race([attach, timeout])) ?? {}
+      const guardedAttach = attach.then((result) => {
+        if (timedOut) {
+          result.sourceActivationLease?.rollback()
+        }
+        return result
+      })
+      return (await Promise.race([guardedAttach, timeout])) ?? {}
     } finally {
       if (timer) {
         clearTimeout(timer)

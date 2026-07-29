@@ -126,6 +126,28 @@ describe('SshChannelMultiplexer', () => {
       await expect(promise).rejects.toThrow('PTY allocation failed')
     })
 
+    it('runs beforeResolve before an adjacent notification in the same decoder turn', async () => {
+      const order: string[] = []
+      mux.onNotification(() => order.push('notification'))
+      const promise = mux.request(
+        'pty.attach',
+        { id: 'pty-1' },
+        {
+          beforeResolve: () => order.push('beforeResolve')
+        }
+      )
+
+      transport.dataCallbacks[0](
+        Buffer.concat([
+          makeResponseFrame(1, { incarnationId: 'incarnation-1' }, 1),
+          makeNotificationFrame('pty.data', { id: 'pty-1', data: 'first' }, 2)
+        ])
+      )
+
+      expect(order).toEqual(['beforeResolve', 'notification'])
+      await expect(promise).resolves.toEqual({ incarnationId: 'incarnation-1' })
+    })
+
     it('times out after 30s with no response', async () => {
       const promise = mux.request('pty.spawn')
 

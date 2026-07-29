@@ -130,6 +130,79 @@ describe('TerminalSourceRangeLedger', () => {
     })
   })
 
+  it('replaces covered mappings without synthesizing encoded-byte credit', () => {
+    const ledger = new TerminalSourceRangeLedger('generation-1')
+    ledger.accept(5, 4, [range()], 4)
+    ledger.accept(
+      7,
+      4,
+      [
+        range({
+          spanId: 'span-trailing',
+          sourceStartSu: 4,
+          sourceEndSu: 8,
+          displayStart: 4,
+          displayEnd: 8
+        })
+      ],
+      8
+    )
+    const replacement = ledger.planSourceRangeReplacement(8)
+
+    expect(replacement).not.toBeNull()
+    expect(() => replacement?.commit()).not.toThrow()
+    expect(ledger.acknowledge('generation-1', 12)).toMatchObject({
+      status: 'accepted',
+      acknowledgedBytes: 12,
+      settled: []
+    })
+    expect(
+      ledger.accept(
+        3,
+        2,
+        [
+          range({
+            spanId: 'span-live',
+            sourceStartSu: 8,
+            sourceEndSu: 10,
+            displayStart: 8,
+            displayEnd: 10,
+            transform: { transformed: false, rawLengthSu: 2, scalarSafe: true }
+          })
+        ],
+        10
+      )
+    ).not.toBeNull()
+  })
+
+  it('rejects an admitted trailing mapping before authoritative commit', () => {
+    const ledger = new TerminalSourceRangeLedger('generation-1')
+    ledger.accept(5, 4, [range()], 4)
+    ledger.accept(
+      7,
+      4,
+      [
+        range({
+          spanId: 'span-trailing',
+          sourceStartSu: 4,
+          sourceEndSu: 8,
+          displayStart: 4,
+          displayEnd: 8
+        })
+      ],
+      8
+    )
+
+    expect(ledger.planSourceRangeReplacement(4)).toBeNull()
+  })
+
+  it('rejects an unsequenced mapped frame before replacement commit', () => {
+    const ledger = new TerminalSourceRangeLedger('generation-1')
+    ledger.accept(5, 4, [range()])
+
+    expect(ledger.planSourceRangeReplacement(4)).toBeNull()
+  })
+
   it('rolls back a pre-send admission without accepting a byte boundary', () => {
     const registry = new TerminalSourceRangeRegistry()
     const ledger = registry.open('generation-1')!

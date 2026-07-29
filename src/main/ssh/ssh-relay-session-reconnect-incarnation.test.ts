@@ -204,6 +204,57 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     }
   })
 
+  it('rolls back a timed-out activation that resolves after its replacement commits', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    const session = new SshRelaySession('target-1', getMainWindow, mockStore, mockPortForward)
+    await session.establish(mockConn)
+    vi.clearAllMocks()
+    mockDeploySuccess()
+    const timedOutLease = { commit: vi.fn(), rollback: vi.fn() }
+    const replacementLease = { commit: vi.fn(), rollback: vi.fn() }
+    let resolveTimedOut!: (result: {
+      incarnationId: string
+      sourceActivationLease: typeof timedOutLease
+    }) => void
+    const mockAttach = vi
+      .fn()
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveTimedOut = resolve
+        })
+      )
+      .mockResolvedValueOnce({
+        incarnationId: 'incarnation-replacement',
+        sourceActivationLease: replacementLease
+      })
+    vi.mocked(getSshPtyProvider).mockReturnValue({
+      attachForReconnect: mockAttach,
+      dispose: vi.fn()
+    } as unknown as ReturnType<typeof getSshPtyProvider>)
+    vi.mocked(getPtyIdsForConnection).mockReturnValue(['pty-1'])
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0)
+    vi.useFakeTimers()
+
+    try {
+      const reconnect = session.reconnect(mockConn)
+      await vi.advanceTimersByTimeAsync(11_000)
+      await reconnect
+      resolveTimedOut({
+        incarnationId: 'incarnation-timed-out',
+        sourceActivationLease: timedOutLease
+      })
+      await Promise.resolve()
+
+      expect(replacementLease.commit).toHaveBeenCalledOnce()
+      expect(replacementLease.rollback).not.toHaveBeenCalled()
+      expect(timedOutLease.rollback).toHaveBeenCalledOnce()
+      expect(timedOutLease.commit).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+      random.mockRestore()
+    }
+  })
+
   it('restores and persists exact incarnation proof from reconnect attach', async () => {
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
     const incarnationId = 'incarnation-reconnect'
@@ -253,11 +304,12 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
       onPtySpawned: vi.fn(),
       registerPty: vi.fn()
     }
+    const sourceActivationLease = { commit: vi.fn(), rollback: vi.fn() }
     vi.mocked(getSshPtyProvider).mockReturnValue({
       attachForReconnect: vi.fn().mockImplementation(async () => {
         emitExitDuringAttach({ id: APP_PTY_ID, code: 0, incarnationId })
         emitExitDuringAttach({ id: APP_PTY_ID, code: 0, incarnationId: 'incarnation-stale' })
-        return { incarnationId, replay: 'dead-output' }
+        return { incarnationId, replay: 'dead-output', sourceActivationLease }
       }),
       dispose: vi.fn()
     } as unknown as ReturnType<typeof getSshPtyProvider>)
@@ -286,6 +338,8 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
     expect(restorePtyIncarnation).toHaveBeenCalledWith(APP_PTY_ID, incarnationId)
     expect(setPtyOwnership).not.toHaveBeenCalled()
     expect(mockStore.persistPtyBinding).not.toHaveBeenCalled()
+    expect(sourceActivationLease.rollback).toHaveBeenCalledOnce()
+    expect(sourceActivationLease.commit).not.toHaveBeenCalled()
     expect(mockStore.markSshRemotePtyLease).toHaveBeenCalledWith(
       'target-1',
       'pty-live',
@@ -307,6 +361,7 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
       onPtySpawned: vi.fn(),
       registerPty: vi.fn()
     }
+    const sourceActivationLease = { commit: vi.fn(), rollback: vi.fn() }
     vi.mocked(getSshPtyProvider).mockReturnValue({
       attachForReconnect: vi.fn().mockImplementation(async () => {
         emitExitDuringAttach({
@@ -314,7 +369,7 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
           code: 0,
           incarnationId: 'incarnation-old'
         })
-        return { incarnationId: currentIncarnationId, replay: 'live-output' }
+        return { incarnationId: currentIncarnationId, replay: 'live-output', sourceActivationLease }
       }),
       dispose: vi.fn()
     } as unknown as ReturnType<typeof getSshPtyProvider>)
@@ -333,6 +388,8 @@ describe('SshRelaySession reconnect incarnation ordering', () => {
 
     expect(runtime.onPtyExit).not.toHaveBeenCalled()
     expect(runtime.acceptPtyIncarnationForExit).not.toHaveBeenCalled()
+    expect(sourceActivationLease.commit).toHaveBeenCalledOnce()
+    expect(sourceActivationLease.rollback).not.toHaveBeenCalled()
     expect(runtime.registerPty).toHaveBeenCalledWith(APP_PTY_ID, 'worktree-1', 'target-1', {
       tabId: 'tab-1',
       leafId: INCARNATION_LEAF_ID,
