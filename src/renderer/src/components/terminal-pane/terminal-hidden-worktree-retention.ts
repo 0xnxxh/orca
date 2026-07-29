@@ -70,8 +70,9 @@ export function getTerminalHiddenPaneRetentionWeight(
   retainedPaneCount: number,
   scrollbackRows: unknown
 ): number {
-  const paneCount =
-    Number.isFinite(retainedPaneCount) && retainedPaneCount > 0 ? Math.floor(retainedPaneCount) : 0
+  const paneCount = Number.isFinite(retainedPaneCount)
+    ? Math.max(1, Math.floor(retainedPaneCount))
+    : 1
   const rowWeight = Math.ceil(
     normalizeDesktopTerminalScrollbackRows(scrollbackRows) /
       DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT

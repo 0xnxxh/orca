@@ -95,6 +95,22 @@ describe('selectRetentionForceParkedTerminalWorktrees', () => {
     )
   })
 
+  it('does not let empty retained topology bypass the pane budget', () => {
+    const worktrees = [
+      retentionCandidate('wt-empty-topology', nowMs - TERMINAL_WORKTREE_PARK_DELAY_MS, {
+        retainedPaneCount: 0
+      })
+    ]
+
+    expect(
+      selectRetentionForceParkedTerminalWorktrees({
+        ...base,
+        worktrees,
+        retentionLimit: 0
+      })
+    ).toEqual(new Set(['wt-empty-topology']))
+  })
+
   it('spends the budget on the newest weighted worktrees first', () => {
     const worktrees = [
       retentionCandidate('wt-old-small', nowMs - TERMINAL_WORKTREE_PARK_DELAY_MS - 2, {
@@ -259,6 +275,13 @@ describe('terminal hidden pane retention weight', () => {
     expect(getTerminalHiddenPaneRetentionWeight(3, 5_000)).toBe(3)
     expect(getTerminalHiddenPaneRetentionWeight(3, 25_000)).toBe(15)
     expect(getTerminalHiddenPaneRetentionWeight(2, 50_000)).toBe(20)
+  })
+
+  it('charges one pane when retained topology is empty or invalid', () => {
+    expect(getTerminalHiddenPaneRetentionWeight(0, 5_000)).toBe(1)
+    expect(getTerminalHiddenPaneRetentionWeight(-1, 5_000)).toBe(1)
+    expect(getTerminalHiddenPaneRetentionWeight(0.5, 5_000)).toBe(1)
+    expect(getTerminalHiddenPaneRetentionWeight(Number.NaN, 5_000)).toBe(1)
   })
 
   it('reuses pane counts across unrelated store writes and buffer-only layout changes', () => {
