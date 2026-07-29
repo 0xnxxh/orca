@@ -91,11 +91,11 @@ processes, mixed-version clients, or the Ubuntu 20.04 packaging floor.
 
 The final exact-code Docker rerun rebuilt the E2E main bundle and all relay
 targets immediately before execution. It is bound to implementation commit
-`7327640d3a2b1f0d6aa11a3e8c0fc2dea7f63c8d`, tree
-`137109283b5d72015b243d0ebe30edee52525e9c`, main bundle SHA-256
-`c1b3bfcfef07638ff35bfa19422dc5b67df582c6fe8e353c61f0a218de70d4bf`,
+`bdeb9759d8827abf055eb0c06a0fc1a6afa37cf7`, tree
+`0037af6de877880c14555422dfd2c2b40881d5f8`, main bundle SHA-256
+`085fbdf1a37a22fcd2271d5af119f2870b652644bd8b13d0f74f056f03bb49a1`,
 and deployed Linux-x64 relay SHA-256
-`a7438fc47c4da0223ceaafab621086e14b6cdee427f53a3bf2e710fa99bcf2e6`.
+`bebbe3a648bb9f85b026392006a1736c09192af6508443a04907a74c0f1de255`.
 No additional live topology proof is inferred from that run.
 
 ## Verified baseline and migration boundary
@@ -2527,12 +2527,13 @@ other live topologies remain separate.
 After the exact-PTY migration-failure containment fix,
 `electron-vite build --mode e2e` and `pnpm run build:relay` produced the exact
 artifact hashes recorded above. The four-case Docker command then passed in
-1.0 minute: direct typing was 4.1/107.6 ms median/worst; ACK-stalled typing was
-3.5/4.2 ms at exactly 262,144 held source units; fixed-size filesystem/Git
-churn was 140.5/147.8 ms with 108 bulk reads; reconnect completed in
-15.4 seconds. This is direct SSH/deployed Linux relay evidence only.
+58.5 seconds without a source-credit override: direct typing was 7.0/111.7 ms
+median/worst; ACK-stalled typing was 8.2/17.7 ms at exactly 262,144 held source
+units; fixed-size filesystem/Git churn was 148.8/159.5 ms with 95 bulk reads;
+reconnect completed in 14.6 seconds. This is direct SSH/deployed Linux relay
+evidence only.
 
-At the current working tree, the source/intake slice passed 12 files and 205
+At the implementation commit above, the source/intake slice passed 12 files and 205
 tests, the provider/session slice passed 16 files and 192 tests, and this
 complementary lifecycle slice passed 13 files and 150 tests:
 

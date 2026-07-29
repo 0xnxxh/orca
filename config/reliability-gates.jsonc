@@ -3591,7 +3591,7 @@
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/providers/ssh-pty-notification-routing.test.ts src/main/providers/ssh-pty-provider-reattach-incarnation.test.ts src/relay/relay-pty-source-recovery-interleavings.test.ts src/main/ssh/ssh-relay-deploy.test.ts src/main/ssh/ssh-relay-session-data-delivery.test.ts --reporter=dot",
           "result": "passed",
           "durationSeconds": 1.63,
-          "summary": "Five deterministic provider, relay, deploy, and session files passed 70 tests after red seams proved that source frames mutated legacy incarnation state and generic restore-required reattach returned an outputless live PTY. The candidate keeps exact source identity side-effect free, fails generic restore-required reattach as expired, preserves session-latched reconnect selection, and proves a failed recovery activation stays private and exact-retryable until successful response settlement; no live topology was exercised."
+          "summary": "Five deterministic provider, relay, deploy, and session files passed 70 tests after red seams proved that source frames mutated legacy incarnation state and generic restore-required reattach returned an outputless live PTY. The candidate keeps exact source identity side-effect free, fails generic restore-required reattach as expired, offers V1 through reconnect, and proves a failed recovery activation stays private and exact-retryable until successful response settlement; no live topology was exercised."
         },
         {
           "date": "2026-07-28",
@@ -3610,6 +3610,15 @@
           "result": "passed",
           "durationSeconds": 60,
           "summary": "Four post-rebase Docker OpenSSH/deployed-relay tests passed: direct typing median/worst 107.7/113.6 ms, stalled-ACK typing 3.6/107.3 ms at an exact 262,144-source-unit plateau, fixed-size filesystem/Git churn 148.1/161.1 ms with 93 bulk reads, and terminal owner-lease reconnect in 15.7 seconds."
+        },
+        {
+          "date": "2026-07-29",
+          "runner": "local",
+          "platform": "macos",
+          "command": "ORCA_E2E_SSH_DOCKER=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/ssh-docker-relay-perf.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "passed",
+          "durationSeconds": 58.5,
+          "summary": "All four always-on deployed Linux relay/direct-SSH cases passed after rebuilding at implementation commit bdeb9759d8827abf055eb0c06a0fc1a6afa37cf7/tree 0037af6de877880c14555422dfd2c2b40881d5f8: main bundle SHA-256 085fbdf1a37a22fcd2271d5af119f2870b652644bd8b13d0f74f056f03bb49a1 and Linux-x64 relay SHA-256 bebbe3a648bb9f85b026392006a1736c09192af6508443a04907a74c0f1de255. Direct typing was 7.0/111.7 ms median/worst, ACK-stalled typing was 8.2/17.7 ms at exactly 262,144 held source units, fixed-size filesystem/Git churn was 148.8/159.5 ms with 95 bulk reads, and owner-lease reconnect completed in 14.6 seconds; no paired-runtime topology was exercised."
         }
       ],
       "runtimeBudget": {
