@@ -3440,10 +3440,10 @@
           "date": "2026-07-28",
           "runner": "local",
           "platform": "macos",
-          "command": "pnpm exec vitest run --config config/vitest.config.ts src/shared/pty-consumer-session.test.ts src/main/ipc/ssh-pty-output-intake.test.ts src/main/ipc/ssh-pty-output-exit-deadline.test.ts src/main/ipc/ssh-pty-remote-source-range-consumers.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/main/ssh/ssh-multiplexer-transport-writer.test.ts src/main/ssh/ssh-channel-multiplexer.test.ts src/main/ssh/ssh-pty-source-credit-rollout.test.ts src/main/ssh/ssh-relay-deploy.test.ts src/relay/dispatcher-client-writer.test.ts --reporter=dot",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/shared/pty-consumer-session.test.ts src/main/ipc/ssh-pty-output-intake.test.ts src/main/ipc/ssh-pty-output-exit-deadline.test.ts src/main/ipc/ssh-pty-remote-source-range-consumers.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/main/ssh/ssh-multiplexer-transport-writer.test.ts src/main/ssh/ssh-channel-multiplexer.test.ts src/main/ssh/ssh-channel-multiplexer-backpressure.test.ts src/main/ssh/ssh-pty-source-credit-rollout.test.ts src/main/ssh/ssh-relay-deploy.test.ts src/relay/dispatcher-client-writer.test.ts --reporter=dot",
           "result": "passed",
-          "durationSeconds": 7.05,
-          "summary": "Ten deterministic source-intake, exit-deadline, remote-consumer, multiplex, writer, rollout, and deploy files passed 189 tests, including both exit-time ordering oracles."
+          "durationSeconds": 6.77,
+          "summary": "Eleven deterministic source-intake, exit-deadline, remote-consumer, multiplex, writer, rollout, and deploy files passed 197 tests, including both exit-time ordering oracles and control-lane drain priority."
         },
         {
           "date": "2026-07-28",
