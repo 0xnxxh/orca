@@ -260,7 +260,10 @@ export class PtyConsumerSession {
       hello.clientInstanceId === current.clientInstanceId &&
       authentication.principal === current.principal
     if (!recoveryMatches) {
-      throw new Error('Owner recovery lease is stale or belongs to another principal')
+      throw Object.assign(
+        new Error('Owner recovery lease is stale or belongs to another principal'),
+        { code: PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR }
+      )
     }
     if (current.state === 'pending') {
       throw new Error('Owner grant publication is still pending')

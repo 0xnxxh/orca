@@ -3328,9 +3328,15 @@
           ]
         },
         {
+          "file": "src/shared/pty-consumer-session.test.ts",
+          "assertions": [
+            "mismatched recovery is typed for one-shot fallback while the stale principal remains a subscriber and the retained principal and lease preserve recovery authority"
+          ]
+        },
+        {
           "file": "src/main/ssh/ssh-relay-session-data-delivery.test.ts",
           "assertions": [
-            "stale owner recovery clears cached state and retries exactly once without resume",
+            "the state-machine stale-owner error clears cached state and retries exactly once without resume",
             "recovery remains quarantined until exact checkpoint-to-recoveryEnd coverage and live handoff",
             "invalid recovery cancels only its replacement token without physical PTY or ownership teardown"
           ]
@@ -3424,8 +3430,8 @@
           "platform": "macos",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/providers/ssh-pty-provider.test.ts src/main/ssh/ssh-relay-session.test.ts src/main/ssh/ssh-relay-session-data-delivery.test.ts src/main/ssh/ssh-relay-session-incarnation.test.ts src/main/ssh/ssh-relay-session-reconnect-incarnation.test.ts src/main/ssh/ssh-relay-session-terminal-error.test.ts src/main/ssh/ssh-pty-recovery-retention-budget.test.ts src/main/ssh/relay-protocol-backpressure.test.ts src/relay/protocol-backpressure.test.ts src/relay/pty-source-credit-ledger.test.ts src/relay/pty-source-credit-scheduler.test.ts src/relay/relay-pty-source-publication.test.ts src/relay/ssh-pty-source-credit-adapter.test.ts --reporter=dot",
           "result": "passed",
-          "durationSeconds": 1.96,
-          "summary": "13 deterministic SSH relay/session/source/decoder unit files passed with 161 tests; no live topology was exercised."
+          "durationSeconds": 10.46,
+          "summary": "Thirteen deterministic SSH relay/session/source/decoder files passed 173 tests, including a one-shot fresh retry driven by the real state-machine stale-owner error; no live topology was exercised."
         },
         {
           "date": "2026-07-28",
@@ -3442,8 +3448,8 @@
           "platform": "macos",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/shared/pty-consumer-session.test.ts src/main/ipc/ssh-pty-output-intake.test.ts src/main/ipc/ssh-pty-output-exit-deadline.test.ts src/main/ipc/ssh-pty-remote-source-range-consumers.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/main/ssh/ssh-multiplexer-transport-writer.test.ts src/main/ssh/ssh-channel-multiplexer.test.ts src/main/ssh/ssh-channel-multiplexer-backpressure.test.ts src/main/ssh/ssh-pty-source-credit-rollout.test.ts src/main/ssh/ssh-relay-deploy.test.ts src/relay/dispatcher-client-writer.test.ts --reporter=dot",
           "result": "passed",
-          "durationSeconds": 6.77,
-          "summary": "Eleven deterministic source-intake, exit-deadline, remote-consumer, multiplex, writer, rollout, and deploy files passed 197 tests, including both exit-time ordering oracles and control-lane drain priority."
+          "durationSeconds": 11.71,
+          "summary": "Eleven deterministic source-intake, exit-deadline, remote-consumer, multiplex, writer, rollout, and deploy files passed 197 tests, including exit-time ordering, control-lane drain priority, and typed mismatched-principal recovery with retained authority isolation."
         },
         {
           "date": "2026-07-28",
@@ -3465,7 +3471,7 @@
       },
       "redGreenEvidence": {
         "status": "partial",
-        "evidence": "Tests assert pathless runtime output reuses unchanged path-provenance history with zero old-candidate byte scans, ordinary saturated terminal tails retain no rebuilt wait text or repeated phrase scans while every blocked/ready prompt family remains live, main pending renderer output is capped per PTY and in total, direct-SSH source/recovery memory and both frame decoders stay within exact caps, and 50-PTY reconnect isolates slow/failing siblings. The deterministic main-to-relay drain oracle failed with ordinary-2 and ordinary-3 ahead of a later control frame under the single FIFO, then passed with control-first lane selection and four-write ordinary fairness. On exact pre-fix baseline db167ea3d with test-only oracles, cancellation proof reclaimed the published projection span before transfer and generation close allowed a late proof to publish final exit; both deterministic oracles pass after proof acquisition and commit are separated under the exact deadline barrier. Before the snapshot-admission fix, the focused consumer oracle failed because the trailing span entered transferring instead of remaining open; after retaining model-sequence ends and reserving at the serialized fence, the joined main/runtime oracle passed for renderer and headless sources with upstream boundaries 4 then 8. Before cumulative partial ACK and source-rotation support, the ledger rejected ACK 40 of 100 and the multiplex seam detached instead of publishing recovered token B; both exact oracles pass while stale stream and source generations remain rejected. Before restore-record retirement, invalid-checkpoint recovery followed by restore/retry returned restoreRequired a second time instead of opening a fresh activation; the same deterministic oracle passes after exact response-settlement cleanup. Other controls previously failed with serial reattach, UTF-8-only accounting, and roughly 32 MiB decoder retention. Needs daemon-stream contract coverage and broader hidden-output/input-latency perf artifacts before promotion."
+        "evidence": "Tests assert pathless runtime output reuses unchanged path-provenance history with zero old-candidate byte scans, ordinary saturated terminal tails retain no rebuilt wait text or repeated phrase scans while every blocked/ready prompt family remains live, main pending renderer output is capped per PTY and in total, direct-SSH source/recovery memory and both frame decoders stay within exact caps, and 50-PTY reconnect isolates slow/failing siblings. The deterministic main-to-relay drain oracle failed with ordinary-2 and ordinary-3 ahead of a later control frame under the single FIFO, then passed with control-first lane selection and four-write ordinary fairness. On exact pre-fix baseline db167ea3d with test-only oracles, cancellation proof reclaimed the published projection span before transfer and generation close allowed a late proof to publish final exit; both deterministic oracles pass after proof acquisition and commit are separated under the exact deadline barrier. Before the snapshot-admission fix, the focused consumer oracle failed because the trailing span entered transferring instead of remaining open; after retaining model-sequence ends and reserving at the serialized fence, the joined main/runtime oracle passed for renderer and headless sources with upstream boundaries 4 then 8. Before cumulative partial ACK and source-rotation support, the ledger rejected ACK 40 of 100 and the multiplex seam detached instead of publishing recovered token B; both exact oracles pass while stale stream and source generations remain rejected. Before restore-record retirement, invalid-checkpoint recovery followed by restore/retry returned restoreRequired a second time instead of opening a fresh activation; the same deterministic oracle passes after exact response-settlement cleanup. With test-only oracles on pre-fix 4bf54da9b, an existing-owner mismatch lacked the stale-owner code and both shared authority and main fallback rows failed; the candidate types that refusal while stale fresh admission remains a subscriber and the retained principal and lease can still recover. Other controls previously failed with serial reattach, UTF-8-only accounting, and roughly 32 MiB decoder retention. Needs daemon-stream contract coverage and broader hidden-output/input-latency perf artifacts before promotion."
       },
       "performanceBudget": {
         "required": true,

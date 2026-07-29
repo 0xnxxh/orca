@@ -163,7 +163,7 @@ describe('PtyConsumerSession', () => {
     ).toThrow('Active owner')
   })
 
-  it('rejects stale recovery without disturbing the retained owner', () => {
+  it('types mismatched recovery without disturbing principal or lease ownership', () => {
     const session = createSession()
     const first = session.admit(ownerHello(), auth('connection-1'))
     first.commitPublication()
@@ -171,16 +171,38 @@ describe('PtyConsumerSession', () => {
 
     expect(() =>
       session.admit(
-        ownerHello({ resume: { ownerGeneration: 1, ownerLease: 'wrong' } }),
-        auth('connection-2')
+        ownerHello({ resume: { ownerGeneration: 1, ownerLease: 'lease-1' } }),
+        auth('connection-2', { principal: 'stale-desktop' })
       )
-    ).toThrow('stale')
+    ).toThrow(
+      expect.objectContaining({
+        code: PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR,
+        message: expect.stringContaining('principal')
+      })
+    )
+    expect(() =>
+      session.admit(
+        ownerHello({ resume: { ownerGeneration: 1, ownerLease: 'wrong' } }),
+        auth('connection-3')
+      )
+    ).toThrow(expect.objectContaining({ code: PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR }))
+
+    const staleFresh = session.admit(
+      ownerHello(),
+      auth('connection-2', { principal: 'stale-desktop' })
+    )
+    expect(staleFresh.grant).toMatchObject({ role: 'subscriber' })
+    expect(staleFresh.grant.ownerLease).toBeUndefined()
 
     const recovered = session.admit(
       ownerHello({ resume: { ownerGeneration: 1, ownerLease: 'lease-1' } }),
-      auth('connection-3')
+      auth('connection-4')
     )
-    expect(recovered.grant.role).toBe('session-owner')
+    expect(recovered.grant).toMatchObject({
+      role: 'session-owner',
+      ownerGeneration: 2,
+      ownerLease: 'lease-2'
+    })
   })
 
   it('elects a new owner after disconnected-owner grace expires', () => {

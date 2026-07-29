@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR } from '../../shared/pty-consumer-session'
 import { SshRelaySession } from './ssh-relay-session'
-import { createMockDeps, mockDeploySuccess } from './ssh-relay-session-test-fixtures'
+import {
+  createMismatchedOwnerRecoveryError,
+  createMockDeps,
+  mockDeploySuccess
+} from './ssh-relay-session-test-fixtures'
 
 const {
   acceptOutputDataMock,
@@ -325,11 +328,7 @@ describe('SshRelaySession data delivery', () => {
     first.detach()
 
     openConsumerSessionMock
-      .mockRejectedValueOnce(
-        Object.assign(new Error('Owner recovery lease is stale'), {
-          code: PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR
-        })
-      )
+      .mockRejectedValueOnce(createMismatchedOwnerRecoveryError())
       .mockImplementationOnce(async (_mux, options) => ({
         mode: 'negotiated',
         clientInstanceId: options.clientInstanceId,
