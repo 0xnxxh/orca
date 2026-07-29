@@ -7,15 +7,37 @@ describe('hosted WebView simulator E2E options', () => {
       accountsOnly: false,
       clipboardImageOnly: false,
       device: 'iPhone 17 Pro',
+      expectedBuild: undefined,
       filesPreviewOnly: false,
       isolationOnly: false,
       nativeSettingsOnly: false,
       photosRevocationOnly: false,
+      reuseNativeInstall: false,
       securityOnly: false,
       skipNativeBuild: false,
       sourceControlOnly: false,
       timeoutMs: 180_000
     })
+  })
+
+  it('reuses an installed app without selecting the cached reinstall path', () => {
+    expect(parseHostedWebViewSimulatorE2eOptions(['--reuse-native-install'])).toMatchObject({
+      reuseNativeInstall: true,
+      skipNativeBuild: false
+    })
+    expect(() =>
+      parseHostedWebViewSimulatorE2eOptions(['--reuse-native-install', '--skip-native-build'])
+    ).toThrow('mutually exclusive')
+  })
+
+  it('accepts only canonical expected build identities', () => {
+    const buildId = 'a'.repeat(64)
+    expect(parseHostedWebViewSimulatorE2eOptions(['--expected-build', buildId])).toMatchObject({
+      expectedBuild: buildId
+    })
+    expect(() =>
+      parseHostedWebViewSimulatorE2eOptions(['--expected-build', 'A'.repeat(64)])
+    ).toThrow('lowercase SHA-256')
   })
 
   it('parses the focused cached-app journey', () => {

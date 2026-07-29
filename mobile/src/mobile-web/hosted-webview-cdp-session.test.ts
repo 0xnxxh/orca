@@ -53,6 +53,10 @@ const simulatorAppBuildSource = readFileSync(
   new URL('../../scripts/hosted-ios-simulator-app-build.mjs', import.meta.url),
   'utf8'
 )
+const simulatorAppPreparationSource = readFileSync(
+  new URL('../../scripts/hosted-ios-simulator-app-preparation.mjs', import.meta.url),
+  'utf8'
+)
 const androidSecurityHarnessSource = readFileSync(
   new URL('../../scripts/run-hosted-android-webview-security-e2e.mjs', import.meta.url),
   'utf8'
@@ -583,11 +587,16 @@ describe('hosted WebView CDP target selection', () => {
   })
 
   it('builds and installs the exact native shell before the isolated live gate', () => {
-    expect(simulatorHarnessSource).toContain('nativeAppPath = options.skipNativeBuild')
+    expect(simulatorHarnessSource).toContain('hostedIosSimulatorAppPreparation')
     expect(simulatorHarnessSource).toContain(
-      "await evidenceStep('cached native simulator app install'"
+      'const appPreparation = hostedIosSimulatorAppPreparation'
     )
-    expect(simulatorHarnessSource).toContain(": await evidenceStep('native simulator app build'")
+    expect(simulatorHarnessSource).toContain(
+      'nativeAppPath = await evidenceStep(appPreparation.label, appPreparation.run)'
+    )
+    expect(simulatorAppPreparationSource).toContain("label: 'existing native simulator app'")
+    expect(simulatorAppPreparationSource).toContain("label: 'cached native simulator app install'")
+    expect(simulatorAppPreparationSource).toContain("label: 'native simulator app build'")
     expect(simulatorHarnessSource).toContain('options.securityOnly')
     expect(simulatorHarnessSource).toContain(
       "expectedText: options.sourceControlOnly ? '1 tab' : '2 tabs'"

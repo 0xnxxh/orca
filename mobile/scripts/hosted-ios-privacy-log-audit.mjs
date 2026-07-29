@@ -22,7 +22,7 @@ export async function verifyHostedIosPrivacyLogs({ deviceUdid, startedAt }) {
       'log',
       'show',
       '--start',
-      new Date(startedAt).toISOString(),
+      hostedIosLogStartTime(startedAt),
       '--style',
       'compact',
       '--predicate',
@@ -35,6 +35,14 @@ export async function verifyHostedIosPrivacyLogs({ deviceUdid, startedAt }) {
     }
   )
   return hostedIosPrivacyLogEvidence(stdout)
+}
+
+export function hostedIosLogStartTime(value) {
+  const date = new Date(value)
+  const part = (number) => String(number).padStart(2, '0')
+  return `${[date.getFullYear(), part(date.getMonth() + 1), part(date.getDate())].join('-')} ${part(
+    date.getHours()
+  )}:${part(date.getMinutes())}:${part(date.getSeconds())}`
 }
 
 export function hostedIosPrivacyLogEvidence(source) {

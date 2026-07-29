@@ -43,6 +43,7 @@ import { verifyHostedSourceControlReviewJourney } from './hosted-ios-source-cont
 import { captureNativeSourceControlReviewBaselines } from './hosted-ios-source-control-review-parity.mjs'
 import { resetHostedIosPhotosPermission } from './hosted-ios-photo-permission-denial.mjs'
 import { verifyHostedIosTerminalInputJourney } from './hosted-ios-terminal-device-input-journey.mjs'
+import { waitForHostedIosBuildActivation } from './hosted-ios-build-activation.mjs'
 import { completeHostedIosNativeOnboarding } from './hosted-ios-native-onboarding.mjs'
 import { activateHostedWorkspaceRow } from './hosted-webview-workspace-activation.mjs'
 import { resolveHostedWebViewRuntimeDirectory } from './hosted-webview-runtime-directory.mjs'
@@ -51,11 +52,7 @@ import {
   configureHostedIosWebViewSecurityProbe,
   startHostedIosWebViewSecurityProbe
 } from './hosted-ios-webview-security-probe.mjs'
-import {
-  buildAndInstallHostedIosSimulatorApp,
-  hostedIosSimulatorAppPath,
-  installHostedIosSimulatorApp
-} from './hosted-ios-simulator-app-build.mjs'
+import { hostedIosSimulatorAppPreparation } from './hosted-ios-simulator-app-preparation.mjs'
 
 const execFileAsync = promisify(execFile)
 const worktree = path.resolve(import.meta.dirname, '../..')
@@ -93,18 +90,8 @@ async function main() {
       worktree
     })
     await configureHostedIosWebViewSecurityProbe(deviceUdid, networkProbe)
-    nativeAppPath = options.skipNativeBuild
-      ? await evidenceStep('cached native simulator app install', async () => {
-          const appPath = hostedIosSimulatorAppPath(worktree)
-          await installHostedIosSimulatorApp({ deviceUdid, appPath })
-          return appPath
-        })
-      : await evidenceStep('native simulator app build', () =>
-          buildAndInstallHostedIosSimulatorApp({
-            deviceUdid,
-            worktree
-          })
-        )
+    const appPreparation = hostedIosSimulatorAppPreparation({ deviceUdid, worktree, ...options })
+    nativeAppPath = await evidenceStep(appPreparation.label, appPreparation.run)
     if (options.securityOnly) {
       await evidenceStep('Photos permission reset', () =>
         resetHostedIosPhotosPermission(deviceUdid)
@@ -421,6 +408,7 @@ async function main() {
         `Hosted WebView reached the network probe: ${networkProbe.observations.join(', ')}`
       )
     }
+    await waitForHostedIosBuildActivation(deviceUdid, options, runtimeDirectory)
     console.log(
       JSON.stringify(
         {

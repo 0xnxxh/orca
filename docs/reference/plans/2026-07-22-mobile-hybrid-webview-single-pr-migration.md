@@ -2708,6 +2708,12 @@ silent WebKit miss.
   iOS/Android simulator crash-loop rollback pass. iOS Simulator manual previous,
   cache-clear/redownload, and offline corrupt-active recovery pass; the Android
   emulator passes the same manual and corrupt-active recovery slices.
+  The current iPhone 17 Pro Simulator drill delivered UI-identical candidate
+  `4efe928e…` through the authenticated Desktop over final `8f452c7b…`, then
+  terminated three distinct WebContent processes. Four WebKit targets mounted
+  and activation atomically returned to final in 14.3 seconds; the recovered
+  private origin changed, page state remained credential-free, and a
+  7,156,093-byte native log slice contained zero reviewed privacy marker.
   Physical-device storage-pressure and final-candidate rollback drills remain.
 - Bridge schemas, compatibility ranges, unknown capability, stale session,
   origin mismatch, message/concurrency/rate limits, cancellation, and

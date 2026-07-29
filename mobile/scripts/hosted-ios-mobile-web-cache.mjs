@@ -6,6 +6,15 @@ const HOST_DIRECTORY_LIMIT = 16
 const identityPattern = /^[a-f0-9]{64}$/
 
 export async function readIosRollbackActivation(appDataPath) {
+  const records = await readIosActivationRecords(appDataPath)
+  const candidates = records.filter((record) => record.previous)
+  if (candidates.length !== 1) {
+    throw new Error(`Expected one iOS rollback candidate, found ${candidates.length}`)
+  }
+  return candidates[0]
+}
+
+export async function readIosActivationRecords(appDataPath) {
   const cacheRoot = path.join(appDataPath, 'Library', 'Application Support', 'OrcaMobileWeb')
   const entries = await readdir(cacheRoot, { withFileTypes: true })
   if (entries.length > HOST_DIRECTORY_LIMIT) {
@@ -28,11 +37,7 @@ export async function readIosRollbackActivation(appDataPath) {
       }
     }
   }
-  const candidates = records.filter((record) => record.previous)
-  if (candidates.length !== 1) {
-    throw new Error(`Expected one iOS rollback candidate, found ${candidates.length}`)
-  }
-  return candidates[0]
+  return records
 }
 
 export async function waitForIosActivation(pathname, expectedBuildId, timeoutMs) {

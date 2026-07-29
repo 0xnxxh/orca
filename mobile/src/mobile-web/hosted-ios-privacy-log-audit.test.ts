@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { hostedIosPrivacyLogEvidence } from '../../scripts/hosted-ios-privacy-log-audit.mjs'
+import {
+  hostedIosLogStartTime,
+  hostedIosPrivacyLogEvidence
+} from '../../scripts/hosted-ios-privacy-log-audit.mjs'
 
 describe('hosted iOS privacy log audit', () => {
+  it('formats simulator log start times without ISO separators', () => {
+    const value = hostedIosLogStartTime(new Date(2026, 6, 29, 12, 34, 56).getTime())
+
+    expect(value).toBe('2026-07-29 12:34:56')
+  })
+
   it('accepts fixed-category connection and recovery logs', () => {
     expect(
       hostedIosPrivacyLogEvidence(

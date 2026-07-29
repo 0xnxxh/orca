@@ -355,6 +355,18 @@ Storage, Session Storage, and cookies are empty. A 12,238,623-byte, ten-minute
 Orca unified-log slice contains zero privileged-field, token-storage,
 native-authority, private-origin URL, WebSocket URL, or fixture marker.
 
+The same simulator now passes a fresh automatic rollback drill without
+reinstalling the native shell or editing cache metadata. The paired Desktop
+delivered UI-identical candidate `4efe928e…` over final package `8f452c7b…`;
+native activation recorded candidate as active and final as previous. Killing
+WebContent PIDs `34182`, `34554`, and `34644` mounted four distinct WebKit
+targets and atomically restored final in 14.3 seconds. The private origin
+changed, the recovered 10,447-byte DOM/history, Web Storage, and cookies contain
+zero credential marker, and the 7,156,093-byte Orca log slice contains zero
+privileged-field, token-storage, native-authority, private-origin URL, WebSocket
+URL, or fixture marker. Physical-device and final release-candidate rollback
+remain open.
+
 ## 1. Production Cutover and Cleanup
 
 - [ ] Make the production hybrid route the default from the reviewed release
@@ -480,7 +492,9 @@ native-authority, private-origin URL, WebSocket URL, or fixture marker.
       fallback.
 - [ ] Drill automatic rollback, manual previous-generation recovery, cache
       clearing, corruption, incompatible bridge, disconnection, pairing
-      removal, and WebView loss on the final release candidate.
+      removal, and WebView loss on the final release candidate. The exact
+      UI-identical iOS Simulator candidate-to-final three-crash drill passes;
+      this item remains open for physical and final release-candidate evidence.
 - [ ] Run final CI, packaged release builds, signing, and store-build
       verification.
 - [ ] Attach parity, tests, device benchmarks, security review, App Review,

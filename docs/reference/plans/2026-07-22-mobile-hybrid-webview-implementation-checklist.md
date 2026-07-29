@@ -24,7 +24,9 @@
   now also passes the deliberate-red private-origin network/navigation
   isolation gate at a routed reserved-HTTPS URL with zero escaped traffic;
   cross-platform package/cache fault tests and bounded bridge replay/race tests
-  now pass; iOS Simulator and Android emulator manual previous-generation
+  now pass; the iPhone 17 Pro Simulator also passes exact-package automatic
+  crash-loop rollback with clean DOM, storage, cookie, and native-log privacy
+  evidence; iOS Simulator and Android emulator manual previous-generation
   recovery, cache clear/redownload, and corrupt-active cold fallback now pass
   through the native recovery surface; the exact iOS Simulator and Android API
   36 Agent History, Source Control, and Review journeys and the full
@@ -1791,10 +1793,16 @@ copy.
   native session `E_AO…`, the third changed to `ScXR…`, and
   `activation.json` moved from `bb86b378…` with previous `800db4d5…` to
   active `800db4d5…` with no previous entry. The exact iPhone 17 Pro simulator
-  Debug app killed WebContent PIDs `69677`, `70416`, and `70512` in 11.9
-  seconds, remounted four distinct WebKit targets, made the same atomic
-  `bb86b378…` to `800db4d5…` activation change, and retained the unchanged
-  terminal UI. Physical devices and the final release candidate remain.
+  Debug app now also delivered UI-identical candidate `4efe928e…` through the
+  paired Desktop over final package `8f452c7b…`, activated it with the final
+  package as `previous`, and then killed WebContent PIDs `34182`, `34554`, and
+  `34644`. Four distinct WebKit targets mounted in 14.3 seconds; the private
+  origin changed and `activation.json` atomically moved to final
+  `8f452c7b…` with no previous entry. The recovered 10,447-byte DOM/history,
+  Web Storage, and cookies contain no credential marker, and the 7,156,093-byte
+  Orca log slice contains zero privileged-field, token-storage,
+  native-authority, private-origin URL, WebSocket URL, or fixture marker.
+  Physical devices and the final release candidate remain.
 - [~] Drill manual recovery to previous generation and cache clearing. On iOS
   Simulator, native accessibility activated **Use previous**, atomically moved
   `bb86b378…` over `800db4d5…`, then activated **Clear cache**, removed the host
@@ -2859,3 +2867,8 @@ one-test file passes in a 194-millisecond isolated rerun.
 | 2026-07-29 | Complete | A focused exact-app iPhone 17 Pro / iOS 26.5 Simulator journey passes private-origin URL, live DOM/History, empty Web Storage/cookies, network/navigation/popup/service-worker/download/external-scheme, and executable isolation. The 11,668-byte DOM and a 12,238,623-byte ten-minute Orca log slice contain zero reviewed privacy marker. Three focused files / 38 tests, the full 583-file mobile suite / 3,462 tests, typecheck, lint, max-lines, formatting, and diff hygiene pass.                                                                                                                 |
 | 2026-07-29 | Finding  | The broader security journey independently reached hosted terminal text paste on iPhone 17 Pro Max but could not discover the existing unlabeled Attach control, then reached Attach on the calibrated iPhone 17 Pro but missed the native document picker. Picker evidence remains covered by prior focused runs; the isolation-only gate now avoids conflating picker automation with WebView isolation.                                                                                                                                                                                                |
 | 2026-07-29 | Next     | Run the equivalent Android live privacy audit, then continue exact release-app content corpus injection, broader live two-host/topology races, native crash-report review, and independent security review.                                                                                                                                                                                                                                                                                                                                                                                               |
+| 2026-07-29 | Finding  | The cached-app rollback setup still reinstalled the simulator app under `--skip-native-build`, erasing the cache it intended to exercise. Its activation check could also accept the expected build from an unrelated paired host. Simulator `log show --start` rejected ISO timestamps with `T` and `Z`.                                                                                                                                                                                                                                                                                                 |
+| 2026-07-29 | Complete | The iOS harness now has an explicit installed-app reuse mode, idempotent onboarding, fixed-identity activation waiting derived from the paired Desktop public key, and simulator-compatible local log timestamps. Six focused files / 48 tests pass, including the extracted native-app preparation source contract and unrelated-host rejection.                                                                                                                                                                                                                                                         |
+| 2026-07-29 | Complete | A genuine UI-identical candidate `4efe928e…` was delivered through the fixed paired Desktop and activated over final `8f452c7b…`. Killing WebContent PIDs `34182`, `34554`, and `34644` remounted four distinct targets and atomically restored final in 14.3 seconds. The recovered private origin changed; 10,447 bytes of DOM/history, Web Storage, and cookies contain zero credential marker, and 7,156,093 bytes of native logs contain zero reviewed privacy marker.                                                                                                                               |
+| 2026-07-29 | Complete | Post-drill validation passes 586 mobile files / 3,477 tests with 2 expected skips; root, mobile, and mobile-web typechecks; root/mobile lint and native/type-aware audits; 55 reliability gates; localization; max-lines; formatting; exact `8f452c7b…` package verification; changed-code quality; React Doctor with zero blocking errors; and diff hygiene.                                                                                                                                                                                                                                             |
+| 2026-07-29 | Next     | Run the equivalent Android live privacy audit, then continue exact release-app content corpus injection, broader live two-host/topology races, native crash-report review, independent security review, and physical/final-candidate rollback.                                                                                                                                                                                                                                                                                                                                                            |
