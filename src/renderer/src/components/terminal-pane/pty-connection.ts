@@ -504,10 +504,6 @@ type E2eTerminalPtyOutputDebugSnapshot = {
   hiddenRendererSkipCount: number
   hiddenRendererSkippedChars: number
   hiddenRendererMode2031ReplyCount: number
-  activeHiddenRestoreCount: number
-  activeHiddenRestoreSnapshotMs: number
-  activeHiddenRestoreReplayMs: number
-  activeHiddenRestoreTotalMs: number
 }
 
 type E2eTerminalPtyOutputDebugApi = {
@@ -541,21 +537,13 @@ type ColdRestoreAgentResumeStartup = PendingStartupCommand & {
 const e2eTerminalPtyOutputDebugState: E2eTerminalPtyOutputDebugSnapshot = {
   hiddenRendererSkipCount: 0,
   hiddenRendererSkippedChars: 0,
-  hiddenRendererMode2031ReplyCount: 0,
-  activeHiddenRestoreCount: 0,
-  activeHiddenRestoreSnapshotMs: 0,
-  activeHiddenRestoreReplayMs: 0,
-  activeHiddenRestoreTotalMs: 0
+  hiddenRendererMode2031ReplyCount: 0
 }
 
 function resetE2eTerminalPtyOutputDebug(): void {
   e2eTerminalPtyOutputDebugState.hiddenRendererSkipCount = 0
   e2eTerminalPtyOutputDebugState.hiddenRendererSkippedChars = 0
   e2eTerminalPtyOutputDebugState.hiddenRendererMode2031ReplyCount = 0
-  e2eTerminalPtyOutputDebugState.activeHiddenRestoreCount = 0
-  e2eTerminalPtyOutputDebugState.activeHiddenRestoreSnapshotMs = 0
-  e2eTerminalPtyOutputDebugState.activeHiddenRestoreReplayMs = 0
-  e2eTerminalPtyOutputDebugState.activeHiddenRestoreTotalMs = 0
 }
 
 function exposeE2eTerminalPtyOutputDebug(): void {
@@ -584,22 +572,6 @@ function recordHiddenMode2031Reply(): void {
   }
   exposeE2eTerminalPtyOutputDebug()
   e2eTerminalPtyOutputDebugState.hiddenRendererMode2031ReplyCount += 1
-}
-
-function recordActiveHiddenRestoreTiming(
-  priority: 'active' | 'inactive' | undefined,
-  snapshotMs: number,
-  replayMs: number,
-  totalMs: number
-): void {
-  if (!e2eConfig.exposeStore || priority !== 'active') {
-    return
-  }
-  exposeE2eTerminalPtyOutputDebug()
-  e2eTerminalPtyOutputDebugState.activeHiddenRestoreCount += 1
-  e2eTerminalPtyOutputDebugState.activeHiddenRestoreSnapshotMs = snapshotMs
-  e2eTerminalPtyOutputDebugState.activeHiddenRestoreReplayMs = replayMs
-  e2eTerminalPtyOutputDebugState.activeHiddenRestoreTotalMs = totalMs
 }
 
 function exposeE2eTerminalPtyDataInjection(): void {
@@ -7014,10 +6986,7 @@ export function connectPanePty(
       }
     }
 
-    function requestHiddenOutputRestoreIfNeeded(opts?: {
-      bypassScheduler?: boolean
-      debugPriority?: 'active' | 'inactive'
-    }): boolean {
+    function requestHiddenOutputRestoreIfNeeded(opts?: { bypassScheduler?: boolean }): boolean {
       // Why: once the write pipeline is probe-certified dead a restore can never parse; recovery owns the pane and the remount gets a fresh xterm + restore.
       if (isTerminalWritePipelineCertifiedDead(pane.terminal)) {
         // Why the re-kick: certification's recovery request can be budget-declined or cancelled by a sibling remount; without this, a revealed dead pane keeps the stale frame forever.
@@ -7048,7 +7017,9 @@ export function connectPanePty(
         return true
       }
       if (!opts?.bypassScheduler) {
-        const priority = isActiveSplitPane() ? 'active' : 'inactive'
+        const resolvePriority = (): 'active' | 'inactive' =>
+          isActiveSplitPane() ? 'active' : 'inactive'
+        const priority = resolvePriority()
         if (priority === 'inactive') {
           if (!hiddenOutputRestoreScheduled) {
             hiddenOutputRestoreScheduled = true
@@ -7071,12 +7042,11 @@ export function connectPanePty(
                   return
                 }
                 const restoreRequested = requestHiddenOutputRestoreIfNeeded({
-                  bypassScheduler: true,
-                  debugPriority: priority
+                  bypassScheduler: true
                 })
                 return restoreRequested ? (hiddenOutputRestoreInFlight ?? undefined) : undefined
               },
-              priority
+              resolvePriority
             )
           }
           return true
@@ -7087,10 +7057,7 @@ export function connectPanePty(
         scheduleHiddenOutputRestore(
           pane.terminal,
           () => {
-            restoreRequested = requestHiddenOutputRestoreIfNeeded({
-              bypassScheduler: true,
-              debugPriority: priority
-            })
+            restoreRequested = requestHiddenOutputRestoreIfNeeded({ bypassScheduler: true })
             return hiddenOutputRestoreInFlight ?? undefined
           },
           priority
@@ -7099,9 +7066,6 @@ export function connectPanePty(
       }
       clearHiddenOutputRestoreDeferredRetryTimer()
       hiddenOutputRestoreRetryDeferred = false
-      const restoreStartedAt = performance.now()
-      let restoreSnapshotMs = 0
-      let restoreReplayMs = 0
 
       hiddenOutputRestoreInFlight = (async () => {
         // Backstop (rc.7.perf loop): bound how many snapshot fetch+replay rounds one task burns before yielding to the live stream.
@@ -7128,15 +7092,12 @@ export function connectPanePty(
           const restoreGeneration = hiddenOutputRestoreGeneration
           hiddenOutputRestoreNeeded = false
           let snapshot: PtyBufferSnapshot | null = null
-          const snapshotStartedAt = performance.now()
           try {
             snapshot = await serializeHiddenOutputSnapshot(currentPtyId, {
               scrollbackRows: resolveHiddenRestoreScrollbackRows(pane.terminal.options.scrollback)
             })
           } catch {
             snapshot = null
-          } finally {
-            restoreSnapshotMs += performance.now() - snapshotStartedAt
           }
           if (disposed) {
             return
@@ -7160,12 +7121,7 @@ export function connectPanePty(
           }
           hiddenOutputRestoreDeferredRetryAttempts = 0
           restoreIterations += 1
-          const replayStartedAt = performance.now()
-          try {
-            await applyMainBufferSnapshot(snapshot)
-          } finally {
-            restoreReplayMs += performance.now() - replayStartedAt
-          }
+          await applyMainBufferSnapshot(snapshot)
           if (
             disposed ||
             hiddenOutputRestoreGeneration !== restoreGeneration ||
@@ -7217,12 +7173,6 @@ export function connectPanePty(
       const hiddenOutputRestoreTask = hiddenOutputRestoreInFlight
       let trackedHiddenOutputRestore: Promise<void>
       trackedHiddenOutputRestore = hiddenOutputRestoreTask.finally(() => {
-        recordActiveHiddenRestoreTiming(
-          opts?.debugPriority,
-          restoreSnapshotMs,
-          restoreReplayMs,
-          performance.now() - restoreStartedAt
-        )
         if (hiddenOutputRestoreInFlight === trackedHiddenOutputRestore) {
           hiddenOutputRestoreInFlight = null
         }

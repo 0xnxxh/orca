@@ -7,6 +7,7 @@ import {
   type HiddenPressureOutputMode,
   writePressureOutputScript
 } from './artificial-opencode-hidden-pressure-script'
+import { waitForHiddenPressureCompletion } from './artificial-opencode-hidden-pressure-completion'
 import { waitForMarkerLatency } from './artificial-opencode-pane-interactions'
 import {
   ensureTerminalVisible,
@@ -174,6 +175,8 @@ export async function runHiddenRealPtyPressureScenario<
       typingPtyId,
       runId
     )
+    // Why: typing must overlap live pressure, but restore must start from a complete hidden model rather than timing the remaining generators.
+    await waitForHiddenPressureCompletion(orcaPage, hiddenPanes, runId)
     const debug = await deps.readTerminalPtyOutputDebug(orcaPage)
     const scheduler = await deps.readTerminalOutputSchedulerDebug(orcaPage)
     const mainPressure = await deps.readMainPtyPressureDebug(orcaPage)
@@ -249,14 +252,14 @@ export async function runHiddenRealPtyPressureScenario<
 async function waitForMainHiddenDeliveryDrops<TMainPressure extends HiddenPressureMainSnapshot>(
   orcaPage: Page,
   deps: { readMainPtyPressureDebug: (page: Page) => Promise<TMainPressure | null> },
-  pressureOutputChars: number
+  minimumDroppedChars: number
 ): Promise<void> {
   await expect
     .poll(
       async () => (await deps.readMainPtyPressureDebug(orcaPage))?.hiddenDeliveryDroppedChars ?? 0,
       { timeout: 30_000, message: 'Main hidden-delivery gate did not drop hidden PTY output' }
     )
-    .toBeGreaterThanOrEqual(pressureOutputChars)
+    .toBeGreaterThanOrEqual(minimumDroppedChars)
 }
 
 async function measureHiddenOutputRestoreLatency(

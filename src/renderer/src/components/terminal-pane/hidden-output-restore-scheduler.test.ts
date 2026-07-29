@@ -44,6 +44,30 @@ describe('hidden output restore scheduler', () => {
     expect(secondRestore).toHaveBeenCalledTimes(1)
   })
 
+  it('promotes queued work whose priority becomes active before the drain', async () => {
+    let isActive = false
+    let settleActive: (() => void) | undefined
+    const inactiveRestore = vi.fn()
+    const promotedRestore = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          settleActive = resolve
+        })
+    )
+
+    scheduleHiddenOutputRestore({}, inactiveRestore, 'inactive')
+    scheduleHiddenOutputRestore({}, promotedRestore, () => (isActive ? 'active' : 'inactive'))
+    isActive = true
+
+    await vi.advanceTimersByTimeAsync(16)
+    expect(promotedRestore).toHaveBeenCalledTimes(1)
+    expect(inactiveRestore).not.toHaveBeenCalled()
+
+    settleActive?.()
+    await vi.advanceTimersByTimeAsync(16)
+    expect(inactiveRestore).toHaveBeenCalledTimes(1)
+  })
+
   it('waits for an inactive restore to finish before starting the next', async () => {
     let settleFirst: (() => void) | undefined
     const firstRestore = vi.fn(

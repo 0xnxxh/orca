@@ -1332,14 +1332,14 @@ describe('pane terminal output scheduler', () => {
 
     expect(terminal.write).not.toHaveBeenCalled()
 
-    // Why 12: promoted backlogs use the parse-clocked high-priority budget
+    // Why 8: promoted backlogs use the parse-clocked high-priority budget
     // (HIGH_PRIORITY_MAX_WRITES_PER_DRAIN) so a visible flood drains at the
     // parser's pace instead of a fixed 2-write drip.
     vi.advanceTimersByTime(0)
-    expect(terminal.write).toHaveBeenCalledTimes(12)
+    expect(terminal.write).toHaveBeenCalledTimes(8)
 
     vi.advanceTimersByTime(4)
-    expect(terminal.write).toHaveBeenCalledTimes(24)
+    expect(terminal.write).toHaveBeenCalledTimes(16)
   })
 
   it('yields high-priority backlog drains when writes spend the frame budget', async () => {

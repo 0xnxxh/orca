@@ -92,8 +92,8 @@ const BACKGROUND_DRAIN_INTERVAL_MS = 16
 const HIGH_PRIORITY_DRAIN_INTERVAL_MS = 4
 const BACKGROUND_CHUNK_CHARS = 16 * 1024
 const MAX_WRITES_PER_DRAIN = 2
-// Why 12: visible split-pane fan-in needs 192KB/tick; the 8ms budget still bounds slow parsers.
-const HIGH_PRIORITY_MAX_WRITES_PER_DRAIN = 12
+// Why 8: per-tick volume (8 x 16KB = 128KB ≈ 1.3ms parse) sets the sustained ceiling (~30MB/s) within DRAIN_TIME_BUDGET_MS; at 2 it was only 8MB/s against a ~100MB/s parser (see throughput bench).
+const HIGH_PRIORITY_MAX_WRITES_PER_DRAIN = 8
 const DRAIN_TIME_BUDGET_MS = 8
 const LARGE_BACKLOG_CHARS = 512 * 1024
 const SYNC_FOREGROUND_FLUSH_CHARS = 256 * 1024

@@ -1,9 +1,12 @@
 type HiddenOutputRestorePriority = 'active' | 'inactive'
 
+type HiddenOutputRestorePriorityResolver = () => HiddenOutputRestorePriority
+
 type HiddenOutputRestoreRequest = () => void | Promise<void>
 
 type HiddenOutputRestoreEntry = {
   requestRestore: HiddenOutputRestoreRequest
+  priority: HiddenOutputRestorePriority | HiddenOutputRestorePriorityResolver
 }
 
 type InactiveHiddenOutputRestore = {
@@ -95,31 +98,66 @@ function runInactiveRestore(target: object, requestRestore: HiddenOutputRestoreR
   finishInactiveRestore(target, token)
 }
 
+function resolveRestorePriority(
+  priority: HiddenOutputRestorePriority | HiddenOutputRestorePriorityResolver
+): HiddenOutputRestorePriority {
+  return typeof priority === 'function' ? priority() : priority
+}
+
+function takeNextScheduledRestore(): {
+  target: object
+  entry: HiddenOutputRestoreEntry
+  priority: HiddenOutputRestorePriority
+} | null {
+  let fallback:
+    | {
+        target: object
+        entry: HiddenOutputRestoreEntry
+        priority: HiddenOutputRestorePriority
+      }
+    | undefined
+  for (const [target, entry] of inactiveRestoreQueue) {
+    const priority = resolveRestorePriority(entry.priority)
+    fallback ??= { target, entry, priority }
+    if (priority === 'active') {
+      inactiveRestoreQueue.delete(target)
+      return { target, entry, priority }
+    }
+  }
+  if (!fallback) {
+    return null
+  }
+  inactiveRestoreQueue.delete(fallback.target)
+  return fallback
+}
+
 function drainInactiveRestoreQueue(): void {
   inactiveRestoreTimer = null
   if (inactiveRestore !== null || activeRestoreTokensByTarget.size > 0) {
     return
   }
-  const next = inactiveRestoreQueue.entries().next()
-  if (next.done) {
+  const next = takeNextScheduledRestore()
+  if (!next) {
     return
   }
-  const [target, entry] = next.value
-  inactiveRestoreQueue.delete(target)
-  runInactiveRestore(target, entry.requestRestore)
+  if (next.priority === 'active') {
+    runActiveRestore(next.target, next.entry.requestRestore)
+    return
+  }
+  runInactiveRestore(next.target, next.entry.requestRestore)
 }
 
 export function scheduleHiddenOutputRestore(
   target: object,
   requestRestore: HiddenOutputRestoreRequest,
-  priority: HiddenOutputRestorePriority
+  priority: HiddenOutputRestorePriority | HiddenOutputRestorePriorityResolver
 ): void {
-  if (priority === 'active') {
+  if (resolveRestorePriority(priority) === 'active') {
     cancelScheduledHiddenOutputRestore(target)
     runActiveRestore(target, requestRestore)
     return
   }
-  inactiveRestoreQueue.set(target, { requestRestore })
+  inactiveRestoreQueue.set(target, { requestRestore, priority })
   scheduleInactiveRestoreDrain()
 }
 

@@ -11104,6 +11104,54 @@ describe('connectPanePty', () => {
       )
     })
 
+    it('releases post-snapshot live bytes when the active split stays layout-collapsed', async () => {
+      enableMainAuthority()
+      const deps = createDeps({ isVisibleRef: { current: false } })
+      const { pane, transport, dataCallback } = await connectHiddenPane(deps)
+      vi.useFakeTimers()
+      Object.defineProperties(pane.container, {
+        isConnected: { configurable: true, value: true },
+        offsetParent: { configurable: true, value: {} },
+        getBoundingClientRect: {
+          configurable: true,
+          value: () => ({ width: 0, height: 0 })
+        }
+      })
+      const getMainBufferSnapshot = window.api.pty.getMainBufferSnapshot as unknown as ReturnType<
+        typeof vi.fn
+      >
+      getMainBufferSnapshot.mockResolvedValue({
+        data: 'source-grid hidden snapshot\r\n',
+        cols: 80,
+        rows: 24,
+        seq: 64
+      })
+      pane.fitAddon.proposeDimensions = vi.fn(() => ({ cols: 2, rows: 1 })) as never
+      transport.resize.mockClear()
+
+      dataCallback('hidden output\r\n', { seq: 16, rawLength: 16 })
+      const { _dispatchPtyModelRestoreNeededForTest } = await import('./pty-model-restore-channel')
+      _dispatchPtyModelRestoreNeededForTest({ id: 'pty-id', reason: 'hidden-drop', markerSeq: 64 })
+      ;(deps.isVisibleRef as { current: boolean }).current = true
+      const { requestTerminalBacklogRecovery } =
+        await import('@/lib/pane-manager/pane-terminal-output-scheduler')
+      requestTerminalBacklogRecovery(pane.terminal as never)
+      await flushAsyncTicks(20)
+
+      dataCallback('live-after-collapsed-restore', { seq: 92, rawLength: 28 })
+      expect(pane.terminal.write.mock.calls.map((call) => String(call[0])).join('')).not.toContain(
+        'live-after-collapsed-restore'
+      )
+
+      await vi.advanceTimersByTimeAsync(128)
+      await flushAsyncTicks(20)
+
+      expect(transport.resize).not.toHaveBeenCalled()
+      expect(pane.terminal.write.mock.calls.map((call) => String(call[0])).join('')).toContain(
+        'live-after-collapsed-restore'
+      )
+    })
+
     it('kicks pane recovery when reveal finds the write pipeline certified dead', async () => {
       // 2026-07-13 fossil-pane incident: bytes drop while hidden, pipeline certified dead, cert recovery empty — reveal must re-kick it.
       enableMainAuthority()
@@ -13927,6 +13975,69 @@ describe('connectPanePty', () => {
       expect(pane.terminal.write).not.toHaveBeenCalledWith(hidden)
       expect(pane.terminal.write).toHaveBeenCalledWith(
         expect.stringContaining('inactive snapshot'),
+        expect.any(Function)
+      )
+    } finally {
+      disposable?.dispose()
+      resetHiddenOutputRestoreSchedulerForTests()
+    }
+  })
+
+  it('promotes a deferred hidden restore when its pane becomes active before the drain', async () => {
+    const { resetHiddenOutputRestoreSchedulerForTests, scheduleHiddenOutputRestore } =
+      await import('./hidden-output-restore-scheduler')
+    let disposable: { dispose: () => void } | null = null
+    try {
+      const { connectPanePty } = await import('./pty-connection')
+      const transport = createMockTransport('pty-id')
+      const capturedDataCallback: {
+        current: ((data: string, meta?: { seq?: number; rawLength?: number }) => void) | null
+      } = { current: null }
+      transport.connect.mockImplementation(
+        async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+          capturedDataCallback.current = callbacks.onData ?? null
+          return 'pty-id'
+        }
+      )
+      transportFactoryQueue.push(transport)
+      const getMainBufferSnapshot = window.api.pty.getMainBufferSnapshot as unknown as ReturnType<
+        typeof vi.fn
+      >
+      getMainBufferSnapshot.mockResolvedValue({
+        data: 'promoted snapshot\r\n',
+        cols: 100,
+        rows: 30,
+        seq: 64
+      })
+
+      const pane = createPane(1)
+      const manager = createManager(1, 1)
+      const deps = createDeps({
+        isActiveRef: { current: false },
+        isVisibleRef: { current: false }
+      })
+      disposable = connectPanePty(pane as never, manager as never, deps as never)
+      await flushAsyncTicks(6)
+
+      const blockingRestore = vi.fn(() => new Promise<void>(() => undefined))
+      scheduleHiddenOutputRestore({}, blockingRestore, 'inactive')
+      const hidden = 'x'.repeat(2 * 1024 * 1024 + 1)
+      const live = 'visible promoted output\r\n'
+      capturedDataCallback.current?.(hidden, { seq: hidden.length, rawLength: hidden.length })
+      ;(deps.isVisibleRef as { current: boolean }).current = true
+      capturedDataCallback.current?.(live, {
+        seq: hidden.length + live.length,
+        rawLength: live.length
+      })
+      ;(deps.isActiveRef as { current: boolean }).current = true
+
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      await flushAsyncTicks(20)
+
+      expect(blockingRestore).not.toHaveBeenCalled()
+      expect(getMainBufferSnapshot).toHaveBeenCalledWith('pty-id', { scrollbackRows: 5000 })
+      expect(pane.terminal.write).toHaveBeenCalledWith(
+        expect.stringContaining('promoted snapshot'),
         expect.any(Function)
       )
     } finally {
