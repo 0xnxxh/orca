@@ -303,6 +303,8 @@ async function runOrcaCliMode(
   let nextSeq = 1
   let highestReceivedSeq = 0
   const requestId = 1
+  const postOutputRequestId = 2
+  let initialExitCode = 0
 
   const sendRequest = (): void => {
     const env = pickRemoteCliEnv(process.env)
@@ -324,6 +326,67 @@ async function runOrcaCliMode(
     sock.write(frame)
   }
 
+  const finish = (exitCode: number): void => {
+    sock.destroy()
+    process.exit(exitCode)
+  }
+
+  const sendPostOutput = (postOutput: unknown): void => {
+    sock.write(
+      encodeJsonRpcFrame(
+        {
+          jsonrpc: '2.0',
+          id: postOutputRequestId,
+          method: 'orca.cli.postOutput',
+          params: { postOutput, env: pickRemoteCliEnv(process.env) }
+        },
+        nextSeq++,
+        highestReceivedSeq
+      )
+    )
+  }
+
+  const writeOutput = (
+    result: { stdout?: unknown; stderr?: unknown },
+    onFlushed: (error?: Error) => void
+  ): void => {
+    let pending = 0
+    let completed = false
+    const settle = (error?: Error): void => {
+      if (completed) {
+        return
+      }
+      if (error) {
+        completed = true
+        onFlushed(error)
+        return
+      }
+      pending -= 1
+      if (pending === 0) {
+        completed = true
+        onFlushed()
+      }
+    }
+    if (typeof result.stdout === 'string' && result.stdout.length > 0) {
+      pending += 1
+      const output = Buffer.from(result.stdout)
+      stdoutWriter.enqueue(
+        'control',
+        () => output,
+        output.length,
+        (settlement) => settle(settlement.ok ? undefined : settlement.error)
+      )
+    }
+    if (typeof result.stderr === 'string' && result.stderr.length > 0) {
+      pending += 1
+      process.stderr.write(result.stderr, 'utf8', (error) => settle(error ?? undefined))
+    }
+    if (pending === 0) {
+      completed = true
+      onFlushed()
+    }
+  }
+
   const decoder = new FrameDecoder((frame: DecodedFrame) => {
     if (frame.id > highestReceivedSeq) {
       highestReceivedSeq = frame.id
@@ -332,38 +395,41 @@ async function runOrcaCliMode(
       return
     }
     const msg = parseJsonRpcMessage(frame.payload)
-    if (!('id' in msg) || msg.id !== requestId || !('result' in msg || 'error' in msg)) {
+    if (
+      !('id' in msg) ||
+      (msg.id !== requestId && msg.id !== postOutputRequestId) ||
+      !('result' in msg || 'error' in msg)
+    ) {
       return
     }
     const response = msg as JsonRpcResponse
     if (response.error) {
       process.stderr.write(`${response.error.message}\n`)
-      sock.destroy()
-      process.exit(1)
+      finish(1)
+      return
+    }
+    if (response.id === postOutputRequestId) {
+      finish(initialExitCode)
+      return
     }
     const result = (response.result ?? {}) as {
       stdout?: unknown
       stderr?: unknown
       exitCode?: unknown
+      postOutput?: unknown
     }
-    if (typeof result.stderr === 'string' && result.stderr.length > 0) {
-      process.stderr.write(result.stderr)
-    }
-    sock.destroy()
-    const exitCode = typeof result.exitCode === 'number' ? result.exitCode : 0
-    if (typeof result.stdout === 'string' && result.stdout.length > 0) {
-      const output = Buffer.from(result.stdout)
-      stdoutWriter.enqueue(
-        'control',
-        () => output,
-        output.length,
-        (settlement) => {
-          process.exit(settlement.ok ? exitCode : 1)
-        }
-      )
-    } else {
-      process.exit(exitCode)
-    }
+    initialExitCode = typeof result.exitCode === 'number' ? result.exitCode : 0
+    writeOutput(result, (error) => {
+      if (error) {
+        finish(1)
+        return
+      }
+      if (result.postOutput === undefined) {
+        finish(initialExitCode)
+        return
+      }
+      sendPostOutput(result.postOutput)
+    })
   })
 
   const connectTimeout = setTimeout(() => {
@@ -596,6 +662,12 @@ async function main(): Promise<void> {
 
   dispatcher.onRequest('orca.cli', async (params, context) => {
     return await dispatcher.requestAnyClient('orca.cli', params, {
+      excludeClientId: context.clientId,
+      timeoutMs: remoteCliRequestTimeoutMs(params)
+    })
+  })
+  dispatcher.onRequest('orca.cli.postOutput', async (params, context) => {
+    return await dispatcher.requestAnyClient('orca.cli.postOutput', params, {
       excludeClientId: context.clientId,
       timeoutMs: remoteCliRequestTimeoutMs(params)
     })

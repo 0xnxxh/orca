@@ -79,6 +79,10 @@ import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 import { DEFAULT_PTY_SOURCE_WINDOW_SU } from '../../shared/pty-source-credit-contract'
 import { PTY_CONSUMER_STALE_OWNER_RECOVERY_ERROR } from '../../shared/pty-consumer-session'
 import { runRemoteOrcaCli } from './ssh-remote-orca-cli'
+import {
+  acknowledgeRemoteOrcaCliPostOutput,
+  parseRemoteOrcaCliPostOutput
+} from './ssh-remote-orchestration-post-output'
 import { toSshExecutionHostId, type ExecutionHostId } from '../../shared/execution-host'
 import { isTerminalLeafId, makePaneKey } from '../../shared/stable-pane-id'
 import { isValidTerminalTabId } from '../../shared/terminal-tab-id'
@@ -283,6 +287,7 @@ export class SshRelaySession {
   private readonly retiredSourceDeliveries = new SshPtyRetiredSourceDeliveries()
   private readonly ptyConsumerClientInstanceId: string
   private ptyConsumerSessionState: SshPtyConsumerSessionState | null = null
+  private activeCompatibilityAttachmentIds = new Set<string>()
 
   constructor(
     readonly targetId: string,
@@ -423,8 +428,15 @@ export class SshRelaySession {
       this.rememberPtyConsumerRecovery(serverBuildId)
 
       await mux.request('session.resolveHome', { path: '~' })
+      if (!ownsAttempt()) {
+        if (!mux.isDisposed()) {
+          mux.dispose()
+        }
+        throw new Error('Session disposed during establish')
+      }
+      const connectionIncarnation = randomUUID()
 
-      const registered = await this.registerProviders(mux, ownsAttempt)
+      const registered = await this.registerProviders(mux, ownsAttempt, connectionIncarnation)
       if (!registered) {
         if (!mux.isDisposed()) {
           mux.dispose()
@@ -554,8 +566,9 @@ export class SshRelaySession {
         }
         return
       }
+      const connectionIncarnation = randomUUID()
 
-      const registered = await this.registerProviders(mux, ownsAttempt)
+      const registered = await this.registerProviders(mux, ownsAttempt, connectionIncarnation)
       if (!registered) {
         if (!mux.isDisposed()) {
           mux.dispose()
@@ -676,7 +689,8 @@ export class SshRelaySession {
   // Why: shared by establish() and reconnect() so both use the exact same registration sequence.
   private async registerProviders(
     mux: SshChannelMultiplexer,
-    shouldContinue?: () => boolean
+    shouldContinue: (() => boolean) | undefined,
+    connectionIncarnation: string
   ): Promise<boolean> {
     await this.registerRelayRoots(mux)
     if (shouldContinue && !shouldContinue()) {
@@ -707,7 +721,7 @@ export class SshRelaySession {
       return false
     }
 
-    this.wireUpRemoteOrcaCli(mux)
+    this.wireUpRemoteOrcaCli(mux, connectionIncarnation)
 
     const providerGeneration = allocateSshPtyProviderGeneration()
     const ptyProvider = new SshPtyProvider(
@@ -991,7 +1005,7 @@ export class SshRelaySession {
     }
   }
 
-  private wireUpRemoteOrcaCli(mux: SshChannelMultiplexer): void {
+  private wireUpRemoteOrcaCli(mux: SshChannelMultiplexer, connectionIncarnation: string): void {
     mux.onRequest('orca.cli', async (params) => {
       if (!this.runtime) {
         throw new Error('Orca runtime is unavailable')
@@ -1011,12 +1025,54 @@ export class SshRelaySession {
             )
           : {}
       const stdin = typeof params.stdin === 'string' ? params.stdin : undefined
-      return await runRemoteOrcaCli(this.runtime, {
-        argv,
-        cwd,
-        env,
-        ...(stdin !== undefined ? { stdin } : {})
-      })
+      const runtimeAuthority = this.runtime.registerOrchestrationCompatibilitySshAttachment(
+        this.targetId,
+        connectionIncarnation
+      )
+      this.activeCompatibilityAttachmentIds.add(runtimeAuthority.attachmentId)
+      try {
+        return await runRemoteOrcaCli(this.runtime, {
+          argv,
+          cwd,
+          env,
+          ...(stdin !== undefined ? { stdin } : {}),
+          runtimeAuthority
+        })
+      } finally {
+        this.activeCompatibilityAttachmentIds.delete(runtimeAuthority.attachmentId)
+        this.runtime.releaseOrchestrationCompatibilitySshAttachment(runtimeAuthority.attachmentId)
+      }
+    })
+    mux.onRequest('orca.cli.postOutput', async (params) => {
+      if (!this.runtime) {
+        throw new Error('Orca runtime is unavailable')
+      }
+      const rawEnv = params.env
+      const env =
+        rawEnv && typeof rawEnv === 'object' && !Array.isArray(rawEnv)
+          ? Object.fromEntries(
+              Object.entries(rawEnv).filter(
+                (entry): entry is [string, string] =>
+                  typeof entry[0] === 'string' && typeof entry[1] === 'string'
+              )
+            )
+          : {}
+      const runtimeAuthority = this.runtime.registerOrchestrationCompatibilitySshAttachment(
+        this.targetId,
+        connectionIncarnation
+      )
+      this.activeCompatibilityAttachmentIds.add(runtimeAuthority.attachmentId)
+      try {
+        await acknowledgeRemoteOrcaCliPostOutput(this.runtime, {
+          postOutput: parseRemoteOrcaCliPostOutput(params.postOutput),
+          env,
+          runtimeAuthority
+        })
+        return { acknowledged: true }
+      } finally {
+        this.activeCompatibilityAttachmentIds.delete(runtimeAuthority.attachmentId)
+        this.runtime.releaseOrchestrationCompatibilitySshAttachment(runtimeAuthority.attachmentId)
+      }
     })
   }
 
@@ -1170,6 +1226,10 @@ export class SshRelaySession {
       this.mux.dispose(reason)
     }
     this.mux = null
+    for (const attachmentId of this.activeCompatibilityAttachmentIds) {
+      this.runtime?.releaseOrchestrationCompatibilitySshAttachment(attachmentId)
+    }
+    this.activeCompatibilityAttachmentIds.clear()
 
     if (reason === 'shutdown') {
       clearPtyOwnershipForConnection(this.targetId)
