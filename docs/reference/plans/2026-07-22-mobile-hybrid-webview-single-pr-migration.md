@@ -2192,11 +2192,17 @@ The authoritative route now has a separately reviewed ceiling of 10 MiB total,
 from 8 MiB / 2 MiB / 7.5 MiB only after the legacy Mermaid CDN executable was
 replaced by the locally bundled, network-denied engine needed by both native
 and RNW without forking the existing UI. Boundary tests reject every
-measurement above its ceiling. The current 50-asset package is 9,301,460 bytes
-/ 2,692,026 bytes gzip and build
-`e0ad7c7dbb2991f10945bf66b4786dc8efc82599ddea0652e4a95c9d0d554eba`.
+measurement above its ceiling. The current 50-asset package is 9,134,984 bytes
+/ 2,644,462 bytes gzip and build
+`8f452c7b95e729c7fc9a9cc8d10f39717459c9f3571eaf7843a8427b1b809341`.
 `build:mobile-web` and release resource mapping therefore select the RNW
 package; the original 2 MiB Vite-fixture ceiling is retired with that fixture.
+The hosted-only Metro graph resolves the reused screens' default
+`client-context` and `host-store` imports to inert page modules by exact
+resolved source path. The package therefore retains the unchanged screen
+components without bundling native host-token storage, pairing cleanup, or
+logical-client connection authority. Packaging and independent verification
+reject those implementation markers if they return.
 Workspace snapshots now page through
 opaque single-use cursors:
 each page is capped at 200 rows and 120 KiB, the stable native-only source
@@ -2845,6 +2851,17 @@ canonical manifest, and activation record to be one JSON value with unique
 decoded object keys and no more than 32 nesting levels. Mirrored corpora reject
 duplicate and escaped-equivalent keys, trailing tokens, malformed scalars, and
 excess depth consistently.
+
+Initial and subsequent page messages reject host identity, public key, device
+token, endpoint, and credential fields. Native cache directories use only the
+SHA-256 of paired identity; activation metadata contains only `active` and
+optional `previous` build hashes; session responses contain only session ID,
+build ID, and the private-origin URL. Terminal and inbound-transport
+diagnostics retain fixed event categories plus numeric, Boolean, or null
+measurements, never host strings, identifiers, custom error names, or RPC error
+codes. The production executable policy rejects telemetry SDK/domain markers,
+test-fixture environment markers, and native credential-authority
+implementations.
 
 The mutation-authorization audit and 25-case valid-shaped response corpus now
 cover the code-level authorization and response-correlation portions of this

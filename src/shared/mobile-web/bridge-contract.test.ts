@@ -275,6 +275,25 @@ describe('mobile web bridge shell contract', () => {
     ).toEqual({ ok: false, error: 'too_large' })
   })
 
+  it.each(['hostId', 'hostIdentity', 'publicKeyB64', 'deviceToken', 'endpoint', 'credential'])(
+    'rejects privileged %s state from the initial page message',
+    (field) => {
+      expect(
+        parseMobileWebBridgeInitialMessage(
+          JSON.stringify({
+            version: MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
+            type: 'init',
+            shellSessionId: SHELL_SESSION_ID,
+            buildId: BUILD_ID,
+            connection: 'connected',
+            grants: [operationGrant()],
+            [field]: 'credential-secret'
+          })
+        )
+      ).toEqual({ ok: false, error: 'invalid_message' })
+    }
+  )
+
   it('rejects unbounded or host-shaped resume routes', () => {
     const base = {
       version: MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,

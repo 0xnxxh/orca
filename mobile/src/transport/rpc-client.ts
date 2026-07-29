@@ -36,7 +36,12 @@ import {
 import { markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
 import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-request-budget'
 import { isRpcResponse } from './rpc-response-shape'
-import { createMobileInboundFrameQueue } from './mobile-inbound-frame-queue'
+import {
+  createMobileInboundFrameQueue,
+  MOBILE_INBOUND_BUFFER_OVERFLOW_MESSAGE,
+  MOBILE_INBOUND_FRAME_TOO_LARGE_MESSAGE,
+  mobileInboundFrameLogDetail
+} from './mobile-inbound-frame-queue'
 import { createMobileDirectRpcOutbound } from './mobile-direct-rpc-outbound'
 import { createMobileDirectRpcSender } from './mobile-direct-rpc-sender'
 import { handleMobileRpcSocketBinaryMessage } from './mobile-rpc-binary-frame-handler'
@@ -306,9 +311,9 @@ export function connect(
     outbound = openingOutbound
     const inboundQueue = createMobileInboundFrameQueue({
       process: handleSocketMessage,
-      onError: (error) => closeForOverload('Inbound', error.message),
-      overflowMessage: 'Mobile RPC inbound buffer overflow',
-      frameTooLargeMessage: 'Mobile RPC inbound frame too large'
+      onError: (error) => closeForOverload('Inbound', mobileInboundFrameLogDetail(error)),
+      overflowMessage: MOBILE_INBOUND_BUFFER_OVERFLOW_MESSAGE,
+      frameTooLargeMessage: MOBILE_INBOUND_FRAME_TOO_LARGE_MESSAGE
     })
     const ignoreStaleSocketEvent = (eventName: string): boolean => {
       if (ws === openingWs) {

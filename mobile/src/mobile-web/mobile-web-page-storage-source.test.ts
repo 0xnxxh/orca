@@ -16,7 +16,7 @@ describe('hosted mobile web page storage', () => {
   it('aliases AsyncStorage only for the hosted web export and rejects page persistence', () => {
     expect(metroSource).toContain("process.env.ORCA_EXPO_ROUTER_ROOT === 'host-web-app'")
     expect(metroSource).toContain("moduleName === '@react-native-async-storage/async-storage'")
-    expect(metroSource).toContain("platform === 'web'")
+    expect(metroSource).toContain("platform !== 'web'")
     expect(verifierSource).toContain('mobileWebRnwExecutablePolicyFailure(source)')
     expect(executablePolicySource).toContain('RNW executable contains ${failure}')
   })

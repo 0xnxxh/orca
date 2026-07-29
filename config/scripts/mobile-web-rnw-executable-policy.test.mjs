@@ -26,6 +26,21 @@ describe('mobile web RNW executable policy', () => {
     expect(mobileWebRnwExecutablePolicyFailure(source)).toBe('build environment path disclosure')
   })
 
+  it.each([
+    ['Sentry.captureException(error)', 'hosted telemetry integration'],
+    ['fetch("https://api.posthog.com/capture")', 'hosted telemetry integration'],
+    ['process.env.ORCA_E2E_MOBILE_WEB_NETWORK_PROBE_TOKEN', 'test fixture marker'],
+    ['process.env.EXPO_PUBLIC_ORCA_E2E_MOBILE_WEB_HOST_PUBLIC_KEY', 'test fixture marker'],
+    ['const key = "orca:web-host-token:" + hostId', 'native credential authority'],
+    ['const key = "orca.host-token." + hostId', 'native credential authority'],
+    ['scheduleHostCredentialCleanup(hostId)', 'native credential authority'],
+    ['openHostLogicalClient(host)', 'native credential authority'],
+    ['resolvePairingHostIdentity(publicKey, hostId)', 'native credential authority'],
+    ['deleteMobileRelayCredentialBundle(hostId)', 'native credential authority']
+  ])('rejects production privacy marker %s', (source, expected) => {
+    expect(mobileWebRnwExecutablePolicyFailure(source)).toBe(expected)
+  })
+
   it('allows inert syntax-highlighter keyword strings', () => {
     expect(
       mobileWebRnwExecutablePolicyFailure('["document","localStorage","sessionStorage","module"]')

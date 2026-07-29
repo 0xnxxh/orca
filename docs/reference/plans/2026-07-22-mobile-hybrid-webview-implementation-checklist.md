@@ -549,7 +549,7 @@ recovery, or physical-device gates.
       RNW artifact. The retired Vite entry, package plugin/verifier, duplicate
       workspace/session/files/source-control UI, and UI-only tests are removed.
       Production bridge clients and transport tests remain. The rebuilt package
-      now verifies as build `e0ad7c7d…`.
+      now verifies as build `8f452c7b…`.
 
 ## 3. Production Package Delivery RPC
 
@@ -1481,10 +1481,17 @@ copy.
   userinfo, signed/OAuth query or fragment credentials, and host-local file
   paths before entering the page; page-originated navigation rejects those
   values and unsupported schemes. Native transport and shared-route logs now
-  drop endpoint, WebSocket/auth event values, repository identity, and raw
-  errors in favor of protocol/state/category fields. The remaining DOM/message,
-  cache metadata, diagnostic, analytics, crash-report, and fixture audit is
-  still open.
+  drop endpoint, WebSocket/auth event values, repository identity, identifiers,
+  custom error names, RPC codes, and raw errors in favor of fixed
+  protocol/state/category fields plus numeric or Boolean measurements. Initial
+  and subsequent bridge messages reject host identity, public key, token,
+  endpoint, and credential fields. Native cache keys hash paired identity;
+  activation metadata and session responses contain only reviewed hashes, IDs,
+  and private-origin URLs. Exact hosted Metro aliases remove native token
+  storage, pairing cleanup, and logical-client connection authority while
+  preserving the reused UI. The executable policy rejects telemetry
+  SDK/domain, test-fixture environment, and native credential-authority markers.
+  Exact-app DOM and native crash-report review remain open.
 - [~] Verify the WebView cannot make network requests. Static iOS/Android CSP
   and native-origin controls are covered. Android also sets
   `blockNetworkLoads`, and its download listener reports and rejects download
@@ -1935,9 +1942,12 @@ passes 576 files / 3,440 tests with 2 expected skips. A full root run passes
 seconds. Mobile/root/RNW typechecks, mobile/shared lint, all 55 reliability
 gates, max-lines, localization, formatting, diff hygiene, and production
 package verification pass. The latest privacy-hardening package is
-`e0ad7c7dbb2991f10945bf66b4786dc8efc82599ddea0652e4a95c9d0d554eba`:
-50 assets, 9,301,460 raw bytes, and 2,692,026 gzip bytes. The full mobile suite
-passes 580 files / 3,449 tests with 2 expected skips.
+`8f452c7b95e729c7fc9a9cc8d10f39717459c9f3571eaf7843a8427b1b809341`:
+50 assets, 9,134,984 raw bytes, and 2,644,462 gzip bytes. The full mobile suite
+passes 582 files / 3,453 tests with 2 expected skips. The current full root run
+passes 3,831 files / 40,242 tests with 70 expected skips except for one
+unrelated load-sensitive remote-control timing assertion; its complete
+26-test file passes in a 2.9-second isolated rerun.
 
 | Date       | Workstream              | Evidence                                                                                                                                                                                                                    | Result                                                                                                                                                                                            |
 | ---------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2315,6 +2325,7 @@ passes 580 files / 3,449 tests with 2 expected skips.
 | 2026-07-27 | Hosted storage boundary | Inert hosted AsyncStorage adapter, verifier rejection of executable `localStorage`, and terminal preference/accessory/custom-shortcut typed bridge operations                                                               | Passed; page-to-native shortcut read/write round trip and unchanged session adapter included in 7 focused files / 34 tests                                                                        |
 | 2026-07-28 | Page persistence        | Packaging and verification share rejection of runtime code generation plus Web Storage, IndexedDB, CacheStorage, cookie, WebSQL, and origin-private filesystem/storage access                                               | Focused policy/package/page-source tests pass; mobile and RNW typechecks, focused lint, max-lines, formatting, diff hygiene, and exact build `bcd9c95e…` verification pass                        |
 | 2026-07-28 | Privacy boundaries      | Fixed page-host label; credential/file-path URL sanitization and navigation rejection; build-path rejection; value-free transport, pairing, Tasks, clipboard, dictation, and terminal logs                                  | 23 focused root tests, 25 focused mobile tests, full 580-file mobile suite / 3,449 tests with 2 skips, typechecks, lint, max-lines, formatting, diff hygiene, and exact build `e0ad7c7d…` pass    |
+| 2026-07-29 | Hosted authority        | Exact-path hosted aliases for native client/host-store authority; fixed-category terminal/inbound diagnostics; bridge credential-field rejection; telemetry, fixture, and credential-authority package policy               | 5 focused files / 62 tests, full 582-file mobile suite / 3,453 tests with 2 skips, all typechecks/lints/55 gates, and exact build `8f452c7b…` pass                                                |
 | 2026-07-27 | Android private origin  | Exact Debug APK at reserved HTTPS origin, main-frame fragment validation, hosted History API fragment retention, deliberate-red network/navigation corpus, and real routed terminal snapshot                                | Passed; `/h/.../session/...#<session>` retained, zero sentinel observations, bridge loaded one real tab, and fresh logcat had no prior exceptions                                                 |
 | 2026-07-27 | RNW package             | Exact-source build and independent verifier after hosted History API session binding                                                                                                                                        | Passed; build `8b5c9b64b4caa778603ff4e3845a7f3df9c6ed0f027560cd5447ed259ebbb0e8`, 49 assets, 9,178,634 raw bytes, 2,662,870 gzip bytes                                                            |
 | 2026-07-27 | Validation              | Focused bridge/origin/history tests, mobile and mobile-web typechecks/lints, max-lines ratchet, Android JVM/process tests, exact Debug assembly, and diff hygiene                                                           | Passed; 34 focused tests, 17 Android JVM tests, 577 Gradle tasks, and no new max-lines bypass                                                                                                     |
@@ -2836,4 +2847,7 @@ passes 580 files / 3,449 tests with 2 expected skips.
 | 2026-07-28 | Complete | Mirrored Swift and Kotlin package-store suites now pass 120 concurrent cache flows per platform. The added same-host matrix covers 16 competing distinct-generation commits, 16 live-session activation/cleanup flows with post-activation reads, and 16 interleaved commit/abort mutations; final activation retains at most active plus previous, and host removal leaves no cache subtree.                                                                                                                                                                                                             |
 | 2026-07-28 | Complete | Packaging and independent verification now share one executable policy that rejects runtime code generation and page-owned Web Storage, IndexedDB, CacheStorage, cookie, WebSQL, and origin-private filesystem/storage access while permitting inert syntax-highlighter keywords. Focused tests, typechecks, lint, max-lines, formatting, diff hygiene, and exact `bcd9c95e…` package verification pass.                                                                                                                                                                                                  |
 | 2026-07-28 | Complete | Hosted page URL construction no longer accepts a paired-host identifier. Browser results, events, and snapshots remove credentials and local file paths; hosted navigation rejects credential-bearing URLs. Packaging rejects build-machine paths. Mobile logs retain only reviewed protocol, state, count, and category fields. The full mobile suite passes 580 files / 3,449 tests with 2 skips, and build `e0ad7c7d…` verifies at 50 assets / 9,301,460 raw / 2,692,026 gzip bytes.                                                                                                                   |
-| 2026-07-28 | Next     | Continue the privacy audit across DOM/messages, cache metadata, diagnostics, analytics, crash reports, and fixtures; then run exact release-app corpus injection, broader live two-host/topology races, and independent security review.                                                                                                                                                                                                                                                                                                                                                                  |
+| 2026-07-29 | Finding  | The hosted RNW package still contained native host-token storage, pairing cleanup, and logical-client transport implementations because reused screens statically imported their default native bindings even when hosted adapters supplied the runtime behavior. No credential value was embedded or intentionally executed, but the page package retained authority code it did not own.                                                                                                                                                                                                                |
+| 2026-07-29 | Complete | Hosted-only Metro resolution now substitutes inert `client-context` and `host-store` modules by exact resolved source path without changing the shared UI. The executable policy rejects native credential-authority, telemetry, and fixture markers. Initial messages reject privileged host fields; terminal and inbound diagnostics retain only fixed categories and non-string measurements. Build `8f452c7b…` verifies with 50 assets / 9,134,984 raw / 2,644,462 gzip bytes.                                                                                                                        |
+| 2026-07-29 | Complete | Focused validation passes 5 files / 62 tests. The full mobile suite passes 582 files / 3,453 tests with 2 skips. All project typechecks, root/mobile/mobile-web lint, native/type-aware audits, 55 reliability gates, localization, max-lines, formatting, package verification, and diff hygiene pass. A full root run passes 3,831 files / 40,242 tests with 70 skips except one unrelated load-sensitive remote-control timing assertion; its complete 26-test file passes in 2.9 seconds isolated.                                                                                                    |
+| 2026-07-29 | Next     | Rebase onto current `origin/main`, rebuild and reverify the exact package, then continue exact release-app DOM/corpus injection, broader live two-host/topology races, native crash-report review, and independent security review.                                                                                                                                                                                                                                                                                                                                                                       |

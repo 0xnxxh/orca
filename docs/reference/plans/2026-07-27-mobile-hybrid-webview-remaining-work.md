@@ -113,8 +113,8 @@ changed-file and full-mobile formatting, localization, the max-lines ratchet,
 and diff hygiene pass. React Doctor reports zero blocking errors across the
 migration without suppressions. The independently verified React Native Web
 package is
-`e0ad7c7dbb2991f10945bf66b4786dc8efc82599ddea0652e4a95c9d0d554eba`:
-50 assets, 9,301,460 raw bytes, and 2,692,026 gzip bytes.
+`8f452c7b95e729c7fc9a9cc8d10f39717459c9f3571eaf7843a8427b1b809341`:
+50 assets, 9,134,984 raw bytes, and 2,644,462 gzip bytes.
 
 The immediately preceding `7c7c673d…` package passed the unpacked macOS arm64 →
 Docker SSH → actual iOS WKWebView journey from a clean app reinstall in 1.9
@@ -314,13 +314,14 @@ collection ceiling. Session subscription events are also bound to the
 requested workspace. Existing Source Control, provider-review, file, and
 Markdown correlation remains in force.
 
-The production package now verifies as `e0ad7c7d…`: 50 assets, 9,301,460 raw
-bytes, and 2,692,026 gzip bytes. The full mobile suite passes 580 files / 3,449
-tests with 2 expected skips. Mobile, mobile-web, and root typechecks; mobile and
-mobile-web lint; all 55 reliability gates; localization; max-lines; and package
-verification pass. The full root run passes 3,829 files / 40,205 tests with 70
-expected skips except for one unrelated 30-second dynamic-import timeout under
-load; its isolated 2-test rerun passes in 4.69 seconds.
+The production package now verifies as `8f452c7b…`: 50 assets, 9,134,984 raw
+bytes, and 2,644,462 gzip bytes. The full mobile suite passes 582 files / 3,453
+tests with 2 expected skips. All project typechecks; root, mobile, and
+mobile-web lint; all 55 reliability gates; localization; max-lines; formatting;
+and package verification pass. The full root run passes 3,831 files / 40,242
+tests with 70 expected skips except for one unrelated load-sensitive
+remote-control timing assertion; its complete 26-test file passes in a
+2.9-second isolated rerun.
 
 The mirrored native package-store suites now pass 120 concurrent cache flows per
 platform. The expanded same-host matrix covers competing distinct generations,
@@ -331,14 +332,19 @@ Packaging and independent package verification now share one executable policy
 that rejects runtime code generation and page-owned Web Storage, IndexedDB,
 CacheStorage, cookie, WebSQL, and origin-private filesystem/storage access. It
 permits inert storage keywords required by the production syntax highlighter
-and rejects build-machine user paths. Hosted URL construction cannot accept a
-paired-host identity. Browser state removes credentials and host-local file
-paths before entering the page, and hosted navigation rejects credential-bearing
-URLs. Native transport and shared-route logging removes endpoint, WebSocket/auth
-event, repository, and raw error values. Focused tests and exact build
-`e0ad7c7d…` verification pass. The remaining security work below is exact
-release-app corpus testing, broader live cross-scope races, the rest of the
-privacy audit, and independent review.
+and rejects build-machine user paths, telemetry SDK/domain markers,
+test-fixture environment markers, and native credential-authority
+implementations. Hosted URL construction cannot accept a paired-host identity.
+Browser state removes credentials and host-local file paths before entering the
+page, and hosted navigation rejects credential-bearing URLs. Native transport
+and shared-route logging removes endpoint, WebSocket/auth event, repository,
+identifier, custom error name, RPC code, and raw error values. The hosted Metro
+graph aliases native client and host-store modules to inert implementations by
+exact resolved path; the unchanged UI remains while token storage, pairing
+cleanup, and logical-client authority leave the package. Focused tests and exact
+build `8f452c7b…` verification pass. The remaining security work below is exact
+release-app corpus testing, broader live cross-scope races, remaining DOM/crash
+report review, and independent review.
 
 ## 1. Production Cutover and Cleanup
 
@@ -418,9 +424,15 @@ privacy audit, and independent review.
       packaging and verification. Hosted routes use a fixed page-host label, the
       package rejects build-machine paths, browser state removes credential and
       host-local file URLs, hosted navigation rejects credential-bearing URLs,
-      and reviewed mobile logs retain only protocol/state/category fields.
-      DOM/messages, cache metadata, remaining diagnostics, analytics, crash
-      reports, and fixtures remain under audit.
+      and reviewed mobile logs retain only fixed protocol/state/category fields
+      plus numeric or Boolean measurements. Initial and subsequent bridge
+      messages reject credential and host-identity fields. Native cache keys
+      hash paired identity; activation metadata and session responses contain
+      only reviewed hashes, IDs, and private-origin URLs. Hosted package
+      resolution removes native token storage, pairing cleanup, and logical
+      transport authority. Package policy rejects telemetry SDK/domain and
+      fixture-environment markers. Exact-app DOM inspection and native crash
+      report review remain.
 - [ ] Verify all resource limits apply before allocation and during assembly.
       Persisted native manifests, activation metadata, and assets have
       pre-allocation read ceilings; every bridge operation has generated

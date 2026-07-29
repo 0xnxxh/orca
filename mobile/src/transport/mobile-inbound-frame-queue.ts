@@ -9,6 +9,9 @@ export const MOBILE_INBOUND_MAX_FRAME_BYTES = 64 * 1024 * 1024
 export const MOBILE_INBOUND_MAX_BUFFERED_BYTES = 96 * 1024 * 1024
 // Why: tiny-frame floods need a count bound independent of their serialized size.
 export const MOBILE_INBOUND_MAX_BUFFERED_FRAMES = 64
+export const MOBILE_INBOUND_BUFFER_OVERFLOW_MESSAGE = 'Mobile RPC inbound buffer overflow'
+export const MOBILE_INBOUND_FRAME_TOO_LARGE_MESSAGE = 'Mobile RPC inbound frame too large'
+export const MOBILE_INBOUND_PROCESSING_FAILED_MESSAGE = 'Mobile RPC inbound processing failed'
 
 type PendingFrame = {
   raw: unknown
@@ -179,6 +182,17 @@ export function assertMobileInboundFrameSize(
   if (mobileInboundFrameRetainedBytes(raw, maxFrameBytes) > maxFrameBytes) {
     throw new Error(message)
   }
+}
+
+export function mobileInboundFrameLogDetail(error: unknown): string {
+  if (
+    error instanceof Error &&
+    (error.message === MOBILE_INBOUND_BUFFER_OVERFLOW_MESSAGE ||
+      error.message === MOBILE_INBOUND_FRAME_TOO_LARGE_MESSAGE)
+  ) {
+    return error.message
+  }
+  return MOBILE_INBOUND_PROCESSING_FAILED_MESSAGE
 }
 
 function mobileInboundFrameRetainedBytes(raw: unknown, unknownFrameBytes: number): number {
