@@ -70,9 +70,11 @@ and source plus HTML/SVG source remain inert, create no injected
 zero loopback-sentinel requests. A valid 1×1 PNG whose `tEXt` metadata carries
 script-shaped content and the same sentinel URL also decodes through the real
 RNW image surface on both exact apps without exposing metadata, executing its
-marker, or making a request. Mermaid, terminal-link, task/provider,
-bounded-error, physical-device, release-runtime, and independent review
-coverage remain open.
+marker, or making a request. Both exact apps also pass the live hostile
+terminal-link corpus: JavaScript links stay inert, no HTTP request occurs
+without a tap, and a native tap opens the allowlisted file target through the
+unchanged Session presentation. Mermaid, task/provider, bounded-error,
+physical-device, release-runtime, and independent review coverage remain open.
 
 The iPhone 17 Pro / iOS 26.5 Simulator now captures the unchanged native and
 hosted Tasks and Session screens from one disposable Desktop runtime. Tasks
@@ -121,8 +123,8 @@ within the 3% / 4 budgets. The packaged document opts into native safe-area
 insets, and nested syntax text retains the native effective font behavior.
 
 The migration is based on `origin/main` at `4543bb6826`; the final rebase is
-complete and the branch is 58 commits ahead and zero behind. Post-rebase
-validation plus the hostile-content slice now passes 589 mobile files / 3,511
+complete and the branch is 61 commits ahead and zero behind. Post-rebase
+validation plus the hostile-content slice now passes 593 mobile files / 3,530
 tests with 2 expected skips. The latest full root run passes 3,854 files /
 40,508 tests with 71 expected skips. All project typechecks,
 root/mobile/mobile-web lint and code-quality audits, 56 reliability gates,
@@ -421,7 +423,10 @@ remain open.
       unset, and make zero sentinel requests. Both exact apps also decode a
       valid 1×1 PNG carrying hostile `tEXt` metadata through the RNW image
       surface without exposing metadata, executing its marker, or reaching the
-      sentinel. Mermaid, terminal-link, provider/task, bounded-error, physical
+      sentinel. Both exact apps also pass the same hostile OSC-8 terminal
+      corpus: JavaScript links stay inert, no untapped HTTP request reaches the
+      sentinel, and a native tap opens the allowlisted repository file through
+      the unchanged Session UI. Mermaid, provider/task, bounded-error, physical
       devices, release builds, and independent interaction review remain open.
 - [ ] Fuzz manifests, chunks, paths, MIME types, CSP, cache metadata, bridge
       envelopes, limits, ordering, cancellation, and subscriptions. The

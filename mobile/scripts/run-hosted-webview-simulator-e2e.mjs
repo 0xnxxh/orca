@@ -2,7 +2,6 @@
 
 import { execFile } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
-import net from 'node:net'
 import path from 'node:path'
 import process from 'node:process'
 import { promisify } from 'node:util'
@@ -13,6 +12,7 @@ import {
   removeHostedAdversarialRepositoryFixture
 } from './hosted-adversarial-repository-fixture.mjs'
 import { stopHostedChildProcess } from './hosted-child-process-shutdown.mjs'
+import { findAvailableHostedLoopbackPort } from './hosted-loopback-port.mjs'
 import { parseHostedWebViewSimulatorE2eOptions } from './hosted-webview-simulator-e2e-options.mjs'
 import {
   captureHostedAccountsParity,
@@ -45,6 +45,7 @@ import {
   captureNativeWorkspaceBaseline
 } from './hosted-ios-workspace-parity.mjs'
 import { verifyHostedAgentHistoryJourney } from './hosted-ios-agent-history-journey.mjs'
+import { verifyHostedIosAdversarialTerminalLinks } from './hosted-ios-adversarial-terminal-links.mjs'
 import { openHostedIosHybridRoute } from './hosted-ios-hybrid-route-handoff.mjs'
 import {
   startHostedIosMobileLauncher,
@@ -94,6 +95,8 @@ async function main() {
   let nativeAppPath = null
   let adversarialFixture = null
   let adversarialInspector = null
+  let adversarialTerminalLinks = null
+  let adversarialTerminalHandle = null
   try {
     networkProbe = await startHostedIosWebViewSecurityProbe()
     if (options.adversarialContent) {
@@ -134,11 +137,13 @@ async function main() {
       completeHostedIosNativeOnboarding(emulator, expectedWorkspace, options.timeoutMs)
     )
     if (adversarialFixture) {
-      await evidenceStep('adversarial repository registration', () =>
+      adversarialTerminalHandle = await evidenceStep('adversarial repository registration', () =>
         registerHostedIosAdversarialRepository({
           fixture: adversarialFixture,
           orcaCli: orcaSelection.command,
-          pairingRuntimeUserDataPath: path.join(runtimeDirectory, 'paired-host', 'userData')
+          pairingRuntimeUserDataPath: path.join(runtimeDirectory, 'paired-host', 'userData'),
+          probe: networkProbe,
+          timeoutMs: options.timeoutMs
         })
       )
       adversarialInspector = createHostedIosAdversarialContentInspector({
@@ -243,7 +248,7 @@ async function main() {
     await evidenceStep('native hybrid route handoff', () =>
       openHostedIosHybridRoute(emulator, options.timeoutMs)
     )
-    const inspectorPort = await findAvailableLoopbackPort()
+    const inspectorPort = await findAvailableHostedLoopbackPort()
     const discoveryUrl = `http://127.0.0.1:${inspectorPort}`
     inspector = await startCdpServer({ port: inspectorPort })
     let workspaceDocument = await waitForVisibleHostedWebView({
@@ -395,18 +400,38 @@ async function main() {
                   })
               )
             }
-            const sessionDocument = await waitForVisibleHostedWebView({
+            let sessionDocument = await waitForVisibleHostedWebView({
               discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
               expectedText: options.sourceControlOnly ? '1 tab' : '2 tabs',
               expectedHrefIncludes: '/session/',
               requireInteractiveControls: false,
               timeoutMs: options.timeoutMs
             })
+            if (adversarialInspector) {
+              const result = await evidenceStep('adversarial terminal links', () =>
+                verifyHostedIosAdversarialTerminalLinks({
+                  ...securityJourney,
+                  deviceUdid,
+                  document: sessionDocument,
+                  emulator,
+                  positiveFilePath: adversarialFixture.repositoryFiles[0].filename,
+                  probe: networkProbe,
+                  terminalHandle: adversarialTerminalHandle,
+                  worktree: adversarialFixture.root
+                })
+              )
+              adversarialTerminalLinks = result.evidence
+              sessionDocument = result.sessionDocument
+            }
             return verifyHostedSourceControlReviewJourney({
               deviceUdid,
               discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
               emulator,
-              expectedSessionDiffText: options.sourceControlOnly ? '2 tabs' : '3 tabs',
+              expectedSessionDiffText: adversarialInspector
+                ? '3 tabs'
+                : options.sourceControlOnly
+                  ? '2 tabs'
+                  : '3 tabs',
               nativeBaselines: nativeSourceControlReview,
               inspectChangedContent: adversarialInspector?.inspect,
               runtimeDirectory,
@@ -490,7 +515,8 @@ async function main() {
           coreRouteParity: hostedCoreRoutes?.evidence ?? null,
           filesPreviewParity: hostedFilesPreview?.evidence ?? null,
           sourceControlReview,
-          adversarialContent
+          adversarialContent,
+          adversarialTerminalLinks
         },
         null,
         2
@@ -571,22 +597,6 @@ async function bootSimulator(deviceUdid) {
     await execFileAsync('xcrun', ['simctl', 'boot', deviceUdid])
   }
   await execFileAsync('xcrun', ['simctl', 'bootstatus', deviceUdid, '-b'])
-}
-
-function findAvailableLoopbackPort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer()
-    server.unref()
-    server.once('error', reject)
-    server.listen({ host: '127.0.0.1', port: 0 }, () => {
-      const address = server.address()
-      server.close(() =>
-        typeof address === 'object' && address
-          ? resolve(address.port)
-          : reject(new Error('No port'))
-      )
-    })
-  })
 }
 
 function delay(ms) {

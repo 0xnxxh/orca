@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import process from 'node:process'
 import { promisify } from 'node:util'
 import { HOSTED_ADVERSARIAL_CONTENT_MARKER } from './hosted-adversarial-repository-fixture.mjs'
+import { stageHostedAdversarialTerminalLinks } from './hosted-adversarial-terminal-links.mjs'
 import {
   captureHostedWebViewAdversarialObservation,
   hostedWebViewAdversarialContentObservations
@@ -14,7 +15,7 @@ import { registerWorktreeForPairingRuntime } from './start-emulator-pairing-runt
 const execFileAsync = promisify(execFile)
 
 export async function registerHostedIosAdversarialRepository(
-  { fixture, orcaCli, pairingRuntimeUserDataPath },
+  { fixture, orcaCli, pairingRuntimeUserDataPath, probe, timeoutMs },
   runCli = execFileAsync
 ) {
   const env = {
@@ -37,6 +38,15 @@ export async function registerHostedIosAdversarialRepository(
         stderr: String(result.stderr).trim()
       }
     }
+  })
+  return stageHostedAdversarialTerminalLinks({
+    orcaCli,
+    pairingRuntimeUserDataPath,
+    positiveFilePath: fixture.repositoryFiles[0].filename,
+    probePort: probe.port,
+    probeToken: probe.token,
+    timeoutMs,
+    worktree: fixture.root
   })
 }
 
@@ -85,7 +95,9 @@ export function createHostedIosAdversarialContentInspector({ emulator, fixture, 
 async function captureHostedIosAdversarialDiff({ document, emulator, filename, timeoutMs }) {
   let lastError = new Error('Hosted iOS adversarial diff tab did not activate')
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const point = await readHostedWebViewTextPoint(document, filename)
+    const point = await readHostedWebViewTextPoint(document, filename, undefined, {
+      horizontalPosition: 0.15
+    })
     await tapHostedIosPoint(emulator, point)
     await delay(250)
     try {

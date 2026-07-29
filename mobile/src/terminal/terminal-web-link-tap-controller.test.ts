@@ -4,6 +4,7 @@ import { createTerminalWebLinkTapController } from './terminal-web-link-tap-cont
 
 function tapHarness(hasSelection = false) {
   let selection = hasSelection
+  let bounds = { left: 0, top: 0, width: 100, height: 100 }
   const listeners = new Map<string, ((event: never) => void)[]>()
   const container = {
     addEventListener(type: string, listener: (event: never) => void) {
@@ -20,7 +21,7 @@ function tapHarness(hasSelection = false) {
     cols: 10,
     rows: 10,
     element: {
-      getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 100 })
+      getBoundingClientRect: () => bounds
     },
     buffer: { active: { viewportY: 0 } },
     hasSelection: () => selection
@@ -48,6 +49,9 @@ function tapHarness(hasSelection = false) {
     onTerminalTap,
     setSelection(value: boolean) {
       selection = value
+    },
+    setBounds(value: typeof bounds) {
+      bounds = value
     }
   }
 }
@@ -128,6 +132,27 @@ describe('hosted terminal link tap controller', () => {
     expect(harness.activateAtBufferCell).toHaveBeenCalledWith(4, 5)
     expect(preventDefault).toHaveBeenCalledOnce()
     expect(stopPropagation).toHaveBeenCalledOnce()
+  })
+
+  it('retains the touched cell when keyboard focus resizes the terminal', () => {
+    const harness = tapHarness()
+    harness.dispatch('pointerdown', {
+      pointerType: 'touch',
+      button: -1,
+      pointerId: 1,
+      clientX: 55,
+      clientY: 45
+    })
+    harness.setBounds({ left: 0, top: 0, width: 100, height: 50 })
+    harness.dispatch('pointerup', {
+      pointerId: 1,
+      clientX: 55,
+      clientY: 45,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn()
+    })
+
+    expect(harness.activateAtBufferCell).toHaveBeenCalledWith(4, 5)
   })
 
   it('completes a short WebKit-canceled touch from its stored start point', () => {

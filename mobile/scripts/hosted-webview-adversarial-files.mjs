@@ -122,7 +122,10 @@ export function hostedAdversarialFileExecutionEvidence(result) {
   ) {
     throw new Error(`Hosted adversarial repository file executed: ${JSON.stringify(result)}`)
   }
-  return { injectedElementCount: 0, repositoryFileScriptMarkersExecuted: false }
+  return {
+    injectedElementCount: 0,
+    repositoryFileScriptMarkersExecuted: false
+  }
 }
 
 async function waitForAdversarialImage(document, filename, timeoutMs, WebSocketCtor) {
@@ -213,9 +216,10 @@ async function waitForText(document, expected, timeoutMs, WebSocketCtor) {
     WebSocketCtor
   )
   throw new Error(
-    `Hosted adversarial file text was not rendered: ${expected.slice(0, 120)} at ${
-      state?.href ?? 'unavailable'
-    }. Body tail: ${JSON.stringify(bodyTail.slice(-1024))}`
+    `Hosted adversarial file text was not rendered: ${expected.slice(
+      0,
+      120
+    )} at ${state?.href ?? 'unavailable'}. Body tail: ${JSON.stringify(bodyTail.slice(-1024))}`
   )
 }
 

@@ -74,6 +74,27 @@ describe('hosted terminal link provider', () => {
     expect(onOpenUrl).toHaveBeenCalledWith('https://example.com/123')
   })
 
+  it('gives live OSC ranges the same tap routing and stale-text protection', () => {
+    const onOpenUrl = vi.fn()
+    const liveLinks = [
+      {
+        row: 3,
+        startCol: 0,
+        endCol: 10,
+        uri: 'https://example.com/live',
+        expectedText: 'live issue'
+      }
+    ]
+    const links = terminalWebLinksForLine('live issue', 3, [], 0, () => ({ onOpenUrl }), liveLinks)
+
+    expect(links).toHaveLength(1)
+    links[0]?.activate()
+    expect(onOpenUrl).toHaveBeenCalledWith('https://example.com/live')
+    expect(
+      terminalWebLinksForLine('overwritten', 3, [], 0, () => ({ onOpenUrl }), liveLinks)
+    ).toEqual([])
+  })
+
   it('drops retained OSC ranges after their rows leave the buffer', () => {
     expect(
       terminalWebLinksForLine(

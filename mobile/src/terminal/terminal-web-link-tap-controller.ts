@@ -16,6 +16,7 @@ type CompleteLinkTapOptions = {
 }
 
 type TapCandidate = {
+  cell: { row: number; column: number } | null
   inputId: number
   clientX: number
   clientY: number
@@ -43,6 +44,7 @@ export function createTerminalWebLinkTapController({
       return
     }
     pointerTap = {
+      cell: terminalBufferCellAtClientPoint(terminal, event.clientX, event.clientY),
       inputId: event.pointerId,
       clientX: event.clientX,
       clientY: event.clientY,
@@ -68,7 +70,7 @@ export function createTerminalWebLinkTapController({
       return
     }
     lastCompletionAt = Date.now()
-    if (completeAt(candidate.clientX, candidate.clientY, candidate.hadSelection)) {
+    if (completeCandidate(candidate)) {
       event.preventDefault()
       event.stopPropagation()
     }
@@ -83,7 +85,7 @@ export function createTerminalWebLinkTapController({
       return
     }
     lastCompletionAt = Date.now()
-    completeAt(candidate.clientX, candidate.clientY, candidate.hadSelection)
+    completeCandidate(candidate)
   }
   const touchStart = (event: TouchEvent) => {
     if (event.touches.length !== 1) {
@@ -95,6 +97,7 @@ export function createTerminalWebLinkTapController({
       return
     }
     touchTap = {
+      cell: terminalBufferCellAtClientPoint(terminal, touch.clientX, touch.clientY),
       inputId: touch.identifier,
       clientX: touch.clientX,
       clientY: touch.clientY,
@@ -126,7 +129,7 @@ export function createTerminalWebLinkTapController({
       return
     }
     lastCompletionAt = Date.now()
-    if (completeAt(candidate.clientX, candidate.clientY, candidate.hadSelection)) {
+    if (completeCandidate(candidate)) {
       event.preventDefault()
       event.stopPropagation()
     }
@@ -141,7 +144,7 @@ export function createTerminalWebLinkTapController({
       return
     }
     lastCompletionAt = Date.now()
-    completeAt(candidate.clientX, candidate.clientY, candidate.hadSelection)
+    completeCandidate(candidate)
   }
   const click = (event: MouseEvent) => {
     if (Date.now() - lastCompletionAt < DUPLICATE_COMPLETION_WINDOW_MS) {
@@ -156,15 +159,24 @@ export function createTerminalWebLinkTapController({
       event.stopPropagation()
     }
   }
-  const completeAt = (clientX: number, clientY: number, hadSelection: boolean) => {
-    const cell = terminalBufferCellAtClientPoint(terminal, clientX, clientY)
+  const completeCandidate = (candidate: TapCandidate) => {
     return completeTerminalWebLinkTap({
-      hasSelection: hadSelection,
-      activateLink: () => (cell ? activateAtBufferCell(cell.row, cell.column) : false),
+      hasSelection: candidate.hadSelection,
+      activateLink: () =>
+        candidate.cell ? activateAtBufferCell(candidate.cell.row, candidate.cell.column) : false,
       cancelSelection,
       onTerminalTap
     })
   }
+  const completeAt = (clientX: number, clientY: number, hadSelection: boolean) =>
+    completeCandidate({
+      cell: terminalBufferCellAtClientPoint(terminal, clientX, clientY),
+      inputId: 0,
+      clientX,
+      clientY,
+      hadSelection,
+      startedAt: Date.now()
+    })
 
   container.addEventListener('pointerdown', pointerDown, true)
   container.addEventListener('pointermove', pointerMove, true)

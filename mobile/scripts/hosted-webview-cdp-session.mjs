@@ -218,6 +218,10 @@ export async function readHostedWebViewTextPoint(
   WebSocketCtor = WebSocket,
   options = {}
 ) {
+  const horizontalPosition = options.horizontalPosition ?? 0.5
+  if (!Number.isFinite(horizontalPosition) || horizontalPosition < 0 || horizontalPosition > 1) {
+    throw new Error('Hosted WebView text point position is invalid')
+  }
   const expression = `(() => {
     const expected = ${JSON.stringify(text)};
     const comparableExpected = ${
@@ -254,7 +258,7 @@ export async function readHostedWebViewTextPoint(
     const screenHeight = Number(screen.height);
     const viewportTop = Math.max(0, screenHeight - Number(innerHeight));
     return JSON.stringify({
-      x: (rect.left + rect.width / 2) / screenWidth,
+      x: (rect.left + rect.width * ${horizontalPosition}) / screenWidth,
       y: (viewportTop + rect.top + rect.height / 2) / screenHeight
     });
   })()`

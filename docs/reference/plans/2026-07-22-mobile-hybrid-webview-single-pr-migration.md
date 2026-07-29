@@ -150,7 +150,7 @@ prototype:
   inventory entry, and fixtures are removed. The production `/hybrid` route,
   production bridge clients, native fallback, and Experimental Settings entry
   remain intentionally until the external cutover gates pass.
-- The 58-commit branch is rebased onto `origin/main` at `4543bb6826` and remains
+- The 61-commit branch is rebased onto `origin/main` at `4543bb6826` and remains
   zero behind. Upstream
   native-chat launch-draft, transcript identity, loading, reconnect, and
   orchestration behavior is retained in both native and hosted adapters.
@@ -214,6 +214,11 @@ prototype:
   execution sentinels unset, and retain network/navigation/executable and
   privacy isolation. The hosted URL carries only the broker-issued opaque
   workspace authority.
+- The same exact apps pass one shared live hostile OSC-8 terminal corpus.
+  JavaScript links stay inert, no untapped HTTP request reaches the loopback
+  sentinel, and a native tap opens the allowlisted repository file through the
+  unchanged Session UI. The shared web terminal retains bounded live OSC-8
+  ranges and binds activation to the touch-start cell.
 - Gesture-mediated native operations share one shell authority that consumes
   each native-observed touch once, rejects expired or future timestamps, clears
   pending authority whenever native `AppState` leaves foreground, and refuses a
@@ -1622,9 +1627,11 @@ sentinel. Both runs retain the outer private-origin network, navigation,
 executable, and privacy isolation gates. A valid 1×1 PNG whose `tEXt` metadata
 contains script-shaped content and the same sentinel URL also decodes through
 the real RNW image surface on both apps without exposing metadata, executing
-its marker, or making a request. This closes only those exact-app emulator
-sinks; Mermaid, terminal-link, task/provider, bounded-error, physical-device,
-Release, and independent-review coverage remain open.
+its marker, or making a request. The same exact apps also pass the live hostile
+terminal-link corpus without executing JavaScript or issuing an untapped HTTP
+request, while a native tap opens the allowlisted file. This closes only those
+exact-app emulator sinks; Mermaid, task/provider, bounded-error,
+physical-device, Release, and independent-review coverage remain open.
 
 Non-document host content stays on React Native text surfaces. Strict schemas
 bound filenames, diff rows, task/provider fields, and error messages; a
@@ -2844,8 +2851,9 @@ literal text, create no matching image node, leave the filename and content
 execution sentinels unset, and pass executable, network, navigation, DOM,
 storage, cookie, log, and process-exit inspection applicable to the platform.
 This closes live filename/diff evidence only; the remaining HTML, SVG/image,
-Markdown, Mermaid, terminal-link, task/provider, bounded-error, physical-device,
-release-runtime, and independent-review corpus remains required.
+Markdown, Mermaid, task/provider, bounded-error, physical-device,
+release-runtime, and independent-review corpus remains required. The separate
+exact-app terminal-link corpus now passes on both platforms.
 
 A mirrored TypeScript, Swift, and Kotlin manifest corpus also rejects quoted and
 Boolean numeric schema, bridge, total-byte, and asset-byte fields before native

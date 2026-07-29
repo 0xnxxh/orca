@@ -5,6 +5,8 @@ import path from 'node:path'
 import process from 'node:process'
 import { promisify } from 'node:util'
 import { resolveEmulatorOrcaCli } from './emulator-orca-cli-selection.mjs'
+import { verifyHostedAndroidAdversarialTerminalLinks } from './hosted-android-adversarial-terminal-links.mjs'
+import { stageHostedAdversarialTerminalLinks } from './hosted-adversarial-terminal-links.mjs'
 import { verifyHostedAndroidAgentHistoryJourney } from './hosted-android-agent-history-journey.mjs'
 import {
   createHostedAdversarialRepositoryFixture,
@@ -121,6 +123,19 @@ async function main() {
         logSuccess: () => {}
       })
     )
+    const adversarialTerminalHandle = adversarialFixture
+      ? await stage('adversarial terminal fixture', () =>
+          stageHostedAdversarialTerminalLinks({
+            orcaCli,
+            pairingRuntimeUserDataPath: runtime.userData,
+            positiveFilePath: adversarialFixture.repositoryFiles[0].filename,
+            probePort: probe.port,
+            probeToken: probe.token,
+            timeoutMs: options.timeoutMs,
+            worktree: testWorkspace
+          })
+        )
+      : null
     metro = await stage('Metro', () =>
       startHostedAndroidMetro({ mobileDir, pairingUrl: runtime.pairingUrl })
     )
@@ -212,12 +227,32 @@ async function main() {
     )
     let agentHistory = null
     let adversarialContent = null
+    let adversarialTerminalLinks = null
     let adversarialReviewDocument = null
     const adversarialObservations = []
     let sourceControlReview = null
     let isolationDocument = sessionDocument
     if (!options.securityOnly) {
       let sourceSessionDocument = sessionDocument
+      if (options.adversarialContent) {
+        const result = await stage('adversarial terminal links', () =>
+          verifyHostedAndroidAdversarialTerminalLinks({
+            discoveryUrl,
+            document: sourceSessionDocument,
+            emulator,
+            orcaCli,
+            pairingRuntimeUserDataPath: runtime.userData,
+            positiveFilePath: adversarialFixture.repositoryFiles[0].filename,
+            probe,
+            tapPoint: tapHostedAndroidPoint,
+            terminalHandle: adversarialTerminalHandle,
+            timeoutMs: options.timeoutMs,
+            worktree: testWorkspace
+          })
+        )
+        adversarialTerminalLinks = result.evidence
+        sourceSessionDocument = result.sessionDocument
+      }
       if (!options.adversarialContent) {
         const agentHistoryResult = await stage('Agent History journey', () =>
           verifyHostedAndroidAgentHistoryJourney({
@@ -236,7 +271,7 @@ async function main() {
           discoveryUrl,
           emulator,
           sessionDocument: sourceSessionDocument,
-          expectedSessionDiffText: options.adversarialContent ? '2 tabs' : '3 tabs',
+          expectedSessionDiffText: '3 tabs',
           inspectChangedContent: options.adversarialContent
             ? async ({ document, phase }) => {
                 if (phase === 'sessionDiff') {
@@ -333,6 +368,7 @@ async function main() {
           workspace: expectedWorkspace,
           agentHistory,
           adversarialContent,
+          adversarialTerminalLinks,
           sourceControlReview,
           networkIsolation,
           navigationIsolation,
@@ -446,7 +482,9 @@ async function tapHostedAndroidJourneyControl(emulator, point, label, attempt = 
 }
 
 async function activateAndroidAdversarialDiffTab(emulator, document, filename) {
-  const point = await readHostedWebViewTextPoint(document, filename)
+  const point = await readHostedWebViewTextPoint(document, filename, undefined, {
+    horizontalPosition: 0.15
+  })
   await tapHostedAndroidPoint(emulator, point)
   await delay(250)
 }

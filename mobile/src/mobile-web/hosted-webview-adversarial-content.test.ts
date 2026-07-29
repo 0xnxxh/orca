@@ -50,7 +50,9 @@ afterEach(async () => {
 
 describe('hosted WebView adversarial content', () => {
   it('creates one disposable hostile filename and diff', async () => {
-    const fixture = await createHostedAdversarialRepositoryFixture({ probePort: 54321 })
+    const fixture = await createHostedAdversarialRepositoryFixture({
+      probePort: 54321
+    })
     fixtures.push(fixture)
 
     const status = await execFileAsync('git', ['status', '--short'], {

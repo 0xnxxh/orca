@@ -73,7 +73,11 @@ export async function readHostedAdversarialRepositoryContent(fixture) {
 }
 
 async function git(cwd, args) {
-  const { stdout } = await execFileAsync('git', args, { cwd, encoding: 'utf8', timeout: 30_000 })
+  const { stdout } = await execFileAsync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    timeout: 30_000
+  })
   return stdout.trim()
 }
 

@@ -2,6 +2,10 @@ import type { IBufferLine, ILink, Terminal } from '@xterm/xterm'
 import { findTerminalFileLinks } from '../../../src/shared/terminal-file-link-matcher'
 import type { TerminalOscLinkRange } from './terminal-osc-link-ranges'
 import { resolveTerminalOscFileTap } from './terminal-file-url-tap'
+import {
+  createTerminalLiveOscLinkRanges,
+  type RetainedTerminalOscLinkRange
+} from './terminal-live-osc-link-ranges'
 import { createTerminalWebLinkTapController } from './terminal-web-link-tap-controller'
 import type { TerminalWebViewProps } from './terminal-webview-contract'
 import {
@@ -39,6 +43,7 @@ export function createTerminalWebLinkController({
   let initialOscLinks: RetainedOscLink[] = []
   let initialOscRowOffset = 0
   let replayingInitialData = false
+  const liveOscLinks = createTerminalLiveOscLinkRanges(terminal)
 
   const provider = terminal.registerLinkProvider({
     provideLinks(bufferLineNumber, callback) {
@@ -54,7 +59,8 @@ export function createTerminalWebLinkController({
         row,
         initialOscLinks,
         initialOscRowOffset,
-        getProps
+        getProps,
+        liveOscLinks.ranges()
       )
         .slice(0, MAX_LINKS_PER_LINE)
         .map((link) => terminalLinkForBufferLine(line, row, link))
@@ -69,6 +75,7 @@ export function createTerminalWebLinkController({
       terminal.buffer.normal.length >= (terminal.options.scrollback ?? 0) + terminal.rows
     ) {
       initialOscRowOffset += 1
+      liveOscLinks.trimLeadingRow()
     }
   })
   const tapController = createTerminalWebLinkTapController({
@@ -81,7 +88,8 @@ export function createTerminalWebLinkController({
         column,
         initialOscLinks,
         initialOscRowOffset,
-        getProps
+        getProps,
+        liveOscLinks.ranges()
       ),
     cancelSelection,
     onTerminalTap: () => getProps().onTerminalTap?.()
@@ -91,6 +99,7 @@ export function createTerminalWebLinkController({
     setInitialOscLinks(links: TerminalOscLinkRange[] | undefined) {
       initialOscLinks = links ? [...links] : []
       initialOscRowOffset = 0
+      liveOscLinks.reset()
     },
     setInitialReplayPending(pending: boolean) {
       replayingInitialData = pending
@@ -105,6 +114,7 @@ export function createTerminalWebLinkController({
     },
     dispose() {
       tapController.dispose()
+      liveOscLinks.dispose()
       lineFeed.dispose()
       provider.dispose()
     }
@@ -127,23 +137,29 @@ export function terminalWebLinksForLine(
   row: number,
   initialOscLinks: RetainedOscLink[],
   initialOscRowOffset: number,
-  getProps: () => TerminalWebViewProps
+  getProps: () => TerminalWebViewProps,
+  liveOscLinks: RetainedTerminalOscLinkRange[] = []
 ): TerminalWebLink[] {
   const links: TerminalWebLink[] = []
-  for (const link of initialOscLinks) {
-    if (link.row - initialOscRowOffset !== row) {
-      continue
+  for (const [retainedLinks, rowOffset] of [
+    [initialOscLinks, initialOscRowOffset],
+    [liveOscLinks, 0]
+  ] as const) {
+    for (const link of retainedLinks) {
+      if (link.row - rowOffset !== row) {
+        continue
+      }
+      const text = lineText.slice(link.startCol, link.endCol)
+      if (!text || (link.expectedText !== undefined && link.expectedText !== text)) {
+        continue
+      }
+      links.push({
+        text,
+        startIndex: link.startCol,
+        endIndex: link.endCol,
+        activate: () => activateTerminalWebUri(link.uri, getProps())
+      })
     }
-    const text = lineText.slice(link.startCol, link.endCol)
-    if (!text || (link.expectedText !== undefined && link.expectedText !== text)) {
-      continue
-    }
-    links.push({
-      text,
-      startIndex: link.startCol,
-      endIndex: link.endCol,
-      activate: () => activateTerminalWebUri(link.uri, getProps())
-    })
   }
   for (const match of findTerminalFileUrls(lineText)) {
     addNonOverlappingLink(links, match, () => activateTerminalWebUri(match.url, getProps()))
@@ -264,7 +280,8 @@ function activateTerminalWebLinkAtBufferCell(
   column: number,
   initialOscLinks: RetainedOscLink[],
   initialOscRowOffset: number,
-  getProps: () => TerminalWebViewProps
+  getProps: () => TerminalWebViewProps,
+  liveOscLinks: RetainedTerminalOscLinkRange[]
 ): boolean {
   const line = terminal.buffer.active.getLine(row)
   if (!line) {
@@ -276,7 +293,8 @@ function activateTerminalWebLinkAtBufferCell(
     row,
     initialOscLinks,
     initialOscRowOffset,
-    getProps
+    getProps,
+    liveOscLinks
   )
   const link = links.find(
     (candidate) => stringIndex >= candidate.startIndex && stringIndex < candidate.endIndex
