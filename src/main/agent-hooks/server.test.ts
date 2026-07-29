@@ -7782,6 +7782,82 @@ describe('AgentHookServer ingestRemote', () => {
 })
 
 describe('AgentHookServer ingestTerminalStatus', () => {
+  // Why: the OSC 9999 payload cannot carry a provider session, so letting it overwrite the row
+  // erased the session id from persisted rows and from headless `orca serve` — which serves these
+  // rows straight to mobile — leaving Chat UI with no transcript to subscribe to (#10630).
+  it('keeps the cached provider session when an OSC status completes the turn', () => {
+    const server = new AgentHookServer()
+    const providerSession = { key: 'session_id' as const, id: 'claude-session-1' }
+
+    server.ingestRemote(
+      {
+        paneKey: PANE,
+        providerSession,
+        payload: { state: 'working', prompt: 'summarize the diff', agentType: 'claude' }
+      },
+      'conn-1'
+    )
+    server.ingestTerminalStatus({
+      paneKey: PANE,
+      connectionId: 'conn-1',
+      payload: { state: 'done', prompt: 'summarize the diff', agentType: 'claude' }
+    })
+
+    expect(server.getStatusSnapshot()[0]).toMatchObject({ state: 'done', providerSession })
+  })
+
+  // Why: an OSC ping that names no agent — or the literal 'unknown', which
+  // resolveAgentStatusIdentity treats identically — makes no claim about the pane's identity, so it
+  // must not read as a mismatch. Missing this stripped the session from persisted and headless rows
+  // while the live renderer kept it, blanking mobile chat only after a restart (#10630).
+  it.each([undefined, 'unknown' as const])(
+    'keeps the cached provider session when an OSC status claims agentType %s',
+    (agentType) => {
+      const server = new AgentHookServer()
+      const providerSession = { key: 'session_id' as const, id: 'claude-session-1' }
+
+      server.ingestRemote(
+        {
+          paneKey: PANE,
+          providerSession,
+          payload: { state: 'working', prompt: 'summarize the diff', agentType: 'claude' }
+        },
+        'conn-1'
+      )
+      server.ingestTerminalStatus({
+        paneKey: PANE,
+        connectionId: 'conn-1',
+        payload: {
+          state: 'done',
+          prompt: 'summarize the diff',
+          ...(agentType ? { agentType } : {})
+        }
+      })
+
+      expect(server.getStatusSnapshot()[0]).toMatchObject({ providerSession })
+    }
+  )
+
+  it('drops the cached provider session when an OSC status starts a new turn', () => {
+    const server = new AgentHookServer()
+
+    server.ingestRemote(
+      {
+        paneKey: PANE,
+        providerSession: { key: 'session_id' as const, id: 'claude-session-1' },
+        payload: { state: 'done', prompt: 'first', agentType: 'claude' }
+      },
+      'conn-1'
+    )
+    server.ingestTerminalStatus({
+      paneKey: PANE,
+      connectionId: 'conn-1',
+      payload: { state: 'working', prompt: 'second', agentType: 'claude' }
+    })
+
+    expect(server.getStatusSnapshot()[0]?.providerSession).toBeUndefined()
+  })
+
   it('forwards runtime terminal status through the normal listener and snapshot path', () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)
