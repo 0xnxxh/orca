@@ -20,7 +20,7 @@ import { ensureActiveWorktreePaneLoad, focusPane } from './artificial-opencode-p
 import {
   measureTerminalTypingDuringLoad,
   type TypingMeasurement
-} from './artificial-opencode-typing-measurement'
+} from './artificial-opencode-terminal-latency-measurement'
 import { runHiddenRealPtyPressureScenario } from './artificial-opencode-hidden-pressure-scenario'
 import type { HiddenPressureOutputMode } from './artificial-opencode-hidden-pressure-script'
 import { runMainPressureScenario } from './artificial-opencode-main-pressure-scenario'
@@ -338,8 +338,14 @@ function annotateTypingMeasurement(
       1
     )}ms rendererLongTask=${measurement.rendererMaxLongTaskMs.toFixed(
       1
-    )}ms rendererLongTaskSupported=${
-      measurement.rendererLongTaskSupported
+    )}ms rendererLongTaskSupported=${measurement.rendererLongTaskSupported} rendererTask=${
+      measurement.rendererTaskDurationMs == null
+        ? 'na'
+        : `${measurement.rendererTaskDurationMs.toFixed(1)}ms`
+    } rendererScript=${
+      measurement.rendererScriptDurationMs == null
+        ? 'na'
+        : `${measurement.rendererScriptDurationMs.toFixed(1)}ms`
     } rendererKeydowns=${measurement.rendererKeydownCount} typingElapsed=${measurement.elapsedMs.toFixed(
       1
     )}ms dispatchSamples=${measurement.dispatchLatencies
