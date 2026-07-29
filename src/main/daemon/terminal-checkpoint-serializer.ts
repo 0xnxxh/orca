@@ -1,7 +1,6 @@
 import type { TerminalCheckpointFile, TerminalSnapshot } from './types'
 import { ColdRestoreReplayWriter } from './cold-restore-replay-writer'
 import { HeadlessEmulator } from './headless-emulator'
-import { jsonUtf8ByteLength } from './json-utf8-byte-length'
 
 type CheckpointMetadata = {
   cwd: string | null
@@ -33,14 +32,8 @@ function checkpointFile(
 }
 
 function stringifyWithinLimit(checkpoint: TerminalCheckpointFile, maxBytes: number): string | null {
-  if (jsonUtf8ByteLength(checkpoint) > maxBytes) {
-    return null
-  }
   const json = JSON.stringify(checkpoint)
-  if (Buffer.byteLength(json, 'utf8') > maxBytes) {
-    throw new Error('Terminal checkpoint size estimator mismatch')
-  }
-  return json
+  return Buffer.byteLength(json, 'utf8') <= maxBytes ? json : null
 }
 
 async function replaySnapshot(snapshot: TerminalSnapshot): Promise<HeadlessEmulator> {
