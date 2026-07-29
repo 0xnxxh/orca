@@ -63,7 +63,6 @@ import {
   replayTerminalLayout,
   restoreScrollbackBuffers
 } from './layout-serialization'
-import { scheduleTerminalInitialRenderSettled } from './terminal-initial-render-settle'
 import { resolveTerminalLayoutActiveLeafId } from './terminal-layout-leaf-ids'
 import { makePaneKey } from '../../../../shared/stable-pane-id'
 import { applyExpandedLayoutTo, restoreExpandedLayoutFrom } from './expand-collapse'
@@ -319,7 +318,6 @@ type UseTerminalPaneLifecycleDeps = {
   setPaneLayoutRevision: React.Dispatch<React.SetStateAction<number>>
   resolveExternalPaneDropTarget?: PaneExternalDropResolver
   onExternalPaneDrop?: PaneExternalDropHandler
-  onInitialRenderSettledRef: React.RefObject<(() => void) | undefined>
 }
 
 export function suppressIntentionalPaneCloseExit(
@@ -568,8 +566,7 @@ export function useTerminalPaneLifecycle({
   setPaneCount,
   setPaneLayoutRevision,
   resolveExternalPaneDropTarget,
-  onExternalPaneDrop,
-  onInitialRenderSettledRef
+  onExternalPaneDrop
 }: UseTerminalPaneLifecycleDeps): void {
   const terminalScrollbackRows = normalizeDesktopTerminalScrollbackRows(
     settings?.terminalScrollbackRows
@@ -707,7 +704,6 @@ export function useTerminalPaneLifecycle({
       initialLayoutRef.current = hydratedInitialScrollback.layout
     }
     let shouldPersistLayout = false
-    let cancelInitialRenderSettle: (() => void) | null = null
     const startupWithSetupSplitWait =
       startup && setupSplit
         ? { ...startup, waitForSetupSplitDirection: setupSplit.direction }
@@ -1490,28 +1486,6 @@ export function useTerminalPaneLifecycle({
     queueResizeAll(isActive)
     persistLayoutSnapshot()
     scheduleRuntimeGraphSync()
-    if (onInitialRenderSettledRef.current) {
-      cancelInitialRenderSettle = scheduleTerminalInitialRenderSettled({
-        manager,
-        isCurrent: () => managerRef.current === manager,
-        isReplaySettled: () => replayingPanesRef.current.size === 0,
-        isContentReady: () => {
-          const terminal = (manager.getActivePane() ?? manager.getPanes()[0])?.terminal
-          if (!terminal) {
-            return false
-          }
-          const buffer = terminal.buffer.active
-          const viewportEnd = Math.min(buffer.length, buffer.viewportY + terminal.rows)
-          for (let row = buffer.viewportY; row < viewportEnd; row += 1) {
-            if (buffer.getLine(row)?.translateToString(true).trim()) {
-              return true
-            }
-          }
-          return false
-        },
-        onSettled: () => onInitialRenderSettledRef.current?.()
-      })
-    }
 
     // Why: deliver the startup command via the PTY connection path (waits for shell readiness), not terminal.paste() which can lose input before the shell reads stdin.
     function onCliSplitPane(event: Event): void {
@@ -1582,7 +1556,6 @@ export function useTerminalPaneLifecycle({
     window.addEventListener(CLOSE_TERMINAL_PANE_EVENT, onCliClosePane)
 
     return () => {
-      cancelInitialRenderSettle?.()
       window.removeEventListener(SPLIT_TERMINAL_PANE_EVENT, onCliSplitPane)
       window.removeEventListener(CLOSE_TERMINAL_PANE_EVENT, onCliClosePane)
       const currentWorktreeTabs = useAppStore.getState().tabsByWorktree[worktreeId]
