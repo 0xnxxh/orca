@@ -15,6 +15,7 @@ import {
 import { agentHookServer, _internals as agentHookInternals } from '../agent-hooks/server'
 import { getSshPtyProvider } from '../ipc/pty'
 import { toAppSshPtyId } from '../providers/ssh-pty-id'
+import { DEFAULT_PTY_SOURCE_WINDOW_SU } from '../../shared/pty-source-credit-contract'
 
 const { getCohortAtEmitMock, trackMock } = vi.hoisted(() => ({
   getCohortAtEmitMock: vi.fn(),
@@ -107,7 +108,10 @@ function createFakeRelay(): FakeRelay {
       'number'
         ? (params.resume as { ownerGeneration: number }).ownerGeneration + 1
         : 1,
-    ownerLease: 'test-owner-lease'
+    ownerLease: 'test-owner-lease',
+    capabilities: {
+      outputFlowControl: { version: 1, windowSu: DEFAULT_PTY_SOURCE_WINDOW_SU }
+    }
   }))
   dispatcher.onRequest('session.resolveHome', async (params) => ({
     resolvedPath: params.path === '~' ? '/home/orca' : params.path
