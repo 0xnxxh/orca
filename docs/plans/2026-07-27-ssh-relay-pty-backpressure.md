@@ -2,9 +2,9 @@
 
 Date: 2026-07-27
 
-Status: architecture and exact SSH V1 wire/API implemented behind an
-experimental startup gate; current shared-worktree reconciliation complete;
-exact-head review and validation pending
+Status: architecture gate closed and exact SSH V1 wire/API implemented behind
+an experimental startup gate; integrated lifecycle fixes reconciled at current
+HEAD; live topology gaps remain explicit below
 
 Historical unbounded baseline: `badf91101babf96fa09cb79a8294f7e23b9f081c`
 (the implementation branch parent). The implementation was rebased onto
@@ -46,41 +46,51 @@ implemented. In this PR:
   writer owns byte admission, priorities, `write(false)`, callbacks, and drain.
 - Spawn and attach responses carry immutable `sourceActivation` metadata. The
   main mux installs a provisional receive lease synchronously in
-  `beforeResolve`, and provider validation commits or rolls back that exact
-  lease before adjacent source notifications can escape.
+  `beforeResolve`; adjacent source notifications remain private to that lease
+  until provider validation commits, while rollback drops them and waits for
+  exact token-cancellation proof.
 - `SshRelaySession` owns grant/reconnect state, bounded recovery quarantine,
   exact recovery fencing, and cumulative ACK publication through the main SSH
-  mux.
+  mux. Failed recovery-cancellation publication or proof closes the exact
+  provider generation and its publishers once.
 - The main SSH intake owns one atomic admission across the model, desktop
   projection, and required remote consumers. Model completion and consumer
   terminality make ACKs eligible; only the mux write callback publishes them.
 - Desktop and remote replacement transactions carry immutable span identity.
   Reserve happens before publication, commit requires the exact
-  generation/sequence fence, and failure or stale publication rolls back
-  without credit.
+  generation/sequence fence, and failure, stale publication, or already
+  reclaimed spans roll back or prune idempotently without credit.
+- Relay `restoreRequired` cancellation retains its exact delivery record until
+  the metadata response settles, then retires only that record so a retry can
+  mint a fresh token. Main exit timeout obtains cancellation proof before
+  transferring projections and committing reclamation, with generation checks
+  around every finalization step.
+- The main-to-relay writer has three FIFO lanes: liveness, control, and
+  ordinary. Drain reselects liveness/control ahead of queued ordinary traffic,
+  while one ordinary frame is guaranteed after four control writes.
 
 The implementation is intentionally scoped:
 
-| Surface                                     | State in this PR                                        | Evidence                                                                                           |
-| ------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Same-build direct SSH/deployed relay, V1 on | implemented; exact-head validation pending              | deterministic relay/main contracts plus prior macOS-hosted Docker OpenSSH                          |
-| Same-build SSH, V1 off                      | implemented bounded legacy mode                         | deterministic rollout and writer contracts                                                         |
-| Reconnect/owner recovery                    | implemented                                             | exact contiguous recovery, stale-owner one-shot retry, eight-wide reattach tests, Docker reconnect |
-| Headed/headless remote consumers            | source-range reserve/commit/rollback implemented        | deterministic runtime/main seam only; no live paired-runtime claim                                 |
-| WSL stdio and Windows named pipe/ConPTY     | shared transport paths preserved                        | deterministic/common-contract evidence only; no physical run                                       |
-| Local provider and local daemon             | unchanged                                               | outside SSH V1 negotiation; existing behavior only                                                 |
-| Folder workspace                            | no `.git` dependency added                              | code-path review only; no dedicated live fixture                                                   |
-| Prior-version/mixed-version peers           | fail-closed or version-scoped legacy behavior preserved | deterministic rollout/deploy contracts; no live old binary                                         |
-| Ubuntu 20.04/glibc 2.31                     | no native dependency added                              | cross-target relay build only; no physical packaging run                                           |
+| Surface                                     | State in this PR                                        | Evidence                                                                                         |
+| ------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Same-build direct SSH/deployed relay, V1 on | implemented                                             | current-head deterministic relay/main contracts plus prior macOS-hosted Docker OpenSSH           |
+| Same-build SSH, V1 off                      | implemented bounded legacy mode                         | deterministic rollout and writer contracts                                                       |
+| Reconnect/owner recovery                    | implemented                                             | exact contiguous recovery, fail-closed cancellation, eight-wide reattach tests, Docker reconnect |
+| Headed/headless remote consumers            | source-range rotation/replacement implemented           | deterministic runtime/main seam only; no live paired-runtime claim                               |
+| WSL stdio and Windows named pipe/ConPTY     | shared transport paths preserved                        | deterministic/common-contract evidence only; no physical run                                     |
+| Local provider and local daemon             | unchanged                                               | outside SSH V1 negotiation; existing behavior only                                               |
+| Folder workspace                            | no `.git` dependency added                              | code-path review only; no dedicated live fixture                                                 |
+| Prior-version/mixed-version peers           | fail-closed or version-scoped legacy behavior preserved | deterministic rollout/deploy contracts; no live old binary                                       |
+| Ubuntu 20.04/glibc 2.31                     | no native dependency added                              | cross-target relay build only; no physical packaging run                                         |
 
 Docker SSH proves the Linux SSH provider and deployed-relay topology. It does
 not prove headed or headless paired-runtime behavior, WSL, Windows ConPTY or
 named pipes, local daemon/provider behavior, folder workspaces, prior-version
 processes, mixed-version clients, or the Ubuntu 20.04 packaging floor.
 
-The prior executable evidence remains useful, but it does not validate the
-current shared-worktree diff. Exact-head review, focused tests, formatting,
-typecheck, and topology reruns remain pending unless explicitly listed below.
+The prior Docker evidence remains useful but predates the final lifecycle
+fixes. Current-head deterministic checks and document validation are listed
+below; no new live topology proof is inferred from them.
 
 ## Verified baseline and migration boundary
 
@@ -199,17 +209,19 @@ renderer-only cap.
    written again before drain. PTY admission stops before a reserved
    control/liveness capacity is consumed.
 5. A spawn/attach token remains `activating` until its metadata-only response
-   crosses the sink fence, then remains `recovering` until all recovery
-   `pty.data` and the completion fence drain. No live `pty.data` is eligible
-   earlier.
+   crosses the relay sink fence. Main may receive source frames after its
+   synchronous provisional install, but they remain lease-private and cannot
+   project until provider/claim/exit validation commits that lease. Recovery
+   remains fenced until all recovery `pty.data` and completion drain.
 6. Data is ordered within a token. `pty.exit` follows every accepted data frame
    and cannot bypass the sink gate or activation fence. Publishing exit seals
    new data but does not retire an uncredited suffix.
 7. Every open token-owned span and consumer obligation ends exactly once in
    `settled`, `transferred`, or `canceled`; a transfer may pass through the
    non-terminal `transferring` state only while its named replacement fence is
-   outstanding. Records are never merely abandoned while their relay token can
-   remain live.
+   outstanding. A canceled `restoreRequired` delivery remains addressable until
+   its exact response settles and retires only if the map still names that
+   record. Records are never merely abandoned while their relay token can live.
 8. Desktop, mobile, web, and agent-session consumers follow the explicit
    settlement policy below. A stalled recoverable desktop projection cannot
    freeze a healthy lossless remote view.
@@ -223,13 +235,16 @@ renderer-only cap.
     replay tail and no live queue.
 12. Decoder work, decoded bytes, model admission, and activation-hold turns are
     bounded. A self-imposed read or local-write pause rebases both liveness
-    clocks, and control/liveness service remains bounded under PTY and bulk
-    saturation.
+    clocks. Main-to-relay drain reselects liveness, then control, ahead of
+    ordinary PTY input; four consecutive control selections force one ordinary
+    selection when both lanes remain non-empty.
 13. Disconnect, provider replacement, renderer reload, exit, disposal, and
     workspace removal have explicit bounded cleanup. After their required
     publication, transfer, cancellation, or generation-close proof, they leave
     no open span, token, writer callback, drain waiter, timer, cursor, or paused
-    PTY.
+    PTY. Recovery-cancellation publication failure or rejected proof fails
+    closed by closing only the owning provider generation and disposing its
+    mux, provider, publishers, provisional lease, and registration once.
 14. All counters are finite safe integers. A transformed frame requires a
     valid `rawLength`; malformed, excessive, stale, and cross-client values
     cannot create credit or crash either process.
@@ -251,7 +266,10 @@ renderer-only cap.
 20. Desktop admission carries immutable span identity through model reserve,
     projection queue, renderer send, ACK, salvage, reload, and replacement.
     Failure either rolls back an uncommitted transaction or transfers a
-    committed obligation with proof.
+    committed obligation with proof. Exit timeout acquires cancellation proof
+    without mutation, transfers published projections, commits proof
+    reclamation, prepares/finalizes exit once, and rechecks the provider
+    generation before each post-proof mutation.
 21. Projection drop, thinning, salvage, restore, and replay preserve current
     main's ordered terminal side-effect facts and bounded scanner state,
     including DEC mode 2031 subscribe/withdraw decisions. Pre-commit rollback
@@ -272,6 +290,19 @@ clientGeneration, ownerGeneration, ptyIncarnation, deliveryToken)`. Each
     semantics. It may use the fixed-frame lane only from an empty,
     unsaturated producer epoch; ordinary PTY and reshapable bulk frames still
     obey the non-reserved capacity.
+26. A lossless remote stream may advance its cumulative encoded-byte ACK to an
+    interior byte offset. Exact byte budget is released immediately, while the
+    covering immutable source frame remains unsettled until its complete
+    encoded boundary is crossed.
+27. A lossless remote stream accepts an in-place source-token rotation only
+    when PTY ID, provider generation, and incarnation match; both client and
+    owner generations strictly increase; the token changes; and source/display
+    coordinates remain contiguous. Old or partially increasing identities are
+    rejected.
+28. Snapshot replacement commits are idempotent and never synthesize byte or
+    source credit. Duplicate/closed ledger commits are no-ops; if cancellation
+    proof already reclaimed a reserved span, source replacement commit rejects,
+    rollback skips the absent span, and settle/detach prune cached mappings.
 
 ## Protocol
 
@@ -281,8 +312,9 @@ Decision: `PtyConsumerSession` is a shared semantic state machine, not a
 universal transport protocol. The architecture gate is closed and is no
 longer waiting for exact wire/API names: the SSH adapter implements
 `sourceActivation`, source-bearing `pty.data`, `pty.recoveryComplete`,
-cumulative `pty.ackData`, and token-scoped cancellation. Exact-head code
-review and validation remain engineering gates. A relay-only
+cumulative `pty.ackData`, and token-scoped cancellation. Current-head
+deterministic validation is an engineering gate; unexecuted live topologies
+remain separate promotion gates. A relay-only
 `pty.getCapabilities` followed by `pty.negotiateClient` remains rejected
 because it would create a second readiness authority beside the existing
 authenticated handshakes.
@@ -309,6 +341,19 @@ additional interleavings:
 | Failed exit publication could discard a sealed delivery before its suffix was credited  | Failed publication retains the sealed delivery; late cumulative ACK and exact owner recovery can still settle it, and exit is republished without reopening source admission.          |
 | Recovery-response cancellation authority ended at enqueue rather than writer settlement | The request remains cancellation-authoritative until its response settles; retry reuses the same provisional replacement identity instead of creating an unfenced owner.               |
 | Snapshot replacement transferred every pending remote span at one sequence fence        | Each immutable span retains its model-sequence end; replacement transfers only spans covered by the authoritative `SnapshotEnd`, while trailing spans remain live and replay in order. |
+
+Current-head adversarial reconciliation closed these additional integrated
+failures without widening the approved topology:
+
+| Finding                                                                      | Implemented resolution                                                                                                                                                               |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Invalid-checkpoint `restoreRequired` left a canceled delivery blocking retry | Keep the exact canceled record through response settlement, then delete it only if it is still current; retry mints a fresh activation token.                                        |
+| Recovery cancellation publication/proof rejection left ambiguous authority   | Raise a typed recovery-cancellation failure and close the exact provider generation, disposing its mux, provider, publishers, lease, and registration exactly once.                  |
+| Remote partial ACK or higher-generation token rotation detached the stream   | Release exact cumulative byte credit at any valid interior offset without source settlement; admit only contiguous strictly higher client/owner generations with a new token.        |
+| Snapshot cleanup raced cancellation-proof reclamation                        | Make ledger replacement commit idempotent and make remote replacement commit reject reclaimed spans while rollback, settle, and detach prune them without dereference or new credit. |
+| Drain resumed the main mux's old ordinary FIFO ahead of control              | Select liveness, control, and ordinary from separate FIFO lanes; prioritize control after drain and force one ordinary write after four controls.                                    |
+| Same-turn source data escaped a provisional activation                       | Queue data privately under the provisional lease; commit publishes in order, while rollback drops it, restores only the active predecessor, and awaits exact cancellation proof.     |
+| Exit cancellation proof reclaimed spans before projection transfer           | Acquire proof first, transfer projections, commit proof, prepare/finalize once, and fence every post-proof step against provider-generation close.                                   |
 
 The common state machine accepts only:
 
@@ -703,12 +748,17 @@ The main mux supplies the receive fence. Spawn and attach requests register a
 synchronous `beforeResolve(result)` hook in their pending-request record.
 `handleResponse` parses the whole response and provisionally installs
 `sourceActivation` before resolving the Promise. The lease captures the exact
-prior receive state and candidate token. Only after operation-ID result,
-incarnation, claimed-owner, attach identity, stale-attempt, and
-spawn/attach-exit validation succeeds does the provider commit it and update
-`livePtyIds`. Any failure rolls back the exact provisional state and token
-through the originating mux; it cannot erase a newer revision or cancel a
-newer token. An identical already-installed activation is an idempotent no-op.
+prior receive state, candidate token, and a private ordered list of same-turn
+source frames. Only after operation-ID result, incarnation, claimed-owner,
+attach identity, stale-attempt, and spawn/attach-exit validation succeeds does
+the provider commit it, publish the held frames in order, and update
+`livePtyIds`. Any failure first retires the candidate and drops its held data,
+restores only the nearest non-retired predecessor, then waits for a valid
+`pty.cancelDelivery` response from the originating mux. It cannot erase a
+newer revision or cancel a newer token. An identical already-committed
+activation is an idempotent no-op; an identical provisional activation is
+stale. Fresh-spawn rollback that cannot prove cancellation surfaces
+`execution_owner_unavailable` rather than claiming the old token retired.
 
 The receive cursor starts at `checkpointSourceEndSu`, not
 `recoveryEndSu`. Source-bearing notifications for the installed identity may
@@ -718,10 +768,10 @@ fence commits. Unknown or mismatched source identities are rejected before
 `livePtyIds`, runtime, renderer, or source obligations change.
 
 Output produced while a token is activating is retained by its bounded shared
-cursor and can pause the native PTY; it is never sent early. Main drops
-unknown-token notifications before `livePtyIds.add` or any other side effect
-and records a protocol violation. No unknown-token hold is needed because the
-wire fence is authoritative.
+cursor and can pause the native PTY; it is never sent early. Output arriving
+after main's synchronous install but before authority commit is bounded by the
+provisional lease and is not visible to runtime, desktop, remote consumers, or
+`livePtyIds`. Main drops unknown-token notifications before any side effect.
 
 Before issuing attach or any same-client replacement, main serializes that
 `(providerGeneration, ptyIncarnation)` through a migration fence: freeze new
@@ -740,9 +790,13 @@ proved fence it sends `{ status: 'checkpointUnavailable' }`.
 The relay accepts the checkpoint only for the same incarnation and within
 `[oldCreditedEndSu, retainedLiveEndSu]`. It never clamps a value forward,
 trusts a value beyond sent/retained data, or replays freed pre-credit source;
-an invalid or uncovered checkpoint returns the token-free `restoreRequired`
-arm. It does not activate a subscription or stream a partial gap; main either
-restores an authoritative model generation before retry or surfaces the gap.
+an invalid or uncovered checkpoint cancels the attempted delivery and returns
+the token-free `restoreRequired` arm. The canceled record remains installed and
+cancellation-authoritative until that metadata response settles. Settlement
+deletes it only if the delivery map still points to the exact record and wakes
+capacity; a retry can then mint a fresh token. It does not activate a
+subscription or stream a partial gap; main either restores an authoritative
+model generation before retry or surfaces the gap.
 
 Recovery bodies use the ordinary source-bearing `pty.data` schema. The new
 token initializes `sentEndSu = creditedEndSu = checkpointSourceEndSu`, and
@@ -793,11 +847,17 @@ the model nor desktop projection.
 A failed or stale recovery attempt cancels only its own replacement token.
 It never sends cancellation on a newer mux, clears a newer checkpoint, shuts
 down the physical PTY/process, deletes PTY ownership, or expires the owner
-lease. A valid token-scoped cancellation proof is applied locally when it
-matches; otherwise the lease remains detached and retryable. A fresh relay
-that no longer retains the cached owner returns typed error `-32041`; main
-clears only the cached owner/checkpoints and retries `pty.openClient` exactly
-once without `resume`.
+lease. A valid matching token-scoped cancellation proof is applied locally and
+leaves the lease detached and retryable. If the current attempt cannot publish
+cancellation or local proof application rejects, the session fails closed:
+it closes the exact provider generation with
+`ssh_source_recovery_cancellation_failed`, disposes that generation's mux,
+provider, ACK/cancellation publishers, provisional lease, and registration
+once, and reconnects without clearing physical PTY ownership. If the attempt
+is already stale, it performs no cleanup against the replacement. A fresh
+relay that no longer retains the cached owner returns typed error `-32041`;
+main clears only the cached owner/checkpoints and retries `pty.openClient`
+exactly once without `resume`.
 
 Idempotent agent-session spawn has two layers. The cached
 `agentSessionCreateOperationId` promise returns only the physical PTY
@@ -820,11 +880,15 @@ survives; the next retry can subscribe to the retained PTY.
 
 Split policy from lifecycle and transport:
 
-- `pty-output-span-ledger.ts` owns immutable source spans, token cursors,
-  cumulative validation, reconnect-grace ownership, and reclamation.
-- `pty-output-scheduler.ts` owns DRR selection, 16 Ki-su publication,
-  per-client cursors, recovery, exit barriers, budgets, and additional-
-  subscriber eviction.
+- `pty-source-credit-ledger.ts`, `pty-source-credit-record.ts`, and
+  `pty-source-replay-index.ts` own cumulative token state, immutable retained
+  source records, exact replay ranges, rotation, and reclamation.
+- `relay-pty-source-publication.ts`,
+  `relay-pty-source-activation.ts`,
+  `relay-pty-source-send-scheduler.ts`, and
+  `relay-pty-source-exit-publication.ts` own activation/restore settlement,
+  16 Ki-su publication, recovery, exit barriers, budgets, and subscriber
+  scheduling.
 - `dispatcher-client-writer.ts` owns the one writer per sink, activation
   fences, lane queues, drain callbacks, and close settlement.
 
@@ -878,18 +942,18 @@ and request model restore; it may not over-credit, truncate, or send an
 oversized or permanently inadmissible frame.
 
 The existing 100 Ki-su replay-tail policy and the chunked
-`RecentPtyOutputBuffer` representation from `79ec57d04` remain. Slice 5c adds a
-bounded parallel source-range index or extends that buffer with indexed
-records; it must preserve the current append-path performance and equivalence
-tests and must not restore the former rolling-string re-slice. Legacy replay
-still materializes the same display tail. V1 restore additionally preserves
+`RecentPtyOutputBuffer` representation from `79ec57d04` remain.
+`PtySourceReplayIndex` now provides the bounded parallel source-range index
+without restoring the former rolling-string re-slice. Legacy replay still
+materializes the same display tail. V1 restore additionally preserves
 incarnation, exact source ranges, and transform metadata. Index eviction
-follows the buffer's exact retained prefix and never fabricates a mapping.
+follows the buffer's exact retained prefix and never fabricates a mapping; the
+existing append-path equivalence/performance contracts remain in force.
 
 ### Scheduling and fairness
 
-Use deficit round-robin over PTYs, then rotate subscribed clients for the
-selected PTY. One scheduling turn admits at most:
+The relay scheduler uses deficit round-robin over PTYs, then rotates subscribed
+clients for the selected PTY. One scheduling turn admits at most:
 
 - two PTY frames;
 - 32 Ki su;
@@ -995,13 +1059,21 @@ remote mapping, and ACK publication record. In order, it:
 
 The barrier has the same charged 30-second deadline. At expiry, main first
 sends token-scoped `pty.cancelDelivery` and waits up to 10 seconds for its
-proof. That proof permits failing/transferring remote streams, resetting only
-this PTY's model generation with `restoreRequired`, and reporting incomplete
-exit instead of successful lossless completion. Only if the cancellation
-request or proof cannot publish does main close the provider so generation
-cleanup proves cancellation; unrelated PTYs are not torn down on the ordinary
-timeout path. A late emulator callback cannot mutate the reset generation.
-Thus relay sink ordering and main asynchronous model ordering are both proved.
+proof without applying it. If the exact barrier/generation still owns the
+exit, main transfers published desktop projections to
+`ssh-exit-delivery-canceled`, commits the proof to reclaim source spans,
+prepares exit once, rechecks generation ownership, finalizes exit, rechecks
+again, then closes the projection. This order prevents proof commit from
+reclaiming a span before its published projection transfers.
+
+If provider-generation close wins while proof is pending, it rejects and
+removes the barrier plus its cancellation/preparation ownership; the late
+proof performs no transfer, commit, preparation, final exit, or projection
+close. If cancellation publication or proof fails while the barrier remains
+current, main closes the provider so generation cleanup proves cancellation;
+unrelated PTYs are not torn down on the ordinary successful timeout path. A
+late emulator callback cannot mutate the reset generation. Thus relay sink
+ordering and main asynchronous model ordering are both proved.
 
 ## Dispatcher and transport drain
 
@@ -1241,8 +1313,9 @@ value, so retries cannot lose an eligible prefix.
 
 ### Bounded asynchronous model admission
 
-Replace the unmetered headless-emulator `writeChain` contract with a charged
-FIFO per PTY and global scheduler. `acceptPtyData` returns a Promise receipt:
+The charged FIFO per PTY and global scheduler replace the unmetered
+headless-emulator `writeChain` contract. `acceptPtyData` returns a Promise
+receipt:
 
 1. before capturing the frame, reserve its charged retained bytes against the
    per-PTY and global model-admission budgets;
@@ -1357,14 +1430,23 @@ ordered composite list rather than collapsing them into a proportional range.
 An ACK must be a finite safe integer in
 `previousAckedEndByte <= ackedEndByte <= lastAcceptedByte`; excessive values
 are rejected and counted, never clamped into full settlement. An in-range
-partial-frame ACK is recorded but settles no source units; only complete
-recorded frame boundaries settle their exact ordered source ranges. UTF-8
-width, JSON escaping, `rawLength`, and display transforms are never converted
-proportionally.
-Before stream replacement, snapshot recovery, or detach, create the
-replacement owner and atomically transfer every remaining mapping; otherwise
-cancel that consumer and its bounded stream. Old stream generations cannot
-settle new mappings.
+partial-frame ACK advances the byte watermark and releases exactly that byte
+budget, but retains the covering frame's immutable source mapping and settles
+no source units. Only complete recorded frame boundaries settle their exact
+ordered source ranges. UTF-8 width, JSON escaping, `rawLength`, and display
+transforms are never converted proportionally.
+
+The same attached stream may cross a source-token rotation without transferring
+its older unsettled frame. Admission requires the same PTY ID, provider
+generation, and incarnation; strictly greater client and owner generations; a
+different delivery token; and exact source/display continuity. The ledger then
+rebinds future frames to the new identity while older frames retain their own
+immutable identity and settle at their encoded boundaries. Equal, lower,
+partially advanced, cross-provider, cross-incarnation, or same-token rotations
+are rejected. Before stream replacement, snapshot recovery, or detach, create
+the replacement owner and atomically transfer every remaining mapping;
+otherwise cancel that consumer and its bounded stream. Old stream generations
+cannot settle new mappings.
 
 The main registry stores the immutable source identity with each admitted
 remote mapping, not only its `spanId`. A replacement reservation moves the
@@ -1373,9 +1455,10 @@ headless `SnapshotEnd` publication at or beyond the reservation's required
 sequence commits them. Stale generation, failed publication, disconnect, or
 explicit rollback restores the original live-stream obligation. If
 token-scoped cancellation proof has already reclaimed the authoritative span,
-late ACK, detach, rollback, and replacement commit prune the cached mapping
-and become idempotent no-ops; they never dereference reclaimed state or create
-credit.
+late ACK/settle prunes the cached mapping, detach skips absent spans, and a
+replacement commit returns false without dereferencing the reclaimed record.
+Rollback then deletes the exact reservation and skips already-absent spans.
+These paths are idempotent and create no credit.
 
 ACK-pending output overflow uses the same transaction. For a source-mapped
 stream, serialize the bounded snapshot, reserve only immutable spans whose
@@ -1389,6 +1472,10 @@ publication, or commit failure calls
 `rollbackRemoteTerminalSourceRangeReplacement`, preserves the live
 obligations, reports the stream error, and detaches that stream. One
 `ackRecoverySnapshotInFlight` flag bounds the operation to single-flight.
+At the encoded-byte ledger, snapshot replacement commit is itself idempotent:
+duplicate commits and commits after close are no-ops, preserve cumulative byte
+coordinates, and remove only source mappings covered by the authoritative
+snapshot sequence.
 
 The stall policy is deliberately split. Desktop-only parse failure reaches its
 bounded projection cap, transfers to model restore, and lets upstream credit
@@ -1415,25 +1502,32 @@ explicit/connection-close proof. The transaction creates the replacement
 owner before marking source `transferring`; only exact recovery-complete
 coverage terminally transfers it.
 
-| Event                                                 | Mandatory transition                                                                                                                                                                  |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| spawn/attach response decoded                         | install provisional `sourceActivation` in synchronous `beforeResolve`; commit after all provider/exit validation, otherwise restore exact prior state and cancel only candidate token |
-| model accepts; desktop/mobile parses                  | settle that consumer                                                                                                                                                                  |
-| hidden thinning, empty transform, pending-cap salvage | preserve ordered terminal facts/scanner state, then transfer desktop to model and emit restore marker                                                                                 |
-| renderer reload/destroy/send failure/heal             | transfer all desktop obligations to model before clearing queue/accounting                                                                                                            |
-| pane closes while provider/token remains live         | transfer recoverable views, then request token cancel if no required consumer remains                                                                                                 |
-| PTY exit                                              | relay seals token; main retains prior receipts/projections/remotes; runtime/renderer exit only after terminality or bounded cancellation proof                                        |
-| provider replacement/reconnect                        | close old client generation; transfer only exact ranges proven by replacement recovery, otherwise cancel and restore                                                                  |
-| relay `pty.deliveryCanceled`                          | without replacement, cancel matching remainder and restore; with replacement, enter `transferring` pending coverage                                                                   |
-| same-client token supersession                        | create replacement first, transfer exact covered remainder after recovery, cancel any uncovered range                                                                                 |
-| empty or non-empty recovery completion                | require checkpoint-to-`recoveryEndSu` continuity, retain that live-start anchor after activation, then admit only an exactly contiguous live frame                                    |
-| recovery completion lacks writer capacity             | retain range/fence state and retry on capacity; keep at most one admitted completion attempt                                                                                          |
-| stale/overlapping recovery attempt                    | cancel only that attempt's token; never mutate the replacement mux, checkpoint, PTY ownership, physical process, or owner lease                                                       |
-| remote snapshot replacement                           | reserve immutable span IDs/ranges, commit only after current-generation `SnapshotEnd` coverage, otherwise roll back                                                                   |
-| remote ACK-pending overflow snapshot                  | reserve covered spans, publish, commit exact snapshot identity/sequence, then trim; rollback and detach on failure                                                                    |
-| late remote detach after token cancellation           | prune already-reclaimed mappings and detach idempotently without dereference or new credit                                                                                            |
-| explicit live-token reset                             | `pty.cancelDelivery` response proves relay cancellation before local discard; failure closes the provider transport                                                                   |
-| relay/client dispose                                  | relay cancels token/cursors; main cancels only after close-generation proof                                                                                                           |
+| Event                                                 | Mandatory transition                                                                                                                                                                      |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| spawn/attach response decoded                         | install provisional `sourceActivation` in synchronous `beforeResolve`; hold same-turn data privately, commit/publish after validation, or drop/restore and await exact cancellation proof |
+| invalid-checkpoint `restoreRequired`                  | keep the canceled relay record through response settlement; retire only the still-current record, wake capacity, and permit a fresh-token retry                                           |
+| model accepts; desktop/mobile parses                  | settle that consumer                                                                                                                                                                      |
+| hidden thinning, empty transform, pending-cap salvage | preserve ordered terminal facts/scanner state, then transfer desktop to model and emit restore marker                                                                                     |
+| renderer reload/destroy/send failure/heal             | transfer all desktop obligations to model before clearing queue/accounting                                                                                                                |
+| pane closes while provider/token remains live         | transfer recoverable views, then request token cancel if no required consumer remains                                                                                                     |
+| PTY exit                                              | relay seals token; main retains prior receipts/projections/remotes; runtime/renderer exit only after terminality or bounded cancellation proof                                            |
+| provider replacement/reconnect                        | close old client generation; transfer only exact ranges proven by replacement recovery, otherwise cancel and restore                                                                      |
+| relay `pty.deliveryCanceled`                          | without replacement, cancel matching remainder and restore; with replacement, enter `transferring` pending coverage                                                                       |
+| same-client token supersession                        | create replacement first, transfer exact covered remainder after recovery, cancel any uncovered range                                                                                     |
+| empty or non-empty recovery completion                | require checkpoint-to-`recoveryEndSu` continuity, retain that live-start anchor after activation, then admit only an exactly contiguous live frame                                        |
+| recovery completion lacks writer capacity             | retain range/fence state and retry on capacity; keep at most one admitted completion attempt                                                                                              |
+| stale/overlapping recovery attempt                    | cancel only that attempt's token; never mutate the replacement mux, checkpoint, PTY ownership, physical process, or owner lease                                                           |
+| current recovery cancellation publication/proof fails | close the exact provider generation and release its mux, provider, publishers, provisional lease, and registration once; retain physical PTY ownership for reconnect                      |
+| partial remote cumulative byte ACK                    | advance/release exact byte credit; retain the covering source frame and obligation until a complete recorded boundary                                                                     |
+| contiguous higher-generation source token             | keep the stream attached, bind later frames to the new identity, and preserve unsettled older-token frame mappings                                                                        |
+| remote snapshot replacement                           | reserve immutable span IDs/ranges, commit only after current-generation `SnapshotEnd` coverage, otherwise roll back                                                                       |
+| snapshot commit after proof reclaimed a span          | reject commit without dereference; rollback removes the exact reservation and skips absent spans; later settle/detach prunes cached mappings                                              |
+| remote ACK-pending overflow snapshot                  | reserve covered spans, publish, commit exact snapshot identity/sequence, then trim; rollback and detach on failure                                                                        |
+| late remote detach after token cancellation           | prune already-reclaimed mappings and detach idempotently without dereference or new credit                                                                                                |
+| exit timeout receives cancellation proof              | while generation-current, transfer projections, commit proof, prepare/finalize once, and close projection with generation checks between mutations                                        |
+| provider generation closes during exit proof          | reject/remove barrier ownership; a late proof cannot commit, prepare, finalize, or publish exit                                                                                           |
+| explicit live-token reset                             | `pty.cancelDelivery` response proves relay cancellation before local discard; failure closes the provider transport                                                                       |
+| relay/client dispose                                  | relay cancels token/cursors; main cancels only after close-generation proof                                                                                                               |
 
 There is no “abandon live token” transition. A main-side path that cannot prove
 settlement, transfer, or relay cancellation must keep the ledger or close the
@@ -1463,6 +1557,9 @@ relay token:
   recovering --completion admitted--> completion-in-flight(single)
   completion-in-flight --write success--> active
   completion-in-flight --write error--> recovering(exact replacement/cleanup)
+  recovering --invalid checkpoint--> restore-canceled-awaiting-response
+  restore-canceled-awaiting-response --exact response settles/current record-->
+    closed(delete record, wake capacity)
   activating --stale/close--> closed(cancel)
   activating|recovering|active --same-client replacement--> closing(superseded)
   active --native exit--> sealed-unsettled
@@ -1476,6 +1573,13 @@ relay token:
 writer:
   writable --write(false)--> saturated --drain--> writable
   writable|saturated --close/error/detach--> closed
+
+main mux writer selection:
+  any queued liveness --> select liveness
+  control queued and (ordinary empty or controlsSinceOrdinary < 4) --> select control
+  ordinary queued --> select ordinary(reset controlsSinceOrdinary)
+  control queued after ordinary empty --> select control
+  drain --> writable(re-run the same selection; preserve FIFO inside each lane)
 
 main obligation:
   open --consumer receipt--> settled
@@ -1497,9 +1601,14 @@ main token span:
     --cancel response/client-generation close--> canceled
 
 main receive token:
-  unseen --beforeResolve--> provisional(cursor = checkpointSourceEndSu)
-  provisional --all spawn/attach/exit validation--> receiving-activation(commit lease)
-  provisional --validation failure--> prior exact state(rollback candidate token)
+  unseen --beforeResolve--> provisional(cursor = checkpointSourceEndSu, heldData = [])
+  provisional --same-turn contiguous data--> provisional(append heldData; no projection)
+  provisional --all spawn/attach/exit validation-->
+    receiving-activation(commit lease, publish heldData in order)
+  provisional --validation failure-->
+    rollback(drop heldData, restore active predecessor, request exact cancellation)
+  rollback --valid cancellation response--> prior exact state
+  rollback --publication/proof rejects--> fail operation(execution owner unavailable)
   receiving-activation --validated response/no recovery--> active
   receiving-activation --quarantine exact checkpoint..recoveryEnd + complete fence-->
     active(expectedLiveStart = recoveryEnd)
@@ -1509,15 +1618,28 @@ main receive token:
   exit-sealed --prior model/projection/remote terminal--> exit-ack-queued
   exit-ack-queued --runtime + renderer exit cleanup--> exited-awaiting-ack-publication
   exited-awaiting-ack-publication --ACK success/generation close--> closed
-  exit-sealed --deadline--> canceling-exited-token
-  canceling-exited-token --token cancellation proof--> closed(restore-required)
-  canceling-exited-token --proof cannot publish--> closing-provider
+  exit-sealed --deadline--> acquiring-exit-cancellation-proof
+  acquiring-exit-cancellation-proof --proof + generation current-->
+    transfer-projection -> commit-proof -> prepare-once -> finalize -> close-projection
+  acquiring-exit-cancellation-proof --generation closes-->
+    closed(reject barrier; late proof has no authority)
+  acquiring-exit-cancellation-proof --proof cannot publish while current--> closing-provider
   receiving-activation|active --overflow/cancel/close--> closed
+
+remote source ledger:
+  frame-open --partial cumulative byte ACK-->
+    frame-open(release exact byte delta; retain source mapping)
+  frame-open --ACK reaches encoded frame end--> frame-settled(settle exact source ranges)
+  old-token frame-open --contiguous strictly higher client+owner generation/new token-->
+    old-token frame-open + new-token receiving
+  receiving --stale/partial generation advance or identity discontinuity--> reject
 
 remote projection replacement:
   live --reserve immutable spans + required SnapshotEnd seq--> transferring
   transferring --current generation SnapshotEnd covers required seq--> transferred
   transferring --stale/failure/disconnect--> live(rollback)
+  transferring --authoritative span already reclaimed-->
+    commit-rejected -> rollback(skip absent span, delete reservation)
   live|transferring --authoritative token already canceled--> detached(prune cached spans)
 
 remote ACK-overflow recovery:
@@ -1639,12 +1761,42 @@ function finishRecovery(candidate: RecoveryCandidate, fence: RecoveryComplete): 
   installLiveStartAnchor(candidate.identity, fence.recoveryEndSu)
 }
 
+async function rollbackProvisionalActivation(lease: ReceiveLease): Promise<void> {
+  lease.dropHeldDataAndRestoreActivePredecessor()
+  const proved = await cancelExactTokenThroughOriginatingMux(lease.identity)
+  if (!proved) throw executionOwnerUnavailable()
+}
+
+function acknowledgeRemoteBytes(stream: RemoteStream, ackedEndByte: number): void {
+  const delta = stream.validateAndAdvanceCumulativeByteAck(ackedEndByte)
+  stream.byteBudget.release(delta)
+  for (const frame of stream.completeFramesThrough(ackedEndByte)) {
+    settleExactSourceRanges(frame.sourceRanges)
+  }
+}
+
 function replaceRemoteConsumer(stream: RemoteStream, requiredSeq: number): void {
   const reservation = remoteRanges.reserveImmutableSpans(stream, requiredSeq)
   publishSnapshotEnd(stream).then(
-    (publication) => remoteRanges.commitIfCurrentAndCovered(reservation, publication),
+    (publication) => {
+      if (!remoteRanges.commitIfCurrentAndCovered(reservation, publication)) {
+        remoteRanges.rollbackSkippingReclaimed(reservation)
+      }
+    },
     (error) => remoteRanges.rollback(reservation, error)
   )
+}
+
+async function cancelTimedOutExit(exit: ExitBarrier): Promise<void> {
+  const proof = await requestCancellationProofWithoutMutation(exit.identity)
+  if (!exit.isCurrentGeneration()) return
+  transferPublishedProjection(exit.identity)
+  commitCancellationProof(proof)
+  prepareExitOnce(exit.identity)
+  if (!exit.isCurrentGeneration()) return
+  finalizeExit(exit.identity)
+  if (!exit.isCurrentGeneration()) return
+  closeProjection(exit.identity)
 }
 
 async function recoverAckOverflow(stream: RemoteStream): Promise<void> {
@@ -1671,7 +1823,7 @@ the range queue and is never interpreted directly as source units.
 
 ## Incremental frame decoding
 
-Extend the actual main transport contract:
+The actual main transport contract is extended as follows:
 
 ```ts
 type MultiplexerTransport = {
@@ -1696,15 +1848,25 @@ Readable contract. WSL child stdin/stdout exposes the same metrics,
 callback/drain, and pause/resume adapter. The startup residue is delivered once
 before later data.
 
-`SshChannelMultiplexer` also owns one main-to-relay writer. Its lanes are
-liveness, interactive/control (requests, PTY input, cancellation, coalesced
-PTY ACK), and producer-owned bulk. It applies the same effective reserve and
-applies the same one-keepalive saturated-epoch exemption; all ordinary writes
-wait for their per-write callback and `onWriteDrain` after saturation.
-Reshapable bulk is sliced to non-reserved capacity; fixed filesystem frames
-use their exclusive empty-sink admission. Priority is rechecked between
-frames. Thus an ACK burst or file/Git stream cannot build an invisible queue
-ahead of keystrokes, and V1 ACK settlement has a concrete write fence.
+`SshChannelMultiplexer` also owns one main-to-relay writer with exactly three
+bounded FIFO lanes:
+
+1. `liveness` for the coalesced probe, including the one saturated-epoch
+   bypass;
+2. `control` for source ACK, cancellation, exit, RPC request, and response
+   frames;
+3. `ordinary` for `pty.data`, including PTY input/paste traffic.
+
+The scheduler rechecks priority after every frame and whenever drain reopens
+the writer. Liveness wins first. Control wins over queued ordinary traffic
+until four control frames have been selected while ordinary remains queued;
+the next selection must be one ordinary frame and resets the counter. FIFO is
+preserved within each lane. All non-bypass writes still wait for their
+per-write callback and `onWriteDrain` after saturation. Producer-side bulk
+shaping and fixed filesystem-frame admission remain with their existing
+owners; they do not create a fourth mux-writer lane. Thus control cannot remain
+behind an old ordinary backlog after drain, ordinary input cannot starve under
+a sustained control stream, and V1 ACK settlement has a concrete write fence.
 
 On the relay, the initial client uses `process.stdin.pause()/resume()` and each
 accepted Unix-socket/named-pipe client uses `socket.pause()/resume()`.
@@ -1763,9 +1925,16 @@ invalidates the lease so a later election starts a new generation. Each
 transition:
 
 - cancel read-pause epochs, writer callbacks, and scheduled work;
-- reject queued control frames;
+- reject queued liveness, control, and ordinary mux frames, clear lane heads,
+  and reset the four-control fairness counter;
 - roll back uncommitted receive-activation leases to their exact prior
-  revision and cancel only the provisional token through its originating mux;
+  active predecessor, drop lease-private data, and await cancellation of only
+  the provisional token through its originating mux;
+- fail closed on the exact provider generation when a current recovery cannot
+  publish cancellation or validate its proof; provisional spawn rollback
+  failure instead surfaces execution ownership as unavailable;
+- retain canceled `restoreRequired` relay deliveries until their response
+  settlement callback, then delete only the exact still-current record;
 - clear or transfer one recovery-completion attempt and its capacity listener;
 - move active PTY cursors to reconnect grace or cancel them;
 - preserve sealed-unsettled suffixes until the relay applies their ACK, exact
@@ -1778,6 +1947,10 @@ transition:
 - cancel uncommitted terminal-fact publications, restore their prior scanner
   snapshots, and transfer committed projection scanner state exactly once;
 - roll back any remote snapshot replacement before clearing ACK-overflow state;
+- preserve partial remote byte watermarks while retaining covering source
+  frames, and prune cached mappings whose authoritative spans were reclaimed;
+- reject and remove exit barriers plus cancellation/preparation ownership on
+  provider-generation close so late proofs cannot publish final exit;
 - release shared spans no longer referenced;
 - recompute native PTY pause state;
 - expire pending RPC ownership.
@@ -1819,11 +1992,13 @@ Recovery receipt is transactional. Main retains quarantined recovery `pty.data`,
 the candidate mux, token, checkpoint, and `recoveryEndSu` until the exact
 completion fence validates. It commits no partial body to the model. On
 failure it requests cancellation only through the candidate mux and accepts
-only matching proof; a stale attempt may not touch current mux state. After a
-successful empty recovery it keeps `recoveryEndSu` as a live continuity anchor
-until the first live frame arrives. Failure marks the existing PTY lease
-detached and retryable rather than deleting ownership or terminating the
-physical process.
+only matching proof; a stale attempt may not touch current mux state. A
+current attempt whose cancellation publication or proof rejects closes the
+exact provider generation and its registered resources once, rather than
+leaving ambiguous authority. After a successful empty recovery it keeps
+`recoveryEndSu` as a live continuity anchor until the first live frame arrives.
+A proved recovery failure marks the existing PTY lease detached and retryable
+rather than deleting ownership or terminating the physical process.
 
 For an operation-ID spawn replay, physical result lookup completes first; the
 current request then creates and fences a new subscription as specified above.
@@ -2030,8 +2205,8 @@ boundaries even though they ship in one PR.
   legacy PTY frame.
 - Preserve the current 8 ms/1 ms PTY cadence and current replay semantics. The
   replay tail stays the chunked `RecentPtyOutputBuffer` added in
-  `79ec57d04`; a later source ledger must wrap or index it rather than replace
-  it with the former per-append rolling string.
+  `79ec57d04`; `PtySourceReplayIndex` now indexes it without replacing it with
+  the former per-append rolling string.
 - This slice bounds relay writable queues for legacy main, WSL, direct SSH,
   and detached relay socket/named-pipe clients without changing the wire. The
   separate local terminal daemon is not exercised or changed.
@@ -2084,16 +2259,16 @@ boundaries even though they ship in one PR.
 
 ### Slice 5c: exit, reconnect, and replay — implemented
 
-- Add sealed-unsettled exit, cancellation proofs, owner reconnect grace,
+- Implements sealed-unsettled exit, cancellation proofs, owner reconnect grace,
   token replacement, and exact transfer.
-- Carry recovery as contiguous source-bearing `pty.data` from checkpoint to
+- Carries recovery as contiguous source-bearing `pty.data` from checkpoint to
   recovery end; fence live output with single-flight, capacity-retryable
   `pty.recoveryComplete` writer settlement.
-- Add a bounded source-range index beside the current
+- Adds a bounded source-range index beside the current
   `RecentPtyOutputBuffer`, preserving its append performance and legacy
   output.
-- Do not enable reconnect V1 until late-ACK, timeout, supersession, and
-  generation-close oracles pass.
+- Reconnect V1 remains under the startup gate; its late-ACK, timeout,
+  supersession, and generation-close deterministic oracles pass.
 
 ### Slice 5d: required remote consumers — deterministic seam implemented
 
@@ -2115,7 +2290,28 @@ boundaries even though they ship in one PR.
   SSH.
 - Keep best-effort remote streams outside upstream obligations.
 
-### Slice 5e: remaining topology validation and adapters — deliberately deferred
+### Slice 5e: adversarial lifecycle reconciliation — implemented
+
+- Retain canceled invalid-checkpoint deliveries through exact
+  `restoreRequired` response settlement, then retire only the current record.
+- Fail closed on the exact provider generation when a current recovery
+  cancellation cannot publish or its proof rejects; release generation-owned
+  resources once without clearing physical PTY ownership.
+- Allow partial cumulative remote byte ACKs to release byte budget without
+  settling an incomplete source frame, and admit only contiguous strictly
+  higher client/owner generations with a new token.
+- Make encoded snapshot replacement commit idempotent; reject reclaimed-span
+  commits and make rollback, settle, and detach prune absent spans safely.
+- Split main-to-relay writes into liveness/control/ordinary FIFO lanes, select
+  control first after drain, and guarantee ordinary progress after four
+  controls.
+- Hold provisional activation data until provider/claim/exit validation
+  commits; rollback drops it, restores only the active predecessor, and awaits
+  exact cancellation proof.
+- Acquire exit cancellation proof before projection transfer and proof commit;
+  prepare/finalize once and fence every post-proof step by provider generation.
+
+### Slice 5f: remaining topology validation and adapters — deliberately deferred
 
 - Local in-process and daemon hello remain unchanged; neither adopts SSH
   framing or source credit in this PR.
@@ -2142,6 +2338,10 @@ recorded evidence include:
 - main model admission, desktop identity/rollback, exit barriers, remote
   reserve/commit/rollback, token cancellation, exact recovery continuity,
   eight-wide reconnect, retention budgets, rollout latching, and deploy policy;
+- current-head restore-response retirement, fail-closed recovery cancellation,
+  partial remote ACK, higher-generation token rotation, reclaimed-span
+  idempotence, three-lane mux fairness, provisional claim gating, and
+  generation-fenced exit proof ordering;
 - the four-test Docker OpenSSH/deployed-relay suite for source-window plateau,
   concurrent typing, fixed-size filesystem/Git churn, and owner reconnect.
 
@@ -2166,16 +2366,36 @@ churn was 148.1/161.1 ms with 93 bulk reads; owner reconnect completed in
 15.7 seconds. These measurements are direct SSH/deployed Linux relay evidence
 only.
 
-Those results predate the current activation, recovery-completion, early-ACK,
-subscriber-isolation, ACK-overflow snapshot, and split-SFTP credential diff.
-Their exact-head focused and broader reruns remain pending.
+The Docker results predate the final adversarial lifecycle reconciliation and
+are not current-head proof for those races. The current-head deterministic
+commands below cover the integrated fixes; a direct Docker rerun and all other
+live topologies remain separate.
+
+At current HEAD, this focused command passed 11 files and 134 tests:
+
+```bash
+pnpm exec vitest run --config config/vitest.config.ts \
+  src/relay/relay-pty-source-restore-retry.test.ts \
+  src/main/ssh/ssh-relay-session-recovery-races.test.ts \
+  src/main/runtime/rpc/terminal-source-range-ledger.test.ts \
+  src/main/runtime/rpc/terminal-multiplex.test.ts \
+  src/main/ssh/ssh-multiplexer-transport-writer.test.ts \
+  src/main/ssh/ssh-channel-multiplexer-backpressure.test.ts \
+  src/main/providers/ssh-pty-notification-routing.test.ts \
+  src/main/providers/ssh-pty-provider-agent-session-create-operation.test.ts \
+  src/main/providers/ssh-pty-provider-exit-race.test.ts \
+  src/main/ipc/ssh-pty-output-exit-deadline.test.ts \
+  src/main/ipc/ssh-pty-remote-source-range-consumers.test.ts --reporter=dot
+```
 
 The deterministic recovery seam specifically covers an empty recovery followed
 by a gapped live frame, overlapping reconnect attempts, late frames after
-cancel, typed stale-owner retry, and the negative assertions that no physical
-PTY shutdown, provider-state clear, ownership delete, or lease expiry occurs.
-The remote-consumer seam covers token cancellation followed by late detach and
-replacement commit, proving reclaimed span IDs are pruned idempotently.
+cancel, typed stale-owner retry, response-settled `restoreRequired` retirement,
+and fail-closed exact-generation cleanup. It also asserts that a proved
+token-local failure causes no physical PTY shutdown, ownership delete, or
+lease expiry. The remote-consumer seam covers partial cumulative ACK, safe
+higher-generation token rotation, and token cancellation followed by late
+detach/replacement commit, proving reclaimed span IDs are pruned idempotently.
 
 ### Normative unit and property matrix
 
@@ -2196,9 +2416,10 @@ replacement commit, proving reclaimed span IDs are pruned idempotently.
   controls, and transformed spans where `rawLength !== data.length`; assert the
   budget arithmetic and reject transformed frames without valid `rawLength`;
 - run the shared semantic state-machine suite and the implemented SSH
-  socket/named-pipe adapter suite; keep local, daemon, direct-stdio/WSL, and
-  remote-runtime adapters as distinct unimplemented or unexecuted topology
-  claims rather than inferring equivalence;
+  socket/named-pipe adapter suite; local and daemon V1 adapters remain
+  unimplemented, direct-stdio/WSL has deterministic common-transport evidence
+  only, and remote-runtime source mapping is implemented at a deterministic
+  seam but unexecuted in a live paired topology;
 - verify SSH session-owner election with V1 requested and with session-granted
   same-build legacy, invalid/stale credential or lease rejection, 30-second
   lease expiry, and atomic reconnect generation transfer through POSIX sockets
@@ -2213,24 +2434,34 @@ replacement commit, proving reclaimed span IDs are pruned idempotently.
   once, report its exact remaining span, and transfer only matching recovery
   coverage while canceling the already-checkpointed prefix without re-ingest,
   duplicate output, or an open cursor;
+- keep one lossless remote stream attached across an unsettled old-token frame
+  and a contiguous new-token frame; require strictly higher client and owner
+  generations, the same provider/incarnation, a new token, and reject every
+  stale or partially advanced identity;
 - verify metadata response callbacks precede source-ranged recovery and live
   data in V1, including saturation with older control; use multi-frame
   all-control-character gaps to prove source bodies remain ordinary
   producer-owned `pty.data` rather than control responses;
 - feed response, recovery, completion fence, and first live data in one decoder
   turn; prove synchronous `beforeResolve` installs a provisional cursor at
-  `checkpointSourceEndSu`, all provider/claim/exit validation precedes lease
-  commit, rollback restores the exact prior state/token, and exact gap spans
-  reach the model once through `recoveryEndSu`;
+  `checkpointSourceEndSu`, same-turn data remains unprojected until all
+  provider/claim/exit validation commits the lease, rollback drops held data,
+  restores only the active predecessor, awaits exact token-cancellation proof,
+  and exact gap spans reach the model once through `recoveryEndSu`;
 - reject wrong-incarnation checkpoints and checkpoints below old credit or
   beyond retained live end; require a token-free `restoreRequired` response
-  with no partial recovery or forward clamping;
+  with no partial recovery or forward clamping; retain the canceled record
+  through response settlement, retire only the exact current record, then
+  prove retry mints a fresh token and publishes one live source frame;
 - send identical recovery `pty.data` for distinct tokens within one second and
   prove token/range identity, not a wall-clock fingerprint, controls admission;
 - retry an operation-ID spawn after commit/before response from a new client;
   prove it receives a fresh subscription and the stale client cannot ACK;
 - assert `write(false)` admits exactly one frame, preserves the control reserve,
   and admits no ordinary later frame before drain;
+- queue ordinary PTY input before source ACK, cancellation, exit, request, and
+  response frames; after drain require liveness/control selection first, FIFO
+  within all three lanes, and one ordinary selection after four controls;
 - deliver a cumulative ACK reentrantly before the source writer callback;
   reserve only the exact same-token pending boundary, then prove successful
   settlement applies it and failed settlement permits only an exact retry;
@@ -2268,6 +2499,10 @@ replacement commit, proving reclaimed span IDs are pruned idempotently.
   migration fence either checkpoints after the final guarded receipt or times
   out to a model-generation reset/restore, with no late mutation or duplicate
   gap ingestion;
+- reject recovery cancellation publication and local proof application while
+  the attempt is current; prove the exact provider generation, mux, provider,
+  publishers, provisional lease, and registration close once, while unrelated
+  generations and physical PTY ownership remain untouched;
 - prove renderer ACK/heal/write-off on V1 settles/transfers via display ranges
   and emits no legacy `acknowledgeDataEvent` wire delta;
 - admit interleaved spans from two token generations and prove every desktop
@@ -2278,12 +2513,15 @@ replacement commit, proving reclaimed span IDs are pruned idempotently.
 - generate remote UTF-8, JSON-escaped, transformed, split, and composite frames;
   keep legacy `ackOutput: 1` delta ACKs outside source obligations; negotiate
   `ackOutputSourceRanges: 1`, then apply partial, excessive, and stale-generation
-  cumulative ACKs and prove excessive rejection plus source settlement only at
-  recorded frame boundaries, with send-stop without auto-transfer at the cap
-  and atomic mapping transfer on an explicit reconnect/detach;
+  cumulative ACKs and prove a partial ACK releases only its exact byte delta,
+  retains the covering source frame, and settles source only at recorded frame
+  boundaries, with send-stop without auto-transfer at the cap and atomic
+  mapping transfer on an explicit reconnect/detach;
 - overflow ACK-pending remote output and inject snapshot serialization,
   publication, exact-generation commit, and rollback failures; prove covered
-  chunks trim only after commit and recovery remains single-flight;
+  chunks trim only after commit and recovery remains single-flight; after
+  cancellation proof reclaims a reserved span, require commit rejection,
+  idempotent rollback, and safe late settle/detach pruning;
 - feed current mobile notification epochs and watermarks into terminal ACK
   handlers and prove they are rejected without changing any source obligation;
 - extend `terminal-output-frame-chunks-equivalence.test.ts` so composite source
@@ -2311,9 +2549,11 @@ replacement commit, proving reclaimed span IDs are pruned idempotently.
 - receive exit with queued and in-flight emulator writes plus desktop and
   remote mappings; prove main delays `runtime.onPtyExit`, renderer exit, model
   disposal, and subscription cleanup until prior owners settle/transfer, and
-  prove deadline first cancels only the exited token, rejects late generation
-  callbacks, and reports incomplete restore-required exit; separately make the
-  cancellation proof fail and prove only then the provider closes;
+  prove deadline first acquires cancellation proof, transfers published
+  projections, commits proof, prepares/finalizes once, and rejects late
+  generation callbacks; close the generation while proof is pending and prove
+  no final exit publishes, then separately make proof fail while current and
+  prove only then the provider closes;
 - verify round-robin progress across 50 continuously active PTYs;
 - verify spans are freed only after all divergent cursors advance, cancel, or
   transfer;
@@ -2371,7 +2611,8 @@ reported as headed paired-server, headless `orca serve`, remote-runtime
 lossless subscription, macOS node-pty, Windows ConPTY/named pipe, or WSL
 evidence.
 
-Run paired-runtime coverage separately when Slice 5d maps remote consumers:
+The Slice 5d mapping is implemented, but live paired-runtime coverage remains
+a separate promotion requirement:
 
 | Topology                                       | Required oracle                                                                             |
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------- |
@@ -2423,16 +2664,18 @@ Implementation and rollout stages:
    reliability oracles.
 2. Slices 5a-5c are implemented behind the startup gate and relay launch
    policy with unit/service contracts and prior direct Docker SSH evidence.
-3. Slice 5d's remote source-range transaction is implemented at deterministic
-   main/runtime seams. Live headed paired, headless, WSL, Windows,
-   local-daemon, local-provider, and folder-workspace evidence remains future
-   work before those topologies are marked covered.
-4. complete exact-head review, focused/full validation, and the direct Docker
-   rerun for the current activation/recovery/deploy diff;
-5. run an internal same-build canary comparing gate-off and V1 sink,
+3. Slices 5d-5e implement remote source-range transactions and the final
+   lifecycle reconciliation at deterministic main/runtime/provider/relay
+   seams. Live headed paired, headless, WSL, Windows, local-daemon,
+   local-provider, and folder-workspace evidence remains future work before
+   those topologies are marked covered.
+4. Current-head deterministic reconciliation and focused integrated-fix checks
+   are complete. Full validation and a direct Docker rerun of the final
+   lifecycle diff remain required before promotion.
+5. Run an internal same-build canary comparing gate-off and V1 sink,
    model-admission, latency, sealed-exit, recovery, and reconnect metrics while
    separately counting orphan prior-version daemons;
-6. default on only after zero ordering/data-loss failures and stable memory
+6. Default on only after zero ordering/data-loss failures and stable memory
    plateaus for one release cycle; remove the flag only after same-build legacy
    fallback and versioned-orphan cleanup stay healthy through the supported
    upgrade window.
