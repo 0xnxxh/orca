@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   MAX_FEEDBACK_IMAGE_BYTES,
   MAX_FEEDBACK_IMAGE_COUNT,
+  hasAttachableFeedbackImage,
   readFeedbackImageFiles
 } from './feedback-image-attachments'
 
@@ -18,6 +19,26 @@ function pngFile(name: string, size = 8): File {
   Object.defineProperty(file, 'size', { value: size })
   return file
 }
+
+describe('hasAttachableFeedbackImage', () => {
+  it('is true when any file is an allow-listed type', () => {
+    const svg = new File(['x'], 'a.svg', { type: 'image/svg+xml' })
+    expect(hasAttachableFeedbackImage([svg, pngFile('a.png')])).toBe(true)
+  })
+
+  // Why: the paste handler only consumes the event when this is true. An
+  // image/* type outside the allow-list must still fall through so co-pasted
+  // text is not swallowed, while readFeedbackImageFiles raises its toast.
+  it('is false when every file is an unsupported image type', () => {
+    const svg = new File(['x'], 'a.svg', { type: 'image/svg+xml' })
+    const bmp = new File(['x'], 'a.bmp', { type: 'image/bmp' })
+    expect(hasAttachableFeedbackImage([svg, bmp])).toBe(false)
+  })
+
+  it('is false for an empty selection', () => {
+    expect(hasAttachableFeedbackImage([])).toBe(false)
+  })
+})
 
 describe('readFeedbackImageFiles', () => {
   it('reads supported images into drafts with distinct ids', async () => {

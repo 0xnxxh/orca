@@ -25,6 +25,16 @@ function isSupportedType(contentType: string): boolean {
   return (SUPPORTED_FEEDBACK_IMAGE_TYPES as readonly string[]).includes(contentType)
 }
 
+/**
+ * Whether a paste should be consumed. Extraction stays broad so unsupported
+ * image types still reach the rejection toast, but swallowing the paste when
+ * nothing is attachable would also discard any text riding along on the
+ * clipboard.
+ */
+export function hasAttachableFeedbackImage(files: readonly File[]): boolean {
+  return files.some((file) => isSupportedType(file.type))
+}
+
 export function releaseFeedbackImageDraft(draft: FeedbackImageDraft): void {
   URL.revokeObjectURL(draft.previewUrl)
 }

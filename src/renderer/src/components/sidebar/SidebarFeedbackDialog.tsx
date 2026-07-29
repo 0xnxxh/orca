@@ -17,6 +17,7 @@ import type { GitHubViewer } from '../../../../shared/types'
 import { translate } from '@/i18n/i18n'
 import {
   extractImageFilesFromDataTransfer,
+  hasAttachableFeedbackImage,
   readFeedbackImageFiles,
   releaseFeedbackImageDraft,
   type FeedbackImageDraft
@@ -258,10 +259,16 @@ export function SidebarFeedbackDialog({
         // screenshot lands whether or not the caret is in the message box.
         onPaste={(event) => {
           const pasted = extractImageFilesFromDataTransfer(event.clipboardData)
-          if (pasted.length > 0) {
-            event.preventDefault()
-            handleAddFiles(pasted)
+          if (pasted.length === 0) {
+            return
           }
+          // Why: consume the paste only when something is actually attachable.
+          // An unsupported image still routes through for its rejection toast,
+          // but preventing default there would silently eat co-pasted text.
+          if (hasAttachableFeedbackImage(pasted)) {
+            event.preventDefault()
+          }
+          handleAddFiles(pasted)
         }}
         // Why: dragenter/leave fire per nested child; the hook counts depth so
         // the highlight only clears once the pointer leaves the dialog.
