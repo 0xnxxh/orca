@@ -494,6 +494,7 @@ export class AgentHookServer {
   // Why: hydrated rows give UI continuity but aren't evidence of live agent work in this runtime.
   private runtimeObservedStatusPaneKeys = new Set<string>()
   private hydratedAuthorityCommitments: readonly AgentHookAuthorityEvidence[] = Object.freeze([])
+  private revokedHydratedAuthorityCommitments = new WeakSet<AgentHookAuthorityEvidence>()
   private currentAuthorityObservations = new Map<string, AgentHookAuthorityEvidence>()
   private legacyPaneKeyAliases = new Map<string, PaneKeyAliasEntry>()
   private paneKeyAliasPersistenceListener: PaneKeyAliasPersistenceListener | null = null
@@ -597,7 +598,9 @@ export class AgentHookServer {
     const matchesCandidate = (entry: AgentHookAuthorityEvidence): boolean =>
       entry.launchTokenHash === candidate.launchTokenHash &&
       entry.connectionId === candidate.connectionId
-    const commitments = this.hydratedAuthorityCommitments.filter(matchesCandidate)
+    const commitments = this.hydratedAuthorityCommitments.filter(
+      (entry) => matchesCandidate(entry) && !this.revokedHydratedAuthorityCommitments.has(entry)
+    )
     const current = Array.from(this.currentAuthorityObservations.values())
     const observations = current.filter(matchesCandidate)
     const paneObservations = current.filter(
@@ -1409,6 +1412,7 @@ export class AgentHookServer {
         aliasChanged = true
       }
     }
+    this.revokeHydratedAuthorityForPaneKeys(paneKeys)
     const hadStatus = [...paneKeys].some((key) => this.state.lastStatusByPaneKey.has(key))
     for (const key of paneKeys) {
       this.markPaneClosedForAgentStatus(key)
@@ -1437,6 +1441,7 @@ export class AgentHookServer {
     const clearedStatusPaneKeys = new Set<string>()
     for (const [legacyPaneKey, entry] of this.legacyPaneKeyAliases) {
       if (entry.ptyId === ptyId) {
+        this.revokeHydratedAuthorityForPaneKeys(new Set([legacyPaneKey, entry.stablePaneKey]))
         this.legacyPaneKeyAliases.delete(legacyPaneKey)
         clearPaneCacheState(this.state, legacyPaneKey)
         this.currentAuthorityObservations.delete(legacyPaneKey)
@@ -1471,6 +1476,17 @@ export class AgentHookServer {
 
   private resolvePaneKeyAlias(paneKey: string): string {
     return this.legacyPaneKeyAliases.get(paneKey)?.stablePaneKey ?? paneKey
+  }
+
+  private revokeHydratedAuthorityForPaneKeys(paneKeys: ReadonlySet<string>): void {
+    for (const commitment of this.hydratedAuthorityCommitments) {
+      if (
+        paneKeys.has(commitment.paneKey) ||
+        paneKeys.has(this.resolvePaneKeyAlias(commitment.paneKey))
+      ) {
+        this.revokedHydratedAuthorityCommitments.add(commitment)
+      }
+    }
   }
 
   private normalizeHookBodyPaneKeyAlias(body: unknown): unknown {
@@ -1816,6 +1832,7 @@ export class AgentHookServer {
     this.lastWrittenJson = null
     this.runtimeObservedStatusPaneKeys.clear()
     this.hydratedAuthorityCommitments = Object.freeze([])
+    this.revokedHydratedAuthorityCommitments = new WeakSet()
     this.currentAuthorityObservations.clear()
     this.promptSentDedupeByPaneKey.clear()
     this.closedAgentStatusTabIds.clear()
@@ -1938,6 +1955,11 @@ export class AgentHookServer {
         paneKeysToClear.add(paneKey)
       }
     }
+    for (const commitment of this.hydratedAuthorityCommitments) {
+      if (paneCacheKeyMatchesTab(commitment.paneKey, tabId)) {
+        paneKeysToClear.add(commitment.paneKey)
+      }
+    }
 
     let aliasChanged = false
     for (const [legacyPaneKey, entry] of this.legacyPaneKeyAliases) {
@@ -1951,6 +1973,7 @@ export class AgentHookServer {
         aliasChanged = true
       }
     }
+    this.revokeHydratedAuthorityForPaneKeys(paneKeysToClear)
 
     let statusChanged = false
     for (const paneKey of paneKeysToClear) {
@@ -1975,6 +1998,7 @@ export class AgentHookServer {
 
   clearPaneState(paneKey: string): void {
     const resolvedPaneKey = this.resolvePaneKeyAlias(paneKey)
+    const paneKeys = new Set([paneKey, resolvedPaneKey])
     // Why: only persist when a status entry was actually evicted; dropping prompt/tool caches doesn't change the file.
     const hadStatus = this.state.lastStatusByPaneKey.has(resolvedPaneKey)
     this.clearAssistantMessageRetry(resolvedPaneKey)
@@ -1986,12 +2010,15 @@ export class AgentHookServer {
     for (const [legacyPaneKey, stablePaneKey] of this.legacyPaneKeyAliases) {
       if (stablePaneKey.stablePaneKey === resolvedPaneKey) {
         this.legacyPaneKeyAliases.delete(legacyPaneKey)
+        paneKeys.add(legacyPaneKey)
+        paneKeys.add(stablePaneKey.stablePaneKey)
         clearPaneCacheState(this.state, legacyPaneKey)
         this.currentAuthorityObservations.delete(legacyPaneKey)
         this.promptSentDedupeByPaneKey.delete(legacyPaneKey)
         clearedAlias = true
       }
     }
+    this.revokeHydratedAuthorityForPaneKeys(paneKeys)
     if (clearedAlias) {
       this.notifyPaneKeyAliasPersistenceListener()
     }
@@ -2143,6 +2170,7 @@ export class AgentHookServer {
   }
 
   private captureHydratedAuthorityCommitments(): void {
+    this.revokedHydratedAuthorityCommitments = new WeakSet()
     this.hydratedAuthorityCommitments = Object.freeze(
       Array.from(this.state.lastStatusByPaneKey.values(), (entry) =>
         this.toAuthorityEvidence(entry as EnrichedAgentHookEventPayload)

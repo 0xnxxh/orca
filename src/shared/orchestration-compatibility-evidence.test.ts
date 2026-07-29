@@ -74,4 +74,11 @@ describe('orchestration compatibility evidence', () => {
       }
     })
   })
+
+  it('redacts cyclic arrays without recursing forever', () => {
+    const cyclic: unknown[] = []
+    cyclic.push(cyclic)
+
+    expect(redactOrchestrationCompatibilitySecrets(cyclic)).toEqual(['[circular]'])
+  })
 })

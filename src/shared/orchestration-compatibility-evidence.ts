@@ -88,9 +88,6 @@ export function redactOrchestrationCompatibilitySecrets(value: unknown): unknown
 }
 
 function redactValue(value: unknown, seen: WeakSet<object>): unknown {
-  if (Array.isArray(value)) {
-    return value.map((entry) => redactValue(entry, seen))
-  }
   if (typeof value !== 'object' || value === null) {
     return value
   }
@@ -98,6 +95,9 @@ function redactValue(value: unknown, seen: WeakSet<object>): unknown {
     return '[circular]'
   }
   seen.add(value)
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactValue(entry, seen))
+  }
   return Object.fromEntries(
     Object.entries(value).map(([key, entry]) => [
       key,

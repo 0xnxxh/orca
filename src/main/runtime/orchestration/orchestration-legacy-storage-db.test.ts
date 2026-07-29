@@ -13,6 +13,7 @@ import {
 type CutoverFixture = {
   dbPath: string
   currentRunId: string
+  unrelatedRunId: string
   currentDispatchId: string
   legacyTaskId: string
   legacyDispatchId: string
@@ -21,6 +22,7 @@ type CutoverFixture = {
   legacyQuestionId: string
   legacyDeliveryId: string
   rejectionMessageId: string
+  lookalikeMessageId: string
 }
 
 describe('OrchestrationDb legacy contract storage', () => {
@@ -46,6 +48,11 @@ describe('OrchestrationDb legacy contract storage', () => {
       coordinatorPaneKey: 'tab_current:11111111-1111-4111-8111-111111111111'
     })
     const currentTask = first.createTask({ spec: 'current', runId: currentRun.id })
+    const unrelatedRun = first.createRun({
+      objective: 'Unrelated current work',
+      coordinatorHandle: 'term_unrelated_coord',
+      coordinatorPaneKey: 'tab_unrelated:55555555-5555-4555-8555-555555555555'
+    })
     const currentDispatch = first.createDispatchContext(
       currentTask.id,
       'term_current_worker',
@@ -109,6 +116,12 @@ describe('OrchestrationDb legacy contract storage', () => {
       type: 'heartbeat',
       payload: JSON.stringify({ _orcaLifecycleRejection: { code: 'migration', reason: 'cutover' } })
     })
+    const lookalike = first.insertMessage({
+      from: 'term_legacy_worker',
+      to: 'term_legacy_coord',
+      subject: 'Ordinary legacy mail',
+      payload: JSON.stringify({ '.orcaLifecycleRejection': 'not an audit marker' })
+    })
     first.close()
 
     const raw = new Database(dbPath)
@@ -133,6 +146,7 @@ describe('OrchestrationDb legacy contract storage', () => {
     return {
       dbPath,
       currentRunId: currentRun.id,
+      unrelatedRunId: unrelatedRun.id,
       currentDispatchId: currentDispatch.id,
       legacyTaskId: legacyTask.id,
       legacyDispatchId: retryDispatch.id,
@@ -140,7 +154,8 @@ describe('OrchestrationDb legacy contract storage', () => {
       legacyMessageIds: legacyMessages.map((message) => message.id),
       legacyQuestionId: question.message.id,
       legacyDeliveryId,
-      rejectionMessageId: rejection.id
+      rejectionMessageId: rejection.id,
+      lookalikeMessageId: lookalike.id
     }
   }
 
@@ -208,6 +223,10 @@ describe('OrchestrationDb legacy contract storage', () => {
       run_id: adoptedRunId,
       delivery_contract: 'audit_only'
     })
+    expect(db.getMessageById(fixture.lookalikeMessageId)).toMatchObject({
+      run_id: adoptedRunId,
+      delivery_contract: 'legacy_direct'
+    })
     expect(
       sqlite.prepare('SELECT * FROM deliveries WHERE id = ?').get(fixture.legacyDeliveryId)
     ).toMatchObject({ run_id: adoptedRunId, status: 'fenced' })
@@ -231,6 +250,22 @@ describe('OrchestrationDb legacy contract storage', () => {
       CURRENT_CONTRACT_VERSION
     )
     expect(db.listTasks({ runId: LEGACY_RUN_ID })).toEqual([])
+  })
+
+  it('ignores unrelated cross-Run anomalies while validating adopted rows', () => {
+    const fixture = createCutoverFixture()
+    const raw = new Database(fixture.dbPath)
+    raw
+      .prepare('UPDATE dispatch_contexts SET run_id = ? WHERE id = ?')
+      .run(fixture.unrelatedRunId, fixture.currentDispatchId)
+    raw.close()
+
+    db = new OrchestrationDb(fixture.dbPath)
+
+    expect(db.getLegacyAdoption()).toBeDefined()
+    expect(db.getDispatchContextById(fixture.currentDispatchId)?.run_id).toBe(
+      fixture.unrelatedRunId
+    )
   })
 
   it('does not synthesize an adopted Run or compatibility authority for a fresh database', () => {

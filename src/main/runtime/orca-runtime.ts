@@ -3576,13 +3576,26 @@ export class OrcaRuntimeService {
   prepareLegacyWorkerTerminalRecovery(): LegacyWorkerTerminalRecoveryPlan {
     const plan = this.getLegacyWorkerTerminalRecoveryPlan()
     const store = this.store
-    const session = store?.getWorkspaceSession?.()
-    if (!store?.setWorkspaceSession || !store.flushOrThrow || !session) {
+    if (!store?.getWorkspaceSession || !store.setWorkspaceSession || !store.flushOrThrow) {
       return plan
     }
-    let next: WorkspaceSessionState | null = null
+    const sessions = new Map<
+      ExecutionHostId,
+      { current: WorkspaceSessionState; next: WorkspaceSessionState }
+    >()
+    const changedHostIds = new Set<ExecutionHostId>()
     for (const blocked of plan.blockedPanes) {
-      const record = session.sleepingAgentSessionsByPaneKey?.[blocked.paneKey]
+      const hostId = this.getWorkspaceSessionHostIdForWorktree(blocked.worktreeId)
+      let state = sessions.get(hostId)
+      if (!state) {
+        const current = store.getWorkspaceSession(hostId)
+        if (!current) {
+          continue
+        }
+        state = { current, next: structuredClone(current) }
+        sessions.set(hostId, state)
+      }
+      const record = state.next.sleepingAgentSessionsByPaneKey?.[blocked.paneKey]
       if (
         !record ||
         !runtimeWorktreeIdsEqual(record.worktreeId, blocked.worktreeId) ||
@@ -3590,20 +3603,23 @@ export class OrcaRuntimeService {
       ) {
         continue
       }
-      next ??= structuredClone(session)
-      next.sleepingAgentSessionsByPaneKey = {
-        ...next.sleepingAgentSessionsByPaneKey,
+      state.next.sleepingAgentSessionsByPaneKey = {
+        ...state.next.sleepingAgentSessionsByPaneKey,
         [blocked.paneKey]: {
           ...record,
           automaticResumeBlockedBy: 'legacy-orchestration-worker'
         }
       }
+      changedHostIds.add(hostId)
     }
-    if (!next) {
+    const changed = [...sessions].filter(([hostId]) => changedHostIds.has(hostId))
+    if (changed.length === 0) {
       return plan
     }
     try {
-      store.setWorkspaceSession(next)
+      for (const [hostId, state] of changed) {
+        store.setWorkspaceSession(state.next, hostId)
+      }
       store.flushOrThrow()
     } catch (error) {
       console.warn('[orchestration] failed to persist legacy worker resume fence', error)
@@ -3636,7 +3652,7 @@ export class OrcaRuntimeService {
     resolution: 'adopted' | 'exited'
   ): boolean {
     const store = this.store
-    const session = store?.getWorkspaceSession?.()
+    const session = this.getWorkspaceSessionForWorktree(candidate.worktreeId)
     if (!store?.setWorkspaceSession || !store.flushOrThrow || !session) {
       return false
     }
@@ -3662,11 +3678,11 @@ export class OrcaRuntimeService {
       }
     }
     try {
-      store.setWorkspaceSession(next)
+      this.setWorkspaceSessionForWorktree(candidate.worktreeId, next)
       store.flushOrThrow()
       return true
     } catch (error) {
-      store.setWorkspaceSession(session)
+      this.setWorkspaceSessionForWorktree(candidate.worktreeId, session)
       console.warn('[orchestration] failed to persist legacy worker recovery resolution', {
         dispatchId: candidate.dispatchId,
         resolution,
@@ -3734,7 +3750,7 @@ export class OrcaRuntimeService {
         deferredDispatchIds.add(candidate.dispatchId)
         continue
       }
-      const session = this.store?.getWorkspaceSession?.()
+      const session = this.getWorkspaceSessionForWorktree(candidate.worktreeId)
       const sessionWorktreeId = session
         ? resolveTerminalSessionWorktreeId(session, candidate.worktreeId)
         : null
@@ -4178,21 +4194,37 @@ export class OrcaRuntimeService {
 
   notifySshRelayReady(targetId: string): void {
     const generation = this.bumpSshRelayRecoveryGeneration(targetId)
-    void (async () => {
-      await this.reconcileLegacyWorkerTerminals({
-        connectionId: targetId,
-        materializeRenderer: this.notifier !== null
-      })
-      await this.publishRecoveredSshMobileSessionTabs(targetId, generation)
-    })().catch((error) => {
-      if (this.sshRelayRecoveryGenerationByTargetId.get(targetId) !== generation) {
-        return
+    const publish = async (): Promise<void> => {
+      try {
+        await this.publishRecoveredSshMobileSessionTabs(targetId, generation)
+      } catch (error) {
+        if (this.sshRelayRecoveryGenerationByTargetId.get(targetId) === generation) {
+          console.warn('[runtime] failed to publish recovered SSH session tabs', {
+            targetId,
+            error
+          })
+        }
       }
-      console.warn('[runtime] failed to publish recovered SSH session tabs', {
-        targetId,
-        error
-      })
+    }
+    const initialPublication = publish()
+    void initialPublication
+    void this.reconcileLegacyWorkerTerminals({
+      connectionId: targetId,
+      materializeRenderer: this.notifier !== null
     })
+      .then(async () => {
+        await initialPublication
+        await publish()
+      })
+      .catch((error) => {
+        if (this.sshRelayRecoveryGenerationByTargetId.get(targetId) !== generation) {
+          return
+        }
+        console.warn('[orchestration] legacy worker reconcile failed on relay ready', {
+          targetId,
+          error
+        })
+      })
   }
 
   private bumpSshRelayRecoveryGeneration(targetId: string): number {
@@ -13482,7 +13514,7 @@ export class OrcaRuntimeService {
   private getTerminalTopologyRevision(worktreeId: string): number {
     const repoId = getRepoIdFromWorktreeId(worktreeId)
     return (
-      this.store?.getWorkspaceSession?.()?.terminalTopologyRevisionByRepoId?.[repoId] ??
+      this.getWorkspaceSessionForWorktree(worktreeId)?.terminalTopologyRevisionByRepoId?.[repoId] ??
       this.terminalTopologyRevisionByRepoId.get(repoId) ??
       0
     )
@@ -13506,7 +13538,7 @@ export class OrcaRuntimeService {
       throw new Error('terminal_liveness_unavailable')
     }
     const store = this.store
-    const session = store?.getWorkspaceSession?.()
+    const session = this.getWorkspaceSessionForWorktree(workspace.id)
     if (!store?.setWorkspaceSession || !store.flushOrThrow || !session) {
       throw new Error('workspace_session_unavailable')
     }
@@ -13924,10 +13956,10 @@ export class OrcaRuntimeService {
     }
     const persisted = advanceTerminalTopologyRevision(next, workspace.id)
     try {
-      store.setWorkspaceSession(persisted)
+      this.setWorkspaceSessionForWorktree(workspace.id, persisted)
       store.flushOrThrow()
     } catch (error) {
-      store.setWorkspaceSession(session)
+      this.setWorkspaceSessionForWorktree(workspace.id, session)
       throw error
     }
     for (const { claim, pty, paneKey } of validated) {

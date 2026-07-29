@@ -137,5 +137,23 @@ describe('AgentHookServer authority evidence', () => {
 
     expect(server.getHydratedAuthorityCommitments()).toBe(commitments)
     expect(server.getCurrentAuthorityObservations()).toEqual([])
+    expect(
+      server.attestCompatibilityAuthority({
+        paneKey: PANE_KEY,
+        launchTokenHash: createHash('sha256').update('launch-before-restart').digest('hex'),
+        connectionId: 'ssh-target'
+      })
+    ).toEqual({ paneKey: PANE_KEY, source: 'hydrated_commitment' })
+
+    server.clearPaneState(PANE_KEY)
+
+    expect(server.getHydratedAuthorityCommitments()).toBe(commitments)
+    expect(
+      server.attestCompatibilityAuthority({
+        paneKey: PANE_KEY,
+        launchTokenHash: createHash('sha256').update('launch-before-restart').digest('hex'),
+        connectionId: 'ssh-target'
+      })
+    ).toBeNull()
   })
 })

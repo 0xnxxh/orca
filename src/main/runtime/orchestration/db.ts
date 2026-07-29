@@ -903,7 +903,7 @@ export class OrchestrationDb {
       .prepare(
         `UPDATE messages
          SET delivery_contract = CASE
-           WHEN payload LIKE '%"_orcaLifecycleRejection"%' THEN 'audit_only'
+           WHEN instr(payload, '"_orcaLifecycleRejection"') > 0 THEN 'audit_only'
            ELSE 'legacy_direct'
          END
          WHERE run_id = ?`
@@ -977,30 +977,47 @@ export class OrchestrationDb {
 
     const mismatch = this.db
       .prepare(
-        `SELECT 1
+        `WITH migration_runs(run_id) AS (VALUES (?), (?))
+         SELECT 1
          WHERE EXISTS(
            SELECT 1 FROM dispatch_contexts d
            INNER JOIN tasks t ON t.id = d.task_id
            WHERE d.run_id <> t.run_id
+             AND (
+               d.run_id IN (SELECT run_id FROM migration_runs)
+               OR t.run_id IN (SELECT run_id FROM migration_runs)
+             )
          )
             OR EXISTS(
               SELECT 1 FROM decision_gates g
               INNER JOIN tasks t ON t.id = g.task_id
               WHERE g.run_id <> t.run_id
+                AND (
+                  g.run_id IN (SELECT run_id FROM migration_runs)
+                  OR t.run_id IN (SELECT run_id FROM migration_runs)
+                )
             )
             OR EXISTS(
               SELECT 1 FROM question_threads q
               INNER JOIN dispatch_contexts d ON d.id = q.dispatch_id
               WHERE q.run_id <> d.run_id
+                AND (
+                  q.run_id IN (SELECT run_id FROM migration_runs)
+                  OR d.run_id IN (SELECT run_id FROM migration_runs)
+                )
             )
             OR EXISTS(
               SELECT 1 FROM deliveries d
               INNER JOIN json_each(d.message_ids) ids
               INNER JOIN messages m ON m.id = ids.value
               WHERE d.run_id <> m.run_id
+                AND (
+                  d.run_id IN (SELECT run_id FROM migration_runs)
+                  OR m.run_id IN (SELECT run_id FROM migration_runs)
+                )
             )`
       )
-      .get()
+      .get(LEGACY_RUN_ID, adoptedRunId)
     if (mismatch) {
       throw new Error('Legacy orchestration adoption produced inconsistent Run ownership.')
     }
@@ -1367,10 +1384,10 @@ export class OrchestrationDb {
             AND (m.to_handle = d.assignee_handle OR m.to_handle = 'dispatch:' || d.id)
            WHERE m.run_id = ? AND m.delivery_contract = 'legacy_direct'
          )
-         WHERE handle = ?`
+         WHERE handle = ?
+         LIMIT 1`
         )
-        .all(runId, LEGACY_CONTRACT_VERSION, runId, LEGACY_CONTRACT_VERSION, runId, terminalHandle)
-        .length
+        .get(runId, LEGACY_CONTRACT_VERSION, runId, LEGACY_CONTRACT_VERSION, runId, terminalHandle)
     )
   }
 

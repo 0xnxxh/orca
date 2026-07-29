@@ -17057,7 +17057,19 @@ describe('OrcaRuntimeService', () => {
         }
       }
     }
-    const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(session)
+    const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(session)
+    const localSession = getDefaultWorkspaceSession()
+    let sshSession = session
+    const getWorkspaceSession = vi.fn((hostId?: string | null) =>
+      hostId === `ssh:${connectionId}` ? sshSession : localSession
+    )
+    const setWorkspaceSession = vi.fn((next: WorkspaceSessionState, hostId?: string | null) => {
+      if (hostId !== `ssh:${connectionId}`) {
+        throw new Error(`unexpected workspace-session host ${hostId ?? 'default'}`)
+      }
+      sshSession = next
+    })
+    const getSession = (): WorkspaceSessionState => sshSession
     const remoteRepo = {
       ...store.getRepos()[0],
       connectionId
@@ -17078,6 +17090,8 @@ describe('OrcaRuntimeService', () => {
         ...runtimeStore,
         getRepos: () => [remoteRepo],
         getRepo: (id: string) => (id === TEST_REPO_ID ? remoteRepo : undefined),
+        getWorkspaceSession,
+        setWorkspaceSession,
         flushOrThrow: vi.fn()
       } as never,
       undefined,
@@ -17134,6 +17148,8 @@ describe('OrcaRuntimeService', () => {
       expect(
         getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]?.automaticResumeBlockedBy
       ).toBe('legacy-orchestration-worker')
+      expect(localSession.sleepingAgentSessionsByPaneKey?.[workerPaneKey]).toBeUndefined()
+      expect(getWorkspaceSession).toHaveBeenCalledWith(`ssh:${connectionId}`)
 
       await expect(
         runtime.reconcileLegacyWorkerTerminals({
@@ -17150,6 +17166,7 @@ describe('OrcaRuntimeService', () => {
     }
 
     expect(getSession().sleepingAgentSessionsByPaneKey?.[workerPaneKey]).toBeUndefined()
+    expect(setWorkspaceSession).toHaveBeenCalledWith(expect.any(Object), `ssh:${connectionId}`)
     expect(revealTerminalSession).toHaveBeenCalledWith(TEST_WORKTREE_ID, {
       ptyId,
       title: 'SSH legacy worker',
@@ -24150,6 +24167,9 @@ describe('OrcaRuntimeService', () => {
     })
     const events: RuntimeMobileSessionTabsResult[] = []
     runtime.onMobileSessionTabsChanged((snapshot) => events.push(snapshot))
+    const reconcile = vi
+      .spyOn(runtime, 'reconcileLegacyWorkerTerminals')
+      .mockReturnValue(new Promise(() => undefined))
 
     runtime.notifySshRelayReady('ssh-1')
     await vi.waitFor(() =>
@@ -24170,6 +24190,10 @@ describe('OrcaRuntimeService', () => {
         terminal: expect.any(String)
       })
     ])
+    expect(reconcile).toHaveBeenCalledWith({
+      connectionId: 'ssh-1',
+      materializeRenderer: false
+    })
   })
 
   it('uses only a recent expired SSH lease as a bounded pane-recovery tombstone', async () => {
