@@ -41,9 +41,24 @@ describe('selectEvictionExemptTerminalTabLayoutKey', () => {
     ).not.toBe(selectEvictionExemptTerminalTabLayoutKey(layoutState({ [LEAF_ID]: PTY_ID }), TABS))
   })
 
+  it('does not collide when a pty id contains layout-key delimiters', () => {
+    const embeddedLeaf = `pty-local-detached,${SECOND_LEAF_ID}:second`
+    expect(
+      selectEvictionExemptTerminalTabLayoutKey(layoutState({ [LEAF_ID]: embeddedLeaf }), TABS)
+    ).not.toBe(
+      selectEvictionExemptTerminalTabLayoutKey(
+        layoutState({
+          [LEAF_ID]: 'pty-local-detached',
+          [SECOND_LEAF_ID]: 'second'
+        }),
+        TABS
+      )
+    )
+  })
+
   it('tolerates tabs with no persisted layout', () => {
     expect(selectEvictionExemptTerminalTabLayoutKey({ terminalLayoutsByTabId: {} }, TABS)).toBe(
-      `${TAB_ID}=`
+      JSON.stringify([[TAB_ID, []]])
     )
   })
 })

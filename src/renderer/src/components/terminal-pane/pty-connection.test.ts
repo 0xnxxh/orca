@@ -192,6 +192,7 @@ type StoreState = {
     localWindowsRuntimeDefault?: { kind: 'windows-host' } | { kind: 'wsl'; distro: string | null }
     terminalMainSideEffectAuthority?: boolean
     terminalHiddenDeliveryGate?: boolean
+    terminalSshViewParking?: boolean
     notifications?: {
       enabled?: boolean
       agentTaskComplete?: boolean
@@ -19896,9 +19897,13 @@ describe('connectPanePty', () => {
 
     const pane = createPane(1)
     const { writes } = captureCallbackTerminalWrites(pane)
+    pane.terminal.write(
+      `captured-early-marker\r\n${Array.from({ length: 12 }, (_, index) => `captured-${index}\r\n`).join('')}`
+    )
     const deps = createDeps({
       restoredLeafId: LEAF_1,
-      restoredPtyIdByLeafId: { [LEAF_1]: sshPtyId }
+      restoredPtyIdByLeafId: { [LEAF_1]: sshPtyId },
+      restoredViewportBlankingPanesRef: { current: new Set([1]) }
     })
 
     connectPanePty(pane as never, createManager(1) as never, deps as never)
@@ -19913,6 +19918,11 @@ describe('connectPanePty', () => {
     await flushAsyncTicks(20)
 
     expect(writes).toContain('relay-fallback-output')
+    expect(writes).toContain('\x1b[2J\x1b[H')
+    expect(writes).not.toContain('\x1b[2J\x1b[3J\x1b[H')
+    expect((await renderHeadlessBuffer(writes, 80, 6)).join('\n')).toContain(
+      'captured-early-marker'
+    )
     // Why: a stalled reveal must cost exactly one bounded probe — a re-probe
     // would buy a second timeout window before the relay paint.
     expect(window.api.pty.getMainBufferSnapshot).toHaveBeenCalledTimes(1)
@@ -19952,6 +19962,47 @@ describe('connectPanePty', () => {
 
     expect(window.api.pty.getMainBufferSnapshot).not.toHaveBeenCalled()
     expect(writes).toContain('relay-reconnect-output')
+  })
+
+  it('preserves restored scrollback through relay replay without a parked watcher', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const sshPtyId = toAppSshPtyId('conn-1', 'relay-pty-1')
+    const transport = createMockTransport(sshPtyId)
+    transport.connect.mockImplementation(async () => {
+      transport.getPtyId.mockReturnValue(sshPtyId)
+      return { id: sshPtyId, isReattach: true, replay: 'relay-reconnect-output' }
+    })
+    transportFactoryQueue.push(transport)
+
+    mockStoreState = {
+      ...mockStoreState,
+      settings: { ...mockStoreState.settings, terminalSshViewParking: false },
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: null }] },
+      repos: [{ id: 'repo1', connectionId: 'conn-1' }],
+      deferredSshReconnectTargets: ['conn-1'],
+      deferredSshSessionIdsByTabId: { 'tab-1': sshPtyId }
+    }
+
+    const pane = createPane(1)
+    const { writes } = captureCallbackTerminalWrites(pane)
+    pane.terminal.write(
+      `captured-early-marker\r\n${Array.from({ length: 12 }, (_, index) => `captured-${index}\r\n`).join('')}`
+    )
+    const deps = createDeps({
+      restoredLeafId: LEAF_1,
+      restoredPtyIdByLeafId: { [LEAF_1]: sshPtyId },
+      restoredViewportBlankingPanesRef: { current: new Set([1]) }
+    })
+
+    connectPanePty(pane as never, createManager(1) as never, deps as never)
+    await flushAsyncTicks(20)
+
+    expect(window.api.pty.getMainBufferSnapshot).not.toHaveBeenCalled()
+    expect(writes).toContain('\x1b[2J\x1b[H')
+    expect(writes).not.toContain('\x1b[2J\x1b[3J\x1b[H')
+    expect((await renderHeadlessBuffer(writes, 80, 6)).join('\n')).toContain(
+      'captured-early-marker'
+    )
   })
 
   it('does not auto-reconnect after a user cancels deferred SSH passphrase auth', async () => {
