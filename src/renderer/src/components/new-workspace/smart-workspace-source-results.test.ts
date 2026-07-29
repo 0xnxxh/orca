@@ -128,6 +128,45 @@ describe('Branch source results', () => {
     ).toEqual([{ refName: 'origin/feature', localBranchName: 'feature' }])
   })
 
+  it('keeps the last branch results while the user trims a prefix of the settled query', () => {
+    expect(
+      getVisibleBranchResults({
+        mode: 'branches',
+        value: 'fe',
+        selectedRepoId: 'repo-1',
+        resultRepoId: 'repo-1',
+        resultQuery: 'feat',
+        branches: [{ refName: 'origin/feature', localBranchName: 'feature' }]
+      })
+    ).toEqual([{ refName: 'origin/feature', localBranchName: 'feature' }])
+  })
+
+  it('hides held branch results when the live query diverges from the settled query', () => {
+    expect(
+      getVisibleBranchResults({
+        mode: 'branches',
+        value: 'bug',
+        selectedRepoId: 'repo-1',
+        resultRepoId: 'repo-1',
+        resultQuery: 'feat',
+        branches: [{ refName: 'origin/feature', localBranchName: 'feature' }]
+      })
+    ).toEqual([])
+  })
+
+  it('keeps held branch results across case-only edits of a prefix query', () => {
+    expect(
+      getVisibleBranchResults({
+        mode: 'branches',
+        value: 'Feat',
+        selectedRepoId: 'repo-1',
+        resultRepoId: 'repo-1',
+        resultQuery: 'feat',
+        branches: [{ refName: 'origin/feature', localBranchName: 'feature' }]
+      })
+    ).toEqual([{ refName: 'origin/feature', localBranchName: 'feature' }])
+  })
+
   it('uses stable cmdk values for typed-text actions', () => {
     expect(
       buildSmartWorkspaceSourceRows({

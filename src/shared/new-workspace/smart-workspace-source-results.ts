@@ -99,9 +99,20 @@ export function getVisibleBranchResults({
   if (!selectedRepoId || resultRepoId !== selectedRepoId || resultQuery === null) {
     return []
   }
-  // Why: hold the last settled branch list while the user types ahead — blanking
-  // on query mismatch flashed the dropdown empty between keystrokes.
-  if (value.trim() === '' && resultQuery !== '') {
+  const currentQuery = value.trim()
+  // Why: hold the last settled list while the user extends/trims the query so the
+  // dropdown does not blank between debounced keystrokes. Drop the hold when the
+  // query diverges (e.g. "feat" → "bug") so unrelated rows do not linger.
+  if (currentQuery === '') {
+    return resultQuery === '' ? branches : []
+  }
+  const currentQueryKey = currentQuery.toLowerCase()
+  const resultQueryKey = resultQuery.toLowerCase()
+  if (
+    resultQueryKey !== currentQueryKey &&
+    !currentQueryKey.startsWith(resultQueryKey) &&
+    !resultQueryKey.startsWith(currentQueryKey)
+  ) {
     return []
   }
   return branches

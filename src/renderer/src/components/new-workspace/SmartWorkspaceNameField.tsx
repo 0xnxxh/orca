@@ -1081,7 +1081,7 @@ export default function SmartWorkspaceNameField({
     }
   }, [rows])
 
-  // Why: source rows lag debouncedQuery, so keep Enter off a stale row.
+  // Why: live input leads debounced search; freeze highlight until the query catches up.
   const valueWithinSourceLimit = isSmartWorkspaceSourceQueryWithinLimit(value)
   const debouncedQueryWithinSourceLimit = isSmartWorkspaceSourceQueryWithinLimit(debouncedQuery)
   const trimmedValue = valueWithinSourceLimit ? value.trim() : ''
@@ -1151,10 +1151,8 @@ export default function SmartWorkspaceNameField({
 
   const handleSelect = useCallback(
     (row: RowEntry) => {
-      // Why: provider rows can lag the live input; typed-name / create-branch stay safe.
-      if (isQueryStale && row.kind !== 'use-name' && row.kind !== 'create-branch') {
-        return
-      }
+      // Why: select what is shown — held provider rows stay visible while the
+      // query is ahead of debounce, so blocking them made click/Enter no-ops.
       if (row.kind === 'use-name' || row.kind === 'create-branch') {
         // Why: "create new branch" has no ref to base from, so it uses the typed-name path (default base).
         onValueChange(row.name)
@@ -1170,14 +1168,7 @@ export default function SmartWorkspaceNameField({
       }
       setOpen(false)
     },
-    [
-      isQueryStale,
-      onBranchSelect,
-      onGitHubItemSelect,
-      onGitLabItemSelect,
-      onLinearIssueSelect,
-      onValueChange
-    ]
+    [onBranchSelect, onGitHubItemSelect, onGitLabItemSelect, onLinearIssueSelect, onValueChange]
   )
 
   const applyEmojiReplacement = useCallback(
@@ -1609,19 +1600,12 @@ export default function SmartWorkspaceNameField({
                         }
                         if (open && rows.length > 0) {
                           const row = rows.find((entry) => entry.value === resolvedCommandValue)
-                          if (
-                            row &&
-                            !(
-                              isQueryStale &&
-                              row.kind !== 'use-name' &&
-                              row.kind !== 'create-branch'
-                            )
-                          ) {
+                          if (row) {
                             event.preventDefault()
                             handleSelect(row)
                             return
                           }
-                          // No selectable row (stale provider arm); fall through to onPlainEnter.
+                          // No highlighted row; fall through to onPlainEnter so the keypress isn't inert.
                         }
                         onPlainEnter?.()
                       }
