@@ -7168,11 +7168,21 @@ export class OrcaRuntimeService {
     connectionId?: string,
     deadline: WatcherRemovalDeadline = createWatcherRemovalDeadline()
   ): Promise<void> => {
+    // Why drain the remote/explorer closes: they await SSH round trips and lease suspends that a dead
+    // link never answers. The local close bounds its own awaits against the same deadline internally.
     const results = await Promise.allSettled([
       connectionId
-        ? closeRemoteWatcherForWorktreePath(connectionId, worktreePath)
+        ? drainBeforeWatcherRemoval(
+            closeRemoteWatcherForWorktreePath(connectionId, worktreePath),
+            deadline,
+            `remote watcher close for ${worktreePath}`
+          )
         : closeLocalWatcherForWorktreePath(worktreePath, deadline),
-      this.fileCommands.closeFileExplorerWatchersForPath(worktreePath, connectionId)
+      drainBeforeWatcherRemoval(
+        this.fileCommands.closeFileExplorerWatchersForPath(worktreePath, connectionId),
+        deadline,
+        `file explorer watcher close for ${worktreePath}`
+      )
     ])
     const failure = results.find((result): result is PromiseRejectedResult => {
       return result.status === 'rejected'

@@ -1,3 +1,4 @@
+import type * as FsPromises from 'node:fs/promises'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
@@ -35,7 +36,10 @@ vi.mock('fs', () => ({
   statSync: statSyncMock
 }))
 
-vi.mock('node:fs/promises', () => ({
+// Spread the real module: this factory replaces node:fs/promises for the whole import graph, so a
+// transitive readFile/mkdir would otherwise resolve to undefined.
+vi.mock('node:fs/promises', async () => ({
+  ...(await vi.importActual<typeof FsPromises>('node:fs/promises')),
   rm: rmAsyncMock
 }))
 

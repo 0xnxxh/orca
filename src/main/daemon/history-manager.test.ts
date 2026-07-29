@@ -492,28 +492,32 @@ describe('HistoryManager', () => {
       const sessionId = 'bulky'
       await mgr.openSession(sessionId, { cwd: '/tmp', cols: 80, rows: 24 })
       const sessionDir = join(dir, getHistorySessionDirName(sessionId))
-      // Enough entries that a synchronous recursive rm is unmistakable in the timer gaps.
+      // Enough entries that an async rm has to cycle the loop thousands of times to finish.
       for (let i = 0; i < 3_000; i++) {
         writeFileSync(join(sessionDir, `chunk-${i}.log`), `payload-${i}`)
       }
 
-      // Why: removeSession runs in the Electron main process, so the probe is main-thread lag, not duration.
-      let maxGapMs = 0
-      let previousTickAt = performance.now()
-      const ticker = setInterval(() => {
-        const now = performance.now()
-        maxGapMs = Math.max(maxGapMs, now - previousTickAt)
-        previousTickAt = now
-      }, 2)
+      // Why loop turns, not timer gaps: removeSession runs on the Electron main thread, and the
+      // regression is a blocked loop. Wall-clock gap bounds measure runner scheduling and flake;
+      // a turn count doesn't — a sync recursive rm yields exactly zero turns while it walks the
+      // tree, an async one yields one per libuv completion regardless of how fast the box is.
+      let loopTurns = 0
+      let counting = true
+      const countTurn = (): void => {
+        if (counting) {
+          loopTurns++
+          setImmediate(countTurn)
+        }
+      }
+      setImmediate(countTurn)
       try {
-        previousTickAt = performance.now()
         await mgr.removeSession(sessionId)
       } finally {
-        clearInterval(ticker)
+        counting = false
       }
 
       expect(existsSync(sessionDir)).toBe(false)
-      expect(maxGapMs).toBeLessThan(30)
+      expect(loopTurns).toBeGreaterThan(100)
     })
   })
 })

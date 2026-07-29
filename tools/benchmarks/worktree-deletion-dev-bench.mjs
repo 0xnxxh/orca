@@ -13,7 +13,9 @@ import { rm } from 'node:fs/promises'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
-import { chromium } from 'playwright'
+// Why @playwright/test, not playwright: only the former is a declared devDependency; it re-exports
+// the same browser types, so the benchmark resolves without relying on a hoisted transitive install.
+import { chromium } from '@playwright/test'
 
 const DEFAULT_ITERATIONS = 3
 const DEFAULT_HISTORY_FILES = 10_000
@@ -132,6 +134,8 @@ function launchDevInstance({ label, repoRoot }, fixture, port) {
     cwd: repoRoot,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
+    // Why: own process group so teardown can signal the Electron/Vite grandchildren, not just the launcher.
+    detached: process.platform !== 'win32',
     windowsHide: true
   })
   const log = { stdout: '', stderr: '' }
@@ -159,8 +163,15 @@ async function connectToOrca(instance) {
     }
     try {
       const browser = await chromium.connectOverCDP(instance.endpoint)
-      const page = await findOrcaPage(browser)
-      return { browser, page }
+      try {
+        // CDP answers long before the renderer exposes window.__store; without this, every
+        // findOrcaPage timeout drops a live browser handle and leaks a connection per retry.
+        const page = await findOrcaPage(browser)
+        return { browser, page }
+      } catch (error) {
+        await browser.close().catch(() => undefined)
+        throw error
+      }
     } catch (error) {
       lastError = error
       await delay(500)
@@ -296,6 +307,7 @@ async function measureDeletion(page, worktreeId, rootWorktreeId) {
       }
       store.getState().setActiveWorktree(fallbackId)
       let settled = false
+      let failure = null
       const startedAt = performance.now()
       const deletion = store
         .getState()
@@ -304,6 +316,13 @@ async function measureDeletion(page, worktreeId, rootWorktreeId) {
           settled = true
           return result
         })
+        .catch((error) => {
+          // Why: without this the poll loop below spins forever on a rejected delete — the exact
+          // failure this benchmark exists to surface would read as a hang.
+          settled = true
+          failure = error
+          return null
+        })
       const ipcSamplesMs = []
       let maxRendererTimerDriftMs = 0
       let expectedTimerAt = performance.now() + 10
@@ -311,7 +330,6 @@ async function measureDeletion(page, worktreeId, rootWorktreeId) {
         await new Promise((resolve) => window.setTimeout(resolve, 10))
         const now = performance.now()
         maxRendererTimerDriftMs = Math.max(maxRendererTimerDriftMs, now - expectedTimerAt)
-        expectedTimerAt = now + 10
         const ipcStartedAt = performance.now()
         await Promise.race([
           window.api.repos.list(),
@@ -320,8 +338,14 @@ async function measureDeletion(page, worktreeId, rootWorktreeId) {
           )
         ])
         ipcSamplesMs.push(performance.now() - ipcStartedAt)
+        // Why re-read the clock here: anchoring on `now` would fold the IPC round trip that
+        // ipcSamplesMs already records into the next iteration's drift.
+        expectedTimerAt = performance.now() + 10
       }
       const result = await deletion
+      if (failure) {
+        throw new Error(`removeWorktree rejected: ${String(failure)}`)
+      }
       const postDeleteIpcStartedAt = performance.now()
       await window.api.repos.list()
       const finalState = store.getState()
@@ -464,7 +488,14 @@ async function benchmarkInstance(instanceConfig, index, options) {
     await browser.close()
     browser = null
     await stopDevInstance(instance)
-    await verifyRestart(instanceConfig, fixture, port, repoState.repoId)
+    // Why a fresh port: the debug listener may still hold the old one, so reusing it can attach to
+    // the dying endpoint or burn the whole start timeout.
+    await verifyRestart(
+      instanceConfig,
+      fixture,
+      await findAvailablePort(port + 1),
+      repoState.repoId
+    )
     return {
       label: instanceConfig.label,
       repoRoot: instanceConfig.repoRoot,
@@ -508,20 +539,32 @@ function isPortAvailable(port) {
 }
 
 async function stopDevInstance(instance) {
-  if (instance.child.exitCode !== null) {
+  // Why signalCode too: a signal-terminated child leaves exitCode null, so an exitCode-only guard
+  // re-enters the kill path for a dead process and burns the full 8s race on every teardown.
+  if (instance.child.exitCode !== null || instance.child.signalCode !== null) {
     return
   }
   if (process.platform === 'win32') {
     spawnSync('taskkill.exe', ['/PID', String(instance.child.pid), '/T', '/F'], { stdio: 'ignore' })
     return
   }
-  instance.child.kill('SIGINT')
+  killDevInstanceTree(instance.child, 'SIGINT')
   const exited = await Promise.race([
     new Promise((resolve) => instance.child.once('exit', () => resolve(true))),
     delay(8_000).then(() => false)
   ])
   if (!exited) {
-    instance.child.kill('SIGKILL')
+    killDevInstanceTree(instance.child, 'SIGKILL')
+  }
+}
+
+/** POSIX: signal the whole group, or the launcher's Electron/Vite grandchildren survive and keep the
+ *  CDP port and fixture directory busy. */
+function killDevInstanceTree(child, signal) {
+  try {
+    process.kill(-child.pid, signal)
+  } catch {
+    child.kill(signal)
   }
 }
 

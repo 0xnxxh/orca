@@ -2472,23 +2472,29 @@ export function registerWorktreeHandlers(
           const hooks = await getArchiveHooksForRemoval(repo)
           const archiveScript = hooks?.scripts.archive
           if (archiveScript && !args.skipArchive) {
-            await withWorktreeRemoveStageSpan('archive_hook', 'remote', async () => {
-              const result = repo.connectionId
-                ? await runRemoteArchiveHook(repo, canonicalWorktreePath, archiveScript)
-                : await runHook(
-                    'archive',
-                    canonicalWorktreePath,
-                    repo,
-                    undefined,
-                    localWorktreeGitOptions
+            // Why the branch on connectionId: this block is shared by both flows, so a hardcoded
+            // 'remote' would file every local archive hook under the SSH breakdown.
+            await withWorktreeRemoveStageSpan(
+              'archive_hook',
+              repo.connectionId ? 'remote' : 'local',
+              async () => {
+                const result = repo.connectionId
+                  ? await runRemoteArchiveHook(repo, canonicalWorktreePath, archiveScript)
+                  : await runHook(
+                      'archive',
+                      canonicalWorktreePath,
+                      repo,
+                      undefined,
+                      localWorktreeGitOptions
+                    )
+                if (!result.success) {
+                  console.error(
+                    `[hooks] archive hook failed for ${canonicalWorktreePath}:`,
+                    result.output
                   )
-              if (!result.success) {
-                console.error(
-                  `[hooks] archive hook failed for ${canonicalWorktreePath}:`,
-                  result.output
-                )
+                }
               }
-            })
+            )
           }
 
           const remoteConnectionId = repo.connectionId ?? undefined

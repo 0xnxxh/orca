@@ -7901,6 +7901,32 @@ describe('registerWorktreeHandlers', () => {
     }
   })
 
+  it('traces a local archive hook as flow local, not remote', async () => {
+    const records: RedactableSpan[] = []
+    setActiveSink({
+      push: (record) => records.push(record as RedactableSpan),
+      flush: () => {},
+      close: () => {}
+    })
+    try {
+      mockKnownFeatureWorktree()
+      // The archive hook block is shared by both flows, so a local repo must not land under 'remote'.
+      getEffectiveHooksMock.mockReturnValue({ scripts: { archive: 'pnpm worktree:archive' } })
+      runHookMock.mockResolvedValue({ success: true, output: '' })
+      removeWorktreeMock.mockResolvedValue({})
+
+      await handlers['worktrees:remove'](null, { worktreeId: 'repo-1::/workspace/feature-wt' })
+
+      const archiveStage = records.find((record) => record.name === 'worktree.remove.archive_hook')
+      expect(archiveStage?.attributes).toMatchObject({
+        kind: 'worktree',
+        'worktree.flow': 'local'
+      })
+    } finally {
+      _resetTracerForTests()
+    }
+  })
+
   it('prunes git worktree tracking when removing an orphaned worktree', async () => {
     mockKnownFeatureWorktree()
     const orphanError = Object.assign(new Error('git worktree remove failed'), {

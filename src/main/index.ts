@@ -65,8 +65,7 @@ import { DesktopRelayService } from './runtime/relay/desktop-relay-service'
 import type { RelayBrokerStatus } from './runtime/relay/relay-session-broker'
 import { awaitRuntimeFileWatcherUnsubscribes } from './runtime/orca-runtime-files'
 import { clearRuntimeMetadataIfOwned } from './runtime/runtime-metadata'
-import { schedulePendingHistoryTreeRemovals } from './terminal-history-deletion'
-import { getHistoryRoot } from './terminal-history-paths'
+import { scheduleAllPendingHistoryTreeRemovals } from './terminal-history-deletion'
 import { ensureMainI18n, setMainPluginLanguagePacks, setMainUiLanguage } from './i18n/main-i18n'
 import {
   getNextDefaultOnAppearanceSettingValue,
@@ -2688,7 +2687,7 @@ void app.whenReady().then(async () => {
     automations.start()
     // Why: serve deletes worktrees too, and the history GC that normally drains delete tombstones is
     // armed from the main window — without this, a quit mid-removal leaks the tree until a desktop launch.
-    schedulePendingHistoryTreeRemovals(getHistoryRoot())
+    scheduleAllPendingHistoryTreeRemovals()
     await printServeReady(serveOptions)
     return
   }

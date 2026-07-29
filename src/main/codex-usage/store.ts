@@ -381,7 +381,8 @@ export class CodexUsageStore {
     this.store = store
     this.state = this.load()
     // Why: a crash between write and rename orphans a 60 MB temp file; reclaim once per launch.
-    void removeStaleDurableWriteTempFiles(getCodexUsageFile())
+    // Seeding the write queue with it also orders the sweep ahead of the first write of this launch.
+    this.pendingWrite = removeStaleDurableWriteTempFiles(getCodexUsageFile())
   }
 
   private load(): CodexUsagePersistedState {
@@ -502,10 +503,12 @@ export class CodexUsageStore {
         this.state.worktreeFingerprint = worktreeFingerprint
         this.state.scanState.lastScanCompletedAt = Date.now()
         this.state.scanState.lastScanError = null
-        await this.writeToDisk()
+        // Why swallow: persistence is a cache concern. A disk failure must not turn a good scan into
+        // a scan error and reject refresh() for every query caller; writeToDisk already logs it.
+        await this.writeToDisk().catch(() => {})
       } catch (error) {
         this.state.scanState.lastScanError = error instanceof Error ? error.message : String(error)
-        await this.writeToDisk()
+        await this.writeToDisk().catch(() => {})
       } finally {
         this.scanPromise = null
       }

@@ -31,13 +31,17 @@ export async function drainBeforeWatcherRemoval(
   }
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
+    const settled = promise.then(() => 'settled' as const)
     const outcome = await Promise.race([
-      promise.then(() => 'settled' as const),
+      settled,
       new Promise<'timeout'>((resolve) => {
         timer = setTimeout(() => resolve('timeout'), deadline.remainingMs())
       })
     ])
     if (outcome === 'timeout') {
+      // Why: nobody awaits the abandoned promise anymore, so a late rejection (an aborted native
+      // subscribe finally reporting) would be an unhandled rejection — fatal in the main process.
+      void settled.catch(() => {})
       console.warn(`[watcher-removal] Timed out waiting for ${label}; continuing removal`)
     }
     return outcome

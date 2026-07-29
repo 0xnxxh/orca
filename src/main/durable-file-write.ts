@@ -104,16 +104,20 @@ export function durableWriteTempPath(finalPath: string): string {
 /**
  * Sweep temp files orphaned by a death between write and rename — for multi-MB payloads they would
  * otherwise accumulate forever. Racing another instance's in-flight save at worst loses that save,
- * the trade already accepted for rename-based atomicity.
+ * the trade already accepted for rename-based atomicity. This process's own temps are skipped: a
+ * `<file>.<our pid>.*.tmp` seen during a sweep is a live write, and deleting it fails its rename.
  */
 export async function removeStaleDurableWriteTempFiles(finalPath: string): Promise<void> {
   const directory = dirname(finalPath)
   const prefix = `${basename(finalPath)}.`
+  const ownPrefix = `${prefix}${process.pid}.`
   try {
     const names = await readdir(directory)
     await Promise.all(
       names
-        .filter((name) => name.startsWith(prefix) && name.endsWith('.tmp'))
+        .filter(
+          (name) => name.startsWith(prefix) && name.endsWith('.tmp') && !name.startsWith(ownPrefix)
+        )
         .map((name) => rm(join(directory, name), { force: true }).catch(() => {}))
     )
   } catch {

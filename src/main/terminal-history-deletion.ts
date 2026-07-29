@@ -73,13 +73,18 @@ export function schedulePendingHistoryTreeRemovals(historyRoot: string): void {
   }
 }
 
-/** Drain every history root's tombstones and await the in-flight removals. Tests only: production
- *  schedules the same drain from startup GC and headless serve without ever blocking on it. */
-export async function flushPendingWorktreeHistoryDeletions(): Promise<void> {
+/** Schedule tombstoned trees under every history root, native and WSL. */
+export function scheduleAllPendingHistoryTreeRemovals(): void {
   schedulePendingHistoryTreeRemovals(getHistoryRoot())
   for (const distroRoot of listWslHistoryRoots()) {
     schedulePendingHistoryTreeRemovals(distroRoot)
   }
+}
+
+/** Drain every history root's tombstones and await the in-flight removals. Tests only: production
+ *  schedules the same drain from startup GC and headless serve without ever blocking on it. */
+export async function flushPendingWorktreeHistoryDeletions(): Promise<void> {
+  scheduleAllPendingHistoryTreeRemovals()
   await Promise.all(pendingHistoryTreeRemovals.values())
 }
 
