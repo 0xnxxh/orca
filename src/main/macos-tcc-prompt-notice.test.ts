@@ -106,7 +106,8 @@ describe('tcc prompt notice threshold', () => {
     const [, contents] = writeFileAtomically.mock.calls.at(-1) as [string, string]
     expect(JSON.parse(contents)).toMatchObject({
       promptCount: TCC_PROMPT_NOTICE_THRESHOLD,
-      notified: true
+      notified: true,
+      acknowledgedAfterClose: true
     })
   })
 
@@ -142,7 +143,11 @@ describe('tcc prompt notice threshold', () => {
 
     expect(consumePendingTccPromptNotice(2)).toBeNull()
     const [, contents] = writeFileAtomically.mock.calls.at(-1) as [string, string]
-    expect(JSON.parse(contents)).toMatchObject({ dismissed: true, notified: true })
+    expect(JSON.parse(contents)).toMatchObject({
+      dismissed: true,
+      notified: true,
+      acknowledgedAfterClose: true
+    })
   })
 
   it('routes a later prompt to the replacement main window', () => {
@@ -313,6 +318,49 @@ describe('tcc prompt notice threshold', () => {
       })
       expect(mainWindow.once).not.toHaveBeenCalled()
       expect(consumePendingTccPromptNotice(1)).toEqual({ claimId: 1, promptCount: 2 })
+    } finally {
+      Object.defineProperty(process, 'platform', platform!)
+    }
+  })
+
+  it('replays a legacy optimistic acknowledgement without respawning the watcher', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    readTallyFile.mockReturnValue(
+      JSON.stringify({ promptCount: 1, notified: true, dismissed: false })
+    )
+    try {
+      const mainWindow = createWindowStub()
+      initTccPromptNotice(mainWindow as never)
+
+      expect(watchStart).not.toHaveBeenCalled()
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith('macosTccPrompts:threshold', {
+        promptCount: 1
+      })
+      expect(consumePendingTccPromptNotice(1)).toEqual({ claimId: 1, promptCount: 1 })
+    } finally {
+      Object.defineProperty(process, 'platform', platform!)
+    }
+  })
+
+  it('does not replay a notice acknowledged after close', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    readTallyFile.mockReturnValue(
+      JSON.stringify({
+        promptCount: 1,
+        notified: true,
+        dismissed: false,
+        acknowledgedAfterClose: true
+      })
+    )
+    try {
+      const mainWindow = createWindowStub()
+      initTccPromptNotice(mainWindow as never)
+
+      expect(watchStart).not.toHaveBeenCalled()
+      expect(mainWindow.webContents.send).not.toHaveBeenCalled()
+      expect(consumePendingTccPromptNotice(1)).toBeNull()
     } finally {
       Object.defineProperty(process, 'platform', platform!)
     }
