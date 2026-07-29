@@ -51,6 +51,11 @@ import {
   setActivityTerminalPortals,
   type ActivityTerminalPortalTarget
 } from './activity-terminal-portal'
+import {
+  reconcileActivityPortalThreads,
+  resolveActivityPortalSwap
+} from './activity-portal-thread-reconciliation'
+import { createActivityPortalReadinessLatch } from './activity-portal-readiness-oscillation'
 import type { Repo, TerminalTab, Worktree } from '../../../../shared/types'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import {
@@ -284,7 +289,7 @@ function getSelectedActivityTerminalPortalStatus(
   }
 }
 
-function useActivityTerminalPortalStatus(
+export function useActivityTerminalPortalStatus(
   target: HTMLElement | null,
   paneKey: string | null,
   forceUnavailable = false
@@ -316,12 +321,15 @@ function useActivityTerminalPortalStatus(
     let disposed = false
     let readyFrame: number | null = null
     let sawUnreadySelectedRoot = false
+    // Why: scoped to this subscription, so it resets whenever target/paneKey change.
+    const readinessLatch = createActivityPortalReadinessLatch()
 
     const updateReadiness = (status: ActivityTerminalPortalReadiness['status']): void => {
+      const latched = readinessLatch.next(status)
       setReadiness((prev) =>
-        prev.target === target && prev.paneKey === paneKey && prev.status === status
+        prev.target === target && prev.paneKey === paneKey && prev.status === latched
           ? prev
-          : { target, paneKey, status }
+          : { target, paneKey, status: latched }
       )
     }
 
@@ -1512,27 +1520,12 @@ export default function ActivityPrototypePage(): React.JSX.Element {
           (tab) => tab.id === displayedTabId
         )
       : false
-  const displayedIsSelectedTerminal =
-    selectedThread &&
-    displayedThread &&
-    displayedThread.worktree.id === selectedThread.worktree.id &&
-    displayedThread.tab.id === selectedThread.tab.id
-  const visibleThread =
-    selectedThread && selectedHasLiveTab
-      ? displayedThread && displayedHasLiveTab && displayedThread.paneKey !== selectedThread.paneKey
-        ? displayedIsSelectedTerminal
-          ? selectedThread
-          : displayedThread
-        : selectedThread
-      : null
-  const stagedThread =
-    selectedThread &&
-    selectedHasLiveTab &&
-    visibleThread &&
-    visibleThread.paneKey !== selectedThread.paneKey &&
-    !displayedIsSelectedTerminal
-      ? selectedThread
-      : null
+  const { visibleThread, stagedThread } = reconcileActivityPortalThreads({
+    selectedThread,
+    displayedThread,
+    selectedHasLiveTab: Boolean(selectedHasLiveTab),
+    displayedHasLiveTab: Boolean(displayedHasLiveTab)
+  })
   const inactivePortalSlotId = otherActivityTerminalSlot(activePortalSlotId)
   const portalTargetBySlot = {
     primary: primaryPortalTargetEl,
@@ -1605,18 +1598,27 @@ export default function ActivityPrototypePage(): React.JSX.Element {
   ])
 
   useLayoutEffect(() => {
-    if (!selectedThread || !selectedHasLiveTab) {
+    const swap = resolveActivityPortalSwap({
+      selectedThread,
+      selectedHasLiveTab: Boolean(selectedHasLiveTab),
+      visibleThread,
+      stagedThread,
+      visiblePortalReady,
+      stagedPortalReady,
+      stagedPortalUnavailable
+    })
+    if (swap?.kind === 'clear') {
       setDisplayedPaneKey(null)
       return
     }
-    if (stagedThread && (stagedPortalReady || stagedPortalUnavailable)) {
+    if (swap?.kind === 'swap-staged') {
       // Why: a stale selected pane must swap to the unavailable state, not leave the previous pane visible under the new row.
       setActivePortalSlotId(inactivePortalSlotId)
-      setDisplayedPaneKey(stagedThread.paneKey)
+      setDisplayedPaneKey(swap.paneKey)
       return
     }
-    if (!stagedThread && visibleThread?.paneKey === selectedThread.paneKey && visiblePortalReady) {
-      setDisplayedPaneKey(selectedThread.paneKey)
+    if (swap?.kind === 'settle-visible') {
+      setDisplayedPaneKey(swap.paneKey)
     }
   }, [
     inactivePortalSlotId,
