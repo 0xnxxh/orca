@@ -23,6 +23,7 @@ import {
   type FeedbackImageDraft
 } from '@/lib/feedback-image-attachments'
 import { SidebarFeedbackImageAttachments } from './SidebarFeedbackImageAttachments'
+import { MAX_FEEDBACK_LENGTH, SidebarFeedbackLengthCounter } from './SidebarFeedbackLengthCounter'
 import { useFeedbackImageDrop } from './use-feedback-image-drop'
 
 const GITHUB_ISSUES_URL = 'https://github.com/stablyai/orca/issues/'
@@ -349,8 +350,14 @@ export function SidebarFeedbackDialog({
             'What could we improve?'
           )}
           rows={7}
+          // Why: the endpoint rejects longer reports with a 400 the user reads as
+          // a generic failure, so stop the overflow here instead.
+          maxLength={MAX_FEEDBACK_LENGTH}
           className="min-h-32 w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         />
+        <div className="flex justify-end">
+          <SidebarFeedbackLengthCounter length={feedback.length} />
+        </div>
 
         <SidebarFeedbackImageAttachments
           images={images}

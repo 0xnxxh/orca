@@ -5025,6 +5025,9 @@
           "screenshotsHint": "Attach up to {count} screenshots",
           "attachImages": "Attach",
           "removeImage": "Remove image"
+        },
+        "SidebarFeedbackLengthCounter": {
+          "remaining": "{remaining} characters left"
         }
       },
       "shared": {
