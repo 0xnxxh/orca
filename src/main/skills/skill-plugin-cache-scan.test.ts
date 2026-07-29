@@ -47,13 +47,16 @@ describe('plugin skill candidate scan', () => {
       })
     )
 
+    // Budget: the root's two vendor dirents, one's, and its skill's — so the count is
+    // crossed inside 'two', not at the root. That is what pins the issue to the scan
+    // root the dialog can name rather than whichever directory happened to cross it.
     const result = await scanKnownPluginSkillCandidates(root, new Set(['orca-cli']), {
-      maximumEntries: 1
+      maximumEntries: 4
     })
 
-    // Why: the walk ends before descending, so both real skills go unseen. The issue is
-    // all that stops the dialog reporting all-clear over a scan that never reached them.
-    expect(result.candidates).toEqual([])
+    // Why: the second vendor's skill goes unseen. The issue is all that stops the dialog
+    // reporting all-clear over a scan that never reached it.
+    expect(result.candidates).toEqual([{ name: 'orca-cli', path: join(root, 'one', 'orca-cli') }])
     expect(result.issues).toEqual([{ path: root, reason: 'entry-limit', errorCode: null }])
   })
 
@@ -63,18 +66,22 @@ describe('plugin skill candidate scan', () => {
     // spends the whole scan on missing paths. Only this guard bounds that.
     const root = await mkdtemp(join(tmpdir(), 'orca-plugin-entry-limit-declared-'))
     temporaryDirectories.push(root)
-    const candidate = join(root, 'a-skills', 'orca-cli')
-    await mkdir(join(root, '.codex-plugin'), { recursive: true })
+    // Why: the manifest sits under a vendor directory, not at the scan root, so the
+    // directory whose declared roots cross the budget is not the root the issue names.
+    const packageRoot = join(root, 'vendor')
+    const candidate = join(packageRoot, 'a-skills', 'orca-cli')
+    await mkdir(join(packageRoot, '.codex-plugin'), { recursive: true })
     await mkdir(candidate, { recursive: true })
     await writeFile(
-      join(root, '.codex-plugin', 'plugin.json'),
+      join(packageRoot, '.codex-plugin', 'plugin.json'),
       '{"skills":["./a-skills","./missing-one","./missing-two"]}\n'
     )
     await writeFile(join(candidate, 'SKILL.md'), '# Orca CLI\n')
 
-    // Budget: the root's two dirents, a-skills', the skill's, and the first declared root.
+    // Budget: the root's dirent, the vendor's two, a-skills', the skill's, and the first
+    // declared root.
     const result = await scanKnownPluginSkillCandidates(root, new Set(['orca-cli']), {
-      maximumEntries: 5
+      maximumEntries: 6
     })
 
     // Why: the declared root that exists was fully walked, so the bound is being crossed by
