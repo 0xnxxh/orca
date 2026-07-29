@@ -10,22 +10,42 @@ import {
 import { waitForHostedIosAccessibilityControl } from './hosted-ios-accessibility'
 import { waitForHostedIosEvaluation } from './hosted-ios-webview-cdp'
 
+type PastedTerminalCommandOperations = {
+  tapControl?: typeof tapHostedIosAccessibilityControl
+  waitForEvaluation?: typeof waitForHostedIosEvaluation
+  writePasteboard?: typeof writeHostedIosSimulatorPasteboard
+}
+
 export async function sendHostedIosPastedTerminalCommand(
   args: HostedIosEmulatorCommandOptions & { discoveryUrl: string },
-  command: string
+  command: string,
+  operations: PastedTerminalCommandOperations = {}
 ): Promise<{ expected: string; requireCarriageReturn: true }> {
-  await writeHostedIosSimulatorPasteboard(args.deviceUdid, command)
+  const tapControl = operations.tapControl ?? tapHostedIosAccessibilityControl
+  const waitForEvaluation = operations.waitForEvaluation ?? waitForHostedIosEvaluation
+  const writePasteboard = operations.writePasteboard ?? writeHostedIosSimulatorPasteboard
+  await writePasteboard(args.deviceUdid, command)
+  let lastActivationError: unknown
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    await tapHostedIosAccessibilityControl(args, 'Paste', 20_000)
-    await allowHostedIosPasteIfRequested(args)
-    await waitForHostedIosEvaluation(
-      args.discoveryUrl,
-      5_000,
-      hostedIosTerminalInputCaptureExpression,
-      (value) => value.split(HOSTED_IOS_TERMINAL_CLIPBOARD_PASTE_CAPTURE).length - 1 >= attempt
-    )
+    await tapControl(args, 'Paste', 20_000)
+    await allowHostedIosPasteIfRequested(args, tapControl)
+    try {
+      await waitForEvaluation(
+        args.discoveryUrl,
+        5_000,
+        hostedIosTerminalInputCaptureExpression,
+        (value) => value.includes(HOSTED_IOS_TERMINAL_CLIPBOARD_PASTE_CAPTURE)
+      )
+      lastActivationError = undefined
+      break
+    } catch (error) {
+      lastActivationError = error
+    }
   }
-  await waitForHostedIosEvaluation(
+  if (lastActivationError) {
+    throw lastActivationError
+  }
+  await waitForEvaluation(
     args.discoveryUrl,
     10_000,
     `(() => {
@@ -57,10 +77,11 @@ async function tapHostedIosAccessibilityControl(
 }
 
 async function allowHostedIosPasteIfRequested(
-  args: HostedIosEmulatorCommandOptions
+  args: HostedIosEmulatorCommandOptions,
+  tapControl: typeof tapHostedIosAccessibilityControl
 ): Promise<void> {
   try {
-    await tapHostedIosAccessibilityControl(args, 'Allow Paste', 3_000)
+    await tapControl(args, 'Allow Paste', 3_000)
   } catch {
     // The prompt appears only after the first cross-app paste.
   }

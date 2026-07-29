@@ -102,28 +102,30 @@ pixels and 0.910 mean channel difference; Review passes at 2.134% and 1.947,
 within the 3% / 4 budgets. The packaged document opts into native safe-area
 insets, and nested syntax text retains the native effective font behavior.
 
-The migration is based on `origin/main` at `0660ad9d6` with the final rebase
-pending after this validation batch. Post-rebase validation passes 570 mobile
-files / 3,418 tests with 2 expected skips and 3,817 root files / 39,966 tests
-with 62 expected skips. The earlier load-sensitive root timeouts do not recur
-in the latest complete run. All project typechecks,
+The migration is based on `origin/main` at `c8dba6d72`; the final rebase is
+complete and the branch is 39 commits ahead and zero behind. Post-rebase
+validation passes 570 mobile files / 3,418 tests with 2 expected skips and
+3,818 root files / 39,968 tests with 62 expected skips. The earlier
+load-sensitive root timeouts do not recur in the latest complete run. All
+project typechecks,
 root/mobile/mobile-web lint and code-quality audits, 55 reliability gates,
 changed-file and full-mobile formatting, localization, the max-lines ratchet,
 and diff hygiene pass. React Doctor reports zero blocking errors across the
 migration without suppressions. The independently verified React Native Web
 package is
-`072e5f3cc1bd508e02efe8e0f3706d061fed561ed71e4af640b821d863716aef`:
-50 assets, 9,290,968 raw bytes, and 2,688,498 gzip bytes.
+`7c7c673deb74e158cdfb99b1ca536fd88cd3ab5dac4eb8db78c43ca12f6ce31d`:
+50 assets, 9,290,968 raw bytes, and 2,688,499 gzip bytes.
 
 That exact package now passes the unpacked macOS arm64 → Docker SSH → actual
-iOS WKWebView journey in 2.1 minutes. Authenticated RPC returned the packaged
-build with no checkout-output fallback; the unchanged mobile UI mutated the
-remote terminal, rendered a remote native-chat transcript, retained it during
-provider loss, and rendered the appended assistant message after reconnect.
-The harness seeds the pasteboard before Session snapshots clipboard
-availability, uses the existing opaque clipboard-paste capability and Enter
-accessory, and retries one bounded serve-sim accessibility timeout. It does not
-depend on or change the simulator's keyboard layout.
+iOS WKWebView journey from a clean app reinstall in 1.9 minutes. Authenticated
+RPC returned the packaged build with no checkout-output fallback; the unchanged
+mobile UI mutated the remote terminal, rendered a remote native-chat transcript,
+retained it during provider loss, and rendered the appended assistant message
+after reconnect. The harness seeds the pasteboard before Session snapshots
+clipboard availability, uses the existing opaque clipboard-paste capability
+and Enter accessory, retries one missed native activation, and stops after the
+first captured request. Two focused retry tests pass. It does not depend on or
+change the simulator's keyboard layout.
 
 The latest native-authority audit keeps the unchanged UI but removes hosted
 fallback access to Expo clipboard, image/document pickers, haptics, and direct

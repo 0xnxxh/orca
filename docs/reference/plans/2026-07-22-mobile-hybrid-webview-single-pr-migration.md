@@ -148,7 +148,8 @@ prototype:
   inventory entry, and fixtures are removed. The production `/hybrid` route,
   production bridge clients, native fallback, and Experimental Settings entry
   remain intentionally until the external cutover gates pass.
-- The branch is rebased onto `origin/main` at `0660ad9d6`; upstream
+- The branch is rebased onto `origin/main` at `c8dba6d72`; it is 39 commits
+  ahead and zero behind. Upstream
   native-chat launch-draft, transcript identity, loading, reconnect, and
   orchestration behavior is retained in both native and hosted adapters.
 
@@ -1090,19 +1091,22 @@ Pro Simulator, Source Control passes at 0.736% changed pixels / 0.910 mean
 channel difference and Review at 2.134% / 1.947, within the 3% / 4 budgets.
 
 Current validation passes 570 mobile files / 3,418 tests with 2 expected skips
-and 3,817 root files / 39,966 tests with 62 expected skips. The earlier
+and 3,818 root files / 39,968 tests with 62 expected skips. The earlier
 load-sensitive root timeouts do not recur in the latest complete run. All
 project typechecks, root/mobile/mobile-web lint and code-quality audits,
 changed-file formatting, localization, max-lines and diff hygiene, and 55
 reliability gates pass. React Doctor reports zero blocking errors across the
 migration without suppressions. The independently verified production package
-`072e5f3cc1bd508e02efe8e0f3706d061fed561ed71e4af640b821d863716aef`
-contains 50 assets and verifies at 9,290,968 raw bytes / 2,688,498 gzip bytes.
+`7c7c673deb74e158cdfb99b1ca536fd88cd3ab5dac4eb8db78c43ca12f6ce31d`
+contains 50 assets and verifies at 9,290,968 raw bytes / 2,688,499 gzip bytes.
 That exact package passes the unpacked macOS arm64 → Docker SSH → actual iOS
-WKWebView journey in 2.1 minutes. Authenticated RPC returned the packaged
-build with no checkout-output fallback; the unchanged mobile UI mutated the
-remote terminal, rendered a remote native-chat transcript, retained it during
-provider loss, and rendered the appended assistant message after reconnect.
+WKWebView journey from a clean app reinstall in 1.9 minutes. Authenticated RPC
+returned the packaged build with no checkout-output fallback; the unchanged
+mobile UI mutated the remote terminal, rendered a remote native-chat
+transcript, retained it during provider loss, and rendered the appended
+assistant message after reconnect. The paste harness retries one missed native
+activation, stops after the first captured request, and passes two focused
+retry tests.
 The complete cached-app iOS journey passes Workspace, Accounts, Tasks, Session,
 Files/Preview, Agent History portrait/landscape, Desktop restart and E2EE
 recovery, native-touch resume, Source Control, a third Session diff tab,
