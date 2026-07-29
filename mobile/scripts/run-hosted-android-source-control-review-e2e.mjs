@@ -7,6 +7,10 @@ import { promisify } from 'node:util'
 import { resolveEmulatorOrcaCli } from './emulator-orca-cli-selection.mjs'
 import { verifyHostedAndroidAgentHistoryJourney } from './hosted-android-agent-history-journey.mjs'
 import {
+  readHostedAndroidExitInfo,
+  verifyHostedAndroidPrivacyAudit
+} from './hosted-android-privacy-audit.mjs'
+import {
   tapHostedAndroidAccessibilityControl,
   tapHostedAndroidPoint,
   waitForHostedAndroidAccessibilityControlMatch
@@ -33,6 +37,7 @@ import {
   waitForVisibleHostedWebView
 } from './hosted-webview-cdp-session.mjs'
 import { verifyHostedWebViewExecutableIsolation } from './hosted-webview-executable-isolation.mjs'
+import { verifyHostedWebViewPrivacyIsolation } from './hosted-webview-privacy-isolation.mjs'
 import { resolveHostedWebViewRuntimeDirectory } from './hosted-webview-runtime-directory.mjs'
 import { activateHostedWorkspaceRow } from './hosted-webview-workspace-activation.mjs'
 import { verifyHostedSourceControlReviewJourney } from './hosted-ios-source-control-review-journey.mjs'
@@ -66,10 +71,14 @@ async function main() {
   let metro
   let probe
   let inspector
+  let exitInfoBaseline
   const reversePorts = new Set()
   try {
     await stage('Android emulator', () => runAndroidAdb(adb, ['get-state']))
     await stage('Android log reset', () => runAndroidAdb(adb, ['logcat', '-c']))
+    exitInfoBaseline = await stage('Android exit-info baseline', () =>
+      readHostedAndroidExitInfo(adb)
+    )
     if (!options.skipNativeBuild) {
       await stage('Android debug app build', () => buildHostedAndroidDebugApp({ adb, androidDir }))
     }
@@ -133,6 +142,12 @@ async function main() {
         timeoutMs: options.timeoutMs
       })
     )
+    let privacyIsolation = null
+    if (options.securityOnly) {
+      privacyIsolation = await stage('workspace privacy isolation probe', () =>
+        verifyHostedWebViewPrivacyIsolation({ document: workspaceDocument })
+      )
+    }
     await stage('workspace activation', async () => {
       try {
         await activateHostedWorkspaceRow(
@@ -228,6 +243,9 @@ async function main() {
         probeId: probe.token
       })
     )
+    privacyIsolation ??= await stage('privacy isolation probe', () =>
+      verifyHostedWebViewPrivacyIsolation({ document: isolationDocument })
+    )
     await delay(500)
     if (probe.observations.length > 0) {
       throw new Error(
@@ -235,6 +253,14 @@ async function main() {
       )
     }
     await stage('Android bridge log audit', () => assertHostedAndroidBridgeLogClean(adb))
+    const privacyAudit = await stage('Android privacy and exit-info audit', () =>
+      verifyHostedAndroidPrivacyAudit({
+        adb,
+        baselineExitInfo: exitInfoBaseline,
+        devServerPort: metro.port,
+        probePort: probe.port
+      })
+    )
     console.log(
       JSON.stringify(
         {
@@ -247,6 +273,8 @@ async function main() {
           networkIsolation,
           navigationIsolation,
           executableIsolation,
+          privacyIsolation,
+          privacyAudit,
           sentinelObservations: probe.observations
         },
         null,

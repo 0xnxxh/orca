@@ -1495,8 +1495,12 @@ copy.
   SDK/domain, test-fixture environment, and native credential-authority markers.
   A focused exact-app iOS run now finds zero privileged markers in the live DOM,
   History state, page storage, cookies, and a 12,238,623-byte unified-log slice.
-  Equivalent Android live privacy inspection and native crash-report review
-  remain open.
+  The exact Android Debug app also passes private-origin DOM/History,
+  page-storage, cookie, 975,464-byte `logcat`, and process-exit inspection with
+  zero privileged marker, zero unexpected WebSocket URL, and no new crash,
+  native crash, ANR, initialization-failure, or excessive-resource record.
+  Exact release-app corpus, broader live race, sustained-allocation, and
+  independent review remain open.
 - [~] Verify the WebView cannot make network requests. Static iOS/Android CSP
   and native-origin controls are covered. Android also sets
   `blockNetworkLoads`, and its download listener reports and rejects download
@@ -1952,13 +1956,14 @@ passes 576 files / 3,440 tests with 2 expected skips. A full root run passes
 30-second dynamic-import timeout; its isolated 2-test rerun passes in 4.69
 seconds. Mobile/root/RNW typechecks, mobile/shared lint, all 55 reliability
 gates, max-lines, localization, formatting, diff hygiene, and production
-package verification pass. The latest privacy-hardening package is
-`8f452c7b95e729c7fc9a9cc8d10f39717459c9f3571eaf7843a8427b1b809341`:
-50 assets, 9,134,984 raw bytes, and 2,644,462 gzip bytes. The full mobile suite
-passes 583 files / 3,462 tests with 2 expected skips. The current full root run
-passes 3,839 files / 40,326 tests with 71 expected skips except for one
-unrelated load-sensitive remote-runtime socket setup failure; its complete
-one-test file passes in a 194-millisecond isolated rerun.
+package verification pass. The current privacy-hardening package is
+`3c0f364f9cb6f1785d1d08fdeb81ca5367b091706c24d124374a88578839e745`:
+50 assets, 9,135,273 raw bytes, and 2,644,558 gzip bytes. The full mobile suite
+passes 588 files / 3,499 tests with 2 expected skips. The latest full root run
+from immediately before the final one-commit rebase passes 3,839 files / 40,326
+tests with 71 expected skips except for one unrelated load-sensitive
+remote-runtime socket setup failure; its complete one-test file passes in a
+194-millisecond isolated rerun.
 
 | Date       | Workstream              | Evidence                                                                                                                                                                                                                    | Result                                                                                                                                                                                            |
 | ---------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2872,3 +2877,8 @@ one-test file passes in a 194-millisecond isolated rerun.
 | 2026-07-29 | Complete | A genuine UI-identical candidate `4efe928e…` was delivered through the fixed paired Desktop and activated over final `8f452c7b…`. Killing WebContent PIDs `34182`, `34554`, and `34644` remounted four distinct targets and atomically restored final in 14.3 seconds. The recovered private origin changed; 10,447 bytes of DOM/history, Web Storage, and cookies contain zero credential marker, and 7,156,093 bytes of native logs contain zero reviewed privacy marker.                                                                                                                               |
 | 2026-07-29 | Complete | Post-drill validation passes 586 mobile files / 3,477 tests with 2 expected skips; root, mobile, and mobile-web typechecks; root/mobile lint and native/type-aware audits; 55 reliability gates; localization; max-lines; formatting; exact `8f452c7b…` package verification; changed-code quality; React Doctor with zero blocking errors; and diff hygiene.                                                                                                                                                                                                                                             |
 | 2026-07-29 | Next     | Run the equivalent Android live privacy audit, then continue exact release-app content corpus injection, broader live two-host/topology races, native crash-report review, independent security review, and physical/final-candidate rollback.                                                                                                                                                                                                                                                                                                                                                            |
+| 2026-07-29 | Complete | Rebased all 55 migration commits without conflict onto `origin/main` at `a7c8b8e07`; the branch is zero behind. The independently rebuilt package verifies as `3c0f364f…` with 50 assets / 9,135,273 raw / 2,644,558 gzip bytes.                                                                                                                                                                                                                                                                                                                                                                          |
+| 2026-07-29 | Complete | Post-rebase validation passes 587 mobile files / 3,479 tests with 2 expected skips; all project typechecks; root/mobile/mobile-web lint and code-quality audits; 56 reliability gates; localization; max-lines; full-mobile formatting; changed-code quality; React Doctor with zero new migration findings; package verification; and diff hygiene.                                                                                                                                                                                                                                                      |
+| 2026-07-29 | Finding  | The first Android privacy audit rejected three logged WebSocket URLs: one exact Expo Debug connection and two deliberate loopback CSP probes. A later run also observed Expo's second exact Dev Launcher client identifier. The audit now admits only those bounded Debug/probe shapes and rejects extra fields, credentials, production endpoints, secure WebSockets, and all other URLs.                                                                                                                                                                                                                |
+| 2026-07-29 | Complete | The exact Pixel 9 Pro API 36 arm64 Debug app passes private-origin DOM/History, page-storage/cookie, network/navigation/executable isolation, fresh `logcat`, and `ApplicationExitInfo` review. The 11,459-byte document and 975,464-byte log slice contain zero privileged marker or unexpected WebSocket URL; the sentinel records zero escaped request and Android records no new crash/native-crash/ANR/initialization/resource failure. Two focused files / 28 tests cover shared iOS/Android markers, Android exit/debug-URL mutations, and live-gate integration.                                  |
+| 2026-07-29 | Complete | Post-audit validation passes 588 mobile files / 3,499 tests with 2 expected skips; all project typechecks; root/mobile/mobile-web lint and code-quality audits; 56 reliability gates; localization; max-lines; full-mobile formatting; changed-code quality; React Doctor with zero new migration findings; exact `3c0f364f…` package verification; and diff hygiene.                                                                                                                                                                                                                                     |

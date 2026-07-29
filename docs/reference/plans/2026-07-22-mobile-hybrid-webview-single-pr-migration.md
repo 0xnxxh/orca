@@ -150,7 +150,7 @@ prototype:
   inventory entry, and fixtures are removed. The production `/hybrid` route,
   production bridge clients, native fallback, and Experimental Settings entry
   remain intentionally until the external cutover gates pass.
-- The 51-commit branch is rebased onto `origin/main` at `1df8aa560` and remains
+- The 55-commit branch is rebased onto `origin/main` at `a7c8b8e07` and remains
   zero behind. Upstream
   native-chat launch-draft, transcript identity, loading, reconnect, and
   orchestration behavior is retained in both native and hosted adapters.
@@ -2192,9 +2192,9 @@ The authoritative route now has a separately reviewed ceiling of 10 MiB total,
 from 8 MiB / 2 MiB / 7.5 MiB only after the legacy Mermaid CDN executable was
 replaced by the locally bundled, network-denied engine needed by both native
 and RNW without forking the existing UI. Boundary tests reject every
-measurement above its ceiling. The current 50-asset package is 9,134,984 bytes
-/ 2,644,462 bytes gzip and build
-`8f452c7b95e729c7fc9a9cc8d10f39717459c9f3571eaf7843a8427b1b809341`.
+measurement above its ceiling. The current 50-asset package is 9,135,273 bytes
+/ 2,644,558 bytes gzip and build
+`3c0f364f9cb6f1785d1d08fdeb81ca5367b091706c24d124374a88578839e745`.
 `build:mobile-web` and release resource mapping therefore select the RNW
 package; the original 2 MiB Vite-fixture ceiling is retired with that fixture.
 The hosted-only Metro graph resolves the reused screens' default
@@ -2879,6 +2879,18 @@ and undeclared-script probes all fail closed while the declared application and
 document remain active. A 12,238,623-byte, ten-minute Orca unified-log slice
 contains zero privileged-field, token-storage, native-authority, private-origin
 URL, WebSocket URL, or fixture marker.
+
+The exact Pixel 9 Pro API 36 arm64 Debug app passes the equivalent Android
+privacy and process-exit audit. Its 11,459-byte private-origin workspace
+document has no credential or query, no DOM/History marker, no accessible Local
+Storage, no Session Storage entry, and no cookie. All isolation probes fail
+closed with zero sentinel observation. A fresh 975,464-byte `logcat` slice
+contains zero privileged-field, token-storage, native-authority, private-origin
+URL, unexpected WebSocket URL, or fixture marker. The only two WebSocket
+messages match the exact Expo Debug client and deliberate loopback-probe
+shapes; focused mutations fail closed. No new crash, native crash, ANR,
+initialization failure, or excessive-resource `ApplicationExitInfo` record
+appears during the run.
 
 The mutation-authorization audit and 25-case valid-shaped response corpus now
 cover the code-level authorization and response-correlation portions of this

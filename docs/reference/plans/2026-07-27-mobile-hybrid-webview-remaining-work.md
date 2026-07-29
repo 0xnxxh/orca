@@ -102,19 +102,19 @@ pixels and 0.910 mean channel difference; Review passes at 2.134% and 1.947,
 within the 3% / 4 budgets. The packaged document opts into native safe-area
 insets, and nested syntax text retains the native effective font behavior.
 
-The migration is based on `origin/main` at `1df8aa560`; the final rebase is
-complete and the branch is 51 commits ahead and zero behind. Post-rebase
-validation now passes 576 mobile files / 3,440 tests with 2 expected skips. The
-latest root run passes 3,829 files / 40,205 tests with 70 expected skips except
-for one load-sensitive 30-second dynamic-import timeout; its isolated 2-test
-rerun passes in 4.69 seconds. All project typechecks,
-root/mobile/mobile-web lint and code-quality audits, 55 reliability gates,
+The migration is based on `origin/main` at `a7c8b8e07`; the final rebase is
+complete and the branch is 55 commits ahead and zero behind. Post-rebase
+validation now passes 588 mobile files / 3,499 tests with 2 expected skips. The
+latest full root run from immediately before the final one-commit rebase passes
+3,839 files / 40,326 tests with 71 expected skips except for one unrelated
+load-sensitive remote-runtime socket setup failure; its complete one-test file
+passes in a 194-millisecond isolated rerun. All project typechecks,
+root/mobile/mobile-web lint and code-quality audits, 56 reliability gates,
 changed-file and full-mobile formatting, localization, the max-lines ratchet,
-and diff hygiene pass. React Doctor reports zero blocking errors across the
-migration without suppressions. The independently verified React Native Web
-package is
-`8f452c7b95e729c7fc9a9cc8d10f39717459c9f3571eaf7843a8427b1b809341`:
-50 assets, 9,134,984 raw bytes, and 2,644,462 gzip bytes.
+and diff hygiene pass. React Doctor reports zero new migration findings. The
+independently verified React Native Web package is
+`3c0f364f9cb6f1785d1d08fdeb81ca5367b091706c24d124374a88578839e745`:
+50 assets, 9,135,273 raw bytes, and 2,644,558 gzip bytes.
 
 The immediately preceding `7c7c673d…` package passed the unpacked macOS arm64 →
 Docker SSH → actual iOS WKWebView journey from a clean app reinstall in 1.9
@@ -314,14 +314,14 @@ collection ceiling. Session subscription events are also bound to the
 requested workspace. Existing Source Control, provider-review, file, and
 Markdown correlation remains in force.
 
-The production package now verifies as `8f452c7b…`: 50 assets, 9,134,984 raw
-bytes, and 2,644,462 gzip bytes. The full mobile suite passes 583 files / 3,462
+The production package now verifies as `3c0f364f…`: 50 assets, 9,135,273 raw
+bytes, and 2,644,558 gzip bytes. The full mobile suite passes 588 files / 3,499
 tests with 2 expected skips. All project typechecks; root, mobile, and
-mobile-web lint; all 55 reliability gates; localization; max-lines; formatting;
-and package verification pass. The post-rebase full root run passes 3,839 files
-/ 40,326 tests with 71 expected skips except for one unrelated load-sensitive
-remote-runtime socket setup failure; its complete one-test file passes in a
-194-millisecond isolated rerun.
+mobile-web lint; all 56 reliability gates; localization; max-lines; formatting;
+and package verification pass. The latest full root run from immediately before
+the final one-commit rebase passes 3,839 files / 40,326 tests with 71 expected
+skips except for one unrelated load-sensitive remote-runtime socket setup
+failure; its complete one-test file passes in a 194-millisecond isolated rerun.
 
 The mirrored native package-store suites now pass 120 concurrent cache flows per
 platform. The expanded same-host matrix covers competing distinct generations,
@@ -343,8 +343,8 @@ graph aliases native client and host-store modules to inert implementations by
 exact resolved path; the unchanged UI remains while token storage, pairing
 cleanup, and logical-client authority leave the package. Focused tests and exact
 build `8f452c7b…` verification pass. The remaining security work below is exact
-release-app corpus testing, broader live cross-scope races, Android live
-privacy and native crash-report review, and independent review.
+release-app corpus testing, broader live cross-scope races, sustained allocation
+testing, and independent review.
 
 A focused final-package iPhone 17 Pro / iOS 26.5 Simulator run now separates
 WebView isolation from unrelated native picker automation. The actual WKWebView
@@ -354,6 +354,18 @@ the 11,668-byte live DOM and History state contain zero privileged marker; Local
 Storage, Session Storage, and cookies are empty. A 12,238,623-byte, ten-minute
 Orca unified-log slice contains zero privileged-field, token-storage,
 native-authority, private-origin URL, WebSocket URL, or fixture marker.
+
+The exact Pixel 9 Pro API 36 arm64 Debug app now passes the equivalent Android
+live privacy and process-exit audit. Its 11,459-byte private-origin workspace
+document has no credential or query, no DOM/History marker, no accessible Local
+Storage, no Session Storage entry, and no cookie. Network, navigation, popup,
+service-worker, download, external-scheme, and undeclared-script probes fail
+closed with zero sentinel observation. A 975,464-byte fresh `logcat` slice has
+zero privileged-field, token-storage, native-authority, private-origin URL,
+unexpected WebSocket URL, or fixture marker. The two observed WebSocket
+messages match exact Debug-client and deliberate loopback-probe shapes; mutated
+forms fail focused tests. Android reports no new crash, native crash, ANR,
+initialization failure, or excessive-resource exit record during the run.
 
 The same simulator now passes a fresh automatic rollback drill without
 reinstalling the native shell or editing cache metadata. The paired Desktop
@@ -452,9 +464,10 @@ remain open.
       only reviewed hashes, IDs, and private-origin URLs. Hosted package
       resolution removes native token storage, pairing cleanup, and logical
       transport authority. Package policy rejects telemetry SDK/domain and
-      fixture-environment markers. Exact-app iOS DOM, History, page-storage,
-      cookie, and unified-log inspection now passes. Equivalent Android live
-      privacy inspection and native crash-report review remain.
+      fixture-environment markers. Exact-app iOS and Android DOM, History,
+      page-storage, cookie, native-log, and process-exit inspection now passes.
+      Exact release-app corpus, broader live race, sustained-allocation, and
+      independent review remain.
 - [ ] Verify all resource limits apply before allocation and during assembly.
       Persisted native manifests, activation metadata, and assets have
       pre-allocation read ceilings; every bridge operation has generated
