@@ -11,7 +11,6 @@ import {
 } from './workspace-kanban-card-pointer-drag-dom'
 import {
   createDragPreview,
-  getDraggedCards,
   setDragDocumentStyles,
   setDraggedCardsDragging,
   updateDragPreviewPosition
@@ -33,7 +32,6 @@ type DragState = {
   currentY: number
   worktreeIds: string[]
   sourceCard: HTMLElement
-  draggedCards: HTMLElement[]
   preview: HTMLElement | null
   previewOffsetX: number
   previewOffsetY: number
@@ -117,7 +115,11 @@ export function useWorkspaceKanbanCardPointerDrag({
       if (state.frameId !== null) {
         window.cancelAnimationFrame(state.frameId)
       }
-      setDraggedCardsDragging(state.draggedCards, false)
+      setDraggedCardsDragging({
+        board: boardRef.current,
+        worktreeIds: state.worktreeIds,
+        enabled: false
+      })
       removeCardDropIndicator()
       state.preview?.remove()
       setDragDocumentStyles(false)
@@ -146,13 +148,20 @@ export function useWorkspaceKanbanCardPointerDrag({
     [boardRef, clearDragTarget]
   )
 
-  const startPointerDrag = useCallback((state: DragState) => {
-    state.started = true
-    isPointerDragActiveRef.current = true
-    setDraggedCardsDragging(state.draggedCards, true)
-    state.preview = createDragPreview(state)
-    setDragDocumentStyles(true)
-  }, [])
+  const startPointerDrag = useCallback(
+    (state: DragState) => {
+      state.started = true
+      isPointerDragActiveRef.current = true
+      setDraggedCardsDragging({
+        board: boardRef.current,
+        worktreeIds: state.worktreeIds,
+        enabled: true
+      })
+      state.preview = createDragPreview(state)
+      setDragDocumentStyles(true)
+    },
+    [boardRef]
+  )
 
   const updatePointerDragTarget = useCallback(
     (state: DragState) => {
@@ -303,7 +312,6 @@ export function useWorkspaceKanbanCardPointerDrag({
         currentY: event.clientY,
         worktreeIds,
         sourceCard: card,
-        draggedCards: getDraggedCards(board, worktreeIds, card),
         preview: null,
         previewOffsetX: 0,
         previewOffsetY: 0,

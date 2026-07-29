@@ -1,4 +1,4 @@
-import React, { useCallback, useLayoutEffect, useRef } from 'react'
+import React, { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { Repo, WorkspaceStatus, Worktree } from '../../../../shared/types'
 import WorkspaceKanbanCard from './WorkspaceKanbanCard'
@@ -10,6 +10,10 @@ const WORKSPACE_BOARD_CARD_ESTIMATED_HEIGHT = 36
 // Matches the `space-y-2` rhythm the lane used before virtualization.
 const WORKSPACE_BOARD_CARD_GAP = 8
 const WORKSPACE_BOARD_CARD_OVERSCAN = 6
+
+function estimateWorkspaceBoardCardSize(): number {
+  return WORKSPACE_BOARD_CARD_ESTIMATED_HEIGHT
+}
 
 type WorkspaceKanbanLaneCardListProps = {
   items: readonly Worktree[]
@@ -42,12 +46,13 @@ function WorkspaceKanbanLaneCardList({
   onAssignWorkspaceStatus
 }: WorkspaceKanbanLaneCardListProps): React.JSX.Element {
   const spacerRef = useRef<HTMLDivElement | null>(null)
-  const itemIdsRef = useRef<readonly string[]>([])
-  itemIdsRef.current = items.map((item) => item.id)
+  const itemIds = useMemo(() => items.map((item) => item.id), [items])
+  const itemIdsRef = useRef(itemIds)
+  itemIdsRef.current = itemIds
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => WORKSPACE_BOARD_CARD_ESTIMATED_HEIGHT,
+    estimateSize: estimateWorkspaceBoardCardSize,
     getItemKey: useCallback((index: number) => items[index]?.id ?? index, [items]),
     overscan: WORKSPACE_BOARD_CARD_OVERSCAN,
     gap: WORKSPACE_BOARD_CARD_GAP,

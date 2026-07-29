@@ -18,20 +18,24 @@ const WINDOW_END = 25
 const TOTAL_SIZE = 21_992
 
 vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: ({ count }: { count: number }) => ({
-    getTotalSize: () => TOTAL_SIZE,
-    measurementsCache: Array.from({ length: count }, (_, index) => ({
-      index,
-      start: index * 44,
-      end: index * 44 + 36
-    })),
-    getVirtualItems: () =>
-      Array.from({ length: WINDOW_END - WINDOW_START + 1 }, (_, offset) => {
-        const index = WINDOW_START + offset
-        return { index, key: `w${index}`, start: index * 44 }
-      }),
-    measureElement: () => {}
-  })
+  useVirtualizer: ({ count }: { count: number }) => {
+    const start = count === 0 ? 0 : Math.min(WINDOW_START, count - 1)
+    const end = count === 0 ? -1 : Math.min(WINDOW_END, count - 1)
+    return {
+      getTotalSize: () => (count === 0 ? 0 : count * 44 - 8),
+      measurementsCache: Array.from({ length: count }, (_, index) => ({
+        index,
+        start: index * 44,
+        end: index * 44 + 36
+      })),
+      getVirtualItems: () =>
+        Array.from({ length: Math.max(0, end - start + 1) }, (_, offset) => {
+          const index = start + offset
+          return { index, key: `w${index}`, start: index * 44 }
+        }),
+      measureElement: () => {}
+    }
+  }
 }))
 
 vi.mock('./WorkspaceKanbanCard', () => ({
@@ -101,5 +105,15 @@ describe('WorkspaceKanbanLaneCardList', () => {
       '[data-workspace-board-card-id]'
     )?.parentElement
     expect(first?.style.transform).toBe(`translateY(${WINDOW_START * 44}px)`)
+  })
+
+  it('renders nothing for an empty lane and a single card at index 0', () => {
+    const empty = renderLane(0)
+    expect(empty.querySelectorAll('[data-workspace-board-card-id]')).toHaveLength(0)
+
+    const single = renderLane(1)
+    const card = single.querySelector('[data-workspace-board-card-id]')
+    expect(card?.getAttribute('data-workspace-board-card-id')).toBe('w0')
+    expect(card?.getAttribute('data-workspace-board-card-index')).toBe('0')
   })
 })

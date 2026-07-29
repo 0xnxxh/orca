@@ -652,10 +652,18 @@ export default function WorkspaceKanbanDrawer({
       setRenderCards(false)
       return
     }
+    let cancelled = false
     const frameId = window.requestAnimationFrame(() => {
-      startTransition(() => setRenderCards(true))
+      startTransition(() => {
+        if (!cancelled) {
+          setRenderCards(true)
+        }
+      })
     })
-    return () => window.cancelAnimationFrame(frameId)
+    return () => {
+      cancelled = true
+      window.cancelAnimationFrame(frameId)
+    }
   }, [open])
 
   useWorkspaceKanbanShiftWheelScroll(boardRef, laneScrollerRef, open, isPointerDragActiveRef)

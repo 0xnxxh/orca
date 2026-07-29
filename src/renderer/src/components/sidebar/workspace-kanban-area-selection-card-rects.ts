@@ -7,10 +7,17 @@ type AreaSelectionCardContentRect = {
   scrollTop: number
 }
 
+export type AreaSelectionViewportRect = {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
 export type AreaSelectionCardRect = {
   id: string
   element: HTMLElement | null
-  rect: DOMRect
+  rect: AreaSelectionViewportRect
   scrollContainer: HTMLElement | null
   contentRect: AreaSelectionCardContentRect | null
 }
@@ -35,7 +42,12 @@ export function getAreaSelectionCardRects(board: HTMLElement): AreaSelectionCard
       cardRects.set(virtualRect.id, {
         id: virtualRect.id,
         element: null,
-        rect: makeDomRect(virtualRect),
+        rect: {
+          left: virtualRect.left,
+          top: virtualRect.top,
+          right: virtualRect.right,
+          bottom: virtualRect.bottom
+        },
         scrollContainer,
         contentRect: {
           top: virtualRect.contentTop,
@@ -66,7 +78,12 @@ export function getAreaSelectionCardRects(board: HTMLElement): AreaSelectionCard
     cardRects.set(id, {
       id,
       element: card,
-      rect,
+      rect: {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom
+      },
       scrollContainer,
       contentRect: metrics
         ? {
@@ -79,18 +96,4 @@ export function getAreaSelectionCardRects(board: HTMLElement): AreaSelectionCard
     })
   }
   return Array.from(cardRects.values())
-}
-
-function makeDomRect(rect: { left: number; top: number; right: number; bottom: number }): DOMRect {
-  return {
-    x: rect.left,
-    y: rect.top,
-    left: rect.left,
-    top: rect.top,
-    right: rect.right,
-    bottom: rect.bottom,
-    width: rect.right - rect.left,
-    height: rect.bottom - rect.top,
-    toJSON: () => ({})
-  } as DOMRect
 }
