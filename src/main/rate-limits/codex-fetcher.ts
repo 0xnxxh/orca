@@ -292,6 +292,12 @@ function mapBackendRateLimitResetCredits(
   }
 }
 
+function hasCompleteRateLimitResetCredits(
+  credits: RateLimitResetCredits | null | undefined
+): boolean {
+  return Boolean(credits && (credits.availableCount === 0 || credits.nextExpiresAt != null))
+}
+
 function createBackendRequestSignal(
   callerSignal?: AbortSignal,
   timeoutMs = BACKEND_TIMEOUT_MS
@@ -392,8 +398,7 @@ async function withBackendRateLimitResetCredits(
   if (
     options?.signal?.aborted ||
     limits.provider !== 'codex' ||
-    (limits.rateLimitResetCredits?.nextExpiresAt !== undefined &&
-      limits.rateLimitResetCredits.nextExpiresAt !== null)
+    hasCompleteRateLimitResetCredits(limits.rateLimitResetCredits)
   ) {
     return limits
   }
@@ -574,17 +579,21 @@ async function withBackendSessionWindow(
   }
   try {
     const backend = await fetchViaBackend(options)
-    if (!backend?.session) {
+    if (!backend) {
       return limits
+    }
+    const rateLimitResetCredits = backend.rateLimitResetCredits ?? limits.rateLimitResetCredits
+    if (!backend.session) {
+      return rateLimitResetCredits === limits.rateLimitResetCredits
+        ? limits
+        : { ...limits, rateLimitResetCredits }
     }
     return {
       ...limits,
       session: backend.session,
       weekly: backend.weekly ?? limits.weekly,
       planType: backend.planType ?? limits.planType,
-      ...(backend.rateLimitResetCredits !== undefined
-        ? { rateLimitResetCredits: backend.rateLimitResetCredits }
-        : {}),
+      ...(rateLimitResetCredits !== undefined ? { rateLimitResetCredits } : {}),
       updatedAt: backend.updatedAt
     }
   } catch {
