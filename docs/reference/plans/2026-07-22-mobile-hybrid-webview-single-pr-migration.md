@@ -150,7 +150,7 @@ prototype:
   inventory entry, and fixtures are removed. The production `/hybrid` route,
   production bridge clients, native fallback, and Experimental Settings entry
   remain intentionally until the external cutover gates pass.
-- The 44-commit branch is rebased onto `origin/main` at `3f5328755` and remains
+- The 51-commit branch is rebased onto `origin/main` at `1df8aa560` and remains
   zero behind. Upstream
   native-chat launch-draft, transcript identity, loading, reconnect, and
   orchestration behavior is retained in both native and hosted adapters.

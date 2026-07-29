@@ -102,8 +102,8 @@ pixels and 0.910 mean channel difference; Review passes at 2.134% and 1.947,
 within the 3% / 4 budgets. The packaged document opts into native safe-area
 insets, and nested syntax text retains the native effective font behavior.
 
-The migration is based on `origin/main` at `3f5328755`; the final rebase is
-complete and the branch is 44 commits ahead and zero behind. Post-rebase
+The migration is based on `origin/main` at `1df8aa560`; the final rebase is
+complete and the branch is 51 commits ahead and zero behind. Post-rebase
 validation now passes 576 mobile files / 3,440 tests with 2 expected skips. The
 latest root run passes 3,829 files / 40,205 tests with 70 expected skips except
 for one load-sensitive 30-second dynamic-import timeout; its isolated 2-test
@@ -318,10 +318,10 @@ The production package now verifies as `8f452c7b…`: 50 assets, 9,134,984 raw
 bytes, and 2,644,462 gzip bytes. The full mobile suite passes 582 files / 3,453
 tests with 2 expected skips. All project typechecks; root, mobile, and
 mobile-web lint; all 55 reliability gates; localization; max-lines; formatting;
-and package verification pass. The full root run passes 3,831 files / 40,242
-tests with 70 expected skips except for one unrelated load-sensitive
-remote-control timing assertion; its complete 26-test file passes in a
-2.9-second isolated rerun.
+and package verification pass. The post-rebase full root run passes 3,839 files
+/ 40,326 tests with 71 expected skips except for one unrelated load-sensitive
+remote-runtime socket setup failure; its complete one-test file passes in a
+194-millisecond isolated rerun.
 
 The mirrored native package-store suites now pass 120 concurrent cache flows per
 platform. The expanded same-host matrix covers competing distinct generations,
