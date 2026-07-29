@@ -46,6 +46,7 @@ describe('worktree RPC schemas', () => {
     const parsed = WorktreeSet.parse({ worktree: 'id:r1::/repos/wt', comment: 'note' })
 
     expect(parsed.displayName).toBeUndefined()
+    expect(Object.prototype.hasOwnProperty.call(parsed, 'displayName')).toBe(false)
   })
 
   it('ignores a non-string display name rather than persisting it', () => {
