@@ -1,10 +1,12 @@
 import { app, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 import { networkInterfaces } from 'node:os'
-import QRCode from 'qrcode'
 import type { RuntimeAccessGrant } from '../../shared/runtime-access-grants'
+import type { MobilePairingConnectionMode } from '../../shared/mobile-pairing-connection-mode'
 import { isTailnetIPv4Address } from '../../shared/tailnet-address'
 import type { DeviceEntry } from '../runtime/device-registry'
 import type { OrcaRuntimeRpcServer } from '../runtime/runtime-rpc'
+import type { RelayBrokerStatus } from '../runtime/relay/relay-session-broker'
+import { encodeMobilePairingQr, type MobilePairingQrResult } from '../runtime/mobile-pairing-qr'
 import {
   getWebSocketPort,
   inspectWindowsMobileFirewall,
@@ -17,10 +19,24 @@ export type NetworkInterface = {
   address: string
 }
 
+// Why: link-local IPv6 addresses (fe80::/10) require a scope/zone id to be
+// connectable and never work as a QR-advertised pairing host, so they are
+// excluded from the pickable list. The regex covers the full /10 range
+// (fe80: through febf:), not just the fe80: prefix the OS usually assigns.
+function isUsableIPv6Address(address: string): boolean {
+  return !/^fe[89ab][0-9a-f]:/i.test(address)
+}
+
+function isProxyFakeIpIPv4Address(address: string): boolean {
+  return /^198\.(?:18|19)\./.test(address)
+}
+
 // Why: the WebSocket transport advertises 0.0.0.0 as its endpoint, which isn't
-// connectable from a mobile device. We enumerate all non-internal IPv4
-// addresses so the user can choose which one to advertise in the QR code
-// (e.g. LAN vs Tailscale).
+// connectable from a mobile device. We enumerate all non-internal IPv4 and
+// (non-link-local) IPv6 addresses so the user can choose which one to advertise
+// in the QR code (e.g. LAN vs Tailscale). IPv6 must be included so pairing works
+// on IPv6-only hosts (e.g. a headless `orca serve` reachable only over IPv6),
+// where an IPv4-only scan returns nothing and the UI reports "no interfaces".
 function getNetworkInterfaces(): NetworkInterface[] {
   const result: NetworkInterface[] = []
   const interfaces = networkInterfaces()
@@ -29,14 +45,30 @@ function getNetworkInterfaces(): NetworkInterface[] {
       continue
     }
     for (const addr of addrs) {
-      if (addr.family === 'IPv4' && !addr.internal) {
+      if (addr.internal) {
+        continue
+      }
+      if (addr.family === 'IPv4') {
+        // 198.18.0.0/15 proxy fake IPs are only routable inside the desktop proxy.
+        if (isProxyFakeIpIPv4Address(addr.address)) {
+          continue
+        }
+        result.push({ name, address: addr.address })
+      } else if (addr.family === 'IPv6' && isUsableIPv6Address(addr.address)) {
         result.push({ name, address: addr.address })
       }
     }
   }
-  return result.sort(
-    (a, b) => Number(isTailnetIPv4Address(b.address)) - Number(isTailnetIPv4Address(a.address))
-  )
+  // Why: prefer tailnet IPv4 first (most portable across networks), then other
+  // IPv4, then IPv6 as a fallback for IPv6-only environments.
+  return result.sort((a, b) => rankAddress(a.address) - rankAddress(b.address))
+}
+
+function rankAddress(address: string): number {
+  if (isTailnetIPv4Address(address)) {
+    return 0
+  }
+  return address.includes(':') ? 2 : 1
 }
 
 function getDefaultPairingAddress(): string | null {
@@ -60,6 +92,9 @@ function toRuntimeAccessGrant(device: DeviceEntry): RuntimeAccessGrant {
 export type MobileHandlerDependencies = {
   firewallEnvironment?: WindowsMobileFirewallEnvironment
   openWindowsNetworkSettings?: () => Promise<void>
+  getRelayStatus?: () => RelayBrokerStatus
+  consumePendingUnpairedDeviceAuthFailure?: (webContentsId: number) => boolean
+  encodePairingQr?: (pairingUrl: string) => Promise<MobilePairingQrResult>
 }
 
 export function registerMobileHandlers(
@@ -78,7 +113,14 @@ export function registerMobileHandlers(
 
   ipcMain.handle(
     'mobile:getPairingQR',
-    async (_event, args?: { address?: string; rotate?: boolean }) => {
+    async (
+      _event,
+      args?: {
+        address?: string
+        connectionMode?: MobilePairingConnectionMode
+        rotate?: boolean
+      }
+    ) => {
       // Why: allow the caller to specify which network interface address to
       // embed in the QR code. This supports overlay networks (Tailscale,
       // ZeroTier) where the default LAN IP isn't reachable from the phone.
@@ -94,28 +136,29 @@ export function registerMobileHandlers(
       // `rotate: true` (explicit "Regenerate" intent because the prior token
       // may have been exposed), we discard any pending token and mint a fresh
       // one so the new QR carries a different credential.
-      const offer = rpcServer.createPairingOffer({
+      const offer = await rpcServer.createMobilePairingOffer({
         address: ip,
+        connectionMode: args?.connectionMode,
         rotate: args?.rotate,
-        name: `Mobile ${new Date().toLocaleDateString()}`,
-        scope: 'mobile'
+        name: `Mobile ${new Date().toLocaleDateString()}`
       })
       if (!offer.available) {
         return { available: false as const }
       }
 
-      const qrDataUrl = await QRCode.toDataURL(offer.pairingUrl, {
-        errorCorrectionLevel: 'M',
-        margin: 2,
-        width: 256
-      })
+      const qr = await (dependencies.encodePairingQr ?? encodeMobilePairingQr)(offer.pairingUrl)
 
       return {
         available: true as const,
-        qrDataUrl,
+        qrDataUrl: qr.ok ? qr.qrDataUrl : null,
+        ...(!qr.ok ? { qrError: qr.reason } : {}),
         pairingUrl: offer.pairingUrl,
         endpoint: offer.endpoint,
-        deviceId: offer.deviceId
+        deviceId: offer.deviceId,
+        // Why: an automatic request can degrade to a local-only offer when
+        // Relay provisioning fails; the UI needs the encoded mode to avoid
+        // labeling a LAN-only code as Relay.
+        connectionMode: offer.connectionMode
       }
     }
   )
@@ -187,12 +230,12 @@ export function registerMobileHandlers(
     }
   })
 
-  ipcMain.handle('mobile:revokeDevice', (_event, args: { deviceId: string }) => {
+  ipcMain.handle('mobile:revokeDevice', async (_event, args: { deviceId: string }) => {
     const registry = rpcServer.getDeviceRegistry()
     if (!registry) {
       return { revoked: false }
     }
-    return { revoked: rpcServer.revokeMobileDevice(args.deviceId) }
+    return { revoked: await rpcServer.revokeMobileDevice(args.deviceId) }
   })
 
   ipcMain.handle('mobile:revokeRuntimeAccess', (_event, args: { deviceId: string }) => {
@@ -233,6 +276,17 @@ export function registerMobileHandlers(
       (() => shell.openExternal('ms-settings:network-status'))
     await openSettings()
     return true
+  })
+
+  ipcMain.handle('mobile:getRelayStatus', () => ({
+    status: dependencies.getRelayStatus?.() ?? 'offline'
+  }))
+
+  ipcMain.handle('mobile:consumePendingUnpairedDeviceAuthFailure', (event) => {
+    if (!isWindowRenderer(event)) {
+      return false
+    }
+    return dependencies.consumePendingUnpairedDeviceAuthFailure?.(event.sender.id) ?? false
   })
 }
 

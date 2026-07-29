@@ -8,6 +8,7 @@ import type { PtyTransport } from './pty-transport'
 import { safeFind } from '../terminal-search-safe-find'
 import { resolveTerminalShortcutAction } from './terminal-shortcut-policy'
 import type { MacOptionAsAlt } from './terminal-shortcut-policy'
+import { createTerminalNativeOnlyShortcutTracker } from './terminal-native-only-shortcut'
 import {
   keybindingMatchesAction,
   type KeybindingOverrides,
@@ -28,6 +29,7 @@ import { recordCreatedTerminalPaneSplit } from './terminal-pane-split-completion
 import { splitTerminalPaneWithInheritedCwd } from './terminal-pane-split-with-inherited-cwd'
 import { useAppStore } from '@/store'
 import { recordTerminalUserInputForLeaf } from './terminal-input-activity'
+import { copyTerminalSelection } from './terminal-selection-copy'
 import { isLocalWindowsConptyPaneForCtrlArrow } from './terminal-ctrl-arrow-conpty'
 import { makePaneKey } from '../../../../shared/stable-pane-id'
 import { resolveWindowsShiftEnterEncodingForPane } from './terminal-windows-shift-enter'
@@ -49,7 +51,8 @@ export function resolveTerminalKeyboardShortcutAction(
   isKittyKeyboardActivePane: Parameters<typeof resolveTerminalShortcutAction>[7],
   layoutBaseCharacterForCode: Parameters<typeof resolveTerminalShortcutAction>[8],
   getWindowsShiftEnterEncoding: Parameters<typeof resolveTerminalShortcutAction>[9],
-  isWindowsTerminalHost: NonNullable<Parameters<typeof resolveTerminalShortcutAction>[10]>
+  isWindowsTerminalHost: NonNullable<Parameters<typeof resolveTerminalShortcutAction>[10]>,
+  terminalShortcutPolicy: Parameters<typeof resolveTerminalShortcutAction>[11] = 'orca-first'
 ): ReturnType<typeof resolveTerminalShortcutAction> {
   // Why: keep the host callback required at the production boundary so a
   // caller cannot silently fall back to client-OS byte routing.
@@ -64,7 +67,8 @@ export function resolveTerminalKeyboardShortcutAction(
     isKittyKeyboardActivePane,
     layoutBaseCharacterForCode,
     getWindowsShiftEnterEncoding,
-    isWindowsTerminalHost
+    isWindowsTerminalHost,
+    terminalShortcutPolicy
   )
 }
 
@@ -260,6 +264,7 @@ export function useTerminalKeyboardShortcuts({
     // held. To distinguish left vs right Option, we record the Option key's
     // location from its own keydown event and clear it on keyup.
     let optionKeyLocation = 0
+    const nativeOnlyShortcutTracker = createTerminalNativeOnlyShortcutTracker()
     const onModifierDown = (e: KeyboardEvent): void => {
       if (e.key === 'Alt') {
         optionKeyLocation = e.location
@@ -300,6 +305,9 @@ export function useTerminalKeyboardShortcuts({
     }
 
     const onKeyDown = (e: KeyboardEvent): void => {
+      // Why: replace stale state only for this physical key so rollover cannot
+      // disarm a still-held native-only chord before its Kitty keyup arrives.
+      nativeOnlyShortcutTracker.prepareKeyDown(e)
       const manager = managerRef.current
       if (!manager) {
         return
@@ -392,9 +400,18 @@ export function useTerminalKeyboardShortcuts({
         isKittyKeyboardActivePane,
         getLayoutBaseCharacterForCode,
         getActivePaneWindowsShiftEnterEncoding,
-        isActivePaneWindowsTerminalHost
+        isActivePaneWindowsTerminalHost,
+        terminalShortcutPolicy
       )
       if (!action) {
+        return
+      }
+
+      if (action.type === 'switchInputSource') {
+        // Why: the OS must receive its default action, while xterm must receive
+        // none of the keydown, keypress, or keyup sequence.
+        nativeOnlyShortcutTracker.armKeyDown(e)
+        e.stopImmediatePropagation()
         return
       }
 
@@ -431,13 +448,15 @@ export function useTerminalKeyboardShortcuts({
         if (!pane) {
           return
         }
-        const selection = pane.terminal.getSelection()
-        if (!selection) {
+        if (!pane.terminal.getSelection()) {
           return
         }
         e.preventDefault()
         e.stopImmediatePropagation()
-        void window.api.ui.writeClipboardText(selection).catch(() => {
+        void copyTerminalSelection({
+          terminal: pane.terminal,
+          writeClipboardText: window.api.ui.writeTerminalClipboardText
+        }).catch(() => {
           /* ignore clipboard write failures */
         })
         return
@@ -607,19 +626,53 @@ export function useTerminalKeyboardShortcuts({
       }
     }
 
+    const onNativeOnlyShortcutCompanion = (e: KeyboardEvent): void => {
+      if (nativeOnlyShortcutTracker.consumeCompanion(e)) {
+        // Why: canceling only the companion keypress prevents Chromium's text
+        // insertion without canceling the keydown default used by the OS switch.
+        if (e.type === 'keypress') {
+          e.preventDefault()
+        }
+        e.stopImmediatePropagation()
+      }
+    }
+
+    // Why: modern Chromium can skip keypress and insert via beforeinput; block
+    // only this chord's text so an IME commit in the same window remains intact.
+    const onNativeOnlyBeforeInput = (e: Event): void => {
+      if (!(e instanceof InputEvent) || !nativeOnlyShortcutTracker.shouldSuppressBeforeInput(e)) {
+        return
+      }
+      e.preventDefault()
+      e.stopImmediatePropagation()
+    }
+
+    const onNativeOnlyBlur = (): void => {
+      nativeOnlyShortcutTracker.clear()
+    }
+
     window.addEventListener('keydown', onModifierDown, { capture: true })
     window.addEventListener('keyup', onModifierUp, { capture: true })
     window.addEventListener('keydown', onKeyDown, { capture: true })
+    window.addEventListener('keypress', onNativeOnlyShortcutCompanion, { capture: true })
+    window.addEventListener('keyup', onNativeOnlyShortcutCompanion, { capture: true })
+    window.addEventListener('beforeinput', onNativeOnlyBeforeInput, { capture: true })
+    window.addEventListener('blur', onNativeOnlyBlur)
     return () => {
       window.removeEventListener('keydown', onModifierDown, { capture: true })
       window.removeEventListener('keyup', onModifierUp, { capture: true })
       window.removeEventListener('keydown', onKeyDown, { capture: true })
+      window.removeEventListener('keypress', onNativeOnlyShortcutCompanion, { capture: true })
+      window.removeEventListener('keyup', onNativeOnlyShortcutCompanion, { capture: true })
+      window.removeEventListener('beforeinput', onNativeOnlyBeforeInput, { capture: true })
+      window.removeEventListener('blur', onNativeOnlyBlur)
     }
   }, [
     isActive,
     keyboardScopeRef,
     managerRef,
     paneTransportsRef,
+    panePtyBindingsRef,
     paneCwdRef,
     fallbackCwd,
     expandedPaneIdRef,

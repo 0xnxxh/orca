@@ -7,6 +7,7 @@
  * mid-evaluation. Keeping the maps and pure disposal here lets the slice
  * import cycle-free, mirroring how pty-dispatcher exports its handler maps.
  */
+import { discardPreHandlerPtyState } from './pty-pre-handler-buffer'
 
 export type ParkedTerminalPaneCapture = {
   ptyId: string | null
@@ -50,6 +51,16 @@ export function getParkedTerminalWatcherTabIds(): string[] {
   return Array.from(parkedWatchersByTabId.keys())
 }
 
+/**
+ * Whether this tab is parked right now — the reveal remount's own mount effect
+ * runs before the host effect that disposes the watcher (child effects first),
+ * so a pane reading this at connect time can tell a park-reveal from an
+ * in-place reattach. Empty entries are pinned-close tombstones, not live parks.
+ */
+export function isTerminalTabParked(tabId: string): boolean {
+  return (parkedWatchersByTabId.get(tabId)?.disposersByPtyId.size ?? 0) > 0
+}
+
 export function disposeParkedTabWatchers(tabId: string): void {
   const entry = parkedWatchersByTabId.get(tabId)
   if (!entry) {
@@ -62,15 +73,19 @@ export function disposeParkedTabWatchers(tabId: string): void {
   entry.disposersByPtyId.clear()
 }
 
+export function retireParkedTerminalTab(tabId: string): void {
+  // Why: explicit tab retirement permanently invalidates both live parked
+  // observers and unmounted-pane candidates; neither may reattach later.
+  disposeParkedTabWatchers(tabId)
+  capturedPanesByTabId.delete(tabId)
+}
+
 /**
  * Synchronously disposes any parked watcher subscribed to these PTYs.
- * shutdownWorktreeTerminals silences the live transports' final teardown
- * flush via unregisterPtyDataHandlers, but parked watchers ride the
- * dispatcher SIDECAR channel that call does not touch — without this, the
- * flush still marks unread and arms notification timers for a worktree that
- * is already sleeping or deleted. The tab entries are kept so a sleeping
- * parked tab does not restart watchers against its stale PTY ids; wake
- * re-mints the ids and the sync path restarts watchers then.
+ * Shutdown transactionally suspends dispatcher sidecars before teardown, then
+ * disposes their watchers only after commit. The tab entries remain so a
+ * sleeping parked tab cannot restart against stale PTY ids; wake re-mints the
+ * ids and the sync path restarts watchers then.
  */
 export function disposeParkedTerminalWatchersForPtyIds(ptyIds: readonly string[]): void {
   for (const entry of parkedWatchersByTabId.values()) {
@@ -84,19 +99,55 @@ export function disposeParkedTerminalWatchersForPtyIds(ptyIds: readonly string[]
   }
 }
 
-export function disposeParkedTerminalWatchersForWorktree(worktreeId: string): void {
+export function disposeParkedTerminalWatchersForWorktree(
+  worktreeId: string,
+  options?: { consumePreHandlerState?: boolean }
+): void {
   for (const [tabId, entry] of parkedWatchersByTabId) {
     if (entry.worktreeId === worktreeId) {
-      disposeParkedTabWatchers(tabId)
+      if (options?.consumePreHandlerState) {
+        disposeRemovedWorktreeParkedTabWatchers(tabId, entry)
+      } else {
+        disposeParkedTabWatchers(tabId)
+      }
     }
   }
+}
+
+export function disposeRemovedWorktreeParkedTerminalWatchers(
+  worktreeId: string,
+  authoritativePtyIds: readonly string[] = []
+): void {
+  for (const ptyId of authoritativePtyIds) {
+    discardPreHandlerPtyState(ptyId)
+  }
+  disposeParkedTerminalWatchersForWorktree(worktreeId, { consumePreHandlerState: true })
+}
+
+export function disposeAllParkedTerminalWatchers(): void {
+  for (const tabId of Array.from(parkedWatchersByTabId.keys())) {
+    disposeParkedTabWatchers(tabId)
+  }
+}
+
+function disposeRemovedWorktreeParkedTabWatchers(
+  tabId: string,
+  entry: ParkedTabWatcherEntry
+): void {
+  // Why: removal unregisters sidecars before PTY kill finishes. Tombstone each
+  // old PTY now so its delayed final flush/exit cannot refill bounded buffers
+  // after this worktree loses every future pane consumer.
+  for (const ptyId of entry.paneIdByPtyId.keys()) {
+    discardPreHandlerPtyState(ptyId)
+  }
+  disposeParkedTabWatchers(tabId)
 }
 
 /** Drops watchers and captures for worktrees that no longer exist. */
 export function pruneParkedTerminalWatchers(liveWorktreeIds: ReadonlySet<string>): void {
   for (const [tabId, entry] of parkedWatchersByTabId) {
     if (!liveWorktreeIds.has(entry.worktreeId)) {
-      disposeParkedTabWatchers(tabId)
+      disposeRemovedWorktreeParkedTabWatchers(tabId, entry)
     }
   }
   for (const [tabId, capture] of capturedPanesByTabId) {

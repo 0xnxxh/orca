@@ -21,6 +21,7 @@ function createMockRuntime(): CoordinatorRuntime & {
   createdTerminalOptions: { title?: string }[]
   probeDriftCalls: string[]
   probeDriftResult: DriftResult
+  cliCommand: 'orca' | 'orca-ide'
   setProbeDrift(result: DriftResult): void
   throwProbeDrift: Error | null
 } {
@@ -36,6 +37,7 @@ function createMockRuntime(): CoordinatorRuntime & {
     createdTerminalOptions: [] as { title?: string }[],
     probeDriftCalls: [] as string[],
     probeDriftResult: null as DriftResult,
+    cliCommand: 'orca' as 'orca' | 'orca-ide',
     throwProbeDrift: null as Error | null,
     setProbeDrift(result: DriftResult): void {
       mock.probeDriftResult = result
@@ -63,6 +65,9 @@ function createMockRuntime(): CoordinatorRuntime & {
         throw mock.throwProbeDrift
       }
       return mock.probeDriftResult
+    },
+    getTerminalOrchestrationCliCommand() {
+      return mock.cliCommand
     }
   }
   return mock
@@ -93,6 +98,7 @@ function insertWorkerDone(
     payload: JSON.stringify({
       taskId: params.taskId,
       dispatchId,
+      outcome: 'succeeded',
       ...(params.filesModified ? { filesModified: params.filesModified } : {})
     }),
     senderPaneKey:
@@ -121,6 +127,7 @@ describe('Coordinator', () => {
   it('dispatches a ready task to an available terminal', async () => {
     db = new OrchestrationDb(':memory:')
     const runtime = createMockRuntime()
+    runtime.cliCommand = 'orca-ide'
     runtime.terminals = [{ handle: 'term_a', worktreeId: 'wt1', connected: true, writable: true }]
 
     const task = db.createTask({ spec: 'implement feature' })
@@ -147,6 +154,7 @@ describe('Coordinator', () => {
     expect(result.status).toBe('completed')
     expect(result.completedTasks).toContain(task.id)
     expect(runtime.sentMessages.length).toBeGreaterThan(0)
+    expect(runtime.sentMessages[0].text).toContain('orca-ide orchestration send')
   })
 
   it('records the assignee pane key when the runtime can resolve one', async () => {
@@ -185,7 +193,7 @@ describe('Coordinator', () => {
       to: 'coord',
       subject: 'Done',
       type: 'worker_done',
-      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id })
+      payload: JSON.stringify({ taskId: task.id, dispatchId: dispatch.id, outcome: 'succeeded' })
     })
 
     reconcileLifecycleMessage(db, msg)
@@ -207,7 +215,11 @@ describe('Coordinator', () => {
 
     const task = db.createTask({ spec: 'duplicate completion' })
     const dispatch = db.createDispatchContext(task.id, 'term_a')
-    const payload = JSON.stringify({ taskId: task.id, dispatchId: dispatch.id })
+    const payload = JSON.stringify({
+      taskId: task.id,
+      dispatchId: dispatch.id,
+      outcome: 'succeeded'
+    })
     const first = db.insertMessage({
       from: 'term_a',
       to: 'coord',
@@ -562,7 +574,11 @@ describe('Coordinator', () => {
       to: 'coord',
       subject: 'Late done',
       type: 'worker_done',
-      payload: JSON.stringify({ taskId: task.id, dispatchId: staleCtx.id })
+      payload: JSON.stringify({
+        taskId: task.id,
+        dispatchId: staleCtx.id,
+        outcome: 'succeeded'
+      })
     })
 
     const staleCoordinator = new Coordinator(db, runtime, {
@@ -614,7 +630,7 @@ describe('Coordinator', () => {
       to: 'coord',
       subject: 'Done after restart',
       type: 'worker_done',
-      payload: JSON.stringify({ taskId: task.id, dispatchId: ctx.id }),
+      payload: JSON.stringify({ taskId: task.id, dispatchId: ctx.id, outcome: 'succeeded' }),
       senderPaneKey: `tab_after:${leafId}`
     })
 

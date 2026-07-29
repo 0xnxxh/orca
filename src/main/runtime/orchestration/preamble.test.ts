@@ -45,9 +45,12 @@ describe('buildDispatchPreamble', () => {
     expect(result).toContain('reportPath')
     expect(result).toContain('--task-id task_abc123')
     expect(result).toContain('--dispatch-id ctx_def456')
+    expect(result).toContain('--outcome succeeded')
+    expect(result).toContain('replace it with --outcome failed')
     expect(result).toContain('--files-modified "path/a,path/b"')
     expect(result).toContain('--report-path "<optional: path to the full artifact>"')
-    expect(result).toMatch(/orchestration send --to term_coord --from term_worker/)
+    expect(result).toMatch(/orchestration send --from term_worker/)
+    expect(result).not.toContain('orchestration send --to term_coord')
   })
 
   it(
@@ -85,12 +88,12 @@ describe('buildDispatchPreamble', () => {
     expect(result).toContain('--task-id task_abc123')
     expect(result).toContain('--dispatch-id ctx_def456')
     expect(result).toContain('--phase "<short: investigating|implementing|reviewing|waiting>"')
-    expect(result).toMatch(/orchestration send --to term_coord --from term_worker/)
+    expect(result).toMatch(/orchestration send --from term_worker/)
   })
 
   it('includes ask block with BEHAVIOR RULE #1 forbidding AskUserQuestion', () => {
     const result = buildDispatchPreamble(baseParams())
-    expect(result).toMatch(/orchestration ask --to term_coord --from term_worker/)
+    expect(result).toMatch(/orchestration ask --from term_worker/)
     expect(result).toContain('--question')
     expect(result).toContain('--timeout-ms 600000')
     // Why: the exact phrase is asserted so the rule can't be trimmed away by
@@ -101,19 +104,25 @@ describe('buildDispatchPreamble', () => {
     // else (e.g., not in an example payload or header). Count occurrences
     // of the exact token as a sanity check.
     const occurrences = (result.match(/AskUserQuestion/g) ?? []).length
-    // Three mentions: the one-liner ban, the TUI-prompt rationale, and the
-    // "when tempted to reach for AskUserQuestion" closing line.
-    expect(occurrences).toBe(3)
+    expect(occurrences).toBe(2)
   })
 
   it('binds every injected worker command to the dispatched terminal', () => {
     const result = buildDispatchPreamble(baseParams())
 
-    expect(result).toMatch(/orchestration ask --to term_coord --from term_worker/)
-    expect(result).toMatch(
-      /orchestration send --to term_coord --from term_worker \\\n    --type escalation/
-    )
+    expect(result).toMatch(/orchestration ask --from term_worker/)
+    expect(result).toMatch(/orchestration send --from term_worker \\\n    --type escalation/)
     expect(result).toContain('orchestration check --terminal term_worker')
+  })
+
+  it('carries the minted Dispatch capability on lifecycle and question commands', () => {
+    const result = buildDispatchPreamble({
+      ...baseParams(),
+      dispatchCapability: 'dcap_test_secret'
+    })
+
+    expect(result.match(/--dispatch-capability dcap_test_secret/g)).toHaveLength(4)
+    expect(result).not.toContain('"dispatchCapability"')
   })
 
   it('tells prompt-returning workers to idle without post-done polling', () => {
@@ -159,7 +168,7 @@ describe('buildDispatchPreamble', () => {
   })
 
   it('uses orca-dev CLI when devMode is true', () => {
-    const result = buildDispatchPreamble(baseParams({ devMode: true }))
+    const result = buildDispatchPreamble(baseParams({ devMode: true, cliCommand: 'orca-ide' }))
     expect(result).toContain('orca-dev orchestration send')
     expect(result).toContain('orca-dev orchestration check')
     expect(result).toContain('orca-dev orchestration ask')
@@ -173,6 +182,15 @@ describe('buildDispatchPreamble', () => {
     const result = buildDispatchPreamble(baseParams({ devMode: false }))
     expect(result).toContain('orca orchestration send')
     expect(result).toContain('orca orchestration check')
+  })
+
+  it('uses the exact orca-ide command for packaged WSL workers', () => {
+    const result = buildDispatchPreamble(baseParams({ cliCommand: 'orca-ide' }))
+
+    expect(result).toContain('orca-ide orchestration send')
+    expect(result).toContain('orca-ide orchestration check')
+    expect(result).toContain('orca-ide orchestration ask')
+    expect(result).not.toMatch(/(^|\s)orca orchestration/m)
   })
 
   it('appends a BASE DRIFT section when baseDrift.behind > 0', () => {

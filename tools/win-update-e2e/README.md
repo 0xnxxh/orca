@@ -5,6 +5,12 @@ harness performs a real silent update and proves, with machine-checkable
 assertions, what happens to the terminal **daemon** and its **sessions** across
 the update — and whether any console/terminal window flashes.
 
+> **Companion harness:** proving the daemon survives a **crash** of the main
+> process (GitHub #7742), rather than an update, lives in
+> [`tools/win-crash-survival-e2e`](../win-crash-survival-e2e/README.md). It reuses
+> the shared modules in this directory (app driver, daemon discovery, PowerShell
+> runner, platform guard, table renderer).
+
 It is the Phase 0 "proof harness" deliverable from
 [`docs/windows-terminal-update-survival-plan.md`](../../docs/windows-terminal-update-survival-plan.md).
 It exists specifically because the July 2026 attempt shipped four broken RCs
@@ -48,6 +54,7 @@ Or directly: `node tools/win-update-e2e/run.mjs --from ... --to ... --expect ...
 | `--install-dir <path>`                        | Isolated-install mode (see below) — install into `<path>`   |
 | `--asset-pattern <glob>`                      | gh asset glob (default `*windows-setup.exe`)                |
 | `--soak-seconds <n>`                          | Post-relaunch window-watch soak (default `180`)             |
+| `--require-distinct-artifacts`                | Require distinct N/B paths, versions, and SHA-256 hashes    |
 | `--keep-install`                              | Skip teardown/uninstall for debugging (ignored in isolated) |
 
 ### Profiles
@@ -204,6 +211,14 @@ powershell -File tools/win-update-e2e/window-enum.ps1
 
 ## Known limitations
 
+- **This is installer/session scaffolding, not the orchestration cutover gate.**
+  `--require-distinct-artifacts` makes the existing Windows update journey fail
+  closed unless it received two provably different packages. A CI follow-up
+  must still drive the packaged updater with a blocked packaged `orca.exe` ask,
+  prove launcher status `75` and the exact native/WSL resume command, then
+  record one question and reply on B. That proof requires distinct installed
+  A/B artifacts and a physical Windows host with WSL; this harness does not
+  simulate either contract.
 - **Scrollback fidelity is best-effort.** A production build renders the
   terminal with WebGL, so xterm text is not reliably in the DOM and the e2e
   `SerializeAddon` is not exposed. When text cannot be read the check reports
