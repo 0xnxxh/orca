@@ -328,3 +328,103 @@ describe('host-store list mutations', () => {
     expect(storedHostsRaw).toBe('{')
   })
 })
+
+describe('host-store pairing save under an unusable keystore', () => {
+  const NEW_HOST = {
+    id: 'host-1782629088232',
+    name: 'Host 1',
+    endpoint: 'ws://192.168.0.56:6769',
+    publicKeyB64: 'desktop-key',
+    lastConnected: 0,
+    deviceToken: 'device-token'
+  }
+  // Why: the verbatim Android rejection from #6600 — expo maps a null-message GeneralSecurityException to this.
+  const ENCRYPT_REJECTION = new Error(
+    "Could not encrypt the value for key 'orca.host-token.host-1782629088232' under keychain 'key_v1'. Caused by: unknown"
+  )
+  const GENERATION_KEY = 'orca:host-token-keychain-generation'
+  let storedHostsRaw: string
+  let storedGenerationRaw: string | null
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetHostStoreForTests()
+    resetMobileRelayHostOverlayStoreForTests()
+    scheduleCleanupMock.mockReset()
+    scheduleCleanupMock.mockResolvedValue(undefined)
+    storedHostsRaw = '[]'
+    storedGenerationRaw = null
+    asyncStorageMock.getItem.mockImplementation(async (key: string) => {
+      if (key === HOSTS_STORAGE_KEY) {
+        return storedHostsRaw
+      }
+      // Why: the generation record is durable on device; a forgetful mock would fake a broken read path.
+      return key === GENERATION_KEY ? storedGenerationRaw : null
+    })
+    asyncStorageMock.setItem.mockImplementation(async (key: string, raw: string) => {
+      if (key === HOSTS_STORAGE_KEY) {
+        storedHostsRaw = raw
+      } else if (key === GENERATION_KEY) {
+        storedGenerationRaw = raw
+      }
+    })
+    secureStoreMock.deleteItemAsync.mockResolvedValue(undefined)
+    secureStoreMock.getItemAsync.mockResolvedValue(null)
+  })
+
+  it('saves the paired host by rotating past the wedged keystore alias (#6600)', async () => {
+    const written = new Map<string | undefined, string>()
+    // Why: one wedged AndroidKeyStore alias rejects every host token; a fresh alias accepts.
+    secureStoreMock.setItemAsync.mockImplementation(
+      async (_key: string, value: string, options?: { keychainService?: string }) => {
+        if (options?.keychainService === undefined) {
+          throw ENCRYPT_REJECTION
+        }
+        written.set(options.keychainService, value)
+      }
+    )
+
+    await expect(saveHost(NEW_HOST)).resolves.toBeUndefined()
+
+    expect(written.get('orca.host-tokens.v1')).toBe('device-token')
+    expect(JSON.parse(storedHostsRaw)).toEqual([
+      {
+        id: NEW_HOST.id,
+        name: NEW_HOST.name,
+        endpoint: NEW_HOST.endpoint,
+        publicKeyB64: NEW_HOST.publicKeyB64,
+        lastConnected: NEW_HOST.lastConnected
+      }
+    ])
+  })
+
+  it('still surfaces the failure when no keystore alias can accept the token', async () => {
+    secureStoreMock.setItemAsync.mockRejectedValue(ENCRYPT_REJECTION)
+
+    await expect(saveHost(NEW_HOST)).rejects.toBe(ENCRYPT_REJECTION)
+  })
+
+  it('serves the rotated token to loadHosts so the saved host survives a relaunch', async () => {
+    const written = new Map<string | undefined, string>()
+    secureStoreMock.setItemAsync.mockImplementation(
+      async (_key: string, value: string, options?: { keychainService?: string }) => {
+        if (options?.keychainService === undefined) {
+          throw ENCRYPT_REJECTION
+        }
+        written.set(options.keychainService, value)
+      }
+    )
+    await saveHost(NEW_HOST)
+    // Why: a fresh process has no token cache, so the host list has to come back off the rotated alias.
+    resetHostStoreForTests()
+    secureStoreMock.getItemAsync.mockImplementation(
+      async (_key: string, options?: { keychainService?: string }) =>
+        written.get(options?.keychainService) ?? null
+    )
+
+    const hosts = await loadHosts()
+
+    expect(hosts).toHaveLength(1)
+    expect(hosts[0]!.deviceToken).toBe('device-token')
+  })
+})
