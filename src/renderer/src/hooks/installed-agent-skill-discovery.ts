@@ -2,28 +2,45 @@ import type { SkillDiscoveryResult, SkillDiscoveryTarget } from '../../../shared
 import type { RuntimeClientTarget } from '@/runtime/runtime-rpc-client'
 import { discoverSkillsForRuntimeTarget } from '@/runtime/runtime-skills-client'
 import { INSTALLED_AGENT_SKILLS_CHANGED_EVENT } from './installed-agent-skills-change-event'
+import {
+  clearInstalledAgentSkillDiscoveryCache,
+  peekInstalledAgentSkillDiscoveryCache,
+  readInstalledAgentSkillDiscoveryCache,
+  resetInstalledAgentSkillDiscoveryCacheForTests,
+  writeInstalledAgentSkillDiscoveryCache
+} from './installed-agent-skill-discovery-cache'
 
 export const LOCAL_RUNTIME_TARGET: RuntimeClientTarget = { kind: 'local' }
 
-let cachedDiscoveryByTarget = new Map<string, SkillDiscoveryResult>()
+let discoveryGeneration = 0
 let pendingDiscoveryByTarget = new Map<string, Promise<SkillDiscoveryResult>>()
 let pendingDiscoverySatisfiesForcedRefreshByTarget = new Map<string, boolean>()
 
 /** Last completed scan for a runtime-scoped key, for a synchronous first render. */
 export function getCachedSkillDiscovery(key: string): SkillDiscoveryResult | null {
-  return cachedDiscoveryByTarget.get(key) ?? null
+  return peekInstalledAgentSkillDiscoveryCache(key)
 }
 
 /** Invalidate every cached scan and tell mounted hooks to re-scan (e.g. after an install). */
 export function notifyInstalledAgentSkillsChanged(): void {
-  cachedDiscoveryByTarget.clear()
+  invalidateInstalledAgentSkillDiscovery()
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(INSTALLED_AGENT_SKILLS_CHANGED_EVENT))
   }
 }
 
+export function invalidateInstalledAgentSkillDiscovery(): void {
+  discoveryGeneration += 1
+  clearInstalledAgentSkillDiscoveryCache()
+  // Why: an install/uninstall must start a post-mutation scan; older pending
+  // reads may finish, but their generation can no longer repopulate the cache.
+  pendingDiscoveryByTarget.clear()
+  pendingDiscoverySatisfiesForcedRefreshByTarget.clear()
+}
+
 export function resetSkillDiscoveryCacheForTests(): void {
-  cachedDiscoveryByTarget = new Map()
+  invalidateInstalledAgentSkillDiscovery()
+  resetInstalledAgentSkillDiscoveryCacheForTests()
   pendingDiscoveryByTarget = new Map()
   pendingDiscoverySatisfiesForcedRefreshByTarget = new Map()
 }
@@ -82,13 +99,16 @@ export function getRuntimeScopedSkillDiscoveryKey(
 function startInstalledAgentSkillDiscovery(
   force: boolean,
   target: SkillDiscoveryTarget | undefined,
-  runtimeTarget: RuntimeClientTarget
+  runtimeTarget: RuntimeClientTarget,
+  key: string
 ): Promise<SkillDiscoveryResult> {
-  const key = getRuntimeScopedSkillDiscoveryKey(runtimeTarget, target)
+  const generation = discoveryGeneration
   const normalizedTarget = normalizeSkillDiscoveryTarget(target)
   const discovery = discoverSkillsForRuntimeTarget(runtimeTarget, normalizedTarget)
     .then((result) => {
-      cachedDiscoveryByTarget.set(key, result)
+      if (generation === discoveryGeneration) {
+        writeInstalledAgentSkillDiscoveryCache(key, result)
+      }
       return result
     })
     .finally(() => {
@@ -112,9 +132,13 @@ export async function discoverInstalledAgentSkills(
   runtimeTarget: RuntimeClientTarget = LOCAL_RUNTIME_TARGET
 ): Promise<SkillDiscoveryResult> {
   const key = getRuntimeScopedSkillDiscoveryKey(runtimeTarget, target)
-  const cachedDiscovery = cachedDiscoveryByTarget.get(key)
-  if (!force && cachedDiscovery) {
-    return cachedDiscovery
+  if (!force) {
+    // Why: only a cache-serving read should refresh recency — a forced refresh
+    // discards the entry it would otherwise promote.
+    const cachedDiscovery = readInstalledAgentSkillDiscoveryCache(key)
+    if (cachedDiscovery) {
+      return cachedDiscovery
+    }
   }
 
   const inFlightDiscovery = pendingDiscoveryByTarget.get(key)
@@ -134,5 +158,5 @@ export async function discoverInstalledAgentSkills(
     }
   }
 
-  return startInstalledAgentSkillDiscovery(force, target, runtimeTarget)
+  return startInstalledAgentSkillDiscovery(force, target, runtimeTarget, key)
 }
