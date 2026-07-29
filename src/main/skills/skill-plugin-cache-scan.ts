@@ -51,7 +51,7 @@ function errorCode(error: unknown): string | null {
 
 // Why: overriding a bound is how its truncation path stays executable — reaching the real
 // entry budget costs a 16k-dirent fixture per case, and the declared-root guard below it
-// only fires when the count lands in a one-entry window. Production passes neither.
+// needs the running count parked just under that budget. Production passes neither.
 export type PluginSkillScanBounds = {
   maximumCandidates?: number
   maximumEntries?: number
