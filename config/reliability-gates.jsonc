@@ -3099,7 +3099,7 @@
         "pnpm exec vitest run --config config/vitest.config.ts src/main/providers/ssh-pty-provider.test.ts src/main/providers/ssh-pty-source-delivery-ledger.test.ts src/main/ssh/ssh-pty-retired-source-deliveries.test.ts src/main/ssh/ssh-relay-session.test.ts src/main/ssh/ssh-relay-session-data-delivery.test.ts src/main/ssh/ssh-relay-session-recovery-races.test.ts src/main/ssh/ssh-relay-session-incarnation.test.ts src/main/ssh/ssh-relay-session-reconnect-incarnation.test.ts src/main/ssh/ssh-relay-session-terminal-error.test.ts src/main/ssh/ssh-pty-recovery-retention-budget.test.ts src/main/ssh/relay-protocol-backpressure.test.ts src/relay/protocol-backpressure.test.ts src/relay/pty-source-credit-ledger.test.ts src/relay/pty-source-credit-scheduler.test.ts src/relay/relay-pty-source-publication.test.ts src/relay/ssh-pty-source-credit-adapter.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/ssh-pty-model-admission.test.ts src/main/ipc/ssh-pty-output-model-migration.test.ts src/main/ssh/ssh-relay-session-model-migration.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/relay/git-response-stream-ownership.test.ts src/relay/pty-handler.test.ts --reporter=dot",
-        "pnpm exec vitest run --config config/vitest.config.ts src/main/providers/ssh-pty-notification-routing.test.ts src/main/providers/ssh-pty-provider-agent-session-create-operation.test.ts src/main/providers/ssh-pty-provider-exit-race.test.ts --reporter=dot",
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/providers/ssh-pty-notification-routing.test.ts src/main/providers/ssh-pty-provider-agent-session-create-operation.test.ts src/main/providers/ssh-pty-provider-exit-race.test.ts src/main/providers/ssh-pty-provider-reattach-incarnation.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/relay/relay-pty-source-recovery-interleavings.test.ts src/relay/relay-pty-source-recovery-completion.test.ts src/relay/relay-pty-source-restore-retry.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/relay/dispatcher.test.ts src/relay/pty-handler-source-publication.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/ssh/ssh-relay-session-recovery-races.test.ts --reporter=dot",
@@ -3110,6 +3110,7 @@
         "pnpm exec vitest run --config config/vitest.config.ts src/relay/relay-pty-source-restore-retry.test.ts src/main/ssh/ssh-relay-session-recovery-races.test.ts src/main/runtime/rpc/terminal-source-range-ledger.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/main/ssh/ssh-multiplexer-transport-writer.test.ts src/main/ssh/ssh-channel-multiplexer-backpressure.test.ts src/main/providers/ssh-pty-notification-routing.test.ts src/main/providers/ssh-pty-source-delivery-ledger.test.ts src/main/ssh/ssh-pty-retired-source-deliveries.test.ts src/main/providers/ssh-pty-provider-agent-session-create-operation.test.ts src/main/providers/ssh-pty-provider-exit-race.test.ts src/main/ipc/ssh-pty-output-exit-deadline.test.ts src/main/ipc/ssh-pty-remote-source-range-consumers.test.ts --reporter=dot",
         "pnpm exec vitest run src/main/providers/ssh-pty-notification-routing.test.ts src/main/providers/ssh-pty-provider-exit-race.test.ts src/main/ssh/ssh-relay-session-data-delivery.test.ts src/main/ssh/ssh-relay-session-recovery-races.test.ts src/main/ssh/ssh-relay-session-reconnect-incarnation.test.ts src/main/ssh/ssh-relay-session-incarnation.test.ts src/main/ssh/ssh-relay-session.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/ssh/ssh-pty-source-credit-rollout.test.ts src/main/ssh/ssh-relay-session.test.ts src/main/ssh/ssh-relay-session-reconnect-incarnation.test.ts src/main/persistence.test.ts src/renderer/src/components/settings/ssh-target-draft.test.ts src/renderer/src/components/settings/ssh-target-save-payload.test.ts src/renderer/src/components/settings/SshHostAdvancedFields.test.tsx --reporter=dot",
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/providers/ssh-pty-notification-routing.test.ts src/main/providers/ssh-pty-provider-reattach-incarnation.test.ts src/relay/relay-pty-source-recovery-interleavings.test.ts src/main/ssh/ssh-relay-deploy.test.ts src/main/ssh/ssh-relay-session-data-delivery.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/agent-hooks/wsl-hook-relay-sentinel.test.ts --reporter=dot",
         "ORCA_E2E_SSH_DOCKER=1 ORCA_SSH_PTY_SOURCE_CREDIT_V1=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/ssh-docker-relay-perf.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
         "ORCA_E2E_SSH_DOCKER=1 ORCA_SSH_PTY_SOURCE_CREDIT_V1=1 pnpm exec playwright test tests/e2e/ssh-docker-relay-perf.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1"
@@ -3126,6 +3127,7 @@
         "src/main/providers/ssh-pty-source-delivery-ledger.test.ts",
         "src/main/providers/ssh-pty-provider-agent-session-create-operation.test.ts",
         "src/main/providers/ssh-pty-provider-exit-race.test.ts",
+        "src/main/providers/ssh-pty-provider-reattach-incarnation.test.ts",
         "src/main/ssh/ssh-relay-session.test.ts",
         "src/main/ssh/ssh-relay-session-data-delivery.test.ts",
         "src/main/ssh/ssh-relay-session-model-migration.test.ts",
@@ -3223,6 +3225,7 @@
           "assertions": [
             "provisional source frames remain unprojected and are discarded on rollback",
             "held and later recovery frames route only to the private sink until final commit, without ordinary listeners or live PTY publication",
+            "exact source frames use their immutable incarnation without invoking or mutating the legacy incarnation resolver",
             "exit during private recovery retires the activation ledger at final commit and rejects late same-token frames",
             "private recovery retirement restores the exact predecessor without issuing a second cancellation",
             "older rollback cancels only its exact token without replacing a newer activation"
@@ -3245,6 +3248,12 @@
           "file": "src/main/providers/ssh-pty-provider-exit-race.test.ts",
           "assertions": [
             "exit before a fresh spawn reply drops provisional source data and settles exact cancellation"
+          ]
+        },
+        {
+          "file": "src/main/providers/ssh-pty-provider-reattach-incarnation.test.ts",
+          "assertions": [
+            "source-credit restore-required generic reattach fails as expired instead of returning an outputless live PTY"
           ]
         },
         {
@@ -3350,7 +3359,7 @@
             "failed exit publication retains sealed delivery for late cumulative ACK and exact token recovery",
             "exact owner recovery republishes exit without reopening source admission",
             "a failed recovery-completion frame rolls back its fence and the next exact owner republishes it before live admission",
-            "request cancellation remains authoritative through writer settlement and retry returns the same replacement recovery identity"
+            "failed activation response retains private retry authority, and exact retry clears activation only after successful settlement"
           ]
         },
         {
@@ -3618,6 +3627,15 @@
           "result": "passed",
           "durationSeconds": 20.19,
           "summary": "Seven deterministic rollout, session, persistence, and renderer files passed 494 tests. The focused assertions prove per-target default-off opt-in, explicit environment precedence, normalized persistence through SSH-config refresh, Advanced-setting rendering/save/clear, and immutable selection through automatic reconnect; no live SSH or paired-runtime topology was exercised."
+        },
+        {
+          "date": "2026-07-28",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/providers/ssh-pty-notification-routing.test.ts src/main/providers/ssh-pty-provider-reattach-incarnation.test.ts src/relay/relay-pty-source-recovery-interleavings.test.ts src/main/ssh/ssh-relay-deploy.test.ts src/main/ssh/ssh-relay-session-data-delivery.test.ts --reporter=dot",
+          "result": "passed",
+          "durationSeconds": 1.63,
+          "summary": "Five deterministic provider, relay, deploy, and session files passed 70 tests after red seams proved that source frames mutated legacy incarnation state and generic restore-required reattach returned an outputless live PTY. The candidate keeps exact source identity side-effect free, fails generic restore-required reattach as expired, preserves session-latched reconnect selection, and proves a failed recovery activation stays private and exact-retryable until successful response settlement; no live topology was exercised."
         },
         {
           "date": "2026-07-28",

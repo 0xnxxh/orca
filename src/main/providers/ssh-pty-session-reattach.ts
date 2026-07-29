@@ -28,6 +28,7 @@ export type SshPtyAttachResult = {
 }
 
 type SshPtyReattachResult = PtySpawnResult & {
+  sourceRecovery?: PtySourceRecoveryResult
   sourceActivationLease?: SshPtyReceivingActivationLease
 }
 
@@ -209,6 +210,7 @@ export async function reattachSshPtySession(args: {
       isReattach: true,
       ...(attachResult.replay ? { replay: attachResult.replay } : {}),
       ...(attachResult.incarnationId ? { incarnationId: attachResult.incarnationId } : {}),
+      ...(attachResult.sourceRecovery ? { sourceRecovery: attachResult.sourceRecovery } : {}),
       ...(attachResult.sourceActivation ? { sourceActivation: attachResult.sourceActivation } : {}),
       ...(attachResult.sourceActivationLease
         ? { sourceActivationLease: attachResult.sourceActivationLease }

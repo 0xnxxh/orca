@@ -697,7 +697,7 @@ async function repairInstalledNativeDeps(
     } catch (err) {
       signal?.throwIfAborted()
       console.warn(
-        `[ssh-relay] Launch namespace marker is unconfirmed at ${remoteDir}; retaining the install lock`
+        `[ssh-relay] Launch namespace marker is unconfirmed at ${remoteDir}; deferring lock ownership to stale recovery`
       )
       return { ownsInstallLock: !isUnconfirmedSshCommandTermination(err) }
     }

@@ -599,7 +599,7 @@ describe('SshRelaySession data delivery', () => {
     expect(notifyWithSettlementMock).toHaveBeenCalledWith('pty.ackData', batch, settled)
   })
 
-  it('applies the V1 kill switch to reconnect negotiation', async () => {
+  it('keeps the captured V1 selection through reconnect negotiation', async () => {
     let enabled = true
     const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
     const session = new SshRelaySession(
@@ -617,7 +617,7 @@ describe('SshRelaySession data delivery', () => {
     await session.reconnect(mockConn)
 
     expect(openConsumerSessionMock.mock.calls[0][1]).toHaveProperty('outputFlowControl')
-    expect(openConsumerSessionMock.mock.calls[1][1]).not.toHaveProperty('outputFlowControl')
+    expect(openConsumerSessionMock.mock.calls[1][1]).toHaveProperty('outputFlowControl')
     expect(deployAndLaunchRelay).toHaveBeenNthCalledWith(
       1,
       mockConn,
@@ -632,7 +632,7 @@ describe('SshRelaySession data delivery', () => {
       undefined,
       undefined,
       'target-1',
-      false
+      true
     )
   })
 

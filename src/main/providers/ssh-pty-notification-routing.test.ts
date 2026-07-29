@@ -191,7 +191,7 @@ describe('subscribeSshPtyNotifications', () => {
     })
   })
 
-  it('keeps exact source incarnation independent from prior legacy delivery state', () => {
+  it('keeps exact source incarnation independent without mutating legacy delivery state', () => {
     const { handler, dataListeners, resolvePtyIncarnation, installReceivingActivation } =
       createSubscription()
     const onData = vi.fn()
@@ -216,7 +216,8 @@ describe('subscribeSshPtyNotifications', () => {
       'incarnation:pty-1',
       'incarnation-1'
     ])
-    expect(resolvePtyIncarnation).toHaveBeenCalledTimes(2)
+    expect(resolvePtyIncarnation).toHaveBeenCalledTimes(1)
+    expect(resolvePtyIncarnation).toHaveBeenCalledWith('pty-1', undefined)
   })
 
   it('drops stale delivery generations without touching their PTY or unrelated PTYs', () => {
@@ -444,7 +445,7 @@ describe('subscribeSshPtyNotifications', () => {
       expect(onData.mock.calls.map((call) => call[0].data)).toEqual(['one', 'two'])
       expect(livePtyIds).toEqual(liveBeforeInvalid)
       expect(toAppPtyId).toHaveBeenCalledTimes(1)
-      expect(resolvePtyIncarnation).toHaveBeenCalledTimes(1)
+      expect(resolvePtyIncarnation).not.toHaveBeenCalled()
       expect(mux.request).toHaveBeenCalledWith('pty.cancelDelivery', {
         id: 'pty-1',
         clientGeneration,

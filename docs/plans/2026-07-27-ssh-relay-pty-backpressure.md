@@ -810,7 +810,9 @@ The receive cursor starts at `checkpointSourceEndSu`, not
 then advance only contiguously. Frames through `recoveryEndSu` stay
 quarantined as recovery; later frames stay held until the exact completion
 fence commits. Unknown or mismatched source identities are rejected before
-`livePtyIds`, runtime, renderer, or source obligations change.
+`livePtyIds`, runtime, renderer, or source obligations change. Exact
+source-bearing frames carry their immutable `ptyIncarnation` directly and do
+not invoke or mutate the legacy incarnation resolver.
 
 Every exact-token private frame advances a monotonic observed-source high-water
 before quarantine retention or `restoreRequired` checks. If exact exit arrives,
@@ -860,6 +862,12 @@ deletes it only if the delivery map still points to the exact record and wakes
 capacity; a retry can then mint a fresh token. It does not activate a
 subscription or stream a partial gap; main either restores an authoritative
 model generation before retry or surfaces the gap.
+
+The reconnect coordinator consumes `restoreRequired` and owns snapshot-backed
+replacement. A generic existing-session provider reattach has no such recovery
+owner, so it maps `restoreRequired` to `SSH_SESSION_EXPIRED` instead of
+returning an outputless live PTY; the existing renderer fallback may then
+replace that stale session.
 
 Recovery bodies use the ordinary source-bearing `pty.data` schema. The new
 token initializes `sentEndSu = creditedEndSu = checkpointSourceEndSu`, and

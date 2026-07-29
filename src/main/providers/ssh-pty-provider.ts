@@ -22,6 +22,7 @@ import { buildSshPtySpawnRequest } from './ssh-pty-spawn-request'
 import { SshPtySpawnExitRaceTracker } from './ssh-pty-spawn-exit-race'
 import { SshAgentSessionCapabilities } from './ssh-agent-session-capabilities'
 import type { PtyProcessInspection } from './pty-process-inspection'
+import { SSH_SESSION_EXPIRED_ERROR } from './ssh-pty-errors'
 
 // Why: sequential relay teardown calls share one absolute budget; convert to the mux-relative timeout only at dispatch.
 function relayTimeoutOptions(deadlineMs: number | undefined): { timeoutMs: number } | undefined {
@@ -97,9 +98,18 @@ export class SshPtyProvider implements IPtyProvider {
           rememberPtyIncarnation: (relayPtyId, incarnationId) =>
             this.outputState.rememberPtyIncarnation(relayPtyId, incarnationId)
         })
+        if (result.sourceRecovery?.status === 'restoreRequired') {
+          throw new Error(
+            `${SSH_SESSION_EXPIRED_ERROR}: ${toRelaySshPtyId(this.connectionId, result.id)}`
+          )
+        }
         this.livePtyIds.add(result.id)
         result.sourceActivationLease?.commit()
-        const { sourceActivationLease: _lease, ...spawnResult } = result
+        const {
+          sourceActivationLease: _lease,
+          sourceRecovery: _sourceRecovery,
+          ...spawnResult
+        } = result
         return spawnResult
       } catch (error) {
         result?.sourceActivationLease?.rollback()

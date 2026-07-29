@@ -236,7 +236,7 @@ describe('relay PTY source recovery interleavings', () => {
     ).toHaveLength(1)
   })
 
-  it('keeps timeout cancellation authoritative until a recovery response settles', async () => {
+  it('keeps failed recovery activation private and retryable until exact response settles', async () => {
     const primaryWrites: Buffer[] = []
     dispatcher = new RelayDispatcher(
       (data, settle) => {
@@ -278,24 +278,13 @@ describe('relay PTY source recovery interleavings', () => {
     dispatcher.invalidateClient()
 
     const recoveredWrites: Buffer[] = []
-    let blockedResponseSettlement: ((result: SinkWriteSettlement) => void) | undefined
-    let drainWriter: (() => void) | undefined
     const recoveredClientId = dispatcher.attachClient(
       (data, settle) => {
         recoveredWrites.push(Buffer.from(data))
-        if (message(data)?.id === 3) {
-          blockedResponseSettlement = settle
-          return false
-        }
         settle({ ok: true })
         return true
       },
-      {
-        supportsWriteCallback: true,
-        waitWriteDrain: (callback) => {
-          drainWriter = callback
-        }
-      },
+      { supportsWriteCallback: true },
       endpointIdentity
     )
     dispatcher.feedClient(
@@ -312,47 +301,53 @@ describe('relay PTY source recovery interleavings', () => {
       })
     )
     await flushRequests()
-    dispatcher.onRequest('pty.testRecover', async (params, context) => ({
-      sourceRecovery: publication.activate(
-        'pty-1',
-        'incarnation-1',
-        context,
-        params.sourceRecovery as PtySourceRecoveryRequest
-      )
-    }))
-    const recoveryRequest = {
+    const recoveryRequest: PtySourceRecoveryRequest = {
       status: 'checkpoint',
-      deliveryToken: oldData.deliveryToken,
-      clientGeneration: oldData.clientGeneration,
-      ownerGeneration: oldData.ownerGeneration,
+      deliveryToken: String(oldData.deliveryToken),
+      clientGeneration: Number(oldData.clientGeneration),
+      ownerGeneration: Number(oldData.ownerGeneration),
       ptyIncarnation: 'incarnation-1',
       acceptedSourceEndSu: 4
     }
-    dispatcher.feedClient(
-      recoveredClientId,
-      requestFrame(3, 'pty.testRecover', { sourceRecovery: recoveryRequest })
+    const firstActivationSettlements: ((result: SinkWriteSettlement) => void)[] = []
+    const firstRecovery = publication.activate(
+      'pty-1',
+      'incarnation-1',
+      {
+        clientId: recoveredClientId,
+        isStale: () => false,
+        sessionIdentity: endpointIdentity,
+        onResponseSettled: (callback) => firstActivationSettlements.push(callback)
+      },
+      recoveryRequest
     )
-    await flushRequests()
-    const firstRecovery = responseResult(recoveredWrites, 3)!.sourceRecovery
     expect(firstRecovery).toMatchObject({
       status: 'pending',
       checkpointSourceEndSu: 4,
       recoveryEndSu: 8
     })
 
-    dispatcher.feedClient(
-      recoveredClientId,
-      encodeJsonRpcFrame({ jsonrpc: '2.0', method: 'rpc.cancel', params: { id: 3 } }, 4, 0)
-    )
-    blockedResponseSettlement!({ ok: true })
-    drainWriter!()
-    dispatcher.feedClient(
-      recoveredClientId,
-      requestFrame(4, 'pty.testRecover', { sourceRecovery: recoveryRequest })
-    )
-    await flushRequests()
+    firstActivationSettlements[0]({ ok: false, error: new Error('response publication failed') })
+    expect(publication.getDebugSnapshot()).toMatchObject({ active: 0, activating: 1 })
+    const writesBeforeRetry = recoveredWrites.length
+    publication.onCreditAvailable('pty-1')
+    expect(recoveredWrites).toHaveLength(writesBeforeRetry)
 
-    expect(responseResult(recoveredWrites, 4)?.sourceRecovery).toEqual(firstRecovery)
+    const retryActivationSettlements: ((result: SinkWriteSettlement) => void)[] = []
+    const retriedRecovery = publication.activate(
+      'pty-1',
+      'incarnation-1',
+      {
+        clientId: recoveredClientId,
+        isStale: () => false,
+        sessionIdentity: endpointIdentity,
+        onResponseSettled: (callback) => retryActivationSettlements.push(callback)
+      },
+      recoveryRequest
+    )
+
+    expect(retriedRecovery).toEqual(firstRecovery)
+    retryActivationSettlements[0]({ ok: true })
     expect(publication.getDebugSnapshot()).toMatchObject({ active: 1, activating: 0 })
   })
 

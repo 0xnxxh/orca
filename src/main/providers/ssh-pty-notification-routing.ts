@@ -44,15 +44,14 @@ export function subscribeSshPtyNotifications(args: {
 }): SshPtyNotificationSubscription {
   const toDataPayload = (pending: PendingSshPtySourceData): Parameters<SshPtyDataCallback>[0] => {
     const id = args.toAppPtyId(pending.relayPtyId)
-    const ptyIncarnation = args.resolvePtyIncarnation(
-      pending.relayPtyId,
-      pending.params.ptyIncarnation ?? pending.params.incarnationId
-    )
+    const ptyIncarnation = pending.source
+      ? (pending.params.ptyIncarnation as string)
+      : args.resolvePtyIncarnation(pending.relayPtyId, pending.params.incarnationId)
     return {
       id,
       data: pending.data,
       providerGeneration: args.providerGeneration,
-      ptyIncarnation: pending.source ? (pending.params.ptyIncarnation as string) : ptyIncarnation,
+      ptyIncarnation,
       ...(typeof pending.params.rawLength === 'number'
         ? { sequenceChars: pending.params.rawLength }
         : {}),
