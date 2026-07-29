@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { TerminalOutputSourceRange } from '../../../shared/terminal-output-source-range'
 import {
   TERMINAL_SOURCE_RANGE_STREAM_MAX_BYTES,
@@ -26,7 +26,91 @@ function range(overrides: Partial<TerminalOutputSourceRange> = {}): TerminalOutp
 }
 
 describe('TerminalSourceRangeLedger', () => {
-  it('rejects partial encoded boundaries without changing its watermark', () => {
+  it('advances partial byte credit without settling its covering source frame', () => {
+    const release = vi.fn()
+    const ledger = new TerminalSourceRangeLedger('generation-1', {
+      canReserve: () => true,
+      reserve: () => true,
+      release,
+      close: () => {}
+    })
+    ledger.accept(100, 100, [
+      range({
+        sourceEndSu: 100,
+        displayEnd: 100,
+        transform: { transformed: false, rawLengthSu: 100, scalarSafe: true }
+      })
+    ])
+
+    expect(ledger.acknowledge('stale-generation', 40)).toEqual({
+      status: 'stale-generation',
+      settled: []
+    })
+    expect(ledger.acknowledge('generation-1', 40)).toEqual({
+      status: 'accepted',
+      acknowledgedBytes: 40,
+      settled: []
+    })
+    expect(ledger.getDebugSnapshot()).toMatchObject({
+      ackedEndByte: 40,
+      retainedBytes: 60,
+      frames: 1
+    })
+    expect(release).toHaveBeenLastCalledWith(40)
+
+    expect(ledger.acknowledge('generation-1', 100)).toMatchObject({
+      status: 'accepted',
+      acknowledgedBytes: 60,
+      settled: [{ spanId: 'span-1', sourceStartSu: 0, sourceEndSu: 100 }]
+    })
+    expect(ledger.getDebugSnapshot()).toMatchObject({
+      ackedEndByte: 100,
+      retainedBytes: 0,
+      frames: 0
+    })
+    expect(release.mock.calls).toEqual([[40], [60]])
+  })
+
+  it('admits a contiguous recovered delivery while the prior token remains unsettled', () => {
+    const ledger = new TerminalSourceRangeLedger('generation-1')
+    expect(ledger.accept(4, 4, [range()])).not.toBeNull()
+    expect(
+      ledger.accept(4, 4, [
+        range({
+          spanId: 'span-recovered',
+          clientGeneration: 3,
+          ownerGeneration: 4,
+          deliveryToken: 'token-2',
+          sourceStartSu: 4,
+          sourceEndSu: 8,
+          displayStart: 4,
+          displayEnd: 8
+        })
+      ])
+    ).not.toBeNull()
+
+    expect(ledger.acknowledge('generation-1', 4)).toMatchObject({
+      status: 'accepted',
+      settled: [{ spanId: 'span-1', deliveryToken: 'token-1' }]
+    })
+    expect(ledger.acknowledge('generation-1', 8)).toMatchObject({
+      status: 'accepted',
+      settled: [{ spanId: 'span-recovered', deliveryToken: 'token-2' }]
+    })
+    expect(
+      ledger.prepareAccept(4, 4, [
+        range({
+          spanId: 'span-stale',
+          sourceStartSu: 8,
+          sourceEndSu: 12,
+          displayStart: 8,
+          displayEnd: 12
+        })
+      ]).status
+    ).toBe('cross-generation')
+  })
+
+  it('settles only complete frames when a cumulative ACK crosses frame boundaries', () => {
     const ledger = new TerminalSourceRangeLedger('generation-1')
     ledger.accept(5, 4, [range()])
     ledger.accept(7, 5, [
@@ -40,15 +124,19 @@ describe('TerminalSourceRangeLedger', () => {
       })
     ])
 
-    expect(ledger.acknowledge('generation-1', 3).status).toBe('invalid')
+    expect(ledger.acknowledge('generation-1', 3)).toEqual({
+      status: 'accepted',
+      acknowledgedBytes: 3,
+      settled: []
+    })
     expect(ledger.getDebugSnapshot()).toMatchObject({
-      ackedEndByte: 0,
-      retainedBytes: 12,
+      ackedEndByte: 3,
+      retainedBytes: 9,
       frames: 2
     })
     expect(ledger.acknowledge('generation-1', 12)).toMatchObject({
       status: 'accepted',
-      acknowledgedBytes: 12,
+      acknowledgedBytes: 9,
       settled: [{ spanId: 'span-1' }, { spanId: 'span-2' }]
     })
   })

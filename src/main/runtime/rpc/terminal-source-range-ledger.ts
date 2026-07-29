@@ -56,6 +56,20 @@ const STANDALONE_BUDGET: TerminalSourceRangeBudget = {
   close: () => {}
 }
 
+function isRecoveredSourceIdentity(
+  previous: TerminalOutputSourceRange,
+  next: TerminalOutputSourceRange
+): boolean {
+  return (
+    previous.id === next.id &&
+    previous.providerGeneration === next.providerGeneration &&
+    previous.ptyIncarnation === next.ptyIncarnation &&
+    next.clientGeneration > previous.clientGeneration &&
+    next.ownerGeneration > previous.ownerGeneration &&
+    next.deliveryToken !== previous.deliveryToken
+  )
+}
+
 export class TerminalSourceRangeLedger {
   private acceptedEndByte = 0
   private ackedEndByte = 0
@@ -110,7 +124,8 @@ export class TerminalSourceRangeLedger {
     if (
       first &&
       (this.boundRange
-        ? !sameTerminalOutputSourceIdentity(this.boundRange, first)
+        ? !sameTerminalOutputSourceIdentity(this.boundRange, first) &&
+          !isRecoveredSourceIdentity(this.boundRange, first)
         : !sourceRanges.every((range) => sameTerminalOutputSourceIdentity(first, range)))
     ) {
       return { status: 'cross-generation' }
@@ -148,7 +163,7 @@ export class TerminalSourceRangeLedger {
         this.mappingMode ??= nextMappingMode
         const last = ranges.at(-1)
         if (first && last) {
-          this.boundRange ??= first
+          this.boundRange = first
           this.mappedSourceEndSu = last.sourceEndSu
           this.mappedDisplayEnd = last.displayEnd
         }
@@ -202,25 +217,20 @@ export class TerminalSourceRangeLedger {
     if (ackedEndByte === this.ackedEndByte) {
       return { status: 'duplicate', settled: [] }
     }
-    if (!this.frames.some((frame) => frame.encodedEndByte === ackedEndByte)) {
-      return { status: 'invalid', settled: [] }
-    }
     const acknowledgedBytes = ackedEndByte - this.ackedEndByte
     const settled: TerminalOutputSourceRange[] = []
     let frameCount = 0
-    let releasedBytes = 0
     for (const frame of this.frames) {
       if (frame.encodedEndByte > ackedEndByte) {
         break
       }
       settled.push(...frame.sourceRanges)
       frameCount++
-      releasedBytes += frame.encodedEndByte - frame.encodedStartByte
     }
     this.ackedEndByte = ackedEndByte
     this.frames.splice(0, frameCount)
-    this.retainedBytes -= releasedBytes
-    this.budget.release(releasedBytes)
+    this.retainedBytes -= acknowledgedBytes
+    this.budget.release(acknowledgedBytes)
     return { status: 'accepted', acknowledgedBytes, settled: Object.freeze(settled) }
   }
 

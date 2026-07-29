@@ -77,7 +77,7 @@ export function replaceTerminalSourceRangeFrames(
   return Object.freeze({
     frames: replaced,
     mappingMode: remainingRanges.length > 0 ? 'mapped' : null,
-    boundRange: remainingRanges[0] ?? null,
+    boundRange: last ?? null,
     mappedSourceEndSu: last?.sourceEndSu ?? null,
     mappedDisplayEnd: last?.displayEnd ?? null
   })
