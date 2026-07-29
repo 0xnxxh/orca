@@ -64,9 +64,6 @@ describe('getTerminalImeInputProps', () => {
       for (const preference of PREFERENCES) {
         const props = getTerminalImeInputProps(entryMode, 'android', preference)
         expect(props.autoCorrect).not.toBe(false)
-        expect(Object.hasOwn(props, 'autoCorrect')).toBe(
-          isTerminalAutocorrectEnabled(entryMode, 'android', preference)
-        )
       }
     }
   })
@@ -101,28 +98,72 @@ describe('getTerminalImeInputProps', () => {
   })
 })
 
+// Why: a slice between anchors silently runs to EOF if an anchor rots, which turns
+// every assertion below it vacuous — so a missing anchor must fail loudly instead.
+function sliceBetween(source: string, startAnchor: string, endAnchor: string): string {
+  const start = source.indexOf(startAnchor)
+  expect(start, `start anchor not found: ${startAnchor}`).toBeGreaterThan(-1)
+  const end = source.indexOf(endAnchor, start)
+  expect(end, `end anchor not found after start: ${endAnchor}`).toBeGreaterThan(-1)
+  return source.slice(start, end)
+}
+
 describe('session route IME wiring', () => {
+  // Element-scoped, not file-scoped: ~20 other mobile fields legitimately hardcode
+  // autoCorrect={false}, and this route has non-terminal inputs of its own.
+  const liveInput = sliceBetween(
+    sessionRouteSource,
+    'ref={liveInputRef}',
+    'importantForAutofill="no"'
+  )
+  const commandInput = sliceBetween(
+    sessionRouteSource,
+    'ref={commandInputRef}',
+    'onSubmitEditing={() => void handleSend()}'
+  )
+
   // Guard the call sites: the pure module is only a fix if the route actually uses it.
   it('routes both terminal inputs through the IME prop builder', () => {
-    expect(sessionRouteSource).toContain(
-      "{...getTerminalImeInputProps('live', Platform.OS, autocompletePref)}"
-    )
-    expect(sessionRouteSource).toContain(
-      "{...getTerminalImeInputProps('command', Platform.OS, autocompletePref)}"
+    expect(liveInput).toContain("getTerminalImeInputProps('live', Platform.OS, autocompletePref)")
+    expect(commandInput).toContain(
+      "getTerminalImeInputProps('command', Platform.OS, autocompletePref)"
     )
   })
 
-  it('hardcodes neither autoCorrect nor spellCheck on the terminal inputs', () => {
-    expect(sessionRouteSource).not.toContain('autoCorrect={false}')
-    expect(sessionRouteSource).not.toContain('spellCheck={false}')
-    expect(sessionRouteSource).not.toContain('autoCorrect={autocompleteEnabled}')
+  // #6995: a literal false on either terminal input reintroduces NO_SUGGESTIONS on Android.
+  it('hardcodes neither autoCorrect nor spellCheck on either terminal input', () => {
+    for (const [name, element] of [
+      ['live', liveInput],
+      ['command', commandInput]
+    ] as const) {
+      expect(element, `${name} input`).not.toMatch(/autoCorrect=\{(false|true)\}/)
+      expect(element, `${name} input`).not.toMatch(/spellCheck=\{(false|true)\}/)
+    }
+  })
+
+  // Android caches inputType at mount, so the prop shape and the remount key must flip together.
+  it('keys the Android command-input remount off the same resolved value it emits', () => {
+    expect(commandInput).toContain('commandAutocorrect')
+    expect(sessionRouteSource).toContain(
+      "isTerminalAutocorrectEnabled('command', Platform.OS, autocompletePref)"
+    )
   })
 
   // Otherwise the toggle reads "Off" on iOS while the command bar autocorrects (#4606).
-  it('resolves the settings toggle through the same per-platform default', () => {
-    expect(terminalSettingsSource).toContain("isTerminalAutocorrectEnabled('command', Platform.OS,")
-    expect(terminalSettingsSource).not.toContain(
-      'const [autocompleteEnabled, setAutocompleteEnabled] = useState(false)'
+  it('resolves the settings toggle and its copy through the same per-platform default', () => {
+    const autocompleteState = sliceBetween(
+      terminalSettingsSource,
+      'const [autocompleteEnabled, setAutocompleteEnabled]',
+      'const toggleAutocomplete'
     )
+    // Both the initial value and the post-load value must go through the resolver,
+    // or the row renders a default the command bar does not actually use.
+    expect(autocompleteState).not.toContain('useState(false)')
+    expect(
+      autocompleteState.match(/isTerminalAutocorrectEnabled\('command', Platform\.OS,/g)?.length
+    ).toBe(2)
+    // ...and so must the "On/Off by default" sentence in the group description.
+    const groupDescription = sliceBetween(terminalSettingsSource, 'KEYBOARD INPUT', 'by default')
+    expect(groupDescription).toContain("isTerminalAutocorrectEnabled('command', Platform.OS,")
   })
 })

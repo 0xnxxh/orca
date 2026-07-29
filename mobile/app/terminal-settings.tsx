@@ -334,9 +334,12 @@ export default function TerminalSettingsScreen() {
         <Text style={[styles.groupHeading, styles.inputGroupGap]}>KEYBOARD INPUT</Text>
         <Text style={styles.groupDescription}>
           Enable phone-style autocomplete, autocorrect, and spelling suggestions in the terminal
-          command bar. {Platform.OS === 'ios' ? 'On' : 'Off'} by default. Direct keyboard input
-          (when keys go straight to the terminal) always sends raw keystrokes, so suggestions
-          don&apos;t apply there.
+          command bar.{' '}
+          {isTerminalAutocorrectEnabled('command', Platform.OS, 'unset') ? 'On' : 'Off'} by default.
+          Direct keyboard input (when keys go straight to the terminal) never autocorrects.
+          {Platform.OS === 'android'
+            ? ' On Android the keyboard may still offer suggestions you can tap — suppressing them entirely is the same setting that stops Korean and Chinese from composing, so composition wins.'
+            : ''}
         </Text>
         <View style={[styles.section, styles.sectionTopGap]}>
           <View style={styles.row}>
