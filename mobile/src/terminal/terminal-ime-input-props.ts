@@ -53,7 +53,32 @@ export function getTerminalImeInputProps(
     // and Samsung Keyboard answers that flag by switching IME composition off entirely —
     // Hangul then arrives as raw jamo (#6995). Omitting the prop drops the flag without
     // asking for autocorrect. spellCheck is iOS-only, so it stays off the Android path.
-    return enabled ? { autoCorrect: true } : {}
+    if (enabled) {
+      return { autoCorrect: true }
+    }
+    // Why: an Off switch that emitted the same props as untouched would be a control that
+    // does nothing, leaving no way back to suppression. Honour it with NO_SUGGESTIONS even
+    // though that costs IME composition — the user asked, and it is reversible. Only the
+    // command bar, because the toggle never claimed to govern direct entry.
+    if (preference === 'off' && entryMode === 'command') {
+      return { autoCorrect: false }
+    }
+    return {}
   }
   return { autoCorrect: enabled, spellCheck: enabled }
+}
+
+// Why: Android caches IME inputType at mount, so the remount key must change whenever the
+// emitted props change — and on Android that is a three-way split ({} vs true vs false), not
+// the boolean the key used to track. Keying off the props themselves keeps the two in step.
+export function getTerminalImeRemountKey(
+  entryMode: TerminalInputEntryMode,
+  platform: TerminalImePlatform,
+  preference: TerminalAutocompletePreference
+): string {
+  if (platform !== 'android') {
+    return `${entryMode}-input`
+  }
+  const { autoCorrect } = getTerminalImeInputProps(entryMode, platform, preference)
+  return `${entryMode}-input-ac-${autoCorrect === undefined ? 'omitted' : String(autoCorrect)}`
 }

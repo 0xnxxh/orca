@@ -133,6 +133,7 @@ import {
 } from '../../../../src/terminal/terminal-keyboard-type'
 import {
   getTerminalImeInputProps,
+  getTerminalImeRemountKey,
   isTerminalAutocorrectEnabled,
   type TerminalAutocompletePreference
 } from '../../../../src/terminal/terminal-ime-input-props'
@@ -5041,13 +5042,7 @@ export default function SessionScreen() {
                     <TextInput
                       ref={commandInputRef}
                       // Why: Android caches IME inputType at mount, so toggling autocomplete must remount there; iOS updates in place.
-                      key={
-                        Platform.OS === 'android'
-                          ? commandAutocorrect
-                            ? 'cmd-input-ac-on'
-                            : 'cmd-input-ac-off'
-                          : 'cmd-input'
-                      }
+                      key={getTerminalImeRemountKey('command', Platform.OS, autocompletePref)}
                       style={styles.textInput}
                       value={input}
                       // Why: iOS kills active dictation/IME if JS writes a value differing from native text; store raw, normalize at send.

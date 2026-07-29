@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   getTerminalImeInputProps,
+  getTerminalImeRemountKey,
   isTerminalAutocorrectEnabled,
   parseTerminalAutocompletePreference,
   type TerminalAutocompletePreference
@@ -59,18 +60,39 @@ describe('isTerminalAutocorrectEnabled', () => {
 describe('getTerminalImeInputProps', () => {
   // #6995: RN maps autoCorrect={false} to Android's NO_SUGGESTIONS inputType, and Samsung
   // Keyboard answers that flag by disabling IME composition — Hangul arrives as raw jamo.
-  it('never emits an explicit false autoCorrect on Android', () => {
+  // The one deliberate exception is an explicit command-bar Off — the user asked for
+  // suppression and it is reversible. Nothing else on Android may emit the flag.
+  it('emits an explicit false autoCorrect on Android only where the user asked for it', () => {
     for (const entryMode of ['live', 'command'] as const) {
       for (const preference of PREFERENCES) {
         const props = getTerminalImeInputProps(entryMode, 'android', preference)
-        expect(props.autoCorrect).not.toBe(false)
+        expect(props.autoCorrect === false, `${entryMode}/${preference}`).toBe(
+          entryMode === 'command' && preference === 'off'
+        )
       }
     }
   })
 
-  it('omits autoCorrect entirely on Android when suggestions stay suppressed', () => {
+  it('omits autoCorrect entirely on Android when the preference is untouched', () => {
     expect(getTerminalImeInputProps('live', 'android', 'unset')).toEqual({})
-    expect(getTerminalImeInputProps('command', 'android', 'off')).toEqual({})
+    expect(getTerminalImeInputProps('command', 'android', 'unset')).toEqual({})
+  })
+
+  // Otherwise Off emits the same props as untouched — a control that does nothing, with no
+  // way back to suppression. It costs IME composition, which is the point of asking.
+  it('honours an explicit Android Off instead of making the switch a no-op', () => {
+    expect(getTerminalImeInputProps('command', 'android', 'off')).toEqual({ autoCorrect: false })
+    expect(getTerminalImeInputProps('command', 'android', 'off')).not.toEqual(
+      getTerminalImeInputProps('command', 'android', 'unset')
+    )
+  })
+
+  // The toggle never claimed to govern direct entry, and #6995 was reported on the live path,
+  // so an explicit Off must not reintroduce NO_SUGGESTIONS there.
+  it('keeps Android direct entry composing even when the user turned autocorrect off', () => {
+    for (const preference of PREFERENCES) {
+      expect(getTerminalImeInputProps('live', 'android', preference)).toEqual({})
+    }
   })
 
   it('still opts Android into autocorrect when the user asked for it', () => {
@@ -108,6 +130,42 @@ function sliceBetween(source: string, startAnchor: string, endAnchor: string): s
   return source.slice(start, end)
 }
 
+describe('getTerminalImeRemountKey', () => {
+  // Android caches inputType at mount. Before the explicit-Off case existed the key tracked a
+  // boolean, which cannot distinguish {} from {autoCorrect:false} — so unset -> off would have
+  // kept the key and the user's Off would never have reached the IME.
+  it('gives every distinct Android prop shape a distinct key', () => {
+    const keys = PREFERENCES.map((preference) =>
+      getTerminalImeRemountKey('command', 'android', preference)
+    )
+    expect(new Set(keys).size).toBe(PREFERENCES.length)
+  })
+
+  it('changes the Android key exactly when the emitted props change', () => {
+    for (const a of PREFERENCES) {
+      for (const b of PREFERENCES) {
+        const sameProps =
+          JSON.stringify(getTerminalImeInputProps('command', 'android', a)) ===
+          JSON.stringify(getTerminalImeInputProps('command', 'android', b))
+        const sameKey =
+          getTerminalImeRemountKey('command', 'android', a) ===
+          getTerminalImeRemountKey('command', 'android', b)
+        expect(sameKey, `${a} vs ${b}`).toBe(sameProps)
+      }
+    }
+  })
+
+  // iOS updates inputType in place, so remounting would only cost focus and IME state.
+  it('keeps one stable key off Android so the input is never remounted', () => {
+    for (const platform of ['ios', 'web', 'windows', 'macos'] as const) {
+      const keys = PREFERENCES.map((preference) =>
+        getTerminalImeRemountKey('command', platform, preference)
+      )
+      expect(new Set(keys).size).toBe(1)
+    }
+  })
+})
+
 describe('session route IME wiring', () => {
   // Element-scoped, not file-scoped: ~20 other mobile fields legitimately hardcode
   // autoCorrect={false}, and this route has non-terminal inputs of its own.
@@ -141,12 +199,14 @@ describe('session route IME wiring', () => {
     }
   })
 
-  // Android caches inputType at mount, so the prop shape and the remount key must flip together.
-  it('keys the Android command-input remount off the same resolved value it emits', () => {
-    expect(commandInput).toContain('commandAutocorrect')
-    expect(sessionRouteSource).toContain(
-      "isTerminalAutocorrectEnabled('command', Platform.OS, autocompletePref)"
+  // Android caches inputType at mount, so the key must derive from the emitted props. A key
+  // computed from the boolean instead cannot tell {} from {autoCorrect:false}, and an explicit
+  // Off would silently never reach the IME.
+  it('derives the command-input remount key from the emitted props, not a boolean', () => {
+    expect(commandInput).toContain(
+      "key={getTerminalImeRemountKey('command', Platform.OS, autocompletePref)}"
     )
+    expect(commandInput).not.toMatch(/key=\{[^}]*commandAutocorrect/)
   })
 
   // Otherwise the toggle reads "Off" on iOS while the command bar autocorrects (#4606).

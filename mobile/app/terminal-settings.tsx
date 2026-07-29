@@ -338,7 +338,7 @@ export default function TerminalSettingsScreen() {
           {isTerminalAutocorrectEnabled('command', Platform.OS, 'unset') ? 'On' : 'Off'} by default.
           Direct keyboard input (when keys go straight to the terminal) never autocorrects.
           {Platform.OS === 'android'
-            ? ' On Android the keyboard may still offer suggestions you can tap — suppressing them entirely is the same setting that stops Korean and Chinese from composing, so composition wins.'
+            ? ' Left untouched on Android the keyboard may still offer suggestions you can tap; turning this off suppresses them, but also stops Korean and Chinese composing.'
             : ''}
         </Text>
         <View style={[styles.section, styles.sectionTopGap]}>
