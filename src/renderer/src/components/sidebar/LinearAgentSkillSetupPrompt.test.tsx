@@ -344,9 +344,11 @@ describe('LinearAgentSkillSetupPrompt', () => {
       setupButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(document.body.textContent).toContain("bash -lc 'npx --yes skills add")
     expect(mocks.panelProps.at(-1)).toEqual(
       expect.objectContaining({
+        // Pinned whole: the only check that both non-interactive flags survive WSL wrapping.
+        command:
+          "wsl.exe -d 'Fedora' -- bash -lc 'npx --yes skills add https://github.com/stablyai/orca --skill orca-linear --global -y'",
         installedCommand:
           "wsl.exe -d 'Fedora' -- bash -lc 'npx skills update orca-linear --global'",
         terminalShellOverride: 'powershell.exe',
