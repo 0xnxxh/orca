@@ -71,6 +71,18 @@ declare global {
     __terminalParkingDebug?: {
       parkDelayMs: number
       parkedTabIds: () => string[]
+      retentionLimit: number | null
+      worktreeVerdicts: () => {
+        worktreeId: string
+        forceParked: boolean
+        hasActivityTerminalPortal: boolean
+        hasPendingSpawnWork: boolean
+        hiddenSinceMs: number | null
+        isVisible: boolean
+        ordinaryParkingCovers: boolean
+        parkCooldownUntilMs: number | null
+        shouldMeasureHiddenWorktree: boolean
+      }[]
     }
     __monacoEditorE2E?: MonacoE2EProbe
     __e2ePtyAppliedSizeReadDelayMs?: number

@@ -2050,6 +2050,11 @@ export function connectPanePty(
       // surviving shell then receives pointer moves as typed SGR reports; the
       // replay guard keeps xterm's auto-replies from leaking to the shell.
       replayIntoTerminal(pane, deps.replayingPanesRef, POST_REPLAY_REATTACH_RESET, {
+        breadcrumbIdentity: {
+          tabId: deps.tabId,
+          worktreeId: deps.worktreeId,
+          ptyId: transport.getPtyId()
+        },
         shouldRefreshViewportSynchronously: shouldRefreshForegroundSynchronously
       })
       if (reason === 'visible-pty') {
@@ -2579,6 +2584,11 @@ export function connectPanePty(
         // eats every click and keystroke against a dead transport — disarm the
         // modes now and arm the reveal-time wake.
         replayIntoTerminal(pane, deps.replayingPanesRef, POST_REPLAY_MODE_RESET, {
+          breadcrumbIdentity: {
+            tabId: deps.tabId,
+            worktreeId: deps.worktreeId,
+            ptyId: transport.getPtyId()
+          },
           shouldRefreshViewportSynchronously: shouldRefreshForegroundSynchronously
         })
         hibernatedWakeTarget = { ptyId, record: sleepingRecordEntry.record }
@@ -5332,6 +5342,11 @@ export function connectPanePty(
       // scheduler's deferred drain cannot land older bytes on top of the replay.
       flushTerminalOutput(pane.terminal)
       replayIntoTerminal(pane, deps.replayingPanesRef, data, {
+        breadcrumbIdentity: {
+          tabId: deps.tabId,
+          worktreeId: deps.worktreeId,
+          ptyId: transport.getPtyId()
+        },
         shouldRefreshViewportSynchronously: shouldRefreshForegroundSynchronously,
         shouldReleaseRenderPause: () => deps.isVisibleRef.current
       })
@@ -5342,6 +5357,11 @@ export function connectPanePty(
       // merely after the write was queued.
       flushTerminalOutput(pane.terminal)
       return replayIntoTerminalAsync(pane, deps.replayingPanesRef, data, {
+        breadcrumbIdentity: {
+          tabId: deps.tabId,
+          worktreeId: deps.worktreeId,
+          ptyId: transport.getPtyId()
+        },
         shouldRefreshViewportSynchronously: shouldRefreshForegroundSynchronously,
         shouldReleaseRenderPause: () => deps.isVisibleRef.current
       })

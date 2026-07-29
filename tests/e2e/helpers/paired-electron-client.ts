@@ -21,6 +21,7 @@ import {
   replaceRuntimePairingInPlace,
   type SameIdPairingReplacement
 } from './nested-runtime-same-id-pairing'
+import { createPairedWebClientUrl, type PairedWebClientOptions } from './paired-web-client-url'
 
 export type { SameIdPairingReplacement } from './nested-runtime-same-id-pairing'
 
@@ -92,11 +93,13 @@ export async function createRuntimeDesktopPairingOffer(
 
 export async function launchPairedWebClient(
   hubApp: ElectronApplication,
-  offer: RuntimeDesktopPairingOffer
+  offer: RuntimeDesktopPairingOffer,
+  options: PairedWebClientOptions = {}
 ): Promise<PairedWebClient> {
   if (!offer.webClientUrl) {
     throw new Error('HUB runtime did not provide a paired web client URL')
   }
+  const clientUrl = createPairedWebClientUrl(offer.webClientUrl, options)
   const pagePromise = hubApp.waitForEvent('window')
   await hubApp.evaluate(
     async ({ BrowserWindow }, { partition, url }) => {
@@ -115,11 +118,13 @@ export async function launchPairedWebClient(
     },
     {
       partition: `e2e-nested-runtime-web-${randomUUID()}`,
-      url: offer.webClientUrl
+      url: clientUrl
     }
   )
   const page = await pagePromise
-  await page.locator('[data-worktree-sidebar]').waitFor({ state: 'visible', timeout: 30_000 })
+  if (options.waitForWorkspace !== false) {
+    await page.locator('[data-worktree-sidebar]').waitFor({ state: 'visible', timeout: 30_000 })
+  }
   return { page, dispose: () => page.close() }
 }
 

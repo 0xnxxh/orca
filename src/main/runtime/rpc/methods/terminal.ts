@@ -2273,9 +2273,8 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             rows: serialized?.rows ?? size?.rows,
             displayMode,
             seq: layoutSeq,
-            truncated:
-              initialOutputOverflowed ||
-              (serialized ? read.truncated : isTerminalReadPayloadIncomplete(read))
+            // Why: retained-tail truncation loses history, not the authoritative latest-screen fallback.
+            truncated: initialOutputOverflowed
           })
           sendSnapshotFrames((opcode, payload) => sendFrame(request.streamId, opcode, payload), {
             kind: 'scrollback',
@@ -2284,9 +2283,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             displayMode,
             seq: snapshotFrameSeq,
             cwd: serialized?.cwd,
-            truncated:
-              initialOutputOverflowed ||
-              (serialized ? read.truncated : isTerminalReadPayloadIncomplete(read)),
+            truncated: initialOutputOverflowed,
             truncatedByByteBudget: serialized?.truncatedByByteBudget,
             source: serialized?.source,
             oscLinks: serialized?.oscLinks,
@@ -3026,8 +3023,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           streamId,
           lines: read.tail,
           truncated:
-            initialOutputOverflowed ||
-            (serialized ? read.truncated : isTerminalReadPayloadIncomplete(read)),
+            initialOutputOverflowed || (!sendBinary && isTerminalReadPayloadIncomplete(read)),
           cols: serialized?.cols ?? size?.cols,
           rows: serialized?.rows ?? size?.rows,
           displayMode,
@@ -3040,9 +3036,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           displayMode,
           seq: snapshotFrameSeq,
           cwd: serialized?.cwd,
-          truncated:
-            initialOutputOverflowed ||
-            (serialized ? read.truncated : isTerminalReadPayloadIncomplete(read)),
+          truncated: initialOutputOverflowed,
           truncatedByByteBudget: serialized?.truncatedByByteBudget,
           oscLinks: serialized?.oscLinks,
           data: serialized?.data ?? ''

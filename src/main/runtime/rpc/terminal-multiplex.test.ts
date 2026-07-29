@@ -1901,7 +1901,7 @@ describe('terminal multiplex RPC', () => {
     await dispatchPromise
   })
 
-  it('marks multiplex fallback snapshots truncated when the uncursored read is limited', async () => {
+  it('keeps a limited retained-tail fallback usable for multiplex first paint', async () => {
     const messages: string[] = []
     const binaryFrames: Uint8Array<ArrayBufferLike>[] = []
     const handlers = new Map<
@@ -1984,7 +1984,7 @@ describe('terminal multiplex RPC', () => {
     expect(subscribed).toMatchObject({
       type: 'subscribed',
       streamId: 11,
-      truncated: true
+      truncated: false
     })
 
     const decodedFrames = binaryFrames.map((frame) => decodeTerminalStreamFrame(frame))
@@ -1992,7 +1992,7 @@ describe('terminal multiplex RPC', () => {
       (frame) => frame?.opcode === TerminalStreamOpcode.SnapshotStart && frame.streamId === 11
     )
     expect(snapshotStart && decodeTerminalStreamJson(snapshotStart.payload)).toMatchObject({
-      truncated: true
+      truncated: false
     })
     const snapshotData = decodedFrames
       .filter((frame) => frame?.opcode === TerminalStreamOpcode.SnapshotChunk)
@@ -2002,6 +2002,50 @@ describe('terminal multiplex RPC', () => {
 
     runtime.cleanupSubscription('terminal-multiplex:conn-multiplex-limited')
     await dispatchPromise
+  })
+
+  it('does not mark a serialized multiplex snapshot truncated from an overflowed read', async () => {
+    const harness = startDesktopMultiplexSubscribe({
+      readTerminal: vi.fn().mockResolvedValue({
+        tail: ['old retained line'],
+        truncated: true,
+        limited: true
+      }),
+      serializeTerminalBuffer: vi.fn().mockResolvedValue({
+        data: 'authoritative current screen\r\n',
+        cols: 120,
+        rows: 40
+      })
+    })
+
+    await vi.waitFor(() =>
+      expect(harness.messages.some((message) => JSON.parse(message).result?.type === 'ready')).toBe(
+        true
+      )
+    )
+    sendDesktopMultiplexSubscribe(harness.handlers)
+    await vi.waitFor(() =>
+      expect(
+        harness.messages.some((message) => JSON.parse(message).result?.type === 'subscribed')
+      ).toBe(true)
+    )
+
+    const snapshotStart = harness.binaryFrames
+      .map((bytes) => decodeTerminalStreamFrame(bytes))
+      .find((frame) => frame?.opcode === TerminalStreamOpcode.SnapshotStart && frame.streamId === 7)
+    expect(snapshotStart && decodeTerminalStreamJson(snapshotStart.payload)).toMatchObject({
+      truncated: false
+    })
+    expect(
+      harness.binaryFrames
+        .map((bytes) => decodeTerminalStreamFrame(bytes))
+        .filter((frame) => frame?.opcode === TerminalStreamOpcode.SnapshotChunk)
+        .map((frame) => (frame ? decodeTerminalStreamText(frame.payload) : ''))
+        .join('')
+    ).toBe('authoritative current screen\r\n')
+
+    harness.cleanups.get('terminal-multiplex:conn-desktop-first-paint')?.()
+    await harness.dispatchPromise
   })
 
   it('falls back to smaller requested snapshots when serialized data exceeds the send budget', async () => {

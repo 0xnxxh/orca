@@ -93,13 +93,17 @@ import {
 } from './terminal-pane/terminal-hidden-view-parking'
 import {
   TERMINAL_HIDDEN_WORKTREE_RETENTION_TTL_MS,
+  hasPendingRetentionSpawnWork,
   selectForceParkEvictableTabIds,
   selectRetentionForceParkedTerminalWorktrees,
   type TerminalWorktreeRetentionCandidate
 } from './terminal-pane/terminal-hidden-worktree-retention'
 import { captureForceParkedWorktreeBuffers } from './terminal-pane/force-park-buffer-capture'
 import { warnTerminalLifecycleAnomaly } from './terminal-pane/terminal-lifecycle-diagnostics'
-import { getTerminalParkingPolicyOverrides } from './terminal-pane/terminal-parking-e2e-overrides'
+import {
+  getTerminalParkingPolicyOverrides,
+  recordTerminalWorktreeParkingDebugVerdicts
+} from './terminal-pane/terminal-parking-e2e-overrides'
 import { selectEvictionExemptTerminalTabIds } from './terminal-pane/terminal-eviction-exempt-tabs'
 import {
   canWatcherCoverParkedTerminalTab,
@@ -1006,14 +1010,11 @@ function Terminal(): React.JSX.Element | null {
           isVisible: candidate.isVisible,
           shouldMeasureHiddenWorktree: candidate.shouldMeasureHiddenWorktree,
           hasActivityTerminalPortal: candidate.hasActivityTerminalPortal,
-          parkCooldownUntilMs: candidate.parkCooldownUntilMs,
+          parkCooldownUntilMs: candidate.parkCooldownUntilMs ?? null,
           ordinaryParkingCovers:
             parkEligible && worktreeTabsAreWatcherCovered(candidate.worktreeId, tabs),
-          hasPendingSpawnWork: tabs.some(
-            (tab) =>
-              pendingStartupByTabId[tab.id] !== undefined ||
-              tab.pendingActivationSpawn === true ||
-              (typeof tab.pendingActivationSpawn === 'number' && tab.pendingActivationSpawn > 0)
+          hasPendingSpawnWork: tabs.some((tab) =>
+            hasPendingRetentionSpawnWork(tab, pendingStartupByTabId)
           )
         }
       }
@@ -1025,6 +1026,13 @@ function Terminal(): React.JSX.Element | null {
       nowMs,
       ...overrides
     })
+    recordTerminalWorktreeParkingDebugVerdicts(
+      retentionBudgetCandidates.map((candidate) => ({
+        ...candidate,
+        parkCooldownUntilMs: candidate.parkCooldownUntilMs ?? null,
+        forceParked: forceParkedWorktreeIds.has(candidate.worktreeId)
+      }))
+    )
     const capturedForceParked = forceParkedCaptureDoneRef.current
     for (const id of Array.from(capturedForceParked)) {
       if (!forceParkedWorktreeIds.has(id)) {

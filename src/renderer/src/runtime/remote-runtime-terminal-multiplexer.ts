@@ -10,7 +10,8 @@ import {
   encodeTerminalStreamJson,
   encodeTerminalStreamText
 } from '../../../shared/terminal-stream-protocol'
-import { e2eConfig } from '@/lib/e2e-config'
+import { e2eConfig, e2eDisableRemoteTerminalStallRecovery } from '@/lib/e2e-config'
+import { recordRendererCrashBreadcrumb } from '@/lib/crash-breadcrumb-recorder'
 import { deliverTerminalDataWithDeferredCredit } from '@/lib/pane-manager/terminal-delivery-credit'
 import { unwrapRuntimeRpcResult } from './runtime-rpc-client'
 import { getRuntimeEnvironmentRevision } from './runtime-environment-revision'
@@ -18,6 +19,10 @@ import {
   TERMINAL_MULTIPLEX_ACK_BATCH_BYTES,
   TERMINAL_MULTIPLEX_ACK_FLUSH_MS
 } from '../../../shared/terminal-multiplex-flow-control'
+import {
+  createRemoteTerminalStreamWatchdog,
+  type RemoteTerminalStreamWatchdog
+} from './remote-terminal-stream-watchdog'
 
 type RuntimeEnvironmentSubscriptionHandle = {
   unsubscribe: () => void
@@ -101,6 +106,7 @@ type RemoteRuntimeMultiplexedTerminalState = {
   resyncPendingSend: boolean
   resyncTimer: ReturnType<typeof setTimeout> | null
   resyncAttempts: number
+  watchdog: RemoteTerminalStreamWatchdog
 }
 
 type RemoteRuntimeSnapshotInfo = {
@@ -155,6 +161,7 @@ type E2eRemoteTerminalMultiplexAckGateSnapshot = {
 type E2eRemoteTerminalMultiplexAckGateApi = {
   hold: (terminals: string[]) => void
   release: () => void
+  sendInput: (terminal: string, text: string) => number
   snapshot: () => E2eRemoteTerminalMultiplexAckGateSnapshot
 }
 
@@ -208,6 +215,13 @@ function exposeE2eRemoteTerminalMultiplexAckGate(): void {
       }
     },
     release: releaseE2eRemoteTerminalAcks,
+    sendInput: (terminal, value) => {
+      let sent = 0
+      for (const multiplexer of multiplexers.values()) {
+        sent += multiplexer.sendInputForE2e(terminal, value)
+      }
+      return sent
+    },
     snapshot: getE2eRemoteAckSnapshot
   }
 }
@@ -267,14 +281,30 @@ class RemoteRuntimeTerminalMultiplexer {
       resyncInFlight: false,
       resyncPendingSend: false,
       resyncTimer: null,
-      resyncAttempts: 0
+      resyncAttempts: 0,
+      watchdog: createRemoteTerminalStreamWatchdog((stall) => {
+        if (!e2eDisableRemoteTerminalStallRecovery) {
+          recordRendererCrashBreadcrumb('remote_terminal_stream_stall_recovery', {
+            environmentId: this.environmentId,
+            expectedSeq: state.expectedSeq ?? null,
+            inactiveForMs: stall.inactiveForMs,
+            outstandingDeliveryBytes: stall.outstandingDeliveryBytes,
+            pendingAckBytes: state.pendingAckBytes,
+            reason: stall.reason,
+            resyncAttempts: state.resyncAttempts,
+            snapshotPending: state.pendingSnapshotRequest !== null,
+            streamId: state.streamId,
+            terminal: state.terminal
+          })
+          this.recoverStalledStream(state)
+        }
+      })
     }
     this.streams.set(streamId, state)
 
     const stream: RemoteRuntimeMultiplexedTerminal = {
       streamId,
-      sendInput: (text) =>
-        this.sendFrame(streamId, TerminalStreamOpcode.Input, encodeTerminalStreamText(text)),
+      sendInput: (text) => this.sendInput(state, text),
       resize: (cols, rows) =>
         this.sendFrame(
           streamId,
@@ -301,6 +331,7 @@ class RemoteRuntimeTerminalMultiplexer {
       close: () => {
         if (this.streams.get(streamId) === state) {
           discardOutputAcknowledgements(state)
+          state.watchdog.dispose()
           this.sendFrame(streamId, TerminalStreamOpcode.Unsubscribe)
           clearResyncTimer(state)
           rejectPendingSnapshotRequest(state, 'Remote terminal stream closed.')
@@ -437,8 +468,10 @@ class RemoteRuntimeTerminalMultiplexer {
     if (!stream) {
       return
     }
+    stream.watchdog.recordInbound()
     if (event.type === 'end') {
       discardOutputAcknowledgements(stream)
+      stream.watchdog.dispose()
       clearSnapshot(stream)
       clearResyncTimer(stream)
       rejectPendingSnapshotRequest(stream, 'Remote terminal stream ended.')
@@ -508,6 +541,7 @@ class RemoteRuntimeTerminalMultiplexer {
       }
       return
     }
+    stream.watchdog.recordInbound()
     if (
       frame.opcode === TerminalStreamOpcode.Output ||
       frame.opcode === TerminalStreamOpcode.OutputSpan
@@ -577,7 +611,9 @@ class RemoteRuntimeTerminalMultiplexer {
         return
       }
       try {
+        const settleWatchdog = stream.watchdog.beginOutputDelivery(frame.payload.byteLength)
         deliverTerminalDataWithDeferredCredit(() => {
+          settleWatchdog()
           if (shouldHoldE2eRemoteTerminalAck(stream.terminal)) {
             stream.heldAckBytes += frame.payload.byteLength
           } else {
@@ -846,7 +882,7 @@ class RemoteRuntimeTerminalMultiplexer {
         if (stream.pendingSnapshotRequest?.timer === timer) {
           clearPendingSnapshotRequest(stream)
           reject(new Error('Remote terminal snapshot timed out.'))
-          this.sendDeferredResyncSnapshot(stream)
+          this.recoverStalledStream(stream)
         }
       }, REMOTE_TERMINAL_SNAPSHOT_REQUEST_TIMEOUT_MS)
       if (typeof timer.unref === 'function') {
@@ -879,6 +915,37 @@ class RemoteRuntimeTerminalMultiplexer {
       TerminalStreamOpcode.Ack,
       encodeTerminalStreamJson({ bytes })
     )
+  }
+
+  private sendInput(stream: RemoteRuntimeMultiplexedTerminalState, text: string): boolean {
+    const sent = this.sendFrame(
+      stream.streamId,
+      TerminalStreamOpcode.Input,
+      encodeTerminalStreamText(text)
+    )
+    if (sent) {
+      stream.watchdog.recordCommandInput(text)
+    }
+    return sent
+  }
+
+  private recoverStalledStream(stream: RemoteRuntimeMultiplexedTerminalState): void {
+    if (this.streams.get(stream.streamId) !== stream) {
+      return
+    }
+    stream.watchdog.dispose()
+    discardOutputAcknowledgements(stream)
+    clearSnapshot(stream)
+    clearResyncTimer(stream)
+    rejectPendingSnapshotRequest(stream, 'Remote terminal stream stopped responding.')
+    this.streams.delete(stream.streamId)
+    this.sendFrame(stream.streamId, TerminalStreamOpcode.Unsubscribe)
+    if (stream.callbacks.onTransportClose) {
+      stream.callbacks.onTransportClose({ recoverable: true })
+    } else {
+      stream.callbacks.onError?.('Remote terminal stream stopped responding.')
+    }
+    this.closeIfIdle()
   }
 
   private queueOutputAcknowledgement(
@@ -925,6 +992,16 @@ class RemoteRuntimeTerminalMultiplexer {
       }
     }
     return released
+  }
+
+  sendInputForE2e(terminal: string, text: string): number {
+    let sent = 0
+    for (const stream of this.streams.values()) {
+      if (stream.terminal === terminal && this.sendInput(stream, text)) {
+        sent += 1
+      }
+    }
+    return sent
   }
 
   private sendFrame(
@@ -983,6 +1060,7 @@ class RemoteRuntimeTerminalMultiplexer {
     this.releaseIfCurrent(this.environmentId, this)
     for (const stream of streams) {
       discardOutputAcknowledgements(stream)
+      stream.watchdog.dispose()
       clearSnapshot(stream)
       clearResyncTimer(stream)
       rejectPendingSnapshotRequest(stream, message ?? 'Remote runtime connection closed.')
