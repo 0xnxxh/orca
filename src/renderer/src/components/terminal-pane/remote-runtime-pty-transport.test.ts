@@ -701,6 +701,46 @@ describe('createRemoteRuntimePtyTransport', () => {
     )
   })
 
+  it('retries initial web mirror inventory after a transient runtime close', async () => {
+    const healthyRuntimeCall = runtimeCall.getMockImplementation()
+    let activateAttempts = 0
+    runtimeCall.mockImplementation(async (request: { method: string; params?: unknown }) => {
+      if (request.method === 'session.tabs.activate' && activateAttempts++ === 0) {
+        throw Object.assign(new Error('Remote Orca runtime closed the connection.'), {
+          code: 'remote_runtime_unavailable'
+        })
+      }
+      return healthyRuntimeCall?.(request)
+    })
+    const { createRemoteRuntimePtyTransport } = await import('./remote-runtime-pty-transport')
+    const onError = vi.fn()
+    const recoveryPhases: string[] = []
+    const transport = createRemoteRuntimePtyTransport('env-1', {
+      worktreeId: 'wt-1',
+      tabId: 'web-terminal-host-tab-1',
+      leafId: 'pane:1'
+    })
+
+    transport.attach({
+      existingPtyId: 'remote:env-1@@stale-client-handle',
+      cols: 100,
+      rows: 30,
+      callbacks: {
+        onError,
+        onRecoveryStateChange: (state) => recoveryPhases.push(state.phase)
+      }
+    })
+
+    await vi.waitFor(() => expect(runtimeSubscribe).toHaveBeenCalledTimes(1))
+    expect(activateAttempts).toBe(2)
+    expect(onError).not.toHaveBeenCalled()
+    expect(recoveryPhases).toContain('backoff')
+    expect(latestSubscribePayload().terminal).toBe('terminal-1')
+    expect(runtimeCall.mock.calls.some(([request]) => request.method === 'terminal.create')).toBe(
+      false
+    )
+  })
+
   it('resolves a HUB-native SSH PTY wake hint to its runtime terminal handle', async () => {
     const leafId = '11111111-1111-4111-8111-111111111111'
     runtimeCall.mockImplementation(async (request: { method: string; params?: unknown }) => {
