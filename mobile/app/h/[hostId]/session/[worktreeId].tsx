@@ -3814,25 +3814,23 @@ export default function SessionScreen() {
           pendingActiveTerminalHandleRef.current = createdHandle
           activeHandleRef.current = createdHandle
           setActiveHandle(createdHandle)
-          setTerminals((prev) => {
-            const existing = prev.find((terminal) => terminal.handle === createdHandle)
-            const createdTerminal: Terminal = {
-              handle: createdHandle,
-              title: created.title || existing?.title || t('m.1ELofI0'),
-              terminalTheme: created.terminalTheme ?? existing?.terminalTheme,
-              isActive: true
-            }
-            if (existing) {
-              const next = prev.map((terminal) =>
+          const previousTerminals = terminalsRef.current
+          const existing = previousTerminals.find((terminal) => terminal.handle === createdHandle)
+          const createdTerminal: Terminal = {
+            handle: createdHandle,
+            title: created.title || existing?.title || t('m.1ELofI0'),
+            terminalTheme: created.terminalTheme ?? existing?.terminalTheme,
+            isActive: true
+          }
+          const nextTerminals = existing
+            ? previousTerminals.map((terminal) =>
                 terminal.handle === createdHandle ? { ...terminal, ...createdTerminal } : terminal
               )
-              terminalsRef.current = next
-              return terminalRecordsEqual(prev, next) ? prev : next
-            }
-            const next = [...prev, createdTerminal]
-            terminalsRef.current = next
-            return next
-          })
+            : [...previousTerminals, createdTerminal]
+          if (!terminalRecordsEqual(previousTerminals, nextTerminals)) {
+            terminalsRef.current = nextTerminals
+            setTerminals(nextTerminals)
+          }
           subscribeToTerminal(createdHandle)
           if (options?.initialPrompt?.trim()) {
             void client
@@ -4066,15 +4064,13 @@ export default function SessionScreen() {
         title
       })
       if (response.ok) {
-        setTerminals((prev) => {
-          const next = prev.map((terminal) =>
-            terminal.handle === target.handle
-              ? { ...terminal, title: title || t('m.1ELofI0') }
-              : terminal
-          )
-          terminalsRef.current = next
-          return next
-        })
+        const nextTerminals = terminalsRef.current.map((terminal) =>
+          terminal.handle === target.handle
+            ? { ...terminal, title: title || t('m.1ELofI0') }
+            : terminal
+        )
+        terminalsRef.current = nextTerminals
+        setTerminals(nextTerminals)
         scheduleDelayedAction(() => void fetchTerminals(), 300)
       }
     } catch {
