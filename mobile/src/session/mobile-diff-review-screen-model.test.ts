@@ -62,6 +62,8 @@ describe('mobile diff review screen model', () => {
     await mobileI18n.changeLanguage('es')
     try {
       expect(mobileReviewFilterLabel('unreviewed')).toBe('Sin revisar')
+      expect(mobileReviewFilterLabel('unstaged')).toBe('Sin preparar')
+      expect(mobileReviewFilterLabel('staged')).toBe('Preparado')
       expect(mobileReviewNoteCountLabel(1)).toBe('1 nota')
       expect(mobileReviewNoteCountLabel(2)).toBe('2 notas')
       expect(mobileReviewUnsentNoteCountLabel(1)).toBe('1 nota no enviada')

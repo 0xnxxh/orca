@@ -26,7 +26,34 @@ const MOBILE_LOCALE_KEY_OVERRIDES = {
   'm.zDZEMlw': { es: 'Conectando…', ja: '接続中…', ko: '연결 중…', zh: '正在连接…' },
   'm.T3HZLEU': { es: 'Conectando…', ja: '接続中…', ko: '연결 중…', zh: '正在连接…' },
   'm.X8_vuao': { es: 'Detener', ja: '停止', ko: '중지', zh: '停止' },
-  'm.Scz67W0': { es: 'Continuar', ja: '続ける', ko: '계속', zh: '继续' }
+  'm.Scz67W0': { es: 'Continuar', ja: '続ける', ko: '계속', zh: '继续' },
+  'm.qzEC9yM': { es: 'ascendente', ja: '昇順', ko: '오름차순', zh: '升序' },
+  'm.2IFEfeA': { es: 'descendente', ja: '降順', ko: '내림차순', zh: '降序' },
+  'm.EiCMRDA': {
+    es: 'Sin preparar',
+    ja: '未ステージ',
+    ko: '스테이징되지 않음',
+    zh: '未暂存'
+  },
+  'm.YcfLGog': { es: 'Preparado', ja: 'ステージ済み', ko: '스테이징됨', zh: '已暂存' },
+  'm.FohFTKc': {
+    es: 'Todos los repositorios',
+    ja: 'すべてのリポジトリ',
+    ko: '모든 리포지토리',
+    zh: '所有仓库'
+  },
+  'm.dBmZ43Q': {
+    es: 'Todos los repos',
+    ja: 'すべてのリポジトリ',
+    ko: '모든 저장소',
+    zh: '所有代码库'
+  },
+  'm.zrhQGaA': {
+    es: '{{value0}} repositorios',
+    ja: '{{value0}} リポジトリ',
+    ko: '저장소 {{value0}}개',
+    zh: '{{value0}} 个代码库'
+  }
 }
 
 function protectPlaceholders(text) {

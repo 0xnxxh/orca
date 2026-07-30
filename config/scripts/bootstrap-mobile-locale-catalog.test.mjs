@@ -12,7 +12,7 @@ describe('bootstrap-mobile-locale-catalog', () => {
     expect(shouldReuseDesktopTranslation('Codex', 'Codex')).toBe(true)
   })
 
-  it('localizes action keys without translating the Continue agent name', () => {
+  it('uses contextual overrides without translating the Continue agent name', () => {
     expect(
       repairMobileTranslatedValue({
         key: 'm.Scz67W0',
@@ -29,5 +29,13 @@ describe('bootstrap-mobile-locale-catalog', () => {
         locale: 'es'
       })
     ).toBe('Continue')
+    expect(
+      repairMobileTranslatedValue({
+        key: 'm.EiCMRDA',
+        enValue: 'Unstaged',
+        localeValue: 'sin escena',
+        locale: 'es'
+      })
+    ).toBe('Sin preparar')
   })
 })
