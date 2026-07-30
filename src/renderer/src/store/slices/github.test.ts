@@ -6694,6 +6694,37 @@ describe('createGitHubSlice.fetchWorkItems source/error envelope', () => {
     expect(result).toEqual({ items: [], failedCount: 0, issueErrorTypes: ['validation_error'] })
   })
 
+  it('demotes non-window validation errors so they cannot drive the unreachable clamp', async () => {
+    runtimeEnvironmentCall.mockResolvedValueOnce({
+      id: 'rpc-work-items-page-422-other',
+      ok: true,
+      result: {
+        items: [],
+        sources: {
+          issues: { owner: 'up', repo: 'r' },
+          prs: null,
+          originCandidate: { owner: 'up', repo: 'r' },
+          upstreamCandidate: null
+        },
+        errors: {
+          issues: { type: 'validation_error', message: 'Validation Failed: query is malformed' }
+        }
+      },
+      _meta: { runtimeId: 'remote-runtime' }
+    })
+    const store = createTestStore()
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-1' },
+      repos: [{ id: 'runtime-repo-id', path: '/server/repo', name: 'repo', kind: 'git' }]
+    } as unknown as Partial<AppState>)
+
+    const result = await store
+      .getState()
+      .fetchWorkItemsNextPage([{ repoId: 'caller-repo-id', path: '/server/repo' }], 24, 100, '', 2)
+
+    expect(result).toEqual({ items: [], failedCount: 0, issueErrorTypes: ['unknown'] })
+  })
+
   it('routes work-item counts through the active runtime environment', async () => {
     runtimeEnvironmentCall.mockResolvedValueOnce({
       id: 'rpc-work-items-count',

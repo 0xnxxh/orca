@@ -65,7 +65,13 @@ export function resolveEmptyPageOutcome(args: {
   countedTotalPages: number | null
 }): EmptyPageOutcome {
   const clamp = Math.max(1, Math.floor(args.target))
-  if (args.issueErrorTypes.includes('validation_error') && args.failedCount === 0) {
+  // Why: every error must be the window 422 — a sibling repo's envelope
+  // 403/404 alongside it means a repo that may still have pages, so the
+  // transient-failure branch must win the toast and block the clamp.
+  const onlyWindowErrors =
+    args.issueErrorTypes.length > 0 &&
+    args.issueErrorTypes.every((type) => type === 'validation_error')
+  if (onlyWindowErrors && args.failedCount === 0) {
     return { reason: 'window-unreachable', clampTotalPagesTo: clamp }
   }
   if (args.failedCount > 0 || args.issueErrorTypes.length > 0) {

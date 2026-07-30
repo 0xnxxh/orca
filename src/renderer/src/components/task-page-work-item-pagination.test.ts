@@ -80,16 +80,23 @@ describe('resolveEmptyPageOutcome', () => {
     ).toEqual({ reason: 'window-unreachable', clampTotalPagesTo: 33 })
   })
 
-  it('resolves as load-failed when a window 422 coincides with a thrown repo fetch', () => {
-    // Repos advance independently; another repo's transient failure says
-    // nothing about the healthy repos' remaining pages — and the transient
-    // failure is the actionable signal, so it wins the toast too.
+  it('resolves as load-failed when a window 422 coincides with a sibling failure', () => {
+    // Repos advance independently; another repo's failure — thrown or on the
+    // envelope channel — says nothing about the healthy repos' remaining
+    // pages, and the transient failure is the actionable signal.
     expect(
       resolveEmptyPageOutcome({
         ...base,
         target: 5,
         failedCount: 1,
         issueErrorTypes: ['validation_error']
+      })
+    ).toEqual({ reason: 'load-failed', clampTotalPagesTo: null })
+    expect(
+      resolveEmptyPageOutcome({
+        ...base,
+        target: 5,
+        issueErrorTypes: ['validation_error', 'permission_denied']
       })
     ).toEqual({ reason: 'load-failed', clampTotalPagesTo: null })
   })

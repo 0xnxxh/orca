@@ -2821,7 +2821,14 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
           })
           // Why: page-N failures aren't in the per-repo banner (keyed on the initial fetch); log them so pagination failures are observable instead of silently truncating (richer surface deferred, design doc §6).
           if (envelope.errors?.issues) {
-            issueErrorTypes.push(envelope.errors.issues.type)
+            const { type, message } = envelope.errors.issues
+            // Why: only the 1000-result-window 422 may drive the unreachable
+            // clamp; demote other validation errors so they read as failures.
+            issueErrorTypes.push(
+              type === 'validation_error' && !/first 1000 search results/i.test(message)
+                ? 'unknown'
+                : type
+            )
             console.warn(
               `[workItems] next page ${r.repoId} issues-side partial failure:`,
               envelope.errors.issues

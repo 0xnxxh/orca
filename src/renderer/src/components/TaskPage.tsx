@@ -3835,7 +3835,8 @@ export default function TaskPage(): React.JSX.Element {
     workItemsInvalidationNonce,
     taskRefreshNonce,
     taskSource,
-    githubMode
+    githubMode,
+    taskResumeApplied
   ])
 
   // Why: the dialog's "Use" button routes through the same direct-launch flow as the row-level "Use" CTA so behavior is consistent regardless of entry point.
@@ -6432,7 +6433,11 @@ export default function TaskPage(): React.JSX.Element {
       githubPerRepoPageLimit
     ).then(({ totalPages: countedPages }) => {
       if (!cancelled) {
-        setCountedTotalPages(countedPages)
+        // Why: min against an already-applied clamp — the count must not
+        // re-advertise pages a probe has proven unreachable this generation.
+        setCountedTotalPages((previous) =>
+          previous !== null && previous > 0 ? Math.min(previous, countedPages) : countedPages
+        )
       }
     })
 
