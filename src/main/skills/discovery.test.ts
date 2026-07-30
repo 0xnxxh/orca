@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { buildSkillDiscoverySources, discoverSkills } from './discovery'
+import { TUI_AGENT_CONFIG } from '../../shared/tui-agent-config'
 import type { Repo } from '../../shared/types'
 
 function makeRepo(path: string, connectionId: string | null = null): Repo {
@@ -137,6 +138,49 @@ describe('skill discovery', () => {
     expect(reviews[0].rootPaths?.slice().sort()).toEqual(
       [codexSkills, join(home, '.agents', 'skills')].sort()
     )
+  })
+
+  it('keys every deduped root to an owning source so per-agent coverage resolves', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-skills-'))
+    const home = join(root, 'home')
+    const claudeSkills = join(home, '.claude', 'skills')
+    await mkdir(join(claudeSkills, 'orchestration'), { recursive: true })
+    await writeFile(join(claudeSkills, 'orchestration', 'SKILL.md'), '# orchestration')
+    // `npx skills add --global` links a provider home onto an existing install.
+    await mkdir(join(home, '.grok'), { recursive: true })
+    await symlink(claudeSkills, join(home, '.grok', 'skills'), 'dir')
+
+    const result = await discoverSkills({ homeDir: home, repos: [], includeCwd: false })
+
+    const skill = result.skills.find((entry) => entry.name === 'orchestration')
+    // Why: renderer coverage looks each rootPath up in `sources` by path, so a
+    // root with no matching source silently drops that agent back to uncovered.
+    const owners = skill?.rootPaths
+      ?.map((rootPath) => result.sources.find((source) => source.path === rootPath))
+      .map((source) => source?.owner)
+    expect(owners?.slice().sort()).toEqual(['claude', 'grok'])
+  })
+
+  it('names every source owner after a real agent id', () => {
+    // Why: renderer coverage joins `owner` to a TuiAgent id by string equality, and
+    // AgentType widens to string — a typo here reads Missing forever, type-clean.
+    const owners = buildSkillDiscoverySources({
+      homeDir: '/home/test',
+      repos: [],
+      includeCwd: false
+    }).flatMap((source) => (source.owner === null ? [] : [source.owner]))
+
+    expect(owners.filter((owner) => !(owner in TUI_AGENT_CONFIG))).toEqual([])
+  })
+
+  it('scans a home-equal workspace path as both a home and a repo root', () => {
+    // Why: coverage must tolerate several sources per path. Deduping these would
+    // make the renderer's duplicate-root regression test assert a dead shape.
+    const paths = buildSkillDiscoverySources({ homeDir: '/home/test', cwd: '/home/test' })
+      .filter((source) => source.path === join('/home/test', '.claude', 'skills'))
+      .map((source) => source.sourceKind)
+
+    expect(paths.slice().sort()).toEqual(['home', 'repo'])
   })
 
   it('does not add SSH-backed repository paths to local scan roots', () => {
