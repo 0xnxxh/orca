@@ -58,6 +58,11 @@ type AiVaultHandlerOptions = AiVaultSessionSources &
     scanRuntimeAiVaultSessions?: RuntimeAiVaultScanner
   }
 
+type AllHostScanSnapshot = {
+  sshHosts: AiVaultHostDiscoveryResult<{ targetId: string }>
+  runtimeHosts: AiVaultHostDiscoveryResult<RuntimeAiVaultHostInfo>
+}
+
 let scanCoordinator = new AiVaultScanCoordinator()
 let handlerOptions: AiVaultHandlerOptions = {}
 const listCancellations = createSenderScopedRequestCancellations()
@@ -69,16 +74,21 @@ async function listAiVaultSessions(
   const executionHostScope = normalizeExecutionHostScope(
     args?.executionHostScope ?? LOCAL_EXECUTION_HOST_ID
   )
+  const allHostSnapshot = executionHostScope === 'all' ? captureAllHostScanSnapshot() : undefined
   // Scope paths change the result set, so they must be part of the cache key.
   // A scanner consumes at most 64 paths, so smaller equivalent workspace sets
   // can share a snapshot regardless of which worktree was selected first.
   const scopePaths = args?.scopePaths ?? []
-  const key = JSON.stringify({
+  const hostLegCacheKey = JSON.stringify({
     scopePaths:
       scopePaths.length <= AI_VAULT_SCOPE_PATHS_MAX_COUNT
         ? [...new Set(scopePaths)].sort()
         : scopePaths,
     executionHostScope
+  })
+  const key = JSON.stringify({
+    hostLegCacheKey,
+    hostTopology: allHostSnapshot ? allHostTopologyKey(allHostSnapshot) : undefined
   })
   const depth = requestedAiVaultSessionDepth(args)
   const scanKey = JSON.stringify({ key, depth })
@@ -94,7 +104,14 @@ async function listAiVaultSessions(
     force,
     signal: options.signal,
     start: (scanSignal) => {
-      const scan = () => scanAiVaultSessionsByHostScope(args, executionHostScope, scanSignal, key)
+      const scan = () =>
+        scanAiVaultSessionsByHostScope(
+          args,
+          executionHostScope,
+          scanSignal,
+          hostLegCacheKey,
+          allHostSnapshot
+        )
       if (executionHostScope === LOCAL_EXECUTION_HOST_ID) {
         return scan()
       }
@@ -113,7 +130,8 @@ async function scanAiVaultSessionsByHostScope(
   args: AiVaultListArgs | undefined,
   executionHostScope: ExecutionHostScope,
   signal?: AbortSignal,
-  cacheKey = ''
+  cacheKey = '',
+  allHostSnapshot?: AllHostScanSnapshot
 ): Promise<AiVaultListResult> {
   const depth = requestedAiVaultSessionDepth(args)
   const scopePaths = args?.scopePaths ?? []
@@ -121,8 +139,8 @@ async function scanAiVaultSessionsByHostScope(
     return scanLocalAiVaultSessions(args, signal)
   }
   if (executionHostScope === 'all') {
-    const runtimeHosts = getActiveRuntimeAiVaultHostInfosResult()
-    const sshHosts = getActiveSshAiVaultHostInfosResult()
+    const snapshot = allHostSnapshot ?? captureAllHostScanSnapshot()
+    const { runtimeHosts, sshHosts } = snapshot
     const runtimeResults = [
       ...(runtimeHosts.issue ? [runtimeHosts.issue] : []),
       ...(sshHosts.issue ? [sshHosts.issue] : [])
@@ -206,6 +224,24 @@ function getActiveRuntimeAiVaultHostInfosResult(): AiVaultHostDiscoveryResult<Ru
     path: 'runtime environments',
     fallbackMessage: 'Runtime hosts are unavailable.'
   })
+}
+
+function captureAllHostScanSnapshot(): AllHostScanSnapshot {
+  return {
+    sshHosts: getActiveSshAiVaultHostInfosResult(),
+    runtimeHosts: getActiveRuntimeAiVaultHostInfosResult()
+  }
+}
+
+function allHostTopologyKey(snapshot: AllHostScanSnapshot): unknown {
+  return {
+    ssh: snapshot.sshHosts.hostInfos.map((host) => host.targetId).sort(),
+    runtime: snapshot.runtimeHosts.hostInfos.map((host) => host.executionHostId).sort(),
+    issues: [snapshot.sshHosts.issue, snapshot.runtimeHosts.issue]
+      .flatMap((result) => result?.issues ?? [])
+      .map((issue) => `${issue.path}:${issue.message}`)
+      .sort()
+  }
 }
 
 function getActiveSshAiVaultHostInfosResult(): AiVaultHostDiscoveryResult<{ targetId: string }> {
