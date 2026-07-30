@@ -418,6 +418,89 @@ const daemonLifecycleSchema = z.discriminatedUnion('transition', [
     .strict()
 ])
 
+const daemonAuditEligibilitySchema = z
+  .object({
+    state: z.enum(['present', 'gone', 'unknown']),
+    reason: z.enum([
+      'authenticated_inventory',
+      'endpoint_identity_changed',
+      'inventory_failed',
+      'linux_boot_changed',
+      'linux_start_ticks_mismatch',
+      'linux_zombie',
+      'pid_missing',
+      'token_missing_after_authenticated_disconnect',
+      'transport_closed',
+      'windows_creation_time_mismatch',
+      'windows_named_pipe_missing',
+      'windows_process_missing'
+    ]),
+    trigger: z.enum([
+      'endpoint_identity_changed',
+      'inventory_answered',
+      'inventory_failed',
+      'token_missing_after_authenticated_disconnect',
+      'transport_closed'
+    ]),
+    evidence_sources: z
+      .array(
+        z.enum([
+          'authenticated_inventory',
+          'boot_identity',
+          'endpoint_identity',
+          'endpoint_stat',
+          'linux_proc_stat',
+          'pid_record',
+          'process_command_line',
+          'process_signal',
+          'process_start_time',
+          'token_file',
+          'windows_cim',
+          'windows_named_pipe'
+        ])
+      )
+      .min(1)
+      .max(12),
+    protocol_generation: z.number().int().positive().max(1_000),
+    provider: z.literal('local-daemon'),
+    endpoint_kind: z.enum(['unix-socket', 'windows-named-pipe']),
+    profile_scope: z.enum(['configured', 'unspecified']),
+    exact_incarnation: z.enum([
+      'endpoint-identity',
+      'endpoint-identity-linux-ticks',
+      'unavailable'
+    ]),
+    reachability: z.enum(['authenticated', 'disconnected', 'unknown']),
+    inventory_authority: z.enum(['authoritative', 'unavailable']),
+    process_liveness: z.enum(['present', 'gone', 'unknown']),
+    process_reason: z
+      .enum([
+        'command_line_mismatch',
+        'command_line_unavailable',
+        'exact_identity_unavailable',
+        'inspection_failed',
+        'linux_boot_changed',
+        'linux_identity_incomplete',
+        'linux_identity_match',
+        'linux_start_ticks_mismatch',
+        'linux_zombie',
+        'macos_identity_match',
+        'macos_start_time_mismatch',
+        'permission_denied',
+        'pid_missing',
+        'process_start_time_unavailable',
+        'windows_command_line_unavailable',
+        'windows_creation_time_mismatch',
+        'windows_identity_match',
+        'windows_named_pipe_missing',
+        'windows_process_missing',
+        'windows_process_start_time_unavailable'
+      ])
+      .nullable(),
+    endpoint_state: z.enum(['missing', 'named-pipe', 'non-socket', 'socket', 'unknown'])
+  })
+  .strict()
+
 // Rollout signal for granting Codex hook trust via codex app-server RPCs
 // instead of Orca's self-computed trusted_hash. `fallback`/`verify_failed`
 // spikes mean the RPC lane is not taking; steady-state ledger skips are not
@@ -1412,6 +1495,7 @@ export const eventSchemas = {
   daemon_start_failed: daemonStartFailedSchema,
   main_thread_hang_detected: mainThreadHangDetectedSchema,
   daemon_lifecycle: daemonLifecycleSchema,
+  daemon_audit_eligibility: daemonAuditEligibilitySchema,
   runtime_rpc_start_failed: runtimeRpcStartFailedSchema,
 
   codex_trust_grant: codexTrustGrantSchema,
