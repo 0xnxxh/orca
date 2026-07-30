@@ -8,16 +8,18 @@ import type {
   WorktreePollerWindowVisibility
 } from './worktree-base-directory-poller'
 import {
+  createDegradedBaselineGate,
   startAdaptiveGitCommonPoller,
   tryTakeGitCommonPollBaseline,
   type AdaptiveGitCommonPollSubscription,
   type GitCommonPollingCadence
 } from './worktree-git-common-poll-cadence'
+import { startGitCommonPolling } from './worktree-git-common-polling'
 import {
-  isMissingPathError,
   PRIMARY_CHECKOUT_METADATA_FILES,
-  startGitCommonPolling
-} from './worktree-git-common-polling'
+  snapshotPrimaryCheckoutMetadata,
+  type PrimaryCheckoutMetadataSnapshot
+} from './worktree-git-common-snapshot'
 
 // Watches a repo's `<common>/.git/worktrees` metadata plus the primary
 // checkout's shallow branch/index files — the only paths the git-common event
@@ -33,26 +35,6 @@ import {
 // Electron main process: watcher.node teardown races heap-corrupt the hosting
 // process when unsubscribe overlaps in-flight callbacks (issue #8732), and
 // root deletion via `git worktree prune` makes that overlap routine here.
-
-// Why: branch switches and commits made in the primary checkout rewrite these
-// top-level files (linked-worktree equivalents live under `worktrees/`).
-// Deliberately excludes FETCH_HEAD-style churn that carries no status change.
-async function snapshotPrimaryCheckoutMetadata(
-  commonDirPath: string
-): Promise<Map<string, number>> {
-  const mtimes = new Map<string, number>()
-  for (const name of PRIMARY_CHECKOUT_METADATA_FILES) {
-    const filePath = join(commonDirPath, name)
-    try {
-      mtimes.set(filePath, (await stat(filePath)).mtimeMs)
-    } catch (error) {
-      if (!isMissingPathError(error)) {
-        throw error
-      }
-    }
-  }
-  return mtimes
-}
 
 function diffMtimeMap(
   prev: Map<string, number>,
@@ -76,7 +58,7 @@ function diffMtimeMap(
 }
 
 async function startSnapshotDiffPoller(
-  takeSnapshot: () => Promise<Map<string, number>>,
+  takeSnapshot: (previous?: Map<string, number>) => Promise<PrimaryCheckoutMetadataSnapshot>,
   onEvents: (events: WorktreeBasePollEvent[]) => void,
   // No index backstop: this poller re-stats every file each tick, so there is no gated
   // read for a forced full scan to unblock.
@@ -86,27 +68,38 @@ async function startSnapshotDiffPoller(
   onBaselineRecovered: () => void
 ): Promise<AdaptiveGitCommonPollSubscription> {
   let disposed = false
-  let snapshot = await tryTakeGitCommonPollBaseline(takeSnapshot)
+  // Why: a degraded scan has no previous view to retain at baseline time, so it simply omits the
+  // files it could not read. Committing that as authoritative makes the next clean tick diff them
+  // as creates; wait out a bounded number of whole ones instead.
+  const deferDegradedBaseline = createDegradedBaselineGate()
+  const baseline = await tryTakeGitCommonPollBaseline(
+    () => takeSnapshot(),
+    'primary-checkout metadata'
+  )
+  let snapshot = baseline && !deferDegradedBaseline(baseline.degraded) ? baseline.mtimes : null
   const polling = startAdaptiveGitCommonPoller({
     cadence: { activeIntervalMs: cadence.activeIntervalMs, idleIntervalMs: cadence.idleIntervalMs },
     visibility,
     poll: async () => {
       onFullScan?.()
-      const next = await takeSnapshot()
+      const next = await takeSnapshot(snapshot ?? undefined)
       if (disposed) {
         return { changed: false }
       }
       if (!snapshot) {
-        snapshot = next
+        if (deferDegradedBaseline(next.degraded)) {
+          return { changed: false, degraded: true }
+        }
+        snapshot = next.mtimes
         onBaselineRecovered()
         return { changed: true }
       }
-      const events = diffMtimeMap(snapshot, next)
-      snapshot = next
+      const events = diffMtimeMap(snapshot, next.mtimes)
+      snapshot = next.mtimes
       if (events.length > 0) {
         onEvents(events)
       }
-      return { changed: events.length > 0 }
+      return { changed: events.length > 0, degraded: next.degraded }
     }
   })
 
@@ -306,27 +299,31 @@ export async function startGitCommonWatch(
     indexBackstopIntervalMs
   }
   if (platform === 'darwin') {
-    const primaryMetadataPoll = await startSnapshotDiffPoller(
-      () => snapshotPrimaryCheckoutMetadata(target.path),
-      onEvents,
-      cadence,
-      visibility,
-      onFullScan,
-      () =>
-        onEvents(
-          PRIMARY_CHECKOUT_METADATA_FILES.map((name) => ({
-            type: 'update',
-            path: join(target.path, name)
-          }))
-        )
-    )
-    const narrowWatch = await startGitCommonNarrowWatch(
-      target,
-      onEvents,
-      pollIntervalMs,
-      visibility,
-      primaryMetadataPoll.resetCadence
-    )
+    // Why: install both in parallel — a slow/blocked stat on a primary file must not delay the
+    // FSEvents subscription (and with it, first linked-worktree create detection). The narrow watch
+    // reaches the poller through a late-bound holder; events that land before the poller exists are
+    // covered by the baseline it takes at that moment.
+    let resetPrimaryPollCadence: () => void = () => {}
+    const [primaryMetadataPoll, narrowWatch] = await Promise.all([
+      startSnapshotDiffPoller(
+        (previous) => snapshotPrimaryCheckoutMetadata(target.path, previous),
+        onEvents,
+        cadence,
+        visibility,
+        onFullScan,
+        () =>
+          onEvents(
+            PRIMARY_CHECKOUT_METADATA_FILES.map((name) => ({
+              type: 'update',
+              path: join(target.path, name)
+            }))
+          )
+      ),
+      startGitCommonNarrowWatch(target, onEvents, pollIntervalMs, visibility, () =>
+        resetPrimaryPollCadence()
+      )
+    ])
+    resetPrimaryPollCadence = primaryMetadataPoll.resetCadence
     return {
       unsubscribe: async () => {
         await Promise.all([narrowWatch.unsubscribe(), primaryMetadataPoll.unsubscribe()])

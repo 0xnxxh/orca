@@ -4,9 +4,12 @@ import { getActiveSidebarWorkspaceId } from '../../../shared/workspace-scope'
 
 export const SSH_STARTUP_RECONNECT_CONCURRENCY = 3
 
-export type SshStartupReconnectResult = {
-  timedOut: boolean
-}
+/**
+ * Floor on the batch budget a task must still have when it takes a slot. Below this the attempt
+ * would be killed before a connect could plausibly land, so it is skipped as `not-started-budget`
+ * instead of burning a slot and reporting a misleading `timed-out` with a spurious onFailure.
+ */
+const MIN_ATTEMPT_BUDGET_MS = 250
 
 export type SshStartupReconnectOutcome =
   | 'completed'
@@ -30,7 +33,9 @@ export function shouldStartBackgroundSshReconnect(args: {
 
 type ScheduledReconnect = {
   targetId: string
-  deadline: number
+  attemptTimeoutMs: number
+  /** Wall-clock cap on the whole batch, or null to let the queue drain unbounded. */
+  batchDeadline: number | null
   signal: AbortSignal
   connect: () => Promise<SshConnectionState | null>
   publishState: (state: SshConnectionState) => void
@@ -39,8 +44,7 @@ type ScheduledReconnect = {
   started: boolean
   resultSettled: boolean
   released: boolean
-  holdUntilBudget: boolean
-  budgetTimer: ReturnType<typeof setTimeout> | null
+  timer: ReturnType<typeof setTimeout> | null
   removeAbortListener: () => void
 }
 
@@ -60,7 +64,13 @@ export class SshStartupReconnectScheduler {
 
   schedule(args: {
     targetId: string
-    deadline: number
+    /**
+     * Per-attempt cap, counted from the moment the task takes a slot — never from batch start.
+     * With a `batchDeadline` the effective cap is the smaller of the two, so a task that reaches a
+     * slot late gets only the budget the batch has left.
+     */
+    attemptTimeoutMs: number
+    batchDeadline: number | null
     signal: AbortSignal
     connect: () => Promise<SshConnectionState | null>
     publishState: (state: SshConnectionState) => void
@@ -73,27 +83,19 @@ export class SshStartupReconnectScheduler {
         started: false,
         resultSettled: false,
         released: false,
-        holdUntilBudget: false,
-        budgetTimer: null,
+        timer: null,
         removeAbortListener: () => {}
-      }
-      const finish = (outcome: SshStartupReconnectOutcome): void => {
-        if (task.resultSettled) {
-          return
-        }
-        task.resultSettled = true
-        task.resolve({ targetId: task.targetId, outcome })
       }
       const onAbort = (): void => {
         if (!task.started) {
           this.removeQueuedTask(task)
           this.clearTaskTimer(task)
           task.removeAbortListener()
-          finish('cancelled')
+          this.finish(task, 'cancelled')
           this.drain()
           return
         }
-        finish('cancelled')
+        this.finish(task, 'cancelled')
       }
       args.signal.addEventListener('abort', onAbort, { once: true })
       task.removeAbortListener = () => args.signal.removeEventListener('abort', onAbort)
@@ -102,34 +104,24 @@ export class SshStartupReconnectScheduler {
         onAbort()
         return
       }
-      const budgetMs = remainingBudgetMs(args.deadline)
-      if (budgetMs <= 0) {
-        task.removeAbortListener()
-        finish('not-started-budget')
-        return
-      }
-      task.budgetTimer = setTimeout(() => {
-        task.budgetTimer = null
-        if (!task.started) {
+      if (task.batchDeadline !== null) {
+        const queueBudgetMs = remainingBudgetMs(task.batchDeadline)
+        if (queueBudgetMs < MIN_ATTEMPT_BUDGET_MS) {
+          task.removeAbortListener()
+          this.finish(task, 'not-started-budget')
+          return
+        }
+        // Why: only the wait for a slot is batch-bounded. Once started, the task owns its own
+        // timeout — otherwise a few slow front-of-queue connects would expire every target behind
+        // them without ever calling connect, silently skipping those hosts for the session.
+        task.timer = setTimeout(() => {
+          task.timer = null
           this.removeQueuedTask(task)
           task.removeAbortListener()
-          finish('not-started-budget')
+          this.finish(task, 'not-started-budget')
           this.drain()
-          return
-        }
-        if (task.holdUntilBudget) {
-          this.release(task)
-          return
-        }
-        if (!task.resultSettled && !task.signal.aborted) {
-          const error = new Error('SSH reconnect timeout')
-          task.onFailure(error)
-          finish('timed-out')
-        }
-        // Why: connect gets no abort signal, so a hung IPC would hold its slot forever and
-        // three of them would starve every later batch. The deadline caps the hold instead.
-        this.release(task)
-      }, budgetMs)
+        }, queueBudgetMs - MIN_ATTEMPT_BUDGET_MS)
+      }
       this.queue.push(task)
       this.drain()
     })
@@ -138,16 +130,12 @@ export class SshStartupReconnectScheduler {
   private drain(): void {
     while (this.activeCount < this.concurrency && this.queue.length > 0) {
       const task = this.queue.shift()!
-      if (task.signal.aborted || remainingBudgetMs(task.deadline) <= 0) {
+      const expired =
+        task.batchDeadline !== null && remainingBudgetMs(task.batchDeadline) < MIN_ATTEMPT_BUDGET_MS
+      if (task.signal.aborted || expired) {
         this.clearTaskTimer(task)
         task.removeAbortListener()
-        if (!task.resultSettled) {
-          task.resolve({
-            targetId: task.targetId,
-            outcome: task.signal.aborted ? 'cancelled' : 'not-started-budget'
-          })
-          task.resultSettled = true
-        }
+        this.finish(task, task.signal.aborted ? 'cancelled' : 'not-started-budget')
         continue
       }
       this.start(task)
@@ -157,6 +145,24 @@ export class SshStartupReconnectScheduler {
   private start(task: ScheduledReconnect): void {
     task.started = true
     this.activeCount++
+    this.clearTaskTimer(task)
+    // A batch deadline still caps a started attempt: the critical batch is awaited on the startup
+    // path, so it must return within its budget no matter when the task reached a slot.
+    const timeoutMs =
+      task.batchDeadline === null
+        ? task.attemptTimeoutMs
+        : Math.min(task.attemptTimeoutMs, remainingBudgetMs(task.batchDeadline))
+    task.timer = setTimeout(() => {
+      task.timer = null
+      if (!task.resultSettled && !task.signal.aborted) {
+        const error = new Error('SSH reconnect timeout')
+        task.onFailure(error)
+        this.finish(task, 'timed-out')
+      }
+      // Why: connect gets no abort signal, so a hung IPC would hold its slot forever and
+      // three of them would starve every later batch. The timeout caps the hold instead.
+      this.release(task)
+    }, timeoutMs)
     void Promise.resolve()
       .then(task.connect)
       .then(
@@ -165,28 +171,34 @@ export class SshStartupReconnectScheduler {
             if (state) {
               task.publishState(state)
             }
-            task.resultSettled = true
-            task.resolve({ targetId: task.targetId, outcome: 'completed' })
+            this.finish(task, 'completed')
           }
           this.release(task)
         },
         (error: unknown) => {
-          if (isConnectAlreadyInProgress(error) && remainingBudgetMs(task.deadline) > 0) {
-            task.holdUntilBudget = true
-            if (!task.resultSettled) {
-              task.resultSettled = true
-              task.resolve({ targetId: task.targetId, outcome: 'in-progress' })
-            }
+          if (isConnectAlreadyInProgress(error)) {
+            // Why: main already owns an attempt for this target and will publish its result via
+            // the state-change push, so this task has no work left. Holding the slot until the
+            // timeout would idle up to `concurrency` slots and starve the rest of the queue.
+            this.finish(task, 'in-progress')
+            this.release(task)
             return
           }
           if (!task.resultSettled && !task.signal.aborted) {
             task.onFailure(error)
-            task.resultSettled = true
-            task.resolve({ targetId: task.targetId, outcome: 'failed' })
+            this.finish(task, 'failed')
           }
           this.release(task)
         }
       )
+  }
+
+  private finish(task: ScheduledReconnect, outcome: SshStartupReconnectOutcome): void {
+    if (task.resultSettled) {
+      return
+    }
+    task.resultSettled = true
+    task.resolve({ targetId: task.targetId, outcome })
   }
 
   private release(task: ScheduledReconnect): void {
@@ -208,9 +220,9 @@ export class SshStartupReconnectScheduler {
   }
 
   private clearTaskTimer(task: ScheduledReconnect): void {
-    if (task.budgetTimer) {
-      clearTimeout(task.budgetTimer)
-      task.budgetTimer = null
+    if (task.timer) {
+      clearTimeout(task.timer)
+      task.timer = null
     }
   }
 }
@@ -228,21 +240,34 @@ export function partitionSshStartupReconnectTargets(args: {
   targetIds: readonly string[]
   activeTargetIds: readonly string[]
   activeTabId: string | null
+  /**
+   * SSH pty ids owned by the active workspace's tabs. Why: connection-owner resolution returns
+   * `undefined` when the workspace's repo is missing from the local catalog, and folder workspaces
+   * never key `remoteSessionIdsByTabId` at all (it is built from repo → connection), so the active
+   * host would fall through to background. A tab's own pty id names the target either way.
+   */
+  activeWorkspaceSessionIds?: readonly string[]
   remoteSessionIdsByTabId?: Readonly<Record<string, string>>
 }): { criticalTargetIds: string[]; backgroundTargetIds: string[] } {
   const targetIds = [...new Set(args.targetIds)]
   const eligible = new Set(targetIds)
   const activeTargets = new Set(args.activeTargetIds.filter((id) => eligible.has(id)))
   const sessionTargets = new Set<string>()
-  for (const [tabId, sessionId] of Object.entries(args.remoteSessionIdsByTabId ?? {})) {
+  const addSessionTarget = (sessionId: string, elevate: boolean): void => {
     const targetId = parseAppSshPtyId(sessionId)?.connectionId
     if (!targetId || !eligible.has(targetId)) {
-      continue
+      return
     }
     sessionTargets.add(targetId)
-    if (tabId === args.activeTabId) {
+    if (elevate) {
       activeTargets.add(targetId)
     }
+  }
+  for (const [tabId, sessionId] of Object.entries(args.remoteSessionIdsByTabId ?? {})) {
+    addSessionTarget(sessionId, tabId === args.activeTabId)
+  }
+  for (const sessionId of args.activeWorkspaceSessionIds ?? []) {
+    addSessionTarget(sessionId, true)
   }
   const criticalTargetIds = targetIds.filter((targetId) => activeTargets.has(targetId))
   return {
@@ -260,20 +285,33 @@ export function partitionSshStartupReconnectTargets(args: {
 
 export function reconnectSshTargetsForRendererStartup(args: {
   targetIds: readonly string[]
-  budgetMs: number
+  /**
+   * Cap on a single connect once it holds a slot. When `batchBudgetMs` is set, the attempt is
+   * capped at whichever of the two expires first, so a full per-host window is only guaranteed for
+   * batches whose budget exceeds it — today, just the unbudgeted background batch.
+   */
+  attemptTimeoutMs: number
+  /**
+   * Cap on the whole batch, for the critical batch that startup awaits. Omit for fire-and-forget
+   * batches: a shared batch cap plus bounded concurrency expires queued hosts without ever dialing
+   * them, so a background host would silently lose its startup attempt entirely.
+   */
+  batchBudgetMs?: number
   signal: AbortSignal
   connect: (targetId: string) => Promise<SshConnectionState | null>
   publishState: (targetId: string, state: SshConnectionState) => void
   onFailure: (targetId: string, error: unknown) => void
   scheduler?: SshStartupReconnectScheduler
 }): Promise<SshStartupReconnectBatchResult[]> {
-  const deadline = performance.now() + args.budgetMs
+  const batchDeadline =
+    args.batchBudgetMs === undefined ? null : performance.now() + args.batchBudgetMs
   const scheduler = args.scheduler ?? startupReconnectScheduler
   return Promise.all(
     args.targetIds.map((targetId) =>
       scheduler.schedule({
         targetId,
-        deadline,
+        attemptTimeoutMs: args.attemptTimeoutMs,
+        batchDeadline,
         signal: args.signal,
         connect: () => args.connect(targetId),
         publishState: (state) => args.publishState(targetId, state),
@@ -281,34 +319,4 @@ export function reconnectSshTargetsForRendererStartup(args: {
       })
     )
   )
-}
-
-export async function reconnectSshTargetForRendererStartup(args: {
-  targetId: string
-  timeoutMs: number
-  connect: (targetId: string) => Promise<SshConnectionState | null>
-  publishState: (targetId: string, state: SshConnectionState) => void
-  onFailure: (targetId: string, error: unknown) => void
-}): Promise<SshStartupReconnectResult> {
-  const { targetId, timeoutMs, connect, publishState, onFailure } = args
-  let timeoutId: ReturnType<typeof setTimeout> | null = null
-  try {
-    const timeout = new Promise<never>((_resolve, reject) => {
-      timeoutId = setTimeout(() => reject(new Error('SSH reconnect timeout')), timeoutMs)
-    })
-    const state = await Promise.race([connect(targetId), timeout])
-    if (state) {
-      publishState(targetId, state)
-    }
-    return { timedOut: false }
-  } catch (error) {
-    onFailure(targetId, error)
-    return {
-      timedOut: error instanceof Error && error.message === 'SSH reconnect timeout'
-    }
-  } finally {
-    if (timeoutId !== null) {
-      clearTimeout(timeoutId)
-    }
-  }
 }

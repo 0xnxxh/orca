@@ -148,11 +148,9 @@ import {
 } from './startup/startup-diagnostics'
 import {
   partitionSshStartupReconnectTargets,
-  reconnectSshTargetsForRendererStartup,
-  resolveSshStartupActiveWorkspaceId,
-  shouldStartBackgroundSshReconnect,
-  type SshStartupReconnectBatchResult
+  resolveSshStartupActiveWorkspaceId
 } from './startup/ssh-startup-reconnect'
+import { startSshStartupReconnect } from './startup/ssh-startup-reconnect-orchestration'
 import { connectSshTargetDeduplicated } from './lib/ssh-target-connect-deduplication'
 import { shouldRenderPetOverlay } from './components/pet/pet-overlay-visibility'
 import { applyDocumentTheme } from './lib/document-theme'
@@ -1019,76 +1017,49 @@ function App(): React.JSX.Element {
                   activeTargetIds:
                     typeof activeConnectionId === 'string' ? [activeConnectionId] : [],
                   activeTabId: sessionRead.session.activeTabId,
+                  activeWorkspaceSessionIds: activeWorkspaceId
+                    ? (sessionRead.session.tabsByWorktree[activeWorkspaceId] ?? []).flatMap(
+                        (tab) => {
+                          // Folder workspaces never key remoteSessionIdsByTabId, so fall back to the
+                          // tab's own pty id — the only place their SSH host is recorded.
+                          const sessionId =
+                            sessionRead.session.remoteSessionIdsByTabId?.[tab.id] ?? tab.ptyId
+                          return sessionId ? [sessionId] : []
+                        }
+                      )
+                    : [],
                   remoteSessionIdsByTabId: sessionRead.session.remoteSessionIdsByTabId
                 })
-              actions.setDeferredSshReconnectTargets([
-                ...new Set(targets.map(({ targetId }) => targetId))
-              ])
 
-              const reconnectTargets = (targetIds: readonly string[]) =>
-                reconnectSshTargetsForRendererStartup({
-                  targetIds,
-                  budgetMs: SSH_RECONNECT_TIMEOUT_MS,
-                  signal: abortController.signal,
-                  connect: (targetId) =>
-                    connectSshTargetDeduplicated(targetId, () =>
-                      window.api.ssh.connect({ targetId })
-                    ),
-                  publishState: actions.setSshConnectionState,
-                  onFailure: (targetId, error) => {
-                    console.warn(`SSH auto-reconnect failed for ${targetId}:`, error)
-                  }
-                })
-              const finalizeCompletedTargets = async (
-                results: readonly SshStartupReconnectBatchResult[]
-              ): Promise<void> => {
-                // Why: the critical batch awaits this on the startup path, so probe every target
-                // at once instead of paying one IPC round-trip per target serially.
-                await Promise.all(
-                  results
-                    .filter(({ outcome }) => outcome === 'completed')
-                    .map(async ({ targetId }) => {
-                      if (abortController.signal.aborted) {
-                        return
-                      }
-                      // Why: older/wrapped providers may return no connect state; poll once before releasing the deferred pane gate.
-                      try {
-                        const state = await window.api.ssh.getState({ targetId })
-                        if (state?.status === 'connected') {
-                          actions.setSshConnectionState(targetId, state)
-                        }
-                      } catch {
-                        /* best-effort */
-                      }
-                      if (!abortController.signal.aborted) {
-                        actions.removeDeferredSshReconnectTarget(targetId)
-                      }
-                    })
-                )
-              }
-
-              const criticalResults = await timeRendererStartupStep(
-                'ssh-reconnect',
-                () => reconnectTargets(criticalTargetIds),
-                {
-                  criticalTargets: criticalTargetIds.length,
-                  backgroundTargets: backgroundTargetIds.length,
-                  deferredTargets: deferredTargets.length
-                }
+              const { backgroundSettled } = await startSshStartupReconnect({
+                targetIds: targets.map(({ targetId }) => targetId),
+                criticalTargetIds,
+                backgroundTargetIds,
+                attemptTimeoutMs: SSH_RECONNECT_TIMEOUT_MS,
+                criticalBudgetMs: SSH_RECONNECT_TIMEOUT_MS,
+                signal: abortController.signal,
+                connect: (targetId) =>
+                  connectSshTargetDeduplicated(targetId, () =>
+                    window.api.ssh.connect({ targetId })
+                  ),
+                getState: (targetId) => window.api.ssh.getState({ targetId }),
+                publishState: actions.setSshConnectionState,
+                setDeferredTargets: actions.setDeferredSshReconnectTargets,
+                removeDeferredTarget: actions.removeDeferredSshReconnectTarget,
+                onFailure: (targetId, error) => {
+                  console.warn(`SSH auto-reconnect failed for ${targetId}:`, error)
+                },
+                runCriticalStep: (run) =>
+                  timeRendererStartupStep('ssh-reconnect', run, {
+                    criticalTargets: criticalTargetIds.length,
+                    backgroundTargets: backgroundTargetIds.length,
+                    deferredTargets: deferredTargets.length
+                  }),
+                runBackgroundStep: (run) => timeRendererStartupStep('ssh-reconnect-background', run)
+              })
+              void backgroundSettled?.catch((error) =>
+                console.warn('SSH background reconnect failed:', error)
               )
-              await finalizeCompletedTargets(criticalResults)
-              if (
-                shouldStartBackgroundSshReconnect({
-                  backgroundTargetCount: backgroundTargetIds.length,
-                  aborted: abortController.signal.aborted
-                })
-              ) {
-                void timeRendererStartupStep('ssh-reconnect-background', () =>
-                  reconnectTargets(backgroundTargetIds)
-                )
-                  .then(finalizeCompletedTargets)
-                  .catch((error) => console.warn('SSH background reconnect failed:', error))
-              }
             } catch (err) {
               console.warn('SSH startup reconnect failed:', err)
             }
