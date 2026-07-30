@@ -8,6 +8,7 @@ const BASE_OPTIONS: SecureStore.SecureStoreOptions = {
 }
 
 const GENERATION_STORAGE_KEY = 'orca:pairing-keychain-generation'
+const PRESENCE_STORAGE_PREFIX = 'orca:pairing-keychain-presence:'
 const SERVICE_PREFIX = 'orca.pairing.v'
 // Why: every generation adds one read probe per miss; bound pathological recovery cost.
 const MAX_GENERATION = 8
@@ -33,6 +34,7 @@ type LoadedGeneration =
   | { generation: 0; pending: false; reliable: false; error: unknown }
 
 type GenerationState = { generation: number; pending: boolean }
+type PresenceChange = { storageKey: string; previousRaw: string | null }
 
 let cachedGeneration: GenerationState | null = null
 let keychainMutation: Promise<void> = Promise.resolve()
@@ -59,6 +61,33 @@ function parseGeneration(raw: string | null): LoadedGeneration {
     }
   }
   return { generation: parsed, pending, reliable: true }
+}
+
+function parsePresenceGeneration(raw: string | null): number | null {
+  if (raw === null) {
+    return null
+  }
+  const parsed = Number(raw)
+  if (
+    !Number.isInteger(parsed) ||
+    parsed < 0 ||
+    parsed > MAX_GENERATION ||
+    String(parsed) !== raw
+  ) {
+    throw new Error('pairing keychain presence record is invalid')
+  }
+  return parsed
+}
+
+function presenceStorageKey(key: string): string {
+  return `${PRESENCE_STORAGE_PREFIX}${key}`
+}
+
+async function loadPresenceGeneration(key: string): Promise<number | null> {
+  if (Platform.OS !== 'android') {
+    return null
+  }
+  return parsePresenceGeneration(await AsyncStorage.getItem(presenceStorageKey(key)))
 }
 
 async function loadGeneration(): Promise<LoadedGeneration> {
@@ -90,8 +119,53 @@ function enqueueKeychainMutation(operation: () => Promise<void>): Promise<void> 
   return mutation
 }
 
+async function preparePresenceWrite(
+  key: string,
+  generation: number
+): Promise<PresenceChange | null> {
+  if (Platform.OS !== 'android') {
+    return null
+  }
+  // Why: Expo Android returns null for both absent and undecryptable entries.
+  const storageKey = presenceStorageKey(key)
+  const previousRaw = await AsyncStorage.getItem(storageKey)
+  parsePresenceGeneration(previousRaw)
+  await AsyncStorage.setItem(storageKey, String(generation))
+  return { storageKey, previousRaw }
+}
+
+async function restorePresence(change: PresenceChange | null): Promise<void> {
+  if (!change) {
+    return
+  }
+  if (change.previousRaw === null) {
+    await AsyncStorage.removeItem(change.storageKey)
+    return
+  }
+  await AsyncStorage.setItem(change.storageKey, change.previousRaw)
+}
+
+async function setItemAtGeneration(key: string, value: string, generation: number): Promise<void> {
+  const presenceChange = await preparePresenceWrite(key, generation)
+  try {
+    await SecureStore.setItemAsync(key, value, optionsForGeneration(generation))
+  } catch (error) {
+    // Why: a failed rollback leaves reads fail-closed at the attempted generation.
+    await restorePresence(presenceChange).catch(() => {})
+    throw error
+  }
+}
+
 export async function readPairingKeychainItem(key: string): Promise<string | null> {
   await keychainMutation
+  const presenceGeneration = await loadPresenceGeneration(key)
+  if (presenceGeneration !== null) {
+    const value = await SecureStore.getItemAsync(key, optionsForGeneration(presenceGeneration))
+    if (value === null) {
+      throw new Error('pairing keychain item is unavailable at its recorded generation')
+    }
+    return value
+  }
   const loaded = await loadGeneration()
   const firstCandidate = loaded.reliable ? loaded.generation : MAX_GENERATION
   for (let candidate = firstCandidate; candidate >= 0; candidate -= 1) {
@@ -111,7 +185,7 @@ async function writePairingKeychainItemImpl(key: string, value: string): Promise
   const generation = loaded.generation
   let firstError: unknown
   try {
-    await SecureStore.setItemAsync(key, value, optionsForGeneration(generation))
+    await setItemAtGeneration(key, value, generation)
     if (loaded.pending) {
       await commitGeneration(generation, false)
     }
@@ -134,7 +208,7 @@ async function writePairingKeychainItemImpl(key: string, value: string): Promise
     throw firstError
   }
   try {
-    await SecureStore.setItemAsync(key, value, optionsForGeneration(rotated))
+    await setItemAtGeneration(key, value, rotated)
     await commitGeneration(rotated, false)
   } catch {
     throw firstError
@@ -166,6 +240,9 @@ async function deletePairingKeychainItemImpl(key: string): Promise<void> {
   }
   if (firstError !== undefined) {
     throw firstError
+  }
+  if (Platform.OS === 'android') {
+    await AsyncStorage.removeItem(presenceStorageKey(key))
   }
 }
 

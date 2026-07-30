@@ -32,6 +32,7 @@ import type { PairingOffer } from './types'
 
 const now = Date.UTC(2026, 6, 13)
 const GENERATION_KEY = 'orca:pairing-keychain-generation'
+const JOURNAL_PRESENCE_KEY = 'orca:pairing-keychain-presence:orca.mobile-relay.pairing-journal.v1'
 const offer = {
   v: 2,
   endpoint: 'ws://192.168.1.10:6768',
@@ -53,6 +54,7 @@ describe('mobile relay pairing journal store', () => {
   let metadataRaw: string | null
   let secretRaw: string | null
   let generationRaw: string | null
+  let presenceRaw: string | null
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -61,18 +63,31 @@ describe('mobile relay pairing journal store', () => {
     metadataRaw = null
     secretRaw = null
     generationRaw = null
-    asyncStorage.getItem.mockImplementation(async (key: string) =>
-      key === GENERATION_KEY ? generationRaw : metadataRaw
-    )
+    presenceRaw = null
+    asyncStorage.getItem.mockImplementation(async (key: string) => {
+      if (key === GENERATION_KEY) {
+        return generationRaw
+      }
+      if (key === JOURNAL_PRESENCE_KEY) {
+        return presenceRaw
+      }
+      return metadataRaw
+    })
     asyncStorage.setItem.mockImplementation(async (key: string, value: string) => {
       if (key === GENERATION_KEY) {
         generationRaw = value
+      } else if (key === JOURNAL_PRESENCE_KEY) {
+        presenceRaw = value
       } else {
         metadataRaw = value
       }
     })
-    asyncStorage.removeItem.mockImplementation(async () => {
-      metadataRaw = null
+    asyncStorage.removeItem.mockImplementation(async (key: string) => {
+      if (key === JOURNAL_PRESENCE_KEY) {
+        presenceRaw = null
+      } else {
+        metadataRaw = null
+      }
     })
     secureStore.getItemAsync.mockImplementation(async () => secretRaw)
     secureStore.setItemAsync.mockImplementation(async (_key: string, value: string) => {

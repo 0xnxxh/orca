@@ -30,6 +30,7 @@ import {
 
 const GENERATION_KEY = 'orca:pairing-keychain-generation'
 const TOKEN_KEY = 'orca.host-token.host-1782629088232'
+const TOKEN_PRESENCE_KEY = `orca:pairing-keychain-presence:${TOKEN_KEY}`
 
 // Why: the exact Android failure from #6600 — expo maps a null-message GeneralSecurityException to this.
 const ENCRYPT_REJECTION = new Error(
@@ -139,7 +140,11 @@ describe('pairing keychain', () => {
   it('never stores a token under a generation it could not durably record', async () => {
     // Why: reads only walk back from the recorded generation, so a token written under an
     // unrecorded one is silently unreachable after a relaunch and the host vanishes.
-    asyncStorageMock.setItem.mockRejectedValue(new Error('storage full'))
+    asyncStorageMock.setItem.mockImplementation(async (key: string) => {
+      if (key === GENERATION_KEY) {
+        throw new Error('storage full')
+      }
+    })
     secureStoreMock.setItemAsync.mockImplementation(
       async (_k: string, _v: string, options: Options) => {
         if (serviceOf(options) === undefined) {
@@ -241,6 +246,39 @@ describe('pairing keychain', () => {
     expect(secureStoreMock.getItemAsync).toHaveBeenCalledTimes(1)
   })
 
+  it('does not return a stale older value when a recorded current item decrypts as null', async () => {
+    generationRecord = '1'
+    let presenceRecord: string | null = null
+    asyncStorageMock.getItem.mockImplementation(async (key: string) => {
+      if (key === GENERATION_KEY) {
+        return generationRecord
+      }
+      return key === TOKEN_PRESENCE_KEY ? presenceRecord : null
+    })
+    asyncStorageMock.setItem.mockImplementation(async (key: string, raw: string) => {
+      if (key === GENERATION_KEY) {
+        generationRecord = raw
+      }
+      if (key === TOKEN_PRESENCE_KEY) {
+        presenceRecord = raw
+      }
+    })
+
+    await writePairingKeychainItem(TOKEN_KEY, 'rotated-token')
+    expect(presenceRecord).toBe('1')
+    expect(asyncStorageMock.setItem.mock.invocationCallOrder[0]).toBeLessThan(
+      secureStoreMock.setItemAsync.mock.invocationCallOrder[0]!
+    )
+
+    resetPairingKeychainForTests()
+    secureStoreMock.getItemAsync.mockImplementation(async (_k: string, options: Options) =>
+      serviceOf(options) === undefined ? 'legacy-token' : null
+    )
+
+    await expect(readPairingKeychainItem(TOKEN_KEY)).rejects.toThrow(/recorded generation/)
+    expect(secureStoreMock.getItemAsync).toHaveBeenCalledTimes(1)
+  })
+
   it('reads an older value while a newly recorded alias has no item yet', async () => {
     generationRecord = '1:pending'
     secureStoreMock.getItemAsync.mockImplementation(async (_k: string, options: Options) =>
@@ -251,7 +289,12 @@ describe('pairing keychain', () => {
   })
 
   it('probes every bounded service when the generation record is temporarily unreadable', async () => {
-    asyncStorageMock.getItem.mockRejectedValueOnce(new Error('storage unavailable'))
+    asyncStorageMock.getItem.mockImplementation(async (key: string) => {
+      if (key === GENERATION_KEY) {
+        throw new Error('storage unavailable')
+      }
+      return null
+    })
     secureStoreMock.getItemAsync.mockImplementation(async (_k: string, options: Options) =>
       serviceOf(options) === 'orca.pairing.v2' ? 'rotated-token' : null
     )
@@ -280,6 +323,7 @@ describe('pairing keychain', () => {
       serviceOf(call[1] as Options)
     )
     expect(services).toEqual(['orca.pairing.v2', 'orca.pairing.v1', undefined])
+    expect(asyncStorageMock.removeItem).toHaveBeenCalledWith(TOKEN_PRESENCE_KEY)
   })
 
   it('reports a partial delete failure after attempting every generation', async () => {
@@ -293,6 +337,7 @@ describe('pairing keychain', () => {
 
     await expect(deletePairingKeychainItem(TOKEN_KEY)).rejects.toBe(deleteError)
     expect(secureStoreMock.deleteItemAsync).toHaveBeenCalledTimes(3)
+    expect(asyncStorageMock.removeItem).not.toHaveBeenCalled()
   })
 
   it('serializes writes that share the global generation', async () => {
