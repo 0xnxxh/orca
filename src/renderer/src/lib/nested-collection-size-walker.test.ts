@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { walkNestedCollectionSizes } from './nested-collection-size-walker'
 import { summarizeStateCollectionSizes } from './renderer-memory-profile'
 
@@ -436,8 +436,10 @@ describe('node budget', () => {
       )
     }
 
-    summarizeStateCollectionSizes(state, 20)
+    // Freeze time to isolate node caps; the real deadline has its own stress test below.
+    const now = vi.spyOn(performance, 'now').mockReturnValue(0)
     const walk = walkNestedCollectionSizes(state, 12)
+    now.mockRestore()
     const reported = walk.counts['wide[].items'] ?? 0
 
     expect(walk.nodesVisited).toBeLessThanOrEqual(NODES_CEILING)
