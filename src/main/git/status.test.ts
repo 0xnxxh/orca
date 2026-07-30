@@ -108,6 +108,7 @@ import {
   getBranchCompare,
   getCommitCompare,
   getDiff,
+  getGitRepositorySnapshot,
   getStagedCommitContext,
   getStatus,
   getSubmoduleStatus,
@@ -1174,6 +1175,38 @@ describe('getStatus', () => {
         durationMs
       })
     )
+  })
+
+  it('publishes the live native status result into the repository snapshot owner', async () => {
+    gitExecFileAsyncMock.mockResolvedValueOnce({
+      stdout:
+        '# branch.oid abcdef1234567890\n' +
+        '# branch.head feature/snapshot\n' +
+        '# branch.upstream origin/feature/snapshot\n' +
+        '# branch.ab +2 -1\n' +
+        '1 .M N... 100644 100644 100644 aaaa aaaa src/app.ts\n'
+    })
+
+    const result = await getStatus('/snapshot-repo')
+    const snapshot = getGitRepositorySnapshot('/snapshot-repo')
+
+    expect(snapshot).toMatchObject({
+      repositoryIdentity: {
+        head: 'abcdef1234567890',
+        branch: 'refs/heads/feature/snapshot'
+      },
+      status: {
+        entries: result.entries,
+        didHitLimit: false,
+        lineStatsState: 'complete'
+      },
+      upstream: result.upstreamStatus,
+      conflicts: 'unknown',
+      freshness: {
+        status: { state: 'fresh' },
+        upstream: { state: 'fresh' }
+      }
+    })
   })
 
   it('coalesces identical in-flight status reads without caching after settle', async () => {

@@ -32,8 +32,10 @@ import {
 } from '../git/max-buffer-overflow'
 import { InFlightPromiseDedupe, stableInFlightKey } from '../../shared/in-flight-promise-dedupe'
 import { gitExecMutatesRepository } from '../../shared/git-exec-mutation'
-import { GitStatusReadLeaseOwner } from '../git/git-status-read-lease-owner'
-import { GitUpstreamStatusReadOwner } from '../git/git-upstream-status-read-owner'
+import {
+  GitRepositorySnapshotOwner,
+  type GitRepositorySnapshot
+} from '../git/git-repository-snapshot-owner'
 
 type NonInteractiveExecQueueEntry = {
   started: boolean
@@ -85,8 +87,7 @@ function filterUntrackedPorcelainStatus(stdout: string | undefined): string | un
 
 export class SshGitProvider implements IGitProvider {
   private readonly gitDiffReadDedupe = new InFlightPromiseDedupe<GitDiffResult | GitDiffResult[]>()
-  private readonly statusReadLeaseOwner = new GitStatusReadLeaseOwner<GitStatusResult>()
-  private readonly upstreamStatusReadOwner = new GitUpstreamStatusReadOwner()
+  private readonly repositorySnapshotOwner = new GitRepositorySnapshotOwner()
 
   private connectionId: string
   private mux: SshChannelMultiplexer
@@ -103,8 +104,7 @@ export class SshGitProvider implements IGitProvider {
 
   private invalidateGitReads(): void {
     this.gitDiffReadDedupe.clear()
-    this.statusReadLeaseOwner.invalidate()
-    this.upstreamStatusReadOwner.invalidate()
+    this.repositorySnapshotOwner.invalidate()
   }
 
   private loggedWorktreeIsCleanFallback = false
@@ -142,17 +142,23 @@ export class SshGitProvider implements IGitProvider {
       ...upstreamCacheBypassArgs,
       ...lineStatsReuseArgs
     }
-    const key = stableInFlightKey([
+    return this.repositorySnapshotOwner.readStatus(
+      { kind: 'ssh-provider', connectionId: this.connectionId },
       worktreePath,
-      options?.includeIgnored === true,
-      options?.bypassEffectiveUpstreamNegativeCache === true,
-      options?.reuseLineStats === true
-    ])
-    return this.statusReadLeaseOwner.lease(key, options?.signal, async (sharedSignal) => {
-      return (await this.mux.request('git.status', request, {
-        signal: sharedSignal
-      })) as GitStatusResult
-    })
+      {
+        includeIgnored: options?.includeIgnored === true,
+        reuseLineStats: options?.reuseLineStats === true,
+        bypassEffectiveUpstreamNegativeCache:
+          options?.bypassEffectiveUpstreamNegativeCache === true,
+        limit: null,
+        sharedLinkPaths: []
+      },
+      options?.signal,
+      async (sharedSignal) =>
+        (await this.mux.request('git.status', request, {
+          signal: sharedSignal
+        })) as GitStatusResult
+    )
   }
 
   async getSubmoduleStatus(
@@ -510,8 +516,8 @@ export class SshGitProvider implements IGitProvider {
     worktreePath: string,
     pushTarget?: GitPushTarget
   ): Promise<GitUpstreamStatus> {
-    return this.upstreamStatusReadOwner.read(
-      { kind: 'ssh-provider' },
+    return this.repositorySnapshotOwner.readUpstream(
+      { kind: 'ssh-provider', connectionId: this.connectionId },
       worktreePath,
       pushTarget,
       async () =>
@@ -520,6 +526,26 @@ export class SshGitProvider implements IGitProvider {
           ...(pushTarget ? { pushTarget } : {})
         })) as GitUpstreamStatus
     )
+  }
+
+  getRepositorySnapshot(
+    worktreePath: string,
+    options?: GitProviderStatusOptions,
+    pushTarget?: GitPushTarget
+  ): GitRepositorySnapshot | null {
+    return this.repositorySnapshotOwner.getSnapshot({
+      executionIdentity: { kind: 'ssh-provider', connectionId: this.connectionId },
+      worktreePath,
+      statusIdentity: {
+        includeIgnored: options?.includeIgnored === true,
+        reuseLineStats: options?.reuseLineStats === true,
+        bypassEffectiveUpstreamNegativeCache:
+          options?.bypassEffectiveUpstreamNegativeCache === true,
+        limit: null,
+        sharedLinkPaths: []
+      },
+      pushTarget
+    })
   }
 
   async pushBranch(

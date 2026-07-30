@@ -11,7 +11,7 @@ vi.mock('./runner', () => ({
 }))
 
 import { getUpstreamStatus, invalidateGitUpstreamStatusReads } from './upstream'
-import { runWithGitReadCacheInvalidation } from './status'
+import { getGitRepositorySnapshot, runWithGitReadCacheInvalidation } from './status'
 
 const missingTrackingRefError = new Error(
   "fatal: ambiguous argument 'HEAD@{u}': unknown revision or path not in the working tree.\n" +
@@ -69,6 +69,24 @@ describe('getUpstreamStatus', () => {
         )
       })
     )
+  })
+
+  it('publishes the live native upstream result into the repository snapshot owner', async () => {
+    gitExecFileAsyncMock
+      .mockResolvedValueOnce({ stdout: 'main\n' })
+      .mockResolvedValueOnce({ stdout: 'origin/main\n' })
+      .mockResolvedValueOnce({ stdout: '2\t0\n' })
+
+    const result = await getUpstreamStatus('/snapshot-upstream-repo')
+    const snapshot = getGitRepositorySnapshot('/snapshot-upstream-repo')
+
+    expect(snapshot).toMatchObject({
+      upstream: result,
+      freshness: {
+        status: { state: 'missing' },
+        upstream: { state: 'fresh' }
+      }
+    })
   })
 
   it('isolates physical reads by worktree, native or WSL host, and every target field', async () => {

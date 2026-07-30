@@ -12,6 +12,7 @@ import type {
   GitConflictOperation,
   GitDiffResult,
   GitFileStatus,
+  GitPushTarget,
   GitStatusEntry,
   GitStatusResult,
   GitUpstreamStatus
@@ -52,9 +53,12 @@ import { getLargeDiffRenderLimit } from '../../shared/large-diff-render-limit'
 import { InFlightPromiseDedupe, stableInFlightKey } from '../../shared/in-flight-promise-dedupe'
 import type { GitRuntimeOptions } from './git-runtime-options'
 import { gitOptionsForWorktree } from './git-runtime-options'
-import { GitStatusReadLeaseOwner } from './git-status-read-lease-owner'
 import { parseGitRevListFirstParentOid } from '../../shared/git-rev-list-output'
-import { nativeAndWslGitUpstreamStatusReadOwner } from './git-upstream-status-read-owner'
+import {
+  nativeAndWslGitRepositorySnapshotOwner,
+  type GitRepositoryExecutionIdentity,
+  type GitRepositorySnapshot
+} from './git-repository-snapshot-owner'
 import {
   beginGitStatusLineStatsCacheWrite,
   clearGitStatusLineStatsCache,
@@ -94,13 +98,11 @@ const effectiveUpstreamStatusInFlight = new Map<string, Promise<GitUpstreamStatu
 const retiredEffectiveUpstreamStatusInFlight = new Map<string, Promise<GitUpstreamStatus>>()
 const gitDiffReadDedupe = new InFlightPromiseDedupe<GitDiffResult>()
 const effectiveUpstreamStatusWriteGeneration = new Map<string, number>()
-const statusReadLeaseOwner = new GitStatusReadLeaseOwner<GitStatusResult>()
 
 // Why: clear both diff and status in-flight caches; clearing only diff would let getStatus() join a pre-mutation read.
 export function invalidateGitReadCaches(): void {
   gitDiffReadDedupe.clear()
-  statusReadLeaseOwner.invalidate()
-  nativeAndWslGitUpstreamStatusReadOwner.invalidate()
+  nativeAndWslGitRepositorySnapshotOwner.invalidate()
   clearGitStatusLineStatsCache()
   clearSubmodulePathsCache()
   resolvedUpstreamNameCache.clear()
@@ -219,26 +221,41 @@ export async function getStatus(
   options: GetStatusOptions = {}
 ): Promise<GitStatusResult> {
   gitDiffReadDedupe.clear()
-  // Why: dedupe only concurrent identical reads; after settle, callers must run a fresh read.
-  const cacheKey = getStatusReadKey(worktreePath, options)
-  return statusReadLeaseOwner.lease(cacheKey, options.signal, (sharedSignal) =>
-    runGetStatus(worktreePath, { ...options, signal: sharedSignal })
+  return nativeAndWslGitRepositorySnapshotOwner.readStatus(
+    getStatusExecutionIdentity(options),
+    worktreePath,
+    getStatusSnapshotIdentity(options),
+    options.signal,
+    (sharedSignal) => runGetStatus(worktreePath, { ...options, signal: sharedSignal })
   )
 }
 
-function getStatusReadKey(worktreePath: string, options: GetStatusOptions): string {
-  // Why: each key part can change the output shape or runtime routing.
-  const limit = resolveGitStatusLimit(options.limit)
-  return stableInFlightKey([
+export function getGitRepositorySnapshot(
+  worktreePath: string,
+  options: GetStatusOptions = {},
+  pushTarget?: GitPushTarget
+): GitRepositorySnapshot | null {
+  return nativeAndWslGitRepositorySnapshotOwner.getSnapshot({
+    executionIdentity: getStatusExecutionIdentity(options),
     worktreePath,
-    options.wslDistro ?? '',
-    options.includeIgnored === true,
-    options.reuseLineStats === true,
-    options.bypassEffectiveUpstreamNegativeCache === true,
-    limit,
+    statusIdentity: getStatusSnapshotIdentity(options),
+    pushTarget
+  })
+}
+
+function getStatusExecutionIdentity(options: GetStatusOptions): GitRepositoryExecutionIdentity {
+  return options.wslDistro ? { kind: 'wsl', distro: options.wslDistro } : { kind: 'native' }
+}
+
+function getStatusSnapshotIdentity(options: GetStatusOptions) {
+  return {
+    includeIgnored: options.includeIgnored === true,
+    reuseLineStats: options.reuseLineStats === true,
+    bypassEffectiveUpstreamNegativeCache: options.bypassEffectiveUpstreamNegativeCache === true,
+    limit: resolveGitStatusLimit(options.limit),
     // Why: this changes which entries survive, so it must not share a cache slot.
-    options.sharedLinkPaths ?? []
-  ])
+    sharedLinkPaths: options.sharedLinkPaths ?? []
+  }
 }
 
 /** Remove untracked entries that are shared symlinks Orca created.

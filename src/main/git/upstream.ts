@@ -5,14 +5,14 @@ import { getEffectiveGitUpstreamStatus } from '../../shared/git-effective-upstre
 import { getPublishTargetStatus } from '../../shared/git-publish-target-status'
 import { gitExecFileAsync } from './runner'
 import { validateGitPushTarget } from './push-target-validation'
-import { nativeAndWslGitUpstreamStatusReadOwner } from './git-upstream-status-read-owner'
+import { nativeAndWslGitRepositorySnapshotOwner } from './git-repository-snapshot-owner'
 
 type GitExecOptions = {
   wslDistro?: string
 }
 
 export function invalidateGitUpstreamStatusReads(): void {
-  nativeAndWslGitUpstreamStatusReadOwner.invalidate()
+  nativeAndWslGitRepositorySnapshotOwner.invalidate()
 }
 
 function gitExecOptions(
@@ -85,7 +85,7 @@ export function getUpstreamStatus(
   const executionIdentity = options.wslDistro
     ? ({ kind: 'wsl', distro: options.wslDistro } as const)
     : ({ kind: 'native' } as const)
-  return nativeAndWslGitUpstreamStatusReadOwner.read(
+  return nativeAndWslGitRepositorySnapshotOwner.readUpstream(
     executionIdentity,
     worktreePath,
     pushTarget,

@@ -1121,6 +1121,75 @@ describe('SshGitProvider', () => {
     expect(mux.request).toHaveBeenCalledTimes(3)
   })
 
+  it('publishes combined immutable snapshots per provider incarnation', async () => {
+    mux.request.mockImplementation((method) => {
+      if (method === 'git.status') {
+        return Promise.resolve({
+          entries: [{ path: 'src/app.ts', status: 'modified', area: 'unstaged' }],
+          conflictOperation: 'rebase',
+          head: 'abc123',
+          branch: 'refs/heads/feature'
+        })
+      }
+      if (method === 'git.upstreamStatus') {
+        return Promise.resolve({
+          hasUpstream: true,
+          upstreamName: 'origin/feature',
+          ahead: 1,
+          behind: 0
+        })
+      }
+      return Promise.resolve(undefined)
+    })
+
+    await provider.getStatus('/home/user/repo')
+    await provider.getUpstreamStatus('/home/user/repo')
+    const snapshot = provider.getRepositorySnapshot('/home/user/repo')
+    const replacement = new SshGitProvider('conn-1', mux as never)
+
+    expect(snapshot).toMatchObject({
+      repositoryIdentity: { head: 'abc123', branch: 'refs/heads/feature' },
+      status: { entries: [{ path: 'src/app.ts' }] },
+      upstream: { upstreamName: 'origin/feature' },
+      conflicts: 'rebase',
+      freshness: {
+        status: { state: 'fresh' },
+        upstream: { state: 'fresh' }
+      }
+    })
+    expect(Object.isFrozen(snapshot)).toBe(true)
+    expect(replacement.getRepositorySnapshot('/home/user/repo')).toBeNull()
+  })
+
+  it('marks retained snapshots stale across the existing SSH mutation fence', async () => {
+    mux.request.mockImplementation((method) => {
+      if (method === 'git.status') {
+        return Promise.resolve({
+          entries: [],
+          conflictOperation: 'unknown',
+          head: 'abc123',
+          branch: 'refs/heads/main'
+        })
+      }
+      return Promise.resolve(undefined)
+    })
+
+    await provider.getStatus('/home/user/repo')
+    const before = provider.getRepositorySnapshot('/home/user/repo')
+    await provider.stageFile('/home/user/repo', 'src/app.ts')
+    const after = provider.getRepositorySnapshot('/home/user/repo')
+
+    expect(before?.freshness.status.state).toBe('fresh')
+    expect(after?.revision).toBe(before?.revision)
+    expect(after?.freshness.status).toMatchObject({
+      state: 'stale',
+      generation: before!.freshness.status.generation
+    })
+    expect(after!.freshness.status.currentGeneration).toBeGreaterThan(
+      after!.freshness.status.generation
+    )
+  })
+
   it('getUpstreamStatus forwards an explicit push target', async () => {
     const upstreamResult = { hasUpstream: true, upstreamName: 'fork/feature', ahead: 0, behind: 1 }
     mux.request.mockResolvedValue(upstreamResult)
