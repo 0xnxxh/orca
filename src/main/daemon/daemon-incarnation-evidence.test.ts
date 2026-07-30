@@ -9,6 +9,7 @@ import {
 import {
   classifyDaemonAuditFailure,
   recordAuthenticatedInventory,
+  type DaemonAuditClassifierDependencies,
   type DaemonAuditContext
 } from './daemon-audit-classifier'
 
@@ -18,6 +19,15 @@ const exactIncarnation: ExactDaemonIncarnation = {
   linuxStartTicks: '4242',
   bootId: 'boot-a'
 }
+const auditClassifierDependencies = {
+  probeProcessIdentity: async () => ({
+    state: 'unknown',
+    reason: 'inspection_failed',
+    evidenceSources: ['process_signal']
+  }),
+  inspectEndpointState: async (context) =>
+    context.endpointKind === 'windows-named-pipe' ? 'named-pipe' : 'missing'
+} satisfies DaemonAuditClassifierDependencies
 
 function linuxStat(state: string, startTicks: string): string {
   return `42 (orca daemon with spaces) ${[state, ...Array(18).fill('0'), startTicks].join(' ')}`
@@ -40,14 +50,13 @@ function linuxDependencies(
 describe('daemon process identity evidence', () => {
   it('pins the dated conclusive-gone oracle contract', () => {
     expect(DAEMON_GONE_PROOFS).toEqual({
-      linux: [
-        'pid_missing',
-        'boot_identity_changed',
-        'raw_start_ticks_mismatch',
-        'matching_identity_zombie'
-      ],
+      linux: ['pid_missing', 'linux_boot_changed', 'linux_start_ticks_mismatch', 'linux_zombie'],
       darwin: ['pid_missing'],
-      win32: ['cim_process_missing', 'cim_creation_time_mismatch', 'named_pipe_missing']
+      win32: [
+        'windows_process_missing',
+        'windows_creation_time_mismatch',
+        'windows_named_pipe_missing'
+      ]
     })
   })
 
@@ -133,7 +142,7 @@ describe('daemon process identity evidence', () => {
     ).resolves.toMatchObject({ state: 'unknown', reason: 'exact_identity_unavailable' })
   })
 
-  it('uses Windows CreationDate mismatch as gone while null fields stay unknown', async () => {
+  it('uses Windows CreationDate as the primary identity regardless of command line', async () => {
     const base = {
       platform: 'win32' as const,
       signalProcess: () => 'occupied' as const
@@ -162,8 +171,8 @@ describe('daemon process identity evidence', () => {
         })
       })
     ).resolves.toMatchObject({
-      state: 'unknown',
-      reason: 'windows_command_line_unavailable'
+      state: 'present',
+      reason: 'windows_identity_match'
     })
     await expect(
       probeDaemonProcessIdentity(exactIncarnation, endpoint, {
@@ -175,8 +184,8 @@ describe('daemon process identity evidence', () => {
         })
       })
     ).resolves.toMatchObject({
-      state: 'unknown',
-      reason: 'command_line_mismatch'
+      state: 'present',
+      reason: 'windows_identity_match'
     })
     await expect(
       probeDaemonProcessIdentity(exactIncarnation, endpoint, {
@@ -214,8 +223,8 @@ describe('daemon process identity evidence', () => {
         })
       })
     ).resolves.toMatchObject({
-      state: 'unknown',
-      reason: 'windows_command_line_unavailable'
+      state: 'present',
+      reason: 'windows_identity_match'
     })
   })
 
@@ -261,7 +270,9 @@ describe('daemon audit availability evidence', () => {
   })
 
   it('represents failed legacy inventory as unknown, never an empty process list', async () => {
-    const observation = await classifyDaemonAuditFailure(context, 'inventory_failed', null)
+    const observation = await classifyDaemonAuditFailure(context, 'inventory_failed', null, {
+      dependencies: auditClassifierDependencies
+    })
 
     expect(observation).toMatchObject({
       state: 'unknown',
@@ -278,7 +289,10 @@ describe('daemon audit availability evidence', () => {
       context,
       'token_missing_after_authenticated_disconnect',
       null,
-      ['token_file']
+      {
+        additionalEvidenceSources: ['token_file'],
+        dependencies: auditClassifierDependencies
+      }
     )
 
     expect(observation.state).toBe('unknown')
@@ -295,8 +309,11 @@ describe('daemon audit availability evidence', () => {
       windowsContext,
       'inventory_failed',
       exactIncarnation,
-      ['windows_named_pipe'],
-      'windows_named_pipe_missing'
+      {
+        additionalEvidenceSources: ['windows_named_pipe'],
+        endpointGoneProof: 'windows_named_pipe_missing',
+        dependencies: auditClassifierDependencies
+      }
     )
 
     expect(observation).toMatchObject({
@@ -304,6 +321,25 @@ describe('daemon audit availability evidence', () => {
       reason: 'windows_named_pipe_missing',
       endpointState: 'missing',
       exactIncarnation
+    })
+  })
+
+  it('rejects named-pipe disappearance as a gone proof for Unix endpoints', async () => {
+    const observation = await classifyDaemonAuditFailure(
+      context,
+      'inventory_failed',
+      exactIncarnation,
+      {
+        additionalEvidenceSources: ['windows_named_pipe'],
+        endpointGoneProof: 'windows_named_pipe_missing',
+        dependencies: auditClassifierDependencies
+      }
+    )
+
+    expect(observation).toMatchObject({
+      state: 'unknown',
+      reason: 'inventory_failed',
+      processLiveness: 'unknown'
     })
   })
 })

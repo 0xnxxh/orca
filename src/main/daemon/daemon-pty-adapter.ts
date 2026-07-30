@@ -1651,10 +1651,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       return
     }
     const event = { previous: { ...previous }, current: { ...current } }
-    // oxlint-disable-next-line unicorn/no-useless-spread -- listeners may unsubscribe during dispatch
-    for (const listener of [...this.identityChangeListeners]) {
-      listener(event)
-    }
+    notifyAuditListeners(this.identityChangeListeners, event)
     this.observeAuditFailure('endpoint_identity_changed', previousExactIncarnation, [
       'endpoint_identity'
     ])
@@ -1682,13 +1679,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
     additionalEvidenceSources: readonly DaemonEvidenceSource[] = [],
     endpointGoneProof?: 'windows_named_pipe_missing'
   ): void {
-    void classifyDaemonAuditFailure(
-      this.auditContext,
-      trigger,
-      exactIncarnation,
+    void classifyDaemonAuditFailure(this.auditContext, trigger, exactIncarnation, {
       additionalEvidenceSources,
       endpointGoneProof
-    )
+    })
       .then((observation) => this.publishAuditObservation(observation))
       .catch(() => {})
   }
@@ -1696,10 +1690,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private publishAuditObservation(observation: DaemonAuditObservation): void {
     this.lastAuditObservation = observation
     trackDaemonAuditEligibility(observation)
-    // oxlint-disable-next-line unicorn/no-useless-spread -- listeners may unsubscribe during dispatch
-    for (const listener of [...this.auditObservationListeners]) {
-      listener(observation)
-    }
+    notifyAuditListeners(this.auditObservationListeners, observation)
   }
 
   private resyncBackgroundedSessions(): void {
@@ -2316,6 +2307,16 @@ function removeListener<T>(listeners: T[], listener: T): void {
   const index = listeners.indexOf(listener)
   if (index !== -1) {
     listeners.splice(index, 1)
+  }
+}
+
+function notifyAuditListeners<T>(listeners: readonly ((value: T) => void)[], value: T): void {
+  for (const listener of listeners.slice()) {
+    try {
+      listener(value)
+    } catch {
+      // Audit observers cannot affect daemon operations.
+    }
   }
 }
 

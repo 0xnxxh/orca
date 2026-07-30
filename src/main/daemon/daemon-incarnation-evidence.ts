@@ -222,13 +222,13 @@ async function probeWindowsProcess(
       exactIncarnation
     )
   }
-  if (!identity.commandLine) {
-    return unknown('windows_command_line_unavailable', ['windows_cim'])
-  }
-  if (!commandLineMatchesDaemon(identity.commandLine, endpoint.socketPath, endpoint.tokenPath)) {
-    return unknown('command_line_mismatch', ['windows_cim'])
-  }
-  return present('windows_identity_match', ['windows_cim', 'endpoint_identity'])
+  return present(
+    'windows_identity_match',
+    identity.commandLine &&
+      commandLineMatchesDaemon(identity.commandLine, endpoint.socketPath, endpoint.tokenPath)
+      ? ['windows_cim', 'process_command_line', 'endpoint_identity']
+      : ['windows_cim', 'endpoint_identity']
+  )
 }
 
 export function parseLinuxProcessState(statLine: string): string | null {

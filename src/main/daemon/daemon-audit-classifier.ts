@@ -6,13 +6,12 @@ import {
   type DaemonProcessEvidence,
   type ExactDaemonIncarnation
 } from './daemon-incarnation-evidence'
+import type {
+  DaemonAuditFailureTrigger,
+  DaemonAuditGoneReason
+} from '../../shared/daemon-audit-eligibility'
 
-export type DaemonAuditTrigger =
-  | 'endpoint_identity_changed'
-  | 'inventory_answered'
-  | 'inventory_failed'
-  | 'token_missing_after_authenticated_disconnect'
-  | 'transport_closed'
+export type { DaemonAuditTrigger } from '../../shared/daemon-audit-eligibility'
 
 export type DaemonAuditContext = {
   protocolGeneration: number
@@ -22,10 +21,6 @@ export type DaemonAuditContext = {
   endpointKind: 'unix-socket' | 'windows-named-pipe'
   profileScope: string
 }
-
-type DaemonAuditGoneReason =
-  | Extract<DaemonProcessEvidence, { state: 'gone' }>['reason']
-  | 'windows_named_pipe_missing'
 
 export type DaemonAuditObservation =
   | {
@@ -45,7 +40,7 @@ export type DaemonAuditObservation =
   | {
       state: 'gone'
       reason: DaemonAuditGoneReason
-      trigger: Exclude<DaemonAuditTrigger, 'inventory_answered'>
+      trigger: DaemonAuditFailureTrigger
       evidenceSources: DaemonEvidenceSources
       context: DaemonAuditContext
       exactIncarnation: ExactDaemonIncarnation
@@ -58,8 +53,8 @@ export type DaemonAuditObservation =
     }
   | {
       state: 'unknown'
-      reason: Exclude<DaemonAuditTrigger, 'inventory_answered'>
-      trigger: Exclude<DaemonAuditTrigger, 'inventory_answered'>
+      reason: DaemonAuditFailureTrigger
+      trigger: DaemonAuditFailureTrigger
       evidenceSources: DaemonEvidenceSources
       context: DaemonAuditContext
       exactIncarnation: ExactDaemonIncarnation | null
@@ -74,6 +69,17 @@ export type DaemonAuditObservation =
     }
 
 export type DaemonEndpointState = 'missing' | 'named-pipe' | 'non-socket' | 'socket' | 'unknown'
+
+export type DaemonAuditClassifierDependencies = {
+  probeProcessIdentity?: typeof probeDaemonProcessIdentity
+  inspectEndpointState?: (context: DaemonAuditContext) => Promise<DaemonEndpointState>
+}
+
+export type DaemonAuditClassificationOptions = {
+  additionalEvidenceSources?: readonly DaemonEvidenceSource[]
+  endpointGoneProof?: 'windows_named_pipe_missing'
+  dependencies?: DaemonAuditClassifierDependencies
+}
 
 export function recordAuthenticatedInventory(
   context: DaemonAuditContext,
@@ -97,28 +103,34 @@ export function recordAuthenticatedInventory(
 
 export async function classifyDaemonAuditFailure(
   context: DaemonAuditContext,
-  trigger: Exclude<DaemonAuditTrigger, 'inventory_answered'>,
+  trigger: DaemonAuditFailureTrigger,
   exactIncarnation: ExactDaemonIncarnation | null,
-  additionalEvidenceSources: readonly DaemonEvidenceSource[] = [],
-  endpointGoneProof?: 'windows_named_pipe_missing'
+  options: DaemonAuditClassificationOptions = {}
 ): Promise<DaemonAuditObservation> {
+  const probeProcessIdentity =
+    options.dependencies?.probeProcessIdentity ?? probeDaemonProcessIdentity
+  const inspectEndpoint = options.dependencies?.inspectEndpointState ?? inspectDaemonEndpointState
   const [processEvidence, endpointState] = await Promise.all([
-    probeDaemonProcessIdentity(exactIncarnation, {
+    probeProcessIdentity(exactIncarnation, {
       socketPath: context.endpoint,
       tokenPath: context.tokenPath
     }),
-    inspectEndpointState(context)
+    inspectEndpoint(context)
   ])
   const reachability = reachabilityForTrigger(trigger)
   const evidenceSources = combineEvidenceSources(
     processEvidence.evidenceSources,
     context.endpointKind === 'unix-socket' ? ['endpoint_stat'] : [],
-    additionalEvidenceSources
+    options.additionalEvidenceSources ?? []
   )
-  if (endpointGoneProof && exactIncarnation) {
+  if (
+    options.endpointGoneProof &&
+    context.endpointKind === 'windows-named-pipe' &&
+    exactIncarnation
+  ) {
     return {
       state: 'gone',
-      reason: endpointGoneProof,
+      reason: options.endpointGoneProof,
       trigger,
       evidenceSources,
       context,
@@ -126,7 +138,7 @@ export async function classifyDaemonAuditFailure(
       reachability,
       inventoryAuthority: 'unavailable',
       processLiveness: 'gone',
-      processReason: endpointGoneProof,
+      processReason: options.endpointGoneProof,
       endpointState: 'missing',
       observedAtMs: Date.now()
     }
@@ -163,7 +175,9 @@ export async function classifyDaemonAuditFailure(
   }
 }
 
-async function inspectEndpointState(context: DaemonAuditContext): Promise<DaemonEndpointState> {
+async function inspectDaemonEndpointState(
+  context: DaemonAuditContext
+): Promise<DaemonEndpointState> {
   if (context.endpointKind === 'windows-named-pipe') {
     return 'named-pipe'
   }
@@ -176,7 +190,7 @@ async function inspectEndpointState(context: DaemonAuditContext): Promise<Daemon
 }
 
 function reachabilityForTrigger(
-  trigger: Exclude<DaemonAuditTrigger, 'inventory_answered'>
+  trigger: DaemonAuditFailureTrigger
 ): 'authenticated' | 'disconnected' | 'unknown' {
   if (trigger === 'endpoint_identity_changed') {
     return 'authenticated'

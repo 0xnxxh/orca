@@ -9,6 +9,11 @@ import type {
 
 const execFileAsync = promisify(execFile)
 
+export type DaemonProcessInspectionDependencies = {
+  readTextFile?: (path: string) => Promise<string>
+  runCommand?: (file: string, args: string[], timeoutMs: number) => Promise<string>
+}
+
 export function inspectProcessSignal(pid: number): ProcessSignalEvidence {
   try {
     process.kill(pid, 0)
@@ -34,29 +39,40 @@ export async function readLinuxStat(pid: number): Promise<LinuxStatEvidence> {
 
 export async function readProcessCommandLine(
   pid: number,
-  platform: NodeJS.Platform
+  platform: NodeJS.Platform,
+  dependencies: DaemonProcessInspectionDependencies = {}
 ): Promise<string | undefined> {
+  const readTextFile =
+    dependencies.readTextFile ?? (async (path: string) => await readFile(path, 'utf8'))
+  const runCommand = dependencies.runCommand ?? runInspectionCommand
   if (platform === 'linux') {
     try {
-      return await readFile(`/proc/${pid}/cmdline`, 'utf8')
+      const procCommandLine = await readTextFile(`/proc/${pid}/cmdline`)
+      if (procCommandLine.length > 0) {
+        return procCommandLine
+      }
     } catch {
       // Fall through to ps for procfs privilege or mount restrictions.
     }
   }
   try {
-    const { stdout } = await execFileAsync('ps', ['-p', String(pid), '-o', 'command='], {
-      encoding: 'utf8',
-      timeout: 2_000
-    })
+    const stdout = await runCommand('ps', ['-p', String(pid), '-o', 'command='], 2_000)
     return stdout.trim() || undefined
   } catch {
     return undefined
   }
 }
 
-export async function queryWindowsProcess(pid: number): Promise<WindowsProcessEvidence> {
+export async function queryWindowsProcess(
+  pid: number,
+  dependencies: DaemonProcessInspectionDependencies = {}
+): Promise<WindowsProcessEvidence> {
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    return { status: 'unavailable' }
+  }
+  const runCommand = dependencies.runCommand ?? runInspectionCommand
   try {
-    const { stdout } = await execFileAsync(
+    const stdout = await runCommand(
       'powershell.exe',
       [
         '-NoProfile',
@@ -68,7 +84,7 @@ export async function queryWindowsProcess(pid: number): Promise<WindowsProcessEv
           `$start = [long]([DateTimeOffset]$p.CreationDate).ToUnixTimeMilliseconds() }; ` +
           `@{ exists = $true; cmd = $p.CommandLine; start = $start } | ConvertTo-Json -Compress }`
       ],
-      { encoding: 'utf8', timeout: 3_000 }
+      3_000
     )
     const parsed = JSON.parse(stdout.trim()) as {
       exists?: unknown
@@ -90,6 +106,15 @@ export async function queryWindowsProcess(pid: number): Promise<WindowsProcessEv
   } catch {
     return { status: 'unavailable' }
   }
+}
+
+async function runInspectionCommand(
+  file: string,
+  args: string[],
+  timeoutMs: number
+): Promise<string> {
+  const { stdout } = await execFileAsync(file, args, { encoding: 'utf8', timeout: timeoutMs })
+  return stdout
 }
 
 function hasErrorCode(error: unknown, code: string): boolean {

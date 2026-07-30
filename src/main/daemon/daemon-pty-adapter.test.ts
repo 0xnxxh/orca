@@ -1484,6 +1484,9 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         previous: NonNullable<typeof firstIdentity>
         current: NonNullable<typeof firstIdentity>
       }[] = []
+      adapter.onDaemonIdentityChanged(() => {
+        throw new Error('audit listener failed')
+      })
       adapter.onDaemonIdentityChanged((event) => identityChanges.push(event))
 
       await server.shutdown()
@@ -1505,7 +1508,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       })
       await server.start()
 
-      await adapter.listProcesses()
+      await expect(adapter.listProcesses()).resolves.toEqual([])
 
       expect(identityChanges).toEqual([
         {
@@ -1518,6 +1521,28 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         }
       ])
       expect(adapter.getLastAuthenticatedDaemonIdentity()).toEqual(identityChanges[0]?.current)
+    })
+
+    it('isolates audit observation listeners from inventory and later listeners', async () => {
+      const laterListener = vi.fn()
+      adapter.onAuditEligibilityObservation(() => {
+        throw new Error('audit listener failed')
+      })
+      adapter.onAuditEligibilityObservation(laterListener)
+
+      await expect(adapter.listProcesses()).resolves.toEqual([])
+
+      expect(laterListener).toHaveBeenCalledOnce()
+      expect(laterListener).toHaveBeenCalledWith(
+        expect.objectContaining({
+          state: 'present',
+          reason: 'authenticated_inventory'
+        })
+      )
+      expect(adapter.getLastAuditObservation()).toMatchObject({
+        state: 'present',
+        reason: 'authenticated_inventory'
+      })
     })
 
     it('audits token ENOENT only after an authenticated disconnect', async () => {
