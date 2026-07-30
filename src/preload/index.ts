@@ -14,7 +14,11 @@ import type { AgentHookInstallStatus } from '../shared/agent-hook-types'
 import type { CodexConfigSyncStatus } from '../shared/codex-config-sync-types'
 import type { TerminalPaneSplitSource } from '../shared/feature-education-telemetry'
 import type { ProjectExecutionRuntimeResolution } from '../shared/project-execution-runtime'
-import type { GitRepositorySnapshot } from '../shared/git-repository-snapshot'
+import type {
+  GitRepositorySnapshot,
+  GitRepositorySnapshotRequest,
+  GitRepositorySnapshotSubscriptionEvent
+} from '../shared/git-repository-snapshot'
 import type { StartupCommandDelivery } from '../shared/codex-startup-delivery'
 import type {
   AgentProviderSessionMetadata,
@@ -255,6 +259,10 @@ import type {
   LocalLogTailWatchArgs
 } from '../shared/local-log-tail-types'
 import { subscribeRuntimeEnvironmentFromPreload } from './runtime-environment-subscriptions'
+import {
+  subscribeGitRepositorySnapshotFromPreload,
+  type GitRepositorySnapshotSubscriptionHandle
+} from './git-repository-snapshot-subscriptions'
 import type { RuntimeEnvironmentSubscriptionHandle } from './runtime-environment-subscriptions'
 import type { HostedReviewForBranchArgs } from '../shared/hosted-review'
 import type { ReadClipboardTextOptions } from '../shared/clipboard-text'
@@ -3184,6 +3192,11 @@ const api = {
       reuseLineStats?: boolean
       pushTarget?: GitPushTarget
     }): Promise<GitRepositorySnapshot | null> => ipcRenderer.invoke('git:repositorySnapshot', args),
+    subscribeRepositorySnapshot: (
+      args: GitRepositorySnapshotRequest,
+      callback: (event: GitRepositorySnapshotSubscriptionEvent) => void
+    ): Promise<GitRepositorySnapshotSubscriptionHandle> =>
+      subscribeGitRepositorySnapshotFromPreload(ipcRenderer, args, callback),
     submoduleStatus: (args: {
       worktreePath: string
       submodulePath: string

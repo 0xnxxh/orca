@@ -19,6 +19,7 @@ import type {
   RemoveWorktreeResult
 } from '../../shared/types'
 import type { GitHistoryOptions, GitHistoryResult } from '../../shared/git-history'
+import type { GitRepositorySnapshotRevisionEvent } from '../../shared/git-repository-snapshot'
 import { buildHostedRemoteCommitUrl, buildHostedRemoteFileUrl } from '../git/hosted-remote-url'
 import { JsonRpcErrorCode } from '../ssh/relay-protocol'
 import { requestGitStreamable } from '../ssh/ssh-git-response-stream-reader'
@@ -546,6 +547,30 @@ export class SshGitProvider implements IGitProvider {
       },
       pushTarget
     })
+  }
+
+  subscribeRepositorySnapshot(
+    worktreePath: string,
+    options: GitProviderStatusOptions | undefined,
+    pushTarget: GitPushTarget | undefined,
+    listener: (event: GitRepositorySnapshotRevisionEvent) => void
+  ): () => void {
+    return this.repositorySnapshotOwner.subscribe(
+      {
+        executionIdentity: { kind: 'ssh-provider', connectionId: this.connectionId },
+        worktreePath,
+        statusIdentity: {
+          includeIgnored: options?.includeIgnored === true,
+          reuseLineStats: options?.reuseLineStats === true,
+          bypassEffectiveUpstreamNegativeCache:
+            options?.bypassEffectiveUpstreamNegativeCache === true,
+          limit: null,
+          sharedLinkPaths: []
+        },
+        pushTarget
+      },
+      listener
+    )
   }
 
   async pushBranch(

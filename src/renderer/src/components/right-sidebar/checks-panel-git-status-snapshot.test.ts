@@ -106,6 +106,23 @@ describe('buildChecksPanelGitStatusContextKey', () => {
     expect(context(target)).not.toBe(context({ ...target, remoteUrl: 'ssh://git.example/repo' }))
   })
 
+  it('distinguishes the exact local execution host and WSL distro', () => {
+    const base = {
+      repoId: 'repo-1',
+      worktreeId: 'worktree-1',
+      worktreePath: 'repo-worktree',
+      branch: 'feature/checks',
+      runtimeEnvironmentId: null,
+      repoConnectionId: null,
+      pushTarget: null
+    }
+    const context = (localExecutionScope: string) =>
+      buildChecksPanelGitStatusContextKey({ ...base, localExecutionScope })
+
+    expect(context('host')).not.toBe(context('wsl:Ubuntu'))
+    expect(context('wsl:Ubuntu')).not.toBe(context('wsl:Debian'))
+  })
+
   it('changes when linked hosted review metadata changes', () => {
     const base = {
       repoId: 'repo-1',

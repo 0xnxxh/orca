@@ -28,6 +28,7 @@ const {
   registerUIHandlersMock,
   setTrustedUIRendererWebContentsIdMock,
   registerFilesystemHandlersMock,
+  registerGitRepositorySnapshotSubscriptionHandlersMock,
   registerRuntimeHandlersMock,
   registerRuntimeEnvironmentHandlersMock,
   registerEphemeralVmHandlersMock,
@@ -93,6 +94,7 @@ const {
   registerUIHandlersMock: vi.fn(),
   setTrustedUIRendererWebContentsIdMock: vi.fn(),
   registerFilesystemHandlersMock: vi.fn(),
+  registerGitRepositorySnapshotSubscriptionHandlersMock: vi.fn(),
   registerRuntimeHandlersMock: vi.fn(),
   registerRuntimeEnvironmentHandlersMock: vi.fn(),
   registerEphemeralVmHandlersMock: vi.fn(),
@@ -283,6 +285,11 @@ vi.mock('./filesystem', () => ({
   registerFilesystemHandlers: registerFilesystemHandlersMock
 }))
 
+vi.mock('./git-repository-snapshot-subscriptions', () => ({
+  registerGitRepositorySnapshotSubscriptionHandlers:
+    registerGitRepositorySnapshotSubscriptionHandlersMock
+}))
+
 vi.mock('./filesystem-watcher', () => ({
   registerFilesystemWatcherHandlers: registerFilesystemWatcherHandlersMock
 }))
@@ -411,6 +418,7 @@ describe('registerCoreHandlers', () => {
     registerUIHandlersMock.mockReset()
     setTrustedUIRendererWebContentsIdMock.mockReset()
     registerFilesystemHandlersMock.mockReset()
+    registerGitRepositorySnapshotSubscriptionHandlersMock.mockReset()
     registerRuntimeHandlersMock.mockReset()
     registerRuntimeEnvironmentHandlersMock.mockReset()
     registerEphemeralVmHandlersMock.mockReset()
@@ -533,6 +541,7 @@ describe('registerCoreHandlers', () => {
     expect(registerEmulatorFrameStreamHandlersMock).toHaveBeenCalled()
     expect(registerEmulatorVideoStreamHandlersMock).toHaveBeenCalled()
     expect(registerFilesystemHandlersMock).toHaveBeenCalledWith(store)
+    expect(registerGitRepositorySnapshotSubscriptionHandlersMock).toHaveBeenCalledWith(store)
     expect(registerRuntimeHandlersMock).toHaveBeenCalledWith(runtime)
     expect(registerRuntimeEnvironmentHandlersMock).toHaveBeenCalledWith(store)
     expect(registerEphemeralVmHandlersMock).toHaveBeenCalledWith(store, undefined)

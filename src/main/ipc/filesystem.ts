@@ -29,7 +29,10 @@ import type {
   TuiAgent
 } from '../../shared/types'
 import type { GitHistoryOptions, GitHistoryResult } from '../../shared/git-history'
-import type { GitRepositorySnapshot } from '../../shared/git-repository-snapshot'
+import type {
+  GitRepositorySnapshot,
+  GitRepositorySnapshotRequest
+} from '../../shared/git-repository-snapshot'
 import type { SshMutationExpectation } from '../../shared/ssh-types'
 import { assertSshMutationExpectation } from '../ssh/ssh-connection-generation'
 import {
@@ -136,6 +139,7 @@ import { sanitizeLocalDownloadFilename } from '../local-download-filename'
 import { registerFilesystemDownloadFolderHandlers } from './filesystem-download-folder'
 import { getWorktreeSharedLinkPaths } from '../git/worktree-shared-directories'
 import { createSenderScopedRequestCancellations } from './sender-scoped-request-cancellation'
+import { resolveLocalGitRepositorySnapshotRequest } from './git-repository-snapshot-request'
 
 // Why: Monaco degrades features on large files like VS Code, so a 5MB block would needlessly lock out ordinary JSON/log files.
 const MAX_TEXT_FILE_SIZE = 50 * 1024 * 1024 // 50MB
@@ -1145,17 +1149,7 @@ export function registerFilesystemHandlers(
 
   ipcMain.handle(
     'git:repositorySnapshot',
-    async (
-      _event,
-      args: {
-        worktreePath: string
-        connectionId?: string
-        includeIgnored?: boolean
-        bypassEffectiveUpstreamNegativeCache?: boolean
-        reuseLineStats?: boolean
-        pushTarget?: GitPushTarget
-      }
-    ): Promise<GitRepositorySnapshot | null> => {
+    async (_event, args: GitRepositorySnapshotRequest): Promise<GitRepositorySnapshot | null> => {
       if (args.pushTarget) {
         assertGitPushTargetShape(args.pushTarget)
       }
@@ -1173,19 +1167,8 @@ export function registerFilesystemHandlers(
         }
         return provider.getRepositorySnapshot(args.worktreePath, options, args.pushTarget)
       }
-      const worktreePath = await resolveRegisteredWorktreePath(args.worktreePath, store)
-      const repo = getLocalRepoForRegisteredWorktree(store, args.worktreePath, worktreePath)
-      const gitOptions = getLocalGitOptionsForRepo(store, repo)
-      const sharedLinkPaths = repo ? getWorktreeSharedLinkPaths(repo) : []
-      return getGitRepositorySnapshot(
-        worktreePath,
-        {
-          ...options,
-          ...gitOptions,
-          ...(sharedLinkPaths.length > 0 ? { sharedLinkPaths } : {})
-        },
-        args.pushTarget
-      )
+      const request = await resolveLocalGitRepositorySnapshotRequest(store, args)
+      return getGitRepositorySnapshot(request.worktreePath, request.options, args.pushTarget)
     }
   )
 

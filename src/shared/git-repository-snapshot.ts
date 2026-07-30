@@ -1,4 +1,18 @@
-import type { GitConflictOperation, GitStatusEntry, GitUpstreamStatus } from './types'
+import type {
+  GitConflictOperation,
+  GitPushTarget,
+  GitStatusEntry,
+  GitUpstreamStatus
+} from './types'
+
+export type GitRepositorySnapshotRequest = {
+  worktreePath: string
+  connectionId?: string
+  includeIgnored?: boolean
+  bypassEffectiveUpstreamNegativeCache?: boolean
+  reuseLineStats?: boolean
+  pushTarget?: GitPushTarget
+}
 
 export type GitRepositoryProjectionFreshness = Readonly<{
   state: 'missing' | 'fresh' | 'stale' | 'failed' | 'placeholder'
@@ -7,6 +21,15 @@ export type GitRepositoryProjectionFreshness = Readonly<{
   revision: number | null
   identity: string | null
 }>
+
+export type GitRepositorySnapshotRevisionEvent = Readonly<{
+  state: 'invalidated' | 'ready'
+  generation: number
+  revision: number
+}>
+
+export type GitRepositorySnapshotSubscriptionEvent = GitRepositorySnapshotRevisionEvent &
+  Readonly<{ incarnation: number }>
 
 export type GitRepositorySnapshot = Readonly<{
   revision: number

@@ -6,6 +6,7 @@ import type { Store } from '../persistence'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 import type { StatsCollector } from '../stats/collector'
 import { registerFilesystemHandlers } from './filesystem'
+import { registerGitRepositorySnapshotSubscriptionHandlers } from './git-repository-snapshot-subscriptions'
 import type { CommitMessageAgentEnvironmentResolvers } from '../text-generation/commit-message-agent-environment'
 import { registerFilesystemWatcherHandlers } from './filesystem-watcher'
 import { registerClaudeUsageHandlers } from './claude-usage'
@@ -211,6 +212,7 @@ export function registerCoreHandlers(
   } else {
     registerFilesystemHandlers(store)
   }
+  registerGitRepositorySnapshotSubscriptionHandlers(store)
   registerFilesystemWatcherHandlers()
   registerRuntimeHandlers(runtime)
   registerRuntimeEnvironmentHandlers(store)

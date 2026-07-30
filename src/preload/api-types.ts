@@ -282,7 +282,11 @@ import type {
 
 import type { SetupScriptImportCandidate } from '../shared/setup-script-imports'
 import type { GitHistoryOptions, GitHistoryResult } from '../shared/git-history'
-import type { GitRepositorySnapshot } from '../shared/git-repository-snapshot'
+import type {
+  GitRepositorySnapshot,
+  GitRepositorySnapshotRequest,
+  GitRepositorySnapshotSubscriptionEvent
+} from '../shared/git-repository-snapshot'
 import type { PublicKnownRuntimeEnvironment } from '../shared/runtime-environments'
 import type { EphemeralVmRecipeDoctorResult } from '../shared/ephemeral-vm-recipes'
 import type { EphemeralVmRecipeResultWarning } from '../shared/ephemeral-vm-recipe-diagnostics'
@@ -2846,6 +2850,10 @@ export type PreloadApi = {
       reuseLineStats?: boolean
       pushTarget?: GitPushTarget
     }) => Promise<GitRepositorySnapshot | null>
+    subscribeRepositorySnapshot: (
+      args: GitRepositorySnapshotRequest,
+      callback: (event: GitRepositorySnapshotSubscriptionEvent) => void
+    ) => Promise<{ unsubscribe: () => void }>
     submoduleStatus: (args: {
       worktreePath: string
       submodulePath: string

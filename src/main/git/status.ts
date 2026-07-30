@@ -54,6 +54,7 @@ import { InFlightPromiseDedupe, stableInFlightKey } from '../../shared/in-flight
 import type { GitRuntimeOptions } from './git-runtime-options'
 import { gitOptionsForWorktree } from './git-runtime-options'
 import { parseGitRevListFirstParentOid } from '../../shared/git-rev-list-output'
+import type { GitRepositorySnapshotRevisionEvent } from '../../shared/git-repository-snapshot'
 import {
   nativeAndWslGitRepositorySnapshotOwner,
   type GitRepositoryExecutionIdentity,
@@ -241,6 +242,23 @@ export function getGitRepositorySnapshot(
     statusIdentity: getStatusSnapshotIdentity(options),
     pushTarget
   })
+}
+
+export function subscribeGitRepositorySnapshot(
+  worktreePath: string,
+  options: GetStatusOptions,
+  pushTarget: GitPushTarget | undefined,
+  listener: (event: GitRepositorySnapshotRevisionEvent) => void
+): () => void {
+  return nativeAndWslGitRepositorySnapshotOwner.subscribe(
+    {
+      executionIdentity: getStatusExecutionIdentity(options),
+      worktreePath,
+      statusIdentity: getStatusSnapshotIdentity(options),
+      pushTarget
+    },
+    listener
+  )
 }
 
 function getStatusExecutionIdentity(options: GetStatusOptions): GitRepositoryExecutionIdentity {

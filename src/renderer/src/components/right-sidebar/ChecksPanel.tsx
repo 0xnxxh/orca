@@ -84,7 +84,6 @@ import type {
   HostedReviewProvider
 } from '../../../../shared/hosted-review'
 import { resolveHostedReviewCreationProvider } from '../../../../shared/hosted-review-creation-providers'
-import { normalizeGlobalWindowsRuntimeDefault } from '../../../../shared/project-execution-runtime'
 import { normalizeHostedReviewHeadRef } from '../../../../shared/hosted-review-refs'
 import { getHostedReviewCacheKey, refreshHostedReviewCard } from '@/store/slices/hosted-review'
 import { toast } from 'sonner'
@@ -142,6 +141,7 @@ import {
   resolveChecksPanelReviewEvidenceProvider
 } from './checks-panel-pr-refresh-request'
 import { installWindowVisibilityInterval } from '@/lib/window-visibility-interval'
+import { useChecksPanelRepositorySnapshotRevision } from './use-checks-panel-repository-snapshot-revision'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 import { gitLabPipelineJobsToPRChecks } from '../../../../shared/gitlab-pipeline-checks'
@@ -518,6 +518,10 @@ export default function ChecksPanel(): React.JSX.Element {
     null
   )
   const [gitStatusRefreshNonce, setGitStatusRefreshNonce] = useState(0)
+  const requestGitStatusRefresh = useCallback(
+    () => setGitStatusRefreshNonce((value) => value + 1),
+    []
+  )
   // Bumped by manual Retry/Refresh so eligibility re-runs even when Git state is unchanged (e.g. an auth fix must still clear the hard error).
   const [eligibilityRefreshNonce, setEligibilityRefreshNonce] = useState(0)
   const [editingTitle, setEditingTitle] = useState(false)
@@ -601,14 +605,16 @@ export default function ChecksPanel(): React.JSX.Element {
     [runtimeEnvironmentId, settings]
   )
   const repoConnectionId = repo?.connectionId?.trim() || null
-  // Local execution host variant (wsl:{distro} vs host); applies only when local — remote contexts are scoped by runtimeEnvironmentId/connectionId.
-  const localExecutionScope = useMemo<string | null>(() => {
+  const localExecutionScope = useAppStore((state): string | null => {
     if (runtimeEnvironmentId != null || repoConnectionId != null) {
       return null
     }
-    const localRuntime = normalizeGlobalWindowsRuntimeDefault(settings?.localWindowsRuntimeDefault)
-    return localRuntime.kind === 'wsl' ? `wsl:${localRuntime.distro ?? ''}` : 'host'
-  }, [runtimeEnvironmentId, repoConnectionId, settings?.localWindowsRuntimeDefault])
+    const localRuntime = getLocalProjectExecutionRuntimeContext(state, activeWorktreeId)
+    if (localRuntime?.status === 'repair-required') {
+      return `repair:${localRuntime.repair.cacheKey}`
+    }
+    return localRuntime?.runtime.kind === 'wsl' ? `wsl:${localRuntime.runtime.distro}` : 'host'
+  })
   const sshConnectionStatus = useAppStore((s) =>
     repoConnectionId ? s.sshConnectionStates.get(repoConnectionId)?.status : undefined
   )
@@ -685,6 +691,30 @@ export default function ChecksPanel(): React.JSX.Element {
   }
 
   const isFolder = repo ? isFolderRepo(repo) : false
+  const gitStatusSnapshotContext = useMemo(
+    () => ({
+      settings: ownerSettings,
+      worktreeId: activeWorktreeId,
+      worktreePath: activeWorktreePath ?? '',
+      connectionId: activeConnectionId ?? undefined
+    }),
+    [activeConnectionId, activeWorktreeId, activeWorktreePath, ownerSettings]
+  )
+  const gitStatusSnapshotRevision = useChecksPanelRepositorySnapshotRevision({
+    context: gitStatusSnapshotContext,
+    contextKey: panelContextKey,
+    enabled:
+      Boolean(repo) &&
+      !isFolder &&
+      Boolean(branch) &&
+      isPanelVisible &&
+      Boolean(activeWorktreeId) &&
+      Boolean(activeWorktreePath) &&
+      !runtimeEnvironmentId &&
+      (!repoConnectionId || sshConnectionStatus === 'connected'),
+    pushTarget: activeWorktreePushTarget,
+    requestRefresh: requestGitStatusRefresh
+  })
   const prCacheKey =
     repo && branch
       ? getGitHubPRCacheKey(
@@ -1498,7 +1528,8 @@ export default function ChecksPanel(): React.JSX.Element {
       }
     }
     gitStatusSnapshotInFlightContextRef.current = requestContextKey
-    // Why: global status maps are keyed only by worktree; use their changes as invalidation signals, then fetch a local snapshot.
+    const revisionRead = gitStatusSnapshotRevision.beginRead()
+    let observedRepositoryRevision: number | null = null
     if (gitStatusSnapshotRetryTimerRef.current) {
       clearTimeout(gitStatusSnapshotRetryTimerRef.current)
       gitStatusSnapshotRetryTimerRef.current = null
@@ -1513,9 +1544,17 @@ export default function ChecksPanel(): React.JSX.Element {
       connectionId
     }
     void (async () => {
+      const readOwnerSnapshot = async (
+        options?: Parameters<typeof getDesktopGitRepositorySnapshot>[1]
+      ) => {
+        const snapshot = await getDesktopGitRepositorySnapshot(context, options)
+        if (snapshot) {
+          observedRepositoryRevision = Math.max(observedRepositoryRevision ?? 0, snapshot.revision)
+        }
+        return snapshot
+      }
       let repositorySnapshot = readChecksPanelRepositorySnapshot(
-        await getDesktopGitRepositorySnapshot(
-          context,
+        await readOwnerSnapshot(
           activeWorktreePushTarget ? { pushTarget: activeWorktreePushTarget } : undefined
         ),
         requestContextKey,
@@ -1523,7 +1562,7 @@ export default function ChecksPanel(): React.JSX.Element {
       )
       if (!repositorySnapshot) {
         repositorySnapshot = readChecksPanelRepositorySnapshot(
-          await getDesktopGitRepositorySnapshot(context, {
+          await readOwnerSnapshot({
             reuseLineStats: true,
             ...(activeWorktreePushTarget ? { pushTarget: activeWorktreePushTarget } : {})
           }),
@@ -1562,6 +1601,9 @@ export default function ChecksPanel(): React.JSX.Element {
       ) {
         freshRemoteStatus = await getRuntimeGitUpstreamStatus(context)
       }
+      await readOwnerSnapshot(
+        activeWorktreePushTarget ? { pushTarget: activeWorktreePushTarget } : undefined
+      )
       return {
         contextKey: requestContextKey,
         hasUncommittedChanges: status.entries.length > 0,
@@ -1612,12 +1654,19 @@ export default function ChecksPanel(): React.JSX.Element {
         if (gitStatusSnapshotInFlightContextRef.current === requestContextKey) {
           gitStatusSnapshotInFlightContextRef.current = null
         }
+        let shouldRerun = gitStatusSnapshotRevision.finishRead(
+          revisionRead,
+          observedRepositoryRevision
+        )
         if (gitStatusSnapshotRerunContextRef.current === requestContextKey) {
           gitStatusSnapshotRerunContextRef.current = null
+          shouldRerun = true
+        }
+        if (shouldRerun) {
           if (
             shouldCommitChecksPanelGitStatusSnapshot(panelContextKeyRef.current, requestContextKey)
           ) {
-            setGitStatusRefreshNonce((value) => value + 1)
+            requestGitStatusRefresh()
           }
         }
       })
@@ -1634,7 +1683,7 @@ export default function ChecksPanel(): React.JSX.Element {
     activeWorktreePath,
     activeConnectionId,
     branch,
-    gitStatusInvalidation,
+    gitStatusSnapshotRevision,
     gitStatusRefreshNonce,
     isFolder,
     isPanelVisible,
@@ -1642,7 +1691,7 @@ export default function ChecksPanel(): React.JSX.Element {
     panelContextKey,
     repo,
     repoConnectionId,
-    remoteStatusInvalidation,
+    requestGitStatusRefresh,
     runtimeEnvironmentId,
     sshConnectionStatus,
     updateWorktreeGitIdentity

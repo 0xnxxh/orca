@@ -1,10 +1,8 @@
 import type { GitPushTarget, GitStatusResult, GitUpstreamStatus } from '../../shared/types'
+import type { GitRepositorySnapshotRevisionEvent } from '../../shared/git-repository-snapshot'
 import { InFlightPromiseDedupe, stableInFlightKey } from '../../shared/in-flight-promise-dedupe'
 import { GitStatusReadLeaseOwner } from './git-status-read-lease-owner'
 import {
-  createGitRepositoryProjectionFreshness,
-  EMPTY_GIT_IGNORED_PATHS,
-  EMPTY_GIT_STATUS_ENTRIES,
   freezeGitRepositoryStatus,
   freezeGitRepositoryUpstream,
   gitRepositoryScopeKey,
@@ -13,9 +11,13 @@ import {
   type GitRepositoryExecutionIdentity,
   type GitRepositorySnapshot,
   type GitRepositorySnapshotQuery,
-  type GitRepositoryStatusIdentity,
-  type GitRepositoryStatusProjection
+  type GitRepositoryStatusIdentity
 } from './git-repository-snapshot-projection'
+import {
+  GitRepositorySnapshotRevisionSubscriptions,
+  type GitRepositoryRecord
+} from './git-repository-snapshot-revision-subscriptions'
+import { createGitRepositorySnapshot } from './git-repository-snapshot-reader'
 
 export type {
   GitRepositoryExecutionIdentity,
@@ -28,19 +30,6 @@ export type {
 export const MAX_GIT_REPOSITORY_SNAPSHOTS = 64
 export const MAX_GIT_REPOSITORY_PROJECTION_VARIANTS = 4
 
-type ProjectionRecord<T> = {
-  generation: number
-  generatedAt: number
-  revision: number
-  value: T
-  failedGeneration?: number
-}
-
-type RepositoryRecord = {
-  status: Map<string, ProjectionRecord<GitRepositoryStatusProjection>>
-  upstream: Map<string, ProjectionRecord<Readonly<GitUpstreamStatus>>>
-}
-
 function clampBound(value: number, maximum: number): number {
   return Number.isFinite(value) ? Math.min(maximum, Math.max(1, Math.floor(value))) : maximum
 }
@@ -48,7 +37,8 @@ function clampBound(value: number, maximum: number): number {
 export class GitRepositorySnapshotOwner {
   private readonly statusReads = new GitStatusReadLeaseOwner<GitStatusResult>()
   private readonly upstreamReads = new InFlightPromiseDedupe<GitUpstreamStatus>()
-  private readonly repositories = new Map<string, RepositoryRecord>()
+  private readonly repositories = new Map<string, GitRepositoryRecord>()
+  private readonly revisionSubscriptions = new GitRepositorySnapshotRevisionSubscriptions()
   private readonly maxRepositories: number
   private readonly maxProjectionVariants: number
   private generation = 0
@@ -141,72 +131,31 @@ export class GitRepositorySnapshotOwner {
     this.touchRepository(repositoryKey, repository)
     const statusIdentity = gitRepositoryStatusKey(query.statusIdentity)
     const upstreamIdentity = gitRepositoryUpstreamKey(query.pushTarget)
-    const statusRecord = repository.status.get(statusIdentity)
-    const upstreamRecord = repository.upstream.get(upstreamIdentity)
-    if (!statusRecord && !upstreamRecord) {
-      return null
-    }
-
-    const statusFreshness = createGitRepositoryProjectionFreshness(
-      statusRecord,
+    return createGitRepositorySnapshot(
+      repository,
       this.generation,
-      statusIdentity
+      statusIdentity,
+      upstreamIdentity,
+      query.pushTarget === undefined
     )
-    const embeddedUpstreamRecord =
-      query.pushTarget === undefined && statusRecord?.value.upstream ? statusRecord : undefined
-    const useEmbeddedUpstream =
-      embeddedUpstreamRecord &&
-      (!upstreamRecord || embeddedUpstreamRecord.revision > upstreamRecord.revision)
-    const selectedUpstreamRecord = useEmbeddedUpstream ? embeddedUpstreamRecord : upstreamRecord
-    const upstreamFreshness = selectedUpstreamRecord
-      ? createGitRepositoryProjectionFreshness(
-          selectedUpstreamRecord,
-          this.generation,
-          useEmbeddedUpstream ? `status:${statusIdentity}` : upstreamIdentity
-        )
-      : createGitRepositoryProjectionFreshness(undefined, this.generation, upstreamIdentity)
-    const revision = Math.max(statusRecord?.revision ?? 0, upstreamRecord?.revision ?? 0)
-    const generatedAt = Math.max(statusRecord?.generatedAt ?? 0, upstreamRecord?.generatedAt ?? 0)
-    const status = statusRecord?.value
-    return Object.freeze({
-      revision,
-      generatedAt,
-      repositoryIdentity: status?.repositoryIdentity ?? Object.freeze({ head: null, branch: null }),
-      status:
-        status?.status ??
-        Object.freeze({
-          entries: EMPTY_GIT_STATUS_ENTRIES,
-          didHitLimit: false,
-          statusLength: null,
-          ignoredPaths: EMPTY_GIT_IGNORED_PATHS,
-          lineStatsState: 'missing' as const,
-          retentionTruncated: false
-        }),
-      upstream: useEmbeddedUpstream
-        ? embeddedUpstreamRecord.value.upstream
-        : (upstreamRecord?.value ?? null),
-      conflicts: status?.conflicts ?? null,
-      worktreeGraphVersion: 0,
-      freshness: Object.freeze({
-        repositoryIdentity: statusFreshness,
-        status: statusFreshness,
-        upstream: upstreamFreshness,
-        conflicts: statusFreshness,
-        worktreeGraph: Object.freeze({
-          state: 'placeholder',
-          generation: this.generation,
-          currentGeneration: this.generation,
-          revision: null,
-          identity: null
-        })
-      })
-    })
+  }
+
+  subscribe(
+    query: GitRepositorySnapshotQuery,
+    listener: (event: GitRepositorySnapshotRevisionEvent) => void
+  ): () => void {
+    return this.revisionSubscriptions.subscribe(query, listener)
   }
 
   invalidate(): void {
     this.generation += 1
     this.statusReads.invalidate()
     this.upstreamReads.clear()
+    this.revisionSubscriptions.invalidate(this.generation, this.revision)
+  }
+
+  getSubscriptionCountForTests(): number {
+    return this.revisionSubscriptions.count
   }
 
   getRetentionState(): Readonly<{
@@ -227,7 +176,7 @@ export class GitRepositorySnapshotOwner {
     })
   }
 
-  private getOrCreateRepository(repositoryKey: string): RepositoryRecord {
+  private getOrCreateRepository(repositoryKey: string): GitRepositoryRecord {
     const existing = this.repositories.get(repositoryKey)
     if (existing) {
       this.touchRepository(repositoryKey, existing)
@@ -245,12 +194,12 @@ export class GitRepositorySnapshotOwner {
     return repository
   }
 
-  private touchRepository(repositoryKey: string, repository: RepositoryRecord): void {
+  private touchRepository(repositoryKey: string, repository: GitRepositoryRecord): void {
     this.repositories.delete(repositoryKey)
     this.repositories.set(repositoryKey, repository)
   }
 
-  private removeEmptyRepository(repositoryKey: string, repository: RepositoryRecord): void {
+  private removeEmptyRepository(repositoryKey: string, repository: GitRepositoryRecord): void {
     if (
       this.repositories.get(repositoryKey) === repository &&
       repository.status.size === 0 &&
@@ -262,7 +211,7 @@ export class GitRepositorySnapshotOwner {
 
   private publishStatus(
     repositoryKey: string,
-    repository: RepositoryRecord,
+    repository: GitRepositoryRecord,
     projectionKey: string,
     generation: number,
     result: GitStatusResult
@@ -270,6 +219,7 @@ export class GitRepositorySnapshotOwner {
     if (generation !== this.generation || this.repositories.get(repositoryKey) !== repository) {
       return
     }
+    const previous = repository.status.get(projectionKey)
     const revision = this.nextRevision()
     const generatedAt = this.now()
     this.remember(repository.status, projectionKey, {
@@ -278,11 +228,18 @@ export class GitRepositorySnapshotOwner {
       revision,
       value: freezeGitRepositoryStatus(result)
     })
+    this.revisionSubscriptions.statusPublished(
+      repositoryKey,
+      repository,
+      projectionKey,
+      previous,
+      this.generation
+    )
   }
 
   private publishUpstream(
     repositoryKey: string,
-    repository: RepositoryRecord,
+    repository: GitRepositoryRecord,
     projectionKey: string,
     generation: number,
     result: GitUpstreamStatus
@@ -296,6 +253,12 @@ export class GitRepositorySnapshotOwner {
       revision: this.nextRevision(),
       value: freezeGitRepositoryUpstream(result)
     })
+    this.revisionSubscriptions.upstreamPublished(
+      repositoryKey,
+      repository,
+      projectionKey,
+      this.generation
+    )
   }
 
   private remember<T>(projections: Map<string, T>, key: string, value: T): void {
