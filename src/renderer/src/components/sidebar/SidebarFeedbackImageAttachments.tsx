@@ -84,7 +84,8 @@ export function SidebarFeedbackImageAttachments({
                 type="button"
                 aria-label={translate(
                   'auto.components.sidebar.SidebarFeedbackImageAttachments.removeImage',
-                  'Remove image'
+                  'Remove {{fileName}}',
+                  { fileName: image.name }
                 )}
                 disabled={disabled}
                 onClick={() => onRemove(image.id)}

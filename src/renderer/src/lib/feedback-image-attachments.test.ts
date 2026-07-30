@@ -68,6 +68,19 @@ describe('readFeedbackImageFiles', () => {
     expect(errors).toEqual(['notes.pdf is not a supported image type.'])
   })
 
+  it('caps rejection detail so a large drop cannot mount one toast per file', async () => {
+    const files = Array.from(
+      { length: 100 },
+      (_, index) => new File(['x'], `image-${index}.svg`, { type: 'image/svg+xml' })
+    )
+
+    const { images, errors } = await readFeedbackImageFiles(files, 0)
+
+    expect(images).toEqual([])
+    expect(errors).toHaveLength(5)
+    expect(errors.at(-1)).toBe('96 additional images could not be attached.')
+  })
+
   it('reports an oversized image instead of skipping it', async () => {
     const { images, errors } = await readFeedbackImageFiles(
       [pngFile('huge.png', MAX_FEEDBACK_IMAGE_BYTES + 1)],

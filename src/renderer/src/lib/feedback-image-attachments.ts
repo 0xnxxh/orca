@@ -1,3 +1,4 @@
+import { translate } from '@/i18n/i18n'
 import { createBrowserUuid } from './browser-uuid'
 
 export const MAX_FEEDBACK_IMAGE_COUNT = 4
@@ -10,6 +11,7 @@ export const SUPPORTED_FEEDBACK_IMAGE_TYPES = [
 ] as const
 
 export const FEEDBACK_IMAGE_FILE_ACCEPT = SUPPORTED_FEEDBACK_IMAGE_TYPES.join(',')
+const MAX_FEEDBACK_IMAGE_DETAIL_ERRORS = 4
 
 export type FeedbackImageDraft = {
   id: string
@@ -50,6 +52,12 @@ export function formatFeedbackImageSize(bytes: number): string {
     : `${Math.max(1, Math.round(bytes / 1024))} KB`
 }
 
+function feedbackImageDisplayName(file: File): string {
+  return (
+    file.name || translate('auto.lib.feedback.image.attachments.fallbackName', 'Image attachment')
+  )
+}
+
 /**
  * Converts picked/pasted/dropped files into drafts. Rejections come back as
  * messages rather than being skipped, because silently dropping an attachment
@@ -62,25 +70,57 @@ export async function readFeedbackImageFiles(
   const images: FeedbackImageDraft[] = []
   const errors: string[] = []
   let remaining = MAX_FEEDBACK_IMAGE_COUNT - existingCount
+  let omittedErrorCount = 0
+  const addError = (createMessage: () => string): void => {
+    if (errors.length < MAX_FEEDBACK_IMAGE_DETAIL_ERRORS) {
+      errors.push(createMessage())
+    } else {
+      omittedErrorCount += 1
+    }
+  }
 
   try {
     for (const file of files) {
+      const fileName = feedbackImageDisplayName(file)
       if (!isSupportedType(file.type)) {
-        errors.push(`${file.name || 'Image'} is not a supported image type.`)
+        addError(() =>
+          translate(
+            'auto.lib.feedback.image.attachments.unsupportedType',
+            '{{fileName}} is not a supported image type.',
+            { fileName }
+          )
+        )
         continue
       }
       if (file.size === 0) {
-        errors.push(`${file.name || 'Image'} is empty.`)
+        addError(() =>
+          translate('auto.lib.feedback.image.attachments.empty', '{{fileName}} is empty.', {
+            fileName
+          })
+        )
         continue
       }
       if (file.size > MAX_FEEDBACK_IMAGE_BYTES) {
-        errors.push(
-          `${file.name || 'Image'} is larger than ${formatFeedbackImageSize(MAX_FEEDBACK_IMAGE_BYTES)}.`
+        addError(() =>
+          translate(
+            'auto.lib.feedback.image.attachments.tooLarge',
+            '{{fileName}} is larger than {{maxSize}}.',
+            {
+              fileName,
+              maxSize: formatFeedbackImageSize(MAX_FEEDBACK_IMAGE_BYTES)
+            }
+          )
         )
         continue
       }
       if (remaining <= 0) {
-        errors.push(`You can attach up to ${MAX_FEEDBACK_IMAGE_COUNT} images.`)
+        addError(() =>
+          translate(
+            'auto.lib.feedback.image.attachments.tooMany',
+            'You can attach up to {{maxCount}} images.',
+            { maxCount: MAX_FEEDBACK_IMAGE_COUNT }
+          )
+        )
         break
       }
       remaining -= 1
@@ -88,7 +128,7 @@ export async function readFeedbackImageFiles(
         // Why: crypto.randomUUID is undefined in non-secure browser contexts (LAN
         // web client over plain HTTP); createBrowserUuid falls back safely.
         id: `${file.name}-${file.size}-${createBrowserUuid()}`,
-        name: file.name || 'pasted-image',
+        name: fileName,
         contentType: file.type,
         bytes: file.size,
         data: new Uint8Array(await file.arrayBuffer()),
@@ -100,6 +140,16 @@ export async function readFeedbackImageFiles(
     // URL pins its blob for the life of the renderer.
     images.forEach(releaseFeedbackImageDraft)
     throw error
+  }
+
+  if (omittedErrorCount > 0) {
+    errors.push(
+      translate(
+        'auto.lib.feedback.image.attachments.additionalErrors',
+        '{{count}} additional images could not be attached.',
+        { count: omittedErrorCount }
+      )
+    )
   }
 
   return { images, errors }

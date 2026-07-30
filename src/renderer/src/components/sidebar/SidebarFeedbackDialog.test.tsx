@@ -112,6 +112,7 @@ describe('SidebarFeedbackDialog image submission', () => {
     })
 
     await waitFor(() => expect((send as HTMLButtonElement).disabled).toBe(false))
+    expect(screen.getByRole('button', { name: 'Remove shot.png' })).toBeTruthy()
     fireEvent.click(send)
     await waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1))
     expect(mocks.submit.mock.calls[0]?.[0].images).toEqual([
