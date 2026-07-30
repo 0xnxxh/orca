@@ -11,6 +11,8 @@ const sessionRouteSource = readFileSync(
 function routeSlice(anchorStart: string, anchorEnd: string): string {
   const start = sessionRouteSource.indexOf(anchorStart)
   expect(start).toBeGreaterThanOrEqual(0)
+  // Why: a duplicated start anchor would silently slice the wrong region.
+  expect(sessionRouteSource.indexOf(anchorStart, start + 1)).toBe(-1)
   const end = sessionRouteSource.indexOf(anchorEnd, start)
   expect(end).toBeGreaterThan(start)
   return sessionRouteSource.slice(start, end + anchorEnd.length)
