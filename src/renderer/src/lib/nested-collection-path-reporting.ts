@@ -11,6 +11,7 @@ export function createNestedCollectionChildPath(
   key: string | null,
   maxPathLength: number
 ): string | null {
+  // Root keys are source-owned Zustand fields already emitted by the top-level contributor.
   if (frame.depth === 0) {
     return key !== null && key.length <= maxPathLength ? key : null
   }

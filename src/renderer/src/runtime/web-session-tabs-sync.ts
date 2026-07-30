@@ -112,6 +112,7 @@ registerModuleSingletonSize(
   'webTabsSync.replayableSnapshots',
   replayableSessionTabsSnapshotByWorktree
 )
+registerModuleSingletonSize('webTabsSync.lastHostTabCounts', lastHostTerminalTabCountByWorktree)
 registerModuleSingletonSize('webTabsSync.hostTabIdByLocalKey', hostSessionTabIdByLocalKey)
 
 type TerminalSurface = RuntimeMobileSessionTerminalClientTab
