@@ -1,4 +1,4 @@
-import type { GitHubWorkItem } from '../../../shared/types'
+import type { ClassifiedError, GitHubWorkItem } from '../../../shared/types'
 
 /**
  * Cross-repo Tasks pagination is cursor-based on `updatedAt`: each page's oldest
@@ -33,6 +33,38 @@ export function workItemIdentity(item: Pick<GitHubWorkItem, 'id' | 'repoId'>): s
 
 export function taskPageToGitHubApiPage(taskPage: number): number {
   return Math.max(0, Math.floor(taskPage)) + 1
+}
+
+export type EmptyPageOutcome = {
+  reason: 'window-unreachable' | 'load-failed' | 'end-of-data'
+  /** New advertised page count, or null to leave the current count alone. */
+  clampTotalPagesTo: number | null
+}
+
+/**
+ * An empty page load has three distinct meanings, and only the caller-side
+ * error channels can tell them apart (#11485):
+ * - a `validation_error` is GitHub's 422 for pages past its 1000-result search
+ *   window — the page can never load, so stop advertising it;
+ * - any other per-repo error (thrown or issue-side envelope) may be transient
+ *   (rate limit, permissions), so surface it but keep the advertised count;
+ * - no error at all is the designed end-of-data signal from probing the
+ *   speculative page `fallbackTotalPages` advertises while the count is
+ *   unknown — withdraw the phantom page silently.
+ */
+export function resolveEmptyPageOutcome(args: {
+  target: number
+  failedCount: number
+  issueErrorTypes: readonly ClassifiedError['type'][]
+}): EmptyPageOutcome {
+  const clamp = Math.max(1, Math.floor(args.target))
+  if (args.issueErrorTypes.includes('validation_error')) {
+    return { reason: 'window-unreachable', clampTotalPagesTo: clamp }
+  }
+  if (args.failedCount > 0 || args.issueErrorTypes.length > 0) {
+    return { reason: 'load-failed', clampTotalPagesTo: null }
+  }
+  return { reason: 'end-of-data', clampTotalPagesTo: clamp }
 }
 
 // Why: provider pages cannot spill truncated rows into the next page. Divide

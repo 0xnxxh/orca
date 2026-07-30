@@ -3,6 +3,7 @@ import type { GitHubWorkItem } from '../../../shared/types'
 import {
   accumulateWorkItemPages,
   getTaskPagePerRepoLimit,
+  resolveEmptyPageOutcome,
   taskPageToGitHubApiPage,
   workItemIdentity
 } from './task-page-work-item-pagination'
@@ -56,6 +57,42 @@ describe('numbered GitHub pagination', () => {
     expect(getTaskPagePerRepoLimit(2, 36, 100)).toBe(36)
     expect(getTaskPagePerRepoLimit(3, 36, 100)).toBe(33)
     expect(getTaskPagePerRepoLimit(90, 36, 100)).toBe(1)
+  })
+})
+
+describe('resolveEmptyPageOutcome', () => {
+  it('clamps and reports unreachable when the search window 422 is present', () => {
+    expect(
+      resolveEmptyPageOutcome({ target: 33, failedCount: 0, issueErrorTypes: ['validation_error'] })
+    ).toEqual({ reason: 'window-unreachable', clampTotalPagesTo: 33 })
+    // A thrown repo alongside the 422 doesn't mask the window signal.
+    expect(
+      resolveEmptyPageOutcome({ target: 5, failedCount: 1, issueErrorTypes: ['validation_error'] })
+    ).toEqual({ reason: 'window-unreachable', clampTotalPagesTo: 5 })
+  })
+
+  it('reports a failure without clamping for transient or unclassified errors', () => {
+    expect(resolveEmptyPageOutcome({ target: 5, failedCount: 2, issueErrorTypes: [] })).toEqual({
+      reason: 'load-failed',
+      clampTotalPagesTo: null
+    })
+    for (const type of ['permission_denied', 'not_found', 'rate_limited', 'unknown'] as const) {
+      expect(
+        resolveEmptyPageOutcome({ target: 5, failedCount: 0, issueErrorTypes: [type] })
+      ).toEqual({ reason: 'load-failed', clampTotalPagesTo: null })
+    }
+  })
+
+  it('treats a clean empty probe as end-of-data and withdraws the speculative page', () => {
+    expect(resolveEmptyPageOutcome({ target: 2, failedCount: 0, issueErrorTypes: [] })).toEqual({
+      reason: 'end-of-data',
+      clampTotalPagesTo: 2
+    })
+    // Never clamps below one advertised page.
+    expect(resolveEmptyPageOutcome({ target: 0, failedCount: 0, issueErrorTypes: [] })).toEqual({
+      reason: 'end-of-data',
+      clampTotalPagesTo: 1
+    })
   })
 })
 

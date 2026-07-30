@@ -656,6 +656,8 @@ const EMPTY_CHECKS_CACHE_TTL = 10_000
 // Why: the work-item list is a browse surface, not a source of truth, so 60s staleness is fine (SWR keeps it current).
 const WORK_ITEMS_CACHE_TTL = 60_000
 // GitHub's Search API serves at most the first 1000 results; deeper requests 422.
+// floor() is deliberately conservative: for PR-only queries (no search call) the
+// tail `1000 % limit` results become unreachable rather than special-casing scope.
 const GITHUB_SEARCH_RESULT_WINDOW = 1000
 // Why: long-lived (matches repos.ts) so the user has time to read + act on persist failures before the toast vanishes.
 const ERROR_TOAST_DURATION = 60_000
@@ -1966,7 +1968,11 @@ export type GitHubSlice = {
     displayLimit: number,
     query: string,
     page: number
-  ) => Promise<{ items: GitHubWorkItem[]; failedCount: number }>
+  ) => Promise<{
+    items: GitHubWorkItem[]
+    failedCount: number
+    issueErrorTypes: ClassifiedError['type'][]
+  }>
   /** Count items and derive pages from the largest per-repo result set. */
   countWorkItemsAcrossRepos: (
     repos: {
@@ -2786,9 +2792,10 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
 
   fetchWorkItemsNextPage: async (repos, perRepoLimit, displayLimit, query, page) => {
     if (isGitHubWorkItemsQueryTooLarge(query)) {
-      return { items: [], failedCount: 0 }
+      return { items: [], failedCount: 0, issueErrorTypes: [] }
     }
     let failedCount = 0
+    const issueErrorTypes: ClassifiedError['type'][] = []
     const perProjectResults = await Promise.all(
       repos.map(async (r) => {
         const requestState = get()
@@ -2814,6 +2821,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
           })
           // Why: page-N failures aren't in the per-repo banner (keyed on the initial fetch); log them so pagination failures are observable instead of silently truncating (richer surface deferred, design doc §6).
           if (envelope.errors?.issues) {
+            issueErrorTypes.push(envelope.errors.issues.type)
             console.warn(
               `[workItems] next page ${r.repoId} issues-side partial failure:`,
               envelope.errors.issues
@@ -2833,7 +2841,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       })
     )
     const merged = sortWorkItemsByNumber(perProjectResults.flat()).slice(0, displayLimit)
-    return { items: merged, failedCount }
+    return { items: merged, failedCount, issueErrorTypes }
   },
 
   countWorkItemsAcrossRepos: async (repos, query, perRepoLimit) => {

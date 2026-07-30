@@ -206,6 +206,7 @@ import {
 import { shouldHideTaskPageListChrome } from '@/components/task-page-list-chrome-visibility'
 import {
   getTaskPagePerRepoLimit,
+  resolveEmptyPageOutcome,
   taskPageToGitHubApiPage
 } from '@/components/task-page-work-item-pagination'
 import { sortWorkItemsByNumber } from '../../../shared/work-items'
@@ -3207,11 +3208,17 @@ export default function TaskPage(): React.JSX.Element {
 
   // Why: stable string key for selectedRepos — the repos store installs a fresh
   // array on every repos:changed event, so array-identity deps re-fire even when
-  // the selection is unchanged.
+  // the selection is unchanged. Includes the resolved GitHub source context so a
+  // provider-identity change still re-keys everything the requests depend on.
   const selectedReposKey = useMemo(
     () =>
       selectedRepos
-        .map((r) => `${r.id}|${r.path}|${r.connectionId ?? ''}|${r.executionHostId ?? ''}`)
+        .map(
+          (r) =>
+            `${r.id}|${r.path}|${r.connectionId ?? ''}|${r.executionHostId ?? ''}|${JSON.stringify(
+              getTaskPageRepoSourceContext(r, 'github')
+            )}`
+        )
         .join(','),
     [selectedRepos]
   )
@@ -6170,7 +6177,7 @@ export default function TaskPage(): React.JSX.Element {
       setPaginationLoading(true)
       setLoadingTargetPage(target)
       try {
-        const { items, failedCount } = await fetchWorkItemsNextPage(
+        const { items, failedCount, issueErrorTypes } = await fetchWorkItemsNextPage(
           repoArgs,
           githubPerRepoPageLimit,
           githubPageSize,
@@ -6181,20 +6188,32 @@ export default function TaskPage(): React.JSX.Element {
           return
         }
         if (items.length === 0) {
-          // Why: staying on the current page without saying so reads as a dead
-          // click (#11485). Empty with no thrown fetch means the target is past
-          // GitHub's reachable search window, so stop advertising it; thrown
-          // fetches may be transient, so keep the page count.
-          toast.error(
-            translate(
-              'auto.components.TaskPage.loadPageUnreachable',
-              'Page {{value0}} could not be loaded from GitHub.',
-              { value0: String(target + 1) }
+          // Why: see resolveEmptyPageOutcome — a dead click needs feedback only
+          // when something actually failed; a clean empty probe is end-of-data.
+          const outcome = resolveEmptyPageOutcome({ target, failedCount, issueErrorTypes })
+          if (outcome.reason === 'window-unreachable') {
+            toast.error(
+              translate(
+                'auto.components.TaskPage.loadPageUnreachable',
+                'Page {{value0}} is beyond what GitHub search can return.',
+                { value0: String(target + 1) }
+              ),
+              { id: 'work-items-page-unreachable' }
             )
-          )
-          if (failedCount === 0) {
+          } else if (outcome.reason === 'load-failed') {
+            toast.error(
+              translate(
+                'auto.components.TaskPage.loadPageFailed',
+                'Page {{value0}} could not be loaded from GitHub.',
+                { value0: String(target + 1) }
+              ),
+              { id: 'work-items-page-load-failed' }
+            )
+          }
+          const clamp = outcome.clampTotalPagesTo
+          if (clamp !== null) {
             setCountedTotalPages((previous) =>
-              previous !== null && previous > target ? target : previous
+              previous !== null && previous < clamp ? previous : clamp
             )
           }
           return
@@ -6416,9 +6435,13 @@ export default function TaskPage(): React.JSX.Element {
       cancelled = true
     }
     // Why: store selectors are stable (omit from deps); workItemsInvalidationNonce included so a preference flip re-dispatches.
+    // selectedReposKey stands in for selectedRepos — the array gets a fresh
+    // identity on every repos:changed event, and re-running this effect then
+    // resets pagination mid-click (#11485). The key covers every repo field the
+    // requests read.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    selectedRepos,
+    selectedReposKey,
     appliedTaskSearch,
     taskRefreshNonce,
     taskSource,

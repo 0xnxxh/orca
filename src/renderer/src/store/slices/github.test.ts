@@ -6656,7 +6656,8 @@ describe('createGitHubSlice.fetchWorkItems source/error envelope', () => {
     })
     expect(result).toEqual({
       items: [{ ...item, repoId: 'caller-repo-id' }],
-      failedCount: 0
+      failedCount: 0,
+      issueErrorTypes: []
     })
   })
 
@@ -6745,6 +6746,25 @@ describe('createGitHubSlice.fetchWorkItems source/error envelope', () => {
     expect(result).toEqual({ totalCount: 1171, totalPages: 33 })
   })
 
+  it('pins the search-window cap at dividing and non-dividing per-repo limits', async () => {
+    const store = createTestStore()
+    // 36 is the shipped single-repo limit: floor(1000 / 36) = 27, so page 28
+    // (window 973-1008, crossing 1000) is never advertised.
+    mockApi.gh.countWorkItems.mockResolvedValueOnce(2000)
+    await expect(
+      store
+        .getState()
+        .countWorkItemsAcrossRepos([{ repoId: 'repo-id', path: '/local/repo' }], 'is:issue', 36)
+    ).resolves.toEqual({ totalCount: 2000, totalPages: 27 })
+    // 25 divides 1000 evenly: the full window stays reachable (40 pages).
+    mockApi.gh.countWorkItems.mockResolvedValueOnce(2000)
+    await expect(
+      store
+        .getState()
+        .countWorkItemsAcrossRepos([{ repoId: 'repo-id', path: '/local/repo' }], 'is:issue', 25)
+    ).resolves.toEqual({ totalCount: 2000, totalPages: 40 })
+  })
+
   it('rejects oversized work-item queries before cache keys or provider calls', async () => {
     const store = createTestStore()
     const secret = 'github-work-items-secret'
@@ -6773,7 +6793,7 @@ describe('createGitHubSlice.fetchWorkItems source/error envelope', () => {
           oversizedQuery,
           1
         )
-    ).resolves.toEqual({ items: [], failedCount: 0 })
+    ).resolves.toEqual({ items: [], failedCount: 0, issueErrorTypes: [] })
     await expect(
       store
         .getState()
