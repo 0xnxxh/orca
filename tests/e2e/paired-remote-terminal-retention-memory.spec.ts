@@ -24,10 +24,14 @@ test('ordinary-parks paired terminals and restores authoritative host scrollback
     terminalParkingDelayMs: 100
   })
   try {
-    await runPairedTerminalParkingOracle(client.page, {
-      fallbackWorktreeId: seed.worktreeIds[0]!,
-      repoId: seed.repoId
-    })
+    await runPairedTerminalParkingOracle(
+      client.page,
+      {
+        fallbackWorktreeId: seed.worktreeIds[0]!,
+        repoId: seed.repoId
+      },
+      { hostPage: orcaPage }
+    )
   } finally {
     await client.dispose()
   }

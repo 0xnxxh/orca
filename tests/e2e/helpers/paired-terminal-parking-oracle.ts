@@ -44,7 +44,8 @@ async function callRuntime<TResult>(page: Page, method: string, params: unknown)
 
 export async function runPairedTerminalParkingOracle(
   page: Page,
-  seed: PairedTerminalParkingSeed
+  seed: PairedTerminalParkingSeed,
+  options: { hostPage?: Page } = {}
 ): Promise<void> {
   const fixture = createPairedTerminalParkingFixture()
   const createdWorktreeIds: string[] = []
@@ -132,6 +133,7 @@ export async function runPairedTerminalParkingOracle(
         .toContain(`FILLED:${created.marker}`)
       remoteTabs.push({ ...created, originalPtyId })
     }
+    await expectHostTerminalsUnmounted(options.hostPage, seed.fallbackWorktreeId, remoteTabs)
 
     await page.evaluate(() => window.__store?.getState().setActiveView('tasks'))
     await expect
@@ -263,6 +265,7 @@ export async function runPairedTerminalParkingOracle(
     await expect
       .poll(() => getTerminalContent(page), { timeout: 30_000 })
       .toContain(`LIVE:${liveMarker}`)
+    await expectHostTerminalsUnmounted(options.hostPage, seed.fallbackWorktreeId, remoteTabs)
   } finally {
     for (const tab of remoteTabs) {
       await callRuntime(page, 'terminal.closeTab', { terminal: tab.terminal }).catch(
@@ -281,4 +284,25 @@ export async function runPairedTerminalParkingOracle(
     }
     fixture.dispose()
   }
+}
+
+async function expectHostTerminalsUnmounted(
+  hostPage: Page | undefined,
+  activeWorktreeId: string,
+  remoteTabs: RemoteTab[]
+): Promise<void> {
+  if (!hostPage) {
+    return
+  }
+  await expect
+    .poll(() =>
+      hostPage.evaluate(
+        (tabIds) => ({
+          activeWorktreeId: window.__store?.getState().activeWorktreeId,
+          mountedCount: tabIds.filter((tabId) => window.__paneManagers?.has(tabId)).length
+        }),
+        remoteTabs.map(({ tabId }) => tabId)
+      )
+    )
+    .toEqual({ activeWorktreeId, mountedCount: 0 })
 }
