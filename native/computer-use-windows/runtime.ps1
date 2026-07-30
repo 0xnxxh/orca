@@ -94,7 +94,7 @@ public static class OrcaDesktopWin32 {
     [DllImport("user32.dll")]
     public static extern uint SendInput(uint count, INPUT[] inputs, int size);
 
-    public static void SendModifiedClick(byte[] modifiers, uint mouseDown, uint mouseUp, int count) {
+    public static void SendModifiedClick(byte[] modifiers, uint mouseDown, uint mouseUp) {
         const uint keyboardInput = 1;
         const uint mouseInput = 0;
         const uint keyUp = 0x0002;
@@ -102,10 +102,8 @@ public static class OrcaDesktopWin32 {
         foreach (var modifier in modifiers) {
             inputs.Add(KeyboardInput(keyboardInput, modifier, 0));
         }
-        for (var index = 0; index < count; index++) {
-            inputs.Add(MouseInput(mouseInput, mouseDown));
-            inputs.Add(MouseInput(mouseInput, mouseUp));
-        }
+        inputs.Add(MouseInput(mouseInput, mouseDown));
+        inputs.Add(MouseInput(mouseInput, mouseUp));
         for (var index = modifiers.Length - 1; index >= 0; index--) {
             inputs.Add(KeyboardInput(keyboardInput, modifiers[index], keyUp));
         }
@@ -1016,12 +1014,14 @@ function Send-OrcaMouseClick([IntPtr]$WindowHandle, [int]$ScreenX, [int]$ScreenY
         }
         return
     }
-    [OrcaDesktopWin32]::SendModifiedClick(
-        [byte[]]$modifierKeys,
-        [uint32]$down,
-        [uint32]$up,
-        $clickCount
-    )
+    for ($i = 0; $i -lt $clickCount; $i++) {
+        [OrcaDesktopWin32]::SendModifiedClick(
+            [byte[]]$modifierKeys,
+            [uint32]$down,
+            [uint32]$up
+        )
+        if ($i + 1 -lt $clickCount) { Start-Sleep -Milliseconds 35 }
+    }
 }
 
 function Send-OrcaDrag([IntPtr]$WindowHandle, $From, $To) {

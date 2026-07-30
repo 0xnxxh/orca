@@ -24,16 +24,25 @@ describe('computer-use modifier safety', () => {
     expect(clickInput).not.toContain('down: true')
   })
 
-  it('submits the complete modified click in one Windows SendInput batch', () => {
+  it('submits each modified Windows click in a closed, timed SendInput batch', () => {
     const windows = source('native/computer-use-windows/runtime.ps1')
     const modifiedClick = windows.slice(
       windows.indexOf('public static void SendModifiedClick'),
       windows.indexOf('private static INPUT KeyboardInput')
     )
+    const mouseClick = windows.slice(
+      windows.indexOf('function Send-OrcaMouseClick'),
+      windows.indexOf('function Send-OrcaDrag')
+    )
 
     expect(modifiedClick).toContain('SendInput((uint)values.Length, values')
     expect(modifiedClick).toContain('SendInput((uint)releaseValues.Length, releaseValues')
     expect(modifiedClick).toContain('if (sent != (uint)values.Length)')
+    expect(modifiedClick).not.toContain('int count')
+    expect(mouseClick).toMatch(
+      /for \(\$i = 0; \$i -lt \$clickCount; \$i\+\+\) \{\s+\[OrcaDesktopWin32\]::SendModifiedClick\(/
+    )
+    expect(mouseClick).toContain('if ($i + 1 -lt $clickCount) { Start-Sleep -Milliseconds 35 }')
     expect(windows).not.toContain('keybd_event')
   })
 
