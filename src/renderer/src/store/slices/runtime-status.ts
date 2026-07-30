@@ -8,6 +8,7 @@ import {
   unwrapRuntimeRpcResult
 } from '@/runtime/runtime-rpc-client'
 import { replaceRuntimeEnvironmentRevisions } from '@/runtime/runtime-environment-revision'
+import { evictSkillDiscoveryForRuntimeEnvironments } from '@/hooks/installed-agent-skill-discovery'
 
 /** Live status for one saved runtime environment, as last observed by the
  * renderer. `status === null` records a probe that failed or timed out so the
@@ -158,6 +159,10 @@ export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeSta
     const retiredEnvironmentIds = [...new Set([...removedIds, ...replacedEnvironmentIds])]
     if (retiredEnvironmentIds.length > 0) {
       get().purgeStaleRuntimeHostState?.(retiredEnvironmentIds)
+      // Why: a retired environment's cached skill scan would otherwise be served
+      // verbatim if its id is re-paired, and ephemeral VMs mint a fresh id per
+      // start, leaking one retained entry per start until LRU pressure (#11429).
+      evictSkillDiscoveryForRuntimeEnvironments(retiredEnvironmentIds)
     }
   },
 

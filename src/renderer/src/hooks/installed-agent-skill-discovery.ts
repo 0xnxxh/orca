@@ -4,6 +4,7 @@ import { discoverSkillsForRuntimeTarget } from '@/runtime/runtime-skills-client'
 import { INSTALLED_AGENT_SKILLS_CHANGED_EVENT } from './installed-agent-skills-change-event'
 import {
   clearInstalledAgentSkillDiscoveryCache,
+  evictInstalledAgentSkillDiscoveryCacheKey,
   peekInstalledAgentSkillDiscoveryCache,
   readInstalledAgentSkillDiscoveryCache,
   resetInstalledAgentSkillDiscoveryCacheForTests,
@@ -36,6 +37,23 @@ export function invalidateInstalledAgentSkillDiscovery(): void {
   // reads may finish, but their generation can no longer repopulate the cache.
   pendingDiscoveryByTarget.clear()
   pendingDiscoverySatisfiesForcedRefreshByTarget.clear()
+}
+
+/**
+ * Evict the cached and in-flight scans owned by runtime environments that left
+ * the saved list (removed, or re-paired under the same id). Keyed, not a flush:
+ * the local/WSL entries and surviving remotes stay warm, so removal cannot
+ * re-fire every mounted consumer's scan. Called by the runtime-status slice —
+ * this module must stay store-free (#6887), so the store subscription lives on
+ * the consuming side.
+ */
+export function evictSkillDiscoveryForRuntimeEnvironments(environmentIds: readonly string[]): void {
+  for (const environmentId of environmentIds) {
+    const key = getRuntimeScopedSkillDiscoveryKey({ kind: 'environment', environmentId }, undefined)
+    evictInstalledAgentSkillDiscoveryCacheKey(key)
+    pendingDiscoveryByTarget.delete(key)
+    pendingDiscoverySatisfiesForcedRefreshByTarget.delete(key)
+  }
 }
 
 export function resetSkillDiscoveryCacheForTests(): void {
@@ -106,7 +124,9 @@ function startInstalledAgentSkillDiscovery(
   const normalizedTarget = normalizeSkillDiscoveryTarget(target)
   const discovery = discoverSkillsForRuntimeTarget(runtimeTarget, normalizedTarget)
     .then((result) => {
-      if (generation === discoveryGeneration) {
+      // Why: only the still-registered scan may populate — a scan whose runtime
+      // environment was evicted mid-flight must not resurrect the retired entry.
+      if (generation === discoveryGeneration && pendingDiscoveryByTarget.get(key) === discovery) {
         writeInstalledAgentSkillDiscoveryCache(key, result)
       }
       return result
