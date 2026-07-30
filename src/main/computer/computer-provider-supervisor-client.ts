@@ -2,12 +2,16 @@ import {
   COMPUTER_PROVIDER_SUPERVISOR_CHANNEL,
   isComputerProviderSupervisorMessage,
   isStartedSupervisedMacOSProvider,
+  isSupervisedDesktopProviderResult,
   type ComputerProviderSupervisorRequest,
-  type StartedSupervisedMacOSProvider
+  type StartedSupervisedMacOSProvider,
+  type SupervisedDesktopProviderResult
 } from './computer-provider-supervisor-protocol'
+import type { BridgeRequest } from './desktop-script-provider-types'
 import { RuntimeClientError } from './runtime-client-error'
 
 const SUPERVISOR_REQUEST_TIMEOUT_MS = 10_000
+export const DESKTOP_PROVIDER_SUPERVISOR_REQUEST_TIMEOUT_MS = 40_000
 const MAX_EARLY_MACOS_TERMINATIONS = 32
 
 type PendingSupervisorRequest = {
@@ -67,6 +71,17 @@ export class ComputerProviderSupervisorClient {
       this.macOSSessions.delete(sessionId)
       this.earlyMacOSTerminations.delete(sessionId)
     }
+  }
+
+  async executeDesktopProvider(request: BridgeRequest): Promise<SupervisedDesktopProviderResult> {
+    const result = await this.request('desktop.execute', { request })
+    if (!isSupervisedDesktopProviderResult(result)) {
+      throw new RuntimeClientError(
+        'accessibility_error',
+        'computer provider supervisor returned an invalid desktop provider result'
+      )
+    }
+    return result
   }
 
   handleMessage(message: unknown): boolean {
@@ -138,6 +153,10 @@ export class ComputerProviderSupervisorClient {
     } as ComputerProviderSupervisorRequest
 
     return new Promise((resolve, reject) => {
+      const timeoutMs =
+        method === 'desktop.execute'
+          ? DESKTOP_PROVIDER_SUPERVISOR_REQUEST_TIMEOUT_MS
+          : SUPERVISOR_REQUEST_TIMEOUT_MS
       const timer = setTimeout(() => {
         this.pending.delete(id)
         reject(
@@ -146,7 +165,7 @@ export class ComputerProviderSupervisorClient {
             `computer provider supervisor ${method} timed out`
           )
         )
-      }, SUPERVISOR_REQUEST_TIMEOUT_MS)
+      }, timeoutMs)
       this.pending.set(id, { resolve, reject, timer })
       try {
         this.send(request, (error) => {
@@ -202,6 +221,12 @@ export function claimSupervisedMacOSProvider(sessionId: string): Promise<void> {
 
 export function releaseSupervisedMacOSProvider(sessionId: string): Promise<void> {
   return client.releaseMacOSProvider(sessionId)
+}
+
+export function executeSupervisedDesktopProvider(
+  request: BridgeRequest
+): Promise<SupervisedDesktopProviderResult> {
+  return client.executeDesktopProvider(request)
 }
 
 export function handleComputerProviderSupervisorMessage(message: unknown): boolean {
