@@ -225,20 +225,30 @@ describe('remote terminal stalled stream recovery', () => {
     expect(stream.sendInput('regressed-snapshot\r')).toBe(true)
     await vi.advanceTimersByTimeAsync(REMOTE_TERMINAL_COMMAND_RESPONSE_TIMEOUT_MS)
     const regressedRequest = sentFrames(TerminalStreamOpcode.SnapshotRequest)[2]
-    const regressedPayload = regressedRequest
-      ? decodeTerminalStreamJson<{ requestId: number }>(regressedRequest.payload)
-      : null
-    emitSnapshot(stream.streamId, regressedPayload?.requestId ?? 0, 'partial-output', 8)
+    expect(regressedRequest).toBeDefined()
+    if (!regressedRequest) {
+      throw new Error('Missing regressed snapshot request')
+    }
+    const regressedPayload = decodeTerminalStreamJson<{ requestId: number }>(
+      regressedRequest.payload
+    )
+    expect(regressedPayload.requestId).toBeTypeOf('number')
+    emitSnapshot(stream.streamId, regressedPayload.requestId, 'partial-output', 8)
     await vi.advanceTimersByTimeAsync(0)
 
     expect(onTransportClose).not.toHaveBeenCalled()
     expect(stream.sendInput('still-below-baseline\r')).toBe(true)
     await vi.advanceTimersByTimeAsync(REMOTE_TERMINAL_COMMAND_RESPONSE_TIMEOUT_MS)
     const belowBaselineRequest = sentFrames(TerminalStreamOpcode.SnapshotRequest)[3]
-    const belowBaselinePayload = belowBaselineRequest
-      ? decodeTerminalStreamJson<{ requestId: number }>(belowBaselineRequest.payload)
-      : null
-    emitSnapshot(stream.streamId, belowBaselinePayload?.requestId ?? 0, 'partial-output', 10)
+    expect(belowBaselineRequest).toBeDefined()
+    if (!belowBaselineRequest) {
+      throw new Error('Missing below-baseline snapshot request')
+    }
+    const belowBaselinePayload = decodeTerminalStreamJson<{ requestId: number }>(
+      belowBaselineRequest.payload
+    )
+    expect(belowBaselinePayload.requestId).toBeTypeOf('number')
+    emitSnapshot(stream.streamId, belowBaselinePayload.requestId, 'partial-output', 10)
     await vi.advanceTimersByTimeAsync(0)
 
     expect(onTransportClose).not.toHaveBeenCalled()
