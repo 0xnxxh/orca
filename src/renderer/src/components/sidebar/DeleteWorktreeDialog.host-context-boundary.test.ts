@@ -21,8 +21,21 @@ describe('DeleteWorktreeDialog host-context boundaries', () => {
     )
 
     expect(effect).toContain('getSettingsForWorktreeRuntimeOwner')
+    expect(effect).toContain('probeDeleteWorktreeDirtyStatus')
     expect(effect).toContain('worktreesByRepo: useAppStore.getState().worktreesByRepo')
     expect(effect).toContain('item.id')
     expect(effect).not.toContain('settings,\n        worktreeId: item.id')
+  })
+
+  it('preserves cached status and non-git workspace exclusions', () => {
+    const effect = sourceBetween(
+      SOURCE,
+      'const statusTargets = deleteTargets.filter(',
+      'return () => {'
+    )
+
+    expect(effect).toContain('!item.isMainWorktree')
+    expect(effect).toContain('!getIsFolderWorkspaceDelete(repoMap, item)')
+    expect(effect).toContain('gitStatusByWorktree[item.id] === undefined')
   })
 })

@@ -15,6 +15,10 @@ const defaultStatusIdentity: GitRepositoryStatusIdentity = {
   limit: 1_000,
   sharedLinkPaths: []
 }
+const safetyStatusIdentity: GitRepositoryStatusIdentity = {
+  ...defaultStatusIdentity,
+  reuseLineStats: true
+}
 const statusResult: GitStatusResult = {
   entries: [{ path: 'src/app.ts', status: 'modified', area: 'unstaged', added: 2, removed: 1 }],
   conflictOperation: 'merge',
@@ -164,6 +168,59 @@ describe('GitRepositorySnapshotOwner', () => {
       upstream: { upstreamName: 'fork/feature' }
     })
   })
+
+  it.each([
+    ['native activity poll', native, defaultStatusIdentity],
+    ['native safety poll', native, safetyStatusIdentity],
+    [
+      'exact WSL distro activity poll',
+      { kind: 'wsl', distro: 'Ubuntu' } as const,
+      defaultStatusIdentity
+    ],
+    [
+      'exact WSL distro safety poll',
+      { kind: 'wsl', distro: 'Ubuntu' } as const,
+      safetyStatusIdentity
+    ]
+  ])(
+    'reduces settled polling plus delete-warning %s status loads from two to one',
+    async (_label, executionIdentity, pollingIdentity) => {
+      const baselineOwner = new GitRepositorySnapshotOwner()
+      const baselineLoads = vi.fn(async () => statusResult)
+      await baselineOwner.readStatus(
+        executionIdentity,
+        '/repo',
+        pollingIdentity,
+        undefined,
+        baselineLoads
+      )
+      await baselineOwner.readStatus(
+        executionIdentity,
+        '/repo',
+        defaultStatusIdentity,
+        undefined,
+        baselineLoads
+      )
+
+      const migratedOwner = new GitRepositorySnapshotOwner()
+      const migratedLoads = vi.fn(async () => statusResult)
+      await migratedOwner.readStatus(
+        executionIdentity,
+        '/repo',
+        pollingIdentity,
+        undefined,
+        migratedLoads
+      )
+      const snapshot = migratedOwner.getSnapshot(query(executionIdentity, '/repo', pollingIdentity))
+
+      expect(baselineLoads).toHaveBeenCalledTimes(2)
+      expect(migratedLoads).toHaveBeenCalledOnce()
+      expect(snapshot).toMatchObject({
+        freshness: { status: { state: 'fresh' } },
+        status: { entries: statusResult.entries }
+      })
+    }
+  )
 
   it('does not publish rejected reads and always retries settled work', async () => {
     const owner = new GitRepositorySnapshotOwner()

@@ -1225,6 +1225,30 @@ describe('SshGitProvider', () => {
     })
   })
 
+  it('reduces settled polling plus delete-warning status RPCs from two to one', async () => {
+    mux.request.mockResolvedValue({
+      entries: [{ path: 'src/app.ts', status: 'modified', area: 'unstaged' }],
+      conflictOperation: 'unknown'
+    })
+
+    await provider.getStatus('/home/user/repo', { reuseLineStats: true })
+    await provider.getStatus('/home/user/repo')
+    expect(mux.request).toHaveBeenCalledTimes(2)
+
+    mux.request.mockClear()
+    const migratedProvider = new SshGitProvider('conn-1', mux as never)
+    await migratedProvider.getStatus('/home/user/repo', { reuseLineStats: true })
+    const snapshot = migratedProvider.getRepositorySnapshot('/home/user/repo', {
+      reuseLineStats: true
+    })
+
+    expect(mux.request).toHaveBeenCalledTimes(1)
+    expect(snapshot).toMatchObject({
+      freshness: { status: { state: 'fresh' } },
+      status: { entries: [{ path: 'src/app.ts' }] }
+    })
+  })
+
   it('marks retained snapshots stale across the existing SSH mutation fence', async () => {
     mux.request.mockImplementation((method) => {
       if (method === 'git.status') {

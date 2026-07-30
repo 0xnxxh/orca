@@ -9,7 +9,6 @@ import {
 import { useAppStore } from '@/store'
 import { toast } from 'sonner'
 import { getConnectionId } from '@/lib/connection-context'
-import { getRuntimeGitStatus } from '@/runtime/runtime-git-client'
 import { getSettingsForWorktreeRuntimeOwner } from '@/lib/worktree-runtime-owner'
 import { runWorktreeDeletesInParallel } from './delete-worktree-flow'
 import { prepareActiveWorktreeFocusAfterDelete } from './active-worktree-focus-after-delete'
@@ -22,6 +21,7 @@ import { DeleteWorktreeTargetPreview } from './DeleteWorktreeTargetPreview'
 import { DeleteWorktreeWarningPanels } from './DeleteWorktreeWarningPanels'
 import { persistDeleteWorktreeConfirmSkipPreference } from './delete-worktree-preference-toast'
 import { getDeleteWorktreeDirtyChangeCounts } from './delete-worktree-dirty-change-counts'
+import { probeDeleteWorktreeDirtyStatus } from './delete-worktree-dirty-status-probe'
 import {
   countFolderWorkspaceDeletes,
   getDeleteWorktreeDialogCopy,
@@ -184,26 +184,20 @@ const DeleteWorktreeDialog = React.memo(function DeleteWorktreeDialog() {
     }
     let cancelled = false
     for (const item of statusTargets) {
-      void getRuntimeGitStatus({
-        // Why: delete warnings inspect git state for the selected workspace;
-        // a later focused-host switch must not make this preload query another host.
-        settings: getSettingsForWorktreeRuntimeOwner(
-          { repos, settings, worktreesByRepo: useAppStore.getState().worktreesByRepo },
-          item.id
-        ),
-        worktreeId: item.id,
-        worktreePath: item.path,
-        connectionId: getConnectionId(item.id) ?? undefined
-      })
-        .then((status) => {
-          if (!cancelled) {
-            setGitStatus(item.id, status)
-          }
-        })
-        .catch(() => {
-          // Best-effort only: delete itself still performs the authoritative
-          // backend check and will surface failures through the normal toast.
-        })
+      void probeDeleteWorktreeDirtyStatus(
+        {
+          // Why: warning reads stay on the selected workspace owner across focus changes.
+          settings: getSettingsForWorktreeRuntimeOwner(
+            { repos, settings, worktreesByRepo: useAppStore.getState().worktreesByRepo },
+            item.id
+          ),
+          worktreeId: item.id,
+          worktreePath: item.path,
+          connectionId: getConnectionId(item.id) ?? undefined
+        },
+        () => !cancelled,
+        (status) => setGitStatus(item.id, status)
+      )
     }
     return () => {
       cancelled = true
