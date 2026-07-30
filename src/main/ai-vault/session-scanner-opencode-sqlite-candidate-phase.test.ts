@@ -55,7 +55,7 @@ describe('OpenCodeSqliteCandidatePhase', () => {
 
       // Cache reuse needs no worker, so only the uncached row is omitted.
       expect(phase.prepareBatch([cached, uncached])).toEqual([cached])
-      expect(context.metrics().workOmitted).toBe(true)
+      expect(context.metrics()).toMatchObject({ sqliteParseCacheHits: 1, workOmitted: true })
     } finally {
       context.dispose()
     }

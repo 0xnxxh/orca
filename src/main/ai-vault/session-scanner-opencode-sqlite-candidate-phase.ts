@@ -37,6 +37,7 @@ export class OpenCodeSqliteCandidatePhase {
       // measures outstanding SQLite work.
       const servedFromCache = hasFreshSessionParseCacheEntry(candidate, this.platform)
       if (servedFromCache) {
+        this.context.noteSqliteParseCacheHit()
         return true
       }
       if (this.context.isTerminated) {

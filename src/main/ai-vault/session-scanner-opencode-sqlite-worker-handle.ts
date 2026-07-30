@@ -7,16 +7,16 @@ export const IDLE_TEARDOWN_MS = 30_000
 // preempt a thread parked inside a long query — it resolves only once that query
 // returns. Spawning a replacement before then stacks a second thread onto the
 // same core, which is exactly the CPU burn this worker boundary exists to bound.
-// So the next spawn waits for the old thread to actually die, and this grace
-// period keeps a never-returning query from wedging the transport forever.
+// So the next spawn waits during a bounded grace period; expiry is logged
+// because a replacement may overlap a never-returning query.
 export const TERMINATE_GRACE_MS = 5_000
 
 export type WorkerFactory = () => Worker
 
 /**
  * Owns the single lazily-spawned scan worker: its listeners, its idle teardown,
- * and the guarantee that a replacement thread never starts before the previous
- * one is confirmed dead. Knows nothing about queueing or scan budgets.
+ * and the bounded teardown before a replacement may start. Knows nothing about
+ * queueing or scan budgets.
  */
 export class OpenCodeSqliteWorkerHandle {
   private worker: Worker | null = null
@@ -37,7 +37,7 @@ export class OpenCodeSqliteWorkerHandle {
     this.options = options
   }
 
-  /** True while a previous thread is still dying; no spawn may happen yet. */
+  /** True while a previous thread is within its teardown grace period. */
   get isTearingDown(): boolean {
     return this.teardownInFlight !== null
   }
@@ -101,7 +101,12 @@ export class OpenCodeSqliteWorkerHandle {
         () => undefined
       ),
       new Promise<void>((resolve) => {
-        graceTimer = setTimeout(resolve, TERMINATE_GRACE_MS)
+        graceTimer = setTimeout(() => {
+          this.options.log(
+            `OpenCode SQLite worker terminate grace expired after ${TERMINATE_GRACE_MS}ms; replacement may overlap a wedged worker.`
+          )
+          resolve()
+        }, TERMINATE_GRACE_MS)
         graceTimer.unref?.()
       })
     ]).finally(() => {

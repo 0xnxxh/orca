@@ -9,7 +9,6 @@ import {
   assertSessionParseCacheJsonWithinLimitsCooperatively,
   serializeSessionParseCacheSnapshotPiecesCooperatively,
   SESSION_PARSE_CACHE_JSON_LIMITS,
-  SESSION_PARSE_CACHE_MAX_BYTES,
   SESSION_PARSE_CACHE_SCHEMA_VERSION
 } from './session-parse-cache-snapshot-serialization'
 import { readNodeFileWithinLimit } from '../../shared/node-bounded-file-reader'
@@ -23,9 +22,11 @@ import {
 
 export {
   serializeSessionParseCacheSnapshot,
-  SESSION_PARSE_CACHE_JSON_LIMITS,
-  SESSION_PARSE_CACHE_MAX_BYTES
+  SESSION_PARSE_CACHE_JSON_LIMITS
 } from './session-parse-cache-snapshot-serialization'
+
+// JSON.parse is synchronous; 16 MiB retains a realistic full cache while bounding launch stalls.
+export const SESSION_PARSE_CACHE_MAX_BYTES = 16 * 1024 * 1024
 
 // Debounce so back-to-back scans (desktop IPC + runtime RPC) collapse into one write.
 const SAVE_DEBOUNCE_MS = 1_500
@@ -121,12 +122,31 @@ async function loadPersistedEntries(current: SessionParseCachePersistenceOptions
       seedSessionParseCache(entries)
       return
     }
-    // Unreadable content, not a missing file: drop it so it can't be re-read
-    // every launch while the next save replaces it.
-    await rm(current.filePath, { force: true }).catch(() => {})
-  } catch {
-    // Why: a missing/corrupt/foreign cache file must never fail the scan;
-    // worst case is exactly today's cold scan.
+    await discardUnreadableCache(current.filePath, 'invalid schema or content')
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return
+    }
+    // Why: an unreadable cache must degrade to a cold scan.
+    await discardUnreadableCache(current.filePath, error)
+  }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as NodeJS.ErrnoException).code === 'ENOENT'
+  )
+}
+
+async function discardUnreadableCache(filePath: string, cause: unknown): Promise<void> {
+  try {
+    await rm(filePath, { force: true })
+    console.debug('[ai-vault] discarded unreadable session parse cache', cause)
+  } catch (cleanupError) {
+    console.debug('[ai-vault] session parse cache load and cleanup failed', cause, cleanupError)
   }
 }
 
@@ -217,7 +237,8 @@ async function persistSnapshot(current: SessionParseCachePersistenceOptions): Pr
   try {
     const snapshot = await serializeSessionParseCacheSnapshotPiecesCooperatively(
       snapshotSessionParseCacheForPersistence(),
-      current.appVersion
+      current.appVersion,
+      SESSION_PARSE_CACHE_MAX_BYTES
     )
     if (snapshot === null) {
       return
@@ -244,6 +265,7 @@ async function writeSessionParseCacheSnapshot(
     for (const piece of pieces) {
       await handle.writeFile(piece)
     }
+    await handle.sync()
   } finally {
     await handle.close()
   }

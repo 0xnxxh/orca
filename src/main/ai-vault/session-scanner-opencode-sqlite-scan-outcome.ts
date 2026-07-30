@@ -32,14 +32,19 @@ export function recordOpenCodeSqliteScanOutcome(args: {
       .length
   )
   args.span.setAttribute('opencodeSqliteListCancelled', metrics.sqliteListCancelled)
+  args.span.setAttribute('opencodeSqliteParseCacheHits', metrics.sqliteParseCacheHits)
   args.span.setAttribute('opencodeSqliteTerminationReason', metrics.terminationReason ?? 'none')
   const message = scanOutcomeMessage(metrics)
   if (message) {
     args.issues.push({ agent: 'opencode', path: 'opencode.db', message })
   }
-  // A list response caches nothing. Only a completed parse proves the next scan
-  // can advance instead of replaying the same list-and-deadline cycle.
-  if (metrics.terminationReason === 'deadline' && !metrics.parseAnswered) {
+  // A list response caches nothing. A completed parse or a cache-served row
+  // proves the user-visible scan still made progress.
+  if (
+    metrics.terminationReason === 'deadline' &&
+    !metrics.parseAnswered &&
+    metrics.sqliteParseCacheHits === 0
+  ) {
     noteOpenCodeSqliteScanHardFailure()
     return
   }

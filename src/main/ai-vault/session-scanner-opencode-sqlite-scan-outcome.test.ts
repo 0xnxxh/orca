@@ -284,6 +284,32 @@ describe('recordOpenCodeSqliteScanOutcome', () => {
     }
   })
 
+  it('does not back off when the deadline scan served SQLite rows from parse cache', async () => {
+    vi.useFakeTimers()
+    const context = new OpenCodeSqliteScanContext(1)
+    try {
+      context.noteSqliteParseCacheHit()
+      context.armDeadline()
+      await vi.advanceTimersByTimeAsync(1)
+      context.markWorkOmitted()
+      recordOpenCodeSqliteScanOutcome({
+        candidates: [],
+        context,
+        discoveries: [],
+        issues: [],
+        span: recordingSpan(new Map())
+      })
+      expect(context.metrics()).toMatchObject({
+        parseAnswered: false,
+        sqliteParseCacheHits: 1
+      })
+      expect(openCodeSqliteScanCooldownRemainingMs()).toBe(0)
+    } finally {
+      context.dispose()
+      vi.useRealTimers()
+    }
+  })
+
   it('does not report deadline expiry when no work was omitted', async () => {
     vi.useFakeTimers()
     const context = new OpenCodeSqliteScanContext(1)

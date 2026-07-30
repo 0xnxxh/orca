@@ -52,6 +52,7 @@ export type OpenCodeSqliteScanMetrics = {
   workerAnswered: boolean
   // A successful parse response is cacheable; a list response is not.
   parseAnswered: boolean
+  sqliteParseCacheHits: number
   workOmitted: boolean
 }
 
@@ -74,6 +75,7 @@ export class OpenCodeSqliteScanContext {
   private sourcePresent = false
   private answered = false
   private parseAnswered = false
+  private parseCacheHits = 0
   private omitted = false
   private terminationReason: OpenCodeSqliteScanTerminationReason | null = null
 
@@ -117,6 +119,10 @@ export class OpenCodeSqliteScanContext {
 
   noteParseResponse(): void {
     this.parseAnswered = true
+  }
+
+  noteSqliteParseCacheHit(): void {
+    this.parseCacheHits += 1
   }
 
   noteWorkerDeath(): boolean {
@@ -192,6 +198,7 @@ export class OpenCodeSqliteScanContext {
       terminationReason: this.terminationReason,
       workerAnswered: this.answered,
       parseAnswered: this.parseAnswered,
+      sqliteParseCacheHits: this.parseCacheHits,
       workOmitted: this.omitted
     }
   }

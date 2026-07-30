@@ -13,9 +13,10 @@ import type { AiVaultScanIssue, AiVaultSession } from '../../shared/ai-vault-typ
 import type { SessionFileCandidate } from './session-scanner-types'
 import {
   OPENCODE_SQLITE_SCAN_DEADLINE_MS,
-  type OpenCodeSqliteScanContext
+  OpenCodeSqliteScanContext
 } from './session-scanner-opencode-sqlite-scan-context'
 import { buildOpenCodeSqliteCandidatePath } from './session-scanner-opencode-sqlite-paths'
+import { discoverOpenCodeSessions } from './session-scanner-opencode-sqlite-discovery'
 import type { SessionParseStats } from './session-scanner-parse-cache'
 import type * as GrokParserModule from './session-scanner-grok-parser'
 import type * as ParseCachePersistenceModule from './session-parse-cache-persistence'
@@ -227,6 +228,55 @@ function sqliteSession(dbPath: string, sessionId: string, mtimeMs: number): AiVa
 }
 
 describe('scanAiVaultSessions — OpenCode SQLite + legacy file coexistence', () => {
+  it('retains a completed live list when a sibling source terminates the shared context', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-ai-vault-list-race-'))
+    tempRoots.push(root)
+    const firstStorage = join(root, 'first-storage')
+    const secondStorage = join(root, 'second-storage')
+    await Promise.all([
+      mkdir(join(firstStorage, 'session'), { recursive: true }),
+      mkdir(join(secondStorage, 'session'), { recursive: true })
+    ])
+    const firstDbPath = join(root, 'first.db')
+    const secondDbPath = join(root, 'second.db')
+    const live = sqliteCandidate(firstDbPath, 'live-first', 2_000)
+    const context = new OpenCodeSqliteScanContext()
+    workerMock.listOverride = async (args) => {
+      if (args.dbPaths[0] === secondDbPath) {
+        args.context.tripCircuit(new Error('sibling worker fault'))
+        return []
+      }
+      return [live]
+    }
+
+    try {
+      const [first, second] = await Promise.all([
+        discoverOpenCodeSessions({
+          context,
+          storageDir: firstStorage,
+          dbPaths: [firstDbPath],
+          limitPerAgent: 50,
+          platform: 'darwin',
+          issues: []
+        }),
+        discoverOpenCodeSessions({
+          context,
+          storageDir: secondStorage,
+          dbPaths: [secondDbPath],
+          limitPerAgent: 50,
+          platform: 'darwin',
+          issues: []
+        })
+      ])
+
+      expect(first.files).toContainEqual(live.file)
+      expect(second.files).toEqual([])
+      expect(context.metrics().terminationReason).toBe('workerCrashLoop')
+    } finally {
+      context.dispose()
+    }
+  })
+
   it('keeps the SQLite budget for SQLite work when other agents parse for longer', async () => {
     vi.useFakeTimers()
     try {

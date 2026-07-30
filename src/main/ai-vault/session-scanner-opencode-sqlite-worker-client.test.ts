@@ -477,9 +477,7 @@ describe('OpenCodeSqliteWorkerClient', () => {
     await expect(
       client.list({ context, dbPaths: ['/tmp/opencode.db'], limit: 10, issues: listIssues })
     ).resolves.toEqual([])
-    expect(
-      listIssues.some((issue) => issue.message.includes('background scanner could not start'))
-    ).toBe(true)
+    expect(listIssues).toEqual([])
     expect(context.metrics().terminationReason).toBe('workerUnavailable')
     await expect(
       client.parse({
@@ -623,7 +621,7 @@ describe('OpenCodeSqliteWorkerClient', () => {
     expect(workers).toHaveLength(MAX_CONSECUTIVE_DEATHS)
   })
 
-  it('surfaces a list-leg timeout as a scan issue and returns no candidates', async () => {
+  it('leaves a single list timeout below the consecutive-failure circuit threshold', async () => {
     vi.useFakeTimers()
     try {
       const workers: FakeWorker[] = []
@@ -638,14 +636,16 @@ describe('OpenCodeSqliteWorkerClient', () => {
         limit: 10,
         issues
       })
-      // The list request is dispatched but never answered → it must time out into
-      // a scan issue (not an unbounded stall) and contribute no sessions.
+      // The list request is dispatched but never answered. Outcome reporting,
+      // not this transport client, owns the single user-facing diagnostic.
       await vi.advanceTimersByTimeAsync(LIST_TIMEOUT_MS)
       await expect(listPromise).resolves.toEqual([])
-      expect(issues).toHaveLength(1)
-      expect(issues[0]!.agent).toBe('opencode')
-      expect(issues[0]!.message).toMatch(/did not complete/)
-      expect(context.metrics().terminationReason).toBe('workerTimeoutLoop')
+      expect(issues).toEqual([])
+      expect(context.metrics()).toMatchObject({
+        sqliteListCancelled: true,
+        terminationReason: null,
+        workOmitted: true
+      })
     } finally {
       vi.useRealTimers()
     }
@@ -672,7 +672,32 @@ describe('OpenCodeSqliteWorkerClient', () => {
 
     await expect(listPromise).resolves.toEqual([])
     expect(context.metrics().terminationReason).toBe('listFailed')
-    expect(issues[0]?.message).toMatch(/list handler failed/)
+    expect(issues).toEqual([])
+  })
+
+  it('leaves a single list worker fault below the consecutive-death threshold', async () => {
+    const workers: FakeWorker[] = []
+    const client = new OpenCodeSqliteWorkerClient({
+      workerFactory: makeFactory(workers),
+      log() {}
+    })
+    const issues: AiVaultScanIssue[] = []
+    const listPromise = client.list({
+      context,
+      dbPaths: ['/tmp/opencode.db'],
+      limit: 10,
+      issues
+    })
+
+    workers[0]!.emit('error', new Error('single list fault'))
+
+    await expect(listPromise).resolves.toEqual([])
+    expect(issues).toEqual([])
+    expect(context.metrics()).toMatchObject({
+      sqliteListCancelled: true,
+      terminationReason: null,
+      workOmitted: true
+    })
   })
 
   it('self-heals after repeated spawn failures instead of latching unavailable', async () => {
@@ -693,9 +718,7 @@ describe('OpenCodeSqliteWorkerClient', () => {
     const firstIssues: AiVaultScanIssue[] = []
     const first = await client.list({ context, dbPaths: ['/db'], limit: 10, issues: firstIssues })
     expect(first).toEqual([])
-    expect(
-      firstIssues.some((issue) => issue.message.includes('background scanner could not start'))
-    ).toBe(true)
+    expect(firstIssues).toEqual([])
     expect(context.metrics().terminationReason).toBe('workerUnavailable')
     expect(workers).toHaveLength(0)
 

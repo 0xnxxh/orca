@@ -49,6 +49,7 @@ const APP_VERSION = '1.2.3-test'
 
 let tempRoots: string[] = []
 let activeDebugSpy: MockInstance | null = null
+let activeFileHandleSyncSpy: MockInstance | null = null
 
 // Restored from a hook, not inline: a failed assertion must not leave
 // console.debug stubbed for every later test in the file.
@@ -65,6 +66,8 @@ beforeEach(() => {
 afterEach(async () => {
   activeDebugSpy?.mockRestore()
   activeDebugSpy = null
+  activeFileHandleSyncSpy?.mockRestore()
+  activeFileHandleSyncSpy = null
   resetSessionParseCachePersistenceForTests()
   await Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true })))
   tempRoots = []
@@ -187,11 +190,14 @@ describe('session parse cache persistence', () => {
     const cacheFile = join(root, 'session-parse-cache.json')
     await writeFile(cacheFile, 'not json {{{')
     initSessionParseCachePersistence({ filePath: cacheFile, appVersion: APP_VERSION })
+    const debugSpy = silenceDebugLogs()
 
     const transcript = await writeTranscript(root)
     const stats = await coldParseStats(transcript)
     expect(stats.fullParses).toBe(1)
     expect(stats.reused).toBe(0)
+    expect(existsSync(cacheFile)).toBe(false)
+    expect(debugSpy).toHaveBeenCalled()
   })
 
   it('rejects an oversized sparse cache before reading its contents', async () => {
@@ -200,11 +206,14 @@ describe('session parse cache persistence', () => {
     await writeFile(cacheFile, '')
     await truncate(cacheFile, SESSION_PARSE_CACHE_MAX_BYTES + 1)
     initSessionParseCachePersistence({ filePath: cacheFile, appVersion: APP_VERSION })
+    const debugSpy = silenceDebugLogs()
 
     const transcript = await writeTranscript(root)
     const stats = await coldParseStats(transcript)
     expect(stats.fullParses).toBe(1)
     expect(stats.reused).toBe(0)
+    expect(existsSync(cacheFile)).toBe(false)
+    expect(debugSpy).toHaveBeenCalled()
   })
 
   it('accepts an exact-byte-cap cache file', async () => {
@@ -265,10 +274,13 @@ describe('session parse cache persistence', () => {
       })
     )
     initSessionParseCachePersistence({ filePath: cacheFile, appVersion: APP_VERSION })
+    const debugSpy = silenceDebugLogs()
 
     const stats = await coldParseStats(transcript)
     expect(stats.fullParses).toBe(1)
     expect(stats.reused).toBe(0)
+    expect(existsSync(cacheFile)).toBe(false)
+    expect(debugSpy).toHaveBeenCalled()
   })
 
   it('accepts nesting depth 32 and rejects depth 33 through the real loader', async () => {
@@ -424,6 +436,27 @@ describe('session parse cache persistence', () => {
     expect(existsSync(cacheFile)).toBe(true)
   })
 
+  it('syncs a complete temp snapshot before its atomic rename', async () => {
+    const root = await makeTempDir()
+    const cacheFile = join(root, 'session-parse-cache.json')
+    initSessionParseCachePersistence({ filePath: cacheFile, appVersion: APP_VERSION })
+    const transcript = await writeTranscript(root)
+    const stats = await coldParseStats(transcript)
+    const probe = await fsPromises.open(join(root, 'file-handle-probe'), 'w')
+    activeFileHandleSyncSpy = vi.spyOn(Object.getPrototypeOf(probe), 'sync')
+    await probe.close()
+    vi.clearAllMocks()
+
+    scheduleSessionParseCachePersist(stats)
+    await flushSessionParseCachePersistForTests()
+
+    expect(activeFileHandleSyncSpy).toHaveBeenCalledTimes(1)
+    expect(fsPromises.rename).toHaveBeenCalledTimes(1)
+    expect(activeFileHandleSyncSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(fsPromises.rename).mock.invocationCallOrder[0]!
+    )
+  })
+
   it('sweeps orphaned temp files from a prior crashed save on load', async () => {
     const root = await makeTempDir()
     const cacheFile = join(root, 'session-parse-cache.json')
@@ -504,13 +537,13 @@ describe('session parse cache persistence', () => {
     expect(stats.fullParses).toBe(0)
   })
 
-  it('round-trips a full 4,096-entry writer snapshot', async () => {
+  it('trims a large writer snapshot to the synchronous parse budget and keeps its newest entry', async () => {
     const root = await makeTempDir()
     const cacheFile = join(root, 'session-parse-cache.json')
     const transcript = await writeTranscript(root)
     const candidate = await claudeCandidate(transcript)
     const largeSession = {
-      padding: 'x'.repeat(14_000)
+      padding: 'x'.repeat(4_000)
     } as unknown as PersistedSessionParseCacheEntry['session']
     const entry: PersistedSessionParseCacheEntry = {
       mtimeMs: candidate.file.mtimeMs,
@@ -540,8 +573,10 @@ describe('session parse cache persistence', () => {
     await parseAgentSessionFileCached(candidate, process.platform, stats)
     expect(stats.reused).toBe(1)
     const persistedText = await readFile(cacheFile, 'utf8')
-    expect(Buffer.byteLength(persistedText)).toBeGreaterThan(54 * 1024 * 1024)
-    expect(JSON.parse(persistedText).entries).toHaveLength(4096)
+    expect(Buffer.byteLength(persistedText)).toBeLessThanOrEqual(SESSION_PARSE_CACHE_MAX_BYTES)
+    const persisted = JSON.parse(persistedText) as { entries: unknown[] }
+    expect(persisted.entries.length).toBeGreaterThan(0)
+    expect(persisted.entries.length).toBeLessThan(4096)
   })
 
   it('rejects malformed entries even when they fall outside the retained tail', async () => {

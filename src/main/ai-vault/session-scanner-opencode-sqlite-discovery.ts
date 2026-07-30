@@ -54,15 +54,20 @@ async function listWithinScanBudget(args: {
       limit: args.limitPerAgent,
       issues: args.issues
     })
-    if (!args.context.isTerminated) {
+    // A sibling source can terminate the shared context after this list already
+    // answered; completed live work remains authoritative.
+    if (candidates.length > 0) {
       return candidates
     }
-    args.context.markSqliteListCancelled()
-    return cachedOpenCodeSqliteCandidates({
-      dbPaths: args.dbPaths,
-      platform: args.platform,
-      limit: args.limitPerAgent
-    })
+    if (args.context.isTerminated || args.context.metrics().sqliteListCancelled) {
+      args.context.markSqliteListCancelled()
+      return cachedOpenCodeSqliteCandidates({
+        dbPaths: args.dbPaths,
+        platform: args.platform,
+        limit: args.limitPerAgent
+      })
+    }
+    return []
   } finally {
     args.context.pauseDeadline()
   }

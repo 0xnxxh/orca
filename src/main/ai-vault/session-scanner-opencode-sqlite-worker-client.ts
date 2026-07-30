@@ -1,6 +1,5 @@
 import type { AiVaultScanIssue, AiVaultSession } from '../../shared/ai-vault-types'
 import type { SessionFileCandidate } from './session-scanner-types'
-import { errorMessage } from './session-scanner-values'
 import {
   isOpenCodeSqliteScanTerminatedError,
   type OpenCodeSqliteScanContext
@@ -45,30 +44,23 @@ export class OpenCodeSqliteWorkerClient {
       if (isOpenCodeSqliteScanTerminatedError(err)) {
         return []
       }
+      args.context.markSqliteListCancelled()
+      args.context.markWorkOmitted()
       if (err instanceof OpenCodeSqliteWorkerUnavailableError) {
         if (!args.context.isTerminated) {
           args.context.tripUnavailableCircuit(err)
         }
-        args.issues.push({
-          agent: 'opencode',
-          path: args.dbPaths[0] ?? 'opencode.db',
-          message:
-            'OpenCode history was skipped because its background scanner could not start; the app remains responsive.'
-        })
         return []
       }
-      if (err instanceof OpenCodeSqliteWorkerTimeoutError && !args.context.isTerminated) {
-        args.context.tripTimeoutCircuit(err)
-      } else if (err instanceof OpenCodeSqliteWorkerFaultError && !args.context.isTerminated) {
-        args.context.tripCircuit(err)
-      } else if (!args.context.isTerminated) {
+      // The transport owns consecutive timeout/crash counting. A single failed
+      // list must not abort sibling sources or claim a repeated worker loop.
+      if (
+        !(err instanceof OpenCodeSqliteWorkerTimeoutError) &&
+        !(err instanceof OpenCodeSqliteWorkerFaultError) &&
+        !args.context.isTerminated
+      ) {
         args.context.tripListFailure(err instanceof Error ? err : new Error(String(err)))
       }
-      args.issues.push({
-        agent: 'opencode',
-        path: args.dbPaths[0] ?? 'opencode.db',
-        message: `OpenCode history scan did not complete: ${errorMessage(err)}`
-      })
       return []
     }
   }
