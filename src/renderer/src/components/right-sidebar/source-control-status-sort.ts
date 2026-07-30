@@ -1,13 +1,12 @@
 import type { GitStatusEntry } from '../../../../shared/types'
-import { fileNameCollator } from '../../../../shared/file-name-sort'
+import { compareFileNames, fileNameCollator } from '../../../../shared/file-name-sort'
 
 export const sourceControlPathCollator = fileNameCollator
 
 export function compareGitStatusEntries(a: GitStatusEntry, b: GitStatusEntry): number {
-  return (
-    getConflictSortRank(a) - getConflictSortRank(b) ||
-    sourceControlPathCollator.compare(a.path, b.path)
-  )
+  // Why: compareFileNames (not the raw collator) so numeric-collation ties
+  // ("2" vs "02") stay a total order shared with the File Explorer.
+  return getConflictSortRank(a) - getConflictSortRank(b) || compareFileNames(a.path, b.path)
 }
 
 function getConflictSortRank(entry: GitStatusEntry): number {
