@@ -27,7 +27,7 @@ import {
 import { registerDaemonManagementHandlers } from '../ipc/pty-management'
 import { registerSshHandlers } from '../ipc/ssh'
 import { registerRemoteWorkspaceHandlers } from '../ipc/remote-workspace'
-import { browserManager } from '../browser/browser-manager'
+import { getBrowserKernelWindowDependencies } from '../browser/browser-kernel-window-dependencies'
 import { hasSystemMediaAccess, requestSystemMediaAccess } from '../browser/browser-media-access'
 import type { OrcaRuntimeService, RuntimeWorktreeLifecycleEvent } from '../runtime/orca-runtime'
 import {
@@ -96,6 +96,7 @@ export function attachMainWindowServices(
     onWorktreeLifecycle?: (event: RuntimeWorktreeLifecycleEvent) => void
   }
 ): void {
+  const { browserManager } = getBrowserKernelWindowDependencies()
   registerAppReloadHandler(mainWindow, options?.onBeforeRendererReload)
   registerRepoHandlers(mainWindow, store)
   registerWorktreeHandlers(mainWindow, store, runtime, {

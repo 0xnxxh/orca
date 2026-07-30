@@ -26,6 +26,7 @@ import {
   removeLargeFileCountUntrackedTree
 } from './large-file-count-fixtures'
 import { DEFAULT_GIT_STATUS_LIMIT } from '../../src/shared/git-status-limit'
+import { captureMainThreadDiagnosticInterval } from './main-thread-diagnostic-interval'
 
 // Matches the large-diff freeze budget: a blocking stall past 1s is the
 // "UI becomes unresponsive" symptom reported in #8013.
@@ -263,6 +264,53 @@ test.describe('Source Control large file count (#8013)', () => {
   // Why: each scenario gets its own Electron app + isolated fixture repo, so a
   // failing scale must not skip the others — every scenario is a data point.
   test.use({ seedTestRepo: false })
+
+  test.describe('diagnostic evidence', () => {
+    test.use({ orcaAppExtraEnv: { ORCA_MAIN_THREAD_DIAGNOSTICS: '1' } })
+
+    test('reports subprocess and RPC counts for one large-repo status interval', async ({
+      orcaPage,
+      electronApp,
+      registerPostElectronShutdownCleanup
+    }) => {
+      test.setTimeout(120_000)
+      const modifiedFiles = Number(process.env.ORCA_DIAGNOSTIC_LARGE_FILE_COUNT ?? '1000')
+      const fixture = createLargeFileCountRepo({
+        trackedFiles: modifiedFiles,
+        modifiedFiles
+      })
+      registerPostElectronShutdownCleanup(() => removeLargeFileCountRepo(fixture.repoPath))
+      await waitForSessionReady(orcaPage)
+      await orcaPage.evaluate(async (repoPath) => {
+        const addedRepo = await window.__store?.getState().addRepoPath(repoPath)
+        if (!addedRepo) {
+          throw new Error(`isolated repo not found: ${repoPath}`)
+        }
+      }, fixture.repoPath)
+      try {
+        const evidence = await captureMainThreadDiagnosticInterval(electronApp, async () => {
+          return await orcaPage.evaluate(
+            async (repoPath) =>
+              (await window.api.git.status({ worktreePath: repoPath })).entries.length,
+            fixture.repoPath
+          )
+        })
+        const report = {
+          mode: 'large-repository-main-thread-diagnostics',
+          syntheticTrackedAndModifiedFiles: modifiedFiles,
+          statusEntryCount: evidence.activityResult,
+          ...evidence.diagnostics
+        }
+
+        console.log(`[large-repo-main-thread] ${JSON.stringify(report)}`)
+        expect(report.statusEntryCount).toBeGreaterThanOrEqual(modifiedFiles)
+        expect(report.spawnCount).toBeGreaterThan(0)
+        expect(report.rpcCount).toBeGreaterThanOrEqual(0)
+      } finally {
+        await unregisterLargeFileCountRepos(orcaPage, [fixture.repoPath])
+      }
+    })
+  })
 
   test('a large untracked set under the status cap stays responsive', async ({
     orcaPage,

@@ -1,6 +1,7 @@
 import { writeSync } from 'node:fs'
 
 export const STARTUP_DIAGNOSTICS_ENV = 'ORCA_STARTUP_DIAGNOSTICS'
+export const STARTUP_PROCESS_CLOCK = 'process-performance-now-ms'
 
 export type StartupDiagnosticSink = (fd: number, text: string) => unknown
 
@@ -30,10 +31,12 @@ export function logStartupDiagnostic(
   writeStartupDiagnosticLine(`[startup] ${event}${detailText ? ` ${detailText}` : ''}`, write)
 }
 
-// Why: startup benchmarking needs in-process timestamps — harness-side stderr
-// arrival times include pipe buffering jitter. `t` is ms since process start.
 export function logStartupMilestone(event: string, details: Record<string, unknown> = {}): void {
   if (isStartupDiagnosticsEnabled()) {
-    logStartupDiagnostic(event, { t: Math.round(performance.now()), ...details })
+    logStartupDiagnostic(event, {
+      ...details,
+      t: Math.round(performance.now() * 10) / 10,
+      clock: STARTUP_PROCESS_CLOCK
+    })
   }
 }

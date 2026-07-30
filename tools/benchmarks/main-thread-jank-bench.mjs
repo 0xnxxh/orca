@@ -10,6 +10,7 @@
  *   - subprocess spawns since the last report, keyed by command
  *     ("git status", "gh api", …) with the synchronous spawn-initiation cost
  *     that held the main thread (blockMsTotal/blockMsMax)
+ *   - outbound remote-host RPC requests keyed only by stable protocol method
  * On macOS the bench also tails the unified log for the exact
  * "Performance Diagnostics" warnings from the issue and records which process
  * emitted them, so spawn churn and OS warnings can be correlated by timestamp.
@@ -17,6 +18,7 @@
  * Usage:
  *   node tools/benchmarks/main-thread-jank-bench.mjs --label baseline
  *     [--duration-s 120] [--warmup-s 20] [--fixture-dir <path>]
+ *     [--tracked-file-count 10000]
  *     [--exe <path-to-packaged-Orca>] [--headless] [--no-log-stream]
  *
  * The window must stay VISIBLE during the run: git-status polling is gated on
@@ -30,6 +32,12 @@ import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
+import { sanitizeBenchmarkArtifactHomePaths } from './benchmark-artifact-home-sanitizer.mjs'
+import {
+  aggregateMainThreadDiagnosticReports,
+  parseMainThreadDiagnosticLine,
+  waitForMainThreadDiagnosticDrain
+} from './main-thread-diagnostic-report.mjs'
 
 const scriptDir = import.meta.dirname
 const repoRoot = resolve(scriptDir, '..', '..')
@@ -40,6 +48,7 @@ function parseArgs(argv) {
     label: 'run',
     durationS: 120,
     warmupS: 20,
+    trackedFileCount: 0,
     fixtureDir: null,
     exe: null,
     headless: false,
@@ -60,6 +69,9 @@ function parseArgs(argv) {
       case '--fixture-dir':
         args.fixtureDir = next()
         break
+      case '--tracked-file-count':
+        args.trackedFileCount = Number(next())
+        break
       case '--exe':
         args.exe = next()
         break
@@ -73,6 +85,9 @@ function parseArgs(argv) {
         throw new Error(`Unknown argument: ${argv[i]}`)
     }
   }
+  if (!Number.isInteger(args.trackedFileCount) || args.trackedFileCount < 0) {
+    throw new Error('--tracked-file-count must be a non-negative integer')
+  }
   return args
 }
 
@@ -84,19 +99,27 @@ function parseArgs(argv) {
  * the shape Orca worktrees commonly have, which forces the effective-upstream
  * probe (the most spawn-heavy status path) on every poll tick.
  */
-function ensureFixture(fixtureDir) {
+function ensureFixture(fixtureDir, trackedFileCount) {
   mkdirSync(fixtureDir, { recursive: true })
-  const repoPath = join(fixtureDir, 'bench-repo')
+  const fixtureSuffix = trackedFileCount > 0 ? `-${trackedFileCount}-files` : ''
+  const repoPath = join(fixtureDir, `bench-repo${fixtureSuffix}`)
   if (!existsSync(join(repoPath, '.git'))) {
     mkdirSync(repoPath, { recursive: true })
     run('git', ['init', repoPath])
     run('git', ['-C', repoPath, 'config', 'user.email', 'bench@example.com'])
     run('git', ['-C', repoPath, 'config', 'user.name', 'Bench'])
     writeFileSync(join(repoPath, 'README.md'), '# bench\n')
+    if (trackedFileCount > 0) {
+      const trackedFilesDir = join(repoPath, 'large-repo-files')
+      mkdirSync(trackedFilesDir, { recursive: true })
+      for (let index = 0; index < trackedFileCount; index++) {
+        writeFileSync(join(trackedFilesDir, `${String(index).padStart(7, '0')}.txt`), `${index}\n`)
+      }
+    }
     run('git', ['-C', repoPath, 'add', '.'])
     run('git', ['-C', repoPath, 'commit', '-m', 'init', '--no-gpg-sign'])
   }
-  const originPath = join(fixtureDir, 'bench-origin.git')
+  const originPath = join(fixtureDir, `bench-origin${fixtureSuffix}.git`)
   if (!existsSync(originPath)) {
     run('git', ['init', '--bare', originPath])
     run('git', ['-C', repoPath, 'remote', 'add', 'origin', originPath])
@@ -172,18 +195,6 @@ function run(command, args) {
   }
 }
 
-function parseMainThreadLine(line) {
-  const match = /^\[main-thread\] (\{.*\})$/.exec(line)
-  if (!match) {
-    return null
-  }
-  try {
-    return JSON.parse(match[1])
-  } catch {
-    return null
-  }
-}
-
 /**
  * Tail the macOS unified log for the exact warning from issue #7576. Events
  * are kept with process identity + wall-clock timestamp so they can be lined
@@ -249,34 +260,15 @@ function killProcessTree(proc) {
   }
 }
 
-function aggregate(reports) {
-  const perCommand = {}
-  let spawnCount = 0
-  let maxGapMs = 0
-  let gapsOver50Ms = 0
-  let gapsOver250Ms = 0
-  for (const report of reports) {
-    spawnCount += report.spawnCount ?? 0
-    maxGapMs = Math.max(maxGapMs, report.maxGapMs ?? 0)
-    gapsOver50Ms += report.gapsOver50Ms ?? 0
-    gapsOver250Ms += report.gapsOver250Ms ?? 0
-    for (const [command, stats] of Object.entries(report.spawns ?? {})) {
-      const entry = (perCommand[command] ??= { count: 0, blockMsTotal: 0, blockMsMax: 0 })
-      entry.count += stats.count
-      entry.blockMsTotal = Math.round((entry.blockMsTotal + stats.blockMsTotal) * 100) / 100
-      entry.blockMsMax = Math.max(entry.blockMsMax, stats.blockMsMax)
-    }
-  }
-  return { spawnCount, maxGapMs, gapsOver50Ms, gapsOver250Ms, perCommand }
-}
-
 async function main() {
   const args = parseArgs(process.argv)
   const fixtureDir = resolve(
     args.fixtureDir ?? join(repoRoot, '.bench-fixtures', 'main-thread-jank')
   )
-  const repoPath = ensureFixture(fixtureDir)
-  console.log(`[fixture] userData=${fixtureDir} repo=${repoPath}`)
+  const repoPath = ensureFixture(fixtureDir, args.trackedFileCount)
+  console.log(
+    `[fixture] userData=${fixtureDir} repo=${repoPath} trackedFiles=${args.trackedFileCount}`
+  )
 
   // Why: the jank probe needs a stable workload and must never scan or mutate
   // a developer Codex profile while running against synthetic userData.
@@ -323,7 +315,7 @@ async function main() {
       const line = buffer.slice(0, newlineIndex).trimEnd()
       buffer = buffer.slice(newlineIndex + 1)
       newlineIndex = buffer.indexOf('\n')
-      const report = parseMainThreadLine(line)
+      const report = parseMainThreadDiagnosticLine(line)
       if (report) {
         // Marker lines (e.g. updater-check-attempt) timestamp one-off
         // activities for correlation; they are not 5s report windows.
@@ -344,14 +336,17 @@ async function main() {
     exitedEarly = true
   })
 
-  const totalMs = (args.warmupS + args.durationS) * 1000
+  console.log(`[bench] pid=${child.pid} warming up ${args.warmupS}s…`)
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, args.warmupS * 1000))
+  const measuredReportStartIndex = await waitForMainThreadDiagnosticDrain(allReports, {
+    isProcessRunning: () => !exitedEarly
+  })
+  const measurementStartedAtWallMs = Date.now()
   console.log(
-    `[bench] pid=${child.pid} warming up ${args.warmupS}s, then measuring ${args.durationS}s…`
+    `[bench] warmup counters drained; measuring ${args.durationS}s from the next complete window`
   )
-  await new Promise((resolvePromise) => setTimeout(resolvePromise, totalMs))
-
-  const measureStartWallMs = startedAtWallMs + args.warmupS * 1000
-  const reports = allReports.filter((report) => report.wallMs >= measureStartWallMs)
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, args.durationS * 1000))
+  const reports = allReports.slice(measuredReportStartIndex)
   killProcessTree(child)
   if (logStreamChild) {
     killProcessTree(logStreamChild)
@@ -360,8 +355,8 @@ async function main() {
     console.error('[bench] app exited before the measurement window completed')
   }
 
-  const totals = aggregate(reports)
-  const measuredMinutes = args.durationS / 60
+  const totals = aggregateMainThreadDiagnosticReports(reports)
+  const diagnosticMinutes = totals.diagnosticWindowDurationMs / 60_000
   const result = {
     label: args.label,
     capturedAt: new Date(startedAtWallMs).toISOString(),
@@ -369,10 +364,14 @@ async function main() {
     config: { ...args, fixtureDir },
     outcome: exitedEarly ? 'early-exit' : 'ok',
     measuredDurationS: args.durationS,
+    measurementStartedAt: new Date(measurementStartedAtWallMs).toISOString(),
+    diagnosticWindowDurationS: totals.diagnosticWindowDurationMs / 1_000,
     reportCount: reports.length,
     totals: {
       ...totals,
-      spawnsPerMinute: Math.round((totals.spawnCount / Math.max(measuredMinutes, 0.01)) * 10) / 10
+      spawnsPerMinute:
+        Math.round((totals.spawnCount / Math.max(diagnosticMinutes, 0.01)) * 10) / 10,
+      rpcsPerMinute: Math.round((totals.rpcCount / Math.max(diagnosticMinutes, 0.01)) * 10) / 10
     },
     perfDiagnostics: {
       enabled: Boolean(logStreamChild),
@@ -395,20 +394,27 @@ async function main() {
     resultsDir,
     `main-thread-jank-${args.label}-${new Date(startedAtWallMs).toISOString().replace(/[:.]/g, '-')}.json`
   )
-  writeFileSync(outPath, JSON.stringify(result, null, 2))
+  writeFileSync(outPath, JSON.stringify(sanitizeBenchmarkArtifactHomePaths(result), null, 2))
 
   console.log(`\n[bench] label=${args.label} outcome=${result.outcome}`)
-  console.log(`  reports: ${reports.length} (5s windows over ${args.durationS}s)`)
+  console.log(
+    `  reports: ${reports.length} complete windows (${result.diagnosticWindowDurationS}s)`
+  )
   console.log(
     `  spawns: ${totals.spawnCount} total, ${result.totals.spawnsPerMinute}/min` +
-      `  worst event-loop stall: ${totals.maxGapMs}ms` +
-      `  stalls >50ms: ${totals.gapsOver50Ms}, >250ms: ${totals.gapsOver250Ms}`
+      `; worst event-loop stall: ${totals.maxGapMs}ms` +
+      `; stalls >50ms: ${totals.gapsOver50Ms}, >250ms: ${totals.gapsOver250Ms}`
   )
   const topCommands = Object.entries(totals.perCommand).sort((a, b) => b[1].count - a[1].count)
   for (const [commandKey, stats] of topCommands.slice(0, 10)) {
     console.log(
       `    ${commandKey}: ${stats.count} spawns, block ${stats.blockMsTotal}ms total / ${stats.blockMsMax}ms max`
     )
+  }
+  console.log(`  remote RPCs: ${totals.rpcCount} total, ${result.totals.rpcsPerMinute}/min`)
+  const topRpcMethods = Object.entries(totals.perRpcMethod).sort((a, b) => b[1].count - a[1].count)
+  for (const [method, stats] of topRpcMethods.slice(0, 10)) {
+    console.log(`    ${method}: ${stats.count} requests`)
   }
   if (logStreamChild) {
     const byProcessSummary = perfDiagnosticsEvents.length

@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { Suspense, useCallback } from 'react'
 import { SquareArrowOutUpRight, XIcon } from 'lucide-react'
 import { AgentIcon } from '@/lib/agent-catalog'
 import { agentTypeToIconAgent, formatAgentTypeLabel } from '@/lib/agent-status'
@@ -6,8 +6,16 @@ import { agentStateLabel } from '@/components/AgentStateDot'
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
-import { AgentTerminalPreview } from './AgentTerminalPreview'
 import { translate } from '@/i18n/i18n'
+import { lazyWithRetry } from '@/lib/lazy-with-retry'
+
+const AgentTerminalPreview = lazyWithRetry(
+  () =>
+    import('./AgentTerminalPreview').then((module) => ({
+      default: module.AgentTerminalPreview
+    })),
+  { reloadKey: 'dashboard-agent-terminal-preview' }
+)
 
 /** Routing payload for focusing an agent's pane in the main window. */
 export type AgentRevealArgs = {
@@ -96,7 +104,13 @@ export function AgentTerminalDialog({
             </DialogClose>
           </div>
           {card.ptyId ? (
-            <AgentTerminalPreview ptyId={card.ptyId} terminalInput={card.terminalInput ?? null} />
+            <Suspense
+              fallback={
+                <div aria-hidden className="h-[calc(100vh-140px)] w-full bg-background p-1.5" />
+              }
+            >
+              <AgentTerminalPreview ptyId={card.ptyId} terminalInput={card.terminalInput ?? null} />
+            </Suspense>
           ) : (
             <div className="px-2.5 pb-2 text-[11px] text-muted-foreground">
               {translate(

@@ -1,11 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ManagedPane, PaneManager } from '@/lib/pane-manager/pane-manager'
 import { getDefaultSettings } from '../../../../shared/constants'
-import {
-  applyTerminalAppearance,
-  hexToRgba,
-  publishTerminalViewAttributesAtAppStart
-} from './terminal-appearance'
+import { applyTerminalAppearance, hexToRgba } from './terminal-appearance'
+import { publishTerminalViewAttributesAtAppStart } from './terminal-view-start'
 import { maybePushMode2031Flip } from './terminal-mode-2031-replies'
 import { mode2031SequenceFor } from '../../../../shared/terminal-color-scheme-protocol'
 import { _resetTerminalViewAttributesPublisherForTest } from './terminal-view-attributes-publisher'
@@ -285,6 +282,53 @@ describe('publishTerminalViewAttributesAtAppStart', () => {
 
     expect(publishTerminalViewAttributesAtAppStart(settings, true, send)).toBe(false)
     expect(sent).toHaveLength(1)
+  })
+
+  it('publishes the initial system dark or light selection', () => {
+    _resetTerminalViewAttributesPublisherForTest()
+    const sent: TerminalViewAttributes[] = []
+    const send = (attributes: TerminalViewAttributes): boolean => {
+      sent.push(attributes)
+      return true
+    }
+    const settings = { ...getDefaultSettings('/tmp'), theme: 'system' as const }
+
+    expect(publishTerminalViewAttributesAtAppStart(settings, true, send)).toBe(true)
+    expect(publishTerminalViewAttributesAtAppStart(settings, false, send)).toBe(true)
+    expect(sent.map((attributes) => attributes.colorSchemeMode)).toEqual(['dark', 'light'])
+  })
+
+  it('publishes a selected custom theme with composed opacity', () => {
+    _resetTerminalViewAttributesPublisherForTest()
+    const sent: TerminalViewAttributes[] = []
+    const send = (attributes: TerminalViewAttributes): boolean => {
+      sent.push(attributes)
+      return true
+    }
+    const settings = {
+      ...getDefaultSettings('/tmp'),
+      terminalThemeDark: 'custom:warp:tokyo-night',
+      terminalBackgroundOpacity: 0.5,
+      terminalCustomThemes: [
+        {
+          id: 'warp:tokyo-night',
+          name: 'Tokyo Night',
+          source: 'warp' as const,
+          mode: 'dark' as const,
+          terminal: {
+            background: '#1a1b26',
+            foreground: '#c0caf5',
+            black: '#15161e'
+          },
+          importedAt: '2026-06-05T00:00:00.000Z'
+        }
+      ]
+    }
+
+    expect(publishTerminalViewAttributesAtAppStart(settings, true, send)).toBe(true)
+    expect(sent[0]?.background).toEqual([0x1a, 0x1b, 0x26])
+    expect(sent[0]?.foreground).toEqual([0xc0, 0xca, 0xf5])
+    expect(sent[0]?.ansi[0]).toEqual([0x15, 0x16, 0x1e])
   })
 
   it('makes the later pane-mount applyTerminalAppearance a deduped no-op re-push', () => {

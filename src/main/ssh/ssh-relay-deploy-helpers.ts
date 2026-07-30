@@ -3,9 +3,30 @@ import { createSshOperationAbortError } from './ssh-connection-utils'
 import { RELAY_SENTINEL, RELAY_SENTINEL_TIMEOUT_MS } from './relay-protocol'
 import type { MultiplexerTransport } from './ssh-channel-multiplexer'
 import { buildRelayVersionMismatchError } from './ssh-relay-handshake-mismatch'
+import { loadSftpUploadCapability, type SftpUploadCapability } from './sftp-upload-capability'
 
-export { uploadFile, uploadDirectory, mkdirSftp } from './sftp-upload'
 export { execCommand, isUnconfirmedSshCommandTermination } from './ssh-relay-exec-command'
+
+export async function uploadFile(
+  ...args: Parameters<SftpUploadCapability['uploadFile']>
+): Promise<void> {
+  const { uploadFile: upload } = await loadSftpUploadCapability()
+  await upload(...args)
+}
+
+export async function uploadDirectory(
+  ...args: Parameters<SftpUploadCapability['uploadDirectory']>
+): Promise<void> {
+  const { uploadDirectory: upload } = await loadSftpUploadCapability()
+  await upload(...args)
+}
+
+export async function mkdirSftp(
+  ...args: Parameters<SftpUploadCapability['mkdirSftp']>
+): Promise<void> {
+  const { mkdirSftp: mkdir } = await loadSftpUploadCapability()
+  await mkdir(...args)
+}
 
 // ── Sentinel detection ────────────────────────────────────────────────
 

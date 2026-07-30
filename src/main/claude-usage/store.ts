@@ -1,7 +1,6 @@
 /* eslint-disable max-lines -- Why: this store is the single main-process owner for Claude usage persistence, scan gating, and query semantics. Keeping those policy decisions together avoids split-brain range/scope logic across multiple files. */
-import { app } from 'electron'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname } from 'node:path'
 import type {
   ClaudeUsageBreakdownKind,
   ClaudeUsageBreakdownRow,
@@ -18,6 +17,9 @@ import type { Store } from '../persistence'
 import { loadKnownUsageWorktreesByRepo, type UsageWorktreeRef } from '../usage-worktree-metadata'
 import type { ClaudeUsagePersistedState } from './types'
 import { createWorktreeRefs, getSessionProjectLabel, scanClaudeUsageFiles } from './scanner'
+import { getClaudeUsageFilePath } from './claude-usage-file-path'
+
+export { initClaudeUsagePath } from './claude-usage-file-path'
 
 // Why: v5 widens Claude ownership keys (message-id / uuid fallbacks). Older
 // caches either lack ownership or used narrower keys and can under/over-count
@@ -25,10 +27,6 @@ import { createWorktreeRefs, getSessionProjectLabel, scanClaudeUsageFiles } from
 const SCHEMA_VERSION = 5
 const STALE_MS = 5 * 60_000
 const AUTOMATION_ATTRIBUTION_WINDOW_MS = 5 * 60_000
-
-// Why: capture the path after configureDevUserDataPath() but before app.setName()
-// mutates Electron's derived userData location, matching the persistence/store pattern.
-let _claudeUsageFile: string | null = null
 
 type ClaudeModelPricing = {
   input: number
@@ -126,17 +124,6 @@ function getDefaultState(): ClaudeUsagePersistedState {
       lastScanError: null
     }
   }
-}
-
-export function initClaudeUsagePath(): void {
-  _claudeUsageFile = join(app.getPath('userData'), 'orca-claude-usage.json')
-}
-
-function getClaudeUsageFile(): string {
-  if (!_claudeUsageFile) {
-    _claudeUsageFile = join(app.getPath('userData'), 'orca-claude-usage.json')
-  }
-  return _claudeUsageFile
 }
 
 function hasClaudeModelVersion(model: string, family: string, version: string): boolean {
@@ -339,7 +326,7 @@ export class ClaudeUsageStore {
 
   private load(): ClaudeUsagePersistedState {
     try {
-      const usageFile = getClaudeUsageFile()
+      const usageFile = getClaudeUsageFilePath()
       if (!existsSync(usageFile)) {
         return getDefaultState()
       }
@@ -376,7 +363,7 @@ export class ClaudeUsageStore {
   }
 
   private writeToDisk(): void {
-    const usageFile = getClaudeUsageFile()
+    const usageFile = getClaudeUsageFilePath()
     const dir = dirname(usageFile)
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true })

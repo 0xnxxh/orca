@@ -56,7 +56,7 @@ function eligibleInventory(): SkillFreshnessInventory {
   }
 }
 
-vi.mock('@/hooks/useSkillFreshness', () => ({
+vi.mock('@/hooks/skill-freshness', () => ({
   useSkillFreshness: () => ({
     inventory: mocks.inventory,
     loading: false,

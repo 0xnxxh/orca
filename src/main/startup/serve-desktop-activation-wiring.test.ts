@@ -49,6 +49,8 @@ describe('serve desktop activation wiring', () => {
   })
 
   it('keeps the headless install policy after desktop promotion', () => {
-    expect(source).toContain('updateInstallMode: resolveUpdateInstallMode(isServeMode)')
+    expect(source).toContain(
+      'updateInstallMode: getUpdaterRuntimeStartupCapability().resolveUpdateInstallMode(isServeMode)'
+    )
   })
 })

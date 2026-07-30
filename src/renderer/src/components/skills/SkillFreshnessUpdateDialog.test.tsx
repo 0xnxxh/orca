@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
 import { act, useState, type ReactNode } from 'react'
+import { Circle, XCircle } from 'lucide-react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
@@ -11,9 +12,18 @@ import type {
 import { SkillFreshnessUpdateDialog } from './SkillFreshnessUpdateDialog'
 import {
   consumeSkillFreshnessUpdateDialogRequest,
-  requestSkillFreshnessUpdateDialog
+  getSkillFreshnessUpdateDialogRequest,
+  requestSkillFreshnessUpdateDialog,
+  subscribeSkillFreshnessUpdateDialog
 } from './skill-freshness-update-dialog'
-import { _resetSkillUpdateRunStore, SKILL_UPDATE_SUCCESS_LINGER_MS } from './skill-update-run-store'
+import {
+  acknowledgeSkillUpdateRun,
+  cancelSkillUpdateRun,
+  _resetSkillUpdateRunStore,
+  SKILL_UPDATE_SUCCESS_LINGER_MS,
+  startSkillUpdateRun,
+  useSkillUpdateRun
+} from './skill-update-run-store'
 
 const mocks = vi.hoisted(() => ({
   inventory: null as SkillFreshnessInventory | null,
@@ -131,13 +141,49 @@ async function renderDialog(): Promise<void> {
   document.body.appendChild(container)
   root = createRoot(container)
   await act(async () => {
-    root?.render(<SkillFreshnessUpdateDialog />)
+    root?.render(
+      <SkillFreshnessUpdateDialog
+        acknowledgeUpdateRun={acknowledgeSkillUpdateRun}
+        cancelUpdateRun={cancelSkillUpdateRun}
+        consumeOpenRequest={consumeSkillFreshnessUpdateDialogRequest}
+        getOpenRequest={getSkillFreshnessUpdateDialogRequest}
+        notifyInstalledSkillsChanged={mocks.notifyChanged}
+        rowStateIcons={{ failed: XCircle, pending: Circle }}
+        startUpdateRun={startSkillUpdateRun}
+        subscribeOpenRequest={subscribeSkillFreshnessUpdateDialog}
+        useFreshness={() => ({
+          inventory: mocks.inventory,
+          loading: mocks.loading,
+          error: mocks.error,
+          refresh: mocks.refresh
+        })}
+        useUpdateRun={useSkillUpdateRun}
+      />
+    )
   })
 }
 
 async function rerender(): Promise<void> {
   await act(async () => {
-    root?.render(<SkillFreshnessUpdateDialog />)
+    root?.render(
+      <SkillFreshnessUpdateDialog
+        acknowledgeUpdateRun={acknowledgeSkillUpdateRun}
+        cancelUpdateRun={cancelSkillUpdateRun}
+        consumeOpenRequest={consumeSkillFreshnessUpdateDialogRequest}
+        getOpenRequest={getSkillFreshnessUpdateDialogRequest}
+        notifyInstalledSkillsChanged={mocks.notifyChanged}
+        rowStateIcons={{ failed: XCircle, pending: Circle }}
+        startUpdateRun={startSkillUpdateRun}
+        subscribeOpenRequest={subscribeSkillFreshnessUpdateDialog}
+        useFreshness={() => ({
+          inventory: mocks.inventory,
+          loading: mocks.loading,
+          error: mocks.error,
+          refresh: mocks.refresh
+        })}
+        useUpdateRun={useSkillUpdateRun}
+      />
+    )
   })
 }
 
@@ -238,6 +284,20 @@ describe('SkillFreshnessUpdateDialog', () => {
 
     expect(container?.querySelector('[data-dialog-open]')).toBeNull()
     expect(skillsApi.cancelUpdateRun).not.toHaveBeenCalled()
+  })
+
+  it('reopens the same in-flight run after closing', async () => {
+    await renderDialog()
+    await openViaRequest()
+    await emitRun({ state: 'running', names: ['orca-cli'], startedAt: 1, output: '' })
+    await clickButton('Close')
+    await openViaRequest()
+
+    expect(container?.textContent).toContain('Updating 1 skill…')
+    expect(
+      container?.querySelector('[data-skill-row="orca-cli"]')?.getAttribute('data-state-label')
+    ).toBe('pending')
+    expect(skillsApi.getUpdateRun).toHaveBeenCalledTimes(1)
   })
 
   it('reports per-skill success once the run settles', async () => {

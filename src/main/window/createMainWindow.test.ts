@@ -60,11 +60,14 @@ vi.mock('../app-icon', () => ({
   getAppIconPath: vi.fn(() => 'icon')
 }))
 
-vi.mock('../browser/browser-manager', () => ({
-  browserManager: {
-    attachGuestPolicies: attachGuestPoliciesMock,
-    setDictationShortcutForwardingPredicate: vi.fn()
-  }
+vi.mock('../browser/browser-kernel-window-dependencies', () => ({
+  getBrowserKernelWindowDependencies: () => ({
+    browserManager: {
+      attachGuestPolicies: attachGuestPoliciesMock,
+      setDictationShortcutForwardingPredicate: vi.fn()
+    },
+    isAllowedSessionPartition: () => true
+  })
 }))
 
 import {

@@ -81,6 +81,8 @@ export type SubprocessSpawnStats = {
 }
 
 const spawnStatsByCommand = new Map<string, SubprocessSpawnStats>()
+export type RemoteRpcRequestStats = { count: number }
+const rpcStatsByMethod = new Map<string, RemoteRpcRequestStats>()
 
 /**
  * Record one subprocess spawn from the main process. `blockMs` is how long
@@ -119,6 +121,38 @@ export function drainSubprocessSpawnStats(): Record<string, SubprocessSpawnStats
   return drained
 }
 
+export function classifyRemoteRpcMethod(method: string): string {
+  if (method.length > 80 || !/^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)+$/.test(method)) {
+    return 'other'
+  }
+  return method
+}
+
+/**
+ * Record one outbound request at a remote host/provider RPC boundary.
+ * No-op unless ORCA_MAIN_THREAD_DIAGNOSTICS=1.
+ */
+export function recordRemoteRpcRequest(method: string): void {
+  if (!isMainThreadDiagnosticsEnabled()) {
+    return
+  }
+  const key = classifyRemoteRpcMethod(method)
+  const stats = rpcStatsByMethod.get(key)
+  if (stats) {
+    stats.count++
+  } else {
+    rpcStatsByMethod.set(key, { count: 1 })
+  }
+}
+
+export function drainRemoteRpcRequestStats(): Record<string, RemoteRpcRequestStats> {
+  const drained = Object.fromEntries(
+    [...rpcStatsByMethod].map(([key, stats]) => [key, { count: stats.count }])
+  )
+  rpcStatsByMethod.clear()
+  return drained
+}
+
 /**
  * Timestamped marker line for correlating a specific main-process activity
  * (e.g. an updater check) with the probe's stall windows and with macOS
@@ -138,8 +172,8 @@ export function writeMainThreadDiagnosticMarker(marker: string): void {
  * Long-running main-process jank probe for benchmarks and field diagnosis of
  * issue #7576. Every 5s emits one `[main-thread] {json}` stderr line with the
  * window's worst event-loop stall, stall counts over 50/250ms, and drained
- * subprocess spawn stats. Unlike the startup stall probe this never stops:
- * the churn it measures (git status polling, updater retries) is steady-state.
+ * subprocess and remote RPC stats. Unlike the startup stall probe this never
+ * stops: the churn it measures is steady-state.
  */
 export function startMainThreadChurnProbe(): void {
   if (!isMainThreadDiagnosticsEnabled()) {
@@ -166,15 +200,20 @@ export function startMainThreadChurnProbe(): void {
     if (now - lastReport < REPORT_EVERY_MS) {
       return
     }
+    const windowDurationMs = now - lastReport
     lastReport = now
     const spawns = drainSubprocessSpawnStats()
+    const rpcs = drainRemoteRpcRequestStats()
     const report = {
       t: Math.round(now),
+      windowDurationMs: Math.round(windowDurationMs),
       maxGapMs: Math.max(0, Math.round(windowMaxGapMs)),
       gapsOver50Ms,
       gapsOver250Ms,
       spawnCount: Object.values(spawns).reduce((sum, s) => sum + s.count, 0),
-      spawns
+      spawns,
+      rpcCount: Object.values(rpcs).reduce((sum, rpc) => sum + rpc.count, 0),
+      rpcs
     }
     windowMaxGapMs = 0
     gapsOver50Ms = 0

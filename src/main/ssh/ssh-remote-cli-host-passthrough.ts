@@ -8,7 +8,7 @@ import { app } from 'electron'
 import { spawn as nodeSpawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { getCanonicalUserDataPath } from '../persistence'
+import { getCanonicalUserDataPath } from '../persistence-data-path'
 import { parseRemoteCliArgs } from './ssh-remote-cli-args'
 import { clampOrchestrationAskTimeoutMs } from '../../shared/orchestration-ask-timeout'
 import {

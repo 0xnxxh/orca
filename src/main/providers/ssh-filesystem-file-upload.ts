@@ -1,5 +1,5 @@
 import type { SFTPWrapper } from 'ssh2'
-import { uploadFile as uploadFileViaSftp } from '../ssh/sftp-upload'
+import { loadSftpUploadCapability } from '../ssh/sftp-upload-capability'
 import type { FileUploadSession } from './types'
 
 export type SftpFactory = () => Promise<SFTPWrapper>
@@ -24,12 +24,13 @@ export async function openSshFileUploadSession(
   if (!createSftp) {
     throw new Error('Remote file upload is unavailable. Reconnect the SSH target and retry.')
   }
+  const { uploadFile } = await loadSftpUploadCapability()
   const sftp = await createSftp()
   return {
     // Why: one session covers the whole import so normal SSH keeps its prior
     // channel count even when a directory contains many files.
     uploadFile: (sourcePath, destinationPath, options) =>
-      uploadFileViaSftp(sftp, sourcePath, destinationPath, options),
+      uploadFile(sftp, sourcePath, destinationPath, options),
     close: () => sftp.end()
   }
 }

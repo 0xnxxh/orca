@@ -1,5 +1,5 @@
 /* eslint-disable max-lines -- Why: persistence keeps schema defaults, migration, and load/save/flush in one file so the storage contract reviews as a unit. */
-import { app, safeStorage } from 'electron'
+import { safeStorage } from 'electron'
 import {
   readFileSync,
   writeFileSync,
@@ -79,14 +79,18 @@ import {
   buildWorkspaceRunContext
 } from '../shared/task-source-context'
 import type { MigrationUnsupportedPtyEntry } from '../shared/agent-status-types'
-import { MOBILE_PAIRING_USERDATA_FILES } from './runtime/mobile-pairing-files'
 import { normalizePersistedMobileClientTabSelections } from './runtime/client-session-tab-selection-persistence'
 import { sanitizeWorkspaceSessionTerminalRetirements } from './runtime/mobile-session-terminal-persistence-retirement'
 import {
   removeRepoFromHostWorkspaceSessions,
   removeRepoFromWorkspaceSession
 } from './orca-profiles/profile-project-session-state'
-import { hardenExistingSecureFile } from '../shared/secure-file'
+import { getPersistenceDataFilePath as getDataFile } from './persistence-data-path'
+export {
+  getCanonicalUserDataPath,
+  initDataPath,
+  migrateMobilePairingDataToCanonicalUserDataPath
+} from './persistence-data-path'
 import {
   LEGACY_DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS,
   type RemovedSshTargetTombstone,
@@ -329,27 +333,6 @@ function retireLegacyInstructionsForClearedTextActionRecipes(
   return changed ? { ...sourceControlAi, instructionsByOperation } : sourceControlAi
 }
 
-// Why capture once (not a module const, not per-call): a const resolves before configureDevUserDataPath() redirects userData (dev/prod collide);
-// per-call resolves after app.setName('Orca') flips path case and loses data on case-sensitive FS. index.ts calls initDataPath() at the right moment.
-let _dataFile: string | null = null
-let _userDataDir: string | null = null
-
-export function initDataPath(): void {
-  const userDataDir = app.getPath('userData')
-  _userDataDir = userDataDir
-  _dataFile = join(userDataDir, 'orca-data.json')
-}
-
-function getDataFile(): string {
-  if (!_dataFile) {
-    // Safety fallback — should not be hit in normal startup.
-    const userDataDir = app.getPath('userData')
-    _userDataDir = userDataDir
-    _dataFile = join(userDataDir, 'orca-data.json')
-  }
-  return _dataFile
-}
-
 // Why a sidecar: githubCache refreshes every poll and would rewrite the whole multi-MB orca-data.json each cycle.
 // Snapshotted best-effort at quit for instant badges next launch; safe to lose.
 function getGithubCacheFile(dataFile = getDataFile()): string {
@@ -432,49 +415,6 @@ function readGithubCacheSnapshot(dataFile: string): PersistedState['githubCache'
     // Missing or corrupt snapshot: start with an empty cache and refetch.
   }
   return null
-}
-
-/**
- * Return the userData directory captured at initDataPath() time, before app.setName() can change how app.getPath('userData') resolves.
- *
- * Subsystems sharing storage with orca-data.json read this instead of resolving late, which on case-sensitive FS can lose paired devices.
- */
-export function getCanonicalUserDataPath(): string {
-  if (!_userDataDir) {
-    // Safety fallback — should not be hit in normal startup.
-    _userDataDir = app.getPath('userData')
-  }
-  return _userDataDir
-}
-
-/**
- * Copy legacy mobile pairing credentials into the canonical userData directory.
- *
- * Copies the registry and E2EE keypair forward as a pair so an update doesn't force a re-pair or mix devices with the wrong key.
- */
-export function migrateMobilePairingDataToCanonicalUserDataPath(sourceUserDataDir: string): void {
-  const targetUserDataDir = getCanonicalUserDataPath()
-  if (resolve(sourceUserDataDir) === resolve(targetUserDataDir)) {
-    return
-  }
-
-  const migrations = MOBILE_PAIRING_USERDATA_FILES.map((fileName) => ({
-    sourcePath: join(sourceUserDataDir, fileName),
-    targetPath: join(targetUserDataDir, fileName)
-  }))
-  if (migrations.some(({ sourcePath }) => !existsSync(sourcePath))) {
-    return
-  }
-  if (migrations.some(({ targetPath }) => existsSync(targetPath))) {
-    return
-  }
-
-  mkdirSync(targetUserDataDir, { recursive: true })
-  for (const { sourcePath, targetPath } of migrations) {
-    copyFileSync(sourcePath, targetPath)
-    // Why: copyFileSync drops Windows ACLs, so re-assert current-user-only on these credential copies (device tokens, E2EE key).
-    hardenExistingSecureFile(targetPath)
-  }
 }
 
 // Why (issue #1158): keep 5 rolling backups at >=1h spacing so a corrupt/empty write leaves an earlier copy recoverable.

@@ -1,11 +1,11 @@
 import { REMOTE_RUNTIME_SHARED_CONTROL_CAPABILITY } from '../../shared/protocol-version'
-import { sendRemoteRuntimeRequest } from '../../shared/remote-runtime-client'
 import { markEnvironmentUsed } from '../../shared/runtime-environment-store'
 import type {
   getPreferredPairingOffer,
   KnownRuntimeEnvironment
 } from '../../shared/runtime-environments'
 import type { RuntimeStatus } from '../../shared/runtime-types'
+import { sendRemoteRuntimeOneShotRequest } from './runtime-environment-request-connections'
 
 const sharedControlSupport = new Map<string, { cacheKey: string; check: Promise<boolean> }>()
 
@@ -30,7 +30,7 @@ export async function supportsSharedControl(
   }
   let resolvedCacheKey = cacheKey
   const check = (async () => {
-    const response = await sendRemoteRuntimeRequest<RuntimeStatus>(
+    const response = await sendRemoteRuntimeOneShotRequest<RuntimeStatus>(
       pairing,
       'status.get',
       undefined,

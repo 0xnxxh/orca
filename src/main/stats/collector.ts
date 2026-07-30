@@ -1,9 +1,11 @@
-import { app } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from 'node:fs'
 import { writeFile, mkdir, rm } from 'node:fs/promises'
-import { join, dirname } from 'node:path'
+import { dirname } from 'node:path'
 import type { StatsSummary } from '../../shared/types'
 import type { StatsEvent, StatsAggregates, StatsFile } from './types'
+import { getStatsFilePath } from './stats-file-path'
+
+export { initStatsPath } from './stats-file-path'
 
 const STATS_SCHEMA_VERSION = 1
 const MAX_EVENTS = 10_000
@@ -15,23 +17,6 @@ const MAX_COUNTED_PRS = 2_000
 // Why 5s instead of the main store's 300ms: stat events are infrequent
 // (a few per session) and not latency-sensitive for the UI.
 const DEBOUNCE_MS = 5_000
-
-// Why: same timing constraint as persistence.ts — the path must be captured
-// after configureDevUserDataPath() but before app.setName('Orca'). See the
-// comment block in persistence.ts:20-28 for the full explanation.
-let _statsFile: string | null = null
-
-export function initStatsPath(): void {
-  _statsFile = join(app.getPath('userData'), 'orca-stats.json')
-}
-
-function getStatsFile(): string {
-  if (!_statsFile) {
-    // Safety fallback — should not be hit in normal startup.
-    _statsFile = join(app.getPath('userData'), 'orca-stats.json')
-  }
-  return _statsFile
-}
 
 function getDefaultAggregates(): StatsAggregates {
   return {
@@ -161,7 +146,7 @@ export class StatsCollector {
 
   private load(): StatsFile {
     try {
-      const statsFile = getStatsFile()
+      const statsFile = getStatsFilePath()
       if (existsSync(statsFile)) {
         const raw = readFileSync(statsFile, 'utf-8')
         const parsed = JSON.parse(raw) as StatsFile
@@ -261,7 +246,7 @@ export class StatsCollector {
     json: string
     generation: number
   } {
-    const statsFile = getStatsFile()
+    const statsFile = getStatsFilePath()
 
     // Trim events to bounded size before writing
     if (this.events.length > MAX_EVENTS) {
@@ -282,7 +267,7 @@ export class StatsCollector {
   }
 
   private writeToDiskSync(): void {
-    const dir = dirname(getStatsFile())
+    const dir = dirname(getStatsFilePath())
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true })
     }
@@ -293,7 +278,7 @@ export class StatsCollector {
   }
 
   private async writeToDiskAsync(): Promise<void> {
-    const dir = dirname(getStatsFile())
+    const dir = dirname(getStatsFilePath())
     if (!existsSync(dir)) {
       await mkdir(dir, { recursive: true })
     }

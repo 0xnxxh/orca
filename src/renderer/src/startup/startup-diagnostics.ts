@@ -9,7 +9,7 @@ export function logRendererStartupDiagnostic(
   details: StartupDiagnosticDetails = {}
 ): void {
   const api = window.api?.app
-  if (!api?.startupDiagnostic) {
+  if (!api?.startupDiagnosticsEnabled || !api.startupDiagnostic) {
     return
   }
   void api

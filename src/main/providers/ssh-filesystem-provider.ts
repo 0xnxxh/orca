@@ -1,13 +1,9 @@
 import type { SshChannelMultiplexer } from '../ssh/ssh-channel-multiplexer'
 import { isMethodNotFoundError, readFileViaStream } from '../ssh/ssh-filesystem-stream-reader'
-import { uploadBuffer } from '../ssh/sftp-upload'
-import { lstatViaSftp } from './ssh-filesystem-provider-sftp'
-import {
-  downloadFileViaSftp,
-  downloadFolderViaSftp,
-  type SftpFactory
-} from './ssh-filesystem-download'
+import { loadSftpUploadCapability } from '../ssh/sftp-upload-capability'
+import type { SftpFactory } from './ssh-filesystem-download'
 import { openSshFileUploadSession, type SshRawTransferOptions } from './ssh-filesystem-file-upload'
+import { lstatViaSftp } from './ssh-filesystem-sftp-stat'
 import {
   closeSshFilesystemWatch,
   registerSshFilesystemWatch,
@@ -52,11 +48,13 @@ export class SshFilesystemProvider implements IFilesystemProvider {
       // omitting this method makes folder capability truthful at the provider boundary.
       // windowsRemotePaths is provider-owned (from host platform), not a caller option.
       const windowsRemotePaths = hostPlatform ? isWindowsRemoteHost(hostPlatform) : undefined
-      this.downloadFolder = (sourcePath, destinationPath, options) =>
-        downloadFolderViaSftp(createSftp, sourcePath, destinationPath, {
+      this.downloadFolder = async (sourcePath, destinationPath, options) => {
+        const { downloadFolderViaSftp } = await import('./ssh-filesystem-download')
+        await downloadFolderViaSftp(createSftp, sourcePath, destinationPath, {
           ...options,
           windowsRemotePaths
         })
+      }
     }
 
     this.unsubscribeNotifications = mux.onNotification((method, params) =>
@@ -136,6 +134,10 @@ export class SshFilesystemProvider implements IFilesystemProvider {
       await this.rawTransfer.downloadFile(sourcePath, destinationPath)
       return
     }
+    if (!this.createSftp) {
+      throw new Error('Remote file download is unavailable. Reconnect the SSH target and retry.')
+    }
+    const { downloadFileViaSftp } = await import('./ssh-filesystem-download')
     await downloadFileViaSftp(this.createSftp, sourcePath, destinationPath)
   }
 
@@ -210,6 +212,7 @@ export class SshFilesystemProvider implements IFilesystemProvider {
     try {
       // Why: relay fs.writeFile is text-only. SFTP writes the decoded bytes
       // directly so runtime uploads do not corrupt images, PDFs, or archives.
+      const { uploadBuffer } = await loadSftpUploadCapability()
       await uploadBuffer(sftp, contents, filePath, {
         append,
         exclusive: !append

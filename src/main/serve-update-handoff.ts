@@ -8,7 +8,7 @@ import {
   type ServeSupervisorMessage,
   type ServeUpdateHandoffState
 } from '../shared/serve-update-handoff'
-import { getCanonicalUserDataPath } from './persistence'
+import { getCanonicalUserDataPath } from './persistence-data-path'
 
 function getConfiguredHandoffPath(): string | null {
   const configuredPath = process.env[SERVE_UPDATE_HANDOFF_PATH_ENV]

@@ -1,4 +1,4 @@
-import { useSkillFreshness } from '@/hooks/useSkillFreshness'
+import { useSkillFreshness } from '@/hooks/skill-freshness'
 import { translate } from '@/i18n/i18n'
 import { Button } from '@/components/ui/button'
 import { IntegrationStatusPill } from '@/components/integration-status-pill'

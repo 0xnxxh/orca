@@ -1,3 +1,10 @@
+import {
+  MobileTerminalProcessMemoryDiagnostics,
+  type MobileTerminalProcessMemoryReadiness,
+  type MobileTerminalProcessMemoryReader
+} from './mobile-terminal-process-memory-diagnostics'
+import { MobileTerminalWebViewCountDiagnostics } from './mobile-terminal-webview-count-diagnostics'
+
 const MOBILE_TERMINAL_DIAGNOSTIC_TAG = '[terminal-diagnostic]'
 
 type MobileTerminalDiagnosticValue = string | number | boolean | null | undefined
@@ -37,13 +44,17 @@ export function getMobileTerminalDiagnosticErrorName(error: unknown): string {
   return typeof error
 }
 
+export function isMobileTerminalDiagnosticsEnabled(): boolean {
+  return typeof __DEV__ === 'undefined' || __DEV__
+}
+
 export function logMobileTerminalDiagnostic(
   event: string,
   details: MobileTerminalDiagnosticDetails = {}
 ): void {
   // Why: lifecycle diagnostics are intentionally available for HMR repros,
   // but high-frequency WebView events must not add production log overhead.
-  if (typeof __DEV__ !== 'undefined' && !__DEV__) {
+  if (!isMobileTerminalDiagnosticsEnabled()) {
     return
   }
   // Keep this structured and content-free so users can safely share a filtered log.
@@ -57,6 +68,22 @@ export class MobileTerminalDiagnostics {
   private lastAppliedTabsSignature: string | null = null
   private lastTabsFetchStartAt = 0
   private tabsFetchSkipLogged = false
+  private readonly processMemory: MobileTerminalProcessMemoryDiagnostics
+  private readonly webViewCounts: MobileTerminalWebViewCountDiagnostics
+
+  constructor(
+    enabled = isMobileTerminalDiagnosticsEnabled(),
+    readProcessMemory?: MobileTerminalProcessMemoryReader
+  ) {
+    this.processMemory = new MobileTerminalProcessMemoryDiagnostics(
+      enabled,
+      (snapshot) => logMobileTerminalDiagnostic('process-memory-snapshot', snapshot),
+      readProcessMemory
+    )
+    this.webViewCounts = new MobileTerminalWebViewCountDiagnostics(enabled, (snapshot) => {
+      logMobileTerminalDiagnostic('webview-count-snapshot', snapshot)
+    })
+  }
 
   clearTerminalCache(): void {
     this.streamGateByHandle.clear()
@@ -69,6 +96,7 @@ export class MobileTerminalDiagnostics {
     this.lastAppliedTabsSignature = null
     this.lastTabsFetchStartAt = 0
     this.tabsFetchSkipLogged = false
+    this.webViewCounts.resetRoute()
   }
 
   terminalUnsubscribed(handle: string): void {
@@ -171,9 +199,15 @@ export class MobileTerminalDiagnostics {
   tabsApplied(
     snapshot: DiagnosticTabsSnapshot,
     tabs: readonly DiagnosticTab[],
+    terminalRecordCount: number,
     activeTab: DiagnosticTab | null,
     selectionSource: string
   ): void {
+    this.webViewCounts.sessionSnapshot({
+      terminalRecordCount,
+      terminalTabCount: tabs.filter((tab) => tab.type === 'terminal').length,
+      tabCount: tabs.length
+    })
     const activeHandle =
       activeTab?.type === 'terminal' && typeof activeTab.terminal === 'string'
         ? activeTab.terminal
@@ -265,6 +299,17 @@ export class MobileTerminalDiagnostics {
       reload,
       isActive
     })
+  }
+
+  createWebViewMountLifecycle() {
+    return this.webViewCounts.createMountLifecycle()
+  }
+
+  async sampleProcessMemoryOnce(
+    platform: string,
+    readiness: MobileTerminalProcessMemoryReadiness
+  ): Promise<void> {
+    await this.processMemory.sampleOnce(platform, readiness)
   }
 
   private logTabs(

@@ -50,6 +50,7 @@ import {
   createLinkedSshFileTransferSignal,
   raceSftpFileTransferWithAbort
 } from './ssh-file-transfer-abort'
+import { loadSftpUploadCapability } from './sftp-upload-capability'
 export type { SshConnectionCallbacks } from './ssh-connection-utils'
 
 type SshRemoteFileOptions = {
@@ -433,7 +434,7 @@ export class SshConnection {
           const transfer = (async (): Promise<void> => {
             const targetDir = await resolveSftpTransferPathIfMapped(sftp, remoteDir, options)
             linkedSignal.signal.throwIfAborted()
-            const { uploadDirectory } = await import('./ssh-relay-deploy-helpers')
+            const { uploadDirectory } = await loadSftpUploadCapability()
             await uploadDirectory(sftp, localDir, targetDir)
           })()
           await raceSftpFileTransferWithAbort(transfer, linkedSignal.signal, (onClose) => {
@@ -480,7 +481,7 @@ export class SshConnection {
   async openFileUploadSession(options?: SshRemoteFileOptions): Promise<FileUploadSession> {
     if (!this.useSystemSshTransport) {
       const sftp = await this.sftp()
-      const { uploadFile } = await import('./sftp-upload')
+      const { uploadFile } = await loadSftpUploadCapability()
       return {
         uploadFile: (localPath, remotePath, uploadOptions) =>
           uploadFile(sftp, localPath, remotePath, uploadOptions),
@@ -531,7 +532,7 @@ export class SshConnection {
           const write = (async (): Promise<void> => {
             const targetPath = await resolveSftpTransferPathIfMapped(sftp, remotePath, options)
             linkedSignal.signal.throwIfAborted()
-            const { writeStringViaSftp } = await import('./sftp-upload')
+            const { writeStringViaSftp } = await loadSftpUploadCapability()
             await writeStringViaSftp(sftp, targetPath, contents)
           })()
           await raceSftpFileTransferWithAbort(write, linkedSignal.signal, (onClose) => {
@@ -561,7 +562,7 @@ export class SshConnection {
     if (!this.useSystemSshTransport) {
       const sftp = await this.sftp()
       try {
-        const { uploadBuffer } = await import('./sftp-upload')
+        const { uploadBuffer } = await loadSftpUploadCapability()
         await uploadBuffer(sftp, contents, remotePath, options)
       } finally {
         sftp.end()

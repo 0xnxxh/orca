@@ -1,15 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   MAIN_THREAD_DIAGNOSTICS_ENV,
+  classifyRemoteRpcMethod,
   classifySubprocessCommand,
+  drainRemoteRpcRequestStats,
   drainSubprocessSpawnStats,
   isMainThreadDiagnosticsEnabled,
+  recordRemoteRpcRequest,
   recordSubprocessSpawn
 } from './main-thread-churn-probe'
 
 afterEach(() => {
   vi.unstubAllEnvs()
   drainSubprocessSpawnStats()
+  drainRemoteRpcRequestStats()
 })
 
 describe('classifySubprocessCommand', () => {
@@ -70,5 +74,32 @@ describe('recordSubprocessSpawn', () => {
       'git rev-list': { count: 1, blockMsTotal: 1.5, blockMsMax: 1.5 }
     })
     expect(drainSubprocessSpawnStats()).toEqual({})
+  })
+})
+
+describe('recordRemoteRpcRequest', () => {
+  it('keeps only stable protocol method buckets', () => {
+    expect(classifyRemoteRpcMethod('git.status')).toBe('git.status')
+    expect(classifyRemoteRpcMethod('fs.workspaceSpaceScan')).toBe('fs.workspaceSpaceScan')
+    expect(classifyRemoteRpcMethod('/home/alice/private-repo')).toBe('other')
+    expect(classifyRemoteRpcMethod(`git.${'x'.repeat(80)}`)).toBe('other')
+  })
+
+  it('is disabled without allocating retained stats', () => {
+    vi.stubEnv(MAIN_THREAD_DIAGNOSTICS_ENV, '')
+    recordRemoteRpcRequest('git.status')
+    expect(drainRemoteRpcRequestStats()).toEqual({})
+  })
+
+  it('aggregates once per method and drain resets the window', () => {
+    vi.stubEnv(MAIN_THREAD_DIAGNOSTICS_ENV, '1')
+    recordRemoteRpcRequest('git.status')
+    recordRemoteRpcRequest('git.status')
+    recordRemoteRpcRequest('git.history')
+    expect(drainRemoteRpcRequestStats()).toEqual({
+      'git.status': { count: 2 },
+      'git.history': { count: 1 }
+    })
+    expect(drainRemoteRpcRequestStats()).toEqual({})
   })
 })

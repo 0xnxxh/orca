@@ -7,7 +7,7 @@ vi.mock('electron', () => ({
     getAppPath: () => '/host/app'
   }
 }))
-vi.mock('../persistence', () => ({
+vi.mock('../persistence-data-path', () => ({
   getCanonicalUserDataPath: () => '/host/user-data'
 }))
 

@@ -61,7 +61,7 @@ import { StarNagCard } from './components/StarNagCard'
 import { StarNagAgentValueMomentObserver } from './components/star-nag/StarNagAgentValueMomentObserver'
 import { StarNagToastHost } from './components/star-nag/StarNagToastHost'
 import { SkillFreshnessNudge } from './components/skills/SkillFreshnessNudge'
-import { SkillFreshnessUpdateDialog } from './components/skills/SkillFreshnessUpdateDialog'
+import { SkillFreshnessUpdateDialogHost } from './components/skills/SkillFreshnessUpdateDialogHost'
 import { TelemetryFirstLaunchSurface } from './components/TelemetryFirstLaunchSurface'
 import { ZoomOverlay } from './components/ZoomOverlay'
 import { onOnboardingReopened } from './components/onboarding/show-onboarding-event'
@@ -147,10 +147,11 @@ import {
   timeRendererStartupSyncStep
 } from './startup/startup-diagnostics'
 import { reconnectSshTargetForRendererStartup } from './startup/ssh-startup-reconnect'
+import { loadSettingsModule } from './components/settings/settings-module-loader'
 import { shouldRenderPetOverlay } from './components/pet/pet-overlay-visibility'
 import { applyDocumentTheme } from './lib/document-theme'
 import { getSystemPrefersDark } from './lib/terminal-theme'
-import { publishTerminalViewAttributesAtAppStart } from './components/terminal-pane/terminal-appearance'
+import { publishTerminalViewAttributesAtAppStart } from './components/terminal-pane/terminal-view-start'
 import { isEditableTarget } from './lib/editable-target'
 import { getSelectedTextForFileSearch } from './lib/file-search-selection'
 import { useShortcutLabel } from './hooks/useShortcutLabel'
@@ -204,7 +205,7 @@ import { isGitRepoKind } from '../../shared/repo-kind'
 import { showTerminalShortcutCaptureNotification } from '@/lib/terminal-shortcut-capture-notification'
 import { resolveMountedLazyModalIds, type LazyModalId } from './lazy-modal-mount-state'
 import { translate } from '@/i18n/i18n'
-import PinnedTabCloseDialog from './components/terminal-pane/PinnedTabCloseDialog'
+import PinnedTabCloseDialogHost from './components/terminal-pane/PinnedTabCloseDialogHost'
 import { useOsc52ClipboardDefaultOnNotice } from './components/terminal-pane/osc52-clipboard-default-on-notice'
 import {
   hasRequestedBackgroundTerminalWorktreeMount,
@@ -325,7 +326,7 @@ const WorktreeCreationPanel = lazy(
 const TaskPage = lazy(() => import('./components/TaskPage'))
 const AutomationsPage = lazy(() => import('./components/automations/AutomationsPage'))
 const ActivityPrototypePage = lazy(() => import('./components/activity/ActivityPrototypePage'))
-const Settings = lazy(() => import('./components/settings/Settings'))
+const Settings = lazy(loadSettingsModule)
 const SkillsPage = lazy(() => import('./components/skills/SkillsPage'))
 const WorkspaceSpacePage = lazy(() => import('./components/workspace-space/WorkspaceSpacePage'))
 const MobilePage = lazy(() => import('./components/mobile/MobilePage'))
@@ -2738,7 +2739,7 @@ function App(): React.JSX.Element {
               surface="overlay"
               compact
             >
-              <SkillFreshnessUpdateDialog />
+              <SkillFreshnessUpdateDialogHost />
             </RecoverableRenderErrorBoundary>
             <Suspense fallback={null}>
               <RecoverableRenderErrorBoundary
@@ -2754,7 +2755,7 @@ function App(): React.JSX.Element {
       </TooltipProvider>
       <Toaster closeButton toastOptions={{ className: 'font-sans text-sm' }} />
       <SkillFreshnessNudge />
-      <PinnedTabCloseDialog />
+      <PinnedTabCloseDialogHost />
       {/* Why: Electron's drag-region hit-test is DOM-order-based (ignores z-index); render last so WindowControls stay clickable. */}
       {hasCustomTitleBar && <WindowControls />}
     </div>

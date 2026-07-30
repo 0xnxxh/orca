@@ -1828,4 +1828,6 @@ function Settings(): React.JSX.Element {
   )
 }
 
+export { SkillFreshnessUpdateDialog } from '@/components/skills/SkillFreshnessUpdateDialog'
+export { default as PinnedTabCloseDialog } from '@/components/terminal-pane/PinnedTabCloseDialog'
 export default Settings

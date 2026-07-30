@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, ChevronDown, Circle, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronDown, type LucideIcon } from 'lucide-react'
 import type { SkillFreshnessGroupModel } from './skill-freshness-grouping'
 import { translate } from '@/i18n/i18n'
 import { Badge } from '@/components/ui/badge'
@@ -13,14 +13,29 @@ export type SkillRowState = 'available' | 'blocked' | 'pending' | 'done' | 'fail
  * Leading status glyph. Absent for `available` on purpose: an empty reserved box
  * would just indent the name past a gap with nothing in it.
  */
-function StateIcon({ state }: { state: SkillRowState }): React.JSX.Element | null {
+export type SkillUpdateRowStateIcons = {
+  failed: LucideIcon
+  pending: LucideIcon
+}
+
+function StateIcon({
+  state,
+  stateIcons
+}: {
+  state: SkillRowState
+  stateIcons: SkillUpdateRowStateIcons
+}): React.JSX.Element | null {
   switch (state) {
     case 'done':
       return <CheckCircle2 className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-    case 'failed':
-      return <XCircle className="size-4 shrink-0 text-destructive" />
-    case 'pending':
-      return <Circle className="size-4 shrink-0 text-muted-foreground" />
+    case 'failed': {
+      const FailedIcon = stateIcons.failed
+      return <FailedIcon className="size-4 shrink-0 text-destructive" />
+    }
+    case 'pending': {
+      const PendingIcon = stateIcons.pending
+      return <PendingIcon className="size-4 shrink-0 text-muted-foreground" />
+    }
     case 'blocked':
       return <AlertTriangle className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
     case 'available':
@@ -66,10 +81,12 @@ function StateBadge({ state }: { state: SkillRowState }): React.JSX.Element | nu
  */
 export function SkillUpdateRow({
   group,
-  state
+  state,
+  stateIcons
 }: {
   group: SkillFreshnessGroupModel
   state: SkillRowState
+  stateIcons: SkillUpdateRowStateIcons
 }): React.JSX.Element {
   const locationCount = group.locations.length
   return (
@@ -86,7 +103,7 @@ export function SkillUpdateRow({
         }`}
       >
         <span className="flex min-w-0 flex-1 items-center gap-2">
-          <StateIcon state={state} />
+          <StateIcon state={state} stateIcons={stateIcons} />
           <span className="min-w-0 truncate text-[13px] font-medium text-foreground">
             {group.name}
           </span>

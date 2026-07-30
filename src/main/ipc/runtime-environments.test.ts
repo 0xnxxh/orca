@@ -56,8 +56,10 @@ vi.mock('../../shared/remote-runtime-client', () => ({
 }))
 
 vi.mock('./runtime-environment-request-connections', () => ({
+  sendRemoteRuntimeOneShotRequest: sendRemoteRuntimeRequestMock,
   sendRemoteRuntimeConnectionRequest: sendRemoteRuntimeConnectionRequestMock,
   sendRemoteRuntimeSharedControlRequest: sendRemoteRuntimeSharedControlRequestMock,
+  subscribeRemoteRuntimeDedicatedRequest: subscribeRemoteRuntimeRequestMock,
   subscribeRemoteRuntimeSharedControlRequest: subscribeRemoteRuntimeSharedControlRequestMock,
   getRemoteRuntimeSharedControlDiagnostics: getRemoteRuntimeSharedControlDiagnosticsMock,
   reconnectRemoteRuntimeSharedControlConnection: reconnectRemoteRuntimeSharedControlConnectionMock,

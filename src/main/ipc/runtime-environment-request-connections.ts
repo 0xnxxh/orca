@@ -1,11 +1,21 @@
 import type { PairingOffer } from '../../shared/pairing'
-import type { RuntimeRpcResponse } from '../../shared/runtime-rpc-envelope'
+import type {
+  RuntimeOrchestrationEnvelope,
+  RuntimeRpcResponse
+} from '../../shared/runtime-rpc-envelope'
+import {
+  sendRemoteRuntimeRequest,
+  subscribeRemoteRuntimeRequest,
+  type RemoteRuntimeSubscription,
+  type RemoteRuntimeSubscriptionCallbacks
+} from '../../shared/remote-runtime-client'
 import { RemoteRuntimeRequestConnection } from '../../shared/remote-runtime-request-connection'
 import { RemoteRuntimeSharedControlConnection } from '../../shared/remote-runtime-shared-control-connection'
 import type {
   RemoteRuntimeSharedConnectionDiagnostics,
   RemoteRuntimeSharedSubscription
 } from '../../shared/remote-runtime-shared-control-types'
+import { recordRemoteRpcRequest } from '../diagnostics/main-thread-churn-probe'
 
 type CachedRuntimeConnection = {
   pairingKey: string
@@ -19,6 +29,17 @@ type CachedSharedControlConnection = {
 
 const requestConnections = new Map<string, CachedRuntimeConnection>()
 const sharedControlConnections = new Map<string, CachedSharedControlConnection>()
+
+export function sendRemoteRuntimeOneShotRequest<TResult>(
+  pairing: PairingOffer,
+  method: string,
+  params: unknown,
+  timeoutMs: number,
+  envelope?: RuntimeOrchestrationEnvelope
+): Promise<RuntimeRpcResponse<TResult>> {
+  recordRemoteRpcRequest(method)
+  return sendRemoteRuntimeRequest(pairing, method, params, timeoutMs, envelope)
+}
 
 export function sendRemoteRuntimeConnectionRequest<TResult>(
   environmentId: string,
@@ -37,6 +58,7 @@ export function sendRemoteRuntimeConnectionRequest<TResult>(
     }
     requestConnections.set(environmentId, cached)
   }
+  recordRemoteRpcRequest(method)
   return cached.connection.request(method, params, timeoutMs)
 }
 
@@ -63,7 +85,19 @@ export function sendRemoteRuntimeSharedControlRequest<TResult>(
   params: unknown,
   timeoutMs: number
 ): Promise<RuntimeRpcResponse<TResult>> {
+  recordRemoteRpcRequest(method)
   return getSharedControlConnection(environmentId, pairing).request(method, params, timeoutMs)
+}
+
+export function subscribeRemoteRuntimeDedicatedRequest<TResult>(
+  pairing: PairingOffer,
+  method: string,
+  params: unknown,
+  timeoutMs: number,
+  callbacks: RemoteRuntimeSubscriptionCallbacks<TResult>
+): Promise<RemoteRuntimeSubscription> {
+  recordRemoteRpcRequest(method)
+  return subscribeRemoteRuntimeRequest(pairing, method, params, timeoutMs, callbacks)
 }
 
 export function subscribeRemoteRuntimeSharedControlRequest<TResult>(
@@ -79,6 +113,7 @@ export function subscribeRemoteRuntimeSharedControlRequest<TResult>(
     onClose?: () => void
   }
 ): Promise<RemoteRuntimeSharedSubscription> {
+  recordRemoteRpcRequest(method)
   return getSharedControlConnection(environmentId, pairing).subscribe(
     method,
     params,

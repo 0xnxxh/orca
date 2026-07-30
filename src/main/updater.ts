@@ -44,6 +44,11 @@ import {
   requestServeUpdateHandoff
 } from './serve-update-handoff'
 import type { LocalBuildFeed } from './local-builds/local-build-feed-server'
+import {
+  clearUpdateInstallQuitInProgress,
+  markUpdateInstallQuitInProgress
+} from './updater-quit-state'
+export { isQuittingForUpdate } from './updater-quit-state'
 
 type CheckFailureSource = 'event' | 'promise' | 'fallback-promise'
 type MissingManifestPrereleaseFallbackResult = { userInitiated: boolean }
@@ -137,8 +142,6 @@ let _setPendingUpdateNudgeId: ((id: string | null) => void) | null = null
 let _setDismissedUpdateNudgeId: ((id: string | null) => void) | null = null
 // Why: guards against duplicate download() calls while an accepted request transitions status to 'downloading'.
 let downloadInFlight = false
-/** Guards the macOS `activate` handler from reopening the old version while ShipIt replaces the .app bundle. */
-let quittingForUpdate = false
 let autoUpdater: ElectronAutoUpdater | null = null
 let activeUpdateSource: 'release' | 'local' = 'release'
 let activeLocalBuildFeed: LocalBuildFeed | null = null
@@ -653,7 +656,7 @@ async function performQuitAndInstall(): Promise<void> {
   markMacQuitAndInstallInFlight()
 
   // Set BEFORE anything else so the `activate` handler doesn't reopen the old version while ShipIt replaces the .app bundle.
-  quittingForUpdate = true
+  markUpdateInstallQuitInProgress()
 
   try {
     await withUpdaterSpan({ stage: 'install' }, async (span) => {
@@ -746,7 +749,7 @@ async function performQuitAndInstall(): Promise<void> {
 
 function resetQuitForUpdateState(): void {
   quitAndInstallInProgress = false
-  quittingForUpdate = false
+  clearUpdateInstallQuitInProgress()
   updateInstallCommitted = false
   quitAndInstallNativeInvoked = false
   disarmUpdateInstallExitWatchdog()
@@ -1464,10 +1467,6 @@ async function checkForLocalBuildFromMenu(): Promise<void> {
   } finally {
     localBuildSelectionInProgress = false
   }
-}
-
-export function isQuittingForUpdate(): boolean {
-  return quittingForUpdate
 }
 
 export function quitAndInstall(): void {

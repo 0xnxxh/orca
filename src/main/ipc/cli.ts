@@ -7,7 +7,7 @@ import {
 } from '../cli/wsl-cli-registration-registry'
 import { WslCliInstaller } from '../cli/wsl-cli-installer'
 import { runSerializedWslCliRegistrationOperation } from '../cli/wsl-cli-registration-operation'
-import { getCanonicalUserDataPath } from '../persistence'
+import { getCanonicalUserDataPath } from '../persistence-data-path'
 import { hydrateShellPath, mergePathSegments } from '../startup/hydrate-shell-path'
 import { getDefaultWslDistro } from '../wsl'
 

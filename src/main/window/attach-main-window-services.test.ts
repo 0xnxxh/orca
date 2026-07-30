@@ -86,10 +86,12 @@ vi.mock('../memory/hydrate-local-pty-registry', () => ({
   hydrateLocalPtyRegistryAtBoot: hydrateLocalPtyRegistryAtBootMock
 }))
 
-vi.mock('../browser/browser-manager', () => ({
-  browserManager: {
-    unregisterAll: browserManagerUnregisterAllMock
-  }
+vi.mock('../browser/browser-kernel-window-dependencies', () => ({
+  getBrowserKernelWindowDependencies: () => ({
+    browserManager: {
+      unregisterAll: browserManagerUnregisterAllMock
+    }
+  })
 }))
 
 vi.mock('../updater', () => ({

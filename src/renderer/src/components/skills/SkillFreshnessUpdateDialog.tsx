@@ -6,8 +6,6 @@ import {
   isSkillScanIssueTruncatingScan,
   type SkillFreshnessInventory
 } from '../../../../shared/skill-freshness'
-import { useSkillFreshness } from '@/hooks/useSkillFreshness'
-import { notifyInstalledAgentSkillsChanged } from '@/hooks/useInstalledAgentSkills'
 import { translate } from '@/i18n/i18n'
 import { Button } from '@/components/ui/button'
 import {
@@ -23,17 +21,7 @@ import { groupSkillFreshness } from './skill-freshness-grouping'
 import { SkillFreshnessScanIssues } from './skill-freshness-scan-issues'
 import { SkillUpdateRow } from './SkillUpdateRow'
 import { SummaryHeadline, summarizeInventory } from './skill-freshness-summary-headline'
-import {
-  acknowledgeSkillUpdateRun,
-  cancelSkillUpdateRun,
-  startSkillUpdateRun,
-  useSkillUpdateRun
-} from './skill-update-run-store'
-import {
-  consumeSkillFreshnessUpdateDialogRequest,
-  getSkillFreshnessUpdateDialogRequest,
-  subscribeSkillFreshnessUpdateDialog
-} from './skill-freshness-update-dialog'
+import type { SkillFreshnessUpdateDialogDependencies } from './skill-freshness-update-dialog'
 
 function RunLog({ output }: { output: string }): React.JSX.Element | null {
   if (!output.trim()) {
@@ -62,14 +50,21 @@ function RunLog({ output }: { output: string }): React.JSX.Element | null {
   )
 }
 
-export function SkillFreshnessUpdateDialog(): React.JSX.Element {
-  const state = useSkillFreshness()
-  const run = useSkillUpdateRun()
-  const open = useSyncExternalStore(
-    subscribeSkillFreshnessUpdateDialog,
-    getSkillFreshnessUpdateDialogRequest,
-    getSkillFreshnessUpdateDialogRequest
-  )
+export function SkillFreshnessUpdateDialog({
+  acknowledgeUpdateRun,
+  cancelUpdateRun,
+  consumeOpenRequest,
+  getOpenRequest,
+  notifyInstalledSkillsChanged,
+  rowStateIcons,
+  startUpdateRun,
+  subscribeOpenRequest,
+  useFreshness,
+  useUpdateRun
+}: SkillFreshnessUpdateDialogDependencies): React.JSX.Element {
+  const state = useFreshness()
+  const run = useUpdateRun()
+  const open = useSyncExternalStore(subscribeOpenRequest, getOpenRequest, getOpenRequest)
   const [copied, setCopied] = useState(false)
 
   // Why: settling a run notifies every skills surface, and that refresh nulls the
@@ -147,7 +142,7 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
     }
     // Why: closing never cancels. The run is owned by main and keeps going; the
     // status-bar segment carries it from here.
-    consumeSkillFreshnessUpdateDialogRequest()
+    consumeOpenRequest()
     setCopied(false)
     // Don't carry a finished session's rows into the next open — but a live run
     // keeps its own, or reopening from the status segment mid-run would land on
@@ -156,13 +151,13 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
       lastInventoryRef.current = null
     }
     if (showResult) {
-      void acknowledgeSkillUpdateRun()
+      void acknowledgeUpdateRun()
     }
-    notifyInstalledAgentSkillsChanged()
+    notifyInstalledSkillsChanged()
   }
 
   const handleUpdate = (names: readonly string[]): void => {
-    void startSkillUpdateRun(names)
+    void startUpdateRun(names)
   }
 
   const handleCopyCommand = (): void => {
@@ -306,7 +301,12 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
           <div className={`min-w-0 ${isRunning ? '' : 'border-t border-border/60'}`}>
             <TooltipProvider>
               {rows.map((row) => (
-                <SkillUpdateRow key={row.group.name} group={row.group} state={row.state} />
+                <SkillUpdateRow
+                  key={row.group.name}
+                  group={row.group}
+                  state={row.state}
+                  stateIcons={rowStateIcons}
+                />
               ))}
             </TooltipProvider>
           </div>
@@ -373,7 +373,7 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
               variant="ghost"
               size="sm"
               disabled={isStopping}
-              onClick={() => void cancelSkillUpdateRun()}
+              onClick={() => void cancelUpdateRun()}
             >
               {isStopping
                 ? translate(

@@ -1783,6 +1783,7 @@ export default function SessionScreen() {
         terminalTabs,
         terminalsRef.current
       )
+      const terminalRecordCount = mergedTerminalsForActive.length
       terminalsRef.current = mergedTerminalsForActive
       setTerminals((prev) =>
         terminalRecordsEqual(prev, mergedTerminalsForActive) ? prev : mergedTerminalsForActive
@@ -1858,7 +1859,7 @@ export default function SessionScreen() {
           pendingActiveTerminalHandleRef.current = null
         }
       }
-      diagnostics.tabsApplied(result, nextTabs, active, selectionSource)
+      diagnostics.tabsApplied(result, nextTabs, terminalRecordCount, active, selectionSource)
       activeSessionTabTypeRef.current = active?.type ?? null
       activeSessionTabIdRef.current = active?.id ?? null
       setActiveSessionTabId(active?.id ?? null)
@@ -2934,7 +2935,6 @@ export default function SessionScreen() {
       terminalGestureInputInFlightRef.current.delete(handle)
     }
   }, [])
-
   const handleTerminalWebReady = useCallback(
     (handle: string) => {
       const wasAlreadyReady = webReadyHandlesRef.current.has(handle)
@@ -4737,6 +4737,8 @@ export default function SessionScreen() {
                       void saveTerminalTextScale(scale)
                     }}
                     onRef={setTerminalWebViewRef}
+                    diagnostics={terminalDiagnosticsRef.current}
+                    terminalRecordsLoaded={terminalsLoaded}
                     onWebReady={handleTerminalWebReady}
                     onSelectionMode={handleSelectionMode}
                     onSelectionCopy={handleSelectionCopy}

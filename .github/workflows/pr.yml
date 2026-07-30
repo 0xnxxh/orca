@@ -251,6 +251,9 @@ jobs:
           done
           exit "$status"
 
+      - name: Check Electron bundle budgets
+        run: pnpm run check:electron-bundle-budgets
+
       - name: Project web client from renderer build
         run: pnpm run build:web-from-renderer
 

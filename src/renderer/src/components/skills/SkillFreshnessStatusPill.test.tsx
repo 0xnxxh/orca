@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   inventory: null as SkillFreshnessInventory | null
 }))
 
-vi.mock('@/hooks/useSkillFreshness', () => ({
+vi.mock('@/hooks/skill-freshness', () => ({
   useSkillFreshness: () => ({
     inventory: mocks.inventory,
     loading: false,

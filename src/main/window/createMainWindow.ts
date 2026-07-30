@@ -13,8 +13,7 @@ import { join } from 'node:path'
 import { is } from '@electron-toolkit/utils'
 import type { Store } from '../persistence'
 import { getAppIconPath } from '../app-icon'
-import { browserManager } from '../browser/browser-manager'
-import { browserSessionRegistry } from '../browser/browser-session-registry'
+import { getBrowserKernelWindowDependencies } from '../browser/browser-kernel-window-dependencies'
 import { translateMain } from '../i18n/main-i18n'
 import { normalizeBrowserNavigationUrl } from '../../shared/browser-url'
 import { ORCA_BROWSER_GUEST_WEB_PREFERENCES } from '../../shared/browser-guest-web-preferences'
@@ -216,6 +215,7 @@ export function createMainWindow(
   store: Store | null,
   opts?: CreateMainWindowOptions
 ): BrowserWindow {
+  const { browserManager, isAllowedSessionPartition } = getBrowserKernelWindowDependencies()
   const rawSavedBounds = store?.getUI().windowBounds
   // Why: reject min-size or substantially off-screen bounds so the titlebar stays reachable after display changes.
   const savedBounds =
@@ -447,7 +447,7 @@ export function createMainWindow(
     const partition = typeof webPreferences.partition === 'string' ? webPreferences.partition : ''
 
     // Why: fail closed — deny any src or partition not in the registry allowlist so a renderer bug can't smuggle preload/Node into an unprivileged guest.
-    if (!normalizedSrc || !browserSessionRegistry.isAllowedPartition(partition)) {
+    if (!normalizedSrc || !isAllowedSessionPartition(partition)) {
       event.preventDefault()
       return
     }

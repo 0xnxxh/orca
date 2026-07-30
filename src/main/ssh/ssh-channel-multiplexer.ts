@@ -14,6 +14,7 @@ import {
   type JsonRpcResponse,
   type JsonRpcNotification
 } from './relay-protocol'
+import { recordRemoteRpcRequest } from '../diagnostics/main-thread-churn-probe'
 
 export type MultiplexerTransport = {
   write: (data: Buffer) => void
@@ -216,6 +217,7 @@ export class SshChannelMultiplexer {
         options.signal.addEventListener('abort', onAbort, { once: true })
       }
       this.pendingRequests.set(id, { resolve, reject, timer, cleanup })
+      recordRemoteRpcRequest(method)
       this.sendMessage(msg)
     })
   }

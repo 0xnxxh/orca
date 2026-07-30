@@ -1,6 +1,5 @@
 /* eslint-disable max-lines -- Why: this store owns Codex analytics persistence, scan policy, and renderer query semantics. Keeping them together prevents the Codex range/scope rules from drifting away from the scanner’s event model. */
-import { app } from 'electron'
-import { dirname, join } from 'node:path'
+import { dirname } from 'node:path'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import type {
   CodexUsageBreakdownKind,
@@ -18,6 +17,9 @@ import type { Store } from '../persistence'
 import { loadKnownUsageWorktreesByRepo, type UsageWorktreeRef } from '../usage-worktree-metadata'
 import type { CodexUsagePersistedState } from './types'
 import { createWorktreeRefs, scanCodexUsageFiles } from './scanner'
+import { getCodexUsageFilePath } from './codex-usage-file-path'
+
+export { initCodexUsagePath } from './codex-usage-file-path'
 
 // Why: v5 keys Codex ownership on raw token_count identity without session id
 // so forks that rewrite session_meta still match. Older caches used session-
@@ -25,8 +27,6 @@ import { createWorktreeRefs, scanCodexUsageFiles } from './scanner'
 const SCHEMA_VERSION = 5
 const STALE_MS = 5 * 60_000
 const AUTOMATION_ATTRIBUTION_WINDOW_MS = 5 * 60_000
-
-let _codexUsageFile: string | null = null
 
 type TieredPrice = { threshold: number; price: number }
 type CodexModelPricing = {
@@ -159,17 +159,6 @@ export function normalizePersistedState(state: CodexUsagePersistedState): CodexU
       locationModelBreakdown: session.locationModelBreakdown ?? []
     }))
   }
-}
-
-export function initCodexUsagePath(): void {
-  _codexUsageFile = join(app.getPath('userData'), 'orca-codex-usage.json')
-}
-
-function getCodexUsageFile(): string {
-  if (!_codexUsageFile) {
-    _codexUsageFile = join(app.getPath('userData'), 'orca-codex-usage.json')
-  }
-  return _codexUsageFile
 }
 
 function stripParenthesizedReasoningTier(model: string): string | null {
@@ -374,7 +363,7 @@ export class CodexUsageStore {
 
   private load(): CodexUsagePersistedState {
     try {
-      const usageFile = getCodexUsageFile()
+      const usageFile = getCodexUsageFilePath()
       if (!existsSync(usageFile)) {
         return getDefaultState()
       }
@@ -394,7 +383,7 @@ export class CodexUsageStore {
   }
 
   private writeToDisk(): void {
-    const usageFile = getCodexUsageFile()
+    const usageFile = getCodexUsageFilePath()
     const dir = dirname(usageFile)
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true })

@@ -5,17 +5,15 @@ import type {
   RuntimeRpcResponse
 } from '../../shared/runtime-rpc-envelope'
 import type { RuntimeStatus } from '../../shared/runtime-types'
-import {
-  sendRemoteRuntimeRequest,
-  subscribeRemoteRuntimeRequest,
-  type RemoteRuntimeSubscription
-} from '../../shared/remote-runtime-client'
+import type { RemoteRuntimeSubscription } from '../../shared/remote-runtime-client'
 import { withRemoteRuntimeTailscaleHint } from '../../shared/remote-runtime-tailscale-hint'
 import { enqueueRuntimeCall } from './runtime-environment-call-queue'
 import {
   reconnectRemoteRuntimeSharedControlConnection,
   sendRemoteRuntimeConnectionRequest,
+  sendRemoteRuntimeOneShotRequest,
   sendRemoteRuntimeSharedControlRequest,
+  subscribeRemoteRuntimeDedicatedRequest,
   subscribeRemoteRuntimeSharedControlRequest
 } from './runtime-environment-request-connections'
 import { attachRemoteControlDiagnostics } from './runtime-environment-status-diagnostics'
@@ -40,7 +38,7 @@ export async function getRuntimeEnvironmentStatus(
   const pairing = getPreferredPairingOffer(environment)
   let response: RuntimeRpcResponse<RuntimeStatus>
   try {
-    response = await sendRemoteRuntimeRequest<RuntimeStatus>(
+    response = await sendRemoteRuntimeOneShotRequest<RuntimeStatus>(
       pairing,
       'status.get',
       undefined,
@@ -106,7 +104,7 @@ export async function callRuntimeEnvironment(
       endpoint = pairing.endpoint
       const effectiveTimeoutMs = timeoutMs ?? DEFAULT_REMOTE_RUNTIME_TIMEOUT_MS
       if (envelope) {
-        const response = await sendRemoteRuntimeRequest(
+        const response = await sendRemoteRuntimeOneShotRequest(
           pairing,
           method,
           params,
@@ -144,7 +142,12 @@ export async function callRuntimeEnvironment(
       }
       // Why: startup/control-plane RPCs use the proven one-shot path so repo
       // hydration cannot be coupled to a stale terminal-control connection.
-      const response = await sendRemoteRuntimeRequest(pairing, method, params, effectiveTimeoutMs)
+      const response = await sendRemoteRuntimeOneShotRequest(
+        pairing,
+        method,
+        params,
+        effectiveTimeoutMs
+      )
       markEnvironmentUsedFromResponse(userDataPath, currentEnvironment.id, response)
       return response
     })
@@ -221,7 +224,7 @@ export async function subscribeRuntimeEnvironment(
         callbacksWithMarkUsed
       )
     }
-    return await subscribeRemoteRuntimeRequest(
+    return await subscribeRemoteRuntimeDedicatedRequest(
       pairing,
       method,
       params,

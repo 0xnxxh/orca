@@ -5,7 +5,7 @@
 
 import type { SFTPWrapper } from 'ssh2'
 import type { SshConnection } from './ssh-connection'
-import { writeStringViaSftp } from './sftp-upload'
+import { loadSftpUploadCapability } from './sftp-upload-capability'
 import { uploadDirectory } from './ssh-relay-deploy-helpers'
 import { raceSftpFileTransferWithAbort } from './ssh-file-transfer-abort'
 import {
@@ -65,6 +65,7 @@ export async function writeRelayFile(
       sftpNamespace: options?.sftpNamespace
     })
     options?.signal?.throwIfAborted()
+    const { writeStringViaSftp } = await loadSftpUploadCapability()
     await writeStringViaSftp(sftp, targetPath, contents)
   })
 }

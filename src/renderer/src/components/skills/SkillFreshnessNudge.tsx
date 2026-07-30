@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Terminal } from 'lucide-react'
 import { toast } from 'sonner'
-import { useSkillFreshness } from '@/hooks/useSkillFreshness'
+import { useSkillFreshness } from '@/hooks/skill-freshness'
 import { translate } from '@/i18n/i18n'
 import { useAppStore } from '@/store'
 import { requestSkillFreshnessUpdateDialog } from './skill-freshness-update-dialog'

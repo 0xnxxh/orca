@@ -91,6 +91,20 @@ describe('PR workflow parallelism', () => {
     expect(packageJson.scripts['build:release']).toContain('pnpm run build:web-from-renderer')
   })
 
+  it('checks bundle budgets after the Electron build without rebuilding', () => {
+    const steps = workflow.jobs.package.steps
+    const buildIndex = steps.findIndex((step) => step.name === 'Build package inputs')
+    const budgetIndex = steps.findIndex((step) => step.name === 'Check Electron bundle budgets')
+    const webIndex = steps.findIndex(
+      (step) => step.name === 'Project web client from renderer build'
+    )
+
+    expect(steps[budgetIndex].run).toBe('pnpm run check:electron-bundle-budgets')
+    expect(buildIndex).toBeLessThan(budgetIndex)
+    expect(budgetIndex).toBeLessThan(webIndex)
+    expect(packageJson.scripts['check:electron-bundle-budgets']).not.toContain('build:')
+  })
+
   it('restores the pnpm store before dependency installation', () => {
     const steps = dependencyAction.runs.steps
     const pnpmIndex = steps.findIndex((step) => step.name === 'Setup pnpm')

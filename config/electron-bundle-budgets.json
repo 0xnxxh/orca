@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "entries": {
+    "electron-main": {
+      "maxRawBytes": 825109,
+      "maxJavaScriptFiles": 1,
+      "maxCssFiles": 0
+    },
+    "electron-preload": {
+      "maxRawBytes": 132000,
+      "maxJavaScriptFiles": 1,
+      "maxCssFiles": 0
+    },
+    "renderer-index": {
+      "maxRawBytes": 8466347,
+      "maxJavaScriptFiles": 293,
+      "maxCssFiles": 2
+    },
+    "renderer-popout": {
+      "maxRawBytes": 4537948,
+      "maxJavaScriptFiles": 78,
+      "maxCssFiles": 2
+    },
+    "renderer-web": {
+      "maxRawBytes": 4384876,
+      "maxJavaScriptFiles": 34,
+      "maxCssFiles": 1
+    }
+  }
+}

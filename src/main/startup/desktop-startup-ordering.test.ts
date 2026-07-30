@@ -50,7 +50,7 @@ describe('startup ordering', () => {
     const barrierEnd = source.indexOf("ipcMain.handle(\n  'app:startupDiagnostic'", barrierStart)
     const barrier = source.slice(barrierStart, barrierEnd)
     const reconciliationStart = source.indexOf(
-      'managedWslCliReconciliationReady = reconcileManagedWslCliRegistrations('
+      'managedWslCliReconciliationReady = cliWslStartupCapability'
     )
     const serveStart = source.indexOf('if (serveOptions) {', reconciliationStart)
     const serveReady = source.indexOf('await printServeReady(serveOptions)', serveStart)

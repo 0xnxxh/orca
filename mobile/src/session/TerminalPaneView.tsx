@@ -1,6 +1,7 @@
-import { useCallback } from 'react'
-import { StyleSheet, View } from 'react-native'
+import { useCallback, useEffect, useRef } from 'react'
+import { Platform, StyleSheet, View } from 'react-native'
 import { TerminalWebView } from '../terminal/TerminalWebView'
+import type { MobileTerminalDiagnostics } from './mobile-terminal-diagnostics'
 import type {
   MobileTerminalTheme,
   TerminalKeyboardAvoidanceMetrics,
@@ -15,6 +16,8 @@ type TerminalPaneViewProps = {
   terminalTheme?: MobileTerminalTheme
   textScale: number
   onRef: (handle: string, ref: TerminalWebViewHandle | null) => void
+  diagnostics: MobileTerminalDiagnostics
+  terminalRecordsLoaded: boolean
   onWebReady: (handle: string) => void
   onSelectionMode: (handle: string, active: boolean) => void
   onSelectionCopy: (handle: string, text: string) => void
@@ -37,6 +40,8 @@ export function TerminalPaneView({
   terminalTheme,
   textScale,
   onRef,
+  diagnostics,
+  terminalRecordsLoaded,
   onWebReady,
   onSelectionMode,
   onSelectionCopy,
@@ -51,12 +56,40 @@ export function TerminalPaneView({
   onOpenUrl,
   onTextScaleChange
 }: TerminalPaneViewProps) {
+  const diagnosticsMountLifecycleRef = useRef<
+    ReturnType<MobileTerminalDiagnostics['createWebViewMountLifecycle']> | undefined
+  >(undefined)
+  if (diagnosticsMountLifecycleRef.current === undefined) {
+    diagnosticsMountLifecycleRef.current = diagnostics.createWebViewMountLifecycle()
+  }
   const setRef = useCallback(
     (ref: TerminalWebViewHandle | null) => {
       onRef(handle, ref)
     },
     [handle, onRef]
   )
+
+  useEffect(() => {
+    const lifecycle = diagnosticsMountLifecycleRef.current
+    if (!lifecycle) {
+      return
+    }
+    lifecycle.mounted(active)
+    return lifecycle.unmounted
+  }, [diagnostics])
+
+  useEffect(() => {
+    const lifecycle = diagnosticsMountLifecycleRef.current
+    if (lifecycle) {
+      lifecycle.activityChanged(active)
+      if (terminalRecordsLoaded) {
+        void diagnostics.sampleProcessMemoryOnce(Platform.OS, {
+          terminalRecordsLoaded,
+          renderedTerminalPaneCount: 1
+        })
+      }
+    }
+  }, [active, diagnostics, terminalRecordsLoaded])
 
   return (
     <View
