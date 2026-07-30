@@ -34534,6 +34534,191 @@ describe('OrcaRuntimeService', () => {
     expect(removeWorktreeLineage).not.toHaveBeenCalled()
   })
 
+  it('revalidates missing worktrees before stopping their local provider sessions', async () => {
+    const deletedId = `${TEST_REPO_ID}::/tmp/deleted`
+    const survivingId = `${TEST_REPO_ID}::/tmp/surviving`
+    const localProvider = {
+      listProcesses: vi.fn(async () => [
+        { id: `${deletedId}@@deleted-session`, cwd: '/tmp/deleted', title: 'shell' },
+        { id: `${survivingId}@@surviving-session`, cwd: '/tmp/surviving', title: 'shell' }
+      ]),
+      shutdown: vi.fn(async () => {})
+    }
+    const runtime = new OrcaRuntimeService(store, undefined, {
+      getLocalProvider: () => localProvider as never
+    })
+    vi.spyOn(
+      runtime as unknown as { listDetectedWorktreesForResolvedRepo: () => unknown },
+      'listDetectedWorktreesForResolvedRepo'
+    ).mockResolvedValue({
+      repoId: TEST_REPO_ID,
+      authoritative: true,
+      source: 'git',
+      worktrees: [{ id: survivingId }] as never
+    })
+
+    const result = await runtime.teardownMissingManagedWorktreeTerminals(`id:${TEST_REPO_ID}`, [
+      deletedId,
+      survivingId
+    ])
+
+    expect(result).toEqual({ stoppedWorktreeIds: [deletedId] })
+    expect(localProvider.shutdown).toHaveBeenCalledWith(
+      `${deletedId}@@deleted-session`,
+      expect.objectContaining({ immediate: true })
+    )
+    expect(localProvider.shutdown).not.toHaveBeenCalledWith(
+      `${survivingId}@@surviving-session`,
+      expect.anything()
+    )
+  })
+
+  // Why (#10562): the renderer purges its state regardless of the sweep result, so
+  // revalidating against a cached scan (30s TTL) that still lists an already-deleted
+  // directory would strand those PTYs permanently — nothing asks a second time.
+  it('revalidates against a fresh scan instead of a warm worktree-scan cache', async () => {
+    const deletedId = `${TEST_REPO_ID}::/tmp/deleted`
+    const localProvider = {
+      listProcesses: vi.fn(async () => [
+        { id: `${deletedId}@@deleted-session`, cwd: '/tmp/deleted', title: 'shell' }
+      ]),
+      shutdown: vi.fn(async () => {})
+    }
+    const runtime = new OrcaRuntimeService(store, undefined, {
+      getLocalProvider: () => localProvider as never
+    })
+
+    // Warm the scan cache while the worktree still exists.
+    vi.mocked(listWorktrees).mockResolvedValueOnce([
+      { path: '/tmp/deleted', head: 'abc', branch: 'd', isBare: false, isMainWorktree: false }
+    ])
+    await runtime.teardownMissingManagedWorktreeTerminals(`id:${TEST_REPO_ID}`, [deletedId])
+    expect(localProvider.shutdown).not.toHaveBeenCalled()
+
+    // The worktree is now gone; the cached scan must not mask that.
+    vi.mocked(listWorktrees).mockResolvedValue([])
+    const result = await runtime.teardownMissingManagedWorktreeTerminals(`id:${TEST_REPO_ID}`, [
+      deletedId
+    ])
+
+    expect(result).toEqual({ stoppedWorktreeIds: [deletedId] })
+    expect(localProvider.shutdown).toHaveBeenCalledWith(
+      `${deletedId}@@deleted-session`,
+      expect.objectContaining({ immediate: true })
+    )
+  })
+
+  it('does not stop sessions after a non-authoritative revalidation', async () => {
+    const localProvider = {
+      listProcesses: vi.fn(async () => []),
+      shutdown: vi.fn(async () => {})
+    }
+    const runtime = new OrcaRuntimeService(store, undefined, {
+      getLocalProvider: () => localProvider as never
+    })
+    vi.spyOn(
+      runtime as unknown as { listDetectedWorktreesForResolvedRepo: () => unknown },
+      'listDetectedWorktreesForResolvedRepo'
+    ).mockResolvedValue({
+      repoId: TEST_REPO_ID,
+      authoritative: false,
+      source: 'metadata-fallback',
+      worktrees: []
+    })
+
+    await runtime.teardownMissingManagedWorktreeTerminals(`id:${TEST_REPO_ID}`, [
+      `${TEST_REPO_ID}::/tmp/deleted`
+    ])
+
+    expect(localProvider.listProcesses).not.toHaveBeenCalled()
+  })
+
+  // Why: an explicit connection identity only narrows the selector, it must not
+  // change the grammar. Treating the selector as a bare repo id made every
+  // `path:`/`name:` selector fail repo_not_found on this path alone.
+  it('resolves non-id selectors when a connection identity is supplied', async () => {
+    const deletedId = `${TEST_REPO_ID}::/tmp/deleted`
+    const localProvider = {
+      listProcesses: vi.fn(async () => [
+        { id: `${deletedId}@@deleted-session`, cwd: '/tmp/deleted', title: 'shell' }
+      ]),
+      shutdown: vi.fn(async () => {})
+    }
+    const localRepo = store.getRepos()[0]
+    const runtime = new OrcaRuntimeService(
+      { ...store, getRepos: () => [localRepo, { ...localRepo, connectionId: 'ssh-1' }] } as never,
+      undefined,
+      { getLocalProvider: () => localProvider as never }
+    )
+    vi.spyOn(
+      runtime as unknown as { listDetectedWorktreesForResolvedRepo: () => unknown },
+      'listDetectedWorktreesForResolvedRepo'
+    ).mockResolvedValue({
+      repoId: TEST_REPO_ID,
+      authoritative: true,
+      source: 'git',
+      worktrees: []
+    })
+
+    // `path:` is ambiguous across the two rows; connectionId null selects the local one.
+    const result = await runtime.teardownMissingManagedWorktreeTerminals(
+      `path:${localRepo.path}`,
+      [deletedId],
+      null
+    )
+
+    expect(result).toEqual({ stoppedWorktreeIds: [deletedId] })
+    expect(localProvider.shutdown).toHaveBeenCalledWith(
+      `${deletedId}@@deleted-session`,
+      expect.objectContaining({ immediate: true })
+    )
+  })
+
+  it('uses the connection-scoped repo when local and SSH repo ids collide', async () => {
+    const deletedId = `${TEST_REPO_ID}::/tmp/deleted`
+    const localProvider = {
+      listProcesses: vi.fn(async () => []),
+      shutdown: vi.fn(async () => {})
+    }
+    const sshProvider = {
+      listProcesses: vi.fn(async () => [
+        { id: `${deletedId}@@ssh-session`, cwd: '/tmp/deleted', title: 'shell' }
+      ]),
+      shutdown: vi.fn(async () => {})
+    }
+    const localRepo = store.getRepos()[0]
+    const sshRepo = { ...localRepo, connectionId: 'ssh-1' }
+    const runtime = new OrcaRuntimeService(
+      {
+        ...store,
+        getRepos: () => [localRepo, sshRepo]
+      } as never,
+      undefined,
+      {
+        getLocalProvider: () => localProvider as never,
+        getSshProvider: (connectionId) =>
+          connectionId === 'ssh-1' ? (sshProvider as never) : undefined
+      }
+    )
+    vi.spyOn(
+      runtime as unknown as { listDetectedWorktreesForResolvedRepo: () => unknown },
+      'listDetectedWorktreesForResolvedRepo'
+    ).mockResolvedValue({
+      repoId: TEST_REPO_ID,
+      authoritative: true,
+      source: 'git',
+      worktrees: []
+    })
+
+    await runtime.teardownMissingManagedWorktreeTerminals(TEST_REPO_ID, [deletedId], 'ssh-1')
+
+    expect(sshProvider.shutdown).toHaveBeenCalledWith(
+      `${deletedId}@@ssh-session`,
+      expect.objectContaining({ immediate: true })
+    )
+    expect(localProvider.listProcesses).not.toHaveBeenCalled()
+  })
+
   it('hydrates runtime detected lists with instance-validated legacy lineage', async () => {
     const parentPath = join(tmpdir(), 'worktree-parent')
     const childPath = join(tmpdir(), 'worktree-child')
