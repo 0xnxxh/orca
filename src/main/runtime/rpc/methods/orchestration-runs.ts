@@ -19,7 +19,7 @@ const RunUseParams = z.object({
 const RunCurrentParams = z.object({ from: requiredString('Missing coordinator terminal') })
 const RunListParams = z.object({
   limit: z.number().int().min(1).max(ORCHESTRATION_RUN_PAGE_LIMIT).optional(),
-  cursor: OptionalString
+  cursor: z.string().min(1).optional()
 })
 const RunShowParams = z.object({ id: requiredString('Missing --id'), from: OptionalString })
 
