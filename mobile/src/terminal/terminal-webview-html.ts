@@ -11,6 +11,7 @@ import { TERMINAL_WEBVIEW_THEME_JS } from './terminal-webview-theme-injected'
 import { TERMINAL_QUERY_REPLY_JS } from './terminal-webview-query-reply-injected'
 import { URL_TAP_WEBVIEW_JS } from './terminal-webview-url-tap'
 import { TERMINAL_WEBGL_RECOVERY_JS } from './terminal-webview-webgl-recovery-injected'
+import { TERMINAL_MOUSE_CLICK_DRAG_JS } from './terminal-webview-mouse-click-drag-injected'
 import { TERMINAL_WHEEL_SCROLL_JS } from './terminal-webview-wheel-scroll-injected'
 
 const DEFAULT_TERMINAL_THEME: RuntimeMobileTerminalTheme['theme'] = {
@@ -1640,6 +1641,10 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
   // terminal-webview-wheel-scroll-injected.ts (extracted for max-lines).
   ${TERMINAL_WHEEL_SCROLL_JS}
 
+  // External mouse click/drag: see
+  // terminal-webview-mouse-click-drag-injected.ts (extracted for max-lines).
+  ${TERMINAL_MOUSE_CLICK_DRAG_JS}
+
   btnCopy.addEventListener('click', function(e) {
     e.preventDefault();
     e.stopPropagation();
@@ -1697,6 +1702,7 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
     targetSurface.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); }, true);
 
     attachSurfaceWheelHandler(targetSurface);
+    attachSurfaceMouseClickDragHandler(targetSurface);
 
     targetSurface.addEventListener('touchstart', function(e) {
       if (dispatcherShouldBlockSurface()) return;
