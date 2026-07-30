@@ -24,6 +24,7 @@ import { prepareLocalWorktreeRootsForRepos } from '../worktree-root-preparation'
 import { scheduleCurrentWorktreeBaseDirectoryWatcherSync } from './worktree-base-directory-watcher'
 import { applyPRBotAuthorOverride } from '../../shared/pr-bot-author-overrides'
 import { resolveEnvironment } from '../../shared/runtime-environment-store'
+import { haveSameDisabledTuiAgents } from '../../shared/tui-agent-selection'
 
 // Why: the whitelist is the source-of-truth for which keys we emit on. Casting
 // to a Set once at module load lets the IPC handler's per-key membership
@@ -153,7 +154,7 @@ export function registerSettingsHandlers(
       ('agentStatusHooksEnabled' in sanitizedArgs &&
         before.agentStatusHooksEnabled !== result.agentStatusHooksEnabled) ||
       ('disabledTuiAgents' in sanitizedArgs &&
-        before.disabledTuiAgents !== result.disabledTuiAgents)
+        !haveSameDisabledTuiAgents(before.disabledTuiAgents, result.disabledTuiAgents))
     if (hookSettingChanged) {
       try {
         await applyAgentStatusHooksEnabled(result.agentStatusHooksEnabled, result, {

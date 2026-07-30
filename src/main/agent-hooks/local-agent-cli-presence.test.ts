@@ -136,6 +136,34 @@ describe('detectLocalManagedAgentCliPresence', () => {
     expect(result.codex?.state).toBe('found')
   })
 
+  it('warns and uses the inherited PATH when shell hydration throws', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const result = await detectLocalManagedAgentCliPresence(
+        [codexTarget],
+        { agentCmdOverrides: {} },
+        {
+          pathEnv: '',
+          pathDelimiter: ':',
+          fileProbe: { isExecutableFile: vi.fn(async () => false) },
+          platform: 'linux',
+          shouldHydrateShellPath: true,
+          hydratePath: vi.fn(async () => {
+            throw new Error('shell unavailable')
+          })
+        }
+      )
+
+      expect(result.codex?.state).toBe('missing')
+      expect(warning).toHaveBeenCalledWith(
+        '[agent-hooks] Shell PATH hydration failed; using inherited PATH:',
+        expect.objectContaining({ message: 'shell unavailable' })
+      )
+    } finally {
+      warning.mockRestore()
+    }
+  })
+
   it.runIf(process.platform !== 'win32')(
     'accepts executable symlinks and rejects broken symlinks',
     async () => {

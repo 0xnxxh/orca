@@ -136,8 +136,9 @@ async function maybeHydrateShellPath(options: DetectOptions): Promise<void> {
     if (result.ok) {
       mergePathSegments(result.segments)
     }
-  } catch {
+  } catch (error) {
     // Detection failure must never permit config mutation.
+    console.warn('[agent-hooks] Shell PATH hydration failed; using inherited PATH:', error)
   }
 }
 
