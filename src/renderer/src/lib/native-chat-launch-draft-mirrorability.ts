@@ -14,5 +14,5 @@
  * predicate to accept multi-line flips seeding and view mode together.
  */
 export function canMirrorLaunchDraftToNativeChat(text: string): boolean {
-  return text.trim().length > 0 && !text.includes('\n')
+  return text.trim().length > 0 && !/[\r\n\u2028\u2029]/.test(text)
 }

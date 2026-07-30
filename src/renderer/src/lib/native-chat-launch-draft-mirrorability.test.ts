@@ -22,6 +22,9 @@ import { decideInitialAgentTabViewMode } from './native-chat-initial-view-mode'
 const DRAFT_TEXTS = [
   'https://github.com/o/r/issues/12',
   'Reproduce on Windows first\n\nhttps://github.com/o/r/issues/12',
+  'Reproduce on Windows first\rhttps://github.com/o/r/issues/12',
+  'Reproduce first\u2028https://github.com/o/r/issues/12',
+  'Reproduce first\u2029https://github.com/o/r/issues/12',
   'ORC-123: Restore linked quick-create\nhttps://linear.app/o/issue/ORC-123',
   'ORC-123 https://linear.app/o/issue/ORC-123\n',
   '  spaced but single line  ',
@@ -68,9 +71,12 @@ describe('launch draft mirrorability', () => {
 
   // The only test that pins the rule itself; the agreement tests above adapt on
   // their own. Multi-line send work updates the predicate body and this test.
-  it('accepts single-line text and rejects anything with a newline', () => {
+  it('accepts single-line text and rejects any line separator', () => {
     expect(canMirrorLaunchDraftToNativeChat('https://github.com/o/r/issues/12')).toBe(true)
     expect(canMirrorLaunchDraftToNativeChat('one\ntwo')).toBe(false)
+    expect(canMirrorLaunchDraftToNativeChat('one\rtwo')).toBe(false)
+    expect(canMirrorLaunchDraftToNativeChat('one\u2028two')).toBe(false)
+    expect(canMirrorLaunchDraftToNativeChat('one\u2029two')).toBe(false)
     expect(canMirrorLaunchDraftToNativeChat('trailing\n')).toBe(false)
     expect(canMirrorLaunchDraftToNativeChat('   ')).toBe(false)
   })

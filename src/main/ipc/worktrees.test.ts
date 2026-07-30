@@ -1134,6 +1134,7 @@ describe('registerWorktreeHandlers', () => {
       startup: {
         command: 'claude --prefill test',
         env: { ORCA_AGENT_MODE: 'direct' },
+        viewMode: 'chat',
         telemetry: {
           agent_kind: 'claude',
           launch_source: 'new_workspace_composer',
@@ -1154,6 +1155,7 @@ describe('registerWorktreeHandlers', () => {
         command: 'claude --prefill test',
         env: { ORCA_AGENT_MODE: 'direct' },
         launchAgent: 'claude',
+        viewMode: 'chat',
         startupCommandDelivery: undefined,
         telemetry: {
           agent_kind: 'claude',

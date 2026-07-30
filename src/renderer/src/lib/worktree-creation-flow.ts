@@ -26,6 +26,7 @@ import type {
 } from '@/lib/pending-worktree-creation'
 import { createBrowserUuid } from '@/lib/browser-uuid'
 import { seedAgentTabStateAfterWorktreeCreate } from '@/lib/worktree-creation-agent-seeds'
+import { resolveBackendDraftStartup } from '@/lib/worktree-draft-startup-view-mode'
 
 type ContinueBackgroundWorktreeCreationOptions = {
   revealCreationSurface?: boolean
@@ -141,6 +142,7 @@ async function executeWorktreeCreation(
 
   let result: CreateWorktreeResult
   try {
+    const backendStartup = resolveBackendDraftStartup(preparedRequest)
     result = await useAppStore
       .getState()
       .createWorktree(
@@ -160,7 +162,7 @@ async function executeWorktreeCreation(
         preparedRequest.workspaceStatus,
         preparedRequest.linkedGitLabMR,
         preparedRequest.linkedGitLabIssue,
-        preparedRequest.startup,
+        backendStartup,
         preparedRequest.pendingFirstAgentMessageRename,
         creationId,
         preparedRequest.linkedLinearIssueWorkspaceId,
