@@ -101,6 +101,14 @@ export const TERMINAL_MOUSE_CLICK_DRAG_JS = `
     targetSurface.addEventListener('pointerdown', function(e) {
       if (e.pointerType !== 'mouse' || e.button !== 0) return;
       if (dispatcherShouldBlockSurface() || !term) return;
+      // Why: a pointerup lost outside the WebView must not leave the previous
+      // gesture latched (tracking press with no release) when the next one lands.
+      if (mouseGesture) abandonMouseGesture();
+      // Why: mouse pointers have no implicit capture; without it a drag that
+      // leaves the surface drops pointermove/pointerup and strands the gesture.
+      try {
+        if (targetSurface.setPointerCapture) targetSurface.setPointerCapture(e.pointerId);
+      } catch (err) {}
       mouseGesture = {
         startX: e.clientX, startY: e.clientY,
         lastX: e.clientX, lastY: e.clientY,
