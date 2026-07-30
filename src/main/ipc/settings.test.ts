@@ -149,6 +149,32 @@ describe('registerSettingsHandlers', () => {
     expect(applyAgentStatusHooksEnabledMock).not.toHaveBeenCalled()
   })
 
+  it('reconciles hooks when the disabled-agent set changes', async () => {
+    const before = {
+      agentStatusHooksEnabled: true,
+      disabledTuiAgents: ['codex', 'claude']
+    }
+    const updated = {
+      ...before,
+      disabledTuiAgents: ['claude']
+    }
+    store.getSettings.mockReturnValue(before)
+    store.updateSettings.mockReturnValue(updated)
+    registerSettingsHandlers(store as never)
+    const handler = handleMock.mock.calls.find((call) => call[0] === 'settings:set')?.[1] as (
+      event: typeof settingsInvokeEvent,
+      args: { disabledTuiAgents: string[] }
+    ) => Promise<unknown>
+
+    await handler(settingsInvokeEvent, { disabledTuiAgents: ['claude'] })
+
+    expect(applyAgentStatusHooksEnabledMock).toHaveBeenCalledWith(
+      true,
+      updated,
+      expect.objectContaining({ shouldContinue: expect.any(Function) })
+    )
+  })
+
   it('rejects durable Active Server writes through generic settings:set', async () => {
     store.getSettings.mockReturnValue({ activeRuntimeEnvironmentId: null })
     store.updateSettings.mockReturnValue({ activeRuntimeEnvironmentId: null })
