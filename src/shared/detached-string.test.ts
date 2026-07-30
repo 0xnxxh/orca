@@ -20,21 +20,13 @@ describe('detachString', () => {
     expect(detachString(value)).toBe(value)
   })
 
-  // Why the control arm: V8 only builds a SlicedString when the result is at
-  // least SlicedString::kMinLength (13) chars; shorter slices are already
-  // copied flat. A retention assertion over a short result therefore passes
-  // with or without detachString and proves nothing. Measuring the raw slice
-  // in the same run makes the test fail if that premise ever stops holding.
-  //
-  // resolveForcedGc works without --expose-gc, so this guard runs under the
-  // plain `vitest run` CI uses instead of silently skipping.
+  // A ≥13-char raw control arm proves both SlicedString retention and default-run GC.
   const forcedGc = resolveForcedGc()
   const itWithGc = forcedGc ? it : it.skip
   itWithGc('detaches a slice from its parent buffer', () => {
     const chunkChars = 16 * 1024
     const slices = 4096
     const forceGc = createForceGc(forcedGc!)
-    // Comfortably over kMinLength so the untouched slice really is a SlicedString.
     const measure = (detach: boolean): number => {
       const held: string[] = []
       forceGc()
@@ -52,7 +44,6 @@ describe('detachString', () => {
 
     const attachedMiB = measure(false)
     const detachedMiB = measure(true)
-    // ~128 MiB of parents stay alive when the slices are left attached.
     expect(attachedMiB).toBeGreaterThan(16)
     expect(detachedMiB).toBeLessThan(attachedMiB / 8)
   })

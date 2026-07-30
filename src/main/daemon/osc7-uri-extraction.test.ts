@@ -33,9 +33,7 @@ describe('OSC-7 URI extraction', () => {
     expect(execSpy).not.toHaveBeenCalled()
   })
 
-  // The tail is parked per-PTY (orca-runtime osc7ScanTailByPtyId) and per
-  // daemon scanner until the next chunk, so an attached slice pins one whole
-  // source chunk per tracked PTY.
+  // Production persists one scan tail per PTY and daemon scanner.
   const forcedGc = resolveForcedGc()
   const itWithGc = forcedGc ? it : it.skip
   itWithGc('does not pin the source chunk behind a carried OSC scan tail', () => {
@@ -46,7 +44,6 @@ describe('OSC-7 URI extraction', () => {
     const before = process.memoryUsage().heapUsed
     const carried = new Map<string, string>()
     for (let index = 0; index < ptys; index += 1) {
-      // No terminator yet, so the tail is carried to the next chunk.
       const chunk = `${'x'.repeat(chunkChars)}\x1b]7;file://host/Users/dev/orca/wt-${index}`
       carried.set(`pty-${index}`, extractOscScanTail(chunk, 4096))
     }
@@ -54,7 +51,6 @@ describe('OSC-7 URI extraction', () => {
     const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
 
     expect(carried.get('pty-0')).toBe('\x1b]7;file://host/Users/dev/orca/wt-0')
-    // 8 MiB of source chunks stay alive if the tails are still attached.
     expect(retainedMiB).toBeLessThan(2)
   })
 })

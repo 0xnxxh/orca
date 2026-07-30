@@ -46,9 +46,7 @@ function isReplyElicitingCsi(sequence: string): boolean {
   )
 }
 
-// Detached: the returned pending prefix is parked in per-stream scan state
-// until the next chunk, so an attached slice would pin a whole PTY chunk for
-// every buffering terminal stream.
+// Persisted query prefixes must not retain their source PTY chunks.
 function boundedPending(input: string, startIndex: number): string {
   return detachString(input.slice(startIndex, startIndex + MAX_PENDING_QUERY_CHARS))
 }

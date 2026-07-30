@@ -141,9 +141,7 @@ function containsRewriteEraseSequence(data: string): boolean {
   return false
 }
 
-// Detached: callers park this tail in per-pane closure state (foreground/hidden
-// RewriteCsiScanTail in pty-connection.ts) until the next chunk, so an attached
-// slice pins a whole PTY chunk per open pane.
+// Persisted per-pane rewrite tails must not retain their source PTY chunks.
 function trailingIncompleteRewriteCsiTail(data: string): string {
   const escapeIndex = data.lastIndexOf(ESCAPE_CHARACTER)
   if (escapeIndex === -1) {

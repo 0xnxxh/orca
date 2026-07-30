@@ -21,10 +21,10 @@ import { createTerminalZeroDimensionsMessage } from '../../../../shared/terminal
 import { isWorktreeRemovalFenceError } from '../../../../shared/worktree-removal-fence-error'
 import { parseTerminalOscColorQuery } from '../../../../shared/terminal-osc-color-reply'
 import {
-  HIDDEN_STARTUP_RENDERER_QUERY_PENDING_CHARS,
   containsCsiRendererQuery,
   containsStatefulRendererQuery,
   extractHiddenStartupRendererQueryData,
+  extractHiddenStartupRendererQueryPending,
   findCsiFinalByteIndex,
   isStatefulRendererReplyCsiQuery,
   isStatelessRendererReplyCsiQuery
@@ -5224,8 +5224,7 @@ export function connectPanePty(
           return ''
         }
       }
-      // Detached: this tail is parked per pane until the next chunk, so an
-      // attached slice would pin a whole PTY chunk for the pane's lifetime.
+      // Persisted per-pane tails must not retain their source PTY chunks.
       return detachString(tail.slice(-TERMINAL_RENDERER_RISK_SCAN_TAIL_CHARS))
     }
 
@@ -6260,7 +6259,7 @@ export function connectPanePty(
       if (input.startsWith('\x1b[')) {
         const finalByteIndex = findCsiFinalByteIndex(input, 2)
         if (finalByteIndex === -1) {
-          nextPending = input.slice(0, HIDDEN_STARTUP_RENDERER_QUERY_PENDING_CHARS)
+          nextPending = extractHiddenStartupRendererQueryPending(input, 0)
           consumedInputChars = input.length
         } else {
           const sequence = input.slice(0, finalByteIndex + 1)
@@ -6274,7 +6273,7 @@ export function connectPanePty(
       } else if (input.startsWith('\x1b]')) {
         const query = parseTerminalOscColorQuery(input, 0)
         if (query.kind === 'partial') {
-          nextPending = input.slice(0, HIDDEN_STARTUP_RENDERER_QUERY_PENDING_CHARS)
+          nextPending = extractHiddenStartupRendererQueryPending(input, 0)
           consumedInputChars = input.length
         } else if (query.kind === 'match') {
           oscColorQueryData = input.slice(0, query.endIndex)

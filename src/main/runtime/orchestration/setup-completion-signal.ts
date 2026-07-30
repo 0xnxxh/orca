@@ -67,8 +67,7 @@ export function createSetupCompletionScanner(
           return
         }
       }
-      // Detached: the carry is held per running setup until its next chunk, so
-      // an attached slice would pin a whole setup-output chunk each.
+      // Persisted setup carries must not retain their source output chunks.
       carry = detachString(combined.slice(-SETUP_COMPLETION_CARRY_LENGTH))
     }
   }

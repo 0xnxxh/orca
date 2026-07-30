@@ -62,9 +62,7 @@ export function createDraftPasteReadyScanner(readySignal: DraftPasteReadySignal)
   return {
     observe(data: string): DraftPasteReadyScanResult {
       const combined = recent + data
-      // Detached: both rings survive until the next chunk (and past settle, until
-      // the scanner itself is dropped), so an attached slice would pin a whole
-      // PTY chunk per waiting pane instead of the 512 chars the ring promises.
+      // Persisted scanner rings must not retain their source PTY chunks.
       recent = detachString(combined.slice(-RING_CHARS))
       if (!saw2004) {
         const markerIndex = combined.indexOf(DECSET_BRACKETED_PASTE)

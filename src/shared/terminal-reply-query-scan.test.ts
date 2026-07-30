@@ -40,13 +40,7 @@ describe('terminal reply query scan', () => {
     expect(second.queries).toEqual([])
   })
 
-  // The pending prefix is parked in per-stream scan state until the next chunk
-  // for the whole mobile-stream buffering window, so an attached slice pins a
-  // whole PTY chunk per buffering stream.
-  //
-  // Why the pending prefix is long: V8 only builds a SlicedString past
-  // SlicedString::kMinLength (13 chars); a shorter one is already copied flat
-  // and would make this assertion pass with or without the detach.
+  // The ≥13-char control arm proves detachment for one persisted mobile-stream query.
   const splitQueryPrefix = '\x1b[?1049;2004;2026'
   const forcedGc = resolveForcedGc()
   const itWithGc = forcedGc ? it : it.skip
@@ -60,9 +54,6 @@ describe('terminal reply query scan', () => {
     const states = Array.from(
       { length: streams },
       (_unused, index) =>
-        // A distinct chunk per stream, each ending mid-CSI so the partial query
-        // is carried. Sharing one chunk would leave a single parent alive and
-        // make the assertion pass whether or not the pending prefix is detached.
         scanTerminalReplyQuerySequences(
           `${'x'.repeat(chunkChars)}pty-${index}${splitQueryPrefix}`,
           0,
@@ -72,7 +63,6 @@ describe('terminal reply query scan', () => {
     forceGc()
     const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
 
-    // The pending prefix must still assemble the query across the boundary.
     const pendingStartSeq = states[0]!.pendingStartSeq!
     const resumed = scanTerminalReplyQuerySequences(
       '$p',
@@ -86,7 +76,6 @@ describe('terminal reply query scan', () => {
         endSeq: pendingStartSeq + splitQueryPrefix.length + 2
       }
     ])
-    // 8 MiB of source chunks stay alive if the pending prefixes are attached.
     expect(retainedMiB).toBeLessThan(2)
   })
 })

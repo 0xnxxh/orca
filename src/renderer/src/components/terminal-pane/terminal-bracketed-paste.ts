@@ -99,8 +99,7 @@ export function observeTerminalBracketedPasteModeOutput(
     return
   }
   const combined = (bracketedPasteModeOutputTail.get(terminal) ?? '') + data
-  // Detached: this tail is parked in a per-terminal WeakMap until the pane sees
-  // a 2004 toggle, so an attached slice pins a whole PTY chunk per interrupted pane.
+  // Persisted per-terminal tails must not retain their source PTY chunks.
   bracketedPasteModeOutputTail.set(
     terminal,
     detachString(combined.slice(-BRACKETED_PASTE_MODE_TAIL_MAX))

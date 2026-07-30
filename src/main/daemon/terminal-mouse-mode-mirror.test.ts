@@ -34,8 +34,7 @@ describe('TerminalMouseModeMirror', () => {
     expect(mirror.sgrMousePixelsMode).toBe(false)
   })
 
-  // One mirror per daemon session holds the scan tail until the next chunk, so
-  // an attached slice pins a whole PTY chunk per live session.
+  // Production persists one scan tail per daemon session.
   const forcedGc = resolveForcedGc()
   const itWithGc = forcedGc ? it : it.skip
   itWithGc('does not pin the source chunk behind a carried private-mode tail', () => {
@@ -46,18 +45,15 @@ describe('TerminalMouseModeMirror', () => {
     const before = process.memoryUsage().heapUsed
     const mirrors = Array.from({ length: sessions }, () => {
       const mirror = new TerminalMouseModeMirror()
-      // Ends mid-DECSET, so the params tail is carried into the next chunk.
       mirror.scan(`${'x'.repeat(chunkChars)}\x1b[?1002;1006;100`)
       return mirror
     })
     forceGc()
     const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
 
-    // The carry must still complete the split DECSET across the boundary.
     mirrors[0]!.scan('3h')
     expect(mirrors[0]!.mouseTrackingMode).toBe('any')
     expect(mirrors[0]!.sgrMouseMode).toBe(true)
-    // 8 MiB of source chunks stay alive if the tails are still attached.
     expect(retainedMiB).toBeLessThan(2)
   })
 })

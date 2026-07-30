@@ -4,10 +4,7 @@ const OSC_TITLE_SCAN_TAIL_LIMIT = 4096
 const OSC_TITLE_PREFIX_LENGTH = 4
 const OSC_TITLE_CODES = new Set(['0', '1', '2'])
 
-// Callers park the returned tail in a per-PTY map until the next chunk
-// arrives. The non-empty tails are slices of the raw chunk, so they are
-// detached (see trimOscTitleScanTail) — otherwise each carried tail would pin
-// a whole source chunk for as long as its PTY stays tracked.
+// Persisted per-PTY tails must not retain their source chunks.
 export function extractOscTitleScanTail(input: string): string {
   const lastOsc = input.lastIndexOf('\x1b]')
   if (lastOsc !== -1) {

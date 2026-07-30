@@ -67,10 +67,7 @@ export function extractLastOsc7Uri(data: string): string | null {
   return lastUri
 }
 
-// Callers park this tail until the next chunk arrives — osc7ScanTailByPtyId in
-// orca-runtime.ts, TerminalOscCwdTitleScanner.scanTail in the daemon — so the
-// returned slice is detached; otherwise each carried tail pins a whole source
-// chunk for as long as its PTY or scanner stays alive.
+// Persisted scan tails must not retain their source PTY chunks.
 export function extractOscScanTail(input: string, limit: number): string {
   const lastOsc = input.lastIndexOf('\x1b]')
   const lastEscape = input.endsWith('\x1b') ? input.length - 1 : -1

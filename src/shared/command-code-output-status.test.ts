@@ -464,8 +464,7 @@ describe('terminal control stripping', () => {
     }
   })
 
-  // Every pane runs this detector (the ring is written before the Command Code
-  // early-out), so an attached ring pins one whole PTY chunk per open pane.
+  // Every pane persists this ring before Command Code detection.
   const forcedGc = resolveForcedGc()
   const itWithGc = forcedGc ? it : it.skip
   itWithGc('does not pin the source chunk behind the recent raw-text ring', () => {
@@ -484,7 +483,6 @@ describe('terminal control stripping', () => {
     const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
 
     expect(detectors).toHaveLength(panes)
-    // ~8 MiB of source chunks stay alive if the rings are still attached.
     expect(retainedMiB).toBeLessThan(2)
   })
 })

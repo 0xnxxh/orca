@@ -190,11 +190,7 @@ export function normalizeInteractivePromptField(
   if (typeof value !== 'string' || value.length === 0) {
     return undefined
   }
-  // Why detach: this field is cached in the store, so an over-cap value's
-  // truncated slice would otherwise pin the whole original string.
-  // Why only when truncation happened: an under-cap value is returned by
-  // identity, is already flat (JSON.parse / JSON.stringify output), and pins
-  // nothing — detaching it would copy the payload on every hook event.
+  // Only truncated values can retain oversized payloads; preserve hot-path identity otherwise.
   const truncated = truncatePreservingSurrogates(value, maxLength)
   if (truncated.length === 0) {
     return undefined

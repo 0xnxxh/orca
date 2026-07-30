@@ -30,13 +30,7 @@ describe('extractHiddenStartupRendererQueryData', () => {
     expect(pending.length).toBe(HIDDEN_STARTUP_RENDERER_QUERY_PENDING_CHARS)
   })
 
-  // `pending` is parked per pane (hiddenStartupRendererQueryPending in
-  // pty-connection.ts) until the next chunk, so an attached slice pins a whole
-  // PTY chunk per open pane.
-  //
-  // Why the split CSI is long: V8 only builds a SlicedString past
-  // SlicedString::kMinLength (13 chars); a shorter prefix is already copied
-  // flat and would make this assertion pass with or without the detach.
+  // The ≥13-char control arm proves detachment for one persisted query per pane.
   const splitCsi = '\x1b[?1049;2004;2026'
   const forcedGc = resolveForcedGc()
   const itWithGc = forcedGc ? it : it.skip
@@ -50,8 +44,6 @@ describe('extractHiddenStartupRendererQueryData', () => {
     const pendings = Array.from(
       { length: panes },
       (_unused, index) =>
-        // A distinct chunk per pane, each ending mid-CSI. Sharing one chunk
-        // would leave a single parent alive and pass either way.
         extractHiddenStartupRendererQueryData(
           `${'x'.repeat(chunkChars)}pane-${index}${splitCsi}`,
           ''
@@ -60,12 +52,10 @@ describe('extractHiddenStartupRendererQueryData', () => {
     forceGc()
     const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
 
-    // The pending prefix must still assemble the query across the boundary.
     expect(pendings[0]).toBe(splitCsi)
     expect(extractHiddenStartupRendererQueryData('$p', pendings[0]!).statefulQueryData).toBe(
       `${splitCsi}$p`
     )
-    // 8 MiB of source chunks stay alive if the pending prefixes are attached.
     expect(retainedMiB).toBeLessThan(2)
   })
 })

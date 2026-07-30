@@ -406,13 +406,7 @@ describe('nativeWindowsRewriteNeedsFollowupRenderRefresh', () => {
   })
 })
 
-// The rewrite-CSI scan tail is parked in per-pane closure state
-// (foreground/hiddenRewriteCsiScanTail in pty-connection.ts) until the next
-// chunk, so an attached slice pins a whole PTY chunk per open pane.
-//
-// Why the split CSI is long: V8 only builds a SlicedString past
-// SlicedString::kMinLength (13 chars); a shorter tail is already copied flat
-// and would make this assertion pass with or without the detach.
+// The ≥13-char control arm proves detachment for one persisted rewrite tail per pane.
 describe('rewrite CSI scan tail retention', () => {
   const splitCsi = '\x1b[1;2;3;4;5;6;7;8;9'
   const forcedGc = resolveForcedGc()
@@ -427,8 +421,6 @@ describe('rewrite CSI scan tail retention', () => {
     const tails = Array.from(
       { length: panes },
       (_unused, index) =>
-        // A distinct chunk per pane, each ending mid-CSI. Sharing one chunk
-        // would leave a single parent alive and pass either way.
         terminalRewriteOutputRenderRefreshDecision(
           `${'x'.repeat(chunkChars)}pane-${index}${splitCsi}`,
           { previousChunkEndsWithCarriageReturn: false, previousRewriteCsiScanTail: '' }
@@ -437,7 +429,6 @@ describe('rewrite CSI scan tail retention', () => {
     forceGc()
     const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
 
-    // The tail must still complete the erase sequence across the boundary.
     expect(tails[0]).toBe(splitCsi)
     expect(
       terminalRewriteOutputRenderRefreshDecision('K', {
@@ -445,7 +436,6 @@ describe('rewrite CSI scan tail retention', () => {
         previousRewriteCsiScanTail: tails[0]!
       }).prefersRenderRefresh
     ).toBe(true)
-    // 8 MiB of source chunks stay alive if the carried tails are attached.
     expect(retainedMiB).toBeLessThan(2)
   })
 })

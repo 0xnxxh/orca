@@ -137,10 +137,7 @@ function rawTextMayContainCommandCodeBanner(rawText: string): boolean {
   return rawText.includes('C') && rawText.includes('o') && rawText.includes('d')
 }
 
-// Detached: every pane parks this ring until its next chunk (the detector runs
-// before the Command Code early-out), so an attached slice pins a whole PTY
-// chunk per pane. The empty-prefix case matters too: V8 returns `data` itself
-// from `'' + data`, so that branch slices the raw chunk as well.
+// Every pane persists this ring before Command Code detection.
 function appendRecentRawText(previousRawText: string, data: string): string {
   if (data.length >= RECENT_TEXT_LIMIT) {
     return detachString(data.slice(-RECENT_TEXT_LIMIT))

@@ -11,6 +11,7 @@ import {
 } from '../../shared/agent-detection'
 import { detachString } from '../../shared/detached-string'
 import { extractOscTitleScanTail } from '../../shared/osc-title-scan-tail'
+import { retainTerminalPendingAnsi } from './terminal-pending-ansi'
 import { isServerDriveListRequest, listWindowsDrives } from './windows-drive-listing'
 import { extractLastOsc7Uri, extractOscScanTail } from '../daemon/osc7-uri-extraction'
 import { parseFileUriPathParts } from '../daemon/osc7-file-uri'
@@ -8927,8 +8928,7 @@ export class OrcaRuntimeService {
     }
     const appendedLower = appendedText.toLowerCase()
     const keywordHit = WAIT_BLOCKED_KEYWORD_PATTERN.test(`${state.keywordCarry}${appendedLower}`)
-    // Detached: keywordCarry is parked per PTY until the next chunk, so an
-    // attached slice would pin the whole lowercased chunk per tracked PTY.
+    // Persisted keyword carries must not retain their source PTY chunks.
     state.keywordCarry = detachString(appendedLower.slice(-WAIT_BLOCKED_KEYWORD_CARRY_CHARS))
     // Why the cap keeps the tail: the accumulated text only anchors boundary-
     // spanning prompt detection; anything past the tail cap has scrolled out
@@ -32477,7 +32477,6 @@ const WAIT_BLOCKED_KEYWORD_CARRY_CHARS = 31
 const MAX_TAIL_LINES = 2000
 const MAX_TAIL_CHARS = 256 * 1024
 const MAX_TAIL_PARTIAL_CHARS = 4000
-const MAX_TAIL_PENDING_ANSI_CHARS = 4096
 const DEFAULT_TERMINAL_READ_LIMIT = 120
 const MAX_TERMINAL_READ_LIMIT = 2000
 const MAX_TERMINAL_PREVIEW_CHARS = 32 * 1024
@@ -34693,13 +34692,16 @@ function normalizeTerminalChunk(
     if (char === '\x1b') {
       appendTerminalNormalizedSpan(parts, combined, textStart, index)
       if (index + 1 >= combined.length) {
-        return { text: parts.join(''), pendingAnsi: combined.slice(index) }
+        return {
+          text: parts.join(''),
+          pendingAnsi: retainTerminalPendingAnsi(combined.slice(index))
+        }
       }
       const parsed = parseAnsiControlSequence(combined, index)
       if (!parsed) {
         return {
           text: parts.join(''),
-          pendingAnsi: trimPendingAnsiControl(combined.slice(index))
+          pendingAnsi: retainTerminalPendingAnsi(combined.slice(index))
         }
       }
       if (parsed.kind === 'csi' && isTerminalPreviewLineControl(parsed)) {
@@ -34761,15 +34763,6 @@ function terminalChunkNeedsNormalization(chunk: string): boolean {
     }
   }
   return false
-}
-
-function trimPendingAnsiControl(value: string): string {
-  if (value.length <= MAX_TAIL_PENDING_ANSI_CHARS) {
-    return value
-  }
-  const introducer = value.slice(0, Math.min(2, value.length))
-  const suffixBudget = Math.max(0, MAX_TAIL_PENDING_ANSI_CHARS - introducer.length)
-  return `${introducer}${value.slice(-suffixBudget)}`
 }
 
 function isTerminalPreviewLineControl(parsed: {

@@ -61,9 +61,7 @@ function parseOscTitleAt(data: string, index: number): OscTitleParseResult {
 function readBoundedOscTitle(data: string, titleStart: number, titleEnd: number): string {
   // Why: PTY output can contain pasted or remote-controlled OSC titles; keep
   // downstream title detection bounded while preserving trailing status words.
-  // Why detach here: titles outlive their chunk in pane/tab state, and a raw
-  // slice would pin the whole PTY chunk. Detaching at the extraction boundary
-  // means no consumer can bypass it.
+  // Extracted titles must not retain their source PTY chunks.
   const length = titleEnd - titleStart
   if (length <= MAX_OSC_TITLE_CHARS) {
     return detachString(data.slice(titleStart, titleEnd))

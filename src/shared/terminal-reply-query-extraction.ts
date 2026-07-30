@@ -16,10 +16,8 @@ export type ExtractedRendererQueryData = {
   pending: string
 }
 
-// Detached: callers park `pending` until the next chunk — one per pane in the
-// renderer (hiddenStartupRendererQueryPending, pty-connection.ts) — so an
-// attached slice would pin a whole PTY chunk for as long as the pane lives.
-function detachedQueryPending(input: string, start: number): string {
+// Pending query state must not retain the source PTY chunk.
+export function extractHiddenStartupRendererQueryPending(input: string, start: number): string {
   return detachString(input.slice(start, start + HIDDEN_STARTUP_RENDERER_QUERY_PENDING_CHARS))
 }
 
@@ -53,7 +51,7 @@ export function extractHiddenStartupRendererQueryData(
           statelessQueryData,
           statefulQueryData,
           oscColorQueryData,
-          pending: detachedQueryPending(input, candidateIndex)
+          pending: extractHiddenStartupRendererQueryPending(input, candidateIndex)
         }
       }
       const sequence = input.slice(candidateIndex, finalByteIndex + 1)
@@ -73,7 +71,7 @@ export function extractHiddenStartupRendererQueryData(
           statelessQueryData,
           statefulQueryData,
           oscColorQueryData,
-          pending: detachedQueryPending(input, candidateIndex)
+          pending: extractHiddenStartupRendererQueryPending(input, candidateIndex)
         }
       }
       if (query.kind === 'none') {

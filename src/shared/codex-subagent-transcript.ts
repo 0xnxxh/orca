@@ -78,9 +78,7 @@ function readJsonlCursor(cursor: JsonlCursor): JsonRecord[] | undefined {
   const content = `${skippedPrefix ? '' : cursor.carry}${buffer.toString('utf8', 0, bytesRead)}`
   const lines = content.split('\n')
   cursor.offset = start + bytesRead
-  // Detached: `split` yields slices of the up-to-1 MiB read buffer, and this
-  // carry is parked per cursor (one per pane, plus one per tracked subagent, in
-  // codexSubagentTranscriptByPaneKey) until the next poll.
+  // Persisted cursor carries must not retain the transcript read buffer.
   cursor.carry = detachString(lines.pop() ?? '')
   if (skippedPrefix) {
     lines.shift()

@@ -93,8 +93,7 @@ export class TerminalMouseModeMirror {
     }
   }
 
-  // Detached: one mirror per daemon session holds this tail until the next
-  // chunk, so an attached slice pins a whole PTY chunk per live session.
+  // Persisted per-session tails must not retain their source PTY chunks.
   private extractScanTail(input: string): string {
     const start = Math.max(input.lastIndexOf('\x1b'), input.lastIndexOf('\x9b'))
     if (start === -1) {

@@ -293,9 +293,7 @@ describe('createTerminalGitHubPRLinkDetector', () => {
     ])
   })
 
-  // The URL carry lives in the detector closure until the next chunk, and there
-  // is one detector per pane/PTY, so an attached slice pins a whole PTY chunk
-  // per pane for as long as the pane stays open.
+  // Production persists one URL carry per pane or PTY.
   const forcedGc = resolveForcedGc()
   const itWithGc = forcedGc ? it : it.skip
   itWithGc('does not pin the source chunk behind a carried PR-URL prefix', () => {
@@ -306,14 +304,12 @@ describe('createTerminalGitHubPRLinkDetector', () => {
     const before = process.memoryUsage().heapUsed
     const detectors = Array.from({ length: panes }, (_unused, index) => {
       const observe = createTerminalGitHubPRLinkDetector()
-      // Ends mid-URL, so the prefix is carried into the next chunk.
       observe(`${'x'.repeat(chunkChars)}https://github.com/acme/repo-${index}/pul`)
       return observe
     })
     forceGc()
     const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
 
-    // The carry must still complete the split URL across the chunk boundary.
     expect(detectors[0]!('l/12\n')).toEqual([
       {
         url: 'https://github.com/acme/repo-0/pull/12',
@@ -321,7 +317,6 @@ describe('createTerminalGitHubPRLinkDetector', () => {
         number: 12
       }
     ])
-    // 8 MiB of source chunks stay alive if the carries are still attached.
     expect(retainedMiB).toBeLessThan(2)
   })
 })

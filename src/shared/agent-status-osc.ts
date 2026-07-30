@@ -71,8 +71,7 @@ export function createAgentStatusOscProcessor(): (data: string) => ProcessedAgen
 
       if (terminator === null) {
         const candidate = combined.slice(start)
-        // Detached: `pending` survives until the next chunk, so an attached
-        // slice would pin this whole chunk per processor (one per pane).
+        // Persisted per-pane payloads must not retain their source PTY chunks.
         pending = candidate.length > MAX_PENDING ? '' : detachString(candidate)
         break
       }

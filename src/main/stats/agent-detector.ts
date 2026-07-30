@@ -286,8 +286,7 @@ function isStTerminatedStringControlIntroducer(introducer: string): boolean {
   return introducer === 'P' || introducer === 'X' || introducer === '^' || introducer === '_'
 }
 
-// Detached because meaningfulContentScanTailByPtyId parks this until the next
-// chunk: an attached slice pins a whole source chunk per tracked PTY.
+// Persisted per-PTY tails must not retain their source chunks.
 function trimMeaningfulContentScanTail(value: string): string {
   if (value.length <= MEANINGFUL_CONTENT_SCAN_TAIL_LIMIT) {
     return detachString(value)

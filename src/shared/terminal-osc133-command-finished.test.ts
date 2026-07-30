@@ -34,8 +34,7 @@ describe('createOsc133CommandFinishedScanner', () => {
     expect(onCommandFinished).not.toHaveBeenCalled()
   })
 
-  // The carry lives in the scanner closure until the next chunk, and there is
-  // one scanner per pane, so an attached slice pins a whole PTY chunk per pane.
+  // Production persists one unterminated payload per pane scanner.
   const forcedGc = resolveForcedGc()
   const itWithGc = forcedGc ? it : it.skip
   itWithGc('does not pin the source chunk behind a carried OSC 133 payload', () => {
@@ -47,17 +46,14 @@ describe('createOsc133CommandFinishedScanner', () => {
     const before = process.memoryUsage().heapUsed
     const scanners = Array.from({ length: panes }, (_unused, index) => {
       const scanner = createOsc133CommandFinishedScanner(finished)
-      // No terminator yet, so the payload is carried into the next chunk.
       scanner.scan(`${'x'.repeat(chunkChars)}\x1b]133;D;${index} pending payload tail text`)
       return scanner
     })
     forceGc()
     const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
 
-    // The carry must still resolve across the chunk boundary.
     scanners[0]!.scan('\x07')
     expect(finished).toHaveBeenCalledWith(0)
-    // 8 MiB of source chunks stay alive if the carries are still attached.
     expect(retainedMiB).toBeLessThan(2)
   })
 })

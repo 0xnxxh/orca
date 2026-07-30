@@ -157,10 +157,7 @@ describe('Codex subagent transcript reconciliation', () => {
     expect(roster.size).toBe(0)
   })
 
-  // The trailing partial line is parked per cursor in
-  // codexSubagentTranscriptByPaneKey until the next poll, and `split` yields
-  // slices of the up-to-1 MiB read buffer, so an attached carry pins a whole
-  // buffer per tracked pane.
+  // Production persists one partial line per transcript cursor.
   const forcedGc = resolveForcedGc()
   const itWithGc = forcedGc ? it : it.skip
   itWithGc('does not pin the read buffer behind a carried partial line', () => {
@@ -172,7 +169,6 @@ describe('Codex subagent transcript reconciliation', () => {
 
     const states = Array.from({ length: panes }, (_unused, index) => {
       const parentPath = join(dir, `rollout-parent-${index}.jsonl`)
-      // Trailing partial line (no newline) is what gets carried.
       writeFileSync(parentPath, `${jsonl([activity('started')])}${bulkLine}\n{"partial":${index}`)
       return { state: createCodexSubagentTranscriptState(), parentPath }
     })
@@ -186,7 +182,6 @@ describe('Codex subagent transcript reconciliation', () => {
     const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
 
     expect(states[0]!.state.parent.carry).toBe('{"partial":0')
-    // ~64 MiB of read buffers stay alive if the carries are still attached.
     expect(retainedMiB).toBeLessThan(8)
   })
 })

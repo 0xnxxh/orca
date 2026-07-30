@@ -171,10 +171,7 @@ export class TerminalKittyKeyboardModeTracker {
     }
   }
 
-  // Detached: this tracker is per-pane (renderer) and per-PTY (main), and the
-  // tail outlives its input until the next chunk. An attached slice would pin
-  // the whole input — a live PTY chunk, or a full reattach/replay snapshot on
-  // the scanReplay path — for as long as the pane stays open.
+  // Persisted tracker tails must not retain live chunks or replay snapshots.
   private extractScanTail(input: string): string {
     const start = Math.max(input.lastIndexOf('\x1b'), input.lastIndexOf('\x9b'))
     if (start === -1) {

@@ -85,9 +85,7 @@ describe('advancePartialEscapeTail', () => {
     expect(advancePartialEscapeTail('', huge)).toBe('')
   })
 
-  // The headless emulator parks this tail per session until the next write and
-  // ships it in every snapshot, so an attached slice pins a whole written
-  // stream per live session.
+  // Production persists and snapshots one partial escape tail per emulator.
   const forcedGc = resolveForcedGc()
   const itWithGc = forcedGc ? it : it.skip
   itWithGc('does not pin the written stream behind a carried escape tail', () => {
@@ -97,16 +95,13 @@ describe('advancePartialEscapeTail', () => {
     forceGc()
     const before = process.memoryUsage().heapUsed
     const tails = Array.from({ length: sessions }, (_unused, index) =>
-      // Unterminated OSC, so the tail is carried into the next write.
       advancePartialEscapeTail('', `${'x'.repeat(chunkChars)}\x1b]0;pane-${index} title`)
     )
     forceGc()
     const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
 
     expect(tails[0]).toBe('\x1b]0;pane-0 title')
-    // The fold must still complete the split sequence on the next chunk.
     expect(advancePartialEscapeTail(tails[0]!, '\x07rest')).toBe('')
-    // 8 MiB of source streams stay alive if the tails are still attached.
     expect(retainedMiB).toBeLessThan(2)
   })
 })

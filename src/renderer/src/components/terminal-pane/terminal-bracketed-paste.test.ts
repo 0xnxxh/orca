@@ -5,10 +5,7 @@ import {
   pasteTerminalText,
   sanitizeTerminalPasteText
 } from './terminal-bracketed-paste'
-import {
-  createForceGc,
-  resolveForcedGc
-} from '../../../../shared/forced-gc-for-retention-tests'
+import { createForceGc, resolveForcedGc } from '../../../../shared/forced-gc-for-retention-tests'
 
 function createTerminal(bracketedPasteMode = true) {
   const terminal = {
@@ -257,8 +254,7 @@ describe('terminal bracketed paste policy', () => {
     expect(splitCallCount).toBe(0)
   })
 
-  // The tail sits in a per-terminal WeakMap until the pane sees a 2004 toggle,
-  // so an attached slice pins a whole PTY chunk per interrupted pane.
+  // Production persists one interrupted-mode tail per terminal.
   const forcedGc = resolveForcedGc()
   const itWithGc = forcedGc ? it : it.skip
   itWithGc('does not pin the source chunk behind the interrupted-pane mode tail', () => {
@@ -266,8 +262,7 @@ describe('terminal bracketed paste policy', () => {
     const panes = 512
     const chunkChars = 16 * 1024
 
-    // Plain stubs, not createTerminal: a vi.fn() per pane costs megabytes of
-    // mock bookkeeping and would swamp the retention signal being measured.
+    // Avoid mock bookkeeping that would swamp the retention signal.
     const terminals = Array.from({ length: panes }, () => ({
       modes: { bracketedPasteMode: true }
     }))
@@ -276,14 +271,12 @@ describe('terminal bracketed paste policy', () => {
     const before = process.memoryUsage().heapUsed
     for (const [index, terminal] of terminals.entries()) {
       markTerminalBracketedPasteInterrupted(terminal)
-      // No 2004 sequence, so the tail is carried rather than cleared.
       observeTerminalBracketedPasteModeOutput(terminal, `${'x'.repeat(chunkChars)}pane-${index}`)
     }
     forceGc()
     const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
 
     expect(terminals).toHaveLength(panes)
-    // ~8 MiB of source chunks stay alive if the tails are still attached.
     expect(retainedMiB).toBeLessThan(2)
   })
 })

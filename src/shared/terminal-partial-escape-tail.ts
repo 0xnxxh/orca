@@ -147,9 +147,6 @@ export function extractPartialEscapeTail(stream: string): string {
  *  (tracking abandoned) when the tail exceeds the cap — see the cap comment. */
 export function advancePartialEscapeTail(pendingTail: string, chunk: string): string {
   const tail = extractPartialEscapeTail(pendingTail + chunk)
-  // Detached: this is the ingest-time fold, so callers park the result per
-  // emulator/session until the next write; an attached slice would pin the
-  // whole written stream. Detaching after the cap check keeps the discarded
-  // over-cap tail (an unterminated OSC can span the entire chunk) free.
+  // Persisted emulator tails must not retain the whole written stream.
   return tail.length > MAX_PARTIAL_ESCAPE_TAIL_LENGTH ? '' : detachString(tail)
 }

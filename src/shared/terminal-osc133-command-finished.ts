@@ -90,8 +90,7 @@ export function createOsc133CommandFinishedScanner(
       const terminator = findOscTerminator(combined, payloadStart)
       if (!terminator) {
         const pending = combined.slice(start)
-        // Detached: the carry outlives this chunk in the scanner closure (one per
-        // pane), so an attached slice would pin the whole chunk until the next one.
+        // Persisted per-pane carries must not retain their source PTY chunks.
         carry = detachString(
           pending.length > MAX_OSC_CARRY_LENGTH
             ? pending.slice(pending.length - MAX_OSC_CARRY_LENGTH)

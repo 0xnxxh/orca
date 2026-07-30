@@ -66,8 +66,7 @@ function lastIndexOfHttpScheme(value: string, fromIndex?: number): number {
   return lastIndex
 }
 
-// Detached: the carry survives in the detector closure until the next chunk, and
-// there is one detector per pane/PTY, so an attached slice pins a whole chunk each.
+// Long URL carries must not retain their source PTY chunk.
 function getPotentialGitHubPRCarry(value: string): string {
   // Why bounded: carry is always a suffix of at most MAX_CARRY_LENGTH, so a scheme
   // further back can only ever be dropped — scanning to it is O(chunk) per PTY write.
@@ -83,11 +82,11 @@ function getPotentialGitHubPRCarry(value: string): string {
 
   const fragment = endsWithHttpSchemePrefixFragment(tailWindow)
   if (fragment === '' || windowStart === 0) {
-    return detachString(fragment)
+    return fragment
   }
   // Why look behind: an older scheme means the URL already overran the cap, so the
   // carry is abandoned rather than restarted from this fragment.
-  return lastIndexOfHttpScheme(value, windowStart - 1) === -1 ? detachString(fragment) : ''
+  return lastIndexOfHttpScheme(value, windowStart - 1) === -1 ? fragment : ''
 }
 
 function hasTerminalUrlWhitespace(value: string, start: number, end: number): boolean {
