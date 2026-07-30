@@ -22,6 +22,7 @@ import type {
 } from '../shared/agent-session-resume'
 import type { MobileRelayStatus } from '../shared/mobile-relay-status'
 import type { MobilePairingConnectionMode } from '../shared/mobile-pairing-connection-mode'
+import type { MobileRelayMintFailure } from '../shared/mobile-relay-mint-failure'
 import type { VerifyAndAddRuntimeEnvironmentResult } from '../shared/remote-pairing-verification'
 import type {
   SshMutationExpectation,
@@ -4576,7 +4577,12 @@ const api = {
       connectionMode?: MobilePairingConnectionMode
       rotate?: boolean
     }): Promise<
-      | { available: false }
+      | {
+          available: false
+          reason?: string
+          guidance?: string
+          relayFailure?: MobileRelayMintFailure
+        }
       | {
           available: true
           qrDataUrl: string | null
