@@ -53,6 +53,7 @@ vi.mock('@/store', () => ({
 }))
 
 vi.mock('@/store/selectors', () => ({
+  getAllWorktreesFromState: () => Array.from(mocks.state.worktreeMap.values()),
   getWorktreeMapFromState: () => mocks.state.worktreeMap
 }))
 
