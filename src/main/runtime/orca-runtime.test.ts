@@ -30981,6 +30981,19 @@ describe('OrcaRuntimeService', () => {
         }
       ]
     })
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, {
+      tabs: [
+        {
+          tabId: 'host-tab',
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'Codex',
+          activeLeafId: HEADLESS_LEAF_ID,
+          layout: null
+        }
+      ],
+      leaves: []
+    })
 
     const { worktrees } = await runtime.getWorktreePs()
     const oldSummary = worktrees.find((worktree) => worktree.worktreeId === TEST_WORKTREE_ID)
@@ -31133,6 +31146,47 @@ describe('OrcaRuntimeService', () => {
     })
   })
 
+  it('drops a hydrated row when only its stale persisted tab remains', async () => {
+    const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession({
+      ...getDefaultWorkspaceSession(),
+      tabsByWorktree: {
+        [TEST_WORKTREE_ID]: [
+          {
+            id: 'stale-tab',
+            ptyId: null,
+            worktreeId: TEST_WORKTREE_ID,
+            title: 'Codex',
+            customTitle: null,
+            color: null,
+            sortOrder: 0,
+            createdAt: 1
+          }
+        ]
+      }
+    })
+    const now = Date.now()
+    const runtime = new OrcaRuntimeService(runtimeStore as never, undefined, {
+      getAgentStatusSnapshot: () => [
+        {
+          paneKey: 'stale-tab:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          worktreeId: TEST_WORKTREE_ID,
+          tabId: 'stale-tab',
+          state: 'done',
+          prompt: 'persisted history',
+          agentType: 'codex',
+          connectionId: null,
+          receivedAt: now,
+          stateStartedAt: now - 60_000
+        }
+      ]
+    })
+
+    const { worktrees } = await runtime.getWorktreePs()
+    const summary = worktrees.find((worktree) => worktree.worktreeId === TEST_WORKTREE_ID)
+
+    expect(summary?.agents).toEqual([])
+  })
+
   it('resolves legacy numeric pane keys through the stale filter too', async () => {
     // Why: non-UUID leaves produce `tabId:paneRuntimeId` keys with no tabId
     // field; they still name a real tab and must not bypass the filter.
@@ -31177,6 +31231,19 @@ describe('OrcaRuntimeService', () => {
           stateStartedAt: now - 100
         }
       ]
+    })
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, {
+      tabs: [
+        {
+          tabId: 'open-tab',
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'Codex',
+          activeLeafId: '33333333-3333-4333-8333-333333333333',
+          layout: null
+        }
+      ],
+      leaves: []
     })
 
     const { worktrees } = await runtime.getWorktreePs()
