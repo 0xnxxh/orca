@@ -6727,6 +6727,24 @@ describe('createGitHubSlice.fetchWorkItems source/error envelope', () => {
     expect(result).toEqual({ totalCount: 101, totalPages: 3 })
   })
 
+  it('caps advertised pages at the GitHub search result window', async () => {
+    const store = createTestStore()
+    mockApi.gh.countWorkItems.mockResolvedValueOnce(1170).mockResolvedValueOnce(1)
+
+    const result = await store.getState().countWorkItemsAcrossRepos(
+      [
+        { repoId: 'large-repo', path: '/local/large' },
+        { repoId: 'small-repo', path: '/local/small' }
+      ],
+      'is:issue',
+      30
+    )
+
+    // 1170 results → 39 naive pages, but the Search API 422s past its
+    // 1000-result window; only floor(1000 / 30) = 33 pages are reachable (#11485).
+    expect(result).toEqual({ totalCount: 1171, totalPages: 33 })
+  })
+
   it('rejects oversized work-item queries before cache keys or provider calls', async () => {
     const store = createTestStore()
     const secret = 'github-work-items-secret'

@@ -655,6 +655,8 @@ const CHECKS_CACHE_TTL = 60_000 // 1 minute — checks change more frequently
 const EMPTY_CHECKS_CACHE_TTL = 10_000
 // Why: the work-item list is a browse surface, not a source of truth, so 60s staleness is fine (SWR keeps it current).
 const WORK_ITEMS_CACHE_TTL = 60_000
+// GitHub's Search API serves at most the first 1000 results; deeper requests 422.
+const GITHUB_SEARCH_RESULT_WINDOW = 1000
 // Why: long-lived (matches repos.ts) so the user has time to read + act on persist failures before the toast vanishes.
 const ERROR_TOAST_DURATION = 60_000
 
@@ -2839,6 +2841,10 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       return { totalCount: 0, totalPages: 0 }
     }
     const normalizedLimit = Math.max(1, Math.floor(perRepoLimit))
+    // Why: GitHub's Search API rejects requests past its 1000-result window with
+    // HTTP 422, so pages whose range crosses it are unreachable — advertising
+    // them yields page clicks that can never navigate.
+    const maxReachablePages = Math.max(1, Math.floor(GITHUB_SEARCH_RESULT_WINDOW / normalizedLimit))
     const counts = await Promise.all(
       repos.map(async (r) => {
         // Why: same stampede cap as item-fetch — without a slot a 90-repo selection fires 90 concurrent count IPCs before the main-side rate-limit guard sees the first 403.
@@ -2870,7 +2876,8 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       totalCount: counts.reduce((sum, count) => sum + count, 0),
       // Why: repos advance independently by page, so take the max across repos — a sum/page-width undercounts when one repo owns most results.
       totalPages: counts.reduce(
-        (maxPages, count) => Math.max(maxPages, Math.ceil(count / normalizedLimit)),
+        (maxPages, count) =>
+          Math.max(maxPages, Math.min(Math.ceil(count / normalizedLimit), maxReachablePages)),
         0
       )
     }

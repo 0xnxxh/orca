@@ -6165,7 +6165,7 @@ export default function TaskPage(): React.JSX.Element {
       setPaginationLoading(true)
       setLoadingTargetPage(target)
       try {
-        const { items } = await fetchWorkItemsNextPage(
+        const { items, failedCount } = await fetchWorkItemsNextPage(
           repoArgs,
           githubPerRepoPageLimit,
           githubPageSize,
@@ -6176,6 +6176,22 @@ export default function TaskPage(): React.JSX.Element {
           return
         }
         if (items.length === 0) {
+          // Why: staying on the current page without saying so reads as a dead
+          // click (#11485). Empty with no thrown fetch means the target is past
+          // GitHub's reachable search window, so stop advertising it; thrown
+          // fetches may be transient, so keep the page count.
+          toast.error(
+            translate(
+              'auto.components.TaskPage.loadPageUnreachable',
+              'Page {{value0}} could not be loaded from GitHub.',
+              { value0: String(target + 1) }
+            )
+          )
+          if (failedCount === 0) {
+            setCountedTotalPages((previous) =>
+              previous !== null && previous > target ? target : previous
+            )
+          }
           return
         }
         setPages((previous) => {
