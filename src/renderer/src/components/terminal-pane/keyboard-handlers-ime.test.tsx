@@ -31,6 +31,7 @@ function keyboardEvent(
 function createHarness(): {
   deps: KeyboardHandlersDeps
   editable: HTMLInputElement
+  sendInput: ReturnType<typeof vi.fn>
   startComposition: () => void
   terminalInput: HTMLTextAreaElement
   dispose: () => void
@@ -97,6 +98,7 @@ function createHarness(): {
   return {
     deps,
     editable,
+    sendInput,
     terminalInput,
     startComposition: () => {
       terminalElement.dispatchEvent(
@@ -274,4 +276,56 @@ describe('Windows IME keyboard ownership', () => {
     hook.unmount()
     harness.dispose()
   })
+
+  it.each([
+    // Why: an active IME reports every consumed key as Process/229, e.g. Shift+ㅃ or an MS-IME Ctrl chord.
+    { label: 'Shift+KeyQ', code: 'KeyQ', modifier: { shiftKey: true } },
+    { label: 'Ctrl+KeyI', code: 'KeyI', modifier: { ctrlKey: true } }
+  ])('does not treat an IME-consumed $label as a modified Enter', ({ code, modifier }) => {
+    const harness = createHarness()
+    const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
+    harness.startComposition()
+    const consumed = keyboardEvent('keydown', {
+      key: 'Process',
+      code,
+      keyCode: 229,
+      timeStamp: 10,
+      isComposing: true,
+      ...modifier
+    })
+
+    harness.terminalInput.dispatchEvent(consumed)
+    vi.runAllTimers()
+
+    expect(consumed.defaultPrevented).toBe(false)
+    expect(harness.sendInput).not.toHaveBeenCalled()
+    hook.unmount()
+    harness.dispose()
+  })
+
+  it.each([{ code: 'Enter' }, { code: 'NumpadEnter' }])(
+    'still defers a composed Shift+Enter reported as Process with code $code',
+    ({ code }) => {
+      const harness = createHarness()
+      const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
+      harness.startComposition()
+      const processEnter = keyboardEvent('keydown', {
+        key: 'Process',
+        code,
+        keyCode: 229,
+        timeStamp: 10,
+        isComposing: true,
+        shiftKey: true
+      })
+
+      harness.terminalInput.dispatchEvent(processEnter)
+
+      expect(processEnter.defaultPrevented).toBe(true)
+      expect(harness.sendInput).not.toHaveBeenCalled()
+      vi.runAllTimers()
+      expect(harness.sendInput).toHaveBeenCalledWith('\x1b\r')
+      hook.unmount()
+      harness.dispose()
+    }
+  )
 })
