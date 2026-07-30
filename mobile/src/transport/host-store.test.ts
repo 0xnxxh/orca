@@ -14,6 +14,7 @@ const secureStoreMock = vi.hoisted(() => ({
 }))
 
 const scheduleCleanupMock = vi.hoisted(() => vi.fn())
+const platformMock = vi.hoisted(() => ({ OS: 'ios' }))
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: asyncStorageMock
@@ -25,7 +26,7 @@ vi.mock('expo-secure-store', () => ({
 }))
 
 vi.mock('react-native', () => ({
-  Platform: { OS: 'ios' }
+  Platform: platformMock
 }))
 
 vi.mock('./host-credential-cleanup', () => ({
@@ -70,6 +71,7 @@ describe('host-store list mutations', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetHostStoreForTests()
+    platformMock.OS = 'ios'
     resetMobileRelayHostOverlayStoreForTests()
     scheduleCleanupMock.mockReset()
     scheduleCleanupMock.mockResolvedValue(undefined)
@@ -177,6 +179,25 @@ describe('host-store list mutations', () => {
 
     expect(asyncStorageMock.getItem).not.toHaveBeenCalledWith(OVERLAY_STORAGE_KEY)
     expect(secureStoreMock.deleteItemAsync).not.toHaveBeenCalled()
+  })
+
+  it('keeps the normal iOS save on the existing default keychain service', async () => {
+    await saveHost({
+      id: 'host-new',
+      name: 'New Host',
+      endpoint: 'ws://127.0.0.1:3',
+      publicKeyB64: 'key-new',
+      deviceToken: 'new-token',
+      lastConnected: 0
+    })
+
+    expect(secureStoreMock.setItemAsync).toHaveBeenCalledWith(
+      'orca.host-token.host-new',
+      'new-token',
+      {
+        keychainAccessible: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY'
+      }
+    )
   })
 
   it('commits the removal when credential cleanup scheduling rejects', async () => {
@@ -342,13 +363,14 @@ describe('host-store pairing save under an unusable keystore', () => {
   const ENCRYPT_REJECTION = new Error(
     "Could not encrypt the value for key 'orca.host-token.host-1782629088232' under keychain 'key_v1'. Caused by: unknown"
   )
-  const GENERATION_KEY = 'orca:host-token-keychain-generation'
+  const GENERATION_KEY = 'orca:pairing-keychain-generation'
   let storedHostsRaw: string
   let storedGenerationRaw: string | null
 
   beforeEach(() => {
     vi.clearAllMocks()
     resetHostStoreForTests()
+    platformMock.OS = 'android'
     resetMobileRelayHostOverlayStoreForTests()
     scheduleCleanupMock.mockReset()
     scheduleCleanupMock.mockResolvedValue(undefined)
@@ -386,7 +408,7 @@ describe('host-store pairing save under an unusable keystore', () => {
 
     await expect(saveHost(NEW_HOST)).resolves.toBeUndefined()
 
-    expect(written.get('orca.host-tokens.v1')).toBe('device-token')
+    expect(written.get('orca.pairing.v1')).toBe('device-token')
     expect(JSON.parse(storedHostsRaw)).toEqual([
       {
         id: NEW_HOST.id,

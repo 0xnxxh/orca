@@ -8,11 +8,11 @@ import {
 } from './types'
 import { getNextHostNameFromHosts } from './host-names'
 import {
-  deleteHostTokenFromKeychain,
-  readHostTokenFromKeychain,
-  resetHostTokenKeychainForTests,
-  writeHostTokenToKeychain
-} from './host-token-keychain'
+  deletePairingKeychainItem,
+  readPairingKeychainItem,
+  resetPairingKeychainForTests,
+  writePairingKeychainItem
+} from './pairing-keychain'
 import {
   retryPendingHostCredentialCleanups,
   scheduleHostCredentialCleanup
@@ -45,7 +45,7 @@ async function readDeviceToken(hostId: string): Promise<string | null> {
   if (Platform.OS === 'web') {
     return AsyncStorage.getItem(webTokenKey(hostId))
   }
-  return readHostTokenFromKeychain(tokenKey(hostId))
+  return readPairingKeychainItem(tokenKey(hostId))
 }
 
 async function writeDeviceToken(hostId: string, token: string): Promise<void> {
@@ -53,7 +53,7 @@ async function writeDeviceToken(hostId: string, token: string): Promise<void> {
     await AsyncStorage.setItem(webTokenKey(hostId), token)
     return
   }
-  await writeHostTokenToKeychain(tokenKey(hostId), token)
+  await writePairingKeychainItem(tokenKey(hostId), token)
 }
 
 async function deleteDeviceToken(hostId: string): Promise<void> {
@@ -61,7 +61,7 @@ async function deleteDeviceToken(hostId: string): Promise<void> {
     await AsyncStorage.removeItem(webTokenKey(hostId))
     return
   }
-  await deleteHostTokenFromKeychain(tokenKey(hostId))
+  await deletePairingKeychainItem(tokenKey(hostId))
 }
 
 async function deleteHostCredentials(hostId: string): Promise<void> {
@@ -341,5 +341,5 @@ export function resetHostStoreForTests(): void {
   hostListMutation = Promise.resolve()
   tokenCache.clear()
   inflightLoad = null
-  resetHostTokenKeychainForTests()
+  resetPairingKeychainForTests()
 }
