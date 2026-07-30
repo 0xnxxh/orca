@@ -31226,6 +31226,35 @@ describe('OrcaRuntimeService', () => {
     expect(summary).toMatchObject({ hasHostSidebarActivity: true, status: 'working' })
   })
 
+  it('drops a hydrated WSL hook row after its local tab is closed', async () => {
+    // Why: WSL relay ids are transport provenance; the pane remains local.
+    const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession({
+      ...getDefaultWorkspaceSession(),
+      tabsByWorktree: {}
+    })
+    const now = Date.now()
+    const runtime = new OrcaRuntimeService(runtimeStore as never, undefined, {
+      getAgentStatusSnapshot: () => [
+        {
+          paneKey: 'closed-wsl-tab:99999999-9999-4999-8999-999999999999',
+          worktreeId: TEST_WORKTREE_ID,
+          tabId: 'closed-wsl-tab',
+          state: 'done',
+          prompt: 'finished in WSL',
+          agentType: 'codex',
+          connectionId: 'wsl:Ubuntu',
+          receivedAt: now,
+          stateStartedAt: now - 60_000
+        }
+      ]
+    })
+
+    const { worktrees } = await runtime.getWorktreePs()
+    const summary = worktrees.find((worktree) => worktree.worktreeId === TEST_WORKTREE_ID)
+
+    expect(summary?.agents).toEqual([])
+  })
+
   it('keeps remote hook rows whose tabs are only tracked on the remote host', async () => {
     // Why: the local session partition for an SSH host can be empty while the
     // remote host owns the terminals; absence there is not proof of a close.

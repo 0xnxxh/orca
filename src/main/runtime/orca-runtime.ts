@@ -371,6 +371,7 @@ import {
 } from '../../shared/stable-pane-id'
 import { parseAppSshPtyId } from '../../shared/ssh-pty-id'
 import { isValidHostTerminalTabId, isValidTerminalTabId } from '../../shared/terminal-tab-id'
+import { isWslHookRelayConnectionId } from '../../shared/wsl-hook-relay-contract'
 import {
   applyTerminalQuickCommandMutation,
   MAX_QUICK_COMMANDS,
@@ -16600,7 +16601,7 @@ export class OrcaRuntimeService {
       if (
         tabId !== undefined &&
         mirroredWorktreeId === undefined &&
-        src.connectionId === null &&
+        (src.connectionId === null || isWslHookRelayConnectionId(src.connectionId)) &&
         !connectedPtyEvidence.tabIds.has(tabId) &&
         !connectedPtyEvidence.paneKeys.has(src.paneKey) &&
         (src.ptyId === undefined || !connectedPtyEvidence.ptyIds.has(src.ptyId))
@@ -16608,7 +16609,7 @@ export class OrcaRuntimeService {
         // Why: hook snapshots hydrate from last-status.json for days, so a local
         // row whose tab left every session/graph and has no connected PTY is
         // retained history — surfacing it resurrects closed agents on mobile
-        // (#6072). Remote rows are exempt: their tabs may only exist remotely.
+        // (#6072). SSH rows are exempt: their tabs may only exist remotely.
         continue
       }
       const worktreeId = mirroredWorktreeId ?? src.worktreeId
