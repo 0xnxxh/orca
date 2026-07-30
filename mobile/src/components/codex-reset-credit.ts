@@ -1,4 +1,4 @@
-import { formatResetCountdown } from '../../../src/shared/rate-limit-reset-format'
+import { formatResetDuration } from '../../../src/shared/rate-limit-reset-format'
 import {
   buildCodexResetCreditExpectedScope,
   type CodexResetCreditExpectedScope
@@ -70,16 +70,22 @@ export function getCodexResetCreditSummary(
     return null
   }
   const expiry = credits?.nextExpiresAt
-  const expiryLabel =
-    typeof expiry === 'number' && Number.isFinite(expiry)
-      ? formatResetCountdown(expiry - now).replace(
-          /^Resets/,
-          count === 1 ? 'Expires' : 'Next expires'
-        )
-      : null
+  let expiryLabel: string | null = null
+  if (typeof expiry === 'number' && Number.isFinite(expiry)) {
+    const duration = formatResetDuration(expiry - now)
+    expiryLabel =
+      count === 1
+        ? duration === 'now'
+          ? t('m.aaZ_2qE')
+          : t('m.1neVPtc', { value0: duration })
+        : duration === 'now'
+          ? t('m.nH5aDJ4')
+          : t('m.fA_ezvI', { value0: duration })
+  }
   return {
     availableCount: count,
-    availabilityLabel: t('m.myZTLv0', { value0: count, value1: count === 1 ? 'reset' : 'resets' }),
+    availabilityLabel:
+      count === 1 ? t('m.CfvCAaE', { value0: count }) : t('m.myZTLv0', { value0: count }),
     expiryLabel
   }
 }

@@ -95,4 +95,15 @@ describe('verify-mobile-localization-catalog', () => {
     expect(report).toContain('es.json placeholder mismatch: m.greeting')
     expect(report).toContain('es.json has extra key: m.extra')
   })
+
+  it('rejects encoded HTML entities that React Native would render literally', async () => {
+    const root = makeProject({
+      sourceText: "export const label = 'not rendered'\n",
+      catalogs: { en: { m: { label: 'Don&apos;t encode &amp; characters' } } }
+    })
+
+    expect(await runFailedVerification(root)).toContain(
+      'en.json: m.label contains an encoded HTML entity'
+    )
+  })
 })

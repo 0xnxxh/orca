@@ -9,6 +9,17 @@ import ts from 'typescript-api'
 import { collectLocalizationCandidates } from './audit-localization-coverage.mjs'
 
 const TRANSLATE_IMPORT = "import { t } from '@/i18n/mobile-i18n'\n"
+const JSX_ENTITY_VALUES = {
+  amp: '&',
+  apos: "'",
+  gt: '>',
+  lt: '<',
+  quot: '"'
+}
+
+function decodeJsxEntities(value) {
+  return value.replace(/&(amp|apos|gt|lt|quot);/g, (_match, name) => JSX_ENTITY_VALUES[name])
+}
 
 function keyForCandidate(candidate, fallback = candidate.text) {
   const source = `${candidate.filePath}:${fallback}`
@@ -88,7 +99,7 @@ function findNodeByRange(sourceFile, start, end) {
 
 function translationForCandidate(candidate, sourceFile) {
   if (!candidate.dynamic) {
-    return { fallback: candidate.text }
+    return { fallback: decodeJsxEntities(candidate.text) }
   }
 
   const node = findNodeByRange(sourceFile, candidate.start, candidate.end)
@@ -199,7 +210,7 @@ function mixedJsxTranslation(node, filePath, sourceFile) {
     hasValue = true
   }
 
-  const fallback = sourceFallback.replace(/\s+/g, ' ').trim()
+  const fallback = decodeJsxEntities(sourceFallback.replace(/\s+/g, ' ').trim())
   if (!hasText || !hasValue || fallback.length < 2) {
     return null
   }

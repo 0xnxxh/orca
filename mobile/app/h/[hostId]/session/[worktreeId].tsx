@@ -280,6 +280,7 @@ import type {
   TerminalGestureInputQueue
 } from './mobile-session-route-types'
 import { t } from '@/i18n/mobile-i18n'
+import { addRefreshTimer, type RefreshTimerLifecycle } from '@/session/session-refresh-timer'
 
 const TERMINAL_KEYBOARD_DISMISS_ACTION_SHEET_FALLBACK_MS = 450
 
@@ -2685,17 +2686,14 @@ export default function SessionScreen() {
     }
     // Why: clear the initialized flag so the reconnect scrollback replaces stale content instead of being dropped.
     initializedHandlesRef.current.clear()
-    let disposed = false
-    const timers: ReturnType<typeof setTimeout>[] = []
-    function addTimer(fn: () => void, ms: number) {
-      if (disposed) {
-        return
-      }
-      timers.push(setTimeout(fn, ms))
-    }
+    const lifecycle: RefreshTimerLifecycle = { disposed: false, timers: [] }
     void (async () => {
       const reportActivationOutcome = (response: RpcSuccess | null): void => {
-        if (!disposed && response && headlessActivationNeedsHostRenderer(response.result)) {
+        if (
+          !lifecycle.disposed &&
+          response &&
+          headlessActivationNeedsHostRenderer(response.result)
+        ) {
           showToast(t('m.RJlcmtM'), 3000)
         }
       }
@@ -2710,21 +2708,21 @@ export default function SessionScreen() {
           .then((response) => reportActivationOutcome(response.ok ? response : null))
           .catch(() => null)
       }
-      if (disposed) {
+      if (lifecycle.disposed) {
         return
       }
       await ensureSessionTabs().catch(() => null)
-      if (disposed) {
+      if (lifecycle.disposed) {
         return
       }
       await fetchTerminals({ allowEmptyLoaded: false })
-      if (disposed) {
+      if (lifecycle.disposed) {
         return
       }
-      addTimer(() => void fetchTerminals({ allowEmptyLoaded: false }), 750)
-      addTimer(() => void fetchTerminals({ allowEmptyLoaded: true }), 1500)
+      addRefreshTimer(lifecycle, 750, () => void fetchTerminals({ allowEmptyLoaded: false }))
+      addRefreshTimer(lifecycle, 1500, () => void fetchTerminals({ allowEmptyLoaded: true }))
       if (client && created === '1' && !isFloatingWorkspaceRoute) {
-        addTimer(() => {
+        addRefreshTimer(lifecycle, 1800, () => {
           if (activeHandleRef.current) {
             return
           }
@@ -2737,19 +2735,19 @@ export default function SessionScreen() {
               })
               .catch(() => null)
             reportActivationOutcome(activationResponse?.ok ? activationResponse : null)
-            if (disposed) {
+            if (lifecycle.disposed) {
               return
             }
             await fetchTerminals({ allowEmptyLoaded: true })
-            addTimer(() => void fetchTerminals({ allowEmptyLoaded: true }), 750)
+            addRefreshTimer(lifecycle, 750, () => void fetchTerminals({ allowEmptyLoaded: true }))
           })()
-        }, 1800)
+        })
       }
     })()
     return () => {
-      disposed = true
-      for (const t of timers) {
-        clearTimeout(t)
+      lifecycle.disposed = true
+      for (const timer of lifecycle.timers) {
+        clearTimeout(timer)
       }
     }
   }, [

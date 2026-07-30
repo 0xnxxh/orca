@@ -11,6 +11,7 @@ const SOURCE_RELATIVE_ROOTS = [path.join('mobile', 'app'), path.join('mobile', '
 const LOCALES_RELATIVE_DIR = path.join('mobile', 'src', 'i18n', 'locales')
 const MOBILE_LOCALES = ['en', 'es', 'ja', 'ko', 'zh']
 const PLACEHOLDER_RE = /\{\{\s*([^,}\s]+)(?:,[^}]*)?\}\}/g
+const ENCODED_HTML_ENTITY_RE = /&(?:amp|apos|gt|lt|quot);/i
 
 function normalizePath(root, filePath) {
   return path.relative(root, filePath).split(path.sep).join('/')
@@ -44,6 +45,9 @@ async function collectSourceFiles(directory) {
 function flattenCatalog(value, catalogName, prefix = '', entries = new Map(), issues = []) {
   if (typeof value === 'string') {
     entries.set(prefix, value)
+    if (ENCODED_HTML_ENTITY_RE.test(value)) {
+      issues.push(`${catalogName}: ${prefix} contains an encoded HTML entity`)
+    }
     return { entries, issues }
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {

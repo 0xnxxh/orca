@@ -21,6 +21,13 @@ const LOCALE_CONFIG = {
   ja: { targetLanguage: 'ja', displayName: 'Japanese' },
   es: { targetLanguage: 'es', displayName: 'Spanish' }
 }
+const MOBILE_LOCALE_KEY_OVERRIDES = {
+  'm.I-waJyg': { es: 'Conectando…', ja: '接続中…', ko: '연결 중…', zh: '正在连接…' },
+  'm.zDZEMlw': { es: 'Conectando…', ja: '接続中…', ko: '연결 중…', zh: '正在连接…' },
+  'm.T3HZLEU': { es: 'Conectando…', ja: '接続中…', ko: '연결 중…', zh: '正在连接…' },
+  'm.X8_vuao': { es: 'Detener', ja: '停止', ko: '중지', zh: '停止' },
+  'm.Scz67W0': { es: 'Continuar', ja: '続ける', ko: '계속', zh: '继续' }
+}
 
 function protectPlaceholders(text) {
   const tokens = []
@@ -105,6 +112,16 @@ function mostFrequent(values) {
   return [...counts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0]
 }
 
+export function shouldReuseDesktopTranslation(english, translation) {
+  return translation !== english || shouldPreserveEnglishValue(english)
+}
+
+export function repairMobileTranslatedValue(options) {
+  return (
+    MOBILE_LOCALE_KEY_OVERRIDES[options.key]?.[options.locale] ?? repairTranslatedValue(options)
+  )
+}
+
 async function seedFromDesktopCatalog(root, locale, cache) {
   const enCatalog = JSON.parse(
     await fs.readFile(path.join(root, DESKTOP_LOCALES_DIR, 'en.json'), 'utf8')
@@ -129,7 +146,7 @@ async function seedFromDesktopCatalog(root, locale, cache) {
 
   for (const [english, values] of translationsByEnglish) {
     const translation = mostFrequent(values)
-    if (translation && !cache.has(english)) {
+    if (translation && shouldReuseDesktopTranslation(english, translation) && !cache.has(english)) {
       cache.set(english, translation)
     }
   }
@@ -197,7 +214,7 @@ export async function main(root = process.cwd(), locale = parseLocaleArg(process
     setLeaf(
       localeCatalog,
       leaf.key,
-      repairTranslatedValue({
+      repairMobileTranslatedValue({
         key: leaf.key,
         enValue: leaf.value,
         localeValue: cache.get(leaf.value) ?? leaf.value,

@@ -1333,8 +1333,9 @@ function getProjectGitHubMergeConfirmMessage(pending: PendingProjectGitHubMerge)
   if (pending.method === 'squash') {
     return t('m.LCOEY5w', { value0: number })
   }
-  const action = pending.method === 'rebase' ? 'Rebase and merge' : 'Merge'
-  return t('m.cAXZUp4', { value0: action, value1: number })
+  return pending.method === 'rebase'
+    ? t('m.X5VvyPQ', { value0: number })
+    : t('m.cAXZUp4', { value0: number })
 }
 
 function hostedStateChangeAction(nextState: PendingHostedStateChange['nextState']): string {
@@ -2067,7 +2068,7 @@ function isFailedGitHubCheck(check: { conclusion?: string | null }): boolean {
 }
 
 function repositoryCount(count: number): string {
-  return `${count} ${count === 1 ? 'repository' : 'repositories'}`
+  return count === 1 ? t('m.nt1k3hc', { value0: count }) : t('m.qzhASv0', { value0: count })
 }
 
 function buildPartialRepositoryNotice(failedCount: number, totalCount: number): string {
@@ -8430,20 +8431,23 @@ export default function MobileTasksScreen() {
         subtitle: githubProjectViewSort
           ? t('m.fERYVNg', {
               value0: githubProjectViewSort.field.name,
-              value1: githubProjectViewSort.direction.toLowerCase()
+              value1: githubProjectViewSort.direction === 'DESC' ? t('m.2IFEfeA') : t('m.qzEC9yM')
             })
           : t('m.P-ZWamw')
       },
       ...githubProjectFields.map((field) => {
         const active = githubProjectSortOverride?.fieldId === field.id
         const nextDirection =
-          !active || githubProjectSortOverride.direction === 'DESC' ? 'ascending' : 'descending'
+          !active || githubProjectSortOverride.direction === 'DESC'
+            ? t('m.qzEC9yM')
+            : t('m.2IFEfeA')
         return {
           value: field.id,
           label: field.name,
           subtitle: active
             ? t('m.YKWIedk', {
-                value0: githubProjectSortOverride.direction.toLowerCase(),
+                value0:
+                  githubProjectSortOverride.direction === 'DESC' ? t('m.2IFEfeA') : t('m.qzEC9yM'),
                 value1: nextDirection
               })
             : t('m.yvbNVZo')

@@ -140,6 +140,7 @@ const USER_VISIBLE_RETURN_FUNCTIONS = new Set([
   'mobileReviewScopeLabel',
   'projectFieldValueLabel',
   'projectRowStatusLabel',
+  'repositoryCount',
   'saveErrorMessageFromPreviewResult',
   'sendSheetMessage',
   'setupSourceLabel',

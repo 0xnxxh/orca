@@ -5,7 +5,7 @@ import { colors } from '../theme/mobile-theme'
 import type { MobileDiffReviewQueueItem } from '../session/mobile-diff-review-queue'
 import { MOBILE_GIT_STATUS_LABELS } from '../source-control/mobile-git-status'
 import {
-  mobileReviewCountLabel,
+  mobileReviewNoteCountLabel,
   mobileReviewScopeLabel,
   type ReviewDiffState
 } from '../session/mobile-diff-review-screen-model'
@@ -77,9 +77,7 @@ export function MobileDiffReviewFileSummary({
         {item.isReviewed ? <Text style={styles.reviewedPill}>{t('m.TGeBFA8')}</Text> : null}
         {item.changedSinceReview ? <Text style={styles.stalePill}>{t('m.cV_5zt0')}</Text> : null}
         {item.noteCount > 0 ? (
-          <Text style={styles.fileMeta}>
-            {mobileReviewCountLabel(item.noteCount, 'note', 'notes')}
-          </Text>
+          <Text style={styles.fileMeta}>{mobileReviewNoteCountLabel(item.noteCount)}</Text>
         ) : null}
         {item.staleNoteCount > 0 ? (
           <Text style={styles.staleText}>{t('m.OAIsqbU', { value0: item.staleNoteCount })}</Text>

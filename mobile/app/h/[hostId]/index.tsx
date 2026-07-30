@@ -868,9 +868,13 @@ export function HostScreen({
                 ]}
                 onPress={() => setShowFilterModal(true)}
                 accessibilityRole="button"
-                accessibilityLabel={t('m.kz_Kdkw', {
-                  value0: activeFilterCount > 0 ? `, ${activeFilterCount} active` : ''
-                })}
+                accessibilityLabel={
+                  activeFilterCount === 0
+                    ? t('m.kz_Kdkw')
+                    : activeFilterCount === 1
+                      ? t('m.6oNXq-k')
+                      : t('m.DxBfvEc', { value0: activeFilterCount })
+                }
               >
                 <Filter
                   size={12}

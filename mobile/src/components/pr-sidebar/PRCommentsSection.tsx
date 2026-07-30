@@ -196,10 +196,12 @@ export function PRCommentsSection({
                         accessibilityRole="button"
                       >
                         <Text style={styles.showMoreText}>
-                          {t('m.vV46Tns', {
-                            value0: Math.min(remaining, COMMENT_PAGE),
-                            value1: remaining > COMMENT_PAGE ? ` of ${remaining}` : ''
-                          })}
+                          {remaining > COMMENT_PAGE
+                            ? t('m.vV46Tns', {
+                                value0: COMMENT_PAGE,
+                                value1: remaining
+                              })
+                            : t('m.cHoCGwY', { value0: remaining })}
                         </Text>
                       </Pressable>
                     ) : null}
