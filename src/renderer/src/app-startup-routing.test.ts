@@ -20,6 +20,9 @@ describe('renderer startup runtime routing', () => {
     const localReposIndex = indexInStartupBlock(
       "actions.fetchReposForAllHosts({ remoteHosts: 'skip' })"
     )
+    const repoCatalogSettlementIndex = indexInStartupBlock(
+      "timeRendererStartupStep('repo-catalog-settlement'"
+    )
     const localGroupsIndex = indexInStartupBlock(
       "actions.fetchProjectGroupsForAllHosts({ remoteHosts: 'skip' })"
     )
@@ -39,6 +42,8 @@ describe('renderer startup runtime routing', () => {
     expect(settingsIndex).toBeLessThan(uiGetIndex)
     expect(uiGetIndex).toBeLessThan(hydrateUiIndex)
     expect(hydrateUiIndex).toBeLessThan(localReposIndex)
+    expect(localReposIndex).toBeLessThan(repoCatalogSettlementIndex)
+    expect(repoCatalogSettlementIndex).toBeLessThan(sessionIndex)
     // The local catalog chain stays internally ordered (folders merge against project groups).
     expect(localReposIndex).toBeLessThan(localGroupsIndex)
     expect(localGroupsIndex).toBeLessThan(localFoldersIndex)
