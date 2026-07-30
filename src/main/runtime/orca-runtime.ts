@@ -1272,6 +1272,10 @@ type TerminalCreateOptions = {
   rendererBacked?: boolean
   activate?: boolean
   presentation?: RuntimeTerminalPresentation
+  // Why: `false` adopts the terminal without pointing the user at it — no
+  // sidebar reveal, no tab focus. Distinct from 'background' presentation,
+  // which skips renderer adoption entirely.
+  surfaceOwner?: false
   tabId?: string
   leafId?: string
   sessionId?: string
@@ -1655,6 +1659,12 @@ function createTerminalRevealWarning(handle: string, error?: unknown): string {
   ].join(' ')
 }
 
+// Why: an absent `surfaceOwner` means "default", so surfacing callers must omit
+// the key rather than send `true`.
+function ownerSurfacing(shouldSurface: boolean): { surfaceOwner?: false } {
+  return shouldSurface ? {} : { surfaceOwner: false }
+}
+
 function resolveTerminalPresentation(opts: {
   presentation?: RuntimeTerminalPresentation
   focus?: boolean
@@ -1703,6 +1713,7 @@ type RuntimeNotifier = {
       viewMode?: 'terminal' | 'chat'
       activate?: boolean
       presentation?: RuntimeTerminalPresentation
+      surfaceOwner?: false
       tabId?: string
       leafId?: string
       splitFromLeafId?: string
@@ -20003,7 +20014,8 @@ export class OrcaRuntimeService {
   private async createDefaultTabTerminals(
     worktreeSelector: string,
     worktreeId: string,
-    defaultTabs: CreateWorktreeResult['defaultTabs'] | undefined
+    defaultTabs: CreateWorktreeResult['defaultTabs'] | undefined,
+    surfacing: { surfaceOwner?: false } = {}
   ): Promise<string[]> {
     if (!defaultTabs || defaultTabs.tabs.length === 0 || !this.ptyController?.spawn) {
       return []
@@ -20014,7 +20026,8 @@ export class OrcaRuntimeService {
         const command = template.command?.trim()
         const terminal = await this.createTerminal(worktreeSelector, {
           ...(template.title ? { title: template.title } : {}),
-          ...(command && defaultTabs.runCommands ? { command } : {})
+          ...(command && defaultTabs.runCommands ? { command } : {}),
+          ...surfacing
         })
         handles.push(terminal.handle)
         if (template.color && terminal.tabId) {
@@ -20045,17 +20058,22 @@ export class OrcaRuntimeService {
     // the setup command. Pass that wrapped command through so the Setup tab runs
     // the same script the agent is waiting on instead of a bare runner.
     wrappedSetupCommand?: string
+    // Why: a workspace provisioned in the background must not pull the sidebar
+    // to itself; the user never asked to look at these tabs.
+    surfaceOwner?: false
   }): Promise<{ setupSpawned: boolean; setupTerminalHandle: string | null }> {
     if (!this.ptyController?.spawn) {
       return { setupSpawned: false, setupTerminalHandle: null }
     }
+    const surfacing = ownerSurfacing(args.surfaceOwner !== false)
     let setupSpawned = false
     let setupTerminalHandle: string | null = null
     try {
       const defaultTabHandles = await this.createDefaultTabTerminals(
         args.worktreeSelector,
         args.worktreeId,
-        args.defaultTabs
+        args.defaultTabs,
+        surfacing
       )
       let primaryTerminalHandle = args.primaryTerminalHandle ?? defaultTabHandles[0] ?? null
       const setupLaunchMode =
@@ -20065,7 +20083,7 @@ export class OrcaRuntimeService {
           >
         ).setupScriptLaunchMode ?? 'new-tab'
       if (!args.hasStartupTerminal && !primaryTerminalHandle) {
-        const terminal = await this.createTerminal(args.worktreeSelector)
+        const terminal = await this.createTerminal(args.worktreeSelector, surfacing)
         primaryTerminalHandle = terminal.handle
       }
       if (args.setup) {
@@ -20091,12 +20109,14 @@ export class OrcaRuntimeService {
               direction: setupLaunchMode === 'split-horizontal' ? 'horizontal' : 'vertical',
               command: setupCommand,
               env: setupEnv,
-              activate: false
+              activate: false,
+              ...surfacing
             })
           : this.createTerminal(args.worktreeSelector, {
               title: 'Setup',
               command: setupCommand,
-              env: setupEnv
+              env: setupEnv,
+              ...surfacing
             }))
         setupTerminalHandle = setupTerminal.handle
         setupSpawned = true
@@ -20375,7 +20395,8 @@ export class OrcaRuntimeService {
             ...(effectiveCreatedWithAgent ? { launchAgent: effectiveCreatedWithAgent } : {}),
             ...(effectiveStartup.viewMode ? { viewMode: effectiveStartup.viewMode } : {}),
             startupCommandDelivery: effectiveStartup.startupCommandDelivery,
-            telemetry: effectiveStartup.telemetry
+            telemetry: effectiveStartup.telemetry,
+            ...ownerSurfacing(shouldActivate)
           })
           if (effectiveDraftPaste) {
             this.pasteStartupDraftWhenReady(terminal.handle, effectiveDraftPaste)
@@ -20406,7 +20427,7 @@ export class OrcaRuntimeService {
         }
       } else if (this.ptyController?.spawn && !didSpawnStartup) {
         try {
-          await this.createTerminal(`id:${worktree.id}`)
+          await this.createTerminal(`id:${worktree.id}`, { surfaceOwner: false })
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
           warning = warning
@@ -21115,7 +21136,8 @@ export class OrcaRuntimeService {
           ...(effectiveCreatedWithAgent ? { launchAgent: effectiveCreatedWithAgent } : {}),
           ...(sequencedStartup.viewMode ? { viewMode: sequencedStartup.viewMode } : {}),
           startupCommandDelivery: sequencedStartup.startupCommandDelivery,
-          telemetry: sequencedStartup.telemetry
+          telemetry: sequencedStartup.telemetry,
+          ...ownerSurfacing(shouldActivate)
         })
         if (effectiveDraftPaste) {
           this.pasteStartupDraftWhenReady(terminal.handle, effectiveDraftPaste)
@@ -21216,7 +21238,8 @@ export class OrcaRuntimeService {
             : 'posix'
           : 'posix',
         observeSetupCompletion: args.observeSetupCompletion,
-        ...(wrappedSetupCommandStr ? { wrappedSetupCommand: wrappedSetupCommandStr } : {})
+        ...(wrappedSetupCommandStr ? { wrappedSetupCommand: wrappedSetupCommandStr } : {}),
+        surfaceOwner: false
       })
       // Why: runtime owns setup spawning here, so the RPC result must omit setup
       // to keep the headless/mobile caller from launching it a second time.
@@ -21232,7 +21255,7 @@ export class OrcaRuntimeService {
       }
     } else if (this.ptyController?.spawn) {
       try {
-        await this.createTerminal(`id:${worktree.id}`)
+        await this.createTerminal(`id:${worktree.id}`, { surfaceOwner: false })
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         warning = warning
@@ -21416,6 +21439,7 @@ export class OrcaRuntimeService {
     this.invalidateWorktreeScanCacheForRepo(repo.id)
     this.notifyWorktreesChanged(repo.id)
 
+    const shouldActivate = args.activate === true || args.runHooks === true
     let warning = result.warning
     let didSpawnStartup = false
     // Why: same no-double-spawn contract as the local path — once runtime
@@ -21464,7 +21488,8 @@ export class OrcaRuntimeService {
           ...(args.createdWithAgent ? { launchAgent: args.createdWithAgent } : {}),
           ...(sequencedStartup.viewMode ? { viewMode: sequencedStartup.viewMode } : {}),
           startupCommandDelivery: sequencedStartup.startupCommandDelivery,
-          telemetry: sequencedStartup.telemetry
+          telemetry: sequencedStartup.telemetry,
+          ...ownerSurfacing(shouldActivate)
         })
         if (args.startupDraftPaste) {
           this.pasteStartupDraftWhenReady(terminal.handle, args.startupDraftPaste)
@@ -21485,7 +21510,6 @@ export class OrcaRuntimeService {
       }
     }
 
-    const shouldActivate = args.activate === true || args.runHooks === true
     if (shouldActivate) {
       const runtimeWillProvisionTerminals =
         didSpawnStartup && Boolean(result.setup || result.defaultTabs)
@@ -21567,7 +21591,8 @@ export class OrcaRuntimeService {
             : 'posix'
           : 'posix',
         observeSetupCompletion: args.observeSetupCompletion,
-        ...(wrappedSetupCommandStr ? { wrappedSetupCommand: wrappedSetupCommandStr } : {})
+        ...(wrappedSetupCommandStr ? { wrappedSetupCommand: wrappedSetupCommandStr } : {}),
+        surfaceOwner: false
       })
       // Why: runtime owns setup spawning here, so omit setup from the RPC result
       // to keep the headless/mobile caller from launching it a second time.
@@ -21583,7 +21608,7 @@ export class OrcaRuntimeService {
       }
     } else if (!shouldActivate && this.ptyController?.spawn) {
       try {
-        await this.createTerminal(`path:${result.worktree.path}`)
+        await this.createTerminal(`path:${result.worktree.path}`, { surfaceOwner: false })
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         warning = warning
@@ -24009,6 +24034,7 @@ export class OrcaRuntimeService {
             ...(launchOpts.viewMode ? { viewMode: launchOpts.viewMode } : {}),
             activate: presentation === 'focused',
             ...(presentation ? { presentation } : {}),
+            ...ownerSurfacing(opts.surfaceOwner !== false),
             tabId,
             leafId
           })
@@ -24093,7 +24119,8 @@ export class OrcaRuntimeService {
         startupCommandDelivery: launchOpts.startupCommandDelivery,
         title: launchOpts.title,
         activate: presentation === 'focused',
-        ...(presentation ? { presentation } : {})
+        ...(presentation ? { presentation } : {}),
+        ...ownerSurfacing(opts.surfaceOwner !== false)
       })
     })
 
@@ -25233,6 +25260,9 @@ export class OrcaRuntimeService {
       env?: Record<string, string>
       envToDelete?: string[]
       activate?: boolean
+      // Why: same split as createTerminal — adopt the pane without revealing its
+      // workspace, for splits the user never asked to see.
+      surfaceOwner?: false
       telemetrySource?: TerminalPaneSplitSource
     } = {}
   ): Promise<RuntimeTerminalSplit> {
@@ -25270,6 +25300,9 @@ export class OrcaRuntimeService {
       env?: Record<string, string>
       envToDelete?: string[]
       activate?: boolean
+      // Why: same split as createTerminal — adopt the pane without revealing its
+      // workspace, for splits the user never asked to see.
+      surfaceOwner?: false
       telemetrySource?: TerminalPaneSplitSource
     } = {}
   ): Promise<RuntimeTerminalSplit> {
@@ -25320,6 +25353,7 @@ export class OrcaRuntimeService {
         ptyId: result.id,
         title: null,
         activate: opts.activate !== false,
+        ...ownerSurfacing(opts.surfaceOwner !== false),
         tabId: parentTabId,
         leafId,
         splitFromLeafId: parsedPaneKey.leafId,
