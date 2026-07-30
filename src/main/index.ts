@@ -80,6 +80,7 @@ import { DesktopRelayService } from './runtime/relay/desktop-relay-service'
 import type { RelayBrokerStatus } from './runtime/relay/relay-session-broker'
 import { awaitRuntimeFileWatcherUnsubscribes } from './runtime/orca-runtime-files'
 import { clearRuntimeMetadataIfOwned } from './runtime/runtime-metadata'
+import { scheduleAllPendingHistoryTreeRemovals } from './terminal-history-deletion'
 import { ensureMainI18n, setMainPluginLanguagePacks, setMainUiLanguage } from './i18n/main-i18n'
 import {
   getNextDefaultOnAppearanceSettingValue,
@@ -2791,6 +2792,9 @@ void app.whenReady().then(async () => {
     }
     // Why: headless serve never opens a renderer, so arm scheduled automation dispatch here.
     automations.start()
+    // Why: serve deletes worktrees too, and the history GC that normally drains delete tombstones is
+    // armed from the main window — without this, a quit mid-removal leaks the tree until a desktop launch.
+    scheduleAllPendingHistoryTreeRemovals()
     await printServeReady(serveOptions)
     return
   }
@@ -2917,6 +2921,13 @@ app.on('will-quit', (e) => {
   killAllPty()
   const watcherShutdown = shutdownWatchersOnce()
   store?.flush()
+  // Why: usage-cache writes are queued off the main thread, so a quit right after setEnabled or a
+  // scan completion would drop the final snapshot. Captured before any await; joins the barrier below.
+  const usageCacheFlush = Promise.all([
+    claudeUsage?.flush(),
+    codexUsage?.flush(),
+    openCodeUsage?.flush()
+  ]).then(() => {})
 
   // Why: preventDefault to await disconnectDaemon's async checkpoint writes (else data lost); guard prevents an infinite quit loop on the re-fired will-quit.
   if (!daemonDisconnectDone) {
@@ -2950,7 +2961,8 @@ app.on('will-quit', (e) => {
       { name: 'runtime-rpc', promise: rpcStopAndClear },
       { name: 'watchers', promise: watcherShutdown },
       { name: 'emulator', promise: emulatorShutdown },
-      { name: 'plugin-hosts', promise: pluginHostShutdown }
+      { name: 'plugin-hosts', promise: pluginHostShutdown },
+      { name: 'usage-cache', promise: usageCacheFlush }
     ])
       .then((pendingTeardowns) => {
         if (pendingTeardowns.length > 0) {
