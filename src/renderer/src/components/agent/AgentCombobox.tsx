@@ -175,6 +175,7 @@ export default function AgentCombobox({
     () => (value ? (agents.find((agent) => agent.id === value) ?? null) : null),
     [agents, value]
   )
+  const selectedDefaultPreference = value ?? (allowBlankTerminal ? 'blank' : null)
   const filteredAgents = useMemo(() => searchAgentPickerEntries(agents, query), [agents, query])
   const blankMatchesQuery = useMemo(
     () => allowBlankTerminal && agentPickerBlankTerminalMatches(query),
@@ -307,8 +308,14 @@ export default function AgentCombobox({
     <div className="min-w-0 w-full">
       <Popover open={open} onOpenChange={handleOpenChange}>
         <AgentDefaultContextMenu
-          isDefault={defaultAgent === (value ?? 'blank')}
-          onSetDefault={onSetDefault ? () => onSetDefault(value ?? 'blank') : undefined}
+          isDefault={
+            selectedDefaultPreference !== null && defaultAgent === selectedDefaultPreference
+          }
+          onSetDefault={
+            onSetDefault && selectedDefaultPreference !== null
+              ? () => onSetDefault(selectedDefaultPreference)
+              : undefined
+          }
         >
           <PopoverTrigger asChild>
             <Button

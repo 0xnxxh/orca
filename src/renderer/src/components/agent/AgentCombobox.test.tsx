@@ -49,6 +49,25 @@ describe('AgentCombobox', () => {
     expect(onSetDefault).toHaveBeenCalledWith('blank')
   })
 
+  it('does not offer a default action for an Agent-only empty state', () => {
+    const onSetDefault = vi.fn()
+    render(
+      <AgentCombobox
+        agents={[]}
+        value={null}
+        onValueChange={vi.fn()}
+        allowBlankTerminal={false}
+        emptyLabel="Select an Agent"
+        onSetDefault={onSetDefault}
+      />
+    )
+
+    fireEvent.contextMenu(screen.getByRole('combobox'))
+
+    expect(screen.queryByRole('menuitem')).toBeNull()
+    expect(onSetDefault).not.toHaveBeenCalled()
+  })
+
   it('marks the closed trigger when its selection is already the default', () => {
     const onSetDefault = vi.fn()
     render(
