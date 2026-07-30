@@ -71,9 +71,7 @@ export function useTerminalLiveInputCommit<TTabType extends string>({
   })
 
   useEffect(() => {
-    // Why: sends during an outage are silently lost, so the mirror's "already on the PTY"
-    // record is unknowable after a cut — stale state would replay fragments or emit phantom
-    // erases into the first post-reconnect send. Reset while down; the PTY echo is truth.
+    // Why: what reached the PTY is unknowable across an outage — stale mirror state corrupts the first post-reconnect send.
     if (!connected) {
       clearPendingLiveInputCommit()
     }

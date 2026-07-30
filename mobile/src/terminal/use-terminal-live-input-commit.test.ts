@@ -55,8 +55,7 @@ function createTerminalLiveInputCommitHarness({
       return currentSendResult
     }
   }
-  // The hook keeps live-input state in refs, so a change handler alone never
-  // re-renders; only a prop change (these variables) re-runs the clear effects.
+  // Refs never re-render; only these variables re-run the hook's clear effects.
   let currentActiveSessionTabType: string | undefined = 'terminal'
   let currentConnected = true
   let handlers: ReturnType<typeof useTerminalLiveInputCommit<string>> | null = null

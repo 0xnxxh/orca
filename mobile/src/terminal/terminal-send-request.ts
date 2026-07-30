@@ -7,9 +7,7 @@ type TerminalSendParams = {
   readonly client?: { readonly id: string; readonly type: 'mobile' }
 }
 
-// Why: keystroke-grade sends must never park in the connect wait — a send parked
-// across a reconnect replays stale bytes into the PTY long after they were typed
-// (#6713's `YZZYecho …` corruption of the first post-recovery command).
+// Why: keystroke sends must never park in the connect wait — parked sends replay into the PTY after reconnect (#6713).
 export const TERMINAL_INPUT_SEND_OPTIONS: SendRequestOptions = { failWhenDisconnected: true }
 
 export function buildTerminalSendParams(args: {
