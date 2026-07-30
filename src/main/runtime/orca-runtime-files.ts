@@ -38,6 +38,7 @@ import {
   resolveRuntimePath
 } from '../../shared/cross-platform-path'
 import { PhysicalExitTracker } from '../../shared/physical-exit-tracker'
+import { compareFileNames } from '../../shared/file-name-sort'
 import type {
   RuntimeFileListResult,
   RuntimeFileOpenResult,
@@ -1277,7 +1278,7 @@ export class RuntimeFileCommands {
       if (a.isDirectory !== b.isDirectory) {
         return a.isDirectory ? -1 : 1
       }
-      return a.name.localeCompare(b.name)
+      return compareFileNames(a.name, b.name)
     })
   }
 

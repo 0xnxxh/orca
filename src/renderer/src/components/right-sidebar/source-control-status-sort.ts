@@ -1,8 +1,7 @@
 import type { GitStatusEntry } from '../../../../shared/types'
+import { fileNameCollator } from '../../../../shared/file-name-sort'
 
-// Why hoisted: localeCompare with an options object resolves a fresh ICU collator
-// on every comparison, so a changed-file sort paid for one per O(n log n) step.
-export const sourceControlPathCollator = new Intl.Collator(undefined, { numeric: true })
+export const sourceControlPathCollator = fileNameCollator
 
 export function compareGitStatusEntries(a: GitStatusEntry, b: GitStatusEntry): number {
   return (

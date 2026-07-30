@@ -30,6 +30,7 @@ import type {
 } from '../../shared/types'
 import type { GitHistoryOptions, GitHistoryResult } from '../../shared/git-history'
 import type { SshMutationExpectation } from '../../shared/ssh-types'
+import { compareFileNames } from '../../shared/file-name-sort'
 import { assertSshMutationExpectation } from '../ssh/ssh-connection-generation'
 import {
   buildRgArgs,
@@ -531,7 +532,7 @@ export function registerFilesystemHandlers(
           if (a.isDirectory !== b.isDirectory) {
             return a.isDirectory ? -1 : 1
           }
-          return a.name.localeCompare(b.name)
+          return compareFileNames(a.name, b.name)
         })
       } catch (error: unknown) {
         recordCrashBreadcrumb(
