@@ -67,3 +67,14 @@ export function appendFeedbackImagesToFormData(
     )
   }
 }
+
+/** Older servers omit this field; any settled 2xx still confirms the feedback text landed. */
+export async function readFeedbackImagesDelivered(response: Response): Promise<boolean> {
+  try {
+    const parsed: unknown = await response.json()
+    if (typeof parsed === 'object' && parsed !== null && 'imagesDelivered' in parsed) {
+      return (parsed as { imagesDelivered?: unknown }).imagesDelivered !== false
+    }
+  } catch {}
+  return true
+}

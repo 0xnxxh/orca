@@ -455,7 +455,22 @@ describe('submitFeedback', () => {
       })
     })
 
-    it('bounds a stalled partial-delivery response body by the attachment timeout', async () => {
+    it('treats a settled non-JSON 2xx as delivered for legacy servers', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 202,
+        json: async () => {
+          throw new SyntaxError('Unexpected token')
+        }
+      } as unknown as Response)
+
+      await expect(submitFeedback(imageSubmitArgs([pngImage()]))).resolves.toEqual({
+        ok: true,
+        imagesDelivered: true
+      })
+    })
+
+    it('fails a stalled delivery response body at the attachment timeout', async () => {
       vi.useFakeTimers()
       fetchMock.mockImplementation((_url: string, init?: RequestInit) =>
         Promise.resolve({
@@ -471,7 +486,11 @@ describe('submitFeedback', () => {
       const result = submitFeedback(imageSubmitArgs([pngImage()]))
       await vi.advanceTimersByTimeAsync(60_000)
 
-      await expect(result).resolves.toEqual({ ok: true, imagesDelivered: true })
+      await expect(result).resolves.toEqual({
+        ok: false,
+        status: null,
+        error: 'request timed out after 60 seconds'
+      })
       expect(requestInit().signal).toMatchObject({ aborted: true })
     })
 

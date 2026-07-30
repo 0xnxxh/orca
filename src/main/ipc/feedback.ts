@@ -3,6 +3,7 @@ import { app, ipcMain, net } from 'electron'
 import {
   appendFeedbackImagesToFormData,
   normalizeFeedbackImageBytes,
+  readFeedbackImagesDelivered,
   validateFeedbackImages,
   type FeedbackImageAttachment
 } from './feedback-image-attachments'
@@ -119,7 +120,15 @@ async function postFeedback(
       signal: controller.signal
     }
     const response = await net.fetch(url, init)
-    return await (readResponse ? readResponse(response).then(() => response) : response)
+    if (readResponse) {
+      await readResponse(response)
+    }
+    // Why: a response parser may tolerate malformed legacy bodies, but it must
+    // not turn the deadline's aborted body into a confirmed delivery.
+    if (controller.signal.aborted) {
+      throw new Error(`request timed out after ${timeoutMs / 1000} seconds`)
+    }
+    return response
   } catch (error) {
     // Why: Electron and Node report AbortError differently; keep deadline logs stable.
     if (controller.signal.aborted) {
@@ -271,17 +280,6 @@ async function submitFeedbackWithDiagnosticBundle(
   }
 }
 
-/** Older servers omit this field; any 2xx still confirms the feedback text landed. */
-async function readImagesDelivered(response: Response): Promise<boolean> {
-  try {
-    const parsed: unknown = await response.json()
-    if (typeof parsed === 'object' && parsed !== null && 'imagesDelivered' in parsed) {
-      return (parsed as { imagesDelivered?: unknown }).imagesDelivered !== false
-    }
-  } catch {}
-  return true
-}
-
 export async function submitFeedback(
   args: InternalFeedbackSubmitArgs
 ): Promise<FeedbackSubmitResult> {
@@ -302,7 +300,7 @@ export async function submitFeedback(
         body,
         FEEDBACK_ATTACHMENT_REQUEST_TIMEOUT_MS,
         async (nextResponse) => {
-          imagesDelivered = nextResponse.ok ? await readImagesDelivered(nextResponse) : true
+          imagesDelivered = nextResponse.ok ? await readFeedbackImagesDelivered(nextResponse) : true
         }
       )
       if (response.ok) {
