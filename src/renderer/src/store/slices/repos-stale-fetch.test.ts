@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { createTestStore } from './store-test-helpers'
-import type { Repo } from '../../../../shared/types'
+import { createTestStore, makeTab } from './store-test-helpers'
+import type { Repo, WorkspaceSessionState } from '../../../../shared/types'
+import { getDefaultWorkspaceSession } from '../../../../shared/constants'
 import { clearRuntimeCompatibilityCacheForTests } from '../../runtime/runtime-rpc-client'
 
 const localRepo: Repo = {
@@ -73,5 +74,55 @@ describe('repos slice stale-fetch race (#7020)', () => {
     resolveStale([localRepo, remoteRepo])
     await stale
     expect(store.getState().repos).toEqual([])
+  })
+
+  it('waits for the superseding catalog fetch before startup hydration', async () => {
+    let resolveStartup!: (repos: Repo[]) => void
+    let resolveRefresh!: (repos: Repo[]) => void
+    const startupRepos = new Promise<Repo[]>((resolve) => {
+      resolveStartup = resolve
+    })
+    const refreshedRepos = new Promise<Repo[]>((resolve) => {
+      resolveRefresh = resolve
+    })
+    reposList.mockReturnValueOnce(startupRepos).mockReturnValueOnce(refreshedRepos)
+    const store = createTestStore()
+
+    const startup = store.getState().fetchReposForAllHosts({ remoteHosts: 'skip' })
+    const refresh = store.getState().fetchRepos()
+    resolveStartup([localRepo])
+    await startup
+
+    let settled = false
+    const settlement = store
+      .getState()
+      .awaitLocalRepoCatalogSettlement()
+      .then(() => {
+        settled = true
+      })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    resolveRefresh([localRepo])
+    await Promise.all([refresh, settlement])
+    expect(store.getState().repos.map((repo) => repo.id)).toEqual(['local-repo'])
+
+    const worktreeId = 'local-repo::/local'
+    const session: WorkspaceSessionState = {
+      ...getDefaultWorkspaceSession(),
+      activeRepoId: localRepo.id,
+      activeWorktreeId: worktreeId,
+      activeTabId: 'restored-tab',
+      activeWorktreeIdsOnShutdown: [worktreeId],
+      tabsByWorktree: {
+        [worktreeId]: [makeTab({ id: 'restored-tab', worktreeId, ptyId: 'original-daemon-pty' })]
+      }
+    }
+    store.getState().hydrateWorkspaceSession(session)
+
+    expect(store.getState().activeWorktreeId).toBe(worktreeId)
+    expect(store.getState().pendingReconnectPtyIdByTabId).toEqual({
+      'restored-tab': 'original-daemon-pty'
+    })
   })
 })

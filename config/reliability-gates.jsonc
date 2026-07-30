@@ -533,18 +533,20 @@
       "providers": ["local", "daemon", "ssh"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["local", "daemon", "ssh"],
-      "coverageNotes": "Deterministic unit coverage exercises activation gating, single-instance ownership, quit policy, local/remote CLI status, headless binding persistence, local daemon identity, SSH identity transfer, and the macOS serve update handoff from staged installer through atomic bundle replacement and target-version readiness. A macOS Electron journey covers headless promotion and persistent PTY identity. A disposable locally signed Electron canary exercised real ShipIt and a temporary LaunchAgent with the compiled production supervisor; full packaged Orca and Linux/Windows serve updates remain uncollected.",
+      "coverageNotes": "Deterministic unit coverage exercises activation gating, single-instance ownership, quit policy, local/remote CLI status, headless binding persistence, repo-catalog settlement before session hydration, local daemon identity, SSH identity transfer, and the macOS serve update handoff from staged installer through atomic bundle replacement and target-version readiness. A macOS Electron journey covers headless promotion and persistent PTY identity. A disposable locally signed Electron canary exercised real ShipIt and a temporary LaunchAgent with the compiled production supervisor; full packaged Orca and Linux/Windows serve updates remain uncollected.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/issues/8457",
         "https://github.com/stablyai/orca/issues/9563"
       ],
       "invariant": "A safely promotable headless serve process is the single app owner. Desktop activation preserves its daemon-backed sessions. On macOS, a CLI-supervised serve update keeps the node-mode parent alive across ShipIt's atomic bundle swap, restarts with the original serve arguments only after the target bundle is present, and clears handoff state only after that target version reports runtime readiness. Unsupported or failed handoffs leave the current serving owner intact or recover it once without an install retry loop.",
-      "oracle": "Unit tests coalesce early activation, preserve daemon and SSH identity, and reproduce the update race with a staged target, old serving child, persistent CLI parent, atomic .app replacement, and replacement readiness message. They assert the parent does not exit for launchd to respawn the old app, the native updater does not launch an interactive GUI, the replacement version is verified before handoff completion, mismatches become durable failures without retries, and unsupported/preflight-failed installs do not invoke native quit or PTY cleanup. The Electron journey independently verifies headless promotion retains owner/runtime/daemon/PTY identity and terminal I/O.",
+      "oracle": "Unit tests coalesce early activation, preserve daemon and SSH identity, and force a superseding repo refresh between the startup catalog read and session hydration. They assert hydration waits for the latest local catalog without waiting for remote hosts, then retains the exact daemon PTY reattach hint. The update harness separately uses a staged target, old serving child, persistent CLI parent, atomic .app replacement, and replacement readiness message. The Electron journey independently verifies persisted tab/leaf/PTY identity, owner/runtime/daemon/PTY continuity, and terminal I/O.",
       "commands": [
         "pnpm exec vitest run --config config/vitest.config.ts src/cli/runtime/launch.test.ts src/main/serve-update-handoff.test.ts src/main/updater.headless-serve-install.test.ts src/main/updater.test.ts src/main/updater.mac-install.test.ts src/main/window/attach-main-window-services.test.ts src/main/startup/serve-desktop-activation-wiring.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/startup/serve-desktop-activation.test.ts src/main/startup/serve-desktop-activation-wiring.test.ts src/main/startup/single-instance-lock.test.ts src/main/startup/window-all-closed-quit-policy.test.ts src/cli/runtime-client.test.ts src/cli/runtime/websocket-transport.test.ts src/main/runtime/orca-runtime.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/store/slices/repos-stale-fetch.test.ts src/renderer/src/store/slices/repos-all-hosts-generation.test.ts src/renderer/src/app-startup-routing.test.ts",
         "pnpm exec electron-vite build --mode e2e",
-        "pnpm run test:e2e -- tests/e2e/headless-serve-desktop-activation.spec.ts --workers=1"
+        "pnpm run test:e2e -- tests/e2e/headless-serve-desktop-activation.spec.ts --workers=1",
+        "SKIP_BUILD=1 pnpm exec playwright test tests/e2e/headless-serve-desktop-activation.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1 --repeat-each=10"
       ],
       "testFiles": [
         "src/main/updater.headless-serve-install.test.ts",
@@ -557,6 +559,9 @@
         "src/cli/runtime-client.test.ts",
         "src/cli/runtime/websocket-transport.test.ts",
         "src/main/runtime/orca-runtime.test.ts",
+        "src/renderer/src/store/slices/repos-stale-fetch.test.ts",
+        "src/renderer/src/store/slices/repos-all-hosts-generation.test.ts",
+        "src/renderer/src/app-startup-routing.test.ts",
         "tests/e2e/headless-serve-desktop-activation.spec.ts"
       ],
       "assertionRefs": [
@@ -639,15 +644,38 @@
           ]
         },
         {
+          "file": "src/renderer/src/store/slices/repos-stale-fetch.test.ts",
+          "assertions": [
+            "a superseding repo refresh settles before session hydration and preserves the original daemon PTY reattach hint"
+          ]
+        },
+        {
+          "file": "src/renderer/src/store/slices/repos-all-hosts-generation.test.ts",
+          "assertions": [
+            "the hydration barrier settles after the newest local catalog without waiting for remote runtime catalogs",
+            "Connect-flow and all-host catalogs preserve the newest request for each runtime host regardless of response order"
+          ]
+        },
+        {
           "file": "tests/e2e/headless-serve-desktop-activation.spec.ts",
           "assertions": [
             "desktop activation keeps the same main owner PID, runtime id, daemon PID, and PTY id",
+            "promotion persists the exact original tab id, terminal leaf id, and PTY id before the test proceeds to renderer assertions",
             "terminal output written before promotion remains visible and post-promotion input/output still works",
             "the activating second process exits instead of becoming another owner"
           ]
         }
       ],
       "evidenceRuns": [
+        {
+          "date": "2026-07-30",
+          "runner": "local",
+          "platform": "macos",
+          "command": "SKIP_BUILD=1 pnpm exec playwright test tests/e2e/headless-serve-desktop-activation.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1 --repeat-each=10",
+          "result": "passed",
+          "durationSeconds": 58,
+          "summary": "Ten consecutive isolated Electron promotions retained the persisted tab, leaf, daemon PTY, main owner, runtime, and daemon identities plus pre/post-promotion I/O. The affected baseline failed 3/5; disabling only the catalog-settlement wait failed 3/5 with valid session input discarded because the superseding repo catalog had not settled."
+        },
         {
           "date": "2026-07-21",
           "runner": "local",
@@ -686,11 +714,11 @@
       },
       "redGreenEvidence": {
         "status": "complete",
-        "evidence": "The original updater regression was observed red with one native install call, one paired-client disconnect, one cleanup start, no replacement owner, and a stranded staged installer. The root-cause harness was then observed red because the Electron child received no handoff path and the CLI parent exited, allowing launchd to spawn the old version while ShipIt still required zero running target apps. A live canary then exposed MacUpdater ignoring quitAndInstall relaunch arguments and starting a second desktop owner; disabling its independent relaunch for supervised mode produced one stable LaunchAgent parent, one verified replacement, and a surviving session across the real ShipIt swap. The final deterministic harness keeps that parent, observes the atomic bundle swap, and verifies the new serving version before clearing state. Earlier activation evidence also fixed second-owner and replacement-PTY failures."
+        "evidence": "The promotion oracle failed 3/5 on the affected behavior and 3/5 with only the catalog-settlement wait disabled: session:get still contained the original binding, but hydration saw no settled repo owner, discarded its restore metadata, and fresh-spawned. The candidate passed 10/10, while the deterministic unit race is red without settlement and green with it. The original updater regression was separately observed red with one native install call, one paired-client disconnect, one cleanup start, no replacement owner, and a stranded staged installer. The final update harness keeps the CLI parent, observes the atomic bundle swap, and verifies the new serving version before clearing state."
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "Normal serve and desktop paths add only constant-time mode checks plus one IPC listener on the macOS CLI child. During an actual install handoff only, the CLI watches the stable app parent directory and performs a bounded 250ms version-file poll for at most 120 seconds; there are no subprocesses, network calls, provider scans, or startup waits. Activation performance is unchanged."
+        "evidence": "Startup adds one local-catalog settlement barrier that follows newer local requests but excludes remote-host RPCs. Normal serve and desktop paths otherwise add only constant-time mode checks plus one IPC listener on the macOS CLI child. During an actual install handoff only, the CLI watches the stable app parent directory and performs a bounded 250ms version-file poll for at most 120 seconds; there are no extra subprocesses, network calls, or provider scans."
       },
       "promotionCriteria": [
         "Collect at least 100 consecutive CI or soak passes or 14 days without an unexplained flake.",
