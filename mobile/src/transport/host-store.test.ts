@@ -319,6 +319,67 @@ describe('host-store list mutations', () => {
     expect(storedHostsRaw).toBe('{')
   })
 
+  // Why: gates the (slow, real-device 50-200ms) Keychain pass so a load can be
+  // parked mid-flight while a write commits underneath it.
+  function gateKeychainReads(): () => void {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    secureStoreMock.getItemAsync.mockImplementation(async (key: string) => {
+      await gate
+      return key.endsWith(HOST_ONE.id) || key.endsWith(HOST_TWO.id) ? `token-${key.at(-1)}` : null
+    })
+    return release
+  }
+
+  it('does not serve a pre-removal snapshot to a load issued after the removal (#8791)', async () => {
+    const releaseKeychain = gateKeychainReads()
+    const parkedLoad = loadHosts()
+    await vi.waitFor(() => {
+      expect(secureStoreMock.getItemAsync).toHaveBeenCalled()
+    })
+
+    await removeHost(HOST_ONE.id)
+    const afterRemoval = loadHosts()
+    releaseKeychain()
+
+    await parkedLoad
+    await expect(afterRemoval.then((hosts) => hosts.map((host) => host.id))).resolves.toEqual([
+      HOST_TWO.id
+    ])
+  })
+
+  it('does not serve a pre-rename snapshot to a load issued after the rename (#8791)', async () => {
+    const releaseKeychain = gateKeychainReads()
+    const parkedLoad = loadHosts()
+    await vi.waitFor(() => {
+      expect(secureStoreMock.getItemAsync).toHaveBeenCalled()
+    })
+
+    await updateHostNameAndEndpoint(HOST_ONE.id, { name: 'Living Room Mac' })
+    const afterRename = loadHosts()
+    releaseKeychain()
+
+    await parkedLoad
+    const hosts = await afterRename
+    expect(hosts.find((host) => host.id === HOST_ONE.id)?.name).toBe('Living Room Mac')
+  })
+
+  it('still shares one Keychain pass across loads with no write between them', async () => {
+    const releaseKeychain = gateKeychainReads()
+    const first = loadHosts()
+    await vi.waitFor(() => {
+      expect(secureStoreMock.getItemAsync).toHaveBeenCalled()
+    })
+    const second = loadHosts()
+    releaseKeychain()
+
+    const [firstHosts, secondHosts] = await Promise.all([first, second])
+    expect(firstHosts).toBe(secondHosts)
+    expect(secureStoreMock.getItemAsync).toHaveBeenCalledTimes(2)
+  })
+
   it('resolves instead of rejecting when updateLastConnected hits unreadable storage', async () => {
     // Why: callers fire updateLastConnected with `void`; a rejection here would
     // surface as an unhandled promise rejection rather than a caught error.

@@ -8,6 +8,7 @@ import {
   type StoredHostProfile
 } from './types'
 import { getNextHostNameFromHosts } from './host-names'
+import { dropSharedHostListLoad, shareHostListLoad } from './host-list-load-sharing'
 import {
   retryPendingHostCredentialCleanups,
   scheduleHostCredentialCleanup
@@ -73,7 +74,6 @@ async function deleteHostCredentials(hostId: string): Promise<void> {
 
 // Why: Keychain reads are slow (50-200ms) and loadHosts() runs on every screen mount; cache per-hostId in memory, invalidate on save/remove.
 const tokenCache = new Map<string, string>()
-let inflightLoad: Promise<HostProfile[]> | null = null
 // Why: serialize RMW of the shared hosts JSON; without a queue concurrent writers drop writes (resurrect a removed host, drop a rename).
 let hostListMutation: Promise<void> = Promise.resolve()
 
@@ -103,13 +103,7 @@ export async function loadHosts(): Promise<HostProfile[]> {
   // Why: writers hold the mutation chain across their full RMW; wait so a load doesn't race a half-written list.
   await hostListMutation
   // Why: deduplicate concurrent loadHosts() calls so simultaneously mounting screens share one Keychain read pass.
-  if (inflightLoad) {
-    return inflightLoad
-  }
-  inflightLoad = doLoadHosts().finally(() => {
-    inflightLoad = null
-  })
-  return inflightLoad
+  return shareHostListLoad(doLoadHosts)
 }
 
 async function doLoadHosts(): Promise<HostProfile[]> {
@@ -197,6 +191,7 @@ async function mutateStoredHosts(
     const current = await readStoredHostsForMutation()
     const next = update(current)
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+    dropSharedHostListLoad()
   })
   hostListMutation = mutation.catch(() => {})
   return mutation
@@ -258,6 +253,7 @@ async function persistHost(host: HostProfile, requireExisting: boolean): Promise
       relayHostId: validated.relayHostId,
       relay: validated.relay
     })
+    dropSharedHostListLoad()
   }
   const overlayRemovalIds = [...duplicateHostIds]
   if (!validated.endpoints && updatedExistingHost) {
@@ -266,6 +262,7 @@ async function persistHost(host: HostProfile, requireExisting: boolean): Promise
   if (overlayRemovalIds.length > 0) {
     // Why: reusing an id for direct-only re-pairing must not retain routing metadata from the previous transport state.
     await removeMobileRelayHostOverlays(overlayRemovalIds)
+    dropSharedHostListLoad()
   }
   for (const duplicateHostId of duplicateHostIds) {
     tokenCache.delete(duplicateHostId)
@@ -282,6 +279,7 @@ export async function removeHost(hostId: string): Promise<void> {
   tokenCache.delete(hostId)
   try {
     await removeMobileRelayHostOverlay(hostId)
+    dropSharedHostListLoad()
   } catch {
     // Base removal is authoritative; a retained overlay can't resurrect the host and is cleaned on a later retry.
   }
@@ -341,5 +339,5 @@ export async function updateLastConnected(hostId: string): Promise<void> {
 export function resetHostStoreForTests(): void {
   hostListMutation = Promise.resolve()
   tokenCache.clear()
-  inflightLoad = null
+  dropSharedHostListLoad()
 }
