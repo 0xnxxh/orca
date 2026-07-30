@@ -261,6 +261,8 @@ describe('mobile rpc-client connection timeout', () => {
     )
 
     client.notifyForeground()
+    const probe = sentRequest(socket, 'status.get')
+    socket.receive(`encrypted:${JSON.stringify({ id: probe.id, ok: true, result: {} })}`)
     socket.receive(encodeBrowserFrame())
     await Promise.resolve()
     await Promise.resolve()
@@ -540,6 +542,7 @@ describe('mobile rpc-client connection timeout', () => {
     socket.open()
     socket.receive(JSON.stringify({ type: 'e2ee_ready' }))
     socket.receive('encrypted:{"type":"e2ee_authenticated"}')
+    socket.emitCloseOnClose = false
 
     const request = client.sendRequest(
       'speech.dictation.finish',
@@ -557,6 +560,8 @@ describe('mobile rpc-client connection timeout', () => {
 
     await vi.advanceTimersByTimeAsync(1)
     await expect(request).rejects.toThrow('Request timed out: speech.dictation.finish')
+    expect(socket.close).toHaveBeenCalled()
+    expect(client.getState()).toBe('reconnecting')
 
     client.close()
   })
@@ -782,7 +787,7 @@ describe('mobile rpc-client connection timeout', () => {
       client.close()
     })
 
-    it('keeps a healthy connection when a binary stream frame arrives while the probe is pending', async () => {
+    it('does not let terminal stream traffic mask a stalled control channel', async () => {
       const { client, socket } = connectAuthenticated()
       const events: unknown[] = []
 
@@ -799,6 +804,7 @@ describe('mobile rpc-client connection timeout', () => {
         })}`
       )
 
+      socket.emitCloseOnClose = false
       client.notifyForeground()
       socket.receive(encodeTerminalOutput(42, 'still alive'))
       await Promise.resolve()
@@ -806,8 +812,21 @@ describe('mobile rpc-client connection timeout', () => {
       await vi.advanceTimersByTimeAsync(8_000)
 
       expect(events).toContainEqual({ type: 'data', streamId: 42, chunk: 'still alive' })
-      expect(socket.close).not.toHaveBeenCalled()
-      expect(client.getState()).toBe('connected')
+      expect(socket.close).toHaveBeenCalled()
+      expect(client.getState()).toBe('reconnecting')
+
+      client.close()
+    })
+
+    it('demotes a timed-out probe even when React Native omits onclose', async () => {
+      const { client, socket } = connectAuthenticated()
+      socket.emitCloseOnClose = false
+
+      client.notifyForeground()
+      await vi.advanceTimersByTimeAsync(8_000)
+
+      expect(socket.close).toHaveBeenCalled()
+      expect(client.getState()).toBe('reconnecting')
 
       client.close()
     })

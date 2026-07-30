@@ -12,6 +12,7 @@ import {
 } from 'react'
 import type { RpcClient } from './rpc-client'
 import { connectionLogStore } from './connection-log-buffer'
+import { verifyForceReconnectRpcHealth } from './force-reconnect-rpc-health'
 import { subscribeConnectionRevivalTriggers } from './connection-revival-triggers'
 import { HostClientOpenRegistry } from './host-client-open-registry'
 import { loadHosts } from './host-store'
@@ -212,6 +213,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
       const fresh = await openEntry(hostId)
       if (fresh) {
         fresh.refCount = savedRefCount
+        await verifyForceReconnectRpcHealth(fresh.client)
       }
     },
     [openEntry]
@@ -455,8 +457,7 @@ export function useCloseHost(): (hostId: string) => void {
 
 // Why: future-proof "Connection issues — try again" affordance.
 export function useForceReconnect(): (hostId: string) => Promise<void> {
-  const ctx = useRpcClientContext()
-  return ctx.forceReconnect
+  return useRpcClientContext().forceReconnect
 }
 
 // Why: primes already-loaded HostProfiles so the provider can skip a second loadHosts()/Keychain pass on cold start.

@@ -167,7 +167,7 @@ export function connect(
   let lastConnectedAt: number | null = null
   // Why: cheap diagnostics for RN/OkHttp process-state poisoning (retry cadence, inbound traffic, close timing).
   let lastInboundAt: number | null = null
-  let inboundSequence = 0
+  let controlResponseSequence = 0
   let lastWsClosedAt: number | null = null
   let wsConstructionCounter = 0
   let currentWsOpenedAt: number | null = null
@@ -501,7 +501,9 @@ export function connect(
       if (!isRpcResponse(response)) {
         return
       }
-      recordValidatedInboundTraffic()
+      if (pending.has(response.id)) {
+        controlResponseSequence++
+      }
 
       // Why: a mid-session unauthorized may be transient (issue #5200) — handleAuthRejection retries before latching auth-failed.
       if (!response.ok && response.error.code === 'unauthorized') {
@@ -762,26 +764,23 @@ export function connect(
     }
   }
 
-  // Why: app-level liveness probe (see ACTIVITY_PROBE_INTERVAL_MS) — force-closes the WS on failure so onclose reconnects.
+  // Why: stream frames can flow while control RPC is wedged; only a control response satisfies this probe.
   function runActivityProbe() {
     if (state !== 'connected' || !ws) {
       return
     }
     const probeWs = ws
     const id = nextId()
-    const probeInboundSequence = inboundSequence
+    const probeControlResponseSequence = controlResponseSequence
     let timedOut = false
     const timeout = setTimeout(() => {
       timedOut = true
       pending.delete(id)
-      if (inboundSequence > probeInboundSequence) {
+      if (controlResponseSequence > probeControlResponseSequence) {
         return
       }
       console.log('[net] activity-probe TIMEOUT — forcing reconnect', { state })
-      // Why: stale probe timers must not close a replacement socket.
-      if (probeWs === ws && probeWs.readyState === WebSocket.OPEN) {
-        probeWs.close()
-      }
+      forceSocketReconnect(probeWs)
     }, 8_000)
     pending.set(id, {
       resolve: () => {
@@ -800,6 +799,19 @@ export function connect(
     if (!sendEncrypted({ id, deviceToken, method: 'status.get' })) {
       clearTimeout(timeout)
       pending.delete(id)
+    }
+  }
+
+  function forceSocketReconnect(socket: WebSocket): void {
+    if (socket !== ws) {
+      return
+    }
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.close()
+    }
+    // Why: RN can omit onclose for a half-open socket; demote locally instead of staying falsely connected.
+    if (socket === ws) {
+      handleSocketClosed(socket, { timedOut: true })
     }
   }
 
@@ -911,21 +923,15 @@ export function connect(
     }
   }
 
-  function recordValidatedInboundTraffic(): void {
-    inboundSequence++
-  }
-
   function handleBinaryFrame(bytes: Uint8Array): void {
     const browserFrame = decodeBrowserScreencastFrame(bytes)
     if (browserFrame) {
-      recordValidatedInboundTraffic()
       handleBrowserBinaryFrame(browserFrame)
       return
     }
     handleTerminalBinaryFrame(bytes, {
       terminalSnapshots,
-      getListener: (streamId) => terminalStreamListeners.get(streamId),
-      recordValidatedInboundTraffic
+      getListener: (streamId) => terminalStreamListeners.get(streamId)
     })
   }
 
@@ -1007,6 +1013,7 @@ export function connect(
         })
       }
 
+      const requestWs = ws
       return new Promise((resolve, reject) => {
         const id = nextId()
         const timeoutMs = resolvePostConnectRequestTimeout(budget, REQUEST_TIMEOUT_MS)
@@ -1019,6 +1026,9 @@ export function connect(
           })
           // Why: the frame was written 30s ago — the host may have processed it.
           reject(markRpcDeliveryUnknown(new Error(`Request timed out: ${method}`)))
+          if (requestWs) {
+            forceSocketReconnect(requestWs)
+          }
         }, timeoutMs)
 
         pending.set(id, {
