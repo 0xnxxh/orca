@@ -1,3 +1,5 @@
+import { readFetchResponseJsonWithinLimit } from '../../shared/fetch-response-body'
+
 // Why: mirrors the server allow-list. Slack picks a renderer from the filename
 // extension, so every accepted type needs one.
 const FEEDBACK_IMAGE_EXTENSIONS: Record<string, string> = {
@@ -9,6 +11,7 @@ const FEEDBACK_IMAGE_EXTENSIONS: Record<string, string> = {
 
 export const MAX_FEEDBACK_IMAGE_COUNT = 4
 export const MAX_FEEDBACK_IMAGE_BYTES = 8 * 1024 * 1024
+export const MAX_FEEDBACK_IMAGE_RESPONSE_BYTES = 64 * 1024
 export const FEEDBACK_IMAGE_FORM_FIELD = 'feedbackImage'
 
 export type FeedbackImageAttachment = {
@@ -26,24 +29,30 @@ export function getSupportedFeedbackImageContentTypes(): string[] {
   return Object.keys(FEEDBACK_IMAGE_EXTENSIONS)
 }
 
-export function normalizeFeedbackImageBytes(data: Uint8Array): Uint8Array {
-  // Why: a Uint8Array already carries exact view bounds; copying it here adds
-  // another 32 MiB at the four-image cap before Blob framing copies it again.
-  return data instanceof Uint8Array ? data : new Uint8Array(data)
-}
-
 export function feedbackImageFilename(index: number, contentType: string): string {
   return `feedback-image-${index + 1}.${FEEDBACK_IMAGE_EXTENSIONS[contentType]}`
 }
 
 /** Defence in depth: the renderer validates first, but this channel is reachable directly. */
-export function validateFeedbackImages(images: FeedbackImageAttachment[]): string | null {
+export function validateFeedbackImages(images: unknown): string | null {
+  if (!Array.isArray(images)) {
+    return 'Image attachments must be a list.'
+  }
   if (images.length > MAX_FEEDBACK_IMAGE_COUNT) {
     return `Attach ${MAX_FEEDBACK_IMAGE_COUNT} images or fewer.`
   }
   for (const image of images) {
+    if (!image || typeof image !== 'object') {
+      return 'Invalid image attachment.'
+    }
+    if (typeof image.contentType !== 'string') {
+      return 'Invalid image attachment content type.'
+    }
     if (!isSupportedFeedbackImageContentType(image.contentType)) {
-      return `Unsupported image type ${image.contentType}.`
+      return 'Unsupported image type.'
+    }
+    if (!(image.data instanceof Uint8Array)) {
+      return 'Invalid image attachment bytes.'
     }
     if (image.data.byteLength === 0) {
       return 'Image attachment is empty.'
@@ -68,13 +77,16 @@ export function appendFeedbackImagesToFormData(
   }
 }
 
-/** Older servers omit this field; any settled 2xx still confirms the feedback text landed. */
+/** A 2xx confirms the text; only the response contract can confirm its images. */
 export async function readFeedbackImagesDelivered(response: Response): Promise<boolean> {
   try {
-    const parsed: unknown = await response.json()
+    const parsed: unknown = await readFetchResponseJsonWithinLimit(
+      response,
+      MAX_FEEDBACK_IMAGE_RESPONSE_BYTES
+    )
     if (typeof parsed === 'object' && parsed !== null && 'imagesDelivered' in parsed) {
-      return (parsed as { imagesDelivered?: unknown }).imagesDelivered !== false
+      return (parsed as { imagesDelivered?: unknown }).imagesDelivered === true
     }
   } catch {}
-  return true
+  return false
 }

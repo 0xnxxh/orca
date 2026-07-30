@@ -2,7 +2,6 @@ import os from 'node:os'
 import { app, ipcMain, net } from 'electron'
 import {
   appendFeedbackImagesToFormData,
-  normalizeFeedbackImageBytes,
   readFeedbackImagesDelivered,
   validateFeedbackImages,
   type FeedbackImageAttachment
@@ -285,7 +284,7 @@ export async function submitFeedback(
 ): Promise<FeedbackSubmitResult> {
   // Why: buildSubmitBody drops images on the crash lane, so validating them
   // there would abort a crash report over attachments it never meant to send.
-  if (args.submissionType !== 'crash' && args.images?.length) {
+  if (args.submissionType !== 'crash' && args.images !== undefined) {
     const imageError = validateFeedbackImages(args.images)
     if (imageError) {
       return { ok: false, status: null, error: imageError }
@@ -343,16 +342,20 @@ export async function submitFeedback(
 
 export function registerFeedbackHandlers(): void {
   ipcMain.removeHandler('feedback:submit')
-  ipcMain.handle('feedback:submit', (_event, args: FeedbackSubmitArgs) =>
+  ipcMain.handle('feedback:submit', (_event, args: FeedbackSubmitArgs) => {
+    // Why: validate the raw clone before normalization so a tiny hostile value
+    // cannot become a large main-process typed-array allocation.
+    if (args.images !== undefined) {
+      const imageError = validateFeedbackImages(args.images)
+      if (imageError) {
+        return { ok: false, status: null, error: imageError }
+      }
+    }
     // Why: crash submissions are main-only. A compromised renderer can invoke
     // this channel directly, so force the public feedback lane at the boundary.
-    submitFeedback({
+    return submitFeedback({
       ...args,
-      submissionType: 'feedback',
-      images: args.images?.map((image) => ({
-        contentType: image.contentType,
-        data: normalizeFeedbackImageBytes(image.data)
-      }))
+      submissionType: 'feedback'
     })
-  )
+  })
 }

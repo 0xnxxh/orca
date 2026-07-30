@@ -80,8 +80,10 @@ export function SidebarFeedbackImageAttachments({
                 alt={image.name}
                 className="size-14 rounded border border-border object-cover"
               />
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="icon-xs"
                 aria-label={translate(
                   'auto.components.sidebar.SidebarFeedbackImageAttachments.removeImage',
                   'Remove {{fileName}}',
@@ -89,10 +91,10 @@ export function SidebarFeedbackImageAttachments({
                 )}
                 disabled={disabled}
                 onClick={() => onRemove(image.id)}
-                className="absolute -right-1.5 -top-1.5 flex size-4 items-center justify-center rounded-full border border-border bg-background text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/attachment:opacity-100"
+                className="absolute -right-2 -top-2 rounded-full text-muted-foreground opacity-80 hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
               >
                 <X className="size-2.5" />
-              </button>
+              </Button>
               <span className="mt-0.5 block text-center text-[10px] leading-none text-muted-foreground">
                 {formatFeedbackImageSize(image.bytes)}
               </span>

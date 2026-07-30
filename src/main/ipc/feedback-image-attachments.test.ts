@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   MAX_FEEDBACK_IMAGE_BYTES,
   MAX_FEEDBACK_IMAGE_COUNT,
+  appendFeedbackImagesToFormData,
   feedbackImageFilename,
   isSupportedFeedbackImageContentType,
-  normalizeFeedbackImageBytes,
   validateFeedbackImages
 } from './feedback-image-attachments'
 
@@ -27,9 +27,7 @@ describe('isSupportedFeedbackImageContentType', () => {
     'rejects the inherited member %s',
     (contentType) => {
       expect(isSupportedFeedbackImageContentType(contentType)).toBe(false)
-      expect(validateFeedbackImages([image(contentType)])).toBe(
-        `Unsupported image type ${contentType}.`
-      )
+      expect(validateFeedbackImages([image(contentType)])).toBe('Unsupported image type.')
     }
   )
 })
@@ -49,15 +47,17 @@ describe('feedbackImageFilename', () => {
   })
 })
 
-describe('normalizeFeedbackImageBytes', () => {
-  it('preserves exact typed-array bounds without copying the backing buffer', () => {
+describe('appendFeedbackImagesToFormData', () => {
+  it('frames only the exact typed-array view', async () => {
     const backing = new Uint8Array([0, 1, 2, 3])
     const view = backing.subarray(1, 3)
+    const formData = new FormData()
 
-    const normalized = normalizeFeedbackImageBytes(view)
+    appendFeedbackImagesToFormData(formData, [{ contentType: 'image/png', data: view }])
 
-    expect(normalized).toBe(view)
-    expect([...normalized]).toEqual([1, 2])
+    const blob = formData.get('feedbackImage')
+    expect(blob).toBeInstanceOf(Blob)
+    expect(new Uint8Array(await (blob as Blob).arrayBuffer())).toEqual(new Uint8Array([1, 2]))
   })
 })
 
@@ -76,6 +76,14 @@ describe('validateFeedbackImages', () => {
         Array.from({ length: MAX_FEEDBACK_IMAGE_COUNT + 1 }, () => image('image/png'))
       )
     ).toBe(`Attach ${MAX_FEEDBACK_IMAGE_COUNT} images or fewer.`)
+  })
+
+  it('rejects malformed attachment collections and byte payloads', () => {
+    expect(validateFeedbackImages('image/png')).toBe('Image attachments must be a list.')
+    expect(validateFeedbackImages([null])).toBe('Invalid image attachment.')
+    expect(validateFeedbackImages([{ contentType: 'image/png', data: '8388608' }])).toBe(
+      'Invalid image attachment bytes.'
+    )
   })
 
   it('rejects an empty attachment', () => {

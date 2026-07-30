@@ -229,7 +229,7 @@ export function SidebarFeedbackDialog({
           toast.warning(
             translate(
               'auto.components.sidebar.SidebarFeedbackDialog.imagesNotDelivered',
-              'Feedback sent, but the images could not be attached.'
+              'Feedback sent, but image delivery could not be confirmed.'
             )
           )
         } else {
@@ -266,7 +266,7 @@ export function SidebarFeedbackDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         ref={contentRef}
-        className="sm:max-w-lg"
+        className="max-h-[calc(100vh-3rem)] overflow-y-auto scrollbar-sleek sm:max-w-lg"
         onOpenAutoFocus={(event) => {
           event.preventDefault()
           feedbackTextareaRef.current?.focus()

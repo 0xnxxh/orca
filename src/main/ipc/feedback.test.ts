@@ -16,6 +16,7 @@ vi.mock('electron', () => ({
   net: { fetch: (...args: unknown[]) => fetchMock(...args) }
 }))
 
+import { MAX_FEEDBACK_IMAGE_RESPONSE_BYTES } from './feedback-image-attachments'
 import { registerFeedbackHandlers, submitFeedback } from './feedback'
 
 function okResponse(): Response {
@@ -446,16 +447,16 @@ describe('submitFeedback', () => {
       })
     })
 
-    it('treats a 2xx without the field as delivered so older servers still succeed', async () => {
+    it('reports unconfirmed delivery when a 2xx omits the image result', async () => {
       fetchMock.mockResolvedValue(jsonResponse({ ok: true }))
 
       await expect(submitFeedback(imageSubmitArgs([pngImage()]))).resolves.toEqual({
         ok: true,
-        imagesDelivered: true
+        imagesDelivered: false
       })
     })
 
-    it('treats a settled non-JSON 2xx as delivered for legacy servers', async () => {
+    it('reports unconfirmed delivery for a settled non-JSON 2xx', async () => {
       fetchMock.mockResolvedValue({
         ok: true,
         status: 202,
@@ -466,7 +467,34 @@ describe('submitFeedback', () => {
 
       await expect(submitFeedback(imageSubmitArgs([pngImage()]))).resolves.toEqual({
         ok: true,
-        imagesDelivered: true
+        imagesDelivered: false
+      })
+    })
+
+    it('reports unconfirmed delivery when the response body aborts before the deadline', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 202,
+        json: async () => {
+          throw new TypeError('terminated')
+        }
+      } as unknown as Response)
+
+      await expect(submitFeedback(imageSubmitArgs([pngImage()]))).resolves.toEqual({
+        ok: true,
+        imagesDelivered: false
+      })
+      expect(requestInit().signal).toMatchObject({ aborted: false })
+    })
+
+    it('bounds the image-delivery response body', async () => {
+      fetchMock.mockResolvedValue(
+        new Response('x'.repeat(MAX_FEEDBACK_IMAGE_RESPONSE_BYTES + 1), { status: 202 })
+      )
+
+      await expect(submitFeedback(imageSubmitArgs([pngImage()]))).resolves.toEqual({
+        ok: true,
+        imagesDelivered: false
       })
     })
 
@@ -514,7 +542,36 @@ describe('submitFeedback', () => {
         images: [{ contentType: 'constructor', data: new Uint8Array(4).fill(1) }]
       })) as { ok: boolean; error?: string }
 
-      expect(result).toMatchObject({ ok: false, error: 'Unsupported image type constructor.' })
+      expect(result).toMatchObject({ ok: false, error: 'Unsupported image type.' })
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('rejects malformed IPC bytes before typed-array normalization', async () => {
+      registerFeedbackHandlers()
+      const result = (await handlers.get('feedback:submit')?.(null, {
+        feedback: 'images attached',
+        githubLogin: null,
+        githubEmail: null,
+        images: [{ contentType: 'image/png', data: '8388608' }]
+      })) as { ok: boolean; error?: string }
+
+      expect(result).toMatchObject({ ok: false, error: 'Invalid image attachment bytes.' })
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('rejects oversized IPC batches before normalizing their entries', async () => {
+      registerFeedbackHandlers()
+      const result = (await handlers.get('feedback:submit')?.(null, {
+        feedback: 'images attached',
+        githubLogin: null,
+        githubEmail: null,
+        images: Array.from({ length: 5 }, () => ({
+          contentType: 'image/png',
+          data: '8388608'
+        }))
+      })) as { ok: boolean; error?: string }
+
+      expect(result).toMatchObject({ ok: false, error: 'Attach 4 images or fewer.' })
       expect(fetchMock).not.toHaveBeenCalled()
     })
 

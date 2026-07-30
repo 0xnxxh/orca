@@ -74,6 +74,14 @@ afterEach(() => {
 })
 
 describe('SidebarFeedbackDialog image submission', () => {
+  it('keeps the dialog scrollable within short windows', () => {
+    const { container } = render(<SidebarFeedbackDialog open onOpenChange={vi.fn()} />)
+    const content = container.querySelector('.scrollbar-sleek')
+
+    expect(content?.className).toContain('max-h-[calc(100vh-3rem)]')
+    expect(content?.className).toContain('overflow-y-auto')
+  })
+
   it('waits for in-flight image reads before enabling Send', async () => {
     let finishRead: ((value: unknown) => void) | undefined
     mocks.readFeedbackImageFiles.mockReturnValue(
@@ -112,12 +120,50 @@ describe('SidebarFeedbackDialog image submission', () => {
     })
 
     await waitFor(() => expect((send as HTMLButtonElement).disabled).toBe(false))
-    expect(screen.getByRole('button', { name: 'Remove shot.png' })).toBeTruthy()
+    const remove = screen.getByRole('button', { name: 'Remove shot.png' })
+    expect(remove.dataset.slot).toBe('button')
+    expect(remove.dataset.size).toBe('icon-xs')
     fireEvent.click(send)
     await waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1))
     expect(mocks.submit.mock.calls[0]?.[0].images).toEqual([
       { contentType: 'image/png', data: new Uint8Array([1]) }
     ])
+  })
+
+  it('warns when the server cannot confirm image delivery', async () => {
+    mocks.readFeedbackImageFiles.mockResolvedValue({
+      images: [
+        {
+          id: 'shot',
+          name: 'shot.png',
+          contentType: 'image/png',
+          bytes: 1,
+          data: new Uint8Array([1]),
+          previewUrl: 'blob:shot'
+        }
+      ],
+      errors: []
+    })
+    mocks.submit.mockResolvedValue({ ok: true, imagesDelivered: false })
+    const onOpenChange = vi.fn()
+    const { container } = render(<SidebarFeedbackDialog open onOpenChange={onOpenChange} />)
+    fireEvent.change(screen.getByPlaceholderText('What could we improve?'), {
+      target: { value: 'Screenshot attached' }
+    })
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')
+    fireEvent.change(input!, {
+      target: { files: [new File(['x'], 'shot.png', { type: 'image/png' })] }
+    })
+    await screen.findByRole('button', { name: 'Remove shot.png' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    await waitFor(() =>
+      expect(mocks.toastWarning).toHaveBeenCalledWith(
+        'Feedback sent, but image delivery could not be confirmed.'
+      )
+    )
+    expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
   it('does not consume text when the pasted image cannot be attached', () => {
