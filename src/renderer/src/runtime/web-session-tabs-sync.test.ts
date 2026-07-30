@@ -1954,6 +1954,35 @@ describe('applyWebSessionTabsSnapshot', () => {
     expect(attributionPatch.agentStatusEpoch).toBe(8)
     expect(attributionPatch.sortEpoch).toBe(12)
 
+    const fresherAttributionPatch = applyWebSessionTabsSnapshot(
+      makeState({
+        ...initial,
+        agentStatusByPaneKey: {
+          [mirroredPaneKey]: {
+            ...existing,
+            updatedAt: NOW,
+            worktreeId: 'stale-worktree',
+            tabId: 'stale-tab',
+            providerSession: undefined
+          }
+        },
+        agentStatusEpoch: 7,
+        sortEpoch: 11
+      }),
+      { ...snapshot, snapshotVersion: 3 },
+      ENV,
+      NOW
+    ) as Partial<WebSessionTabsSyncState>
+
+    expect(fresherAttributionPatch.agentStatusByPaneKey?.[mirroredPaneKey]).toMatchObject({
+      worktreeId: existing.worktreeId,
+      tabId: existing.tabId,
+      updatedAt: NOW,
+      providerSession: { key: 'session_id', id: 'session-1' }
+    })
+    expect(fresherAttributionPatch.agentStatusEpoch).toBe(8)
+    expect(fresherAttributionPatch.sortEpoch).toBe(12)
+
     const identityPatch = applyWebSessionTabsSnapshot(
       makeState({
         ...initial,
@@ -1966,7 +1995,7 @@ describe('applyWebSessionTabsSnapshot', () => {
           }
         }
       }),
-      { ...snapshot, snapshotVersion: 3 },
+      { ...snapshot, snapshotVersion: 4 },
       ENV,
       NOW
     ) as Partial<WebSessionTabsSyncState>
