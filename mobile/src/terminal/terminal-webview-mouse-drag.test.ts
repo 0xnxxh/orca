@@ -21,7 +21,7 @@ describe('terminal WebView external mouse drag', () => {
     for (const motion of reports.slice(1, -1)) {
       expect(motion.charCodeAt(3)).toBe(64)
     }
-    expect(reports[reports.length - 1]?.charCodeAt(3)).toBe(35)
+    expect(reports.at(-1)?.charCodeAt(3)).toBe(35)
     // Motion reports are deduped per cell, so a horizontal drag advances columns.
     const motionCols = reports.slice(1, -1).map((report) => report.charCodeAt(4))
     expect(new Set(motionCols).size).toBe(motionCols.length)
@@ -63,7 +63,7 @@ describe('terminal WebView external mouse drag', () => {
     mouse.dispatchPointer('pointermove', { x: 200, y: 60, button: 0, buttons: 0 })
 
     const reports = mouse.terminalInputBytes().match(DEFAULT_MOUSE_REPORT_RE) ?? []
-    expect(reports[reports.length - 1]?.charCodeAt(3)).toBe(35)
+    expect(reports.at(-1)?.charCodeAt(3)).toBe(35)
 
     mouse.clearPostedMessages()
     mouse.dispatchPointer('pointermove', { x: 240, y: 60, button: 0, buttons: 1 })
@@ -82,6 +82,6 @@ describe('terminal WebView external mouse drag', () => {
 
     const reports = mouse.terminalInputBytes().match(DEFAULT_MOUSE_REPORT_RE) ?? []
     // Press went to the TUI, so the cancel must not leave the button latched.
-    expect(reports[reports.length - 1]?.charCodeAt(3)).toBe(35)
+    expect(reports.at(-1)?.charCodeAt(3)).toBe(35)
   })
 })

@@ -1,3 +1,4 @@
+import { runInThisContext } from 'node:vm'
 import { afterEach, beforeEach, vi, type Mock } from 'vitest'
 import { XTERM_HTML } from './terminal-webview-html'
 
@@ -105,7 +106,36 @@ function terminalSurface(): HTMLElement {
   return surface
 }
 
-function postedMessages(postMessage: PostMessage): Array<Record<string, unknown>> {
+function dispatchPointer(type: PointerEventType, init: PointerEventInit = {}): void {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX: init.x ?? 40,
+    clientY: init.y ?? 60,
+    button: init.button ?? 0,
+    buttons: init.buttons ?? 0
+  })
+  // Why: happy-dom's PointerEvent init drops pointerType; grafting it onto a
+  // MouseEvent exercises the same duck-typed reads the WebView handler does.
+  Object.defineProperty(event, 'pointerType', { value: init.pointerType ?? 'mouse' })
+  terminalSurface().dispatchEvent(event)
+}
+
+function mouseClick(x: number, y: number): void {
+  dispatchPointer('pointerdown', { x, y, button: 0, buttons: 1 })
+  dispatchPointer('pointerup', { x, y, button: 0, buttons: 0 })
+}
+
+function mouseDrag(x1: number, y1: number, x2: number, y2: number): void {
+  dispatchPointer('pointerdown', { x: x1, y: y1, button: 0, buttons: 1 })
+  const midX = Math.round((x1 + x2) / 2)
+  const midY = Math.round((y1 + y2) / 2)
+  dispatchPointer('pointermove', { x: midX, y: midY, button: 0, buttons: 1 })
+  dispatchPointer('pointermove', { x: x2, y: y2, button: 0, buttons: 1 })
+  dispatchPointer('pointerup', { x: x2, y: y2, button: 0, buttons: 0 })
+}
+
+function postedMessages(postMessage: PostMessage): Record<string, unknown>[] {
   return postMessage.mock.calls.map(([raw]) => JSON.parse(String(raw)) as Record<string, unknown>)
 }
 
@@ -117,7 +147,7 @@ function terminalInputBytes(postMessage: PostMessage): string {
 }
 
 export function useTerminalMouseWebViewHarness() {
-  let animationFrames: Array<() => void>
+  let animationFrames: (() => void)[]
   let buffer: BufferState
   let postMessage: PostMessage
   let registeredWindowListeners: RegisteredWindowListener[]
@@ -126,7 +156,7 @@ export function useTerminalMouseWebViewHarness() {
 
   function boot(): void {
     document.body.innerHTML = bodyMarkup()
-    new Function(iifeSource())()
+    runInThisContext(iifeSource())
     window.dispatchEvent(
       new MessageEvent('message', {
         data: JSON.stringify({ type: 'init', cols: 40, rows: 24, initialData: '' })
@@ -139,40 +169,11 @@ export function useTerminalMouseWebViewHarness() {
   }
 
   function activeTerminal(): TerminalStub {
-    const terminal = terminals[terminals.length - 1]
+    const terminal = terminals.at(-1)
     if (!terminal) {
       throw new Error('terminal missing')
     }
     return terminal
-  }
-
-  function dispatchPointer(type: PointerEventType, init: PointerEventInit = {}): void {
-    const event = new MouseEvent(type, {
-      bubbles: true,
-      cancelable: true,
-      clientX: init.x ?? 40,
-      clientY: init.y ?? 60,
-      button: init.button ?? 0,
-      buttons: init.buttons ?? 0
-    })
-    // Why: happy-dom's PointerEvent init drops pointerType; grafting it onto a
-    // MouseEvent exercises the same duck-typed reads the WebView handler does.
-    Object.defineProperty(event, 'pointerType', { value: init.pointerType ?? 'mouse' })
-    terminalSurface().dispatchEvent(event)
-  }
-
-  function mouseClick(x: number, y: number): void {
-    dispatchPointer('pointerdown', { x, y, button: 0, buttons: 1 })
-    dispatchPointer('pointerup', { x, y, button: 0, buttons: 0 })
-  }
-
-  function mouseDrag(x1: number, y1: number, x2: number, y2: number): void {
-    dispatchPointer('pointerdown', { x: x1, y: y1, button: 0, buttons: 1 })
-    const midX = Math.round((x1 + x2) / 2)
-    const midY = Math.round((y1 + y2) / 2)
-    dispatchPointer('pointermove', { x: midX, y: midY, button: 0, buttons: 1 })
-    dispatchPointer('pointermove', { x: x2, y: y2, button: 0, buttons: 1 })
-    dispatchPointer('pointerup', { x: x2, y: y2, button: 0, buttons: 0 })
   }
 
   beforeEach(() => {
