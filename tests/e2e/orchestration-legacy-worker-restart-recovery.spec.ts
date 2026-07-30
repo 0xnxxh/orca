@@ -622,10 +622,17 @@ for (const contractVersion of [LEGACY_CONTRACT_VERSION, CURRENT_CONTRACT_VERSION
 
       let assignmentRunId = run.result.run.id
       if (contractVersion === LEGACY_CONTRACT_VERSION) {
-        const runs = await secondClient.call<{
-          runs: { id: string; objective: string }[]
-        }>('orchestration.runList')
-        assignmentRunId = runs.result.runs.find(
+        const runs: { id: string; objective: string }[] = []
+        let cursor: string | undefined
+        do {
+          const page = await secondClient.call<{
+            runs: { id: string; objective: string }[]
+            nextCursor: string | null
+          }>('orchestration.runList', cursor ? { cursor } : {})
+          runs.push(...page.result.runs)
+          cursor = page.result.nextCursor ?? undefined
+        } while (cursor)
+        assignmentRunId = runs.find(
           (candidate) =>
             candidate.objective === 'Recovered orchestration work from a contract update'
         )!.id

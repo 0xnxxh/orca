@@ -96,6 +96,57 @@ describe('OrchestrationDb bounded mutation receipts', () => {
     expect(db.getMutationReceipt('caller', 'overflow')).toBeUndefined()
   })
 
+  it('prunes completed receipts before accepting a remote attachment', () => {
+    db = new OrchestrationDb(':memory:')
+    insertMutationReceipts(db, MUTATION_RECEIPT_MAX_ROWS, 'completed')
+
+    db.createRemoteDispatchAttachment({
+      dispatchId: 'ctx_remote_pruned',
+      taskId: 'task_remote_pruned',
+      homePeerFingerprint: 'caller',
+      protocolVersion: 1,
+      runtimeEpoch: 'worker_epoch',
+      mutationReceipt: {
+        callerFingerprint: 'caller',
+        requestId: 'remote_pruned',
+        method: 'orchestration.federationAttachStart',
+        payloadHash: 'hash_remote_pruned'
+      }
+    })
+
+    const count = sqliteFor(db)
+      .prepare('SELECT COUNT(*) AS count FROM mutation_receipts')
+      .get() as { count: number }
+    expect(count.count).toBe(MUTATION_RECEIPT_MAX_ROWS)
+    expect(db.getMutationReceipt('caller', 'request_00001')).toBeUndefined()
+    expect(db.getMutationReceipt('caller', 'remote_pruned')).toMatchObject({ state: 'pending' })
+    expect(db.getRemoteDispatchAttachment('ctx_remote_pruned')).toBeDefined()
+  })
+
+  it('rejects a remote attachment when pending receipts fill the ledger', () => {
+    db = new OrchestrationDb(':memory:')
+    insertMutationReceipts(db, MUTATION_RECEIPT_MAX_ROWS, 'pending')
+
+    expect(() =>
+      db!.createRemoteDispatchAttachment({
+        dispatchId: 'ctx_remote_overflow',
+        taskId: 'task_remote_overflow',
+        homePeerFingerprint: 'caller',
+        protocolVersion: 1,
+        runtimeEpoch: 'worker_epoch',
+        mutationReceipt: {
+          callerFingerprint: 'caller',
+          requestId: 'remote_overflow',
+          method: 'orchestration.federationAttachStart',
+          payloadHash: 'hash_remote_overflow'
+        }
+      })
+    ).toThrowError(expect.objectContaining({ code: 'mutation_ledger_full' }))
+    expect(db.getMutationReceipt('caller', 'request_00001')).toMatchObject({ state: 'pending' })
+    expect(db.getMutationReceipt('caller', 'remote_overflow')).toBeUndefined()
+    expect(db.getRemoteDispatchAttachment('ctx_remote_overflow')).toBeUndefined()
+  })
+
   it('guards atomic worker acceptance without changing task state', () => {
     db = new OrchestrationDb(':memory:')
     const task = db.createTask({ spec: 'capacity check' })
@@ -125,15 +176,21 @@ describe('OrchestrationDb Run pagination', () => {
 
   it('returns stable bounded pages without skipping Runs sharing a timestamp', () => {
     db = new OrchestrationDb(':memory:')
-    const createdIds = Array.from(
-      { length: 5 },
-      (_, index) =>
-        db!.createRun({
-          objective: `Run ${index}`,
-          coordinatorHandle: `term_coord_${index}`,
-          coordinatorPaneKey: `tab_coord_${index}:11111111-1111-4111-8111-111111111111`
-        }).id
+    const createdIds = Array.from({ length: 5 }, (_, index) => `run_page_${index}`)
+    const insertRun = sqliteFor(db).prepare(
+      `INSERT INTO runs (
+         id, objective, coordinator_handle, coordinator_pane_key,
+         consumer_generation, legacy, created_at
+       ) VALUES (?, ?, ?, ?, 1, 0, '2025-01-01 00:00:00')`
     )
+    for (const [index, id] of createdIds.entries()) {
+      insertRun.run(
+        id,
+        `Run ${index}`,
+        `term_coord_${index}`,
+        `tab_coord_${index}:11111111-1111-4111-8111-111111111111`
+      )
+    }
     const seen: string[] = []
     let cursor: string | undefined
 

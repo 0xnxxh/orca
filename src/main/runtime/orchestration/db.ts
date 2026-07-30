@@ -4438,6 +4438,7 @@ export class OrchestrationDb {
           `Remote attachment request ${params.mutationReceipt.requestId} already exists.`
         )
       }
+      this.ensureMutationReceiptCapacity()
       this.db
         .prepare(
           `INSERT INTO mutation_receipts (
