@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { GitHubWorkItem } from '../../../shared/types'
 import {
   accumulateWorkItemPages,
+  buildSelectedReposKey,
   getTaskPagePerRepoLimit,
   resolveEmptyPageOutcome,
   taskPageToGitHubApiPage,
@@ -61,38 +62,92 @@ describe('numbered GitHub pagination', () => {
 })
 
 describe('resolveEmptyPageOutcome', () => {
+  const base = { failedCount: 0, issueErrorTypes: [] as const, countedTotalPages: null }
+
   it('clamps and reports unreachable when the search window 422 is present', () => {
     expect(
-      resolveEmptyPageOutcome({ target: 33, failedCount: 0, issueErrorTypes: ['validation_error'] })
+      resolveEmptyPageOutcome({ ...base, target: 33, issueErrorTypes: ['validation_error'] })
     ).toEqual({ reason: 'window-unreachable', clampTotalPagesTo: 33 })
-    // A thrown repo alongside the 422 doesn't mask the window signal.
+    // A real count is still clamped — the count over-advertising is the bug.
     expect(
-      resolveEmptyPageOutcome({ target: 5, failedCount: 1, issueErrorTypes: ['validation_error'] })
-    ).toEqual({ reason: 'window-unreachable', clampTotalPagesTo: 5 })
+      resolveEmptyPageOutcome({
+        ...base,
+        target: 33,
+        issueErrorTypes: ['validation_error'],
+        countedTotalPages: 39
+      })
+    ).toEqual({ reason: 'window-unreachable', clampTotalPagesTo: 33 })
+  })
+
+  it('does not clamp on a window 422 when a sibling repo fetch threw', () => {
+    // Repos advance independently; another repo's transient failure says
+    // nothing about the healthy repos' remaining pages.
+    expect(
+      resolveEmptyPageOutcome({
+        ...base,
+        target: 5,
+        failedCount: 1,
+        issueErrorTypes: ['validation_error']
+      })
+    ).toEqual({ reason: 'window-unreachable', clampTotalPagesTo: null })
   })
 
   it('reports a failure without clamping for transient or unclassified errors', () => {
-    expect(resolveEmptyPageOutcome({ target: 5, failedCount: 2, issueErrorTypes: [] })).toEqual({
+    expect(resolveEmptyPageOutcome({ ...base, target: 5, failedCount: 2 })).toEqual({
       reason: 'load-failed',
       clampTotalPagesTo: null
     })
     for (const type of ['permission_denied', 'not_found', 'rate_limited', 'unknown'] as const) {
-      expect(
-        resolveEmptyPageOutcome({ target: 5, failedCount: 0, issueErrorTypes: [type] })
-      ).toEqual({ reason: 'load-failed', clampTotalPagesTo: null })
+      expect(resolveEmptyPageOutcome({ ...base, target: 5, issueErrorTypes: [type] })).toEqual({
+        reason: 'load-failed',
+        clampTotalPagesTo: null
+      })
     }
   })
 
-  it('treats a clean empty probe as end-of-data and withdraws the speculative page', () => {
-    expect(resolveEmptyPageOutcome({ target: 2, failedCount: 0, issueErrorTypes: [] })).toEqual({
+  it('withdraws the speculative page on clean empty only while the count is unknown', () => {
+    expect(resolveEmptyPageOutcome({ ...base, target: 2 })).toEqual({
       reason: 'end-of-data',
       clampTotalPagesTo: 2
     })
+    // 0 means the count itself failed — treat like unknown.
+    expect(resolveEmptyPageOutcome({ ...base, target: 2, countedTotalPages: 0 })).toEqual({
+      reason: 'end-of-data',
+      clampTotalPagesTo: 2
+    })
+    // A real count must not shrink: the PR list path swallows its own failures
+    // into clean-empty results, and clamping would hide healthy pages silently.
+    expect(resolveEmptyPageOutcome({ ...base, target: 2, countedTotalPages: 34 })).toEqual({
+      reason: 'end-of-data',
+      clampTotalPagesTo: null
+    })
     // Never clamps below one advertised page.
-    expect(resolveEmptyPageOutcome({ target: 0, failedCount: 0, issueErrorTypes: [] })).toEqual({
+    expect(resolveEmptyPageOutcome({ ...base, target: 0 })).toEqual({
       reason: 'end-of-data',
       clampTotalPagesTo: 1
     })
+  })
+})
+
+describe('buildSelectedReposKey', () => {
+  const contextFor = (r: { id: string }) => ({ provider: 'github', repoId: r.id })
+
+  it('is stable across fresh arrays with identical contents', () => {
+    const a = [{ id: 'r1', path: '/a', connectionId: null, executionHostId: null }]
+    const b = [{ ...a[0] }]
+    expect(buildSelectedReposKey(a, contextFor)).toBe(buildSelectedReposKey(b, contextFor))
+  })
+
+  it('changes when any request-relevant field changes', () => {
+    const repo = { id: 'r1', path: '/a', connectionId: null, executionHostId: null }
+    const key = buildSelectedReposKey([repo], contextFor)
+    expect(buildSelectedReposKey([{ ...repo, executionHostId: 'ssh:host' }], contextFor)).not.toBe(
+      key
+    )
+    expect(buildSelectedReposKey([{ ...repo, path: '/b' }], contextFor)).not.toBe(key)
+    expect(
+      buildSelectedReposKey([repo], (r) => ({ provider: 'github', repoId: r.id, owner: 'new' }))
+    ).not.toBe(key)
   })
 })
 

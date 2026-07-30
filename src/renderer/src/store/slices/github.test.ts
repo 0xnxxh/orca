@@ -6661,6 +6661,39 @@ describe('createGitHubSlice.fetchWorkItems source/error envelope', () => {
     })
   })
 
+  it('surfaces issue-side envelope errors as issueErrorTypes on next-page fetches', async () => {
+    runtimeEnvironmentCall.mockResolvedValueOnce({
+      id: 'rpc-work-items-page-422',
+      ok: true,
+      result: {
+        items: [],
+        sources: {
+          issues: { owner: 'up', repo: 'r' },
+          prs: null,
+          originCandidate: { owner: 'up', repo: 'r' },
+          upstreamCandidate: null
+        },
+        errors: {
+          issues: { type: 'validation_error', message: 'only the first 1000 search results' }
+        }
+      },
+      _meta: { runtimeId: 'remote-runtime' }
+    })
+    const store = createTestStore()
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-1' },
+      repos: [{ id: 'runtime-repo-id', path: '/server/repo', name: 'repo', kind: 'git' }]
+    } as unknown as Partial<AppState>)
+
+    const result = await store
+      .getState()
+      .fetchWorkItemsNextPage([{ repoId: 'caller-repo-id', path: '/server/repo' }], 24, 100, '', 34)
+
+    // The window 422 travels on the envelope error channel, not failedCount —
+    // resolveEmptyPageOutcome keys on this exact string (#11485).
+    expect(result).toEqual({ items: [], failedCount: 0, issueErrorTypes: ['validation_error'] })
+  })
+
   it('routes work-item counts through the active runtime environment', async () => {
     runtimeEnvironmentCall.mockResolvedValueOnce({
       id: 'rpc-work-items-count',

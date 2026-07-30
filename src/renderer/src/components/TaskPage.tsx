@@ -205,6 +205,7 @@ import {
 } from '@/components/task-page-cache-selectors'
 import { shouldHideTaskPageListChrome } from '@/components/task-page-list-chrome-visibility'
 import {
+  buildSelectedReposKey,
   getTaskPagePerRepoLimit,
   resolveEmptyPageOutcome,
   taskPageToGitHubApiPage
@@ -3206,20 +3207,10 @@ export default function TaskPage(): React.JSX.Element {
     [eligibleRepos, repoSelection]
   )
 
-  // Why: stable string key for selectedRepos — the repos store installs a fresh
-  // array on every repos:changed event, so array-identity deps re-fire even when
-  // the selection is unchanged. Includes the resolved GitHub source context so a
-  // provider-identity change still re-keys everything the requests depend on.
+  // Why: see buildSelectedReposKey — array-identity deps re-fire on every
+  // repos:changed even when the selection is unchanged.
   const selectedReposKey = useMemo(
-    () =>
-      selectedRepos
-        .map(
-          (r) =>
-            `${r.id}|${r.path}|${r.connectionId ?? ''}|${r.executionHostId ?? ''}|${JSON.stringify(
-              getTaskPageRepoSourceContext(r, 'github')
-            )}`
-        )
-        .join(','),
+    () => buildSelectedReposKey(selectedRepos, (r) => getTaskPageRepoSourceContext(r, 'github')),
     [selectedRepos]
   )
 
@@ -3830,12 +3821,21 @@ export default function TaskPage(): React.JSX.Element {
 
   // Why: keyed on selectedReposKey, not the selectedRepos array — a background
   // repos:changed refresh mid-flight would otherwise bump the generation and
-  // silently discard the user's page navigation (#11485).
+  // silently discard the user's page navigation (#11485). Mirrors every dep of
+  // the fetch effect that resets page state, so a reset always invalidates
+  // in-flight page requests.
   useEffect(() => {
     paginationGenerationRef.current += 1
     setPaginationLoading(false)
     setLoadingTargetPage(null)
-  }, [selectedReposKey, appliedTaskSearch, workItemsInvalidationNonce])
+  }, [
+    selectedReposKey,
+    appliedTaskSearch,
+    workItemsInvalidationNonce,
+    taskRefreshNonce,
+    taskSource,
+    githubMode
+  ])
 
   // Why: the dialog's "Use" button routes through the same direct-launch flow as the row-level "Use" CTA so behavior is consistent regardless of entry point.
   const githubTaskDrawerWorkItem = useAppStore((s) => s.githubTaskDrawerWorkItem)
@@ -6190,7 +6190,12 @@ export default function TaskPage(): React.JSX.Element {
         if (items.length === 0) {
           // Why: see resolveEmptyPageOutcome — a dead click needs feedback only
           // when something actually failed; a clean empty probe is end-of-data.
-          const outcome = resolveEmptyPageOutcome({ target, failedCount, issueErrorTypes })
+          const outcome = resolveEmptyPageOutcome({
+            target,
+            failedCount,
+            issueErrorTypes,
+            countedTotalPages
+          })
           if (outcome.reason === 'window-unreachable') {
             toast.error(
               translate(
@@ -6242,6 +6247,7 @@ export default function TaskPage(): React.JSX.Element {
       paginationLoading,
       selectedRepos,
       currentPage,
+      countedTotalPages,
       appliedTaskSearch,
       fetchWorkItemsNextPage,
       githubPageSize,

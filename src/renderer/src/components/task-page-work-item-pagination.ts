@@ -45,26 +45,59 @@ export type EmptyPageOutcome = {
  * An empty page load has three distinct meanings, and only the caller-side
  * error channels can tell them apart (#11485):
  * - a `validation_error` is GitHub's 422 for pages past its 1000-result search
- *   window — the page can never load, so stop advertising it;
+ *   window — the page can never load, so stop advertising it (unless a sibling
+ *   repo's fetch threw, which says nothing about the other repos' windows);
  * - any other per-repo error (thrown or issue-side envelope) may be transient
  *   (rate limit, permissions), so surface it but keep the advertised count;
- * - no error at all is the designed end-of-data signal from probing the
- *   speculative page `fallbackTotalPages` advertises while the count is
- *   unknown — withdraw the phantom page silently.
+ * - no error at all is end-of-data. That only warrants a clamp while the count
+ *   is unknown (null) or failed (0), to withdraw the speculative page
+ *   `fallbackTotalPages` advertises — a real count must not shrink, because a
+ *   provider that swallows its own failures (the PR list path) also produces
+ *   clean-empty results.
  */
 export function resolveEmptyPageOutcome(args: {
   target: number
   failedCount: number
   issueErrorTypes: readonly ClassifiedError['type'][]
+  countedTotalPages: number | null
 }): EmptyPageOutcome {
   const clamp = Math.max(1, Math.floor(args.target))
   if (args.issueErrorTypes.includes('validation_error')) {
-    return { reason: 'window-unreachable', clampTotalPagesTo: clamp }
+    return {
+      reason: 'window-unreachable',
+      clampTotalPagesTo: args.failedCount === 0 ? clamp : null
+    }
   }
   if (args.failedCount > 0 || args.issueErrorTypes.length > 0) {
     return { reason: 'load-failed', clampTotalPagesTo: null }
   }
-  return { reason: 'end-of-data', clampTotalPagesTo: clamp }
+  const countUnknown = args.countedTotalPages === null || args.countedTotalPages === 0
+  return { reason: 'end-of-data', clampTotalPagesTo: countUnknown ? clamp : null }
+}
+
+/**
+ * Stable identity string for a repo selection. The repos store installs a fresh
+ * array on every repos:changed event, so effects keyed on array identity re-fire
+ * with the selection unchanged — resetting pagination mid-click (#11485). The
+ * key must cover every repo field the work-item requests read; the caller
+ * supplies the resolved source context (which must stay free of timestamps).
+ */
+export function buildSelectedReposKey<
+  T extends {
+    id: string
+    path: string
+    connectionId?: string | null
+    executionHostId?: string | null
+  }
+>(repos: readonly T[], sourceContextFor: (repo: T) => unknown): string {
+  return repos
+    .map(
+      (r) =>
+        `${r.id}|${r.path}|${r.connectionId ?? ''}|${r.executionHostId ?? ''}|${JSON.stringify(
+          sourceContextFor(r)
+        )}`
+    )
+    .join(',')
 }
 
 // Why: provider pages cannot spill truncated rows into the next page. Divide
