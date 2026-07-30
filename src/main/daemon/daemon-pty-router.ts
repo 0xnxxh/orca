@@ -13,23 +13,16 @@ import type { PtyProcessInspection } from '../providers/pty-process-inspection'
 import { probePtyOwners } from './daemon-pty-liveness-probe'
 import { shouldHandoffDaemonHistory } from './daemon-history-handoff'
 
+type PtyDataListener = Parameters<IPtyProvider['onData']>[0]
+type PtyExitListener = Parameters<IPtyProvider['onExit']>[0]
+
 export class DaemonPtyRouter implements IPtyProvider {
   private current: DaemonPtyAdapter
   private legacy: DaemonPtyAdapter[]
   private sessionAdapters = new Map<string, DaemonPtyAdapter>()
   private unsubscribers: (() => void)[] = []
-  private dataListeners: ((payload: {
-    id: string
-    data: string
-    sequenceChars?: number
-    transformed?: boolean
-    seq?: number
-  }) => void)[] = []
-  private exitListeners: ((payload: {
-    id: string
-    code: number
-    incarnationId?: PtyIncarnationId
-  }) => void)[] = []
+  private dataListeners: PtyDataListener[] = []
+  private exitListeners: PtyExitListener[] = []
 
   constructor(opts: { current: DaemonPtyAdapter; legacy: DaemonPtyAdapter[] }) {
     this.current = opts.current
