@@ -298,10 +298,9 @@ export function useWorkspaceKanbanCardPointerDrag({
         return
       }
 
-      const selectedIds = selectedWorktreeIdsRef.current
       const selectedWorktrees = selectedWorktreesRef.current
       const worktreeIds =
-        selectedIds.has(worktreeId) && selectedWorktrees.length > 1
+        selectedWorktreeIdsRef.current.has(worktreeId) && selectedWorktrees.length > 1
           ? selectedWorktrees.map((worktree) => worktree.id)
           : [worktreeId]
       dragRef.current = {

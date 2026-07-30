@@ -249,6 +249,7 @@ export function useWorkspaceKanbanAreaSelection({
         window.cancelAnimationFrame(state.scrollFrameId)
         state.scrollFrameId = null
       }
+      refreshAreaSelectionMeasurements()
       flushAreaSelectionDrag()
       if (shouldCommitWorkspaceKanbanAreaSelection(state)) {
         updateSelectionForAreaRef.current(
@@ -262,7 +263,7 @@ export function useWorkspaceKanbanAreaSelection({
       dragRef.current = null
       setOverlayRect(overlayRef.current, null)
     },
-    [flushAreaSelectionDrag, overlayRef]
+    [flushAreaSelectionDrag, overlayRef, refreshAreaSelectionMeasurements]
   )
 
   const handleAreaSelectionPointerDown = useCallback(
