@@ -3157,7 +3157,7 @@ export type PreloadApi = {
         activate?: boolean
         focus?: boolean
         presentation?: RuntimeTerminalPresentation
-        surfaceOwner?: boolean
+        surfaceOwner?: false
         tabId?: string
         leafId?: string
         splitFromLeafId?: string

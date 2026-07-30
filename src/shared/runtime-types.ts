@@ -626,8 +626,9 @@ type RuntimeTerminalCreateBaseRequestPayload = {
    * Why: adopting a terminal is separate from pointing the user at it. `false`
    * keeps the tab silent — no sidebar reveal, no tab focus — for terminals the
    * user never asked to see (e.g. a workspace created in the background).
+   * Absent means "surface it", so this is a suppression switch, never `true`.
    */
-  surfaceOwner?: boolean
+  surfaceOwner?: false
 }
 
 export type RuntimeTerminalCreateRequestPayload =

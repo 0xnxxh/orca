@@ -36582,6 +36582,172 @@ describe('OrcaRuntimeService', () => {
     )
   })
 
+  it('does not surface the new workspace when a background create splits its setup pane', async () => {
+    const runtimeStore = {
+      ...store,
+      getSettings: () => ({
+        ...store.getSettings(),
+        setupScriptLaunchMode: 'split-horizontal' as const
+      })
+    }
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    const activateWorktree = vi.fn()
+    const revealTerminalSession = vi.fn().mockResolvedValue({ tabId: 'tab-bg-setup-split' })
+    const spawn = vi
+      .fn()
+      .mockResolvedValueOnce({ id: 'pty-bg-split-main' })
+      .mockResolvedValueOnce({ id: 'pty-bg-split-setup' })
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+    runtime.setNotifier({
+      worktreesChanged: vi.fn(),
+      reposChanged: vi.fn(),
+      activateWorktree,
+      createTerminal: vi.fn(),
+      revealTerminalSession,
+      splitTerminal: vi.fn(),
+      renameTerminal: vi.fn(),
+      focusTerminal: vi.fn(),
+      closeTerminal: vi.fn(),
+      sleepWorktree: vi.fn(),
+      terminalFitOverrideChanged: vi.fn(),
+      terminalDriverChanged: vi.fn()
+    })
+    runtime.attachWindow(1)
+
+    computeWorktreePathMock.mockReturnValue('/tmp/workspaces/runtime-bg-split-setup')
+    ensurePathWithinWorkspaceMock.mockReturnValue('/tmp/workspaces/runtime-bg-split-setup')
+    vi.mocked(getEffectiveHooks).mockReturnValue({ scripts: { setup: 'pnpm install' } })
+    vi.mocked(shouldRunSetupForCreate).mockReturnValue(true)
+    vi.mocked(createSetupRunnerScript).mockReturnValue({
+      runnerScriptPath: '/tmp/repo/.git/orca/setup-runner.sh',
+      envVars: {
+        ORCA_ROOT_PATH: '/tmp/repo',
+        ORCA_WORKTREE_PATH: '/tmp/workspaces/runtime-bg-split-setup'
+      }
+    })
+    vi.mocked(listWorktrees).mockResolvedValue([
+      {
+        path: '/tmp/workspaces/runtime-bg-split-setup',
+        head: 'def',
+        branch: 'runtime-bg-split-setup',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+
+    const result = await runtime.createManagedWorktree({
+      repoSelector: 'id:repo-1',
+      name: 'runtime-bg-split-setup',
+      setupDecision: 'run'
+    })
+
+    // Split launch modes reach the renderer through splitTerminal, not
+    // createTerminal — that path must suppress owner surfacing too.
+    expect(activateWorktree).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2))
+    const mainEnv = (spawn.mock.calls[0]![0] as { env?: Record<string, string> }).env ?? {}
+    await vi.waitFor(() =>
+      expect(revealTerminalSession).toHaveBeenLastCalledWith(
+        result.worktree.id,
+        expect.objectContaining({
+          ptyId: 'pty-bg-split-setup',
+          tabId: mainEnv.ORCA_TAB_ID,
+          activate: false,
+          surfaceOwner: false,
+          splitDirection: 'horizontal'
+        })
+      )
+    )
+  })
+
+  it('still surfaces the new workspace when an activating create splits its setup pane', async () => {
+    const runtimeStore = {
+      ...store,
+      getSettings: () => ({
+        ...store.getSettings(),
+        setupScriptLaunchMode: 'split-horizontal' as const
+      })
+    }
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    const revealTerminalSession = vi.fn().mockResolvedValue({ tabId: 'tab-active-setup-split' })
+    const spawn = vi
+      .fn()
+      .mockResolvedValueOnce({ id: 'pty-active-split-main' })
+      .mockResolvedValueOnce({ id: 'pty-active-split-setup' })
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+    runtime.setNotifier({
+      worktreesChanged: vi.fn(),
+      reposChanged: vi.fn(),
+      activateWorktree: vi.fn(),
+      createTerminal: vi.fn(),
+      revealTerminalSession,
+      splitTerminal: vi.fn(),
+      renameTerminal: vi.fn(),
+      focusTerminal: vi.fn(),
+      closeTerminal: vi.fn(),
+      sleepWorktree: vi.fn(),
+      terminalFitOverrideChanged: vi.fn(),
+      terminalDriverChanged: vi.fn()
+    })
+    runtime.attachWindow(1)
+
+    computeWorktreePathMock.mockReturnValue('/tmp/workspaces/runtime-active-split-setup')
+    ensurePathWithinWorkspaceMock.mockReturnValue('/tmp/workspaces/runtime-active-split-setup')
+    vi.mocked(getEffectiveHooks).mockReturnValue({ scripts: { setup: 'pnpm install' } })
+    vi.mocked(shouldRunSetupForCreate).mockReturnValue(true)
+    vi.mocked(createSetupRunnerScript).mockReturnValue({
+      runnerScriptPath: '/tmp/repo/.git/orca/setup-runner.sh',
+      envVars: {
+        ORCA_ROOT_PATH: '/tmp/repo',
+        ORCA_WORKTREE_PATH: '/tmp/workspaces/runtime-active-split-setup'
+      }
+    })
+    vi.mocked(listWorktrees).mockResolvedValue([
+      {
+        path: '/tmp/workspaces/runtime-active-split-setup',
+        head: 'def',
+        branch: 'runtime-active-split-setup',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+
+    const result = await runtime.createManagedWorktree({
+      repoSelector: 'id:repo-1',
+      name: 'runtime-active-split-setup',
+      activate: true,
+      setupDecision: 'run',
+      createdWithAgent: 'claude',
+      startup: { command: 'claude' }
+    })
+
+    // No-regression guard: an explicit --activate still reveals the workspace.
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() =>
+      expect(revealTerminalSession).toHaveBeenLastCalledWith(
+        result.worktree.id,
+        expect.objectContaining({
+          ptyId: 'pty-active-split-setup',
+          splitDirection: 'horizontal'
+        })
+      )
+    )
+    const splitRevealPayload = revealTerminalSession.mock.lastCall?.[1] as
+      | { surfaceOwner?: boolean }
+      | undefined
+    expect(splitRevealPayload).not.toHaveProperty('surfaceOwner')
+  })
+
   it('does not warn when setup is explicitly skipped for CLI-created worktrees', async () => {
     const metaById: Record<string, WorktreeMeta> = {}
     const runtimeStore = {
