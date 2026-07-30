@@ -180,7 +180,7 @@ const electronMocks = vi.hoisted(() => {
     BrowserWindow: { fromId: vi.fn((_id: number): unknown => null) },
     webContents: { fromId: vi.fn((_id: number): unknown => null) },
     ipcMain,
-    app: { getPath: vi.fn(() => '/tmp') }
+    app: { getPath: vi.fn(() => '/tmp'), isPackaged: false }
   }
 })
 
@@ -621,6 +621,7 @@ vi.mock('../git/git-username', async () => {
 
 function resetRuntimeTestMocks(): void {
   resetPlatform()
+  electronMocks.app.isPackaged = false
   clearConfiguredWorktreeSharedDirectoriesCacheForTests()
   _resetTerminalViewAttributesForTest()
   advertisedUrlWatcher.clear()
@@ -1719,6 +1720,7 @@ describe('OrcaRuntimeService', () => {
   })
 
   it('reconciles hooks only when paired-client hook settings change', async () => {
+    electronMocks.app.isPackaged = true
     let settings = {
       ...store.getSettings(),
       agentStatusHooksEnabled: true,
@@ -1742,7 +1744,10 @@ describe('OrcaRuntimeService', () => {
     expect(applyAgentStatusHooksEnabledMock).toHaveBeenCalledWith(
       true,
       expect.objectContaining({ disabledTuiAgents: ['claude'] }),
-      expect.objectContaining({ shouldContinue: expect.any(Function) })
+      expect.objectContaining({
+        shouldContinue: expect.any(Function),
+        shouldHydrateShellPath: process.platform !== 'win32'
+      })
     )
   })
 
