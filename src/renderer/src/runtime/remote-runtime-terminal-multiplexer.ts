@@ -110,6 +110,7 @@ type RemoteRuntimeMultiplexedTerminalState = {
   // Track it so a gap triggers a self-healing snapshot resync instead of
   // silently rendering corrupt/missing output (frame-drop resync).
   expectedSeq: number | undefined
+  commandProbeBaselineSeq: number | undefined
   recoverySnapshotSeq: number | undefined
   resyncInFlight: boolean
   resyncPendingSend: boolean
@@ -331,6 +332,7 @@ class RemoteRuntimeTerminalMultiplexer {
       initialSnapshotReceived: false,
       pendingSnapshotRequest: null,
       expectedSeq: undefined,
+      commandProbeBaselineSeq: undefined,
       recoverySnapshotSeq: undefined,
       resyncInFlight: false,
       resyncPendingSend: false,
@@ -693,6 +695,7 @@ class RemoteRuntimeTerminalMultiplexer {
         }
         if (typeof seq === 'number') {
           stream.expectedSeq = seq
+          stream.commandProbeBaselineSeq = undefined
         }
         stream.callbacks.onData(data, {
           seq,
@@ -795,6 +798,7 @@ class RemoteRuntimeTerminalMultiplexer {
       if (target === 'initial') {
         clearResyncTimer(stream)
         stream.expectedSeq = typeof info?.seq === 'number' ? info.seq : undefined
+        stream.commandProbeBaselineSeq = undefined
         stream.resyncInFlight = false
         stream.resyncPendingSend = false
         stream.initialSnapshotReceived = true
@@ -805,6 +809,7 @@ class RemoteRuntimeTerminalMultiplexer {
         if (snapshotApplied) {
           clearResyncTimer(stream)
           stream.expectedSeq = typeof info?.seq === 'number' ? info.seq : undefined
+          stream.commandProbeBaselineSeq = undefined
           stream.recoverySnapshotSeq = typeof info?.seq === 'number' ? info.seq : undefined
           stream.resyncAttempts = 0
           stream.resyncInFlight = false
@@ -1049,24 +1054,23 @@ class RemoteRuntimeTerminalMultiplexer {
         if (this.streams.get(stream.streamId) !== stream) {
           return
         }
-        if (
-          typeof snapshot?.seq === 'number' &&
-          snapshot.seq > 0 &&
-          typeof stream.expectedSeq !== 'number'
-        ) {
-          recordRendererCrashBreadcrumb(
-            'remote_terminal_stream_stall_probe_missing_delivery_high_water',
-            {
+        if (typeof snapshot?.seq === 'number' && typeof stream.expectedSeq !== 'number') {
+          if (
+            typeof stream.commandProbeBaselineSeq === 'number' &&
+            snapshot.seq > stream.commandProbeBaselineSeq
+          ) {
+            recordRendererCrashBreadcrumb('remote_terminal_stream_stall_probe_baseline_advanced', {
+              baselineSeq: stream.commandProbeBaselineSeq,
               environmentId: this.environmentId,
               snapshotSeq: snapshot.seq,
               streamId: stream.streamId,
               terminal: stream.terminal
-            }
-          )
-          this.recoverStalledStream(stream)
-          return
-        }
-        if (
+            })
+            this.recoverStalledStream(stream)
+            return
+          }
+          stream.commandProbeBaselineSeq = snapshot.seq
+        } else if (
           typeof snapshot?.seq === 'number' &&
           typeof stream.expectedSeq === 'number' &&
           snapshot.seq > stream.expectedSeq
@@ -1085,6 +1089,7 @@ class RemoteRuntimeTerminalMultiplexer {
         recordRendererCrashBreadcrumb('remote_terminal_stream_stall_probe_succeeded', {
           deliveredSeq: stream.expectedSeq ?? null,
           environmentId: this.environmentId,
+          probeBaselineSeq: stream.commandProbeBaselineSeq ?? null,
           snapshotSeq: snapshot?.seq ?? null,
           streamId: stream.streamId,
           terminal: stream.terminal

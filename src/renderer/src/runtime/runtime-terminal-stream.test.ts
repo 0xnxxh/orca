@@ -462,7 +462,7 @@ describe('remote runtime terminal multiplex ACK gate', () => {
     liveTerminal.close()
   })
 
-  it('drops output only from the exact stream armed by the E2E fault gate', async () => {
+  it('drops output only from the armed stream when its replacement reuses the stream ID', async () => {
     const { getRemoteRuntimeTerminalMultiplexer, resetRemoteRuntimeTerminalMultiplexersForTests } =
       await import('./remote-runtime-terminal-multiplexer')
     resetRemoteRuntimeTerminalMultiplexersForTests()
