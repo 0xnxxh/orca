@@ -4116,18 +4116,37 @@ describe('terminal multiplex RPC', () => {
     await harness.dispatchPromise
   })
 
-  it('supports 44 active streams while retaining a bounded per-connection limit', async () => {
-    const harness = startDesktopMultiplexSubscribe()
+  it('admits 128 active streams, rejects the 129th, and reuses released capacity', async () => {
+    let dataSubscriberCount = 0
+    let viewSubscriberCount = 0
+    const harness = startDesktopMultiplexSubscribe({
+      subscribeToTerminalData: vi.fn(() => {
+        dataSubscriberCount += 1
+        let released = false
+        return () => {
+          if (!released) {
+            released = true
+            dataSubscriberCount -= 1
+          }
+        }
+      }),
+      registerRemoteTerminalViewSubscriber: vi.fn(() => {
+        viewSubscriberCount += 1
+        let released = false
+        return () => {
+          if (!released) {
+            released = true
+            viewSubscriberCount -= 1
+          }
+        }
+      })
+    })
     await vi.waitFor(() =>
       expect(harness.messages.some((message) => JSON.parse(message).result?.type === 'ready')).toBe(
         true
       )
     )
-    for (
-      let streamId = 1;
-      streamId <= TERMINAL_MULTIPLEX_MAX_ACTIVE_STREAMS_PER_CONNECTION + 1;
-      streamId += 1
-    ) {
+    const sendSubscribe = (streamId: number): void => {
       harness.handlers.get(0)?.(
         decodeTerminalStreamFrame(
           encodeTerminalStreamFrame({
@@ -4143,6 +4162,14 @@ describe('terminal multiplex RPC', () => {
           })
         )!
       )
+    }
+    expect(TERMINAL_MULTIPLEX_MAX_ACTIVE_STREAMS_PER_CONNECTION).toBe(128)
+    for (
+      let streamId = 1;
+      streamId <= TERMINAL_MULTIPLEX_MAX_ACTIVE_STREAMS_PER_CONNECTION + 1;
+      streamId += 1
+    ) {
+      sendSubscribe(streamId)
     }
 
     await vi.waitFor(() => {
@@ -4162,12 +4189,53 @@ describe('terminal multiplex RPC', () => {
         streamId: TERMINAL_MULTIPLEX_MAX_ACTIVE_STREAMS_PER_CONNECTION + 1
       })
     })
+    expect(dataSubscriberCount).toBe(TERMINAL_MULTIPLEX_MAX_ACTIVE_STREAMS_PER_CONNECTION)
+    expect(viewSubscriberCount).toBe(TERMINAL_MULTIPLEX_MAX_ACTIVE_STREAMS_PER_CONNECTION)
+
+    harness.handlers.get(1)?.(
+      decodeTerminalStreamFrame(
+        encodeTerminalStreamFrame({
+          opcode: TerminalStreamOpcode.Unsubscribe,
+          streamId: 1,
+          seq: TERMINAL_MULTIPLEX_MAX_ACTIVE_STREAMS_PER_CONNECTION + 2,
+          payload: new Uint8Array()
+        })
+      )!
+    )
+    await vi.waitFor(() => {
+      expect(dataSubscriberCount).toBe(TERMINAL_MULTIPLEX_MAX_ACTIVE_STREAMS_PER_CONNECTION - 1)
+      expect(viewSubscriberCount).toBe(TERMINAL_MULTIPLEX_MAX_ACTIVE_STREAMS_PER_CONNECTION - 1)
+      expect(harness.handlers.has(1)).toBe(false)
+    })
+
+    const retriedStreamId = TERMINAL_MULTIPLEX_MAX_ACTIVE_STREAMS_PER_CONNECTION + 1
+    sendSubscribe(retriedStreamId)
+    await vi.waitFor(() => {
+      const subscribedStreamIds = harness.messages
+        .map((message) => JSON.parse(message).result)
+        .filter((result) => result?.type === 'subscribed')
+        .map((result) => result.streamId)
+      expect(subscribedStreamIds).toContain(retriedStreamId)
+      expect(
+        harness.binaryFrames.some((bytes) => {
+          const frame = decodeTerminalStreamFrame(bytes)
+          return (
+            frame?.streamId === retriedStreamId && frame.opcode === TerminalStreamOpcode.SnapshotEnd
+          )
+        })
+      ).toBe(true)
+    })
+    expect(dataSubscriberCount).toBe(TERMINAL_MULTIPLEX_MAX_ACTIVE_STREAMS_PER_CONNECTION)
+    expect(viewSubscriberCount).toBe(TERMINAL_MULTIPLEX_MAX_ACTIVE_STREAMS_PER_CONNECTION)
 
     harness.cleanups.get('terminal-multiplex:conn-desktop-first-paint')?.()
     await harness.dispatchPromise
+    expect(dataSubscriberCount).toBe(0)
+    expect(viewSubscriberCount).toBe(0)
   })
 
   it('reserves PTY wait capacity independently from active streams', async () => {
+    const activeStreamCount = 44
     const waitSignals: AbortSignal[] = []
     const resolveWaits: ((ptyId: string) => void)[] = []
     const runtime = stubRuntime({
@@ -4211,13 +4279,13 @@ describe('terminal multiplex RPC', () => {
       )
     }
 
-    for (let streamId = 1; streamId <= 44; streamId += 1) {
+    for (let streamId = 1; streamId <= activeStreamCount; streamId += 1) {
       sendSubscribe(streamId, `active-${streamId}`)
     }
     await vi.waitFor(() =>
       expect(
         harness.messages.filter((message) => JSON.parse(message).result?.type === 'subscribed')
-      ).toHaveLength(44)
+      ).toHaveLength(activeStreamCount)
     )
 
     for (
@@ -4225,12 +4293,13 @@ describe('terminal multiplex RPC', () => {
       offset <= TERMINAL_MULTIPLEX_MAX_PENDING_PTY_WAITS_PER_CONNECTION + 1;
       offset += 1
     ) {
-      sendSubscribe(44 + offset, `pending-${offset}`)
+      sendSubscribe(activeStreamCount + offset, `pending-${offset}`)
     }
     await vi.waitFor(() =>
       expect(waitSignals).toHaveLength(TERMINAL_MULTIPLEX_MAX_PENDING_PTY_WAITS_PER_CONNECTION)
     )
-    const rejectedStreamId = 45 + TERMINAL_MULTIPLEX_MAX_PENDING_PTY_WAITS_PER_CONNECTION
+    const rejectedStreamId =
+      activeStreamCount + TERMINAL_MULTIPLEX_MAX_PENDING_PTY_WAITS_PER_CONNECTION + 1
     await vi.waitFor(() => {
       const results = harness.messages.map((message) => JSON.parse(message).result)
       expect(results).toContainEqual({
@@ -4247,18 +4316,14 @@ describe('terminal multiplex RPC', () => {
     await vi.waitFor(() => {
       const results = harness.messages.map((message) => JSON.parse(message).result)
       expect(results.filter((result) => result?.type === 'subscribed')).toHaveLength(
-        TERMINAL_MULTIPLEX_MAX_ACTIVE_STREAMS_PER_CONNECTION
+        activeStreamCount + TERMINAL_MULTIPLEX_MAX_PENDING_PTY_WAITS_PER_CONNECTION
       )
       expect(
         results.filter(
           (result) =>
             result?.type === 'error' && result.message === 'terminal_stream_limit_exceeded'
         )
-      ).toHaveLength(
-        45 +
-          TERMINAL_MULTIPLEX_MAX_PENDING_PTY_WAITS_PER_CONNECTION -
-          TERMINAL_MULTIPLEX_MAX_ACTIVE_STREAMS_PER_CONNECTION
-      )
+      ).toHaveLength(1)
     })
 
     harness.cleanups.get('terminal-multiplex:conn-desktop-first-paint')?.()
