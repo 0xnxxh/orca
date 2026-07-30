@@ -271,8 +271,7 @@ describe('installed agent skill discovery lifecycle', () => {
   })
 
   it('evicts only the retired environments, leaving other entries warm', async () => {
-    // Why: #11429 — removal must not degrade into a flush, or every removal
-    // re-fires each mounted consumer's scan (the storm #7670 fixed).
+    // Why: a flush would re-fire every mounted consumer's scan.
     const discover = discoverSkillsForRuntimeTarget
     discover.mockResolvedValueOnce(result(1))
     discover.mockResolvedValueOnce(result(2))
@@ -283,7 +282,6 @@ describe('installed agent skill discovery lifecycle', () => {
 
     evictSkillDiscoveryForRuntimeEnvironments(['env-a'])
 
-    // env-b and local are still served from cache; only env-a rescans.
     await expect(discoverInstalledAgentSkills(false, undefined, remote('env-b'))).resolves.toEqual(
       result(2)
     )
@@ -297,9 +295,7 @@ describe('installed agent skill discovery lifecycle', () => {
   })
 
   it('does not let a scan in flight at eviction time repopulate the retired entry', async () => {
-    // Why: an environment removed mid-scan (ephemeral VM teardown) must not
-    // resurrect its entry when the scan lands — a re-pair reusing the id would
-    // then be served the retired peer's skill list.
+    // Why: VM teardown can race a scan already in flight.
     const staleScan = deferred<SkillDiscoveryResult>()
     const discover = discoverSkillsForRuntimeTarget
     discover.mockReturnValueOnce(staleScan.promise)
@@ -309,7 +305,6 @@ describe('installed agent skill discovery lifecycle', () => {
     staleScan.resolve(result(1))
     await expect(staleRequest).resolves.toEqual(result(1))
 
-    // The next read must rescan rather than serve the retired result.
     discover.mockResolvedValueOnce(result(2))
     await expect(discoverInstalledAgentSkills(false, undefined, remote('env-a'))).resolves.toEqual(
       result(2)

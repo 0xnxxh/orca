@@ -39,14 +39,7 @@ export function invalidateInstalledAgentSkillDiscovery(): void {
   pendingDiscoverySatisfiesForcedRefreshByTarget.clear()
 }
 
-/**
- * Evict the cached and in-flight scans owned by runtime environments that left
- * the saved list (removed, or re-paired under the same id). Keyed, not a flush:
- * the local/WSL entries and surviving remotes stay warm, so removal cannot
- * re-fire every mounted consumer's scan. Called by the runtime-status slice —
- * this module must stay store-free (#6887), so the store subscription lives on
- * the consuming side.
- */
+// Keyed eviction keeps surviving targets warm and this discovery module store-free.
 export function evictSkillDiscoveryForRuntimeEnvironments(environmentIds: readonly string[]): void {
   for (const environmentId of environmentIds) {
     const key = getRuntimeScopedSkillDiscoveryKey({ kind: 'environment', environmentId }, undefined)
@@ -124,8 +117,7 @@ function startInstalledAgentSkillDiscovery(
   const normalizedTarget = normalizeSkillDiscoveryTarget(target)
   const discovery = discoverSkillsForRuntimeTarget(runtimeTarget, normalizedTarget)
     .then((result) => {
-      // Why: only the still-registered scan may populate — a scan whose runtime
-      // environment was evicted mid-flight must not resurrect the retired entry.
+      // Why: an evicted in-flight scan must not resurrect a retired entry.
       if (generation === discoveryGeneration && pendingDiscoveryByTarget.get(key) === discovery) {
         writeInstalledAgentSkillDiscoveryCache(key, result)
       }

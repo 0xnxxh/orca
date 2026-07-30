@@ -1,15 +1,3 @@
-/**
- * Staleness + memory-leak regression (#11429): runtime-scoped skill discovery
- * cache entries must be evicted when their runtime environment leaves the
- * saved list.
- *
- * Remote scans cache under `runtime:<environmentId>` (#6887) in the bounded
- * LRU (#7670), but nothing evicted them on environment removal. Ephemeral VMs
- * mint a fresh environment id per start, so every start left a permanently
- * retained entry until LRU pressure, and re-pairing an id served the removed
- * peer's skill list. `setRuntimeEnvironments` now evicts retired ids —
- * removed and same-id re-paired alike.
- */
 import { afterEach, describe, expect, it } from 'vitest'
 import { create } from 'zustand'
 import type { PublicKnownRuntimeEnvironment } from '../../../../shared/runtime-environments'
@@ -19,6 +7,7 @@ import {
   resetSkillDiscoveryCacheForTests
 } from '@/hooks/installed-agent-skill-discovery'
 import {
+  getInstalledAgentSkillDiscoveryCacheSizeForTests,
   hasInstalledAgentSkillDiscoveryCacheEntryForTests,
   writeInstalledAgentSkillDiscoveryCache
 } from '@/hooks/installed-agent-skill-discovery-cache'
@@ -57,7 +46,6 @@ describe('skill discovery cache evicted on environment removal (#11429)', () => 
     store.getState().setRuntimeEnvironments([env('env-keep')])
 
     expect(hasInstalledAgentSkillDiscoveryCacheEntryForTests(runtimeKey('env-drop'))).toBe(false)
-    // Surviving remote and local entries stay warm — eviction is keyed, not a flush.
     expect(hasInstalledAgentSkillDiscoveryCacheEntryForTests(runtimeKey('env-keep'))).toBe(true)
     expect(hasInstalledAgentSkillDiscoveryCacheEntryForTests('host')).toBe(true)
   })
@@ -70,5 +58,27 @@ describe('skill discovery cache evicted on environment removal (#11429)', () => 
     store.getState().setRuntimeEnvironments([env('env-a', 2)])
 
     expect(hasInstalledAgentSkillDiscoveryCacheEntryForTests(runtimeKey('env-a'))).toBe(false)
+  })
+
+  it('returns to baseline across repeated ephemeral runtime cycles', () => {
+    const store = createSliceStore()
+    const keep = env('env-keep')
+    store.getState().setRuntimeEnvironments([keep])
+    writeInstalledAgentSkillDiscoveryCache(runtimeKey(keep.id), discovery(1))
+    writeInstalledAgentSkillDiscoveryCache('host', discovery(2))
+    const baseline = getInstalledAgentSkillDiscoveryCacheSizeForTests()
+
+    for (let cycle = 0; cycle < 100; cycle += 1) {
+      const ephemeral = env(`orca-${cycle}`)
+      store.getState().setRuntimeEnvironments([keep, ephemeral])
+      writeInstalledAgentSkillDiscoveryCache(runtimeKey(ephemeral.id), discovery(cycle + 3))
+      expect(getInstalledAgentSkillDiscoveryCacheSizeForTests()).toBe(baseline + 1)
+
+      store.getState().setRuntimeEnvironments([keep])
+      expect(getInstalledAgentSkillDiscoveryCacheSizeForTests()).toBe(baseline)
+    }
+
+    expect(hasInstalledAgentSkillDiscoveryCacheEntryForTests(runtimeKey(keep.id))).toBe(true)
+    expect(hasInstalledAgentSkillDiscoveryCacheEntryForTests('host')).toBe(true)
   })
 })

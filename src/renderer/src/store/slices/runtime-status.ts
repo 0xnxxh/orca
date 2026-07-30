@@ -159,9 +159,7 @@ export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeSta
     const retiredEnvironmentIds = [...new Set([...removedIds, ...replacedEnvironmentIds])]
     if (retiredEnvironmentIds.length > 0) {
       get().purgeStaleRuntimeHostState?.(retiredEnvironmentIds)
-      // Why: a retired environment's cached skill scan would otherwise be served
-      // verbatim if its id is re-paired, and ephemeral VMs mint a fresh id per
-      // start, leaking one retained entry per start until LRU pressure (#11429).
+      // Why: ephemeral runtimes otherwise leak one cached scan per retired id.
       evictSkillDiscoveryForRuntimeEnvironments(retiredEnvironmentIds)
     }
   },
