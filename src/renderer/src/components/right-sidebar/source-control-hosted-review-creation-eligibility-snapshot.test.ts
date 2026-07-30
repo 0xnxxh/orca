@@ -32,7 +32,7 @@ describe('resolveHostedReviewCreationProviderForTarget', () => {
 })
 
 describe('buildLocalBlockerHostedReviewCreationEligibility', () => {
-  it('reports dirty without offering create intent when the review lookup failed', () => {
+  it('reports dirty with unavailable lookup while still allowing prepare-only Create PR intent', () => {
     const eligibility = buildLocalBlockerHostedReviewCreationEligibility('github', {
       ...featureBranch,
       hasUncommittedChanges: true,
@@ -45,7 +45,7 @@ describe('buildLocalBlockerHostedReviewCreationEligibility', () => {
       nextAction: 'commit',
       reviewLookupOutcome: 'unavailable'
     })
-    // Why: branch guidance can remain specific, but a failed lookup cannot authorize creation.
+    // Why: local prep (stage/commit/push) is safe without lookup authority; final create stays fail-closed in main.
     expect(
       resolveCreatePrIntentEligibility({
         stagedCount: 1,
@@ -56,7 +56,7 @@ describe('buildLocalBlockerHostedReviewCreationEligibility', () => {
         hostedReviewCreation: eligibility,
         branchCommitsAhead: 0
       })
-    ).toEqual({ eligible: false, kind: null })
+    ).toEqual({ eligible: true, kind: 'dirty' })
   })
 
   it('prefers dirty over no_upstream when both apply, matching main-process ordering', () => {
