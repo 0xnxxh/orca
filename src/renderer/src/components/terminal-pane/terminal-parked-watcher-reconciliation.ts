@@ -71,12 +71,19 @@ export function reconcileParkedWatcherPtyIds(args: {
   entryTabPtyId: string | null
   paneIdByPtyId: ReadonlyMap<string, number>
   expectedPtyIds: ReadonlySet<string>
-}): { restart: boolean; retiredPaneIds: number[] } {
-  const samePtyIds =
-    args.paneIdByPtyId.size === args.expectedPtyIds.size &&
-    Array.from(args.paneIdByPtyId.keys()).every((ptyId) => args.expectedPtyIds.has(ptyId))
+}): {
+  restartAll: boolean
+  addedPtyIds: string[]
+  retainedPtyIds: string[]
+  retiredPaneIds: number[]
+} {
+  const retainedPtyIds = Array.from(args.paneIdByPtyId.keys()).filter((ptyId) =>
+    args.expectedPtyIds.has(ptyId)
+  )
   return {
-    restart: args.entryTabPtyId !== args.currentTabPtyId || !samePtyIds,
+    restartAll: args.entryTabPtyId !== args.currentTabPtyId,
+    addedPtyIds: Array.from(args.expectedPtyIds).filter((ptyId) => !args.paneIdByPtyId.has(ptyId)),
+    retainedPtyIds,
     retiredPaneIds: Array.from(args.paneIdByPtyId)
       .filter(([ptyId]) => !args.expectedPtyIds.has(ptyId))
       .map(([, paneId]) => paneId)

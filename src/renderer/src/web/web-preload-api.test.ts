@@ -522,12 +522,12 @@ describe('web runtime environment identity', () => {
         })
       }
       await expect(Promise.all(activeCalls)).resolves.toEqual(
-        expect.arrayContaining([
+        Array.from({ length: 8 }, () =>
           expect.objectContaining({
             ok: false,
             error: expect.objectContaining({ code: 'runtime_manually_disconnected' })
           })
-        ])
+        )
       )
     }
   )

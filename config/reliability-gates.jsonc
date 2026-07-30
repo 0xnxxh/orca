@@ -2996,10 +2996,10 @@
         "https://github.com/stablyai/orca/issues/8652",
         "https://github.com/stablyai/orca/pull/10625"
       ],
-      "invariant": "A host advertising terminal.paired-parking.v1 keeps the PTY and bounded authoritative history alive while an ordinary hidden-view park destroys the client xterm and releases its raw per-PTY stream. Reveal must restore up to the requested 5,000 rows, parked-time side effects/output, the same PTY identity, and continued input/output. Hosts without the capability must retain the existing limit/TTL force-parking fallback. A paired terminal stream whose delivery credits or command responses stop progressing must replace only that stream and repaint authoritative host output. Manual disconnect must retain pairing while preventing queued or passive calls and subscriptions from recreating transport until explicit Connect.",
-      "oracle": "Run one byte-identical six-terminal oracle against an isolated headed desktop host and an isolated headless `orca serve` host. Stage at least 1,000,000 xterm cells, enable ordinary parking with the lossy retention budget disabled, require exactly one mounted manager and five parked tabs, at most 45% retained cells, no more than 16 MiB heap growth, and under 500 ms timer drift. While a tab is parked, require authoritative terminal.read to observe new PTY output; reveal it and require the original PTY, a marker within the requested 5,000-row history, the parked marker, and post-reveal input/output. Admit 128 active streams, reject the 129th as retryable, release one stream, then require the retry to attach and publish a snapshot without multiplying retained subscribers. Disable terminal.paired-parking.v1 and require the same oracle to fail before parking, while the legacy limit-one fallback separately passes. Also preserve truncated first paint, ACK-starved same-PTY stream recovery, and queued manual-disconnect fencing.",
+      "invariant": "A host advertising terminal.paired-parking.v1 keeps the PTY and bounded authoritative history alive while an ordinary hidden-view park destroys the client xterm and releases its raw per-PTY stream. Reveal must restore up to the requested 5,000 rows, parked-time side effects/output, the same PTY identity, and continued input/output. Hosts without the capability must retain the existing limit/TTL force-parking fallback. A paired terminal stream whose delivery credits stop progressing must replace only that stream; command silence must first probe authoritative state and replace only if that probe times out. Manual disconnect must retain pairing while preventing queued or passive calls and subscriptions from recreating transport until explicit Connect.",
+      "oracle": "Run one byte-identical six-terminal oracle against an isolated headed desktop host and an isolated headless `orca serve` host. Stage at least 1,000,000 xterm cells, enable ordinary parking with the lossy retention budget disabled, require exactly one mounted manager and five parked tabs, at most 45% retained cells, no more than 16 MiB heap growth, and under 500 ms timer drift. While a tab is parked, require authoritative terminal.read to observe new PTY output; reveal it and require the original PTY, a marker within the requested 5,000-row history, the parked marker, and post-reveal input/output. Admit 128 active streams, reject the 129th as retryable, release one stream, then require the retry to attach and publish a snapshot without multiplying retained subscribers. Disable terminal.paired-parking.v1 and require the same oracle to fail before parking, while the legacy limit-one fallback separately passes. Also preserve truncated first paint, ACK-starved same-PTY recovery, responsive silent-command snapshot probes, dead-stream probe timeout recovery, and queued manual-disconnect fencing.",
       "commands": [
-        "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/main/runtime/rpc/terminal-subscribe-buffer.test.ts src/renderer/src/components/terminal-pane/parked-terminal-byte-watcher.test.ts src/renderer/src/components/terminal-pane/terminal-side-effect-facts-handler.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts src/renderer/src/components/terminal-pane/terminal-hidden-view-parking.test.ts src/renderer/src/components/terminal-pane/terminal-hidden-worktree-retention.test.ts src/renderer/src/components/terminal-pane/terminal-parked-tab-watchers.test.ts src/renderer/src/components/terminal-pane/terminal-parked-watcher-reconciliation.test.ts src/renderer/src/components/terminal-pane/terminal-parking-e2e-overrides.test.ts src/renderer/src/runtime/remote-runtime-terminal-stall-recovery.test.ts src/renderer/src/runtime/runtime-client-events.test.ts src/renderer/src/web/web-preload-api.test.ts src/main/ipc/runtime-environments.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/main/runtime/rpc/terminal-subscribe-buffer.test.ts src/renderer/src/components/terminal-pane/parked-terminal-byte-watcher.test.ts src/renderer/src/components/terminal-pane/terminal-side-effect-facts-handler.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts src/renderer/src/components/terminal-pane/terminal-hidden-view-parking.test.ts src/renderer/src/components/terminal-pane/terminal-hidden-worktree-retention.test.ts src/renderer/src/components/terminal-pane/terminal-parked-tab-watchers.test.ts src/renderer/src/components/terminal-pane/terminal-parked-watcher-reconciliation.test.ts src/renderer/src/components/terminal-pane/terminal-parked-watcher-partial-reconciliation.test.ts src/renderer/src/components/terminal-pane/terminal-parking-e2e-overrides.test.ts src/renderer/src/runtime/remote-runtime-terminal-stall-recovery.test.ts src/renderer/src/runtime/runtime-client-events.test.ts src/renderer/src/web/web-preload-api.test.ts src/main/ipc/runtime-environments.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/runtime/remote-runtime-terminal-parse-backpressure.test.ts",
         "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-truncated-tail-first-paint.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
         "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_DISABLE_PAIRED_TERMINAL_PARKING=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-truncated-tail-first-paint.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
@@ -3022,6 +3022,7 @@
         "src/renderer/src/components/terminal-pane/terminal-hidden-view-parking.test.ts",
         "src/renderer/src/components/terminal-pane/terminal-parked-tab-watchers.test.ts",
         "src/renderer/src/components/terminal-pane/terminal-parked-watcher-reconciliation.test.ts",
+        "src/renderer/src/components/terminal-pane/terminal-parked-watcher-partial-reconciliation.test.ts",
         "src/renderer/src/components/terminal-pane/terminal-parking-e2e-overrides.test.ts",
         "src/renderer/src/runtime/remote-runtime-terminal-stall-recovery.test.ts",
         "src/renderer/src/runtime/remote-runtime-terminal-parse-backpressure.test.ts",
@@ -3081,7 +3082,8 @@
           "assertions": [
             "forwards facts over the shared client-event stream without a desktop renderer",
             "prefers provider history over a partial headless mirror for requested snapshots",
-            "falls back to the available mirror when authoritative provider history is unavailable"
+            "falls back to the available mirror when authoritative provider history is unavailable",
+            "bounds a hung authoritative provider acquisition and reuses its fallback"
           ]
         },
         {
@@ -3109,12 +3111,27 @@
           ]
         },
         {
+          "file": "src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts",
+          "assertions": [
+            "keeps a mounted HUB mirror alive when the old stream ends before the replacement snapshot"
+          ]
+        },
+        {
           "file": "src/renderer/src/components/terminal-pane/terminal-parked-tab-watchers.test.ts",
           "assertions": ["starts a fact watcher for snapshot-capable paired PTYs"]
         },
         {
+          "file": "src/renderer/src/components/terminal-pane/terminal-parked-watcher-partial-reconciliation.test.ts",
+          "assertions": [
+            "retains a continuing watcher and title while reconciling a reminted split leaf"
+          ]
+        },
+        {
           "file": "src/renderer/src/runtime/remote-runtime-terminal-stall-recovery.test.ts",
           "assertions": [
+            "restarts only the stream whose renderer delivery credit never settles",
+            "probes then restarts a stream when an entered command receives no frames",
+            "keeps a silent responsive stream after its authoritative snapshot probe",
             "classifies a capacity rejection followed by end as recoverable transport pressure"
           ]
         },
@@ -3133,10 +3150,10 @@
           "date": "2026-07-29",
           "runner": "local",
           "platform": "macos",
-          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/main/runtime/rpc/terminal-subscribe-buffer.test.ts src/renderer/src/components/terminal-pane/parked-terminal-byte-watcher.test.ts src/renderer/src/components/terminal-pane/terminal-side-effect-facts-handler.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts src/renderer/src/components/terminal-pane/terminal-hidden-view-parking.test.ts src/renderer/src/components/terminal-pane/terminal-hidden-worktree-retention.test.ts src/renderer/src/components/terminal-pane/terminal-parked-tab-watchers.test.ts src/renderer/src/components/terminal-pane/terminal-parked-watcher-reconciliation.test.ts src/renderer/src/components/terminal-pane/terminal-parking-e2e-overrides.test.ts src/renderer/src/runtime/remote-runtime-terminal-stall-recovery.test.ts src/renderer/src/runtime/runtime-client-events.test.ts src/renderer/src/web/web-preload-api.test.ts src/main/ipc/runtime-environments.test.ts",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/main/runtime/rpc/terminal-subscribe-buffer.test.ts src/renderer/src/components/terminal-pane/parked-terminal-byte-watcher.test.ts src/renderer/src/components/terminal-pane/terminal-side-effect-facts-handler.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts src/renderer/src/components/terminal-pane/terminal-hidden-view-parking.test.ts src/renderer/src/components/terminal-pane/terminal-hidden-worktree-retention.test.ts src/renderer/src/components/terminal-pane/terminal-parked-tab-watchers.test.ts src/renderer/src/components/terminal-pane/terminal-parked-watcher-reconciliation.test.ts src/renderer/src/components/terminal-pane/terminal-parked-watcher-partial-reconciliation.test.ts src/renderer/src/components/terminal-pane/terminal-parking-e2e-overrides.test.ts src/renderer/src/runtime/remote-runtime-terminal-stall-recovery.test.ts src/renderer/src/runtime/runtime-client-events.test.ts src/renderer/src/web/web-preload-api.test.ts src/main/ipc/runtime-environments.test.ts",
           "result": "passed",
-          "durationSeconds": 27.82,
-          "summary": "Sixteen focused files passed 1,935 tests with one existing skip, including 128 active streams, retryable rejection at 129, released-slot snapshot recovery, and balanced subscriber cleanup."
+          "durationSeconds": 19.54,
+          "summary": "Seventeen focused files passed 1,938 tests with one existing skip, including 128 active streams, retryable rejection at 129, released-slot snapshot recovery, bounded liveness probes, and balanced subscriber cleanup."
         },
         {
           "date": "2026-07-29",

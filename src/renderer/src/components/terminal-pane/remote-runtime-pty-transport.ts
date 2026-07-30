@@ -169,8 +169,19 @@ export function createRemoteRuntimePtyTransport(
 
   function setAttachmentReady(ready: boolean): void {
     attachmentReady = ready
+    if (!ready) {
+      return
+    }
     for (const resolve of attachmentReadyWaiters) {
-      resolve(ready)
+      resolve(true)
+    }
+    attachmentReadyWaiters.clear()
+  }
+
+  function setAttachmentUnavailable(): void {
+    attachmentReady = false
+    for (const resolve of attachmentReadyWaiters) {
+      resolve(false)
     }
     attachmentReadyWaiters.clear()
   }
@@ -1095,6 +1106,7 @@ export function createRemoteRuntimePtyTransport(
     handle = null
     remotePtyId = null
     closeMultiplexedStream()
+    setAttachmentUnavailable()
     emitRecoveryState()
     if (stalePtyId) {
       onPtyExit?.(stalePtyId)
@@ -1419,6 +1431,7 @@ export function createRemoteRuntimePtyTransport(
           }
           outputProcessor.clearAccumulatedState()
           if (tabId && isWebTerminalSurfaceTabId(tabId)) {
+            setAttachmentReady(false)
             multiplexedStream = null
             multiplexedStreamHandle = null
             clearPendingViewportClaim()
@@ -1433,7 +1446,7 @@ export function createRemoteRuntimePtyTransport(
           remotePtyId = null
           multiplexedStream = null
           multiplexedStreamHandle = null
-          setAttachmentReady(false)
+          setAttachmentUnavailable()
           terminalEnded = true
           clearPendingViewportClaim()
           emitRecoveryState()
@@ -1481,6 +1494,7 @@ export function createRemoteRuntimePtyTransport(
           } else {
             connecting = false
             recovery.cancel()
+            setAttachmentUnavailable()
             emitRecoveryState()
           }
         }
@@ -1860,6 +1874,7 @@ export function createRemoteRuntimePtyTransport(
       const id = remotePtyId
       unregisterShutdownHandlers(id)
       closeMultiplexedStream()
+      setAttachmentUnavailable()
       handle = null
       remotePtyId = null
       emitRecoveryState()
@@ -1885,6 +1900,7 @@ export function createRemoteRuntimePtyTransport(
       connecting = false
       clearPendingViewportClaim()
       closeMultiplexedStream()
+      setAttachmentUnavailable()
       emitRecoveryState()
       storedCallbacks = {}
     },
@@ -2033,16 +2049,15 @@ export function createRemoteRuntimePtyTransport(
       if (!connected || !handle) {
         return null
       }
-      const targetHandle = handle
-      if (!(await waitForAttachmentReady()) || handle !== targetHandle) {
+      if (!(await waitForAttachmentReady()) || !handle) {
         return null
       }
-      return getCurrentMultiplexedStream(targetHandle)?.serializeBuffer(opts) ?? null
+      return getCurrentMultiplexedStream(handle)?.serializeBuffer(opts) ?? null
     },
 
     destroy() {
       destroyed = true
-      setAttachmentReady(false)
+      setAttachmentUnavailable()
       this.disconnect()
       recovery.dispose()
       inputBatcher.clear()

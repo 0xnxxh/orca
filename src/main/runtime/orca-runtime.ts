@@ -1463,6 +1463,7 @@ type ProviderBufferAcquisition = {
   generation: number
   scrollbackRows: number
   promise: Promise<PtyProviderBufferSnapshot | null>
+  timedOut: boolean
 }
 
 type RuntimeTerminalBufferSnapshot = {
@@ -10012,7 +10013,10 @@ export class OrcaRuntimeService {
     ptyId: string,
     opts: { scrollbackRows?: number } = {}
   ): Promise<RuntimeTerminalBufferSnapshot | null> {
-    const providerSnapshot = await this.serializeProviderTerminalBuffer(ptyId, opts)
+    const providerSnapshot = await this.serializeProviderTerminalBuffer(ptyId, opts, {
+      timeoutMs: AUTHORITATIVE_TERMINAL_SNAPSHOT_TIMEOUT_MS,
+      retireOnTimeout: true
+    })
     if (providerSnapshot) {
       return providerSnapshot
     }
@@ -10579,7 +10583,7 @@ export class OrcaRuntimeService {
   private async serializeProviderTerminalBuffer(
     ptyId: string,
     opts: { scrollbackRows?: number } = {},
-    wait: { timeoutMs?: number } = {}
+    wait: { timeoutMs?: number; retireOnTimeout?: boolean } = {}
   ): Promise<PtyProviderBufferSnapshot | null> {
     const generation = this.getPtyLifecycleGeneration(ptyId)
     const scrollbackRows = Math.max(0, Math.floor(opts.scrollbackRows ?? 0))
@@ -10590,7 +10594,7 @@ export class OrcaRuntimeService {
       acquisition.scrollbackRows < scrollbackRows
     ) {
       const promise = this.captureProviderTerminalBuffer(ptyId, opts, generation)
-      acquisition = { generation, scrollbackRows, promise }
+      acquisition = { generation, scrollbackRows, promise, timedOut: false }
       this.providerBufferAcquisitionsByPtyId.set(ptyId, acquisition)
       void promise.finally(() => {
         if (this.providerBufferAcquisitionsByPtyId.get(ptyId) === acquisition) {
@@ -10598,9 +10602,26 @@ export class OrcaRuntimeService {
         }
       })
     }
-    return typeof wait.timeoutMs === 'number'
-      ? withTimeout(acquisition.promise, wait.timeoutMs, null)
-      : acquisition.promise
+    if (acquisition.timedOut) {
+      return null
+    }
+    if (typeof wait.timeoutMs !== 'number') {
+      return acquisition.promise
+    }
+    const result = await withTimeout<
+      { settled: true; value: PtyProviderBufferSnapshot | null } | { settled: false }
+    >(
+      acquisition.promise.then((value) => ({ settled: true as const, value })),
+      wait.timeoutMs,
+      { settled: false as const }
+    )
+    if (!result.settled) {
+      if (wait.retireOnTimeout) {
+        acquisition.timedOut = true
+      }
+      return null
+    }
+    return result.value
   }
 
   private async captureProviderTerminalBuffer(
@@ -32504,6 +32525,7 @@ const MAX_TAIL_PENDING_ANSI_CHARS = 4096
 const DEFAULT_TERMINAL_READ_LIMIT = 120
 const MAX_TERMINAL_READ_LIMIT = 2000
 const MAX_TERMINAL_PREVIEW_CHARS = 32 * 1024
+export const AUTHORITATIVE_TERMINAL_SNAPSHOT_TIMEOUT_MS = 8_000
 const VISIBLE_TERMINAL_SNAPSHOT_TIMEOUT_MS = 750
 const VISIBLE_TERMINAL_SNAPSHOT_RETRY_MS = 1_000
 const MAX_PREVIEW_LINES = 6

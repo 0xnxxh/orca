@@ -66,7 +66,7 @@ describe('paired parked-watcher reconciliation', () => {
     ])
   })
 
-  it('restarts the watcher set and identifies the retired title slot', () => {
+  it('surgically reconciles a reminted split leaf without restarting its sibling', () => {
     expect(
       reconcileParkedWatcherPtyIds({
         currentTabPtyId: FIRST_PTY_ID,
@@ -77,6 +77,11 @@ describe('paired parked-watcher reconciliation', () => {
         ]),
         expectedPtyIds: new Set([FIRST_PTY_ID, NEW_SECOND_PTY_ID])
       })
-    ).toEqual({ restart: true, retiredPaneIds: [2] })
+    ).toEqual({
+      restartAll: false,
+      addedPtyIds: [NEW_SECOND_PTY_ID],
+      retainedPtyIds: [FIRST_PTY_ID],
+      retiredPaneIds: [2]
+    })
   })
 })

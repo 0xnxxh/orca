@@ -86,6 +86,7 @@ type MockStoreState = {
   >
   clearTabLaunchAgent: ReturnType<typeof vi.fn>
   clearRuntimePaneTitle: ReturnType<typeof vi.fn>
+  setRuntimePaneTitle: ReturnType<typeof vi.fn>
   setTabLayout: ReturnType<typeof vi.fn>
   updateTabTitle: ReturnType<typeof vi.fn>
 }
@@ -148,6 +149,7 @@ describe('terminal-parked-tab-watchers', () => {
       runtimeStatusByEnvironmentId: new Map(),
       clearTabLaunchAgent: vi.fn(),
       clearRuntimePaneTitle: vi.fn(),
+      setRuntimePaneTitle: vi.fn(),
       setTabLayout: vi.fn(),
       updateTabTitle: vi.fn()
     }
@@ -241,7 +243,8 @@ describe('terminal-parked-tab-watchers', () => {
     expect(startedWatchers[0].options).toMatchObject({
       ptyId: 'remote:env-1@@terminal-1'
     })
-    expect(startedWatchers[0].options).not.toHaveProperty('onPtyExit')
+    expect(subscribeToPtyExit).not.toHaveBeenCalled()
+    expect(exitSubscriptions).toEqual([])
   })
 
   it('starts watchers for SSH PTYs (C1 SSH parking, default on)', () => {

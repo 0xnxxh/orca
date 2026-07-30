@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   TerminalStreamOpcode,
   decodeTerminalStreamFrame,
+  decodeTerminalStreamJson,
   encodeTerminalStreamFrame,
+  encodeTerminalStreamJson,
   encodeTerminalStreamText
 } from '../../../shared/terminal-stream-protocol'
 import {
@@ -99,8 +101,8 @@ describe('remote terminal stalled stream recovery', () => {
     healthy.close()
   })
 
-  it('restarts a stream when an entered command receives no frames', async () => {
-    const { getRemoteRuntimeTerminalMultiplexer } =
+  it('probes then restarts a stream when an entered command receives no frames', async () => {
+    const { getRemoteRuntimeTerminalMultiplexer, REMOTE_TERMINAL_SNAPSHOT_REQUEST_TIMEOUT_MS } =
       await import('./remote-runtime-terminal-multiplexer')
     const onTransportClose = vi.fn()
     const stream = await getRemoteRuntimeTerminalMultiplexer('windows-test').subscribeTerminal({
@@ -112,6 +114,10 @@ describe('remote terminal stalled stream recovery', () => {
 
     expect(stream.sendInput('ls\r')).toBe(true)
     await vi.advanceTimersByTimeAsync(REMOTE_TERMINAL_COMMAND_RESPONSE_TIMEOUT_MS)
+
+    expect(onTransportClose).not.toHaveBeenCalled()
+    expect(sentFrames(TerminalStreamOpcode.SnapshotRequest)).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(REMOTE_TERMINAL_SNAPSHOT_REQUEST_TIMEOUT_MS)
 
     expect(onTransportClose).toHaveBeenCalledWith({ recoverable: true })
     expect(sentUnsubscribeStreamIds()).toEqual([stream.streamId])
@@ -125,6 +131,36 @@ describe('remote terminal stalled stream recovery', () => {
         terminal: 'term-silent'
       })
     })
+  })
+
+  it('keeps a silent responsive stream after its authoritative snapshot probe', async () => {
+    const { getRemoteRuntimeTerminalMultiplexer } =
+      await import('./remote-runtime-terminal-multiplexer')
+    const onTransportClose = vi.fn()
+    const stream = await getRemoteRuntimeTerminalMultiplexer('windows-test').subscribeTerminal({
+      terminal: 'term-password',
+      client: { id: 'mac-viewer', type: 'desktop' },
+      callbacks: { onData: vi.fn(), onSnapshot: vi.fn(), onTransportClose }
+    })
+    sendBinary.mockClear()
+
+    expect(stream.sendInput('secret\r')).toBe(true)
+    await vi.advanceTimersByTimeAsync(REMOTE_TERMINAL_COMMAND_RESPONSE_TIMEOUT_MS)
+    const firstRequest = sentFrames(TerminalStreamOpcode.SnapshotRequest)[0]
+    const firstRequestPayload = firstRequest
+      ? decodeTerminalStreamJson<{ requestId: number }>(firstRequest.payload)
+      : null
+    expect(firstRequestPayload?.requestId).toBeTypeOf('number')
+
+    emitRequestedSnapshot(stream.streamId, firstRequestPayload?.requestId ?? 0)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(onTransportClose).not.toHaveBeenCalled()
+    expect(sentUnsubscribeStreamIds()).toEqual([])
+    expect(stream.sendInput('silent-command\r')).toBe(true)
+    await vi.advanceTimersByTimeAsync(REMOTE_TERMINAL_COMMAND_RESPONSE_TIMEOUT_MS)
+    expect(sentFrames(TerminalStreamOpcode.SnapshotRequest)).toHaveLength(2)
+    stream.close()
   })
 
   it('keeps a command stream when any host frame proves it is responsive', async () => {
@@ -204,10 +240,38 @@ describe('remote terminal stalled stream recovery', () => {
     )
   }
 
-  function sentUnsubscribeStreamIds(): number[] {
+  function emitRequestedSnapshot(streamId: number, requestId: number): void {
+    callbacks?.onBinary(
+      encodeTerminalStreamFrame({
+        opcode: TerminalStreamOpcode.SnapshotStart,
+        streamId,
+        seq: 1,
+        payload: encodeTerminalStreamJson({
+          kind: 'scrollback',
+          requestId,
+          cols: 80,
+          rows: 24
+        })
+      })
+    )
+    callbacks?.onBinary(
+      encodeTerminalStreamFrame({
+        opcode: TerminalStreamOpcode.SnapshotEnd,
+        streamId,
+        seq: 2,
+        payload: new Uint8Array()
+      })
+    )
+  }
+
+  function sentFrames(opcode: TerminalStreamOpcode) {
     return sendBinary.mock.calls.flatMap(([bytes]) => {
       const frame = decodeTerminalStreamFrame(bytes)
-      return frame?.opcode === TerminalStreamOpcode.Unsubscribe ? [frame.streamId] : []
+      return frame?.opcode === opcode ? [frame] : []
     })
+  }
+
+  function sentUnsubscribeStreamIds(): number[] {
+    return sentFrames(TerminalStreamOpcode.Unsubscribe).map((frame) => frame.streamId)
   }
 })

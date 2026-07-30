@@ -132,6 +132,7 @@ export async function launchPairedWebClient(
     }
     return { page, dispose: () => page?.close() ?? Promise.resolve() }
   } catch (error) {
+    void pagePromise.catch(() => undefined)
     await page?.close().catch(() => undefined)
     throw error
   }

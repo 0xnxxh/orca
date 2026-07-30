@@ -151,45 +151,54 @@ export async function runPairedTerminalParkingOracle(
     expect(baseline.bufferCells).toBeGreaterThan(MIN_STAGED_BUFFER_CELLS)
 
     const lagProbe = await startRendererLagProbe(page)
-    await page.evaluate(async () => {
-      await window.__store?.getState().updateSettings({ terminalHiddenViewParking: true })
-    })
-    await expect
-      .poll(
-        () =>
-          page.evaluate(
-            ({ tabIds, worktreeIds }) => {
-              const verdicts = window.__terminalParkingDebug?.worktreeVerdicts() ?? []
-              return {
-                forceParked: worktreeIds.map(
-                  (id) => verdicts.find((verdict) => verdict.worktreeId === id)?.forceParked
-                ),
-                mounted: tabIds.filter((id) => window.__paneManagers?.has(id)).length,
-                ordinaryParkingCovers: worktreeIds.map(
-                  (id) =>
-                    verdicts.find((verdict) => verdict.worktreeId === id)?.ordinaryParkingCovers
-                ),
-                parked: window.__terminalParkingDebug?.parkedTabIds().length,
-                retentionBudgetEnabled:
-                  window.__store?.getState().settings?.terminalHiddenWorktreeRetentionBudget
-              }
-            },
-            {
-              tabIds: remoteTabs.map((tab) => tab.tabId),
-              worktreeIds: remoteTabs.map((tab) => tab.worktreeId)
-            }
-          ),
-        { timeout: 10_000 }
-      )
-      .toEqual({
-        forceParked: Array(TARGET_WORKTREE_COUNT).fill(false),
-        mounted: 1,
-        ordinaryParkingCovers: Array(TARGET_WORKTREE_COUNT).fill(true),
-        parked: TARGET_WORKTREE_COUNT - 1,
-        retentionBudgetEnabled: false
+    let maxLagMs = Number.POSITIVE_INFINITY
+    let lagProbeStopped = false
+    try {
+      await page.evaluate(async () => {
+        await window.__store?.getState().updateSettings({ terminalHiddenViewParking: true })
       })
-    const maxLagMs = await lagProbe.evaluate((probe) => probe.stop())
-    await lagProbe.dispose()
+      await expect
+        .poll(
+          () =>
+            page.evaluate(
+              ({ tabIds, worktreeIds }) => {
+                const verdicts = window.__terminalParkingDebug?.worktreeVerdicts() ?? []
+                return {
+                  forceParked: worktreeIds.map(
+                    (id) => verdicts.find((verdict) => verdict.worktreeId === id)?.forceParked
+                  ),
+                  mounted: tabIds.filter((id) => window.__paneManagers?.has(id)).length,
+                  ordinaryParkingCovers: worktreeIds.map(
+                    (id) =>
+                      verdicts.find((verdict) => verdict.worktreeId === id)?.ordinaryParkingCovers
+                  ),
+                  parked: window.__terminalParkingDebug?.parkedTabIds().length,
+                  retentionBudgetEnabled:
+                    window.__store?.getState().settings?.terminalHiddenWorktreeRetentionBudget
+                }
+              },
+              {
+                tabIds: remoteTabs.map((tab) => tab.tabId),
+                worktreeIds: remoteTabs.map((tab) => tab.worktreeId)
+              }
+            ),
+          { timeout: 10_000 }
+        )
+        .toEqual({
+          forceParked: Array(TARGET_WORKTREE_COUNT).fill(false),
+          mounted: 1,
+          ordinaryParkingCovers: Array(TARGET_WORKTREE_COUNT).fill(true),
+          parked: TARGET_WORKTREE_COUNT - 1,
+          retentionBudgetEnabled: false
+        })
+      maxLagMs = await lagProbe.evaluate((probe) => probe.stop())
+      lagProbeStopped = true
+    } finally {
+      if (!lagProbeStopped) {
+        await lagProbe.evaluate((probe) => probe.stop()).catch(() => undefined)
+      }
+      await lagProbe.dispose()
+    }
     const after = await readPairedRetentionSample(
       page,
       remoteTabs.map((tab) => tab.tabId)

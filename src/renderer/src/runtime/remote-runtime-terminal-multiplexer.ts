@@ -150,7 +150,7 @@ type RemoteRuntimeSnapshotRequest = {
 
 const CONTROL_STREAM_ID = 0
 const MAX_REMOTE_TERMINAL_SNAPSHOT_BYTES = 2 * 1024 * 1024
-const REMOTE_TERMINAL_SNAPSHOT_REQUEST_TIMEOUT_MS = 10_000
+export const REMOTE_TERMINAL_SNAPSHOT_REQUEST_TIMEOUT_MS = 10_000
 const REMOTE_TERMINAL_RESYNC_TIMEOUT_MS = 10_000
 // Why: a truncated recovery means the server is too flooded to serialize;
 // retrying once per incoming chunk would stampede it, so back off instead.
@@ -297,19 +297,25 @@ class RemoteRuntimeTerminalMultiplexer {
       resyncAttempts: 0,
       capacityRejected: false,
       watchdog: createRemoteTerminalStreamWatchdog((stall) => {
-        if (!e2eDisableRemoteTerminalStallRecovery) {
-          recordRendererCrashBreadcrumb('remote_terminal_stream_stall_recovery', {
-            environmentId: this.environmentId,
-            expectedSeq: state.expectedSeq ?? null,
-            inactiveForMs: stall.inactiveForMs,
-            outstandingDeliveryBytes: stall.outstandingDeliveryBytes,
-            pendingAckBytes: state.pendingAckBytes,
-            reason: stall.reason,
-            resyncAttempts: state.resyncAttempts,
-            snapshotPending: state.pendingSnapshotRequest !== null,
-            streamId: state.streamId,
-            terminal: state.terminal
-          })
+        if (e2eDisableRemoteTerminalStallRecovery) {
+          state.watchdog.completeCommandResponseProbe()
+          return
+        }
+        recordRendererCrashBreadcrumb('remote_terminal_stream_stall_recovery', {
+          environmentId: this.environmentId,
+          expectedSeq: state.expectedSeq ?? null,
+          inactiveForMs: stall.inactiveForMs,
+          outstandingDeliveryBytes: stall.outstandingDeliveryBytes,
+          pendingAckBytes: state.pendingAckBytes,
+          reason: stall.reason,
+          resyncAttempts: state.resyncAttempts,
+          snapshotPending: state.pendingSnapshotRequest !== null,
+          streamId: state.streamId,
+          terminal: state.terminal
+        })
+        if (stall.reason === 'command-response-timeout') {
+          this.probeCommandResponse(state)
+        } else {
           this.recoverStalledStream(state)
         }
       })
@@ -986,6 +992,28 @@ class RemoteRuntimeTerminalMultiplexer {
       stream.watchdog.recordCommandInput(text)
     }
     return sent
+  }
+
+  private probeCommandResponse(stream: RemoteRuntimeMultiplexedTerminalState): void {
+    void this.requestSnapshot(stream).then(
+      () => {
+        if (this.streams.get(stream.streamId) !== stream) {
+          return
+        }
+        stream.watchdog.completeCommandResponseProbe()
+        recordRendererCrashBreadcrumb('remote_terminal_stream_stall_probe_succeeded', {
+          environmentId: this.environmentId,
+          streamId: stream.streamId,
+          terminal: stream.terminal
+        })
+      },
+      () => {
+        // Snapshot timeout owns recovery; an explicit host error already proves liveness.
+        if (this.streams.get(stream.streamId) === stream) {
+          stream.watchdog.completeCommandResponseProbe()
+        }
+      }
+    )
   }
 
   private recoverStalledStream(stream: RemoteRuntimeMultiplexedTerminalState): void {

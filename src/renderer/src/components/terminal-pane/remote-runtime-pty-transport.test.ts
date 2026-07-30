@@ -1508,6 +1508,8 @@ describe('createRemoteRuntimePtyTransport', () => {
     })
     await vi.waitFor(() => expect(subscriptionSendBinary).toHaveBeenCalled())
     const oldStreamId = latestSubscribePayload().streamId
+    emitSnapshot(oldStreamId, 'before restart')
+    expect(transport.isConnected()).toBe(true)
 
     runtimeCall.mockImplementation(async (args: { method: string }) =>
       args.method === 'session.tabs.list' ? new Promise(() => {}) : { ok: true, result: {} }
@@ -1516,10 +1518,17 @@ describe('createRemoteRuntimePtyTransport', () => {
       ok: true,
       result: { type: 'end', streamId: oldStreamId, code: 0 }
     })
+    const replacementSnapshot = transport.serializeBuffer?.({ scrollbackRows: 5000 })
+    let snapshotSettled = false
+    void replacementSnapshot?.then(() => {
+      snapshotSettled = true
+    })
+    await Promise.resolve()
 
     expect(onExit).not.toHaveBeenCalled()
     expect(onPtyExit).not.toHaveBeenCalled()
     expect(transport.getPtyId()).toBe('remote:hub-env@@terminal-1')
+    expect(snapshotSettled).toBe(false)
     expect(handleEvents.getWebSessionTerminalHandleSubscriberCountForTests()).toBe(1)
 
     handleEvents.queueAcceptedWebSessionTerminalSnapshot(
@@ -1557,6 +1566,39 @@ describe('createRemoteRuntimePtyTransport', () => {
     expect(onPtySpawn).not.toHaveBeenCalled()
     expect(onPtyExit).not.toHaveBeenCalled()
     expect(onExit).not.toHaveBeenCalled()
+    emitSnapshot(latestSubscribePayload().streamId, 'replacement initial state')
+    await vi.waitFor(() =>
+      expect(latestFrameForOpcode(TerminalStreamOpcode.SnapshotRequest)).toBeDefined()
+    )
+    const requestFrame = latestFrameForOpcode(TerminalStreamOpcode.SnapshotRequest)
+    const request = requestFrame
+      ? decodeTerminalStreamJson<{ requestId?: number }>(requestFrame.payload)
+      : null
+    emitSnapshotFrame(
+      latestSubscribePayload().streamId,
+      TerminalStreamOpcode.SnapshotStart,
+      encodeTerminalStreamJson({
+        kind: 'scrollback',
+        requestId: request?.requestId,
+        cols: 100,
+        rows: 30
+      })
+    )
+    emitSnapshotFrame(
+      latestSubscribePayload().streamId,
+      TerminalStreamOpcode.SnapshotChunk,
+      encodeTerminalStreamText('replacement authoritative state')
+    )
+    emitSnapshotFrame(
+      latestSubscribePayload().streamId,
+      TerminalStreamOpcode.SnapshotEnd,
+      new Uint8Array()
+    )
+    await expect(replacementSnapshot).resolves.toMatchObject({
+      data: 'replacement authoritative state',
+      cols: 100,
+      rows: 30
+    })
   })
 
   it('coalesces concurrent stale errors for the handle that was replaced', async () => {

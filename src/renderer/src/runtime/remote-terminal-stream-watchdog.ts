@@ -9,6 +9,7 @@ export type RemoteTerminalStreamStall = {
 
 export type RemoteTerminalStreamWatchdog = {
   beginOutputDelivery: (bytes: number) => () => void
+  completeCommandResponseProbe: () => void
   recordCommandInput: (text: string) => void
   recordInbound: () => void
   dispose: () => void
@@ -21,6 +22,7 @@ export function createRemoteTerminalStreamWatchdog(
   let deliveryTimer: ReturnType<typeof setTimeout> | null = null
   let outstandingDeliveryBytes = 0
   let lastInboundAtMs = Date.now()
+  let commandResponseProbePending = false
   let disposed = false
 
   const clearResponseTimer = (): void => {
@@ -39,9 +41,13 @@ export function createRemoteTerminalStreamWatchdog(
     if (disposed) {
       return
     }
-    disposed = true
     clearResponseTimer()
-    clearDeliveryTimer()
+    if (reason === 'command-response-timeout') {
+      commandResponseProbePending = true
+    } else {
+      disposed = true
+      clearDeliveryTimer()
+    }
     onStall({
       inactiveForMs: Math.max(0, Date.now() - lastInboundAtMs),
       outstandingDeliveryBytes,
@@ -75,8 +81,11 @@ export function createRemoteTerminalStreamWatchdog(
         armDeliveryTimer()
       }
     },
+    completeCommandResponseProbe() {
+      commandResponseProbePending = false
+    },
     recordCommandInput(text) {
-      if (disposed || responseTimer || !/[\r\n]/u.test(text)) {
+      if (disposed || commandResponseProbePending || responseTimer || !/[\r\n]/u.test(text)) {
         return
       }
       responseTimer = setTimeout(
@@ -90,6 +99,7 @@ export function createRemoteTerminalStreamWatchdog(
     },
     dispose() {
       disposed = true
+      commandResponseProbePending = false
       clearResponseTimer()
       clearDeliveryTimer()
       outstandingDeliveryBytes = 0
