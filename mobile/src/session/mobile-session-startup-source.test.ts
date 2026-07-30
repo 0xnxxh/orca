@@ -55,7 +55,7 @@ describe('mobile session startup', () => {
   it('loads session tabs without waiting for desktop activation', () => {
     const startupEffect = sliceBetween(
       'void (async () => {',
-      'return () => {\n      disposed = true'
+      'return () => {\n      lifecycle.disposed = true'
     )
 
     expect(startupEffect).toContain("void client\n          .sendRequest('worktree.activate'")

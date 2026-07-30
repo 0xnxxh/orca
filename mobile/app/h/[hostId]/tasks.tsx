@@ -1919,7 +1919,7 @@ function discussionSummary(count: number): string {
   if (count === 0) {
     return t('m.24Kgyy4')
   }
-  return `${count} ${count === 1 ? t('m.px-yCeQ') : t('m.Uv1hPbA')}`
+  return t(count === 1 ? 'm.px-yCeQ' : 'm.Uv1hPbA', { value0: count })
 }
 
 function renderCommentReactions(comment: DetailComment): ReactNode {

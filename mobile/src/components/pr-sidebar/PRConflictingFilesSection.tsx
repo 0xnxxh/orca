@@ -76,8 +76,9 @@ export function PRConflictingFilesSection({ pr, isRefreshing = false, triage }: 
     <PRSection title={t('m.DnSMHG0')}>
       {conflict.commitsBehind !== null && conflict.baseCommit !== null ? (
         <Text style={styles.meta}>
-          {conflict.commitsBehind} {t('m.mTbAh0Q')}
-          {conflict.commitsBehind === 1 ? '' : 's'} {t('m.93sCYQo')}
+          {t(conflict.commitsBehind === 1 ? 'm.ngn4NjA' : 'm.93sCYQo', {
+            value0: conflict.commitsBehind
+          })}{' '}
           <Text style={styles.metaMono}>{conflict.baseCommit}</Text>)
         </Text>
       ) : null}

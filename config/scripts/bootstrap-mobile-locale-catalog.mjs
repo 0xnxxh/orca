@@ -53,6 +53,30 @@ const MOBILE_LOCALE_KEY_OVERRIDES = {
     ja: '{{value0}} リポジトリ',
     ko: '저장소 {{value0}}개',
     zh: '{{value0}} 个代码库'
+  },
+  'm.px-yCeQ': {
+    es: '{{value0}} comentario',
+    ja: 'コメント {{value0}} 件',
+    ko: '댓글 {{value0}}개',
+    zh: '{{value0}} 条评论'
+  },
+  'm.Uv1hPbA': {
+    es: '{{value0}} comentarios',
+    ja: 'コメント {{value0}} 件',
+    ko: '댓글 {{value0}}개',
+    zh: '{{value0}} 条评论'
+  },
+  'm.ngn4NjA': {
+    es: '{{value0}} commit por detrás (commit base:',
+    ja: '{{value0}} コミット遅れ (ベースコミット:',
+    ko: '{{value0}}개 커밋 뒤처짐 (기준 커밋:',
+    zh: '落后 {{value0}} 个提交 (基础提交：'
+  },
+  'm.93sCYQo': {
+    es: '{{value0}} commits por detrás (commit base:',
+    ja: '{{value0}} コミット遅れ (ベースコミット:',
+    ko: '{{value0}}개 커밋 뒤처짐 (기준 커밋:',
+    zh: '落后 {{value0}} 个提交 (基础提交：'
   }
 }
 
