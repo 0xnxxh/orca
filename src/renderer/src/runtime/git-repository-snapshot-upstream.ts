@@ -1,4 +1,4 @@
-import type { GitUpstreamStatus } from '../../../../shared/types'
+import type { GitUpstreamStatus } from '../../../shared/types'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -12,7 +12,7 @@ function isOptionalBoolean(value: Record<string, unknown>, key: string): boolean
   return !hasOwn(value, key) || typeof value[key] === 'boolean'
 }
 
-export function readWorkspaceSpaceSnapshotUpstream(value: unknown): GitUpstreamStatus | null {
+export function readGitRepositorySnapshotUpstream(value: unknown): GitUpstreamStatus | null {
   if (
     !isRecord(value) ||
     typeof value.hasUpstream !== 'boolean' ||

@@ -292,6 +292,7 @@ import {
 } from './source-control-hosted-review-push-target'
 import { buildSourceControlManualReviewUrlFromContext } from './source-control-manual-review-url'
 import { parseRemoteRepo } from './source-control-remote-repo'
+import { useSourceControlAutomaticUpstreamSnapshot } from './use-source-control-automatic-upstream-snapshot'
 export { HostedReviewHeaderLink } from './hosted-review-header-chrome'
 import {
   createRunningCommitMessageGenerationRecord,
@@ -1218,6 +1219,9 @@ function SourceControlInner(): React.JSX.Element {
   const activeConnectionId = activeWorktreeId
     ? (getConnectionId(activeWorktreeId) ?? activeRepoConnectionId)
     : null
+  const activeSshConnectionState = useAppStore((state) =>
+    activeConnectionId ? (state.sshConnectionStates.get(activeConnectionId) ?? null) : null
+  )
   const activeSourceControlLaunchPlatform = resolveSourceControlLaunchPlatform({
     connectionId: activeConnectionId,
     worktreePath,
@@ -4996,28 +5000,18 @@ function SourceControlInner(): React.JSX.Element {
     worktreePath
   ])
 
-  useEffect(() => {
-    // Why: gate on isBranchVisible so we don't spawn git processes while the sidebar is closed.
-    if (!activeWorktreeId || !worktreePath || isFolder || !isBranchVisible) {
-      return
-    }
-    const connectionId = getConnectionId(activeWorktreeId) ?? undefined
-    void fetchUpstreamStatus(
-      activeWorktreeId,
-      worktreePath,
-      connectionId,
-      activeWorktree?.pushTarget,
-      { runtimeTargetSettings: activeRepoSettings }
-    )
-  }, [
-    activeRepoSettings,
-    activeWorktree?.pushTarget,
-    activeWorktreeId,
+  useSourceControlAutomaticUpstreamSnapshot({
+    enabled: isBranchVisible && !isFolder,
+    settings: activeRepoSettings,
+    worktreeId: activeWorktreeId,
+    worktreePath,
+    connectionId: activeConnectionId,
+    sshConnectionState: activeSshConnectionState,
+    branch: branchName,
+    pushTarget: activeWorktree?.pushTarget,
     fetchUpstreamStatus,
-    isBranchVisible,
-    isFolder,
-    worktreePath
-  ])
+    setUpstreamStatus
+  })
 
   const toggleSection = useCallback((section: string) => {
     setCollapsedSections((prev) => {

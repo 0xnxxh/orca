@@ -9,11 +9,11 @@ import {
   getRuntimeGitRepositorySnapshot,
   type RuntimeGitRepositorySnapshotOptions
 } from '@/runtime/runtime-git-repository-snapshot-client'
+import { readGitRepositorySnapshotUpstream } from '@/runtime/git-repository-snapshot-upstream'
 import {
   refreshGitStatusForWorktree,
   type GitStatusRefreshDeps
 } from '../right-sidebar/git-status-refresh'
-import { readWorkspaceSpaceSnapshotUpstream } from './workspace-space-git-snapshot-upstream'
 
 export type WorkspaceSpaceGitStatusContext = {
   settings: Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined
@@ -204,7 +204,7 @@ export function readWorkspaceSpaceGitStatusSnapshot(
   }
   const entries = value.status.entries.map(readGitStatusEntry)
   const conflictOperation = readConflictOperation(value.conflicts)
-  const upstream = readWorkspaceSpaceSnapshotUpstream(value.upstream)
+  const upstream = readGitRepositorySnapshotUpstream(value.upstream)
   if (entries.includes(null) || !conflictOperation || !upstream) {
     return null
   }
