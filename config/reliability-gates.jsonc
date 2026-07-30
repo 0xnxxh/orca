@@ -4270,6 +4270,7 @@
         {
           "file": "src/renderer/src/components/terminal/background-terminal-worktree-mount.test.ts",
           "assertions": [
+            "startup waits for hydration before mounting terminal panes while degraded mode remains interactive",
             "only an explicit local execution host can defer cold activation",
             "SSH, remote-runtime, and unresolved owners remain eager"
           ]

@@ -69,6 +69,7 @@ import { scheduleBackgroundTerminalWorktreeMeasure } from './terminal/background
 import {
   applyBackgroundMountTabRestriction,
   canDeferColdActivationTabsForHost,
+  canMountTerminalWorkspaceForStartup,
   planColdActivationTabDeferral,
   pruneClosedBackgroundMountTabs,
   revealActivationDeferredTabs,
@@ -327,6 +328,7 @@ function Terminal(): React.JSX.Element | null {
   const expandedPaneByTabId = useAppStore((s) => s.expandedPaneByTabId)
   const workspaceSessionReady = useAppStore((s) => s.workspaceSessionReady)
   const hydrationSucceeded = useAppStore((s) => s.hydrationSucceeded)
+  const startupWorktreeRefreshCompleted = useAppStore((s) => s.startupWorktreeRefreshCompleted)
   const openFiles = useAppStore((s) => s.openFiles)
   const activeFileId = useAppStore((s) => s.activeFileId)
   const activeBrowserTabId = useAppStore((s) => s.activeBrowserTabId)
@@ -1152,8 +1154,15 @@ function Terminal(): React.JSX.Element | null {
     terminalSshParkingEnabled,
     workspaceSurfaces
   ])
-  // Why: gate on workspaceSessionReady so TerminalPane doesn't mount and spawn a duplicate PTY before reconnectPersistedTerminals() finishes.
-  if (renderedActiveWorktreeId && workspaceSessionReady) {
+  // Why: a slow post-reconnect step exposes workspaceSessionReady before hydration can populate snapshot capabilities.
+  if (
+    renderedActiveWorktreeId &&
+    canMountTerminalWorkspaceForStartup({
+      workspaceSessionReady,
+      hydrationSucceeded,
+      startupWorktreeRefreshCompleted
+    })
+  ) {
     // Why: mounting every saved tab at once (scrollback replay + WebGL + sync-IPC snapshot per pane) freezes the renderer, so hidden tabs defer and mount on first reveal.
     const worktreeTabs = tabsByWorktree[renderedActiveWorktreeId] ?? []
     const coldActivationDeferralEnabled =
