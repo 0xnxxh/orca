@@ -532,6 +532,59 @@ describe('WSL availability cache', () => {
     }
   })
 
+  // Why: the caches expire independently and `getWslRepairReason` checks availability
+  // first, so a definitive failure held for 10min would report `wsl-unavailable` over a
+  // WSL that just listed a distro. Finding a distro must drop the stale failure.
+  it.each([
+    ['a definitive failure', { status: 1 }],
+    ['a timeout', { code: 'ETIMEDOUT', status: null, signal: 'SIGTERM' }]
+  ])('re-probes availability once a distro list succeeds after %s', (_label, errorShape) => {
+    vi.useFakeTimers()
+    execFileSyncMock.mockImplementationOnce(() => {
+      throw Object.assign(new Error('probe failed'), errorShape)
+    })
+
+    try {
+      withPlatform('win32', () => {
+        expect(isWslAvailable()).toBe(false)
+
+        // A distro turns up (WSL finished provisioning / was repaired mid-session).
+        execFileSyncMock.mockReturnValueOnce('Ubuntu\n')
+        expect(listWslDistros()).toEqual(['Ubuntu'])
+
+        // Without dropping the stale failure this would stay false for 10min.
+        execFileSyncMock.mockReturnValueOnce('')
+        expect(isWslAvailable()).toBe(true)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // Why: an empty list re-probes on a 15s-to-5min schedule, so clearing the availability
+  // failure on every empty probe would re-spawn the blocking 5s probe far too often.
+  it('does not drop an availability failure for an empty distro list', () => {
+    vi.useFakeTimers()
+    execFileSyncMock.mockImplementationOnce(() => {
+      throw Object.assign(new Error('probe failed'), { status: 1 })
+    })
+
+    try {
+      withPlatform('win32', () => {
+        expect(isWslAvailable()).toBe(false)
+        execFileSyncMock.mockReturnValueOnce('')
+        expect(listWslDistros()).toEqual([])
+        expect(getCachedWslAvailability()).toBe(false)
+        // Still inside the definitive window, so no re-probe was paid.
+        expect(execFileSyncMock).toHaveBeenCalledTimes(2)
+        expect(isWslAvailable()).toBe(false)
+        expect(execFileSyncMock).toHaveBeenCalledTimes(2)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps reporting unavailable off Windows without probing', () => {
     withPlatform('darwin', () => {
       expect(isWslAvailable()).toBe(false)

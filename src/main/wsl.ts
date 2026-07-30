@@ -137,6 +137,9 @@ function cacheWslDistroList(rawDistros: string[]): string[] {
   if (userDistros.length === 0 && wslDistroCache !== null && wslDistroCache.length > 0) {
     return wslDistroCache
   }
+  if (userDistros.length > 0) {
+    dropStaleWslAvailabilityFailure()
+  }
   wslDistroCache = userDistros
   if (wslDistroCache.length === 0) {
     const now = Date.now()
@@ -322,6 +325,17 @@ function isRetryableWslProbeFailure(error: unknown): boolean {
     return false
   }
   return failure?.code !== 'ENOENT'
+}
+
+// Why: the two caches expire independently, and `getWslRepairReason` checks availability
+// first — so a definitive failure held for 10-30min would report `wsl-unavailable` over a
+// WSL that just listed a distro for us. A non-empty list proves wsl.exe ran, so drop the
+// stale failure and let the next call re-probe. Non-empty lists are cached for the process
+// lifetime, so this cannot re-spawn the blocking probe more than once.
+function dropStaleWslAvailabilityFailure(): void {
+  if (wslAvailableCache && !wslAvailableCache.available && !('unsupported' in wslAvailableCache)) {
+    wslAvailableCache = null
+  }
 }
 
 function isWslAvailabilityCacheFresh(cache: WslAvailabilityCache): boolean {
