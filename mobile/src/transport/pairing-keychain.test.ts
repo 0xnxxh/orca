@@ -75,8 +75,8 @@ describe('pairing keychain', () => {
     expect(generationRecord).toBeNull()
   })
 
-  it('rotates to a fresh keystore alias when the shared default alias is unusable (#6600)', async () => {
-    // Why: models a wedged AndroidKeyStore alias — every write under key_v1 fails, a new alias works.
+  it('recovers when the reported Android encryption failure is alias-local', async () => {
+    // Why: simulate the unverified alias-local case; no affected physical device was available.
     secureStoreMock.setItemAsync.mockImplementation(
       async (_k: string, _v: string, options: Options) => {
         if (serviceOf(options) === undefined) {
@@ -97,8 +97,33 @@ describe('pairing keychain', () => {
     secureStoreMock.setItemAsync.mockRejectedValue(ENCRYPT_REJECTION)
 
     await expect(writePairingKeychainItem(TOKEN_KEY, 'token')).rejects.toBe(ENCRYPT_REJECTION)
-    expect(generationRecord).toBe('1')
+    expect(generationRecord).toBe('1:pending')
     expect(secureStoreMock.deleteItemAsync).not.toHaveBeenCalled()
+  })
+
+  it('retries an unconfirmed alias without consuming another generation', async () => {
+    generationRecord = '1:pending'
+    secureStoreMock.setItemAsync.mockRejectedValue(ENCRYPT_REJECTION)
+
+    await expect(writePairingKeychainItem(TOKEN_KEY, 'token')).rejects.toBe(ENCRYPT_REJECTION)
+
+    expect(generationRecord).toBe('1:pending')
+    expect(secureStoreMock.setItemAsync).toHaveBeenCalledTimes(1)
+    expect(serviceOf(secureStoreMock.setItemAsync.mock.calls[0]![2] as Options)).toBe(
+      'orca.pairing.v1'
+    )
+  })
+
+  it('confirms an unconfirmed alias after its first successful write', async () => {
+    generationRecord = '1:pending'
+
+    await writePairingKeychainItem(TOKEN_KEY, 'token')
+
+    expect(generationRecord).toBe('1')
+    expect(secureStoreMock.setItemAsync).toHaveBeenCalledTimes(1)
+    expect(serviceOf(secureStoreMock.setItemAsync.mock.calls[0]![2] as Options)).toBe(
+      'orca.pairing.v1'
+    )
   })
 
   it('does not rotate on an iOS keychain failure', async () => {
@@ -152,7 +177,34 @@ describe('pairing keychain', () => {
 
     await writePairingKeychainItem(TOKEN_KEY, 'token')
 
-    expect(order).toEqual(['record:1', 'store:orca.pairing.v1'])
+    expect(order).toEqual(['record:1:pending', 'store:orca.pairing.v1', 'record:1'])
+  })
+
+  it('keeps a successful rotated write reachable when confirmation storage fails', async () => {
+    asyncStorageMock.setItem.mockImplementation(async (key: string, raw: string) => {
+      if (key !== GENERATION_KEY) {
+        return
+      }
+      if (raw === '1') {
+        throw new Error('storage unavailable')
+      }
+      generationRecord = raw
+    })
+    secureStoreMock.setItemAsync.mockImplementation(
+      async (_k: string, _v: string, options: Options) => {
+        if (serviceOf(options) === undefined) {
+          throw ENCRYPT_REJECTION
+        }
+      }
+    )
+
+    await expect(writePairingKeychainItem(TOKEN_KEY, 'token')).rejects.toBe(ENCRYPT_REJECTION)
+
+    expect(generationRecord).toBe('1:pending')
+    secureStoreMock.getItemAsync.mockImplementation(async (_k: string, options: Options) =>
+      serviceOf(options) === 'orca.pairing.v1' ? 'token' : null
+    )
+    await expect(readPairingKeychainItem(TOKEN_KEY)).resolves.toBe('token')
   })
 
   it('reads through the rotated service once a rotation has been committed', async () => {
@@ -175,14 +227,25 @@ describe('pairing keychain', () => {
     expect(secureStoreMock.getItemAsync).toHaveBeenCalledTimes(3)
   })
 
-  it('keeps reading older services when the current alias throws instead of missing', async () => {
+  it('does not return a stale older value when the current alias throws', async () => {
     generationRecord = '1'
+    const currentError = new Error('Could not decrypt the value')
     secureStoreMock.getItemAsync.mockImplementation(async (_k: string, options: Options) => {
       if (serviceOf(options) === 'orca.pairing.v1') {
-        throw new Error('Could not decrypt the value')
+        throw currentError
       }
       return 'legacy-token'
     })
+
+    await expect(readPairingKeychainItem(TOKEN_KEY)).rejects.toBe(currentError)
+    expect(secureStoreMock.getItemAsync).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads an older value while a newly recorded alias has no item yet', async () => {
+    generationRecord = '1:pending'
+    secureStoreMock.getItemAsync.mockImplementation(async (_k: string, options: Options) =>
+      serviceOf(options) === undefined ? 'legacy-token' : null
+    )
 
     await expect(readPairingKeychainItem(TOKEN_KEY)).resolves.toBe('legacy-token')
   })
@@ -249,7 +312,7 @@ describe('pairing keychain', () => {
     expect(secureStoreMock.setItemAsync).toHaveBeenCalledTimes(2)
   })
 
-  it.each(['not-a-number', '', ' '])(
+  it.each(['not-a-number', '', ' ', '0:pending'])(
     'probes rotated services when generation record %j is malformed',
     async (raw) => {
       generationRecord = raw
@@ -261,7 +324,7 @@ describe('pairing keychain', () => {
     }
   )
 
-  it.each(['not-a-number', '', ' '])(
+  it.each(['not-a-number', '', ' ', '0:pending'])(
     'refuses to write from malformed generation record %j',
     async (raw) => {
       generationRecord = raw
@@ -273,7 +336,7 @@ describe('pairing keychain', () => {
     }
   )
 
-  it.each(['not-a-number', '', ' '])(
+  it.each(['not-a-number', '', ' ', '0:pending'])(
     'deletes every bounded service when generation record %j is malformed',
     async (raw) => {
       generationRecord = raw

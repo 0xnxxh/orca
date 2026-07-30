@@ -29,52 +29,59 @@ function optionsForGeneration(generation: number): SecureStore.SecureStoreOption
 }
 
 type LoadedGeneration =
-  | { generation: number; reliable: true }
-  | { generation: 0; reliable: false; error: unknown }
+  | { generation: number; pending: boolean; reliable: true }
+  | { generation: 0; pending: false; reliable: false; error: unknown }
 
-let cachedGeneration: number | null = null
+type GenerationState = { generation: number; pending: boolean }
+
+let cachedGeneration: GenerationState | null = null
 let keychainMutation: Promise<void> = Promise.resolve()
 
 function parseGeneration(raw: string | null): LoadedGeneration {
   if (raw === null) {
-    return { generation: 0, reliable: true }
+    return { generation: 0, pending: false, reliable: true }
   }
-  const parsed = Number(raw)
+  const pending = raw.endsWith(':pending')
+  const generationRaw = pending ? raw.slice(0, -':pending'.length) : raw
+  const parsed = Number(generationRaw)
   if (
     !Number.isInteger(parsed) ||
     parsed < 0 ||
     parsed > MAX_GENERATION ||
-    String(parsed) !== raw
+    (pending && parsed === 0) ||
+    String(parsed) !== generationRaw
   ) {
     return {
       generation: 0,
+      pending: false,
       reliable: false,
       error: new Error('pairing keychain generation record is invalid')
     }
   }
-  return { generation: parsed, reliable: true }
+  return { generation: parsed, pending, reliable: true }
 }
 
 async function loadGeneration(): Promise<LoadedGeneration> {
   if (cachedGeneration !== null) {
-    return { generation: cachedGeneration, reliable: true }
+    return { ...cachedGeneration, reliable: true }
   }
   try {
     const loaded = parseGeneration(await AsyncStorage.getItem(GENERATION_STORAGE_KEY))
     if (loaded.reliable) {
-      cachedGeneration = loaded.generation
+      cachedGeneration = { generation: loaded.generation, pending: loaded.pending }
     }
     return loaded
   } catch (error) {
     // Why: don't cache or rotate from a guess; a later read may recover the durable pointer.
-    return { generation: 0, reliable: false, error }
+    return { generation: 0, pending: false, reliable: false, error }
   }
 }
 
 // Why: reads only walk back from the recorded generation, so persist before writing under it.
-async function commitGeneration(generation: number): Promise<void> {
-  await AsyncStorage.setItem(GENERATION_STORAGE_KEY, String(generation))
-  cachedGeneration = generation
+async function commitGeneration(generation: number, pending: boolean): Promise<void> {
+  const raw = pending ? `${generation}:pending` : String(generation)
+  await AsyncStorage.setItem(GENERATION_STORAGE_KEY, raw)
+  cachedGeneration = { generation, pending }
 }
 
 function enqueueKeychainMutation(operation: () => Promise<void>): Promise<void> {
@@ -87,19 +94,11 @@ export async function readPairingKeychainItem(key: string): Promise<string | nul
   await keychainMutation
   const loaded = await loadGeneration()
   const firstCandidate = loaded.reliable ? loaded.generation : MAX_GENERATION
-  let firstError: unknown
   for (let candidate = firstCandidate; candidate >= 0; candidate -= 1) {
-    try {
-      const value = await SecureStore.getItemAsync(key, optionsForGeneration(candidate))
-      if (value !== null) {
-        return value
-      }
-    } catch (error) {
-      firstError ??= error
+    const value = await SecureStore.getItemAsync(key, optionsForGeneration(candidate))
+    if (value !== null) {
+      return value
     }
-  }
-  if (firstError !== undefined) {
-    throw firstError
   }
   return null
 }
@@ -113,12 +112,16 @@ async function writePairingKeychainItemImpl(key: string, value: string): Promise
   let firstError: unknown
   try {
     await SecureStore.setItemAsync(key, value, optionsForGeneration(generation))
+    if (loaded.pending) {
+      await commitGeneration(generation, false)
+    }
     return
   } catch (error) {
     firstError = error
   }
 
-  if (!isAndroidEncryptionFailure(firstError)) {
+  // Why: retry an unconfirmed alias instead of exhausting generations on a device-wide failure.
+  if (loaded.pending || !isAndroidEncryptionFailure(firstError)) {
     throw firstError
   }
   const rotated = generation + 1
@@ -126,13 +129,16 @@ async function writePairingKeychainItemImpl(key: string, value: string): Promise
     throw firstError
   }
   try {
-    await commitGeneration(rotated)
+    await commitGeneration(rotated, true)
   } catch {
     throw firstError
   }
-  await SecureStore.setItemAsync(key, value, optionsForGeneration(rotated)).catch(() => {
+  try {
+    await SecureStore.setItemAsync(key, value, optionsForGeneration(rotated))
+    await commitGeneration(rotated, false)
+  } catch {
     throw firstError
-  })
+  }
 }
 
 function isAndroidEncryptionFailure(error: unknown): boolean {

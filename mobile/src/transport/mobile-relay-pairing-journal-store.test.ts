@@ -103,7 +103,7 @@ describe('mobile relay pairing journal store', () => {
     await expect(loadMobileRelayPairingJournal()).resolves.toEqual(journal)
   })
 
-  it('rotates the journal secret before relay-enabled pairing connects (#6600)', async () => {
+  it('retries the journal under a distinct alias before relay pairing connects (#6600)', async () => {
     const journal = createMobileRelayPairingJournal({
       offer: offer as PairingOffer & { relay: NonNullable<PairingOffer['relay']> },
       hostId: 'host-1',

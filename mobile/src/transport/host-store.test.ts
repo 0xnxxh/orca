@@ -350,7 +350,7 @@ describe('host-store list mutations', () => {
   })
 })
 
-describe('host-store pairing save under an unusable keystore', () => {
+describe('host-store pairing save after an Android encryption rejection', () => {
   const NEW_HOST = {
     id: 'host-1782629088232',
     name: 'Host 1',
@@ -394,9 +394,9 @@ describe('host-store pairing save under an unusable keystore', () => {
     secureStoreMock.getItemAsync.mockResolvedValue(null)
   })
 
-  it('saves the paired host by rotating past the wedged keystore alias (#6600)', async () => {
+  it('saves the host when the reported Android failure is alias-local (#6600)', async () => {
     const written = new Map<string | undefined, string>()
-    // Why: one wedged AndroidKeyStore alias rejects every host token; a fresh alias accepts.
+    // Why: simulate the unverified alias-local case; no affected physical device was available.
     secureStoreMock.setItemAsync.mockImplementation(
       async (_key: string, value: string, options?: { keychainService?: string }) => {
         if (options?.keychainService === undefined) {
