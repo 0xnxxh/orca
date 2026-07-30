@@ -104,6 +104,64 @@ describe('git RPC methods', () => {
     })
   })
 
+  it('forwards the exact snapshot status identity and explicit push target', async () => {
+    const pushTarget = {
+      remoteName: 'fork',
+      branchName: 'feature/checks',
+      remoteUrl: 'ssh://git.example/repo',
+      remoteCreated: false
+    }
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      getRuntimeGitRepositorySnapshot: vi.fn().mockResolvedValue(null)
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: GIT_METHODS })
+
+    const response = await dispatcher.dispatch(
+      makeRequest('git.repositorySnapshot', {
+        worktree: 'id:wt-1',
+        includeIgnored: true,
+        bypassEffectiveUpstreamNegativeCache: true,
+        reuseLineStats: true,
+        pushTarget
+      })
+    )
+
+    expect(runtime.getRuntimeGitRepositorySnapshot).toHaveBeenCalledWith(
+      'id:wt-1',
+      {
+        includeIgnored: true,
+        bypassEffectiveUpstreamNegativeCache: true,
+        reuseLineStats: true
+      },
+      pushTarget
+    )
+    expect(response).toMatchObject({ ok: true, result: null })
+  })
+
+  it('preserves an absent snapshot status identity and rejects malformed push targets', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      getRuntimeGitRepositorySnapshot: vi.fn().mockResolvedValue(null)
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: GIT_METHODS })
+
+    await dispatcher.dispatch(
+      makeRequest('git.repositorySnapshot', {
+        worktree: 'id:wt-1'
+      })
+    )
+    const malformed = await dispatcher.dispatch(
+      makeRequest('git.repositorySnapshot', {
+        worktree: 'id:wt-1',
+        pushTarget: { remoteName: 'origin' }
+      })
+    )
+
+    expect(runtime.getRuntimeGitRepositorySnapshot).toHaveBeenCalledWith('id:wt-1', undefined)
+    expect(malformed).toMatchObject({ ok: false, error: { code: 'invalid_argument' } })
+  })
+
   it('returns ignored paths for selected explorer rows', async () => {
     const runtime = {
       getRuntimeId: () => 'test-runtime',

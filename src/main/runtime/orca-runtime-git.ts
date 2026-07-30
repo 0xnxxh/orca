@@ -16,6 +16,7 @@ import type {
   TuiAgent,
   Worktree
 } from '../../shared/types'
+import type { GitRepositorySnapshot } from '../../shared/git-repository-snapshot'
 import type { CommitMessageDraftContext } from '../../shared/commit-message-generation'
 import { getCommitMessageModelDiscoveryHostKey } from '../../shared/commit-message-host-key'
 import type { GitHistoryOptions, GitHistoryResult } from '../../shared/git-history'
@@ -43,6 +44,7 @@ import {
   getDiff,
   getStagedCommitContext,
   getStatus as getGitStatus,
+  getGitRepositorySnapshot,
   getSubmoduleStatus as getGitSubmoduleStatus,
   stageFile,
   unstageFile
@@ -204,6 +206,31 @@ export class RuntimeGitCommands {
     return options
       ? getGitStatus(target.worktree.path, { ...options, ...gitOptions, ...sharedOptions })
       : getGitStatus(target.worktree.path, { ...gitOptions, ...sharedOptions })
+  }
+
+  async getRuntimeGitRepositorySnapshot(
+    worktreeSelector: string,
+    options?: GitProviderStatusOptions,
+    pushTarget?: GitPushTarget
+  ): Promise<GitRepositorySnapshot | null> {
+    const target = await this.host.resolveRuntimeGitTarget(worktreeSelector)
+    const provider = target.connectionId ? getSshGitProvider(target.connectionId) : null
+    if (target.connectionId) {
+      if (!provider) {
+        throw new Error(SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE)
+      }
+      return provider.getRepositorySnapshot(target.worktree.path, options, pushTarget)
+    }
+    const sharedLinkPaths = target.repo ? getWorktreeSharedLinkPaths(target.repo) : []
+    return getGitRepositorySnapshot(
+      target.worktree.path,
+      {
+        ...options,
+        ...localGitOptionsForTarget(target),
+        ...(sharedLinkPaths.length > 0 ? { sharedLinkPaths } : {})
+      },
+      pushTarget
+    )
   }
 
   async getRuntimeGitSubmoduleStatus(

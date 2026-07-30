@@ -13,6 +13,17 @@ export const GitStatusParams = WorktreeSelector.extend({
   reuseLineStats: z.boolean().optional()
 })
 
+const GitPushTargetParam = z.object({
+  remoteName: z.string(),
+  branchName: z.string(),
+  remoteUrl: z.string().optional(),
+  remoteCreated: z.boolean().optional()
+})
+
+export const GitRepositorySnapshotParams = GitStatusParams.extend({
+  pushTarget: GitPushTargetParam.optional()
+})
+
 export const GitCheckIgnored = WorktreeSelector.extend({
   paths: z.array(z.string().min(1, 'Missing path')).max(2000)
 })
@@ -199,13 +210,6 @@ export const GitGeneratePullRequestFields = GitGenerateCommitMessage.extend({
 
 export const GitBulkPaths = WorktreeSelector.extend({
   filePaths: z.array(z.string().min(1, 'Missing file path'))
-})
-
-const GitPushTargetParam = z.object({
-  remoteName: z.string(),
-  branchName: z.string(),
-  remoteUrl: z.string().optional(),
-  remoteCreated: z.boolean().optional()
 })
 
 export const GitPush = WorktreeSelector.extend({

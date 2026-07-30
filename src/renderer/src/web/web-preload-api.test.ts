@@ -3180,6 +3180,49 @@ describe('web git preload API', () => {
     vi.doUnmock('./web-runtime-client')
   })
 
+  it('returns inert repository snapshots and a stable no-op subscription handle', async () => {
+    const runtimeCalls: { method: string; params: unknown }[] = []
+    vi.doMock('./web-runtime-client', () => ({
+      WebRuntimeClient: class {
+        call(method: string, params?: unknown): Promise<RuntimeRpcResponse<unknown>> {
+          runtimeCalls.push({ method, params })
+          throw new Error('Repository snapshot fallbacks must not use runtime RPC')
+        }
+
+        close(): void {}
+      }
+    }))
+    const globals = installBrowserGlobals('Linux')
+    writeStoredRuntimeEnvironment(globals.storage)
+    const { installWebPreloadApi } = await import('./web-preload-api')
+    installWebPreloadApi()
+    const callback = vi.fn()
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    const addEventListener = vi.mocked(globals.window.addEventListener)
+    const listenerCount = addEventListener.mock.calls.length
+
+    await expect(
+      globals.window.api.git.repositorySnapshot({ worktreePath: '/workspace/repo' })
+    ).resolves.toBeNull()
+    const first = await globals.window.api.git.subscribeRepositorySnapshot(
+      { worktreePath: '/workspace/repo' },
+      callback
+    )
+    const second = await globals.window.api.git.subscribeRepositorySnapshot(
+      { worktreePath: '/workspace/other' },
+      callback
+    )
+    first.unsubscribe()
+    second.unsubscribe()
+
+    expect(first).toBe(second)
+    expect(runtimeCalls).toEqual([])
+    expect(callback).not.toHaveBeenCalled()
+    expect(setTimeoutSpy).not.toHaveBeenCalled()
+    expect(addEventListener).toHaveBeenCalledTimes(listenerCount)
+    setTimeoutSpy.mockRestore()
+  })
+
   it('routes remote commit URL requests through the runtime git API', async () => {
     const runtimeCalls: { method: string; params: unknown }[] = []
     const worktree = {

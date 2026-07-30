@@ -22,6 +22,7 @@ import {
   GitRebaseFromBase,
   GitRemoteCommitUrl,
   GitRemoteFileUrl,
+  GitRepositorySnapshotParams,
   GitStatusParams,
   GitSubmoduleStatus,
   GitTargetedRemote,
@@ -108,6 +109,29 @@ export const GIT_METHODS: RpcMethod[] = [
       return options === undefined
         ? runtime.getRuntimeGitStatus(params.worktree)
         : runtime.getRuntimeGitStatus(params.worktree, options)
+    }
+  }),
+  defineMethod({
+    name: 'git.repositorySnapshot',
+    params: GitRepositorySnapshotParams,
+    handler: async (params, { runtime }) => {
+      const options =
+        params.includeIgnored === undefined &&
+        params.bypassEffectiveUpstreamNegativeCache === undefined &&
+        params.reuseLineStats === undefined
+          ? undefined
+          : {
+              ...(params.includeIgnored === undefined
+                ? {}
+                : { includeIgnored: params.includeIgnored }),
+              ...(params.bypassEffectiveUpstreamNegativeCache === true
+                ? { bypassEffectiveUpstreamNegativeCache: true }
+                : {}),
+              ...(params.reuseLineStats === true ? { reuseLineStats: true } : {})
+            }
+      return params.pushTarget === undefined
+        ? runtime.getRuntimeGitRepositorySnapshot(params.worktree, options)
+        : runtime.getRuntimeGitRepositorySnapshot(params.worktree, options, params.pushTarget)
     }
   }),
   defineMethod({

@@ -254,6 +254,9 @@ type WebRuntimeEnvelopeCaller = <TResult>(
   params?: unknown,
   timeoutMs?: number
 ) => Promise<RuntimeRpcResponse<TResult>>
+const WEB_GIT_REPOSITORY_SNAPSHOT_SUBSCRIPTION_HANDLE = Object.freeze({
+  unsubscribe: noopUnsubscribe
+})
 type WebGitHubRouteKey =
   | 'repoSlug'
   | 'repoUpstream'
@@ -1830,6 +1833,9 @@ async function callAbortableRuntimeStatus<TResult>(
 
 function createGitApi(): NonNullable<Partial<PreloadApi>['git']> {
   return {
+    repositorySnapshot: () => Promise.resolve(null),
+    subscribeRepositorySnapshot: () =>
+      Promise.resolve(WEB_GIT_REPOSITORY_SNAPSHOT_SUBSCRIPTION_HANDLE),
     status: async ({
       worktreePath,
       includeIgnored,

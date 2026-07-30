@@ -121,7 +121,7 @@ import {
   getRuntimeGitUpstreamStatus,
   type RuntimeGeneratePullRequestFieldsOverrides
 } from '@/runtime/runtime-git-client'
-import { getDesktopGitRepositorySnapshot } from '@/runtime/desktop-git-repository-snapshot-client'
+import { getChecksPanelRepositorySnapshot } from './checks-panel-repository-snapshot-client'
 import {
   buildChecksPanelGitStatusContextKey,
   readChecksPanelRepositorySnapshot,
@@ -1545,9 +1545,9 @@ export default function ChecksPanel(): React.JSX.Element {
     }
     void (async () => {
       const readOwnerSnapshot = async (
-        options?: Parameters<typeof getDesktopGitRepositorySnapshot>[1]
+        options?: Parameters<typeof getChecksPanelRepositorySnapshot>[1]
       ) => {
-        const snapshot = await getDesktopGitRepositorySnapshot(context, options)
+        const snapshot = await getChecksPanelRepositorySnapshot(context, options)
         if (snapshot) {
           observedRepositoryRevision = Math.max(observedRepositoryRevision ?? 0, snapshot.revision)
         }
