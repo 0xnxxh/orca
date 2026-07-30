@@ -1166,13 +1166,17 @@ export function buildPtyHostEnv(
     clearPiAgentShadowEnv(baseEnv, 'pi')
     clearPiAgentShadowEnv(baseEnv, 'omp')
     if (piAgentKind === 'pi') {
-      const piEnv = piTitlebarExtensionService.buildPtyEnv(id, preexistingPiAgentDir, 'pi')
+      const piEnv = piTitlebarExtensionService.buildPtyEnv(id, preexistingPiAgentDir, 'pi', {
+        materializeDefaultHome: hasLaunchCommand
+      })
       Object.assign(baseEnv, piEnv)
       exposePiManagedExtensionEnv(baseEnv, 'pi', piEnv)
     }
 
     if (shouldPrepareOmpShadow) {
-      const ompEnv = piTitlebarExtensionService.buildPtyEnv(id, preexistingOmpAgentDir, 'omp')
+      const ompEnv = piTitlebarExtensionService.buildPtyEnv(id, preexistingOmpAgentDir, 'omp', {
+        materializeDefaultHome: piAgentKind === 'omp'
+      })
       Object.assign(baseEnv, ompEnv)
       exposePiManagedExtensionEnv(baseEnv, 'omp', ompEnv)
     }

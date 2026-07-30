@@ -60,4 +60,19 @@ describe('registerManagedHookInstaller', () => {
     })
     expect(installManagedHooks).toHaveBeenNthCalledWith(2, { signal: undefined })
   })
+
+  it('validates, deduplicates, and forwards the detected agent allowlist', async () => {
+    const installManagedHooks = vi.fn().mockResolvedValue({ installers: 1, errors: 0 })
+    const handler = captureHandler(() => ({ installManagedHooks }))
+
+    await handler({ agents: ['codex', 'codex'] }, context())
+
+    expect(installManagedHooks).toHaveBeenCalledWith({
+      signal: undefined,
+      agents: ['codex']
+    })
+    await expect(handler({ agents: ['unknown'] }, context())).rejects.toThrow(
+      'invalid_managed_hook_agents'
+    )
+  })
 })

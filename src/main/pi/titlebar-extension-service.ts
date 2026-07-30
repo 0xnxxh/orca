@@ -169,7 +169,8 @@ export class PiTitlebarExtensionService {
   buildPtyEnv(
     ptyId: string,
     existingAgentDir: string | undefined,
-    kind: PiAgentKind
+    kind: PiAgentKind,
+    options?: { materializeDefaultHome?: boolean }
   ): Record<string, string> {
     const sourceAgentDir = existingAgentDir || getDefaultPiAgentDir(kind)
     try {
@@ -178,6 +179,15 @@ export class PiTitlebarExtensionService {
     } catch {
       // Why: old per-PTY overlay cleanup is best-effort; a locked stale
       // directory should not prevent the terminal from starting.
+    }
+
+    if (!existsSync(sourceAgentDir) && options?.materializeDefaultHome === false) {
+      if (kind === 'omp') {
+        const statusSource = withOrcaManagedExtensionMarker(getPiAgentStatusExtensionSource(kind))
+        const statusExtensionPath = this.writeOmpFallbackStatusExtension(statusSource)
+        return statusExtensionPath ? { ORCA_OMP_STATUS_EXTENSION: statusExtensionPath } : {}
+      }
+      return {}
     }
 
     if (kind === 'omp') {

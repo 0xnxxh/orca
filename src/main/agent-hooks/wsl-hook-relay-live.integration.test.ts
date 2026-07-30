@@ -102,6 +102,12 @@ describe.skipIf(process.platform === 'win32')(
             envelope as Parameters<AgentHookServer['ingestRemote']>[0],
             connectionId
           ),
+        managedHookSettings: () => ({
+          agentCmdOverrides: {
+            claude: process.execPath,
+            codex: process.execPath
+          }
+        }),
         warn: (message) => warns.push(message),
         transientRetryDelayMs: 1
       })

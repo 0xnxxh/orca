@@ -41,6 +41,7 @@ const PI_OVERLAY_SUBDIR_BY_KIND: Record<PiAgentKind, string> = {
 const OPENCODE_PLUGIN_FILE = 'orca-opencode-status.js'
 const PI_EXTENSION_FILE = 'orca-agent-status.ts'
 const PI_AGENT_SUBDIR = 'agent'
+const OMP_MANAGED_STATUS_EXTENSION_DIR = 'omp-managed-status-extension'
 const ORCA_MANAGED_EXTENSION_MARKER = '@orca-managed-pi-extension'
 
 function withOrcaManagedPiExtensionMarker(source: string): string {
@@ -79,8 +80,9 @@ export type PluginSources = {
   ompExtensionSource?: string
 }
 
-export function getRelayPiStatusExtensionPath(agentDir: string): string {
-  return join(agentDir, 'extensions', PI_EXTENSION_FILE)
+export type MaterializePiResult = {
+  sourceAgentDir?: string
+  statusExtensionPath?: string
 }
 
 /** Presence of this file is what makes an overlay usable — a rebuild that failed
@@ -236,10 +238,30 @@ export class PluginOverlayManager {
     }
   }
 
-  /** Install the Pi/OMP status extension into the remote real agent dir and
-   *  return that directory. `kind` selects which Pi-compatible agent's default
-   *  dir to use when `existingAgentDir` is not supplied. */
-  materializePi(id: string, existingAgentDir?: string, kind: PiAgentKind = 'pi'): string | null {
+  private writeOmpManagedStatusExtension(extensionSource: string): string | null {
+    const fallbackDir = join(this.homeDir, RELAY_HOOKS_DIR, OMP_MANAGED_STATUS_EXTENSION_DIR)
+    try {
+      mkdirSync(fallbackDir, { recursive: true })
+      const fallbackPath = join(fallbackDir, PI_EXTENSION_FILE)
+      if (!this.canOverwritePiExtension(fallbackPath)) {
+        return null
+      }
+      writeFileSync(fallbackPath, extensionSource)
+      return fallbackPath
+    } catch (err) {
+      process.stderr.write(
+        `[plugin-overlay] failed to write OMP managed status extension: ${err instanceof Error ? err.message : String(err)}\n`
+      )
+      return null
+    }
+  }
+
+  materializePi(
+    id: string,
+    existingAgentDir?: string,
+    kind: PiAgentKind = 'pi',
+    options?: { materializeDefaultHome?: boolean }
+  ): MaterializePiResult | null {
     const extensionSource = this.getPiExtensionSource(kind)
     if (!extensionSource || !isUsableId(id)) {
       return null
@@ -249,6 +271,17 @@ export class PluginOverlayManager {
       if (existingAgentDir && !existsSync(existingAgentDir)) {
         return null
       }
+      if (
+        !existingAgentDir &&
+        !existsSync(sourceAgentDir) &&
+        options?.materializeDefaultHome === false
+      ) {
+        if (kind === 'omp') {
+          const statusExtensionPath = this.writeOmpManagedStatusExtension(extensionSource)
+          return statusExtensionPath ? { statusExtensionPath } : null
+        }
+        return null
+      }
       const extensionsDir = join(sourceAgentDir, 'extensions')
       mkdirSync(extensionsDir, { recursive: true })
       const extensionPath = join(extensionsDir, PI_EXTENSION_FILE)
@@ -256,7 +289,10 @@ export class PluginOverlayManager {
         return null
       }
       writeFileSync(extensionPath, extensionSource)
-      return sourceAgentDir
+      return {
+        sourceAgentDir,
+        statusExtensionPath: extensionPath
+      }
     } catch (err) {
       process.stderr.write(
         `[plugin-overlay] failed to install ${kind} extension: ${err instanceof Error ? err.message : String(err)}\n`

@@ -166,12 +166,18 @@ describe('WslHookRelayManager', () => {
     return child as unknown as ChildProcessWithoutNullStreams & { emitClose: () => void }
   }
 
-  function guestTransport(registerInstallPlugins = true): MultiplexerTransport {
+  function guestTransport(
+    options: { registerInstallPlugins?: boolean; detectedAgents?: string[] } = {}
+  ): MultiplexerTransport {
+    const { registerInstallPlugins = true, detectedAgents = ['codex'] } = options
     const harness = createGuestHarness()
     harnesses.push(harness)
     registerWslHookFsHandlers(harness.guestDispatcher, home)
     harness.guestDispatcher.onRequest(AGENT_HOOK_REQUEST_REPLAY_METHOD, async () => ({
       replayed: 0
+    }))
+    harness.guestDispatcher.onRequest('preflight.detectAgents', async () => ({
+      agents: detectedAgents
     }))
     // A guest bundle predating the plugin overlay omits this handler (-32601).
     if (registerInstallPlugins) {
@@ -212,6 +218,7 @@ describe('WslHookRelayManager', () => {
       waitForSentinel: vi.fn(async () => guestTransport()),
       ingest: vi.fn(),
       installHooks: vi.fn(async () => []),
+      managedHookSettings: () => null,
       pluginSources: () => ({ opencodePluginSource: '// opencode plugin source' }),
       warn: vi.fn(),
       transientRetryDelayMs: 1,
@@ -228,7 +235,8 @@ describe('WslHookRelayManager', () => {
     expect(deps.spawnRelay).toHaveBeenCalledTimes(1)
     // Codex is the one agent whose home Orca redirects for WSL sessions.
     expect(deps.installHooks).toHaveBeenCalledWith(expect.anything(), home, {
-      codexHomeDir: `${home}/.local/share/orca/codex-runtime-home/home`
+      codexHomeDir: `${home}/.local/share/orca/codex-runtime-home/home`,
+      agents: ['codex']
     })
 
     expect(manager.getGuestEndpointFilePath('Ubuntu')).toBe(
@@ -261,7 +269,7 @@ describe('WslHookRelayManager', () => {
   })
 
   it('leaves the overlay dir null when the guest bundle lacks the installPlugins handler', async () => {
-    const waitForSentinel = vi.fn(async () => guestTransport(false))
+    const waitForSentinel = vi.fn(async () => guestTransport({ registerInstallPlugins: false }))
     const { manager, deps } = createManager({ waitForSentinel })
     manager.ensureForDistro('Ubuntu')
     // Connect still completes (hooks install); the -32601 is swallowed silently.
@@ -269,6 +277,17 @@ describe('WslHookRelayManager', () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(manager.getOpenCodeOverlayDir('Ubuntu')).toBeNull()
     expect(deps.warn).not.toHaveBeenCalledWith(expect.stringContaining('installPlugins'))
+    manager.disposeAll()
+  })
+
+  it('does not mutate managed agent homes when no WSL agents are detected', async () => {
+    const waitForSentinel = vi.fn(async () => guestTransport({ detectedAgents: [] }))
+    const { manager, deps } = createManager({ waitForSentinel })
+
+    manager.ensureForDistro('Ubuntu')
+    await vi.waitFor(() => expect(manager.getOpenCodeOverlayDir('Ubuntu')).toBe(opencodeOverlayDir))
+
+    expect(deps.installHooks).not.toHaveBeenCalled()
     manager.disposeAll()
   })
 

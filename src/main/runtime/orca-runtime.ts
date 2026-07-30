@@ -396,6 +396,7 @@ import {
 } from '../agent-trust-presets'
 import { markRemoteAgentWorkspaceTrusted } from '../remote-agent-trust-presets'
 import { applyAgentStatusHooksEnabled } from '../agent-hooks/managed-agent-hook-controls'
+import { recordManagedHookInstallFailure } from '../agent-hooks/install-telemetry'
 import {
   isWindowsAbsolutePathLike,
   isPathInsideOrEqual,
@@ -3300,7 +3301,7 @@ export class OrcaRuntimeService {
     }
   }
 
-  updateClientSettings(
+  async updateClientSettings(
     updates: Pick<
       Partial<GlobalSettings>,
       | 'agentStatusHooksEnabled'
@@ -3320,36 +3321,51 @@ export class OrcaRuntimeService {
       | 'minimaxUsageModels'
       | 'prBotAuthorOverrides'
     >
-  ): Pick<
-    GlobalSettings,
-    | 'defaultTuiAgent'
-    | 'disabledTuiAgents'
-    | 'agentCmdOverrides'
-    | 'agentDefaultArgs'
-    | 'agentDefaultEnv'
-    | 'agentStatusHooksEnabled'
-    | 'defaultTaskSource'
-    | 'defaultTaskViewPreset'
-    | 'visibleTaskProviders'
-    | 'defaultRepoSelection'
-    | 'defaultLinearTeamSelection'
-    | 'githubProjects'
-    | 'experimentalNewWorktreeCardStyle'
-    | 'compactWorktreeCards'
-    | 'minimaxGroupId'
-    | 'minimaxUsageModels'
-    | 'prBotAuthorOverrides'
+  ): Promise<
+    Pick<
+      GlobalSettings,
+      | 'defaultTuiAgent'
+      | 'disabledTuiAgents'
+      | 'agentCmdOverrides'
+      | 'agentDefaultArgs'
+      | 'agentDefaultEnv'
+      | 'agentStatusHooksEnabled'
+      | 'defaultTaskSource'
+      | 'defaultTaskViewPreset'
+      | 'visibleTaskProviders'
+      | 'defaultRepoSelection'
+      | 'defaultLinearTeamSelection'
+      | 'githubProjects'
+      | 'experimentalNewWorktreeCardStyle'
+      | 'compactWorktreeCards'
+      | 'minimaxGroupId'
+      | 'minimaxUsageModels'
+      | 'prBotAuthorOverrides'
+    >
   > {
     if (!this.store?.getSettings || !this.store.updateSettings) {
       throw new Error('runtime_unavailable')
     }
-    const before = this.store.getSettings().agentStatusHooksEnabled !== false
+    const beforeSettings = this.store.getSettings()
+    const before = beforeSettings.agentStatusHooksEnabled !== false
     this.store.updateSettings(updates, { notifyListeners: true })
     if (
-      typeof updates.agentStatusHooksEnabled === 'boolean' &&
-      before !== updates.agentStatusHooksEnabled
+      (typeof updates.agentStatusHooksEnabled === 'boolean' &&
+        before !== updates.agentStatusHooksEnabled) ||
+      updates.disabledTuiAgents !== undefined
     ) {
-      applyAgentStatusHooksEnabled(updates.agentStatusHooksEnabled)
+      const settings = this.store.getSettings()
+      await applyAgentStatusHooksEnabled(settings.agentStatusHooksEnabled !== false, settings, {
+        onInstallError: recordManagedHookInstallFailure,
+        shouldContinue: (agent) => {
+          const current = this.store?.getSettings()
+          return (
+            current !== undefined &&
+            current.agentStatusHooksEnabled !== false &&
+            !current.disabledTuiAgents?.includes(agent)
+          )
+        }
+      })
     }
     return this.getClientSettings()
   }

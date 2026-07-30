@@ -1663,7 +1663,7 @@ describe('OrcaRuntimeService', () => {
     expect(updateSettings).not.toHaveBeenCalled()
   })
 
-  it('accepts runtime-backed setting updates from paired clients', () => {
+  it('accepts runtime-backed setting updates from paired clients', async () => {
     let settings = {
       ...store.getSettings(),
       experimentalNewWorktreeCardStyle: false,
@@ -1682,7 +1682,7 @@ describe('OrcaRuntimeService', () => {
     } as never)
 
     expect(
-      runtime.updateClientSettings({
+      await runtime.updateClientSettings({
         experimentalNewWorktreeCardStyle: true,
         compactWorktreeCards: true,
         minimaxGroupId: 'group-42',
