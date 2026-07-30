@@ -9430,12 +9430,14 @@
           "cloudVmTitle": "云虚拟机运行时",
           "cloudVmRefresh": "刷新云虚拟机运行时",
           "cloudVmLoading": "正在检查云虚拟机运行时…",
-          "cloudVmEmpty": "没有需要清理的云虚拟机运行时。"
+          "cloudVmEmpty": "没有需要清理的云虚拟机运行时。",
+          "cloudVmEmptyWithSetup": "还没有云虚拟机运行时。请在创建工作区时使用环境模板来创建。"
         },
         "ephemeralVms": {
           "search": {
             "title": "工作区专属环境",
-            "description": "了解仓库自带的环境模板如何为每个工作区提供按需创建、可丢弃的独立环境。"
+            "description": "了解仓库自带的环境模板如何为每个工作区提供按需创建、可丢弃的独立环境。",
+            "cloudVmTitle": "云虚拟机"
           }
         },
         "EphemeralVmsPane": {
@@ -9454,11 +9456,14 @@
           "recipesHelp": "orca.yaml 和已启用插件中的配方会显示在这里，可用于启动工作区。",
           "refresh": "刷新临时 VM 环境模板",
           "checking": "正在检查环境模板...",
-          "none": "还没有找到环境模板。"
+          "none": "还没有找到环境模板。",
+          "cloudVmSkillTitle": "云虚拟机设置技能",
+          "cloudVmRefresh": "刷新云虚拟机环境模板"
         },
         "ephemeralVmsExperimentalSetting": {
           "description": "显示仓库自带按需环境的设置控件和工作区运行目标。",
-          "toggleLabel": "切换工作区专属环境"
+          "toggleLabel": "切换工作区专属环境",
+          "cloudVmToggleLabel": "切换云虚拟机"
         },
         "SourceControlActionRepoOverrideNote": {
           "agent": "智能体",
@@ -9941,6 +9946,13 @@
           "endpointKind": "端点类型",
           "networkConnection": "网络连接",
           "notAttempted": "未尝试"
+        },
+        "CloudVmSetupGuide": {
+          "title": "创建云虚拟机",
+          "description": "云虚拟机会在创建工作区时通过环境模板创建。",
+          "setupRecipe": "为你的云提供商设置环境模板。",
+          "createWorkspace": "创建工作区，并在“运行于”中选择该模板。",
+          "openSetup": "设置环境模板"
         }
       },
       "right": {

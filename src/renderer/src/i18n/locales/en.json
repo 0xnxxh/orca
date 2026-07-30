@@ -9459,12 +9459,14 @@
           "cloudVmTitle": "Cloud VM runtimes",
           "cloudVmRefresh": "Refresh Cloud VM runtimes",
           "cloudVmLoading": "Checking Cloud VM runtimes…",
-          "cloudVmEmpty": "No Cloud VM runtimes need cleanup."
+          "cloudVmEmpty": "No Cloud VM runtimes need cleanup.",
+          "cloudVmEmptyWithSetup": "No Cloud VM runtimes yet. Create one from a workspace using an environment recipe."
         },
         "ephemeralVms": {
           "search": {
             "title": "Per-Workspace Environments",
-            "description": "Learn how repo-owned recipes give each workspace its own on-demand, disposable environment."
+            "description": "Learn how repo-owned recipes give each workspace its own on-demand, disposable environment.",
+            "cloudVmTitle": "Cloud VM"
           }
         },
         "EphemeralVmsPane": {
@@ -9483,11 +9485,14 @@
           "recipesHelp": "Recipes from orca.yaml and enabled plugins show up here, ready to launch a workspace on.",
           "refresh": "Refresh ephemeral VM recipes",
           "checking": "Checking recipes...",
-          "none": "No recipes found yet."
+          "none": "No recipes found yet.",
+          "cloudVmSkillTitle": "Cloud VM setup skill",
+          "cloudVmRefresh": "Refresh Cloud VM recipes"
         },
         "ephemeralVmsExperimentalSetting": {
           "description": "Shows setup controls and workspace run targets for repo-owned, on-demand environments.",
-          "toggleLabel": "Toggle per-workspace environments"
+          "toggleLabel": "Toggle per-workspace environments",
+          "cloudVmToggleLabel": "Toggle Cloud VM"
         },
         "SourceControlActionRepoOverrideNote": {
           "agent": "Agent",
@@ -9972,6 +9977,13 @@
           "notAttempted": "Not attempted",
           "saveFailed": "Could not save the host",
           "saveFailedHelp": "The host was verified, but Orca could not save it. Check the name and local settings storage, then try again."
+        },
+        "CloudVmSetupGuide": {
+          "title": "Create a Cloud VM",
+          "description": "Cloud VMs are created from environment recipes when you create a workspace.",
+          "setupRecipe": "Set up an environment recipe for your cloud provider.",
+          "createWorkspace": "Create a workspace and select that recipe under Run on.",
+          "openSetup": "Set up environment recipes"
         }
       },
       "right": {
