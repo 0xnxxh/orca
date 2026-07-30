@@ -6657,11 +6657,11 @@ describe('createGitHubSlice.fetchWorkItems source/error envelope', () => {
     expect(result).toEqual({
       items: [{ ...item, repoId: 'caller-repo-id' }],
       failedCount: 0,
-      issueErrorTypes: []
+      errorTypes: []
     })
   })
 
-  it('surfaces issue-side envelope errors as issueErrorTypes on next-page fetches', async () => {
+  it('surfaces issue-side envelope errors as errorTypes on next-page fetches', async () => {
     runtimeEnvironmentCall.mockResolvedValueOnce({
       id: 'rpc-work-items-page-422',
       ok: true,
@@ -6691,7 +6691,7 @@ describe('createGitHubSlice.fetchWorkItems source/error envelope', () => {
 
     // The window 422 travels on the envelope error channel, not failedCount —
     // resolveEmptyPageOutcome keys on this exact string (#11485).
-    expect(result).toEqual({ items: [], failedCount: 0, issueErrorTypes: ['validation_error'] })
+    expect(result).toEqual({ items: [], failedCount: 0, errorTypes: ['validation_error'] })
   })
 
   it('demotes non-window validation errors so they cannot drive the unreachable clamp', async () => {
@@ -6722,7 +6722,40 @@ describe('createGitHubSlice.fetchWorkItems source/error envelope', () => {
       .getState()
       .fetchWorkItemsNextPage([{ repoId: 'caller-repo-id', path: '/server/repo' }], 24, 100, '', 2)
 
-    expect(result).toEqual({ items: [], failedCount: 0, issueErrorTypes: ['unknown'] })
+    expect(result).toEqual({ items: [], failedCount: 0, errorTypes: ['unknown'] })
+  })
+
+  it('surfaces PR-side envelope errors demoted so they read as failures, never window 422s', async () => {
+    runtimeEnvironmentCall.mockResolvedValueOnce({
+      id: 'rpc-work-items-page-prs-error',
+      ok: true,
+      result: {
+        items: [],
+        sources: {
+          issues: null,
+          prs: { owner: 'up', repo: 'r' },
+          originCandidate: { owner: 'up', repo: 'r' },
+          upstreamCandidate: null
+        },
+        errors: {
+          prs: { type: 'validation_error', message: 'Failed to load pull requests: bad flag' }
+        }
+      },
+      _meta: { runtimeId: 'remote-runtime' }
+    })
+    const store = createTestStore()
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-1' },
+      repos: [{ id: 'runtime-repo-id', path: '/server/repo', name: 'repo', kind: 'git' }]
+    } as unknown as Partial<AppState>)
+
+    const result = await store
+      .getState()
+      .fetchWorkItemsNextPage([{ repoId: 'caller-repo-id', path: '/server/repo' }], 24, 100, '', 2)
+
+    // A swallowed PR-side failure must not read as end-of-data (#11485), and a
+    // PR-side validation error must never join the issue-only window signal.
+    expect(result).toEqual({ items: [], failedCount: 0, errorTypes: ['unknown'] })
   })
 
   it('routes work-item counts through the active runtime environment', async () => {
@@ -6857,7 +6890,7 @@ describe('createGitHubSlice.fetchWorkItems source/error envelope', () => {
           oversizedQuery,
           1
         )
-    ).resolves.toEqual({ items: [], failedCount: 0, issueErrorTypes: [] })
+    ).resolves.toEqual({ items: [], failedCount: 0, errorTypes: [] })
     await expect(
       store
         .getState()

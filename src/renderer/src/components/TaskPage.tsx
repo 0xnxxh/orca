@@ -6187,7 +6187,7 @@ export default function TaskPage(): React.JSX.Element {
       setPaginationLoading(true)
       setLoadingTargetPage(target)
       try {
-        const { items, failedCount, issueErrorTypes } = await fetchWorkItemsNextPage(
+        const { items, failedCount, errorTypes } = await fetchWorkItemsNextPage(
           repoArgs,
           githubPerRepoPageLimit,
           githubPageSize,
@@ -6205,7 +6205,7 @@ export default function TaskPage(): React.JSX.Element {
           const { reason } = resolveEmptyPageOutcome({
             target,
             failedCount,
-            issueErrorTypes,
+            errorTypes,
             countedTotalPages: null
           })
           if (reason === 'window-unreachable') {
@@ -6228,8 +6228,22 @@ export default function TaskPage(): React.JSX.Element {
               { id: 'work-items-page-load-failed' }
             )
           } else {
+            // Why: with a real count the clamp is refused, so without a toast
+            // the click would look dead — the count mis-advertised the page.
+            // countedTotalPages is a click-time closure read; worst case the
+            // toast decision is off in a race, which is benign.
+            if (countedTotalPages !== null && countedTotalPages > 0) {
+              toast.error(
+                translate(
+                  'auto.components.TaskPage.loadPageFailed',
+                  'Page {{value0}} could not be loaded from GitHub.',
+                  { value0: String(target + 1) }
+                ),
+                { id: 'work-items-page-load-failed' }
+              )
+            }
             setCountedTotalPages((previous) =>
-              applyEmptyPageClamp(previous, { target, failedCount, issueErrorTypes })
+              applyEmptyPageClamp(previous, { target, failedCount, errorTypes })
             )
           }
           return
@@ -6256,6 +6270,7 @@ export default function TaskPage(): React.JSX.Element {
       paginationLoading,
       selectedRepos,
       currentPage,
+      countedTotalPages,
       appliedTaskSearch,
       fetchWorkItemsNextPage,
       githubPageSize,

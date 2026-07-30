@@ -37,7 +37,9 @@ export function taskPageToGitHubApiPage(taskPage: number): number {
 
 export type EmptyPageOutcome = {
   reason: 'window-unreachable' | 'load-failed' | 'end-of-data'
-  /** New advertised page count, or null to leave the current count alone. */
+  /** New advertised page count, or null to leave the current count alone.
+   *  Window clamps are applied via applyWindowPageLimit — this field carries
+   *  the same value there for symmetry, but the count slot must not use it. */
   clampTotalPagesTo: number | null
 }
 
@@ -47,21 +49,18 @@ export type EmptyPageOutcome = {
  * - a `validation_error` is GitHub's 422 for pages past its 1000-result search
  *   window — the page can never load, so stop advertising it. When a sibling
  *   repo's fetch also threw, the transient failure wins (load-failed, no
- *   clamp) so the toast and the clamp never disagree. Note this branch is
- *   issue-scope-only: the PR list path self-caps at the window and never 422s,
- *   so PR-tab dead clicks resolve as end-of-data.
- * - any other per-repo error (thrown or issue-side envelope) may be transient
- *   (rate limit, permissions), so surface it but keep the advertised count;
+ *   clamp) so the toast and the clamp never disagree. The window signal is
+ *   issue-side only: PR-side errors arrive demoted (never validation_error).
+ * - any other per-repo error (thrown, or on either envelope channel) may be
+ *   transient (rate limit, permissions), so surface it but keep the count;
  * - no error at all is end-of-data. That only warrants a clamp while the count
  *   is unknown (null) or failed (0), to withdraw the speculative page
- *   `fallbackTotalPages` advertises — a real count must not shrink, because a
- *   provider that swallows its own failures (the PR list path) also produces
- *   clean-empty results.
+ *   `fallbackTotalPages` advertises — a real count must not shrink.
  */
 export function resolveEmptyPageOutcome(args: {
   target: number
   failedCount: number
-  issueErrorTypes: readonly ClassifiedError['type'][]
+  errorTypes: readonly ClassifiedError['type'][]
   countedTotalPages: number | null
 }): EmptyPageOutcome {
   const clamp = Math.max(1, Math.floor(args.target))
@@ -69,12 +68,11 @@ export function resolveEmptyPageOutcome(args: {
   // 403/404 alongside it means a repo that may still have pages, so the
   // transient-failure branch must win the toast and block the clamp.
   const onlyWindowErrors =
-    args.issueErrorTypes.length > 0 &&
-    args.issueErrorTypes.every((type) => type === 'validation_error')
+    args.errorTypes.length > 0 && args.errorTypes.every((type) => type === 'validation_error')
   if (onlyWindowErrors && args.failedCount === 0) {
     return { reason: 'window-unreachable', clampTotalPagesTo: clamp }
   }
-  if (args.failedCount > 0 || args.issueErrorTypes.length > 0) {
+  if (args.failedCount > 0 || args.errorTypes.length > 0) {
     return { reason: 'load-failed', clampTotalPagesTo: null }
   }
   const countUnknown = args.countedTotalPages === null || args.countedTotalPages === 0
@@ -95,7 +93,7 @@ export function applyEmptyPageClamp(
   args: {
     target: number
     failedCount: number
-    issueErrorTypes: readonly ClassifiedError['type'][]
+    errorTypes: readonly ClassifiedError['type'][]
   }
 ): number | null {
   const outcome = resolveEmptyPageOutcome({ ...args, countedTotalPages: previous })

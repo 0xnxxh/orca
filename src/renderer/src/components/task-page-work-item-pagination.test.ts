@@ -65,18 +65,18 @@ describe('numbered GitHub pagination', () => {
 })
 
 describe('resolveEmptyPageOutcome', () => {
-  const base = { failedCount: 0, issueErrorTypes: [] as const, countedTotalPages: null }
+  const base = { failedCount: 0, errorTypes: [] as const, countedTotalPages: null }
 
   it('clamps and reports unreachable when the search window 422 is present', () => {
     expect(
-      resolveEmptyPageOutcome({ ...base, target: 33, issueErrorTypes: ['validation_error'] })
+      resolveEmptyPageOutcome({ ...base, target: 33, errorTypes: ['validation_error'] })
     ).toEqual({ reason: 'window-unreachable', clampTotalPagesTo: 33 })
     // A real count is still clamped — the count over-advertising is the bug.
     expect(
       resolveEmptyPageOutcome({
         ...base,
         target: 33,
-        issueErrorTypes: ['validation_error'],
+        errorTypes: ['validation_error'],
         countedTotalPages: 39
       })
     ).toEqual({ reason: 'window-unreachable', clampTotalPagesTo: 33 })
@@ -91,14 +91,14 @@ describe('resolveEmptyPageOutcome', () => {
         ...base,
         target: 5,
         failedCount: 1,
-        issueErrorTypes: ['validation_error']
+        errorTypes: ['validation_error']
       })
     ).toEqual({ reason: 'load-failed', clampTotalPagesTo: null })
     expect(
       resolveEmptyPageOutcome({
         ...base,
         target: 5,
-        issueErrorTypes: ['validation_error', 'permission_denied']
+        errorTypes: ['validation_error', 'permission_denied']
       })
     ).toEqual({ reason: 'load-failed', clampTotalPagesTo: null })
   })
@@ -109,7 +109,7 @@ describe('resolveEmptyPageOutcome', () => {
       clampTotalPagesTo: null
     })
     for (const type of ['permission_denied', 'not_found', 'rate_limited', 'unknown'] as const) {
-      expect(resolveEmptyPageOutcome({ ...base, target: 5, issueErrorTypes: [type] })).toEqual({
+      expect(resolveEmptyPageOutcome({ ...base, target: 5, errorTypes: [type] })).toEqual({
         reason: 'load-failed',
         clampTotalPagesTo: null
       })
@@ -141,7 +141,7 @@ describe('resolveEmptyPageOutcome', () => {
 })
 
 describe('applyEmptyPageClamp', () => {
-  const clean = { failedCount: 0, issueErrorTypes: [] as const }
+  const clean = { failedCount: 0, errorTypes: [] as const }
 
   it('keeps a real count that resolved between click and response', () => {
     // The count promise routinely lands mid-flight; the committed value, not
@@ -158,10 +158,10 @@ describe('applyEmptyPageClamp', () => {
     // Window 422 limits live in provenPageLimit (applyWindowPageLimit), not
     // the count slot.
     expect(
-      applyEmptyPageClamp(39, { target: 33, failedCount: 0, issueErrorTypes: ['validation_error'] })
+      applyEmptyPageClamp(39, { target: 33, failedCount: 0, errorTypes: ['validation_error'] })
     ).toBe(39)
-    expect(applyEmptyPageClamp(33, { target: 5, failedCount: 2, issueErrorTypes: [] })).toBe(33)
-    expect(applyEmptyPageClamp(null, { target: 5, failedCount: 2, issueErrorTypes: [] })).toBe(null)
+    expect(applyEmptyPageClamp(33, { target: 5, failedCount: 2, errorTypes: [] })).toBe(33)
+    expect(applyEmptyPageClamp(null, { target: 5, failedCount: 2, errorTypes: [] })).toBe(null)
   })
 })
 

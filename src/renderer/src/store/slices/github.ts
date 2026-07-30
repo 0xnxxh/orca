@@ -1971,7 +1971,7 @@ export type GitHubSlice = {
   ) => Promise<{
     items: GitHubWorkItem[]
     failedCount: number
-    issueErrorTypes: ClassifiedError['type'][]
+    errorTypes: ClassifiedError['type'][]
   }>
   /** Count items and derive pages from the largest per-repo result set. */
   countWorkItemsAcrossRepos: (
@@ -2792,10 +2792,10 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
 
   fetchWorkItemsNextPage: async (repos, perRepoLimit, displayLimit, query, page) => {
     if (isGitHubWorkItemsQueryTooLarge(query)) {
-      return { items: [], failedCount: 0, issueErrorTypes: [] }
+      return { items: [], failedCount: 0, errorTypes: [] }
     }
     let failedCount = 0
-    const issueErrorTypes: ClassifiedError['type'][] = []
+    const errorTypes: ClassifiedError['type'][] = []
     const perProjectResults = await Promise.all(
       repos.map(async (r) => {
         const requestState = get()
@@ -2824,7 +2824,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
             const { type, message } = envelope.errors.issues
             // Why: only the 1000-result-window 422 may drive the unreachable
             // clamp; demote other validation errors so they read as failures.
-            issueErrorTypes.push(
+            errorTypes.push(
               type === 'validation_error' && !/first 1000 search results/i.test(message)
                 ? 'unknown'
                 : type
@@ -2832,6 +2832,16 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
             console.warn(
               `[workItems] next page ${r.repoId} issues-side partial failure:`,
               envelope.errors.issues
+            )
+          }
+          if (envelope.errors?.prs) {
+            // Why: the window 422 is issue-side only — a PR-side validation
+            // error must never join the unreachable signal.
+            const { type } = envelope.errors.prs
+            errorTypes.push(type === 'validation_error' ? 'unknown' : type)
+            console.warn(
+              `[workItems] next page ${r.repoId} prs-side partial failure:`,
+              envelope.errors.prs
             )
           }
           return envelope.items.map((item): GitHubWorkItem => ({ ...item, repoId: r.repoId }))
@@ -2848,7 +2858,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       })
     )
     const merged = sortWorkItemsByNumber(perProjectResults.flat()).slice(0, displayLimit)
-    return { items: merged, failedCount, issueErrorTypes }
+    return { items: merged, failedCount, errorTypes }
   },
 
   countWorkItemsAcrossRepos: async (repos, query, perRepoLimit) => {
