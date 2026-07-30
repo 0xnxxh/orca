@@ -706,6 +706,102 @@
       "demotionRule": "Quarantine the Electron journey only with a linked product or harness defect; demote if activation changes the owner/runtime/daemon/PTY identity, loses prior output, opens before provider readiness, or fails to honor a committed quit."
     },
     {
+      "id": "runtime.websocket-heartbeat-cadence",
+      "title": "Runtime WebSockets enter an owned shared heartbeat cadence",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "runtime-platform",
+      "layer": "websocket-transport-lifecycle",
+      "surfaces": [
+        "headed paired runtime",
+        "headless orca serve",
+        "web and mobile runtime clients"
+      ],
+      "platforms": ["macos", "linux", "windows"],
+      "providers": ["remote-runtime"],
+      "coveredPlatforms": ["macos"],
+      "coveredProviders": ["remote-runtime"],
+      "coverageNotes": "Deterministic transport tests cover listener-before-probe ownership, first- and later-socket shared cadence, responsive and unresponsive cleanup, pause/resume, connection caps, pre-auth expiry, and close/error races. Headed paired-runtime and headless serve validation passed on macOS; live Linux and Windows heartbeat evidence remains uncollected.",
+      "motivatingLinks": [
+        "https://github.com/stablyai/orca/issues/11298",
+        "https://github.com/stablyai/orca/pull/11300"
+      ],
+      "invariant": "Every accepted runtime socket installs message, pong, close, and error ownership before any heartbeat probe. With uninterrupted timer delivery, the first socket that arms an idle heartbeat is probed immediately and an unresponsive socket is reaped within one interval. Later sockets join the existing shared cadence without another timer or immediate sweep and are reaped within two intervals. Responsive sockets survive, pause recovery grants a fresh probe, and close or error-to-close releases connection listeners and timers.",
+      "oracle": "With one fake clock and exact socket identities, accept the first socket at 0 ms and require an immediate owned probe plus reaping at 100 ms when unresponsive. Keep a responsive first socket, accept an unresponsive later socket at 50 ms, require the same shared timer, its first probe at 100 ms, no early reap, and termination at 200 ms. Inject synchronous message, pong, close, and error events, then require exact heartbeat membership and zero retained timers/listeners after final close. Production transport tests independently cover real socket round trips, pre-auth and capacity bounds, revocation, shutdown, and half-open cleanup.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/ws-transport-accept-order.test.ts src/main/runtime/rpc/remote-runtime-server-heartbeat.test.ts src/main/runtime/rpc/ws-transport.test.ts"
+      ],
+      "testFiles": [
+        "src/main/runtime/rpc/ws-transport-accept-order.test.ts",
+        "src/main/runtime/rpc/remote-runtime-server-heartbeat.test.ts",
+        "src/main/runtime/rpc/ws-transport.test.ts"
+      ],
+      "assertionRefs": [
+        {
+          "file": "src/main/runtime/rpc/ws-transport-accept-order.test.ts",
+          "assertions": [
+            "the first synchronous probe observes message, pong, close, and error ownership",
+            "the first unresponsive socket is reaped at one interval",
+            "a later socket keeps the original shared timer, is first probed on the shared tick, and is reaped within two intervals",
+            "final close releases heartbeat membership, listeners, and timers"
+          ]
+        },
+        {
+          "file": "src/main/runtime/rpc/remote-runtime-server-heartbeat.test.ts",
+          "assertions": [
+            "one missed probe reaps only the unresponsive client",
+            "event-loop resume grants clients a fresh probe"
+          ]
+        },
+        {
+          "file": "src/main/runtime/rpc/ws-transport.test.ts",
+          "assertions": [
+            "heartbeat arming and shutdown follow accepted connection membership",
+            "pre-auth, raw TCP, and accepted WebSocket resource bounds remain enforced",
+            "error and close races finalize membership once"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-07-29",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/rpc/ws-transport-accept-order.test.ts src/main/runtime/rpc/remote-runtime-server-heartbeat.test.ts src/main/runtime/rpc/ws-transport.test.ts",
+          "result": "passed",
+          "durationSeconds": 0.91,
+          "summary": "Three runtime transport files and 35 tests passed with deterministic first- and later-socket cadence, exact listener/timer ownership, pause recovery, security bounds, and cleanup."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 2,
+        "scope": "focused runtime WebSocket heartbeat and transport tests"
+      },
+      "flakeHistory": {
+        "status": "unknown",
+        "evidence": "Deterministic fake-clock and local socket coverage passed on macOS; CI soak history is not yet available."
+      },
+      "redGreenEvidence": {
+        "status": "complete",
+        "evidence": "On latest main and with the listener-order fix disabled, the first synchronous probe observed no message, pong, close, or error owner. The structural listener-order fix passed those assertions. The published delayed-first-sweep alternative missed the first-socket one-interval cleanup bound. A later-socket oracle now separately pins the intended shared cadence at a 100 ms first probe and 200 ms reap after acceptance at 50 ms."
+      },
+      "performanceBudget": {
+        "required": true,
+        "evidence": "The transport retains exactly one shared interval, performs one O(N) sweep per tick, and adds no per-socket heartbeat timer, polling, subprocess, network request, or immediate later-socket sweep. Each accepted socket retains only its existing lifecycle listeners and pre-auth timer; deterministic assertions preserve the shared timer identity and bound final cleanup to zero timers."
+      },
+      "promotionCriteria": [
+        "Collect at least 100 consecutive CI or soak passes or 14 days without an unexplained flake.",
+        "Collect live Linux and Windows paired-runtime heartbeat evidence.",
+        "Add a multi-client live fanout run that confirms shared-cadence cleanup under connection churn."
+      ],
+      "knownGaps": [
+        "Live paired-runtime validation currently covers macOS only.",
+        "The later-socket bound is deterministic fake-clock coverage; live scheduler jitter is not measured.",
+        "Multi-client churn and sleep/wake fanout remain live-test gaps."
+      ],
+      "demotionRule": "Demote if any probe can run before lifecycle ownership, if more than one shared heartbeat timer is armed, if first-socket cleanup exceeds one interval, if later-socket cleanup exceeds two intervals, or if close/error cleanup retains listeners or timers."
+    },
+    {
       "id": "editor.live-log-append-stability",
       "title": "Long live session logs retain their Monaco viewport while appending",
       "maturity": "experimental",
