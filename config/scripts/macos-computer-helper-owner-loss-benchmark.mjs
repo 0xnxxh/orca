@@ -13,6 +13,8 @@ import {
   sampleProcess
 } from './macos-computer-helper-owner-loss-metrics.mjs'
 import {
+  benchmarkTrialNeedsCleanup,
+  parseBenchmarkTrialResult,
   processIdentityIsCurrent,
   signalProcessIdentity,
   spawnBenchmarkProcess,
@@ -434,31 +436,39 @@ function artifactSha256(artifactPath) {
 }
 
 function runTrial(executable, expectation) {
-  const launcherDir = mkdtempSync(path.join(tmpdir(), 'orca-helper-owner-bench-launcher-'))
-  const trialTempDir = mkdtempSync(path.join(path.sep, 'tmp', 'orca-owner-bench-'))
-  const helperRecordPath = path.join(launcherDir, 'helper.json')
-  const resultPath = path.join(launcherDir, 'result.json')
-  const stderrPath = path.join(launcherDir, 'stderr.log')
-  const stdoutPath = path.join(launcherDir, 'stdout.log')
-  writeFileSync(
-    path.join(launcherDir, 'package.json'),
-    JSON.stringify({ name: 'orca-helper-owner-benchmark', main: 'main.cjs' })
-  )
-  writeFileSync(
-    path.join(launcherDir, 'main.cjs'),
-    `import(${JSON.stringify(pathToFileURL(scriptPath).href)}).catch((error) => {
-  console.error(error)
-  process.exitCode = 1
-})\n`
-  )
+  let launcherDir
+  let trialTempDir
+  let helperRecordPath
+  let resultPath
+  let stderrPath
+  let stdoutPath
   let result
   let serializedResult
+  let parsedResult
+  let parsedResultAvailable = false
   let trialError
   let cleanupError
   let stderrDescriptor
   let stdoutDescriptor
   let trialOutput = ''
   try {
+    launcherDir = mkdtempSync(path.join(tmpdir(), 'orca-helper-owner-bench-launcher-'))
+    trialTempDir = mkdtempSync(path.join(path.sep, 'tmp', 'orca-owner-bench-'))
+    helperRecordPath = path.join(launcherDir, 'helper.json')
+    resultPath = path.join(launcherDir, 'result.json')
+    stderrPath = path.join(launcherDir, 'stderr.log')
+    stdoutPath = path.join(launcherDir, 'stdout.log')
+    writeFileSync(
+      path.join(launcherDir, 'package.json'),
+      JSON.stringify({ name: 'orca-helper-owner-benchmark', main: 'main.cjs' })
+    )
+    writeFileSync(
+      path.join(launcherDir, 'main.cjs'),
+      `import(${JSON.stringify(pathToFileURL(scriptPath).href)}).catch((error) => {
+  console.error(error)
+  process.exitCode = 1
+})\n`
+    )
     const env = {
       ...process.env,
       TMPDIR: trialTempDir,
@@ -478,12 +488,14 @@ function runTrial(executable, expectation) {
     })
     if (result.status === 0 && existsSync(resultPath)) {
       serializedResult = readFileSync(resultPath, 'utf8')
+      parsedResult = parseBenchmarkTrialResult(serializedResult)
+      parsedResultAvailable = true
     }
   } catch (error) {
     trialError = error
   } finally {
-    const failedTrial = result?.status !== 0 || !serializedResult
-    const trialMarker = `TMPDIR=${trialTempDir}`
+    const failedTrial = benchmarkTrialNeedsCleanup(result, parsedResultAvailable)
+    const trialMarker = trialTempDir ? `TMPDIR=${trialTempDir}` : undefined
     const cleanup = cleanupOwnerLossTrial({
       failed: failedTrial,
       pid: result?.pid,
@@ -508,7 +520,7 @@ function runTrial(executable, expectation) {
     trialError = new Error(`Electron trial did not write a result:\n${trialOutput}`)
   }
   throwBenchmarkTrialFailures(trialError, cleanupError)
-  return JSON.parse(serializedResult)
+  return parsedResult
 }
 
 function runBenchmark() {

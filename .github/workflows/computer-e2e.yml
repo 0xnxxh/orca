@@ -10,6 +10,7 @@ on:
       - 'config/scripts/build-windows-cli-launcher.test.mjs'
       - 'config/scripts/computer-e2e-workflow.test.mjs'
       - 'config/scripts/macos-computer-helper-owner-loss-benchmark.mjs'
+      - 'config/scripts/macos-computer-helper-owner-loss-group-recovery.test.mjs'
       - 'config/scripts/macos-computer-helper-owner-loss-metrics.mjs'
       - 'config/scripts/macos-computer-helper-owner-loss-processes.mjs'
       - 'config/scripts/macos-computer-helper-owner-loss-processes.test.mjs'
@@ -92,6 +93,7 @@ jobs:
           config/scripts/build-windows-cli-launcher.test.mjs
           src/main/ssh/ssh-remote-cli-launcher.test.ts
           config/scripts/computer-e2e-workflow.test.mjs
+          config/scripts/macos-computer-helper-owner-loss-group-recovery.test.mjs
           config/scripts/macos-computer-helper-owner-loss-processes.test.mjs
           config/scripts/computer-use-modifier-safety.test.mjs
           config/scripts/computer-use-skill-guidance.test.mjs
@@ -165,7 +167,10 @@ jobs:
           run_install: false
       - run: pnpm install --frozen-lockfile
       - name: Owner-loss benchmark process cleanup
-        run: pnpm vitest run config/scripts/macos-computer-helper-owner-loss-processes.test.mjs
+        run: >-
+          pnpm vitest run
+          config/scripts/macos-computer-helper-owner-loss-group-recovery.test.mjs
+          config/scripts/macos-computer-helper-owner-loss-processes.test.mjs
       - name: Authenticated helper owner-loss smoke
         run: pnpm bench:macos-computer-helper-owner-loss --expect reaped --trials 1
       - name: Swift tests and signed universal helper verification

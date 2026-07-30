@@ -1,12 +1,14 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  benchmarkTrialNeedsCleanup,
   killProcessMatchingCommand,
   killRecordedAndMatchingProcesses,
   killRecordedProcess,
+  parseBenchmarkTrialResult,
   processIdentity,
   runBenchmarkCleanupStages,
   signalProcessIdentity,
@@ -15,6 +17,7 @@ import {
   throwBenchmarkTrialFailures,
   writeProcessRecord
 } from './macos-computer-helper-owner-loss-processes.mjs'
+import { cleanupOwnerLossTrial } from './macos-computer-helper-owner-loss-trial-cleanup.mjs'
 
 const describeMacOS = process.platform === 'darwin' ? describe : describe.skip
 const spawnedPids = new Set()
@@ -73,8 +76,13 @@ describeMacOS('macOS helper owner-loss benchmark process cleanup', () => {
     expect(thrown.errors.map((error) => error.message)).toEqual(['first failure', 'last failure'])
   })
 
-  it('preserves both trial and cleanup failures', () => {
-    const trialError = new Error('trial failed with captured output')
+  it('preserves malformed-result and cleanup failures', () => {
+    let trialError
+    try {
+      parseBenchmarkTrialResult('{malformed')
+    } catch (error) {
+      trialError = error
+    }
     const cleanupError = new Error('cleanup failed')
     let thrown
 
@@ -83,8 +91,31 @@ describeMacOS('macOS helper owner-loss benchmark process cleanup', () => {
     } catch (error) {
       thrown = error
     }
+    expect(trialError).toBeInstanceOf(SyntaxError)
     expect(thrown).toBeInstanceOf(AggregateError)
     expect(thrown.errors).toEqual([trialError, cleanupError])
+  })
+
+  it('cleans up a status-zero trial whose result could not be parsed', () => {
+    expect(benchmarkTrialNeedsCleanup(undefined, false)).toBe(true)
+    expect(benchmarkTrialNeedsCleanup({ status: 0 }, false)).toBe(true)
+    expect(benchmarkTrialNeedsCleanup({ status: 0 }, true)).toBe(false)
+    expect(benchmarkTrialNeedsCleanup({ status: 1 }, true)).toBe(true)
+  })
+
+  it('removes a launcher directory after partial trial setup', () => {
+    const launcherDir = mkdtempSync(path.join(tmpdir(), 'orca-owner-partial-setup-test-'))
+    temporaryDirectories.add(launcherDir)
+
+    const cleanup = cleanupOwnerLossTrial({
+      failed: true,
+      launcherDir,
+      outputPaths: []
+    })
+
+    expect(cleanup.error).toBeUndefined()
+    expect(existsSync(launcherDir)).toBe(false)
+    temporaryDirectories.delete(launcherDir)
   })
 
   it('kills a timed-out trial group only after validating its environment', async () => {
@@ -284,68 +315,6 @@ describeMacOS('macOS helper owner-loss benchmark process cleanup', () => {
       [-41, 'SIGCONT'],
       [41, 'SIGCONT']
     ])
-  })
-
-  it('retains uncertain stop state across cleanup stage failures', () => {
-    const marker = 'ORCA_OWNER_GROUP=trial'
-    const members = [{ pid: 41, pgid: 41, command: `/launcher ${marker}` }]
-    const groupState = { stopped: false }
-    let scanCount = 0
-    let continueAttempts = 0
-    const operations = {
-      processIdentities: () => {
-        scanCount += 1
-        if (scanCount >= 3) {
-          throw new Error(
-            scanCount === 3 ? 'post-stop inspection failed' : 'final inspection failed'
-          )
-        }
-        return members
-      },
-      signalProcess: (pid, signal) => {
-        if (pid === -41 && signal === 'SIGCONT') {
-          continueAttempts += 1
-          if (continueAttempts === 1) {
-            throw new Error('first compensation failed')
-          }
-        }
-      }
-    }
-
-    expect(() =>
-      signalValidatedProcessGroup(41, marker, 'SIGSTOP', groupState, operations)
-    ).toThrow('Benchmark process group signal recovery failed')
-    expect(groupState.stopped).toBe(true)
-    expect(() =>
-      signalValidatedProcessGroup(41, marker, 'SIGKILL', groupState, operations)
-    ).toThrow('final inspection failed')
-    expect(continueAttempts).toBe(2)
-    expect(groupState.stopped).toBe(false)
-  })
-
-  it('preserves group authority errors when compensation fails', () => {
-    const marker = 'ORCA_OWNER_GROUP=trial'
-    const ownershipError = 'Benchmark process group no longer belongs to this trial'
-    let thrown
-
-    try {
-      signalValidatedProcessGroup(
-        41,
-        marker,
-        'SIGKILL',
-        { stopped: true },
-        {
-          processIdentities: () => [{ pid: 41, pgid: 41, command: '/unrelated' }],
-          signalProcess: () => {
-            throw new Error('resume denied')
-          }
-        }
-      )
-    } catch (error) {
-      thrown = error
-    }
-    expect(thrown).toBeInstanceOf(AggregateError)
-    expect(thrown.errors.map((error) => error.message)).toEqual([ownershipError, 'resume denied'])
   })
 
   it('kills a recorded helper in a separate process group', async () => {

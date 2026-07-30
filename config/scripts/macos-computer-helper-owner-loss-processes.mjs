@@ -185,16 +185,45 @@ export function throwBenchmarkTrialFailures(trialError, cleanupError) {
   }
 }
 
+export function parseBenchmarkTrialResult(serializedResult) {
+  return JSON.parse(serializedResult)
+}
+
+export function benchmarkTrialNeedsCleanup(spawnResult, parsedResultAvailable) {
+  return spawnResult?.status !== 0 || !parsedResultAvailable
+}
+
 const processGroupSignalOperations = {
   processIdentities,
   signalProcess: process.kill.bind(process)
+}
+
+function compensateStoppedGroup(pgid, groupState, operations) {
+  const errors = []
+  const targets = [
+    groupState.stopped ? [-pgid, 'stopped'] : null,
+    groupState.anchorPid ? [groupState.anchorPid, 'anchorPid'] : null
+  ].filter(Boolean)
+  for (const [pid, stateKey] of targets) {
+    try {
+      operations.signalProcess(pid, 'SIGCONT')
+      groupState[stateKey] = stateKey === 'stopped' ? false : null
+    } catch (error) {
+      if (error?.code === 'ESRCH') {
+        groupState[stateKey] = stateKey === 'stopped' ? false : null
+      } else {
+        errors.push(error)
+      }
+    }
+  }
+  return errors
 }
 
 export function signalValidatedProcessGroup(
   pgid,
   environmentFragment,
   signal,
-  groupState = { stopped: false },
+  groupState = { stopped: false, anchorPid: null },
   operations = processGroupSignalOperations
 ) {
   if (!Number.isInteger(pgid) || pgid <= 0) {
@@ -204,52 +233,49 @@ export function signalValidatedProcessGroup(
   try {
     members = operations.processIdentities(true).filter((identity) => identity.pgid === pgid)
   } catch (error) {
-    if (!groupState.stopped) {
-      throw error
-    }
-    try {
-      operations.signalProcess(-pgid, 'SIGCONT')
-      groupState.stopped = false
-    } catch (resumeError) {
-      if (resumeError?.code === 'ESRCH') {
-        groupState.stopped = false
-      } else {
-        throw new AggregateError(
-          [error, resumeError],
-          'Benchmark process group recovery failed before validation'
-        )
-      }
+    const recoveryErrors = compensateStoppedGroup(pgid, groupState, operations)
+    if (recoveryErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...recoveryErrors],
+        'Benchmark process group recovery failed before validation'
+      )
     }
     throw error
   }
   if (members.length === 0) {
+    const recoveryErrors = compensateStoppedGroup(pgid, groupState, operations)
+    if (recoveryErrors.length > 0) {
+      throw new AggregateError(recoveryErrors, 'Benchmark missing process group recovery failed')
+    }
     return false
   }
   if (members.some((identity) => !identity.command.includes(environmentFragment))) {
     const ownershipError = new Error('Benchmark process group no longer belongs to this trial')
-    if (groupState.stopped) {
-      try {
-        operations.signalProcess(-pgid, 'SIGCONT')
-        groupState.stopped = false
-      } catch (resumeError) {
-        if (resumeError?.code === 'ESRCH') {
-          groupState.stopped = false
-        } else {
-          throw new AggregateError(
-            [ownershipError, resumeError],
-            'Benchmark process group authority recovery failed'
-          )
-        }
-      }
+    const recoveryErrors = compensateStoppedGroup(pgid, groupState, operations)
+    if (recoveryErrors.length > 0) {
+      throw new AggregateError(
+        [ownershipError, ...recoveryErrors],
+        'Benchmark process group authority recovery failed'
+      )
     }
     throw ownershipError
   }
+  if (groupState.anchorPid) {
+    try {
+      operations.signalProcess(groupState.anchorPid, 'SIGCONT')
+      groupState.anchorPid = null
+    } catch (error) {
+      if (error?.code === 'ESRCH') {
+        groupState.anchorPid = null
+      } else {
+        throw new AggregateError([error], 'Benchmark pending anchor recovery failed')
+      }
+    }
+  }
   const anchor = members[0]
-  let anchorNeedsResume = false
-  let groupNeedsResume = groupState.stopped
   try {
     operations.signalProcess(anchor.pid, 'SIGSTOP')
-    anchorNeedsResume = true
+    groupState.anchorPid = anchor.pid
     const stoppedAnchor = operations
       .processIdentities(true)
       .find((identity) => identity.pid === anchor.pid)
@@ -257,9 +283,8 @@ export function signalValidatedProcessGroup(
       throw new Error('Benchmark process group anchor changed before signaling')
     }
     operations.signalProcess(-pgid, 'SIGSTOP')
-    groupNeedsResume = true
     groupState.stopped = true
-    anchorNeedsResume = false
+    groupState.anchorPid = null
     const stoppedMembers = operations
       .processIdentities(true)
       .filter((identity) => identity.pgid === pgid)
@@ -274,33 +299,12 @@ export function signalValidatedProcessGroup(
       if (signal !== 'SIGKILL') {
         operations.signalProcess(-pgid, 'SIGCONT')
       }
-      groupNeedsResume = false
       groupState.stopped = false
+      groupState.anchorPid = null
     }
     return true
   } catch (error) {
-    const recoveryErrors = []
-    if (groupNeedsResume) {
-      try {
-        operations.signalProcess(-pgid, 'SIGCONT')
-        groupState.stopped = false
-      } catch (caught) {
-        if (caught?.code === 'ESRCH') {
-          groupState.stopped = false
-        } else {
-          recoveryErrors.push(caught)
-        }
-      }
-    }
-    if (anchorNeedsResume) {
-      try {
-        operations.signalProcess(anchor.pid, 'SIGCONT')
-      } catch (caught) {
-        if (caught?.code !== 'ESRCH') {
-          recoveryErrors.push(caught)
-        }
-      }
-    }
+    const recoveryErrors = compensateStoppedGroup(pgid, groupState, operations)
     if (recoveryErrors.length > 0) {
       throw new AggregateError(
         [error, ...recoveryErrors],

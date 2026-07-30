@@ -47,6 +47,7 @@ describe('computer-use e2e workflow', () => {
     expect(triggerPaths).toEqual(
       expect.arrayContaining([
         'config/scripts/computer-e2e-workflow.test.mjs',
+        'config/scripts/macos-computer-helper-owner-loss-group-recovery.test.mjs',
         'config/scripts/computer-use-modifier-safety.test.mjs',
         'config/scripts/computer-use-skill-guidance.test.mjs',
         'config/scripts/computer-use-smoke.mjs',
@@ -76,6 +77,7 @@ describe('computer-use e2e workflow', () => {
     const regressionRun = nativeSmokeRuns.find((run) => run.includes('pnpm vitest run'))
     const expectedRegressionFiles = [
       'config/scripts/computer-e2e-workflow.test.mjs',
+      'config/scripts/macos-computer-helper-owner-loss-group-recovery.test.mjs',
       'config/scripts/macos-computer-helper-owner-loss-processes.test.mjs',
       'config/scripts/computer-use-modifier-safety.test.mjs',
       'config/scripts/computer-use-skill-guidance.test.mjs',
@@ -129,14 +131,18 @@ describe('computer-use e2e workflow', () => {
     expect(job['runs-on']).toBe('macos-15')
     expect(checkout.with['persist-credentials']).toBe(false)
     expect(runs).toContain('pnpm bench:macos-computer-helper-owner-loss --expect reaped --trials 1')
-    expect(runs).toContain(
-      'pnpm vitest run config/scripts/macos-computer-helper-owner-loss-processes.test.mjs'
+    const cleanupRun = runs.find((run) =>
+      run.includes('config/scripts/macos-computer-helper-owner-loss-processes.test.mjs')
+    )
+    expect(cleanupRun).toContain(
+      'config/scripts/macos-computer-helper-owner-loss-group-recovery.test.mjs'
     )
     expect(runs).toContain('pnpm verify:computer-native')
     expect(runs.join('\n')).not.toContain('test:e2e:computer')
     expect(workflow.on.pull_request.paths).toEqual(
       expect.arrayContaining([
         'config/scripts/macos-computer-helper-owner-loss-benchmark.mjs',
+        'config/scripts/macos-computer-helper-owner-loss-group-recovery.test.mjs',
         'config/scripts/macos-computer-helper-owner-loss-metrics.mjs',
         'config/scripts/macos-computer-helper-owner-loss-processes.mjs',
         'config/scripts/macos-computer-helper-owner-loss-processes.test.mjs',
@@ -158,6 +164,11 @@ describe('computer-use e2e workflow', () => {
     expect(benchmark).toContain('spawnBenchmarkProcess(executable, [launcherDir]')
     expect(benchmark).toContain("stdio: ['ignore', stdoutDescriptor, stderrDescriptor]")
     expect(benchmark).toContain('cleanupOwnerLossTrial({')
+    const parseIndex = benchmark.indexOf('parseBenchmarkTrialResult(serializedResult)')
+    const cleanupIndex = benchmark.indexOf('cleanupOwnerLossTrial({')
+    expect(parseIndex).toBeGreaterThanOrEqual(0)
+    expect(cleanupIndex).toBeGreaterThanOrEqual(0)
+    expect(parseIndex).toBeLessThan(cleanupIndex)
     expect(benchmark).toContain('trialCleanupSha256: artifactSha256(trialCleanupPath)')
     expect(cleanup).toContain('killRecordedAndMatchingProcesses(options.recordPath')
     expect(cleanup).toContain("signalValidatedProcessGroup(options.pid, options.marker, 'SIGKILL'")

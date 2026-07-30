@@ -6,18 +6,18 @@ import {
 } from './macos-computer-helper-owner-loss-processes.mjs'
 
 export function cleanupOwnerLossTrial(options) {
-  const groupState = { stopped: false }
+  const groupState = { stopped: false, anchorPid: null }
   let error
   let output = ''
   try {
     runBenchmarkCleanupStages([
       () => {
-        if (options.failed) {
+        if (options.failed && Number.isInteger(options.pid) && options.marker) {
           signalValidatedProcessGroup(options.pid, options.marker, 'SIGSTOP', groupState)
         }
       },
       () => {
-        if (options.failed) {
+        if (options.failed && options.recordPath && options.tempDir) {
           killRecordedAndMatchingProcesses(options.recordPath, options.helperPath, [
             options.helperPath,
             options.tempDir
@@ -25,7 +25,7 @@ export function cleanupOwnerLossTrial(options) {
         }
       },
       () => {
-        if (options.failed) {
+        if (options.failed && Number.isInteger(options.pid) && options.marker) {
           signalValidatedProcessGroup(options.pid, options.marker, 'SIGKILL', groupState)
         }
       },
@@ -40,13 +40,21 @@ export function cleanupOwnerLossTrial(options) {
         }
       },
       () => {
-        output = options.outputPaths
-          .filter(existsSync)
+        output = (options.outputPaths ?? [])
+          .filter((outputPath) => outputPath && existsSync(outputPath))
           .map((outputPath) => readFileSync(outputPath, 'utf8'))
           .join('')
       },
-      () => rmSync(options.launcherDir, { recursive: true, force: true }),
-      () => rmSync(options.tempDir, { recursive: true, force: true })
+      () => {
+        if (options.launcherDir) {
+          rmSync(options.launcherDir, { recursive: true, force: true })
+        }
+      },
+      () => {
+        if (options.tempDir) {
+          rmSync(options.tempDir, { recursive: true, force: true })
+        }
+      }
     ])
   } catch (caught) {
     error = caught
