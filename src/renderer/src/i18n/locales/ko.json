@@ -4346,7 +4346,8 @@
         },
         "WorkspaceKanbanStatusLane": {
           "8ad104642b": "비어 있음",
-          "3611d1ae7f": "워크스페이스 보드 열 크기 조정"
+          "3611d1ae7f": "워크스페이스 보드 열 크기 조정",
+          "2df01a03ff": "일치하는 항목 없음"
         },
         "WorkspaceStatusAppearancePopover": {
           "514be2f569": "{{value0}} 색상을 {{value1}}로 설정",
@@ -5001,6 +5002,14 @@
         "WorktreeDeveloperMenu": {
           "developer": "Developer",
           "parkTerminal": "Park terminal"
+        },
+        "WorkspaceKanbanSearchField": {
+          "bdb753c78d": "일치하는 워크스페이스가 없습니다",
+          "4d96c209d6": "워크스페이스 {{value1}}개 중 {{value0}}개 일치",
+          "c0cd6bdf6c": "워크스페이스 검색",
+          "3b7ea51793": "검색 지우기",
+          "7f1c2e94a5": "검색어가 너무 깁니다 — 보드가 필터링되지 않았습니다",
+          "9a4d0f6b21": "너무 김"
         }
       },
       "shared": {
