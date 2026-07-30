@@ -124,7 +124,7 @@ describe('ComputerProviderSupervisorHost', () => {
     host.shutdown()
     host.attach(replacementSend)
     resolveExecution({ stdout: '{"ok":true}', stderr: '', error: null })
-    await Promise.resolve()
+    await new Promise<void>((resolve) => setImmediate(resolve))
 
     expect(originalSend).not.toHaveBeenCalled()
     expect(replacementSend).not.toHaveBeenCalled()
