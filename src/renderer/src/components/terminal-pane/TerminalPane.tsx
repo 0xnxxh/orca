@@ -2029,9 +2029,6 @@ function TerminalPane(
         setTerminalError(formatTerminalPasteExecutionError(execution.reason))
         return
       }
-      if (text) {
-        recordTerminalUserInputForLeaf(tabId, pane.leafId)
-      }
       if (options?.recoverImagePasteWebglAtlas) {
         scheduleImagePasteWebglAtlasRecovery()
       }
@@ -2055,6 +2052,7 @@ function TerminalPane(
         connectionId,
         runtimeEnvironmentId,
         forceBracketedMultilineTextPaste,
+        onPasteIntent: () => recordTerminalUserInputForLeaf(tabId, pane.leafId),
         pasteText: (text, options) =>
           executePanePasteText(pane, source, activeElementAtDispatch, text, options),
         onTextPasteError: () =>
@@ -2202,6 +2200,7 @@ function TerminalPane(
         connectionId,
         runtimeEnvironmentId,
         forceBracketedMultilineTextPaste,
+        onPasteIntent: () => recordTerminalUserInputForLeaf(tabId, pane.leafId),
         pasteText: (text, options) =>
           executePanePasteText(pane, 'app-menu', activeElementAtDispatch, text, options),
         onTextPasteError: () =>

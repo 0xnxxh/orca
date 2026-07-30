@@ -22,6 +22,7 @@ type PasteTerminalClipboardDeps = {
   connectionId?: string | null
   runtimeEnvironmentId?: string | null
   forceBracketedMultilineTextPaste?: boolean
+  onPasteIntent?: () => void
   onTextPasteError?: (error: unknown) => void
   onImagePasteError?: (error: unknown) => void
 }
@@ -46,9 +47,11 @@ export async function pasteTerminalClipboard({
   connectionId,
   runtimeEnvironmentId,
   forceBracketedMultilineTextPaste = false,
+  onPasteIntent,
   onTextPasteError,
   onImagePasteError
 }: PasteTerminalClipboardDeps): Promise<TerminalClipboardPasteResult> {
+  onPasteIntent?.()
   let text = ''
   try {
     text = await readClipboardText({ maxBytes: TERMINAL_PASTE_MAX_BYTES })

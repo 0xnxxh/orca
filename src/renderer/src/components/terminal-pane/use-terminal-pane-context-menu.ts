@@ -266,9 +266,6 @@ export function useTerminalPaneContextMenu({
       onPasteError(formatTerminalPasteExecutionError(execution.reason))
       return false
     }
-    if (text) {
-      recordTerminalUserInputForLeaf(tabId, pane.leafId)
-    }
     if (options?.recoverImagePasteWebglAtlas) {
       scheduleImagePasteWebglAtlasRecovery()
     }
@@ -323,6 +320,7 @@ export function useTerminalPaneContextMenu({
       connectionId,
       runtimeEnvironmentId,
       forceBracketedMultilineTextPaste,
+      onPasteIntent: () => recordTerminalUserInputForLeaf(tabId, pane.leafId),
       pasteText: (text, options) => executeMenuPasteText(pane, source, text, options),
       onTextPasteError: () =>
         onPasteError('Paste failed: clipboard text is too large for a safe terminal paste.'),

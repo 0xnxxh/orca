@@ -10,6 +10,7 @@ import {
   BRACKETED_PASTE_START,
   sanitizeTerminalPasteText
 } from '@/components/terminal-pane/terminal-bracketed-paste'
+import { readTerminalUserInputGeneration } from '@/components/terminal-pane/terminal-input-activity'
 import { waitForAgentReady } from './agent-ready-wait'
 import { getSettingsForWorktreeRuntimeOwner } from './worktree-runtime-owner'
 import { sendAgentDraftPasteContent } from './agent-draft-paste-content'
@@ -102,6 +103,8 @@ export async function pasteDraftWhenAgentReady(args: {
     onTimeout?.()
     return false
   }
+  const submitUserInputGeneration =
+    submit === true ? readTerminalUserInputGeneration(ptyId) : undefined
 
   const settings = getSettingsForAgentTabRuntimeOwner(tabId)
   const ready = await waitForAgentDraftInputReady(ptyId, budget, readySignal, settings)
@@ -123,7 +126,8 @@ export async function pasteDraftWhenAgentReady(args: {
     settings,
     ptyId,
     content,
-    submit: submit === true
+    submit: submit === true,
+    submitUserInputGeneration
   })
 }
 
@@ -146,6 +150,8 @@ export async function pasteDraftToAgentPtyWhenReady(args: {
 
   const budget = timeoutMs ?? READINESS_TIMEOUT_MS
   const settings = getSettingsForAgentTabRuntimeOwner(tabId)
+  const submitUserInputGeneration =
+    submit === true ? readTerminalUserInputGeneration(ptyId) : undefined
   const readySignal = agentConfig?.draftPasteReadySignal ?? 'render-quiet-after-bracketed-paste'
   const ready = await waitForAgentDraftInputReady(ptyId, budget, readySignal, settings)
   if (!ready) {
@@ -162,7 +168,8 @@ export async function pasteDraftToAgentPtyWhenReady(args: {
     settings,
     ptyId,
     content,
-    submit: submit === true
+    submit: submit === true,
+    submitUserInputGeneration
   })
 }
 
@@ -209,9 +216,17 @@ async function sendBracketedPasteToAgent(args: {
   ptyId: string
   content: string
   submit: boolean
+  submitUserInputGeneration?: number
 }): Promise<boolean> {
   const { settings = useAppStore.getState().settings, ptyId, content, submit } = args
+  const submitUserInputGeneration =
+    submit === true
+      ? (args.submitUserInputGeneration ?? readTerminalUserInputGeneration(ptyId))
+      : undefined
   try {
+    if (didTerminalUserInputChange(ptyId, submitUserInputGeneration)) {
+      return false
+    }
     const pasted = await sendAgentDraftPasteContent(settings, ptyId, content)
     if (!pasted) {
       return false
@@ -224,10 +239,18 @@ async function sendBracketedPasteToAgent(args: {
     // Enter arrive in the same PTY write. Split the submit into the next turn so
     // the TUI processes bracketed-paste termination before handling Enter.
     await new Promise<void>((resolve) => window.setTimeout(resolve, POST_PASTE_SUBMIT_DELAY_MS))
+    // Why: user input has a separate transport queue; never submit mixed content.
+    if (didTerminalUserInputChange(ptyId, submitUserInputGeneration)) {
+      return false
+    }
     return await sendRuntimePtyInputVerified(settings, ptyId, '\r')
   } catch {
     return false
   }
+}
+
+function didTerminalUserInputChange(ptyId: string, generation: number | undefined): boolean {
+  return generation !== undefined && readTerminalUserInputGeneration(ptyId) !== generation
 }
 
 /**
