@@ -75,6 +75,29 @@ export function getBranchSearchRequest({
   return { repoId: selectedRepoId, query: trimmedQuery, limit }
 }
 
+/**
+ * Why: provider arrays lag the live input (200ms debounce). Keep them while the
+ * user is still typing, but hide immediately when the field is cleared so prior
+ * non-empty results cannot stay selectable until debounce catches up.
+ */
+export function getVisibleHeldProviderResults<T>({
+  items,
+  value,
+  debouncedQuery
+}: {
+  items: readonly T[]
+  value: string
+  debouncedQuery: string
+}): T[] {
+  if (!isSmartWorkspaceSourceQueryWithinLimit(value)) {
+    return []
+  }
+  if (value.trim() === '' && debouncedQuery.trim() !== '') {
+    return []
+  }
+  return items.slice()
+}
+
 export function getVisibleBranchResults({
   branches,
   mode,
@@ -106,16 +129,36 @@ export function getVisibleBranchResults({
   if (currentQuery === '') {
     return resultQuery === '' ? branches : []
   }
-  const currentQueryKey = currentQuery.toLowerCase()
-  const resultQueryKey = resultQuery.toLowerCase()
-  if (
-    resultQueryKey !== currentQueryKey &&
-    !currentQueryKey.startsWith(resultQueryKey) &&
-    !resultQueryKey.startsWith(currentQueryKey)
-  ) {
+  if (!shouldHoldSourceResultsForQuery({ resultQuery, value: currentQuery })) {
     return []
   }
   return branches
+}
+
+/** Max |live − settled| length while still treating a prefix as "still typing". */
+const SOURCE_RESULT_HOLD_MAX_DELTA = 4
+
+/**
+ * Why: prefix-only hold lets a settled "f" stick under "fix-unrelated-…" for the
+ * whole next debounce. Cap the length delta so hold covers fast typing, not long
+ * continuations of a short settled query.
+ */
+export function shouldHoldSourceResultsForQuery({
+  resultQuery,
+  value
+}: {
+  resultQuery: string
+  value: string
+}): boolean {
+  const currentQueryKey = value.trim().toLowerCase()
+  const resultQueryKey = resultQuery.trim().toLowerCase()
+  if (resultQueryKey === currentQueryKey) {
+    return true
+  }
+  if (!currentQueryKey.startsWith(resultQueryKey) && !resultQueryKey.startsWith(currentQueryKey)) {
+    return false
+  }
+  return Math.abs(currentQueryKey.length - resultQueryKey.length) <= SOURCE_RESULT_HOLD_MAX_DELTA
 }
 
 export function buildSmartWorkspaceSourceRows({

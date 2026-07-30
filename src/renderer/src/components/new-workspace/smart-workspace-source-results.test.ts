@@ -5,7 +5,9 @@ import {
   getBranchSearchRequest,
   getSmartWorkspaceEmptyHint,
   getVisibleBranchResults,
-  isSmartWorkspaceSourceQueryWithinLimit
+  getVisibleHeldProviderResults,
+  isSmartWorkspaceSourceQueryWithinLimit,
+  shouldHoldSourceResultsForQuery
 } from './smart-workspace-source-results'
 
 describe('Branch source results', () => {
@@ -154,6 +156,25 @@ describe('Branch source results', () => {
     ).toEqual([])
   })
 
+  it('drops a short settled query once the live query grows far beyond a typing delta', () => {
+    // Why: prefix-only hold would keep "f" results under "fix-unrelated-payment-bug".
+    expect(
+      getVisibleBranchResults({
+        mode: 'branches',
+        value: 'fix-unrelated-payment-bug',
+        selectedRepoId: 'repo-1',
+        resultRepoId: 'repo-1',
+        resultQuery: 'f',
+        branches: [{ refName: 'origin/foo', localBranchName: 'foo' }]
+      })
+    ).toEqual([])
+    expect(
+      shouldHoldSourceResultsForQuery({ resultQuery: 'f', value: 'fix-unrelated-payment-bug' })
+    ).toBe(false)
+    expect(shouldHoldSourceResultsForQuery({ resultQuery: 'feat', value: 'featu' })).toBe(true)
+    expect(shouldHoldSourceResultsForQuery({ resultQuery: 'feat', value: 'feature/x' })).toBe(false)
+  })
+
   it('keeps held branch results across case-only edits of a prefix query', () => {
     expect(
       getVisibleBranchResults({
@@ -165,6 +186,36 @@ describe('Branch source results', () => {
         branches: [{ refName: 'origin/feature', localBranchName: 'feature' }]
       })
     ).toEqual([{ refName: 'origin/feature', localBranchName: 'feature' }])
+  })
+
+  it('hides held provider results immediately when the field is cleared ahead of debounce', () => {
+    expect(
+      getVisibleHeldProviderResults({
+        items: [{ id: 'pr-1' }],
+        value: '',
+        debouncedQuery: 'fix'
+      })
+    ).toEqual([])
+  })
+
+  it('keeps held provider results while the user types ahead of debounce', () => {
+    expect(
+      getVisibleHeldProviderResults({
+        items: [{ id: 'pr-1' }],
+        value: 'fix',
+        debouncedQuery: 'fi'
+      })
+    ).toEqual([{ id: 'pr-1' }])
+  })
+
+  it('shows provider results once the cleared field and debounce are both empty', () => {
+    expect(
+      getVisibleHeldProviderResults({
+        items: [{ id: 'default-1' }],
+        value: '',
+        debouncedQuery: ''
+      })
+    ).toEqual([{ id: 'default-1' }])
   })
 
   it('uses stable cmdk values for typed-text actions', () => {
