@@ -63,6 +63,35 @@ describe('terminal checkpoint serializer', () => {
     )
   })
 
+  it('rejects multibyte input whose code-unit length fits under the byte cap', async () => {
+    const input = snapshot({
+      scrollbackAnsi: 'é\r\n'.repeat(100),
+      scrollbackLines: 100
+    })
+    const expected = JSON.stringify({
+      snapshotAnsi: input.snapshotAnsi,
+      scrollbackAnsi: input.scrollbackAnsi,
+      oscLinks: input.oscLinks,
+      rehydrateSequences: input.rehydrateSequences,
+      cwd: metadata.cwd,
+      cols: input.cols,
+      rows: input.rows,
+      modes: input.modes,
+      scrollbackLines: input.scrollbackLines,
+      generation: metadata.generation,
+      checkpointedAt: metadata.checkpointedAt
+    })
+    const maxBytes = expected.length + 1
+
+    expect(expected.length).toBeLessThan(maxBytes)
+    expect(Buffer.byteLength(expected, 'utf8')).toBeGreaterThan(maxBytes)
+
+    const serialized = await serializeTerminalCheckpointWithinLimit(input, metadata, maxBytes)
+
+    expect(serialized).not.toBe(expected)
+    expect(Buffer.byteLength(serialized, 'utf8')).toBeLessThanOrEqual(maxBytes)
+  })
+
   it('does not materialize and rescan a passing candidate', async () => {
     let reads = 0
     const input = snapshot()
