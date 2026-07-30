@@ -60,6 +60,8 @@ export type RpcResponse = {
   _meta: { runtimeId: string }
 }
 
+export type RpcRespond = (response: RpcResponse, shouldSend?: () => boolean) => void
+
 export const mockScenarioSummary = {
   repoCount: FAKE_REPOS.length,
   worktreeCount: fakeWorktrees.length,
@@ -107,13 +109,18 @@ export function handleRequest(
   send: (response: RpcResponse) => void,
   ws: WebSocket
 ): void {
-  const respond = (response: RpcResponse) => {
+  const respond: RpcRespond = (response, shouldSend) => {
+    const deliver = () => {
+      if (shouldSend?.() !== false) {
+        send(response)
+      }
+    }
     const delay = responseDelayFor(request.method)
     if (delay > 0) {
-      setTimeout(() => send(response), delay)
+      setTimeout(deliver, delay)
       return
     }
-    send(response)
+    deliver()
   }
 
   // Each returns false for methods it does not own; first owner wins.

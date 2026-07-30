@@ -1,5 +1,5 @@
 import type { WebSocket } from 'ws'
-import type { RpcRequest, RpcResponse } from './mock-server-rpc-handlers'
+import type { RpcRequest, RpcRespond, RpcResponse } from './mock-server-rpc-handlers'
 import {
   createMockTerminals,
   FAKE_SCROLLBACK,
@@ -8,35 +8,46 @@ import {
 
 // Why: the client resubscribes on every viewport change; without cancellation
 // each resubscribe would stack another interval streaming under a dead request.
-const streamIntervals = new WeakMap<WebSocket, Map<string, ReturnType<typeof setInterval>>>()
+type TerminalStream = { interval: ReturnType<typeof setInterval> | null }
+const terminalStreams = new WeakMap<WebSocket, Map<string, TerminalStream>>()
 
 function clearTerminalStream(ws: WebSocket, terminal: string): void {
-  const perTerminal = streamIntervals.get(ws)
-  const interval = perTerminal?.get(terminal)
-  if (interval !== undefined) {
-    clearInterval(interval)
+  const perTerminal = terminalStreams.get(ws)
+  const stream = perTerminal?.get(terminal)
+  if (stream) {
+    stopTerminalStreamInterval(stream)
     perTerminal?.delete(terminal)
   }
 }
 
-function trackTerminalStream(
-  ws: WebSocket,
-  terminal: string,
-  interval: ReturnType<typeof setInterval>
-): void {
-  let perTerminal = streamIntervals.get(ws)
+function beginTerminalStream(ws: WebSocket, terminal: string): TerminalStream {
+  clearTerminalStream(ws, terminal)
+  let perTerminal = terminalStreams.get(ws)
   if (!perTerminal) {
     perTerminal = new Map()
-    streamIntervals.set(ws, perTerminal)
+    terminalStreams.set(ws, perTerminal)
   }
-  perTerminal.set(terminal, interval)
+  const stream = { interval: null }
+  perTerminal.set(terminal, stream)
+  return stream
+}
+
+function isCurrentTerminalStream(ws: WebSocket, terminal: string, stream: TerminalStream): boolean {
+  return terminalStreams.get(ws)?.get(terminal) === stream && ws.readyState === ws.OPEN
+}
+
+function stopTerminalStreamInterval(stream: TerminalStream): void {
+  if (stream.interval !== null) {
+    clearInterval(stream.interval)
+    stream.interval = null
+  }
 }
 
 /** Terminal list/stream/input backend for the mock server. Returns false for
  *  methods it does not own. */
 export function handleMockTerminalRequest(
   request: RpcRequest,
-  respond: (response: RpcResponse) => void,
+  respond: RpcRespond,
   success: (id: string, result: unknown, streaming?: boolean) => RpcResponse,
   ws: WebSocket,
   // Shared with `session.tabs.list` so both surfaces agree on which worktree an
@@ -57,6 +68,9 @@ export function handleMockTerminalRequest(
     }
 
     case 'terminal.subscribe': {
+      const terminal = String(request.params?.terminal ?? 'term-1')
+      const stream = beginTerminalStream(ws, terminal)
+      const isCurrent = () => isCurrentTerminalStream(ws, terminal, stream)
       // Why: the client resubscribes until scrollback echoes its viewport dims;
       // the legacy `lines` shape left the session screen in that loop forever.
       const viewport = request.params?.viewport as { cols?: number; rows?: number } | undefined
@@ -74,23 +88,28 @@ export function handleMockTerminalRequest(
           rows: viewport?.rows ?? 24,
           serialized: FAKE_SCROLLBACK.replace(/\n/g, '\r\n') + tuiPreamble,
           truncated: false
-        })
+        }),
+        isCurrent
       )
 
-      const terminal = String(request.params?.terminal ?? 'term-1')
-      clearTerminalStream(ws, terminal)
       let chunkIndex = 0
-      const interval = setInterval(() => {
-        if (chunkIndex >= STREAMING_CHUNKS.length || ws.readyState !== ws.OPEN) {
-          // Why: no `end` event - a live terminal stream stays open, and `end`
-          // makes the client tear the subscription down and blank the pane.
-          clearTerminalStream(ws, terminal)
+      stream.interval = setInterval(() => {
+        if (!isCurrent()) {
+          stopTerminalStreamInterval(stream)
           return
         }
-        respond(success(request.id, { type: 'data', chunk: STREAMING_CHUNKS[chunkIndex] }, true))
+        if (chunkIndex >= STREAMING_CHUNKS.length) {
+          // Why: no `end` event - a live terminal stream stays open, and `end`
+          // makes the client tear the subscription down and blank the pane.
+          stopTerminalStreamInterval(stream)
+          return
+        }
+        respond(
+          success(request.id, { type: 'data', chunk: STREAMING_CHUNKS[chunkIndex] }, true),
+          isCurrent
+        )
         chunkIndex++
       }, 500)
-      trackTerminalStream(ws, terminal, interval)
       return true
     }
 

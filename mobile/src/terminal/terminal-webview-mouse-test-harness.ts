@@ -21,7 +21,7 @@ type BufferState = {
 }
 
 type TerminalStub = ReturnType<typeof makeTerminal>
-type RegisteredWindowListener = {
+type RegisteredEventListener = {
   listener: EventListenerOrEventListenerObject
   options?: boolean | AddEventListenerOptions
   type: string
@@ -150,7 +150,8 @@ export function useTerminalMouseWebViewHarness() {
   let animationFrames: (() => void)[]
   let buffer: BufferState
   let postMessage: PostMessage
-  let registeredWindowListeners: RegisteredWindowListener[]
+  let registeredDocumentListeners: RegisteredEventListener[]
+  let registeredWindowListeners: RegisteredEventListener[]
   let select: Select
   let terminals: TerminalStub[]
 
@@ -179,9 +180,19 @@ export function useTerminalMouseWebViewHarness() {
   beforeEach(() => {
     animationFrames = []
     buffer = { baseY: 0, type: 'normal', viewportY: 0 }
+    registeredDocumentListeners = []
     registeredWindowListeners = []
     select = vi.fn<(col: number, row: number, len: number) => void>()
     terminals = []
+    const addDocumentEventListener = document.addEventListener.bind(document)
+    vi.spyOn(document, 'addEventListener').mockImplementation(((
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions
+    ) => {
+      registeredDocumentListeners.push({ type, listener, options })
+      addDocumentEventListener(type, listener, options)
+    }) as typeof document.addEventListener)
     const addWindowEventListener = window.addEventListener.bind(window)
     vi.spyOn(window, 'addEventListener').mockImplementation(((
       type: string,
@@ -212,6 +223,9 @@ export function useTerminalMouseWebViewHarness() {
   })
 
   afterEach(() => {
+    for (const { type, listener, options } of registeredDocumentListeners) {
+      document.removeEventListener(type, listener as EventListener, options)
+    }
     for (const { type, listener, options } of registeredWindowListeners) {
       window.removeEventListener(type, listener as EventListener, options)
     }
