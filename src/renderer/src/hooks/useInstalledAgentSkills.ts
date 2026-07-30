@@ -185,11 +185,9 @@ export function useInstalledAgentSkillNames(
       }
 
       if (!enabled) {
-        if (showLoading) {
-          writeIfCurrent(() => {
-            setLoading(false)
-          })
-        }
+        writeIfCurrent(() => {
+          setLoading(false)
+        })
         return false
       }
       if (showLoading) {
@@ -221,11 +219,12 @@ export function useInstalledAgentSkillNames(
           )
         })
       } finally {
-        if (showLoading) {
-          writeIfCurrent(() => {
-            setLoading(false)
-          })
-        }
+        // Why: a silent refresh can supersede an in-flight loading one, whose own
+        // clear is then dropped by the generation guard. Only the winning
+        // generation clears, so it must clear regardless of its own showLoading.
+        writeIfCurrent(() => {
+          setLoading(false)
+        })
       }
       return installedAfterRefresh
     },

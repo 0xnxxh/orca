@@ -7081,7 +7081,7 @@
           "incompleteBannerTitle": "표시 중인 일부 제공업체에 설정이 필요합니다",
           "incompleteBannerBody": "사용하지 않는 제공업체를 숨기거나 카드를 펼쳐 단계를 완료하세요.",
           "providersDescription": "각 카드에서 연결, 작업 표시 여부, Linear의 경우 스킬 설정까지 진행할 수 있습니다.",
-          "integrationsHint": "모든 제공업체의 자격 증명은 다음에서도 관리할 수 있습니다.",
+          "integrationsHint": "모든 제공업체의 자격 증명은 다음에서도 관리할 수 있습니다:",
           "integrationsLink": "연동",
           "skillHint": ". Linear를 연결한 후 사용 예시는 설정 → Linear에서 확인할 수 있습니다.",
           "incompleteBannerBodyWithLinear": "사용하지 않는 제공업체를 숨기거나 카드를 펼쳐 단계를 완료하세요. Linear에는 API 액세스, 에이전트 스킬, 작업에 표시가 필요합니다."

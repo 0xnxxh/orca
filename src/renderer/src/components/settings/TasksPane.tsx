@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useRef } from 'react'
 import { Github, Gitlab } from 'lucide-react'
 import type { GlobalSettings, TaskProvider } from '../../../../shared/types'
 import {
@@ -109,10 +109,12 @@ export function TasksPane({ settings, updateSettings }: TasksPaneProps): React.J
     readinessByProvider,
     previousAutoExpanded: previousAutoExpandedRef.current
   })
-  // Commit-only write: a discarded render must not seed the sticky decision.
-  useEffect(() => {
+  // Claim during render, not in an effect: a layout effect elsewhere can force a
+  // sync re-render before passive effects flush, and that render would see an
+  // unclaimed slot and collapse the open card.
+  if (autoExpandedProvider !== null && previousAutoExpandedRef.current === null) {
     previousAutoExpandedRef.current = autoExpandedProvider
-  }, [autoExpandedProvider])
+  }
 
   const toggleProvider = (provider: TaskProvider): void => {
     const isVisible = visibleProviders.includes(provider)

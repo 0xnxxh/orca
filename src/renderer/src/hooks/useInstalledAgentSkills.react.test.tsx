@@ -351,6 +351,44 @@ describe('useInstalledAgentSkill', () => {
     expect(latestState?.installed).toBe(true)
   })
 
+  it('clears loading when a silent refresh supersedes an in-flight focus rescan', async () => {
+    const firstScan = deferred<SkillDiscoveryResult>()
+    const focusScan = deferred<SkillDiscoveryResult>()
+    const discover = vi
+      .fn<(target?: SkillDiscoveryTarget) => Promise<SkillDiscoveryResult>>()
+      .mockReturnValueOnce(firstScan.promise)
+      .mockReturnValueOnce(focusScan.promise)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills: { discover } }
+    })
+
+    await renderProbe()
+    firstScan.resolve(discoveryResult([skill({ name: 'orca-linear' })]))
+    await act(async () => {
+      await firstScan.promise
+    })
+
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    expect(latestState?.loading).toBe(true)
+
+    // The silent refresh takes over the generation, so it owns the spinner too.
+    await act(async () => {
+      notifyInstalledAgentSkillsRefreshed()
+      await Promise.resolve()
+    })
+    await flushMicrotasks()
+    expect(latestState?.loading).toBe(false)
+
+    focusScan.resolve(discoveryResult([skill({ name: 'orca-linear' })]))
+    await act(async () => {
+      await focusScan.promise
+    })
+    expect(latestState?.loading).toBe(false)
+  })
+
   it('reports unsettled again when the discovery target changes', async () => {
     const hostScan = deferred<SkillDiscoveryResult>()
     const wslScan = deferred<SkillDiscoveryResult>()
