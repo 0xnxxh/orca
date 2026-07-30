@@ -7299,6 +7299,8 @@ export class OrcaRuntimeService {
     this.gitCommands.getRuntimeGitStatus.bind(this.gitCommands)
   getRuntimeGitRepositorySnapshot: RuntimeGitCommands['getRuntimeGitRepositorySnapshot'] =
     this.gitCommands.getRuntimeGitRepositorySnapshot.bind(this.gitCommands)
+  subscribeRuntimeGitRepositorySnapshotRevision: RuntimeGitCommands['subscribeRuntimeGitRepositorySnapshotRevision'] =
+    this.gitCommands.subscribeRuntimeGitRepositorySnapshotRevision.bind(this.gitCommands)
   getRuntimeGitSubmoduleStatus: RuntimeGitCommands['getRuntimeGitSubmoduleStatus'] =
     this.gitCommands.getRuntimeGitSubmoduleStatus.bind(this.gitCommands)
   checkRuntimeGitIgnoredPaths: RuntimeGitCommands['checkRuntimeGitIgnoredPaths'] =

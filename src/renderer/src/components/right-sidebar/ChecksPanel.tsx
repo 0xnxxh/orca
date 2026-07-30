@@ -595,6 +595,15 @@ export default function ChecksPanel(): React.JSX.Element {
   const runtimeEnvironmentId = useAppStore((s) =>
     getRuntimeEnvironmentIdForWorktree(s, activeWorktreeId)
   )
+  const runtimeEnvironmentPairingRevision = useAppStore((s) => {
+    if (!runtimeEnvironmentId) {
+      return null
+    }
+    const environment = s.runtimeEnvironments.find(
+      (candidate) => candidate.id === runtimeEnvironmentId
+    )
+    return environment ? (environment.pairingRevision ?? environment.createdAt) : null
+  })
   const ownerSettings = useMemo<AppState['settings']>(
     () =>
       !settings
@@ -629,6 +638,7 @@ export default function ChecksPanel(): React.JSX.Element {
     linkedAzureDevOpsPR: activeWorktree?.linkedAzureDevOpsPR ?? null,
     linkedGiteaPR: activeWorktree?.linkedGiteaPR ?? null,
     runtimeEnvironmentId,
+    runtimeEnvironmentPairingRevision,
     repoConnectionId,
     localExecutionScope,
     pushTarget: activeWorktreePushTarget
@@ -712,6 +722,15 @@ export default function ChecksPanel(): React.JSX.Element {
       Boolean(activeWorktreePath) &&
       !runtimeEnvironmentId &&
       (!repoConnectionId || sshConnectionStatus === 'connected'),
+    runtimeEnabled:
+      Boolean(repo) &&
+      !isFolder &&
+      Boolean(branch) &&
+      isPanelVisible &&
+      Boolean(activeWorktreeId) &&
+      Boolean(activeWorktreePath) &&
+      Boolean(runtimeEnvironmentId) &&
+      Boolean(repoConnectionId),
     pushTarget: activeWorktreePushTarget,
     requestRefresh: requestGitStatusRefresh
   })
@@ -1468,7 +1487,8 @@ export default function ChecksPanel(): React.JSX.Element {
       !shouldPollChecksPanelRuntimeSshStatus({
         isPanelVisible,
         runtimeEnvironmentId,
-        repoConnectionId
+        repoConnectionId,
+        runtimeSnapshotPollingRequired: gitStatusSnapshotRevision.runtimeSnapshotPollingRequired
       })
     ) {
       return undefined
@@ -1494,7 +1514,12 @@ export default function ChecksPanel(): React.JSX.Element {
       },
       intervalMs: RUNTIME_SSH_STATUS_REFRESH_MS
     })
-  }, [isPanelVisible, repoConnectionId, runtimeEnvironmentId])
+  }, [
+    gitStatusSnapshotRevision.runtimeSnapshotPollingRequired,
+    isPanelVisible,
+    repoConnectionId,
+    runtimeEnvironmentId
+  ])
 
   useEffect(() => {
     if (
@@ -1530,6 +1555,7 @@ export default function ChecksPanel(): React.JSX.Element {
     gitStatusSnapshotInFlightContextRef.current = requestContextKey
     const revisionRead = gitStatusSnapshotRevision.beginRead()
     let observedRepositoryRevision: number | null = null
+    let admittedRepositorySnapshot = false
     if (gitStatusSnapshotRetryTimerRef.current) {
       clearTimeout(gitStatusSnapshotRetryTimerRef.current)
       gitStatusSnapshotRetryTimerRef.current = null
@@ -1571,13 +1597,19 @@ export default function ChecksPanel(): React.JSX.Element {
         )
       }
       if (repositorySnapshot) {
-        if (
-          !stale &&
-          shouldCommitChecksPanelGitStatusSnapshot(panelContextKeyRef.current, requestContextKey)
-        ) {
-          updateWorktreeGitIdentity(activeWorktreeId, repositorySnapshot.gitIdentity ?? {})
+        if (gitStatusSnapshotRevision.isReadCurrent(revisionRead)) {
+          admittedRepositorySnapshot = true
+          if (
+            !stale &&
+            shouldCommitChecksPanelGitStatusSnapshot(panelContextKeyRef.current, requestContextKey)
+          ) {
+            updateWorktreeGitIdentity(activeWorktreeId, repositorySnapshot.gitIdentity ?? {})
+          }
+          return repositorySnapshot
         }
-        return repositorySnapshot
+        if (stale) {
+          return repositorySnapshot
+        }
       }
       const status = await getRuntimeGitStatus(context)
       if (
@@ -1656,7 +1688,8 @@ export default function ChecksPanel(): React.JSX.Element {
         }
         let shouldRerun = gitStatusSnapshotRevision.finishRead(
           revisionRead,
-          observedRepositoryRevision
+          observedRepositoryRevision,
+          admittedRepositorySnapshot
         )
         if (gitStatusSnapshotRerunContextRef.current === requestContextKey) {
           gitStatusSnapshotRerunContextRef.current = null

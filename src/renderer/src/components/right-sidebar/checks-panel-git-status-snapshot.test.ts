@@ -123,6 +123,30 @@ describe('buildChecksPanelGitStatusContextKey', () => {
     expect(context('wsl:Ubuntu')).not.toBe(context('wsl:Debian'))
   })
 
+  it('changes when the current runtime pairing revision changes', () => {
+    const base = {
+      repoId: 'repo-1',
+      worktreeId: 'worktree-1',
+      worktreePath: 'repo-worktree',
+      branch: 'feature/checks',
+      runtimeEnvironmentId: 'runtime-1',
+      repoConnectionId: 'ssh-1',
+      pushTarget: null
+    }
+
+    expect(
+      buildChecksPanelGitStatusContextKey({
+        ...base,
+        runtimeEnvironmentPairingRevision: 8
+      })
+    ).not.toBe(
+      buildChecksPanelGitStatusContextKey({
+        ...base,
+        runtimeEnvironmentPairingRevision: 9
+      })
+    )
+  })
+
   it('changes when linked hosted review metadata changes', () => {
     const base = {
       repoId: 'repo-1',
@@ -500,6 +524,14 @@ describe('shouldPollChecksPanelRuntimeSshStatus', () => {
         isPanelVisible: true,
         runtimeEnvironmentId: 'runtime-1',
         repoConnectionId: null
+      })
+    ).toBe(false)
+    expect(
+      shouldPollChecksPanelRuntimeSshStatus({
+        isPanelVisible: true,
+        runtimeEnvironmentId: 'runtime-1',
+        repoConnectionId: 'ssh-1',
+        runtimeSnapshotPollingRequired: false
       })
     ).toBe(false)
   })

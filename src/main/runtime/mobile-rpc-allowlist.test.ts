@@ -114,6 +114,12 @@ describe('mobile RPC allowlist', () => {
     expect(registeredRuntimeMethods()).toContain('git.repositorySnapshot')
   })
 
+  it('registers the desktop revision stream without granting it to mobile clients', () => {
+    expect(registeredRuntimeMethods()).toContain('git.repositorySnapshotRevisions.subscribe')
+    expect(mobileRpcAllowlist()).not.toContain('git.repositorySnapshotRevisions.subscribe')
+    expect(mobileLiteralRpcMethods()).not.toContain('git.repositorySnapshotRevisions.subscribe')
+  })
+
   it('allows every RPC method used by the mobile app', () => {
     // Why: mobile-scoped runtime tokens are checked before dispatch. A mobile
     // feature can compile and still fail at runtime if its method is missing here.

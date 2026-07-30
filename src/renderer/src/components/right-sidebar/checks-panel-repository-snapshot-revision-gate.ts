@@ -39,6 +39,10 @@ export class ChecksPanelRepositorySnapshotRevisionGate {
     return this.readSequence
   }
 
+  isCurrent(read: number): boolean {
+    return this.activeRead === read && !this.invalidatedDuringFlight
+  }
+
   observe(event: GitRepositorySnapshotSubscriptionEvent): boolean {
     if (this.floor && compareEvent(event, this.floor) <= 0) {
       return false

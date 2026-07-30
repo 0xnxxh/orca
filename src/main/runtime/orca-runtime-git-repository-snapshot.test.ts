@@ -6,7 +6,10 @@ import { RuntimeGitCommands, type ResolvedRuntimeGitWorktree } from './orca-runt
 
 const mocks = vi.hoisted(() => ({
   getGitRepositorySnapshot: vi.fn(),
+  subscribeGitRepositorySnapshot: vi.fn(),
   getSshGitProvider: vi.fn(),
+  getSshGitProviderGeneration: vi.fn(),
+  subscribeSshGitProviderRegistry: vi.fn(),
   getStatus: vi.fn(),
   getUpstreamStatus: vi.fn()
 }))
@@ -14,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../git/status', async () => ({
   ...(await vi.importActual<typeof GitStatusModule>('../git/status')),
   getGitRepositorySnapshot: mocks.getGitRepositorySnapshot,
+  subscribeGitRepositorySnapshot: mocks.subscribeGitRepositorySnapshot,
   getStatus: mocks.getStatus
 }))
 
@@ -23,7 +27,9 @@ vi.mock('../git/upstream', async () => ({
 }))
 
 vi.mock('../providers/ssh-git-dispatch', () => ({
-  getSshGitProvider: mocks.getSshGitProvider
+  getSshGitProvider: mocks.getSshGitProvider,
+  getSshGitProviderGeneration: mocks.getSshGitProviderGeneration,
+  subscribeSshGitProviderRegistry: mocks.subscribeSshGitProviderRegistry
 }))
 
 function makeWorktree(path: string): ResolvedRuntimeGitWorktree {
@@ -45,7 +51,10 @@ function makeWorktree(path: string): ResolvedRuntimeGitWorktree {
 describe('RuntimeGitCommands repository snapshot query', () => {
   beforeEach(() => {
     mocks.getGitRepositorySnapshot.mockReset()
+    mocks.subscribeGitRepositorySnapshot.mockReset()
     mocks.getSshGitProvider.mockReset()
+    mocks.getSshGitProviderGeneration.mockReset()
+    mocks.subscribeSshGitProviderRegistry.mockReset()
     mocks.getStatus.mockReset()
     mocks.getUpstreamStatus.mockReset()
   })
@@ -122,6 +131,146 @@ describe('RuntimeGitCommands repository snapshot query', () => {
     )
     expect(provider.getStatus).not.toHaveBeenCalled()
     expect(mocks.getGitRepositorySnapshot).not.toHaveBeenCalled()
+  })
+
+  it('subscribes to the exact native or WSL owner identity', async () => {
+    const unsubscribe = vi.fn()
+    let publish:
+      | ((event: { state: 'ready'; generation: number; revision: number }) => void)
+      | null = null
+    mocks.subscribeGitRepositorySnapshot.mockImplementation(
+      (_path, _options, _pushTarget, listener) => {
+        publish = listener
+        return unsubscribe
+      }
+    )
+    const listener = vi.fn()
+    const commands = new RuntimeGitCommands({
+      resolveRuntimeGitTarget: async () => ({
+        worktree: makeWorktree('/workspace/feature'),
+        repo: { path: '/workspace/repo', symlinkPaths: ['node_modules'] } as never,
+        localGitOptions: { wslDistro: 'Ubuntu-24.04' }
+      }),
+      getRuntimeSettings: () => ({}) as GlobalSettings
+    })
+
+    const subscription = await commands.subscribeRuntimeGitRepositorySnapshotRevision(
+      'id:wt-1',
+      { reuseLineStats: true },
+      { remoteName: 'fork', branchName: 'feature/checks', remoteCreated: false },
+      listener
+    )
+    const publishReady = publish as
+      | ((event: { state: 'ready'; generation: number; revision: number }) => void)
+      | null
+    expect(publishReady).not.toBeNull()
+    publishReady?.({
+      state: 'ready',
+      generation: 3,
+      revision: 9
+    })
+
+    expect(mocks.subscribeGitRepositorySnapshot).toHaveBeenCalledWith(
+      '/workspace/feature',
+      {
+        reuseLineStats: true,
+        wslDistro: 'Ubuntu-24.04',
+        sharedLinkPaths: ['node_modules']
+      },
+      { remoteName: 'fork', branchName: 'feature/checks', remoteCreated: false },
+      expect.any(Function)
+    )
+    expect(listener).toHaveBeenCalledWith({
+      state: 'ready',
+      generation: 3,
+      revision: 9,
+      incarnation: 0
+    })
+    subscription.unsubscribe()
+    expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
+  it('keeps native revision subscriptions out of the WSL identity', async () => {
+    mocks.subscribeGitRepositorySnapshot.mockReturnValue(vi.fn())
+    const commands = new RuntimeGitCommands({
+      resolveRuntimeGitTarget: async () => ({
+        worktree: makeWorktree('/workspace/native')
+      }),
+      getRuntimeSettings: () => ({}) as GlobalSettings
+    })
+
+    await commands.subscribeRuntimeGitRepositorySnapshotRevision(
+      'id:wt-1',
+      undefined,
+      undefined,
+      vi.fn()
+    )
+
+    expect(mocks.subscribeGitRepositorySnapshot).toHaveBeenCalledWith(
+      '/workspace/native',
+      {},
+      undefined,
+      expect.any(Function)
+    )
+  })
+
+  it('invalidates and rebinds the exact SSH provider incarnation', async () => {
+    const ownerUnsubscribes = [vi.fn(), vi.fn()]
+    const ownerListeners: ((event: {
+      state: 'ready'
+      generation: number
+      revision: number
+    }) => void)[] = []
+    const providers = ownerUnsubscribes.map((unsubscribe) => ({
+      subscribeRepositorySnapshot: vi.fn((_path, _options, _pushTarget, listener) => {
+        ownerListeners.push(listener)
+        return unsubscribe
+      })
+    }))
+    let registryListener:
+      | ((event: {
+          connectionId: string
+          generation: number
+          provider: (typeof providers)[number] | undefined
+        }) => void)
+      | undefined
+    const unsubscribeRegistry = vi.fn()
+    mocks.subscribeSshGitProviderRegistry.mockImplementation((listener) => {
+      registryListener = listener
+      return unsubscribeRegistry
+    })
+    mocks.getSshGitProvider.mockReturnValue(providers[0])
+    mocks.getSshGitProviderGeneration.mockReturnValue(4)
+    const listener = vi.fn()
+    const commands = new RuntimeGitCommands({
+      resolveRuntimeGitTarget: async () => ({
+        worktree: makeWorktree('/remote/repo'),
+        connectionId: 'conn-2'
+      }),
+      getRuntimeSettings: () => ({}) as GlobalSettings
+    })
+
+    const subscription = await commands.subscribeRuntimeGitRepositorySnapshotRevision(
+      'id:wt-1',
+      undefined,
+      undefined,
+      listener
+    )
+    ownerListeners[0]?.({ state: 'ready', generation: 1, revision: 7 })
+    registryListener?.({ connectionId: 'other', generation: 9, provider: undefined })
+    registryListener?.({ connectionId: 'conn-2', generation: 5, provider: providers[1] })
+    ownerListeners[0]?.({ state: 'ready', generation: 2, revision: 8 })
+    ownerListeners[1]?.({ state: 'ready', generation: 0, revision: 1 })
+
+    expect(listener.mock.calls).toEqual([
+      [{ state: 'ready', generation: 1, revision: 7, incarnation: 4 }],
+      [{ state: 'invalidated', generation: 0, revision: 0, incarnation: 5 }],
+      [{ state: 'ready', generation: 0, revision: 1, incarnation: 5 }]
+    ])
+    expect(ownerUnsubscribes[0]).toHaveBeenCalledOnce()
+    subscription.unsubscribe()
+    expect(unsubscribeRegistry).toHaveBeenCalledOnce()
+    expect(ownerUnsubscribes[1]).toHaveBeenCalledOnce()
   })
 
   it('measures settled local or WSL polling plus Checks as two fresh loads versus one', async () => {

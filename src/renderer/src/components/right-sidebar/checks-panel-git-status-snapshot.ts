@@ -12,6 +12,7 @@ export type ChecksPanelGitStatusContextInput = {
   linkedAzureDevOpsPR?: number | null
   linkedGiteaPR?: number | null
   runtimeEnvironmentId: string | null
+  runtimeEnvironmentPairingRevision?: number | null
   repoConnectionId: string | null
   pushTarget: GitPushTarget | null | undefined
   // Local execution host variant (`wsl:{distro}` vs `host`) so a Windows-host
@@ -64,6 +65,7 @@ export function buildChecksPanelGitStatusContextKey(
     linkedAzureDevOpsPR: input.linkedAzureDevOpsPR ?? null,
     linkedGiteaPR: input.linkedGiteaPR ?? null,
     runtimeEnvironmentId: input.runtimeEnvironmentId ?? '',
+    runtimeEnvironmentPairingRevision: input.runtimeEnvironmentPairingRevision ?? null,
     repoConnectionId: input.repoConnectionId ?? '',
     localExecutionScope: input.localExecutionScope ?? null,
     pushTarget: input.pushTarget
@@ -111,9 +113,13 @@ export function shouldPollChecksPanelRuntimeSshStatus(input: {
   isPanelVisible: boolean
   runtimeEnvironmentId: string | null
   repoConnectionId: string | null
+  runtimeSnapshotPollingRequired?: boolean
 }): boolean {
   return (
-    input.isPanelVisible && input.runtimeEnvironmentId !== null && input.repoConnectionId !== null
+    input.isPanelVisible &&
+    input.runtimeEnvironmentId !== null &&
+    input.repoConnectionId !== null &&
+    input.runtimeSnapshotPollingRequired !== false
   )
 }
 

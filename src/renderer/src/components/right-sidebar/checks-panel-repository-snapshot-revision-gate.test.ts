@@ -41,7 +41,9 @@ describe('ChecksPanelRepositorySnapshotRevisionGate', () => {
     const gate = new ChecksPanelRepositorySnapshotRevisionGate()
 
     const read = gate.begin()
+    expect(gate.isCurrent(read)).toBe(true)
     expect(gate.observe(event(0, 'invalidated', 0, 2))).toBe(false)
+    expect(gate.isCurrent(read)).toBe(false)
     expect(gate.observe(event(2, 'ready', 0, 2))).toBe(false)
     expect(gate.finish(read, 20)).toBe(true)
   })

@@ -16,7 +16,10 @@ import type {
   TuiAgent,
   Worktree
 } from '../../shared/types'
-import type { GitRepositorySnapshot } from '../../shared/git-repository-snapshot'
+import type {
+  GitRepositorySnapshot,
+  GitRepositorySnapshotSubscriptionEvent
+} from '../../shared/git-repository-snapshot'
 import type { CommitMessageDraftContext } from '../../shared/commit-message-generation'
 import { getCommitMessageModelDiscoveryHostKey } from '../../shared/commit-message-host-key'
 import type { GitHistoryOptions, GitHistoryResult } from '../../shared/git-history'
@@ -45,6 +48,7 @@ import {
   getStagedCommitContext,
   getStatus as getGitStatus,
   getGitRepositorySnapshot,
+  subscribeGitRepositorySnapshot,
   getSubmoduleStatus as getGitSubmoduleStatus,
   stageFile,
   unstageFile
@@ -57,6 +61,8 @@ import { gitFastForward, gitFetch, gitPull, gitPullRebaseFromBase, gitPush } fro
 import { gitSyncForkDefaultBranch } from '../git/fork-sync'
 import {
   getSshGitProvider,
+  getSshGitProviderGeneration,
+  subscribeSshGitProviderRegistry,
   SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE
 } from '../providers/ssh-git-dispatch'
 import { checkIgnoredPaths } from '../git/check-ignored-paths'
@@ -87,6 +93,10 @@ import { resolveHostedReviewBodyForGeneration } from '../source-control/pull-req
 import type { HostedReviewProvider } from '../../shared/hosted-review'
 
 export type ResolvedRuntimeGitWorktree = Worktree & { git: GitWorktreeInfo }
+export type RuntimeGitRepositorySnapshotRevisionSubscription = {
+  incarnation: number
+  unsubscribe: () => void
+}
 type RuntimeCommitMessageSettingsOverride = Partial<
   Pick<
     GlobalSettings,
@@ -231,6 +241,87 @@ export class RuntimeGitCommands {
       },
       pushTarget
     )
+  }
+
+  async subscribeRuntimeGitRepositorySnapshotRevision(
+    worktreeSelector: string,
+    options: GitProviderStatusOptions | undefined,
+    pushTarget: GitPushTarget | undefined,
+    listener: (event: GitRepositorySnapshotSubscriptionEvent) => void
+  ): Promise<RuntimeGitRepositorySnapshotRevisionSubscription> {
+    const target = await this.host.resolveRuntimeGitTarget(worktreeSelector)
+    if (!target.connectionId) {
+      const sharedLinkPaths = target.repo ? getWorktreeSharedLinkPaths(target.repo) : []
+      const unsubscribe = subscribeGitRepositorySnapshot(
+        target.worktree.path,
+        {
+          ...options,
+          ...localGitOptionsForTarget(target),
+          ...(sharedLinkPaths.length > 0 ? { sharedLinkPaths } : {})
+        },
+        pushTarget,
+        (event) => listener({ ...event, incarnation: 0 })
+      )
+      return { incarnation: 0, unsubscribe }
+    }
+
+    const connectionId = target.connectionId
+    let closed = false
+    let bindingToken = 0
+    let unsubscribeOwner = (): void => {}
+    const bind = (
+      provider: NonNullable<ReturnType<typeof getSshGitProvider>>,
+      incarnation: number
+    ): void => {
+      bindingToken += 1
+      const token = bindingToken
+      unsubscribeOwner = provider.subscribeRepositorySnapshot(
+        target.worktree.path,
+        options,
+        pushTarget,
+        (event) => {
+          if (!closed && token === bindingToken) {
+            listener({ ...event, incarnation })
+          }
+        }
+      )
+    }
+    const unsubscribeRegistry = subscribeSshGitProviderRegistry((event) => {
+      if (closed || event.connectionId !== connectionId) {
+        return
+      }
+      bindingToken += 1
+      unsubscribeOwner()
+      unsubscribeOwner = (): void => {}
+      listener({
+        state: 'invalidated',
+        generation: 0,
+        revision: 0,
+        incarnation: event.generation
+      })
+      if (event.provider) {
+        bind(event.provider, event.generation)
+      }
+    })
+    const provider = getSshGitProvider(connectionId)
+    if (!provider) {
+      unsubscribeRegistry()
+      throw new Error(SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE)
+    }
+    const incarnation = getSshGitProviderGeneration(connectionId)
+    bind(provider, incarnation)
+    return {
+      incarnation,
+      unsubscribe: () => {
+        if (closed) {
+          return
+        }
+        closed = true
+        bindingToken += 1
+        unsubscribeRegistry()
+        unsubscribeOwner()
+      }
+    }
   }
 
   async getRuntimeGitSubmoduleStatus(
