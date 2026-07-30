@@ -24,6 +24,8 @@ type MobileNativeChatSendArgs = {
   text: string
   enter?: boolean
   clearInputFirst?: boolean
+  /** Exact host launch draft this submitting write resolves when accepted. */
+  resolvedLaunchDraft?: { text: string; createdAt: number }
   mobileClient?: MobileTerminalClient
   /** Shared budget for a whole user action (heal → paste → text, or one selector's
    *  keystroke sequence). Omit to give this write its own full budget. */
@@ -64,6 +66,7 @@ export async function sendMobileNativeChatMessageWithOutcome(
         terminal: args.terminal,
         text: args.clearInputFirst ? `${CLEAR_UNSUBMITTED_INPUT}${args.text}` : args.text,
         enter: args.enter ?? true,
+        ...(args.resolvedLaunchDraft ? { resolvedLaunchDraft: args.resolvedLaunchDraft } : {}),
         ...(args.mobileClient ? { client: args.mobileClient } : {})
       },
       // The budget covers this whole write, reconnect wait included — a chat send

@@ -138,6 +138,7 @@ export function useMobileNativeChatController(args: {
     pending: chatPending,
     captureSendOrigin,
     readSeededLaunchDraft,
+    readSeededLaunchDraftSeed,
     clearDraftForSend,
     restoreRejectedDraft,
     acceptSend,
@@ -149,6 +150,7 @@ export function useMobileNativeChatController(args: {
     sessionId: activeChatSessionId,
     messages: nativeChatSession.messages,
     launchDraft: activeSessionTab?.launchDraft ?? null,
+    launchDraftCreatedAt: activeSessionTab?.launchDraftCreatedAt ?? null,
     // Why: pass the raw draft plus this flag rather than nulling it off-chat —
     // a null is indistinguishable from a host retraction, and peeking at the
     // terminal view would permanently decline the prefill.
@@ -247,7 +249,7 @@ export function useMobileNativeChatController(args: {
     handleRef: activeHandleRef,
     deviceTokenRef,
     captureSendOrigin,
-    readSeededLaunchDraft,
+    readSeededLaunchDraftSeed,
     clearDraftForSend,
     restoreRejectedDraft,
     acceptSend,

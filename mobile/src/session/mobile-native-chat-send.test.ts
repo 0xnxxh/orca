@@ -31,6 +31,7 @@ describe('sendMobileNativeChatMessage', () => {
         client,
         terminal: 'term',
         text: 'hello',
+        resolvedLaunchDraft: { text: 'seed', createdAt: 7 },
         mobileClient: { id: 'device', type: 'mobile' }
       })
     ).resolves.toBe(true)
@@ -40,6 +41,7 @@ describe('sendMobileNativeChatMessage', () => {
         terminal: 'term',
         text: 'hello',
         enter: true,
+        resolvedLaunchDraft: { text: 'seed', createdAt: 7 },
         client: { id: 'device', type: 'mobile' }
       },
       { timeoutMs: MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS, budgetSpansConnect: true }

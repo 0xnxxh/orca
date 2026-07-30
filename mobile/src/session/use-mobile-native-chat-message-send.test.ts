@@ -29,7 +29,9 @@ describe('useMobileNativeChatMessageSend', () => {
   let renderer: ReactTestRenderer | null = null
   let api: Send | null = null
 
-  const mount = (readSeededLaunchDraft: () => string | null): void => {
+  const mount = (
+    readSeededLaunchDraftSeed: () => { text: string; createdAt: number | null } | null
+  ): void => {
     function Probe(): null {
       api = useMobileNativeChatMessageSend({
         client: { sendRequest: vi.fn() } as never,
@@ -37,7 +39,7 @@ describe('useMobileNativeChatMessageSend', () => {
         handleRef: { current: 'term' },
         deviceTokenRef: { current: 'device' },
         captureSendOrigin: () => ({ draftKey: 'k', pendingKey: 'p' }) as never,
-        readSeededLaunchDraft,
+        readSeededLaunchDraftSeed,
         clearDraftForSend: () => {},
         restoreRejectedDraft: () => {},
         acceptSend: () => {},
@@ -51,8 +53,14 @@ describe('useMobileNativeChatMessageSend', () => {
     })
   }
 
-  const sentArgs = (): { clearInputFirst?: boolean } =>
-    sendWithOutcome.mock.calls[0]![0] as { clearInputFirst?: boolean }
+  const sentArgs = (): {
+    clearInputFirst?: boolean
+    resolvedLaunchDraft?: { text: string; createdAt: number }
+  } =>
+    sendWithOutcome.mock.calls[0]![0] as {
+      clearInputFirst?: boolean
+      resolvedLaunchDraft?: { text: string; createdAt: number }
+    }
   const clearArgs = (): { clearInput?: string } =>
     (clearInputWrite.mock.calls[0]?.[0] ?? {}) as { clearInput?: string }
 
@@ -72,7 +80,7 @@ describe('useMobileNativeChatMessageSend', () => {
   })
 
   it('sizes the pre-clear to every line of a parked launch draft', async () => {
-    mount(() => DRAFT)
+    mount(() => ({ text: DRAFT, createdAt: 1 }))
     await act(async () => {
       await api!.send('hello')
     })
@@ -81,7 +89,7 @@ describe('useMobileNativeChatMessageSend', () => {
 
   it('issues the burst as its OWN write, before the body', async () => {
     // Bundled into the body write it arrived as literal Ctrl+U text.
-    mount(() => DRAFT)
+    mount(() => ({ text: DRAFT, createdAt: 1 }))
     await act(async () => {
       await api!.send('hello')
     })
@@ -95,7 +103,7 @@ describe('useMobileNativeChatMessageSend', () => {
   it('aborts without sending the body when the clear is rejected', async () => {
     // Sending on top of an uncleared line is exactly the concatenation bug.
     clearInputWrite.mockResolvedValue(false)
-    mount(() => DRAFT)
+    mount(() => ({ text: DRAFT, createdAt: 1 }))
     let result: boolean | undefined
     await act(async () => {
       result = await api!.send('hello')
@@ -107,11 +115,12 @@ describe('useMobileNativeChatMessageSend', () => {
   it('drops the body write\u2019s own Ctrl+U prefix once the dedicated clear ran', async () => {
     // A Ctrl+U written immediately before body text in the SAME write arrives as
     // a literal control character, so it would head the received message.
-    mount(() => DRAFT)
+    mount(() => ({ text: DRAFT, createdAt: 1 }))
     await act(async () => {
       await api!.send('hello')
     })
     expect(sentArgs().clearInputFirst).toBe(false)
+    expect(sentArgs().resolvedLaunchDraft).toEqual({ text: DRAFT, createdAt: 1 })
   })
 
   it('keeps the single-Ctrl+U prefix when no dedicated clear ran', async () => {
@@ -120,6 +129,7 @@ describe('useMobileNativeChatMessageSend', () => {
       await api!.send('hello')
     })
     expect(sentArgs().clearInputFirst).toBe(true)
+    expect(sentArgs().resolvedLaunchDraft).toBeUndefined()
   })
 
   it('writes no clear at all when nothing is parked on the line', async () => {
@@ -131,7 +141,7 @@ describe('useMobileNativeChatMessageSend', () => {
   })
 
   it('reads the draft at send time, so a retired seed stops widening the clear', async () => {
-    let parked: string | null = DRAFT
+    let parked: { text: string; createdAt: number } | null = { text: DRAFT, createdAt: 1 }
     mount(() => parked)
     await act(async () => {
       await api!.send('first')
@@ -147,11 +157,20 @@ describe('useMobileNativeChatMessageSend', () => {
 
   it('does not clear an image send after the image was pasted', async () => {
     // A second clear here would wipe the image that was just pasted.
-    mount(() => DRAFT)
+    mount(() => ({ text: DRAFT, createdAt: 1 }))
     await act(async () => {
       await api!.send('caption', ['file:///a.png'])
     })
     expect(clearInputWrite).not.toHaveBeenCalled()
     expect(sentArgs().clearInputFirst).toBe(false)
+    expect(sentArgs().resolvedLaunchDraft).toEqual({ text: DRAFT, createdAt: 1 })
+  })
+
+  it('does not resolve a composer seed from a question-card answer', async () => {
+    mount(() => ({ text: DRAFT, createdAt: 1 }))
+    await act(async () => {
+      await api!.answerQuestion('1')
+    })
+    expect(sentArgs().resolvedLaunchDraft).toBeUndefined()
   })
 })

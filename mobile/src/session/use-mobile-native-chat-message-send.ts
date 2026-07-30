@@ -8,6 +8,7 @@ import {
 } from './mobile-native-chat-send'
 import { healMobileNativeChatStaleInput } from './mobile-native-chat-stale-input'
 import type { MobileNativeChatSendOrigin } from './use-mobile-native-chat-drafts'
+import type { MobileNativeChatLaunchDraftSeed } from './use-mobile-native-chat-launch-draft-seed'
 import { buildAgentTuiClearInputForText } from '../../../src/shared/agent-tui-input-clear'
 
 export type MobileNativeChatMessageSend = {
@@ -36,7 +37,7 @@ export function useMobileNativeChatMessageSend(args: {
   captureSendOrigin: (text: string) => MobileNativeChatSendOrigin | null
   /** Launch-context text Orca parked on the agent's TUI input line, or null. Read
    *  at send time so the pre-clear can be sized to every line it occupies. */
-  readSeededLaunchDraft: () => string | null
+  readSeededLaunchDraftSeed: () => MobileNativeChatLaunchDraftSeed | null
   clearDraftForSend: (origin: MobileNativeChatSendOrigin, text: string) => void
   restoreRejectedDraft: (origin: MobileNativeChatSendOrigin, text: string) => void
   acceptSend: (origin: MobileNativeChatSendOrigin, text: string, images?: string[]) => void
@@ -53,7 +54,7 @@ export function useMobileNativeChatMessageSend(args: {
     handleRef,
     deviceTokenRef,
     captureSendOrigin,
-    readSeededLaunchDraft,
+    readSeededLaunchDraftSeed,
     clearDraftForSend,
     restoreRejectedDraft,
     acceptSend,
@@ -112,12 +113,12 @@ export function useMobileNativeChatMessageSend(args: {
       // arrived as literal Ctrl+U text and the draft concatenated (see
       // clearMobileNativeChatInput). A rejected clear aborts the send rather
       // than pasting on top of an uncleared line.
-      const seededLaunchDraft = readSeededLaunchDraft()
+      const seededLaunchDraft = readSeededLaunchDraftSeed()
       if (seededLaunchDraft && !images?.length) {
         const cleared = await clearMobileNativeChatInput({
           client,
           terminal: handle,
-          clearInput: buildAgentTuiClearInputForText(seededLaunchDraft),
+          clearInput: buildAgentTuiClearInputForText(seededLaunchDraft.text),
           deadline,
           ...(deviceTokenRef.current
             ? { mobileClient: { id: deviceTokenRef.current, type: 'mobile' } }
@@ -147,6 +148,14 @@ export function useMobileNativeChatMessageSend(args: {
         // write reaches the agent as a literal control character rather than a
         // keypress (observed live as a stray \x15 heading the received message).
         clearInputFirst: !images?.length && !seededLaunchDraft,
+        ...(syncComposer && typeof seededLaunchDraft?.createdAt === 'number'
+          ? {
+              resolvedLaunchDraft: {
+                text: seededLaunchDraft.text,
+                createdAt: seededLaunchDraft.createdAt
+              }
+            }
+          : {}),
         deadline,
         ...(deviceTokenRef.current
           ? { mobileClient: { id: deviceTokenRef.current, type: 'mobile' } }
@@ -182,7 +191,7 @@ export function useMobileNativeChatMessageSend(args: {
       handleRef,
       holdUnconfirmedSend,
       onSendError,
-      readSeededLaunchDraft,
+      readSeededLaunchDraftSeed,
       restoreRejectedDraft
     ]
   )

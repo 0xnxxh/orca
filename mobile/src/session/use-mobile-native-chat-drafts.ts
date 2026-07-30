@@ -9,6 +9,7 @@ import {
 } from './mobile-native-chat-draft-reconcile'
 import { mobileNativeChatScopeKey } from './mobile-native-chat-scope-key'
 import { useMobileNativeChatLaunchDraftSeed } from './use-mobile-native-chat-launch-draft-seed'
+import type { MobileNativeChatLaunchDraftSeed } from './use-mobile-native-chat-launch-draft-seed'
 
 export type MobileNativeChatPendingMessage = {
   id: string
@@ -44,6 +45,7 @@ export function useMobileNativeChatDrafts(args: {
   messages: readonly NativeChatMessage[]
   /** Host-provided launch context still parked as an unsent TUI-input draft. */
   launchDraft?: string | null
+  launchDraftCreatedAt?: number | null
   /** Whether the tab is currently resolved to the chat view. Off-chat the
    *  launch-draft effects hold their state instead of acting on it. */
   chatActive?: boolean
@@ -60,6 +62,7 @@ export function useMobileNativeChatDrafts(args: {
    *  line, or null once it has been declined or retired. Send paths size their
    *  pre-clear from it, since one Ctrl+U clears only one logical line. */
   readSeededLaunchDraft: () => string | null
+  readSeededLaunchDraftSeed: () => MobileNativeChatLaunchDraftSeed | null
   /** Clear the composer at send time, before the RPC settles. */
   clearDraftForSend: (origin: MobileNativeChatSendOrigin, text: string) => void
   /** Put the text back after a definite rejection, unless newer edits exist. */
@@ -78,6 +81,7 @@ export function useMobileNativeChatDrafts(args: {
     sessionId,
     messages,
     launchDraft,
+    launchDraftCreatedAt,
     chatActive = true,
     transcriptLoading
   } = args
@@ -96,10 +100,11 @@ export function useMobileNativeChatDrafts(args: {
   activePendingKeyRef.current = pendingKey
   const mountedRef = useRef(false)
 
-  const { readSeededLaunchDraft } = useMobileNativeChatLaunchDraftSeed({
+  const { readSeededLaunchDraft, readSeededLaunchDraftSeed } = useMobileNativeChatLaunchDraftSeed({
     draftKey,
     messages,
     launchDraft,
+    launchDraftCreatedAt,
     chatActive,
     transcriptLoading,
     setDrafts
@@ -316,6 +321,7 @@ export function useMobileNativeChatDrafts(args: {
     pending,
     captureSendOrigin,
     readSeededLaunchDraft,
+    readSeededLaunchDraftSeed,
     clearDraftForSend,
     restoreRejectedDraft,
     acceptSend,
