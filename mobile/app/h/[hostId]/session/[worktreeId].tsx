@@ -127,6 +127,7 @@ import { isTerminalSendRpcAccepted } from '../../../../src/terminal/terminal-sen
 import { sendMobileTerminalQueryReply } from '../../../../src/terminal/mobile-terminal-query-reply'
 import { TERMINAL_QUERY_REPLY_INPUT_RUNTIME_CAPABILITY } from '../../../../../src/shared/protocol-version'
 import { useTerminalLiveInputCommit } from '../../../../src/terminal/use-terminal-live-input-commit'
+import { resolveMobileTerminalInputGate } from '../../../../src/terminal/terminal-input-connection-gate'
 import {
   getTerminalCommandKeyboardType,
   getTerminalLiveInputKeyboardType
@@ -1058,18 +1059,18 @@ export default function SessionScreen() {
     activeHandleRef,
     activeSessionTabType: activeSessionTab?.type,
     activeSessionTabTypeRef,
+    connected: connState === 'connected',
     liveInputRef,
     liveInputTerminalHandles,
     liveInputTerminalHandlesRef,
     sendLiveTerminalInputRef,
     setLiveInputCapture
   })
-  const canSend =
-    connState === 'connected' &&
-    activeHandle != null &&
-    activeSessionTab?.type !== 'markdown' &&
-    activeSessionTab?.type !== 'file' &&
-    activeSessionTab?.type !== 'browser'
+  const { canCompose, canSend } = resolveMobileTerminalInputGate({
+    connState,
+    activeHandle,
+    activeSessionTabType: activeSessionTab?.type
+  })
   const liveInputEnabled = activeHandle ? liveInputTerminalHandles.has(activeHandle) : false
   const [browserScreencastSupported, setBrowserScreencastSupported] = useState<boolean | null>(null)
   // Why: hosts without aiVault.v1 reject listSessions, so hide the header entry instead of a dead-end "update this host" panel.
@@ -2991,7 +2992,8 @@ export default function SessionScreen() {
   }, [activeSessionTab, fileDocs, readFileTab])
 
   async function handleSend() {
-    if (!client || !activeHandle || sendingRef.current) {
+    // Why: the return key still submits while offline; hold the composed text instead of firing a doomed RPC (#6713).
+    if (!client || !activeHandle || sendingRef.current || !canSend) {
       return
     }
     sendingRef.current = true
@@ -4849,9 +4851,10 @@ export default function SessionScreen() {
                         styles.accessoryKey,
                         liveInputEnabled && styles.accessoryKeyActive,
                         pressed && styles.accessoryKeyPressed,
-                        !canSend && styles.accessoryKeyDisabled
+                        !canCompose && styles.accessoryKeyDisabled
                       ]}
-                      disabled={!canSend}
+                      // Why: offline, live mode is dead but the buffered box still composes — keep the escape hatch tappable (#6713).
+                      disabled={!canCompose}
                       onPress={toggleLiveInput}
                       accessibilityLabel={
                         liveInputEnabled
@@ -4864,7 +4867,7 @@ export default function SessionScreen() {
                         color={
                           liveInputEnabled
                             ? colors.bgBase
-                            : canSend
+                            : canCompose
                               ? colors.textSecondary
                               : colors.textMuted
                         }
@@ -5059,7 +5062,8 @@ export default function SessionScreen() {
                         autocompleteEnabled
                       )}
                       returnKeyType="send"
-                      editable={canSend}
+                      // Why: composing is local — an outage must not lock the field or discard typed text (#6713).
+                      editable={canCompose}
                       onSubmitEditing={() => void handleSend()}
                     />
                     <MobileTerminalInputActions
