@@ -2273,10 +2273,12 @@ export class SshRelaySession {
       (endSu, payload) => Math.max(endSu, payload.source?.sourceEndSu ?? endSu),
       acceptedRecovery.recoveryEndSu
     )
+    // Why: checkpoints are app-id keyed; a relay-id entry here would be shadowed
+    // by a staler app-id entry on the next sourceRecoveryRequest lookup.
     ptyConsumerRecoveryByTarget.get(this.targetId)?.checkpointsByAppPtyId.set(
-      relayPtyId,
+      appPtyId,
       Object.freeze({
-        id: relayPtyId,
+        id: appPtyId,
         providerGeneration: this.activePtyProviderGeneration!,
         clientGeneration: acceptedRecovery.clientGeneration,
         ownerGeneration: acceptedRecovery.ownerGeneration,
