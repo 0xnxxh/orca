@@ -265,6 +265,7 @@ import {
   getCreatePrIntentStagePaths,
   resolveCreatePrIntentReviewBase,
   resolveCreatePrIntentRemoteStep,
+  shouldAttemptCreateHostedReviewForIntent,
   type CreatePrIntentRunToken
 } from './source-control-create-pr-intent-flow'
 import { resolveVisibleCreatePrHeaderAction } from './source-control-create-pr-intent-state'
@@ -3409,7 +3410,7 @@ function SourceControlInner(): React.JSX.Element {
       token: CreatePrIntentRunToken,
       eligibility: HostedReviewCreationEligibility
     ): Promise<boolean> => {
-      if (!activeRepo || !token.branch || !eligibility.canCreate) {
+      if (!activeRepo || !token.branch || !shouldAttemptCreateHostedReviewForIntent(eligibility)) {
         return false
       }
 
@@ -3951,7 +3952,7 @@ function SourceControlInner(): React.JSX.Element {
       if (abortIfStale() || !eligibility) {
         return
       }
-      if (eligibility.canCreate) {
+      if (shouldAttemptCreateHostedReviewForIntent(eligibility)) {
         await createHostedReviewForCreatePrIntent(token, eligibility)
         if (abortIfStale()) {
           return
@@ -4047,7 +4048,7 @@ function SourceControlInner(): React.JSX.Element {
       if (abortIfStale()) {
         return
       }
-      if (eligibility?.canCreate) {
+      if (eligibility && shouldAttemptCreateHostedReviewForIntent(eligibility)) {
         await createHostedReviewForCreatePrIntent(token, eligibility)
         if (abortIfStale()) {
           return

@@ -162,6 +162,15 @@ export function resolveCreatePrIntentRemoteStep({
   return 'none'
 }
 
+export function shouldAttemptCreateHostedReviewForIntent(
+  eligibility: HostedReviewCreationEligibility
+): boolean {
+  return (
+    eligibility.canCreate ||
+    (eligibility.reviewLookupOutcome === 'unavailable' && eligibility.blockedReason === null)
+  )
+}
+
 export function getCreatePrIntentCommitFailureNoticeMessage(
   commitError: string | null | undefined,
   copy: {

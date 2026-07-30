@@ -42,13 +42,16 @@ export function resolveBlockedCreateReviewNoticeMessage(
   if (!eligibility || eligibility.canCreate) {
     return null
   }
+  const copy = localizedHostedReviewCopy(
+    resolveSupportedHostedReviewCopyProvider(eligibility.provider)
+  )
+  if (eligibility.reviewLookupOutcome === 'unavailable') {
+    return `Create ${copy.shortLabel} failed: Orca could not confirm whether this branch already has a ${copy.reviewLabel}. Retry once the ${copy.providerName} lookup succeeds.`
+  }
   const reason = eligibility.blockedReason
   if (!canClickBlockedCreateReviewReason(reason)) {
     return null
   }
-  const copy = localizedHostedReviewCopy(
-    resolveSupportedHostedReviewCopyProvider(eligibility.provider)
-  )
   switch (reason) {
     case 'dirty':
       return `Create ${copy.shortLabel} failed: commit or discard local changes before creating a ${copy.reviewLabel}.`

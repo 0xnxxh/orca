@@ -62,6 +62,20 @@ describe('source-control-create-review-blocked-action', () => {
     )
   })
 
+  it('reports unavailable review lookup authority before a dirty-tree prerequisite', () => {
+    expect(
+      resolveBlockedCreateReviewNoticeMessage(
+        eligibility({
+          blockedReason: 'dirty',
+          nextAction: 'commit',
+          reviewLookupOutcome: 'unavailable'
+        })
+      )
+    ).toBe(
+      'Create PR failed: Orca could not confirm whether this branch already has a pull request. Retry once the GitHub lookup succeeds.'
+    )
+  })
+
   it('returns null when the blocked reason should remain non-clickable', () => {
     expect(
       resolveBlockedCreateReviewNoticeMessage(

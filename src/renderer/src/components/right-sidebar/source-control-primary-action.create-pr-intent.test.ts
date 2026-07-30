@@ -177,6 +177,31 @@ describe('resolvePrimaryAction Create PR intent', () => {
     })
   })
 
+  it('returns Create PR intent for a dirty tree when review lookup is unavailable', () => {
+    const input = inputs({
+      hasUnstagedChanges: true,
+      hasStageableChanges: true,
+      upstreamStatus: upstreamInSync,
+      hostedReviewCreation: {
+        provider: 'github',
+        review: null,
+        canCreate: false,
+        blockedReason: 'dirty',
+        nextAction: 'commit',
+        reviewLookupOutcome: 'unavailable'
+      }
+    })
+
+    expect(resolvePrimaryAction(input)).toMatchObject({
+      kind: 'create_pr_intent',
+      disabled: false
+    })
+    expect(resolveCreatePrHeaderAction(input)).toMatchObject({
+      kind: 'create_pr_intent',
+      disabled: false
+    })
+  })
+
   it('returns Create PR intent for staged changes without a message so the flow can request one', () => {
     const input = inputs({
       stagedCount: 1,

@@ -8,7 +8,8 @@ import {
   getCreatePrIntentCommitFailureNoticeMessage,
   getCreatePrIntentStagePaths,
   resolveCreatePrIntentReviewBase,
-  resolveCreatePrIntentRemoteStep
+  resolveCreatePrIntentRemoteStep,
+  shouldAttemptCreateHostedReviewForIntent
 } from './source-control-create-pr-intent-flow'
 import type { GitStatusEntry } from '../../../../shared/types'
 
@@ -281,6 +282,29 @@ describe('source-control Create PR intent flow helpers', () => {
         }
       })
     ).toBe('blocked')
+  })
+
+  it('retries final creation through main preflight only after local preparation is complete', () => {
+    expect(
+      shouldAttemptCreateHostedReviewForIntent({
+        provider: 'github',
+        review: null,
+        canCreate: false,
+        blockedReason: null,
+        nextAction: null,
+        reviewLookupOutcome: 'unavailable'
+      })
+    ).toBe(true)
+    expect(
+      shouldAttemptCreateHostedReviewForIntent({
+        provider: 'github',
+        review: null,
+        canCreate: false,
+        blockedReason: 'needs_push',
+        nextAction: 'push',
+        reviewLookupOutcome: 'unavailable'
+      })
+    ).toBe(false)
   })
 
   it('surfaces the commit failure summary in the Create PR intent notice', () => {
