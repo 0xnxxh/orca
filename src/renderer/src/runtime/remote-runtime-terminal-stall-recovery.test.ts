@@ -142,6 +142,7 @@ describe('remote terminal stalled stream recovery', () => {
       client: { id: 'mac-viewer', type: 'desktop' },
       callbacks: { onData: vi.fn(), onSnapshot: vi.fn(), onTransportClose }
     })
+    emitOutput(stream.streamId, 'baseline')
     sendBinary.mockClear()
 
     expect(stream.sendInput('secret\r')).toBe(true)
@@ -152,7 +153,7 @@ describe('remote terminal stalled stream recovery', () => {
       : null
     expect(firstRequestPayload?.requestId).toBeTypeOf('number')
 
-    emitRequestedSnapshot(stream.streamId, firstRequestPayload?.requestId ?? 0)
+    emitRequestedSnapshot(stream.streamId, firstRequestPayload?.requestId ?? 0, 'baseline', 8)
     await vi.advanceTimersByTimeAsync(0)
 
     expect(onTransportClose).not.toHaveBeenCalled()
@@ -160,6 +161,82 @@ describe('remote terminal stalled stream recovery', () => {
     expect(stream.sendInput('silent-command\r')).toBe(true)
     await vi.advanceTimersByTimeAsync(REMOTE_TERMINAL_COMMAND_RESPONSE_TIMEOUT_MS)
     expect(sentFrames(TerminalStreamOpcode.SnapshotRequest)).toHaveLength(2)
+    stream.close()
+  })
+
+  it('restarts a stream when the authoritative snapshot advanced without live output', async () => {
+    const { getRemoteRuntimeTerminalMultiplexer } =
+      await import('./remote-runtime-terminal-multiplexer')
+    const onTransportClose = vi.fn()
+    const onData = vi.fn()
+    const stream = await getRemoteRuntimeTerminalMultiplexer('windows-test').subscribeTerminal({
+      terminal: 'term-stale-live-tail',
+      client: { id: 'mac-viewer', type: 'desktop' },
+      callbacks: { onData, onSnapshot: vi.fn(), onTransportClose }
+    })
+    emitOutput(stream.streamId, 'baseline')
+    sendBinary.mockClear()
+
+    expect(stream.sendInput('echo missing\r')).toBe(true)
+    await vi.advanceTimersByTimeAsync(REMOTE_TERMINAL_COMMAND_RESPONSE_TIMEOUT_MS)
+    const request = sentFrames(TerminalStreamOpcode.SnapshotRequest)[0]
+    const payload = request
+      ? decodeTerminalStreamJson<{ requestId: number }>(request.payload)
+      : null
+    emitRequestedSnapshot(stream.streamId, payload?.requestId ?? 0, 'baselinemissing', 15)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(onData).toHaveBeenCalledOnce()
+    expect(onTransportClose).toHaveBeenCalledWith({ recoverable: true })
+    expect(sentUnsubscribeStreamIds()).toEqual([stream.streamId])
+  })
+
+  it('restarts when a sequenced probe has no delivered high-water', async () => {
+    const { getRemoteRuntimeTerminalMultiplexer } =
+      await import('./remote-runtime-terminal-multiplexer')
+    const onTransportClose = vi.fn()
+    const stream = await getRemoteRuntimeTerminalMultiplexer('windows-test').subscribeTerminal({
+      terminal: 'term-first-output-lost',
+      client: { id: 'mac-viewer', type: 'desktop' },
+      callbacks: { onData: vi.fn(), onSnapshot: vi.fn(), onTransportClose }
+    })
+    sendBinary.mockClear()
+
+    expect(stream.sendInput('echo first-output\r')).toBe(true)
+    await vi.advanceTimersByTimeAsync(REMOTE_TERMINAL_COMMAND_RESPONSE_TIMEOUT_MS)
+    const request = sentFrames(TerminalStreamOpcode.SnapshotRequest)[0]
+    const payload = request
+      ? decodeTerminalStreamJson<{ requestId: number }>(request.payload)
+      : null
+    emitRequestedSnapshot(stream.streamId, payload?.requestId ?? 0, 'first-output', 12)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(onTransportClose).toHaveBeenCalledWith({ recoverable: true })
+    expect(sentUnsubscribeStreamIds()).toEqual([stream.streamId])
+  })
+
+  it('keeps a responsive stream when its probe confirms zero output high-water', async () => {
+    const { getRemoteRuntimeTerminalMultiplexer } =
+      await import('./remote-runtime-terminal-multiplexer')
+    const onTransportClose = vi.fn()
+    const stream = await getRemoteRuntimeTerminalMultiplexer('windows-test').subscribeTerminal({
+      terminal: 'term-unsequenced-silent',
+      client: { id: 'mac-viewer', type: 'desktop' },
+      callbacks: { onData: vi.fn(), onSnapshot: vi.fn(), onTransportClose }
+    })
+    sendBinary.mockClear()
+
+    expect(stream.sendInput('silent-command\r')).toBe(true)
+    await vi.advanceTimersByTimeAsync(REMOTE_TERMINAL_COMMAND_RESPONSE_TIMEOUT_MS)
+    const request = sentFrames(TerminalStreamOpcode.SnapshotRequest)[0]
+    const payload = request
+      ? decodeTerminalStreamJson<{ requestId: number }>(request.payload)
+      : null
+    emitRequestedSnapshot(stream.streamId, payload?.requestId ?? 0, '', 0)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(onTransportClose).not.toHaveBeenCalled()
+    expect(sentUnsubscribeStreamIds()).toEqual([])
     stream.close()
   })
 
@@ -240,7 +317,12 @@ describe('remote terminal stalled stream recovery', () => {
     )
   }
 
-  function emitRequestedSnapshot(streamId: number, requestId: number): void {
+  function emitRequestedSnapshot(
+    streamId: number,
+    requestId: number,
+    data = '',
+    seq?: number
+  ): void {
     callbacks?.onBinary(
       encodeTerminalStreamFrame({
         opcode: TerminalStreamOpcode.SnapshotStart,
@@ -250,15 +332,26 @@ describe('remote terminal stalled stream recovery', () => {
           kind: 'scrollback',
           requestId,
           cols: 80,
-          rows: 24
+          rows: 24,
+          seq
         })
       })
     )
+    if (data) {
+      callbacks?.onBinary(
+        encodeTerminalStreamFrame({
+          opcode: TerminalStreamOpcode.SnapshotChunk,
+          streamId,
+          seq: 2,
+          payload: encodeTerminalStreamText(data)
+        })
+      )
+    }
     callbacks?.onBinary(
       encodeTerminalStreamFrame({
         opcode: TerminalStreamOpcode.SnapshotEnd,
         streamId,
-        seq: 2,
+        seq: 3,
         payload: new Uint8Array()
       })
     )
