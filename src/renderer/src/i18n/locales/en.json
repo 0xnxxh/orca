@@ -3715,7 +3715,10 @@
         },
         "UsageBreakdownSection": {
           "7765a4c3e1": "n/a",
-          "247c93ca92": "• inferred pricing"
+          "247c93ca92": "• inferred pricing",
+          "32176e1d44": "turns",
+          "79a69522a5": "events",
+          "02a046792e": "sessions •"
         },
         "UsageSessionsTable": {
           "1afc25eb06": "Turns",
@@ -3787,17 +3790,17 @@
           "b088e0785d": "Beta",
           "f43ad6edf3": "Skills",
           "7e828fb2c6": "Back",
-          "ea72d6185b": "Could not scan local skills",
+          "ea72d6185b": "Could not scan skills",
           "dc4c3328ee": "Reveal file",
           "9963dff6d3": "No description found.",
           "995fde8337": "Could not reveal skill file",
-          "ab5b777350": "Checked local home, repository, bundled, and plugin skill folders.",
+          "ab5b777350": "Checked home, repository, bundled, and plugin skill folders.",
           "08a321a984": "Adjust the search or filters.",
-          "4acd6d68ec": "No local skills found",
+          "4acd6d68ec": "No skills found",
           "6a62a0168c": "No matches",
           "cd7893fbc1": "Scanning skills",
           "35b9a724a0": "Available",
-          "0c74e7ff34": "Local"
+          "0c74e7ff34": "Installed"
         },
         "SkillFreshnessNudge": {
           "titleOne": "An installed Orca skill is out of date",
@@ -3894,7 +3897,7 @@
           "upToDate": "Up to date",
           "installed": "Installed",
           "details": "Details",
-          "needsAttention": "Needs attention"
+          "needsAttention": "Review skill"
         }
       },
       "sidebar": {
@@ -4043,7 +4046,8 @@
           "32a7256d85": "Clone",
           "69f5b5380d": "Cloning...",
           "cloneOnHostDescription": "Enter the Git URL and choose where to clone it on {{value0}}.",
-          "cloneParentFolder": "Parent folder"
+          "cloneParentFolder": "Parent folder",
+          "remoteCloneParentPlaceholder": "/home/user/projects"
         },
         "AutoRenameFailedDialog": {
           "aed1623b1e": "Close",
@@ -8651,6 +8655,7 @@
         "shortcuts": {
           "search": {
             "ca6a0c2df7": "shortcut",
+            "groupShortcut": "{{value0}} shortcut",
             "4811a8264a": "terminal first",
             "afda131738": "orca first",
             "0ecfc47434": "conflict",
@@ -10002,6 +10007,7 @@
             "2bfaf4379c": "More {{value0}} actions",
             "377269db6f": "{{value0}} reopened",
             "fa3ee9a515": "closed",
+            "closedToast": "{{value0}} closed",
             "78f5ff294c": "This will reopen the {{value0}}.",
             "a3d572a4de": "This will close the {{value0}}.",
             "e4aca40024": "Delete Workspace",
@@ -14166,7 +14172,9 @@
       },
       "tool": {
         "running": "Running…",
-        "result": "Result"
+        "result": "Result",
+        "countOne": "1 tool call",
+        "countN": "{{value0}} tool calls"
       },
       "status": {
         "responding": "Agent is responding"

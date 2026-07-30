@@ -150,6 +150,9 @@ test('paints a paired remote terminal when only its retained text tail overflowe
     await remoteTab.click()
     await expect(remoteTab).toHaveAttribute('data-active', 'true')
     await waitForActivePanePtyId(client.page, 30_000)
+    await expect
+      .poll(() => getTerminalContent(client.page), { timeout: 30_000 })
+      .toContain('REMOTE_TRUNCATED_TAIL_READY')
     await callRuntime(client.page, 'terminal.send', {
       terminal,
       text: 'WARMUP',
