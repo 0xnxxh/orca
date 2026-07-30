@@ -1,23 +1,16 @@
 /**
  * Shape classification for the nested collection size walker.
  *
- * Two questions, both answered without reading a single user VALUE: is this
- * object safe to walk at all, and are its keys field names (safe to print) or
- * user data (must be collapsed to `[]`)? The second question is a privacy
- * boundary — walker output is uploaded with crash reports — so it lives here
- * rather than inline, where it is easy to test in isolation.
+ * Keeps exotic objects out, classifies dictionary keys, and gates labels to a
+ * source-owned vocabulary before crash reports leave the machine.
  */
 
 /** Entries sampled to decide dictionary-vs-struct; shape is uniform, so few suffice. */
 export const HOMOGENEITY_SAMPLE = 8
 
 /**
- * Strict lowerCamelCase, the convention every field name in this store follows.
- * Deliberately narrower than "valid identifier": it rejects the shapes user data
- * actually takes — snake_case and kebab branch names, paths, UUIDs, SCREAMING
- * keys — so a one-entry dictionary cannot smuggle a key into a Slack-bound
- * breadcrumb on the one path where repeated-shape detection has nothing to
- * compare against. A rejected key costs a label; an accepted one costs a leak.
+ * Strict lowerCamelCase distinguishes likely fields from common user-key shapes.
+ * The source-owned vocabulary below is the final authorization boundary.
  */
 const NAMED_PROPERTY_KEY = /^[a-z][A-Za-z0-9]{0,31}$/
 
@@ -25,14 +18,64 @@ export function isFieldNameShaped(key: string): boolean {
   return NAMED_PROPERTY_KEY.test(key)
 }
 
+/**
+ * Only source-owned literals may cross the crash-report privacy boundary.
+ * Runtime shape checks cannot distinguish `stateHistory` from a user-chosen
+ * camelCase repo name, so they are defense in depth rather than authorization.
+ */
+const APPROVED_PATH_FIELD_NAMES = new Set([
+  'branches',
+  'browserUrlHistory',
+  'byPane',
+  'cache',
+  'child',
+  'comments',
+  'dictionary',
+  'diffComments',
+  'entries',
+  'files',
+  'history',
+  'items',
+  'list',
+  'panes',
+  'settings',
+  'stateHistory',
+  'tabs'
+])
+
+export function isApprovedPathFieldName(key: string): boolean {
+  return APPROVED_PATH_FIELD_NAMES.has(key)
+}
+
 /** Anything whose entries we can count: containers, plus Sets (counted, not entered). */
 export function isCountableContainer(value: unknown): boolean {
-  return value instanceof Set || isWalkableContainer(value)
+  return isSetContainer(value) || isWalkableContainer(value)
 }
 
 /** True for containers safe to iterate: arrays, Maps, and plain objects. */
 export function isWalkableContainer(value: unknown): value is object {
-  return Array.isArray(value) || value instanceof Map || isPlainObjectShape(value)
+  return isArrayContainer(value) || isMapContainer(value) || isPlainObjectShape(value)
+}
+
+export function isArrayContainer(value: unknown): value is unknown[] {
+  return Array.isArray(value) && Object.getPrototypeOf(value) === Array.prototype
+}
+
+export function isMapContainer(value: unknown): value is Map<unknown, unknown> {
+  return value instanceof Map && Object.getPrototypeOf(value) === Map.prototype
+}
+
+export function isSetContainer(value: unknown): value is Set<unknown> {
+  return value instanceof Set && Object.getPrototypeOf(value) === Set.prototype
+}
+
+export function isReportableContainer(value: object, size: number, maxStructKeys: number): boolean {
+  return (
+    isArrayContainer(value) ||
+    isMapContainer(value) ||
+    isSetContainer(value) ||
+    size > maxStructKeys
+  )
 }
 
 /**
@@ -48,10 +91,8 @@ export function isPlainObjectShape(value: unknown): boolean {
   if (prototype !== Object.prototype && prototype !== null) {
     return false
   }
-  const shape = value as { $$typeof?: unknown; nodeType?: unknown }
-  // Why: React elements and cross-realm DOM wrappers can be prototype-plain yet
-  // reach the entire tree through _owner / parentNode.
-  return shape.$$typeof === undefined && typeof shape.nodeType !== 'number'
+  // Avoid invoking accessors while excluding prototype-plain React/DOM shapes.
+  return !Object.hasOwn(value, '$$typeof') && !Object.hasOwn(value, 'nodeType')
 }
 
 /**
@@ -64,7 +105,7 @@ export function isPlainObjectShape(value: unknown): boolean {
  * with the same field names (`{[repo]: {branches}}`). A struct's fields are not
  * (`{paneKey, state, stateHistory}` mixes scalars with an array; `{tabs, panes}`
  * holds arrays, which carry no field names to match). Erring toward "dictionary"
- * costs a field name in the label; erring the other way leaks user data.
+ * costs grouping precision; the fixed vocabulary still prevents raw-key leaks.
  */
 export function hasRepeatedEntryShape(container: object, isExpired?: () => boolean): boolean {
   let signature: string | null = null
@@ -74,16 +115,26 @@ export function hasRepeatedEntryShape(container: object, isExpired?: () => boole
       // Why checked per entry: each one costs a for-in over a value that may be
       // huge, so the cap alone bounds the entry COUNT but not the time. Bailing
       // returns `true`, which collapses keys — the privacy-safe direction.
-      if (sampled >= HOMOGENEITY_SAMPLE || isExpired?.() === true) {
+      if (sampled >= HOMOGENEITY_SAMPLE) {
         break
       }
-      const value = (container as Record<string, unknown>)[key]
+      if (isExpired?.() === true) {
+        return true
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(container, key)
+      if (descriptor === undefined || !('value' in descriptor)) {
+        return true
+      }
+      const value = descriptor.value
       // Why plain objects only: arrays and Maps expose no field names, so a
       // struct of arrays is indistinguishable from a dictionary of arrays.
       if (!isPlainObjectShape(value)) {
         return false
       }
-      const entrySignature = fieldSignature(value as object)
+      const entrySignature = fieldSignature(value as object, isExpired)
+      if (entrySignature === null) {
+        return true
+      }
       if (signature === null) {
         signature = entrySignature
       } else if (signature !== entrySignature) {
@@ -95,10 +146,7 @@ export function hasRepeatedEntryShape(container: object, isExpired?: () => boole
     // Why: an unreadable entry proves nothing about shape; treat keys as data.
     return true
   }
-  // Why two: a single entry cannot demonstrate repetition, and a one-entry
-  // container is never the leak this walker is looking for. A run cut short by
-  // the deadline lands here with sampled < 2 only if it never got going, in
-  // which case the strict key-syntax rule is what keeps user data out.
+  // One entry cannot demonstrate repetition.
   return sampled >= 2
 }
 
@@ -112,12 +160,15 @@ export function hasRepeatedEntryShape(container: object, isExpired?: () => boole
  * contain at least one `feature/x`, `fix-y`, or `snake_name`, and one such
  * sibling now condemns the whole container's keys instead of only itself.
  */
-export function hasOnlyFieldNameShapedKeys(container: object): boolean {
+export function hasOnlyFieldNameShapedKeys(container: object, isExpired?: () => boolean): boolean {
   let sampled = 0
   try {
     for (const key in container) {
       if (sampled >= HOMOGENEITY_SAMPLE) {
         break
+      }
+      if (isExpired?.() === true) {
+        return false
       }
       if (!isFieldNameShaped(key)) {
         return false
@@ -133,15 +184,15 @@ export function hasOnlyFieldNameShapedKeys(container: object): boolean {
 /**
  * Field names of one entry, order-independent.
  *
- * Why for-in rather than Object.keys: both are O(entry size), but for-in reuses
- * V8's enumeration cache — which the pre-existing top-level summary has already
- * paid for on these same objects — instead of allocating a fresh key array in a
- * renderer that is at 95% of its heap. The per-entry cost is bounded by the
- * caller's deadline, not by this cap.
+ * Why for-in rather than Object.keys: it avoids a key array proportional to an
+ * entry that may already be consuming the renderer heap.
  */
-function fieldSignature(entry: object): string {
+function fieldSignature(entry: object, isExpired?: () => boolean): string | null {
   const fields: string[] = []
   for (const key in entry) {
+    if (isExpired?.() === true) {
+      return null
+    }
     if (fields.length >= HOMOGENEITY_SAMPLE) {
       break
     }

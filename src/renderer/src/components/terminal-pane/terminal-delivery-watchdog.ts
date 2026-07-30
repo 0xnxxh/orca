@@ -15,12 +15,12 @@
  * output flows or while no PTY delivery is expected).
  */
 import { e2eConfig } from '@/lib/e2e-config'
-import { registerModuleSingletonSize } from '@/lib/module-singleton-size-registry'
 import type { PtyRendererDeliveryHealthReply } from '../../../../shared/pty-renderer-delivery-health'
 import { redactPtyIdForDiagnostics } from '../../../../shared/pty-delivery-diagnostics'
 import { deliverPulledPtyModelRestoreMarkers } from './pty-model-restore-channel'
 import { getProcessedPtyCharTotals } from './terminal-pty-ack-gate'
 import { recordTerminalFreezeBreadcrumb } from './terminal-freeze-breadcrumbs'
+import { receivedPtyCharTotals } from './terminal-delivery-watchdog-size-registry'
 
 const WATCHDOG_INTERVAL_MS = 15_000
 // Why 2 ticks: one silent interval can be a probe racing an in-transit chunk;
@@ -44,9 +44,6 @@ type TerminalDeliveryWatchdogDeps = {
   hasAttachedPtys: () => boolean
 }
 
-const receivedPtyCharTotals = new Map<string, number>()
-// Why registered: one entry per PTY ever seen, deleted only on explicit detach.
-registerModuleSingletonSize('watchdog.receivedPtyCharTotals', receivedPtyCharTotals)
 let receivedPtyDataEventCount = 0
 let blackholePtyPushDelivery = false
 

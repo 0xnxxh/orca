@@ -27,10 +27,7 @@ const MAX_NAME_LENGTH = 48
  * breadcrumbs. Call once at module scope; `name` becomes the breadcrumb key.
  * The returned disposer exists for tests and HMR.
  */
-export function registerModuleSingletonSize(
-  name: string,
-  source: SingletonSizeSource
-): () => void {
+export function registerModuleSingletonSize(name: string, source: SingletonSizeSource): () => void {
   if (name.length === 0 || name.length > MAX_NAME_LENGTH) {
     return () => undefined
   }

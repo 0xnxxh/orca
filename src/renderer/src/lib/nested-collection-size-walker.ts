@@ -16,10 +16,24 @@
 import {
   hasOnlyFieldNameShapedKeys,
   hasRepeatedEntryShape,
+  isArrayContainer,
   isCountableContainer,
-  isFieldNameShaped,
+  isMapContainer,
+  isReportableContainer,
+  isSetContainer,
   isWalkableContainer
 } from './nested-container-shape'
+import {
+  queueNestedCollectionFrame,
+  resetNestedCollectionLevelSampling,
+  scaleNestedCollectionFrames,
+  type NestedCollectionFrame
+} from './nested-collection-level-sampling'
+import {
+  addNestedCollectionPathTotal,
+  createNestedCollectionChildPath,
+  largestNestedCollectionPaths
+} from './nested-collection-path-reporting'
 
 export type NestedCollectionSizeWalk = {
   /** Largest nested containers by entry count, keyed by path label. */
@@ -61,20 +75,6 @@ const MAX_STRUCT_KEYS = 32
  */
 const MAX_WALK_MS = 25
 
-type Frame = {
-  container: object
-  path: string
-  depth: number
-  /** Entry count of `container`, measured when it was queued. */
-  size: number
-  /** True when `container` is homogeneous, so sampling its entries is valid. */
-  samplable: boolean
-  /** True when every sampled value is a container, i.e. keys are data, not code. */
-  keysAreData: boolean
-  /** Population this frame stands in for, from sampled ancestors. */
-  scale: number
-}
-
 type WalkState = {
   totals: Map<string, number>
   /** performance.now() past which the walk stops, whatever budget remains. */
@@ -82,8 +82,8 @@ type WalkState = {
   seen: WeakSet<object>
   entryVisits: number
   keysScanned: number
-  /** Frames discarded at the current level's width cap; reset per level. */
-  droppedFrames: number
+  frameCandidatesByPath: Map<string, number>
+  frameReplacementCursor: Map<string, number>
   truncated: boolean
   estimated: boolean
 }
@@ -96,7 +96,8 @@ export function walkNestedCollectionSizes(root: unknown, limit: number): NestedC
     seen: new WeakSet(),
     entryVisits: 0,
     keysScanned: 0,
-    droppedFrames: 0,
+    frameCandidatesByPath: new Map(),
+    frameReplacementCursor: new Map(),
     truncated: false,
     estimated: false
   }
@@ -104,21 +105,26 @@ export function walkNestedCollectionSizes(root: unknown, limit: number): NestedC
   try {
     if (isWalkableContainer(root)) {
       state.seen.add(root)
-      walkLevels(describeFrame(root, '', 0, 1, state), state)
+      const rootFrame = describeFrame(root, '', 0, 1, state)
+      if (isOutOfTime(state)) {
+        state.truncated = true
+      } else {
+        walkLevels(rootFrame, state)
+      }
     }
   } catch {
     state.truncated = true
   }
   return {
-    counts: largestPaths(state.totals, limit),
+    counts: largestNestedCollectionPaths(state.totals, limit),
     nodesVisited: state.entryVisits + state.keysScanned,
     truncated: state.truncated,
     estimated: state.estimated
   }
 }
 
-function walkLevels(rootFrame: Frame, state: WalkState): void {
-  let level: Frame[] = [rootFrame]
+function walkLevels(rootFrame: NestedCollectionFrame, state: WalkState): void {
+  let level: NestedCollectionFrame[] = [rootFrame]
   while (level.length > 0) {
     if (state.entryVisits >= MAX_ENTRY_VISITS || isOutOfTime(state)) {
       state.truncated = true
@@ -128,15 +134,14 @@ function walkLevels(rootFrame: Frame, state: WalkState): void {
     // reaching the depth where the leak actually hides. The last level has no
     // deeper level to save for, so it may use everything that is left.
     const remaining = MAX_ENTRY_VISITS - state.entryVisits
-    const levelAllowance =
-      level[0].depth >= MAX_FRAME_DEPTH ? remaining : Math.ceil(remaining / 2)
+    const levelAllowance = level[0].depth >= MAX_FRAME_DEPTH ? remaining : Math.ceil(remaining / 2)
     const perFrame = clamp(
       Math.floor(levelAllowance / level.length),
       MIN_ENTRIES_PER_FRAME,
       MAX_ENTRIES_PER_FRAME
     )
-    const next: Frame[] = []
-    state.droppedFrames = 0
+    const next: NestedCollectionFrame[] = []
+    resetNestedCollectionLevelSampling(state)
     for (const frame of level) {
       if (state.entryVisits >= MAX_ENTRY_VISITS || isOutOfTime(state)) {
         state.truncated = true
@@ -144,13 +149,18 @@ function walkLevels(rootFrame: Frame, state: WalkState): void {
       }
       scanFrame(frame, perFrame, next, state)
     }
-    applyDroppedFrameScale(next, state.droppedFrames)
+    scaleNestedCollectionFrames(next, state.frameCandidatesByPath)
     level = next
   }
 }
 
 /** Visits a sample of one container's entries and queues their containers. */
-function scanFrame(frame: Frame, perFrame: number, next: Frame[], state: WalkState): void {
+function scanFrame(
+  frame: NestedCollectionFrame,
+  perFrame: number,
+  next: NestedCollectionFrame[],
+  state: WalkState
+): void {
   // Why structs ignore perFrame: their fields are heterogeneous, so a partial
   // scan could silently omit the one field that is leaking.
   const target = frame.samplable ? Math.min(frame.size, perFrame) : frame.size
@@ -170,24 +180,44 @@ function scanFrame(frame: Frame, perFrame: number, next: Frame[], state: WalkSta
 }
 
 function scanFrameEntries(
-  frame: Frame,
+  frame: NestedCollectionFrame,
   target: number,
   scale: number,
-  next: Frame[],
+  next: NestedCollectionFrame[],
   state: WalkState
 ): void {
   const container = frame.container
-  if (Array.isArray(container)) {
+  if (isOutOfTime(state)) {
+    state.truncated = true
+    return
+  }
+  if (isArrayContainer(container)) {
     for (let index = 0; index < target; index += 1) {
+      if (state.entryVisits >= MAX_ENTRY_VISITS || isOutOfTime(state)) {
+        state.truncated = true
+        return
+      }
       state.entryVisits += 1
-      visitChild(container[index], null, frame, scale, next, state)
+      const descriptor = Object.getOwnPropertyDescriptor(container, index)
+      if (descriptor === undefined) {
+        continue
+      }
+      if (!('value' in descriptor)) {
+        state.truncated = true
+        continue
+      }
+      visitChild(descriptor.value, null, frame, scale, next, state)
     }
     return
   }
   let seen = 0
-  if (container instanceof Map) {
+  if (isMapContainer(container)) {
     for (const value of container.values()) {
       if (seen >= target) {
+        return
+      }
+      if (state.entryVisits >= MAX_ENTRY_VISITS || isOutOfTime(state)) {
+        state.truncated = true
         return
       }
       seen += 1
@@ -202,9 +232,18 @@ function scanFrameEntries(
     if (seen >= target) {
       return
     }
+    if (state.entryVisits >= MAX_ENTRY_VISITS || isOutOfTime(state)) {
+      state.truncated = true
+      return
+    }
     seen += 1
     state.entryVisits += 1
-    visitChild((container as Record<string, unknown>)[key], key, frame, scale, next, state)
+    const descriptor = Object.getOwnPropertyDescriptor(container, key)
+    if (descriptor === undefined || !('value' in descriptor)) {
+      state.truncated = true
+      continue
+    }
+    visitChild(descriptor.value, key, frame, scale, next, state)
   }
 }
 
@@ -212,12 +251,20 @@ function scanFrameEntries(
 function visitChild(
   value: unknown,
   key: string | null,
-  frame: Frame,
+  frame: NestedCollectionFrame,
   scale: number,
-  next: Frame[],
+  next: NestedCollectionFrame[],
   state: WalkState
 ): void {
+  if (isOutOfTime(state)) {
+    state.truncated = true
+    return
+  }
   if (!isCountableContainer(value)) {
+    return
+  }
+  if (isOutOfTime(state)) {
+    state.truncated = true
     return
   }
   const child = value as object
@@ -226,7 +273,7 @@ function visitChild(
     return
   }
   state.seen.add(child)
-  const path = childPath(frame, key)
+  const path = createNestedCollectionChildPath(frame, key, MAX_PATH_LENGTH)
   if (path === null) {
     return
   }
@@ -237,11 +284,11 @@ function visitChild(
   // Why depth >= 1 only: depth-0 children are the top-level keys the `store`
   // contributor already reports exactly, so recording them here adds nothing.
   // Why reportable: a struct's field count is not a collection size.
-  if (frame.depth >= 1 && isReportableContainer(child, child_.size)) {
-    addPathTotal(state, path, child_.size * scale)
+  if (frame.depth >= 1 && isReportableContainer(child, child_.size, MAX_STRUCT_KEYS)) {
+    addNestedCollectionPathTotal(state, path, child_.size * scale, MAX_TRACKED_PATHS)
   }
   if (frame.depth < MAX_FRAME_DEPTH && isWalkableContainer(child)) {
-    queueFrame(next, child_, state)
+    queueNestedCollectionFrame(next, child_, MAX_FRAMES_PER_LEVEL, state)
   }
 }
 
@@ -252,13 +299,29 @@ function describeFrame(
   depth: number,
   scale: number,
   state: WalkState
-): Frame {
-  if (Array.isArray(container)) {
+): NestedCollectionFrame {
+  if (isArrayContainer(container)) {
     // Array/Map indices are positional, never user strings, so `[]` always applies.
-    return { container, path, depth, size: container.length, samplable: true, keysAreData: true, scale }
+    return {
+      container,
+      path,
+      depth,
+      size: container.length,
+      samplable: true,
+      keysAreData: true,
+      scale
+    }
   }
-  if (container instanceof Map || container instanceof Set) {
-    return { container, path, depth, size: container.size, samplable: true, keysAreData: true, scale }
+  if (isMapContainer(container) || isSetContainer(container)) {
+    return {
+      container,
+      path,
+      depth,
+      size: container.size,
+      samplable: true,
+      keysAreData: true,
+      scale
+    }
   }
   const size = countKeys(container, state)
   const samplable = size > MAX_STRUCT_KEYS
@@ -272,7 +335,7 @@ function describeFrame(
     samplable ||
     isOutOfTime(state) ||
     hasRepeatedEntryShape(container, () => isOutOfTime(state)) ||
-    !hasOnlyFieldNameShapedKeys(container)
+    !hasOnlyFieldNameShapedKeys(container, () => isOutOfTime(state))
   return { container, path, depth, size, samplable, keysAreData, scale }
 }
 
@@ -288,10 +351,18 @@ function describeFrame(
  */
 function countKeys(container: object, state: WalkState): number {
   let size = 0
+  if (isOutOfTime(state)) {
+    state.truncated = true
+    return size
+  }
   for (const _key in container) {
     size += 1
     state.keysScanned += 1
-    if (size >= MAX_KEYS_PER_CONTAINER || state.keysScanned >= MAX_KEYS_SCANNED) {
+    if (
+      size >= MAX_KEYS_PER_CONTAINER ||
+      state.keysScanned >= MAX_KEYS_SCANNED ||
+      isOutOfTime(state)
+    ) {
       state.truncated = true
       break
     }
@@ -299,88 +370,15 @@ function countKeys(container: object, state: WalkState): number {
   return size
 }
 
-function childPath(frame: Frame, key: string | null): string | null {
-  if (frame.depth === 0) {
-    return key !== null && key.length <= MAX_PATH_LENGTH ? key : null
-  }
-  // Why the parent's shape decides: inside a dictionary every key is user data
-  // (repo name, branch, path), so collapsing to `[]` both yields one path for
-  // the family and keeps user values out of a breadcrumb we upload to Slack.
-  const named = !frame.keysAreData && key !== null && isFieldNameShaped(key)
-  const path = named ? `${frame.path}.${key}` : `${frame.path}[]`
-  return path.length <= MAX_PATH_LENGTH ? path : null
-}
-
-function addPathTotal(state: WalkState, path: string, value: number): void {
-  const existing = state.totals.get(path)
-  if (existing !== undefined) {
-    state.totals.set(path, existing + value)
-    return
-  }
-  if (state.totals.size >= MAX_TRACKED_PATHS) {
-    state.truncated = true
-    return
-  }
-  state.totals.set(path, value)
-}
-
-/**
- * Queues a frame, reservoir-sampling once the level is full so that dropping
- * frames scales the survivors instead of silently under-reporting the level.
- */
-function queueFrame(next: Frame[], frame: Frame, state: WalkState): void {
-  if (next.length < MAX_FRAMES_PER_LEVEL) {
-    next.push(frame)
-    return
-  }
-  state.estimated = true
-  state.droppedFrames += 1
-  // Deterministic stride keeps the sample spread across the level without an RNG.
-  const replaced = state.droppedFrames % MAX_FRAMES_PER_LEVEL
-  next[replaced] = frame
-}
-
-/** Scales a level's surviving frames to stand in for the ones that were dropped. */
-function applyDroppedFrameScale(level: Frame[], dropped: number): void {
-  if (dropped <= 0 || level.length === 0) {
-    return
-  }
-  const factor = (level.length + dropped) / level.length
-  for (const frame of level) {
-    frame.scale *= factor
-  }
-}
-
-/** Real collections only; a struct's field count is noise in a leak breadcrumb. */
-function isReportableContainer(value: object, size: number): boolean {
-  return (
-    Array.isArray(value) || value instanceof Map || value instanceof Set || size > MAX_STRUCT_KEYS
-  )
-}
-
-function largestPaths(totals: Map<string, number>, limit: number): Record<string, number> {
-  if (limit <= 0 || totals.size === 0) {
-    return {}
-  }
-  const counts: Record<string, number> = {}
-  for (const [path, value] of [...totals].sort((a, b) => b[1] - a[1]).slice(0, limit)) {
-    counts[path] = Math.round(value)
-  }
-  return counts
-}
-
 function isOutOfTime(state: WalkState): boolean {
   return now() >= state.deadline
 }
 
-// Why not performance.now() directly: it is absent in some worker/test realms,
-// and a diagnostic must degrade to "no deadline" rather than throw.
 function now(): number {
   return typeof performance === 'object' && typeof performance.now === 'function'
     ? performance.now()
-    : 0
+    : Date.now()
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max)
-}
+const clamp = (value: number, min: number, max: number): number =>
+  Math.min(Math.max(value, min), max)

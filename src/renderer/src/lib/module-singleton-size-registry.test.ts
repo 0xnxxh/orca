@@ -88,20 +88,21 @@ describe('production wiring', () => {
   // No reset here: the assertion depends on the module's own top-level
   // registration, which is the thing under test.
   it('registers the watchdog PTY table, and its count tracks real activity', async () => {
-    const watchdog = await import('@/components/terminal-pane/terminal-delivery-watchdog')
+    const watchdog =
+      await import('../components/terminal-pane/terminal-delivery-watchdog-size-registry')
     const read = (): number | undefined =>
       collectModuleSingletonSizes()['watchdog.receivedPtyCharTotals']
 
     // Empty registrations are skipped, so a real count is what proves the wiring.
     expect(read()).toBeUndefined()
     try {
-      watchdog.recordPtyDataReceived('pty-a', 12)
-      watchdog.recordPtyDataReceived('pty-b', 34)
+      watchdog.receivedPtyCharTotals.set('pty-a', 12)
+      watchdog.receivedPtyCharTotals.set('pty-b', 34)
 
       expect(read()).toBe(2)
     } finally {
-      watchdog.clearReceivedPtyCharTotal('pty-a')
-      watchdog.clearReceivedPtyCharTotal('pty-b')
+      watchdog.receivedPtyCharTotals.delete('pty-a')
+      watchdog.receivedPtyCharTotals.delete('pty-b')
     }
 
     expect(read()).toBeUndefined()

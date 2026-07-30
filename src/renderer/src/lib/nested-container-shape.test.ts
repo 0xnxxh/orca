@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   hasOnlyFieldNameShapedKeys,
   hasRepeatedEntryShape,
+  isApprovedPathFieldName,
+  isArrayContainer,
   isFieldNameShaped,
+  isMapContainer,
   isPlainObjectShape,
+  isSetContainer,
   isWalkableContainer
 } from './nested-container-shape'
 
@@ -36,6 +40,15 @@ describe('isFieldNameShaped', () => {
   })
 })
 
+describe('isApprovedPathFieldName', () => {
+  it('allows source-owned labels but rejects arbitrary camelCase user data', () => {
+    expect(isApprovedPathFieldName('stateHistory')).toBe(true)
+    expect(isApprovedPathFieldName('diffComments')).toBe(true)
+    expect(isApprovedPathFieldName('acmeBillingSecret')).toBe(false)
+    expect(isApprovedPathFieldName('featureCeoCompModel')).toBe(false)
+  })
+})
+
 describe('hasRepeatedEntryShape', () => {
   it('calls repeated records a dictionary, so its user-derived keys collapse', () => {
     expect(
@@ -56,6 +69,10 @@ describe('hasRepeatedEntryShape', () => {
 
   it('cannot infer repetition from a single entry', () => {
     expect(hasRepeatedEntryShape({ onlyOne: { branches: [1] } })).toBe(false)
+  })
+
+  it('collapses keys when the deadline expires before classification', () => {
+    expect(hasRepeatedEntryShape({ onlyOne: { branches: [1] } }, () => true)).toBe(true)
   })
 
   it('treats a struct whose values are arrays as a struct', () => {
@@ -113,6 +130,18 @@ describe('isWalkableContainer', () => {
     expect(isWalkableContainer(new Set([1]))).toBe(false)
     expect(isWalkableContainer(new WeakMap())).toBe(false)
   })
+
+  it('rejects collection subclasses whose accessors or iterators can run user code', () => {
+    class HostileArray extends Array<unknown> {}
+    class HostileMap extends Map<unknown, unknown> {}
+    class HostileSet extends Set<unknown> {}
+
+    expect(isArrayContainer(new HostileArray())).toBe(false)
+    expect(isMapContainer(new HostileMap())).toBe(false)
+    expect(isSetContainer(new HostileSet())).toBe(false)
+    expect(isWalkableContainer(new HostileArray())).toBe(false)
+    expect(isWalkableContainer(new HostileMap())).toBe(false)
+  })
 })
 
 describe('hasOnlyFieldNameShapedKeys', () => {
@@ -122,5 +151,9 @@ describe('hasOnlyFieldNameShapedKeys', () => {
 
   it('accepts a container whose keys are all field names', () => {
     expect(hasOnlyFieldNameShapedKeys({ stateHistory: 1, diffComments: 2 })).toBe(true)
+  })
+
+  it('does not authorize keys when the deadline expires before the scan', () => {
+    expect(hasOnlyFieldNameShapedKeys({ stateHistory: 1 }, () => true)).toBe(false)
   })
 })

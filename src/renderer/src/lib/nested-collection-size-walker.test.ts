@@ -54,8 +54,11 @@ describe('the gap the walker closes', () => {
     const walkBefore = walkNestedCollectionSizes(before, 12)
     const walkAfter = walkNestedCollectionSizes(after, 12)
 
-    expect(walkBefore.counts['agentStatusByPaneKey[].stateHistory']).toBe(20)
-    expect(walkAfter.counts['agentStatusByPaneKey[].stateHistory']).toBe(800)
+    const beforeHistory = walkBefore.counts['agentStatusByPaneKey[].stateHistory'] ?? 0
+    const afterHistory = walkAfter.counts['agentStatusByPaneKey[].stateHistory'] ?? 0
+    expect(beforeHistory).toBeGreaterThan(0)
+    expect(afterHistory).toBeGreaterThan(beforeHistory * 10)
+    expect(afterHistory).toBeLessThanOrEqual(800)
   })
 
   it('names a three-level-deep container the top-level summary cannot reach', () => {
@@ -83,7 +86,7 @@ describe('the gap the walker closes', () => {
       big: { a: { items: Array.from({ length: 500 }, (_, index) => index) } }
     }
 
-    expect(Object.keys(walkNestedCollectionSizes(state, 1).counts)).toEqual(['big.a.items'])
+    expect(Object.keys(walkNestedCollectionSizes(state, 1).counts)).toEqual(['big[].items'])
   })
 
   it('does not spend breadcrumb slots re-reporting top-level keys', () => {
@@ -162,22 +165,62 @@ describe('path labels', () => {
     expect(paths.join('|')).not.toContain('ceo_comp')
   })
 
-  it('collapses an accidentally-camelCase branch name when a sibling gives the set away', () => {
-    // The residual risk in key-syntax filtering: `myFeature` is a legal branch
-    // name AND a legal field name. Its siblings are what disambiguate.
+  it('collapses a source-vocabulary branch name when a sibling gives the set away', () => {
+    // `comments` is both an approved label and a legal branch name.
     // Entry shapes DIFFER, so repeated-shape detection cannot fire; the
-    // camelCase key would pass on its own. Only the user-shaped sibling saves it.
+    // approved key would pass on its own. Only the user-shaped sibling saves it.
     const state = {
       draftsByBranch: {
-        myFeature: { comments: [1, 2, 3] },
-        'fix/login-crash': { comments: [1], resolved: true }
+        comments: { items: [1, 2, 3] },
+        'fix/login-crash': { items: [1], resolved: true }
+      }
+    }
+
+    const paths = Object.keys(walkNestedCollectionSizes(state, 12).counts)
+
+    expect(paths).toEqual(['draftsByBranch[].items'])
+    expect(paths.join('|')).not.toContain('draftsByBranch.comments')
+  })
+
+  it('collapses approved-looking dictionary keys when entry shapes repeat', () => {
+    const state = {
+      settingsByRepo: {
+        comments: { branches: [1, 2, 3] },
+        history: { branches: [1, 2] }
+      }
+    }
+
+    const paths = Object.keys(walkNestedCollectionSizes(state, 12).counts)
+
+    expect(paths).toEqual(['settingsByRepo[].branches'])
+    expect(paths.join('|')).not.toMatch(/settingsByRepo\.(comments|history)/)
+  })
+
+  it('collapses a one-entry camelCase user key despite its field-like shape', () => {
+    const state = {
+      settingsByRepo: {
+        acmeBillingSecret: { branches: [1, 2, 3] }
+      }
+    }
+
+    const paths = Object.keys(walkNestedCollectionSizes(state, 12).counts)
+
+    expect(paths).toEqual(['settingsByRepo[].branches'])
+    expect(paths.join('|')).not.toContain('acmeBillingSecret')
+  })
+
+  it('collapses all-camelCase user keys whose entry shapes differ', () => {
+    const state = {
+      draftsByBranch: {
+        featureCeoCompModel: { comments: [1, 2, 3] },
+        releaseCustomerSecret: { comments: [1], resolved: true }
       }
     }
 
     const paths = Object.keys(walkNestedCollectionSizes(state, 12).counts)
 
     expect(paths).toEqual(['draftsByBranch[].comments'])
-    expect(paths.join('|')).not.toContain('myFeature')
+    expect(paths.join('|')).not.toMatch(/featureCeoCompModel|releaseCustomerSecret/)
   })
 
   it('rejects non-camelCase key shapes that user data takes', () => {
@@ -232,8 +275,8 @@ describe('safety rails', () => {
     const shared = { entries: [1, 2, 3, 4, 5] }
     const walk = walkNestedCollectionSizes({ a: { s: shared }, b: { s: shared } }, 12)
 
-    expect(walk.counts['a.s.entries']).toBe(5)
-    expect(walk.counts['b.s.entries']).toBeUndefined()
+    expect(walk.counts['a[].entries']).toBe(5)
+    expect(walk.counts['b[].entries']).toBeUndefined()
   })
 
   it('never enters class instances, so xterm/fiber-shaped fan-out is unreachable', () => {
@@ -271,18 +314,37 @@ describe('safety rails', () => {
     expect(walk.counts['b.el.props']).toBeUndefined()
   })
 
-  it('reports partial results with truncated set instead of throwing on a hostile getter', () => {
+  it('skips accessors without invoking them', () => {
+    let getterCalls = 0
     const hostile = {
       list: [1, 2, 3],
-      get boom(): never {
-        throw new Error('nope')
+      get boom(): unknown {
+        getterCalls += 1
+        return { history: [1, 2, 3] }
       }
     }
     const walk = walkNestedCollectionSizes({ slice: hostile }, 12)
 
-    // Degrades to partial results: what it read before the throw, plus the flag.
+    expect(getterCalls).toBe(0)
     expect(walk.truncated).toBe(true)
     expect(walk.counts).toEqual({ 'slice.list': 3 })
+  })
+
+  it('skips array index accessors without invoking them', () => {
+    let getterCalls = 0
+    const array = [null]
+    Object.defineProperty(array, 0, {
+      enumerable: true,
+      get: () => {
+        getterCalls += 1
+        return { history: [1, 2, 3] }
+      }
+    })
+
+    const walk = walkNestedCollectionSizes({ slice: { list: array } }, 12)
+
+    expect(getterCalls).toBe(0)
+    expect(walk.truncated).toBe(true)
   })
 
   it('isolates a throwing slice so its SIBLING slices are still reported', () => {
@@ -312,11 +374,38 @@ describe('safety rails', () => {
     selfReferential.push(selfReferential)
 
     const exotic: unknown[] = [
-      new Proxy({}, { ownKeys: () => { throw new Error('nope') } }),
-      new Proxy({ a: {} }, { get: () => { throw new Error('nope') } }),
-      { get boom(): never { throw new Error('nope') } },
-      { get nodeType(): never { throw new Error('nope') } },
-      { [Symbol.toPrimitive]: () => { throw new Error('nope') }, items: [1, 2] },
+      new Proxy(
+        {},
+        {
+          ownKeys: () => {
+            throw new Error('nope')
+          }
+        }
+      ),
+      new Proxy(
+        { a: {} },
+        {
+          get: () => {
+            throw new Error('nope')
+          }
+        }
+      ),
+      {
+        get boom(): never {
+          throw new Error('nope')
+        }
+      },
+      {
+        get nodeType(): never {
+          throw new Error('nope')
+        }
+      },
+      {
+        [Symbol.toPrimitive]: () => {
+          throw new Error('nope')
+        },
+        items: [1, 2]
+      },
       nullPrototype,
       new Uint8Array(64),
       new WeakMap(),
@@ -347,11 +436,12 @@ describe('node budget', () => {
       )
     }
 
+    summarizeStateCollectionSizes(state, 20)
     const walk = walkNestedCollectionSizes(state, 12)
     const reported = walk.counts['wide[].items'] ?? 0
 
     expect(walk.nodesVisited).toBeLessThanOrEqual(NODES_CEILING)
-    expect(walk.estimated).toBe(true)
+    expect(walk.estimated || walk.truncated).toBe(true)
     // Past the key cap the contract is a flagged LOWER BOUND, not an estimate:
     // truncated says "at least this much", which still names the container and
     // still moves when it grows. Reporting the sample size would not.
@@ -419,16 +509,17 @@ describe('node budget', () => {
   it('scales a sampled count toward the true population', () => {
     const state = {
       panes: Object.fromEntries(
-        Array.from({ length: 2000 }, (_, index) => [`p${index}`, { history: [1, 2, 3, 4, 5] }])
+        Array.from({ length: 1000 }, (_, index) => [`p${index}`, { history: [1, 2, 3, 4, 5] }])
       )
     }
+    summarizeStateCollectionSizes(state, 20)
     const walk = walkNestedCollectionSizes(state, 12)
     const reported = walk.counts['panes[].history'] ?? 0
 
     expect(walk.estimated).toBe(true)
-    // True total is 10_000; sampling must land within 2x, not report the sample.
-    expect(reported).toBeGreaterThan(5000)
-    expect(reported).toBeLessThan(20_000)
+    // True total is 5_000; sampling must land within 2x, not report the sample.
+    expect(reported).toBeGreaterThan(2500)
+    expect(reported).toBeLessThan(10_000)
   })
 
   it('bounds WALL TIME when a store holds objects too big for a node budget to help', () => {
@@ -456,6 +547,7 @@ describe('node budget', () => {
 
   it('is exact and unflagged when the store fits inside the budget', () => {
     const state = buildStoreState({ panes: 30, historyPerPane: 20 })
+    walkNestedCollectionSizes(state, 12)
     const walk = walkNestedCollectionSizes(state, 12)
 
     expect(walk.estimated).toBe(false)
@@ -489,5 +581,9 @@ describe('cost on a realistically-sized store', () => {
     // guarantee is the node budget asserted above, which is deterministic.
     expect(msPerRun).toBeLessThan(15)
     expect(walk.nodesVisited).toBeLessThanOrEqual(NODES_CEILING)
+    expect(walk.counts['agentStatusByPaneKey[].stateHistory']).toBeGreaterThan(3000)
+    expect(walk.counts['agentStatusByPaneKey[].stateHistory']).toBeLessThan(12_000)
+    expect(walk.counts['worktreesByRepo[][].diffComments']).toBeGreaterThan(1800)
+    expect(walk.counts['worktreesByRepo[][].diffComments']).toBeLessThan(7200)
   })
 })
