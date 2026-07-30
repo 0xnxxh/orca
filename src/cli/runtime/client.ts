@@ -11,7 +11,7 @@ import { getDefaultUserDataPath, readMetadata } from './metadata'
 import { getCliStatus, resolveDesktopWindowStatus } from './status'
 import { sendRequest } from './transport'
 import { RuntimeClientError, RuntimeRpcFailureError, type RuntimeRpcSuccess } from './types'
-import { sendWebSocketRequest } from './websocket-transport'
+import type { sendWebSocketRequest } from './websocket-transport'
 import { markEnvironmentUsed, resolveEnvironmentPairingOffer } from './environments'
 import { describeRuntimeCompatBlock, evaluateRuntimeCompat } from '../../shared/protocol-compat'
 import {
@@ -20,6 +20,8 @@ import {
   ORCHESTRATION_CONTRACT_VERSION,
   RUNTIME_PROTOCOL_VERSION
 } from '../../shared/protocol-version'
+import { createOrchestrationCompatibilityEnvelope } from './orchestration-compatibility-envelope'
+import { getTimeoutMsParam, isWaitingCheck } from './runtime-request-timeout'
 
 // Why: for long-poll methods the caller's method-level
 // `params.timeoutMs` is the inner waiter budget; we extend the client-side
@@ -29,6 +31,13 @@ import {
 // keepalive window. See design doc §3.1.
 const LONG_POLL_CLIENT_GRACE_MS = 10_000
 
+// Why: ws + tweetnacl + the remote-runtime frame stack only matter once a
+// request actually goes over a pairing offer, which local CLI calls never do.
+// Both call sites already await this, so deferring the load changes no ordering.
+async function loadSendWebSocketRequest(): Promise<typeof sendWebSocketRequest> {
+  return (await import('./websocket-transport.js')).sendWebSocketRequest
+}
+
 export class RuntimeClient {
   private readonly userDataPath: string
   private readonly requestTimeoutMs: number
@@ -36,6 +45,9 @@ export class RuntimeClient {
   private readonly environmentSelector: string | null
   private remoteCompatChecked = false
   private orchestrationContractCheck: Promise<void> | null = null
+  private readonly orchestrationCompatibility = createOrchestrationCompatibilityEnvelope(
+    process.env
+  )
 
   // Why: browser commands trigger first-time session init (agent-browser connect +
   // CDP proxy setup) which can take 15-30s. 60s accommodates cold start without
@@ -69,17 +81,26 @@ export class RuntimeClient {
     const orchestrationRequestId = orchestrationMutation
       ? (options?.orchestrationRequestId ?? randomUUID())
       : undefined
+    const compatibilityEnvelope = method.startsWith('orchestration.')
+      ? {
+          ...this.orchestrationCompatibility,
+          compatibilityInvocationId:
+            orchestrationRequestId ?? this.orchestrationCompatibility.compatibilityInvocationId
+        }
+      : {}
     const envelope = {
       orchestrationCapability: options?.orchestrationCapability,
       orchestrationContractVersion: method.startsWith('orchestration.')
         ? ORCHESTRATION_CONTRACT_VERSION
         : undefined,
-      orchestrationRequestId
+      orchestrationRequestId,
+      ...compatibilityEnvelope
     }
     if (this.remotePairing) {
       if (method !== 'status.get') {
         await this.ensureRemoteRuntimeCompatible(effectiveTimeoutMs)
       }
+      const sendWebSocketRequest = await loadSendWebSocketRequest()
       let response
       try {
         response = await sendWebSocketRequest<TResult>(
@@ -179,6 +200,7 @@ export class RuntimeClient {
     if (!this.remotePairing || this.remoteCompatChecked) {
       return
     }
+    const sendWebSocketRequest = await loadSendWebSocketRequest()
     const response = await sendWebSocketRequest<RuntimeStatus>(
       this.remotePairing,
       'status.get',
@@ -317,20 +339,4 @@ function resolveRemotePairing(
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-function isWaitingCheck(params: unknown): boolean {
-  return (
-    typeof params === 'object' &&
-    params !== null &&
-    'wait' in params &&
-    (params as { wait: unknown }).wait === true
-  )
-}
-
-function getTimeoutMsParam(params: unknown): unknown {
-  if (typeof params !== 'object' || params === null || !('timeoutMs' in params)) {
-    return undefined
-  }
-  return (params as { timeoutMs?: unknown }).timeoutMs
 }
