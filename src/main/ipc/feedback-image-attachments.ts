@@ -77,16 +77,20 @@ export function appendFeedbackImagesToFormData(
   }
 }
 
-/** A 2xx confirms the text; only the response contract can confirm its images. */
+/** Atomic servers omit the image field after both the text and images land. */
 export async function readFeedbackImagesDelivered(response: Response): Promise<boolean> {
   try {
     const parsed: unknown = await readFetchResponseJsonWithinLimit(
       response,
       MAX_FEEDBACK_IMAGE_RESPONSE_BYTES
     )
-    if (typeof parsed === 'object' && parsed !== null && 'imagesDelivered' in parsed) {
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return false
+    }
+    if ('imagesDelivered' in parsed) {
       return (parsed as { imagesDelivered?: unknown }).imagesDelivered === true
     }
+    return (parsed as { ok?: unknown }).ok === true
   } catch {}
   return false
 }

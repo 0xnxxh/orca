@@ -412,11 +412,7 @@ describe('submitFeedback', () => {
     }
 
     function jsonResponse(body: unknown): Response {
-      return {
-        ok: true,
-        status: 202,
-        json: async () => body
-      } as unknown as Response
+      return Response.json(body, { status: 202 })
     }
 
     it('sends attached images as multipart form parts', async () => {
@@ -447,12 +443,12 @@ describe('submitFeedback', () => {
       })
     })
 
-    it('reports unconfirmed delivery when a 2xx omits the image result', async () => {
+    it('accepts the production atomic-success response when it omits the image result', async () => {
       fetchMock.mockResolvedValue(jsonResponse({ ok: true }))
 
       await expect(submitFeedback(imageSubmitArgs([pngImage()]))).resolves.toEqual({
         ok: true,
-        imagesDelivered: false
+        imagesDelivered: true
       })
     })
 
