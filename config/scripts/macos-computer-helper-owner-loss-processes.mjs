@@ -5,19 +5,97 @@ const PROCESS_EXIT_TIMEOUT_MS = 2_000
 const PROCESS_POLL_MS = 25
 const sleepBuffer = new Int32Array(new SharedArrayBuffer(4))
 
-function processIdentity(pid) {
-  try {
-    const output = execFileSync('ps', ['-p', String(pid), '-o', 'pid=,pgid=,command='], {
-      encoding: 'utf8'
-    }).trim()
-    const match = output.match(/^(\d+)\s+(\d+)\s+(.+)$/)
-    if (!match) {
-      return null
-    }
-    return { pid: Number(match[1]), pgid: Number(match[2]), command: match[3] }
-  } catch {
+const processIdentityOperations = {
+  executePs: execFileSync,
+  signalProcess: process.kill.bind(process)
+}
+
+export function processIdentity(pid, operations = processIdentityOperations) {
+  if (!Number.isInteger(pid) || pid <= 0) {
     return null
   }
+  try {
+    const output = operations
+      .executePs('ps', ['-p', String(pid), '-o', 'pid=,pgid=,command='], {
+        encoding: 'utf8'
+      })
+      .trim()
+    const match = output.match(/^(\d+)\s+(\d+)\s+(.+)$/)
+    if (!match) {
+      throw new Error(`Could not parse process identity for ${pid}`)
+    }
+    return { pid: Number(match[1]), pgid: Number(match[2]), command: match[3] }
+  } catch (error) {
+    try {
+      operations.signalProcess(pid, 0)
+    } catch (lookupError) {
+      if (lookupError?.code === 'ESRCH') {
+        return null
+      }
+    }
+    throw error
+  }
+}
+
+function matchingDetachedProcesses(identities, expectedCommandFragments) {
+  return identities.filter(
+    (identity) =>
+      identity.pgid === identity.pid &&
+      expectedCommandFragments.every((fragment) => identity.command.includes(fragment))
+  )
+}
+
+const matchingProcessOperations = {
+  processIdentities,
+  signalProcessIdentity,
+  waitForIdentityExit
+}
+
+export function killProcessMatchingCommand(
+  expectedCommandFragments,
+  operations = matchingProcessOperations
+) {
+  const matches = matchingDetachedProcesses(
+    operations.processIdentities(),
+    expectedCommandFragments
+  )
+  if (matches.length === 0) {
+    return false
+  }
+  const errors = []
+  for (const match of matches) {
+    try {
+      if (operations.signalProcessIdentity(match, expectedCommandFragments[0], 'SIGKILL')) {
+        operations.waitForIdentityExit(match)
+      }
+    } catch (error) {
+      errors.push(error)
+    }
+  }
+  try {
+    const remaining = matchingDetachedProcesses(
+      operations.processIdentities(),
+      expectedCommandFragments
+    )
+    if (remaining.length > 0) {
+      errors.push(
+        new Error(
+          `Benchmark helper cleanup left matching processes: ${remaining
+            .map((identity) => identity.pid)
+            .join(', ')}`
+        )
+      )
+    }
+  } catch (error) {
+    errors.push(error)
+  }
+  if (errors.length === 1) {
+    throw errors[0]
+  }
+  if (errors.length > 1) {
+    throw new AggregateError(errors, 'Benchmark exact-command cleanup failed')
+  }
+  return true
 }
 
 function sleepSync(milliseconds) {
@@ -78,11 +156,21 @@ export function spawnBenchmarkProcess(executable, args, options) {
   })
 }
 
-export function signalValidatedProcessGroup(pgid, environmentFragment, signal) {
+const processGroupSignalOperations = {
+  processIdentities,
+  signalProcess: process.kill.bind(process)
+}
+
+export function signalValidatedProcessGroup(
+  pgid,
+  environmentFragment,
+  signal,
+  operations = processGroupSignalOperations
+) {
   if (!Number.isInteger(pgid) || pgid <= 0) {
     return false
   }
-  const members = processIdentities(true).filter((identity) => identity.pgid === pgid)
+  const members = operations.processIdentities(true).filter((identity) => identity.pgid === pgid)
   if (members.length === 0) {
     return false
   }
@@ -90,31 +178,67 @@ export function signalValidatedProcessGroup(pgid, environmentFragment, signal) {
     throw new Error('Benchmark process group no longer belongs to this trial')
   }
   const anchor = members[0]
+  let stopped = false
   try {
-    process.kill(anchor.pid, 'SIGSTOP')
-    const stoppedAnchor = processIdentities(true).find((identity) => identity.pid === anchor.pid)
+    operations.signalProcess(anchor.pid, 'SIGSTOP')
+    stopped = true
+    const stoppedAnchor = operations
+      .processIdentities(true)
+      .find((identity) => identity.pid === anchor.pid)
     if (!sameIdentity(stoppedAnchor, anchor)) {
-      process.kill(anchor.pid, 'SIGCONT')
+      stopped = false
       throw new Error('Benchmark process group anchor changed before signaling')
     }
-    process.kill(-pgid, 'SIGSTOP')
-    const stoppedMembers = processIdentities(true).filter((identity) => identity.pgid === pgid)
+    operations.signalProcess(-pgid, 'SIGSTOP')
+    const stoppedMembers = operations
+      .processIdentities(true)
+      .filter((identity) => identity.pgid === pgid)
     if (
       stoppedMembers.length === 0 ||
       stoppedMembers.some((identity) => !identity.command.includes(environmentFragment))
     ) {
-      process.kill(-pgid, 'SIGCONT')
       throw new Error('Benchmark process group changed before signaling')
     }
     if (signal !== 'SIGSTOP') {
-      process.kill(-pgid, signal)
+      operations.signalProcess(-pgid, signal)
+      if (signal !== 'SIGKILL') {
+        operations.signalProcess(-pgid, 'SIGCONT')
+      }
+      stopped = false
     }
     return true
   } catch (error) {
-    if (error.code !== 'ESRCH') {
-      throw error
+    const recoveryErrors = []
+    if (stopped) {
+      try {
+        const recoveryMembers = operations
+          .processIdentities(true)
+          .filter(
+            (identity) => identity.pgid === pgid && identity.command.includes(environmentFragment)
+          )
+        for (const member of recoveryMembers) {
+          try {
+            operations.signalProcess(member.pid, 'SIGCONT')
+          } catch (caught) {
+            if (caught?.code !== 'ESRCH') {
+              recoveryErrors.push(caught)
+            }
+          }
+        }
+      } catch (caught) {
+        recoveryErrors.push(caught)
+      }
     }
-    return false
+    if (recoveryErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...recoveryErrors],
+        'Benchmark process group signal recovery failed'
+      )
+    }
+    if (error.code === 'ESRCH') {
+      return false
+    }
+    throw error
   }
 }
 
@@ -128,28 +252,57 @@ export function processIdentityIsCurrent(identity) {
   return sameIdentity(processIdentity(identity?.pid), identity)
 }
 
-export function signalProcessIdentity(identity, expectedCommandFragment, signal) {
+const processSignalOperations = {
+  processIdentity,
+  signalProcess: process.kill.bind(process)
+}
+
+export function signalProcessIdentity(
+  identity,
+  expectedCommandFragment,
+  signal,
+  operations = processSignalOperations
+) {
   validateDetachedIdentity(identity, expectedCommandFragment)
-  const currentIdentity = processIdentity(identity.pid)
+  const currentIdentity = operations.processIdentity(identity.pid)
   if (!currentIdentity) {
     return false
   }
   if (!sameIdentity(currentIdentity, identity)) {
     throw new Error('Recorded benchmark helper PID now belongs to another process')
   }
+  let stopped = false
   try {
-    process.kill(identity.pid, 'SIGSTOP')
-    const stoppedIdentity = processIdentity(identity.pid)
+    operations.signalProcess(identity.pid, 'SIGSTOP')
+    stopped = true
+    const stoppedIdentity = operations.processIdentity(identity.pid)
     if (!sameIdentity(stoppedIdentity, identity)) {
-      process.kill(identity.pid, 'SIGCONT')
+      stopped = false
       throw new Error('Recorded benchmark helper PID changed before signaling')
     }
-    process.kill(-identity.pgid, signal)
+    operations.signalProcess(-identity.pgid, signal)
     if (signal !== 'SIGKILL') {
-      process.kill(-identity.pgid, 'SIGCONT')
+      operations.signalProcess(-identity.pgid, 'SIGCONT')
     }
+    stopped = false
     return true
   } catch (error) {
+    let resumeError
+    if (stopped) {
+      try {
+        const recoveryIdentity = operations.processIdentity(identity.pid)
+        if (sameIdentity(recoveryIdentity, identity)) {
+          operations.signalProcess(identity.pid, 'SIGCONT')
+        }
+      } catch (caught) {
+        if (caught?.code !== 'ESRCH') {
+          resumeError = caught
+        }
+      }
+    }
+    if (resumeError) {
+      throw new AggregateError([error, resumeError], 'Benchmark helper signal recovery failed')
+    }
     if (error.code === 'ESRCH') {
       return false
     }
@@ -166,23 +319,6 @@ export function killRecordedProcess(recordPath, expectedCommandFragment) {
     return false
   }
   return waitForIdentityExit(record)
-}
-
-export function killProcessMatchingCommand(expectedCommandFragments) {
-  const matches = processIdentities().filter(
-    (identity) =>
-      identity.pgid === identity.pid &&
-      expectedCommandFragments.every((fragment) => identity.command.includes(fragment))
-  )
-  if (matches.length === 0) {
-    return false
-  }
-  for (const match of matches) {
-    if (signalProcessIdentity(match, expectedCommandFragments[0], 'SIGKILL')) {
-      waitForIdentityExit(match)
-    }
-  }
-  return true
 }
 
 export function killRecordedAndMatchingProcesses(
