@@ -760,9 +760,10 @@
         "devSearchKeywordNotification": "notification",
         "projectHostsSummary": "{{value0}} hosts",
         "linearTitle": "Linear",
-        "linearDescription": "Give agents the skill to read and update your linked Linear tickets.",
+        "linearDescription": "How Linear works in Orca, setup checklist, agent skill, and example prompts.",
         "pluginsTitle": "Plugins",
-        "pluginsDescription": "Instala y administra plugins experimentales de Orca."
+        "pluginsDescription": "Instala y administra plugins experimentales de Orca.",
+        "tasksDescription": "Connect providers, install the Linear skill, and choose what appears in Tasks."
       },
       "useAppMenuPaste": {
         "pasteTooLarge": "El contenido pegado es demasiado grande."
@@ -6748,7 +6749,8 @@
           "dev": "Herramientas de desarrollo",
           "devDescription": "Herramientas solo de desarrollo para probar estados de la UI.",
           "linearTitle": "Linear",
-          "linearDescription": "Give agents the skill to read and update your linked Linear tickets."
+          "linearDescription": "How Linear works in Orca, setup checklist, agent skill, and example prompts.",
+          "tasksDescription": "Connect providers, install the Linear skill, and choose what appears in Tasks."
         },
         "SettingsFormControls": {
           "42a4d15a30": "No hay fuentes coincidentes.",
@@ -6988,7 +6990,27 @@
           "dd67a1b6e1": "Muestra GitLab en el selector de fuentes de Tareas y en los accesos directos de la barra lateral.",
           "7c5d7fdc20": "GitLab",
           "1db47236cd": "Muestra GitHub en el selector de fuentes de Tareas y en los accesos directos de la barra lateral.",
-          "e14063e727": "GitHub"
+          "e14063e727": "GitHub",
+          "connectProviderTitle": "Connect {{provider}}",
+          "connectCodeHostDescription": "Install and authenticate the CLI under Integrations so Orca can load issues.",
+          "openIntegrations": "Integrations",
+          "connectInIntegrations": "Set up in Integrations",
+          "connectJiraTitle": "Connect Jira",
+          "connectJiraDescription": "Add a Jira Cloud site or self-hosted instance with an API token or PAT.",
+          "manageJira": "Manage access",
+          "addJira": "Add Jira access",
+          "githubDescription": "Browse GitHub issues and start workspaces from them.",
+          "gitlabDescription": "Browse GitLab issues and start workspaces from them.",
+          "linearDescription": "Connect Linear, install the agent skill, and show it in Tasks.",
+          "jiraDescription": "Connect Jira Cloud or self-hosted Jira and show it in Tasks.",
+          "setupTitle": "Task management setup",
+          "setupDescription": "Finish connect + visibility for each provider in one place. Linear also needs the agent skill so coding agents can read and update tickets.",
+          "incompleteBannerTitle": "Some visible providers still need setup",
+          "incompleteBannerBody": "Hide providers you do not use, or expand a card and finish its steps. For Linear: API access, the agent skill, and Show in Tasks.",
+          "providersDescription": "Each card walks through connection (and skill, for Linear) plus whether it appears in Tasks.",
+          "integrationsHint": "Credentials for all providers also live under",
+          "integrationsLink": "Integrations",
+          "skillHint": ". After Linear is connected, usage examples stay under Settings → Linear."
         },
         "TerminalAppearanceSection": {
           "a14a427ae4": "Grosor de la línea divisoria del panel.",
@@ -8628,7 +8650,12 @@
             "cf0e3e0c2f": "proveedor",
             "2ec54bee51": "tareas",
             "765f0c544d": "Elige qué proveedores de tareas aparecen en la página Tareas y en los accesos directos de la barra lateral.",
-            "5b8e4aace5": "Proveedores de tareas"
+            "5b8e4aace5": "Proveedores de tareas",
+            "providersDescription": "Connect task providers, install the Linear agent skill, and choose what appears in Tasks.",
+            "setup": "configuración",
+            "apiKey": "clave de API",
+            "skill": "habilidad",
+            "connect": "conectar"
           }
         },
         "terminal": {
@@ -9380,13 +9407,13 @@
                   "notInstalled": "No instalado",
                   "recheck": "Reverificar",
                   "installedDescription": "Habilidad del agente instalada. Para actualizarla, ejecuta:",
-                  "description": "Permite que tus agentes lean y editen tareas de Linear.",
+                  "description": "Permite que tus agentes lean y editen tareas de Linear. La configuración guiada completa (conexión + skill + visibilidad) está en Ajustes → Task Sources.",
                   "copyCommand": "Copiar comando"
                 }
               },
               "search": {
                 "title": "Linear",
-                "description": "Give agents the skill to read and update your linked Linear tickets."
+                "description": "Linear skill status, usage examples, and links to Task Sources setup."
               }
             }
           }
@@ -9475,15 +9502,15 @@
         },
         "LinearAgentSkillPane": {
           "title": "Linear",
-          "description": "Give agents the skill to read and update your linked Linear tickets.",
+          "description": "How Linear works in Orca: browse issues, start linked workspaces, and let agents update tickets with /orca-linear.",
           "skillTitle": "Linear skill",
           "skillDescription": "Enables agents to read linked tickets and post updates to Linear through Orca.",
-          "howToUse": "How to use it",
-          "howToUseDescription": "Ask an agent working a Linear-linked worktree to read context, post updates, move the ticket, or attach the PR.",
+          "howToUse": "Example prompts",
+          "howToUseDescription": "Click a card to copy a prompt. Use these in a Linear-linked worktree after the skill is installed.",
           "terminalTitle": "Linear skill setup",
           "terminalAriaLabel": "Linear skill install terminal",
-          "manageConnectionHint": "Review connected Linear workspaces and API keys in",
-          "manageConnectionLink": "Integrations settings"
+          "skillSectionTitle": "Agent skill",
+          "skillSectionBody": "Install or update the skill agents need. You can also complete this step from Task Sources during first-time setup."
         },
         "MobileRelayBetaNotice": {
           "notice": "Orca Relay is in beta."
@@ -9793,6 +9820,69 @@
             "logs": "registros de plugins",
             "development": "plugins de desarrollo"
           }
+        },
+        "LinearAgentSkillGuide": {
+          "setupConnectTitle": "1. Connect Linear",
+          "setupConnectBody": "Personal API key so Orca can list issues and open linked workspaces.",
+          "manageKeys": "Manage keys",
+          "addAccess": "Add access",
+          "setupSkillTitle": "2. Install the agent skill",
+          "setupSkillBody": "Gives coding agents /orca-linear for read, update, triage, and PR attach.",
+          "skillReady": "Ready below",
+          "installBelow": "Install below",
+          "setupVisibleTitle": "3. Show Linear in Tasks",
+          "setupVisibleBody": "Keeps Linear in the Tasks source picker and sidebar shortcuts.",
+          "openTaskSources": "Task Sources",
+          "setupTitle": "Setup checklist",
+          "setupBody": "All three are required for the full Tasks + agent loop. First-time path is also under Task Sources.",
+          "setupReady": "All set",
+          "setupProgress": "{{done}} of {{total}} ready",
+          "setupHint": "Prefer one guided place for connect + skill + visibility?",
+          "openFullSetup": "Open Task Sources setup",
+          "notesTitle": "Good to know",
+          "notesIntro": "Quick reminders once Linear is connected and the skill is installed.",
+          "noteLinkedTitle": "Start from a Linear issue",
+          "noteLinkedBody": "Ticket actions work best in a worktree created from Tasks so the issue stays linked as context.",
+          "noteSlashTitle": "Mention /orca-linear",
+          "noteSlashBody": "In chat, use /orca-linear (or ask in plain language) so the agent loads the skill for that turn.",
+          "noteKeysTitle": "Keys follow the runtime",
+          "noteKeysBody": "API keys and workspaces are stored for the active runtime. Manage them anytime under Integrations.",
+          "noteVisibilityTitle": "Hiding ≠ disconnect",
+          "noteVisibilityBody": "Hiding Linear in Task Sources only removes it from the picker. It does not remove your key or skill."
+        },
+        "TaskSourceLinearSetup": {
+          "connectTitle": "Connect Linear",
+          "connectDescription": "Add a Personal API key so Orca can browse issues and open workspaces with ticket context.",
+          "manageAccess": "Manage access",
+          "addAccess": "Add Linear access",
+          "connectedHint": "Workspaces and keys are stored for the active runtime. You can add more access any time.",
+          "recheck": "Re-check connection",
+          "skillTitle": "Install Linear agent skill",
+          "skillDescription": "Gives agents the /orca-linear skill to read tickets, post updates, move states, and attach PRs.",
+          "skillBlocked": "Connect Linear first, then install the skill for agents.",
+          "skillPanelTitle": "Linear skill",
+          "terminalTitle": "Linear skill setup",
+          "terminalAriaLabel": "Linear skill install terminal",
+          "showDescription": "Include Linear in the Tasks page source picker and sidebar shortcuts."
+        },
+        "TaskSourceProviderCard": {
+          "statusChecking": "Checking…",
+          "statusReady": "Ready",
+          "statusConnectRequired": "Connect required",
+          "statusSkillRequired": "Skill required",
+          "statusHidden": "Hidden from Tasks",
+          "statusIncomplete": "Needs setup",
+          "collapseSetup": "Contraer los pasos de configuración de {{provider}}",
+          "expandSetup": "Mostrar los pasos de configuración de {{provider}}"
+        },
+        "TaskSourceShowInTasksStep": {
+          "shown": "Shown",
+          "show": "Show",
+          "hideProviderAction": "Ocultar {{provider}} de Tareas",
+          "showProviderAction": "Mostrar {{provider}} en Tareas",
+          "lastProviderHint": "At least one provider must stay visible in Tasks.",
+          "title": "Show in Tasks",
+          "description": "Include this provider in the Tasks source picker and sidebar shortcuts."
         }
       },
       "right": {

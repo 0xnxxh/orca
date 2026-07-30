@@ -1,0 +1,169 @@
+import { useId, useState, type ReactNode } from 'react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
+import { IntegrationStatusPill } from '@/components/integration-status-pill'
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
+import {
+  getShowInTasksActionLabel,
+  getShowInTasksLabel,
+  getShowInTasksLastProviderHint
+} from './TaskSourceShowInTasksStep'
+import {
+  TASK_PROVIDER_SETUP_STATUS_TONE,
+  getTaskProviderCompletedSteps,
+  getTaskProviderSetupStatus,
+  isTaskProviderChecking,
+  type TaskProviderReadiness,
+  type TaskProviderSetupStatus
+} from './task-source-setup-state'
+import { translate } from '@/i18n/i18n'
+
+type TaskSourceProviderCardProps = {
+  icon: ReactNode
+  name: string
+  description: string
+  readiness: TaskProviderReadiness
+  visible: boolean
+  canHide: boolean
+  defaultExpanded: boolean
+  onToggleVisible: () => void
+  children?: ReactNode
+}
+
+function getSetupStatusLabel(status: TaskProviderSetupStatus): string {
+  switch (status) {
+    case 'checking':
+      return translate(
+        'auto.components.settings.TaskSourceProviderCard.statusChecking',
+        'Checking…'
+      )
+    case 'ready':
+      return translate('auto.components.settings.TaskSourceProviderCard.statusReady', 'Ready')
+    case 'connect-required':
+      return translate(
+        'auto.components.settings.TaskSourceProviderCard.statusConnectRequired',
+        'Connect required'
+      )
+    case 'skill-required':
+      return translate(
+        'auto.components.settings.TaskSourceProviderCard.statusSkillRequired',
+        'Skill required'
+      )
+    case 'hidden':
+      return translate(
+        'auto.components.settings.TaskSourceProviderCard.statusHidden',
+        'Hidden from Tasks'
+      )
+    case 'incomplete':
+      return translate(
+        'auto.components.settings.TaskSourceProviderCard.statusIncomplete',
+        'Needs setup'
+      )
+  }
+}
+
+export function TaskSourceProviderCard({
+  icon,
+  name,
+  description,
+  readiness,
+  visible,
+  canHide,
+  defaultExpanded,
+  onToggleVisible,
+  children
+}: TaskSourceProviderCardProps): React.JSX.Element {
+  const [expandedOverride, setExpandedOverride] = useState<boolean | null>(null)
+  const expanded = expandedOverride ?? defaultExpanded
+  const status = getTaskProviderSetupStatus(readiness)
+  const progress = getTaskProviderCompletedSteps(readiness)
+  const visibilityLocked = visible && !canHide
+  const setupId = useId()
+
+  return (
+    <div className="rounded-xl border border-border/60 bg-card/30">
+      <div className="flex flex-wrap items-start gap-3 p-3.5">
+        <span
+          className={cn(
+            'flex size-9 shrink-0 items-center justify-center rounded-md border',
+            readiness.connected
+              ? 'border-foreground/15 bg-background/80'
+              : 'border-border/60 bg-muted/40 text-muted-foreground'
+          )}
+        >
+          {icon}
+        </span>
+
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-foreground">{name}</p>
+            <IntegrationStatusPill tone={TASK_PROVIDER_SETUP_STATUS_TONE[status]}>
+              {getSetupStatusLabel(status)}
+            </IntegrationStatusPill>
+            {isTaskProviderChecking(readiness) ||
+            status === 'ready' ||
+            status === 'hidden' ? null : (
+              <span
+                className={cn(
+                  'rounded-full px-2 py-0.5 text-[10px] font-medium',
+                  progress.completed === progress.total
+                    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+                    : 'bg-muted text-muted-foreground'
+                )}
+              >
+                {`${progress.completed}/${progress.total}`}
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">{description}</p>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-2">
+          {!expanded ? (
+            <Button
+              type="button"
+              size="sm"
+              variant={visible ? 'outline' : 'secondary'}
+              disabled={visibilityLocked}
+              title={visibilityLocked ? getShowInTasksLastProviderHint() : undefined}
+              aria-label={getShowInTasksActionLabel(visible, canHide, name)}
+              onClick={onToggleVisible}
+              aria-pressed={visible}
+            >
+              {getShowInTasksLabel(visible)}
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-expanded={expanded}
+            aria-controls={setupId}
+            aria-label={
+              expanded
+                ? translate(
+                    'auto.components.settings.TaskSourceProviderCard.collapseSetup',
+                    'Collapse {{provider}} setup steps',
+                    { provider: name }
+                  )
+                : translate(
+                    'auto.components.settings.TaskSourceProviderCard.expandSetup',
+                    'Show {{provider}} setup steps',
+                    { provider: name }
+                  )
+            }
+            onClick={() => setExpandedOverride(!expanded)}
+          >
+            {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+          </Button>
+        </div>
+      </div>
+
+      {expanded ? (
+        <div id={setupId} className="border-t border-border/50 px-3.5 py-1">
+          {children}
+        </div>
+      ) : null}
+    </div>
+  )
+}

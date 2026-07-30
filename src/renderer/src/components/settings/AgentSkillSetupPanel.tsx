@@ -223,9 +223,8 @@ export function AgentSkillSetupPanel({
           className="gap-1.5"
           onClick={() => {
             void onRecheck()
-            if (freshnessSkillName) {
-              notifyInstalledAgentSkillsChanged()
-            }
+            // Broadcast so sibling readiness subscribers (e.g. Task Sources cards) refresh too.
+            notifyInstalledAgentSkillsChanged()
           }}
           disabled={loading}
         >

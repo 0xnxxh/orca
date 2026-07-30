@@ -30,6 +30,11 @@ const updateCapableCallers = new Map<string, readonly string[]>([
     ['getLinearAgentSkillUpdateTarget', 'installedCommand={updateCommand}']
   ],
   [
+    // Task Sources must resolve the same Linear skill update target.
+    'src/renderer/src/components/settings/TaskSourceLinearSetup.tsx',
+    ['getLinearAgentSkillUpdateTarget', 'installedCommand={updateCommand}']
+  ],
+  [
     'src/renderer/src/components/settings/EphemeralVmsPane.tsx',
     ['EPHEMERAL_VMS_SKILL_UPDATE_COMMAND', 'installedCommand={updateCommand}']
   ],

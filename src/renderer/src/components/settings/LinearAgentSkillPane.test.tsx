@@ -17,7 +17,9 @@ const mocks = vi.hoisted(() => ({
   panelProps: [] as Record<string, unknown>[],
   runtime: 'native' as 'native' | 'wsl',
   skillInstalled: true,
-  updateSkillName: 'orca-linear'
+  updateSkillName: 'orca-linear',
+  linearConnected: true,
+  visibleTaskProviders: ['github', 'linear'] as string[]
 }))
 
 vi.mock('./AgentSkillSetupPanel', () => ({
@@ -68,6 +70,41 @@ vi.mock('@/hooks/useActiveProjectSkillRuntime', () => ({
   })
 }))
 
+vi.mock('@/hooks/useLinearProviderConnected', () => ({
+  useLinearProviderConnected: () => mocks.linearConnected
+}))
+
+vi.mock('@/lib/provider-runtime-context', () => ({
+  getProviderRuntimeContextKey: () => 'runtime-key'
+}))
+
+vi.mock('@/components/linear-api-key-dialog', () => ({
+  LinearApiKeyDialog: () => null
+}))
+
+vi.mock('@/store', () => ({
+  useAppStore: (
+    selector: (state: {
+      openSettingsPage: () => void
+      openSettingsTarget: (target: unknown) => void
+      settings: { visibleTaskProviders: string[] }
+      linearStatusChecked: boolean
+      linearStatusContextKey: string
+      checkLinearConnection: () => void
+      settingsSearchQuery: string
+    }) => unknown
+  ) =>
+    selector({
+      openSettingsPage: vi.fn(),
+      openSettingsTarget: vi.fn(),
+      settings: { visibleTaskProviders: mocks.visibleTaskProviders },
+      linearStatusChecked: true,
+      linearStatusContextKey: 'runtime-key',
+      checkLinearConnection: vi.fn(),
+      settingsSearchQuery: ''
+    })
+}))
+
 let root: Root | null = null
 let container: HTMLDivElement | null = null
 
@@ -95,13 +132,22 @@ describe('LinearAgentSkillPane', () => {
     mocks.runtime = 'native'
     mocks.skillInstalled = true
     mocks.updateSkillName = 'orca-linear'
+    mocks.linearConnected = true
+    mocks.visibleTaskProviders = ['github', 'linear']
   })
 
-  it('renders the Linear skill card and the usage examples', () => {
+  it('renders guide content, skill section, and usage examples', () => {
     const markup = renderToStaticMarkup(<LinearAgentSkillPane />)
 
+    expect(markup).toContain('Setup checklist')
+    expect(markup).toContain('Agent skill')
     expect(markup).toContain('Linear skill')
-    expect(markup).toContain('How to use it')
+    expect(markup).toContain('Example prompts')
+    expect(markup).toContain('Good to know')
+    expect(markup).toContain('Start from a Linear issue')
+    expect(markup).toContain('All set')
+    // Notes stay after examples so setup stays primary.
+    expect(markup.indexOf('Example prompts')).toBeLessThan(markup.indexOf('Good to know'))
     const examples = getLinearUsageExamples()
     expect(examples).toHaveLength(5)
     for (const example of examples) {
@@ -109,6 +155,14 @@ describe('LinearAgentSkillPane', () => {
       expect(example.prompt).toContain('/orca-linear')
       expect(example.prompt).not.toContain('{{value0}}')
     }
+  })
+
+  it('shows incomplete checklist when the skill is missing', () => {
+    mocks.skillInstalled = false
+    const markup = renderToStaticMarkup(<LinearAgentSkillPane />)
+
+    expect(markup).toContain('2 of 3 ready')
+    expect(markup).toContain('Install below')
   })
 
   it('passes the orca-linear install/update commands and freshness on a local runtime', async () => {
