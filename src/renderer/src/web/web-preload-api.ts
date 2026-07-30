@@ -7,6 +7,8 @@ import type {
   NativeChatAppendedMessages
 } from '../../../preload/api-types'
 import type { RuntimeRpcResponse } from '../../../shared/runtime-rpc-envelope'
+import { parseHostAccessLink } from '../../../shared/remote-pairing-address'
+import { verifyRemotePairingRuntimeStatus } from '../../../shared/remote-pairing-verification'
 import type { AiVaultListArgs, AiVaultListResult } from '../../../shared/ai-vault-types'
 import type {
   AiVaultPrepareSessionResumeArgs,
@@ -1360,6 +1362,88 @@ function createRuntimeEnvironmentsApi(): NonNullable<Partial<PreloadApi>['runtim
       manuallyDisconnectedEnvironmentIds.clear()
       saveStoredWebRuntimeEnvironment(activeEnvironment)
       return { environment: redactStoredWebRuntimeEnvironment(activeEnvironment) }
+    },
+    verifyAndAddFromPairingCode: async ({ name, pairingCode, allowLoopback }) => {
+      const parsed = parseHostAccessLink(pairingCode)
+      if (!parsed.ok) {
+        return { ok: false, kind: 'access-link-invalid', message: parsed.message }
+      }
+      if (parsed.value.endpointKind === 'loopback' && !allowLoopback) {
+        return {
+          ok: false,
+          kind: 'host-unreachable',
+          message: translate(
+            'auto.web.webPreloadApi.loopbackPairingBlocked',
+            'This access link points back to this device.'
+          )
+        }
+      }
+      let client: WebRuntimeClient | null = null
+      let runtimeStatus: RuntimeStatus
+      try {
+        client = new WebRuntimeClient(parsed.value.pairing)
+        const response = (await client.call('status.get', undefined, {
+          timeoutMs: 15_000
+        })) as RuntimeRpcResponse<RuntimeStatus>
+        if (!response.ok) {
+          return {
+            ok: false,
+            kind: 'connection-interrupted',
+            message: response.error.message
+          }
+        }
+        const statusVerification = verifyRemotePairingRuntimeStatus(response.result)
+        if (!statusVerification.ok) {
+          return statusVerification
+        }
+        runtimeStatus = statusVerification.runtimeStatus
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('Invalid public key')) {
+          return {
+            ok: false,
+            kind: 'access-link-invalid',
+            message: translate(
+              'auto.web.webPreloadApi.remotePairingInvalidDetails',
+              'This access link contains invalid connection details.'
+            )
+          }
+        }
+        if (error instanceof Error && error.message.startsWith('Unauthorized.')) {
+          return {
+            ok: false,
+            kind: 'access-link-invalid',
+            message: error.message
+          }
+        }
+        return {
+          ok: false,
+          kind: 'host-unreachable',
+          message: translate(
+            'auto.web.webPreloadApi.remotePairingUnreachable',
+            'Cannot reach Orca at {{endpoint}}.',
+            { endpoint: parsed.value.displayEndpoint }
+          )
+        }
+      } finally {
+        client?.close()
+      }
+      const usesSshTunnel = parsed.value.endpointKind === 'loopback' && allowLoopback === true
+      const nextEnvironment = createStoredWebRuntimeEnvironment({
+        name,
+        offer: parsed.value.pairing,
+        previousEnvironment: activeEnvironment,
+        ...(usesSshTunnel ? { connectionDependency: 'ssh-tunnel' as const } : {})
+      })
+      // Why: a browser storage failure must leave the currently active host usable.
+      saveStoredWebRuntimeEnvironment(nextEnvironment)
+      manuallyDisconnectedEnvironmentIds.clear()
+      closeActiveRuntimeClients()
+      activeEnvironment = nextEnvironment
+      return {
+        ok: true,
+        environment: redactStoredWebRuntimeEnvironment(nextEnvironment),
+        runtimeStatus
+      }
     },
     resolve: async ({ selector }) =>
       redactStoredWebRuntimeEnvironment(resolveEnvironment(selector)),

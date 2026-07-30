@@ -197,6 +197,17 @@ describe('sendRemoteRuntimeRequest', () => {
     )
   })
 
+  it('classifies a non-Orca handshake as a host identity mismatch', async () => {
+    const server = await createInvalidHandshakeServer()
+
+    await expect(
+      sendRemoteRuntimeRequest(server.pairing, 'status.get', {}, 1000)
+    ).rejects.toMatchObject({
+      code: 'invalid_runtime_response',
+      pairingStage: 'host-identity'
+    })
+  })
+
   it('refreshes the per-call timeout when the runtime sends keepalive frames', async () => {
     const server = await createOneShotServer()
 
@@ -407,6 +418,30 @@ async function createClosingServer(
   servers.push(wss)
   wss.on('connection', (ws) => {
     ws.close(code, reason)
+  })
+
+  await new Promise<void>((resolve) => wss.once('listening', resolve))
+  const address = wss.address() as AddressInfo
+  const pairing = parsePairingCode(
+    encodePairingOffer({
+      v: 2,
+      endpoint: `ws://127.0.0.1:${address.port}`,
+      deviceToken: 'device-token',
+      publicKeyB64: publicKeyToBase64(serverKeyPair.publicKey)
+    })
+  )
+  if (!pairing) {
+    throw new Error('Failed to create test pairing')
+  }
+  return { pairing }
+}
+
+async function createInvalidHandshakeServer(): Promise<{ pairing: PairingOffer }> {
+  const serverKeyPair = generateKeyPair()
+  const wss = new WebSocketServer({ port: 0 })
+  servers.push(wss)
+  wss.on('connection', (ws) => {
+    ws.once('message', () => ws.send(JSON.stringify({ type: 'not_orca' })))
   })
 
   await new Promise<void>((resolve) => wss.once('listening', resolve))
