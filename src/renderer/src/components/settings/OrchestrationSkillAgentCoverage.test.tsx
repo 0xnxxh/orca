@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeClientTarget } from '@/runtime/runtime-client-target'
+import type { DiscoveredSkill, SkillDiscoverySource } from '../../../../shared/skills'
 import { OrchestrationSkillAgentCoverage } from './OrchestrationSkillAgentCoverage'
 
 const useDetectedAgents = vi.fn(() => ({
@@ -21,7 +22,7 @@ vi.mock('@/hooks/use-active-skill-discovery-runtime-target', () => ({
   useActiveSkillDiscoveryRuntimeTarget: () => useActiveSkillDiscoveryRuntimeTarget()
 }))
 
-const claudeHomeSource = {
+const claudeHomeSource: SkillDiscoverySource = {
   id: 'claude-home',
   label: 'Claude home',
   path: '/Users/test/.claude/skills',
@@ -29,9 +30,9 @@ const claudeHomeSource = {
   providers: ['claude'],
   owner: 'claude',
   exists: true
-} as const
+}
 
-const claudeHomeSkill = {
+const claudeHomeSkill: DiscoveredSkill = {
   id: 'claude-skill',
   name: 'orchestration',
   description: null,
@@ -44,7 +45,7 @@ const claudeHomeSkill = {
   installed: true,
   fileCount: 1,
   updatedAt: null
-} as const
+}
 
 describe('OrchestrationSkillAgentCoverage', () => {
   beforeEach(() => {
@@ -92,7 +93,8 @@ describe('OrchestrationSkillAgentCoverage', () => {
 
   it('stays loading while the skill-scan host is unresolved', () => {
     useActiveSkillDiscoveryRuntimeTarget.mockReturnValue(null)
-    useDetectedAgents.mockReturnValue({
+    // Why: Once keeps this loading state from leaking into later tests.
+    useDetectedAgents.mockReturnValueOnce({
       detectedIds: null as never,
       isLoading: true,
       isRefreshing: false,
