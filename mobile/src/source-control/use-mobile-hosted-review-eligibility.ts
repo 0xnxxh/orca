@@ -6,6 +6,10 @@ import {
   fetchMobileHostedReviewEligibility,
   type MobileHostedReviewEligibilityInput
 } from './mobile-hosted-review-service'
+import {
+  recallHostedReviewEligibility,
+  rememberHostedReviewEligibility
+} from './hosted-review-eligibility-memory'
 import type { MobileCreatePrEligibilityState } from './mobile-create-pr-action'
 
 export type MobileHostedReviewEligibilityLoaderInput = {
@@ -58,6 +62,25 @@ export function acceptsMobileHostedReviewEligibilityLoad(args: {
 
 export function eligibilityStateAfterMobileHostedReviewError(): MobileCreatePrEligibilityState {
   return { kind: 'error' }
+}
+
+export function renderedMobileHostedReviewEligibilityState(args: {
+  state: MobileCreatePrEligibilityState
+  shouldFetch: boolean
+  remembered: HostedReviewCreationEligibility | null
+}): MobileCreatePrEligibilityState {
+  if (!args.shouldFetch) {
+    return { kind: 'idle' }
+  }
+  const { state, remembered } = args
+  // Why: under shouldFetch, `idle` only means the fetch effect hasn't run yet,
+  // and cold `loading` carries no snapshot. Both must render as an in-flight
+  // load seeded with the last resolved answer so the Create PR row's footprint
+  // is right on the first painted frame instead of shifting later (#8411).
+  if (state.kind === 'idle' || (state.kind === 'loading' && !state.eligibility)) {
+    return { kind: 'loading', eligibility: remembered }
+  }
+  return state
 }
 
 export function useMobileHostedReviewEligibility(
@@ -127,6 +150,11 @@ export function useMobileHostedReviewEligibility(
     }
     void fetchMobileHostedReviewEligibility(client, worktreeId, requestInput)
       .then((eligibility: HostedReviewCreationEligibility | null) => {
+        if (eligibility) {
+          // Remember even when superseded: the answer is still valid for the
+          // identity it was fetched for, and seeds that branch's next open.
+          rememberHostedReviewEligibility(key.identity, eligibility)
+        }
         if (!isCurrent()) {
           return
         }
@@ -159,5 +187,9 @@ export function useMobileHostedReviewEligibility(
   // snapshot in the same render, before the effect posts `idle` — otherwise the
   // Create PR button could stay enabled for one paint after the worktree is
   // no longer fetchable.
-  return shouldFetch ? state : { kind: 'idle' }
+  return renderedMobileHostedReviewEligibilityState({
+    state,
+    shouldFetch,
+    remembered: recallHostedReviewEligibility(key.identity)
+  })
 }

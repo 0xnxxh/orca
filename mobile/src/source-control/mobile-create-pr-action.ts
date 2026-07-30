@@ -61,7 +61,17 @@ export function buildMobileCreatePrAction({
   }
   const eligibility = eligibilityState.eligibility
   if (!eligibility) {
-    return hiddenAction(noop)
+    // Cold loading: the first answer for this branch is still in flight.
+    // Reserve the row with a disabled placeholder instead of unmounting, so
+    // the changed-files list doesn't shift under the user when it lands (#8411).
+    return {
+      visible: true,
+      label: 'Create Pull Request',
+      disabled: true,
+      loading: true,
+      pushFirst: false,
+      onPress: noop
+    }
   }
   // Why: mirror desktop's structural provider gate (supportsHostedReviewCreation)
   // instead of relying on the host always emitting a hidden blockedReason for
