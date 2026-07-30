@@ -13,6 +13,10 @@ vi.mock('@/store', () => ({
 import { seedNativeChatLaunchDraftForAgentTab } from './agent-launch-prompt-delivery'
 import { canMirrorLaunchDraftToNativeChat } from './native-chat-launch-draft-mirrorability'
 import { decideInitialAgentTabViewMode } from './native-chat-initial-view-mode'
+import { AGENT_TUI_CLEAR_MAX_LINES } from '../../../shared/agent-tui-input-clear'
+
+const maxLineDraft = Array.from({ length: AGENT_TUI_CLEAR_MAX_LINES }, () => 'line').join('\n')
+const overMaxLineDraft = `${maxLineDraft}\nline`
 
 /**
  * Every shape a launch draft takes today. `formatDraftContextBlock` appends a
@@ -28,6 +32,8 @@ const DRAFT_TEXTS = [
   'ORC-123: Restore linked quick-create\nhttps://linear.app/o/issue/ORC-123',
   'ORC-123 https://linear.app/o/issue/ORC-123\n',
   '  spaced but single line  ',
+  maxLineDraft,
+  overMaxLineDraft,
   '',
   '   ',
   '\n'
@@ -77,6 +83,11 @@ describe('launch draft mirrorability', () => {
     expect(canMirrorLaunchDraftToNativeChat('one\u2029two')).toBe(false)
     expect(canMirrorLaunchDraftToNativeChat('trailing\n')).toBe(true)
     expect(canMirrorLaunchDraftToNativeChat('   ')).toBe(false)
+  })
+
+  it('rejects drafts beyond the bounded TUI-clear budget', () => {
+    expect(canMirrorLaunchDraftToNativeChat(maxLineDraft)).toBe(true)
+    expect(canMirrorLaunchDraftToNativeChat(overMaxLineDraft)).toBe(false)
   })
 
   it('withholds the mirror from agents without a native-chat renderer', () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AGENT_TUI_CLEAR_INPUT_FORWARD,
   AGENT_TUI_CLEAR_INPUT_LINE,
   AGENT_TUI_CLEAR_INPUT_MAX,
   AGENT_TUI_CLEAR_LINE_SLACK,
@@ -11,6 +12,8 @@ import {
 
 const countCtrlU = (bytes: string): number =>
   bytes.split('').filter((char) => char === AGENT_TUI_CLEAR_INPUT_LINE).length
+const countCtrlK = (bytes: string): number =>
+  bytes.split('').filter((char) => char === AGENT_TUI_CLEAR_INPUT_FORWARD).length
 
 describe('buildAgentTuiClearInput', () => {
   // The measured law: N kills + (N-1) joins. A constant here silently under-clears
@@ -23,11 +26,15 @@ describe('buildAgentTuiClearInput', () => {
     [4, 7],
     [10, 19]
   ])('clears %i logical lines with %i Ctrl+U', (lines, expected) => {
-    expect(countCtrlU(buildAgentTuiClearInput(lines))).toBe(expected)
+    const clearInput = buildAgentTuiClearInput(lines)
+    expect(countCtrlU(clearInput)).toBe(expected)
+    expect(countCtrlK(clearInput)).toBe(expected)
   })
 
-  it('emits nothing but Ctrl+U — Ctrl+A/Ctrl+K do not clear a multi-line buffer', () => {
-    expect(buildAgentTuiClearInput(4)).toBe(AGENT_TUI_CLEAR_INPUT_LINE.repeat(7))
+  it('clears before the cursor before clearing the suffix after it', () => {
+    expect(buildAgentTuiClearInput(4)).toBe(
+      AGENT_TUI_CLEAR_INPUT_LINE.repeat(7) + AGENT_TUI_CLEAR_INPUT_FORWARD.repeat(7)
+    )
   })
 
   it('still clears one line for a zero or negative count', () => {

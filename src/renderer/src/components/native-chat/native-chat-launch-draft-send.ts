@@ -11,7 +11,25 @@ export type NativeChatLaunchDraftSendPlan =
   | { kind: 'default' }
 
 /** Prompt glyphs both supported agent TUIs draw at the start of the input line. */
-const COMPOSER_PROMPT_LINE = /^\s*[❯›]\s?(.*)$/
+const COMPOSER_PROMPT_LINE = /^\s*([❯›])\s?(.*)$/
+const CLAUDE_FRAME_LINE = /^\s*─{3,}\s*$/
+const CODEX_FOOTER_LINE = /^\s*\S.*\s[·•]\s.*$/
+
+function composerContinuationIsEmpty(lines: string[], promptIndex: number, glyph: string): boolean {
+  for (let index = promptIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index]!
+    if (
+      (glyph === '❯' && CLAUDE_FRAME_LINE.test(line)) ||
+      (glyph === '›' && CODEX_FOOTER_LINE.test(line))
+    ) {
+      return true
+    }
+    if (line.trim() !== '') {
+      return false
+    }
+  }
+  return true
+}
 
 /**
  * Whether the rendered composer prompt is observably empty. Placeholder text,
@@ -25,7 +43,7 @@ export function agentInputLineCleared(screen: string | null | undefined): boolea
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const match = COMPOSER_PROMPT_LINE.exec(lines[index]!)
     if (match) {
-      return match[1]!.trim() === ''
+      return match[2]!.trim() === '' && composerContinuationIsEmpty(lines, index, match[1]!)
     }
   }
   return false

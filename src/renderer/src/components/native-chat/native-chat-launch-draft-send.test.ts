@@ -85,6 +85,16 @@ describe('agentInputLineCleared', () => {
     expect(agentInputLineCleared(edited)).toBe(false)
   })
 
+  it('does not ignore nonempty continuation rows after an empty prompt row', () => {
+    const residue = [
+      '────────────────────────────────────────',
+      '❯ ',
+      '  suffix after a cursor-middle clear',
+      '────────────────────────────────────────'
+    ].join('\n')
+    expect(agentInputLineCleared(residue)).toBe(false)
+  })
+
   it('treats placeholders and parked drafts as unconfirmed', () => {
     expect(agentInputLineCleared(screenPlaceholder)).toBe(false)
     expect(agentInputLineCleared(screenHoldingDraft)).toBe(false)
