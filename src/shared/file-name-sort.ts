@@ -1,5 +1,6 @@
 // Why hoisted: localeCompare with an options object resolves a fresh ICU collator
-// on every comparison, so a directory sort paid for one per O(n log n) step.
+// on every comparison (~14x this form). Numeric collation itself costs ~5x over
+// bare localeCompare — accepted for the feature; don't "optimize" the hoist away.
 // numeric: true orders "99 - a" before "100 - b", matching Finder/Explorer.
 // Locale pinned to 'en' so local main, renderer, relay, and remote runtime hosts
 // all produce one order regardless of each process's LANG (precedent:
