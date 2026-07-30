@@ -795,4 +795,16 @@ describe('gh error classification', () => {
       message: 'Issues are disabled on this repository.'
     })
   })
+
+  // Why: the renderer detects the Search API 1000-result window by matching
+  // /first 1000 search results/i against this message (#11485) — trimming the
+  // raw stderr out of the validation_error copy would silently downgrade every
+  // window 422 to a generic failure. This pins the contract.
+  it('keeps the search-window phrase in validation_error list messages', () => {
+    const stderr =
+      'Command failed: gh api --hostname github.com search/issues\nValidation Failed: Only the first 1000 search results are available (HTTP 422)'
+    const classified = classifyListIssuesError(stderr)
+    expect(classified.type).toBe('validation_error')
+    expect(classified.message).toMatch(/first 1000 search results/i)
+  })
 })

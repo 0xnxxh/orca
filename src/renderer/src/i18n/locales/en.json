@@ -1891,7 +1891,8 @@
         "noGithubSourceDetectedHint": "it may have no GitHub remote, or the source could not be resolved.",
         "jiraLinkSourceUnavailable": "Couldn’t link this Jira issue. Reconnect Jira or pick the matching site, then try again.",
         "loadPageUnreachable": "Page {{value0}} is beyond what GitHub search can return.",
-        "loadPageFailed": "Page {{value0}} could not be loaded from GitHub."
+        "loadPageFailed": "Page {{value0}} could not be loaded from GitHub.",
+        "loadPageNoMoreResults": "No more results on page {{value0}}."
       },
       "Terminal": {
         "73768427cf": "Close",

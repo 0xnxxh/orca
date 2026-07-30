@@ -3823,6 +3823,9 @@ export default function TaskPage(): React.JSX.Element {
   // can't resurrect proven-unreachable pages, nor be pinned by a speculative
   // withdrawal (see deriveAdvertisedTotalPages).
   const [provenPageLimit, setProvenPageLimit] = useState<number | null>(null)
+  // Why: synchronous mirror of countedTotalPages — the empty-page branch needs
+  // the committed value, not a click-time closure, and refs update immediately.
+  const countedTotalPagesRef = useRef<number | null>(null)
   const fetchWorkItemsNextPage = useAppStore((s) => s.fetchWorkItemsNextPage)
   const countWorkItemsAcrossRepos = useAppStore((s) => s.countWorkItemsAcrossRepos)
 
@@ -6228,23 +6231,24 @@ export default function TaskPage(): React.JSX.Element {
               { id: 'work-items-page-load-failed' }
             )
           } else {
-            // Why: with a real count the clamp is refused, so without a toast
-            // the click would look dead — the count mis-advertised the page.
-            // countedTotalPages is a click-time closure read; worst case the
-            // toast decision is off in a race, which is benign.
-            if (countedTotalPages !== null && countedTotalPages > 0) {
-              toast.error(
+            // Why: with a real count the clamp is refused, so without feedback
+            // the click would look dead — the count over-advertised; nothing
+            // failed, so the copy stays neutral. The ref carries the committed
+            // count, immune to the click-time closure race.
+            const committedCount = countedTotalPagesRef.current
+            if (committedCount !== null && committedCount > 0) {
+              toast(
                 translate(
-                  'auto.components.TaskPage.loadPageFailed',
-                  'Page {{value0}} could not be loaded from GitHub.',
+                  'auto.components.TaskPage.loadPageNoMoreResults',
+                  'No more results on page {{value0}}.',
                   { value0: String(target + 1) }
                 ),
-                { id: 'work-items-page-load-failed' }
+                { id: 'work-items-page-no-more-results' }
               )
             }
-            setCountedTotalPages((previous) =>
-              applyEmptyPageClamp(previous, { target, failedCount, errorTypes })
-            )
+            const next = applyEmptyPageClamp(committedCount, { target, failedCount, errorTypes })
+            countedTotalPagesRef.current = next
+            setCountedTotalPages(next)
           }
           return
         }
@@ -6270,7 +6274,6 @@ export default function TaskPage(): React.JSX.Element {
       paginationLoading,
       selectedRepos,
       currentPage,
-      countedTotalPages,
       appliedTaskSearch,
       fetchWorkItemsNextPage,
       githubPageSize,
@@ -6354,6 +6357,7 @@ export default function TaskPage(): React.JSX.Element {
     setPages([page0])
     setCurrentPage(0)
     setCountedTotalPages(null)
+    countedTotalPagesRef.current = null
     setProvenPageLimit(null)
     setTasksError(null)
     setFailedCount(0) // reset so a prior failure banner doesn't linger
@@ -6462,6 +6466,7 @@ export default function TaskPage(): React.JSX.Element {
         // Why: the count overwrites unconditionally — proven window limits live
         // in provenPageLimit, so a late count can't be pinned by a speculative
         // end-of-data withdrawal, and can't resurrect proven-dead pages either.
+        countedTotalPagesRef.current = countedPages
         setCountedTotalPages(countedPages)
       }
     })
