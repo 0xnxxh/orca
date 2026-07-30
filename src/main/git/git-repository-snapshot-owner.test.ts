@@ -107,6 +107,64 @@ describe('GitRepositorySnapshotOwner', () => {
     expect(second?.freshness.upstream.revision).toBe(2)
   })
 
+  it('reduces settled polling plus Checks demand from two physical loads to one per projection', async () => {
+    const pushTarget = {
+      remoteName: 'fork',
+      branchName: 'feature',
+      remoteUrl: 'ssh://git.example/repo',
+      remoteCreated: false
+    }
+    const upstreamResult = {
+      hasUpstream: true,
+      upstreamName: 'fork/feature',
+      ahead: 1,
+      behind: 0
+    }
+    const baselineOwner = new GitRepositorySnapshotOwner()
+    const baselineStatusLoads = vi.fn(async () => statusResult)
+    const baselineUpstreamLoads = vi.fn(async () => upstreamResult)
+    await baselineOwner.readStatus(
+      native,
+      '/repo',
+      defaultStatusIdentity,
+      undefined,
+      baselineStatusLoads
+    )
+    await baselineOwner.readUpstream(native, '/repo', pushTarget, baselineUpstreamLoads)
+    await baselineOwner.readStatus(
+      native,
+      '/repo',
+      defaultStatusIdentity,
+      undefined,
+      baselineStatusLoads
+    )
+    await baselineOwner.readUpstream(native, '/repo', pushTarget, baselineUpstreamLoads)
+
+    const migratedOwner = new GitRepositorySnapshotOwner()
+    const migratedStatusLoads = vi.fn(async () => statusResult)
+    const migratedUpstreamLoads = vi.fn(async () => upstreamResult)
+    await migratedOwner.readStatus(
+      native,
+      '/repo',
+      defaultStatusIdentity,
+      undefined,
+      migratedStatusLoads
+    )
+    await migratedOwner.readUpstream(native, '/repo', pushTarget, migratedUpstreamLoads)
+    const snapshot = migratedOwner.getSnapshot(
+      query(native, '/repo', defaultStatusIdentity, pushTarget)
+    )
+
+    expect(baselineStatusLoads).toHaveBeenCalledTimes(2)
+    expect(baselineUpstreamLoads).toHaveBeenCalledTimes(2)
+    expect(migratedStatusLoads).toHaveBeenCalledOnce()
+    expect(migratedUpstreamLoads).toHaveBeenCalledOnce()
+    expect(snapshot).toMatchObject({
+      freshness: { status: { state: 'fresh' }, upstream: { state: 'fresh' } },
+      upstream: { upstreamName: 'fork/feature' }
+    })
+  })
+
   it('does not publish rejected reads and always retries settled work', async () => {
     const owner = new GitRepositorySnapshotOwner()
     const failure = new Error('read failed')

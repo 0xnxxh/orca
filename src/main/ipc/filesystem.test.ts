@@ -21,6 +21,7 @@ const {
   lstatMock,
   commitChangesMock,
   getStatusMock,
+  getGitRepositorySnapshotMock,
   abortMergeMock,
   abortRebaseMock,
   getDiffMock,
@@ -66,6 +67,7 @@ const {
   lstatMock: vi.fn(),
   commitChangesMock: vi.fn(),
   getStatusMock: vi.fn(),
+  getGitRepositorySnapshotMock: vi.fn(),
   abortMergeMock: vi.fn(),
   abortRebaseMock: vi.fn(),
   getDiffMock: vi.fn(),
@@ -139,6 +141,7 @@ vi.mock('../local-downloaded-folder-promotion', () => ({
 vi.mock('../git/status', () => ({
   commitChanges: commitChangesMock,
   getStatus: getStatusMock,
+  getGitRepositorySnapshot: getGitRepositorySnapshotMock,
   abortMerge: abortMergeMock,
   abortRebase: abortRebaseMock,
   getDiff: getDiffMock,
@@ -287,6 +290,7 @@ describe('registerFilesystemHandlers', () => {
       recordCrashBreadcrumbMock,
       commitChangesMock,
       getStatusMock,
+      getGitRepositorySnapshotMock,
       abortMergeMock,
       abortRebaseMock,
       getDiffMock,
@@ -1518,6 +1522,111 @@ describe('registerFilesystemHandlers', () => {
     expect(sshProvider.getStatus).toHaveBeenCalledWith('/remote/repo', {
       includeIgnored: false,
       reuseLineStats: true
+    })
+  })
+
+  it('reads exact local and SSH repository snapshot identities without running Git', async () => {
+    const pushTarget = {
+      remoteName: 'fork',
+      branchName: 'feature/checks',
+      remoteUrl: 'git@github.com:org/repo.git',
+      remoteCreated: false
+    }
+    const snapshot = { revision: 3 }
+    const sharedStore = {
+      ...store,
+      getRepos: () => [{ ...store.getRepos()[0], symlinkPaths: ['node_modules'] }],
+      getAllWorktreeMeta: () => ({ [`repo-1::${WORKTREE_FEATURE_PATH}`]: {} })
+    }
+    registerWorktreeRootsForRepo(sharedStore as never, 'repo-1', [REPO_PATH, WORKTREE_FEATURE_PATH])
+    getGitRepositorySnapshotMock.mockReturnValue(snapshot)
+    const sshProvider = { getRepositorySnapshot: vi.fn().mockReturnValue(snapshot) }
+    getSshGitProviderMock.mockReturnValue(sshProvider)
+    registerFilesystemHandlers(sharedStore as never)
+    const args = {
+      includeIgnored: true,
+      bypassEffectiveUpstreamNegativeCache: true,
+      reuseLineStats: true,
+      pushTarget
+    }
+
+    await expect(
+      handlers.get('git:repositorySnapshot')!(null, {
+        worktreePath: WORKTREE_FEATURE_PATH,
+        ...args
+      })
+    ).resolves.toBe(snapshot)
+    await expect(
+      handlers.get('git:repositorySnapshot')!(null, {
+        worktreePath: '/remote/repo',
+        connectionId: 'ssh-1',
+        ...args
+      })
+    ).resolves.toBe(snapshot)
+
+    expect(getGitRepositorySnapshotMock).toHaveBeenCalledWith(
+      WORKTREE_FEATURE_PATH,
+      {
+        includeIgnored: true,
+        bypassEffectiveUpstreamNegativeCache: true,
+        reuseLineStats: true,
+        sharedLinkPaths: ['node_modules']
+      },
+      pushTarget
+    )
+    expect(sshProvider.getRepositorySnapshot).toHaveBeenCalledWith(
+      '/remote/repo',
+      {
+        includeIgnored: true,
+        bypassEffectiveUpstreamNegativeCache: true,
+        reuseLineStats: true
+      },
+      pushTarget
+    )
+    expect(getStatusMock).not.toHaveBeenCalled()
+  })
+
+  it('reads repository snapshots from the exact configured WSL distro', async () => {
+    await withPlatform('win32', async () => {
+      const wslStore = {
+        ...store,
+        getRepos: () => [
+          {
+            id: 'repo-1',
+            path: WORKTREE_FEATURE_PATH,
+            displayName: 'repo',
+            badgeColor: '#000',
+            addedAt: 0
+          }
+        ],
+        getProjects: () => [
+          {
+            id: 'project-1',
+            sourceRepoIds: ['repo-1'],
+            localWindowsRuntimePreference: { kind: 'wsl', distro: 'Ubuntu' }
+          }
+        ],
+        getSettings: () => ({
+          workspaceDir: WORKSPACE_DIR,
+          localWindowsRuntimeDefault: { kind: 'windows-host' }
+        })
+      }
+      registerWorktreeRootsForRepo(wslStore as never, 'repo-1', [WORKTREE_FEATURE_PATH])
+      getGitRepositorySnapshotMock.mockReturnValue({ revision: 1 })
+      registerFilesystemHandlers(wslStore as never)
+
+      await handlers.get('git:repositorySnapshot')!(null, {
+        worktreePath: WORKTREE_FEATURE_PATH
+      })
+
+      expect(getGitRepositorySnapshotMock).toHaveBeenCalledWith(
+        WORKTREE_FEATURE_PATH,
+        {
+          includeIgnored: false,
+          wslDistro: 'Ubuntu'
+        },
+        undefined
+      )
     })
   })
 

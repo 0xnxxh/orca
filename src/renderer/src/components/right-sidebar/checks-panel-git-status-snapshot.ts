@@ -1,4 +1,5 @@
 import type { GitPushTarget, GitStatusEntry, GitUpstreamStatus } from '../../../../shared/types'
+import type { GitRepositorySnapshot } from '../../../../shared/git-repository-snapshot'
 
 export type ChecksPanelGitStatusContextInput = {
   repoId: string | null | undefined
@@ -70,10 +71,40 @@ export function buildChecksPanelGitStatusContextKey(
           remoteName: input.pushTarget.remoteName,
           branchName: input.pushTarget.branchName,
           remoteUrl: input.pushTarget.remoteUrl ?? null,
-          remoteCreated: input.pushTarget.remoteCreated ?? false
+          remoteCreated: input.pushTarget.remoteCreated ?? null
         }
       : null
   })
+}
+
+export function readChecksPanelRepositorySnapshot(
+  snapshot: GitRepositorySnapshot | null,
+  contextKey: string,
+  expectedBranch: string
+): ChecksPanelGitStatusSnapshot | null {
+  if (
+    !snapshot ||
+    snapshot.freshness.status.state !== 'fresh' ||
+    snapshot.freshness.upstream.state !== 'fresh' ||
+    snapshot.status.retentionTruncated ||
+    !snapshot.upstream ||
+    (snapshot.upstream.ahead > 0 &&
+      snapshot.upstream.behind > 0 &&
+      snapshot.upstream.behindCommitsArePatchEquivalent === undefined) ||
+    canonicalBranchIdentity(snapshot.repositoryIdentity.branch) !==
+      canonicalBranchIdentity(expectedBranch)
+  ) {
+    return null
+  }
+  return {
+    contextKey,
+    hasUncommittedChanges: snapshot.status.entries.length > 0,
+    remoteStatus: snapshot.upstream,
+    gitIdentity: {
+      head: snapshot.repositoryIdentity.head ?? undefined,
+      branch: snapshot.repositoryIdentity.branch
+    }
+  }
 }
 
 export function shouldPollChecksPanelRuntimeSshStatus(input: {

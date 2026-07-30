@@ -1161,6 +1161,70 @@ describe('SshGitProvider', () => {
     expect(replacement.getRepositorySnapshot('/home/user/repo')).toBeNull()
   })
 
+  it('reduces settled polling plus Checks demand from two RPCs to one per projection', async () => {
+    const pushTarget = {
+      remoteName: 'fork',
+      branchName: 'feature',
+      remoteUrl: 'ssh://git.example/repo',
+      remoteCreated: false
+    }
+    mux.request.mockImplementation((method) => {
+      if (method === 'git.status') {
+        return Promise.resolve({
+          entries: [],
+          conflictOperation: 'unknown',
+          head: 'abc123',
+          branch: 'feature'
+        })
+      }
+      if (method === 'git.upstreamStatus') {
+        return Promise.resolve({
+          hasUpstream: true,
+          upstreamName: 'fork/feature',
+          ahead: 1,
+          behind: 0
+        })
+      }
+      return Promise.resolve(undefined)
+    })
+
+    await provider.getStatus('/home/user/repo')
+    await provider.getUpstreamStatus('/home/user/repo', pushTarget)
+    await provider.getStatus('/home/user/repo')
+    await provider.getUpstreamStatus('/home/user/repo', pushTarget)
+    const baselineCounts = {
+      status: mux.request.mock.calls.filter(([method]) => method === 'git.status').length,
+      upstream: mux.request.mock.calls.filter(([method]) => method === 'git.upstreamStatus').length
+    }
+
+    mux.request.mockClear()
+    const migratedProvider = new SshGitProvider('conn-1', mux as never)
+    await migratedProvider.getStatus('/home/user/repo')
+    await migratedProvider.getUpstreamStatus('/home/user/repo', pushTarget)
+    const snapshot = migratedProvider.getRepositorySnapshot('/home/user/repo', {}, pushTarget)
+    const migratedCounts = {
+      status: mux.request.mock.calls.filter(([method]) => method === 'git.status').length,
+      upstream: mux.request.mock.calls.filter(([method]) => method === 'git.upstreamStatus').length
+    }
+
+    expect(baselineCounts).toEqual({ status: 2, upstream: 2 })
+    expect(migratedCounts).toEqual({ status: 1, upstream: 1 })
+    expect(snapshot).toMatchObject({
+      freshness: { status: { state: 'fresh' }, upstream: { state: 'fresh' } },
+      upstream: { upstreamName: 'fork/feature' }
+    })
+    expect(mux.request).toHaveBeenNthCalledWith(
+      1,
+      'git.status',
+      { worktreePath: '/home/user/repo' },
+      { signal: expect.any(AbortSignal) }
+    )
+    expect(mux.request).toHaveBeenNthCalledWith(2, 'git.upstreamStatus', {
+      worktreePath: '/home/user/repo',
+      pushTarget
+    })
+  })
+
   it('marks retained snapshots stale across the existing SSH mutation fence', async () => {
     mux.request.mockImplementation((method) => {
       if (method === 'git.status') {

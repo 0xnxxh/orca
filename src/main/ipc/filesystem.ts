@@ -29,6 +29,7 @@ import type {
   TuiAgent
 } from '../../shared/types'
 import type { GitHistoryOptions, GitHistoryResult } from '../../shared/git-history'
+import type { GitRepositorySnapshot } from '../../shared/git-repository-snapshot'
 import type { SshMutationExpectation } from '../../shared/ssh-types'
 import { assertSshMutationExpectation } from '../ssh/ssh-connection-generation'
 import {
@@ -41,6 +42,7 @@ import {
 } from '../../shared/text-search'
 import {
   getStatus,
+  getGitRepositorySnapshot,
   getSubmoduleStatus,
   abortMerge,
   abortRebase,
@@ -1140,6 +1142,52 @@ export function registerFilesystemHandlers(
   ipcMain.handle('git:cancelStatus', (event, args: { requestToken: string }): void => {
     gitStatusCancellations.cancel(event, args.requestToken)
   })
+
+  ipcMain.handle(
+    'git:repositorySnapshot',
+    async (
+      _event,
+      args: {
+        worktreePath: string
+        connectionId?: string
+        includeIgnored?: boolean
+        bypassEffectiveUpstreamNegativeCache?: boolean
+        reuseLineStats?: boolean
+        pushTarget?: GitPushTarget
+      }
+    ): Promise<GitRepositorySnapshot | null> => {
+      if (args.pushTarget) {
+        assertGitPushTargetShape(args.pushTarget)
+      }
+      const options = {
+        includeIgnored: args.includeIgnored ?? false,
+        ...(args.reuseLineStats === true ? { reuseLineStats: true } : {}),
+        ...(args.bypassEffectiveUpstreamNegativeCache === true
+          ? { bypassEffectiveUpstreamNegativeCache: true }
+          : {})
+      }
+      if (args.connectionId) {
+        const provider = getSshGitProvider(args.connectionId)
+        if (!provider) {
+          throw new Error(SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE)
+        }
+        return provider.getRepositorySnapshot(args.worktreePath, options, args.pushTarget)
+      }
+      const worktreePath = await resolveRegisteredWorktreePath(args.worktreePath, store)
+      const repo = getLocalRepoForRegisteredWorktree(store, args.worktreePath, worktreePath)
+      const gitOptions = getLocalGitOptionsForRepo(store, repo)
+      const sharedLinkPaths = repo ? getWorktreeSharedLinkPaths(repo) : []
+      return getGitRepositorySnapshot(
+        worktreePath,
+        {
+          ...options,
+          ...gitOptions,
+          ...(sharedLinkPaths.length > 0 ? { sharedLinkPaths } : {})
+        },
+        args.pushTarget
+      )
+    }
+  )
 
   // Why: parent status reports only one gitlink row per submodule; fetch inner per-file changes from the submodule's own worktree.
   ipcMain.handle(

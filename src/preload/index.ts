@@ -14,6 +14,7 @@ import type { AgentHookInstallStatus } from '../shared/agent-hook-types'
 import type { CodexConfigSyncStatus } from '../shared/codex-config-sync-types'
 import type { TerminalPaneSplitSource } from '../shared/feature-education-telemetry'
 import type { ProjectExecutionRuntimeResolution } from '../shared/project-execution-runtime'
+import type { GitRepositorySnapshot } from '../shared/git-repository-snapshot'
 import type { StartupCommandDelivery } from '../shared/codex-startup-delivery'
 import type {
   AgentProviderSessionMetadata,
@@ -3175,6 +3176,14 @@ const api = {
     }): Promise<unknown> => ipcRenderer.invoke('git:status', args),
     cancelStatus: (args: { requestToken: string }): Promise<void> =>
       ipcRenderer.invoke('git:cancelStatus', args),
+    repositorySnapshot: (args: {
+      worktreePath: string
+      connectionId?: string
+      includeIgnored?: boolean
+      bypassEffectiveUpstreamNegativeCache?: boolean
+      reuseLineStats?: boolean
+      pushTarget?: GitPushTarget
+    }): Promise<GitRepositorySnapshot | null> => ipcRenderer.invoke('git:repositorySnapshot', args),
     submoduleStatus: (args: {
       worktreePath: string
       submodulePath: string

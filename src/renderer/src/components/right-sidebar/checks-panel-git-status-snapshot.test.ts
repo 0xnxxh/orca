@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import type { GitRepositorySnapshot } from '../../../../shared/git-repository-snapshot'
 import {
   buildChecksPanelGitStatusContextKey,
+  readChecksPanelRepositorySnapshot,
   readChecksPanelPublishActionGitStatus,
   readChecksPanelRefreshGitIdentitySnapshot,
   readChecksPanelGitStatusSnapshot,
@@ -26,6 +28,40 @@ const SNAPSHOT: ChecksPanelGitStatusSnapshot = {
   }
 }
 
+function repositorySnapshot(overrides: Partial<GitRepositorySnapshot> = {}): GitRepositorySnapshot {
+  const freshness = {
+    state: 'fresh' as const,
+    generation: 2,
+    currentGeneration: 2,
+    revision: 4,
+    identity: 'identity'
+  }
+  return {
+    revision: 4,
+    generatedAt: 100,
+    repositoryIdentity: { head: 'abc123', branch: 'feature/checks' },
+    status: {
+      entries: [{ path: 'src/app.ts', status: 'modified', area: 'unstaged' }],
+      didHitLimit: false,
+      statusLength: 1,
+      ignoredPaths: [],
+      lineStatsState: 'complete',
+      retentionTruncated: false
+    },
+    upstream: { hasUpstream: true, upstreamName: 'origin/main', ahead: 1, behind: 0 },
+    conflicts: null,
+    worktreeGraphVersion: 0,
+    freshness: {
+      repositoryIdentity: freshness,
+      status: freshness,
+      upstream: freshness,
+      conflicts: freshness,
+      worktreeGraph: { ...freshness, state: 'placeholder' }
+    },
+    ...overrides
+  }
+}
+
 describe('buildChecksPanelGitStatusContextKey', () => {
   it('changes when an explicit push target changes', () => {
     const base = {
@@ -48,6 +84,26 @@ describe('buildChecksPanelGitStatusContextKey', () => {
         pushTarget: { remoteName: 'fork', branchName: 'feature/checks' }
       })
     )
+  })
+
+  it('distinguishes every explicit target field including absent versus false', () => {
+    const base = {
+      repoId: 'repo-1',
+      worktreeId: 'worktree-1',
+      worktreePath: 'repo-worktree',
+      branch: 'feature/checks',
+      runtimeEnvironmentId: null,
+      repoConnectionId: null
+    }
+    const context = (
+      pushTarget: NonNullable<
+        Parameters<typeof buildChecksPanelGitStatusContextKey>[0]['pushTarget']
+      >
+    ) => buildChecksPanelGitStatusContextKey({ ...base, pushTarget })
+    const target = { remoteName: 'origin', branchName: 'feature/checks' }
+
+    expect(context(target)).not.toBe(context({ ...target, remoteCreated: false }))
+    expect(context(target)).not.toBe(context({ ...target, remoteUrl: 'ssh://git.example/repo' }))
   })
 
   it('changes when linked hosted review metadata changes', () => {
@@ -109,6 +165,92 @@ describe('buildChecksPanelGitStatusContextKey', () => {
         linkedGiteaPR: 78
       })
     ).not.toBe(unlinkedContext)
+  })
+})
+
+describe('readChecksPanelRepositorySnapshot', () => {
+  it('projects a complete current-generation host snapshot without mutating it', () => {
+    const snapshot = repositorySnapshot()
+
+    expect(readChecksPanelRepositorySnapshot(snapshot, 'panel-context', 'feature/checks')).toEqual({
+      contextKey: 'panel-context',
+      hasUncommittedChanges: true,
+      remoteStatus: snapshot.upstream,
+      gitIdentity: { head: 'abc123', branch: 'feature/checks' }
+    })
+    expect(snapshot.status.entries).toHaveLength(1)
+  })
+
+  it.each(['missing', 'stale', 'failed'] as const)('rejects a %s status projection', (state) => {
+    const snapshot = repositorySnapshot({
+      freshness: {
+        ...repositorySnapshot().freshness,
+        status: { ...repositorySnapshot().freshness.status, state }
+      }
+    })
+
+    expect(
+      readChecksPanelRepositorySnapshot(snapshot, 'panel-context', 'feature/checks')
+    ).toBeNull()
+  })
+
+  it.each(['missing', 'stale', 'failed'] as const)('rejects a %s upstream projection', (state) => {
+    expect(
+      readChecksPanelRepositorySnapshot(
+        repositorySnapshot({
+          freshness: {
+            ...repositorySnapshot().freshness,
+            upstream: { ...repositorySnapshot().freshness.upstream, state }
+          }
+        }),
+        'panel-context',
+        'feature/checks'
+      )
+    ).toBeNull()
+  })
+
+  it('rejects missing upstream data and retention-truncated status projections', () => {
+    expect(
+      readChecksPanelRepositorySnapshot(
+        repositorySnapshot({
+          upstream: null
+        }),
+        'panel-context',
+        'feature/checks'
+      )
+    ).toBeNull()
+    expect(
+      readChecksPanelRepositorySnapshot(
+        repositorySnapshot({
+          status: { ...repositorySnapshot().status, retentionTruncated: true }
+        }),
+        'panel-context',
+        'feature/checks'
+      )
+    ).toBeNull()
+  })
+
+  it('rejects an ambiguous embedded upstream projection', () => {
+    expect(
+      readChecksPanelRepositorySnapshot(
+        repositorySnapshot({
+          upstream: {
+            hasUpstream: true,
+            upstreamName: 'origin/main',
+            ahead: 1,
+            behind: 1
+          }
+        }),
+        'panel-context',
+        'feature/checks'
+      )
+    ).toBeNull()
+  })
+
+  it('rejects a fresh projection from another branch', () => {
+    expect(
+      readChecksPanelRepositorySnapshot(repositorySnapshot(), 'panel-context', 'feature/other')
+    ).toBeNull()
   })
 })
 

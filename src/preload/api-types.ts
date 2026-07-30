@@ -282,6 +282,7 @@ import type {
 
 import type { SetupScriptImportCandidate } from '../shared/setup-script-imports'
 import type { GitHistoryOptions, GitHistoryResult } from '../shared/git-history'
+import type { GitRepositorySnapshot } from '../shared/git-repository-snapshot'
 import type { PublicKnownRuntimeEnvironment } from '../shared/runtime-environments'
 import type { EphemeralVmRecipeDoctorResult } from '../shared/ephemeral-vm-recipes'
 import type { EphemeralVmRecipeResultWarning } from '../shared/ephemeral-vm-recipe-diagnostics'
@@ -2837,6 +2838,14 @@ export type PreloadApi = {
       requestToken?: string
     }) => Promise<GitStatusResult>
     cancelStatus: (args: { requestToken: string }) => Promise<void>
+    repositorySnapshot: (args: {
+      worktreePath: string
+      connectionId?: string
+      includeIgnored?: boolean
+      bypassEffectiveUpstreamNegativeCache?: boolean
+      reuseLineStats?: boolean
+      pushTarget?: GitPushTarget
+    }) => Promise<GitRepositorySnapshot | null>
     submoduleStatus: (args: {
       worktreePath: string
       submodulePath: string

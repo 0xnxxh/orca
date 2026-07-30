@@ -122,8 +122,10 @@ import {
   getRuntimeGitUpstreamStatus,
   type RuntimeGeneratePullRequestFieldsOverrides
 } from '@/runtime/runtime-git-client'
+import { getDesktopGitRepositorySnapshot } from '@/runtime/desktop-git-repository-snapshot-client'
 import {
   buildChecksPanelGitStatusContextKey,
+  readChecksPanelRepositorySnapshot,
   readChecksPanelPublishActionGitStatus,
   readChecksPanelGitStatusSnapshot,
   readChecksPanelRefreshGitIdentitySnapshot,
@@ -1511,6 +1513,33 @@ export default function ChecksPanel(): React.JSX.Element {
       connectionId
     }
     void (async () => {
+      let repositorySnapshot = readChecksPanelRepositorySnapshot(
+        await getDesktopGitRepositorySnapshot(
+          context,
+          activeWorktreePushTarget ? { pushTarget: activeWorktreePushTarget } : undefined
+        ),
+        requestContextKey,
+        branch
+      )
+      if (!repositorySnapshot) {
+        repositorySnapshot = readChecksPanelRepositorySnapshot(
+          await getDesktopGitRepositorySnapshot(context, {
+            reuseLineStats: true,
+            ...(activeWorktreePushTarget ? { pushTarget: activeWorktreePushTarget } : {})
+          }),
+          requestContextKey,
+          branch
+        )
+      }
+      if (repositorySnapshot) {
+        if (
+          !stale &&
+          shouldCommitChecksPanelGitStatusSnapshot(panelContextKeyRef.current, requestContextKey)
+        ) {
+          updateWorktreeGitIdentity(activeWorktreeId, repositorySnapshot.gitIdentity ?? {})
+        }
+        return repositorySnapshot
+      }
       const status = await getRuntimeGitStatus(context)
       if (
         !stale &&
@@ -1533,22 +1562,22 @@ export default function ChecksPanel(): React.JSX.Element {
       ) {
         freshRemoteStatus = await getRuntimeGitUpstreamStatus(context)
       }
-      return { status, remoteStatus: freshRemoteStatus }
+      return {
+        contextKey: requestContextKey,
+        hasUncommittedChanges: status.entries.length > 0,
+        remoteStatus: freshRemoteStatus,
+        gitIdentity: {
+          head: status.head,
+          branch: status.branch ?? (status.head ? null : undefined)
+        }
+      }
     })()
-      .then(({ status, remoteStatus }) => {
+      .then((snapshot) => {
         if (
           !stale &&
           shouldCommitChecksPanelGitStatusSnapshot(panelContextKeyRef.current, requestContextKey)
         ) {
-          setGitStatusSnapshot({
-            contextKey: requestContextKey,
-            hasUncommittedChanges: status.entries.length > 0,
-            remoteStatus,
-            gitIdentity: {
-              head: status.head,
-              branch: status.branch ?? (status.head ? null : undefined)
-            }
-          })
+          setGitStatusSnapshot(snapshot)
           // A fresh probe succeeded, so this context is no longer in the "could not check branch status" state.
           setGitStatusProbeErrorContextKey((key) => (key === requestContextKey ? null : key))
         }
