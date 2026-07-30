@@ -9454,7 +9454,9 @@
           "checking": "레시피 확인 중...",
           "none": "아직 레시피를 찾을 수 없습니다.",
           "cloudVmSkillTitle": "클라우드 VM 설정 스킬",
-          "cloudVmRefresh": "클라우드 VM 레시피 새로 고침"
+          "cloudVmRefresh": "클라우드 VM 레시피 새로 고침",
+          "cloudVmTerminalTitle": "클라우드 VM 설정",
+          "cloudVmTerminalAriaLabel": "클라우드 VM 스킬 설치 터미널"
         },
         "ephemeralVmsExperimentalSetting": {
           "description": "repo 소유 온디맨드 환경에 대한 설정 제어 및 워크스페이스 실행 대상을 표시합니다.",

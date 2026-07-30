@@ -9454,7 +9454,9 @@
           "checking": "レシピを確認中...",
           "none": "レシピはまだ見つかりません。",
           "cloudVmSkillTitle": "クラウド VM セットアップスキル",
-          "cloudVmRefresh": "クラウド VM レシピを更新"
+          "cloudVmRefresh": "クラウド VM レシピを更新",
+          "cloudVmTerminalTitle": "クラウド VM のセットアップ",
+          "cloudVmTerminalAriaLabel": "クラウド VM スキルインストールターミナル"
         },
         "ephemeralVmsExperimentalSetting": {
           "description": "repo が所有するオンデマンド環境のセットアップ コントロールとワークスペース実行ターゲットを示します。",

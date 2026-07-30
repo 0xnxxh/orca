@@ -9483,7 +9483,9 @@
           "checking": "Checking recipes...",
           "none": "No recipes found yet.",
           "cloudVmSkillTitle": "Cloud VM setup skill",
-          "cloudVmRefresh": "Refresh Cloud VM recipes"
+          "cloudVmRefresh": "Refresh Cloud VM recipes",
+          "cloudVmTerminalTitle": "Cloud VM setup",
+          "cloudVmTerminalAriaLabel": "Cloud VM skill install terminal"
         },
         "ephemeralVmsExperimentalSetting": {
           "description": "Shows setup controls and workspace run targets for repo-owned, on-demand environments.",

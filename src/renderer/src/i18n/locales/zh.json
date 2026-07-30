@@ -9454,7 +9454,9 @@
           "checking": "正在检查环境模板...",
           "none": "还没有找到环境模板。",
           "cloudVmSkillTitle": "云虚拟机设置技能",
-          "cloudVmRefresh": "刷新云虚拟机环境模板"
+          "cloudVmRefresh": "刷新云虚拟机环境模板",
+          "cloudVmTerminalTitle": "云虚拟机设置",
+          "cloudVmTerminalAriaLabel": "云虚拟机技能安装终端"
         },
         "ephemeralVmsExperimentalSetting": {
           "description": "显示仓库自带按需环境的设置控件和工作区运行目标。",

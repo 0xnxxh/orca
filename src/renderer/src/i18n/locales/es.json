@@ -9454,7 +9454,9 @@
           "checking": "Comprobando recetas…",
           "none": "Aún no se han encontrado recetas.",
           "cloudVmSkillTitle": "Skill de configuración de VM en la nube",
-          "cloudVmRefresh": "Actualizar recetas de VM en la nube"
+          "cloudVmRefresh": "Actualizar recetas de VM en la nube",
+          "cloudVmTerminalTitle": "Configuración de VM en la nube",
+          "cloudVmTerminalAriaLabel": "Terminal de instalación de la skill de VM en la nube"
         },
         "ephemeralVmsExperimentalSetting": {
           "description": "Muestra controles de configuración y destinos de ejecución de espacios de trabajo para entornos bajo demanda del repositorio.",

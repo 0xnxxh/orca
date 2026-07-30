@@ -153,8 +153,14 @@ export function EphemeralVmsPane(): React.JSX.Element {
         )}
         command={installCommand}
         installedCommand={updateCommand}
-        terminalTitle="Cloud VM setup"
-        terminalAriaLabel="Cloud VM skill install terminal"
+        terminalTitle={translate(
+          'auto.components.settings.EphemeralVmsPane.cloudVmTerminalTitle',
+          'Cloud VM setup'
+        )}
+        terminalAriaLabel={translate(
+          'auto.components.settings.EphemeralVmsPane.cloudVmTerminalAriaLabel',
+          'Cloud VM skill install terminal'
+        )}
         terminalWorktreeId="settings-ephemeral-vms-skill-terminal"
         terminalShellOverride={activeSkillRuntime.terminalShellOverride}
         installed={skillDetected}
