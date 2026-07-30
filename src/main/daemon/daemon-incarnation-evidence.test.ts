@@ -114,6 +114,18 @@ describe('daemon process identity evidence', () => {
     ).resolves.toMatchObject({ state: 'unknown', reason: 'permission_denied' })
   })
 
+  it('keeps a missing proc stat unknown when signal zero still sees the pid', async () => {
+    await expect(
+      probeDaemonProcessIdentity(
+        exactIncarnation,
+        endpoint,
+        linuxDependencies({
+          readLinuxStat: async () => ({ status: 'missing' })
+        })
+      )
+    ).resolves.toMatchObject({ state: 'unknown', reason: 'inspection_failed' })
+  })
+
   it('keeps an unreadable command line unknown even when Linux start identity matches', async () => {
     await expect(
       probeDaemonProcessIdentity(
@@ -321,6 +333,36 @@ describe('daemon audit availability evidence', () => {
       reason: 'windows_named_pipe_missing',
       endpointState: 'missing',
       exactIncarnation
+    })
+  })
+
+  it('keeps contradictory Windows pipe and process evidence unknown', async () => {
+    const windowsContext: DaemonAuditContext = {
+      ...context,
+      endpoint: '\\\\?\\pipe\\orca-daemon',
+      endpointKind: 'windows-named-pipe'
+    }
+    const dependencies = {
+      ...auditClassifierDependencies,
+      probeProcessIdentity: async () => ({
+        state: 'present',
+        reason: 'windows_identity_match',
+        evidenceSources: ['windows_cim', 'endpoint_identity']
+      })
+    } satisfies DaemonAuditClassifierDependencies
+
+    await expect(
+      classifyDaemonAuditFailure(windowsContext, 'inventory_failed', exactIncarnation, {
+        additionalEvidenceSources: ['windows_named_pipe'],
+        endpointGoneProof: 'windows_named_pipe_missing',
+        dependencies
+      })
+    ).resolves.toMatchObject({
+      state: 'unknown',
+      reason: 'inventory_failed',
+      processLiveness: 'present',
+      processReason: 'windows_identity_match',
+      endpointState: 'missing'
     })
   })
 
