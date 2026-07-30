@@ -232,7 +232,10 @@ describe('remote terminal stalled stream recovery', () => {
     const regressedPayload = decodeTerminalStreamJson<{ requestId: number }>(
       regressedRequest.payload
     )
-    expect(regressedPayload.requestId).toBeTypeOf('number')
+    expect(regressedPayload?.requestId).toBeTypeOf('number')
+    if (!regressedPayload || typeof regressedPayload.requestId !== 'number') {
+      throw new Error('Malformed regressed snapshot request')
+    }
     emitSnapshot(stream.streamId, regressedPayload.requestId, 'partial-output', 8)
     await vi.advanceTimersByTimeAsync(0)
 
@@ -247,7 +250,10 @@ describe('remote terminal stalled stream recovery', () => {
     const belowBaselinePayload = decodeTerminalStreamJson<{ requestId: number }>(
       belowBaselineRequest.payload
     )
-    expect(belowBaselinePayload.requestId).toBeTypeOf('number')
+    expect(belowBaselinePayload?.requestId).toBeTypeOf('number')
+    if (!belowBaselinePayload || typeof belowBaselinePayload.requestId !== 'number') {
+      throw new Error('Malformed below-baseline snapshot request')
+    }
     emitSnapshot(stream.streamId, belowBaselinePayload.requestId, 'partial-output', 10)
     await vi.advanceTimersByTimeAsync(0)
 
