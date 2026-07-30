@@ -23,6 +23,7 @@ import type {
 import type { MobileRelayStatus } from '../shared/mobile-relay-status'
 import type { MobilePairingConnectionMode } from '../shared/mobile-pairing-connection-mode'
 import type { MobileRelayMintFailure } from '../shared/mobile-relay-mint-failure'
+import type { VerifyAndAddRuntimeEnvironmentResult } from '../shared/remote-pairing-verification'
 import type {
   SshMutationExpectation,
   SshConnectionState,
@@ -4274,6 +4275,12 @@ const api = {
       pairingCode: string
     }): Promise<{ environment: PublicKnownRuntimeEnvironment }> =>
       ipcRenderer.invoke('runtimeEnvironments:addFromPairingCode', args),
+    verifyAndAddFromPairingCode: (args: {
+      name: string
+      pairingCode: string
+      allowLoopback?: boolean
+    }): Promise<VerifyAndAddRuntimeEnvironmentResult> =>
+      ipcRenderer.invoke('runtimeEnvironments:verifyAndAddFromPairingCode', args),
     resolve: (args: { selector: string }): Promise<PublicKnownRuntimeEnvironment> =>
       ipcRenderer.invoke('runtimeEnvironments:resolve', args),
     remove: (args: { selector: string }): Promise<{ removed: PublicKnownRuntimeEnvironment }> =>
