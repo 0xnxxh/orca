@@ -40,6 +40,10 @@ type CommandOverrideSettings = Partial<Pick<GlobalSettings, 'agentCmdOverrides'>
 
 const DEFAULT_WINDOWS_EXTENSIONS = ['.COM', '.EXE', '.BAT', '.CMD']
 
+function pathApiForPlatform(platform: NodeJS.Platform) {
+  return platform === 'win32' ? path.win32 : path.posix
+}
+
 async function isExecutableFile(filePath: string, platform: NodeJS.Platform): Promise<boolean> {
   try {
     const fileStat = await stat(filePath)
@@ -79,7 +83,7 @@ function candidateFileNames(
   platform: NodeJS.Platform,
   pathExt?: string
 ): string[] {
-  if (platform !== 'win32' || path.extname(candidate)) {
+  if (platform !== 'win32' || pathApiForPlatform(platform).extname(candidate)) {
     return [candidate]
   }
   return windowsPathExts(pathExt).map((suffix) => `${candidate}${suffix}`)
@@ -98,7 +102,7 @@ function expandHomePathToken(token: string, platform: NodeJS.Platform, homeDir: 
     return homeDir
   }
   if (token.startsWith('~/') || (platform === 'win32' && token.startsWith('~\\'))) {
-    return path.join(homeDir, token.slice(2))
+    return pathApiForPlatform(platform).join(homeDir, token.slice(2))
   }
   return token
 }
@@ -115,7 +119,7 @@ async function probePathCandidate(
   }
   for (const dir of dirs) {
     for (const fileName of candidateFileNames(candidate, platform, pathExt)) {
-      if (await fileProbe.isExecutableFile(path.join(dir, fileName))) {
+      if (await fileProbe.isExecutableFile(pathApiForPlatform(platform).join(dir, fileName))) {
         return true
       }
     }
@@ -149,7 +153,7 @@ export async function detectLocalManagedAgentCliPresence(
 ): Promise<LocalCliPresenceByAgent> {
   await maybeHydrateShellPath(options)
   const platform = options.platform ?? process.platform
-  const delimiter = options.pathDelimiter ?? path.delimiter
+  const delimiter = options.pathDelimiter ?? pathApiForPlatform(platform).delimiter
   const dirs = pathEntries(options.pathEnv ?? process.env.PATH ?? '', delimiter)
   const homeDir = options.homeDir ?? homedir()
   const fileProbe = options.fileProbe ?? {

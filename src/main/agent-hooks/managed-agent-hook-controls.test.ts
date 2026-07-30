@@ -73,6 +73,27 @@ describe('managed agent hook controls', () => {
     ])
   })
 
+  it('fails closed when CLI detection rejects', async () => {
+    mocks.detect.mockRejectedValue(new Error('detection unavailable'))
+
+    const results = await installManagedAgentHooks({ agentCmdOverrides: {} })
+
+    expect(mocks.installClaude).not.toHaveBeenCalled()
+    expect(mocks.installCodex).not.toHaveBeenCalled()
+    expect(results).toEqual([
+      expect.objectContaining({
+        agent: 'claude',
+        state: 'skipped',
+        skipReason: 'cli_presence_unknown'
+      }),
+      expect.objectContaining({
+        agent: 'codex',
+        state: 'skipped',
+        skipReason: 'cli_presence_unknown'
+      })
+    ])
+  })
+
   it('removes disabled agents without probing or reinstalling them', async () => {
     mocks.detect.mockResolvedValue({ codex: { state: 'found' } })
 

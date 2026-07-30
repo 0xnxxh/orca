@@ -30,10 +30,10 @@ function readHostKeyFingerprint(params: unknown): string | undefined {
     : undefined
 }
 
-function readAgents(params: unknown): AgentHookTarget[] | undefined {
+function readAgents(params: unknown): AgentHookTarget[] {
   const raw = (params as Partial<AgentHookInstallManagedHooksParams> | null)?.agents
   if (raw === undefined) {
-    return undefined
+    return []
   }
   if (!Array.isArray(raw) || !raw.every(isManagedAgentHookTarget)) {
     throw new Error('invalid_managed_hook_agents')
@@ -65,7 +65,7 @@ export function registerManagedHookInstaller(
       return await loadRuntime().installManagedHooks({
         signal: context.signal,
         ...(hostKeyFingerprint ? { hostKeyFingerprint } : {}),
-        ...(agents ? { agents } : {})
+        agents
       })
     }
   )

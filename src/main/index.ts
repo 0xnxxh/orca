@@ -2565,6 +2565,8 @@ void app.whenReady().then(async () => {
           const settings = managedHookStore.getSettings()
           return isAgentStatusHooksEnabled(settings) && !settings.disabledTuiAgents.includes(agent)
         }
+      }).catch((error) => {
+        console.warn('[agent-hooks] failed to reconcile managed hooks on startup:', error)
       })
     } else {
       removeManagedAgentHooks()

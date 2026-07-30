@@ -2578,6 +2578,8 @@ export class OrcaRuntimeService {
   private readonly runtimeId = randomUUID()
   private readonly startedAt = Date.now()
   private readonly store: RuntimeStore | null
+  private managedHookReconciliationGeneration = 0
+  private managedHookReconciliationTail: Promise<void> = Promise.resolve()
   private readonly orchestrationEnvironmentTransport: OrchestrationEnvironmentTransport | null
   private readonly orchestrationFederationTimers = new Map<string, ReturnType<typeof setInterval>>()
   private readonly orchestrationFederationSyncs = new Map<string, Promise<void>>()
@@ -3322,6 +3324,32 @@ export class OrcaRuntimeService {
     }
   }
 
+  private reconcileManagedAgentHooks(): Promise<void> {
+    const generation = ++this.managedHookReconciliationGeneration
+    const reconciliation = this.managedHookReconciliationTail.then(async () => {
+      if (generation !== this.managedHookReconciliationGeneration) {
+        return
+      }
+      const settings = this.store?.getSettings()
+      if (!settings) {
+        return
+      }
+      await applyAgentStatusHooksEnabled(settings.agentStatusHooksEnabled !== false, settings, {
+        onInstallError: recordManagedHookInstallFailure,
+        shouldContinue: (agent) => {
+          const current = this.store?.getSettings()
+          return (
+            current !== undefined &&
+            current.agentStatusHooksEnabled !== false &&
+            !current.disabledTuiAgents?.includes(agent)
+          )
+        }
+      })
+    })
+    this.managedHookReconciliationTail = reconciliation.catch(() => {})
+    return reconciliation
+  }
+
   async updateClientSettings(
     updates: Pick<
       Partial<GlobalSettings>,
@@ -3377,17 +3405,7 @@ export class OrcaRuntimeService {
       (updates.disabledTuiAgents !== undefined &&
         !haveSameDisabledTuiAgents(beforeSettings.disabledTuiAgents, settings.disabledTuiAgents))
     ) {
-      await applyAgentStatusHooksEnabled(settings.agentStatusHooksEnabled !== false, settings, {
-        onInstallError: recordManagedHookInstallFailure,
-        shouldContinue: (agent) => {
-          const current = this.store?.getSettings()
-          return (
-            current !== undefined &&
-            current.agentStatusHooksEnabled !== false &&
-            !current.disabledTuiAgents?.includes(agent)
-          )
-        }
-      })
+      await this.reconcileManagedAgentHooks()
     }
     return this.getClientSettings()
   }

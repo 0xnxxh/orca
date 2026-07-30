@@ -84,6 +84,24 @@ describe('detectLocalManagedAgentCliPresence', () => {
     expect(probe).toHaveBeenCalledWith(overridePath)
   })
 
+  it('expands Windows home-relative override paths with Windows separators', async () => {
+    const overridePath = 'C:\\Users\\orca\\bin\\claude.cmd'
+    const probe = vi.fn(async (filePath: string) => filePath === overridePath)
+    const result = await detectLocalManagedAgentCliPresence(
+      [claudeTarget],
+      { agentCmdOverrides: { claude: '~\\bin\\claude.cmd --flag' } },
+      {
+        pathEnv: '',
+        fileProbe: { isExecutableFile: probe },
+        platform: 'win32',
+        homeDir: 'C:\\Users\\orca'
+      }
+    )
+
+    expect(result.claude?.state).toBe('found')
+    expect(probe).toHaveBeenCalledWith(overridePath)
+  })
+
   it('expands home-relative override paths', async () => {
     const probe = vi.fn(async (filePath: string) => filePath === '/home/orca/bin/codex')
     const result = await detectLocalManagedAgentCliPresence(
@@ -120,13 +138,12 @@ describe('detectLocalManagedAgentCliPresence', () => {
   })
 
   it('honors PATHEXT for Windows PATH candidates', async () => {
-    const probe = vi.fn(async (filePath: string) => filePath === 'C:\\Tools/codex.CMD')
+    const probe = vi.fn(async (filePath: string) => filePath === 'C:\\Tools\\codex.CMD')
     const result = await detectLocalManagedAgentCliPresence(
       [codexTarget],
       { agentCmdOverrides: {} },
       {
-        pathEnv: 'C:\\Tools',
-        pathDelimiter: ';',
+        pathEnv: 'C:\\Other;C:\\Tools',
         pathExt: '.EXE;.CMD',
         fileProbe: { isExecutableFile: probe },
         platform: 'win32'
@@ -134,6 +151,12 @@ describe('detectLocalManagedAgentCliPresence', () => {
     )
 
     expect(result.codex?.state).toBe('found')
+    expect(probe.mock.calls.map(([filePath]) => filePath)).toEqual([
+      'C:\\Other\\codex.EXE',
+      'C:\\Other\\codex.CMD',
+      'C:\\Tools\\codex.EXE',
+      'C:\\Tools\\codex.CMD'
+    ])
   })
 
   it('warns and uses the inherited PATH when shell hydration throws', async () => {

@@ -117,7 +117,7 @@ export type AgentHookInstallManagedHooksParams = {
   /** SHA-256 fingerprint of the server key negotiated by Orca's SSH transport. */
   hostKeyFingerprint?: string
   /** Positively detected and enabled agents allowed to mutate remote config. */
-  agents?: readonly AgentHookTarget[]
+  agents: readonly AgentHookTarget[]
 }
 
 /** Feature-flag env var. Read once at process start by Orca and the relay.
