@@ -998,6 +998,7 @@ async function listDetectedWorktreesForCapturedRepo(
     let gitWorktrees: GitWorktreeInfo[]
     let shouldUpdateKnownWorktreeState = true
     let scanSucceeded = true
+    let scanFailureReason: string | undefined
     if (isFolderRepo(repo)) {
       if (!isCurrent()) {
         return null
@@ -1051,6 +1052,7 @@ async function listDetectedWorktreesForCapturedRepo(
       gitWorktrees = scan.kind === 'success' ? scan.worktrees : scan.fallbackWorktrees
       shouldUpdateKnownWorktreeState = scan.kind === 'success' && scan.origin === 'scan'
       scanSucceeded = scan.kind === 'success'
+      scanFailureReason = scan.kind === 'failure' ? scan.reason : undefined
     }
     const aborted = abortedResult()
     if (aborted) {
@@ -1072,7 +1074,18 @@ async function listDetectedWorktreesForCapturedRepo(
       rememberLocalWorktreeRoots(store, repo, gitWorktrees)
       pruneLineageForMissingRepoWorktrees(store, repo, gitWorktrees)
     }
-    loggedWorktreeListFailures.delete(`${repo.id}:${repo.path}`)
+    // Why: the runtime returns repo-health failures instead of throwing, so the catch below no longer
+    // sees them — warn here or the per-repo IPC signal disappears. Contention reasons (cancelled,
+    // invalidated, backoff) are normal sweep traffic and stay silent.
+    if (scanSucceeded) {
+      loggedWorktreeListFailures.delete(`${repo.id}:${repo.path}`)
+    } else if (scanFailureReason === 'scan_failed' || scanFailureReason === 'missing_repo_path') {
+      warnOnce(
+        loggedWorktreeListFailures,
+        `${repo.id}:${repo.path}`,
+        `[worktrees] worktree scan failed (${scanFailureReason}) for repo "${repo.displayName}" (${repo.id}) at ${repo.path}`
+      )
+    }
     return {
       repoId: repo.id,
       authoritative: scanSucceeded,

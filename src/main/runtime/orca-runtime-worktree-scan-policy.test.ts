@@ -14,9 +14,13 @@ vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => tmpdir()) }
 }))
 
+// Pinned on purpose: this suite is the policy contract, so each bound gets its own name even where
+// two happen to share a value today.
 const BASE_TTL_MS = 30_000
-const MISSING_REPO_RETRY_MS = 5 * 60_000
+const AGENT_SCRATCH_TTL_MS = 5 * 60_000
 const MAX_TTL_MS = 5 * 60_000
+const MISSING_REPO_RETRY_MS = 5 * 60_000
+const FAILURE_RETRY_CAP_MS = 5 * 60_000
 const REPO_TIMEOUT_MS = 5_000
 
 describe('resolveWorktreeScanCacheTtlMs', () => {
@@ -29,7 +33,7 @@ describe('resolveWorktreeScanCacheTtlMs', () => {
         path: '/Users/dev/.codex-tmp/foragent-capsule',
         connectionId: ''
       })
-    ).toBe(MISSING_REPO_RETRY_MS)
+    ).toBe(AGENT_SCRATCH_TTL_MS)
     expect(
       resolveWorktreeScanCacheTtlMs({
         path: '/home/dev/.codex-tmp/capsule',
@@ -130,7 +134,7 @@ describe('resolveWorktreeScanRetryDelayMs', () => {
     expect(resolveWorktreeScanRetryDelayMs('scan_failed', 1)).toBe(30_000)
     expect(resolveWorktreeScanRetryDelayMs('scan_failed', 2)).toBe(60_000)
     expect(resolveWorktreeScanRetryDelayMs('scan_failed', 3)).toBe(120_000)
-    expect(resolveWorktreeScanRetryDelayMs('scan_failed', 20)).toBe(MISSING_REPO_RETRY_MS)
+    expect(resolveWorktreeScanRetryDelayMs('scan_failed', 20)).toBe(FAILURE_RETRY_CAP_MS)
   })
 })
 

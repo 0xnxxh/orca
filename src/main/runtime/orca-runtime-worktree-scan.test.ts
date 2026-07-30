@@ -7,6 +7,7 @@ import {
   makeGitWorktree,
   makeRepo,
   makeScanRuntime,
+  SCAN_CONCURRENCY,
   signalHonouringStrictScans,
   strictScansFor
 } from './orca-runtime-worktree-scan-test-harness'
@@ -68,7 +69,7 @@ afterEach(() => {
 })
 
 describe('worktree scan fleet', () => {
-  it('derives local fleet size and activity from parked panes, UI tabs, and active sessions', () => {
+  it('derives local fleet size and activity from live panes, UI tabs, and active sessions', () => {
     const repos = [
       makeRepo('repo-pty', '/tmp/pty'),
       makeRepo('repo-ui', '/tmp/ui'),
@@ -80,8 +81,13 @@ describe('worktree scan fleet', () => {
     const runtime = makeScanRuntime(repos, {
       getWorkspaceSession: () => ({ activeWorktreeId: 'repo-session::/tmp/session' })
     })
-    runtime.ptysById.set('parked', {
+    runtime.ptysById.set('pane', {
       worktreeId: 'repo-pty::/tmp/pty',
+      connected: true
+    })
+    // An exited PTY record survives in the archive; it must not keep its repo eager.
+    runtime.ptysById.set('exited', {
+      worktreeId: 'repo-idle::/tmp/idle',
       connected: false
     })
     runtime.tabs.set('editor', { worktreeId: 'repo-ui::/tmp/ui' })
@@ -290,9 +296,12 @@ describe('worktree scan fleet', () => {
       release.splice(0).forEach((resolve) => resolve())
       await new Promise((resolve) => setTimeout(resolve, 0))
     }
+    // Why: without this a wedged slot pool reports a suite timeout on the await below instead of the
+    // invariant that actually broke.
+    expect(settled).toBe(true)
     const results = await pending
 
-    expect(peak).toBeLessThanOrEqual(8)
+    expect(peak).toBeLessThanOrEqual(SCAN_CONCURRENCY)
     expect(
       results.flatMap((result) =>
         result.kind === 'success' ? result.worktrees : result.fallbackWorktrees
@@ -551,9 +560,9 @@ describe('worktree scan fleet', () => {
 
     expect(await runtime.listResolvedWorktrees()).toHaveLength(40)
     await vi.advanceTimersByTimeAsync(BASE_TTL_MS + 1_000)
-    runtime.ptysById.set('parked', {
+    runtime.ptysById.set('pane', {
       worktreeId: `${repos[0]!.id}::${repos[0]!.path}`,
-      connected: false
+      connected: true
     })
     expect(await runtime.listResolvedWorktrees()).toHaveLength(40)
 

@@ -1,16 +1,25 @@
 import { vi } from 'vitest'
 import type { GitWorktreeInfo, Repo, WorktreeMeta } from '../../shared/types'
 import { listWorktreesStrict } from '../git/worktree'
-import { OrcaRuntimeService, type RuntimeWorktreeScanOutcome } from './orca-runtime'
+import {
+  OrcaRuntimeService,
+  RESOLVED_WORKTREE_FLEET_MAX_WAVES,
+  RESOLVED_WORKTREE_REPO_TIMEOUT_MS,
+  WORKTREE_SCAN_CONCURRENCY,
+  type RuntimeWorktreeScanOutcome
+} from './orca-runtime'
 
 /**
  * Shared scaffolding for the worktree-scan suites. Every builder here drives the *mocked*
  * `../git/worktree`, so each importing suite still owns the `vi.mock` calls for it.
  */
 
-export const REPO_TIMEOUT_MS = 5_000
-/** 3 waves x the 5s per-repo budget — the ceiling a sweep spends before it stops spawning. */
-export const FLEET_TIMEOUT_MS = 15_000
+export const REPO_TIMEOUT_MS = RESOLVED_WORKTREE_REPO_TIMEOUT_MS
+/** How many git processes one wave spawns — every slot-count expectation derives from this. */
+export const SCAN_CONCURRENCY = WORKTREE_SCAN_CONCURRENCY
+export const FLEET_MAX_WAVES = RESOLVED_WORKTREE_FLEET_MAX_WAVES
+/** The ceiling a sweep spends before it stops spawning: max waves x the per-repo budget. */
+export const FLEET_TIMEOUT_MS = FLEET_MAX_WAVES * REPO_TIMEOUT_MS
 
 export type ResolvedScanWorktree = {
   id: string

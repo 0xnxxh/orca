@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GitWorktreeInfo, WorktreeMeta } from '../../shared/types'
 import {
+  FLEET_MAX_WAVES,
   FLEET_TIMEOUT_MS,
   makeGitWorktree,
   makeRepo,
@@ -10,7 +11,8 @@ import {
   mockHungStrictScans,
   mockStrictScansWedgedBy,
   mockStrictScansWithLatency,
-  REPO_TIMEOUT_MS
+  REPO_TIMEOUT_MS,
+  SCAN_CONCURRENCY
 } from './orca-runtime-worktree-scan-test-harness'
 
 const { sshProviders, sshProviderGenerations } = vi.hoisted(() => ({
@@ -80,22 +82,22 @@ describe('worktree scan sweep budget', () => {
 
     const pending = runtime.listResolvedWorktrees()
     await vi.advanceTimersByTimeAsync(REPO_TIMEOUT_MS - 1)
-    expect(vi.mocked(listWorktreesStrict)).toHaveBeenCalledTimes(8)
+    expect(vi.mocked(listWorktreesStrict)).toHaveBeenCalledTimes(SCAN_CONCURRENCY)
 
     // A wave that completes nothing reads the same whether the fleet is wedged or only its head is,
     // so it never ends the sweep: each wave's deadline frees its slots and the next wave spawns...
     await vi.advanceTimersByTimeAsync(REPO_TIMEOUT_MS)
-    expect(vi.mocked(listWorktreesStrict)).toHaveBeenCalledTimes(16)
+    expect(vi.mocked(listWorktreesStrict)).toHaveBeenCalledTimes(SCAN_CONCURRENCY * 2)
     await vi.advanceTimersByTimeAsync(REPO_TIMEOUT_MS)
-    expect(vi.mocked(listWorktreesStrict)).toHaveBeenCalledTimes(24)
+    expect(vi.mocked(listWorktreesStrict)).toHaveBeenCalledTimes(SCAN_CONCURRENCY * FLEET_MAX_WAVES)
 
-    // ...until the wave ceiling stops it. The 16 repos still queued are skipped, not spawned.
+    // ...until the wave ceiling stops it. The repos still queued are skipped, not spawned.
     await vi.advanceTimersByTimeAsync(2)
     const result = await pending
 
     expect(result).toEqual([])
-    expect(vi.mocked(listWorktreesStrict)).toHaveBeenCalledTimes(24)
-    expect(hung.peakProcesses).toBeLessThanOrEqual(8)
+    expect(vi.mocked(listWorktreesStrict)).toHaveBeenCalledTimes(SCAN_CONCURRENCY * FLEET_MAX_WAVES)
+    expect(hung.peakProcesses).toBeLessThanOrEqual(SCAN_CONCURRENCY)
     expect(hung.liveProcesses).toBe(0)
     expect(runtime.activeLocalWorktreeScanCount).toBe(0)
     expect(runtime.worktreeScanBackoff.size).toBe(0)
@@ -270,18 +272,22 @@ describe('worktree scan sweep budget', () => {
     await vi.advanceTimersByTimeAsync(FLEET_TIMEOUT_MS + 1)
     const truncated = await pending
 
-    expect(truncated).toHaveLength(24)
+    expect(truncated).toHaveLength(SCAN_CONCURRENCY * FLEET_MAX_WAVES)
     // Repos past the deadline are skipped, not spawned-then-abandoned.
-    expect(vi.mocked(listWorktreesStrict)).toHaveBeenCalledTimes(32)
+    expect(vi.mocked(listWorktreesStrict)).toHaveBeenCalledTimes(
+      SCAN_CONCURRENCY * (FLEET_MAX_WAVES + 1)
+    )
     expect(runtime.worktreeScanBackoff.size).toBe(0)
 
-    // The 24 that landed are cached; the 8 cancelled at the deadline and the 8 never started rescan.
+    // The 3 landed waves are cached; the wave cancelled at the deadline and the one never started rescan.
     await vi.advanceTimersByTimeAsync(1_100)
     const next = runtime.listResolvedWorktrees()
     await vi.advanceTimersByTimeAsync(FLEET_TIMEOUT_MS + 1)
 
-    expect(await next).toHaveLength(40)
-    expect(vi.mocked(listWorktreesStrict)).toHaveBeenCalledTimes(48)
+    expect(await next).toHaveLength(repos.length)
+    expect(vi.mocked(listWorktreesStrict)).toHaveBeenCalledTimes(
+      SCAN_CONCURRENCY * (FLEET_MAX_WAVES + 3)
+    )
   })
 
   it('keeps a joined scan alive when the originating sweep hits its fleet deadline', async () => {

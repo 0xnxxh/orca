@@ -26767,7 +26767,8 @@ export class OrcaRuntimeService {
               fleetAbortController.signal
             ),
             fleetAbortController.signal,
-            cancelledFallback
+            cancelledFallback,
+            `worktree scan for ${repo.id}`
           )
         : cancelledFallback()
       if (scan.kind === 'failure' && scan.reason === 'cancelled' && attempted) {
@@ -26916,7 +26917,11 @@ export class OrcaRuntimeService {
       }
     }
     for (const pty of this.ptysById.values()) {
-      addActiveWorktree(pty.worktreeId)
+      // Why: exited PTY records linger in the archive, so counting them would pin their repo to the
+      // eager TTL forever and inflate the shared spawn budget.
+      if (pty.connected) {
+        addActiveWorktree(pty.worktreeId)
+      }
     }
     for (const tab of this.tabs.values()) {
       addActiveWorktree(tab.worktreeId)
@@ -27258,7 +27263,8 @@ export class OrcaRuntimeService {
           kind: 'failure',
           reason: 'cancelled',
           fallbackWorktrees: this.listStoredSshWorktreesForResolution(repo)
-        })
+        }),
+        `SSH worktree scan for ${repo.id}`
       )
     } finally {
       clearTimeout(timeout)
@@ -27422,6 +27428,9 @@ export class OrcaRuntimeService {
     this.worktreeScanCache.delete(scanKey)
     this.dropWorktreeScanInFlight(scanKey)
     this.worktreeScanBackoff.delete(scanKey)
+    // Why: an invalidation is a request to rescan now — leaving the key deprioritized would sort the
+    // changed repo behind every unattempted one for up to a full fleet deadline.
+    this.worktreeScanDeprioritizedRepoKeys.delete(scanKey)
   }
 
   /** Share IPC discovery with runtime scan cancellation, backoff, and the runtime-wide scan slots. */
@@ -33056,17 +33065,17 @@ const WORKTREE_SCAN_CACHE_TTL_MS = 30_000
 const WORKTREE_SCAN_AGENT_SCRATCH_TTL_MS = 5 * 60_000
 // Why: out-of-band `git worktree add` must surface within 5min even in huge, mostly-active fleets.
 const WORKTREE_SCAN_MAX_TTL_MS = 5 * 60_000
-const RESOLVED_WORKTREE_REPO_TIMEOUT_MS = 5000
+export const RESOLVED_WORKTREE_REPO_TIMEOUT_MS = 5000
 // Why: a sweep runs in waves of WORKTREE_SCAN_CONCURRENCY, so budgeting it at one per-repo timeout
 // truncated healthy fleets the moment `ceil(N/8) × latency` crossed 5s (107 repos = 14 waves).
 // Three waves cover ~120 repos at 1s per scan (400 at 300ms); beyond that the tail truncates and
 // lands on the next sweep, which is the trade we want over holding first paint open for longer.
 // This ceiling is also what a wedged fleet spends, because nothing else ends a sweep early — small
 // fleets still stop in `ceil(N/8)` deadlines, and every repo is separately bounded at one.
-const RESOLVED_WORKTREE_FLEET_MAX_WAVES = 3
+export const RESOLVED_WORKTREE_FLEET_MAX_WAVES = 3
 // Why: the shared runtime slot owns each abortable local git process until settlement. SSH/RPC scans
 // take no slot — they are bounded by the sweep's worker pool and their own per-repo deadline.
-const WORKTREE_SCAN_CONCURRENCY = 8
+export const WORKTREE_SCAN_CONCURRENCY = 8
 // Why: bounds the *idle* local scan rate. Active local repos are eager unconditionally, so above 29
 // actives the fleet exceeds this rate on purpose — freshness where the user is looking wins, and
 // idle repos are already clamped at WORKTREE_SCAN_MAX_TTL_MS so they cannot absorb the overflow.
@@ -33234,7 +33243,8 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Pr
 function settleWithAbort<T>(
   promise: Promise<T>,
   signal: AbortSignal,
-  fallback: () => T
+  fallback: () => T,
+  label: string
 ): Promise<T> {
   if (signal.aborted) {
     return Promise.resolve(fallback())
@@ -33251,7 +33261,12 @@ function settleWithAbort<T>(
     }
     const onAbort = (): void => finish(fallback())
     signal.addEventListener('abort', onAbort, { once: true })
-    promise.then(finish, () => finish(fallback()))
+    promise.then(finish, (error) => {
+      // Why: every caller already maps its own failures to an outcome, so a rejection here is a leak
+      // that would otherwise be indistinguishable from a timeout — surface it before falling back.
+      console.warn(`[runtime] ${label} rejected instead of settling:`, error)
+      finish(fallback())
+    })
   })
 }
 
