@@ -24,8 +24,9 @@ boundaries used by this runbook.
 - Never collect pairing credentials, endpoints, absolute cache paths, full
   build IDs, filenames, terminal content, or page payloads for rollback
   diagnosis.
-- Keep the native workspace fallback until the security, device, and App Store
-  acceptance gates permit its removal.
+- The dedicated hybrid candidate has no native workspace fallback. A
+  native-shell defect requires halting rollout and shipping a corrected,
+  higher-version store build.
 
 ## Choose the Rollback Boundary
 
@@ -36,7 +37,7 @@ boundaries used by this runbook.
 | One host reports corrupt or unreadable cached assets                      | Host-scoped native cache      | Use **Clear cache** and redownload from an authenticated paired Desktop     |
 | Package requires an unsupported bridge version                            | Desktop/native compatibility  | Restore a package compatible with the installed shell; do not force-open it |
 | Pairing, encrypted connectivity, asset origin, cache, or bridge is broken | Native shell                  | Halt the store rollout and prepare a corrected native release               |
-| Notification, deep-link, permission, audio, picker, or recovery UI fails  | Native shell                  | Halt the store rollout and use the retained native workspace fallback       |
+| Notification, deep-link, permission, audio, picker, or recovery UI fails  | Native shell                  | Halt the store rollout and prepare a corrected native release               |
 | Desktop is unavailable but a healthy verified cache exists                | No rollback                   | Continue using the cache; defer refresh until the Desktop reconnects        |
 | Desktop is unavailable and no verified cache exists                       | Connectivity/package delivery | Reconnect or switch hosts; cache recovery cannot manufacture a package      |
 

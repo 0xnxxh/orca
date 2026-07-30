@@ -16,32 +16,13 @@ afterEach(() => {
 })
 
 describe('mobile web Home navigation', () => {
-  it.each([
-    [{ kind: 'workspaceList' } as const, '/h/host'],
-    [
-      { kind: 'session', hostWorkspaceId: 'repo::/work tree' } as const,
-      '/h/host/session/repo%3A%3A%2Fwork%20tree'
-    ],
-    [{ kind: 'tasks', taskSource: 'gitlab' } as const, '/h/host/tasks?taskSource=gitlab'],
-    [{ kind: 'accounts' } as const, '/h/host/accounts'],
-    [{ kind: 'newWorkspace' } as const, '/h/host?action=newWorktree']
-  ])('retains the native fallback for %s', (target, expected) => {
-    const router = { push: vi.fn() }
-
-    navigateFromMobileHome({ router, hostId: 'host', target, mobileWebDefault: false })
-
-    expect(router.push).toHaveBeenCalledWith(expected)
-    expect(latestIntent).toBeNull()
-  })
-
-  it('hands a typed destination to the hosted route without changing Home UI', () => {
+  it('hands a typed destination to the production hosted route', () => {
     const router = { push: vi.fn() }
 
     navigateFromMobileHome({
       router,
       hostId: 'host',
-      target: { kind: 'tasks', taskSource: 'linear' },
-      mobileWebDefault: true
+      target: { kind: 'tasks', taskSource: 'linear' }
     })
 
     expect(router.push).toHaveBeenCalledWith('/hybrid')
@@ -52,9 +33,8 @@ describe('mobile web Home navigation', () => {
     })
   })
 
-  it('switches post-pairing host entry and encodes the hosted route identity', () => {
-    expect(mobileHostWorkspaceEntry('host', false)).toBe('/h/host')
-    expect(mobileHostWorkspaceEntry('host/key?', true)).toBe('/hybrid?hostId=host%2Fkey%3F')
+  it('encodes the post-pairing hosted route identity', () => {
+    expect(mobileHostWorkspaceEntry('host/key?')).toBe('/hybrid?hostId=host%2Fkey%3F')
   })
 })
 

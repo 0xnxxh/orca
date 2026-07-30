@@ -1,6 +1,7 @@
 # Mobile Hybrid WebView Architecture
 
-- **Status:** Implemented behind a gated rollout; production cutover is not approved
+- **Status:** Implemented as the sole workspace route in the dedicated release
+  candidate; production promotion is not approved
 - **Last updated:** July 29, 2026
 - **Migration design:**
   [`plans/2026-07-22-mobile-hybrid-webview-single-pr-migration.md`](./plans/2026-07-22-mobile-hybrid-webview-single-pr-migration.md)
@@ -33,15 +34,21 @@ The architecture removes the broad workspace UI/RPC version boundary:
 
 ## Current Rollout State
 
-The production `/hybrid` route is available from **Settings → Hybrid workspace
-UI** and can be made the default in a reviewed build with
-`EXPO_PUBLIC_ORCA_MOBILE_WEB_DEFAULT=1`.
+The dedicated mobile release candidate always uses the production `/hybrid`
+route for host-workspace destinations. It has no Experimental Settings entry,
+environment-controlled route flag, or user-selectable native workspace
+fallback. Restored legacy `/h/...` shell routes redirect to `/hybrid`.
 
-Without that flag, the existing native workspace routes remain the default.
-Keep the Experimental Settings entry and native workspace fallback until the
-security, physical-device, sustained-performance, rollback, and App Store gates
-in the active tracker pass. App Store acceptance must come from a
-production-shaped submission; simulator or TestFlight evidence is insufficient.
+The screen modules under `mobile/app/h/` remain because the hosted React Native
+Web package imports that shared source. They are no longer native-shell
+workspace destinations.
+
+Use separate Desktop RC channels and TestFlight/internal mobile releases to
+validate the hybrid-only candidate without placing two architectures in one
+app. Promote the exact reviewed candidate only after the security,
+physical-device, sustained-performance, rollback, and App Store gates in the
+active tracker pass. TestFlight evidence does not establish App Store
+acceptance.
 
 ## Ownership Boundaries
 
@@ -274,7 +281,7 @@ result persists after reconnect, restart, or switching hosts.
 | Repeated WebView termination                                              | Health/crash-loop recovery should select a compatible previous generation      | Choose **Use previous** if offered; otherwise switch hosts                 |
 | Corrupt or unreadable host cache                                          | Package fails native verification or open                                      | Choose **Clear cache**, then redownload from the authenticated Desktop     |
 | Incompatible bridge                                                       | Desktop package does not support the installed shell                           | Restore a compatible Desktop package or install the required store release |
-| Pairing, origin, bridge, picker, audio, notification, or recovery failure | Native-owned boundary is affected                                              | Use the retained native fallback and halt the native rollout               |
+| Pairing, origin, bridge, picker, audio, notification, or recovery failure | Native-owned boundary is affected                                              | Halt the native rollout and ship a corrected store build                   |
 
 For terminal rendering failures, use the transport repro scripts documented in
 [`mobile/README.md`](../../mobile/README.md) to separate Desktop stream
@@ -301,13 +308,13 @@ without access to an employee LAN:
 - Record every reviewer question and requested change. Resubmit the final exact
   release candidate if a cutover change materially changes the reviewed binary.
 
-TestFlight distribution does not prove App Store acceptance. Keep the native
-workspace fallback and gated default until a production-shaped submission is
-accepted.
+TestFlight distribution does not prove App Store acceptance. Keep the
+hybrid-only candidate out of production until a production-shaped submission
+is accepted.
 
 ## Release Checklist
 
-Before making the hybrid route the default:
+Before promoting the hybrid-only candidate:
 
 1. Complete the supported macOS, Windows, Linux, headless, SSH, WSL, Direct, and
    realistic cloud Relay package/topology matrix.
@@ -319,5 +326,5 @@ Before making the hybrid route the default:
    candidate.
 5. Obtain production App Store acceptance with an accessible review Desktop and
    accurate notes.
-6. Only then enable the default route, remove the Experimental Settings entry,
-   and decide whether the duplicate native workspace fallback may be removed.
+6. Only then promote the exact accepted mobile candidate and matching Desktop
+   release stream to production.

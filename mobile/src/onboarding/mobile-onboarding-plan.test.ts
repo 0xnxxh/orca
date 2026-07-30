@@ -39,7 +39,7 @@ describe('mobile onboarding plan', () => {
 
   it.each([
     [[], undefined, '/'],
-    [[], 'paired-host', '/h/paired-host'],
+    [[], 'paired-host', '/hybrid?hostId=paired-host'],
     [
       ['session-view', 'notifications'],
       undefined,

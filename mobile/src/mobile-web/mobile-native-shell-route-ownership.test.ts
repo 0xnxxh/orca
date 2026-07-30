@@ -35,6 +35,13 @@ describe('mobile native shell route ownership', () => {
     expect(nativeSettings).toContain("Linking.openURL('https://www.onorca.dev/privacy')")
   })
 
+  it('does not expose the hosted workspace as an experimental setting', () => {
+    expect(nativeSettings).not.toContain('Open hybrid workspace UI')
+    expect(nativeSettings).not.toContain('Hybrid workspace UI')
+    expect(nativeSettings).not.toContain('Experimental')
+    expect(nativeLayout).not.toContain('<Stack.Screen name="h"')
+  })
+
   it('does not add native-shell screens to the desktop-served route graph', () => {
     const hostedRoutePaths = listRouteFiles(hostedRouteRoot)
     for (const routeName of NATIVE_ROUTE_NAMES) {

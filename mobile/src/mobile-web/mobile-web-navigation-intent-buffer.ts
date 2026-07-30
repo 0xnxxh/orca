@@ -55,10 +55,6 @@ export class MobileWebNavigationIntentBuffer {
     return () => this.listeners.delete(listener)
   }
 
-  hasListener(): boolean {
-    return this.listeners.size > 0
-  }
-
   isCurrent(sequence: number): boolean {
     return this.latest?.sequence === sequence
   }
@@ -73,11 +69,3 @@ export class MobileWebNavigationIntentBuffer {
 }
 
 export const MOBILE_WEB_NAVIGATION_INTENTS = new MobileWebNavigationIntentBuffer()
-
-export function shouldHandoffNotificationToMobileWeb(
-  pathname: string,
-  hasIntentListener: boolean,
-  mobileWebDefault = false
-): boolean {
-  return mobileWebDefault || (pathname === '/hybrid' && hasIntentListener)
-}

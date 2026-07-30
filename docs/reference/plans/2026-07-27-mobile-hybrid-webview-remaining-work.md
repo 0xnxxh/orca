@@ -1,6 +1,7 @@
 # Mobile Hybrid WebView Remaining Work
 
-- **Status:** Core implementation complete; validation and gated cutover remain
+- **Status:** Hybrid-only candidate implementation complete; external release
+  validation and production promotion remain
 - **Last updated:** July 29, 2026
 - **Detailed evidence archive:**
   [`2026-07-22-mobile-hybrid-webview-implementation-checklist.md`](./2026-07-22-mobile-hybrid-webview-implementation-checklist.md)
@@ -22,20 +23,25 @@ no replacement product UI.
 
 Hosted feature implementation is complete. Broad validation, independent
 security review, physical-device performance, and App Store acceptance remain
-open. The native workspace route remains the fallback until those gates pass.
+open. The dedicated candidate exposes only the hybrid workspace architecture.
 
-The gated cutover seam now routes Home host selection, exact-session resume,
+The production entry now routes Home host selection, exact-session resume,
 Tasks, Accounts, New Workspace, pairing completion, onboarding completion,
-notification navigation, and cold resume into the production hybrid shell when
-`EXPO_PUBLIC_ORCA_MOBILE_WEB_DEFAULT=1`. Without the flag, the unchanged native
-routes remain the default. Transient shell destinations are not persisted as
-cold-resume state.
+notification navigation, and cold resume into the production hybrid shell
+unconditionally. Restored legacy `/h/...` shell routes redirect to `/hybrid`.
+Transient shell destinations are not persisted as cold-resume state.
 
 The obsolete `hybrid-prototype` route, prototype package/cache/bridge
 implementation, prototype RPC methods and allowlist entries, shared prototype
-contract, and their fixtures are removed. The production `/hybrid` route,
-production bridge clients, Experimental Settings entry, and native workspace
-fallback remain intentionally.
+contract, and their fixtures are removed. The route flag, Experimental Settings
+entry, and native workspace destination are also removed. The shared
+`mobile/app/h/` modules remain solely as source imported by the hosted React
+Native Web package.
+
+Cutover cleanup validation passes 600 mobile files / 3,567 tests with 2
+expected skips, mobile and root typechecks, mobile and root lint, native and
+type-aware code-quality audits, 56 reliability gates, max-lines, localization,
+formatting, and diff hygiene.
 
 The exact iPhone 17 Pro Simulator app now passes the hosted Source Control and
 Review journey. The unchanged Session-origin flow opens a changed file as a
@@ -125,8 +131,8 @@ pixels and 0.910 mean channel difference; Review passes at 2.134% and 1.947,
 within the 3% / 4 budgets. The packaged document opts into native safe-area
 insets, and nested syntax text retains the native effective font behavior.
 
-The migration is based on `origin/main` at `64aa726301`; the final rebase is
-complete and the branch is 64 commits ahead and zero behind. Post-rebase
+The migration is based on `origin/main` at `3eddc467cf`; the final rebase is
+complete and the branch is 65 commits ahead and zero behind. Post-rebase
 validation plus the hostile-content slice now passes 599 mobile files / 3,568
 tests with 2 expected skips. The earlier broad runtime slice passes 13 files /
 906 tests across SSH recovery generations, daemon PTY behavior, terminal
@@ -408,12 +414,12 @@ privileged-field, token-storage, native-authority, private-origin URL, WebSocket
 URL, or fixture marker. Physical-device and final release-candidate rollback
 remain open.
 
-## 1. Production Cutover and Cleanup
+## 1. Production Release Promotion
 
-- [ ] Make the production hybrid route the default from the reviewed release
-      candidate after the security, device, performance, and App Store gates
-      pass.
-- [ ] Remove the Experimental Settings entry at the gated cutover.
+- [ ] Promote the exact hybrid-only mobile candidate and matching Desktop
+      release streams after the security, device, performance, rollback, and
+      App Store gates pass. Candidate testing uses dedicated Desktop RC and
+      TestFlight/internal mobile channels, not an in-app architecture switch.
 
 ## 2. Automated Integration Gates
 
@@ -549,8 +555,7 @@ remain open.
 - [ ] Submit a production-shaped build through App Review; TestFlight does not
       complete this gate.
 - [ ] Record reviewer questions, requested changes, and the final disposition.
-- [ ] Obtain acceptance before deleting the duplicate native workspace
-      fallback.
+- [ ] Obtain acceptance before promoting the hybrid-only candidate.
 - [ ] Drill automatic rollback, manual previous-generation recovery, cache
       clearing, corruption, incompatible bridge, disconnection, pairing
       removal, and WebView loss on the final release candidate. The exact

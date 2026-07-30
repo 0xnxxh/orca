@@ -9,15 +9,12 @@ import { colors } from '../src/theme/mobile-theme'
 import { OrcaLogo } from '../src/components/OrcaLogo'
 import { RpcClientProvider } from '../src/transport/client-context'
 import { LatestNotificationNavigationResolver } from '../src/notifications/notification-routing'
-import {
-  MOBILE_WEB_NAVIGATION_INTENTS,
-  shouldHandoffNotificationToMobileWeb
-} from '../src/mobile-web/mobile-web-navigation-intent-buffer'
-import { MOBILE_WEB_DEFAULT_ENTRY_ENABLED } from '../src/mobile-web/mobile-web-home-navigation'
+import { MOBILE_WEB_NAVIGATION_INTENTS } from '../src/mobile-web/mobile-web-navigation-intent-buffer'
 import {
   loadMobileWebColdResumeRoute,
   mobileWebColdResumeStartupPath
 } from '../src/mobile-web/mobile-web-cold-resume-route'
+import { isRetiredNativeWorkspaceRoute } from '../src/mobile-web/mobile-web-production-route'
 import { loadHosts } from '../src/transport/host-store'
 import { extractPairingCodeFromUrl } from '../src/transport/pairing'
 import { recoverMobileRelayPairing } from '../src/transport/mobile-relay-pairing-recovery'
@@ -54,6 +51,12 @@ export default function RootLayout() {
   useEffect(() => {
     pathnameRef.current = pathname
   }, [pathname])
+
+  useEffect(() => {
+    if (isRetiredNativeWorkspaceRoute(pathname)) {
+      router.replace('/hybrid')
+    }
+  }, [pathname, router])
 
   useEffect(() => {
     // Why: pairing publication is journaled across process death; startup must
@@ -162,20 +165,11 @@ export default function RootLayout() {
       if (disposed) {
         return
       }
-      if (
-        navigation &&
-        shouldHandoffNotificationToMobileWeb(
-          pathnameRef.current,
-          MOBILE_WEB_NAVIGATION_INTENTS.hasListener(),
-          MOBILE_WEB_DEFAULT_ENTRY_ENABLED
-        )
-      ) {
+      if (navigation) {
         MOBILE_WEB_NAVIGATION_INTENTS.publish(navigation.target)
         if (pathnameRef.current !== '/hybrid') {
           router.push('/hybrid')
         }
-      } else if (navigation) {
-        router.push(navigation.path)
       }
     }
 
@@ -244,7 +238,6 @@ export default function RootLayout() {
           <Stack.Screen name="troubleshoot" options={{ headerShown: false }} />
           <Stack.Screen name="connection-log" options={{ headerShown: false }} />
           <Stack.Screen name="about" options={{ headerShown: false }} />
-          <Stack.Screen name="h" options={{ headerShown: false }} />
         </Stack>
       </View>
     </RpcClientProvider>

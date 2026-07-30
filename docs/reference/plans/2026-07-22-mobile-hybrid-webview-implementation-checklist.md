@@ -30,11 +30,12 @@
   recovery, cache clear/redownload, and corrupt-active cold fallback now pass
   through the native recovery surface; the exact iOS Simulator and Android API
   36 Agent History, Source Control, and Review journeys and the full
-  post-rebase validation matrix now pass; a gated production navigation seam
+  post-rebase validation matrix now pass; the production navigation entry
   covers Home, pairing, onboarding, notifications, cold resume, Accounts,
-  Tasks, New Workspace, and exact sessions, while the native fallback remains
-  the default until external release gates pass; obsolete prototype delivery,
-  contracts, RPCs, cache, bridge, route, and fixtures are removed
+  Tasks, New Workspace, and exact sessions unconditionally; the route flag,
+  Experimental Settings entry, and native workspace destination are removed;
+  obsolete prototype delivery, contracts, RPCs, cache, bridge, route, and
+  fixtures are removed
 - **Last updated:** July 29, 2026
 - **Design:**
   [`2026-07-22-mobile-hybrid-webview-single-pr-migration.md`](./2026-07-22-mobile-hybrid-webview-single-pr-migration.md)
@@ -89,7 +90,7 @@ At the end of every implementation session:
 | Security and adversarial review    | In progress          | Fuzzing, race corpus, and independent review         |
 | Device and topology validation     | In progress          | Physical phones/tablets and production cloud Relay   |
 | App Store validation               | Not started          | Production submission, not TestFlight                |
-| Cutover and cleanup                | Gated                | Default flip, Experimental entry, native fallback    |
+| Cutover and cleanup                | Complete             | Production promotion after external release gates    |
 | Release evidence and documentation | In progress          | Packaged releases and final PR artifacts             |
 
 **Current workstream:** Complete the external validation and release gates.
@@ -434,8 +435,9 @@ escaped traffic and a clean native bridge log audit.
 
 **Next action:** Execute the remaining physical-device, topology,
 accessibility, performance, independent-security, packaged-release, rollback,
-and App Store gates. Keep the native fallback and gated cutover unchanged until
-those gates pass. The authoritative shared RNW
+and App Store gates through dedicated Desktop RC and TestFlight/internal mobile
+channels. Promote the exact hybrid-only candidate only after those gates pass.
+The authoritative shared RNW
 route is now governed by a separate reviewed ceiling of 10 MiB total, 3 MiB
 gzip, 9.5 MiB of scripts, 256 KiB of styles, and 64 assets. The earlier 8 MiB /
 2 MiB / 7.5 MiB ceilings held before the existing Mermaid presentation was
@@ -748,8 +750,8 @@ recovery, or physical-device gates.
       adapters with the original phone/tablet push/replace behavior. Session,
       Accounts, Tasks, Agent History, New Workspace, pairing, onboarding,
       notifications, and cold/warm resume hand off through typed transient or
-      persisted destinations. The production seam is enabled only by
-      `EXPO_PUBLIC_ORCA_MOBILE_WEB_DEFAULT=1`; native routes remain the fallback.
+      persisted destinations. The production shell now routes every workspace
+      entry through `/hybrid`; restored legacy `/h/...` routes redirect there.
 - [~] Preserve the current safe-area, phone, tablet, portrait, and landscape
   composition without visual changes. Portrait and landscape pass on the
   current iPhone simulator. The populated Agent History portrait fixture also
@@ -1790,27 +1792,27 @@ copy.
 - [ ] Submit through production App Review; TestFlight alone does not count.
 - [ ] Record submission build, notes, reviewer questions, requested changes, and
       disposition.
-- [ ] Obtain acceptance before deleting duplicate native workspace screens.
-- [ ] Resubmit the exact final release candidate if cutover materially changes
+- [ ] Obtain acceptance before promoting the hybrid-only candidate.
+- [ ] Resubmit the exact final release candidate if it materially changes
       the accepted binary.
 - [ ] Treat rejection or required architectural redesign as a failed Option B
       gate and return to Option A.
 
 ## 14. Cutover, Rollback, and Cleanup
 
-- [x] Keep hybrid workspace behavior explicitly gated until all prior gates
-      pass. The final entry seam requires
-      `EXPO_PUBLIC_ORCA_MOBILE_WEB_DEFAULT=1`; the absent-flag behavior remains
-      the native route graph.
-- [ ] Make the production hybrid route the default from the reviewed commit.
-- [ ] Remove the Experimental Settings entry at the gated cutover.
+- [x] Make the production hybrid route the only workspace destination in the
+      dedicated candidate. Home, pairing, onboarding, notifications, cold
+      resume, Accounts, Tasks, New Workspace, and exact sessions route through
+      `/hybrid`; restored legacy `/h/...` routes redirect there.
+- [x] Remove the Experimental Settings entry and
+      `EXPO_PUBLIC_ORCA_MOBILE_WEB_DEFAULT` route flag.
 - [x] Remove the obsolete `hybrid-prototype` route.
 - [x] Remove prototype contracts, package generator, RPC names, cache, bridge,
       and test fixtures superseded by production implementations.
 - [x] Remove the parallel `src/mobile-web/` presentation while retaining its
       production bridge clients and the shared React Native component source
-      rendered through React Native Web. The native workspace fallback remains
-      untouched until the App Store and release gates pass.
+      rendered through React Native Web. The `app/h/` modules remain shared
+      source, not native-shell workspace destinations.
 - [x] Keep native pairing, recovery, permissions, settings, and diagnostics.
 - [~] Drill automatic rollback from a crash-looping staged package. The exact
   Pixel 9 Pro API 36 Debug app crashed three distinct Chromium renderer
@@ -2927,4 +2929,7 @@ passes 3,854 files / 40,508 tests with 71 expected skips.
 | 2026-07-29 | Complete | Rebased all 64 migration commits onto `origin/main` at `64aa726301`; the branch is zero behind. Shared reliability evidence and SSH disconnect cleanup preserve the newer upstream contracts together with mobile relay-unavailable notification. The earlier broad runtime slice passes 13 files / 906 tests; current-base validation of the affected SSH recovery/session paths passes 5 files / 62 tests.                                                                                                                                                                                              |
 | 2026-07-29 | Complete | The Android exact-app harness waits for the current process to mount React before pairing, selects Tasks through its existing nonvisual label, lets the native recovery surface settle, bypasses non-hittable workspace ARIA nodes, and taps the stable visible workspace row. It proves each route transition before retrying and scopes its final bridge audit to the Orca app PID. The build-inclusive route journey returns `ok: true` with zero sentinel observation, bridge-log finding, or new failure exit record.                                                                                |
 | 2026-07-29 | Complete | Final post-rebase validation passes 599 mobile files / 3,568 tests with 2 expected skips, mobile typecheck/lint/format, and diff hygiene. Independently verified RNW build `121fe8682fc221fd7e6f2955fe1f246017d164db3122d71526bc3f66b19578c5` contains 51 assets / 9,151,993 raw / 2,649,166 gzip bytes. Android retains 41 passing JVM tests and successful Debug APK packaging; root typecheck/lint/code-quality, 56 reliability gates, localization, and max-lines passed after the rebase.                                                                                                            |
+| 2026-07-29 | Complete | The dedicated candidate now exposes only the production hybrid workspace route. Home, pairing, onboarding, notifications, cold resume, Accounts, Tasks, New Workspace, and exact sessions route there unconditionally; restored legacy `/h/...` shell routes redirect there. The environment flag and Experimental Settings entry are removed. Shared `app/h/` modules remain as the unchanged React Native Web source. Dedicated Desktop RC and TestFlight/internal channels isolate validation before production promotion.                                                                             |
+| 2026-07-29 | Complete | Cutover cleanup validation passes 600 mobile files / 3,567 tests with 2 expected skips, mobile and root typechecks, mobile and root lint, native and type-aware code-quality audits, 56 reliability gates, max-lines, localization, formatting, and diff hygiene.                                                                                                                                                                                                                                                                                                                                         |
+| 2026-07-29 | Complete | Rebased all 65 migration commits without conflict onto `origin/main` at `3eddc467cf`; the branch is zero behind. The upstream sidebar prompt and nested-skill boundary changes do not overlap the mobile cutover.                                                                                                                                                                                                                                                                                                                                                                                         |
 | 2026-07-29 | Next     | Continue broader live cross-host/workspace/topology races, sustained allocation and performance testing, physical-device/accessibility validation, independent security review, store-signed release drills, and App Store review. Feature implementation and the Android emulator content corpus are complete.                                                                                                                                                                                                                                                                                           |

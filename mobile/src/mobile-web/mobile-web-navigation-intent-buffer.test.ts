@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import {
-  MobileWebNavigationIntentBuffer,
-  shouldHandoffNotificationToMobileWeb
-} from './mobile-web-navigation-intent-buffer'
+import { MobileWebNavigationIntentBuffer } from './mobile-web-navigation-intent-buffer'
 
 describe('mobile web navigation intent buffer', () => {
   it('retains only the latest bounded native target across listener timing', () => {
@@ -17,8 +14,6 @@ describe('mobile web navigation intent buffer', () => {
       hostId: 'host-one',
       target: { kind: 'workspaceList' }
     })
-    expect(buffer.hasListener()).toBe(true)
-
     const second = buffer.publish({
       kind: 'session',
       hostId: 'host-two',
@@ -39,7 +34,6 @@ describe('mobile web navigation intent buffer', () => {
     expect(buffer.isCurrent(second.sequence)).toBe(false)
 
     unsubscribe()
-    expect(buffer.hasListener()).toBe(false)
   })
 
   it('supersedes an unconsumed intent before a delayed resolver can commit it', () => {
@@ -82,12 +76,5 @@ describe('mobile web navigation intent buffer', () => {
       hostId: 'paired-host',
       target: { kind: 'tasks', taskSource: 'linear' }
     })
-  })
-
-  it('uses hosted handoff only while the Hybrid route has a live consumer', () => {
-    expect(shouldHandoffNotificationToMobileWeb('/hybrid', true)).toBe(true)
-    expect(shouldHandoffNotificationToMobileWeb('/hybrid', false)).toBe(false)
-    expect(shouldHandoffNotificationToMobileWeb('/h/paired-host', true)).toBe(false)
-    expect(shouldHandoffNotificationToMobileWeb('/', false, true)).toBe(true)
   })
 })

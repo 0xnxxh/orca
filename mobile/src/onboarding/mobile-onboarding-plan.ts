@@ -6,7 +6,6 @@ export const MOBILE_ONBOARDING_STEPS = ['session-view', 'notifications'] as cons
 export type MobileOnboardingStep = (typeof MOBILE_ONBOARDING_STEPS)[number]
 export type MobileOnboardingDestination =
   | '/'
-  | `/h/${string}`
   | `/hybrid?hostId=${string}`
   | {
       pathname: '/mobile-onboarding'

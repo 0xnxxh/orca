@@ -121,14 +121,15 @@ that imports those screens and supplies hosted operation adapters.
 - Change the existing screen once; do not copy it into DOM-only JSX.
 - Keep native/hosted differences behind concrete platform modules or named
   operation adapters.
-- Preserve the native route as the behavior oracle and fallback until the
-  release gates approve cutover.
-- Test both native and hosted routes when a shared screen changes.
+- Treat the shared `app/h/` screens as the behavior oracle. They remain source
+  modules for the hosted package, but the native shell no longer exposes them
+  as workspace destinations.
+- Test the hosted route and the relevant shared presentation modules when a
+  screen changes.
 
-Open the hosted route through **Settings → Hybrid workspace UI**. A reviewed
-build may set `EXPO_PUBLIC_ORCA_MOBILE_WEB_DEFAULT=1` to exercise the default
-navigation seam, but the flag must remain off for ordinary production builds
-until the documented gates pass.
+Host, session, task, account, onboarding, notification, and cold-resume entry
+always use the production hybrid route. There is no Experimental Settings
+launcher or environment-controlled native workspace fallback.
 
 ## Package Build
 

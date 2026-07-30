@@ -1,9 +1,10 @@
 # Mobile Hybrid WebView Single-PR Migration
 
-- **Status:** Core implementation complete; validation and cutover gates remain open
+- **Status:** Hybrid-only candidate implementation complete; release validation
+  and production promotion gates remain open
 - **Date:** July 22, 2026
 - **Last updated:** July 29, 2026
-- **Target:** One long-lived pull request, gated before cutover
+- **Target:** One long-lived pull request, gated before production promotion
 - **Related decision:**
   [`2026-07-13-mobile-ota-update-infrastructure.html`](./2026-07-13-mobile-ota-update-infrastructure.html)
 - **Living implementation checklist:**
@@ -37,10 +38,11 @@ security-review, performance, packaged-release, or App Store validation
 matrices.
 
 The migration may be implemented in one PR only if the PR remains a draft
-through those gates. Its commits must stay independently reviewable, the
-existing native workspace UI must remain available during development, and the
-final cutover must not occur until the release candidate passes every criterion
-in this document.
+through those gates. Its commits must stay independently reviewable, and the
+hybrid-only release candidate must not be promoted until it passes every
+criterion in this document. Separate Desktop RC channels and TestFlight/internal
+mobile builds isolate candidate testing without shipping two selectable
+workspace architectures in one app.
 
 ### UI Preservation Contract
 
@@ -66,8 +68,9 @@ it reaches Desktop authority; it does not authorize a redesign.
 - Do not change shared presentation solely to make React Native Web easier to
   support. Put runtime differences behind platform files or named adapters;
   review any intentional product UI change separately against both runtimes.
-- Keep the native workspace route as the behavior oracle and working fallback
-  until the final parity, security, device, and App Store gates pass.
+- Keep the shared `app/h/` screen source as the behavior oracle. The
+  hybrid-only candidate does not expose those modules as native workspace
+  destinations.
 - The former `src/mobile-web/` validation presentation is removed. Its
   surviving modules are production bridge clients and transport state; the
   workspace, session, file, diff, source-control, and review UI comes only from
@@ -140,17 +143,16 @@ prototype:
   tasks, accounts, browser, dictation, native chat, and Agent History. These
   routes reuse the current React Native presentation through React Native Web;
   no replacement product UI remains.
-- A gated shell entry seam covers Home host selection, exact-session resume,
+- The production shell entry covers Home host selection, exact-session resume,
   pairing and onboarding completion, notification navigation, cold resume,
-  Accounts, Tasks, and New Workspace. It activates only with
-  `EXPO_PUBLIC_ORCA_MOBILE_WEB_DEFAULT=1`; absent that flag, the native route
-  graph remains the default and fallback.
+  Accounts, Tasks, and New Workspace unconditionally. Restored legacy
+  `/h/...` routes redirect to `/hybrid`.
 - The obsolete `hybrid-prototype` route, package/cache/bridge implementation,
   shared contract, Desktop RPC methods and allowlist entries, persisted-state
-  inventory entry, and fixtures are removed. The production `/hybrid` route,
-  production bridge clients, native fallback, and Experimental Settings entry
-  remain intentionally until the external cutover gates pass.
-- The 64-commit branch is rebased onto `origin/main` at `64aa726301` and remains
+  inventory entry, and fixtures are removed. The production `/hybrid` route and
+  production bridge clients remain; the route flag, Experimental Settings
+  entry, and native workspace destination are removed from the candidate.
+- The 65-commit branch is rebased onto `origin/main` at `3eddc467cf` and remains
   zero behind. Upstream
   native-chat launch-draft, transcript identity, loading, reconnect, and
   orchestration behavior is retained in both native and hosted adapters.
@@ -1309,11 +1311,11 @@ uses the desktop-built mobile web app by default:
 | Tasks, accounts tied to a host, and browser workspace controls    | Mobile web app                                           |
 
 The existing React Native workspace presentation remains the product source
-through development and after cutover; React Native Web renders that same
-source. Only the superseded native route wrappers and direct runtime bindings
-may be removed in the final cutover commit after parity, security,
-physical-device, and store gates pass. Native pairing and recovery screens are
-not legacy fallback; they are a permanent part of the target architecture.
+through development and after production promotion; React Native Web renders
+that same source. The native shell no longer exposes the `app/h/` graph as a
+workspace destination, but those modules remain because the hosted route graph
+imports them. Native pairing and recovery screens are a permanent part of the
+target architecture.
 
 ## Target Architecture
 
@@ -1415,9 +1417,8 @@ headless, signed-release, Android, or physical-device evidence.
 Production shell, package, page, and shared-contract sources now use only
 production module names and `mobileWeb.package.*` RPC methods. A recursive
 source-boundary test rejects prototype imports, symbols, contracts, or RPC
-names in those roots. The isolated experimental route still registers its
-legacy single-document delivery contract and reuses the production host picker;
-that fixture remains removable only at the final cutover gate.
+names in those roots. The experimental route and its legacy single-document
+delivery contract are removed.
 The production build must:
 
 - Use relative, content-addressed asset paths.
@@ -2729,13 +2730,14 @@ silent WebKit miss.
 - Submit the production-shaped build from the PR branch to App Review with the
   accessible review host and accurate notes.
 
-### 12. Cut over and remove duplicate workspace UI
+### 12. Finalize the hybrid-only candidate
 
-- Make the hybrid workspace route the default only after every gate passes.
-- Remove the Experimental Settings entry at cutover. The obsolete
-  `hybrid-prototype` route and the parallel `src/mobile-web/` presentation are
-  already removed; retain production bridge clients and the shared React
-  Native screen/component source used by React Native Web.
+- Use the hybrid workspace route as the only workspace destination in the
+  dedicated candidate. Do not ship an Experimental Settings entry or route
+  flag.
+- The obsolete `hybrid-prototype` route and the parallel `src/mobile-web/`
+  presentation are removed; retain production bridge clients and the shared
+  React Native screen/component source used by React Native Web.
 - Keep native pairing, recovery, permissions, settings, and diagnostics.
 - Build the final exact release candidate, rerun smoke/performance/security
   checks, and resubmit if the binary materially differs from the accepted
@@ -2985,9 +2987,9 @@ App Review is a product gate. The PR must provide:
 - A record of the submitted commit/build, reviewer questions, requested
   changes, accepted behavior, and final notes.
 
-TestFlight is useful device coverage but does not satisfy this gate. The PR
-must not cut over or remove native workspace screens until a real production
-submission has been accepted. If the final cutover changes the reviewed binary
+TestFlight is useful device coverage but does not satisfy this gate. The
+hybrid-only candidate must not be promoted until a real production submission
+has been accepted. If the final candidate changes the reviewed binary
 materially, submit that exact release candidate again before merge. Rejection,
 required architectural redesign, or unresolved permission is a failed Option B
 gate and returns the project to Option A.
@@ -2998,17 +3000,17 @@ assessment.
 
 ## Rollout and Rollback
 
-### Before cutover
+### Before production promotion
 
-- Keep the new route behind an explicit development/release-candidate flag.
-- Maintain the current native workspace UI while parity and review are in
-  progress.
-- Allow internal and reviewer builds to choose the hybrid route and report the
-  active host/build/bridge versions in diagnostics.
+- Distribute the hybrid-only shell through TestFlight/internal mobile channels
+  and distribute matching Desktop packages through dedicated RC channels.
+- Do not expose an in-app architecture switch. Candidate isolation belongs to
+  release channels, not user settings.
+- Report active host, package, shell, and bridge versions in diagnostics.
 
-### Cutover
+### Production promotion
 
-- Cut over only from the reviewed PR commit after every acceptance gate passes.
+- Promote only the exact reviewed PR commit after every acceptance gate passes.
 - Use phased store rollout and watch native recovery, WebView termination,
   package verification, activation, bridge compatibility, and terminal resync
   rates.
@@ -3062,9 +3064,10 @@ A defect in the asset origin, credential broker, native bridge, audio/picker
 module, or store-installed recovery UI cannot be fixed by desktop-served web
 assets. Halt the phased store rollout and submit a corrected, higher-version
 native build. Store rollout controls limit additional exposure but do not
-reliably downgrade devices that already installed a bad binary. Keep the native
-workspace fallback until the gated cutover permits its removal. This residual
-store dependency is part of Option B.
+reliably downgrade devices that already installed a bad binary. The hybrid-only
+candidate has no native workspace fallback. This store dependency is part of
+Option B: halt rollout and ship a corrected, higher-version native build when a
+shell-owned boundary fails.
 
 The
 [production rollback runbook](../mobile-hybrid-webview-rollback.md)
@@ -3127,14 +3130,15 @@ The single PR may merge only when all boxes are true:
 - [ ] Accessibility and mobile interaction review passes.
 - [ ] Security review has no unresolved high-severity finding.
 - [ ] Production App Store submission of a production-shaped build is accepted.
-- [ ] The final exact release candidate is resubmitted if cutover materially
+- [ ] The final exact release candidate is resubmitted if it materially
       changes the reviewed binary.
 - [ ] Rollback drills recover from a bad package, corrupt cache, WebView loss,
       disconnected desktop, incompatible bridge, and bad native rollout.
 - [x] Obsolete prototype paths, contracts, RPCs, cache, bridge, and fixtures are
       removed.
-- [ ] Duplicate native workspace feature screens are removed after all gates;
-      native pairing/recovery remains.
+- [x] The native shell no longer exposes a second workspace destination; shared
+      `app/h/` screen source remains for React Native Web, and native
+      pairing/recovery remains.
 - [ ] CI, release builds, focused and full tests, lint, format, max-lines ratchet,
       and `git diff --check` pass apart from documented unrelated baseline
       failures.

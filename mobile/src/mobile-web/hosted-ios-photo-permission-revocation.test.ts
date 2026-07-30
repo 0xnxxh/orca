@@ -268,7 +268,7 @@ describe('hosted iOS Photos permission revocation', () => {
     })
   })
 
-  it('reopens the experimental hybrid route after permission-triggered termination', async () => {
+  it('reopens the production hybrid route after permission-triggered termination', async () => {
     const operations = createOperations()
     const workspaceDocument = { href: 'orca-mobile-web://workspace/h/host' }
     operations.waitForDocument
