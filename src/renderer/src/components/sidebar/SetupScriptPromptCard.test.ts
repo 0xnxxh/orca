@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { getRenderedSetupScriptPromptState } from './setup-script-prompt-render-state'
+import {
+  getRenderedSetupScriptPromptState,
+  markSetupScriptPromptSaved
+} from './setup-script-prompt-render-state'
 import type { SetupScriptPromptInspection } from '@/lib/setup-script-prompt'
 import { getRepoHostIdentityForParts } from '@/store/slices/repo-host-identity'
 
@@ -85,5 +88,22 @@ describe('getRenderedSetupScriptPromptState', () => {
         }
       })
     ).toBeNull()
+  })
+})
+
+describe('markSetupScriptPromptSaved', () => {
+  it('does not apply a completed save to the same repo id on another host', () => {
+    const remote = prompt('repo-orca', 'runtime:windows')
+
+    expect(markSetupScriptPromptSaved(remote, repoIdentity('repo-orca', 'local'))).toBe(remote)
+  })
+
+  it('marks the prompt for the saved host effective', () => {
+    expect(
+      markSetupScriptPromptSaved(
+        prompt('repo-orca', 'runtime:windows'),
+        repoIdentity('repo-orca', 'runtime:windows')
+      )
+    ).toMatchObject({ hasEffectiveSetup: true })
   })
 })

@@ -8,6 +8,15 @@ export type LastVisibleSetupScriptPrompt = {
   state: SetupScriptPromptState
 }
 
+export function markSetupScriptPromptSaved(
+  current: SetupScriptPromptState | null,
+  savedRepoHostIdentity: string
+): SetupScriptPromptState | null {
+  return current?.repoHostIdentity === savedRepoHostIdentity && current.status === 'ok'
+    ? { ...current, hasEffectiveSetup: true }
+    : current
+}
+
 export function getRenderedSetupScriptPromptState(input: {
   promptState: SetupScriptPromptState | null
   activeRepoId: string
