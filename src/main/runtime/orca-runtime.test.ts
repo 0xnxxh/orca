@@ -182,7 +182,7 @@ const electronMocks = vi.hoisted(() => {
     BrowserWindow: { fromId: vi.fn((_id: number): unknown => null) },
     webContents: { fromId: vi.fn((_id: number): unknown => null) },
     ipcMain,
-    app: { getPath: vi.fn(() => '/tmp') }
+    app: { getPath: vi.fn(() => '/tmp'), isPackaged: false }
   }
 })
 
@@ -255,6 +255,7 @@ const {
   addGitHubIssueCommentMock,
   listGitHubLabelsMock,
   listGitHubAssignableUsersMock,
+  applyAgentStatusHooksEnabledMock,
   detectInstalledAgentsWithShellPathHydrationMock,
   detectRemoteAgentsMock,
   markCodexProjectTrustedMock,
@@ -361,6 +362,7 @@ const {
     addGitHubIssueCommentMock: vi.fn(),
     listGitHubLabelsMock: vi.fn(),
     listGitHubAssignableUsersMock: vi.fn(),
+    applyAgentStatusHooksEnabledMock: vi.fn(),
     detectInstalledAgentsWithShellPathHydrationMock: vi.fn(),
     detectRemoteAgentsMock: vi.fn(),
     markCodexProjectTrustedMock: vi.fn(),
@@ -432,6 +434,10 @@ vi.mock('../ipc/ssh', () => ({
 vi.mock('../ipc/preflight', () => ({
   detectInstalledAgentsWithShellPathHydration: detectInstalledAgentsWithShellPathHydrationMock,
   detectRemoteAgents: detectRemoteAgentsMock
+}))
+
+vi.mock('../agent-hooks/managed-agent-hook-controls', () => ({
+  applyAgentStatusHooksEnabled: applyAgentStatusHooksEnabledMock
 }))
 
 vi.mock('../agent-trust-presets', () => ({
@@ -617,6 +623,7 @@ vi.mock('../git/git-username', async () => {
 
 function resetRuntimeTestMocks(): void {
   resetPlatform()
+  electronMocks.app.isPackaged = false
   clearConfiguredWorktreeSharedDirectoriesCacheForTests()
   _resetTerminalViewAttributesForTest()
   advertisedUrlWatcher.clear()
@@ -663,6 +670,7 @@ function resetRuntimeTestMocks(): void {
   })
   muxRequestMock.mockReset()
   muxRequestMock.mockResolvedValue(undefined)
+  applyAgentStatusHooksEnabledMock.mockReset().mockResolvedValue([])
   getActiveMultiplexerMock.mockReset()
   getActiveMultiplexerMock.mockReturnValue({ request: muxRequestMock, notify: vi.fn() })
   vi.mocked(createSetupRunnerScript).mockReset()
@@ -1665,7 +1673,7 @@ describe('OrcaRuntimeService', () => {
     expect(updateSettings).not.toHaveBeenCalled()
   })
 
-  it('accepts runtime-backed setting updates from paired clients', () => {
+  it('accepts runtime-backed setting updates from paired clients', async () => {
     let settings = {
       ...store.getSettings(),
       experimentalNewWorktreeCardStyle: false,
@@ -1684,7 +1692,7 @@ describe('OrcaRuntimeService', () => {
     } as never)
 
     expect(
-      runtime.updateClientSettings({
+      await runtime.updateClientSettings({
         experimentalNewWorktreeCardStyle: true,
         compactWorktreeCards: true,
         minimaxGroupId: 'group-42',
@@ -1711,6 +1719,77 @@ describe('OrcaRuntimeService', () => {
       minimaxGroupId: 'group-42',
       minimaxUsageModels: 'general,abab6.5'
     })
+  })
+
+  it('reconciles hooks only when paired-client hook settings change', async () => {
+    electronMocks.app.isPackaged = true
+    let settings = {
+      ...store.getSettings(),
+      agentStatusHooksEnabled: true,
+      disabledTuiAgents: ['codex', 'claude']
+    }
+    const updateSettings = vi.fn((updates: Partial<typeof settings>) => {
+      settings = { ...settings, ...updates }
+      return settings
+    })
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      getSettings: () => settings,
+      updateSettings
+    } as never)
+
+    await runtime.updateClientSettings({ disabledTuiAgents: ['claude', 'codex'] })
+    expect(applyAgentStatusHooksEnabledMock).not.toHaveBeenCalled()
+
+    await runtime.updateClientSettings({ disabledTuiAgents: ['claude'] })
+    expect(applyAgentStatusHooksEnabledMock).toHaveBeenCalledOnce()
+    expect(applyAgentStatusHooksEnabledMock).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({ disabledTuiAgents: ['claude'] }),
+      expect.objectContaining({
+        shouldContinue: expect.any(Function),
+        shouldHydrateShellPath: process.platform !== 'win32'
+      })
+    )
+  })
+
+  it('serializes paired-client hook reconciliation and reads current settings', async () => {
+    let settings = {
+      ...store.getSettings(),
+      agentStatusHooksEnabled: true,
+      disabledTuiAgents: ['codex', 'claude']
+    }
+    const updateSettings = vi.fn((updates: Partial<typeof settings>) => {
+      settings = { ...settings, ...updates }
+      return settings
+    })
+    const firstReconciliation = deferred<[]>()
+    applyAgentStatusHooksEnabledMock
+      .mockImplementationOnce(() => firstReconciliation.promise)
+      .mockResolvedValueOnce([])
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      getSettings: () => settings,
+      updateSettings
+    } as never)
+
+    const first = runtime.updateClientSettings({ disabledTuiAgents: ['claude'] })
+    await vi.waitFor(() => expect(applyAgentStatusHooksEnabledMock).toHaveBeenCalledOnce())
+    const second = runtime.updateClientSettings({ disabledTuiAgents: [] })
+
+    expect(applyAgentStatusHooksEnabledMock).toHaveBeenCalledOnce()
+    const firstOptions = applyAgentStatusHooksEnabledMock.mock.calls[0]?.[2]
+    expect(firstOptions?.shouldContinue?.('claude')).toBe(true)
+
+    firstReconciliation.resolve([])
+    await Promise.all([first, second])
+
+    expect(applyAgentStatusHooksEnabledMock).toHaveBeenCalledTimes(2)
+    expect(applyAgentStatusHooksEnabledMock).toHaveBeenLastCalledWith(
+      true,
+      expect.objectContaining({ disabledTuiAgents: [] }),
+      expect.objectContaining({ shouldContinue: expect.any(Function) })
+    )
   })
 
   it('rejects relative paths for runtime nested repo scan/import', async () => {
