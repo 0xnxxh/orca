@@ -12,6 +12,7 @@ export type CommentMarkdownFilePathSpans = {
 // language — so bare ``` blocks are indistinguishable there. The <pre> renderer
 // marks its subtree instead, and the code renderer reads the mark.
 const FencedCodeContext = React.createContext(false)
+const LinkedCodeContext = React.createContext(false)
 
 export function FencedCodeBoundary({
   children
@@ -23,6 +24,18 @@ export function FencedCodeBoundary({
 
 export function useIsFencedCode(): boolean {
   return React.useContext(FencedCodeContext)
+}
+
+export function LinkedCodeBoundary({
+  children
+}: {
+  children: React.ReactNode
+}): React.ReactElement {
+  return <LinkedCodeContext.Provider value={true}>{children}</LinkedCodeContext.Provider>
+}
+
+export function useIsLinkedCode(): boolean {
+  return React.useContext(LinkedCodeContext)
 }
 
 /**

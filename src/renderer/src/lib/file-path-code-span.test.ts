@@ -13,6 +13,8 @@ describe('isFilePathCodeSpan', () => {
     'src/foo/bar.ts:12',
     'C:\\repo\\config.json',
     'src\\app\\Main.tsx',
+    'docs/My File.md',
+    'C:\\repo\\My File.md',
     '@scope/pkg/dist/index.js',
     'mobile/app/h/[hostId]/session/[worktreeId].tsx',
     'package.json',

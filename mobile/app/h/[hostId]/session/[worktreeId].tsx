@@ -1171,6 +1171,7 @@ export default function SessionScreen() {
     client,
     hostId,
     worktreeId,
+    worktreeName: routeWorktreeName,
     activeSessionTab,
     activeSessionTabId,
     activeHandleRef,
@@ -1178,6 +1179,8 @@ export default function SessionScreen() {
     nativeChatTranscriptIsLocalReadable,
     nativeChatInputLeaseReady,
     connState,
+    pushFilePreview: (href) => router.push(href),
+    onOpenFileError: showToast,
     onSendError: nativeChatSendError.show,
     onSendResolved: nativeChatSendError.clear
   })
@@ -3219,7 +3222,6 @@ export default function SessionScreen() {
     },
     [client, fetchSessionTabs, hostId, routeWorktreeName, router, scheduleDelayedAction, worktreeId]
   )
-
   const handleOpenedFileDiffActivationSeqRef = useRef(0)
   // Capture active tab at tap time; reading it after openDiff would misread a mid-RPC switch and let the retry steal focus.
   const fileOpenStartActiveTabIdRef = useRef<string | null>(null)

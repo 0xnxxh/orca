@@ -26,9 +26,10 @@ type MarkdownNode = {
 }
 
 function createFilePathLinkNode(label: string): MarkdownLinkNode {
+  const url = /^[A-Za-z]:[\\/]/.test(label) ? label.replace(':', '%3A') : label
   return {
     type: 'link',
-    url: label,
+    url,
     title: null,
     children: [{ type: 'text', value: label }]
   }
@@ -67,7 +68,12 @@ function splitFilePathText(value: string): MarkdownNode[] {
 
 function transformFilePathChildren(node: MarkdownNode): void {
   // Existing links keep their href; code spans are handled by the code renderer.
-  if (!node.children || node.type === 'link' || node.type === 'image') {
+  if (
+    !node.children ||
+    node.type === 'link' ||
+    node.type === 'linkReference' ||
+    node.type === 'image'
+  ) {
     return
   }
 

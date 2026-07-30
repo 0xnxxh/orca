@@ -29,6 +29,17 @@ describe('extractFilePathProseSpans', () => {
     expect(spans).toContain('src/b.ts')
   })
 
+  it('preserves balanced route segments and trims prose wrappers', () => {
+    expect(spanTexts('open (shop)/page.tsx and [id]/page.tsx')).toEqual([
+      '(shop)/page.tsx',
+      '[id]/page.tsx'
+    ])
+    expect(spanTexts('open ((shop)/page.tsx) and ([id]/page.tsx)')).toEqual([
+      '(shop)/page.tsx',
+      '[id]/page.tsx'
+    ])
+  })
+
   it('reassembles without overlapping spans', () => {
     const text = 'see /tmp/a.txt and /tmp/b.txt done'
     const spans = extractFilePathProseSpans(text)

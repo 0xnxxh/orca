@@ -94,7 +94,7 @@ function hasMidTokenAt(value: string): boolean {
 
 export function isFilePathCodeSpan(text: string): boolean {
   const trimmed = text.trim()
-  if (!trimmed || trimmed.length > MAX_CODE_SPAN_LENGTH || /\s/.test(trimmed)) {
+  if (!trimmed || trimmed.length > MAX_CODE_SPAN_LENGTH || /[\r\n]/.test(trimmed)) {
     return false
   }
   if (hasNonFileScheme(trimmed) || hasMidTokenAt(trimmed)) {

@@ -291,10 +291,11 @@ export function NativeChatMessageList({
     const projected = foldToolMessages(
       orderNativeChatMessages(stripNoiseMessages(session.messages))
     )
-    const reconciled = reconcileNativeChatRowIdentity(projected, previousRowsRef.current)
-    previousRowsRef.current = reconciled
-    return reconciled
+    return reconcileNativeChatRowIdentity(projected, previousRowsRef.current)
   }, [session.messages])
+  useLayoutEffect(() => {
+    previousRowsRef.current = messages
+  }, [messages])
   const showTypingIndicator =
     isWorking && !messages.some((message) => message.id === NATIVE_CHAT_STREAMING_ID)
 

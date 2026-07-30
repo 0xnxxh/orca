@@ -11,8 +11,10 @@ import { ExpandableMarkdownImage } from './MarkdownImageLightbox'
 import {
   FencedCodeBoundary,
   FilePathCodeSpan,
+  LinkedCodeBoundary,
   readCodeSpanText,
   useIsFencedCode,
+  useIsLinkedCode,
   type CommentMarkdownFilePathSpans
 } from './comment-markdown-file-path-code-span'
 
@@ -31,7 +33,8 @@ function DocumentInlineCode({
   spans: CommentMarkdownFilePathSpans | undefined
 }): React.ReactElement {
   const isFenced = useIsFencedCode()
-  const text = spans && !isFenced ? readCodeSpanText(children) : null
+  const isLinked = useIsLinkedCode()
+  const text = spans && !isFenced && !isLinked ? readCodeSpanText(children) : null
   if (spans && text !== null && spans.isFilePath(text)) {
     return (
       <FilePathCodeSpan
@@ -269,7 +272,7 @@ export function createDocumentCommentMarkdownComponents(
               filePathSpans.onOpen(event, href)
             }}
           >
-            {children}
+            <LinkedCodeBoundary>{children}</LinkedCodeBoundary>
           </a>
         )
       }
@@ -281,7 +284,7 @@ export function createDocumentCommentMarkdownComponents(
           className="break-all text-primary underline underline-offset-2 hover:text-primary/80"
           onClick={(e) => handleMarkdownAnchorClick(e, href, onLinkClick)}
         >
-          {children}
+          <LinkedCodeBoundary>{children}</LinkedCodeBoundary>
         </a>
       )
     },

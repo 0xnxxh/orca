@@ -97,7 +97,6 @@ export function NativeChatToolRun({
   const [showAll, setShowAll] = useState(false)
   // Re-sync when the global toolbar toggle flips.
   useEffect(() => setOpen(expandSignal), [expandSignal])
-  useEffect(() => setShowAll(false), [blocks])
 
   const visibleBlocks =
     showAll || blocks.length <= MAX_VISIBLE_TOOL_LINES

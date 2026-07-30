@@ -21,23 +21,57 @@ const MAX_PROSE_LENGTH = 2000
 
 const TOKEN_PATTERN = /\S+/g
 
-const LEADING_PUNCTUATION = /^[([{<'"`]+/
+const LEADING_PUNCTUATION = /^[{<'"`]+/
 // A trailing ':' or '.' is prose punctuation; a ':12:7' suffix ends in a digit
 // and is left intact.
-const TRAILING_PUNCTUATION = /[)\]}>'"`,.;:!?]+$/
+const TRAILING_PUNCTUATION = /[}>'"`,.;:!?]+$/
 
 type ProseToken = {
   text: string
   offset: number
 }
 
+function hasBalancedDelimiter(value: string, open: string, close: string): boolean {
+  let depth = 0
+  for (const char of value) {
+    if (char === open) {
+      depth += 1
+    } else if (char === close && --depth < 0) {
+      return false
+    }
+  }
+  return depth === 0
+}
+
+function hasBalancedRouteDelimiters(value: string): boolean {
+  return hasBalancedDelimiter(value, '(', ')') && hasBalancedDelimiter(value, '[', ']')
+}
+
 function trimProsePunctuation(token: string, offset: number): ProseToken {
   const leading = LEADING_PUNCTUATION.exec(token)?.[0].length ?? 0
   const withoutLeading = token.slice(leading)
   const trailing = TRAILING_PUNCTUATION.exec(withoutLeading)?.[0].length ?? 0
+  let text = trailing > 0 ? withoutLeading.slice(0, -trailing) : withoutLeading
+  let wrapperLength = 0
+  while (
+    ((text.startsWith('(') && text.endsWith(')')) ||
+      (text.startsWith('[') && text.endsWith(']'))) &&
+    hasBalancedRouteDelimiters(text.slice(1, -1))
+  ) {
+    text = text.slice(1, -1)
+    wrapperLength += 1
+  }
+  while (!hasBalancedRouteDelimiters(text)) {
+    const withoutTrailing = text.slice(0, -1)
+    if ((text.endsWith(')') || text.endsWith(']')) && hasBalancedRouteDelimiters(withoutTrailing)) {
+      text = withoutTrailing
+      continue
+    }
+    break
+  }
   return {
-    text: trailing > 0 ? withoutLeading.slice(0, -trailing) : withoutLeading,
-    offset: offset + leading
+    text,
+    offset: offset + leading + wrapperLength
   }
 }
 

@@ -48,6 +48,17 @@ describe('CommentMarkdown inline-code file paths', () => {
     expect(onOpen.mock.calls[0]?.[1]).toBe('docs/guide.md')
   })
 
+  it('keeps code-formatted authored links owned by their anchor', () => {
+    const onOpen = vi.fn()
+    render('[`docs/a.ts`](https://example.com)', spansWith(onOpen))
+
+    expect(container?.querySelector('button')).toBeNull()
+    const anchor = container?.querySelector('a')
+    expect(anchor?.getAttribute('href')).toBe('https://example.com')
+    expect(anchor?.querySelector('code')?.textContent).toBe('docs/a.ts')
+    expect(onOpen).not.toHaveBeenCalled()
+  })
+
   it('leaves a fenced code block inert', () => {
     // react-markdown routes fenced and inline code through the same slot, so a
     // bare fence whose only line is a path must not become a button.
@@ -129,6 +140,31 @@ describe('CommentMarkdown inline-code file paths', () => {
 
       expect(container?.querySelector('a')).toBeNull()
       expect(container?.querySelector('pre')).not.toBeNull()
+    })
+
+    it('leaves reference-link labels untouched', () => {
+      const onOpen = vi.fn()
+      render('[docs/a.ts][guide]\n\n[guide]: https://example.com', spansWith(onOpen))
+
+      const anchors = container?.querySelectorAll('a')
+      expect(anchors).toHaveLength(1)
+      expect(anchors?.[0]?.getAttribute('href')).toBe('https://example.com')
+      expect(anchors?.[0]?.textContent).toBe('docs/a.ts')
+      expect(onOpen).not.toHaveBeenCalled()
+    })
+
+    it('keeps Windows drive paths alive through markdown sanitization', () => {
+      const onOpen = vi.fn()
+      render(String.raw`Open C:\repo\src\app.ts`, spansWith(onOpen))
+
+      const anchor = container?.querySelector('a')
+      expect(anchor?.textContent).toBe(String.raw`C:\repo\src\app.ts`)
+      expect(anchor?.getAttribute('href')).toContain('C%3A')
+      act(() => {
+        anchor?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      })
+      expect(onOpen).toHaveBeenCalledOnce()
+      expect(onOpen.mock.calls[0]?.[1]).toContain('C%3A')
     })
   })
 })
