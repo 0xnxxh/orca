@@ -5319,7 +5319,9 @@
           "5f818f12ab": "Preparing...",
           "4c05b9d7cb": "Preparing setup terminal.",
           "installLabel": "Install",
-          "updateLabel": "Update"
+          "updateLabel": "Update",
+          "setupCommandFailed": "The setup command exited with code {{value0}}, so the skill was not installed. Retry to run the installer again.",
+          "retrySetup": "Retry"
         },
         "AgentsPane": {
           "d83834f5e6": "Detecting installed agents…",
