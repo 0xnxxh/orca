@@ -156,6 +156,35 @@ export function spawnBenchmarkProcess(executable, args, options) {
   })
 }
 
+export function runBenchmarkCleanupStages(stages) {
+  const errors = []
+  for (const stage of stages) {
+    try {
+      stage()
+    } catch (error) {
+      errors.push(error)
+    }
+  }
+  if (errors.length === 1) {
+    throw errors[0]
+  }
+  if (errors.length > 1) {
+    throw new AggregateError(errors, 'Benchmark trial cleanup failed')
+  }
+}
+
+export function throwBenchmarkTrialFailures(trialError, cleanupError) {
+  if (trialError && cleanupError) {
+    throw new AggregateError([trialError, cleanupError], 'Electron trial and cleanup failed')
+  }
+  if (trialError) {
+    throw trialError
+  }
+  if (cleanupError) {
+    throw cleanupError
+  }
+}
+
 const processGroupSignalOperations = {
   processIdentities,
   signalProcess: process.kill.bind(process)
@@ -165,31 +194,72 @@ export function signalValidatedProcessGroup(
   pgid,
   environmentFragment,
   signal,
+  groupState = { stopped: false },
   operations = processGroupSignalOperations
 ) {
   if (!Number.isInteger(pgid) || pgid <= 0) {
     return false
   }
-  const members = operations.processIdentities(true).filter((identity) => identity.pgid === pgid)
+  let members
+  try {
+    members = operations.processIdentities(true).filter((identity) => identity.pgid === pgid)
+  } catch (error) {
+    if (!groupState.stopped) {
+      throw error
+    }
+    try {
+      operations.signalProcess(-pgid, 'SIGCONT')
+      groupState.stopped = false
+    } catch (resumeError) {
+      if (resumeError?.code === 'ESRCH') {
+        groupState.stopped = false
+      } else {
+        throw new AggregateError(
+          [error, resumeError],
+          'Benchmark process group recovery failed before validation'
+        )
+      }
+    }
+    throw error
+  }
   if (members.length === 0) {
     return false
   }
   if (members.some((identity) => !identity.command.includes(environmentFragment))) {
-    throw new Error('Benchmark process group no longer belongs to this trial')
+    const ownershipError = new Error('Benchmark process group no longer belongs to this trial')
+    if (groupState.stopped) {
+      try {
+        operations.signalProcess(-pgid, 'SIGCONT')
+        groupState.stopped = false
+      } catch (resumeError) {
+        if (resumeError?.code === 'ESRCH') {
+          groupState.stopped = false
+        } else {
+          throw new AggregateError(
+            [ownershipError, resumeError],
+            'Benchmark process group authority recovery failed'
+          )
+        }
+      }
+    }
+    throw ownershipError
   }
   const anchor = members[0]
-  let stopped = false
+  let anchorNeedsResume = false
+  let groupNeedsResume = groupState.stopped
   try {
     operations.signalProcess(anchor.pid, 'SIGSTOP')
-    stopped = true
+    anchorNeedsResume = true
     const stoppedAnchor = operations
       .processIdentities(true)
       .find((identity) => identity.pid === anchor.pid)
     if (!sameIdentity(stoppedAnchor, anchor)) {
-      stopped = false
       throw new Error('Benchmark process group anchor changed before signaling')
     }
     operations.signalProcess(-pgid, 'SIGSTOP')
+    groupNeedsResume = true
+    groupState.stopped = true
+    anchorNeedsResume = false
     const stoppedMembers = operations
       .processIdentities(true)
       .filter((identity) => identity.pgid === pgid)
@@ -204,29 +274,31 @@ export function signalValidatedProcessGroup(
       if (signal !== 'SIGKILL') {
         operations.signalProcess(-pgid, 'SIGCONT')
       }
-      stopped = false
+      groupNeedsResume = false
+      groupState.stopped = false
     }
     return true
   } catch (error) {
     const recoveryErrors = []
-    if (stopped) {
+    if (groupNeedsResume) {
       try {
-        const recoveryMembers = operations
-          .processIdentities(true)
-          .filter(
-            (identity) => identity.pgid === pgid && identity.command.includes(environmentFragment)
-          )
-        for (const member of recoveryMembers) {
-          try {
-            operations.signalProcess(member.pid, 'SIGCONT')
-          } catch (caught) {
-            if (caught?.code !== 'ESRCH') {
-              recoveryErrors.push(caught)
-            }
-          }
-        }
+        operations.signalProcess(-pgid, 'SIGCONT')
+        groupState.stopped = false
       } catch (caught) {
-        recoveryErrors.push(caught)
+        if (caught?.code === 'ESRCH') {
+          groupState.stopped = false
+        } else {
+          recoveryErrors.push(caught)
+        }
+      }
+    }
+    if (anchorNeedsResume) {
+      try {
+        operations.signalProcess(anchor.pid, 'SIGCONT')
+      } catch (caught) {
+        if (caught?.code !== 'ESRCH') {
+          recoveryErrors.push(caught)
+        }
       }
     }
     if (recoveryErrors.length > 0) {
@@ -277,7 +349,6 @@ export function signalProcessIdentity(
     stopped = true
     const stoppedIdentity = operations.processIdentity(identity.pid)
     if (!sameIdentity(stoppedIdentity, identity)) {
-      stopped = false
       throw new Error('Recorded benchmark helper PID changed before signaling')
     }
     operations.signalProcess(-identity.pgid, signal)
@@ -290,10 +361,7 @@ export function signalProcessIdentity(
     let resumeError
     if (stopped) {
       try {
-        const recoveryIdentity = operations.processIdentity(identity.pid)
-        if (sameIdentity(recoveryIdentity, identity)) {
-          operations.signalProcess(identity.pid, 'SIGCONT')
-        }
+        operations.signalProcess(identity.pid, 'SIGCONT')
       } catch (caught) {
         if (caught?.code !== 'ESRCH') {
           resumeError = caught

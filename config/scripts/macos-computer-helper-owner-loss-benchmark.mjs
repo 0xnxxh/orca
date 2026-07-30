@@ -1,15 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto'
 import { execFileSync, fork } from 'node:child_process'
-import {
-  closeSync,
-  existsSync,
-  mkdtempSync,
-  openSync,
-  readFileSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
+import { existsSync, mkdtempSync, openSync, readFileSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -21,13 +13,13 @@ import {
   sampleProcess
 } from './macos-computer-helper-owner-loss-metrics.mjs'
 import {
-  killRecordedAndMatchingProcesses,
   processIdentityIsCurrent,
   signalProcessIdentity,
-  signalValidatedProcessGroup,
   spawnBenchmarkProcess,
+  throwBenchmarkTrialFailures,
   writeProcessRecord
 } from './macos-computer-helper-owner-loss-processes.mjs'
+import { cleanupOwnerLossTrial } from './macos-computer-helper-owner-loss-trial-cleanup.mjs'
 
 const INTERNAL_ENV = 'ORCA_COMPUTER_HELPER_OWNER_BENCH_INTERNAL'
 const EXPECTATION_ENV = 'ORCA_COMPUTER_HELPER_OWNER_BENCH_EXPECTATION'
@@ -46,6 +38,10 @@ const metricsPath = path.join(import.meta.dirname, 'macos-computer-helper-owner-
 const processCleanupPath = path.join(
   import.meta.dirname,
   'macos-computer-helper-owner-loss-processes.mjs'
+)
+const trialCleanupPath = path.join(
+  import.meta.dirname,
+  'macos-computer-helper-owner-loss-trial-cleanup.mjs'
 )
 const sidecarPath = path.join(repoRoot, 'out', 'main', 'computer-sidecar.js')
 const helperAppPath = path.join(
@@ -457,6 +453,8 @@ function runTrial(executable, expectation) {
   )
   let result
   let serializedResult
+  let trialError
+  let cleanupError
   let stderrDescriptor
   let stdoutDescriptor
   let trialOutput = ''
@@ -481,48 +479,35 @@ function runTrial(executable, expectation) {
     if (result.status === 0 && existsSync(resultPath)) {
       serializedResult = readFileSync(resultPath, 'utf8')
     }
+  } catch (error) {
+    trialError = error
   } finally {
     const failedTrial = result?.status !== 0 || !serializedResult
-    const trialEnvironmentFragment = `TMPDIR=${trialTempDir}`
-    try {
-      if (failedTrial) {
-        signalValidatedProcessGroup(result?.pid, trialEnvironmentFragment, 'SIGSTOP')
-      }
-    } finally {
-      try {
-        if (failedTrial) {
-          killRecordedAndMatchingProcesses(helperRecordPath, helperPath, [helperPath, trialTempDir])
-        }
-      } finally {
-        try {
-          if (failedTrial) {
-            signalValidatedProcessGroup(result?.pid, trialEnvironmentFragment, 'SIGKILL')
-          }
-        } finally {
-          if (stderrDescriptor !== undefined) {
-            closeSync(stderrDescriptor)
-          }
-          if (stdoutDescriptor !== undefined) {
-            closeSync(stdoutDescriptor)
-          }
-          trialOutput = [stderrPath, stdoutPath]
-            .filter(existsSync)
-            .map((outputPath) => readFileSync(outputPath, 'utf8'))
-            .join('')
-          rmSync(launcherDir, { recursive: true, force: true })
-          rmSync(trialTempDir, { recursive: true, force: true })
-        }
-      }
-    }
+    const trialMarker = `TMPDIR=${trialTempDir}`
+    const cleanup = cleanupOwnerLossTrial({
+      failed: failedTrial,
+      pid: result?.pid,
+      marker: trialMarker,
+      recordPath: helperRecordPath,
+      helperPath,
+      tempDir: trialTempDir,
+      stderrDescriptor,
+      stdoutDescriptor,
+      outputPaths: [stderrPath, stdoutPath],
+      launcherDir
+    })
+    cleanupError = cleanup.error
+    trialOutput = cleanup.output
   }
-  if (result.status !== 0) {
-    throw new Error(
+  if (!trialError && result?.status !== 0) {
+    trialError = new Error(
       `Electron trial failed (${result.error?.message ?? result.signal ?? result.status}):\n${trialOutput}`
     )
   }
-  if (!serializedResult) {
-    throw new Error(`Electron trial did not write a result:\n${trialOutput}`)
+  if (!trialError && !serializedResult) {
+    trialError = new Error(`Electron trial did not write a result:\n${trialOutput}`)
   }
+  throwBenchmarkTrialFailures(trialError, cleanupError)
   return JSON.parse(serializedResult)
 }
 
@@ -565,7 +550,8 @@ function runBenchmark() {
     sources: {
       benchmarkSha256: artifactSha256(scriptPath),
       metricsSha256: artifactSha256(metricsPath),
-      processCleanupSha256: artifactSha256(processCleanupPath)
+      processCleanupSha256: artifactSha256(processCleanupPath),
+      trialCleanupSha256: artifactSha256(trialCleanupPath)
     },
     expectation: options.expect,
     trials: options.trials,

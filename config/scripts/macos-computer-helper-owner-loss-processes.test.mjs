@@ -8,9 +8,11 @@ import {
   killRecordedAndMatchingProcesses,
   killRecordedProcess,
   processIdentity,
+  runBenchmarkCleanupStages,
   signalProcessIdentity,
   signalValidatedProcessGroup,
   spawnBenchmarkProcess,
+  throwBenchmarkTrialFailures,
   writeProcessRecord
 } from './macos-computer-helper-owner-loss-processes.mjs'
 
@@ -45,6 +47,46 @@ describeMacOS('macOS helper owner-loss benchmark process cleanup', () => {
     expect(() => process.kill(result.pid, 0)).toThrow()
   })
 
+  it('runs every cleanup stage before aggregating errors', () => {
+    const completed = []
+    let thrown
+
+    try {
+      runBenchmarkCleanupStages([
+        () => {
+          completed.push(1)
+          throw new Error('first failure')
+        },
+        () => {
+          completed.push(2)
+        },
+        () => {
+          completed.push(3)
+          throw new Error('last failure')
+        }
+      ])
+    } catch (error) {
+      thrown = error
+    }
+    expect(completed).toEqual([1, 2, 3])
+    expect(thrown).toBeInstanceOf(AggregateError)
+    expect(thrown.errors.map((error) => error.message)).toEqual(['first failure', 'last failure'])
+  })
+
+  it('preserves both trial and cleanup failures', () => {
+    const trialError = new Error('trial failed with captured output')
+    const cleanupError = new Error('cleanup failed')
+    let thrown
+
+    try {
+      throwBenchmarkTrialFailures(trialError, cleanupError)
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(AggregateError)
+    expect(thrown.errors).toEqual([trialError, cleanupError])
+  })
+
   it('kills a timed-out trial group only after validating its environment', async () => {
     const temporaryDirectory = mkdtempSync(path.join(tmpdir(), 'orca-owner-benchmark-group-test-'))
     temporaryDirectories.add(temporaryDirectory)
@@ -68,13 +110,18 @@ describeMacOS('macOS helper owner-loss benchmark process cleanup', () => {
     const childPid = Number(readFileSync(childPidPath, 'utf8'))
     spawnedPids.add(childPid)
     const environmentFragment = `${environmentName}=${environmentValue}`
+    const groupState = { stopped: false }
 
     expect(() =>
       signalValidatedProcessGroup(result.pid, `${environmentName}=wrong`, 'SIGSTOP')
     ).toThrow('Benchmark process group no longer belongs to this trial')
     expect(() => process.kill(childPid, 0)).not.toThrow()
-    expect(signalValidatedProcessGroup(result.pid, environmentFragment, 'SIGSTOP')).toBe(true)
-    expect(signalValidatedProcessGroup(result.pid, environmentFragment, 'SIGKILL')).toBe(true)
+    expect(
+      signalValidatedProcessGroup(result.pid, environmentFragment, 'SIGSTOP', groupState)
+    ).toBe(true)
+    expect(
+      signalValidatedProcessGroup(result.pid, environmentFragment, 'SIGKILL', groupState)
+    ).toBe(true)
     await expect
       .poll(() => {
         try {
@@ -89,7 +136,7 @@ describeMacOS('macOS helper owner-loss benchmark process cleanup', () => {
     spawnedPids.delete(childPid)
   })
 
-  it('resumes marked group members after revalidation fails', () => {
+  it('resumes the group after post-stop revalidation fails', () => {
     const marker = 'ORCA_OWNER_GROUP=trial'
     const members = [
       { pid: 41, pgid: 41, command: `/launcher ${marker}` },
@@ -99,46 +146,206 @@ describeMacOS('macOS helper owner-loss benchmark process cleanup', () => {
     let scanCount = 0
 
     expect(() =>
-      signalValidatedProcessGroup(41, marker, 'SIGKILL', {
-        processIdentities: () => {
-          scanCount += 1
-          if (scanCount === 3) {
-            throw new Error('transient group inspection failure')
+      signalValidatedProcessGroup(
+        41,
+        marker,
+        'SIGKILL',
+        { stopped: false },
+        {
+          processIdentities: () => {
+            scanCount += 1
+            if (scanCount === 3) {
+              throw new Error('transient group inspection failure')
+            }
+            return members
+          },
+          signalProcess: (pid, signal) => {
+            signals.push([pid, signal])
           }
-          return members
-        },
-        signalProcess: (pid, signal) => {
-          signals.push([pid, signal])
         }
-      })
+      )
     ).toThrow('transient group inspection failure')
     expect(signals).toEqual([
       [41, 'SIGSTOP'],
       [-41, 'SIGSTOP'],
-      [41, 'SIGCONT'],
-      [42, 'SIGCONT']
+      [-41, 'SIGCONT']
     ])
   })
 
-  it('does not signal a replacement group anchor', () => {
+  it('compensates a possible stop after group anchor replacement', () => {
     const marker = 'ORCA_OWNER_GROUP=trial'
     const anchor = { pid: 41, pgid: 41, command: `/launcher ${marker}` }
-    const replacement = { pid: 41, pgid: 41, command: '/unrelated' }
+    const replacement = { pid: 41, pgid: 99, command: '/unrelated' }
     const signals = []
     let scanCount = 0
 
     expect(() =>
-      signalValidatedProcessGroup(41, marker, 'SIGKILL', {
-        processIdentities: () => {
-          scanCount += 1
-          return scanCount === 1 ? [anchor] : [replacement]
-        },
-        signalProcess: (pid, signal) => {
-          signals.push([pid, signal])
+      signalValidatedProcessGroup(
+        41,
+        marker,
+        'SIGKILL',
+        { stopped: false },
+        {
+          processIdentities: () => {
+            scanCount += 1
+            return scanCount === 1 ? [anchor] : [replacement]
+          },
+          signalProcess: (pid, signal) => {
+            signals.push([pid, signal])
+          }
         }
-      })
+      )
     ).toThrow('Benchmark process group anchor changed before signaling')
-    expect(signals).toEqual([[41, 'SIGSTOP']])
+    expect(signals).toEqual([
+      [41, 'SIGSTOP'],
+      [41, 'SIGCONT']
+    ])
+  })
+
+  it('resumes a previously frozen group when final inspection fails', () => {
+    const marker = 'ORCA_OWNER_GROUP=trial'
+    const members = [{ pid: 41, pgid: 41, command: `/launcher ${marker}` }]
+    const signals = []
+    let scanCount = 0
+    const groupState = { stopped: false }
+    const operations = {
+      processIdentities: () => {
+        scanCount += 1
+        if (scanCount === 4) {
+          throw new Error('transient final inspection failure')
+        }
+        return members
+      },
+      signalProcess: (pid, signal) => {
+        signals.push([pid, signal])
+      }
+    }
+
+    expect(signalValidatedProcessGroup(41, marker, 'SIGSTOP', groupState, operations)).toBe(true)
+    expect(() =>
+      signalValidatedProcessGroup(41, marker, 'SIGKILL', groupState, operations)
+    ).toThrow('transient final inspection failure')
+    expect(signals).toEqual([
+      [41, 'SIGSTOP'],
+      [-41, 'SIGSTOP'],
+      [-41, 'SIGCONT']
+    ])
+  })
+
+  it('resumes a previously frozen group when final anchor stop fails', () => {
+    const marker = 'ORCA_OWNER_GROUP=trial'
+    const members = [
+      { pid: 41, pgid: 41, command: `/launcher ${marker}` },
+      { pid: 42, pgid: 41, command: `/child ${marker}` }
+    ]
+    const signals = []
+    let finalCall = false
+    const groupState = { stopped: false }
+    const missingProcessError = Object.assign(new Error('anchor exited'), { code: 'ESRCH' })
+    const operations = {
+      processIdentities: () => members,
+      signalProcess: (pid, signal) => {
+        signals.push([pid, signal])
+        if (finalCall && pid === 41 && signal === 'SIGSTOP') {
+          throw missingProcessError
+        }
+      }
+    }
+
+    expect(signalValidatedProcessGroup(41, marker, 'SIGSTOP', groupState, operations)).toBe(true)
+    finalCall = true
+    expect(signalValidatedProcessGroup(41, marker, 'SIGKILL', groupState, operations)).toBe(false)
+    expect(signals.at(-1)).toEqual([-41, 'SIGCONT'])
+  })
+
+  it('resumes a previously frozen group after final anchor replacement', () => {
+    const marker = 'ORCA_OWNER_GROUP=trial'
+    const anchor = { pid: 41, pgid: 41, command: `/launcher ${marker}` }
+    const child = { pid: 42, pgid: 41, command: `/child ${marker}` }
+    const replacement = { pid: 41, pgid: 99, command: '/unrelated' }
+    const signals = []
+    let scanCount = 0
+    const groupState = { stopped: false }
+    const operations = {
+      processIdentities: () => {
+        scanCount += 1
+        return scanCount === 5 ? [replacement, child] : [anchor, child]
+      },
+      signalProcess: (pid, signal) => {
+        signals.push([pid, signal])
+      }
+    }
+
+    expect(signalValidatedProcessGroup(41, marker, 'SIGSTOP', groupState, operations)).toBe(true)
+    expect(() =>
+      signalValidatedProcessGroup(41, marker, 'SIGKILL', groupState, operations)
+    ).toThrow('Benchmark process group anchor changed before signaling')
+    expect(signals.slice(-2)).toEqual([
+      [-41, 'SIGCONT'],
+      [41, 'SIGCONT']
+    ])
+  })
+
+  it('retains uncertain stop state across cleanup stage failures', () => {
+    const marker = 'ORCA_OWNER_GROUP=trial'
+    const members = [{ pid: 41, pgid: 41, command: `/launcher ${marker}` }]
+    const groupState = { stopped: false }
+    let scanCount = 0
+    let continueAttempts = 0
+    const operations = {
+      processIdentities: () => {
+        scanCount += 1
+        if (scanCount >= 3) {
+          throw new Error(
+            scanCount === 3 ? 'post-stop inspection failed' : 'final inspection failed'
+          )
+        }
+        return members
+      },
+      signalProcess: (pid, signal) => {
+        if (pid === -41 && signal === 'SIGCONT') {
+          continueAttempts += 1
+          if (continueAttempts === 1) {
+            throw new Error('first compensation failed')
+          }
+        }
+      }
+    }
+
+    expect(() =>
+      signalValidatedProcessGroup(41, marker, 'SIGSTOP', groupState, operations)
+    ).toThrow('Benchmark process group signal recovery failed')
+    expect(groupState.stopped).toBe(true)
+    expect(() =>
+      signalValidatedProcessGroup(41, marker, 'SIGKILL', groupState, operations)
+    ).toThrow('final inspection failed')
+    expect(continueAttempts).toBe(2)
+    expect(groupState.stopped).toBe(false)
+  })
+
+  it('preserves group authority errors when compensation fails', () => {
+    const marker = 'ORCA_OWNER_GROUP=trial'
+    const ownershipError = 'Benchmark process group no longer belongs to this trial'
+    let thrown
+
+    try {
+      signalValidatedProcessGroup(
+        41,
+        marker,
+        'SIGKILL',
+        { stopped: true },
+        {
+          processIdentities: () => [{ pid: 41, pgid: 41, command: '/unrelated' }],
+          signalProcess: () => {
+            throw new Error('resume denied')
+          }
+        }
+      )
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(AggregateError)
+    expect(thrown.errors.map((error) => error.message)).toEqual([ownershipError, 'resume denied'])
   })
 
   it('kills a recorded helper in a separate process group', async () => {
@@ -263,7 +470,7 @@ describeMacOS('macOS helper owner-loss benchmark process cleanup', () => {
     ])
   })
 
-  it('does not signal a replacement PID after post-stop revalidation', () => {
+  it('compensates a possible stop after helper PID replacement', () => {
     const identity = { pid: 41, pgid: 41, command: '/helper marker' }
     const replacement = { pid: 41, pgid: 41, command: '/unrelated' }
     const signals = []
@@ -280,7 +487,38 @@ describeMacOS('macOS helper owner-loss benchmark process cleanup', () => {
         }
       })
     ).toThrow('Recorded benchmark helper PID changed before signaling')
-    expect(signals).toEqual([[41, 'SIGSTOP']])
+    expect(signals).toEqual([
+      [41, 'SIGSTOP'],
+      [41, 'SIGCONT']
+    ])
+  })
+
+  it('preserves helper identity errors when compensation fails', () => {
+    const identity = { pid: 41, pgid: 41, command: '/helper marker' }
+    const replacement = { pid: 41, pgid: 41, command: '/unrelated' }
+    let inspectionCount = 0
+    let thrown
+
+    try {
+      signalProcessIdentity(identity, 'marker', 'SIGKILL', {
+        processIdentity: () => {
+          inspectionCount += 1
+          return inspectionCount === 1 ? identity : replacement
+        },
+        signalProcess: (_pid, signal) => {
+          if (signal === 'SIGCONT') {
+            throw new Error('resume denied')
+          }
+        }
+      })
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(AggregateError)
+    expect(thrown.errors.map((error) => error.message)).toEqual([
+      'Recorded benchmark helper PID changed before signaling',
+      'resume denied'
+    ])
   })
 
   it('treats a missing PID as process exit after an identity query failure', () => {

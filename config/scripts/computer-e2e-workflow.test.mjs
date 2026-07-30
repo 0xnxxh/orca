@@ -139,7 +139,8 @@ describe('computer-use e2e workflow', () => {
         'config/scripts/macos-computer-helper-owner-loss-benchmark.mjs',
         'config/scripts/macos-computer-helper-owner-loss-metrics.mjs',
         'config/scripts/macos-computer-helper-owner-loss-processes.mjs',
-        'config/scripts/macos-computer-helper-owner-loss-processes.test.mjs'
+        'config/scripts/macos-computer-helper-owner-loss-processes.test.mjs',
+        'config/scripts/macos-computer-helper-owner-loss-trial-cleanup.mjs'
       ])
     )
   })
@@ -149,10 +150,17 @@ describe('computer-use e2e workflow', () => {
       join(projectDir, 'config/scripts/macos-computer-helper-owner-loss-benchmark.mjs'),
       'utf8'
     )
+    const cleanup = readFileSync(
+      join(projectDir, 'config/scripts/macos-computer-helper-owner-loss-trial-cleanup.mjs'),
+      'utf8'
+    )
 
     expect(benchmark).toContain('spawnBenchmarkProcess(executable, [launcherDir]')
     expect(benchmark).toContain("stdio: ['ignore', stdoutDescriptor, stderrDescriptor]")
-    expect(benchmark).toContain('killRecordedAndMatchingProcesses(helperRecordPath, helperPath')
+    expect(benchmark).toContain('cleanupOwnerLossTrial({')
+    expect(benchmark).toContain('trialCleanupSha256: artifactSha256(trialCleanupPath)')
+    expect(cleanup).toContain('killRecordedAndMatchingProcesses(options.recordPath')
+    expect(cleanup).toContain("signalValidatedProcessGroup(options.pid, options.marker, 'SIGKILL'")
   })
 
   it('boots the built daemon under plain Node in the PR native-smoke job after the main build', () => {
