@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ComputerProviderSupervisorClient } from './computer-provider-supervisor-client'
+import {
+  ComputerProviderSupervisorClient,
+  DESKTOP_PROVIDER_SUPERVISOR_REQUEST_TIMEOUT_MS
+} from './computer-provider-supervisor-client'
 import {
   COMPUTER_PROVIDER_SUPERVISOR_CHANNEL,
   type ComputerProviderSupervisorRequest
@@ -86,6 +89,52 @@ describe('ComputerProviderSupervisorClient', () => {
       { method: 'macos.claim', params: { sessionId: 'session-1' } },
       { method: 'macos.release', params: { sessionId: 'session-1' } }
     ])
+  })
+
+  it('executes only a fixed desktop request and validates its result', async () => {
+    const sent: ComputerProviderSupervisorRequest[] = []
+    const client = new ComputerProviderSupervisorClient((message, callback) => {
+      sent.push(message)
+      callback(null)
+    })
+
+    const execution = client.executeDesktopProvider({ tool: 'list_apps' })
+    expect(sent).toEqual([
+      {
+        channel: COMPUTER_PROVIDER_SUPERVISOR_CHANNEL,
+        kind: 'request',
+        id: 1,
+        method: 'desktop.execute',
+        params: { request: { tool: 'list_apps' } }
+      }
+    ])
+    client.handleMessage({
+      channel: COMPUTER_PROVIDER_SUPERVISOR_CHANNEL,
+      kind: 'response',
+      id: 1,
+      ok: true,
+      result: { stdout: '{"ok":true}', stderr: '', error: null }
+    })
+
+    await expect(execution).resolves.toEqual({
+      stdout: '{"ok":true}',
+      stderr: '',
+      error: null
+    })
+  })
+
+  it('rejects malformed desktop results from the parent boundary', async () => {
+    const client = new ComputerProviderSupervisorClient(() => {})
+    const execution = client.executeDesktopProvider({ tool: 'list_apps' })
+    client.handleMessage({
+      channel: COMPUTER_PROVIDER_SUPERVISOR_CHANNEL,
+      kind: 'response',
+      id: 1,
+      ok: true,
+      result: { stdout: Buffer.from('unbounded binary'), stderr: '', error: null }
+    })
+
+    await expect(execution).rejects.toThrow('invalid desktop provider result')
   })
 
   it('rejects immediately when supervisor IPC delivery fails', async () => {
@@ -187,6 +236,26 @@ describe('ComputerProviderSupervisorClient', () => {
     )
     await vi.advanceTimersByTimeAsync(10_000)
 
+    await rejection
+  })
+
+  it('allows the desktop supervisor deadline and reap grace to finish', async () => {
+    vi.useFakeTimers()
+    const client = new ComputerProviderSupervisorClient(() => {})
+
+    const execution = client.executeDesktopProvider({ tool: 'list_apps' })
+    const rejection = expect(execution).rejects.toThrow(
+      'computer provider supervisor desktop.execute timed out'
+    )
+    await vi.advanceTimersByTimeAsync(DESKTOP_PROVIDER_SUPERVISOR_REQUEST_TIMEOUT_MS - 1)
+    let settled = false
+    void execution.catch(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(1)
     await rejection
   })
 })

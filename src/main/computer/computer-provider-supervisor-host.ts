@@ -5,6 +5,7 @@ import {
   type ComputerProviderSupervisorRequest,
   type ComputerProviderSupervisorResponse
 } from './computer-provider-supervisor-protocol'
+import { DesktopScriptProviderSupervisor } from './desktop-script-provider-supervisor'
 import { MacOSNativeProviderSupervisor } from './macos-native-provider-supervisor'
 
 type SupervisorMessageSender = (message: ComputerProviderSupervisorMessage) => void
@@ -14,13 +15,17 @@ type SupervisorResponsePayload =
 
 export class ComputerProviderSupervisorHost {
   private sender: SupervisorMessageSender | null = null
+  private ownerGeneration = 0
   private readonly macOS: MacOSNativeProviderSupervisor
+  private readonly desktop: DesktopScriptProviderSupervisor
 
-  constructor(macOS?: MacOSNativeProviderSupervisor) {
+  constructor(macOS?: MacOSNativeProviderSupervisor, desktop?: DesktopScriptProviderSupervisor) {
     this.macOS = macOS ?? new MacOSNativeProviderSupervisor((event) => this.sender?.(event))
+    this.desktop = desktop ?? new DesktopScriptProviderSupervisor()
   }
 
   attach(sender: SupervisorMessageSender): void {
+    this.ownerGeneration++
     this.sender = sender
   }
 
@@ -28,10 +33,11 @@ export class ComputerProviderSupervisorHost {
     if (!this.sender || !isComputerProviderSupervisorRequest(message)) {
       return false
     }
+    const ownerGeneration = this.ownerGeneration
     void this.dispatch(message).then(
-      (result) => this.send({ id: message.id, ok: true, result }),
+      (result) => this.send(ownerGeneration, { id: message.id, ok: true, result }),
       (error) =>
-        this.send({
+        this.send(ownerGeneration, {
           id: message.id,
           ok: false,
           error: errorPayload(error)
@@ -41,8 +47,10 @@ export class ComputerProviderSupervisorHost {
   }
 
   shutdown(): void {
+    this.ownerGeneration++
     this.sender = null
     this.macOS.shutdown()
+    this.desktop.shutdown()
   }
 
   private async dispatch(request: ComputerProviderSupervisorRequest): Promise<unknown> {
@@ -55,10 +63,15 @@ export class ComputerProviderSupervisorHost {
       case 'macos.release':
         this.macOS.release(request.params.sessionId)
         return { released: true }
+      case 'desktop.execute':
+        return this.desktop.execute(request.params.request)
     }
   }
 
-  private send(response: SupervisorResponsePayload): void {
+  private send(ownerGeneration: number, response: SupervisorResponsePayload): void {
+    if (ownerGeneration !== this.ownerGeneration) {
+      return
+    }
     this.sender?.({
       channel: COMPUTER_PROVIDER_SUPERVISOR_CHANNEL,
       kind: 'response',
