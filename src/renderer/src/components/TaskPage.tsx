@@ -6212,8 +6212,10 @@ export default function TaskPage(): React.JSX.Element {
           }
           const clamp = outcome.clampTotalPagesTo
           if (clamp !== null) {
+            // Why: 0 means the count itself failed (fallback path) — replace it
+            // like null, or the speculative fallback page is never withdrawn.
             setCountedTotalPages((previous) =>
-              previous !== null && previous < clamp ? previous : clamp
+              previous !== null && previous > 0 && previous < clamp ? previous : clamp
             )
           }
           return
