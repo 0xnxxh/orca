@@ -205,6 +205,7 @@ import {
 } from '@/components/task-page-cache-selectors'
 import { shouldHideTaskPageListChrome } from '@/components/task-page-list-chrome-visibility'
 import {
+  applyEmptyPageClamp,
   buildSelectedReposKey,
   getTaskPagePerRepoLimit,
   resolveEmptyPageOutcome,
@@ -6190,13 +6191,15 @@ export default function TaskPage(): React.JSX.Element {
         if (items.length === 0) {
           // Why: see resolveEmptyPageOutcome — a dead click needs feedback only
           // when something actually failed; a clean empty probe is end-of-data.
-          const outcome = resolveEmptyPageOutcome({
+          // The reason never depends on the count, so it's safe to derive here;
+          // the clamp is not (see applyEmptyPageClamp) and runs in the updater.
+          const { reason } = resolveEmptyPageOutcome({
             target,
             failedCount,
             issueErrorTypes,
-            countedTotalPages
+            countedTotalPages: null
           })
-          if (outcome.reason === 'window-unreachable') {
+          if (reason === 'window-unreachable') {
             toast.error(
               translate(
                 'auto.components.TaskPage.loadPageUnreachable',
@@ -6205,7 +6208,7 @@ export default function TaskPage(): React.JSX.Element {
               ),
               { id: 'work-items-page-unreachable' }
             )
-          } else if (outcome.reason === 'load-failed') {
+          } else if (reason === 'load-failed') {
             toast.error(
               translate(
                 'auto.components.TaskPage.loadPageFailed',
@@ -6215,14 +6218,9 @@ export default function TaskPage(): React.JSX.Element {
               { id: 'work-items-page-load-failed' }
             )
           }
-          const clamp = outcome.clampTotalPagesTo
-          if (clamp !== null) {
-            // Why: 0 means the count itself failed (fallback path) — replace it
-            // like null, or the speculative fallback page is never withdrawn.
-            setCountedTotalPages((previous) =>
-              previous !== null && previous > 0 && previous < clamp ? previous : clamp
-            )
-          }
+          setCountedTotalPages((previous) =>
+            applyEmptyPageClamp(previous, { target, failedCount, issueErrorTypes })
+          )
           return
         }
         setPages((previous) => {
@@ -6247,7 +6245,6 @@ export default function TaskPage(): React.JSX.Element {
       paginationLoading,
       selectedRepos,
       currentPage,
-      countedTotalPages,
       appliedTaskSearch,
       fetchWorkItemsNextPage,
       githubPageSize,

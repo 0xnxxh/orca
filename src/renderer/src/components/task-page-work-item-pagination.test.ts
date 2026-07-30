@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { GitHubWorkItem } from '../../../shared/types'
 import {
   accumulateWorkItemPages,
+  applyEmptyPageClamp,
   buildSelectedReposKey,
   getTaskPagePerRepoLimit,
   resolveEmptyPageOutcome,
@@ -79,9 +80,10 @@ describe('resolveEmptyPageOutcome', () => {
     ).toEqual({ reason: 'window-unreachable', clampTotalPagesTo: 33 })
   })
 
-  it('does not clamp on a window 422 when a sibling repo fetch threw', () => {
+  it('resolves as load-failed when a window 422 coincides with a thrown repo fetch', () => {
     // Repos advance independently; another repo's transient failure says
-    // nothing about the healthy repos' remaining pages.
+    // nothing about the healthy repos' remaining pages — and the transient
+    // failure is the actionable signal, so it wins the toast too.
     expect(
       resolveEmptyPageOutcome({
         ...base,
@@ -89,7 +91,7 @@ describe('resolveEmptyPageOutcome', () => {
         failedCount: 1,
         issueErrorTypes: ['validation_error']
       })
-    ).toEqual({ reason: 'window-unreachable', clampTotalPagesTo: null })
+    ).toEqual({ reason: 'load-failed', clampTotalPagesTo: null })
   })
 
   it('reports a failure without clamping for transient or unclassified errors', () => {
@@ -126,6 +128,40 @@ describe('resolveEmptyPageOutcome', () => {
       reason: 'end-of-data',
       clampTotalPagesTo: 1
     })
+  })
+})
+
+describe('applyEmptyPageClamp', () => {
+  const clean = { failedCount: 0, issueErrorTypes: [] as const }
+
+  it('keeps a real count that resolved between click and response', () => {
+    // The count promise routinely lands mid-flight; the committed value, not
+    // the click-time closure, must decide whether end-of-data may clamp.
+    expect(applyEmptyPageClamp(33, { ...clean, target: 2 })).toBe(33)
+  })
+
+  it('clamps while the count is unknown or failed', () => {
+    expect(applyEmptyPageClamp(null, { ...clean, target: 2 })).toBe(2)
+    expect(applyEmptyPageClamp(0, { ...clean, target: 2 })).toBe(2)
+  })
+
+  it('never raises an earlier clamp', () => {
+    // A prior probe clamped to 20; a later window 422 at page 33 must not
+    // re-advertise pages 21-33.
+    expect(
+      applyEmptyPageClamp(20, { target: 33, failedCount: 0, issueErrorTypes: ['validation_error'] })
+    ).toBe(20)
+  })
+
+  it('clamps a real count on a window 422 — the count over-advertising is the bug', () => {
+    expect(
+      applyEmptyPageClamp(39, { target: 33, failedCount: 0, issueErrorTypes: ['validation_error'] })
+    ).toBe(33)
+  })
+
+  it('leaves the count alone on failures', () => {
+    expect(applyEmptyPageClamp(33, { target: 5, failedCount: 2, issueErrorTypes: [] })).toBe(33)
+    expect(applyEmptyPageClamp(null, { target: 5, failedCount: 2, issueErrorTypes: [] })).toBe(null)
   })
 })
 

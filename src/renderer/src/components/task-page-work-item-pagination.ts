@@ -45,8 +45,11 @@ export type EmptyPageOutcome = {
  * An empty page load has three distinct meanings, and only the caller-side
  * error channels can tell them apart (#11485):
  * - a `validation_error` is GitHub's 422 for pages past its 1000-result search
- *   window — the page can never load, so stop advertising it (unless a sibling
- *   repo's fetch threw, which says nothing about the other repos' windows);
+ *   window — the page can never load, so stop advertising it. When a sibling
+ *   repo's fetch also threw, the transient failure wins (load-failed, no
+ *   clamp) so the toast and the clamp never disagree. Note this branch is
+ *   issue-scope-only: the PR list path self-caps at the window and never 422s,
+ *   so PR-tab dead clicks resolve as end-of-data.
  * - any other per-repo error (thrown or issue-side envelope) may be transient
  *   (rate limit, permissions), so surface it but keep the advertised count;
  * - no error at all is end-of-data. That only warrants a clamp while the count
@@ -62,17 +65,36 @@ export function resolveEmptyPageOutcome(args: {
   countedTotalPages: number | null
 }): EmptyPageOutcome {
   const clamp = Math.max(1, Math.floor(args.target))
-  if (args.issueErrorTypes.includes('validation_error')) {
-    return {
-      reason: 'window-unreachable',
-      clampTotalPagesTo: args.failedCount === 0 ? clamp : null
-    }
+  if (args.issueErrorTypes.includes('validation_error') && args.failedCount === 0) {
+    return { reason: 'window-unreachable', clampTotalPagesTo: clamp }
   }
   if (args.failedCount > 0 || args.issueErrorTypes.length > 0) {
     return { reason: 'load-failed', clampTotalPagesTo: null }
   }
   const countUnknown = args.countedTotalPages === null || args.countedTotalPages === 0
   return { reason: 'end-of-data', clampTotalPagesTo: countUnknown ? clamp : null }
+}
+
+/**
+ * Functional-updater body for the advertised-count clamp. Must be evaluated
+ * against the COMMITTED count (React updater `previous`), not a click-time
+ * closure — the count promise routinely resolves between click and response,
+ * and a stale-null closure would let an end-of-data clamp overwrite a real
+ * count. Math.min preserves the never-raise property of earlier clamps.
+ */
+export function applyEmptyPageClamp(
+  previous: number | null,
+  args: {
+    target: number
+    failedCount: number
+    issueErrorTypes: readonly ClassifiedError['type'][]
+  }
+): number | null {
+  const next = resolveEmptyPageOutcome({ ...args, countedTotalPages: previous }).clampTotalPagesTo
+  if (next === null) {
+    return previous
+  }
+  return previous !== null && previous > 0 ? Math.min(previous, next) : next
 }
 
 /**
