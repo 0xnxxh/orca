@@ -23,7 +23,14 @@ final class AgentEntrypointSourceSafetyTests: XCTestCase {
         let source = try agentEntrypointSource()
 
         XCTAssertTrue(source.contains("var pressedModifiers: [KeyModifier] = []"))
-        XCTAssertTrue(source.contains("defer {\n            for modifier in pressedModifiers.reversed()"))
+        XCTAssertTrue(source.contains(
+            """
+            defer {
+                        for modifier in pressedModifiers.reversed() {
+                            flags.remove(modifier.flag)
+                            try? keyEvent(modifier.keyCode, down: false, flags: flags, pid: pid)
+            """
+        ))
         XCTAssertTrue(source.contains("event.flags = flags\n        event.postToPid(pid)"))
     }
 

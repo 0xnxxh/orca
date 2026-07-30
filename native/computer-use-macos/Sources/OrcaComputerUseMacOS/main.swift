@@ -2358,8 +2358,8 @@ private enum Input {
         var pressedModifiers: [KeyModifier] = []
         defer {
             for modifier in pressedModifiers.reversed() {
-                try? keyEvent(modifier.keyCode, down: false, flags: flags, pid: pid)
                 flags.remove(modifier.flag)
+                try? keyEvent(modifier.keyCode, down: false, flags: flags, pid: pid)
             }
         }
         for modifier in parsed.modifiers {

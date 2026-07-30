@@ -111,6 +111,7 @@ public static class OrcaDesktopWin32 {
         var sent = SendInput((uint)values.Length, values, Marshal.SizeOf(typeof(INPUT)));
         if (sent != (uint)values.Length) {
             var releases = new List<INPUT>();
+            releases.Add(MouseInput(mouseInput, mouseUp));
             for (var index = modifiers.Length - 1; index >= 0; index--) {
                 releases.Add(KeyboardInput(keyboardInput, modifiers[index], keyUp));
             }

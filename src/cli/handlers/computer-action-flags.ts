@@ -63,7 +63,8 @@ export function getComputerClickActionFlags(flags: Map<string, string | boolean>
   mouseButton?: string
   modifiers?: string
 } {
-  const modifiers = getOptionalStringFlag(flags, 'modifiers')
+  const rawModifiers = flags.get('modifiers')
+  const modifiers = typeof rawModifiers === 'string' ? rawModifiers : undefined
   const result = {
     elementIndex: getOptionalNonNegativeIntegerFlag(flags, 'element-index'),
     x: getOptionalNumberFlag(flags, 'x'),
