@@ -3,11 +3,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react'
 import { IntegrationStatusPill } from '@/components/integration-status-pill'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import {
-  getShowInTasksActionLabel,
-  getShowInTasksLabel,
-  getShowInTasksLastProviderHint
-} from './TaskSourceShowInTasksStep'
+import { getShowInTasksActionLabel, getShowInTasksLabel } from './TaskSourceShowInTasksStep'
 import {
   TASK_PROVIDER_SETUP_STATUS_TONE,
   getTaskProviderCompletedSteps,
@@ -49,6 +45,11 @@ function getSetupStatusLabel(status: TaskProviderSetupStatus): string {
         'auto.components.settings.TaskSourceProviderCard.statusSkillRequired',
         'Skill required'
       )
+    case 'unavailable':
+      return translate(
+        'auto.components.settings.TaskSourceProviderCard.statusUnavailable',
+        'Status unavailable'
+      )
     case 'hidden':
       return translate(
         'auto.components.settings.TaskSourceProviderCard.statusHidden',
@@ -73,8 +74,16 @@ export function TaskSourceProviderCard({
   onToggleVisible,
   children
 }: TaskSourceProviderCardProps): React.JSX.Element {
-  const [expandedOverride, setExpandedOverride] = useState<boolean | null>(null)
-  const expanded = expandedOverride ?? defaultExpanded
+  const [expanded, setExpanded] = useState(defaultExpanded)
+  const [lastDefaultExpanded, setLastDefaultExpanded] = useState(defaultExpanded)
+  // Auto-expand only ever opens: collapsing is the user's call, so a readiness
+  // change that moves the auto-expand target cannot close a card in use.
+  if (lastDefaultExpanded !== defaultExpanded) {
+    setLastDefaultExpanded(defaultExpanded)
+    if (defaultExpanded) {
+      setExpanded(true)
+    }
+  }
   const status = getTaskProviderSetupStatus(readiness)
   const progress = getTaskProviderCompletedSteps(readiness)
   const visibilityLocked = visible && !canHide
@@ -102,15 +111,10 @@ export function TaskSourceProviderCard({
             </IntegrationStatusPill>
             {isTaskProviderChecking(readiness) ||
             status === 'ready' ||
+            status === 'unavailable' ||
             status === 'hidden' ? null : (
-              <span
-                className={cn(
-                  'rounded-full px-2 py-0.5 text-[10px] font-medium',
-                  progress.completed === progress.total
-                    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
-                    : 'bg-muted text-muted-foreground'
-                )}
-              >
+              // Only unfinished providers reach here, so the count is always partial.
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                 {`${progress.completed}/${progress.total}`}
               </span>
             )}
@@ -124,13 +128,14 @@ export function TaskSourceProviderCard({
               type="button"
               size="sm"
               variant={visible ? 'outline' : 'secondary'}
-              disabled={visibilityLocked}
-              title={visibilityLocked ? getShowInTasksLastProviderHint() : undefined}
+              // aria-disabled, not disabled: the last visible provider must stay
+              // reachable by keyboard so its label can explain why it is locked.
+              aria-disabled={visibilityLocked}
+              className={cn(visibilityLocked && 'cursor-not-allowed opacity-60')}
               aria-label={getShowInTasksActionLabel(visible, canHide, name)}
-              onClick={onToggleVisible}
-              aria-pressed={visible}
+              onClick={visibilityLocked ? undefined : onToggleVisible}
             >
-              {getShowInTasksLabel(visible)}
+              {getShowInTasksLabel(visible, canHide)}
             </Button>
           ) : null}
           <Button
@@ -152,7 +157,7 @@ export function TaskSourceProviderCard({
                     { provider: name }
                   )
             }
-            onClick={() => setExpandedOverride(!expanded)}
+            onClick={() => setExpanded(!expanded)}
           >
             {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
           </Button>

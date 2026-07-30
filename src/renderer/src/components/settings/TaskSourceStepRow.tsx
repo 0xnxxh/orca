@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { StepBadge, type StepState } from './BrowserUseStepBadge'
+import { StepBadge, type StepState } from './SetupStepBadge'
 import { cn } from '@/lib/utils'
 
 type TaskSourceStepRowProps = {

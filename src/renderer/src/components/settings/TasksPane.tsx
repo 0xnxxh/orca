@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { Github, Gitlab } from 'lucide-react'
 import type { GlobalSettings, TaskProvider } from '../../../../shared/types'
 import {
@@ -15,9 +16,13 @@ import { CodeHostSetupSteps, JiraSetupSteps } from './TaskSourceSimpleSetup'
 import { TaskSourceLinearSetup } from './TaskSourceLinearSetup'
 import { TaskSourceProviderCard } from './TaskSourceProviderCard'
 import {
-  getAutoExpandedTaskProvider,
-  getIncompleteVisibleTaskProviders
+  getStalledVisibleTaskProviders,
+  resolveStickyAutoExpandedTaskProvider
 } from './task-source-setup-state'
+import {
+  JIRA_INTEGRATION_SECTION_ID,
+  LINEAR_INTEGRATION_SECTION_ID
+} from './task-provider-integration-section-ids'
 import { getTasksPaneSearchKeywords } from './tasks-search'
 import { useIntegrationProviderStatusRefresh } from './use-integration-provider-status-refresh'
 import { useTaskSourceProviderReadiness } from './use-task-source-provider-readiness'
@@ -91,11 +96,23 @@ export function TasksPane({ settings, updateSettings }: TasksPaneProps): React.J
   const openSettingsPage = useAppStore((s) => s.openSettingsPage)
   const openSettingsTarget = useAppStore((s) => s.openSettingsTarget)
   const checkJiraConnection = useAppStore((s) => s.checkJiraConnection)
+  const refreshPreflightStatus = useAppStore((s) => s.refreshPreflightStatus)
   const readinessByProvider = useTaskSourceProviderReadiness(visibleProviders)
   useIntegrationProviderStatusRefresh()
 
-  const incompleteVisible = getIncompleteVisibleTaskProviders(TASK_PROVIDERS, readinessByProvider)
-  const autoExpandedProvider = getAutoExpandedTaskProvider(TASK_PROVIDERS, readinessByProvider)
+  // Warn only about started-then-stalled setup; untouched providers are the default.
+  const stalledVisible = getStalledVisibleTaskProviders(TASK_PROVIDERS, readinessByProvider)
+  // Sticky across rechecks so expanded Linear install terminals are not unmounted.
+  const previousAutoExpandedRef = useRef<TaskProvider | null>(null)
+  const autoExpandedProvider = resolveStickyAutoExpandedTaskProvider({
+    providers: TASK_PROVIDERS,
+    readinessByProvider,
+    previousAutoExpanded: previousAutoExpandedRef.current
+  })
+  // Commit-only write: a discarded render must not seed the sticky decision.
+  useEffect(() => {
+    previousAutoExpandedRef.current = autoExpandedProvider
+  }, [autoExpandedProvider])
 
   const toggleProvider = (provider: TaskProvider): void => {
     const isVisible = visibleProviders.includes(provider)
@@ -113,9 +130,13 @@ export function TasksPane({ settings, updateSettings }: TasksPaneProps): React.J
     })
   }
 
-  const openIntegrations = (): void => {
+  const openIntegrations = (sectionId?: string): void => {
     openSettingsPage()
-    openSettingsTarget({ pane: 'integrations', repoId: null })
+    openSettingsTarget({
+      pane: 'integrations',
+      repoId: null,
+      ...(sectionId ? { sectionId } : {})
+    })
   }
 
   return (
@@ -128,11 +149,11 @@ export function TasksPane({ settings, updateSettings }: TasksPaneProps): React.J
           )}
           description={translate(
             'auto.components.settings.TasksPane.setupDescription',
-            'Finish connect + visibility for each provider in one place. Linear also needs the agent skill so coding agents can read and update tickets.'
+            'Finish connect + visibility for each provider in one place. Linear also needs the agent skill so coding agents can read and update tickets. At least one provider must stay visible.'
           )}
         />
 
-        {incompleteVisible.length > 0 ? (
+        {stalledVisible.length > 0 ? (
           <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 px-3.5 py-3 text-xs text-muted-foreground">
             <p className="font-medium text-amber-800 dark:text-amber-200">
               {translate(
@@ -140,11 +161,18 @@ export function TasksPane({ settings, updateSettings }: TasksPaneProps): React.J
                 'Some visible providers still need setup'
               )}
             </p>
+            {/* Linear is the only multi-step provider today; the generic body
+                covers any future provider that can stall the same way. */}
             <p className="mt-1">
-              {translate(
-                'auto.components.settings.TasksPane.incompleteBannerBody',
-                'Hide providers you do not use, or expand a card and finish its steps. For Linear: API access, the agent skill, and Show in Tasks.'
-              )}
+              {stalledVisible.includes('linear')
+                ? translate(
+                    'auto.components.settings.TasksPane.incompleteBannerBodyWithLinear',
+                    'Hide providers you do not use, or expand a card and finish its steps. For Linear: API access, the agent skill, and Show in Tasks.'
+                  )
+                : translate(
+                    'auto.components.settings.TasksPane.incompleteBannerBody',
+                    'Hide providers you do not use, or expand a card and finish its steps.'
+                  )}
             </p>
           </div>
         ) : null}
@@ -184,6 +212,7 @@ export function TasksPane({ settings, updateSettings }: TasksPaneProps): React.J
                     visible={visible}
                     canHide={canHide}
                     onToggleVisible={() => toggleProvider('linear')}
+                    onOpenIntegrations={() => openIntegrations(LINEAR_INTEGRATION_SECTION_ID)}
                   />
                 ) : provider === 'jira' ? (
                   <JiraSetupSteps
@@ -193,16 +222,19 @@ export function TasksPane({ settings, updateSettings }: TasksPaneProps): React.J
                     canHide={canHide}
                     onToggleVisible={() => toggleProvider('jira')}
                     onConnected={() => void checkJiraConnection()}
+                    onOpenIntegrations={() => openIntegrations(JIRA_INTEGRATION_SECTION_ID)}
                   />
                 ) : (
                   <CodeHostSetupSteps
                     providerLabel={meta.label}
                     connected={readiness.connected}
                     checking={readiness.checking}
+                    unavailable={readiness.unavailable}
                     visible={visible}
                     canHide={canHide}
                     onToggleVisible={() => toggleProvider(provider)}
-                    onOpenIntegrations={openIntegrations}
+                    onOpenIntegrations={() => openIntegrations()}
+                    onRetryConnection={() => void refreshPreflightStatus({ force: true })}
                   />
                 )}
               </TaskSourceProviderCard>
@@ -220,7 +252,7 @@ export function TasksPane({ settings, updateSettings }: TasksPaneProps): React.J
             variant="link"
             size="sm"
             className="h-auto p-0 text-xs align-baseline"
-            onClick={openIntegrations}
+            onClick={() => openIntegrations()}
           >
             {translate('auto.components.settings.TasksPane.integrationsLink', 'Integrations')}
           </Button>

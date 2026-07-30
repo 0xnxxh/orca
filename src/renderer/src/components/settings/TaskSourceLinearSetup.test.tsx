@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 
+import { cleanup, fireEvent, render } from '@testing-library/react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TaskSourceLinearSetup } from './TaskSourceLinearSetup'
 
 const mocks = vi.hoisted(() => ({
@@ -60,16 +61,27 @@ vi.mock('@/store', () => ({
     selector({ checkLinearConnection: mocks.checkLinearConnection })
 }))
 
-function renderSetup(overrides: { connected?: boolean; visible?: boolean } = {}): string {
-  return renderToStaticMarkup(
+function setupElement(
+  overrides: {
+    connected?: boolean
+    visible?: boolean
+    onOpenIntegrations?: () => void
+  } = {}
+): React.JSX.Element {
+  return (
     <TaskSourceLinearSetup
       connected={overrides.connected ?? false}
       checking={false}
       visible={overrides.visible ?? true}
       canHide
       onToggleVisible={vi.fn()}
+      onOpenIntegrations={overrides.onOpenIntegrations ?? vi.fn()}
     />
   )
+}
+
+function renderSetup(overrides: { connected?: boolean; visible?: boolean } = {}): string {
+  return renderToStaticMarkup(setupElement(overrides))
 }
 
 describe('TaskSourceLinearSetup', () => {
@@ -77,6 +89,10 @@ describe('TaskSourceLinearSetup', () => {
     mocks.skillInstalled = false
     mocks.skillLoading = false
     mocks.panelProps = []
+  })
+
+  afterEach(() => {
+    cleanup()
   })
 
   it('blocks first-time skill install until Linear is connected', () => {
@@ -110,5 +126,14 @@ describe('TaskSourceLinearSetup', () => {
     expect(markup).toContain('data-testid="skill-panel"')
     expect(markup).toContain('Not installed')
     expect(markup).not.toContain('Connect Linear first')
+  })
+
+  it('routes connected credential management to Integrations', () => {
+    const onOpenIntegrations = vi.fn()
+    const rendered = render(setupElement({ connected: true, onOpenIntegrations }))
+
+    fireEvent.click(rendered.getByRole('button', { name: 'Manage keys' }))
+
+    expect(onOpenIntegrations).toHaveBeenCalledOnce()
   })
 })

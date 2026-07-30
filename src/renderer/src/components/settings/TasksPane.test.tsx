@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GlobalSettings, TaskProvider } from '../../../../shared/types'
 import type { TaskProviderReadiness } from './task-source-setup-state'
 import { TasksPane } from './TasksPane'
@@ -13,7 +15,12 @@ const mocks = vi.hoisted(() => ({
   refreshPreflightStatus: vi.fn(),
   checkLinearConnection: vi.fn(),
   checkJiraConnection: vi.fn(),
-  linearSetupProps: [] as { connected: boolean; checking: boolean }[]
+  linearSetupProps: [] as {
+    connected: boolean
+    checking: boolean
+    onOpenIntegrations: () => void
+  }[],
+  jiraSetupProps: [] as { onOpenIntegrations: () => void }[]
 }))
 
 vi.mock('./use-task-source-provider-readiness', () => ({
@@ -25,17 +32,39 @@ vi.mock('./use-integration-provider-status-refresh', () => ({
 }))
 
 vi.mock('./TaskSourceLinearSetup', () => ({
-  TaskSourceLinearSetup: (props: { connected: boolean; checking: boolean }) => {
+  TaskSourceLinearSetup: (props: {
+    connected: boolean
+    checking: boolean
+    onOpenIntegrations: () => void
+  }) => {
     mocks.linearSetupProps.push(props)
     return <div data-testid="linear-setup">Linear setup steps</div>
   }
 }))
 
 vi.mock('./TaskSourceSimpleSetup', () => ({
-  CodeHostSetupSteps: (props: { providerLabel: string }) => (
-    <div data-testid={`code-host-${props.providerLabel}`}>Code host setup</div>
+  CodeHostSetupSteps: (props: {
+    providerLabel: string
+    unavailable?: boolean
+    onRetryConnection: () => void
+  }) => (
+    <div data-testid={`code-host-${props.providerLabel}`}>
+      {props.unavailable ? (
+        <>
+          <span>Orca couldn&apos;t check this connection</span>
+          <button type="button" onClick={props.onRetryConnection}>
+            Try again
+          </button>
+        </>
+      ) : (
+        'Code host setup'
+      )}
+    </div>
   ),
-  JiraSetupSteps: () => <div data-testid="jira-setup">Jira setup</div>
+  JiraSetupSteps: (props: { onOpenIntegrations: () => void }) => {
+    mocks.jiraSetupProps.push(props)
+    return <div data-testid="jira-setup">Jira setup</div>
+  }
 }))
 
 vi.mock('@/store', () => ({
@@ -71,14 +100,37 @@ function renderPane(): string {
   return renderToStaticMarkup(<TasksPane settings={baseSettings} updateSettings={vi.fn()} />)
 }
 
+let root: Root | null = null
+let container: HTMLDivElement | null = null
+
+async function renderInteractivePane(): Promise<HTMLDivElement> {
+  container = document.createElement('div')
+  document.body.appendChild(container)
+  root = createRoot(container)
+  await act(async () => {
+    root?.render(<TasksPane settings={baseSettings} updateSettings={vi.fn()} />)
+  })
+  return container
+}
+
+async function rerenderInteractivePane(): Promise<void> {
+  await act(async () => {
+    root?.render(<TasksPane settings={baseSettings} updateSettings={vi.fn()} />)
+  })
+}
+
 describe('TasksPane', () => {
   beforeEach(() => {
     mocks.linearSetupProps = []
+    mocks.jiraSetupProps = []
+    mocks.openSettingsPage.mockClear()
+    mocks.openSettingsTarget.mockClear()
     mocks.readiness = {
       github: { connected: true, checking: false, visible: true },
       gitlab: { connected: true, checking: false, visible: true },
+      // Started-then-stalled: a Linear key is stored but agents have no skill.
       linear: {
-        connected: false,
+        connected: true,
         checking: false,
         skillInstalled: false,
         skillChecking: false,
@@ -86,6 +138,17 @@ describe('TasksPane', () => {
       },
       jira: { connected: false, checking: false, visible: false }
     }
+  })
+
+  afterEach(async () => {
+    if (root) {
+      await act(async () => {
+        root?.unmount()
+      })
+    }
+    root = null
+    container?.remove()
+    container = null
   })
 
   it('frames Task Sources as a guided setup hub, not visibility-only toggles', () => {
@@ -97,6 +160,26 @@ describe('TasksPane', () => {
     expect(markup).toContain('Linear setup steps')
     expect(markup).toContain('Hide providers you do not use')
     expect(markup).toContain('API access, the agent skill, and Show in Tasks')
+  })
+
+  it('does not warn on a fresh install where nothing is connected yet', () => {
+    // Settings ship with every provider visible, so untouched providers are the
+    // default state; the cards still say "Connect required" on their own.
+    mocks.readiness.github = { connected: false, checking: false, visible: true }
+    mocks.readiness.gitlab = { connected: false, checking: false, visible: true }
+    mocks.readiness.linear = {
+      connected: false,
+      checking: false,
+      skillInstalled: false,
+      skillChecking: false,
+      visible: true
+    }
+    mocks.readiness.jira = { connected: false, checking: false, visible: true }
+
+    const markup = renderPane()
+
+    expect(markup).not.toContain(INCOMPLETE_BANNER)
+    expect(markup).toContain('Connect required')
   })
 
   it('hides the incomplete banner when every visible provider is ready', () => {
@@ -132,8 +215,41 @@ describe('TasksPane', () => {
     renderPane()
 
     expect(mocks.linearSetupProps).toEqual([
-      expect.objectContaining({ connected: false, checking: false })
+      expect.objectContaining({ connected: true, checking: false })
     ])
+  })
+
+  it('deep-links connected Linear credential management to its integration card', async () => {
+    await renderInteractivePane()
+
+    mocks.linearSetupProps.at(-1)?.onOpenIntegrations()
+
+    expect(mocks.openSettingsPage).toHaveBeenCalledOnce()
+    expect(mocks.openSettingsTarget).toHaveBeenCalledWith({
+      pane: 'integrations',
+      repoId: null,
+      sectionId: 'integrations-linear'
+    })
+  })
+
+  it('deep-links connected Jira credential management to its integration card', async () => {
+    mocks.readiness.jira = { connected: true, checking: false, visible: true }
+    await renderInteractivePane()
+    const expandJira = Array.from(container?.querySelectorAll('button') ?? []).find(
+      (button) => button.getAttribute('aria-label') === 'Show Jira setup steps'
+    )
+
+    await act(async () => {
+      expandJira?.click()
+    })
+    mocks.jiraSetupProps.at(-1)?.onOpenIntegrations()
+
+    expect(mocks.openSettingsPage).toHaveBeenCalledOnce()
+    expect(mocks.openSettingsTarget).toHaveBeenCalledWith({
+      pane: 'integrations',
+      repoId: null,
+      sectionId: 'integrations-jira'
+    })
   })
 
   it('auto-expands only the first incomplete provider', () => {
@@ -148,7 +264,7 @@ describe('TasksPane', () => {
 
   it('leaves hidden providers out of the incomplete warning', () => {
     mocks.readiness.linear = {
-      connected: false,
+      connected: true,
       checking: false,
       skillInstalled: false,
       skillChecking: false,
@@ -156,5 +272,123 @@ describe('TasksPane', () => {
     }
 
     expect(renderPane()).not.toContain(INCOMPLETE_BANNER)
+  })
+
+  it('keeps Linear setup mounted while a skill recheck is in flight after auto-expand', async () => {
+    // Same component instance keeps the sticky auto-expand ref across rechecks.
+    await renderInteractivePane()
+    expect(container?.querySelector('[data-testid="linear-setup"]')).not.toBeNull()
+    expect(container?.textContent).toContain(INCOMPLETE_BANNER)
+
+    mocks.readiness.linear = {
+      connected: true,
+      checking: false,
+      skillInstalled: false,
+      skillChecking: true,
+      visible: true
+    }
+    await rerenderInteractivePane()
+
+    // Sticky expand keeps the (possibly open) install terminal mounted mid-scan.
+    expect(container?.querySelector('[data-testid="linear-setup"]')).not.toBeNull()
+  })
+
+  it('keeps the auto-expanded card open after hiding it instead of popping another open', async () => {
+    await renderInteractivePane()
+    expect(container?.querySelector('[data-testid="linear-setup"]')).not.toBeNull()
+
+    // Hiding the stalled provider is the banner's own advice; GitHub must not
+    // silently take over the expansion on a later unrelated render.
+    mocks.readiness.linear = {
+      connected: true,
+      checking: false,
+      skillInstalled: false,
+      skillChecking: false,
+      visible: false
+    }
+    mocks.readiness.github = { connected: false, checking: false, visible: true }
+    await rerenderInteractivePane()
+    await rerenderInteractivePane()
+
+    expect(container?.querySelector('[data-testid="linear-setup"]')).not.toBeNull()
+    expect(container?.textContent).not.toContain('Code host setup')
+  })
+
+  it('keeps Linear expanded when the slower code-host preflight lands after it', async () => {
+    // Cold open: nothing has resolved, so no card auto-expands yet.
+    mocks.readiness.github = { connected: false, checking: true, visible: true }
+    mocks.readiness.gitlab = { connected: false, checking: true, visible: true }
+    mocks.readiness.linear = {
+      connected: false,
+      checking: true,
+      skillInstalled: false,
+      skillChecking: true,
+      visible: true
+    }
+    await renderInteractivePane()
+    expect(container?.querySelector('[data-testid="linear-setup"]')).toBeNull()
+
+    // Linear status + skill scan land first, so Linear auto-expands.
+    mocks.readiness.linear = {
+      connected: true,
+      checking: false,
+      skillInstalled: false,
+      skillChecking: false,
+      visible: true
+    }
+    await rerenderInteractivePane()
+    expect(container?.querySelector('[data-testid="linear-setup"]')).not.toBeNull()
+
+    // gh/glab preflight lands last with gh unauthenticated: GitHub is now the
+    // first incomplete provider, but it must not steal Linear's expansion.
+    mocks.readiness.github = { connected: false, checking: false, visible: true }
+    mocks.readiness.gitlab = { connected: false, checking: false, visible: true }
+    await rerenderInteractivePane()
+
+    expect(container?.querySelector('[data-testid="linear-setup"]')).not.toBeNull()
+  })
+
+  it('does not warn about an unconnected code host once Linear is finished', () => {
+    // A code host is single-step, so "not connected" is never a stalled setup.
+    mocks.readiness.linear = {
+      connected: true,
+      checking: false,
+      skillInstalled: true,
+      skillChecking: false,
+      visible: true
+    }
+    mocks.readiness.github = { connected: false, checking: false, visible: true }
+
+    expect(renderPane()).not.toContain(INCOMPLETE_BANNER)
+  })
+
+  it('shows a retry action instead of setup instructions when preflight is unavailable', async () => {
+    mocks.readiness.github = {
+      connected: false,
+      checking: false,
+      unavailable: true,
+      visible: true
+    }
+    mocks.readiness.gitlab = { connected: true, checking: false, visible: true }
+    mocks.readiness.linear = {
+      connected: true,
+      checking: false,
+      skillInstalled: true,
+      skillChecking: false,
+      visible: true
+    }
+    await renderInteractivePane()
+
+    expect(container?.textContent).toContain('Status unavailable')
+    expect(container?.textContent).toContain("Orca couldn't check this connection")
+    const retry = Array.from(container?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent === 'Try again'
+    )
+    expect(retry).toBeDefined()
+
+    await act(async () => {
+      retry?.click()
+    })
+    expect(mocks.refreshPreflightStatus).toHaveBeenCalledWith({ force: true })
   })
 })

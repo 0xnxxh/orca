@@ -1,29 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { LinearApiKeyDialog } from '@/components/linear-api-key-dialog'
 import { Button } from '@/components/ui/button'
-import {
-  AGENT_SKILL_CLI_PREREQUISITE_NOTICE,
-  ensureOrcaCliAvailableForAgentSkillTerminal
-} from '@/lib/agent-skill-cli-prerequisite'
-import {
-  LINEAR_AGENT_SKILL_NAMES,
-  ORCA_LINEAR_SKILL_INSTALL_COMMAND
-} from '@/lib/agent-feature-install-commands'
-import { getLinearAgentSkillUpdateTarget } from '@/lib/linear-agent-skill-update-command'
-import {
-  GLOBAL_AGENT_SKILL_SOURCE_KINDS,
-  useInstalledAgentSkillNames
-} from '@/hooks/useInstalledAgentSkills'
-import { useActiveProjectSkillRuntime } from '@/hooks/useActiveProjectSkillRuntime'
 import { useAppStore } from '@/store'
 import { AgentSkillSetupPanel } from './AgentSkillSetupPanel'
-import {
-  buildSkillCommandForRuntime,
-  ensureWslCliAvailableForAgentSkillTerminal,
-  getWslCliDistroRequest
-} from './CliSkillRuntimeSetup'
 import { TaskSourceShowInTasksStep } from './TaskSourceShowInTasksStep'
 import { TaskSourceStepRow } from './TaskSourceStepRow'
+import { useLinearAgentSkillSetup } from './use-linear-agent-skill-setup'
 import { translate } from '@/i18n/i18n'
 
 type TaskSourceLinearSetupProps = {
@@ -31,6 +13,7 @@ type TaskSourceLinearSetupProps = {
   checking: boolean
   visible: boolean
   onToggleVisible: () => void
+  onOpenIntegrations: () => void
   canHide: boolean
 }
 
@@ -40,53 +23,22 @@ export function TaskSourceLinearSetup({
   checking,
   visible,
   onToggleVisible,
+  onOpenIntegrations,
   canHide
 }: TaskSourceLinearSetupProps): React.JSX.Element {
   const checkLinearConnection = useAppStore((s) => s.checkLinearConnection)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const activeSkillRuntime = useActiveProjectSkillRuntime()
-
-  const {
-    installed: skillInstalled,
-    loading: skillLoading,
-    error: skillError,
-    skills: linearSkills,
-    refresh: refreshSkill
-  } = useInstalledAgentSkillNames(LINEAR_AGENT_SKILL_NAMES, {
-    discoveryTarget: activeSkillRuntime.discoveryTarget,
-    sourceKinds: GLOBAL_AGENT_SKILL_SOURCE_KINDS
-  })
-
-  const installCommand = useMemo(
-    () =>
-      activeSkillRuntime.installDisabledReason
-        ? ORCA_LINEAR_SKILL_INSTALL_COMMAND
-        : buildSkillCommandForRuntime(
-            ORCA_LINEAR_SKILL_INSTALL_COMMAND,
-            activeSkillRuntime.agentRuntime
-          ),
-    [activeSkillRuntime.agentRuntime, activeSkillRuntime.installDisabledReason]
-  )
-  const updateTarget = useMemo(
-    () => getLinearAgentSkillUpdateTarget(linearSkills, skillInstalled),
-    [linearSkills, skillInstalled]
-  )
-  const updateCommand = useMemo(() => {
-    const command = updateTarget.command
-    return activeSkillRuntime.installDisabledReason
-      ? command
-      : buildSkillCommandForRuntime(command, activeSkillRuntime.agentRuntime)
-  }, [
-    activeSkillRuntime.agentRuntime,
-    activeSkillRuntime.installDisabledReason,
-    updateTarget.command
-  ])
+  const skillSetup = useLinearAgentSkillSetup()
 
   const connectState = checking ? 'in-progress' : connected ? 'done' : 'pending'
   // Skill install is independent of API connection; only gate the first-time install CTA.
-  const skillState = skillLoading ? 'in-progress' : skillInstalled ? 'done' : 'pending'
+  const skillState = skillSetup.skillChecking
+    ? 'in-progress'
+    : skillSetup.skillInstalled
+      ? 'done'
+      : 'pending'
   // Keep the panel visible while scanning so we don't flash "connect first" over an installed skill.
-  const skillInstallBlocked = !connected && !skillInstalled && !skillLoading
+  const skillInstallBlocked = !connected && !skillSetup.skillInstalled && !skillSetup.skillChecking
 
   return (
     <>
@@ -107,12 +59,12 @@ export function TaskSourceLinearSetup({
               type="button"
               size="sm"
               variant={connected ? 'outline' : 'default'}
-              onClick={() => setDialogOpen(true)}
+              onClick={connected ? onOpenIntegrations : () => setDialogOpen(true)}
             >
               {connected
                 ? translate(
                     'auto.components.settings.TaskSourceLinearSetup.manageAccess',
-                    'Manage access'
+                    'Manage keys'
                   )
                 : translate(
                     'auto.components.settings.TaskSourceLinearSetup.addAccess',
@@ -153,7 +105,7 @@ export function TaskSourceLinearSetup({
           )}
           description={translate(
             'auto.components.settings.TaskSourceLinearSetup.skillDescription',
-            'Gives agents the /orca-linear skill to read tickets, post updates, move states, and attach PRs.'
+            'Gives agents /orca-linear to read tickets, post updates, move states, and attach pull or merge requests.'
           )}
           className={skillInstallBlocked ? 'opacity-60' : undefined}
         >
@@ -173,8 +125,8 @@ export function TaskSourceLinearSetup({
                 'Linear skill'
               )}
               description={null}
-              command={installCommand}
-              installedCommand={updateCommand}
+              command={skillSetup.installCommand}
+              installedCommand={skillSetup.updateCommand}
               terminalTitle={translate(
                 'auto.components.settings.TaskSourceLinearSetup.terminalTitle',
                 'Linear skill setup'
@@ -184,30 +136,16 @@ export function TaskSourceLinearSetup({
                 'Linear skill install terminal'
               )}
               terminalWorktreeId="settings-tasks-linear-skill-terminal"
-              terminalShellOverride={activeSkillRuntime.terminalShellOverride}
-              installed={skillInstalled}
-              loading={skillLoading}
-              error={activeSkillRuntime.installDisabledReason ?? skillError}
-              installDisabled={Boolean(activeSkillRuntime.installDisabledReason)}
-              preInstallNotice={AGENT_SKILL_CLI_PREREQUISITE_NOTICE}
-              getPrerequisiteStatus={() =>
-                activeSkillRuntime.agentRuntime?.runtime === 'wsl'
-                  ? window.api.cli.getWslInstallStatus(
-                      getWslCliDistroRequest(activeSkillRuntime.agentRuntime)
-                    )
-                  : window.api.cli.getInstallStatus()
-              }
-              onBeforeOpenTerminal={async () => {
-                await (activeSkillRuntime.agentRuntime?.runtime === 'wsl'
-                  ? ensureWslCliAvailableForAgentSkillTerminal(activeSkillRuntime.agentRuntime)
-                  : ensureOrcaCliAvailableForAgentSkillTerminal())
-              }}
-              onRecheck={refreshSkill}
-              freshnessSkillName={
-                activeSkillRuntime.agentRuntime?.runtime === 'wsl'
-                  ? undefined
-                  : updateTarget.skillName
-              }
+              terminalShellOverride={skillSetup.terminalShellOverride}
+              installed={skillSetup.skillInstalled}
+              loading={skillSetup.skillLoading}
+              error={skillSetup.error}
+              installDisabled={skillSetup.installDisabled}
+              preInstallNotice={skillSetup.preInstallNotice}
+              getPrerequisiteStatus={skillSetup.getPrerequisiteStatus}
+              onBeforeOpenTerminal={skillSetup.onBeforeOpenTerminal}
+              onRecheck={skillSetup.refreshSkill}
+              freshnessSkillName={skillSetup.freshnessSkillName}
             />
           )}
         </TaskSourceStepRow>

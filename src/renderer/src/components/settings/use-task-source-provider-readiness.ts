@@ -19,6 +19,7 @@ export function useTaskSourceProviderReadiness(
   const preflightStatus = useAppStore((s) => s.preflightStatus)
   const preflightStatusChecked = useAppStore((s) => s.preflightStatusChecked)
   const preflightStatusContextKey = useAppStore((s) => s.preflightStatusContextKey)
+  const preflightStatusError = useAppStore((s) => s.preflightStatusError)
   const preflightStatusLoading = useAppStore((s) => s.preflightStatusLoading)
   const expectedPreflightContextKey = useAppStore((s) =>
     localPreflightContextKey(getLocalPreflightContext(s))
@@ -32,20 +33,27 @@ export function useTaskSourceProviderReadiness(
   const providerRuntimeContextKey = getProviderRuntimeContextKey(settings)
   const activeSkillRuntime = useActiveProjectSkillRuntime()
 
-  const { installed: linearSkillInstalled, loading: linearSkillLoading } =
-    useInstalledAgentSkillNames(LINEAR_AGENT_SKILL_NAMES, {
-      discoveryTarget: activeSkillRuntime.discoveryTarget,
-      sourceKinds: GLOBAL_AGENT_SKILL_SOURCE_KINDS
-    })
+  const {
+    installed: linearSkillInstalled,
+    loading: linearSkillLoading,
+    settled: linearSkillSettled
+  } = useInstalledAgentSkillNames(LINEAR_AGENT_SKILL_NAMES, {
+    discoveryTarget: activeSkillRuntime.discoveryTarget,
+    sourceKinds: GLOBAL_AGENT_SKILL_SOURCE_KINDS
+  })
 
   const preflightCurrent = preflightStatusContextKey === expectedPreflightContextKey
   const reviewChecking = preflightStatusLoading || !preflightStatusChecked || !preflightCurrent
+  // A failed preflight leaves the previous status object in place, so mirror
+  // Integrations and refuse to read connection facts out of a stale snapshot.
+  const reviewReadyForConnection = !reviewChecking && preflightStatusError === null
+  const reviewUnavailable = !reviewChecking && preflightStatusError !== null
   const githubConnected =
-    !reviewChecking &&
+    reviewReadyForConnection &&
     preflightStatus?.gh?.installed === true &&
     preflightStatus.gh.authenticated === true
   const gitlabConnected =
-    !reviewChecking &&
+    reviewReadyForConnection &&
     preflightStatus?.glab?.installed === true &&
     preflightStatus.glab.authenticated === true
   const jiraChecking = jiraStatusContextKey !== providerRuntimeContextKey || !jiraStatusChecked
@@ -61,18 +69,20 @@ export function useTaskSourceProviderReadiness(
       github: {
         connected: githubConnected,
         checking: reviewChecking,
+        unavailable: reviewUnavailable,
         visible: visible.has('github')
       },
       gitlab: {
         connected: gitlabConnected,
         checking: reviewChecking,
+        unavailable: reviewUnavailable,
         visible: visible.has('gitlab')
       },
       linear: {
         connected: linearConnected,
         checking: linearChecking,
         skillInstalled: linearSkillInstalled,
-        skillChecking: linearSkillLoading,
+        skillChecking: linearSkillLoading && !linearSkillSettled,
         visible: visible.has('linear')
       },
       jira: {
@@ -90,7 +100,9 @@ export function useTaskSourceProviderReadiness(
     linearConnected,
     linearSkillInstalled,
     linearSkillLoading,
+    linearSkillSettled,
     reviewChecking,
+    reviewUnavailable,
     visibleProvidersKey
   ])
 }

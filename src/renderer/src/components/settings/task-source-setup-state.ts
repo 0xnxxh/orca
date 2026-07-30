@@ -4,6 +4,7 @@ import type { IntegrationStatusTone } from '@/components/integration-status-pill
 export type TaskProviderReadiness = {
   connected: boolean
   checking: boolean
+  unavailable?: boolean
   /** Linear only — agent skill install. Other providers leave this undefined. */
   skillInstalled?: boolean
   skillChecking?: boolean
@@ -15,6 +16,7 @@ export type TaskProviderSetupStatus =
   | 'ready'
   | 'connect-required'
   | 'skill-required'
+  | 'unavailable'
   | 'hidden'
   | 'incomplete'
 
@@ -28,6 +30,7 @@ export const TASK_PROVIDER_SETUP_STATUS_TONE: Record<
   hidden: 'neutral',
   'connect-required': 'attention',
   'skill-required': 'attention',
+  unavailable: 'attention',
   incomplete: 'attention'
 }
 
@@ -55,7 +58,7 @@ export function getTaskProviderCompletedSteps(readiness: TaskProviderReadiness):
 }
 
 export function isTaskProviderReady(readiness: TaskProviderReadiness): boolean {
-  if (isTaskProviderChecking(readiness)) {
+  if (isTaskProviderChecking(readiness) || readiness.unavailable) {
     return false
   }
   const { completed, total } = getTaskProviderCompletedSteps(readiness)
@@ -70,6 +73,9 @@ export function getTaskProviderSetupStatus(
   }
   if (isTaskProviderChecking(readiness)) {
     return 'checking'
+  }
+  if (readiness.unavailable) {
+    return 'unavailable'
   }
   if (isTaskProviderReady(readiness)) {
     return 'ready'
@@ -98,10 +104,44 @@ export function getIncompleteVisibleTaskProviders(
   })
 }
 
+// A provider nobody has touched is the shipped default, not a problem: settings
+// expose all four, so treating "never connected" as a warning would fire on
+// every fresh install. Setup counts as started once a credential or the skill
+// landed.
+export function hasStartedTaskProviderSetup(readiness: TaskProviderReadiness): boolean {
+  return readiness.connected || readiness.skillInstalled === true
+}
+
+// Warn only about setup that started and stalled partway.
+export function getStalledVisibleTaskProviders(
+  providers: readonly TaskProvider[],
+  readinessByProvider: Record<TaskProvider, TaskProviderReadiness>
+): TaskProvider[] {
+  return getIncompleteVisibleTaskProviders(providers, readinessByProvider).filter((provider) =>
+    hasStartedTaskProviderSetup(readinessByProvider[provider])
+  )
+}
+
 // Expand one unfinished provider because defaults expose every provider.
 export function getAutoExpandedTaskProvider(
   providers: readonly TaskProvider[],
   readinessByProvider: Record<TaskProvider, TaskProviderReadiness>
 ): TaskProvider | null {
   return getIncompleteVisibleTaskProviders(providers, readinessByProvider)[0] ?? null
+}
+
+// Auto-expand is a one-time first-open affordance. Once a card has claimed it,
+// it keeps it for the life of the pane: releasing the slot when that provider
+// finishes (or gets hidden) would let a later gh/glab preflight pop a different
+// card open under the user, and could unmount an open install terminal.
+export function resolveStickyAutoExpandedTaskProvider({
+  providers,
+  readinessByProvider,
+  previousAutoExpanded
+}: {
+  providers: readonly TaskProvider[]
+  readinessByProvider: Record<TaskProvider, TaskProviderReadiness>
+  previousAutoExpanded: TaskProvider | null
+}): TaskProvider | null {
+  return previousAutoExpanded ?? getAutoExpandedTaskProvider(providers, readinessByProvider)
 }

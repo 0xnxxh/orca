@@ -23,9 +23,21 @@ function getConnectStepState(props: ConnectStepProps): 'in-progress' | 'done' | 
 export function CodeHostSetupSteps(
   props: ConnectStepProps & {
     providerLabel: string
+    unavailable?: boolean
     onOpenIntegrations: () => void
+    onRetryConnection: () => void
   }
 ): React.JSX.Element {
+  const connectionDescription = props.unavailable
+    ? translate(
+        'auto.components.settings.TasksPane.connectionCheckUnavailable',
+        "Orca couldn't check this connection. Try again, or open Integrations for setup details."
+      )
+    : translate(
+        'auto.components.settings.TasksPane.connectCodeHostDescription',
+        'Install and authenticate the CLI under Integrations so Orca can load issues.'
+      )
+
   return (
     <ol className="divide-y divide-border/50">
       <TaskSourceStepRow
@@ -36,23 +48,22 @@ export function CodeHostSetupSteps(
           'Connect {{provider}}',
           { provider: props.providerLabel }
         )}
-        description={translate(
-          'auto.components.settings.TasksPane.connectCodeHostDescription',
-          'Install and authenticate the CLI under Integrations so Orca can load issues.'
-        )}
+        description={connectionDescription}
         action={
           <Button
             type="button"
             size="sm"
             variant={props.connected ? 'outline' : 'default'}
-            onClick={props.onOpenIntegrations}
+            onClick={props.unavailable ? props.onRetryConnection : props.onOpenIntegrations}
           >
-            {props.connected
-              ? translate('auto.components.settings.TasksPane.openIntegrations', 'Integrations')
-              : translate(
-                  'auto.components.settings.TasksPane.connectInIntegrations',
-                  'Set up in Integrations'
-                )}
+            {props.unavailable
+              ? translate('auto.components.settings.TasksPane.retryConnection', 'Try again')
+              : props.connected
+                ? translate('auto.components.settings.TasksPane.openIntegrations', 'Integrations')
+                : translate(
+                    'auto.components.settings.TasksPane.connectInIntegrations',
+                    'Set up in Integrations'
+                  )}
           </Button>
         }
       />
@@ -68,7 +79,7 @@ export function CodeHostSetupSteps(
 }
 
 export function JiraSetupSteps(
-  props: ConnectStepProps & { onConnected: () => void }
+  props: ConnectStepProps & { onConnected: () => void; onOpenIntegrations: () => void }
 ): React.JSX.Element {
   const [dialogOpen, setDialogOpen] = useState(false)
 
@@ -88,10 +99,10 @@ export function JiraSetupSteps(
               type="button"
               size="sm"
               variant={props.connected ? 'outline' : 'default'}
-              onClick={() => setDialogOpen(true)}
+              onClick={props.connected ? props.onOpenIntegrations : () => setDialogOpen(true)}
             >
               {props.connected
-                ? translate('auto.components.settings.TasksPane.manageJira', 'Manage access')
+                ? translate('auto.components.settings.TasksPane.manageJira', 'Manage keys')
                 : translate('auto.components.settings.TasksPane.addJira', 'Add Jira access')}
             </Button>
           }

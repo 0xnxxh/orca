@@ -43,7 +43,7 @@ export function getLinearGuideNotes(): LinearGuideNote[] {
       ),
       body: translate(
         'auto.components.settings.LinearAgentSkillGuide.noteKeysBody',
-        'API keys and workspaces are stored for the active runtime. Manage them anytime under Integrations.'
+        'API keys and workspaces are stored for the active runtime.'
       )
     },
     {

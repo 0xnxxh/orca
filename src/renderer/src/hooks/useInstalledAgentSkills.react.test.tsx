@@ -13,6 +13,7 @@ import {
   GLOBAL_AGENT_SKILL_SOURCE_KINDS,
   type InstalledAgentSkillState,
   _installedAgentSkillDiscoveryInternalsForTests,
+  notifyInstalledAgentSkillsRefreshed,
   useInstalledAgentSkillNames
 } from './useInstalledAgentSkills'
 
@@ -244,5 +245,97 @@ describe('useInstalledAgentSkill', () => {
       wslDistro: 'Ubuntu',
       projectRuntime: projectWslRuntime
     })
+  })
+
+  it('stays settled through a focus rescan so status surfaces do not flash', async () => {
+    const firstScan = deferred<SkillDiscoveryResult>()
+    const focusScan = deferred<SkillDiscoveryResult>()
+    const discover = vi
+      .fn<(target?: SkillDiscoveryTarget) => Promise<SkillDiscoveryResult>>()
+      .mockReturnValueOnce(firstScan.promise)
+      .mockReturnValueOnce(focusScan.promise)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills: { discover } }
+    })
+
+    await renderProbe()
+    expect(latestState?.settled).toBe(false)
+
+    firstScan.resolve(discoveryResult([skill({ name: 'orca-linear' })]))
+    await act(async () => {
+      await firstScan.promise
+    })
+    expect(latestState?.settled).toBe(true)
+    expect(latestState?.installed).toBe(true)
+
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+
+    // The forced rescan is in flight, but the previous result is still current.
+    expect(latestState?.loading).toBe(true)
+    expect(latestState?.settled).toBe(true)
+    expect(latestState?.installed).toBe(true)
+
+    focusScan.resolve(discoveryResult([skill({ name: 'orca-linear' })]))
+    await act(async () => {
+      await focusScan.promise
+    })
+    expect(latestState?.settled).toBe(true)
+  })
+
+  it('reuses cached discovery when another surface finishes re-checking', async () => {
+    const discover = vi
+      .fn<(target?: SkillDiscoveryTarget) => Promise<SkillDiscoveryResult>>()
+      .mockResolvedValue(discoveryResult([skill({ name: 'orca-linear' })]))
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills: { discover } }
+    })
+
+    await renderProbe()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(discover).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      notifyInstalledAgentSkillsRefreshed()
+      await Promise.resolve()
+    })
+
+    expect(discover).toHaveBeenCalledTimes(1)
+    expect(latestState?.installed).toBe(true)
+  })
+
+  it('reports unsettled again when the discovery target changes', async () => {
+    const hostScan = deferred<SkillDiscoveryResult>()
+    const wslScan = deferred<SkillDiscoveryResult>()
+    const discover = vi
+      .fn<(target?: SkillDiscoveryTarget) => Promise<SkillDiscoveryResult>>()
+      .mockReturnValueOnce(hostScan.promise)
+      .mockReturnValueOnce(wslScan.promise)
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { skills: { discover } }
+    })
+
+    await renderProbe()
+    hostScan.resolve(discoveryResult([skill({ name: 'orca-linear' })]))
+    await act(async () => {
+      await hostScan.promise
+    })
+    expect(latestState?.settled).toBe(true)
+
+    await renderProbe({ runtime: 'wsl', wslDistro: 'Ubuntu' })
+    expect(latestState?.settled).toBe(false)
+
+    wslScan.resolve(discoveryResult([]))
+    await act(async () => {
+      await wslScan.promise
+    })
+    expect(latestState?.settled).toBe(true)
+    expect(latestState?.installed).toBe(false)
   })
 })
