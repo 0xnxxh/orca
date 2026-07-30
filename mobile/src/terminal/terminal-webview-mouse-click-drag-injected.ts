@@ -129,14 +129,16 @@ export const TERMINAL_MOUSE_CLICK_DRAG_JS = `
       var gesture = mouseGesture;
       if (e.pointerType !== 'mouse' || !gesture || gesture.mode === 'cancelled') return;
       if (!term) return;
+      gesture.lastX = e.clientX;
+      gesture.lastY = e.clientY;
       if ((e.buttons & 1) === 0) {
         // Why: a pointerup lost outside the WebView (capture unavailable) must
         // end the gesture here, or a tracked press stays latched at the TUI.
+        // Coordinates first, so the synthesized release lands where the
+        // pointer re-entered rather than at the previous cell.
         abandonMouseGesture();
         return;
       }
-      gesture.lastX = e.clientX;
-      gesture.lastY = e.clientY;
       if (!gesture.moved) {
         var dx = Math.abs(e.clientX - gesture.startX);
         var dy = Math.abs(e.clientY - gesture.startY);
