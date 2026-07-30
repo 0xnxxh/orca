@@ -1,7 +1,5 @@
 import type { GitStatusEntry } from '../../../../shared/types'
-import { compareFileNames, fileNameCollator } from '../../../../shared/file-name-sort'
-
-export const sourceControlPathCollator = fileNameCollator
+import { compareFileNames } from '../../../../shared/file-name-sort'
 
 export function compareGitStatusEntries(a: GitStatusEntry, b: GitStatusEntry): number {
   // Why: compareFileNames (not the raw collator) so numeric-collation ties
