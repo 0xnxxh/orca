@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { resolveMobileTerminalInputGate } from './terminal-input-connection-gate'
+import { buildTerminalSendParams, TERMINAL_INPUT_SEND_OPTIONS } from './terminal-send-request'
 
 const sessionRouteSource = readFileSync(
   new URL('../../app/h/[hostId]/session/[worktreeId].tsx', import.meta.url),
@@ -111,5 +112,23 @@ describe('session route offline-compose wiring', () => {
   it('tells the live-input commit hook about connection loss so stale mirror state resets', () => {
     const hookCall = routeSlice('useTerminalLiveInputCommit({', 'setLiveInputCapture')
     expect(hookCall).toContain("connected: connState === 'connected'")
+  })
+
+  it('keeps every keystroke-grade terminal send now-or-never so nothing replays after reconnect', () => {
+    // Live mirror, buffered send, and gesture arrows must all opt out of the
+    // connect wait — a parked send replays stale bytes into the PTY. Accessory
+    // keys get the same option inside terminal-live-accessory-raw-send.ts.
+    const optOuts = sessionRouteSource.match(/TERMINAL_INPUT_SEND_OPTIONS/g)?.length ?? 0
+    expect(optOuts).toBe(4)
+    expect(TERMINAL_INPUT_SEND_OPTIONS).toEqual({ failWhenDisconnected: true })
+  })
+
+  it('tags terminal sends with the device presence lock only when a token exists', () => {
+    expect(
+      buildTerminalSendParams({ terminal: 't1', text: 'ls', enter: true, deviceToken: 'tok' })
+    ).toEqual({ terminal: 't1', text: 'ls', enter: true, client: { id: 'tok', type: 'mobile' } })
+    expect(
+      buildTerminalSendParams({ terminal: 't1', text: 'ls', enter: false, deviceToken: null })
+    ).toEqual({ terminal: 't1', text: 'ls', enter: false })
   })
 })
