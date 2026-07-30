@@ -115,6 +115,7 @@ import {
 import { parseWebPairingInput } from './web-pairing'
 import { copyClipboardTextViaExecCommand } from './web-clipboard-copy-fallback'
 import { WebRuntimeClient } from './web-runtime-client'
+import { isWebRuntimeUnauthorizedError } from './web-runtime-client-error'
 import { RuntimeRpcCallQueuePool } from '../../../shared/runtime-rpc-call-queue'
 import {
   assertClipboardTextWriteWithinLimitWithYield,
@@ -1408,7 +1409,10 @@ function createRuntimeEnvironmentsApi(): NonNullable<Partial<PreloadApi>['runtim
             )
           }
         }
-        if (error instanceof Error && error.message.startsWith('Unauthorized.')) {
+        if (
+          isWebRuntimeUnauthorizedError(error) ||
+          (error instanceof Error && error.message.startsWith('Unauthorized.'))
+        ) {
           return {
             ok: false,
             kind: 'access-link-invalid',

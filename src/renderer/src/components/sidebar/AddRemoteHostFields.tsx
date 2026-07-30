@@ -148,6 +148,11 @@ export function RemoteServerFields({
   const inputError = pairingCode.trim() !== '' && !parsedLink.ok
   const loopbackBlocked =
     parsedLink.ok && parsedLink.value.endpointKind === 'loopback' && !allowLoopback
+  const pairingCodeDescriptionId = inputError
+    ? 'add-server-pairing-code-error'
+    : loopbackBlocked
+      ? 'add-server-loopback-blocked'
+      : 'add-server-pairing-code-help'
   return (
     <form
       className="space-y-3"
@@ -178,8 +183,8 @@ export function RemoteServerFields({
         </Label>
         <Input
           id="add-server-pairing-code"
-          aria-invalid={inputError}
-          aria-describedby="add-server-pairing-code-help"
+          aria-invalid={inputError || loopbackBlocked}
+          aria-describedby={pairingCodeDescriptionId}
           value={pairingCode}
           disabled={disabled}
           onChange={(event) => onPairingCodeChange(event.target.value)}
@@ -196,7 +201,7 @@ export function RemoteServerFields({
           )}
         </p>
         {inputError ? (
-          <p role="alert" className="text-xs text-destructive">
+          <p id="add-server-pairing-code-error" role="alert" className="text-xs text-destructive">
             {parsedLink.ok ? null : translateHostAccessLinkError(parsedLink.kind)}
           </p>
         ) : null}
@@ -239,7 +244,7 @@ export function RemoteServerFields({
         </div>
       ) : null}
       {loopbackBlocked ? (
-        <p role="alert" className="text-xs text-destructive">
+        <p id="add-server-loopback-blocked" role="alert" className="text-xs text-destructive">
           {translate(
             'auto.components.sidebar.AddRemoteHostDialog.loopbackBlocked',
             'Enable the SSH tunnel override or create a new link using the other host’s Tailscale or LAN address.'

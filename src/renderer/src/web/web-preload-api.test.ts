@@ -631,6 +631,35 @@ describe('web runtime environment identity', () => {
       { id: 'web-server-a' }
     ])
   })
+
+  it('classifies coded browser authorization failures without relying on copy', async () => {
+    vi.doMock('./web-runtime-client', () => ({
+      WebRuntimeClient: class {
+        call(): Promise<RuntimeRpcResponse<unknown>> {
+          return Promise.reject(
+            Object.assign(new Error('Access grant rejected.'), { code: 'unauthorized' })
+          )
+        }
+
+        close(): void {}
+      }
+    }))
+    const globals = installBrowserGlobals('Linux')
+    writeStoredRuntimeEnvironment(globals.storage, 'web-server-a')
+    const { installWebPreloadApi } = await import('./web-preload-api')
+    installWebPreloadApi()
+
+    await expect(
+      globals.window.api.runtimeEnvironments.verifyAndAddFromPairingCode({
+        name: 'Expired server',
+        pairingCode: encodePairingCode()
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      kind: 'access-link-invalid',
+      message: 'Access grant rejected.'
+    })
+  })
 })
 
 describe('web browser-local port capability', () => {

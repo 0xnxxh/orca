@@ -69,6 +69,10 @@ describe('remote pairing address', () => {
       ok: false,
       kind: 'non-connectable-destination'
     })
+    expect(parseHostAccessLink(accessLink('wss://orca.example.com:0'))).toMatchObject({
+      ok: false,
+      kind: 'non-connectable-destination'
+    })
   })
 
   it('blocks absolute localhost names used in access links', () => {

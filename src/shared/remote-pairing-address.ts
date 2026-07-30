@@ -127,7 +127,8 @@ export function parseHostAccessLink(input: string): ParseHostAccessLinkResult {
   if (
     normalizedHostname === '0.0.0.0' ||
     normalizedHostname === '::' ||
-    getEmbeddedIPv4Address(normalizedHostname) === '0.0.0.0'
+    getEmbeddedIPv4Address(normalizedHostname) === '0.0.0.0' ||
+    endpoint.port === '0'
   ) {
     return {
       ok: false,
