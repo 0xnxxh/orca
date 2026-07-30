@@ -1,23 +1,22 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useRef, useState, type MutableRefObject } from 'react'
 import { View } from 'react-native'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState, RpcSuccess } from '../transport/types'
 import { resolveMobileBranchCompareBaseRef } from './mobile-branch-base-ref'
-import {
-  isMobileGitUnavailable,
-  isMobileGitTransientRefreshError,
-  type MobileGitStatusResult
-} from './mobile-git-status'
+import { isMobileGitUnavailable } from './mobile-git-status'
 import type { MobileGitBranchCompareResult } from './mobile-branch-compare'
-import {
-  SELECTOR_RETRY_COUNT,
-  SELECTOR_RETRY_DELAY_MS,
-  wait,
-  type LoadStatusOptions,
-  type MobileBranchCompareState,
-  type ScreenState,
-  type StatusLoadInFlight
+import type {
+  LoadStatusOptions,
+  MobileBranchCompareState,
+  ScreenState,
+  StatusLoadInFlight
 } from './mobile-source-control-screen-state'
+import {
+  isMobileSourceControlStatusLoadContextCurrent,
+  readMobileSourceControlStatus,
+  type MobileSourceControlStatusLoadContext
+} from './mobile-source-control-status-read'
+import { useMobileSourceControlInitialLoad } from './use-mobile-source-control-initial-load'
 
 type Params = {
   client: RpcClient | null
@@ -49,7 +48,11 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
   const [branchCompareState, setBranchCompareState] = useState<MobileBranchCompareState>({
     kind: 'idle'
   })
-  const currentStatusIdentityRef = useRef('')
+  const currentStatusLoadContextRef = useRef<MobileSourceControlStatusLoadContext>({
+    client,
+    connState,
+    statusIdentityKey
+  })
   const currentBranchCompareIdentityRef = useRef('')
   const loadGenerationRef = useRef(0)
   const branchCompareGenerationRef = useRef(0)
@@ -65,7 +68,7 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
     setScreenState({ kind: 'loading' })
     setBranchCompareState({ kind: 'idle' })
   }
-  currentStatusIdentityRef.current = statusIdentityKey
+  currentStatusLoadContextRef.current = { client, connState, statusIdentityKey }
   currentBranchCompareIdentityRef.current = statusIdentityKey
 
   const setRootRef = useCallback((node: View | null): void => {
@@ -159,20 +162,35 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
   )
 
   const loadStatus = useCallback(
-    async (options?: LoadStatusOptions) => {
+    async (options?: LoadStatusOptions, preferRepositorySnapshot = false) => {
       const loadKey = statusIdentityKey
       const inFlight = statusLoadInFlightRef.current
-      if (inFlight && !options?.force && inFlight.key === loadKey && inFlight.client === client) {
+      if (
+        inFlight &&
+        !options?.force &&
+        inFlight.key === loadKey &&
+        inFlight.client === client &&
+        inFlight.connState === connState &&
+        (preferRepositorySnapshot || !inFlight.preferRepositorySnapshot)
+      ) {
         return await inFlight.promise
       }
 
+      const capturedStatusLoadContext = {
+        client,
+        connState,
+        statusIdentityKey: loadKey
+      }
       const loadPromise = (async () => {
         const generation = loadGenerationRef.current + 1
         loadGenerationRef.current = generation
         const isCurrentLoad = () =>
           mountedRef.current &&
           loadGenerationRef.current === generation &&
-          currentStatusIdentityRef.current === loadKey
+          isMobileSourceControlStatusLoadContextCurrent(
+            capturedStatusLoadContext,
+            currentStatusLoadContextRef.current
+          )
         if (!worktreeId) {
           if (isCurrentLoad()) {
             setScreenState({ kind: 'loading' })
@@ -194,44 +212,31 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
         }
         setScreenState((prev) => (prev.kind === 'ready' ? prev : { kind: 'loading' }))
         try {
-          for (let attempt = 0; attempt <= SELECTOR_RETRY_COUNT; attempt += 1) {
-            const response = await client.sendRequest('git.status', {
-              worktree: `id:${worktreeId}`
-            })
-            if (!isCurrentLoad()) {
-              return false
-            }
-            if (response.ok) {
-              const result = (response as RpcSuccess).result as MobileGitStatusResult
-              setScreenState({ kind: 'ready', status: result })
-              void loadBranchCompare({ preserveReadyOnFailure: true })
-              if (options?.clearActionErrorOnSuccess !== false) {
-                setActionError(null)
-              }
-              // Why: recovery prompts are based on a specific failed commit
-              // snapshot; a fresh status means that snapshot may be stale.
-              onStatusLoadSuccess?.()
-              return true
-            }
-            if (isMobileGitUnavailable(response.error?.code, response.error?.message)) {
-              setScreenState({
-                kind: 'unavailable',
-                message: 'Update Orca desktop to use Source Control on mobile.'
-              })
-              return false
-            }
-            const shouldRetry =
-              response.error?.code === 'selector_not_found' ||
-              isMobileGitTransientRefreshError(response.error?.code, response.error?.message)
-            if (shouldRetry && attempt < SELECTOR_RETRY_COUNT) {
-              await wait(SELECTOR_RETRY_DELAY_MS)
-              if (!isCurrentLoad()) {
-                return false
-              }
-              continue
-            }
-            throw new Error(response.error?.message || 'Unable to load source control')
+          const result = await readMobileSourceControlStatus({
+            client,
+            worktreeId,
+            preferRepositorySnapshot,
+            isCurrent: isCurrentLoad
+          })
+          if (result.kind === 'cancelled') {
+            return false
           }
+          if (result.kind === 'unavailable') {
+            setScreenState({
+              kind: 'unavailable',
+              message: 'Update Orca desktop to use Source Control on mobile.'
+            })
+            return false
+          }
+          setScreenState({ kind: 'ready', status: result.status })
+          void loadBranchCompare({ preserveReadyOnFailure: true })
+          if (options?.clearActionErrorOnSuccess !== false) {
+            setActionError(null)
+          }
+          // Why: recovery prompts are based on a specific failed commit
+          // snapshot; a new status means that snapshot may be stale.
+          onStatusLoadSuccess?.()
+          return true
         } catch (err) {
           if (!isCurrentLoad()) {
             return false
@@ -248,10 +253,15 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
           })
           return false
         }
-        return false
       })()
 
-      statusLoadInFlightRef.current = { key: loadKey, client, promise: loadPromise }
+      statusLoadInFlightRef.current = {
+        key: loadKey,
+        client,
+        connState,
+        promise: loadPromise,
+        preferRepositorySnapshot
+      }
       try {
         return await loadPromise
       } finally {
@@ -271,9 +281,7 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
     ]
   )
 
-  useEffect(() => {
-    void loadStatus()
-  }, [loadStatus])
+  useMobileSourceControlInitialLoad({ client, connState, statusIdentityKey, loadStatus })
 
   return {
     screenState,

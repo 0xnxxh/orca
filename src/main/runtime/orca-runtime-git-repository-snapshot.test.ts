@@ -208,7 +208,7 @@ describe('RuntimeGitCommands repository snapshot query', () => {
     )
   })
 
-  it('measures mobile Source Control plus review as two local or WSL statuses versus one', async () => {
+  it('measures mobile Source Control, review, and remount as two local or WSL statuses versus one', async () => {
     mocks.getStatus.mockResolvedValue({ entries: [], conflictOperation: 'unknown' })
     mocks.getGitRepositorySnapshot.mockReturnValue({ revision: 2 })
     const commands = new RuntimeGitCommands({
@@ -220,26 +220,37 @@ describe('RuntimeGitCommands repository snapshot query', () => {
     })
 
     await commands.getRuntimeGitStatus('id:wt-1')
+    await commands.getRuntimeGitRepositorySnapshot('id:wt-1')
     await commands.getRuntimeGitStatus('id:wt-1')
-    const baselineStatus = mocks.getStatus.mock.calls.length
+    const baseline = {
+      status: mocks.getStatus.mock.calls.length,
+      snapshot: mocks.getGitRepositorySnapshot.mock.calls.length
+    }
 
     mocks.getStatus.mockClear()
+    mocks.getGitRepositorySnapshot.mockClear()
+    await commands.getRuntimeGitRepositorySnapshot('id:wt-1')
     await commands.getRuntimeGitStatus('id:wt-1')
     await commands.getRuntimeGitRepositorySnapshot('id:wt-1')
-    const migratedStatus = mocks.getStatus.mock.calls.length
+    await commands.getRuntimeGitRepositorySnapshot('id:wt-1')
+    const migrated = {
+      status: mocks.getStatus.mock.calls.length,
+      snapshot: mocks.getGitRepositorySnapshot.mock.calls.length
+    }
 
-    expect({ baselineStatus, migratedStatus }).toEqual({
-      baselineStatus: 2,
-      migratedStatus: 1
+    expect({ baseline, migrated }).toEqual({
+      baseline: { status: 2, snapshot: 1 },
+      migrated: { status: 1, snapshot: 3 }
     })
     expect(mocks.getGitRepositorySnapshot).toHaveBeenCalledWith(
       '/workspace/feature',
       { wslDistro: 'Ubuntu-24.04' },
       undefined
     )
+    expect(mocks.getGitRepositorySnapshot).toHaveBeenCalledTimes(3)
   })
 
-  it('measures mobile Source Control plus review as two SSH statuses versus one', async () => {
+  it('measures mobile Source Control, review, and remount as two SSH statuses versus one', async () => {
     const provider = {
       getStatus: vi.fn().mockResolvedValue({ entries: [], conflictOperation: 'unknown' }),
       getRepositorySnapshot: vi.fn().mockReturnValue({ revision: 2 })
@@ -254,22 +265,33 @@ describe('RuntimeGitCommands repository snapshot query', () => {
     })
 
     await commands.getRuntimeGitStatus('id:wt-1')
+    await commands.getRuntimeGitRepositorySnapshot('id:wt-1')
     await commands.getRuntimeGitStatus('id:wt-1')
-    const baselineStatus = provider.getStatus.mock.calls.length
+    const baseline = {
+      status: provider.getStatus.mock.calls.length,
+      snapshot: provider.getRepositorySnapshot.mock.calls.length
+    }
 
     provider.getStatus.mockClear()
+    provider.getRepositorySnapshot.mockClear()
+    await commands.getRuntimeGitRepositorySnapshot('id:wt-1')
     await commands.getRuntimeGitStatus('id:wt-1')
     await commands.getRuntimeGitRepositorySnapshot('id:wt-1')
-    const migratedStatus = provider.getStatus.mock.calls.length
+    await commands.getRuntimeGitRepositorySnapshot('id:wt-1')
+    const migrated = {
+      status: provider.getStatus.mock.calls.length,
+      snapshot: provider.getRepositorySnapshot.mock.calls.length
+    }
 
-    expect({ baselineStatus, migratedStatus }).toEqual({
-      baselineStatus: 2,
-      migratedStatus: 1
+    expect({ baseline, migrated }).toEqual({
+      baseline: { status: 2, snapshot: 1 },
+      migrated: { status: 1, snapshot: 3 }
     })
     expect(provider.getRepositorySnapshot).toHaveBeenCalledWith(
       '/remote/repo',
       undefined,
       undefined
     )
+    expect(provider.getRepositorySnapshot).toHaveBeenCalledTimes(3)
   })
 })

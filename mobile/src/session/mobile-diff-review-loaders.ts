@@ -9,11 +9,11 @@ import { buildMobileDiffHunks } from './mobile-diff-hunks'
 import { highlightMobileDiffLines, resolveMobileSyntaxLanguage } from './mobile-file-syntax'
 import {
   readMobileBranchCompareResult,
-  readMobileGitStatusResult,
   readMobileReviewGitDiffResult,
   readMobileReviewWorktreeMetadata
 } from './mobile-diff-review-rpc'
-import { readMobileDiffReviewRepositorySnapshot } from './mobile-diff-review-repository-snapshot'
+import { readMobileDiffReviewRepositorySnapshot } from '../source-control/mobile-git-repository-snapshot'
+import { readMobileGitStatusResult } from '../source-control/mobile-git-status-rpc'
 import {
   canOpenMobileBranchCompareDiff,
   type MobileGitBranchCompareResult

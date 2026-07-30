@@ -1,6 +1,6 @@
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcSuccess } from '../transport/types'
-import { readMobileGitStatusResult } from '../session/mobile-diff-review-rpc'
+import { readMobileGitStatusResult } from './mobile-git-status-rpc'
 import type { MobileGitStatusResult } from './mobile-git-status'
 
 export type MobileHostedReviewStatusReadResult =

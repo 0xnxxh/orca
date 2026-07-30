@@ -5,7 +5,8 @@ import type { MobileGitBranchCompareResult } from '../source-control/mobile-bran
 import type { MobileGitStatusResult } from '../source-control/mobile-git-status'
 import { resolveMobileBranchCompareBaseRef } from '../source-control/mobile-branch-base-ref'
 import { fetchGithubRepoSlug } from './github-pr-rpc'
-import { readMobileBranchCompareResult, readMobileGitStatusResult } from './mobile-diff-review-rpc'
+import { readMobileBranchCompareResult } from './mobile-diff-review-rpc'
+import { readMobileGitStatusResult } from '../source-control/mobile-git-status-rpc'
 
 export type MobilePrBranchContext = {
   branch: string | null

@@ -35,7 +35,9 @@ diff-review load.
   the fresh path, while the existing generation gate suppresses late results after client or
   context replacement.
 - Mutation reloads, retry actions, explicit refreshes, reconciliation, PR creation/prefill safety
-  reads, Source Control, and every non-initial loader call remain fresh.
+  reads, and every non-initial diff-review loader call remain fresh. Source Control's later,
+  separately bounded initial-load consumer is documented in
+  `phase2-mobile-source-control-repository-snapshot-consumer-2026-07-30.md`.
 - Folder-workspace routing and exclusions, provider-neutral review behavior, Git 2.25 behavior,
   and relay/runtime ownership are unchanged.
 
@@ -58,12 +60,13 @@ Focused consumer command:
 
 ```sh
 pnpm --dir mobile exec vitest run \
-  src/session/mobile-diff-review-repository-snapshot.test.ts \
+  src/source-control/mobile-git-repository-snapshot.test.ts \
   src/session/mobile-diff-review-loaders.test.ts \
   src/session/use-mobile-diff-review-controller.test.ts
 ```
 
-Result: 22 tests passed across three files.
+Result: 28 tests passed across three files after the shared mobile snapshot parser moved to its
+Source Control domain boundary.
 
 Focused runtime command:
 
@@ -121,11 +124,10 @@ references, with zero missing or escaping paths and zero static cycles.
   files.
 - Focused runtime snapshot, mobile allowlist, and Git RPC suite: 42 passed across three files.
 - Source inspection found no import cycle. The runtime chain is
-  `mobile-diff-review-loaders.ts` → `mobile-diff-review-repository-snapshot.ts` →
-  `mobile-diff-review-rpc.ts`; the loader also imports the RPC parser directly, forming a DAG.
-  The RPC parser's remaining edges are type-only imports to `mobile-branch-compare.ts` and
-  `mobile-git-status.ts`, which point only to shared Git types and never back to the session
-  modules.
+  `mobile-diff-review-loaders.ts` → `mobile-git-repository-snapshot.ts` →
+  `mobile-git-status-rpc.ts` → `mobile-git-status.ts` → shared Git status types. The loader also
+  imports the status RPC parser directly, forming a DAG; none of the Source Control snapshot/parser
+  modules imports back into the session directory.
 - `pnpm --dir mobile typecheck`, `pnpm run typecheck:node`, and `pnpm run typecheck:web`: passed.
 - Targeted `oxlint --deny-warnings` and `oxfmt --check`: passed.
 - `pnpm run check:max-lines-ratchet`: passed with 354 grandfathered suppressions and no new bypass.
