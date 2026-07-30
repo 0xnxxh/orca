@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { ProjectExecutionRuntimeResolution } from '../../../shared/project-execution-runtime'
 import type { SkillDiscoveryTarget } from '../../../shared/skills'
@@ -86,14 +86,15 @@ export function useActiveProjectSkillRuntime(): ActiveProjectSkillRuntime {
     }
   }, [currentPlatform, runtimeState, windowsCapabilities])
 
-  const stableRef = useRef(resolved)
-  if (
-    activeProjectSkillRuntimeIdentity(stableRef.current) !==
-    activeProjectSkillRuntimeIdentity(resolved)
-  ) {
-    stableRef.current = resolved
+  // Content-equal runtimes keep one reference so effect keys do not thrash.
+  // Adjust during render (not a ref write) when serialized identity changes.
+  const [stable, setStable] = useState(resolved)
+  const stableIdentity = activeProjectSkillRuntimeIdentity(stable)
+  const resolvedIdentity = activeProjectSkillRuntimeIdentity(resolved)
+  if (stableIdentity !== resolvedIdentity) {
+    setStable(resolved)
   }
-  return stableRef.current
+  return stableIdentity === resolvedIdentity ? stable : resolved
 }
 
 function getCurrentPlatform(): NodeJS.Platform {

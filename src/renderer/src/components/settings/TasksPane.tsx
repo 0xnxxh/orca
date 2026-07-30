@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useState } from 'react'
 import { Github, Gitlab } from 'lucide-react'
 import type { GlobalSettings, TaskProvider } from '../../../../shared/types'
 import {
@@ -103,17 +103,17 @@ export function TasksPane({ settings, updateSettings }: TasksPaneProps): React.J
   // Warn only about started-then-stalled setup; untouched providers are the default.
   const stalledVisible = getStalledVisibleTaskProviders(TASK_PROVIDERS, readinessByProvider)
   // Sticky across rechecks so expanded Linear install terminals are not unmounted.
-  const previousAutoExpandedRef = useRef<TaskProvider | null>(null)
+  // Claim during render (not an effect): a layout effect elsewhere can force a
+  // sync re-render before passive effects flush and collapse the open card.
+  // useState (not a ref write) keeps render pure for React Doctor.
+  const [previousAutoExpanded, setPreviousAutoExpanded] = useState<TaskProvider | null>(null)
   const autoExpandedProvider = resolveStickyAutoExpandedTaskProvider({
     providers: TASK_PROVIDERS,
     readinessByProvider,
-    previousAutoExpanded: previousAutoExpandedRef.current
+    previousAutoExpanded
   })
-  // Claim during render, not in an effect: a layout effect elsewhere can force a
-  // sync re-render before passive effects flush, and that render would see an
-  // unclaimed slot and collapse the open card.
-  if (autoExpandedProvider !== null && previousAutoExpandedRef.current === null) {
-    previousAutoExpandedRef.current = autoExpandedProvider
+  if (autoExpandedProvider !== null && previousAutoExpanded === null) {
+    setPreviousAutoExpanded(autoExpandedProvider)
   }
 
   const toggleProvider = (provider: TaskProvider): void => {
