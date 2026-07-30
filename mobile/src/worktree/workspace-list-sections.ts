@@ -1,4 +1,5 @@
 import type { WorkspaceStatusDefinition } from '../../../src/shared/types'
+import { t } from '@/i18n/mobile-i18n'
 import {
   DEFAULT_MOBILE_WORKSPACE_STATUSES,
   coerceMobileWorkspaceStatuses,
@@ -125,17 +126,19 @@ export function buildSections(
 
   const sections: Section[] = []
   if (pinned.length > 0) {
-    sections.push(makeSection('pinned', 'Pinned', pinned, 'pin'))
+    sections.push(makeSection('pinned', t('m.Rn74bFA'), pinned, 'pin'))
   }
 
   if (groupMode === 'none') {
     if (canonicalGroupWorktrees.length > 0) {
-      sections.push(makeSection('all', 'All', canonicalGroupWorktrees, undefined, collapsedGroups))
+      sections.push(
+        makeSection('all', t('m.IwMISoQ'), canonicalGroupWorktrees, undefined, collapsedGroups)
+      )
     }
   } else if (groupMode === 'repo') {
     const byRepo = new Map<string, Worktree[]>()
     for (const w of canonicalGroupWorktrees) {
-      const key = w.repo || 'Unknown'
+      const key = w.repo || t('m.6MEByr4')
       const list = byRepo.get(key)
       if (list) {
         list.push(w)

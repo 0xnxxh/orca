@@ -8,6 +8,13 @@
     "userInterfaceStyle": "automatic",
     "scheme": "orca",
     "newArchEnabled": true,
+    "locales": {
+      "en": "./locales/en.json",
+      "es": "./locales/es.json",
+      "ja": "./locales/ja.json",
+      "ko": "./locales/ko.json",
+      "zh-Hans": "./locales/zh-Hans.json"
+    },
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -79,6 +86,12 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-localization",
+        {
+          "supportedLocales": ["en", "es", "ja", "ko", "zh-Hans"]
+        }
+      ],
       "./plugins/android-respect-rotation-lock.js",
       [
         "expo-splash-screen",
