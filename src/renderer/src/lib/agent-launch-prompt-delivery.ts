@@ -1,19 +1,20 @@
 import { agentDeliversDraftViaNativePrefill } from '@/lib/agent-native-draft-prefill'
 import { pasteDraftWhenAgentReady } from '@/lib/agent-paste-draft'
+import { canMirrorLaunchDraftToNativeChat } from '@/lib/native-chat-launch-draft-mirrorability'
 import { isNativeChatSupportedAgent } from '@/lib/native-chat-supported-agent'
 import { useAppStore } from '@/store'
 import type { TuiAgent } from '../../../shared/types'
 
 /** Seed the chat-composer copy of launch context that reaches only the TUI
- *  input (argv prefill or startup paste). No-op for empty text or agents
- *  without a native-chat renderer. */
+ *  input (argv prefill or startup paste). No-op for agents without a
+ *  native-chat renderer, or for text `canMirrorLaunchDraftToNativeChat`
+ *  rejects — the same predicate that decides whether the tab opens in chat. */
 export function seedNativeChatLaunchDraftForAgentTab(args: {
   tabId: string
   agent: TuiAgent
   text: string
 }): void {
-  // Multi-line drafts are safe because chat clears every parked line before send.
-  if (args.text.trim().length === 0 || !isNativeChatSupportedAgent(args.agent)) {
+  if (!canMirrorLaunchDraftToNativeChat(args.text) || !isNativeChatSupportedAgent(args.agent)) {
     return
   }
   useAppStore.getState().seedNativeChatLaunchDraft({

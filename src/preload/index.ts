@@ -13,6 +13,7 @@ import type { CliInstallStatus } from '../shared/cli-install-types'
 import type { AgentHookInstallStatus } from '../shared/agent-hook-types'
 import type { CodexConfigSyncStatus } from '../shared/codex-config-sync-types'
 import type { TerminalPaneSplitSource } from '../shared/feature-education-telemetry'
+import type { TerminalTabCreateReply } from '../shared/terminal-reveal-identity'
 import type { ProjectExecutionRuntimeResolution } from '../shared/project-execution-runtime'
 import type { StartupCommandDelivery } from '../shared/codex-startup-delivery'
 import type {
@@ -54,6 +55,7 @@ import type {
   BrowserViewportOverride,
   CustomPet,
   FsChangedPayload,
+  FilesystemPathFlavor,
   GetRateLimitResult,
   GitHubPRRefreshCandidate,
   GitHubPRRefreshEvent,
@@ -486,6 +488,8 @@ const api = {
     },
     awaitFirstWindowStartupServices: (): Promise<void> =>
       ipcRenderer.invoke('app:awaitFirstWindowStartupServices'),
+    recoverLegacyWorkerTerminalsForRendererStartup: (): Promise<void> =>
+      ipcRenderer.invoke('app:recoverLegacyWorkerTerminalsForRendererStartup'),
     startupDiagnostic: (event: string, details?: Record<string, unknown>): Promise<void> =>
       startupDiagnosticsEnabled
         ? ipcRenderer.invoke('app:startupDiagnostic', event, details)
@@ -2299,6 +2303,22 @@ const api = {
     }
   },
 
+  macosTccPrompts: {
+    onThreshold: (callback: (payload: unknown) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: unknown): void =>
+        callback(payload)
+      ipcRenderer.on('macosTccPrompts:threshold', listener)
+      return () => ipcRenderer.removeListener('macosTccPrompts:threshold', listener)
+    },
+    consumePending: (): Promise<{ claimId: number; promptCount: number } | null> =>
+      ipcRenderer.invoke('macosTccPrompts:consumePending'),
+    acknowledgePending: (claimId: number): Promise<void> =>
+      ipcRenderer.invoke('macosTccPrompts:acknowledgePending', claimId),
+    releasePending: (claimId: number): Promise<void> =>
+      ipcRenderer.invoke('macosTccPrompts:releasePending', claimId),
+    dismiss: (): Promise<void> => ipcRenderer.invoke('macosTccPrompts:dismiss')
+  },
+
   developerPermissions: {
     getStatus: (): Promise<unknown> => ipcRenderer.invoke('developerPermissions:getStatus'),
     request: (args: { id: string }): Promise<unknown> =>
@@ -2903,6 +2923,7 @@ const api = {
     check: (options) => ipcRenderer.invoke('updater:check', options),
     download: () => ipcRenderer.invoke('updater:download'),
     dismissNudge: () => ipcRenderer.invoke('updater:dismissNudge'),
+    dismissAvailableUpdate: () => ipcRenderer.invoke('updater:dismissAvailableUpdate'),
     quitAndInstall: async (): Promise<void> => {
       await prepareRendererForAppRestart(window, {
         startedEventName: ORCA_UPDATER_QUIT_AND_INSTALL_STARTED_EVENT,
@@ -3568,6 +3589,18 @@ const api = {
       ipcRenderer.on('ui:closeActiveTab', listener)
       return () => ipcRenderer.removeListener('ui:closeActiveTab', listener)
     },
+    onCloseFloatingItem: (callback: (payload: { sourceId: string }) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { sourceId: string }) =>
+        callback(payload)
+      ipcRenderer.on('ui:closeFloatingItem', listener)
+      return () => ipcRenderer.removeListener('ui:closeFloatingItem', listener)
+    },
+    onSelectFloatingIndex: (callback: (payload: { index: number }) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { index: number }) =>
+        callback(payload)
+      ipcRenderer.on('ui:selectFloatingIndex', listener)
+      return () => ipcRenderer.removeListener('ui:selectFloatingIndex', listener)
+    },
     onSwitchTab: (callback: (direction: 1 | -1) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, direction: 1 | -1) => callback(direction)
       ipcRenderer.on('ui:switchTab', listener)
@@ -3666,6 +3699,7 @@ const api = {
         title?: string
         ptyId?: string
         activate?: boolean
+        focus?: boolean
         presentation?: RuntimeTerminalPresentation
         tabId?: string
         leafId?: string
@@ -3690,6 +3724,7 @@ const api = {
           title?: string
           ptyId?: string
           activate?: boolean
+          focus?: boolean
           presentation?: RuntimeTerminalPresentation
           tabId?: string
           leafId?: string
@@ -3721,12 +3756,7 @@ const api = {
       ipcRenderer.on('terminal:requestTabMount', listener)
       return () => ipcRenderer.removeListener('terminal:requestTabMount', listener)
     },
-    replyTerminalCreate: (reply: {
-      requestId: string
-      tabId?: string
-      title?: string
-      error?: string
-    }): void => {
+    replyTerminalCreate: (reply: TerminalTabCreateReply): void => {
       ipcRenderer.send('terminal:tabCreateReply', reply)
     },
     onSplitTerminal: (
@@ -3917,6 +3947,8 @@ const api = {
     }): Promise<string | null> => ipcRenderer.invoke('clipboard:saveImageAsTempFile', args),
     writeClipboardText: (text: string): Promise<void> =>
       ipcRenderer.invoke('clipboard:writeText', text),
+    writeTerminalClipboardText: (text: string): Promise<void> =>
+      ipcRenderer.invoke('clipboard:writeTerminalText', text),
     writeSelectionClipboardText: (text: string): Promise<void> =>
       ipcRenderer.invoke('clipboard:writeSelectionText', text),
     writeClipboardImage: (dataUrl: string): Promise<void> =>
@@ -3947,8 +3979,9 @@ const api = {
     setTerminalInputFocused: (focused: boolean): void => {
       ipcRenderer.send('ui:setTerminalInputFocused', focused)
     },
-    setFloatingTerminalInputFocused: (focused: boolean): void => {
-      ipcRenderer.send('ui:setFloatingTerminalInputFocused', focused)
+    // Why: one atomic payload so main's synchronous before-input-event never sees a torn terminal=true/panel=false state.
+    setFloatingFocus: (state: { panelFocused: boolean; terminalFocused: boolean }): void => {
+      ipcRenderer.send('ui:setFloatingFocus', state)
     },
     setShortcutRecorderFocused: (focused: boolean): void => {
       ipcRenderer.send('ui:setShortcutRecorderFocused', focused)
@@ -4421,6 +4454,7 @@ const api = {
     }): Promise<{
       entries: { name: string; isDirectory: boolean }[]
       resolvedPath: string
+      pathFlavor: FilesystemPathFlavor
     }> => ipcRenderer.invoke('ssh:browseDir', args),
 
     onCredentialRequest: (
@@ -4511,7 +4545,8 @@ const api = {
       | { available: false }
       | {
           available: true
-          qrDataUrl: string
+          qrDataUrl: string | null
+          qrError?: 'encoding_failed'
           pairingUrl: string
           endpoint: string
           deviceId: string
@@ -4610,6 +4645,24 @@ const api = {
         callback(data)
       ipcRenderer.on('agentStatus:migrationUnsupportedClear', listener)
       return () => ipcRenderer.removeListener('agentStatus:migrationUnsupportedClear', listener)
+    },
+    onLegacyWorkerTerminalRecovery: (
+      callback: (data: {
+        paneKey: string
+        resolution: 'adopted' | 'exited' | 'rolled_back'
+        ptyId?: string
+      }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          paneKey: string
+          resolution: 'adopted' | 'exited' | 'rolled_back'
+          ptyId?: string
+        }
+      ) => callback(data)
+      ipcRenderer.on('agentStatus:legacyWorkerTerminalRecovery', listener)
+      return () => ipcRenderer.removeListener('agentStatus:legacyWorkerTerminalRecovery', listener)
     },
     getMigrationUnsupportedSnapshot: (): Promise<MigrationUnsupportedPtyEntry[]> =>
       ipcRenderer.invoke('agentStatus:getMigrationUnsupportedSnapshot'),
