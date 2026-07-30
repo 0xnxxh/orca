@@ -5,6 +5,7 @@ import type {
   WorkspaceStatusDefinition,
   Worktree
 } from '../../../../shared/types'
+import type { WorkspaceKanbanLaneView } from './workspace-kanban-search'
 import WorkspaceKanbanStatusLane from './WorkspaceKanbanStatusLane'
 
 // Why: a fresh [] per render would defeat the memoized lane on empty lanes.
@@ -12,7 +13,9 @@ const EMPTY_LANE_ITEMS: readonly Worktree[] = []
 
 type WorkspaceKanbanLaneGridProps = {
   statuses: readonly WorkspaceStatusDefinition[]
-  worktreesByStatus: ReadonlyMap<WorkspaceStatus, readonly Worktree[]>
+  laneViews: ReadonlyMap<WorkspaceStatus, WorkspaceKanbanLaneView>
+  laneFullWorktreeIds: ReadonlyMap<WorkspaceStatus, readonly string[]>
+  hasQuery: boolean
   repoMap: Map<string, Repo>
   activeWorktreeId: string | null
   columnWidth: number
@@ -39,7 +42,9 @@ type WorkspaceKanbanLaneGridProps = {
 
 export default function WorkspaceKanbanLaneGrid({
   statuses,
-  worktreesByStatus,
+  laneViews,
+  laneFullWorktreeIds,
+  hasQuery,
   repoMap,
   activeWorktreeId,
   columnWidth,
@@ -72,7 +77,10 @@ export default function WorkspaceKanbanLaneGrid({
         <WorkspaceKanbanStatusLane
           key={status.id}
           status={status}
-          items={worktreesByStatus.get(status.id) ?? EMPTY_LANE_ITEMS}
+          items={laneViews.get(status.id)?.items ?? EMPTY_LANE_ITEMS}
+          totalCount={laneViews.get(status.id)?.totalCount ?? 0}
+          hasQuery={hasQuery}
+          fullWorktreeIds={laneFullWorktreeIds.get(status.id) ?? []}
           repoMap={repoMap}
           activeWorktreeId={activeWorktreeId}
           columnWidth={columnWidth}
