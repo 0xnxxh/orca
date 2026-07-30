@@ -8,28 +8,18 @@ import type {
   PtySpawnOptions,
   PtySpawnResult
 } from '../providers/types'
-import type { PtyIncarnationId } from '../../shared/pty-incarnation'
 import type { PtyProcessInspection } from '../providers/pty-process-inspection'
 import { probePtyOwners } from './daemon-pty-liveness-probe'
 import { shouldHandoffDaemonHistory } from './daemon-history-handoff'
+import type { DaemonPtyRouterDataEvent, DaemonPtyRouterExitEvent } from './daemon-pty-router-events'
 
 export class DaemonPtyRouter implements IPtyProvider {
   private current: DaemonPtyAdapter
   private legacy: DaemonPtyAdapter[]
   private sessionAdapters = new Map<string, DaemonPtyAdapter>()
   private unsubscribers: (() => void)[] = []
-  private dataListeners: ((payload: {
-    id: string
-    data: string
-    sequenceChars?: number
-    transformed?: boolean
-    seq?: number
-  }) => void)[] = []
-  private exitListeners: ((payload: {
-    id: string
-    code: number
-    incarnationId?: PtyIncarnationId
-  }) => void)[] = []
+  private dataListeners: ((payload: DaemonPtyRouterDataEvent) => void)[] = []
+  private exitListeners: ((payload: DaemonPtyRouterExitEvent) => void)[] = []
 
   constructor(opts: { current: DaemonPtyAdapter; legacy: DaemonPtyAdapter[] }) {
     this.current = opts.current
@@ -231,15 +221,7 @@ export class DaemonPtyRouter implements IPtyProvider {
     return this.current.getProfiles()
   }
 
-  onData(
-    callback: (payload: {
-      id: string
-      data: string
-      sequenceChars?: number
-      transformed?: boolean
-      seq?: number
-    }) => void
-  ): () => void {
+  onData(callback: (payload: DaemonPtyRouterDataEvent) => void): () => void {
     this.dataListeners.push(callback)
     return () => {
       const idx = this.dataListeners.indexOf(callback)
@@ -267,9 +249,7 @@ export class DaemonPtyRouter implements IPtyProvider {
     return () => {}
   }
 
-  onExit(
-    callback: (payload: { id: string; code: number; incarnationId?: PtyIncarnationId }) => void
-  ): () => void {
+  onExit(callback: (payload: DaemonPtyRouterExitEvent) => void): () => void {
     this.exitListeners.push(callback)
     return () => {
       const idx = this.exitListeners.indexOf(callback)
