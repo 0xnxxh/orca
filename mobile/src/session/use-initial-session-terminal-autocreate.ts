@@ -52,7 +52,13 @@ export function useInitialSessionTerminalAutoCreate(
   const createTerminal = useEffectEvent(args.createTerminal)
 
   useEffect(() => {
-    if (newlyCreatedWorkspace && terminalsLoaded) {
+    if (
+      newlyCreatedWorkspace &&
+      client &&
+      connState === 'connected' &&
+      terminalsLoaded &&
+      (visibleTabCount > 0 || activeHandle !== null)
+    ) {
       consumeCreationRoute()
     }
     if (

@@ -11,6 +11,8 @@ type HarnessProps = {
   terminalsLoaded: boolean
   visibleTabCount: number
   worktreeId: string
+  connected?: boolean
+  hasClient?: boolean
 }
 
 describe('useInitialSessionTerminalAutoCreate', () => {
@@ -24,9 +26,9 @@ describe('useInitialSessionTerminalAutoCreate', () => {
 
   function Harness(props: HarnessProps): null {
     useInitialSessionTerminalAutoCreate({
-      client: {},
+      client: props.hasClient === false ? null : {},
       newlyCreatedWorkspace: props.newlyCreatedWorkspace,
-      connState: 'connected',
+      connState: props.connected === false ? 'disconnected' : 'connected',
       terminalsLoaded: props.terminalsLoaded,
       visibleTabCount: props.visibleTabCount,
       activeHandle: null,
@@ -91,6 +93,15 @@ describe('useInitialSessionTerminalAutoCreate', () => {
       visibleTabCount: 0,
       worktreeId: 'new'
     })
+    expect(consumeCreationRoute).not.toHaveBeenCalled()
+    expect(createTerminal).toHaveBeenCalledOnce()
+
+    await render({
+      newlyCreatedWorkspace: true,
+      terminalsLoaded: true,
+      visibleTabCount: 1,
+      worktreeId: 'new'
+    })
     expect(consumeCreationRoute).toHaveBeenCalledOnce()
     expect(createTerminal).toHaveBeenCalledOnce()
   })
@@ -118,6 +129,34 @@ describe('useInitialSessionTerminalAutoCreate', () => {
     })
     expect(createTerminal).not.toHaveBeenCalled()
   })
+
+  it.each([
+    { connected: false, hasClient: true },
+    { connected: true, hasClient: false }
+  ])(
+    'keeps the creation route armed until a client reconnects (connected=$connected, hasClient=$hasClient)',
+    async ({ connected, hasClient }) => {
+      await render({
+        newlyCreatedWorkspace: true,
+        terminalsLoaded: true,
+        visibleTabCount: 0,
+        worktreeId: 'new',
+        connected,
+        hasClient
+      })
+      expect(consumeCreationRoute).not.toHaveBeenCalled()
+      expect(createTerminal).not.toHaveBeenCalled()
+
+      await render({
+        newlyCreatedWorkspace: true,
+        terminalsLoaded: true,
+        visibleTabCount: 0,
+        worktreeId: 'new'
+      })
+      expect(consumeCreationRoute).not.toHaveBeenCalled()
+      expect(createTerminal).toHaveBeenCalledOnce()
+    }
+  )
 })
 
 describe('useWorktreeSessionTabsLoaded', () => {

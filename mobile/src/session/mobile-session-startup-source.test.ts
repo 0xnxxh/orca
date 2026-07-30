@@ -44,7 +44,8 @@ describe('mobile session startup', () => {
     expect(autoCreateHookSource).toContain('shouldAutoCreateInitialSessionTerminal({')
     expect(autoCreateHookSource).toContain('stateRef.current.autoCreatedForWorktree === worktreeId')
     expect(autoCreateHookSource).toContain('stateRef.current.autoCreatedForWorktree = worktreeId')
-    expect(autoCreateHookSource).toContain('newlyCreatedWorkspace && terminalsLoaded')
+    expect(autoCreateHookSource).toContain("connState === 'connected'")
+    expect(autoCreateHookSource).toContain('(visibleTabCount > 0 || activeHandle !== null)')
     // Why: both callbacks are re-created every render, so the effect must reach them
     // through useEffectEvent rather than deps or a render-time ref write.
     expect(autoCreateHookSource).toContain('useEffectEvent(args.consumeCreationRoute)')
