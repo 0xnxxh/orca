@@ -69,6 +69,7 @@ import { scheduleBackgroundTerminalWorktreeMeasure } from './terminal/background
 import {
   applyBackgroundMountTabRestriction,
   canDeferColdActivationTabsForHost,
+  canMountTerminalWorkspaceForStartup,
   planColdActivationTabDeferral,
   pruneClosedBackgroundMountTabs,
   revealActivationDeferredTabs,
@@ -88,19 +89,23 @@ import { getTerminalWorktreeColdParkRecheckDelayMs } from './terminal-pane/termi
 import {
   TERMINAL_WORKTREE_COLD_PARK_DELAY_MS,
   canParkTerminalWorktreeRenderers,
+  selectPairedRuntimeParkingEnvironmentIds,
   selectColdParkedTerminalWorktrees,
   type TerminalWorktreeColdParkCandidate
 } from './terminal-pane/terminal-hidden-view-parking'
 import {
   TERMINAL_HIDDEN_WORKTREE_RETENTION_TTL_MS,
+  hasPendingRetentionSpawnWork,
   selectForceParkEvictableTabIds,
   selectRetentionForceParkedTerminalWorktrees,
   type TerminalWorktreeRetentionCandidate
 } from './terminal-pane/terminal-hidden-worktree-retention'
 import { captureForceParkedWorktreeBuffers } from './terminal-pane/force-park-buffer-capture'
 import { warnTerminalLifecycleAnomaly } from './terminal-pane/terminal-lifecycle-diagnostics'
-import { getTerminalParkingPolicyOverrides } from './terminal-pane/terminal-parking-e2e-overrides'
-import { useColdParkedTerminalPresentation } from './terminal-pane/use-cold-parked-terminal-presentation'
+import {
+  getTerminalParkingPolicyOverrides,
+  recordTerminalWorktreeParkingDebugVerdicts
+} from './terminal-pane/terminal-parking-e2e-overrides'
 import { selectEvictionExemptTerminalTabIds } from './terminal-pane/terminal-eviction-exempt-tabs'
 import {
   canWatcherCoverParkedTerminalTab,
@@ -297,6 +302,11 @@ function Terminal(): React.JSX.Element | null {
   const pendingStartupByTabId = useAppStore((s) => s.pendingStartupByTabId)
   const terminalParkingEnabled = useAppStore((s) => s.settings?.terminalHiddenViewParking !== false)
   const terminalSshParkingEnabled = useAppStore((s) => s.settings?.terminalSshViewParking !== false)
+  const runtimeStatusByEnvironmentId = useAppStore((s) => s.runtimeStatusByEnvironmentId)
+  const pairedRuntimeParkingEnvironmentIds = useMemo(
+    () => selectPairedRuntimeParkingEnvironmentIds(runtimeStatusByEnvironmentId),
+    [runtimeStatusByEnvironmentId]
+  )
   const terminalRetentionBudgetEnabled = useAppStore(
     (s) => s.settings?.terminalHiddenWorktreeRetentionBudget !== false
   )
@@ -318,6 +328,7 @@ function Terminal(): React.JSX.Element | null {
   const expandedPaneByTabId = useAppStore((s) => s.expandedPaneByTabId)
   const workspaceSessionReady = useAppStore((s) => s.workspaceSessionReady)
   const hydrationSucceeded = useAppStore((s) => s.hydrationSucceeded)
+  const startupWorktreeRefreshCompleted = useAppStore((s) => s.startupWorktreeRefreshCompleted)
   const openFiles = useAppStore((s) => s.openFiles)
   const activeFileId = useAppStore((s) => s.activeFileId)
   const activeBrowserTabId = useAppStore((s) => s.activeBrowserTabId)
@@ -950,7 +961,10 @@ function Terminal(): React.JSX.Element | null {
       })
     }
 
-    const restorePolicy = { sshParkingEnabled: terminalSshParkingEnabled }
+    const restorePolicy = {
+      sshParkingEnabled: terminalSshParkingEnabled,
+      pairedRuntimeParkingEnvironmentIds
+    }
     const nextParkedTerminalWorktreeIds = selectColdParkedTerminalWorktrees({
       worktrees: retentionCandidates,
       pendingStartupByTabId,
@@ -1007,14 +1021,11 @@ function Terminal(): React.JSX.Element | null {
           isVisible: candidate.isVisible,
           shouldMeasureHiddenWorktree: candidate.shouldMeasureHiddenWorktree,
           hasActivityTerminalPortal: candidate.hasActivityTerminalPortal,
-          parkCooldownUntilMs: candidate.parkCooldownUntilMs,
+          parkCooldownUntilMs: candidate.parkCooldownUntilMs ?? null,
           ordinaryParkingCovers:
             parkEligible && worktreeTabsAreWatcherCovered(candidate.worktreeId, tabs),
-          hasPendingSpawnWork: tabs.some(
-            (tab) =>
-              pendingStartupByTabId[tab.id] !== undefined ||
-              tab.pendingActivationSpawn === true ||
-              (typeof tab.pendingActivationSpawn === 'number' && tab.pendingActivationSpawn > 0)
+          hasPendingSpawnWork: tabs.some((tab) =>
+            hasPendingRetentionSpawnWork(tab, pendingStartupByTabId)
           )
         }
       }
@@ -1026,6 +1037,13 @@ function Terminal(): React.JSX.Element | null {
       nowMs,
       ...overrides
     })
+    recordTerminalWorktreeParkingDebugVerdicts(
+      retentionBudgetCandidates.map((candidate) => ({
+        ...candidate,
+        parkCooldownUntilMs: candidate.parkCooldownUntilMs ?? null,
+        forceParked: forceParkedWorktreeIds.has(candidate.worktreeId)
+      }))
+    )
     const capturedForceParked = forceParkedCaptureDoneRef.current
     for (const id of Array.from(capturedForceParked)) {
       if (!forceParkedWorktreeIds.has(id)) {
@@ -1127,6 +1145,7 @@ function Terminal(): React.JSX.Element | null {
     activityTerminalPortals,
     backgroundMountRevision,
     pendingStartupByTabId,
+    pairedRuntimeParkingEnvironmentIds,
     renderedActiveWorktreeId,
     tabsByWorktree,
     terminalParkingEnabled,
@@ -1135,8 +1154,15 @@ function Terminal(): React.JSX.Element | null {
     terminalSshParkingEnabled,
     workspaceSurfaces
   ])
-  // Why: gate on workspaceSessionReady so TerminalPane doesn't mount and spawn a duplicate PTY before reconnectPersistedTerminals() finishes.
-  if (renderedActiveWorktreeId && workspaceSessionReady) {
+  // Why: a slow post-reconnect step exposes workspaceSessionReady before hydration can populate snapshot capabilities.
+  if (
+    renderedActiveWorktreeId &&
+    canMountTerminalWorkspaceForStartup({
+      workspaceSessionReady,
+      hydrationSucceeded,
+      startupWorktreeRefreshCompleted
+    })
+  ) {
     // Why: mounting every saved tab at once (scrollback replay + WebGL + sync-IPC snapshot per pane) freezes the renderer, so hidden tabs defer and mount on first reveal.
     const worktreeTabs = tabsByWorktree[renderedActiveWorktreeId] ?? []
     const coldActivationDeferralEnabled =
@@ -1258,32 +1284,6 @@ function Terminal(): React.JSX.Element | null {
     groupsByWorktree,
     activeGroupIdByWorktree
   )
-  const desiredPresentedWorktree = useMemo(
-    () =>
-      new Map([['terminal-worktree', activeView === 'terminal' ? renderedActiveWorktreeId : null]]),
-    [activeView, renderedActiveWorktreeId]
-  )
-  const availablePresentedWorktreeIds = useMemo(
-    () => new Set(workspaceSurfaces.map((workspace) => workspace.id)),
-    [workspaceSurfaces]
-  )
-  const coldWorktreePresentationTargets = useMemo(
-    () =>
-      activeView === 'terminal' && activeTabType === 'terminal'
-        ? effectiveParkedTerminalWorktreeIds
-        : new Set<string>(),
-    [activeTabType, activeView, effectiveParkedTerminalWorktreeIds]
-  )
-  const {
-    presentationByScope: worktreePresentationByScope,
-    settleTarget: settleWorktreePresentation
-  } = useColdParkedTerminalPresentation({
-    desiredTargetByScope: desiredPresentedWorktree,
-    coldParkedTargetIds: coldWorktreePresentationTargets,
-    availableTargetIds: availablePresentedWorktreeIds
-  })
-  const presentedWorktreeId =
-    worktreePresentationByScope.get('terminal-worktree')?.presentedTargetId ?? null
   // Why: legacy (non-split) host owns watcher reconciliation; split mode's overlay layers own theirs, so only dispose worktrees with no overlay layer.
   useEffect(() => {
     pruneParkedTerminalWatchers(new Set(workspaceSurfaces.map((workspace) => workspace.id)))
@@ -2335,7 +2335,6 @@ function Terminal(): React.JSX.Element | null {
               // Why: strict '=== terminal' (not !== settings) so the terminal/browser surface hides on the tasks page too.
               const isVisible =
                 activeView === 'terminal' && workspace.id === renderedActiveWorktreeId
-              const isPresented = workspace.id === presentedWorktreeId
               const shouldMeasureHiddenWorktree =
                 !isVisible && measurableBackgroundWorktreeIdsRef.current.has(workspace.id)
               const shouldColdParkTerminalPanes =
@@ -2350,7 +2349,6 @@ function Terminal(): React.JSX.Element | null {
                   layout={layout}
                   focusedGroupId={activeGroupIdByWorktree[workspace.id]}
                   isVisible={isVisible}
-                  isPresented={isPresented}
                   shouldMeasureHiddenWorktree={shouldMeasureHiddenWorktree}
                   shouldColdParkTerminalPanes={shouldColdParkTerminalPanes}
                   isForceParked={forceParkedTerminalWorktreeIds.has(workspace.id)}
@@ -2361,7 +2359,6 @@ function Terminal(): React.JSX.Element | null {
                   activationDeferredMountTabIds={
                     activationDeferredMountTabIdsByWorktreeRef.current.get(workspace.id) ?? null
                   }
-                  onInitialTerminalRenderSettled={() => settleWorktreePresentation(workspace.id)}
                 />
               )
             })}
@@ -2388,7 +2385,6 @@ function Terminal(): React.JSX.Element | null {
                 // Why: strict '=== terminal' (not !== settings) so the terminal/browser surface hides on the tasks page too.
                 const isVisible =
                   activeView === 'terminal' && workspace.id === renderedActiveWorktreeId
-                const isPresented = workspace.id === presentedWorktreeId
                 const shouldMeasureHiddenWorktree =
                   !isVisible && measurableBackgroundWorktreeIdsRef.current.has(workspace.id)
                 const shouldColdParkTerminalPanes =
@@ -2399,16 +2395,15 @@ function Terminal(): React.JSX.Element | null {
                   <div
                     key={workspace.id}
                     className={
-                      isPresented
+                      isVisible
                         ? 'absolute inset-0'
-                        : isVisible || shouldMeasureHiddenWorktree
+                        : shouldMeasureHiddenWorktree
                           ? 'absolute inset-0 opacity-0 pointer-events-none'
                           : 'absolute inset-0 hidden'
                     }
-                    inert={!isPresented}
-                    aria-hidden={!isPresented}
+                    aria-hidden={!isVisible}
                   >
-                    <CodexRestartChip isVisible={isPresented} worktreeId={workspace.id} />
+                    <CodexRestartChip isVisible={isVisible} worktreeId={workspace.id} />
                     {(tabsByWorktree[workspace.id] ?? [])
                       .filter((tab) =>
                         shouldMountBackgroundWorktreeTab(
@@ -2424,9 +2419,6 @@ function Terminal(): React.JSX.Element | null {
                         const isActivityPortalTab = activityTerminalPortal !== null
                         const isActiveTerminalTab =
                           isVisible && tab.id === activeTabId && activeTabType === 'terminal'
-                        const isPresentedTerminalTab =
-                          isPresented &&
-                          (isActiveTerminalTab || tab.id === activeTabIdByWorktree[workspace.id])
                         // Why: parking unmounts the view but keeps the PTY; an Activity portal stays
                         // mounted as a visible consumer, and a force-parked worktree's eviction-exempt
                         // tabs stay mounted because a remount would orphan their live pty.
@@ -2444,22 +2436,16 @@ function Terminal(): React.JSX.Element | null {
                             worktreeId={workspace.id}
                             cwd={tab.startupCwd ?? workspace.path}
                             isActive={
-                              (isActiveTerminalTab && isPresented) ||
-                              activityTerminalPortal?.active === true
+                              isActiveTerminalTab || activityTerminalPortal?.active === true
                             }
                             // Why: keep isVisible true for the portaled tab so xterm fits/streams while the workspace surface stays hidden.
-                            isVisible={isPresentedTerminalTab || isActivityPortalTab}
+                            isVisible={isActiveTerminalTab || isActivityPortalTab}
                             // Why: inactive tabs here are tab-hidden (not worktree-hidden), so they need the same light resume path as split-group overlays.
-                            isWorktreeActive={isVisible || isPresented || isActivityPortalTab}
+                            isWorktreeActive={isVisible || isActivityPortalTab}
                             // Why: isolate the portaled Activity leaf so split siblings stay hidden; workspace renders pass null.
                             isolatedPaneKey={activityTerminalPortal?.paneKey ?? null}
                             onPtyExit={(ptyId) => handlePtyExit(tab.id, ptyId)}
                             onCloseTab={() => handleCloseTab(tab.id)}
-                            onInitialRenderSettled={
-                              isActiveTerminalTab
-                                ? () => settleWorktreePresentation(workspace.id)
-                                : undefined
-                            }
                           />
                         )
                         if (activityTerminalPortal) {
@@ -2629,28 +2615,24 @@ const WorktreeSplitSurface = React.memo(function WorktreeSplitSurface({
   layout,
   focusedGroupId,
   isVisible,
-  isPresented,
   shouldMeasureHiddenWorktree,
   shouldColdParkTerminalPanes,
   isForceParked,
   activityTerminalPortals,
   backgroundMountTabIds,
-  activationDeferredMountTabIds,
-  onInitialTerminalRenderSettled
+  activationDeferredMountTabIds
 }: {
   worktreeId: string
   worktreePath: string
   layout: TabGroupLayoutNode
   focusedGroupId?: string
   isVisible: boolean
-  isPresented: boolean
   shouldMeasureHiddenWorktree: boolean
   shouldColdParkTerminalPanes: boolean
   isForceParked: boolean
   activityTerminalPortals: ActivityTerminalPortalTarget[]
   backgroundMountTabIds: ReadonlySet<string> | null
   activationDeferredMountTabIds: ReadonlySet<string> | null
-  onInitialTerminalRenderSettled: (tabId: string) => void
 }): React.JSX.Element {
   const browserPageIds = useAppStore(
     useShallow((state) =>
@@ -2667,46 +2649,38 @@ const WorktreeSplitSurface = React.memo(function WorktreeSplitSurface({
   return (
     <div
       className={
-        isPresented
+        isVisible
           ? 'absolute inset-0 flex'
-          : isVisible || shouldKeepPaintable
+          : shouldKeepPaintable
             ? 'absolute inset-0 flex opacity-0 pointer-events-none'
             : 'absolute inset-0 hidden'
       }
       // Why: paintable-but-hidden webviews must be inert so they stay unreachable by Tab / assistive tech.
-      inert={!isPresented}
-      aria-hidden={!isPresented}
+      inert={!isVisible}
+      aria-hidden={!isVisible}
     >
-      <CodexRestartChip isVisible={isPresented} worktreeId={worktreeId} />
+      <CodexRestartChip isVisible={isVisible} worktreeId={worktreeId} />
       <TabGroupSplitLayout
         layout={layout}
         worktreeId={worktreeId}
         focusedGroupId={focusedGroupId}
-        isWorktreeActive={isVisible || isPresented}
+        isWorktreeActive={isVisible}
       />
       <TerminalPaneOverlayLayer
         worktreeId={worktreeId}
         worktreePath={worktreePath}
         isWorktreeActive={isVisible}
-        isWorktreePresented={isPresented}
         coldParkTerminalPanes={shouldColdParkTerminalPanes}
         isForceParked={isForceParked}
         shouldMeasureHiddenWorktree={shouldMeasureHiddenWorktree}
         activityTerminalPortals={activityTerminalPortals}
         backgroundMountTabIds={backgroundMountTabIds}
         activationDeferredMountTabIds={activationDeferredMountTabIds}
-        onInitialTerminalRenderSettled={onInitialTerminalRenderSettled}
       />
       {isVisible || backgroundMountTabIds === null ? (
         <>
-          <BrowserPaneOverlayLayer
-            worktreeId={worktreeId}
-            isWorktreeActive={isVisible || isPresented}
-          />
-          <EmulatorPaneOverlayLayer
-            worktreeId={worktreeId}
-            isWorktreeActive={isVisible || isPresented}
-          />
+          <BrowserPaneOverlayLayer worktreeId={worktreeId} isWorktreeActive={isVisible} />
+          <EmulatorPaneOverlayLayer worktreeId={worktreeId} isWorktreeActive={isVisible} />
         </>
       ) : null}
       <AiVaultSessionDropLayer worktreeId={worktreeId} enabled={isVisible} />

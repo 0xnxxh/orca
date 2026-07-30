@@ -1,8 +1,49 @@
 import type { SkillDiscoveryResult, SkillDiscoveryTarget } from '../../../shared/skills'
+import type { RuntimeClientTarget } from '@/runtime/runtime-rpc-client'
+import { discoverSkillsForRuntimeTarget } from '@/runtime/runtime-skills-client'
+import { INSTALLED_AGENT_SKILLS_CHANGED_EVENT } from './installed-agent-skills-change-event'
+import {
+  clearInstalledAgentSkillDiscoveryCache,
+  peekInstalledAgentSkillDiscoveryCache,
+  readInstalledAgentSkillDiscoveryCache,
+  resetInstalledAgentSkillDiscoveryCacheForTests,
+  writeInstalledAgentSkillDiscoveryCache
+} from './installed-agent-skill-discovery-cache'
 
-let cachedDiscoveryByTarget = new Map<string, SkillDiscoveryResult>()
+export const LOCAL_RUNTIME_TARGET: RuntimeClientTarget = { kind: 'local' }
+
+let discoveryGeneration = 0
 let pendingDiscoveryByTarget = new Map<string, Promise<SkillDiscoveryResult>>()
 let pendingDiscoverySatisfiesForcedRefreshByTarget = new Map<string, boolean>()
+
+/** Last completed scan for a runtime-scoped key, for a synchronous first render. */
+export function getCachedSkillDiscovery(key: string): SkillDiscoveryResult | null {
+  return peekInstalledAgentSkillDiscoveryCache(key)
+}
+
+/** Invalidate every cached scan and tell mounted hooks to re-scan (e.g. after an install). */
+export function notifyInstalledAgentSkillsChanged(): void {
+  invalidateInstalledAgentSkillDiscovery()
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(INSTALLED_AGENT_SKILLS_CHANGED_EVENT))
+  }
+}
+
+export function invalidateInstalledAgentSkillDiscovery(): void {
+  discoveryGeneration += 1
+  clearInstalledAgentSkillDiscoveryCache()
+  // Why: an install/uninstall must start a post-mutation scan; older pending
+  // reads may finish, but their generation can no longer repopulate the cache.
+  pendingDiscoveryByTarget.clear()
+  pendingDiscoverySatisfiesForcedRefreshByTarget.clear()
+}
+
+export function resetSkillDiscoveryCacheForTests(): void {
+  invalidateInstalledAgentSkillDiscovery()
+  resetInstalledAgentSkillDiscoveryCacheForTests()
+  pendingDiscoveryByTarget = new Map()
+  pendingDiscoverySatisfiesForcedRefreshByTarget = new Map()
+}
 
 function normalizeSkillDiscoveryTarget(
   target: SkillDiscoveryTarget | undefined
@@ -41,22 +82,33 @@ export function getSkillDiscoveryTargetKey(target: SkillDiscoveryTarget | undefi
   return normalizedTarget?.runtime === 'wsl' ? `wsl:${normalizedTarget.wslDistro ?? ''}` : 'host'
 }
 
-export function getCachedInstalledAgentSkillDiscovery(
+// Why: a connected remote runtime scans its own disk. Sharing the local key
+// would keep showing the client's skills after switching environments. The
+// caller's target is dropped for a remote scan (it describes the client's WSL /
+// project runtime), so it must not fragment the key either — otherwise the same
+// remote gets rescanned once per client-side target shape.
+export function getRuntimeScopedSkillDiscoveryKey(
+  runtimeTarget: RuntimeClientTarget,
   target: SkillDiscoveryTarget | undefined
-): SkillDiscoveryResult | null {
-  return cachedDiscoveryByTarget.get(getSkillDiscoveryTargetKey(target)) ?? null
+): string {
+  return runtimeTarget.kind === 'environment'
+    ? `runtime:${runtimeTarget.environmentId}`
+    : getSkillDiscoveryTargetKey(target)
 }
 
 function startInstalledAgentSkillDiscovery(
   force: boolean,
-  target: SkillDiscoveryTarget | undefined
+  target: SkillDiscoveryTarget | undefined,
+  runtimeTarget: RuntimeClientTarget,
+  key: string
 ): Promise<SkillDiscoveryResult> {
-  const key = getSkillDiscoveryTargetKey(target)
+  const generation = discoveryGeneration
   const normalizedTarget = normalizeSkillDiscoveryTarget(target)
-  const discovery = window.api.skills
-    .discover(normalizedTarget)
+  const discovery = discoverSkillsForRuntimeTarget(runtimeTarget, normalizedTarget)
     .then((result) => {
-      cachedDiscoveryByTarget.set(key, result)
+      if (generation === discoveryGeneration) {
+        writeInstalledAgentSkillDiscoveryCache(key, result)
+      }
       return result
     })
     .finally(() => {
@@ -70,14 +122,23 @@ function startInstalledAgentSkillDiscovery(
   return discovery
 }
 
+/**
+ * Cached, de-duplicated skill scan for one runtime. Concurrent callers share a
+ * single in-flight scan per key; `force` bypasses the cache to re-read disk.
+ */
 export async function discoverInstalledAgentSkills(
   force: boolean,
-  target?: SkillDiscoveryTarget
+  target?: SkillDiscoveryTarget,
+  runtimeTarget: RuntimeClientTarget = LOCAL_RUNTIME_TARGET
 ): Promise<SkillDiscoveryResult> {
-  const key = getSkillDiscoveryTargetKey(target)
-  const cachedDiscovery = cachedDiscoveryByTarget.get(key)
-  if (!force && cachedDiscovery) {
-    return cachedDiscovery
+  const key = getRuntimeScopedSkillDiscoveryKey(runtimeTarget, target)
+  if (!force) {
+    // Why: only a cache-serving read should refresh recency — a forced refresh
+    // discards the entry it would otherwise promote.
+    const cachedDiscovery = readInstalledAgentSkillDiscoveryCache(key)
+    if (cachedDiscovery) {
+      return cachedDiscovery
+    }
   }
 
   const inFlightDiscovery = pendingDiscoveryByTarget.get(key)
@@ -88,7 +149,8 @@ export async function discoverInstalledAgentSkills(
     try {
       await inFlightDiscovery
     } catch {
-      // An explicit re-check should still read disk after an older background scan fails.
+      // Why: an explicit re-check should still read current disk state even if
+      // the older background scan failed.
     }
     const nextPendingDiscovery = pendingDiscoveryByTarget.get(key)
     if (nextPendingDiscovery && nextPendingDiscovery !== inFlightDiscovery) {
@@ -96,15 +158,5 @@ export async function discoverInstalledAgentSkills(
     }
   }
 
-  return startInstalledAgentSkillDiscovery(force, target)
-}
-
-export function invalidateInstalledAgentSkillDiscovery(): void {
-  cachedDiscoveryByTarget.clear()
-}
-
-export function resetInstalledAgentSkillDiscoveryForTests(): void {
-  cachedDiscoveryByTarget = new Map()
-  pendingDiscoveryByTarget = new Map()
-  pendingDiscoverySatisfiesForcedRefreshByTarget = new Map()
+  return startInstalledAgentSkillDiscovery(force, target, runtimeTarget, key)
 }

@@ -2,23 +2,30 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   DiscoveredSkill,
   SkillDiscoveryResult,
+  SkillDiscoverySource,
   SkillDiscoveryTarget,
   SkillSourceKind
 } from '../../../shared/skills'
 import { ORCHESTRATION_SKILL_NAME } from '@/lib/agent-feature-install-commands'
 import { markOrchestrationSetupComplete } from '@/lib/orchestration-setup-state'
 import {
+  discoverInstalledAgentSkills,
+  getCachedSkillDiscovery,
+  getRuntimeScopedSkillDiscoveryKey,
+  getSkillDiscoveryTargetKey,
+  resetSkillDiscoveryCacheForTests
+} from './installed-agent-skill-discovery'
+import {
   INSTALLED_AGENT_SKILLS_CHANGED_EVENT,
   INSTALLED_AGENT_SKILLS_REFRESHED_EVENT
 } from './installed-agent-skills-change-event'
-import {
-  discoverInstalledAgentSkills,
-  getCachedInstalledAgentSkillDiscovery,
-  getSkillDiscoveryTargetKey,
-  invalidateInstalledAgentSkillDiscovery,
-  resetInstalledAgentSkillDiscoveryForTests
-} from './installed-agent-skill-discovery'
+import { useActiveSkillDiscoveryRuntimeTarget } from './use-active-skill-discovery-runtime-target'
 import { useMountedRef } from './useMountedRef'
+
+/** Placeholder key while the owning runtime is unknown; nothing is cached under it. */
+const UNRESOLVED_RUNTIME_DISCOVERY_KEY = 'runtime:unresolved'
+
+export { notifyInstalledAgentSkillsChanged } from './installed-agent-skill-discovery'
 
 export const GLOBAL_AGENT_SKILL_SOURCE_KINDS = [
   'home'
@@ -37,13 +44,12 @@ type InstalledAgentSkillMatchOptions = {
 export type InstalledAgentSkillState = {
   installed: boolean
   loading: boolean
-  // Why: a forced rescan (window focus, Re-check) keeps the previous result, so
-  // only the first scan per discovery target is genuinely unknown. Surfaces that
-  // render status read this instead of `loading` to avoid flashing on every
-  // alt-tab; `loading` still drives spinners on the action that triggered it.
+  // Why: a forced rescan keeps the previous result, so only the first scan per
+  // runtime-scoped target is genuinely unknown.
   settled: boolean
   error: string | null
   skills: readonly DiscoveredSkill[]
+  sources: readonly SkillDiscoverySource[]
   refresh: () => Promise<boolean>
 }
 
@@ -87,13 +93,6 @@ export function hasInstalledAgentSkillNamed(
   })
 }
 
-export function notifyInstalledAgentSkillsChanged(): void {
-  invalidateInstalledAgentSkillDiscovery()
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(INSTALLED_AGENT_SKILLS_CHANGED_EVENT))
-  }
-}
-
 export function notifyInstalledAgentSkillsRefreshed(): void {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent(INSTALLED_AGENT_SKILLS_REFRESHED_EVENT))
@@ -104,7 +103,7 @@ export const _installedAgentSkillDiscoveryInternalsForTests = {
   discoverInstalledAgentSkills,
   getSkillDiscoveryTargetKey,
   isOrchestrationSkillName,
-  reset: resetInstalledAgentSkillDiscoveryForTests
+  reset: resetSkillDiscoveryCacheForTests
 }
 
 export function useInstalledAgentSkill(
@@ -121,8 +120,28 @@ export function useInstalledAgentSkillNames(
   const { enabled = true, discoveryTarget, sourceKinds } = options
   const skillNamesKey = skillNames.map(normalizeSkillName).join('\n')
   const candidateSkillNames = useMemo(() => skillNamesKey.split('\n'), [skillNamesKey])
-  const discoveryTargetKey = getSkillDiscoveryTargetKey(discoveryTarget)
-  const cachedDiscovery = getCachedInstalledAgentSkillDiscovery(discoveryTarget)
+  const runtimeTarget = useActiveSkillDiscoveryRuntimeTarget()
+  const discoveryTargetKey = runtimeTarget
+    ? getRuntimeScopedSkillDiscoveryKey(runtimeTarget, discoveryTarget)
+    : UNRESOLVED_RUNTIME_DISCOVERY_KEY
+  // Why: callers derive the target inside a store-backed useMemo, so unrelated
+  // store writes hand us a new object with the same key. Two targets with the
+  // same key resolve to the same scan, so hold one until the key moves and keep
+  // `refresh` — and the discovery effect it drives — stable. State, not a ref:
+  // React may discard a useMemo, and a render-phase ref write can leak from a
+  // render that never commits.
+  const [latchedDiscoveryTarget, setLatchedDiscoveryTarget] = useState({
+    key: discoveryTargetKey,
+    target: discoveryTarget
+  })
+  if (latchedDiscoveryTarget.key !== discoveryTargetKey) {
+    setLatchedDiscoveryTarget({ key: discoveryTargetKey, target: discoveryTarget })
+  }
+  const stableDiscoveryTarget =
+    latchedDiscoveryTarget.key === discoveryTargetKey
+      ? latchedDiscoveryTarget.target
+      : discoveryTarget
+  const cachedDiscovery = getCachedSkillDiscovery(discoveryTargetKey)
   const [result, setResult] = useState<SkillDiscoveryResult | null>(cachedDiscovery)
   const [loading, setLoading] = useState(enabled && !cachedDiscovery)
   const [error, setError] = useState<string | null>(null)
@@ -140,7 +159,7 @@ export function useInstalledAgentSkillNames(
     stateResetInputRef.current.discoveryTargetKey !== discoveryTargetKey ||
     stateResetInputRef.current.enabled !== enabled
   ) {
-    const nextCachedDiscovery = getCachedInstalledAgentSkillDiscovery(discoveryTarget)
+    const nextCachedDiscovery = getCachedSkillDiscovery(discoveryTargetKey)
     const nextLoading = enabled && !nextCachedDiscovery
     stateResetInputRef.current = { discoveryTargetKey, enabled }
     resultForRender = nextCachedDiscovery
@@ -178,9 +197,14 @@ export function useInstalledAgentSkillNames(
           setLoading(true)
         })
       }
+      if (!runtimeTarget) {
+        // Why: stay in the loading state rather than scanning the wrong host and
+        // reporting "not installed" before the owning runtime is known.
+        return false
+      }
       let installedAfterRefresh = false
       try {
-        const next = await discoverInstalledAgentSkills(force, discoveryTarget)
+        const next = await discoverInstalledAgentSkills(force, stableDiscoveryTarget, runtimeTarget)
         installedAfterRefresh = hasInstalledAgentSkillNamed(next.skills, candidateSkillNames, {
           sourceKinds
         })
@@ -205,7 +229,15 @@ export function useInstalledAgentSkillNames(
       }
       return installedAfterRefresh
     },
-    [candidateSkillNames, discoveryTarget, discoveryTargetKey, enabled, mountedRef, sourceKinds]
+    [
+      candidateSkillNames,
+      discoveryTargetKey,
+      enabled,
+      mountedRef,
+      runtimeTarget,
+      sourceKinds,
+      stableDiscoveryTarget
+    ]
   )
 
   useEffect(() => {
@@ -238,6 +270,10 @@ export function useInstalledAgentSkillNames(
     () => (enabled && resultForRender ? resultForRender.skills : []),
     [enabled, resultForRender]
   )
+  const sources = useMemo(
+    () => (enabled && resultForRender ? resultForRender.sources : []),
+    [enabled, resultForRender]
+  )
 
   const installed = useMemo(
     () =>
@@ -261,6 +297,7 @@ export function useInstalledAgentSkillNames(
     settled: enabled && resultForRender !== null,
     error: errorForRender,
     skills,
+    sources,
     refresh: forceRefresh
   }
 }
