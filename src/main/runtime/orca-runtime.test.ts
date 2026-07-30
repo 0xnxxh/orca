@@ -31133,6 +31133,60 @@ describe('OrcaRuntimeService', () => {
     })
   })
 
+  it('resolves legacy numeric pane keys through the stale filter too', async () => {
+    // Why: non-UUID leaves produce `tabId:paneRuntimeId` keys with no tabId
+    // field; they still name a real tab and must not bypass the filter.
+    const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession({
+      ...getDefaultWorkspaceSession(),
+      tabsByWorktree: {
+        [TEST_WORKTREE_ID]: [
+          {
+            id: 'open-tab',
+            ptyId: null,
+            worktreeId: TEST_WORKTREE_ID,
+            title: 'Codex',
+            customTitle: null,
+            color: null,
+            sortOrder: 0,
+            createdAt: 1
+          }
+        ]
+      }
+    })
+    const now = Date.now()
+    const runtime = new OrcaRuntimeService(runtimeStore as never, undefined, {
+      getAgentStatusSnapshot: () => [
+        {
+          paneKey: 'closed-tab:7',
+          worktreeId: TEST_WORKTREE_ID,
+          state: 'done',
+          prompt: 'stale legacy pane',
+          agentType: 'codex',
+          connectionId: null,
+          receivedAt: now,
+          stateStartedAt: now - 60_000
+        },
+        {
+          paneKey: 'open-tab:9',
+          worktreeId: TEST_WORKTREE_ID,
+          state: 'working',
+          prompt: 'live legacy pane',
+          agentType: 'codex',
+          connectionId: null,
+          receivedAt: now,
+          stateStartedAt: now - 100
+        }
+      ]
+    })
+
+    const { worktrees } = await runtime.getWorktreePs()
+    const summary = worktrees.find((worktree) => worktree.worktreeId === TEST_WORKTREE_ID)
+
+    expect(summary?.agents).toEqual([
+      expect.objectContaining({ paneKey: 'open-tab:9', prompt: 'live legacy pane' })
+    ])
+  })
+
   it('keeps a local hook row while a connected PTY still backs its pane', async () => {
     // Why: daemon-held terminals stay live across renderer graph gaps even when
     // no session tab records them; a connected PTY is proof the pane exists.

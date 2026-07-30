@@ -363,7 +363,12 @@ import {
 } from '../../shared/setup-agent-sequencing'
 import { TASK_PROVIDERS } from '../../shared/task-providers'
 import { FIRST_PANE_ID } from '../../shared/pane-key'
-import { isTerminalLeafId, makePaneKey, parsePaneKey } from '../../shared/stable-pane-id'
+import {
+  isTerminalLeafId,
+  makePaneKey,
+  parseLegacyNumericPaneKey,
+  parsePaneKey
+} from '../../shared/stable-pane-id'
 import { parseAppSshPtyId } from '../../shared/ssh-pty-id'
 import { isValidHostTerminalTabId, isValidTerminalTabId } from '../../shared/terminal-tab-id'
 import {
@@ -16585,7 +16590,12 @@ export class OrcaRuntimeService {
     for (const src of rowSources.values()) {
       // Why: hooks retain launch-time attribution across automatic workspace
       // renames; the tab's current mirrored owner is authoritative when present.
-      const tabId = src.tabId ?? parsePaneKey(src.paneKey)?.tabId
+      // Legacy numeric pane keys (non-UUID leaves) still name a real tab, so
+      // parse them too — otherwise their rows would bypass the stale filter.
+      const tabId =
+        src.tabId ??
+        parsePaneKey(src.paneKey)?.tabId ??
+        parseLegacyNumericPaneKey(src.paneKey)?.tabId
       const mirroredWorktreeId = tabId ? mirroredWorktreeIdByTabId.get(tabId) : undefined
       if (
         tabId !== undefined &&
