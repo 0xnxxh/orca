@@ -14,6 +14,7 @@ const {
 const { verifyLinuxGlibcFloor } = require('./scripts/verify-linux-glibc-floor.cjs')
 const { writeMacBuildCompatibility } = require('./scripts/mac-build-compatibility.cjs')
 const { verifyPackagedPluginResources } = require('./scripts/verify-packaged-plugin-resources.cjs')
+const { verifySkillsCliRuntime } = require('./scripts/verify-skills-cli-runtime.cjs')
 
 const isMacRelease = process.env.ORCA_MAC_RELEASE === '1'
 const isLinuxArm64Release = process.env.ORCA_LINUX_ARM64_RELEASE === '1'
@@ -143,16 +144,12 @@ module.exports = {
     'out/main/claude/**',
     'out/main/claude-accounts/keychain.js',
     'out/main/codex/**',
-    'out/main/codex-cli/command.js',
     'out/main/copilot/**',
     'out/main/cursor/**',
     'out/main/droid/**',
     'out/main/gemini/**',
     'out/main/grok/**',
     'out/main/hermes/**',
-    'out/main/ipc/local-agent-install-dir-detection.js',
-    'out/main/ipc/tui-agent-detection-commands.js',
-    'out/main/win32-utils.js',
     'out/main/daemon-entry.js',
     'out/main/plugin-host-entry.js',
     'out/main/computer-sidecar.js',
@@ -183,7 +180,7 @@ module.exports = {
           )
         : join(context.appOutDir, 'resources')
     if (!existsSync(resourcesDir)) {
-      return
+      throw new Error(`Missing packaged resources directory: ${resourcesDir}`)
     }
     if (context.electronPlatformName === 'darwin') {
       const architectureByEnum = { 1: 'x64', 3: 'arm64' }
@@ -206,6 +203,7 @@ module.exports = {
     }
     prunePackagedRuntimeNodeModules(resourcesDir, context.electronPlatformName, context.arch)
     verifyPackagedMainRuntimeDeps(resourcesDir)
+    verifySkillsCliRuntime(join(resourcesDir, 'app.asar.unpacked', 'out'), resourcesDir)
     // Why: boot the packaged daemon-entry under plain Node, but only for the
     // slice matching the packaging host's arch — daemon-entry.js is JS, yet it
     // require()s the native (N-API) node-pty for the TARGET arch, which the host
