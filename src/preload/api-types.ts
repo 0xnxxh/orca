@@ -47,6 +47,7 @@ import type {
 } from '../shared/terminal-render-desync-evidence'
 import type { MobileRelayStatus } from '../shared/mobile-relay-status'
 import type { MobilePairingConnectionMode } from '../shared/mobile-pairing-connection-mode'
+import type { MobileRelayMintFailure } from '../shared/mobile-relay-mint-failure'
 import type {
   SshMutationExpectation,
   SshConnectionState,
@@ -3566,7 +3567,12 @@ export type PreloadApi = {
       connectionMode?: MobilePairingConnectionMode
       rotate?: boolean
     }) => Promise<
-      | { available: false }
+      | {
+          available: false
+          reason?: string
+          guidance?: string
+          relayFailure?: MobileRelayMintFailure
+        }
       | {
           available: true
           qrDataUrl: string | null
@@ -3574,7 +3580,7 @@ export type PreloadApi = {
           pairingUrl: string
           endpoint: string
           deviceId: string
-          /** Mode the QR actually encodes; 'local-only' when Relay could not be attached. */
+          /** Mode the QR actually encodes. */
           connectionMode: MobilePairingConnectionMode
         }
     >

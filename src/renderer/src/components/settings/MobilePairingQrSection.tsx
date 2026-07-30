@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { Check, CircleAlert, Copy, Maximize2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '../ui/button'
@@ -29,17 +29,28 @@ export function MobilePairingQrSection({
   onClearCodeCopiedTimer
 }: MobilePairingQrSectionProps): React.JSX.Element | null {
   const pairingCodeButtonMountedRef = useRef(false)
+  const pairingCodeButtonRef = useRef<HTMLButtonElement | null>(null)
+  const hadPairingUrlRef = useRef(pairingUrl != null)
   const codeCopiedResetTimerRef = useRef<number | null>(null)
 
   const setPairingCodeButtonRef = useCallback(
     (node: HTMLButtonElement | null) => {
       pairingCodeButtonMountedRef.current = node !== null
+      pairingCodeButtonRef.current = node
       if (node === null) {
         onClearCodeCopiedTimer()
       }
     },
     [onClearCodeCopiedTimer]
   )
+
+  useEffect(() => {
+    const becameReady = !hadPairingUrlRef.current && pairingUrl != null
+    hadPairingUrlRef.current = pairingUrl != null
+    if (becameReady && document.activeElement === document.body) {
+      pairingCodeButtonRef.current?.focus()
+    }
+  }, [pairingUrl])
 
   async function copyPairingCode() {
     if (!pairingUrl) {
@@ -119,6 +130,10 @@ export function MobilePairingQrSection({
               variant="outline"
               size="sm"
               onClick={() => void copyPairingCode()}
+              aria-label={translate(
+                'auto.components.settings.MobilePane.copyPairingCode',
+                'Copy pairing code'
+              )}
               className="font-mono text-[11px] leading-tight whitespace-normal break-all h-auto py-2 px-3"
             >
               <span className="flex-1 text-left">{pairingUrl}</span>
