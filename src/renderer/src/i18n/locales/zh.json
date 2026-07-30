@@ -644,6 +644,8 @@
             "empty": "{{fileName}} is empty.",
             "tooLarge": "{{fileName}} is larger than {{maxSize}}.",
             "tooMany": "You can attach up to {{maxCount}} images.",
+            "dimensionsTooLarge": "{{fileName}} has dimensions that are too large to preview safely.",
+            "invalidImage": "{{fileName}} is not a valid supported image.",
             "additionalErrors": "{{count}} additional images could not be attached."
           }
         }

@@ -166,6 +166,32 @@ describe('SidebarFeedbackDialog image submission', () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
+  it('releases image previews when the sidebar unmounts the dialog', async () => {
+    mocks.readFeedbackImageFiles.mockResolvedValue({
+      images: [
+        {
+          id: 'shot',
+          name: 'shot.png',
+          contentType: 'image/png',
+          bytes: 1,
+          data: new Uint8Array([1]),
+          previewUrl: 'blob:shot'
+        }
+      ],
+      errors: []
+    })
+    const { container, unmount } = render(<SidebarFeedbackDialog open onOpenChange={vi.fn()} />)
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')
+    fireEvent.change(input!, {
+      target: { files: [new File(['x'], 'shot.png', { type: 'image/png' })] }
+    })
+    await screen.findByRole('button', { name: 'Remove shot.png' })
+
+    unmount()
+
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:shot')
+  })
+
   it('does not consume text when the pasted image cannot be attached', () => {
     mocks.readFeedbackImageFiles.mockResolvedValue({
       images: [],

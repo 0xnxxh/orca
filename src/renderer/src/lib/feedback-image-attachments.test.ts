@@ -14,8 +14,21 @@ beforeEach(() => {
   URL.revokeObjectURL = vi.fn()
 })
 
-function pngFile(name: string, size = 8): File {
-  const file = new File(['x'], name, { type: 'image/png' })
+function pngHeader(width = 1, height = 1): Uint8Array<ArrayBuffer> {
+  const bytes = new Uint8Array(new ArrayBuffer(24))
+  bytes.set([137, 80, 78, 71, 13, 10, 26, 10])
+  const view = new DataView(bytes.buffer)
+  view.setUint32(8, 13)
+  bytes.set([73, 72, 68, 82], 12)
+  view.setUint32(16, width)
+  view.setUint32(20, height)
+  return bytes
+}
+
+function pngFile(name: string, size = 24, dimensions = { width: 1, height: 1 }): File {
+  const file = new File([pngHeader(dimensions.width, dimensions.height)], name, {
+    type: 'image/png'
+  })
   Object.defineProperty(file, 'size', { value: size })
   return file
 }
@@ -55,7 +68,7 @@ describe('readFeedbackImageFiles', () => {
     expect(errors).toEqual([])
     expect(images).toHaveLength(2)
     expect(new Set(images.map((image) => image.id)).size).toBe(2)
-    expect(images[0].data.byteLength).toBe(1)
+    expect(images[0].data.byteLength).toBe(24)
   })
 
   it('reports an unsupported type instead of skipping it', async () => {
@@ -96,6 +109,42 @@ describe('readFeedbackImageFiles', () => {
 
     expect(images).toEqual([])
     expect(errors).toEqual(['empty.png is empty.'])
+  })
+
+  it('rejects a raster that would exceed the decoded preview budget', async () => {
+    const file = pngFile('huge-dimensions.png', 24, { width: 8192, height: 8192 })
+
+    const { images, errors } = await readFeedbackImageFiles([file], 0)
+
+    expect(images).toEqual([])
+    expect(errors).toEqual([
+      'huge-dimensions.png has dimensions that are too large to preview safely.'
+    ])
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
+  })
+
+  it('rejects invalid raster bytes instead of mounting a broken preview', async () => {
+    const file = new File(['not an image'], 'broken.png', { type: 'image/png' })
+
+    const { images, errors } = await readFeedbackImageFiles([file], 0)
+
+    expect(images).toEqual([])
+    expect(errors).toEqual(['broken.png is not a valid supported image.'])
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
+  })
+
+  it('does not count a rejected preview against the attachment limit', async () => {
+    const files = [
+      new File(['not an image'], 'broken.png', { type: 'image/png' }),
+      ...Array.from({ length: MAX_FEEDBACK_IMAGE_COUNT }, (_, index) =>
+        pngFile(`valid-${index}.png`)
+      )
+    ]
+
+    const { images, errors } = await readFeedbackImageFiles(files, 0)
+
+    expect(images).toHaveLength(MAX_FEEDBACK_IMAGE_COUNT)
+    expect(errors).toEqual(['broken.png is not a valid supported image.'])
   })
 
   it('reports the overflow once the running count is already at capacity', async () => {

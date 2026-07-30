@@ -1,5 +1,10 @@
 import { translate } from '@/i18n/i18n'
 import { createBrowserUuid } from './browser-uuid'
+import {
+  INVALID_RASTER_IMAGE_PREVIEW_ERROR,
+  RASTER_IMAGE_PREVIEW_TOO_LARGE_ERROR,
+  assertRasterImagePreviewWithinLimits
+} from '../../../shared/raster-image-preview-limits'
 
 export const MAX_FEEDBACK_IMAGE_COUNT = 4
 export const MAX_FEEDBACK_IMAGE_BYTES = 8 * 1024 * 1024
@@ -123,6 +128,32 @@ export async function readFeedbackImageFiles(
         )
         break
       }
+      const data = new Uint8Array(await file.arrayBuffer())
+      try {
+        assertRasterImagePreviewWithinLimits(data, file.type)
+      } catch (error) {
+        if (error instanceof Error && error.message === RASTER_IMAGE_PREVIEW_TOO_LARGE_ERROR) {
+          addError(() =>
+            translate(
+              'auto.lib.feedback.image.attachments.dimensionsTooLarge',
+              '{{fileName}} has dimensions that are too large to preview safely.',
+              { fileName }
+            )
+          )
+          continue
+        }
+        if (error instanceof Error && error.message === INVALID_RASTER_IMAGE_PREVIEW_ERROR) {
+          addError(() =>
+            translate(
+              'auto.lib.feedback.image.attachments.invalidImage',
+              '{{fileName}} is not a valid supported image.',
+              { fileName }
+            )
+          )
+          continue
+        }
+        throw error
+      }
       remaining -= 1
       images.push({
         // Why: crypto.randomUUID is undefined in non-secure browser contexts (LAN
@@ -131,7 +162,7 @@ export async function readFeedbackImageFiles(
         name: fileName,
         contentType: file.type,
         bytes: file.size,
-        data: new Uint8Array(await file.arrayBuffer()),
+        data,
         previewUrl: URL.createObjectURL(file)
       })
     }

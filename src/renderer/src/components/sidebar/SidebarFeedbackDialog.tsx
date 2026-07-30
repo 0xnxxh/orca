@@ -70,17 +70,23 @@ export function SidebarFeedbackDialog({
   const [pendingImageReadCount, setPendingImageReadCount] = useState(0)
   const mountedRef = useMountedRef()
   const feedbackTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const liveImageDraftsRef = useRef<FeedbackImageDraft[]>([])
 
   const clearImages = React.useCallback(() => {
-    setImages((current) => {
-      current.forEach(releaseFeedbackImageDraft)
-      return []
-    })
+    liveImageDraftsRef.current.forEach(releaseFeedbackImageDraft)
+    liveImageDraftsRef.current = []
+    setImages([])
   }, [])
 
   // Why: object URLs for the thumbnails leak until revoked, so drop them when
   // the dialog unmounts as well as when an attachment is removed.
-  React.useEffect(() => clearImages, [clearImages])
+  React.useEffect(
+    () => () => {
+      liveImageDraftsRef.current.forEach(releaseFeedbackImageDraft)
+      liveImageDraftsRef.current = []
+    },
+    []
+  )
 
   const imageCount = images.length
 
@@ -117,6 +123,7 @@ export function SidebarFeedbackDialog({
           }
           setPendingImageReadCount((current) => Math.max(0, current - files.length))
           if (added.length > 0) {
+            liveImageDraftsRef.current = [...liveImageDraftsRef.current, ...added]
             setImages((existing) => [...existing, ...added])
           }
           // Why: never drop an attachment without telling the user — that
@@ -142,13 +149,12 @@ export function SidebarFeedbackDialog({
   )
 
   const handleRemoveImage = React.useCallback((id: string) => {
-    setImages((current) => {
-      const removed = current.find((image) => image.id === id)
-      if (removed) {
-        releaseFeedbackImageDraft(removed)
-      }
-      return current.filter((image) => image.id !== id)
-    })
+    const removed = liveImageDraftsRef.current.find((image) => image.id === id)
+    if (removed) {
+      releaseFeedbackImageDraft(removed)
+      liveImageDraftsRef.current = liveImageDraftsRef.current.filter((image) => image.id !== id)
+    }
+    setImages((current) => current.filter((image) => image.id !== id))
   }, [])
 
   const { isDragActive, contentRef, dragHandlers } = useFeedbackImageDrop(open, handleAddFiles)
