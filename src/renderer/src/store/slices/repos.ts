@@ -1634,13 +1634,22 @@ export type RepoSlice = {
   reorderRepos: (orderedIds: string[]) => Promise<void>
 }
 
-const latestLocalRepoCatalogFetchByStore = new WeakMap<() => AppState, Promise<void>>()
+type LocalRepoCatalogFetchOutcome =
+  | { status: 'fulfilled' }
+  | { status: 'rejected'; reason: unknown }
+
+const latestLocalRepoCatalogFetchByStore = new WeakMap<
+  () => AppState,
+  Promise<LocalRepoCatalogFetchOutcome>
+>()
 const latestRepoCatalogGenerationByHostByStore = new WeakMap<() => AppState, Map<string, number>>()
 const latestAllHostRepoCatalogGenerationByStore = new WeakMap<() => AppState, number>()
 
-function startLocalRepoCatalogFetch(get: () => AppState): () => void {
-  let settle: () => void = () => undefined
-  const settlement = new Promise<void>((resolve) => {
+function startLocalRepoCatalogFetch(
+  get: () => AppState
+): (outcome: LocalRepoCatalogFetchOutcome) => void {
+  let settle: (outcome: LocalRepoCatalogFetchOutcome) => void = () => undefined
+  const settlement = new Promise<LocalRepoCatalogFetchOutcome>((resolve) => {
     settle = resolve
   })
   latestLocalRepoCatalogFetchByStore.set(get, settlement)
@@ -1653,8 +1662,11 @@ async function awaitLatestLocalRepoCatalogFetch(get: () => AppState): Promise<vo
     if (!pending) {
       return
     }
-    await pending
+    const outcome = await pending
     if (latestLocalRepoCatalogFetchByStore.get(get) === pending) {
+      if (outcome.status === 'rejected') {
+        throw outcome.reason
+      }
       return
     }
   }
@@ -1717,8 +1729,9 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
 
   fetchRepos: async () => {
     const target = getActiveRuntimeTarget(get().settings)
-    const settleLocalCatalog =
+    const settleLocalCatalog: (outcome: LocalRepoCatalogFetchOutcome) => void =
       target.kind === 'local' ? startLocalRepoCatalogFetch(get) : () => undefined
+    let localCatalogOutcome: LocalRepoCatalogFetchOutcome = { status: 'fulfilled' }
     // Why: overlapping repos:changed fetches can resolve out of order; a stale one must not overwrite a newer result and resurrect deleted projects (#7020).
     let generation = 0
     set((s) => {
@@ -1781,9 +1794,10 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       })
       scheduleSafeAutoForkSync(get, finalizedHostRepos)
     } catch (err) {
+      localCatalogOutcome = { status: 'rejected', reason: err }
       console.error('Failed to fetch repos:', err)
     } finally {
-      settleLocalCatalog()
+      settleLocalCatalog(localCatalogOutcome)
     }
   },
 
@@ -1947,14 +1961,16 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
 
     // Local first so local repos are present even if a remote fetch stalls.
     let failed = false
+    let localCatalogOutcome: LocalRepoCatalogFetchOutcome = { status: 'fulfilled' }
     try {
       applyCatalog(await fetchRepoCatalogForTarget({ kind: 'local' }))
     } catch (err) {
       failed = true
+      localCatalogOutcome = { status: 'rejected', reason: err }
       console.error('Failed to fetch local repos for all-host load:', err)
     }
     // Why: startup hydration needs the newest local catalog, not unreachable remote hosts.
-    settleLocalCatalog()
+    settleLocalCatalog(localCatalogOutcome)
     if (
       get().reposFetchGeneration !== generation &&
       !isLatestRepoCatalogGeneration(get, LOCAL_EXECUTION_HOST_ID, generation)

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { createTestStore, makeTab } from './store-test-helpers'
+import { createTestStore, makeLayout, makeTab } from './store-test-helpers'
 import type { Repo, WorkspaceSessionState } from '../../../../shared/types'
 import { getDefaultWorkspaceSession } from '../../../../shared/constants'
 import { clearRuntimeCompatibilityCacheForTests } from '../../runtime/runtime-rpc-client'
@@ -21,6 +21,34 @@ const remoteRepo: Repo = {
 }
 
 const reposList = vi.fn()
+const promotionWorktreeId = 'local-repo::/local'
+const promotionTabId = 'restored-tab'
+const promotionPtyId = 'original-daemon-pty'
+
+function makePromotionSession(): WorkspaceSessionState {
+  return {
+    ...getDefaultWorkspaceSession(),
+    activeRepoId: localRepo.id,
+    activeWorktreeId: promotionWorktreeId,
+    activeTabId: promotionTabId,
+    activeWorktreeIdsOnShutdown: [promotionWorktreeId],
+    tabsByWorktree: {
+      [promotionWorktreeId]: [
+        makeTab({
+          id: promotionTabId,
+          worktreeId: promotionWorktreeId,
+          ptyId: promotionPtyId
+        })
+      ]
+    },
+    terminalLayoutsByTabId: {
+      [promotionTabId]: {
+        ...makeLayout(),
+        ptyIdsByLeafId: { 'pane:1': promotionPtyId }
+      }
+    }
+  }
+}
 
 beforeEach(() => {
   clearRuntimeCompatibilityCacheForTests()
@@ -107,22 +135,64 @@ describe('repos slice stale-fetch race (#7020)', () => {
     await Promise.all([refresh, settlement])
     expect(store.getState().repos.map((repo) => repo.id)).toEqual(['local-repo'])
 
-    const worktreeId = 'local-repo::/local'
-    const session: WorkspaceSessionState = {
-      ...getDefaultWorkspaceSession(),
-      activeRepoId: localRepo.id,
-      activeWorktreeId: worktreeId,
-      activeTabId: 'restored-tab',
-      activeWorktreeIdsOnShutdown: [worktreeId],
-      tabsByWorktree: {
-        [worktreeId]: [makeTab({ id: 'restored-tab', worktreeId, ptyId: 'original-daemon-pty' })]
-      }
-    }
-    store.getState().hydrateWorkspaceSession(session)
+    store.getState().hydrateWorkspaceSession(makePromotionSession())
 
-    expect(store.getState().activeWorktreeId).toBe(worktreeId)
+    expect(store.getState().activeWorktreeId).toBe(promotionWorktreeId)
     expect(store.getState().pendingReconnectPtyIdByTabId).toEqual({
-      'restored-tab': 'original-daemon-pty'
+      [promotionTabId]: promotionPtyId
     })
+    expect(store.getState().terminalLayoutsByTabId[promotionTabId]?.ptyIdsByLeafId).toEqual({
+      'pane:1': promotionPtyId
+    })
+  })
+
+  it('waits for a refresh started after initial settlement before startup hydration', async () => {
+    let resolveRefresh!: (repos: Repo[]) => void
+    const refreshedRepos = new Promise<Repo[]>((resolve) => {
+      resolveRefresh = resolve
+    })
+    reposList.mockResolvedValueOnce([localRepo]).mockReturnValueOnce(refreshedRepos)
+    const store = createTestStore()
+
+    await store.getState().fetchReposForAllHosts({ remoteHosts: 'skip' })
+    await store.getState().awaitLocalRepoCatalogSettlement()
+    const refresh = store.getState().fetchRepos()
+    let hydrated = false
+    const hydration = (async () => {
+      await store.getState().awaitLocalRepoCatalogSettlement()
+      store.getState().hydrateWorkspaceSession(makePromotionSession())
+      hydrated = true
+    })()
+
+    await Promise.resolve()
+    expect(hydrated).toBe(false)
+
+    resolveRefresh([localRepo])
+    await Promise.all([refresh, hydration])
+    expect(store.getState().activeWorktreeId).toBe(promotionWorktreeId)
+    expect(store.getState().pendingReconnectPtyIdByTabId[promotionTabId]).toBe(promotionPtyId)
+  })
+
+  it('rejects startup settlement when the superseding local catalog fails', async () => {
+    let resolveStartup!: (repos: Repo[]) => void
+    const startupRepos = new Promise<Repo[]>((resolve) => {
+      resolveStartup = resolve
+    })
+    reposList.mockReturnValueOnce(startupRepos).mockRejectedValueOnce(new Error('catalog failed'))
+    const store = createTestStore()
+
+    const startup = store.getState().fetchReposForAllHosts({ remoteHosts: 'skip' })
+    const refresh = store.getState().fetchRepos()
+    resolveStartup([localRepo])
+    await Promise.all([startup, refresh])
+
+    const hydration = async (): Promise<void> => {
+      await store.getState().awaitLocalRepoCatalogSettlement()
+      store.getState().hydrateWorkspaceSession(makePromotionSession())
+    }
+    await expect(hydration()).rejects.toThrow('catalog failed')
+    expect(store.getState().tabsByWorktree).toEqual({})
+    expect(store.getState().terminalLayoutsByTabId).toEqual({})
+    expect(store.getState().pendingReconnectPtyIdByTabId).toEqual({})
   })
 })

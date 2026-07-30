@@ -954,6 +954,9 @@ function App(): React.JSX.Element {
         }
         const sessionRead = sessionOutcome.value
         await keybindingsPromise
+        await timeRendererStartupStep('repo-catalog-final-settlement', () =>
+          actions.awaitLocalRepoCatalogSettlement()
+        )
         if (!cancelled) {
           const sessionHydrationOptions = {
             additionalValidWorkspaceKeys: collectFolderWorkspaceKeysFromSession(sessionRead.session)

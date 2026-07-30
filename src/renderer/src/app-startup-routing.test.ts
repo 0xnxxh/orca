@@ -23,6 +23,9 @@ describe('renderer startup runtime routing', () => {
     const repoCatalogSettlementIndex = indexInStartupBlock(
       "timeRendererStartupStep('repo-catalog-settlement'"
     )
+    const finalRepoCatalogSettlementIndex = indexInStartupBlock(
+      "timeRendererStartupStep('repo-catalog-final-settlement'"
+    )
     const localGroupsIndex = indexInStartupBlock(
       "actions.fetchProjectGroupsForAllHosts({ remoteHosts: 'skip' })"
     )
@@ -44,6 +47,8 @@ describe('renderer startup runtime routing', () => {
     expect(hydrateUiIndex).toBeLessThan(localReposIndex)
     expect(localReposIndex).toBeLessThan(repoCatalogSettlementIndex)
     expect(repoCatalogSettlementIndex).toBeLessThan(sessionIndex)
+    expect(sessionIndex).toBeLessThan(finalRepoCatalogSettlementIndex)
+    expect(finalRepoCatalogSettlementIndex).toBeLessThan(startupBlockEnd)
     // The local catalog chain stays internally ordered (folders merge against project groups).
     expect(localReposIndex).toBeLessThan(localGroupsIndex)
     expect(localGroupsIndex).toBeLessThan(localFoldersIndex)
@@ -80,6 +85,7 @@ describe('renderer startup runtime routing', () => {
     // The catalog and selective hydration chains overlap, but both settle before recovery or hydration.
     const joinStart = indexInStartupBlock('await Promise.allSettled([')
     expect(joinStart).toBeGreaterThan(hydrateUiIndex)
+    expect(joinStart).toBeLessThan(finalRepoCatalogSettlementIndex)
     const joinBlock = source.slice(joinStart, startupBlockEnd)
     expect(joinBlock).toContain('hydrationSessionChain')
     expect(joinBlock).toContain('localCatalogChain')
