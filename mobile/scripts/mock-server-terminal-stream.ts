@@ -6,6 +6,32 @@ import {
   STREAMING_CHUNKS
 } from './mock-server-terminal-fixtures'
 
+// Why: the client resubscribes on every viewport change; without cancellation
+// each resubscribe would stack another interval streaming under a dead request.
+const streamIntervals = new WeakMap<WebSocket, Map<string, ReturnType<typeof setInterval>>>()
+
+function clearTerminalStream(ws: WebSocket, terminal: string): void {
+  const perTerminal = streamIntervals.get(ws)
+  const interval = perTerminal?.get(terminal)
+  if (interval !== undefined) {
+    clearInterval(interval)
+    perTerminal?.delete(terminal)
+  }
+}
+
+function trackTerminalStream(
+  ws: WebSocket,
+  terminal: string,
+  interval: ReturnType<typeof setInterval>
+): void {
+  let perTerminal = streamIntervals.get(ws)
+  if (!perTerminal) {
+    perTerminal = new Map()
+    streamIntervals.set(ws, perTerminal)
+  }
+  perTerminal.set(terminal, interval)
+}
+
 /** Terminal list/stream/input backend for the mock server. Returns false for
  *  methods it does not own. */
 export function handleMockTerminalRequest(
@@ -51,17 +77,20 @@ export function handleMockTerminalRequest(
         })
       )
 
+      const terminal = String(request.params?.terminal ?? 'term-1')
+      clearTerminalStream(ws, terminal)
       let chunkIndex = 0
       const interval = setInterval(() => {
         if (chunkIndex >= STREAMING_CHUNKS.length || ws.readyState !== ws.OPEN) {
           // Why: no `end` event - a live terminal stream stays open, and `end`
           // makes the client tear the subscription down and blank the pane.
-          clearInterval(interval)
+          clearTerminalStream(ws, terminal)
           return
         }
         respond(success(request.id, { type: 'data', chunk: STREAMING_CHUNKS[chunkIndex] }, true))
         chunkIndex++
       }, 500)
+      trackTerminalStream(ws, terminal, interval)
       return true
     }
 
@@ -74,6 +103,7 @@ export function handleMockTerminalRequest(
       return true
 
     case 'terminal.unsubscribe':
+      clearTerminalStream(ws, String(request.params?.terminal ?? 'term-1'))
       respond(success(request.id, { unsubscribed: true }))
       return true
 
