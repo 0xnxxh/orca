@@ -12,6 +12,11 @@ import { getTerminalHistoryQuarantineOwnerDir } from './terminal-history-recover
 const PENDING_DELETE_DIR_NAME = '.pending-delete'
 
 const pendingSessionTreeRemovals = new Map<string, Promise<void>>()
+// Why: a tombstone whose rm fails once (Windows EBUSY under AV) would otherwise sit on disk until the
+// next HistoryManager construction. Bounded so a genuinely wedged tree stops burning timers.
+export const SESSION_TREE_REMOVAL_RETRY_DELAYS_MS = [30_000, 120_000]
+const sessionTreeRemovalAttempts = new Map<string, number>()
+const sessionTreeRemovalRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 export function isTerminalHistoryPendingDeleteEntry(name: string): boolean {
   return name === PENDING_DELETE_DIR_NAME
@@ -33,15 +38,42 @@ function tombstoneSessionTree(basePath: string, dir: string): string | null {
   }
 }
 
+function scheduleSessionTreeRemovalRetry(dir: string): void {
+  const attempt = sessionTreeRemovalAttempts.get(dir) ?? 0
+  const retryDelayMs = SESSION_TREE_REMOVAL_RETRY_DELAYS_MS[attempt]
+  if (retryDelayMs === undefined) {
+    // Out of in-process attempts: the tombstone stays queued for the next construction's drain.
+    sessionTreeRemovalAttempts.delete(dir)
+    return
+  }
+  sessionTreeRemovalAttempts.set(dir, attempt + 1)
+  const timer = setTimeout(() => {
+    sessionTreeRemovalRetryTimers.delete(dir)
+    scheduleSessionTreeRemoval(dir)
+  }, retryDelayMs)
+  timer.unref?.()
+  sessionTreeRemovalRetryTimers.set(dir, timer)
+}
+
 function scheduleSessionTreeRemoval(dir: string): void {
   if (pendingSessionTreeRemovals.has(dir)) {
     return
   }
+  // A rescan (startup drain) hitting the same tombstone supersedes its pending retry.
+  const pendingRetry = sessionTreeRemovalRetryTimers.get(dir)
+  if (pendingRetry) {
+    clearTimeout(pendingRetry)
+    sessionTreeRemovalRetryTimers.delete(dir)
+  }
   const removal = removeHostTree(dir)
+    .then(() => {
+      sessionTreeRemovalAttempts.delete(dir)
+    })
     .catch((err: unknown) => {
       console.warn(
         `[history] Failed to delete tombstoned session tree: ${err instanceof Error ? err.message : String(err)}`
       )
+      scheduleSessionTreeRemovalRetry(dir)
     })
     .finally(() => {
       if (pendingSessionTreeRemovals.get(dir) === removal) {
@@ -89,6 +121,15 @@ export function schedulePendingSessionTreeRemovals(basePath: string): void {
   } catch {
     // Missing or unreadable queue is non-fatal; the next construction rescans.
   }
+}
+
+/** Drop every armed retry timer so a fixture teardown cannot resurrect a removal. Tests only. */
+export function cancelPendingSessionTreeRemovalRetries(): void {
+  for (const timer of sessionTreeRemovalRetryTimers.values()) {
+    clearTimeout(timer)
+  }
+  sessionTreeRemovalRetryTimers.clear()
+  sessionTreeRemovalAttempts.clear()
 }
 
 /** Await the in-flight tombstone removals. Tests only — production reclaims off the critical path and

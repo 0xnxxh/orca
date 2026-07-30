@@ -8245,8 +8245,10 @@ describe('registerWorktreeHandlers', () => {
     ])
     // Why order matters: linked-path deletion is destructive, so PTYs must release every handle
     // before Windows or WSL filesystem cleanup starts (mirrors the runtime removal path).
-    expect(killAllProcessesForWorktreeMock.mock.invocationCallOrder[0]).toBeLessThan(
-      removeWorktreeLinkedPathsMock.mock.invocationCallOrder[0]
+    expect(killAllProcessesForWorktreeMock).toHaveBeenCalled()
+    // Latest PTY sweep vs earliest deletion: a later sweep would mean handles were still open.
+    expect(Math.max(...killAllProcessesForWorktreeMock.mock.invocationCallOrder)).toBeLessThan(
+      Math.min(...removeWorktreeLinkedPathsMock.mock.invocationCallOrder)
     )
   })
 
