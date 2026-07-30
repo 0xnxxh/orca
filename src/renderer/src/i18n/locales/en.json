@@ -9459,12 +9459,10 @@
           "cloudVmTitle": "Cloud VM runtimes",
           "cloudVmRefresh": "Refresh Cloud VM runtimes",
           "cloudVmLoading": "Checking Cloud VM runtimes…",
-          "cloudVmEmpty": "No Cloud VM runtimes need cleanup.",
           "cloudVmEmptyWithSetup": "No Cloud VM runtimes yet. Create one from a workspace using an environment recipe."
         },
         "ephemeralVms": {
           "search": {
-            "title": "Per-Workspace Environments",
             "description": "Learn how repo-owned recipes give each workspace its own on-demand, disposable environment.",
             "cloudVmTitle": "Cloud VM"
           }
@@ -9472,7 +9470,6 @@
         "EphemeralVmsPane": {
           "loadError": "Could not load recipes.",
           "copyError": "Could not copy the prompt.",
-          "skillTitle": "Per-Workspace Environments skill",
           "skillDescription": "Sets up, builds, authenticates, and validates repo-owned environment recipes.",
           "whatTitle": "What the skill does, with you",
           "whatScaffold": "Writes the recipe & scripts for your provider — connected over an Orca server or SSH.",
@@ -9483,7 +9480,6 @@
           "copied": "Copied",
           "recipes": "Recipes",
           "recipesHelp": "Recipes from orca.yaml and enabled plugins show up here, ready to launch a workspace on.",
-          "refresh": "Refresh ephemeral VM recipes",
           "checking": "Checking recipes...",
           "none": "No recipes found yet.",
           "cloudVmSkillTitle": "Cloud VM setup skill",
@@ -9491,7 +9487,6 @@
         },
         "ephemeralVmsExperimentalSetting": {
           "description": "Shows setup controls and workspace run targets for repo-owned, on-demand environments.",
-          "toggleLabel": "Toggle per-workspace environments",
           "cloudVmToggleLabel": "Toggle Cloud VM"
         },
         "SourceControlActionRepoOverrideNote": {

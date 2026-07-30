@@ -22,9 +22,11 @@ describe('CloudVmSetupGuide', () => {
     expect(container.textContent).toContain('Create a Cloud VM')
     expect(container.textContent).toContain('Create a workspace')
 
-    act(() => {
-      container.querySelector('button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
+    const button = container.querySelector('button')
+    if (!button) {
+      throw new Error('Cloud VM setup button was not rendered')
+    }
+    act(() => button.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 
     expect(useAppStore.getState().settingsNavigationTarget).toEqual({
       pane: 'experimental',

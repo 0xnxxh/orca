@@ -9430,12 +9430,10 @@
           "cloudVmTitle": "클라우드 VM 런타임",
           "cloudVmRefresh": "클라우드 VM 런타임 새로 고침",
           "cloudVmLoading": "클라우드 VM 런타임 확인 중…",
-          "cloudVmEmpty": "정리가 필요한 클라우드 VM 런타임이 없습니다.",
           "cloudVmEmptyWithSetup": "아직 클라우드 VM 런타임이 없습니다. 환경 레시피를 사용해 워크스페이스에서 생성하세요."
         },
         "ephemeralVms": {
           "search": {
-            "title": "워크스페이스별 환경",
             "description": "repo 소유 레시피가 각 워크스페이스에 고유한 주문형 일회용 환경을 제공하는 방법을 알아보세요.",
             "cloudVmTitle": "클라우드 VM"
           }
@@ -9443,7 +9441,6 @@
         "EphemeralVmsPane": {
           "loadError": "레시피를 로드할 수 없습니다.",
           "copyError": "프롬프트를 복사할 수 없습니다.",
-          "skillTitle": "워크스페이스별 환경 기술",
           "skillDescription": "repo 소유 환경 레시피를 설정, 빌드, 인증 및 검증합니다.",
           "whatTitle": "당신과 함께 기술이 하는 일",
           "whatScaffold": "Orca 서버 또는 SSH를 통해 연결된 공급자를 위한 레시피 및 스크립트를 작성합니다.",
@@ -9454,7 +9451,6 @@
           "copied": "복사됨",
           "recipes": "조리법",
           "recipesHelp": "orca.yaml과 활성화된 플러그인의 레시피가 여기에 표시되어 워크스페이스를 시작할 수 있습니다.",
-          "refresh": "임시 VM 레시피 새로 고침",
           "checking": "레시피 확인 중...",
           "none": "아직 레시피를 찾을 수 없습니다.",
           "cloudVmSkillTitle": "클라우드 VM 설정 스킬",
@@ -9462,7 +9458,6 @@
         },
         "ephemeralVmsExperimentalSetting": {
           "description": "repo 소유 온디맨드 환경에 대한 설정 제어 및 워크스페이스 실행 대상을 표시합니다.",
-          "toggleLabel": "워크스페이스별 환경 전환",
           "cloudVmToggleLabel": "클라우드 VM 전환"
         },
         "SourceControlActionRepoOverrideNote": {

@@ -9430,12 +9430,10 @@
           "cloudVmTitle": "云虚拟机运行时",
           "cloudVmRefresh": "刷新云虚拟机运行时",
           "cloudVmLoading": "正在检查云虚拟机运行时…",
-          "cloudVmEmpty": "没有需要清理的云虚拟机运行时。",
           "cloudVmEmptyWithSetup": "还没有云虚拟机运行时。请在创建工作区时使用环境模板来创建。"
         },
         "ephemeralVms": {
           "search": {
-            "title": "工作区专属环境",
             "description": "了解仓库自带的环境模板如何为每个工作区提供按需创建、可丢弃的独立环境。",
             "cloudVmTitle": "云虚拟机"
           }
@@ -9443,7 +9441,6 @@
         "EphemeralVmsPane": {
           "loadError": "无法加载环境模板。",
           "copyError": "无法复制提示词。",
-          "skillTitle": "工作区专属环境技能",
           "skillDescription": "设置、构建、认证并验证仓库自带的环境模板。",
           "whatTitle": "此技能会与你一起完成",
           "whatScaffold": "为你的提供商编写环境模板和脚本，可通过 Orca 服务器或 SSH 连接。",
@@ -9454,7 +9451,6 @@
           "copied": "已复制",
           "recipes": "环境模板",
           "recipesHelp": "orca.yaml 和已启用插件中的配方会显示在这里，可用于启动工作区。",
-          "refresh": "刷新临时 VM 环境模板",
           "checking": "正在检查环境模板...",
           "none": "还没有找到环境模板。",
           "cloudVmSkillTitle": "云虚拟机设置技能",
@@ -9462,7 +9458,6 @@
         },
         "ephemeralVmsExperimentalSetting": {
           "description": "显示仓库自带按需环境的设置控件和工作区运行目标。",
-          "toggleLabel": "切换工作区专属环境",
           "cloudVmToggleLabel": "切换云虚拟机"
         },
         "SourceControlActionRepoOverrideNote": {

@@ -9430,12 +9430,10 @@
           "cloudVmTitle": "クラウド VM ランタイム",
           "cloudVmRefresh": "クラウド VM ランタイムを更新",
           "cloudVmLoading": "クラウド VM ランタイムを確認中…",
-          "cloudVmEmpty": "クリーンアップが必要なクラウド VM ランタイムはありません。",
           "cloudVmEmptyWithSetup": "クラウド VM ランタイムはまだありません。環境レシピを使用してワークスペースから作成してください。"
         },
         "ephemeralVms": {
           "search": {
-            "title": "ワークスペースごとの環境",
             "description": "repo 所有のレシピが各ワークスペースに独自のオンデマンドの使い捨て環境を与える方法を学びましょう。",
             "cloudVmTitle": "クラウド VM"
           }
@@ -9443,7 +9441,6 @@
         "EphemeralVmsPane": {
           "loadError": "レシピを読み込めませんでした。",
           "copyError": "プロンプトをコピーできませんでした。",
-          "skillTitle": "ワークスペースごとの環境スキル",
           "skillDescription": "repo が所有する環境レシピをセットアップ、構築、認証、および検証します。",
           "whatTitle": "スキルが何をするのか、あなたと一緒に",
           "whatScaffold": "Orca サーバーまたは SSH 経由で接続されているプロバイダーのレシピとスクリプトを作成します。",
@@ -9454,7 +9451,6 @@
           "copied": "コピーされました",
           "recipes": "レシピ",
           "recipesHelp": "orca.yaml と有効なプラグインのレシピがここに表示され、ワークスペースを起動できます。",
-          "refresh": "一時的な VM レシピを更新する",
           "checking": "レシピを確認中...",
           "none": "レシピはまだ見つかりません。",
           "cloudVmSkillTitle": "クラウド VM セットアップスキル",
@@ -9462,7 +9458,6 @@
         },
         "ephemeralVmsExperimentalSetting": {
           "description": "repo が所有するオンデマンド環境のセットアップ コントロールとワークスペース実行ターゲットを示します。",
-          "toggleLabel": "ワークスペースごとの環境を切り替える",
           "cloudVmToggleLabel": "クラウド VM を切り替える"
         },
         "SourceControlActionRepoOverrideNote": {
