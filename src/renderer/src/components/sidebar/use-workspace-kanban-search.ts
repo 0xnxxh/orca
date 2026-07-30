@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useMemo, useState } from 'react'
 import { isWorktreePaletteQueryTooLarge } from '@/lib/worktree-palette-query-bounds'
 import type { Repo, Worktree } from '../../../../shared/types'
 import { matchWorkspaceBoardWorktrees } from './workspace-kanban-search'
@@ -29,6 +29,11 @@ export function useWorkspaceKanbanSearch(args: {
   isQueryTooLarge: boolean
 } {
   const [query, setQuery] = useState('')
+  // Why: board identities churn on agent-status ticks, so an unchanged match set
+  // must keep its identity or every memoized card re-renders on every tick.
+  // Store via setState-during-render (not a ref write) so discarded renders do
+  // not leak a match set that never committed.
+  const [stableMatched, setStableMatched] = useState<ReadonlySet<string> | null>(null)
 
   // Why: a stale query silently hiding cards on reopen is a trap. Reset during
   // render like useWorkspaceKanbanSelection, so no frame paints the old filter.
@@ -52,15 +57,13 @@ export function useWorkspaceKanbanSearch(args: {
     [args.repoMap, args.worktrees, deferredQuery]
   )
 
-  // Why: board identities churn on agent-status ticks, so an unchanged match set
-  // must keep its identity or every memoized card re-renders on every tick.
-  const stableMatchedRef = useRef<ReadonlySet<string> | null>(null)
-  const previousMatched = stableMatchedRef.current
   const matchingWorktreeIds =
-    previousMatched && matched && areWorktreeIdSetsEqual(previousMatched, matched)
-      ? previousMatched
+    stableMatched && matched && areWorktreeIdSetsEqual(stableMatched, matched)
+      ? stableMatched
       : matched
-  stableMatchedRef.current = matchingWorktreeIds
+  if (matchingWorktreeIds !== stableMatched) {
+    setStableMatched(matchingWorktreeIds)
+  }
 
   const clearQuery = useCallback(() => setQuery(''), [])
 
