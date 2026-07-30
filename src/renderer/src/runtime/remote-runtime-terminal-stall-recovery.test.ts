@@ -222,9 +222,29 @@ describe('remote terminal stalled stream recovery', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     expect(onTransportClose).not.toHaveBeenCalled()
+    expect(stream.sendInput('regressed-snapshot\r')).toBe(true)
+    await vi.advanceTimersByTimeAsync(REMOTE_TERMINAL_COMMAND_RESPONSE_TIMEOUT_MS)
+    const regressedRequest = sentFrames(TerminalStreamOpcode.SnapshotRequest)[2]
+    const regressedPayload = regressedRequest
+      ? decodeTerminalStreamJson<{ requestId: number }>(regressedRequest.payload)
+      : null
+    emitSnapshot(stream.streamId, regressedPayload?.requestId ?? 0, 'partial-output', 8)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(onTransportClose).not.toHaveBeenCalled()
+    expect(stream.sendInput('still-below-baseline\r')).toBe(true)
+    await vi.advanceTimersByTimeAsync(REMOTE_TERMINAL_COMMAND_RESPONSE_TIMEOUT_MS)
+    const belowBaselineRequest = sentFrames(TerminalStreamOpcode.SnapshotRequest)[3]
+    const belowBaselinePayload = belowBaselineRequest
+      ? decodeTerminalStreamJson<{ requestId: number }>(belowBaselineRequest.payload)
+      : null
+    emitSnapshot(stream.streamId, belowBaselinePayload?.requestId ?? 0, 'partial-output', 10)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(onTransportClose).not.toHaveBeenCalled()
     expect(stream.sendInput('echo second-output\r')).toBe(true)
     await vi.advanceTimersByTimeAsync(REMOTE_TERMINAL_COMMAND_RESPONSE_TIMEOUT_MS)
-    const advancedRequest = sentFrames(TerminalStreamOpcode.SnapshotRequest)[2]
+    const advancedRequest = sentFrames(TerminalStreamOpcode.SnapshotRequest)[4]
     const advancedPayload = advancedRequest
       ? decodeTerminalStreamJson<{ requestId: number }>(advancedRequest.payload)
       : null

@@ -110,6 +110,7 @@ type RemoteRuntimeMultiplexedTerminalState = {
   // Track it so a gap triggers a self-healing snapshot resync instead of
   // silently rendering corrupt/missing output (frame-drop resync).
   expectedSeq: number | undefined
+  // Why: compare command probes when initial/live frames supplied no high-water.
   commandProbeBaselineSeq: number | undefined
   recoverySnapshotSeq: number | undefined
   resyncInFlight: boolean
@@ -1069,7 +1070,7 @@ class RemoteRuntimeTerminalMultiplexer {
             this.recoverStalledStream(stream)
             return
           }
-          stream.commandProbeBaselineSeq = snapshot.seq
+          stream.commandProbeBaselineSeq ??= snapshot.seq
         } else if (
           typeof snapshot?.seq === 'number' &&
           typeof stream.expectedSeq === 'number' &&
