@@ -10,6 +10,30 @@ import {
 } from './workspace-statuses'
 
 describe('workspace status visuals', () => {
+  it('keeps workflows longer than a dozen columns', () => {
+    // Why: mirroring an external workflow (Jira, Linear) routinely needs more
+    // than a dozen states. The old cap of 12 dropped the extra ones on the
+    // next normalize, with no error and nothing in the UI preventing them.
+    const authored = Array.from({ length: 20 }, (_, index) => ({
+      id: `state-${index}`,
+      label: `State ${index}`
+    }))
+
+    const statuses = normalizeWorkspaceStatuses(authored)
+
+    expect(statuses).toHaveLength(20)
+    expect(statuses.at(-1)).toMatchObject({ id: 'state-19', label: 'State 19' })
+  })
+
+  it('still truncates absurd payloads so corrupted data cannot explode the board', () => {
+    const corrupted = Array.from({ length: 500 }, (_, index) => ({
+      id: `state-${index}`,
+      label: `State ${index}`
+    }))
+
+    expect(normalizeWorkspaceStatuses(corrupted).length).toBeLessThanOrEqual(64)
+  })
+
   it('keeps the default workflow order', () => {
     expect(cloneDefaultWorkspaceStatuses().map((status) => status.id)).toEqual([
       'todo',
