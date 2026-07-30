@@ -929,6 +929,7 @@ import {
   registerTerminalViewAttributesApplier
 } from './terminal-view-attribute-store'
 import { killAllProcessesForWorktree, teardownRpcDeadline } from './worktree-teardown'
+import { stopMissingWorktreeTerminals } from './missing-worktree-terminal-reconciliation'
 import {
   MobileNotificationReplayBuffer,
   type ReplayableMobileNotification
@@ -19425,8 +19426,18 @@ export class OrcaRuntimeService {
     }
   }
 
-  async listDetectedManagedWorktrees(repoSelector: string): Promise<DetectedWorktreeListResult> {
-    const repo = await this.resolveRepoSelector(repoSelector)
+  async listDetectedManagedWorktrees(
+    repoSelector: string,
+    connectionId?: string | null
+  ): Promise<DetectedWorktreeListResult> {
+    return this.listDetectedWorktreesForResolvedRepo(
+      await this.resolveRepoSelectorForConnection(repoSelector, connectionId)
+    )
+  }
+
+  private async listDetectedWorktreesForResolvedRepo(
+    repo: Repo
+  ): Promise<DetectedWorktreeListResult> {
     const store = this.requireStore()
     if (isFolderRepo(repo)) {
       const worktrees = listRuntimeFolderWorkspaces(store, repo)
@@ -19474,6 +19485,56 @@ export class OrcaRuntimeService {
       source: scan.ok ? 'git' : 'metadata-fallback',
       worktrees: projectResolvedWorktreeLineage(detected, store.getAllWorktreeLineage?.() ?? {})
     }
+  }
+
+  async teardownMissingManagedWorktreeTerminals(
+    repoSelector: string,
+    knownWorktreeIds: readonly string[],
+    connectionId?: string | null
+  ): Promise<{ stoppedWorktreeIds: string[] }> {
+    const repo = await this.resolveRepoSelectorForConnection(repoSelector, connectionId)
+    // Why: killing PTYs must be proven against the host right now — a cached scan
+    // (30s TTL) can still list a directory git already dropped, and the renderer
+    // purges its state either way, so a stale miss strands those processes for good.
+    this.invalidateWorktreeScanCacheForRepo(repo.id)
+    // Why: rescanning by `id:` would re-resolve the already-resolved repo, and a
+    // duplicate id across hosts makes that second lookup throw selector_ambiguous
+    // even though the caller's selector was unique — losing the sweep entirely.
+    const detected = await this.listDetectedWorktreesForResolvedRepo(repo)
+    if (!detected.authoritative) {
+      return { stoppedWorktreeIds: [] }
+    }
+    return stopMissingWorktreeTerminals(
+      repo,
+      knownWorktreeIds,
+      detected.worktrees.map((worktree) => worktree.id),
+      {
+        runtime: this,
+        getLocalProvider: () => this.getLocalProvider(),
+        getSshProvider: (connectionId) => this.getSshProviderFn?.(connectionId),
+        onPtyStopped: this.onPtyStopped ?? undefined
+      }
+    )
+  }
+
+  private resolveRepoSelectorForConnection(
+    repoSelector: string,
+    connectionId?: string | null
+  ): Promise<Repo> {
+    if (connectionId === undefined) {
+      return this.resolveRepoSelector(repoSelector)
+    }
+    // Why: an explicit connection identity only *narrows* the selector; it must not
+    // change the grammar. Matching the selector as a bare repo id would make
+    // `path:`/`name:` selectors resolve to repo_not_found on this path alone.
+    const wanted = connectionId?.trim() || null
+    const matches = this.selectReposBySelector(repoSelector).filter(
+      (repo) => (repo.connectionId?.trim() || null) === wanted
+    )
+    if (matches.length !== 1) {
+      throw new Error(matches.length > 1 ? 'selector_ambiguous' : 'repo_not_found')
+    }
+    return Promise.resolve(matches[0])
   }
 
   private isRuntimeWorktreeVisible(
@@ -26684,27 +26745,32 @@ export class OrcaRuntimeService {
     return this.store?.getAllWorkspaceLineage?.() ?? {}
   }
 
+  // Why: one selector grammar, so connection-scoped resolution can narrow the same
+  // candidate set instead of reimplementing (and diverging from) the matching rules.
+  private selectReposBySelector(selector: string): Repo[] {
+    const repos = this.store?.getRepos() ?? []
+    if (selector.startsWith('id:')) {
+      return repos.filter((repo) => repo.id === selector.slice(3))
+    }
+    if (selector.startsWith('path:')) {
+      return repos.filter((repo) => runtimePathsEqual(repo.path, selector.slice(5)))
+    }
+    if (selector.startsWith('name:')) {
+      return repos.filter((repo) => repo.displayName === selector.slice(5))
+    }
+    return repos.filter(
+      (repo) =>
+        repo.id === selector ||
+        runtimePathsEqual(repo.path, selector) ||
+        repo.displayName === selector
+    )
+  }
+
   private async resolveRepoSelector(selector: string): Promise<Repo> {
     if (!this.store) {
       throw new Error('repo_not_found')
     }
-    const repos = this.store.getRepos()
-    let candidates: Repo[]
-
-    if (selector.startsWith('id:')) {
-      candidates = repos.filter((repo) => repo.id === selector.slice(3))
-    } else if (selector.startsWith('path:')) {
-      candidates = repos.filter((repo) => runtimePathsEqual(repo.path, selector.slice(5)))
-    } else if (selector.startsWith('name:')) {
-      candidates = repos.filter((repo) => repo.displayName === selector.slice(5))
-    } else {
-      candidates = repos.filter(
-        (repo) =>
-          repo.id === selector ||
-          runtimePathsEqual(repo.path, selector) ||
-          repo.displayName === selector
-      )
-    }
+    const candidates = this.selectReposBySelector(selector)
 
     if (candidates.length === 1) {
       return candidates[0]
