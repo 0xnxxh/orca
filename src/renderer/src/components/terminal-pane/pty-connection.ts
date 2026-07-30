@@ -7569,6 +7569,9 @@ export function connectPanePty(
         // Why: the transport already delivered the dead session's final frame + exit; treat as terminal state, not a failed reattach.
         return true
       }
+      if (connectResult?.routingUnavailable) {
+        return true
+      }
 
       const retryPtyId =
         connectResult?.id ??

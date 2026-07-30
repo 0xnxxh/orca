@@ -13,6 +13,7 @@ import type {
 } from '../providers/types'
 import { findDaemonAdapter, listProviderSessionIds } from './degraded-daemon-session-routing'
 import { probePtyOwners } from './daemon-pty-liveness-probe'
+import { DaemonSnapshotAcknowledgementRoutes } from './daemon-snapshot-acknowledgement-routes'
 
 export class DegradedDaemonPtyProvider implements IPtyProvider {
   readonly routesFreshSpawnsToLocalProvider = true
@@ -23,6 +24,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   private legacy: DaemonPtyAdapter[]
   private fallback: IPtyProvider
   private sessionProviders = new Map<string, IPtyProvider>()
+  private readonly snapshotAcks = new DaemonSnapshotAcknowledgementRoutes()
   private unsubscribers: (() => void)[] = []
   private dataListeners: ((payload: PtyDataEvent) => void)[] = []
   private exitListeners: ((payload: { id: string; code: number }) => void)[] = []
@@ -143,8 +145,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     id: string,
     opts?: { scrollbackRows?: number }
   ): Promise<PtyProviderBufferSnapshot | null> {
-    // Why: recovery must reach the legacy adapter that owns the thinned session model.
-    return (await this.providerFor(id).getBufferSnapshot?.(id, opts)) ?? null
+    return await this.snapshotAcks.capture(id, opts, this.providerFor(id), this.allDaemonAdapters())
   }
 
   async clearBuffer(id: string): Promise<void> {
@@ -252,9 +253,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   }
 
   ackColdRestore(sessionId: string): void {
-    findDaemonAdapter(this.sessionProviders, this.allDaemonAdapters(), sessionId)?.ackColdRestore(
-      sessionId
-    )
+    this.snapshotAcks.acknowledge(sessionId)
   }
 
   clearTombstone(sessionId: string): void {

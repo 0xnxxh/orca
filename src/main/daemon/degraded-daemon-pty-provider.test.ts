@@ -294,6 +294,34 @@ describe('DegradedDaemonPtyProvider', () => {
     })
   })
 
+  it('acknowledges a colliding id through the daemon that produced its snapshot', async () => {
+    const sessionId = 'colliding-session'
+    const current = createDaemonAdapter('current', [sessionId])
+    const legacy = createDaemonAdapter('legacy', [sessionId])
+    const fallback = createProvider('fallback')
+    legacy.getBufferSnapshot = vi.fn(async () => ({
+      data: 'legacy frame',
+      cols: 80,
+      rows: 24,
+      seq: 1,
+      source: 'headless' as const
+    }))
+    const provider = new DegradedDaemonPtyProvider({
+      current,
+      legacy: [legacy],
+      fallback
+    })
+
+    await provider.discoverDaemonSessions()
+    await provider.getBufferSnapshot(sessionId)
+    legacy.emitExit(sessionId, 0)
+    expect(provider.hasPty(sessionId)).toBe(true)
+    provider.ackColdRestore(sessionId)
+
+    expect(legacy.ackColdRestore).toHaveBeenCalledExactlyOnceWith(sessionId)
+    expect(current.ackColdRestore).not.toHaveBeenCalled()
+  })
+
   it('forwards replay output from fallback and daemon providers', () => {
     const current = createDaemonAdapter('daemon')
     const fallback = createProvider('fallback')

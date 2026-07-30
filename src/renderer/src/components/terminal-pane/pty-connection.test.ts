@@ -11104,6 +11104,30 @@ describe('connectPanePty', () => {
     expect(deps.updateTabPtyId).not.toHaveBeenCalled()
   })
 
+  it('retains restored layout and rendered state when daemon routing is unavailable', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport('tab-pty')
+    transport.connect.mockImplementation(async ({ sessionId }: { sessionId?: string }) =>
+      sessionId ? { id: sessionId, routingUnavailable: true as const } : 'unexpected-fresh-pty'
+    )
+    transportFactoryQueue.push(transport)
+    const pane = createPane(1)
+    const deps = createDeps({
+      restoredLeafId: LEAF_1,
+      restoredPtyIdByLeafId: { [LEAF_1]: 'tab-pty' }
+    })
+
+    connectPanePty(pane as never, createManager(1) as never, deps as never)
+    await flushAsyncTicks(20)
+
+    expect(transport.connect).toHaveBeenCalledTimes(1)
+    expect(deps.clearExitedPanePtyLayoutBinding).not.toHaveBeenCalled()
+    expect(deps.syncPanePtyLayoutBinding).not.toHaveBeenCalledWith(1, null)
+    expect(deps.clearTabPtyId).not.toHaveBeenCalled()
+    expect(deps.updateTabPtyId).not.toHaveBeenCalled()
+    expect(pane.terminal.clear).not.toHaveBeenCalled()
+  })
+
   // Why: Phase 6 deleted the hidden-skip grammar — every hidden chunk rides the background scheduler, none content-scanned.
   it('queues hidden PTY bytes on the background scheduler without per-chunk scanning', async () => {
     const { connectPanePty } = await import('./pty-connection')

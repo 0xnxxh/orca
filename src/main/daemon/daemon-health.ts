@@ -665,12 +665,14 @@ export async function killStaleDaemon(
 ): Promise<boolean> {
   const pidPath = getDaemonPidPath(runtimeDir, protocolVersion)
   let killedDaemon = false
+  let identifiedDaemon = false
   try {
     const parsedPid = parseDaemonPidFile(readFileSync(pidPath, 'utf8'))
     if (
       parsedPid &&
       (await isDaemonProcess(parsedPid.pid, socketPath, tokenPath, parsedPid.startedAtMs))
     ) {
+      identifiedDaemon = true
       const { pid, startedAtMs } = parsedPid
       process.kill(pid, 'SIGTERM')
       const deadline = Date.now() + KILL_WAIT_MS
@@ -708,10 +710,12 @@ export async function killStaleDaemon(
     // PID file missing or process already dead
   }
 
-  try {
-    unlinkSync(pidPath)
-  } catch {
-    // Best-effort
+  if (identifiedDaemon) {
+    try {
+      unlinkSync(pidPath)
+    } catch {
+      // Best-effort
+    }
   }
 
   const socketIsLive = await canConnectSocket(socketPath)

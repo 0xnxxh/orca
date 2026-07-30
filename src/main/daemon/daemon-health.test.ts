@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { createServer, connect, type Server } from 'node:net'
@@ -429,12 +429,14 @@ describe('killStaleDaemon pid identity guards', () => {
     // expected and not a real kill. We only care that no actual termination
     // signal is sent.
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    const pidPath = getDaemonPidPath(dir)
     try {
       await expect(killStaleDaemon(dir, socketPath, tokenPath)).resolves.toBe(false)
       const terminationSignals = killSpy.mock.calls.filter(
         ([, sig]) => sig === 'SIGTERM' || sig === 'SIGKILL'
       )
       expect(terminationSignals).toEqual([])
+      expect(readFileSync(pidPath, 'utf8')).toContain(`"pid":${process.pid}`)
     } finally {
       killSpy.mockRestore()
     }

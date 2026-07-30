@@ -10,7 +10,7 @@ export class DaemonPtyAdapterSubscriptionFanout {
 
   constructor(
     private readonly adapters: readonly DaemonPtyAdapter[],
-    onAdapterExit: (id: string) => void
+    onAdapterExit: (adapter: DaemonPtyAdapter, id: string) => void
   ) {
     for (const adapter of adapters) {
       this.unsubscribers.push(
@@ -20,7 +20,7 @@ export class DaemonPtyAdapterSubscriptionFanout {
           }
         }),
         adapter.onExit((payload) => {
-          onAdapterExit(payload.id)
+          onAdapterExit(adapter, payload.id)
           for (const listener of this.exitListeners) {
             listener(payload)
           }

@@ -313,6 +313,26 @@ describe('pty:management IPC handlers', () => {
       expect(current.shutdown).toHaveBeenCalledTimes(1)
     })
 
+    it('keeps sessions remaining when their owner becomes unavailable while polling', async () => {
+      const current = makeAdapter(5, [makeSession('uncertain-session')])
+      vi.mocked(current.listSessions)
+        .mockResolvedValueOnce([
+          makeSession('uncertain-session') as Omit<DaemonSessionInfo, 'protocolVersion'>
+        ])
+        .mockRejectedValue(new Error('listing unavailable'))
+      const { registerDaemonManagementHandlers } = await importFresh()
+      getDaemonProviderMock.mockReturnValue(await makeRouter(current))
+      registerDaemonManagementHandlers()
+
+      const result = await runKillAllWithPolls(buildHandlerMap()['pty:management:killAll'])
+
+      expect(result).toEqual({
+        killedCount: 0,
+        remainingCount: 1,
+        killedSessionIds: []
+      })
+    })
+
     it('does not count respawned sessions with fresh IDs against remainingCount', async () => {
       // Why: mounted panes may re-call pty:spawn with brand-new session IDs
       // while killAll is polling (tab remount, navigate-back). Those fresh
@@ -385,6 +405,44 @@ describe('pty:management IPC handlers', () => {
         killedSessionIds: ['b']
       })
     })
+
+    it('kills and counts colliding ids through their exact owning adapters', async () => {
+      const sessionId = 'colliding-session'
+      const currentSessions = [makeSession(sessionId, { incarnationId: 'current-incarnation' })]
+      const legacySessions = [
+        makeSession(sessionId, {
+          protocolVersion: 3,
+          incarnationId: 'legacy-incarnation'
+        })
+      ]
+      const current = makeAdapter(5, [])
+      const legacy = makeAdapter(3, [])
+      current.listSessions = vi.fn(async () =>
+        currentSessions.map(({ protocolVersion: _pv, ...session }) => session)
+      )
+      legacy.listSessions = vi.fn(async () =>
+        legacySessions.map(({ protocolVersion: _pv, ...session }) => session)
+      )
+      current.shutdown = vi.fn(async () => {
+        currentSessions.splice(0)
+      })
+      legacy.shutdown = vi.fn(async () => {
+        legacySessions.splice(0)
+      })
+      const { registerDaemonManagementHandlers } = await importFresh()
+      getDaemonProviderMock.mockReturnValue(await makeRouter(current, [legacy]))
+      registerDaemonManagementHandlers()
+
+      const result = await runKillAllWithPolls(buildHandlerMap()['pty:management:killAll'])
+
+      expect(result).toEqual({
+        killedCount: 2,
+        remainingCount: 0,
+        killedSessionIds: [sessionId, sessionId]
+      })
+      expect(current.shutdown).toHaveBeenCalledExactlyOnceWith(sessionId, { immediate: true })
+      expect(legacy.shutdown).toHaveBeenCalledExactlyOnceWith(sessionId, { immediate: true })
+    })
   })
 
   describe('killOne', () => {
@@ -417,6 +475,55 @@ describe('pty:management IPC handlers', () => {
       }
 
       expect(result.success).toBe(false)
+      expect(current.shutdown).not.toHaveBeenCalled()
+    })
+
+    it('fails a bare colliding id closed and routes an incarnation-qualified kill', async () => {
+      const sessionId = 'colliding-session'
+      const current = makeAdapter(5, [
+        makeSession(sessionId, { incarnationId: 'current-incarnation' })
+      ])
+      const legacy = makeAdapter(3, [
+        makeSession(sessionId, {
+          protocolVersion: 3,
+          incarnationId: 'legacy-incarnation'
+        })
+      ])
+      const { registerDaemonManagementHandlers } = await importFresh()
+      getDaemonProviderMock.mockReturnValue(await makeRouter(current, [legacy]))
+      registerDaemonManagementHandlers()
+      const handler = buildHandlerMap()['pty:management:killOne']
+
+      await expect(handler({}, { sessionId })).resolves.toEqual({ success: false })
+      await expect(
+        handler(
+          {},
+          {
+            sessionId,
+            protocolVersion: 3,
+            incarnationId: 'legacy-incarnation'
+          }
+        )
+      ).resolves.toEqual({ success: true })
+
+      expect(current.shutdown).not.toHaveBeenCalled()
+      expect(legacy.shutdown).toHaveBeenCalledExactlyOnceWith(sessionId, { immediate: true })
+    })
+
+    it('fails closed when another adapter cannot rule out a colliding id', async () => {
+      const current = makeAdapter(5, [makeSession('current-session')])
+      const legacy = makeAdapter(3, [])
+      legacy.listSessions.mockRejectedValue(new Error('listing unavailable'))
+      const { registerDaemonManagementHandlers } = await importFresh()
+      getDaemonProviderMock.mockReturnValue(await makeRouter(current, [legacy]))
+      registerDaemonManagementHandlers()
+
+      const result = await buildHandlerMap()['pty:management:killOne'](
+        {},
+        { sessionId: 'current-session', protocolVersion: 5 }
+      )
+
+      expect(result).toEqual({ success: false })
       expect(current.shutdown).not.toHaveBeenCalled()
     })
 

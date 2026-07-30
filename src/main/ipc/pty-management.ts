@@ -29,17 +29,46 @@ function isDaemonDegraded(): boolean {
   return getDaemonProvider() instanceof DegradedDaemonPtyProvider
 }
 
-async function collectSessions(adapters: DaemonPtyAdapter[]): Promise<DaemonSessionInfo[]> {
+type OwnedDaemonSession = {
+  owner: DaemonPtyAdapter
+  session: DaemonSessionInfo
+}
+
+type DaemonSessionCollection = {
+  sessions: OwnedDaemonSession[]
+  unavailableOwners: Set<DaemonPtyAdapter>
+}
+
+async function collectSessions(adapters: DaemonPtyAdapter[]): Promise<DaemonSessionCollection> {
   const results = await Promise.allSettled(
     adapters.map(async (adapter) => {
       const sessions = await adapter.listSessions()
-      return sessions.map<DaemonSessionInfo>((s) => ({
-        ...s,
-        protocolVersion: adapter.protocolVersion
+      return sessions.map((session) => ({
+        owner: adapter,
+        session: { ...session, protocolVersion: adapter.protocolVersion }
       }))
     })
   )
-  return results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []))
+  const sessions: OwnedDaemonSession[] = []
+  const unavailableOwners = new Set<DaemonPtyAdapter>()
+  for (const [index, result] of results.entries()) {
+    if (result.status === 'fulfilled') {
+      sessions.push(...result.value)
+    } else {
+      unavailableOwners.add(adapters[index])
+    }
+  }
+  return { sessions, unavailableOwners }
+}
+
+function sameSessionIncarnation(left: OwnedDaemonSession, right: OwnedDaemonSession): boolean {
+  return (
+    left.owner === right.owner &&
+    left.session.sessionId === right.session.sessionId &&
+    (left.session.incarnationId === undefined ||
+      right.session.incarnationId === undefined ||
+      left.session.incarnationId === right.session.incarnationId)
+  )
 }
 
 export function registerDaemonManagementHandlers(): void {
@@ -51,7 +80,9 @@ export function registerDaemonManagementHandlers(): void {
   ipcMain.handle(
     'pty:management:listSessions',
     async (): Promise<{ sessions: DaemonSessionInfo[]; degraded: boolean }> => {
-      const sessions = await collectSessions(getDaemonAdapters())
+      const sessions = (await collectSessions(getDaemonAdapters())).sessions.map(
+        ({ session }) => session
+      )
       return { sessions, degraded: isDaemonDegraded() }
     }
   )
@@ -65,9 +96,7 @@ export function registerDaemonManagementHandlers(): void {
       killedSessionIds: string[]
     }> => {
       const adapters = getDaemonAdapters()
-      // Why: snapshot session IDs up front so mid-kill respawns aren't counted as "remaining".
-      const initial = await collectSessions(adapters)
-      const initialIds = new Set(initial.map((s) => s.sessionId))
+      const initial = (await collectSessions(adapters)).sessions
       const initialCount = initial.length
 
       if (initialCount === 0) {
@@ -76,61 +105,64 @@ export function registerDaemonManagementHandlers(): void {
 
       // Why: no retry — session.kill() is idempotent and runs its own kill ladder; allSettled so one rejection doesn't abort the rest.
       await Promise.allSettled(
-        initial.map(async (session) => {
-          // Why: assumes PROTOCOL_VERSION stays distinct from PREVIOUS_DAEMON_PROTOCOL_VERSIONS (types.ts), else legacy sessions misroute here.
-          const owner = adapters.find((a) => a.protocolVersion === session.protocolVersion)
-          if (!owner) {
-            return
-          }
+        initial.map(async ({ owner, session }) => {
           // Why: immediate=true only matters to legacy/future adapters; swallow rejections since remainingCount reports stuck sessions.
           await owner.shutdown(session.sessionId, { immediate: true }).catch(() => {})
         })
       )
 
       // Why: count only the initial-snapshot intersection so renderer respawns mid-kill aren't counted as remaining.
-      let remainingOriginalCount = initialCount
-      let remainingOriginalIds = initialIds
+      let remainingOriginal = initial
       for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt += 1) {
         await sleep(POLL_INTERVAL_MS)
         const current = await collectSessions(adapters)
-        remainingOriginalIds = new Set(
-          current
-            .filter((session) => initialIds.has(session.sessionId))
-            .map((session) => session.sessionId)
+        remainingOriginal = initial.filter(
+          (original) =>
+            current.unavailableOwners.has(original.owner) ||
+            current.sessions.some((candidate) => sameSessionIncarnation(original, candidate))
         )
-        remainingOriginalCount = remainingOriginalIds.size
-        if (remainingOriginalCount === 0) {
+        if (remainingOriginal.length === 0) {
           break
         }
       }
 
-      const killedCount = initialCount - remainingOriginalCount
+      const killed = initial.filter(
+        (original) =>
+          !remainingOriginal.some((candidate) => sameSessionIncarnation(original, candidate))
+      )
       return {
-        killedCount,
-        remainingCount: remainingOriginalCount,
-        killedSessionIds: [...initialIds].filter(
-          (sessionId) => !remainingOriginalIds.has(sessionId)
-        )
+        killedCount: killed.length,
+        remainingCount: remainingOriginal.length,
+        killedSessionIds: killed.map(({ session }) => session.sessionId)
       }
     }
   )
 
   ipcMain.handle(
     'pty:management:killOne',
-    async (_event, args: { sessionId: string }): Promise<{ success: boolean }> => {
+    async (
+      _event,
+      args: { sessionId: string; protocolVersion?: number; incarnationId?: string }
+    ): Promise<{ success: boolean }> => {
       if (typeof args?.sessionId !== 'string' || args.sessionId.length === 0) {
         return { success: false }
       }
       const adapters = getDaemonAdapters()
-      const sessions = await collectSessions(adapters)
-      const match = sessions.find((s) => s.sessionId === args.sessionId)
-      if (!match) {
+      const collection = await collectSessions(adapters)
+      if (collection.unavailableOwners.size > 0) {
         return { success: false }
       }
-      const owner = adapters.find((a) => a.protocolVersion === match.protocolVersion)
-      if (!owner) {
+      const matches = collection.sessions.filter(
+        ({ session }) =>
+          session.sessionId === args.sessionId &&
+          (args.protocolVersion === undefined ||
+            session.protocolVersion === args.protocolVersion) &&
+          (args.incarnationId === undefined || session.incarnationId === args.incarnationId)
+      )
+      if (matches.length !== 1) {
         return { success: false }
       }
+      const [{ owner }] = matches
       try {
         await owner.shutdown(args.sessionId, { immediate: true })
         return { success: true }
