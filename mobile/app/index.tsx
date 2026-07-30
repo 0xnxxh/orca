@@ -869,7 +869,9 @@ export default function HomeScreen() {
                   <View style={styles.quickActionIcon}>
                     <QrCode size={16} color={colors.textSecondary} />
                   </View>
-                  <Text style={styles.quickActionLabel}>{t('m.lWqrsbM')}</Text>
+                  <Text style={styles.quickActionLabel} numberOfLines={2}>
+                    {t('m.lWqrsbM')}
+                  </Text>
                 </Pressable>
                 <Pressable
                   disabled={!primaryConnectedHost}
@@ -887,7 +889,9 @@ export default function HomeScreen() {
                   <View style={styles.quickActionIcon}>
                     <Plus size={16} color={colors.textSecondary} />
                   </View>
-                  <Text style={styles.quickActionLabel}>{t('m.8CNCPA8')}</Text>
+                  <Text style={styles.quickActionLabel} numberOfLines={2}>
+                    {t('m.8CNCPA8')}
+                  </Text>
                 </Pressable>
               </View>
 
@@ -1331,6 +1335,7 @@ const styles = StyleSheet.create({
   },
   quickAction: {
     flex: 1,
+    minWidth: 0,
     flexDirection: 'row',
     backgroundColor: colors.bgPanel,
     borderWidth: 1,
@@ -1345,6 +1350,7 @@ const styles = StyleSheet.create({
     opacity: 0.45
   },
   quickActionIcon: {
+    flexShrink: 0,
     width: 28,
     height: 28,
     borderRadius: 9,
@@ -1353,6 +1359,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   quickActionLabel: {
+    flex: 1,
+    minWidth: 0,
     fontSize: 12,
     fontWeight: '600',
     color: colors.textSecondary
