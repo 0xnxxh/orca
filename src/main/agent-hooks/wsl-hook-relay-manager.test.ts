@@ -3,7 +3,6 @@
 // the per-distro relay manager state machine with fault injection.
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -34,9 +33,13 @@ function createGuestHarness(): GuestHarness {
   const clientDataCallbacks: ((data: Buffer) => void)[] = []
   const closeCallbacks: (() => void)[] = []
   const transport: MultiplexerTransport = {
-    write: (data) => {
-      setImmediate(() => relayFeed?.(data))
+    write: (data, onSettled) => {
+      setImmediate(() => {
+        relayFeed?.(data)
+        onSettled?.({ ok: true })
+      })
     },
+    supportsWriteSettlement: true,
     onData: (cb) => {
       clientDataCallbacks.push(cb)
     },
@@ -44,21 +47,24 @@ function createGuestHarness(): GuestHarness {
       closeCallbacks.push(cb)
     }
   }
-  const guestDispatcher = new RelayDispatcher((data: Buffer) => {
-    setImmediate(() => {
-      for (const cb of clientDataCallbacks) {
-        cb(data)
-      }
-    })
-  })
+  const guestDispatcher = new RelayDispatcher(
+    (data: Buffer, onSettled) => {
+      setImmediate(() => {
+        for (const cb of clientDataCallbacks) {
+          cb(data)
+        }
+        onSettled({ ok: true })
+      })
+    },
+    { supportsWriteCallback: true }
+  )
   relayFeed = (data) => guestDispatcher.feed(data)
   const mux = new SshChannelMultiplexer(transport)
   return { transport, guestDispatcher, mux }
 }
 
-// Why skipIf: the fs bridge runs inside the Linux guest and is POSIX-only by
-// design (posix.resolve). On a Windows dev host tmpdir() yields C:\ paths the
-// bridge correctly refuses; Windows coverage comes from the live rig runs.
+// Why skipIf: the fs bridge runs inside the Linux guest and is POSIX-only;
+// Windows coverage comes from the live rig runs.
 describe.skipIf(process.platform === 'win32')(
   'createWslHookSftpAdapter over the guest fs bridge',
   () => {
@@ -66,7 +72,7 @@ describe.skipIf(process.platform === 'win32')(
     let harness: GuestHarness
 
     beforeEach(() => {
-      home = mkdtempSync(join(tmpdir(), 'wsl-guest-home-'))
+      home = mkdtempSync(join('/tmp', 'wsl-guest-home-'))
       harness = createGuestHarness()
       registerWslHookFsHandlers(harness.guestDispatcher, home)
     })
