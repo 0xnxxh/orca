@@ -716,7 +716,10 @@ function buildMirroredAgentStatusPatch(
     // Why: an active web stream can report a fresher OSC 9999 status before the next host snapshot, so don't rewind it with an older host publication.
     const nextEntry =
       existing && existing.updatedAt > entry.updatedAt
-        ? normalizeCompatibleAgentStatusEntryForOwner(existing, entry.agentType)
+        ? {
+            ...normalizeCompatibleAgentStatusEntryForOwner(existing, entry.agentType),
+            providerSession: existing.providerSession ?? entry.providerSession
+          }
         : entry
     nextByPaneKey.set(entry.paneKey, nextEntry)
   }

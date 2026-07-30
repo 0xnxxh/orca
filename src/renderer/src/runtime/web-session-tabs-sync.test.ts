@@ -1895,7 +1895,7 @@ describe('applyWebSessionTabsSnapshot', () => {
     expect(patch.sortEpoch).toBe(1)
   })
 
-  it('updates a mirrored same-state entry when resume identity arrives', () => {
+  it('repairs mirrored same-state attribution and retains identity from an older snapshot', () => {
     const hostPaneKey = makePaneKey('host-tab-1', LEAF_ID)
     const snapshot = makeSnapshot([
       {
@@ -1929,11 +1929,15 @@ describe('applyWebSessionTabsSnapshot', () => {
     ) as Partial<WebSessionTabsSyncState>
     const mirroredPaneKey = Object.keys(initial.agentStatusByPaneKey ?? {})[0]!
     const existing = initial.agentStatusByPaneKey![mirroredPaneKey]!
-    const patch = applyWebSessionTabsSnapshot(
+    const attributionPatch = applyWebSessionTabsSnapshot(
       makeState({
         ...initial,
         agentStatusByPaneKey: {
-          [mirroredPaneKey]: { ...existing, providerSession: undefined }
+          [mirroredPaneKey]: {
+            ...existing,
+            worktreeId: 'stale-worktree',
+            tabId: 'stale-tab'
+          }
         },
         agentStatusEpoch: 7,
         sortEpoch: 11
@@ -1943,12 +1947,37 @@ describe('applyWebSessionTabsSnapshot', () => {
       NOW
     ) as Partial<WebSessionTabsSyncState>
 
-    expect(patch.agentStatusByPaneKey?.[mirroredPaneKey]?.providerSession).toEqual({
+    expect(attributionPatch.agentStatusByPaneKey?.[mirroredPaneKey]).toMatchObject({
+      worktreeId: existing.worktreeId,
+      tabId: existing.tabId
+    })
+    expect(attributionPatch.agentStatusEpoch).toBe(8)
+    expect(attributionPatch.sortEpoch).toBe(12)
+
+    const identityPatch = applyWebSessionTabsSnapshot(
+      makeState({
+        ...initial,
+        ...attributionPatch,
+        agentStatusByPaneKey: {
+          [mirroredPaneKey]: {
+            ...attributionPatch.agentStatusByPaneKey![mirroredPaneKey]!,
+            updatedAt: NOW,
+            providerSession: undefined
+          }
+        }
+      }),
+      { ...snapshot, snapshotVersion: 3 },
+      ENV,
+      NOW
+    ) as Partial<WebSessionTabsSyncState>
+
+    expect(identityPatch.agentStatusByPaneKey?.[mirroredPaneKey]?.providerSession).toEqual({
       key: 'session_id',
       id: 'session-1'
     })
-    expect(patch.agentStatusEpoch).toBe(7)
-    expect(patch.sortEpoch).toBe(11)
+    expect(identityPatch.agentStatusByPaneKey?.[mirroredPaneKey]?.updatedAt).toBe(NOW)
+    expect(identityPatch.agentStatusEpoch).toBe(8)
+    expect(identityPatch.sortEpoch).toBe(12)
   })
 
   it('keeps mirrored OMP tabs from repainting to Pi-compatible titles', () => {
