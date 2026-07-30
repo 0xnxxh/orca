@@ -3594,20 +3594,27 @@ private final class SocketListener: @unchecked Sendable {
         }
         let authorizedPeer = peerProcessId(fd).map(isAuthorizedAgentPeer) == true
         let decoder = JSONDecoder()
+        var registrationComplete = false
         while let line = readLine(from: fd) {
             guard let data = line.data(using: .utf8),
                   let request = try? decoder.decode(Request.self, from: data)
             else {
                 continue
             }
-            sessionLock.lock()
-            let claimed = sessionOwnership.registerConnection(
-                fd,
-                authenticated: isAuthenticated(request: request, authorizedPeer: authorizedPeer)
-            )
-            sessionLock.unlock()
-            if claimed {
-                onSessionClaimed()
+            if !registrationComplete {
+                sessionLock.lock()
+                let registration = sessionOwnership.registerConnection(
+                    fd,
+                    authenticated: isAuthenticated(
+                        request: request,
+                        authorizedPeer: authorizedPeer
+                    )
+                )
+                sessionLock.unlock()
+                registrationComplete = registration != .rejected
+                if registration == .claimed {
+                    onSessionClaimed()
+                }
             }
             let response = handleRequest(
                 provider: provider,
@@ -3621,8 +3628,9 @@ private final class SocketListener: @unchecked Sendable {
     }
 
     private func isAuthenticated(request: Request, authorizedPeer: Bool) -> Bool {
+        guard authorizedPeer else { return false }
         guard let token else { return true }
-        return request.token == token && authorizedPeer
+        return request.token == token
     }
 }
 
@@ -3756,7 +3764,7 @@ private func handleRequest(
     if let expectedToken, request.token != expectedToken {
         return ["id": request.id, "ok": false, "error": ["code": "permission_denied", "message": "invalid computer-use agent token"]]
     }
-    if expectedToken != nil && !authorizedPeer {
+    if !authorizedPeer {
         return ["id": request.id, "ok": false, "error": ["code": "permission_denied", "message": "computer-use agent peer is not authorized"]]
     }
     if request.method == "terminate" {

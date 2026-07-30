@@ -112,6 +112,23 @@ export function useInstalledAgentSkillNames(
   const discoveryTargetKey = runtimeTarget
     ? getRuntimeScopedSkillDiscoveryKey(runtimeTarget, discoveryTarget)
     : UNRESOLVED_RUNTIME_DISCOVERY_KEY
+  // Why: callers derive the target inside a store-backed useMemo, so unrelated
+  // store writes hand us a new object with the same key. Two targets with the
+  // same key resolve to the same scan, so hold one until the key moves and keep
+  // `refresh` — and the discovery effect it drives — stable. State, not a ref:
+  // React may discard a useMemo, and a render-phase ref write can leak from a
+  // render that never commits.
+  const [latchedDiscoveryTarget, setLatchedDiscoveryTarget] = useState({
+    key: discoveryTargetKey,
+    target: discoveryTarget
+  })
+  if (latchedDiscoveryTarget.key !== discoveryTargetKey) {
+    setLatchedDiscoveryTarget({ key: discoveryTargetKey, target: discoveryTarget })
+  }
+  const stableDiscoveryTarget =
+    latchedDiscoveryTarget.key === discoveryTargetKey
+      ? latchedDiscoveryTarget.target
+      : discoveryTarget
   const cachedDiscovery = getCachedSkillDiscovery(discoveryTargetKey)
   const [result, setResult] = useState<SkillDiscoveryResult | null>(cachedDiscovery)
   const [loading, setLoading] = useState(enabled && !cachedDiscovery)
@@ -171,7 +188,7 @@ export function useInstalledAgentSkillNames(
       }
       let installedAfterRefresh = false
       try {
-        const next = await discoverInstalledAgentSkills(force, discoveryTarget, runtimeTarget)
+        const next = await discoverInstalledAgentSkills(force, stableDiscoveryTarget, runtimeTarget)
         installedAfterRefresh = hasInstalledAgentSkillNamed(next.skills, candidateSkillNames, {
           sourceKinds
         })
@@ -196,12 +213,12 @@ export function useInstalledAgentSkillNames(
     },
     [
       candidateSkillNames,
-      discoveryTarget,
       discoveryTargetKey,
       enabled,
       mountedRef,
       runtimeTarget,
-      sourceKinds
+      sourceKinds,
+      stableDiscoveryTarget
     ]
   )
 
