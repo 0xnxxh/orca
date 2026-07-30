@@ -414,7 +414,7 @@ describe('submitFeedback', () => {
       return {
         ok: true,
         status: 202,
-        clone: () => ({ json: async () => body }) as unknown as Response
+        json: async () => body
       } as unknown as Response
     }
 
@@ -453,6 +453,26 @@ describe('submitFeedback', () => {
         ok: true,
         imagesDelivered: true
       })
+    })
+
+    it('bounds a stalled partial-delivery response body by the attachment timeout', async () => {
+      vi.useFakeTimers()
+      fetchMock.mockImplementation((_url: string, init?: RequestInit) =>
+        Promise.resolve({
+          ok: true,
+          status: 202,
+          json: () =>
+            new Promise((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () => reject(new Error('body aborted')))
+            })
+        } as unknown as Response)
+      )
+
+      const result = submitFeedback(imageSubmitArgs([pngImage()]))
+      await vi.advanceTimersByTimeAsync(60_000)
+
+      await expect(result).resolves.toEqual({ ok: true, imagesDelivered: true })
+      expect(requestInit().signal).toMatchObject({ aborted: true })
     })
 
     it('rejects unsupported image types before any request is made', async () => {

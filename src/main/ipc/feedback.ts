@@ -106,11 +106,11 @@ function buildSubmitBody(args: InternalFeedbackSubmitArgs): FeedbackSubmitBody {
 async function postFeedback(
   url: string,
   body: FeedbackSubmitBody,
-  timeoutMs = FEEDBACK_REQUEST_TIMEOUT_MS
+  timeoutMs = FEEDBACK_REQUEST_TIMEOUT_MS,
+  readResponse?: (response: Response) => Promise<void>
 ): Promise<Response> {
   const controller = new AbortController()
-  // Why: a silent feedback endpoint should not leave IPC or crash-report
-  // submission flows pending forever.
+  // Why: a silent endpoint must not leave feedback IPC pending forever.
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const init: RequestInit = {
@@ -118,10 +118,10 @@ async function postFeedback(
       ...feedbackRequestBodyInit(body),
       signal: controller.signal
     }
-    return await net.fetch(url, init)
+    const response = await net.fetch(url, init)
+    return await (readResponse ? readResponse(response).then(() => response) : response)
   } catch (error) {
-    // Why: Electron and Node use different AbortError messages. Normalize our
-    // client deadline so support logs explain which request budget expired.
+    // Why: Electron and Node report AbortError differently; keep deadline logs stable.
     if (controller.signal.aborted) {
       throw new Error(`request timed out after ${timeoutMs / 1000} seconds`)
     }
@@ -271,20 +271,14 @@ async function submitFeedbackWithDiagnosticBundle(
   }
 }
 
-/**
- * Reads the server's partial-delivery signal. A 2xx means the feedback text
- * reached Slack, so a missing or unparseable field must not downgrade that to a
- * failure — older servers simply answer `{ ok: true }`.
- */
+/** Older servers omit this field; any 2xx still confirms the feedback text landed. */
 async function readImagesDelivered(response: Response): Promise<boolean> {
   try {
-    const parsed: unknown = await response.clone().json()
+    const parsed: unknown = await response.json()
     if (typeof parsed === 'object' && parsed !== null && 'imagesDelivered' in parsed) {
       return (parsed as { imagesDelivered?: unknown }).imagesDelivered !== false
     }
-  } catch {
-    // Why: a 2xx with a non-JSON body still means the text was accepted.
-  }
+  } catch {}
   return true
 }
 
@@ -302,13 +296,17 @@ export async function submitFeedback(
   const body = buildSubmitBody(args)
   if (body.images?.length) {
     try {
+      let imagesDelivered = true
       const response = await postFeedback(
         FEEDBACK_API_URL,
         body,
-        FEEDBACK_ATTACHMENT_REQUEST_TIMEOUT_MS
+        FEEDBACK_ATTACHMENT_REQUEST_TIMEOUT_MS,
+        async (nextResponse) => {
+          imagesDelivered = nextResponse.ok ? await readImagesDelivered(nextResponse) : true
+        }
       )
       if (response.ok) {
-        return { ok: true, imagesDelivered: await readImagesDelivered(response) }
+        return { ok: true, imagesDelivered }
       }
       // Why: the text lane retries 5xx, this one does not. Replaying up to
       // 32 MiB of attachments on a flaky link costs more than it saves, and the
