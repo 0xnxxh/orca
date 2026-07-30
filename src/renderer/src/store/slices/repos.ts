@@ -3174,7 +3174,11 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
         const target = ownerTarget
         const updatedRepo =
           target.kind === 'local'
-            ? await window.api.repos.update({ repoId: projectId, updates: sanitizedUpdates })
+            ? await window.api.repos.update({
+                repoId: projectId,
+                updates: sanitizedUpdates,
+                ...(ownerHasExplicitHost ? { hostId: ownerHostId } : {})
+              })
             : (
                 await callRuntimeRpc<{ repo: Repo }>(
                   target,

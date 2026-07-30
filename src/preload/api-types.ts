@@ -1191,6 +1191,7 @@ export type PreloadApi = {
     }) => Promise<{ status: 'applied' | 'rejected' }>
     update: (args: {
       repoId: string
+      hostId?: ExecutionHostId
       updates: Partial<
         Pick<
           Repo,
@@ -2527,7 +2528,10 @@ export type PreloadApi = {
       hooks: OrcaHooks | null
       mayNeedUpdate: boolean
     }>
-    inspectSetupScriptImports: (args: { repoId: string }) => Promise<SetupScriptImportCandidate[]>
+    inspectSetupScriptImports: (args: {
+      repoId: string
+      hostId?: ExecutionHostId
+    }) => Promise<SetupScriptImportCandidate[]>
     createIssueCommandRunner: (args: {
       repoId: string
       worktreePath: string
