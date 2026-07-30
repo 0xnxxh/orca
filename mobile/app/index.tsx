@@ -538,7 +538,6 @@ export default function HomeScreen() {
       }
     }
     // Why: key on host-id set + each client's identity so resubs fire when forceReconnect swaps a host's client, not on every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     allClients
       .map((e) => `${e.hostId}:${clientKey(e.client)}`)

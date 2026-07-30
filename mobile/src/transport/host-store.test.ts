@@ -415,6 +415,35 @@ describe('host-store list mutations', () => {
     )
   })
 
+  it('does not let a late pre-write token read poison the token cache', async () => {
+    const newHost = {
+      id: 'host-new',
+      name: 'New Host',
+      endpoint: 'ws://127.0.0.1:3',
+      publicKeyB64: 'key-new',
+      deviceToken: 'token-new',
+      lastConnected: 0
+    }
+    storedHostsRaw = JSON.stringify([{ ...newHost, deviceToken: undefined }])
+    let resolvePrewriteTokenRead: (token: string) => void = () => {}
+    secureStoreMock.getItemAsync.mockReturnValue(
+      new Promise<string>((resolve) => {
+        resolvePrewriteTokenRead = resolve
+      })
+    )
+
+    const parkedLoad = loadHosts()
+    await vi.waitFor(() => {
+      expect(secureStoreMock.getItemAsync).toHaveBeenCalled()
+    })
+    await saveHost(newHost)
+    resolvePrewriteTokenRead('token-old')
+    await parkedLoad
+
+    const hosts = await loadHosts()
+    expect(hosts.find((host) => host.id === newHost.id)?.deviceToken).toBe(newHost.deviceToken)
+  })
+
   it('still shares one Keychain pass across loads with no write between them', async () => {
     const releaseKeychain = gateKeychainReads()
     const first = loadHosts()

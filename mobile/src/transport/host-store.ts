@@ -8,7 +8,7 @@ import {
   type StoredHostProfile
 } from './types'
 import { getNextHostNameFromHosts } from './host-names'
-import { dropSharedHostListLoad, shareHostListLoad } from './host-list-load-sharing'
+import * as hostListLoads from './host-list-load-sharing'
 import {
   retryPendingHostCredentialCleanups,
   scheduleHostCredentialCleanup
@@ -103,7 +103,7 @@ export async function loadHosts(): Promise<HostProfile[]> {
   // Why: writers hold the mutation chain across their full RMW; wait so a load doesn't race a half-written list.
   await hostListMutation
   // Why: deduplicate concurrent loadHosts() calls so simultaneously mounting screens share one Keychain read pass.
-  return shareHostListLoad(doLoadHosts)
+  return hostListLoads.shareHostListLoad(doLoadHosts)
 }
 
 async function doLoadHosts(): Promise<HostProfile[]> {
@@ -125,6 +125,7 @@ async function doLoadHosts(): Promise<HostProfile[]> {
   for (const stored of storedHosts) {
     let token = tokenCache.get(stored.id)
     if (!token) {
+      const readRevision = hostListLoads.getHostListLoadRevision()
       let fetched: string | null
       try {
         fetched = await readDeviceToken(stored.id)
@@ -137,7 +138,9 @@ async function doLoadHosts(): Promise<HostProfile[]> {
         continue
       }
       token = fetched
-      tokenCache.set(stored.id, token)
+      if (readRevision === hostListLoads.getHostListLoadRevision()) {
+        tokenCache.set(stored.id, token)
+      }
     }
     const overlay = overlays.get(stored.id)
     out.push({
@@ -191,7 +194,7 @@ async function mutateStoredHosts(
     const current = await readStoredHostsForMutation()
     const next = update(current)
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-    dropSharedHostListLoad()
+    hostListLoads.dropSharedHostListLoad()
   })
   hostListMutation = mutation.catch(() => {})
   return mutation
@@ -245,7 +248,7 @@ async function persistHost(host: HostProfile, requireExisting: boolean): Promise
   // Why: write metadata before the keychain token so a crash leaves recoverable orphaned metadata, not an orphaned token that persists forever.
   await writeDeviceToken(stored.id, validated.deviceToken)
   tokenCache.set(stored.id, validated.deviceToken)
-  dropSharedHostListLoad()
+  hostListLoads.dropSharedHostListLoad()
   if (validated.endpoints) {
     await saveMobileRelayHostOverlay({
       v: 2,
@@ -254,7 +257,7 @@ async function persistHost(host: HostProfile, requireExisting: boolean): Promise
       relayHostId: validated.relayHostId,
       relay: validated.relay
     })
-    dropSharedHostListLoad()
+    hostListLoads.dropSharedHostListLoad()
   }
   const overlayRemovalIds = [...duplicateHostIds]
   if (!validated.endpoints && updatedExistingHost) {
@@ -263,7 +266,7 @@ async function persistHost(host: HostProfile, requireExisting: boolean): Promise
   if (overlayRemovalIds.length > 0) {
     // Why: reusing an id for direct-only re-pairing must not retain routing metadata from the previous transport state.
     await removeMobileRelayHostOverlays(overlayRemovalIds)
-    dropSharedHostListLoad()
+    hostListLoads.dropSharedHostListLoad()
   }
   for (const duplicateHostId of duplicateHostIds) {
     tokenCache.delete(duplicateHostId)
@@ -280,7 +283,7 @@ export async function removeHost(hostId: string): Promise<void> {
   tokenCache.delete(hostId)
   try {
     await removeMobileRelayHostOverlay(hostId)
-    dropSharedHostListLoad()
+    hostListLoads.dropSharedHostListLoad()
   } catch {
     // Base removal is authoritative; a retained overlay can't resurrect the host and is cleaned on a later retry.
   }
@@ -340,5 +343,5 @@ export async function updateLastConnected(hostId: string): Promise<void> {
 export function resetHostStoreForTests(): void {
   hostListMutation = Promise.resolve()
   tokenCache.clear()
-  dropSharedHostListLoad()
+  hostListLoads.dropSharedHostListLoad()
 }
