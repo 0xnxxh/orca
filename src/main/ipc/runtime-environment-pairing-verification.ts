@@ -1,4 +1,7 @@
-import { addEnvironmentFromPairingCode } from '../../shared/runtime-environment-store'
+import {
+  addEnvironmentFromPairingCode,
+  RuntimeEnvironmentStoreError
+} from '../../shared/runtime-environment-store'
 import { parseHostAccessLink } from '../../shared/remote-pairing-address'
 import {
   verifyRemotePairingRuntimeStatus,
@@ -56,10 +59,22 @@ export async function verifyAndAddRuntimeEnvironmentFromPairingCode(
   }
 
   const usesSshTunnel = parsed.value.endpointKind === 'loopback' && args.allowLoopback === true
-  const environment = addEnvironmentFromPairingCode(userDataPath, {
-    ...args,
-    ...(usesSshTunnel ? { connectionDependency: 'ssh-tunnel' as const } : {})
-  })
+  let environment: ReturnType<typeof addEnvironmentFromPairingCode>
+  try {
+    environment = addEnvironmentFromPairingCode(userDataPath, {
+      ...args,
+      ...(usesSshTunnel ? { connectionDependency: 'ssh-tunnel' as const } : {})
+    })
+  } catch (error) {
+    return {
+      ok: false,
+      kind: 'environment-save-failed',
+      message:
+        error instanceof RuntimeEnvironmentStoreError && error.code === 'invalid_argument'
+          ? error.message
+          : 'Orca verified the host but could not save it. Check local settings storage and try again.'
+    }
+  }
   return {
     ok: true,
     environment: redactRuntimeEnvironment(environment),

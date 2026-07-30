@@ -175,7 +175,8 @@
         "runtimeEnvironmentManuallyDisconnected": "Runtime environment is manually disconnected.",
         "loopbackPairingBlocked": "This access link points back to this device.",
         "remotePairingUnreachable": "Cannot reach Orca at {{endpoint}}.",
-        "remotePairingInvalidDetails": "This access link contains invalid connection details."
+        "remotePairingInvalidDetails": "This access link contains invalid connection details.",
+        "remotePairingSaveFailed": "Orca verified the host but could not save it. Check browser storage and try again."
       },
       "web": {
         "preload": {
@@ -9968,7 +9969,9 @@
           "connectionDetails": "Connection details",
           "endpointKind": "Endpoint kind",
           "networkConnection": "Network connection",
-          "notAttempted": "Not attempted"
+          "notAttempted": "Not attempted",
+          "saveFailed": "Could not save the host",
+          "saveFailedHelp": "The host was verified, but Orca could not save it. Check the name and local settings storage, then try again."
         }
       },
       "right": {

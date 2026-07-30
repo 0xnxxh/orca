@@ -146,7 +146,7 @@ export function RuntimePairingUrlGenerator({
   }, [loadNetworkInterfaces])
 
   useEffect(() => {
-    if (intent !== 'another') {
+    if (intent !== 'another' || networkInterfaces.length === 0) {
       return
     }
     const addressStillAvailable = networkInterfaces.some(

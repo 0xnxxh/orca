@@ -138,6 +138,7 @@ import {
 } from '../../../shared/feature-interactions'
 import { normalizeContextualTourIds, type ContextualTourId } from '../../../shared/contextual-tours'
 import { translate } from '@/i18n/i18n'
+import { translateHostAccessLinkError } from '@/lib/remote-pairing-copy'
 import { getDefaultCreateProjectParent } from '@/components/sidebar/create-project-defaults'
 import {
   parseRuntimeNativeChatReadSessionResult,
@@ -1367,7 +1368,11 @@ function createRuntimeEnvironmentsApi(): NonNullable<Partial<PreloadApi>['runtim
     verifyAndAddFromPairingCode: async ({ name, pairingCode, allowLoopback }) => {
       const parsed = parseHostAccessLink(pairingCode)
       if (!parsed.ok) {
-        return { ok: false, kind: 'access-link-invalid', message: parsed.message }
+        return {
+          ok: false,
+          kind: 'access-link-invalid',
+          message: translateHostAccessLinkError(parsed.kind)
+        }
       }
       if (parsed.value.endpointKind === 'loopback' && !allowLoopback) {
         return {
@@ -1439,7 +1444,18 @@ function createRuntimeEnvironmentsApi(): NonNullable<Partial<PreloadApi>['runtim
         ...(usesSshTunnel ? { connectionDependency: 'ssh-tunnel' as const } : {})
       })
       // Why: a browser storage failure must leave the currently active host usable.
-      saveStoredWebRuntimeEnvironment(nextEnvironment)
+      try {
+        saveStoredWebRuntimeEnvironment(nextEnvironment)
+      } catch {
+        return {
+          ok: false,
+          kind: 'environment-save-failed',
+          message: translate(
+            'auto.web.webPreloadApi.remotePairingSaveFailed',
+            'Orca verified the host but could not save it. Check browser storage and try again.'
+          )
+        }
+      }
       manuallyDisconnectedEnvironmentIds.clear()
       closeActiveRuntimeClients()
       activeEnvironment = nextEnvironment

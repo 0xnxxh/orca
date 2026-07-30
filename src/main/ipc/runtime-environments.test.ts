@@ -366,6 +366,36 @@ describe('registerRuntimeEnvironmentHandlers', () => {
     expect(environmentStore.listEnvironments(userDataPath)).toEqual([])
   })
 
+  it('returns a structured failure when a verified host cannot be persisted', async () => {
+    registerRuntimeEnvironmentHandlers(store as never)
+    environmentStore.addEnvironmentFromPairingCode(userDataPath, {
+      name: 'desk',
+      pairingCode: pairingCode('ws://100.76.32.125:6768')
+    })
+    sendRemoteRuntimeRequestMock.mockResolvedValue({
+      id: 'status',
+      ok: true,
+      result: runtimeStatus(),
+      _meta: { runtimeId: 'runtime-a' }
+    })
+    const verifyAndAdd = handler<
+      { name: string; pairingCode: string },
+      { ok: boolean; kind?: string; message?: string }
+    >('runtimeEnvironments:verifyAndAddFromPairingCode')
+
+    await expect(
+      verifyAndAdd(null, {
+        name: 'desk',
+        pairingCode: pairingCode('ws://100.76.32.125:6768')
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      kind: 'environment-save-failed',
+      message: 'A server named "desk" already exists.'
+    })
+    expect(environmentStore.listEnvironments(userDataPath)).toHaveLength(1)
+  })
+
   it('requires an explicit Advanced selection before removing the Active Server', async () => {
     registerRuntimeEnvironmentHandlers(store as never)
     const add = handler<

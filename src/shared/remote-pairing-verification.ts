@@ -9,6 +9,7 @@ export type RemotePairingFailureKind =
   | 'access-link-invalid'
   | 'protocol-incompatible'
   | 'connection-interrupted'
+  | 'environment-save-failed'
 
 export type RemotePairingFailure = {
   ok: false

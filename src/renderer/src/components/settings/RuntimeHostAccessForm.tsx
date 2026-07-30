@@ -264,16 +264,23 @@ export function RuntimeHostAccessForm({
                         'auto.components.settings.RuntimeHostAccessForm.interrupted',
                         'Connection interrupted'
                       )
-                    : translate(
-                        'auto.components.settings.RuntimeHostAccessForm.unavailable',
-                        'Host unavailable'
-                      )}
+                    : failure.kind === 'environment-save-failed'
+                      ? translate(
+                          'auto.components.settings.RuntimeHostAccessForm.saveFailed',
+                          'Could not save the host'
+                        )
+                      : translate(
+                          'auto.components.settings.RuntimeHostAccessForm.unavailable',
+                          'Host unavailable'
+                        )}
           </div>
           <p className="text-xs text-muted-foreground">
-            {translateRemotePairingFailureDescription(
-              failure.kind,
-              parsed.ok ? parsed.value.displayEndpoint : null
-            )}
+            {failure.kind === 'environment-save-failed'
+              ? failure.message
+              : translateRemotePairingFailureDescription(
+                  failure.kind,
+                  parsed.ok ? parsed.value.displayEndpoint : null
+                )}
           </p>
         </div>
       ) : null}

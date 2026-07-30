@@ -270,7 +270,9 @@ export async function sendRemoteRuntimeRequest<TResult>(
           error: new RemoteRuntimeClientError(
             'invalid_runtime_response',
             'Remote Orca runtime returned an undecryptable frame.',
-            { pairingStage: 'host-identity' }
+            {
+              pairingStage: state === 'awaiting_authenticated' ? 'host-identity' : getPairingStage()
+            }
           )
         })
         return

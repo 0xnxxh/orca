@@ -6,7 +6,15 @@ import {
   type RuntimePairingIntent
 } from './RuntimePairingGeneratorForm'
 
-function renderForm(intent: RuntimePairingIntent, selectedAddress: string): string {
+function renderForm(
+  intent: RuntimePairingIntent,
+  selectedAddress: string,
+  generated?: {
+    address: string
+    runtimePairingUrl: string
+    webClientUrl: string
+  }
+): string {
   return renderToStaticMarkup(
     <TooltipProvider>
       <RuntimePairingGeneratorForm
@@ -16,10 +24,10 @@ function renderForm(intent: RuntimePairingIntent, selectedAddress: string): stri
         selectedAddress={selectedAddress}
         refreshingNetworkInterfaces={false}
         isGeneratingPairing={false}
-        webClientUrl={null}
-        runtimePairingUrl={null}
+        webClientUrl={generated?.webClientUrl ?? null}
+        runtimePairingUrl={generated?.runtimePairingUrl ?? null}
         copiedTarget={null}
-        generatedAddress={null}
+        generatedAddress={generated?.address ?? null}
         onIntentChange={vi.fn()}
         onSelectedAddressChange={vi.fn()}
         onRefreshNetworkInterfaces={vi.fn()}
@@ -45,5 +53,16 @@ describe('RuntimePairingGeneratorForm', () => {
     const populatedMarkup = renderForm('custom', 'openclaw.example.ts.net')
     expect(populatedMarkup).toContain('value="openclaw.example.ts.net"')
     expect(populatedMarkup).not.toContain('disabled=""')
+  })
+
+  it('hides generated links after the selected address changes', () => {
+    const markup = renderForm('another', '100.76.32.125', {
+      address: '192.168.1.10',
+      runtimePairingUrl: 'orca://pair?code=stale-secret',
+      webClientUrl: 'https://example.test/?pair=stale-secret'
+    })
+
+    expect(markup).toContain('The connection address changed.')
+    expect(markup).not.toContain('stale-secret')
   })
 })

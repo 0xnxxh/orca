@@ -208,6 +208,17 @@ describe('sendRemoteRuntimeRequest', () => {
     })
   })
 
+  it('classifies an undecryptable post-auth frame as a runtime failure', async () => {
+    const server = await createOneShotServer({ sendUndecryptableResponse: true })
+
+    await expect(
+      sendRemoteRuntimeRequest(server.pairing, 'status.get', {}, 1000)
+    ).rejects.toMatchObject({
+      code: 'invalid_runtime_response',
+      pairingStage: 'runtime'
+    })
+  })
+
   it('refreshes the per-call timeout when the runtime sends keepalive frames', async () => {
     const server = await createOneShotServer()
 
@@ -464,6 +475,7 @@ async function createOneShotServer(
   options: {
     response?: (requestId: string) => unknown
     onRequest?: (request: Record<string, unknown>) => void
+    sendUndecryptableResponse?: boolean
   } = {}
 ): Promise<{ pairing: PairingOffer }> {
   const serverKeyPair = generateKeyPair()
@@ -501,6 +513,10 @@ async function createOneShotServer(
 
       const request = JSON.parse(plaintext) as { id: string } & Record<string, unknown>
       options.onRequest?.(request)
+      if (options.sendUndecryptableResponse) {
+        ws.send('not-an-encrypted-frame')
+        return
+      }
       const key = sharedKey
       const keepalive = setInterval(() => {
         sendEncrypted(ws, key, { _keepalive: true })

@@ -76,6 +76,11 @@ export function translateRemotePairingFailureDescription(
         'auto.components.settings.RuntimeHostAccessForm.interruptedHelp',
         'The connection stopped during verification. Check the network or SSH tunnel and try again.'
       )
+    case 'environment-save-failed':
+      return translate(
+        'auto.components.settings.RuntimeHostAccessForm.saveFailedHelp',
+        'The host was verified, but Orca could not save it. Check the name and local settings storage, then try again.'
+      )
     case 'host-unreachable':
       return translate(
         'auto.components.settings.RuntimeHostAccessForm.unavailableHelp',

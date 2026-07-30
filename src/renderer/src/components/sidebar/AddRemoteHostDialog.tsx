@@ -230,10 +230,12 @@ export function AddRemoteHostDialog({
       })
       if (!result.ok) {
         toast.error(
-          translateRemotePairingFailureDescription(
-            result.kind,
-            parsedServerLink.value.displayEndpoint
-          )
+          result.kind === 'environment-save-failed'
+            ? result.message
+            : translateRemotePairingFailureDescription(
+                result.kind,
+                parsedServerLink.value.displayEndpoint
+              )
         )
         return
       }
