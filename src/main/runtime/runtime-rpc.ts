@@ -218,6 +218,7 @@ const MOBILE_RPC_METHOD_ALLOWLIST = new Set([
   'git.pull',
   'git.push',
   'git.rebaseFromBase',
+  'git.repositorySnapshot',
   'git.stage',
   'git.status',
   'git.unstage',

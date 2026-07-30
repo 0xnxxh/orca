@@ -108,6 +108,12 @@ function registeredRuntimeMethods(): Set<string> {
 }
 
 describe('mobile RPC allowlist', () => {
+  it('discovers, allows, and registers the repository snapshot query', () => {
+    expect(mobileLiteralRpcMethods()).toContain('git.repositorySnapshot')
+    expect(mobileRpcAllowlist()).toContain('git.repositorySnapshot')
+    expect(registeredRuntimeMethods()).toContain('git.repositorySnapshot')
+  })
+
   it('allows every RPC method used by the mobile app', () => {
     // Why: mobile-scoped runtime tokens are checked before dispatch. A mobile
     // feature can compile and still fail at runtime if its method is missing here.

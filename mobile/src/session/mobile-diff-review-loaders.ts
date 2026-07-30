@@ -13,6 +13,7 @@ import {
   readMobileReviewGitDiffResult,
   readMobileReviewWorktreeMetadata
 } from './mobile-diff-review-rpc'
+import { readMobileDiffReviewRepositorySnapshot } from './mobile-diff-review-repository-snapshot'
 import {
   canOpenMobileBranchCompareDiff,
   type MobileGitBranchCompareResult
@@ -66,16 +67,29 @@ export async function loadMobileDiffReviewBranchCompare(
 
 export async function loadMobileDiffReviewSnapshot(
   client: RpcClient,
-  worktreeId: string
+  worktreeId: string,
+  options: { preferRepositorySnapshot?: boolean } = {}
 ): Promise<ReviewScreenState> {
-  const statusResponse = await client.sendRequest('git.status', { worktree: `id:${worktreeId}` })
-  if (!statusResponse.ok) {
+  const selector = { worktree: `id:${worktreeId}` }
+  let status = null
+  if (options.preferRepositorySnapshot) {
+    try {
+      const snapshotResponse = await client.sendRequest('git.repositorySnapshot', selector)
+      status = snapshotResponse.ok
+        ? readMobileDiffReviewRepositorySnapshot(snapshotResponse.result)
+        : null
+    } catch {
+      // Initial review remains compatible with old or disconnected runtimes.
+    }
+  }
+  const statusResponse = status ? null : await client.sendRequest('git.status', selector)
+  if (statusResponse && !statusResponse.ok) {
     if (isMobileGitUnavailable(statusResponse.error?.code, statusResponse.error?.message)) {
       return { kind: 'unavailable', message: 'Update Orca desktop to review changes on mobile.' }
     }
     throw new Error(statusResponse.error?.message || 'Unable to load changes')
   }
-  const status = readMobileGitStatusResult(statusResponse.result)
+  status ??= readMobileGitStatusResult(statusResponse?.result)
   if (!status) {
     throw new Error('Source control response was invalid')
   }

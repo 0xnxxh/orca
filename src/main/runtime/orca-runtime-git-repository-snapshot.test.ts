@@ -126,7 +126,7 @@ describe('RuntimeGitCommands repository snapshot query', () => {
 
   it('measures settled local or WSL polling plus Checks as two fresh loads versus one', async () => {
     const pushTarget = { remoteName: 'fork', branchName: 'feature/checks' }
-    mocks.getStatus.mockResolvedValue({ entries: [], conflictOperation: 'none' })
+    mocks.getStatus.mockResolvedValue({ entries: [], conflictOperation: 'unknown' })
     mocks.getUpstreamStatus.mockResolvedValue({ hasUpstream: true, ahead: 0, behind: 0 })
     mocks.getGitRepositorySnapshot.mockReturnValue({ revision: 2 })
     const commands = new RuntimeGitCommands({
@@ -165,7 +165,7 @@ describe('RuntimeGitCommands repository snapshot query', () => {
   it('measures settled SSH polling plus Checks as two remote calls versus one', async () => {
     const pushTarget = { remoteName: 'fork', branchName: 'feature/checks' }
     const provider = {
-      getStatus: vi.fn().mockResolvedValue({ entries: [], conflictOperation: 'none' }),
+      getStatus: vi.fn().mockResolvedValue({ entries: [], conflictOperation: 'unknown' }),
       getUpstreamStatus: vi.fn().mockResolvedValue({ hasUpstream: true, ahead: 0, behind: 0 }),
       getRepositorySnapshot: vi.fn().mockReturnValue({ revision: 2 })
     }
@@ -205,6 +205,71 @@ describe('RuntimeGitCommands repository snapshot query', () => {
       '/remote/repo',
       undefined,
       pushTarget
+    )
+  })
+
+  it('measures mobile Source Control plus review as two local or WSL statuses versus one', async () => {
+    mocks.getStatus.mockResolvedValue({ entries: [], conflictOperation: 'unknown' })
+    mocks.getGitRepositorySnapshot.mockReturnValue({ revision: 2 })
+    const commands = new RuntimeGitCommands({
+      resolveRuntimeGitTarget: async () => ({
+        worktree: makeWorktree('/workspace/feature'),
+        localGitOptions: { wslDistro: 'Ubuntu-24.04' }
+      }),
+      getRuntimeSettings: () => ({}) as GlobalSettings
+    })
+
+    await commands.getRuntimeGitStatus('id:wt-1')
+    await commands.getRuntimeGitStatus('id:wt-1')
+    const baselineStatus = mocks.getStatus.mock.calls.length
+
+    mocks.getStatus.mockClear()
+    await commands.getRuntimeGitStatus('id:wt-1')
+    await commands.getRuntimeGitRepositorySnapshot('id:wt-1')
+    const migratedStatus = mocks.getStatus.mock.calls.length
+
+    expect({ baselineStatus, migratedStatus }).toEqual({
+      baselineStatus: 2,
+      migratedStatus: 1
+    })
+    expect(mocks.getGitRepositorySnapshot).toHaveBeenCalledWith(
+      '/workspace/feature',
+      { wslDistro: 'Ubuntu-24.04' },
+      undefined
+    )
+  })
+
+  it('measures mobile Source Control plus review as two SSH statuses versus one', async () => {
+    const provider = {
+      getStatus: vi.fn().mockResolvedValue({ entries: [], conflictOperation: 'unknown' }),
+      getRepositorySnapshot: vi.fn().mockReturnValue({ revision: 2 })
+    }
+    mocks.getSshGitProvider.mockReturnValue(provider)
+    const commands = new RuntimeGitCommands({
+      resolveRuntimeGitTarget: async () => ({
+        worktree: makeWorktree('/remote/repo'),
+        connectionId: 'conn-2'
+      }),
+      getRuntimeSettings: () => ({}) as GlobalSettings
+    })
+
+    await commands.getRuntimeGitStatus('id:wt-1')
+    await commands.getRuntimeGitStatus('id:wt-1')
+    const baselineStatus = provider.getStatus.mock.calls.length
+
+    provider.getStatus.mockClear()
+    await commands.getRuntimeGitStatus('id:wt-1')
+    await commands.getRuntimeGitRepositorySnapshot('id:wt-1')
+    const migratedStatus = provider.getStatus.mock.calls.length
+
+    expect({ baselineStatus, migratedStatus }).toEqual({
+      baselineStatus: 2,
+      migratedStatus: 1
+    })
+    expect(provider.getRepositorySnapshot).toHaveBeenCalledWith(
+      '/remote/repo',
+      undefined,
+      undefined
     )
   })
 })

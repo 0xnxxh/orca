@@ -29,6 +29,7 @@ import type {
   SendSheetState
 } from './mobile-diff-review-screen-model'
 import { useMobileDiffReviewInteractions } from './use-mobile-diff-review-interactions'
+import { useMobileDiffReviewInitialLoad } from './use-mobile-diff-review-initial-load'
 import { useMobilePrSidebarController } from './use-mobile-pr-sidebar-controller'
 
 type ControllerInput = {
@@ -74,39 +75,40 @@ export function useMobileDiffReviewController(input: ControllerInput) {
   const [showCompletion, setShowCompletion] = useState(false)
   const worktreeLabel = getWorktreeLabel(name, worktreeId)
 
-  const loadReviewData = useCallback(async () => {
-    const generation = loadGenerationRef.current + 1
-    loadGenerationRef.current = generation
-    const isCurrent = () => generation === loadGenerationRef.current
-    if (!worktreeId) {
-      setScreenState({ kind: 'error', message: 'Missing worktree' })
-      return
-    }
-    if (!client || connState !== 'connected') {
-      setScreenState({ kind: 'error', message: 'Waiting for desktop...' })
-      return
-    }
-    setScreenState((prev) => (prev.kind === 'ready' ? prev : { kind: 'loading' }))
-    try {
-      const nextState = await loadMobileDiffReviewSnapshot(client, worktreeId)
-      if (!isCurrent()) {
-        return
-      }
-      setScreenState(nextState)
-      setActionError(nextState.kind === 'ready' ? (nextState.branchError ?? null) : null)
-    } catch (err) {
-      if (isCurrent()) {
+  const loadReviewData = useCallback(
+    async (preferRepositorySnapshot = false) => {
+      const generation = ++loadGenerationRef.current
+      const isCurrent = () => generation === loadGenerationRef.current
+      if (!worktreeId || !client || connState !== 'connected') {
         setScreenState({
           kind: 'error',
-          message: err instanceof Error ? err.message : 'Unable to load review'
+          message: worktreeId ? 'Waiting for desktop...' : 'Missing worktree'
         })
+        return
       }
-    }
-  }, [client, connState, worktreeId])
+      setScreenState((prev) => (prev.kind === 'ready' ? prev : { kind: 'loading' }))
+      try {
+        const nextState = await loadMobileDiffReviewSnapshot(client, worktreeId, {
+          preferRepositorySnapshot
+        })
+        if (!isCurrent()) {
+          return
+        }
+        setScreenState(nextState)
+        setActionError(nextState.kind === 'ready' ? (nextState.branchError ?? null) : null)
+      } catch (err) {
+        if (isCurrent()) {
+          setScreenState({
+            kind: 'error',
+            message: err instanceof Error ? err.message : 'Unable to load review'
+          })
+        }
+      }
+    },
+    [client, connState, worktreeId]
+  )
 
-  useEffect(() => {
-    void loadReviewData()
-  }, [loadReviewData])
+  useMobileDiffReviewInitialLoad({ client, connState, hostId, worktreeId, loadReviewData })
 
   const queue = useMemo(() => {
     if (screenState.kind !== 'ready') {
