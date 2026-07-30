@@ -5,7 +5,8 @@ import {
   getTerminalImeRemountKey,
   isTerminalAutocorrectEnabled,
   parseTerminalAutocompletePreference,
-  type TerminalAutocompletePreference
+  type TerminalAutocompletePreference,
+  type TerminalImePlatform
 } from './terminal-ime-input-props'
 
 const sessionRouteSource = readFileSync(
@@ -19,6 +20,7 @@ const terminalSettingsSource = readFileSync(
 )
 
 const PREFERENCES: readonly TerminalAutocompletePreference[] = ['on', 'off', 'unset']
+const PLATFORMS: readonly TerminalImePlatform[] = ['android', 'ios', 'web', 'windows', 'macos']
 
 describe('parseTerminalAutocompletePreference', () => {
   it('keeps a missing value distinguishable from an explicit off', () => {
@@ -36,86 +38,42 @@ describe('parseTerminalAutocompletePreference', () => {
 })
 
 describe('isTerminalAutocorrectEnabled', () => {
-  it('never enables autocorrect for direct (live) entry on any platform or preference', () => {
-    for (const platform of ['android', 'ios', 'web', 'windows', 'macos'] as const) {
-      for (const preference of PREFERENCES) {
-        expect(isTerminalAutocorrectEnabled('live', platform, preference)).toBe(false)
-      }
-    }
-  })
-
-  // #4606: non-direct entry is reviewed before send, so iOS gets phone-style typing by default.
+  // #4606: command-bar entry is buffered and reviewed before send, so iOS gets
+  // phone-style typing by default.
   it('defaults command-bar autocorrect on for iOS and off elsewhere', () => {
-    expect(isTerminalAutocorrectEnabled('command', 'ios', 'unset')).toBe(true)
-    expect(isTerminalAutocorrectEnabled('command', 'android', 'unset')).toBe(false)
-    expect(isTerminalAutocorrectEnabled('command', 'web', 'unset')).toBe(false)
+    expect(isTerminalAutocorrectEnabled('ios', 'unset')).toBe(true)
+    expect(isTerminalAutocorrectEnabled('android', 'unset')).toBe(false)
+    expect(isTerminalAutocorrectEnabled('web', 'unset')).toBe(false)
+    expect(isTerminalAutocorrectEnabled('windows', 'unset')).toBe(false)
+    expect(isTerminalAutocorrectEnabled('macos', 'unset')).toBe(false)
   })
 
   it('lets an explicit preference override the per-platform default in both directions', () => {
-    expect(isTerminalAutocorrectEnabled('command', 'ios', 'off')).toBe(false)
-    expect(isTerminalAutocorrectEnabled('command', 'android', 'on')).toBe(true)
+    expect(isTerminalAutocorrectEnabled('ios', 'off')).toBe(false)
+    expect(isTerminalAutocorrectEnabled('android', 'on')).toBe(true)
   })
 })
 
 describe('getTerminalImeInputProps', () => {
-  // #6995: RN maps autoCorrect={false} to Android's NO_SUGGESTIONS inputType, and Samsung
-  // Keyboard answers that flag by disabling IME composition — Hangul arrives as raw jamo.
-  // The one deliberate exception is an explicit command-bar Off — the user asked for
-  // suppression and it is reversible. Nothing else on Android may emit the flag.
-  it('emits an explicit false autoCorrect on Android only where the user asked for it', () => {
-    for (const entryMode of ['live', 'command'] as const) {
+  it('emits autoCorrect and spellCheck together from the resolved preference', () => {
+    for (const platform of PLATFORMS) {
       for (const preference of PREFERENCES) {
-        const props = getTerminalImeInputProps(entryMode, 'android', preference)
-        expect(props.autoCorrect === false, `${entryMode}/${preference}`).toBe(
-          entryMode === 'command' && preference === 'off'
+        const enabled = isTerminalAutocorrectEnabled(platform, preference)
+        expect(getTerminalImeInputProps(platform, preference), `${platform}/${preference}`).toEqual(
+          { autoCorrect: enabled, spellCheck: enabled }
         )
       }
     }
   })
 
-  it('omits autoCorrect entirely on Android when the preference is untouched', () => {
-    expect(getTerminalImeInputProps('live', 'android', 'unset')).toEqual({})
-    expect(getTerminalImeInputProps('command', 'android', 'unset')).toEqual({})
-  })
-
-  // Otherwise Off emits the same props as untouched — a control that does nothing, with no
-  // way back to suppression. It costs IME composition, which is the point of asking.
-  it('honours an explicit Android Off instead of making the switch a no-op', () => {
-    expect(getTerminalImeInputProps('command', 'android', 'off')).toEqual({ autoCorrect: false })
-    expect(getTerminalImeInputProps('command', 'android', 'off')).not.toEqual(
-      getTerminalImeInputProps('command', 'android', 'unset')
-    )
-  })
-
-  // The toggle never claimed to govern direct entry, and #6995 was reported on the live path,
-  // so an explicit Off must not reintroduce NO_SUGGESTIONS there.
-  it('keeps Android direct entry composing even when the user turned autocorrect off', () => {
-    for (const preference of PREFERENCES) {
-      expect(getTerminalImeInputProps('live', 'android', preference)).toEqual({})
-    }
-  })
-
-  it('still opts Android into autocorrect when the user asked for it', () => {
-    expect(getTerminalImeInputProps('command', 'android', 'on')).toEqual({ autoCorrect: true })
-  })
-
-  // spellCheck is iOS-only in RN, so it must not ride along on the Android path.
-  it('keeps spellCheck off the Android props entirely', () => {
-    for (const preference of PREFERENCES) {
-      expect(
-        Object.hasOwn(getTerminalImeInputProps('command', 'android', preference), 'spellCheck')
-      ).toBe(false)
-    }
-  })
-
-  it('keeps iOS direct entry raw while defaulting the command bar to autocorrect', () => {
-    expect(getTerminalImeInputProps('live', 'ios', 'unset')).toEqual({
-      autoCorrect: false,
-      spellCheck: false
-    })
-    expect(getTerminalImeInputProps('command', 'ios', 'unset')).toEqual({
+  it('defaults the iOS command bar to autocorrect while Android stays raw (#4606)', () => {
+    expect(getTerminalImeInputProps('ios', 'unset')).toEqual({
       autoCorrect: true,
       spellCheck: true
+    })
+    expect(getTerminalImeInputProps('android', 'unset')).toEqual({
+      autoCorrect: false,
+      spellCheck: false
     })
   })
 })
@@ -131,36 +89,32 @@ function sliceBetween(source: string, startAnchor: string, endAnchor: string): s
 }
 
 describe('getTerminalImeRemountKey', () => {
-  // Android caches inputType at mount. Before the explicit-Off case existed the key tracked a
-  // boolean, which cannot distinguish {} from {autoCorrect:false} — so unset -> off would have
-  // kept the key and the user's Off would never have reached the IME.
-  it('gives every distinct Android prop shape a distinct key', () => {
-    const keys = PREFERENCES.map((preference) =>
-      getTerminalImeRemountKey('command', 'android', preference)
-    )
-    expect(new Set(keys).size).toBe(PREFERENCES.length)
-  })
-
+  // Android caches IME inputType at mount, so the key must change exactly when the emitted
+  // props change. Deriving it from the props (not a separately-maintained boolean) makes
+  // key-vs-props drift structurally impossible.
   it('changes the Android key exactly when the emitted props change', () => {
     for (const a of PREFERENCES) {
       for (const b of PREFERENCES) {
         const sameProps =
-          JSON.stringify(getTerminalImeInputProps('command', 'android', a)) ===
-          JSON.stringify(getTerminalImeInputProps('command', 'android', b))
+          JSON.stringify(getTerminalImeInputProps('android', a)) ===
+          JSON.stringify(getTerminalImeInputProps('android', b))
         const sameKey =
-          getTerminalImeRemountKey('command', 'android', a) ===
-          getTerminalImeRemountKey('command', 'android', b)
+          getTerminalImeRemountKey('android', a) === getTerminalImeRemountKey('android', b)
         expect(sameKey, `${a} vs ${b}`).toBe(sameProps)
       }
     }
   })
 
+  it('remounts the Android input when the user opts in to autocorrect', () => {
+    expect(getTerminalImeRemountKey('android', 'on')).not.toBe(
+      getTerminalImeRemountKey('android', 'unset')
+    )
+  })
+
   // iOS updates inputType in place, so remounting would only cost focus and IME state.
   it('keeps one stable key off Android so the input is never remounted', () => {
     for (const platform of ['ios', 'web', 'windows', 'macos'] as const) {
-      const keys = PREFERENCES.map((preference) =>
-        getTerminalImeRemountKey('command', platform, preference)
-      )
+      const keys = PREFERENCES.map((preference) => getTerminalImeRemountKey(platform, preference))
       expect(new Set(keys).size).toBe(1)
     }
   })
@@ -174,8 +128,7 @@ describe('getTerminalImeRemountKey', () => {
 // here and be re-pinned. Known gap: swapping the argument for a different value of the same
 // type would still pass — the unit tests above own correctness, these only own the hookup.
 describe('session route IME wiring', () => {
-  // Element-scoped, not file-scoped: ~20 other mobile fields legitimately hardcode
-  // autoCorrect={false}, and this route has non-terminal inputs of its own.
+  // Element-scoped, not file-scoped: this route has non-terminal inputs of its own.
   const liveInput = sliceBetween(
     sessionRouteSource,
     'ref={liveInputRef}',
@@ -187,32 +140,24 @@ describe('session route IME wiring', () => {
     'onSubmitEditing={() => void handleSend()}'
   )
 
-  // Guard the call sites: the pure module is only a fix if the route actually uses it.
-  it('routes both terminal inputs through the IME prop builder', () => {
-    expect(liveInput).toContain("getTerminalImeInputProps('live', Platform.OS, autocompletePref)")
-    expect(commandInput).toContain(
-      "getTerminalImeInputProps('command', Platform.OS, autocompletePref)"
-    )
+  // Guard the call site: the pure module is only a fix if the route actually uses it.
+  it('routes the command input through the IME prop builder', () => {
+    expect(commandInput).toContain('getTerminalImeInputProps(Platform.OS, autocompletePref)')
+    expect(commandInput).not.toMatch(/autoCorrect=\{/)
+    expect(commandInput).not.toMatch(/spellCheck=\{/)
   })
 
-  // #6995: a literal false on either terminal input reintroduces NO_SUGGESTIONS on Android.
-  it('hardcodes neither autoCorrect nor spellCheck on either terminal input', () => {
-    for (const [name, element] of [
-      ['live', liveInput],
-      ['command', commandInput]
-    ] as const) {
-      expect(element, `${name} input`).not.toMatch(/autoCorrect=\{(false|true)\}/)
-      expect(element, `${name} input`).not.toMatch(/spellCheck=\{(false|true)\}/)
-    }
+  // The settings copy promises direct input always sends raw keystrokes; the live input
+  // must stay hardcoded raw for that sentence to remain true.
+  it('keeps the live input hardcoded raw on every platform', () => {
+    expect(liveInput).toContain('autoCorrect={false}')
+    expect(liveInput).toContain('spellCheck={false}')
   })
 
-  // Android caches inputType at mount, so the key must derive from the emitted props. A key
-  // computed from the boolean instead cannot tell {} from {autoCorrect:false}, and an explicit
-  // Off would silently never reach the IME.
+  // Android caches inputType at mount, so the key must derive from the emitted props — a
+  // separately-maintained boolean can drift from what the input actually received.
   it('derives the command-input remount key from the emitted props, not a boolean', () => {
-    expect(commandInput).toContain(
-      "key={getTerminalImeRemountKey('command', Platform.OS, autocompletePref)}"
-    )
+    expect(commandInput).toContain('key={getTerminalImeRemountKey(Platform.OS, autocompletePref)}')
     expect(commandInput).not.toMatch(/key=\{[^}]*commandAutocorrect/)
   })
 
@@ -226,11 +171,13 @@ describe('session route IME wiring', () => {
     // Both the initial value and the post-load value must go through the resolver,
     // or the row renders a default the command bar does not actually use.
     expect(autocompleteState).not.toContain('useState(false)')
-    expect(
-      autocompleteState.match(/isTerminalAutocorrectEnabled\('command', Platform\.OS,/g)?.length
-    ).toBe(2)
+    expect(autocompleteState.match(/isTerminalAutocorrectEnabled\(Platform\.OS,/g)?.length).toBe(2)
     // ...and so must the "On/Off by default" sentence in the group description.
-    const groupDescription = sliceBetween(terminalSettingsSource, 'KEYBOARD INPUT', 'by default')
-    expect(groupDescription).toContain("isTerminalAutocorrectEnabled('command', Platform.OS,")
+    const groupDescription = sliceBetween(
+      terminalSettingsSource,
+      'KEYBOARD INPUT',
+      'Direct keyboard input'
+    )
+    expect(groupDescription).toContain('isTerminalAutocorrectEnabled(Platform.OS,')
   })
 })

@@ -902,7 +902,7 @@ export default function SessionScreen() {
   const [terminalTextScale, setTerminalTextScale] = useState(1)
   // Why: terminal command-bar autocomplete opt-in, reloaded on focus so a Settings → Terminal toggle takes effect on return.
   const [autocompletePref, setAutocompletePref] = useState<TerminalAutocompletePreference>('unset')
-  const commandAutocorrect = isTerminalAutocorrectEnabled('command', Platform.OS, autocompletePref)
+  const commandAutocorrect = isTerminalAutocorrectEnabled(Platform.OS, autocompletePref)
   const [terminalLinkOpenMode, setTerminalLinkOpenMode] =
     useState<MobileTerminalLinkOpenMode>('orca-browser')
   const [liveInputCapture, setLiveInputCapture] = useState('')
@@ -5025,8 +5025,8 @@ export default function SessionScreen() {
                       placeholder=""
                       showSoftInputOnFocus
                       autoCapitalize="none"
-                      // Why: a hardcoded false here becomes Android's NO_SUGGESTIONS inputType, which Samsung Keyboard answers by killing IME composition (#6995).
-                      {...getTerminalImeInputProps('live', Platform.OS, autocompletePref)}
+                      autoCorrect={false}
+                      spellCheck={false}
                       smartInsertDelete={false}
                       // Why: iOS textContentType overrides autoComplete and can narrow the keyboard; keep IME switching available.
                       autoComplete="off"
@@ -5042,7 +5042,7 @@ export default function SessionScreen() {
                     <TextInput
                       ref={commandInputRef}
                       // Why: Android caches IME inputType at mount, so toggling autocomplete must remount there; iOS updates in place.
-                      key={getTerminalImeRemountKey('command', Platform.OS, autocompletePref)}
+                      key={getTerminalImeRemountKey(Platform.OS, autocompletePref)}
                       style={styles.textInput}
                       value={input}
                       // Why: iOS kills active dictation/IME if JS writes a value differing from native text; store raw, normalize at send.
@@ -5050,7 +5050,7 @@ export default function SessionScreen() {
                       placeholder="Type a command…"
                       placeholderTextColor={colors.textMuted}
                       autoCapitalize="none"
-                      {...getTerminalImeInputProps('command', Platform.OS, autocompletePref)}
+                      {...getTerminalImeInputProps(Platform.OS, autocompletePref)}
                       smartInsertDelete={false}
                       // Why: not autofill content, but keyboard must stay default so non-Latin IMEs remain selectable.
                       autoComplete="off"

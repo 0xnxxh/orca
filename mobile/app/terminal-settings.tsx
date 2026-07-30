@@ -159,7 +159,7 @@ export default function TerminalSettingsScreen() {
   // Why: the switch must show what the command bar actually does, so an unset
   // preference resolves through the same per-platform default the input uses.
   const [autocompleteEnabled, setAutocompleteEnabled] = useState(() =>
-    isTerminalAutocorrectEnabled('command', Platform.OS, 'unset')
+    isTerminalAutocorrectEnabled(Platform.OS, 'unset')
   )
   // Why: a fast toggle before the initial load resolves must win — otherwise the
   // delayed read would clobber the user's choice with the stored (stale) value.
@@ -168,7 +168,7 @@ export default function TerminalSettingsScreen() {
     let stale = false
     void loadTerminalAutocompletePreference().then((preference) => {
       if (!stale && !userToggledAutocompleteRef.current) {
-        setAutocompleteEnabled(isTerminalAutocorrectEnabled('command', Platform.OS, preference))
+        setAutocompleteEnabled(isTerminalAutocorrectEnabled(Platform.OS, preference))
       }
     })
     return () => {
@@ -334,12 +334,9 @@ export default function TerminalSettingsScreen() {
         <Text style={[styles.groupHeading, styles.inputGroupGap]}>KEYBOARD INPUT</Text>
         <Text style={styles.groupDescription}>
           Enable phone-style autocomplete, autocorrect, and spelling suggestions in the terminal
-          command bar.{' '}
-          {isTerminalAutocorrectEnabled('command', Platform.OS, 'unset') ? 'On' : 'Off'} by default.
-          Direct keyboard input (when keys go straight to the terminal) never autocorrects.
-          {Platform.OS === 'android'
-            ? ' Left untouched on Android the keyboard may still offer suggestions you can tap; turning this off suppresses them, but also stops Korean and Chinese composing.'
-            : ''}
+          command bar. {isTerminalAutocorrectEnabled(Platform.OS, 'unset') ? 'On' : 'Off'} by
+          default. Direct keyboard input (when keys go straight to the terminal) always sends raw
+          keystrokes, so suggestions don&apos;t apply there.
         </Text>
         <View style={[styles.section, styles.sectionTopGap]}>
           <View style={styles.row}>
