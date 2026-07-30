@@ -245,6 +245,7 @@ async function persistHost(host: HostProfile, requireExisting: boolean): Promise
   // Why: write metadata before the keychain token so a crash leaves recoverable orphaned metadata, not an orphaned token that persists forever.
   await writeDeviceToken(stored.id, validated.deviceToken)
   tokenCache.set(stored.id, validated.deviceToken)
+  dropSharedHostListLoad()
   if (validated.endpoints) {
     await saveMobileRelayHostOverlay({
       v: 2,

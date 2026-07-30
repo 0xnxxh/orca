@@ -366,6 +366,55 @@ describe('host-store list mutations', () => {
     expect(hosts.find((host) => host.id === HOST_ONE.id)?.name).toBe('Living Room Mac')
   })
 
+  it('does not share a pre-token snapshot after saveHost commits its token', async () => {
+    const newHost = {
+      id: 'host-new',
+      name: 'New Host',
+      endpoint: 'ws://127.0.0.1:3',
+      publicKeyB64: 'key-new',
+      deviceToken: 'token-new',
+      lastConnected: 0
+    }
+    let releaseTokenWrite: () => void = () => {}
+    secureStoreMock.setItemAsync.mockReturnValue(
+      new Promise<void>((resolve) => {
+        releaseTokenWrite = resolve
+      })
+    )
+    let resolvePrewriteTokenRead: (token: string | null) => void = () => {}
+    const prewriteTokenRead = new Promise<string | null>((resolve) => {
+      resolvePrewriteTokenRead = resolve
+    })
+    secureStoreMock.getItemAsync.mockImplementation(async (key: string) => {
+      if (key.endsWith(newHost.id)) {
+        return prewriteTokenRead
+      }
+      return key.endsWith(HOST_ONE.id) || key.endsWith(HOST_TWO.id) ? `token-${key.at(-1)}` : null
+    })
+
+    const save = saveHost(newHost)
+    await vi.waitFor(() => {
+      expect(secureStoreMock.setItemAsync).toHaveBeenCalled()
+    })
+    const parkedLoad = loadHosts()
+    await vi.waitFor(() => {
+      expect(secureStoreMock.getItemAsync).toHaveBeenCalledWith(
+        expect.stringContaining(newHost.id),
+        expect.anything()
+      )
+    })
+
+    releaseTokenWrite()
+    await save
+    const afterSave = loadHosts()
+    resolvePrewriteTokenRead(null)
+
+    await parkedLoad
+    await expect(afterSave.then((hosts) => hosts.map((host) => host.id))).resolves.toContain(
+      newHost.id
+    )
+  })
+
   it('still shares one Keychain pass across loads with no write between them', async () => {
     const releaseKeychain = gateKeychainReads()
     const first = loadHosts()
