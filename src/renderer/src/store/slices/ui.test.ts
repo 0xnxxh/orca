@@ -23,6 +23,7 @@ import { buildAgentNotificationId } from '../../../../shared/agent-notification-
 import type { AgentStatusEntry } from '../../../../shared/agent-status-types'
 import type { TaskSourceContext } from '../../../../shared/task-source-context'
 import { getSetupScriptPromptDismissalKey } from '../../lib/setup-script-prompt'
+import { getRepoHostIdentityForParts } from './repo-host-identity'
 
 const mocks = vi.hoisted(() => ({
   sendNotesToActiveAgentSession: vi.fn(),
@@ -860,7 +861,9 @@ describe('createUISlice hydratePersistedUI', () => {
 
   it('preserves persisted repo filters until repos are loaded', () => {
     const store = createUIStore()
-    const remoteDismissalKey = getSetupScriptPromptDismissalKey('remote-repo')
+    const remoteDismissalKey = getSetupScriptPromptDismissalKey(
+      getRepoHostIdentityForParts('remote-repo', 'runtime:env-1')
+    )
 
     store.getState().hydratePersistedUI(
       makePersistedUI({
@@ -882,8 +885,12 @@ describe('createUISlice hydratePersistedUI', () => {
 
   it('validates persisted repo filters when repos are already loaded', () => {
     const store = createUIStore()
-    const localDismissalKey = getSetupScriptPromptDismissalKey('local-repo')
-    const staleDismissalKey = getSetupScriptPromptDismissalKey('stale-repo')
+    const localDismissalKey = getSetupScriptPromptDismissalKey(
+      getRepoHostIdentityForParts('local-repo', 'local')
+    )
+    const staleDismissalKey = getSetupScriptPromptDismissalKey(
+      getRepoHostIdentityForParts('stale-repo', 'local')
+    )
     store.setState({
       repos: [
         { id: 'local-repo', path: '/local', displayName: 'Local', badgeColor: '#000', addedAt: 1 }
@@ -1920,14 +1927,13 @@ describe('createUISlice hydratePersistedUI', () => {
 })
 
 describe('createUISlice settings navigation', () => {
-  it('accepts the setup guide target emitted by Settings navigation metadata', () => {
+  it('accepts a host-qualified setup guide target', () => {
     const store = createUIStore()
-
-    store.getState().openSettingsTarget({ pane: 'setup-guide', repoId: null })
-
+    store.getState().openSettingsTarget({ pane: 'setup-guide', repoId: null, hostId: 'ssh:host-1' })
     expect(store.getState().settingsNavigationTarget).toEqual({
       pane: 'setup-guide',
-      repoId: null
+      repoId: null,
+      hostId: 'ssh:host-1'
     })
   })
 
@@ -1937,9 +1943,9 @@ describe('createUISlice settings navigation', () => {
       target: unknown
     ) => void
 
-    expect(() => openSettingsTarget({ page: 'orchestration' })).toThrowError(
-      'openSettingsTarget received an invalid navigation target'
-    )
+    expect(() =>
+      openSettingsTarget({ pane: 'repo', repoId: 'repo-1', hostId: 'invalid' })
+    ).toThrowError('openSettingsTarget received an invalid navigation target')
     expect(store.getState().settingsNavigationTarget).toBeNull()
   })
 

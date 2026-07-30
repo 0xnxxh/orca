@@ -2073,6 +2073,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
       _event,
       args: {
         repoId: string
+        hostId?: ExecutionHostId
         updates: Partial<
           Pick<
             Repo,
@@ -2214,7 +2215,13 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
           updates.sourceControlAi = normalizedSourceControlAi
         }
       }
-      const updated = store.updateRepo(args.repoId, updates)
+      const hostId = args.hostId ? normalizeExecutionHostId(args.hostId) : null
+      if (args.hostId && !hostId) {
+        return null
+      }
+      const updated = hostId
+        ? store.updateRepo(args.repoId, updates, hostId)
+        : store.updateRepo(args.repoId, updates)
       if (updated) {
         if ('worktreeBasePath' in updates) {
           void prepareLocalWorktreeRootForRepo(store, updated)

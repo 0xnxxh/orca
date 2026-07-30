@@ -1694,6 +1694,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
         const reconciliation = reconcileSupersededSshRepos(result.repos, s)
         const prunedRepos = applyManualRepoOrder(reconciliation.repos, s.manualRepoOrder)
         const validRepoIds = new Set(prunedRepos.map((repo) => repo.id))
+        const validRepoHostIdentities = new Set(prunedRepos.map(getRepoHostIdentity))
         const projectCompatibility = projectCompatibilityForReconciledRepos(
           prunedRepos,
           catalog.projectHostSetupCompatibility
@@ -1724,7 +1725,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           filterRepoIds: s.filterRepoIds.filter((projectId) => validRepoIds.has(projectId)),
           setupScriptPromptDismissedRepoIds: filterSetupScriptPromptDismissalsToValidRepos(
             s.setupScriptPromptDismissedRepoIds,
-            validRepoIds
+            validRepoHostIdentities
           )
         }
       })
@@ -1766,6 +1767,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
         const reconciliation = reconcileSupersededSshRepos(result.repos, s)
         const finalizedRepos = applyManualRepoOrder(reconciliation.repos, s.manualRepoOrder)
         const validRepoIds = new Set(finalizedRepos.map((repo) => repo.id))
+        const validRepoHostIdentities = new Set(finalizedRepos.map(getRepoHostIdentity))
         const projectCompatibility = projectCompatibilityForReconciledRepos(
           finalizedRepos,
           catalog.projectHostSetupCompatibility
@@ -1795,7 +1797,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           filterRepoIds: s.filterRepoIds.filter((projectId) => validRepoIds.has(projectId)),
           setupScriptPromptDismissedRepoIds: filterSetupScriptPromptDismissalsToValidRepos(
             s.setupScriptPromptDismissedRepoIds,
-            validRepoIds
+            validRepoHostIdentities
           )
         }
       })
@@ -1863,12 +1865,13 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
     const validateRepoScopedUi = (): void => {
       set((s) => {
         const validRepoIds = new Set(s.repos.map((repo) => repo.id))
+        const validRepoHostIdentities = new Set(s.repos.map(getRepoHostIdentity))
         return {
           activeRepoId: s.activeRepoId && validRepoIds.has(s.activeRepoId) ? s.activeRepoId : null,
           filterRepoIds: s.filterRepoIds.filter((projectId) => validRepoIds.has(projectId)),
           setupScriptPromptDismissedRepoIds: filterSetupScriptPromptDismissalsToValidRepos(
             s.setupScriptPromptDismissedRepoIds,
-            validRepoIds
+            validRepoHostIdentities
           ),
           trustedOrcaHooks: filterTrustedOrcaHooksToValidRepos(s.trustedOrcaHooks, validRepoIds)
         }
@@ -3201,7 +3204,11 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
         const target = ownerTarget
         const updatedRepo =
           target.kind === 'local'
-            ? await window.api.repos.update({ repoId: projectId, updates: sanitizedUpdates })
+            ? await window.api.repos.update({
+                repoId: projectId,
+                updates: sanitizedUpdates,
+                ...(ownerHasExplicitHost ? { hostId: ownerHostId } : {})
+              })
             : (
                 await callRuntimeRpc<{ repo: Repo }>(
                   target,

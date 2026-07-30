@@ -4225,6 +4225,27 @@ describe('Store', () => {
     expect(store.getRepo('r1')!.displayName).toBe('renamed')
   })
 
+  it('updateRepo targets one host when repo ids collide', async () => {
+    const store = await createStore()
+    store.addRepo(makeRepo({ id: 'shared', path: '/local/repo' }))
+    store.addRepo(
+      makeRepo({
+        id: 'shared',
+        path: '/remote/repo',
+        connectionId: 'server',
+        executionHostId: 'ssh:server'
+      })
+    )
+
+    const updated = store.updateRepo('shared', { displayName: 'Remote renamed' }, 'ssh:server')
+
+    expect(updated?.path).toBe('/remote/repo')
+    expect(store.getRepos().filter((repo) => repo.id === 'shared')).toMatchObject([
+      { path: '/local/repo', displayName: 'test' },
+      { path: '/remote/repo', displayName: 'Remote renamed' }
+    ])
+  })
+
   it('updateRepo keeps project host setup compatibility records in sync', async () => {
     const store = await createStore()
     store.addRepo(makeRepo({ worktreeBasePath: '../worktrees' }))

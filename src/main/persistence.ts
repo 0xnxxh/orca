@@ -4536,9 +4536,13 @@ export class Store {
     > & {
       sourceControlAi?: Repo['sourceControlAi'] | null
       externalWorktreeDiscoverySuppressedAt?: Repo['externalWorktreeDiscoverySuppressedAt'] | null
-    }
+    },
+    hostId?: ExecutionHostId
   ): Repo | null {
-    const repo = this.state.repos.find((r) => r.id === id)
+    const repo = this.state.repos.find(
+      (candidate) =>
+        candidate.id === id && (!hostId || getRepoExecutionHostId(candidate) === hostId)
+    )
     if (!repo) {
       return null
     }

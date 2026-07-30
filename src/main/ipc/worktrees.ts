@@ -3076,66 +3076,69 @@ export function registerWorktreeHandlers(
     }
   )
 
-  ipcMain.handle('hooks:inspectSetupScriptImports', async (_event, args: { repoId: string }) => {
-    const repo = store.getRepo(args.repoId)
-    if (!repo || isFolderRepo(repo)) {
-      return []
-    }
+  ipcMain.handle(
+    'hooks:inspectSetupScriptImports',
+    async (_event, args: { repoId: string; hostId?: ExecutionHostId }) => {
+      const repo = getRepoForWorktreeRemoval(store, args.repoId, args.hostId)
+      if (!repo || isFolderRepo(repo)) {
+        return []
+      }
 
-    return inspectSetupScriptImportCandidates(
-      async (relativePath) => {
-        const filePath = joinWorktreeRelativePath(repo.path, relativePath)
-        if (repo.connectionId) {
-          const fsProvider = getSshFilesystemProvider(repo.connectionId)
-          if (!fsProvider) {
-            return null
-          }
-          try {
-            const result = await fsProvider.readFile(filePath)
-            return result.isBinary ? null : result.content
-          } catch {
-            return null
-          }
-        }
-
-        try {
-          return await readFile(filePath, 'utf-8')
-        } catch (error) {
-          if (!isENOENT(error)) {
-            console.warn('[hooks] Failed to inspect setup script import candidate:', error)
-          }
-          return null
-        }
-      },
-      {
-        fileExists: async (relativePath) => {
+      return inspectSetupScriptImportCandidates(
+        async (relativePath) => {
           const filePath = joinWorktreeRelativePath(repo.path, relativePath)
           if (repo.connectionId) {
             const fsProvider = getSshFilesystemProvider(repo.connectionId)
             if (!fsProvider) {
-              return false
+              return null
             }
             try {
-              const fileStat = await fsProvider.stat(filePath)
-              return fileStat.type !== 'directory'
+              const result = await fsProvider.readFile(filePath)
+              return result.isBinary ? null : result.content
             } catch {
-              return false
+              return null
             }
           }
 
           try {
-            const fileStat = await stat(filePath)
-            return !fileStat.isDirectory()
+            return await readFile(filePath, 'utf-8')
           } catch (error) {
             if (!isENOENT(error)) {
-              console.warn('[hooks] Failed to stat setup script import candidate:', error)
+              console.warn('[hooks] Failed to inspect setup script import candidate:', error)
             }
-            return false
+            return null
+          }
+        },
+        {
+          fileExists: async (relativePath) => {
+            const filePath = joinWorktreeRelativePath(repo.path, relativePath)
+            if (repo.connectionId) {
+              const fsProvider = getSshFilesystemProvider(repo.connectionId)
+              if (!fsProvider) {
+                return false
+              }
+              try {
+                const fileStat = await fsProvider.stat(filePath)
+                return fileStat.type !== 'directory'
+              } catch {
+                return false
+              }
+            }
+
+            try {
+              const fileStat = await stat(filePath)
+              return !fileStat.isDirectory()
+            } catch (error) {
+              if (!isENOENT(error)) {
+                console.warn('[hooks] Failed to stat setup script import candidate:', error)
+              }
+              return false
+            }
           }
         }
-      }
-    )
-  })
+      )
+    }
+  )
 
   ipcMain.handle(
     'hooks:readIssueCommand',
