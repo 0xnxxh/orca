@@ -44,6 +44,13 @@ describe('computer-use skill guidance', () => {
     expect(skill).toContain('`result.snapshot.treeText`')
     expect(skill).not.toContain('`result.elements`')
   })
+
+  it('requires atomic modifier-click actions', () => {
+    const skill = readFileSync(guidePath, 'utf8')
+
+    expect(skill).toContain('click --modifiers <chord>')
+    expect(skill).toContain('Never synthesize separate modifier-down and modifier-up commands')
+  })
 })
 
 describe('computer-use install stub', () => {
