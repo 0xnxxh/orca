@@ -125,11 +125,14 @@ pixels and 0.910 mean channel difference; Review passes at 2.134% and 1.947,
 within the 3% / 4 budgets. The packaged document opts into native safe-area
 insets, and nested syntax text retains the native effective font behavior.
 
-The migration is based on `origin/main` at `6c3b2cfb39`; the final rebase is
-complete and the branch is 62 commits ahead and zero behind. Post-rebase
-validation plus the hostile-content slice now passes 597 mobile files / 3,562
-tests with 2 expected skips. The focused merged SSH recovery path passes 940
-tests with 1 expected skip. The latest full root run passes 40,515 tests apart
+The migration is based on `origin/main` at `64aa726301`; the final rebase is
+complete and the branch is 64 commits ahead and zero behind. Post-rebase
+validation plus the hostile-content slice now passes 599 mobile files / 3,568
+tests with 2 expected skips. The earlier broad runtime slice passes 13 files /
+906 tests across SSH recovery generations, daemon PTY behavior, terminal
+recovery/IME, and remote skill discovery; current-base validation of the
+affected SSH recovery/session paths passes 5 files / 62 tests. The latest full
+root run passes 40,515 tests apart
 from one unrelated load-sensitive transcript watcher assertion whose 28-test
 file passes standalone. All project typechecks,
 root/mobile/mobile-web lint and code-quality audits, 56 reliability gates,
@@ -137,10 +140,12 @@ changed-file and full-mobile formatting, localization, the max-lines ratchet,
 and diff hygiene pass. React Doctor reports zero new migration findings. The
 independently verified React Native Web package is
 `121fe8682fc221fd7e6f2955fe1f246017d164db3122d71526bc3f66b19578c5`:
-51 assets, 9,151,993 raw bytes, and 2,649,166 gzip bytes. The final exact
-Android journey passes the complete hostile route and isolation corpus with
-zero executed marker, sentinel observation, bridge-log finding, or new failure
-exit record.
+51 assets, 9,151,993 raw bytes, and 2,649,166 gzip bytes. The final
+build-inclusive exact Android journey returns `ok: true` after Agent History,
+Source Control/Review, and the complete isolation corpus, with zero sentinel
+observation, bridge-log finding, or new failure exit record. Workspace
+activation waits for the native recovery surface to settle and taps the stable
+visible row instead of the non-hittable Android WebView ARIA node.
 
 The immediately preceding `7c7c673d…` package passed the unpacked macOS arm64 →
 Docker SSH → actual iOS WKWebView journey from a clean app reinstall in 1.9

@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   activateControl: vi.fn(),
   readControlPoint: vi.fn(),
   readState: vi.fn(),
+  readStablePoint: vi.fn(),
   readTextPoint: vi.fn(),
   setInput: vi.fn(),
   tapPoint: vi.fn(),
@@ -22,6 +23,10 @@ vi.mock('../../scripts/hosted-android-emulator-accessibility.mjs', () => ({
   tapHostedAndroidPoint: mocks.tapPoint
 }))
 
+vi.mock('../../scripts/hosted-android-webview-touch-point.mjs', () => ({
+  readStableHostedAndroidWebViewPoint: mocks.readStablePoint
+}))
+
 vi.mock('../../scripts/hosted-webview-control-point.mjs', () => ({
   readHostedWebViewControlPoint: mocks.readControlPoint
 }))
@@ -33,6 +38,7 @@ describe('hosted Android Agent History journey', () => {
     vi.clearAllMocks()
     mocks.activateControl.mockResolvedValue(undefined)
     mocks.readControlPoint.mockResolvedValue({ x: 0.4, y: 0.3 })
+    mocks.readStablePoint.mockImplementation((readPoint) => readPoint())
     mocks.readTextPoint.mockResolvedValue({ x: 0.5, y: 0.4 })
     mocks.setInput.mockResolvedValue(undefined)
     mocks.tapPoint.mockImplementation((_emulator, point) => point)

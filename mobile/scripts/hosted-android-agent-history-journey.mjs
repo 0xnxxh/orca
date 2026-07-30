@@ -10,6 +10,7 @@ import {
   EMULATOR_AGENT_HISTORY_TITLE
 } from './emulator-agent-history-fixture.mjs'
 import { tapHostedAndroidPoint } from './hosted-android-emulator-accessibility.mjs'
+import { readStableHostedAndroidWebViewPoint } from './hosted-android-webview-touch-point.mjs'
 import { readHostedWebViewControlPoint } from './hosted-webview-control-point.mjs'
 
 const SEARCH_PLACEHOLDER = 'Search sessions, repo:, path:'
@@ -142,7 +143,9 @@ export async function verifyHostedAndroidAgentHistoryJourney({
 }
 
 async function tapAndroidLabel(emulator, document, label) {
-  const point = await readHostedWebViewControlPoint(document, label)
+  const point = await readStableHostedAndroidWebViewPoint(() =>
+    readHostedWebViewControlPoint(document, label)
+  )
   return tapHostedAndroidPoint(emulator, point)
 }
 

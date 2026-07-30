@@ -27,6 +27,10 @@ import {
   waitForHostedAndroidAccessibilityControlMatch
 } from './hosted-android-emulator-accessibility.mjs'
 import {
+  activateHostedAndroidWorkspaceControl,
+  prepareHostedAndroidWorkspaceInput
+} from './hosted-android-workspace-activation.mjs'
+import {
   assertHostedAndroidBridgeLogClean,
   buildHostedAndroidDebugApp,
   forwardHostedAndroidInspector,
@@ -212,6 +216,7 @@ async function main() {
     const sessionDocument = await stage(
       'workspace activation and hosted Session route',
       async () => {
+        await prepareHostedAndroidWorkspaceInput(emulator)
         let activeDocument = workspaceDocument
         let lastError
         for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -219,7 +224,8 @@ async function main() {
             await activateHostedWorkspaceRow(
               activeDocument,
               workspaceRowName,
-              (document, target) => activateAndroidWorkspaceControl(emulator, document, target),
+              (document, target) =>
+                activateHostedAndroidWorkspaceControl(emulator, document, target),
               Math.min(options.timeoutMs, 15_000),
               () =>
                 waitForVisibleHostedWebView({
@@ -484,25 +490,6 @@ async function pairAndroidApp(emulator, pairingUrl, timeoutMs) {
   if (destination.label === 'Back to home') {
     throw new Error('Android pairing failed before reaching the onboarding flow')
   }
-}
-
-async function activateAndroidWorkspaceControl(emulator, document, target) {
-  if (target.kind !== 'text') {
-    return activateHostedWebViewControl(document, target)
-  }
-  if (target.reveal) {
-    await readHostedWebViewTextPoint(document, target.value, undefined, {
-      ignoreCase: target.ignoreCase,
-      occurrence: target.occurrence,
-      reveal: true
-    })
-    await delay(250)
-  }
-  const point = await readHostedWebViewTextPoint(document, target.value, undefined, {
-    ignoreCase: target.ignoreCase,
-    occurrence: target.occurrence
-  })
-  await tapHostedAndroidPoint(emulator, point)
 }
 
 async function tapHostedAndroidJourneyControl(emulator, point, label, attempt = 0, document) {
