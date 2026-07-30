@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { RuntimeClientTarget } from '@/runtime/runtime-client-target'
 import { OrchestrationSkillAgentCoverage } from './OrchestrationSkillAgentCoverage'
 
 const useDetectedAgents = vi.fn(() => ({
@@ -8,43 +9,55 @@ const useDetectedAgents = vi.fn(() => ({
   isRefreshing: false,
   refresh: vi.fn()
 }))
+const useActiveSkillDiscoveryRuntimeTarget = vi.fn<() => RuntimeClientTarget | null>(() => ({
+  kind: 'local'
+}))
 
 vi.mock('@/hooks/useDetectedAgents', () => ({
   useDetectedAgents: (...args: unknown[]) => useDetectedAgents(...(args as []))
 }))
 
+vi.mock('@/hooks/use-active-skill-discovery-runtime-target', () => ({
+  useActiveSkillDiscoveryRuntimeTarget: () => useActiveSkillDiscoveryRuntimeTarget()
+}))
+
+const claudeHomeSource = {
+  id: 'claude-home',
+  label: 'Claude home',
+  path: '/Users/test/.claude/skills',
+  sourceKind: 'home',
+  providers: ['claude'],
+  owner: 'claude',
+  exists: true
+} as const
+
+const claudeHomeSkill = {
+  id: 'claude-skill',
+  name: 'orchestration',
+  description: null,
+  providers: ['claude'],
+  sourceKind: 'home',
+  sourceLabel: 'Claude home',
+  rootPath: '/Users/test/.claude/skills',
+  directoryPath: '/Users/test/.claude/skills/orchestration',
+  skillFilePath: '/Users/test/.claude/skills/orchestration/SKILL.md',
+  installed: true,
+  fileCount: 1,
+  updatedAt: null
+} as const
+
 describe('OrchestrationSkillAgentCoverage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useActiveSkillDiscoveryRuntimeTarget.mockReturnValue({ kind: 'local' })
+  })
+
   it('shows each detected agent with an explicit skill status', () => {
     const markup = renderToStaticMarkup(
       <OrchestrationSkillAgentCoverage
         loading={false}
-        sources={[
-          {
-            id: 'claude-home',
-            label: 'Claude home',
-            path: '/Users/test/.claude/skills',
-            sourceKind: 'home',
-            providers: ['claude'],
-            owner: 'claude',
-            exists: true
-          }
-        ]}
-        skills={[
-          {
-            id: 'claude-skill',
-            name: 'orchestration',
-            description: null,
-            providers: ['claude'],
-            sourceKind: 'home',
-            sourceLabel: 'Claude home',
-            rootPath: '/Users/test/.claude/skills',
-            directoryPath: '/Users/test/.claude/skills/orchestration',
-            skillFilePath: '/Users/test/.claude/skills/orchestration/SKILL.md',
-            installed: true,
-            fileCount: 1,
-            updatedAt: null
-          }
-        ]}
+        sources={[claudeHomeSource]}
+        skills={[claudeHomeSkill]}
       />
     )
 
@@ -56,5 +69,41 @@ describe('OrchestrationSkillAgentCoverage', () => {
     // Why: an omitted target reads as "host unknown", which pins detectedIds to
     // null and leaves the widget spinning forever.
     expect(useDetectedAgents).toHaveBeenCalledWith({ kind: 'local' })
+  })
+
+  it('detects agents on the focused runtime host that produced the skill scan', () => {
+    useActiveSkillDiscoveryRuntimeTarget.mockReturnValue({
+      kind: 'environment',
+      environmentId: 'env-1'
+    })
+
+    renderToStaticMarkup(
+      <OrchestrationSkillAgentCoverage
+        loading={false}
+        sources={[claudeHomeSource]}
+        skills={[claudeHomeSkill]}
+      />
+    )
+
+    // Why: skills/sources come from the remote scan; matching them against
+    // local agent ids reports wrong Ready/Missing chips.
+    expect(useDetectedAgents).toHaveBeenCalledWith({ kind: 'runtime', environmentId: 'env-1' })
+  })
+
+  it('stays loading while the skill-scan host is unresolved', () => {
+    useActiveSkillDiscoveryRuntimeTarget.mockReturnValue(null)
+    useDetectedAgents.mockReturnValue({
+      detectedIds: null as never,
+      isLoading: true,
+      isRefreshing: false,
+      refresh: vi.fn()
+    })
+
+    const markup = renderToStaticMarkup(
+      <OrchestrationSkillAgentCoverage loading={false} sources={[]} skills={[]} />
+    )
+
+    expect(useDetectedAgents).toHaveBeenCalledWith(undefined)
+    expect(markup).toContain('Checking installed agents')
   })
 })

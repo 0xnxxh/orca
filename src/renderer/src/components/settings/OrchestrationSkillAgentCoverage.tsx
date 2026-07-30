@@ -1,10 +1,25 @@
 import type { DiscoveredSkill, SkillDiscoverySource } from '../../../../shared/skills'
 import type { OrchestrationSkillAgentStatus } from '@/lib/orchestration-skill-coverage'
+import type { RuntimeClientTarget } from '@/runtime/runtime-client-target'
 import { AgentIcon } from '@/lib/agent-catalog'
-import { useDetectedAgents } from '@/hooks/useDetectedAgents'
+import { useActiveSkillDiscoveryRuntimeTarget } from '@/hooks/use-active-skill-discovery-runtime-target'
+import { useDetectedAgents, type AgentDetectionTarget } from '@/hooks/useDetectedAgents'
 import { getOrchestrationSkillAgentStatuses } from '@/lib/orchestration-skill-coverage'
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
+
+function toAgentDetectionTarget(
+  target: RuntimeClientTarget | null
+): AgentDetectionTarget | undefined {
+  if (target === null) {
+    // Why: undefined keeps detection loading (detectedIds null) until the scan
+    // host resolves, instead of flashing local agents for a remote runtime.
+    return undefined
+  }
+  return target.kind === 'environment'
+    ? { kind: 'runtime', environmentId: target.environmentId }
+    : { kind: 'local' }
+}
 
 function getAgentCoverageSummary(props: {
   loading: boolean
@@ -74,7 +89,12 @@ export function OrchestrationSkillAgentCoverage(props: {
   className?: string
 }): React.JSX.Element {
   const { skills, sources, loading: skillsLoading, embedded = false, className } = props
-  const { detectedIds, isLoading: agentsLoading } = useDetectedAgents({ kind: 'local' })
+  // Why: skills/sources come from the runtime-scoped scan (#6887); detect agents
+  // on that same host or remote skill roots get matched against local agent ids.
+  const runtimeTarget = useActiveSkillDiscoveryRuntimeTarget()
+  const { detectedIds, isLoading: agentsLoading } = useDetectedAgents(
+    toAgentDetectionTarget(runtimeTarget)
+  )
   const loading = skillsLoading || agentsLoading || detectedIds === null
   const agentStatuses = getOrchestrationSkillAgentStatuses(skills, detectedIds ?? [], sources)
   const installedCount = agentStatuses.filter((status) => status.installed).length
