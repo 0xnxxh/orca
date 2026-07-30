@@ -1927,6 +1927,28 @@ describe('createUISlice hydratePersistedUI', () => {
 })
 
 describe('createUISlice settings navigation', () => {
+  it('accepts a host-qualified setup guide target', () => {
+    const store = createUIStore()
+    store.getState().openSettingsTarget({ pane: 'setup-guide', repoId: null, hostId: 'ssh:host-1' })
+    expect(store.getState().settingsNavigationTarget).toEqual({
+      pane: 'setup-guide',
+      repoId: null,
+      hostId: 'ssh:host-1'
+    })
+  })
+
+  it('rejects malformed settings targets before storing them', () => {
+    const store = createUIStore()
+    const openSettingsTarget = store.getState().openSettingsTarget as unknown as (
+      target: unknown
+    ) => void
+
+    expect(() =>
+      openSettingsTarget({ pane: 'repo', repoId: 'repo-1', hostId: 'invalid' })
+    ).toThrowError('openSettingsTarget received an invalid navigation target')
+    expect(store.getState().settingsNavigationTarget).toBeNull()
+  })
+
   it('prefetches the restored default task source when provider settings drifted', () => {
     const store = createUIStore()
     const prefetchWorkItems = vi.fn()
