@@ -11639,7 +11639,6 @@
           "2f077ef4eb": ", and scan the code.",
           "3aa7bb2d8b": "Pair Desktop",
           "d1495e5e64": "Open Orca Mobile, tap",
-          "901c98bb93": "Pair this",
           "3960f5c339": "Step 2 of 2",
           "3241f3c26a": "Install QR",
           "7af266b80d": "Install QR code",
@@ -11676,7 +11675,10 @@
           "qrSignInRequired": "Sign in to create a Relay pairing code",
           "qrRenderFailed": "QR couldn’t be rendered — copy the code below",
           "qrGeneratePrompt": "Generate a pairing code to continue",
-          "pairingCodeReady": "Pairing code ready"
+          "pairingCodeReady": "Pairing code ready",
+          "pairThisMac": "Pair this Mac.",
+          "pairThisPc": "Pair this PC.",
+          "pairThisComputer": "Pair this computer."
         },
         "MobilePage": {
           "e17393c6a3": "Phone preview",

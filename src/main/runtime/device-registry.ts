@@ -168,11 +168,18 @@ export class DeviceRegistry {
   }
 
   updateLastSeen(deviceId: string): void {
-    const device = this.devices.find((d) => d.deviceId === deviceId)
-    if (device) {
-      device.lastSeenAt = Date.now()
-      this.save()
+    const index = this.devices.findIndex((d) => d.deviceId === deviceId)
+    if (index < 0) {
+      return
     }
+    // Why: persist before memory swap so a failed write cannot leave a scanned
+    // device looking never-scanned on disk, where rotation would drop it.
+    const seenAt = Date.now()
+    const nextDevices = this.devices.map((device, candidateIndex) =>
+      candidateIndex === index ? { ...device, lastSeenAt: seenAt } : device
+    )
+    this.save(nextDevices)
+    this.devices = nextDevices
   }
 
   private load(): void {
@@ -197,7 +204,7 @@ export class DeviceRegistry {
     }
   }
 
-  private save(devices: DeviceEntry[] = this.devices): void {
+  private save(devices: DeviceEntry[]): void {
     writeSecureJsonFile(this.registryPath, devices)
   }
 }

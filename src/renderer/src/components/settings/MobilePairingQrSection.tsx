@@ -33,15 +33,24 @@ export function MobilePairingQrSection({
   const hadPairingUrlRef = useRef(pairingUrl != null)
   const codeCopiedResetTimerRef = useRef<number | null>(null)
 
+  // Why: the reset timeout is owned here, so clearing only the parent's timer would leave it running.
+  const clearCodeCopiedResetTimer = useCallback(() => {
+    if (codeCopiedResetTimerRef.current !== null) {
+      window.clearTimeout(codeCopiedResetTimerRef.current)
+      codeCopiedResetTimerRef.current = null
+    }
+    onClearCodeCopiedTimer()
+  }, [onClearCodeCopiedTimer])
+
   const setPairingCodeButtonRef = useCallback(
     (node: HTMLButtonElement | null) => {
       pairingCodeButtonMountedRef.current = node !== null
       pairingCodeButtonRef.current = node
       if (node === null) {
-        onClearCodeCopiedTimer()
+        clearCodeCopiedResetTimer()
       }
     },
-    [onClearCodeCopiedTimer]
+    [clearCodeCopiedResetTimer]
   )
 
   useEffect(() => {
@@ -61,7 +70,7 @@ export function MobilePairingQrSection({
       if (!pairingCodeButtonMountedRef.current) {
         return
       }
-      onClearCodeCopiedTimer()
+      clearCodeCopiedResetTimer()
       onCodeCopiedChange(true)
       codeCopiedResetTimerRef.current = window.setTimeout(() => {
         codeCopiedResetTimerRef.current = null

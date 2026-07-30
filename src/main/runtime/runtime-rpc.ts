@@ -718,9 +718,8 @@ export class OrcaRuntimeRpcServer {
     ) {
       return inFlight.request
     }
-    const generation = rotate
-      ? ++this.mobilePairingOfferGeneration
-      : this.mobilePairingOfferGeneration
+    // Why: every request that is not coalesced above supersedes the older one, rotating or not.
+    const generation = ++this.mobilePairingOfferGeneration
     const request = this.mobileRelayPairingOfferQueue.then(() =>
       generation === this.mobilePairingOfferGeneration
         ? this.createMobilePairingOfferSerial(args, generation)
@@ -781,8 +780,22 @@ export class OrcaRuntimeRpcServer {
     if (!direct.available) {
       return direct
     }
-    const ownsPendingCredential = pending?.deviceId !== direct.deviceId
-    this.deviceRegistry?.setMobilePairingConnectionMode(direct.deviceId, connectionMode)
+    const createdNewPendingDevice = pending?.deviceId !== direct.deviceId
+    let connectionModeStored = false
+    try {
+      connectionModeStored =
+        this.deviceRegistry?.setMobilePairingConnectionMode(direct.deviceId, connectionMode) ??
+        false
+    } catch (error) {
+      console.error('[runtime] Failed to persist the pairing connection mode:', error)
+    }
+    // Why: the mode is part of the credential — a QR whose policy was never stored must not pair under the default one.
+    if (!connectionModeStored) {
+      if (createdNewPendingDevice) {
+        this.discardPendingMobilePairingDevice(direct.deviceId)
+      }
+      return pairingUnavailable('device_registry_unavailable', DEVICE_REGISTRY_UNAVAILABLE_GUIDANCE)
+    }
     // Why: explicit LAN path never needs Relay; mint the direct-only offer as selected.
     if (connectionMode === 'local-only') {
       return { ...direct, connectionMode: 'local-only' }
@@ -792,7 +805,7 @@ export class OrcaRuntimeRpcServer {
     const refuseAutomaticWithoutRelay = (
       relayFailure: MobileRelayMintFailure
     ): PairingOfferUnavailable => {
-      if (ownsPendingCredential) {
+      if (createdNewPendingDevice) {
         this.discardPendingMobilePairingDevice(direct.deviceId)
       }
       return {
@@ -824,15 +837,15 @@ export class OrcaRuntimeRpcServer {
     try {
       relayPairing = await relayProvider.createPairingRelay(device.deviceId)
     } catch (error) {
-      console.warn('[runtime] Failed to create Relay pairing invite:', error)
-      return refuseAutomaticWithoutRelay(
-        mobileRelayMintFailureFromUnknown({
-          stage: 'create_pairing_relay',
-          error,
-          fallbackCode: 'relay_mint_failed',
-          fallbackMessage: 'Relay pairing invite request failed'
-        })
-      )
+      // Why: the raw provider error can carry request metadata or credentials — log only the validated code.
+      const relayFailure = mobileRelayMintFailureFromUnknown({
+        stage: 'create_pairing_relay',
+        error,
+        fallbackCode: 'relay_mint_failed',
+        fallbackMessage: 'Relay pairing invite request failed'
+      })
+      console.warn(`[runtime] Failed to create Relay pairing invite: ${relayFailure.code}`)
+      return refuseAutomaticWithoutRelay(relayFailure)
     }
     const currentDevice = this.deviceRegistry?.getDevice(device.deviceId)
     if (
@@ -841,15 +854,15 @@ export class OrcaRuntimeRpcServer {
       currentDevice?.token !== device.token ||
       this.deviceRegistry?.getMobilePairingConnectionMode(device.deviceId) !== 'automatic'
     ) {
-      this.queueRelayDeviceRevoke(relayPairing.binding)
-      if (ownsPendingCredential) {
+      this.queueOrRetainRelayDeviceRevoke(device.deviceId, relayPairing.binding)
+      if (createdNewPendingDevice) {
         this.discardPendingMobilePairingDevice(direct.deviceId)
       }
       return this.relayPairingRequestSuperseded()
     }
     try {
       if (!this.setMobileRelayBinding(device.deviceId, relayPairing.binding)) {
-        this.queueRelayDeviceRevoke(relayPairing.binding)
+        this.queueOrRetainRelayDeviceRevoke(device.deviceId, relayPairing.binding)
         return refuseAutomaticWithoutRelay({
           code: 'relay_binding_failed',
           stage: 'binding_failed',
@@ -858,7 +871,7 @@ export class OrcaRuntimeRpcServer {
       }
     } catch (error) {
       console.warn('[runtime] Failed to persist Relay pairing binding:', error)
-      this.queueRelayDeviceRevoke(relayPairing.binding)
+      this.queueOrRetainRelayDeviceRevoke(device.deviceId, relayPairing.binding)
       return refuseAutomaticWithoutRelay({
         code: 'relay_binding_failed',
         stage: 'binding_failed',
@@ -903,7 +916,26 @@ export class OrcaRuntimeRpcServer {
         return
       }
     }
-    this.deviceRegistry?.removeDevice(deviceId)
+    try {
+      this.deviceRegistry?.removeDevice(deviceId)
+    } catch (error) {
+      console.error('[runtime] Failed to drop an unused mobile pairing credential:', error)
+    }
+  }
+
+  /**
+   * Why: the outbox is the only durable cleanup record for a minted invite. When it can't be
+   * written, keep the binding on the device so cleanup keeps a reference instead of orphaning it.
+   */
+  private queueOrRetainRelayDeviceRevoke(deviceId: string, binding: RelayDeviceBinding): void {
+    if (this.queueRelayDeviceRevoke(binding)) {
+      return
+    }
+    try {
+      this.deviceRegistry?.setRelayBinding(deviceId, binding)
+    } catch (error) {
+      console.error('[runtime] Failed to retain an unrevoked Relay binding:', error)
+    }
   }
 
   private queueRelayDeviceRevoke(binding: RelayDeviceBinding): boolean {

@@ -11,15 +11,16 @@ import type { MobilePairingConnectionMode } from '../../../../shared/mobile-pair
 import type { MobileRelayMintFailure } from '../../../../shared/mobile-relay-mint-failure'
 import { translate } from '@/i18n/i18n'
 
-function getDeviceLabel(): string {
+/** Why: one full sentence per device kind so translators own word order and punctuation. */
+function pairDeviceHeading(): string {
   const ua = navigator.userAgent
   if (ua.includes('Mac')) {
-    return 'Mac'
+    return translate('auto.components.mobile.MobileHero.pairThisMac', 'Pair this Mac.')
   }
   if (ua.includes('Windows')) {
-    return 'PC'
+    return translate('auto.components.mobile.MobileHero.pairThisPc', 'Pair this PC.')
   }
-  return 'computer'
+  return translate('auto.components.mobile.MobileHero.pairThisComputer', 'Pair this computer.')
 }
 
 /** Short copy for the QR frame when no image can be shown. */
@@ -126,10 +127,7 @@ export function MobileHeroPairingStep({
             {translate('auto.components.mobile.MobileHero.3960f5c339', 'Step 2 of 2')}
           </span>
         </div>
-        <h2 className="mp-h2">
-          {translate('auto.components.mobile.MobileHero.901c98bb93', 'Pair this')}{' '}
-          {getDeviceLabel()}.
-        </h2>
+        <h2 className="mp-h2">{pairDeviceHeading()}</h2>
         <p className="mp-lead-sm">
           {translate('auto.components.mobile.MobileHero.d1495e5e64', 'Open Orca Mobile, tap')}{' '}
           <strong>

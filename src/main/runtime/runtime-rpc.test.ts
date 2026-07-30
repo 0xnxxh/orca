@@ -1055,6 +1055,70 @@ describe('OrcaRuntimeRpcServer', () => {
     }
   })
 
+  it('supersedes an older concurrent Relay mint for a different address without rotate', async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
+    const server = new OrcaRuntimeRpcServer({
+      runtime: new OrcaRuntimeService(),
+      userDataPath,
+      enableWebSocket: true,
+      wsPort: 0
+    })
+    let resolveFirst: (() => void) | undefined
+    const firstMint = new Promise<void>((resolve) => {
+      resolveFirst = resolve
+    })
+    const createPairingRelay = vi.fn(async (relayDeviceId: string) => {
+      if (createPairingRelay.mock.calls.length === 1) {
+        await firstMint
+      }
+      return {
+        relay: {
+          v: 1 as const,
+          directorUrl: 'https://relay.example.com',
+          cellUrl: 'https://cell.example.com',
+          assignmentEpoch: 7,
+          relayHostId: 'AbCdEf0123_-xyZ9',
+          inviteToken: 'A'.repeat(43),
+          inviteExpiresAt: Date.now() + 60_000,
+          e2eeFraming: 2 as const
+        },
+        binding: {
+          relayHostId: 'AbCdEf0123_-xyZ9',
+          relayDeviceId,
+          ownerIdentityKey: 'user\0profile\0org'
+        }
+      }
+    })
+    const onDeviceRevokeQueued = vi.fn()
+    server.setMobileRelayPairingProvider({
+      createPairingRelay,
+      onDeviceRevokeQueued,
+      getEndpoints: vi.fn(),
+      provisionRelay: vi.fn()
+    })
+
+    await server.start()
+    try {
+      const first = server.createMobilePairingOffer({ address: '100.64.1.20' })
+      await vi.waitFor(() => expect(createPairingRelay).toHaveBeenCalledOnce())
+      const second = server.createMobilePairingOffer({ address: '100.64.1.21' })
+      resolveFirst?.()
+      await expect(first).resolves.toMatchObject({
+        available: false,
+        relayFailure: { code: 'relay_request_superseded' }
+      })
+      const secondOffer = await second
+      expect(secondOffer.available).toBe(true)
+      if (!secondOffer.available) {
+        throw new Error('WebSocket pairing unavailable')
+      }
+      expect(secondOffer.endpoint).toContain('100.64.1.21')
+      expect(onDeviceRevokeQueued).toHaveBeenCalledOnce()
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('lets LAN supersede a pending Relay mint without waiting for it', async () => {
     const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
     const server = new OrcaRuntimeRpcServer({
@@ -1226,6 +1290,74 @@ describe('OrcaRuntimeRpcServer', () => {
       await expect(offerPromise).resolves.toMatchObject({ available: false })
       expect(onDeviceRevokeQueued).toHaveBeenCalledOnce()
       expect(server.getDeviceRegistry()?.getPendingDevice('mobile')).toBeNull()
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('retains a minted Relay binding on the device when cleanup cannot be queued', async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
+    const server = new OrcaRuntimeRpcServer({
+      runtime: new OrcaRuntimeService(),
+      userDataPath,
+      enableWebSocket: true,
+      wsPort: 0
+    })
+    let resolveRelay: (() => void) | undefined
+    const relayGate = new Promise<void>((resolve) => {
+      resolveRelay = resolve
+    })
+    server.setMobileRelayPairingProvider({
+      createPairingRelay: async (relayDeviceId) => {
+        await relayGate
+        return {
+          relay: {
+            v: 1,
+            directorUrl: 'https://relay.example.com',
+            cellUrl: 'https://cell.example.com',
+            assignmentEpoch: 7,
+            relayHostId: 'AbCdEf0123_-xyZ9',
+            inviteToken: 'A'.repeat(43),
+            inviteExpiresAt: Date.now() + 60_000,
+            e2eeFraming: 2
+          },
+          binding: {
+            relayHostId: 'AbCdEf0123_-xyZ9',
+            relayDeviceId,
+            ownerIdentityKey: 'user\0profile\0org'
+          }
+        }
+      },
+      onDeviceRevokeQueued: vi.fn(),
+      getEndpoints: vi.fn(),
+      provisionRelay: vi.fn()
+    })
+
+    await server.start()
+    try {
+      const registry = server.getDeviceRegistry()
+      if (!registry) {
+        throw new Error('Device registry unavailable')
+      }
+      const offerPromise = server.createMobilePairingOffer({ address: '100.64.1.20' })
+      await vi.waitFor(() => expect(registry.getPendingDevice('mobile')).not.toBeNull())
+      const deviceId = registry.getPendingDevice('mobile')?.deviceId
+      vi.spyOn(server.getRelayRevokeOutbox(), 'enqueue').mockImplementation(() => {
+        throw new Error('disk full')
+      })
+      // Why: swapping the provider supersedes the in-flight mint.
+      server.setMobileRelayPairingProvider({
+        createPairingRelay: vi.fn(),
+        onDeviceRevokeQueued: vi.fn(),
+        getEndpoints: vi.fn(),
+        provisionRelay: vi.fn()
+      })
+      resolveRelay?.()
+      await expect(offerPromise).resolves.toMatchObject({ available: false })
+      expect(registry.getDevice(deviceId ?? '')?.relayBinding).toMatchObject({
+        relayHostId: 'AbCdEf0123_-xyZ9',
+        relayDeviceId: deviceId
+      })
     } finally {
       await server.stop()
     }

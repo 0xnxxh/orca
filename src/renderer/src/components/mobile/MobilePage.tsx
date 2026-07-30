@@ -97,11 +97,11 @@ export default function MobilePage(): React.JSX.Element {
     if (relayMintFailure == null) {
       return
     }
+    // Why: users share this payload — the selected address would leak a LAN/Tailscale IP or hostname.
     const payload = {
       kind: 'mobile_pairing_relay_failure',
       preferredConnectionMode: connectionMode,
       failure: relayMintFailure,
-      selectedAddress: selectedAddress ?? null,
       at: new Date().toISOString()
     }
     try {
@@ -121,7 +121,7 @@ export default function MobilePage(): React.JSX.Element {
         )
       }
     }
-  }, [connectionMode, mountedRef, relayMintFailure, selectedAddress])
+  }, [connectionMode, mountedRef, relayMintFailure])
 
   useMobilePairingQrInvalidation({
     connectionMode,

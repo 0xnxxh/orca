@@ -2135,6 +2135,7 @@
 @container (max-width: 1080px) {
   .mobile-page-root .mp-hero {
     --mp-flow-card-padding: 20px;
+
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
     align-items: start;
