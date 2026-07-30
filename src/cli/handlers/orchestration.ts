@@ -22,6 +22,7 @@ import type {
 import type { NativeChatMessage } from '../../shared/native-chat-types'
 import type { RuntimeTerminalRead } from '../../shared/runtime-types'
 import { orchestrationMigrationData } from '../../shared/orchestration-rpc-contract'
+import { ORCHESTRATION_RUN_PAGE_LIMIT } from '../../shared/orchestration-run-pagination'
 import {
   formatMessageReadOnlyTag,
   formatOrchestrationCheckText,
@@ -468,7 +469,7 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
       runs: { id: string; objective: string; legacy: number }[]
       nextCursor: string | null
     }>('orchestration.runList', {
-      limit: getOptionalPositiveIntegerFlag(flags, 'limit'),
+      limit: getOptionalPositiveIntegerFlag(flags, 'limit') ?? ORCHESTRATION_RUN_PAGE_LIMIT,
       cursor: getOptionalStringFlag(flags, 'cursor')
     })
     printResult(result, json, (r) => {

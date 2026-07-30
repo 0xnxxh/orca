@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { defineMethod, type RpcMethod } from '../core'
 import { OptionalBoolean, OptionalString, requiredString } from '../schemas'
-import { RUN_LIST_MAX_LIMIT } from '../../orchestration/db'
+import { ORCHESTRATION_RUN_PAGE_LIMIT } from '../../../../shared/orchestration-run-pagination'
 import type { OrcaRuntimeService } from '../../orca-runtime'
 import { OrchestrationError } from '../../orchestration/orchestration-error'
 
@@ -18,7 +18,7 @@ const RunUseParams = z.object({
 
 const RunCurrentParams = z.object({ from: requiredString('Missing coordinator terminal') })
 const RunListParams = z.object({
-  limit: z.number().int().min(1).max(RUN_LIST_MAX_LIMIT).optional(),
+  limit: z.number().int().min(1).max(ORCHESTRATION_RUN_PAGE_LIMIT).optional(),
   cursor: OptionalString
 })
 const RunShowParams = z.object({ id: requiredString('Missing --id'), from: OptionalString })

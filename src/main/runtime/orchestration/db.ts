@@ -42,6 +42,7 @@ import { ORCHESTRATION_LEGACY_RUN_ID } from '../../../shared/orchestration-rpc-c
 import { parsePaneKey } from '../../../shared/stable-pane-id'
 import { OrchestrationError } from './orchestration-error'
 import { resolveOrchestrationMigrationStartVersion } from './orchestration-schema-version-skew'
+import { ORCHESTRATION_RUN_PAGE_LIMIT } from '../../../shared/orchestration-run-pagination'
 import { ORCHESTRATION_CONTRACT_VERSION } from '../../../shared/protocol-version'
 
 // Why: leaf UUID is the remint-stable pane identity (tab half changes on break-out); exact match covers legacy/unparseable keys.
@@ -237,8 +238,6 @@ export const CURRENT_CONTRACT_VERSION = ORCHESTRATION_CONTRACT_VERSION
 
 const MUTATION_RECEIPT_MAX_ROWS = 10_000
 const MUTATION_RECEIPT_MAX_AGE_DAYS = 30
-const RUN_LIST_DEFAULT_LIMIT = 100
-export const RUN_LIST_MAX_LIMIT = 100
 
 export type RunListPage = {
   runs: RunRow[]
@@ -2305,7 +2304,16 @@ export class OrchestrationDb {
   }
 
   listRuns(params: { limit?: number; cursor?: string } = {}): RunListPage {
-    const limit = Math.min(Math.max(1, params.limit ?? RUN_LIST_DEFAULT_LIMIT), RUN_LIST_MAX_LIMIT)
+    if (params.limit === undefined && params.cursor === undefined) {
+      const rows = this.db
+        .prepare('SELECT * FROM runs ORDER BY created_at DESC, id DESC')
+        .all() as RunRow[]
+      return { runs: rows.map(exposeRunTimestamps), nextCursor: null }
+    }
+    const limit = Math.min(
+      Math.max(1, params.limit ?? ORCHESTRATION_RUN_PAGE_LIMIT),
+      ORCHESTRATION_RUN_PAGE_LIMIT
+    )
     const cursor = params.cursor ? decodeRunListCursor(params.cursor) : undefined
     const rows = (
       cursor

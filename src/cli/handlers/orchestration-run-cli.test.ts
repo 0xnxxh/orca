@@ -83,6 +83,21 @@ describe('lightweight Run CLI handlers', () => {
     })
   })
 
+  it('opts into bounded Run pagination by default', async () => {
+    callMock.mockResolvedValue({ result: { runs: [], nextCursor: null } })
+
+    await ORCHESTRATION_HANDLERS['orchestration run-list']({
+      flags: new Map(),
+      client: { call: callMock },
+      json: true
+    } as never)
+
+    expect(callMock).toHaveBeenCalledWith('orchestration.runList', {
+      limit: 100,
+      cursor: undefined
+    })
+  })
+
   it('passes explicit legacy takeover only when requested', async () => {
     callMock.mockResolvedValue({
       result: { run: { id: 'run_adopted', objective: 'Recovered work' } }
