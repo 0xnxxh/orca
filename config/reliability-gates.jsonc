@@ -3250,13 +3250,15 @@
     },
     {
       "id": "terminal-performance.remote-hidden-retention-budget",
-      "title": "Paired remote terminals paint retained output and bound hidden renderer state",
+      "title": "Paired terminals park client renderers while host PTYs preserve bounded history",
       "maturity": "experimental",
       "protection": "partial",
       "owner": "terminal-runtime",
-      "layer": "paired-headed-runtime",
+      "layer": "paired-headed-and-headless-runtime",
       "surfaces": [
         "paired remote terminal first paint",
+        "paired remote terminal ordinary parking",
+        "paired remote terminal bounded scrollback restore",
         "stalled paired terminal stream recovery",
         "hidden remote worktree retention",
         "remote terminal reveal and input",
@@ -3266,37 +3268,47 @@
       "providers": ["paired-runtime", "ssh"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["paired-runtime"],
-      "coverageNotes": "Deterministic headed macOS runs launch an isolated Orca desktop server and a separate paired web client. They prove a truncated retained history still paints its latest-screen snapshot; an ACK-starved stream can stop client delivery while its host PTY cursor advances, then recover without replacing the PTY; and six real paired host-backed worktrees with bounded scrollback shrink to the configured manager/cell budget before reveal restores the original PTY and live input. The same stream-stall oracle passes against an isolated headless `orca serve` host. A separate headed memory test measures staged xterm buffer release for remote-shaped terminals. Unit tests cover stream timeouts and diagnostic reasons, SSH and paired classification, plus desktop and browser manual-disconnect fencing. Linux, Windows, mixed-version paired hosts, live SSH, headless retention, and production-scale paired hosts remain gaps.",
+      "coverageNotes": "Deterministic headed macOS runs launch an isolated Orca desktop server and a separate paired web client. A byte-identical headless run uses an isolated `orca serve` host. Both create six real paired host PTYs with bounded high-output scrollback, ordinary-park five client xterms without enabling the lossy retention budget, assert bounded cells/heap/timer lag, then restore 5,000 rows on the original PTY including output produced while parked and continued input/output. Separate headed/headless ACK-starvation tests recover one stalled stream without replacing its PTY. A capability-disabled run proves legacy hosts retain the prior lossy limit/TTL fallback. Unit tests cover exact-owner capability routing, raw-stream release, singleton side-effect facts with timed handoff cleanup, provider-authoritative snapshots, capacity-pressure backoff, full split-leaf remint reconciliation, truncation, and manual-disconnect queue fencing. Linux, Windows, mixed-version paired hosts, live SSH, and production-scale paired hosts remain gaps.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/issues/8652",
         "https://github.com/stablyai/orca/pull/10625"
       ],
-      "invariant": "Historical retained-tail overflow must not invalidate a complete serialized or latest-screen first-paint snapshot. A paired terminal stream whose delivery credits or command responses stop progressing must replace only that stream, preserve its tab and PTY identity, and repaint authoritative host output. With terminal parking enabled, hidden unparkable SSH and paired-runtime worktrees must retain at most the configured count and none beyond the TTL, including paired tabs with a host-backed remote PTY and stale activation residue. Force-parking must preserve the captured screen and later PTY input/output. Manual disconnect must retain pairing while preventing passive calls and subscriptions from recreating transport until explicit Connect.",
-      "oracle": "Launch a headed desktop host and a separate paired client. Produce more than the retained terminal-read limit, require terminal.read to report truncated, reload the client, and require the final marker to paint before new output. Separately withhold ACKs until one stream exhausts its 512 KiB window, require the host to finish bounded output and advance its cursor after accepted input while the client lacks the marker, then require command-response recovery to repaint it with the same tab and PTY. Run the byte-identical oracle with recovery disabled and require it to stay stalled. Create six live host PTYs in distinct paired worktrees, stage bounded high-output scrollback in every mounted xterm, disable the budget and require all six managers to survive, then enable a limit of two and require exactly two managers plus at most 45% of staged buffer cells to remain without material heap growth or a renderer timer stall. Reveal an evicted tab, require the same PTY identity and fresh live echo. Disconnect transport, exercise passive status, call, and subscribe paths, and require no client reconstruction until explicit Connect.",
+      "invariant": "A host advertising terminal.paired-parking.v1 keeps the PTY and bounded authoritative history alive while an ordinary hidden-view park destroys the client xterm and releases its raw per-PTY stream. Reveal must restore up to the requested 5,000 rows, parked-time side effects/output, the same PTY identity, and continued input/output. Hosts without the capability must retain the existing limit/TTL force-parking fallback. A paired terminal stream whose delivery credits or command responses stop progressing must replace only that stream and repaint authoritative host output. Manual disconnect must retain pairing while preventing queued or passive calls and subscriptions from recreating transport until explicit Connect.",
+      "oracle": "Run one byte-identical six-terminal oracle against an isolated headed desktop host and an isolated headless `orca serve` host. Stage at least 1,000,000 xterm cells, enable ordinary parking with the lossy retention budget disabled, require exactly one mounted manager and five parked tabs, at most 45% retained cells, no more than 16 MiB heap growth, and under 500 ms timer drift. While a tab is parked, require authoritative terminal.read to observe new PTY output; reveal it and require the original PTY, a marker within the requested 5,000-row history, the parked marker, and post-reveal input/output. Disable terminal.paired-parking.v1 and require the same oracle to fail before parking, while the legacy limit-one fallback separately passes. Also preserve truncated first paint, ACK-starved same-PTY stream recovery, and queued manual-disconnect fencing.",
       "commands": [
-        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/web/web-preload-api.test.ts src/main/ipc/runtime-environments.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/main/runtime/rpc/terminal-subscribe-buffer.test.ts src/renderer/src/components/terminal-pane/terminal-hidden-worktree-retention.test.ts src/renderer/src/components/terminal-pane/terminal-parking-e2e-overrides.test.ts",
-        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/runtime/remote-runtime-terminal-stall-recovery.test.ts src/renderer/src/runtime/remote-runtime-terminal-parse-backpressure.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/main/runtime/rpc/terminal-subscribe-buffer.test.ts src/renderer/src/components/terminal-pane/parked-terminal-byte-watcher.test.ts src/renderer/src/components/terminal-pane/terminal-side-effect-facts-handler.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts src/renderer/src/components/terminal-pane/terminal-hidden-view-parking.test.ts src/renderer/src/components/terminal-pane/terminal-hidden-worktree-retention.test.ts src/renderer/src/components/terminal-pane/terminal-parked-tab-watchers.test.ts src/renderer/src/components/terminal-pane/terminal-parked-watcher-reconciliation.test.ts src/renderer/src/components/terminal-pane/terminal-parking-e2e-overrides.test.ts src/renderer/src/runtime/remote-runtime-terminal-stall-recovery.test.ts src/renderer/src/runtime/runtime-client-events.test.ts src/renderer/src/web/web-preload-api.test.ts src/main/ipc/runtime-environments.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/runtime/remote-runtime-terminal-parse-backpressure.test.ts",
         "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-truncated-tail-first-paint.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
+        "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_DISABLE_PAIRED_TERMINAL_PARKING=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-truncated-tail-first-paint.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
         "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-stall-recovery.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
-        "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_DISABLE_REMOTE_TERMINAL_STALL_RECOVERY=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-stall-recovery.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
         "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/headless-paired-remote-terminal-stall-recovery.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
         "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-retention-memory.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
+        "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/headless-paired-remote-terminal-retention-memory.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
         "SKIP_BUILD=1 pnpm exec playwright test tests/e2e/terminal-parked-memory.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1"
       ],
       "testFiles": [
+        "src/main/runtime/orca-runtime.test.ts",
         "src/renderer/src/web/web-preload-api.test.ts",
         "src/main/ipc/runtime-environments.test.ts",
         "src/main/runtime/rpc/terminal-multiplex.test.ts",
         "src/main/runtime/rpc/terminal-subscribe-buffer.test.ts",
+        "src/renderer/src/components/terminal-pane/parked-terminal-byte-watcher.test.ts",
+        "src/renderer/src/components/terminal-pane/terminal-side-effect-facts-handler.test.ts",
+        "src/renderer/src/components/terminal-pane/pty-connection.test.ts",
         "src/renderer/src/components/terminal-pane/terminal-hidden-worktree-retention.test.ts",
+        "src/renderer/src/components/terminal-pane/terminal-hidden-view-parking.test.ts",
+        "src/renderer/src/components/terminal-pane/terminal-parked-tab-watchers.test.ts",
+        "src/renderer/src/components/terminal-pane/terminal-parked-watcher-reconciliation.test.ts",
         "src/renderer/src/components/terminal-pane/terminal-parking-e2e-overrides.test.ts",
         "src/renderer/src/runtime/remote-runtime-terminal-stall-recovery.test.ts",
         "src/renderer/src/runtime/remote-runtime-terminal-parse-backpressure.test.ts",
+        "src/renderer/src/runtime/runtime-client-events.test.ts",
         "src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts",
         "tests/e2e/paired-remote-terminal-truncated-tail-first-paint.spec.ts",
         "tests/e2e/paired-remote-terminal-stall-recovery.spec.ts",
         "tests/e2e/headless-paired-remote-terminal-stall-recovery.spec.ts",
         "tests/e2e/paired-remote-terminal-retention-memory.spec.ts",
+        "tests/e2e/headless-paired-remote-terminal-retention-memory.spec.ts",
         "tests/e2e/terminal-parked-memory.spec.ts"
       ],
       "assertionRefs": [
@@ -3316,13 +3328,19 @@
           "file": "tests/e2e/paired-remote-terminal-truncated-tail-first-paint.spec.ts",
           "assertions": [
             "paints a paired remote terminal when only its retained text tail overflowed",
-            "bounds hidden paired-runtime pane managers and restores PTY output"
+            "legacy paired hosts retain the lossy hidden-manager budget fallback"
           ]
         },
         {
           "file": "tests/e2e/paired-remote-terminal-retention-memory.spec.ts",
           "assertions": [
-            "bounds retained buffers across real paired worktrees and preserves PTYs"
+            "ordinary-parks paired terminals and restores authoritative host scrollback"
+          ]
+        },
+        {
+          "file": "tests/e2e/headless-paired-remote-terminal-retention-memory.spec.ts",
+          "assertions": [
+            "ordinary-parks paired terminals against an isolated headless Orca host"
           ]
         },
         {
@@ -3340,16 +3358,60 @@
           ]
         },
         {
+          "file": "src/main/runtime/orca-runtime.test.ts",
+          "assertions": [
+            "forwards facts over the shared client-event stream without a desktop renderer",
+            "prefers provider history over a partial headless mirror for requested snapshots",
+            "falls back to the available mirror when authoritative provider history is unavailable"
+          ]
+        },
+        {
           "file": "src/main/runtime/rpc/terminal-multiplex.test.ts",
           "assertions": [
-            "binary first paint remains valid when only retained history was truncated"
+            "binary first paint remains valid when only retained history was truncated",
+            "supports 44 active streams while retaining a bounded per-connection limit",
+            "reserves PTY wait capacity independently from active streams"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/terminal-pane/parked-terminal-byte-watcher.test.ts",
+          "assertions": [
+            "consumes host facts without a raw terminal stream for paired PTYs"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/terminal-pane/pty-connection.test.ts",
+          "assertions": [
+            "restores configured paired scrollback after an ordinary park reveal"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/terminal-pane/terminal-hidden-view-parking.test.ts",
+          "assertions": [
+            "selects only reachable hosts advertising the paired parking contract",
+            "accepts paired ptys only for the exact snapshot-capable owner",
+            "rejects paired, fail-open, foreign, and null ptys without capability evidence"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/terminal-pane/terminal-parked-tab-watchers.test.ts",
+          "assertions": [
+            "starts a fact watcher for snapshot-capable paired PTYs"
+          ]
+        },
+        {
+          "file": "src/renderer/src/runtime/remote-runtime-terminal-stall-recovery.test.ts",
+          "assertions": [
+            "classifies a capacity rejection followed by end as recoverable transport pressure"
           ]
         },
         {
           "file": "src/renderer/src/web/web-preload-api.test.ts",
           "assertions": [
             "keeps pairing while manual disconnect fences passive reconnects",
-            "fences a web runtime response that completes after manual disconnect"
+            "fences a web runtime response that completes after manual disconnect",
+            "returns a disconnect envelope when a queued active runtime call disconnects",
+            "returns a disconnect envelope when a queued selected environment call disconnects"
           ]
         }
       ],
@@ -3358,10 +3420,10 @@
           "date": "2026-07-29",
           "runner": "local",
           "platform": "macos",
-          "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/web/web-preload-api.test.ts src/main/ipc/runtime-environments.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/main/runtime/rpc/terminal-subscribe-buffer.test.ts src/renderer/src/components/terminal-pane/terminal-hidden-worktree-retention.test.ts src/renderer/src/components/terminal-pane/terminal-parking-e2e-overrides.test.ts",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/main/runtime/rpc/terminal-subscribe-buffer.test.ts src/renderer/src/components/terminal-pane/parked-terminal-byte-watcher.test.ts src/renderer/src/components/terminal-pane/terminal-side-effect-facts-handler.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts src/renderer/src/components/terminal-pane/terminal-hidden-view-parking.test.ts src/renderer/src/components/terminal-pane/terminal-hidden-worktree-retention.test.ts src/renderer/src/components/terminal-pane/terminal-parked-tab-watchers.test.ts src/renderer/src/components/terminal-pane/terminal-parked-watcher-reconciliation.test.ts src/renderer/src/components/terminal-pane/terminal-parking-e2e-overrides.test.ts src/renderer/src/runtime/remote-runtime-terminal-stall-recovery.test.ts src/renderer/src/runtime/runtime-client-events.test.ts src/renderer/src/web/web-preload-api.test.ts src/main/ipc/runtime-environments.test.ts",
           "result": "passed",
-          "durationSeconds": 5.98,
-          "summary": "Six focused files passed 202 tests covering transport truncation semantics, paired retention classification, deterministic overrides, and desktop/browser disconnect fencing."
+          "durationSeconds": 21.33,
+          "summary": "Sixteen focused runtime, multiplex, parking, restore, side-effect, capacity, lifecycle, and queued-disconnect files passed 1,921 tests with one existing skip."
         },
         {
           "date": "2026-07-29",
@@ -3370,16 +3432,7 @@
           "command": "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-truncated-tail-first-paint.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
           "result": "passed",
           "durationSeconds": 18.5,
-          "summary": "Both headed paired-server scenarios passed: truncated retained history painted after reload, and the retention control/candidate run evicted exactly the older hidden manager before successful reveal and live PTY input."
-        },
-        {
-          "date": "2026-07-29",
-          "runner": "local",
-          "platform": "macos",
-          "command": "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_DISABLE_REMOTE_TERMINAL_STALL_RECOVERY=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-stall-recovery.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
-          "result": "failed",
-          "durationSeconds": 36.6,
-          "summary": "With stream recovery disabled, the host cursor advanced after accepted input while the paired client remained frozen around flood row 5,396 and never painted the later marker."
+          "summary": "The headed paired-server scenario painted a truncated retained history after reload; the capability-disabled legacy fallback scenario is skipped unless explicitly selected."
         },
         {
           "date": "2026-07-29",
@@ -3396,8 +3449,8 @@
           "platform": "macos",
           "command": "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-retention-memory.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
           "result": "passed",
-          "durationSeconds": 14.8,
-          "summary": "Six real paired worktrees and host PTYs retained bounded high-output client buffers with the budget disabled, shrank to exactly two managers and under 45% of staged cells when enabled, stayed within heap and timer-lag budgets, then restored live output on the original evicted PTY."
+          "durationSeconds": 14.5,
+          "summary": "Six real paired worktrees and host PTYs ordinary-parked five client xterms with the lossy budget disabled, released at least 55% of staged cells within heap and timer-lag budgets, then restored requested row 4,000, parked-time output, and live I/O on the original PTY."
         },
         {
           "date": "2026-07-29",
@@ -3407,6 +3460,24 @@
           "result": "passed",
           "durationSeconds": 14.4,
           "summary": "An isolated `orca serve` host and paired web renderer exhausted one terminal stream, recovered it, and preserved the original PTY and tab without exposing readiness or pairing material."
+        },
+        {
+          "date": "2026-07-29",
+          "runner": "local",
+          "platform": "macos",
+          "command": "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/headless-paired-remote-terminal-retention-memory.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
+          "result": "passed",
+          "durationSeconds": 14.2,
+          "summary": "The isolated headless `orca serve` host passed the byte-identical six-PTY ordinary-parking, memory/lag, deep-history, same-PTY, parked-output, and post-reveal I/O oracle."
+        },
+        {
+          "date": "2026-07-29",
+          "runner": "local",
+          "platform": "macos",
+          "command": "ORCA_E2E_WEB_CLIENT=1 ORCA_E2E_DISABLE_PAIRED_TERMINAL_PARKING=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-truncated-tail-first-paint.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
+          "result": "passed",
+          "durationSeconds": 18.8,
+          "summary": "A host without terminal.paired-parking.v1 preserved the existing lossy limit-one fallback, restored retained output, and continued PTY input/output."
         }
       ],
       "runtimeBudget": {
@@ -3419,27 +3490,27 @@
       },
       "redGreenEvidence": {
         "status": "complete",
-        "evidence": "Before the snapshot fix, the headed paired reload stayed blank because retained-tail truncation invalidated first paint. Before the paired-retention follow-up, the live control/candidate oracle kept remote managers mounted because stale pendingActivationSpawn residue excluded host-backed worktrees. With stalled-stream recovery disabled, the host cursor advanced but the client remained frozen; enabling it repainted the marker with the same PTY and tab. The six-worktree retention oracle keeps all managers and staged cells when the budget is disabled, then releases four managers and their buffers when enabled."
+        "evidence": "The six-PTY ordinary-parking oracle was red in two independently observed stages: the parked paired remount first used detached attach and restored only rows 5,963–5,999, then the requested snapshot still lost to the current-screen replay until park reveals explicitly entered the capability-gated reattach coordinator. The candidate is green on headed and headless hosts, while disabling terminal.paired-parking.v1 makes the byte-identical oracle fail at its capability precondition and leaves the separately tested legacy lossy fallback green. With stalled-stream recovery disabled, the host cursor advanced but the client remained frozen; enabling it repainted the marker with the same PTY and tab."
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "The production policy retains at most 12 hidden unparkable worktrees and force-parks any hidden beyond 45 minutes. Stream recovery adds no polling: timers exist only while an entered command awaits a frame or renderer delivery credit remains unsettled, and restart is scoped to one stream. The headed paired memory oracle requires exact manager reduction, at least 55% staged xterm-cell release, no more than 16 MiB heap growth, and under 500 ms timer drift; all paired oracles use bounded output and deterministic barriers rather than an overnight sleep."
+        "evidence": "Capable paired hosts use ordinary parking: the host PTY and bounded 5,000-row provider model remain, while five hidden client xterms and their raw per-PTY multiplex streams are destroyed. Parked side effects share the singleton runtime client-event stream. Headed and headless oracles require exact reduction from six managers to one, at least 55% staged xterm-cell release, no more than 16 MiB heap growth, and under 500 ms timer drift. Legacy hosts retain the prior 12-worktree/45-minute lossy force-parking policy. Stream recovery adds no polling and is scoped to one stream."
       },
       "promotionCriteria": [
-        "Collect 100 consecutive CI passes or 14 days of soak history for both headed commands.",
+        "Collect 100 consecutive CI passes or 14 days of soak history for the headed and headless parking commands.",
         "Run the paired topology on Windows and Linux and add one live SSH retention run.",
         "Run the stream-stall oracle with a v1.4.160-rc.3 host and v1.4.160-rc.4 client.",
         "Add a production-scale paired run with dozens of worktrees and explicit event-loop and renderer-memory budgets.",
-        "Keep the budget-off control, exact manager-count assertion, reveal marker, and post-reveal PTY input in one headed run."
+        "Keep the budget-off control, exact manager count, row-4,000 reveal marker, parked-time output, and post-reveal PTY input in both topology runs."
       ],
       "knownGaps": [
-        "Remote reveal restores only the serialized screen or captured tail because no full remote scrollback RPC exists.",
-        "The scaled paired headed retention scenario uses six worktrees and a cap of two; it proves real host-backed eviction and buffer release, not a 100-worktree soak or the production cap of 12.",
+        "Paired reveal restores at most the requested 5,000 rows; older history is intentionally unavailable.",
+        "The scaled paired scenarios use six worktrees and ordinary-park five; they prove real host-backed eviction and buffer release, not a 100-worktree soak.",
         "Display-off reveal latency is a separate atlas and viewport-reflow class and is not covered by this gate.",
         "Historical field trace archives are still required to order replay-wedge events against renderer heartbeat loss and deduplicate archived records.",
         "The live windows-issues incident proves a healthy host PTY and dead existing client stream, but lacks per-stream ACK counters; ACK starvation is reproduced, not yet proven as that field incident's unique boundary."
       ],
-      "demotionRule": "Keep experimental or demote to protection none if paired first paint is blank, passive work reconnects after manual disconnect, an eligible hidden remote manager survives the cap or TTL, reveal loses the captured screen or live PTY, retained buffer cells do not fall, or either headed scenario flakes."
+      "demotionRule": "Keep experimental or demote to protection none if paired first paint is blank, passive work reconnects after manual disconnect, a capable hidden paired manager survives ordinary parking, a legacy host bypasses its fallback, reveal loses requested bounded history or live PTY identity, retained buffer cells do not fall, or either headed/headless scenario flakes."
     },
     {
       "id": "terminal-performance.no-hot-list-sessions",

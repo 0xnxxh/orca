@@ -149,7 +149,7 @@
       },
       "webPreloadApi": {
         "aiVaultUnavailableForHost": "此执行主机不支持 Agent 会话历史记录。",
-        "runtimeEnvironmentManuallyDisconnected": "Runtime environment is manually disconnected."
+        "runtimeEnvironmentManuallyDisconnected": "运行时环境已手动断开连接。"
       },
       "web": {
         "preload": {

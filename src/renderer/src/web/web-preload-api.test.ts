@@ -465,6 +465,72 @@ describe('web runtime environment identity', () => {
       error: { code: 'runtime_manually_disconnected' }
     })
   })
+
+  it.each(['active runtime', 'selected environment'] as const)(
+    'returns a disconnect envelope when a queued %s call disconnects',
+    async (route) => {
+      const pending: ((response: RuntimeRpcResponse<unknown>) => void)[] = []
+      const call = vi.fn(
+        (method: string) =>
+          new Promise<RuntimeRpcResponse<unknown>>((resolve) => {
+            pending.push((response) => resolve({ ...response, id: method }))
+          })
+      )
+      vi.doMock('./web-runtime-client', () => ({
+        WebRuntimeClient: class {
+          call = call
+          close(): void {}
+        }
+      }))
+      const globals = installBrowserGlobals('Linux')
+      writeStoredRuntimeEnvironment(globals.storage, 'web-server-a')
+      const { installWebPreloadApi } = await import('./web-preload-api')
+      installWebPreloadApi()
+      const invoke = (): Promise<RuntimeRpcResponse<unknown>> =>
+        route === 'active runtime'
+          ? globals.window.api.runtime.call({ method: 'repos.list' })
+          : globals.window.api.runtimeEnvironments.call({
+              selector: 'web-server-a',
+              method: 'repos.list'
+            })
+
+      const activeCalls = Array.from({ length: 8 }, invoke)
+      await vi.waitFor(() => expect(call).toHaveBeenCalledTimes(8))
+      const queuedCall = invoke()
+      expect(call).toHaveBeenCalledTimes(8)
+
+      await globals.window.api.runtimeEnvironments.disconnect({ selector: 'web-server-a' })
+      pending[0]?.({
+        id: 'repos.list',
+        ok: true,
+        result: {},
+        _meta: { runtimeId: 'runtime-1' }
+      })
+
+      await expect(queuedCall).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'runtime_manually_disconnected' }
+      })
+      expect(call).toHaveBeenCalledTimes(8)
+
+      for (const resolve of pending.slice(1)) {
+        resolve({
+          id: 'repos.list',
+          ok: true,
+          result: {},
+          _meta: { runtimeId: 'runtime-1' }
+        })
+      }
+      await expect(Promise.all(activeCalls)).resolves.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            ok: false,
+            error: expect.objectContaining({ code: 'runtime_manually_disconnected' })
+          })
+        ])
+      )
+    }
+  )
 })
 
 describe('web browser-local port capability', () => {

@@ -152,6 +152,47 @@ describe('remote terminal stalled stream recovery', () => {
     stream.close()
   })
 
+  it('classifies a capacity rejection followed by end as recoverable transport pressure', async () => {
+    const { getRemoteRuntimeTerminalMultiplexer } =
+      await import('./remote-runtime-terminal-multiplexer')
+    const onEnd = vi.fn()
+    const onError = vi.fn()
+    const onTransportClose = vi.fn()
+    const stream = await getRemoteRuntimeTerminalMultiplexer('windows-test').subscribeTerminal({
+      terminal: 'term-over-capacity',
+      client: { id: 'mac-viewer', type: 'desktop' },
+      callbacks: {
+        onData: vi.fn(),
+        onSnapshot: vi.fn(),
+        onEnd,
+        onError,
+        onTransportClose
+      }
+    })
+
+    callbacks?.onResponse({
+      ok: true,
+      result: {
+        type: 'error',
+        streamId: stream.streamId,
+        message: 'terminal_stream_limit_exceeded'
+      }
+    })
+    callbacks?.onResponse({
+      ok: true,
+      result: { type: 'end', streamId: stream.streamId }
+    })
+
+    expect(onTransportClose).toHaveBeenCalledOnce()
+    expect(onTransportClose).toHaveBeenCalledWith({
+      recoverable: true,
+      retryWithBackoff: true
+    })
+    expect(onEnd).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
+    expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
   function emitOutput(streamId: number, text: string): void {
     callbacks?.onBinary(
       encodeTerminalStreamFrame({

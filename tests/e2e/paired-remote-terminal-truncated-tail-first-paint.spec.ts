@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import type { Page } from '@stablyai/playwright-test'
 import type { RuntimeTerminalRead } from '../../src/shared/runtime-types'
+import { TERMINAL_PAIRED_PARKING_RUNTIME_CAPABILITY } from '../../src/shared/protocol-version'
 import { toWebTerminalSurfaceTabId } from '../../src/shared/terminal-surface-id'
 import { expect, test } from './helpers/orca-app'
 import {
@@ -220,10 +221,14 @@ test('paints a paired remote terminal when only its retained text tail overflowe
   }
 })
 
-test('bounds hidden paired-runtime pane managers and restores PTY output @headful', async ({
+test('legacy paired hosts retain the lossy hidden-manager budget fallback @headful', async ({
   electronApp,
   orcaPage
 }) => {
+  test.skip(
+    process.env.ORCA_E2E_DISABLE_PAIRED_TERMINAL_PARKING !== '1',
+    'The legacy fallback requires a host without terminal.paired-parking.v1.'
+  )
   test.setTimeout(120_000)
   const worktreeIds = await orcaPage.evaluate(() =>
     window.__store
@@ -247,6 +252,15 @@ test('bounds hidden paired-runtime pane managers and restores PTY output @headfu
       terminalParkingDelayMs: RETENTION_PARK_DELAY_MS,
       terminalRetentionLimit: 1
     })
+    expect(
+      await client.page.evaluate(
+        (capability) =>
+          Array.from(window.__store?.getState().runtimeStatusByEnvironmentId.values() ?? []).some(
+            (entry) => entry.status?.capabilities?.includes(capability)
+          ),
+        TERMINAL_PAIRED_PARKING_RUNTIME_CAPABILITY
+      )
+    ).toBe(false)
     await expect
       .poll(
         () =>

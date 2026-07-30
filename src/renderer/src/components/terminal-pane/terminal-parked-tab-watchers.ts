@@ -6,21 +6,23 @@
  * disposes them on reveal, tab close, PTY exit, or worktree teardown.
  */
 import { isTerminalLeafId } from '../../../../shared/stable-pane-id'
-import type { TerminalTab } from '../../../../shared/types'
 import { useAppStore } from '@/store'
+import { isRemoteRuntimePtyId, sendRuntimePtyInput } from '@/runtime/runtime-terminal-inspection'
 import { closeTerminalTab } from '../terminal/terminal-tab-actions'
-import {
-  collectLeafIdsInOrder,
-  resolveRootlessTerminalLayoutLeafId
-} from './terminal-layout-leaf-ids'
 import { detachTerminalLayoutLeaf } from './terminal-layout-leaf-detach'
 import { subscribeToPtyExit } from './pty-dispatcher'
 import { discardPreHandlerPtyState } from './pty-pre-handler-buffer'
 import { startParkedTerminalByteWatcher } from './parked-terminal-byte-watcher'
 import {
   isParkRestorableTerminalPty,
+  selectPairedRuntimeParkingEnvironmentIds,
   type TerminalParkRestorePolicy
 } from './terminal-hidden-view-parking'
+import {
+  reconcileParkedWatcherPtyIds,
+  resolveParkedTerminalPaneCandidates,
+  type ParkableTerminalTabModel
+} from './terminal-parked-watcher-reconciliation'
 import {
   resolveTabTitleAfterPaneClose,
   shouldClearLaunchAgentForClosedPane
@@ -28,8 +30,7 @@ import {
 import {
   capturedPanesByTabId,
   disposeParkedTabWatchers,
-  parkedWatchersByTabId,
-  type ParkedTerminalPaneCapture
+  parkedWatchersByTabId
 } from './terminal-parked-watcher-registry'
 
 // Why: re-export so callers keep one import surface; the registry split only breaks the store-slice import cycle.
@@ -43,67 +44,31 @@ export {
   pruneParkedTerminalWatchers
 } from './terminal-parked-watcher-registry'
 export type { ParkedTerminalPaneCapture } from './terminal-parked-watcher-registry'
-
-export type ParkableTerminalTabModel = Pick<TerminalTab, 'id' | 'ptyId'>
+export {
+  fallbackParkedPaneCandidates,
+  resolveParkedTerminalPaneCandidates
+} from './terminal-parked-watcher-reconciliation'
+export type { ParkableTerminalTabModel } from './terminal-parked-watcher-reconciliation'
 export type ParkedTerminalPtyEligibility = (ptyId: string) => boolean
 
 const allowSnapshotBackedPty = (): boolean => true
-
-type ParkedPaneFallbackState = {
-  terminalLayoutsByTabId: ReturnType<typeof useAppStore.getState>['terminalLayoutsByTabId']
-  runtimePaneTitlesByTabId: ReturnType<typeof useAppStore.getState>['runtimePaneTitlesByTabId']
-}
-
-// Why: pane ids are unknown in this layout fallback; reuse the sole runtime-title slot when unambiguous to overwrite a stale title, else negative slots that can't collide with real PaneManager ids.
-export function fallbackParkedPaneCandidates(
-  tab: ParkableTerminalTabModel,
-  state: ParkedPaneFallbackState
-): ParkedTerminalPaneCapture[] {
-  const layout = state.terminalLayoutsByTabId[tab.id]
-  // Why: a tab that never mounted a pane persists a rootless layout, so there is
-  // no root to walk. replayTerminalLayout resolves the single leaf for that same
-  // shape — match it here, or such a tab is permanently uncoverable and can
-  // never park.
-  const rootLeafIds = collectLeafIdsInOrder(layout?.root)
-  const rootlessLeafId = layout ? resolveRootlessTerminalLayoutLeafId(layout) : null
-  const leafIds =
-    rootLeafIds.length > 0 ? rootLeafIds : rootlessLeafId !== null ? [rootlessLeafId] : []
-  if (leafIds.length === 0) {
-    return []
-  }
-  const ptyIdsByLeafId = layout?.ptyIdsByLeafId ?? {}
-  const titleSlots = Object.keys(state.runtimePaneTitlesByTabId[tab.id] ?? {})
-  const reusableSlot =
-    leafIds.length === 1 && titleSlots.length === 1 ? Number(titleSlots[0]) : null
-  return leafIds.map((leafId, index) => ({
-    ptyId: ptyIdsByLeafId[leafId] ?? (leafIds.length === 1 ? tab.ptyId : null),
-    paneId: reusableSlot ?? -(index + 1),
-    leafId,
-    drivesTabTitle: layout?.activeLeafId ? leafId === layout.activeLeafId : index === 0
-  }))
-}
-
-// Why: start path and eligibility check must resolve identical candidates, or a tab passes the check then starts uncoverable.
-export function resolveParkedTerminalPaneCandidates(
-  tab: ParkableTerminalTabModel,
-  state: ParkedPaneFallbackState
-): ParkedTerminalPaneCapture[] {
-  const captured = capturedPanesByTabId.get(tab.id)
-  // Why: a capture missing the tab's current PTY is stale (PTY re-minted since unmount); fall back to the layout.
-  const capturedIsCurrent =
-    captured !== undefined &&
-    captured.panes.length > 0 &&
-    (tab.ptyId === null || captured.panes.some((pane) => pane.ptyId === tab.ptyId))
-  return capturedIsCurrent ? captured.panes : fallbackParkedPaneCandidates(tab, state)
-}
 
 // Why: fact-mode watchers work for any pty whose bytes transit local main —
 // SSH included — so watcher coverage follows the park-restore policy, not the
 // stricter daemon-snapshot predicate.
 function parkRestorePolicyFromState(state: {
   settings: { terminalSshViewParking?: boolean } | null
+  runtimeStatusByEnvironmentId: ReadonlyMap<
+    string,
+    { status: { capabilities?: readonly string[] } | null | undefined }
+  >
 }): TerminalParkRestorePolicy {
-  return { sshParkingEnabled: state.settings?.terminalSshViewParking !== false }
+  return {
+    sshParkingEnabled: state.settings?.terminalSshViewParking !== false,
+    pairedRuntimeParkingEnvironmentIds: selectPairedRuntimeParkingEnvironmentIds(
+      state.runtimeStatusByEnvironmentId
+    )
+  }
 }
 
 /**
@@ -153,22 +118,7 @@ function startParkedTabWatchers(
     ) {
       continue
     }
-    const initialTitle = state.runtimePaneTitlesByTabId[tab.id]?.[pane.paneId]
-    const disposeWatcher = startParkedTerminalByteWatcher({
-      ptyId,
-      tabId: tab.id,
-      worktreeId,
-      leafId: pane.leafId,
-      paneId: pane.paneId,
-      drivesTabTitle: pane.drivesTabTitle,
-      // Why: seed the agent tracker with the last title so an agent working at park time still notifies on finish.
-      ...(initialTitle !== undefined ? { initialTitle } : {}),
-      ...(restoreTitleOnRegister ? { restoreTitleOnRegister: true } : {}),
-      // Why: no pane transport while parked, so write straight to the PTY (same channel as background launches).
-      sendInput: (data) => window.api.pty.write(ptyId, data)
-    })
-    // Why: a PTY exiting while parked has no pane for cleanup, so its watcher must not outlive it.
-    const unsubscribeExit = subscribeToPtyExit(ptyId, (_code, { hadPrimary }) => {
+    const handlePtyExit = (_code: number, { hadPrimary }: { hadPrimary: boolean }): void => {
       // Why: while parked this sidecar is the only exit observer, so teardown must run here or dead leaves resurrect on reveal.
       useAppStore.getState().clearRuntimePaneTitle(tab.id, pane.paneId)
       if (disposersByPtyId.size > 1) {
@@ -207,7 +157,26 @@ function startParkedTabWatchers(
         // Why: cancellation keeps the buffered final frame/exit for the reveal-mounted pane.
         onCancel: () => {}
       })
+    }
+    const initialTitle = state.runtimePaneTitlesByTabId[tab.id]?.[pane.paneId]
+    const disposeWatcher = startParkedTerminalByteWatcher({
+      ptyId,
+      tabId: tab.id,
+      worktreeId,
+      leafId: pane.leafId,
+      paneId: pane.paneId,
+      drivesTabTitle: pane.drivesTabTitle,
+      ...(initialTitle !== undefined ? { initialTitle } : {}),
+      ...(restoreTitleOnRegister ? { restoreTitleOnRegister: true } : {}),
+      sendInput: (data) => {
+        sendRuntimePtyInput(useAppStore.getState().settings, ptyId, data)
+      }
     })
+    // Why: the paired host retires exited surfaces authoritatively; local/SSH
+    // exits still arrive through the renderer's singleton main channel.
+    const unsubscribeExit = isRemoteRuntimePtyId(ptyId)
+      ? () => {}
+      : subscribeToPtyExit(ptyId, handlePtyExit)
     paneIdByPtyId.set(ptyId, pane.paneId)
     disposersByPtyId.set(ptyId, () => {
       unsubscribeExit()
@@ -297,7 +266,24 @@ function disposeClosedParkedTabWatchers(
   for (const ptyId of entry.paneIdByPtyId.keys()) {
     discardPreHandlerPtyState(ptyId)
   }
+  for (const paneId of entry.paneIdByPtyId.values()) {
+    useAppStore.getState().clearRuntimePaneTitle(tabId, paneId)
+  }
   disposeParkedTabWatchers(tabId)
+}
+
+function watchablePtyIds(worktreeId: string, tab: ParkableTerminalTabModel): Set<string> {
+  const state = useAppStore.getState()
+  const restorePolicy = parkRestorePolicyFromState(state)
+  return new Set(
+    resolveParkedTerminalPaneCandidates(tab, state).flatMap((pane) =>
+      pane.ptyId &&
+      isTerminalLeafId(pane.leafId) &&
+      isParkRestorableTerminalPty(pane.ptyId, worktreeId, restorePolicy)
+        ? [pane.ptyId]
+        : []
+    )
+  )
 }
 
 /**
@@ -336,7 +322,19 @@ export function syncParkedTerminalTabWatchers(args: {
       continue
     }
     const entry = parkedWatchersByTabId.get(tab.id)
-    if (entry && entry.tabPtyId !== tab.ptyId) {
+    const expectedPtyIds = watchablePtyIds(args.worktreeId, tab)
+    const reconciliation = entry
+      ? reconcileParkedWatcherPtyIds({
+          currentTabPtyId: tab.ptyId,
+          entryTabPtyId: entry.tabPtyId,
+          paneIdByPtyId: entry.paneIdByPtyId,
+          expectedPtyIds
+        })
+      : null
+    if (entry && reconciliation?.restart) {
+      for (const paneId of reconciliation.retiredPaneIds) {
+        useAppStore.getState().clearRuntimePaneTitle(tab.id, paneId)
+      }
       disposeParkedTabWatchers(tab.id)
     }
     if (!parkedWatchersByTabId.has(tab.id)) {

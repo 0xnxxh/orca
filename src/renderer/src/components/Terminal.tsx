@@ -88,6 +88,7 @@ import { getTerminalWorktreeColdParkRecheckDelayMs } from './terminal-pane/termi
 import {
   TERMINAL_WORKTREE_COLD_PARK_DELAY_MS,
   canParkTerminalWorktreeRenderers,
+  selectPairedRuntimeParkingEnvironmentIds,
   selectColdParkedTerminalWorktrees,
   type TerminalWorktreeColdParkCandidate
 } from './terminal-pane/terminal-hidden-view-parking'
@@ -300,6 +301,11 @@ function Terminal(): React.JSX.Element | null {
   const pendingStartupByTabId = useAppStore((s) => s.pendingStartupByTabId)
   const terminalParkingEnabled = useAppStore((s) => s.settings?.terminalHiddenViewParking !== false)
   const terminalSshParkingEnabled = useAppStore((s) => s.settings?.terminalSshViewParking !== false)
+  const runtimeStatusByEnvironmentId = useAppStore((s) => s.runtimeStatusByEnvironmentId)
+  const pairedRuntimeParkingEnvironmentIds = useMemo(
+    () => selectPairedRuntimeParkingEnvironmentIds(runtimeStatusByEnvironmentId),
+    [runtimeStatusByEnvironmentId]
+  )
   const terminalRetentionBudgetEnabled = useAppStore(
     (s) => s.settings?.terminalHiddenWorktreeRetentionBudget !== false
   )
@@ -953,7 +959,10 @@ function Terminal(): React.JSX.Element | null {
       })
     }
 
-    const restorePolicy = { sshParkingEnabled: terminalSshParkingEnabled }
+    const restorePolicy = {
+      sshParkingEnabled: terminalSshParkingEnabled,
+      pairedRuntimeParkingEnvironmentIds
+    }
     const nextParkedTerminalWorktreeIds = selectColdParkedTerminalWorktrees({
       worktrees: retentionCandidates,
       pendingStartupByTabId,
@@ -1134,6 +1143,7 @@ function Terminal(): React.JSX.Element | null {
     activityTerminalPortals,
     backgroundMountRevision,
     pendingStartupByTabId,
+    pairedRuntimeParkingEnvironmentIds,
     renderedActiveWorktreeId,
     tabsByWorktree,
     terminalParkingEnabled,

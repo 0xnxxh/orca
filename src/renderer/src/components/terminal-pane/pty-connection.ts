@@ -13,6 +13,7 @@ import { getWorktreeMapFromState } from '@/store/selectors'
 import { parseWorkspaceKey } from '../../../../shared/workspace-scope'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import { isEphemeralSetupTerminalWorktreeId } from '../../../../shared/ephemeral-setup-terminal-worktree-id'
+import { TERMINAL_PAIRED_PARKING_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
 import { TerminalKittyKeyboardModeTracker } from '../../../../shared/terminal-kitty-keyboard-mode-tracker'
 import { isRuntimeOwnedSshTargetId, parseExecutionHostId } from '../../../../shared/execution-host'
 import { createTerminalZeroDimensionsMessage } from '../../../../shared/terminal-zero-dimensions-diagnostic'
@@ -766,6 +767,17 @@ function isSshSessionExpiredError(err: unknown): boolean {
 
 function isRemoteRuntimePtyId(ptyId: string | null | undefined): boolean {
   return typeof ptyId === 'string' && ptyId.startsWith(REMOTE_PTY_ID_PREFIX)
+}
+
+function canRestorePairedParkedTerminal(ptyId: string): boolean {
+  const environmentId = getRemoteRuntimePtyEnvironmentId(ptyId)
+  return (
+    environmentId !== null &&
+    useAppStore
+      .getState()
+      .runtimeStatusByEnvironmentId.get(environmentId)
+      ?.status?.capabilities?.includes(TERMINAL_PAIRED_PARKING_RUNTIME_CAPABILITY) === true
+  )
 }
 
 function consumeInactiveForegroundImmediateBudget(dataLength: number): boolean {
@@ -2587,7 +2599,7 @@ export function connectPanePty(
           breadcrumbIdentity: {
             tabId: deps.tabId,
             worktreeId: deps.worktreeId,
-            ptyId: transport.getPtyId()
+            ptyId
           },
           shouldRefreshViewportSynchronously: shouldRefreshForegroundSynchronously
         })
@@ -7690,20 +7702,30 @@ export function connectPanePty(
       // the probe; a later in-place reconnect on this same mount must not buy a
       // second timeout before the relay paint.
       const revealFollowsTerminalPark =
-        mountFollowsTerminalPark && connectResult?.isReattach === true
+        mountFollowsTerminalPark &&
+        (connectResult?.isReattach === true || isRemoteRuntimePtyId(ptyId))
       mountFollowsTerminalPark = false
-      // Why: a relay restart empties the replay buffer, but main's model may
-      // still hold the session — a park-reveal probes it even with no replay
-      // so the reveal is never blank when main has content. Prefetched (before
-      // the payload task) so the coordinator route covers the paint.
-      let prefetchedSshModelSnapshot: PtyBufferSnapshot | null = null
-      if (revealFollowsTerminalPark && !hasStructuralReplay) {
-        prefetchedSshModelSnapshot = await fetchSshMainModelReattachSnapshot()
+      // Why: ordinary parking destroys xterm. Rebuild from the authoritative
+      // host snapshot before releasing queued live bytes; null falls back to
+      // the subscribe screen without keeping the old xterm mounted.
+      let prefetchedParkModelSnapshot: PtyBufferSnapshot | null = null
+      if (revealFollowsTerminalPark && (!hasStructuralReplay || isRemoteRuntimePtyId(ptyId))) {
+        if (isRemoteRuntimePtyId(ptyId)) {
+          try {
+            prefetchedParkModelSnapshot = await serializeHiddenOutputSnapshot(ptyId, {
+              scrollbackRows: resolveHiddenRestoreScrollbackRows(pane.terminal.options.scrollback)
+            })
+          } catch {
+            prefetchedParkModelSnapshot = null
+          }
+        } else {
+          prefetchedParkModelSnapshot = await fetchSshMainModelReattachSnapshot()
+        }
         if (!isCurrentReattachPayload()) {
           return false
         }
       }
-      let reattachPayloadApplied = !hasStructuralReplay && prefetchedSshModelSnapshot === null
+      let reattachPayloadApplied = !hasStructuralReplay && prefetchedParkModelSnapshot === null
       const applyReattachPayload = async (): Promise<void> => {
         if (!isCurrentReattachPayload()) {
           return
@@ -7744,13 +7766,14 @@ export function connectPanePty(
               window.api.pty.ackColdRestore(ptyId)
             }
           }
-        } else if (connectResult?.replay || prefetchedSshModelSnapshot) {
+        } else if (connectResult?.replay || prefetchedParkModelSnapshot) {
           // Why scoped to a park-reveal: the 100KiB relay tail loses scrollback the
           // model still holds, but an in-place reattach (network reconnect, wake,
           // reload) already has that replay in hand, so probing would only delay its
           // paint by the timeout. Memoized, so this is never a second probe.
           const modelSnapshot = revealFollowsTerminalPark
-            ? (prefetchedSshModelSnapshot ?? (await fetchSshMainModelReattachSnapshot()))
+            ? (prefetchedParkModelSnapshot ??
+              (isRemoteRuntimePtyId(ptyId) ? null : await fetchSshMainModelReattachSnapshot()))
             : null
           if (!isCurrentReattachPayload()) {
             return
@@ -7876,7 +7899,7 @@ export function connectPanePty(
             schedulePendingStartupCommandDelivery()
           }
         }
-        if (hasStructuralReplay || prefetchedSshModelSnapshot) {
+        if (hasStructuralReplay || prefetchedParkModelSnapshot) {
           await waitForTerminalReplayWritesParsed(pane.terminal)
           if (!isCurrentReattachPayload()) {
             return
@@ -7930,7 +7953,7 @@ export function connectPanePty(
           window.api.pty.signal(reattachPtyId, 'SIGWINCH')
         }
       }
-      if (hasStructuralReplay || prefetchedSshModelSnapshot) {
+      if (hasStructuralReplay || prefetchedParkModelSnapshot) {
         await structuralReplayCoordinator.run(applyReattachPayload, {
           shouldRestore: isCurrentReattachPayload,
           afterRestore: fitAfterReattachRestore
@@ -8345,9 +8368,17 @@ export function connectPanePty(
     const legacyAttachOnlyPtyId = isLegacyWorkerAutomaticResumeBlocked()
       ? candidateReattachSessionId
       : null
+    const pairedParkedReattachSessionId =
+      mountFollowsTerminalPark &&
+      candidateReattachSessionId &&
+      isRemoteRuntimePtyId(candidateReattachSessionId) &&
+      canRestorePairedParkedTerminal(candidateReattachSessionId)
+        ? candidateReattachSessionId
+        : null
     const deferredReattachSessionId = legacyAttachOnlyPtyId
       ? null
       : (runtimeHostPtyWakeHint ??
+        pairedParkedReattachSessionId ??
         (candidateReattachSessionId &&
         !isRemoteRuntimePtyId(candidateReattachSessionId) &&
         !candidateHasEagerBuffer &&

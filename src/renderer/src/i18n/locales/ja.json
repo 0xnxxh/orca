@@ -149,7 +149,7 @@
       },
       "webPreloadApi": {
         "aiVaultUnavailableForHost": "この実行ホストでは Agent セッション履歴を使用できません。",
-        "runtimeEnvironmentManuallyDisconnected": "Runtime environment is manually disconnected."
+        "runtimeEnvironmentManuallyDisconnected": "ランタイム環境は手動で切断されています。"
       },
       "web": {
         "preload": {

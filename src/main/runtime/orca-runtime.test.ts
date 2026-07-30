@@ -8068,6 +8068,38 @@ describe('OrcaRuntimeService', () => {
       expect(trackerEntries.get('pty-1')?.commandCodeDetector).toBeNull()
     })
 
+    it('forwards facts over the shared client-event stream without a desktop renderer', () => {
+      const runtime = new OrcaRuntimeService(store)
+      const events: RuntimeClientEvent[] = []
+      runtime.syncWindowGraph(HEADLESS_RUNTIME_WINDOW_ID, { tabs: [], leaves: [] })
+      const unsubscribe = runtime.onClientEvent((event) => events.push(event))
+
+      runtime.onPtyData('pty-remote', '\x1b]0;Codex working\x07\x07', 100)
+
+      expect(events).toEqual([
+        {
+          type: 'terminalSideEffects',
+          batch: {
+            ptyId: 'pty-remote',
+            seq: 19,
+            facts: [
+              {
+                kind: 'title',
+                normalizedTitle: 'Codex working',
+                rawTitle: 'Codex working'
+              },
+              { kind: 'agent-working' },
+              { kind: 'bell' }
+            ]
+          }
+        }
+      ])
+
+      unsubscribe()
+      runtime.onPtyData('pty-remote', '\x07', 101)
+      expect(events).toHaveLength(1)
+    })
+
     it('emits one batched event per chunk with facts in byte order and attribution', () => {
       const { runtime, batches } = createSideEffectRuntime()
       syncSinglePty(runtime)
@@ -8453,6 +8485,62 @@ describe('OrcaRuntimeService', () => {
         cwd: '/projects/restored',
         seq: 900,
         source: 'headless'
+      })
+    })
+
+    it('prefers provider history over a partial headless mirror for requested snapshots', async () => {
+      const { runtime } = createSideEffectRuntime()
+      const serializeProviderBuffer = vi.fn().mockResolvedValue({
+        data: 'authoritative screen\r\n',
+        scrollbackAnsi: 'deep provider history\r\n',
+        cols: 120,
+        rows: 40,
+        seq: 900,
+        source: 'headless'
+      })
+      runtime.setPtyController({
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => null,
+        serializeProviderBuffer,
+        hasRendererSerializer: () => false
+      })
+      syncSinglePty(runtime)
+      runtime.onPtyData('pty-1', 'partial current screen\r\n', 100)
+
+      await expect(
+        runtime.serializeAuthoritativeTerminalBuffer('pty-1', { scrollbackRows: 5000 })
+      ).resolves.toMatchObject({
+        data: 'authoritative screen\r\n',
+        scrollbackAnsi: 'deep provider history\r\n',
+        seq: 900
+      })
+      expect(serializeProviderBuffer).toHaveBeenCalledWith('pty-1', {
+        scrollbackRows: 5000
+      })
+    })
+
+    it('falls back to the available mirror when authoritative provider history is unavailable', async () => {
+      const { runtime } = createSideEffectRuntime()
+      const serializeProviderBuffer = vi.fn().mockResolvedValue(null)
+      runtime.setPtyController({
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => null,
+        serializeProviderBuffer,
+        hasRendererSerializer: () => false
+      })
+      syncSinglePty(runtime)
+      runtime.onPtyData('pty-1', 'partial current screen\r\n', 100)
+
+      await expect(
+        runtime.serializeAuthoritativeTerminalBuffer('pty-1', { scrollbackRows: 5000 })
+      ).resolves.toMatchObject({
+        data: expect.stringContaining('partial current screen'),
+        source: 'headless'
+      })
+      expect(serializeProviderBuffer).toHaveBeenCalledWith('pty-1', {
+        scrollbackRows: 5000
       })
     })
 

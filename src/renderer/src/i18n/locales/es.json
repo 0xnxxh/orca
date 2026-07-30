@@ -149,7 +149,7 @@
       },
       "webPreloadApi": {
         "aiVaultUnavailableForHost": "El historial de sesiones de Agents no está disponible para este host de ejecución.",
-        "runtimeEnvironmentManuallyDisconnected": "Runtime environment is manually disconnected."
+        "runtimeEnvironmentManuallyDisconnected": "El entorno de ejecución se ha desconectado manualmente."
       },
       "web": {
         "preload": {

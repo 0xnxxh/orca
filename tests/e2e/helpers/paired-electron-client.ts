@@ -100,32 +100,41 @@ export async function launchPairedWebClient(
     throw new Error('HUB runtime did not provide a paired web client URL')
   }
   const clientUrl = createPairedWebClientUrl(offer.webClientUrl, options)
-  const pagePromise = hubApp.waitForEvent('window')
-  await hubApp.evaluate(
-    async ({ BrowserWindow }, { partition, url }) => {
-      const clientWindow = new BrowserWindow({
-        height: 1200,
-        show: false,
-        width: 1440,
-        webPreferences: {
-          contextIsolation: true,
-          nodeIntegration: false,
-          partition,
-          sandbox: true
-        }
-      })
-      await clientWindow.loadURL(url)
-    },
-    {
-      partition: `e2e-nested-runtime-web-${randomUUID()}`,
-      url: clientUrl
+  let page: Page | undefined
+  const pagePromise = hubApp.waitForEvent('window').then((candidate) => (page = candidate))
+  try {
+    await hubApp.evaluate(
+      async ({ BrowserWindow }, { partition, url }) => {
+        const clientWindow = new BrowserWindow({
+          height: 1200,
+          show: false,
+          width: 1440,
+          webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            partition,
+            sandbox: true
+          }
+        })
+        await clientWindow.loadURL(url).catch((error) => {
+          clientWindow.destroy()
+          throw error
+        })
+      },
+      {
+        partition: `e2e-nested-runtime-web-${randomUUID()}`,
+        url: clientUrl
+      }
+    )
+    page = await pagePromise
+    if (options.waitForWorkspace !== false) {
+      await page.locator('[data-worktree-sidebar]').waitFor({ state: 'visible', timeout: 30_000 })
     }
-  )
-  const page = await pagePromise
-  if (options.waitForWorkspace !== false) {
-    await page.locator('[data-worktree-sidebar]').waitFor({ state: 'visible', timeout: 30_000 })
+    return { page, dispose: () => page?.close() ?? Promise.resolve() }
+  } catch (error) {
+    await page?.close().catch(() => undefined)
+    throw error
   }
-  return { page, dispose: () => page.close() }
 }
 
 export async function launchPairedElectronClient(

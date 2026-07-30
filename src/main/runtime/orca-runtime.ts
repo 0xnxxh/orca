@@ -438,6 +438,7 @@ import {
   REMOTE_RUNTIME_SHARED_CONTROL_CAPABILITY,
   RUNTIME_CAPABILITIES,
   RUNTIME_PROTOCOL_VERSION,
+  TERMINAL_PAIRED_PARKING_RUNTIME_CAPABILITY,
   type RuntimeCapability
 } from '../../shared/protocol-version'
 import {
@@ -1442,6 +1443,20 @@ type ProviderBufferAcquisition = {
   generation: number
   scrollbackRows: number
   promise: Promise<PtyProviderBufferSnapshot | null>
+}
+
+type RuntimeTerminalBufferSnapshot = {
+  data: string
+  cols: number
+  rows: number
+  seq?: number
+  cwd?: string | null
+  lastTitle?: string
+  source?: 'headless' | 'renderer'
+  oscLinks?: TerminalOscLinkRange[]
+  alternateScreen?: boolean
+  scrollbackAnsi?: string
+  pendingEscapeTailAnsi?: string
 }
 
 type HeadlessSeedMetadata = {
@@ -3027,6 +3042,7 @@ export class OrcaRuntimeService {
   private readonly onPtyStopped: ((ptyId: string) => void) | null
   private readonly onTerminalAgentStatus: ((event: RuntimeTerminalAgentStatusEvent) => void) | null
   private readonly onTerminalSideEffects: ((batch: TerminalSideEffectBatch) => void) | null
+  private terminalSideEffectLocalConsumerAvailable = false
   private terminalSideEffectConsumerAvailable = false
   private readonly getAgentStatusSnapshotFn: (() => AgentStatusIpcPayload[]) | null
   private readonly getAgentProviderSessionSnapshotFn: (() => AgentStatusIpcPayload[]) | null
@@ -4502,7 +4518,9 @@ export class OrcaRuntimeService {
         (capability !== 'browser.screencast.v1' || canBrowse) &&
         // Why: the nested-runtime E2E needs a real legacy transport without maintaining an old binary fixture.
         (process.env.ORCA_E2E_DISABLE_RUNTIME_SHARED_CONTROL !== '1' ||
-          capability !== REMOTE_RUNTIME_SHARED_CONTROL_CAPABILITY)
+          capability !== REMOTE_RUNTIME_SHARED_CONTROL_CAPABILITY) &&
+        (process.env.ORCA_E2E_DISABLE_PAIRED_TERMINAL_PARKING !== '1' ||
+          capability !== TERMINAL_PAIRED_PARKING_RUNTIME_CAPABILITY)
     )
     if (hasOffscreen) {
       capabilities.push(BROWSER_HEADLESS_RUNTIME_CAPABILITY)
@@ -4568,8 +4586,10 @@ export class OrcaRuntimeService {
 
   onClientEvent(listener: (event: RuntimeClientEvent) => void): () => void {
     this.clientEventListeners.add(listener)
+    this.refreshTerminalSideEffectConsumerAvailability()
     return () => {
       this.clientEventListeners.delete(listener)
+      this.refreshTerminalSideEffectConsumerAvailability()
     }
   }
 
@@ -9064,7 +9084,7 @@ export class OrcaRuntimeService {
   /** Record one derived side-effect fact: batched per chunk while applying
    *  bytes, emitted immediately for between-chunk facts (stale-title timer). */
   private recordTerminalSideEffectFact(ptyId: string, fact: TerminalSideEffectFact): void {
-    if (!this.onTerminalSideEffects || !this.terminalSideEffectConsumerAvailable) {
+    if (!this.terminalSideEffectConsumerAvailable) {
       return
     }
     const entry = this.ptyTitleTrackersByPtyId.get(ptyId)
@@ -9080,11 +9100,7 @@ export class OrcaRuntimeService {
     facts: TerminalSideEffectFact[],
     options: { replay?: boolean } = {}
   ): void {
-    if (
-      !this.onTerminalSideEffects ||
-      !this.terminalSideEffectConsumerAvailable ||
-      facts.length === 0
-    ) {
+    if (!this.terminalSideEffectConsumerAvailable || facts.length === 0) {
       return
     }
     const batch: TerminalSideEffectBatch = {
@@ -9094,10 +9110,15 @@ export class OrcaRuntimeService {
       ...(options.replay ? { replay: true } : {}),
       ...this.resolveTerminalSideEffectAttribution(ptyId)
     }
-    try {
-      this.onTerminalSideEffects(batch)
-    } catch (err) {
-      console.error('[runtime] terminal side-effect listener threw', { ptyId, err })
+    if (this.terminalSideEffectLocalConsumerAvailable) {
+      try {
+        this.onTerminalSideEffects?.(batch)
+      } catch (err) {
+        console.error('[runtime] terminal side-effect listener threw', { ptyId, err })
+      }
+    }
+    if (this.clientEventListeners.size > 0) {
+      this.emitClientEvent({ type: 'terminalSideEffects', batch })
     }
   }
 
@@ -9425,7 +9446,13 @@ export class OrcaRuntimeService {
   }
 
   private setTerminalSideEffectConsumerAvailable(available: boolean): void {
-    const nextAvailable = available && this.onTerminalSideEffects !== null
+    this.terminalSideEffectLocalConsumerAvailable = available && this.onTerminalSideEffects !== null
+    this.refreshTerminalSideEffectConsumerAvailability()
+  }
+
+  private refreshTerminalSideEffectConsumerAvailability(): void {
+    const nextAvailable =
+      this.terminalSideEffectLocalConsumerAvailable || this.clientEventListeners.size > 0
     if (nextAvailable === this.terminalSideEffectConsumerAvailable) {
       return
     }
@@ -9863,19 +9890,18 @@ export class OrcaRuntimeService {
   serializeTerminalBuffer(
     ptyId: string,
     opts: { scrollbackRows?: number } = {}
-  ): Promise<{
-    data: string
-    cols: number
-    rows: number
-    seq?: number
-    cwd?: string | null
-    lastTitle?: string
-    source?: 'headless' | 'renderer'
-    oscLinks?: TerminalOscLinkRange[]
-    alternateScreen?: boolean
-    scrollbackAnsi?: string
-    pendingEscapeTailAnsi?: string
-  } | null> {
+  ): Promise<RuntimeTerminalBufferSnapshot | null> {
+    return this.serializeTerminalBufferFromAvailableState(ptyId, opts)
+  }
+
+  async serializeAuthoritativeTerminalBuffer(
+    ptyId: string,
+    opts: { scrollbackRows?: number } = {}
+  ): Promise<RuntimeTerminalBufferSnapshot | null> {
+    const providerSnapshot = await this.serializeProviderTerminalBuffer(ptyId, opts)
+    if (providerSnapshot) {
+      return providerSnapshot
+    }
     return this.serializeTerminalBufferFromAvailableState(ptyId, opts)
   }
 

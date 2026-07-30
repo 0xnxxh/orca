@@ -149,7 +149,7 @@
       },
       "webPreloadApi": {
         "aiVaultUnavailableForHost": "이 실행 호스트에서는 Agent 세션 기록을 사용할 수 없습니다.",
-        "runtimeEnvironmentManuallyDisconnected": "Runtime environment is manually disconnected."
+        "runtimeEnvironmentManuallyDisconnected": "런타임 환경이 수동으로 연결 해제되었습니다."
       },
       "web": {
         "preload": {

@@ -69,7 +69,12 @@ test('recovers an ACK-starved stream from an isolated headless Orca host @headfu
 }) => {
   test.setTimeout(180_000)
   const host = await launchHeadlessPairedRuntimeHost()
-  const client = await launchPairedWebClient(host.app, host.offer, { waitForWorkspace: false })
+  const client = await launchPairedWebClient(host.app, host.offer, {
+    waitForWorkspace: false
+  }).catch(async (error) => {
+    await host.dispose()
+    throw error
+  })
   let terminal: string | null = null
   try {
     await host.client.call('repo.add', { path: testRepoPath, kind: 'git' })

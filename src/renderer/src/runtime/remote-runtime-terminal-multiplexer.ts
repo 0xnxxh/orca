@@ -17,7 +17,8 @@ import { unwrapRuntimeRpcResult } from './runtime-rpc-client'
 import { getRuntimeEnvironmentRevision } from './runtime-environment-revision'
 import {
   TERMINAL_MULTIPLEX_ACK_BATCH_BYTES,
-  TERMINAL_MULTIPLEX_ACK_FLUSH_MS
+  TERMINAL_MULTIPLEX_ACK_FLUSH_MS,
+  TERMINAL_MULTIPLEX_STREAM_LIMIT_ERROR
 } from '../../../shared/terminal-multiplex-flow-control'
 import {
   createRemoteTerminalStreamWatchdog,
@@ -62,7 +63,7 @@ export type RemoteRuntimeMultiplexedTerminalCallbacks = {
   onDriverChanged?: (
     driver: { kind: 'idle' } | { kind: 'desktop' } | { kind: 'mobile'; clientId: string }
   ) => void
-  onTransportClose?: (event: { recoverable: boolean }) => void
+  onTransportClose?: (event: { recoverable: boolean; retryWithBackoff?: boolean }) => void
 }
 
 export type RemoteRuntimeMultiplexedTerminal = {
@@ -106,6 +107,7 @@ type RemoteRuntimeMultiplexedTerminalState = {
   resyncPendingSend: boolean
   resyncTimer: ReturnType<typeof setTimeout> | null
   resyncAttempts: number
+  capacityRejected: boolean
   watchdog: RemoteTerminalStreamWatchdog
 }
 
@@ -282,6 +284,7 @@ class RemoteRuntimeTerminalMultiplexer {
       resyncPendingSend: false,
       resyncTimer: null,
       resyncAttempts: 0,
+      capacityRejected: false,
       watchdog: createRemoteTerminalStreamWatchdog((stall) => {
         if (!e2eDisableRemoteTerminalStallRecovery) {
           recordRendererCrashBreadcrumb('remote_terminal_stream_stall_recovery', {
@@ -476,14 +479,25 @@ class RemoteRuntimeTerminalMultiplexer {
       clearResyncTimer(stream)
       rejectPendingSnapshotRequest(stream, 'Remote terminal stream ended.')
       this.streams.delete(event.streamId)
-      stream.callbacks.onEnd?.()
+      if (stream.capacityRejected) {
+        if (stream.callbacks.onTransportClose) {
+          stream.callbacks.onTransportClose({ recoverable: true, retryWithBackoff: true })
+        } else {
+          stream.callbacks.onError?.(TERMINAL_MULTIPLEX_STREAM_LIMIT_ERROR)
+        }
+      } else {
+        stream.callbacks.onEnd?.()
+      }
       this.closeIfIdle()
     } else if (event.type === 'error') {
-      clearSnapshot(stream)
-      rejectPendingSnapshotRequest(
-        stream,
+      const message =
         typeof event.message === 'string' ? event.message : 'Remote terminal stream failed.'
-      )
+      if (message === TERMINAL_MULTIPLEX_STREAM_LIMIT_ERROR) {
+        stream.capacityRejected = true
+        return
+      }
+      clearSnapshot(stream)
+      rejectPendingSnapshotRequest(stream, message)
       // Why: the paired binary Error frame can be dropped under backpressure;
       // this reliable event must also dispatch or release the resync gate, and
       // must never disarm the watchdog while leaving the gate shut.
@@ -493,9 +507,7 @@ class RemoteRuntimeTerminalMultiplexer {
         clearResyncTimer(stream)
         stream.resyncInFlight = false
       }
-      stream.callbacks.onError?.(
-        typeof event.message === 'string' ? event.message : 'Remote terminal stream failed.'
-      )
+      stream.callbacks.onError?.(message)
     } else if (event.type === 'fit-override-changed') {
       if (
         (event.mode !== 'mobile-fit' &&
@@ -729,11 +741,16 @@ class RemoteRuntimeTerminalMultiplexer {
       return
     }
     if (frame.opcode === TerminalStreamOpcode.Error) {
+      const message = decodeTerminalStreamText(frame.payload)
+      if (message === TERMINAL_MULTIPLEX_STREAM_LIMIT_ERROR) {
+        stream.capacityRejected = true
+        return
+      }
       clearSnapshot(stream)
       const pendingSnapshotRequest = stream.pendingSnapshotRequest
       if (pendingSnapshotRequest) {
         clearPendingSnapshotRequest(stream)
-        pendingSnapshotRequest.reject(new Error(decodeTerminalStreamText(frame.payload)))
+        pendingSnapshotRequest.reject(new Error(message))
         this.sendDeferredResyncSnapshot(stream)
         return
       }
@@ -741,7 +758,7 @@ class RemoteRuntimeTerminalMultiplexer {
       clearResyncTimer(stream)
       stream.resyncInFlight = false
       stream.resyncPendingSend = false
-      stream.callbacks.onError?.(decodeTerminalStreamText(frame.payload))
+      stream.callbacks.onError?.(message)
     }
   }
 

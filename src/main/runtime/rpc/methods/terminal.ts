@@ -56,8 +56,10 @@ import {
   TERMINAL_MULTIPLEX_ACK_STREAM_MAX_WINDOW_BYTES,
   TERMINAL_MULTIPLEX_ACK_TOTAL_INITIAL_WINDOW_BYTES,
   TERMINAL_MULTIPLEX_ACK_TOTAL_MAX_WINDOW_BYTES,
-  TERMINAL_MULTIPLEX_MAX_STREAMS_PER_CONNECTION,
+  TERMINAL_MULTIPLEX_MAX_ACTIVE_STREAMS_PER_CONNECTION,
+  TERMINAL_MULTIPLEX_MAX_PENDING_PTY_WAITS_PER_CONNECTION,
   TERMINAL_MULTIPLEX_PENDING_MAX_BYTES,
+  TERMINAL_MULTIPLEX_STREAM_LIMIT_ERROR,
   TERMINAL_OUTPUT_BATCH_MAX_BYTES
 } from '../../../../shared/terminal-multiplex-flow-control'
 import { drainTerminalMultiplexRoundRobin } from '../terminal-multiplex-round-robin'
@@ -532,11 +534,17 @@ async function serializeBudgetedRequestedSnapshot(
 ): Promise<SerializedSnapshot> {
   const requestedRows = scrollbackRows ?? 0
   for (const rows of requestedSnapshotScrollbackCandidates(scrollbackRows)) {
-    const serialized = await runtime.serializeTerminalBuffer(ptyId, { scrollbackRows: rows })
+    const serialized = await runtime.serializeAuthoritativeTerminalBuffer(ptyId, {
+      scrollbackRows: rows
+    })
     if (!serialized) {
       return null
     }
-    const data = (serialized.scrollbackAnsi ?? '') + serialized.data
+    const scrollbackAnsi =
+      'scrollbackAnsi' in serialized && typeof serialized.scrollbackAnsi === 'string'
+        ? serialized.scrollbackAnsi
+        : ''
+    const data = scrollbackAnsi + serialized.data
     const overByteBudget = terminalStreamByteLengthExceeds(data, REQUESTED_SNAPSHOT_BYTE_BUDGET)
     if (!overByteBudget || rows === 0) {
       return {
@@ -2068,14 +2076,6 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         const request = parsed.data
         detachStream(request.streamId, false)
         cancelPendingPtyWaits(request.streamId)
-        if (
-          streams.size + pendingPtyWaitControllers.size >=
-          TERMINAL_MULTIPLEX_MAX_STREAMS_PER_CONNECTION
-        ) {
-          sendStreamError(request.streamId, 'terminal_stream_limit_exceeded')
-          emit({ type: 'end', streamId: request.streamId })
-          return
-        }
 
         const isMobile = request.client?.type === 'mobile'
         let leaf: { ptyId: string | null } | null
@@ -2088,6 +2088,14 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           return
         }
         if (!leaf?.ptyId && request.client) {
+          if (
+            pendingPtyWaitControllers.size >=
+            TERMINAL_MULTIPLEX_MAX_PENDING_PTY_WAITS_PER_CONNECTION
+          ) {
+            sendStreamError(request.streamId, TERMINAL_MULTIPLEX_STREAM_LIMIT_ERROR)
+            emit({ type: 'end', streamId: request.streamId })
+            return
+          }
           // Why: a never-mounted tab has no graph leaf to await; mounting the exact tab attaches its PTY without activating the worktree.
           runtime.requestRendererTerminalTabMount(request.terminal)
           const waitController = new AbortController()
@@ -2138,6 +2146,11 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
         }
         // Why: a competing subscribe may own this streamId after the PTY await; detach it so an orphaned view subscriber can't silence the model responder (terminal-query-authority.md).
         detachStream(request.streamId, false)
+        if (streams.size >= TERMINAL_MULTIPLEX_MAX_ACTIVE_STREAMS_PER_CONNECTION) {
+          sendStreamError(request.streamId, TERMINAL_MULTIPLEX_STREAM_LIMIT_ERROR)
+          emit({ type: 'end', streamId: request.streamId })
+          return
+        }
 
         const ptyId = leaf.ptyId
         const stream: TerminalMultiplexStream = {

@@ -29,7 +29,8 @@ export type HeadlessPairedRuntimeHost = {
 }
 
 async function readPairingOffer(app: ElectronApplication): Promise<RuntimeDesktopPairingOffer> {
-  const stdout = app.process().stdout
+  const child = app.process()
+  const stdout = child.stdout
   if (!stdout) {
     throw new Error('Headless runtime stdout is unavailable')
   }
@@ -42,6 +43,15 @@ async function readPairingOffer(app: ElectronApplication): Promise<RuntimeDeskto
     const cleanup = (): void => {
       clearTimeout(timeout)
       stdout.off('data', onData)
+      child.off('close', onClose)
+    }
+    const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
+      cleanup()
+      reject(
+        new Error(
+          `Headless runtime exited before pairing readiness (code=${code ?? 'none'}, signal=${signal ?? 'none'})`
+        )
+      )
     }
     const onData = (chunk: Buffer): void => {
       buffered += chunk.toString()
@@ -69,42 +79,47 @@ async function readPairingOffer(app: ElectronApplication): Promise<RuntimeDeskto
       }
     }
     stdout.on('data', onData)
+    child.on('close', onClose)
+    if (child.exitCode !== null || child.signalCode !== null) {
+      onClose(child.exitCode, child.signalCode)
+    }
   })
 }
 
 export async function launchHeadlessPairedRuntimeHost(): Promise<HeadlessPairedRuntimeHost> {
   const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'orca-e2e-headless-paired-'))
-  writeFileSync(
-    path.join(userDataDir, 'orca-data.json'),
-    `${JSON.stringify(getE2ECompletedOnboardingProfile(), null, 2)}\n`
-  )
-  const { ELECTRON_RUN_AS_NODE: _unused, ...cleanEnv } = process.env
-  void _unused
-  const isolation = createElectronHomeIsolation({
-    inheritedEnv: cleanEnv,
-    launchEnv: {
-      NODE_ENV: 'development',
-      ORCA_E2E_ENFORCE_SINGLE_INSTANCE_LOCK: '1',
-      ORCA_E2E_HEADLESS: '1'
-    },
-    extraEnv: {},
-    userDataDir,
-    codexRealHomeEnabled: false
-  })
-  const mainPath = path.join(process.cwd(), 'out', 'main', 'index.js')
-  const app = await electron.launch({
-    args: [
-      ...getOrcaElectronLaunchArgs(mainPath, false),
-      '--serve',
-      '--serve-json',
-      '--serve-port',
-      '0',
-      '--serve-pairing-address',
-      '127.0.0.1'
-    ],
-    env: isolation.env
-  })
+  let app: ElectronApplication | undefined
   try {
+    writeFileSync(
+      path.join(userDataDir, 'orca-data.json'),
+      `${JSON.stringify(getE2ECompletedOnboardingProfile(), null, 2)}\n`
+    )
+    const { ELECTRON_RUN_AS_NODE: _unused, ...cleanEnv } = process.env
+    void _unused
+    const isolation = createElectronHomeIsolation({
+      inheritedEnv: cleanEnv,
+      launchEnv: {
+        NODE_ENV: 'development',
+        ORCA_E2E_ENFORCE_SINGLE_INSTANCE_LOCK: '1',
+        ORCA_E2E_HEADLESS: '1'
+      },
+      extraEnv: {},
+      userDataDir,
+      codexRealHomeEnabled: false
+    })
+    const mainPath = path.join(process.cwd(), 'out', 'main', 'index.js')
+    app = await electron.launch({
+      args: [
+        ...getOrcaElectronLaunchArgs(mainPath, false),
+        '--serve',
+        '--serve-json',
+        '--serve-port',
+        '0',
+        '--serve-pairing-address',
+        '127.0.0.1'
+      ],
+      env: isolation.env
+    })
     assertElectronResolvedIsolatedHome(
       await app.evaluate(({ app: electronApp }) => electronApp.getPath('home')),
       isolation
@@ -121,9 +136,14 @@ export async function launchHeadlessPairedRuntimeHost(): Promise<HeadlessPairedR
       }
     }
   } catch (error) {
-    await closeElectronAppForE2E(app)
-    await cleanupE2EDaemons(userDataDir)
-    rmSync(userDataDir, { recursive: true, force: true })
+    try {
+      if (app) {
+        await closeElectronAppForE2E(app)
+      }
+      await cleanupE2EDaemons(userDataDir)
+    } finally {
+      rmSync(userDataDir, { recursive: true, force: true })
+    }
     throw error
   }
 }
