@@ -17,7 +17,7 @@ test('ordinary-parks paired terminals and restores authoritative host scrollback
     if (!active) {
       throw new Error('Paired retention host has no active seeded worktree')
     }
-    return { repoId: active.repoId, worktreeIds: worktrees.map((worktree) => worktree.id) }
+    return { activeWorktreeId: active.id, repoId: active.repoId }
   })
   const offer = await createRuntimeDesktopPairingOffer(orcaPage)
   const client = await launchPairedWebClient(electronApp, offer, {
@@ -27,7 +27,7 @@ test('ordinary-parks paired terminals and restores authoritative host scrollback
     await runPairedTerminalParkingOracle(
       client.page,
       {
-        fallbackWorktreeId: seed.worktreeIds[0]!,
+        fallbackWorktreeId: seed.activeWorktreeId,
         repoId: seed.repoId
       },
       { hostPage: orcaPage }

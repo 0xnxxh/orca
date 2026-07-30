@@ -1,7 +1,10 @@
 import type { Page } from '@stablyai/playwright-test'
 import type { RuntimeTerminalRead } from '../../../src/shared/runtime-types'
 import { TERMINAL_PAIRED_PARKING_RUNTIME_CAPABILITY } from '../../../src/shared/protocol-version'
-import { toWebTerminalSurfaceTabId } from '../../../src/shared/terminal-surface-id'
+import {
+  toHostSessionTabId,
+  toWebTerminalSurfaceTabId
+} from '../../../src/shared/terminal-surface-id'
 import {
   readPairedRetentionSample,
   startRendererLagProbe
@@ -15,11 +18,6 @@ const MIN_STAGED_BUFFER_CELLS = 1_000_000
 const MAX_RETAINED_CELL_FRACTION = 0.45
 const MAX_EVICTION_LAG_MS = 500
 const MAX_HEAP_GROWTH_BYTES = 16 * 1024 * 1024
-
-type PairedTerminalParkingSeed = {
-  fallbackWorktreeId: string
-  repoId: string
-}
 
 type RemoteTab = {
   marker: string
@@ -44,7 +42,7 @@ async function callRuntime<TResult>(page: Page, method: string, params: unknown)
 
 export async function runPairedTerminalParkingOracle(
   page: Page,
-  seed: PairedTerminalParkingSeed,
+  seed: { fallbackWorktreeId: string; repoId: string },
   options: { hostPage?: Page } = {}
 ): Promise<void> {
   const fixture = createPairedTerminalParkingFixture()
@@ -302,7 +300,7 @@ async function expectHostTerminalsUnmounted(
             activeWorktreeId: window.__store?.getState().activeWorktreeId,
             mountedCount: tabIds.filter((tabId) => window.__paneManagers?.has(tabId)).length
           }),
-          remoteTabs.map(({ tabId }) => tabId)
+          remoteTabs.map(({ tabId }) => toHostSessionTabId(tabId))
         ),
       { timeout: 30_000 }
     )
