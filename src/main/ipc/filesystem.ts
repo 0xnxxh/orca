@@ -30,7 +30,7 @@ import type {
 } from '../../shared/types'
 import type { GitHistoryOptions, GitHistoryResult } from '../../shared/git-history'
 import type { SshMutationExpectation } from '../../shared/ssh-types'
-import { compareFileNames } from '../../shared/file-name-sort'
+import { sortDirEntries } from '../../shared/file-name-sort'
 import { assertSshMutationExpectation } from '../ssh/ssh-connection-generation'
 import {
   buildRgArgs,
@@ -513,7 +513,9 @@ export function registerFilesystemHandlers(
         if (args.connectionId) {
           throwSite = 'ssh-provider'
           const provider = requireSshFilesystemProvider(args.connectionId)
-          return await provider.readDir(args.dirPath)
+          // Why: re-sort locally — the remote relay may be an older build with
+          // lexicographic ordering.
+          return sortDirEntries(await provider.readDir(args.dirPath))
         }
         throwSite = 'authorize'
         const dirPath = await resolveAuthorizedPath(args.dirPath, store)
@@ -528,12 +530,7 @@ export function registerFilesystemHandlers(
             isSymlink: entry.isSymbolicLink()
           }))
         )
-        return mapped.sort((a, b) => {
-          if (a.isDirectory !== b.isDirectory) {
-            return a.isDirectory ? -1 : 1
-          }
-          return compareFileNames(a.name, b.name)
-        })
+        return sortDirEntries(mapped)
       } catch (error: unknown) {
         recordCrashBreadcrumb(
           'fs_readdir_error',
