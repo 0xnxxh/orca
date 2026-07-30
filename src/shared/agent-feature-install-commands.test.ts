@@ -17,22 +17,22 @@ import {
 describe('agent feature skill commands', () => {
   it('builds a global install command by default', () => {
     expect(buildAgentFeatureSkillInstallCommand(['orca-cli'])).toBe(
-      'npx skills add https://github.com/stablyai/orca --skill orca-cli --global'
+      'npx skills@1.5.21 add https://github.com/stablyai/orca --skill orca-cli --global'
     )
   })
 
   it('drops --global when installing locally', () => {
     expect(buildAgentFeatureSkillInstallCommand(['orca-cli'], { global: false })).toBe(
-      'npx skills add https://github.com/stablyai/orca --skill orca-cli'
+      'npx skills@1.5.21 add https://github.com/stablyai/orca --skill orca-cli'
     )
   })
 
   it('repeats --skill per name for multi-skill installs', () => {
     expect(buildAgentFeatureSkillInstallCommand(['orca-cli', 'orchestration'])).toBe(
-      'npx skills add https://github.com/stablyai/orca --skill orca-cli --skill orchestration --global'
+      'npx skills@1.5.21 add https://github.com/stablyai/orca --skill orca-cli --skill orchestration --global'
     )
     expect(buildAgentFeatureSkillInstallArgs(['orca-cli', 'orchestration'])).toEqual([
-      'skills',
+      'skills@1.5.21',
       'add',
       'https://github.com/stablyai/orca',
       '--skill',
@@ -76,10 +76,10 @@ describe('agent feature skill commands', () => {
     expect(
       buildAgentFeatureSkillInstallCommand(['orca-cli'], { yes: true, agents: ['universal'] })
     ).toBe(
-      'npx skills add https://github.com/stablyai/orca --skill orca-cli --global --agent universal -y'
+      'npx skills@1.5.21 add https://github.com/stablyai/orca --skill orca-cli --global --agent universal -y'
     )
     expect(buildAgentFeatureSkillUpdateCommand(['orca-cli'], { global: false, yes: true })).toBe(
-      'npx skills update orca-cli --project -y'
+      'npx skills@1.5.21 update orca-cli --project -y'
     )
     expect(
       buildAgentFeatureSkillInstallArgs(['orca-cli'], { yes: true, agents: ['universal'] }).at(-1)
@@ -89,26 +89,26 @@ describe('agent feature skill commands', () => {
 
   it('builds single-skill update commands', () => {
     expect(buildAgentFeatureSkillUpdateCommand('orchestration')).toBe(
-      'npx skills update orchestration --global'
+      'npx skills@1.5.21 update orchestration --global'
     )
   })
 
   it('trims and rejects blank update skill names', () => {
     expect(buildAgentFeatureSkillUpdateCommand('  orca-cli  ')).toBe(
-      'npx skills update orca-cli --global'
+      'npx skills@1.5.21 update orca-cli --global'
     )
     expect(() => buildAgentFeatureSkillUpdateCommand('   ')).toThrow('A skill name is required.')
   })
 
   it('builds multi-skill update commands and selects project scope for --local', () => {
     expect(buildAgentFeatureSkillUpdateCommand(['orca-cli', 'orchestration'])).toBe(
-      'npx skills update orca-cli orchestration --global'
+      'npx skills@1.5.21 update orca-cli orchestration --global'
     )
     expect(buildAgentFeatureSkillUpdateCommand(['orca-cli'], { global: false })).toBe(
-      'npx skills update orca-cli --project'
+      'npx skills@1.5.21 update orca-cli --project'
     )
     expect(buildAgentFeatureSkillUpdateArgs(['orca-cli'], { global: false })).toEqual([
-      'skills',
+      'skills@1.5.21',
       'update',
       'orca-cli',
       '--project'
@@ -117,16 +117,30 @@ describe('agent feature skill commands', () => {
   })
 
   it('exports single-skill update constants without changing install bundles', () => {
-    expect(ORCA_CLI_SKILL_UPDATE_COMMAND).toBe('npx skills update orca-cli --global')
-    expect(COMPUTER_USE_SKILL_UPDATE_COMMAND).toBe('npx skills update computer-use --global')
-    expect(ORCHESTRATION_SKILL_UPDATE_COMMAND).toBe('npx skills update orchestration --global')
-    expect(EPHEMERAL_VMS_SKILL_UPDATE_COMMAND).toBe(
-      'npx skills update orca-per-workspace-env --global'
+    expect(ORCA_CLI_SKILL_UPDATE_COMMAND).toBe('npx skills@1.5.21 update orca-cli --global')
+    expect(COMPUTER_USE_SKILL_UPDATE_COMMAND).toBe('npx skills@1.5.21 update computer-use --global')
+    expect(ORCHESTRATION_SKILL_UPDATE_COMMAND).toBe(
+      'npx skills@1.5.21 update orchestration --global'
     )
-    expect(ORCA_LINEAR_SKILL_UPDATE_COMMAND).toBe('npx skills update orca-linear --global')
-    expect(LINEAR_TICKETS_SKILL_UPDATE_COMMAND).toBe('npx skills update linear-tickets --global')
+    expect(EPHEMERAL_VMS_SKILL_UPDATE_COMMAND).toBe(
+      'npx skills@1.5.21 update orca-per-workspace-env --global'
+    )
+    expect(ORCA_LINEAR_SKILL_UPDATE_COMMAND).toBe('npx skills@1.5.21 update orca-linear --global')
+    expect(LINEAR_TICKETS_SKILL_UPDATE_COMMAND).toBe(
+      'npx skills@1.5.21 update linear-tickets --global'
+    )
     expect(ORCA_CLI_ORCHESTRATION_SKILL_INSTALL_COMMAND).toBe(
       buildAgentFeatureSkillInstallCommand(['orca-cli', 'orchestration'])
     )
+  })
+
+  it('pins the skills CLI to one exact version in every invocation', () => {
+    // Why: an unpinned `skills` floats to npm latest, whose parser silently
+    // drops unknown flags — an upstream --agent rename would revive the
+    // ~75-agent fan-out install with exit 0 (#11593). Exact only, never a
+    // range: cmd.exe treats ^ as its escape character in pasteable commands.
+    const exactPin = /^skills@\d+\.\d+\.\d+$/
+    expect(buildAgentFeatureSkillInstallArgs(['orca-cli'])[0]).toMatch(exactPin)
+    expect(buildAgentFeatureSkillUpdateArgs('orca-cli')[0]).toMatch(exactPin)
   })
 })

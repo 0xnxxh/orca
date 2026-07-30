@@ -1,4 +1,5 @@
 import { isSkillsCliAgentKeyShaped } from './skills-cli-agent-keys'
+import { SKILLS_CLI_PACKAGE_SPEC } from './skills-cli-version'
 
 export const ORCA_SKILLS_REPOSITORY_URL = 'https://github.com/stablyai/orca'
 
@@ -42,7 +43,7 @@ export function buildAgentFeatureSkillInstallArgs(
   // Why: one flag per name remains compatible with both single-value and variadic parsers.
   const skillArgs = skillNames.flatMap((name) => ['--skill', name])
   return [
-    'skills',
+    SKILLS_CLI_PACKAGE_SPEC,
     'add',
     ORCA_SKILLS_REPOSITORY_URL,
     ...skillArgs,
@@ -75,7 +76,7 @@ export function buildAgentFeatureSkillUpdateArgs(
   }
   const global = options.global ?? true
   return [
-    'skills',
+    SKILLS_CLI_PACKAGE_SPEC,
     'update',
     ...names,
     global ? '--global' : '--project',

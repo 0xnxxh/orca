@@ -1,0 +1,37 @@
+name: Skill add agent scoping
+
+on:
+  pull_request:
+    paths:
+      - 'src/shared/skills-cli-version.ts'
+      - 'src/shared/agent-feature-install-commands.ts'
+      - 'src/cli/handlers/skills.ts'
+      - 'src/main/skills/skill-update-run.ts'
+      - 'config/scripts/verify-skill-add-agent-scoping.mjs'
+      - '.github/workflows/skill-add-agent-scoping.yml'
+  merge_group:
+  push:
+    branches:
+      - main
+
+jobs:
+  scoping:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+        skills-cli: [pinned]
+        include:
+          - os: ubuntu-latest
+            skills-cli: latest
+    continue-on-error: ${{ matrix.skills-cli == 'latest' }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+      - name: Verify --agent scoping against the resolved skills CLI
+        run: node config/scripts/verify-skill-add-agent-scoping.mjs --cli=${{ matrix.skills-cli }}

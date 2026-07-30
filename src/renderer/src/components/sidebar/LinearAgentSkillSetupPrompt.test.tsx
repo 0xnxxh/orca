@@ -344,11 +344,11 @@ describe('LinearAgentSkillSetupPrompt', () => {
       setupButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(document.body.textContent).toContain("wsl.exe -d 'Fedora' -- bash -lc 'npx skills add")
+    expect(document.body.textContent).toContain("-d 'Fedora' -- bash -lc 'npx skills@1.5.21 add")
     expect(mocks.panelProps.at(-1)).toEqual(
       expect.objectContaining({
         installedCommand:
-          "wsl.exe -d 'Fedora' -- bash -lc 'npx skills update orca-linear --global'",
+          "wsl.exe -d 'Fedora' -- bash -lc 'npx skills@1.5.21 update orca-linear --global'",
         terminalShellOverride: 'powershell.exe',
         getPrerequisiteStatus: expect.any(Function)
       })

@@ -1,4 +1,5 @@
 import type { SkillProvider, SkillSourceKind } from './skills'
+import { SKILLS_CLI_PACKAGE_SPEC } from './skills-cli-version'
 
 export type SkillBundleFileIdentity = {
   path: string
@@ -209,7 +210,9 @@ export function canonicalizeSkillUpdateNames(names: readonly string[]): string[]
 
 export function buildTargetedSkillUpdateCommand(names: readonly string[]): string | null {
   const canonicalNames = canonicalizeSkillUpdateNames(names)
-  return canonicalNames ? `npx skills update ${canonicalNames.join(' ')} --global` : null
+  return canonicalNames
+    ? `npx ${SKILLS_CLI_PACKAGE_SPEC} update ${canonicalNames.join(' ')} --global`
+    : null
 }
 
 // Why: `skills update` has no --json (that flag only exists on `list`), so the

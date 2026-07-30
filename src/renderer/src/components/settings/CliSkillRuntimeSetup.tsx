@@ -115,7 +115,9 @@ function normalizeWindowsSkillUpdateCommand(
   }
 
   const trimmedCommand = command.trim()
-  const updateMatch = /^npx\s+skills\s+update\s+([A-Za-z0-9_-]+)\s+--global$/i.exec(trimmedCommand)
+  const updateMatch = /^npx\s+skills(?:@\S+)?\s+update\s+([A-Za-z0-9_-]+)\s+--global$/i.exec(
+    trimmedCommand
+  )
   if (!updateMatch) {
     return command
   }
@@ -136,7 +138,7 @@ function wrapWindowsSkillCommandWithNpxPrerequisite(
     // Why: skill setup terminals spawn on the focused runtime environment, so a
     // Windows client must not hand a cmd.exe command to a remote host.
     isRemoteRuntimeEnvironmentFocused() ||
-    !/^npx\s+skills\s+(?:add|update)\b/i.test(trimmedCommand)
+    !/^npx\s+skills(?:@\S+)?\s+(?:add|update)\b/i.test(trimmedCommand)
   ) {
     return command
   }

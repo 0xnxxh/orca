@@ -181,6 +181,21 @@ describe('CliSkillRuntimeSetup runtime helpers', () => {
     ).toBe(`${windowsNpxPreflightPrefix}${windowsNpxGuidance}) else (${installCommand})"`)
   })
 
+  it('rewrites the version-pinned update command on the Windows host path too', () => {
+    const installCommand = buildAgentFeatureSkillInstallCommand(['orchestration'])
+
+    expect(
+      buildSkillCommandForRuntime(
+        'npx skills@1.5.21 update orchestration --global',
+        {
+          runtime: 'host',
+          label: 'Windows'
+        },
+        'win32'
+      )
+    ).toBe(`${windowsNpxPreflightPrefix}${windowsNpxGuidance}) else (${installCommand})"`)
+  })
+
   it('treats missing runtime as a preflighted Windows host fallback for skill updates', () => {
     const installCommand = buildAgentFeatureSkillInstallCommand(['orca-cli'])
 

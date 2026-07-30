@@ -51,7 +51,7 @@ describe('SkillUpdateRunner', () => {
     // non-interactive branch. Dropping either can wedge the run.
     expect(spawnCalls[0].args).toEqual([
       '--yes',
-      'skills',
+      'skills@1.5.21',
       'update',
       'orca-cli',
       'orchestration',

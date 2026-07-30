@@ -40,7 +40,7 @@ describe('skippedReason', () => {
     const reason = skippedReason([row(null)], 'orchestration')
     expect(reason).toContain('reports the skill as already up to date')
     expect(reason).toContain(
-      'npx skills add https://github.com/stablyai/orca --skill orchestration --global'
+      'npx skills@1.5.21 add https://github.com/stablyai/orca --skill orchestration --global'
     )
   })
 
@@ -48,7 +48,7 @@ describe('skippedReason', () => {
     // Why: reinstalling a newer copy rolls the user back to what this build ships.
     const reason = skippedReason([row('newer')], 'orchestration')
     expect(reason).toContain('later version')
-    expect(reason).not.toContain('skills add')
+    expect(reason).not.toContain('skills@1.5.21 add')
   })
 
   it('keeps a placement blocker ahead of the record advice', () => {
@@ -63,7 +63,7 @@ describe('skippedReason', () => {
     // skip swapped the one runnable command for advice about a copy Orca never judged.
     const reason = skippedReason([row(null), projectRow()], 'orchestration')
     expect(reason).toContain('reports the skill as already up to date')
-    expect(reason).toContain('skills add')
+    expect(reason).toContain('skills@1.5.21 add')
     expect(reason).not.toContain('This is a project skill')
   })
 
