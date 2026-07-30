@@ -54,6 +54,7 @@ import type { GitRuntimeOptions } from './git-runtime-options'
 import { gitOptionsForWorktree } from './git-runtime-options'
 import { GitStatusReadLeaseOwner } from './git-status-read-lease-owner'
 import { parseGitRevListFirstParentOid } from '../../shared/git-rev-list-output'
+import { nativeAndWslGitUpstreamStatusReadOwner } from './git-upstream-status-read-owner'
 import {
   beginGitStatusLineStatsCacheWrite,
   clearGitStatusLineStatsCache,
@@ -99,6 +100,7 @@ const statusReadLeaseOwner = new GitStatusReadLeaseOwner<GitStatusResult>()
 export function invalidateGitReadCaches(): void {
   gitDiffReadDedupe.clear()
   statusReadLeaseOwner.invalidate()
+  nativeAndWslGitUpstreamStatusReadOwner.invalidate()
   clearGitStatusLineStatsCache()
   clearSubmodulePathsCache()
   resolvedUpstreamNameCache.clear()

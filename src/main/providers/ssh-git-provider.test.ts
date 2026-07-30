@@ -1002,6 +1002,125 @@ describe('SshGitProvider', () => {
     expect(result).toEqual(upstreamResult)
   })
 
+  it('benchmarks concurrent upstream-status RPC pressure', async () => {
+    const benchPath = process.env.ORCA_SSH_GIT_UPSTREAM_COALESCING_BENCH_JSON
+    if (!benchPath) {
+      return
+    }
+    mux.request.mockResolvedValue({
+      hasUpstream: true,
+      upstreamName: 'origin/main',
+      ahead: 1,
+      behind: 0
+    })
+
+    await Promise.all(
+      Array.from({ length: 10 }, () => provider.getUpstreamStatus('/home/user/repo'))
+    )
+
+    const upstreamRequests = mux.request.mock.calls.filter(
+      ([method]) => method === 'git.upstreamStatus'
+    )
+    const { mkdirSync, writeFileSync } = await vi.importActual<typeof NodeFs>('node:fs')
+    mkdirSync(path.dirname(benchPath), { recursive: true })
+    writeFileSync(
+      benchPath,
+      JSON.stringify({
+        scenario: 'ssh-git-upstream-concurrent-burst',
+        concurrentCalls: 10,
+        upstreamStatusRequests: upstreamRequests.length,
+        method: 'git.upstreamStatus',
+        payload: { worktreePath: '/home/user/repo' }
+      })
+    )
+  })
+
+  it('shares one upstream-status RPC across ten identical callers', async () => {
+    const pending = deferredPromise<{
+      hasUpstream: true
+      upstreamName: string
+      ahead: number
+      behind: number
+    }>()
+    mux.request.mockReturnValue(pending.promise)
+
+    const reads = Array.from({ length: 10 }, () => provider.getUpstreamStatus('/home/user/repo'))
+    await waitForRequestCount(mux.request, 1)
+
+    expect(mux.request).toHaveBeenCalledTimes(1)
+    pending.resolve({ hasUpstream: true, upstreamName: 'origin/main', ahead: 1, behind: 0 })
+    await expect(Promise.all(reads)).resolves.toHaveLength(10)
+  })
+
+  it('isolates upstream-status RPCs by worktree and every target field', async () => {
+    mux.request.mockResolvedValue({
+      hasUpstream: true,
+      upstreamName: 'fork/feature',
+      ahead: 0,
+      behind: 0
+    })
+    const baseTarget = { remoteName: 'fork', branchName: 'feature' }
+
+    await Promise.all([
+      provider.getUpstreamStatus('/repo-a'),
+      provider.getUpstreamStatus('/repo-b'),
+      provider.getUpstreamStatus('/repo-a', baseTarget),
+      provider.getUpstreamStatus('/repo-a', { ...baseTarget, remoteName: 'origin' }),
+      provider.getUpstreamStatus('/repo-a', { ...baseTarget, branchName: 'other' }),
+      provider.getUpstreamStatus('/repo-a', {
+        ...baseTarget,
+        remoteUrl: 'https://github.com/example/fork.git'
+      }),
+      provider.getUpstreamStatus('/repo-a', { ...baseTarget, remoteCreated: false }),
+      provider.getUpstreamStatus('/repo-a', { ...baseTarget, remoteCreated: true })
+    ])
+
+    expect(mux.request).toHaveBeenCalledTimes(8)
+  })
+
+  it('keeps upstream-status reads isolated per provider instance', async () => {
+    const otherProvider = new SshGitProvider('conn-1', mux as never)
+    mux.request.mockResolvedValue({
+      hasUpstream: true,
+      upstreamName: 'origin/main',
+      ahead: 0,
+      behind: 0
+    })
+
+    await Promise.all([
+      provider.getUpstreamStatus('/home/user/repo'),
+      otherProvider.getUpstreamStatus('/home/user/repo')
+    ])
+
+    expect(mux.request).toHaveBeenCalledTimes(2)
+  })
+
+  it('runs a fresh upstream-status RPC after result and error settlement', async () => {
+    const failure = new Error('upstream RPC failed')
+    mux.request
+      .mockResolvedValueOnce({
+        hasUpstream: true,
+        upstreamName: 'origin/main',
+        ahead: 0,
+        behind: 0
+      })
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce({
+        hasUpstream: false,
+        ahead: 0,
+        behind: 0
+      })
+
+    await expect(provider.getUpstreamStatus('/home/user/repo')).resolves.toMatchObject({
+      hasUpstream: true
+    })
+    await expect(provider.getUpstreamStatus('/home/user/repo')).rejects.toBe(failure)
+    await expect(provider.getUpstreamStatus('/home/user/repo')).resolves.toMatchObject({
+      hasUpstream: false
+    })
+    expect(mux.request).toHaveBeenCalledTimes(3)
+  })
+
   it('getUpstreamStatus forwards an explicit push target', async () => {
     const upstreamResult = { hasUpstream: true, upstreamName: 'fork/feature', ahead: 0, behind: 1 }
     mux.request.mockResolvedValue(upstreamResult)
@@ -1430,6 +1549,42 @@ describe('SshGitProvider', () => {
     )
     await Promise.all([beforeMutation, duringMutation, afterMutation])
     expect(mux.request.mock.calls.filter(([method]) => method === 'git.status')).toHaveLength(3)
+  })
+
+  it('fences upstream-status reads before, during, and after an SSH mutation', async () => {
+    const upstreamRequests = Array.from({ length: 3 }, () =>
+      deferredPromise<{ hasUpstream: false; ahead: 0; behind: 0 }>()
+    )
+    const mutation = deferredPromise<void>()
+    let upstreamRequestIndex = 0
+    mux.request.mockImplementation((method) => {
+      if (method === 'git.upstreamStatus') {
+        return upstreamRequests[upstreamRequestIndex++]?.promise
+      }
+      if (method === 'git.stage') {
+        return mutation.promise
+      }
+      return Promise.resolve(undefined)
+    })
+
+    const beforeMutation = provider.getUpstreamStatus('/home/user/repo')
+    await waitForRequestCount(mux.request, 1)
+    const mutating = provider.stageFile('/home/user/repo', 'src/file.ts')
+    await waitForRequestCount(mux.request, 2)
+    const duringMutation = provider.getUpstreamStatus('/home/user/repo')
+    await waitForRequestCount(mux.request, 3)
+    mutation.resolve(undefined)
+    await mutating
+    const afterMutation = provider.getUpstreamStatus('/home/user/repo')
+    await waitForRequestCount(mux.request, 4)
+
+    upstreamRequests.forEach((pending) =>
+      pending.resolve({ hasUpstream: false, ahead: 0, behind: 0 })
+    )
+    await Promise.all([beforeMutation, duringMutation, afterMutation])
+    expect(
+      mux.request.mock.calls.filter(([method]) => method === 'git.upstreamStatus')
+    ).toHaveLength(3)
   })
 
   it.each([
