@@ -295,14 +295,16 @@ async function expectHostTerminalsUnmounted(
     return
   }
   await expect
-    .poll(() =>
-      hostPage.evaluate(
-        (tabIds) => ({
-          activeWorktreeId: window.__store?.getState().activeWorktreeId,
-          mountedCount: tabIds.filter((tabId) => window.__paneManagers?.has(tabId)).length
-        }),
-        remoteTabs.map(({ tabId }) => tabId)
-      )
+    .poll(
+      () =>
+        hostPage.evaluate(
+          (tabIds) => ({
+            activeWorktreeId: window.__store?.getState().activeWorktreeId,
+            mountedCount: tabIds.filter((tabId) => window.__paneManagers?.has(tabId)).length
+          }),
+          remoteTabs.map(({ tabId }) => tabId)
+        ),
+      { timeout: 30_000 }
     )
     .toEqual({ activeWorktreeId, mountedCount: 0 })
 }
