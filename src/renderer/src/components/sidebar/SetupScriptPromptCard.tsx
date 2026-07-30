@@ -21,12 +21,11 @@ import { openSetupScriptSettings } from './open-setup-script-settings'
 import { trackSetupScriptPromptExposure } from './setup-script-prompt-exposure-telemetry'
 import {
   findSetupScriptPromptRepo,
-  getRenderedSetupScriptPromptState,
   markSetupScriptPromptSaved,
-  type LastVisibleSetupScriptPrompt,
   type SetupScriptPromptState
 } from './setup-script-prompt-render-state'
 import { useSetupScriptPromptRevalidation } from './useSetupScriptPromptRevalidation'
+import { useRenderedSetupScriptPromptState } from './useRenderedSetupScriptPromptState'
 import { translate } from '@/i18n/i18n'
 import { getRepoHostIdentity } from '@/store/slices/repo-host-identity'
 import { getRepoExecutionHostId } from '../../../../shared/execution-host'
@@ -60,7 +59,6 @@ function SetupScriptPromptCard(): React.JSX.Element | null {
   const isDismissed = activeRepoHostIdentity
     ? isSetupScriptPromptDismissed(activeRepoHostIdentity, dismissedRepoIds)
     : false
-  const lastVisiblePromptRef = useRef<LastVisibleSetupScriptPrompt | null>(null)
 
   useEffect(() => {
     if (!sidebarOpen || !activeRepo || !isGitRepoKind(activeRepo) || isDismissed) {
@@ -348,31 +346,25 @@ function SetupScriptPromptCard(): React.JSX.Element | null {
     })
   }, [activeRepo, detectedSetupDraft, promptState, saveSetupCandidate])
 
-  if (
+  const promptTargetHidden =
     !sidebarOpen ||
     !activeRepo ||
     !activeRepoHostIdentity ||
     !isGitRepoKind(activeRepo) ||
     isDismissed
-  ) {
-    lastVisiblePromptRef.current = null
-    return null
-  }
-
-  const renderedPromptState = getRenderedSetupScriptPromptState({
+  const renderedPromptState = useRenderedSetupScriptPromptState({
     promptState,
-    activeRepoId: activeRepo.id,
+    activeRepoId: activeRepo?.id ?? null,
     activeRepoHostIdentity,
-    lastVisiblePrompt: lastVisiblePromptRef.current
+    promptTargetHidden
   })
 
   if (
+    promptTargetHidden ||
+    !activeRepo ||
     !renderedPromptState ||
     (renderedPromptState.status === 'ok' && renderedPromptState.hasEffectiveSetup)
   ) {
-    if (renderedPromptState?.status === 'ok' && renderedPromptState.hasEffectiveSetup) {
-      lastVisiblePromptRef.current = null
-    }
     return null
   }
 
@@ -380,16 +372,7 @@ function SetupScriptPromptCard(): React.JSX.Element | null {
   // retry-able card entirely — the global scope-mismatch banner explains it and
   // a retry would just re-fire repo.hooksCheck on every repo focus.
   if (renderedPromptState.status === 'forbidden') {
-    lastVisiblePromptRef.current = null
     return null
-  }
-
-  if (
-    renderedPromptState.status === 'ok' &&
-    !renderedPromptState.hasEffectiveSetup &&
-    renderedPromptState.repoHostIdentity === activeRepoHostIdentity
-  ) {
-    lastVisiblePromptRef.current = { state: renderedPromptState }
   }
 
   const isInspectionError = renderedPromptState.status === 'error'
