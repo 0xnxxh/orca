@@ -82,11 +82,13 @@ export function resolveEmptyPageOutcome(args: {
 }
 
 /**
- * Functional-updater body for the advertised-count clamp. Must be evaluated
- * against the COMMITTED count (React updater `previous`), not a click-time
- * closure — the count promise routinely resolves between click and response,
- * and a stale-null closure would let an end-of-data clamp overwrite a real
- * count. Math.min preserves the never-raise property of earlier clamps.
+ * Functional-updater body for the SPECULATIVE end-of-data withdrawal only.
+ * Must be evaluated against the COMMITTED count (React updater `previous`),
+ * not a click-time closure — the count promise routinely resolves between
+ * click and response. Window 422 clamps are PROVEN and live in their own
+ * state (applyWindowPageLimit); keeping them out of the count slot lets a
+ * later real count overwrite the speculative value instead of being pinned
+ * under it.
  */
 export function applyEmptyPageClamp(
   previous: number | null,
@@ -96,11 +98,37 @@ export function applyEmptyPageClamp(
     issueErrorTypes: readonly ClassifiedError['type'][]
   }
 ): number | null {
-  const next = resolveEmptyPageOutcome({ ...args, countedTotalPages: previous }).clampTotalPagesTo
-  if (next === null) {
+  const outcome = resolveEmptyPageOutcome({ ...args, countedTotalPages: previous })
+  if (outcome.reason !== 'end-of-data' || outcome.clampTotalPagesTo === null) {
     return previous
   }
-  return previous !== null && previous > 0 ? Math.min(previous, next) : next
+  return outcome.clampTotalPagesTo
+}
+
+/** Proven window 422 limit: set once, only ever lowered, reset per generation. */
+export function applyWindowPageLimit(previous: number | null, target: number): number {
+  const clamp = Math.max(1, Math.floor(target))
+  return previous === null ? clamp : Math.min(previous, clamp)
+}
+
+/**
+ * Advertised page count = the count-or-fallback estimate, capped by the proven
+ * window limit, floored at the loaded pages. Splitting the proven cap from the
+ * count slot makes the result order-independent: a count arriving after a
+ * speculative withdrawal overwrites it, while a proven limit survives.
+ */
+export function deriveAdvertisedTotalPages(args: {
+  loadedPages: number
+  countedTotalPages: number | null
+  fallbackTotalPages: number
+  provenPageLimit: number | null
+}): number {
+  const uncapped =
+    args.countedTotalPages && args.countedTotalPages > 0
+      ? Math.max(args.loadedPages, args.countedTotalPages)
+      : args.fallbackTotalPages
+  const capped = args.provenPageLimit === null ? uncapped : Math.min(uncapped, args.provenPageLimit)
+  return Math.max(args.loadedPages, capped)
 }
 
 /**

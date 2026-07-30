@@ -206,7 +206,9 @@ import {
 import { shouldHideTaskPageListChrome } from '@/components/task-page-list-chrome-visibility'
 import {
   applyEmptyPageClamp,
+  applyWindowPageLimit,
   buildSelectedReposKey,
+  deriveAdvertisedTotalPages,
   getTaskPagePerRepoLimit,
   resolveEmptyPageOutcome,
   taskPageToGitHubApiPage
@@ -3817,6 +3819,10 @@ export default function TaskPage(): React.JSX.Element {
   const [paginationLoading, setPaginationLoading] = useState(false)
   const [loadingTargetPage, setLoadingTargetPage] = useState<number | null>(null)
   const [countedTotalPages, setCountedTotalPages] = useState<number | null>(null)
+  // Proven window-422 page limit — separate from the count so a late count
+  // can't resurrect proven-unreachable pages, nor be pinned by a speculative
+  // withdrawal (see deriveAdvertisedTotalPages).
+  const [provenPageLimit, setProvenPageLimit] = useState<number | null>(null)
   const fetchWorkItemsNextPage = useAppStore((s) => s.fetchWorkItemsNextPage)
   const countWorkItemsAcrossRepos = useAppStore((s) => s.countWorkItemsAcrossRepos)
 
@@ -6155,10 +6161,12 @@ export default function TaskPage(): React.JSX.Element {
   const fallbackTotalPages = lastLoadedPageFull
     ? Math.max(pages.length, lastLoadedPageIndex + 2)
     : Math.max(1, pages.length)
-  const totalPages =
-    countedTotalPages && countedTotalPages > 0
-      ? Math.max(pages.length, countedTotalPages)
-      : fallbackTotalPages
+  const totalPages = deriveAdvertisedTotalPages({
+    loadedPages: pages.length,
+    countedTotalPages,
+    fallbackTotalPages,
+    provenPageLimit
+  })
 
   // Why: load only the clicked page so a high-page jump doesn't exhaust GitHub's Search API rate bucket.
   const handleLoadNextPage = useCallback(
@@ -6209,6 +6217,7 @@ export default function TaskPage(): React.JSX.Element {
               ),
               { id: 'work-items-page-unreachable' }
             )
+            setProvenPageLimit((previous) => applyWindowPageLimit(previous, target))
           } else if (reason === 'load-failed') {
             toast.error(
               translate(
@@ -6218,10 +6227,11 @@ export default function TaskPage(): React.JSX.Element {
               ),
               { id: 'work-items-page-load-failed' }
             )
+          } else {
+            setCountedTotalPages((previous) =>
+              applyEmptyPageClamp(previous, { target, failedCount, issueErrorTypes })
+            )
           }
-          setCountedTotalPages((previous) =>
-            applyEmptyPageClamp(previous, { target, failedCount, issueErrorTypes })
-          )
           return
         }
         setPages((previous) => {
@@ -6329,6 +6339,7 @@ export default function TaskPage(): React.JSX.Element {
     setPages([page0])
     setCurrentPage(0)
     setCountedTotalPages(null)
+    setProvenPageLimit(null)
     setTasksError(null)
     setFailedCount(0) // reset so a prior failure banner doesn't linger
     setGithubUnavailable(false)
@@ -6433,11 +6444,10 @@ export default function TaskPage(): React.JSX.Element {
       githubPerRepoPageLimit
     ).then(({ totalPages: countedPages }) => {
       if (!cancelled) {
-        // Why: min against an already-applied clamp — the count must not
-        // re-advertise pages a probe has proven unreachable this generation.
-        setCountedTotalPages((previous) =>
-          previous !== null && previous > 0 ? Math.min(previous, countedPages) : countedPages
-        )
+        // Why: the count overwrites unconditionally — proven window limits live
+        // in provenPageLimit, so a late count can't be pinned by a speculative
+        // end-of-data withdrawal, and can't resurrect proven-dead pages either.
+        setCountedTotalPages(countedPages)
       }
     })
 

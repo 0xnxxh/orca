@@ -3,7 +3,9 @@ import type { GitHubWorkItem } from '../../../shared/types'
 import {
   accumulateWorkItemPages,
   applyEmptyPageClamp,
+  applyWindowPageLimit,
   buildSelectedReposKey,
+  deriveAdvertisedTotalPages,
   getTaskPagePerRepoLimit,
   resolveEmptyPageOutcome,
   taskPageToGitHubApiPage,
@@ -147,28 +149,84 @@ describe('applyEmptyPageClamp', () => {
     expect(applyEmptyPageClamp(33, { ...clean, target: 2 })).toBe(33)
   })
 
-  it('clamps while the count is unknown or failed', () => {
+  it('withdraws the speculative page while the count is unknown or failed', () => {
     expect(applyEmptyPageClamp(null, { ...clean, target: 2 })).toBe(2)
     expect(applyEmptyPageClamp(0, { ...clean, target: 2 })).toBe(2)
   })
 
-  it('never raises an earlier clamp', () => {
-    // A prior probe clamped to 20; a later window 422 at page 33 must not
-    // re-advertise pages 21-33.
-    expect(
-      applyEmptyPageClamp(20, { target: 33, failedCount: 0, issueErrorTypes: ['validation_error'] })
-    ).toBe(20)
-  })
-
-  it('clamps a real count on a window 422 — the count over-advertising is the bug', () => {
+  it('never touches the count for window or failure outcomes', () => {
+    // Window 422 limits live in provenPageLimit (applyWindowPageLimit), not
+    // the count slot.
     expect(
       applyEmptyPageClamp(39, { target: 33, failedCount: 0, issueErrorTypes: ['validation_error'] })
+    ).toBe(39)
+    expect(applyEmptyPageClamp(33, { target: 5, failedCount: 2, issueErrorTypes: [] })).toBe(33)
+    expect(applyEmptyPageClamp(null, { target: 5, failedCount: 2, issueErrorTypes: [] })).toBe(null)
+  })
+})
+
+describe('applyWindowPageLimit', () => {
+  it('sets, only lowers, and never goes below one page', () => {
+    expect(applyWindowPageLimit(null, 33)).toBe(33)
+    expect(applyWindowPageLimit(33, 20)).toBe(20)
+    expect(applyWindowPageLimit(20, 33)).toBe(20)
+    expect(applyWindowPageLimit(null, 0)).toBe(1)
+  })
+})
+
+describe('deriveAdvertisedTotalPages', () => {
+  it('is order-independent: a count landing after a speculative withdrawal wins', () => {
+    // Probe first: end-of-data wrote countedTotalPages=1 (speculative). Count
+    // then overwrites with 39 — the bar must show 39, not stay collapsed.
+    expect(
+      deriveAdvertisedTotalPages({
+        loadedPages: 1,
+        countedTotalPages: 39,
+        fallbackTotalPages: 2,
+        provenPageLimit: null
+      })
+    ).toBe(39)
+  })
+
+  it('caps a real count with the proven window limit', () => {
+    expect(
+      deriveAdvertisedTotalPages({
+        loadedPages: 3,
+        countedTotalPages: 39,
+        fallbackTotalPages: 4,
+        provenPageLimit: 33
+      })
     ).toBe(33)
   })
 
-  it('leaves the count alone on failures', () => {
-    expect(applyEmptyPageClamp(33, { target: 5, failedCount: 2, issueErrorTypes: [] })).toBe(33)
-    expect(applyEmptyPageClamp(null, { target: 5, failedCount: 2, issueErrorTypes: [] })).toBe(null)
+  it('uses the fallback while the count is unknown/failed, still window-capped', () => {
+    expect(
+      deriveAdvertisedTotalPages({
+        loadedPages: 1,
+        countedTotalPages: null,
+        fallbackTotalPages: 2,
+        provenPageLimit: null
+      })
+    ).toBe(2)
+    expect(
+      deriveAdvertisedTotalPages({
+        loadedPages: 1,
+        countedTotalPages: 0,
+        fallbackTotalPages: 5,
+        provenPageLimit: 3
+      })
+    ).toBe(3)
+  })
+
+  it('never advertises fewer pages than are loaded', () => {
+    expect(
+      deriveAdvertisedTotalPages({
+        loadedPages: 5,
+        countedTotalPages: 2,
+        fallbackTotalPages: 2,
+        provenPageLimit: 2
+      })
+    ).toBe(5)
   })
 })
 
