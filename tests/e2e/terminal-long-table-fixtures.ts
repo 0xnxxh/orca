@@ -214,8 +214,7 @@ for (const line of rendered) {
   await writeStdout(line + '\\r\\n')
 }
 await writeStdout('\\x1b[?2026l')
-await writeStdout('${widthMarker}:' + generatedTableWidth + '\\r\\n')
-await writeStdout('${marker}\\r\\n')
+await writeStdout('${widthMarker}:' + generatedTableWidth + '\\r\\n${marker}\\r\\n')
 `
 }
 
