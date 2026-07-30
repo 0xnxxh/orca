@@ -31,8 +31,13 @@ function isSupportedType(contentType: string): boolean {
  * nothing is attachable would also discard any text riding along on the
  * clipboard.
  */
-export function hasAttachableFeedbackImage(files: readonly File[]): boolean {
-  return files.some((file) => isSupportedType(file.type))
+export function hasAttachableFeedbackImage(files: readonly File[], existingCount = 0): boolean {
+  return (
+    existingCount < MAX_FEEDBACK_IMAGE_COUNT &&
+    files.some(
+      (file) => isSupportedType(file.type) && file.size > 0 && file.size <= MAX_FEEDBACK_IMAGE_BYTES
+    )
+  )
 }
 
 export function releaseFeedbackImageDraft(draft: FeedbackImageDraft): void {
@@ -62,6 +67,10 @@ export async function readFeedbackImageFiles(
     for (const file of files) {
       if (!isSupportedType(file.type)) {
         errors.push(`${file.name || 'Image'} is not a supported image type.`)
+        continue
+      }
+      if (file.size === 0) {
+        errors.push(`${file.name || 'Image'} is empty.`)
         continue
       }
       if (file.size > MAX_FEEDBACK_IMAGE_BYTES) {

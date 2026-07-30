@@ -38,6 +38,14 @@ describe('hasAttachableFeedbackImage', () => {
   it('is false for an empty selection', () => {
     expect(hasAttachableFeedbackImage([])).toBe(false)
   })
+
+  it('is false when supported files cannot pass validation', () => {
+    expect(hasAttachableFeedbackImage([pngFile('empty.png', 0)])).toBe(false)
+    expect(hasAttachableFeedbackImage([pngFile('huge.png', MAX_FEEDBACK_IMAGE_BYTES + 1)])).toBe(
+      false
+    )
+    expect(hasAttachableFeedbackImage([pngFile('a.png')], MAX_FEEDBACK_IMAGE_COUNT)).toBe(false)
+  })
 })
 
 describe('readFeedbackImageFiles', () => {
@@ -68,6 +76,13 @@ describe('readFeedbackImageFiles', () => {
 
     expect(images).toEqual([])
     expect(errors).toEqual(['huge.png is larger than 8.0 MB.'])
+  })
+
+  it('reports an empty image instead of deferring rejection until submit', async () => {
+    const { images, errors } = await readFeedbackImageFiles([pngFile('empty.png', 0)], 0)
+
+    expect(images).toEqual([])
+    expect(errors).toEqual(['empty.png is empty.'])
   })
 
   it('reports the overflow once the running count is already at capacity', async () => {

@@ -4,6 +4,7 @@ import {
   MAX_FEEDBACK_IMAGE_COUNT,
   feedbackImageFilename,
   isSupportedFeedbackImageContentType,
+  normalizeFeedbackImageBytes,
   validateFeedbackImages
 } from './feedback-image-attachments'
 
@@ -45,6 +46,18 @@ describe('feedbackImageFilename', () => {
 
   it('numbers attachments from one', () => {
     expect(feedbackImageFilename(3, 'image/png')).toBe('feedback-image-4.png')
+  })
+})
+
+describe('normalizeFeedbackImageBytes', () => {
+  it('preserves exact typed-array bounds without copying the backing buffer', () => {
+    const backing = new Uint8Array([0, 1, 2, 3])
+    const view = backing.subarray(1, 3)
+
+    const normalized = normalizeFeedbackImageBytes(view)
+
+    expect(normalized).toBe(view)
+    expect([...normalized]).toEqual([1, 2])
   })
 })
 

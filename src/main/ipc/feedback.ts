@@ -2,6 +2,7 @@ import os from 'node:os'
 import { app, ipcMain, net } from 'electron'
 import {
   appendFeedbackImagesToFormData,
+  normalizeFeedbackImageBytes,
   validateFeedbackImages,
   type FeedbackImageAttachment
 } from './feedback-image-attachments'
@@ -352,12 +353,9 @@ export function registerFeedbackHandlers(): void {
     submitFeedback({
       ...args,
       submissionType: 'feedback',
-      // Why: structured clone can hand back ArrayBufferViews over a larger
-      // buffer; normalize so byteLength checks and Blob framing use the exact
-      // bytes the renderer selected.
       images: args.images?.map((image) => ({
         contentType: image.contentType,
-        data: new Uint8Array(image.data)
+        data: normalizeFeedbackImageBytes(image.data)
       }))
     })
   )

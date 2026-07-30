@@ -23,7 +23,6 @@ import {
   type FeedbackImageDraft
 } from '@/lib/feedback-image-attachments'
 import { SidebarFeedbackImageAttachments } from './SidebarFeedbackImageAttachments'
-import { MAX_FEEDBACK_LENGTH, SidebarFeedbackLengthCounter } from './SidebarFeedbackLengthCounter'
 import { useFeedbackImageDrop } from './use-feedback-image-drop'
 
 const GITHUB_ISSUES_URL = 'https://github.com/stablyai/orca/issues/'
@@ -68,6 +67,7 @@ export function SidebarFeedbackDialog({
   const [isViewerLoading, setIsViewerLoading] = useState(false)
   const [submitAnonymously, setSubmitAnonymously] = useState(false)
   const [images, setImages] = useState<FeedbackImageDraft[]>([])
+  const [pendingImageReadCount, setPendingImageReadCount] = useState(0)
   const mountedRef = useMountedRef()
   const feedbackTextareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -93,11 +93,21 @@ export function SidebarFeedbackDialog({
       if (files.length === 0) {
         return
       }
+      if (isSubmitting) {
+        toast.warning(
+          translate(
+            'auto.components.sidebar.SidebarFeedbackDialog.attachWhileSending',
+            'Wait for the current feedback to finish sending before attaching more images.'
+          )
+        )
+        return
+      }
       // Why: read the committed count from the closure rather than a ref. A ref
       // synced in an effect can still be stale-low right after an add, which
       // over-accepts and gets the whole submission rejected by the main process.
       const existingCount = imageCount + pendingImageReadsRef.current
       pendingImageReadsRef.current += files.length
+      setPendingImageReadCount((current) => current + files.length)
       void readFeedbackImageFiles(files, existingCount).then(
         ({ images: added, errors }) => {
           pendingImageReadsRef.current -= files.length
@@ -105,6 +115,7 @@ export function SidebarFeedbackDialog({
             added.forEach(releaseFeedbackImageDraft)
             return
           }
+          setPendingImageReadCount((current) => Math.max(0, current - files.length))
           if (added.length > 0) {
             setImages((existing) => [...existing, ...added])
           }
@@ -116,6 +127,7 @@ export function SidebarFeedbackDialog({
           pendingImageReadsRef.current -= files.length
           console.error('Failed to read feedback image attachments:', error)
           if (mountedRef.current) {
+            setPendingImageReadCount((current) => Math.max(0, current - files.length))
             toast.error(
               translate(
                 'auto.components.sidebar.SidebarFeedbackDialog.imageReadFailed',
@@ -126,7 +138,7 @@ export function SidebarFeedbackDialog({
         }
       )
     },
-    [imageCount, mountedRef]
+    [imageCount, isSubmitting, mountedRef]
   )
 
   const handleRemoveImage = React.useCallback((id: string) => {
@@ -173,6 +185,9 @@ export function SidebarFeedbackDialog({
   }, [open])
 
   const handleSubmit = async (): Promise<void> => {
+    if (isSubmitting || pendingImageReadsRef.current > 0) {
+      return
+    }
     const trimmed = feedback.trim()
     if (!trimmed) {
       toast.warning(
@@ -266,7 +281,7 @@ export function SidebarFeedbackDialog({
           // Why: consume the paste only when something is actually attachable.
           // An unsupported image still routes through for its rejection toast,
           // but preventing default there would silently eat co-pasted text.
-          if (hasAttachableFeedbackImage(pasted)) {
+          if (hasAttachableFeedbackImage(pasted, imageCount + pendingImageReadsRef.current)) {
             event.preventDefault()
           }
           handleAddFiles(pasted)
@@ -350,14 +365,8 @@ export function SidebarFeedbackDialog({
             'What could we improve?'
           )}
           rows={7}
-          // Why: the endpoint rejects longer reports with a 400 the user reads as
-          // a generic failure, so stop the overflow here instead.
-          maxLength={MAX_FEEDBACK_LENGTH}
           className="min-h-32 w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         />
-        <div className="flex justify-end">
-          <SidebarFeedbackLengthCounter length={feedback.length} />
-        </div>
 
         <SidebarFeedbackImageAttachments
           images={images}
@@ -413,7 +422,10 @@ export function SidebarFeedbackDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
             {translate('auto.components.sidebar.SidebarFeedbackDialog.8bf619e4cf', 'Cancel')}
           </Button>
-          <Button onClick={() => void handleSubmit()} disabled={isSubmitting || !feedback.trim()}>
+          <Button
+            onClick={() => void handleSubmit()}
+            disabled={isSubmitting || pendingImageReadCount > 0 || !feedback.trim()}
+          >
             {isSubmitting
               ? translate('auto.components.sidebar.SidebarFeedbackDialog.69969ba364', 'Sending…')
               : translate('auto.components.sidebar.SidebarFeedbackDialog.f2e42e1307', 'Send')}

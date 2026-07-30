@@ -26,6 +26,12 @@ export function getSupportedFeedbackImageContentTypes(): string[] {
   return Object.keys(FEEDBACK_IMAGE_EXTENSIONS)
 }
 
+export function normalizeFeedbackImageBytes(data: Uint8Array): Uint8Array {
+  // Why: a Uint8Array already carries exact view bounds; copying it here adds
+  // another 32 MiB at the four-image cap before Blob framing copies it again.
+  return data instanceof Uint8Array ? data : new Uint8Array(data)
+}
+
 export function feedbackImageFilename(index: number, contentType: string): string {
   return `feedback-image-${index + 1}.${FEEDBACK_IMAGE_EXTENSIONS[contentType]}`
 }
