@@ -1,7 +1,7 @@
 /* eslint-disable max-lines -- Why: the analyzer's private treemap, selection,
    breakdown, and table pieces share one scan state and should evolve as one resource-manager surface. */
 /* oxlint-disable react-doctor/no-adjust-state-on-prop-change -- Why: the relative time clock advances from a wall-clock interval, which is an external timer rather than render-derived state. */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   ArrowDown,
@@ -29,7 +29,7 @@ import type {
   AgentStatusEntry,
   MigrationUnsupportedPtyEntry
 } from '../../../../shared/agent-status-types'
-import type { GitStatusResult, Repo, TerminalTab, Worktree } from '../../../../shared/types'
+import type { Repo, TerminalTab, Worktree } from '../../../../shared/types'
 import type {
   WorkspaceSpaceItem,
   WorkspaceSpaceWorktree
@@ -42,7 +42,6 @@ import { useAppStore } from '../../store'
 import { getRepoMapFromState, getWorktreeMapFromState } from '../../store/selectors'
 import { getHostedReviewCacheKey } from '../../store/slices/hosted-review'
 import { issueCacheKey as getIssueCacheKey } from '../../store/slices/github'
-import { refreshGitStatusForWorktree } from '../right-sidebar/git-status-refresh'
 import { runWorktreeBatchDelete } from '../sidebar/delete-worktree-flow'
 import { prepareActiveWorktreeFocusAfterDelete } from '../sidebar/active-worktree-focus-after-delete'
 import { branchDisplayName } from '../sidebar/WorktreeCardHelpers'
@@ -68,13 +67,16 @@ import {
 } from './workspace-space-format'
 import { buildTreemapLayout, type TreemapRect } from './workspace-space-layout'
 import {
+  useWorkspaceSpaceGitStatusRefresh,
+  type WorkspaceGitRefreshState
+} from './use-workspace-space-git-status-refresh'
+import {
   filterWorkspaceSpaceRows,
   countWorkspaceSpaceActiveAgents,
   getLargestWorkspaceSpaceItemSize,
   getLargestWorkspaceSpaceRowSize,
   getSelectedDeletableWorkspaceIds,
   getVisibleDeletableWorkspaceIds,
-  getWorkspaceSpaceGitStatusRefreshCandidates,
   isWorkspaceSpaceRowReadyToDelete,
   pruneWorkspaceSpaceSelectedIds,
   resolveWorkspaceSpaceInspectedWorktreeId,
@@ -93,18 +95,11 @@ const TREEMAP_FILLS = [
   'color-mix(in srgb, var(--primary) 24%, var(--card))',
   'color-mix(in srgb, var(--chart-1) 38%, var(--card))'
 ]
-const GIT_STATUS_REFRESH_CONCURRENCY = 6
-
 type WorkspaceSpaceDeleteState = {
   isDeleting: boolean
   error: string | null
   canForceDelete: boolean
   forceDeleteReason: WorktreeForceDeleteReason | null
-}
-
-type WorkspaceGitRefreshState = {
-  isRefreshing: boolean
-  error: string | null
 }
 
 type WorkspaceDecisionDetails = {
@@ -1260,10 +1255,6 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [inspectedWorktreeId, setInspectedWorktreeId] = useState<string | null>(null)
   const [treemapZoomWorktreeId, setTreemapZoomWorktreeId] = useState<string | null>(null)
-  const [gitRefreshStateByWorktreeId, setGitRefreshStateByWorktreeId] = useState<
-    Record<string, WorkspaceGitRefreshState>
-  >({})
-  const inFlightGitStatusRefreshes = useRef<Set<string>>(new Set())
 
   const refresh = useCallback((): void => {
     void refreshWorkspaceSpace().catch(() => {
@@ -1276,6 +1267,21 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   }, [cancelWorkspaceSpaceScan])
 
   const sourceRows = useMemo(() => analysis?.worktrees ?? [], [analysis?.worktrees])
+  const gitStatusRefreshDeps = useMemo(
+    () => ({
+      setGitStatus,
+      updateWorktreeGitIdentity,
+      setUpstreamStatus,
+      fetchUpstreamStatus
+    }),
+    [fetchUpstreamStatus, setGitStatus, setUpstreamStatus, updateWorktreeGitIdentity]
+  )
+  const gitRefreshStateByWorktreeId = useWorkspaceSpaceGitStatusRefresh({
+    sourceRows,
+    repoMap,
+    settings,
+    deps: gitStatusRefreshDeps
+  })
   const decisionDetailsByWorktreeId = useMemo(() => {
     // Why: active-agent freshness is time-based. The epoch bumps when fresh
     // hook entries cross the stale boundary so delete readiness recomputes.
@@ -1335,63 +1341,6 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
     (worktreeId: string): boolean => deleteStateByWorktreeId[worktreeId]?.isDeleting ?? false,
     [deleteStateByWorktreeId]
   )
-  const refreshWorkspaceGitStatus = useCallback(
-    (worktree: WorkspaceSpaceWorktree): Promise<void> => {
-      const currentState = useAppStore.getState()
-      if (currentState.gitStatusByWorktree[worktree.worktreeId] !== undefined) {
-        return Promise.resolve()
-      }
-      if (inFlightGitStatusRefreshes.current.has(worktree.worktreeId)) {
-        return Promise.resolve()
-      }
-      inFlightGitStatusRefreshes.current.add(worktree.worktreeId)
-
-      setGitRefreshStateByWorktreeId((current) => ({
-        ...current,
-        [worktree.worktreeId]: { isRefreshing: true, error: null }
-      }))
-
-      return refreshGitStatusForWorktree({
-        settings,
-        worktreeId: worktree.worktreeId,
-        worktreePath: worktree.path,
-        connectionId:
-          currentState.repos.find((repo) => repo.id === worktree.repoId)?.connectionId ?? undefined,
-        deps: {
-          setGitStatus,
-          updateWorktreeGitIdentity,
-          setUpstreamStatus,
-          fetchUpstreamStatus
-        }
-      })
-        .then(() => {
-          if (useAppStore.getState().gitStatusByWorktree[worktree.worktreeId] === undefined) {
-            setGitStatus(worktree.worktreeId, {
-              conflictOperation: 'unknown',
-              entries: [],
-              ignoredPaths: []
-            } as GitStatusResult)
-          }
-          setGitRefreshStateByWorktreeId((current) => ({
-            ...current,
-            [worktree.worktreeId]: { isRefreshing: false, error: null }
-          }))
-        })
-        .catch((error: unknown) => {
-          setGitRefreshStateByWorktreeId((current) => ({
-            ...current,
-            [worktree.worktreeId]: {
-              isRefreshing: false,
-              error: error instanceof Error ? error.message : String(error)
-            }
-          }))
-        })
-        .finally(() => {
-          inFlightGitStatusRefreshes.current.delete(worktree.worktreeId)
-        })
-    },
-    [fetchUpstreamStatus, setGitStatus, setUpstreamStatus, settings, updateWorktreeGitIdentity]
-  )
   const isWorktreeUnavailableForDelete = useCallback(
     (worktreeId: string): boolean => {
       if (isWorktreeDeleting(worktreeId)) {
@@ -1436,32 +1385,6 @@ export function WorkspaceSpaceManagerPanel(): React.JSX.Element {
   if (treemapZoomWorktreeId !== nextTreemapZoomWorktreeId) {
     setTreemapZoomWorktreeId(nextTreemapZoomWorktreeId)
   }
-
-  useEffect(() => {
-    const candidates = getWorkspaceSpaceGitStatusRefreshCandidates(sourceRows)
-    if (candidates.length === 0) {
-      return
-    }
-
-    let cancelled = false
-    let nextIndex = 0
-    const runWorker = async (): Promise<void> => {
-      while (!cancelled) {
-        const worktree = candidates[nextIndex]
-        nextIndex += 1
-        if (!worktree) {
-          return
-        }
-        await refreshWorkspaceGitStatus(worktree)
-      }
-    }
-    const workerCount = Math.min(GIT_STATUS_REFRESH_CONCURRENCY, candidates.length)
-    void Promise.all(Array.from({ length: workerCount }, () => runWorker()))
-
-    return () => {
-      cancelled = true
-    }
-  }, [refreshWorkspaceGitStatus, sourceRows])
 
   const inspectedWorktree =
     rows.find((row) => row.worktreeId === nextInspectedWorktreeId) ??

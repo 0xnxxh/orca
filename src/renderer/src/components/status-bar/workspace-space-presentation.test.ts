@@ -366,6 +366,23 @@ describe('workspace space presentation helpers', () => {
     ).toEqual(rows.map((item) => item.worktreeId))
   })
 
+  it('excludes main, folder-main, unavailable, and nondeletable rows from automatic status work', () => {
+    const rows = [
+      row({ worktreeId: 'eligible' }),
+      row({ worktreeId: 'main', isMainWorktree: true, canDelete: false }),
+      row({
+        worktreeId: 'folder-main',
+        repoId: 'folder-repo',
+        isMainWorktree: true,
+        canDelete: false
+      }),
+      row({ worktreeId: 'unavailable', status: 'unavailable' }),
+      row({ worktreeId: 'nondeletable', canDelete: false })
+    ]
+
+    expect(getWorkspaceSpaceGitStatusRefreshCandidates(rows)).toEqual([rows[0]])
+  })
+
   it('resolves inspected worktree ids from the current scan rows', () => {
     const rows = [
       row({ worktreeId: 'errored', status: 'error' }),
