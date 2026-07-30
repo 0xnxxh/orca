@@ -123,6 +123,28 @@ export async function launchHostedAndroidDevClient(adb, metroPort, probe) {
   )
 }
 
+export async function waitForHostedAndroidReactReady(adb, timeoutMs, runAdb = runAndroidAdb) {
+  const deadline = Date.now() + timeoutMs
+  let lastError = 'Android app process is unavailable'
+  while (Date.now() < deadline) {
+    try {
+      const pid = await runAdb(adb, ['shell', 'pidof', packageName])
+      if (!/^\d+$/u.test(pid)) {
+        throw new Error('Android app process is unavailable')
+      }
+      const logcat = await runAdb(adb, ['logcat', '--pid', pid, '-d', '-v', 'brief'])
+      if (/Running "main"/u.test(logcat)) {
+        return pid
+      }
+      lastError = 'React main has not mounted'
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+    }
+    await delay(250)
+  }
+  throw new Error(`Android React runtime was unavailable: ${lastError}`)
+}
+
 export function openHostedAndroidUrl(adb, url) {
   return runAndroidAdb(
     adb,
@@ -188,11 +210,12 @@ export function findHostedAndroidBridgeLogFailures(logcat, appPid) {
   })
 }
 
-export async function assertHostedAndroidBridgeLogClean(adb) {
-  const [logcat, appPid] = await Promise.all([
-    runAndroidAdb(adb, ['logcat', '-d', '-v', 'brief']),
-    runAndroidAdb(adb, ['shell', 'pidof', packageName])
-  ])
+export async function assertHostedAndroidBridgeLogClean(adb, runAdb = runAndroidAdb) {
+  const appPid = await runAdb(adb, ['shell', 'pidof', packageName])
+  if (!/^\d+$/u.test(appPid)) {
+    throw new Error('Android app process is unavailable')
+  }
+  const logcat = await runAdb(adb, ['logcat', '--pid', appPid, '-d', '-v', 'brief'])
   const failures = findHostedAndroidBridgeLogFailures(logcat, appPid)
   if (failures.length > 0) {
     throw new Error(`Android bridge emitted errors:\n${failures.slice(0, 16).join('\n')}`)

@@ -11,6 +11,7 @@ import {
   readHostedWebViewTextPoint,
   waitForVisibleHostedWebView
 } from './hosted-webview-cdp-session.mjs'
+import { readHostedWebViewControlPoint } from './hosted-webview-control-point.mjs'
 
 const PROVIDER_DOM_EXPRESSION = `JSON.stringify((() => {
   const mermaidFrames = Array.from(
@@ -48,33 +49,70 @@ const PROVIDER_DOM_EXPRESSION = `JSON.stringify((() => {
     mermaidFrames
   };
 })())`
-const TASKS_TOOLBAR_X = 0.87
-
 export async function verifyHostedAdversarialTasks({
   activatePoint,
   discoveryUrl,
   document,
   timeoutMs
 }) {
-  const filterPoint = await readHostedWebViewTextPoint(document, 'Filter')
-  await activatePoint({ x: TASKS_TOOLBAR_X, y: filterPoint.y })
-  const tasks = await waitForVisibleHostedWebView({
-    discoveryUrl,
-    expectedText: HOSTED_ADVERSARIAL_PROVIDER_TITLE_MARKER,
-    expectedHrefIncludes: '/tasks',
-    timeoutMs
-  })
+  let activeDocument = document
+  let tasks
+  let lastError
+  for (let attempt = 0; attempt < 3 && !tasks; attempt += 1) {
+    if (!activeDocument.href.includes('/tasks')) {
+      await activatePoint(await readHostedWebViewControlPoint(activeDocument, 'Tasks'))
+    }
+    try {
+      tasks = await waitForVisibleHostedWebView({
+        discoveryUrl,
+        expectedText: HOSTED_ADVERSARIAL_PROVIDER_TITLE_MARKER,
+        expectedHrefIncludes: '/tasks',
+        timeoutMs: Math.min(timeoutMs, 15_000)
+      })
+    } catch (error) {
+      lastError = error
+      activeDocument = await waitForVisibleHostedWebView({
+        discoveryUrl,
+        expectedText: '',
+        requireInteractiveControls: false,
+        timeoutMs
+      })
+    }
+  }
+  if (!tasks) {
+    throw lastError ?? new Error('Hosted adversarial Tasks route did not open')
+  }
   const evidence = await waitForProviderEvidence(tasks, timeoutMs, {
     errorMarker: true,
     titleMarker: true
   })
-  const titlePoint = await readHostedWebViewTextPoint(tasks, 'Tasks')
-  await activatePoint({ x: Math.max(0.04, titlePoint.x - 0.12), y: titlePoint.y })
-  const workspaceDocument = await waitForVisibleHostedWebView({
-    discoveryUrl,
-    expectedText: 'Orca Desktop',
-    timeoutMs
-  })
+  activeDocument = tasks
+  let workspaceDocument
+  lastError = undefined
+  for (let attempt = 0; attempt < 3 && !workspaceDocument; attempt += 1) {
+    if (activeDocument.href.includes('/tasks')) {
+      const titlePoint = await readHostedWebViewTextPoint(activeDocument, 'Tasks')
+      await activatePoint({ x: Math.max(0.04, titlePoint.x - 0.12), y: titlePoint.y })
+    }
+    try {
+      workspaceDocument = await waitForVisibleHostedWebView({
+        discoveryUrl,
+        expectedText: 'Orca Desktop',
+        timeoutMs: Math.min(timeoutMs, 15_000)
+      })
+    } catch (error) {
+      lastError = error
+      activeDocument = await waitForVisibleHostedWebView({
+        discoveryUrl,
+        expectedText: '',
+        requireInteractiveControls: false,
+        timeoutMs
+      })
+    }
+  }
+  if (!workspaceDocument) {
+    throw lastError ?? new Error('Hosted adversarial Tasks route did not close')
+  }
   return { evidence, workspaceDocument }
 }
 

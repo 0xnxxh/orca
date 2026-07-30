@@ -35,7 +35,8 @@ import {
   openHostedAndroidUrl,
   resolveHostedAndroidAdb,
   startHostedAndroidMetro,
-  stopHostedAndroidApp
+  stopHostedAndroidApp,
+  waitForHostedAndroidReactReady
 } from './hosted-android-emulator-session.mjs'
 import { runAndroidAdb } from './hosted-android-mobile-web-cache.mjs'
 import { HOSTED_MOBILE_APP_ROUTE_URL } from './hosted-mobile-e2e-launch.mjs'
@@ -164,6 +165,7 @@ async function main() {
     await stage('development client launch', () =>
       launchHostedAndroidDevClient(adb, metro.port, probe)
     )
+    await stage('React runtime', () => waitForHostedAndroidReactReady(adb, options.timeoutMs))
     const emulator = { adb }
     await stage('native pairing', () =>
       pairAndroidApp(emulator, runtime.pairingUrl, options.timeoutMs)

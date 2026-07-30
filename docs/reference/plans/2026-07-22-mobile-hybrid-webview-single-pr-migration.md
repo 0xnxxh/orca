@@ -150,7 +150,7 @@ prototype:
   inventory entry, and fixtures are removed. The production `/hybrid` route,
   production bridge clients, native fallback, and Experimental Settings entry
   remain intentionally until the external cutover gates pass.
-- The 61-commit branch is rebased onto `origin/main` at `4543bb6826` and remains
+- The 62-commit branch is rebased onto `origin/main` at `6c3b2cfb39` and remains
   zero behind. Upstream
   native-chat launch-draft, transcript identity, loading, reconnect, and
   orchestration behavior is retained in both native and hosted adapters.
@@ -1146,15 +1146,21 @@ and nested syntax text keeps the effective native font behavior. On iPhone 17
 Pro Simulator, Source Control passes at 0.736% changed pixels / 0.910 mean
 channel difference and Review at 2.134% / 1.947, within the 3% / 4 budgets.
 
-Current validation passes 596 mobile files / 3,552 tests with 2 expected skips.
+Current validation passes 597 mobile files / 3,562 tests with 2 expected skips.
 The root suite passes 40,515 tests but hit one unrelated load-sensitive
 transcript watcher assertion; its 28-test file passes standalone. All project
 typechecks, root/mobile/mobile-web lint and code-quality audits, formatting,
 localization, max-lines and diff hygiene, and the current 56 reliability gates
 pass. React Doctor reports zero blocking migration error without suppressions.
 The independently verified production package
-`240b80e7da8601d062daf17e2dc88e0ca32c984f7580d4060bd5b877e0022c3d`
-contains 51 assets and verifies at 9,151,939 raw bytes / 2,649,167 gzip bytes.
+`121fe8682fc221fd7e6f2955fe1f246017d164db3122d71526bc3f66b19578c5`
+contains 51 assets and verifies at 9,151,993 raw bytes / 2,649,166 gzip bytes.
+The post-rebase exact Android journey passes Tasks, Session, terminal links,
+Source Control/Review, hostile provider/file/diff/Markdown/HTML/SVG/PNG/Mermaid
+content, all isolation probes, the app-scoped bridge audit, and the privacy and
+exit-info audit with zero executed marker or sentinel observation. The harness
+waits for React before pairing and locates the existing Tasks control through
+its nonvisual accessibility label rather than a fixed screen coordinate.
 The preceding exact package `3c0f364f…` passes the unpacked macOS arm64 → Docker SSH → actual iOS
 WKWebView journey from a clean app reinstall in 1.9 minutes. Authenticated RPC
 returned the packaged build with no checkout-output fallback; the unchanged

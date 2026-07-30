@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { findHostedAndroidBridgeLogFailures } from '../../scripts/hosted-android-emulator-session.mjs'
+import {
+  assertHostedAndroidBridgeLogClean,
+  findHostedAndroidBridgeLogFailures,
+  waitForHostedAndroidReactReady
+} from '../../scripts/hosted-android-emulator-session.mjs'
 
 describe('hosted Android emulator session', () => {
   it('finds native bridge rejection, conversion, cast, and process failures', () => {
@@ -31,6 +35,32 @@ describe('hosted Android emulator session', () => {
 
     expect(findHostedAndroidBridgeLogFailures(logcat, '20200')).toEqual([
       '      E/AndroidRuntime(20200): FATAL EXCEPTION: main'
+    ])
+  })
+
+  it('waits for the current Android app process to mount React main', async () => {
+    const responses = [
+      '7301',
+      'I/ReactNativeJS: Loading bundle',
+      '7301',
+      'I/ReactNativeJS: Running "main"'
+    ]
+    const runAdb = async () => responses.shift() ?? ''
+
+    await expect(waitForHostedAndroidReactReady('adb', 2_000, runAdb)).resolves.toBe('7301')
+  })
+
+  it('scopes the bridge audit to the current Android app process', async () => {
+    const calls: string[][] = []
+    const runAdb = async (_adb: string, args: string[]) => {
+      calls.push(args)
+      return calls.length === 1 ? '7301' : 'I/chromium: hosted route'
+    }
+
+    await expect(assertHostedAndroidBridgeLogClean('adb', runAdb)).resolves.toBeUndefined()
+    expect(calls).toEqual([
+      ['shell', 'pidof', 'com.stably.orca.mobile'],
+      ['logcat', '--pid', '7301', '-d', '-v', 'brief']
     ])
   })
 })

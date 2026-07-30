@@ -1056,6 +1056,8 @@ export function HostScreen({
               style={styles.searchToggle}
               onPress={() => navigateFromHostList(`/h/${hostId}/tasks`)}
               disabled={connState !== 'connected'}
+              accessibilityRole="button"
+              accessibilityLabel="Tasks"
             >
               <List
                 size={16}

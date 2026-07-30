@@ -102,11 +102,12 @@ longer restart Preview loads, and RNW preserves the native iOS font fallback.
 The unchanged Accounts screen now also passes deterministic iOS
 native-versus-hosted parity at 0.050% changed pixels, 0.099 mean channel
 difference, and 0.000544 vertical-title delta, within the 3% / 4 / 0.005
-budgets. Its existing non-embedded toolbar icon has no native accessibility
-label, so the fixture uses the unchanged icon position and leaves the semantic
-gap for the broader VoiceOver review. The complete cached-app journey passes
-with Accounts inserted before Tasks, Session, Files/Preview, Agent History,
-Desktop restart/recovery, Source Control, Review, and both isolation probes.
+budgets. Its existing non-embedded toolbar icon now exposes a nonvisual `Tasks`
+accessibility label without changing layout or styling. The exact Android
+fixture locates that control semantically and retries only after proving the
+route did not open. The complete cached-app journey passes with Accounts
+inserted before Tasks, Session, Files/Preview, Agent History, Desktop
+restart/recovery, Source Control, Review, and both isolation probes.
 
 The base workspace screen now has the same deterministic proof. Native and
 hosted mount the unchanged `HostScreen` and pass at 0.879% changed pixels,
@@ -124,17 +125,22 @@ pixels and 0.910 mean channel difference; Review passes at 2.134% and 1.947,
 within the 3% / 4 budgets. The packaged document opts into native safe-area
 insets, and nested syntax text retains the native effective font behavior.
 
-The migration is based on `origin/main` at `4543bb6826`; the final rebase is
-complete and the branch is 61 commits ahead and zero behind. Post-rebase
-validation plus the hostile-content slice now passes 593 mobile files / 3,530
-tests with 2 expected skips. The latest full root run passes 3,854 files /
-40,508 tests with 71 expected skips. All project typechecks,
+The migration is based on `origin/main` at `6c3b2cfb39`; the final rebase is
+complete and the branch is 62 commits ahead and zero behind. Post-rebase
+validation plus the hostile-content slice now passes 597 mobile files / 3,562
+tests with 2 expected skips. The focused merged SSH recovery path passes 940
+tests with 1 expected skip. The latest full root run passes 40,515 tests apart
+from one unrelated load-sensitive transcript watcher assertion whose 28-test
+file passes standalone. All project typechecks,
 root/mobile/mobile-web lint and code-quality audits, 56 reliability gates,
 changed-file and full-mobile formatting, localization, the max-lines ratchet,
 and diff hygiene pass. React Doctor reports zero new migration findings. The
 independently verified React Native Web package is
-`3c0f364f9cb6f1785d1d08fdeb81ca5367b091706c24d124374a88578839e745`:
-50 assets, 9,135,273 raw bytes, and 2,644,558 gzip bytes.
+`121fe8682fc221fd7e6f2955fe1f246017d164db3122d71526bc3f66b19578c5`:
+51 assets, 9,151,993 raw bytes, and 2,649,166 gzip bytes. The final exact
+Android journey passes the complete hostile route and isolation corpus with
+zero executed marker, sentinel observation, bridge-log finding, or new failure
+exit record.
 
 The immediately preceding `7c7c673d…` package passed the unpacked macOS arm64 →
 Docker SSH → actual iOS WKWebView journey from a clean app reinstall in 1.9
