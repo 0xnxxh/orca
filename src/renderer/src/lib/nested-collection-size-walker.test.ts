@@ -476,7 +476,10 @@ describe('node budget', () => {
       state[`slice${slice}`] = Array.from({ length: 2000 }, () => ({ items: [1, 2, 3] }))
     }
 
+    // Freeze time to isolate the entry cap; the real deadline has its own stress test below.
+    const now = vi.spyOn(performance, 'now').mockReturnValue(0)
     const walk = walkNestedCollectionSizes(state, 12)
+    now.mockRestore()
 
     // 512_000 entries exist; an unbudgeted walk reads all of them.
     expect(walk.nodesVisited).toBeLessThanOrEqual(10_000)
