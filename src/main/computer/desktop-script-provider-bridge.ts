@@ -7,9 +7,7 @@ export async function execBridge(
 ): Promise<{ stdout: string; stderr: string }> {
   const result = await executeSupervisedDesktopProvider(withoutUndefinedValues(request))
   if (result.error) {
-    throw result.error.killed
-      ? new RuntimeClientError('action_timeout', result.error.message)
-      : mapBridgeError(result.error.message)
+    throw mapBridgeError(result.error.message)
   }
   return { stdout: result.stdout, stderr: result.stderr }
 }

@@ -25,11 +25,11 @@ export function expectDesktopProviderSubprocessStartCount(count: number): void {
   expect(executeSupervisedDesktopProviderMock).toHaveBeenCalledTimes(count)
 }
 
-export function mockBridgeExecutionError(message: string, killed = false): void {
+export function mockBridgeExecutionError(message: string): void {
   executeSupervisedDesktopProviderMock.mockResolvedValueOnce({
     stdout: '',
     stderr: message,
-    error: { message, killed }
+    error: { message, killed: false }
   })
 }
 

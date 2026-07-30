@@ -123,12 +123,4 @@ describe('DesktopScriptProviderClient errors and capabilities', () => {
 
     await expect(client.listApps()).rejects.toMatchObject({ code: 'app_not_found' })
   })
-
-  it('preserves killed provider failures as timeouts', async () => {
-    mockBridgeExecutionError('provider exceeded its deadline', true)
-
-    const client = await createDesktopScriptProviderClient('linux', '/tmp/runtime.py')
-
-    await expect(client.listApps()).rejects.toMatchObject({ code: 'action_timeout' })
-  })
 })
