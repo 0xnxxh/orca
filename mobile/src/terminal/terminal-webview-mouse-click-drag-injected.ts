@@ -128,7 +128,13 @@ export const TERMINAL_MOUSE_CLICK_DRAG_JS = `
     targetSurface.addEventListener('pointermove', function(e) {
       var gesture = mouseGesture;
       if (e.pointerType !== 'mouse' || !gesture || gesture.mode === 'cancelled') return;
-      if (!term || (e.buttons & 1) === 0) return;
+      if (!term) return;
+      if ((e.buttons & 1) === 0) {
+        // Why: a pointerup lost outside the WebView (capture unavailable) must
+        // end the gesture here, or a tracked press stays latched at the TUI.
+        abandonMouseGesture();
+        return;
+      }
       gesture.lastX = e.clientX;
       gesture.lastY = e.clientY;
       if (!gesture.moved) {

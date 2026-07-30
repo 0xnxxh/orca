@@ -254,7 +254,7 @@ describe('terminal WebView external mouse click and drag', () => {
     expect(new Set(motionCols).size).toBe(motionCols.length)
   })
 
-  it('does not report press or motion for an x10 click-only TUI drag', () => {
+  it('does not report motion or release for an x10 click-only TUI drag', () => {
     boot()
     activeTerminal().modes.mouseTrackingMode = 'x10'
 
@@ -335,6 +335,26 @@ describe('terminal WebView external mouse click and drag', () => {
 
     // Why: Android SOURCE_MOUSE injections can pair a mouse pointerdown with
     // real touch events; double-handling would double the click report.
+    expect(terminalInputBytes(postMessage)).toBe('')
+  })
+
+  it('releases a tracked drag when the button state shows the pointerup was lost', () => {
+    boot()
+    activeTerminal().modes.mouseTrackingMode = 'drag'
+
+    dispatchPointer('pointerdown', { x: 40, y: 60, button: 0, buttons: 1 })
+    dispatchPointer('pointermove', { x: 160, y: 60, button: 0, buttons: 1 })
+    // Pointer re-enters with the button already up — the pointerup never arrived.
+    dispatchPointer('pointermove', { x: 200, y: 60, button: 0, buttons: 0 })
+
+    const reports = terminalInputBytes(postMessage).match(DEFAULT_MOUSE_REPORT_RE) ?? []
+    expect(reports[reports.length - 1]?.charCodeAt(3)).toBe(35)
+
+    postMessage.mockClear()
+    dispatchPointer('pointermove', { x: 240, y: 60, button: 0, buttons: 1 })
+
+    // The lost pointerup ended the gesture; a later unrelated move must not
+    // keep emitting motion for it.
     expect(terminalInputBytes(postMessage)).toBe('')
   })
 
