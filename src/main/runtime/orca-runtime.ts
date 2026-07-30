@@ -386,7 +386,11 @@ import {
   isExpectedAgentProcess,
   recognizeAgentProcess
 } from '../../shared/agent-process-recognition'
-import { isTuiAgentEnabled, pickTuiAgent } from '../../shared/tui-agent-selection'
+import {
+  haveSameDisabledTuiAgents,
+  isTuiAgentEnabled,
+  pickTuiAgent
+} from '../../shared/tui-agent-selection'
 import {
   resolveTuiAgentLaunchArgs,
   resolveTuiAgentLaunchEnv
@@ -406,6 +410,7 @@ import {
 } from '../agent-trust-presets'
 import { markRemoteAgentWorkspaceTrusted } from '../remote-agent-trust-presets'
 import { applyAgentStatusHooksEnabled } from '../agent-hooks/managed-agent-hook-controls'
+import { recordManagedHookInstallFailure } from '../agent-hooks/install-telemetry'
 import {
   isWindowsAbsolutePathLike,
   isPathInsideOrEqual,
@@ -533,7 +538,7 @@ import {
 } from '../../shared/claude-agent-teams-tmux-compat'
 import { joinWorktreeRelativePath } from './runtime-relative-paths'
 import { collectMemorySnapshot } from '../memory/collector'
-import { BrowserWindow, ipcMain, Notification } from 'electron'
+import { app, BrowserWindow, ipcMain, Notification } from 'electron'
 import type { AgentBrowserBridge } from '../browser/agent-browser-bridge'
 import type { BrowserBackend } from '../browser/browser-backend'
 import { BrowserError } from '../browser/cdp-bridge'
@@ -2601,6 +2606,8 @@ export class OrcaRuntimeService {
   private readonly runtimeId = randomUUID()
   private readonly startedAt = Date.now()
   private readonly store: RuntimeStore | null
+  private managedHookReconciliationGeneration = 0
+  private managedHookReconciliationTail: Promise<void> = Promise.resolve()
   private readonly orchestrationEnvironmentTransport: OrchestrationEnvironmentTransport | null
   private readonly orchestrationFederationTimers = new Map<string, ReturnType<typeof setInterval>>()
   private readonly orchestrationFederationSyncs = new Map<string, Promise<void>>()
@@ -3346,7 +3353,34 @@ export class OrcaRuntimeService {
     }
   }
 
-  updateClientSettings(
+  private reconcileManagedAgentHooks(): Promise<void> {
+    const generation = ++this.managedHookReconciliationGeneration
+    const reconciliation = this.managedHookReconciliationTail.then(async () => {
+      if (generation !== this.managedHookReconciliationGeneration) {
+        return
+      }
+      const settings = this.store?.getSettings()
+      if (!settings) {
+        return
+      }
+      await applyAgentStatusHooksEnabled(settings.agentStatusHooksEnabled !== false, settings, {
+        shouldHydrateShellPath: app.isPackaged && process.platform !== 'win32',
+        onInstallError: recordManagedHookInstallFailure,
+        shouldContinue: (agent) => {
+          const current = this.store?.getSettings()
+          return (
+            current !== undefined &&
+            current.agentStatusHooksEnabled !== false &&
+            !current.disabledTuiAgents?.includes(agent)
+          )
+        }
+      })
+    })
+    this.managedHookReconciliationTail = reconciliation.catch(() => {})
+    return reconciliation
+  }
+
+  async updateClientSettings(
     updates: Pick<
       Partial<GlobalSettings>,
       | 'agentStatusHooksEnabled'
@@ -3366,36 +3400,42 @@ export class OrcaRuntimeService {
       | 'minimaxUsageModels'
       | 'prBotAuthorOverrides'
     >
-  ): Pick<
-    GlobalSettings,
-    | 'defaultTuiAgent'
-    | 'disabledTuiAgents'
-    | 'agentCmdOverrides'
-    | 'agentDefaultArgs'
-    | 'agentDefaultEnv'
-    | 'agentStatusHooksEnabled'
-    | 'defaultTaskSource'
-    | 'defaultTaskViewPreset'
-    | 'visibleTaskProviders'
-    | 'defaultRepoSelection'
-    | 'defaultLinearTeamSelection'
-    | 'githubProjects'
-    | 'experimentalNewWorktreeCardStyle'
-    | 'compactWorktreeCards'
-    | 'minimaxGroupId'
-    | 'minimaxUsageModels'
-    | 'prBotAuthorOverrides'
+  ): Promise<
+    Pick<
+      GlobalSettings,
+      | 'defaultTuiAgent'
+      | 'disabledTuiAgents'
+      | 'agentCmdOverrides'
+      | 'agentDefaultArgs'
+      | 'agentDefaultEnv'
+      | 'agentStatusHooksEnabled'
+      | 'defaultTaskSource'
+      | 'defaultTaskViewPreset'
+      | 'visibleTaskProviders'
+      | 'defaultRepoSelection'
+      | 'defaultLinearTeamSelection'
+      | 'githubProjects'
+      | 'experimentalNewWorktreeCardStyle'
+      | 'compactWorktreeCards'
+      | 'minimaxGroupId'
+      | 'minimaxUsageModels'
+      | 'prBotAuthorOverrides'
+    >
   > {
     if (!this.store?.getSettings || !this.store.updateSettings) {
       throw new Error('runtime_unavailable')
     }
-    const before = this.store.getSettings().agentStatusHooksEnabled !== false
+    const beforeSettings = this.store.getSettings()
+    const before = beforeSettings.agentStatusHooksEnabled !== false
     this.store.updateSettings(updates, { notifyListeners: true })
+    const settings = this.store.getSettings()
     if (
-      typeof updates.agentStatusHooksEnabled === 'boolean' &&
-      before !== updates.agentStatusHooksEnabled
+      (typeof updates.agentStatusHooksEnabled === 'boolean' &&
+        before !== updates.agentStatusHooksEnabled) ||
+      (updates.disabledTuiAgents !== undefined &&
+        !haveSameDisabledTuiAgents(beforeSettings.disabledTuiAgents, settings.disabledTuiAgents))
     ) {
-      applyAgentStatusHooksEnabled(updates.agentStatusHooksEnabled)
+      await this.reconcileManagedAgentHooks()
     }
     return this.getClientSettings()
   }
