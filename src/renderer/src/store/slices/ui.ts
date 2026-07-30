@@ -744,6 +744,7 @@ export type UISlice = {
   settingsNavigationTarget: {
     pane: SettingsNavTarget
     repoId: string | null
+    hostId?: ExecutionHostId
     sectionId?: string
     intent?: 'add-quick-command' | 'add-remote-orca-server' | 'add-ssh-host'
   } | null

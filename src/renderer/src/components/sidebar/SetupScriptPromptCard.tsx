@@ -20,6 +20,7 @@ import { showSavedInProjectSettingsToast } from './SetupScriptPromptToast'
 import { openSetupScriptSettings } from './open-setup-script-settings'
 import { trackSetupScriptPromptExposure } from './setup-script-prompt-exposure-telemetry'
 import {
+  findSetupScriptPromptRepo,
   getRenderedSetupScriptPromptState,
   markSetupScriptPromptSaved,
   type LastVisibleSetupScriptPrompt,
@@ -27,13 +28,16 @@ import {
 } from './setup-script-prompt-render-state'
 import { useSetupScriptPromptRevalidation } from './useSetupScriptPromptRevalidation'
 import { translate } from '@/i18n/i18n'
-import { findRepoForHost, getRepoHostIdentity } from '@/store/slices/repo-host-identity'
+import { getRepoHostIdentity } from '@/store/slices/repo-host-identity'
 import { getRepoExecutionHostId } from '../../../../shared/execution-host'
+import { useWorktreeById } from '@/store/selectors'
 
 function SetupScriptPromptCard(): React.JSX.Element | null {
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
   const repos = useAppStore((s) => s.repos)
   const activeRepoId = useAppStore((s) => s.activeRepoId)
+  const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
+  const activeWorktree = useWorktreeById(activeWorktreeId)
   const settings = useAppStore((s) => s.settings)
   const updateRepo = useAppStore((s) => s.updateRepo)
   const openSettingsPage = useAppStore((s) => s.openSettingsPage)
@@ -49,8 +53,8 @@ function SetupScriptPromptCard(): React.JSX.Element | null {
   const mountedRef = useMountedRef()
 
   const activeRepo = useMemo(
-    () => (activeRepoId ? findRepoForHost(repos, activeRepoId, { settings }) : null),
-    [activeRepoId, repos, settings]
+    () => findSetupScriptPromptRepo({ repos, activeRepoId, activeWorktree, settings }),
+    [activeRepoId, activeWorktree, repos, settings]
   )
   const activeRepoHostIdentity = activeRepo ? getRepoHostIdentity(activeRepo) : null
   const isDismissed = activeRepoHostIdentity
@@ -98,14 +102,14 @@ function SetupScriptPromptCard(): React.JSX.Element | null {
   }, [activeRepo, inspectionRetryKey, isDismissed, settings, sidebarOpen])
 
   const openLocalCommandSettings = useCallback(
-    (repoId: string) => {
+    (repoId: string, hostId: ReturnType<typeof getRepoExecutionHostId>) =>
       openSetupScriptSettings({
         repoId,
+        hostId,
         setSettingsSearchQuery,
         openSettingsTarget,
         openSettingsPage
-      })
-    },
+      }),
     [openSettingsPage, openSettingsTarget, setSettingsSearchQuery]
   )
 
@@ -162,7 +166,7 @@ function SetupScriptPromptCard(): React.JSX.Element | null {
         })
       )
     }
-    openLocalCommandSettings(activeRepo.id)
+    openLocalCommandSettings(activeRepo.id, getRepoExecutionHostId(activeRepo))
   }, [activeRepo, activeRepoHostIdentity, openLocalCommandSettings, promptState])
 
   const handleDismiss = useCallback(() => {
@@ -249,7 +253,7 @@ function SetupScriptPromptCard(): React.JSX.Element | null {
               markSetupScriptPromptSaved(current, importedRepoHostIdentity)
             )
             showSavedInProjectSettingsToast({
-              onOpenSettings: () => openLocalCommandSettings(importedRepoId),
+              onOpenSettings: () => openLocalCommandSettings(importedRepoId, importedHostId),
               description: translate(
                 'auto.components.sidebar.SetupScriptPromptCard.a49196d538',
                 'Runs when Orca creates a new worktree.'
@@ -262,7 +266,7 @@ function SetupScriptPromptCard(): React.JSX.Element | null {
           setPromptState((current) => markSetupScriptPromptSaved(current, importedRepoHostIdentity))
           const skippedCount = candidate.unsupportedFields?.length ?? 0
           showSavedInProjectSettingsToast({
-            onOpenSettings: () => openLocalCommandSettings(importedRepoId),
+            onOpenSettings: () => openLocalCommandSettings(importedRepoId, importedHostId),
             description:
               skippedCount > 0
                 ? `${skippedCount} unsupported field${skippedCount === 1 ? '' : 's'} skipped. Saved the setup command.`
@@ -385,9 +389,7 @@ function SetupScriptPromptCard(): React.JSX.Element | null {
     !renderedPromptState.hasEffectiveSetup &&
     renderedPromptState.repoHostIdentity === activeRepoHostIdentity
   ) {
-    lastVisiblePromptRef.current = {
-      state: renderedPromptState
-    }
+    lastVisiblePromptRef.current = { state: renderedPromptState }
   }
 
   const isInspectionError = renderedPromptState.status === 'error'

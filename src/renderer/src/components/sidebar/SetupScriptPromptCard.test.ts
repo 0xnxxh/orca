@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  findSetupScriptPromptRepo,
   getRenderedSetupScriptPromptState,
   markSetupScriptPromptSaved
 } from './setup-script-prompt-render-state'
 import type { SetupScriptPromptInspection } from '@/lib/setup-script-prompt'
 import { getRepoHostIdentityForParts } from '@/store/slices/repo-host-identity'
+import type { Repo } from '../../../../shared/types'
 
 function repoIdentity(repoId: string, hostId: string): string {
   return getRepoHostIdentityForParts(repoId, hostId)
@@ -23,6 +25,64 @@ function prompt(
     candidate: null
   }
 }
+
+describe('findSetupScriptPromptRepo', () => {
+  it('uses the active direct-SSH worktree host when repo ids collide', () => {
+    const local: Repo = {
+      id: 'same-repo',
+      path: '/local',
+      displayName: 'Local',
+      badgeColor: '#000',
+      addedAt: 1
+    }
+    const ssh: Repo = {
+      ...local,
+      path: '/ssh',
+      displayName: 'SSH',
+      connectionId: 'server',
+      executionHostId: 'ssh:server'
+    }
+
+    expect(
+      findSetupScriptPromptRepo({
+        repos: [local, ssh],
+        activeRepoId: 'same-repo',
+        activeWorktree: { repoId: 'same-repo', hostId: 'ssh:server' },
+        settings: { activeRuntimeEnvironmentId: null }
+      })
+    ).toBe(ssh)
+  })
+
+  it('uses the runtime owner for a relayed SSH worktree', () => {
+    const directSsh: Repo = {
+      id: 'same-repo',
+      path: '/direct',
+      displayName: 'Direct SSH',
+      badgeColor: '#000',
+      addedAt: 1,
+      connectionId: 'private'
+    }
+    const runtime: Repo = {
+      ...directSsh,
+      path: '/runtime',
+      displayName: 'Runtime',
+      executionHostId: 'runtime:hub'
+    }
+
+    expect(
+      findSetupScriptPromptRepo({
+        repos: [directSsh, runtime],
+        activeRepoId: 'same-repo',
+        activeWorktree: {
+          repoId: 'same-repo',
+          hostId: 'ssh:private',
+          runtimeOwnerEnvironmentId: 'hub'
+        },
+        settings: { activeRuntimeEnvironmentId: null }
+      })
+    ).toBe(runtime)
+  })
+})
 
 describe('getRenderedSetupScriptPromptState', () => {
   it('uses the current inspection when it belongs to the active repo and host', () => {
