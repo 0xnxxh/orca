@@ -1866,7 +1866,10 @@ describe('applyWebSessionTabsSnapshot', () => {
             stateStartedAt: NOW - 1_000,
             agentType: 'codex',
             paneKey: hostPaneKey,
+            tabId: 'host-tab-1',
+            worktreeId: WT,
             terminalTitle: 'codex [working]',
+            providerSession: { key: 'session_id', id: 'session-1' },
             stateHistory: []
           }
         }
@@ -1882,6 +1885,9 @@ describe('applyWebSessionTabsSnapshot', () => {
       prompt: 'fix web parity',
       agentType: 'codex',
       paneKey: mirroredPaneKey,
+      tabId: mirroredId,
+      worktreeId: WT,
+      providerSession: { key: 'session_id', id: 'session-1' },
       terminalTitle: 'codex [working]'
     })
     expect(patch.agentStatusByPaneKey?.[hostPaneKey]).toBeUndefined()
@@ -1889,7 +1895,7 @@ describe('applyWebSessionTabsSnapshot', () => {
     expect(patch.sortEpoch).toBe(1)
   })
 
-  it('bumps aggregate epochs when a mirrored same-state entry gains attribution', () => {
+  it('updates a mirrored same-state entry when resume identity arrives', () => {
     const hostPaneKey = makePaneKey('host-tab-1', LEAF_ID)
     const snapshot = makeSnapshot([
       {
@@ -1910,6 +1916,7 @@ describe('applyWebSessionTabsSnapshot', () => {
           paneKey: hostPaneKey,
           worktreeId: WT,
           tabId: 'host-tab-1',
+          providerSession: { key: 'session_id', id: 'session-1' },
           stateHistory: []
         }
       }
@@ -1926,7 +1933,7 @@ describe('applyWebSessionTabsSnapshot', () => {
       makeState({
         ...initial,
         agentStatusByPaneKey: {
-          [mirroredPaneKey]: { ...existing, worktreeId: 'stale-worktree', tabId: 'stale-tab' }
+          [mirroredPaneKey]: { ...existing, providerSession: undefined }
         },
         agentStatusEpoch: 7,
         sortEpoch: 11
@@ -1936,8 +1943,12 @@ describe('applyWebSessionTabsSnapshot', () => {
       NOW
     ) as Partial<WebSessionTabsSyncState>
 
-    expect(patch.agentStatusEpoch).toBe(8)
-    expect(patch.sortEpoch).toBe(12)
+    expect(patch.agentStatusByPaneKey?.[mirroredPaneKey]?.providerSession).toEqual({
+      key: 'session_id',
+      id: 'session-1'
+    })
+    expect(patch.agentStatusEpoch).toBe(7)
+    expect(patch.sortEpoch).toBe(11)
   })
 
   it('keeps mirrored OMP tabs from repainting to Pi-compatible titles', () => {
