@@ -316,7 +316,21 @@ describe('worktree scan sweep budget', () => {
     vi.useFakeTimers()
     const repo = makeRepo('repo-ssh', '/remote/repo', { connectionId: 'ssh-1' })
     const storedPath = '/remote/repo-linked'
-    registerSshProvider('ssh-1', vi.fn().mockReturnValue(new Promise(() => {})))
+    let providerSignal: AbortSignal | undefined
+    registerSshProvider(
+      'ssh-1',
+      vi.fn(
+        async (_path: string, options?: { signal?: AbortSignal }) =>
+          await new Promise<GitWorktreeInfo[]>((_resolve, reject) => {
+            providerSignal = options?.signal
+            options?.signal?.addEventListener(
+              'abort',
+              () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+              { once: true }
+            )
+          })
+      )
+    )
     const runtime = makeScanRuntime([repo], {
       metaById: {
         [`${repo.id}::${storedPath}`]: { instanceId: 'stored-instance' } as WorktreeMeta
@@ -330,6 +344,7 @@ describe('worktree scan sweep budget', () => {
     // A relay that ran out of time is contention, not repo health.
     expect(runtime.worktreeScanBackoff.size).toBe(0)
     expect(runtime.worktreeScanInFlight.size).toBe(0)
+    expect(providerSignal?.aborted).toBe(true)
   })
 
   it('scans repos with a live pane before idle repos so truncation lands on idle ones', async () => {
@@ -349,5 +364,58 @@ describe('worktree scan sweep budget', () => {
     await vi.advanceTimersByTimeAsync(FLEET_TIMEOUT_MS + 1)
 
     expect((await pending).map((worktree) => worktree.path)).toContain(join(tmpdir(), 'ordered-39'))
+  })
+
+  it('rotates a wedged head that fills the wave ceiling so the healthy tail is not starved forever', async () => {
+    vi.useFakeTimers()
+    // Three waves × 8 slots = 24: a wedged prefix this wide consumes every wave of one sweep.
+    // Without cross-sweep deprioritization the same 24 sort first every time and the 16 healthy
+    // repos never spawn ([0,0,0] forever). After sweep 1 the wedged head is deprioritized, so
+    // sweep 2 lands the healthy tail.
+    const repos = Array.from({ length: 40 }, (_, index) =>
+      makeRepo(`repo-${index}`, join(tmpdir(), `cliff-${String(index).padStart(2, '0')}`))
+    )
+    mockStrictScansWedgedBy(/cliff-(0[0-9]|1[0-9]|2[0-3])$/, 200)
+    const runtime = makeScanRuntime(repos)
+
+    const first = runtime.listResolvedWorktrees()
+    await vi.advanceTimersByTimeAsync(FLEET_TIMEOUT_MS + 1)
+    expect(await first).toHaveLength(0)
+    expect(vi.mocked(listWorktreesStrict)).toHaveBeenCalledTimes(24)
+
+    await vi.advanceTimersByTimeAsync(1_100)
+    const second = runtime.listResolvedWorktrees()
+    await vi.advanceTimersByTimeAsync(FLEET_TIMEOUT_MS + 1)
+    expect(await second).toHaveLength(16)
+
+    await vi.advanceTimersByTimeAsync(1_100)
+    const third = runtime.listResolvedWorktrees()
+    await vi.advanceTimersByTimeAsync(FLEET_TIMEOUT_MS + 1)
+    expect(await third).toHaveLength(16)
+  })
+
+  it('rotates cancelled active repos behind a healthy idle tail', async () => {
+    vi.useFakeTimers()
+    const repos = Array.from({ length: 40 }, (_, index) =>
+      makeRepo(`repo-${index}`, join(tmpdir(), `active-cliff-${String(index).padStart(2, '0')}`))
+    )
+    mockStrictScansWedgedBy(/active-cliff-(0[0-9]|1[0-9]|2[0-3])$/, 200)
+    const runtime = makeScanRuntime(repos)
+    repos.slice(0, 24).forEach((repo, index) => {
+      runtime.ptysById.set(`pty-${index}`, {
+        worktreeId: `${repo.id}::${repo.path}`,
+        connected: true
+      })
+    })
+
+    const first = runtime.listResolvedWorktrees()
+    await vi.advanceTimersByTimeAsync(FLEET_TIMEOUT_MS + 1)
+    expect(await first).toHaveLength(0)
+
+    await vi.advanceTimersByTimeAsync(1_100)
+    const second = runtime.listResolvedWorktrees()
+    await vi.advanceTimersByTimeAsync(FLEET_TIMEOUT_MS + 1)
+
+    expect(await second).toHaveLength(16)
   })
 })

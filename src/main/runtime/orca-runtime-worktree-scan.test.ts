@@ -134,7 +134,7 @@ describe('worktree scan fleet', () => {
 
     const first = await runtime.listResolvedWorktrees()
     expect(first.map((worktree) => worktree.path)).toEqual([healthyPath])
-    expect(runtime.worktreeScanBackoff.get('missing')?.kind).toBe('missing_repo_path')
+    expect([...runtime.worktreeScanBackoff.values()][0]?.kind).toBe('missing_repo_path')
     expect(listWorktrees).not.toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(BASE_TTL_MS + 1_000)
@@ -160,7 +160,7 @@ describe('worktree scan fleet', () => {
     expect((await runtime.listResolvedWorktrees()).map((entry) => entry.path)).toEqual([repo.path])
     await vi.advanceTimersByTimeAsync(BASE_TTL_MS + 1_000)
     expect((await runtime.listResolvedWorktrees()).map((entry) => entry.path)).toEqual([repo.path])
-    expect(runtime.worktreeScanBackoff.get(repo.id)?.kind).toBe('scan_failed')
+    expect([...runtime.worktreeScanBackoff.values()][0]?.kind).toBe('scan_failed')
 
     await vi.advanceTimersByTimeAsync(10_000)
     expect((await runtime.listResolvedWorktrees()).map((entry) => entry.path)).toEqual([repo.path])
@@ -169,7 +169,7 @@ describe('worktree scan fleet', () => {
     await vi.advanceTimersByTimeAsync(21_000)
     expect((await runtime.listResolvedWorktrees()).map((entry) => entry.path)).toEqual([repo.path])
     expect(strictScansFor(repo.path)).toBe(3)
-    expect(runtime.worktreeScanBackoff.has(repo.id)).toBe(false)
+    expect(runtime.worktreeScanBackoff.size).toBe(0)
   })
 
   it('preserves the legacy empty-success contract for a registered non-git directory', async () => {
@@ -182,8 +182,8 @@ describe('worktree scan fleet', () => {
     const result = await runtime.listRepoWorktreesForResolution(repo)
 
     expect(result).toEqual({ kind: 'success', origin: 'scan', worktrees: [] })
-    expect(runtime.worktreeScanCache.has(repo.id)).toBe(true)
-    expect(runtime.worktreeScanBackoff.has(repo.id)).toBe(false)
+    expect(runtime.worktreeScanCache.size).toBe(1)
+    expect(runtime.worktreeScanBackoff.size).toBe(0)
   })
 
   it('keeps stored SSH worktrees visible while a failed provider is backed off', async () => {
@@ -200,12 +200,65 @@ describe('worktree scan fleet', () => {
 
     const first = await runtime.listResolvedWorktrees()
     expect(first.map((worktree) => worktree.path)).toEqual([storedPath])
-    expect(runtime.worktreeScanBackoff.get(repo.id)?.kind).toBe('scan_failed')
+    expect([...runtime.worktreeScanBackoff.values()][0]?.kind).toBe('scan_failed')
 
     await vi.advanceTimersByTimeAsync(2_000)
     const backedOff = await runtime.listResolvedWorktrees()
     expect(backedOff.map((worktree) => worktree.path)).toEqual([storedPath])
     expect(listSshWorktrees).toHaveBeenCalledTimes(1)
+  })
+
+  it('isolates scan state for duplicate repo ids on different hosts', async () => {
+    const localRepo = makeRepo('repo-shared', join(tmpdir(), 'shared-local'))
+    const sshRepo = makeRepo('repo-shared', '/remote/shared', { connectionId: 'ssh-1' })
+    const localWorktree = makeGitWorktree(localRepo.path)
+    const sshWorktree = makeGitWorktree(sshRepo.path)
+    vi.mocked(listWorktreesStrict).mockResolvedValue([localWorktree])
+    const listSshWorktrees = vi.fn().mockResolvedValue([sshWorktree])
+    registerSshProvider('ssh-1', listSshWorktrees)
+    const runtime = makeScanRuntime([localRepo, sshRepo])
+
+    await runtime.listRepoWorktreesForResolution(localRepo)
+    await runtime.listRepoWorktreesForResolution(sshRepo)
+    await runtime.listRepoWorktreesForResolution(localRepo)
+    await runtime.listRepoWorktreesForResolution(sshRepo)
+
+    expect(strictScansFor(localRepo.path)).toBe(1)
+    expect(listSshWorktrees).toHaveBeenCalledTimes(1)
+    expect(runtime.worktreeScanCache.size).toBe(2)
+
+    runtime.invalidateRepoWorktreeScan(localRepo.id)
+    await runtime.listRepoWorktreesForResolution(localRepo)
+    await runtime.listRepoWorktreesForResolution(sshRepo)
+
+    expect(strictScansFor(localRepo.path)).toBe(2)
+    expect(listSshWorktrees).toHaveBeenCalledTimes(2)
+  })
+
+  it('filters stored SSH fallbacks by execution host', async () => {
+    const localRepo = makeRepo('repo-shared', join(tmpdir(), 'fallback-local'))
+    const sshRepo = makeRepo('repo-shared', '/remote/fallback', { connectionId: 'ssh-1' })
+    const localStoredPath = join(tmpdir(), 'fallback-local-linked')
+    const sshStoredPath = '/remote/fallback-linked'
+    registerSshProvider('ssh-1', vi.fn().mockRejectedValue(new Error('connection lost')))
+    const runtime = makeScanRuntime([localRepo, sshRepo], {
+      metaById: {
+        [`${localRepo.id}::${localStoredPath}`]: {
+          instanceId: 'local-instance',
+          hostId: 'local'
+        } as unknown as WorktreeMeta,
+        [`${sshRepo.id}::${sshStoredPath}`]: {
+          instanceId: 'ssh-instance',
+          hostId: 'ssh:ssh-1'
+        } as unknown as WorktreeMeta
+      }
+    })
+
+    await expect(runtime.listRepoWorktreesForResolution(sshRepo)).resolves.toEqual({
+      kind: 'failure',
+      reason: 'scan_failed',
+      fallbackWorktrees: [expect.objectContaining({ path: sshStoredPath })]
+    })
   })
 
   it('bounds parallel explicit scans with the same runtime-wide slot pool', async () => {
@@ -375,7 +428,7 @@ describe('worktree scan fleet', () => {
     }
     await expect(joiner).resolves.toEqual(invalidated)
     await expect(originator).resolves.toEqual(invalidated)
-    expect(runtime.worktreeScanCache.has(repo.id)).toBe(false)
+    expect(runtime.worktreeScanCache.size).toBe(0)
   })
 
   it('never backs off repos for slot-queue waits or scan timeouts', async () => {
@@ -437,7 +490,7 @@ describe('worktree scan fleet', () => {
       reason: 'backoff',
       fallbackWorktrees: []
     })
-    expect(runtime.worktreeScanBackoff.get(repo.id)?.kind).toBe('scan_failed')
+    expect([...runtime.worktreeScanBackoff.values()][0]?.kind).toBe('scan_failed')
     expect(strictScansFor(repo.path)).toBe(1)
   })
 
@@ -451,13 +504,13 @@ describe('worktree scan fleet', () => {
 
     const failed = await runtime.listRepoWorktreesForResolution(repo)
     expect(failed).toMatchObject({ kind: 'failure', reason: 'scan_failed' })
-    expect(runtime.worktreeScanBackoff.has(repo.id)).toBe(true)
+    expect(runtime.worktreeScanBackoff.size).toBe(1)
 
     runtime.invalidateWorktreeScanCacheForRepo(repo.id)
     const recovered = await runtime.listRepoWorktreesForResolution(repo)
 
     expect(recovered).toEqual({ kind: 'success', origin: 'scan', worktrees: [worktree] })
-    expect(runtime.worktreeScanBackoff.has(repo.id)).toBe(false)
+    expect(runtime.worktreeScanBackoff.size).toBe(0)
     expect(strictScansFor(repo.path)).toBe(2)
   })
 
@@ -479,7 +532,7 @@ describe('worktree scan fleet', () => {
     rejectScan?.(Object.assign(new Error('permission denied'), { code: 'EACCES' }))
     await expect(explicit).resolves.toMatchObject({ kind: 'failure', reason: 'scan_failed' })
     await sweep
-    expect(runtime.worktreeScanBackoff.get(repo.id)?.kind).toBe('scan_failed')
+    expect([...runtime.worktreeScanBackoff.values()][0]?.kind).toBe('scan_failed')
 
     await vi.advanceTimersByTimeAsync(2_000)
     await runtime.listResolvedWorktrees()
@@ -514,19 +567,19 @@ describe('worktree scan fleet', () => {
     vi.mocked(listWorktreesStrict).mockResolvedValue([makeGitWorktree(repos[0]!.path)])
     const runtime = makeScanRuntime(repos)
     await runtime.listResolvedWorktrees()
-    runtime.worktreeScanBackoff.set('repo-1', {
+    runtime.worktreeScanBackoff.set('orphan-scan-key', {
       kind: 'scan_failed',
       failures: 1
     })
-    runtime.worktreeScanGenerations.set('repo-1', 1)
+    runtime.worktreeScanGenerations.set('orphan-scan-key', 1)
 
     repos.splice(0)
     await vi.advanceTimersByTimeAsync(1_001)
     await runtime.listResolvedWorktrees()
 
-    expect(runtime.worktreeScanCache.has('repo-1')).toBe(false)
-    expect(runtime.worktreeScanBackoff.has('repo-1')).toBe(false)
-    expect(runtime.worktreeScanGenerations.has('repo-1')).toBe(false)
-    expect(runtime.worktreeScanInFlight.has('repo-1')).toBe(false)
+    expect(runtime.worktreeScanCache.size).toBe(0)
+    expect(runtime.worktreeScanBackoff.size).toBe(0)
+    expect(runtime.worktreeScanGenerations.size).toBe(0)
+    expect(runtime.worktreeScanInFlight.size).toBe(0)
   })
 })

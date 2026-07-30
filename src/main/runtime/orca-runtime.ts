@@ -2729,6 +2729,15 @@ export class OrcaRuntimeService {
   private worktreeScanCache = new Map<string, RuntimeWorktreeScanCache>()
   private worktreeScanInFlight = new Map<string, RuntimeWorktreeScanInFlight>()
   private worktreeScanBackoff = new Map<string, RuntimeWorktreeScanBackoff>()
+  /**
+   * Why: cancelled repos write no backoff (contention ≠ health), so a wedged prefix of the scan
+   * order would otherwise sort identically every sweep and starve the tail forever once it fills
+   * the wave ceiling (24 slots). Deprioritize only repos that *attempted* a scan and cancelled —
+   * never-started repos stay eager so the cold tail can rotate forward.
+   */
+  private worktreeScanDeprioritizedRepoKeys = new Set<string>()
+  private worktreeScanSweepSequence = 0
+  private worktreeScanAppliedDeprioritizationSequence = 0
   private activeLocalWorktreeScanCount = 0
   private localWorktreeScanWaiters: WorktreeScanSlotWaiter[] = []
   private cloneInFlightByPath = new Map<string, Promise<void>>()
@@ -26697,16 +26706,16 @@ export class OrcaRuntimeService {
       ])
     )
     const fleet = this.resolveWorktreeScanFleet(repos)
+    const sweepSequence = ++this.worktreeScanSweepSequence
     // Why: the concurrency cap turns a sweep into waves, so one flat per-repo deadline truncates
     // large but healthy fleets (107 repos = 14 waves) — the fleet ceiling is sized in waves instead.
-    // It is deliberately only a wall clock, never a wedge detector: every wedge signal available
-    // mid-sweep (a wave that completed nothing) reads identically for a wedged prefix of the scan
-    // order — a hung relay, a down WSL distro, a dead network mount holding a clustered block of
-    // repos — and for a wedged fleet, and giving up on the former starves the healthy tail on every
-    // sweep forever, because a cancelled repo is never backed off and so sorts into the same place
-    // next time. Wedged repos are bounded by their own per-repo deadline, which frees their slots
-    // and lets the tail spawn behind them; only the ceiling ends the sweep.
-    // Repos past the deadline are cancelled — never backed off — and serve cached fallbacks.
+    // It is deliberately only a wall clock, never a wedge detector: every mid-sweep "wave completed
+    // nothing" signal reads identically for a wedged prefix and a wedged fleet, and aborting on it
+    // starves the healthy tail. Wedged repos free their own slots at the per-repo deadline so the
+    // tail can spawn behind them; only the ceiling ends the sweep. Repos past the deadline are
+    // cancelled — never backed off — and serve cached fallbacks. Cross-sweep deprioritization
+    // (worktreeScanDeprioritizedRepoKeys) is what stops a wedged prefix that fills the ceiling from
+    // sorting into the same place forever.
     const fleetAbortController = new AbortController()
     const fleetTimeout = setTimeout(
       () => fleetAbortController.abort(),
@@ -26714,6 +26723,7 @@ export class OrcaRuntimeService {
         RESOLVED_WORKTREE_REPO_TIMEOUT_MS
     )
     fleetTimeout.unref?.()
+    const nextDeprioritizedRepoKeys = new Set<string>()
     const scanRepo = async (repo: Repo): Promise<ResolvedWorktree[]> => {
       if (isFolderRepo(repo)) {
         return listRuntimeFolderWorkspaces(this.requireStore(), repo).map((worktree) => ({
@@ -26733,16 +26743,23 @@ export class OrcaRuntimeService {
           comment: worktree.comment
         }))
       }
+      const scanKey = resolveWorktreeScanStateKey(repo)
+      const projectRuntime =
+        getRepoExecutionHostId(repo) === LOCAL_EXECUTION_HOST_ID
+          ? projectRuntimeByRepoId.get(repo.id)
+          : undefined
       const cancelledFallback = (): RuntimeWorktreeScanOutcome =>
         this.buildWorktreeScanFailure(
           repo,
           'cancelled',
-          this.worktreeScanGenerations.get(repo.id) ?? 0,
-          resolveWorktreeScanRuntimeKey(repo, projectRuntimeByRepoId.get(repo.id))
+          this.worktreeScanGenerations.get(scanKey) ?? 0,
+          resolveWorktreeScanRuntimeKey(repo, projectRuntime)
         )
-      const scan = fleetAbortController.signal.aborted
-        ? cancelledFallback()
-        : await settleWithAbort(
+      // Why: only count cancellations from scans that actually started — a never-started repo must
+      // stay non-deprioritized so the cold tail can rotate ahead of a wedged head next sweep.
+      const attempted = !fleetAbortController.signal.aborted
+      const scan = attempted
+        ? await settleWithAbort(
             this.listRepoWorktreesForResolution(
               repo,
               projectRuntimeByRepoId,
@@ -26752,6 +26769,10 @@ export class OrcaRuntimeService {
             fleetAbortController.signal,
             cancelledFallback
           )
+        : cancelledFallback()
+      if (scan.kind === 'failure' && scan.reason === 'cancelled' && attempted) {
+        nextDeprioritizedRepoKeys.add(scanKey)
+      }
       const gitWorktrees = scan.kind === 'success' ? scan.worktrees : scan.fallbackWorktrees
       if (scan.kind === 'success') {
         this.pruneLineageForMissingRepoWorktrees(repo, gitWorktrees)
@@ -26785,12 +26806,16 @@ export class OrcaRuntimeService {
         }
       })
     }
-    // Why: truncation must land on idle repos — a repo with a live pane is the one the sweep exists
-    // for. Results are re-indexed so the snapshot keeps repo order regardless of scan order.
+    // Why: cancelled repos already had their chance; rotate them behind unattempted repos before
+    // preferring active workspaces so a wedged active prefix cannot starve the healthy tail.
     const scanOrder = [...repos.keys()].sort((left, right) => {
+      const leftKey = resolveWorktreeScanStateKey(repos[left])
+      const rightKey = resolveWorktreeScanStateKey(repos[right])
+      const leftDeprioritized = this.worktreeScanDeprioritizedRepoKeys.has(leftKey) ? 1 : 0
+      const rightDeprioritized = this.worktreeScanDeprioritizedRepoKeys.has(rightKey) ? 1 : 0
       const leftIdle = fleet.activeRepoIds.has(repos[left].id) ? 0 : 1
       const rightIdle = fleet.activeRepoIds.has(repos[right].id) ? 0 : 1
-      return leftIdle - rightIdle || left - right
+      return leftDeprioritized - rightDeprioritized || leftIdle - rightIdle || left - right
     })
     const perRepoWorktrees: ResolvedWorktree[][] = Array.from({ length: repos.length }, () => [])
     try {
@@ -26804,6 +26829,12 @@ export class OrcaRuntimeService {
       })
     } finally {
       clearTimeout(fleetTimeout)
+      // Why: replace (not union) so a repo that succeeds or is skipped without attempting recovers
+      // priority; the sequence prevents an older overlapping sweep from overwriting newer evidence.
+      if (sweepSequence > this.worktreeScanAppliedDeprioritizationSequence) {
+        this.worktreeScanDeprioritizedRepoKeys = nextDeprioritizedRepoKeys
+        this.worktreeScanAppliedDeprioritizationSequence = sweepSequence
+      }
     }
     const worktrees = projectResolvedWorktreeLineage(
       perRepoWorktrees.flat(),
@@ -26913,7 +26944,7 @@ export class OrcaRuntimeService {
     generation?: number,
     runtimeKey?: string
   ): Extract<RuntimeWorktreeScanOutcome, { kind: 'failure' }> {
-    const cached = this.worktreeScanCache.get(repo.id)
+    const cached = this.worktreeScanCache.get(resolveWorktreeScanStateKey(repo))
     const matchingCached =
       cached &&
       (generation === undefined || cached.generation === generation) &&
@@ -26936,7 +26967,8 @@ export class OrcaRuntimeService {
     runtimeKey: string
   ): void {
     const now = Date.now()
-    const previous = this.worktreeScanBackoff.get(repo.id)
+    const scanKey = resolveWorktreeScanStateKey(repo)
+    const previous = this.worktreeScanBackoff.get(scanKey)
     const continued =
       previous?.generation === generation &&
       previous.runtimeKey === runtimeKey &&
@@ -26948,7 +26980,7 @@ export class OrcaRuntimeService {
         `[runtime] repo directory missing, backing off worktree scans: ${repo.id} (${repo.path})`
       )
     }
-    this.worktreeScanBackoff.set(repo.id, {
+    this.worktreeScanBackoff.set(scanKey, {
       generation,
       runtimeKey,
       kind,
@@ -26959,11 +26991,12 @@ export class OrcaRuntimeService {
   }
 
   private clearWorktreeScanFailure(repo: Repo): void {
-    const previous = this.worktreeScanBackoff.get(repo.id)
+    const scanKey = resolveWorktreeScanStateKey(repo)
+    const previous = this.worktreeScanBackoff.get(scanKey)
     if (!previous) {
       return
     }
-    this.worktreeScanBackoff.delete(repo.id)
+    this.worktreeScanBackoff.delete(scanKey)
     if (previous.kind === 'missing_repo_path') {
       console.warn(`[runtime] repo directory is back, resuming worktree scans: ${repo.id}`)
     }
@@ -26977,14 +27010,17 @@ export class OrcaRuntimeService {
     maxCacheAgeMs?: number
   ): Promise<RuntimeWorktreeScanOutcome> {
     const now = Date.now()
-    const generation = this.worktreeScanGenerations.get(repo.id) ?? 0
+    const scanKey = resolveWorktreeScanStateKey(repo)
+    const generation = this.worktreeScanGenerations.get(scanKey) ?? 0
     const projectRuntime = projectRuntimeByRepoId
-      ? projectRuntimeByRepoId.get(repo.id)
+      ? getRepoExecutionHostId(repo) === LOCAL_EXECUTION_HOST_ID
+        ? projectRuntimeByRepoId.get(repo.id)
+        : undefined
       : !repo.connectionId
         ? resolveLocalProjectRuntimeForRepo(this.requireStore(), repo)
         : undefined
     const runtimeKey = resolveWorktreeScanRuntimeKey(repo, projectRuntime)
-    const cached = this.worktreeScanCache.get(repo.id)
+    const cached = this.worktreeScanCache.get(scanKey)
     if (
       cached?.generation === generation &&
       cached.runtimeKey === runtimeKey &&
@@ -26997,7 +27033,7 @@ export class OrcaRuntimeService {
     ) {
       return { kind: 'success', origin: 'cache', worktrees: cached.worktrees }
     }
-    const inFlight = this.worktreeScanInFlight.get(repo.id)
+    const inFlight = this.worktreeScanInFlight.get(scanKey)
     if (
       inFlight?.generation === generation &&
       inFlight.runtimeKey === runtimeKey &&
@@ -27005,7 +27041,7 @@ export class OrcaRuntimeService {
     ) {
       return this.joinWorktreeScan(inFlight, fleetSignal)
     }
-    const backoff = this.worktreeScanBackoff.get(repo.id)
+    const backoff = this.worktreeScanBackoff.get(scanKey)
     if (
       backoff?.generation === generation &&
       backoff.runtimeKey === runtimeKey &&
@@ -27041,10 +27077,10 @@ export class OrcaRuntimeService {
     const promise: Promise<RuntimeWorktreeScanOutcome> = scanned.then(
       (result): RuntimeWorktreeScanOutcome => {
         const isCurrent =
-          generation === (this.worktreeScanGenerations.get(repo.id) ?? 0) &&
-          this.worktreeScanInFlight.get(repo.id)?.promise === promise
-        if (this.worktreeScanInFlight.get(repo.id)?.promise === promise) {
-          this.worktreeScanInFlight.delete(repo.id)
+          generation === (this.worktreeScanGenerations.get(scanKey) ?? 0) &&
+          this.worktreeScanInFlight.get(scanKey)?.promise === promise
+        if (this.worktreeScanInFlight.get(scanKey)?.promise === promise) {
+          this.worktreeScanInFlight.delete(scanKey)
         }
         if (!isCurrent) {
           return {
@@ -27056,7 +27092,7 @@ export class OrcaRuntimeService {
         }
         if (result.kind === 'success') {
           this.clearWorktreeScanFailure(repo)
-          this.worktreeScanCache.set(repo.id, {
+          this.worktreeScanCache.set(scanKey, {
             generation,
             runtimeKey,
             worktrees: result.worktrees,
@@ -27070,8 +27106,8 @@ export class OrcaRuntimeService {
         return result
       },
       (error) => {
-        if (this.worktreeScanInFlight.get(repo.id)?.promise === promise) {
-          this.worktreeScanInFlight.delete(repo.id)
+        if (this.worktreeScanInFlight.get(scanKey)?.promise === promise) {
+          this.worktreeScanInFlight.delete(scanKey)
         }
         throw error
       }
@@ -27083,7 +27119,7 @@ export class OrcaRuntimeService {
       controller,
       waiters: 0
     }
-    this.worktreeScanInFlight.set(repo.id, entry)
+    this.worktreeScanInFlight.set(scanKey, entry)
     return this.joinWorktreeScan(entry, fleetSignal)
   }
 
@@ -27096,9 +27132,6 @@ export class OrcaRuntimeService {
     entry: RuntimeWorktreeScanInFlight,
     fleetSignal?: AbortSignal
   ): Promise<RuntimeWorktreeScanOutcome> {
-    if (fleetSignal?.aborted) {
-      return entry.promise
-    }
     // A caller with no deadline is a waiter that never walks away, so it alone keeps the scan alive.
     entry.waiters += 1
     let waiting = true
@@ -27116,7 +27149,13 @@ export class OrcaRuntimeService {
         entry.controller.abort()
       }
     }
-    fleetSignal?.addEventListener('abort', abandon, { once: true })
+    // Why: AbortSignal does not re-emit when already aborted, so a joiner that arrives after the
+    // fleet deadline must abandon synchronously or it would pin waiters>0 with no cancel path.
+    if (fleetSignal?.aborted) {
+      abandon()
+    } else {
+      fleetSignal?.addEventListener('abort', abandon, { once: true })
+    }
     return entry.promise.then(
       (result) => {
         stopWaiting()
@@ -27201,7 +27240,7 @@ export class OrcaRuntimeService {
     timeout.unref?.()
     try {
       return await settleWithAbort(
-        provider.listWorktrees(repo.path).then(
+        provider.listWorktrees(repo.path, { signal: controller.signal }).then(
           (worktrees): RuntimeWorktreeScanOutcome => ({
             kind: 'success',
             origin: 'scan',
@@ -27283,20 +27322,22 @@ export class OrcaRuntimeService {
   }
 
   private pruneWorktreeScanState(repos: readonly Repo[]): void {
-    const liveRepoIds = new Set(repos.map((repo) => repo.id))
-    for (const repoId of new Set([
+    const liveRepoKeys = new Set(repos.map(resolveWorktreeScanStateKey))
+    for (const scanKey of new Set([
       ...this.worktreeScanGenerations.keys(),
       ...this.worktreeScanCache.keys(),
       ...this.worktreeScanInFlight.keys(),
-      ...this.worktreeScanBackoff.keys()
+      ...this.worktreeScanBackoff.keys(),
+      ...this.worktreeScanDeprioritizedRepoKeys
     ])) {
-      if (liveRepoIds.has(repoId)) {
+      if (liveRepoKeys.has(scanKey)) {
         continue
       }
-      this.worktreeScanGenerations.delete(repoId)
-      this.worktreeScanCache.delete(repoId)
-      this.dropWorktreeScanInFlight(repoId)
-      this.worktreeScanBackoff.delete(repoId)
+      this.worktreeScanGenerations.delete(scanKey)
+      this.worktreeScanCache.delete(scanKey)
+      this.dropWorktreeScanInFlight(scanKey)
+      this.worktreeScanBackoff.delete(scanKey)
+      this.worktreeScanDeprioritizedRepoKeys.delete(scanKey)
     }
   }
 
@@ -27310,9 +27351,9 @@ export class OrcaRuntimeService {
    * invalidation. So follow `joinWorktreeScan`'s rule and kill it only once nobody is waiting; a
    * waited scan still frees its slot at its own per-repo deadline.
    */
-  private dropWorktreeScanInFlight(repoId: string): void {
-    const entry = this.worktreeScanInFlight.get(repoId)
-    this.worktreeScanInFlight.delete(repoId)
+  private dropWorktreeScanInFlight(scanKey: string): void {
+    const entry = this.worktreeScanInFlight.get(scanKey)
+    this.worktreeScanInFlight.delete(scanKey)
     if (entry && entry.waiters <= 0) {
       entry.controller.abort()
     }
@@ -27324,9 +27365,15 @@ export class OrcaRuntimeService {
       return []
     }
     const byWorktreeId = new Map<string, GitWorktreeInfo>()
+    const expectedHostId = getRepoExecutionHostId(repo)
+    const repoOwnerCount = store.getRepos().filter((candidate) => candidate.id === repo.id).length
     for (const [worktreeId, meta] of Object.entries(store.getAllWorktreeMeta())) {
       const parsed = splitWorktreeId(worktreeId)
-      if (!parsed || parsed.repoId !== repo.id) {
+      if (
+        !parsed ||
+        parsed.repoId !== repo.id ||
+        (meta.hostId ? meta.hostId !== expectedHostId : repoOwnerCount > 1)
+      ) {
         continue
       }
       // Why: mirror worktrees:list's disconnected-SSH fallback — keep persisted SSH worktrees while the provider reconnects instead of zero rows.
@@ -27356,10 +27403,25 @@ export class OrcaRuntimeService {
   }
 
   private invalidateWorktreeScanCacheForRepo(repoId: string): void {
-    this.worktreeScanGenerations.set(repoId, (this.worktreeScanGenerations.get(repoId) ?? 0) + 1)
-    this.worktreeScanCache.delete(repoId)
-    this.dropWorktreeScanInFlight(repoId)
-    this.worktreeScanBackoff.delete(repoId)
+    const keyPrefix = `${repoId}\0`
+    for (const scanKey of new Set([
+      ...this.worktreeScanGenerations.keys(),
+      ...this.worktreeScanCache.keys(),
+      ...this.worktreeScanInFlight.keys(),
+      ...this.worktreeScanBackoff.keys(),
+      ...this.worktreeScanDeprioritizedRepoKeys
+    ])) {
+      if (scanKey.startsWith(keyPrefix)) {
+        this.invalidateWorktreeScanState(scanKey)
+      }
+    }
+  }
+
+  private invalidateWorktreeScanState(scanKey: string): void {
+    this.worktreeScanGenerations.set(scanKey, (this.worktreeScanGenerations.get(scanKey) ?? 0) + 1)
+    this.worktreeScanCache.delete(scanKey)
+    this.dropWorktreeScanInFlight(scanKey)
+    this.worktreeScanBackoff.delete(scanKey)
   }
 
   /** Share IPC discovery with runtime scan cancellation, backoff, and the runtime-wide scan slots. */
@@ -27378,16 +27440,11 @@ export class OrcaRuntimeService {
 
   private invalidateSshWorktreeScanCacheInternal(targetId: string): void {
     const repos = this.store?.getRepos() ?? []
-    const affectedRepoIds = new Set(
-      repos.filter((repo) => repo.connectionId === targetId).map((repo) => repo.id)
-    )
-    for (const repoId of affectedRepoIds) {
-      this.worktreeScanGenerations.set(repoId, (this.worktreeScanGenerations.get(repoId) ?? 0) + 1)
-      this.worktreeScanCache.delete(repoId)
-      this.dropWorktreeScanInFlight(repoId)
-      this.worktreeScanBackoff.delete(repoId)
+    const affectedRepos = repos.filter((repo) => repo.connectionId === targetId)
+    for (const repo of affectedRepos) {
+      this.invalidateWorktreeScanState(resolveWorktreeScanStateKey(repo))
     }
-    if (affectedRepoIds.size > 0) {
+    if (affectedRepos.length > 0) {
       this.resolvedWorktreeGeneration += 1
       this.resolvedWorktreeCache = null
     }
@@ -33217,6 +33274,10 @@ function resolveWorktreeScanRuntimeKey(
     : repo.connectionId
       ? `ssh:${repo.connectionId}:${getSshGitProviderGeneration(repo.connectionId)}`
       : 'local:default'
+}
+
+function resolveWorktreeScanStateKey(repo: Repo): string {
+  return `${repo.id}\0${getRepoExecutionHostId(repo)}\0${repo.path}`
 }
 
 function isMissingFileSystemPathError(error: unknown): boolean {
