@@ -15,12 +15,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import { ChevronLeft } from 'lucide-react-native'
 import { colors, radii, spacing, typography } from '../../../src/theme/mobile-theme'
 import { loadHosts, updateHostNameAndEndpoint } from '../../../src/transport/host-store'
-import {
-  displayHostEndpoint,
-  endpointPort,
-  endpointScheme,
-  normalizeHostEndpoint
-} from '../../../src/transport/host-endpoint'
+import { displayHostEndpoint } from '../../../src/transport/host-endpoint'
+import { resolveHostEndpointEdit } from '../../../src/transport/host-endpoint-edit'
 import { useForceReconnect, usePrimeHosts } from '../../../src/transport/client-context'
 import type { HostProfile } from '../../../src/transport/types'
 import { t } from '@/i18n/mobile-i18n'
@@ -69,27 +65,24 @@ export default function EditHostScreen() {
     void load()
   }, [load])
 
-  const fallbackPort = host ? endpointPort(host.endpoint) : undefined
-  const fallbackScheme = host ? endpointScheme(host.endpoint) : 'ws'
-
-  const normalizedEndpoint = useMemo(
-    () => normalizeHostEndpoint(address, { fallbackPort, fallbackScheme }),
-    [address, fallbackPort, fallbackScheme]
+  const endpointEdit = useMemo(
+    () => (host ? resolveHostEndpointEdit(host.endpoint, address) : null),
+    [address, host]
   )
 
   const nameTrimmed = name.trim()
   const nameChanged = host != null && nameTrimmed.length > 0 && nameTrimmed !== host.name
-  const endpointChanged =
-    host != null && normalizedEndpoint.ok && normalizedEndpoint.endpoint !== host.endpoint
+  const endpointChanged = endpointEdit?.kind === 'changed'
   const canSave =
     host != null &&
+    endpointEdit != null &&
     nameTrimmed.length > 0 &&
-    normalizedEndpoint.ok &&
+    endpointEdit.kind !== 'invalid' &&
     (nameChanged || endpointChanged) &&
     !saving
 
   async function handleSave() {
-    if (!host || !hostId || savingRef.current) {
+    if (!host || !hostId || !endpointEdit || savingRef.current) {
       return
     }
     const nextName = name.trim()
@@ -97,14 +90,14 @@ export default function EditHostScreen() {
       setSaveError(t('m.7UECNUc'))
       return
     }
-    if (!normalizedEndpoint.ok) {
-      setSaveError(normalizedEndpoint.error)
+    if (endpointEdit.kind === 'invalid') {
+      setSaveError(endpointEdit.error)
       return
     }
 
     const willRename = nextName !== host.name
-    const willUpdateEndpoint = normalizedEndpoint.endpoint !== host.endpoint
-    if (!willRename && !willUpdateEndpoint) {
+    const nextEndpoint = endpointEdit.kind === 'changed' ? endpointEdit.endpoint : undefined
+    if (!willRename && nextEndpoint === undefined) {
       router.back()
       return
     }
@@ -118,7 +111,7 @@ export default function EditHostScreen() {
       // other, and a host removed mid-edit throws instead of no-oping.
       await updateHostNameAndEndpoint(host.id, {
         ...(willRename ? { name: nextName } : {}),
-        ...(willUpdateEndpoint ? { endpoint: normalizedEndpoint.endpoint } : {})
+        ...(nextEndpoint !== undefined ? { endpoint: nextEndpoint } : {})
       })
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : t('m.sI26LXo'))
@@ -141,7 +134,7 @@ export default function EditHostScreen() {
     setSaving(false)
     router.back()
 
-    if (willUpdateEndpoint) {
+    if (nextEndpoint !== undefined) {
       // Why: reconnect is a follow-on side effect of a save that already
       // committed — its failure or a hang must not be reported as a save
       // failure or block navigating back.
@@ -241,12 +234,12 @@ export default function EditHostScreen() {
             />
             <Text style={styles.hint}>{t('m.dYplni8')}</Text>
 
-            {normalizedEndpoint.ok ? (
+            {endpointEdit == null ? null : endpointEdit.kind !== 'invalid' ? (
               <Text style={styles.preview} numberOfLines={2}>
-                {t('m.eB5hKE4', { value0: normalizedEndpoint.endpoint })}
+                {t('m.eB5hKE4', { value0: endpointEdit.endpoint })}
               </Text>
             ) : address.trim().length > 0 ? (
-              <Text style={styles.previewError}>{normalizedEndpoint.error}</Text>
+              <Text style={styles.previewError}>{endpointEdit.error}</Text>
             ) : null}
 
             {saveError ? <Text style={styles.errorText}>{saveError}</Text> : null}
