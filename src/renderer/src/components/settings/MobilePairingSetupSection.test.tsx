@@ -49,6 +49,7 @@ function renderSection(
   return {
     ...rendered,
     user,
+    props,
     onSelectedAddressChange,
     onCustomAddressSelect,
     onCustomAddressRemove,
@@ -132,6 +133,26 @@ describe('MobilePairingSetupSection', () => {
     expect(onSelectedAddressChange).not.toHaveBeenCalled()
   })
 
+  it('restores list focus after removing a custom address with the keyboard', async () => {
+    const address = 'first.example:6768'
+    const { user, props, rerender, onCustomAddressSelect } = renderSection({
+      customAddresses: [address]
+    })
+
+    await user.click(screen.getByRole('combobox'))
+    const remove = screen.getByRole('button', { name: `Remove ${address}` })
+    remove.focus()
+    await user.keyboard('{Enter}')
+    rerender(
+      <TooltipProvider>
+        <MobilePairingSetupSection {...props} customAddresses={[]} />
+      </TooltipProvider>
+    )
+
+    expect(screen.getByRole('listbox', { name: 'Network address to advertise' })).toHaveFocus()
+    expect(onCustomAddressSelect).not.toHaveBeenCalled()
+  })
+
   it('selects a saved custom address through the custom path', async () => {
     const address = '100.64.1.20'
     const { user, onSelectedAddressChange, onCustomAddressSelect } = renderSection({
@@ -152,11 +173,45 @@ describe('MobilePairingSetupSection', () => {
     const address = 'first.example:6768'
     const { user, onCustomAddressSelect } = renderSection({ customAddresses: [address] })
 
-    await user.click(screen.getByRole('combobox'))
-    expect(document.querySelector('[data-slot="command"]')).toHaveFocus()
+    const trigger = screen.getByRole('combobox')
+    await user.click(trigger)
+    const list = screen.getByRole('listbox', { name: 'Network address to advertise' })
+    expect(list).toHaveFocus()
+    expect(trigger).toHaveAttribute('aria-controls', list.id)
+    const selectedOption = screen.getByRole('option', { name: '100.64.1.20 (tailscale0)' })
+    await vi.waitFor(() => expect(list).toHaveAttribute('aria-activedescendant', selectedOption.id))
     await user.keyboard('{ArrowDown}{Enter}')
 
     expect(onCustomAddressSelect).toHaveBeenCalledWith(address)
+  })
+
+  it('supports prefix typeahead across custom addresses', async () => {
+    const address = 'zebra.example:6768'
+    const { user, onCustomAddressSelect } = renderSection({
+      customAddresses: ['alpha.example:6768', address]
+    })
+
+    await user.click(screen.getByRole('combobox'))
+    await user.keyboard('z')
+    const list = screen.getByRole('listbox', { name: 'Network address to advertise' })
+    const customOption = screen.getByRole('option', { name: `${address} (custom)` })
+    await vi.waitFor(() => expect(list).toHaveAttribute('aria-activedescendant', customOption.id))
+    await user.keyboard('{Enter}')
+
+    expect(onCustomAddressSelect).toHaveBeenCalledWith(address)
+  })
+
+  it('selects the highlighted custom address with Space', async () => {
+    const address = 'first.example:6768'
+    const { user, onCustomAddressSelect, onCustomAddressRemove } = renderSection({
+      customAddresses: [address]
+    })
+
+    await user.click(screen.getByRole('combobox'))
+    await user.keyboard('{ArrowDown} ')
+
+    expect(onCustomAddressSelect).toHaveBeenCalledWith(address)
+    expect(onCustomAddressRemove).not.toHaveBeenCalled()
   })
 
   it('generates a pairing code', async () => {

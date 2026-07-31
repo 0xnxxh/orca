@@ -70,6 +70,10 @@ export function useMobilePairingAddressPreference(args: {
 
   const commitAddress = useCallback(
     (address: string, isManual: boolean): void => {
+      const addressChanged = selectedAddressRef.current !== address
+      if (!addressChanged && selectedAddressIsManualRef.current === isManual) {
+        return
+      }
       selectedAddressRef.current = address
       selectedAddressIsManualRef.current = isManual
       setSelectedAddress(address)
@@ -95,7 +99,9 @@ export function useMobilePairingAddressPreference(args: {
           void updateSettings({ mobilePairingCustomAddress: null })
         }
       }
-      onSelectionInvalidated({ address, source: 'user' })
+      if (addressChanged) {
+        onSelectionInvalidated({ address, source: 'user' })
+      }
     },
     [onSelectionInvalidated, updateSettings]
   )
@@ -130,6 +136,7 @@ export function useMobilePairingAddressPreference(args: {
         return
       }
       const nextAddress = selectRefreshedNetworkAddress(undefined, networkInterfaces)
+      const addressChanged = selectedAddressRef.current !== nextAddress
       selectedAddressRef.current = nextAddress
       selectedAddressIsManualRef.current = false
       setSelectedAddress(nextAddress)
@@ -139,7 +146,9 @@ export function useMobilePairingAddressPreference(args: {
         mobilePairingCustomAddress: null,
         mobilePairingCustomAddresses: nextCustomAddresses
       })
-      onSelectionInvalidated({ address: nextAddress, source: 'user' })
+      if (addressChanged) {
+        onSelectionInvalidated({ address: nextAddress, source: 'user' })
+      }
     },
     [networkInterfaces, onSelectionInvalidated, updateSettings]
   )
@@ -158,11 +167,14 @@ export function useMobilePairingAddressPreference(args: {
     pendingWrites.length = 0
     const nextAddress =
       savedCustomAddress ?? selectRefreshedNetworkAddress(undefined, networkInterfaces)
+    const addressChanged = selectedAddressRef.current !== nextAddress
     selectedAddressRef.current = nextAddress
     selectedAddressIsManualRef.current = savedCustomAddress !== undefined
     setSelectedAddress(nextAddress)
     setSelectedAddressIsCustom(savedCustomAddress !== undefined)
-    onSelectionInvalidated({ address: nextAddress, source: 'external' })
+    if (addressChanged) {
+      onSelectionInvalidated({ address: nextAddress, source: 'external' })
+    }
   }, [networkInterfaces, onSelectionInvalidated, savedCustomAddress])
 
   useEffect(() => {

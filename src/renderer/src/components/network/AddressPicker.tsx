@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronDown, Plus, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '../ui/button'
@@ -54,6 +54,11 @@ function AddressPickerItem({
               variant="ghost"
               size="icon-xs"
               aria-label={removeLabel}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.stopPropagation()
+                }
+              }}
               onClick={(event) => {
                 event.stopPropagation()
                 onRemove()
@@ -121,8 +126,14 @@ export function AddressPicker({
   const [pickerOpen, setPickerOpen] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [commandValue, setCommandValue] = useState('')
-  const commandRef = useRef<HTMLDivElement>(null)
-  const listId = useId()
+  const [listId, setListId] = useState<string>()
+  const listRef = useRef<HTMLDivElement>(null)
+  const restoreFocusAfterRemovalRef = useRef(false)
+  const typeaheadRef = useRef({ query: '', updatedAt: 0 })
+  const handleListRef = useCallback((node: HTMLDivElement | null) => {
+    listRef.current = node
+    setListId(node?.id)
+  }, [])
   const isCustomSelection =
     value !== undefined &&
     value !== '' &&
@@ -165,11 +176,73 @@ export function AddressPicker({
     }
   }, [commandValue, displayedCustomOptions, firstCommandValue, options, pickerOpen])
 
+  useEffect(() => {
+    if (!pickerOpen || !restoreFocusAfterRemovalRef.current) {
+      return
+    }
+    restoreFocusAfterRemovalRef.current = false
+    listRef.current?.focus()
+  }, [displayedCustomOptions, pickerOpen])
+
+  useEffect(() => {
+    if (!pickerOpen) {
+      return
+    }
+    const frame = window.requestAnimationFrame(() => {
+      const list = listRef.current
+      const activeOption = list?.querySelector<HTMLElement>('[cmdk-item][aria-selected="true"]')
+      if (list && activeOption?.id) {
+        list.setAttribute('aria-activedescendant', activeOption.id)
+      }
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [commandValue, displayedCustomOptions, options, pickerOpen])
+
   const handlePickerOpenChange = (nextOpen: boolean): void => {
+    typeaheadRef.current = { query: '', updatedAt: 0 }
     if (nextOpen) {
       setCommandValue(firstCommandValue)
     }
     setPickerOpen(nextOpen)
+  }
+
+  const handleCommandKeyDown = (event: React.KeyboardEvent): void => {
+    if (event.key === ' ') {
+      event.preventDefault()
+      listRef.current?.querySelector<HTMLElement>('[cmdk-item][aria-selected="true"]')?.click()
+      return
+    }
+    if (
+      event.key.length !== 1 ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.nativeEvent.isComposing
+    ) {
+      return
+    }
+    event.preventDefault()
+    const now = Date.now()
+    const previous = typeaheadRef.current
+    const query = now - previous.updatedAt > 700 ? event.key : previous.query + event.key
+    typeaheadRef.current = { query, updatedAt: now }
+    const repeatedKey = [...query].every((character) => character === query[0])
+    const prefix = (repeatedKey ? event.key : query).toLocaleLowerCase()
+    const items = [
+      ...options.map((option) => ({ command: `detected:${option.value}`, label: option.label })),
+      ...displayedCustomOptions.map((option) => ({
+        command: `custom:${option.value}`,
+        label: option.label
+      })),
+      { command: 'add-custom-address', label: addCustomLabel }
+    ]
+    const currentIndex = items.findIndex((item) => item.command === commandValue)
+    const nextItem = [...items.slice(currentIndex + 1), ...items.slice(0, currentIndex + 1)].find(
+      (item) => item.label.toLocaleLowerCase().startsWith(prefix)
+    )
+    if (nextItem) {
+      setCommandValue(nextItem.command)
+    }
   }
 
   const selectValue = (next: string, custom: boolean): void => {
@@ -217,18 +290,17 @@ export function AddressPicker({
           className="w-[var(--radix-popover-trigger-width)] min-w-[14rem] p-0"
           onOpenAutoFocus={(event) => {
             event.preventDefault()
-            commandRef.current?.focus()
+            listRef.current?.focus()
           }}
         >
           <Command
-            ref={commandRef}
-            tabIndex={-1}
             shouldFilter={false}
             loop
             value={commandValue}
             onValueChange={setCommandValue}
+            onKeyDown={handleCommandKeyDown}
           >
-            <CommandList id={listId} className="max-h-72 py-1">
+            <CommandList ref={handleListRef} label={triggerAriaLabel} className="max-h-72 py-1">
               {options.length > 0 ? (
                 <CommandGroup>
                   {options.map((option) => (
@@ -254,7 +326,14 @@ export function AddressPicker({
                       selected={isCustomSelection && option.value === value}
                       commandValue={`custom:${option.value}`}
                       onSelect={() => selectValue(option.value, true)}
-                      onRemove={onCustomRemove ? () => onCustomRemove(option.value) : undefined}
+                      onRemove={
+                        onCustomRemove
+                          ? () => {
+                              restoreFocusAfterRemovalRef.current = true
+                              onCustomRemove(option.value)
+                            }
+                          : undefined
+                      }
                       removeLabel={removeCustomLabel?.(option.value)}
                     />
                   ))}

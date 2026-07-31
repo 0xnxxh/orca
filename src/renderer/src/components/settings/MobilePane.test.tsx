@@ -453,6 +453,71 @@ describe('MobilePane pairing connection mode', () => {
     expect(screen.getByTestId('custom-addresses')).toHaveTextContent('100.126.117.25:6768')
   })
 
+  it('keeps the current pairing code when the active custom address is reselected', async () => {
+    const customAddress = '100.126.117.25:6768'
+    mocks.holder.state.settings = {
+      mobileAutoRestoreFitMs: null,
+      mobilePairingCustomAddress: customAddress,
+      mobilePairingCustomAddresses: [customAddress]
+    }
+    const user = userEvent.setup()
+    render(<MobilePane />)
+
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await waitFor(() => expect(screen.getByTestId('qr')).toHaveTextContent('base64,qr'))
+    getPairingQR.mockClear()
+    updateSettings.mockClear()
+
+    await user.click(screen.getByRole('button', { name: 'choose-custom-address' }))
+
+    expect(updateSettings).not.toHaveBeenCalled()
+    expect(getPairingQR).not.toHaveBeenCalled()
+    expect(screen.getByTestId('qr')).toHaveTextContent('base64,qr')
+  })
+
+  it('keeps the current pairing code when only custom address intent changes', async () => {
+    const address = '100.126.117.25:6768'
+    mocks.holder.state.settings = {
+      mobileAutoRestoreFitMs: null,
+      mobilePairingCustomAddress: address,
+      mobilePairingCustomAddresses: [address]
+    }
+    mocks.listNetworkInterfaces.mockResolvedValue({
+      interfaces: [{ name: 'Tailscale', address }]
+    })
+    const user = userEvent.setup()
+    render(<MobilePane />)
+    await waitFor(() => expect(mocks.listNetworkInterfaces).toHaveBeenCalledOnce())
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await waitFor(() => expect(screen.getByTestId('qr')).toHaveTextContent('base64,qr'))
+    getPairingQR.mockClear()
+    updateSettings.mockClear()
+
+    await user.click(screen.getByRole('button', { name: 'choose-discovered-address' }))
+
+    expect(updateSettings).toHaveBeenCalledWith({ mobilePairingCustomAddress: null })
+    expect(getPairingQR).not.toHaveBeenCalled()
+    expect(screen.getByTestId('qr')).toHaveTextContent('base64,qr')
+    expect(screen.getByTestId('selected-address-is-custom')).toHaveTextContent('false')
+
+    updateSettings.mockClear()
+    await user.click(screen.getByRole('button', { name: 'choose-custom-address' }))
+    expect(updateSettings).toHaveBeenCalledWith({
+      mobilePairingCustomAddress: address,
+      mobilePairingCustomAddresses: [address]
+    })
+    updateSettings.mockClear()
+    await user.click(screen.getByRole('button', { name: 'remove-custom-address' }))
+
+    expect(updateSettings).toHaveBeenCalledWith({
+      mobilePairingCustomAddress: null,
+      mobilePairingCustomAddresses: []
+    })
+    expect(getPairingQR).not.toHaveBeenCalled()
+    expect(screen.getByTestId('qr')).toHaveTextContent('base64,qr')
+    expect(screen.getByTestId('selected-address-is-custom')).toHaveTextContent('false')
+  })
+
   it('removes the selected custom address and falls back to discovery', async () => {
     const customAddress = '100.126.117.25:6768'
     mocks.holder.state.settings = {

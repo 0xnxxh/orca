@@ -5568,13 +5568,22 @@ export class Store {
         updates.mobilePairingCustomAddresses
       )
     }
-    if (sanitizedUpdates.mobilePairingCustomAddress) {
-      sanitizedUpdates.mobilePairingCustomAddresses = addMobilePairingCustomAddress(
-        sanitizedUpdates.mobilePairingCustomAddresses ??
-          this.state.settings.mobilePairingCustomAddresses ??
-          [],
-        sanitizedUpdates.mobilePairingCustomAddress
-      )
+    if (
+      'mobilePairingCustomAddress' in sanitizedUpdates ||
+      'mobilePairingCustomAddresses' in sanitizedUpdates
+    ) {
+      const mobilePairingCustomAddress =
+        'mobilePairingCustomAddress' in sanitizedUpdates
+          ? sanitizedUpdates.mobilePairingCustomAddress
+          : this.state.settings.mobilePairingCustomAddress
+      if (mobilePairingCustomAddress) {
+        sanitizedUpdates.mobilePairingCustomAddresses = addMobilePairingCustomAddress(
+          sanitizedUpdates.mobilePairingCustomAddresses ??
+            this.state.settings.mobilePairingCustomAddresses ??
+            [],
+          mobilePairingCustomAddress
+        )
+      }
     }
     const historyWithPreviousLayout = buildWorkspaceDirHistoryForUpdate(
       this.state.settings,

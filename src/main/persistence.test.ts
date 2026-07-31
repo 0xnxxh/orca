@@ -5434,6 +5434,12 @@ describe('Store', () => {
         mobilePairingCustomAddresses: ['second.example']
       }).mobilePairingCustomAddresses
     ).toEqual(['second.example', 'active.example:6768'])
+
+    expect(
+      store.updateSettings({
+        mobilePairingCustomAddresses: ['third.example']
+      }).mobilePairingCustomAddresses
+    ).toEqual(['third.example', 'active.example:6768'])
   })
 
   it('notifies settings listeners with changed keys only', async () => {
