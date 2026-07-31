@@ -826,8 +826,8 @@
         "pasteTooLarge": "Paste is too large."
       },
       "useMacosTccPromptNotice": {
-        "title": "Seeing “Orca would like to access…”?",
-        "description": "That macOS message appears when an agent or terminal tool accesses protected files. macOS names Orca because Orca launched the tool. Grant Full Disk Access to Orca and Orca Helper to reduce future prompts.",
+        "title": "Reduce repeated macOS file-access prompts",
+        "description": "macOS attributes file access by your agents and terminal tools to Orca. Granting Full Disk Access reduces these prompts.",
         "openSettings": "Open Settings",
         "dismiss": "Don't show again"
       }
