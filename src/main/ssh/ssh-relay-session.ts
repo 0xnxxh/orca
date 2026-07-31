@@ -2119,6 +2119,8 @@ export class SshRelaySession {
     }
     const checkpoints = recovery?.checkpointsByAppPtyId
     const relayPtyId = toRelaySshPtyId(this.targetId, appPtyId)
+    // Why: every checkpoint writer records app-id keys now, so the relay-id
+    // lookup (and its paired delete below) is a legacy guard only.
     const checkpoint = checkpoints?.get(appPtyId) ?? checkpoints?.get(relayPtyId)
     if (!checkpoint) {
       return Object.freeze({ status: 'checkpointUnavailable' })
