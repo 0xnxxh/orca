@@ -9,13 +9,8 @@ export { DEFAULT_WORKSPACE_STATUSES } from './workspace-status-defaults'
 
 const WORKSPACE_STATUS_GROUP_PREFIX = 'workspace-status:'
 const MAX_STATUS_LABEL_LENGTH = 32
-// Why: corruption guard only — nothing in the board or the sidebar depends on
-// this number, and the renderer never enforces it, so a low cap just truncated
-// legitimate columns on the next normalize. Teams mirroring an external
-// workflow (Jira, Linear) routinely need more than a dozen states; the board
-// already scrolls horizontally and groups by status, so the extra columns cost
-// nothing structurally.
-const MAX_WORKSPACE_STATUSES = 64
+// Bounds corrupted payloads and the board's eager lane rendering.
+export const MAX_WORKSPACE_STATUSES = 64
 type WorkspaceStatusNormalizationOptions = {
   migrateDefaultWorkflowStatuses?: boolean
   migrateLegacyDefaultStatusVisuals?: boolean

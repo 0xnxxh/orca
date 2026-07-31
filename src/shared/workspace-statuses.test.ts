@@ -3,6 +3,7 @@ import {
   WORKSPACE_BOARD_COLUMN_WIDTH_DEFAULT,
   WORKSPACE_BOARD_COLUMN_WIDTH_MAX,
   WORKSPACE_BOARD_COLUMN_WIDTH_MIN,
+  MAX_WORKSPACE_STATUSES,
   clampWorkspaceBoardColumnWidth,
   cloneDefaultWorkspaceStatuses,
   normalizePersistedWorkspaceStatuses,
@@ -10,28 +11,25 @@ import {
 } from './workspace-statuses'
 
 describe('workspace status visuals', () => {
-  it('keeps workflows longer than a dozen columns', () => {
-    // Why: mirroring an external workflow (Jira, Linear) routinely needs more
-    // than a dozen states. The old cap of 12 dropped the extra ones on the
-    // next normalize, with no error and nothing in the UI preventing them.
-    const authored = Array.from({ length: 20 }, (_, index) => ({
-      id: `state-${index}`,
-      label: `State ${index}`
+  it.each([13, 20])('keeps all %i authored columns in order', (count) => {
+    const authored = Array.from({ length: count }, (_, index) => ({
+      id: `state-${index + 1}`,
+      label: `State ${index + 1}`
     }))
 
     const statuses = normalizeWorkspaceStatuses(authored)
 
-    expect(statuses).toHaveLength(20)
-    expect(statuses.at(-1)).toMatchObject({ id: 'state-19', label: 'State 19' })
+    expect(statuses).toHaveLength(count)
+    expect(statuses.map((status) => status.id)).toEqual(authored.map((status) => status.id))
   })
 
-  it('still truncates absurd payloads so corrupted data cannot explode the board', () => {
+  it('clamps corrupted payloads to the exact board limit', () => {
     const corrupted = Array.from({ length: 500 }, (_, index) => ({
       id: `state-${index}`,
       label: `State ${index}`
     }))
 
-    expect(normalizeWorkspaceStatuses(corrupted).length).toBeLessThanOrEqual(64)
+    expect(normalizeWorkspaceStatuses(corrupted)).toHaveLength(MAX_WORKSPACE_STATUSES)
   })
 
   it('keeps the default workflow order', () => {

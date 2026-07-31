@@ -11,6 +11,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import { SettingsSwitch } from '../settings/SettingsFormControls'
 import type { WorkspaceStatusDefinition } from '../../../../shared/types'
+import { MAX_WORKSPACE_STATUSES } from '../../../../shared/workspace-statuses'
 import { getWorkspaceStatusVisualMeta } from './workspace-status'
 import WorkspaceStatusAppearancePopover from './WorkspaceStatusAppearancePopover'
 import { translate } from '@/i18n/i18n'
@@ -38,6 +39,8 @@ export default function WorkspaceKanbanSettingsMenu({
   onRemoveStatus,
   onAddStatus
 }: WorkspaceKanbanSettingsMenuProps): React.JSX.Element {
+  const statusLimitReached = workspaceStatuses.length >= MAX_WORKSPACE_STATUSES
+
   return (
     <DropdownMenu modal={false}>
       <Tooltip>
@@ -195,6 +198,7 @@ export default function WorkspaceKanbanSettingsMenu({
             variant="ghost"
             size="xs"
             className="mt-1 h-7 w-full justify-start text-[12px]"
+            disabled={statusLimitReached}
             onClick={onAddStatus}
           >
             <Plus className="size-3.5" />
@@ -202,6 +206,11 @@ export default function WorkspaceKanbanSettingsMenu({
               'auto.components.sidebar.WorkspaceKanbanSettingsMenu.79eb990aa4',
               'Add status'
             )}
+            {statusLimitReached ? (
+              <span className="ml-auto font-normal text-muted-foreground">
+                {workspaceStatuses.length} / {MAX_WORKSPACE_STATUSES}
+              </span>
+            ) : null}
           </Button>
         </div>
       </DropdownMenuContent>
