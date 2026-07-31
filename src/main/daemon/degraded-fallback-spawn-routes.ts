@@ -28,6 +28,10 @@ export class DegradedFallbackSpawnRoutes {
     return this.exited.has(sessionId)
   }
 
+  hasLiveCandidate(sessionId: string): boolean {
+    return this.isInFlight(sessionId) && !this.hasExited(sessionId)
+  }
+
   recordExit(sessionId: string): void {
     if (this.isInFlight(sessionId)) {
       this.exited.add(sessionId)

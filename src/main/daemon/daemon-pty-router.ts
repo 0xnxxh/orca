@@ -63,13 +63,13 @@ export class DaemonPtyRouter implements IPtyProvider {
   async spawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
     const targetResult = this.routing.spawnTarget(opts)
     const target = targetResult instanceof Promise ? await targetResult : targetResult
-    this.routing.beginSpawn(opts, target)
+    const authoritativeIntent = this.routing.beginSpawn(opts, target)
     try {
       const result = await target.spawn(opts)
-      this.routing.recordSpawn(result, target, opts)
+      this.routing.recordSpawn(result, target, opts, authoritativeIntent)
       return result
     } finally {
-      this.routing.endSpawn(opts)
+      this.routing.endSpawn(opts, authoritativeIntent)
     }
   }
 

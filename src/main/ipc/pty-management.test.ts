@@ -328,24 +328,35 @@ describe('pty:management IPC handlers', () => {
       expect(current.shutdown).toHaveBeenCalledTimes(1)
     })
 
-    it('keeps sessions remaining when their owner becomes unavailable while polling', async () => {
+    it('stops polling an unavailable owner while healthy owners converge', async () => {
       const current = makeAdapter(5, [makeSession('uncertain-session')])
+      const legacy = makeAdapter(3, [])
       vi.mocked(current.listSessions)
         .mockResolvedValueOnce([
           makeSession('uncertain-session') as Omit<DaemonSessionInfo, 'protocolVersion'>
         ])
         .mockRejectedValue(new Error('listing unavailable'))
+      vi.mocked(legacy.listSessions)
+        .mockResolvedValueOnce([
+          makeSession('eventual-session') as Omit<DaemonSessionInfo, 'protocolVersion'>
+        ])
+        .mockResolvedValueOnce([
+          makeSession('eventual-session') as Omit<DaemonSessionInfo, 'protocolVersion'>
+        ])
+        .mockResolvedValue([])
       const { registerDaemonManagementHandlers } = await importFresh()
-      getDaemonProviderMock.mockReturnValue(await makeRouter(current))
+      getDaemonProviderMock.mockReturnValue(await makeRouter(current, [legacy]))
       registerDaemonManagementHandlers()
 
       const result = await runKillAllWithPolls(buildHandlerMap()['pty:management:killAll'])
 
       expect(result).toEqual({
-        killedCount: 0,
+        killedCount: 1,
         remainingCount: 1,
-        killedSessionIds: []
+        killedSessionIds: ['eventual-session']
       })
+      expect(current.listSessions).toHaveBeenCalledTimes(2)
+      expect(legacy.listSessions).toHaveBeenCalledTimes(3)
     })
 
     it('does not count respawned sessions with fresh IDs against remainingCount', async () => {

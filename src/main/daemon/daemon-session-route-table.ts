@@ -9,10 +9,7 @@ import {
 } from './daemon-session-route'
 import { probeDaemonSessionOwner } from './daemon-session-owner-probes'
 import { DaemonSessionRouteStore } from './daemon-session-route-store'
-import {
-  assertFreshDaemonSessionAvailable,
-  ownerForFreshDaemonSession
-} from './daemon-fresh-session-routing'
+import * as freshSessionRouting from './daemon-fresh-session-routing'
 import { resolveDaemonSessionOwnerSync } from './daemon-session-owner-sync-resolution'
 import { resolveDaemonSessionOwner } from './daemon-session-owner-resolution'
 import {
@@ -20,6 +17,7 @@ import {
   markDaemonSessionUnavailable
 } from './daemon-session-route-availability'
 import { DaemonSessionOwnerResolutionCache } from './daemon-session-owner-resolution-cache'
+import * as historyHandoffRouting from './daemon-history-handoff-routing'
 
 export class DaemonSessionRouteTable {
   private readonly routes = new DaemonSessionRouteStore()
@@ -126,16 +124,21 @@ export class DaemonSessionRouteTable {
   }
 
   recordFreshOwned(sessionId: string, owner: DaemonPtyAdapter): void {
-    const route = this.routes.get(sessionId)
-    if (
-      !route ||
-      route.state === 'unavailable' ||
-      (route.state === 'owned' && route.owner === owner && !isCurrentOwnedDaemonSessionRoute(route))
-    ) {
-      this.transfer(sessionId, owner)
-      return
-    }
-    this.recordOwned(sessionId, owner)
+    freshSessionRouting.recordFreshOwnedDaemonSession(
+      this.routes.get(sessionId),
+      owner,
+      () => this.transfer(sessionId, owner),
+      (route) => this.routes.set(sessionId, route),
+      () => this.recordOwned(sessionId, owner)
+    )
+  }
+
+  recordHistoryHandoff(sessionId: string, owner: DaemonPtyAdapter, target: DaemonPtyAdapter): void {
+    this.routes.set(sessionId, historyHandoffRouting.createDaemonHistoryHandoffRoute(owner, target))
+  }
+
+  historyHandoffTarget(sessionId: string): DaemonPtyAdapter | undefined {
+    return historyHandoffRouting.daemonHistoryHandoffTarget(this.routes.get(sessionId))
   }
 
   recordDiscoveryFailure(owner: DaemonPtyAdapter): void {
@@ -169,7 +172,7 @@ export class DaemonSessionRouteTable {
   }
 
   ownerForFreshSpawn(sessionId: string | undefined, current: DaemonPtyAdapter): DaemonPtyAdapter {
-    return ownerForFreshDaemonSession(
+    return freshSessionRouting.ownerForFreshDaemonSession(
       sessionId,
       sessionId ? this.routes.get(sessionId) : undefined,
       current,
@@ -178,7 +181,7 @@ export class DaemonSessionRouteTable {
   }
 
   assertFreshSpawnAvailable(sessionId: string | undefined): void {
-    assertFreshDaemonSessionAvailable(
+    freshSessionRouting.assertFreshDaemonSessionAvailable(
       sessionId,
       sessionId ? this.routes.get(sessionId) : undefined,
       () => sessionId && this.routes.delete(sessionId)
@@ -281,7 +284,8 @@ export class DaemonSessionRouteTable {
         return null
       }
       const result = await probeDaemonSessionOwner(route.owner, sessionId)
-      return sameDaemonIncarnation(route.incarnation, result.incarnation) &&
+      return this.routes.get(sessionId) === route &&
+        sameDaemonIncarnation(route.incarnation, result.incarnation) &&
         sameDaemonIncarnation(result.incarnation, result.owner.getLastAuthenticatedDaemonIdentity())
         ? result.result
         : null

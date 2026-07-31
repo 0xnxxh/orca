@@ -35,6 +35,10 @@ export const E2E_FORCE_DAEMON_HEALTH_UNREACHABLE_ENV = 'ORCA_E2E_FORCE_DAEMON_HE
 // tolerance keeps the guard effective without false mismatches.
 const WIN32_START_TIME_TOLERANCE_MS = 10_000
 
+function isNoSuchProcessError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH'
+}
+
 // 'rejected' means the daemon answered and refused the handshake (bad token,
 // foreign protocol) — it can never be adopted, unlike 'unreachable', which
 // also covers a live-but-wedged daemon that simply missed the RPC budget.
@@ -678,13 +682,23 @@ export async function killStaleDaemon(
       identifiedPid = parsedPid.pid
       identifiedLaunchNonce = parsedPid.launchNonce
       const { pid, startedAtMs } = parsedPid
-      process.kill(pid, 'SIGTERM')
-      const deadline = Date.now() + KILL_WAIT_MS
       let exited = false
-      while (Date.now() < deadline) {
+      try {
+        process.kill(pid, 'SIGTERM')
+      } catch (error) {
+        if (!isNoSuchProcessError(error)) {
+          throw error
+        }
+        exited = true
+      }
+      const deadline = Date.now() + KILL_WAIT_MS
+      while (!exited && Date.now() < deadline) {
         try {
           process.kill(pid, 0)
-        } catch {
+        } catch (error) {
+          if (!isNoSuchProcessError(error)) {
+            throw error
+          }
           exited = true
           break
         }
@@ -704,8 +718,8 @@ export async function killStaleDaemon(
           try {
             process.kill(pid, 'SIGKILL')
             exited = true
-          } catch {
-            // Already dead
+          } catch (error) {
+            exited = isNoSuchProcessError(error)
           }
         }
       }
@@ -715,7 +729,12 @@ export async function killStaleDaemon(
     // PID file missing or process already dead
   }
 
-  if (identifiedDaemon && identifiedPid !== null && identifiedLaunchNonce !== null) {
+  if (
+    killedDaemon &&
+    identifiedDaemon &&
+    identifiedPid !== null &&
+    identifiedLaunchNonce !== null
+  ) {
     unlinkOwnedDaemonPidFile(pidPath, identifiedPid, identifiedLaunchNonce)
   }
 

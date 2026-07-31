@@ -443,6 +443,150 @@ describe('killStaleDaemon pid identity guards', () => {
     }
   })
 
+  it('preserves the owned pidfile when SIGTERM is rejected', async () => {
+    if (process.platform === 'win32') {
+      return
+    }
+
+    const child = spawn(
+      process.execPath,
+      ['-e', 'setInterval(()=>{},1000)', 'daemon-entry', socketPath, tokenPath],
+      { stdio: 'ignore' }
+    )
+    const pidPath = getDaemonPidPath(dir)
+    const pidfile = serializeDaemonPidFile({
+      pid: child.pid!,
+      startedAtMs: null,
+      launchNonce: 'signal-rejected'
+    })
+    writeFileSync(pidPath, pidfile, { mode: 0o600 })
+    const realKill = process.kill.bind(process)
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === child.pid && signal === 'SIGTERM') {
+        throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' })
+      }
+      return realKill(pid, signal)
+    })
+
+    try {
+      await expect(killStaleDaemon(dir, socketPath, tokenPath)).resolves.toBe(false)
+      expect(readFileSync(pidPath, 'utf8')).toBe(pidfile)
+      expect(child.exitCode).toBeNull()
+    } finally {
+      killSpy.mockRestore()
+      const exited =
+        child.exitCode === null
+          ? new Promise<void>((resolve) => child.once('exit', () => resolve()))
+          : Promise.resolve()
+      if (child.exitCode === null) {
+        child.kill('SIGKILL')
+      }
+      await exited
+    }
+  })
+
+  it('preserves the owned pidfile when SIGKILL is rejected', async () => {
+    if (process.platform === 'win32') {
+      return
+    }
+
+    const child = spawn(
+      process.execPath,
+      ['-e', 'setInterval(()=>{},1000)', 'daemon-entry', socketPath, tokenPath],
+      { stdio: 'ignore' }
+    )
+    const pidPath = getDaemonPidPath(dir)
+    const pidfile = serializeDaemonPidFile({
+      pid: child.pid!,
+      startedAtMs: null,
+      launchNonce: 'kill-rejected'
+    })
+    writeFileSync(pidPath, pidfile, { mode: 0o600 })
+    const realKill = process.kill.bind(process)
+    let observeSigterm!: () => void
+    const sigtermObserved = new Promise<void>((resolve) => {
+      observeSigterm = resolve
+    })
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === child.pid && signal === 'SIGTERM') {
+        observeSigterm()
+        return true
+      }
+      if (pid === child.pid && signal === 'SIGKILL') {
+        throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' })
+      }
+      return realKill(pid, signal)
+    })
+
+    vi.useFakeTimers()
+    try {
+      const killing = killStaleDaemon(dir, socketPath, tokenPath)
+      await sigtermObserved
+      await vi.advanceTimersByTimeAsync(3_100)
+      await expect(killing).resolves.toBe(false)
+      expect(readFileSync(pidPath, 'utf8')).toBe(pidfile)
+      expect(child.exitCode).toBeNull()
+    } finally {
+      vi.useRealTimers()
+      killSpy.mockRestore()
+      const exited =
+        child.exitCode === null
+          ? new Promise<void>((resolve) => child.once('exit', () => resolve()))
+          : Promise.resolve()
+      if (child.exitCode === null) {
+        child.kill('SIGKILL')
+      }
+      await exited
+    }
+  })
+
+  it('preserves the owned pidfile when the post-SIGTERM liveness probe is rejected', async () => {
+    if (process.platform === 'win32') {
+      return
+    }
+
+    const child = spawn(
+      process.execPath,
+      ['-e', 'setInterval(()=>{},1000)', 'daemon-entry', socketPath, tokenPath],
+      { stdio: 'ignore' }
+    )
+    const pidPath = getDaemonPidPath(dir)
+    const pidfile = serializeDaemonPidFile({
+      pid: child.pid!,
+      startedAtMs: null,
+      launchNonce: 'probe-rejected'
+    })
+    writeFileSync(pidPath, pidfile, { mode: 0o600 })
+    const realKill = process.kill.bind(process)
+    let termAccepted = false
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === child.pid && signal === 'SIGTERM') {
+        termAccepted = true
+        return true
+      }
+      if (pid === child.pid && signal === 0 && termAccepted) {
+        throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' })
+      }
+      return realKill(pid, signal)
+    })
+
+    try {
+      await expect(killStaleDaemon(dir, socketPath, tokenPath)).resolves.toBe(false)
+      expect(readFileSync(pidPath, 'utf8')).toBe(pidfile)
+      expect(child.exitCode).toBeNull()
+    } finally {
+      killSpy.mockRestore()
+      const exited =
+        child.exitCode === null
+          ? new Promise<void>((resolve) => child.once('exit', () => resolve()))
+          : Promise.resolve()
+      if (child.exitCode === null) {
+        child.kill('SIGKILL')
+      }
+      await exited
+    }
+  })
+
   it('preserves replacement identity files when the pid changes ownership during escalation', async () => {
     if (process.platform === 'win32') {
       return

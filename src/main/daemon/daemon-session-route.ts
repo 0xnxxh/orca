@@ -12,6 +12,7 @@ export type DaemonSessionRoute =
       state: 'unavailable'
       owner: DaemonPtyAdapter
       incarnation: DaemonEndpointIdentity | null
+      historyHandoffTarget?: DaemonPtyAdapter
     }
   | {
       state: 'ambiguous'

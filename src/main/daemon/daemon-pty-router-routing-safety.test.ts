@@ -1,107 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { DaemonEndpointIdentity } from './daemon-hello-protocol'
-import type { DaemonPtyAdapter } from './daemon-pty-adapter'
 import { DaemonPtyRouter } from './daemon-pty-router'
-import type { PtyProcessInfo, PtySpawnOptions } from '../providers/types'
-
-type AdapterHarness = {
-  adapter: DaemonPtyAdapter
-  emitData: (sessionId: string, data: string) => void
-  emitIdentityChange: (previous: DaemonEndpointIdentity, current: DaemonEndpointIdentity) => void
-  emitExit: (sessionId: string, code: number) => void
-  setIdentity: (identity: DaemonEndpointIdentity) => void
-}
-
-function identity(label: string, pid: number): DaemonEndpointIdentity {
-  return {
-    pid,
-    startedAtMs: pid * 1_000,
-    launchNonce: `${label}-${pid}`
-  }
-}
-
-function createAdapter(
-  label: string,
-  sessions: string[] = [],
-  reconcileResult: { alive: string[]; killed: string[] } = { alive: [], killed: [] }
-): AdapterHarness {
-  let daemonIdentity = identity(label, label === 'current' ? 20 : 10)
-  const identityListeners: ((event: {
-    previous: DaemonEndpointIdentity
-    current: DaemonEndpointIdentity
-  }) => void)[] = []
-  const dataListeners: ((payload: { id: string; data: string }) => void)[] = []
-  const exitListeners: ((payload: { id: string; code: number }) => void)[] = []
-  const adapter = {
-    protocolVersion: label === 'current' ? 30 : 29,
-    getLastAuthenticatedDaemonIdentity: vi.fn(() => ({ ...daemonIdentity })),
-    matchesLastAuthenticatedDaemonIdentity: vi.fn(
-      (candidate: DaemonEndpointIdentity | null) =>
-        candidate !== null &&
-        candidate.pid === daemonIdentity.pid &&
-        candidate.startedAtMs === daemonIdentity.startedAtMs &&
-        candidate.launchNonce === daemonIdentity.launchNonce
-    ),
-    onDaemonIdentityChanged: vi.fn(
-      (
-        listener: (event: {
-          previous: DaemonEndpointIdentity
-          current: DaemonEndpointIdentity
-        }) => void
-      ) => {
-        identityListeners.push(listener)
-        return () => {}
-      }
-    ),
-    listProcesses: vi.fn(
-      async (): Promise<PtyProcessInfo[]> => sessions.map((id) => ({ id, cwd: '', title: label }))
-    ),
-    spawn: vi.fn(async (opts: PtySpawnOptions) => ({
-      id: opts.sessionId ?? `${label}-fresh`
-    })),
-    probePtyLiveness: vi.fn(async (id: string) => sessions.includes(id)),
-    hasPty: vi.fn((id: string) => sessions.includes(id)),
-    shutdown: vi.fn(async () => {}),
-    sendSignal: vi.fn(async () => {}),
-    getBufferSnapshot: vi.fn(async () => null),
-    ackColdRestore: vi.fn(),
-    reconcileOnStartup: vi.fn(async () => reconcileResult),
-    onData: vi.fn((listener: (payload: { id: string; data: string }) => void) => {
-      dataListeners.push(listener)
-      return () => {}
-    }),
-    onExit: vi.fn((listener: (payload: { id: string; code: number }) => void) => {
-      exitListeners.push(listener)
-      return () => {}
-    }),
-    onBackgroundStreamEvent: vi.fn(() => () => {}),
-    onWriteUnavailable: vi.fn(() => () => {}),
-    dispose: vi.fn(),
-    disconnectOnly: vi.fn(async () => {})
-  } as unknown as DaemonPtyAdapter
-
-  return {
-    adapter,
-    emitData: (sessionId, data) => {
-      for (const listener of dataListeners) {
-        listener({ id: sessionId, data })
-      }
-    },
-    setIdentity: (next) => {
-      daemonIdentity = next
-    },
-    emitIdentityChange: (previous, current) => {
-      for (const listener of identityListeners) {
-        listener({ previous, current })
-      }
-    },
-    emitExit: (sessionId, code) => {
-      for (const listener of exitListeners) {
-        listener({ id: sessionId, code })
-      }
-    }
-  }
-}
+import { createAdapter, identity } from './daemon-pty-router-routing-safety-fixture'
 
 describe('DaemonPtyRouter routing safety', () => {
   afterEach(() => {
@@ -169,6 +68,67 @@ describe('DaemonPtyRouter routing safety', () => {
       cols: 80,
       rows: 24
     })
+  })
+
+  it('keeps a history handoff fenced until the current owner produces output', async () => {
+    const sessionId = 'history-handoff'
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', [sessionId])
+    let resolveSpawn: ((result: { id: string }) => void) | undefined
+    vi.mocked(current.adapter.spawn).mockReturnValue(
+      new Promise((resolve) => {
+        resolveSpawn = resolve
+      })
+    )
+    const router = new DaemonPtyRouter({
+      current: current.adapter,
+      legacy: [legacy.adapter]
+    })
+    const data = vi.fn()
+    router.onData(data)
+
+    await router.discoverLegacySessions()
+    await router.shutdown(sessionId, { immediate: true, keepHistory: true })
+    expect(router.getSessionRouteState(sessionId)).toBe('unavailable')
+
+    const spawning = router.spawn({ sessionId, cols: 80, rows: 24 })
+    current.emitData(sessionId, 'restored frame')
+    expect(data).toHaveBeenCalledExactlyOnceWith({ id: sessionId, data: 'restored frame' })
+
+    resolveSpawn?.({ id: sessionId })
+    await spawning
+    expect(router.getSessionRouteState(sessionId)).toBe('owned')
+  })
+
+  it('preserves collision evidence during a history handoff', async () => {
+    const sessionId = 'colliding-history-handoff'
+    const currentSessions: string[] = []
+    const current = createAdapter('current', currentSessions)
+    const legacy = createAdapter('legacy', [sessionId])
+    let resolveSpawn: ((result: { id: string }) => void) | undefined
+    vi.mocked(current.adapter.spawn).mockReturnValue(
+      new Promise((resolve) => {
+        resolveSpawn = resolve
+      })
+    )
+    const router = new DaemonPtyRouter({
+      current: current.adapter,
+      legacy: [legacy.adapter]
+    })
+
+    await router.discoverLegacySessions()
+    await router.shutdown(sessionId, { immediate: true, keepHistory: true })
+    const spawning = router.spawn({ sessionId, cols: 80, rows: 24 })
+    legacy.emitData(sessionId, 'foreign frame')
+    current.emitData(sessionId, 'restored frame')
+    currentSessions.push(sessionId)
+    resolveSpawn?.({ id: sessionId })
+    await spawning
+
+    expect(router.getSessionRouteState(sessionId)).toBe('ambiguous')
+    await expect(router.sendSignal(sessionId, 'SIGTERM')).rejects.toThrow(
+      'daemon_session_routing_unavailable'
+    )
   })
 
   it('probes adapters outside an ambiguous route while discovery is incomplete', async () => {
@@ -467,6 +427,31 @@ describe('DaemonPtyRouter routing safety', () => {
     await expect(signaling).rejects.toThrow('daemon_session_routing_unavailable')
     expect(current.adapter.sendSignal).not.toHaveBeenCalled()
     expect(legacy.adapter.sendSignal).not.toHaveBeenCalled()
+  })
+
+  it('rejects a liveness result when ownership changes in flight', async () => {
+    const sessionId = 'stale-owned-liveness'
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', [sessionId])
+    let finishProbe: ((result: boolean) => void) | undefined
+    vi.mocked(legacy.adapter.probePtyLiveness).mockReturnValue(
+      new Promise((resolve) => {
+        finishProbe = resolve
+      })
+    )
+    const router = new DaemonPtyRouter({
+      current: current.adapter,
+      legacy: [legacy.adapter]
+    })
+
+    await router.discoverLegacySessions()
+    const probing = router.probePtyLiveness(sessionId)
+    await vi.waitFor(() => expect(finishProbe).toBeDefined())
+    current.emitData(sessionId, 'colliding frame')
+    finishProbe?.(false)
+
+    await expect(probing).resolves.toBeNull()
+    expect(router.getSessionRouteState(sessionId)).toBe('ambiguous')
   })
 
   it('does not apply reconciliation after an earlier adapter is replaced', async () => {

@@ -7,7 +7,7 @@ import { DaemonSnapshotAcknowledgementRoutes } from './daemon-snapshot-acknowled
 export class DaemonPtyRouterSessionRouting {
   private readonly routes: DaemonSessionRouteTable
   private readonly snapshotAcks = new DaemonSnapshotAcknowledgementRoutes()
-  private readonly freshSpawnsInFlight = new Map<
+  private readonly authoritativeSpawnsInFlight = new Map<
     string,
     { owner: DaemonPtyAdapter; count: number }
   >()
@@ -48,41 +48,54 @@ export class DaemonPtyRouterSessionRouting {
     if (!opts.sessionId || opts.isNewSession) {
       return this.routes.ownerForFreshSpawn(opts.sessionId, this.current)
     }
+    const historyHandoffTarget = this.routes.historyHandoffTarget(opts.sessionId)
+    if (historyHandoffTarget) {
+      return historyHandoffTarget
+    }
     return this.routes.resolveOwner(opts.sessionId)
   }
 
-  recordSpawn(result: PtySpawnResult, target: DaemonPtyAdapter, opts: PtySpawnOptions): void {
+  recordSpawn(
+    result: PtySpawnResult,
+    target: DaemonPtyAdapter,
+    opts: PtySpawnOptions,
+    authoritativeIntent: boolean
+  ): void {
     if (result.exitedBeforeSpawnReply) {
       return
     }
-    if (opts.isNewSession && opts.sessionId === result.id) {
+    if (authoritativeIntent && opts.sessionId === result.id) {
       this.routes.recordFreshOwned(result.id, target)
       return
     }
     this.routes.recordOwned(result.id, target)
   }
 
-  beginSpawn(opts: PtySpawnOptions, target: DaemonPtyAdapter): void {
-    if (!opts.isNewSession || !opts.sessionId) {
-      return
+  beginSpawn(opts: PtySpawnOptions, target: DaemonPtyAdapter): boolean {
+    if (
+      !opts.sessionId ||
+      (!opts.isNewSession && this.routes.historyHandoffTarget(opts.sessionId) !== target)
+    ) {
+      return false
     }
-    const inFlight = this.freshSpawnsInFlight.get(opts.sessionId)
-    this.freshSpawnsInFlight.set(opts.sessionId, {
+    const inFlight = this.authoritativeSpawnsInFlight.get(opts.sessionId)
+    this.authoritativeSpawnsInFlight.set(opts.sessionId, {
       owner: target,
       count: (inFlight?.count ?? 0) + 1
     })
+    return true
   }
 
-  endSpawn(opts: PtySpawnOptions): void {
-    if (!opts.isNewSession || !opts.sessionId) {
+  endSpawn(opts: PtySpawnOptions, authoritativeIntent: boolean): void {
+    if (!authoritativeIntent || !opts.sessionId) {
       return
     }
-    const inFlight = this.freshSpawnsInFlight.get(opts.sessionId)
+    const inFlight = this.authoritativeSpawnsInFlight.get(opts.sessionId)
     if (!inFlight || inFlight.count <= 1) {
-      this.freshSpawnsInFlight.delete(opts.sessionId)
+      this.authoritativeSpawnsInFlight.delete(opts.sessionId)
       return
     }
-    this.freshSpawnsInFlight.set(opts.sessionId, {
+    this.authoritativeSpawnsInFlight.set(opts.sessionId, {
       owner: inFlight.owner,
       count: inFlight.count - 1
     })
@@ -143,7 +156,7 @@ export class DaemonPtyRouterSessionRouting {
     migrateHistory: boolean
   ): void {
     if (migrateHistory) {
-      this.routes.transfer(sessionId, this.current)
+      this.routes.recordHistoryHandoff(sessionId, owner, this.current)
       return
     }
     if (!keepHistory) {
@@ -186,9 +199,13 @@ export class DaemonPtyRouterSessionRouting {
   }
 
   shouldForwardStreamEvent(sessionId: string, owner: DaemonPtyAdapter): boolean {
-    const freshSpawn = this.freshSpawnsInFlight.get(sessionId)
-    if (freshSpawn && freshSpawn.owner !== owner) {
-      this.routes.recordFreshOwned(sessionId, freshSpawn.owner)
+    const authoritativeSpawn = this.authoritativeSpawnsInFlight.get(sessionId)
+    if (authoritativeSpawn?.owner === owner) {
+      this.routes.recordFreshOwned(sessionId, owner)
+      return this.routes.shouldForwardEvent(sessionId, owner)
+    }
+    if (authoritativeSpawn) {
+      this.routes.recordFreshOwned(sessionId, authoritativeSpawn.owner)
       this.routes.recordOwned(sessionId, owner)
       return false
     }
@@ -196,8 +213,8 @@ export class DaemonPtyRouterSessionRouting {
   }
 
   recordExit(sessionId: string, owner: DaemonPtyAdapter): boolean {
-    const freshSpawn = this.freshSpawnsInFlight.get(sessionId)
-    if (freshSpawn && freshSpawn.owner !== owner) {
+    const authoritativeSpawn = this.authoritativeSpawnsInFlight.get(sessionId)
+    if (authoritativeSpawn && authoritativeSpawn.owner !== owner) {
       if (this.routes.get(sessionId)) {
         this.routes.markUnavailable(sessionId, owner)
       }
@@ -231,7 +248,7 @@ export class DaemonPtyRouterSessionRouting {
     for (const unsubscribe of this.identityUnsubscribes.splice(0)) {
       unsubscribe()
     }
-    this.freshSpawnsInFlight.clear()
+    this.authoritativeSpawnsInFlight.clear()
     this.snapshotAcks.clear()
   }
 }

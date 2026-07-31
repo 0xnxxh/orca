@@ -3,6 +3,7 @@ import {
   DaemonSessionOwnerUnknownError,
   type DaemonSessionRoute,
   DaemonSessionUnavailableError,
+  isCurrentOwnedDaemonSessionRoute,
   sameDaemonIncarnation
 } from './daemon-session-route'
 
@@ -43,4 +44,35 @@ export function assertFreshDaemonSessionAvailable(
     throw new DaemonSessionUnavailableError(sessionId)
   }
   throw new DaemonSessionOwnerUnknownError(sessionId)
+}
+
+export function recordFreshOwnedDaemonSession(
+  route: DaemonSessionRoute | undefined,
+  owner: DaemonPtyAdapter,
+  transfer: () => void,
+  setRoute: (route: DaemonSessionRoute) => void,
+  recordOwned: () => void
+): void {
+  if (
+    !route ||
+    route.state === 'unavailable' ||
+    (route.state === 'owned' && route.owner === owner && !isCurrentOwnedDaemonSessionRoute(route))
+  ) {
+    transfer()
+    return
+  }
+  if (
+    route.state === 'ambiguous' &&
+    route.candidates.has(owner) &&
+    route.candidates.get(owner) === null
+  ) {
+    const incarnation = owner.getLastAuthenticatedDaemonIdentity()
+    if (incarnation) {
+      const candidates = new Map(route.candidates)
+      candidates.set(owner, incarnation)
+      setRoute({ state: 'ambiguous', candidates })
+      return
+    }
+  }
+  recordOwned()
 }

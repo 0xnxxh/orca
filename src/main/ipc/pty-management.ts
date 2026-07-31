@@ -149,16 +149,27 @@ export function registerDaemonManagementHandlers(): void {
 
       // Why: count only the initial-snapshot intersection so renderer respawns mid-kill aren't counted as remaining.
       let remainingOriginal = initial
+      let pollingAdapters = adapters
+      const unavailableOwners = new Set<DaemonPtyAdapter>()
       for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt += 1) {
         await sleep(POLL_INTERVAL_MS)
-        const current = await collectSessions(adapters)
+        const current = await collectSessions(pollingAdapters)
+        for (const owner of current.unavailableOwners) {
+          unavailableOwners.add(owner)
+        }
         const currentIndex = indexSessionIncarnations(current.sessions)
         remainingOriginal = initial.filter(
           (original) =>
-            current.unavailableOwners.has(original.owner) ||
-            hasSessionIncarnation(currentIndex, original)
+            unavailableOwners.has(original.owner) || hasSessionIncarnation(currentIndex, original)
         )
         if (remainingOriginal.length === 0) {
+          break
+        }
+        const remainingOwners = new Set(remainingOriginal.map(({ owner }) => owner))
+        pollingAdapters = pollingAdapters.filter(
+          (adapter) => remainingOwners.has(adapter) && !unavailableOwners.has(adapter)
+        )
+        if (pollingAdapters.length === 0) {
           break
         }
       }
