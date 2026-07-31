@@ -5389,6 +5389,34 @@ describe('Store', () => {
     expect(updated.prBotAuthorOverrides[499]).toBe('bot-0499')
   })
 
+  it('normalizes custom mobile pairing addresses on load and every settings write', async () => {
+    writeDataFile({
+      settings: {
+        mobilePairingCustomAddress: 'host:99999'
+      }
+    })
+    const store = await createStore()
+
+    expect(store.getSettings().mobilePairingCustomAddress).toBeNull()
+    store.flush()
+    expect(
+      (readDataFile() as { settings?: GlobalSettings }).settings?.mobilePairingCustomAddress
+    ).toBeNull()
+
+    const updated = store.updateSettings({
+      mobilePairingCustomAddress: ' 100.126.117.25:6768 '
+    })
+    expect(updated.mobilePairingCustomAddress).toBe('100.126.117.25:6768')
+    store.flush()
+    expect(
+      (readDataFile() as { settings?: GlobalSettings }).settings?.mobilePairingCustomAddress
+    ).toBe('100.126.117.25:6768')
+
+    expect(
+      store.updateSettings({ mobilePairingCustomAddress: 42 as never }).mobilePairingCustomAddress
+    ).toBeNull()
+  })
+
   it('notifies settings listeners with changed keys only', async () => {
     const store = await createStore()
     const listener = vi.fn()

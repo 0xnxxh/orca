@@ -520,6 +520,24 @@ describe('registerSettingsHandlers', () => {
     )
   })
 
+  it('clears malformed custom mobile pairing addresses before persistence', async () => {
+    store.getSettings.mockReturnValue({ mobilePairingCustomAddress: '100.126.117.25:6768' })
+    store.updateSettings.mockReturnValue({ mobilePairingCustomAddress: null })
+    registerSettingsHandlers(store as never)
+
+    const handler = handleMock.mock.calls.find((call) => call[0] === 'settings:set')?.[1] as (
+      _event: unknown,
+      args: unknown
+    ) => Promise<unknown>
+
+    await handler(settingsInvokeEvent, { mobilePairingCustomAddress: 'host:99999' })
+
+    expect(store.updateSettings).toHaveBeenCalledWith(
+      { mobilePairingCustomAddress: null },
+      { notifyListeners: true, originWebContentsId: 1 }
+    )
+  })
+
   it('normalizes custom terminal themes from renderer settings IPC', async () => {
     store.getSettings.mockReturnValue({ terminalCustomThemes: [] })
     store.updateSettings.mockReturnValue({ terminalCustomThemes: [] })

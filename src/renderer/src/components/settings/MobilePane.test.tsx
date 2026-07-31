@@ -75,6 +75,8 @@ vi.mock('./MobilePairingSetupSection', () => ({
     networkInterfaces: { name: string; address: string }[]
     selectedAddress: string | undefined
     onSelectedAddressChange: (address: string) => void
+    refreshingNetworkInterfaces: boolean
+    onRefreshNetworkInterfaces: () => void
     onGenerateQr: () => void
   }) => (
     <div>
@@ -82,6 +84,7 @@ vi.mock('./MobilePairingSetupSection', () => ({
       <span data-testid="can-generate">{String(props.canGenerate)}</span>
       <span data-testid="loading">{String(props.loading)}</span>
       <span data-testid="selected-address">{props.selectedAddress ?? 'none'}</span>
+      <span data-testid="refreshing-addresses">{String(props.refreshingNetworkInterfaces)}</span>
       {props.connectionPathControl}
       {/* Mirror the real Generate gate (loading/canGenerate) so a stuck
           loading flag surfaces as a disabled control the tests can catch. */}
@@ -101,6 +104,9 @@ vi.mock('./MobilePairingSetupSection', () => ({
         onClick={() => props.onSelectedAddressChange(props.networkInterfaces[0]!.address)}
       >
         choose-discovered-address
+      </button>
+      <button type="button" onClick={props.onRefreshNetworkInterfaces}>
+        refresh-addresses
       </button>
     </div>
   )
@@ -426,9 +432,45 @@ describe('MobilePane pairing connection mode', () => {
     expect(updateSettings).toHaveBeenCalledWith({
       mobilePairingCustomAddress: '100.126.117.25:6768'
     })
+    expect(screen.getByTestId('selected-address')).toHaveTextContent('100.126.117.25:6768')
 
     await user.click(screen.getByRole('button', { name: 'choose-discovered-address' }))
     expect(updateSettings).toHaveBeenCalledWith({ mobilePairingCustomAddress: null })
+    expect(screen.getByTestId('selected-address')).toHaveTextContent('10.0.0.2')
+  })
+
+  it('keeps a saved custom override when discovery later stops listing it', async () => {
+    const customAddress = '100.126.117.25:6768'
+    mocks.holder.state.settings = {
+      mobileAutoRestoreFitMs: null,
+      mobilePairingCustomAddress: customAddress
+    }
+    mocks.listNetworkInterfaces.mockResolvedValueOnce({
+      interfaces: [{ name: 'Tailscale', address: customAddress }]
+    })
+    const user = userEvent.setup()
+    render(<MobilePane />)
+    await waitFor(() =>
+      expect(screen.getByTestId('selected-address')).toHaveTextContent(customAddress)
+    )
+
+    let resolveRefresh: ((value: Record<string, unknown>) => void) | undefined
+    mocks.listNetworkInterfaces.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRefresh = resolve
+        })
+    )
+    await user.click(screen.getByRole('button', { name: 'refresh-addresses' }))
+    expect(screen.getByTestId('refreshing-addresses')).toHaveTextContent('true')
+
+    resolveRefresh?.({ interfaces: [{ name: 'Ethernet', address: '10.0.0.2' }] })
+    await waitFor(() =>
+      expect(screen.getByTestId('refreshing-addresses')).toHaveTextContent('false')
+    )
+
+    expect(screen.getByTestId('selected-address')).toHaveTextContent(customAddress)
+    expect(updateSettings).not.toHaveBeenCalled()
   })
 
   it('discards a Relay QR that resolves after signing out mid-generate', async () => {

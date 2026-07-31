@@ -56,6 +56,8 @@ vi.mock('./MobilePageContent', () => ({
     relayMintFailure: MobileRelayMintFailure | null
     onRetryRelay: () => void
     selectedAddress: string | undefined
+    loadNetworkInterfaces: () => void
+    refreshingNetworkInterfaces: boolean
     stage: string | null
     stepIdx: number
   }) => (
@@ -69,6 +71,7 @@ vi.mock('./MobilePageContent', () => ({
       <span data-testid="pairing-qr-error">{String(props.pairingQrError)}</span>
       <span data-testid="relay-failure">{props.relayMintFailure?.stage ?? 'none'}</span>
       <span data-testid="selected-address">{props.selectedAddress ?? 'none'}</span>
+      <span data-testid="refreshing-addresses">{String(props.refreshingNetworkInterfaces)}</span>
       <button type="button" onClick={props.enterFlow}>
         Enter flow
       </button>
@@ -86,6 +89,9 @@ vi.mock('./MobilePageContent', () => ({
       </button>
       <button type="button" onClick={() => props.handleAddressChange('10.0.0.2')}>
         Change address
+      </button>
+      <button type="button" onClick={props.loadNetworkInterfaces}>
+        Refresh addresses
       </button>
       <button
         type="button"
@@ -107,6 +113,7 @@ import MobilePage from './MobilePage'
 
 describe('MobilePage pairing connection mode', () => {
   const getPairingQR = vi.fn()
+  const listNetworkInterfaces = vi.fn()
 
   beforeEach(() => {
     getPairingQR.mockReset().mockResolvedValue({
@@ -114,6 +121,7 @@ describe('MobilePage pairing connection mode', () => {
       qrDataUrl: 'data:image/png;base64,qr',
       pairingUrl: 'orca://pair#automatic'
     })
+    listNetworkInterfaces.mockReset().mockResolvedValue({ interfaces: [] })
     mocks.storeState = {
       closeMobilePage: vi.fn(),
       orcaProfileAuthStatus: { state: 'connected' },
@@ -126,7 +134,7 @@ describe('MobilePage pairing connection mode', () => {
         mobile: {
           getPairingQR,
           listDevices: vi.fn().mockResolvedValue({ devices: [] }),
-          listNetworkInterfaces: vi.fn().mockResolvedValue({ interfaces: [] })
+          listNetworkInterfaces
         },
         shell: { openUrl: vi.fn() },
         ui: { writeClipboardText: vi.fn().mockResolvedValue(undefined) }
@@ -461,5 +469,39 @@ describe('MobilePage pairing connection mode', () => {
         mobilePairingCustomAddress: 'wss://custom.example/large'
       })
     )
+  })
+
+  it('keeps a custom address when an older network refresh resolves', async () => {
+    let resolveRefresh: ((value: Record<string, unknown>) => void) | undefined
+    listNetworkInterfaces.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRefresh = resolve
+        })
+    )
+    const user = userEvent.setup()
+    render(<MobilePage />)
+    await waitFor(() => expect(screen.getByTestId('stage')).toHaveTextContent('intro'))
+    await user.click(screen.getByRole('button', { name: 'Enter flow' }))
+    await waitFor(() => expect(listNetworkInterfaces).toHaveBeenCalledOnce())
+    expect(screen.getByTestId('refreshing-addresses')).toHaveTextContent('true')
+
+    await user.click(screen.getByRole('button', { name: 'Confirm custom address' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('selected-address')).toHaveTextContent('wss://custom.example/large')
+    )
+    expect(listNetworkInterfaces).toHaveBeenCalledOnce()
+
+    resolveRefresh?.({ interfaces: [{ name: 'Ethernet', address: '10.0.0.2' }] })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('refreshing-addresses')).toHaveTextContent('false')
+    )
+    expect(screen.getByTestId('selected-address')).toHaveTextContent('wss://custom.example/large')
+    expect(getPairingQR).not.toHaveBeenCalledWith({
+      address: '10.0.0.2',
+      connectionMode: 'automatic',
+      rotate: true
+    })
   })
 })

@@ -20,7 +20,8 @@ export function useMobilePairingAddressPreference(args: {
   const [selectedAddress, setSelectedAddress] = useState<string | undefined>(savedCustomAddress)
   const selectedAddressRef = useRef(selectedAddress)
   const selectedAddressIsManualRef = useRef(savedCustomAddress !== undefined)
-  const handledCustomAddressRef = useRef(savedCustomAddress)
+  const observedCustomAddressRef = useRef(savedCustomAddress)
+  const pendingCustomAddressWritesRef = useRef<(string | undefined)[]>([])
 
   const selectAddressAfterRefresh = useCallback(
     (interfaces: readonly MobileNetworkInterface[]): void => {
@@ -29,12 +30,11 @@ export function useMobilePairingAddressPreference(args: {
         interfaces,
         selectedAddressIsManualRef.current
       )
-      selectedAddressIsManualRef.current =
-        nextAddress !== undefined && !interfaces.some((iface) => iface.address === nextAddress)
       if (nextAddress === selectedAddressRef.current) {
         return
       }
       selectedAddressRef.current = nextAddress
+      selectedAddressIsManualRef.current = false
       setSelectedAddress(nextAddress)
       onSelectionInvalidated()
     },
@@ -48,8 +48,11 @@ export function useMobilePairingAddressPreference(args: {
       selectedAddressIsManualRef.current = isManual
       setSelectedAddress(address)
       const customAddress = isManual ? address : undefined
-      if (customAddress !== handledCustomAddressRef.current) {
-        handledCustomAddressRef.current = customAddress
+      const pendingWrites = pendingCustomAddressWritesRef.current
+      const effectiveCustomAddress =
+        pendingWrites.length > 0 ? pendingWrites.at(-1) : observedCustomAddressRef.current
+      if (customAddress !== effectiveCustomAddress) {
+        pendingWrites.push(customAddress)
         void updateSettings({ mobilePairingCustomAddress: customAddress ?? null })
       }
       onSelectionInvalidated()
@@ -58,10 +61,17 @@ export function useMobilePairingAddressPreference(args: {
   )
 
   useEffect(() => {
-    if (savedCustomAddress === handledCustomAddressRef.current) {
+    if (savedCustomAddress === observedCustomAddressRef.current) {
       return
     }
-    handledCustomAddressRef.current = savedCustomAddress
+    observedCustomAddressRef.current = savedCustomAddress
+    const pendingWrites = pendingCustomAddressWritesRef.current
+    const acknowledgedWriteIndex = pendingWrites.indexOf(savedCustomAddress)
+    if (acknowledgedWriteIndex !== -1) {
+      pendingWrites.splice(0, acknowledgedWriteIndex + 1)
+      return
+    }
+    pendingWrites.length = 0
     const nextAddress =
       savedCustomAddress ?? selectRefreshedNetworkAddress(undefined, networkInterfaces)
     selectedAddressRef.current = nextAddress
