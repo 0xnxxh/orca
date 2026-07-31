@@ -11,7 +11,9 @@ import {
   CURRENT_WORKER_PANE,
   evidence,
   invoke,
-  request
+  request,
+  WORKER_HANDLE,
+  WORKER_PANE
 } from './orchestration-legacy-compatibility-dispatcher-test-fixture'
 
 afterEach(() => {
@@ -196,6 +198,81 @@ describe('current orchestration authority precedence', () => {
     })
     expect(harness.db.getMessageById(message.id)?.read).toBe(1)
   })
+
+  it.each(['dispatch', 'websocket'] as const)(
+    '%s routes a reused legacy terminal current check before its retained principal',
+    async (transport) => {
+      const harness = createHarness()
+      const { runId, dispatchId } = await createReusedCurrentDispatch(harness, transport)
+      const message = harness.db.insertMessage({
+        runId,
+        from: CURRENT_COORDINATOR_HANDLE,
+        to: `dispatch:${dispatchId}`,
+        subject: 'reused terminal guidance',
+        deliveryContract: 'current_delivery'
+      })
+
+      const response = await invoke(
+        harness.dispatcher,
+        request(
+          'orchestration.check',
+          { terminal: WORKER_HANDLE },
+          evidence('worker'),
+          `reused-current-check-${transport}`
+        ),
+        transport
+      )
+
+      expect(response).toMatchObject({
+        ok: true,
+        result: {
+          runId,
+          dispatchId,
+          messages: [{ id: message.id }],
+          count: 1
+        }
+      })
+      expect(response).not.toHaveProperty('result.legacyCompatibility')
+    }
+  )
+
+  it.each(['dispatch', 'websocket'] as const)(
+    '%s routes a reused legacy terminal current ask before its retained principal',
+    async (transport) => {
+      const harness = createHarness()
+      const { dispatchId, capability } = await createReusedCurrentDispatch(harness, transport)
+
+      const response = await invoke(
+        harness.dispatcher,
+        {
+          ...request(
+            'orchestration.ask',
+            {
+              from: WORKER_HANDLE,
+              question: 'Continue with the current assignment?',
+              timeoutMs: 0
+            },
+            evidence('worker'),
+            `reused-current-ask-${transport}`
+          ),
+          orchestrationCapability: capability
+        },
+        transport
+      )
+
+      expect(response).toMatchObject({
+        ok: true,
+        result: {
+          answer: null,
+          messageId: expect.any(String),
+          timedOut: true
+        }
+      })
+      expect(response).not.toHaveProperty('result.legacyCompatibility')
+      const questionId = (response as { result: { messageId: string } }).result.messageId
+      expect(harness.db.getQuestion(questionId)?.dispatch_id).toBe(dispatchId)
+    }
+  )
 })
 
 function createCurrentDispatch(harness: ReturnType<typeof createHarness>): {
@@ -218,6 +295,41 @@ function createCurrentDispatch(harness: ReturnType<typeof createHarness>): {
   const capability = harness.db.mintDispatchCapability({
     dispatchId: dispatch.id,
     paneKey: CURRENT_WORKER_PANE,
+    processIncarnation: 'process-1'
+  })
+  return { runId: run.id, taskId: task.id, dispatchId: dispatch.id, capability }
+}
+
+async function createReusedCurrentDispatch(
+  harness: ReturnType<typeof createHarness>,
+  suffix: string
+): Promise<{
+  runId: string
+  taskId: string
+  dispatchId: string
+  capability: string
+}> {
+  const legacyCheck = await harness.dispatcher.dispatch(
+    request(
+      'orchestration.check',
+      { terminal: WORKER_HANDLE, peek: true },
+      evidence('worker'),
+      `attest-legacy-worker-${suffix}`
+    )
+  )
+  expect(legacyCheck).toHaveProperty('result.legacyCompatibility')
+  harness.db.completeDispatch(harness.dispatchId)
+
+  const run = harness.db.createRun({
+    objective: 'current work in reused terminal',
+    coordinatorHandle: CURRENT_COORDINATOR_HANDLE,
+    coordinatorPaneKey: CURRENT_COORDINATOR_PANE
+  })
+  const task = harness.db.createTask({ spec: 'reused terminal assignment', runId: run.id })
+  const dispatch = harness.db.createDispatchContext(task.id, WORKER_HANDLE, WORKER_PANE)
+  const capability = harness.db.mintDispatchCapability({
+    dispatchId: dispatch.id,
+    paneKey: WORKER_PANE,
     processIncarnation: 'process-1'
   })
   return { runId: run.id, taskId: task.id, dispatchId: dispatch.id, capability }
