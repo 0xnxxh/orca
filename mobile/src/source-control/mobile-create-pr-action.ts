@@ -8,12 +8,17 @@ import { getMobilePrCreateBlockMessage } from './mobile-pr-create'
 
 export type MobileCreatePrEligibilityState =
   | { kind: 'idle' }
-  | { kind: 'loading'; eligibility: HostedReviewCreationEligibility | null }
-  | { kind: 'ready'; eligibility: HostedReviewCreationEligibility }
-  | { kind: 'error' }
+  | {
+      kind: 'loading'
+      eligibility: HostedReviewCreationEligibility | null
+      reserveSpace?: boolean
+    }
+  | { kind: 'ready'; eligibility: HostedReviewCreationEligibility; reserveSpace?: boolean }
+  | { kind: 'error'; reserveSpace?: boolean }
 
 export type MobileCreatePrAction = {
   visible: boolean
+  reserveSpace: boolean
   label: string
   disabled: boolean
   hint?: string
@@ -38,9 +43,10 @@ const HIDDEN_BLOCKED_REASONS = new Set<HostedReviewCreationBlockedReason>([
 
 const BUSY_ACTIONS = new Set(['create-pr', 'push-create-pr'])
 
-function hiddenAction(onPress: () => void): MobileCreatePrAction {
+function hiddenAction(onPress: () => void, reserveSpace = false): MobileCreatePrAction {
   return {
     visible: false,
+    reserveSpace,
     label: 'Create Pull Request',
     disabled: true,
     loading: false,
@@ -56,8 +62,11 @@ export function buildMobileCreatePrAction({
   onCreatePr
 }: BuildMobileCreatePrActionArgs): MobileCreatePrAction {
   const noop = () => {}
-  if (!branch || eligibilityState.kind === 'idle' || eligibilityState.kind === 'error') {
+  if (!branch || eligibilityState.kind === 'idle') {
     return hiddenAction(noop)
+  }
+  if (eligibilityState.kind === 'error') {
+    return hiddenAction(noop, eligibilityState.reserveSpace)
   }
   const eligibility = eligibilityState.eligibility
   if (!eligibility) {
@@ -66,6 +75,7 @@ export function buildMobileCreatePrAction({
     // the changed-files list doesn't shift under the user when it lands (#8411).
     return {
       visible: true,
+      reserveSpace: false,
       label: 'Create Pull Request',
       disabled: true,
       loading: true,
@@ -77,7 +87,7 @@ export function buildMobileCreatePrAction({
   // instead of relying on the host always emitting a hidden blockedReason for
   // non-creatable providers like bitbucket.
   if (!supportsHostedReviewCreation(eligibility.provider)) {
-    return hiddenAction(noop)
+    return hiddenAction(noop, eligibilityState.reserveSpace)
   }
   const copy = hostedReviewCopy(eligibility.provider)
   const label = `Create ${copy.titleLabel}`
@@ -95,6 +105,7 @@ export function buildMobileCreatePrAction({
     const disabled = busy || stale
     return {
       visible: true,
+      reserveSpace: false,
       label,
       disabled,
       loading,
@@ -106,7 +117,7 @@ export function buildMobileCreatePrAction({
   }
 
   if (HIDDEN_BLOCKED_REASONS.has(eligibility.blockedReason)) {
-    return hiddenAction(noop)
+    return hiddenAction(noop, eligibilityState.reserveSpace)
   }
 
   const hint =
@@ -122,6 +133,7 @@ export function buildMobileCreatePrAction({
 
   return {
     visible: true,
+    reserveSpace: false,
     label,
     disabled: true,
     hint,

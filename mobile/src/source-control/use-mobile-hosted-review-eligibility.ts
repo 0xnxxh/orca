@@ -15,6 +15,7 @@ import type { MobileCreatePrEligibilityState } from './mobile-create-pr-action'
 export type MobileHostedReviewEligibilityLoaderInput = {
   client: RpcClient | null
   connState: ConnectionState
+  hostId: string
   worktreeId: string
   branch: string | null | undefined
   hasUpstream: boolean | undefined
@@ -33,8 +34,9 @@ export function buildMobileHostedReviewEligibilityLoadKey(
 ): MobileHostedReviewEligibilityLoadKey {
   const branch = input.branch ?? ''
   return {
-    identity: `${input.worktreeId}\0${branch}`,
+    identity: `${input.hostId}\0${input.worktreeId}\0${branch}`,
     fetch: [
+      input.hostId,
       input.worktreeId,
       branch,
       String(input.hasUpstream ?? ''),
@@ -60,8 +62,10 @@ export function acceptsMobileHostedReviewEligibilityLoad(args: {
   return args.generation === args.currentGeneration && args.identity === args.currentIdentity
 }
 
-export function eligibilityStateAfterMobileHostedReviewError(): MobileCreatePrEligibilityState {
-  return { kind: 'error' }
+export function eligibilityStateAfterMobileHostedReviewError(
+  reserveSpace = false
+): MobileCreatePrEligibilityState {
+  return { kind: 'error', reserveSpace }
 }
 
 export function renderedMobileHostedReviewEligibilityState(args: {
@@ -78,7 +82,12 @@ export function renderedMobileHostedReviewEligibilityState(args: {
   // load seeded with the last resolved answer so the Create PR row's footprint
   // is right on the first painted frame instead of shifting later (#8411).
   if (state.kind === 'idle' || (state.kind === 'loading' && !state.eligibility)) {
-    return { kind: 'loading', eligibility: remembered }
+    return {
+      kind: 'loading',
+      eligibility: remembered,
+      reserveSpace:
+        state.kind === 'loading' ? (state.reserveSpace ?? remembered === null) : remembered === null
+    }
   }
   return state
 }
@@ -89,6 +98,7 @@ export function useMobileHostedReviewEligibility(
   const {
     client,
     connState,
+    hostId,
     worktreeId,
     branch,
     hasUpstream,
@@ -101,7 +111,9 @@ export function useMobileHostedReviewEligibility(
   const generationRef = useRef(0)
   const currentIdentityRef = useRef('')
   const lastResetIdentityRef = useRef('')
+  const reservedIdentityRef = useRef('')
   const key = buildMobileHostedReviewEligibilityLoadKey({
+    hostId,
     worktreeId,
     branch,
     hasUpstream,
@@ -112,6 +124,7 @@ export function useMobileHostedReviewEligibility(
 
   if (lastResetIdentityRef.current !== key.identity) {
     lastResetIdentityRef.current = key.identity
+    reservedIdentityRef.current = ''
     setState({ kind: 'idle' })
   }
   currentIdentityRef.current = key.identity
@@ -137,9 +150,16 @@ export function useMobileHostedReviewEligibility(
       return
     }
 
+    const reserveSpace =
+      reservedIdentityRef.current === key.identity ||
+      recallHostedReviewEligibility(key.identity) === null
+    if (reserveSpace) {
+      reservedIdentityRef.current = key.identity
+    }
     setState((prev) => ({
       kind: 'loading',
-      eligibility: prev.kind === 'ready' ? prev.eligibility : null
+      eligibility: prev.kind === 'ready' ? prev.eligibility : null,
+      reserveSpace
     }))
     const requestInput: MobileHostedReviewEligibilityInput = {
       branch,
@@ -150,23 +170,19 @@ export function useMobileHostedReviewEligibility(
     }
     void fetchMobileHostedReviewEligibility(client, worktreeId, requestInput)
       .then((eligibility: HostedReviewCreationEligibility | null) => {
-        if (eligibility) {
-          // Remember even when superseded: the answer is still valid for the
-          // identity it was fetched for, and seeds that branch's next open.
-          rememberHostedReviewEligibility(key.identity, eligibility)
-        }
         if (!isCurrent()) {
           return
         }
         if (!eligibility) {
-          setState({ kind: 'error' })
+          setState(eligibilityStateAfterMobileHostedReviewError(reserveSpace))
           return
         }
-        setState({ kind: 'ready', eligibility })
+        rememberHostedReviewEligibility(key.identity, eligibility)
+        setState({ kind: 'ready', eligibility, reserveSpace })
       })
       .catch(() => {
         if (isCurrent()) {
-          setState(eligibilityStateAfterMobileHostedReviewError())
+          setState(eligibilityStateAfterMobileHostedReviewError(reserveSpace))
         }
       })
   }, [
@@ -177,6 +193,7 @@ export function useMobileHostedReviewEligibility(
     connState,
     hasUncommittedChanges,
     hasUpstream,
+    hostId,
     key.fetch,
     key.identity,
     shouldFetch,

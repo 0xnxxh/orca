@@ -10,7 +10,7 @@ type Props = {
 
 export function MobileSourceControlCreatePrEntry({ action }: Props) {
   if (!action.visible) {
-    return null
+    return action.reserveSpace ? <View style={styles.createPrReservedSpace} /> : null
   }
   const enabled = !action.disabled
   return (

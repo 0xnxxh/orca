@@ -210,6 +210,10 @@ const baseStyles = StyleSheet.create({
     marginTop: spacing.md,
     gap: spacing.xs
   },
+  createPrReservedSpace: {
+    marginTop: spacing.md,
+    minHeight: 42
+  },
   createPrButton: {
     minHeight: 42,
     borderRadius: radii.button,

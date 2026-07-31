@@ -170,22 +170,58 @@ describe('cold-mount layout stability (issue #8411)', () => {
   // useMobileHostedReviewEligibility's real cold-mount sequence for a creatable
   // branch: no prior snapshot exists, so `loading` carries eligibility: null.
   const coldMount: MobileCreatePrEligibilityState[] = [
-    { kind: 'loading', eligibility: null },
-    { kind: 'ready', eligibility: eligibility({ canCreate: true }) }
+    { kind: 'loading', eligibility: null, reserveSpace: true },
+    { kind: 'ready', eligibility: eligibility({ canCreate: true }), reserveSpace: true }
   ]
 
   it('reserves the button row while the first eligibility request is in flight', () => {
-    const footprint = coldMount.map(
-      (eligibilityState) =>
-        buildMobileCreatePrAction({
-          branch: 'feature',
-          eligibilityState,
-          busyAction: null,
-          onCreatePr: vi.fn()
-        }).visible
+    const descriptors = coldMount.map((eligibilityState) =>
+      buildMobileCreatePrAction({
+        branch: 'feature',
+        eligibilityState,
+        busyAction: null,
+        onCreatePr: vi.fn()
+      })
     )
 
+    const footprint = descriptors.map(({ visible, reserveSpace }) => visible || reserveSpace)
+
     // On the buggy parent this was [false, true] -- the false -> true step is the jump.
+    expect(footprint).toEqual([true, true])
+  })
+
+  it.each([
+    [
+      'existing review',
+      {
+        kind: 'ready',
+        eligibility: eligibility({ canCreate: false, blockedReason: 'existing_review' }),
+        reserveSpace: true
+      } satisfies MobileCreatePrEligibilityState
+    ],
+    [
+      'unsupported provider',
+      {
+        kind: 'ready',
+        eligibility: eligibility({ provider: 'bitbucket' as HostedReviewProvider }),
+        reserveSpace: true
+      } satisfies MobileCreatePrEligibilityState
+    ],
+    [
+      'eligibility error',
+      { kind: 'error', reserveSpace: true } satisfies MobileCreatePrEligibilityState
+    ]
+  ])('keeps the cold-load footprint when %s resolves hidden', (_label, resolvedState) => {
+    const footprint = [coldMount[0], resolvedState].map((eligibilityState) => {
+      const descriptor = buildMobileCreatePrAction({
+        branch: 'feature',
+        eligibilityState,
+        busyAction: null,
+        onCreatePr: vi.fn()
+      })
+      return descriptor.visible || descriptor.reserveSpace
+    })
+
     expect(footprint).toEqual([true, true])
   })
 
