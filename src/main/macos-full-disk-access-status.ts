@@ -1,13 +1,13 @@
-import { closeSync, openSync } from 'node:fs'
+import { open } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { DeveloperPermissionStatus } from '../shared/developer-permissions-types'
 
-type ReadProbe = (filePath: string) => void
+type ReadProbe = (filePath: string) => Promise<void>
 
-function openForRead(filePath: string): void {
-  const descriptor = openSync(filePath, 'r')
-  closeSync(descriptor)
+async function openForRead(filePath: string): Promise<void> {
+  const handle = await open(filePath, 'r')
+  await handle.close()
 }
 
 function errorCode(error: unknown): string | undefined {
@@ -16,13 +16,13 @@ function errorCode(error: unknown): string | undefined {
     : undefined
 }
 
-export function probeMacosFullDiskAccess({
+export async function probeMacosFullDiskAccess({
   homeDirectory = homedir(),
   readProbe = openForRead
 }: {
   homeDirectory?: string
   readProbe?: ReadProbe
-} = {}): DeveloperPermissionStatus {
+} = {}): Promise<DeveloperPermissionStatus> {
   const databasePath = join(
     homeDirectory,
     'Library',
@@ -31,7 +31,7 @@ export function probeMacosFullDiskAccess({
     'TCC.db'
   )
   try {
-    readProbe(databasePath)
+    await readProbe(databasePath)
     return 'granted'
   } catch (error) {
     const code = errorCode(error)
@@ -39,6 +39,6 @@ export function probeMacosFullDiskAccess({
   }
 }
 
-export function getMacosFullDiskAccessStatus(): DeveloperPermissionStatus {
+export async function getMacosFullDiskAccessStatus(): Promise<DeveloperPermissionStatus> {
   return process.platform === 'darwin' ? probeMacosFullDiskAccess() : 'unsupported'
 }

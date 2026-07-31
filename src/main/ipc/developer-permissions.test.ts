@@ -79,7 +79,7 @@ describe('registerDeveloperPermissionHandlers', () => {
     getMediaAccessStatusMock.mockReset()
     isTrustedAccessibilityClientMock.mockReset()
     getMacosFullDiskAccessStatusMock.mockReset()
-    getMacosFullDiskAccessStatusMock.mockReturnValue('denied')
+    getMacosFullDiskAccessStatusMock.mockResolvedValue('denied')
     execFileMock.mockReset()
     execFileMock.mockImplementation((...args: unknown[]) => {
       const callback = args.at(-1)
@@ -128,7 +128,7 @@ describe('registerDeveloperPermissionHandlers', () => {
   }
 
   it('returns the Full Disk Access read-probe status', async () => {
-    getMacosFullDiskAccessStatusMock.mockReturnValue('granted')
+    getMacosFullDiskAccessStatusMock.mockResolvedValue('granted')
     registerDeveloperPermissionHandlers()
 
     const call = handleMock.mock.calls.find(

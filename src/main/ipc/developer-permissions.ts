@@ -148,7 +148,7 @@ async function getPermissionState(id: DeveloperPermissionId): Promise<DeveloperP
     case 'accessibility':
       return { id, status: getAccessibilityStatus() }
     case 'full-disk-access':
-      return { id, status: getMacosFullDiskAccessStatus() }
+      return { id, status: await getMacosFullDiskAccessStatus() }
     case 'automation':
     case 'local-network':
       return { id, status: unsupportedOffMac() ?? 'unknown' }

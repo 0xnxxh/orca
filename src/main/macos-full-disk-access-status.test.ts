@@ -24,40 +24,40 @@ afterEach(() => {
 })
 
 describe('probeMacosFullDiskAccess', () => {
-  it('reports granted only when the TCC database opens for reading', () => {
-    const readProbe = vi.fn()
+  it('reports granted only when the TCC database opens for reading', async () => {
+    const readProbe = vi.fn().mockResolvedValue(undefined)
 
-    expect(probeMacosFullDiskAccess({ homeDirectory, readProbe })).toBe('granted')
+    await expect(probeMacosFullDiskAccess({ homeDirectory, readProbe })).resolves.toBe('granted')
     expect(readProbe).toHaveBeenCalledWith(databasePath)
   })
 
-  it.each(['EACCES', 'EPERM'])('reports denied for %s', (code) => {
-    expect(
+  it.each(['EACCES', 'EPERM'])('reports denied for %s', async (code) => {
+    await expect(
       probeMacosFullDiskAccess({
         homeDirectory,
-        readProbe: () => {
+        readProbe: async () => {
           throw fileSystemError(code)
         }
       })
-    ).toBe('denied')
+    ).resolves.toBe('denied')
   })
 
-  it.each(['ENOENT', 'ENOTDIR', 'EBUSY'])('keeps %s failures unknown', (code) => {
-    expect(
+  it.each(['ENOENT', 'ENOTDIR', 'EBUSY'])('keeps %s failures unknown', async (code) => {
+    await expect(
       probeMacosFullDiskAccess({
         homeDirectory,
-        readProbe: () => {
+        readProbe: async () => {
           throw fileSystemError(code)
         }
       })
-    ).toBe('unknown')
+    ).resolves.toBe('unknown')
   })
 })
 
 describe('getMacosFullDiskAccessStatus', () => {
-  it('is unsupported off macOS', () => {
+  it('is unsupported off macOS', async () => {
     Object.defineProperty(process, 'platform', { configurable: true, value: 'linux' })
 
-    expect(getMacosFullDiskAccessStatus()).toBe('unsupported')
+    await expect(getMacosFullDiskAccessStatus()).resolves.toBe('unsupported')
   })
 })
