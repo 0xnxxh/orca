@@ -16,7 +16,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     // Why: Node 26's undefined Web Storage globals prevent Vitest from installing happy-dom's.
-    execArgv: ['--no-experimental-webstorage'],
+    // --expose-gc backs the string-retention guards in detached-string-retention.test.ts.
+    execArgv: ['--no-experimental-webstorage', '--expose-gc'],
     include: [
       'src/**/*.test.ts',
       'src/**/*.test.tsx',

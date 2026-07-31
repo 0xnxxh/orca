@@ -5,7 +5,6 @@ import {
   pasteTerminalText,
   sanitizeTerminalPasteText
 } from './terminal-bracketed-paste'
-import { createForceGc, resolveForcedGc } from '../../../../shared/forced-gc-for-retention-tests'
 
 function createTerminal(bracketedPasteMode = true) {
   const terminal = {
@@ -252,31 +251,5 @@ describe('terminal bracketed paste policy', () => {
     expect(terminal.paste).toHaveBeenCalledWith('commit')
     expect(terminal.options.ignoreBracketedPasteMode).toBe(false)
     expect(splitCallCount).toBe(0)
-  })
-
-  // Production persists one interrupted-mode tail per terminal.
-  const forcedGc = resolveForcedGc()
-  const itWithGc = forcedGc ? it : it.skip
-  itWithGc('does not pin the source chunk behind the interrupted-pane mode tail', () => {
-    const forceGc = createForceGc(forcedGc!)
-    const panes = 512
-    const chunkChars = 16 * 1024
-
-    // Avoid mock bookkeeping that would swamp the retention signal.
-    const terminals = Array.from({ length: panes }, () => ({
-      modes: { bracketedPasteMode: true }
-    }))
-
-    forceGc()
-    const before = process.memoryUsage().heapUsed
-    for (const [index, terminal] of terminals.entries()) {
-      markTerminalBracketedPasteInterrupted(terminal)
-      observeTerminalBracketedPasteModeOutput(terminal, `${'x'.repeat(chunkChars)}pane-${index}`)
-    }
-    forceGc()
-    const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
-
-    expect(terminals).toHaveLength(panes)
-    expect(retainedMiB).toBeLessThan(2)
   })
 })

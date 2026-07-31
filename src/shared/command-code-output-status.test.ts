@@ -3,7 +3,6 @@ import {
   createCommandCodeOutputStatusDetector,
   stripTerminalControl
 } from './command-code-output-status'
-import { createForceGc, resolveForcedGc } from './forced-gc-for-retention-tests'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -462,27 +461,5 @@ describe('terminal control stripping', () => {
       }
       expectLegacyEquivalent(data)
     }
-  })
-
-  // Every pane persists this ring before Command Code detection.
-  const forcedGc = resolveForcedGc()
-  const itWithGc = forcedGc ? it : it.skip
-  itWithGc('does not pin the source chunk behind the recent raw-text ring', () => {
-    const forceGc = createForceGc(forcedGc!)
-    const panes = 512
-    const chunkChars = 16 * 1024
-
-    forceGc()
-    const before = process.memoryUsage().heapUsed
-    const detectors = Array.from({ length: panes }, (_unused, index) => {
-      const detector = createCommandCodeOutputStatusDetector({ onWorking: () => undefined })
-      detector.observe(`${'x'.repeat(chunkChars)}pane-${index}`)
-      return detector
-    })
-    forceGc()
-    const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
-
-    expect(detectors).toHaveLength(panes)
-    expect(retainedMiB).toBeLessThan(2)
   })
 })

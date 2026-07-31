@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { createForceGc, resolveForcedGc } from '../../../../shared/forced-gc-for-retention-tests'
 import {
   nativeWindowsRewriteNeedsFollowupRenderRefresh,
   terminalOutputContainsEastAsianRendererRisk,
@@ -403,39 +402,5 @@ describe('nativeWindowsRewriteNeedsFollowupRenderRefresh', () => {
         isInPlaceRewrite: true
       })
     ).toBe(false)
-  })
-})
-
-// The ≥13-char control arm proves detachment for one persisted rewrite tail per pane.
-describe('rewrite CSI scan tail retention', () => {
-  const splitCsi = '\x1b[1;2;3;4;5;6;7;8;9'
-  const forcedGc = resolveForcedGc()
-  const itWithGc = forcedGc ? it : it.skip
-  itWithGc('does not pin the source chunk behind a carried rewrite CSI tail', () => {
-    const chunkChars = 16 * 1024
-    const panes = 512
-    const forceGc = createForceGc(forcedGc!)
-    expect(splitCsi.length).toBeGreaterThanOrEqual(13)
-    forceGc()
-    const before = process.memoryUsage().heapUsed
-    const tails = Array.from(
-      { length: panes },
-      (_unused, index) =>
-        terminalRewriteOutputRenderRefreshDecision(
-          `${'x'.repeat(chunkChars)}pane-${index}${splitCsi}`,
-          { previousChunkEndsWithCarriageReturn: false, previousRewriteCsiScanTail: '' }
-        ).nextRewriteCsiScanTail
-    )
-    forceGc()
-    const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
-
-    expect(tails[0]).toBe(splitCsi)
-    expect(
-      terminalRewriteOutputRenderRefreshDecision('K', {
-        previousChunkEndsWithCarriageReturn: false,
-        previousRewriteCsiScanTail: tails[0]!
-      }).prefersRenderRefresh
-    ).toBe(true)
-    expect(retainedMiB).toBeLessThan(2)
   })
 })

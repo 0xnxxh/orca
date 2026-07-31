@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createForceGc, resolveForcedGc } from '../../../shared/forced-gc-for-retention-tests'
 import { buildObservedSetupCommand, createSetupCompletionScanner } from './setup-completion-signal'
 
 describe('orchestration setup completion signal', () => {
@@ -56,33 +55,5 @@ describe('orchestration setup completion signal', () => {
 
     expect(onComplete).toHaveBeenCalledOnce()
     expect(onComplete).toHaveBeenCalledWith(17)
-  })
-})
-
-// Production persists one carry per running setup.
-describe('setup completion scanner retention', () => {
-  const forcedGc = resolveForcedGc()
-  const itWithGc = forcedGc ? it : it.skip
-  itWithGc('does not pin the source chunk behind the carry', () => {
-    const chunkChars = 16 * 1024
-    const setups = 512
-    const forceGc = createForceGc(forcedGc!)
-    forceGc()
-    const before = process.memoryUsage().heapUsed
-    const scanners = Array.from({ length: setups }, (_unused, index) => {
-      const scanner = createSetupCompletionScanner(`token-${index}`, () => undefined)
-      scanner.scan(`${'x'.repeat(chunkChars)}setup-${index}`)
-      return scanner
-    })
-    forceGc()
-    const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
-
-    const exitCodes: number[] = []
-    const split = createSetupCompletionScanner('tok', (code) => exitCodes.push(code))
-    split.scan(`${'x'.repeat(chunkChars)}__ORCA_SETUP_COMPLETE__:tok`)
-    split.scan(':7\n')
-    expect(exitCodes).toEqual([7])
-    expect(scanners).toHaveLength(setups)
-    expect(retainedMiB).toBeLessThan(2)
   })
 })

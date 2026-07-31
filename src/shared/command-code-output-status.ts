@@ -9,7 +9,7 @@ import {
   cleanCommandCodePromptCandidate,
   isCommandCodeIdlePromptCandidate
 } from './command-code-prompt-text'
-import { detachString } from './detached-string'
+import { detachString, EMPTY_DETACHED_STRING, type DetachedString } from './detached-string'
 import { stripTerminalControl } from './terminal-control-stripping'
 
 export { stripTerminalControl } from './terminal-control-stripping'
@@ -138,7 +138,7 @@ function rawTextMayContainCommandCodeBanner(rawText: string): boolean {
 }
 
 // Every pane persists this ring before Command Code detection.
-function appendRecentRawText(previousRawText: string, data: string): string {
+function appendRecentRawText(previousRawText: string, data: string): DetachedString {
   if (data.length >= RECENT_TEXT_LIMIT) {
     return detachString(data.slice(-RECENT_TEXT_LIMIT))
   }
@@ -223,7 +223,7 @@ export function createCommandCodeOutputStatusDetector(args: {
   let hasSeenCommandCodeUi =
     isCommandCodeLaunchCommand(args.startupCommand) || Boolean(args.inFlightTurn)
   let lastSubmittedPrompt = args.inFlightTurn?.prompt ?? ''
-  let recentRawText = ''
+  let recentRawText: DetachedString = EMPTY_DETACHED_STRING
 
   return {
     observe(data: string): boolean {

@@ -8,7 +8,7 @@
  * terminators, best-effort exit codes) must be identical in both.
  */
 
-import { detachString } from './detached-string'
+import { detachString, EMPTY_DETACHED_STRING, type DetachedString } from './detached-string'
 
 type OscTerminator = {
   index: number
@@ -39,15 +39,15 @@ function parseBestEffortExitCode(value: string | undefined): number | null {
   return Number.isNaN(parsed) ? null : parsed
 }
 
-function findPrefixCarry(data: string): string {
+function findPrefixCarry(data: string): DetachedString {
   const maxCarryLength = Math.min(data.length, OSC_133_PREFIX.length - 1)
   for (let length = maxCarryLength; length > 0; length -= 1) {
     const suffix = data.slice(data.length - length)
     if (OSC_133_PREFIX.startsWith(suffix)) {
-      return suffix
+      return detachString(suffix)
     }
   }
-  return ''
+  return EMPTY_DETACHED_STRING
 }
 
 export type Osc133CommandFinishedScanner = {
@@ -62,7 +62,7 @@ export function createOsc133CommandFinishedScanner(
   /** OSC 133;C — the shell exec'd a command; the pane's foreground changed. */
   onCommandStarted?: () => void
 ): Osc133CommandFinishedScanner {
-  let carry = ''
+  let carry: DetachedString = EMPTY_DETACHED_STRING
 
   const handleOsc133 = (payload: string): void => {
     const [sequence, exitCode] = payload.split(';')
@@ -77,7 +77,7 @@ export function createOsc133CommandFinishedScanner(
 
   const scan = (data: string): void => {
     let combined = carry + data
-    carry = ''
+    carry = EMPTY_DETACHED_STRING
 
     while (combined.length > 0) {
       const start = combined.indexOf(OSC_133_PREFIX)
@@ -107,7 +107,7 @@ export function createOsc133CommandFinishedScanner(
   return {
     scan,
     reset() {
-      carry = ''
+      carry = EMPTY_DETACHED_STRING
     }
   }
 }

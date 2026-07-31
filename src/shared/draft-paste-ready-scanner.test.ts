@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { createDraftPasteReadyScanner } from './draft-paste-ready-scanner'
-import { createForceGc, resolveForcedGc } from './forced-gc-for-retention-tests'
 
 const DECSET_BRACKETED_PASTE = '\x1b[?2004h'
 const SHOW_CURSOR = '\x1b[?25h'
@@ -135,28 +134,5 @@ describe('createDraftPasteReadyScanner', () => {
         armQuietTimer: false
       })
     })
-  })
-})
-
-// Production persists two 512-char rings per startup-draft waiter.
-describe('draft paste scanner retention', () => {
-  const forcedGc = resolveForcedGc()
-  const itWithGc = forcedGc ? it : it.skip
-  itWithGc('does not pin the source chunk behind the recent rings', () => {
-    const chunkChars = 16 * 1024
-    const waiters = 512
-    const forceGc = createForceGc(forcedGc!)
-    forceGc()
-    const before = process.memoryUsage().heapUsed
-    const scanners = Array.from({ length: waiters }, (_unused, index) => {
-      const scanner = createDraftPasteReadyScanner('codex-composer-prompt')
-      scanner.observe(`${DECSET_BRACKETED_PASTE}${'x'.repeat(chunkChars)}pane-${index}`)
-      return scanner
-    })
-    forceGc()
-    const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
-
-    expect(scanners[0]!.observe(CODEX_PROMPT)).toEqual({ ready: true, armQuietTimer: false })
-    expect(retainedMiB).toBeLessThan(2)
   })
 })

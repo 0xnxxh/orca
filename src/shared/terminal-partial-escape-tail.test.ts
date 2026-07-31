@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { createForceGc, resolveForcedGc } from './forced-gc-for-retention-tests'
 import {
   advancePartialEscapeTail,
   extractPartialEscapeTail,
@@ -83,25 +82,5 @@ describe('advancePartialEscapeTail', () => {
     // An unterminated OSC longer than the cap degrades to pre-fix behavior.
     const huge = `\x1b]0;${'x'.repeat(MAX_PARTIAL_ESCAPE_TAIL_LENGTH + 10)}`
     expect(advancePartialEscapeTail('', huge)).toBe('')
-  })
-
-  // Production persists and snapshots one partial escape tail per emulator.
-  const forcedGc = resolveForcedGc()
-  const itWithGc = forcedGc ? it : it.skip
-  itWithGc('does not pin the written stream behind a carried escape tail', () => {
-    const chunkChars = 16 * 1024
-    const sessions = 512
-    const forceGc = createForceGc(forcedGc!)
-    forceGc()
-    const before = process.memoryUsage().heapUsed
-    const tails = Array.from({ length: sessions }, (_unused, index) =>
-      advancePartialEscapeTail('', `${'x'.repeat(chunkChars)}\x1b]0;pane-${index} title`)
-    )
-    forceGc()
-    const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
-
-    expect(tails[0]).toBe('\x1b]0;pane-0 title')
-    expect(advancePartialEscapeTail(tails[0]!, '\x07rest')).toBe('')
-    expect(retainedMiB).toBeLessThan(2)
   })
 })

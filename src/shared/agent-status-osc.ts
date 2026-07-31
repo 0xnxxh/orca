@@ -1,6 +1,6 @@
 import type { ParsedAgentStatusPayload } from './agent-status-types'
 import { parseAgentStatusPayload } from './agent-status-types'
-import { detachString } from './detached-string'
+import { detachString, EMPTY_DETACHED_STRING, type DetachedString } from './detached-string'
 
 const OSC_AGENT_STATUS_PREFIX = '\x1b]9999;'
 
@@ -34,11 +34,11 @@ function findAgentStatusTerminator(
  */
 export function createAgentStatusOscProcessor(): (data: string) => ProcessedAgentStatusChunk {
   const MAX_PENDING = 64 * 1024
-  let pending = ''
+  let pending: DetachedString = EMPTY_DETACHED_STRING
 
   return (data: string): ProcessedAgentStatusChunk => {
     const combined = pending + data
-    pending = ''
+    pending = EMPTY_DETACHED_STRING
 
     const payloads: ParsedAgentStatusPayload[] = []
     let cleanData = ''
@@ -58,7 +58,7 @@ export function createAgentStatusOscProcessor(): (data: string) => ProcessedAgen
         }
         if (partialPrefixLen > 0) {
           cleanData += tail.slice(0, tail.length - partialPrefixLen)
-          pending = tail.slice(tail.length - partialPrefixLen)
+          pending = detachString(tail.slice(tail.length - partialPrefixLen))
         } else {
           cleanData += tail
         }
@@ -72,7 +72,7 @@ export function createAgentStatusOscProcessor(): (data: string) => ProcessedAgen
       if (terminator === null) {
         const candidate = combined.slice(start)
         // Persisted per-pane payloads must not retain their source PTY chunks.
-        pending = candidate.length > MAX_PENDING ? '' : detachString(candidate)
+        pending = candidate.length > MAX_PENDING ? EMPTY_DETACHED_STRING : detachString(candidate)
         break
       }
 

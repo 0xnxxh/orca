@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { createForceGc, resolveForcedGc } from './forced-gc-for-retention-tests'
 import {
   extractHiddenStartupRendererQueryData,
   HIDDEN_STARTUP_RENDERER_QUERY_PENDING_CHARS
@@ -28,34 +27,5 @@ describe('extractHiddenStartupRendererQueryData', () => {
   it('bounds the carried pending prefix', () => {
     const { pending } = extractHiddenStartupRendererQueryData(`\x1b[${'1;'.repeat(200)}`, '')
     expect(pending.length).toBe(HIDDEN_STARTUP_RENDERER_QUERY_PENDING_CHARS)
-  })
-
-  // The ≥13-char control arm proves detachment for one persisted query per pane.
-  const splitCsi = '\x1b[?1049;2004;2026'
-  const forcedGc = resolveForcedGc()
-  const itWithGc = forcedGc ? it : it.skip
-  itWithGc('does not pin the source chunk behind a carried pending query', () => {
-    const chunkChars = 16 * 1024
-    const panes = 512
-    const forceGc = createForceGc(forcedGc!)
-    expect(splitCsi.length).toBeGreaterThanOrEqual(13)
-    forceGc()
-    const before = process.memoryUsage().heapUsed
-    const pendings = Array.from(
-      { length: panes },
-      (_unused, index) =>
-        extractHiddenStartupRendererQueryData(
-          `${'x'.repeat(chunkChars)}pane-${index}${splitCsi}`,
-          ''
-        ).pending
-    )
-    forceGc()
-    const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
-
-    expect(pendings[0]).toBe(splitCsi)
-    expect(extractHiddenStartupRendererQueryData('$p', pendings[0]!).statefulQueryData).toBe(
-      `${splitCsi}$p`
-    )
-    expect(retainedMiB).toBeLessThan(2)
   })
 })

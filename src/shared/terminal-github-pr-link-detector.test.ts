@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createForceGc, resolveForcedGc } from './forced-gc-for-retention-tests'
 import { createTerminalGitHubPRLinkDetector } from './terminal-github-pr-link-detector'
 
 const issue8126Url = 'https://github.com/owner/repo/pull/10'
@@ -291,32 +290,5 @@ describe('createTerminalGitHubPRLinkDetector', () => {
         number: 12
       }
     ])
-  })
-
-  // Production persists one URL carry per pane or PTY.
-  const forcedGc = resolveForcedGc()
-  const itWithGc = forcedGc ? it : it.skip
-  itWithGc('does not pin the source chunk behind a carried PR-URL prefix', () => {
-    const chunkChars = 16 * 1024
-    const panes = 512
-    const forceGc = createForceGc(forcedGc!)
-    forceGc()
-    const before = process.memoryUsage().heapUsed
-    const detectors = Array.from({ length: panes }, (_unused, index) => {
-      const observe = createTerminalGitHubPRLinkDetector()
-      observe(`${'x'.repeat(chunkChars)}https://github.com/acme/repo-${index}/pul`)
-      return observe
-    })
-    forceGc()
-    const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
-
-    expect(detectors[0]!('l/12\n')).toEqual([
-      {
-        url: 'https://github.com/acme/repo-0/pull/12',
-        slug: { owner: 'acme', repo: 'repo-0', host: 'github.com' },
-        number: 12
-      }
-    ])
-    expect(retainedMiB).toBeLessThan(2)
   })
 })

@@ -9,7 +9,11 @@ import {
   isShellProcess,
   normalizeTerminalTitle
 } from '../../shared/agent-detection'
-import { detachString } from '../../shared/detached-string'
+import {
+  detachString,
+  EMPTY_DETACHED_STRING,
+  type DetachedString
+} from '../../shared/detached-string'
 import { extractOscTitleScanTail } from '../../shared/osc-title-scan-tail'
 import { retainTerminalPendingAnsi } from './terminal-pending-ansi'
 import { isServerDriveListRequest, listWindowsDrives } from './windows-drive-listing'
@@ -1167,7 +1171,7 @@ type RuntimeLeafRecord = RuntimeSyncedLeaf & {
   tailTranscriptBuffer: string[]
   tailTranscriptChars: number
   tailPartialLine: string
-  tailPendingAnsi: string
+  tailPendingAnsi: DetachedString
   tailRedrawCursor: RetainedTailRedrawCursor | null
   tailTruncated: boolean
   tailLinesTotal: number
@@ -1228,7 +1232,7 @@ type RuntimePtyWorktreeRecord = {
   tailTranscriptBuffer: string[]
   tailTranscriptChars: number
   tailPartialLine: string
-  tailPendingAnsi: string
+  tailPendingAnsi: DetachedString
   tailRedrawCursor: RetainedTailRedrawCursor | null
   tailTruncated: boolean
   tailLinesTotal: number
@@ -2776,7 +2780,7 @@ export class OrcaRuntimeService {
       lastAt: number
       lastWaitState: TerminalTailWaitState | null
       appended: string
-      keywordCarry: string
+      keywordCarry: DetachedString
       timer: ReturnType<typeof setTimeout> | null
     }
   >()
@@ -2797,10 +2801,10 @@ export class OrcaRuntimeService {
   // Why: ordinary OSC 0/1/2 titles can split across PTY chunks, especially over
   // SSH/relay buffering. Keep a small raw scan tail and feed reconstructed
   // chunks into the title tracker instead of falling back to last-title scans.
-  private oscTitleScanTailByPtyId = new Map<string, string>()
+  private oscTitleScanTailByPtyId = new Map<string, DetachedString>()
   // Why: mobile file taps resolve relative paths on the host. OSC 7 is the
   // terminal-owned cwd signal, and it can arrive in live output between snapshots.
-  private osc7ScanTailByPtyId = new Map<string, string>()
+  private osc7ScanTailByPtyId = new Map<string, DetachedString>()
   private terminalCwdByPtyId = new Map<string, string>()
   private terminalFileUriHostnameByPtyId = new Map<string, string>()
   // Why: latest agent-status payload per pane, retained so worktree.ps can serve
@@ -4967,7 +4971,7 @@ export class OrcaRuntimeService {
         tailTranscriptBuffer: tailSource?.tailTranscriptBuffer ?? [],
         tailTranscriptChars: tailSource?.tailTranscriptChars ?? 0,
         tailPartialLine: tailSource?.tailPartialLine ?? '',
-        tailPendingAnsi: tailSource?.tailPendingAnsi ?? '',
+        tailPendingAnsi: tailSource?.tailPendingAnsi ?? EMPTY_DETACHED_STRING,
         tailRedrawCursor: tailSource?.tailRedrawCursor ?? null,
         tailTruncated: tailSource?.tailTruncated ?? false,
         tailLinesTotal: tailSource?.tailLinesTotal ?? 0,
@@ -8923,7 +8927,13 @@ export class OrcaRuntimeService {
   private scheduleWaitBlockedCheck(ptyId: string, appendedText: string, at: number): void {
     let state = this.waitBlockedCheckStateByPtyId.get(ptyId)
     if (!state) {
-      state = { lastAt: 0, lastWaitState: null, appended: '', keywordCarry: '', timer: null }
+      state = {
+        lastAt: 0,
+        lastWaitState: null,
+        appended: '',
+        keywordCarry: EMPTY_DETACHED_STRING,
+        timer: null
+      }
       this.waitBlockedCheckStateByPtyId.set(ptyId, state)
     }
     const appendedLower = appendedText.toLowerCase()
@@ -8959,7 +8969,7 @@ export class OrcaRuntimeService {
       lastAt: number
       lastWaitState: TerminalTailWaitState | null
       appended: string
-      keywordCarry: string
+      keywordCarry: DetachedString
       timer: ReturnType<typeof setTimeout> | null
     },
     at: number
@@ -9110,10 +9120,10 @@ export class OrcaRuntimeService {
     }
     const pty = this.getOrCreatePtyWorktreeRecord(ptyId)
     if (pty) {
-      pty.tailPendingAnsi = ''
+      pty.tailPendingAnsi = EMPTY_DETACHED_STRING
     }
     for (const leaf of this.getLeavesForPty(ptyId)) {
-      leaf.tailPendingAnsi = ''
+      leaf.tailPendingAnsi = EMPTY_DETACHED_STRING
     }
     this.oscTitleScanTailByPtyId.delete(ptyId)
     this.osc7ScanTailByPtyId.delete(ptyId)
@@ -26982,7 +26992,7 @@ export class OrcaRuntimeService {
         tailTranscriptBuffer: [],
         tailTranscriptChars: 0,
         tailPartialLine: '',
-        tailPendingAnsi: '',
+        tailPendingAnsi: EMPTY_DETACHED_STRING,
         tailRedrawCursor: null,
         tailTruncated: false,
         tailLinesTotal: 0,
@@ -27408,7 +27418,7 @@ export class OrcaRuntimeService {
     pty.tailTranscriptBuffer = []
     pty.tailTranscriptChars = 0
     pty.tailPartialLine = ''
-    pty.tailPendingAnsi = ''
+    pty.tailPendingAnsi = EMPTY_DETACHED_STRING
     pty.tailRedrawCursor = null
     pty.tailTruncated = false
     pty.tailLinesTotal = 0
@@ -34679,10 +34689,10 @@ function mergeWorktreeStatus(
 function normalizeTerminalChunk(
   chunk: string,
   pendingAnsi: string = ''
-): { text: string; pendingAnsi: string } {
+): { text: string; pendingAnsi: DetachedString } {
   // Why: skip full ANSI/OSC scanning for the common plain-text PTY chunk (perf on high-throughput streams).
   if (pendingAnsi.length === 0 && !terminalChunkNeedsNormalization(chunk)) {
-    return { text: chunk, pendingAnsi: '' }
+    return { text: chunk, pendingAnsi: EMPTY_DETACHED_STRING }
   }
   const combined = `${pendingAnsi}${chunk}`
   const parts: string[] = []
@@ -34730,7 +34740,7 @@ function normalizeTerminalChunk(
     }
   }
   appendTerminalNormalizedSpan(parts, combined, textStart, combined.length)
-  return { text: parts.join(''), pendingAnsi: '' }
+  return { text: parts.join(''), pendingAnsi: EMPTY_DETACHED_STRING }
 }
 
 function appendTerminalNormalizedSpan(

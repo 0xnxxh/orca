@@ -1,4 +1,4 @@
-import { detachString } from './detached-string'
+import { detachString, EMPTY_DETACHED_STRING, type DetachedString } from './detached-string'
 import type { DraftPasteReadySignal } from './tui-agent-config'
 
 // Why: agents enable bracketed paste (DECSET 2004) before their composer is
@@ -48,8 +48,8 @@ export type DraftPasteReadyScanResult = {
 export function createDraftPasteReadyScanner(readySignal: DraftPasteReadySignal): {
   observe: (data: string) => DraftPasteReadyScanResult
 } {
-  let recent = ''
-  let postHandshakeRecent = ''
+  let recent: DetachedString = EMPTY_DETACHED_STRING
+  let postHandshakeRecent: DetachedString = EMPTY_DETACHED_STRING
   let saw2004 = false
 
   const signalMarker =

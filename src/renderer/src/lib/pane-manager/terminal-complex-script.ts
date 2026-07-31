@@ -1,7 +1,11 @@
 // Why: some foreground ANSI redraws paint background fills before glyphs settle.
 // Detect those chunks so the terminal can force a narrow viewport refresh
 // without switching renderers based on the text content.
-import { detachString } from '../../../../shared/detached-string'
+import {
+  detachString,
+  EMPTY_DETACHED_STRING,
+  type DetachedString
+} from '../../../../shared/detached-string'
 
 const EMOJI_PRESENTATION_PATTERN = /\p{Emoji_Presentation}/u
 const ESCAPE_CHARACTER = String.fromCharCode(0x1b)
@@ -142,20 +146,20 @@ function containsRewriteEraseSequence(data: string): boolean {
 }
 
 // Persisted per-pane rewrite tails must not retain their source PTY chunks.
-function trailingIncompleteRewriteCsiTail(data: string): string {
+function trailingIncompleteRewriteCsiTail(data: string): DetachedString {
   const escapeIndex = data.lastIndexOf(ESCAPE_CHARACTER)
   if (escapeIndex === -1) {
-    return ''
+    return EMPTY_DETACHED_STRING
   }
   const tail = data.slice(escapeIndex)
   if (tail === ESCAPE_CHARACTER) {
-    return tail
+    return detachString(tail)
   }
   if (!tail.startsWith('\x1b[')) {
-    return ''
+    return EMPTY_DETACHED_STRING
   }
   if (tail.length > REWRITE_CSI_SCAN_TAIL_MAX_CHARS) {
-    return ''
+    return EMPTY_DETACHED_STRING
   }
   for (let index = 2; index < tail.length; index++) {
     const char = tail[index]
@@ -165,7 +169,7 @@ function trailingIncompleteRewriteCsiTail(data: string): string {
     if (char === ';' || char === '?') {
       continue
     }
-    return ''
+    return EMPTY_DETACHED_STRING
   }
   return detachString(tail)
 }
@@ -180,12 +184,13 @@ export function terminalRewriteOutputPrefersRenderRefresh(data: string): boolean
 
 export type TerminalRewriteOutputRenderRefreshDecision = {
   nextChunkEndsWithCarriageReturn: boolean
-  nextRewriteCsiScanTail: string
+  nextRewriteCsiScanTail: DetachedString
   prefersRenderRefresh: boolean
 }
 
 export type TerminalRewriteOutputRenderRefreshState = {
   previousChunkEndsWithCarriageReturn: boolean
+  // Input-only: callers park `nextRewriteCsiScanTail`, which is detached.
   previousRewriteCsiScanTail: string
 }
 
@@ -196,7 +201,7 @@ export function terminalRewriteOutputRenderRefreshDecision(
   if (!data) {
     return {
       nextChunkEndsWithCarriageReturn: state.previousChunkEndsWithCarriageReturn,
-      nextRewriteCsiScanTail: state.previousRewriteCsiScanTail,
+      nextRewriteCsiScanTail: detachString(state.previousRewriteCsiScanTail),
       prefersRenderRefresh: false
     }
   }

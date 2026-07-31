@@ -13,7 +13,7 @@ import {
   AGENT_STATUS_STATES,
   AGENT_TYPE_MAX_LENGTH
 } from './agent-status-types'
-import { createForceGc, resolveForcedGc } from './forced-gc-for-retention-tests'
+import { forceGc } from './string-retention-measurement'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -242,35 +242,12 @@ Fix dispatch fallback preview for normalized status prompts`
     expect(AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH).toBe(16000)
   })
 
-  // The store caches capped interactive prompts.
-  const forcedGc = resolveForcedGc()
-  const itWithGc = forcedGc ? it : it.skip
-  itWithGc('does not pin the oversized payload behind a capped interactivePrompt', () => {
-    const oversize = 2 * 1024 * 1024
-    const payloads = 64
-    const forceGc = createForceGc(forcedGc!)
-    forceGc()
-    const before = process.memoryUsage().heapUsed
-    const held = Array.from({ length: payloads }, (_unused, index) =>
-      normalizeAgentStatusPayload({
-        state: 'waiting',
-        interactivePrompt: `{"questions":["q-${index}"`.padEnd(oversize, 'z')
-      })
-    )
-    forceGc()
-    const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
-
-    expect(held[0]!.interactivePrompt).toHaveLength(AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH)
-    expect(retainedMiB).toBeLessThan(16)
-  })
-
   // Under-cap prompts stay on the allocation-free hook path.
-  itWithGc('returns an under-cap interactivePrompt without copying it', () => {
+  it('returns an under-cap interactivePrompt without copying it', () => {
     const source = JSON.stringify({
       questions: [{ question: 'Which approach?', options: ['a'.repeat(4000), 'b'.repeat(4000)] }]
     })
     expect(source.length).toBeLessThan(AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH)
-    const forceGc = createForceGc(forcedGc!)
     const repeats = 20_000
 
     forceGc()

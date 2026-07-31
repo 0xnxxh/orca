@@ -1,4 +1,8 @@
-import { detachString } from '../../../shared/detached-string'
+import {
+  detachString,
+  EMPTY_DETACHED_STRING,
+  type DetachedString
+} from '../../../shared/detached-string'
 import {
   resolveSetupRunnerCommand,
   type SetupRunnerCommandPlatform
@@ -49,7 +53,7 @@ export function createSetupCompletionScanner(
   scan: (data: string) => void
 } {
   const expectedPrefix = completionPrefix(completionToken)
-  let carry = ''
+  let carry: DetachedString = EMPTY_DETACHED_STRING
   let completed = false
   return {
     scan(data: string): void {

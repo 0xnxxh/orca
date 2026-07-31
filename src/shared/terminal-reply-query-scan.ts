@@ -1,4 +1,4 @@
-import { detachString } from './detached-string'
+import { detachString, EMPTY_DETACHED_STRING, type DetachedString } from './detached-string'
 import { findCsiFinalByteIndex } from './terminal-reply-query-extraction'
 import { parseTerminalOscColorQuery } from './terminal-osc-color-reply'
 
@@ -16,12 +16,12 @@ export type TerminalReplyQuerySequence = {
 }
 
 export type TerminalReplyQueryScanState = {
-  pending: string
+  pending: DetachedString
   pendingStartSeq: number | null
 }
 
 export const EMPTY_TERMINAL_REPLY_QUERY_SCAN_STATE: TerminalReplyQueryScanState = {
-  pending: '',
+  pending: EMPTY_DETACHED_STRING,
   pendingStartSeq: null
 }
 
@@ -47,7 +47,7 @@ function isReplyElicitingCsi(sequence: string): boolean {
 }
 
 // Persisted query prefixes must not retain their source PTY chunks.
-function boundedPending(input: string, startIndex: number): string {
+function boundedPending(input: string, startIndex: number): DetachedString {
   return detachString(input.slice(startIndex, startIndex + MAX_PENDING_QUERY_CHARS))
 }
 

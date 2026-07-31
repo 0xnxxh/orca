@@ -1,5 +1,5 @@
 import type { Terminal } from '@xterm/xterm'
-import { detachString } from '../../../../shared/detached-string'
+import { detachString, type DetachedString } from '../../../../shared/detached-string'
 
 type BracketedPasteTerminal = {
   modes: {
@@ -18,7 +18,7 @@ type PasteTerminalTextOptions = {
 }
 
 const interruptedBracketedPasteTerminals = new WeakSet<object>()
-const bracketedPasteModeOutputTail = new WeakMap<object, string>()
+const bracketedPasteModeOutputTail = new WeakMap<object, DetachedString>()
 const ESCAPE = '\u001b'
 export const BRACKETED_PASTE_START = `${ESCAPE}[200~`
 export const BRACKETED_PASTE_END = `${ESCAPE}[201~`

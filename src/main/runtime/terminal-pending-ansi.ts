@@ -1,8 +1,8 @@
-import { detachString } from '../../shared/detached-string'
+import { detachString, type DetachedString } from '../../shared/detached-string'
 
 const MAX_TERMINAL_PENDING_ANSI_CHARS = 4096
 
-export function retainTerminalPendingAnsi(value: string): string {
+export function retainTerminalPendingAnsi(value: string): DetachedString {
   if (value.length <= MAX_TERMINAL_PENDING_ANSI_CHARS) {
     return detachString(value)
   }

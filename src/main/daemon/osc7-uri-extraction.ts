@@ -1,4 +1,8 @@
-import { detachString } from '../../shared/detached-string'
+import {
+  detachString,
+  EMPTY_DETACHED_STRING,
+  type DetachedString
+} from '../../shared/detached-string'
 
 const OSC7_PREFIX = '\x1b]7;'
 const ESC_CODE_UNIT = 0x1b
@@ -68,17 +72,17 @@ export function extractLastOsc7Uri(data: string): string | null {
 }
 
 // Persisted scan tails must not retain their source PTY chunks.
-export function extractOscScanTail(input: string, limit: number): string {
+export function extractOscScanTail(input: string, limit: number): DetachedString {
   const lastOsc = input.lastIndexOf('\x1b]')
   const lastEscape = input.endsWith('\x1b') ? input.length - 1 : -1
   const start = Math.max(lastOsc, lastEscape)
   if (start === -1) {
-    return ''
+    return EMPTY_DETACHED_STRING
   }
 
   const suffix = input.slice(start)
   if (suffix.includes('\x07') || suffix.includes('\x1b\\')) {
-    return ''
+    return EMPTY_DETACHED_STRING
   }
   return detachString(suffix.slice(-limit))
 }

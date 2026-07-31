@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { createForceGc, resolveForcedGc } from './forced-gc-for-retention-tests'
 import { TerminalKittyKeyboardModeTracker } from './terminal-kitty-keyboard-mode-tracker'
 
 describe('TerminalKittyKeyboardModeTracker', () => {
@@ -147,49 +146,5 @@ describe('TerminalKittyKeyboardModeTracker', () => {
     const ranAndExited = new TerminalKittyKeyboardModeTracker()
     ranAndExited.scanReplay('\x1b[>1uoutput\x1b[<u')
     expect(ranAndExited.flags).toBe(0)
-  })
-
-  // The ≥13-char control arm proves detachment for one persisted tail per tracker.
-  const splitPrivateModeTail = '\x1b[?1049;2004;2026;1234'
-  const forcedGc = resolveForcedGc()
-  const itWithGc = forcedGc ? it : it.skip
-  itWithGc('does not pin the source chunk behind a carried kitty scan tail', () => {
-    const chunkChars = 16 * 1024
-    const panes = 512
-    const forceGc = createForceGc(forcedGc!)
-    expect(splitPrivateModeTail.length).toBeGreaterThanOrEqual(13)
-    forceGc()
-    const before = process.memoryUsage().heapUsed
-    const trackers = Array.from({ length: panes }, (_unused, index) => {
-      const tracker = new TerminalKittyKeyboardModeTracker()
-      tracker.scan(`${'x'.repeat(chunkChars)}pty-${index}${splitPrivateModeTail}`)
-      return tracker
-    })
-    forceGc()
-    const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
-
-    trackers[0]!.scan('9h')
-    expect(trackers[0]!.isAlternateScreen).toBe(true)
-    expect(retainedMiB).toBeLessThan(2)
-  })
-
-  // Replay consumes whole reattach snapshots rather than 16 KiB live chunks.
-  itWithGc('does not pin a reattach snapshot behind a carried kitty scan tail', () => {
-    const snapshotChars = 5000 * 120
-    const panes = 20
-    const forceGc = createForceGc(forcedGc!)
-    forceGc()
-    const before = process.memoryUsage().heapUsed
-    const trackers = Array.from({ length: panes }, (_unused, index) => {
-      const tracker = new TerminalKittyKeyboardModeTracker()
-      tracker.scanReplay(`${'x'.repeat(snapshotChars)}pane-${index}${splitPrivateModeTail}`)
-      return tracker
-    })
-    forceGc()
-    const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
-
-    trackers[0]!.scan('9h')
-    expect(trackers[0]!.isAlternateScreen).toBe(true)
-    expect(retainedMiB).toBeLessThan(2)
   })
 })
