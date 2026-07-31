@@ -25,6 +25,14 @@ async function writeEvidence(
   })
 }
 
+function removeOriginRemoteIfPresent(cwd: string): void {
+  try {
+    execFileSync('git', ['remote', 'remove', 'origin'], { cwd, stdio: 'pipe' })
+  } catch {
+    // Why: setup and teardown must not fail just because origin is absent.
+  }
+}
+
 test.describe('Source Control Create PR intent worktree switching', () => {
   test.describe.configure({ mode: 'serial' })
 
@@ -228,9 +236,11 @@ test.describe('Source Control Create PR intent worktree switching', () => {
     const remoteRoot = mkdtempSync(path.join(os.tmpdir(), 'orca-e2e-create-pr-remote-'))
     const remotePath = path.join(remoteRoot, 'origin.git')
     execFileSync('git', ['init', '--bare', remotePath])
+    // Why: the seeded worktree may already define origin, so make the add idempotent.
+    removeOriginRemoteIfPresent(prWorktreePath)
     execFileSync('git', ['remote', 'add', 'origin', remotePath], { cwd: prWorktreePath })
     registerPostElectronShutdownCleanup(async () => {
-      execFileSync('git', ['remote', 'remove', 'origin'], { cwd: prWorktreePath })
+      removeOriginRemoteIfPresent(prWorktreePath)
       rmSync(remoteRoot, { recursive: true, force: true })
     })
     createStagedCommitMessageChange(prWorktreePath)

@@ -296,9 +296,14 @@ describe('source-control Create PR intent flow helpers', () => {
       canCreate: false,
       blockedReason: null,
       nextAction: null,
-      reviewLookupOutcome: 'unavailable' as const
+      reviewLookupOutcome: 'unavailable' as const,
+      head: 'feature-branch'
     }
     expect(shouldAttemptCreateHostedReviewForIntent(unavailable)).toBe(true)
+    // Loading placeholders share the unavailable/null-reason shape but carry no branch.
+    expect(shouldAttemptCreateHostedReviewForIntent({ ...unavailable, head: undefined })).toBe(
+      false
+    )
     expect(shouldGenerateHostedReviewDetailsForIntent(unavailable)).toBe(false)
     expect(
       shouldGenerateHostedReviewDetailsForIntent({

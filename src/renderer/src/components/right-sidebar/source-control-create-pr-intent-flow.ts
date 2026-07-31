@@ -171,7 +171,11 @@ export function shouldAttemptCreateHostedReviewForIntent(
 ): boolean {
   return (
     eligibility.canCreate ||
-    (eligibility.reviewLookupOutcome === 'unavailable' && eligibility.blockedReason === null)
+    // Why: `head` separates a real unavailable-lookup result from a loading
+    // placeholder, which carries the same outcome/reason pair but no branch.
+    (eligibility.reviewLookupOutcome === 'unavailable' &&
+      eligibility.blockedReason === null &&
+      Boolean(eligibility.head?.trim()))
   )
 }
 
