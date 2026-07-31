@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { act } from 'react'
+import { act, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FeatureSetupInlineTerminal } from './FeatureSetupInlineTerminal'
@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
     terminalWindowsShell?: string
     terminalWindowsWslDistro?: string | null
   },
+  platform: 'darwin' as NodeJS.Platform,
   isNpxOnPath: vi.fn(),
   openUrl: vi.fn()
 }))
@@ -40,17 +41,22 @@ vi.mock('@/lib/telemetry', () => ({
 let container: HTMLElement | null = null
 let root: Root | null = null
 
-async function renderTerminal(): Promise<void> {
+async function renderTerminal({ strict = false }: { strict?: boolean } = {}): Promise<void> {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
+  await rerenderTerminal({ strict })
+}
+
+async function rerenderTerminal({ strict = false }: { strict?: boolean } = {}): Promise<void> {
+  const terminal = (
+    <FeatureSetupInlineTerminal
+      command={INSTALL_COMMAND}
+      selection={DEFAULT_ONBOARDING_FEATURE_SETUP_SELECTION}
+    />
+  )
   await act(async () => {
-    root?.render(
-      <FeatureSetupInlineTerminal
-        command={INSTALL_COMMAND}
-        selection={DEFAULT_ONBOARDING_FEATURE_SETUP_SELECTION}
-      />
-    )
+    root?.render(strict ? <StrictMode>{terminal}</StrictMode> : terminal)
   })
   await act(async () => {})
 }
@@ -59,13 +65,14 @@ describe('FeatureSetupInlineTerminal', () => {
   beforeEach(() => {
     mocks.terminalProps.length = 0
     mocks.settings = {}
+    mocks.platform = 'darwin'
     mocks.isNpxOnPath.mockReset()
     mocks.isNpxOnPath.mockResolvedValue(true)
     mocks.openUrl.mockReset()
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
-        platform: { get: () => ({ platform: 'darwin' }) },
+        platform: { get: () => ({ platform: mocks.platform }) },
         shell: { openUrl: mocks.openUrl },
         skills: { isNpxOnPath: mocks.isNpxOnPath }
       }
@@ -88,7 +95,21 @@ describe('FeatureSetupInlineTerminal', () => {
     await renderTerminal()
 
     expect(mocks.isNpxOnPath).toHaveBeenCalledTimes(1)
+    expect(mocks.isNpxOnPath).toHaveBeenCalledWith(undefined, { forceRefresh: false })
     expect(mocks.terminalProps.at(-1)?.description).toBe(RUN_DESCRIPTION)
+  })
+
+  it('issues one WSL preflight during a StrictMode mount', async () => {
+    mocks.platform = 'win32'
+    mocks.settings = {
+      terminalWindowsShell: 'wsl.exe',
+      terminalWindowsWslDistro: 'Ubuntu'
+    }
+
+    await renderTerminal({ strict: true })
+
+    expect(mocks.isNpxOnPath).toHaveBeenCalledTimes(1)
+    expect(mocks.isNpxOnPath).toHaveBeenCalledWith({ wslDistro: 'Ubuntu' }, { forceRefresh: false })
   })
 
   it('blocks the raw command and shows actionable guidance when npx is missing', async () => {
@@ -110,6 +131,19 @@ describe('FeatureSetupInlineTerminal', () => {
     await renderTerminal()
 
     expect(mocks.isNpxOnPath).not.toHaveBeenCalled()
+    expect(mocks.terminalProps.at(-1)?.description).toBe(RUN_DESCRIPTION)
+  })
+
+  it('re-probes the host after switching back from a remote runtime', async () => {
+    mocks.isNpxOnPath.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    await renderTerminal()
+
+    mocks.settings = { activeRuntimeEnvironmentId: 'ssh-host-1' }
+    await rerenderTerminal()
+    mocks.settings = {}
+    await rerenderTerminal()
+
+    expect(mocks.isNpxOnPath).toHaveBeenCalledTimes(2)
     expect(mocks.terminalProps.at(-1)?.description).toBe(RUN_DESCRIPTION)
   })
 
@@ -135,6 +169,7 @@ describe('FeatureSetupInlineTerminal', () => {
     await act(async () => {})
 
     expect(mocks.isNpxOnPath).toHaveBeenCalledTimes(2)
+    expect(mocks.isNpxOnPath).toHaveBeenNthCalledWith(2, undefined, { forceRefresh: true })
     expect(mocks.terminalProps.at(-1)?.command).toBe(INSTALL_COMMAND)
   })
 

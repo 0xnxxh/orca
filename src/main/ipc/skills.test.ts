@@ -126,7 +126,7 @@ describe('registerSkillsHandlers', () => {
     if (!call) {
       throw new Error('skills:isNpxOnPath handler was not registered')
     }
-    return call[1] as (_event: unknown, context?: unknown) => Promise<boolean>
+    return call[1] as (_event: unknown, context?: unknown, options?: unknown) => Promise<boolean>
   }
 
   it('uses host skill discovery when resolved project runtime overrides stale WSL target state', async () => {
@@ -245,9 +245,10 @@ describe('registerSkillsHandlers', () => {
   it('registers the npx preflight and forwards its runtime context', async () => {
     const handler = getNpxPreflightHandler()
     const context = { wslDistro: 'Ubuntu' }
+    const options = { forceRefresh: true }
 
-    await expect(handler(null, context)).resolves.toBe(true)
+    await expect(handler(null, context, options)).resolves.toBe(true)
 
-    expect(isNpxOnPathForSkillInstallMock).toHaveBeenCalledWith(context)
+    expect(isNpxOnPathForSkillInstallMock).toHaveBeenCalledWith(context, options)
   })
 })

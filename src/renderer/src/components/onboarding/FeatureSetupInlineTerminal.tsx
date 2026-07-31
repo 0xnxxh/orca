@@ -44,6 +44,7 @@ export function FeatureSetupInlineTerminal({
     key: probeKey,
     status: initialProbeStatus
   })
+  const npxProbeRequestRef = useRef<{ key: string; promise: Promise<boolean> } | null>(null)
 
   if (npxProbe.key !== probeKey) {
     setNpxProbe({ key: probeKey, status: initialProbeStatus })
@@ -51,6 +52,7 @@ export function FeatureSetupInlineTerminal({
 
   useEffect(() => {
     if (isRemoteRuntimeFocused) {
+      npxProbeRequestRef.current = null
       return
     }
     let cancelled = false
@@ -59,7 +61,15 @@ export function FeatureSetupInlineTerminal({
       terminalWindowsShell,
       terminalWindowsWslDistro
     )
-    window.api.skills.isNpxOnPath(context).then(
+    const existingRequest = npxProbeRequestRef.current
+    const request =
+      existingRequest?.key === probeKey
+        ? existingRequest.promise
+        : window.api.skills.isNpxOnPath(context, { forceRefresh: probeRevision > 0 })
+    if (request !== existingRequest?.promise) {
+      npxProbeRequestRef.current = { key: probeKey, promise: request }
+    }
+    void request.then(
       (onPath) => {
         if (!cancelled) {
           setNpxProbe({ key: probeKey, status: onPath ? 'available' : 'missing' })
@@ -74,7 +84,14 @@ export function FeatureSetupInlineTerminal({
     return () => {
       cancelled = true
     }
-  }, [isRemoteRuntimeFocused, platform, probeKey, terminalWindowsShell, terminalWindowsWslDistro])
+  }, [
+    isRemoteRuntimeFocused,
+    platform,
+    probeKey,
+    probeRevision,
+    terminalWindowsShell,
+    terminalWindowsWslDistro
+  ])
 
   const selectionTelemetry = useMemo(
     () => onboardingFeatureSetupTelemetrySelection(selection),

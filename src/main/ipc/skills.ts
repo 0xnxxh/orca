@@ -84,8 +84,12 @@ export function registerSkillsHandlers(store: Store): void {
 
   ipcMain.handle(
     'skills:isNpxOnPath',
-    async (_event, context?: PreflightRuntimeContext): Promise<boolean> => {
-      return isNpxOnPathForSkillInstall(context)
+    async (
+      _event,
+      context?: PreflightRuntimeContext,
+      options?: { forceRefresh?: boolean }
+    ): Promise<boolean> => {
+      return isNpxOnPathForSkillInstall(context, options)
     }
   )
 }
