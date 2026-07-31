@@ -13,13 +13,13 @@ export function MobileNativeChatLongText({
   const chunks = useMemo(() => splitMobileNativeChatLongText(content), [content])
   return (
     <View>
-      {chunks.map((chunk, index) => (
+      {chunks.map((chunk) => (
         <Text
-          key={`${index}:${chunk.length}`}
+          key={chunk.start}
           style={[styles.longTextPlain, { fontSize: TEXT_SIZE * fontScale }]}
           selectable
         >
-          {chunk}
+          {chunk.text}
         </Text>
       ))}
     </View>

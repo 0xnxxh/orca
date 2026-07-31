@@ -13,16 +13,22 @@ describe('splitMobileNativeChatLongText', () => {
     const chunks = splitMobileNativeChatLongText(text)
 
     expect(chunks.length).toBeGreaterThan(1)
-    expect(chunks.every((chunk) => chunk.length <= MOBILE_NATIVE_CHAT_TEXT_CHUNK_CHARS)).toBe(true)
-    expect(chunks.join('')).toBe(text)
+    expect(chunks.every((chunk) => chunk.text.length <= MOBILE_NATIVE_CHAT_TEXT_CHUNK_CHARS)).toBe(
+      true
+    )
+    expect(chunks.map((chunk) => chunk.text).join('')).toBe(text)
+    expect(new Set(chunks.map((chunk) => chunk.start)).size).toBe(chunks.length)
+    expect(splitMobileNativeChatLongText(text).map((chunk) => chunk.start)).toEqual(
+      chunks.map((chunk) => chunk.start)
+    )
   })
 
   it('does not split surrogate pairs at a hard boundary', () => {
     const text = `${'a'.repeat(MOBILE_NATIVE_CHAT_TEXT_CHUNK_CHARS - 1)}😀tail`
     const chunks = splitMobileNativeChatLongText(text)
 
-    expect(chunks.join('')).toBe(text)
-    expect(chunks[0]?.endsWith('\ud83d')).toBe(false)
-    expect(chunks[1]?.startsWith('\ude00')).toBe(false)
+    expect(chunks.map((chunk) => chunk.text).join('')).toBe(text)
+    expect(chunks[0]?.text.endsWith('\ud83d')).toBe(false)
+    expect(chunks[1]?.text.startsWith('\ude00')).toBe(false)
   })
 })

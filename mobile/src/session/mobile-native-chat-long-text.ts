@@ -1,7 +1,9 @@
 export const MOBILE_NATIVE_CHAT_TEXT_CHUNK_CHARS = 4000
 
-export function splitMobileNativeChatLongText(text: string): string[] {
-  const chunks: string[] = []
+export type MobileNativeChatTextChunk = { start: number; text: string }
+
+export function splitMobileNativeChatLongText(text: string): MobileNativeChatTextChunk[] {
+  const chunks: MobileNativeChatTextChunk[] = []
   let start = 0
   while (start < text.length) {
     const hardEnd = Math.min(start + MOBILE_NATIVE_CHAT_TEXT_CHUNK_CHARS, text.length)
@@ -9,7 +11,7 @@ export function splitMobileNativeChatLongText(text: string): string[] {
     if (hardEnd < text.length) {
       end = preferredTextBoundary(text, start, end)
     }
-    chunks.push(text.slice(start, end))
+    chunks.push({ start, text: text.slice(start, end) })
     start = end
   }
   return chunks
