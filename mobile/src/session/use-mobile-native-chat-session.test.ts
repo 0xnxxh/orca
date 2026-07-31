@@ -235,20 +235,14 @@ describe('useMobileNativeChatSession', () => {
     let text = ''
     await act(async () => {
       text = await state!.loadFullText('current', {
-        recordOffset: 81,
-        blockIndex: 2,
+        capability: 'capability-current',
         originalChars: 9000
       })
     })
 
     expect(text).toBe('complete text')
     expect(sendRequest).toHaveBeenCalledWith('nativeChat.readTextBlock', {
-      agent: 'claude',
-      sessionId: 'session',
-      messageId: 'current',
-      recordOffset: 81,
-      blockIndex: 2,
-      transcriptPath: '/remote/chat.jsonl'
+      capability: 'capability-current'
     })
   })
 
@@ -262,7 +256,7 @@ describe('useMobileNativeChatSession', () => {
     await mount({ sendRequest, subscribe } as unknown as RpcClient)
 
     const outcome = state!
-      .loadFullText('current', { recordOffset: 81, blockIndex: 0, originalChars: 9000 })
+      .loadFullText('current', { capability: 'capability-current', originalChars: 9000 })
       .catch((error: unknown) => error)
     await act(async () => renderer?.update(createElement(Harness, { client: null })))
     await act(async () => {
@@ -286,8 +280,7 @@ describe('useMobileNativeChatSession', () => {
       await mount({ sendRequest, subscribe } as unknown as RpcClient)
       const loaderBeforeReplacement = state!.loadFullText
       const outcome = loaderBeforeReplacement('current', {
-        recordOffset: 81,
-        blockIndex: 0,
+        capability: 'capability-current',
         originalChars: 9000
       }).catch((error: unknown) => error)
 

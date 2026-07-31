@@ -167,7 +167,7 @@ describe('MobileNativeChatView send-error banner', () => {
   })
 
   it('pauses tail-follow before expanding a clipped response', async () => {
-    const retrieval = { recordOffset: 42, blockIndex: 0, originalChars: 9000 }
+    const retrieval = { capability: 'capability-preview', originalChars: 9000 }
     const message: NativeChatMessage = {
       id: 'assistant-1',
       role: 'assistant',

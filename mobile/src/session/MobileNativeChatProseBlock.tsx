@@ -90,6 +90,8 @@ function TextBlock({
     key !== null && textExpansion?.cached?.key === key ? textExpansion.cached.text : null
   const rawContent = expanded && cached !== null ? cached : block.text
   const content = normalizeImagePromptMarker ? stripImagePromptMarker(rawContent) : rawContent
+  const useLongText =
+    (block.retrieval?.originalChars ?? content.length) > MAX_EXPANDED_MARKDOWN_CHARS
   const loading = key !== null && textExpansion?.loadingKey === key
   const expansionBusy = textExpansion?.loadingKey != null
   const failed = key !== null && textExpansion?.errorKey === key
@@ -105,10 +107,17 @@ function TextBlock({
 
   return (
     <View>
-      {invert ? (
-        <Text style={[styles.userText, { fontSize: TEXT_SIZE * fontScale }]}>{content}</Text>
-      ) : content.length > MAX_EXPANDED_MARKDOWN_CHARS ? (
-        <MobileNativeChatLongText content={content} fontScale={fontScale} />
+      {useLongText ? (
+        <MobileNativeChatLongText content={content} fontScale={fontScale} invert={invert} />
+      ) : invert ? (
+        <Text
+          style={[
+            styles.userText,
+            { fontSize: TEXT_SIZE * fontScale, lineHeight: (TEXT_SIZE + 6) * fontScale }
+          ]}
+        >
+          {content}
+        </Text>
       ) : (
         <MobileMarkdown content={content} textScale={1.25 * fontScale} onOpenFile={onOpenFile} />
       )}

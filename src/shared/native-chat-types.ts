@@ -29,9 +29,8 @@ export type NativeChatRole = (typeof NATIVE_CHAT_ROLES)[number]
 
 /** Plain prose / markdown. The assistant body, a user prompt, reasoning text. */
 export type NativeChatTextRetrieval = {
-  /** JSONL byte offset used for a bounded, direct record read. */
-  recordOffset: number
-  blockIndex: number
+  /** Opaque, server-issued authority for one exact transcript text block. */
+  capability: string
   originalChars: number
 }
 

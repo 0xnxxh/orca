@@ -273,12 +273,7 @@ export function useMobileNativeChatSession(args: {
       const requestGeneration = streamGenerationRef.current
       const requestTextSourceRevision = textSourceRevision
       const response = await client.sendRequest('nativeChat.readTextBlock', {
-        agent,
-        sessionId,
-        messageId,
-        recordOffset: retrieval.recordOffset,
-        blockIndex: retrieval.blockIndex,
-        ...(transcriptPath ? { transcriptPath } : {})
+        capability: retrieval.capability
       })
       if (identityRef.current !== requestIdentity || clientRef.current !== client) {
         throw new Error('Chat session changed')
@@ -298,7 +293,7 @@ export function useMobileNativeChatSession(args: {
       }
       return result.text
     },
-    [client, agent, sessionId, transcriptPath, identity, textSourceRevision]
+    [client, agent, sessionId, identity, textSourceRevision]
   )
 
   return {

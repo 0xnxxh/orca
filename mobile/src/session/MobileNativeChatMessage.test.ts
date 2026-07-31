@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as Clipboard from 'expo-clipboard'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 
 vi.mock('react-native', async () => {
@@ -33,11 +34,16 @@ function userMessage(blocks: NativeChatMessage['blocks']): NativeChatMessage {
   return { id: 'u1', role: 'user', blocks, timestamp: null, source: 'transcript' }
 }
 
+function assistantMessage(blocks: NativeChatMessage['blocks']): NativeChatMessage {
+  return { id: 'a1', role: 'assistant', blocks, timestamp: null, source: 'transcript' }
+}
+
 describe('MobileNativeChatMessage image-ref rendering', () => {
   let renderer: ReactTestRenderer | null = null
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    vi.mocked(Clipboard.setStringAsync).mockReset().mockResolvedValue()
   })
   afterEach(() => {
     act(() => renderer?.unmount())
@@ -46,7 +52,8 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
 
   function render(
     message: NativeChatMessage,
-    textExpansion?: MobileNativeChatTextExpansion
+    textExpansion?: MobileNativeChatTextExpansion,
+    fontScale = 1
   ): ReactTestRenderer {
     const original = console.error
     const spy = vi.spyOn(console, 'error').mockImplementation((...a) => {
@@ -57,7 +64,9 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
     })
     try {
       act(() => {
-        renderer = create(createElement(MobileNativeChatMessage, { message, textExpansion }))
+        renderer = create(
+          createElement(MobileNativeChatMessage, { message, textExpansion, fontScale })
+        )
       })
     } finally {
       spy.mockRestore()
@@ -95,7 +104,7 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
     ['ordinary prose', `Summary\n\n${'Readable paragraph. '.repeat(300)}`],
     ['fenced code', `\`\`\`ts\n${'const answer = 42\n'.repeat(300)}\`\`\``]
   ])('renders complete %s after lazy expansion', (_label, fullText) => {
-    const retrieval = { recordOffset: 42, blockIndex: 0, originalChars: fullText.length }
+    const retrieval = { capability: 'capability-expanded', originalChars: fullText.length }
     const message: NativeChatMessage = {
       id: 'assistant-1',
       role: 'assistant',
@@ -109,7 +118,8 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
       expandedKey: key,
       loadingKey: null,
       errorKey: null,
-      toggle: vi.fn()
+      toggle: vi.fn(),
+      loadForCopy: vi.fn().mockResolvedValue(fullText)
     }
 
     const tree = render(message, textExpansion)
@@ -123,7 +133,7 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
       { length: 3000 },
       (_, index) => `Paragraph ${index}: readable native chat prose.`
     ).join('\n\n')
-    const retrieval = { recordOffset: 42, blockIndex: 0, originalChars: fullText.length }
+    const retrieval = { capability: 'capability-long', originalChars: fullText.length }
     const message: NativeChatMessage = {
       id: 'assistant-1',
       role: 'assistant',
@@ -137,7 +147,8 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
       expandedKey: key,
       loadingKey: null,
       errorKey: null,
-      toggle: vi.fn()
+      toggle: vi.fn(),
+      loadForCopy: vi.fn().mockResolvedValue(fullText)
     }
 
     const tree = render(message, textExpansion)
@@ -152,8 +163,58 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
     expect(tree.root.findAllByType('MobileMarkdown' as never)).toHaveLength(0)
   })
 
+  it('uses the same chunked renderer before and after a very long Markdown expansion', () => {
+    const fullText = `# Result\n\n\`\`\`ts\n${'const value = 42\n'.repeat(7000)}\`\`\``
+    const preview = `${fullText.slice(0, 4000)}\n… (truncated)`
+    const retrieval = { capability: 'capability-markdown', originalChars: fullText.length }
+    const message = assistantMessage([{ type: 'text', text: preview, retrieval }])
+    const textExpansion: MobileNativeChatTextExpansion = {
+      cached: null,
+      expandedKey: null,
+      loadingKey: null,
+      errorKey: null,
+      toggle: vi.fn(),
+      loadForCopy: vi.fn().mockResolvedValue(fullText)
+    }
+
+    const tree = render(message, textExpansion)
+    const previewChunks = tree.root
+      .findAllByType('Text' as never)
+      .filter((node) => node.props.selectable === true)
+      .map((node) => node.children.join(''))
+
+    expect(fullText.length).toBeGreaterThan(100_000)
+    expect(previewChunks.join('')).toBe(preview)
+    expect(tree.root.findAllByType('MobileMarkdown' as never)).toHaveLength(0)
+  })
+
+  it('chunks very long user text and scales its line height with pinch zoom', () => {
+    const fullText = 'User prose. '.repeat(10_000)
+    const retrieval = { capability: 'capability-user-long', originalChars: fullText.length }
+    const message = userMessage([{ type: 'text', text: 'User prose preview', retrieval }])
+    const key = mobileNativeChatTextKey(message.id, retrieval)
+    const textExpansion: MobileNativeChatTextExpansion = {
+      cached: { key, text: fullText },
+      expandedKey: key,
+      loadingKey: null,
+      errorKey: null,
+      toggle: vi.fn(),
+      loadForCopy: vi.fn().mockResolvedValue(fullText)
+    }
+
+    const chunks = render(message, textExpansion, 1.8)
+      .root.findAllByType('Text' as never)
+      .filter((node) => node.props.selectable === true)
+
+    expect(chunks.length).toBeGreaterThan(1)
+    expect(chunks.map((node) => node.children.join('')).join('')).toBe(fullText)
+    expect(chunks[0].props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ fontSize: 30.6, lineHeight: 41.4 })])
+    )
+  })
+
   it('strips the image prompt marker from expanded user text', () => {
-    const retrieval = { recordOffset: 42, blockIndex: 0, originalChars: 9000 }
+    const retrieval = { capability: 'capability-caption', originalChars: 9000 }
     const message = userMessage([{ type: 'text', text: 'caption preview', retrieval }])
     const key = mobileNativeChatTextKey(message.id, retrieval)
     const textExpansion: MobileNativeChatTextExpansion = {
@@ -161,7 +222,8 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
       expandedKey: key,
       loadingKey: null,
       errorKey: null,
-      toggle: vi.fn()
+      toggle: vi.fn(),
+      loadForCopy: vi.fn().mockResolvedValue('[Image #1] complete caption')
     }
 
     const tree = render(message, textExpansion)
@@ -175,8 +237,8 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
   })
 
   it('disables all expansion actions while one block is loading', () => {
-    const firstRetrieval = { recordOffset: 42, blockIndex: 0, originalChars: 9000 }
-    const secondRetrieval = { recordOffset: 84, blockIndex: 1, originalChars: 8000 }
+    const firstRetrieval = { capability: 'capability-first', originalChars: 9000 }
+    const secondRetrieval = { capability: 'capability-second', originalChars: 8000 }
     const message: NativeChatMessage = {
       id: 'assistant-1',
       role: 'assistant',
@@ -192,7 +254,8 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
       expandedKey: null,
       loadingKey: mobileNativeChatTextKey(message.id, firstRetrieval),
       errorKey: null,
-      toggle: vi.fn()
+      toggle: vi.fn(),
+      loadForCopy: vi.fn()
     }
 
     const actions = render(message, textExpansion).root.findAll(
@@ -201,5 +264,47 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
 
     expect(actions).toHaveLength(2)
     expect(actions.every((action) => action.props.disabled === true)).toBe(true)
+  })
+
+  it('recovers every clipped prose block before copying the exact message', async () => {
+    const first = { capability: 'capability-copy-first', originalChars: 5000 }
+    const second = { capability: 'capability-copy-second', originalChars: 6000 }
+    const loadForCopy = vi
+      .fn()
+      .mockResolvedValueOnce('complete first')
+      .mockResolvedValueOnce('complete second')
+    const textExpansion: MobileNativeChatTextExpansion = {
+      cached: null,
+      expandedKey: null,
+      loadingKey: null,
+      errorKey: null,
+      toggle: vi.fn(),
+      loadForCopy
+    }
+    const tree = render(
+      assistantMessage([
+        { type: 'text', text: 'first preview', retrieval: first },
+        { type: 'text', text: 'second preview', retrieval: second }
+      ]),
+      textExpansion
+    )
+
+    await act(async () =>
+      tree.root.findByProps({ accessibilityLabel: 'Copy message' }).props.onPress()
+    )
+
+    expect(loadForCopy.mock.calls.map((call) => call[1])).toEqual([first, second])
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith('complete first\n\ncomplete second')
+  })
+
+  it('reports clipboard rejection without showing copied success', async () => {
+    vi.mocked(Clipboard.setStringAsync).mockRejectedValueOnce(new Error('clipboard full'))
+    const tree = render(assistantMessage([{ type: 'text', text: 'complete' }]))
+
+    await act(async () =>
+      tree.root.findByProps({ accessibilityLabel: 'Copy message' }).props.onPress()
+    )
+
+    expect(tree.root.findByProps({ accessibilityLabel: 'Copy failed. Retry' })).toBeTruthy()
   })
 })

@@ -6,8 +6,8 @@ import {
   type MobileNativeChatTextExpansion
 } from './use-mobile-native-chat-text-expansion'
 
-const first = { recordOffset: 10, blockIndex: 0, originalChars: 5000 }
-const second = { recordOffset: 20, blockIndex: 1, originalChars: 6000 }
+const first = { capability: 'capability-first', originalChars: 5000 }
+const second = { capability: 'capability-second', originalChars: 6000 }
 
 describe('useMobileNativeChatTextExpansion', () => {
   let renderer: ReactTestRenderer | null = null
@@ -81,6 +81,22 @@ describe('useMobileNativeChatTextExpansion', () => {
 
     expect(expansion?.cached).toMatchObject({ text: 'full second' })
     expect(JSON.stringify(expansion)).not.toContain('full first')
+  })
+
+  it('reuses the singleton display cache for copy without retaining other copied blocks', async () => {
+    const load = vi.fn().mockResolvedValueOnce('full first').mockResolvedValueOnce('full second')
+    await mount(load)
+    await act(async () => {
+      expansion?.toggle('message-1', first)
+      await Promise.resolve()
+    })
+
+    await expect(expansion!.loadForCopy('message-1', first)).resolves.toBe('full first')
+    await expect(expansion!.loadForCopy('message-1', second)).resolves.toBe('full second')
+
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(expansion?.cached).toMatchObject({ text: 'full first' })
+    expect(JSON.stringify(expansion)).not.toContain('full second')
   })
 
   it('serializes reads across distinct blocks', async () => {

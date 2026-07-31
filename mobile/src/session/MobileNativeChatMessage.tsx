@@ -19,10 +19,7 @@ import {
   summarizeToolRun,
   toolFilePath
 } from './mobile-native-chat-tool-summary'
-import {
-  mobileNativeChatTextKey,
-  type MobileNativeChatTextExpansion
-} from './use-mobile-native-chat-text-expansion'
+import type { MobileNativeChatTextExpansion } from './use-mobile-native-chat-text-expansion'
 
 const MAX_VISIBLE_TOOL_PAIRS = 6
 const MAX_TOOL_RUN_DIFF_ROWS = 240
@@ -204,18 +201,30 @@ function ToolRun({
  *  this message's top aligns to the top of the viewport. */
 function AgentControls({
   onCopy,
+  copyState,
   onScrollToTop
 }: {
-  onCopy: () => void
+  onCopy: () => Promise<void>
+  copyState: 'idle' | 'copying' | 'failed'
   onScrollToTop?: () => void
 }): React.JSX.Element {
+  const copying = copyState === 'copying'
   return (
     <View style={styles.controls}>
       <Pressable
         style={({ pressed }) => [styles.controlButton, pressed && styles.controlPressed]}
-        onPress={onCopy}
+        onPress={() => void onCopy()}
+        disabled={copying}
         hitSlop={8}
-        accessibilityLabel="Copy message"
+        accessibilityLabel={
+          copying
+            ? 'Copying message'
+            : copyState === 'failed'
+              ? 'Copy failed. Retry'
+              : 'Copy message'
+        }
+        accessibilityLiveRegion="polite"
+        accessibilityState={{ busy: copying, disabled: copying }}
       >
         <Copy size={14} color={colors.textMuted} strokeWidth={2} />
       </Pressable>
@@ -260,6 +269,7 @@ function MobileNativeChatMessageImpl({
   const isAgent = !isUser
   // Briefly tint the bubble to confirm a copy landed.
   const [copied, setCopied] = useState(false)
+  const [copyState, setCopyState] = useState<'idle' | 'copying' | 'failed'>('idle')
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(
     () => () => {
@@ -275,23 +285,35 @@ function MobileNativeChatMessageImpl({
   const { prose, tools } = splitNativeChatBlocks(message.blocks)
   const firstUserTextIndex = isUser ? prose.findIndex(isTextBlock) : -1
 
-  const handleCopy = (): void => {
-    const text = nativeChatMessageText(message.blocks, (block) => {
-      if (!block.retrieval || !textExpansion?.cached) {
-        return undefined
+  const handleCopy = async (): Promise<void> => {
+    setCopyState('copying')
+    const recovered = new Map<Extract<NativeChatBlock, { type: 'text' }>, string>()
+    try {
+      for (const block of message.blocks) {
+        if (!isTextBlock(block) || !block.retrieval) {
+          continue
+        }
+        if (!textExpansion) {
+          throw new Error('Full message unavailable')
+        }
+        recovered.set(block, await textExpansion.loadForCopy(message.id, block.retrieval))
       }
-      const key = mobileNativeChatTextKey(message.id, block.retrieval)
-      return textExpansion.cached.key === key ? textExpansion.cached.text : undefined
-    })
-    if (!text) {
-      return
+      const text = nativeChatMessageText(message.blocks, (block) => recovered.get(block))
+      if (!text) {
+        setCopyState('idle')
+        return
+      }
+      await Clipboard.setStringAsync(text)
+      setCopyState('idle')
+      setCopied(true)
+      if (copyTimer.current) {
+        clearTimeout(copyTimer.current)
+      }
+      copyTimer.current = setTimeout(() => setCopied(false), 700)
+    } catch {
+      setCopied(false)
+      setCopyState('failed')
     }
-    void Clipboard.setStringAsync(text)
-    setCopied(true)
-    if (copyTimer.current) {
-      clearTimeout(copyTimer.current)
-    }
-    copyTimer.current = setTimeout(() => setCopied(false), 700)
   }
 
   // Copy + scroll-to-top, shown inline with the first tool call (or after the
@@ -300,6 +322,7 @@ function MobileNativeChatMessageImpl({
     isAgent && !queued ? (
       <AgentControls
         onCopy={handleCopy}
+        copyState={copyState}
         onScrollToTop={
           onScrollToMessage && messageIndex !== undefined
             ? () => onScrollToMessage(messageIndex)

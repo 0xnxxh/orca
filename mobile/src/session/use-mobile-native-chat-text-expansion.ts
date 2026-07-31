@@ -19,13 +19,14 @@ export type MobileNativeChatTextExpansion = {
   loadingKey: string | null
   errorKey: string | null
   toggle: (messageId: string, retrieval: NativeChatTextRetrieval) => void
+  loadForCopy: (messageId: string, retrieval: NativeChatTextRetrieval) => Promise<string>
 }
 
 export function mobileNativeChatTextKey(
   messageId: string,
   retrieval: NativeChatTextRetrieval
 ): string {
-  return `${messageId}\0${retrieval.recordOffset}\0${retrieval.blockIndex}\0${retrieval.originalChars}`
+  return `${messageId}\0${retrieval.capability}\0${retrieval.originalChars}`
 }
 
 /** Retains at most one full block and reuses it across collapse/re-expand. */
@@ -99,15 +100,26 @@ export function useMobileNativeChatTextExpansion(
     [current, loadFullText, onExpand]
   )
 
+  const loadForCopy = useCallback(
+    (messageId: string, retrieval: NativeChatTextRetrieval): Promise<string> => {
+      const key = mobileNativeChatTextKey(messageId, retrieval)
+      return current.cached?.key === key
+        ? Promise.resolve(current.cached.text)
+        : loadFullText(messageId, retrieval)
+    },
+    [current.cached, loadFullText]
+  )
+
   return useMemo(
     () => ({
       cached: current.cached,
       expandedKey: current.expandedKey,
       loadingKey: current.request?.key ?? null,
       errorKey: current.errorKey,
-      toggle
+      toggle,
+      loadForCopy
     }),
-    [current, toggle]
+    [current, loadForCopy, toggle]
   )
 }
 

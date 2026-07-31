@@ -56,7 +56,8 @@ const watcher = vi.hoisted(() => ({
   watching: true
 }))
 const textBlockRead = vi.hoisted(() => ({
-  value: { text: '' } as { text: string } | { error: string }
+  value: { text: '' } as { text: string } | { error: string },
+  args: null as null | Record<string, unknown>
 }))
 vi.mock('../../../native-chat/transcript-watch', () => ({
   readNativeChatTranscriptTail: ({ limit }: { limit: number }) => {
@@ -74,7 +75,10 @@ vi.mock('../../../native-chat/transcript-watch', () => ({
   }
 }))
 vi.mock('../../../native-chat/transcript-record-reader', () => ({
-  readNativeChatTextBlock: () => Promise.resolve(textBlockRead.value)
+  readNativeChatTextBlock: (args: Record<string, unknown>) => {
+    textBlockRead.args = args
+    return Promise.resolve(textBlockRead.value)
+  }
 }))
 
 import { NATIVE_CHAT_METHODS } from './native-chat'
@@ -136,15 +140,31 @@ function streamingContext(clientKind: RpcContext['clientKind']): RpcContext {
     runtime: {
       registerSubscriptionCleanup: vi.fn(),
       cleanupSubscription: vi.fn(),
-      cleanupSubscriptionsByPrefix: vi.fn()
+      cleanupSubscriptionsByPrefix: vi.fn(),
+      authorizeNativeChatSession: vi.fn(() => ({ transcriptPath: '/trusted/session.jsonl' }))
     } as unknown as RpcContext['runtime'],
     connectionId: 'connection-1',
+    pairedDeviceId: 'device-1',
     clientKind
   }
 }
 
-function ctxWith(clientKind: RpcContext['clientKind']): RpcContext {
-  return { runtime: {} as RpcContext['runtime'], clientKind }
+function ctxWith(
+  clientKind: RpcContext['clientKind'],
+  options: {
+    pairedDeviceId?: string
+    authorize?: (agent: string, sessionId: string, transcriptPath?: string) => unknown
+  } = {}
+): RpcContext {
+  return {
+    runtime: {
+      authorizeNativeChatSession: vi.fn(
+        options.authorize ?? (() => ({ transcriptPath: '/trusted/session.jsonl' }))
+      )
+    } as unknown as RpcContext['runtime'],
+    pairedDeviceId: options.pairedDeviceId ?? 'device-1',
+    clientKind
+  }
 }
 
 function firstOutput(result: unknown): string {
@@ -179,21 +199,21 @@ describe('nativeChat.readSession clientKind truncation gating', () => {
     expect(block).toMatchObject({ type: 'text' })
     expect((block as { text: string }).text.length).toBeLessThan(fullText.length)
     expect(block).toMatchObject({
-      retrieval: { recordOffset: 73, blockIndex: 0, originalChars: fullText.length }
+      retrieval: { capability: expect.any(String), originalChars: fullText.length }
     })
+    const capability = (block as { retrieval: { capability: string } }).retrieval.capability
 
-    await expect(
-      readTextBlockHandler()(
-        {
-          agent: 'claude',
-          sessionId: 's',
-          messageId: message.id,
-          recordOffset: 73,
-          blockIndex: 0
-        },
-        ctxWith('mobile')
-      )
-    ).resolves.toEqual({ text: fullText })
+    await expect(readTextBlockHandler()({ capability }, ctxWith('mobile'))).resolves.toEqual({
+      text: fullText
+    })
+    expect(textBlockRead.args).toMatchObject({
+      agent: 'claude',
+      sessionId: 's',
+      transcriptPath: '/trusted/session.jsonl',
+      messageId: message.id,
+      recordOffset: 73,
+      blockIndex: 0
+    })
   })
 
   it('does not offer irreversible text retrieval when no record position exists', async () => {
@@ -207,6 +227,58 @@ describe('nativeChat.readSession clientKind truncation gating', () => {
 
     expect(block).toMatchObject({ type: 'text' })
     expect(block).not.toHaveProperty('retrieval')
+  })
+
+  it('rejects a transcript session absent from server-owned state', async () => {
+    cachedResult.value = { messages: [makeTextMessage(OVERSIZED)] }
+
+    await expect(
+      readSessionHandler()(
+        { agent: 'claude', sessionId: 'unrelated', transcriptPath: '/private/other.jsonl' },
+        ctxWith('mobile', { authorize: () => null })
+      )
+    ).resolves.toEqual({ error: 'Transcript unavailable' })
+  })
+
+  it('binds opaque retrieval capabilities to the paired device and exact text', async () => {
+    const fullText = `prefix-${'x'.repeat(5000)}`
+    const message = makeTextMessage(fullText)
+    markTranscriptRecordOffset(message, 73)
+    cachedResult.value = { messages: [message] }
+    textBlockRead.value = { text: fullText }
+    const result = await readSessionHandler()(
+      { agent: 'claude', sessionId: 's' },
+      ctxWith('mobile')
+    )
+    const block = (result as { messages: NativeChatMessage[] }).messages[0].blocks[0] as {
+      retrieval: { capability: string }
+    }
+
+    await expect(
+      readTextBlockHandler()(
+        { capability: block.retrieval.capability },
+        ctxWith('mobile', { pairedDeviceId: 'device-2' })
+      )
+    ).resolves.toEqual({ error: 'Full message unavailable' })
+
+    textBlockRead.value = { text: `tamper-${'y'.repeat(fullText.length - 7)}` }
+    await expect(
+      readTextBlockHandler()({ capability: block.retrieval.capability }, ctxWith('mobile'))
+    ).resolves.toEqual({ error: 'Full message unavailable' })
+  })
+
+  it('does not accept caller-controlled transcript coordinates for full-text reads', () => {
+    const method = NATIVE_CHAT_METHODS.find((m) => m.name === 'nativeChat.readTextBlock')
+    expect(() =>
+      method?.params?.parse({
+        agent: 'claude',
+        sessionId: 's',
+        transcriptPath: '/private/other.jsonl',
+        messageId: 'message',
+        recordOffset: 0,
+        blockIndex: 0
+      })
+    ).toThrow()
   })
 
   it('clips oversized tool output for mobile clients', async () => {
@@ -396,6 +468,26 @@ describe('nativeChat.readSession clientKind truncation gating', () => {
 })
 
 describe('nativeChat.subscribe initial snapshot', () => {
+  it('stops emitting text grants after server-owned session authority changes', async () => {
+    watcher.watching = true
+    watcher.args = null
+    const emitted: unknown[] = []
+    const context = streamingContext('mobile')
+    const authorize = vi.mocked(context.runtime.authorizeNativeChatSession)
+    authorize
+      .mockReturnValueOnce({ transcriptPath: '/trusted/session.jsonl' })
+      .mockReturnValue(null)
+    await subscribeHandler()({ agent: 'claude', sessionId: 's' }, context, (value) =>
+      emitted.push(value)
+    )
+    const appended = makeTextMessage(OVERSIZED)
+    markTranscriptRecordOffset(appended, 101)
+
+    activeWatcherArgs().onAppend([appended])
+
+    expect(emitted).toEqual([])
+  })
+
   it('attaches fresh retrieval locators to mobile appends and replacements', async () => {
     watcher.watching = true
     watcher.args = null
@@ -417,11 +509,11 @@ describe('nativeChat.subscribe initial snapshot', () => {
     expect(emitted).toMatchObject([
       {
         type: 'appended',
-        messages: [{ blocks: [{ retrieval: { recordOffset: 101, blockIndex: 0 } }] }]
+        messages: [{ blocks: [{ retrieval: { capability: expect.any(String) } }] }]
       },
       {
         type: 'replacement',
-        messages: [{ blocks: [{ retrieval: { recordOffset: 202, blockIndex: 0 } }] }]
+        messages: [{ blocks: [{ retrieval: { capability: expect.any(String) } }] }]
       }
     ])
   })
