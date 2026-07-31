@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
+import { parseLinuxBootTimeSeconds, parseLinuxProcStartTicks } from './daemon-health'
 import type {
   LinuxStatEvidence,
   ProcessSignalEvidence,
@@ -111,6 +112,54 @@ export async function queryWindowsProcess(
     }
   } catch {
     return { status: 'unavailable' }
+  }
+}
+
+// Why: the sync procfs helper in daemon-health spawns getconf per call; CLK_TCK is fixed for
+// the kernel's lifetime, so cache one async spawn and only retry after a failure.
+let clockTicksPerSecond: Promise<number | null> | null = null
+
+async function readClockTicksPerSecond(
+  runCommand: (file: string, args: string[], timeoutMs: number) => Promise<string>
+): Promise<number | null> {
+  clockTicksPerSecond ??= runCommand('getconf', ['CLK_TCK'], 1_000).then(
+    (stdout) => {
+      const ticks = Number(stdout.trim())
+      return Number.isFinite(ticks) && ticks > 0 ? ticks : null
+    },
+    () => null
+  )
+  const ticksPerSecond = await clockTicksPerSecond
+  if (ticksPerSecond === null) {
+    clockTicksPerSecond = null
+  }
+  return ticksPerSecond
+}
+
+// Why: same main-thread hazard as darwin — the sync linux helper does two readFileSync calls
+// plus a getconf spawn, and this audit-only probe runs in the Electron main process.
+export async function readLinuxProcessStartedAtMs(
+  pid: number,
+  dependencies: DaemonProcessInspectionDependencies = {}
+): Promise<number | null> {
+  const readTextFile =
+    dependencies.readTextFile ?? (async (path: string) => await readFile(path, 'utf8'))
+  try {
+    const startTicks = parseLinuxProcStartTicks(await readTextFile(`/proc/${pid}/stat`))
+    const bootTimeSeconds = parseLinuxBootTimeSeconds(await readTextFile('/proc/stat'))
+    const ticksPerSecond = await readClockTicksPerSecond(
+      dependencies.runCommand ?? runInspectionCommand
+    )
+    if (
+      ticksPerSecond === null ||
+      !Number.isFinite(startTicks) ||
+      !Number.isFinite(bootTimeSeconds)
+    ) {
+      return null
+    }
+    return bootTimeSeconds * 1000 + (startTicks / ticksPerSecond) * 1000
+  } catch {
+    return null
   }
 }
 

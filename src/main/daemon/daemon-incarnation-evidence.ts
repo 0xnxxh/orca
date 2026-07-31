@@ -1,9 +1,5 @@
 import { parseLinuxStartTicks, readBootIdentity } from '../agent-hooks/managed-hook-owner-identity'
-import {
-  commandLineMatchesDaemon,
-  getProcessStartedAtMs,
-  startTimesWithinTolerance
-} from './daemon-health'
+import { commandLineMatchesDaemon, startTimesWithinTolerance } from './daemon-health'
 import {
   WINDOWS_CREATION_TIME_TOLERANCE_MS,
   type DaemonEvidenceSources,
@@ -15,6 +11,7 @@ import {
 import {
   inspectProcessSignal,
   queryWindowsProcess,
+  readLinuxProcessStartedAtMs,
   readLinuxStat,
   readMacosProcessStartedAtMs,
   readProcessCommandLine
@@ -34,11 +31,6 @@ export {
 } from './daemon-incarnation-evidence-types'
 
 const POSIX_START_TIME_TOLERANCE_MS = 1_500
-
-// Why: linux start time comes from procfs via the shared helper; only darwin's `ps` spawn
-// had to move off the main thread.
-const readLinuxProcessStartedAtMs = async (pid: number): Promise<number | null> =>
-  getProcessStartedAtMs(pid)
 
 export async function probeDaemonProcessIdentity(
   exactIncarnation: ExactDaemonIncarnation | null,
