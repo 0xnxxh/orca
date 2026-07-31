@@ -96,6 +96,7 @@ function createScenario(
       }
       return probe
     }),
+    cancelDelivery: vi.fn(),
     sealDelivery: vi.fn(),
     settleExitPublication: vi.fn(),
     deliveryMode: vi.fn(() => 'source-owner' as const)
@@ -108,7 +109,7 @@ function createScenario(
     projectPtyExitToMatchingClients: vi.fn(() => true),
     tryNotifyPtyExitToClient: vi.fn(() => true)
   }
-  const sender = { pump: vi.fn() }
+  const sender = { pump: vi.fn(), wakeSendWaiters: vi.fn() }
   const counters: RelayPtySourcePublicationCounters = {
     opened: 0,
     rotated: 0,
@@ -119,6 +120,13 @@ function createScenario(
     exitRolledBack: 0
   }
   const capacityIds: string[] = []
+  let capacityError: Error | null = null
+  const onCapacity = (id: string): void => {
+    capacityIds.push(id)
+    if (capacityError) {
+      throw capacityError
+    }
+  }
   const run = (): boolean =>
     sealAndPublishPtySourceExit({
       params,
@@ -128,7 +136,7 @@ function createScenario(
       session: session as unknown as SshPtyConsumerSessionAdapter,
       sender: sender as unknown as RelayPtySourceSendScheduler,
       counters,
-      onCapacity: (id) => capacityIds.push(id)
+      onCapacity
     })
   const runTracked = (legacyExits: RelayPtySourceLegacyExitIndex): boolean =>
     sealAndPublishTrackedPtySourceExit({
@@ -139,7 +147,7 @@ function createScenario(
       session: session as unknown as SshPtyConsumerSessionAdapter,
       sender: sender as unknown as RelayPtySourceSendScheduler,
       counters,
-      onCapacity: (id) => capacityIds.push(id)
+      onCapacity
     })
   return {
     deliveries,
@@ -150,7 +158,10 @@ function createScenario(
     capacityIds,
     run,
     runTracked,
-    setProbe
+    setProbe,
+    setCapacityError: (error: Error): void => {
+      capacityError = error
+    }
   }
 }
 
@@ -274,6 +285,33 @@ describe('RelayPtySourceLegacyExitIndex', () => {
     expect(scenario.publish()).toBe(false)
   })
 
+  it('consumes a completed retired exit without publishing it again', () => {
+    const scenario = createIndex()
+    scenario.index.remember(params, true)
+    scenario.index.complete(params)
+
+    expect(scenario.publish()).toBe(true)
+    expect(scenario.dispatcher.tryNotifyPtyExitToMatchingClients).not.toHaveBeenCalled()
+    expect(scenario.publish()).toBeNull()
+  })
+
+  it('does not let stale completion overwrite a later incarnation', () => {
+    const scenario = createIndex()
+    const next = { ...params, incarnationId: 'incarnation-2' }
+    scenario.index.remember(next, true)
+
+    scenario.index.complete(params)
+
+    expect(scenario.publish()).toBeNull()
+    expect(
+      scenario.index.publishAfterRetire(
+        next,
+        scenario.dispatcher as unknown as RelayDispatcher,
+        scenario.session as unknown as SshPtyConsumerSessionAdapter
+      )
+    ).toBe(true)
+  })
+
   it('remembers a subscriber projection when the owner publication throws', () => {
     const record = deliveryRecord({ sealed: true })
     const scenario = createScenario(closedSnapshot({ state: 'sealed-unsettled' }), record)
@@ -284,6 +322,11 @@ describe('RelayPtySourceLegacyExitIndex', () => {
 
     expect(() => scenario.runTracked(index)).toThrow('owner write failed')
     expect(scenario.dispatcher.projectPtyExitToMatchingClients).toHaveBeenCalledOnce()
+    expect(scenario.session.cancelDelivery).toHaveBeenCalledWith(
+      record.identity,
+      'exit-publication-failed'
+    )
+    expect(scenario.deliveries.has(params.id)).toBe(false)
     expect(
       index.publishAfterRetire(
         params,
@@ -362,6 +405,44 @@ describe('sealAndPublishPtySourceExit settlement closure', () => {
     expect(scenario.capacityIds).toEqual(['pty-1'])
   })
 
+  it('retains committed completion until a failed capacity signal is retried', () => {
+    const record = deliveryRecord({ sealed: true })
+    const scenario = createScenario(closedSnapshot({ state: 'sealed-unsettled' }), record)
+    const index = new RelayPtySourceLegacyExitIndex()
+    let settle: ((result: { ok: true }) => void) | undefined
+    scenario.dispatcher.tryNotifyPtyExitToClient.mockImplementation((...args: unknown[]) => {
+      settle = args[2] as typeof settle
+      return true
+    })
+    scenario.session.settleExitPublication.mockImplementation(() => {
+      throw new Error('PTY source delivery is not sealed')
+    })
+    scenario.setCapacityError(new Error('capacity callback failed'))
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    try {
+      expect(scenario.runTracked(index)).toBe(true)
+      expect(() => settle!({ ok: true })).not.toThrow()
+
+      expect(
+        index.publishAfterRetire(
+          params,
+          scenario.dispatcher as unknown as RelayDispatcher,
+          scenario.session as unknown as SshPtyConsumerSessionAdapter
+        )
+      ).toBe(true)
+      expect(scenario.dispatcher.tryNotifyPtyExitToMatchingClients).not.toHaveBeenCalled()
+      expect(
+        index.publishAfterRetire(
+          params,
+          scenario.dispatcher as unknown as RelayDispatcher,
+          scenario.session as unknown as SshPtyConsumerSessionAdapter
+        )
+      ).toBeNull()
+    } finally {
+      stderr.mockRestore()
+    }
+  })
+
   it.each([
     ['committed', { ok: true } as const],
     ['rolled back', { ok: false, error: new Error('socket write failed') } as const]
@@ -369,9 +450,14 @@ describe('sealAndPublishPtySourceExit settlement closure', () => {
     const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
     try {
       const scenario = createInFlightScenario(closedSnapshot({ state: 'sealed-unsettled' }))
+      scenario.record.sendWaiters.add(vi.fn())
       scenario.session.settleExitPublication.mockImplementation(() => {
         throw new Error('PTY source delivery is not sealed')
       })
+      scenario.sender.wakeSendWaiters.mockImplementation(() => {
+        throw new Error('send waiter failed')
+      })
+      scenario.setCapacityError(new Error('capacity callback failed'))
 
       expect(() => scenario.settle(result)).not.toThrow()
 
@@ -379,6 +465,12 @@ describe('sealAndPublishPtySourceExit settlement closure', () => {
         '[pty-source-exit] exit settlement failed for pty-1'
       )
       expect(scenario.capacityIds).toEqual(['pty-1'])
+      expect(scenario.session.cancelDelivery).toHaveBeenCalledWith(
+        scenario.record.identity,
+        'exit-publication-failed'
+      )
+      expect(scenario.deliveries.has(params.id)).toBe(false)
+      expect(scenario.record.sendWaiters.size).toBe(0)
     } finally {
       stderr.mockRestore()
     }

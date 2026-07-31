@@ -347,6 +347,64 @@ describe('PtyHandler negotiated source publication', () => {
     }
   })
 
+  it('retires the delivery after the owner exit publication throws', async () => {
+    await spawn({})
+    const spawnResult = writes.map((buffer) => responseResult(buffer, 2)).find(Boolean)!
+    const id = String(spawnResult.id)
+    const subscriberWrites = attachSubscriber()
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    const publishOwnerExit = vi
+      .spyOn(dispatcher, 'tryNotifyPtyExitToClient')
+      .mockImplementationOnce(() => {
+        throw new Error('owner write failed')
+      })
+    try {
+      expect(() => exitCallback!({ exitCode: 8 })).not.toThrow()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(exitFrames()).toHaveLength(1)
+      expect(subscriberExitFrames(subscriberWrites)).toHaveLength(1)
+      expect(publication.accepts(id)).toBe(false)
+      expect(adapter.getDebugSnapshot().deliveryTokens).toBe(0)
+
+      handler.handleSourcePublicationCapacity(id)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(exitFrames()).toHaveLength(1)
+      expect(subscriberExitFrames(subscriberWrites)).toHaveLength(1)
+    } finally {
+      publishOwnerExit.mockRestore()
+      stderr.mockRestore()
+    }
+  })
+
+  it('retires the delivery when committed owner exit settlement fails', async () => {
+    await spawn({})
+    const spawnResult = writes.map((buffer) => responseResult(buffer, 2)).find(Boolean)!
+    const id = String(spawnResult.id)
+    const subscriberWrites = attachSubscriber()
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    const settleOwnerExit = vi.spyOn(adapter, 'settleExitPublication').mockImplementation(() => {
+      throw new Error('exit settlement failed')
+    })
+    try {
+      exitCallback!({ exitCode: 9 })
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(exitFrames()).toHaveLength(1)
+      expect(subscriberExitFrames(subscriberWrites)).toHaveLength(1)
+      expect(publication.accepts(id)).toBe(false)
+      expect(adapter.getDebugSnapshot().deliveryTokens).toBe(0)
+
+      handler.handleSourcePublicationCapacity(id)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(exitFrames()).toHaveLength(1)
+      expect(subscriberExitFrames(subscriberWrites)).toHaveLength(1)
+    } finally {
+      settleOwnerExit.mockRestore()
+      stderr.mockRestore()
+    }
+  })
+
   it('lets a retired record re-target its own exit instead of broadcasting a duplicate', async () => {
     await spawn({})
     const spawnResult = writes.map((buffer) => responseResult(buffer, 2)).find(Boolean)!

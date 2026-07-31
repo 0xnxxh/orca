@@ -13,6 +13,7 @@ type PtySourceExitOptions = {
   params: PtyExitParams
   record: RelayPtySourceDeliveryRecord
   deliveries: Map<string, RelayPtySourceDeliveryRecord>
+  legacyExits?: RelayPtySourceLegacyExitIndex
   dispatcher: RelayDispatcher
   session: SshPtyConsumerSessionAdapter
   sender: RelayPtySourceSendScheduler
@@ -26,22 +27,35 @@ type PtySourceExitOptions = {
  * projection and the owner's exit frame, and the fallback must not broadcast a second copy.
  */
 export class RelayPtySourceLegacyExitIndex {
-  private readonly incarnationByPty = new Map<string, string>()
+  private readonly stateByPty = new Map<
+    string,
+    Readonly<{ incarnationId: string; state: 'owner-pending' | 'complete' }>
+  >()
 
   remember(params: PtyExitParams, delivered: boolean): void {
     if (delivered) {
-      this.incarnationByPty.set(params.id, params.incarnationId)
+      this.stateByPty.set(params.id, {
+        incarnationId: params.incarnationId,
+        state: 'owner-pending'
+      })
     } else {
       this.forget(params.id)
     }
   }
 
-  /** Drops the entry once the exit is complete for every client, so the map cannot grow unbounded. */
-  forget(id: string): void {
-    this.incarnationByPty.delete(id)
+  complete(params: PtyExitParams): void {
+    if (this.stateByPty.get(params.id)?.incarnationId !== params.incarnationId) {
+      return
+    }
+    this.stateByPty.set(params.id, { incarnationId: params.incarnationId, state: 'complete' })
   }
 
-  clear = (): void => this.incarnationByPty.clear()
+  /** Drops the entry once the exit is complete for every client, so the map cannot grow unbounded. */
+  forget(id: string): void {
+    this.stateByPty.delete(id)
+  }
+
+  clear = (): void => this.stateByPty.clear()
 
   /** Publishes a retired record's exit to the owner alone, or null when nothing was projected. */
   publishAfterRetire(
@@ -49,8 +63,13 @@ export class RelayPtySourceLegacyExitIndex {
     dispatcher: RelayDispatcher,
     session: SshPtyConsumerSessionAdapter
   ): boolean | null {
-    if (this.incarnationByPty.get(params.id) !== params.incarnationId) {
+    const remembered = this.stateByPty.get(params.id)
+    if (remembered?.incarnationId !== params.incarnationId) {
       return null
+    }
+    if (remembered.state === 'complete') {
+      this.forget(params.id)
+      return true
     }
     const published = dispatcher.tryNotifyPtyExitToMatchingClients(
       (clientId) => session.deliveryMode(clientId) === 'source-owner',
@@ -71,6 +90,27 @@ function logExitSettlementFault(id: string, err: unknown): void {
   )
 }
 
+function retireFaultedPtySourceExit(
+  options: PtySourceExitOptions,
+  record: RelayPtySourceDeliveryRecord
+): void {
+  try {
+    options.session.cancelDelivery(record.identity, 'exit-publication-failed')
+  } catch (err) {
+    logExitSettlementFault(options.params.id, err)
+  }
+  try {
+    options.sender.wakeSendWaiters(record)
+  } catch (err) {
+    logExitSettlementFault(options.params.id, err)
+  } finally {
+    record.sendWaiters.clear()
+  }
+  if (options.deliveries.get(options.params.id) === record) {
+    options.deliveries.delete(options.params.id)
+  }
+}
+
 /** Seals and publishes the pty's exit, recording whether the legacy projection outlives the record. */
 export function sealAndPublishTrackedPtySourceExit(
   options: Omit<PtySourceExitOptions, 'record'> & { legacyExits: RelayPtySourceLegacyExitIndex }
@@ -81,13 +121,9 @@ export function sealAndPublishTrackedPtySourceExit(
   }
   try {
     return sealAndPublishPtySourceExit({ ...options, record })
-  } finally {
-    // Why: the subscriber projection may succeed before the owner write throws; the handler's
-    // fallback must still know to target only the owner instead of broadcasting a duplicate.
-    options.legacyExits.remember(
-      options.params,
-      record.legacyExitAccepted && options.deliveries.get(options.params.id) === record
-    )
+  } catch (err) {
+    retireFaultedPtySourceExit({ ...options, record }, record)
+    throw err
   }
 }
 
@@ -97,6 +133,7 @@ export function sealAndPublishPtySourceExit(options: PtySourceExitOptions): bool
     const published = dispatcher.tryNotifyPtyExit(params)
     if (published && deliveries.get(params.id) === record) {
       deliveries.delete(params.id)
+      options.legacyExits?.forget(params.id)
     }
     return published
   }
@@ -113,6 +150,7 @@ export function sealAndPublishPtySourceExit(options: PtySourceExitOptions): bool
       if (deliveries.get(params.id) === record) {
         deliveries.delete(params.id)
       }
+      options.legacyExits?.forget(params.id)
       return true
     }
     // Why: the delivery was canceled out from under the record; never touch the sealed
@@ -125,6 +163,7 @@ export function sealAndPublishPtySourceExit(options: PtySourceExitOptions): bool
       : dispatcher.tryNotifyPtyExit(params)
     if (published && deliveries.get(params.id) === record) {
       deliveries.delete(params.id)
+      options.legacyExits?.forget(params.id)
     }
     return published
   }
@@ -142,6 +181,7 @@ export function sealAndPublishPtySourceExit(options: PtySourceExitOptions): bool
       (clientId) => session.deliveryMode(clientId) !== 'source-owner',
       params
     )
+    options.legacyExits?.remember(params, record.legacyExitAccepted)
     if (!record.legacyExitAccepted) {
       return false
     }
@@ -172,6 +212,10 @@ export function sealAndPublishPtySourceExit(options: PtySourceExitOptions): bool
     } catch (err) {
       settlementFailed = true
       logExitSettlementFault(params.id, err)
+      if (result.ok) {
+        options.legacyExits?.complete(params)
+      }
+      retireFaultedPtySourceExit(options, record)
     } finally {
       if (result.ok || deliveryGone || settlementFailed) {
         try {
