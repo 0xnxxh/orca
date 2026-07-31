@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { deriveTaskPagePRCheckSummary } from '../renderer/src/components/task-page-pr-check-summary'
-import { gitLabPipelineJobsToPRChecks } from './gitlab-pipeline-checks'
-import { derivePRCheckStatus, derivePRCheckStatusFromRollup } from './pr-check-status'
-import { summarizeProviderChecks } from './provider-check-summary'
-import type { GitLabPipelineJob } from './gitlab-types'
-import type { PRCheckDetail, ProviderCheckSummary } from './types'
+import { deriveTaskPagePRCheckSummary } from './task-page-pr-check-summary'
+import { gitLabPipelineJobsToPRChecks } from '../../../shared/gitlab-pipeline-checks'
+import { derivePRCheckStatus, derivePRCheckStatusFromRollup } from '../../../shared/pr-check-status'
+import { summarizeProviderChecks } from '../../../shared/provider-check-summary'
+import type { GitLabPipelineJob } from '../../../shared/gitlab-types'
+import type { PRCheckDetail, ProviderCheckSummary } from '../../../shared/types'
 
 function completed(conclusion: string): PRCheckDetail {
   return {
