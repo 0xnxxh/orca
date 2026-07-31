@@ -11,8 +11,8 @@ export function detachString(value: string): DetachedString {
   if (value.length < V8_ROPE_MIN_LENGTH) {
     return value as DetachedString
   }
-  // Slicing a ConsString forces a flatten to a fresh SeqString; `.slice(0)`,
-  // `String(v)` and `.repeat(1)` do NOT — see detached-string.test.ts.
+  // Slicing a ConsString flattens it, so the result's only parent is that fresh
+  // copy; `.slice(0)`, `String(v)` and `.repeat(1)` do NOT — see detached-string.test.ts.
   return ` ${value}`.slice(1) as DetachedString
 }
 

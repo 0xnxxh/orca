@@ -9,7 +9,8 @@ export function forceGc(): void {
   const gc = (globalThis as { gc?: () => void }).gc
   if (typeof gc !== 'function') {
     throw new Error(
-      'Retention guards need --expose-gc; it is set in config/vitest.config.ts test.execArgv.'
+      'Retention guards need --expose-gc. Run with `--config config/vitest.config.ts`, ' +
+        'which sets it in test.execArgv; a bare `vitest run` finds no config and omits it.'
     )
   }
   gc()
@@ -22,6 +23,7 @@ export type RetentionCase = {
   samples: number
   maxRetainedMiB?: number
   source: (index: number) => string
+  /** Runs before the measured window, for cases whose source must reach disk first. */
   prepare?: (source: string, index: number) => void
   retain: (source: string, index: number) => unknown
   verify: (first: never) => void

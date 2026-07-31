@@ -45,6 +45,28 @@ describe('detachString', () => {
     expect(detachedMiB).toBeLessThan(attachedMiB / 8)
   })
 
+  // Backs the comment in detached-string.ts: these read like harmless simplifications of
+  // the concat idiom, but none of them flatten, so each still pins the parent chunk.
+  it.each([
+    ['slice(0)', (value: string): string => value.slice(0)],
+    ['String(value)', (value: string): string => String(value)],
+    ['repeat(1)', (value: string): string => value.repeat(1)]
+  ])('does not detach via %s', (_name, simplify) => {
+    const chunkChars = 16 * 1024
+    const slices = 512
+    const held: string[] = []
+    forceGc()
+    const before = process.memoryUsage().heapUsed
+    for (let index = 0; index < slices; index += 1) {
+      held.push(simplify(`${'x'.repeat(chunkChars)}|retained-title-${index}`.slice(chunkChars + 1)))
+    }
+    forceGc()
+    const retainedMiB = (process.memoryUsage().heapUsed - before) / (1024 * 1024)
+
+    expect(held[0].length).toBeGreaterThanOrEqual(13)
+    expect(retainedMiB).toBeGreaterThan(((chunkChars * slices) / (1024 * 1024)) * 0.75)
+  })
+
   // Pins the V8_ROPE_MIN_LENGTH short-circuit: a V8 change must fail here, not leak silently.
   it('pins the 13-char slice boundary V8 uses to start retaining parents', () => {
     const chunkChars = 16 * 1024

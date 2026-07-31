@@ -13,6 +13,12 @@ import { AgentDetector } from './stats/agent-detector'
 const PTY_CHUNK_CHARS = 16 * 1024
 const PTYS = 512
 
+// Production keys one tail per PTY off a single detector, so share it across samples.
+const meaningfulContentDetector = new AgentDetector({
+  onAgentStart: () => undefined,
+  onAgentStop: () => undefined
+} as never)
+
 const RETENTION_CASES: RetentionCase[] = [
   retentionCase({
     name: 'terminal pending ansi tail',
@@ -63,16 +69,12 @@ const RETENTION_CASES: RetentionCase[] = [
     samples: PTYS,
     source: (index) => `${'y'.repeat(PTY_CHUNK_CHARS)}pty-${index}\x1b[38;2;12;34;5`,
     retain: (source, index) => {
-      const detector = new AgentDetector({
-        onAgentStart: () => undefined,
-        onAgentStop: () => undefined
-      } as never)
-      detector.onData(`pty-${index}`, '\x1b]0;⠂ Writing patch\x07', 100)
-      detector.onData(`pty-${index}`, source, 200)
-      return detector
+      meaningfulContentDetector.onData(`pty-${index}`, '\x1b]0;⠂ Writing patch\x07', 100)
+      meaningfulContentDetector.onData(`pty-${index}`, source, 200)
+      return meaningfulContentDetector
     },
     verify: (first) => {
-      expect(first.trackedPtyCount).toBe(1)
+      expect(first.trackedPtyCount).toBe(PTYS)
     }
   }),
 
