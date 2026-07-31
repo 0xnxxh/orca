@@ -14686,5 +14686,18 @@
         "unknown": "Restart Orca to try again."
       }
     }
+  },
+  "featureTips": {
+    "voice": {
+      "demoPrompt": "Refactor the voice setup flow and add coverage for the permission states.",
+      "startDictation": "Start dictation",
+      "agentPromptTitle": "Agent prompt · bonito",
+      "listening": "Listening...",
+      "focusPaneInstruction": "Focus a terminal, editor, or agent prompt, then press",
+      "theShortcut": "the dictation shortcut",
+      "startStopInstruction": "to start or stop.",
+      "settingsInstruction": "Change the model, dictation mode, or shortcut anytime in",
+      "settingsLink": "Settings → Voice"
+    }
   }
 }
