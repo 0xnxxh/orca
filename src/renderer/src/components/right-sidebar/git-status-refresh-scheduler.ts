@@ -8,10 +8,17 @@ export type GitStatusRefreshReason = 'activity' | 'safety'
 export type GitStatusRefreshPacing = {
   lastRunEndedAt: number
   lastRunDurationMs: number
+  nextRunId: number
+  latestFinishedRunId: number
 }
 
 export function createGitStatusRefreshPacing(): GitStatusRefreshPacing {
-  return { lastRunEndedAt: -Infinity, lastRunDurationMs: 0 }
+  return {
+    lastRunEndedAt: -Infinity,
+    lastRunDurationMs: 0,
+    nextRunId: 0,
+    latestFinishedRunId: 0
+  }
 }
 
 export type GitStatusRefreshScheduler = {
@@ -133,6 +140,7 @@ export function createGitStatusRefreshScheduler(
     clearSafetyTimer()
     inFlight = true
     const startedAt = Date.now()
+    const runId = ++pacing.nextRunId
     const controller = new AbortController()
     activeController = controller
     let result: Promise<void>
@@ -146,14 +154,17 @@ export function createGitStatusRefreshScheduler(
         // Status refresh errors are transient; the next signal or safety run retries.
       })
       .finally(() => {
-        pacing.lastRunEndedAt = Date.now()
-        // Why: cancelled scans never delivered a useful result, so their wall
-        // time must not stretch the next activity/safety gap. Otherwise hide →
-        // reveal after a slow abort waits out the aborted scan's full duration
-        // before the catch-up refresh can start.
-        pacing.lastRunDurationMs = controller.signal.aborted
-          ? 0
-          : Math.max(0, pacing.lastRunEndedAt - startedAt)
+        if (runId > pacing.latestFinishedRunId) {
+          pacing.latestFinishedRunId = runId
+          pacing.lastRunEndedAt = Date.now()
+          // Why: cancelled scans never delivered a useful result, so their wall
+          // time must not stretch the next activity/safety gap. Otherwise hide →
+          // reveal after a slow abort waits out the aborted scan's full duration
+          // before the catch-up refresh can start.
+          pacing.lastRunDurationMs = controller.signal.aborted
+            ? 0
+            : Math.max(0, pacing.lastRunEndedAt - startedAt)
+        }
         if (activeController === controller) {
           activeController = null
         }

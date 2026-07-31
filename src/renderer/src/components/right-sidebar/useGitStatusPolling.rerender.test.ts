@@ -172,6 +172,13 @@ describe('useGitStatusPolling rerender stability', () => {
     // Should trigger an immediate poll on the new worktree (total 2 calls)
     // without having to wait for the 3000ms timer.
     expect(refreshMock).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      useAppStore.setState({ activeWorktreeId: WORKTREE_ID })
+    })
+    await flushMicrotasks()
+
+    expect(refreshMock).toHaveBeenCalledTimes(3)
   })
 
   it('refreshes immediately when Source Control becomes visible', async () => {

@@ -312,6 +312,66 @@ describe('createGitStatusRefreshScheduler', () => {
     expect(task).toHaveBeenCalledTimes(2)
   })
 
+  it('does not let an older disposed run erase replacement backoff', async () => {
+    vi.useFakeTimers()
+    const calls: ReturnType<typeof deferred>[] = []
+    const task = vi.fn(() => {
+      const call = deferred()
+      calls.push(call)
+      return call.promise
+    })
+    const pacing = createGitStatusRefreshPacing()
+
+    const first = createScheduler(task, pacing)
+    first.resumeSafety()
+    first.dispose()
+
+    const second = createScheduler(task, pacing)
+    second.resumeSafety()
+    await vi.advanceTimersByTimeAsync(30_000)
+    calls[1]?.resolve()
+    await flushMicrotasks()
+
+    await vi.advanceTimersByTimeAsync(1)
+    calls[0]?.resolve()
+    await flushMicrotasks()
+    second.signal()
+
+    await vi.advanceTimersByTimeAsync(29_998)
+    expect(task).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(task).toHaveBeenCalledTimes(3)
+  })
+
+  it('lets an aborted old run pace repeated rebuilds until a replacement finishes', async () => {
+    vi.useFakeTimers()
+    const calls: ReturnType<typeof deferred>[] = []
+    const task = vi.fn(() => {
+      const call = deferred()
+      calls.push(call)
+      return call.promise
+    })
+    const pacing = createGitStatusRefreshPacing()
+
+    const first = createScheduler(task, pacing)
+    first.resumeSafety()
+    first.dispose()
+
+    const second = createScheduler(task, pacing)
+    second.resumeSafety()
+    calls[0]?.resolve()
+    await flushMicrotasks()
+    second.dispose()
+
+    const third = createScheduler(task, pacing)
+    third.resumeSafety()
+    expect(task).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(2999)
+    expect(task).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(task).toHaveBeenCalledTimes(3)
+  })
+
   it('cleans up debounce and safety timers on dispose', async () => {
     vi.useFakeTimers()
     const task = vi.fn(async () => {})

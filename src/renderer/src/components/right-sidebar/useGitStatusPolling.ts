@@ -164,18 +164,21 @@ export function useGitStatusPolling(options: { enabled?: boolean } = {}): void {
   const statusRefreshGenerationRef = useRef(0)
 
   const statusSchedulerRef = useRef<GitStatusRefreshScheduler | null>(null)
-  // Why: pacing is keyed by worktree, not by scheduler instance — the rebuilds
-  // below (execution-host/push-target changes) must not reset it, or a flapping
-  // host id lets sustained change signals run git at the bare debounce.
-  const statusPacingByWorktreeRef = useRef<Map<string, GitStatusRefreshPacing> | null>(null)
+  // Why: pacing belongs to the current worktree, not to scheduler instances —
+  // execution-host/push-target rebuilds must not reset it, or a flapping host id
+  // lets sustained change signals run git at the bare debounce.
+  const statusPacingRef = useRef<{
+    key: string
+    pacing: GitStatusRefreshPacing
+  } | null>(null)
   useEffect(() => {
     const generation = ++statusRefreshGenerationRef.current
-    const pacingByWorktree = (statusPacingByWorktreeRef.current ??= new Map())
     const pacingKey = `${activeWorktreeId}\0${worktreePath}`
-    let pacing = pacingByWorktree.get(pacingKey)
+    let pacing =
+      statusPacingRef.current?.key === pacingKey ? statusPacingRef.current.pacing : undefined
     if (!pacing) {
       pacing = createGitStatusRefreshPacing()
-      pacingByWorktree.set(pacingKey, pacing)
+      statusPacingRef.current = { key: pacingKey, pacing }
     }
     const scheduler = createGitStatusRefreshScheduler(
       ({ reason, signal }) =>
