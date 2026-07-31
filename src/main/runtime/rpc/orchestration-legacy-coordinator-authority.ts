@@ -1,4 +1,5 @@
 import type { OrcaRuntimeService, OrchestrationCompatibilityCallerAuthority } from '../orca-runtime'
+import type { OrchestrationDb } from '../orchestration/db'
 import type { LegacyCompatibilityPrincipalRow } from '../orchestration/types'
 import type { LegacyCoordinatorAuthorityProof, RpcRequest } from './core'
 import {
@@ -24,7 +25,7 @@ export class LegacyCoordinatorAuthority {
       return undefined
     }
     // Why: an unnamed Run means the caller's own binding; only an unbound caller can still mean the adopted Run.
-    const requestedRun = requestedRunId ?? this.boundRunId(request) ?? adoption.adopted_run_id
+    const requestedRun = requestedRunId ?? boundRunId(db, request) ?? adoption.adopted_run_id
     if (requestedRun !== adoption.adopted_run_id) {
       return undefined
     }
@@ -137,14 +138,6 @@ export class LegacyCoordinatorAuthority {
     return run.id
   }
 
-  private boundRunId(request: RpcRequest): string | undefined {
-    const paneKey = request.orchestrationCompatibilityEvidence?.paneKey
-    if (!paneKey) {
-      return undefined
-    }
-    return this.runtime.getOrchestrationDb().getCurrentRunForPane(paneKey)?.id
-  }
-
   private candidate(
     runId: string,
     identity: {
@@ -186,4 +179,9 @@ export class LegacyCoordinatorAuthority {
       principal.process_incarnation === attestation.processIncarnation
     )
   }
+}
+
+function boundRunId(db: OrchestrationDb, request: RpcRequest): string | undefined {
+  const paneKey = request.orchestrationCompatibilityEvidence?.paneKey
+  return paneKey ? db.getCurrentRunForPane(paneKey)?.id : undefined
 }
