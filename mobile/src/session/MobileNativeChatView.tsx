@@ -162,7 +162,11 @@ export function MobileNativeChatView({
   const [atBottom, setAtBottom] = useState(true)
   const sendScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { fontScale, pinchGesture } = useMobileNativeChatPinchGesture()
-  const textExpansion = useMobileNativeChatTextExpansion(loadFullText ?? unavailableFullText)
+  const pauseTailFollow = useCallback(() => setAtBottom(false), [])
+  const textExpansion = useMobileNativeChatTextExpansion(
+    loadFullText ?? unavailableFullText,
+    pauseTailFollow
+  )
   useEffect(
     () => () => {
       if (sendScrollTimerRef.current) {

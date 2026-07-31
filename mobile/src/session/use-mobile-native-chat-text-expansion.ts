@@ -30,7 +30,8 @@ export function mobileNativeChatTextKey(
 
 /** Retains at most one full block and reuses it across collapse/re-expand. */
 export function useMobileNativeChatTextExpansion(
-  loadFullText: FullTextLoader
+  loadFullText: FullTextLoader,
+  onExpand?: () => void
 ): MobileNativeChatTextExpansion {
   const [state, setState] = useState<ExpansionState>(() => emptyState(loadFullText))
   let current = state
@@ -50,9 +51,11 @@ export function useMobileNativeChatTextExpansion(
         return
       }
       if (current.cached?.key === key) {
+        onExpand?.()
         setState({ ...current, expandedKey: key, errorKey: null })
         return
       }
+      onExpand?.()
       const request = { key }
       setState({
         source: loadFullText,
@@ -83,7 +86,7 @@ export function useMobileNativeChatTextExpansion(
           )
         })
     },
-    [current, loadFullText]
+    [current, loadFullText, onExpand]
   )
 
   return useMemo(

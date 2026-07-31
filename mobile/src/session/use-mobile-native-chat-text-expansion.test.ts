@@ -23,36 +23,38 @@ describe('useMobileNativeChatTextExpansion', () => {
     expansion = null
   })
 
-  function Harness({ load }: { load: () => Promise<string> }): null {
-    expansion = useMobileNativeChatTextExpansion(load)
+  function Harness({
+    load,
+    onExpand
+  }: {
+    load: () => Promise<string>
+    onExpand?: () => void
+  }): null {
+    expansion = useMobileNativeChatTextExpansion(load, onExpand)
     return null
   }
 
-  async function mount(load: () => Promise<string>): Promise<void> {
-    const original = console.error
-    const spy = vi.spyOn(console, 'error').mockImplementation((...args) => {
-      if (typeof args[0] === 'string' && args[0].includes('react-test-renderer is deprecated')) {
-        return
-      }
-      original(...args)
-    })
+  async function mount(load: () => Promise<string>, onExpand?: () => void): Promise<void> {
+    const restore = suppressRendererWarning()
     try {
       await act(async () => {
-        renderer = create(createElement(Harness, { load }))
+        renderer = create(createElement(Harness, { load, onExpand }))
       })
     } finally {
-      spy.mockRestore()
+      restore()
     }
   }
 
   it('caches one full block and re-expands it without another read', async () => {
     const load = vi.fn().mockResolvedValue('full first')
-    await mount(load)
+    const onExpand = vi.fn()
+    await mount(load, onExpand)
 
     await act(async () => {
       expansion?.toggle('message', first)
       await Promise.resolve()
     })
+    expect(onExpand).toHaveBeenCalledOnce()
     expect(expansion?.cached?.text).toBe('full first')
     expect(expansion?.expandedKey).toBe(expansion?.cached?.key)
 
@@ -60,6 +62,7 @@ describe('useMobileNativeChatTextExpansion', () => {
     expect(expansion?.expandedKey).toBeNull()
     act(() => expansion?.toggle('message', first))
 
+    expect(onExpand).toHaveBeenCalledTimes(2)
     expect(expansion?.expandedKey).toBe(expansion?.cached?.key)
     expect(load).toHaveBeenCalledTimes(1)
   })
@@ -97,3 +100,14 @@ describe('useMobileNativeChatTextExpansion', () => {
     expect(expansion?.expandedKey).toBeNull()
   })
 })
+
+function suppressRendererWarning(): () => void {
+  const original = console.error
+  const spy = vi.spyOn(console, 'error').mockImplementation((...args) => {
+    if (typeof args[0] === 'string' && args[0].includes('react-test-renderer is deprecated')) {
+      return
+    }
+    original(...args)
+  })
+  return () => spy.mockRestore()
+}

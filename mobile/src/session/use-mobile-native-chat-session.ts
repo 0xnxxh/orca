@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type {
   NativeChatMessage,
   NativeChatTextRetrieval
@@ -96,12 +96,16 @@ export function useMobileNativeChatSession(args: {
   const limitRef = useRef(INITIAL_LIMIT)
   // Tracks the live session so a late loadEarlier resolve can detect a swap.
   const sessionIdRef = useRef<string | null>(sessionId)
-  sessionIdRef.current = sessionId
   const identityRef = useRef(identity)
-  identityRef.current = identity
   const clientRef = useRef(client)
-  clientRef.current = client
   const streamGenerationRef = useRef(0)
+
+  useLayoutEffect(() => {
+    // Async completions must only observe inputs from a committed render.
+    sessionIdRef.current = sessionId
+    identityRef.current = identity
+    clientRef.current = client
+  }, [client, identity, sessionId])
 
   // Replace the base list (read results are an ordered tail). Resets the merger
   // cache so the index is rebuilt once over the new base.
