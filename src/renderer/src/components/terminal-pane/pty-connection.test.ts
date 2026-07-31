@@ -6110,19 +6110,24 @@ describe('connectPanePty', () => {
     expect(window.api.agentStatus.inferInterrupt).not.toHaveBeenCalled()
   })
 
-  it('does not infer interrupts when the main process rejects acknowledged input', async () => {
+  it('preserves a local pane when an unavailable route rejects acknowledged input', async () => {
     const { connectPanePty } = await import('./pty-connection')
+    const { _resetTerminalPaneRecoveryForTests } = await import('./terminal-pane-recovery')
 
     vi.useFakeTimers()
     vi.setSystemTime(1_100)
-    const transport = createMockTransport('pty-mobile-race')
+    _resetTerminalPaneRecoveryForTests()
+    vi.mocked(window.api.pty.hasPty).mockResolvedValue(null)
+    const remountTerminalTabForRecovery = vi.fn<(tabId: string) => boolean>(() => true)
+    mockStoreState = { ...mockStoreState, remountTerminalTabForRecovery } as StoreState
+    const transport = createMockTransport('pty-route-unavailable')
     transport.sendInputAccepted = vi.fn().mockResolvedValue(false)
     transportFactoryQueue.push(transport)
     const paneKey = makePaneKey('tab-1', LEAF_1)
     mockStoreState.agentStatusByPaneKey[paneKey] = {
       paneKey,
       state: 'working',
-      prompt: 'mobile race input',
+      prompt: 'route unavailable input',
       updatedAt: 1_000,
       stateStartedAt: 900,
       agentType: 'codex',
@@ -6151,6 +6156,9 @@ describe('connectPanePty', () => {
     expect(transport.sendInputAccepted).toHaveBeenCalledWith('\x03')
     expect(transport.sendInput).not.toHaveBeenCalled()
     expect(window.api.agentStatus.inferInterrupt).not.toHaveBeenCalled()
+    expect(window.api.pty.hasPty).toHaveBeenCalledWith('pty-route-unavailable')
+    expect(remountTerminalTabForRecovery).not.toHaveBeenCalled()
+    _resetTerminalPaneRecoveryForTests()
   })
 
   it('remounts a connected pane when main reports its daemon write unavailable', async () => {
