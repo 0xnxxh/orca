@@ -4,7 +4,7 @@ import { isFloatingWorkspaceWorktreeId } from './floating-workspace'
 import { isMobileNativeChatTranscriptReadable } from './mobile-native-chat-eligibility'
 import { getRepoIdFromMobileWorktreeId } from './mobile-session-route-helpers'
 
-type RepoSummary = { id: string; connectionId?: string | null }
+type WorkspaceSummary = { id: string; connectionId?: string | null }
 type ReadabilityState = { client: RpcClient | null; worktreeId: string; readable: boolean }
 
 export function useMobileNativeChatReadability(
@@ -12,6 +12,7 @@ export function useMobileNativeChatReadability(
   worktreeId: string
 ): boolean {
   const isFloatingWorkspace = isFloatingWorkspaceWorktreeId(worktreeId)
+  const isFolderWorkspace = worktreeId.startsWith('folder:')
   const [state, setState] = useState<ReadabilityState>({
     client: null,
     worktreeId: '',
@@ -28,20 +29,27 @@ export function useMobileNativeChatReadability(
       return
     }
     void client
-      .sendRequest('repo.list')
+      .sendRequest(isFolderWorkspace ? 'folderWorkspace.list' : 'repo.list')
       .then((response) => {
         if (!active) {
           return
         }
-        const repos = response.ok
-          ? ((response.result as { repos?: RepoSummary[] }).repos ?? [])
+        const workspaces = response.ok
+          ? isFolderWorkspace
+            ? ((response.result as { folderWorkspaces?: WorkspaceSummary[] }).folderWorkspaces ??
+              [])
+            : ((response.result as { repos?: WorkspaceSummary[] }).repos ?? [])
           : []
-        const repoId = getRepoIdFromMobileWorktreeId(worktreeId)
-        const repo = repos.find((candidate) => candidate.id === repoId)
+        const workspaceId = isFolderWorkspace
+          ? worktreeId.slice('folder:'.length)
+          : getRepoIdFromMobileWorktreeId(worktreeId)
+        const workspace = workspaces.find((candidate) => candidate.id === workspaceId)
         setState({
           client,
           worktreeId,
-          readable: repo ? isMobileNativeChatTranscriptReadable(repo.connectionId ?? null) : false
+          readable: workspace
+            ? isMobileNativeChatTranscriptReadable(workspace.connectionId ?? null)
+            : false
         })
       })
       .catch(() => {
@@ -52,7 +60,7 @@ export function useMobileNativeChatReadability(
     return () => {
       active = false
     }
-  }, [client, isFloatingWorkspace, worktreeId])
+  }, [client, isFloatingWorkspace, isFolderWorkspace, worktreeId])
   if (isFloatingWorkspace) {
     return true
   }

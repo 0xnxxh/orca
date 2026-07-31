@@ -21,12 +21,20 @@ describe('useMobileNativeChatReadability', () => {
 
   async function mount(
     connectionId: string | null,
-    worktreeId = 'repo::/worktree'
+    worktreeId = 'repo::/worktree',
+    rejectRequest = false
   ): Promise<ReturnType<typeof vi.fn>> {
-    const sendRequest = vi.fn().mockResolvedValue({
-      ok: true,
-      result: { repos: [{ id: 'repo', connectionId }] }
-    })
+    const sendRequest = rejectRequest
+      ? vi.fn().mockRejectedValue(new Error('method unavailable'))
+      : vi.fn().mockImplementation((method: string) =>
+          Promise.resolve({
+            ok: true,
+            result:
+              method === 'folderWorkspace.list'
+                ? { folderWorkspaces: [{ id: 'folder-1', connectionId }] }
+                : { repos: [{ id: 'repo', connectionId }] }
+          })
+        )
     const client = {
       sendRequest
     } as unknown as RpcClient
@@ -65,6 +73,33 @@ describe('useMobileNativeChatReadability', () => {
   it('fails closed for Model-A SSH transcript hosts', async () => {
     await mount('model-a-ssh')
     expect(readable).toBe(false)
+  })
+
+  it('resolves folder-workspace transcript readability from the folder catalog', async () => {
+    const localRequest = await mount(null, 'folder:folder-1')
+    expect(readable).toBe(true)
+    expect(localRequest).toHaveBeenCalledWith('folderWorkspace.list')
+    act(() => renderer?.unmount())
+    renderer = null
+
+    await mount('runtime-ssh-environment', 'folder:folder-1')
+    expect(readable).toBe(true)
+    act(() => renderer?.unmount())
+    renderer = null
+
+    await mount('model-a-ssh', 'folder:folder-1')
+    expect(readable).toBe(false)
+  })
+
+  it('fails closed when the folder catalog cannot resolve the route', async () => {
+    await mount(null, 'folder:missing')
+    expect(readable).toBe(false)
+    act(() => renderer?.unmount())
+    renderer = null
+
+    const unavailableRequest = await mount(null, 'folder:folder-1', true)
+    expect(readable).toBe(false)
+    expect(unavailableRequest).toHaveBeenCalledWith('folderWorkspace.list')
   })
 
   it('treats the host-local floating workspace as readable without listing repos', async () => {
