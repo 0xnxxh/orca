@@ -26,11 +26,18 @@ async function writeEvidence(
 }
 
 function removeOriginRemoteIfPresent(cwd: string): void {
-  try {
-    execFileSync('git', ['remote', 'remove', 'origin'], { cwd, stdio: 'pipe' })
-  } catch {
-    // Why: setup and teardown must not fail just because origin is absent.
+  // Why: check presence instead of swallowing errors, so real Git failures still surface.
+  const remotes = execFileSync('git', ['remote'], {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+    .split('\n')
+    .map((line) => line.trim())
+  if (!remotes.includes('origin')) {
+    return
   }
+  execFileSync('git', ['remote', 'remove', 'origin'], { cwd, stdio: 'pipe' })
 }
 
 test.describe('Source Control Create PR intent worktree switching', () => {
