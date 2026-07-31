@@ -106,6 +106,11 @@ export function getTerminalImeModifiedEnterKind(
   return null
 }
 
+// Why: an active Windows IME reports every key it consumes as Process/229, whatever the physical key was.
+export function isTerminalImeConsumedKey(event: Pick<KeyboardEvent, 'key' | 'keyCode'>): boolean {
+  return event.key === 'Process' && event.keyCode === 229
+}
+
 export function isTerminalImeProcessEnter(
   event: Pick<
     KeyboardEvent,
@@ -113,9 +118,9 @@ export function isTerminalImeProcessEnter(
   >
 ): boolean {
   return (
-    event.key === 'Process' &&
-    event.keyCode === 229 &&
-    // Why: an active Windows IME reports every consumed key as Process/229, so only the physical code distinguishes Enter.
+    isTerminalImeConsumedKey(event) &&
+    // Only the physical code distinguishes Enter. Keep this strict: a key event without a scan code
+    // reports code '' and falls back to the Enter keyup path rather than guessing.
     (event.code === 'Enter' || event.code === 'NumpadEnter') &&
     getTerminalImeModifiedEnterKind(event) !== null
   )

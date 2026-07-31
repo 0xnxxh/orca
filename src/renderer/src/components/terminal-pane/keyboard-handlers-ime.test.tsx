@@ -280,7 +280,10 @@ describe('Windows IME keyboard ownership', () => {
   it.each([
     // Why: an active IME reports every consumed key as Process/229, e.g. Shift+ㅃ or an MS-IME Ctrl chord.
     { label: 'Shift+KeyQ', code: 'KeyQ', modifier: { shiftKey: true } },
-    { label: 'Ctrl+KeyI', code: 'KeyI', modifier: { ctrlKey: true } }
+    { label: 'Ctrl+KeyI', code: 'KeyI', modifier: { ctrlKey: true } },
+    // Ctrl+K / Ctrl+W are bound on Windows, so a leaked Process chord would clear or close the pane.
+    { label: 'Ctrl+KeyK', code: 'KeyK', modifier: { ctrlKey: true } },
+    { label: 'Ctrl+KeyW', code: 'KeyW', modifier: { ctrlKey: true } }
   ])('does not treat an IME-consumed $label as a modified Enter', ({ code, modifier }) => {
     const harness = createHarness()
     const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
@@ -299,6 +302,36 @@ describe('Windows IME keyboard ownership', () => {
 
     expect(consumed.defaultPrevented).toBe(false)
     expect(harness.sendInput).not.toHaveBeenCalled()
+    expect(harness.deps.onClearPaneScrollback).not.toHaveBeenCalled()
+    expect(harness.deps.onRequestClosePane).not.toHaveBeenCalled()
+    hook.unmount()
+    harness.dispose()
+  })
+
+  it.each([
+    { label: 'Ctrl+KeyK', code: 'KeyK' },
+    { label: 'Ctrl+KeyW', code: 'KeyW' }
+  ])('stops an IME-consumed $label from reaching window-level shortcuts', ({ code }) => {
+    const harness = createHarness()
+    const hook = renderHook(() => useTerminalKeyboardShortcuts(harness.deps))
+    const windowHandler = vi.fn()
+    window.addEventListener('keydown', windowHandler)
+    harness.startComposition()
+
+    harness.terminalInput.dispatchEvent(
+      keyboardEvent('keydown', {
+        key: 'Process',
+        code,
+        keyCode: 229,
+        timeStamp: 10,
+        isComposing: true,
+        ctrlKey: true
+      })
+    )
+    vi.runAllTimers()
+
+    expect(windowHandler).not.toHaveBeenCalled()
+    window.removeEventListener('keydown', windowHandler)
     hook.unmount()
     harness.dispose()
   })
