@@ -110,6 +110,13 @@ function getEntryTabId(entry: AgentStatusEntry): string | null {
   return parsePaneKey(entry.paneKey)?.tabId ?? null
 }
 
+function hasUnsettledOrUnknownDispatch({ orchestration }: AgentStatusEntry): boolean {
+  // Why: provider done hooks can fire mid-Dispatch; only runtime-confirmed settlement makes sleep safe.
+  return orchestration
+    ? !['completed', 'failed', 'circuit_broken'].includes(orchestration.dispatchStatus ?? '')
+    : false
+}
+
 function getEligiblePane(args: {
   entry: AgentStatusEntry
   tab: TerminalTab
@@ -140,6 +147,7 @@ function getEligiblePane(args: {
   if (
     entry.state !== 'done' ||
     entry.interrupted === true ||
+    hasUnsettledOrUnknownDispatch(entry) ||
     (sleepingRecord && !hasOnlyLivePiCompatibleRecoveryIdentity)
   ) {
     return null

@@ -36036,6 +36036,7 @@ describe('OrcaRuntimeService', () => {
     expect(result.agentOrchestrationByPaneKey?.[workerPaneKey]).toMatchObject({
       taskId: 'task-1',
       dispatchId: 'ctx-1',
+      dispatchStatus: 'dispatched',
       taskTitle: 'Dispatch prompt work',
       displayName: 'Review dispatch prompts and make worker labels distinct',
       parentPaneKey: coordinatorPaneKey,
@@ -36113,6 +36114,7 @@ describe('OrcaRuntimeService', () => {
     expect(result.agentOrchestrationByPaneKey?.[workerPaneKey]).toMatchObject({
       taskId: 'task-done',
       dispatchId: 'ctx-done',
+      dispatchStatus: 'completed',
       parentPaneKey: coordinatorPaneKey,
       parentTerminalHandle: coordinatorHandle
     })
@@ -36170,7 +36172,8 @@ describe('OrcaRuntimeService', () => {
 
     expect(result.agentOrchestrationByPaneKey?.[workerPaneKey]).toEqual({
       taskId: 'task-done',
-      dispatchId: 'ctx-done'
+      dispatchId: 'ctx-done',
+      dispatchStatus: 'completed'
     })
   })
 

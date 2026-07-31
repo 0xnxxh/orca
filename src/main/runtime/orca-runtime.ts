@@ -29198,6 +29198,7 @@ export class OrcaRuntimeService {
     return {
       taskId: dispatch.task_id,
       dispatchId: dispatch.id,
+      dispatchStatus: dispatch.status,
       ...(display.taskTitle ? { taskTitle: display.taskTitle } : {}),
       ...(display.displayName ? { displayName: display.displayName } : {}),
       ...(parentTerminalHandle ? { parentTerminalHandle } : {}),

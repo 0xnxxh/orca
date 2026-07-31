@@ -134,6 +134,39 @@ describe('agent sleep planner', () => {
     ).toEqual([])
   })
 
+  it.each([undefined, 'pending', 'dispatched'] as const)(
+    'blocks orchestration panes while dispatch status is %s',
+    (dispatchStatus) => {
+      const orchestrated = entry({
+        orchestration: {
+          taskId: 'task-1',
+          dispatchId: 'ctx-1',
+          ...(dispatchStatus ? { dispatchStatus } : {})
+        }
+      })
+
+      expect(
+        plannedPaneKeys(
+          snapshot({ agentStatusByPaneKey: { [orchestrated.paneKey]: orchestrated } })
+        )
+      ).toEqual([])
+    }
+  )
+
+  it('allows orchestration panes after authoritative dispatch settlement', () => {
+    const orchestrated = entry({
+      orchestration: {
+        taskId: 'task-1',
+        dispatchId: 'ctx-1',
+        dispatchStatus: 'completed'
+      }
+    })
+
+    expect(
+      plannedPaneKeys(snapshot({ agentStatusByPaneKey: { [orchestrated.paneKey]: orchestrated } }))
+    ).toEqual([orchestrated.paneKey])
+  })
+
   it('requires the idle threshold and blocks input after done', () => {
     const fresh = entry({ updatedAt: NOW - 1_000 })
     expect(

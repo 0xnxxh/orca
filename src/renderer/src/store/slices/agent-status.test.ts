@@ -265,6 +265,36 @@ describe('agent status runtime orchestration metadata', () => {
     })
   })
 
+  it('updates runtime status for the same dispatch', () => {
+    vi.useFakeTimers()
+    const store = createTestStore()
+    const childPaneKey = 'tab-child:11111111-1111-4111-8111-111111111111'
+
+    store.getState().setAgentStatus(childPaneKey, {
+      state: 'done',
+      prompt: 'child agent',
+      agentType: 'claude',
+      orchestration: {
+        taskId: 'task-1',
+        dispatchId: 'ctx-1',
+        dispatchStatus: 'dispatched'
+      }
+    })
+    store.getState().setRuntimeAgentOrchestrationByPaneKey({
+      [childPaneKey]: {
+        taskId: 'task-1',
+        dispatchId: 'ctx-1',
+        dispatchStatus: 'completed'
+      }
+    })
+
+    expect(store.getState().agentStatusByPaneKey[childPaneKey].orchestration).toMatchObject({
+      taskId: 'task-1',
+      dispatchId: 'ctx-1',
+      dispatchStatus: 'completed'
+    })
+  })
+
   it('keeps current payload orchestration ahead of a stale runtime map entry', () => {
     vi.useFakeTimers()
     const store = createTestStore()
