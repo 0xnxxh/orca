@@ -45,7 +45,10 @@ import {
 } from '@/store/slices/runtime-environment-ssh'
 import { hydrateRuntimeEnvironmentSshState } from '@/runtime/runtime-environment-ssh-state'
 import { handleInternalTerminalFileDrop } from './terminal-drop-handler'
-import { recordTerminalUserInputForLeaf } from './terminal-input-activity'
+import {
+  markTerminalUserInputIntentForLeaf,
+  recordTerminalUserInputForLeaf
+} from './terminal-input-activity'
 import {
   collectLeafIdsInOrder,
   EMPTY_LAYOUT,
@@ -2029,6 +2032,9 @@ function TerminalPane(
         setTerminalError(formatTerminalPasteExecutionError(execution.reason))
         return
       }
+      if (text) {
+        recordTerminalUserInputForLeaf(tabId, pane.leafId, ptyId)
+      }
       if (options?.recoverImagePasteWebglAtlas) {
         scheduleImagePasteWebglAtlasRecovery()
       }
@@ -2053,7 +2059,7 @@ function TerminalPane(
         runtimeEnvironmentId,
         forceBracketedMultilineTextPaste,
         onPasteIntent: () =>
-          recordTerminalUserInputForLeaf(
+          markTerminalUserInputIntentForLeaf(
             tabId,
             pane.leafId,
             paneTransportsRef.current.get(pane.id)?.getPtyId()
@@ -2206,7 +2212,7 @@ function TerminalPane(
         runtimeEnvironmentId,
         forceBracketedMultilineTextPaste,
         onPasteIntent: () =>
-          recordTerminalUserInputForLeaf(
+          markTerminalUserInputIntentForLeaf(
             tabId,
             pane.leafId,
             paneTransportsRef.current.get(pane.id)?.getPtyId()
@@ -2696,7 +2702,7 @@ function TerminalPane(
       armPrimarySelectionNativePasteSuppression()
       clickedPane.terminal.focus()
       void readPrimarySelectionText(() =>
-        recordTerminalUserInputForLeaf(
+        markTerminalUserInputIntentForLeaf(
           tabId,
           clickedPane.leafId,
           paneTransportsRef.current.get(clickedPane.id)?.getPtyId()
@@ -2756,7 +2762,9 @@ function TerminalPane(
         })
         if (execution.status !== 'pasted') {
           setTerminalError(formatTerminalPasteExecutionError(execution.reason))
+          return
         }
+        recordTerminalUserInputForLeaf(tabId, clickedPane.leafId, ptyId)
       })
     },
     [getPrimarySelectionMiddleClickPane, tabId, worktreeId]

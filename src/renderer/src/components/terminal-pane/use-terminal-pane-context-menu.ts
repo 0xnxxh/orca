@@ -41,7 +41,10 @@ import { recordCreatedTerminalPaneSplit } from './terminal-pane-split-completion
 import { splitTerminalPaneWithInheritedCwd } from './terminal-pane-split-with-inherited-cwd'
 import { useAppStore } from '@/store'
 import { translate } from '@/i18n/i18n'
-import { recordTerminalUserInputForLeaf } from './terminal-input-activity'
+import {
+  markTerminalUserInputIntentForLeaf,
+  recordTerminalUserInputForLeaf
+} from './terminal-input-activity'
 import { copyTerminalHandleForPane } from './terminal-handle-copy'
 import { runCopyPaneId, runTerminalCopy } from './terminal-copy-rejection-guards'
 import { copyTerminalSelection } from './terminal-selection-copy'
@@ -266,6 +269,9 @@ export function useTerminalPaneContextMenu({
       onPasteError(formatTerminalPasteExecutionError(execution.reason))
       return false
     }
+    if (text) {
+      recordTerminalUserInputForLeaf(tabId, pane.leafId, ptyId)
+    }
     if (options?.recoverImagePasteWebglAtlas) {
       scheduleImagePasteWebglAtlasRecovery()
     }
@@ -321,7 +327,7 @@ export function useTerminalPaneContextMenu({
       runtimeEnvironmentId,
       forceBracketedMultilineTextPaste,
       onPasteIntent: () =>
-        recordTerminalUserInputForLeaf(
+        markTerminalUserInputIntentForLeaf(
           tabId,
           pane.leafId,
           paneTransportsRef.current.get(pane.id)?.getPtyId()

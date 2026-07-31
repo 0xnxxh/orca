@@ -50,6 +50,24 @@ export function markTerminalUserInputForPtyId(
   }
 }
 
+export function markTerminalUserInputIntentForLeaf(
+  tabId: string,
+  leafId: string,
+  ptyId?: string | null
+): void {
+  try {
+    const state = useAppStore.getState()
+    const layoutPtyId = state.terminalLayoutsByTabId?.[tabId]?.ptyIdsByLeafId?.[leafId]
+    const tabPtyIds = state.ptyIdsByTabId?.[tabId] ?? []
+    markTerminalUserInputForPtyId(
+      ptyId ?? layoutPtyId ?? (tabPtyIds.length === 1 ? tabPtyIds[0] : null),
+      makePaneKey(tabId, leafId)
+    )
+  } catch {
+    // Malformed layouts cannot identify a safe draft-cancellation target.
+  }
+}
+
 export function recordTerminalUserInputForLeaf(
   tabId: string,
   leafId: string,

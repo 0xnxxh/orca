@@ -13,6 +13,7 @@ import {
   submitPromptToAgentPty
 } from './agent-paste-draft'
 import {
+  markTerminalUserInputIntentForLeaf,
   markTerminalUserInputForPtyId,
   recordTerminalUserInputForLeaf
 } from '@/components/terminal-pane/terminal-input-activity'
@@ -444,7 +445,8 @@ describe('pasteDraftWhenAgentReady', () => {
     })
     await flushMicrotasks()
 
-    recordTerminalUserInputForLeaf('tab-1', TARGET_LEAF_ID)
+    markTerminalUserInputIntentForLeaf('tab-1', TARGET_LEAF_ID)
+    expect(testState.appState.recordTerminalInput).not.toHaveBeenCalled()
     testState.appState.terminalLayoutsByTabId = {
       'tab-1': {
         ptyIdsByLeafId: {
