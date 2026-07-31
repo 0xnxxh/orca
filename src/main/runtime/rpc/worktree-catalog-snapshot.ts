@@ -1,59 +1,48 @@
-import { randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import type {
   RuntimeWorktreePsConditionalResult,
   RuntimeWorktreePsResult
 } from '../../../shared/runtime-types'
 
-type CachedWorktreeCatalog = {
+// Why: 192 bits of a sha256 over the serialized catalog. Accidental collision is
+// impossible at any realistic poll rate, and this is not an auth boundary.
+const SNAPSHOT_ID_LENGTH = 32
+
+type MemoizedCatalogId = {
   result: RuntimeWorktreePsResult
   snapshotId: string
 }
 
-const MAX_CACHED_LIMITS = 8
+// Why: a pure memo over the most recent catalog. Because ids are derived from content
+// rather than from cache state, dropping or thrashing this slot costs CPU and nothing
+// else — it can never produce a wrong answer, so it needs no scoping, eviction policy,
+// or per-caller isolation. Serializing every poll instead would cost ~3x the compare.
+let memoizedId: MemoizedCatalogId | null = null
 
-export class WorktreeCatalogSnapshotCache {
-  private readonly runtimeScope = randomUUID()
-  private sequence = 0
-  private readonly cachedByLimit = new Map<number | undefined, CachedWorktreeCatalog>()
-
-  resolve(
-    limit: number | undefined,
-    result: RuntimeWorktreePsResult,
-    afterSnapshotId: string | null
-  ): RuntimeWorktreePsConditionalResult {
-    const cached = this.cachedByLimit.get(limit)
-    if (cached && isDeepStrictEqual(cached.result, result)) {
-      this.cachedByLimit.delete(limit)
-      this.cachedByLimit.set(limit, cached)
-      if (afterSnapshotId === cached.snapshotId) {
-        return { unchanged: true, snapshotId: cached.snapshotId }
-      }
-      return { ...result, snapshotId: cached.snapshotId }
-    }
-
-    const snapshotId = `${this.runtimeScope}:${++this.sequence}`
-    this.cachedByLimit.delete(limit)
-    this.cachedByLimit.set(limit, { result, snapshotId })
-    if (this.cachedByLimit.size > MAX_CACHED_LIMITS) {
-      this.cachedByLimit.delete(this.cachedByLimit.keys().next().value)
-    }
-    return { ...result, snapshotId }
+function worktreeCatalogSnapshotId(result: RuntimeWorktreePsResult): string {
+  if (memoizedId && isDeepStrictEqual(memoizedId.result, result)) {
+    return memoizedId.snapshotId
   }
+  const snapshotId = createHash('sha256')
+    .update(JSON.stringify(result))
+    .digest('base64url')
+    .slice(0, SNAPSHOT_ID_LENGTH)
+  memoizedId = { result, snapshotId }
+  return snapshotId
 }
 
-const snapshotsByRuntime = new WeakMap<object, WorktreeCatalogSnapshotCache>()
-
+// Why: content-addressed like an HTTP ETag, so snapshot ownership lives entirely in the
+// id. Any number of concurrent clients, any `limit`, and any runtime restart stay correct
+// by construction: ids match only when the catalogs are byte-identical, which is exactly
+// when `unchanged` is the right answer.
 export function resolveWorktreeCatalogSnapshot(
-  runtime: object,
-  limit: number | undefined,
   result: RuntimeWorktreePsResult,
   afterSnapshotId: string | null
 ): RuntimeWorktreePsConditionalResult {
-  let snapshots = snapshotsByRuntime.get(runtime)
-  if (!snapshots) {
-    snapshots = new WorktreeCatalogSnapshotCache()
-    snapshotsByRuntime.set(runtime, snapshots)
+  const snapshotId = worktreeCatalogSnapshotId(result)
+  if (afterSnapshotId === snapshotId) {
+    return { unchanged: true, snapshotId }
   }
-  return snapshots.resolve(limit, result, afterSnapshotId)
+  return { ...result, snapshotId }
 }

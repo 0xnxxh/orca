@@ -29,6 +29,7 @@ import { loadHosts } from '../src/transport/host-store'
 import { navigateToMobileHostEdit } from '../src/transport/host-edit-navigation'
 import { removeHostAndCloseClient } from '../src/transport/host-removal-lifecycle'
 import { pickResumeWorktree } from '../src/worktree/resume-worktree'
+import { WORKTREE_PS_FULL_LIMIT } from '../src/worktree/worktree-catalog-snapshot-client'
 import type { RpcClient } from '../src/transport/rpc-client'
 import { sendSingleFlightRequest } from '../src/transport/request-single-flight'
 import {
@@ -185,8 +186,7 @@ function fetchWorktreeInfo(
     })
   }
 
-  // Why: worktree.ps defaults to 200 and silently truncates; request all so counts are accurate.
-  sendSingleFlightRequest(client, hostId, 'worktree.ps', { limit: 10000 })
+  sendSingleFlightRequest(client, hostId, 'worktree.ps', { limit: WORKTREE_PS_FULL_LIMIT })
     .then((response) => {
       if (disposed()) {
         return

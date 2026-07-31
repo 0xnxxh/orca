@@ -30,10 +30,11 @@ export const WORKTREE_METHODS: RpcMethod[] = [
     params: WorktreePsParams,
     handler: async (params, { runtime }) => {
       const result = await runtime.getWorktreePs(params.limit)
+      // Why: callers that never send the field get the byte-exact legacy response.
       if (params.afterSnapshotId === undefined) {
         return result
       }
-      return resolveWorktreeCatalogSnapshot(runtime, params.limit, result, params.afterSnapshotId)
+      return resolveWorktreeCatalogSnapshot(result, params.afterSnapshotId)
     }
   }),
   defineMethod({

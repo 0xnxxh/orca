@@ -2,6 +2,9 @@ import type { RpcClient } from '../transport/rpc-client'
 import type { RpcSuccess } from '../transport/types'
 import type { Worktree } from './workspace-list-sections'
 
+// Why: worktree.ps silently truncates at 200; use a high cap so large hosts don't drop workspaces.
+export const WORKTREE_PS_FULL_LIMIT = 10_000
+
 export type WorktreeCatalogAdmission<T> =
   | { kind: 'full'; snapshotId: string | null; worktrees: T[] }
   | { kind: 'unchanged'; snapshotId: string }
@@ -11,11 +14,6 @@ type PendingWorktreeCatalog = {
   admission: WorktreeCatalogAdmission<Worktree>
   client: RpcClient
   hostId: string
-}
-
-export type AdmittedWorktreeCatalog = {
-  changed: boolean
-  worktrees: Worktree[]
 }
 
 function validSnapshotId(value: unknown): string | null {
@@ -34,22 +32,22 @@ export function admitWorktreeCatalogResponse<T>(
     unchanged?: unknown
     worktrees?: unknown
   }
-  if ('unchanged' in response) {
-    const snapshotId = validSnapshotId(response.snapshotId)
-    if (response.unchanged === true && snapshotId && snapshotId === requestedSnapshotId) {
-      return { kind: 'unchanged', snapshotId }
+  // Why: a full response is defined by carrying rows, so discriminate on that rather
+  // than on the presence of `unchanged` — the latter could collide with a future
+  // catalog field and silently reclassify a full response.
+  if (Array.isArray(response.worktrees)) {
+    return {
+      kind: 'full',
+      snapshotId: validSnapshotId(response.snapshotId),
+      worktrees: response.worktrees as T[]
     }
-    return { kind: 'invalid' }
   }
 
-  if (!Array.isArray(response.worktrees)) {
-    return { kind: 'invalid' }
+  const snapshotId = validSnapshotId(response.snapshotId)
+  if (response.unchanged === true && snapshotId && snapshotId === requestedSnapshotId) {
+    return { kind: 'unchanged', snapshotId }
   }
-  return {
-    kind: 'full',
-    snapshotId: validSnapshotId(response.snapshotId),
-    worktrees: response.worktrees as T[]
-  }
+  return { kind: 'invalid' }
 }
 
 export class WorktreeCatalogSnapshotClient {
@@ -67,7 +65,7 @@ export class WorktreeCatalogSnapshotClient {
     }
     const requestedSnapshotId = this.snapshotId
     const response = await client.sendRequest('worktree.ps', {
-      limit: 10_000,
+      limit: WORKTREE_PS_FULL_LIMIT,
       afterSnapshotId: requestedSnapshotId
     })
     if (!response.ok) {
@@ -83,26 +81,27 @@ export class WorktreeCatalogSnapshotClient {
     }
   }
 
-  admit(pending: PendingWorktreeCatalog | null): AdmittedWorktreeCatalog | null {
+  /** The confirmed host catalog to apply, or null when there is nothing to apply. */
+  admit(pending: PendingWorktreeCatalog | null): Worktree[] | null {
     if (!pending) {
       return null
     }
-    if (
-      pending.client !== this.client ||
-      pending.hostId !== this.hostId ||
-      pending.admission.kind === 'invalid'
-    ) {
+    // Why: a response from a superseded client/host is stale, not wrong — dropping it
+    // must not invalidate the token the current client/host just established.
+    if (pending.client !== this.client || pending.hostId !== this.hostId) {
+      return null
+    }
+    if (pending.admission.kind === 'invalid') {
       this.snapshotId = null
       return null
     }
 
-    const admission = pending.admission
-    this.snapshotId = admission.snapshotId
-    if (admission.kind === 'full') {
-      this.confirmedWorktrees = admission.worktrees
+    this.snapshotId = pending.admission.snapshotId
+    if (pending.admission.kind === 'full') {
+      this.confirmedWorktrees = pending.admission.worktrees
     }
+    // Why: unchanged responses still return the confirmed rows so every poll reasserts
+    // host truth over optimistic local edits, exactly as the full-payload path did.
     return this.confirmedWorktrees
-      ? { changed: admission.kind === 'full', worktrees: this.confirmedWorktrees }
-      : null
   }
 }

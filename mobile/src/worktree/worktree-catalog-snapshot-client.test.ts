@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import {
   admitWorktreeCatalogResponse,
+  WORKTREE_PS_FULL_LIMIT,
   WorktreeCatalogSnapshotClient
 } from './worktree-catalog-snapshot-client'
 
@@ -34,6 +35,19 @@ describe('admitWorktreeCatalogResponse', () => {
     })
   })
 
+  it('classifies by rows, so a future `unchanged` catalog field cannot hide a full response', () => {
+    expect(
+      admitWorktreeCatalogResponse(
+        { worktrees: [{ id: 'worktree-1' }], unchanged: false, snapshotId: 'snapshot-1' },
+        'snapshot-1'
+      )
+    ).toEqual({
+      kind: 'full',
+      snapshotId: 'snapshot-1',
+      worktrees: [{ id: 'worktree-1' }]
+    })
+  })
+
   it('rejects unchanged responses for a snapshot the client does not own', () => {
     expect(
       admitWorktreeCatalogResponse({ unchanged: true, snapshotId: 'snapshot-2' }, 'snapshot-1')
@@ -45,9 +59,12 @@ describe('admitWorktreeCatalogResponse', () => {
 
   it('rejects malformed success payloads', () => {
     expect(admitWorktreeCatalogResponse(null, 'snapshot-1')).toEqual({ kind: 'invalid' })
-    expect(
-      admitWorktreeCatalogResponse({ unchanged: false, snapshotId: 'snapshot-1' }, 'snapshot-1')
-    ).toEqual({ kind: 'invalid' })
+    expect(admitWorktreeCatalogResponse({ unchanged: false }, 'snapshot-1')).toEqual({
+      kind: 'invalid'
+    })
+  })
+
+  it('accepts a full response but ignores an out-of-bounds snapshot id', () => {
     expect(
       admitWorktreeCatalogResponse({ worktrees: [], snapshotId: 'x'.repeat(129) }, null)
     ).toEqual({ kind: 'full', snapshotId: null, worktrees: [] })
@@ -69,9 +86,10 @@ function clientWithResults(...results: unknown[]): RpcClient {
 }
 
 describe('WorktreeCatalogSnapshotClient', () => {
-  it('retains confirmed rows while admitting unchanged responses', async () => {
+  it('returns the confirmed rows on unchanged responses so callers can reassert them', async () => {
+    const rows = [{ worktreeId: 'worktree-1' }]
     const client = clientWithResults(
-      { worktrees: [{ worktreeId: 'worktree-1' }], snapshotId: 'snapshot-1' },
+      { worktrees: rows, snapshotId: 'snapshot-1' },
       { unchanged: true, snapshotId: 'snapshot-1' }
     )
     const snapshots = new WorktreeCatalogSnapshotClient()
@@ -79,8 +97,8 @@ describe('WorktreeCatalogSnapshotClient', () => {
     const first = snapshots.admit(await snapshots.fetch(client, 'host-1'))
     const second = snapshots.admit(await snapshots.fetch(client, 'host-1'))
 
-    expect(first).toMatchObject({ changed: true })
-    expect(second).toEqual({ changed: false, worktrees: first?.worktrees })
+    expect(first).toEqual(rows)
+    expect(second).toEqual(rows)
   })
 
   it('does not advance the token until the caller admits a response', async () => {
@@ -94,7 +112,7 @@ describe('WorktreeCatalogSnapshotClient', () => {
     snapshots.admit(await snapshots.fetch(client, 'host-1'))
 
     expect(client.sendRequest).toHaveBeenNthCalledWith(2, 'worktree.ps', {
-      limit: 10_000,
+      limit: WORKTREE_PS_FULL_LIMIT,
       afterSnapshotId: null
     })
   })
@@ -108,7 +126,7 @@ describe('WorktreeCatalogSnapshotClient', () => {
     await snapshots.fetch(client, 'host-1')
 
     expect(client.sendRequest).toHaveBeenNthCalledWith(2, 'worktree.ps', {
-      limit: 10_000,
+      limit: WORKTREE_PS_FULL_LIMIT,
       afterSnapshotId: 'snapshot-1'
     })
   })
@@ -126,7 +144,7 @@ describe('WorktreeCatalogSnapshotClient', () => {
     await snapshots.fetch(client, 'host-1')
 
     expect(client.sendRequest).toHaveBeenNthCalledWith(3, 'worktree.ps', {
-      limit: 10_000,
+      limit: WORKTREE_PS_FULL_LIMIT,
       afterSnapshotId: null
     })
   })
@@ -140,8 +158,25 @@ describe('WorktreeCatalogSnapshotClient', () => {
     await snapshots.fetch(secondClient, 'host-2')
 
     expect(secondClient.sendRequest).toHaveBeenCalledWith('worktree.ps', {
-      limit: 10_000,
+      limit: WORKTREE_PS_FULL_LIMIT,
       afterSnapshotId: null
+    })
+  })
+
+  it('drops a superseded host response without invalidating the current token', async () => {
+    const firstClient = clientWithResults({ worktrees: [], snapshotId: 'snapshot-1' })
+    const secondClient = clientWithResults({ worktrees: [], snapshotId: 'snapshot-2' })
+    const snapshots = new WorktreeCatalogSnapshotClient()
+
+    // Host A's response is still in flight when the screen switches to host B.
+    const stale = await snapshots.fetch(firstClient, 'host-1')
+    snapshots.admit(await snapshots.fetch(secondClient, 'host-2'))
+    expect(snapshots.admit(stale)).toBeNull()
+
+    await snapshots.fetch(secondClient, 'host-2')
+    expect(secondClient.sendRequest).toHaveBeenNthCalledWith(2, 'worktree.ps', {
+      limit: WORKTREE_PS_FULL_LIMIT,
+      afterSnapshotId: 'snapshot-2'
     })
   })
 })
