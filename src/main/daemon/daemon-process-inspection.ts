@@ -10,9 +10,11 @@ import type {
 
 const execFileAsync = promisify(execFile)
 
+type InspectionCommandRunner = (file: string, args: string[], timeoutMs: number) => Promise<string>
+
 export type DaemonProcessInspectionDependencies = {
   readTextFile?: (path: string) => Promise<string>
-  runCommand?: (file: string, args: string[], timeoutMs: number) => Promise<string>
+  runCommand?: InspectionCommandRunner
 }
 
 export function inspectProcessSignal(pid: number): ProcessSignalEvidence {
@@ -116,22 +118,27 @@ export async function queryWindowsProcess(
 }
 
 // Why: the sync procfs helper in daemon-health spawns getconf per call; CLK_TCK is fixed for
-// the kernel's lifetime, so cache one async spawn and only retry after a failure.
-let clockTicksPerSecond: Promise<number | null> | null = null
+// the kernel's lifetime, so cache one async spawn and only retry after a failure. The cache is
+// keyed by runner because CLK_TCK belongs to the host that executes the command, not the module.
+const clockTicksPerSecondByRunner = new WeakMap<InspectionCommandRunner, Promise<number | null>>()
 
 async function readClockTicksPerSecond(
-  runCommand: (file: string, args: string[], timeoutMs: number) => Promise<string>
+  runCommand: InspectionCommandRunner
 ): Promise<number | null> {
-  clockTicksPerSecond ??= runCommand('getconf', ['CLK_TCK'], 1_000).then(
-    (stdout) => {
-      const ticks = Number(stdout.trim())
-      return Number.isFinite(ticks) && ticks > 0 ? ticks : null
-    },
-    () => null
-  )
-  const ticksPerSecond = await clockTicksPerSecond
-  if (ticksPerSecond === null) {
-    clockTicksPerSecond = null
+  let pending = clockTicksPerSecondByRunner.get(runCommand)
+  if (!pending) {
+    pending = runCommand('getconf', ['CLK_TCK'], 1_000).then(
+      (stdout) => {
+        const ticks = Number(stdout.trim())
+        return Number.isFinite(ticks) && ticks > 0 ? ticks : null
+      },
+      () => null
+    )
+    clockTicksPerSecondByRunner.set(runCommand, pending)
+  }
+  const ticksPerSecond = await pending
+  if (ticksPerSecond === null && clockTicksPerSecondByRunner.get(runCommand) === pending) {
+    clockTicksPerSecondByRunner.delete(runCommand)
   }
   return ticksPerSecond
 }

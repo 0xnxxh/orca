@@ -56,6 +56,25 @@ describe('daemon audit eligibility telemetry', () => {
     expect(() =>
       trackDaemonAuditEligibility(recordAuthenticatedInventory(context, null))
     ).not.toThrow()
+
+    // The rate-limited tracker is the production call site, so it carries the same guarantee.
+    const trackEligibility = createDaemonAuditEligibilityTracker()
+    expect(() => trackEligibility(recordAuthenticatedInventory(context, null))).not.toThrow()
+  })
+
+  it('cannot affect callers when the rate-limit bookkeeping throws', () => {
+    const trackEligibility = createDaemonAuditEligibilityTracker(() => {
+      throw new Error('no clock')
+    })
+
+    expect(() => trackEligibility(recordAuthenticatedInventory(context, null))).not.toThrow()
+
+    // A malformed observation must not escape the guard either.
+    const malformed = recordAuthenticatedInventory(context, null)
+    expect(() =>
+      trackEligibility({ ...malformed, evidenceSources: undefined as never })
+    ).not.toThrow()
+    expect(trackMock).not.toHaveBeenCalled()
   })
 
   it('collapses repeated identical observations into one heartbeat per window', () => {

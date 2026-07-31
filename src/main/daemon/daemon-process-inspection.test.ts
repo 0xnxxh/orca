@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   queryWindowsProcess,
+  readLinuxProcessStartedAtMs,
   readMacosProcessStartedAtMs,
   readProcessCommandLine
 } from './daemon-process-inspection'
+
+// btime 1699000000 with 1000 start ticks: 10s after boot at 100Hz, 1s at 1000Hz.
+const readProcStat = async (path: string): Promise<string> =>
+  path === '/proc/stat' ? 'btime 1699000000\n' : `42 (orca-daemon) S${' 0'.repeat(18)} 1000 0 0\n`
 
 describe('daemon process inspection', () => {
   it('falls back to ps when Linux procfs returns an empty command line', async () => {
@@ -69,6 +74,44 @@ describe('daemon process inspection', () => {
       Date.parse('Sat Jan  1 00:00:00 2028')
     )
     expect(runCommand).toHaveBeenCalledWith('ps', ['-p', '42', '-o', 'lstart='], 2_000)
+  })
+
+  // CLK_TCK belongs to the host that runs getconf, so a second runner must not inherit the first's.
+  it('scopes the CLK_TCK cache to the runner that produced it', async () => {
+    const hundredHz = vi.fn(async () => '100')
+    const thousandHz = vi.fn(async () => '1000')
+
+    await expect(
+      readLinuxProcessStartedAtMs(42, { readTextFile: readProcStat, runCommand: hundredHz })
+    ).resolves.toBe(1_699_000_010_000)
+    await expect(
+      readLinuxProcessStartedAtMs(42, { readTextFile: readProcStat, runCommand: thousandHz })
+    ).resolves.toBe(1_699_000_001_000)
+    expect(thousandHz).toHaveBeenCalledWith('getconf', ['CLK_TCK'], 1_000)
+
+    // The first runner stays cached: one spawn per runner, not per call.
+    await expect(
+      readLinuxProcessStartedAtMs(42, { readTextFile: readProcStat, runCommand: hundredHz })
+    ).resolves.toBe(1_699_000_010_000)
+    expect(hundredHz).toHaveBeenCalledOnce()
+  })
+
+  it('retries getconf for a runner whose first CLK_TCK read failed', async () => {
+    let attempt = 0
+    const runCommand = vi.fn(async () => {
+      attempt += 1
+      if (attempt === 1) {
+        throw new Error('getconf missing')
+      }
+      return '100'
+    })
+
+    await expect(
+      readLinuxProcessStartedAtMs(42, { readTextFile: readProcStat, runCommand })
+    ).resolves.toBeNull()
+    await expect(
+      readLinuxProcessStartedAtMs(42, { readTextFile: readProcStat, runCommand })
+    ).resolves.toBe(1_699_000_010_000)
   })
 
   it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN])(

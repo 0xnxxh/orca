@@ -23,19 +23,25 @@ export function createDaemonAuditEligibilityTracker(
   let lastProperties: string | null = null
   let lastTrackedAtMs = 0
   return (observation) => {
-    const properties = JSON.stringify(auditEligibilityProperties(observation))
-    const observedAtMs = monotonicNowMs()
-    const elapsedMs = observedAtMs - lastTrackedAtMs
-    if (
-      properties === lastProperties &&
-      elapsedMs >= 0 &&
-      elapsedMs < REPEATED_OBSERVATION_INTERVAL_MS
-    ) {
-      return
+    // Why: the rate-limit bookkeeping runs inside the daemon's inventory path, so it is guarded
+    // together with the emit — audit telemetry cannot affect daemon availability.
+    try {
+      const properties = JSON.stringify(auditEligibilityProperties(observation))
+      const observedAtMs = monotonicNowMs()
+      const elapsedMs = observedAtMs - lastTrackedAtMs
+      if (
+        properties === lastProperties &&
+        elapsedMs >= 0 &&
+        elapsedMs < REPEATED_OBSERVATION_INTERVAL_MS
+      ) {
+        return
+      }
+      lastProperties = properties
+      lastTrackedAtMs = observedAtMs
+      trackDaemonAuditEligibility(observation)
+    } catch {
+      // Audit telemetry cannot affect daemon availability.
     }
-    lastProperties = properties
-    lastTrackedAtMs = observedAtMs
-    trackDaemonAuditEligibility(observation)
   }
 }
 
