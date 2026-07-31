@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import type { Repo, Worktree, TerminalTab } from '../../../shared/types'
 import type { AppState } from './types'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../shared/constants'
-import { getRepoExecutionHostId } from '../../../shared/execution-host'
+import { getRepoExecutionHostId, parseExecutionHostId } from '../../../shared/execution-host'
 import { getProjectHostSetupProjectionFromState } from './project-host-setup-selector'
 import {
   getIndexedAllWorktrees as getCachedAllWorktrees,
@@ -181,16 +181,26 @@ export function selectRepoByIdForActiveWorkspace(
   if (!repoId) {
     return null
   }
+  const repo = getCachedRepoMap(state.repos).get(repoId) ?? null
   if (repoId === state.activeRepoId && state.activeWorkspaceExecutionHostId) {
-    return (
-      state.repos.find(
-        (repo) =>
-          repo.id === repoId &&
-          getRepoExecutionHostId(repo) === state.activeWorkspaceExecutionHostId
-      ) ?? null
+    const hostMatch = state.repos.find(
+      (candidate) =>
+        candidate.id === repoId &&
+        getRepoExecutionHostId(candidate) === state.activeWorkspaceExecutionHostId
     )
+    if (hostMatch) {
+      return hostMatch
+    }
+    // Why: withRepoHostOwnership keeps a paired-hub worktree on its own SSH host while the repo
+    // stays hub-owned, so that one mismatch still names the right repo; every other stays closed.
+    const isPairedHubRepo =
+      parseExecutionHostId(state.activeWorkspaceExecutionHostId)?.kind === 'ssh' &&
+      parseExecutionHostId(repo ? getRepoExecutionHostId(repo) : undefined)?.kind === 'runtime'
+    if (!isPairedHubRepo) {
+      return null
+    }
   }
-  return getCachedRepoMap(state.repos).get(repoId) ?? null
+  return repo
 }
 
 export const useRepoById = (repoId: string | null) =>
