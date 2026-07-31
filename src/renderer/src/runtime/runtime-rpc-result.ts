@@ -16,11 +16,8 @@ export function hasRuntimeRpcErrorCode(error: unknown, expectedCode: string): bo
   const seen = new Set<unknown>()
   let current = error
   while (!seen.has(current)) {
-    if (current instanceof Error ? current.message === expectedCode : current === expectedCode) {
-      return true
-    }
     if (!current || typeof current !== 'object') {
-      return false
+      return current === expectedCode
     }
     seen.add(current)
     const candidate = current as {
@@ -28,11 +25,15 @@ export function hasRuntimeRpcErrorCode(error: unknown, expectedCode: string): bo
       code?: unknown
       response?: { error?: { code?: unknown; message?: unknown } }
     }
+    // Machine tokens are checked before Error.message so a subclass with a human-readable message still classifies by code.
     if (
       candidate.code === expectedCode ||
       candidate.response?.error?.code === expectedCode ||
       candidate.response?.error?.message === expectedCode
     ) {
+      return true
+    }
+    if (current instanceof Error && current.message === expectedCode) {
       return true
     }
     current = candidate.cause

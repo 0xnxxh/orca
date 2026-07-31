@@ -287,9 +287,17 @@ async function mapWithConcurrency<T, R>(
   return results
 }
 
-function removeWorktreeMetadataAndTransientState(store: Store, worktreeId: string): void {
+function removeWorktreeMetadataAndTransientState(
+  store: Store,
+  worktreeId: string,
+  hostId?: ExecutionHostId
+): void {
   // Why: worktree IDs are path-derived and reusable; drop process-local caches before the same ID can map to a new workspace.
-  store.removeWorktreeMeta(worktreeId)
+  if (hostId) {
+    store.removeWorktreeMeta(worktreeId, hostId)
+  } else {
+    store.removeWorktreeMeta(worktreeId)
+  }
   advertisedUrlWatcher.forgetWorktree(worktreeId)
   // Why: drop this worktree's localhost label routes so they don't accumulate in the proxy's route maps all session.
   localhostWorktreeLabelProxy.unregisterWorktree(worktreeId)
@@ -2843,8 +2851,9 @@ export function registerWorktreeHandlers(
         })
 
         runtime.clearOptimisticReconcileToken(args.worktreeId)
-        removeWorktreeMetadataAndTransientState(store, args.worktreeId)
-        store.removeWorkspaceSessionStateForWorktree(args.worktreeId, args.hostId)
+        removeWorktreeMetadataAndTransientState(store, args.worktreeId, args.hostId)
+        // Why: cached roots outlive the forgotten workspace, so an ownerless path stays filesystem-authorized until a rebuild.
+        invalidateAuthorizedRootsCache()
         preservedBranchCleanupByWorktreeId.delete(args.worktreeId)
         notifyWorktreesChanged(mainWindow, repoId)
         return {}

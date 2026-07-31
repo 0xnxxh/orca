@@ -41621,22 +41621,16 @@ describe('OrcaRuntimeService', () => {
     const { runtimeStore, removeWorktreeMeta } = createStaleRuntimeWorktreeStore(TEST_WORKTREE_ID, {
       hostId: 'runtime:env-1'
     })
-    const removeWorkspaceSessionStateForWorktree = vi.fn()
     const orphanStore = {
       ...runtimeStore,
       getRepos: () => [],
-      getRepo: () => undefined,
-      removeWorkspaceSessionStateForWorktree
+      getRepo: () => undefined
     }
     const runtime = createWorktreeRemovalRuntime(orphanStore)
 
     await expect(runtime.removeManagedWorktree(TEST_WORKTREE_ID)).resolves.toEqual({})
 
-    expect(removeWorktreeMeta).toHaveBeenCalledWith(TEST_WORKTREE_ID)
-    expect(removeWorkspaceSessionStateForWorktree).toHaveBeenCalledWith(
-      TEST_WORKTREE_ID,
-      'runtime:env-1'
-    )
+    expect(removeWorktreeMeta).toHaveBeenCalledWith(TEST_WORKTREE_ID, 'runtime:env-1')
     expect(deleteWorktreeHistoryDirMock).toHaveBeenCalledWith(TEST_WORKTREE_ID)
     expect(invalidateAuthorizedRootsCacheMock).toHaveBeenCalled()
     expect(removeWorktree).not.toHaveBeenCalled()

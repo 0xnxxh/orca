@@ -1063,7 +1063,6 @@ type RuntimeStore = {
   getWorkspaceSession?: Store['getWorkspaceSession']
   getWorkspaceSessionHostIds?: Store['getWorkspaceSessionHostIds']
   setWorkspaceSession?: Store['setWorkspaceSession']
-  removeWorkspaceSessionStateForWorktree?: Store['removeWorkspaceSessionStateForWorktree']
   flushOrThrow?: Store['flushOrThrow']
   persistPtyBinding?: Store['persistPtyBinding']
   getSshRemotePtyLeases?: Store['getSshRemotePtyLeases']
@@ -23078,8 +23077,11 @@ export class OrcaRuntimeService {
     // Why: worktree IDs are path-derived and can be recreated, so removal must
     // purge history and process-local caches before the ID points at new state.
     const hostId = store.getWorktreeMeta(worktreeId)?.hostId
-    store.removeWorktreeMeta(worktreeId)
-    store.removeWorkspaceSessionStateForWorktree?.(worktreeId, hostId)
+    if (hostId) {
+      store.removeWorktreeMeta(worktreeId, hostId)
+    } else {
+      store.removeWorktreeMeta(worktreeId)
+    }
     this.mobileSessionTabsByWorktree.delete(worktreeId)
     advertisedUrlWatcher.forgetWorktree(worktreeId)
     deleteWorktreeHistoryDir(worktreeId)

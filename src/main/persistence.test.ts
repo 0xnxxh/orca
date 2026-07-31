@@ -11699,31 +11699,83 @@ describe('Store host-partitioned workspace sessions', () => {
     expect(reloaded.getWorkspaceSession('runtime:env-a').activeRepoId).toBe('repo-a')
   })
 
-  it('removes one orphaned worktree from only its owning host partition', async () => {
+  it('removes one orphaned worktree with a host-scoped topology fence', async () => {
     const store = await createStore()
     const worktreeId = 'repo-gone::/workspace/stale'
     const session = {
       ...makeHostSession('repo-gone'),
       activeWorktreeId: worktreeId,
       activeWorktreeIdsOnShutdown: [worktreeId],
-      lastVisitedAtByWorktreeId: { [worktreeId]: 123 }
+      lastVisitedAtByWorktreeId: { [worktreeId]: 123 },
+      tabsByWorktree: {
+        [worktreeId]: [makeTerminalTab({ id: 'stale-tab', worktreeId })]
+      },
+      terminalTopologyRevisionByRepoId: { 'repo-gone': 3 }
     }
+    store.setWorkspaceSession(session, 'local')
     store.setWorkspaceSession(session, 'runtime:env-a')
     store.setWorkspaceSession(session, 'runtime:env-b')
 
     store.removeWorkspaceSessionStateForWorktree(worktreeId, 'runtime:env-a')
+    store.setWorkspaceSession(session, 'runtime:env-a')
     store.flush()
 
     const reloaded = await createStore()
     expect(reloaded.getWorkspaceSession('runtime:env-a')).toMatchObject({
-      activeWorktreeId: null,
-      activeWorktreeIdsOnShutdown: [],
-      lastVisitedAtByWorktreeId: {}
+      tabsByWorktree: {},
+      terminalTopologyRevisionByRepoId: { 'repo-gone': 4 }
     })
     expect(reloaded.getWorkspaceSession('runtime:env-b')).toMatchObject({
       activeWorktreeId: worktreeId,
       activeWorktreeIdsOnShutdown: [worktreeId],
-      lastVisitedAtByWorktreeId: { [worktreeId]: 123 }
+      lastVisitedAtByWorktreeId: { [worktreeId]: 123 },
+      terminalTopologyRevisionByRepoId: { 'repo-gone': 3 }
+    })
+    expect(reloaded.getWorkspaceSession('local')).toMatchObject({
+      activeWorktreeId: worktreeId,
+      activeWorktreeIdsOnShutdown: [worktreeId],
+      lastVisitedAtByWorktreeId: { [worktreeId]: 123 },
+      terminalTopologyRevisionByRepoId: { 'repo-gone': 3 }
+    })
+  })
+
+  it('uses persisted worktree ownership when removing metadata', async () => {
+    const store = await createStore()
+    const worktreeId = 'repo-gone::/workspace/stale'
+    const session = {
+      ...makeHostSession('repo-gone'),
+      tabsByWorktree: {
+        [worktreeId]: [makeTerminalTab({ id: 'stale-tab', worktreeId })]
+      }
+    }
+    store.setWorkspaceSession(session, 'local')
+    store.setWorkspaceSession(session, 'runtime:env-a')
+    store.setWorkspaceSession(session, 'runtime:env-b')
+    store.setWorktreeMeta(worktreeId, { hostId: 'runtime:env-a' })
+
+    store.removeWorktreeMeta(worktreeId)
+
+    expect(store.getWorkspaceSession('runtime:env-a').tabsByWorktree[worktreeId]).toBeUndefined()
+    expect(store.getWorkspaceSession('runtime:env-b').tabsByWorktree[worktreeId]).toHaveLength(1)
+    expect(store.getWorkspaceSession('local').tabsByWorktree[worktreeId]).toHaveLength(1)
+  })
+
+  it('fences a delayed session write when its host partition was not persisted', async () => {
+    const store = await createStore()
+    const worktreeId = 'repo-gone::/workspace/stale'
+    const delayedSession = {
+      ...makeHostSession('repo-gone'),
+      tabsByWorktree: {
+        [worktreeId]: [makeTerminalTab({ id: 'stale-tab', worktreeId })]
+      }
+    }
+
+    store.removeWorkspaceSessionStateForWorktree(worktreeId, 'runtime:env-a')
+    store.setWorkspaceSession(delayedSession, 'runtime:env-a')
+
+    expect(store.getWorkspaceSession('runtime:env-a')).toMatchObject({
+      tabsByWorktree: {},
+      terminalTopologyRevisionByRepoId: { 'repo-gone': 1 }
     })
   })
 

@@ -5264,15 +5264,13 @@ export class Store {
     return updated
   }
 
-  removeWorktreeMeta(worktreeId: string): void {
+  removeWorktreeMeta(worktreeId: string, hostId?: ExecutionHostId | null): void {
+    // Why: recorded ownership picks the single partition to clean, so a remote workspace never falls back to wiping local session state.
+    const ownerHostId = hostId === undefined ? this.state.worktreeMeta[worktreeId]?.hostId : hostId
     delete this.state.worktreeMeta[worktreeId]
     delete this.state.worktreeLineageById[worktreeId]
     delete this.state.workspaceLineageByChildKey[worktreeWorkspaceKey(worktreeId)]
-    this.state.workspaceSession = removeWorkspaceSessionOwner(
-      this.state.workspaceSession,
-      worktreeId,
-      { advanceTerminalTopologyRevision: true }
-    )!
+    this.removeWorkspaceSessionStateForWorktree(worktreeId, ownerHostId)
     this.scheduleSave()
   }
 
@@ -6067,12 +6065,28 @@ export class Store {
     this.setHostWorkspaceSession(resolved, session)
   }
 
-  removeWorkspaceSessionStateForWorktree(worktreeId: string, hostId?: string | null): void {
-    const session = removeWorkspaceSessionOwner(this.getWorkspaceSession(hostId), worktreeId)
-    if (session) {
-      // Host scoping matters because identical repo/path ids may exist on two servers.
-      this.setWorkspaceSession(session, hostId)
+  removeWorkspaceSessionStateForWorktree(
+    worktreeId: string,
+    hostId?: ExecutionHostId | null
+  ): void {
+    const resolved = this.resolveHostId(hostId)
+    const current = this.getWorkspaceSession(resolved)
+    const session = removeWorkspaceSessionOwner(current, worktreeId, {
+      advanceTerminalTopologyRevision: true
+    })
+    if (!session) {
+      return
     }
+    if (resolved === LOCAL_EXECUTION_HOST_ID) {
+      this.state.workspaceSession = session
+    } else {
+      // Host scoping matters because identical repo/path ids may exist on two servers.
+      this.state.workspaceSessionsByHostId = {
+        ...this.state.workspaceSessionsByHostId,
+        [resolved]: session
+      }
+    }
+    this.scheduleSave()
   }
 
   /** Persist a non-'local' host partition; remote hosts skip setLocalWorkspaceSession's local-daemon PTY-binding race guards. */
