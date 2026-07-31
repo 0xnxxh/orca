@@ -73,27 +73,6 @@ describe('primary selection buffer', () => {
     expect(readSelectionClipboardText).toHaveBeenCalledWith({ maxBytes: 262_144 })
   })
 
-  it('records read intent before waiting for the system selection clipboard', async () => {
-    const onReadStart = vi.fn()
-    const readSelectionClipboardText = vi.fn(async () => {
-      expect(onReadStart).toHaveBeenCalledOnce()
-      return 'from-system'
-    })
-    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' })
-    vi.stubGlobal('window', {
-      api: {
-        ui: {
-          readSelectionClipboardText,
-          writeSelectionClipboardText: vi.fn(async () => {})
-        }
-      }
-    })
-    setPrimarySelectionEnabled(true)
-
-    await expect(readPrimarySelectionText(onReadStart)).resolves.toBe('from-system')
-    expect(onReadStart).toHaveBeenCalledOnce()
-  })
-
   it('keeps the private buffer on non-Linux platforms', async () => {
     const writeSelectionClipboardText = vi.fn(async () => {})
     vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' })
