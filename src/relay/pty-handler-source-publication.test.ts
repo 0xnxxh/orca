@@ -380,6 +380,32 @@ describe('PtyHandler negotiated source publication', () => {
     expect(exitFrames()[0].params).toMatchObject({ id: spawnResult.id, code: 5 })
   })
 
+  it('contains a retired-record publication fault and falls back to the legacy exit', async () => {
+    await spawn({})
+    const spawnResult = writes.map((buffer) => responseResult(buffer, 2)).find(Boolean)!
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    try {
+      handler.setSourcePublication(
+        stubPublication({
+          accepts: () => false,
+          publishExitAfterRetire: () => {
+            throw new Error('retired owner lookup failed')
+          }
+        })
+      )
+
+      expect(() => exitCallback!({ exitCode: 6 })).not.toThrow()
+
+      expect(exitFrames()).toHaveLength(1)
+      expect(exitFrames()[0].params).toMatchObject({ id: spawnResult.id, code: 6 })
+      expect(String(stderr.mock.calls.at(-1)?.[0])).toContain(
+        '[pty-handler] retired pty exit publication failed'
+      )
+    } finally {
+      stderr.mockRestore()
+    }
+  })
+
   it('completes the exit from the settled state without re-sealing the delivery', async () => {
     await spawn({})
     const spawnResult = writes.map((buffer) => responseResult(buffer, 2)).find(Boolean)!
