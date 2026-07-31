@@ -6,23 +6,26 @@ import type {
 } from '../../../shared/runtime-types'
 
 type CachedWorktreeCatalog = {
-  limit: number | undefined
   result: RuntimeWorktreePsResult
   snapshotId: string
 }
 
+const MAX_CACHED_LIMITS = 8
+
 export class WorktreeCatalogSnapshotCache {
   private readonly runtimeScope = randomUUID()
   private sequence = 0
-  private cached: CachedWorktreeCatalog | null = null
+  private readonly cachedByLimit = new Map<number | undefined, CachedWorktreeCatalog>()
 
   resolve(
     limit: number | undefined,
     result: RuntimeWorktreePsResult,
     afterSnapshotId: string | null
   ): RuntimeWorktreePsConditionalResult {
-    const cached = this.cached
-    if (cached !== null && cached.limit === limit && isDeepStrictEqual(cached.result, result)) {
+    const cached = this.cachedByLimit.get(limit)
+    if (cached && isDeepStrictEqual(cached.result, result)) {
+      this.cachedByLimit.delete(limit)
+      this.cachedByLimit.set(limit, cached)
       if (afterSnapshotId === cached.snapshotId) {
         return { unchanged: true, snapshotId: cached.snapshotId }
       }
@@ -30,7 +33,11 @@ export class WorktreeCatalogSnapshotCache {
     }
 
     const snapshotId = `${this.runtimeScope}:${++this.sequence}`
-    this.cached = { limit, result, snapshotId }
+    this.cachedByLimit.delete(limit)
+    this.cachedByLimit.set(limit, { result, snapshotId })
+    if (this.cachedByLimit.size > MAX_CACHED_LIMITS) {
+      this.cachedByLimit.delete(this.cachedByLimit.keys().next().value)
+    }
     return { ...result, snapshotId }
   }
 }
