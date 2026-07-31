@@ -70,7 +70,10 @@ async function loadInventory(force: boolean): Promise<SkillFreshnessInventory> {
   }
 }
 
-async function refreshSkillFreshness(force = true): Promise<void> {
+/** Rescan freshness without going through the hook, for surfaces whose explicit
+ *  refresh affordance must move the shared verdict (the installed-skills refreshed
+ *  event reuses a completed scan and deliberately does not reach this store). */
+export async function refreshSkillFreshness(force = true): Promise<void> {
   if (scheduledFocusRescan !== null) {
     window.clearTimeout(scheduledFocusRescan)
     scheduledFocusRescan = null

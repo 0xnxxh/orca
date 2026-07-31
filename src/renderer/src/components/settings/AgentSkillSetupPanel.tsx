@@ -11,6 +11,7 @@ import {
   notifyInstalledAgentSkillsRefreshed
 } from '@/hooks/useInstalledAgentSkills'
 import { useMountedRef } from '@/hooks/useMountedRef'
+import { refreshSkillFreshness } from '@/hooks/useSkillFreshness'
 import { isOrcaCliAvailableOnPath } from '@/lib/agent-skill-cli-prerequisite'
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
@@ -234,6 +235,11 @@ export function AgentSkillSetupPanel({
             void Promise.resolve(onRecheck()).then(() => {
               // Reuse the completed scan so sibling surfaces sync without rediscovery.
               notifyInstalledAgentSkillsRefreshed()
+              // Why: that event never reaches the freshness store, and the pill this
+              // panel renders would otherwise keep its pre-click verdict forever.
+              if (freshnessSkillName) {
+                void refreshSkillFreshness()
+              }
             })
           }}
           disabled={loading}
