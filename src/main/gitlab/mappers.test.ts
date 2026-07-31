@@ -232,6 +232,23 @@ describe('derivePipelineStatus', () => {
     expect(derivePipelineStatus('manual')).toBe('neutral')
   })
 
+  // Why: `head_pipeline.status` is the only production entry point (client.ts passes objects, not
+  // job arrays), so it must land where the Checks tab lands for the same jobs — an all-skipped
+  // pipeline read grey on the card and green in the tab, flipping tone purely on hydration order.
+  it('counts a skipped pipeline string as passing, matching the Checks tab', () => {
+    expect(derivePipelineStatus('skipped')).toBe('success')
+    expect(derivePipelineStatus({ status: 'skipped' })).toBe('success')
+  })
+
+  // Why: pins the one remaining string/array divergence. A canceled *job* rolls up to 'failure',
+  // but the card stays neutral until the grey→red tone change is signed off separately; this
+  // assertion exists so that flip cannot land silently.
+  it('keeps a canceled pipeline string neutral (deferred tone change)', () => {
+    expect(derivePipelineStatus('canceled')).toBe('neutral')
+    expect(derivePipelineStatus('canceling')).toBe('neutral')
+    expect(derivePipelineStatus([{ status: 'canceled' }])).toBe('failure')
+  })
+
   it('rolls up an array of jobs', () => {
     expect(derivePipelineStatus([{ status: 'success' }, { status: 'success' }])).toBe('success')
     expect(derivePipelineStatus([{ status: 'success' }, { status: 'failed' }])).toBe('failure')

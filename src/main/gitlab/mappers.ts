@@ -279,8 +279,20 @@ function classifyPipelineString(status: string): CheckStatus {
   if (s === 'failed' || s === 'action_required') {
     return 'failure'
   }
+  // Why: a skipped pipeline is a deliberate "not applicable" (every job filtered out by `rules:`),
+  // which classifyCheckOutcome counts as passing — leaving it neutral here made the MR card read
+  // grey while the Checks tab, fed by the same jobs, read green.
+  if (s === 'skipped') {
+    return 'success'
+  }
   // Why: a `manual` pipeline is blocked on a human trigger, not broken — never paint the card red.
   if (s === 'manual') {
+    return 'neutral'
+  }
+  // Why: deliberate, product-sign-off-pending divergence — a canceled *job* is 'failed' on every
+  // check surface (provider-check-summary.ts FAILED_CONCLUSIONS), but flipping canceled MR cards
+  // from grey to red is a visible tone change that belongs in its own change, not this one.
+  if (s === 'canceled' || s === 'canceling') {
     return 'neutral'
   }
   if (

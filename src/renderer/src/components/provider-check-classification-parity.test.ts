@@ -50,11 +50,28 @@ type ParityCase = {
   checks: PRCheckDetail[]
   /** Set when the case also pins the main-process job-array rollup for the same jobs. */
   gitLabJobStatuses?: string[]
+  /**
+   * The `head_pipeline.status` GitLab reports for this same job set. This is the only GitLab path
+   * with production callers (client.ts passes pipeline objects, never job arrays), so it is the
+   * surface that decides the MR card's tone.
+   */
+  gitLabPipelineStatus?: string
   expected: ParityExpectation
 }
 
-function gitLabCase(name: string, statuses: string[], expected: ParityExpectation): ParityCase {
-  return { name, checks: gitLabJobs(...statuses), gitLabJobStatuses: statuses, expected }
+function gitLabCase(
+  name: string,
+  statuses: string[],
+  expected: ParityExpectation,
+  pipelineStatus?: string
+): ParityCase {
+  return {
+    name,
+    checks: gitLabJobs(...statuses),
+    gitLabJobStatuses: statuses,
+    ...(pipelineStatus ? { gitLabPipelineStatus: pipelineStatus } : {}),
+    expected
+  }
 }
 
 const PARITY_CASES: ParityCase[] = [
@@ -96,13 +113,12 @@ const PARITY_CASES: ParityCase[] = [
     ],
     expected: { state: 'pending', passed: 1, failed: 0, pending: 1, neutral: 0 }
   },
-  gitLabCase('GitLab manual gate only', ['manual'], {
-    state: 'neutral',
-    passed: 0,
-    failed: 0,
-    pending: 0,
-    neutral: 1
-  }),
+  gitLabCase(
+    'GitLab manual gate only',
+    ['manual'],
+    { state: 'neutral', passed: 0, failed: 0, pending: 0, neutral: 1 },
+    'manual'
+  ),
   gitLabCase('GitLab manual gate alongside a green pipeline', ['manual', 'success'], {
     state: 'success',
     passed: 1,
@@ -110,13 +126,12 @@ const PARITY_CASES: ParityCase[] = [
     pending: 0,
     neutral: 1
   }),
-  gitLabCase('GitLab skipped-only pipeline', ['skipped', 'skipped'], {
-    state: 'success',
-    passed: 2,
-    failed: 0,
-    pending: 0,
-    neutral: 0
-  }),
+  gitLabCase(
+    'GitLab skipped-only pipeline',
+    ['skipped', 'skipped'],
+    { state: 'success', passed: 2, failed: 0, pending: 0, neutral: 0 },
+    'skipped'
+  ),
   gitLabCase('GitLab success alongside an unrecognized job status', ['success', 'wat'], {
     state: 'success',
     passed: 1,
@@ -131,13 +146,12 @@ const PARITY_CASES: ParityCase[] = [
     pending: 0,
     neutral: 0
   }),
-  gitLabCase('GitLab manual gate alongside a running job', ['manual', 'running'], {
-    state: 'pending',
-    passed: 0,
-    failed: 0,
-    pending: 1,
-    neutral: 1
-  }),
+  gitLabCase(
+    'GitLab manual gate alongside a running job',
+    ['manual', 'running'],
+    { state: 'pending', passed: 0, failed: 0, pending: 1, neutral: 1 },
+    'running'
+  ),
   {
     name: 'genuine action_required',
     checks: [completed('success'), completed('action_required')],
@@ -148,17 +162,24 @@ const PARITY_CASES: ParityCase[] = [
 describe('provider check classification parity', () => {
   it.each(PARITY_CASES)(
     '$name resolves identically on every desktop surface',
-    ({ checks, expected, gitLabJobStatuses }) => {
+    ({ checks, expected, gitLabJobStatuses, gitLabPipelineStatus }) => {
       const summary = { ...expected, total: checks.length }
       expect(summarizeProviderChecks(checks)).toEqual(summary)
       expect(deriveTaskPagePRCheckSummary(checks)).toEqual(summary)
       expect(derivePRCheckStatus(checks)).toBe(expected.state)
       expect(derivePRCheckStatusFromRollup(checks.map(toGraphQLRollup))).toBe(expected.state)
       if (gitLabJobStatuses) {
-        // Why: the main-process job-array rollup is a fourth surface for the same jobs.
+        // Why: the job-array rollup has no production caller today (client.ts only ever passes
+        // pipeline objects) — it is pinned so a future caller cannot inherit a drifted copy.
         expect(derivePipelineStatus(gitLabJobStatuses.map((status) => ({ status })))).toBe(
           expected.state
         )
+      }
+      if (gitLabPipelineStatus) {
+        // Why: this *is* the production GitLab entry point — the MR card and the hosted-review
+        // queue read it, so it must not disagree with the Checks tab for the same jobs.
+        expect(derivePipelineStatus(gitLabPipelineStatus)).toBe(expected.state)
+        expect(derivePipelineStatus({ status: gitLabPipelineStatus })).toBe(expected.state)
       }
       // Why: the pill's label, tone and icon all read this one summary, so a green pill must never say "unresolved".
       expect(getProviderChecksLabel(summary).includes('Unresolved')).toBe(

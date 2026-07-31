@@ -210,6 +210,31 @@ describe('ChecksList', () => {
     expect(markup).not.toContain('opacity-0')
     expect(markup).not.toContain('Open details')
   })
+
+  // Why: the pill above this list already calls skipped checks passing; a "2 passing" header on the
+  // same 2-success/3-skipped PR contradicts its own "5/5 passed" pill.
+  it('counts skipped checks in the passing header, matching the checks pill', () => {
+    const markup = renderToStaticMarkup(
+      React.createElement(
+        TooltipProvider,
+        null,
+        React.createElement(ChecksList, {
+          checks: [
+            { name: 'build', status: 'completed', conclusion: 'success', url: null },
+            { name: 'test', status: 'completed', conclusion: 'success', url: null },
+            { name: 'deploy', status: 'completed', conclusion: 'skipped', url: null },
+            { name: 'docs', status: 'completed', conclusion: 'skipped', url: null },
+            { name: 'e2e', status: 'completed', conclusion: 'skipped', url: null }
+          ],
+          checksLoading: false,
+          checkDetailsContextKey: 'repo:43'
+        })
+      )
+    )
+
+    expect(markup).toContain('5 passing')
+    expect(markup).not.toContain('2 passing')
+  })
 })
 
 describe('isMutablePRConversationComment', () => {

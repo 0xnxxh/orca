@@ -100,6 +100,7 @@ import { translate } from '@/i18n/i18n'
 import { useActiveWorktree } from '@/store/selectors'
 import { useAppStore } from '@/store'
 import { sortChecksBySeverity } from '../../../../shared/pr-check-severity-order'
+import { classifyCheckOutcome } from '../../../../shared/provider-check-summary'
 
 export const PullRequestIcon = GitPullRequest
 
@@ -969,7 +970,9 @@ export function ChecksList({
       })),
     [checkDetailsContextKey, sorted]
   )
-  const passingCount = checks.filter((c) => c.conclusion === 'success').length
+  // Why: the header count must agree with the checks pill, which reads the shared classifier —
+  // counting only `success` made a 2-success/3-skipped PR say "2 passing" next to "5/5 passed".
+  const passingCount = checks.filter((c) => classifyCheckOutcome(c) === 'passed').length
   const failingCount = checks.filter((c) => isFailedCheck(c)).length
   const pendingCount = checks.filter(
     (c) => c.conclusion === 'pending' || c.conclusion === null
