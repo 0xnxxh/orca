@@ -31311,8 +31311,9 @@ describe('OrcaRuntimeService', () => {
   })
 
   it('keeps a retained OSC row via its connected PTY after the pane binding is cleared', async () => {
-    // Graph migration nulls pty.tabId/paneKey while the PTY stays connected;
-    // the ptyId conjunct is then the only rescue for the retained OSC row.
+    // A controller incarnation change nulls pty.tabId/paneKey while the PTY
+    // stays connected (adoptControllerTerminalHandle); the ptyId conjunct is
+    // then the only rescue for the retained OSC row.
     const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession({
       ...getDefaultWorkspaceSession(),
       tabsByWorktree: {}
@@ -31336,6 +31337,49 @@ describe('OrcaRuntimeService', () => {
     const summary = worktrees.find((worktree) => worktree.worktreeId === TEST_WORKTREE_ID)
 
     expect(summary?.agents).toEqual([expect.objectContaining({ prompt: 'osc reporter' })])
+  })
+
+  it('keeps the connected-PTY rescue when a hook row outraces the OSC row for the same pane', async () => {
+    // Hook payloads carry no ptyId; the OSC-observed one must survive the
+    // hook row winning the freshness race or the ptyId rescue goes dead.
+    const paneKey = 'race-tab:dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+    const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession({
+      ...getDefaultWorkspaceSession(),
+      tabsByWorktree: {}
+    })
+    const runtime = new OrcaRuntimeService(runtimeStore as never, undefined, {
+      getAgentStatusSnapshot: () => [
+        {
+          paneKey,
+          worktreeId: TEST_WORKTREE_ID,
+          tabId: 'race-tab',
+          state: 'working',
+          prompt: 'hook-fresh agent',
+          agentType: 'codex',
+          connectionId: null,
+          receivedAt: Date.now() + 60_000,
+          stateStartedAt: Date.now() - 100
+        }
+      ]
+    })
+    runtime['recordPtyWorktree']('race-pty', TEST_WORKTREE_ID, {
+      connected: true,
+      tabId: 'race-tab',
+      paneKey
+    })
+    runtime.onPtyData(
+      'race-pty',
+      '\x1b]9999;{"state":"working","prompt":"osc ping","agentType":"codex"}\x07',
+      1
+    )
+    const pty = runtime['ptysById'].get('race-pty')!
+    pty.tabId = null
+    pty.paneKey = null
+
+    const { worktrees } = await runtime.getWorktreePs()
+    const summary = worktrees.find((worktree) => worktree.worktreeId === TEST_WORKTREE_ID)
+
+    expect(summary?.agents).toEqual([expect.objectContaining({ prompt: 'hook-fresh agent' })])
   })
 
   it('keeps a retained OSC row from an SSH pane after its PTY disconnects', async () => {

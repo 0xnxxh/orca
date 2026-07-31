@@ -16576,6 +16576,9 @@ export class OrcaRuntimeService {
       }
       rowSources.set(entry.paneKey, {
         paneKey: entry.paneKey,
+        // Hook payloads carry no ptyId; keep the OSC-observed one so the
+        // connected-PTY rescue survives a hook row winning the freshness race.
+        ptyId: existing?.ptyId,
         tabId: entry.tabId,
         worktreeId: entry.worktreeId,
         connectionId: entry.connectionId,
