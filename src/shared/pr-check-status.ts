@@ -45,7 +45,11 @@ function normalizeRollupCheck(raw: RawCheckRollup, index: number): PRCheckDetail
     conclusion === 'error' || conclusion === 'startup_failure'
       ? 'failure'
       : conclusion ||
-        (state === 'failure' || state === 'error' ? 'failure' : state === 'success' ? 'success' : '')
+        (state === 'failure' || state === 'error'
+          ? 'failure'
+          : state === 'success'
+            ? 'success'
+            : '')
   const isPending =
     status === 'queued' ||
     status === 'in_progress' ||
