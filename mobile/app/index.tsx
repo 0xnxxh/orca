@@ -30,12 +30,9 @@ import { removeHostAndCloseClient } from '../src/transport/host-removal-lifecycl
 import { pickResumeWorktree } from '../src/worktree/resume-worktree'
 import type { RpcClient } from '../src/transport/rpc-client'
 import { sendSingleFlightRequest } from '../src/transport/request-single-flight'
-import {
-  useAllHostClients,
-  useCloseHost,
-  useForceReconnect,
-  usePrimeHosts
-} from '../src/transport/client-context'
+import { useCloseHost, useForceReconnect, usePrimeHosts } from '../src/transport/client-context'
+import { useAllHostClients } from '../src/transport/all-host-client-connections'
+import { selectHomeAutoConnectHostIds } from '../src/transport/home-host-auto-connect'
 import { classifyConnection } from '../src/transport/connection-health'
 import { subscribeToDesktopNotifications } from '../src/notifications/mobile-notifications'
 import {
@@ -315,7 +312,8 @@ export default function HomeScreen() {
 
   // Why: shared clients from the per-host store, not N independent WebSockets. See docs/mobile-shared-client-per-host.md.
   const hostIds = useMemo(() => hosts.map((h) => h.id), [hosts])
-  const allClients = useAllHostClients(hostIds)
+  const autoConnectHostIds = useMemo(() => selectHomeAutoConnectHostIds(hosts), [hosts])
+  const allClients = useAllHostClients(hostIds, { autoConnectHostIds })
   const hostPaths = useMemo(
     () => Object.fromEntries(allClients.map(({ hostId, path }) => [hostId, path])),
     [allClients]

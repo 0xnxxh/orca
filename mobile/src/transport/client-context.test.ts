@@ -21,6 +21,7 @@ vi.mock('./connection-revival-triggers', () => ({
 }))
 
 import { RpcClientProvider, useCloseHost, useHostClient } from './client-context'
+import { useAllHostClients } from './all-host-client-connections'
 
 type FakeClient = RpcClient & {
   emitState: (state: ConnectionState) => void
@@ -315,5 +316,32 @@ describe('useHostClient', () => {
     })
 
     expect(connectMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('useAllHostClients', () => {
+  it('only opens the requested startup subset', async () => {
+    const host2 = { ...HOST, id: 'host-2', name: 'Host 2' }
+    connectMock.mockReturnValue(makeFakeClient('connected'))
+    loadHostsMock.mockResolvedValue([HOST, host2])
+
+    let renderer: ReactTestRenderer | null = null
+    function Probe(): null {
+      useAllHostClients([HOST.id, host2.id], { autoConnectHostIds: [host2.id] })
+      return null
+    }
+
+    const restore = suppressReactTestRendererDeprecationWarning()
+    try {
+      await act(async () => {
+        renderer = create(createElement(RpcClientProvider, null, createElement(Probe)))
+        await Promise.resolve()
+      })
+      expect(connectMock).toHaveBeenCalledOnce()
+      expect(connectMock).toHaveBeenCalledWith(host2, expect.any(Function))
+    } finally {
+      restore()
+      act(() => renderer?.unmount())
+    }
   })
 })
