@@ -1921,6 +1921,7 @@ export function createRemoteRuntimePtyTransport(
           return
         }
         clearPendingViewportClaim()
+        recovery.cancel()
         handleRemoteTerminalError(error)
       })
     },

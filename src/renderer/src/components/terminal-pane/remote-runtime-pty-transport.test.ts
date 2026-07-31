@@ -790,6 +790,51 @@ describe('createRemoteRuntimePtyTransport', () => {
     }
   })
 
+  it('ends web mirror recovery when a retry returns a fatal inventory error', async () => {
+    vi.useFakeTimers()
+    try {
+      let activateAttempts = 0
+      runtimeCall.mockImplementation(async (request: { method: string }) => {
+        if (request.method !== 'session.tabs.activate') {
+          throw new Error(`Unexpected method ${request.method}`)
+        }
+        activateAttempts += 1
+        if (activateAttempts === 1) {
+          throw Object.assign(new Error('Remote Orca runtime closed the connection.'), {
+            code: 'remote_runtime_unavailable'
+          })
+        }
+        throw Object.assign(new Error('Remote runtime pairing credentials expired.'), {
+          code: 'unauthorized'
+        })
+      })
+      const { createRemoteRuntimePtyTransport } = await import('./remote-runtime-pty-transport')
+      const onError = vi.fn()
+      const transport = createRemoteRuntimePtyTransport('env-1', {
+        worktreeId: 'wt-1',
+        tabId: 'web-terminal-host-tab-1',
+        leafId: 'pane:1'
+      })
+
+      transport.attach({
+        existingPtyId: 'remote:env-1@@stale-client-handle',
+        callbacks: { onError }
+      })
+      await vi.advanceTimersByTimeAsync(250)
+
+      expect(onError).toHaveBeenCalledWith('Remote runtime pairing credentials expired.')
+      expect(transport.getRecoveryState?.().phase).toBe('offline')
+      const attemptsAfterFatalError = activateAttempts
+
+      await vi.advanceTimersByTimeAsync(5 * 60_000)
+      expect(activateAttempts).toBe(attemptsAfterFatalError)
+      expect(transport.getRecoveryState?.().phase).toBe('offline')
+      transport.destroy?.()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not restart web mirror recovery when an in-flight request rejects after cutoff', async () => {
     vi.useFakeTimers()
     try {
