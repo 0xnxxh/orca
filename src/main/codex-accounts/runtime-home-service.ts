@@ -477,6 +477,14 @@ export class CodexRuntimeHomeService {
     return this.isHostSystemDefaultRealHomeSelected(launchEnv) && this.realHomeLaneGate()
   }
 
+  reconcileLegacySharedHomeForRetainedPanes(): void {
+    if (!this.isHostSystemDefaultRealHome()) {
+      return
+    }
+    this.syncLegacySharedSystemDefaultAuthForRetainedPanes()
+    syncLegacySharedCodexConfigForRetainedPanes()
+  }
+
   syncActiveWslSelectionsBeforeRestart(): void {
     if (process.platform !== 'win32') {
       return

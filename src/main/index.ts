@@ -2841,6 +2841,9 @@ void app.whenReady().then(async () => {
     return
   }
 
+  // Why: retained daemon shells can invoke Codex without crossing launch prep.
+  codexRuntimeHome.reconcileLegacySharedHomeForRetainedPanes()
+
   // Why: window and RPC startup run in parallel; registerPtyHandlers gates PTY spawns so RPC binds without racing the daemon provider swap.
   const [win, runtimeRpcStartResult] = await Promise.all([
     Promise.resolve(openMainWindow()),

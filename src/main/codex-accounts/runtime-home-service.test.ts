@@ -1147,9 +1147,10 @@ describe('CodexRuntimeHomeService', () => {
     expect(readFileSync(join(getRuntimeCodexHomePath(), 'config.toml'), 'utf-8')).toContain(
       'stale-provider'
     )
-    expect(service.prepareForCodexLaunch()).toBeNull()
+    service.reconcileLegacySharedHomeForRetainedPanes()
     expect(readFileSync(getRuntimeCodexAuthPath(), 'utf-8')).toBe(systemAuth)
     expect(readFileSync(join(getRuntimeCodexHomePath(), 'config.toml'), 'utf-8')).toBe(systemConfig)
+    expect(service.prepareForCodexLaunch()).toBeNull()
   })
 
   it('preserves retained managed auth across a real-home main-process restart', async () => {
@@ -1554,11 +1555,11 @@ describe('CodexRuntimeHomeService', () => {
     writeFileSync(runtimeConfigPath, 'model = "runtime-change"\n', 'utf-8')
 
     setRealHomeLaneForTest(true)
-    let realHomeLaneUsable = true
-    service.setRealHomeLaneGate(() => realHomeLaneUsable)
+    service.setRealHomeLaneGate(() => false)
+    service.reconcileLegacySharedHomeForRetainedPanes()
+    expect(readFileSync(systemConfigPath, 'utf-8')).toBe('model = "baseline"\n')
     expect(readFileSync(runtimeConfigPath, 'utf-8')).toBe('model = "runtime-change"\n')
 
-    realHomeLaneUsable = false
     expect(service.prepareForCodexLaunch()).toBe(getRuntimeCodexHomePath())
     expect(readFileSync(systemConfigPath, 'utf-8')).toBe('model = "runtime-change"\n')
     expect(readFileSync(runtimeConfigPath, 'utf-8')).toBe('model = "runtime-change"\n')
