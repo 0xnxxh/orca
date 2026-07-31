@@ -382,6 +382,64 @@ describe('useAllHostClients', () => {
     }
   })
 
+  it('closes a demoted Home client when the recent-host set rotates', async () => {
+    const hosts = [
+      { ...HOST, id: 'host-a', lastConnected: 4 },
+      { ...HOST, id: 'host-b', lastConnected: 3 },
+      { ...HOST, id: 'host-c', lastConnected: 2 },
+      { ...HOST, id: 'host-d', lastConnected: 1 }
+    ]
+    const clients = new Map<string, FakeClient>()
+    connectMock.mockImplementation((profile: typeof HOST) => {
+      const client = makeFakeClient('connected')
+      clients.set(profile.id, client)
+      return client
+    })
+    loadHostsMock.mockResolvedValue(hosts)
+
+    let activeHostIds: string[] = []
+    let renderer: ReactTestRenderer | null = null
+    function Probe({ profiles }: { profiles: typeof hosts }): null {
+      const hostIds = profiles.map((host) => host.id)
+      activeHostIds = useAllHostClients(hostIds, {
+        autoConnectHostIds: selectHomeAutoConnectHostIds(profiles),
+        closeUnusedOnRelease: true
+      }).map(({ hostId }) => hostId)
+      return null
+    }
+
+    const restore = suppressReactTestRendererDeprecationWarning()
+    try {
+      await act(async () => {
+        renderer = create(
+          createElement(RpcClientProvider, null, createElement(Probe, { profiles: hosts }))
+        )
+        await Promise.resolve()
+      })
+      expect(activeHostIds.sort()).toEqual(['host-a', 'host-b', 'host-c'])
+
+      const rotatedHosts = hosts.map((host) =>
+        host.id === 'host-d' ? { ...host, lastConnected: 5 } : host
+      )
+      await act(async () => {
+        renderer?.update(
+          createElement(RpcClientProvider, null, createElement(Probe, { profiles: rotatedHosts }))
+        )
+        await Promise.resolve()
+      })
+
+      expect(connectMock).toHaveBeenCalledTimes(4)
+      expect(activeHostIds.sort()).toEqual(['host-a', 'host-b', 'host-d'])
+      expect(clients.get('host-a')?.closeMock).not.toHaveBeenCalled()
+      expect(clients.get('host-b')?.closeMock).not.toHaveBeenCalled()
+      expect(clients.get('host-c')?.closeMock).toHaveBeenCalledOnce()
+      expect(clients.get('host-d')?.closeMock).not.toHaveBeenCalled()
+    } finally {
+      restore()
+      act(() => renderer?.unmount())
+    }
+  })
+
   it('retains connect-all behavior when no startup subset is provided', async () => {
     const host2 = { ...HOST, id: 'host-2', name: 'Host 2' }
     connectMock.mockReturnValue(makeFakeClient('connected'))

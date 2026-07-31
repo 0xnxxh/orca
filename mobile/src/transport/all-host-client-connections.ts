@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RpcClient } from './rpc-client'
 import type { MobileConnectionPath } from './stable-logical-rpc-client'
 import type { ConnectionState } from './types'
@@ -6,54 +6,82 @@ import { useRpcClientContext } from './client-context'
 
 type UseAllHostClientsOptions = {
   autoConnectHostIds?: readonly string[]
-  closeUnusedOnUnmount?: boolean
-  preserveHostIdsOnUnmount?: readonly string[]
+  closeUnusedOnRelease?: boolean
 }
 
 export function useAllHostClients(hostIds: string[], options?: UseAllHostClientsOptions) {
   const ctx = useRpcClientContext()
   const autoConnectHostIds = options?.autoConnectHostIds ?? hostIds
-  const closeUnusedOnUnmount = options?.closeUnusedOnUnmount ?? false
-  const preserveHostIdsOnUnmount = options?.preserveHostIdsOnUnmount ?? []
+  const closeUnusedOnRelease = options?.closeUnusedOnRelease ?? false
   const key = useMemo(
     () =>
       [
         [...hostIds].sort().join(','),
         [...autoConnectHostIds].sort().join(','),
-        closeUnusedOnUnmount ? 'close' : 'keep',
-        [...preserveHostIdsOnUnmount].sort().join(',')
+        closeUnusedOnRelease ? 'close' : 'keep'
       ].join('|'),
-    [autoConnectHostIds, closeUnusedOnUnmount, hostIds, preserveHostIdsOnUnmount]
+    [autoConnectHostIds, closeUnusedOnRelease, hostIds]
   )
   const [tick, setTick] = useState(0)
+  const acquiredHostIdsRef = useRef<Set<string>>(new Set())
+  const hostUnsubscribesRef = useRef<Map<string, () => void>>(new Map())
+  const closeUnusedRef = useRef(closeUnusedOnRelease)
+  closeUnusedRef.current = closeUnusedOnRelease
 
   useEffect(() => {
-    if (hostIds.length === 0) {
-      return
-    }
-    const trackedHostIds = new Set(hostIds)
-    const acquiredHostIds = autoConnectHostIds.filter((id) => trackedHostIds.has(id))
-    const preservedHostIds = new Set(preserveHostIdsOnUnmount)
-    for (const id of acquiredHostIds) {
-      ctx.acquire(id)
-    }
-    const unsubs = hostIds.map((id) =>
-      ctx.subscribeHostState(id, () => setTick((value) => value + 1))
-    )
-    unsubs.push(ctx.subscribeAllHosts(() => setTick((value) => value + 1)))
+    const unsubscribeAllHosts = ctx.subscribeAllHosts(() => setTick((value) => value + 1))
     return () => {
-      for (const unsubscribe of unsubs) {
+      unsubscribeAllHosts()
+      for (const unsubscribe of hostUnsubscribesRef.current.values()) {
         unsubscribe()
       }
-      for (const id of acquiredHostIds) {
-        if (closeUnusedOnUnmount && !preservedHostIds.has(id)) {
+      hostUnsubscribesRef.current.clear()
+      for (const id of acquiredHostIdsRef.current) {
+        if (closeUnusedRef.current) {
+          ctx.releaseAndCloseIfUnused(id)
+        } else {
+          ctx.release(id)
+        }
+      }
+      acquiredHostIdsRef.current.clear()
+    }
+  }, [ctx])
+
+  useEffect(() => {
+    const trackedHostIds = new Set(hostIds)
+    const nextAcquiredHostIds = new Set(autoConnectHostIds.filter((id) => trackedHostIds.has(id)))
+
+    for (const [id, unsubscribe] of hostUnsubscribesRef.current) {
+      if (!trackedHostIds.has(id)) {
+        unsubscribe()
+        hostUnsubscribesRef.current.delete(id)
+      }
+    }
+    for (const id of trackedHostIds) {
+      if (!hostUnsubscribesRef.current.has(id)) {
+        hostUnsubscribesRef.current.set(
+          id,
+          ctx.subscribeHostState(id, () => setTick((value) => value + 1))
+        )
+      }
+    }
+
+    for (const id of acquiredHostIdsRef.current) {
+      if (!nextAcquiredHostIds.has(id)) {
+        if (closeUnusedOnRelease) {
           ctx.releaseAndCloseIfUnused(id)
         } else {
           ctx.release(id)
         }
       }
     }
-  }, [key])
+    for (const id of nextAcquiredHostIds) {
+      if (!acquiredHostIdsRef.current.has(id)) {
+        ctx.acquire(id)
+      }
+    }
+    acquiredHostIdsRef.current = nextAcquiredHostIds
+  }, [ctx, key])
 
   return useMemo(() => {
     const clientsByHostId = new Map(
@@ -70,5 +98,5 @@ export function useAllHostClients(hostIds: string[], options?: UseAllHostClients
         ? [{ hostId, client, state: ctx.getState(hostId), path: ctx.getActivePath(hostId) }]
         : []
     })
-  }, [key, tick])
+  }, [ctx, hostIds, tick])
 }

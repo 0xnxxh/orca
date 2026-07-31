@@ -316,7 +316,10 @@ export default function HomeScreen() {
   // Why: shared clients from the per-host store, not N independent WebSockets. See docs/mobile-shared-client-per-host.md.
   const hostIds = useMemo(() => hosts.map((h) => h.id), [hosts])
   const autoConnectHostIds = useMemo(() => selectHomeAutoConnectHostIds(hosts), [hosts])
-  const allClients = useAllHostClients(hostIds, { autoConnectHostIds })
+  const allClients = useAllHostClients(hostIds, {
+    autoConnectHostIds,
+    closeUnusedOnRelease: true
+  })
   const hostPaths = useMemo(
     () => Object.fromEntries(allClients.map(({ hostId, path }) => [hostId, path])),
     [allClients]

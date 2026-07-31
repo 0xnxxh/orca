@@ -90,9 +90,13 @@ function HomeProbe(): null {
 
 function SettingsProbe(): null {
   useAllHostClients(HOST_IDS, {
-    closeUnusedOnUnmount: true,
-    preserveHostIdsOnUnmount: HOME_HOST_IDS
+    closeUnusedOnRelease: true
   })
+  return null
+}
+
+function DynamicSettingsProbe({ hostIds }: { hostIds: string[] }): null {
+  useAllHostClients(hostIds, { closeUnusedOnRelease: true })
   return null
 }
 
@@ -188,7 +192,7 @@ beforeEach(() => {
 })
 
 describe('settings host client lifecycle', () => {
-  it('closes settings-only clients on leave without reconnecting the bounded Home set', async () => {
+  it('closes settings-only clients while a mounted Home owner keeps its bounded set', async () => {
     const clients = new Map<string, FakeClient[]>()
     connectMock.mockImplementation((profile: HostProfile) => {
       const client = makeFakeClient(profile.id === 'offline-host' ? 'reconnecting' : 'connected')
@@ -197,16 +201,49 @@ describe('settings host client lifecycle', () => {
     })
     loadHostsMock.mockResolvedValue(HOSTS)
 
-    const renderer = await renderScreen('home')
+    function NavigationStack({ settingsVisible }: { settingsVisible: boolean }) {
+      return createElement(
+        RpcClientProvider,
+        null,
+        createElement(
+          Fragment,
+          null,
+          createElement(ContextProbe),
+          createElement(HomeProbe),
+          settingsVisible ? createElement(SettingsProbe) : null
+        )
+      )
+    }
+
+    let renderer: ReactTestRenderer | null = null
+    const restore = suppressRendererWarning()
+    try {
+      await act(async () => {
+        renderer = create(createElement(NavigationStack, { settingsVisible: false }))
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+    } finally {
+      restore()
+    }
+    if (!renderer) {
+      throw new Error('navigation stack harness did not render')
+    }
     expect(activeHostIds()).toEqual([...HOME_HOST_IDS].sort())
     expect(connectMock).toHaveBeenCalledTimes(3)
 
-    await navigate(renderer, 'settings')
+    await act(async () => {
+      renderer?.update(createElement(NavigationStack, { settingsVisible: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
     expect(activeHostIds()).toEqual([...HOST_IDS].sort())
     expect(connectMock).toHaveBeenCalledTimes(HOSTS.length)
     expect(loadHostsMock).toHaveBeenCalledTimes(HOME_HOST_IDS.length)
 
-    await navigate(renderer, 'home')
+    await act(async () => {
+      renderer?.update(createElement(NavigationStack, { settingsVisible: false }))
+    })
     expect(activeHostIds()).toEqual([...HOME_HOST_IDS].sort())
     for (const hostId of HOME_HOST_IDS) {
       expect(clients.get(hostId)).toHaveLength(1)
@@ -216,9 +253,15 @@ describe('settings host client lifecycle', () => {
       expect(clients.get(hostId)?.[0]?.closeMock).toHaveBeenCalledOnce()
     }
 
-    await navigate(renderer, 'settings')
+    await act(async () => {
+      renderer?.update(createElement(NavigationStack, { settingsVisible: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
     expect(loadHostsMock).toHaveBeenCalledTimes(HOME_HOST_IDS.length)
-    await navigate(renderer, 'home')
+    await act(async () => {
+      renderer?.update(createElement(NavigationStack, { settingsVisible: false }))
+    })
     expect(activeHostIds()).toEqual([...HOME_HOST_IDS].sort())
     for (const hostId of HOME_HOST_IDS) {
       expect(clients.get(hostId)).toHaveLength(1)
@@ -231,6 +274,106 @@ describe('settings host client lifecycle', () => {
     }
 
     act(() => renderer.unmount())
+  })
+
+  it('leaves no zero-reference clients after repeated settings navigation', async () => {
+    const clients = new Map<string, FakeClient[]>()
+    connectMock.mockImplementation((profile: HostProfile) => {
+      const client = makeFakeClient('reconnecting')
+      clients.set(profile.id, [...(clients.get(profile.id) ?? []), client])
+      return client
+    })
+    loadHostsMock.mockResolvedValue(HOSTS)
+
+    const renderer = await renderScreen('settings')
+    expect(activeHostIds()).toEqual([...HOST_IDS].sort())
+
+    await navigate(renderer, 'empty')
+    expect(activeHostIds()).toEqual([])
+    for (const hostClients of clients.values()) {
+      expect(hostClients).toHaveLength(1)
+      expect(hostClients[0]?.closeMock).toHaveBeenCalledOnce()
+    }
+
+    await navigate(renderer, 'settings')
+    await navigate(renderer, 'empty')
+    expect(activeHostIds()).toEqual([])
+    expect(connectMock).toHaveBeenCalledTimes(HOSTS.length * 2)
+    for (const hostClients of clients.values()) {
+      expect(hostClients).toHaveLength(2)
+      expect(hostClients.every((client) => client.closeMock.mock.calls.length === 1)).toBe(true)
+    }
+
+    act(() => renderer.unmount())
+  })
+
+  it('reconciles host-list changes without restarting retained or shared clients', async () => {
+    const clients = new Map<string, FakeClient>()
+    connectMock.mockImplementation((profile: HostProfile) => {
+      const client = makeFakeClient('reconnecting')
+      clients.set(profile.id, client)
+      return client
+    })
+    loadHostsMock.mockResolvedValue(HOSTS)
+
+    const retainedHostId = 'direct-recent'
+    const sharedHostId = 'relay-recent'
+    const removedHostId = 'folder-workspace-host'
+    const addedHostId = 'offline-host'
+    function HostListApp({ settingsHostIds }: { settingsHostIds: string[] }) {
+      return createElement(
+        RpcClientProvider,
+        null,
+        createElement(
+          Fragment,
+          null,
+          createElement(ContextProbe),
+          createElement(DetailProbe, { hostId: sharedHostId }),
+          createElement(DynamicSettingsProbe, { hostIds: settingsHostIds })
+        )
+      )
+    }
+
+    let renderer: ReactTestRenderer | null = null
+    const restore = suppressRendererWarning()
+    try {
+      await act(async () => {
+        renderer = create(
+          createElement(HostListApp, {
+            settingsHostIds: [retainedHostId, sharedHostId, removedHostId]
+          })
+        )
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+    } finally {
+      restore()
+    }
+    if (!renderer) {
+      throw new Error('host-list lifecycle harness did not render')
+    }
+
+    await act(async () => {
+      renderer?.update(
+        createElement(HostListApp, {
+          settingsHostIds: [retainedHostId, addedHostId]
+        })
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(connectMock).toHaveBeenCalledTimes(4)
+    expect(activeHostIds()).toEqual([addedHostId, retainedHostId, sharedHostId].sort())
+    expect(clients.get(retainedHostId)?.closeMock).not.toHaveBeenCalled()
+    expect(clients.get(sharedHostId)?.closeMock).not.toHaveBeenCalled()
+    expect(clients.get(removedHostId)?.closeMock).toHaveBeenCalledOnce()
+    expect(clients.get(addedHostId)?.closeMock).not.toHaveBeenCalled()
+
+    act(() => renderer.unmount())
+    expect(clients.get(retainedHostId)?.closeMock).toHaveBeenCalledOnce()
+    expect(clients.get(sharedHostId)?.closeMock).toHaveBeenCalledOnce()
+    expect(clients.get(addedHostId)?.closeMock).toHaveBeenCalledOnce()
   })
 
   it('does not close a settings client still held by an active consumer', async () => {
@@ -270,8 +413,7 @@ describe('settings host client lifecycle', () => {
 
     function RetrySettingsProbe(): null {
       useAllHostClients([retryHost.id], {
-        closeUnusedOnUnmount: true,
-        preserveHostIdsOnUnmount: []
+        closeUnusedOnRelease: true
       })
       return null
     }
@@ -343,8 +485,7 @@ describe('settings host client lifecycle', () => {
 
     function PendingSettingsProbe(): null {
       useAllHostClients([settingsOnlyHost.id], {
-        closeUnusedOnUnmount: true,
-        preserveHostIdsOnUnmount: []
+        closeUnusedOnRelease: true
       })
       return null
     }
