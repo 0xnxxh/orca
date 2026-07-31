@@ -22,16 +22,21 @@ describe('useMobileNativeChatReadability', () => {
   async function mount(
     connectionId: string | null,
     worktreeId = 'repo::/worktree',
-    rejectRequest = false
+    options: { rejectRequest?: boolean; folderWorkspaces?: unknown } = {}
   ): Promise<ReturnType<typeof vi.fn>> {
-    const sendRequest = rejectRequest
+    const sendRequest = options.rejectRequest
       ? vi.fn().mockRejectedValue(new Error('method unavailable'))
       : vi.fn().mockImplementation((method: string) =>
           Promise.resolve({
             ok: true,
             result:
               method === 'folderWorkspace.list'
-                ? { folderWorkspaces: [{ id: 'folder-1', connectionId }] }
+                ? {
+                    folderWorkspaces:
+                      'folderWorkspaces' in options
+                        ? options.folderWorkspaces
+                        : [{ id: 'folder-1', connectionId }]
+                  }
                 : { repos: [{ id: 'repo', connectionId }] }
           })
         )
@@ -97,9 +102,45 @@ describe('useMobileNativeChatReadability', () => {
     act(() => renderer?.unmount())
     renderer = null
 
-    const unavailableRequest = await mount(null, 'folder:folder-1', true)
+    const unavailableRequest = await mount(null, 'folder:folder-1', { rejectRequest: true })
     expect(readable).toBe(false)
     expect(unavailableRequest).toHaveBeenCalledWith('folderWorkspace.list')
+  })
+
+  it('fails closed for malformed folder routes without requesting the catalog', async () => {
+    const sendRequest = await mount(null, 'folder:', {
+      folderWorkspaces: [{ id: '', connectionId: null }]
+    })
+
+    expect(readable).toBe(false)
+    expect(sendRequest).not.toHaveBeenCalled()
+  })
+
+  it('rejects duplicate folder catalog IDs regardless of order', async () => {
+    await mount(null, 'folder:folder-1', {
+      folderWorkspaces: [
+        { id: 'folder-1', connectionId: null },
+        { id: 'folder-1', connectionId: 'model-a-ssh' }
+      ]
+    })
+    expect(readable).toBe(false)
+    act(() => renderer?.unmount())
+    renderer = null
+
+    await mount(null, 'folder:folder-1', {
+      folderWorkspaces: [
+        { id: 'folder-1', connectionId: 'model-a-ssh' },
+        { id: 'folder-1', connectionId: null }
+      ]
+    })
+    expect(readable).toBe(false)
+  })
+
+  it('rejects folder catalog matches without explicit authority', async () => {
+    await mount(null, 'folder:folder-1', {
+      folderWorkspaces: [{ id: 'folder-1' }]
+    })
+    expect(readable).toBe(false)
   })
 
   it('treats the host-local floating workspace as readable without listing repos', async () => {
