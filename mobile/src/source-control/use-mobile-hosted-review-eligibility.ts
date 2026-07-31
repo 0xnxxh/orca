@@ -6,10 +6,6 @@ import {
   fetchMobileHostedReviewEligibility,
   type MobileHostedReviewEligibilityInput
 } from './mobile-hosted-review-service'
-import {
-  recallHostedReviewEligibility,
-  rememberHostedReviewEligibility
-} from './hosted-review-eligibility-memory'
 import type { MobileCreatePrEligibilityState } from './mobile-create-pr-action'
 
 export type MobileHostedReviewEligibilityLoaderInput = {
@@ -58,36 +54,30 @@ export function acceptsMobileHostedReviewEligibilityLoad(args: {
   currentGeneration: number
   identity: string
   currentIdentity: string
+  fetch: string
+  currentFetch: string
 }): boolean {
-  return args.generation === args.currentGeneration && args.identity === args.currentIdentity
+  return (
+    args.generation === args.currentGeneration &&
+    args.identity === args.currentIdentity &&
+    args.fetch === args.currentFetch
+  )
 }
 
-export function eligibilityStateAfterMobileHostedReviewError(
-  reserveSpace = false
-): MobileCreatePrEligibilityState {
-  return { kind: 'error', reserveSpace }
+export function eligibilityStateAfterMobileHostedReviewError(): MobileCreatePrEligibilityState {
+  return { kind: 'error' }
 }
 
 export function renderedMobileHostedReviewEligibilityState(args: {
   state: MobileCreatePrEligibilityState
   shouldFetch: boolean
-  remembered: HostedReviewCreationEligibility | null
 }): MobileCreatePrEligibilityState {
   if (!args.shouldFetch) {
     return { kind: 'idle' }
   }
-  const { state, remembered } = args
-  // Why: under shouldFetch, `idle` only means the fetch effect hasn't run yet,
-  // and cold `loading` carries no snapshot. Both must render as an in-flight
-  // load seeded with the last resolved answer so the Create PR row's footprint
-  // is right on the first painted frame instead of shifting later (#8411).
-  if (state.kind === 'idle' || (state.kind === 'loading' && !state.eligibility)) {
-    return {
-      kind: 'loading',
-      eligibility: remembered,
-      reserveSpace:
-        state.kind === 'loading' ? (state.reserveSpace ?? remembered === null) : remembered === null
-    }
+  const { state } = args
+  if (state.kind === 'idle') {
+    return { kind: 'loading', eligibility: null }
   }
   return state
 }
@@ -110,8 +100,9 @@ export function useMobileHostedReviewEligibility(
   const [state, setState] = useState<MobileCreatePrEligibilityState>({ kind: 'idle' })
   const generationRef = useRef(0)
   const currentIdentityRef = useRef('')
+  const currentFetchRef = useRef('')
   const lastResetIdentityRef = useRef('')
-  const reservedIdentityRef = useRef('')
+  const lastResetFetchRef = useRef('')
   const key = buildMobileHostedReviewEligibilityLoadKey({
     hostId,
     worktreeId,
@@ -124,42 +115,49 @@ export function useMobileHostedReviewEligibility(
 
   if (lastResetIdentityRef.current !== key.identity) {
     lastResetIdentityRef.current = key.identity
-    reservedIdentityRef.current = ''
     setState({ kind: 'idle' })
+  } else if (lastResetFetchRef.current !== key.fetch) {
+    setState((prev) => ({
+      kind: 'loading',
+      eligibility: prev.kind === 'ready' || prev.kind === 'loading' ? prev.eligibility : null
+    }))
   }
+  lastResetFetchRef.current = key.fetch
   currentIdentityRef.current = key.identity
+  currentFetchRef.current = key.fetch
 
   useEffect(() => {
     const generation = generationRef.current + 1
     generationRef.current = generation
+    let active = true
     const isCurrent = () =>
+      active &&
       acceptsMobileHostedReviewEligibilityLoad({
         generation,
         currentGeneration: generationRef.current,
         identity: key.identity,
-        currentIdentity: currentIdentityRef.current
+        currentIdentity: currentIdentityRef.current,
+        fetch: key.fetch,
+        currentFetch: currentFetchRef.current
       })
 
     if (!shouldFetch) {
       if (isCurrent()) {
         setState({ kind: 'idle' })
       }
-      return
+      return () => {
+        active = false
+      }
     }
     if (!client || !branch) {
-      return
+      return () => {
+        active = false
+      }
     }
 
-    const reserveSpace =
-      reservedIdentityRef.current === key.identity ||
-      recallHostedReviewEligibility(key.identity) === null
-    if (reserveSpace) {
-      reservedIdentityRef.current = key.identity
-    }
     setState((prev) => ({
       kind: 'loading',
-      eligibility: prev.kind === 'ready' ? prev.eligibility : null,
-      reserveSpace
+      eligibility: prev.kind === 'ready' || prev.kind === 'loading' ? prev.eligibility : null
     }))
     const requestInput: MobileHostedReviewEligibilityInput = {
       branch,
@@ -174,17 +172,19 @@ export function useMobileHostedReviewEligibility(
           return
         }
         if (!eligibility) {
-          setState(eligibilityStateAfterMobileHostedReviewError(reserveSpace))
+          setState(eligibilityStateAfterMobileHostedReviewError())
           return
         }
-        rememberHostedReviewEligibility(key.identity, eligibility)
-        setState({ kind: 'ready', eligibility, reserveSpace })
+        setState({ kind: 'ready', eligibility })
       })
       .catch(() => {
         if (isCurrent()) {
-          setState(eligibilityStateAfterMobileHostedReviewError(reserveSpace))
+          setState(eligibilityStateAfterMobileHostedReviewError())
         }
       })
+    return () => {
+      active = false
+    }
   }, [
     ahead,
     behind,
@@ -206,7 +206,6 @@ export function useMobileHostedReviewEligibility(
   // no longer fetchable.
   return renderedMobileHostedReviewEligibilityState({
     state,
-    shouldFetch,
-    remembered: recallHostedReviewEligibility(key.identity)
+    shouldFetch
   })
 }

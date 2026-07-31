@@ -1,24 +1,16 @@
-import type {
-  HostedReviewCreationBlockedReason,
-  HostedReviewCreationEligibility
-} from '../../../src/shared/hosted-review'
+import type { HostedReviewCreationEligibility } from '../../../src/shared/hosted-review'
 import { supportsHostedReviewCreation } from '../../../src/shared/hosted-review-creation-providers'
 import { hostedReviewCopy } from './hosted-review-copy'
 import { getMobilePrCreateBlockMessage } from './mobile-pr-create'
 
 export type MobileCreatePrEligibilityState =
   | { kind: 'idle' }
-  | {
-      kind: 'loading'
-      eligibility: HostedReviewCreationEligibility | null
-      reserveSpace?: boolean
-    }
-  | { kind: 'ready'; eligibility: HostedReviewCreationEligibility; reserveSpace?: boolean }
-  | { kind: 'error'; reserveSpace?: boolean }
+  | { kind: 'loading'; eligibility: HostedReviewCreationEligibility | null }
+  | { kind: 'ready'; eligibility: HostedReviewCreationEligibility }
+  | { kind: 'error' }
 
 export type MobileCreatePrAction = {
   visible: boolean
-  reserveSpace: boolean
   label: string
   disabled: boolean
   hint?: string
@@ -34,19 +26,11 @@ export type BuildMobileCreatePrActionArgs = {
   onCreatePr: (pushFirst: boolean) => void
 }
 
-const HIDDEN_BLOCKED_REASONS = new Set<HostedReviewCreationBlockedReason>([
-  'detached_head',
-  'existing_review',
-  'unsupported_provider',
-  null
-])
-
 const BUSY_ACTIONS = new Set(['create-pr', 'push-create-pr'])
 
-function hiddenAction(onPress: () => void, reserveSpace = false): MobileCreatePrAction {
+function hiddenAction(onPress: () => void): MobileCreatePrAction {
   return {
     visible: false,
-    reserveSpace,
     label: 'Create Pull Request',
     disabled: true,
     loading: false,
@@ -66,17 +50,20 @@ export function buildMobileCreatePrAction({
     return hiddenAction(noop)
   }
   if (eligibilityState.kind === 'error') {
-    return hiddenAction(noop, eligibilityState.reserveSpace)
+    return {
+      visible: true,
+      label: 'Review status unavailable',
+      disabled: true,
+      loading: false,
+      pushFirst: false,
+      onPress: noop
+    }
   }
   const eligibility = eligibilityState.eligibility
   if (!eligibility) {
-    // Cold loading: the first answer for this branch is still in flight.
-    // Reserve the row with a disabled placeholder instead of unmounting, so
-    // the changed-files list doesn't shift under the user when it lands (#8411).
     return {
       visible: true,
-      reserveSpace: false,
-      label: 'Create Pull Request',
+      label: 'Checking review status…',
       disabled: true,
       loading: true,
       pushFirst: false,
@@ -87,7 +74,14 @@ export function buildMobileCreatePrAction({
   // instead of relying on the host always emitting a hidden blockedReason for
   // non-creatable providers like bitbucket.
   if (!supportsHostedReviewCreation(eligibility.provider)) {
-    return hiddenAction(noop, eligibilityState.reserveSpace)
+    return {
+      visible: true,
+      label: 'Review creation unavailable for this provider',
+      disabled: true,
+      loading: false,
+      pushFirst: false,
+      onPress: noop
+    }
   }
   const copy = hostedReviewCopy(eligibility.provider)
   const label = `Create ${copy.titleLabel}`
@@ -105,7 +99,6 @@ export function buildMobileCreatePrAction({
     const disabled = busy || stale
     return {
       visible: true,
-      reserveSpace: false,
       label,
       disabled,
       loading,
@@ -114,10 +107,6 @@ export function buildMobileCreatePrAction({
       // true no-op when busy/stale, not a deferred create against stale state.
       onPress: disabled ? noop : () => onCreatePr(pushFirst)
     }
-  }
-
-  if (HIDDEN_BLOCKED_REASONS.has(eligibility.blockedReason)) {
-    return hiddenAction(noop, eligibilityState.reserveSpace)
   }
 
   const hint =
@@ -133,7 +122,6 @@ export function buildMobileCreatePrAction({
 
   return {
     visible: true,
-    reserveSpace: false,
     label,
     disabled: true,
     hint,

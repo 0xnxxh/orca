@@ -10,9 +10,10 @@ type Props = {
 
 export function MobileSourceControlCreatePrEntry({ action }: Props) {
   if (!action.visible) {
-    return action.reserveSpace ? <View style={styles.createPrReservedSpace} /> : null
+    return null
   }
   const enabled = !action.disabled
+  const copy = action.hint ?? action.label
   return (
     <View style={styles.createPrBlock}>
       <Pressable
@@ -36,15 +37,17 @@ export function MobileSourceControlCreatePrEntry({ action }: Props) {
             strokeWidth={2.2}
           />
         )}
-        <Text style={[styles.createPrButtonText, !enabled && styles.createPrButtonTextDisabled]}>
-          {action.label}
+        <Text
+          style={[
+            styles.createPrButtonText,
+            !enabled && styles.createPrButtonTextDisabled,
+            action.hint && styles.createPrButtonHint
+          ]}
+          numberOfLines={2}
+        >
+          {copy}
         </Text>
       </Pressable>
-      {action.hint ? (
-        <Text style={styles.createPrHint} numberOfLines={2}>
-          {action.hint}
-        </Text>
-      ) : null}
     </View>
   )
 }
