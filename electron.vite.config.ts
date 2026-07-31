@@ -260,16 +260,8 @@ export const electronViteConfig: UserConfig = {
           'agent-hooks/managed-agent-hook-controls': resolve(
             'src/main/agent-hooks/managed-agent-hook-controls.ts'
           ),
-          'ipc/local-agent-install-dir-detection': resolve(
-            'src/main/ipc/local-agent-install-dir-detection.ts'
-          ),
-          'ipc/tui-agent-detection-commands': resolve(
-            'src/main/ipc/tui-agent-detection-commands.ts'
-          ),
-          // Why: same rule — `orca account add` / `account list` import these.
-          'claude-accounts/keychain': resolve('src/main/claude-accounts/keychain.ts'),
-          'codex-cli/command': resolve('src/main/codex-cli/command.ts'),
-          'win32-utils': resolve('src/main/win32-utils.ts')
+          // Why: account import mutates the user's macOS Keychain from the CLI.
+          'claude-accounts/keychain': resolve('src/main/claude-accounts/keychain.ts')
         },
         // Why: Rolldown's SSR default is ESM, but Electron and sidecar launchers
         // consume these stable CommonJS paths.
