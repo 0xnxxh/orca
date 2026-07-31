@@ -119,6 +119,28 @@ describe('useMobileNativeChatTextExpansion', () => {
     expect(load).toHaveBeenCalledTimes(2)
   })
 
+  it('rejects copy retrieval while another full block is loading', async () => {
+    let resolveFirst: (text: string) => void = () => {}
+    const load = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<string>((resolve) => (resolveFirst = resolve)))
+      .mockResolvedValueOnce('full second')
+    await mount(load)
+
+    act(() => expansion?.toggle('message-1', first))
+    await expect(expansion!.loadForCopy('message-2', second)).rejects.toThrow(
+      'Another full message is loading'
+    )
+    expect(load).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      resolveFirst('full first')
+      await Promise.resolve()
+    })
+    await expect(expansion!.loadForCopy('message-2', second)).resolves.toBe('full second')
+    expect(load).toHaveBeenCalledTimes(2)
+  })
+
   it('clears retained text and ignores an old read when the session loader changes', async () => {
     let resolveFirst: (text: string) => void = () => {}
     const loadFirst = vi.fn(() => new Promise<string>((resolve) => (resolveFirst = resolve)))
@@ -127,6 +149,9 @@ describe('useMobileNativeChatTextExpansion', () => {
     act(() => expansion?.toggle('message-1', first))
 
     await act(async () => renderer?.update(createElement(Harness, { load: loadSecond })))
+    await expect(expansion!.loadForCopy('message-2', second)).rejects.toThrow(
+      'Another full message is loading'
+    )
     await act(async () => {
       resolveFirst('stale session')
       await Promise.resolve()
@@ -134,6 +159,7 @@ describe('useMobileNativeChatTextExpansion', () => {
 
     expect(expansion?.cached).toBeNull()
     expect(expansion?.expandedKey).toBeNull()
+    await expect(expansion!.loadForCopy('message-2', second)).resolves.toBe('new session')
   })
 })
 

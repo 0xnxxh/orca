@@ -5,6 +5,7 @@ type FullTextLoader = (messageId: string, retrieval: NativeChatTextRetrieval) =>
 
 type CachedText = { key: string; text: string }
 type ExpansionRequest = { key: string }
+type RetrievalGate = { source: FullTextLoader; active: boolean }
 type ExpansionState = {
   source: FullTextLoader
   cached: CachedText | null
@@ -36,14 +37,34 @@ export function useMobileNativeChatTextExpansion(
 ): MobileNativeChatTextExpansion {
   const [state, setState] = useState<ExpansionState>(() => emptyState(loadFullText))
   const requestRef = useRef<ExpansionRequest | null>(null)
+  const retrievalGateRef = useRef<RetrievalGate>({ source: loadFullText, active: false })
   let current = state
   if (current.source !== loadFullText) {
     current = emptyState(loadFullText)
     setState(current)
   }
+  if (retrievalGateRef.current.source !== loadFullText) {
+    retrievalGateRef.current.source = loadFullText
+  }
   useLayoutEffect(() => {
     requestRef.current = null
   }, [loadFullText])
+
+  const readFullText = useCallback(
+    async (messageId: string, retrieval: NativeChatTextRetrieval): Promise<string> => {
+      const gate = retrievalGateRef.current
+      if (gate.source !== loadFullText || gate.active) {
+        throw new Error('Another full message is loading')
+      }
+      gate.active = true
+      try {
+        return await loadFullText(messageId, retrieval)
+      } finally {
+        gate.active = false
+      }
+    },
+    [loadFullText]
+  )
 
   const toggle = useCallback(
     (messageId: string, retrieval: NativeChatTextRetrieval): void => {
@@ -70,7 +91,7 @@ export function useMobileNativeChatTextExpansion(
         request,
         errorKey: null
       })
-      void loadFullText(messageId, retrieval)
+      void readFullText(messageId, retrieval)
         .then((text) => {
           setState((latest) =>
             latest.source === loadFullText && latest.request === request
@@ -97,7 +118,7 @@ export function useMobileNativeChatTextExpansion(
           }
         })
     },
-    [current, loadFullText, onExpand]
+    [current, loadFullText, onExpand, readFullText]
   )
 
   const loadForCopy = useCallback(
@@ -105,9 +126,9 @@ export function useMobileNativeChatTextExpansion(
       const key = mobileNativeChatTextKey(messageId, retrieval)
       return current.cached?.key === key
         ? Promise.resolve(current.cached.text)
-        : loadFullText(messageId, retrieval)
+        : readFullText(messageId, retrieval)
     },
-    [current.cached, loadFullText]
+    [current.cached, readFullText]
   )
 
   return useMemo(

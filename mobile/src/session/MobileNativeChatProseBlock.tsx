@@ -97,8 +97,9 @@ function TextBlock({
   const failed = key !== null && textExpansion?.errorKey === key
   const showLoading = useDelayedLoading(loading)
   const contentNoun = invert ? 'message' : 'response'
+  const loadingLabel = `Loading full ${contentNoun}…`
   const actionLabel = showLoading
-    ? `Loading full ${contentNoun}…`
+    ? loadingLabel
     : failed
       ? `Retry full ${contentNoun}`
       : expanded
@@ -127,8 +128,8 @@ function TextBlock({
           disabled={expansionBusy}
           onPress={() => textExpansion.toggle(messageId, block.retrieval!)}
           accessibilityRole="button"
-          accessibilityLabel={actionLabel}
-          accessibilityState={{ disabled: expansionBusy, expanded }}
+          accessibilityLabel={loading ? loadingLabel : actionLabel}
+          accessibilityState={{ busy: loading, disabled: expansionBusy, expanded }}
         >
           {showLoading ? (
             <ActivityIndicator size="small" color={invert ? colors.bgBase : colors.textSecondary} />

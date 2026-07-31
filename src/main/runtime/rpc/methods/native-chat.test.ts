@@ -229,6 +229,25 @@ describe('nativeChat.readSession clientKind truncation gating', () => {
     expect(block).not.toHaveProperty('retrieval')
   })
 
+  it('does not split a Unicode surrogate pair at the mobile preview boundary', async () => {
+    const fullText = `${'a'.repeat(3999)}😀tail`
+    const message = makeTextMessage(fullText)
+    markTranscriptRecordOffset(message, 73)
+    cachedResult.value = { messages: [message] }
+
+    const result = await readSessionHandler()(
+      { agent: 'claude', sessionId: 's' },
+      ctxWith('mobile')
+    )
+    const block = (result as { messages: NativeChatMessage[] }).messages[0].blocks[0] as {
+      text: string
+    }
+    const preview = block.text.slice(0, block.text.indexOf('\n… (truncated)'))
+
+    expect(preview).toBe('a'.repeat(3999))
+    expect(preview.endsWith('\ud83d')).toBe(false)
+  })
+
   it('rejects a transcript session absent from server-owned state', async () => {
     cachedResult.value = { messages: [makeTextMessage(OVERSIZED)] }
 

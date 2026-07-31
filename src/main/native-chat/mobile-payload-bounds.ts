@@ -18,9 +18,16 @@ export type AuthorizedNativeChatPayloadSession = {
 }
 
 function clip(text: string): string {
-  return text.length > MOBILE_BLOCK_CHAR_CAP
-    ? text.slice(0, MOBILE_BLOCK_CHAR_CAP) + TRUNCATION_MARKER
-    : text
+  if (text.length <= MOBILE_BLOCK_CHAR_CAP) {
+    return text
+  }
+  let end = MOBILE_BLOCK_CHAR_CAP
+  const previous = text.charCodeAt(end - 1)
+  const next = text.charCodeAt(end)
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end--
+  }
+  return text.slice(0, end) + TRUNCATION_MARKER
 }
 
 function clipBlock(

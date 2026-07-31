@@ -43,6 +43,12 @@ export const styles = StyleSheet.create({
   controlPressed: {
     opacity: 0.5
   },
+  copyError: {
+    alignSelf: 'center',
+    color: colors.statusRed,
+    fontSize: typography.metaSize,
+    fontWeight: '600'
+  },
   copied: {
     backgroundColor: colors.diffAddedBg,
     borderRadius: radii.card

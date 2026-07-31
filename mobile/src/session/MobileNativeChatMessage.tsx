@@ -211,6 +211,11 @@ function AgentControls({
   const copying = copyState === 'copying'
   return (
     <View style={styles.controls}>
+      {copyState === 'failed' ? (
+        <Text style={styles.copyError} accessibilityRole="alert">
+          Copy failed
+        </Text>
+      ) : null}
       <Pressable
         style={({ pressed }) => [styles.controlButton, pressed && styles.controlPressed]}
         onPress={() => void onCopy()}
@@ -220,9 +225,10 @@ function AgentControls({
           copying
             ? 'Copying message'
             : copyState === 'failed'
-              ? 'Copy failed. Retry'
+              ? 'Retry copying message'
               : 'Copy message'
         }
+        accessibilityRole="button"
         accessibilityLiveRegion="polite"
         accessibilityState={{ busy: copying, disabled: copying }}
       >

@@ -258,12 +258,15 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
       loadForCopy: vi.fn()
     }
 
-    const actions = render(message, textExpansion).root.findAll(
-      (node) => node.props.accessibilityState?.disabled === true
-    )
+    const tree = render(message, textExpansion)
+    const actions = tree.root.findAll((node) => node.props.accessibilityState?.disabled === true)
 
     expect(actions).toHaveLength(2)
     expect(actions.every((action) => action.props.disabled === true)).toBe(true)
+    expect(
+      tree.root.findByProps({ accessibilityLabel: 'Loading full response…' }).props
+        .accessibilityState
+    ).toMatchObject({ busy: true })
   })
 
   it('recovers every clipped prose block before copying the exact message', async () => {
@@ -305,6 +308,10 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
       tree.root.findByProps({ accessibilityLabel: 'Copy message' }).props.onPress()
     )
 
-    expect(tree.root.findByProps({ accessibilityLabel: 'Copy failed. Retry' })).toBeTruthy()
+    expect(tree.root.findByProps({ accessibilityLabel: 'Retry copying message' })).toBeTruthy()
+    expect(tree.root.findByProps({ accessibilityRole: 'alert' })).toBeTruthy()
+    expect(
+      tree.root.findAllByType('Text' as never).map((node) => node.children.join(''))
+    ).toContain('Copy failed')
   })
 })

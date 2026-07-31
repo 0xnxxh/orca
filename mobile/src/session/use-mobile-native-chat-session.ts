@@ -45,6 +45,35 @@ type ReadSessionResult =
   | { messages: NativeChatMessage[]; hasMore?: boolean; beforeOffset?: number }
   | { error: string }
 type ReadTextBlockResult = { text: string } | { error: string }
+
+function textRetrievalKey(messageId: string, retrieval: NativeChatTextRetrieval): string {
+  return `${messageId}\0${retrieval.capability}\0${retrieval.originalChars}`
+}
+
+type TextRetrievalIndex = Map<string, Set<string>>
+
+function indexTextRetrievals(messages: readonly NativeChatMessage[]): TextRetrievalIndex {
+  const index: TextRetrievalIndex = new Map()
+  for (const message of messages) {
+    updateTextRetrievalIndex(index, message)
+  }
+  return index
+}
+
+function updateTextRetrievalIndex(index: TextRetrievalIndex, message: NativeChatMessage): void {
+  const keys = new Set<string>()
+  for (const block of message.blocks) {
+    if (block.type === 'text' && block.retrieval) {
+      keys.add(textRetrievalKey(message.id, block.retrieval))
+    }
+  }
+  if (keys.size > 0) {
+    index.set(message.id, keys)
+  } else {
+    index.delete(message.id)
+  }
+}
+
 /** Subscribe to an agent's native-chat transcript over the paired connection.
  *  Reads a small recent window for a fast first paint, tails it for live turns,
  *  and pages in older history on demand. Read results replace the list (they are
@@ -101,6 +130,7 @@ export function useMobileNativeChatSession(args: {
   const streamGenerationRef = useRef(0)
   const textSourceRevisionRef = useRef(0)
   const [textSourceRevision, setTextSourceRevision] = useState(0)
+  const textRetrievalIndexRef = useRef<TextRetrievalIndex>(new Map())
 
   useLayoutEffect(() => {
     // Async completions must only observe inputs from a committed render.
@@ -113,6 +143,7 @@ export function useMobileNativeChatSession(args: {
   // cache so the index is rebuilt once over the new base.
   const setList = useCallback((next: readonly NativeChatMessage[]) => {
     replaceList(mergerRef.current, next)
+    textRetrievalIndexRef.current = indexTextRetrievals(mergerRef.current.list)
     setMessages(mergerRef.current.list)
   }, [])
 
@@ -173,6 +204,21 @@ export function useMobileNativeChatSession(args: {
           setRead({ client, identity, status: 'error' })
           setError(applied.error)
           return
+        }
+        if (
+          frame.type !== 'appended' ||
+          applied.cursorInvalidated ||
+          !Array.isArray(frame.messages)
+        ) {
+          textRetrievalIndexRef.current = indexTextRetrievals(applied.messages)
+        } else {
+          for (const incoming of frame.messages) {
+            const index = mergerRef.current.indexById.get(incoming.id)
+            const currentMessage = index === undefined ? undefined : applied.messages[index]
+            if (currentMessage) {
+              updateTextRetrievalIndex(textRetrievalIndexRef.current, currentMessage)
+            }
+          }
         }
         setMessages(applied.messages)
         if (applied.hasMore != null) {
@@ -272,6 +318,10 @@ export function useMobileNativeChatSession(args: {
       const requestIdentity = identity
       const requestGeneration = streamGenerationRef.current
       const requestTextSourceRevision = textSourceRevision
+      const requestRetrievalKey = textRetrievalKey(messageId, retrieval)
+      if (!textRetrievalIndexRef.current.get(messageId)?.has(requestRetrievalKey)) {
+        throw new Error('Chat transcript changed')
+      }
       const response = await client.sendRequest('nativeChat.readTextBlock', {
         capability: retrieval.capability
       })
@@ -280,7 +330,8 @@ export function useMobileNativeChatSession(args: {
       }
       if (
         streamGenerationRef.current !== requestGeneration ||
-        textSourceRevisionRef.current !== requestTextSourceRevision
+        textSourceRevisionRef.current !== requestTextSourceRevision ||
+        !textRetrievalIndexRef.current.get(messageId)?.has(requestRetrievalKey)
       ) {
         throw new Error('Chat transcript changed')
       }
