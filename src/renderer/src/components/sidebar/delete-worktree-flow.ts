@@ -270,7 +270,7 @@ export function runWorktreeBatchDelete(
 ): boolean {
   const state = useAppStore.getState()
   const worktreeMap = getWorktreeMapFromState(state)
-  const targets = worktreeIds
+  const targets = Array.from(new Set(worktreeIds))
     .map((id) => worktreeMap.get(id) ?? null)
     .filter((worktree): worktree is Worktree => worktree != null && !worktree.isMainWorktree)
 
