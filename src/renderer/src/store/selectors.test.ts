@@ -297,27 +297,47 @@ describe('store selectors', () => {
       displayName: 'hub',
       executionHostId: toRuntimeExecutionHostId('hub-a')
     })
+    const local = makeRepo({
+      id: 'hub-repo',
+      path: '/local/repo',
+      displayName: 'local',
+      executionHostId: 'local'
+    })
+    const activeState = {
+      activeRepoId: 'hub-repo',
+      activeWorkspaceExecutionHostId: toSshExecutionHostId('hub-private-target')
+    }
+
+    for (const repos of [[repo], [local, repo], [repo, local]]) {
+      expect(selectRepoByIdForActiveWorkspace({ ...activeState, repos }, 'hub-repo')).toBe(repo)
+    }
+    // Why: useGitStatusPolling gates every lane on this exact expression, so a null repo silently stops polling.
+    const activeRepo = selectRepoByIdForActiveWorkspace(
+      { ...activeState, repos: [repo] },
+      'hub-repo'
+    )
+    expect(activeRepo ? isGitRepoKind(activeRepo) : false).toBe(true)
+  })
+
+  it('fails a paired-hub repo fallback closed when rival HUB rows share the repo ID', () => {
+    const repoForHub = (environmentId: string) =>
+      makeRepo({
+        id: 'hub-repo',
+        path: `/hub/${environmentId}/repo`,
+        displayName: environmentId,
+        executionHostId: toRuntimeExecutionHostId(environmentId)
+      })
 
     expect(
       selectRepoByIdForActiveWorkspace(
         {
-          repos: [repo],
+          repos: [repoForHub('hub-a'), repoForHub('hub-b')],
           activeRepoId: 'hub-repo',
-          activeWorkspaceExecutionHostId: toSshExecutionHostId('hub-private-target')
+          activeWorkspaceExecutionHostId: toSshExecutionHostId('shared-private-target')
         },
         'hub-repo'
       )
-    ).toBe(repo)
-    // Why: useGitStatusPolling gates every lane on this exact expression, so a null repo silently stops polling.
-    const activeRepo = selectRepoByIdForActiveWorkspace(
-      {
-        repos: [repo],
-        activeRepoId: 'hub-repo',
-        activeWorkspaceExecutionHostId: toSshExecutionHostId('hub-private-target')
-      },
-      'hub-repo'
-    )
-    expect(activeRepo ? isGitRepoKind(activeRepo) : false).toBe(true)
+    ).toBeNull()
   })
 
   it('still prefers the host-matching row when one repo ID spans hosts', () => {
