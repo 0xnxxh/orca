@@ -6,14 +6,24 @@ import { useRpcClientContext } from './client-context'
 
 type UseAllHostClientsOptions = {
   autoConnectHostIds?: readonly string[]
+  closeUnusedOnUnmount?: boolean
+  preserveHostIdsOnUnmount?: readonly string[]
 }
 
 export function useAllHostClients(hostIds: string[], options?: UseAllHostClientsOptions) {
   const ctx = useRpcClientContext()
   const autoConnectHostIds = options?.autoConnectHostIds ?? hostIds
+  const closeUnusedOnUnmount = options?.closeUnusedOnUnmount ?? false
+  const preserveHostIdsOnUnmount = options?.preserveHostIdsOnUnmount ?? []
   const key = useMemo(
-    () => `${[...hostIds].sort().join(',')}|${[...autoConnectHostIds].sort().join(',')}`,
-    [autoConnectHostIds, hostIds]
+    () =>
+      [
+        [...hostIds].sort().join(','),
+        [...autoConnectHostIds].sort().join(','),
+        closeUnusedOnUnmount ? 'close' : 'keep',
+        [...preserveHostIdsOnUnmount].sort().join(',')
+      ].join('|'),
+    [autoConnectHostIds, closeUnusedOnUnmount, hostIds, preserveHostIdsOnUnmount]
   )
   const [tick, setTick] = useState(0)
 
@@ -23,6 +33,7 @@ export function useAllHostClients(hostIds: string[], options?: UseAllHostClients
     }
     const trackedHostIds = new Set(hostIds)
     const acquiredHostIds = autoConnectHostIds.filter((id) => trackedHostIds.has(id))
+    const preservedHostIds = new Set(preserveHostIdsOnUnmount)
     for (const id of acquiredHostIds) {
       ctx.acquire(id)
     }
@@ -35,7 +46,11 @@ export function useAllHostClients(hostIds: string[], options?: UseAllHostClients
         unsubscribe()
       }
       for (const id of acquiredHostIds) {
-        ctx.release(id)
+        if (closeUnusedOnUnmount && !preservedHostIds.has(id)) {
+          ctx.releaseAndCloseIfUnused(id)
+        } else {
+          ctx.release(id)
+        }
       }
     }
   }, [key])

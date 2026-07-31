@@ -29,6 +29,7 @@ type StoreEntry = {
 export type RpcClientContextValue = {
   acquire: (hostId: string, host?: HostProfile) => RpcClient | null
   release: (hostId: string) => void
+  releaseAndCloseIfUnused: (hostId: string) => void
   forceReconnect: (hostId: string) => Promise<void>
   closeHost: (hostId: string) => void
   getState: (hostId: string) => ConnectionState
@@ -53,6 +54,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
 
   // Pending opens keyed by hostId so two acquire() callers in the same render don't race the host lookup.
   const pendingOpensRef = useRef(new HostClientOpenRegistry())
+  const pendingAcquisitionsRef = useRef<Map<string, number>>(new Map())
 
   // Why: cache of already-loaded HostProfiles so openEntry can skip a second loadHosts()/Keychain pass on cold start.
   const primedHostsRef = useRef<Map<string, HostProfile>>(new Map())
@@ -73,9 +75,12 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const closeEntry = useCallback((hostId: string) => {
+  const closeEntry = useCallback((hostId: string, forgetPrimedHost = true) => {
     pendingOpensRef.current.cancel(hostId)
-    primedHostsRef.current.delete(hostId)
+    pendingAcquisitionsRef.current.delete(hostId)
+    if (forgetPrimedHost) {
+      primedHostsRef.current.delete(hostId)
+    }
     const entry = storeRef.current.get(hostId)
     entry?.unsubState()
     storeRef.current.delete(hostId)
@@ -147,9 +152,10 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
       const entry: StoreEntry = {
         client,
         state: client.getState(),
-        refCount: 0,
+        refCount: pendingAcquisitionsRef.current.get(hostId) ?? 0,
         unsubState
       }
+      pendingAcquisitionsRef.current.delete(hostId)
       storeRef.current.set(hostId, entry)
       notifyHostState(hostId, entry.state)
       notifyAllHosts()
@@ -171,13 +177,12 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
         existing.refCount += 1
         return existing.client
       }
+      pendingAcquisitionsRef.current.set(
+        hostId,
+        (pendingAcquisitionsRef.current.get(hostId) ?? 0) + 1
+      )
       // Trigger async open; returns null this tick — consumers re-call acquire() from an effect that re-runs on state changes.
-      void openEntry(hostId).then((entry) => {
-        if (!entry) {
-          return
-        }
-        entry.refCount += 1
-      })
+      void openEntry(hostId)
       return null
     },
     [openEntry]
@@ -192,11 +197,29 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
   // Why: no idle-close on refcount→0 — transient nav gaps flashed false 'disconnected', so keep sockets alive while foregrounded.
   const release = useCallback((hostId: string) => {
     const entry = storeRef.current.get(hostId)
-    if (!entry) {
+    if (entry) {
+      entry.refCount = Math.max(0, entry.refCount - 1)
       return
     }
-    entry.refCount = Math.max(0, entry.refCount - 1)
+    decrementPendingAcquisition(pendingAcquisitionsRef.current, hostId)
   }, [])
+
+  const releaseAndCloseIfUnused = useCallback(
+    (hostId: string) => {
+      const entry = storeRef.current.get(hostId)
+      if (entry) {
+        entry.refCount = Math.max(0, entry.refCount - 1)
+        if (entry.refCount === 0) {
+          closeEntry(hostId, false)
+        }
+        return
+      }
+      if (decrementPendingAcquisition(pendingAcquisitionsRef.current, hostId) === 0) {
+        closeEntry(hostId, false)
+      }
+    },
+    [closeEntry]
+  )
 
   const forceReconnect = useCallback(
     async (hostId: string) => {
@@ -209,10 +232,13 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
         entry.client.close()
         storeRef.current.delete(hostId)
       }
-      const fresh = await openEntry(hostId)
-      if (fresh) {
-        fresh.refCount = savedRefCount
+      if (savedRefCount > 0) {
+        pendingAcquisitionsRef.current.set(
+          hostId,
+          Math.max(savedRefCount, pendingAcquisitionsRef.current.get(hostId) ?? 0)
+        )
       }
+      await openEntry(hostId)
     },
     [openEntry]
   )
@@ -276,6 +302,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     const store = storeRef.current
     return () => {
       pendingOpensRef.current.cancelAll()
+      pendingAcquisitionsRef.current.clear()
       for (const [hostId] of store) {
         closeEntry(hostId)
       }
@@ -295,6 +322,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     () => ({
       acquire,
       release,
+      releaseAndCloseIfUnused,
       forceReconnect,
       closeHost: closeEntry,
       getState,
@@ -309,6 +337,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     [
       acquire,
       release,
+      releaseAndCloseIfUnused,
       forceReconnect,
       closeEntry,
       getState,
@@ -415,4 +444,14 @@ export function usePrimeHosts(): (hosts: HostProfile[]) => void {
 function clientActivePath(client: RpcClient | undefined): MobileConnectionPath {
   const logical = client as Partial<StableLogicalRpcClient> | undefined
   return typeof logical?.getActivePath === 'function' ? logical.getActivePath() : 'lan'
+}
+
+function decrementPendingAcquisition(pending: Map<string, number>, hostId: string): number {
+  const next = Math.max(0, (pending.get(hostId) ?? 0) - 1)
+  if (next === 0) {
+    pending.delete(hostId)
+  } else {
+    pending.set(hostId, next)
+  }
+  return next
 }

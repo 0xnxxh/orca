@@ -15,6 +15,7 @@ import { colors, radii, spacing, typography } from '../src/theme/mobile-theme'
 import { loadHosts } from '../src/transport/host-store'
 import type { HostProfile } from '../src/transport/types'
 import { useAllHostClients } from '../src/transport/all-host-client-connections'
+import { selectHomeAutoConnectHostIds } from '../src/transport/home-host-auto-connect'
 import type { RpcClient } from '../src/transport/rpc-client'
 import { BottomDrawer } from '../src/components/BottomDrawer'
 import { VoiceModelList } from '../src/components/VoiceModelList'
@@ -47,7 +48,11 @@ export default function VoiceSettingsScreen(): React.JSX.Element {
     void loadHosts().then(setHosts)
   }, [])
   const hostIds = useMemo(() => hosts.map((h) => h.id), [hosts])
-  const hostClients = useAllHostClients(hostIds)
+  const homeHostIds = useMemo(() => selectHomeAutoConnectHostIds(hosts), [hosts])
+  const hostClients = useAllHostClients(hostIds, {
+    closeUnusedOnUnmount: true,
+    preserveHostIdsOnUnmount: homeHostIds
+  })
   // Voice dictation runs on the paired desktop, so pick the first connected host.
   const client: RpcClient | null = useMemo(
     () => hostClients.find((entry) => entry.state === 'connected')?.client ?? null,
