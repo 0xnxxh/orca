@@ -737,9 +737,9 @@ export type TerminalSlice = {
    *  prompt from one the A -> B -> A collapse dropped. */
   markCodexRestartNotices: (
     notices: (Pick<CodexRestartNotice, 'previousAccountLabel' | 'nextAccountLabel'> &
-      Partial<
-        Pick<CodexRestartNotice, 'previousAccountId' | 'nextAccountId' | 'homeRouteChanged'>
-      > & {
+      Partial<Pick<CodexRestartNotice, 'previousAccountId' | 'nextAccountId'>> & {
+        /** Explicit false replaces a restored route notice after main rechecks it. */
+        homeRouteChanged?: boolean
         ptyId: string
       })[]
   ) => string[]
@@ -3468,7 +3468,9 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         const launch = existing ?? notice
         const target = { id: notice.nextAccountId, label: notice.nextAccountLabel }
         const homeRouteChanged =
-          existing?.homeRouteChanged === true || notice.homeRouteChanged === true
+          notice.homeRouteChanged === undefined
+            ? existing?.homeRouteChanged === true
+            : notice.homeRouteChanged
 
         // Why: a live Codex pane keeps its original launch account until it actually restarts, so A -> B -> A must not leave a stale restart notice.
         if (

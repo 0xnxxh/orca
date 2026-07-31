@@ -80,6 +80,7 @@ import { migrateLegacySharedAuthToPerAccountHome } from './legacy-shared-auth-mi
 import { hasStoredCodexCredential } from './managed-codex-auth-readiness'
 import { syncLegacySharedCodexConfigForRetainedPanes } from './legacy-shared-config-compatibility'
 import type { CodexPaneHomeRoute } from '../codex/codex-pane-account-registry'
+import { isShellStartupEnvProbeSupported } from '../pty/shell-startup-env'
 
 type CodexSystemDefaultSnapshot = {
   authJson: string | null
@@ -466,7 +467,8 @@ export class CodexRuntimeHomeService {
     const settings = this.store.getSettings()
     if (
       !isCodexSystemDefaultRealHomeEnabled() ||
-      normalizeCodexRuntimeSelection(settings).host !== null
+      normalizeCodexRuntimeSelection(settings).host !== null ||
+      !isShellStartupEnvProbeSupported()
     ) {
       return false
     }
@@ -1664,12 +1666,21 @@ export class CodexRuntimeHomeService {
       const systemAuth = this.readSystemDefaultAuth()
       if (!existsSync(runtimeAuthPath)) {
         const logoutMarkerStatus = this.getRuntimeLogoutMarkerStatus()
+        const snapshot = this.readSystemDefaultSnapshot(this.getSystemDefaultSnapshotPath())
+        const knownSystemAuthBaseline =
+          provenanceStatus.kind === 'committed' &&
+          provenanceStatus.provenance.owner === 'system-default'
+            ? provenanceStatus.provenance.authJson
+            : provenanceStatus.kind === 'missing'
+              ? (this.lastWrittenAuthJson ?? snapshot?.authJson)
+              : undefined
         if (
-          logoutMarkerStatus.kind === 'system-default-changed' &&
-          logoutMarkerStatus.systemDefaultAuthJson !== null
+          (logoutMarkerStatus.kind === 'system-default-changed' ||
+            (knownSystemAuthBaseline !== undefined && knownSystemAuthBaseline !== systemAuth)) &&
+          systemAuth !== null
         ) {
           const replaced = this.writeRuntimeAuth(
-            logoutMarkerStatus.systemDefaultAuthJson,
+            systemAuth,
             {
               owner: 'system-default'
             },

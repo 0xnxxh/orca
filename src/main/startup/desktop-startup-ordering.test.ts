@@ -95,6 +95,21 @@ describe('startup ordering', () => {
     )
   })
 
+  it('reconciles retained Codex homes once before serve and desktop startup diverge', () => {
+    const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const hookStateIndex = source.indexOf('ensureRealHomeCodexHookState({')
+    const reconciliation = 'codexRuntimeHome.reconcileLegacySharedHomeForRetainedPanes()'
+    const reconciliationIndex = source.indexOf(reconciliation, hookStateIndex)
+    const serveIndex = source.indexOf('if (serveOptions) {', reconciliationIndex)
+    const desktopIndex = source.indexOf('Promise.resolve(openMainWindow())', serveIndex)
+
+    expect(hookStateIndex).toBeGreaterThanOrEqual(0)
+    expect(reconciliationIndex).toBeGreaterThan(hookStateIndex)
+    expect(serveIndex).toBeGreaterThan(reconciliationIndex)
+    expect(desktopIndex).toBeGreaterThan(serveIndex)
+    expect(source.split(reconciliation)).toHaveLength(2)
+  })
+
   it('exposes managed WSL reconciliation status to headless serve clients and diagnostics', () => {
     const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
 

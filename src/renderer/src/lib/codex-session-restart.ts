@@ -209,16 +209,58 @@ export async function markLiveCodexSessionsForRestart(args: {
     return
   }
 
+  const currentState = useAppStore.getState()
+  const restoredRouteNoticePtyIds = liveCodexSessionPtyIds.filter(
+    (ptyId) => currentState.codexRestartNoticeByPtyId[ptyId]?.homeRouteChanged === true
+  )
+  const restoredRouteNoticePtyIdSet = new Set(restoredRouteNoticePtyIds)
+  const authoritativeStalePanes =
+    restoredRouteNoticePtyIds.length === 0
+      ? null
+      : await window.api.codexAccounts
+          .listStalePanes({ ptyIds: restoredRouteNoticePtyIds })
+          .catch(() => null)
+  const authoritativeStaleByPtyId = authoritativeStalePanes
+    ? new Map(authoritativeStalePanes.map((pane) => [pane.ptyId, pane]))
+    : null
+  if (authoritativeStaleByPtyId) {
+    for (const ptyId of restoredRouteNoticePtyIds) {
+      if (!authoritativeStaleByPtyId.has(ptyId)) {
+        useAppStore.getState().clearCodexRestartNotice(ptyId)
+      }
+    }
+  }
+
   useAppStore.getState().markCodexRestartNotices(
-    liveCodexSessionPtyIds.map((ptyId) => ({
-      ptyId,
-      previousAccountLabel: args.previousAccountLabel,
-      nextAccountLabel: args.nextAccountLabel,
-      ...(args.previousAccountId === undefined
-        ? {}
-        : { previousAccountId: args.previousAccountId }),
-      ...(args.nextAccountId === undefined ? {} : { nextAccountId: args.nextAccountId })
-    }))
+    liveCodexSessionPtyIds.flatMap((ptyId) => {
+      if (authoritativeStaleByPtyId && restoredRouteNoticePtyIdSet.has(ptyId)) {
+        const stalePane = authoritativeStaleByPtyId.get(ptyId)
+        if (!stalePane) {
+          return []
+        }
+        return [
+          {
+            ptyId,
+            previousAccountLabel: args.previousAccountLabel,
+            nextAccountLabel: args.nextAccountLabel,
+            previousAccountId: stalePane.launchAccountId,
+            nextAccountId: stalePane.activeAccountId,
+            homeRouteChanged: stalePane.reason === 'home-route-change'
+          }
+        ]
+      }
+      return [
+        {
+          ptyId,
+          previousAccountLabel: args.previousAccountLabel,
+          nextAccountLabel: args.nextAccountLabel,
+          ...(args.previousAccountId === undefined
+            ? {}
+            : { previousAccountId: args.previousAccountId }),
+          ...(args.nextAccountId === undefined ? {} : { nextAccountId: args.nextAccountId })
+        }
+      ]
+    })
   )
 }
 

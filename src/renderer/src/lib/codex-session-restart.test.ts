@@ -124,6 +124,7 @@ describe('markLiveCodexSessionsForRestart', () => {
       previousAccountLabel: ACCOUNT_A,
       nextAccountLabel: ACCOUNT_B
     })
+    expect(window.api.codexAccounts.listStalePanes).not.toHaveBeenCalled()
   })
 
   it('marks every live Codex split pane and ignores non-Codex panes', async () => {

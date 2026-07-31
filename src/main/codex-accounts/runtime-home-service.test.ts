@@ -1543,6 +1543,41 @@ describe('CodexRuntimeHomeService', () => {
     expect(readFileSync(getRuntimeCodexAuthPath(), 'utf-8')).toBe(reloginAuth)
   })
 
+  it.each([
+    ['committed provenance', false],
+    ['pre-provenance migration', true]
+  ])(
+    'recreates retained auth after a %s crash between logout deletion and metadata commit',
+    async (_label, removeProvenance) => {
+      const systemAuth = createCodexAuthJson('system@example.com', 'acct-system', 'old-token')
+      const reloginAuth = createCodexAuthJson('system@example.com', 'acct-system', 'relogin-token')
+      writeFileSync(getSystemCodexAuthPath(), systemAuth, 'utf-8')
+      const store = createStore(createSettings({ codexSystemDefaultRealHomeEnabled: false }))
+      const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+      new CodexRuntimeHomeService(store as never)
+
+      setRealHomeLaneForTest(true)
+      rmSync(getSystemCodexAuthPath())
+      rmSync(getRuntimeCodexAuthPath())
+      if (removeProvenance) {
+        rmSync(getSharedRuntimeAuthProvenancePath())
+      }
+      rmSync(
+        join(testState.userDataDir, 'codex-runtime-home', 'system-default-runtime-logout.json'),
+        {
+          force: true
+        }
+      )
+      const restartedService = new CodexRuntimeHomeService(store as never)
+      restartedService.setRealHomeLaneGate(() => true)
+
+      expect(existsSync(getRuntimeCodexAuthPath())).toBe(false)
+      writeFileSync(getSystemCodexAuthPath(), reloginAuth, 'utf-8')
+      expect(restartedService.prepareForRateLimitFetch()).toBe(getSystemCodexHomePath())
+      expect(readFileSync(getRuntimeCodexAuthPath(), 'utf-8')).toBe(reloginAuth)
+    }
+  )
+
   it('preserves shared config changes when a pending real-home lane falls back', async () => {
     const systemConfigPath = join(getSystemCodexHomePath(), 'config.toml')
     const runtimeConfigPath = join(getRuntimeCodexHomePath(), 'config.toml')
