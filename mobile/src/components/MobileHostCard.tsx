@@ -20,6 +20,8 @@ export function MobileHostCard(props: {
 }) {
   const connected = props.state === 'connected'
   const isError = ['warning', 'unreachable', 'auth-failed'].includes(props.verdict.kind)
+  const statusLabel = verdictDisplayLabel(props.verdict)
+  const connectionPathLabel = connected ? mobileConnectionPathLabel(props.path) : null
   const worktreeSummary = props.worktreeCounts
     ? `${props.worktreeCounts.total} worktree${props.worktreeCounts.total === 1 ? '' : 's'}${props.worktreeCounts.active > 0 ? ` · ${props.worktreeCounts.active} active` : ''}`
     : null
@@ -27,7 +29,7 @@ export function MobileHostCard(props: {
     <View style={styles.card}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Open ${props.host.name}`}
+        accessibilityLabel={`Open ${props.host.name}, ${statusLabel}${connectionPathLabel ? ` via ${connectionPathLabel}` : ''}`}
         style={({ pressed }) => [styles.cardMain, pressed && styles.cardPressed]}
         onPress={props.onPress}
         onLongPress={props.onLongPress}
@@ -49,8 +51,8 @@ export function MobileHostCard(props: {
               style={[styles.metaText, isError && { color: colors.statusRed }]}
               numberOfLines={1}
             >
-              {verdictDisplayLabel(props.verdict)}
-              {connected ? ` · ${mobileConnectionPathLabel(props.path)}` : ''}
+              {statusLabel}
+              {connectionPathLabel ? ` · ${connectionPathLabel}` : ''}
             </Text>
           </View>
           {connected && worktreeSummary ? (

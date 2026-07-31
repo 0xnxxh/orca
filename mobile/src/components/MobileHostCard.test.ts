@@ -20,6 +20,14 @@ vi.mock('./StatusDot', () => ({
   StatusDot: 'StatusDot'
 }))
 
+function suppressRendererDeprecation() {
+  return vi.spyOn(console, 'error').mockImplementation((...args) => {
+    if (typeof args[0] !== 'string' || !args[0].includes('react-test-renderer is deprecated')) {
+      throw new Error(String(args[0]))
+    }
+  })
+}
+
 describe('MobileHostCard', () => {
   let renderer: ReactTestRenderer | null = null
 
@@ -37,11 +45,7 @@ describe('MobileHostCard', () => {
     const onPress = vi.fn()
     const onLongPress = vi.fn()
     const onOpenActions = vi.fn()
-    const consoleError = vi.spyOn(console, 'error').mockImplementation((...args) => {
-      if (typeof args[0] !== 'string' || !args[0].includes('react-test-renderer is deprecated')) {
-        throw new Error(String(args[0]))
-      }
-    })
+    const consoleError = suppressRendererDeprecation()
     await act(async () => {
       renderer = create(
         createElement(MobileHostCard, {
@@ -66,7 +70,7 @@ describe('MobileHostCard', () => {
 
     const buttons = renderer.root.findAllByType('Pressable')
     expect(buttons).toHaveLength(2)
-    expect(buttons[0].props.accessibilityLabel).toBe('Open Desk')
+    expect(buttons[0].props.accessibilityLabel).toBe('Open Desk, Disconnected')
     expect(buttons[1].props.accessibilityLabel).toBe('Actions for Desk')
 
     act(() => buttons[1].props.onPress())
@@ -77,5 +81,33 @@ describe('MobileHostCard', () => {
     act(() => buttons[0].props.onLongPress())
     expect(onPress).toHaveBeenCalledOnce()
     expect(onLongPress).toHaveBeenCalledOnce()
+  })
+
+  it('announces the connection path for an online host', async () => {
+    const consoleError = suppressRendererDeprecation()
+    await act(async () => {
+      renderer = create(
+        createElement(MobileHostCard, {
+          host: {
+            id: 'desk',
+            name: 'Desk',
+            endpoint: 'ws://192.168.1.2:6768',
+            deviceToken: 'token',
+            publicKeyB64: 'key',
+            lastConnected: 1
+          },
+          state: 'connected',
+          verdict: { kind: 'normal', label: 'Connected' },
+          path: 'relay',
+          onPress: vi.fn(),
+          onLongPress: vi.fn(),
+          onOpenActions: vi.fn()
+        })
+      )
+    })
+    consoleError.mockRestore()
+
+    const navigationButton = renderer.root.findAllByType('Pressable')[0]
+    expect(navigationButton.props.accessibilityLabel).toBe('Open Desk, Connected via Orca Relay')
   })
 })
