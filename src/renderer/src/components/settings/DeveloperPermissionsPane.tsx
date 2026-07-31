@@ -353,7 +353,7 @@ export function DeveloperPermissionsPane({
               key={permission.id}
               data-settings-section={settingId}
               data-highlighted={highlightedSettingId === settingId ? 'true' : undefined}
-              className="flex items-center justify-between gap-4 px-4 py-3 transition-[background-color,box-shadow] duration-500 data-[highlighted=true]:bg-accent data-[highlighted=true]:ring-2 data-[highlighted=true]:ring-inset data-[highlighted=true]:ring-ring/50 motion-reduce:transition-none"
+              className="flex items-center justify-between gap-4 px-4 py-3 transition-[background-color,box-shadow] duration-500 data-[highlighted=true]:bg-annotation-highlight/10 data-[highlighted=true]:ring-2 data-[highlighted=true]:ring-inset data-[highlighted=true]:ring-annotation-highlight/60 motion-reduce:transition-none"
             >
               <div className="flex min-w-0 items-start gap-3">
                 <div className="mt-0.5 text-muted-foreground">{permission.icon}</div>
