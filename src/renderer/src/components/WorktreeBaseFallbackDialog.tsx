@@ -28,11 +28,14 @@ export default function WorktreeBaseFallbackDialog(): React.JSX.Element {
     (state) => state.setContextualToursBlockingSurfaceVisible
   )
   const lastNoticeRef = useRef(notice)
-  if (notice) {
-    lastNoticeRef.current = notice
-  }
   const displayedNotice = notice ?? lastNoticeRef.current
   const open = notice !== null && activeModal === 'none'
+
+  useEffect(() => {
+    if (notice) {
+      lastNoticeRef.current = notice
+    }
+  }, [notice])
 
   useEffect(() => {
     setContextualToursBlockingSurfaceVisible(open)
