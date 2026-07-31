@@ -12,15 +12,22 @@ export async function isNpxOnPathForSkillInstall(
   options?: { forceRefresh?: boolean }
 ): Promise<boolean> {
   const wslTarget = getPreflightWslTarget(context) ?? undefined
-  await (options?.forceRefresh && !wslTarget
-    ? refreshHostPath()
-    : hydrateShellPathForAgentDetection(context))
+  if (wslTarget) {
+    return isCommandOnPath('npx', wslTarget)
+  }
+  const forceRefresh = options?.forceRefresh ?? false
+  await (process.platform === 'win32'
+    ? mergePersistedWindowsPathAsync(process.env, { forceRefresh })
+    : preparePosixHostPath(context, forceRefresh))
   return isCommandOnPath('npx', wslTarget)
 }
 
-async function refreshHostPath(): Promise<void> {
-  if (process.platform === 'win32') {
-    await mergePersistedWindowsPathAsync(process.env, { forceRefresh: true })
+async function preparePosixHostPath(
+  context: PreflightRuntimeContext | undefined,
+  forceRefresh: boolean
+): Promise<void> {
+  if (!forceRefresh) {
+    await hydrateShellPathForAgentDetection(context)
     return
   }
   const hydration = await hydrateShellPath({ force: true })

@@ -61,8 +61,31 @@ describe('isNpxOnPathForSkillInstall', () => {
 
     await expect(isNpxOnPathForSkillInstall(context)).resolves.toBe(true)
 
-    expect(mocks.hydrateShellPath).toHaveBeenCalledWith(context)
+    expect(mocks.hydrateShellPath).not.toHaveBeenCalled()
+    expect(mocks.mergePersistedWindowsPath).not.toHaveBeenCalled()
     expect(mocks.isCommandOnPath).toHaveBeenCalledWith('npx', { distro: 'Ubuntu' })
+  })
+
+  it('awaits the asynchronous Windows PATH merge before the initial host check', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    let finishPathMerge: (() => void) | undefined
+    mocks.mergePersistedWindowsPath.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishPathMerge = resolve
+        })
+    )
+
+    const check = isNpxOnPathForSkillInstall()
+    await Promise.resolve()
+
+    expect(mocks.isCommandOnPath).not.toHaveBeenCalled()
+    expect(mocks.mergePersistedWindowsPath).toHaveBeenCalledWith(process.env, {
+      forceRefresh: false
+    })
+    finishPathMerge?.()
+    await expect(check).resolves.toBe(true)
+    expect(mocks.isCommandOnPath).toHaveBeenCalledWith('npx', undefined)
   })
 
   it('checks the default WSL distro without refreshing the Windows host PATH', async () => {

@@ -147,6 +147,27 @@ describe('FeatureSetupInlineTerminal', () => {
     expect(mocks.terminalProps.at(-1)?.description).toBe(RUN_DESCRIPTION)
   })
 
+  it('ignores a stale local result after remote focus cancels the probe', async () => {
+    let finishProbe: ((onPath: boolean) => void) | undefined
+    mocks.isNpxOnPath.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishProbe = resolve
+        })
+    )
+    await renderTerminal()
+
+    mocks.settings = { activeRuntimeEnvironmentId: 'ssh-host-1' }
+    await rerenderTerminal()
+    await act(async () => {
+      finishProbe?.(false)
+    })
+
+    expect(mocks.isNpxOnPath).toHaveBeenCalledTimes(1)
+    expect(container?.textContent).not.toContain('Node.js is required')
+    expect(mocks.terminalProps.at(-1)?.description).toBe(RUN_DESCRIPTION)
+  })
+
   it('fails open when the probe rejects', async () => {
     mocks.isNpxOnPath.mockRejectedValue(new Error('ipc unavailable'))
 
