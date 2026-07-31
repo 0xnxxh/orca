@@ -741,6 +741,65 @@ describe('createRemoteRuntimePtyTransport', () => {
     )
   })
 
+  it('does not restart web mirror recovery when an in-flight request rejects after cutoff', async () => {
+    vi.useFakeTimers()
+    try {
+      const healthyRuntimeCall = runtimeCall.getMockImplementation()
+      let rejectInFlight: (error: Error) => void = () => {}
+      let activateAttempts = 0
+      runtimeCall.mockImplementation((request: { method: string }) => {
+        if (request.method !== 'session.tabs.activate') {
+          throw new Error(`Unexpected method ${request.method}`)
+        }
+        activateAttempts += 1
+        if (activateAttempts === 1) {
+          return Promise.reject(
+            Object.assign(new Error('Remote Orca runtime closed the connection.'), {
+              code: 'remote_runtime_unavailable'
+            })
+          )
+        }
+        return new Promise((_, reject) => {
+          rejectInFlight = reject
+        })
+      })
+      const { createRemoteRuntimePtyTransport } = await import('./remote-runtime-pty-transport')
+      const transport = createRemoteRuntimePtyTransport('env-1', {
+        worktreeId: 'wt-1',
+        tabId: 'web-terminal-host-tab-1',
+        leafId: 'pane:1'
+      })
+
+      transport.attach({
+        existingPtyId: 'remote:env-1@@stale-client-handle',
+        callbacks: {}
+      })
+      await vi.advanceTimersByTimeAsync(250)
+      expect(activateAttempts).toBe(2)
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(transport.getRecoveryState?.().phase).toBe('disconnected')
+
+      rejectInFlight(
+        Object.assign(new Error('Remote Orca runtime closed the connection.'), {
+          code: 'remote_runtime_unavailable'
+        })
+      )
+      await vi.advanceTimersByTimeAsync(5 * 60_000)
+
+      expect(activateAttempts).toBe(2)
+      expect(transport.getRecoveryState?.().phase).toBe('disconnected')
+
+      runtimeCall.mockImplementation(healthyRuntimeCall!)
+      expect(transport.retryRecovery?.()).toBe(true)
+      await vi.waitFor(() => expect(runtimeSubscribe).toHaveBeenCalledTimes(1))
+      expect(latestSubscribePayload().terminal).toBe('terminal-1')
+      transport.destroy?.()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('resolves a HUB-native SSH PTY wake hint to its runtime terminal handle', async () => {
     const leafId = '11111111-1111-4111-8111-111111111111'
     runtimeCall.mockImplementation(async (request: { method: string; params?: unknown }) => {

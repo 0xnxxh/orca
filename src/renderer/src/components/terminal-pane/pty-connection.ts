@@ -3866,7 +3866,14 @@ export function connectPanePty(
     }
   }
   const claimPendingVisibleRemoteViewport = (): void => {
-    if (!pendingVisibleRemoteViewportClaim || !deps.isVisibleRef.current) {
+    if (
+      !pendingVisibleRemoteViewportClaim ||
+      !deps.isVisibleRef.current ||
+      typeof document === 'undefined' ||
+      document.visibilityState === 'hidden' ||
+      typeof document.hasFocus !== 'function' ||
+      !document.hasFocus()
+    ) {
       return
     }
     claimViewportForUserActivity()

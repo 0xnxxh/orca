@@ -513,7 +513,10 @@ export function createRemoteRuntimePtyTransport(
         ) {
           throw error
         }
-        recoveryEpoch = recovery.isActive ? recovery.currentEpoch : recovery.begin()
+        if (recoveryEpoch !== undefined && !recovery.isCurrent(recoveryEpoch)) {
+          return undefined
+        }
+        recoveryEpoch ??= recovery.begin()
         if (!(await waitForHostSessionAttachRetry(recoveryEpoch)) || !isCurrent()) {
           return undefined
         }

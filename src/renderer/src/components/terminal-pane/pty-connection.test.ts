@@ -23565,7 +23565,12 @@ describe('connectPanePty', () => {
       expect(transport.resize).not.toHaveBeenCalled()
     })
 
-    it('claims a visible remote mirror once when its passive fit hold arrives', async () => {
+    it('claims a focused visible remote mirror once when its passive fit hold arrives', async () => {
+      let documentFocused = true
+      ;(globalThis as { document?: Document }).document = {
+        visibilityState: 'visible',
+        hasFocus: vi.fn(() => documentFocused)
+      } as unknown as Document
       const { setFitOverride } = await import('@/lib/pane-manager/mobile-fit-overrides')
       const { connectPanePty } = await import('./pty-connection')
       const ptyId = 'remote:env-1@@terminal-visible'
@@ -23597,6 +23602,20 @@ describe('connectPanePty', () => {
       binding.syncProcessTracking()
       deps.isVisibleRef.current = true
       binding.noteVisibilityResume()
+      expect(transport.claimViewport).toHaveBeenCalledWith(132, 42)
+
+      setFitOverride(ptyId, 'desktop-fit', 132, 42)
+      documentFocused = false
+      deps.isVisibleRef.current = false
+      binding.syncProcessTracking()
+      deps.isVisibleRef.current = true
+      binding.noteVisibilityResume()
+      transport.claimViewport.mockClear()
+      setFitOverride(ptyId, 'remote-desktop-fit', 80, 24)
+      expect(transport.claimViewport).not.toHaveBeenCalled()
+
+      documentFocused = true
+      binding.reassertPtySizeAfterWindowWake()
       expect(transport.claimViewport).toHaveBeenCalledWith(132, 42)
 
       setFitOverride(ptyId, 'desktop-fit', 132, 42)
