@@ -6,11 +6,19 @@ import { hostEndpointLabel } from '../transport/host-endpoint-label'
 import { colors, radii, spacing } from '../theme/mobile-theme'
 import { PickerModal } from './PickerModal'
 
-export function MobileHomeQuickActions(props: {
+type Props = {
   connectedHosts: HostProfile[]
   onPairDesktop: () => void
   onCreateWorkspace: (hostId: string) => void
-}) {
+}
+
+export function MobileHomeQuickActions(props: Props) {
+  // Why: a connectivity topology change invalidates an open destination picker.
+  const hostSetKey = JSON.stringify(props.connectedHosts.map((host) => host.id))
+  return <MobileHomeQuickActionsContent key={hostSetKey} {...props} />
+}
+
+function MobileHomeQuickActionsContent(props: Props) {
   const [hostPickerVisible, setHostPickerVisible] = useState(false)
   const canCreateWorkspace = props.connectedHosts.length > 0
 
@@ -40,6 +48,7 @@ export function MobileHomeQuickActions(props: {
         </Pressable>
         <Pressable
           accessibilityRole="button"
+          accessibilityState={{ disabled: !canCreateWorkspace }}
           disabled={!canCreateWorkspace}
           style={({ pressed }) => [
             styles.quickAction,

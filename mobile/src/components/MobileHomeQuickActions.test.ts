@@ -50,22 +50,27 @@ describe('MobileHomeQuickActions', () => {
   async function renderQuickActions(connectedHosts: HostProfile[]) {
     const onPairDesktop = vi.fn()
     const onCreateWorkspace = vi.fn()
+    const quickActions = (hosts: HostProfile[]) =>
+      createElement(MobileHomeQuickActions, {
+        connectedHosts: hosts,
+        onPairDesktop,
+        onCreateWorkspace
+      })
     const consoleError = vi.spyOn(console, 'error').mockImplementation((...args) => {
       if (typeof args[0] !== 'string' || !args[0].includes('react-test-renderer is deprecated')) {
         throw new Error(String(args[0]))
       }
     })
     await act(async () => {
-      renderer = create(
-        createElement(MobileHomeQuickActions, {
-          connectedHosts,
-          onPairDesktop,
-          onCreateWorkspace
-        })
-      )
+      renderer = create(quickActions(connectedHosts))
     })
     consoleError.mockRestore()
-    return { onCreateWorkspace }
+    return {
+      onCreateWorkspace,
+      rerender: async (hosts: HostProfile[]) => {
+        await act(async () => renderer!.update(quickActions(hosts)))
+      }
+    }
   }
 
   function newWorkspaceButton() {
@@ -80,6 +85,7 @@ describe('MobileHomeQuickActions', () => {
     await renderQuickActions([])
 
     expect(newWorkspaceButton().props.disabled).toBe(true)
+    expect(newWorkspaceButton().props.accessibilityState).toEqual({ disabled: true })
     expect(picker().props.visible).toBe(false)
   })
 
@@ -111,5 +117,20 @@ describe('MobileHomeQuickActions', () => {
 
     act(() => picker().props.onSelect('laptop'))
     expect(callbacks.onCreateWorkspace).toHaveBeenCalledWith('laptop')
+  })
+
+  it('closes a stale picker when fewer than two hosts remain connected', async () => {
+    const desk = host('desk', 'Desk', 'ws://192.168.1.2:6768')
+    const laptop = host('laptop', 'Laptop', 'wss://relay.example.com/mobile')
+    const callbacks = await renderQuickActions([desk, laptop])
+
+    act(() => newWorkspaceButton().props.onPress())
+    expect(picker().props.visible).toBe(true)
+
+    await callbacks.rerender([desk])
+    expect(picker().props.visible).toBe(false)
+
+    await callbacks.rerender([desk, laptop])
+    expect(picker().props.visible).toBe(false)
   })
 })
