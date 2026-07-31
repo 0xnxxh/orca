@@ -261,9 +261,12 @@ export function MountedBottomDrawer({
       }
     })
 
-  const drawerStyle = useAnimatedStyle(() => ({
+  const keyboardLayoutStyle = useAnimatedStyle(() => ({
     // Why: layout lift keeps native hit/accessibility frames aligned with the rendered drawer.
-    marginBottom: fillAvailable ? keyboardInset : keyboardOffset.value,
+    marginBottom: keyboardOffset.value
+  }))
+
+  const drawerStyle = useAnimatedStyle(() => ({
     transform: [
       {
         translateY:
@@ -361,9 +364,11 @@ export function MountedBottomDrawer({
                 maxWidth: isWideLayout ? modalMaxWidth : undefined,
                 maxHeight: screenHeight - insets.top - spacing.lg,
                 height: fillHeight,
+                marginBottom: fillAvailable ? keyboardInset : 0,
                 paddingBottom:
                   fillAvailable && keyboardInset > 0 ? spacing.sm : insets.bottom + spacing.lg
               },
+              fillAvailable ? null : keyboardLayoutStyle,
               drawerStyle
             ]}
           >

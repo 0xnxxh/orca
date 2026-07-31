@@ -89,6 +89,19 @@ function findDrawer(renderer: ReactTestRenderer): ReactTestInstance {
   return drawer
 }
 
+function findStyleWith(
+  drawer: ReactTestInstance,
+  property: 'marginBottom' | 'transform'
+): Record<string, unknown> {
+  const style = drawer.props.style.findLast(
+    (entry: Record<string, unknown> | null) => entry !== null && property in entry
+  )
+  if (!style) {
+    throw new Error(`Drawer style missing ${property}`)
+  }
+  return style
+}
+
 describe('MountedBottomDrawer keyboard layout', () => {
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -128,9 +141,9 @@ describe('MountedBottomDrawer keyboard layout', () => {
       })
     })
 
-    const shownStyle = findDrawer(renderer).props.style.at(-1)
-    expect(shownStyle.marginBottom).toBe(302)
-    expect(shownStyle.transform).toEqual([{ translateY: 0 }])
+    const shownDrawer = findDrawer(renderer)
+    expect(findStyleWith(shownDrawer, 'marginBottom').marginBottom).toBe(302)
+    expect(findStyleWith(shownDrawer, 'transform').transform).toEqual([{ translateY: 0 }])
 
     act(() => {
       keyboardListeners.get('keyboardWillHide')?.({
@@ -138,7 +151,7 @@ describe('MountedBottomDrawer keyboard layout', () => {
         endCoordinates: { height: 0 }
       })
     })
-    expect(findDrawer(renderer).props.style.at(-1).marginBottom).toBe(0)
+    expect(findStyleWith(findDrawer(renderer), 'marginBottom').marginBottom).toBe(0)
     act(() => renderer.unmount())
   })
 
@@ -170,8 +183,18 @@ describe('MountedBottomDrawer keyboard layout', () => {
     })
 
     const style = findDrawer(renderer).props.style
-    expect(style[2]).toMatchObject({ height: 438, paddingBottom: 8 })
-    expect(style.at(-1)).toMatchObject({ marginBottom: 336, transform: [{ translateY: 0 }] })
+    expect(style[2]).toMatchObject({ height: 438, marginBottom: 336, paddingBottom: 8 })
+    expect(findStyleWith(findDrawer(renderer), 'transform').transform).toEqual([{ translateY: 0 }])
+
+    act(() => {
+      keyboardListeners.get('keyboardWillHide')?.({
+        duration: 250,
+        endCoordinates: { height: 0 }
+      })
+    })
+
+    const hiddenStyle = findDrawer(renderer).props.style
+    expect(hiddenStyle[2]).toMatchObject({ height: 774, marginBottom: 0, paddingBottom: 50 })
     act(() => renderer.unmount())
   })
 })
