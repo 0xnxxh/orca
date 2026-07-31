@@ -22076,6 +22076,81 @@ describe('OrcaRuntimeService', () => {
     ])
   })
 
+  it('fills a renderer-published agent status with its hook provider session', async () => {
+    const leafId = '11111111-1111-4111-8111-111111111111'
+    const paneKey = `codex-tab:${leafId}`
+    const providerSession = {
+      key: 'session_id' as const,
+      id: '019c12d5-a3d1-7d82-b1f9-a3f25b078a22'
+    }
+    const now = Date.now()
+    const runtime = new OrcaRuntimeService(store, undefined, {
+      getAgentStatusSnapshot: () => [
+        {
+          paneKey,
+          state: 'done',
+          prompt: '',
+          agentType: 'codex',
+          connectionId: null,
+          receivedAt: now,
+          stateStartedAt: now,
+          tabId: 'codex-tab',
+          worktreeId: TEST_WORKTREE_ID,
+          providerSession
+        }
+      ]
+    })
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, {
+      tabs: [],
+      leaves: [],
+      mobileSessionTabs: [
+        {
+          worktree: TEST_WORKTREE_ID,
+          publicationEpoch: 'epoch-1',
+          snapshotVersion: 1,
+          activeGroupId: null,
+          activeTabId: `codex-tab::${leafId}`,
+          activeTabType: 'terminal',
+          tabs: [
+            {
+              type: 'terminal',
+              id: `codex-tab::${leafId}`,
+              parentTabId: 'codex-tab',
+              leafId,
+              title: 'Codex',
+              launchAgent: 'codex',
+              agentStatus: {
+                state: 'working',
+                prompt: 'Reply with MOBILE QA OK and nothing else.',
+                updatedAt: now,
+                stateStartedAt: now,
+                agentType: 'codex',
+                paneKey,
+                stateHistory: []
+              },
+              isActive: true
+            }
+          ]
+        }
+      ]
+    })
+
+    const result = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+
+    expect(result.tabs[0]).toEqual(
+      expect.objectContaining({
+        type: 'terminal',
+        agentStatus: expect.objectContaining({
+          state: 'working',
+          prompt: 'Reply with MOBILE QA OK and nothing else.',
+          agentType: 'codex',
+          providerSession
+        })
+      })
+    )
+  })
+
   it('preserves authoritative OMP identity for Pi-compatible remote terminal snapshots', async () => {
     const runtime = new OrcaRuntimeService(store)
     const leafId = '11111111-1111-4111-8111-111111111111'
