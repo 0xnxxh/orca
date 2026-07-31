@@ -3044,6 +3044,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             initialOutputOverflowed ||
             (serialized ? read.truncated : isTerminalReadPayloadIncomplete(read)),
           truncatedByByteBudget: serialized?.truncatedByByteBudget,
+          source: serialized?.source,
           oscLinks: serialized?.oscLinks,
           data: serialized?.data ?? ''
         })

@@ -18,7 +18,9 @@ type TerminalPaneViewProps = {
   onRef: (handle: string, ref: TerminalWebViewHandle | null) => void
   diagnostics: MobileTerminalDiagnostics
   terminalRecordsLoaded: boolean
+  onMounted: (handle: string) => void
   onWebReady: (handle: string) => void
+  onEngineError: (handle: string, message: string) => void
   onSelectionMode: (handle: string, active: boolean) => void
   onSelectionCopy: (handle: string, text: string) => void
   onSelectionEvicted: (handle: string) => void
@@ -42,7 +44,9 @@ export function TerminalPaneView({
   onRef,
   diagnostics,
   terminalRecordsLoaded,
+  onMounted,
   onWebReady,
+  onEngineError,
   onSelectionMode,
   onSelectionCopy,
   onSelectionEvicted,
@@ -75,8 +79,9 @@ export function TerminalPaneView({
       return
     }
     lifecycle.mounted(active)
+    onMounted(handle)
     return lifecycle.unmounted
-  }, [diagnostics])
+  }, [diagnostics, handle, onMounted])
 
   useEffect(() => {
     const lifecycle = diagnosticsMountLifecycleRef.current
@@ -108,6 +113,7 @@ export function TerminalPaneView({
         terminalTheme={terminalTheme}
         textScale={textScale}
         onWebReady={() => onWebReady(handle)}
+        onEngineError={(message) => onEngineError(handle, message)}
         onSelectionMode={(a) => onSelectionMode(handle, a)}
         onSelectionCopy={(t) => onSelectionCopy(handle, t)}
         onSelectionEvicted={() => onSelectionEvicted(handle)}

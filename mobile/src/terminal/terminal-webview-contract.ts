@@ -60,7 +60,7 @@ export type TerminalWebViewHandle = {
     initialData?: string,
     preserveScroll?: boolean,
     oscLinks?: TerminalOscLinkRange[]
-  ) => void
+  ) => number
   resize: (cols: number, rows: number) => void
   // Why: reflow the local xterm buffer (scrollback included) to a new width
   // after a server-side PTY reflow, so older wrapped lines rewrap to match the
@@ -71,9 +71,8 @@ export type TerminalWebViewHandle = {
   resetZoom: () => void
   cancelSelect: () => void
   doSelectAll: () => void
-  // Why: lets callers await the WebView-side `init` rAF chain (term.open
-  // → renderService population → first paint) so a follow-up measure
-  // doesn't race ahead and find term=null or cellWidth=0. Resolves on
-  // the next 'ready' notify after the most recent init.
-  awaitReady: () => Promise<void>
+  // Why: generation fencing prevents a superseded init from satisfying a
+  // newer cold reveal while still allowing callers to await render setup.
+  awaitRenderReady: (generation: number) => Promise<boolean>
+  isRenderReadyGenerationCurrent: (generation: number) => boolean
 }

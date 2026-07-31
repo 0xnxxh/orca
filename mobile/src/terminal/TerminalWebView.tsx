@@ -51,12 +51,18 @@ export const TerminalWebView = forwardRef<TerminalWebViewHandle, Props>(function
   const measureResolveRef = useRef<
     ((result: { cols: number; rows: number } | null) => void) | null
   >(null)
-  // Why: each init() call posts 'init' to the WebView and arms a fresh
-  // ready promise. WebView's init() rAF chain ends with a 'ready' notify
-  // that resolves it. measureFitDimensions awaits this so it doesn't
-  // race ahead of term.open() / renderService population.
-  const readyPromiseRef = useRef<Promise<void> | null>(null)
-  const readyResolveRef = useRef<(() => void) | null>(null)
+  const renderReadyGenerationRef = useRef(0)
+  const renderReadyRef = useRef<{
+    generation: number
+    promise: Promise<boolean>
+    resolve: (ready: boolean) => void
+  } | null>(null)
+  const cancelRenderReady = useCallback(() => {
+    const pending = renderReadyRef.current
+    renderReadyGenerationRef.current += 1
+    renderReadyRef.current = null
+    pending?.resolve(false)
+  }, [])
   const { clearEngineError, engineError, reportEngineError, reportNativeEngineError } =
     useTerminalWebViewEngineErrorState(onEngineError)
   const { armWebReadyWatchdog, clearWebReadyWatchdog } = useTerminalWebReadyWatchdog(
@@ -95,9 +101,10 @@ export const TerminalWebView = forwardRef<TerminalWebViewHandle, Props>(function
 
   useEffect(() => {
     return () => {
+      cancelRenderReady()
       writeCoalescer.clear()
     }
-  }, [writeCoalescer])
+  }, [cancelRenderReady, writeCoalescer])
 
   const confirmWebReady = useCallback(
     (notifyParent: boolean) => {
@@ -141,15 +148,17 @@ export const TerminalWebView = forwardRef<TerminalWebViewHandle, Props>(function
         msg.pingId === pendingPingIdRef.current
       ) {
         confirmWebReady(false)
-      } else if (msg.type === 'ready') {
-        // Why: the WebView's init() rAF chain has run — term is open,
-        // renderService is populated, first paint has happened. Resolve
-        // any pending awaitReady() so a queued measure can now safely
-        // read cell dims.
-        const resolve = readyResolveRef.current
-        readyResolveRef.current = null
-        readyPromiseRef.current = null
-        resolve?.()
+      } else if (msg.type === 'render-ready') {
+        const pending = renderReadyRef.current
+        if (
+          typeof msg.generation !== 'number' ||
+          pending?.generation !== msg.generation ||
+          renderReadyGenerationRef.current !== msg.generation
+        ) {
+          return
+        }
+        renderReadyRef.current = null
+        pending.resolve(true)
       } else if (msg.type === 'measure-result') {
         const resolve = measureResolveRef.current
         measureResolveRef.current = null
@@ -194,6 +203,7 @@ export const TerminalWebView = forwardRef<TerminalWebViewHandle, Props>(function
   )
 
   const handleLoadStart = useCallback(() => {
+    cancelRenderReady()
     isWebReadyRef.current = false
     pendingPingIdRef.current = null
     armWebReadyWatchdog()
@@ -201,24 +211,26 @@ export const TerminalWebView = forwardRef<TerminalWebViewHandle, Props>(function
     // dropping them avoids replaying terminal chunks before the next init snapshot.
     pendingMessages.clear()
     writeCoalescer.clear()
-  }, [armWebReadyWatchdog, pendingMessages, writeCoalescer])
+  }, [armWebReadyWatchdog, cancelRenderReady, pendingMessages, writeCoalescer])
 
   const handleReload = useCallback(() => {
+    handleLoadStart()
     clearEngineError()
     webViewRef.current?.reload()
-  }, [clearEngineError])
+  }, [clearEngineError, handleLoadStart])
 
   const handleContentProcessDidTerminate = useCallback(() => {
     // Why: WKWebView content-process loss is recoverable; stale commands belong
     // to the dead document and the replacement must prove readiness before replay.
     isWebReadyRef.current = false
+    cancelRenderReady()
     pendingPingIdRef.current = null
     pendingMessages.clear()
     writeCoalescer.clear()
     clearEngineError()
     armWebReadyWatchdog()
     webViewRef.current?.reload()
-  }, [armWebReadyWatchdog, clearEngineError, pendingMessages, writeCoalescer])
+  }, [armWebReadyWatchdog, cancelRenderReady, clearEngineError, pendingMessages, writeCoalescer])
 
   useEffect(() => {
     postMessage({ type: 'set-theme', terminalTheme })
@@ -253,22 +265,14 @@ export const TerminalWebView = forwardRef<TerminalWebViewHandle, Props>(function
         preserveScroll?: boolean,
         oscLinks?: TerminalOscLinkRange[]
       ) {
-        // Why: arm a fresh ready promise BEFORE posting init. The WebView
-        // resolves it via the 'ready' notify at the end of its rAF chain.
-        // Resolve any prior in-flight ready first so awaiters from the
-        // previous generation don't sit on the 3s setTimeout fallback —
-        // each leaked timer + closure pinned an awaiting measure caller
-        // for the full 3s under rapid re-init (orientation change,
-        // multiple resubscribes), delaying cold-start fit chains.
-        const priorResolve = readyResolveRef.current
-        if (priorResolve) {
-          readyResolveRef.current = null
-          readyPromiseRef.current = null
-          priorResolve()
-        }
-        readyPromiseRef.current = new Promise<void>((resolve) => {
-          readyResolveRef.current = resolve
+        renderReadyRef.current?.resolve(false)
+        renderReadyGenerationRef.current += 1
+        const generation = renderReadyGenerationRef.current
+        let resolveReady!: (ready: boolean) => void
+        const promise = new Promise<boolean>((resolve) => {
+          resolveReady = resolve
         })
+        renderReadyRef.current = { generation, promise, resolve: resolveReady }
         // Why: pending chunks are pre-snapshot data; the init snapshot supersedes
         // them, and writing them after init would corrupt the fresh buffer.
         writeCoalescer.clear()
@@ -280,8 +284,10 @@ export const TerminalWebView = forwardRef<TerminalWebViewHandle, Props>(function
           oscLinks,
           terminalTheme,
           fontScale: textScale,
-          preserveScroll
+          preserveScroll,
+          renderReadyGeneration: generation
         })
+        return generation
       },
       resize(cols: number, rows: number) {
         // Why: resize/reflow must observe all prior writes or bytes reorder.
@@ -336,25 +342,31 @@ export const TerminalWebView = forwardRef<TerminalWebViewHandle, Props>(function
       doSelectAll() {
         postMessage({ type: 'do-select-all' })
       },
-      async awaitReady(): Promise<void> {
-        // Why: returns the in-flight ready promise (set by init); resolves
-        // immediately if no init is pending. Capped at 3s so a stuck
-        // WebView doesn't hang the caller.
-        const p = readyPromiseRef.current
-        if (!p) {
-          return
+      isRenderReadyGenerationCurrent(generation: number): boolean {
+        return renderReadyGenerationRef.current === generation
+      },
+      async awaitRenderReady(generation: number): Promise<boolean> {
+        const pending = renderReadyRef.current
+        if (
+          renderReadyGenerationRef.current !== generation ||
+          (pending != null && pending.generation !== generation)
+        ) {
+          return false
         }
-        await new Promise<void>((resolve) => {
+        if (!pending) {
+          return true
+        }
+        return new Promise<boolean>((resolve) => {
           let settled = false
           const timeout = setTimeout(() => {
             settled = true
-            resolve()
+            resolve(false)
           }, 3000)
-          void p.finally(() => {
+          void pending.promise.then((ready) => {
             if (!settled) {
               clearTimeout(timeout)
               settled = true
-              resolve()
+              resolve(ready)
             }
           })
         })

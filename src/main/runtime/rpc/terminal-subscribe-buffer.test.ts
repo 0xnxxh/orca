@@ -566,7 +566,7 @@ describe('terminal subscribe buffering', () => {
       // so the client's first scrollback snapshot is already current. The
       // 'resized'/pending-output-overflow follow-up path remains only for
       // overflow that begins after the initial snapshot went out.
-      expect(decodedStarts).toEqual([expect.objectContaining({ kind: 'scrollback', seq })])
+      expect(decodedStarts).toEqual([expect.objectContaining({ seq, source: 'headless' })])
       const snapshotText = decodedFrames
         .filter((frame) => frame.opcode === TerminalStreamOpcode.SnapshotChunk)
         .map((frame) => decodeTerminalStreamText(frame.payload))
@@ -840,7 +840,7 @@ describe('terminal subscribe buffering', () => {
       // layout seq on the wire; the recovered data still ships as the first
       // and only scrollback snapshot.
       expect(snapshotStarts.map((frame) => decodeTerminalStreamJson(frame.payload))).toEqual([
-        expect.objectContaining({ kind: 'scrollback', seq: 1 })
+        expect.objectContaining({ kind: 'scrollback', seq: 1, source: 'renderer' })
       ])
       const snapshotText = decodedFrames
         .filter((frame) => frame.opcode === TerminalStreamOpcode.SnapshotChunk)

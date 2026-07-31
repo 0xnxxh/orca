@@ -269,4 +269,85 @@ describe('TerminalWebView engine errors', () => {
     postWebViewMessage(renderer, { type: 'web-ready' })
     expect(postedCommands().map((command) => command.type)).toEqual(['set-theme', 'write'])
   })
+
+  it('rejects superseded and malformed render-ready generations', async () => {
+    const terminalRef = createRef<TerminalWebViewHandle>()
+    const { renderer } = createTerminalWebViewRenderer(vi.fn(), { ref: terminalRef })
+    postWebViewMessage(renderer, { type: 'web-ready' })
+
+    const firstGeneration = terminalRef.current!.init(80, 24, 'first')
+    const firstReady = terminalRef.current!.awaitRenderReady(firstGeneration)
+    const secondGeneration = terminalRef.current!.init(100, 30, 'second')
+    const secondReady = terminalRef.current!.awaitRenderReady(secondGeneration)
+
+    await expect(firstReady).resolves.toBe(false)
+    postWebViewMessage(renderer, { type: 'render-ready', generation: firstGeneration })
+    postWebViewMessage(renderer, { type: 'render-ready', generation: 'malformed' })
+
+    let secondSettled = false
+    void secondReady.then(() => {
+      secondSettled = true
+    })
+    await Promise.resolve()
+    expect(secondSettled).toBe(false)
+
+    postWebViewMessage(renderer, { type: 'render-ready', generation: secondGeneration })
+    await expect(secondReady).resolves.toBe(true)
+    expect(terminalRef.current!.isRenderReadyGenerationCurrent(firstGeneration)).toBe(false)
+    expect(terminalRef.current!.isRenderReadyGenerationCurrent(secondGeneration)).toBe(true)
+
+    act(() => {
+      renderer.root.findByType('WebView').props.onLoadStart()
+    })
+    expect(terminalRef.current!.isRenderReadyGenerationCurrent(secondGeneration)).toBe(false)
+    await expect(terminalRef.current!.awaitRenderReady(secondGeneration)).resolves.toBe(false)
+
+    const cancelledGeneration = terminalRef.current!.init(120, 40, 'cancelled')
+    const cancelledReady = terminalRef.current!.awaitRenderReady(cancelledGeneration)
+    act(() => {
+      renderer.root.findByType('WebView').props.onLoadStart()
+    })
+    await expect(cancelledReady).resolves.toBe(false)
+    expect(terminalRef.current!.isRenderReadyGenerationCurrent(cancelledGeneration)).toBe(false)
+  })
+
+  it('invalidates render readiness before overlay reload starts', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const terminalRef = createRef<TerminalWebViewHandle>()
+    const { renderer } = createTerminalWebViewRenderer(vi.fn(), { ref: terminalRef })
+    postWebViewMessage(renderer, { type: 'web-ready' })
+    const generation = terminalRef.current!.init(80, 24, 'pending')
+    const ready = terminalRef.current!.awaitRenderReady(generation)
+    postWebViewMessage(renderer, {
+      fatal: true,
+      message: 'terminal engine failed',
+      type: 'error'
+    })
+
+    act(() => {
+      renderer.root.findByType('Pressable').props.onPress()
+    })
+    postWebViewMessage(renderer, { type: 'render-ready', generation })
+
+    expect(nativeWebViewMethods.reload).toHaveBeenCalledTimes(1)
+    expect(terminalRef.current!.isRenderReadyGenerationCurrent(generation)).toBe(false)
+    await expect(ready).resolves.toBe(false)
+  })
+
+  it('invalidates a completed render-ready generation on unmount', async () => {
+    const terminalRef = createRef<TerminalWebViewHandle>()
+    const { renderer } = createTerminalWebViewRenderer(vi.fn(), { ref: terminalRef })
+    postWebViewMessage(renderer, { type: 'web-ready' })
+    const handle = terminalRef.current!
+    const generation = handle.init(80, 24, 'ready')
+    const ready = handle.awaitRenderReady(generation)
+
+    postWebViewMessage(renderer, { type: 'render-ready', generation })
+    await expect(ready).resolves.toBe(true)
+
+    act(() => renderer.unmount())
+
+    expect(handle.isRenderReadyGenerationCurrent(generation)).toBe(false)
+    await expect(handle.awaitRenderReady(generation)).resolves.toBe(false)
+  })
 })

@@ -134,9 +134,11 @@ describe('TerminalWebView scroll routing', () => {
     expect(measureBlock).toContain('clearTimeout(timeout)')
     expect(measureBlock).toContain('measureResolveRef.current === finish')
 
-    const readyBlock = sliceBetween('async awaitReady()', '})')
+    const readyBlock = sliceBetween('async awaitRenderReady(', '})')
     expect(readyBlock).toContain('clearTimeout(timeout)')
-    expect(readyBlock).toContain('void p.finally')
+    expect(readyBlock).toContain('void pending.promise.then')
+    expect(readyBlock).toContain('resolve(false)')
+    expect(readyBlock).toContain('resolve(ready)')
   })
 
   it('hides xterm scrollbars and drives the mobile scroll indicator from committed rows', () => {

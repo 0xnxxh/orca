@@ -666,7 +666,7 @@ ${TERMINAL_WEBVIEW_THEME_JS}
 
 ${TERMINAL_WEBGL_RECOVERY_JS}
 
-  function init(cols, rows, initialData, nextTheme, nextFontScale, preserveScroll, nextOscLinks) {
+  function init(cols, rows, initialData, nextTheme, nextFontScale, preserveScroll, nextOscLinks, renderReadyGeneration) {
     if (typeof nextFontScale === 'number' && nextFontScale > 0) currentTextScale = nextFontScale;
     // Why: a width-reflow re-stream rewraps the same content at new cols.
     // Distance-from-bottom (rows) is the only stable anchor across reflow,
@@ -763,7 +763,7 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
         initialOscLinkRowOffset = 0;
         initialOscLinkEvictionReady = true;
         applyFitScale('init-replay');
-        notify({ type: 'ready', cols: cols, rows: rows });
+        notify({ type: 'render-ready', generation: renderReadyGeneration, cols: cols, rows: rows });
       });
     });
   }
@@ -791,7 +791,6 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
     initRows = rows || initRows;
     term.resize(cols || term.cols, rows || term.rows);
     applyFitScale('resize-msg');
-    notify({ type: 'ready', cols: cols, rows: rows });
   }
 
   // reflow(): see terminal-webview-reflow-injected.ts (extracted for max-lines).
@@ -916,7 +915,7 @@ ${TERMINAL_WEBGL_RECOVERY_JS}
     if (msg.type === 'ping') {
       notify({ type: 'pong', pingId: msg.id });
     } else if (msg.type === 'init') {
-      init(msg.cols, msg.rows, msg.initialData, msg.terminalTheme, msg.fontScale, msg.preserveScroll, msg.oscLinks);
+      init(msg.cols, msg.rows, msg.initialData, msg.terminalTheme, msg.fontScale, msg.preserveScroll, msg.oscLinks, msg.renderReadyGeneration);
     } else if (msg.type === 'set-font-scale') {
       // Why: ignore RN echoing back the value a pinch just set (msg.fontScale ===
       // currentTextScale) so the post-pinch state isn't reset; only apply changes.

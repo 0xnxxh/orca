@@ -225,6 +225,9 @@ import {
 } from '../../../../src/session/mobile-terminal-prune-decision'
 import { useMobileNativeChatTerminalStream } from '../../../../src/session/use-mobile-native-chat-terminal-stream'
 import { subscribeMobileTerminalSafely } from '../../../../src/session/mobile-terminal-stream-subscribe'
+import { resubscribeMobileTerminalAfterInitialViewport } from '../../../../src/session/mobile-terminal-initial-viewport-resubscribe'
+import { useMobileTerminalHotSetIntegration } from '../../../../src/session/use-mobile-terminal-hot-set-integration'
+import { useMobileTerminalWebViewReadiness } from '../../../../src/session/use-mobile-terminal-webview-readiness'
 import { activateMobileSessionTab } from '../../../../src/session/mobile-session-tab-activation'
 import { MobileTerminalDiagnostics } from '../../../../src/session/mobile-terminal-diagnostics'
 import { runAcceptedMobileSessionTabsEffects } from '../../../../src/session/mobile-session-tabs-accepted-effects'
@@ -979,6 +982,7 @@ export default function SessionScreen() {
     Map<string, TerminalKeyboardAvoidanceMetrics>
   >(new Map())
   const [selectModeActive, setSelectModeActive] = useState(false)
+  const selectModeHandleRef = useRef<string | null>(null)
   const [canPaste, setCanPaste] = useState(false)
   const [showDictationSetup, setShowDictationSetup] = useState(false)
   // 'hold' = press-and-hold mic, 'toggle' = tap-to-start/stop; mirrors Settings ▸ Voice ▸ Dictation Mode.
@@ -1342,40 +1346,45 @@ export default function SessionScreen() {
   const unsubscribeTerminalRef = useRef(unsubscribeTerminal)
   unsubscribeTerminalRef.current = unsubscribeTerminal
 
-  const clearTerminalCache = useCallback(() => {
-    terminalUnsubsRef.current.forEach((unsub) => unsub())
-    clearNativeChatInputLease()
-    terminalUnsubsRef.current.clear()
-    subscribingHandlesRef.current.clear()
-    initializedHandlesRef.current.clear()
-    terminalDiagnosticsRef.current.clearTerminalCache()
-    webReadyHandlesRef.current.clear()
-    subscribeSeqRef.current.clear()
-    layoutSeqRef.current.clear()
-    terminalCwdRef.current.clear()
-    setTerminalKeyboardMetrics(new Map())
-    for (const term of terminalRefs.current.values()) {
-      term.clear()
-    }
-  }, [clearNativeChatInputLease])
-
-  // Why: measure the phone viewport once from the first TerminalWebView; dims ride every subscribe so the server auto-fits without a separate RPC.
-  const measureViewportOnce = useCallback(
-    async (handle: string) => {
-      if (viewportMeasuredRef.current) {
-        return
-      }
-      const dims = await getTerminalRef(handle)?.measureFitDimensions(
-        terminalFrameHeightRef.current || undefined
-      )
-      terminalDiagnosticsRef.current.viewportMeasured(handle, dims, terminalFrameHeightRef.current)
-      if (dims) {
-        viewportRef.current = dims
-        viewportMeasuredRef.current = true
-      }
-    },
-    [getTerminalRef]
-  )
+  const {
+    admitScrollback: admitHotSetScrollback,
+    acceptsStreamEvent: acceptsHotSetStreamEvent,
+    clearTerminalCache,
+    completeRenderReadyAfterInit: completeHotSetRenderReadyAfterInit,
+    handleEngineError: handleTerminalEngineError,
+    handlePaneMounted: handleTerminalPaneMounted,
+    handleWebReady: handleHotSetWebReady,
+    mountedHandles: mountedTerminalHandles,
+    recordBoundary: recordHotSetBoundary,
+    setWebViewRef: setTerminalWebViewRef,
+    terminateColdStream: terminateHotSetStream
+  } = useMobileTerminalHotSetIntegration({
+    scopeKey: `${hostId}:${worktreeId}`,
+    handles: terminals.map((terminal) => terminal.handle),
+    activeHandle,
+    activeTerminalHandleExpected:
+      activeSessionTab?.type === 'terminal' && typeof activeSessionTab.terminal === 'string',
+    activeHandleRef,
+    pendingActiveHandleRef: pendingActiveTerminalHandleRef,
+    connectionState: connState,
+    unsubscribe: unsubscribeTerminal,
+    webReadyRef: webReadyHandlesRef,
+    initializedRef: initializedHandlesRef,
+    layoutSeqRef,
+    terminalRefs,
+    subscribingRef: subscribingHandlesRef,
+    subscriptionsRef: terminalUnsubsRef,
+    subscribeSequenceRef: subscribeSeqRef,
+    cwdRef: terminalCwdRef,
+    gestureBucketsRef: terminalGestureInputBucketsRef,
+    gestureQueuesRef: terminalGestureInputQueuesRef,
+    gestureInFlightRef: terminalGestureInputInFlightRef,
+    selectionHandleRef: selectModeHandleRef,
+    setSelectionActive: setSelectModeActive,
+    setKeyboardMetrics: setTerminalKeyboardMetrics,
+    diagnostics: terminalDiagnosticsRef.current,
+    clearNativeChatInputLease
+  })
 
   const subscribeToTerminal = useCallback(
     (handle: string) => {
@@ -1415,6 +1424,7 @@ export default function SessionScreen() {
       const seq = (subscribeSeqRef.current.get(handle) ?? 0) + 1
       subscribeSeqRef.current.set(handle, seq)
       diagnostics.streamArmed(handle, seq, viewportRef.current)
+      recordHotSetBoundary(handle, 'stream-armed')
 
       // Why: viewport is embedded in the subscribe params so the server auto-fits before serializing scrollback (no focus→safeFit race).
       const unsub = subscribeMobileTerminalSafely(
@@ -1429,12 +1439,13 @@ export default function SessionScreen() {
           capabilities: nativeChatTerminalStream.mobileNativeChatTerminalCapabilities(covered)
         },
         (result) => {
-          if (subscribeSeqRef.current.get(handle) !== seq) {
+          if (subscribeSeqRef.current.get(handle) !== seq || !acceptsHotSetStreamEvent(handle)) {
             return
           }
           const data = result as Record<string, unknown>
           diagnostics.firstStreamEvent(handle, seq, data.type)
           if (data.type === 'end' || data.type === 'error') {
+            terminateHotSetStream(handle, `cold-stream-${String(data.type)}`)
             unsubscribeTerminalRef.current(handle)
             return
           }
@@ -1473,6 +1484,7 @@ export default function SessionScreen() {
             layoutSeqRef.current.set(handle, eventSeq)
           }
           if (data.type === 'scrollback') {
+            admitHotSetScrollback(handle, data)
             diagnostics.streamScrollback(handle, seq, eventSeq, data)
             if (initializedHandlesRef.current.has(handle)) {
               return
@@ -1497,8 +1509,9 @@ export default function SessionScreen() {
               })
               return
             }
-            ref.init(cols, rows, initialData, false, oscLinks)
+            const initGeneration = ref.init(cols, rows, initialData, false, oscLinks)
             initializedHandlesRef.current.add(handle)
+            completeHotSetRenderReadyAfterInit(handle, ref, initGeneration)
             if (data.displayMode) {
               setTerminalModes((prev) =>
                 new Map(prev).set(handle, data.displayMode as MobileDisplayMode)
@@ -1513,24 +1526,14 @@ export default function SessionScreen() {
                 (scrollbackCols !== viewportRef.current.cols ||
                   scrollbackRows !== viewportRef.current.rows))
             if (needsResubscribe) {
-              void (async () => {
-                // Why: wait for init()'s rAF chain before measuring, else the measure races ahead and returns null (log dump 2026-05-06).
-                await getTerminalRef(handle)?.awaitReady()
-                if (subscribeSeqRef.current.get(handle) !== seq) {
-                  return
-                }
-                const dims = await getTerminalRef(handle)?.measureFitDimensions(
-                  terminalFrameHeightRef.current || undefined
-                )
-                // Why: re-check seq — the awaits may have let a newer subscribe cycle arm; tearing it down would resubscribe a stale generation.
-                if (subscribeSeqRef.current.get(handle) !== seq) {
-                  return
-                }
-                if (!getTerminalRef(handle)) {
-                  return
-                }
-                // Why: scrollback came back at cols=80 (server's null-viewport fallback), so this subscriber record has no viewport — resubscribe so the server stores it.
-                if (dims) {
+              void resubscribeMobileTerminalAfterInitialViewport({
+                handle,
+                sequence: seq,
+                initGeneration,
+                frameHeight: terminalFrameHeightRef.current,
+                getSequence: (candidate) => subscribeSeqRef.current.get(candidate),
+                getRef: getTerminalRef,
+                onMeasured: (dims) => {
                   diagnostics.streamResubscribing(handle, seq, dims)
                   viewportRef.current = dims
                   viewportMeasuredRef.current = true
@@ -1538,7 +1541,7 @@ export default function SessionScreen() {
                   initializedHandlesRef.current.delete(handle)
                   subscribeToTerminal(handle)
                 }
-              })()
+              })
             }
           } else if (data.type === 'metadata') {
             updateTerminalCwdFromStreamEvent(handle, data, terminalCwdRef.current)
@@ -1570,7 +1573,11 @@ export default function SessionScreen() {
             diagnostics.streamResized(handle, seq, eventSeq, data, getTerminalRef(handle) != null)
             const oscLinks = isTerminalOscLinkRanges(data.oscLinks) ? data.oscLinks : undefined
             if (serialized != null) {
-              getTerminalRef(handle)?.init(cols, rows, serialized, true, oscLinks)
+              const ref = getTerminalRef(handle)
+              if (ref) {
+                const initGeneration = ref.init(cols, rows, serialized, true, oscLinks)
+                completeHotSetRenderReadyAfterInit(handle, ref, initGeneration)
+              }
             } else {
               getTerminalRef(handle)?.resize(cols, rows)
             }
@@ -1582,7 +1589,10 @@ export default function SessionScreen() {
             scheduleDelayedAction(() => getTerminalRef(handle)?.resetZoom(), 200)
           }
         },
-        () => unsubscribeTerminalRef.current(handle)
+        () => {
+          terminateHotSetStream(handle, 'cold-stream-closed')
+          unsubscribeTerminalRef.current(handle)
+        }
       )
 
       if (subscribeSeqRef.current.get(handle) === seq) {
@@ -1592,7 +1602,17 @@ export default function SessionScreen() {
       }
       subscribingHandlesRef.current.delete(handle)
     },
-    [client, getTerminalRef, markNativeChatInputLeaseReady, scheduleDelayedAction]
+    [
+      acceptsHotSetStreamEvent,
+      admitHotSetScrollback,
+      client,
+      completeHotSetRenderReadyAfterInit,
+      getTerminalRef,
+      markNativeChatInputLeaseReady,
+      recordHotSetBoundary,
+      scheduleDelayedAction,
+      terminateHotSetStream
+    ]
   )
 
   const nativeChatStream = useMobileNativeChatTerminalStream({
@@ -2919,56 +2939,18 @@ export default function SessionScreen() {
   // Ref to latest switchSessionTab so fetchSessionTabs can activate a synced browser tab without a dependency cycle.
   switchSessionTabRef.current = switchSessionTab
 
-  // Why: only store the ref; subscribe on web-ready to avoid the blank-terminal race (init queued before xterm.js loaded).
-  const setTerminalWebViewRef = useCallback((handle: string, ref: TerminalWebViewHandle | null) => {
-    terminalDiagnosticsRef.current.webViewRef(handle, ref != null)
-    if (ref) {
-      terminalRefs.current.set(handle, ref)
-    } else {
-      terminalRefs.current.delete(handle)
-      terminalGestureInputBucketsRef.current.delete(handle)
-      const queued = terminalGestureInputQueuesRef.current.get(handle)
-      if (queued?.timer) {
-        clearTimeout(queued.timer)
-      }
-      terminalGestureInputQueuesRef.current.delete(handle)
-      terminalGestureInputInFlightRef.current.delete(handle)
-    }
-  }, [])
-  const handleTerminalWebReady = useCallback(
-    (handle: string) => {
-      const wasAlreadyReady = webReadyHandlesRef.current.has(handle)
-      webReadyHandlesRef.current.add(handle)
-      nativeChatStream.notifyWebReady(handle, wasAlreadyReady)
-      terminalDiagnosticsRef.current.webViewReady(
-        handle,
-        wasAlreadyReady,
-        handle === activeHandleRef.current
-      )
-      if (wasAlreadyReady && initializedHandlesRef.current.has(handle)) {
-        // Why: WebView reloaded (hot reload / Android churn); old xterm buffer is gone, so resubscribe for a fresh scrollback.
-        unsubscribeTerminal(handle)
-        initializedHandlesRef.current.delete(handle)
-        if (handle === activeHandleRef.current) {
-          subscribeToTerminal(handle)
-        }
-        return
-      }
-      // Why: first subscribe may skip (no WebView ref); await measure so it carries the viewport, else it races measureViewportOnce and skips.
-      // Why: a just-created tab can lose activeHandleRef to a lagging snapshot; honor the pending marker so its web-ready subscribe still fires.
-      const isIntendedActive = () =>
-        handle === activeHandleRef.current || handle === pendingActiveTerminalHandleRef.current
-      if (isIntendedActive() && !terminalUnsubsRef.current.has(handle)) {
-        void (async () => {
-          await measureViewportOnce(handle)
-          if (isIntendedActive() && !terminalUnsubsRef.current.has(handle)) {
-            subscribeToTerminal(handle)
-          }
-        })()
-      }
-    },
-    [measureViewportOnce, nativeChatStream, subscribeToTerminal, unsubscribeTerminal]
-  )
+  const handleTerminalWebReady = useMobileTerminalWebViewReadiness({
+    handleReady: handleHotSetWebReady,
+    getRef: getTerminalRef,
+    frameHeightRef: terminalFrameHeightRef,
+    viewportMeasuredRef,
+    viewportRef,
+    onViewportMeasured: (handle, dimensions, frameHeight) =>
+      terminalDiagnosticsRef.current.viewportMeasured(handle, dimensions, frameHeight),
+    notifyNativeChat: nativeChatStream.notifyWebReady,
+    subscribe: subscribeToTerminal,
+    unsubscribe: unsubscribeTerminal
+  })
 
   useEffect(() => {
     if (activeSessionTab?.type !== 'markdown') {
@@ -3524,6 +3506,7 @@ export default function SessionScreen() {
     if (handle !== activeHandleRef.current) {
       return
     }
+    selectModeHandleRef.current = active ? handle : null
     setSelectModeActive(active)
     if (active) {
       Keyboard.dismiss()
@@ -3569,6 +3552,7 @@ export default function SessionScreen() {
       // eslint-disable-next-line no-console
       console.warn('[mobile-clip] selection evicted')
       showToast('Selection cleared (scrolled out of buffer)', 1500)
+      selectModeHandleRef.current = null
       setSelectModeActive(false)
     },
     [showToast]
@@ -4723,36 +4707,42 @@ export default function SessionScreen() {
                   notifyTerminalFrameHeight(nextHeight)
                 }}
               >
-                {terminals.map((terminal) => (
-                  <TerminalPaneView
-                    key={terminal.handle}
-                    handle={terminal.handle}
-                    active={terminal.handle === activeHandle}
-                    keyboardLift={terminal.handle === activeHandle ? activeTerminalKeyboardLift : 0}
-                    terminalTheme={terminal.terminalTheme}
-                    textScale={terminalTextScale}
-                    onTextScaleChange={(scale) => {
-                      // Why: pinch-to-zoom reports a new preset; persist it so the size sticks across panes and launches.
-                      setTerminalTextScale(scale)
-                      void saveTerminalTextScale(scale)
-                    }}
-                    onRef={setTerminalWebViewRef}
-                    diagnostics={terminalDiagnosticsRef.current}
-                    terminalRecordsLoaded={terminalsLoaded}
-                    onWebReady={handleTerminalWebReady}
-                    onSelectionMode={handleSelectionMode}
-                    onSelectionCopy={handleSelectionCopy}
-                    onSelectionEvicted={handleSelectionEvicted}
-                    onModesChanged={handleModesChanged}
-                    onKeyboardAvoidanceMetrics={handleKeyboardAvoidanceMetrics}
-                    onHaptic={handleHaptic}
-                    onTerminalInput={handleTerminalInput}
-                    onTerminalQueryReply={handleTerminalQueryReply}
-                    onTerminalTap={handleTerminalTap}
-                    onFileTap={handleFileTap}
-                    onOpenUrl={handleTerminalOpenUrl}
-                  />
-                ))}
+                {terminals
+                  .filter((terminal) => mountedTerminalHandles.has(terminal.handle))
+                  .map((terminal) => (
+                    <TerminalPaneView
+                      key={terminal.handle}
+                      handle={terminal.handle}
+                      active={terminal.handle === activeHandle}
+                      keyboardLift={
+                        terminal.handle === activeHandle ? activeTerminalKeyboardLift : 0
+                      }
+                      terminalTheme={terminal.terminalTheme}
+                      textScale={terminalTextScale}
+                      onTextScaleChange={(scale) => {
+                        // Why: pinch-to-zoom reports a new preset; persist it so the size sticks across panes and launches.
+                        setTerminalTextScale(scale)
+                        void saveTerminalTextScale(scale)
+                      }}
+                      onRef={setTerminalWebViewRef}
+                      diagnostics={terminalDiagnosticsRef.current}
+                      terminalRecordsLoaded={terminalsLoaded}
+                      onMounted={handleTerminalPaneMounted}
+                      onWebReady={handleTerminalWebReady}
+                      onEngineError={handleTerminalEngineError}
+                      onSelectionMode={handleSelectionMode}
+                      onSelectionCopy={handleSelectionCopy}
+                      onSelectionEvicted={handleSelectionEvicted}
+                      onModesChanged={handleModesChanged}
+                      onKeyboardAvoidanceMetrics={handleKeyboardAvoidanceMetrics}
+                      onHaptic={handleHaptic}
+                      onTerminalInput={handleTerminalInput}
+                      onTerminalQueryReply={handleTerminalQueryReply}
+                      onTerminalTap={handleTerminalTap}
+                      onFileTap={handleFileTap}
+                      onOpenUrl={handleTerminalOpenUrl}
+                    />
+                  ))}
                 <MobileNativeChatOverlay
                   controller={nativeChatController}
                   images={nativeChatImages}
