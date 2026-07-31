@@ -126,6 +126,42 @@ type CodexReadBackMatch =
     }
   | { kind: 'none' | 'ambiguous' }
 
+function readCodexLastRefresh(authJson: string): number | null {
+  try {
+    const parsed = JSON.parse(authJson) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null
+    }
+    const value = (parsed as Record<string, unknown>).last_refresh
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : null
+    }
+    if (typeof value !== 'string' || !value.trim()) {
+      return null
+    }
+    const timestamp = Date.parse(value)
+    return Number.isFinite(timestamp) ? timestamp : null
+  } catch {
+    return null
+  }
+}
+
+function codexAuthIsMonotonicallyFresher(
+  candidateAuthJson: string,
+  baselineAuthJson: string
+): boolean {
+  const candidateLastRefresh = readCodexLastRefresh(candidateAuthJson)
+  const baselineLastRefresh = readCodexLastRefresh(baselineAuthJson)
+  if (candidateLastRefresh !== null || baselineLastRefresh !== null) {
+    return (
+      candidateLastRefresh !== null &&
+      baselineLastRefresh !== null &&
+      candidateLastRefresh > baselineLastRefresh
+    )
+  }
+  return codexAuthIsFresher(candidateAuthJson, baselineAuthJson)
+}
+
 export class CodexRuntimeHomeService {
   // Which managed account runtime auth.json mirrors; null means it follows system-default ~/.codex instead of a managed account.
   private lastSyncedAccountId: string | null = null
@@ -1593,14 +1629,19 @@ export class CodexRuntimeHomeService {
         return
       }
       const snapshot = this.readSystemDefaultSnapshot(this.getSystemDefaultSnapshotPath())
+      const snapshotAuth = snapshot?.authJson ?? null
+      const preProvenanceRuntimeRefreshProven =
+        provenanceStatus.kind === 'missing' &&
+        snapshotAuth !== null &&
+        this.runtimeAuthMatchesSystemDefaultIdentity(runtimeAuth, snapshotAuth) &&
+        codexAuthIsMonotonicallyFresher(runtimeAuth, snapshotAuth)
       const systemDefaultOwnershipProven =
-        provenance?.owner === 'system-default' ||
-        (provenanceStatus.kind === 'missing' && snapshot !== null)
+        provenance?.owner === 'system-default' || preProvenanceRuntimeRefreshProven
       const mirroredSystemDefaultAuth =
         provenance?.owner === 'system-default'
           ? provenance.authJson
           : provenanceStatus.kind === 'missing'
-            ? (this.lastWrittenAuthJson ?? snapshot?.authJson ?? null)
+            ? (this.lastWrittenAuthJson ?? snapshotAuth)
             : null
       if (!existsSync(systemDefaultAuthPath)) {
         if (mirroredSystemDefaultAuth !== null && runtimeAuth === mirroredSystemDefaultAuth) {

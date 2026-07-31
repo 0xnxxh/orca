@@ -257,7 +257,8 @@ function createCodexAuthJson(
   email: string,
   accountId: string,
   refreshToken: string,
-  expiresAt?: number
+  expiresAt?: number,
+  lastRefresh?: string
 ): string {
   const idToken = [
     encodeJwtPart({ alg: 'none', typ: 'JWT' }),
@@ -274,6 +275,7 @@ function createCodexAuthJson(
 
   return `${JSON.stringify({
     auth_mode: 'chatgpt',
+    ...(lastRefresh === undefined ? {} : { last_refresh: lastRefresh }),
     tokens: {
       access_token: `access-${accountId}`,
       id_token: idToken,
@@ -3767,11 +3769,19 @@ describe('CodexRuntimeHomeService', () => {
 
   it('reads back system-default token refreshes after a pre-provenance restart', async () => {
     const runtimeAuthPath = getRuntimeCodexAuthPath()
-    const systemAuth = createCodexAuthJson('system@example.com', 'acct-system', 'system-old')
+    const systemAuth = createCodexAuthJson(
+      'system@example.com',
+      'acct-system',
+      'system-old',
+      undefined,
+      '2026-07-30T12:00:00.000Z'
+    )
     const refreshedAuth = createCodexAuthJson(
       'system@example.com',
       'acct-system',
-      'system-refreshed'
+      'system-refreshed',
+      undefined,
+      '2026-07-31T12:00:00.000Z'
     )
     writeFileSync(getSystemCodexAuthPath(), systemAuth, 'utf-8')
     const store = createStore(createSettings())
@@ -3786,6 +3796,37 @@ describe('CodexRuntimeHomeService', () => {
 
     expect(readFileSync(getSystemCodexAuthPath(), 'utf-8')).toBe(refreshedAuth)
     expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe(refreshedAuth)
+  })
+
+  it('does not read back older same-identity auth without provenance', async () => {
+    const runtimeAuthPath = getRuntimeCodexAuthPath()
+    const systemAuth = createCodexAuthJson(
+      'system@example.com',
+      'acct-system',
+      'system-newer',
+      undefined,
+      '2026-07-31T12:00:00.000Z'
+    )
+    const staleRuntimeAuth = createCodexAuthJson(
+      'system@example.com',
+      'acct-system',
+      'runtime-older',
+      undefined,
+      '2026-07-30T12:00:00.000Z'
+    )
+    writeFileSync(getSystemCodexAuthPath(), systemAuth, 'utf-8')
+    const store = createStore(createSettings())
+
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    new CodexRuntimeHomeService(store as never)
+
+    writeFileSync(runtimeAuthPath, staleRuntimeAuth, 'utf-8')
+    rmSync(getSharedRuntimeAuthProvenancePath())
+    const restartedService = new CodexRuntimeHomeService(store as never)
+    restartedService.syncForCurrentSelection()
+
+    expect(readFileSync(getSystemCodexAuthPath(), 'utf-8')).toBe(systemAuth)
+    expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe(systemAuth)
   })
 
   it('keeps a local runtime logout when the system-default auth still exists', async () => {
@@ -3920,8 +3961,20 @@ describe('CodexRuntimeHomeService', () => {
 
   it('clears refreshed runtime auth after a pre-provenance external logout', async () => {
     const runtimeAuthPath = getRuntimeCodexAuthPath()
-    const systemAuth = createCodexAuthJson('system@example.com', 'acct-system', 'system')
-    const refreshedAuth = createCodexAuthJson('system@example.com', 'acct-system', 'refreshed')
+    const systemAuth = createCodexAuthJson(
+      'system@example.com',
+      'acct-system',
+      'system',
+      undefined,
+      '2026-07-30T12:00:00.000Z'
+    )
+    const refreshedAuth = createCodexAuthJson(
+      'system@example.com',
+      'acct-system',
+      'refreshed',
+      undefined,
+      '2026-07-31T12:00:00.000Z'
+    )
     writeFileSync(getSystemCodexAuthPath(), systemAuth, 'utf-8')
     const store = createStore(createSettings())
 
