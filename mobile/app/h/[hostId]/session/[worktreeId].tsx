@@ -1888,7 +1888,7 @@ export default function SessionScreen() {
         activeHandleRef.current = active.terminal
         setActiveHandle(active.terminal)
         subscribeToTerminal(active.terminal)
-      } else if (active) {
+      } else {
         const previous = activeHandleRef.current
         if (previous) {
           unsubscribeTerminal(previous)
