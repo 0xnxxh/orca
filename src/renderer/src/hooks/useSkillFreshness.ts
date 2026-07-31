@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 import type { SkillFreshnessInventory } from '../../../shared/skill-freshness'
 import { INSTALLED_AGENT_SKILLS_CHANGED_EVENT } from './installed-agent-skills-change-event'
 
@@ -29,7 +29,13 @@ const DISABLED_SNAPSHOT: SkillFreshnessSnapshot = Object.freeze({
   loading: false,
   error: null
 })
+const REENABLING_SNAPSHOT: SkillFreshnessSnapshot = Object.freeze({
+  inventory: null,
+  loading: true,
+  error: null
+})
 const subscribers = new Set<() => void>()
+let pendingReenableRefresh: Promise<void> | null = null
 
 function publishSnapshot(next: SkillFreshnessSnapshot): void {
   if (
@@ -173,7 +179,16 @@ export type SkillFreshnessState = SkillFreshnessSnapshot & {
 
 async function skipSkillFreshnessRefresh(): Promise<void> {}
 
+function refreshSkillFreshnessAfterReenable(): Promise<void> {
+  pendingReenableRefresh ??= refreshSkillFreshness(true).finally(() => {
+    pendingReenableRefresh = null
+  })
+  return pendingReenableRefresh
+}
+
 export function useSkillFreshness(enabled = true): SkillFreshnessState {
+  const previousEnabledRef = useRef(enabled)
+  const reenabled = enabled && !previousEnabledRef.current
   const current = useSyncExternalStore(
     enabled ? subscribe : subscribeDisabled,
     enabled ? getSnapshot : getDisabledSnapshot,
@@ -181,12 +196,22 @@ export function useSkillFreshness(enabled = true): SkillFreshnessState {
   )
 
   useEffect(() => {
-    if (enabled) {
-      ensureInventoryLoaded()
+    const wasEnabled = previousEnabledRef.current
+    previousEnabledRef.current = enabled
+    if (!enabled) {
+      return
     }
+    if (!wasEnabled) {
+      void refreshSkillFreshnessAfterReenable()
+      return
+    }
+    ensureInventoryLoaded()
   }, [enabled])
 
-  return { ...current, refresh: enabled ? refreshSkillFreshness : skipSkillFreshnessRefresh }
+  return {
+    ...(reenabled ? REENABLING_SNAPSHOT : current),
+    refresh: enabled ? refreshSkillFreshness : skipSkillFreshnessRefresh
+  }
 }
 
 export const _skillFreshnessCacheForTests = {
@@ -197,6 +222,7 @@ export const _skillFreshnessCacheForTests = {
     completedRevision = -1
     lastCompletedScanAt = 0
     refreshSequence = 0
+    pendingReenableRefresh = null
     if (scheduledFocusRescan !== null) {
       window.clearTimeout(scheduledFocusRescan)
       scheduledFocusRescan = null

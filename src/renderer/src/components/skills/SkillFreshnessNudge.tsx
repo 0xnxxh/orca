@@ -38,6 +38,15 @@ export function SkillFreshnessNudge(): null {
   const activeNudgeRef = useRef<ActiveFreshnessNudge | null>(null)
 
   useEffect(() => {
+    if (!activeSkillRuntime.canUseLocalSkillFreshness) {
+      const active = activeNudgeRef.current
+      if (active) {
+        active.persistDismissal = false
+        activeNudgeRef.current = null
+        toast.dismiss(active.id)
+      }
+      return
+    }
     const inventory = state.inventory
     if (!settingsLoaded) {
       return
@@ -184,7 +193,14 @@ export function SkillFreshnessNudge(): null {
       }
     )
     activeNudgeRef.current = nextActive
-  }, [dismissed, settingsLoaded, state.error, state.inventory, updateSettings])
+  }, [
+    activeSkillRuntime.canUseLocalSkillFreshness,
+    dismissed,
+    settingsLoaded,
+    state.error,
+    state.inventory,
+    updateSettings
+  ])
 
   return null
 }
