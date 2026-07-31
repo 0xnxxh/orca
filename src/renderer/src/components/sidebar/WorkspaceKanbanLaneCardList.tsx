@@ -47,8 +47,6 @@ function WorkspaceKanbanLaneCardList({
 }: WorkspaceKanbanLaneCardListProps): React.JSX.Element {
   const spacerRef = useRef<HTMLDivElement | null>(null)
   const itemIds = useMemo(() => items.map((item) => item.id), [items])
-  const itemIdsRef = useRef(itemIds)
-  itemIdsRef.current = itemIds
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollRef.current,
@@ -70,11 +68,11 @@ function WorkspaceKanbanLaneCardList({
     return registerWorkspaceKanbanVirtualLaneLayout({
       scrollElement,
       spacerElement,
-      getItemIds: () => itemIdsRef.current,
+      getItemIds: () => itemIds,
       getMeasurements: () => virtualizer.measurementsCache
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- virtualizer is a stable instance (useVirtualizer holds it in useState), and getMeasurements reads measurementsCache off it live.
-  }, [scrollRef])
+  }, [itemIds, scrollRef])
 
   return (
     <div
