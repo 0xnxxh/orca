@@ -11,6 +11,7 @@ const ASAR_ENV = 'ORCA_PACKAGED_WATCHDOG_SMOKE_ASAR'
 const TIMEOUT_MS = 100
 const CHECK_INTERVAL_MS = 20
 const POLL_TIMEOUT_MS = 5_000
+const SUCCESS_LINE = '[packaged-watchdog-smoke] app.asar worker detected and recovered a stall'
 
 function sleep(ms) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms))
@@ -107,10 +108,9 @@ async function runInternal() {
     worker.postMessage({ type: 'shutdown' })
     await waitForExit(worker, workerError)
     worker = undefined
-    console.log('[packaged-watchdog-smoke] app.asar worker detected and recovered a stall')
+    console.log(SUCCESS_LINE)
   } finally {
     await worker?.terminate()
-    app.quit()
     rmSync(tempRoot, { recursive: true, force: true })
   }
 }
@@ -152,6 +152,12 @@ function runSmoke() {
           `${result.stderr || result.stdout}`
       )
     }
+    // Why: Electron discards process.exitCode, so status 0 alone can't prove the worker ran.
+    if (!result.stdout.includes(SUCCESS_LINE)) {
+      throw new Error(
+        `Packaged watchdog smoke did not report success:\n${result.stderr || result.stdout}`
+      )
+    }
     process.stdout.write(result.stdout)
   } finally {
     rmSync(launcherDir, { recursive: true, force: true })
@@ -159,7 +165,15 @@ function runSmoke() {
 }
 
 if (process.env[INTERNAL_ENV] === '1') {
-  await runInternal()
+  // Why: a graceful quit exits 0 regardless of process.exitCode; only app.exit propagates failure.
+  const { app } = await import('electron')
+  try {
+    await runInternal()
+    app.exit(0)
+  } catch (error) {
+    console.error(error)
+    app.exit(1)
+  }
 } else {
   runSmoke()
 }

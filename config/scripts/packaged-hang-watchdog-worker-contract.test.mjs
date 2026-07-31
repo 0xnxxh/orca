@@ -20,4 +20,16 @@ describe('packaged hang watchdog worker contract', () => {
       "process.platform === 'linux' ? ['--no-sandbox', launcherDir] : [launcherDir]"
     )
   })
+
+  // Why: Electron ignores process.exitCode, so the gate needs app.exit plus a stdout assertion.
+  it('fails the smoke when the packaged worker never reports success', () => {
+    const smokeSource = readFileSync(
+      'config/scripts/smoke-packaged-hang-watchdog-worker.mjs',
+      'utf8'
+    )
+
+    expect(smokeSource).toContain('app.exit(1)')
+    expect(smokeSource).not.toContain('app.quit()')
+    expect(smokeSource).toContain('if (!result.stdout.includes(SUCCESS_LINE))')
+  })
 })
