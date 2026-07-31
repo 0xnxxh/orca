@@ -114,7 +114,7 @@ import {
   loadTerminalAccessoryLayout
 } from '../../../../src/terminal/terminal-accessory-layout'
 import { createTerminalLiveAccessoryInput } from '../../../../src/terminal/terminal-live-accessory-input'
-import { getTerminalLiveAccessoryRawSendTarget } from '../../../../src/terminal/terminal-live-accessory-raw-send-target'
+import { sendTerminalLiveAccessoryRawBytes } from '../../../../src/terminal/terminal-live-accessory-raw-send'
 import {
   clearTerminalLiveInputFocusTimer,
   focusTerminalLiveInputTarget,
@@ -127,6 +127,11 @@ import { isTerminalSendRpcAccepted } from '../../../../src/terminal/terminal-sen
 import { sendMobileTerminalQueryReply } from '../../../../src/terminal/mobile-terminal-query-reply'
 import { TERMINAL_QUERY_REPLY_INPUT_RUNTIME_CAPABILITY } from '../../../../../src/shared/protocol-version'
 import { useTerminalLiveInputCommit } from '../../../../src/terminal/use-terminal-live-input-commit'
+import { resolveMobileTerminalInputGate } from '../../../../src/terminal/terminal-input-connection-gate'
+import {
+  buildTerminalSendParams,
+  TERMINAL_INPUT_SEND_OPTIONS
+} from '../../../../src/terminal/terminal-send-request'
 import {
   getTerminalCommandKeyboardType,
   getTerminalLiveInputKeyboardType
@@ -1074,18 +1079,18 @@ export default function SessionScreen() {
     activeHandleRef,
     activeSessionTabType: activeSessionTab?.type,
     activeSessionTabTypeRef,
+    connected: connState === 'connected',
     liveInputRef,
     liveInputTerminalHandles,
     liveInputTerminalHandlesRef,
     sendLiveTerminalInputRef,
     setLiveInputCapture
   })
-  const canSend =
-    connState === 'connected' &&
-    activeHandle != null &&
-    activeSessionTab?.type !== 'markdown' &&
-    activeSessionTab?.type !== 'file' &&
-    activeSessionTab?.type !== 'browser'
+  const { canCompose, canSend } = resolveMobileTerminalInputGate({
+    connState,
+    activeHandle,
+    activeSessionTabType: activeSessionTab?.type
+  })
   const liveInputEnabled = activeHandle ? liveInputTerminalHandles.has(activeHandle) : false
   const [browserScreencastSupported, setBrowserScreencastSupported] = useState<boolean | null>(null)
   // Why: hosts without aiVault.v1 reject listSessions, so hide the header entry instead of a dead-end "update this host" panel.
@@ -3005,7 +3010,8 @@ export default function SessionScreen() {
   }, [activeSessionTab, fileDocs, readFileTab])
 
   async function handleSend() {
-    if (!client || !activeHandle || sendingRef.current) {
+    // Why: the return key still submits while offline; hold the composed text instead of firing a doomed RPC (#6713).
+    if (!client || !activeHandle || sendingRef.current || !canSend) {
       return
     }
     sendingRef.current = true
@@ -3014,15 +3020,17 @@ export default function SessionScreen() {
     setInput('')
 
     try {
-      await client.sendRequest('terminal.send', {
-        terminal: activeHandle,
-        text,
-        enter: true,
-        // Why: presence-lock take-floor; marks this phone active so multi-mobile contention resolves to the last actor.
-        ...(deviceTokenRef.current
-          ? { client: { id: deviceTokenRef.current, type: 'mobile' as const } }
-          : {})
-      })
+      // Why: fail now and restore the text — a send parked across a reconnect would execute long after the tap.
+      await client.sendRequest(
+        'terminal.send',
+        buildTerminalSendParams({
+          terminal: activeHandle,
+          text,
+          enter: true,
+          deviceToken: deviceTokenRef.current
+        }),
+        TERMINAL_INPUT_SEND_OPTIONS
+      )
     } catch {
       setInput(text)
     } finally {
@@ -3039,29 +3047,15 @@ export default function SessionScreen() {
     if (accessoryCommit.kind !== 'allow-raw') {
       return
     }
-    const currentClient = clientRef.current
-    // Why: async IME flushing can outlive the original terminal selection.
-    const rawSendTarget = getTerminalLiveAccessoryRawSendTarget({
+    await sendTerminalLiveAccessoryRawBytes({
+      client: clientRef.current,
       targetHandle,
       activeHandle: activeHandleRef.current,
-      activeSessionTabType: activeSessionTabTypeRef.current
+      activeSessionTabType: activeSessionTabTypeRef.current,
+      connState: connStateRef.current,
+      bytes: input.bytes,
+      deviceToken: deviceTokenRef.current
     })
-    if (!currentClient || !rawSendTarget || connStateRef.current !== 'connected') {
-      return
-    }
-    await currentClient
-      .sendRequest('terminal.send', {
-        terminal: rawSendTarget,
-        text: input.bytes,
-        enter: false,
-        ...(deviceTokenRef.current
-          ? { client: { id: deviceTokenRef.current, type: 'mobile' as const } }
-          : {})
-      })
-      .then(
-        () => undefined,
-        () => undefined
-      )
   }
 
   const sendLiveTerminalInput = useCallback(
@@ -3085,15 +3079,19 @@ export default function SessionScreen() {
       ) {
         return false
       }
+      // Why: live-mirror deltas queued behind a dying send drain into the connect
+      // wait and replay stale bytes after reconnect (#6713's `YZZYecho …` corruption).
       return rpc
-        .sendRequest('terminal.send', {
-          terminal: handle,
-          text,
-          enter: false,
-          ...(deviceTokenRef.current
-            ? { client: { id: deviceTokenRef.current, type: 'mobile' as const } }
-            : {})
-        })
+        .sendRequest(
+          'terminal.send',
+          buildTerminalSendParams({
+            terminal: handle,
+            text,
+            enter: false,
+            deviceToken: deviceTokenRef.current
+          }),
+          TERMINAL_INPUT_SEND_OPTIONS
+        )
         .then(isTerminalSendRpcAccepted, () => false)
     },
     [showToast]
@@ -3355,14 +3353,17 @@ export default function SessionScreen() {
 
     terminalGestureInputInFlightRef.current.add(handle)
     try {
-      await rpc.sendRequest('terminal.send', {
-        terminal: handle,
-        text: queued.bytes,
-        enter: false,
-        ...(deviceTokenRef.current
-          ? { client: { id: deviceTokenRef.current, type: 'mobile' as const } }
-          : {})
-      })
+      // Why: gesture arrows parked across a reconnect would move a TUI long after the swipe.
+      await rpc.sendRequest(
+        'terminal.send',
+        buildTerminalSendParams({
+          terminal: handle,
+          text: queued.bytes,
+          enter: false,
+          deviceToken: deviceTokenRef.current
+        }),
+        TERMINAL_INPUT_SEND_OPTIONS
+      )
     } catch {
       // Transient failure
     } finally {
@@ -3842,14 +3843,15 @@ export default function SessionScreen() {
           subscribeToTerminal(createdHandle)
           if (options?.initialPrompt?.trim()) {
             void client
-              .sendRequest('terminal.send', {
-                terminal: createdHandle,
-                text: options.initialPrompt,
-                enter: options.enter !== false,
-                ...(deviceTokenRef.current
-                  ? { client: { id: deviceTokenRef.current, type: 'mobile' as const } }
-                  : {})
-              })
+              .sendRequest(
+                'terminal.send',
+                buildTerminalSendParams({
+                  terminal: createdHandle,
+                  text: options.initialPrompt,
+                  enter: options.enter !== false,
+                  deviceToken: deviceTokenRef.current
+                })
+              )
               .then((sendResponse) => {
                 if (!sendResponse.ok) {
                   throw new Error((sendResponse as RpcFailure).error.message || t('m.v-nMJVc'))
@@ -4845,9 +4847,10 @@ export default function SessionScreen() {
                         styles.accessoryKey,
                         liveInputEnabled && styles.accessoryKeyActive,
                         pressed && styles.accessoryKeyPressed,
-                        !canSend && styles.accessoryKeyDisabled
+                        !canCompose && styles.accessoryKeyDisabled
                       ]}
-                      disabled={!canSend}
+                      // Why: offline, live mode is dead but the buffered box still composes — keep the escape hatch tappable (#6713).
+                      disabled={!canCompose}
                       onPress={toggleLiveInput}
                       accessibilityLabel={liveInputEnabled ? t('m.LNjU0eA') : t('m.g0S-mpY')}
                     >
@@ -4856,7 +4859,7 @@ export default function SessionScreen() {
                         color={
                           liveInputEnabled
                             ? colors.bgBase
-                            : canSend
+                            : canCompose
                               ? colors.textSecondary
                               : colors.textMuted
                         }
@@ -5053,7 +5056,8 @@ export default function SessionScreen() {
                         autocompleteEnabled
                       )}
                       returnKeyType="send"
-                      editable={canSend}
+                      // Why: composing is local — an outage must not lock the field or discard typed text (#6713).
+                      editable={canCompose}
                       onSubmitEditing={() => void handleSend()}
                     />
                     <MobileTerminalInputActions
