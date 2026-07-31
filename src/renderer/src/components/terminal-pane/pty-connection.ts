@@ -7781,7 +7781,9 @@ export function connectPanePty(
       // the subscribe screen without keeping the old xterm mounted.
       let prefetchedParkModelSnapshot: PtyBufferSnapshot | null = null
       if (revealFollowsTerminalPark && (!hasStructuralReplay || isRemoteRuntimePtyId(ptyId))) {
-        if (isRemoteRuntimePtyId(ptyId)) {
+        if (parseAppSshPtyId(ptyId)) {
+          prefetchedParkModelSnapshot = await fetchSshMainModelReattachSnapshot()
+        } else {
           try {
             prefetchedParkModelSnapshot = await serializeHiddenOutputSnapshot(ptyId, {
               scrollbackRows: resolveHiddenRestoreScrollbackRows(pane.terminal.options.scrollback)
@@ -7789,8 +7791,6 @@ export function connectPanePty(
           } catch {
             prefetchedParkModelSnapshot = null
           }
-        } else {
-          prefetchedParkModelSnapshot = await fetchSshMainModelReattachSnapshot()
         }
         if (!isCurrentReattachPayload()) {
           return false
