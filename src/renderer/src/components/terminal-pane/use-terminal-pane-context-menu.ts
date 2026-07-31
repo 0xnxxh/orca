@@ -320,7 +320,12 @@ export function useTerminalPaneContextMenu({
       connectionId,
       runtimeEnvironmentId,
       forceBracketedMultilineTextPaste,
-      onPasteIntent: () => recordTerminalUserInputForLeaf(tabId, pane.leafId),
+      onPasteIntent: () =>
+        recordTerminalUserInputForLeaf(
+          tabId,
+          pane.leafId,
+          paneTransportsRef.current.get(pane.id)?.getPtyId()
+        ),
       pasteText: (text, options) => executeMenuPasteText(pane, source, text, options),
       onTextPasteError: () =>
         onPasteError('Paste failed: clipboard text is too large for a safe terminal paste.'),

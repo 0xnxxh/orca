@@ -2052,7 +2052,12 @@ function TerminalPane(
         connectionId,
         runtimeEnvironmentId,
         forceBracketedMultilineTextPaste,
-        onPasteIntent: () => recordTerminalUserInputForLeaf(tabId, pane.leafId),
+        onPasteIntent: () =>
+          recordTerminalUserInputForLeaf(
+            tabId,
+            pane.leafId,
+            paneTransportsRef.current.get(pane.id)?.getPtyId()
+          ),
         pasteText: (text, options) =>
           executePanePasteText(pane, source, activeElementAtDispatch, text, options),
         onTextPasteError: () =>
@@ -2200,7 +2205,12 @@ function TerminalPane(
         connectionId,
         runtimeEnvironmentId,
         forceBracketedMultilineTextPaste,
-        onPasteIntent: () => recordTerminalUserInputForLeaf(tabId, pane.leafId),
+        onPasteIntent: () =>
+          recordTerminalUserInputForLeaf(
+            tabId,
+            pane.leafId,
+            paneTransportsRef.current.get(pane.id)?.getPtyId()
+          ),
         pasteText: (text, options) =>
           executePanePasteText(pane, 'app-menu', activeElementAtDispatch, text, options),
         onTextPasteError: () =>
@@ -2686,7 +2696,11 @@ function TerminalPane(
       armPrimarySelectionNativePasteSuppression()
       clickedPane.terminal.focus()
       void readPrimarySelectionText(() =>
-        recordTerminalUserInputForLeaf(tabId, clickedPane.leafId)
+        recordTerminalUserInputForLeaf(
+          tabId,
+          clickedPane.leafId,
+          paneTransportsRef.current.get(clickedPane.id)?.getPtyId()
+        )
       ).then(async (text) => {
         if (!text) {
           return

@@ -10,13 +10,14 @@ import {
   BRACKETED_PASTE_START,
   sanitizeTerminalPasteText
 } from '@/components/terminal-pane/terminal-bracketed-paste'
-import { readTerminalUserInputGeneration } from '@/components/terminal-pane/terminal-input-activity'
+import { createTerminalUserInputCheckpoint } from '@/components/terminal-pane/terminal-input-activity'
 import { waitForAgentReady } from './agent-ready-wait'
 import { getSettingsForWorktreeRuntimeOwner } from './worktree-runtime-owner'
 import { sendAgentDraftPasteContent } from './agent-draft-paste-content'
 import { agentDeliversDraftViaNativePrefill } from './agent-native-draft-prefill'
 import { waitForAgentDraftInputReady } from './agent-draft-readiness'
 import { isExpectedAgentProcess } from '../../../shared/agent-process-recognition'
+import { makePaneKey } from '../../../shared/stable-pane-id'
 export {
   AGENT_DRAFT_PASTE_CHUNK_MAX_BYTES,
   AGENT_DRAFT_PASTE_DIRECT_MAX_BYTES,
@@ -96,39 +97,43 @@ export async function pasteDraftWhenAgentReady(args: {
     return false
   }
 
-  const budget = timeoutMs ?? READINESS_TIMEOUT_MS
-  const readySignal = agentConfig?.draftPasteReadySignal ?? 'render-quiet-after-bracketed-paste'
-  const ptyId = await waitForPtyId(tabId, budget)
-  if (!ptyId) {
-    onTimeout?.()
-    return false
-  }
-  const submitUserInputGeneration =
-    submit === true ? readTerminalUserInputGeneration(ptyId) : undefined
-
-  const settings = getSettingsForAgentTabRuntimeOwner(tabId)
-  const ready = await waitForAgentDraftInputReady(ptyId, budget, readySignal, settings)
-  if (!ready) {
-    // Why: fast-starting TUIs can emit the paste-ready escape sequence before
-    // this sidecar subscription attaches. If process/title inspection says the
-    // launched agent owns the PTY, fall back to a best-effort paste instead of
-    // silently dropping generated prompts.
-    const fallbackReady = agentConfig
-      ? await waitForAgentReady(tabId, agentConfig.expectedProcess, { timeoutMs: 1000 })
-      : { ready: false }
-    if (!fallbackReady.ready) {
+  const userInputCheckpoint = createTerminalUserInputCheckpoint()
+  try {
+    const budget = timeoutMs ?? READINESS_TIMEOUT_MS
+    const readySignal = agentConfig?.draftPasteReadySignal ?? 'render-quiet-after-bracketed-paste'
+    const ptyId = await waitForPtyId(tabId, budget)
+    if (!ptyId) {
       onTimeout?.()
       return false
     }
-  }
 
-  return await sendBracketedPasteToAgent({
-    settings,
-    ptyId,
-    content,
-    submit: submit === true,
-    submitUserInputGeneration
-  })
+    const settings = getSettingsForAgentTabRuntimeOwner(tabId)
+    const ready = await waitForAgentDraftInputReady(ptyId, budget, readySignal, settings)
+    if (!ready) {
+      // Why: fast-starting TUIs can emit the paste-ready escape sequence before
+      // this sidecar subscription attaches. If process/title inspection says the
+      // launched agent owns the PTY, fall back to a best-effort paste instead of
+      // silently dropping generated prompts.
+      const fallbackReady = agentConfig
+        ? await waitForAgentReady(tabId, agentConfig.expectedProcess, { timeoutMs: 1000 })
+        : { ready: false }
+      if (!fallbackReady.ready) {
+        onTimeout?.()
+        return false
+      }
+    }
+
+    return await sendBracketedPasteToAgent({
+      settings,
+      ptyId,
+      paneKey: resolveAgentDraftPaneKey(tabId, ptyId),
+      content,
+      submit: submit === true,
+      userInputCheckpoint
+    })
+  } finally {
+    userInputCheckpoint.dispose()
+  }
 }
 
 export async function pasteDraftToAgentPtyWhenReady(args: {
@@ -148,29 +153,33 @@ export async function pasteDraftToAgentPtyWhenReady(args: {
     return false
   }
 
-  const budget = timeoutMs ?? READINESS_TIMEOUT_MS
-  const settings = getSettingsForAgentTabRuntimeOwner(tabId)
-  const submitUserInputGeneration =
-    submit === true ? readTerminalUserInputGeneration(ptyId) : undefined
-  const readySignal = agentConfig?.draftPasteReadySignal ?? 'render-quiet-after-bracketed-paste'
-  const ready = await waitForAgentDraftInputReady(ptyId, budget, readySignal, settings)
-  if (!ready) {
-    const fallbackReady = agentConfig
-      ? await waitForExpectedAgentOnPty(ptyId, agentConfig.expectedProcess, 1000, settings)
-      : false
-    if (!fallbackReady) {
-      onTimeout?.()
-      return false
+  const userInputCheckpoint = createTerminalUserInputCheckpoint()
+  try {
+    const budget = timeoutMs ?? READINESS_TIMEOUT_MS
+    const settings = getSettingsForAgentTabRuntimeOwner(tabId)
+    const readySignal = agentConfig?.draftPasteReadySignal ?? 'render-quiet-after-bracketed-paste'
+    const ready = await waitForAgentDraftInputReady(ptyId, budget, readySignal, settings)
+    if (!ready) {
+      const fallbackReady = agentConfig
+        ? await waitForExpectedAgentOnPty(ptyId, agentConfig.expectedProcess, 1000, settings)
+        : false
+      if (!fallbackReady) {
+        onTimeout?.()
+        return false
+      }
     }
-  }
 
-  return await sendBracketedPasteToAgent({
-    settings,
-    ptyId,
-    content,
-    submit: submit === true,
-    submitUserInputGeneration
-  })
+    return await sendBracketedPasteToAgent({
+      settings,
+      ptyId,
+      paneKey: resolveAgentDraftPaneKey(tabId, ptyId),
+      content,
+      submit: submit === true,
+      userInputCheckpoint
+    })
+  } finally {
+    userInputCheckpoint.dispose()
+  }
 }
 
 export async function submitPromptToAgentTab(args: {
@@ -214,20 +223,28 @@ export async function sendBracketedPasteToRunningAgent(args: {
 async function sendBracketedPasteToAgent(args: {
   settings?: Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null
   ptyId: string
+  paneKey?: string | null
   content: string
   submit: boolean
-  submitUserInputGeneration?: number
+  userInputCheckpoint?: ReturnType<typeof createTerminalUserInputCheckpoint>
 }): Promise<boolean> {
   const { settings = useAppStore.getState().settings, ptyId, content, submit } = args
-  const submitUserInputGeneration =
-    submit === true
-      ? (args.submitUserInputGeneration ?? readTerminalUserInputGeneration(ptyId))
-      : undefined
+  const ownsUserInputCheckpoint = !args.userInputCheckpoint && submit
+  const userInputCheckpoint =
+    args.userInputCheckpoint ?? (submit ? createTerminalUserInputCheckpoint() : null)
+  const receivedRealUserInput = (): boolean =>
+    userInputCheckpoint?.receivedInputFor(ptyId, args.paneKey) ?? false
   try {
-    if (didTerminalUserInputChange(ptyId, submitUserInputGeneration)) {
+    if (receivedRealUserInput()) {
       return false
     }
-    const pasted = await sendAgentDraftPasteContent(settings, ptyId, content)
+    const pasted = await sendAgentDraftPasteContent(
+      settings,
+      ptyId,
+      content,
+      undefined,
+      () => !receivedRealUserInput()
+    )
     if (!pasted) {
       return false
     }
@@ -240,17 +257,26 @@ async function sendBracketedPasteToAgent(args: {
     // the TUI processes bracketed-paste termination before handling Enter.
     await new Promise<void>((resolve) => window.setTimeout(resolve, POST_PASTE_SUBMIT_DELAY_MS))
     // Why: user input has a separate transport queue; never submit mixed content.
-    if (didTerminalUserInputChange(ptyId, submitUserInputGeneration)) {
+    if (receivedRealUserInput()) {
       return false
     }
     return await sendRuntimePtyInputVerified(settings, ptyId, '\r')
   } catch {
     return false
+  } finally {
+    if (ownsUserInputCheckpoint) {
+      userInputCheckpoint?.dispose()
+    }
   }
 }
 
-function didTerminalUserInputChange(ptyId: string, generation: number | undefined): boolean {
-  return generation !== undefined && readTerminalUserInputGeneration(ptyId) !== generation
+function resolveAgentDraftPaneKey(tabId: string, ptyId: string): string | null {
+  const ptyIdsByLeafId =
+    useAppStore.getState().terminalLayoutsByTabId?.[tabId]?.ptyIdsByLeafId ?? {}
+  const leafId = Object.entries(ptyIdsByLeafId).find(
+    ([, candidatePtyId]) => candidatePtyId === ptyId
+  )?.[0]
+  return leafId ? makePaneKey(tabId, leafId) : null
 }
 
 /**

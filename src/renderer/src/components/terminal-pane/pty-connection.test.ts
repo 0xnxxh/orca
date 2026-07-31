@@ -3621,7 +3621,7 @@ describe('connectPanePty', () => {
   it('records hibernation activity from the core user-input signal, not synthetic onData replies', async () => {
     // Regression: xterm auto-replies share the onData stream with typing; recording them as input made the planner see "input after done" and never hibernate.
     const { connectPanePty } = await import('./pty-connection')
-    const { readTerminalUserInputGeneration } = await import('./terminal-input-activity')
+    const { createTerminalUserInputCheckpoint } = await import('./terminal-input-activity')
     const transport = createMockTransport('pty-pane-2')
     transportFactoryQueue.push(transport)
     const manager = createManager(1)
@@ -3654,10 +3654,11 @@ describe('connectPanePty', () => {
     // Real user input fires the core signal and records activity.
     const activePtyId = (transport.getPtyId as unknown as () => string | null)()
     expect(activePtyId).toBeTypeOf('string')
-    const inputGeneration = readTerminalUserInputGeneration(activePtyId!)
+    const inputCheckpoint = createTerminalUserInputCheckpoint()
     ;(userInputListener as unknown as () => void)()
     expect(mockStoreState.recordTerminalInput).toHaveBeenCalledTimes(1)
-    expect(readTerminalUserInputGeneration(activePtyId!)).toBe(inputGeneration + 1)
+    expect(inputCheckpoint.receivedInputFor(activePtyId!)).toBe(true)
+    inputCheckpoint.dispose()
 
     binding.dispose()
     expect(userInputDispose).toHaveBeenCalled()
@@ -6471,6 +6472,54 @@ describe('connectPanePty', () => {
     expect(window.api.pty.writeAccepted).not.toHaveBeenCalled()
     expect(mockStoreState.recordTerminalInput).toHaveBeenCalledOnce()
     expect(mockStoreState.recordTerminalInput).toHaveBeenCalledWith(makePaneKey('tab-1', LEAF_1))
+  })
+
+  it('does not inject a startup draft after real input takes over the pane', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const capturedDataCallback: { current: ((data: string) => void) | null } = { current: null }
+    const transport = createMockTransport('pty-codex')
+    transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+      capturedDataCallback.current = callbacks.onData ?? null
+      return 'pty-codex'
+    })
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: null }] },
+      repos: [{ id: 'repo1', connectionId: null }]
+    }
+    const pane = createPane(1)
+    let userInputListener: (() => void) | null = null
+    ;(pane.terminal as unknown as { _core: unknown })._core = {
+      coreService: {
+        onUserInput: vi.fn((listener: () => void) => {
+          userInputListener = listener
+          return { dispose: vi.fn() }
+        })
+      }
+    }
+    const binding = connectPanePty(
+      pane as never,
+      createManager(1) as never,
+      createDeps({
+        startup: {
+          command: 'codex',
+          launchAgent: 'codex',
+          launchConfig: { agentArgs: '', agentEnv: {} },
+          launchToken: 'launch-token-1',
+          draftPrompt: 'https://github.com/stablyai/orca/issues/42'
+        }
+      }) as never
+    )
+    await flushAsyncTicks()
+
+    expect(userInputListener).toBeTypeOf('function')
+    ;(userInputListener as unknown as () => void)()
+    capturedDataCallback.current?.('\x1b[?2004h\x1b[2K› ')
+    await flushAsyncTicks()
+
+    expect(transport.sendInputAccepted).not.toHaveBeenCalled()
+    binding.dispose()
   })
 
   it('does not consume startup draft delivery before deferred connect starts', async () => {

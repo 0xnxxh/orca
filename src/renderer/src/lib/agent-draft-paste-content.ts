@@ -24,9 +24,10 @@ export async function sendAgentDraftPasteContent(
   settings: Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined,
   ptyId: string,
   content: string,
-  writePty?: AgentDraftPtyInputWriter
+  writePty?: AgentDraftPtyInputWriter,
+  canContinue?: () => boolean
 ): Promise<boolean> {
-  if (content.length > AGENT_DRAFT_PASTE_MAX_BYTES) {
+  if (content.length > AGENT_DRAFT_PASTE_MAX_BYTES || canContinue?.() === false) {
     return false
   }
 
@@ -48,9 +49,18 @@ export async function sendAgentDraftPasteContent(
   if (await isSanitizedDraftPasteOverLimit(terminalContent, AGENT_DRAFT_PASTE_MAX_BYTES)) {
     return false
   }
+  if (canContinue?.() === false) {
+    return false
+  }
 
   let bracketedPasteOpen = false
   for (const chunk of iterateAgentDraftPasteContentChunks(terminalContent)) {
+    if (canContinue?.() === false) {
+      if (bracketedPasteOpen) {
+        await closeAgentDraftBracketedPaste(settings, ptyId, writePty)
+      }
+      return false
+    }
     let accepted = false
     try {
       accepted = await writeAgentDraftPtyInput(settings, ptyId, chunk, writePty)
