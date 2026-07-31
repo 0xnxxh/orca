@@ -79,12 +79,16 @@ export function sealAndPublishTrackedPtySourceExit(
   if (!record) {
     return false
   }
-  const published = sealAndPublishPtySourceExit({ ...options, record })
-  options.legacyExits.remember(
-    options.params,
-    record.legacyExitAccepted && options.deliveries.get(options.params.id) === record
-  )
-  return published
+  try {
+    return sealAndPublishPtySourceExit({ ...options, record })
+  } finally {
+    // Why: the subscriber projection may succeed before the owner write throws; the handler's
+    // fallback must still know to target only the owner instead of broadcasting a duplicate.
+    options.legacyExits.remember(
+      options.params,
+      record.legacyExitAccepted && options.deliveries.get(options.params.id) === record
+    )
+  }
 }
 
 export function sealAndPublishPtySourceExit(options: PtySourceExitOptions): boolean {

@@ -6,7 +6,8 @@ import type {
 import type { RelayDispatcher } from './dispatcher'
 import {
   RelayPtySourceLegacyExitIndex,
-  sealAndPublishPtySourceExit
+  sealAndPublishPtySourceExit,
+  sealAndPublishTrackedPtySourceExit
 } from './relay-pty-source-exit-publication'
 import type {
   RelayPtySourceDeliveryRecord,
@@ -129,7 +130,28 @@ function createScenario(
       counters,
       onCapacity: (id) => capacityIds.push(id)
     })
-  return { deliveries, session, dispatcher, sender, counters, capacityIds, run, setProbe }
+  const runTracked = (legacyExits: RelayPtySourceLegacyExitIndex): boolean =>
+    sealAndPublishTrackedPtySourceExit({
+      params,
+      legacyExits,
+      deliveries,
+      dispatcher: dispatcher as unknown as RelayDispatcher,
+      session: session as unknown as SshPtyConsumerSessionAdapter,
+      sender: sender as unknown as RelayPtySourceSendScheduler,
+      counters,
+      onCapacity: (id) => capacityIds.push(id)
+    })
+  return {
+    deliveries,
+    session,
+    dispatcher,
+    sender,
+    counters,
+    capacityIds,
+    run,
+    runTracked,
+    setProbe
+  }
 }
 
 describe('sealAndPublishPtySourceExit closed-delivery guard', () => {
@@ -250,6 +272,33 @@ describe('RelayPtySourceLegacyExitIndex', () => {
 
     expect(scenario.publish()).toBe(false)
     expect(scenario.publish()).toBe(false)
+  })
+
+  it('remembers a subscriber projection when the owner publication throws', () => {
+    const record = deliveryRecord({ sealed: true })
+    const scenario = createScenario(closedSnapshot({ state: 'sealed-unsettled' }), record)
+    const index = new RelayPtySourceLegacyExitIndex()
+    scenario.dispatcher.tryNotifyPtyExitToClient.mockImplementation(() => {
+      throw new Error('owner write failed')
+    })
+
+    expect(() => scenario.runTracked(index)).toThrow('owner write failed')
+    expect(scenario.dispatcher.projectPtyExitToMatchingClients).toHaveBeenCalledOnce()
+    expect(
+      index.publishAfterRetire(
+        params,
+        scenario.dispatcher as unknown as RelayDispatcher,
+        scenario.session as unknown as SshPtyConsumerSessionAdapter
+      )
+    ).toBe(true)
+    expect(scenario.dispatcher.tryNotifyPtyExit).not.toHaveBeenCalled()
+    expect(
+      index.publishAfterRetire(
+        params,
+        scenario.dispatcher as unknown as RelayDispatcher,
+        scenario.session as unknown as SshPtyConsumerSessionAdapter
+      )
+    ).toBeNull()
   })
 
   it.each([
