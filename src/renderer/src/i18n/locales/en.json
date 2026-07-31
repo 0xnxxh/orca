@@ -322,6 +322,11 @@
             "f518e89aa5": "Project already exists in that profile",
             "f03ae7f27b": "Failed to transfer project"
           }
+        },
+        "runtime": {
+          "status": {
+            "runtimeHostDisconnectedDescription": "Workspaces and terminals on this server are unavailable."
+          }
         }
       }
     },

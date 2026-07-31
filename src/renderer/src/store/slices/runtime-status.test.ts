@@ -1,6 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { create } from 'zustand'
+import { toast } from 'sonner'
 import type { RuntimeStatus } from '../../../../shared/runtime-types'
+import type { PublicKnownRuntimeEnvironment } from '../../../../shared/runtime-environments'
 import { createCompatibleRuntimeStatusResponse } from '../../runtime/runtime-compatibility-test-fixture'
 import {
   callRuntimeRpc,
@@ -11,6 +13,10 @@ import {
   type RuntimeStatusSlice,
   getRuntimeEnvironmentConnectionGeneration
 } from './runtime-status'
+
+vi.mock('sonner', () => ({
+  toast: { warning: vi.fn(), dismiss: vi.fn() }
+}))
 
 function createSliceStore() {
   return create<RuntimeStatusSlice>()((...a) => ({
@@ -32,6 +38,22 @@ function makeStatus(overrides: Partial<RuntimeStatus> = {}): RuntimeStatus {
   } as RuntimeStatus
 }
 
+function makeEnvironment(
+  overrides: Partial<PublicKnownRuntimeEnvironment> = {}
+): PublicKnownRuntimeEnvironment {
+  return {
+    id: 'env-a',
+    name: 'Dev Box',
+    createdAt: 1,
+    updatedAt: 1,
+    lastUsedAt: null,
+    runtimeId: null,
+    endpoints: [{ id: 'ws-a', kind: 'websocket', label: 'WebSocket', endpoint: 'ws://x' }],
+    preferredEndpointId: 'ws-a',
+    ...overrides
+  }
+}
+
 function stubRuntimeEnvironmentApi({
   getStatus = vi.fn(),
   list = vi.fn()
@@ -49,6 +71,11 @@ function stubRuntimeEnvironmentApi({
   })
   return { getStatus, list }
 }
+
+beforeEach(() => {
+  vi.mocked(toast.warning).mockReset()
+  vi.mocked(toast.dismiss).mockReset()
+})
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -140,6 +167,77 @@ describe('runtime-status slice', () => {
     const map = store.getState().runtimeStatusByEnvironmentId
     expect(map.size).toBe(1)
     expect(map.get('env-a')).toEqual({ status: null, checkedAt: 5, connectionGeneration: 1 })
+  })
+
+  it('does not toast when the first probe finds a saved server offline', () => {
+    const store = createSliceStore()
+    store.setState({ runtimeEnvironments: [makeEnvironment()] })
+
+    store.getState().setRuntimeEnvironmentStatus('env-a', { status: null, checkedAt: 1 })
+
+    expect(toast.warning).not.toHaveBeenCalled()
+  })
+
+  it('toasts once when a connected server becomes unavailable', () => {
+    const store = createSliceStore()
+    store.setState({ runtimeEnvironments: [makeEnvironment()] })
+    store.getState().setRuntimeEnvironmentStatus('env-a', { status: makeStatus(), checkedAt: 1 })
+
+    store.getState().setRuntimeEnvironmentStatus('env-a', { status: null, checkedAt: 2 })
+    store.getState().setRuntimeEnvironmentStatus('env-a', { status: null, checkedAt: 3 })
+
+    expect(toast.warning).toHaveBeenCalledTimes(1)
+    expect(toast.warning).toHaveBeenCalledWith(
+      'Dev Box disconnected',
+      expect.objectContaining({
+        id: 'runtime-environment-disconnected:env-a',
+        description: 'Workspaces and terminals on this server are unavailable.',
+        action: expect.objectContaining({ label: 'Retry' })
+      })
+    )
+  })
+
+  it('dismisses the disconnect toast when the server recovers', () => {
+    const store = createSliceStore()
+    store.getState().setRuntimeEnvironmentStatus('env-a', { status: makeStatus(), checkedAt: 1 })
+    store.getState().setRuntimeEnvironmentStatus('env-a', { status: null, checkedAt: 2 })
+
+    store.getState().setRuntimeEnvironmentStatus('env-a', { status: makeStatus(), checkedAt: 3 })
+
+    expect(toast.dismiss).toHaveBeenCalledWith('runtime-environment-disconnected:env-a')
+  })
+
+  it('retries from the toast and re-surfaces it when the server is still offline', async () => {
+    const getStatus = vi.fn().mockRejectedValue(new Error('closed'))
+    stubRuntimeEnvironmentApi({ getStatus })
+    const store = createSliceStore()
+    store.setState({ runtimeEnvironments: [makeEnvironment()] })
+    store.getState().setRuntimeEnvironmentStatus('env-a', { status: makeStatus(), checkedAt: 1 })
+    store.getState().setRuntimeEnvironmentStatus('env-a', { status: null, checkedAt: 2 })
+    const options = vi.mocked(toast.warning).mock.calls[0]?.[1] as unknown as {
+      action: { onClick: () => void }
+    }
+
+    options.action.onClick()
+
+    await vi.waitFor(() => {
+      expect(getStatus).toHaveBeenCalledWith({ selector: 'env-a', timeoutMs: 10_000 })
+      expect(toast.warning).toHaveBeenCalledTimes(2)
+    })
+    expect(vi.mocked(toast.warning).mock.calls[1]?.[1]?.id).toBe(
+      'runtime-environment-disconnected:env-a'
+    )
+  })
+
+  it('does not report removal or explicit status clearing as a disconnect', () => {
+    const store = createSliceStore()
+    store.setState({ runtimeEnvironments: [makeEnvironment()] })
+    store.getState().setRuntimeEnvironmentStatus('env-a', { status: makeStatus(), checkedAt: 1 })
+
+    store.getState().clearRuntimeEnvironmentStatus('env-a')
+    store.getState().setRuntimeEnvironments([])
+
+    expect(toast.warning).not.toHaveBeenCalled()
   })
 
   it('clears a single environment entry', () => {
