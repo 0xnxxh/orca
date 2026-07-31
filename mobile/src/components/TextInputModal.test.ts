@@ -65,12 +65,17 @@ describe('TextInputModal actions', () => {
     vi.restoreAllMocks()
   })
 
-  it('exposes an enabled 44pt Save action and submits its trimmed value', () => {
+  it('enables a 44pt Save action after paste and submits its trimmed value', () => {
     const onSubmit = vi.fn()
-    const renderer = renderModal('  orca://pair?code=abc  ', onSubmit)
+    const renderer = renderModal('', onSubmit)
+    const input = renderer.root.findByType('TextInput')
+
+    expect(findAction(renderer, 'Save').props.disabled).toBe(true)
+    act(() => input.props.onChangeText('  orca://pair?code=abc  '))
     const save = findAction(renderer, 'Save')
 
     expect(save.props.accessibilityRole).toBe('button')
+    expect(save.props.disabled).toBe(false)
     expect(save.props.accessibilityState).toEqual({ disabled: false })
     expect(save.props.style({ pressed: false })[0]).toMatchObject({ minHeight: 44 })
 
@@ -102,11 +107,14 @@ describe('TextInputModal actions', () => {
   })
 
   it('reports the Save action as disabled when validation blocks submission', () => {
-    const renderer = renderModal('   ')
+    const onSubmit = vi.fn()
+    const renderer = renderModal('   ', onSubmit)
     const save = findAction(renderer, 'Save')
 
     expect(save.props.disabled).toBe(true)
     expect(save.props.accessibilityState).toEqual({ disabled: true })
+    act(() => renderer.root.findByType('TextInput').props.onSubmitEditing())
+    expect(onSubmit).not.toHaveBeenCalled()
     act(() => renderer.unmount())
   })
 })

@@ -184,6 +184,9 @@ describe('MountedBottomDrawer keyboard layout', () => {
 
     const style = findDrawer(renderer).props.style
     expect(style[2]).toMatchObject({ height: 438, marginBottom: 336, paddingBottom: 8 })
+    expect(
+      style.filter((entry: Record<string, unknown> | null) => entry?.marginBottom != null)
+    ).toHaveLength(1)
     expect(findStyleWith(findDrawer(renderer), 'transform').transform).toEqual([{ translateY: 0 }])
 
     act(() => {
