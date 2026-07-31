@@ -71,7 +71,7 @@ jobs:
           VITE_EXPOSE_STORE: 'true'
         run: |
           npx electron-vite build --mode e2e
-          pnpm run build:web
+          pnpm run build:web-from-renderer
 
       - name: Upload E2E build output
         uses: actions/upload-artifact@v7
