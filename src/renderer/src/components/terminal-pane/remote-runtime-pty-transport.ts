@@ -638,7 +638,7 @@ export function createRemoteRuntimePtyTransport(
       }
     }
 
-    if (!isCurrent()) {
+    if (!isCurrent() || recovery.currentPhase === 'disconnected') {
       return undefined
     }
     handle = hostHandle

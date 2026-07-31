@@ -903,6 +903,67 @@ describe('createRemoteRuntimePtyTransport', () => {
     }
   })
 
+  it('does not subscribe after mirror metadata resolution crosses the recovery cutoff', async () => {
+    vi.useFakeTimers()
+    try {
+      const healthyRuntimeCall = runtimeCall.getMockImplementation()
+      let activateAttempts = 0
+      let resolveMetadata: (value: unknown) => void = () => {}
+      runtimeCall.mockImplementation((request: { method: string; params?: unknown }) => {
+        if (request.method === 'session.tabs.activate' && activateAttempts++ === 0) {
+          return Promise.reject(
+            Object.assign(new Error('Remote Orca runtime closed the connection.'), {
+              code: 'remote_runtime_unavailable'
+            })
+          )
+        }
+        if (request.method === 'terminal.resolvePane') {
+          return new Promise((resolve) => {
+            resolveMetadata = resolve
+          })
+        }
+        return healthyRuntimeCall?.(request)
+      })
+      const { createRemoteRuntimePtyTransport } = await import('./remote-runtime-pty-transport')
+      const transport = createRemoteRuntimePtyTransport('env-1', {
+        worktreeId: 'wt-1',
+        tabId: 'web-terminal-host-tab-1',
+        leafId: 'pane:1'
+      })
+
+      transport.attach({
+        existingPtyId: 'remote:env-1@@stale-client-handle',
+        callbacks: {}
+      })
+      await vi.advanceTimersByTimeAsync(250)
+      expect(runtimeCall).toHaveBeenCalledWith(
+        expect.objectContaining({ method: 'terminal.resolvePane' })
+      )
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(transport.getRecoveryState?.().phase).toBe('disconnected')
+
+      resolveMetadata({
+        ok: true,
+        result: {
+          terminal: {
+            handle: 'terminal-1',
+            tabId: 'host-tab-1',
+            leafId: 'pane:1',
+            worktreeId: 'wt-1'
+          }
+        }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(runtimeSubscribe).not.toHaveBeenCalled()
+      expect(transport.getRecoveryState?.().phase).toBe('disconnected')
+      transport.destroy?.()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('ignores stale web mirror inventory failure after a newer connect lifecycle', async () => {
     const healthyRuntimeCall = runtimeCall.getMockImplementation()
     let rejectStaleInventory: (error: Error) => void = () => {}
