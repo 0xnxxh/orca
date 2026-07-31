@@ -32,7 +32,10 @@ import type { RpcClient } from '../src/transport/rpc-client'
 import { sendSingleFlightRequest } from '../src/transport/request-single-flight'
 import { useCloseHost, useForceReconnect, usePrimeHosts } from '../src/transport/client-context'
 import { useAllHostClients } from '../src/transport/all-host-client-connections'
-import { selectHomeAutoConnectHostIds } from '../src/transport/home-host-auto-connect'
+import {
+  resolveHomeHostConnectionState,
+  selectHomeAutoConnectHostIds
+} from '../src/transport/home-host-auto-connect'
 import { classifyConnection } from '../src/transport/connection-health'
 import { subscribeToDesktopNotifications } from '../src/notifications/mobile-notifications'
 import {
@@ -777,7 +780,11 @@ export default function HomeScreen() {
           }
           ItemSeparatorComponent={CardGap}
           renderItem={({ item }) => {
-            const state = hostStates[item.id] ?? 'connecting'
+            const state = resolveHomeHostConnectionState(
+              item.id,
+              hostStates[item.id],
+              autoConnectHostIds
+            )
             const attempts = hostAttempts[item.id] ?? 0
             const lastConnectedAt = hostLastConnected[item.id] ?? null
             const info = worktreeInfo[item.id]
@@ -975,7 +982,11 @@ export default function HomeScreen() {
           if (!host) {
             return []
           }
-          const state = hostStates[host.id] ?? 'connecting'
+          const state = resolveHomeHostConnectionState(
+            host.id,
+            hostStates[host.id],
+            autoConnectHostIds
+          )
           const isLive =
             state === 'connected' ||
             state === 'connecting' ||

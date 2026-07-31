@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { HostProfile } from './types'
-import { HOME_AUTO_CONNECT_LIMIT, selectHomeAutoConnectHostIds } from './home-host-auto-connect'
+import {
+  HOME_AUTO_CONNECT_LIMIT,
+  resolveHomeHostConnectionState,
+  selectHomeAutoConnectHostIds
+} from './home-host-auto-connect'
 
 function host(id: string, lastConnected: number, credentials = true): HostProfile {
   return {
@@ -13,7 +17,7 @@ function host(id: string, lastConnected: number, credentials = true): HostProfil
   }
 }
 
-describe('selectHomeAutoConnectHostIds', () => {
+describe('home host auto-connect', () => {
   it('limits startup connections to the most recently used credentialed hosts', () => {
     const hosts = [
       host('old', 1),
@@ -34,5 +38,19 @@ describe('selectHomeAutoConnectHostIds', () => {
     selectHomeAutoConnectHostIds(hosts)
 
     expect(hosts.map((item) => item.id)).toEqual(['old', 'new'])
+  })
+
+  it('only presents hosts in the startup subset as connecting before clients open', () => {
+    const autoConnectHostIds = ['recent']
+
+    expect(resolveHomeHostConnectionState('recent', undefined, autoConnectHostIds)).toBe(
+      'connecting'
+    )
+    expect(resolveHomeHostConnectionState('stale', undefined, autoConnectHostIds)).toBe(
+      'disconnected'
+    )
+    expect(resolveHomeHostConnectionState('stale', 'connected', autoConnectHostIds)).toBe(
+      'connected'
+    )
   })
 })

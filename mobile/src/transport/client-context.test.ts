@@ -20,8 +20,9 @@ vi.mock('./connection-revival-triggers', () => ({
   subscribeConnectionRevivalTriggers: () => () => {}
 }))
 
-import { RpcClientProvider, useCloseHost, useHostClient } from './client-context'
+import { RpcClientProvider, useCloseHost, useForceReconnect, useHostClient } from './client-context'
 import { useAllHostClients } from './all-host-client-connections'
+import { selectHomeAutoConnectHostIds } from './home-host-auto-connect'
 
 type FakeClient = RpcClient & {
   emitState: (state: ConnectionState) => void
@@ -339,6 +340,97 @@ describe('useAllHostClients', () => {
       })
       expect(connectMock).toHaveBeenCalledOnce()
       expect(connectMock).toHaveBeenCalledWith(host2, expect.any(Function))
+    } finally {
+      restore()
+      act(() => renderer?.unmount())
+    }
+  })
+
+  it('keeps startup connection fanout constant for a large saved-host list', async () => {
+    const hosts = Array.from({ length: 1_000 }, (_, index) => ({
+      ...HOST,
+      id: `host-${index}`,
+      name: `Host ${index}`,
+      lastConnected: index
+    }))
+    const hostIds = hosts.map((host) => host.id)
+    const autoConnectHostIds = selectHomeAutoConnectHostIds(hosts)
+    connectMock.mockReturnValue(makeFakeClient('connected'))
+    loadHostsMock.mockResolvedValue(hosts)
+
+    let renderer: ReactTestRenderer | null = null
+    function Probe(): null {
+      useAllHostClients(hostIds, { autoConnectHostIds })
+      return null
+    }
+
+    const restore = suppressReactTestRendererDeprecationWarning()
+    try {
+      await act(async () => {
+        renderer = create(createElement(RpcClientProvider, null, createElement(Probe)))
+        await Promise.resolve()
+      })
+      expect(connectMock).toHaveBeenCalledTimes(3)
+      expect(connectMock.mock.calls.map(([host]) => host.id)).toEqual([
+        'host-999',
+        'host-998',
+        'host-997'
+      ])
+    } finally {
+      restore()
+      act(() => renderer?.unmount())
+    }
+  })
+
+  it('retains connect-all behavior when no startup subset is provided', async () => {
+    const host2 = { ...HOST, id: 'host-2', name: 'Host 2' }
+    connectMock.mockReturnValue(makeFakeClient('connected'))
+    loadHostsMock.mockResolvedValue([HOST, host2])
+
+    let renderer: ReactTestRenderer | null = null
+    function Probe(): null {
+      useAllHostClients([HOST.id, host2.id])
+      return null
+    }
+
+    const restore = suppressReactTestRendererDeprecationWarning()
+    try {
+      await act(async () => {
+        renderer = create(createElement(RpcClientProvider, null, createElement(Probe)))
+        await Promise.resolve()
+      })
+      expect(connectMock).toHaveBeenCalledTimes(2)
+    } finally {
+      restore()
+      act(() => renderer?.unmount())
+    }
+  })
+
+  it('allows an excluded host to connect manually', async () => {
+    connectMock.mockReturnValue(makeFakeClient('connected'))
+    loadHostsMock.mockResolvedValue([HOST])
+
+    let reconnect: ((hostId: string) => Promise<void>) | null = null
+    let renderer: ReactTestRenderer | null = null
+    function Probe(): null {
+      useAllHostClients([HOST.id], { autoConnectHostIds: [] })
+      reconnect = useForceReconnect()
+      return null
+    }
+
+    const restore = suppressReactTestRendererDeprecationWarning()
+    try {
+      await act(async () => {
+        renderer = create(createElement(RpcClientProvider, null, createElement(Probe)))
+      })
+      expect(connectMock).not.toHaveBeenCalled()
+      if (!reconnect) {
+        throw new Error('reconnect harness did not initialize')
+      }
+      await act(async () => {
+        await reconnect?.(HOST.id)
+      })
+      expect(connectMock).toHaveBeenCalledOnce()
     } finally {
       restore()
       act(() => renderer?.unmount())

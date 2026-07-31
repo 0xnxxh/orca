@@ -1,4 +1,4 @@
-import type { HostProfile } from './types'
+import type { ConnectionState, HostProfile } from './types'
 
 export const HOME_AUTO_CONNECT_LIMIT = 3
 
@@ -13,4 +13,12 @@ export function selectHomeAutoConnectHostIds(
     )
     .slice(0, Math.max(0, limit))
     .map((host) => host.id)
+}
+
+export function resolveHomeHostConnectionState(
+  hostId: string,
+  state: ConnectionState | undefined,
+  autoConnectHostIds: readonly string[]
+): ConnectionState {
+  return state ?? (autoConnectHostIds.includes(hostId) ? 'connecting' : 'disconnected')
 }
