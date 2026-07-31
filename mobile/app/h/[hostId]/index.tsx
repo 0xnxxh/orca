@@ -38,7 +38,10 @@ import {
   useForceReconnect
 } from '../../../src/transport/client-context'
 import { useWorktreeResync } from '../../../src/transport/use-worktree-resync'
-import { startHostWorktreeRefresh } from '../../../src/worktree/host-worktree-refresh'
+import {
+  startHostWorktreeRefresh,
+  type WorktreeRefreshOptions
+} from '../../../src/worktree/host-worktree-refresh'
 import {
   useLastConnectedAt,
   useReconnectAttempt
@@ -407,7 +410,7 @@ export function HostScreen({
   )
 
   const fetchWorktrees = useCallback(
-    async (options: { allowDuringModal?: boolean } = {}) => {
+    async (options: WorktreeRefreshOptions = {}) => {
       if (!client || connState !== 'connected') {
         return
       }
@@ -419,6 +422,7 @@ export function HostScreen({
         return
       }
       fetchWorktreesInFlightRef.current = true
+      options.onStarted?.()
       const requestClient = client
       const requestHostId = hostId
 

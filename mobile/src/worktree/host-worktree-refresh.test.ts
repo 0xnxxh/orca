@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
-import { startHostWorktreeRefresh } from './host-worktree-refresh'
+import { startHostWorktreeRefresh, type WorktreeRefreshOptions } from './host-worktree-refresh'
 
 const appState = vi.hoisted(() => ({
   currentState: 'active',
@@ -33,7 +33,9 @@ describe('startHostWorktreeRefresh', () => {
     appState.listener = null
     appState.remove.mockClear()
     eventListener = null
-    fetchWorktrees = vi.fn().mockResolvedValue(undefined)
+    fetchWorktrees = vi.fn(async (options?: WorktreeRefreshOptions) => {
+      options?.onStarted?.()
+    })
     fetchRepoMetadata = vi.fn().mockResolvedValue(undefined)
     unsubscribe = vi.fn()
     stop = null
@@ -77,7 +79,7 @@ describe('startHostWorktreeRefresh', () => {
     appState.currentState = 'active'
     appState.listener?.('active')
 
-    expect(fetchWorktrees).toHaveBeenCalledWith({ allowDuringModal: true })
+    expect(fetchWorktrees).toHaveBeenCalledWith(expect.objectContaining({ allowDuringModal: true }))
     expect(fetchRepoMetadata).toHaveBeenCalledWith({ queueIfInFlight: true })
   })
 
@@ -109,6 +111,36 @@ describe('startHostWorktreeRefresh', () => {
 
     expect(fetchRepoMetadata).toHaveBeenCalledOnce()
     expect(fetchRepoMetadata).toHaveBeenCalledWith({ force: true, queueIfInFlight: true })
+  })
+
+  it('defers only the worktree safety poll after an event refresh', async () => {
+    start()
+    fetchWorktrees.mockClear()
+    fetchRepoMetadata.mockClear()
+
+    await vi.advanceTimersByTimeAsync(2_900)
+    eventListener?.({ type: 'worktreesChanged', repoId: 'repo-1' })
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(fetchWorktrees).toHaveBeenCalledTimes(1)
+    expect(fetchRepoMetadata).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(2_900)
+    expect(fetchWorktrees).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the safety deadline when an event refresh is suppressed', async () => {
+    start()
+    fetchWorktrees.mockClear()
+    fetchRepoMetadata.mockClear()
+    fetchWorktrees.mockImplementationOnce(async () => undefined)
+
+    await vi.advanceTimersByTimeAsync(2_900)
+    eventListener?.({ type: 'worktreesChanged', repoId: 'repo-1' })
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(fetchWorktrees).toHaveBeenCalledTimes(2)
+    expect(fetchRepoMetadata).toHaveBeenCalledTimes(1)
   })
 
   it('refreshes worktrees on worktreesChanged and both snapshots after stream replay', () => {

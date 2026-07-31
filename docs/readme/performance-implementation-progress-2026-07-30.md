@@ -13,7 +13,8 @@
 | 1     | Linear setup/onboarding lazy boundary        | Complete                            | Main renderer static graph reduced by about 1.29 MB and 10 JavaScript chunks                                                              |
 | 1     | SSH/SFTP false-boundary repairs              | Complete                            | Measured main-entry reductions with packaged relative chunks and focused transfer tests                                                   |
 | 2     | Host-owned repository snapshots              | Complete through current checkpoint | Repository, source-control, space-manager, mobile source-control, review, and runtime consumers reuse authoritative revisions             |
-| 3     | Mobile terminal hot set and cold parking     | Validated; draft checkpoint pending | Default-off active + two MRU policy with one grace pane, source-provenanced snapshot/replay reveal, cleanup, diagnostics, and regressions |
+| 3     | Mobile terminal hot set and cold parking     | Published to draft PR               | Default-off active + two MRU policy with one grace pane, source-provenanced snapshot/replay reveal, cleanup, diagnostics, and regressions |
+| 3     | Mobile worktree event-aware safety polling   | Published to draft PR               | Event, foreground, and reconnect refreshes defer only the next redundant worktree poll                                                    |
 
 ## Current mobile hot-set tranche
 
@@ -86,5 +87,33 @@ Per user direction, work continued locally with this ledger and a tracked read-o
 
 - Durable physical iOS and Android evidence for memory deltas and cold-reveal p95 before enabling the feature by default.
 - Physical-device process-loss, foreground, selection, keyboard, SSH/relay, and folder-workspace confirmation.
-- Commit, push, and update draft PR #11539 while keeping it draft.
-- Select the next measured roadmap tranche after this checkpoint is safely published.
+- Validate and publish the event-aware mobile worktree polling checkpoint while keeping PR #11539 draft.
+- Add complete catalog freshness ownership before introducing replay or relaxing idle polling.
+
+## Next tranche exploration
+
+The next roadmap target is the revisioned mobile workspace catalog. The current foreground path
+performs one full `worktree.ps` request every three seconds per client, plus event, foreground, and
+reconnect refreshes.
+
+A full-result in-flight coalescing arm reduced ten concurrent logical requests to one builder call,
+but it was rejected and restored. A worktree/platform invalidation must allow a newer poll to
+overtake an older pending scan; sharing only by request limit joined the fresh request to stale work
+and timed out the existing generation regression. The lower resolved-worktree scan already shares
+in-flight work by generation.
+
+The next retained seam must therefore carry an exact catalog freshness generation across topology,
+PTY, session, agent, unread, and metadata inputs before any full-result reuse or polling relaxation.
+
+The first retained catalog-side reduction keeps the three-second safety policy but makes its
+worktree timer event-aware. A worktree refresh triggered at 2.9 seconds now postpones the next
+safety snapshot until 5.9 seconds instead of issuing a duplicate at 3.0 seconds. Repo metadata
+retains its independent fixed interval and unchanged 60-second callee throttle. Modal-blocked or
+in-flight-suppressed refreshes do not postpone the existing safety deadline.
+
+Checkpoint validation:
+
+- Focused host-refresh suite: 1 file, 7 tests passed.
+- Full mobile suite: 370 files, 2,716 passed, 2 skipped.
+- Platform-generation overtaking regression: 1 passed.
+- Mobile typecheck, lint, format check, max-lines ratchet, and `git diff --check` passed.

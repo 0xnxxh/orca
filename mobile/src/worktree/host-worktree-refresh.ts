@@ -4,7 +4,10 @@ import type { RpcClient } from '../transport/rpc-client'
 
 const WORKTREE_REFRESH_MS = 3000
 
-type WorktreeRefreshOptions = { allowDuringModal?: boolean }
+export type WorktreeRefreshOptions = {
+  allowDuringModal?: boolean
+  onStarted?: () => void
+}
 type RepoRefreshOptions = { force?: boolean; queueIfInFlight?: boolean }
 
 type HostWorktreeRefreshArgs = {
@@ -20,12 +23,31 @@ export function startHostWorktreeRefresh({
 }: HostWorktreeRefreshArgs): () => void {
   let stale = false
   let eventStreamReady = false
+  let worktreeRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+  const scheduleWorktreeRefresh = (): void => {
+    if (worktreeRefreshTimer) {
+      clearTimeout(worktreeRefreshTimer)
+    }
+    worktreeRefreshTimer = setTimeout(() => {
+      worktreeRefreshTimer = null
+      if (AppState.currentState === 'active') {
+        void fetchWorktrees()
+      }
+      scheduleWorktreeRefresh()
+    }, WORKTREE_REFRESH_MS)
+  }
+
+  const refreshWorktrees = (options?: WorktreeRefreshOptions): void => {
+    // Reset only after modal and in-flight guards admit the request.
+    void fetchWorktrees({ ...options, onStarted: scheduleWorktreeRefresh })
+  }
 
   const refreshOnForeground = (): void => {
     if (AppState.currentState !== 'active') {
       return
     }
-    void fetchWorktrees({ allowDuringModal: true })
+    refreshWorktrees({ allowDuringModal: true })
     void fetchRepoMetadata({ queueIfInFlight: true })
   }
 
@@ -34,11 +56,10 @@ export function startHostWorktreeRefresh({
       refreshOnForeground()
     }
   })
-  const interval = setInterval(() => {
+  const repoMetadataInterval = setInterval(() => {
     if (AppState.currentState !== 'active') {
       return
     }
-    void fetchWorktrees()
     // Why: desktop Settings repo edits (icon/color/name, repo removal) notify only the
     // renderer IPC, not the runtime clientEvents stream, so `reposChanged` never reaches
     // mobile. Keep a periodic repo.list as the convergence safety-net; fetchRepoMetadata
@@ -59,7 +80,7 @@ export function startHostWorktreeRefresh({
         eventStreamReady = true
         if (replayedAfterReconnect) {
           // Why: client events are not queued while disconnected, so re-read both snapshots after replay.
-          void fetchWorktrees()
+          refreshWorktrees()
           void fetchRepoMetadata({ force: true, queueIfInFlight: true })
         }
         return
@@ -71,17 +92,21 @@ export function startHostWorktreeRefresh({
       if (event.type === 'reposChanged') {
         void fetchRepoMetadata({ force: true, queueIfInFlight: true })
       } else if (event.type === 'worktreesChanged') {
-        void fetchWorktrees()
+        refreshWorktrees()
       }
     }
   )
 
-  void fetchWorktrees()
+  scheduleWorktreeRefresh()
+  refreshWorktrees()
   void fetchRepoMetadata({ force: true, queueIfInFlight: true })
 
   return () => {
     stale = true
-    clearInterval(interval)
+    if (worktreeRefreshTimer) {
+      clearTimeout(worktreeRefreshTimer)
+    }
+    clearInterval(repoMetadataInterval)
     appStateSubscription.remove()
     unsubscribe()
   }
