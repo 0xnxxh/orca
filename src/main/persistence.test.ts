@@ -41,6 +41,7 @@ import { SshConnectionStore } from './ssh/ssh-connection-store'
 import { setSourceControlActionDefault } from '../shared/source-control-ai-actions'
 import { LEGACY_DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS } from '../shared/ssh-types'
 import { closeTerminalTabInWorkspaceSession } from '../shared/workspace-session-terminal-tab-close'
+import { MAX_WORKSPACE_STATUSES } from '../shared/workspace-statuses'
 
 // Shared mutable state so the electron mock can reference a per-test directory
 const testState = { dir: '' }
@@ -6838,6 +6839,37 @@ describe('Store', () => {
 
     store.updateUI({ syncTaskStatusFromWorkspaceBoard: true })
     expect(store.getUI().syncTaskStatusFromWorkspaceBoard).toBe(true)
+  })
+
+  it('preserves the supported workflow and clamps statuses to the eager lane budget', async () => {
+    const authored = Array.from({ length: MAX_WORKSPACE_STATUSES }, (_, index) => ({
+      id: `state-${index + 1}`,
+      label: `State ${index + 1}`
+    }))
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [],
+      worktreeMeta: {},
+      settings: {},
+      ui: { workspaceStatuses: authored },
+      githubCache: { pr: {}, issue: {} },
+      workspaceSession: {}
+    })
+
+    const store = await createStore()
+    expect(store.getUI().workspaceStatuses?.map((status) => status.id)).toEqual(
+      authored.map((status) => status.id)
+    )
+
+    store.updateUI({
+      workspaceStatuses: [...authored, { id: 'state-over-budget', label: 'State over budget' }]
+    })
+    store.flush()
+
+    expect(store.getUI().workspaceStatuses).toHaveLength(MAX_WORKSPACE_STATUSES)
+    expect((readDataFile() as PersistedState).ui.workspaceStatuses).toHaveLength(
+      MAX_WORKSPACE_STATUSES
+    )
   })
 
   it('repairs the known-bad reordered default workspace statuses once on load', async () => {

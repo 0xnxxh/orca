@@ -32,6 +32,10 @@ describe('workspace status visuals', () => {
     expect(normalizeWorkspaceStatuses(corrupted)).toHaveLength(MAX_WORKSPACE_STATUSES)
   })
 
+  it('keeps eager board rendering within its measured lane budget', () => {
+    expect(MAX_WORKSPACE_STATUSES).toBe(20)
+  })
+
   it('keeps the default workflow order', () => {
     expect(cloneDefaultWorkspaceStatuses().map((status) => status.id)).toEqual([
       'todo',

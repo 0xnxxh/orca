@@ -111,12 +111,8 @@ describe('WorkspaceKanbanSettingsMenu', () => {
       (button) => button.textContent?.trim().startsWith('Add status') === true
     )
 
-    expect(document.body.textContent).toContain(
-      `${MAX_WORKSPACE_STATUSES} / ${MAX_WORKSPACE_STATUSES}`
-    )
-    expect(addStatus?.textContent).toContain(
-      `${MAX_WORKSPACE_STATUSES} / ${MAX_WORKSPACE_STATUSES}`
-    )
+    expect(document.body.textContent).toContain('20 / 20')
+    expect(addStatus?.textContent).toContain('20 / 20')
     expect(addStatus?.disabled).toBe(true)
     addStatus?.click()
     expect(onAddStatus).not.toHaveBeenCalled()
