@@ -1674,10 +1674,27 @@ export class CodexRuntimeHomeService {
             : provenanceStatus.kind === 'missing'
               ? (this.lastWrittenAuthJson ?? snapshot?.authJson)
               : undefined
+        if (systemAuth === null) {
+          if (
+            provenanceStatus.kind === 'committed' &&
+            provenanceStatus.provenance.owner === 'system-default' &&
+            provenanceStatus.provenance.authJson === null &&
+            logoutMarkerStatus.kind === 'applies' &&
+            snapshot?.authJson === null
+          ) {
+            this.lastWrittenAuthJson = null
+            return
+          }
+          // Why: commit a crashed logout before a managed transition can discard its recovery baseline.
+          this.captureSystemDefaultSnapshot({ force: true })
+          this.persistRuntimeLogoutMarker(null)
+          this.lastWrittenAuthJson = null
+          this.persistSharedRuntimeAuthProvenance({ owner: 'system-default', authJson: null })
+          return
+        }
         if (
-          (logoutMarkerStatus.kind === 'system-default-changed' ||
-            (knownSystemAuthBaseline !== undefined && knownSystemAuthBaseline !== systemAuth)) &&
-          systemAuth !== null
+          logoutMarkerStatus.kind === 'system-default-changed' ||
+          (knownSystemAuthBaseline !== undefined && knownSystemAuthBaseline !== systemAuth)
         ) {
           const replaced = this.writeRuntimeAuth(
             systemAuth,
@@ -1839,12 +1856,25 @@ export class CodexRuntimeHomeService {
     }
     const provenance: CodexSharedRuntimeAuthProvenance =
       owner.owner === 'system-default' ? { owner: 'system-default', authJson: contents } : owner
+    const runtimeAuthAlreadyMatches = this.fileContentsEqual(runtimeAuthPath, contents)
+    if (
+      runtimeAuthAlreadyMatches &&
+      this.sharedRuntimeAuthProvenanceMatches(
+        this.resolveSharedRuntimeAuthProvenanceStatus(),
+        provenance
+      )
+    ) {
+      this.ensureOwnerOnlyMode(runtimeAuthPath)
+      this.lastWrittenAuthJson = contents
+      this.clearRuntimeLogoutMarker()
+      return true
+    }
     this.persistSharedRuntimeAuthProvenance({
       owner: 'pending',
       next: provenance,
       runtimeAuthJson: contents
     })
-    if (this.fileContentsEqual(this.getRuntimeAuthPath(), contents)) {
+    if (runtimeAuthAlreadyMatches) {
       this.ensureOwnerOnlyMode(runtimeAuthPath)
       this.lastWrittenAuthJson = contents
       this.persistSharedRuntimeAuthProvenance(provenance)
@@ -2021,6 +2051,19 @@ export class CodexRuntimeHomeService {
     }
     this.persistSharedRuntimeAuthProvenance(restored)
     return restored
+  }
+
+  private sharedRuntimeAuthProvenanceMatches(
+    status: CodexSharedRuntimeAuthProvenanceStatus,
+    expected: CodexSharedRuntimeAuthProvenance
+  ): boolean {
+    if (status.kind !== 'committed' || status.provenance.owner !== expected.owner) {
+      return false
+    }
+    return expected.owner === 'system-default'
+      ? status.provenance.owner === 'system-default' &&
+          status.provenance.authJson === expected.authJson
+      : status.provenance.owner === 'managed' && status.provenance.accountId === expected.accountId
   }
 
   private resolveSharedRuntimeAuthProvenanceStatus(): CodexSharedRuntimeAuthProvenanceStatus {
