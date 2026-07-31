@@ -188,6 +188,7 @@ describe('resolvePrimaryAction Create PR intent', () => {
         canCreate: false,
         blockedReason: 'dirty',
         nextAction: 'commit',
+        defaultBaseRef: 'main',
         reviewLookupOutcome: 'unavailable'
       }
     })

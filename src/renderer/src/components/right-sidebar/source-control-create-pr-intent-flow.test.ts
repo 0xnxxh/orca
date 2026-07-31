@@ -9,7 +9,8 @@ import {
   getCreatePrIntentStagePaths,
   resolveCreatePrIntentReviewBase,
   resolveCreatePrIntentRemoteStep,
-  shouldAttemptCreateHostedReviewForIntent
+  shouldAttemptCreateHostedReviewForIntent,
+  shouldGenerateHostedReviewDetailsForIntent
 } from './source-control-create-pr-intent-flow'
 import type { GitStatusEntry } from '../../../../shared/types'
 
@@ -22,6 +23,7 @@ describe('source-control Create PR intent flow helpers', () => {
         worktreeId: 'wt-1',
         worktreePath: '/repo',
         branch: 'feature',
+        provider: 'github',
         baseRef: 'origin/main'
       })
 
@@ -45,7 +47,8 @@ describe('source-control Create PR intent flow helpers', () => {
       repoId: 'repo-1',
       worktreeId: 'wt-1',
       worktreePath: '/repo',
-      branch: 'feature/pr'
+      branch: 'feature/pr',
+      provider: 'github'
     })
 
     expect(createPrIntentGitStatusMatchesToken(token, { branch: 'refs/heads/feature/pr' })).toBe(
@@ -64,7 +67,8 @@ describe('source-control Create PR intent flow helpers', () => {
       repoId: 'repo-1',
       worktreeId: 'wt-1',
       worktreePath: wt1Path,
-      branch: 'feature/pr'
+      branch: 'feature/pr',
+      provider: 'github'
     })
 
     expect(
@@ -93,6 +97,7 @@ describe('source-control Create PR intent flow helpers', () => {
       worktreeId: 'wt-1',
       worktreePath,
       branch: 'feature/pr',
+      provider: 'github',
       baseRef: 'refs/remotes/origin/main'
     })
 
@@ -284,15 +289,22 @@ describe('source-control Create PR intent flow helpers', () => {
     ).toBe('blocked')
   })
 
-  it('retries final creation through main preflight only after local preparation is complete', () => {
+  it('uses main preflight as the final lookup authority after preparation', () => {
+    const unavailable = {
+      provider: 'github' as const,
+      review: null,
+      canCreate: false,
+      blockedReason: null,
+      nextAction: null,
+      reviewLookupOutcome: 'unavailable' as const
+    }
+    expect(shouldAttemptCreateHostedReviewForIntent(unavailable)).toBe(true)
+    expect(shouldGenerateHostedReviewDetailsForIntent(unavailable)).toBe(false)
     expect(
-      shouldAttemptCreateHostedReviewForIntent({
-        provider: 'github',
-        review: null,
-        canCreate: false,
-        blockedReason: null,
-        nextAction: null,
-        reviewLookupOutcome: 'unavailable'
+      shouldGenerateHostedReviewDetailsForIntent({
+        ...unavailable,
+        canCreate: true,
+        reviewLookupOutcome: 'not_found'
       })
     ).toBe(true)
     expect(

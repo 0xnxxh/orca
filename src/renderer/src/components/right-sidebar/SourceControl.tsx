@@ -266,11 +266,13 @@ import {
   resolveCreatePrIntentReviewBase,
   resolveCreatePrIntentRemoteStep,
   shouldAttemptCreateHostedReviewForIntent,
+  shouldGenerateHostedReviewDetailsForIntent,
   type CreatePrIntentRunToken
 } from './source-control-create-pr-intent-flow'
 import { resolveVisibleCreatePrHeaderAction } from './source-control-create-pr-intent-state'
 import { resolveBlockedCreateReviewNoticeMessage } from './source-control-create-review-blocked-action'
 import {
+  buildCreatePrIntentUnavailableEligibility,
   buildLoadingHostedReviewCreationEligibility,
   buildLocalBlockerHostedReviewCreationEligibility,
   resolveHostedReviewCreationProviderForTarget
@@ -1577,11 +1579,25 @@ function SourceControlInner(): React.JSX.Element {
       remoteInferredHostedReviewProvider
     ]
   )
+  const unavailableHostedReviewProvider =
+    hostedReview?.provider ??
+    hostedReviewCreation?.provider ??
+    (linkedGitLabMR != null
+      ? 'gitlab'
+      : linkedAzureDevOpsPR != null
+        ? 'azure-devops'
+        : linkedGiteaPR != null
+          ? 'gitea'
+          : linkedGitHubPR != null || fallbackGitHubPRNumber != null
+            ? 'github'
+            : linkedBitbucketPR != null
+              ? 'bitbucket'
+              : remoteInferredHostedReviewProvider)
   const resolveCurrentHostedReviewCreationProvider = useEffectEvent(() =>
     resolveHostedReviewCreationProviderForTarget(
       hostedReviewCreationProviderHintRef.current,
       { repoId: activeRepoId, worktreeId: activeWorktreeId ?? null, branch: branchName },
-      provisionalHostedReviewProvider
+      unavailableHostedReviewProvider ?? 'unsupported'
     )
   )
   useEffect(() => {
@@ -1623,7 +1639,7 @@ function SourceControlInner(): React.JSX.Element {
       const provider = resolveHostedReviewCreationProviderForTarget(
         hostedReviewCreationProviderHintRef.current,
         { repoId: activeRepoId, worktreeId: activeWorktreeId ?? null, branch: branchName },
-        provisionalHostedReviewProvider
+        unavailableHostedReviewProvider ?? provisionalHostedReviewProvider
       )
       return buildLoadingHostedReviewCreationEligibility(provider)
     }
@@ -1634,7 +1650,8 @@ function SourceControlInner(): React.JSX.Element {
     branchName,
     hostedReviewCreation,
     isHostedReviewCreationLoading,
-    provisionalHostedReviewProvider
+    provisionalHostedReviewProvider,
+    unavailableHostedReviewProvider
   ])
   const hasHostedReviewLink = hasPositiveHostedReviewNumberLink({
     linkedGitHubPR,
@@ -3442,6 +3459,7 @@ function SourceControlInner(): React.JSX.Element {
       }
 
       if (
+        shouldGenerateHostedReviewDetailsForIntent(eligibility) &&
         hasConfiguredSourceControlTextGenerationDefaults({
           actionId: 'pullRequest',
           settings,
@@ -3652,23 +3670,40 @@ function SourceControlInner(): React.JSX.Element {
       if (!activeRepo || !token.branch) {
         return null
       }
-      const result = await getHostedReviewCreationEligibility({
-        repoPath: activeRepo.path,
-        repoId: activeRepo.id,
-        worktreePath: token.worktreePath,
-        branch: token.branch,
-        base: token.baseRef ?? null,
-        hasUncommittedChanges,
-        hasUpstream: upstreamStatus?.hasUpstream,
-        ahead: upstreamStatus?.ahead,
-        behind: upstreamStatus?.behind,
-        linkedGitHubPR,
-        fallbackGitHubPR: fallbackGitHubPRNumber,
-        linkedGitLabMR,
-        linkedBitbucketPR,
-        linkedAzureDevOpsPR,
-        linkedGiteaPR
-      })
+      let result: HostedReviewCreationEligibility
+      try {
+        result = await getHostedReviewCreationEligibility({
+          repoPath: activeRepo.path,
+          repoId: activeRepo.id,
+          worktreePath: token.worktreePath,
+          branch: token.branch,
+          base: token.baseRef ?? null,
+          hasUncommittedChanges,
+          hasUpstream: upstreamStatus?.hasUpstream,
+          ahead: upstreamStatus?.ahead,
+          behind: upstreamStatus?.behind,
+          linkedGitHubPR,
+          fallbackGitHubPR: fallbackGitHubPRNumber,
+          linkedGitLabMR,
+          linkedBitbucketPR,
+          linkedAzureDevOpsPR,
+          linkedGiteaPR
+        })
+      } catch (error) {
+        console.warn('[SourceControl] Create PR intent eligibility failed', error)
+        const fallback = buildCreatePrIntentUnavailableEligibility(token.provider, {
+          branch: token.branch,
+          baseRef: token.baseRef,
+          hasUncommittedChanges,
+          hasUpstream: upstreamStatus?.hasUpstream,
+          ahead: upstreamStatus?.ahead,
+          behind: upstreamStatus?.behind
+        })
+        if (!fallback) {
+          return null
+        }
+        result = fallback
+      }
       setHostedReviewCreationState({
         repoId: activeRepo.id,
         worktreeId: token.worktreeId,
@@ -3740,6 +3775,7 @@ function SourceControlInner(): React.JSX.Element {
       worktreeId: activeWorktreeId,
       worktreePath,
       branch: branchName,
+      provider: unavailableHostedReviewProvider ?? 'unsupported',
       // Why: intent crosses async commit/push steps, so the base stays tied to what was selected when the run started.
       baseRef: effectiveBaseRef ?? null
     })
@@ -3940,10 +3976,6 @@ function SourceControlInner(): React.JSX.Element {
         }
       }
 
-      const branchAhead = await refreshBranchCompareForCreatePrIntent(token)
-      if (abortIfStale()) {
-        return
-      }
       let eligibility = await readHostedReviewCreationEligibilityForIntent({
         token,
         hasUncommittedChanges: latestStatusEntries.length > 0,
@@ -3964,6 +3996,13 @@ function SourceControlInner(): React.JSX.Element {
         return
       }
 
+      const branchAhead =
+        eligibility.blockedReason === 'no_upstream'
+          ? await refreshBranchCompareForCreatePrIntent(token)
+          : undefined
+      if (abortIfStale()) {
+        return
+      }
       const remoteStep = resolveCreatePrIntentRemoteStep({
         upstreamStatus: latestUpstreamStatus,
         hostedReviewCreation: eligibility,
@@ -4110,6 +4149,7 @@ function SourceControlInner(): React.JSX.Element {
     remoteStatus,
     runRemoteAction,
     setCreatePrIntentNoticeForWorktree,
+    unavailableHostedReviewProvider,
     updateCommitDrafts,
     worktreePath
   ])

@@ -2,7 +2,10 @@ import {
   isBehindOnlyUpstream,
   shouldForcePushWithLeaseForUpstream
 } from '../../../../shared/git-upstream-status'
-import type { HostedReviewCreationEligibility } from '../../../../shared/hosted-review'
+import type {
+  HostedReviewCreationEligibility,
+  HostedReviewProvider
+} from '../../../../shared/hosted-review'
 import {
   normalizeHostedReviewBaseRef,
   normalizeHostedReviewHeadRef
@@ -24,6 +27,7 @@ export type CreatePrIntentRunToken = {
   worktreeId: string
   worktreePath: string
   branch: string
+  provider: HostedReviewProvider
   baseRef?: string | null
   startedAt: number
 }
@@ -169,6 +173,12 @@ export function shouldAttemptCreateHostedReviewForIntent(
     eligibility.canCreate ||
     (eligibility.reviewLookupOutcome === 'unavailable' && eligibility.blockedReason === null)
   )
+}
+
+export function shouldGenerateHostedReviewDetailsForIntent(
+  eligibility: HostedReviewCreationEligibility
+): boolean {
+  return eligibility.canCreate
 }
 
 export function getCreatePrIntentCommitFailureNoticeMessage(

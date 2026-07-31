@@ -46,8 +46,15 @@ export function resolveCreateReviewIntentEligibility({
     return { eligible: false, kind: null }
   }
 
-  // Why: lookup authority gates the final create, not safe local preparation;
-  // the main create preflight still fails closed when lookup remains unavailable.
+  if (
+    hostedReviewCreation.reviewLookupOutcome === 'unavailable' &&
+    !hostedReviewCreation.defaultBaseRef?.trim()
+  ) {
+    return { eligible: false, kind: null }
+  }
+
+  // Why: safe branch preparation can continue without lookup authority; the
+  // main create preflight still fails closed before creating a duplicate.
   if (hostedReviewCreation.blockedReason === 'dirty') {
     if (stagedCount > 0 && !hasMessage) {
       return { eligible: true, kind: 'message_required' }

@@ -13,33 +13,71 @@ function unavailableEligibility(blockedReason: HostedReviewCreationBlockedReason
     canCreate: false,
     blockedReason,
     nextAction: null,
+    defaultBaseRef: 'main',
     reviewLookupOutcome: 'unavailable' as const
   }
 }
 
 describe('resolveCreateReviewIntentEligibility', () => {
+  it('rejects unavailable eligibility when the default branch is unknown', () => {
+    expect(
+      resolveCreateReviewIntentEligibility({
+        stagedCount: 1,
+        hasStageableChanges: true,
+        hasMessage: true,
+        hasUnresolvedConflicts: false,
+        upstreamStatus: { hasUpstream: true, ahead: 0, behind: 0 },
+        hostedReviewCreation: {
+          ...unavailableEligibility('dirty'),
+          defaultBaseRef: null
+        }
+      })
+    ).toEqual({ eligible: false, kind: null })
+  })
+
+  it('keeps dirty local preparation eligible when review lookup is unavailable', () => {
+    expect(
+      resolveCreateReviewIntentEligibility({
+        stagedCount: 0,
+        hasStageableChanges: true,
+        hasMessage: true,
+        hasUnresolvedConflicts: false,
+        upstreamStatus: { hasUpstream: true, ahead: 0, behind: 0 },
+        hostedReviewCreation: unavailableEligibility('dirty')
+      })
+    ).toEqual({ eligible: true, kind: 'dirty' })
+  })
+
+  it('still requires a message before committing staged changes without lookup authority', () => {
+    expect(
+      resolveCreateReviewIntentEligibility({
+        stagedCount: 1,
+        hasStageableChanges: false,
+        hasMessage: false,
+        hasUnresolvedConflicts: false,
+        upstreamStatus: { hasUpstream: true, ahead: 0, behind: 0 },
+        hostedReviewCreation: unavailableEligibility('dirty')
+      })
+    ).toEqual({ eligible: true, kind: 'message_required' })
+  })
+
   it.each<{
     blockedReason: HostedReviewCreationBlockedReason
-    expectedKind: CreateReviewIntentKind
+    blockedKind: CreateReviewIntentKind
     stagedCount?: number
     hasStageableChanges?: boolean
     branchCommitsAhead?: number
     upstreamStatus?: GitUpstreamStatus
   }>([
     {
-      blockedReason: 'dirty',
-      expectedKind: 'dirty',
-      hasStageableChanges: true
-    },
-    {
       blockedReason: 'no_upstream',
-      expectedKind: 'no_upstream',
+      blockedKind: 'no_upstream',
       branchCommitsAhead: 1,
       upstreamStatus: { hasUpstream: false, ahead: 0, behind: 0 }
     },
     {
       blockedReason: 'needs_push',
-      expectedKind: 'needs_push',
+      blockedKind: 'needs_push',
       upstreamStatus: {
         hasUpstream: true,
         upstreamName: 'origin/feature',
@@ -49,7 +87,7 @@ describe('resolveCreateReviewIntentEligibility', () => {
     },
     {
       blockedReason: 'needs_sync',
-      expectedKind: 'needs_sync',
+      blockedKind: 'needs_sync',
       upstreamStatus: {
         hasUpstream: true,
         upstreamName: 'origin/feature',
@@ -59,7 +97,7 @@ describe('resolveCreateReviewIntentEligibility', () => {
     },
     {
       blockedReason: 'needs_sync',
-      expectedKind: 'force_push',
+      blockedKind: 'force_push',
       branchCommitsAhead: 1,
       upstreamStatus: {
         hasUpstream: true,
@@ -70,10 +108,10 @@ describe('resolveCreateReviewIntentEligibility', () => {
       }
     }
   ])(
-    'keeps recoverable $expectedKind preparation eligible when review lookup is unavailable',
+    'keeps recoverable $blockedKind preparation eligible when review lookup is unavailable',
     ({
       blockedReason,
-      expectedKind,
+      blockedKind,
       stagedCount = 0,
       hasStageableChanges = false,
       branchCommitsAhead,
@@ -89,7 +127,7 @@ describe('resolveCreateReviewIntentEligibility', () => {
           hostedReviewCreation: unavailableEligibility(blockedReason),
           branchCommitsAhead
         })
-      ).toEqual({ eligible: true, kind: expectedKind })
+      ).toEqual({ eligible: true, kind: blockedKind })
     }
   )
 })
