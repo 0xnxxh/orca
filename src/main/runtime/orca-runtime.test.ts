@@ -36177,6 +36177,61 @@ describe('OrcaRuntimeService', () => {
     })
   })
 
+  it.each(['failed', 'circuit_broken'] as const)(
+    'returns recent %s orchestration context without an active coordinator',
+    (dispatchStatus) => {
+      const runtime = new OrcaRuntimeService(store)
+      const workerLeafId = '66666666-6666-4666-8666-666666666666'
+      const workerPaneKey = makePaneKey('tab-worker', workerLeafId)
+      const workerHandle = runtime.preAllocateHandleForPty('pty-worker')
+      const getActiveCoordinatorRun = vi.fn(() => ({
+        id: 'run-unrelated',
+        coordinator_handle: 'term_unrelated'
+      }))
+      runtime.setOrchestrationDb({
+        getActiveDispatchForTerminal: vi.fn(() => undefined),
+        getLatestDispatchForTerminal: vi.fn(() => ({
+          id: 'ctx-settled',
+          task_id: 'task-settled',
+          assignee_handle: workerHandle,
+          status: dispatchStatus,
+          completed_at: new Date(Date.now()).toISOString()
+        })),
+        getActiveCoordinatorRun
+      } as never)
+      runtime.attachWindow(1)
+
+      const result = runtime.syncWindowGraph(1, {
+        tabs: [
+          {
+            tabId: 'tab-worker',
+            worktreeId: TEST_WORKTREE_ID,
+            title: 'Claude Code',
+            activeLeafId: workerLeafId,
+            layout: null
+          }
+        ],
+        leaves: [
+          {
+            tabId: 'tab-worker',
+            worktreeId: TEST_WORKTREE_ID,
+            leafId: workerLeafId,
+            paneRuntimeId: 1,
+            ptyId: 'pty-worker',
+            paneTitle: null
+          }
+        ]
+      })
+
+      expect(result.agentOrchestrationByPaneKey?.[workerPaneKey]).toEqual({
+        taskId: 'task-settled',
+        dispatchId: 'ctx-settled',
+        dispatchStatus
+      })
+      expect(getActiveCoordinatorRun).not.toHaveBeenCalled()
+    }
+  )
+
   it('does not return stale completed orchestration context for renderer-synced terminal leaves', () => {
     const runtime = new OrcaRuntimeService(store)
     const workerLeafId = '77777777-7777-4777-8777-777777777777'
