@@ -119,28 +119,27 @@ describe('MobileHomeQuickActions', () => {
     expect(callbacks.onCreateWorkspace).toHaveBeenCalledWith('laptop')
   })
 
-  it('disambiguates path-routed hosts with identical visible identities', async () => {
+  it('disambiguates path-routed hosts without exposing endpoint paths', async () => {
     await renderQuickActions([
-      host('desk-a', 'Desk', 'wss://gateway.example.com/host-a'),
-      host('desk-b', 'Desk', 'wss://gateway.example.com/host-b'),
-      host('desk-c', 'Desk', 'wss://gateway.example.com/host-b')
+      host('desk-a', 'Desk', 'wss://gateway.example.com/v1/connect/bearer-secret-a'),
+      host('desk-b', 'Desk', 'wss://gateway.example.com/v1/connect/bearer-secret-b')
     ])
 
     act(() => newWorkspaceButton().props.onPress())
 
     expect(picker().props.options).toEqual([
-      { value: 'desk-a', label: 'Desk', subtitle: 'gateway.example.com/host-a' },
+      {
+        value: 'desk-a',
+        label: 'Desk',
+        subtitle: 'gateway.example.com · desk-a'
+      },
       {
         value: 'desk-b',
         label: 'Desk',
-        subtitle: 'gateway.example.com/host-b · desk-b'
-      },
-      {
-        value: 'desk-c',
-        label: 'Desk',
-        subtitle: 'gateway.example.com/host-b · desk-c'
+        subtitle: 'gateway.example.com · desk-b'
       }
     ])
+    expect(JSON.stringify(picker().props.options)).not.toContain('bearer-secret')
   })
 
   it('closes a stale picker when fewer than two hosts remain connected', async () => {
