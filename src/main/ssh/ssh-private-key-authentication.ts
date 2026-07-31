@@ -41,16 +41,17 @@ function isUsableAsEagerPrivateKey(key: PrivateKeyFile, passphrase?: string | Bu
   if (parsed instanceof Error) {
     return false
   }
-  const parsedKeys = Array.isArray(parsed) ? parsed : [parsed]
-  return parsedKeys.some(
-    (entry) => typeof entry?.isPrivateKey === 'function' && entry.isPrivateKey()
-  )
+  // Why: ssh2 keeps only the first entry of a multi-key parse (client.js `privateKey[0]`).
+  const eager = Array.isArray(parsed) ? parsed[0] : parsed
+  return typeof eager?.isPrivateKey === 'function' && eager.isPrivateKey()
 }
 
 // Why: ssh2's Client.connect parses config.privateKey before any auth runs and
 // throws on an encrypted/unparseable one, so seeding it with the first candidate
 // would abort the connect instead of letting authHandler try the other keys.
 // Falling back to keys[0] keeps the passphrase prompt for an encrypted-only list.
+// `config.passphrase` is still unset here on the first connect — callers only fill
+// it after a prompt — so an encrypted key can only be picked on a retry pass.
 function selectEagerPrivateKey(config: ConnectConfig, keys: PrivateKeyFile[]): PrivateKeyFile {
   return keys.find((key) => isUsableAsEagerPrivateKey(key, config.passphrase)) ?? keys[0]!
 }

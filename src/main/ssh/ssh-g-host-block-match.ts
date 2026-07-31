@@ -11,16 +11,17 @@ function normalize(value: string | undefined): string {
   return value?.trim().toLowerCase() ?? ''
 }
 
-// Why: `ssh -G` fills `user` from the local account whenever no User directive matched.
-function localAccountName(): string {
-  const fromEnv = process.env.USER || process.env.LOGNAME || process.env.USERNAME
+// Why: `ssh -G` fills `user` from the local account whenever no User directive
+// matched; null means the local account is unknown, so `user` carries no verdict.
+function localAccountName(): string | null {
+  const fromEnv = normalize(process.env.USER || process.env.LOGNAME || process.env.USERNAME)
   if (fromEnv) {
-    return normalize(fromEnv)
+    return fromEnv
   }
   try {
-    return normalize(userInfo().username)
+    return normalize(userInfo().username) || null
   } catch {
-    return ''
+    return null
   }
 }
 
@@ -37,7 +38,10 @@ function localAccountName(): string {
  *
  * Known limitation: the signals below read the *effective* config, so a wildcard
  * `Host *` supplying User/Port/ProxyCommand — or `CanonicalizeHostname yes` —
- * still reads as a match for an alias whose own block is gone.
+ * still reads as a match for an alias whose own block is gone. The reverse
+ * verdict falls back to the stored snapshot, whose IdentityFile is used verbatim
+ * (only `~` is expanded), so a stored path with OpenSSH tokens (%d/%h/%r) stays
+ * unreadable — pre-existing behaviour, unchanged here.
  */
 export function hasOpenSshHostBlockMatch(
   target: HostBlockMatchTarget,
@@ -58,6 +62,7 @@ export function hasOpenSshHostBlockMatch(
   if (resolved.proxyCommand || resolved.proxyJump) {
     return true
   }
+  const localAccount = localAccountName()
   const user = normalize(resolved.user)
-  return user !== '' && user !== localAccountName()
+  return localAccount !== null && user !== '' && user !== localAccount
 }

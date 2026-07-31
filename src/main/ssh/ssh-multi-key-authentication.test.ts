@@ -202,6 +202,20 @@ describe('ordered SSH private-key authentication', () => {
     expect(getPassphrasePrivateKeyPath(config)).toBe('/keys/encrypted-first')
   })
 
+  it('falls back to the first identity when every candidate is encrypted', () => {
+    mockEncryptedKeyPaths(['/keys/encrypted-first', '/keys/encrypted-second'])
+    const config = buildConnectConfig(
+      makeTarget(),
+      makeResolved({ identityFile: ['/keys/encrypted-first', '/keys/encrypted-second'] }),
+      { includeAgent: false, includePrivateKey: true }
+    )
+
+    // Why: no parseable candidate means the eager parse must still throw, so the
+    // passphrase prompt fires instead of silently dropping to agent-only auth.
+    expect(config.privateKey).toEqual(Buffer.from('/keys/encrypted-first'))
+    expect(getPassphrasePrivateKeyPath(config)).toBe('/keys/encrypted-first')
+  })
+
   it('still hands ssh2 an encrypted key when it is the only identity', () => {
     mockEncryptedKeyPaths(['/keys/encrypted-only'])
     const config = buildConnectConfig(

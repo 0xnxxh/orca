@@ -188,6 +188,23 @@ describe('ssh -G host-block matching', () => {
     })
   })
 
+  // A launchd/systemd-spawned main process has no USER/LOGNAME/USERNAME, so the
+  // resolved user proves nothing and the stored fields have to win.
+  it('ignores the resolved user when the local account cannot be determined', () => {
+    vi.stubEnv('USER', '')
+    vi.stubEnv('LOGNAME', '')
+    vi.stubEnv('USERNAME', '')
+
+    const config = buildConnectConfig(
+      storedTarget({ jumpHost: undefined }),
+      unmatchedDefaults({ user: 'whoever' }),
+      { includeAgent: false, includePrivateKey: true }
+    )
+
+    expect(config.username).toBe('deploy')
+    expect(config.host).toBe('10.0.0.5')
+  })
+
   it('keeps manual targets on their stored fields regardless of ssh -G output', () => {
     const config = buildConnectConfig(
       storedTarget({ source: 'manual', configHost: undefined }),
