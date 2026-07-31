@@ -251,14 +251,11 @@ export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeSta
       })
       return { runtimeStatusByEnvironmentId: next }
     })
-    if (previous?.status === null && status.status !== null) {
+    if (options?.suppressDisconnectToast) {
       dismissRuntimeDisconnectedToast(environmentId)
-    } else if (
-      previous &&
-      previous.status !== null &&
-      status.status === null &&
-      !options?.suppressDisconnectToast
-    ) {
+    } else if (previous?.status === null && status.status !== null) {
+      dismissRuntimeDisconnectedToast(environmentId)
+    } else if (previous && previous.status !== null && status.status === null) {
       showRuntimeDisconnectedToast(environmentId, get)
     }
   },

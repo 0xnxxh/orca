@@ -256,6 +256,23 @@ describe('runtime-status slice', () => {
     expect(store.getState().runtimeStatusByEnvironmentId.get('env-a')?.status).toBeNull()
   })
 
+  it('dismisses an outage toast opened while an intentional disconnect was pending', () => {
+    const store = createSliceStore()
+    store.getState().setRuntimeEnvironmentStatus('env-a', { status: makeStatus(), checkedAt: 1 })
+    store.getState().setRuntimeEnvironmentStatus('env-a', { status: null, checkedAt: 2 })
+
+    store
+      .getState()
+      .setRuntimeEnvironmentStatus(
+        'env-a',
+        { status: null, checkedAt: 3 },
+        { suppressDisconnectToast: true }
+      )
+
+    expect(toast.warning).toHaveBeenCalledTimes(1)
+    expect(toast.dismiss).toHaveBeenCalledWith('runtime-environment-disconnected:env-a')
+  })
+
   it('clears a single environment entry', () => {
     const store = createSliceStore()
     store.getState().setRuntimeEnvironmentStatus('env-a', { status: makeStatus(), checkedAt: 1 })
