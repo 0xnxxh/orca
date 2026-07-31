@@ -24,6 +24,11 @@ let snapshot: SkillFreshnessSnapshot = {
   loading: false,
   error: null
 }
+const DISABLED_SNAPSHOT: SkillFreshnessSnapshot = Object.freeze({
+  inventory: null,
+  loading: false,
+  error: null
+})
 const subscribers = new Set<() => void>()
 
 function publishSnapshot(next: SkillFreshnessSnapshot): void {
@@ -136,12 +141,24 @@ function subscribe(subscriber: () => void): () => void {
     if (subscribers.size === 0) {
       window.removeEventListener('focus', onWindowFocus)
       window.removeEventListener(INSTALLED_AGENT_SKILLS_CHANGED_EVENT, onInstalledSkillsChanged)
+      if (scheduledFocusRescan !== null) {
+        window.clearTimeout(scheduledFocusRescan)
+        scheduledFocusRescan = null
+      }
     }
   }
 }
 
+function subscribeDisabled(): () => void {
+  return () => {}
+}
+
 function getSnapshot(): SkillFreshnessSnapshot {
   return snapshot
+}
+
+function getDisabledSnapshot(): SkillFreshnessSnapshot {
+  return DISABLED_SNAPSHOT
 }
 
 function ensureInventoryLoaded(): void {
@@ -154,14 +171,22 @@ export type SkillFreshnessState = SkillFreshnessSnapshot & {
   refresh: () => Promise<void>
 }
 
-export function useSkillFreshness(): SkillFreshnessState {
-  const current = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+async function skipSkillFreshnessRefresh(): Promise<void> {}
+
+export function useSkillFreshness(enabled = true): SkillFreshnessState {
+  const current = useSyncExternalStore(
+    enabled ? subscribe : subscribeDisabled,
+    enabled ? getSnapshot : getDisabledSnapshot,
+    enabled ? getSnapshot : getDisabledSnapshot
+  )
 
   useEffect(() => {
-    ensureInventoryLoaded()
-  }, [])
+    if (enabled) {
+      ensureInventoryLoaded()
+    }
+  }, [enabled])
 
-  return { ...current, refresh: refreshSkillFreshness }
+  return { ...current, refresh: enabled ? refreshSkillFreshness : skipSkillFreshnessRefresh }
 }
 
 export const _skillFreshnessCacheForTests = {

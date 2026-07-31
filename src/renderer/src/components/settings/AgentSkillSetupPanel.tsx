@@ -128,12 +128,13 @@ export function AgentSkillSetupPanel({
   )
 
   const handleTerminalExit = useCallback((): void => {
+    const shouldRecheck = setupAttemptRunningRef.current
     if (mountedRef.current) {
       setupAttemptRunningRef.current = false
       setTerminalOpen(false)
       setSetupAttemptRunning(false)
     }
-    recheckSurfacesAfterAgentSkillTerminal(onRecheck, freshnessSkillName)
+    void (shouldRecheck && recheckSurfacesAfterAgentSkillTerminal(onRecheck, freshnessSkillName))
   }, [freshnessSkillName, mountedRef, onRecheck])
 
   useEffect(() => {

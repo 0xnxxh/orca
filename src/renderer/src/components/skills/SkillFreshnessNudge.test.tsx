@@ -65,6 +65,10 @@ vi.mock('@/hooks/useSkillFreshness', () => ({
   })
 }))
 
+vi.mock('@/hooks/useActiveProjectSkillRuntime', () => ({
+  useActiveProjectSkillRuntime: () => ({ canUseLocalSkillFreshness: true })
+}))
+
 vi.mock('sonner', () => ({
   toast: { info: mocks.toastInfo, dismiss: mocks.toastDismiss }
 }))

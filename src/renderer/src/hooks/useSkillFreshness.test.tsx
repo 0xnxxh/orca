@@ -33,8 +33,8 @@ let container: HTMLDivElement | null = null
 let state: SkillFreshnessState | null = null
 const states = new Map<string, SkillFreshnessState>()
 
-function Probe({ id = 'default' }: { id?: string }): null {
-  state = useSkillFreshness()
+function Probe({ id = 'default', enabled = true }: { id?: string; enabled?: boolean }): null {
+  state = useSkillFreshness(enabled)
   states.set(id, state)
   return null
 }
@@ -51,6 +51,7 @@ describe('useSkillFreshness', () => {
 
   afterEach(async () => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
     if (root) {
       await act(async () => root?.unmount())
     }
@@ -77,6 +78,24 @@ describe('useSkillFreshness', () => {
 
     await act(async () => second.resolve(inventory(2)))
     expect(state?.inventory?.scannedAt).toBe(2)
+  })
+
+  it('does not scan, subscribe, or refresh while local freshness is disabled', async () => {
+    const freshnessInventory = vi.fn().mockResolvedValue(inventory(1))
+    const addEventListener = vi.spyOn(window, 'addEventListener')
+    window.api = { skills: { freshnessInventory } } as never
+
+    await act(async () => root?.render(<Probe enabled={false} />))
+    await act(async () => window.dispatchEvent(new Event('orca:installed-agent-skills-changed')))
+    await act(async () => state?.refresh())
+
+    expect(freshnessInventory).not.toHaveBeenCalled()
+    expect(state).toMatchObject({ inventory: null, loading: false, error: null })
+    expect(
+      addEventListener.mock.calls.filter(
+        ([name]) => name === 'focus' || name === 'orca:installed-agent-skills-changed'
+      )
+    ).toHaveLength(0)
   })
 
   it('skips focus rescans inside the cooldown but honors install-change events', async () => {

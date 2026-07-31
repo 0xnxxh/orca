@@ -47,6 +47,7 @@ describe('useActiveProjectSkillRuntime', () => {
   })
 
   it('limits local freshness to resolved host runtimes', () => {
+    expect(shouldUseLocalSkillFreshness({ kind: 'local' }, undefined)).toBe(true)
     expect(
       shouldUseLocalSkillFreshness({ kind: 'local' }, { runtime: 'host', label: 'Host' })
     ).toBe(true)
