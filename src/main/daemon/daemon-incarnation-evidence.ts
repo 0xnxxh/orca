@@ -66,7 +66,10 @@ async function probeLinuxProcess(
 ): Promise<DaemonProcessEvidence> {
   const stat = await (dependencies.readLinuxStat ?? readLinuxStat)(exactIncarnation.identity.pid)
   if (stat.status === 'missing') {
-    return gone('pid_missing', ['linux_proc_stat', 'endpoint_identity'], exactIncarnation)
+    return unknown(signal === 'permission_denied' ? 'permission_denied' : 'inspection_failed', [
+      'linux_proc_stat',
+      'process_signal'
+    ])
   }
   if (stat.status === 'unavailable') {
     return unknown(signal === 'permission_denied' ? 'permission_denied' : 'inspection_failed', [
