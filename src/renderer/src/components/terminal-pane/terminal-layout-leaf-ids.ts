@@ -1,6 +1,7 @@
 import type { TerminalLayoutSnapshot, TerminalPaneLayoutNode } from '../../../../shared/types'
 import { isTerminalLeafId, type TerminalLeafId } from '../../../../shared/stable-pane-id'
 import { mintStablePaneId } from '@/lib/pane-manager/mint-stable-pane-id'
+import { normalizeTerminalLayoutPtyOwnership } from './terminal-layout-pty-ownership'
 
 const EMPTY_TERMINAL_LAYOUT: TerminalLayoutSnapshot = {
   root: null,
@@ -124,9 +125,10 @@ function getRemappedLeafId(
   return rewrite.nextLeafIdByInputLeafId.get(leafId) ?? null
 }
 
-export function normalizeTerminalLayoutSnapshot(
-  snapshot: TerminalLayoutSnapshot | null | undefined
-): { snapshot: TerminalLayoutSnapshot; changed: boolean } {
+function normalizeTerminalLayoutLeafIds(snapshot: TerminalLayoutSnapshot | null | undefined): {
+  snapshot: TerminalLayoutSnapshot
+  changed: boolean
+} {
   if (!snapshot?.root) {
     const nextSnapshot = snapshot ?? EMPTY_TERMINAL_LAYOUT
     const activeLeafId = resolveRootlessTerminalLayoutLeafId(nextSnapshot)
@@ -204,6 +206,17 @@ export function normalizeTerminalLayoutSnapshot(
       ...(titlesByLeafId ? { titlesByLeafId } : {})
     },
     changed: true
+  }
+}
+
+export function normalizeTerminalLayoutSnapshot(
+  snapshot: TerminalLayoutSnapshot | null | undefined
+): { snapshot: TerminalLayoutSnapshot; changed: boolean } {
+  const leafIds = normalizeTerminalLayoutLeafIds(snapshot)
+  const ptyOwnership = normalizeTerminalLayoutPtyOwnership(leafIds.snapshot)
+  return {
+    snapshot: ptyOwnership.snapshot,
+    changed: leafIds.changed || ptyOwnership.changed
   }
 }
 

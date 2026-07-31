@@ -87,6 +87,7 @@ import {
   normalizeTerminalLayoutSnapshot,
   resolvePtyBoundActiveLeafId
 } from '@/components/terminal-pane/terminal-layout-leaf-ids'
+import { normalizeTerminalLayoutPtyOwnership } from '@/components/terminal-pane/terminal-layout-pty-ownership'
 import { shutdownBufferCaptures } from '@/components/terminal-pane/shutdown-buffer-captures'
 import { callRuntimeRpc } from '@/runtime/runtime-rpc-client'
 import { parseRemoteRuntimePtyId, toRemoteRuntimePtyId } from '@/runtime/runtime-terminal-stream'
@@ -3513,7 +3514,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     set((s) => {
       const next = { ...s.terminalLayoutsByTabId }
       if (layout) {
-        next[tabId] = layout
+        next[tabId] = normalizeTerminalLayoutPtyOwnership(layout).snapshot
       } else {
         delete next[tabId]
       }
