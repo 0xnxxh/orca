@@ -17,6 +17,7 @@ import type {
   LocalBaseRefUpdateSuggestion,
   Repo,
   Worktree,
+  WorktreeCreateBaseFallback,
   WorktreeHeadIdentity,
   WorktreeMeta
 } from '../../shared/types'
@@ -1577,6 +1578,7 @@ export async function createRemoteWorktree(
   }
   let { baseBranch } = basePlan
   let { remoteTrackingBase } = basePlan
+  let baseFallback: WorktreeCreateBaseFallback | undefined
 
   if (remoteTrackingBase) {
     const hasRemoteTrackingBaseRef = await hasRemoteTrackingRefSsh(
@@ -1592,6 +1594,10 @@ export async function createRemoteWorktree(
       // Why: branch reuse and conflict checks must see the local fallback too.
       if (hasFallbackLocalBaseRef) {
         baseBranch = remoteTrackingBase.branch
+      }
+      baseFallback = {
+        requestedRef: remoteTrackingBase.base,
+        localRef: baseBranch
       }
       remoteTrackingBase = null
     }
@@ -1939,6 +1945,7 @@ export async function createRemoteWorktree(
     ...(defaultTabs ? { defaultTabs } : {}),
     ...(localBaseRefRefresh ? { localBaseRefRefresh } : {}),
     ...(localBaseRefUpdateSuggestion ? { localBaseRefUpdateSuggestion } : {}),
+    ...(baseFallback ? { baseFallback } : {}),
     timing: timing.finish()
   }
 }
@@ -2016,6 +2023,7 @@ export async function createLocalWorktree(
   }
 
   let remoteTrackingBase: RemoteTrackingBase | null = null
+  let baseFallback: WorktreeCreateBaseFallback | undefined
   let remoteTrackingRefresh: {
     base: RemoteTrackingBase
     hadLocalBaseRef: boolean
@@ -2053,6 +2061,10 @@ export async function createLocalWorktree(
         // Why: use the usable local branch when offline refresh cannot create its tracking ref.
         if (hasFallbackLocalBaseRef) {
           baseBranch = remoteTrackingBase.branch
+        }
+        baseFallback = {
+          requestedRef: remoteTrackingBase.base,
+          localRef: baseBranch
         }
         remoteTrackingBase = null
       } else {
@@ -2604,6 +2616,7 @@ export async function createLocalWorktree(
       ? { localBaseRefUpdateSuggestion: addResult.localBaseRefUpdateSuggestion }
       : {}),
     ...(stagedStartup.startupTerminal ? { startupTerminal: stagedStartup.startupTerminal } : {}),
+    ...(baseFallback ? { baseFallback } : {}),
     ...(stagedStartup.warning
       ? { warning: appendWorktreeCreateWarning(includeCopyWarning, stagedStartup.warning) }
       : includeCopyWarning
