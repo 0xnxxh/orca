@@ -97,10 +97,11 @@ export function setPrimarySelectionText(text: string): boolean {
   return true
 }
 
-export async function readPrimarySelectionText(): Promise<string> {
+export async function readPrimarySelectionText(onReadStart?: () => void): Promise<string> {
   if (!enabled) {
     return ''
   }
+  onReadStart?.()
   const selectionClipboardApi = shouldUseSystemPrimarySelectionClipboard()
     ? getSelectionClipboardApi()
     : null

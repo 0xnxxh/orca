@@ -2685,7 +2685,9 @@ function TerminalPane(
       // avoid inserting text into the PTY twice.
       armPrimarySelectionNativePasteSuppression()
       clickedPane.terminal.focus()
-      void readPrimarySelectionText().then(async (text) => {
+      void readPrimarySelectionText(() =>
+        recordTerminalUserInputForLeaf(tabId, clickedPane.leafId)
+      ).then(async (text) => {
         if (!text) {
           return
         }
@@ -2740,9 +2742,7 @@ function TerminalPane(
         })
         if (execution.status !== 'pasted') {
           setTerminalError(formatTerminalPasteExecutionError(execution.reason))
-          return
         }
-        recordTerminalUserInputForLeaf(tabId, clickedPane.leafId)
       })
     },
     [getPrimarySelectionMiddleClickPane, tabId, worktreeId]
