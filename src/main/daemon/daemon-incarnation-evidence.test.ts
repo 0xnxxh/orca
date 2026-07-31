@@ -260,6 +260,21 @@ describe('daemon process identity evidence', () => {
       })
     ).resolves.toMatchObject({ state: 'gone', reason: 'pid_missing' })
   })
+
+  it('keeps unsupported platforms indeterminate without running a Darwin probe', async () => {
+    const signalProcess = vi.fn(() => 'occupied' as const)
+    const readCommandLine = vi.fn(async () => 'node daemon-entry')
+
+    await expect(
+      probeDaemonProcessIdentity(exactIncarnation, endpoint, {
+        platform: 'freebsd',
+        signalProcess,
+        readCommandLine
+      })
+    ).resolves.toMatchObject({ state: 'unknown', reason: 'inspection_failed' })
+    expect(signalProcess).not.toHaveBeenCalled()
+    expect(readCommandLine).not.toHaveBeenCalled()
+  })
 })
 
 describe('daemon audit availability evidence', () => {

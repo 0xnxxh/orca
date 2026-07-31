@@ -41,6 +41,9 @@ export async function probeDaemonProcessIdentity(
     return unknown('exact_identity_unavailable', ['pid_record'])
   }
   const platform = dependencies.platform ?? process.platform
+  if (platform !== 'linux' && platform !== 'darwin' && platform !== 'win32') {
+    return unknown('inspection_failed', ['process_signal'])
+  }
   const signalProcess = dependencies.signalProcess ?? inspectProcessSignal
   const signal = signalProcess(exactIncarnation.identity.pid)
   if (platform !== 'win32' && signal === 'missing') {
