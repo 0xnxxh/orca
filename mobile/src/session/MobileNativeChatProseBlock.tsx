@@ -7,6 +7,7 @@ import { isImageRefBlock, isTextBlock } from './mobile-native-chat-blocks'
 import { isRenderableImageUri } from './mobile-native-chat-image-preview'
 import { stripImagePromptMarker } from './mobile-native-chat-image-transcript-markers'
 import { styles, TEXT_SIZE } from './mobile-native-chat-message-styles'
+import { MobileNativeChatLongText } from './MobileNativeChatLongText'
 import {
   mobileNativeChatTextKey,
   type MobileNativeChatTextExpansion
@@ -107,9 +108,7 @@ function TextBlock({
       {invert ? (
         <Text style={[styles.userText, { fontSize: TEXT_SIZE * fontScale }]}>{content}</Text>
       ) : content.length > MAX_EXPANDED_MARKDOWN_CHARS ? (
-        <Text style={[styles.longTextPlain, { fontSize: TEXT_SIZE * fontScale }]} selectable>
-          {content}
-        </Text>
+        <MobileNativeChatLongText content={content} fontScale={fontScale} />
       ) : (
         <MobileMarkdown content={content} textScale={1.25 * fontScale} onOpenFile={onOpenFile} />
       )}

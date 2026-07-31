@@ -118,6 +118,40 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
     expect(tree.root.findByProps({ accessibilityLabel: 'Show less' })).toBeTruthy()
   })
 
+  it('chunks very long expanded prose into visible native text nodes', () => {
+    const fullText = Array.from(
+      { length: 3000 },
+      (_, index) => `Paragraph ${index}: readable native chat prose.`
+    ).join('\n\n')
+    const retrieval = { recordOffset: 42, blockIndex: 0, originalChars: fullText.length }
+    const message: NativeChatMessage = {
+      id: 'assistant-1',
+      role: 'assistant',
+      blocks: [{ type: 'text', text: `${fullText.slice(0, 4000)}\n… (truncated)`, retrieval }],
+      timestamp: null,
+      source: 'transcript'
+    }
+    const key = mobileNativeChatTextKey(message.id, retrieval)
+    const textExpansion: MobileNativeChatTextExpansion = {
+      cached: { key, text: fullText },
+      expandedKey: key,
+      loadingKey: null,
+      errorKey: null,
+      toggle: vi.fn()
+    }
+
+    const tree = render(message, textExpansion)
+    const chunks = tree.root
+      .findAllByType('Text' as never)
+      .filter((node) => node.props.selectable === true)
+      .map((node) => node.children.join(''))
+
+    expect(fullText.length).toBeGreaterThan(100_000)
+    expect(chunks.length).toBeGreaterThan(1)
+    expect(chunks.join('')).toBe(fullText)
+    expect(tree.root.findAllByType('MobileMarkdown' as never)).toHaveLength(0)
+  })
+
   it('strips the image prompt marker from expanded user text', () => {
     const retrieval = { recordOffset: 42, blockIndex: 0, originalChars: 9000 }
     const message = userMessage([{ type: 'text', text: 'caption preview', retrieval }])
