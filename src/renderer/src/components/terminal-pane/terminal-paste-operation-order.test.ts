@@ -32,6 +32,16 @@ function chunkedWindowsPaste() {
 }
 
 describe('terminal paste operation ordering', () => {
+  it('starts an uncontended paste operation synchronously', async () => {
+    let started = false
+    const operation = runTerminalPtyInputTransaction('pty-1', async () => {
+      started = true
+    })
+
+    expect(started).toBe(true)
+    await operation
+  })
+
   it('keeps startup context outside an active chunked user paste frame', async () => {
     const writes: string[] = []
     let startupDraft: Promise<boolean> | null = null

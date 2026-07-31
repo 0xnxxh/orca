@@ -8,14 +8,16 @@ export async function runTerminalPtyInputTransaction<T>(
     return await operation()
   }
 
-  const previous = transactionTails.get(ptyId) ?? Promise.resolve()
+  const previous = transactionTails.get(ptyId)
   let release!: () => void
   const current = new Promise<void>((resolve) => {
     release = resolve
   })
   transactionTails.set(ptyId, current)
 
-  await previous
+  if (previous) {
+    await previous
+  }
   try {
     return await operation()
   } finally {
