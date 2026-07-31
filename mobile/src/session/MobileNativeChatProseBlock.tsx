@@ -5,6 +5,7 @@ import { MobileMarkdown } from '../components/MobileMarkdown'
 import { colors } from '../theme/mobile-theme'
 import { isImageRefBlock, isTextBlock } from './mobile-native-chat-blocks'
 import { isRenderableImageUri } from './mobile-native-chat-image-preview'
+import { stripImagePromptMarker } from './mobile-native-chat-image-transcript-markers'
 import { styles, TEXT_SIZE } from './mobile-native-chat-message-styles'
 import {
   mobileNativeChatTextKey,
@@ -20,6 +21,7 @@ export function MobileNativeChatProseBlock({
   invert,
   fontScale,
   textExpansion,
+  normalizeImagePromptMarker,
   onOpenFile
 }: {
   block: NativeChatBlock
@@ -27,6 +29,7 @@ export function MobileNativeChatProseBlock({
   invert?: boolean
   fontScale: number
   textExpansion?: MobileNativeChatTextExpansion
+  normalizeImagePromptMarker?: boolean
   onOpenFile?: (relativePath: string) => void
 }): React.JSX.Element | null {
   if (isTextBlock(block)) {
@@ -37,6 +40,7 @@ export function MobileNativeChatProseBlock({
         invert={invert}
         fontScale={fontScale}
         textExpansion={textExpansion}
+        normalizeImagePromptMarker={normalizeImagePromptMarker}
         onOpenFile={onOpenFile}
       />
     )
@@ -68,6 +72,7 @@ function TextBlock({
   invert,
   fontScale,
   textExpansion,
+  normalizeImagePromptMarker,
   onOpenFile
 }: {
   block: Extract<NativeChatBlock, { type: 'text' }>
@@ -75,14 +80,17 @@ function TextBlock({
   invert?: boolean
   fontScale: number
   textExpansion?: MobileNativeChatTextExpansion
+  normalizeImagePromptMarker?: boolean
   onOpenFile?: (relativePath: string) => void
 }): React.JSX.Element {
   const key = block.retrieval ? mobileNativeChatTextKey(messageId, block.retrieval) : null
   const expanded = key !== null && textExpansion?.expandedKey === key
   const cached =
     key !== null && textExpansion?.cached?.key === key ? textExpansion.cached.text : null
-  const content = expanded && cached !== null ? cached : block.text
+  const rawContent = expanded && cached !== null ? cached : block.text
+  const content = normalizeImagePromptMarker ? stripImagePromptMarker(rawContent) : rawContent
   const loading = key !== null && textExpansion?.loadingKey === key
+  const expansionBusy = textExpansion?.loadingKey != null
   const failed = key !== null && textExpansion?.errorKey === key
   const showLoading = useDelayedLoading(loading)
   const contentNoun = invert ? 'message' : 'response'
@@ -108,11 +116,11 @@ function TextBlock({
       {block.retrieval && textExpansion ? (
         <Pressable
           style={styles.longTextAction}
-          disabled={loading}
+          disabled={expansionBusy}
           onPress={() => textExpansion.toggle(messageId, block.retrieval!)}
           accessibilityRole="button"
           accessibilityLabel={actionLabel}
-          accessibilityState={{ disabled: loading, expanded }}
+          accessibilityState={{ disabled: expansionBusy, expanded }}
         >
           {showLoading ? (
             <ActivityIndicator size="small" color={invert ? colors.bgBase : colors.textSecondary} />

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { NativeChatTextRetrieval } from '../../../src/shared/native-chat-types'
 
 type FullTextLoader = (messageId: string, retrieval: NativeChatTextRetrieval) => Promise<string>
@@ -34,16 +34,20 @@ export function useMobileNativeChatTextExpansion(
   onExpand?: () => void
 ): MobileNativeChatTextExpansion {
   const [state, setState] = useState<ExpansionState>(() => emptyState(loadFullText))
+  const requestRef = useRef<ExpansionRequest | null>(null)
   let current = state
   if (current.source !== loadFullText) {
     current = emptyState(loadFullText)
     setState(current)
   }
+  useLayoutEffect(() => {
+    requestRef.current = null
+  }, [loadFullText])
 
   const toggle = useCallback(
     (messageId: string, retrieval: NativeChatTextRetrieval): void => {
       const key = mobileNativeChatTextKey(messageId, retrieval)
-      if (current.request?.key === key) {
+      if (requestRef.current !== null) {
         return
       }
       if (current.expandedKey === key) {
@@ -57,6 +61,7 @@ export function useMobileNativeChatTextExpansion(
       }
       onExpand?.()
       const request = { key }
+      requestRef.current = request
       setState({
         source: loadFullText,
         cached: null,
@@ -84,6 +89,11 @@ export function useMobileNativeChatTextExpansion(
               ? { ...latest, request: null, errorKey: key }
               : latest
           )
+        })
+        .finally(() => {
+          if (requestRef.current === request) {
+            requestRef.current = null
+          }
         })
     },
     [current, loadFullText, onExpand]

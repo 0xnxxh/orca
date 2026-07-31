@@ -99,6 +99,8 @@ export function useMobileNativeChatSession(args: {
   const identityRef = useRef(identity)
   const clientRef = useRef(client)
   const streamGenerationRef = useRef(0)
+  const textSourceRevisionRef = useRef(0)
+  const [textSourceRevision, setTextSourceRevision] = useState(0)
 
   useLayoutEffect(() => {
     // Async completions must only observe inputs from a committed render.
@@ -151,6 +153,8 @@ export function useMobileNativeChatSession(args: {
           // Why: replacement and reconnect snapshots are authoritative windows;
           // stale page limits/results must not constrain the fresh generation.
           streamGenerationRef.current += 1
+          textSourceRevisionRef.current += 1
+          setTextSourceRevision(textSourceRevisionRef.current)
           limitRef.current = INITIAL_LIMIT
           loadingEarlierRef.current = false
           setLoadingEarlier(false)
@@ -266,6 +270,8 @@ export function useMobileNativeChatSession(args: {
         throw new Error('Full message unavailable')
       }
       const requestIdentity = identity
+      const requestGeneration = streamGenerationRef.current
+      const requestTextSourceRevision = textSourceRevision
       const response = await client.sendRequest('nativeChat.readTextBlock', {
         agent,
         sessionId,
@@ -277,6 +283,12 @@ export function useMobileNativeChatSession(args: {
       if (identityRef.current !== requestIdentity || clientRef.current !== client) {
         throw new Error('Chat session changed')
       }
+      if (
+        streamGenerationRef.current !== requestGeneration ||
+        textSourceRevisionRef.current !== requestTextSourceRevision
+      ) {
+        throw new Error('Chat transcript changed')
+      }
       if (!response.ok) {
         throw new Error('Full message unavailable')
       }
@@ -286,7 +298,7 @@ export function useMobileNativeChatSession(args: {
       }
       return result.text
     },
-    [client, agent, sessionId, transcriptPath, identity]
+    [client, agent, sessionId, transcriptPath, identity, textSourceRevision]
   )
 
   return {

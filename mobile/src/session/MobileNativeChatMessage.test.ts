@@ -117,4 +117,55 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
     expect(tree.root.findByType('MobileMarkdown' as never).props.content).toBe(fullText)
     expect(tree.root.findByProps({ accessibilityLabel: 'Show less' })).toBeTruthy()
   })
+
+  it('strips the image prompt marker from expanded user text', () => {
+    const retrieval = { recordOffset: 42, blockIndex: 0, originalChars: 9000 }
+    const message = userMessage([{ type: 'text', text: 'caption preview', retrieval }])
+    const key = mobileNativeChatTextKey(message.id, retrieval)
+    const textExpansion: MobileNativeChatTextExpansion = {
+      cached: { key, text: '[Image #1] complete caption' },
+      expandedKey: key,
+      loadingKey: null,
+      errorKey: null,
+      toggle: vi.fn()
+    }
+
+    const tree = render(message, textExpansion)
+    const text = tree.root
+      .findAllByType('Text' as never)
+      .map((node) => node.children.join(''))
+      .join(' ')
+
+    expect(text).toContain('complete caption')
+    expect(text).not.toContain('[Image #1]')
+  })
+
+  it('disables all expansion actions while one block is loading', () => {
+    const firstRetrieval = { recordOffset: 42, blockIndex: 0, originalChars: 9000 }
+    const secondRetrieval = { recordOffset: 84, blockIndex: 1, originalChars: 8000 }
+    const message: NativeChatMessage = {
+      id: 'assistant-1',
+      role: 'assistant',
+      blocks: [
+        { type: 'text', text: 'first preview', retrieval: firstRetrieval },
+        { type: 'text', text: 'second preview', retrieval: secondRetrieval }
+      ],
+      timestamp: null,
+      source: 'transcript'
+    }
+    const textExpansion: MobileNativeChatTextExpansion = {
+      cached: null,
+      expandedKey: null,
+      loadingKey: mobileNativeChatTextKey(message.id, firstRetrieval),
+      errorKey: null,
+      toggle: vi.fn()
+    }
+
+    const actions = render(message, textExpansion).root.findAll(
+      (node) => node.props.accessibilityState?.disabled === true
+    )
+
+    expect(actions).toHaveLength(2)
+    expect(actions.every((action) => action.props.disabled === true)).toBe(true)
+  })
 })

@@ -4,7 +4,12 @@ import * as Clipboard from 'expo-clipboard'
 import { ArrowUp, ChevronDown, Copy, SquareChevronRight } from 'lucide-react-native'
 import type { NativeChatBlock, NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { colors } from '../theme/mobile-theme'
-import { pairToolBlocks, splitNativeChatBlocks, type ToolPair } from './mobile-native-chat-blocks'
+import {
+  isTextBlock,
+  pairToolBlocks,
+  splitNativeChatBlocks,
+  type ToolPair
+} from './mobile-native-chat-blocks'
 import { diffFromText, diffFromToolCall, type DiffLine } from './mobile-native-chat-diff'
 import { MAX_TOOL_RESULT_CHARS, styles } from './mobile-native-chat-message-styles'
 import { nativeChatMessageText } from './mobile-native-chat-message-text'
@@ -268,6 +273,7 @@ function MobileNativeChatMessageImpl({
   // tool calls fold into a collapsible run beneath. The user's own messages get
   // an inverted (filled accent) bubble so they stand apart from agent prose.
   const { prose, tools } = splitNativeChatBlocks(message.blocks)
+  const firstUserTextIndex = isUser ? prose.findIndex(isTextBlock) : -1
 
   const handleCopy = (): void => {
     const text = nativeChatMessageText(message.blocks, (block) => {
@@ -322,6 +328,7 @@ function MobileNativeChatMessageImpl({
             invert={isUser}
             fontScale={fontScale}
             textExpansion={textExpansion}
+            normalizeImagePromptMarker={index === firstUserTextIndex}
             onOpenFile={onOpenFile}
           />
         ))}

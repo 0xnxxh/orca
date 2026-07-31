@@ -83,6 +83,26 @@ describe('useMobileNativeChatTextExpansion', () => {
     expect(JSON.stringify(expansion)).not.toContain('full first')
   })
 
+  it('serializes reads across distinct blocks', async () => {
+    let resolveFirst: (text: string) => void = () => {}
+    const load = vi.fn(() => new Promise<string>((resolve) => (resolveFirst = resolve)))
+    await mount(load)
+
+    act(() => {
+      expansion?.toggle('message-1', first)
+      expansion?.toggle('message-2', second)
+    })
+
+    expect(load).toHaveBeenCalledOnce()
+    expect(expansion?.loadingKey).toBeTruthy()
+    await act(async () => {
+      resolveFirst('full first')
+      await Promise.resolve()
+    })
+    act(() => expansion?.toggle('message-2', second))
+    expect(load).toHaveBeenCalledTimes(2)
+  })
+
   it('clears retained text and ignores an old read when the session loader changes', async () => {
     let resolveFirst: (text: string) => void = () => {}
     const loadFirst = vi.fn(() => new Promise<string>((resolve) => (resolveFirst = resolve)))

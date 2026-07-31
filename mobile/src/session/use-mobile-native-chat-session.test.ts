@@ -272,6 +272,37 @@ describe('useMobileNativeChatSession', () => {
 
     await expect(outcome).resolves.toMatchObject({ message: 'Chat session changed' })
   })
+
+  it.each(['replacement', 'snapshot'] as const)(
+    'invalidates pending and cached full text after an authoritative %s',
+    async (frameType) => {
+      let resolveRead: (response: unknown) => void = () => {}
+      const sendRequest = vi.fn(() => new Promise((resolve) => (resolveRead = resolve)))
+      const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+        emit = onData
+        onData({ type: 'snapshot', messages: [message('current')], hasMore: false })
+        return () => {}
+      })
+      await mount({ sendRequest, subscribe } as unknown as RpcClient)
+      const loaderBeforeReplacement = state!.loadFullText
+      const outcome = loaderBeforeReplacement('current', {
+        recordOffset: 81,
+        blockIndex: 0,
+        originalChars: 9000
+      }).catch((error: unknown) => error)
+
+      await act(async () => {
+        emit({ type: frameType, messages: [message('current')], hasMore: false })
+      })
+      expect(state!.loadFullText).not.toBe(loaderBeforeReplacement)
+      await act(async () => {
+        resolveRead({ ok: true, result: { text: 'stale text' } })
+        await Promise.resolve()
+      })
+
+      await expect(outcome).resolves.toMatchObject({ message: 'Chat transcript changed' })
+    }
+  )
 })
 
 describe('useMobileNativeChatSession transcriptLoading', () => {
