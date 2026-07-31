@@ -3,10 +3,8 @@ import { defineMethod, type RpcMethod } from '../core'
 import { OptionalFiniteNumber, OptionalString, requiredString } from '../schemas'
 import type { GateStatus } from '../../orchestration/db'
 import { Coordinator } from '../../orchestration/coordinator'
+import { resolveRunScope } from './orchestration-run-scope'
 import { OrchestrationError } from '../../orchestration/orchestration-error'
-import { orchestrationSkillRecoveryData } from '../../../../shared/orchestration-rpc-contract'
-import type { OrcaRuntimeService } from '../../orca-runtime'
-import type { RunRow } from '../../orchestration/types'
 
 // Why: the coordinator instance is stored at module scope so orchestration.runStop
 // can signal it to halt. Only one coordinator can run at a time (enforced by
@@ -44,67 +42,6 @@ const GateListParams = z.object({
   from: OptionalString,
   run: OptionalString
 })
-
-// Why: gates are Run-scoped state, so every gate method resolves the caller's Run the same way
-// resolveRunScope does for taskCreate/taskUpdate/dispatch (orchestration.ts). Duplicated rather than
-// imported because orchestration.ts already imports this module.
-function resolveGateRunScope(
-  runtime: OrcaRuntimeService,
-  params: {
-    runId?: string
-    callerTerminalHandle?: string
-    requireCurrentConsumer: boolean
-    legacyCoordinatorRunId?: string
-  }
-): RunRow {
-  const db = runtime.getOrchestrationDb()
-  const explicit = params.runId ? db.getRun(params.runId) : undefined
-  if (params.runId && (!explicit || explicit.legacy === 1)) {
-    throw new OrchestrationError('run_not_found', `Run ${params.runId} was not found.`)
-  }
-
-  if (!params.requireCurrentConsumer && explicit) {
-    return explicit
-  }
-  if (explicit && params.legacyCoordinatorRunId === explicit.id) {
-    return explicit
-  }
-  if (!params.callerTerminalHandle) {
-    throw new OrchestrationError(
-      'run_required',
-      'No Run is bound. Use orchestration run-create or run-use first. No effects were applied.',
-      orchestrationSkillRecoveryData()
-    )
-  }
-  const paneKey = runtime.getTerminalPaneKey(params.callerTerminalHandle)
-  if (!paneKey) {
-    throw new OrchestrationError(
-      'stable_pane_required',
-      'The coordinator terminal has no stable pane identity.'
-    )
-  }
-  const current = db.getCurrentRunForPane(paneKey)
-  if (!current) {
-    if (explicit) {
-      throw new OrchestrationError(
-        'consumer_fenced',
-        `This coordinator terminal is no longer bound to Run ${explicit.id}.`
-      )
-    }
-    throw new OrchestrationError(
-      'run_required',
-      'No Run is bound. Use orchestration run-create or run-use first. No effects were applied.',
-      orchestrationSkillRecoveryData()
-    )
-  }
-  if (explicit && current.id !== explicit.id) {
-    throw new OrchestrationError(
-      'consumer_fenced',
-      `This coordinator terminal is bound to ${current.id}, not ${explicit.id}.`
-    )
-  }
-  return current
-}
 
 export const ORCHESTRATION_GATE_METHODS: RpcMethod[] = [
   // Why: Section 4.12 — orchestration.run returns immediately with a run ID.
@@ -174,7 +111,7 @@ export const ORCHESTRATION_GATE_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.gateCreate',
     params: GateCreateParams,
-    handler: (params, { runtime, legacyCoordinatorRunId }) => {
+    handler: (params, { orchestrationCompatibilityEvidence, runtime, legacyCoordinatorRunId }) => {
       const db = runtime.getOrchestrationDb()
       let options: string[] | undefined
       if (params.options) {
@@ -192,11 +129,12 @@ export const ORCHESTRATION_GATE_METHODS: RpcMethod[] = [
       if (!task) {
         throw new Error(`Task not found: ${params.task}`)
       }
-      const run = resolveGateRunScope(runtime, {
+      const run = resolveRunScope(runtime, {
         runId: params.run,
         callerTerminalHandle: params.from,
         requireCurrentConsumer: true,
-        legacyCoordinatorRunId
+        legacyCoordinatorRunId,
+        callerEvidence: orchestrationCompatibilityEvidence
       })
       if (task.run_id !== run.id) {
         throw new OrchestrationError(
@@ -216,17 +154,18 @@ export const ORCHESTRATION_GATE_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.gateResolve',
     params: GateResolveParams,
-    handler: (params, { runtime, legacyCoordinatorRunId }) => {
+    handler: (params, { orchestrationCompatibilityEvidence, runtime, legacyCoordinatorRunId }) => {
       const db = runtime.getOrchestrationDb()
       const existing = db.getGate(params.id)
       if (!existing) {
         throw new Error(`Gate not found: ${params.id}`)
       }
-      const run = resolveGateRunScope(runtime, {
+      const run = resolveRunScope(runtime, {
         runId: params.run,
         callerTerminalHandle: params.from,
         requireCurrentConsumer: true,
-        legacyCoordinatorRunId
+        legacyCoordinatorRunId,
+        callerEvidence: orchestrationCompatibilityEvidence
       })
       // Why: a gate outside the caller's Run is indistinguishable from a missing one, so probing cannot map foreign Runs.
       if (existing.run_id !== run.id) {
@@ -243,18 +182,19 @@ export const ORCHESTRATION_GATE_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'orchestration.gateList',
     params: GateListParams,
-    handler: (params, { runtime, legacyCoordinatorRunId }) => {
+    handler: (params, { orchestrationCompatibilityEvidence, runtime, legacyCoordinatorRunId }) => {
       const db = runtime.getOrchestrationDb()
       const explicitRun = params.run ? db.getRun(params.run) : undefined
       // Why: same read posture as taskList — an explicitly named Run is inspectable, an unnamed one means the caller's own.
       const run =
         explicitRun?.legacy === 1
           ? explicitRun
-          : resolveGateRunScope(runtime, {
+          : resolveRunScope(runtime, {
               runId: params.run,
               callerTerminalHandle: params.from,
               requireCurrentConsumer: params.run === undefined,
-              legacyCoordinatorRunId
+              legacyCoordinatorRunId,
+              callerEvidence: orchestrationCompatibilityEvidence
             })
       const gates = db
         .listGates({

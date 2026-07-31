@@ -339,10 +339,6 @@ describe('pane-bound Run lookup', () => {
     bind(61, 2001)
     const large = measure()
 
-    // eslint-disable-next-line no-console
-    console.log(
-      `[bench] getCurrentRunForPane 61 runs=${small.toFixed(4)}ms 2001 runs=${large.toFixed(4)}ms`
-    )
     // The pre-index scan grew ~28x across this range; the index keeps it flat.
     expect(large).toBeLessThan(small * 6)
     expect(explain(db, 'x')).toContain('USING INDEX idx_runs_coordinator_pane_leaf')
