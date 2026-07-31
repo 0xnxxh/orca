@@ -117,6 +117,7 @@ type MirroredTerminalTab = {
   hostTabId: string
   ptyIds: string[]
   layout: TerminalLayoutSnapshot
+  retainedLeafIdByPrunedLeafId?: ReadonlyMap<string, string>
 }
 
 type MirroredBrowserTab = {
@@ -590,7 +591,21 @@ function buildMirroredTerminalTabs(
     const layout = normalizeTerminalLayoutPtyOwnership(
       chooseRemoteTerminalLayout(surfaces, ptyIdsByLeafId, existingLayout, requestedActiveLeafId)
     ).snapshot
-    const ptyIds = Object.values(layout.ptyIdsByLeafId ?? {})
+    const layoutPtyEntries = Object.entries(layout.ptyIdsByLeafId ?? {})
+    const ptyIds = layoutPtyEntries.map(([, ptyId]) => ptyId)
+    let retainedLeafIdByPrunedLeafId: Map<string, string> | undefined
+    if (layoutPtyEntries.length < Object.keys(ptyIdsByLeafId).length) {
+      const retainedLeafIdByPtyId = new Map(
+        layoutPtyEntries.map(([leafId, ptyId]) => [ptyId, leafId])
+      )
+      retainedLeafIdByPrunedLeafId = new Map()
+      for (const [leafId, ptyId] of Object.entries(ptyIdsByLeafId)) {
+        const retainedLeafId = retainedLeafIdByPtyId.get(ptyId)
+        if (retainedLeafId && retainedLeafId !== leafId) {
+          retainedLeafIdByPrunedLeafId.set(leafId, retainedLeafId)
+        }
+      }
+    }
     const launchAgent =
       activeSurface.launchAgent ?? surfaces.find((surface) => surface.launchAgent)?.launchAgent
     const ownerAgent = resolvePaneAgentOwner({
@@ -645,24 +660,28 @@ function buildMirroredTerminalTabs(
       },
       hostTabId: parentTabId,
       ptyIds,
-      layout
+      layout,
+      ...(retainedLeafIdByPrunedLeafId ? { retainedLeafIdByPrunedLeafId } : {})
     }
   })
 }
 
-function toMirroredPaneKey(surface: TerminalSurface): string | null {
-  if (!isTerminalLeafId(surface.leafId)) {
+function toMirroredPaneKey(surface: TerminalSurface, leafId = surface.leafId): string | null {
+  if (!isTerminalLeafId(leafId)) {
     return null
   }
-  return makePaneKey(toWebTerminalSurfaceTabId(surface.parentTabId), surface.leafId)
+  return makePaneKey(toWebTerminalSurfaceTabId(surface.parentTabId), leafId)
 }
 
 /** Normalises and mirrors agent status updates from the host payload, preserving ownership metadata. */
-function remapHostAgentStatus(surface: TerminalSurface): AgentStatusEntry | null {
+function remapHostAgentStatus(
+  surface: TerminalSurface,
+  retainedLeafId?: string
+): AgentStatusEntry | null {
   if (!surface.agentStatus) {
     return null
   }
-  const paneKey = toMirroredPaneKey(surface)
+  const paneKey = toMirroredPaneKey(surface, retainedLeafId)
   if (!paneKey) {
     return null
   }
@@ -687,6 +706,7 @@ function buildMirroredAgentStatusPatch(
   state: WebSessionTabsSyncState,
   currentTerminalTabs: readonly TerminalTab[],
   terminalSurfaceTabs: readonly TerminalSurface[],
+  mirroredTerminalTabs: readonly MirroredTerminalTab[],
   now: number
 ): Pick<WebSessionTabsSyncState, 'agentStatusByPaneKey' | 'agentStatusEpoch' | 'sortEpoch'> | null {
   const mirroredTabIds = new Set<string>()
@@ -703,13 +723,26 @@ function buildMirroredAgentStatusPatch(
     return null
   }
 
+  let retainedLeafIdByHostTabAndPrunedLeafId: Map<string, ReadonlyMap<string, string>> | undefined
+  for (const entry of mirroredTerminalTabs) {
+    if (entry.retainedLeafIdByPrunedLeafId) {
+      retainedLeafIdByHostTabAndPrunedLeafId ??= new Map()
+      retainedLeafIdByHostTabAndPrunedLeafId.set(
+        entry.hostTabId,
+        entry.retainedLeafIdByPrunedLeafId
+      )
+    }
+  }
   const nextByPaneKey = new Map<string, AgentStatusEntry>()
   for (const surface of terminalSurfaceTabs) {
-    const entry = remapHostAgentStatus(surface)
+    const retainedLeafId = retainedLeafIdByHostTabAndPrunedLeafId
+      ?.get(surface.parentTabId)
+      ?.get(surface.leafId)
+    const entry = remapHostAgentStatus(surface, retainedLeafId)
     if (!entry) {
       continue
     }
-    const existing = state.agentStatusByPaneKey[entry.paneKey]
+    const existing = nextByPaneKey.get(entry.paneKey) ?? state.agentStatusByPaneKey[entry.paneKey]
     // Why: keep fresher OSC state while taking remapped ownership metadata from the authoritative host snapshot.
     const hostIdentityPredatesCurrentTurn =
       existing !== undefined &&
@@ -2520,6 +2553,7 @@ export function applyWebSessionTabsSnapshot(
     state,
     currentTerminalTabs,
     terminalSurfaceTabs,
+    mirroredTerminalTabs,
     now
   )
 

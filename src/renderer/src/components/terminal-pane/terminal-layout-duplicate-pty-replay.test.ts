@@ -65,4 +65,34 @@ describe('duplicate PTY layout replay', () => {
     expect(manager.splitPane).not.toHaveBeenCalled()
     expect([...restored]).toEqual([[LEAF_1, 1]])
   })
+
+  it('reattaches one PTY when the split repeats its bound leaf id', () => {
+    const manager = {
+      createInitialPane: vi.fn((opts?: { leafId?: string }) => ({
+        id: 1,
+        leafId: opts?.leafId ?? LEAF_2
+      })),
+      splitPane: vi.fn()
+    }
+
+    const restored = replayTerminalLayout(
+      manager as unknown as Parameters<typeof replayTerminalLayout>[0],
+      {
+        root: {
+          type: 'split',
+          direction: 'vertical',
+          first: { type: 'leaf', leafId: LEAF_1 },
+          second: { type: 'leaf', leafId: LEAF_1 }
+        },
+        activeLeafId: LEAF_1,
+        expandedLeafId: null,
+        ptyIdsByLeafId: { [LEAF_1]: 'pty-agent' }
+      },
+      true
+    )
+
+    expect(manager.createInitialPane).toHaveBeenCalledWith({ focus: true, leafId: LEAF_1 })
+    expect(manager.splitPane).not.toHaveBeenCalled()
+    expect([...restored]).toEqual([[LEAF_1, 1]])
+  })
 })

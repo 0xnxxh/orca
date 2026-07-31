@@ -212,18 +212,18 @@ function normalizeTerminalLayoutLeafIds(snapshot: TerminalLayoutSnapshot | null 
 export function normalizeTerminalLayoutSnapshot(
   snapshot: TerminalLayoutSnapshot | null | undefined
 ): { snapshot: TerminalLayoutSnapshot; changed: boolean } {
-  const leafIds = normalizeTerminalLayoutLeafIds(snapshot)
-  const ptyOwnership = normalizeTerminalLayoutPtyOwnership(leafIds.snapshot)
-  const activeLeafId = ptyOwnership.snapshot.root
-    ? ptyOwnership.snapshot.activeLeafId
-    : resolveRootlessTerminalLayoutLeafId(ptyOwnership.snapshot)
+  const ptyOwnership = normalizeTerminalLayoutPtyOwnership(snapshot ?? EMPTY_TERMINAL_LAYOUT)
+  const leafIds = normalizeTerminalLayoutLeafIds(ptyOwnership.snapshot)
+  const activeLeafId = leafIds.snapshot.root
+    ? leafIds.snapshot.activeLeafId
+    : resolveRootlessTerminalLayoutLeafId(leafIds.snapshot)
   return {
     snapshot:
-      activeLeafId === ptyOwnership.snapshot.activeLeafId
-        ? ptyOwnership.snapshot
-        : { ...ptyOwnership.snapshot, activeLeafId },
+      activeLeafId === leafIds.snapshot.activeLeafId
+        ? leafIds.snapshot
+        : { ...leafIds.snapshot, activeLeafId },
     changed:
-      leafIds.changed || ptyOwnership.changed || activeLeafId !== ptyOwnership.snapshot.activeLeafId
+      ptyOwnership.changed || leafIds.changed || activeLeafId !== leafIds.snapshot.activeLeafId
   }
 }
 

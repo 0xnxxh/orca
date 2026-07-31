@@ -2361,7 +2361,16 @@ describe('applyWebSessionTabsSnapshot', () => {
           parentLayout,
           isActive: false,
           status: 'ready',
-          terminal: 'terminal-1'
+          terminal: 'terminal-1',
+          agentStatus: {
+            state: 'working',
+            prompt: 'stale duplicate',
+            updatedAt: NOW - 100,
+            stateStartedAt: NOW - 1_000,
+            agentType: 'codex',
+            paneKey: makePaneKey('host-tab-1', LEAF_ID),
+            stateHistory: []
+          }
         },
         {
           type: 'terminal',
@@ -2388,6 +2397,13 @@ describe('applyWebSessionTabsSnapshot', () => {
       ptyIdsByLeafId: {
         [SECOND_LEAF_ID]: 'remote:web-env-1@@terminal-1'
       }
+    })
+    expect(Object.keys(patch.agentStatusByPaneKey ?? {})).toEqual([
+      makePaneKey(mirroredId!, SECOND_LEAF_ID)
+    ])
+    expect(patch.agentStatusByPaneKey?.[makePaneKey(mirroredId!, SECOND_LEAF_ID)]).toMatchObject({
+      prompt: 'stale duplicate',
+      paneKey: makePaneKey(mirroredId!, SECOND_LEAF_ID)
     })
   })
 

@@ -17,14 +17,23 @@ function collectLeafIds(node: TerminalPaneLayoutNode | null | undefined): string
 
 function pruneLeaves(
   node: TerminalPaneLayoutNode,
-  removedLeafIds: ReadonlySet<string>
+  retainedLeafIdByRemovedLeafId: ReadonlyMap<string, string>,
+  retainedSelfLeafIds: Set<string>
 ): TerminalPaneLayoutNode | null {
   if (node.type === 'leaf') {
-    return removedLeafIds.has(node.leafId) ? null : node
+    const retainedLeafId = retainedLeafIdByRemovedLeafId.get(node.leafId)
+    if (!retainedLeafId) {
+      return node
+    }
+    if (retainedLeafId === node.leafId && !retainedSelfLeafIds.has(node.leafId)) {
+      retainedSelfLeafIds.add(node.leafId)
+      return node
+    }
+    return null
   }
 
-  const first = pruneLeaves(node.first, removedLeafIds)
-  const second = pruneLeaves(node.second, removedLeafIds)
+  const first = pruneLeaves(node.first, retainedLeafIdByRemovedLeafId, retainedSelfLeafIds)
+  const second = pruneLeaves(node.second, retainedLeafIdByRemovedLeafId, retainedSelfLeafIds)
   if (first && second) {
     return first === node.first && second === node.second ? node : { ...node, first, second }
   }
@@ -72,6 +81,10 @@ function findDuplicatePtyLeafReplacements(snapshot: TerminalLayoutSnapshot): Map
   const ptyIdsByLeafId = snapshot.ptyIdsByLeafId ?? {}
   const rootLeafIds = collectLeafIds(snapshot.root)
   const rootLeafIdSet = new Set(rootLeafIds)
+  const activeLeafId =
+    !snapshot.root || (snapshot.activeLeafId && rootLeafIdSet.has(snapshot.activeLeafId))
+      ? snapshot.activeLeafId
+      : null
   const orderedLeafIds = [
     ...rootLeafIds,
     ...Object.keys(ptyIdsByLeafId).filter((leafId) => !rootLeafIdSet.has(leafId))
@@ -89,7 +102,7 @@ function findDuplicatePtyLeafReplacements(snapshot: TerminalLayoutSnapshot): Map
       retainedLeafIdByPtyId.set(ptyId, leafId)
       continue
     }
-    if (leafId === snapshot.activeLeafId) {
+    if (leafId === activeLeafId) {
       retainedLeafIdByRemovedLeafId.set(retainedLeafId, leafId)
       retainedLeafIdByPtyId.set(ptyId, leafId)
       continue
@@ -109,8 +122,18 @@ export function normalizeTerminalLayoutPtyOwnership(
   }
 
   // Why: one live PTY has one renderer surface; retaining both leaves races input, resize, and teardown.
-  const removedLeafIds = new Set(retainedLeafIdByRemovedLeafId.keys())
-  const root = snapshot.root ? pruneLeaves(snapshot.root, removedLeafIds) : null
+  const removedLeafIds = new Set<string>()
+  for (const [removedLeafId, retainedLeafId] of retainedLeafIdByRemovedLeafId) {
+    if (removedLeafId !== retainedLeafId) {
+      removedLeafIds.add(removedLeafId)
+    }
+  }
+  const root = snapshot.root
+    ? pruneLeaves(snapshot.root, retainedLeafIdByRemovedLeafId, new Set())
+    : null
+  const activeLeafId = snapshot.activeLeafId
+    ? resolveRetainedLeafId(snapshot.activeLeafId, retainedLeafIdByRemovedLeafId)
+    : snapshot.activeLeafId
   const ptyIdsByLeafId = coalesceLeafRecord(snapshot.ptyIdsByLeafId, retainedLeafIdByRemovedLeafId)
   const buffersByLeafId = coalesceLeafRecord(
     snapshot.buffersByLeafId,
@@ -133,6 +156,7 @@ export function normalizeTerminalLayoutPtyOwnership(
     snapshot: {
       ...snapshotWithoutLeafRecords,
       root,
+      activeLeafId,
       expandedLeafId:
         snapshot.expandedLeafId && removedLeafIds.has(snapshot.expandedLeafId)
           ? null
