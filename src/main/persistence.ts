@@ -425,7 +425,27 @@ function gcStaleWorktreeMeta(state: PersistedState): number {
 
 function normalizeWorktreeLinkedItemMetadata(state: PersistedState): boolean {
   let changed = false
-  for (const meta of Object.values(state.worktreeMeta ?? {})) {
+  const rawWorktreeMeta = state.worktreeMeta as unknown
+  if (
+    typeof rawWorktreeMeta !== 'object' ||
+    rawWorktreeMeta === null ||
+    Array.isArray(rawWorktreeMeta)
+  ) {
+    state.worktreeMeta = {}
+    changed = rawWorktreeMeta !== undefined
+  }
+  for (const [key, meta] of Object.entries(state.worktreeMeta)) {
+    // Why: hand-corrupted non-object entries are a real input class; drop them here because gcStaleWorktreeMeta
+    // keeps timestamp-less keys forever and every downstream consumer trusts the Record<string, WorktreeMeta> type.
+    if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) {
+      delete state.worktreeMeta[key]
+      // Companions go with it, matching gcStaleWorktreeMeta/removeWorktreeMeta; a stranded lineage row would
+      // otherwise re-attach to a worktree recreated at the same repoId::path.
+      delete state.worktreeLineageById[key]
+      delete state.workspaceLineageByChildKey[worktreeWorkspaceKey(key)]
+      changed = true
+      continue
+    }
     const linkedWorkItem = normalizeWorkspaceLinkedItem(meta.linkedWorkItem)
     const sourceContext = normalizeStoredTaskSourceContext(meta.linkedTaskSourceContext)
     const linkedTaskSourceContext = isWorkspaceLinkedItemSourceContextMatch(
