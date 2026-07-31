@@ -45,10 +45,7 @@ import {
 } from '@/store/slices/runtime-environment-ssh'
 import { hydrateRuntimeEnvironmentSshState } from '@/runtime/runtime-environment-ssh-state'
 import { handleInternalTerminalFileDrop } from './terminal-drop-handler'
-import {
-  markTerminalUserInputIntentForLeaf,
-  recordTerminalUserInputForLeaf
-} from './terminal-input-activity'
+import { recordTerminalUserInputForLeaf } from './terminal-input-activity'
 import {
   collectLeafIdsInOrder,
   EMPTY_LAYOUT,
@@ -2032,9 +2029,6 @@ function TerminalPane(
         setTerminalError(formatTerminalPasteExecutionError(execution.reason))
         return
       }
-      if (text) {
-        recordTerminalUserInputForLeaf(tabId, pane.leafId, ptyId)
-      }
       if (options?.recoverImagePasteWebglAtlas) {
         scheduleImagePasteWebglAtlasRecovery()
       }
@@ -2058,12 +2052,7 @@ function TerminalPane(
         connectionId,
         runtimeEnvironmentId,
         forceBracketedMultilineTextPaste,
-        onPasteIntent: () =>
-          markTerminalUserInputIntentForLeaf(
-            tabId,
-            pane.leafId,
-            paneTransportsRef.current.get(pane.id)?.getPtyId()
-          ),
+        onPasteIntent: () => recordTerminalUserInputForLeaf(tabId, pane.leafId),
         pasteText: (text, options) =>
           executePanePasteText(pane, source, activeElementAtDispatch, text, options),
         onTextPasteError: () =>
@@ -2211,12 +2200,7 @@ function TerminalPane(
         connectionId,
         runtimeEnvironmentId,
         forceBracketedMultilineTextPaste,
-        onPasteIntent: () =>
-          markTerminalUserInputIntentForLeaf(
-            tabId,
-            pane.leafId,
-            paneTransportsRef.current.get(pane.id)?.getPtyId()
-          ),
+        onPasteIntent: () => recordTerminalUserInputForLeaf(tabId, pane.leafId),
         pasteText: (text, options) =>
           executePanePasteText(pane, 'app-menu', activeElementAtDispatch, text, options),
         onTextPasteError: () =>
@@ -2702,11 +2686,7 @@ function TerminalPane(
       armPrimarySelectionNativePasteSuppression()
       clickedPane.terminal.focus()
       void readPrimarySelectionText(() =>
-        markTerminalUserInputIntentForLeaf(
-          tabId,
-          clickedPane.leafId,
-          paneTransportsRef.current.get(clickedPane.id)?.getPtyId()
-        )
+        recordTerminalUserInputForLeaf(tabId, clickedPane.leafId)
       ).then(async (text) => {
         if (!text) {
           return
@@ -2762,9 +2742,7 @@ function TerminalPane(
         })
         if (execution.status !== 'pasted') {
           setTerminalError(formatTerminalPasteExecutionError(execution.reason))
-          return
         }
-        recordTerminalUserInputForLeaf(tabId, clickedPane.leafId, ptyId)
       })
     },
     [getPrimarySelectionMiddleClickPane, tabId, worktreeId]

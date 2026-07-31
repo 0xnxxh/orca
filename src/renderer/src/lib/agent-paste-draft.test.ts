@@ -12,19 +12,13 @@ import {
   sendBracketedPasteToRunningAgent,
   submitPromptToAgentPty
 } from './agent-paste-draft'
-import {
-  markTerminalUserInputIntentForLeaf,
-  markTerminalUserInputForPtyId,
-  recordTerminalUserInputForLeaf
-} from '@/components/terminal-pane/terminal-input-activity'
+import { markTerminalUserInputForPtyId } from '@/components/terminal-pane/terminal-input-activity'
 
 const testState = vi.hoisted(() => ({
   appState: {
     settings: {},
-    ptyIdsByTabId: { 'tab-1': ['pty-1'] } as Record<string, string[]>,
-    terminalLayoutsByTabId: {} as Record<string, { ptyIdsByLeafId?: Record<string, string> }>,
+    ptyIdsByTabId: { 'tab-1': ['pty-1'] },
     runtimePaneTitlesByTabId: {},
-    recordTerminalInput: vi.fn(),
     tabsByWorktree: {} as Record<string, { id: string; title?: string }[]>,
     repos: [] as { id: string; connectionId: string | null; executionHostId?: string | null }[],
     worktreesByRepo: {} as Record<string, { id: string; repoId: string }[]>
@@ -63,8 +57,6 @@ const SHOW_CURSOR = '\x1b[?25h'
 const CODEX_COMPOSER_PROMPT_RENDER = '\x1b[1m›\x1b[0m Ask Codex to do anything'
 const ISSUE_URL = 'Synthetic linked work item context'
 const PASTED_ISSUE_URL = `\x1b[200~${ISSUE_URL}\x1b[201~`
-const TARGET_LEAF_ID = '11111111-1111-4111-8111-111111111111'
-const SIBLING_LEAF_ID = '22222222-2222-4222-8222-222222222222'
 
 describe('pasteDraftWhenAgentReady', () => {
   beforeEach(() => {
@@ -75,9 +67,7 @@ describe('pasteDraftWhenAgentReady', () => {
     })
     testState.appState.settings = {}
     testState.appState.ptyIdsByTabId = { 'tab-1': ['pty-1'] }
-    testState.appState.terminalLayoutsByTabId = {}
     testState.appState.runtimePaneTitlesByTabId = {}
-    testState.appState.recordTerminalInput.mockReset()
     testState.appState.tabsByWorktree = {}
     testState.appState.repos = []
     testState.appState.worktreesByRepo = {}
@@ -398,11 +388,12 @@ describe('pasteDraftWhenAgentReady', () => {
     expect(ptyWrites).toEqual([PASTED_ISSUE_URL, '\x1b[200~one\rtwo\rthree\rfour\rfive\x1b[201~'])
   })
 
-  it('does not inject an unsubmitted launch draft after user input takes over', async () => {
+  it('does not inject launch context after user input takes over during readiness', async () => {
     const promise = pasteDraftWhenAgentReady({
       tabId: 'tab-1',
       content: ISSUE_URL,
       agent: 'codex',
+      submit: true,
       forcePaste: true
     })
     await flushMicrotasks()
@@ -412,83 +403,6 @@ describe('pasteDraftWhenAgentReady', () => {
 
     await expect(promise).resolves.toBe(false)
     expect(testState.sendRuntimePtyInputVerified).not.toHaveBeenCalled()
-  })
-
-  it('does not treat input before the PTY binding poll as the launch baseline', async () => {
-    testState.appState.ptyIdsByTabId = {}
-    const promise = pasteDraftWhenAgentReady({
-      tabId: 'tab-1',
-      content: ISSUE_URL,
-      agent: 'codex',
-      submit: true,
-      forcePaste: true
-    })
-    await flushMicrotasks()
-
-    markTerminalUserInputForPtyId('pty-late')
-    testState.appState.ptyIdsByTabId = { 'tab-1': ['pty-late'] }
-    await vi.advanceTimersByTimeAsync(50)
-    testState.ptyObserver?.(`${DECSET_BRACKETED_PASTE}${CODEX_COMPOSER_PROMPT_RENDER}`)
-
-    await expect(promise).resolves.toBe(false)
-    expect(testState.sendRuntimePtyInputVerified).not.toHaveBeenCalled()
-  })
-
-  it('cancels for pre-bind paste intent on the target split leaf only', async () => {
-    testState.appState.ptyIdsByTabId = {}
-    const promise = pasteDraftWhenAgentReady({
-      tabId: 'tab-1',
-      content: ISSUE_URL,
-      agent: 'codex',
-      submit: true,
-      forcePaste: true
-    })
-    await flushMicrotasks()
-
-    markTerminalUserInputIntentForLeaf('tab-1', TARGET_LEAF_ID)
-    expect(testState.appState.recordTerminalInput).not.toHaveBeenCalled()
-    testState.appState.terminalLayoutsByTabId = {
-      'tab-1': {
-        ptyIdsByLeafId: {
-          [TARGET_LEAF_ID]: 'pty-target',
-          [SIBLING_LEAF_ID]: 'pty-sibling'
-        }
-      }
-    }
-    testState.appState.ptyIdsByTabId = { 'tab-1': ['pty-target', 'pty-sibling'] }
-    await vi.advanceTimersByTimeAsync(50)
-    testState.ptyObserver?.(`${DECSET_BRACKETED_PASTE}${CODEX_COMPOSER_PROMPT_RENDER}`)
-
-    await expect(promise).resolves.toBe(false)
-    expect(testState.sendRuntimePtyInputVerified).not.toHaveBeenCalled()
-  })
-
-  it('keeps sibling split input from canceling the target launch context', async () => {
-    testState.appState.terminalLayoutsByTabId = {
-      'tab-1': {
-        ptyIdsByLeafId: {
-          [TARGET_LEAF_ID]: 'pty-1',
-          [SIBLING_LEAF_ID]: 'pty-sibling'
-        }
-      }
-    }
-    const promise = pasteDraftWhenAgentReady({
-      tabId: 'tab-1',
-      content: ISSUE_URL,
-      agent: 'codex',
-      forcePaste: true
-    })
-    await flushMicrotasks()
-
-    recordTerminalUserInputForLeaf('tab-1', SIBLING_LEAF_ID, 'pty-sibling')
-    testState.ptyObserver?.(`${DECSET_BRACKETED_PASTE}${CODEX_COMPOSER_PROMPT_RENDER}`)
-
-    await expect(promise).resolves.toBe(true)
-    expect(testState.sendRuntimePtyInputVerified).toHaveBeenCalledWith(
-      {},
-      'pty-1',
-      PASTED_ISSUE_URL
-    )
   })
 
   it('does not submit when the verified paste write fails', async () => {
@@ -736,34 +650,6 @@ describe('pasteDraftWhenAgentReady', () => {
 
     await expect(promise).resolves.toBe(true)
     expect(testState.sendRuntimePtyInputVerified).toHaveBeenLastCalledWith({}, 'pty-1', '\r')
-  })
-
-  it('stops a chunked auto-submit when real input arrives between draft chunks', async () => {
-    let writeCount = 0
-    testState.sendRuntimePtyInputVerified.mockImplementation(async () => {
-      writeCount += 1
-      if (writeCount === 2) {
-        markTerminalUserInputForPtyId('pty-1')
-      }
-      return true
-    })
-    const content = 'x'.repeat(
-      AGENT_DRAFT_PASTE_DIRECT_MAX_BYTES + AGENT_DRAFT_PASTE_CHUNK_MAX_BYTES + 7
-    )
-
-    await expect(
-      sendBracketedPasteToRunningAgent({
-        ptyId: 'pty-1',
-        content
-      })
-    ).resolves.toBe(false)
-
-    expect(testState.sendRuntimePtyInputVerified).toHaveBeenCalledTimes(3)
-    expect(testState.sendRuntimePtyInputVerified).toHaveBeenNthCalledWith(1, {}, 'pty-1', '[200~')
-    expect(testState.sendRuntimePtyInputVerified).toHaveBeenNthCalledWith(3, {}, 'pty-1', '[201~')
-    expect(testState.sendRuntimePtyInputVerified.mock.calls.some((call) => call[2] === '\r')).toBe(
-      false
-    )
   })
 
   it('normalizes multiline running-agent drafts like terminal paste', async () => {

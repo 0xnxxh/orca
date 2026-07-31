@@ -136,10 +136,7 @@ import {
 } from '../../../../shared/terminal-color-scheme-protocol'
 import { warnTerminalLifecycleAnomaly } from './terminal-lifecycle-diagnostics'
 import { subscribeToTerminalUserInput } from './terminal-user-input-signal'
-import {
-  createTerminalUserInputCheckpoint,
-  markTerminalUserInputForPtyId
-} from './terminal-input-activity'
+import { markTerminalUserInputForPtyId } from './terminal-input-activity'
 import {
   hasPtySerializer,
   registerPtySerializer,
@@ -1237,12 +1234,6 @@ export function connectPanePty(
     !startupDraftAgentConfig?.draftPromptEnvVar
   let startupDraftDeliveryClaimed = false
   let startupDraftPasteAttempted = false
-  let startupDraftUserInputCheckpoint: ReturnType<typeof createTerminalUserInputCheckpoint> | null =
-    null
-  const disposeStartupDraftUserInputCheckpoint = (): void => {
-    startupDraftUserInputCheckpoint?.dispose()
-    startupDraftUserInputCheckpoint = null
-  }
   const claimStartupDraftPasteDelivery = (): boolean => {
     if (!startupDraftPromptNeedsPaste || launchToken === undefined) {
       return false
@@ -1258,9 +1249,6 @@ export function connectPanePty(
       tabId: deps.tabId,
       launchToken
     })
-    if (startupDraftDeliveryClaimed) {
-      startupDraftUserInputCheckpoint = createTerminalUserInputCheckpoint()
-    }
     return startupDraftDeliveryClaimed
   }
   const releaseUnattemptedStartupDraftPasteDelivery = (): void => {
@@ -1273,7 +1261,6 @@ export function connectPanePty(
       launchToken
     })
     startupDraftDeliveryClaimed = false
-    disposeStartupDraftUserInputCheckpoint()
   }
   if (paneStartup?.launchConfig) {
     useAppStore.getState().registerAgentLaunchConfig(cacheKey, paneStartup.launchConfig, {
@@ -3630,7 +3617,7 @@ export function connectPanePty(
     useAppStore.getState().recordTerminalInput(cacheKey)
   }
   const recordRealTerminalUserInput = (): void => {
-    markTerminalUserInputForPtyId(transport.getPtyId(), cacheKey)
+    markTerminalUserInputForPtyId(transport.getPtyId())
     recordTerminalInputForHibernation()
   }
   // Why: onData mixes real user input with xterm's parser auto-replies (focus
@@ -3645,7 +3632,7 @@ export function connectPanePty(
   )
   const recordTerminalInputForHibernationFallback = (): void => {
     if (userInputActivityDisposable === null) {
-      recordTerminalInputForHibernation()
+      recordRealTerminalUserInput()
     }
   }
   const markAcceptedTerminalInputSent = (): void => {
@@ -4769,13 +4756,6 @@ export function connectPanePty(
       if (!ptyId) {
         return
       }
-      if (startupDraftUserInputCheckpoint?.receivedInputFor(ptyId, cacheKey)) {
-        startupDraftPasteSettled = true
-        startupDraftPasteAttempted = true
-        cleanupStartupDraftPasteTimers()
-        disposeStartupDraftUserInputCheckpoint()
-        return
-      }
       startupDraftPasteInFlight = true
       startupDraftPasteSettled = true
       startupDraftPasteAttempted = true
@@ -4783,26 +4763,19 @@ export function connectPanePty(
       const settings = getSettingsForWorktreeRuntimeOwner(useAppStore.getState(), deps.worktreeId)
       // Why: xterm focus reports share this transport queue. Bypassing it can
       // race CSI I against the draft on ConPTY and expose a literal `[I` prefix.
-      void sendAgentDraftPasteContent(
-        settings,
-        ptyId,
-        startupDraftPrompt,
-        async (data) => {
-          const accepted = await writeTerminalPastePtyInput(transport, data)
-          if (accepted && !startupDraftInputRecorded) {
-            // Why: this transport write bypasses xterm's user-input signal; keep
-            // the composed draft from being discarded by later hibernation.
-            startupDraftInputRecorded = true
-            recordTerminalInputForHibernation()
-          }
-          return accepted
-        },
-        () => !startupDraftUserInputCheckpoint?.receivedInputFor(ptyId, cacheKey)
-      )
+      void sendAgentDraftPasteContent(settings, ptyId, startupDraftPrompt, async (data) => {
+        const accepted = await writeTerminalPastePtyInput(transport, data)
+        if (accepted && !startupDraftInputRecorded) {
+          // Why: this transport write bypasses xterm's user-input signal; keep
+          // the composed draft from being discarded by later hibernation.
+          startupDraftInputRecorded = true
+          recordTerminalInputForHibernation()
+        }
+        return accepted
+      })
         .catch(() => false)
         .finally(() => {
           startupDraftPasteInFlight = false
-          disposeStartupDraftUserInputCheckpoint()
         })
     }
     const deliverStartupDraftIfAgentOwnsPty = async (): Promise<void> => {
@@ -8961,7 +8934,6 @@ export function connectPanePty(
       }
       cleanupStartupDraftPasteTimers()
       releaseUnattemptedStartupDraftPasteDelivery()
-      disposeStartupDraftUserInputCheckpoint()
       unregisterAgentHookTerminalLifecycle()
       clearSuppressedTitleSideEffects()
       clearPendingAgentTaskCompleteNotification()

@@ -25,11 +25,10 @@ export async function sendAgentDraftPasteContent(
   settings: Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined,
   ptyId: string,
   content: string,
-  writePty?: AgentDraftPtyInputWriter,
-  canContinue?: () => boolean
+  writePty?: AgentDraftPtyInputWriter
 ): Promise<boolean> {
   return await runTerminalPtyInputTransaction(ptyId, () =>
-    sendAgentDraftPasteContentNow(settings, ptyId, content, writePty, canContinue)
+    sendAgentDraftPasteContentNow(settings, ptyId, content, writePty)
   )
 }
 
@@ -37,10 +36,9 @@ async function sendAgentDraftPasteContentNow(
   settings: Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined,
   ptyId: string,
   content: string,
-  writePty?: AgentDraftPtyInputWriter,
-  canContinue?: () => boolean
+  writePty?: AgentDraftPtyInputWriter
 ): Promise<boolean> {
-  if (content.length > AGENT_DRAFT_PASTE_MAX_BYTES || canContinue?.() === false) {
+  if (content.length > AGENT_DRAFT_PASTE_MAX_BYTES) {
     return false
   }
 
@@ -62,18 +60,9 @@ async function sendAgentDraftPasteContentNow(
   if (await isSanitizedDraftPasteOverLimit(terminalContent, AGENT_DRAFT_PASTE_MAX_BYTES)) {
     return false
   }
-  if (canContinue?.() === false) {
-    return false
-  }
 
   let bracketedPasteOpen = false
   for (const chunk of iterateAgentDraftPasteContentChunks(terminalContent)) {
-    if (canContinue?.() === false) {
-      if (bracketedPasteOpen) {
-        await closeAgentDraftBracketedPaste(settings, ptyId, writePty)
-      }
-      return false
-    }
     let accepted = false
     try {
       accepted = await writeAgentDraftPtyInput(settings, ptyId, chunk, writePty)

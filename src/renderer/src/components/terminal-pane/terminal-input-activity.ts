@@ -1,90 +1,29 @@
 import { makePaneKey } from '../../../../shared/stable-pane-id'
 import { useAppStore } from '@/store'
 
-type TerminalUserInputCheckpoint = {
-  receivedInputFor: (ptyId: string, paneKey?: string | null) => boolean
-  dispose: () => void
-}
+// Why: delayed automatic Enter must yield when real input reaches the same PTY.
+const userInputGenerationByPtyId = new Map<string, number>()
 
-let userInputGeneration = 0
-let activeCheckpointCount = 0
-const latestUserInputGenerationByPtyId = new Map<string, number>()
-const latestUserInputGenerationByPaneKey = new Map<string, number>()
-
-export function createTerminalUserInputCheckpoint(): TerminalUserInputCheckpoint {
-  const generation = userInputGeneration
-  let disposed = false
-  activeCheckpointCount += 1
-  return {
-    receivedInputFor: (ptyId, paneKey) =>
-      !disposed &&
-      ((latestUserInputGenerationByPtyId.get(ptyId) ?? 0) > generation ||
-        Boolean(paneKey && (latestUserInputGenerationByPaneKey.get(paneKey) ?? 0) > generation)),
-    dispose: () => {
-      if (disposed) {
-        return
-      }
-      disposed = true
-      activeCheckpointCount -= 1
-      if (activeCheckpointCount === 0) {
-        latestUserInputGenerationByPtyId.clear()
-        latestUserInputGenerationByPaneKey.clear()
-      }
-    }
-  }
-}
-
-export function markTerminalUserInputForPtyId(
-  ptyId: string | null | undefined,
-  paneKey?: string | null
-): void {
-  if (activeCheckpointCount === 0 || (!ptyId && !paneKey)) {
+export function markTerminalUserInputForPtyId(ptyId: string | null | undefined): void {
+  if (!ptyId) {
     return
   }
-  userInputGeneration += 1
-  if (ptyId) {
-    latestUserInputGenerationByPtyId.set(ptyId, userInputGeneration)
-  }
-  if (paneKey) {
-    latestUserInputGenerationByPaneKey.set(paneKey, userInputGeneration)
-  }
+  userInputGenerationByPtyId.set(ptyId, (userInputGenerationByPtyId.get(ptyId) ?? 0) + 1)
 }
 
-export function markTerminalUserInputIntentForLeaf(
-  tabId: string,
-  leafId: string,
-  ptyId?: string | null
-): void {
+export function readTerminalUserInputGeneration(ptyId: string): number {
+  return userInputGenerationByPtyId.get(ptyId) ?? 0
+}
+
+export function recordTerminalUserInputForLeaf(tabId: string, leafId: string): void {
   try {
     const state = useAppStore.getState()
     const layoutPtyId = state.terminalLayoutsByTabId?.[tabId]?.ptyIdsByLeafId?.[leafId]
     const tabPtyIds = state.ptyIdsByTabId?.[tabId] ?? []
-    markTerminalUserInputForPtyId(
-      ptyId ?? layoutPtyId ?? (tabPtyIds.length === 1 ? tabPtyIds[0] : null),
-      makePaneKey(tabId, leafId)
-    )
-  } catch {
-    // Malformed layouts cannot identify a safe draft-cancellation target.
-  }
-}
-
-export function recordTerminalUserInputForLeaf(
-  tabId: string,
-  leafId: string,
-  ptyId?: string | null
-): void {
-  try {
-    const state = useAppStore.getState()
-    const layoutPtyId = state.terminalLayoutsByTabId?.[tabId]?.ptyIdsByLeafId?.[leafId]
-    const tabPtyIds = state.ptyIdsByTabId?.[tabId] ?? []
-    const paneKey = makePaneKey(tabId, leafId)
-    markTerminalUserInputForPtyId(
-      ptyId ?? layoutPtyId ?? (tabPtyIds.length === 1 ? tabPtyIds[0] : null),
-      paneKey
-    )
+    markTerminalUserInputForPtyId(layoutPtyId ?? (tabPtyIds.length === 1 ? tabPtyIds[0] : null))
     // Why: hibernation must see all user-authorized terminal writes, including
     // sends that bypass xterm.onData.
-    state.recordTerminalInput(paneKey)
+    state.recordTerminalInput(makePaneKey(tabId, leafId))
   } catch {
     // Legacy/malformed layouts are ignored; hibernation remains conservative
     // when it cannot match live PTYs to stable pane keys.
