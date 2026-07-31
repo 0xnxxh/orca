@@ -184,28 +184,6 @@ function createAdapter(
   } as unknown as AdapterMock
 }
 
-it('forwards dead-endpoint write-unavailable signals from every routed adapter', () => {
-  // Why revert-sensitive: main subscribes on the ROUTED provider, so if the router
-  // does not forward this the STA-2373 fan-out never reaches the renderer and only
-  // the written pane recovers — siblings stay frozen. The router is the live
-  // localProvider whenever a legacy daemon socket exists (protocol bump mid-session).
-  const current = createAdapter('current')
-  const legacy = createAdapter('legacy')
-  const router = new DaemonPtyRouter({ current, legacy: [legacy] })
-  const recovered: string[] = []
-
-  const unsubscribe = router.onWriteUnavailable(({ id }) => recovered.push(id))
-  current.triggerWriteUnavailable('current-pane')
-  legacy.triggerWriteUnavailable('legacy-pane')
-
-  expect(recovered).toEqual(['current-pane', 'legacy-pane'])
-
-  unsubscribe()
-  current.triggerWriteUnavailable('after-unsubscribe')
-  legacy.triggerWriteUnavailable('after-unsubscribe')
-  expect(recovered).toEqual(['current-pane', 'legacy-pane'])
-})
-
 it('rejects completion inspection when no daemon owns the session', async () => {
   const router = new DaemonPtyRouter({
     current: createAdapter('current'),

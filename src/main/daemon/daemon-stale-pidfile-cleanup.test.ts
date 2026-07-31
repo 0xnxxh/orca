@@ -109,6 +109,44 @@ describe('stale daemon pidfile cleanup', () => {
     }
   })
 
+  it('preserves matching POSIX command evidence when the start time is inconclusive', async () => {
+    if (process.platform === 'win32') {
+      return
+    }
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        "process.send?.('ready');setInterval(()=>{},1000)",
+        'daemon-entry',
+        socketPath,
+        tokenPath
+      ],
+      { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
+    )
+    await new Promise<void>((resolve) => {
+      child.on('message', (message) => {
+        if (message === 'ready') {
+          resolve()
+        }
+      })
+    })
+    const record = serializeDaemonPidFile({
+      pid: child.pid!,
+      startedAtMs: Date.now() - 5_000,
+      launchNonce: 'slow-bootstrap'
+    })
+    writeFileSync(pidPath, record, { mode: 0o600 })
+
+    try {
+      await expect(killStaleDaemon(dir, socketPath, tokenPath)).resolves.toBe(false)
+      expect(readFileSync(pidPath, 'utf8')).toBe(record)
+      expect(child.exitCode).toBeNull()
+    } finally {
+      child.kill('SIGKILL')
+    }
+  })
+
   it('preserves the exact record when process access is rejected', async () => {
     const record = serializeDaemonPidFile({
       pid: process.pid,

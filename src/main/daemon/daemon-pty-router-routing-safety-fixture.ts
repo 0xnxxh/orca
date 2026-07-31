@@ -8,6 +8,7 @@ export type AdapterHarness = {
   emitData: (sessionId: string, data: string) => void
   emitIdentityChange: (previous: DaemonEndpointIdentity, current: DaemonEndpointIdentity) => void
   emitExit: (sessionId: string, code: number) => void
+  emitWriteUnavailable: (sessionId: string) => void
   setIdentity: (identity: DaemonEndpointIdentity) => void
 }
 
@@ -31,6 +32,7 @@ export function createAdapter(
   }) => void)[] = []
   const dataListeners: ((payload: { id: string; data: string }) => void)[] = []
   const exitListeners: ((payload: { id: string; code: number }) => void)[] = []
+  const writeUnavailableListeners: ((payload: { id: string }) => void)[] = []
   const adapter = {
     protocolVersion: label === 'current' ? 30 : 29,
     getLastAuthenticatedDaemonIdentity: vi.fn(() => ({ ...daemonIdentity })),
@@ -74,7 +76,15 @@ export function createAdapter(
       return () => {}
     }),
     onBackgroundStreamEvent: vi.fn(() => () => {}),
-    onWriteUnavailable: vi.fn(() => () => {}),
+    onWriteUnavailable: vi.fn((listener: (payload: { id: string }) => void) => {
+      writeUnavailableListeners.push(listener)
+      return () => {
+        const index = writeUnavailableListeners.indexOf(listener)
+        if (index !== -1) {
+          writeUnavailableListeners.splice(index, 1)
+        }
+      }
+    }),
     dispose: vi.fn(),
     disconnectOnly: vi.fn(async () => {})
   } as unknown as DaemonPtyAdapter
@@ -97,6 +107,11 @@ export function createAdapter(
     emitExit: (sessionId, code) => {
       for (const listener of exitListeners) {
         listener({ id: sessionId, code })
+      }
+    },
+    emitWriteUnavailable: (sessionId) => {
+      for (const listener of writeUnavailableListeners) {
+        listener({ id: sessionId })
       }
     }
   }

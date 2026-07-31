@@ -25,7 +25,7 @@ export class DegradedDaemonSessionRouting {
     this.adapters = [current, ...legacy]
     this.adapterSet = new Set(this.adapters)
     this.routes = new DaemonSessionRouteTable(this.adapters)
-    this.fallbackRoutes = new FallbackRoutes(this.fallbackOwners, this.routes)
+    this.fallbackRoutes = new FallbackRoutes(this.fallbackOwners, this.routes, this.fallbackSpawns)
     for (const adapter of this.adapters) {
       this.identityUnsubscribes.push(
         adapter.onDaemonIdentityChanged(({ previous }) => {
@@ -76,7 +76,7 @@ export class DegradedDaemonSessionRouting {
           this.fallbackRoutes.recordSpawnedSession(result.id, target)
         }
       } else {
-        this.routes.recordOwned(result.id, target as DaemonPtyAdapter)
+        this.fallbackRoutes.recordDaemonSpawn(result.id, opts.sessionId, target as DaemonPtyAdapter)
       }
       return result
     } finally {
@@ -158,11 +158,12 @@ export class DegradedDaemonSessionRouting {
       this.fallbackRoutes.clearCollision(sessionId)
       return true
     }
-    if (route) {
-      this.fallbackRoutes.recordCollision(sessionId)
-      return false
-    }
-    return true
+    this.fallbackRoutes.recordCollision(sessionId)
+    return false
+  }
+
+  shouldForwardWriteUnavailable(adapter: DaemonPtyAdapter, sessionId: string): boolean {
+    return this.fallbackRoutes.shouldForwardWriteUnavailable(sessionId, adapter)
   }
 
   recordExit(provider: IPtyProvider, sessionId: string): boolean {

@@ -3,6 +3,7 @@ import type { DaemonPtyAdapter } from './daemon-pty-adapter'
 import type { DaemonEndpointIdentity } from './daemon-hello-protocol'
 import { DaemonSessionRouteTable } from './daemon-session-route-table'
 import { DaemonSnapshotAcknowledgementRoutes } from './daemon-snapshot-acknowledgement-routes'
+import { recordValidatedDaemonSpawn } from './daemon-spawn-route-validation'
 
 export class DaemonPtyRouterSessionRouting {
   private readonly routes: DaemonSessionRouteTable
@@ -64,11 +65,15 @@ export class DaemonPtyRouterSessionRouting {
     if (result.exitedBeforeSpawnReply) {
       return
     }
-    if (authoritativeIntent && opts.sessionId === result.id) {
-      this.routes.recordFreshOwned(result.id, target)
+    if (authoritativeIntent) {
+      if (opts.sessionId === result.id) {
+        this.routes.recordFreshOwned(result.id, target)
+      } else {
+        this.routes.recordOwned(result.id, target)
+      }
       return
     }
-    this.routes.recordOwned(result.id, target)
+    recordValidatedDaemonSpawn(this.routes, result.id, opts.sessionId, target)
   }
 
   beginSpawn(opts: PtySpawnOptions, target: DaemonPtyAdapter): boolean {
@@ -210,6 +215,13 @@ export class DaemonPtyRouterSessionRouting {
       return false
     }
     return this.routes.recordDataOwner(sessionId, owner)
+  }
+
+  shouldForwardWriteUnavailable(sessionId: string, owner: DaemonPtyAdapter): boolean {
+    const authoritativeSpawn = this.authoritativeSpawnsInFlight.get(sessionId)
+    return authoritativeSpawn
+      ? authoritativeSpawn.owner === owner
+      : this.routes.getOwned(sessionId) === owner
   }
 
   recordExit(sessionId: string, owner: DaemonPtyAdapter): boolean {

@@ -568,10 +568,10 @@ async function matchDaemonProcess(
       return probeProcessExistence(pid) === 'absent' ? 'stale' : 'unknown'
     }
   }
-  return commandLineMatchesDaemon(commandLine, socketPath, tokenPath) &&
-    startTimeMatches(pid, startedAtMs)
-    ? 'match'
-    : 'stale'
+  if (!commandLineMatchesDaemon(commandLine, socketPath, tokenPath)) {
+    return 'stale'
+  }
+  return startTimeMatches(pid, startedAtMs) ? 'match' : 'unknown'
 }
 
 async function isDaemonProcess(

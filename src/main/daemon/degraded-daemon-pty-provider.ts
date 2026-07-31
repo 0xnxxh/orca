@@ -227,7 +227,13 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   // adapters only — the local fallback has no dead-socket problem.
   onWriteUnavailable(callback: (payload: { id: string }) => void): () => void {
     return combineUnsubscribes(
-      this.allDaemonAdapters().map((adapter) => adapter.onWriteUnavailable(callback))
+      this.allDaemonAdapters().map((adapter) =>
+        adapter.onWriteUnavailable((payload) => {
+          if (this.routing.shouldForwardWriteUnavailable(adapter, payload.id)) {
+            callback(payload)
+          }
+        })
+      )
     )
   }
 

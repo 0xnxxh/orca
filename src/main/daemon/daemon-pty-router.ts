@@ -27,6 +27,7 @@ export class DaemonPtyRouter implements IPtyProvider {
     this.subscriptions = new DaemonPtyAdapterSubscriptionFanout(
       this.allAdapters(),
       (adapter, id) => this.routing.shouldForwardStreamEvent(id, adapter),
+      (adapter, id) => this.routing.shouldForwardWriteUnavailable(id, adapter),
       (adapter, id) => this.routing.recordExit(id, adapter)
     )
   }

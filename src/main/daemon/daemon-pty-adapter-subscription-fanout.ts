@@ -11,6 +11,10 @@ export class DaemonPtyAdapterSubscriptionFanout {
   constructor(
     private readonly adapters: readonly DaemonPtyAdapter[],
     private readonly shouldForwardStreamEvent: (adapter: DaemonPtyAdapter, id: string) => boolean,
+    private readonly shouldForwardWriteUnavailable: (
+      adapter: DaemonPtyAdapter,
+      id: string
+    ) => boolean,
     onAdapterExit: (adapter: DaemonPtyAdapter, id: string) => boolean
   ) {
     for (const adapter of adapters) {
@@ -60,7 +64,15 @@ export class DaemonPtyAdapterSubscriptionFanout {
   // Why: main subscribes on the routed provider, so without this the dead-endpoint
   // fan-out never reaches the renderer and only the written pane recovers (STA-2373).
   onWriteUnavailable(callback: (payload: { id: string }) => void): () => void {
-    return combineUnsubscribes(this.adapters.map((adapter) => adapter.onWriteUnavailable(callback)))
+    return combineUnsubscribes(
+      this.adapters.map((adapter) =>
+        adapter.onWriteUnavailable((payload) => {
+          if (this.shouldForwardWriteUnavailable(adapter, payload.id)) {
+            callback(payload)
+          }
+        })
+      )
+    )
   }
 
   onReplay(_callback: (payload: { id: string; data: string }) => void): () => void {

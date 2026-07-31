@@ -2,6 +2,8 @@ import type { IPtyProvider } from '../providers/types'
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
 import { sameDaemonIncarnation } from './daemon-session-route'
 import type { DaemonSessionRouteTable } from './daemon-session-route-table'
+import { recordValidatedDaemonSpawn } from './daemon-spawn-route-validation'
+import type { DegradedFallbackSpawnRoutes } from './degraded-fallback-spawn-routes'
 
 type FallbackLivenessProbe = {
   provider: IPtyProvider
@@ -15,7 +17,8 @@ export class DegradedFallbackSessionRoutes {
 
   constructor(
     private readonly sessions: Map<string, IPtyProvider>,
-    private readonly daemonRoutes: DaemonSessionRouteTable
+    private readonly daemonRoutes: DaemonSessionRouteTable,
+    private readonly spawns: DegradedFallbackSpawnRoutes
   ) {}
 
   hasCollision(sessionId: string): boolean {
@@ -41,10 +44,27 @@ export class DegradedFallbackSessionRoutes {
     }
   }
 
+  recordDaemonSpawn(
+    resultSessionId: string,
+    requestedSessionId: string | undefined,
+    owner: DaemonPtyAdapter
+  ): void {
+    recordValidatedDaemonSpawn(this.daemonRoutes, resultSessionId, requestedSessionId, owner)
+  }
+
   clearUnownedCollision(sessionId: string): void {
     if (!this.sessions.has(sessionId)) {
       this.clearCollision(sessionId)
     }
+  }
+
+  shouldForwardWriteUnavailable(sessionId: string, owner: DaemonPtyAdapter): boolean {
+    return (
+      !this.spawns.hasLiveCandidate(sessionId) &&
+      !this.sessions.has(sessionId) &&
+      !this.collisionIds.has(sessionId) &&
+      this.daemonRoutes.getOwned(sessionId) === owner
+    )
   }
 
   deleteSession(sessionId: string): void {
