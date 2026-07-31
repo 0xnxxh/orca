@@ -503,7 +503,6 @@ export function createRemoteRuntimePtyTransport(
           if (!recovery.isCurrent(recoveryEpoch)) {
             return undefined
           }
-          recovery.markHealthy()
         }
         return hostHandle
       } catch (error) {
@@ -1911,7 +1910,11 @@ export function createRemoteRuntimePtyTransport(
         }
         await adoptResolvedHostPane(resolved, options, false, generation)
       })().catch((error) => {
-        if (generation !== attachGeneration || destroyed) {
+        if (
+          generation !== attachGeneration ||
+          attachLifecycleEpoch !== lifecycleEpoch ||
+          destroyed
+        ) {
           return
         }
         clearPendingViewportClaim()
