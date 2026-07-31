@@ -32,8 +32,13 @@ export class RelayPtySourceLegacyExitIndex {
     if (delivered) {
       this.incarnationByPty.set(params.id, params.incarnationId)
     } else {
-      this.incarnationByPty.delete(params.id)
+      this.forget(params.id)
     }
+  }
+
+  /** Drops the entry once the exit is complete for every client, so the map cannot grow unbounded. */
+  forget(id: string): void {
+    this.incarnationByPty.delete(id)
   }
 
   clear = (): void => this.incarnationByPty.clear()
@@ -52,7 +57,7 @@ export class RelayPtySourceLegacyExitIndex {
       params
     )
     if (published) {
-      this.incarnationByPty.delete(params.id)
+      this.forget(params.id)
     }
     return published
   }

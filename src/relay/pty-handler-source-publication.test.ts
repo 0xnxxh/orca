@@ -347,6 +347,39 @@ describe('PtyHandler negotiated source publication', () => {
     }
   })
 
+  it('lets a retired record re-target its own exit instead of broadcasting a duplicate', async () => {
+    await spawn({})
+    const spawnResult = writes.map((buffer) => responseResult(buffer, 2)).find(Boolean)!
+    const subscriberWrites = attachSubscriber()
+    const publishExitAfterRetire = vi.fn(() => true)
+    handler.setSourcePublication(stubPublication({ accepts: () => false, publishExitAfterRetire }))
+
+    expect(() => exitCallback!({ exitCode: 4 })).not.toThrow()
+
+    expect(publishExitAfterRetire).toHaveBeenCalledWith(
+      expect.objectContaining({ id: spawnResult.id, code: 4 })
+    )
+    expect(exitFrames()).toHaveLength(0)
+    expect(subscriberExitFrames(subscriberWrites)).toHaveLength(0)
+
+    handler.handleSourcePublicationCapacity(String(spawnResult.id))
+    await vi.advanceTimersByTimeAsync(8)
+    expect(publishExitAfterRetire).toHaveBeenCalledOnce()
+  })
+
+  it('broadcasts the legacy exit when the retired record never projected one', async () => {
+    await spawn({})
+    const spawnResult = writes.map((buffer) => responseResult(buffer, 2)).find(Boolean)!
+    handler.setSourcePublication(
+      stubPublication({ accepts: () => false, publishExitAfterRetire: () => null })
+    )
+
+    exitCallback!({ exitCode: 5 })
+
+    expect(exitFrames()).toHaveLength(1)
+    expect(exitFrames()[0].params).toMatchObject({ id: spawnResult.id, code: 5 })
+  })
+
   it('completes the exit from the settled state without re-sealing the delivery', async () => {
     await spawn({})
     const spawnResult = writes.map((buffer) => responseResult(buffer, 2)).find(Boolean)!
