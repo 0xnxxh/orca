@@ -21,11 +21,28 @@ type ServeReady = {
   }
 }
 
+const STARTUP_DIAGNOSTIC_LIMIT = 8_000
+
 export type HeadlessPairedRuntimeHost = {
   app: ElectronApplication
   client: RuntimeClient
   dispose: () => Promise<void>
   offer: RuntimeDesktopPairingOffer
+}
+
+function appendStartupDiagnostic(current: string, chunk: Buffer): string {
+  return `${current}${chunk.toString()}`.slice(-STARTUP_DIAGNOSTIC_LIMIT)
+}
+
+function formatStartupDiagnostics(stdout: string, stderr: string): string {
+  const redactPairingCode = (value: string): string =>
+    value.replace(/orca:\/\/[^\s"\\]+/g, 'orca://[redacted]')
+  return [
+    stdout ? `stdout:\n${redactPairingCode(stdout)}` : '',
+    stderr ? `stderr:\n${redactPairingCode(stderr)}` : ''
+  ]
+    .filter(Boolean)
+    .join('\n')
 }
 
 async function readPairingOffer(app: ElectronApplication): Promise<RuntimeDesktopPairingOffer> {
@@ -36,24 +53,38 @@ async function readPairingOffer(app: ElectronApplication): Promise<RuntimeDeskto
   }
   return new Promise((resolve, reject) => {
     let buffered = ''
+    let stdoutDiagnostic = ''
+    let stderrDiagnostic = ''
+    const stderr = child.stderr
     const timeout = setTimeout(() => {
       cleanup()
-      reject(new Error('Headless runtime did not publish pairing readiness'))
+      const diagnostics = formatStartupDiagnostics(stdoutDiagnostic, stderrDiagnostic)
+      reject(
+        new Error(
+          `Headless runtime did not publish pairing readiness${diagnostics ? `\n${diagnostics}` : ''}`
+        )
+      )
     }, 60_000)
     const cleanup = (): void => {
       clearTimeout(timeout)
       stdout.off('data', onData)
+      stderr?.off('data', onStderr)
       child.off('close', onClose)
     }
     const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
       cleanup()
+      const diagnostics = formatStartupDiagnostics(stdoutDiagnostic, stderrDiagnostic)
       reject(
         new Error(
-          `Headless runtime exited before pairing readiness (code=${code ?? 'none'}, signal=${signal ?? 'none'})`
+          `Headless runtime exited before pairing readiness (code=${code ?? 'none'}, signal=${signal ?? 'none'})${diagnostics ? `\n${diagnostics}` : ''}`
         )
       )
     }
+    const onStderr = (chunk: Buffer): void => {
+      stderrDiagnostic = appendStartupDiagnostic(stderrDiagnostic, chunk)
+    }
     const onData = (chunk: Buffer): void => {
+      stdoutDiagnostic = appendStartupDiagnostic(stdoutDiagnostic, chunk)
       buffered += chunk.toString()
       const lines = buffered.split(/\r?\n/)
       buffered = lines.pop() ?? ''
@@ -79,6 +110,7 @@ async function readPairingOffer(app: ElectronApplication): Promise<RuntimeDeskto
       }
     }
     stdout.on('data', onData)
+    stderr?.on('data', onStderr)
     child.on('close', onClose)
     if (child.exitCode !== null || child.signalCode !== null) {
       onClose(child.exitCode, child.signalCode)
@@ -120,11 +152,12 @@ export async function launchHeadlessPairedRuntimeHost(): Promise<HeadlessPairedR
       ],
       env: isolation.env
     })
-    assertElectronResolvedIsolatedHome(
-      await app.evaluate(({ app: electronApp }) => electronApp.getPath('home')),
-      isolation
-    )
-    const offer = await readPairingOffer(app)
+    const [offer] = await Promise.all([
+      readPairingOffer(app),
+      app
+        .evaluate(({ app: electronApp }) => electronApp.getPath('home'))
+        .then((home) => assertElectronResolvedIsolatedHome(home, isolation))
+    ])
     return {
       app,
       client: new RuntimeClient(userDataDir, 5_000),

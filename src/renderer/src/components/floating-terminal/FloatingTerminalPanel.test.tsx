@@ -144,6 +144,10 @@ const saveDialogBox = vi.hoisted(() => ({
   fileId: null as string | null
 }))
 
+const parkingBox = vi.hoisted(() => ({
+  parkedTabIds: new Set<string>()
+}))
+
 vi.mock('react', async () => {
   const actual = await vi.importActual<typeof import('react')>('react') // eslint-disable-line @typescript-eslint/consistent-type-imports -- vi.importActual requires inline import()
   return {
@@ -203,6 +207,10 @@ vi.mock('@/components/terminal-pane/TerminalPane', () => ({
   default: function TerminalPane() {
     return null
   }
+}))
+
+vi.mock('@/components/terminal-pane/use-terminal-tab-cold-parking', () => ({
+  useTerminalTabColdParking: () => parkingBox.parkedTabIds
 }))
 
 vi.mock('@/components/terminal-pane/terminal-ime-input-context-refresh', () => ({
@@ -574,6 +582,22 @@ function findByTypeName(node: unknown, typeName: string): ReactElementLike {
   return found
 }
 
+function findAllByTypeName(node: unknown, typeName: string): ReactElementLike[] {
+  const found: ReactElementLike[] = []
+  visit(node, (entry) => {
+    const candidate =
+      typeof entry.type === 'function' || typeof entry.type === 'object'
+        ? ((entry.type as { displayName?: string; name?: string }).displayName ??
+          (entry.type as { displayName?: string; name?: string }).name ??
+          '')
+        : entry.type
+    if (candidate === typeName) {
+      found.push(entry)
+    }
+  })
+  return found
+}
+
 function findByProp(node: unknown, propName: string): ReactElementLike {
   let found: ReactElementLike | null = null
   visit(node, (entry) => {
@@ -780,6 +804,7 @@ describe('FloatingTerminalPanel close behavior', () => {
     hookRuntime.index = 0
     hookRuntime.values = []
     saveDialogBox.fileId = null
+    parkingBox.parkedTabIds = new Set()
     resetStore()
     // Why: the open-maximized intent is a module singleton; drain any leftover
     // from a prior test so it cannot bleed into an unrelated render.
@@ -1475,6 +1500,20 @@ describe('FloatingTerminalPanel close behavior', () => {
     const openElement = await renderPanel(true)
     const openPane = findByTypeName(openElement, 'TerminalPane')
     expect(openPane.props.isVisible).toBe(true)
+  })
+
+  it('does not mount floating terminal panes selected for cold parking', async () => {
+    setFloatingTabs([makeTab({ id: 'tab-1' }), makeTab({ id: 'tab-2' })])
+    parkingBox.parkedTabIds = new Set(['tab-2'])
+
+    await renderPanel(true)
+    runEffects()
+    await Promise.resolve()
+    const element = await renderPanel(true)
+
+    expect(findAllByTypeName(element, 'TerminalPane').map((pane) => pane.props.tabId)).toEqual([
+      'tab-1'
+    ])
   })
 
   it('routes titlebar Cmd+T to the floating workspace', async () => {
