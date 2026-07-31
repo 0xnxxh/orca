@@ -1,5 +1,7 @@
 import { execFile, execFileSync } from 'node:child_process'
 import { parseWslUncPath, toWindowsWslPath } from '../shared/wsl-paths'
+import { filterUserWslDistros, parseWslDistros } from './wsl-distro-list-output'
+import { wslDistroListRetryDelayMs } from './wsl-distro-retry'
 
 export { toWindowsWslPath } from '../shared/wsl-paths'
 
@@ -99,38 +101,39 @@ let wslDistroCache: string[] | null = null
 // otherwise hide every distro until restart), but repeated failures cannot
 // re-spawn a blocking wsl.exe on every caller; brief negative caching bounds
 // the spawn rate on machines where WSL is absent or persistently broken.
-const WSL_DISTRO_LIST_RETRY_DELAY_MS = 15_000
-// Why: a machine with only docker-desktop registered filters to empty on every probe,
-// so a flat window would re-spawn wsl.exe every 15s for the whole session. Provisioning
-// is a one-time event, so backing off still clears the picker well inside setup.
-const WSL_DISTRO_LIST_MAX_RETRY_DELAY_MS = 5 * 60_000
+// Empty and failed probes back off from 15 seconds to a five-minute cap.
 let wslDistroListRetryAfterMs = 0
 let wslDistroListEmptyStreak = 0
+let wslDistroProbeSequence = 0
+let wslDistroCacheSequence = 0
 // Why: availability is a separate, blocking probe. Deliberately not a multiple of the
 // renderer's 30s capability TTL, so repeated refreshes don't land on this boundary and
 // re-probe every cycle.
 const WSL_AVAILABILITY_NEGATIVE_CACHE_TTL_MS = 45_000
 
-function normalizeWslListOutput(output: string): string[] {
-  // Why: wsl.exe can emit UTF-16-looking NUL bytes when inherited through
-  // some Windows shells; strip them before line parsing.
-  return output
-    .replaceAll(String.fromCharCode(0), '')
-    .split(/\r?\n/)
-    .map((line) => line.trim().replace(/^\*\s*/, ''))
-    .filter(Boolean)
-}
-
-function isUserWslDistro(distro: string): boolean {
-  return !distro.toLowerCase().startsWith('docker-desktop')
+function armWslDistroListRetry(): void {
+  const now = Date.now()
+  // Concurrent completions belong to the retry window already armed by the first result.
+  if (now < wslDistroListRetryAfterMs) {
+    return
+  }
+  wslDistroListEmptyStreak += 1
+  wslDistroListRetryAfterMs = now + wslDistroListRetryDelayMs(wslDistroListEmptyStreak)
 }
 
 // Why: `wsl --install` reports zero distros while one is still provisioning, so an
 // empty answer is transient and must stay retryable — caching it for the process
 // lifetime is what made WSL vanish from the picker after setup. It is still cached
 // for reads, so a missing distro stays visible to `isKnownMissingDistro`.
-function cacheWslDistroList(rawDistros: string[]): string[] {
-  const userDistros = rawDistros.filter(isUserWslDistro)
+function cacheWslDistroList(rawDistros: string[], probeSequence: number): string[] {
+  const userDistros = filterUserWslDistros(rawDistros)
+  // An older positive result must not replace the newer lifetime-stable list.
+  if (
+    probeSequence < wslDistroCacheSequence &&
+    (userDistros.length === 0 || (wslDistroCache?.length ?? 0) > 0)
+  ) {
+    return wslDistroCache ?? []
+  }
   // Why: probes overlap and can resolve out of order — a slow pre-registration wsl.exe
   // can land after a fast one that already found the distro. A late empty answer must
   // not erase that list, or provisioning reverts to "no distros" and backs off again.
@@ -140,22 +143,10 @@ function cacheWslDistroList(rawDistros: string[]): string[] {
   if (userDistros.length > 0) {
     dropStaleWslAvailabilityFailure()
   }
+  wslDistroCacheSequence = probeSequence
   wslDistroCache = userDistros
   if (wslDistroCache.length === 0) {
-    const now = Date.now()
-    // Why: concurrent probes all land here with the same empty answer; counting each
-    // one would jump the very first round straight to the cap.
-    if (now >= wslDistroListRetryAfterMs) {
-      wslDistroListEmptyStreak += 1
-    }
-    wslDistroListRetryAfterMs =
-      now +
-      Math.min(
-        // Why: the catch path arms a window without touching the streak, so clamp the
-        // floor — a streak of 0 would halve the delay instead of holding it at the base.
-        WSL_DISTRO_LIST_RETRY_DELAY_MS * 2 ** (Math.max(wslDistroListEmptyStreak, 1) - 1),
-        WSL_DISTRO_LIST_MAX_RETRY_DELAY_MS
-      )
+    armWslDistroListRetry()
   }
   return wslDistroCache
 }
@@ -182,14 +173,15 @@ export function listWslDistros(): string[] {
   }
 
   try {
+    const probeSequence = ++wslDistroProbeSequence
     const output = execFileSync('wsl.exe', ['--list', '--quiet'], {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 5000
     })
-    return cacheWslDistroList(normalizeWslListOutput(output))
+    return cacheWslDistroList(parseWslDistros(output), probeSequence)
   } catch {
-    wslDistroListRetryAfterMs = Date.now() + WSL_DISTRO_LIST_RETRY_DELAY_MS
+    armWslDistroListRetry()
     return wslDistroCache ?? []
   }
 }
@@ -209,10 +201,11 @@ export async function listWslDistrosAsync(): Promise<string[]> {
   }
 
   try {
+    const probeSequence = ++wslDistroProbeSequence
     const output = await execFileUtf8('wsl.exe', ['--list', '--quiet'])
-    return cacheWslDistroList(normalizeWslListOutput(output))
+    return cacheWslDistroList(parseWslDistros(output), probeSequence)
   } catch {
-    wslDistroListRetryAfterMs = Date.now() + WSL_DISTRO_LIST_RETRY_DELAY_MS
+    armWslDistroListRetry()
     return wslDistroCache ?? []
   }
 }
@@ -342,8 +335,10 @@ function isWslAvailabilityCacheFresh(cache: WslAvailabilityCache): boolean {
   if (isPermanentWslAvailabilityCache(cache)) {
     return true
   }
-  const failed = cache as { cachedAt: number; retryable: boolean; failures: number }
-  return Date.now() - failed.cachedAt < wslAvailabilityRetryDelayMs(failed)
+  if (!('cachedAt' in cache)) {
+    return false
+  }
+  return Date.now() - cache.cachedAt < wslAvailabilityRetryDelayMs(cache)
 }
 
 /**
@@ -400,6 +395,8 @@ export function _resetWslCachesForTests(): void {
   wslDistroCache = null
   wslDistroListRetryAfterMs = 0
   wslDistroListEmptyStreak = 0
+  wslDistroProbeSequence = 0
+  wslDistroCacheSequence = 0
   wslAvailableCache = null
 }
 
@@ -426,9 +423,11 @@ export function _setWslCachesForTests(args: {
   // too — otherwise a seeded [] lets the next call spawn a real 5s wsl.exe.
   wslDistroListRetryAfterMs = 0
   wslDistroListEmptyStreak = 0
+  wslDistroProbeSequence = 0
+  wslDistroCacheSequence = 0
   wslDistroCache = null
   if (args.distros) {
-    cacheWslDistroList(args.distros)
+    cacheWslDistroList(args.distros, ++wslDistroProbeSequence)
   }
 }
 

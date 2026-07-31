@@ -227,8 +227,28 @@ describe('WSL distro discovery cache', () => {
     }
   })
 
-  // Why: listWslDistrosAsync has no in-flight dedupe, so two probes overlap and can
-  // resolve out of order — a slow pre-registration wsl.exe landing after a fast one.
+  it('backs off after repeated distro-list failures', () => {
+    vi.useFakeTimers()
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error('transient failure')
+    })
+
+    try {
+      withPlatform('win32', () => {
+        expect(listWslDistros()).toEqual([])
+        vi.advanceTimersByTime(15_000)
+        expect(listWslDistros()).toEqual([])
+        expect(execFileSyncMock).toHaveBeenCalledTimes(2)
+        vi.advanceTimersByTime(15_000)
+        expect(listWslDistros()).toEqual([])
+        expect(execFileSyncMock).toHaveBeenCalledTimes(2)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // Why: listWslDistrosAsync has no in-flight dedupe, so two probes can resolve out of order.
   // The late empty answer must not erase the list the newer probe already found.
   it('does not let a late empty probe erase a list a newer probe found', async () => {
     const callbacks: ((error: Error | null, stdout: string) => void)[] = []
@@ -243,6 +263,24 @@ describe('WSL distro discovery cache', () => {
 
       callbacks[1](null, 'Ubuntu\n')
       callbacks[0](null, '')
+
+      await expect(fresh).resolves.toEqual(['Ubuntu'])
+      await expect(stale).resolves.toEqual(['Ubuntu'])
+      expect(getCachedWslDistros()).toEqual(['Ubuntu'])
+    })
+  })
+
+  it('does not let an older non-empty probe overwrite a newer list', async () => {
+    const callbacks: ((error: Error | null, stdout: string) => void)[] = []
+    execFileMock.mockImplementation((_command, _args, _options, callback) => {
+      callbacks.push(callback)
+    })
+
+    await withPlatformAsync('win32', async () => {
+      const stale = listWslDistrosAsync()
+      const fresh = listWslDistrosAsync()
+      callbacks[1](null, 'Ubuntu\n')
+      callbacks[0](null, 'Debian\n')
 
       await expect(fresh).resolves.toEqual(['Ubuntu'])
       await expect(stale).resolves.toEqual(['Ubuntu'])
@@ -278,9 +316,7 @@ describe('WSL distro discovery cache', () => {
     }
   })
 
-  // Why: the catch path arms a window without advancing the streak, so an overlapping
-  // empty probe computes its delay from a streak of 0 — unclamped that halves the base
-  // window to 7.5s and re-spawns wsl.exe early.
+  // Why: an overlapping failure and empty result must count as one retry window.
   it('holds the base window when a failure and an empty result overlap', async () => {
     vi.useFakeTimers()
     const callbacks: ((error: Error | null, stdout: string) => void)[] = []
@@ -301,6 +337,34 @@ describe('WSL distro discovery cache', () => {
         expect(listWslDistros()).toEqual([])
         expect(execFileSyncMock).not.toHaveBeenCalled()
         vi.advanceTimersByTime(7_500)
+        expect(listWslDistros()).toEqual([])
+        expect(execFileSyncMock).toHaveBeenCalledTimes(1)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not shorten an empty-list backoff when an overlapping probe fails', async () => {
+    vi.useFakeTimers()
+    execFileSyncMock.mockReturnValueOnce('')
+    const callbacks: ((error: Error | null, stdout: string) => void)[] = []
+    execFileMock.mockImplementation((_command, _args, _options, callback) => {
+      callbacks.push(callback)
+    })
+
+    try {
+      await withPlatformAsync('win32', async () => {
+        expect(listWslDistros()).toEqual([])
+        vi.advanceTimersByTime(15_000)
+
+        const empty = listWslDistrosAsync()
+        const failing = listWslDistrosAsync()
+        callbacks[0](null, '')
+        callbacks[1](new Error('transient failure'), '')
+        await Promise.all([empty, failing])
+
+        vi.advanceTimersByTime(15_000)
         expect(listWslDistros()).toEqual([])
         expect(execFileSyncMock).toHaveBeenCalledTimes(1)
       })
