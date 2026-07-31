@@ -16,7 +16,7 @@ function sourceFiles(directory: string): string[] {
 
 function isNonScreenExpoModule(path: string): boolean {
   const fileName = basename(path)
-  if (/\+api(?:\.\w+)?\.[jt]sx?$/.test(fileName)) {
+  if (/\+api\.[jt]sx?$/.test(fileName)) {
     return true
   }
   return (
@@ -67,7 +67,7 @@ function hasDefaultExport(path: string, source: string): boolean {
 describe('Expo route module boundary', () => {
   it('allows Expo modules that are not screen routes', () => {
     expect(isNonScreenExpoModule(join(appDirectory, 'health+api.ts'))).toBe(true)
-    expect(isNonScreenExpoModule(join(appDirectory, 'health+api.ios.ts'))).toBe(true)
+    expect(isNonScreenExpoModule(join(appDirectory, 'health+api.ios.ts'))).toBe(false)
     expect(isNonScreenExpoModule(join(appDirectory, '+html.tsx'))).toBe(true)
     expect(isNonScreenExpoModule(join(appDirectory, '+middleware.ts'))).toBe(true)
     expect(isNonScreenExpoModule(join(appDirectory, '+native-intent.ts'))).toBe(true)
