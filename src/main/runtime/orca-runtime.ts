@@ -1430,6 +1430,9 @@ type RuntimeAgentRowSnapshot = {
   ptyId: string
   worktreeId?: string
   tabId?: string
+  // Transport of the pane's PTY at retain time; null for local. Without it,
+  // OSC rows for SSH panes would lose the remote exemption in worktree.ps.
+  connectionId: string | null
   payload: ParsedAgentStatusPayload
   // When the current payload.state was first observed for this pane (ms).
   stateStartedAt: number
@@ -9607,6 +9610,7 @@ export class OrcaRuntimeService {
             target.paneKey,
             target.worktreeId,
             target.tabId,
+            target.connectionId ?? null,
             payload
           ) || retainedChanged
         if (!this.onTerminalAgentStatus) {
@@ -9637,6 +9641,7 @@ export class OrcaRuntimeService {
     paneKey: string,
     worktreeId: string | undefined,
     tabId: string | undefined,
+    connectionId: string | null,
     payload: ParsedAgentStatusPayload
   ): boolean {
     const now = Date.now()
@@ -9651,6 +9656,7 @@ export class OrcaRuntimeService {
       ptyId,
       worktreeId,
       tabId,
+      connectionId,
       payload,
       stateStartedAt,
       updatedAt: now
@@ -16469,6 +16475,8 @@ export class OrcaRuntimeService {
 
     // Why: a connected PTY proves a pane is still live even when its tab has
     // already left every session record (daemon-held terminals, graph gaps).
+    // Deliberately trusts the optimistic connected flag (no freshPtyLiveness
+    // gate, unlike the count loops above): evidence only KEEPS rows.
     const connectedPtyEvidence = {
       tabIds: new Set<string>(),
       paneKeys: new Set<string>(),
@@ -16547,7 +16555,7 @@ export class OrcaRuntimeService {
         ptyId: snapshot.ptyId,
         tabId: snapshot.tabId,
         worktreeId: snapshot.worktreeId,
-        connectionId: null,
+        connectionId: snapshot.connectionId,
         state: payload.state,
         agentType: payload.agentType ?? null,
         prompt: payload.prompt,
@@ -16600,16 +16608,19 @@ export class OrcaRuntimeService {
       const mirroredWorktreeId = tabId ? mirroredWorktreeIdByTabId.get(tabId) : undefined
       if (
         tabId !== undefined &&
-        !this.tabs.has(tabId) &&
+        mirroredWorktreeId === undefined &&
         (src.connectionId === null || isWslHookRelayConnectionId(src.connectionId)) &&
         !connectedPtyEvidence.tabIds.has(tabId) &&
         !connectedPtyEvidence.paneKeys.has(src.paneKey) &&
         (src.ptyId === undefined || !connectedPtyEvidence.ptyIds.has(src.ptyId))
       ) {
-        // Why: hook snapshots hydrate from last-status.json for days, so a local
-        // row missing from the live graph with no connected PTY is retained
-        // history; persisted tabs can outlive a close (#6072). SSH rows are
-        // exempt because their tabs may only exist remotely.
+        // Why: hook snapshots hydrate from last-status.json for days, so a row
+        // from a local or WSL-relayed pane whose tab left every session and the
+        // live graph, with no connected PTY, is retained history — surfacing it
+        // resurrects closed agents on mobile (#6072). SSH rows are exempt (their
+        // tabs may exist only remotely), as are rows with no resolvable tabId
+        // (staleness unprovable). Session tabs count as existence: headless
+        // serve has no renderer graph, and session.tabs.list serves them.
         continue
       }
       const worktreeId = mirroredWorktreeId ?? src.worktreeId
