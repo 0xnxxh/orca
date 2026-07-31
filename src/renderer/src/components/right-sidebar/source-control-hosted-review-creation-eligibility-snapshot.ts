@@ -68,16 +68,14 @@ export function resolveHostedReviewCreationProviderForTarget(
  * times out, so the UI can show branch guidance without treating the failed
  * lookup as authority to create a review.
  *
- * Mirrors the main process's own lookup-failure fallback exactly — both its
- * `canReturnLocalBlocker` guard and its blocker ordering
- * (`src/main/source-control/hosted-review-creation.ts`). The guard is
- * load-bearing: without it a failed probe on the default branch or a detached
- * HEAD would synthesize `dirty`/`commit` and surface an *enabled* Create PR
- * that commits onto the base branch, where the real probe returns
- * `default_branch`/`detached_head` (disabled). Returns null when no local
- * blocker is determinable (unknown upstream, ahead-only, fully synced) so the
- * caller can surface the retryable state — matching main, which won't offer a
- * push it can't first auth-check.
+ * Blocker ordering matches main (`dirty` → `no_upstream` → `needs_sync`). The
+ * branch/base guard is load-bearing and intentionally stricter than main when
+ * base is unknown: without a known base, a failed probe must not synthesize
+ * `dirty`/`commit` on what might be the default branch (main would return
+ * `default_branch`/`detached_head` and keep Create disabled). Returns null
+ * when no local blocker is determinable (unknown base, unknown upstream,
+ * ahead-only, fully synced) so the caller can surface the retryable state —
+ * matching main, which won't offer a push it can't first auth-check.
  */
 export function buildLocalBlockerHostedReviewCreationEligibility(
   provider: HostedReviewProvider,

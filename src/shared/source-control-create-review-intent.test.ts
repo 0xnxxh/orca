@@ -35,6 +35,38 @@ describe('resolveCreateReviewIntentEligibility', () => {
     ).toEqual({ eligible: false, kind: null })
   })
 
+  it('rejects unavailable eligibility when the default branch is blank', () => {
+    expect(
+      resolveCreateReviewIntentEligibility({
+        stagedCount: 1,
+        hasStageableChanges: true,
+        hasMessage: true,
+        hasUnresolvedConflicts: false,
+        upstreamStatus: { hasUpstream: true, ahead: 0, behind: 0 },
+        hostedReviewCreation: {
+          ...unavailableEligibility('dirty'),
+          defaultBaseRef: '   '
+        }
+      })
+    ).toEqual({ eligible: false, kind: null })
+  })
+
+  it('stays ineligible when no local blocker remains under unavailable lookup', () => {
+    expect(
+      resolveCreateReviewIntentEligibility({
+        stagedCount: 0,
+        hasStageableChanges: false,
+        hasMessage: true,
+        hasUnresolvedConflicts: false,
+        upstreamStatus: { hasUpstream: true, ahead: 0, behind: 0 },
+        hostedReviewCreation: {
+          ...unavailableEligibility('dirty'),
+          blockedReason: null
+        }
+      })
+    ).toEqual({ eligible: false, kind: null })
+  })
+
   it('keeps dirty local preparation eligible when review lookup is unavailable', () => {
     expect(
       resolveCreateReviewIntentEligibility({
