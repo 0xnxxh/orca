@@ -3349,15 +3349,6 @@
           "result": "passed",
           "durationSeconds": 17.5,
           "summary": "The headed six-PTY oracle kept all warm-mounted hidden streams at zero renderer scheduler enqueues/drains under sustained output and under 500 ms timer lag, then restored the authoritative flood tail and parked/live markers exactly once."
-        },
-        {
-          "date": "2026-07-30",
-          "runner": "local",
-          "platform": "macos",
-          "command": "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/headless-paired-remote-terminal-retention-memory.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
-          "result": "passed",
-          "durationSeconds": 14.0,
-          "summary": "The isolated headless host passed the same six-stream zero-hidden-renderer-work, bounded-lag, exact authoritative restoration, same-PTY, and continued-I/O oracle."
         }
       ],
       "runtimeBudget": {
