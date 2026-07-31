@@ -1593,6 +1593,9 @@ export class CodexRuntimeHomeService {
         return
       }
       const snapshot = this.readSystemDefaultSnapshot(this.getSystemDefaultSnapshotPath())
+      const systemDefaultOwnershipProven =
+        provenance?.owner === 'system-default' ||
+        (provenanceStatus.kind === 'missing' && snapshot !== null)
       const mirroredSystemDefaultAuth =
         provenance?.owner === 'system-default'
           ? provenance.authJson
@@ -1605,7 +1608,7 @@ export class CodexRuntimeHomeService {
           return
         }
         if (
-          provenance?.owner === 'system-default' &&
+          systemDefaultOwnershipProven &&
           mirroredSystemDefaultAuth !== null &&
           this.runtimeAuthMatchesSystemDefaultIdentity(runtimeAuth, mirroredSystemDefaultAuth)
         ) {
@@ -1619,7 +1622,7 @@ export class CodexRuntimeHomeService {
         return
       }
       if (
-        provenance?.owner === 'system-default' &&
+        systemDefaultOwnershipProven &&
         mirroredSystemDefaultAuth !== null &&
         systemDefaultAuth === mirroredSystemDefaultAuth &&
         this.runtimeAuthMatchesSystemDefaultIdentity(runtimeAuth, mirroredSystemDefaultAuth)

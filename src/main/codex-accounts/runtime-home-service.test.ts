@@ -3765,7 +3765,7 @@ describe('CodexRuntimeHomeService', () => {
     ).toEqual({ authJson: refreshedAuth })
   })
 
-  it('reads back system-default token refreshes after restart when the snapshot proves the baseline', async () => {
+  it('reads back system-default token refreshes after a pre-provenance restart', async () => {
     const runtimeAuthPath = getRuntimeCodexAuthPath()
     const systemAuth = createCodexAuthJson('system@example.com', 'acct-system', 'system-old')
     const refreshedAuth = createCodexAuthJson(
@@ -3780,6 +3780,7 @@ describe('CodexRuntimeHomeService', () => {
     new CodexRuntimeHomeService(store as never)
 
     writeFileSync(runtimeAuthPath, refreshedAuth, 'utf-8')
+    rmSync(getSharedRuntimeAuthProvenancePath())
     const restartedService = new CodexRuntimeHomeService(store as never)
     restartedService.syncForCurrentSelection()
 
@@ -3915,6 +3916,24 @@ describe('CodexRuntimeHomeService', () => {
         join(testState.userDataDir, 'codex-runtime-home', 'system-default-runtime-logout.json')
       )
     ).toBe(true)
+  })
+
+  it('clears refreshed runtime auth after a pre-provenance external logout', async () => {
+    const runtimeAuthPath = getRuntimeCodexAuthPath()
+    const systemAuth = createCodexAuthJson('system@example.com', 'acct-system', 'system')
+    const refreshedAuth = createCodexAuthJson('system@example.com', 'acct-system', 'refreshed')
+    writeFileSync(getSystemCodexAuthPath(), systemAuth, 'utf-8')
+    const store = createStore(createSettings())
+
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    new CodexRuntimeHomeService(store as never)
+
+    writeFileSync(runtimeAuthPath, refreshedAuth, 'utf-8')
+    rmSync(getSharedRuntimeAuthProvenancePath())
+    rmSync(getSystemCodexAuthPath())
+    new CodexRuntimeHomeService(store as never)
+
+    expect(existsSync(runtimeAuthPath)).toBe(false)
   })
 
   it('persists runtime auth refreshes after returning to system default', async () => {
