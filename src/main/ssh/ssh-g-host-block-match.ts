@@ -34,6 +34,10 @@ function localAccountName(): string {
  * would silently replace a stored target's host/port/user/proxy/identity with
  * those defaults — dialing the bare alias as the local user — whenever the block
  * is renamed, removed, or lives on another machine.
+ *
+ * Known limitation: the signals below read the *effective* config, so a wildcard
+ * `Host *` supplying User/Port/ProxyCommand — or `CanonicalizeHostname yes` —
+ * still reads as a match for an alias whose own block is gone.
  */
 export function hasOpenSshHostBlockMatch(
   target: HostBlockMatchTarget,

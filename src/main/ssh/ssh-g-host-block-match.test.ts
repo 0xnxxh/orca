@@ -135,6 +135,17 @@ describe('ssh -G host-block matching', () => {
     expect(mockReadFileSync).not.toHaveBeenCalledWith('/keys/prod')
   })
 
+  // Every other field is a bare default, so only the rewritten HostName can carry the verdict.
+  it('treats a rewritten HostName as a match when nothing else differs from the defaults', () => {
+    const config = buildConnectConfig(
+      storedTarget({ jumpHost: undefined }),
+      unmatchedDefaults({ hostname: '10.9.9.9' }),
+      { includeAgent: false, includePrivateKey: true }
+    )
+
+    expect(config.host).toBe('10.9.9.9')
+  })
+
   it('treats a User directive as a match even when HostName echoes the alias', () => {
     const config = buildConnectConfig(
       storedTarget({ configHost: 'github.com', label: 'github.com', host: 'github.com' }),
@@ -146,14 +157,35 @@ describe('ssh -G host-block matching', () => {
     expect(config.username).toBe('git')
   })
 
+  // Stored port stays non-22 so the legacy `target.port === 22` fallback can't supply the answer.
   it('treats a non-default Port as a match even when HostName echoes the alias', () => {
     const config = buildConnectConfig(
-      storedTarget({ port: 22 }),
+      storedTarget({ port: 2222 }),
       unmatchedDefaults({ port: 2022 }),
       { includeAgent: false, includePrivateKey: true }
     )
 
     expect(config.port).toBe(2022)
+  })
+
+  it('treats a ProxyJump directive as a match even when HostName echoes the alias', () => {
+    const target = storedTarget({ jumpHost: 'stale-bastion' })
+
+    expect(resolveEffectiveProxy(target, unmatchedDefaults({ proxyJump: 'edge' }))).toEqual({
+      kind: 'jump-host',
+      jumpHost: 'edge'
+    })
+  })
+
+  it('treats a ProxyCommand directive as a match even when HostName echoes the alias', () => {
+    const target = storedTarget({ jumpHost: undefined, proxyCommand: 'stale-proxy %h' })
+
+    expect(
+      resolveEffectiveProxy(target, unmatchedDefaults({ proxyCommand: 'cf access ssh %h' }))
+    ).toEqual({
+      kind: 'proxy-command',
+      command: 'cf access ssh %h'
+    })
   })
 
   it('keeps manual targets on their stored fields regardless of ssh -G output', () => {
