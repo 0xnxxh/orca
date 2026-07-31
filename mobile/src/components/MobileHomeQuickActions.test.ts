@@ -142,6 +142,21 @@ describe('MobileHomeQuickActions', () => {
     expect(JSON.stringify(picker().props.options)).not.toContain('bearer-secret')
   })
 
+  it('does not expose malformed legacy endpoint details', async () => {
+    await renderQuickActions([
+      host('desk-a', 'Desk', 'gateway.example.com/v1/connect/bearer-secret?token=query-secret'),
+      host('desk-b', 'Desk', 'legacy-endpoint/other-secret')
+    ])
+
+    act(() => newWorkspaceButton().props.onPress())
+
+    expect(picker().props.options).toEqual([
+      { value: 'desk-a', label: 'Desk', subtitle: 'Unknown endpoint · desk-a' },
+      { value: 'desk-b', label: 'Desk', subtitle: 'Unknown endpoint · desk-b' }
+    ])
+    expect(JSON.stringify(picker().props.options)).not.toContain('secret')
+  })
+
   it('closes a stale picker when fewer than two hosts remain connected', async () => {
     const desk = host('desk', 'Desk', 'ws://192.168.1.2:6768')
     const laptop = host('laptop', 'Laptop', 'wss://relay.example.com/mobile')

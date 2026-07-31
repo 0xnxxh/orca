@@ -3,6 +3,6 @@ export function hostEndpointLabel(endpoint: string): string {
     const url = new URL(endpoint)
     return `${url.hostname}${url.port ? `:${url.port}` : ''}`
   } catch {
-    return endpoint
+    return 'Unknown endpoint'
   }
 }
