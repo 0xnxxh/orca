@@ -1,7 +1,11 @@
 import type { SkillDiscoveryResult, SkillDiscoveryTarget } from '../../../shared/skills'
 import type { RuntimeClientTarget } from '@/runtime/runtime-rpc-client'
 import { discoverSkillsForRuntimeTarget } from '@/runtime/runtime-skills-client'
-import { INSTALLED_AGENT_SKILLS_CHANGED_EVENT } from './installed-agent-skills-change-event'
+import {
+  INSTALLED_AGENT_SKILL_DISCOVERY_RUNTIME_REPLACED_EVENT,
+  INSTALLED_AGENT_SKILLS_CHANGED_EVENT,
+  type InstalledAgentSkillDiscoveryRuntimeReplacedDetail
+} from './installed-agent-skills-change-event'
 import {
   clearInstalledAgentSkillDiscoveryCache,
   evictInstalledAgentSkillDiscoveryCacheKey,
@@ -46,6 +50,26 @@ export function evictSkillDiscoveryForRuntimeEnvironments(environmentIds: readon
     evictInstalledAgentSkillDiscoveryCacheKey(key)
     pendingDiscoveryByTarget.delete(key)
     pendingDiscoverySatisfiesForcedRefreshByTarget.delete(key)
+  }
+}
+
+export function notifySkillDiscoveryRuntimeEnvironmentsReplaced(
+  environmentIds: readonly string[]
+): void {
+  if (
+    environmentIds.length > 0 &&
+    typeof window !== 'undefined' &&
+    typeof window.dispatchEvent === 'function'
+  ) {
+    const keys = environmentIds.map((environmentId) =>
+      getRuntimeScopedSkillDiscoveryKey({ kind: 'environment', environmentId }, undefined)
+    )
+    window.dispatchEvent(
+      new CustomEvent<InstalledAgentSkillDiscoveryRuntimeReplacedDetail>(
+        INSTALLED_AGENT_SKILL_DISCOVERY_RUNTIME_REPLACED_EVENT,
+        { detail: { keys } }
+      )
+    )
   }
 }
 
