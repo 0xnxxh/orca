@@ -64,6 +64,7 @@ export type RuntimeStatusSlice = {
 
 const connectionGenerationByEnvironment = new Map<string, number>()
 const activeRuntimeDisconnectedToasts = new Map<string, symbol>()
+const RUNTIME_DISCONNECTED_TOAST_DURATION_MS = 4_000
 
 function getRuntimeDisconnectedToastId(environmentId: string): string {
   return `runtime-environment-disconnected:${environmentId}`
@@ -89,30 +90,49 @@ function showRuntimeDisconnectedToast(environmentId: string, getState: () => App
       activeRuntimeDisconnectedToasts.delete(toastId)
     }
   }
-  toast.warning(title, {
-    id: toastId,
-    description: translate(
-      'auto.store.slices.runtime.status.runtimeHostDisconnectedDescription',
-      'Workspaces and terminals on this server are unavailable.'
-    ),
-    action: {
-      label: translate('browser.loadFailure.retry', 'Retry'),
-      onClick: () => {
-        void getState()
-          .refreshRuntimeEnvironmentStatus(environmentId)
-          .then((reachable) => {
-            const stillSaved = getState().runtimeEnvironments.some(
-              (entry) => entry.id === environmentId
-            )
-            if (!reachable && stillSaved) {
-              showRuntimeDisconnectedToast(environmentId, getState)
-            }
-          })
-      }
-    },
-    onDismiss: clearActiveToast,
-    onAutoClose: clearActiveToast
-  })
+  let retrying = false
+  const showToast = (duration = RUNTIME_DISCONNECTED_TOAST_DURATION_MS): void => {
+    toast.warning(title, {
+      id: toastId,
+      description: translate(
+        'auto.store.slices.runtime.status.runtimeHostDisconnectedDescription',
+        'Workspaces and terminals on this server are unavailable.'
+      ),
+      duration,
+      action: {
+        label: translate('browser.loadFailure.retry', 'Retry'),
+        onClick: (event) => {
+          // Why: Sonner otherwise deletes the keyed toast after the action callback.
+          event.preventDefault()
+          if (retrying) {
+            return
+          }
+          retrying = true
+          showToast(Number.POSITIVE_INFINITY)
+          void getState()
+            .refreshRuntimeEnvironmentStatus(environmentId)
+            .then((reachable) => {
+              const stillSaved = getState().runtimeEnvironments.some(
+                (entry) => entry.id === environmentId
+              )
+              if (
+                !reachable &&
+                stillSaved &&
+                activeRuntimeDisconnectedToasts.get(toastId) === activation
+              ) {
+                showToast()
+              }
+            })
+            .finally(() => {
+              retrying = false
+            })
+        }
+      },
+      onDismiss: clearActiveToast,
+      onAutoClose: clearActiveToast
+    })
+  }
+  showToast()
 }
 
 function dismissRuntimeDisconnectedToast(environmentId: string): void {

@@ -78,6 +78,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -207,7 +208,16 @@ describe('runtime-status slice', () => {
     expect(toast.dismiss).toHaveBeenCalledWith('runtime-environment-disconnected:env-a')
   })
 
-  it('retries from the toast and re-surfaces it when the server is still offline', async () => {
+  it('keeps the keyed action toast visible when an offline retry settles', async () => {
+    vi.useFakeTimers()
+    const toastId = 'runtime-environment-disconnected:env-a'
+    const visibleToastIds = new Set<string | number>()
+    vi.mocked(toast.warning).mockImplementation((_title, options) => {
+      if (options?.id !== undefined) {
+        visibleToastIds.add(options.id)
+      }
+      return options?.id ?? ''
+    })
     const getStatus = vi.fn().mockRejectedValue(new Error('closed'))
     stubRuntimeEnvironmentApi({ getStatus })
     const store = createSliceStore()
@@ -215,18 +225,39 @@ describe('runtime-status slice', () => {
     store.getState().setRuntimeEnvironmentStatus('env-a', { status: makeStatus(), checkedAt: 1 })
     store.getState().setRuntimeEnvironmentStatus('env-a', { status: null, checkedAt: 2 })
     const options = vi.mocked(toast.warning).mock.calls[0]?.[1] as unknown as {
-      action: { onClick: () => void }
+      action: { onClick: (event: { preventDefault: () => void }) => void }
+    }
+    const clickAction = (): { defaultPrevented: boolean } => {
+      const event = {
+        defaultPrevented: false,
+        preventDefault() {
+          this.defaultPrevented = true
+        }
+      }
+      options.action.onClick(event)
+      if (!event.defaultPrevented) {
+        setTimeout(() => visibleToastIds.delete(toastId), 200)
+      }
+      return event
     }
 
-    options.action.onClick()
+    const firstClick = clickAction()
+    const secondClick = clickAction()
+    await vi.advanceTimersByTimeAsync(0)
 
-    await vi.waitFor(() => {
-      expect(getStatus).toHaveBeenCalledWith({ selector: 'env-a', timeoutMs: 10_000 })
-      expect(toast.warning).toHaveBeenCalledTimes(2)
-    })
-    expect(vi.mocked(toast.warning).mock.calls[1]?.[1]?.id).toBe(
-      'runtime-environment-disconnected:env-a'
-    )
+    expect(firstClick.defaultPrevented).toBe(true)
+    expect(secondClick.defaultPrevented).toBe(true)
+    expect(getStatus).toHaveBeenCalledWith({ selector: 'env-a', timeoutMs: 10_000 })
+    await vi.advanceTimersByTimeAsync(200)
+    expect(visibleToastIds.has(toastId)).toBe(true)
+    expect(getStatus).toHaveBeenCalledTimes(1)
+    expect(toast.warning).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(toast.warning).mock.calls.map((call) => call[1]?.duration)).toEqual([
+      4_000,
+      Number.POSITIVE_INFINITY,
+      4_000
+    ])
+    expect(vi.mocked(toast.warning).mock.calls.every((call) => call[1]?.id === toastId)).toBe(true)
   })
 
   it('does not report removal or explicit status clearing as a disconnect', () => {
