@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  createGitStatusRefreshPacing,
   createGitStatusRefreshScheduler,
+  type GitStatusRefreshPacing,
   type GitStatusRefreshReason
 } from './git-status-refresh-scheduler'
 
@@ -19,7 +21,8 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 function createScheduler(
-  task: (request: { reason: GitStatusRefreshReason; signal: AbortSignal }) => Promise<void>
+  task: (request: { reason: GitStatusRefreshReason; signal: AbortSignal }) => Promise<void>,
+  pacing?: GitStatusRefreshPacing
 ) {
   return createGitStatusRefreshScheduler(task, {
     safetyIntervalMs: 60_000,
@@ -29,7 +32,8 @@ function createScheduler(
       idleMultiplier: 5,
       changeSignalMultiplier: 1,
       maxIntervalMs: 5 * 60_000
-    }
+    },
+    ...(pacing ? { pacing } : {})
   })
 }
 
@@ -255,6 +259,56 @@ describe('createGitStatusRefreshScheduler', () => {
     expect(task).toHaveBeenCalledTimes(2)
     await flushMicrotasks()
     await vi.advanceTimersByTimeAsync(120_000)
+    expect(task).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the activity floor across scheduler recreation when pacing is shared', async () => {
+    vi.useFakeTimers()
+    const task = vi.fn(async () => {})
+    const pacing = createGitStatusRefreshPacing()
+
+    const first = createScheduler(task, pacing)
+    first.resumeSafety()
+    await flushMicrotasks()
+    expect(task).toHaveBeenCalledTimes(1)
+    first.dispose()
+
+    // A rebuild (execution-host/push-target change) must not grant a fresh
+    // immediate run; the floor from the previous run still applies.
+    const second = createScheduler(task, pacing)
+    second.resumeSafety()
+    await flushMicrotasks()
+    expect(task).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(2999)
+    expect(task).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(task).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps slow-scan backoff across scheduler recreation when pacing is shared', async () => {
+    vi.useFakeTimers()
+    const calls: ReturnType<typeof deferred>[] = []
+    const task = vi.fn(() => {
+      const call = deferred()
+      calls.push(call)
+      return call.promise
+    })
+    const pacing = createGitStatusRefreshPacing()
+
+    const first = createScheduler(task, pacing)
+    first.resumeSafety()
+    await vi.advanceTimersByTimeAsync(30_000)
+    calls[0]?.resolve()
+    await flushMicrotasks()
+    first.dispose()
+
+    const second = createScheduler(task, pacing)
+    second.resumeSafety()
+    await flushMicrotasks()
+    // The 30s scan duration still paces the next run: max(3s floor, 1x 30s).
+    await vi.advanceTimersByTimeAsync(29_999)
+    expect(task).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
     expect(task).toHaveBeenCalledTimes(2)
   })
 

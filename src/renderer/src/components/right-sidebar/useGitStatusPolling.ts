@@ -15,7 +15,9 @@ import { useGitStatusFileWatchRefresh } from './git-status-file-watch-refresh'
 import { useGitStatusPushSignalRefresh } from './git-status-push-signal-refresh'
 import { useStaleConflictOperationPolling } from './stale-conflict-operation-poll'
 import {
+  createGitStatusRefreshPacing,
   createGitStatusRefreshScheduler,
+  type GitStatusRefreshPacing,
   type GitStatusRefreshReason,
   type GitStatusRefreshScheduler
 } from './git-status-refresh-scheduler'
@@ -162,8 +164,19 @@ export function useGitStatusPolling(options: { enabled?: boolean } = {}): void {
   const statusRefreshGenerationRef = useRef(0)
 
   const statusSchedulerRef = useRef<GitStatusRefreshScheduler | null>(null)
+  // Why: pacing is keyed by worktree, not by scheduler instance — the rebuilds
+  // below (execution-host/push-target changes) must not reset it, or a flapping
+  // host id lets sustained change signals run git at the bare debounce.
+  const statusPacingByWorktreeRef = useRef<Map<string, GitStatusRefreshPacing> | null>(null)
   useEffect(() => {
     const generation = ++statusRefreshGenerationRef.current
+    const pacingByWorktree = (statusPacingByWorktreeRef.current ??= new Map())
+    const pacingKey = `${activeWorktreeId}\0${worktreePath}`
+    let pacing = pacingByWorktree.get(pacingKey)
+    if (!pacing) {
+      pacing = createGitStatusRefreshPacing()
+      pacingByWorktree.set(pacingKey, pacing)
+    }
     const scheduler = createGitStatusRefreshScheduler(
       ({ reason, signal }) =>
         runFetchStatusRef.current({
@@ -179,7 +192,8 @@ export function useGitStatusPolling(options: { enabled?: boolean } = {}): void {
         safetyIntervalMs: STATUS_SAFETY_INTERVAL_MS,
         activityDebounceMs: STATUS_ACTIVITY_DEBOUNCE_MS,
         activityMinGapMs: STATUS_ACTIVITY_MIN_GAP_MS,
-        slowTaskBackoff: SLOW_GIT_POLL_BACKOFF
+        slowTaskBackoff: SLOW_GIT_POLL_BACKOFF,
+        pacing
       }
     )
     statusSchedulerRef.current = scheduler
