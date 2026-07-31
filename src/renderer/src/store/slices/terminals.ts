@@ -87,7 +87,10 @@ import {
   normalizeTerminalLayoutSnapshot,
   resolvePtyBoundActiveLeafId
 } from '@/components/terminal-pane/terminal-layout-leaf-ids'
-import { normalizeTerminalLayoutPtyOwnership } from '@/components/terminal-pane/terminal-layout-pty-ownership'
+import {
+  normalizeTerminalLayoutPtyOwnership,
+  resolveTerminalLayoutPtyOwnershipTransfers
+} from '@/components/terminal-pane/terminal-layout-pty-ownership'
 import { shutdownBufferCaptures } from '@/components/terminal-pane/shutdown-buffer-captures'
 import { callRuntimeRpc } from '@/runtime/runtime-rpc-client'
 import { parseRemoteRuntimePtyId, toRemoteRuntimePtyId } from '@/runtime/runtime-terminal-stream'
@@ -3511,15 +3514,30 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
   },
 
   setTabLayout: (tabId, layout) => {
+    let ownershipTransfers: ReturnType<typeof resolveTerminalLayoutPtyOwnershipTransfers> = []
     set((s) => {
       const next = { ...s.terminalLayoutsByTabId }
       if (layout) {
-        next[tabId] = normalizeTerminalLayoutPtyOwnership(layout).snapshot
+        const normalized = normalizeTerminalLayoutPtyOwnership(layout)
+        next[tabId] = normalized.snapshot
+        if (normalized.changed) {
+          ownershipTransfers = resolveTerminalLayoutPtyOwnershipTransfers(
+            layout,
+            normalized.snapshot
+          )
+        }
       } else {
         delete next[tabId]
       }
       return { terminalLayoutsByTabId: next }
     })
+    for (const { removedLeafId, retainedLeafId, ptyId } of ownershipTransfers) {
+      get().transferAgentPaneAuthority({
+        fromPaneKey: makePaneKey(tabId, removedLeafId),
+        toPaneKey: makePaneKey(tabId, retainedLeafId),
+        ptyId
+      })
+    }
   },
 
   syncPaneDetachPtyOwnership: ({

@@ -300,3 +300,20 @@ export function normalizeTerminalLayoutPtyOwnership(
     changed: true
   }
 }
+
+export function resolveTerminalLayoutPtyOwnershipTransfers(
+  source: TerminalLayoutSnapshot,
+  normalized: TerminalLayoutSnapshot
+): { removedLeafId: string; retainedLeafId: string; ptyId: string }[] {
+  const retainedLeafIdByPtyId = new Map(
+    Object.entries(normalized.ptyIdsByLeafId ?? {}).map(([leafId, ptyId]) => [ptyId, leafId])
+  )
+  const transfers: { removedLeafId: string; retainedLeafId: string; ptyId: string }[] = []
+  for (const [removedLeafId, ptyId] of Object.entries(source.ptyIdsByLeafId ?? {})) {
+    const retainedLeafId = retainedLeafIdByPtyId.get(ptyId)
+    if (retainedLeafId && retainedLeafId !== removedLeafId) {
+      transfers.push({ removedLeafId, retainedLeafId, ptyId })
+    }
+  }
+  return transfers
+}
