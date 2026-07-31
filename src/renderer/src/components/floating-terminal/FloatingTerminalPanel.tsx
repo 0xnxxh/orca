@@ -12,6 +12,7 @@ import { useContextualTour } from '@/components/contextual-tours/use-contextual-
 import TabBar from '@/components/tab-bar/TabBar'
 import { resolveGroupTabFromVisibleId } from '@/components/tab-group/tab-group-visible-id'
 import TerminalPane, { type TerminalPaneHandle } from '@/components/terminal-pane/TerminalPane'
+import { shouldDeferParkedPtyExitTabClose } from '@/components/terminal-pane/terminal-parked-tab-watchers'
 import { useTerminalTabColdParking } from '@/components/terminal-pane/use-terminal-tab-cold-parking'
 import { isTerminalPaneCloseChord } from '@/components/terminal-pane/terminal-shortcut-policy'
 import { isTerminalImeInputContextRefreshing } from '@/components/terminal-pane/terminal-ime-input-context-refresh'
@@ -1863,7 +1864,15 @@ export function FloatingTerminalPanel({
                         // atlas to corrupt) while hidden, and the resume on
                         // reopen rebuilds the renderer from scratch.
                         isVisible={isActive && open}
-                        onPtyExit={() => closeTab(tab.id, { reason: 'pty-exit' })}
+                        onPtyExit={(ptyId) => {
+                          if (shouldDeferParkedPtyExitTabClose(tab.id, ptyId)) {
+                            return
+                          }
+                          closeTerminalTab(tab.id, {
+                            reason: 'pty-exit',
+                            lifecyclePtyId: ptyId
+                          })
+                        }}
                         onCloseTab={() => closeFloatingItemConfirmed(tab.id)}
                       />
                     </div>

@@ -137,6 +137,7 @@ const mocks = vi.hoisted(() => ({
   setTabColor: vi.fn(),
   setTabCustomTitle: vi.fn(),
   setTabPaneExpanded: vi.fn(),
+  shouldDeferParkedPtyExitTabClose: vi.fn(),
   useContextualTour: vi.fn()
 }))
 
@@ -211,6 +212,10 @@ vi.mock('@/components/terminal-pane/TerminalPane', () => ({
 
 vi.mock('@/components/terminal-pane/use-terminal-tab-cold-parking', () => ({
   useTerminalTabColdParking: () => parkingBox.parkedTabIds
+}))
+
+vi.mock('@/components/terminal-pane/terminal-parked-tab-watchers', () => ({
+  shouldDeferParkedPtyExitTabClose: mocks.shouldDeferParkedPtyExitTabClose
 }))
 
 vi.mock('@/components/terminal-pane/terminal-ime-input-context-refresh', () => ({
@@ -825,6 +830,7 @@ describe('FloatingTerminalPanel close behavior', () => {
     mocks.isTerminalImeInputContextRefreshing.mockReturnValue(false)
     mocks.isWebRuntimeSessionActive.mockReturnValue(false)
     mocks.pickFloatingMarkdownDocument.mockResolvedValue(null)
+    mocks.shouldDeferParkedPtyExitTabClose.mockReturnValue(false)
     const localStorage = {
       clear: vi.fn(),
       getItem: vi.fn(() => null),
@@ -2522,11 +2528,16 @@ describe('FloatingTerminalPanel close behavior', () => {
     const element = await renderPanel(true, onOpenChange)
     const terminalPane = findByTypeName(element, 'TerminalPane')
 
-    ;(terminalPane.props.onPtyExit as () => void)()
-    expect(mocks.closeTab).toHaveBeenCalledWith('tab-1', { reason: 'pty-exit' })
+    ;(terminalPane.props.onPtyExit as (ptyId: string) => void)('pty-1')
+    expect(mocks.shouldDeferParkedPtyExitTabClose).toHaveBeenCalledWith('tab-1', 'pty-1')
+    expect(mocks.closeTerminalTab).toHaveBeenCalledWith('tab-1', {
+      lifecyclePtyId: 'pty-1',
+      reason: 'pty-exit'
+    })
+    expect(mocks.closeTab).not.toHaveBeenCalled()
     expect(onOpenChange).not.toHaveBeenCalled()
 
-    mocks.closeTab.mockClear()
+    mocks.closeTerminalTab.mockClear()
     ;(terminalPane.props.onCloseTab as () => void)()
     // Explicit pane close routes through the confirmed-close authority, not a raw pty-exit prune.
     expect(mocks.closeTerminalTab).toHaveBeenCalledWith(
@@ -2535,6 +2546,23 @@ describe('FloatingTerminalPanel close behavior', () => {
     )
     expect(mocks.closeTab).not.toHaveBeenCalled()
     expect(onOpenChange).not.toHaveBeenCalled()
+  })
+
+  it('preserves split siblings when a parked PTY exits during reveal', async () => {
+    setFloatingTabs([makeTab({ id: 'tab-1' })])
+    mocks.shouldDeferParkedPtyExitTabClose.mockReturnValueOnce(true)
+
+    await renderPanel(true)
+    runEffects()
+    await Promise.resolve()
+    const element = await renderPanel(true)
+    const terminalPane = findByTypeName(element, 'TerminalPane')
+
+    ;(terminalPane.props.onPtyExit as (ptyId: string) => void)('split-pty')
+
+    expect(mocks.shouldDeferParkedPtyExitTabClose).toHaveBeenCalledWith('tab-1', 'split-pty')
+    expect(mocks.closeTerminalTab).not.toHaveBeenCalled()
+    expect(mocks.closeTab).not.toHaveBeenCalled()
   })
 
   it('renders and closes simulator tabs in the floating workspace', async () => {

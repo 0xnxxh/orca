@@ -132,37 +132,30 @@ export async function runPairedTerminalColdActivationOracle(
       })
     }
 
-    const originalPtyIds = await expect
+    let originalPtyIds: string[] | null = null
+    await expect
       .poll(
-        () =>
-          page.evaluate(
+        async () => {
+          originalPtyIds = await page.evaluate(
             ({ tabIds, targetWorktreeId }) => {
               const tabs = window.__store?.getState().tabsByWorktree[targetWorktreeId] ?? []
               const byId = new Map(tabs.map((tab) => [tab.id, tab.ptyId]))
               const ids = tabIds.map((id) => byId.get(id) ?? null)
-              return ids.every((id) => typeof id === 'string') ? ids : null
+              return ids.every((id): id is string => typeof id === 'string') ? ids : null
             },
             {
               tabIds: pendingTabs.map((tab) => tab.tabId),
               targetWorktreeId: worktreeId
             }
-          ),
+          )
+          return originalPtyIds
+        },
         { timeout: 30_000 }
       )
       .not.toBeNull()
-      .then(() =>
-        page.evaluate(
-          ({ tabIds, targetWorktreeId }) => {
-            const tabs = window.__store?.getState().tabsByWorktree[targetWorktreeId] ?? []
-            const byId = new Map(tabs.map((tab) => [tab.id, tab.ptyId]))
-            return tabIds.map((id) => byId.get(id)!)
-          },
-          {
-            tabIds: pendingTabs.map((tab) => tab.tabId),
-            targetWorktreeId: worktreeId
-          }
-        )
-      )
+    if (originalPtyIds === null) {
+      throw new Error('Paired cold-activation PTY ids were not captured')
+    }
     const tabs: ColdTab[] = pendingTabs.map((tab, index) => ({
       ...tab,
       originalPtyId: originalPtyIds[index]!

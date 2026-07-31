@@ -3105,7 +3105,7 @@
         "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-probe-gap-recovery.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
         "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/headless-paired-remote-terminal-stall-recovery.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
         "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/paired-remote-terminal-retention-memory.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
-        "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/headless-paired-remote-terminal-retention-memory.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
+        "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/headless-paired-remote-terminal-retention-memory.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
         "SKIP_BUILD=1 pnpm exec playwright test tests/e2e/terminal-parked-memory.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1"
       ],
       "testFiles": [
@@ -3167,7 +3167,10 @@
         },
         {
           "file": "tests/e2e/headless-paired-remote-terminal-retention-memory.spec.ts",
-          "assertions": ["ordinary-parks paired terminals against an isolated headless Orca host"]
+          "assertions": [
+            "ordinary-parks paired terminals against an isolated headless Orca host",
+            "cold-activates only visible paired terminals against an isolated headless host"
+          ]
         },
         {
           "file": "tests/e2e/terminal-parked-memory.spec.ts",
@@ -3310,13 +3313,13 @@
           "summary": "An isolated `orca serve` host and paired web renderer exhausted one terminal stream, recovered it, and preserved the original PTY and tab without exposing readiness or pairing material."
         },
         {
-          "date": "2026-07-29",
+          "date": "2026-07-30",
           "runner": "local",
           "platform": "macos",
-          "command": "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/headless-paired-remote-terminal-retention-memory.spec.ts --config tests/playwright.config.ts --project electron-headful --workers=1",
+          "command": "ORCA_E2E_WEB_CLIENT=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/headless-paired-remote-terminal-retention-memory.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
           "result": "passed",
-          "durationSeconds": 14.2,
-          "summary": "The isolated headless `orca serve` host passed the byte-identical six-PTY ordinary-parking, memory/lag, deep-history, same-PTY, parked-output, and post-reveal I/O oracle."
+          "durationSeconds": 23,
+          "summary": "The isolated headless `orca serve` host passed ordinary parking plus cold activation: deferred tabs stayed unmounted until activation, preserved PTY identity and parked output, and resumed live input."
         },
         {
           "date": "2026-07-29",

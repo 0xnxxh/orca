@@ -22,6 +22,8 @@ type ServeReady = {
 }
 
 const STARTUP_DIAGNOSTIC_LIMIT = 8_000
+const PAIRING_URL_PATTERN = /orca:\/\/[^\s"\\]+/g
+const WEB_CLIENT_PAIRING_PATTERN = /([#&]pairing=)[^&\s"\\]+/g
 
 export type HeadlessPairedRuntimeHost = {
   app: ElectronApplication
@@ -30,19 +32,60 @@ export type HeadlessPairedRuntimeHost = {
   offer: RuntimeDesktopPairingOffer
 }
 
-function appendStartupDiagnostic(current: string, chunk: Buffer): string {
-  return `${current}${chunk.toString()}`.slice(-STARTUP_DIAGNOSTIC_LIMIT)
+export class HeadlessPairedRuntimeStartupDiagnosticBuffer {
+  private completed = ''
+  private discardingOversizedLine = false
+  private pending = ''
+
+  append(chunk: Buffer): void {
+    let value = chunk.toString()
+    if (this.discardingOversizedLine) {
+      const newlineIndex = value.indexOf('\n')
+      if (newlineIndex === -1) {
+        return
+      }
+      value = value.slice(newlineIndex + 1)
+      this.discardingOversizedLine = false
+    }
+
+    const combined = `${this.pending}${value}`
+    const newlineIndex = combined.lastIndexOf('\n')
+    if (newlineIndex !== -1) {
+      this.completed = `${this.completed}${redactPairingMaterial(
+        combined.slice(0, newlineIndex + 1)
+      )}`.slice(-STARTUP_DIAGNOSTIC_LIMIT)
+      this.pending = combined.slice(newlineIndex + 1)
+    } else {
+      this.pending = combined
+    }
+    if (this.pending.length > STARTUP_DIAGNOSTIC_LIMIT) {
+      this.pending = ''
+      this.discardingOversizedLine = true
+    }
+  }
+
+  read(): string {
+    const pending = this.discardingOversizedLine ? '' : redactPairingMaterial(this.pending)
+    return `${this.completed}${pending}`.slice(-STARTUP_DIAGNOSTIC_LIMIT)
+  }
 }
 
-function formatStartupDiagnostics(stdout: string, stderr: string): string {
-  const redactPairingCode = (value: string): string =>
-    value.replace(/orca:\/\/[^\s"\\]+/g, 'orca://[redacted]')
+export function formatHeadlessPairedRuntimeStartupDiagnostics(
+  stdout: string,
+  stderr: string
+): string {
   return [
-    stdout ? `stdout:\n${redactPairingCode(stdout)}` : '',
-    stderr ? `stderr:\n${redactPairingCode(stderr)}` : ''
+    stdout ? `stdout:\n${redactPairingMaterial(stdout)}` : '',
+    stderr ? `stderr:\n${redactPairingMaterial(stderr)}` : ''
   ]
     .filter(Boolean)
     .join('\n')
+}
+
+function redactPairingMaterial(value: string): string {
+  return value
+    .replace(PAIRING_URL_PATTERN, 'orca://[redacted]')
+    .replace(WEB_CLIENT_PAIRING_PATTERN, '$1[redacted]')
 }
 
 async function readPairingOffer(app: ElectronApplication): Promise<RuntimeDesktopPairingOffer> {
@@ -53,12 +96,15 @@ async function readPairingOffer(app: ElectronApplication): Promise<RuntimeDeskto
   }
   return new Promise((resolve, reject) => {
     let buffered = ''
-    let stdoutDiagnostic = ''
-    let stderrDiagnostic = ''
+    const stdoutDiagnostic = new HeadlessPairedRuntimeStartupDiagnosticBuffer()
+    const stderrDiagnostic = new HeadlessPairedRuntimeStartupDiagnosticBuffer()
     const stderr = child.stderr
     const timeout = setTimeout(() => {
       cleanup()
-      const diagnostics = formatStartupDiagnostics(stdoutDiagnostic, stderrDiagnostic)
+      const diagnostics = formatHeadlessPairedRuntimeStartupDiagnostics(
+        stdoutDiagnostic.read(),
+        stderrDiagnostic.read()
+      )
       reject(
         new Error(
           `Headless runtime did not publish pairing readiness${diagnostics ? `\n${diagnostics}` : ''}`
@@ -73,7 +119,10 @@ async function readPairingOffer(app: ElectronApplication): Promise<RuntimeDeskto
     }
     const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
       cleanup()
-      const diagnostics = formatStartupDiagnostics(stdoutDiagnostic, stderrDiagnostic)
+      const diagnostics = formatHeadlessPairedRuntimeStartupDiagnostics(
+        stdoutDiagnostic.read(),
+        stderrDiagnostic.read()
+      )
       reject(
         new Error(
           `Headless runtime exited before pairing readiness (code=${code ?? 'none'}, signal=${signal ?? 'none'})${diagnostics ? `\n${diagnostics}` : ''}`
@@ -81,10 +130,10 @@ async function readPairingOffer(app: ElectronApplication): Promise<RuntimeDeskto
       )
     }
     const onStderr = (chunk: Buffer): void => {
-      stderrDiagnostic = appendStartupDiagnostic(stderrDiagnostic, chunk)
+      stderrDiagnostic.append(chunk)
     }
     const onData = (chunk: Buffer): void => {
-      stdoutDiagnostic = appendStartupDiagnostic(stdoutDiagnostic, chunk)
+      stdoutDiagnostic.append(chunk)
       buffered += chunk.toString()
       const lines = buffered.split(/\r?\n/)
       buffered = lines.pop() ?? ''

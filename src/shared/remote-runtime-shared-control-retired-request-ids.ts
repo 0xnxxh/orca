@@ -45,10 +45,9 @@ export class SharedControlRetiredRequestIds {
 
   private pruneExpired(now: number): void {
     for (const [requestId, expiresAt] of this.ids) {
-      if (expiresAt > now) {
-        return
+      if (expiresAt <= now) {
+        this.ids.delete(requestId)
       }
-      this.ids.delete(requestId)
     }
   }
 }

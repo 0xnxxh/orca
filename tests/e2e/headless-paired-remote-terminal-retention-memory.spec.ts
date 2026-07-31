@@ -4,7 +4,7 @@ import { launchPairedWebClient, type PairedWebClient } from './helpers/paired-el
 import { runPairedTerminalColdActivationOracle } from './helpers/paired-terminal-cold-activation-oracle'
 import { runPairedTerminalParkingOracle } from './helpers/paired-terminal-parking-oracle'
 
-test('ordinary-parks paired terminals against an isolated headless Orca host @headful', async ({
+test('ordinary-parks paired terminals against an isolated headless Orca host', async ({
   testRepoPath
 }) => {
   test.setTimeout(240_000)
@@ -40,7 +40,7 @@ test('ordinary-parks paired terminals against an isolated headless Orca host @he
   }
 })
 
-test('cold-activates only visible paired terminals against an isolated headless host @headful', async ({
+test('cold-activates only visible paired terminals against an isolated headless host', async ({
   testRepoPath
 }) => {
   test.setTimeout(240_000)

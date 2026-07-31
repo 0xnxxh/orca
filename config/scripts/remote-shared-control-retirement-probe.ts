@@ -33,63 +33,66 @@ async function main(): Promise<void> {
     }
     originalWarn(message, details)
   }
-  const startedAt = Date.now()
-  const before = await requestMemorySnapshot(pairing, environment.id)
-  let ok = 0
-  let subscriptionResponses = 0
-  let runtimeStatus: RuntimeStatus | null = null
-  const cleanupDurationsMs: number[] = []
-  for (let cycle = 0; cycle < cycles; cycle += 1) {
-    const result = await runCycle({
-      pairing,
-      environmentId: environment.id,
-      concurrency,
-      settleMs,
-      cleanupTimeoutMs
-    })
-    ok += result.ok
-    subscriptionResponses += result.subscriptionResponses
-    runtimeStatus ??= result.runtimeStatus
-    cleanupDurationsMs.push(result.cleanupDurationMs)
-  }
-  await wait(settleMs)
-  const after = await requestMemorySnapshot(pairing, environment.id)
-  console.warn = originalWarn
-  console.log(
-    JSON.stringify({
-      environment: { id: environment.id, name: environment.name },
-      runtime: runtimeStatus
-        ? {
-            appVersion: runtimeStatus.appVersion ?? null,
-            capabilities: runtimeStatus.capabilities ?? [],
-            hostPlatform: runtimeStatus.hostPlatform ?? null
-          }
-        : null,
-      cycles,
-      concurrency,
-      requests: cycles * concurrency,
-      ok,
-      subscriptionResponses,
-      cleanupDurationMs: {
-        average: Math.round(
-          cleanupDurationsMs.reduce((total, duration) => total + duration, 0) /
-            cleanupDurationsMs.length
+  try {
+    const startedAt = Date.now()
+    const before = await requestMemorySnapshot(pairing, environment.id)
+    let ok = 0
+    let subscriptionResponses = 0
+    let runtimeStatus: RuntimeStatus | null = null
+    const cleanupDurationsMs: number[] = []
+    for (let cycle = 0; cycle < cycles; cycle += 1) {
+      const result = await runCycle({
+        pairing,
+        environmentId: environment.id,
+        concurrency,
+        settleMs,
+        cleanupTimeoutMs
+      })
+      ok += result.ok
+      subscriptionResponses += result.subscriptionResponses
+      runtimeStatus ??= result.runtimeStatus
+      cleanupDurationsMs.push(result.cleanupDurationMs)
+    }
+    await wait(settleMs)
+    const after = await requestMemorySnapshot(pairing, environment.id)
+    console.log(
+      JSON.stringify({
+        environment: { id: environment.id, name: environment.name },
+        runtime: runtimeStatus
+          ? {
+              appVersion: runtimeStatus.appVersion ?? null,
+              capabilities: runtimeStatus.capabilities ?? [],
+              hostPlatform: runtimeStatus.hostPlatform ?? null
+            }
+          : null,
+        cycles,
+        concurrency,
+        requests: cycles * concurrency,
+        ok,
+        subscriptionResponses,
+        cleanupDurationMs: {
+          average: Math.round(
+            cleanupDurationsMs.reduce((total, duration) => total + duration, 0) /
+              cleanupDurationsMs.length
+          ),
+          maximum: Math.max(...cleanupDurationsMs)
+        },
+        unknownResponseFrames: Array.from(unknownResponses.values()).reduce(
+          (total, count) => total + count,
+          0
         ),
-        maximum: Math.max(...cleanupDurationsMs)
-      },
-      unknownResponseFrames: Array.from(unknownResponses.values()).reduce(
-        (total, count) => total + count,
-        0
-      ),
-      unknownResponseIds: unknownResponses.size,
-      memory: {
-        before: summarizeMemory(before),
-        after: summarizeMemory(after),
-        appDelta: after.app.memory - before.app.memory
-      },
-      elapsedMs: Date.now() - startedAt
-    })
-  )
+        unknownResponseIds: unknownResponses.size,
+        memory: {
+          before: summarizeMemory(before),
+          after: summarizeMemory(after),
+          appDelta: after.app.memory - before.app.memory
+        },
+        elapsedMs: Date.now() - startedAt
+      })
+    )
+  } finally {
+    console.warn = originalWarn
+  }
 }
 
 async function runCycle(args: {
@@ -134,6 +137,8 @@ async function runCycle(args: {
       subscription.close()
     }
     const cleanupDurationMs = await waitForConnectionIdle(connection, args.cleanupTimeoutMs)
+    // Let cleanup replies reach the retirement cache before closing the socket.
+    await wait(args.settleMs)
     return {
       ok: responses.filter((response) => response.ok).length,
       subscriptionResponses,
@@ -165,12 +170,19 @@ async function requestMemorySnapshot(
   environmentId: string
 ): Promise<MemorySnapshot> {
   const connection = new RemoteRuntimeSharedControlConnection(pairing, { environmentId })
-  const response = await connection.request<MemorySnapshot>('diagnostics.memory', undefined, 20_000)
-  connection.close()
-  if (!response.ok) {
-    throw new Error(`Memory snapshot failed: ${response.error.message}`)
+  try {
+    const response = await connection.request<MemorySnapshot>(
+      'diagnostics.memory',
+      undefined,
+      20_000
+    )
+    if (!response.ok) {
+      throw new Error(`Memory snapshot failed: ${response.error.message}`)
+    }
+    return response.result
+  } finally {
+    connection.close()
   }
-  return response.result
 }
 
 function summarizeMemory(snapshot: MemorySnapshot): {
