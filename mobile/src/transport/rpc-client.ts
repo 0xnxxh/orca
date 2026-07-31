@@ -385,6 +385,10 @@ export function connect(
           `No e2ee_ready/e2ee_authenticated within ${HANDSHAKE_TIMEOUT_MS / 1000}s`
         )
         openingWs.close()
+        // Why: React Native can omit onclose for a wedged iOS transport.
+        if (ws === openingWs) {
+          handleSocketClosed(openingWs, { timedOut: true })
+        }
       }, HANDSHAKE_TIMEOUT_MS)
     }
 
