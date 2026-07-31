@@ -205,6 +205,23 @@ describe('writeFileAtomically', () => {
     }
   })
 
+  it('returns false when the target disappears during the removal probe', () => {
+    setup()
+    try {
+      const target = join(dir, 'guarded-auth.json')
+      writeFileSync(target, 'baseline')
+      fsMock.linkSync.mockImplementationOnce(() => {
+        rmSync(target)
+        throw Object.assign(new Error('gone'), { code: 'ENOENT' })
+      })
+
+      expect(removeFileAtomicallyIfUnchanged(target, 'baseline')).toBe(false)
+      expect(existsSync(`${target}.orca-guarded`)).toBe(false)
+    } finally {
+      cleanup()
+    }
+  })
+
   it('preserves a replacement created while the expected generation is quarantined', () => {
     setup()
     try {

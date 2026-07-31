@@ -63,7 +63,14 @@ export function removeFileAtomicallyIfUnchanged(
 ): boolean {
   const heldPath = getGuardedOperationHeldPath(targetPath)
   recoverInterruptedGuardedOperation(heldPath, targetPath)
-  assertHardLinkPublicationSupported(targetPath, targetPath)
+  try {
+    assertHardLinkPublicationSupported(targetPath, targetPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return false
+    }
+    throw error
+  }
   try {
     renameFileWithWindowsRetry(targetPath, heldPath)
   } catch (error) {

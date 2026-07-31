@@ -1821,6 +1821,7 @@ export class CodexRuntimeHomeService {
       // Why: with Orca owning CODEX_HOME, a deleted runtime auth.json is a local logout, not a cue to restore the user's real ~/.codex snapshot.
       this.persistRuntimeLogoutMarker()
       this.lastWrittenAuthJson = null
+      this.persistSharedRuntimeAuthProvenance({ owner: 'system-default', authJson: null })
       return
     }
 
@@ -1830,6 +1831,7 @@ export class CodexRuntimeHomeService {
       this.captureSystemDefaultSnapshot({ force: true })
       this.persistRuntimeLogoutMarker()
       this.lastWrittenAuthJson = null
+      this.persistSharedRuntimeAuthProvenance({ owner: 'system-default', authJson: null })
       return
     }
 
@@ -1846,11 +1848,13 @@ export class CodexRuntimeHomeService {
       if (!refreshedSnapshot) {
         rmSync(runtimeAuthPath, { force: true })
         this.lastWrittenAuthJson = null
+        this.persistSharedRuntimeAuthProvenance({ owner: 'system-default', authJson: null })
         return
       }
       if (refreshedSnapshot.authJson === null) {
         rmSync(runtimeAuthPath, { force: true })
         this.lastWrittenAuthJson = null
+        this.persistSharedRuntimeAuthProvenance({ owner: 'system-default', authJson: null })
         return
       }
       this.writeRuntimeAuth(refreshedSnapshot.authJson, { owner: 'system-default' })
@@ -1859,6 +1863,7 @@ export class CodexRuntimeHomeService {
     if (snapshot.authJson === null) {
       rmSync(runtimeAuthPath, { force: true })
       this.lastWrittenAuthJson = null
+      this.persistSharedRuntimeAuthProvenance({ owner: 'system-default', authJson: null })
       return
     }
     this.writeRuntimeAuth(snapshot.authJson, { owner: 'system-default' })

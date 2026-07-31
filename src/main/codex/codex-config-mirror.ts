@@ -1,7 +1,11 @@
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { readAgentStateFileSync } from '../agent-state-file-reader'
-import { writeFileAtomically, writeFileAtomicallyIfUnchanged } from '../codex-accounts/fs-utils'
+import {
+  recoverInterruptedGuardedFileOperation,
+  writeFileAtomically,
+  writeFileAtomicallyIfUnchanged
+} from '../codex-accounts/fs-utils'
 import { getOrcaManagedCodexHomePath, getSystemCodexHomePath } from './codex-home-paths'
 import { rewriteRelativePathConfigValues } from './codex-config-path-reference-rewrite'
 import { normalizeDeprecatedCodexHookFeatureFlag } from './config-toml-deprecated-hook-flag'
@@ -101,6 +105,7 @@ export function syncSystemConfigIntoLegacySharedCodexHome(
 ): void {
   const systemConfigPath = join(homes.systemHomePath, 'config.toml')
   const runtimeConfigPath = join(homes.runtimeHomePath, 'config.toml')
+  recoverInterruptedGuardedFileOperation(runtimeConfigPath)
   const rawSystemConfig = existsSync(systemConfigPath)
     ? readAgentStateFileSync(systemConfigPath)
     : ''
