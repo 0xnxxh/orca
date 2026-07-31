@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { makePaneKey } from '../../../../shared/stable-pane-id'
+import { getDefaultWorkspaceSession } from '../../../../shared/constants'
 import {
   resetAgentPaneAuthorityAliasesForTests,
   resolveAgentPaneAuthorityKey
 } from './agent-pane-authority'
-import { createTestStore } from './store-test-helpers'
+import { createTestStore, makeTab, makeWorktree, seedStore } from './store-test-helpers'
 
 const LEAF_1 = '11111111-1111-4111-8111-111111111111'
 const LEAF_2 = '22222222-2222-4222-8222-222222222222'
@@ -97,6 +98,117 @@ describe('setTabLayout PTY ownership', () => {
       agentType: 'codex'
     })
     expect(store.getState().agentStatusByPaneKey[retainedPaneKey]?.prompt).toBe('after repair')
+  })
+
+  it('moves hydrated pane authority onto the retained PTY leaf', () => {
+    const store = createTestStore()
+    const worktreeId = 'repo1::/wt-1'
+    const removedPaneKey = makePaneKey('tab-1', LEAF_1)
+    const retainedPaneKey = makePaneKey('tab-1', LEAF_2)
+    seedStore(store, {
+      worktreesByRepo: {
+        repo1: [makeWorktree({ id: worktreeId, repoId: 'repo1', path: '/wt-1' })]
+      }
+    })
+    store.getState().setAgentStatus(removedPaneKey, {
+      state: 'working',
+      prompt: 'before hydration',
+      agentType: 'codex'
+    })
+
+    store.getState().hydrateWorkspaceSession({
+      ...getDefaultWorkspaceSession(),
+      activeRepoId: 'repo1',
+      activeWorktreeId: worktreeId,
+      activeTabId: 'tab-1',
+      tabsByWorktree: {
+        [worktreeId]: [makeTab({ id: 'tab-1', worktreeId, ptyId: 'pty-agent' })]
+      },
+      terminalLayoutsByTabId: {
+        'tab-1': {
+          root: {
+            type: 'split',
+            direction: 'vertical',
+            first: { type: 'leaf', leafId: LEAF_1 },
+            second: { type: 'leaf', leafId: LEAF_2 }
+          },
+          activeLeafId: LEAF_2,
+          expandedLeafId: null,
+          ptyIdsByLeafId: {
+            [LEAF_1]: 'pty-agent',
+            [LEAF_2]: 'pty-agent'
+          }
+        }
+      }
+    })
+
+    expect(store.getState().agentStatusByPaneKey[removedPaneKey]).toBeUndefined()
+    expect(store.getState().agentStatusByPaneKey[retainedPaneKey]?.prompt).toBe('before hydration')
+    expect(resolveAgentPaneAuthorityKey(removedPaneKey)).toBe(retainedPaneKey)
+  })
+
+  it('does not steal authority from a pane that was already detached to another tab', () => {
+    const store = createTestStore()
+    const removedPaneKey = makePaneKey('source-tab', LEAF_1)
+    const retainedPaneKey = makePaneKey('source-tab', LEAF_2)
+    const detachedPaneKey = makePaneKey('target-tab', LEAF_1)
+    store.getState().setTabLayout('target-tab', {
+      root: { type: 'leaf', leafId: LEAF_1 },
+      activeLeafId: LEAF_1,
+      expandedLeafId: null,
+      ptyIdsByLeafId: { [LEAF_1]: 'pty-detached' }
+    })
+    store.getState().transferAgentPaneAuthority({
+      fromPaneKey: removedPaneKey,
+      toPaneKey: detachedPaneKey,
+      ptyId: 'pty-detached'
+    })
+
+    store.getState().setTabLayout('source-tab', {
+      root: {
+        type: 'split',
+        direction: 'vertical',
+        first: { type: 'leaf', leafId: LEAF_1 },
+        second: { type: 'leaf', leafId: LEAF_2 }
+      },
+      activeLeafId: LEAF_2,
+      expandedLeafId: null,
+      ptyIdsByLeafId: {
+        [LEAF_1]: 'pty-detached',
+        [LEAF_2]: 'pty-detached'
+      }
+    })
+
+    expect(resolveAgentPaneAuthorityKey(removedPaneKey)).toBe(detachedPaneKey)
+    expect(resolveAgentPaneAuthorityKey(detachedPaneKey)).toBe(detachedPaneKey)
+    expect(resolveAgentPaneAuthorityKey(retainedPaneKey)).toBe(retainedPaneKey)
+  })
+
+  it('repairs duplicate legacy leaf ownership without throwing', () => {
+    const store = createTestStore()
+
+    expect(() =>
+      store.getState().setTabLayout('tab-1', {
+        root: {
+          type: 'split',
+          direction: 'horizontal',
+          first: { type: 'leaf', leafId: 'pane:1' },
+          second: { type: 'leaf', leafId: 'pane:2' }
+        },
+        activeLeafId: 'pane:2',
+        expandedLeafId: null,
+        ptyIdsByLeafId: {
+          'pane:1': 'pty-agent',
+          'pane:2': 'pty-agent'
+        }
+      })
+    ).not.toThrow()
+    expect(store.getState().terminalLayoutsByTabId['tab-1']).toEqual({
+      root: { type: 'leaf', leafId: 'pane:2' },
+      activeLeafId: 'pane:2',
+      expandedLeafId: null,
+      ptyIdsByLeafId: { 'pane:2': 'pty-agent' }
+    })
   })
 
   it('scopes ownership to a tab so detach handoffs can share a PTY across tabs', () => {
