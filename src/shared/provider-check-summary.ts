@@ -80,3 +80,22 @@ export function summarizeProviderChecks(
     neutral
   }
 }
+
+/** The one checks-pill label; it keys off `state` so the text can never contradict the pill's tone or icon. */
+export function getProviderChecksLabel(summary: ProviderCheckSummary | undefined): string {
+  if (!summary) {
+    return 'Checks'
+  }
+  if (summary.total === 0) {
+    return 'No checks'
+  }
+  if (summary.failed > 0) {
+    return `${summary.failed} failing`
+  }
+  if (summary.pending > 0) {
+    return `${summary.pending} pending`
+  }
+  return summary.state === 'neutral'
+    ? 'Unresolved checks'
+    : `${summary.passed}/${summary.total} passed`
+}

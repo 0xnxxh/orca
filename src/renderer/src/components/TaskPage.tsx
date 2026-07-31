@@ -209,6 +209,7 @@ import {
   taskPageToGitHubApiPage
 } from '@/components/task-page-work-item-pagination'
 import { sortWorkItemsByNumber } from '../../../shared/work-items'
+import { getProviderChecksLabel } from '../../../shared/provider-check-summary'
 import LinearIssueAttributeFilterDropdowns from '@/components/linear-issue-attribute-filter-dropdowns'
 import { resolveLinearIssueAttributeFilterPrimaryTeam } from '@/components/linear-issue-attribute-filter-primary-team'
 import {
@@ -2013,23 +2014,7 @@ function GHAssigneesCell({
 }
 
 function getChecksLabel(item: GitHubWorkItem): string {
-  const summary = item.checksSummary
-  if (!summary) {
-    return 'Checks'
-  }
-  if (summary.total === 0) {
-    return 'No checks'
-  }
-  if (summary.failed > 0) {
-    return `${summary.failed} failing`
-  }
-  if (summary.pending > 0) {
-    return `${summary.pending} pending`
-  }
-  if (summary.neutral > 0) {
-    return `${summary.neutral} unresolved`
-  }
-  return `${summary.passed}/${summary.total} passed`
+  return getProviderChecksLabel(item.checksSummary)
 }
 
 function getChecksPillTone(item: GitHubWorkItem): string {

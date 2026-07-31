@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { deriveTaskPagePRCheckSummary } from './task-page-pr-check-summary'
 import { gitLabPipelineJobsToPRChecks } from '../../../shared/gitlab-pipeline-checks'
 import { derivePRCheckStatus, derivePRCheckStatusFromRollup } from '../../../shared/pr-check-status'
-import { summarizeProviderChecks } from '../../../shared/provider-check-summary'
+import {
+  getProviderChecksLabel,
+  summarizeProviderChecks
+} from '../../../shared/provider-check-summary'
 import type { GitLabPipelineJob } from '../../../shared/gitlab-types'
 import type { PRCheckDetail, ProviderCheckSummary } from '../../../shared/types'
 
@@ -110,6 +113,15 @@ describe('provider check classification parity', () => {
       expect(deriveTaskPagePRCheckSummary(checks)).toEqual(summary)
       expect(derivePRCheckStatus(checks)).toBe(expected.state)
       expect(derivePRCheckStatusFromRollup(checks.map(toGraphQLRollup))).toBe(expected.state)
+      // Why: the pill's label, tone and icon all read this one summary, so a green pill must never say "unresolved".
+      expect(getProviderChecksLabel(summary).includes('Unresolved')).toBe(
+        expected.state === 'neutral'
+      )
     }
   )
+
+  it('labels a green PR carrying one neutral check as passing', () => {
+    const checks = [...Array.from({ length: 19 }, () => completed('success')), completed('neutral')]
+    expect(getProviderChecksLabel(summarizeProviderChecks(checks))).toBe('19/20 passed')
+  })
 })
