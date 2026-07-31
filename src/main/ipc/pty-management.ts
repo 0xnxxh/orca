@@ -96,7 +96,11 @@ export function registerDaemonManagementHandlers(): void {
       killedSessionIds: string[]
     }> => {
       const adapters = getDaemonAdapters()
-      const initial = (await collectSessions(adapters)).sessions
+      const initialCollection = await collectSessions(adapters)
+      if (initialCollection.unavailableOwners.size > 0) {
+        throw new Error('Cannot kill daemon sessions while session inventory is unavailable')
+      }
+      const initial = initialCollection.sessions
       const initialCount = initial.length
 
       if (initialCount === 0) {

@@ -693,6 +693,7 @@ export async function killStaleDaemon(
         // process that happens to now own the same pid.
         if (!(await isDaemonProcess(pid, socketPath, tokenPath, startedAtMs))) {
           console.warn('[daemon] Skipping SIGKILL for stale daemon: reason=pid_recycled')
+          identifiedDaemon = false
           exited = true
           killedDaemon = true
         } else {
@@ -719,7 +720,7 @@ export async function killStaleDaemon(
   }
 
   const socketIsLive = await canConnectSocket(socketPath)
-  if (process.platform !== 'win32' && existsSync(socketPath) && (killedDaemon || !socketIsLive)) {
+  if (process.platform !== 'win32' && existsSync(socketPath) && !socketIsLive) {
     try {
       unlinkSync(socketPath)
     } catch {

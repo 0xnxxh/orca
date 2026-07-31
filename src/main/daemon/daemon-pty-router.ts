@@ -25,9 +25,8 @@ export class DaemonPtyRouter implements IPtyProvider {
     this.routing = new DaemonPtyRouterSessionRouting(this.current, this.allAdapters())
     this.subscriptions = new DaemonPtyAdapterSubscriptionFanout(
       this.allAdapters(),
-      (adapter, id) => {
-        this.routing.recordExit(id, adapter)
-      }
+      (adapter, id) => this.routing.shouldForwardStreamEvent(id, adapter),
+      (adapter, id) => this.routing.recordExit(id, adapter)
     )
   }
 
@@ -59,7 +58,7 @@ export class DaemonPtyRouter implements IPtyProvider {
     const targetResult = this.routing.spawnTarget(opts)
     const target = targetResult instanceof Promise ? await targetResult : targetResult
     const result = await target.spawn(opts)
-    this.routing.recordSpawn(result, target)
+    this.routing.recordSpawn(result, target, opts)
     return result
   }
 
@@ -104,15 +103,15 @@ export class DaemonPtyRouter implements IPtyProvider {
   }
 
   pauseProducer(id: string): void {
-    this.routing.ownerSync(id).pauseProducer(id)
+    this.routing.ownerForHint(id)?.pauseProducer(id)
   }
 
   resumeProducer(id: string): void {
-    this.routing.ownerSync(id).resumeProducer(id)
+    this.routing.ownerForHint(id)?.resumeProducer(id)
   }
 
   setPtyBackgrounded(id: string, background: boolean): void {
-    this.routing.ownerSync(id).setPtyBackgrounded(id, background)
+    this.routing.ownerForHint(id)?.setPtyBackgrounded(id, background)
   }
 
   async shutdown(

@@ -289,6 +289,21 @@ describe('pty:management IPC handlers', () => {
       expect(legacy.shutdown).toHaveBeenCalledWith('old-1', { immediate: true })
     })
 
+    it('rejects before killing when the initial owner inventory is incomplete', async () => {
+      const current = makeAdapter(5, [makeSession('current-session')])
+      const legacy = makeAdapter(3, [])
+      legacy.listSessions.mockRejectedValue(new Error('listing unavailable'))
+      const { registerDaemonManagementHandlers } = await importFresh()
+      getDaemonProviderMock.mockReturnValue(await makeRouter(current, [legacy]))
+      registerDaemonManagementHandlers()
+
+      await expect(buildHandlerMap()['pty:management:killAll']({})).rejects.toThrow(
+        'session inventory is unavailable'
+      )
+      expect(current.shutdown).not.toHaveBeenCalled()
+      expect(legacy.shutdown).not.toHaveBeenCalled()
+    })
+
     it('reports remainingCount when sessions refuse to die after the poll window', async () => {
       const sessions = [makeSession('stuck')]
       const current = makeAdapter(5, [])

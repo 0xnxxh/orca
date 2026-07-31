@@ -22,6 +22,8 @@ export class DaemonSnapshotAcknowledgementRoutes {
   ): void {
     if (snapshot) {
       this.producers.set(sessionId, producer)
+    } else {
+      this.producers.delete(sessionId)
     }
   }
 
@@ -34,6 +36,8 @@ export class DaemonSnapshotAcknowledgementRoutes {
     const producer = adapters.find((adapter) => adapter === provider)
     if (producer) {
       this.record(sessionId, snapshot, producer)
+    } else {
+      this.producers.delete(sessionId)
     }
   }
 

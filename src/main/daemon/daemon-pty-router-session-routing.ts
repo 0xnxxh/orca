@@ -40,11 +40,15 @@ export class DaemonPtyRouterSessionRouting {
     return this.routes.resolveOwner(opts.sessionId)
   }
 
-  recordSpawn(result: PtySpawnResult, target: DaemonPtyAdapter): void {
+  recordSpawn(result: PtySpawnResult, target: DaemonPtyAdapter, opts: PtySpawnOptions): void {
     if (result.exitedBeforeSpawnReply) {
       return
     }
-    this.routes.transfer(result.id, target)
+    if (opts.isNewSession && opts.sessionId === result.id) {
+      this.routes.recordFreshOwned(result.id, target)
+      return
+    }
+    this.routes.recordOwned(result.id, target)
   }
 
   async owner(sessionId: string): Promise<DaemonPtyAdapter> {
@@ -53,6 +57,14 @@ export class DaemonPtyRouterSessionRouting {
 
   ownerSync(sessionId: string): DaemonPtyAdapter {
     return this.routes.resolveOwnerSync(sessionId)
+  }
+
+  ownerForHint(sessionId: string): DaemonPtyAdapter | null {
+    try {
+      return this.ownerSync(sessionId)
+    } catch {
+      return null
+    }
   }
 
   ownerOrCurrent(sessionId?: string): DaemonPtyAdapter {
@@ -121,8 +133,18 @@ export class DaemonPtyRouterSessionRouting {
     this.snapshotAcks.drop(sessionId)
   }
 
-  recordExit(sessionId: string, owner: DaemonPtyAdapter): void {
+  shouldForwardEvent(sessionId: string, owner: DaemonPtyAdapter): boolean {
+    return this.routes.shouldForwardEvent(sessionId, owner)
+  }
+
+  shouldForwardStreamEvent(sessionId: string, owner: DaemonPtyAdapter): boolean {
+    return this.routes.recordDataOwner(sessionId, owner)
+  }
+
+  recordExit(sessionId: string, owner: DaemonPtyAdapter): boolean {
+    const shouldForward = this.shouldForwardEvent(sessionId, owner)
     this.routes.markUnavailable(sessionId, owner)
+    return shouldForward
   }
 
   markAdapterUnavailable(adapter: DaemonPtyAdapter): void {

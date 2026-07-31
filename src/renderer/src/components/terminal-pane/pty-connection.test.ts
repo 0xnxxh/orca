@@ -11126,6 +11126,8 @@ describe('connectPanePty', () => {
     expect(deps.clearTabPtyId).not.toHaveBeenCalled()
     expect(deps.updateTabPtyId).not.toHaveBeenCalled()
     expect(pane.terminal.clear).not.toHaveBeenCalled()
+    expect(window.api.pty.settlePaneSerializer).not.toHaveBeenCalled()
+    expect(window.api.pty.clearPendingPaneSerializer).toHaveBeenCalled()
   })
 
   // Why: Phase 6 deleted the hidden-skip grammar — every hidden chunk rides the background scheduler, none content-scanned.

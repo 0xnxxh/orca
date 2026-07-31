@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DaemonEndpointIdentity } from './daemon-hello-protocol'
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
 import { DaemonPtyRouter } from './daemon-pty-router'
@@ -77,11 +77,15 @@ function createAdapter(
 }
 
 describe('DaemonPtyRouter routing safety', () => {
-  it('fences unknown existing ids until a later complete legacy listing', async () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('uses conclusive probes while fencing absence after a failed discovery', async () => {
     const current = createAdapter('current')
     const legacy = createAdapter('legacy', ['legacy-session'])
     vi.mocked(legacy.adapter.listProcesses).mockRejectedValueOnce(new Error('listing failed'))
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
     const router = new DaemonPtyRouter({
       current: current.adapter,
       legacy: [legacy.adapter]
@@ -96,18 +100,17 @@ describe('DaemonPtyRouter routing safety', () => {
         rows: 24
       })
     ).resolves.toMatchObject({ id: 'fresh-session' })
-    await expect(router.spawn({ sessionId: 'legacy-session', cols: 80, rows: 24 })).rejects.toThrow(
-      'daemon_session_routing_unavailable'
-    )
-    await expect(router.shutdown('legacy-session', { immediate: true })).rejects.toThrow(
-      'daemon_session_routing_unavailable'
-    )
-    await expect(router.sendSignal('legacy-session', 'SIGTERM')).rejects.toThrow(
+    await expect(
+      router.spawn({ sessionId: 'legacy-session', cols: 80, rows: 24 })
+    ).resolves.toMatchObject({ id: 'legacy-session' })
+    await expect(router.shutdown('missing-session', { immediate: true })).rejects.toThrow(
       'daemon_session_routing_unavailable'
     )
 
     await router.discoverLegacySessions()
-    await router.spawn({ sessionId: 'legacy-session', cols: 80, rows: 24 })
+    await expect(router.shutdown('missing-session', { immediate: true })).rejects.toThrow(
+      'terminal_gone'
+    )
 
     expect(current.adapter.spawn).toHaveBeenCalledExactlyOnceWith({
       sessionId: 'fresh-session',
@@ -120,7 +123,32 @@ describe('DaemonPtyRouter routing safety', () => {
       cols: 80,
       rows: 24
     })
-    warn.mockRestore()
+  })
+
+  it('probes adapters outside an ambiguous route while discovery is incomplete', async () => {
+    const sessionId = 'hidden-collision'
+    const firstSessions = [sessionId]
+    const current = createAdapter('current')
+    const first = createAdapter('legacy-first', firstSessions)
+    const second = createAdapter('legacy-second', [sessionId])
+    const undiscovered = createAdapter('legacy-undiscovered', [sessionId])
+    vi.mocked(undiscovered.adapter.listProcesses).mockRejectedValueOnce(
+      new Error('listing unavailable')
+    )
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const router = new DaemonPtyRouter({
+      current: current.adapter,
+      legacy: [first.adapter, second.adapter, undiscovered.adapter]
+    })
+
+    await router.discoverLegacySessions()
+    firstSessions.splice(0)
+
+    await expect(router.sendSignal(sessionId, 'SIGTERM')).rejects.toThrow(
+      'daemon_session_routing_unavailable'
+    )
+    expect(second.adapter.sendSignal).not.toHaveBeenCalled()
+    expect(undiscovered.adapter.sendSignal).not.toHaveBeenCalled()
   })
 
   it('fails existing operations unknown when an owner probe is inconclusive', async () => {
@@ -194,6 +222,63 @@ describe('DaemonPtyRouter routing safety', () => {
     expect(current.adapter.shutdown).not.toHaveBeenCalled()
   })
 
+  it('collapses an ambiguous route after one daemon incarnation is replaced', async () => {
+    const sessionId = 'replaced-collision'
+    const current = createAdapter('current', [sessionId], {
+      alive: [sessionId],
+      killed: []
+    })
+    const legacy = createAdapter('legacy', [sessionId], {
+      alive: [sessionId],
+      killed: []
+    })
+    const router = new DaemonPtyRouter({
+      current: current.adapter,
+      legacy: [legacy.adapter]
+    })
+    const previous = identity('legacy', 10)
+    const replacement = identity('legacy', 11)
+
+    await router.reconcileOnStartup(new Set())
+    legacy.setIdentity(replacement)
+    legacy.emitIdentityChange(previous, replacement)
+
+    expect(router.getSessionRouteState(sessionId)).toBe('owned')
+    await router.sendSignal(sessionId, 'SIGTERM')
+    expect(current.adapter.sendSignal).toHaveBeenCalledExactlyOnceWith(sessionId, 'SIGTERM')
+    expect(legacy.adapter.sendSignal).not.toHaveBeenCalled()
+  })
+
+  it('keeps a canonical spawn collision ambiguous', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['canonical-session'])
+    vi.mocked(current.adapter.spawn).mockResolvedValue({
+      id: 'canonical-session',
+      incarnationId: 'current-incarnation'
+    })
+    vi.mocked(current.adapter.probePtyLiveness).mockResolvedValue(true)
+    const router = new DaemonPtyRouter({
+      current: current.adapter,
+      legacy: [legacy.adapter]
+    })
+    await router.discoverLegacySessions()
+
+    await router.spawn({
+      sessionId: 'requested-session',
+      isNewSession: true,
+      cols: 80,
+      rows: 24,
+      agentSessionEnsure: {} as never
+    })
+
+    expect(router.getSessionRouteState('canonical-session')).toBe('ambiguous')
+    await expect(router.sendSignal('canonical-session', 'SIGTERM')).rejects.toThrow(
+      'daemon_session_routing_unavailable'
+    )
+    expect(current.adapter.sendSignal).not.toHaveBeenCalled()
+    expect(legacy.adapter.sendSignal).not.toHaveBeenCalled()
+  })
+
   it('scopes unavailable tombstones to the authenticated daemon incarnation', async () => {
     const sessionId = 'legacy-session'
     const current = createAdapter('current')
@@ -219,6 +304,35 @@ describe('DaemonPtyRouter routing safety', () => {
     expect(router.getSessionRouteState(sessionId)).toBe('owned')
     await router.sendSignal(sessionId, 'SIGTERM')
     expect(legacy.adapter.sendSignal).toHaveBeenCalledWith(sessionId, 'SIGTERM')
+  })
+
+  it('allows explicit fresh reuse after the tombstone owner is replaced', async () => {
+    const sessionId = 'legacy-session'
+    const legacySessions = [sessionId]
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', legacySessions)
+    const router = new DaemonPtyRouter({
+      current: current.adapter,
+      legacy: [legacy.adapter]
+    })
+    const previous = identity('legacy', 10)
+    const replacement = identity('legacy', 11)
+
+    await router.discoverLegacySessions()
+    legacy.setIdentity(replacement)
+    legacy.emitIdentityChange(previous, replacement)
+    legacySessions.splice(0)
+    await router.discoverLegacySessions()
+
+    await expect(
+      router.spawn({ sessionId, isNewSession: true, cols: 80, rows: 24 })
+    ).resolves.toMatchObject({ id: sessionId })
+    expect(current.adapter.spawn).toHaveBeenCalledExactlyOnceWith({
+      sessionId,
+      isNewSession: true,
+      cols: 80,
+      rows: 24
+    })
   })
 
   it('acknowledges a colliding id through the adapter that produced its snapshot', async () => {
@@ -247,6 +361,32 @@ describe('DaemonPtyRouter routing safety', () => {
 
     expect(legacy.adapter.ackColdRestore).toHaveBeenCalledExactlyOnceWith(sessionId)
     expect(current.adapter.ackColdRestore).not.toHaveBeenCalled()
+  })
+
+  it('clears a stale snapshot producer after a later null capture', async () => {
+    const sessionId = 'legacy-snapshot'
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', [sessionId])
+    vi.mocked(legacy.adapter.getBufferSnapshot)
+      .mockResolvedValueOnce({
+        data: 'legacy frame',
+        cols: 80,
+        rows: 24,
+        seq: 1,
+        source: 'headless'
+      })
+      .mockResolvedValueOnce(null)
+    const router = new DaemonPtyRouter({
+      current: current.adapter,
+      legacy: [legacy.adapter]
+    })
+
+    await router.discoverLegacySessions()
+    await router.getBufferSnapshot(sessionId)
+    await router.getBufferSnapshot(sessionId)
+    router.ackColdRestore(sessionId)
+
+    expect(legacy.adapter.ackColdRestore).not.toHaveBeenCalled()
   })
 
   it('passes folder and git-worktree keys through the same reconciliation path', async () => {

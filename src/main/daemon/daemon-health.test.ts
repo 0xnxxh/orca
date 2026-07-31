@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { createServer, connect, type Server } from 'node:net'
+import { spawn } from 'node:child_process'
 import { DaemonServer } from './daemon-server'
 import { getDaemonPidPath, serializeDaemonPidFile } from './daemon-spawner'
 import {
@@ -436,9 +437,77 @@ describe('killStaleDaemon pid identity guards', () => {
         ([, sig]) => sig === 'SIGTERM' || sig === 'SIGKILL'
       )
       expect(terminationSignals).toEqual([])
-      expect(readFileSync(pidPath, 'utf8')).toContain(`"pid":${process.pid}`)
+      expect(parseDaemonPidFile(readFileSync(pidPath, 'utf8'))?.pid).toBe(process.pid)
     } finally {
       killSpy.mockRestore()
+    }
+  })
+
+  it('preserves replacement identity files when the pid changes ownership during escalation', async () => {
+    if (process.platform === 'win32') {
+      return
+    }
+
+    const replacementSocket = createServer((socket) => socket.end())
+    await new Promise<void>((resolve, reject) => {
+      replacementSocket.once('error', reject)
+      replacementSocket.listen(socketPath, () => {
+        replacementSocket.off('error', reject)
+        resolve()
+      })
+    })
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        "process.on('SIGTERM',()=>{process.title='replacement-process';process.send?.('replaced')});process.send?.('ready');setInterval(()=>{},1000)",
+        'daemon-entry',
+        socketPath,
+        tokenPath
+      ],
+      { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
+    )
+    await new Promise<void>((resolve, reject) => {
+      child.once('error', reject)
+      child.on('message', (message) => {
+        if (message === 'ready') {
+          resolve()
+        }
+      })
+    })
+    const pid = child.pid
+    expect(pid).toEqual(expect.any(Number))
+    const pidPath = getDaemonPidPath(dir)
+    writeFileSync(pidPath, serializeDaemonPidFile({ pid: pid!, startedAtMs: null }), {
+      mode: 0o600
+    })
+    const replacementObserved = new Promise<void>((resolve) => {
+      child.on('message', (message) => {
+        if (message === 'replaced') {
+          resolve()
+        }
+      })
+    })
+
+    vi.useFakeTimers()
+    try {
+      const killing = killStaleDaemon(dir, socketPath, tokenPath)
+      await replacementObserved
+      await vi.advanceTimersByTimeAsync(3_100)
+      await expect(killing).resolves.toBe(true)
+      expect(parseDaemonPidFile(readFileSync(pidPath, 'utf8'))?.pid).toBe(pid)
+      expect(existsSync(socketPath)).toBe(true)
+    } finally {
+      vi.useRealTimers()
+      const exited =
+        child.exitCode === null
+          ? new Promise<void>((resolve) => child.once('exit', () => resolve()))
+          : Promise.resolve()
+      if (child.exitCode === null) {
+        child.kill('SIGKILL')
+      }
+      await exited
+      await closeServer(replacementSocket)
     }
   })
 })

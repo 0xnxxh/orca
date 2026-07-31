@@ -10,17 +10,23 @@ export class DaemonPtyAdapterSubscriptionFanout {
 
   constructor(
     private readonly adapters: readonly DaemonPtyAdapter[],
-    onAdapterExit: (adapter: DaemonPtyAdapter, id: string) => void
+    private readonly shouldForwardStreamEvent: (adapter: DaemonPtyAdapter, id: string) => boolean,
+    onAdapterExit: (adapter: DaemonPtyAdapter, id: string) => boolean
   ) {
     for (const adapter of adapters) {
       this.unsubscribers.push(
         adapter.onData((payload) => {
+          if (!shouldForwardStreamEvent(adapter, payload.id)) {
+            return
+          }
           for (const listener of this.dataListeners) {
             listener(payload)
           }
         }),
         adapter.onExit((payload) => {
-          onAdapterExit(adapter, payload.id)
+          if (!onAdapterExit(adapter, payload.id)) {
+            return
+          }
           for (const listener of this.exitListeners) {
             listener(payload)
           }
@@ -41,7 +47,13 @@ export class DaemonPtyAdapterSubscriptionFanout {
 
   onBackgroundStreamEvent(callback: (payload: PtyBackgroundStreamEvent) => void): () => void {
     return combineUnsubscribes(
-      this.adapters.map((adapter) => adapter.onBackgroundStreamEvent(callback))
+      this.adapters.map((adapter) =>
+        adapter.onBackgroundStreamEvent((payload) => {
+          if (this.shouldForwardStreamEvent(adapter, payload.id)) {
+            callback(payload)
+          }
+        })
+      )
     )
   }
 

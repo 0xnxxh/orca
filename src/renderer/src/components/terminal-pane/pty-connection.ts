@@ -8253,7 +8253,12 @@ export function connectPanePty(
                 finishReattachLiveDataDeferral(accepted, outputCallbacks.generation)
                 const gen = await preSignalPromise
                 if (typeof gen === 'number') {
-                  if (!accepted) {
+                  const routingUnavailable =
+                    result &&
+                    typeof result === 'object' &&
+                    'routingUnavailable' in result &&
+                    result.routingUnavailable === true
+                  if (!accepted || routingUnavailable) {
                     await window.api.pty.clearPendingPaneSerializer(cacheKey, gen).catch(() => {})
                   } else if (!isRemoteRuntimePtyId(pendingSessionId)) {
                     const settledPtyId =
@@ -8489,7 +8494,12 @@ export function connectPanePty(
           finishReattachLiveDataDeferral(accepted, outputCallbacks.generation)
           const gen = await preSignalPromise
           if (typeof gen === 'number') {
-            if (!accepted) {
+            const routingUnavailable =
+              result &&
+              typeof result === 'object' &&
+              'routingUnavailable' in result &&
+              result.routingUnavailable === true
+            if (!accepted || routingUnavailable) {
               await window.api.pty.clearPendingPaneSerializer(cacheKey, gen).catch(() => {})
             } else if (!isRemoteRuntimePtyId(deferredReattachSessionId)) {
               const settledPtyId =

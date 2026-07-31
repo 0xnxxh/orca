@@ -83,6 +83,8 @@ function createAdapter(
       writes.push({ id, data })
     }),
     resize: vi.fn(),
+    pauseProducer: vi.fn(),
+    resumeProducer: vi.fn(),
     setPtyBackgrounded: vi.fn(),
     getBufferSnapshot: vi.fn(async () => null),
     shutdown: vi.fn(async (id: string) => {
@@ -440,6 +442,97 @@ describe('DaemonPtyRouter', () => {
     })
   })
 
+  it('silently drops best-effort hints for an unavailable route', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['legacy-session'])
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+    await router.discoverLegacySessions()
+    legacy.emitExit('legacy-session', 0)
+
+    expect(() => router.pauseProducer('legacy-session')).not.toThrow()
+    expect(() => router.resumeProducer('legacy-session')).not.toThrow()
+    expect(() => router.setPtyBackgrounded('legacy-session', true)).not.toThrow()
+    expect(current.pauseProducer).not.toHaveBeenCalled()
+    expect(current.resumeProducer).not.toHaveBeenCalled()
+    expect(current.setPtyBackgrounded).not.toHaveBeenCalled()
+  })
+
+  it('fences colliding output and keeps a surviving owner after the other exits', async () => {
+    const sessionId = 'colliding-session'
+    const current = createAdapter('current', [sessionId], {
+      alive: [sessionId],
+      killed: []
+    })
+    const legacy = createAdapter('legacy', [sessionId], {
+      alive: [sessionId],
+      killed: []
+    })
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+    const data = vi.fn()
+    const exit = vi.fn()
+    router.onData(data)
+    router.onExit(exit)
+    await router.reconcileOnStartup(new Set())
+
+    current.emitData(sessionId, 'current')
+    legacy.emitData(sessionId, 'legacy')
+    current.emitExit(sessionId, 0)
+
+    expect(data).not.toHaveBeenCalled()
+    expect(exit).not.toHaveBeenCalled()
+    expect(router.getSessionRouteState(sessionId)).toBe('owned')
+
+    legacy.emitData(sessionId, 'survivor')
+    expect(data).toHaveBeenCalledExactlyOnceWith({ id: sessionId, data: 'survivor' })
+  })
+
+  it('records data ownership before discovery and fences later collision evidence', () => {
+    const sessionId = 'undiscovered-collision'
+    const current = createAdapter('current', [sessionId])
+    const legacy = createAdapter('legacy', [sessionId])
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+    const data = vi.fn()
+    router.onData(data)
+
+    current.emitData(sessionId, 'current')
+    legacy.emitData(sessionId, 'legacy')
+    current.emitData(sessionId, 'current-after-collision')
+
+    expect(data).toHaveBeenCalledExactlyOnceWith({ id: sessionId, data: 'current' })
+    expect(router.getSessionRouteState(sessionId)).toBe('ambiguous')
+  })
+
+  it('preserves collision evidence received before a fresh spawn reply', async () => {
+    const sessionId = 'fresh-collision'
+    const currentSessions = [sessionId]
+    const legacySessions = [sessionId]
+    const current = createAdapter('current', currentSessions)
+    const legacy = createAdapter('legacy', legacySessions)
+    let resolveSpawn: ((result: PtySpawnResult) => void) | undefined
+    vi.mocked(current.spawn).mockReturnValue(
+      new Promise((resolve) => {
+        resolveSpawn = resolve
+      })
+    )
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+
+    const spawning = router.spawn({
+      sessionId,
+      isNewSession: true,
+      cols: 80,
+      rows: 24
+    })
+    current.emitData(sessionId, 'current')
+    legacy.emitData(sessionId, 'legacy')
+    resolveSpawn?.({ id: sessionId })
+    await spawning
+
+    expect(router.getSessionRouteState(sessionId)).toBe('ambiguous')
+    await expect(router.sendSignal(sessionId, 'SIGTERM')).rejects.toThrow(
+      'daemon_session_routing_unavailable'
+    )
+  })
+
   it('forwards gap events and explicit sequence accounting from every adapter', () => {
     const current = createAdapter('current')
     const legacy = createAdapter('legacy')
@@ -468,6 +561,22 @@ describe('DaemonPtyRouter', () => {
       droppedChars: 512,
       sequenceChars: 508
     })
+  })
+
+  it('fences background stream events from a colliding adapter', async () => {
+    const sessionId = 'background-collision'
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', [sessionId])
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+    const backgroundSpy = vi.fn()
+    router.onBackgroundStreamEvent(backgroundSpy)
+    await router.discoverLegacySessions()
+
+    current.emitBackground({ id: sessionId, kind: 'dataGap', droppedChars: 512 })
+    legacy.emitBackground({ id: sessionId, kind: 'transientFact', fact: { kind: 'bell' } })
+
+    expect(backgroundSpy).not.toHaveBeenCalled()
+    expect(router.getSessionRouteState(sessionId)).toBe('ambiguous')
   })
 
   it('tombstones a legacy route after the routed session exits', async () => {
@@ -628,6 +737,20 @@ describe('DaemonPtyRouter', () => {
     })
     expect(legacy.write).toHaveBeenCalledWith('legacy-alive', 'old\n')
     expect(current.write).toHaveBeenCalledWith('current-alive', 'new\n')
+  })
+
+  it('accepts a live owner after another adapter tombstones the same id', async () => {
+    const sessionId = 'reconciled-owner'
+    const current = createAdapter('current', [], { alive: [], killed: [sessionId] })
+    const legacy = createAdapter('legacy', [], { alive: [sessionId], killed: [] })
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+
+    await router.reconcileOnStartup(new Set())
+    await router.sendSignal(sessionId, 'SIGTERM')
+
+    expect(router.getSessionRouteState(sessionId)).toBe('owned')
+    expect(legacy.sendSignal).toHaveBeenCalledExactlyOnceWith(sessionId, 'SIGTERM')
+    expect(current.sendSignal).not.toHaveBeenCalled()
   })
 
   it('merges large startup reconciliation results', async () => {
