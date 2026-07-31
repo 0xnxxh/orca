@@ -46,7 +46,11 @@ export type RuntimeStatusSlice = {
    * retires state owned by any environment that just left the saved list. */
   setRuntimeEnvironments: (environments: PublicKnownRuntimeEnvironment[]) => void
   /** Merges one environment's status. Replaces the prior entry for that id. */
-  setRuntimeEnvironmentStatus: (environmentId: string, status: RuntimeEnvironmentStatus) => void
+  setRuntimeEnvironmentStatus: (
+    environmentId: string,
+    status: RuntimeEnvironmentStatus,
+    options?: { suppressDisconnectToast?: boolean }
+  ) => void
   /** Drops a removed environment so stale hosts don't linger in the registry. */
   clearRuntimeEnvironmentStatus: (environmentId: string) => void
   /** Drops every entry whose id is not in the saved-environments set. */
@@ -223,7 +227,7 @@ export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeSta
     }
   },
 
-  setRuntimeEnvironmentStatus: (environmentId, status) => {
+  setRuntimeEnvironmentStatus: (environmentId, status, options) => {
     const previous = get().runtimeStatusByEnvironmentId.get(environmentId)
     // Why: a non-null status proves the runtime just answered, so drop any stale
     // "offline" compat failure before this online transition fires the
@@ -249,7 +253,12 @@ export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeSta
     })
     if (previous?.status === null && status.status !== null) {
       dismissRuntimeDisconnectedToast(environmentId)
-    } else if (previous && previous.status !== null && status.status === null) {
+    } else if (
+      previous &&
+      previous.status !== null &&
+      status.status === null &&
+      !options?.suppressDisconnectToast
+    ) {
       showRuntimeDisconnectedToast(environmentId, get)
     }
   },
