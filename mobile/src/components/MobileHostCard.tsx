@@ -22,6 +22,7 @@ export function MobileHostCard(props: {
   const isError = ['warning', 'unreachable', 'auth-failed'].includes(props.verdict.kind)
   const statusLabel = verdictDisplayLabel(props.verdict)
   const connectionPathLabel = connected ? mobileConnectionPathLabel(props.path) : null
+  const accessibleConnectionPathLabel = connectionPathLabel?.replace(' · ', ' via ')
   const worktreeSummary = props.worktreeCounts
     ? `${props.worktreeCounts.total} worktree${props.worktreeCounts.total === 1 ? '' : 's'}${props.worktreeCounts.active > 0 ? ` · ${props.worktreeCounts.active} active` : ''}`
     : null
@@ -29,7 +30,7 @@ export function MobileHostCard(props: {
     <View style={styles.card}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Open ${props.host.name}, ${statusLabel}${connectionPathLabel ? ` via ${connectionPathLabel}` : ''}`}
+        accessibilityLabel={`Open ${props.host.name}, ${statusLabel}${accessibleConnectionPathLabel ? `, ${accessibleConnectionPathLabel}` : ''}`}
         style={({ pressed }) => [styles.cardMain, pressed && styles.cardPressed]}
         onPress={props.onPress}
         onLongPress={props.onLongPress}

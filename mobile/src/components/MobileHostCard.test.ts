@@ -83,7 +83,7 @@ describe('MobileHostCard', () => {
     expect(onLongPress).toHaveBeenCalledOnce()
   })
 
-  it('announces the connection path for an online host', async () => {
+  it('announces the connection path without the visual separator', async () => {
     const consoleError = suppressRendererDeprecation()
     await act(async () => {
       renderer = create(
@@ -98,7 +98,7 @@ describe('MobileHostCard', () => {
           },
           state: 'connected',
           verdict: { kind: 'normal', label: 'Connected' },
-          path: 'relay',
+          path: 'tailscale',
           onPress: vi.fn(),
           onLongPress: vi.fn(),
           onOpenActions: vi.fn()
@@ -108,6 +108,8 @@ describe('MobileHostCard', () => {
     consoleError.mockRestore()
 
     const navigationButton = renderer.root.findAllByType('Pressable')[0]
-    expect(navigationButton.props.accessibilityLabel).toBe('Open Desk, Connected via Orca Relay')
+    expect(navigationButton.props.accessibilityLabel).toBe(
+      'Open Desk, Connected, Direct via Tailscale'
+    )
   })
 })
