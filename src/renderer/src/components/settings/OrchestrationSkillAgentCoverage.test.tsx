@@ -1,12 +1,13 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { RuntimeClientTarget } from '@/runtime/runtime-client-target'
+import type { RuntimeClientTarget } from '@/runtime/runtime-rpc-client'
 import type { DiscoveredSkill, SkillDiscoverySource } from '../../../../shared/skills'
 import { OrchestrationSkillAgentCoverage } from './OrchestrationSkillAgentCoverage'
 
 const useDetectedAgents = vi.fn(() => ({
   detectedIds: ['claude', 'codex'],
   isLoading: false,
+  detectionFailed: false,
   isRefreshing: false,
   refresh: vi.fn()
 }))
@@ -88,7 +89,10 @@ describe('OrchestrationSkillAgentCoverage', () => {
 
     // Why: skills/sources come from the remote scan; matching them against
     // local agent ids reports wrong Ready/Missing chips.
-    expect(useDetectedAgents).toHaveBeenCalledWith({ kind: 'runtime', environmentId: 'env-1' })
+    expect(useDetectedAgents).toHaveBeenCalledWith({
+      kind: 'runtime',
+      environmentId: 'env-1'
+    })
   })
 
   it('stays loading while the skill-scan host is unresolved', () => {
@@ -97,6 +101,7 @@ describe('OrchestrationSkillAgentCoverage', () => {
     useDetectedAgents.mockReturnValueOnce({
       detectedIds: null as never,
       isLoading: true,
+      detectionFailed: false,
       isRefreshing: false,
       refresh: vi.fn()
     })
@@ -107,5 +112,33 @@ describe('OrchestrationSkillAgentCoverage', () => {
 
     expect(useDetectedAgents).toHaveBeenCalledWith(undefined)
     expect(markup).toContain('Checking installed agents')
+  })
+
+  it('drops out of loading with a retry when the runtime probe failed', () => {
+    useActiveSkillDiscoveryRuntimeTarget.mockReturnValue({
+      kind: 'environment',
+      environmentId: 'env-1'
+    })
+    // Why: ensureRuntimeDetectedAgents' catch never writes detectedIds, so a
+    // failed probe would otherwise leave the card spinning for the whole mount.
+    useDetectedAgents.mockReturnValueOnce({
+      detectedIds: null as never,
+      isLoading: false,
+      detectionFailed: true,
+      isRefreshing: false,
+      refresh: vi.fn()
+    })
+
+    const markup = renderToStaticMarkup(
+      <OrchestrationSkillAgentCoverage
+        loading={false}
+        sources={[claudeHomeSource]}
+        skills={[claudeHomeSkill]}
+      />
+    )
+
+    expect(markup).not.toContain('Checking installed agents')
+    expect(markup).toContain('reach the host')
+    expect(markup).toContain('Retry')
   })
 })
