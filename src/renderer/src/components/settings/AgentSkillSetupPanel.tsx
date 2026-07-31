@@ -84,6 +84,9 @@ export function AgentSkillSetupPanel({
     const nextCommand =
       setupCommandFailedCode !== null && terminalCommand ? terminalCommand : activeCommand
     setTerminalOpening(true)
+    if (setupCommandFailedCode !== null) {
+      setTerminalOpen(false)
+    }
     void (async () => {
       let shouldOpenTerminal = false
       try {

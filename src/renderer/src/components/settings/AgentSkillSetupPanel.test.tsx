@@ -426,7 +426,17 @@ describe('AgentSkillSetupPanel', () => {
   })
 
   it('retries a failed command in a fresh interactive terminal', async () => {
-    await renderInteractivePanel()
+    let finishRetryPreflight: (() => void) | null = null
+    const retryPreflight = new Promise<void>((resolve) => {
+      finishRetryPreflight = resolve
+    })
+    let preflightCount = 0
+    await renderInteractivePanel({
+      onBeforeOpenTerminal: () => {
+        preflightCount += 1
+        return preflightCount === 1 ? undefined : retryPreflight
+      }
+    })
     await clickButton('Install')
     const firstInstance = container
       ?.querySelector('[data-testid="inline-command-terminal"]')
@@ -436,6 +446,13 @@ describe('AgentSkillSetupPanel', () => {
       mocks.terminalProps.at(-1)?.onCommandFinished?.(1)
     })
     await clickButton('Retry')
+    expect(container?.querySelector('[data-testid="inline-command-terminal"]')).toBeNull()
+
+    await act(async () => {
+      finishRetryPreflight?.()
+      await retryPreflight
+    })
+    await act(async () => {})
 
     expect(mocks.terminalProps.at(-1)).toMatchObject({ command: INSTALL_COMMAND })
     expect(
