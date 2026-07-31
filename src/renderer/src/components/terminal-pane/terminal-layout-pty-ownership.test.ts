@@ -162,6 +162,29 @@ describe('terminal layout PTY ownership normalization', () => {
     })
   })
 
+  it('repairs rootless duplicate ownership in one idempotent pass', () => {
+    const normalized = normalizeTerminalLayoutSnapshot({
+      root: null,
+      activeLeafId: null,
+      expandedLeafId: null,
+      ptyIdsByLeafId: {
+        [LEAF_1]: 'pty-agent',
+        [LEAF_2]: 'pty-agent'
+      }
+    })
+
+    expect(normalized.snapshot).toEqual({
+      root: null,
+      activeLeafId: LEAF_1,
+      expandedLeafId: null,
+      ptyIdsByLeafId: { [LEAF_1]: 'pty-agent' }
+    })
+    expect(normalizeTerminalLayoutSnapshot(normalized.snapshot)).toEqual({
+      snapshot: normalized.snapshot,
+      changed: false
+    })
+  })
+
   it('preserves valid split layouts by identity', () => {
     const layout = duplicatePtyLayout()
     layout.ptyIdsByLeafId = {

@@ -214,9 +214,16 @@ export function normalizeTerminalLayoutSnapshot(
 ): { snapshot: TerminalLayoutSnapshot; changed: boolean } {
   const leafIds = normalizeTerminalLayoutLeafIds(snapshot)
   const ptyOwnership = normalizeTerminalLayoutPtyOwnership(leafIds.snapshot)
+  const activeLeafId = ptyOwnership.snapshot.root
+    ? ptyOwnership.snapshot.activeLeafId
+    : resolveRootlessTerminalLayoutLeafId(ptyOwnership.snapshot)
   return {
-    snapshot: ptyOwnership.snapshot,
-    changed: leafIds.changed || ptyOwnership.changed
+    snapshot:
+      activeLeafId === ptyOwnership.snapshot.activeLeafId
+        ? ptyOwnership.snapshot
+        : { ...ptyOwnership.snapshot, activeLeafId },
+    changed:
+      leafIds.changed || ptyOwnership.changed || activeLeafId !== ptyOwnership.snapshot.activeLeafId
   }
 }
 
