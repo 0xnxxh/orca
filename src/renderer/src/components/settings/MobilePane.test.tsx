@@ -26,6 +26,7 @@ type StoreState = {
   settings: {
     mobileAutoRestoreFitMs: number | null
     mobilePairingConnectionMode?: MobilePairingConnectionMode
+    mobilePairingCustomAddress?: string | null
   }
   updateSettings: (patch: Record<string, unknown>) => Promise<void>
   recordFeatureInteraction: (feature: string) => void
@@ -71,12 +72,16 @@ vi.mock('./MobilePairingSetupSection', () => ({
     canGenerate?: boolean
     loading: boolean
     connectionPathControl: React.ReactNode
+    networkInterfaces: { name: string; address: string }[]
+    selectedAddress: string | undefined
+    onSelectedAddressChange: (address: string) => void
     onGenerateQr: () => void
   }) => (
     <div>
       <span data-testid="mode">{props.connectionMode}</span>
       <span data-testid="can-generate">{String(props.canGenerate)}</span>
       <span data-testid="loading">{String(props.loading)}</span>
+      <span data-testid="selected-address">{props.selectedAddress ?? 'none'}</span>
       {props.connectionPathControl}
       {/* Mirror the real Generate gate (loading/canGenerate) so a stuck
           loading flag surfaces as a disabled control the tests can catch. */}
@@ -86,6 +91,16 @@ vi.mock('./MobilePairingSetupSection', () => ({
         disabled={props.loading || props.canGenerate === false}
       >
         Generate
+      </button>
+      <button type="button" onClick={() => props.onSelectedAddressChange('100.126.117.25:6768')}>
+        choose-custom-address
+      </button>
+      <button
+        type="button"
+        disabled={props.networkInterfaces.length === 0}
+        onClick={() => props.onSelectedAddressChange(props.networkInterfaces[0]!.address)}
+      >
+        choose-discovered-address
       </button>
     </div>
   )
@@ -374,6 +389,46 @@ describe('MobilePane pairing connection mode', () => {
     }
     render(<MobilePane />)
     expect(screen.getByTestId('mode')).toHaveTextContent('local-only')
+  })
+
+  it('restores a saved custom address for future pairing codes', async () => {
+    mocks.holder.state.settings = {
+      mobileAutoRestoreFitMs: null,
+      mobilePairingCustomAddress: '100.126.117.25:6768'
+    }
+    mocks.listNetworkInterfaces.mockResolvedValue({
+      interfaces: [{ name: 'Ethernet', address: '10.0.0.2' }]
+    })
+    const user = userEvent.setup()
+    render(<MobilePane />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('selected-address')).toHaveTextContent('100.126.117.25:6768')
+    )
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await waitFor(() =>
+      expect(getPairingQR).toHaveBeenCalledWith({
+        address: '100.126.117.25:6768',
+        connectionMode: 'automatic'
+      })
+    )
+  })
+
+  it('persists a custom address and clears it when a discovered address is selected', async () => {
+    mocks.listNetworkInterfaces.mockResolvedValue({
+      interfaces: [{ name: 'Ethernet', address: '10.0.0.2' }]
+    })
+    const user = userEvent.setup()
+    render(<MobilePane />)
+    await waitFor(() => expect(mocks.listNetworkInterfaces).toHaveBeenCalledOnce())
+
+    await user.click(screen.getByRole('button', { name: 'choose-custom-address' }))
+    expect(updateSettings).toHaveBeenCalledWith({
+      mobilePairingCustomAddress: '100.126.117.25:6768'
+    })
+
+    await user.click(screen.getByRole('button', { name: 'choose-discovered-address' }))
+    expect(updateSettings).toHaveBeenCalledWith({ mobilePairingCustomAddress: null })
   })
 
   it('discards a Relay QR that resolves after signing out mid-generate', async () => {

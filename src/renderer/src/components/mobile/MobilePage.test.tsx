@@ -11,7 +11,11 @@ import type { MobileRelayMintFailure } from '../../../../shared/mobile-relay-min
 type StoreState = {
   closeMobilePage: () => void
   orcaProfileAuthStatus: { state: 'connected' | 'local' }
-  settings: { showMobileButton: boolean; mobilePairingConnectionMode?: MobilePairingConnectionMode }
+  settings: {
+    showMobileButton: boolean
+    mobilePairingConnectionMode?: MobilePairingConnectionMode
+    mobilePairingCustomAddress?: string | null
+  }
   updateSettings: () => Promise<void>
 }
 
@@ -51,6 +55,7 @@ vi.mock('./MobilePageContent', () => ({
     pairingQrError: boolean
     relayMintFailure: MobileRelayMintFailure | null
     onRetryRelay: () => void
+    selectedAddress: string | undefined
     stage: string | null
     stepIdx: number
   }) => (
@@ -63,6 +68,7 @@ vi.mock('./MobilePageContent', () => ({
       <span data-testid="pairing-url">{props.pairingUrl ?? 'none'}</span>
       <span data-testid="pairing-qr-error">{String(props.pairingQrError)}</span>
       <span data-testid="relay-failure">{props.relayMintFailure?.stage ?? 'none'}</span>
+      <span data-testid="selected-address">{props.selectedAddress ?? 'none'}</span>
       <button type="button" onClick={props.enterFlow}>
         Enter flow
       </button>
@@ -187,6 +193,22 @@ describe('MobilePage pairing connection mode', () => {
 
     await waitFor(() => expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'local-only' }))
     expect(screen.getByTestId('mode')).toHaveTextContent('local-only')
+  })
+
+  it('restores a saved custom address for future pairing codes', async () => {
+    mocks.storeState.settings = {
+      showMobileButton: true,
+      mobilePairingCustomAddress: '100.126.117.25:6768'
+    }
+    await openPairingStep()
+
+    await waitFor(() =>
+      expect(getPairingQR).toHaveBeenCalledWith({
+        address: '100.126.117.25:6768',
+        connectionMode: 'automatic'
+      })
+    )
+    expect(screen.getByTestId('selected-address')).toHaveTextContent('100.126.117.25:6768')
   })
 
   it('does not auto-mint any QR when signed out with Anywhere selected', async () => {
@@ -422,5 +444,22 @@ describe('MobilePage pairing connection mode', () => {
       })
     )
     expect(getPairingQR).toHaveBeenCalledTimes(2)
+    expect(mocks.storeState.updateSettings).not.toHaveBeenCalledWith({
+      mobilePairingCustomAddress: 'wss://custom.example/large'
+    })
+  })
+
+  it('persists a custom address after its QR preflight succeeds', async () => {
+    const user = userEvent.setup()
+    await openPairingStep()
+    await waitFor(() => expect(getPairingQR).toHaveBeenCalledTimes(1))
+
+    await user.click(screen.getByRole('button', { name: 'Confirm custom address' }))
+
+    await waitFor(() =>
+      expect(mocks.storeState.updateSettings).toHaveBeenCalledWith({
+        mobilePairingCustomAddress: 'wss://custom.example/large'
+      })
+    )
   })
 })

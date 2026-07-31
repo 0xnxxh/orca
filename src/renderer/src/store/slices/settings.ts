@@ -23,6 +23,7 @@ import { bumpProviderRuntimeSessionGeneration } from '@/lib/provider-runtime-con
 import { normalizeUiLanguage } from '../../../../shared/ui-language'
 import { normalizeDesktopTerminalScrollbackRows } from '../../../../shared/terminal-scrollback-policy'
 import { translate } from '@/i18n/i18n'
+import { normalizeMobilePairingCustomAddress } from '../../../../shared/mobile-pairing-custom-address'
 
 export type SettingsSlice = SettingsSearchState & {
   settings: GlobalSettings | null
@@ -103,6 +104,11 @@ function normalizeSettingsUpdates(
   if ('terminalScrollbackRows' in updates) {
     sanitizedUpdates.terminalScrollbackRows = normalizeDesktopTerminalScrollbackRows(
       updates.terminalScrollbackRows
+    )
+  }
+  if ('mobilePairingCustomAddress' in updates) {
+    sanitizedUpdates.mobilePairingCustomAddress = normalizeMobilePairingCustomAddress(
+      updates.mobilePairingCustomAddress
     )
   }
   return sanitizedUpdates

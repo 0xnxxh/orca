@@ -169,6 +169,7 @@ import {
 import { normalizeTerminalQuickCommands } from '../shared/terminal-quick-commands'
 import { normalizeTaskProviderSettings } from '../shared/task-providers'
 import { normalizeAutoRenameBranchFromWorkDefaultOn } from '../shared/auto-rename-branch-from-work-settings'
+import { normalizeMobilePairingCustomAddress } from '../shared/mobile-pairing-custom-address'
 import { normalizeOpenInApplications } from '../shared/open-in-applications'
 import { normalizeTerminalShortcutPolicy } from '../shared/keybindings'
 import { normalizeSourceControlGroupOrder } from '../shared/source-control-group-order'
@@ -3146,6 +3147,15 @@ export class Store {
           parsed.settings?.compactWorktreeCards ??
           parsed.settings?.experimentalCompactWorktreeCards ??
           defaults.settings.compactWorktreeCards
+        const mobilePairingCustomAddress = normalizeMobilePairingCustomAddress(
+          parsed.settings?.mobilePairingCustomAddress
+        )
+        if (
+          parsed.settings?.mobilePairingCustomAddress !== undefined &&
+          parsed.settings.mobilePairingCustomAddress !== mobilePairingCustomAddress
+        ) {
+          this.loadNeedsSave = true
+        }
         const normalizedSourceControlGroupOrder = normalizeSourceControlGroupOrder(
           parsed.settings?.sourceControlGroupOrder
         )
@@ -3229,6 +3239,7 @@ export class Store {
               parsed.settings?.terminalCustomThemes
             ),
             appIcon: normalizeAppIconId(parsed.settings?.appIcon),
+            mobilePairingCustomAddress,
             // Why: persisted settings may be hand-edited or from older builds; keep tray-minimize false unless stored value is true.
             minimizeToTrayOnClose: parsed.settings?.minimizeToTrayOnClose === true,
             // Why: missing means default-on; round-trips unchanged on non-mac since darwin consumers gate the effect.
@@ -5521,6 +5532,11 @@ export class Store {
       // Why: every writer (desktop IPC, web RPC, migrations) hits this boundary, so the persisted list stays bounded and well-formed.
       sanitizedUpdates.prBotAuthorOverrides = normalizePRBotAuthorOverrides(
         updates.prBotAuthorOverrides
+      )
+    }
+    if ('mobilePairingCustomAddress' in updates) {
+      sanitizedUpdates.mobilePairingCustomAddress = normalizeMobilePairingCustomAddress(
+        updates.mobilePairingCustomAddress
       )
     }
     const historyWithPreviousLayout = buildWorkspaceDirHistoryForUpdate(

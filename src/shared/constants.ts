@@ -351,6 +351,7 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     mobileAutoRestoreFitMs: null,
     // Why: Anywhere (Relay + local) is the default; local-only is written only on explicit same-network choice.
     mobilePairingConnectionMode: 'automatic',
+    mobilePairingCustomAddress: null,
     // Why: off keeps the cosmetic overlay unmounted for users who never opt in.
     experimentalPet: false,
     experimentalActivity: false,
