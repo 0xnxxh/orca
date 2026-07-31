@@ -622,9 +622,54 @@ describe('DegradedDaemonPtyProvider', () => {
     expect(current.write).not.toHaveBeenCalled()
   })
 
+  it('releases an in-flight fallback when the colliding daemon changes incarnation', async () => {
+    const sessionId = 'in-flight-incarnation-collision'
+    const previous = { pid: 1, startedAtMs: 1, launchNonce: 'previous' }
+    const replacement = { pid: 2, startedAtMs: 2, launchNonce: 'replacement' }
+    const current = createDaemonAdapter('daemon')
+    const fallback = createProvider('fallback')
+    let identity = previous
+    let notifyIdentityChange!: (event: DaemonIdentityChangeEvent) => void
+    vi.mocked(current.getLastAuthenticatedDaemonIdentity).mockImplementation(() => identity)
+    vi.mocked(current.onDaemonIdentityChanged).mockImplementation((listener) => {
+      notifyIdentityChange = listener
+      return () => {}
+    })
+    let resolveSpawn!: (result: PtySpawnResult) => void
+    vi.mocked(fallback.spawn).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSpawn = resolve
+      })
+    )
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+    const data = vi.fn()
+    provider.onData(data)
+
+    const spawning = provider.spawn({ sessionId, isNewSession: true, cols: 80, rows: 24 })
+    current.emitData(sessionId, 'foreign daemon output')
+    identity = replacement
+    notifyIdentityChange({ previous, current: replacement })
+    fallback.emitData(sessionId, 'fallback first')
+    resolveSpawn({ id: sessionId })
+    await spawning
+    provider.write(sessionId, 'fallback input')
+
+    expect(data).toHaveBeenCalledExactlyOnceWith({ id: sessionId, data: 'fallback first' })
+    expect(fallback.write).toHaveBeenCalledExactlyOnceWith(sessionId, 'fallback input')
+  })
+
   it('rejects unknown fallback output after unavailable tombstones are evicted', async () => {
     const current = createDaemonAdapter('daemon')
     const fallback = createProvider('fallback')
+    const previous = { pid: 1, startedAtMs: 1, launchNonce: 'previous' }
+    const replacement = { pid: 2, startedAtMs: 2, launchNonce: 'replacement' }
+    let identity = previous
+    let notifyIdentityChange!: (event: DaemonIdentityChangeEvent) => void
+    vi.mocked(current.getLastAuthenticatedDaemonIdentity).mockImplementation(() => identity)
+    vi.mocked(current.onDaemonIdentityChanged).mockImplementation((listener) => {
+      notifyIdentityChange = listener
+      return () => {}
+    })
     const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
 
     for (let index = 0; index <= 1_000; index += 1) {
@@ -657,6 +702,18 @@ describe('DegradedDaemonPtyProvider', () => {
       id: 'explicit-fallback',
       data: 'safe frame'
     })
+
+    current.emitData('explicit-fallback', 'foreign frame')
+    identity = replacement
+    notifyIdentityChange({ previous, current: replacement })
+    fallback.emitData('explicit-fallback', 'surviving frame')
+    provider.write('explicit-fallback', 'safe input')
+
+    expect(data).toHaveBeenNthCalledWith(2, {
+      id: 'explicit-fallback',
+      data: 'surviving frame'
+    })
+    expect(fallback.write).toHaveBeenCalledExactlyOnceWith('explicit-fallback', 'safe input')
   })
 
   it('preserves explicit sequence accounting on daemon data events', () => {

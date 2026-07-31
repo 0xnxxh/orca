@@ -90,6 +90,7 @@ describe('DaemonPtyRouter routing safety', () => {
     await router.discoverLegacySessions()
     await router.shutdown(sessionId, { immediate: true, keepHistory: true })
     expect(router.getSessionRouteState(sessionId)).toBe('unavailable')
+    expect(router.supportsGitCredentialGuardHost(sessionId)).toBe(false)
 
     const spawning = router.spawn({ sessionId, cols: 80, rows: 24 })
     current.emitData(sessionId, 'restored frame')

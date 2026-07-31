@@ -74,7 +74,8 @@ export class DaemonPtyRouter implements IPtyProvider {
   }
 
   supportsGitCredentialGuardHost(sessionId?: string): boolean {
-    return this.routing.ownerOrCurrent(sessionId).supportsGitCredentialGuardHost()
+    const owner = sessionId ? this.routing.ownerForHint(sessionId) : this.current
+    return owner?.supportsGitCredentialGuardHost() ?? false
   }
 
   supportsAgentSessionClaims(): boolean {

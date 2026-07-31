@@ -2,6 +2,7 @@ import type { IPtyProvider } from '../providers/types'
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
 import { sameDaemonIncarnation } from './daemon-session-route'
 import type { DaemonSessionRouteTable } from './daemon-session-route-table'
+import type { DegradedFallbackSpawnRoutes } from './degraded-fallback-spawn-routes'
 
 type FallbackLivenessProbe = {
   provider: IPtyProvider
@@ -15,7 +16,8 @@ export class DegradedFallbackSessionRoutes {
 
   constructor(
     private readonly sessions: Map<string, IPtyProvider>,
-    private readonly daemonRoutes: DaemonSessionRouteTable
+    private readonly daemonRoutes: DaemonSessionRouteTable,
+    private readonly spawns: DegradedFallbackSpawnRoutes
   ) {}
 
   hasCollision(sessionId: string): boolean {
@@ -94,7 +96,7 @@ export class DegradedFallbackSessionRoutes {
     owner: DaemonPtyAdapter,
     incarnation: ReturnType<DaemonPtyAdapter['getLastAuthenticatedDaemonIdentity']>
   ): boolean {
-    if (!this.sessions.has(sessionId)) {
+    if (!this.sessions.has(sessionId) && !this.spawns.hasLiveCandidate(sessionId)) {
       return false
     }
     const route = this.daemonRoutes.get(sessionId)

@@ -2883,6 +2883,7 @@ describe('registerPtyHandlers', () => {
         env: Record<string, string>
         envToDelete?: string[]
         isNewSession?: boolean
+        sessionId?: string
         shellOverride?: string
         terminalWindowsWslDistro?: string | null
         terminalWindowsPowerShellImplementation?: string
@@ -2943,6 +2944,7 @@ describe('registerPtyHandlers', () => {
         spawnArgs?: {
           cwd?: string
           worktreeId?: string
+          sessionId?: string
           shellOverride?: string
           command?: string
           launchAgent?: TuiAgent
@@ -4055,6 +4057,28 @@ describe('registerPtyHandlers', () => {
         expect(env.GIT_CONFIG_COUNT).toBe('3')
         expect(env.GIT_CONFIG_KEY_1).toBe('credential.interactive')
         expect(env.GIT_CONFIG_KEY_2).toBe('credential.guiPrompt')
+      })
+
+      it('uses a conservative guard for an unresolved caller-provided daemon session', async () => {
+        const supportsGuard = vi.fn(() => false)
+        const options = await daemonSpawnAndGetOptions(
+          {
+            GIT_CONFIG_COUNT: '1',
+            GIT_CONFIG_KEY_0: 'http.proxy',
+            GIT_CONFIG_VALUE_0: 'http://proxy.invalid'
+          },
+          undefined,
+          undefined,
+          undefined,
+          { sessionId: 'preserved-session', command: 'claude' },
+          supportsGuard
+        )
+
+        expect(supportsGuard).toHaveBeenCalledExactlyOnceWith('preserved-session')
+        expect(options.sessionId).toBe('preserved-session')
+        expect(options.env.GIT_CONFIG_COUNT).toBe('3')
+        expect(options.env.GIT_CONFIG_KEY_1).toBe('credential.interactive')
+        expect(options.env.GIT_CONFIG_KEY_2).toBe('credential.guiPrompt')
       })
 
       it('passes the minted sessionId through to provider.spawn and host env setup', async () => {

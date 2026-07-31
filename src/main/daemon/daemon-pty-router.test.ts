@@ -382,6 +382,22 @@ describe('DaemonPtyRouter', () => {
     expect(router.supportsGitCredentialGuardHost('legacy-session')).toBe(false)
   })
 
+  it('keeps an unresolved guard-host hint conservative until async owner resolution', async () => {
+    const sessionId = 'preserved-current-session'
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy')
+    vi.mocked(current.probePtyLiveness).mockResolvedValue(true)
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+
+    expect(router.supportsGitCredentialGuardHost(sessionId)).toBe(false)
+    await expect(router.spawn({ sessionId, cols: 80, rows: 24 })).resolves.toEqual({
+      id: sessionId
+    })
+
+    expect(current.spawn).toHaveBeenCalledExactlyOnceWith({ sessionId, cols: 80, rows: 24 })
+    expect(legacy.spawn).not.toHaveBeenCalled()
+  })
+
   it('routes fresh foreground confirmation to the session-owning daemon', async () => {
     const current = createAdapter('current', ['current-session'])
     const legacy = createAdapter('legacy', ['legacy-session'])

@@ -4,15 +4,15 @@ import { shutdownDegradedFallbackSessions } from './degraded-daemon-fallback-shu
 import { DaemonSessionRouteTable } from './daemon-session-route-table'
 import { DaemonSessionOwnerUnknownError, sameDaemonIncarnation } from './daemon-session-route'
 import type { DaemonSnapshotAcknowledgementRoutes } from './daemon-snapshot-acknowledgement-routes'
-import { DegradedFallbackSessionRoutes } from './degraded-fallback-session-routes'
+import { DegradedFallbackSessionRoutes as FallbackRoutes } from './degraded-fallback-session-routes'
 import { DegradedFallbackSpawnRoutes } from './degraded-fallback-spawn-routes'
 
 export class DegradedDaemonSessionRouting {
   private readonly adapters: DaemonPtyAdapter[]
   private readonly adapterSet: ReadonlySet<DaemonPtyAdapter>
   private readonly routes: DaemonSessionRouteTable
-  private readonly fallbackSessions = new Map<string, IPtyProvider>()
-  private readonly fallbackRoutes: DegradedFallbackSessionRoutes
+  private readonly fallbackOwners = new Map<string, IPtyProvider>()
+  private readonly fallbackRoutes: FallbackRoutes
   private readonly fallbackSpawns = new DegradedFallbackSpawnRoutes()
   private readonly identityUnsubscribes: (() => void)[] = []
 
@@ -25,7 +25,7 @@ export class DegradedDaemonSessionRouting {
     this.adapters = [current, ...legacy]
     this.adapterSet = new Set(this.adapters)
     this.routes = new DaemonSessionRouteTable(this.adapters)
-    this.fallbackRoutes = new DegradedFallbackSessionRoutes(this.fallbackSessions, this.routes)
+    this.fallbackRoutes = new FallbackRoutes(this.fallbackOwners, this.routes, this.fallbackSpawns)
     for (const adapter of this.adapters) {
       this.identityUnsubscribes.push(
         adapter.onDaemonIdentityChanged(({ previous }) => {
@@ -51,7 +51,7 @@ export class DegradedDaemonSessionRouting {
           incarnation
         )
         for (const session of sessions) {
-          if (this.fallbackSessions.has(session.id)) {
+          if (this.fallbackOwners.has(session.id)) {
             this.fallbackRoutes.recordCollision(session.id)
           }
         }
@@ -95,7 +95,7 @@ export class DegradedDaemonSessionRouting {
     if (this.fallbackRoutes.hasCollision(sessionId)) {
       throw new DaemonSessionOwnerUnknownError(sessionId)
     }
-    return this.fallbackSessions.get(sessionId) ?? this.routes.resolveOwnerSync(sessionId)
+    return this.fallbackOwners.get(sessionId) ?? this.routes.resolveOwnerSync(sessionId)
   }
 
   ownerForHint(sessionId: string): IPtyProvider | null {
@@ -110,7 +110,7 @@ export class DegradedDaemonSessionRouting {
     if (this.fallbackRoutes.hasCollision(sessionId)) {
       return true
     }
-    const fallback = this.fallbackSessions.get(sessionId)
+    const fallback = this.fallbackOwners.get(sessionId)
     return fallback ? (fallback.hasPty?.(sessionId) ?? true) : this.routes.hasPty(sessionId)
   }
 
@@ -131,23 +131,28 @@ export class DegradedDaemonSessionRouting {
   shouldForwardStreamEvent(provider: IPtyProvider, sessionId: string): boolean {
     const adapter = this.daemonAdapter(provider)
     if (adapter) {
-      const shouldForward = this.routes.recordDataOwner(sessionId, adapter)
-      if (this.fallbackSessions.has(sessionId) || this.fallbackSpawns.hasLiveCandidate(sessionId)) {
+      if (this.fallbackOwners.has(sessionId)) {
+        this.routes.recordFreshOwned(sessionId, adapter)
         this.fallbackRoutes.recordCollision(sessionId)
         return false
       }
-      return shouldForward
+      const shouldForward = this.routes.recordDataOwner(sessionId, adapter)
+      if (!this.fallbackSpawns.hasLiveCandidate(sessionId)) {
+        return shouldForward
+      }
+      this.fallbackRoutes.recordCollision(sessionId)
+      return false
     }
     const route = this.routes.get(sessionId)
     if (!route) {
       return (
         !this.fallbackSpawns.hasExited(sessionId) &&
-        (this.fallbackSessions.get(sessionId) === provider ||
+        (this.fallbackOwners.get(sessionId) === provider ||
           this.fallbackSpawns.isInFlight(sessionId))
       )
     }
     if (
-      (this.fallbackSessions.get(sessionId) === provider ||
+      (this.fallbackOwners.get(sessionId) === provider ||
         this.fallbackSpawns.hasLiveCandidate(sessionId)) &&
       route.state === 'unavailable' &&
       !this.fallbackRoutes.hasCollision(sessionId)
@@ -166,7 +171,7 @@ export class DegradedDaemonSessionRouting {
     const adapter = this.daemonAdapter(provider)
     if (!adapter) {
       const isOwned =
-        this.fallbackSessions.get(sessionId) === provider ||
+        this.fallbackOwners.get(sessionId) === provider ||
         this.fallbackSpawns.hasLiveCandidate(sessionId)
       if (!isOwned) {
         return false
@@ -177,7 +182,7 @@ export class DegradedDaemonSessionRouting {
       return !route || route.state === 'unavailable'
     }
     this.snapshotAcks.dropForProducer(sessionId, adapter)
-    if (this.fallbackSessions.has(sessionId) || this.fallbackSpawns.hasLiveCandidate(sessionId)) {
+    if (this.fallbackOwners.has(sessionId) || this.fallbackSpawns.hasLiveCandidate(sessionId)) {
       this.routes.markUnavailable(sessionId, adapter)
       if (this.routes.get(sessionId)?.state === 'unavailable') {
         this.fallbackRoutes.clearCollision(sessionId)
@@ -236,7 +241,7 @@ export class DegradedDaemonSessionRouting {
     for (const { adapter, incarnation, alive: sessionIds } of reconciled) {
       for (const id of sessionIds) {
         this.routes.recordOwnedIncarnation(id, adapter, incarnation)
-        if (this.fallbackSessions.has(id)) {
+        if (this.fallbackOwners.has(id)) {
           this.fallbackRoutes.recordCollision(id)
         }
       }
@@ -277,7 +282,7 @@ export class DegradedDaemonSessionRouting {
   }
 
   async shutdownFallbackSessions(): Promise<number> {
-    const count = await shutdownDegradedFallbackSessions(this.fallbackSessions, this.fallback)
+    const count = await shutdownDegradedFallbackSessions(this.fallbackOwners, this.fallback)
     this.fallbackRoutes.pruneSessionEpochs()
     return count
   }
@@ -307,7 +312,7 @@ export class DegradedDaemonSessionRouting {
       this.routes.assertFreshSpawnAvailable(opts.sessionId)
       return this.fallback
     }
-    return this.fallbackSessions.get(opts.sessionId) ?? this.routes.resolveOwner(opts.sessionId)
+    return this.fallbackOwners.get(opts.sessionId) ?? this.routes.resolveOwner(opts.sessionId)
   }
 
   private daemonAdapter(provider: IPtyProvider): DaemonPtyAdapter | null {
