@@ -8495,7 +8495,9 @@ describe('OrcaRuntimeService', () => {
         const runtime = new OrcaRuntimeService(store)
         const mobileEvents: RuntimeClientEvent[] = []
         const trackerEntries = (
-          runtime as unknown as { ptyTitleTrackersByPtyId: Map<string, unknown> }
+          runtime as unknown as {
+            ptyTitleTrackersByPtyId: Map<string, { commandCodeDetector: unknown }>
+          }
         ).ptyTitleTrackersByPtyId
         runtime.setPtyController({
           write: () => true,
@@ -8518,6 +8520,7 @@ describe('OrcaRuntimeService', () => {
         await vi.advanceTimersByTimeAsync(3_000)
 
         expect(trackerEntries.has(ptyId)).toBe(true)
+        expect(trackerEntries.get(ptyId)?.commandCodeDetector).toBeNull()
         expect((await runtime.listTerminals()).terminals[0]).toMatchObject({ title: 'Codex' })
         expect(mobileEvents.some((event) => event.type === 'terminalSideEffects')).toBe(false)
       } finally {

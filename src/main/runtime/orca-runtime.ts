@@ -2725,9 +2725,7 @@ export class OrcaRuntimeService {
   private ptyController: RuntimePtyController | null = null
   private notifier: RuntimeNotifier | null = null
   private clientEventListeners = new Set<(event: RuntimeClientEvent) => void>()
-  // Why: mobile subscribers discard terminalSideEffects; excluded listeners are
-  // skipped when a batch fans out (they still count as consumer-availability, see
-  // refreshTerminalSideEffectConsumerAvailability).
+  // Why: mobile subscribers discard terminalSideEffects; exclude them from batch delivery and production.
   private terminalSideEffectExcludedClientEventListeners = new Set<
     (event: RuntimeClientEvent) => void
   >()
@@ -9618,33 +9616,23 @@ export class OrcaRuntimeService {
           this.retirePtyAgentLaunchAuthority(ptyId)
           this.recordTerminalSideEffectFact(ptyId, { kind: 'command-finished', exitCode })
         },
-        // Why: headless serve still scans command completion to retire agent
-        // launch authority; other transient facts remain desktop-only.
-        ...(this.terminalSideEffectConsumerAvailable
-          ? {
-              onBell: () => {
-                this.recordTerminalSideEffectFact(ptyId, { kind: 'bell' })
-              },
-              onPrLink: (link: TerminalGitHubPRLink) => {
-                this.recordTerminalSideEffectFact(ptyId, { kind: 'pr-link', link })
-              },
-              // Why: hidden-delivery-gated views never see the bytes, so main
-              // surfaces DECSET 2031 subscribes as facts; the theme reply is
-              // still sent by the renderer (query authority stays with the view).
-              onMode2031Subscribe: () => {
-                this.recordTerminalSideEffectFact(ptyId, { kind: '2031-subscribe' })
-              },
-              // Why: the gated view never sees the withdrawal bytes either, so the
-              // subscription registry it keeps for theme flips needs this fact to
-              // stay truthful.
-              onMode2031Unsubscribe: () => {
-                this.recordTerminalSideEffectFact(ptyId, { kind: '2031-unsubscribe' })
-              }
-            }
-          : {})
+        onBell: () => {
+          this.recordTerminalSideEffectFact(ptyId, { kind: 'bell' })
+        },
+        onPrLink: (link: TerminalGitHubPRLink) => {
+          this.recordTerminalSideEffectFact(ptyId, { kind: 'pr-link', link })
+        },
+        // Why: hidden-delivery-gated views never see 2031 bytes; facts keep their theme registry truthful.
+        onMode2031Subscribe: () => {
+          this.recordTerminalSideEffectFact(ptyId, { kind: '2031-subscribe' })
+        },
+        onMode2031Unsubscribe: () => {
+          this.recordTerminalSideEffectFact(ptyId, { kind: '2031-unsubscribe' })
+        }
       },
       initialTitle !== null ? { initialTitle } : {}
     )
+    tracker.setTransientSideEffectScanningEnabled(this.terminalSideEffectConsumerAvailable)
     const entry: RuntimePtyTitleTrackerEntry = {
       tracker,
       applyingChunk: false,
@@ -9657,15 +9645,7 @@ export class OrcaRuntimeService {
       // self-arms on the Command Code banner; the spawn command (when main
       // saw one) mirrors the renderer detector's startupCommand fast-arm.
       commandCodeDetector: this.terminalSideEffectConsumerAvailable
-        ? createCommandCodeOutputStatusDetector({
-            startupCommand: this.terminalSpawnCommandsByPtyId.get(ptyId) ?? null,
-            onWorking: (prompt) => {
-              this.recordTerminalSideEffectFact(ptyId, { kind: 'command-code-working', prompt })
-            },
-            onDone: (prompt) => {
-              this.recordTerminalSideEffectFact(ptyId, { kind: 'command-code-done', prompt })
-            }
-          })
+        ? this.createTerminalSideEffectCommandCodeDetector(ptyId)
         : null
     }
     this.ptyTitleTrackersByPtyId.set(ptyId, entry)
@@ -9784,21 +9764,33 @@ export class OrcaRuntimeService {
   }
 
   private refreshTerminalSideEffectConsumerAvailability(): void {
-    // Why: counts ALL subscribers, mobile included. Excluding phones would flip
-    // availability whenever the last desktop client leaves/returns on a
-    // phone-attached host, and the rebuild below cancels armed stale-working-title
-    // timers — the phone would keep a stuck 'working' spinner (#1437).
     const nextAvailable =
-      this.terminalSideEffectLocalConsumerAvailable || this.clientEventListeners.size > 0
+      this.terminalSideEffectLocalConsumerAvailable ||
+      this.countTerminalSideEffectConsumingClientEventListeners() > 0
     if (nextAvailable === this.terminalSideEffectConsumerAvailable) {
       return
     }
     this.terminalSideEffectConsumerAvailable = nextAvailable
-    // Why: optional bell/command/link scanners are selected when a tracker is
-    // created. Rebuild at the window boundary so pure headless output stays cheap.
-    for (const ptyId of [...this.ptyTitleTrackersByPtyId.keys()]) {
-      this.disposePtyTitleTracker(ptyId)
+    for (const [ptyId, entry] of this.ptyTitleTrackersByPtyId) {
+      entry.tracker.setTransientSideEffectScanningEnabled(nextAvailable)
+      entry.commandCodeDetector = nextAvailable
+        ? this.createTerminalSideEffectCommandCodeDetector(ptyId)
+        : null
     }
+  }
+
+  private createTerminalSideEffectCommandCodeDetector(
+    ptyId: string
+  ): NonNullable<RuntimePtyTitleTrackerEntry['commandCodeDetector']> {
+    return createCommandCodeOutputStatusDetector({
+      startupCommand: this.terminalSpawnCommandsByPtyId.get(ptyId) ?? null,
+      onWorking: (prompt) => {
+        this.recordTerminalSideEffectFact(ptyId, { kind: 'command-code-working', prompt })
+      },
+      onDone: (prompt) => {
+        this.recordTerminalSideEffectFact(ptyId, { kind: 'command-code-done', prompt })
+      }
+    })
   }
 
   private extractLastOsc7CwdForPty(
