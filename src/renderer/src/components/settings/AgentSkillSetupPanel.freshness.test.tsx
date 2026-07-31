@@ -51,6 +51,7 @@ let container: HTMLDivElement | null = null
 describe('AgentSkillSetupPanel freshness re-check', () => {
   beforeEach(() => {
     _skillFreshnessCacheForTests.reset()
+    mocks.skillsChanged.mockReset()
     mocks.skillsRefreshed.mockReset()
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -77,10 +78,16 @@ describe('AgentSkillSetupPanel freshness re-check', () => {
           completeRecheck = resolve
         })
     )
+    let completeRescan: ((value: SkillFreshnessInventory) => void) | null = null
     const freshnessInventory = vi
       .fn()
       .mockResolvedValueOnce(inventory(['orca-linear']))
-      .mockResolvedValueOnce(inventory([]))
+      .mockImplementationOnce(
+        () =>
+          new Promise<SkillFreshnessInventory>((resolve) => {
+            completeRescan = resolve
+          })
+      )
     window.api = { skills: { freshnessInventory } } as never
 
     await act(async () => root?.render(<AgentSkillSetupPanel {...panelProps(onRecheck)} />))
@@ -110,6 +117,38 @@ describe('AgentSkillSetupPanel freshness re-check', () => {
 
     expect(mocks.skillsRefreshed).toHaveBeenCalledOnce()
     expect(freshnessInventory).toHaveBeenCalledTimes(2)
+    expect(container?.textContent).toContain('Checking...')
     expect(container?.textContent).not.toContain('Update available')
+
+    await act(async () => {
+      completeRescan?.(inventory([]))
+    })
+    await act(async () => {})
+
+    expect(container?.textContent).not.toContain('Checking...')
+    expect(container?.textContent).not.toContain('Update available')
+  })
+
+  it('shows a failed verdict when the post-recheck inventory scan fails', async () => {
+    const freshnessInventory = vi
+      .fn()
+      .mockResolvedValueOnce(inventory(['orca-linear']))
+      .mockRejectedValueOnce(new Error('inventory unavailable'))
+    window.api = { skills: { freshnessInventory } } as never
+
+    await act(async () => root?.render(<AgentSkillSetupPanel {...panelProps()} />))
+    await act(async () => {})
+
+    const recheck = Array.from(container?.querySelectorAll('button') ?? []).find(
+      (candidate) => candidate.textContent?.trim() === 'Re-check'
+    )
+    await act(async () => {
+      recheck?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await act(async () => {})
+
+    expect(container?.textContent).toContain('Check failed')
+    expect(container?.textContent).not.toContain('Installed')
+    expect(container?.textContent).not.toContain('Up to date')
   })
 })

@@ -12,7 +12,11 @@ const UPDATE_COMMAND = 'npx skills update orca-cli --global'
 
 const mocks = vi.hoisted(() => ({
   clipboardWrite: vi.fn(),
-  terminalProps: [] as { command: string; description: string }[],
+  terminalProps: [] as {
+    command: string
+    description: string
+    onTerminalExit?: () => void
+  }[],
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
   skillsChanged: vi.fn(),
@@ -32,7 +36,11 @@ vi.mock('@/hooks/useInstalledAgentSkills', () => ({
 }))
 
 vi.mock('../onboarding/OnboardingInlineCommandTerminal', () => ({
-  OnboardingInlineCommandTerminal: (props: { command: string; description: string }) => {
+  OnboardingInlineCommandTerminal: (props: {
+    command: string
+    description: string
+    onTerminalExit?: () => void
+  }) => {
     mocks.terminalProps.push(props)
     return (
       <div
@@ -269,6 +277,34 @@ describe('AgentSkillSetupPanel', () => {
 
     expect(mocks.skillsRefreshed).toHaveBeenCalledOnce()
     expect(mocks.skillsChanged).not.toHaveBeenCalled()
+  })
+
+  it('rechecks presence without invalidating local freshness when no local verdict exists', async () => {
+    const onRecheck = vi.fn(async () => {})
+    await renderInteractivePanel({ onRecheck })
+    await clickButton('Install')
+
+    await act(async () => {
+      mocks.terminalProps.at(-1)?.onTerminalExit?.()
+    })
+    await act(async () => {})
+
+    expect(onRecheck).toHaveBeenCalledOnce()
+    expect(mocks.skillsRefreshed).toHaveBeenCalledOnce()
+    expect(mocks.skillsChanged).not.toHaveBeenCalled()
+  })
+
+  it('invalidates local freshness after a local skill terminal exits', async () => {
+    const onRecheck = vi.fn()
+    await renderInteractivePanel({ freshnessSkillName: 'orca-cli', onRecheck })
+    await clickButton('Install')
+
+    await act(async () => {
+      mocks.terminalProps.at(-1)?.onTerminalExit?.()
+    })
+
+    expect(mocks.skillsChanged).toHaveBeenCalledOnce()
+    expect(onRecheck).not.toHaveBeenCalled()
   })
 
   it('opens not-installed setup with the install command for preview, copy, and terminal', async () => {

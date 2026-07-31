@@ -176,6 +176,16 @@ export function AgentSkillSetupPanel({
     }
   }
 
+  const handleTerminalExit = useCallback((): void => {
+    if (freshnessSkillName) {
+      notifyInstalledAgentSkillsChanged()
+      return
+    }
+    void Promise.resolve(onRecheck()).then(() => {
+      syncSurfacesAfterAgentSkillRecheck()
+    })
+  }, [freshnessSkillName, onRecheck])
+
   const actionRow = (
     <div className="mt-3 flex flex-wrap items-center gap-2">
       {!installed || showInstallWhenInstalled ? (
@@ -383,7 +393,7 @@ export function AgentSkillSetupPanel({
             terminalTopMarginPx={8}
             descriptionPaddingClassName="px-4 py-2"
             autoScrollIntoView={false}
-            onTerminalExit={notifyInstalledAgentSkillsChanged}
+            onTerminalExit={handleTerminalExit}
           />
         </div>
       ) : null}
