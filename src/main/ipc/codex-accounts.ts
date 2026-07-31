@@ -3,7 +3,6 @@ import type { CodexAccountAddTarget, CodexAccountService } from '../codex-accoun
 import type { CodexAccountSelectionTarget } from '../codex-accounts/runtime-selection'
 import { listRecordedCodexPaneLanes } from '../codex/codex-pane-account-registry'
 import { forgetStaleCodexPanes, listStaleCodexPanes } from '../codex/codex-stale-pane-accounts'
-import { getCustomCodexHomeOverrideForLaunch } from '../codex/codex-real-home-path'
 import type { GlobalSettings } from '../../shared/types'
 
 export function registerCodexAccountHandlers(
@@ -18,8 +17,7 @@ export function registerCodexAccountHandlers(
     return listStaleCodexPanes({
       ptyIds: args.ptyIds.filter((ptyId): ptyId is string => typeof ptyId === 'string'),
       settings,
-      activeHostHomeRoute: codexAccounts.runtimeHomeService.getSelectedHostCodexHomeRoute(),
-      activeHostCustomHomeOverride: getCustomCodexHomeOverrideForLaunch()
+      activeHostHomeRoute: codexAccounts.runtimeHomeService.getSelectedHostCodexHomeRoute()
     })
   })
   ipcMain.handle('codexAccounts:listRecordedPaneLanes', (_event, args: { ptyIds?: unknown }) => {

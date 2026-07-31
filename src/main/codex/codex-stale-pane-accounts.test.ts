@@ -226,7 +226,7 @@ describe('listStaleCodexPanes', () => {
     ).toEqual([])
   })
 
-  it('reports a retained pane after its process CODEX_HOME changes', () => {
+  it('does not report a custom-home spelling change that keeps the shared route', () => {
     recordCodexPaneAccount('pty-1', {
       selectionKey: 'host',
       accountId: null,
@@ -238,20 +238,9 @@ describe('listStaleCodexPanes', () => {
       listStaleCodexPanes({
         ptyIds: ['pty-1'],
         settings: settingsWithSelection(null),
-        activeHostHomeRoute: 'shared-home',
-        activeHostCustomHomeOverride: {
-          source: 'environment',
-          context: { codexHome: '/custom/codex-b' }
-        }
+        activeHostHomeRoute: 'shared-home'
       })
-    ).toEqual([
-      {
-        ptyId: 'pty-1',
-        launchAccountId: null,
-        activeAccountId: null,
-        reason: 'home-route-change'
-      }
-    ])
+    ).toEqual([])
   })
 
   it('leaves a retained pane alone while its process CODEX_HOME is unchanged', () => {
@@ -266,58 +255,33 @@ describe('listStaleCodexPanes', () => {
       listStaleCodexPanes({
         ptyIds: ['pty-1'],
         settings: settingsWithSelection(null),
-        activeHostHomeRoute: 'shared-home',
-        activeHostCustomHomeOverride: {
-          source: 'environment',
-          context: { codexHome: '/custom/codex-home' }
-        }
+        activeHostHomeRoute: 'shared-home'
       })
     ).toEqual([])
   })
 
-  it.each([
-    [
-      'environment to shell startup',
-      { environmentHomeOverride: { codexHome: '/custom/codex-home' } },
-      {
-        source: 'shell-startup' as const,
-        context: {
-          home: '/custom',
-          shell: '/bin/zsh',
-          codexHome: '/custom/codex-home'
-        }
-      }
-    ],
-    [
-      'shell startup to environment',
-      {
-        shellStartupHomeOverride: {
-          home: '/custom',
-          shell: '/bin/zsh',
-          codexHome: '/custom/codex-home'
-        }
-      },
-      {
-        source: 'environment' as const,
-        context: { codexHome: '/custom/codex-home' }
-      }
-    ]
-  ])('does not report a same-path %s change', (_label, provenance, activeOverride) => {
+  it('reports when removing a custom home changes the resolved route', () => {
     recordCodexPaneAccount('pty-1', {
       selectionKey: 'host',
       accountId: null,
       homeRoute: 'shared-home',
-      ...provenance
+      environmentHomeOverride: { codexHome: '/custom/codex-home' }
     })
 
     expect(
       listStaleCodexPanes({
         ptyIds: ['pty-1'],
         settings: settingsWithSelection(null),
-        activeHostHomeRoute: 'shared-home',
-        activeHostCustomHomeOverride: activeOverride
+        activeHostHomeRoute: 'real-home'
       })
-    ).toEqual([])
+    ).toEqual([
+      {
+        ptyId: 'pty-1',
+        launchAccountId: null,
+        activeAccountId: null,
+        reason: 'home-route-change'
+      }
+    ])
   })
 
   it.skipIf(process.platform === 'win32')(
@@ -343,7 +307,7 @@ describe('listStaleCodexPanes', () => {
         listStaleCodexPanes({
           ptyIds: ['pty-1'],
           settings: settingsWithSelection(null),
-          activeHostHomeRoute: 'real-home'
+          activeHostHomeRoute: 'shared-home'
         })
       ).toEqual([])
 
@@ -354,42 +318,6 @@ describe('listStaleCodexPanes', () => {
           ptyIds: ['pty-1'],
           settings: settingsWithSelection(null),
           activeHostHomeRoute: 'real-home'
-        })
-      ).toEqual([
-        {
-          ptyId: 'pty-1',
-          launchAccountId: null,
-          activeAccountId: null,
-          reason: 'home-route-change'
-        }
-      ])
-    }
-  )
-
-  it.skipIf(process.platform === 'win32')(
-    'reports a retained pane when the replacement launch context changes',
-    () => {
-      const paneHome = join(userDataPath, 'pane-home')
-      mkdirSync(paneHome, { recursive: true })
-      const customHome = join(paneHome, 'custom-codex-home')
-      writeFileSync(join(paneHome, '.zshrc'), 'export CODEX_HOME="$HOME/custom-codex-home"\n')
-      recordCodexPaneAccount('pty-1', {
-        selectionKey: 'host',
-        accountId: null,
-        homeRoute: 'shared-home',
-        shellStartupHomeOverride: {
-          home: paneHome,
-          shell: '/bin/zsh',
-          codexHome: customHome
-        }
-      })
-
-      expect(
-        listStaleCodexPanes({
-          ptyIds: ['pty-1'],
-          settings: settingsWithSelection(null),
-          activeHostHomeRoute: 'real-home',
-          activeHostCustomHomeOverride: null
         })
       ).toEqual([
         {
