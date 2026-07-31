@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import { useAppStore } from '@/store'
@@ -80,9 +80,11 @@ export default function MobilePage(): React.JSX.Element {
     setRelayMintFailure
   })
   const generatePairingRef = useRef(generatePairing)
-  generatePairingRef.current = generatePairing
   const pairingContextRef = useRef({ connectionMode, signedIn })
-  pairingContextRef.current = { connectionMode, signedIn }
+  useLayoutEffect(() => {
+    generatePairingRef.current = generatePairing
+    pairingContextRef.current = { connectionMode, signedIn }
+  }, [connectionMode, generatePairing, signedIn])
 
   const handleConnectionModeChange = useCallback(
     (nextMode: MobilePairingConnectionMode): void => {
