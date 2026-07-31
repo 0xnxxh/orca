@@ -14,9 +14,16 @@ import type { RpcClient } from './rpc-client'
 import { connectionLogStore } from './connection-log-buffer'
 import { subscribeConnectionRevivalTriggers } from './connection-revival-triggers'
 import { HostClientOpenRegistry } from './host-client-open-registry'
+import { decrementPendingAcquisition } from './host-client-acquisition-count'
+import {
+  clientActivePath,
+  notifyAllHostListeners,
+  notifyHostStateListeners,
+  type CloseEntryOptions
+} from './host-client-context-state'
 import { loadHosts } from './host-store'
 import { openHostLogicalClient } from './host-logical-client'
-import type { MobileConnectionPath, StableLogicalRpcClient } from './stable-logical-rpc-client'
+import type { MobileConnectionPath } from './stable-logical-rpc-client'
 import type { ConnectionState, HostProfile } from './types'
 
 type StoreEntry = {
@@ -30,6 +37,7 @@ export type RpcClientContextValue = {
   acquire: (hostId: string, host?: HostProfile) => RpcClient | null
   release: (hostId: string) => void
   releaseAndCloseIfUnused: (hostId: string) => void
+  closeIfUnused: (hostId: string) => void
   forceReconnect: (hostId: string) => Promise<void>
   closeHost: (hostId: string) => void
   getState: (hostId: string) => ConnectionState
@@ -59,35 +67,35 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
   // Why: cache of already-loaded HostProfiles so openEntry can skip a second loadHosts()/Keychain pass on cold start.
   const primedHostsRef = useRef<Map<string, HostProfile>>(new Map())
 
-  function notifyHostState(hostId: string, state: ConnectionState) {
-    const set = stateListenersRef.current.get(hostId)
-    if (!set) {
-      return
-    }
-    for (const listener of set) {
-      listener(state)
-    }
-  }
+  const notifyHostState = (hostId: string, state: ConnectionState) =>
+    notifyHostStateListeners(stateListenersRef.current, hostId, state)
+  const notifyAllHosts = () => notifyAllHostListeners(allHostsListenersRef.current)
 
-  function notifyAllHosts() {
-    for (const listener of allHostsListenersRef.current) {
-      listener()
-    }
-  }
-
-  const closeEntry = useCallback((hostId: string, forgetPrimedHost = true) => {
+  const closeEntry = useCallback((hostId: string, options: CloseEntryOptions) => {
+    const entry = storeRef.current.get(hostId)
+    const acquisitionCount = entry?.refCount ?? pendingAcquisitionsRef.current.get(hostId) ?? 0
     pendingOpensRef.current.cancel(hostId)
-    pendingAcquisitionsRef.current.delete(hostId)
-    if (forgetPrimedHost) {
+    if (options.preserveAcquisitions && acquisitionCount > 0) {
+      pendingAcquisitionsRef.current.set(hostId, acquisitionCount)
+    } else {
+      pendingAcquisitionsRef.current.delete(hostId)
+    }
+    if (options.forgetPrimedHost) {
       primedHostsRef.current.delete(hostId)
     }
-    const entry = storeRef.current.get(hostId)
     entry?.unsubState()
     storeRef.current.delete(hostId)
     entry?.client.close()
     notifyHostState(hostId, 'disconnected')
     notifyAllHosts()
   }, [])
+
+  const closeHost = useCallback(
+    (hostId: string) => {
+      closeEntry(hostId, { forgetPrimedHost: true, preserveAcquisitions: true })
+    },
+    [closeEntry]
+  )
 
   const openEntry = useCallback(async (hostId: string): Promise<StoreEntry | null> => {
     const existing = pendingOpensRef.current.getActivePromise(hostId)
@@ -210,12 +218,27 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
       if (entry) {
         entry.refCount = Math.max(0, entry.refCount - 1)
         if (entry.refCount === 0) {
-          closeEntry(hostId, false)
+          closeEntry(hostId, { forgetPrimedHost: false, preserveAcquisitions: false })
         }
         return
       }
       if (decrementPendingAcquisition(pendingAcquisitionsRef.current, hostId) === 0) {
-        closeEntry(hostId, false)
+        closeEntry(hostId, { forgetPrimedHost: false, preserveAcquisitions: false })
+      }
+    },
+    [closeEntry]
+  )
+
+  const closeIfUnused = useCallback(
+    (hostId: string) => {
+      const entry = storeRef.current.get(hostId)
+      const pendingCount = pendingAcquisitionsRef.current.get(hostId)
+      const hasPendingOpen = pendingOpensRef.current.getActivePromise(hostId) !== null
+      if (!entry && pendingCount === undefined && !hasPendingOpen) {
+        return
+      }
+      if ((entry?.refCount ?? pendingCount ?? 0) === 0) {
+        closeEntry(hostId, { forgetPrimedHost: false, preserveAcquisitions: false })
       }
     },
     [closeEntry]
@@ -224,9 +247,8 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
   const forceReconnect = useCallback(
     async (hostId: string) => {
       const entry = storeRef.current.get(hostId)
-      // Why: preserve refcount across the swap; via Disconnect→Reconnect the entry is already gone, so fall back to listener count.
-      const listenerCount = stateListenersRef.current.get(hostId)?.size ?? 0
-      const savedRefCount = entry?.refCount ?? Math.max(1, listenerCount)
+      // Why: ownership survives explicit close/re-pair while observers never become synthetic owners.
+      const savedRefCount = entry?.refCount ?? pendingAcquisitionsRef.current.get(hostId) ?? 0
       if (entry) {
         entry.unsubState()
         entry.client.close()
@@ -304,7 +326,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
       pendingOpensRef.current.cancelAll()
       pendingAcquisitionsRef.current.clear()
       for (const [hostId] of store) {
-        closeEntry(hostId)
+        closeEntry(hostId, { forgetPrimedHost: true, preserveAcquisitions: false })
       }
     }
   }, [])
@@ -323,8 +345,9 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
       acquire,
       release,
       releaseAndCloseIfUnused,
+      closeIfUnused,
       forceReconnect,
-      closeHost: closeEntry,
+      closeHost,
       getState,
       getReconnectAttempt,
       getLastConnectedAt,
@@ -338,8 +361,9 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
       acquire,
       release,
       releaseAndCloseIfUnused,
+      closeIfUnused,
       forceReconnect,
-      closeEntry,
+      closeHost,
       getState,
       getReconnectAttempt,
       getLastConnectedAt,
@@ -439,19 +463,4 @@ export function useForceReconnect(): (hostId: string) => Promise<void> {
 export function usePrimeHosts(): (hosts: HostProfile[]) => void {
   const ctx = useRpcClientContext()
   return ctx.primeHosts
-}
-
-function clientActivePath(client: RpcClient | undefined): MobileConnectionPath {
-  const logical = client as Partial<StableLogicalRpcClient> | undefined
-  return typeof logical?.getActivePath === 'function' ? logical.getActivePath() : 'lan'
-}
-
-function decrementPendingAcquisition(pending: Map<string, number>, hostId: string): number {
-  const next = Math.max(0, (pending.get(hostId) ?? 0) - 1)
-  if (next === 0) {
-    pending.delete(hostId)
-  } else {
-    pending.set(hostId, next)
-  }
-  return next
 }

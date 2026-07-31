@@ -35,15 +35,24 @@ export function useAllHostClients(hostIds: string[], options?: UseAllHostClients
     const unsubscribeAllHosts = ctx.subscribeAllHosts(() => setTick((value) => value + 1))
     return () => {
       unsubscribeAllHosts()
+      const trackedHostIds = [...hostUnsubscribesRef.current.keys()]
+      const acquiredHostIds = new Set(acquiredHostIdsRef.current)
       for (const unsubscribe of hostUnsubscribesRef.current.values()) {
         unsubscribe()
       }
       hostUnsubscribesRef.current.clear()
-      for (const id of acquiredHostIdsRef.current) {
+      for (const id of acquiredHostIds) {
         if (closeUnusedRef.current) {
           ctx.releaseAndCloseIfUnused(id)
         } else {
           ctx.release(id)
+        }
+      }
+      if (closeUnusedRef.current) {
+        for (const id of trackedHostIds) {
+          if (!acquiredHostIds.has(id)) {
+            ctx.closeIfUnused(id)
+          }
         }
       }
       acquiredHostIdsRef.current.clear()
@@ -53,11 +62,13 @@ export function useAllHostClients(hostIds: string[], options?: UseAllHostClients
   useEffect(() => {
     const trackedHostIds = new Set(hostIds)
     const nextAcquiredHostIds = new Set(autoConnectHostIds.filter((id) => trackedHostIds.has(id)))
+    const removedTrackedHostIds: string[] = []
 
     for (const [id, unsubscribe] of hostUnsubscribesRef.current) {
       if (!trackedHostIds.has(id)) {
         unsubscribe()
         hostUnsubscribesRef.current.delete(id)
+        removedTrackedHostIds.push(id)
       }
     }
     for (const id of trackedHostIds) {
@@ -81,6 +92,16 @@ export function useAllHostClients(hostIds: string[], options?: UseAllHostClients
     for (const id of nextAcquiredHostIds) {
       if (!acquiredHostIdsRef.current.has(id)) {
         ctx.acquire(id)
+      }
+    }
+    if (closeUnusedOnRelease) {
+      for (const id of removedTrackedHostIds) {
+        ctx.closeIfUnused(id)
+      }
+      for (const id of trackedHostIds) {
+        if (!nextAcquiredHostIds.has(id)) {
+          ctx.closeIfUnused(id)
+        }
       }
     }
     acquiredHostIdsRef.current = nextAcquiredHostIds

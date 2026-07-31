@@ -2,6 +2,7 @@ import { createElement, Fragment, useEffect } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAllHostClients } from './all-host-client-connections'
+import { useFocusedSettingsHostClients } from './settings-host-client-connections'
 import {
   RpcClientProvider,
   useHostClient,
@@ -15,6 +16,15 @@ import type { ConnectionState, HostProfile } from './types'
 
 const connectMock = vi.fn()
 const loadHostsMock = vi.fn()
+const routeFocus = vi.hoisted(() => ({
+  effect: null as null | (() => void | (() => void))
+}))
+
+vi.mock('expo-router', () => ({
+  useFocusEffect: (effect: () => void | (() => void)) => {
+    routeFocus.effect = effect
+  }
+}))
 
 vi.mock('./host-logical-client', () => ({
   openHostLogicalClient: (...args: unknown[]) => connectMock(...args)
@@ -80,7 +90,10 @@ function ContextProbe(): null {
 }
 
 function HomeProbe(): null {
-  useAllHostClients(HOST_IDS, { autoConnectHostIds: HOME_HOST_IDS })
+  useAllHostClients(HOST_IDS, {
+    autoConnectHostIds: HOME_HOST_IDS,
+    closeUnusedOnRelease: true
+  })
   const primeHosts = usePrimeHosts()
   useEffect(() => {
     primeHosts(HOSTS)
@@ -92,6 +105,11 @@ function SettingsProbe(): null {
   useAllHostClients(HOST_IDS, {
     closeUnusedOnRelease: true
   })
+  return null
+}
+
+function FocusedSettingsProbe(): null {
+  useFocusedSettingsHostClients(HOST_IDS)
   return null
 }
 
@@ -187,6 +205,7 @@ function activeHostIds(): string[] {
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   context = null
+  routeFocus.effect = null
   connectMock.mockReset()
   loadHostsMock.mockReset()
 })
@@ -526,6 +545,211 @@ describe('settings host client lifecycle', () => {
 
     act(() => renderer?.update(createElement(PendingApp, { visible: false })))
     expect(client.closeMock).toHaveBeenCalledOnce()
+    act(() => renderer?.unmount())
+  })
+
+  it('preserves Home ownership when re-pairing replaces a selected host client', async () => {
+    const clients = new Map<string, FakeClient[]>()
+    connectMock.mockImplementation((profile: HostProfile) => {
+      const client = makeFakeClient('connected')
+      clients.set(profile.id, [...(clients.get(profile.id) ?? []), client])
+      return client
+    })
+    loadHostsMock.mockResolvedValue(HOSTS)
+    const replacedHostId = HOME_HOST_IDS[0]!
+
+    function ReplacementApp({
+      detailVisible,
+      settingsVisible
+    }: {
+      detailVisible: boolean
+      settingsVisible: boolean
+    }): React.JSX.Element {
+      return createElement(
+        RpcClientProvider,
+        null,
+        createElement(
+          Fragment,
+          null,
+          createElement(ContextProbe),
+          createElement(HomeProbe),
+          detailVisible ? createElement(DetailProbe, { hostId: replacedHostId }) : null,
+          settingsVisible ? createElement(SettingsProbe) : null
+        )
+      )
+    }
+
+    let renderer: ReactTestRenderer | null = null
+    const restore = suppressRendererWarning()
+    try {
+      await act(async () => {
+        renderer = create(
+          createElement(ReplacementApp, { detailVisible: false, settingsVisible: false })
+        )
+        await Promise.resolve()
+      })
+    } finally {
+      restore()
+    }
+    if (!renderer || !context) {
+      throw new Error('replacement lifecycle harness did not initialize')
+    }
+
+    const originalClient = clients.get(replacedHostId)?.[0]
+    act(() => context?.closeHost(replacedHostId))
+    expect(originalClient?.closeMock).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      renderer?.update(
+        createElement(ReplacementApp, { detailVisible: true, settingsVisible: false })
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const replacementClient = clients.get(replacedHostId)?.[1]
+    expect(replacementClient).toBeDefined()
+
+    await act(async () => {
+      renderer?.update(
+        createElement(ReplacementApp, { detailVisible: false, settingsVisible: true })
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    act(() =>
+      renderer?.update(
+        createElement(ReplacementApp, { detailVisible: false, settingsVisible: false })
+      )
+    )
+
+    expect(activeHostIds()).toEqual([...HOME_HOST_IDS].sort())
+    expect(replacementClient?.closeMock).not.toHaveBeenCalled()
+    act(() => renderer?.unmount())
+    expect(replacementClient?.closeMock).toHaveBeenCalledOnce()
+  })
+
+  it('releases a manually connected host after Home promotes and demotes it', async () => {
+    const manualHost = host('manual-relay-host', 1, { relayHostId: 'AbCdEf0123_-xyZ9' })
+    const client = makeFakeClient('reconnecting')
+    connectMock.mockReturnValue(client)
+    loadHostsMock.mockResolvedValue([manualHost])
+
+    function ManualHomeProbe({ selected }: { selected: boolean }): null {
+      useAllHostClients([manualHost.id], {
+        autoConnectHostIds: selected ? [manualHost.id] : [],
+        closeUnusedOnRelease: true
+      })
+      return null
+    }
+    function ManualApp({ selected }: { selected: boolean }): React.JSX.Element {
+      return createElement(
+        RpcClientProvider,
+        null,
+        createElement(
+          Fragment,
+          null,
+          createElement(ContextProbe),
+          createElement(ManualHomeProbe, { selected })
+        )
+      )
+    }
+
+    let renderer: ReactTestRenderer | null = null
+    const restore = suppressRendererWarning()
+    try {
+      act(() => {
+        renderer = create(createElement(ManualApp, { selected: false }))
+      })
+    } finally {
+      restore()
+    }
+    if (!renderer || !context) {
+      throw new Error('manual connection harness did not initialize')
+    }
+    await act(async () => {
+      await context?.forceReconnect(manualHost.id)
+    })
+    expect(activeHostIds()).toEqual([manualHost.id])
+
+    await act(async () => {
+      renderer?.update(createElement(ManualApp, { selected: true }))
+      await Promise.resolve()
+    })
+    expect(activeHostIds()).toEqual([manualHost.id])
+
+    await act(async () => {
+      renderer?.update(createElement(ManualApp, { selected: false }))
+      await Promise.resolve()
+    })
+
+    expect(activeHostIds()).toEqual([])
+    expect(client.closeMock).toHaveBeenCalledOnce()
+    act(() => renderer?.unmount())
+    expect(client.closeMock).toHaveBeenCalledOnce()
+  })
+
+  it('releases settings-only clients on blur while shared owners stay mounted', async () => {
+    const clients = new Map<string, FakeClient>()
+    connectMock.mockImplementation((profile: HostProfile) => {
+      const client = makeFakeClient('reconnecting')
+      clients.set(profile.id, client)
+      return client
+    })
+    loadHostsMock.mockResolvedValue(HOSTS)
+    const detailHostId = 'folder-workspace-host'
+
+    function FocusStack(): React.JSX.Element {
+      return createElement(
+        RpcClientProvider,
+        null,
+        createElement(
+          Fragment,
+          null,
+          createElement(ContextProbe),
+          createElement(HomeProbe),
+          createElement(DetailProbe, { hostId: detailHostId }),
+          createElement(FocusedSettingsProbe)
+        )
+      )
+    }
+
+    let renderer: ReactTestRenderer | null = null
+    const restore = suppressRendererWarning()
+    try {
+      await act(async () => {
+        renderer = create(createElement(FocusStack))
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+    } finally {
+      restore()
+    }
+    if (!renderer || !routeFocus.effect) {
+      throw new Error('settings focus harness did not initialize')
+    }
+    expect(activeHostIds()).toEqual([...HOME_HOST_IDS, detailHostId].sort())
+
+    let blur: (() => void) | undefined
+    await act(async () => {
+      const cleanup = routeFocus.effect?.()
+      if (typeof cleanup === 'function') {
+        blur = cleanup
+      }
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(activeHostIds()).toEqual([...HOST_IDS].sort())
+
+    await act(async () => {
+      blur?.()
+      await Promise.resolve()
+    })
+    expect(activeHostIds()).toEqual([...HOME_HOST_IDS, detailHostId].sort())
+    for (const hostId of [...HOME_HOST_IDS, detailHostId]) {
+      expect(clients.get(hostId)?.closeMock).not.toHaveBeenCalled()
+    }
+    expect(clients.get('offline-host')?.closeMock).toHaveBeenCalledOnce()
+
     act(() => renderer?.unmount())
   })
 })
