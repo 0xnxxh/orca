@@ -19,14 +19,20 @@ function renderSection(
   overrides: Partial<React.ComponentProps<typeof MobilePairingSetupSection>> = {}
 ) {
   const onSelectedAddressChange = vi.fn()
+  const onCustomAddressSelect = vi.fn()
+  const onCustomAddressRemove = vi.fn()
   const onRefreshNetworkInterfaces = vi.fn()
   const onGenerateQr = vi.fn()
   const props: React.ComponentProps<typeof MobilePairingSetupSection> = {
     connectionMode: 'local-only',
     connectionPathControl: <div data-testid="path-control">path</div>,
     networkInterfaces: [LAN, TAILNET],
+    customAddresses: [],
     selectedAddress: TAILNET.address,
+    selectedAddressIsCustom: false,
     onSelectedAddressChange,
+    onCustomAddressSelect,
+    onCustomAddressRemove,
     refreshingNetworkInterfaces: false,
     onRefreshNetworkInterfaces,
     loading: false,
@@ -40,7 +46,14 @@ function renderSection(
       <MobilePairingSetupSection {...props} />
     </TooltipProvider>
   )
-  return { ...rendered, user, onSelectedAddressChange, onGenerateQr }
+  return {
+    ...rendered,
+    user,
+    onSelectedAddressChange,
+    onCustomAddressSelect,
+    onCustomAddressRemove,
+    onGenerateQr
+  }
 }
 
 describe('MobilePairingSetupSection', () => {
@@ -90,6 +103,60 @@ describe('MobilePairingSetupSection', () => {
     await user.click(screen.getByRole('combobox'))
     await user.click(screen.getByRole('option', { name: '192.168.1.24 (en0)' }))
     expect(onSelectedAddressChange).toHaveBeenCalledWith('192.168.1.24')
+  })
+
+  it('lists and removes saved custom addresses without selecting them', async () => {
+    const first = 'first.example:6768'
+    const second = 'second.example:6768'
+    const { user, onSelectedAddressChange, onCustomAddressSelect, onCustomAddressRemove } =
+      renderSection({ customAddresses: [first, second] })
+
+    await user.click(screen.getByRole('combobox'))
+    expect(screen.getByText('Custom')).toBeVisible()
+    expect(screen.getByRole('option', { name: `${first} (custom)` })).toBeVisible()
+    expect(screen.getByRole('option', { name: `${second} (custom)` })).toBeVisible()
+    const addOption = screen.getByRole('option', { name: 'Add custom address…' })
+    expect(
+      screen
+        .getByRole('option', { name: `${second} (custom)` })
+        .compareDocumentPosition(addOption) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    const remove = screen.getByRole('button', { name: `Remove ${first}` })
+    remove.focus()
+    expect(remove).toHaveFocus()
+    await user.click(remove)
+
+    expect(onCustomAddressRemove).toHaveBeenCalledWith(first)
+    expect(onCustomAddressSelect).not.toHaveBeenCalled()
+    expect(onSelectedAddressChange).not.toHaveBeenCalled()
+  })
+
+  it('selects a saved custom address through the custom path', async () => {
+    const address = '100.64.1.20'
+    const { user, onSelectedAddressChange, onCustomAddressSelect } = renderSection({
+      customAddresses: [address],
+      selectedAddressIsCustom: true
+    })
+
+    await user.click(screen.getByRole('combobox'))
+    const customOption = screen.getByRole('option', { name: `${address} (custom)` })
+    expect(customOption).toHaveAttribute('data-current', 'true')
+    await user.click(customOption)
+
+    expect(onCustomAddressSelect).toHaveBeenCalledWith(address)
+    expect(onSelectedAddressChange).not.toHaveBeenCalled()
+  })
+
+  it('keeps keyboard selection working with removable custom rows', async () => {
+    const address = 'first.example:6768'
+    const { user, onCustomAddressSelect } = renderSection({ customAddresses: [address] })
+
+    await user.click(screen.getByRole('combobox'))
+    expect(document.querySelector('[data-slot="command"]')).toHaveFocus()
+    await user.keyboard('{ArrowDown}{Enter}')
+
+    expect(onCustomAddressSelect).toHaveBeenCalledWith(address)
   })
 
   it('generates a pairing code', async () => {

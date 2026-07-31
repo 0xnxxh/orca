@@ -5392,12 +5392,14 @@ describe('Store', () => {
   it('normalizes custom mobile pairing addresses on load and every settings write', async () => {
     writeDataFile({
       settings: {
-        mobilePairingCustomAddress: 'host:99999'
+        mobilePairingCustomAddress: 'host:99999',
+        mobilePairingCustomAddresses: [' first.example:6768 ', 'host:99999', 'first.example:6768']
       }
     })
     const store = await createStore()
 
     expect(store.getSettings().mobilePairingCustomAddress).toBeNull()
+    expect(store.getSettings().mobilePairingCustomAddresses).toEqual(['first.example:6768'])
     store.flush()
     expect(
       (readDataFile() as { settings?: GlobalSettings }).settings?.mobilePairingCustomAddress
@@ -5407,6 +5409,10 @@ describe('Store', () => {
       mobilePairingCustomAddress: ' 100.126.117.25:6768 '
     })
     expect(updated.mobilePairingCustomAddress).toBe('100.126.117.25:6768')
+    expect(updated.mobilePairingCustomAddresses).toEqual([
+      'first.example:6768',
+      '100.126.117.25:6768'
+    ])
     store.flush()
     expect(
       (readDataFile() as { settings?: GlobalSettings }).settings?.mobilePairingCustomAddress
@@ -5415,6 +5421,19 @@ describe('Store', () => {
     expect(
       store.updateSettings({ mobilePairingCustomAddress: 42 as never }).mobilePairingCustomAddress
     ).toBeNull()
+
+    expect(
+      store.updateSettings({
+        mobilePairingCustomAddresses: [' second.example ', 'host:99999', 'second.example']
+      }).mobilePairingCustomAddresses
+    ).toEqual(['second.example'])
+
+    expect(
+      store.updateSettings({
+        mobilePairingCustomAddress: 'active.example:6768',
+        mobilePairingCustomAddresses: ['second.example']
+      }).mobilePairingCustomAddresses
+    ).toEqual(['second.example', 'active.example:6768'])
   })
 
   it('notifies settings listeners with changed keys only', async () => {

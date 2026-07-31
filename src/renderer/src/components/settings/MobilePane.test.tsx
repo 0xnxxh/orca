@@ -27,6 +27,7 @@ type StoreState = {
     mobileAutoRestoreFitMs: number | null
     mobilePairingConnectionMode?: MobilePairingConnectionMode
     mobilePairingCustomAddress?: string | null
+    mobilePairingCustomAddresses?: string[]
   }
   updateSettings: (patch: Record<string, unknown>) => Promise<void>
   recordFeatureInteraction: (feature: string) => void
@@ -73,8 +74,12 @@ vi.mock('./MobilePairingSetupSection', () => ({
     loading: boolean
     connectionPathControl: React.ReactNode
     networkInterfaces: { name: string; address: string }[]
+    customAddresses: readonly string[]
     selectedAddress: string | undefined
+    selectedAddressIsCustom: boolean
     onSelectedAddressChange: (address: string) => void
+    onCustomAddressSelect: (address: string) => void
+    onCustomAddressRemove: (address: string) => void
     refreshingNetworkInterfaces: boolean
     onRefreshNetworkInterfaces: () => void
     onGenerateQr: () => void
@@ -84,6 +89,8 @@ vi.mock('./MobilePairingSetupSection', () => ({
       <span data-testid="can-generate">{String(props.canGenerate)}</span>
       <span data-testid="loading">{String(props.loading)}</span>
       <span data-testid="selected-address">{props.selectedAddress ?? 'none'}</span>
+      <span data-testid="selected-address-is-custom">{String(props.selectedAddressIsCustom)}</span>
+      <span data-testid="custom-addresses">{props.customAddresses.join(',')}</span>
       <span data-testid="refreshing-addresses">{String(props.refreshingNetworkInterfaces)}</span>
       {props.connectionPathControl}
       {/* Mirror the real Generate gate (loading/canGenerate) so a stuck
@@ -95,8 +102,11 @@ vi.mock('./MobilePairingSetupSection', () => ({
       >
         Generate
       </button>
-      <button type="button" onClick={() => props.onSelectedAddressChange('100.126.117.25:6768')}>
+      <button type="button" onClick={() => props.onCustomAddressSelect('100.126.117.25:6768')}>
         choose-custom-address
+      </button>
+      <button type="button" onClick={() => props.onCustomAddressRemove('100.126.117.25:6768')}>
+        remove-custom-address
       </button>
       <button
         type="button"
@@ -430,13 +440,61 @@ describe('MobilePane pairing connection mode', () => {
 
     await user.click(screen.getByRole('button', { name: 'choose-custom-address' }))
     expect(updateSettings).toHaveBeenCalledWith({
-      mobilePairingCustomAddress: '100.126.117.25:6768'
+      mobilePairingCustomAddress: '100.126.117.25:6768',
+      mobilePairingCustomAddresses: ['100.126.117.25:6768']
     })
     expect(screen.getByTestId('selected-address')).toHaveTextContent('100.126.117.25:6768')
+    expect(screen.getByTestId('selected-address-is-custom')).toHaveTextContent('true')
+    expect(screen.getByTestId('custom-addresses')).toHaveTextContent('100.126.117.25:6768')
 
     await user.click(screen.getByRole('button', { name: 'choose-discovered-address' }))
     expect(updateSettings).toHaveBeenCalledWith({ mobilePairingCustomAddress: null })
     expect(screen.getByTestId('selected-address')).toHaveTextContent('10.0.0.2')
+    expect(screen.getByTestId('custom-addresses')).toHaveTextContent('100.126.117.25:6768')
+  })
+
+  it('removes the selected custom address and falls back to discovery', async () => {
+    const customAddress = '100.126.117.25:6768'
+    mocks.holder.state.settings = {
+      mobileAutoRestoreFitMs: null,
+      mobilePairingCustomAddress: customAddress,
+      mobilePairingCustomAddresses: [customAddress, 'second.example:6768']
+    }
+    mocks.listNetworkInterfaces.mockResolvedValue({
+      interfaces: [{ name: 'Ethernet', address: '10.0.0.2' }]
+    })
+    const user = userEvent.setup()
+    render(<MobilePane />)
+    await waitFor(() =>
+      expect(screen.getByTestId('selected-address')).toHaveTextContent(customAddress)
+    )
+
+    await user.click(screen.getByRole('button', { name: 'remove-custom-address' }))
+
+    expect(updateSettings).toHaveBeenCalledWith({
+      mobilePairingCustomAddress: null,
+      mobilePairingCustomAddresses: ['second.example:6768']
+    })
+    expect(screen.getByTestId('selected-address')).toHaveTextContent('10.0.0.2')
+    expect(screen.getByTestId('selected-address-is-custom')).toHaveTextContent('false')
+  })
+
+  it('removes an inactive custom address without changing the selection', async () => {
+    mocks.holder.state.settings = {
+      mobileAutoRestoreFitMs: null,
+      mobilePairingCustomAddress: 'second.example:6768',
+      mobilePairingCustomAddresses: ['100.126.117.25:6768', 'second.example:6768']
+    }
+    const user = userEvent.setup()
+    render(<MobilePane />)
+
+    await user.click(screen.getByRole('button', { name: 'remove-custom-address' }))
+
+    expect(updateSettings).toHaveBeenCalledWith({
+      mobilePairingCustomAddresses: ['second.example:6768']
+    })
+    expect(screen.getByTestId('selected-address')).toHaveTextContent('second.example:6768')
+    expect(screen.getByTestId('selected-address-is-custom')).toHaveTextContent('true')
   })
 
   it('keeps a saved custom override when discovery later stops listing it', async () => {

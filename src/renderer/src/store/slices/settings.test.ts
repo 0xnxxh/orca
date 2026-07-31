@@ -217,11 +217,15 @@ describe('createSettingsSlice checked persistence', () => {
       settings: { notifications: {} } as unknown as AppState['settings']
     })
 
-    await store
-      .getState()
-      .updateSettingsOrThrow({ mobilePairingCustomAddress: 'host:99999' as never })
+    await store.getState().updateSettingsOrThrow({
+      mobilePairingCustomAddress: 'host:99999' as never,
+      mobilePairingCustomAddresses: [' first.example:6768 ', 'host:99999', 'first.example:6768']
+    })
 
-    expect(settingsSet).toHaveBeenCalledWith({ mobilePairingCustomAddress: null })
+    expect(settingsSet).toHaveBeenCalledWith({
+      mobilePairingCustomAddress: null,
+      mobilePairingCustomAddresses: ['first.example:6768']
+    })
   })
 })
 

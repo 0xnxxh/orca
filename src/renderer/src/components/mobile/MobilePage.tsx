@@ -4,10 +4,7 @@ import { useMountedRef } from '@/hooks/useMountedRef'
 import { useAppStore } from '@/store'
 import type { Platform, StepIndex } from './MobileHero'
 import type { IosChannel } from './mobile-platform-copy'
-import {
-  selectRefreshedNetworkAddress,
-  type MobileNetworkInterface
-} from '../settings/mobile-network-interface-selection'
+import type { MobileNetworkInterface } from '../settings/mobile-network-interface-selection'
 import { translate } from '@/i18n/i18n'
 import { useMobilePageEscape } from './use-mobile-page-escape'
 import { MobilePageContent } from './MobilePageContent'
@@ -22,7 +19,10 @@ import { useMobilePairingQrInvalidation } from './use-mobile-pairing-qr-invalida
 import { useMobileInstallActions } from './use-mobile-install-actions'
 import { useMobilePagePairedDevices } from './use-mobile-page-paired-devices'
 import type { MobileRelayMintFailure } from '../../../../shared/mobile-relay-mint-failure'
-import { useMobilePairingCustomAddress } from './use-mobile-pairing-custom-address'
+import {
+  type MobilePairingAddressChange,
+  useMobilePairingAddressPreference
+} from './use-mobile-pairing-address-preference'
 
 export default function MobilePage(): React.JSX.Element {
   const [stepIdx, setStepIdx] = useState<StepIndex>(0)
@@ -39,16 +39,27 @@ export default function MobilePage(): React.JSX.Element {
   const [pairLoading, setPairLoading] = useState(false)
   const signedIn = useAppStore((state) => state.orcaProfileAuthStatus?.state === 'connected')
   const [connectionMode, setConnectionMode] = useMobilePairingConnectionMode()
-  const savedCustomAddress = useMobilePairingCustomAddress()
   const [networkInterfaces, setNetworkInterfaces] = useState<MobileNetworkInterface[]>([])
-  const [selectedAddress, setSelectedAddress] = useState<string | undefined>(savedCustomAddress)
-  const selectedAddressRef = useRef(selectedAddress)
-  const selectedAddressIsManualRef = useRef(savedCustomAddress !== undefined)
+  const pairingAddressChangeRef = useRef<(change: MobilePairingAddressChange) => void>(() => {})
+  const notifyPairingAddressChange = useCallback(
+    (change: MobilePairingAddressChange): void => pairingAddressChangeRef.current(change),
+    []
+  )
+  const {
+    selectedAddress,
+    selectedAddressIsCustom,
+    customAddresses,
+    selectAddress: handleAddressChange,
+    selectCustomAddress: handleCustomAddressSelect,
+    removeCustomAddress: handleCustomAddressRemove,
+    selectAddressAfterRefresh
+  } = useMobilePairingAddressPreference({
+    networkInterfaces,
+    onSelectionInvalidated: notifyPairingAddressChange
+  })
   const [refreshingNetworkInterfaces, setRefreshingNetworkInterfaces] = useState(false)
   const hasGeneratedRef = useRef(false)
   const pairingRequestIdRef = useRef(0)
-  const observedCustomAddressRef = useRef(savedCustomAddress)
-  const pendingCustomAddressWritesRef = useRef<(string | undefined)[]>([])
   const mountedRef = useMountedRef()
   const closeMobilePage = useAppStore((s) => s.closeMobilePage)
   const showMobileButton = useAppStore((s) => s.settings?.showMobileButton !== false)
@@ -79,12 +90,34 @@ export default function MobilePage(): React.JSX.Element {
     setPairLoading,
     setRelayMintFailure
   })
-  const generatePairingRef = useRef(generatePairing)
-  const pairingContextRef = useRef({ connectionMode, signedIn })
   useLayoutEffect(() => {
-    generatePairingRef.current = generatePairing
-    pairingContextRef.current = { connectionMode, signedIn }
-  }, [connectionMode, generatePairing, signedIn])
+    pairingAddressChangeRef.current = ({ address, source }) => {
+      const pairingContext = { connectionMode, signedIn }
+      if (source === 'user') {
+        if (canMintMobilePairingOffer(pairingContext)) {
+          void generatePairing(true, address ?? '')
+        }
+        return
+      }
+      if (source === 'refresh') {
+        if (hasGeneratedRef.current && canMintMobilePairingOffer(pairingContext)) {
+          void generatePairing(true, address)
+        }
+        return
+      }
+      const shouldRegenerate = hasGeneratedRef.current || pairLoading
+      pairingRequestIdRef.current += 1
+      hasGeneratedRef.current = false
+      setPairQrDataUrl(null)
+      setPairingUrl(null)
+      setPairingQrError(false)
+      setRelayMintFailure(null)
+      setPairLoading(false)
+      if (shouldRegenerate && canMintMobilePairingOffer(pairingContext)) {
+        void generatePairing(true, address ?? '')
+      }
+    }
+  }, [connectionMode, generatePairing, pairLoading, signedIn])
 
   const handleConnectionModeChange = useCallback(
     (nextMode: MobilePairingConnectionMode): void => {
@@ -153,31 +186,7 @@ export default function MobilePage(): React.JSX.Element {
       const result = await window.api.mobile.listNetworkInterfaces()
       if (mountedRef.current) {
         setNetworkInterfaces(result.interfaces)
-      }
-      // Resolve the new address before committing it so we can detect a real
-      // change and remint the QR — otherwise the QR keeps encoding the stale
-      // endpoint after a network refresh swaps the active interface.
-      const currentAddress = selectedAddressRef.current
-      const newAddress = selectRefreshedNetworkAddress(
-        currentAddress,
-        result.interfaces,
-        selectedAddressIsManualRef.current
-      )
-      if (mountedRef.current) {
-        if (newAddress !== currentAddress) {
-          selectedAddressRef.current = newAddress
-          selectedAddressIsManualRef.current = false
-          setSelectedAddress(newAddress)
-        }
-      }
-      const pairingContext = pairingContextRef.current
-      if (
-        newAddress !== currentAddress &&
-        hasGeneratedRef.current &&
-        canMintMobilePairingOffer(pairingContext) &&
-        mountedRef.current
-      ) {
-        void generatePairingRef.current(true, newAddress)
+        selectAddressAfterRefresh(result.interfaces)
       }
     } catch {
       // Network list is non-critical; the QR will still mint with default routing.
@@ -186,7 +195,7 @@ export default function MobilePage(): React.JSX.Element {
         setRefreshingNetworkInterfaces(false)
       }
     }
-  }, [mountedRef])
+  }, [mountedRef, selectAddressAfterRefresh])
 
   useEffect(() => {
     if (stage !== 'flow') {
@@ -194,67 +203,6 @@ export default function MobilePage(): React.JSX.Element {
     }
     void loadNetworkInterfaces()
   }, [stage, loadNetworkInterfaces])
-
-  const handleAddressChange = useCallback(
-    (address: string) => {
-      selectedAddressRef.current = address
-      setSelectedAddress(address)
-      // Why: if the picked address is not in the OS-enumerated list, it is
-      // a user-typed manual entry — remember that so the next refresh does
-      // not snap it back to a tailnet/LAN fallback.
-      const isManual = !networkInterfaces.some((iface) => iface.address === address)
-      selectedAddressIsManualRef.current = isManual
-      const customAddress = isManual ? address : undefined
-      const pendingWrites = pendingCustomAddressWritesRef.current
-      const effectiveCustomAddress =
-        pendingWrites.length > 0 ? pendingWrites.at(-1) : observedCustomAddressRef.current
-      if (customAddress !== effectiveCustomAddress) {
-        pendingWrites.push(customAddress)
-        void updateSettings({ mobilePairingCustomAddress: customAddress ?? null })
-      }
-      if (canMintMobilePairingOffer({ connectionMode, signedIn })) {
-        void generatePairing(true, address)
-      }
-    },
-    [generatePairing, networkInterfaces, connectionMode, signedIn, updateSettings]
-  )
-
-  useEffect(() => {
-    if (savedCustomAddress === observedCustomAddressRef.current) {
-      return
-    }
-    observedCustomAddressRef.current = savedCustomAddress
-    const pendingWrites = pendingCustomAddressWritesRef.current
-    const acknowledgedWriteIndex = pendingWrites.indexOf(savedCustomAddress)
-    if (acknowledgedWriteIndex !== -1) {
-      pendingWrites.splice(0, acknowledgedWriteIndex + 1)
-      return
-    }
-    pendingWrites.length = 0
-    const nextAddress =
-      savedCustomAddress ?? selectRefreshedNetworkAddress(undefined, networkInterfaces)
-    const shouldRegenerate = hasGeneratedRef.current || pairLoading
-    pairingRequestIdRef.current += 1
-    hasGeneratedRef.current = false
-    selectedAddressRef.current = nextAddress
-    selectedAddressIsManualRef.current = savedCustomAddress !== undefined
-    setSelectedAddress(nextAddress)
-    setPairQrDataUrl(null)
-    setPairingUrl(null)
-    setPairingQrError(false)
-    setRelayMintFailure(null)
-    setPairLoading(false)
-    if (shouldRegenerate && canMintMobilePairingOffer({ connectionMode, signedIn })) {
-      void generatePairing(true, nextAddress ?? '')
-    }
-  }, [
-    connectionMode,
-    generatePairing,
-    networkInterfaces,
-    pairLoading,
-    savedCustomAddress,
-    signedIn
-  ])
 
   const beforeCustomAddressChange = useCallback(
     async (address: string): Promise<boolean> => {
@@ -362,6 +310,10 @@ export default function MobilePage(): React.JSX.Element {
       generatePairing={(rotate) => void generatePairing(rotate)}
       canGeneratePairing={canGenerate}
       handleAddressChange={handleAddressChange}
+      customAddresses={customAddresses}
+      selectedAddressIsCustom={selectedAddressIsCustom}
+      onCustomAddressSelect={handleCustomAddressSelect}
+      onCustomAddressRemove={handleCustomAddressRemove}
       beforeCustomAddressChange={beforeCustomAddressChange}
       handleBack={handleBack}
       handleContinue={handleContinue}

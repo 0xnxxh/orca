@@ -29,6 +29,7 @@ describe('getDefaultSettings', () => {
 
   it('defaults mobile pairing to discovered network addresses', () => {
     expect(getDefaultSettings('/tmp').mobilePairingCustomAddress).toBeNull()
+    expect(getDefaultSettings('/tmp').mobilePairingCustomAddresses).toEqual([])
   })
 
   it('keeps first-work branch auto-renaming on by default for new settings', () => {

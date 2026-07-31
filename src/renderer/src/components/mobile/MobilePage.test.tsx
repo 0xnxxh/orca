@@ -15,6 +15,7 @@ type StoreState = {
     showMobileButton: boolean
     mobilePairingConnectionMode?: MobilePairingConnectionMode
     mobilePairingCustomAddress?: string | null
+    mobilePairingCustomAddresses?: string[]
   }
   updateSettings: () => Promise<void>
 }
@@ -48,6 +49,10 @@ vi.mock('./MobilePageContent', () => ({
     enterFlow: () => void
     handleConnectionModeChange: (mode: MobilePairingConnectionMode) => void
     handleAddressChange: (address: string) => void
+    customAddresses: readonly string[]
+    selectedAddressIsCustom: boolean
+    onCustomAddressSelect: (address: string) => void
+    onCustomAddressRemove: (address: string) => void
     beforeCustomAddressChange: (address: string) => Promise<boolean>
     handleContinue: () => void
     pairQrDataUrl: string | null
@@ -71,6 +76,8 @@ vi.mock('./MobilePageContent', () => ({
       <span data-testid="pairing-qr-error">{String(props.pairingQrError)}</span>
       <span data-testid="relay-failure">{props.relayMintFailure?.stage ?? 'none'}</span>
       <span data-testid="selected-address">{props.selectedAddress ?? 'none'}</span>
+      <span data-testid="selected-address-is-custom">{String(props.selectedAddressIsCustom)}</span>
+      <span data-testid="custom-addresses">{props.customAddresses.join(',')}</span>
       <span data-testid="refreshing-addresses">{String(props.refreshingNetworkInterfaces)}</span>
       <button type="button" onClick={props.enterFlow}>
         Enter flow
@@ -98,12 +105,18 @@ vi.mock('./MobilePageContent', () => ({
         onClick={() =>
           void props.beforeCustomAddressChange('wss://custom.example/large').then((confirmed) => {
             if (confirmed) {
-              props.handleAddressChange('wss://custom.example/large')
+              props.onCustomAddressSelect('wss://custom.example/large')
             }
           })
         }
       >
         Confirm custom address
+      </button>
+      <button
+        type="button"
+        onClick={() => props.onCustomAddressRemove('wss://custom.example/large')}
+      >
+        Remove custom address
       </button>
     </div>
   )
@@ -217,6 +230,8 @@ describe('MobilePage pairing connection mode', () => {
       })
     )
     expect(screen.getByTestId('selected-address')).toHaveTextContent('100.126.117.25:6768')
+    expect(screen.getByTestId('selected-address-is-custom')).toHaveTextContent('true')
+    expect(screen.getByTestId('custom-addresses')).toHaveTextContent('100.126.117.25:6768')
   })
 
   it('does not auto-mint any QR when signed out with Anywhere selected', async () => {
@@ -453,7 +468,8 @@ describe('MobilePage pairing connection mode', () => {
     )
     expect(getPairingQR).toHaveBeenCalledTimes(2)
     expect(mocks.storeState.updateSettings).not.toHaveBeenCalledWith({
-      mobilePairingCustomAddress: 'wss://custom.example/large'
+      mobilePairingCustomAddress: 'wss://custom.example/large',
+      mobilePairingCustomAddresses: ['wss://custom.example/large']
     })
   })
 
@@ -466,9 +482,59 @@ describe('MobilePage pairing connection mode', () => {
 
     await waitFor(() =>
       expect(mocks.storeState.updateSettings).toHaveBeenCalledWith({
-        mobilePairingCustomAddress: 'wss://custom.example/large'
+        mobilePairingCustomAddress: 'wss://custom.example/large',
+        mobilePairingCustomAddresses: ['wss://custom.example/large']
       })
     )
+    expect(screen.getByTestId('custom-addresses')).toHaveTextContent('wss://custom.example/large')
+  })
+
+  it('removes the active custom address and remints with a discovered fallback', async () => {
+    mocks.storeState.settings = {
+      showMobileButton: true,
+      mobilePairingCustomAddress: 'wss://custom.example/large',
+      mobilePairingCustomAddresses: ['wss://custom.example/large', 'second.example:6768']
+    }
+    listNetworkInterfaces.mockResolvedValue({
+      interfaces: [{ name: 'Ethernet', address: '10.0.0.2' }]
+    })
+    const user = userEvent.setup()
+    await openPairingStep()
+    await waitFor(() =>
+      expect(screen.getByTestId('selected-address')).toHaveTextContent('wss://custom.example/large')
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Remove custom address' }))
+
+    expect(mocks.storeState.updateSettings).toHaveBeenCalledWith({
+      mobilePairingCustomAddress: null,
+      mobilePairingCustomAddresses: ['second.example:6768']
+    })
+    expect(screen.getByTestId('selected-address')).toHaveTextContent('10.0.0.2')
+    expect(screen.getByTestId('selected-address-is-custom')).toHaveTextContent('false')
+    await waitFor(() =>
+      expect(getPairingQR).toHaveBeenLastCalledWith({
+        address: '10.0.0.2',
+        connectionMode: 'automatic',
+        rotate: true
+      })
+    )
+  })
+
+  it('keeps custom intent when the saved address is also discovered', async () => {
+    mocks.storeState.settings = {
+      showMobileButton: true,
+      mobilePairingCustomAddress: '10.0.0.2',
+      mobilePairingCustomAddresses: ['10.0.0.2']
+    }
+    listNetworkInterfaces.mockResolvedValue({
+      interfaces: [{ name: 'Ethernet', address: '10.0.0.2' }]
+    })
+
+    await openPairingStep()
+
+    expect(screen.getByTestId('selected-address')).toHaveTextContent('10.0.0.2')
+    expect(screen.getByTestId('selected-address-is-custom')).toHaveTextContent('true')
   })
 
   it('keeps a custom address when an older network refresh resolves', async () => {

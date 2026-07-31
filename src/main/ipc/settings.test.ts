@@ -499,9 +499,13 @@ describe('registerSettingsHandlers', () => {
   })
 
   it('normalizes custom mobile pairing addresses before persistence', async () => {
-    store.getSettings.mockReturnValue({ mobilePairingCustomAddress: null })
+    store.getSettings.mockReturnValue({
+      mobilePairingCustomAddress: null,
+      mobilePairingCustomAddresses: []
+    })
     store.updateSettings.mockReturnValue({
-      mobilePairingCustomAddress: '100.126.117.25:6768'
+      mobilePairingCustomAddress: '100.126.117.25:6768',
+      mobilePairingCustomAddresses: ['first.example:6768']
     })
     registerSettingsHandlers(store as never)
 
@@ -511,11 +515,15 @@ describe('registerSettingsHandlers', () => {
     ) => Promise<unknown>
 
     await handler(settingsInvokeEvent, {
-      mobilePairingCustomAddress: ' 100.126.117.25:6768 '
+      mobilePairingCustomAddress: ' 100.126.117.25:6768 ',
+      mobilePairingCustomAddresses: [' first.example:6768 ', 'host:99999', 'first.example:6768']
     })
 
     expect(store.updateSettings).toHaveBeenCalledWith(
-      { mobilePairingCustomAddress: '100.126.117.25:6768' },
+      {
+        mobilePairingCustomAddress: '100.126.117.25:6768',
+        mobilePairingCustomAddresses: ['first.example:6768']
+      },
       { notifyListeners: true, originWebContentsId: 1 }
     )
   })

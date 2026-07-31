@@ -95,13 +95,18 @@ export function MobilePane(): React.JSX.Element {
       setRotateNextQr(true)
     }
   }, [])
+  const invalidatePairingAddress = useCallback(() => invalidatePairing(), [invalidatePairing])
   const {
     selectedAddress,
+    selectedAddressIsCustom,
+    customAddresses,
     selectAddress: handleSelectedAddressChange,
+    selectCustomAddress: handleCustomAddressSelect,
+    removeCustomAddress: handleCustomAddressRemove,
     selectAddressAfterRefresh
   } = useMobilePairingAddressPreference({
     networkInterfaces,
-    onSelectionInvalidated: invalidatePairing
+    onSelectionInvalidated: invalidatePairingAddress
   })
 
   // Why: a Relay QR minted while signed in must not linger on a now-signed-out
@@ -392,8 +397,12 @@ export function MobilePane(): React.JSX.Element {
           />
         }
         networkInterfaces={networkInterfaces}
+        customAddresses={customAddresses}
         selectedAddress={selectedAddress}
+        selectedAddressIsCustom={selectedAddressIsCustom}
         onSelectedAddressChange={handleSelectedAddressChange}
+        onCustomAddressSelect={handleCustomAddressSelect}
+        onCustomAddressRemove={handleCustomAddressRemove}
         refreshingNetworkInterfaces={refreshingNetworkInterfaces}
         onRefreshNetworkInterfaces={() => void loadNetworkInterfaces({ notifyOnError: true })}
         loading={loading}
