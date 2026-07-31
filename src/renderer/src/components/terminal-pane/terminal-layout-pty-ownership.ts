@@ -37,7 +37,11 @@ function resolveRetainedLeafId(
 ): string {
   let retainedLeafId = leafId
   while (retainedLeafIdByRemovedLeafId.has(retainedLeafId)) {
-    retainedLeafId = retainedLeafIdByRemovedLeafId.get(retainedLeafId) ?? retainedLeafId
+    const nextLeafId = retainedLeafIdByRemovedLeafId.get(retainedLeafId)
+    if (!nextLeafId || nextLeafId === retainedLeafId) {
+      return retainedLeafId
+    }
+    retainedLeafId = nextLeafId
   }
   return retainedLeafId
 }

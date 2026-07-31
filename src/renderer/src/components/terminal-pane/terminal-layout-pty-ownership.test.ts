@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { TerminalLayoutSnapshot } from '../../../../shared/types'
 import { normalizeTerminalLayoutSnapshot } from './terminal-layout-leaf-ids'
+import { normalizeTerminalLayoutPtyOwnership } from './terminal-layout-pty-ownership'
 
 const LEAF_1 = '11111111-1111-4111-8111-111111111111'
 const LEAF_2 = '22222222-2222-4222-8222-222222222222'
@@ -180,6 +181,33 @@ describe('terminal layout PTY ownership normalization', () => {
       ptyIdsByLeafId: { [LEAF_1]: 'pty-agent' }
     })
     expect(normalizeTerminalLayoutSnapshot(normalized.snapshot)).toEqual({
+      snapshot: normalized.snapshot,
+      changed: false
+    })
+  })
+
+  it('collapses repeated live leaf ids without looping during direct normalization', () => {
+    const normalized = normalizeTerminalLayoutPtyOwnership({
+      root: {
+        type: 'split',
+        direction: 'vertical',
+        first: { type: 'leaf', leafId: LEAF_1 },
+        second: { type: 'leaf', leafId: LEAF_1 }
+      },
+      activeLeafId: LEAF_1,
+      expandedLeafId: LEAF_1,
+      ptyIdsByLeafId: { [LEAF_1]: 'pty-agent' },
+      buffersByLeafId: { [LEAF_1]: 'cached buffer' }
+    })
+
+    expect(normalized.snapshot).toEqual({
+      root: null,
+      activeLeafId: LEAF_1,
+      expandedLeafId: null,
+      ptyIdsByLeafId: { [LEAF_1]: 'pty-agent' },
+      buffersByLeafId: { [LEAF_1]: 'cached buffer' }
+    })
+    expect(normalizeTerminalLayoutPtyOwnership(normalized.snapshot)).toEqual({
       snapshot: normalized.snapshot,
       changed: false
     })
