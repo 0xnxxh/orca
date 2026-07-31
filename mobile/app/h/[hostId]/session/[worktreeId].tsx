@@ -1888,7 +1888,8 @@ export default function SessionScreen() {
         activeHandleRef.current = active.terminal
         setActiveHandle(active.terminal)
         subscribeToTerminal(active.terminal)
-      } else {
+      } else if (active) {
+        // Why: an empty snapshot can transiently omit a live terminal; explicit close clears it on RPC success.
         const previous = activeHandleRef.current
         if (previous) {
           unsubscribeTerminal(previous)

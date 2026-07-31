@@ -7,12 +7,12 @@ const sessionRouteSource = readFileSync(
 )
 
 describe('mobile session last-tab close', () => {
-  it('clears terminal identity when the authoritative snapshot has no active tab', () => {
+  it('preserves terminal identity while an empty snapshot may be transient', () => {
     const start = sessionRouteSource.indexOf('const applySessionTabs = useCallback')
     const end = sessionRouteSource.indexOf('const readMarkdownTab', start)
     const block = sessionRouteSource.slice(start, end)
 
-    expect(block).toContain('} else {\n        const previous = activeHandleRef.current')
+    expect(block).toContain('} else if (active) {')
   })
 
   it('clears stale active identity when closing leaves no tabs', () => {
