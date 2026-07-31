@@ -23,6 +23,10 @@ import { Button } from '../ui/button'
 import { translate } from '@/i18n/i18n'
 export { getDeveloperPermissionsPaneSearchEntries } from './developer-permissions-search'
 
+type DeveloperPermissionsPaneProps = {
+  highlightedSettingId?: string | null
+}
+
 type PermissionDefinition = {
   id: DeveloperPermissionId
   label: string
@@ -202,7 +206,9 @@ function statusClass(status: DeveloperPermissionStatus | undefined): string {
   return 'border-border bg-muted text-muted-foreground'
 }
 
-export function DeveloperPermissionsPane(): React.JSX.Element {
+export function DeveloperPermissionsPane({
+  highlightedSettingId = null
+}: DeveloperPermissionsPaneProps): React.JSX.Element {
   const [states, setStates] = useState<DeveloperPermissionState[]>([])
   const [loading, setLoading] = useState(true)
   const [pendingId, setPendingId] = useState<DeveloperPermissionId | null>(null)
@@ -340,9 +346,15 @@ export function DeveloperPermissionsPane(): React.JSX.Element {
         {PERMISSIONS.map((permission) => {
           const status = stateById.get(permission.id)
           const pending = pendingId === permission.id
+          const settingId = `developer-permissions-${permission.id}`
 
           return (
-            <div key={permission.id} className="flex items-center justify-between gap-4 px-4 py-3">
+            <div
+              key={permission.id}
+              data-settings-section={settingId}
+              data-highlighted={highlightedSettingId === settingId ? 'true' : undefined}
+              className="flex items-center justify-between gap-4 px-4 py-3 transition-[background-color,box-shadow] duration-500 data-[highlighted=true]:bg-annotation-highlight/10 data-[highlighted=true]:ring-2 data-[highlighted=true]:ring-inset data-[highlighted=true]:ring-annotation-highlight/60 motion-reduce:transition-none"
+            >
               <div className="flex min-w-0 items-start gap-3">
                 <div className="mt-0.5 text-muted-foreground">{permission.icon}</div>
                 <div className="min-w-0 space-y-1">
