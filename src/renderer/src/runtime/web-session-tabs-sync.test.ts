@@ -2007,6 +2007,49 @@ describe('applyWebSessionTabsSnapshot', () => {
     expect(identityPatch.agentStatusByPaneKey?.[mirroredPaneKey]?.updatedAt).toBe(NOW)
     expect(identityPatch.agentStatusEpoch).toBe(8)
     expect(identityPatch.sortEpoch).toBe(12)
+
+    const nextTurnPatch = applyWebSessionTabsSnapshot(
+      makeState({
+        ...initial,
+        agentStatusByPaneKey: {
+          [mirroredPaneKey]: {
+            ...existing,
+            state: 'working',
+            updatedAt: NOW,
+            stateStartedAt: NOW,
+            worktreeId: 'stale-worktree',
+            tabId: 'stale-tab',
+            providerSession: undefined
+          }
+        }
+      }),
+      {
+        ...snapshot,
+        snapshotVersion: 5,
+        tabs: snapshot.tabs.map((tab) =>
+          tab.type === 'terminal' && tab.agentStatus
+            ? {
+                ...tab,
+                agentStatus: {
+                  ...tab.agentStatus,
+                  state: 'done',
+                  providerSession: { key: 'session_id', id: 'previous-session' }
+                }
+              }
+            : tab
+        )
+      },
+      ENV,
+      NOW
+    ) as Partial<WebSessionTabsSyncState>
+
+    expect(nextTurnPatch.agentStatusByPaneKey?.[mirroredPaneKey]).toMatchObject({
+      state: 'working',
+      stateStartedAt: NOW,
+      worktreeId: WT,
+      tabId: existing.tabId
+    })
+    expect(nextTurnPatch.agentStatusByPaneKey?.[mirroredPaneKey]?.providerSession).toBeUndefined()
   })
 
   it('keeps mirrored OMP tabs from repainting to Pi-compatible titles', () => {

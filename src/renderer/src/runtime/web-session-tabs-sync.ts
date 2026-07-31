@@ -714,6 +714,11 @@ function buildMirroredAgentStatusPatch(
     }
     const existing = state.agentStatusByPaneKey[entry.paneKey]
     // Why: keep fresher OSC state while taking remapped ownership metadata from the authoritative host snapshot.
+    const hostIdentityPredatesCurrentTurn =
+      existing !== undefined &&
+      entry.state === 'done' &&
+      existing.state !== 'done' &&
+      existing.stateStartedAt > entry.stateStartedAt
     const nextEntry =
       existing && existing.updatedAt > entry.updatedAt
         ? {
@@ -721,7 +726,9 @@ function buildMirroredAgentStatusPatch(
             paneKey: entry.paneKey,
             worktreeId: entry.worktreeId ?? existing.worktreeId,
             tabId: entry.tabId,
-            providerSession: existing.providerSession ?? entry.providerSession
+            providerSession:
+              existing.providerSession ??
+              (hostIdentityPredatesCurrentTurn ? undefined : entry.providerSession)
           }
         : entry
     nextByPaneKey.set(entry.paneKey, nextEntry)
