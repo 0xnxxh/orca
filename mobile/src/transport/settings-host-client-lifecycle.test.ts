@@ -628,10 +628,14 @@ describe('settings host client lifecycle', () => {
     expect(replacementClient?.closeMock).toHaveBeenCalledOnce()
   })
 
-  it('releases a manually connected host after Home promotes and demotes it', async () => {
+  it('releases a manual host after Home demotes or stops tracking it', async () => {
     const manualHost = host('manual-relay-host', 1, { relayHostId: 'AbCdEf0123_-xyZ9' })
-    const client = makeFakeClient('reconnecting')
-    connectMock.mockReturnValue(client)
+    const clients: FakeClient[] = []
+    connectMock.mockImplementation(() => {
+      const client = makeFakeClient('reconnecting')
+      clients.push(client)
+      return client
+    })
     loadHostsMock.mockResolvedValue([manualHost])
 
     function ManualHomeProbe({ selected }: { selected: boolean }): null {
@@ -641,7 +645,13 @@ describe('settings host client lifecycle', () => {
       })
       return null
     }
-    function ManualApp({ selected }: { selected: boolean }): React.JSX.Element {
+    function ManualApp({
+      selected,
+      homeVisible = true
+    }: {
+      selected: boolean
+      homeVisible?: boolean
+    }) {
       return createElement(
         RpcClientProvider,
         null,
@@ -649,7 +659,7 @@ describe('settings host client lifecycle', () => {
           Fragment,
           null,
           createElement(ContextProbe),
-          createElement(ManualHomeProbe, { selected })
+          homeVisible ? createElement(ManualHomeProbe, { selected }) : null
         )
       )
     }
@@ -683,9 +693,20 @@ describe('settings host client lifecycle', () => {
     })
 
     expect(activeHostIds()).toEqual([])
-    expect(client.closeMock).toHaveBeenCalledOnce()
+    expect(clients[0]?.closeMock).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      await context?.forceReconnect(manualHost.id)
+    })
+    expect(activeHostIds()).toEqual([manualHost.id])
+    expect(clients).toHaveLength(2)
+
+    act(() => renderer?.update(createElement(ManualApp, { selected: false, homeVisible: false })))
+    expect(activeHostIds()).toEqual([])
+    expect(clients[1]?.closeMock).toHaveBeenCalledOnce()
+
     act(() => renderer?.unmount())
-    expect(client.closeMock).toHaveBeenCalledOnce()
+    expect(clients.every((client) => client.closeMock.mock.calls.length === 1)).toBe(true)
   })
 
   it('releases settings-only clients on blur while shared owners stay mounted', async () => {
