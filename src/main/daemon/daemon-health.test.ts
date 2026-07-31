@@ -410,15 +410,13 @@ describe('killStaleDaemon pid identity guards', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  it('does not SIGTERM when the saved startedAtMs mismatches the current process', async () => {
+  it('removes a stale pidfile without signaling a mismatched process', async () => {
     if (process.platform === 'win32') {
       return
     }
 
     // Why: seed a pid file that claims the daemon is `process.pid` (us) but
-    // was started 1 hour ago. Our real start time is "now," so startTimeMatches
-    // returns false and isDaemonProcess rejects. killStaleDaemon must not call
-    // process.kill in that case.
+    // was started 1 hour ago. The identity mismatch must not signal us.
     const bogusStartedAtMs = Date.now() - 60 * 60 * 1000
     writeFileSync(
       getDaemonPidPath(dir),
@@ -437,7 +435,7 @@ describe('killStaleDaemon pid identity guards', () => {
         ([, sig]) => sig === 'SIGTERM' || sig === 'SIGKILL'
       )
       expect(terminationSignals).toEqual([])
-      expect(parseDaemonPidFile(readFileSync(pidPath, 'utf8'))?.pid).toBe(process.pid)
+      expect(existsSync(pidPath)).toBe(false)
     } finally {
       killSpy.mockRestore()
     }
@@ -587,7 +585,7 @@ describe('killStaleDaemon pid identity guards', () => {
     }
   })
 
-  it('preserves replacement identity files when the pid changes ownership during escalation', async () => {
+  it('removes the unchanged pidfile when the pid changes ownership during escalation', async () => {
     if (process.platform === 'win32') {
       return
     }
@@ -639,7 +637,7 @@ describe('killStaleDaemon pid identity guards', () => {
       await replacementObserved
       await vi.advanceTimersByTimeAsync(3_100)
       await expect(killing).resolves.toBe(true)
-      expect(parseDaemonPidFile(readFileSync(pidPath, 'utf8'))?.pid).toBe(pid)
+      expect(existsSync(pidPath)).toBe(false)
       expect(existsSync(socketPath)).toBe(true)
     } finally {
       vi.useRealTimers()

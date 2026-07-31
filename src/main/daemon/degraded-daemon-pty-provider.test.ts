@@ -622,7 +622,7 @@ describe('DegradedDaemonPtyProvider', () => {
     expect(current.write).not.toHaveBeenCalled()
   })
 
-  it('releases an in-flight fallback when the colliding daemon changes incarnation', async () => {
+  it('keeps an in-flight fallback fenced across identity changes until confirmation', async () => {
     const sessionId = 'in-flight-incarnation-collision'
     const previous = { pid: 1, startedAtMs: 1, launchNonce: 'previous' }
     const replacement = { pid: 2, startedAtMs: 2, launchNonce: 'replacement' }
@@ -649,13 +649,43 @@ describe('DegradedDaemonPtyProvider', () => {
     current.emitData(sessionId, 'foreign daemon output')
     identity = replacement
     notifyIdentityChange({ previous, current: replacement })
-    fallback.emitData(sessionId, 'fallback first')
+    fallback.emitData(sessionId, 'still fenced')
+
+    expect(data).not.toHaveBeenCalled()
+    expect(() => provider.write(sessionId, 'blocked input')).toThrow(
+      'daemon_session_routing_unavailable'
+    )
+
     resolveSpawn({ id: sessionId })
     await spawning
+    fallback.emitData(sessionId, 'fallback after confirmation')
     provider.write(sessionId, 'fallback input')
 
-    expect(data).toHaveBeenCalledExactlyOnceWith({ id: sessionId, data: 'fallback first' })
+    expect(data).toHaveBeenCalledExactlyOnceWith({
+      id: sessionId,
+      data: 'fallback after confirmation'
+    })
     expect(fallback.write).toHaveBeenCalledExactlyOnceWith(sessionId, 'fallback input')
+  })
+
+  it('drops an unconfirmed collision when fallback spawn fails', async () => {
+    const sessionId = 'rejected-fallback-collision'
+    const current = createDaemonAdapter('daemon')
+    const fallback = createProvider('fallback')
+    let rejectSpawn!: (error: Error) => void
+    vi.mocked(fallback.spawn).mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectSpawn = reject
+      })
+    )
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+
+    const spawning = provider.spawn({ sessionId, isNewSession: true, cols: 80, rows: 24 })
+    current.emitData(sessionId, 'foreign daemon output')
+    rejectSpawn(new Error('spawn failed'))
+
+    await expect(spawning).rejects.toThrow('spawn failed')
+    expect(provider.hasPty(sessionId)).toBe(false)
   })
 
   it('rejects unknown fallback output after unavailable tombstones are evicted', async () => {

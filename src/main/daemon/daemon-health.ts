@@ -10,7 +10,7 @@ import {
 } from '../../shared/process-output-field-scanner'
 import { isStartupDiagnosticsEnabled, logStartupDiagnostic } from '../startup/startup-diagnostics'
 import { encodeNdjson } from './ndjson'
-import { getDaemonPidPath, unlinkOwnedDaemonPidFile } from './daemon-spawner'
+import { getDaemonPidPath, unlinkUnchangedDaemonPidFile } from './daemon-spawner'
 import {
   PROTOCOL_VERSION,
   type HelloMessage,
@@ -519,51 +519,68 @@ async function queryWindowsProcessIdentity(pid: number): Promise<WindowsProcessI
   }
 }
 
+type DaemonProcessMatch = 'match' | 'stale' | 'unknown'
+
+function probeProcessExistence(pid: number): 'present' | 'absent' | 'unknown' {
+  try {
+    process.kill(pid, 0)
+    return 'present'
+  } catch (error) {
+    return isNoSuchProcessError(error) ? 'absent' : 'unknown'
+  }
+}
+
+async function matchDaemonProcess(
+  pid: number,
+  socketPath: string,
+  tokenPath: string,
+  startedAtMs: number | null
+): Promise<DaemonProcessMatch> {
+  const processExistence = probeProcessExistence(pid)
+  if (processExistence !== 'present') {
+    return processExistence === 'absent' ? 'stale' : 'unknown'
+  }
+
+  if (process.platform === 'win32') {
+    const identity = await queryWindowsProcessIdentity(pid)
+    if (identity === null) {
+      return probeProcessExistence(pid) === 'absent' ? 'stale' : 'unknown'
+    }
+    // Why: image names are too broad after PID reuse. Match the daemon entry
+    // plus the exact socket/token args so we only kill the daemon for this
+    // userData protocol endpoint.
+    return commandLineMatchesDaemon(identity.commandLine, socketPath, tokenPath) &&
+      startTimesWithinTolerance(identity.startedAtMs, startedAtMs, WIN32_START_TIME_TOLERANCE_MS)
+      ? 'match'
+      : 'stale'
+  }
+
+  let commandLine: string
+  try {
+    commandLine = readFileSync(`/proc/${pid}/cmdline`, 'utf8')
+  } catch {
+    try {
+      commandLine = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
+        encoding: 'utf8',
+        timeout: 2_000
+      })
+    } catch {
+      return probeProcessExistence(pid) === 'absent' ? 'stale' : 'unknown'
+    }
+  }
+  return commandLineMatchesDaemon(commandLine, socketPath, tokenPath) &&
+    startTimeMatches(pid, startedAtMs)
+    ? 'match'
+    : 'stale'
+}
+
 async function isDaemonProcess(
   pid: number,
   socketPath: string,
   tokenPath: string,
   startedAtMs: number | null
 ): Promise<boolean> {
-  try {
-    process.kill(pid, 0)
-  } catch {
-    return false
-  }
-
-  if (process.platform === 'win32') {
-    const identity = await queryWindowsProcessIdentity(pid)
-    if (identity === null) {
-      return false
-    }
-    // Why: image names are too broad after PID reuse. Match the daemon entry
-    // plus the exact socket/token args so we only kill the daemon for this
-    // userData protocol endpoint.
-    return (
-      commandLineMatchesDaemon(identity.commandLine, socketPath, tokenPath) &&
-      startTimesWithinTolerance(identity.startedAtMs, startedAtMs, WIN32_START_TIME_TOLERANCE_MS)
-    )
-  }
-
-  try {
-    const cmdline = readFileSync(`/proc/${pid}/cmdline`, 'utf8')
-    return (
-      commandLineMatchesDaemon(cmdline, socketPath, tokenPath) && startTimeMatches(pid, startedAtMs)
-    )
-  } catch {
-    try {
-      const output = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
-        encoding: 'utf8',
-        timeout: 2_000
-      })
-      return (
-        commandLineMatchesDaemon(output, socketPath, tokenPath) &&
-        startTimeMatches(pid, startedAtMs)
-      )
-    } catch {
-      return false
-    }
-  }
+  return (await matchDaemonProcess(pid, socketPath, tokenPath, startedAtMs)) === 'match'
 }
 
 async function getDaemonCommandLine(pid: number): Promise<string | null> {
@@ -670,17 +687,18 @@ export async function killStaleDaemon(
   const pidPath = getDaemonPidPath(runtimeDir, protocolVersion)
   let killedDaemon = false
   let identifiedDaemon = false
-  let identifiedPid: number | null = null
-  let identifiedLaunchNonce: string | null = null
+  let identifiedPidContents: string | null = null
   try {
-    const parsedPid = parseDaemonPidFile(readFileSync(pidPath, 'utf8'))
-    if (
-      parsedPid &&
-      (await isDaemonProcess(parsedPid.pid, socketPath, tokenPath, parsedPid.startedAtMs))
-    ) {
+    const pidContents = readFileSync(pidPath, 'utf8')
+    const parsedPid = parseDaemonPidFile(pidContents)
+    const processMatch = parsedPid
+      ? await matchDaemonProcess(parsedPid.pid, socketPath, tokenPath, parsedPid.startedAtMs)
+      : 'stale'
+    if (processMatch === 'stale') {
+      unlinkUnchangedDaemonPidFile(pidPath, pidContents)
+    } else if (parsedPid && processMatch === 'match') {
       identifiedDaemon = true
-      identifiedPid = parsedPid.pid
-      identifiedLaunchNonce = parsedPid.launchNonce
+      identifiedPidContents = pidContents
       const { pid, startedAtMs } = parsedPid
       let exited = false
       try {
@@ -709,11 +727,12 @@ export async function killStaleDaemon(
         // window is long enough for the pid to be recycled if the original
         // daemon died during the wait. Without this, we'd SIGKILL an unrelated
         // process that happens to now own the same pid.
-        if (!(await isDaemonProcess(pid, socketPath, tokenPath, startedAtMs))) {
+        const currentMatch = await matchDaemonProcess(pid, socketPath, tokenPath, startedAtMs)
+        if (currentMatch !== 'match') {
           console.warn('[daemon] Skipping SIGKILL for stale daemon: reason=pid_recycled')
-          identifiedDaemon = false
+          identifiedDaemon = currentMatch === 'stale'
           exited = true
-          killedDaemon = true
+          killedDaemon = currentMatch === 'stale'
         } else {
           try {
             process.kill(pid, 'SIGKILL')
@@ -729,13 +748,8 @@ export async function killStaleDaemon(
     // PID file missing or process already dead
   }
 
-  if (
-    killedDaemon &&
-    identifiedDaemon &&
-    identifiedPid !== null &&
-    identifiedLaunchNonce !== null
-  ) {
-    unlinkOwnedDaemonPidFile(pidPath, identifiedPid, identifiedLaunchNonce)
+  if (killedDaemon && identifiedDaemon && identifiedPidContents !== null) {
+    unlinkUnchangedDaemonPidFile(pidPath, identifiedPidContents)
   }
 
   const socketIsLive = await canConnectSocket(socketPath)

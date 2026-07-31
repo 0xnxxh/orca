@@ -25,7 +25,7 @@ export class DegradedDaemonSessionRouting {
     this.adapters = [current, ...legacy]
     this.adapterSet = new Set(this.adapters)
     this.routes = new DaemonSessionRouteTable(this.adapters)
-    this.fallbackRoutes = new FallbackRoutes(this.fallbackOwners, this.routes, this.fallbackSpawns)
+    this.fallbackRoutes = new FallbackRoutes(this.fallbackOwners, this.routes)
     for (const adapter of this.adapters) {
       this.identityUnsubscribes.push(
         adapter.onDaemonIdentityChanged(({ previous }) => {
@@ -72,13 +72,8 @@ export class DegradedDaemonSessionRouting {
     try {
       const result = await target.spawn(opts)
       if (target === this.fallback) {
-        const fallbackSurvived = !this.fallbackSpawns.hasExited(result.id)
-        if (fallbackSurvived) {
-          this.fallbackRoutes.recordSession(result.id, target)
-        }
-        const daemonRoute = this.routes.get(result.id)
-        if (fallbackSurvived && daemonRoute && daemonRoute.state !== 'unavailable') {
-          this.fallbackRoutes.recordCollision(result.id)
+        if (!this.fallbackSpawns.hasExited(result.id)) {
+          this.fallbackRoutes.recordSpawnedSession(result.id, target)
         }
       } else {
         this.routes.recordOwned(result.id, target as DaemonPtyAdapter)
@@ -87,6 +82,9 @@ export class DegradedDaemonSessionRouting {
     } finally {
       if (inFlightFallbackId) {
         this.fallbackSpawns.end(inFlightFallbackId)
+        if (!this.fallbackSpawns.hasLiveCandidate(inFlightFallbackId)) {
+          this.fallbackRoutes.clearUnownedCollision(inFlightFallbackId)
+        }
       }
     }
   }

@@ -2,7 +2,6 @@ import type { IPtyProvider } from '../providers/types'
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
 import { sameDaemonIncarnation } from './daemon-session-route'
 import type { DaemonSessionRouteTable } from './daemon-session-route-table'
-import type { DegradedFallbackSpawnRoutes } from './degraded-fallback-spawn-routes'
 
 type FallbackLivenessProbe = {
   provider: IPtyProvider
@@ -16,8 +15,7 @@ export class DegradedFallbackSessionRoutes {
 
   constructor(
     private readonly sessions: Map<string, IPtyProvider>,
-    private readonly daemonRoutes: DaemonSessionRouteTable,
-    private readonly spawns: DegradedFallbackSpawnRoutes
+    private readonly daemonRoutes: DaemonSessionRouteTable
   ) {}
 
   hasCollision(sessionId: string): boolean {
@@ -32,9 +30,21 @@ export class DegradedFallbackSessionRoutes {
     this.collisionIds.delete(sessionId)
   }
 
-  recordSession(sessionId: string, provider: IPtyProvider): void {
+  recordSpawnedSession(sessionId: string, provider: IPtyProvider): void {
     this.sessions.set(sessionId, provider)
     this.epochs.set(sessionId, Symbol())
+    const daemonRoute = this.daemonRoutes.get(sessionId)
+    if (daemonRoute?.state === 'unavailable') {
+      this.clearCollision(sessionId)
+    } else if (daemonRoute) {
+      this.recordCollision(sessionId)
+    }
+  }
+
+  clearUnownedCollision(sessionId: string): void {
+    if (!this.sessions.has(sessionId)) {
+      this.clearCollision(sessionId)
+    }
   }
 
   deleteSession(sessionId: string): void {
@@ -96,7 +106,7 @@ export class DegradedFallbackSessionRoutes {
     owner: DaemonPtyAdapter,
     incarnation: ReturnType<DaemonPtyAdapter['getLastAuthenticatedDaemonIdentity']>
   ): boolean {
-    if (!this.sessions.has(sessionId) && !this.spawns.hasLiveCandidate(sessionId)) {
+    if (!this.sessions.has(sessionId)) {
       return false
     }
     const route = this.daemonRoutes.get(sessionId)
