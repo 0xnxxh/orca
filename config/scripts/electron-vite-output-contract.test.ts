@@ -99,11 +99,19 @@ describe('Electron Vite output contract', () => {
     const processMock = new EventEmitter() as EventEmitter & {
       exit: (code: number) => void
       exitCode?: number
+      stderr: { write: (chunk: string) => boolean }
     }
     let scheduledExit: (() => void) | null = null
     let exitedWith: number | null = null
+    const stderrWrites: string[] = []
     processMock.exit = (code) => {
       exitedWith = code
+    }
+    processMock.stderr = {
+      write: (chunk) => {
+        stderrWrites.push(chunk)
+        return true
+      }
     }
     const context = {
       process: processMock,
@@ -120,6 +128,7 @@ describe('Electron Vite output contract', () => {
     scheduledExit?.()
     expect(exitedWith).toBe(1)
     expect(context).toHaveProperty(BOOTSTRAP_FATAL_EXIT_GUARD_KEY)
+    expect(stderrWrites.join('')).toContain("Cannot find module 'zod'")
   })
 
   it('records the bootstrap failure it exits on, since the guard hides Electron dialog', () => {

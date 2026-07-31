@@ -1,4 +1,4 @@
-const BOOTSTRAP_FATAL_EXIT_GUARD_KEY = '__ORCA_BOOTSTRAP_FATAL_EXIT_GUARD__'
+import { BOOTSTRAP_FATAL_EXIT_GUARD_KEY } from '../src/main/startup/bootstrap-fatal-exit-guard'
 export const BOOTSTRAP_FATAL_LOG_ENV_VAR = 'ORCA_BOOTSTRAP_FATAL_LOG'
 export const BOOTSTRAP_FATAL_LOG_FILE_NAME = 'bootstrap-fatal.log'
 const BOOTSTRAP_FATAL_LOG_MAX_BYTES = 262_144
@@ -70,7 +70,11 @@ export function createBootstrapFatalExitBanner(): string {
     try {
       fs.writeSync(2, line)
     } catch {
-      // Diagnostics must never replace the exit below.
+      try {
+        process.stderr.write(line)
+      } catch {
+        // Diagnostics must never replace the exit below.
+      }
     }
     try {
       const entry = new Date().toISOString() + ' ' + line
