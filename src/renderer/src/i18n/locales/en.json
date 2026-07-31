@@ -325,7 +325,10 @@
         },
         "runtime": {
           "status": {
-            "runtimeHostDisconnectedDescription": "Workspaces and terminals on this server are unavailable."
+            "runtimeHostDisconnectedDescription": "Check that Orca is running on this server and that your network connection is working, then try again.",
+            "runtimeHostUnreachableNamed": "Can't reach {{hostName}}",
+            "runtimeHostUnreachable": "Can't reach Orca server",
+            "tryAgain": "Try again"
           }
         }
       }
