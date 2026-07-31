@@ -3,6 +3,7 @@ import { replayTerminalLayout } from './layout-serialization'
 
 const LEAF_1 = '11111111-1111-4111-8111-111111111111'
 const LEAF_2 = '22222222-2222-4222-8222-222222222222'
+const LEAF_3 = '33333333-3333-4333-8333-333333333333'
 
 describe('duplicate PTY layout replay', () => {
   it('replays one surface when restored leaves point to the same PTY', () => {
@@ -66,7 +67,7 @@ describe('duplicate PTY layout replay', () => {
     expect([...restored]).toEqual([[LEAF_1, 1]])
   })
 
-  it('ignores dangling rootless focus when choosing the retained PTY leaf', () => {
+  it('preserves a rootless pending leaf while pruning duplicate PTY ownership', () => {
     const manager = {
       createInitialPane: vi.fn((opts?: { leafId?: string }) => ({
         id: 1,
@@ -79,7 +80,7 @@ describe('duplicate PTY layout replay', () => {
       manager as unknown as Parameters<typeof replayTerminalLayout>[0],
       {
         root: null,
-        activeLeafId: '33333333-3333-4333-8333-333333333333',
+        activeLeafId: LEAF_3,
         expandedLeafId: null,
         ptyIdsByLeafId: {
           [LEAF_1]: 'pty-agent',
@@ -89,9 +90,9 @@ describe('duplicate PTY layout replay', () => {
       true
     )
 
-    expect(manager.createInitialPane).toHaveBeenCalledWith({ focus: true, leafId: LEAF_1 })
+    expect(manager.createInitialPane).toHaveBeenCalledWith({ focus: true, leafId: LEAF_3 })
     expect(manager.splitPane).not.toHaveBeenCalled()
-    expect([...restored]).toEqual([[LEAF_1, 1]])
+    expect([...restored]).toEqual([[LEAF_3, 1]])
   })
 
   it('reattaches one PTY when the split repeats its bound leaf id', () => {

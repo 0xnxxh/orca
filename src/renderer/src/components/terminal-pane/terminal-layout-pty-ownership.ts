@@ -208,7 +208,7 @@ function resolveOwnedActiveLeafId(
     Boolean(ptyIdsByLeafId && Object.prototype.hasOwnProperty.call(ptyIdsByLeafId, leafId))
   if (rootLeafIds.length === 0) {
     const boundLeafIds = Object.keys(ptyIdsByLeafId ?? {})
-    if (activeLeafId && hasBinding(activeLeafId)) {
+    if (activeLeafId) {
       return activeLeafId
     }
     return boundLeafIds.length === 1 ? boundLeafIds[0] : null

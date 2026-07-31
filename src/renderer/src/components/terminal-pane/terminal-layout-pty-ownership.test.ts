@@ -217,7 +217,7 @@ describe('terminal layout PTY ownership normalization', () => {
     })
   })
 
-  it('repairs dangling rootless focus onto the sole retained PTY owner', () => {
+  it('preserves rootless pending focus while repairing duplicate ownership', () => {
     const normalized = normalizeTerminalLayoutSnapshot({
       root: null,
       activeLeafId: LEAF_3,
@@ -230,7 +230,7 @@ describe('terminal layout PTY ownership normalization', () => {
 
     expect(normalized.snapshot).toEqual({
       root: null,
-      activeLeafId: LEAF_1,
+      activeLeafId: LEAF_3,
       expandedLeafId: null,
       ptyIdsByLeafId: { [LEAF_1]: 'pty-agent' }
     })
