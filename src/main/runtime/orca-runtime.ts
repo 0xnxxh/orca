@@ -69,7 +69,8 @@ import {
 import {
   hasCompatibleAgentTitleIdentity,
   normalizeCompatibleAgentStatusEntryForOwner,
-  normalizeCompatibleAgentTitleForOwner
+  normalizeCompatibleAgentTitleForOwner,
+  resolveCompatibleAgentTypeForOwner
 } from '../../shared/agent-title-owner'
 import { resolvePaneAgentOwner } from '../../shared/pane-agent-owner'
 import {
@@ -28628,10 +28629,21 @@ export class OrcaRuntimeService {
       const liveTitleEvidence = leafTitle ?? ptyTitle
       const liveTitleEvidenceClassification = classifyAgentTitle(liveTitleEvidence)
       // Why: renderer status can precede hook session identity, leaving native chat with no transcript address.
+      const rendererStatusAgent =
+        resolveCompatibleAgentTypeForOwner(tab.agentStatus?.agentType, ownerAgent) ??
+        ownerAgent ??
+        undefined
+      const hookSessionAgent = resolveCompatibleAgentTypeForOwner(
+        hookAgentStatus?.providerSessionAgentType,
+        ownerAgent
+      )
+      const hookSessionMatchesRenderer =
+        !rendererStatusAgent || !hookSessionAgent || rendererStatusAgent === hookSessionAgent
       const hookProviderSession =
         hookAgentStatus?.providerSession &&
+        hookSessionMatchesRenderer &&
         (!tab.agentStatus?.providerSession ||
-          (hookAgentStatus.providerSessionReceivedAt ?? -1) > tab.agentStatus.updatedAt)
+          (hookAgentStatus.providerSessionReceivedAt ?? -1) >= tab.agentStatus.updatedAt)
           ? hookAgentStatus.providerSession
           : tab.agentStatus?.providerSession
       const normalizedTabAgentStatus = tab.agentStatus
@@ -28880,6 +28892,7 @@ export class OrcaRuntimeService {
    *  read would keep offering native chat for what is now a plain shell. */
   private getHookAgentRowForPane(rows: readonly AgentStatusIpcPayload[]): {
     providerSession: AgentProviderSessionMetadata | null
+    providerSessionAgentType: string | null
     providerSessionReceivedAt: number | null
     agentType: string | null
   } {
@@ -28906,6 +28919,7 @@ export class OrcaRuntimeService {
     }
     return {
       providerSession: session?.providerSession ?? null,
+      providerSessionAgentType: session?.agentType ?? null,
       providerSessionReceivedAt: session?.receivedAt ?? null,
       agentType: agent?.agentType ?? null
     }
