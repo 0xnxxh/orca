@@ -655,9 +655,8 @@ const CHECKS_CACHE_TTL = 60_000 // 1 minute — checks change more frequently
 const EMPTY_CHECKS_CACHE_TTL = 10_000
 // Why: the work-item list is a browse surface, not a source of truth, so 60s staleness is fine (SWR keeps it current).
 const WORK_ITEMS_CACHE_TTL = 60_000
-// GitHub's Search API serves at most the first 1000 results; deeper requests 422.
-// floor() is deliberately conservative: for PR-only queries (no search call) the
-// tail `1000 % limit` results become unreachable rather than special-casing scope.
+// GitHub's Search API serves the page that starts within its first 1000 results;
+// the next page 422s even when the final reachable page crosses the boundary.
 const GITHUB_SEARCH_RESULT_WINDOW = 1000
 // Why: long-lived (matches repos.ts) so the user has time to read + act on persist failures before the toast vanishes.
 const ERROR_TOAST_DURATION = 60_000
@@ -2866,10 +2865,8 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       return { totalCount: 0, totalPages: 0 }
     }
     const normalizedLimit = Math.max(1, Math.floor(perRepoLimit))
-    // Why: GitHub's Search API rejects requests past its 1000-result window with
-    // HTTP 422, so pages whose range crosses it are unreachable — advertising
-    // them yields page clicks that can never navigate.
-    const maxReachablePages = Math.max(1, Math.floor(GITHUB_SEARCH_RESULT_WINDOW / normalizedLimit))
+    // Why: GitHub 422s pages that start past its 1000-result search window.
+    const maxReachablePages = Math.max(1, Math.ceil(GITHUB_SEARCH_RESULT_WINDOW / normalizedLimit))
     const counts = await Promise.all(
       repos.map(async (r) => {
         // Why: same stampede cap as item-fetch — without a slot a 90-repo selection fires 90 concurrent count IPCs before the main-side rate-limit guard sees the first 403.

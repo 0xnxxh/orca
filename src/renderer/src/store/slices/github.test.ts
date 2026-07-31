@@ -6838,21 +6838,21 @@ describe('createGitHubSlice.fetchWorkItems source/error envelope', () => {
       30
     )
 
-    // 1170 results → 39 naive pages, but the Search API 422s past its
-    // 1000-result window; only floor(1000 / 30) = 33 pages are reachable (#11485).
-    expect(result).toEqual({ totalCount: 1171, totalPages: 33 })
+    // 1170 results → 39 naive pages, but the Search API 422s once a page
+    // starts past its 1000-result window; ceil(1000 / 30) = 34 stay reachable.
+    expect(result).toEqual({ totalCount: 1171, totalPages: 34 })
   })
 
   it('pins the search-window cap at dividing and non-dividing per-repo limits', async () => {
     const store = createTestStore()
-    // 36 is the shipped single-repo limit: floor(1000 / 36) = 27, so page 28
-    // (window 973-1008, crossing 1000) is never advertised.
+    // 36 is the shipped single-repo limit: page 28 starts at result 973 and is
+    // served; page 29 starts past 1000 and 422s.
     mockApi.gh.countWorkItems.mockResolvedValueOnce(2000)
     await expect(
       store
         .getState()
         .countWorkItemsAcrossRepos([{ repoId: 'repo-id', path: '/local/repo' }], 'is:issue', 36)
-    ).resolves.toEqual({ totalCount: 2000, totalPages: 27 })
+    ).resolves.toEqual({ totalCount: 2000, totalPages: 28 })
     // 25 divides 1000 evenly: the full window stays reachable (40 pages).
     mockApi.gh.countWorkItems.mockResolvedValueOnce(2000)
     await expect(
