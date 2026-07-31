@@ -41,7 +41,6 @@ import { SshConnectionStore } from './ssh/ssh-connection-store'
 import { setSourceControlActionDefault } from '../shared/source-control-ai-actions'
 import { LEGACY_DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS } from '../shared/ssh-types'
 import { closeTerminalTabInWorkspaceSession } from '../shared/workspace-session-terminal-tab-close'
-import { MAX_WORKSPACE_STATUSES } from '../shared/workspace-statuses'
 
 // Shared mutable state so the electron mock can reference a per-test directory
 const testState = { dir: '' }
@@ -6841,34 +6840,43 @@ describe('Store', () => {
     expect(store.getUI().syncTaskStatusFromWorkspaceBoard).toBe(true)
   })
 
-  it('preserves the supported workflow and clamps statuses to the eager lane budget', async () => {
-    const authored = Array.from({ length: MAX_WORKSPACE_STATUSES }, (_, index) => ({
+  it('preserves workflows above 20 statuses across load, write, and restart', async () => {
+    const imported = Array.from({ length: 21 }, (_, index) => ({
       id: `state-${index + 1}`,
       label: `State ${index + 1}`
-    }))
+    })).toReversed()
     writeDataFile({
       schemaVersion: 1,
       repos: [],
       worktreeMeta: {},
       settings: {},
-      ui: { workspaceStatuses: authored },
+      ui: { workspaceStatuses: imported },
       githubCache: { pr: {}, issue: {} },
       workspaceSession: {}
     })
 
     const store = await createStore()
     expect(store.getUI().workspaceStatuses?.map((status) => status.id)).toEqual(
-      authored.map((status) => status.id)
+      imported.map((status) => status.id)
     )
 
-    store.updateUI({
-      workspaceStatuses: [...authored, { id: 'state-over-budget', label: 'State over budget' }]
-    })
+    const authored = Array.from({ length: 64 }, (_, index) => ({
+      id: `final-${String(index + 1).padStart(3, '0')}`,
+      label: `Final ${index + 1}`
+    })).toReversed()
+    store.updateUI({ workspaceStatuses: authored })
     store.flush()
 
-    expect(store.getUI().workspaceStatuses).toHaveLength(MAX_WORKSPACE_STATUSES)
-    expect((readDataFile() as PersistedState).ui.workspaceStatuses).toHaveLength(
-      MAX_WORKSPACE_STATUSES
+    expect(store.getUI().workspaceStatuses?.map((status) => status.id)).toEqual(
+      authored.map((status) => status.id)
+    )
+    expect(
+      (readDataFile() as PersistedState).ui.workspaceStatuses?.map((status) => status.id)
+    ).toEqual(authored.map((status) => status.id))
+
+    const restarted = await createStore()
+    expect(restarted.getUI().workspaceStatuses?.map((status) => status.id)).toEqual(
+      authored.map((status) => status.id)
     )
   })
 

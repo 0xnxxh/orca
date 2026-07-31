@@ -3,7 +3,6 @@ import {
   WORKSPACE_BOARD_COLUMN_WIDTH_DEFAULT,
   WORKSPACE_BOARD_COLUMN_WIDTH_MAX,
   WORKSPACE_BOARD_COLUMN_WIDTH_MIN,
-  MAX_WORKSPACE_STATUSES,
   clampWorkspaceBoardColumnWidth,
   cloneDefaultWorkspaceStatuses,
   normalizePersistedWorkspaceStatuses,
@@ -11,7 +10,7 @@ import {
 } from './workspace-statuses'
 
 describe('workspace status visuals', () => {
-  it.each([13, 20])('keeps all %i authored columns in order', (count) => {
+  it.each([13, 20, 21, 64])('keeps all %i authored columns in order', (count) => {
     const authored = Array.from({ length: count }, (_, index) => ({
       id: `state-${index + 1}`,
       label: `State ${index + 1}`
@@ -23,17 +22,15 @@ describe('workspace status visuals', () => {
     expect(statuses.map((status) => status.id)).toEqual(authored.map((status) => status.id))
   })
 
-  it('clamps corrupted payloads to the exact board limit', () => {
-    const corrupted = Array.from({ length: 500 }, (_, index) => ({
+  it('normalizes every valid status without truncating the workflow', () => {
+    const authored = Array.from({ length: 500 }, (_, index) => ({
       id: `state-${index}`,
       label: `State ${index}`
     }))
 
-    expect(normalizeWorkspaceStatuses(corrupted)).toHaveLength(MAX_WORKSPACE_STATUSES)
-  })
-
-  it('keeps eager board rendering within its measured lane budget', () => {
-    expect(MAX_WORKSPACE_STATUSES).toBe(20)
+    expect(normalizeWorkspaceStatuses(authored).map((status) => status.id)).toEqual(
+      authored.map((status) => status.id)
+    )
   })
 
   it('keeps the default workflow order', () => {

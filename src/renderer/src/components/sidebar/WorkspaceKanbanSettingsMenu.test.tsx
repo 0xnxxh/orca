@@ -3,7 +3,6 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act, type ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { WorkspaceStatusDefinition } from '../../../../shared/types'
-import { MAX_WORKSPACE_STATUSES } from '../../../../shared/workspace-statuses'
 
 const statuses: WorkspaceStatusDefinition[] = [{ id: 'todo', label: 'Todo' }]
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -84,9 +83,15 @@ describe('WorkspaceKanbanSettingsMenu', () => {
     expect(onChange).toHaveBeenCalledWith(true)
   })
 
-  it('adds another status below the board limit', () => {
+  it('keeps adding available for workflows above the former board limit', () => {
     const onAddStatus = vi.fn()
-    renderMenu({ onAddStatus })
+    renderMenu({
+      workspaceStatuses: Array.from({ length: 21 }, (_, index) => ({
+        id: `state-${index + 1}`,
+        label: `State ${index + 1}`
+      })),
+      onAddStatus
+    })
 
     const addStatus = Array.from(document.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'Add status'
@@ -95,26 +100,5 @@ describe('WorkspaceKanbanSettingsMenu', () => {
     expect(addStatus?.disabled).toBe(false)
     addStatus?.click()
     expect(onAddStatus).toHaveBeenCalledOnce()
-  })
-
-  it('disables adding another status at the explicit board limit', () => {
-    const onAddStatus = vi.fn()
-    renderMenu({
-      workspaceStatuses: Array.from({ length: MAX_WORKSPACE_STATUSES }, (_, index) => ({
-        id: `state-${index + 1}`,
-        label: `State ${index + 1}`
-      })),
-      onAddStatus
-    })
-
-    const addStatus = Array.from(document.querySelectorAll('button')).find(
-      (button) => button.textContent?.trim().startsWith('Add status') === true
-    )
-
-    expect(document.body.textContent).toContain('20 / 20')
-    expect(addStatus?.textContent).toContain('20 / 20')
-    expect(addStatus?.disabled).toBe(true)
-    addStatus?.click()
-    expect(onAddStatus).not.toHaveBeenCalled()
   })
 })
