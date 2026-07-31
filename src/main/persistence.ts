@@ -3304,6 +3304,8 @@ export class Store {
             const inlineAgentsMigrated = parsed.ui?._inlineAgentsDefaultedForAllUsers === true
             const expandedCardPropsMigrated =
               parsed.ui?._expandedWorktreeCardPropertiesDefaulted === true
+            const jiraIssueCardPropDefaulted =
+              parsed.ui?._jiraIssueWorktreeCardPropertyDefaulted === true
             const hadExperimentOn = readDeprecatedExperimentFlag(parsed)
             const deliberateUncheck =
               hadExperimentOn &&
@@ -3342,7 +3344,12 @@ export class Store {
                 }
                 return next
               })()
-              const normalized = normalizeWorktreeCardProperties(expandedCandidate)
+              // Why: 'jira-issue' joined the defaults after the expansion migration already stamped upgraded profiles, so it needs its own one-shot backfill.
+              const jiraCandidate =
+                jiraIssueCardPropDefaulted || expandedCandidate.includes('jira-issue')
+                  ? expandedCandidate
+                  : [...expandedCandidate, 'jira-issue' as const]
+              const normalized = normalizeWorktreeCardProperties(jiraCandidate)
               const changed =
                 normalized.length !== rawCardProps.length ||
                 normalized.some((property, index) => property !== rawCardProps[index])
@@ -3351,7 +3358,8 @@ export class Store {
             if (
               migratedCardProps !== undefined ||
               !inlineAgentsMigrated ||
-              !expandedCardPropsMigrated
+              !expandedCardPropsMigrated ||
+              !jiraIssueCardPropDefaulted
             ) {
               this.loadNeedsSave = true
             }
@@ -3419,7 +3427,8 @@ export class Store {
               // Why: keep stamping the legacy flag for rollback forward-compat; the new flag actually gates the migration.
               _inlineAgentsDefaultedForExperiment: true,
               _inlineAgentsDefaultedForAllUsers: true,
-              _expandedWorktreeCardPropertiesDefaulted: true
+              _expandedWorktreeCardPropertiesDefaulted: true,
+              _jiraIssueWorktreeCardPropertyDefaulted: true
             }
           })(),
           // Why: volatile schema; zod-validate workspaceSession at read so a bad payload falls to defaults, not a renderer crash.
