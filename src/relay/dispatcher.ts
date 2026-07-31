@@ -197,6 +197,9 @@ export class RelayDispatcher {
     if (clients.length === 0) {
       return max
     }
+    if (!(max > 0)) {
+      return 0
+    }
     const fitsAll = (bytes: number): boolean =>
       clients.every((client) => bytes <= client.writer.producerFrameCapacity)
     const sizeFrame = (chunk: string): number =>
@@ -835,18 +838,19 @@ export class RelayDispatcher {
     lane: DispatcherWriterLane,
     onSettled: (result: SinkWriteSettlement) => void = () => {},
     // Why: publish paths already sized the frame; avoid a redundant encode.
-    estimatedBytes: number = this.estimateFrameBytes(msg)
+    estimatedBytes?: number
   ): boolean {
     if (this.disposed || client.closed) {
       return false
     }
+    const frameBytes = estimatedBytes ?? this.estimateFrameBytes(msg)
     return client.writer.enqueue(
       lane,
       () => {
         const seq = client.nextOutgoingSeq++
         return encodeJsonRpcFrame(msg, seq, client.highestReceivedSeq)
       },
-      estimatedBytes,
+      frameBytes,
       onSettled
     )
   }
