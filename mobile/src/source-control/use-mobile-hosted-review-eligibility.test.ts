@@ -3,12 +3,13 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HostedReviewCreationEligibility } from '../../../src/shared/hosted-review'
 import {
-  acceptsMobileHostedReviewEligibilityLoad,
   buildMobileHostedReviewEligibilityLoadKey,
   eligibilityStateAfterMobileHostedReviewError,
   renderedMobileHostedReviewEligibilityState,
   shouldFetchMobileHostedReviewEligibility,
-  useMobileHostedReviewEligibility
+  useMobileHostedReviewEligibility,
+  type MobileHostedReviewEligibilityLoadKey,
+  type MobileHostedReviewEligibilityLoadSnapshot
 } from './use-mobile-hosted-review-eligibility'
 import type { MobileCreatePrEligibilityState } from './mobile-create-pr-action'
 
@@ -36,6 +37,13 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   return { promise, resolve }
 }
 
+function loadSnapshot(
+  key: MobileHostedReviewEligibilityLoadKey,
+  state: MobileCreatePrEligibilityState
+): MobileHostedReviewEligibilityLoadSnapshot {
+  return { key, state }
+}
+
 describe('mobile hosted review eligibility loader core', () => {
   it('does not fetch while disconnected or detached', () => {
     expect(
@@ -54,7 +62,7 @@ describe('mobile hosted review eligibility loader core', () => {
     ).toBe(false)
   })
 
-  it('accepts only the latest generation for the current worktree branch identity', () => {
+  it('builds distinct keys for different branches', () => {
     const first = buildMobileHostedReviewEligibilityLoadKey({
       hostId: 'host-1',
       worktreeId: 'wt-1',
@@ -74,16 +82,8 @@ describe('mobile hosted review eligibility loader core', () => {
       hasUncommittedChanges: false
     })
 
-    expect(
-      acceptsMobileHostedReviewEligibilityLoad({
-        generation: 1,
-        currentGeneration: 2,
-        identity: first.identity,
-        currentIdentity: second.identity,
-        fetch: first.fetch,
-        currentFetch: second.fetch
-      })
-    ).toBe(false)
+    expect(first.identity).not.toBe(second.identity)
+    expect(first.fetch).not.toBe(second.fetch)
   })
 
   it('scopes load identity to the paired host', () => {
@@ -102,7 +102,7 @@ describe('mobile hosted review eligibility loader core', () => {
     expect(local.fetch).not.toBe(ssh.fetch)
   })
 
-  it('rejects a superseded fetch before its replacement effect runs', () => {
+  it('renders a superseded same-identity snapshot as loading', () => {
     const input = {
       hostId: 'host-1',
       worktreeId: 'wt-1',
@@ -122,15 +122,12 @@ describe('mobile hosted review eligibility loader core', () => {
 
     expect(older.identity).toBe(newest.identity)
     expect(
-      acceptsMobileHostedReviewEligibilityLoad({
-        generation: 1,
-        currentGeneration: 1,
-        identity: older.identity,
-        currentIdentity: newest.identity,
-        fetch: older.fetch,
-        currentFetch: newest.fetch
+      renderedMobileHostedReviewEligibilityState({
+        snapshot: loadSnapshot(older, { kind: 'ready', eligibility: eligibility() }),
+        key: newest,
+        shouldFetch: true
       })
-    ).toBe(false)
+    ).toMatchObject({ kind: 'loading', eligibility: eligibility() })
   })
 
   it('fails closed after errors', () => {
@@ -142,15 +139,34 @@ describe('mobile hosted review eligibility loader core', () => {
 // render as `idle` (hidden row) or the Create PR row pops in a frame later.
 describe('rendered eligibility state', () => {
   it('renders fetch-imminent idle as an in-flight load', () => {
+    const key = buildMobileHostedReviewEligibilityLoadKey({
+      hostId: 'host-1',
+      worktreeId: 'wt-1',
+      branch: 'feature',
+      hasUpstream: true,
+      ahead: 0,
+      behind: 0,
+      hasUncommittedChanges: false
+    })
     expect(
       renderedMobileHostedReviewEligibilityState({
-        state: { kind: 'idle' },
+        snapshot: loadSnapshot(key, { kind: 'idle' }),
+        key,
         shouldFetch: true
       })
     ).toEqual({ kind: 'loading', eligibility: null })
   })
 
   it('passes resolved and refetch states through untouched', () => {
+    const key = buildMobileHostedReviewEligibilityLoadKey({
+      hostId: 'host-1',
+      worktreeId: 'wt-1',
+      branch: 'feature',
+      hasUpstream: true,
+      ahead: 0,
+      behind: 0,
+      hasUncommittedChanges: false
+    })
     const ready = { kind: 'ready', eligibility: eligibility() } as const
     const refetch = { kind: 'loading', eligibility: eligibility() } as const
     const error = { kind: 'error' } as const
@@ -158,7 +174,8 @@ describe('rendered eligibility state', () => {
     for (const state of [ready, refetch, error]) {
       expect(
         renderedMobileHostedReviewEligibilityState({
-          state,
+          snapshot: loadSnapshot(key, state),
+          key,
           shouldFetch: true
         })
       ).toBe(state)
@@ -166,9 +183,19 @@ describe('rendered eligibility state', () => {
   })
 
   it('renders idle when a fetch is not possible, hiding stale snapshots in the same render', () => {
+    const key = buildMobileHostedReviewEligibilityLoadKey({
+      hostId: 'host-1',
+      worktreeId: 'wt-1',
+      branch: 'feature',
+      hasUpstream: true,
+      ahead: 0,
+      behind: 0,
+      hasUncommittedChanges: false
+    })
     expect(
       renderedMobileHostedReviewEligibilityState({
-        state: { kind: 'ready', eligibility: eligibility() },
+        snapshot: loadSnapshot(key, { kind: 'ready', eligibility: eligibility() }),
+        key,
         shouldFetch: false
       })
     ).toEqual({ kind: 'idle' })
@@ -190,7 +217,7 @@ describe('eligibility request ordering', () => {
 
   it('does not let an older response overwrite the newest state', async () => {
     type Response = { ok: true; result: HostedReviewCreationEligibility }
-    const requests: Array<ReturnType<typeof deferred<Response>>> = []
+    const requests: ReturnType<typeof deferred<Response>>[] = []
     const client = {
       sendRequest: vi.fn(() => {
         const request = deferred<Response>()
@@ -240,7 +267,7 @@ describe('eligibility request ordering', () => {
 
   it('disables a ready snapshot in the render that changes its fetch key', async () => {
     type Response = { ok: true; result: HostedReviewCreationEligibility }
-    const requests: Array<ReturnType<typeof deferred<Response>>> = []
+    const requests: ReturnType<typeof deferred<Response>>[] = []
     const client = {
       sendRequest: vi.fn(() => {
         const request = deferred<Response>()
@@ -284,7 +311,7 @@ describe('eligibility request ordering', () => {
 
   it('invalidates a request when its hook instance unmounts', async () => {
     type Response = { ok: true; result: HostedReviewCreationEligibility }
-    const requests: Array<ReturnType<typeof deferred<Response>>> = []
+    const requests: ReturnType<typeof deferred<Response>>[] = []
     const client = {
       sendRequest: vi.fn(() => {
         const request = deferred<Response>()
