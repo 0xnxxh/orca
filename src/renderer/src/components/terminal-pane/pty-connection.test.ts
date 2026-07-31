@@ -3621,7 +3621,6 @@ describe('connectPanePty', () => {
   it('records hibernation activity from the core user-input signal, not synthetic onData replies', async () => {
     // Regression: xterm auto-replies share the onData stream with typing; recording them as input made the planner see "input after done" and never hibernate.
     const { connectPanePty } = await import('./pty-connection')
-    const { readTerminalUserInputGeneration } = await import('./terminal-input-activity')
     const transport = createMockTransport('pty-pane-2')
     transportFactoryQueue.push(transport)
     const manager = createManager(1)
@@ -3652,12 +3651,8 @@ describe('connectPanePty', () => {
     expect(transport.sendInput).toHaveBeenCalledWith('\x1b[O')
 
     // Real user input fires the core signal and records activity.
-    const activePtyId = (transport.getPtyId as unknown as () => string | null)()
-    expect(activePtyId).toBeTypeOf('string')
-    const inputGeneration = readTerminalUserInputGeneration(activePtyId!)
     ;(userInputListener as unknown as () => void)()
     expect(mockStoreState.recordTerminalInput).toHaveBeenCalledTimes(1)
-    expect(readTerminalUserInputGeneration(activePtyId!)).toBe(inputGeneration + 1)
 
     binding.dispose()
     expect(userInputDispose).toHaveBeenCalled()

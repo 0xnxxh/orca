@@ -12,7 +12,6 @@ import {
   sendBracketedPasteToRunningAgent,
   submitPromptToAgentPty
 } from './agent-paste-draft'
-import { markTerminalUserInputForPtyId } from '@/components/terminal-pane/terminal-input-activity'
 
 const testState = vi.hoisted(() => ({
   appState: {
@@ -55,7 +54,7 @@ vi.mock('@/runtime/runtime-terminal-stream', () => ({
 const DECSET_BRACKETED_PASTE = '\x1b[?2004h'
 const SHOW_CURSOR = '\x1b[?25h'
 const CODEX_COMPOSER_PROMPT_RENDER = '\x1b[1m›\x1b[0m Ask Codex to do anything'
-const ISSUE_URL = 'Synthetic linked work item context'
+const ISSUE_URL = 'https://github.com/stablyai/orca/issues/123'
 const PASTED_ISSUE_URL = `\x1b[200~${ISSUE_URL}\x1b[201~`
 
 describe('pasteDraftWhenAgentReady', () => {
@@ -357,52 +356,6 @@ describe('pasteDraftWhenAgentReady', () => {
     await vi.advanceTimersByTimeAsync(1)
     await expect(promise).resolves.toBe(true)
     expect(testState.sendRuntimePtyInputVerified).toHaveBeenNthCalledWith(2, {}, 'pty-1', '\r')
-  })
-
-  it('does not submit when a five-line Windows paste follows injected context', async () => {
-    const ptyWrites: string[] = []
-    testState.sendRuntimePtyInputVerified.mockImplementation(
-      async (_settings: unknown, _ptyId: string, data: string) => {
-        ptyWrites.push(data)
-        return true
-      }
-    )
-    const promise = pasteDraftWhenAgentReady({
-      tabId: 'tab-1',
-      content: ISSUE_URL,
-      agent: 'codex',
-      submit: true,
-      forcePaste: true
-    })
-    await flushMicrotasks()
-
-    testState.ptyObserver?.(`${DECSET_BRACKETED_PASTE}${CODEX_COMPOSER_PROMPT_RENDER}`)
-    await flushMicrotasks()
-    expect(ptyWrites).toEqual([PASTED_ISSUE_URL])
-
-    markTerminalUserInputForPtyId('pty-1')
-    ptyWrites.push('\x1b[200~one\rtwo\rthree\rfour\rfive\x1b[201~')
-    await vi.advanceTimersByTimeAsync(50)
-
-    await expect(promise).resolves.toBe(false)
-    expect(ptyWrites).toEqual([PASTED_ISSUE_URL, '\x1b[200~one\rtwo\rthree\rfour\rfive\x1b[201~'])
-  })
-
-  it('does not inject launch context after user input takes over during readiness', async () => {
-    const promise = pasteDraftWhenAgentReady({
-      tabId: 'tab-1',
-      content: ISSUE_URL,
-      agent: 'codex',
-      submit: true,
-      forcePaste: true
-    })
-    await flushMicrotasks()
-
-    markTerminalUserInputForPtyId('pty-1')
-    testState.ptyObserver?.(`${DECSET_BRACKETED_PASTE}${CODEX_COMPOSER_PROMPT_RENDER}`)
-
-    await expect(promise).resolves.toBe(false)
-    expect(testState.sendRuntimePtyInputVerified).not.toHaveBeenCalled()
   })
 
   it('does not submit when the verified paste write fails', async () => {

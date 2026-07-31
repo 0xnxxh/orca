@@ -186,23 +186,6 @@ describe('terminal clipboard paste', () => {
     expect(saveClipboardImageAsTempFile).not.toHaveBeenCalled()
   })
 
-  it('records paste intent before waiting for clipboard text', async () => {
-    const onPasteIntent = vi.fn()
-    const readClipboardText = vi.fn(async () => {
-      expect(onPasteIntent).toHaveBeenCalledOnce()
-      return 'one\r\ntwo\r\nthree\r\nfour\r\nfive'
-    })
-
-    await pasteTerminalClipboard({
-      readClipboardText,
-      saveClipboardImageAsTempFile: vi.fn(),
-      pasteText: vi.fn(),
-      onPasteIntent
-    })
-
-    expect(onPasteIntent).toHaveBeenCalledOnce()
-  })
-
   it('reports text paste execution failures without probing for image fallback', async () => {
     const pasteError = new Error('terminal disconnected')
     const saveClipboardImageAsTempFile = vi.fn()

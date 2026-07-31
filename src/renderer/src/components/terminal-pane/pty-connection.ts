@@ -136,7 +136,6 @@ import {
 } from '../../../../shared/terminal-color-scheme-protocol'
 import { warnTerminalLifecycleAnomaly } from './terminal-lifecycle-diagnostics'
 import { subscribeToTerminalUserInput } from './terminal-user-input-signal'
-import { markTerminalUserInputForPtyId } from './terminal-input-activity'
 import {
   hasPtySerializer,
   registerPtySerializer,
@@ -3616,10 +3615,6 @@ export function connectPanePty(
   const recordTerminalInputForHibernation = (): void => {
     useAppStore.getState().recordTerminalInput(cacheKey)
   }
-  const recordRealTerminalUserInput = (): void => {
-    markTerminalUserInputForPtyId(transport.getPtyId())
-    recordTerminalInputForHibernation()
-  }
   // Why: onData mixes real user input with xterm's parser auto-replies (focus
   // reports, DA/DSR/CPR responses). Recording those replies as activity makes
   // the hibernation planner treat a pane hidden after its agent finished as
@@ -3628,11 +3623,11 @@ export function connectPanePty(
   // solely as the fallback when the internal API is unavailable.
   const userInputActivityDisposable = subscribeToTerminalUserInput(
     pane.terminal,
-    recordRealTerminalUserInput
+    recordTerminalInputForHibernation
   )
   const recordTerminalInputForHibernationFallback = (): void => {
     if (userInputActivityDisposable === null) {
-      recordRealTerminalUserInput()
+      recordTerminalInputForHibernation()
     }
   }
   const markAcceptedTerminalInputSent = (): void => {
