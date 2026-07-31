@@ -284,7 +284,11 @@ describe('pairing keychain', () => {
     // caller's orphan cleanup unreachable; absent is the only self-healing answer.
     await expect(readPairingKeychainItem(TOKEN_KEY)).resolves.toBeNull()
     expect(secureStoreMock.getItemAsync).toHaveBeenCalledTimes(1)
-    expect(presenceRecord).toBeNull()
+
+    // Why: clearing the presence record would let the next read walk back to 'legacy-token'.
+    expect(presenceRecord).toBe('1')
+    await expect(readPairingKeychainItem(TOKEN_KEY)).resolves.toBeNull()
+    expect(secureStoreMock.getItemAsync).toHaveBeenCalledTimes(2)
   })
 
   it('reads an older value while a newly recorded alias has no item yet', async () => {

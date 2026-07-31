@@ -364,6 +364,11 @@ describe('mobile relay pairing journal store', () => {
 
     await expect(loadMobileRelayPairingJournal()).resolves.toBeNull()
     expect(metadataRaw).toBeNull()
+    // Why: the presence record must outlive the self-heal so reads stay absent instead of
+    // walking back to an older generation; the metadata-less load sweeps it next.
+    expect(presenceRaw).toBe('0')
+
+    await expect(loadMobileRelayPairingJournal()).resolves.toBeNull()
     expect(presenceRaw).toBeNull()
 
     const rescan = createMobileRelayPairingJournal({

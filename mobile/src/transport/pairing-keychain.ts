@@ -134,17 +134,6 @@ async function preparePresenceWrite(
   return { storageKey, previousRaw }
 }
 
-async function clearPresence(key: string): Promise<void> {
-  if (Platform.OS !== 'android') {
-    return
-  }
-  try {
-    await AsyncStorage.removeItem(presenceStorageKey(key))
-  } catch {
-    // Why: the read already self-healed; a stuck presence record must not fail the caller.
-  }
-}
-
 async function restorePresence(change: PresenceChange | null): Promise<void> {
   if (!change) {
     return
@@ -174,9 +163,10 @@ export async function readPairingKeychainItem(key: string): Promise<string | nul
     const value = await SecureStore.getItemAsync(key, optionsForGeneration(presenceGeneration))
     if (value === null) {
       // Why: Android reports an undecryptable entry as null, so failing closed here latched
-      // callers out of their own orphan cleanup forever; report absent and drop the stale
-      // claim instead, without ever falling back to the superseded older generation.
-      await clearPresence(key)
+      // callers out of their own orphan cleanup forever; report absent instead. The presence
+      // record must survive — it is the only thing that keeps a later read from resurrecting
+      // the superseded value under an older generation. Callers clear it via delete or a
+      // re-pair write, so a legitimately-current older value is traded for re-pairing.
       return null
     }
     return value
