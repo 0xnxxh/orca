@@ -161,11 +161,18 @@ export function resolveCliCommand(
   }
 
   const homePath = options.homePath ?? homedir()
-  const versionManagerCandidate = findFirstExecutable(
+  const nvmCandidate = findFirstExecutable(
     platform,
-    getVersionManagerDirectories(platform, homePath, executableNames),
+    getNvmVersionDirectories(homePath),
     executableNames
   )
+  const versionManagerCandidate =
+    nvmCandidate ??
+    findFirstExecutable(
+      platform,
+      getBaseVersionManagerDirectories(platform, homePath),
+      executableNames
+    )
   return versionManagerCandidate ?? commandName
 }
 

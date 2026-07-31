@@ -203,7 +203,6 @@ module.exports = {
     }
     prunePackagedRuntimeNodeModules(resourcesDir, context.electronPlatformName, context.arch)
     verifyPackagedMainRuntimeDeps(resourcesDir)
-    verifySkillsCliRuntime(join(resourcesDir, 'app.asar.unpacked', 'out'), resourcesDir)
     // Why: boot the packaged daemon-entry under plain Node, but only for the
     // slice matching the packaging host's arch — daemon-entry.js is JS, yet it
     // require()s the native (N-API) node-pty for the TARGET arch, which the host
@@ -211,7 +210,16 @@ module.exports = {
     // arm64=3, universal=4 (universal contains the host slice, so run it).
     const archEnumByNodeArch = { ia32: 0, x64: 1, armv7l: 2, arm64: 3 }
     const hostArchEnum = archEnumByNodeArch[process.arch]
-    if (context.arch === hostArchEnum || context.arch === 4) {
+    const canExecuteTargetArch = context.arch === hostArchEnum || context.arch === 4
+    verifySkillsCliRuntime(join(resourcesDir, 'app.asar.unpacked', 'out'), resourcesDir, {
+      executeCommands: canExecuteTargetArch
+    })
+    if (!canExecuteTargetArch) {
+      console.log(
+        `[verify-skills-cli-runtime] skipped command probes on cross-arch slice (target ${context.arch}, host ${process.arch})`
+      )
+    }
+    if (canExecuteTargetArch) {
       verifyPackagedDaemonEntryBoots(resourcesDir)
     } else {
       // Why: a cross-arch slice can't be booted by the host Node, but the

@@ -40,7 +40,13 @@ try {
   const cliPath = getPackagedCliPath(copiedAppDir)
   const env = { ...process.env, NODE_PATH: '' }
   delete env.ORCA_CLI_CWD
-  const run = (args) => execFileAsync(cliPath, args, { env })
+  const run = (args) =>
+    execFileAsync(cliPath, args, {
+      env,
+      killSignal: 'SIGKILL',
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 30_000
+    })
 
   await run(['--help'])
   const list = JSON.parse((await run(['skills', 'list', '--json'])).stdout)

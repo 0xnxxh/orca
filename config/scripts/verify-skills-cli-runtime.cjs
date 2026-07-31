@@ -2,16 +2,46 @@ const { existsSync, readFileSync, realpathSync } = require('node:fs')
 const { builtinModules, createRequire, isBuiltin } = require('node:module')
 const { dirname, isAbsolute, join, relative, resolve, sep } = require('node:path')
 const { spawnSync } = require('node:child_process')
+const ts = require('typescript-api')
 
-const RUNTIME_IMPORT = /\b(?:require(?:\.resolve)?|import)\s*\(\s*(['"])([^'"]+)\1\s*\)/g
 const BUILTINS = new Set(builtinModules.flatMap((name) => [name, `node:${name}`]))
+const CLI_COMMAND_TIMEOUT_MS = 30_000
 
 function artifactPath(outDir, file) {
   return relative(outDir, file).split(sep).join('/')
 }
 
-function runtimeImportSpecifiers(source) {
-  return [...source.matchAll(RUNTIME_IMPORT)].map((match) => match[2])
+function runtimeImportSpecifiers(source, file) {
+  const sourceFile = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    false,
+    ts.ScriptKind.JS
+  )
+  const specifiers = []
+
+  function visit(node) {
+    if (ts.isCallExpression(node) && node.arguments.length > 0) {
+      const [argument] = node.arguments
+      const expression = node.expression
+      const isRequire = ts.isIdentifier(expression) && expression.text === 'require'
+      const isRequireResolve =
+        ts.isPropertyAccessExpression(expression) &&
+        ts.isIdentifier(expression.expression) &&
+        expression.expression.text === 'require' &&
+        expression.name.text === 'resolve'
+      const isDynamicImport = expression.kind === ts.SyntaxKind.ImportKeyword
+
+      if ((isRequire || isRequireResolve || isDynamicImport) && ts.isStringLiteralLike(argument)) {
+        specifiers.push(argument.text)
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sourceFile)
+  return specifiers
 }
 
 function isOutsideRoot(root, target) {
@@ -25,7 +55,7 @@ function isOptionalPackageImport(artifactRoot, importer, specifier) {
   }
   const segments = specifier.split('/')
   const packageName = specifier.startsWith('@') ? segments.slice(0, 2).join('/') : segments[0]
-  let directory = dirname(importer)
+  let directory = realpathSync(dirname(importer))
 
   while (!isOutsideRoot(artifactRoot, directory)) {
     const packageJson = join(directory, 'package.json')
@@ -94,7 +124,7 @@ function collectRuntimeClosure(outDir, artifactRoot = dirname(outDir)) {
     }
     visited.add(file)
     const source = readFileSync(file, 'utf8')
-    for (const specifier of runtimeImportSpecifiers(source)) {
+    for (const specifier of runtimeImportSpecifiers(source, file)) {
       const resolved = resolveRuntimeImport(outDir, artifactRoot, file, specifier)
       if (resolved && !isOutsideRoot(artifactRoot, resolved) && /\.(?:c|m)?js$/.test(resolved)) {
         pending.push(resolved)
@@ -105,7 +135,7 @@ function collectRuntimeClosure(outDir, artifactRoot = dirname(outDir)) {
   return [...visited].sort()
 }
 
-function runCli(outDir, args) {
+function runCli(outDir, args, timeoutMs = CLI_COMMAND_TIMEOUT_MS) {
   const entry = resolve(outDir, 'cli', 'index.js')
   const env = { ...process.env, NODE_PATH: '' }
   delete env.ORCA_CLI_CWD
@@ -113,10 +143,19 @@ function runCli(outDir, args) {
     cwd: dirname(outDir),
     encoding: 'utf8',
     env,
-    maxBuffer: 16 * 1024 * 1024
+    killSignal: 'SIGKILL',
+    maxBuffer: 16 * 1024 * 1024,
+    timeout: timeoutMs
   })
-  if (result.error || result.status !== 0) {
-    const detail = [result.error?.message, result.stdout, result.stderr].filter(Boolean).join('\n')
+  if (result.error || result.signal || result.status !== 0) {
+    const detail = [
+      result.error?.message,
+      result.signal ? `terminated by ${result.signal}` : null,
+      result.stdout,
+      result.stderr
+    ]
+      .filter(Boolean)
+      .join('\n')
     throw new Error(
       `[verify-skills-cli-runtime] ${args.join(' ')} exited ${String(result.status)}\n${detail}`
     )
@@ -132,9 +171,12 @@ function parseJson(label, output) {
   }
 }
 
-function verifySkillsCliRuntime(outDir, artifactRoot = dirname(outDir)) {
+function verifySkillsCliRuntime(outDir, artifactRoot = dirname(outDir), options = {}) {
   const absoluteOutDir = resolve(outDir)
   const closure = collectRuntimeClosure(absoluteOutDir, resolve(artifactRoot))
+  if (options.executeCommands === false) {
+    return { closureFiles: closure.length, commands: 0 }
+  }
   const list = parseJson('skills list', runCli(absoluteOutDir, ['skills', 'list', '--json']))
   const topicNames = new Set(list.topics?.map((topic) => topic.name))
   for (const topic of ['orca-cli', 'computer-use']) {
@@ -184,4 +226,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { collectRuntimeClosure, verifySkillsCliRuntime }
+module.exports = { collectRuntimeClosure, runCli, verifySkillsCliRuntime }

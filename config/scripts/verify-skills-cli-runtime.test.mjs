@@ -6,7 +6,11 @@ import { join, relative } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { collectRuntimeClosure } = require('./verify-skills-cli-runtime.cjs')
+const {
+  collectRuntimeClosure,
+  runCli,
+  verifySkillsCliRuntime
+} = require('./verify-skills-cli-runtime.cjs')
 
 async function writeSkillsCliFixture(outDir, handlerSource) {
   const cliDir = join(outDir, 'cli')
@@ -59,6 +63,49 @@ describe('skills CLI runtime closure', () => {
           .map((file) => relative(realpathSync(root), file))
           .sort()
       ).toEqual(['cli/handlers/skills.js', 'cli/index.js', 'shared/first.js', 'shared/second.js'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores import-shaped text in comments and strings', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-skills-cli-closure-'))
+    try {
+      await writeSkillsCliFixture(
+        root,
+        [
+          "// require('../../missing-comment.js')",
+          'const message = "import(\'../../missing-string.js\')"',
+          "const template = `require.resolve('../../missing-template.js')`"
+        ].join('\n')
+      )
+
+      expect(collectRuntimeClosure(root)).toHaveLength(2)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('can inspect a cross-arch artifact without executing it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-skills-cli-closure-'))
+    try {
+      await writeSkillsCliFixture(root, '')
+
+      expect(verifySkillsCliRuntime(root, undefined, { executeCommands: false })).toEqual({
+        closureFiles: 2,
+        commands: 0
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('bounds command execution time', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-skills-cli-closure-'))
+    try {
+      await writeSkillsCliFixture(root, 'setInterval(() => {}, 1_000)\n')
+
+      expect(() => runCli(root, [], 50)).toThrow(/ETIMEDOUT|terminated by SIGKILL/)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
