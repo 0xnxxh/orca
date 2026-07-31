@@ -51,20 +51,16 @@ The gate scans the desktop renderer plus both mobile source roots. Mobile uses
 empty.
 
 Verify mobile catalog references, conditional keys, interpolation options, and
-locale parity:
+the translations present in each sparse locale:
 
 ```sh
 pnpm run verify:mobile-localization-catalog
 ```
 
-Refresh a mobile translation catalog after changing English copy:
-
-```sh
-pnpm run bootstrap:mobile:es-catalog
-pnpm run bootstrap:mobile:ja-catalog
-pnpm run bootstrap:mobile:ko-catalog
-pnpm run bootstrap:mobile:zh-catalog
-```
+The checked-in mobile runtime JSON is a temporary bridge to the planned
+canonical PO source and read-only compiler. Feature work updates English only;
+missing target values intentionally use runtime English fallback. Whole-catalog
+translation commands are not part of the maintained workflow.
 
 Sync catalog keys after adding or removing `translate(...)` calls:
 

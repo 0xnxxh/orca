@@ -205,25 +205,20 @@ function verifyCalls(calls, englishEntries) {
   return issues
 }
 
-function verifyLocaleParity(englishEntries, locale, localeEntries) {
+function verifyLocaleEntries(englishEntries, locale, localeEntries) {
   const issues = []
-  const englishKeys = [...englishEntries.keys()].sort()
   const localeKeys = [...localeEntries.keys()].sort()
 
-  for (const key of englishKeys) {
-    if (!localeEntries.has(key)) {
-      issues.push(`${locale}.json missing key: ${key}`)
+  for (const key of localeKeys) {
+    const englishValue = englishEntries.get(key)
+    if (englishValue === undefined) {
+      issues.push(`${locale}.json has extra key: ${key}`)
       continue
     }
-    const englishPlaceholders = collectPlaceholderNames(englishEntries.get(key))
+    const englishPlaceholders = collectPlaceholderNames(englishValue)
     const localePlaceholders = collectPlaceholderNames(localeEntries.get(key))
     if (!sameValues(englishPlaceholders, localePlaceholders)) {
       issues.push(`${locale}.json placeholder mismatch: ${key}`)
-    }
-  }
-  for (const key of localeKeys) {
-    if (!englishEntries.has(key)) {
-      issues.push(`${locale}.json has extra key: ${key}`)
     }
   }
 
@@ -284,7 +279,7 @@ export async function main(root = process.cwd()) {
   for (const locale of MOBILE_LOCALES.slice(1)) {
     const localeEntries = catalogs.get(locale)
     if (localeEntries) {
-      issues.push(...verifyLocaleParity(englishEntries, locale, localeEntries))
+      issues.push(...verifyLocaleEntries(englishEntries, locale, localeEntries))
     }
   }
 

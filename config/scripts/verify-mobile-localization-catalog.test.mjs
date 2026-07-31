@@ -80,7 +80,21 @@ describe('verify-mobile-localization-catalog', () => {
     expect(report).toContain('placeholders [name]')
   })
 
-  it('requires identical locale keys and placeholders', async () => {
+  it('allows missing translations in sparse locale catalogs', async () => {
+    const en = { m: { greeting: 'Hello {{name}}', farewell: 'Bye' } }
+    const root = makeProject({
+      sourceText:
+        "import { t } from '@/i18n/mobile-i18n'\nexport const label = t('m.greeting', { name: 'Orca' })\n",
+      catalogs: {
+        en,
+        es: { m: { greeting: 'Hola {{name}}' } }
+      }
+    })
+
+    await expect(verifyMobileCatalog(root)).resolves.toBe(0)
+  })
+
+  it('validates placeholders and extra keys in present translations', async () => {
     const en = { m: { greeting: 'Hello {{name}}' } }
     const root = makeProject({
       sourceText:
