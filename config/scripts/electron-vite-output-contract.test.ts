@@ -1,8 +1,16 @@
-import { readFileSync } from 'node:fs'
+import * as nodeFs from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import * as nodePath from 'node:path'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { EventEmitter } from 'node:events'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
-import { createBootstrapFatalExitBanner, electronViteConfig } from '../../electron.vite.config'
+import {
+  BOOTSTRAP_FATAL_LOG_ENV_VAR,
+  createBootstrapFatalExitBanner
+} from '../../build-plugins/bootstrap-fatal-exit-banner'
+import { electronViteConfig } from '../../electron.vite.config'
 import { BOOTSTRAP_FATAL_EXIT_GUARD_KEY } from '../../src/main/startup/bootstrap-fatal-exit-guard'
 
 const targetConfig = readFileSync('config/electron-vite-target.config.ts', 'utf8')
@@ -61,6 +69,58 @@ describe('Electron Vite output contract', () => {
     scheduledExit?.()
     expect(exitedWith).toBe(1)
     expect(context).toHaveProperty(BOOTSTRAP_FATAL_EXIT_GUARD_KEY)
+  })
+
+  it('records the bootstrap failure it exits on, since the guard hides Electron dialog', () => {
+    const logDirectory = mkdtempSync(join(tmpdir(), 'orca-bootstrap-fatal-'))
+    const logPath = join(logDirectory, 'fatal.log')
+    const stderrWrites: string[] = []
+    const fsShim = {
+      ...nodeFs,
+      writeSync: (descriptor: number, data: string) => {
+        if (descriptor === 2) {
+          stderrWrites.push(data)
+          return data.length
+        }
+        return nodeFs.writeSync(descriptor, data)
+      }
+    }
+    const processMock = new EventEmitter() as EventEmitter & {
+      env: Record<string, string>
+      pid: number
+      exit: (code: number) => void
+      exitCode?: number
+    }
+    processMock.env = { [BOOTSTRAP_FATAL_LOG_ENV_VAR]: logPath }
+    processMock.pid = 4242
+    processMock.exit = () => {}
+    const context = {
+      process: processMock,
+      setImmediate: () => {},
+      require: (specifier: string) => {
+        if (specifier === 'node:fs') {
+          return fsShim
+        }
+        if (specifier === 'node:path') {
+          return nodePath
+        }
+        // Electron's own module is unreachable from a bootstrap fault this early.
+        throw new Error(`unexpected require: ${specifier}`)
+      }
+    }
+
+    try {
+      runInNewContext(createBootstrapFatalExitBanner(), context)
+      processMock.emit('uncaughtException', new Error("Cannot find module 'ws'"))
+
+      expect(stderrWrites.join('')).toContain("Cannot find module 'ws'")
+      const recorded = readFileSync(logPath, 'utf8')
+      expect(recorded).toContain("Cannot find module 'ws'")
+      expect(recorded).toContain('pid=4242')
+      expect(processMock.exitCode).toBe(1)
+    } finally {
+      rmSync(logDirectory, { recursive: true, force: true })
+    }
   })
 
   it('isolates renderer entry side effects behind strict facades', () => {
