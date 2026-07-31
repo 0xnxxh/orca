@@ -5,6 +5,7 @@ import {
 } from '../../../automations/workspace-provenance'
 import { buildCliWorkspaceProvenance } from '../../../../shared/cli-workspace-provenance'
 import { defineMethod, type RpcMethod } from '../core'
+import { resolveWorktreeCatalogSnapshot } from '../worktree-catalog-snapshot'
 import { resolveRuntimeNavigationTarget } from '../../../../shared/runtime-navigation'
 import {
   WorktreeCreate,
@@ -27,7 +28,13 @@ export const WORKTREE_METHODS: RpcMethod[] = [
   defineMethod({
     name: 'worktree.ps',
     params: WorktreePsParams,
-    handler: async (params, { runtime }) => runtime.getWorktreePs(params.limit)
+    handler: async (params, { runtime }) => {
+      const result = await runtime.getWorktreePs(params.limit)
+      if (params.afterSnapshotId === undefined) {
+        return result
+      }
+      return resolveWorktreeCatalogSnapshot(runtime, params.limit, result, params.afterSnapshotId)
+    }
   }),
   defineMethod({
     name: 'worktree.list',

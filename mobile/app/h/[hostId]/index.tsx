@@ -94,6 +94,7 @@ import {
 import { useWorkspaceSections } from '../../../src/worktree/use-workspace-sections'
 import { getMobileWorkspaceLineageGroupKey } from '../../../src/worktree/mobile-workspace-lineage'
 import { areWorktreeListsEqual } from '../../../src/worktree/worktree-list-snapshot'
+import { WorktreeCatalogSnapshotClient } from '../../../src/worktree/worktree-catalog-snapshot-client'
 import { repoColor } from '../../../src/worktree/repo-color'
 import {
   WORKSPACE_GROUP_OPTIONS as GROUP_OPTIONS,
@@ -141,6 +142,7 @@ export function HostScreen({
   const lastConnectedAt = useLastConnectedAt(hostId)
   const clientRef = useRef<RpcClient | null>(null)
   const fetchWorktreesInFlightRef = useRef(false)
+  const worktreeCatalog = useMemo(() => new WorktreeCatalogSnapshotClient(), [])
   const fetchRepoMetadataInFlightRef = useRef(new WeakSet<RpcClient>())
   const fetchRepoMetadataPendingRef = useRef(new WeakSet<RpcClient>())
   const repoMetadataFetchedAtRef = useRef(0)
@@ -423,27 +425,28 @@ export function HostScreen({
       const requestHostId = hostId
 
       try {
-        // Why: worktree.ps silently truncates at 200; use a high cap so large hosts don't drop workspaces.
-        const response = await requestClient.sendRequest('worktree.ps', { limit: 10000 })
+        const pendingCatalog = await worktreeCatalog.fetch(requestClient, requestHostId)
         if (clientRef.current !== requestClient || hostId !== requestHostId) {
           return
         }
         if (!options.allowDuringModal && newWorktreeModalVisibleRef.current) {
           return
         }
-        if (response.ok) {
-          const result = (response as RpcSuccess).result as { worktrees: Worktree[] }
-          // Why: reuse the existing array on identical snapshots to keep SectionList/sort rebuilds off the tap path.
-          setWorktrees((current) =>
-            areWorktreeListsEqual(current, result.worktrees) ? current : result.worktrees
-          )
-          setLastKnownWorktrees((current) =>
-            areWorktreeListsEqual(current, result.worktrees) ? current : result.worktrees
-          )
-          setWorktreesLoaded(true)
-          // Why (#8498): overwrite the home-written cache with the confirmed snapshot so a reconnect/remount can't serve a stale list.
-          if (hostId) {
-            setCachedWorktrees(hostId, result.worktrees)
+        const result = worktreeCatalog.admit(pendingCatalog)
+        if (result) {
+          if (result.changed) {
+            // Why: reuse the existing array on identical snapshots to keep SectionList/sort rebuilds off the tap path.
+            setWorktrees((current) =>
+              areWorktreeListsEqual(current, result.worktrees) ? current : result.worktrees
+            )
+            setLastKnownWorktrees((current) =>
+              areWorktreeListsEqual(current, result.worktrees) ? current : result.worktrees
+            )
+            setWorktreesLoaded(true)
+            // Why (#8498): overwrite the home-written cache with the confirmed snapshot so a reconnect/remount can't serve a stale list.
+            if (hostId) {
+              setCachedWorktrees(hostId, result.worktrees)
+            }
           }
           // Drop the optimistic active override once the host reports it active, so later desktop changes win.
           setOptimisticActiveWorktreeId((pending) =>
@@ -487,7 +490,7 @@ export function HostScreen({
         fetchWorktreesInFlightRef.current = false
       }
     },
-    [client, connState, hostId]
+    [client, connState, hostId, worktreeCatalog]
   )
 
   useFocusEffect(
