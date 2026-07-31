@@ -41,18 +41,72 @@ vi.mock('./AgentKanbanCard', () => ({
 vi.mock('./AgentTerminalDialog', () => ({
   AgentTerminalDialog: ({
     card,
-    onOpenChange
+    onOpenChange,
+    reviewed,
+    pinned,
+    onMarkReviewed,
+    onTogglePinned
   }: {
     card: DashboardCard | null
     onOpenChange: (open: boolean) => void
+    reviewed?: boolean
+    pinned?: boolean
+    onMarkReviewed?: (card: DashboardCard) => void
+    onTogglePinned?: (card: DashboardCard) => void
   }) => (
     <div
       data-testid="terminal-dialog"
       data-open={card !== null}
       data-bucket={card?.bucket}
       data-pty-id={card?.ptyId ?? undefined}
+      data-reviewed={reviewed}
+      data-pinned={pinned}
     >
       <button data-testid="terminal-dialog-close" onClick={() => onOpenChange(false)} />
+      {card && onMarkReviewed ? (
+        <button data-testid="terminal-dialog-review" onClick={() => onMarkReviewed(card)} />
+      ) : null}
+      {card && onTogglePinned ? (
+        <button data-testid="terminal-dialog-pin" onClick={() => onTogglePinned(card)} />
+      ) : null}
+    </div>
+  ),
+  AgentTerminalPanel: ({
+    card,
+    onOpenChange,
+    reviewed,
+    pinned,
+    onMarkReviewed,
+    onTogglePinned
+  }: {
+    card: DashboardCard | null
+    onOpenChange: (open: boolean) => void
+    reviewed?: boolean
+    pinned?: boolean
+    onMarkReviewed?: (card: DashboardCard) => void
+    onTogglePinned?: (card: DashboardCard) => void
+  }) => (
+    <div
+      data-testid="terminal-panel"
+      data-pty-id={card?.ptyId ?? undefined}
+      data-reviewed={reviewed}
+      data-pinned={pinned}
+    >
+      <button data-testid="terminal-panel-close" onClick={() => onOpenChange(false)} />
+      {card && onMarkReviewed ? (
+        <button
+          data-testid="terminal-panel-review"
+          onClick={() => {
+            onMarkReviewed(card)
+            if (!pinned) {
+              onOpenChange(false)
+            }
+          }}
+        />
+      ) : null}
+      {card && onTogglePinned ? (
+        <button data-testid="terminal-panel-pin" onClick={() => onTogglePinned(card)} />
+      ) : null}
     </div>
   )
 }))
@@ -96,6 +150,7 @@ const ackAgent = vi.fn(async () => {})
 describe('AgentKanbanBoard', () => {
   beforeEach(async () => {
     await i18n.changeLanguage('en')
+    localStorage.clear()
     // The board relays seen-acks through the dashboard preload API.
     ;(window as unknown as { api: unknown }).api = { dashboard: { ackAgent } }
   })
@@ -110,6 +165,66 @@ describe('AgentKanbanBoard', () => {
     renderBoard([])
     const headers = screen.getAllByText(/Needs You|Working|Done/)
     expect(headers.map((h) => h.textContent)).toEqual(['Needs You', 'Working', 'Done'])
+  })
+
+  it('keeps board, rings, and cells available as separate views', () => {
+    renderBoard([])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Rings' }))
+    expect(screen.getByText('Live containment map')).toBeInTheDocument()
+    expect(screen.getByText('Focus view')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Orchestrate' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dashboard' }))
+    expect(screen.getByText('Needs You')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Orchestrate' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cells' }))
+    expect(screen.getByRole('button', { name: 'Cells' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('No agents match the current filters.')).toBeInTheDocument()
+  })
+
+  it('keeps the selected cell map visible beside its terminal panel', () => {
+    const agent = card({ paneKey: 'cell-agent', conversationName: 'Cell agent' })
+    render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} initialView="cells" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cell agent, Working' }))
+
+    expect(screen.getByTestId('agent-cell-project')).toBeInTheDocument()
+    expect(screen.getByTestId('terminal-panel')).toHaveAttribute('data-pty-id', 'p1')
+    expect(screen.getByRole('button', { name: 'Cell agent, Working' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.queryByTestId('terminal-dialog')).not.toBeInTheDocument()
+  })
+
+  it('keeps the selected ring map visible beside its terminal panel', () => {
+    const agent = card({ paneKey: 'ring-agent', conversationName: 'Ring agent' })
+    render(<AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [agent] }} initialView="rings" />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Ring agent/ }))
+
+    expect(screen.getByLabelText('Nested project, workspace, and agent map')).toBeInTheDocument()
+    expect(screen.getByTestId('terminal-panel')).toHaveAttribute('data-pty-id', 'p1')
+    expect(screen.getByRole('button', { name: /Ring agent/ })).toHaveClass('is-selected')
+    expect(screen.queryByText('Focus view')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('terminal-dialog')).not.toBeInTheDocument()
+  })
+
+  it('focuses search with Ctrl+K without taking focus from response fields', () => {
+    renderBoard([])
+    const search = screen.getByLabelText('Search agents')
+
+    fireEvent.keyDown(document.body, { key: 'k', ctrlKey: true })
+    expect(search).toHaveFocus()
+
+    const response = document.createElement('textarea')
+    document.body.append(response)
+    response.focus()
+    fireEvent.keyDown(response, { key: 'k', ctrlKey: true })
+    expect(response).toHaveFocus()
+    response.remove()
   })
 
   it('places cards in their bucket column and counts them', () => {
@@ -300,5 +415,62 @@ describe('AgentKanbanBoard', () => {
       />
     )
     expect(ackAgent).toHaveBeenCalledWith('pk-ack')
+  })
+
+  it('keeps a newly opened result in Focus until it is explicitly reviewed', () => {
+    const fresh = card({
+      paneKey: 'fresh-result',
+      bucket: 'done',
+      dotState: 'done',
+      conversationName: 'Fresh result',
+      finishedAt: 900,
+      unseen: true
+    })
+    const old = card({
+      paneKey: 'old-result',
+      bucket: 'done',
+      dotState: 'done',
+      conversationName: 'Old result',
+      finishedAt: 800,
+      unseen: false
+    })
+    const view = render(
+      <AgentKanbanBoard snapshot={{ generatedAt: 1, cards: [fresh, old] }} initialView="rings" />
+    )
+
+    expect(screen.getByRole('button', { name: /Fresh result/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Old result/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Fresh result/ }))
+    expect(screen.getByTestId('terminal-panel')).toHaveAttribute('data-reviewed', 'false')
+
+    view.rerender(
+      <AgentKanbanBoard
+        snapshot={{ generatedAt: 2, cards: [{ ...fresh, unseen: false }, old] }}
+        initialView="rings"
+      />
+    )
+    expect(screen.getByRole('button', { name: /Fresh result/ })).toBeInTheDocument()
+
+    view.unmount()
+    const reopened = render(
+      <AgentKanbanBoard
+        snapshot={{ generatedAt: 3, cards: [{ ...fresh, unseen: false }, old] }}
+        initialView="rings"
+      />
+    )
+    expect(screen.getByRole('button', { name: /Fresh result/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Fresh result/ }))
+    fireEvent.click(screen.getByTestId('terminal-panel-review'))
+    expect(screen.queryByRole('button', { name: /Fresh result/ })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('terminal-panel')).not.toBeInTheDocument()
+
+    reopened.unmount()
+    render(
+      <AgentKanbanBoard
+        snapshot={{ generatedAt: 4, cards: [{ ...fresh, unseen: false }, old] }}
+        initialView="rings"
+      />
+    )
+    expect(screen.queryByRole('button', { name: /Fresh result/ })).not.toBeInTheDocument()
   })
 })

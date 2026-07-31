@@ -28,6 +28,8 @@ const MAX_ID_LENGTH = 4_096
 const MAX_LABEL_LENGTH = DASHBOARD_MAX_LABEL_LENGTH
 const DASHBOARD_BUCKETS = new Set(['attention', 'working', 'done', 'idle'])
 const DASHBOARD_DOT_STATES = new Set(['working', 'blocked', 'waiting', 'done', 'idle'])
+const DASHBOARD_HOST_KINDS = new Set(['local', 'ssh', 'wsl', 'remote'])
+const DASHBOARD_WORKSPACE_KINDS = new Set(['worktree', 'folder'])
 const DASHBOARD_REVIEW_STATES = new Set(['open', 'closed', 'merged', 'draft'])
 const DASHBOARD_HOST_PLATFORMS = new Set([
   'aix',
@@ -264,8 +266,14 @@ function isDashboardCard(value: unknown): boolean {
     isBoundedString(card.worktreeId, MAX_ID_LENGTH) &&
     isBoundedString(card.tabId, MAX_ID_LENGTH) &&
     (card.leafId === null || isBoundedString(card.leafId, MAX_ID_LENGTH)) &&
+    isOptionalBoundedString(card.parentPaneKey, MAX_ID_LENGTH) &&
     isBoundedString(card.repoName, MAX_LABEL_LENGTH, true) &&
     isBoundedString(card.worktreeName, MAX_LABEL_LENGTH, true) &&
+    (card.hostKind === undefined ||
+      (typeof card.hostKind === 'string' && DASHBOARD_HOST_KINDS.has(card.hostKind))) &&
+    (card.workspaceKind === undefined ||
+      (typeof card.workspaceKind === 'string' &&
+        DASHBOARD_WORKSPACE_KINDS.has(card.workspaceKind))) &&
     isOptionalBoundedString(card.workspaceStatusId, MAX_ID_LENGTH) &&
     isOptionalBoundedString(card.workspaceStatusLabel, MAX_LABEL_LENGTH) &&
     isOptionalBoundedString(card.workspaceStatusColor, MAX_ID_LENGTH) &&

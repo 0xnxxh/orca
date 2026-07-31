@@ -90,8 +90,11 @@ function sameCard(a: DashboardCard, b: DashboardCard): boolean {
     a.worktreeId === b.worktreeId &&
     a.tabId === b.tabId &&
     a.leafId === b.leafId &&
+    a.parentPaneKey === b.parentPaneKey &&
     a.repoName === b.repoName &&
     a.worktreeName === b.worktreeName &&
+    a.hostKind === b.hostKind &&
+    a.workspaceKind === b.workspaceKind &&
     a.hasReview === b.hasReview &&
     a.review?.number === b.review?.number &&
     a.review?.state === b.review?.state &&

@@ -38,6 +38,9 @@ export type DashboardCardSubagent = {
   dotState: DashboardCardDotState
 }
 
+export type DashboardCardHostKind = 'local' | 'ssh' | 'wsl' | 'remote'
+export type DashboardCardWorkspaceKind = 'worktree' | 'folder'
+
 export type DashboardCard = {
   /** Stable identity for React keys. */
   paneKey: string
@@ -58,8 +61,14 @@ export type DashboardCard = {
   worktreeId: string
   tabId: string
   leafId: string | null
+  /** Direct orchestration parent when both agents are visible in this workspace. */
+  parentPaneKey?: string
   repoName: string
   worktreeName: string
+  /** Optional for preload compatibility with snapshots produced before Fleet Rings. */
+  hostKind?: DashboardCardHostKind
+  /** Folder workspaces share the ring hierarchy without pretending to be git worktrees. */
+  workspaceKind?: DashboardCardWorkspaceKind
   workspaceStatusId?: string
   workspaceStatusLabel?: string
   workspaceStatusColor?: string

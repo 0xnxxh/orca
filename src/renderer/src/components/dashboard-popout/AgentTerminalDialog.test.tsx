@@ -2,27 +2,30 @@
 
 import '@testing-library/jest-dom/vitest'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type {
   DashboardCard,
   DashboardCardTerminalInput
 } from '../../../../shared/dashboard-snapshot'
-import { AgentTerminalDialog } from './AgentTerminalDialog'
+import { AgentTerminalDialog, AgentTerminalPanel } from './AgentTerminalDialog'
 
 // Stub the preview so the assertion is on the props the dialog hands it, with
 // no xterm / IPC machinery in the way.
 vi.mock('./AgentTerminalPreview', () => ({
   AgentTerminalPreview: ({
     ptyId,
-    terminalInput
+    terminalInput,
+    className
   }: {
     ptyId: string
     terminalInput?: DashboardCardTerminalInput | null
+    className?: string
   }) => (
     <div
       data-testid="preview"
       data-pty-id={ptyId}
       data-terminal-input={terminalInput === null ? 'null' : JSON.stringify(terminalInput)}
+      className={className}
     />
   )
 }))
@@ -84,5 +87,56 @@ describe('AgentTerminalDialog', () => {
     render(<AgentTerminalDialog card={card()} onOpenChange={() => {}} onReveal={() => {}} />)
 
     expect(screen.getByTestId('preview')).toHaveAttribute('data-terminal-input', 'null')
+  })
+
+  it('offers ring result disposition actions without replacing the shared terminal dialog', () => {
+    const result = card({ bucket: 'done', dotState: 'done', finishedAt: 100 })
+    const onOpenChange = vi.fn()
+    const onMarkReviewed = vi.fn()
+    const onTogglePinned = vi.fn()
+    render(
+      <AgentTerminalDialog
+        card={result}
+        onOpenChange={onOpenChange}
+        onReveal={() => {}}
+        reviewed={false}
+        pinned={false}
+        onMarkReviewed={onMarkReviewed}
+        onTogglePinned={onTogglePinned}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Keep visible' }))
+    expect(onTogglePinned).toHaveBeenCalledWith(result)
+    fireEvent.click(screen.getByRole('button', { name: 'Mark reviewed' }))
+    expect(onMarkReviewed).toHaveBeenCalledWith(result)
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(screen.getByTestId('preview')).toHaveAttribute('data-pty-id', 'pty-1')
+  })
+
+  it('keeps a pinned reviewed result open', () => {
+    const onOpenChange = vi.fn()
+    render(
+      <AgentTerminalDialog
+        card={card({ bucket: 'done', dotState: 'done', finishedAt: 100 })}
+        onOpenChange={onOpenChange}
+        onReveal={() => {}}
+        reviewed={false}
+        pinned
+        onMarkReviewed={() => {}}
+        onTogglePinned={() => {}}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark reviewed' }))
+    expect(onOpenChange).not.toHaveBeenCalled()
+  })
+
+  it('reuses the terminal surface as a non-modal adjacent panel', () => {
+    render(<AgentTerminalPanel card={card()} onOpenChange={() => {}} onReveal={() => {}} />)
+
+    expect(screen.getByTestId('preview')).toHaveClass('min-h-0', 'flex-1')
+    expect(document.querySelector('[data-slot="dialog-overlay"]')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'wt' })).toBeInTheDocument()
   })
 })

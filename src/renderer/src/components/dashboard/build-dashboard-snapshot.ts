@@ -41,6 +41,10 @@ import {
   resolveDashboardCardContext,
   type DashboardCardContextState
 } from './dashboard-card-context'
+import {
+  collectActiveDashboardWorkspaces,
+  dashboardCardHostKind
+} from './dashboard-snapshot-workspaces'
 
 /** The store slices the snapshot builder reads. Kept as a Pick so unit tests
  *  can pass a partial store without constructing the whole AppState. */
@@ -120,8 +124,8 @@ function rowConversationName(
  * Derive the serializable dashboard snapshot from the live renderer store.
  * Reuses the exact per-worktree row machinery the sidebar uses
  * (buildWorktreeAgentRows + the indexed selectors), then flattens every
- * worktree's rows into presentational cards. Subagent/child rows are excluded
- * from the board (out of scope for v1).
+ * worktree's rows into presentational cards. Provider subagents without their
+ * own terminal stay folded into their spawning card.
  */
 export function buildDashboardSnapshot(
   state: DashboardSnapshotState,
@@ -133,27 +137,21 @@ export function buildDashboardSnapshot(
   const repoIconsByRepoId: Record<string, RepoIcon | null> = {}
   const includeCardDetails = options.includeCardDetails !== false
   const generatedTitlesEnabled = state.settings?.tabAutoGenerateTitle === true
-  const activeWorktrees: {
-    repo: AppState['repos'][number]
-    worktree: AppState['worktreesByRepo'][string][number]
-  }[] = []
-
-  for (const repo of state.repos ?? []) {
-    for (const worktree of state.worktreesByRepo?.[repo.id] ?? []) {
-      if (!worktree.isArchived) {
-        activeWorktrees.push({ repo, worktree })
-      }
-    }
-  }
+  const activeWorktrees = collectActiveDashboardWorkspaces(state)
   const filterOptions =
     options.includeFilterOptions === false
       ? undefined
       : {
           // Why: filterOptions is snapshot-level, so an over-long project label
           // costs the WHOLE board, not one card. Bound it at the producer.
-          projects: [...new Map(activeWorktrees.map(({ repo }) => [repo.id, repo])).values()].map(
-            (repo) => ({ id: repo.id, label: boundedLabel(repo.displayName) })
-          ),
+          projects: [
+            ...new Map(
+              activeWorktrees.map((workspace) => [workspace.projectId, workspace])
+            ).values()
+          ].map((workspace) => ({
+            id: workspace.projectId,
+            label: boundedLabel(workspace.projectName)
+          })),
           workspaceStatuses: (state.workspaceStatuses && state.workspaceStatuses.length > 0
             ? state.workspaceStatuses
             : DEFAULT_WORKSPACE_STATUSES
@@ -181,7 +179,8 @@ export function buildDashboardSnapshot(
     }
   }
 
-  for (const { repo, worktree } of activeWorktrees) {
+  for (const workspace of activeWorktrees) {
+    const { repo, worktree } = workspace
     const worktreeId = worktree.id
     const liveEntries = selectLiveAgentStatusEntriesForWorktree(state, worktreeId)
     const migrationUnsupported = selectMigrationUnsupportedEntriesForWorktree(state, worktreeId)
@@ -287,7 +286,7 @@ export function buildDashboardSnapshot(
             })
           : null
       // Only repos that actually contribute a card ship their icon.
-      repoIconsByRepoId[repo.id] = repo.repoIcon ?? null
+      repoIconsByRepoId[workspace.projectId] = workspace.repoIcon
 
       cards.push({
         paneKey: row.paneKey,
@@ -296,12 +295,20 @@ export function buildDashboardSnapshot(
         bucket,
         dotState,
         task: isTitleDerived ? '' : rowTask(row),
-        repoId: repo.id,
+        repoId: workspace.projectId,
         worktreeId,
         tabId,
         leafId,
-        repoName: boundedLabel(repo.displayName),
+        parentPaneKey: row.lineage.parentPaneKey,
+        repoName: boundedLabel(workspace.projectName),
         worktreeName: boundedLabel(worktree.displayName),
+        hostKind: dashboardCardHostKind(
+          workspace,
+          ptyId,
+          terminalInput ?? undefined,
+          clientHost.platform
+        ),
+        workspaceKind: workspace.workspaceKind,
         workspaceStatusId: context?.workspaceStatus.id,
         workspaceStatusLabel: context?.workspaceStatus.label,
         workspaceStatusColor: context?.workspaceStatus.color,

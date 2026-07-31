@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { XIcon } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Columns3, LayoutGrid, Orbit, XIcon } from 'lucide-react'
 import {
   DASHBOARD_BUCKET_ORDER,
   type DashboardBucket,
@@ -12,7 +12,11 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { installWindowVisibilityInterval } from '@/lib/window-visibility-interval'
 import { AgentKanbanCard } from './AgentKanbanCard'
 import { AgentDashboardToolbar } from './AgentDashboardToolbar'
-import { AgentTerminalDialog, type AgentRevealArgs } from './AgentTerminalDialog'
+import {
+  AgentTerminalDialog,
+  AgentTerminalPanel,
+  type AgentRevealArgs
+} from './AgentTerminalDialog'
 import {
   EMPTY_DASHBOARD_FILTERS,
   filterDashboardCards,
@@ -20,6 +24,13 @@ import {
 } from './agent-board-filtering'
 import './agent-board-transitions.css'
 import { translate } from '@/i18n/i18n'
+import { Button } from '@/components/ui/button'
+import { AgentFleetRings } from './AgentFleetRings'
+import { AgentCellMap } from './AgentCellMap'
+import { DashboardOrchestratorChat } from './DashboardOrchestratorChat'
+import { useFleetResultDisposition } from './use-fleet-result-disposition'
+
+export type AgentDashboardView = 'rings' | 'board' | 'cells'
 
 /** Ack an agent in the pop-out window: relayed over IPC to the main renderer.
  *  ?. shields dialog-opening from dev-HMR preload skew (renderer updates hot,
@@ -114,6 +125,7 @@ function KanbanColumn({
 
 type AgentKanbanBoardProps = {
   snapshot: DashboardSnapshot
+  initialView?: AgentDashboardView
   /** Sizing for the outermost container. The pop-out fills the window
    *  (h-screen w-screen); the in-window drawer fills its host (h-full w-full). */
   containerClassName?: string
@@ -136,12 +148,14 @@ type AgentKanbanBoardProps = {
  *  how ack/reveal are routed. */
 export function AgentKanbanBoard({
   snapshot,
+  initialView = 'board',
   containerClassName = 'h-screen w-screen',
   onAckAgent = ackAgentViaPopoutRelay,
   onRevealAgent = revealAgentViaPopoutRelay,
   onClose,
   headerActions
 }: AgentKanbanBoardProps): React.JSX.Element {
+  const [view, setView] = useState(initialView)
   const visibleBuckets = useMemo(
     () =>
       DASHBOARD_BUCKET_ORDER.filter((bucket) => bucket !== 'idle' || snapshot.showIdle === true),
@@ -152,6 +166,7 @@ export function AgentKanbanBoard({
     [snapshot.cards, visibleBuckets]
   )
   const [query, setQuery] = useState('')
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const [filters, setFilters] = useState<DashboardFilters>(EMPTY_DASHBOARD_FILTERS)
   const filteredCards = useMemo(
     () => filterDashboardCards(visibleCards, query, filters),
@@ -163,6 +178,9 @@ export function AgentKanbanBoard({
     [snapshot.cards]
   )
   const [now, setNow] = useState(() => Date.now())
+  const [terminalPanelSide, setTerminalPanelSide] = useState<'left' | 'right'>('right')
+  const { reviewedPaneKeys, pinnedPaneKeys, acknowledge, markReviewed, togglePinned } =
+    useFleetResultDisposition(snapshot.cards, onAckAgent)
 
   useEffect(() => {
     if (!hasRelativeTimestamps) {
@@ -173,6 +191,27 @@ export function AgentKanbanBoard({
       intervalMs: 30_000
     })
   }, [hasRelativeTimestamps])
+
+  useEffect(() => {
+    const handleSearchShortcut = (event: KeyboardEvent): void => {
+      const usesPlatformModifier = navigator.userAgent.includes('Mac')
+        ? event.metaKey
+        : event.ctrlKey
+      if (!usesPlatformModifier || event.key.toLowerCase() !== 'k') {
+        return
+      }
+      if (
+        event.target instanceof Element &&
+        event.target.closest('input, textarea, [contenteditable="true"], .xterm')
+      ) {
+        return
+      }
+      event.preventDefault()
+      searchInputRef.current?.focus()
+    }
+    document.addEventListener('keydown', handleSearchShortcut)
+    return () => document.removeEventListener('keydown', handleSearchShortcut)
+  }, [])
 
   // The open terminal dialog survives bucket moves: only the paneKey is
   // remembered, and the card data is re-resolved from each fresh snapshot.
@@ -203,25 +242,34 @@ export function AgentKanbanBoard({
   // with unseen=false.
   const handleOpenTerminal = useCallback(
     (card: DashboardCard) => {
-      onAckAgent(card.paneKey)
+      acknowledge(card)
       setOpenedCard(card)
     },
-    [onAckAgent]
+    [acknowledge]
+  )
+  const handleOpenAdjacentTerminal = useCallback(
+    (card: DashboardCard, side: 'left' | 'right') => {
+      setTerminalPanelSide(side)
+      handleOpenTerminal(card)
+    },
+    [handleOpenTerminal]
   )
   // Watching the open dialog counts as seeing state changes as they happen —
   // without this, an agent finishing while you watch would re-flag its card.
   useEffect(() => {
     if (dialogCard?.unseen) {
-      onAckAgent(dialogCard.paneKey)
+      acknowledge(dialogCard)
     }
-  }, [dialogCard?.unseen, dialogCard?.paneKey, onAckAgent])
+  }, [acknowledge, dialogCard])
 
   return (
     // Why: the pop-out is its own React root with no app-level provider, and the
     // card's repo tooltip needs one in both hosts. Nesting inside the main
     // window's provider is harmless.
     <TooltipProvider delayDuration={300}>
-      <div className={cn('flex flex-col bg-background text-foreground', containerClassName)}>
+      <div
+        className={cn('relative flex flex-col bg-background text-foreground', containerClassName)}
+      >
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
           <h1 className="text-[13px] font-semibold">
             {translate('dashboardPopout.title', 'Agents')}
@@ -231,6 +279,45 @@ export function AgentKanbanBoard({
               count: visibleCards.length
             })}
           </span>
+          <div
+            className="flex items-center gap-0.5 rounded-md border border-border p-0.5"
+            role="group"
+            aria-label={translate('dashboardPopout.view.label', 'Dashboard view')}
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              aria-pressed={view === 'board'}
+              className={cn('h-6 gap-1 px-2', view === 'board' && 'bg-accent')}
+              onClick={() => setView('board')}
+            >
+              <Columns3 className="size-3" />
+              {translate('dashboardPopout.view.board', 'Dashboard')}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              aria-pressed={view === 'rings'}
+              className={cn('h-6 gap-1 px-2', view === 'rings' && 'bg-accent')}
+              onClick={() => setView('rings')}
+            >
+              <Orbit className="size-3" />
+              {translate('dashboardPopout.view.rings', 'Agent Rings')}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              aria-pressed={view === 'cells'}
+              className={cn('h-6 gap-1 px-2', view === 'cells' && 'bg-accent')}
+              onClick={() => setView('cells')}
+            >
+              <LayoutGrid className="size-3" />
+              {translate('dashboardPopout.view.cells', 'Cells')}
+            </Button>
+          </div>
           {headerActions || onClose ? (
             <div className="ml-auto flex items-center gap-1">
               {headerActions}
@@ -255,27 +342,86 @@ export function AgentKanbanBoard({
           onQueryChange={setQuery}
           filters={filters}
           onFiltersChange={setFilters}
+          searchInputRef={searchInputRef}
         />
-        <div className="scrollbar-sleek flex min-h-0 flex-1 overflow-x-auto p-3">
-          {/* Auto margins center the capped board and collapse during horizontal overflow. */}
-          <div className="mx-auto flex w-full max-w-[1280px] gap-3">
-            {visibleBuckets.map((bucket) => (
-              <KanbanColumn
-                key={bucket}
-                bucket={bucket}
-                cards={grouped[bucket]}
-                repoIconsByRepoId={snapshot.repoIconsByRepoId}
+        {view !== 'board' ? (
+          <div
+            className={cn(
+              'flex min-h-0 flex-1',
+              dialogCard && terminalPanelSide === 'left' && 'flex-row-reverse'
+            )}
+          >
+            {view === 'rings' ? (
+              <AgentFleetRings
+                cards={filteredCards}
                 now={now}
-                onOpenTerminal={handleOpenTerminal}
+                className={
+                  dialogCard
+                    ? 'w-[clamp(14rem,28vw,22rem)] flex-none transition-[width] duration-200 motion-reduce:transition-none'
+                    : undefined
+                }
+                compact={dialogCard !== null}
+                selectedPaneKey={dialogCard?.paneKey}
+                pinnedPaneKeys={pinnedPaneKeys}
+                reviewedPaneKeys={reviewedPaneKeys}
+                onMarkReviewed={markReviewed}
+                onOpenTerminal={handleOpenAdjacentTerminal}
               />
-            ))}
+            ) : (
+              <AgentCellMap
+                cards={filteredCards}
+                now={now}
+                className={
+                  dialogCard
+                    ? 'w-[clamp(14rem,28vw,22rem)] flex-none transition-[width] duration-200 motion-reduce:transition-none'
+                    : undefined
+                }
+                selectedPaneKey={dialogCard?.paneKey}
+                onOpenTerminal={handleOpenAdjacentTerminal}
+              />
+            )}
+            {dialogCard ? (
+              <AgentTerminalPanel
+                card={dialogCard}
+                onOpenChange={handleDialogOpenChange}
+                onReveal={onRevealAgent}
+                reviewed={reviewedPaneKeys.has(dialogCard.paneKey)}
+                pinned={pinnedPaneKeys.has(dialogCard.paneKey)}
+                onMarkReviewed={(card) => markReviewed([card])}
+                onTogglePinned={togglePinned}
+                className={cn(
+                  terminalPanelSide === 'right' ? 'ml-0' : 'mr-0',
+                  'animate-in fade-in-0 duration-200 motion-reduce:animate-none',
+                  terminalPanelSide === 'right' ? 'slide-in-from-right-2' : 'slide-in-from-left-2'
+                )}
+              />
+            ) : null}
           </div>
-        </div>
-        <AgentTerminalDialog
-          card={dialogCard}
-          onOpenChange={handleDialogOpenChange}
-          onReveal={onRevealAgent}
-        />
+        ) : (
+          <div className="scrollbar-sleek flex min-h-0 flex-1 overflow-x-auto p-3">
+            {/* Auto margins center the capped board and collapse during horizontal overflow. */}
+            <div className="mx-auto flex w-full max-w-[1280px] gap-3">
+              {visibleBuckets.map((bucket) => (
+                <KanbanColumn
+                  key={bucket}
+                  bucket={bucket}
+                  cards={grouped[bucket]}
+                  repoIconsByRepoId={snapshot.repoIconsByRepoId}
+                  now={now}
+                  onOpenTerminal={handleOpenTerminal}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+        {view === 'board' ? (
+          <AgentTerminalDialog
+            card={dialogCard}
+            onOpenChange={handleDialogOpenChange}
+            onReveal={onRevealAgent}
+          />
+        ) : null}
+        <DashboardOrchestratorChat cards={visibleCards} />
       </div>
     </TooltipProvider>
   )
