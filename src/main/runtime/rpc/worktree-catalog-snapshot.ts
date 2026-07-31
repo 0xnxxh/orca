@@ -24,11 +24,13 @@ function worktreeCatalogSnapshotId(result: RuntimeWorktreePsResult): string {
   if (memoizedId && isDeepStrictEqual(memoizedId.result, result)) {
     return memoizedId.snapshotId
   }
+  const serialized = JSON.stringify(result)
   const snapshotId = createHash('sha256')
-    .update(JSON.stringify(result))
+    .update(serialized)
     .digest('base64url')
     .slice(0, SNAPSHOT_ID_LENGTH)
-  memoizedId = { result, snapshotId }
+  // Why: caller-owned mutation must not let an old id label new catalog content.
+  memoizedId = { result: JSON.parse(serialized) as RuntimeWorktreePsResult, snapshotId }
   return snapshotId
 }
 
