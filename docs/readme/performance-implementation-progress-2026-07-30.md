@@ -15,6 +15,7 @@
 | 2     | Host-owned repository snapshots              | Complete through current checkpoint | Repository, source-control, space-manager, mobile source-control, review, and runtime consumers reuse authoritative revisions             |
 | 3     | Mobile terminal hot set and cold parking     | Published to draft PR               | Default-off active + two MRU policy with one grace pane, source-provenanced snapshot/replay reveal, cleanup, diagnostics, and regressions |
 | 3     | Mobile worktree event-aware safety polling   | Published to draft PR               | Event, foreground, and reconnect refreshes defer only the next redundant worktree poll                                                    |
+| 3     | Mobile catalog freshness ownership audit     | Complete; implementation pending    | Mapped topology, metadata, folder, PTY, session, agent, orchestration, SSH/provider, and time-based inputs                                |
 
 ## Current mobile hot-set tranche
 
@@ -117,3 +118,28 @@ Checkpoint validation:
 - Full mobile suite: 370 files, 2,716 passed, 2 skipped.
 - Platform-generation overtaking regression: 1 passed.
 - Mobile typecheck, lint, format check, max-lines ratchet, and `git diff --check` passed.
+
+## Catalog freshness ownership audit
+
+The full catalog projection is not currently governed by one revision. Resolved worktree topology
+has generation-keyed in-flight sharing and cache admission, but the returned rows also read repo and
+worktree metadata, folder workspaces, fresh PTY-controller inventory, live leaves and retained PTYs,
+workspace sessions, agent hooks and OSC snapshots, orchestration labels, SSH/provider state, and
+time-based agent expiry.
+
+Several of those authorities mutate without `worktreesChanged`, and some desktop IPC paths notify
+only the renderer. Therefore neither request ordering nor the existing topology generation can
+justify a pre-build `unchanged` response, whole-result reuse, replay, or a slower foreground poll.
+An optional `afterRevision` field would be wire-compatible with older hosts, but it remains deferred
+until its freshness meaning is complete.
+
+The next implementation boundary is one runtime-scoped catalog-input epoch:
+
+1. Bump it at every catalog authority, including scheduled time-based expiry.
+2. Capture the epoch and resolved-topology generation before a build and verify both after awaits.
+3. Use request-sequence compare-and-swap so an older completion cannot publish after a newer one.
+4. Keep full independent builds across epochs; never join fresh requests to stale work.
+5. Only then capability-gate conditional snapshots and later add replay/gap recovery.
+
+The detailed input and compatibility map is recorded in
+`tools/benchmarks/results/phase3-mobile-worktree-catalog-freshness-audit-2026-07-30.md`.
