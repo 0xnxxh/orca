@@ -1279,6 +1279,9 @@ export function createRemoteRuntimePtyTransport(
     if (!isRecoverableRemoteRuntimeConnectionError(toRemoteRuntimeClientErrorLike(error))) {
       return false
     }
+    if (recovery.currentPhase === 'disconnected') {
+      return true
+    }
     scheduleResubscribeAfterTransportClose()
     return true
   }
