@@ -366,14 +366,35 @@ test.describe('Workspace board lane virtualization', () => {
     const laneCards = lane.locator('[data-workspace-board-card-id]')
     await expect.poll(() => laneCards.count(), { timeout: 15_000 }).toBeGreaterThan(3)
     const laneScroll = lane.locator('[data-workspace-board-lane-scroll]')
+    const laneGrid = orcaPage.locator('[data-workspace-board-lane-grid]')
     const box = await laneScroll.boundingBox()
-    if (!box) {
-      throw new Error('Expected the marquee lane to have a bounding box')
+    const laneBox = await lane.boundingBox()
+    const nextLaneBox = await laneGrid.locator('[data-workspace-status]').nth(1).boundingBox()
+    if (!box || !laneBox || !nextLaneBox) {
+      throw new Error('Expected the marquee lane and its neighboring lane to have bounding boxes')
     }
+    const dragStartX = (laneBox.x + laneBox.width + nextLaneBox.x) / 2
+    const dragStartY = box.y + 4
+    const startsInLaneGap = await orcaPage.evaluate(
+      ({ x, y }) => {
+        const target = document.elementFromPoint(x, y)
+        return Boolean(
+          target?.closest('[data-workspace-board-lane-grid]') &&
+          !target.closest('[data-workspace-status]')
+        )
+      },
+      { x: dragStartX, y: dragStartY }
+    )
+    expect(startsInLaneGap).toBe(true)
 
-    await orcaPage.mouse.move(box.x + 2, box.y + 12)
+    await orcaPage.mouse.move(dragStartX, dragStartY)
     await orcaPage.mouse.down()
-    await orcaPage.mouse.move(box.x + box.width - 18, box.y + 80)
+    await orcaPage.mouse.move(box.x + 18, box.y + 80, { steps: 4 })
+    await expect
+      .poll(() => lane.locator('[data-workspace-board-card-area-selected="true"]').count(), {
+        timeout: 15_000
+      })
+      .toBeGreaterThan(0)
     await laneScroll.evaluate(async (element) => {
       for (let pass = 0; pass < 4; pass++) {
         element.scrollTop = element.scrollHeight
@@ -383,7 +404,7 @@ test.describe('Workspace board lane virtualization', () => {
         })
       }
     })
-    await orcaPage.mouse.move(box.x + box.width - 18, box.y + box.height - 12)
+    await orcaPage.mouse.move(box.x + 18, box.y + box.height - 12)
     await orcaPage.mouse.up()
 
     await expect(
