@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { LegacyCoordinatorAuthorityProof, RpcRequest } from './core'
 import type { OrcaRuntimeService, OrchestrationCompatibilityCallerAuthority } from '../orca-runtime'
+import { CURRENT_CONTRACT_VERSION } from '../orchestration/db'
 import { LegacyCompatibilityAuthority } from './orchestration-legacy-authority'
 import { handleLegacyLifecycleSend } from './orchestration-legacy-lifecycle'
 import { handleLegacyCheck, handleLegacyReply } from './orchestration-legacy-mail'
@@ -58,6 +59,13 @@ export class OrchestrationLegacyCompatibility {
     if (!request.method.startsWith('orchestration.')) {
       return { handled: false }
     }
+    const values = params as Record<string, unknown>
+    if (
+      COORDINATOR_PREFLIGHT_METHODS.has(request.method) &&
+      this.usesDifferentCurrentRunBinding(request, values)
+    ) {
+      return { handled: false }
+    }
     const result = await this.route(request, params, signal)
     if (result !== undefined) {
       return { handled: true, result }
@@ -65,7 +73,6 @@ export class OrchestrationLegacyCompatibility {
     if (!COORDINATOR_PREFLIGHT_METHODS.has(request.method)) {
       return { handled: false }
     }
-    const values = params as Record<string, unknown>
     if (request.method === 'orchestration.runUse' && values.takeoverLegacy === true) {
       const callerAuthority = this.runtime.verifyOrchestrationCompatibilityCaller(
         request.orchestrationCompatibilityEvidence
@@ -74,6 +81,9 @@ export class OrchestrationLegacyCompatibility {
         handled: false,
         ...(callerAuthority ? { orchestrationCompatibilityCallerAuthority: callerAuthority } : {})
       }
+    }
+    if (this.usesCurrentAuthority(request, values)) {
+      return { handled: false }
     }
     const requestedRunId =
       request.method === 'orchestration.runUse' ? stringValue(values.id) : stringValue(values.run)
@@ -108,6 +118,72 @@ export class OrchestrationLegacyCompatibility {
           revalidate: () => this.revalidateCoordinatorAuthority(request, authority)
         }
       : undefined
+  }
+
+  private usesDifferentCurrentRunBinding(
+    request: RpcRequest,
+    params: Record<string, unknown>
+  ): boolean {
+    const db = this.runtime.getOrchestrationDb()
+    const adoption = db.getLegacyAdoption()
+    const evidence = request.orchestrationCompatibilityEvidence
+    if (
+      !adoption ||
+      !evidence ||
+      !evidence.terminalHandle ||
+      !evidence.paneKey ||
+      stringValue(params.run) ||
+      request.method === 'orchestration.runUse'
+    ) {
+      return false
+    }
+    const claimedHandle = currentCallerHandle(request.method, params)
+    if (claimedHandle && claimedHandle !== evidence.terminalHandle) {
+      return false
+    }
+    const boundRun = db.getCurrentRunForPane(evidence.paneKey)
+    if (!boundRun || boundRun.id === adoption.adopted_run_id) {
+      return false
+    }
+    const caller = this.runtime.verifyOrchestrationCompatibilityCaller(evidence)
+    if (!caller || caller.terminalHandle !== evidence.terminalHandle) {
+      return false
+    }
+    return db.getCurrentRunForPane(caller.paneKey)?.id === boundRun.id
+  }
+
+  private usesCurrentAuthority(request: RpcRequest, params: Record<string, unknown>): boolean {
+    const db = this.runtime.getOrchestrationDb()
+    const adoption = db.getLegacyAdoption()
+    if (!adoption || stringValue(params.run) || request.method === 'orchestration.runUse') {
+      return false
+    }
+    const caller = this.runtime.verifyOrchestrationCompatibilityCaller(
+      request.orchestrationCompatibilityEvidence
+    )
+    const claimedHandle = currentCallerHandle(request.method, params)
+    if (!caller || (claimedHandle && claimedHandle !== caller.terminalHandle)) {
+      return false
+    }
+    const dispatch = db.getActiveDispatchForIdentity(caller.terminalHandle, caller.paneKey)
+    if (dispatch) {
+      return dispatch.contract_version === CURRENT_CONTRACT_VERSION
+    }
+    if (db.findActiveRemoteAttachmentForPane(caller.paneKey)) {
+      return true
+    }
+    const boundRun = db.getCurrentRunForPane(caller.paneKey)
+    if (!boundRun) {
+      return false
+    }
+    if (boundRun.id !== adoption.adopted_run_id) {
+      return true
+    }
+    return !db.resolveLegacyCoordinatorCandidate({
+      runId: adoption.adopted_run_id,
+      terminalHandle: caller.terminalHandle,
+      paneKey: caller.paneKey
+    })
   }
 
   private async route(
@@ -167,4 +243,18 @@ function legacyCoordinatorMutationCallerFingerprint(
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+function currentCallerHandle(method: string, params: Record<string, unknown>): string | undefined {
+  if (
+    method === 'orchestration.taskCreate' ||
+    method === 'orchestration.taskList' ||
+    method === 'orchestration.taskUpdate'
+  ) {
+    return stringValue(params.callerTerminalHandle)
+  }
+  if (method === 'orchestration.check') {
+    return stringValue(params.terminal)
+  }
+  return stringValue(params.from)
 }
