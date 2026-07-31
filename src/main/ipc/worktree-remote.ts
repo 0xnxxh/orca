@@ -1575,8 +1575,27 @@ export async function createRemoteWorktree(
       'Could not resolve a default base ref for this repo. Pick a base branch explicitly and try again.'
     )
   }
-  const { baseBranch } = basePlan
+  let { baseBranch } = basePlan
   let { remoteTrackingBase } = basePlan
+
+  if (remoteTrackingBase) {
+    const hasRemoteTrackingBaseRef = await hasRemoteTrackingRefSsh(
+      provider,
+      repo.path,
+      remoteTrackingBase.ref
+    )
+    const hasNamedLocalBaseRef = await hasRemoteWorktreeBaseRef(provider, repo.path, baseBranch)
+    const hasFallbackLocalBaseRef =
+      !hasNamedLocalBaseRef &&
+      (await hasRemoteWorktreeBaseRef(provider, repo.path, remoteTrackingBase.branch))
+    if (!hasRemoteTrackingBaseRef && (hasNamedLocalBaseRef || hasFallbackLocalBaseRef)) {
+      // Why: branch reuse and conflict checks must see the local fallback too.
+      if (hasFallbackLocalBaseRef) {
+        baseBranch = remoteTrackingBase.branch
+      }
+      remoteTrackingBase = null
+    }
+  }
 
   let branchName = ''
   let checkoutExistingBranch = false
@@ -1682,19 +1701,6 @@ export async function createRemoteWorktree(
 
   // Why: addWorktree/setup probes run inside the new path; older relays need that root registered before accepting git/fs ops there.
   await registerRequiredSshWorktreeCreateRoots(repo.connectionId!, [remotePath])
-
-  if (remoteTrackingBase) {
-    const hasRemoteTrackingBaseRef = await hasRemoteTrackingRefSsh(
-      provider,
-      repo.path,
-      remoteTrackingBase.ref
-    )
-    const hasLocalBaseRef =
-      hasRemoteTrackingBaseRef || (await hasRemoteWorktreeBaseRef(provider, repo.path, baseBranch))
-    if (!hasRemoteTrackingBaseRef && hasLocalBaseRef) {
-      remoteTrackingBase = null
-    }
-  }
 
   if (remoteTrackingBase) {
     try {
@@ -1971,7 +1977,7 @@ export async function createLocalWorktree(
       ? await resolveLocalGitUsername(repo.path)
       : ''
 
-  const baseBranch = await resolveWorktreeCreateBase({
+  let baseBranch = await resolveWorktreeCreateBase({
     requestedBaseBranch: args.baseBranch,
     repoWorktreeBaseRef: repo.worktreeBaseRef,
     resolveDefaultBaseRef: () => resolveDefaultBaseRefWithLocalGit(localGitExecOptions),
@@ -2029,10 +2035,25 @@ export async function createLocalWorktree(
         remoteTrackingBase,
         ...localWorktreeGitOptionArgs
       )
+      const hasNamedLocalBaseRef = await hasLocalWorktreeBaseRefWithOptions(
+        repo.path,
+        baseBranch,
+        localGitExecOptions
+      )
+      const hasFallbackLocalBaseRef =
+        !hasNamedLocalBaseRef &&
+        (await hasLocalWorktreeBaseRefWithOptions(
+          repo.path,
+          remoteTrackingBase.branch,
+          localGitExecOptions
+        ))
       const hasLocalBaseRef =
-        hasRemoteTrackingBaseRef ||
-        (await hasLocalWorktreeBaseRefWithOptions(repo.path, baseBranch, localGitExecOptions))
+        hasRemoteTrackingBaseRef || hasNamedLocalBaseRef || hasFallbackLocalBaseRef
       if (!hasRemoteTrackingBaseRef && hasLocalBaseRef) {
+        // Why: use the usable local branch when offline refresh cannot create its tracking ref.
+        if (hasFallbackLocalBaseRef) {
+          baseBranch = remoteTrackingBase.branch
+        }
         remoteTrackingBase = null
       } else {
         emitCreateWorktreeProgress(mainWindow, 'fetching', args.creationId)
