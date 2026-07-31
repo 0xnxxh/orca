@@ -145,7 +145,7 @@ describe('MobileHomeQuickActions', () => {
   it('does not expose malformed legacy endpoint details', async () => {
     await renderQuickActions([
       host('desk-a', 'Desk', 'gateway.example.com/v1/connect/bearer-secret?token=query-secret'),
-      host('desk-b', 'Desk', 'legacy-endpoint/other-secret')
+      host('desk-b', 'Desk', 'localhost:6768/private-secret')
     ])
 
     act(() => newWorkspaceButton().props.onPress())
