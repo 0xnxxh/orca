@@ -61,7 +61,7 @@ describe('daemon process identity evidence', () => {
   })
 
   it('proves Linux pid reuse from native start ticks without derived milliseconds', async () => {
-    const readProcessStartedAtMs = vi.fn(() => exactIncarnation.identity.startedAtMs)
+    const readProcessStartedAtMs = vi.fn(async () => exactIncarnation.identity.startedAtMs)
 
     await expect(
       probeDaemonProcessIdentity(
@@ -247,7 +247,7 @@ describe('daemon process identity evidence', () => {
         signalProcess: () => 'occupied',
         readCommandLine: async () =>
           `node daemon-entry --socket ${endpoint.socketPath} --token ${endpoint.tokenPath}`,
-        readProcessStartedAtMs: () => exactIncarnation.identity.startedAtMs + 2_500
+        readProcessStartedAtMs: async () => exactIncarnation.identity.startedAtMs + 2_500
       })
     ).resolves.toMatchObject({ state: 'unknown', reason: 'macos_start_time_mismatch' })
   })

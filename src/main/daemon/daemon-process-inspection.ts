@@ -63,6 +63,9 @@ export async function readProcessCommandLine(
   }
 }
 
+// Why: Get-CimInstance errors (Winmgmt down, corrupt WMI repository, access denied) are
+// non-terminating and exit 0 with an empty $p, which is indistinguishable from "no such
+// process" — so the script reports query failure explicitly instead of asserting absence.
 export async function queryWindowsProcess(
   pid: number,
   dependencies: DaemonProcessInspectionDependencies = {}
@@ -78,23 +81,26 @@ export async function queryWindowsProcess(
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        `$p = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}"; ` +
-          `if (!$p) { @{ exists = $false } | ConvertTo-Json -Compress } else { ` +
+        `$ErrorActionPreference = 'Stop'; ` +
+          `try { $p = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" } ` +
+          `catch { @{ status = 'query_failed' } | ConvertTo-Json -Compress; exit 0 }; ` +
+          `if (!$p) { @{ status = 'missing' } | ConvertTo-Json -Compress; exit 0 }; ` +
           `$start = $null; if ($p.CreationDate) { ` +
           `$start = [long]([DateTimeOffset]$p.CreationDate).ToUnixTimeMilliseconds() }; ` +
-          `@{ exists = $true; cmd = $p.CommandLine; start = $start } | ConvertTo-Json -Compress }`
+          `@{ status = 'present'; cmd = $p.CommandLine; start = $start } | ConvertTo-Json -Compress`
       ],
       3_000
     )
     const parsed = JSON.parse(stdout.trim()) as {
-      exists?: unknown
+      status?: unknown
       cmd?: unknown
       start?: unknown
     }
-    if (parsed.exists === false) {
+    // Only a query that ran and found nothing proves absence; anything else stays indeterminate.
+    if (parsed.status === 'missing') {
       return { status: 'missing' }
     }
-    if (parsed.exists !== true) {
+    if (parsed.status !== 'present') {
       return { status: 'unavailable' }
     }
     return {
@@ -105,6 +111,22 @@ export async function queryWindowsProcess(
     }
   } catch {
     return { status: 'unavailable' }
+  }
+}
+
+// Why: `ps` is darwin's only start-time source and this audit-only probe runs in the
+// Electron main process, where the sync spawn blocks every IPC/UI turn for its duration.
+export async function readMacosProcessStartedAtMs(
+  pid: number,
+  dependencies: DaemonProcessInspectionDependencies = {}
+): Promise<number | null> {
+  const runCommand = dependencies.runCommand ?? runInspectionCommand
+  try {
+    const stdout = await runCommand('ps', ['-p', String(pid), '-o', 'lstart='], 2_000)
+    const startedAtMs = Date.parse(stdout.trim())
+    return Number.isFinite(startedAtMs) ? startedAtMs : null
+  } catch {
+    return null
   }
 }
 

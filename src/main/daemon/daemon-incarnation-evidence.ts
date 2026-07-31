@@ -16,6 +16,7 @@ import {
   inspectProcessSignal,
   queryWindowsProcess,
   readLinuxStat,
+  readMacosProcessStartedAtMs,
   readProcessCommandLine
 } from './daemon-process-inspection'
 
@@ -33,6 +34,11 @@ export {
 } from './daemon-incarnation-evidence-types'
 
 const POSIX_START_TIME_TOLERANCE_MS = 1_500
+
+// Why: linux start time comes from procfs via the shared helper; only darwin's `ps` spawn
+// had to move off the main thread.
+const readLinuxProcessStartedAtMs = async (pid: number): Promise<number | null> =>
+  getProcessStartedAtMs(pid)
 
 export async function probeDaemonProcessIdentity(
   exactIncarnation: ExactDaemonIncarnation | null,
@@ -134,7 +140,7 @@ async function probeLinuxProcess(
     ])
   }
 
-  const startedAtMs = (dependencies.readProcessStartedAtMs ?? getProcessStartedAtMs)(
+  const startedAtMs = await (dependencies.readProcessStartedAtMs ?? readLinuxProcessStartedAtMs)(
     exactIncarnation.identity.pid
   )
   if (startedAtMs === null) {
@@ -172,7 +178,7 @@ async function probeMacosProcess(
   if (!commandLineMatchesDaemon(commandLine, endpoint.socketPath, endpoint.tokenPath)) {
     return unknown('command_line_mismatch', ['process_command_line'])
   }
-  const startedAtMs = (dependencies.readProcessStartedAtMs ?? getProcessStartedAtMs)(
+  const startedAtMs = await (dependencies.readProcessStartedAtMs ?? readMacosProcessStartedAtMs)(
     exactIncarnation.identity.pid
   )
   if (startedAtMs === null) {
