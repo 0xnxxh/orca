@@ -279,22 +279,18 @@ function classifyPipelineString(status: string): CheckStatus {
   if (s === 'failed' || s === 'action_required') {
     return 'failure'
   }
-  // Why: a skipped pipeline is a deliberate "not applicable" (every job filtered out by `rules:`),
-  // which classifyCheckOutcome counts as passing — leaving it neutral here made the MR card read
-  // grey while the Checks tab, fed by the same jobs, read green.
-  if (s === 'skipped') {
-    return 'success'
-  }
-  // Why: a `manual` pipeline is blocked on a human trigger, not broken — never paint the card red.
+  // Why: GitLab only reports pipeline-level `manual` when the pipeline is *blocked* on a human
+  // trigger (a manual job with allow_failure: false), so it is outstanding rather than broken or
+  // done. Red overstated it; neutral would drop the cue entirely and paint the worktree card's MR
+  // icon green (worktree-review-helpers.tsx defaults `open` to emerald), which is worse — with
+  // "Pipelines must succeed" on, GitLab rejects this merge.
   if (s === 'manual') {
-    return 'neutral'
+    return 'pending'
   }
-  // Why: deliberate, product-sign-off-pending divergence — a canceled *job* is 'failed' on every
-  // check surface (provider-check-summary.ts FAILED_CONCLUSIONS), but flipping canceled MR cards
-  // from grey to red is a visible tone change that belongs in its own change, not this one.
-  if (s === 'canceled' || s === 'canceling') {
-    return 'neutral'
-  }
+  // Why: `skipped` and `canceled` pipelines stay neutral (the fall-through below) even though the
+  // job rollup calls the same jobs passing/failing. GitLab's own MR widget paints both grey, and
+  // `allow_merge_on_skipped_pipeline` defaults to false, so a skipped pipeline still blocks merge —
+  // flipping either tone is a product decision that belongs in its own change, not this one.
   if (
     s === 'created' ||
     s === 'pending' ||

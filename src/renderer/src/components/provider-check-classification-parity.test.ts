@@ -53,7 +53,10 @@ type ParityCase = {
   /**
    * The `head_pipeline.status` GitLab reports for this same job set. This is the only GitLab path
    * with production callers (client.ts passes pipeline objects, never job arrays), so it is the
-   * surface that decides the MR card's tone.
+   * surface that decides the MR card's tone. Left unset for the shapes where the pipeline string
+   * knowingly disagrees with the job rollup — a `manual`/`skipped`/`canceled` pipeline is grey on
+   * the card but its jobs roll up green/red in the Checks tab. Those are the deferred tone changes
+   * documented in `classifyPipelineString`; pinning them here would just freeze the disagreement.
    */
   gitLabPipelineStatus?: string
   expected: ParityExpectation
@@ -113,12 +116,13 @@ const PARITY_CASES: ParityCase[] = [
     ],
     expected: { state: 'pending', passed: 1, failed: 0, pending: 1, neutral: 0 }
   },
-  gitLabCase(
-    'GitLab manual gate only',
-    ['manual'],
-    { state: 'neutral', passed: 0, failed: 0, pending: 0, neutral: 1 },
-    'manual'
-  ),
+  gitLabCase('GitLab manual gate only', ['manual'], {
+    state: 'neutral',
+    passed: 0,
+    failed: 0,
+    pending: 0,
+    neutral: 1
+  }),
   gitLabCase('GitLab manual gate alongside a green pipeline', ['manual', 'success'], {
     state: 'success',
     passed: 1,
@@ -126,12 +130,13 @@ const PARITY_CASES: ParityCase[] = [
     pending: 0,
     neutral: 1
   }),
-  gitLabCase(
-    'GitLab skipped-only pipeline',
-    ['skipped', 'skipped'],
-    { state: 'success', passed: 2, failed: 0, pending: 0, neutral: 0 },
-    'skipped'
-  ),
+  gitLabCase('GitLab skipped-only pipeline', ['skipped', 'skipped'], {
+    state: 'success',
+    passed: 2,
+    failed: 0,
+    pending: 0,
+    neutral: 0
+  }),
   gitLabCase('GitLab success alongside an unrecognized job status', ['success', 'wat'], {
     state: 'success',
     passed: 1,
@@ -177,7 +182,8 @@ describe('provider check classification parity', () => {
       }
       if (gitLabPipelineStatus) {
         // Why: this *is* the production GitLab entry point — the MR card and the hosted-review
-        // queue read it, so it must not disagree with the Checks tab for the same jobs.
+        // queue read it, so where it is pinned it must not disagree with the Checks tab for the
+        // same jobs.
         expect(derivePipelineStatus(gitLabPipelineStatus)).toBe(expected.state)
         expect(derivePipelineStatus({ status: gitLabPipelineStatus })).toBe(expected.state)
       }
