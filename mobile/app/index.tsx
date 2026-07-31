@@ -16,6 +16,7 @@ import {
 } from '../src/components/AccountUsage'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { loadHosts } from '../src/transport/host-store'
+import { navigateToMobileHostEdit } from '../src/transport/host-edit-navigation'
 import { removeHostAndCloseClient } from '../src/transport/host-removal-lifecycle'
 import { pickResumeWorktree } from '../src/worktree/resume-worktree'
 import type { RpcClient } from '../src/transport/rpc-client'
@@ -971,7 +972,7 @@ export default function HomeScreen() {
           onDismiss: () => setActionTarget(null),
           onReconnect: (hostId) => void forceReconnectHost(hostId),
           onDisconnect: closeHostClient,
-          onEdit: (hostId) => router.push(`/h/${hostId}/edit`),
+          onEdit: (hostId) => navigateToMobileHostEdit(router, hostId),
           onRemove: setConfirmRemove
         })}
         onClose={() => setActionTarget(null)}

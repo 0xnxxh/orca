@@ -14,6 +14,7 @@ const secureStoreMock = vi.hoisted(() => ({
 }))
 
 const scheduleCleanupMock = vi.hoisted(() => vi.fn())
+const platformMock = vi.hoisted(() => ({ OS: 'ios' }))
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: asyncStorageMock
@@ -25,7 +26,7 @@ vi.mock('expo-secure-store', () => ({
 }))
 
 vi.mock('react-native', () => ({
-  Platform: { OS: 'ios' }
+  Platform: platformMock
 }))
 
 vi.mock('./host-credential-cleanup', () => ({
@@ -70,6 +71,7 @@ describe('host-store list mutations', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetHostStoreForTests()
+    platformMock.OS = 'ios'
     resetMobileRelayHostOverlayStoreForTests()
     scheduleCleanupMock.mockReset()
     scheduleCleanupMock.mockResolvedValue(undefined)
@@ -177,6 +179,25 @@ describe('host-store list mutations', () => {
 
     expect(asyncStorageMock.getItem).not.toHaveBeenCalledWith(OVERLAY_STORAGE_KEY)
     expect(secureStoreMock.deleteItemAsync).not.toHaveBeenCalled()
+  })
+
+  it('keeps the normal iOS save on the existing default keychain service', async () => {
+    await saveHost({
+      id: 'host-new',
+      name: 'New Host',
+      endpoint: 'ws://127.0.0.1:3',
+      publicKeyB64: 'key-new',
+      deviceToken: 'new-token',
+      lastConnected: 0
+    })
+
+    expect(secureStoreMock.setItemAsync).toHaveBeenCalledWith(
+      'orca.host-token.host-new',
+      'new-token',
+      {
+        keychainAccessible: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY'
+      }
+    )
   })
 
   it('commits the removal when credential cleanup scheduling rejects', async () => {
@@ -366,7 +387,7 @@ describe('host-store list mutations', () => {
     expect(hosts.find((host) => host.id === HOST_ONE.id)?.name).toBe('Living Room Mac')
   })
 
-  it('does not share a pre-token snapshot after saveHost commits its token', async () => {
+  it('does not share a host-list pass started before saveHost commits its token', async () => {
     const newHost = {
       id: 'host-new',
       name: 'New Host',
@@ -381,13 +402,18 @@ describe('host-store list mutations', () => {
         releaseTokenWrite = resolve
       })
     )
-    let resolvePrewriteTokenRead: (token: string | null) => void = () => {}
-    const prewriteTokenRead = new Promise<string | null>((resolve) => {
-      resolvePrewriteTokenRead = resolve
+    let resolveParkedTokenRead: (token: string | null) => void = () => {}
+    const parkedTokenRead = new Promise<string | null>((resolve) => {
+      resolveParkedTokenRead = resolve
     })
+    let shouldParkHostOneRead = true
     secureStoreMock.getItemAsync.mockImplementation(async (key: string) => {
+      if (key.endsWith(HOST_ONE.id) && shouldParkHostOneRead) {
+        shouldParkHostOneRead = false
+        return parkedTokenRead
+      }
       if (key.endsWith(newHost.id)) {
-        return prewriteTokenRead
+        return newHost.deviceToken
       }
       return key.endsWith(HOST_ONE.id) || key.endsWith(HOST_TWO.id) ? `token-${key.at(-1)}` : null
     })
@@ -398,21 +424,25 @@ describe('host-store list mutations', () => {
     })
     const parkedLoad = loadHosts()
     await vi.waitFor(() => {
-      expect(secureStoreMock.getItemAsync).toHaveBeenCalledWith(
-        expect.stringContaining(newHost.id),
-        expect.anything()
-      )
+      expect(
+        asyncStorageMock.getItem.mock.calls.filter(([key]) => key === HOSTS_STORAGE_KEY)
+      ).toHaveLength(2)
     })
 
     releaseTokenWrite()
     await save
+    await vi.waitFor(() => {
+      expect(secureStoreMock.getItemAsync).toHaveBeenCalledWith(
+        expect.stringContaining(HOST_ONE.id),
+        expect.anything()
+      )
+    })
     const afterSave = loadHosts()
-    resolvePrewriteTokenRead(null)
+    resolveParkedTokenRead(null)
 
-    await parkedLoad
-    await expect(afterSave.then((hosts) => hosts.map((host) => host.id))).resolves.toContain(
-      newHost.id
-    )
+    const [parkedHosts, savedHosts] = await Promise.all([parkedLoad, afterSave])
+    expect(savedHosts.map((host) => host.id)).toContain(newHost.id)
+    expect(savedHosts).not.toBe(parkedHosts)
   })
 
   it('does not let a late pre-write token read poison the token cache', async () => {
@@ -465,5 +495,106 @@ describe('host-store list mutations', () => {
     await expect(updateLastConnected(HOST_ONE.id)).resolves.toBeUndefined()
     expect(asyncStorageMock.setItem).not.toHaveBeenCalled()
     expect(storedHostsRaw).toBe('{')
+  })
+})
+
+describe('host-store pairing save after an Android encryption rejection', () => {
+  const NEW_HOST = {
+    id: 'host-1782629088232',
+    name: 'Host 1',
+    endpoint: 'ws://192.168.0.56:6769',
+    publicKeyB64: 'desktop-key',
+    lastConnected: 0,
+    deviceToken: 'device-token'
+  }
+  // Why: the verbatim Android rejection from #6600 — expo maps a null-message GeneralSecurityException to this.
+  const ENCRYPT_REJECTION = new Error(
+    "Could not encrypt the value for key 'orca.host-token.host-1782629088232' under keychain 'key_v1'. Caused by: unknown"
+  )
+  const GENERATION_KEY = 'orca:pairing-keychain-generation'
+  let storedHostsRaw: string
+  let storedGenerationRaw: string | null
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetHostStoreForTests()
+    platformMock.OS = 'android'
+    resetMobileRelayHostOverlayStoreForTests()
+    scheduleCleanupMock.mockReset()
+    scheduleCleanupMock.mockResolvedValue(undefined)
+    storedHostsRaw = '[]'
+    storedGenerationRaw = null
+    asyncStorageMock.getItem.mockImplementation(async (key: string) => {
+      if (key === HOSTS_STORAGE_KEY) {
+        return storedHostsRaw
+      }
+      // Why: the generation record is durable on device; a forgetful mock would fake a broken read path.
+      return key === GENERATION_KEY ? storedGenerationRaw : null
+    })
+    asyncStorageMock.setItem.mockImplementation(async (key: string, raw: string) => {
+      if (key === HOSTS_STORAGE_KEY) {
+        storedHostsRaw = raw
+      } else if (key === GENERATION_KEY) {
+        storedGenerationRaw = raw
+      }
+    })
+    secureStoreMock.deleteItemAsync.mockResolvedValue(undefined)
+    secureStoreMock.getItemAsync.mockResolvedValue(null)
+  })
+
+  it('saves the host when the reported Android failure is alias-local (#6600)', async () => {
+    const written = new Map<string | undefined, string>()
+    // Why: simulate the unverified alias-local case; no affected physical device was available.
+    secureStoreMock.setItemAsync.mockImplementation(
+      async (_key: string, value: string, options?: { keychainService?: string }) => {
+        if (options?.keychainService === undefined) {
+          throw ENCRYPT_REJECTION
+        }
+        written.set(options.keychainService, value)
+      }
+    )
+
+    await expect(saveHost(NEW_HOST)).resolves.toBeUndefined()
+
+    expect(written.get('orca.pairing.v1')).toBe('device-token')
+    expect(JSON.parse(storedHostsRaw)).toEqual([
+      {
+        id: NEW_HOST.id,
+        name: NEW_HOST.name,
+        endpoint: NEW_HOST.endpoint,
+        publicKeyB64: NEW_HOST.publicKeyB64,
+        lastConnected: NEW_HOST.lastConnected
+      }
+    ])
+  })
+
+  it('still surfaces the failure when no keystore alias can accept the token', async () => {
+    secureStoreMock.setItemAsync.mockRejectedValue(ENCRYPT_REJECTION)
+
+    await expect(saveHost(NEW_HOST)).rejects.toBe(ENCRYPT_REJECTION)
+  })
+
+  it('serves the rotated token to loadHosts so the saved host survives a relaunch', async () => {
+    const written = new Map<string | undefined, string>()
+    secureStoreMock.setItemAsync.mockImplementation(
+      async (_key: string, value: string, options?: { keychainService?: string }) => {
+        if (options?.keychainService === undefined) {
+          throw ENCRYPT_REJECTION
+        }
+        written.set(options.keychainService, value)
+      }
+    )
+    await saveHost(NEW_HOST)
+    // Why: a fresh process has no token cache, so the host list has to come back off the rotated alias.
+    resetHostStoreForTests()
+    secureStoreMock.getItemAsync.mockImplementation(
+      async (_key: string, options?: { keychainService?: string }) =>
+        written.get(options?.keychainService) ?? null
+    )
+
+    const hosts = await loadHosts()
+
+    expect(hosts).toHaveLength(1)
+    expect(hosts[0]!.deviceToken).toBe('device-token')
   })
 })

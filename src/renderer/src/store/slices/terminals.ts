@@ -31,12 +31,14 @@ import {
 import { deriveGeneratedTabTitle } from '../../../../shared/agent-tab-title'
 import { isDecorativeAgentTitleFrameChange } from '../../../../shared/agent-decorative-title-signature'
 import {
+  isTerminalLeafId,
   makePaneKey,
   parseLegacyNumericPaneKey,
   parsePaneKey
 } from '../../../../shared/stable-pane-id'
 import { isValidHostTerminalTabId, isValidTerminalTabId } from '../../../../shared/terminal-tab-id'
 import { buildByIdIndex, buildWorktreeByIdIndex } from './worktree-by-id-index'
+import { isSameCodexRestartNoticeAccount } from './codex-restart-notice-account-identity'
 import {
   getRepoIdFromWorktreeId,
   splitWorktreeIdForFilesystem
@@ -86,6 +88,10 @@ import {
   normalizeTerminalLayoutSnapshot,
   resolvePtyBoundActiveLeafId
 } from '@/components/terminal-pane/terminal-layout-leaf-ids'
+import {
+  normalizeTerminalLayoutPtyOwnership,
+  resolveTerminalLayoutPtyOwnershipTransfers
+} from '@/components/terminal-pane/terminal-layout-pty-ownership'
 import { shutdownBufferCaptures } from '@/components/terminal-pane/shutdown-buffer-captures'
 import { callRuntimeRpc } from '@/runtime/runtime-rpc-client'
 import { parseRemoteRuntimePtyId, toRemoteRuntimePtyId } from '@/runtime/runtime-terminal-stream'
@@ -120,6 +126,7 @@ import { resolveTerminalWorktreeRoute } from '@/lib/terminal-worktree-route'
 import { resolveWorktreeOperationRouteResult } from '@/lib/worktree-operation-route'
 import { getLocalProjectExecutionRuntimeContext } from '@/lib/local-preflight-context'
 import type { NativeChatLaunchDraft, NativeChatLaunchPrompt } from '@/lib/native-chat-launch-prompt'
+import { resolveAgentPaneAuthorityKey } from './agent-pane-authority'
 import {
   addAdditionalValidWorkspaceKeys,
   type WorkspaceSessionHydrationOptions
@@ -512,9 +519,14 @@ export type AutomaticAgentResumeClaim = {
 export type CodexRestartNotice = {
   previousAccountLabel: string
   nextAccountLabel: string
+  /** Ids behind the two labels, when the caller knows them (`null` is the system
+   *  default). Two accounts can share a label, so only these can decide whether
+   *  a re-mark actually points back at the account the pane launched under. */
+  previousAccountId?: string | null
+  nextAccountId?: string | null
   /** Set once the user asks for the restart. The record outlives the prompt
-   *  because `previousAccountLabel` is the only memory of the account this pane
-   *  actually launched under, which drives the A -> B -> A collapse. */
+   *  because the previous-account fields are the only memory of the account this
+   *  pane actually launched under, which drives the A -> B -> A collapse. */
   restartRequested?: true
   /** Set when the user answers "Keep old account". Same reason the record has to
    *  survive: deleting it erased the launch account, so re-selecting it looked
@@ -563,6 +575,10 @@ export type TerminalSlice = {
   nativeChatLaunchDraftByTabId: Record<string, NativeChatLaunchDraft>
   seedNativeChatLaunchDraft: (draft: NativeChatLaunchDraft) => void
   markNativeChatLaunchDraftAdopted: (tabId: string) => void
+  resolveNativeChatLaunchDraft: (
+    tabId: string,
+    resolution: Pick<NativeChatLaunchDraft, 'createdAt' | 'text'>
+  ) => void
   clearNativeChatLaunchDraft: (tabId: string) => void
   pendingStartupByTabId: Record<
     string,
@@ -714,9 +730,14 @@ export type TerminalSlice = {
   isPtyShutdownPending: (ptyId: string) => boolean
   queueCodexPaneRestarts: (ptyIds: string[]) => void
   consumePendingCodexPaneRestart: (ptyId: string) => boolean
+  /** Returns the ptyIds left holding a notice, so callers can tell a raised
+   *  prompt from one the A -> B -> A collapse dropped. */
   markCodexRestartNotices: (
-    notices: { ptyId: string; previousAccountLabel: string; nextAccountLabel: string }[]
-  ) => void
+    notices: (Pick<CodexRestartNotice, 'previousAccountLabel' | 'nextAccountLabel'> &
+      Partial<Pick<CodexRestartNotice, 'previousAccountId' | 'nextAccountId'>> & {
+        ptyId: string
+      })[]
+  ) => string[]
   clearCodexRestartNotice: (ptyId: string) => void
   dismissCodexRestartNotices: (ptyIds: string[]) => void
   setTabPaneExpanded: (tabId: string, expanded: boolean) => void
@@ -822,6 +843,7 @@ type WorkspaceHydrationPatch = Pick<
   | 'activeRepoId'
   | 'activeWorktreeId'
   | 'activeWorkspaceKey'
+  | 'activeWorkspaceExecutionHostId'
   | 'activeTabId'
   | 'activeTabIdByWorktree'
   | 'restoredRuntimeHostIdByWorkspaceSessionKey'
@@ -850,6 +872,48 @@ function replaceHydratedRecordKeys<T>(
   return {
     ...Object.fromEntries(Object.entries(current).filter(([key]) => !replaceKeys.has(key))),
     ...Object.fromEntries(Object.entries(hydrated).filter(([key]) => replaceKeys.has(key)))
+  }
+}
+
+type TerminalLayoutPtyOwnershipTransfer = ReturnType<
+  typeof resolveTerminalLayoutPtyOwnershipTransfers
+>[number]
+
+function transferNormalizedTerminalLayoutPtyOwnership(
+  state: Pick<AppState, 'terminalLayoutsByTabId' | 'transferAgentPaneAuthority'>,
+  tabId: string,
+  transfers: readonly TerminalLayoutPtyOwnershipTransfer[]
+): void {
+  if (transfers.length === 0) {
+    return
+  }
+  const ptyIdsOwnedByOtherTabs = new Set<string>()
+  for (const [candidateTabId, layout] of Object.entries(state.terminalLayoutsByTabId)) {
+    if (candidateTabId === tabId) {
+      continue
+    }
+    for (const ptyId of Object.values(layout.ptyIdsByLeafId ?? {})) {
+      ptyIdsOwnedByOtherTabs.add(ptyId)
+    }
+  }
+  for (const { removedLeafId, retainedLeafId, ptyId } of transfers) {
+    if (
+      !isTerminalLeafId(removedLeafId) ||
+      !isTerminalLeafId(retainedLeafId) ||
+      ptyIdsOwnedByOtherTabs.has(ptyId)
+    ) {
+      continue
+    }
+    const fromPaneKey = makePaneKey(tabId, removedLeafId)
+    const currentOwner = parsePaneKey(resolveAgentPaneAuthorityKey(fromPaneKey))
+    if (currentOwner && currentOwner.tabId !== tabId) {
+      continue
+    }
+    state.transferAgentPaneAuthority({
+      fromPaneKey,
+      toPaneKey: makePaneKey(tabId, retainedLeafId),
+      ptyId
+    })
   }
 }
 
@@ -915,6 +979,9 @@ function targetScopedWorkspaceHydrationPatch(
     activeRepoId: activeOutsideScope ? state.activeRepoId : hydrated.activeRepoId,
     activeWorktreeId: activeOutsideScope ? state.activeWorktreeId : hydrated.activeWorktreeId,
     activeWorkspaceKey: activeOutsideScope ? state.activeWorkspaceKey : hydrated.activeWorkspaceKey,
+    activeWorkspaceExecutionHostId: activeOutsideScope
+      ? state.activeWorkspaceExecutionHostId
+      : hydrated.activeWorkspaceExecutionHostId,
     activeTabId: activeOutsideScope ? state.activeTabId : hydrated.activeTabId,
     activeTabIdByWorktree: replaceHydratedRecordKeys(
       state.activeTabIdByWorktree,
@@ -1111,6 +1178,26 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         nativeChatLaunchDraftByTabId: {
           ...s.nativeChatLaunchDraftByTabId,
           [tabId]: { ...current, adopted: true }
+        }
+      }
+    })
+  },
+
+  resolveNativeChatLaunchDraft: (tabId, resolution) => {
+    set((s) => {
+      const current = s.nativeChatLaunchDraftByTabId[tabId]
+      if (
+        !current ||
+        current.resolved ||
+        current.createdAt !== resolution.createdAt ||
+        current.text !== resolution.text
+      ) {
+        return {}
+      }
+      return {
+        nativeChatLaunchDraftByTabId: {
+          ...s.nativeChatLaunchDraftByTabId,
+          [tabId]: { ...current, resolved: true }
         }
       }
     })
@@ -3359,25 +3446,39 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
 
   markCodexRestartNotices: (notices) => {
     if (notices.length === 0) {
-      return
+      return []
     }
+    const noticedPtyIds: string[] = []
     set((s) => {
       const next = { ...s.codexRestartNoticeByPtyId }
       const nextPendingCodexPaneRestartIds = { ...s.pendingCodexPaneRestartIds }
       for (const notice of notices) {
         const existing = next[notice.ptyId]
-        const previousAccountLabel = existing?.previousAccountLabel ?? notice.previousAccountLabel
+        // Why one record rather than two lookups: the label and the id of the
+        // launch account have to come from the same source, or they can end up
+        // describing two different accounts.
+        const launch = existing ?? notice
+        const target = { id: notice.nextAccountId, label: notice.nextAccountLabel }
 
         // Why: a live Codex pane keeps its original launch account until it actually restarts, so A -> B -> A must not leave a stale restart notice.
-        if (previousAccountLabel === notice.nextAccountLabel) {
+        if (
+          isSameCodexRestartNoticeAccount(
+            { id: launch.previousAccountId, label: launch.previousAccountLabel },
+            target
+          )
+        ) {
           delete next[notice.ptyId]
           delete nextPendingCodexPaneRestartIds[notice.ptyId]
           continue
         }
 
         next[notice.ptyId] = {
-          previousAccountLabel,
+          previousAccountLabel: launch.previousAccountLabel,
           nextAccountLabel: notice.nextAccountLabel,
+          ...(launch.previousAccountId === undefined
+            ? {}
+            : { previousAccountId: launch.previousAccountId }),
+          ...(notice.nextAccountId === undefined ? {} : { nextAccountId: notice.nextAccountId }),
           // Why: a queued restart relaunches under whatever account is selected
           // when it runs, so a later switch does not reopen an answered prompt.
           ...(existing?.restartRequested ? { restartRequested: true as const } : {}),
@@ -3386,16 +3487,22 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           // so a later C reopens the prompt while adding an account or
           // reauthenticating the active one (both re-mark live panes with the
           // selection unchanged) must not resurrect it and re-mute the pane.
-          ...(existing?.dismissed && existing.nextAccountLabel === notice.nextAccountLabel
+          ...(existing?.dismissed &&
+          isSameCodexRestartNoticeAccount(
+            { id: existing.nextAccountId, label: existing.nextAccountLabel },
+            target
+          )
             ? { dismissed: true as const }
             : {})
         }
+        noticedPtyIds.push(notice.ptyId)
       }
       return {
         codexRestartNoticeByPtyId: next,
         pendingCodexPaneRestartIds: nextPendingCodexPaneRestartIds
       }
     })
+    return noticedPtyIds
   },
 
   clearCodexRestartNotice: (ptyId) => {
@@ -3455,15 +3562,24 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
   },
 
   setTabLayout: (tabId, layout) => {
+    let ownershipTransfers: ReturnType<typeof resolveTerminalLayoutPtyOwnershipTransfers> = []
     set((s) => {
       const next = { ...s.terminalLayoutsByTabId }
       if (layout) {
-        next[tabId] = layout
+        const normalized = normalizeTerminalLayoutPtyOwnership(layout)
+        next[tabId] = normalized.snapshot
+        if (normalized.changed) {
+          ownershipTransfers = resolveTerminalLayoutPtyOwnershipTransfers(
+            layout,
+            normalized.snapshot
+          )
+        }
       } else {
         delete next[tabId]
       }
       return { terminalLayoutsByTabId: next }
     })
+    transferNormalizedTerminalLayoutPtyOwnership(get(), tabId, ownershipTransfers)
   },
 
   syncPaneDetachPtyOwnership: ({
@@ -3663,6 +3779,14 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
   },
 
   hydrateWorkspaceSession: (session, options) => {
+    const ownershipTransferTabIds = options?.replaceWorkspaceKeys
+      ? new Set(
+          options.replaceWorkspaceKeys.flatMap((workspaceKey) =>
+            (session.tabsByWorktree[workspaceKey] ?? []).map((tab) => tab.id)
+          )
+        )
+      : null
+    const ownershipTransfersByTabId = new Map<string, TerminalLayoutPtyOwnershipTransfer[]>()
     set((s) => {
       const runtimeSessionPlaceholders = buildRuntimeSessionPlaceholders({
         repos: s.repos,
@@ -3750,6 +3874,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
               ? (activeWorktreeId as WorkspaceKey)
               : worktreeWorkspaceKey(activeWorktreeId)
             : null
+      const activeWorkspaceExecutionHostId =
+        activeWorkspaceKey && session.activeWorkspaceExecutionHostId
+          ? session.activeWorkspaceExecutionHostId
+          : null
       const activeTabId =
         session.activeTabId && validTabIds.has(session.activeTabId) ? session.activeTabId : null
       const activeRepoId =
@@ -3886,6 +4014,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         activeRepoId,
         activeWorktreeId,
         activeWorkspaceKey,
+        activeWorkspaceExecutionHostId,
         activeTabId,
         activeTabIdByWorktree,
         restoredRuntimeHostIdByWorkspaceSessionKey:
@@ -3913,7 +4042,17 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
             .filter(([tabId]) => validTabIds.has(tabId))
             .map(([tabId, layout]) => {
               // Why: old sessions can contain renderer-local pane:1-style leaf ids; normalize before runtime/mobile surfaces read them.
-              const normalized = normalizeTerminalLayoutSnapshot(layout).snapshot
+              const normalization = normalizeTerminalLayoutSnapshot(layout)
+              const normalized = normalization.snapshot
+              if (
+                normalization.changed &&
+                (!ownershipTransferTabIds || ownershipTransferTabIds.has(tabId))
+              ) {
+                ownershipTransfersByTabId.set(
+                  tabId,
+                  resolveTerminalLayoutPtyOwnershipTransfers(layout, normalized)
+                )
+              }
               const tab = tabById.get(tabId)
               const sanitized = tab ? sanitizeTerminalLayoutPaneTitles(normalized, tab) : normalized
               const activeLeafId = sanitized.root
@@ -3931,6 +4070,9 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         ? targetScopedWorkspaceHydrationPatch(s, hydrated, session, options)
         : hydrated
     })
+    for (const [tabId, transfers] of ownershipTransfersByTabId) {
+      transferNormalizedTerminalLayoutPtyOwnership(get(), tabId, transfers)
+    }
   },
 
   reconnectPersistedTerminals: async (signal, options) => {
