@@ -32,6 +32,7 @@ import type { OpenFile } from '../store/slices/editor'
 import { isTerminalLeafId, makePaneKey, parsePaneKey } from '../../../shared/stable-pane-id'
 import { getRemoteRuntimePtyEnvironmentId, toRemoteRuntimePtyId } from './runtime-terminal-stream'
 import { sanitizeTerminalLayoutPaneTitlesForLabels } from '@/lib/terminal-pane-title-sanitization'
+import { normalizeTerminalLayoutPtyOwnership } from '@/components/terminal-pane/terminal-layout-pty-ownership'
 import {
   getExplicitRuntimeEnvironmentIdForWorktree,
   getRuntimeSessionMirrorEnvironmentIds
@@ -586,9 +587,10 @@ function buildMirroredTerminalTabs(
         .filter((surface): surface is ReadyTerminalSurface => surface.status === 'ready')
         .map((surface) => [surface.leafId, toRemoteRuntimePtyId(surface.terminal, environmentId)])
     )
-    const ptyIds = surfaces
-      .map((surface) => ptyIdsByLeafId[surface.leafId]!)
-      .filter((ptyId): ptyId is string => typeof ptyId === 'string' && ptyId.length > 0)
+    const layout = normalizeTerminalLayoutPtyOwnership(
+      chooseRemoteTerminalLayout(surfaces, ptyIdsByLeafId, existingLayout, requestedActiveLeafId)
+    ).snapshot
+    const ptyIds = Object.values(layout.ptyIdsByLeafId ?? {})
     const launchAgent =
       activeSurface.launchAgent ?? surfaces.find((surface) => surface.launchAgent)?.launchAgent
     const ownerAgent = resolvePaneAgentOwner({
@@ -643,12 +645,7 @@ function buildMirroredTerminalTabs(
       },
       hostTabId: parentTabId,
       ptyIds,
-      layout: chooseRemoteTerminalLayout(
-        surfaces,
-        ptyIdsByLeafId,
-        existingLayout,
-        requestedActiveLeafId
-      )
+      layout
     }
   })
 }

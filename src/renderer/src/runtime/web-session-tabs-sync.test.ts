@@ -2338,6 +2338,59 @@ describe('applyWebSessionTabsSnapshot', () => {
     expect(patch.activeTabIdByWorktree?.[WT]).toBe(mirroredId)
   })
 
+  it('deduplicates mirrored leaves that claim the same remote PTY', () => {
+    const parentLayout = {
+      root: {
+        type: 'split' as const,
+        direction: 'horizontal' as const,
+        first: { type: 'leaf' as const, leafId: LEAF_ID },
+        second: { type: 'leaf' as const, leafId: SECOND_LEAF_ID }
+      },
+      activeLeafId: SECOND_LEAF_ID,
+      expandedLeafId: null
+    }
+    const patch = applyWebSessionTabsSnapshot(
+      makeState(),
+      makeSnapshot([
+        {
+          type: 'terminal',
+          id: HOST_SURFACE_ID,
+          title: 'stale mirror',
+          parentTabId: 'host-tab-1',
+          leafId: LEAF_ID,
+          parentLayout,
+          isActive: false,
+          status: 'ready',
+          terminal: 'terminal-1'
+        },
+        {
+          type: 'terminal',
+          id: `host-tab-1::${SECOND_LEAF_ID}`,
+          title: 'active mirror',
+          parentTabId: 'host-tab-1',
+          leafId: SECOND_LEAF_ID,
+          parentLayout,
+          isActive: true,
+          status: 'ready',
+          terminal: 'terminal-1'
+        }
+      ]),
+      ENV,
+      NOW
+    ) as Partial<WebSessionTabsSyncState>
+
+    const mirroredId = patch.tabsByWorktree?.[WT]?.[0]?.id
+    expect(patch.ptyIdsByTabId?.[mirroredId!]).toEqual(['remote:web-env-1@@terminal-1'])
+    expect(patch.terminalLayoutsByTabId?.[mirroredId!]).toEqual({
+      root: { type: 'leaf', leafId: SECOND_LEAF_ID },
+      activeLeafId: SECOND_LEAF_ID,
+      expandedLeafId: null,
+      ptyIdsByLeafId: {
+        [SECOND_LEAF_ID]: 'remote:web-env-1@@terminal-1'
+      }
+    })
+  })
+
   it('does not let repeated remote terminal status snapshots steal local tab focus', () => {
     const agentTabId = toWebTerminalSurfaceTabId('host-tab-1')
     const shellTabId = toWebTerminalSurfaceTabId('host-tab-2')
