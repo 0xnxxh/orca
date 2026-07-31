@@ -121,6 +121,17 @@ describe('terminal layout PTY ownership normalization', () => {
     expect(normalized.titlesByLeafId).toEqual({ [LEAF_2]: 'only cached title' })
   })
 
+  it('does not combine a retained buffer with a stale duplicate scrollback ref', () => {
+    const layout = duplicatePtyLayout()
+    layout.buffersByLeafId = { [LEAF_2]: 'active buffer' }
+    layout.scrollbackRefsByLeafId = { [LEAF_1]: 'stale-scrollback-ref' }
+
+    const normalized = normalizeTerminalLayoutPtyOwnership(layout).snapshot
+
+    expect(normalized.buffersByLeafId).toEqual({ [LEAF_2]: 'active buffer' })
+    expect(normalized.scrollbackRefsByLeafId).toBeUndefined()
+  })
+
   it('coalesces chained duplicate metadata in layout order', () => {
     const layout = duplicatePtyLayout()
     layout.activeLeafId = LEAF_3
@@ -133,6 +144,7 @@ describe('terminal layout PTY ownership normalization', () => {
       [LEAF_1]: 'first cached buffer',
       [LEAF_2]: 'second cached buffer'
     }
+    layout.scrollbackRefsByLeafId = undefined
 
     const normalized = normalizeTerminalLayoutSnapshot(layout).snapshot
 
@@ -248,6 +260,40 @@ describe('terminal layout PTY ownership normalization', () => {
     })
   })
 
+  it('keeps a valid active unbound leaf while repairing duplicate sibling ownership', () => {
+    const normalized = normalizeTerminalLayoutPtyOwnership({
+      root: {
+        type: 'split',
+        direction: 'vertical',
+        first: {
+          type: 'split',
+          direction: 'horizontal',
+          first: { type: 'leaf', leafId: LEAF_1 },
+          second: { type: 'leaf', leafId: LEAF_2 }
+        },
+        second: { type: 'leaf', leafId: LEAF_3 }
+      },
+      activeLeafId: LEAF_3,
+      expandedLeafId: LEAF_3,
+      ptyIdsByLeafId: {
+        [LEAF_1]: 'pty-agent',
+        [LEAF_2]: 'pty-agent'
+      }
+    })
+
+    expect(normalized.snapshot).toEqual({
+      root: {
+        type: 'split',
+        direction: 'vertical',
+        first: { type: 'leaf', leafId: LEAF_1 },
+        second: { type: 'leaf', leafId: LEAF_3 }
+      },
+      activeLeafId: LEAF_3,
+      expandedLeafId: LEAF_3,
+      ptyIdsByLeafId: { [LEAF_1]: 'pty-agent' }
+    })
+  })
+
   it('collapses repeated live leaf ids without looping during direct normalization', () => {
     const normalized = normalizeTerminalLayoutPtyOwnership({
       root: {
@@ -272,6 +318,45 @@ describe('terminal layout PTY ownership normalization', () => {
     expect(normalizeTerminalLayoutPtyOwnership(normalized.snapshot)).toEqual({
       snapshot: normalized.snapshot,
       changed: false
+    })
+  })
+
+  it('keeps active metadata when its retained leaf id also repeats', () => {
+    const normalized = normalizeTerminalLayoutPtyOwnership({
+      root: {
+        type: 'split',
+        direction: 'horizontal',
+        first: { type: 'leaf', leafId: LEAF_1 },
+        second: {
+          type: 'split',
+          direction: 'vertical',
+          first: { type: 'leaf', leafId: LEAF_2 },
+          second: { type: 'leaf', leafId: LEAF_2 }
+        }
+      },
+      activeLeafId: LEAF_2,
+      expandedLeafId: LEAF_2,
+      ptyIdsByLeafId: {
+        [LEAF_1]: 'pty-agent',
+        [LEAF_2]: 'pty-agent'
+      },
+      buffersByLeafId: {
+        [LEAF_1]: 'stale buffer',
+        [LEAF_2]: 'active buffer'
+      },
+      titlesByLeafId: {
+        [LEAF_1]: 'stale title',
+        [LEAF_2]: 'active title'
+      }
+    }).snapshot
+
+    expect(normalized).toEqual({
+      root: { type: 'leaf', leafId: LEAF_2 },
+      activeLeafId: LEAF_2,
+      expandedLeafId: LEAF_2,
+      ptyIdsByLeafId: { [LEAF_2]: 'pty-agent' },
+      buffersByLeafId: { [LEAF_2]: 'active buffer' },
+      titlesByLeafId: { [LEAF_2]: 'active title' }
     })
   })
 

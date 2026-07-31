@@ -5,6 +5,11 @@ type TerminalLayoutPtyOwnershipNormalization = {
   changed: boolean
 }
 
+type DuplicatePtyLeafReplacements = {
+  orderedLeafIds: string[]
+  retainedLeafIdByRemovedLeafId: Map<string, string>
+}
+
 function collectLeafIds(node: TerminalPaneLayoutNode | null | undefined): string[] {
   if (!node) {
     return []
@@ -70,7 +75,10 @@ function coalesceLeafRecord(
     return undefined
   }
   const retained = Object.fromEntries(
-    Object.entries(source).filter(([leafId]) => !retainedLeafIdByRemovedLeafId.has(leafId))
+    Object.entries(source).filter(([leafId]) => {
+      const retainedLeafId = retainedLeafIdByRemovedLeafId.get(leafId)
+      return retainedLeafId === undefined || retainedLeafId === leafId
+    })
   )
   for (const [removedLeafId, value] of Object.entries(source)) {
     if (!retainedLeafIdByRemovedLeafId.has(removedLeafId)) {
@@ -84,7 +92,78 @@ function coalesceLeafRecord(
   return Object.keys(retained).length > 0 ? retained : undefined
 }
 
-function findDuplicatePtyLeafReplacements(snapshot: TerminalLayoutSnapshot): Map<string, string> {
+function hasLeafRecordValue(source: Record<string, string> | undefined, leafId: string): boolean {
+  return Boolean(source && Object.prototype.hasOwnProperty.call(source, leafId))
+}
+
+function coalesceScrollbackRecords(
+  buffersByLeafId: Record<string, string> | undefined,
+  scrollbackRefsByLeafId: Record<string, string> | undefined,
+  retainedLeafIdByRemovedLeafId: ReadonlyMap<string, string>,
+  orderedLeafIds: readonly string[]
+): {
+  buffersByLeafId: Record<string, string> | undefined
+  scrollbackRefsByLeafId: Record<string, string> | undefined
+} {
+  const affectedRetainedLeafIds = new Set<string>()
+  for (const removedLeafId of retainedLeafIdByRemovedLeafId.keys()) {
+    affectedRetainedLeafIds.add(resolveRetainedLeafId(removedLeafId, retainedLeafIdByRemovedLeafId))
+  }
+
+  const sourceLeafIdByRetainedLeafId = new Map<string, string>()
+  for (const retainedLeafId of affectedRetainedLeafIds) {
+    if (
+      hasLeafRecordValue(buffersByLeafId, retainedLeafId) ||
+      hasLeafRecordValue(scrollbackRefsByLeafId, retainedLeafId)
+    ) {
+      sourceLeafIdByRetainedLeafId.set(retainedLeafId, retainedLeafId)
+    }
+  }
+  for (const leafId of orderedLeafIds) {
+    const retainedLeafId = resolveRetainedLeafId(leafId, retainedLeafIdByRemovedLeafId)
+    if (
+      !affectedRetainedLeafIds.has(retainedLeafId) ||
+      sourceLeafIdByRetainedLeafId.has(retainedLeafId)
+    ) {
+      continue
+    }
+    if (
+      hasLeafRecordValue(buffersByLeafId, leafId) ||
+      hasLeafRecordValue(scrollbackRefsByLeafId, leafId)
+    ) {
+      sourceLeafIdByRetainedLeafId.set(retainedLeafId, leafId)
+    }
+  }
+
+  const coalesce = (
+    source: Record<string, string> | undefined
+  ): Record<string, string> | undefined => {
+    if (!source) {
+      return undefined
+    }
+    const retained = Object.fromEntries(
+      Object.entries(source).filter(([leafId]) => {
+        const retainedLeafId = resolveRetainedLeafId(leafId, retainedLeafIdByRemovedLeafId)
+        return !affectedRetainedLeafIds.has(retainedLeafId)
+      })
+    )
+    for (const [retainedLeafId, sourceLeafId] of sourceLeafIdByRetainedLeafId) {
+      if (hasLeafRecordValue(source, sourceLeafId)) {
+        retained[retainedLeafId] = source[sourceLeafId]!
+      }
+    }
+    return Object.keys(retained).length > 0 ? retained : undefined
+  }
+
+  return {
+    buffersByLeafId: coalesce(buffersByLeafId),
+    scrollbackRefsByLeafId: coalesce(scrollbackRefsByLeafId)
+  }
+}
+
+function findDuplicatePtyLeafReplacements(
+  snapshot: TerminalLayoutSnapshot
+): DuplicatePtyLeafReplacements {
   const ptyIdsByLeafId = snapshot.ptyIdsByLeafId ?? {}
   const rootLeafIds = collectLeafIds(snapshot.root)
   const rootLeafIdSet = new Set(rootLeafIds)
@@ -117,7 +196,7 @@ function findDuplicatePtyLeafReplacements(snapshot: TerminalLayoutSnapshot): Map
     retainedLeafIdByRemovedLeafId.set(leafId, retainedLeafId)
   }
 
-  return retainedLeafIdByRemovedLeafId
+  return { orderedLeafIds, retainedLeafIdByRemovedLeafId }
 }
 
 function resolveOwnedActiveLeafId(
@@ -135,21 +214,18 @@ function resolveOwnedActiveLeafId(
     return boundLeafIds.length === 1 ? boundLeafIds[0] : null
   }
 
-  const hasBoundRootLeaf = rootLeafIds.some(hasBinding)
-  if (
-    activeLeafId &&
-    rootLeafIds.includes(activeLeafId) &&
-    (!hasBoundRootLeaf || hasBinding(activeLeafId))
-  ) {
+  if (activeLeafId && rootLeafIds.includes(activeLeafId)) {
     return activeLeafId
   }
+  const hasBoundRootLeaf = rootLeafIds.some(hasBinding)
   return hasBoundRootLeaf ? (rootLeafIds.find(hasBinding) ?? null) : (rootLeafIds[0] ?? null)
 }
 
 export function normalizeTerminalLayoutPtyOwnership(
   snapshot: TerminalLayoutSnapshot
 ): TerminalLayoutPtyOwnershipNormalization {
-  const retainedLeafIdByRemovedLeafId = findDuplicatePtyLeafReplacements(snapshot)
+  const { orderedLeafIds, retainedLeafIdByRemovedLeafId } =
+    findDuplicatePtyLeafReplacements(snapshot)
   if (retainedLeafIdByRemovedLeafId.size === 0) {
     return { snapshot, changed: false }
   }
@@ -170,13 +246,11 @@ export function normalizeTerminalLayoutPtyOwnership(
   const ptyIdsByLeafId = coalesceLeafRecord(snapshot.ptyIdsByLeafId, retainedLeafIdByRemovedLeafId)
   const rootLeafIds = collectLeafIds(root)
   const activeLeafId = resolveOwnedActiveLeafId(rootLeafIds, mappedActiveLeafId, ptyIdsByLeafId)
-  const buffersByLeafId = coalesceLeafRecord(
+  const { buffersByLeafId, scrollbackRefsByLeafId } = coalesceScrollbackRecords(
     snapshot.buffersByLeafId,
-    retainedLeafIdByRemovedLeafId
-  )
-  const scrollbackRefsByLeafId = coalesceLeafRecord(
     snapshot.scrollbackRefsByLeafId,
-    retainedLeafIdByRemovedLeafId
+    retainedLeafIdByRemovedLeafId,
+    orderedLeafIds
   )
   const titlesByLeafId = coalesceLeafRecord(snapshot.titlesByLeafId, retainedLeafIdByRemovedLeafId)
   const {

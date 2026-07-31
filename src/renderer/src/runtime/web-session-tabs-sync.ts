@@ -117,7 +117,7 @@ type MirroredTerminalTab = {
   hostTabId: string
   ptyIds: string[]
   layout: TerminalLayoutSnapshot
-  retainedLeafIdByPrunedLeafId?: ReadonlyMap<string, string>
+  retainedSurfaceByPrunedLeafId?: ReadonlyMap<string, TerminalSurface>
 }
 
 type MirroredBrowserTab = {
@@ -593,16 +593,20 @@ function buildMirroredTerminalTabs(
     ).snapshot
     const layoutPtyEntries = Object.entries(layout.ptyIdsByLeafId ?? {})
     const ptyIds = layoutPtyEntries.map(([, ptyId]) => ptyId)
-    let retainedLeafIdByPrunedLeafId: Map<string, string> | undefined
+    let retainedSurfaceByPrunedLeafId: Map<string, TerminalSurface> | undefined
     if (layoutPtyEntries.length < Object.keys(ptyIdsByLeafId).length) {
       const retainedLeafIdByPtyId = new Map(
         layoutPtyEntries.map(([leafId, ptyId]) => [ptyId, leafId])
       )
-      retainedLeafIdByPrunedLeafId = new Map()
+      const surfaceByLeafId = new Map(surfaces.map((surface) => [surface.leafId, surface]))
+      retainedSurfaceByPrunedLeafId = new Map()
       for (const [leafId, ptyId] of Object.entries(ptyIdsByLeafId)) {
         const retainedLeafId = retainedLeafIdByPtyId.get(ptyId)
         if (retainedLeafId && retainedLeafId !== leafId) {
-          retainedLeafIdByPrunedLeafId.set(leafId, retainedLeafId)
+          const retainedSurface = surfaceByLeafId.get(retainedLeafId)
+          if (retainedSurface) {
+            retainedSurfaceByPrunedLeafId.set(leafId, retainedSurface)
+          }
         }
       }
     }
@@ -661,7 +665,7 @@ function buildMirroredTerminalTabs(
       hostTabId: parentTabId,
       ptyIds,
       layout,
-      ...(retainedLeafIdByPrunedLeafId ? { retainedLeafIdByPrunedLeafId } : {})
+      ...(retainedSurfaceByPrunedLeafId ? { retainedSurfaceByPrunedLeafId } : {})
     }
   })
 }
@@ -676,17 +680,17 @@ function toMirroredPaneKey(surface: TerminalSurface, leafId = surface.leafId): s
 /** Normalises and mirrors agent status updates from the host payload, preserving ownership metadata. */
 function remapHostAgentStatus(
   surface: TerminalSurface,
-  retainedLeafId?: string
+  retainedSurface?: TerminalSurface
 ): AgentStatusEntry | null {
   if (!surface.agentStatus) {
     return null
   }
-  const paneKey = toMirroredPaneKey(surface, retainedLeafId)
+  const paneKey = toMirroredPaneKey(surface, retainedSurface?.leafId)
   if (!paneKey) {
     return null
   }
   const ownerAgent = resolvePaneAgentOwner({
-    launchAgent: surface.launchAgent,
+    launchAgent: retainedSurface?.launchAgent ?? surface.launchAgent,
     hookAgent: surface.agentStatus.agentType
   })
   return {
@@ -723,22 +727,24 @@ function buildMirroredAgentStatusPatch(
     return null
   }
 
-  let retainedLeafIdByHostTabAndPrunedLeafId: Map<string, ReadonlyMap<string, string>> | undefined
+  let retainedSurfaceByHostTabAndPrunedLeafId:
+    | Map<string, ReadonlyMap<string, TerminalSurface>>
+    | undefined
   for (const entry of mirroredTerminalTabs) {
-    if (entry.retainedLeafIdByPrunedLeafId) {
-      retainedLeafIdByHostTabAndPrunedLeafId ??= new Map()
-      retainedLeafIdByHostTabAndPrunedLeafId.set(
+    if (entry.retainedSurfaceByPrunedLeafId) {
+      retainedSurfaceByHostTabAndPrunedLeafId ??= new Map()
+      retainedSurfaceByHostTabAndPrunedLeafId.set(
         entry.hostTabId,
-        entry.retainedLeafIdByPrunedLeafId
+        entry.retainedSurfaceByPrunedLeafId
       )
     }
   }
   const nextByPaneKey = new Map<string, AgentStatusEntry>()
   for (const surface of terminalSurfaceTabs) {
-    const retainedLeafId = retainedLeafIdByHostTabAndPrunedLeafId
+    const retainedSurface = retainedSurfaceByHostTabAndPrunedLeafId
       ?.get(surface.parentTabId)
       ?.get(surface.leafId)
-    const entry = remapHostAgentStatus(surface, retainedLeafId)
+    const entry = remapHostAgentStatus(surface, retainedSurface)
     if (!entry) {
       continue
     }
