@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Plus, QrCode } from 'lucide-react-native'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 import type { HostProfile } from '../transport/types'
-import { hostEndpointLabel } from '../transport/host-endpoint-label'
+import { hostEndpointLabel, hostEndpointRouteLabel } from '../transport/host-endpoint-label'
 import { colors, radii, spacing } from '../theme/mobile-theme'
 import { PickerModal } from './PickerModal'
 
@@ -10,6 +10,32 @@ type Props = {
   connectedHosts: HostProfile[]
   onPairDesktop: () => void
   onCreateWorkspace: (hostId: string) => void
+}
+
+function hostPickerOptions(hosts: HostProfile[]) {
+  const entries = hosts.map((host) => ({
+    host,
+    endpointLabel: hostEndpointLabel(host.endpoint),
+    routeLabel: hostEndpointRouteLabel(host.endpoint)
+  }))
+  const endpointCounts = new Map<string, number>()
+  const routeCounts = new Map<string, number>()
+  for (const entry of entries) {
+    const endpointKey = JSON.stringify([entry.host.name, entry.endpointLabel])
+    const routeKey = JSON.stringify([entry.host.name, entry.routeLabel])
+    endpointCounts.set(endpointKey, (endpointCounts.get(endpointKey) ?? 0) + 1)
+    routeCounts.set(routeKey, (routeCounts.get(routeKey) ?? 0) + 1)
+  }
+  return entries.map((entry) => {
+    const endpointKey = JSON.stringify([entry.host.name, entry.endpointLabel])
+    const routeKey = JSON.stringify([entry.host.name, entry.routeLabel])
+    const endpointCollides = (endpointCounts.get(endpointKey) ?? 0) > 1
+    const routeCollides = (routeCounts.get(routeKey) ?? 0) > 1
+    const subtitle = endpointCollides
+      ? `${entry.routeLabel}${routeCollides ? ` · ${entry.host.id}` : ''}`
+      : entry.endpointLabel
+    return { value: entry.host.id, label: entry.host.name, subtitle }
+  })
 }
 
 export function MobileHomeQuickActions(props: Props) {
@@ -66,11 +92,7 @@ function MobileHomeQuickActionsContent(props: Props) {
       <PickerModal
         visible={hostPickerVisible}
         title="Create Workspace On"
-        options={props.connectedHosts.map((host) => ({
-          value: host.id,
-          label: host.name,
-          subtitle: hostEndpointLabel(host.endpoint)
-        }))}
+        options={hostPickerOptions(props.connectedHosts)}
         selected=""
         onSelect={props.onCreateWorkspace}
         onClose={() => setHostPickerVisible(false)}

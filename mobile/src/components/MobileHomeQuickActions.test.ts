@@ -119,6 +119,30 @@ describe('MobileHomeQuickActions', () => {
     expect(callbacks.onCreateWorkspace).toHaveBeenCalledWith('laptop')
   })
 
+  it('disambiguates path-routed hosts with identical visible identities', async () => {
+    await renderQuickActions([
+      host('desk-a', 'Desk', 'wss://gateway.example.com/host-a'),
+      host('desk-b', 'Desk', 'wss://gateway.example.com/host-b'),
+      host('desk-c', 'Desk', 'wss://gateway.example.com/host-b')
+    ])
+
+    act(() => newWorkspaceButton().props.onPress())
+
+    expect(picker().props.options).toEqual([
+      { value: 'desk-a', label: 'Desk', subtitle: 'gateway.example.com/host-a' },
+      {
+        value: 'desk-b',
+        label: 'Desk',
+        subtitle: 'gateway.example.com/host-b · desk-b'
+      },
+      {
+        value: 'desk-c',
+        label: 'Desk',
+        subtitle: 'gateway.example.com/host-b · desk-c'
+      }
+    ])
+  })
+
   it('closes a stale picker when fewer than two hosts remain connected', async () => {
     const desk = host('desk', 'Desk', 'ws://192.168.1.2:6768')
     const laptop = host('laptop', 'Laptop', 'wss://relay.example.com/mobile')
