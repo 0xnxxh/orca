@@ -26,7 +26,10 @@ export function useAllHostClients(hostIds: string[], options?: UseAllHostClients
   const acquiredHostIdsRef = useRef<Set<string>>(new Set())
   const hostUnsubscribesRef = useRef<Map<string, () => void>>(new Map())
   const closeUnusedRef = useRef(closeUnusedOnRelease)
-  closeUnusedRef.current = closeUnusedOnRelease
+
+  useEffect(() => {
+    closeUnusedRef.current = closeUnusedOnRelease
+  }, [closeUnusedOnRelease])
 
   useEffect(() => {
     const unsubscribeAllHosts = ctx.subscribeAllHosts(() => setTick((value) => value + 1))
