@@ -10,7 +10,10 @@ export type PRCheckCounts = {
 }
 
 export function getCheckConclusion(check: PRCheckDetail): NonNullable<PRCheckDetail['conclusion']> {
-  return check.conclusion ?? 'pending'
+  if (check.conclusion) {
+    return check.conclusion
+  }
+  return check.status === 'completed' ? 'neutral' : 'pending'
 }
 
 /**

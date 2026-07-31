@@ -63,6 +63,21 @@ describe('getCheckCounts', () => {
     expect(getChecksSummaryLabel(checks)).toBe('1 check pending')
   })
 
+  it('keeps a completed check without a conclusion unresolved', () => {
+    const checks: PRCheckDetail[] = [
+      { name: 'external', status: 'completed', conclusion: null, url: null }
+    ]
+
+    expect(getCheckCounts(checks)).toEqual({
+      passing: 0,
+      failing: 0,
+      needsAction: 0,
+      pending: 0,
+      neutral: 1
+    })
+    expect(getChecksSummaryLabel(checks)).toBe('0 of 1 checks passing')
+  })
+
   it('reports no checks for an empty list', () => {
     expect(getChecksSummaryLabel([])).toBe('No checks found')
   })
