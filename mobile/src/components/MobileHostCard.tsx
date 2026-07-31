@@ -26,11 +26,25 @@ export function MobileHostCard(props: {
   const worktreeSummary = props.worktreeCounts
     ? `${props.worktreeCounts.total} worktree${props.worktreeCounts.total === 1 ? '' : 's'}${props.worktreeCounts.active > 0 ? ` · ${props.worktreeCounts.active} active` : ''}`
     : null
+  const accessibleWorktreeSummary = connected ? worktreeSummary?.replace(' · ', ', ') : null
+  const discoveryHint =
+    props.verdict.kind === 'unreachable' && !props.host.relay
+      ? 'Update desktop Orca and sign in to connect from anywhere'
+      : null
+  const accessibilityLabel = [
+    `Open ${props.host.name}`,
+    statusLabel,
+    accessibleConnectionPathLabel,
+    accessibleWorktreeSummary,
+    discoveryHint
+  ]
+    .filter(Boolean)
+    .join(', ')
   return (
     <View style={styles.card}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Open ${props.host.name}, ${statusLabel}${accessibleConnectionPathLabel ? `, ${accessibleConnectionPathLabel}` : ''}`}
+        accessibilityLabel={accessibilityLabel}
         style={({ pressed }) => [styles.cardMain, pressed && styles.cardPressed]}
         onPress={props.onPress}
         onLongPress={props.onLongPress}
@@ -61,9 +75,9 @@ export function MobileHostCard(props: {
               {worktreeSummary}
             </Text>
           ) : null}
-          {props.verdict.kind === 'unreachable' && !props.host.relay ? (
+          {discoveryHint ? (
             <Text style={styles.discoveryHint} numberOfLines={2}>
-              Update desktop Orca and sign in to connect from anywhere
+              {discoveryHint}
             </Text>
           ) : null}
         </View>

@@ -99,6 +99,7 @@ describe('MobileHostCard', () => {
           state: 'connected',
           verdict: { kind: 'normal', label: 'Connected' },
           path: 'tailscale',
+          worktreeCounts: { total: 3, active: 2 },
           onPress: vi.fn(),
           onLongPress: vi.fn(),
           onOpenActions: vi.fn()
@@ -109,7 +110,41 @@ describe('MobileHostCard', () => {
 
     const navigationButton = renderer.root.findAllByType('Pressable')[0]
     expect(navigationButton.props.accessibilityLabel).toBe(
-      'Open Desk, Connected, Direct via Tailscale'
+      'Open Desk, Connected, Direct via Tailscale, 3 worktrees, 2 active'
+    )
+  })
+
+  it('includes visible offline recovery guidance in the navigation label', async () => {
+    const consoleError = suppressRendererDeprecation()
+    await act(async () => {
+      renderer = create(
+        createElement(MobileHostCard, {
+          host: {
+            id: 'desk',
+            name: 'Desk',
+            endpoint: 'ws://192.168.1.2:6768',
+            deviceToken: 'token',
+            publicKeyB64: 'key',
+            lastConnected: 1
+          },
+          state: 'reconnecting',
+          verdict: {
+            kind: 'unreachable',
+            label: "Can't reach desktop",
+            reason: 'never-connected'
+          },
+          path: 'lan',
+          onPress: vi.fn(),
+          onLongPress: vi.fn(),
+          onOpenActions: vi.fn()
+        })
+      )
+    })
+    consoleError.mockRestore()
+
+    const navigationButton = renderer.root.findAllByType('Pressable')[0]
+    expect(navigationButton.props.accessibilityLabel).toBe(
+      "Open Desk, Can't reach desktop, Update desktop Orca and sign in to connect from anywhere"
     )
   })
 })
