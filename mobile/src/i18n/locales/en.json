@@ -2187,6 +2187,13 @@
       "runFailed": "Couldn't run {{commandLabel}}"
     }
   },
+  "sourceControl": {
+    "reviewStatus": {
+      "checking": "Checking review status…",
+      "unavailable": "Review status unavailable",
+      "unsupportedProvider": "Review creation unavailable for this provider"
+    }
+  },
   "accounts": {
     "selectedManagedAccount": "the selected managed account"
   },

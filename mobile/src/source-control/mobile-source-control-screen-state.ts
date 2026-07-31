@@ -25,7 +25,8 @@ import {
   isMobileGitStageableEntry,
   type MobileGitFileStatus,
   type MobileGitStatusEntry,
-  type MobileGitStatusResult
+  type MobileGitStatusResult,
+  type MobileGitUpstreamStatus
 } from './mobile-git-status'
 import { t } from '@/i18n/mobile-i18n'
 
@@ -133,6 +134,17 @@ export function formatBranchLabel(branch: string | undefined, head: string | und
     return branch.slice('refs/heads/'.length)
   }
   return branch || head?.slice(0, 7) || t('m.wL23gbE')
+}
+
+export function formatMobileUpstreamSyncLabel(
+  upstream: MobileGitUpstreamStatus | undefined
+): string | null {
+  if (!upstream) {
+    return null
+  }
+  return upstream.hasUpstream
+    ? t('m.1YRKLD4', { value0: upstream.ahead, value1: upstream.behind })
+    : t('m.GXYBPqk')
 }
 
 export function statusColor(status: MobileGitFileStatus): string {
