@@ -75,6 +75,7 @@ export class DegradedDaemonSessionRouting {
         if (!this.fallbackSpawns.hasExited(result.id)) {
           this.fallbackRoutes.recordSpawnedSession(result.id, target)
         }
+        this.fallbackRoutes.assertExistingSpawnAvailable(opts, result.id)
       } else {
         this.fallbackRoutes.recordDaemonSpawn(result.id, opts.sessionId, target as DaemonPtyAdapter)
       }

@@ -1,6 +1,6 @@
-import type { IPtyProvider } from '../providers/types'
+import type { IPtyProvider, PtySpawnOptions } from '../providers/types'
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
-import { sameDaemonIncarnation } from './daemon-session-route'
+import { DaemonSessionOwnerUnknownError, sameDaemonIncarnation } from './daemon-session-route'
 import type { DaemonSessionRouteTable } from './daemon-session-route-table'
 import { recordValidatedDaemonSpawn } from './daemon-spawn-route-validation'
 import type { DegradedFallbackSpawnRoutes } from './degraded-fallback-spawn-routes'
@@ -41,6 +41,19 @@ export class DegradedFallbackSessionRoutes {
       this.clearCollision(sessionId)
     } else if (daemonRoute) {
       this.recordCollision(sessionId)
+    }
+  }
+
+  assertExistingSpawnAvailable(opts: PtySpawnOptions, resultSessionId: string): void {
+    if (!opts.sessionId || opts.isNewSession) {
+      return
+    }
+    const hasDaemonOwner = [opts.sessionId, resultSessionId].some((sessionId) => {
+      const route = this.daemonRoutes.get(sessionId)
+      return route !== undefined && route.state !== 'unavailable'
+    })
+    if (hasDaemonOwner) {
+      throw new DaemonSessionOwnerUnknownError(opts.sessionId)
     }
   }
 

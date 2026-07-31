@@ -75,3 +75,31 @@ it('rejects a degraded existing spawn after its selected daemon is replaced', as
 
   await expect(spawning).rejects.toThrow('daemon_session_routing_unavailable')
 })
+
+it('rejects an existing fallback spawn when daemon ownership appears before its reply', async () => {
+  const sessionId = 'fallback-owner-race'
+  const current = createDaemonAdapter('daemon')
+  const fallback = createProvider('fallback')
+  const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+  await provider.spawn({ sessionId, isNewSession: true, cols: 80, rows: 24 })
+  let resolveSpawn!: (result: PtySpawnResult) => void
+  let markSpawnStarted!: () => void
+  const spawnStarted = new Promise<void>((resolve) => {
+    markSpawnStarted = resolve
+  })
+  vi.mocked(fallback.spawn).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        markSpawnStarted()
+        resolveSpawn = resolve
+      })
+  )
+
+  const spawning = provider.spawn({ sessionId, cols: 80, rows: 24 })
+  await spawnStarted
+  current.emitData(sessionId, 'daemon ownership')
+  resolveSpawn({ id: sessionId })
+
+  await expect(spawning).rejects.toThrow('daemon_session_routing_unavailable')
+  expect(() => provider.write(sessionId, 'blocked')).toThrow('daemon_session_routing_unavailable')
+})

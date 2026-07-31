@@ -6163,11 +6163,14 @@ export function registerPtyHandlers(
     const provider = parsedSshId
       ? sshProviders.get(parsedSshId.connectionId)
       : tryGetProviderForPty(args.id)
-    if (!provider?.hasPty) {
+    if (!provider) {
       return null
     }
     try {
-      return provider.hasPty(args.id)
+      const live = provider.probePtyLiveness
+        ? await provider.probePtyLiveness(args.id)
+        : provider.hasPty?.(args.id)
+      return typeof live === 'boolean' ? live : null
     } catch {
       // Why: liveness is only allowed to close panes on an authoritative false.
       return null

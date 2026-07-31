@@ -6299,11 +6299,14 @@ describe('registerPtyHandlers', () => {
   })
 
   it('checks single-PTY liveness without listing every session', async () => {
-    const hasPty = vi.fn((id: string) => id === 'live-pty')
+    const probePtyLiveness = vi.fn(async (id: string) => (id === 'live-pty' ? true : null))
+    const hasPty = vi.fn((_id: string): boolean => {
+      throw new Error('cached ownership is not authoritative')
+    })
     const listProcesses = vi.fn(async () => {
       throw new Error('listProcesses should not be called')
     })
-    setLocalPtyProvider({
+    const provider = {
       spawn: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
@@ -6323,16 +6326,27 @@ describe('registerPtyHandlers', () => {
       listProcesses,
       attach: vi.fn(),
       hasPty,
+      probePtyLiveness,
       getDefaultShell: vi.fn(),
       getProfiles: vi.fn()
-    } as never)
+    }
+    setLocalPtyProvider(provider as never)
     registerPtyHandlers(mainWindow as never)
 
     await expect(handlers.get('pty:hasPty')!(null, { id: 'live-pty' })).resolves.toBe(true)
-    await expect(handlers.get('pty:hasPty')!(null, { id: 'dead-pty' })).resolves.toBe(false)
+    await expect(handlers.get('pty:hasPty')!(null, { id: 'uncertain-pty' })).resolves.toBe(null)
 
-    expect(hasPty).toHaveBeenCalledWith('live-pty')
-    expect(hasPty).toHaveBeenCalledWith('dead-pty')
+    expect(probePtyLiveness).toHaveBeenCalledTimes(2)
+    expect(probePtyLiveness).toHaveBeenNthCalledWith(1, 'live-pty')
+    expect(probePtyLiveness).toHaveBeenNthCalledWith(2, 'uncertain-pty')
+    expect(hasPty).not.toHaveBeenCalled()
+    expect(listProcesses).not.toHaveBeenCalled()
+
+    provider.probePtyLiveness = undefined as never
+    hasPty.mockImplementation((id: string) => id === 'cached-live-pty')
+    await expect(handlers.get('pty:hasPty')!(null, { id: 'cached-pty' })).resolves.toBe(false)
+
+    expect(hasPty).toHaveBeenCalledExactlyOnceWith('cached-pty')
     expect(listProcesses).not.toHaveBeenCalled()
   })
 
