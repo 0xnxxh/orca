@@ -29307,10 +29307,10 @@ export class OrcaRuntimeService {
     handle: string,
     db = this.getOrchestrationDbIfAvailable()
   ): AgentStatusOrchestrationContext | undefined {
-    // Why: active dispatch is authoritative for reused terminals; completed context stale-groups future work once its done row is gone.
+    // Why: active dispatch is authoritative for reused terminals; settled context stale-groups later work once its row is gone.
     const dispatch =
       db?.getActiveDispatchForTerminal?.(handle) ??
-      this.getRecentCompletedDispatchForTerminal(handle, db)
+      this.getRecentSettledDispatchForTerminal(handle, db)
     if (!dispatch) {
       return undefined
     }
@@ -29323,7 +29323,10 @@ export class OrcaRuntimeService {
             displayName: task.display_name
           })
         : { taskTitle: '', displayName: '' }
-    const activeRun = dispatch.status === 'completed' ? undefined : db?.getActiveCoordinatorRun?.()
+    const activeRun =
+      dispatch.status === 'pending' || dispatch.status === 'dispatched'
+        ? db?.getActiveCoordinatorRun?.()
+        : undefined
     const parentTerminalHandle =
       task?.created_by_terminal_handle ??
       (activeRun?.coordinator_handle && activeRun.coordinator_handle !== handle
@@ -29336,6 +29339,7 @@ export class OrcaRuntimeService {
     return {
       taskId: dispatch.task_id,
       dispatchId: dispatch.id,
+      dispatchStatus: dispatch.status,
       ...(display.taskTitle ? { taskTitle: display.taskTitle } : {}),
       ...(display.displayName ? { displayName: display.displayName } : {}),
       ...(parentTerminalHandle ? { parentTerminalHandle } : {}),
@@ -29345,12 +29349,16 @@ export class OrcaRuntimeService {
     }
   }
 
-  private getRecentCompletedDispatchForTerminal(
+  private getRecentSettledDispatchForTerminal(
     handle: string,
     db = this.getOrchestrationDbIfAvailable()
   ): ReturnType<OrchestrationDb['getLatestDispatchForTerminal']> {
     const dispatch = db?.getLatestDispatchForTerminal?.(handle)
-    if (dispatch?.status !== 'completed' || !dispatch.completed_at) {
+    if (
+      !dispatch?.completed_at ||
+      dispatch.status === 'pending' ||
+      dispatch.status === 'dispatched'
+    ) {
       return undefined
     }
     const completedAtMs = Date.parse(
