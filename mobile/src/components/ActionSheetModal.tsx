@@ -64,6 +64,7 @@ export function ActionSheetContent({ title, message, actions, onClose }: Content
             <View key={action.label}>
               {i > 0 && <View style={styles.separator} />}
               <Pressable
+                accessible
                 accessibilityRole="button"
                 accessibilityState={{
                   disabled: Boolean(action.disabled || action.loading),

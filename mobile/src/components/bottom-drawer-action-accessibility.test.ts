@@ -65,6 +65,7 @@ describe('bottom drawer action accessibility', () => {
     )
 
     const action = renderer!.root.findByType('Pressable')
+    expect(action.props.accessible).toBe(true)
     expect(action.props.accessibilityRole).toBe('button')
     expect(action.props.accessibilityState).toEqual({ disabled: true, busy: true })
   })
