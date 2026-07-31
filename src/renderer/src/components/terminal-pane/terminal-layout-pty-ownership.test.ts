@@ -205,6 +205,49 @@ describe('terminal layout PTY ownership normalization', () => {
     })
   })
 
+  it('repairs dangling rootless focus onto the sole retained PTY owner', () => {
+    const normalized = normalizeTerminalLayoutSnapshot({
+      root: null,
+      activeLeafId: LEAF_3,
+      expandedLeafId: LEAF_3,
+      ptyIdsByLeafId: {
+        [LEAF_1]: 'pty-agent',
+        [LEAF_2]: 'pty-agent'
+      }
+    })
+
+    expect(normalized.snapshot).toEqual({
+      root: null,
+      activeLeafId: LEAF_1,
+      expandedLeafId: null,
+      ptyIdsByLeafId: { [LEAF_1]: 'pty-agent' }
+    })
+  })
+
+  it('repairs dangling rooted selection during direct ownership normalization', () => {
+    const normalized = normalizeTerminalLayoutPtyOwnership({
+      root: {
+        type: 'split',
+        direction: 'vertical',
+        first: { type: 'leaf', leafId: LEAF_1 },
+        second: { type: 'leaf', leafId: LEAF_2 }
+      },
+      activeLeafId: LEAF_3,
+      expandedLeafId: LEAF_3,
+      ptyIdsByLeafId: {
+        [LEAF_1]: 'pty-agent',
+        [LEAF_2]: 'pty-agent'
+      }
+    })
+
+    expect(normalized.snapshot).toEqual({
+      root: { type: 'leaf', leafId: LEAF_1 },
+      activeLeafId: LEAF_1,
+      expandedLeafId: null,
+      ptyIdsByLeafId: { [LEAF_1]: 'pty-agent' }
+    })
+  })
+
   it('collapses repeated live leaf ids without looping during direct normalization', () => {
     const normalized = normalizeTerminalLayoutPtyOwnership({
       root: {

@@ -9,10 +9,17 @@ function collectLeafIds(node: TerminalPaneLayoutNode | null | undefined): string
   if (!node) {
     return []
   }
-  if (node.type === 'leaf') {
-    return [node.leafId]
+  const leafIds: string[] = []
+  const pending = [node]
+  while (pending.length > 0) {
+    const current = pending.pop()!
+    if (current.type === 'leaf') {
+      leafIds.push(current.leafId)
+      continue
+    }
+    pending.push(current.second, current.first)
   }
-  return [...collectLeafIds(node.first), ...collectLeafIds(node.second)]
+  return leafIds
 }
 
 function pruneLeaves(
@@ -113,6 +120,32 @@ function findDuplicatePtyLeafReplacements(snapshot: TerminalLayoutSnapshot): Map
   return retainedLeafIdByRemovedLeafId
 }
 
+function resolveOwnedActiveLeafId(
+  rootLeafIds: readonly string[],
+  activeLeafId: string | null,
+  ptyIdsByLeafId: Record<string, string> | undefined
+): string | null {
+  const hasBinding = (leafId: string): boolean =>
+    Boolean(ptyIdsByLeafId && Object.prototype.hasOwnProperty.call(ptyIdsByLeafId, leafId))
+  if (rootLeafIds.length === 0) {
+    const boundLeafIds = Object.keys(ptyIdsByLeafId ?? {})
+    if (activeLeafId && hasBinding(activeLeafId)) {
+      return activeLeafId
+    }
+    return boundLeafIds.length === 1 ? boundLeafIds[0] : null
+  }
+
+  const hasBoundRootLeaf = rootLeafIds.some(hasBinding)
+  if (
+    activeLeafId &&
+    rootLeafIds.includes(activeLeafId) &&
+    (!hasBoundRootLeaf || hasBinding(activeLeafId))
+  ) {
+    return activeLeafId
+  }
+  return hasBoundRootLeaf ? (rootLeafIds.find(hasBinding) ?? null) : (rootLeafIds[0] ?? null)
+}
+
 export function normalizeTerminalLayoutPtyOwnership(
   snapshot: TerminalLayoutSnapshot
 ): TerminalLayoutPtyOwnershipNormalization {
@@ -131,10 +164,12 @@ export function normalizeTerminalLayoutPtyOwnership(
   const root = snapshot.root
     ? pruneLeaves(snapshot.root, retainedLeafIdByRemovedLeafId, new Set())
     : null
-  const activeLeafId = snapshot.activeLeafId
+  const mappedActiveLeafId = snapshot.activeLeafId
     ? resolveRetainedLeafId(snapshot.activeLeafId, retainedLeafIdByRemovedLeafId)
     : snapshot.activeLeafId
   const ptyIdsByLeafId = coalesceLeafRecord(snapshot.ptyIdsByLeafId, retainedLeafIdByRemovedLeafId)
+  const rootLeafIds = collectLeafIds(root)
+  const activeLeafId = resolveOwnedActiveLeafId(rootLeafIds, mappedActiveLeafId, ptyIdsByLeafId)
   const buffersByLeafId = coalesceLeafRecord(
     snapshot.buffersByLeafId,
     retainedLeafIdByRemovedLeafId
@@ -158,9 +193,11 @@ export function normalizeTerminalLayoutPtyOwnership(
       root,
       activeLeafId,
       expandedLeafId:
-        snapshot.expandedLeafId && removedLeafIds.has(snapshot.expandedLeafId)
-          ? null
-          : snapshot.expandedLeafId,
+        snapshot.expandedLeafId &&
+        !removedLeafIds.has(snapshot.expandedLeafId) &&
+        rootLeafIds.includes(snapshot.expandedLeafId)
+          ? snapshot.expandedLeafId
+          : null,
       ...(ptyIdsByLeafId ? { ptyIdsByLeafId } : {}),
       ...(buffersByLeafId ? { buffersByLeafId } : {}),
       ...(scrollbackRefsByLeafId ? { scrollbackRefsByLeafId } : {}),
