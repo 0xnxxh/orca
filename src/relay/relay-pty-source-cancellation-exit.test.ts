@@ -364,4 +364,31 @@ describe('RelayPtySourcePublication cancellation and exit', () => {
     ).not.toThrow()
     expect(exitFrames(harness.writes)).toHaveLength(1)
   })
+
+  it('forgets the legacy exit projection once the healthy exit settles', async () => {
+    const harness = await createHarness()
+    const exit = { id: 'pty-1', code: 0, incarnationId: 'incarnation-1' }
+    expect(harness.publication.sealAndPublishExit(exit)).toBe(true)
+
+    expect(harness.publication.exitPublicationSettled('pty-1')).toBe(true)
+
+    // Why: every client already holds this exit, so a retained index entry would both leak a row
+    // per exited pty and re-publish to the owner if any later fallback ran for the same id.
+    expect(harness.publication.publishExitAfterRetire(exit)).toBeNull()
+    expect(exitFrames(harness.writes)).toHaveLength(1)
+  })
+
+  it('re-targets the owner when a re-attach retires a record that already projected the exit', async () => {
+    const harness = await createHarness()
+    const exit = { id: 'pty-1', code: 0, incarnationId: 'incarnation-1' }
+    expect(harness.publication.sealAndPublishExit(exit)).toBe(true)
+
+    // Why: the handler holds its settled-check back while legacy output is still buffered, so B2
+    // can retire the record first — the index is then all that remembers the projection.
+    activateOwner(harness.publication)
+
+    expect(harness.publication.publishExitAfterRetire(exit)).toBe(true)
+    expect(exitFrames(harness.writes)).toHaveLength(2)
+    expect(harness.publication.publishExitAfterRetire(exit)).toBeNull()
+  })
 })

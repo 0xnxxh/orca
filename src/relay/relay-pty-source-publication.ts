@@ -261,6 +261,9 @@ export class RelayPtySourcePublication {
     if (!record || record.sourceExitState !== 'published') {
       return false
     }
+    // Why: owner and legacy subscribers both hold this exit now, so the index row would otherwise
+    // outlive the pty for the daemon's lifetime and re-publish on any later fallback.
+    this.legacyExits.forget(id)
     this.sender.pruneClosed(id, record)
     return true
   }

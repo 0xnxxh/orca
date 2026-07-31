@@ -4,7 +4,10 @@ import type {
   PtySourceDeliverySnapshot
 } from '../shared/pty-source-credit-contract'
 import type { RelayDispatcher } from './dispatcher'
-import { sealAndPublishPtySourceExit } from './relay-pty-source-exit-publication'
+import {
+  RelayPtySourceLegacyExitIndex,
+  sealAndPublishPtySourceExit
+} from './relay-pty-source-exit-publication'
 import type {
   RelayPtySourceDeliveryRecord,
   RelayPtySourcePublicationCounters,
@@ -197,6 +200,80 @@ describe('sealAndPublishPtySourceExit closed-delivery guard', () => {
     expect(scenario.session.sourceDeliverySnapshotIfKnown).not.toHaveBeenCalled()
     expect(scenario.dispatcher.tryNotifyPtyExit).not.toHaveBeenCalled()
     expect(scenario.deliveries.get('pty-1')).toBe(record)
+  })
+})
+
+describe('RelayPtySourceLegacyExitIndex', () => {
+  function createIndex(notifyAccepted = true) {
+    const index = new RelayPtySourceLegacyExitIndex()
+    const dispatcher = {
+      tryNotifyPtyExitToMatchingClients: vi.fn(
+        (_matches: (clientId: number) => boolean, _params: unknown) => notifyAccepted
+      )
+    }
+    const session = { deliveryMode: vi.fn(() => 'source-owner' as const) }
+    const publish = (): boolean | null =>
+      index.publishAfterRetire(
+        params,
+        dispatcher as unknown as RelayDispatcher,
+        session as unknown as SshPtyConsumerSessionAdapter
+      )
+    return { index, dispatcher, session, publish }
+  }
+
+  it('defers to the caller when nothing was projected for the pty', () => {
+    const scenario = createIndex()
+
+    expect(scenario.publish()).toBeNull()
+
+    expect(scenario.dispatcher.tryNotifyPtyExitToMatchingClients).not.toHaveBeenCalled()
+  })
+
+  it('re-targets the owner exactly once for a remembered projection', () => {
+    const scenario = createIndex()
+    scenario.index.remember(params, true)
+
+    expect(scenario.publish()).toBe(true)
+
+    const matches = scenario.dispatcher.tryNotifyPtyExitToMatchingClients.mock.calls[0][0]
+    expect(matches(1)).toBe(true)
+    scenario.session.deliveryMode.mockReturnValue('legacy-owner' as never)
+    expect(matches(1)).toBe(false)
+    // Why: the second pass is the handler's retry after a later capacity event; re-publishing
+    // would hand the owner a duplicate exit.
+    expect(scenario.publish()).toBeNull()
+  })
+
+  it('keeps the projection retryable when the owner notify is refused', () => {
+    const scenario = createIndex(false)
+    scenario.index.remember(params, true)
+
+    expect(scenario.publish()).toBe(false)
+    expect(scenario.publish()).toBe(false)
+  })
+
+  it.each([
+    [
+      'a later incarnation reused the pty id',
+      (index: RelayPtySourceLegacyExitIndex) =>
+        index.remember({ ...params, incarnationId: 'incarnation-2' }, true)
+    ],
+    [
+      'the projection was withdrawn',
+      (index: RelayPtySourceLegacyExitIndex) => index.remember(params, false)
+    ],
+    [
+      'the exit completed for every client',
+      (index: RelayPtySourceLegacyExitIndex) => index.forget(params.id)
+    ],
+    ['the publication was disposed', (index: RelayPtySourceLegacyExitIndex) => index.clear()]
+  ])('defers to the caller once %s', (_label, mutate) => {
+    const scenario = createIndex()
+    scenario.index.remember(params, true)
+
+    mutate(scenario.index)
+
+    expect(scenario.publish()).toBeNull()
   })
 })
 
