@@ -289,8 +289,12 @@ function classifyPipelineString(status: string): CheckStatus {
   if (s === 'success') {
     return 'success'
   }
-  if (s === 'failed' || s === 'manual' || s === 'action_required') {
+  if (s === 'failed' || s === 'action_required') {
     return 'failure'
+  }
+  // Why: a `manual` pipeline is blocked on a human trigger, not broken — never paint the card red.
+  if (s === 'manual') {
+    return 'neutral'
   }
   if (
     s === 'created' ||

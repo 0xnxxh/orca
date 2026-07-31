@@ -38,8 +38,8 @@ describe('mapPipelineJobStatusToConclusion', () => {
     expect(mapPipelineJobStatusToConclusion('skipped')).toBe('skipped')
   })
 
-  it('maps manual and action-required jobs to an actionable conclusion', () => {
-    expect(mapPipelineJobStatusToConclusion('manual')).toBe('action_required')
+  it('keeps manual gates neutral while action-required stays actionable', () => {
+    expect(mapPipelineJobStatusToConclusion('manual')).toBe('neutral')
     expect(mapPipelineJobStatusToConclusion('action_required')).toBe('action_required')
   })
 
@@ -228,7 +228,8 @@ describe('derivePipelineStatus', () => {
     expect(derivePipelineStatus('success')).toBe('success')
     expect(derivePipelineStatus('failed')).toBe('failure')
     expect(derivePipelineStatus('running')).toBe('pending')
-    expect(derivePipelineStatus('manual')).toBe('failure')
+    // Why: a blocked pipeline is waiting on a human trigger, not broken.
+    expect(derivePipelineStatus('manual')).toBe('neutral')
   })
 
   it('rolls up an array of jobs', () => {
@@ -239,7 +240,13 @@ describe('derivePipelineStatus', () => {
 
   it('failure beats pending in the rollup', () => {
     expect(derivePipelineStatus([{ status: 'failed' }, { status: 'running' }])).toBe('failure')
-    expect(derivePipelineStatus([{ status: 'manual' }, { status: 'success' }])).toBe('failure')
+    expect(derivePipelineStatus([{ status: 'action_required' }, { status: 'success' }])).toBe(
+      'failure'
+    )
+  })
+
+  it('keeps a manual deploy gate from failing an otherwise green pipeline', () => {
+    expect(derivePipelineStatus([{ status: 'manual' }, { status: 'success' }])).toBe('success')
   })
 
   it('handles a single object with status', () => {
