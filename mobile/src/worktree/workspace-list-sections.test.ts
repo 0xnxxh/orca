@@ -665,6 +665,28 @@ describe('buildSections', () => {
     expect(sections[0]?.data.map((worktree) => worktree.lineageDepth)).toEqual([0, 1])
   })
 
+  it('keeps a missing repository separate from a repository named Unknown', () => {
+    const sections = buildSections(
+      [
+        worktree({ worktreeId: 'missing-repo', repoId: 'missing', repo: '' }),
+        worktree({ worktreeId: 'named-unknown', repoId: 'unknown', repo: 'Unknown' })
+      ],
+      'manual',
+      { filterRepoIds: new Set(), hideSleeping: false, hideDefaultBranch: false },
+      '',
+      'repo',
+      new Set(),
+      new Map([['Unknown', 'unknown']]),
+      DEFAULT_MOBILE_WORKSPACE_STATUSES
+    )
+
+    expect(sections.map((section) => section.key)).toEqual(['repo:missing', 'repo:unknown'])
+    expect(sections.map((section) => section.data[0]?.worktreeId)).toEqual([
+      'missing-repo',
+      'named-unknown'
+    ])
+  })
+
   it('collapses child workspaces under lineage parent rows', () => {
     const parent = worktree({
       worktreeId: 'parent',

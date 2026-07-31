@@ -158,6 +158,13 @@ export function mergeTerminalRecordsByCurrentOrder(
   ]
 }
 
+export function removeTerminalRecordByHandle(
+  terminals: readonly TerminalRecord[],
+  handle: string
+): TerminalRecord[] {
+  return terminals.filter((terminal) => terminal.handle !== handle)
+}
+
 export function getTerminalRecordsFromSessionTabs(
   tabs: readonly MobileSessionTabLike[]
 ): TerminalRecord[] {

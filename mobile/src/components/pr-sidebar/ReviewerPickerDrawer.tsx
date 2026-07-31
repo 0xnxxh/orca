@@ -125,7 +125,11 @@ export function ReviewerPickerDrawer({
                 onPress={() => onToggle(item.login)}
                 accessibilityRole="button"
                 accessibilityState={{ selected: requested }}
-                accessibilityLabel={`${requested ? 'Remove' : 'Request'} ${item.login}`}
+                accessibilityLabel={
+                  requested
+                    ? t('m.8Est-xI', { value0: item.login })
+                    : t('review.requestReviewer', { login: item.login })
+                }
               >
                 <View style={styles.rowTrailing}>
                   {requested ? (

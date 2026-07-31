@@ -70,7 +70,7 @@ function parseSegment(text: string): MarkdownBlock[] {
       const sm = SUMMARY.exec(m[2])
       const summary = sm ? stripHtmlTags(sm[1]).trim() : t('m.B0fOGkI')
       const body = m[2].replace(SUMMARY, '')
-      blocks.push({ kind: 'details', summary: summary || 'Details', body: parseSegment(body) })
+      blocks.push({ kind: 'details', summary: summary || t('m.B0fOGkI'), body: parseSegment(body) })
     } else {
       blocks.push({ kind: 'quote', text: stripHtmlTags(m[2]).trim() })
     }

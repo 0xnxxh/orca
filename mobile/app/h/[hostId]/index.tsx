@@ -887,7 +887,7 @@ export function HostScreen({
                   ]}
                   numberOfLines={1}
                 >
-                  {t('m.2hirWvg', { value0: activeFilterCount > 0 ? ` ${activeFilterCount}` : '' })}
+                  {t('m.2hirWvg', { value0: activeFilterCount ? ` (${activeFilterCount})` : '' })}
                 </Text>
               </Pressable>
 

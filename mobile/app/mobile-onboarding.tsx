@@ -151,7 +151,12 @@ function MobileOnboardingFlow({
             accessible
             accessibilityRole="progressbar"
             accessibilityLabel={t('m.aOm3VN4')}
-            accessibilityValue={{ text: `Step ${activeIndex + 1} of ${steps.length}` }}
+            accessibilityValue={{
+              text: t('onboarding.progress', {
+                currentStep: activeIndex + 1,
+                totalSteps: steps.length
+              })
+            }}
             style={styles.progress}
           >
             {steps.map((step, index) => (

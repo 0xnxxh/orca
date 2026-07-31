@@ -53,7 +53,7 @@ export type CheckDetailContent = {
 }
 
 function mapAnnotation(annotation: PRCheckAnnotation): CheckDetailAnnotation {
-  const path = annotation.path ?? 'Annotation'
+  const path = annotation.path ?? t('prChecks.annotationFallback')
   const locator = annotation.startLine ? `${path}:${annotation.startLine}` : path
   return {
     locator,

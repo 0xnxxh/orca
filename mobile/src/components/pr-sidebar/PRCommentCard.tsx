@@ -140,7 +140,7 @@ export const PRCommentCard = memo(function PRCommentCard({
             onPress={() => void Linking.openURL(comment.url).catch(() => {})}
             hitSlop={8}
             accessibilityRole="button"
-            accessibilityLabel={t('m.FKCKtAo')}
+            accessibilityLabel={t('review.openCommentInBrowser')}
           >
             <ExternalLink size={14} color={colors.textSecondary} strokeWidth={2.2} />
           </Pressable>

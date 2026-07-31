@@ -295,11 +295,11 @@ function formatHostForUrl(host: string): string {
  */
 function validateHostname(host: string): string | null {
   if (!host) {
-    return 'Missing hostname.'
+    return t('m.dRmw4EQ')
   }
   // Spaces, path/query/fragment separators, userinfo separators, brackets.
   if (/[\s/?#@[\]]/.test(host)) {
-    return 'Not a valid hostname.'
+    return t('m.6lctDfQ')
   }
   const numericIpv4Error = validateNumericIpv4Candidate(host)
   if (numericIpv4Error) {
@@ -309,12 +309,12 @@ function validateHostname(host: string): string | null {
     // Why: a hex/colon regex accepts malformed forms such as two `::` runs.
     // Reuse the URL parser that WebSocket will ultimately use.
     if (!/^[0-9a-fA-F:]+$/.test(host)) {
-      return 'Not a valid hostname.'
+      return t('m.6lctDfQ')
     }
     try {
       new URL(`ws://[${host}]:${DEFAULT_PORT}`)
     } catch {
-      return 'Not a valid hostname.'
+      return t('m.6lctDfQ')
     }
     return null
   }
@@ -324,7 +324,7 @@ function validateHostname(host: string): string | null {
       host
     )
   ) {
-    return 'Not a valid hostname.'
+    return t('m.6lctDfQ')
   }
   return null
 }
@@ -334,7 +334,7 @@ function validateNumericIpv4Candidate(host: string): string | null {
     return null
   }
   if (!isCanonicalIpv4(host)) {
-    return 'Not a valid hostname.'
+    return t('m.6lctDfQ')
   }
   return null
 }

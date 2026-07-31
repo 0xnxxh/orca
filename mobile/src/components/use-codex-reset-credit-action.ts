@@ -14,7 +14,7 @@ import { t } from '@/i18n/mobile-i18n'
 
 function describeScope(snapshot: AccountsSnapshot, scope: CodexResetCreditExpectedScope): string {
   const account = snapshot.codex.accounts.find((candidate) => candidate.id === scope.accountId)
-  const identity = account?.email ?? 'the selected managed account'
+  const identity = account?.email ?? t('accounts.selectedManagedAccount')
   if (scope.target.runtime === 'host') {
     return t('m.TUCQXxI', { value0: identity })
   }

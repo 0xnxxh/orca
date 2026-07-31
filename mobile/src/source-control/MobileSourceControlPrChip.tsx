@@ -114,7 +114,12 @@ function chipAccessibilityLabel(summary: MobilePrChipSummary): string {
     case 'ready': {
       const comments =
         summary.commentCount != null && summary.commentCount > 0
-          ? `, ${summary.commentCount} unresolved comments`
+          ? t(
+              summary.commentCount === 1
+                ? 'pullRequest.unresolvedComments.one'
+                : 'pullRequest.unresolvedComments.other',
+              { count: summary.commentCount }
+            )
           : ''
       return t('m.RvLuxao', {
         value0: summary.number,

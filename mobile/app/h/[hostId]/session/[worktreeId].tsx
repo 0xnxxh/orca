@@ -179,6 +179,7 @@ import {
   mergeTerminalListWithKnownRecords,
   mergeTerminalRecordsByCurrentOrder,
   mobileSessionTabsEqual,
+  removeTerminalRecordByHandle,
   terminalRecordsEqual
 } from '../../../../src/session/mobile-terminal-records'
 import {
@@ -3928,7 +3929,7 @@ export default function SessionScreen() {
     const label = command.label.trim() || t('m.sgQvHe0')
     void handleCreateTerminal(launch.agent, {
       ...launch.options,
-      errorToast: `Couldn't run ${label}`
+      errorToast: t('session.quickCommand.runFailed', { commandLabel: label })
     })
     return true
   }
@@ -4144,6 +4145,9 @@ export default function SessionScreen() {
           terminalRefs.current.delete(terminalHandle)
           initializedHandlesRef.current.delete(terminalHandle)
           clearTerminalLiveInputDefault(terminalHandle)
+          const nextTerminals = removeTerminalRecordByHandle(terminalsRef.current, terminalHandle)
+          terminalsRef.current = nextTerminals
+          setTerminals(nextTerminals)
         }
         sessionTabsRef.current = remainingTabs
         setSessionTabs(remainingTabs)
@@ -5329,7 +5333,7 @@ export default function SessionScreen() {
       <TextInputModal
         visible={renameTarget != null}
         title={t('m.gKi8D7w')}
-        defaultValue={renameTarget?.title || 'Terminal'}
+        defaultValue={renameTarget?.title || t('m.1ELofI0')}
         placeholder={t('m.pg8WJ-k')}
         onSubmit={(value) => void handleRenameTerminal(value)}
         onCancel={() => setRenameTarget(null)}

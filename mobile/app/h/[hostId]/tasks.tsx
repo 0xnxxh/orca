@@ -84,6 +84,11 @@ import {
   findRepoForGitHubProjectRepository,
   type GitHubRepoSlugCacheEntry
 } from '../../../src/tasks/github-project-repo-match'
+import { isGitHubProjectFieldEmpty } from '../../../src/tasks/github-project-field-emptiness'
+import {
+  githubPullRequestDelta,
+  githubReviewStateLabel
+} from '../../../src/tasks/github-review-metadata'
 import {
   parseGitHubProjectInput as parseProjectInput,
   type GitHubProjectOwnerType,
@@ -1161,23 +1166,6 @@ function getLinearPriorityRank(priority: number): number {
   return priority === 0 ? 5 : priority
 }
 
-function formatGitHubReviewState(state: string | null | undefined): string {
-  switch (state) {
-    case 'APPROVED':
-      return 'Approved'
-    case 'CHANGES_REQUESTED':
-      return 'Changes requested'
-    case 'COMMENTED':
-      return 'Commented'
-    case 'DISMISSED':
-      return 'Dismissed'
-    case 'PENDING':
-      return 'Pending'
-    default:
-      return 'Reviewed'
-  }
-}
-
 function getGitHubReviewerRows(item: {
   reviewRequests?: GitHubAssignableUser[]
   latestReviews?: GitHubPRReviewSummary[]
@@ -1205,7 +1193,7 @@ function getGitHubReviewerRows(item: {
       login,
       name: null,
       avatarUrl: review.avatarUrl,
-      stateLabel: formatGitHubReviewState(review.state)
+      stateLabel: githubReviewStateLabel(review.state)
     })
   }
   return Array.from(byLogin.values())
@@ -1232,31 +1220,17 @@ function getGitHubReviewSummary(item: {
   return `${rows[0]!.login} +${rows.length - 1}`
 }
 
-function formatGitHubPRDelta(item: GitHubWorkItem): string | null {
-  const parts: string[] = []
-  if (typeof item.additions === 'number') {
-    parts.push(`+${item.additions}`)
-  }
-  if (typeof item.deletions === 'number') {
-    parts.push(`-${item.deletions}`)
-  }
-  if (typeof item.changedFiles === 'number') {
-    parts.push(`${item.changedFiles} ${item.changedFiles === 1 ? 'file' : 'files'}`)
-  }
-  return parts.length > 0 ? parts.join(' ') : null
-}
-
 function hostedBranchSummary(item: TaskItem): { head: string; base: string } | null {
   if (item.provider === 'github' && item.source.type === 'pr') {
     return {
-      head: item.source.branchName?.trim() || 'unknown head',
-      base: item.source.baseRefName?.trim() || 'base'
+      head: item.source.branchName?.trim() || t('review.branch.unknownHead'),
+      base: item.source.baseRefName?.trim() || t('m.RIaVSo8')
     }
   }
   if (item.provider === 'gitlab' && item.source.type === 'mr') {
     return {
-      head: item.source.branchName?.trim() || 'unknown head',
-      base: item.source.baseRefName?.trim() || 'base'
+      head: item.source.branchName?.trim() || t('review.branch.unknownHead'),
+      base: item.source.baseRefName?.trim() || t('m.RIaVSo8')
     }
   }
   return null
@@ -1306,8 +1280,12 @@ function getHostedMergeConfirmMessage(pending: PendingHostedMerge): string {
   if (pending.method === 'squash') {
     return t('m.dTuoCp0', { value0: target, value1: pending.item.source.number })
   }
-  const action = pending.method === 'rebase' ? 'Rebase and merge' : 'Merge'
-  return `${action} ${target} #${pending.item.source.number}?`
+  const action = pending.method === 'rebase' ? t('m.b9yLdBs') : t('m.AXgAxVM')
+  return t('hostedReview.mergeConfirm', {
+    action,
+    target,
+    number: pending.item.source.number
+  })
 }
 
 function getProjectGitHubMergeConfirmMessage(pending: PendingProjectGitHubMerge): string {
@@ -1321,7 +1299,7 @@ function getProjectGitHubMergeConfirmMessage(pending: PendingProjectGitHubMerge)
 }
 
 function hostedStateChangeAction(nextState: PendingHostedStateChange['nextState']): string {
-  return nextState === 'closed' ? 'Close' : 'Reopen'
+  return nextState === 'closed' ? t('m.gL1buuY') : t('m.zRLzboM')
 }
 
 function hostedStateChangeTarget(pending: PendingHostedStateChange): {
@@ -1332,38 +1310,48 @@ function hostedStateChangeTarget(pending: PendingHostedStateChange): {
   if (pending.source === 'project') {
     const type = projectRowType(pending.row)
     return {
-      titleTarget: type === 'pr' ? 'Pull Request' : 'Issue',
-      labelTarget: type === 'pr' ? 'PR' : 'Issue',
+      titleTarget: type === 'pr' ? t('m.fO2nz88') : t('m.xcg6mvE'),
+      labelTarget: type === 'pr' ? t('m.psZ6Lys') : t('m.xcg6mvE'),
       number: pending.row.content.number
     }
   }
   if (pending.item.provider === 'gitlab') {
     return {
-      titleTarget: pending.item.source.type === 'mr' ? 'Merge Request' : 'Issue',
-      labelTarget: pending.item.source.type === 'mr' ? 'MR' : 'Issue',
+      titleTarget: pending.item.source.type === 'mr' ? t('m.cR4zEEM') : t('m.xcg6mvE'),
+      labelTarget: pending.item.source.type === 'mr' ? t('m.mYLUh0s') : t('m.xcg6mvE'),
       number: pending.item.source.number
     }
   }
   return {
-    titleTarget: pending.item.source.type === 'pr' ? 'Pull Request' : 'Issue',
-    labelTarget: pending.item.source.type === 'pr' ? 'PR' : 'Issue',
+    titleTarget: pending.item.source.type === 'pr' ? t('m.fO2nz88') : t('m.xcg6mvE'),
+    labelTarget: pending.item.source.type === 'pr' ? t('m.psZ6Lys') : t('m.xcg6mvE'),
     number: pending.item.source.number
   }
 }
 
 function getHostedStateConfirmTitle(pending: PendingHostedStateChange): string {
   const target = hostedStateChangeTarget(pending)
-  return `${hostedStateChangeAction(pending.nextState)} ${target.titleTarget}`
+  return t('hostedReview.stateChangeTitle', {
+    action: hostedStateChangeAction(pending.nextState),
+    target: target.titleTarget
+  })
 }
 
 function getHostedStateConfirmMessage(pending: PendingHostedStateChange): string {
   const target = hostedStateChangeTarget(pending)
-  return `${hostedStateChangeAction(pending.nextState)} ${target.labelTarget} #${target.number}?`
+  return t('hostedReview.stateChangeConfirm', {
+    action: hostedStateChangeAction(pending.nextState),
+    target: target.labelTarget,
+    number: target.number
+  })
 }
 
 function getHostedStateConfirmLabel(pending: PendingHostedStateChange): string {
   const target = hostedStateChangeTarget(pending)
-  return `${hostedStateChangeAction(pending.nextState)} ${target.labelTarget}`
+  return t('hostedReview.stateChangeTitle', {
+    action: hostedStateChangeAction(pending.nextState),
+    target: target.labelTarget
+  })
 }
 
 function mergeGitHubAssignableUsers(
@@ -1689,7 +1677,7 @@ function projectGroupMeta(group: ProjectGroup): string {
       parts.push(`${group.iteration.startDate} - ${endDate.toISOString().slice(0, 10)}`)
     }
     if (isIterationCurrent(group.iteration)) {
-      parts.push('Current')
+      parts.push(t('projects.iteration.current'))
     }
   }
   return parts.join(' · ')
@@ -9355,7 +9343,7 @@ export default function MobileTasksScreen() {
                       <View style={styles.projectFieldPillRow}>
                         {githubProjectSummaryFields.slice(0, 4).map((field) => {
                           const value = projectFieldDisplayLabel(row, field)
-                          const isEmpty = value === 'Empty'
+                          const isEmpty = isGitHubProjectFieldEmpty(row, field)
                           return (
                             <View key={field.id} style={styles.projectFieldPill}>
                               <Text style={styles.projectFieldPillText} numberOfLines={1}>
@@ -9679,7 +9667,7 @@ export default function MobileTasksScreen() {
             const repo = taskRepositoryMeta(item, reposById)
             const isGitHubPr = item.provider === 'github' && item.source.type === 'pr'
             const isGitLabMr = item.provider === 'gitlab' && item.source.type === 'mr'
-            const githubPrDelta = isGitHubPr ? formatGitHubPRDelta(item.source) : null
+            const githubPrDelta = isGitHubPr ? githubPullRequestDelta(item.source) : null
             const branchSummary = hostedBranchSummary(item)
             return (
               <Pressable
@@ -11900,7 +11888,9 @@ export default function MobileTasksScreen() {
                         )}
                         <Pressable
                           style={styles.inlineSaveButton}
-                          disabled={projectMutating || currentLabel === 'Empty'}
+                          disabled={
+                            projectMutating || isGitHubProjectFieldEmpty(projectRowItem, field)
+                          }
                           onPress={() => void mutateProjectRowField(projectRowItem, field, null)}
                         >
                           <Text style={styles.inlineSaveText}>{t('m.GKSPk20')}</Text>

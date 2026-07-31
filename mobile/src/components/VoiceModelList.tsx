@@ -105,7 +105,7 @@ export function VoiceModelList({
                     style={({ pressed }) => [styles.iconButton, pressed && styles.actionPressed]}
                     disabled={anyBusy}
                     onPress={() => onDelete(model)}
-                    accessibilityLabel={t('m.jCov6Mc') + model.label}
+                    accessibilityLabel={t('m.r6942Dw', { value0: model.label })}
                   >
                     {deleteBusy ? (
                       <ActivityIndicator size="small" color={colors.statusRed} />
@@ -121,7 +121,7 @@ export function VoiceModelList({
                   style={({ pressed }) => [styles.iconButton, pressed && styles.actionPressed]}
                   disabled={anyBusy}
                   onPress={() => onDownload(model)}
-                  accessibilityLabel={t('m.8Zue0js') + model.label}
+                  accessibilityLabel={t('voiceModels.downloadLabel', { modelName: model.label })}
                 >
                   {downloadBusy ? (
                     <ActivityIndicator size="small" color={colors.textSecondary} />

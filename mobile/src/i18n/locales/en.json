@@ -2179,6 +2179,67 @@
   "prChecks": {
     "status": {
       "actionRequired": "Action required"
+    },
+    "annotationFallback": "Annotation"
+  },
+  "session": {
+    "quickCommand": {
+      "runFailed": "Couldn't run {{commandLabel}}"
     }
+  },
+  "accounts": {
+    "selectedManagedAccount": "the selected managed account"
+  },
+  "onboarding": {
+    "progress": "Step {{currentStep}} of {{totalSteps}}"
+  },
+  "pullRequest": {
+    "checks": {
+      "running": "{{count}} running"
+    },
+    "unresolvedComments": {
+      "one": ", {{count}} unresolved comment",
+      "other": ", {{count}} unresolved comments"
+    }
+  },
+  "voiceModels": {
+    "downloadLabel": "Download {{modelName}}"
+  },
+  "workspace": {
+    "lineage": {
+      "childCount": {
+        "one": "{{count}} child",
+        "other": "{{count}} children"
+      }
+    }
+  },
+  "agents": {
+    "count": {
+      "one": "{{count}} agent",
+      "other": "{{count}} agents"
+    },
+    "collapseSummary": "Collapse {{agentCountLabel}}",
+    "expandSummary": "Expand {{agentCountLabel}}"
+  },
+  "hostedReview": {
+    "mergeConfirm": "{{action}} {{target}} #{{number}}?",
+    "stateChangeConfirm": "{{action}} {{target}} #{{number}}?",
+    "stateChangeTitle": "{{action}} {{target}}"
+  },
+  "projects": {
+    "iteration": {
+      "current": "Current"
+    }
+  },
+  "review": {
+    "branch": {
+      "unknownHead": "unknown head"
+    },
+    "changedFiles": {
+      "one": "{{count}} file",
+      "other": "{{count}} files"
+    },
+    "openCommentInBrowser": "Open comment in browser",
+    "requestReviewer": "Request {{login}}"
   }
 }

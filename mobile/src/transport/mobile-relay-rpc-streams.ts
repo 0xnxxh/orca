@@ -59,7 +59,7 @@ export class MobileRelayRpcStreams {
       .waitForConnected()
       .then(() => {
         if (!stream.cancelled && !this.options.sendFrame({ id, method, params: stream.params })) {
-          this.fail(id, stream, 'Connection interrupted')
+          this.fail(id, stream, t('m.B2yGeak'))
         }
       })
       .catch((error: unknown) => {

@@ -184,7 +184,12 @@ function WorktreeListRowComponent<T extends WorktreeListRowItem>({
             )}
             <GitBranch size={12} color={colors.textSecondary} />
             <Text style={styles.lineageToggleText}>
-              {lineageChildCount} {lineageChildCount === 1 ? t('m.ugLQfPg') : t('m.JLc6yd4')}
+              {t(
+                lineageChildCount === 1
+                  ? 'workspace.lineage.childCount.one'
+                  : 'workspace.lineage.childCount.other',
+                { count: lineageChildCount }
+              )}
             </Text>
           </Pressable>
         ) : null}

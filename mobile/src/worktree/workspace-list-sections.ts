@@ -15,6 +15,8 @@ import { sortWorktrees } from './workspace-list-ordering'
 export type { FilterState, Section, Worktree } from './workspace-list-types'
 export { CREATE_GRACE_MS, getWorktreeStatus, sortWorktrees } from './workspace-list-ordering'
 
+const MISSING_REPOSITORY_GROUP_KEY = '\0missing-repository'
+
 function makeSection(
   key: string,
   title: string,
@@ -138,7 +140,7 @@ export function buildSections(
   } else if (groupMode === 'repo') {
     const byRepo = new Map<string, Worktree[]>()
     for (const w of canonicalGroupWorktrees) {
-      const key = w.repo || t('m.6MEByr4')
+      const key = w.repo || MISSING_REPOSITORY_GROUP_KEY
       const list = byRepo.get(key)
       if (list) {
         list.push(w)
@@ -162,8 +164,10 @@ export function buildSections(
         byRepo.set(displayName, [])
       }
     }
-    for (const [repo, items] of byRepo) {
-      const key = `repo:${repoIdsByName.get(repo) ?? repo}`
+    for (const [repoIdentity, items] of byRepo) {
+      const missingRepository = repoIdentity === MISSING_REPOSITORY_GROUP_KEY
+      const repo = missingRepository ? t('m.6MEByr4') : repoIdentity
+      const key = missingRepository ? 'repo:missing' : `repo:${repoIdsByName.get(repo) ?? repo}`
       sections.push(
         makeSection(key, repo, orderMainWorktreeFirst(items), undefined, collapsedGroups)
       )

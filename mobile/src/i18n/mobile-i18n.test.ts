@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import appConfig from '../../app.json'
 
 import {
   mobileI18n,
@@ -42,5 +43,26 @@ describe('mobile i18n', () => {
   it('reads and interpolates the English catalog', async () => {
     await mobileI18n.changeLanguage('en')
     expect(t('m.rOYT-0U', { value0: 'Camera' })).toBe('Allow Camera?')
+  })
+
+  it('enables localized native metadata on iOS', () => {
+    expect(appConfig.expo.ios.infoPlist.CFBundleAllowMixedLocalizations).toBe(true)
+  })
+
+  it.each(['ja', 'ko', 'zh'] satisfies MobileUiLocale[])(
+    'falls back from unsafe %s task-status copy',
+    async (locale) => {
+      await mobileI18n.changeLanguage(locale)
+      expect(t('m.zWwi3-o')).toBe('Todo')
+    }
+  )
+
+  it('falls back from polluted Simplified Chinese GitLab copy', async () => {
+    await mobileI18n.changeLanguage('zh')
+    expect([t('m.k98CNAU'), t('m.roI3I5g'), t('m.pmjWIDk')]).toEqual([
+      'GitLab Filter',
+      'GitLab View',
+      'GitLab todo'
+    ])
   })
 })

@@ -18,7 +18,9 @@ const JSX_ENTITY_VALUES = {
 }
 
 function decodeJsxEntities(value) {
-  return value.replace(/&(amp|apos|gt|lt|quot);/g, (_match, name) => JSX_ENTITY_VALUES[name])
+  return value.replace(/&(amp|apos|gt|lt|quot);/gi, (_match, name) => {
+    return JSX_ENTITY_VALUES[name.toLowerCase()]
+  })
 }
 
 function keyForCandidate(candidate, fallback = candidate.text) {
@@ -99,7 +101,11 @@ function findNodeByRange(sourceFile, start, end) {
 
 function translationForCandidate(candidate, sourceFile) {
   if (!candidate.dynamic) {
-    return { fallback: decodeJsxEntities(candidate.text) }
+    const fallback =
+      candidate.kind === 'jsx-text' || candidate.kind.startsWith('jsx-attribute:')
+        ? decodeJsxEntities(candidate.text)
+        : candidate.text
+    return { fallback }
   }
 
   const node = findNodeByRange(sourceFile, candidate.start, candidate.end)
