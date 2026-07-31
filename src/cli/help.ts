@@ -18,6 +18,10 @@ Diagnostics:
 Agent Discovery:
   agent-context             Print the machine-readable command schema for agents
 
+Accounts:
+  account add               Add a managed Claude or Codex account on this Orca host
+  account list              List managed Claude and Codex accounts on this Orca host
+
 Skills:
   skills list               List version-matched skill guides bundled with this Orca CLI
   skills get                Print a version-matched skill guide as Markdown
@@ -214,6 +218,8 @@ Common Commands:
   orca status [--json]
   orca diagnostics memory [--json]
   orca agent-context [--json]
+  orca account add [--agent claude|codex] [--json]
+  orca account list [--json]
   orca environment add --name <name> --pairing-code <code> [--json]
   orca environment list [--json]
   orca environment show --environment <selector> [--json]
@@ -485,6 +491,11 @@ function formatCommandFlagHelp(flag: string, commandPath: string[]): string {
   }
   if (command === 'orchestration task-create' && flag === 'display-name') {
     return '--display-name <text> UI label shown for dispatched worker rows'
+  }
+  // Why: the shared --agent help describes launching a TUI agent in a terminal,
+  // which is the wrong meaning here — this selects the account provider.
+  if (command === 'account add' && flag === 'agent') {
+    return '--agent <id>           Account provider: claude or codex (default claude)'
   }
   if (flag === 'key' && command === 'computer hotkey') {
     return '--key <key-combo>      Modifier chord with one key, e.g. CmdOrCtrl+A'
