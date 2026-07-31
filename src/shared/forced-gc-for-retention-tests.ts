@@ -9,9 +9,12 @@ export function resolveForcedGc(): (() => void) | null {
   }
   try {
     setFlagsFromString('--expose-gc')
-    const exposed = runInNewContext('gc') as unknown
-    setFlagsFromString('--no-expose-gc')
-    return typeof exposed === 'function' ? (exposed as () => void) : null
+    try {
+      const exposed = runInNewContext('gc') as unknown
+      return typeof exposed === 'function' ? (exposed as () => void) : null
+    } finally {
+      setFlagsFromString('--no-expose-gc')
+    }
   } catch {
     return null
   }
