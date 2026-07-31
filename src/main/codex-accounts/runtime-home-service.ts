@@ -74,6 +74,8 @@ import {
 } from './codex-auth-identity'
 import { migrateLegacySharedAuthToPerAccountHome } from './legacy-shared-auth-migration'
 import { hasStoredCodexCredential } from './managed-codex-auth-readiness'
+import { syncLegacySharedCodexHomeForRetainedPanes } from './legacy-shared-home-compatibility'
+import type { CodexPaneHomeRoute } from '../codex/codex-pane-account-registry'
 
 type CodexSystemDefaultSnapshot = {
   authJson: string | null
@@ -181,8 +183,8 @@ export class CodexRuntimeHomeService {
     if (this.isHostSystemDefaultRealHome(launchEnv)) {
       // Why (flag ON, system default): run Codex on the user's own ~/.codex.
       // Returning null tells the PTY/env layer to inject no managed CODEX_HOME;
-      // sessions, auth, and config all live in the native home. No system->
-      // managed session bridge runs, so the real home stays the single source.
+      // the retired mirror is refreshed only for pre-rollout PTYs.
+      syncLegacySharedCodexHomeForRetainedPanes()
       return null
     }
     this.invalidateBackfillAfterManagedSystemDefaultLaunch(launchEnv)
@@ -424,6 +426,13 @@ export class CodexRuntimeHomeService {
       : null
   }
 
+  getSelectedHostCodexHomeRoute(): CodexPaneHomeRoute {
+    if (this.getSelfContainedManagedHostAccount()) {
+      return 'account-home'
+    }
+    return this.isHostSystemDefaultRealHome() ? 'real-home' : 'shared-home'
+  }
+
   // Why: the real-home hook installer flips this gate off when the trust-grant
   // client reports the host incapable, keeping that host byte-identical to the
   // managed lane instead of shipping status-blind panes.
@@ -431,6 +440,9 @@ export class CodexRuntimeHomeService {
 
   setRealHomeLaneGate(gate: () => boolean): void {
     this.realHomeLaneGate = gate
+    if (this.isHostSystemDefaultRealHome()) {
+      syncLegacySharedCodexHomeForRetainedPanes()
+    }
   }
 
   // Why: real-home routing applies only to the host system-default selection

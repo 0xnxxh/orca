@@ -198,6 +198,7 @@ import {
 import { resolveCodexPaneLaunchAccount } from '../codex/codex-pane-launch-account'
 import { getSystemCodexHomePath } from '../codex/codex-home-paths'
 import { isCodexSystemDefaultRealHomeEnabled } from '../codex/codex-real-home-flag'
+import { hasCustomCodexHomeOverride } from '../codex/codex-real-home-path'
 import type { CodexSessionResumePreparation } from '../codex/codex-session-resume-home'
 import { dropUnverifiedCodexResumeArgv } from '../codex/codex-unverified-resume-launch'
 import { isHostCodexHomeForWsl, isWslCodexHomeForHost } from '../pty/codex-home-wsl-env'
@@ -995,6 +996,7 @@ function recordCodexPaneAccountForSpawn(args: {
   isReattach: boolean
   pinnedByResume: boolean
   launchCodexHomePath: string | null
+  launchEnv?: NodeJS.ProcessEnv
   target: CodexAccountSelectionTarget
   settings: GlobalSettings | undefined
 }): void {
@@ -1005,6 +1007,10 @@ function recordCodexPaneAccountForSpawn(args: {
     ? resolveCodexPaneLaunchAccount({
         pinnedByResume: args.pinnedByResume,
         launchCodexHomePath: args.launchCodexHomePath,
+        // Why: a pane-local custom CODEX_HOME is intentional and will be
+        // present again after restart, so route comparison would prompt forever.
+        recordHomeRoute:
+          args.pinnedByResume || !hasCustomCodexHomeOverride({ ...process.env, ...args.launchEnv }),
         systemCodexHomePath: getSystemCodexHomePath(),
         settings: args.settings,
         target: args.target
@@ -4361,6 +4367,7 @@ export function registerPtyHandlers(
           isReattach: result.isReattach === true,
           pinnedByResume: codexResumeHomeSelected,
           launchCodexHomePath: selectedCodexHomePath,
+          launchEnv: args.env,
           target: codexSelectionTarget,
           settings: getSettings?.()
         })
@@ -5445,6 +5452,7 @@ export function registerPtyHandlers(
           isReattach: result.isReattach === true,
           pinnedByResume: codexResumeHomeSelected,
           launchCodexHomePath: selectedCodexHomePath,
+          launchEnv: baseEnv,
           target: codexSelectionTarget,
           settings: getSettings?.()
         })

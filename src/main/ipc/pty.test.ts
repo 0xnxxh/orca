@@ -15002,14 +15002,20 @@ describe('registerPtyHandlers', () => {
     const getSettings = vi.fn().mockReturnValue({ activeCodexManagedAccountId: 'account-a' })
     registerPtyHandlers(mainWindow as never, undefined, undefined, getSettings as never)
 
-    await handlers.get('pty:spawn')!(null, { cols: 80, rows: 24 })
-    await handlers.get('pty:spawn')!(null, { cols: 80, rows: 24, sessionId: 'pty-reattached' })
+    const nativeCodexEnv = { CODEX_HOME: '', ORCA_CODEX_HOME: '' }
+    await handlers.get('pty:spawn')!(null, { cols: 80, rows: 24, env: nativeCodexEnv })
+    await handlers.get('pty:spawn')!(null, {
+      cols: 80,
+      rows: 24,
+      env: nativeCodexEnv,
+      sessionId: 'pty-reattached'
+    })
 
     // Why: a reattached shell keeps the CODEX_HOME baked in at its original
     // spawn, so re-recording it under the current selection would erase the only
     // evidence that the pane is stale.
     expect(recordCodexPaneAccountMock.mock.calls).toEqual([
-      ['pty-fresh', { selectionKey: 'host', accountId: 'account-a' }]
+      ['pty-fresh', { selectionKey: 'host', accountId: 'account-a', homeRoute: 'real-home' }]
     ])
   })
 
@@ -15127,7 +15133,7 @@ describe('registerPtyHandlers', () => {
     // Why: the resume deliberately overrides the selection, so the pane really
     // is on account-a. Recording that is what makes the restart prompt appear.
     expect(recordCodexPaneAccountMock.mock.calls).toEqual([
-      ['pty-resumed', { selectionKey: 'host', accountId: 'account-a' }]
+      ['pty-resumed', { selectionKey: 'host', accountId: 'account-a', homeRoute: 'account-home' }]
     ])
     expect(readFileSyncMock).toHaveBeenCalledWith('/managed/origin/home/auth.json', 'utf8')
     expect(forgetCodexPaneAccountMock).not.toHaveBeenCalled()
@@ -15247,7 +15253,10 @@ describe('registerPtyHandlers', () => {
     })
 
     expect(recordCodexPaneAccountMock.mock.calls).toEqual([
-      ['pty-runtime-resumed', { selectionKey: 'host', accountId: 'account-a' }]
+      [
+        'pty-runtime-resumed',
+        { selectionKey: 'host', accountId: 'account-a', homeRoute: 'account-home' }
+      ]
     ])
     expect(readFileSyncMock).toHaveBeenCalledWith('/managed/origin/home/auth.json', 'utf8')
     expect(forgetCodexPaneAccountMock).not.toHaveBeenCalled()

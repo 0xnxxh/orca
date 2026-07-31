@@ -1041,12 +1041,14 @@ describe('CodexRuntimeHomeService', () => {
     const service = new CodexRuntimeHomeService(store as never)
 
     expect(service.isHostSystemDefaultRealHome()).toBe(true)
+    expect(service.getSelectedHostCodexHomeRoute()).toBe('real-home')
     expect(service.prepareForCodexLaunch()).toBeNull()
     expect(service.getHostCodexHomePathsForSessionDiscovery()).toEqual([
       getRuntimeCodexHomePath(),
       getSystemCodexHomePath()
     ])
     service.setRealHomeLaneGate(() => false)
+    expect(service.getSelectedHostCodexHomeRoute()).toBe('shared-home')
     expect(service.getHostCodexHomePathsForSessionDiscovery()).toEqual([getRuntimeCodexHomePath()])
     const markerPath = join(
       testState.userDataDir,
@@ -1105,6 +1107,35 @@ describe('CodexRuntimeHomeService', () => {
         process.env.ORCA_CODEX_HOME = previousOrcaCodexHome
       }
     }
+  })
+
+  it('keeps pre-rollout shared-home panes authenticated on the real-home lane', async () => {
+    const systemAuth = createCodexAuthJson('system@example.com', 'acct-system', 'system')
+    const systemConfig = [
+      'model_provider = "codex-lb"',
+      '',
+      '[model_providers.codex-lb]',
+      'base_url = "https://codex-lb.example.test/v1"',
+      'requires_openai_auth = true',
+      ''
+    ].join('\n')
+    writeFileSync(getSystemCodexAuthPath(), systemAuth, 'utf-8')
+    writeFileSync(join(getSystemCodexHomePath(), 'config.toml'), systemConfig, 'utf-8')
+    writeFileSync(getRuntimeCodexAuthPath(), '{"tokens":{"access_token":"stale"}}\n', 'utf-8')
+    writeFileSync(
+      join(getRuntimeCodexHomePath(), 'config.toml'),
+      'model_provider = "stale-provider"\n',
+      'utf-8'
+    )
+
+    const store = createStore(createSettings({ codexSystemDefaultRealHomeEnabled: true }))
+    const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+    const service = new CodexRuntimeHomeService(store as never)
+
+    service.setRealHomeLaneGate(() => true)
+    expect(readFileSync(getRuntimeCodexAuthPath(), 'utf-8')).toBe(systemAuth)
+    expect(readFileSync(join(getRuntimeCodexHomePath(), 'config.toml'), 'utf-8')).toBe(systemConfig)
+    expect(service.prepareForCodexLaunch()).toBeNull()
   })
 
   it('routes a host MANAGED account to its own self-contained home when the flag is ON', async () => {
@@ -1596,9 +1627,10 @@ describe('CodexRuntimeHomeService', () => {
     expect(service.isHostSystemDefaultRealHome()).toBe(true)
     expect(service.prepareForCodexLaunch()).toBeNull()
 
-    // E owns refreshes in place, so takeover ignores later shared-mirror bytes.
+    // E owns refreshes in place, so takeover never adopts later shared bytes;
+    // retained pre-E panes receive the selected system-default identity instead.
     expect(readFileSync(join(managedHomePath, 'auth.json'), 'utf-8')).toBe(managedAuth)
-    expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe(refreshedManagedAuth)
+    expect(readFileSync(runtimeAuthPath, 'utf-8')).toBe(systemAuth)
   })
 
   it('does not read shared auth when polling observes a managed-to-real-home transition', async () => {
