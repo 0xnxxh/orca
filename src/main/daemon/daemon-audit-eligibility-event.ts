@@ -16,16 +16,20 @@ export function trackDaemonAuditEligibility(observation: DaemonAuditObservation)
 }
 
 export function createDaemonAuditEligibilityTracker(
-  now: () => number = Date.now
+  // Why: the window must be measured on a monotonic clock — a backward wall-clock jump (NTP
+  // correction, VM resume) would otherwise park the next heartbeat in the future.
+  monotonicNowMs: () => number = () => performance.now()
 ): (observation: DaemonAuditObservation) => void {
   let lastProperties: string | null = null
   let lastTrackedAtMs = 0
   return (observation) => {
     const properties = JSON.stringify(auditEligibilityProperties(observation))
-    const observedAtMs = now()
+    const observedAtMs = monotonicNowMs()
+    const elapsedMs = observedAtMs - lastTrackedAtMs
     if (
       properties === lastProperties &&
-      observedAtMs - lastTrackedAtMs < REPEATED_OBSERVATION_INTERVAL_MS
+      elapsedMs >= 0 &&
+      elapsedMs < REPEATED_OBSERVATION_INTERVAL_MS
     ) {
       return
     }

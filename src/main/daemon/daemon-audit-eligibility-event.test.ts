@@ -74,6 +74,47 @@ describe('daemon audit eligibility telemetry', () => {
     expect(trackMock).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps heartbeating after the clock jumps backward', () => {
+    let nowMs = 1_700_000_000_000
+    const trackEligibility = createDaemonAuditEligibilityTracker(() => nowMs)
+
+    trackEligibility(recordAuthenticatedInventory(context, null))
+    expect(trackMock).toHaveBeenCalledOnce()
+
+    // An NTP correction / VM resume rewinds the clock by an hour.
+    nowMs -= 60 * 60_000
+    trackEligibility(recordAuthenticatedInventory(context, null))
+    expect(trackMock).toHaveBeenCalledTimes(2)
+
+    // The window re-anchors on the rewound clock instead of emitting on every call.
+    for (let index = 0; index < 60; index += 1) {
+      nowMs += 1_000
+      trackEligibility(recordAuthenticatedInventory(context, null))
+    }
+    expect(trackMock).toHaveBeenCalledTimes(2)
+
+    nowMs += 5 * 60_000
+    trackEligibility(recordAuthenticatedInventory(context, null))
+    expect(trackMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('measures the window on a monotonic clock rather than wall time', () => {
+    const wallClock = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
+    const trackEligibility = createDaemonAuditEligibilityTracker()
+
+    try {
+      trackEligibility(recordAuthenticatedInventory(context, null))
+      expect(trackMock).toHaveBeenCalledOnce()
+
+      // Wall time alone must not open the window: no real time has elapsed.
+      wallClock.mockReturnValue(1_700_000_000_000 + 6 * 60_000)
+      trackEligibility(recordAuthenticatedInventory(context, null))
+      expect(trackMock).toHaveBeenCalledOnce()
+    } finally {
+      wallClock.mockRestore()
+    }
+  })
+
   it('emits immediately when the observation changes', () => {
     let nowMs = 1_700_000_000_000
     const trackEligibility = createDaemonAuditEligibilityTracker(() => nowMs)
