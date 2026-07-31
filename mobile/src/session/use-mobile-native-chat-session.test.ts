@@ -33,17 +33,23 @@ describe('useMobileNativeChatSession', () => {
     renderer = null
   })
 
-  function Harness({ client }: { client: RpcClient | null }): null {
+  function Harness({
+    client,
+    transcriptPath = null
+  }: {
+    client: RpcClient | null
+    transcriptPath?: string | null
+  }): null {
     state = useMobileNativeChatSession({
       client,
       agent: 'claude',
       sessionId: 'session',
-      transcriptPath: null
+      transcriptPath
     })
     return null
   }
 
-  async function mount(client: RpcClient): Promise<void> {
+  async function mount(client: RpcClient, transcriptPath?: string): Promise<void> {
     const original = console.error
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation((...args) => {
       if (typeof args[0] === 'string' && args[0].includes('react-test-renderer is deprecated')) {
@@ -53,7 +59,7 @@ describe('useMobileNativeChatSession', () => {
     })
     try {
       await act(async () => {
-        renderer = create(createElement(Harness, { client }))
+        renderer = create(createElement(Harness, { client, transcriptPath }))
       })
     } finally {
       consoleSpy.mockRestore()
@@ -216,6 +222,55 @@ describe('useMobileNativeChatSession', () => {
       limit: 100
     })
     expect(state?.messages.map((entry) => entry.id)).toEqual(['fresh-growing-tail'])
+  })
+
+  it('retrieves a full text block through the active session identity', async () => {
+    const sendRequest = vi.fn().mockResolvedValue({ ok: true, result: { text: 'complete text' } })
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      onData({ type: 'snapshot', messages: [message('current')], hasMore: false })
+      return () => {}
+    })
+    await mount({ sendRequest, subscribe } as unknown as RpcClient, '/remote/chat.jsonl')
+
+    let text = ''
+    await act(async () => {
+      text = await state!.loadFullText('current', {
+        recordOffset: 81,
+        blockIndex: 2,
+        originalChars: 9000
+      })
+    })
+
+    expect(text).toBe('complete text')
+    expect(sendRequest).toHaveBeenCalledWith('nativeChat.readTextBlock', {
+      agent: 'claude',
+      sessionId: 'session',
+      messageId: 'current',
+      recordOffset: 81,
+      blockIndex: 2,
+      transcriptPath: '/remote/chat.jsonl'
+    })
+  })
+
+  it('rejects a full-text response after the client source changes', async () => {
+    let resolveRead: (response: unknown) => void = () => {}
+    const sendRequest = vi.fn(() => new Promise((resolve) => (resolveRead = resolve)))
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      onData({ type: 'snapshot', messages: [message('current')], hasMore: false })
+      return () => {}
+    })
+    await mount({ sendRequest, subscribe } as unknown as RpcClient)
+
+    const outcome = state!
+      .loadFullText('current', { recordOffset: 81, blockIndex: 0, originalChars: 9000 })
+      .catch((error: unknown) => error)
+    await act(async () => renderer?.update(createElement(Harness, { client: null })))
+    await act(async () => {
+      resolveRead({ ok: true, result: { text: 'stale text' } })
+      await Promise.resolve()
+    })
+
+    await expect(outcome).resolves.toMatchObject({ message: 'Chat session changed' })
   })
 })
 

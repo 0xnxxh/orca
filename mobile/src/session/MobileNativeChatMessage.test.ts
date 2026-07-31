@@ -7,6 +7,7 @@ vi.mock('react-native', async () => {
   const React = await import('react')
   return {
     Image: 'Image',
+    ActivityIndicator: 'ActivityIndicator',
     Pressable: 'Pressable',
     Text: ({ children, ...props }: { children?: unknown }) =>
       React.createElement('Text', props, children),
@@ -25,6 +26,8 @@ vi.mock('lucide-react-native', () => ({
 vi.mock('../components/MobileMarkdown', () => ({ MobileMarkdown: 'MobileMarkdown' }))
 
 import { MobileNativeChatMessage } from './MobileNativeChatMessage'
+import { mobileNativeChatTextKey } from './use-mobile-native-chat-text-expansion'
+import type { MobileNativeChatTextExpansion } from './use-mobile-native-chat-text-expansion'
 
 function userMessage(blocks: NativeChatMessage['blocks']): NativeChatMessage {
   return { id: 'u1', role: 'user', blocks, timestamp: null, source: 'transcript' }
@@ -41,7 +44,10 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
     renderer = null
   })
 
-  function render(message: NativeChatMessage): ReactTestRenderer {
+  function render(
+    message: NativeChatMessage,
+    textExpansion?: MobileNativeChatTextExpansion
+  ): ReactTestRenderer {
     const original = console.error
     const spy = vi.spyOn(console, 'error').mockImplementation((...a) => {
       if (typeof a[0] === 'string' && a[0].includes('react-test-renderer is deprecated')) {
@@ -51,7 +57,7 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
     })
     try {
       act(() => {
-        renderer = create(createElement(MobileNativeChatMessage, { message }))
+        renderer = create(createElement(MobileNativeChatMessage, { message, textExpansion }))
       })
     } finally {
       spy.mockRestore()
@@ -83,5 +89,32 @@ describe('MobileNativeChatMessage image-ref rendering', () => {
       .findAllByType('Text' as never)
       .map((node) => String(node.children.join('')))
     expect(texts.some((text) => text.includes('/tmp/host.png'))).toBe(true)
+  })
+
+  it.each([
+    ['ordinary prose', `Summary\n\n${'Readable paragraph. '.repeat(300)}`],
+    ['fenced code', `\`\`\`ts\n${'const answer = 42\n'.repeat(300)}\`\`\``]
+  ])('renders complete %s after lazy expansion', (_label, fullText) => {
+    const retrieval = { recordOffset: 42, blockIndex: 0, originalChars: fullText.length }
+    const message: NativeChatMessage = {
+      id: 'assistant-1',
+      role: 'assistant',
+      blocks: [{ type: 'text', text: `${fullText.slice(0, 4000)}\n… (truncated)`, retrieval }],
+      timestamp: null,
+      source: 'transcript'
+    }
+    const key = mobileNativeChatTextKey(message.id, retrieval)
+    const textExpansion: MobileNativeChatTextExpansion = {
+      cached: { key, text: fullText },
+      expandedKey: key,
+      loadingKey: null,
+      errorKey: null,
+      toggle: vi.fn()
+    }
+
+    const tree = render(message, textExpansion)
+
+    expect(tree.root.findByType('MobileMarkdown' as never).props.content).toBe(fullText)
+    expect(tree.root.findByProps({ accessibilityLabel: 'Show less' })).toBeTruthy()
   })
 })

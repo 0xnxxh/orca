@@ -5,6 +5,11 @@ import type {
   AgentType
 } from '../../../../shared/native-chat-types'
 import {
+  readNativeChatTextBlock,
+  type ReadNativeChatTextBlockArgs
+} from '../../../native-chat/transcript-record-reader'
+import { transcriptRecordOffset } from '../../../native-chat/transcript-record-position'
+import {
   readNativeChatTranscriptTail,
   subscribeNativeChatTranscript
 } from '../../../native-chat/transcript-watch'
@@ -52,6 +57,15 @@ const NativeChatUnsubscribe = z.object({
   subscriptionId: z.string().min(1).optional()
 })
 
+const NativeChatTextBlockRequest = z.object({
+  agent: NativeChatSession.shape.agent,
+  sessionId: NativeChatSession.shape.sessionId,
+  transcriptPath: NativeChatSession.shape.transcriptPath,
+  messageId: z.string().min(1).max(4096),
+  recordOffset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  blockIndex: z.number().int().nonnegative().max(10_000)
+})
+
 // Why: a long agent session can hold thousands of turns (with full tool I/O).
 // Shipping all of them over the paired connection and rendering them at once
 // freezes the mobile app, so the runtime RPC windows to the most recent slice —
@@ -75,9 +89,28 @@ function clip(text: string): string {
     : text
 }
 
-function clipBlock(block: NativeChatBlock): NativeChatBlock {
+function clipBlock(
+  block: NativeChatBlock,
+  blockIndex: number,
+  recordOffset: number | undefined
+): NativeChatBlock {
   if (block.type === 'text') {
-    return block.text.length > MOBILE_BLOCK_CHAR_CAP ? { ...block, text: clip(block.text) } : block
+    if (block.text.length <= MOBILE_BLOCK_CHAR_CAP) {
+      return block
+    }
+    return {
+      ...block,
+      text: clip(block.text),
+      ...(recordOffset === undefined
+        ? {}
+        : {
+            retrieval: {
+              recordOffset,
+              blockIndex,
+              originalChars: block.text.length
+            }
+          })
+    }
   }
   if (block.type === 'tool-result') {
     return block.output.length > MOBILE_BLOCK_CHAR_CAP
@@ -145,7 +178,11 @@ function sanitizeToolInput(
 }
 
 function sanitizeMessage(message: NativeChatMessage): NativeChatMessage {
-  return { ...message, blocks: message.blocks.map(clipBlock) }
+  const recordOffset = transcriptRecordOffset(message)
+  return {
+    ...message,
+    blocks: message.blocks.map((block, blockIndex) => clipBlock(block, blockIndex, recordOffset))
+  }
 }
 
 function sanitizeAppendForClient(
@@ -202,6 +239,11 @@ export const NATIVE_CHAT_METHODS: readonly RpcAnyMethod[] = [
           }
         : result
     }
+  }),
+  defineMethod({
+    name: 'nativeChat.readTextBlock',
+    params: NativeChatTextBlockRequest,
+    handler: async (params) => readNativeChatTextBlock(params as ReadNativeChatTextBlockArgs)
   }),
   defineStreamingMethod({
     name: 'nativeChat.subscribe',

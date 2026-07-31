@@ -55,6 +55,9 @@ const watcher = vi.hoisted(() => ({
   },
   watching: true
 }))
+const textBlockRead = vi.hoisted(() => ({
+  value: { text: '' } as { text: string } | { error: string }
+}))
 vi.mock('../../../native-chat/transcript-watch', () => ({
   readNativeChatTranscriptTail: ({ limit }: { limit: number }) => {
     const messages = cachedResult.value.messages
@@ -70,8 +73,12 @@ vi.mock('../../../native-chat/transcript-watch', () => ({
     return Promise.resolve({ unsubscribe: vi.fn(), watching: watcher.watching })
   }
 }))
+vi.mock('../../../native-chat/transcript-record-reader', () => ({
+  readNativeChatTextBlock: () => Promise.resolve(textBlockRead.value)
+}))
 
 import { NATIVE_CHAT_METHODS } from './native-chat'
+import { markTranscriptRecordOffset } from '../../../native-chat/transcript-record-position'
 
 function makeMessage(text: string): NativeChatMessage {
   return {
@@ -80,6 +87,13 @@ function makeMessage(text: string): NativeChatMessage {
     timestamp: 1_717_236_000_000,
     source: 'transcript',
     blocks: [{ type: 'tool-result', output: text, isError: false }]
+  }
+}
+
+function makeTextMessage(text: string): NativeChatMessage {
+  return {
+    ...makeMessage('ignored'),
+    blocks: [{ type: 'text', text }]
   }
 }
 
@@ -105,6 +119,16 @@ function subscribeHandler(): (
     ctx: RpcContext,
     emit: (value: unknown) => void
   ) => Promise<void>
+}
+
+function readTextBlockHandler(): (params: unknown, ctx: RpcContext) => Promise<unknown> {
+  const method = NATIVE_CHAT_METHODS.find(
+    (candidate) => candidate.name === 'nativeChat.readTextBlock'
+  )
+  if (!method) {
+    throw new Error('readTextBlock method not registered')
+  }
+  return method.handler as (params: unknown, ctx: RpcContext) => Promise<unknown>
 }
 
 function streamingContext(clientKind: RpcContext['clientKind']): RpcContext {
@@ -137,6 +161,54 @@ function activeWatcherArgs(): NonNullable<typeof watcher.args> {
 }
 
 describe('nativeChat.readSession clientKind truncation gating', () => {
+  it.each([
+    ['ordinary assistant prose', `Summary\n\n${'Readable paragraph. '.repeat(300)}`],
+    ['fenced assistant code', `\`\`\`ts\n${'const answer = 42\n'.repeat(300)}\`\`\``]
+  ])('lazily retrieves complete %s from a bounded mobile preview', async (_label, fullText) => {
+    const message = makeTextMessage(fullText)
+    markTranscriptRecordOffset(message, 73)
+    cachedResult.value = { messages: [message] }
+    textBlockRead.value = { text: fullText }
+
+    const result = await readSessionHandler()(
+      { agent: 'claude', sessionId: 's' },
+      ctxWith('mobile')
+    )
+    const block = (result as { messages: NativeChatMessage[] }).messages[0].blocks[0]
+
+    expect(block).toMatchObject({ type: 'text' })
+    expect((block as { text: string }).text.length).toBeLessThan(fullText.length)
+    expect(block).toMatchObject({
+      retrieval: { recordOffset: 73, blockIndex: 0, originalChars: fullText.length }
+    })
+
+    await expect(
+      readTextBlockHandler()(
+        {
+          agent: 'claude',
+          sessionId: 's',
+          messageId: message.id,
+          recordOffset: 73,
+          blockIndex: 0
+        },
+        ctxWith('mobile')
+      )
+    ).resolves.toEqual({ text: fullText })
+  })
+
+  it('does not offer irreversible text retrieval when no record position exists', async () => {
+    cachedResult.value = { messages: [makeTextMessage(OVERSIZED)] }
+
+    const result = await readSessionHandler()(
+      { agent: 'claude', sessionId: 's' },
+      ctxWith('mobile')
+    )
+    const block = (result as { messages: NativeChatMessage[] }).messages[0].blocks[0]
+
+    expect(block).toMatchObject({ type: 'text' })
+    expect(block).not.toHaveProperty('retrieval')
+  })
+
   it('clips oversized tool output for mobile clients', async () => {
     cachedResult.value = { messages: [makeMessage(OVERSIZED)] }
     const result = await readSessionHandler()(
@@ -324,6 +396,36 @@ describe('nativeChat.readSession clientKind truncation gating', () => {
 })
 
 describe('nativeChat.subscribe initial snapshot', () => {
+  it('attaches fresh retrieval locators to mobile appends and replacements', async () => {
+    watcher.watching = true
+    watcher.args = null
+    const emitted: unknown[] = []
+    await subscribeHandler()(
+      { agent: 'claude', sessionId: 's' },
+      streamingContext('mobile'),
+      (value) => emitted.push(value)
+    )
+    const appended = makeTextMessage(OVERSIZED)
+    const replacement = { ...makeTextMessage(OVERSIZED), id: 'replacement' }
+    markTranscriptRecordOffset(appended, 101)
+    markTranscriptRecordOffset(replacement, 202)
+
+    const callbacks = activeWatcherArgs()
+    callbacks.onAppend([appended])
+    callbacks.onReplace?.([replacement], false, 202)
+
+    expect(emitted).toMatchObject([
+      {
+        type: 'appended',
+        messages: [{ blocks: [{ retrieval: { recordOffset: 101, blockIndex: 0 } }] }]
+      },
+      {
+        type: 'replacement',
+        messages: [{ blocks: [{ retrieval: { recordOffset: 202, blockIndex: 0 } }] }]
+      }
+    ])
+  })
+
   it('emits one windowed snapshot with pagination state before live appends', async () => {
     watcher.watching = true
     watcher.args = null

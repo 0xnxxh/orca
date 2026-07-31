@@ -1,26 +1,23 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { Image, Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import { ArrowUp, ChevronDown, Copy, SquareChevronRight } from 'lucide-react-native'
 import type { NativeChatBlock, NativeChatMessage } from '../../../src/shared/native-chat-types'
-import { MobileMarkdown } from '../components/MobileMarkdown'
 import { colors } from '../theme/mobile-theme'
-import {
-  isImageRefBlock,
-  isTextBlock,
-  pairToolBlocks,
-  splitNativeChatBlocks,
-  type ToolPair
-} from './mobile-native-chat-blocks'
+import { pairToolBlocks, splitNativeChatBlocks, type ToolPair } from './mobile-native-chat-blocks'
 import { diffFromText, diffFromToolCall, type DiffLine } from './mobile-native-chat-diff'
-import { isRenderableImageUri } from './mobile-native-chat-image-preview'
-import { MAX_TOOL_RESULT_CHARS, styles, TEXT_SIZE } from './mobile-native-chat-message-styles'
+import { MAX_TOOL_RESULT_CHARS, styles } from './mobile-native-chat-message-styles'
 import { nativeChatMessageText } from './mobile-native-chat-message-text'
+import { MobileNativeChatProseBlock } from './MobileNativeChatProseBlock'
 import {
   summarizeToolInput,
   summarizeToolRun,
   toolFilePath
 } from './mobile-native-chat-tool-summary'
+import {
+  mobileNativeChatTextKey,
+  type MobileNativeChatTextExpansion
+} from './use-mobile-native-chat-text-expansion'
 
 const MAX_VISIBLE_TOOL_PAIRS = 6
 const MAX_TOOL_RUN_DIFF_ROWS = 240
@@ -137,52 +134,6 @@ function ToolLine({
   )
 }
 
-function Prose({
-  block,
-  invert,
-  fontScale,
-  onOpenFile
-}: {
-  block: NativeChatBlock
-  invert?: boolean
-  fontScale: number
-  onOpenFile?: (relativePath: string) => void
-}): React.JSX.Element | null {
-  if (isTextBlock(block)) {
-    // Inverted (user) bubbles use a fixed dark-on-light text rather than the
-    // markdown renderer's light-on-dark palette.
-    if (invert) {
-      return (
-        <Text style={[styles.userText, { fontSize: TEXT_SIZE * fontScale }]}>{block.text}</Text>
-      )
-    }
-    return (
-      <MobileMarkdown content={block.text} textScale={1.25 * fontScale} onOpenFile={onOpenFile} />
-    )
-  }
-  if (isImageRefBlock(block)) {
-    // A local preview (composer echo) or real URL renders as a thumbnail; a bare
-    // host path (not loadable on the device) falls back to a text placeholder.
-    const uri = block.url ?? block.path
-    if (isRenderableImageUri(uri)) {
-      return (
-        <Image
-          source={{ uri }}
-          style={styles.imageThumb}
-          resizeMode="contain"
-          accessibilityLabel={block.alt ?? 'Attached image'}
-        />
-      )
-    }
-    return (
-      <Text style={[styles.imageRef, { fontSize: TEXT_SIZE * fontScale }]}>
-        🖼 {block.alt ?? block.path ?? block.url ?? 'image'}
-      </Text>
-    )
-  }
-  return null
-}
-
 /** A run of a message's tool calls/results, collapsed to a one-line summary that
  *  expands to the individual inline tool lines. `defaultExpanded` lets the global
  *  toolbar toggle drive every run at once while still allowing per-run override. */
@@ -284,7 +235,8 @@ function MobileNativeChatMessageImpl({
   fontScale = 1,
   messageIndex,
   onScrollToMessage,
-  onOpenFile
+  onOpenFile,
+  textExpansion
 }: {
   message: NativeChatMessage
   queued?: boolean
@@ -296,6 +248,7 @@ function MobileNativeChatMessageImpl({
   /** Ask the list to align this message's top to the top of the viewport. */
   onScrollToMessage?: (index: number) => void
   onOpenFile?: (relativePath: string) => void
+  textExpansion?: MobileNativeChatTextExpansion
 }): React.JSX.Element {
   const isUser = message.role === 'user'
   const isReasoning = message.role === 'reasoning'
@@ -317,7 +270,13 @@ function MobileNativeChatMessageImpl({
   const { prose, tools } = splitNativeChatBlocks(message.blocks)
 
   const handleCopy = (): void => {
-    const text = nativeChatMessageText(message.blocks)
+    const text = nativeChatMessageText(message.blocks, (block) => {
+      if (!block.retrieval || !textExpansion?.cached) {
+        return undefined
+      }
+      const key = mobileNativeChatTextKey(message.id, block.retrieval)
+      return textExpansion.cached.key === key ? textExpansion.cached.text : undefined
+    })
     if (!text) {
       return
     }
@@ -356,11 +315,13 @@ function MobileNativeChatMessageImpl({
         ]}
       >
         {prose.map((block, index) => (
-          <Prose
+          <MobileNativeChatProseBlock
             key={index}
             block={block}
+            messageId={message.id}
             invert={isUser}
             fontScale={fontScale}
+            textExpansion={textExpansion}
             onOpenFile={onOpenFile}
           />
         ))}

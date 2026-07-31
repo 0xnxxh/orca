@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
+import type {
+  NativeChatMessage,
+  NativeChatTextRetrieval
+} from '../../../src/shared/native-chat-types'
 import { buildNativeChatSubscriptionId } from '../../../src/shared/native-chat-stream-unsubscribe'
 import type { RpcClient } from '../transport/rpc-client'
 import { createNativeChatMerger, replaceList } from './mobile-native-chat-merge'
@@ -26,6 +29,8 @@ export type MobileNativeChatSession = {
   loadingEarlier: boolean
   /** Grow the window to page in older history. */
   loadEarlier: () => void
+  /** Fetch one full text block represented by a bounded mobile preview. */
+  loadFullText: (messageId: string, retrieval: NativeChatTextRetrieval) => Promise<string>
 }
 
 // Stable empty reference so a not-yet-current read doesn't churn consumers.
@@ -39,6 +44,7 @@ const MAX_MESSAGES = 2000
 type ReadSessionResult =
   | { messages: NativeChatMessage[]; hasMore?: boolean; beforeOffset?: number }
   | { error: string }
+type ReadTextBlockResult = { text: string } | { error: string }
 /** Subscribe to an agent's native-chat transcript over the paired connection.
  *  Reads a small recent window for a fast first paint, tails it for live turns,
  *  and pages in older history on demand. Read results replace the list (they are
@@ -91,6 +97,10 @@ export function useMobileNativeChatSession(args: {
   // Tracks the live session so a late loadEarlier resolve can detect a swap.
   const sessionIdRef = useRef<string | null>(sessionId)
   sessionIdRef.current = sessionId
+  const identityRef = useRef(identity)
+  identityRef.current = identity
+  const clientRef = useRef(client)
+  clientRef.current = client
   const streamGenerationRef = useRef(0)
 
   // Replace the base list (read results are an ordered tail). Resets the merger
@@ -246,6 +256,35 @@ export function useMobileNativeChatSession(args: {
     })()
   }, [client, agent, sessionId, transcriptPath, hasMore, setList])
 
+  const loadFullText = useCallback(
+    async (messageId: string, retrieval: NativeChatTextRetrieval): Promise<string> => {
+      if (!client || !agent || !sessionId) {
+        throw new Error('Full message unavailable')
+      }
+      const requestIdentity = identity
+      const response = await client.sendRequest('nativeChat.readTextBlock', {
+        agent,
+        sessionId,
+        messageId,
+        recordOffset: retrieval.recordOffset,
+        blockIndex: retrieval.blockIndex,
+        ...(transcriptPath ? { transcriptPath } : {})
+      })
+      if (identityRef.current !== requestIdentity || clientRef.current !== client) {
+        throw new Error('Chat session changed')
+      }
+      if (!response.ok) {
+        throw new Error('Full message unavailable')
+      }
+      const result = response.result as ReadTextBlockResult
+      if ('error' in result) {
+        throw new Error(result.error)
+      }
+      return result.text
+    },
+    [client, agent, sessionId, transcriptPath, identity]
+  )
+
   return {
     // Withheld until the settled read belongs to this identity: the effect that
     // clears the previous tab's list is passive, so `messages` lags a commit.
@@ -255,6 +294,7 @@ export function useMobileNativeChatSession(args: {
     error,
     hasMore,
     loadingEarlier,
-    loadEarlier
+    loadEarlier,
+    loadFullText
   }
 }

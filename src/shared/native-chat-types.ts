@@ -28,9 +28,18 @@ export const NATIVE_CHAT_ROLES = ['user', 'assistant', 'tool', 'reasoning', 'sys
 export type NativeChatRole = (typeof NATIVE_CHAT_ROLES)[number]
 
 /** Plain prose / markdown. The assistant body, a user prompt, reasoning text. */
+export type NativeChatTextRetrieval = {
+  /** JSONL byte offset used for a bounded, direct record read. */
+  recordOffset: number
+  blockIndex: number
+  originalChars: number
+}
+
 export type NativeChatTextBlock = {
   type: 'text'
   text: string
+  /** Present when `text` is a bounded mobile preview. */
+  retrieval?: NativeChatTextRetrieval
 }
 
 /** A tool invocation by the agent. `input` is the (already-serialized) tool
