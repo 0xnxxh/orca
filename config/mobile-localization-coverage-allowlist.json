@@ -1,1 +1,9 @@
-[]
+[
+  {
+    "filePath": "mobile/src/transport/pairing-keychain.ts",
+    "kind": "object-property:error",
+    "text": "pairing keychain generation record is invalid",
+    "dynamic": false,
+    "count": 1
+  }
+]
