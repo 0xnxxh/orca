@@ -803,6 +803,7 @@ export default function HomeScreen() {
                   triggerMediumImpact()
                   setActionTarget(item)
                 }}
+                onOpenActions={() => setActionTarget(item)}
               />
             )
           }}
