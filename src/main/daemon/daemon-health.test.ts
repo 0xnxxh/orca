@@ -510,4 +510,65 @@ describe('killStaleDaemon pid identity guards', () => {
       await closeServer(replacementSocket)
     }
   })
+
+  it('preserves a replacement pidfile installed as the targeted process exits', async () => {
+    if (process.platform === 'win32') {
+      return
+    }
+
+    const replacementSocket = createServer((socket) => socket.end())
+    await new Promise<void>((resolve, reject) => {
+      replacementSocket.once('error', reject)
+      replacementSocket.listen(socketPath, () => {
+        replacementSocket.off('error', reject)
+        resolve()
+      })
+    })
+    const pidPath = getDaemonPidPath(dir)
+    const replacementPidfile = serializeDaemonPidFile({
+      pid: process.pid,
+      startedAtMs: null,
+      launchNonce: 'replacement'
+    })
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        "const fs=require('node:fs');const [pidPath,pidfile]=process.argv.slice(1);process.on('SIGTERM',()=>{fs.writeFileSync(pidPath,pidfile);process.exit(0)});process.send?.('ready');setInterval(()=>{},1000)",
+        pidPath,
+        replacementPidfile,
+        'daemon-entry',
+        socketPath,
+        tokenPath
+      ],
+      { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
+    )
+    await new Promise<void>((resolve, reject) => {
+      child.once('error', reject)
+      child.on('message', (message) => {
+        if (message === 'ready') {
+          resolve()
+        }
+      })
+    })
+    writeFileSync(
+      pidPath,
+      serializeDaemonPidFile({
+        pid: child.pid!,
+        startedAtMs: null,
+        launchNonce: 'target'
+      }),
+      { mode: 0o600 }
+    )
+
+    try {
+      await expect(killStaleDaemon(dir, socketPath, tokenPath)).resolves.toBe(true)
+      expect(readFileSync(pidPath, 'utf8')).toBe(replacementPidfile)
+    } finally {
+      if (child.exitCode === null) {
+        child.kill('SIGKILL')
+      }
+      await closeServer(replacementSocket)
+    }
+  })
 })

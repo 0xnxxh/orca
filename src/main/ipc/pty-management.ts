@@ -61,13 +61,45 @@ async function collectSessions(adapters: DaemonPtyAdapter[]): Promise<DaemonSess
   return { sessions, unavailableOwners }
 }
 
-function sameSessionIncarnation(left: OwnedDaemonSession, right: OwnedDaemonSession): boolean {
+type DaemonSessionIncarnationBucket = {
+  hasUnqualifiedSession: boolean
+  incarnationIds: Set<string>
+}
+
+function indexSessionIncarnations(
+  sessions: readonly OwnedDaemonSession[]
+): Map<DaemonPtyAdapter, Map<string, DaemonSessionIncarnationBucket>> {
+  const byOwner = new Map<DaemonPtyAdapter, Map<string, DaemonSessionIncarnationBucket>>()
+  for (const { owner, session } of sessions) {
+    let bySessionId = byOwner.get(owner)
+    if (!bySessionId) {
+      bySessionId = new Map()
+      byOwner.set(owner, bySessionId)
+    }
+    let bucket = bySessionId.get(session.sessionId)
+    if (!bucket) {
+      bucket = { hasUnqualifiedSession: false, incarnationIds: new Set() }
+      bySessionId.set(session.sessionId, bucket)
+    }
+    if (session.incarnationId === undefined) {
+      bucket.hasUnqualifiedSession = true
+    } else {
+      bucket.incarnationIds.add(session.incarnationId)
+    }
+  }
+  return byOwner
+}
+
+function hasSessionIncarnation(
+  index: ReadonlyMap<DaemonPtyAdapter, ReadonlyMap<string, DaemonSessionIncarnationBucket>>,
+  original: OwnedDaemonSession
+): boolean {
+  const bucket = index.get(original.owner)?.get(original.session.sessionId)
   return (
-    left.owner === right.owner &&
-    left.session.sessionId === right.session.sessionId &&
-    (left.session.incarnationId === undefined ||
-      right.session.incarnationId === undefined ||
-      left.session.incarnationId === right.session.incarnationId)
+    bucket !== undefined &&
+    (original.session.incarnationId === undefined ||
+      bucket.hasUnqualifiedSession ||
+      bucket.incarnationIds.has(original.session.incarnationId))
   )
 }
 
@@ -120,20 +152,19 @@ export function registerDaemonManagementHandlers(): void {
       for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt += 1) {
         await sleep(POLL_INTERVAL_MS)
         const current = await collectSessions(adapters)
+        const currentIndex = indexSessionIncarnations(current.sessions)
         remainingOriginal = initial.filter(
           (original) =>
             current.unavailableOwners.has(original.owner) ||
-            current.sessions.some((candidate) => sameSessionIncarnation(original, candidate))
+            hasSessionIncarnation(currentIndex, original)
         )
         if (remainingOriginal.length === 0) {
           break
         }
       }
 
-      const killed = initial.filter(
-        (original) =>
-          !remainingOriginal.some((candidate) => sameSessionIncarnation(original, candidate))
-      )
+      const remainingSet = new Set(remainingOriginal)
+      const killed = initial.filter((original) => !remainingSet.has(original))
       return {
         killedCount: killed.length,
         remainingCount: remainingOriginal.length,

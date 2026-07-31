@@ -1,11 +1,16 @@
 import type { PtyProviderBufferSnapshot, PtySpawnOptions, PtySpawnResult } from '../providers/types'
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
+import type { DaemonEndpointIdentity } from './daemon-hello-protocol'
 import { DaemonSessionRouteTable } from './daemon-session-route-table'
 import { DaemonSnapshotAcknowledgementRoutes } from './daemon-snapshot-acknowledgement-routes'
 
 export class DaemonPtyRouterSessionRouting {
   private readonly routes: DaemonSessionRouteTable
   private readonly snapshotAcks = new DaemonSnapshotAcknowledgementRoutes()
+  private readonly freshSpawnsInFlight = new Map<
+    string,
+    { owner: DaemonPtyAdapter; count: number }
+  >()
   private readonly identityUnsubscribes: (() => void)[] = []
 
   constructor(
@@ -16,16 +21,22 @@ export class DaemonPtyRouterSessionRouting {
     for (const adapter of adapters) {
       this.identityUnsubscribes.push(
         adapter.onDaemonIdentityChanged(({ previous }) => {
+          this.snapshotAcks.dropAdapterIncarnation(adapter, previous)
           this.routes.markOwnerUnavailable(adapter, previous)
         })
       )
     }
   }
 
-  recordDiscovery(adapter: DaemonPtyAdapter, sessions: readonly { id: string }[]): void {
+  recordDiscovery(
+    adapter: DaemonPtyAdapter,
+    sessions: readonly { id: string }[],
+    incarnation?: DaemonEndpointIdentity | null
+  ): void {
     this.routes.recordCompleteDiscovery(
       adapter,
-      sessions.map((session) => session.id)
+      sessions.map((session) => session.id),
+      incarnation
     )
   }
 
@@ -51,6 +62,32 @@ export class DaemonPtyRouterSessionRouting {
     this.routes.recordOwned(result.id, target)
   }
 
+  beginSpawn(opts: PtySpawnOptions, target: DaemonPtyAdapter): void {
+    if (!opts.isNewSession || !opts.sessionId) {
+      return
+    }
+    const inFlight = this.freshSpawnsInFlight.get(opts.sessionId)
+    this.freshSpawnsInFlight.set(opts.sessionId, {
+      owner: target,
+      count: (inFlight?.count ?? 0) + 1
+    })
+  }
+
+  endSpawn(opts: PtySpawnOptions): void {
+    if (!opts.isNewSession || !opts.sessionId) {
+      return
+    }
+    const inFlight = this.freshSpawnsInFlight.get(opts.sessionId)
+    if (!inFlight || inFlight.count <= 1) {
+      this.freshSpawnsInFlight.delete(opts.sessionId)
+      return
+    }
+    this.freshSpawnsInFlight.set(opts.sessionId, {
+      owner: inFlight.owner,
+      count: inFlight.count - 1
+    })
+  }
+
   async owner(sessionId: string): Promise<DaemonPtyAdapter> {
     return await this.routes.resolveOwner(sessionId)
   }
@@ -72,14 +109,7 @@ export class DaemonPtyRouterSessionRouting {
   }
 
   hasPty(sessionId: string): boolean {
-    const route = this.routes.get(sessionId)
-    if (route?.state === 'unavailable') {
-      return false
-    }
-    if (route?.state === 'owned') {
-      return route.owner.hasPty(sessionId)
-    }
-    return this.adapters.some((adapter) => adapter.hasPty(sessionId))
+    return this.routes.hasPty(sessionId)
   }
 
   async probePtyLiveness(sessionId: string): Promise<boolean | null> {
@@ -99,9 +129,7 @@ export class DaemonPtyRouterSessionRouting {
     opts?: { scrollbackRows?: number }
   ): Promise<PtyProviderBufferSnapshot | null> {
     const owner = await this.owner(sessionId)
-    const snapshot = await owner.getBufferSnapshot(sessionId, opts)
-    this.snapshotAcks.record(sessionId, snapshot, owner)
-    return snapshot
+    return await this.snapshotAcks.capture(sessionId, opts, owner, this.adapters)
   }
 
   acknowledgeBufferSnapshot(sessionId: string): void {
@@ -120,17 +148,37 @@ export class DaemonPtyRouterSessionRouting {
     }
     if (!keepHistory) {
       this.routes.markUnavailable(sessionId, owner)
-      this.snapshotAcks.drop(sessionId)
+      this.snapshotAcks.dropForProducer(sessionId, owner)
     }
   }
 
-  recordReconciledAlive(sessionId: string, owner: DaemonPtyAdapter): void {
-    this.routes.recordOwned(sessionId, owner)
+  recordReconciledAlive(
+    sessionId: string,
+    owner: DaemonPtyAdapter,
+    incarnation?: DaemonEndpointIdentity | null
+  ): void {
+    this.routes.recordOwnedIncarnation(
+      sessionId,
+      owner,
+      incarnation ?? owner.getLastAuthenticatedDaemonIdentity()
+    )
   }
 
-  recordReconciledKilled(sessionId: string, owner: DaemonPtyAdapter): void {
-    this.routes.markUnavailable(sessionId, owner)
-    this.snapshotAcks.drop(sessionId)
+  recordReconciledKilled(
+    sessionId: string,
+    owner: DaemonPtyAdapter,
+    incarnation?: DaemonEndpointIdentity | null
+  ): void {
+    this.routes.markUnavailable(
+      sessionId,
+      owner,
+      incarnation ?? owner.getLastAuthenticatedDaemonIdentity()
+    )
+    this.snapshotAcks.dropForProducer(
+      sessionId,
+      owner,
+      incarnation ?? owner.getLastAuthenticatedDaemonIdentity()
+    )
   }
 
   shouldForwardEvent(sessionId: string, owner: DaemonPtyAdapter): boolean {
@@ -138,18 +186,36 @@ export class DaemonPtyRouterSessionRouting {
   }
 
   shouldForwardStreamEvent(sessionId: string, owner: DaemonPtyAdapter): boolean {
+    const freshSpawn = this.freshSpawnsInFlight.get(sessionId)
+    if (freshSpawn && freshSpawn.owner !== owner) {
+      this.routes.recordFreshOwned(sessionId, freshSpawn.owner)
+      this.routes.recordOwned(sessionId, owner)
+      return false
+    }
     return this.routes.recordDataOwner(sessionId, owner)
   }
 
   recordExit(sessionId: string, owner: DaemonPtyAdapter): boolean {
+    const freshSpawn = this.freshSpawnsInFlight.get(sessionId)
+    if (freshSpawn && freshSpawn.owner !== owner) {
+      if (this.routes.get(sessionId)) {
+        this.routes.markUnavailable(sessionId, owner)
+      }
+      this.snapshotAcks.dropForProducer(sessionId, owner)
+      return false
+    }
     const shouldForward = this.shouldForwardEvent(sessionId, owner)
     this.routes.markUnavailable(sessionId, owner)
+    this.snapshotAcks.dropForProducer(sessionId, owner)
     return shouldForward
   }
 
-  markAdapterUnavailable(adapter: DaemonPtyAdapter): void {
+  markAdapterUnavailable(
+    adapter: DaemonPtyAdapter,
+    incarnation = adapter.getLastAuthenticatedDaemonIdentity()
+  ): void {
     if (this.adapters.includes(adapter)) {
-      this.routes.markOwnerUnavailable(adapter)
+      this.routes.markOwnerUnavailable(adapter, incarnation)
     }
   }
 
@@ -165,5 +231,7 @@ export class DaemonPtyRouterSessionRouting {
     for (const unsubscribe of this.identityUnsubscribes.splice(0)) {
       unsubscribe()
     }
+    this.freshSpawnsInFlight.clear()
+    this.snapshotAcks.clear()
   }
 }

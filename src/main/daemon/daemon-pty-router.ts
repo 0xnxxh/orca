@@ -12,6 +12,7 @@ import type { PtyProcessInspection } from '../providers/pty-process-inspection'
 import { shouldHandoffDaemonHistory } from './daemon-history-handoff'
 import type { DaemonPtyRouterDataEvent, DaemonPtyRouterExitEvent } from './daemon-pty-router-events'
 import { DaemonPtyRouterSessionRouting } from './daemon-pty-router-session-routing'
+import { sameDaemonIncarnation } from './daemon-session-route'
 
 export class DaemonPtyRouter implements IPtyProvider {
   private current: DaemonPtyAdapter
@@ -45,8 +46,13 @@ export class DaemonPtyRouter implements IPtyProvider {
   async discoverLegacySessions(): Promise<void> {
     for (const adapter of this.legacy) {
       try {
+        const before = adapter.getLastAuthenticatedDaemonIdentity()
         const sessions = await adapter.listProcesses()
-        this.routing.recordDiscovery(adapter, sessions)
+        const incarnation = adapter.getLastAuthenticatedDaemonIdentity()
+        if (before && !sameDaemonIncarnation(before, incarnation)) {
+          throw new Error('daemon incarnation changed during session discovery')
+        }
+        this.routing.recordDiscovery(adapter, sessions, incarnation)
       } catch (error) {
         this.routing.recordDiscoveryFailure(adapter)
         console.warn('[daemon] Failed to discover legacy daemon sessions', error)
@@ -57,9 +63,14 @@ export class DaemonPtyRouter implements IPtyProvider {
   async spawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
     const targetResult = this.routing.spawnTarget(opts)
     const target = targetResult instanceof Promise ? await targetResult : targetResult
-    const result = await target.spawn(opts)
-    this.routing.recordSpawn(result, target, opts)
-    return result
+    this.routing.beginSpawn(opts, target)
+    try {
+      const result = await target.spawn(opts)
+      this.routing.recordSpawn(result, target, opts)
+      return result
+    } finally {
+      this.routing.endSpawn(opts)
+    }
   }
 
   supportsGitCredentialGuardHost(sessionId?: string): boolean {
@@ -241,8 +252,21 @@ export class DaemonPtyRouter implements IPtyProvider {
   }> {
     const alive: string[] = []
     const killed: string[] = []
+    const reconciled: {
+      adapter: DaemonPtyAdapter
+      incarnation: ReturnType<DaemonPtyAdapter['getLastAuthenticatedDaemonIdentity']>
+      alive: string[]
+      killed: string[]
+    }[] = []
     for (const adapter of this.allAdapters()) {
+      const before = adapter.getLastAuthenticatedDaemonIdentity()
       const result = await adapter.reconcileOnStartup(validWorktreeIds)
+      const incarnation = adapter.getLastAuthenticatedDaemonIdentity()
+      if (before && !sameDaemonIncarnation(before, incarnation)) {
+        this.routing.markAdapterUnavailable(adapter, before)
+        throw new Error('daemon incarnation changed during startup reconciliation')
+      }
+      reconciled.push({ adapter, incarnation, ...result })
       // Why: daemon startup can reconcile many restored sessions; spreading
       // those arrays into push can exceed JavaScript's argument limit.
       for (const id of result.alive) {
@@ -251,11 +275,21 @@ export class DaemonPtyRouter implements IPtyProvider {
       for (const id of result.killed) {
         killed.push(id)
       }
-      for (const id of result.alive) {
-        this.routing.recordReconciledAlive(id, adapter)
+    }
+    for (const { adapter, incarnation } of reconciled) {
+      if (!sameDaemonIncarnation(incarnation, adapter.getLastAuthenticatedDaemonIdentity())) {
+        this.routing.markAdapterUnavailable(adapter, incarnation)
+        throw new Error('daemon incarnation changed during startup reconciliation')
       }
-      for (const id of result.killed) {
-        this.routing.recordReconciledKilled(id, adapter)
+    }
+    for (const { adapter, incarnation, alive: sessionIds } of reconciled) {
+      for (const id of sessionIds) {
+        this.routing.recordReconciledAlive(id, adapter, incarnation)
+      }
+    }
+    for (const { adapter, incarnation, killed: sessionIds } of reconciled) {
+      for (const id of sessionIds) {
+        this.routing.recordReconciledKilled(id, adapter, incarnation)
       }
     }
     return { alive, killed }

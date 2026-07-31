@@ -3,34 +3,56 @@ import {
   createOwnedDaemonSessionRoute,
   DaemonSessionGoneError,
   DaemonSessionOwnerUnknownError,
-  type DaemonSessionRoute,
   DaemonSessionUnavailableError,
+  isCurrentOwnedDaemonSessionRoute,
   sameDaemonIncarnation
 } from './daemon-session-route'
+import { probeDaemonSessionOwner } from './daemon-session-owner-probes'
+import { DaemonSessionRouteStore } from './daemon-session-route-store'
+import {
+  assertFreshDaemonSessionAvailable,
+  ownerForFreshDaemonSession
+} from './daemon-fresh-session-routing'
+import { resolveDaemonSessionOwnerSync } from './daemon-session-owner-sync-resolution'
+import { resolveDaemonSessionOwner } from './daemon-session-owner-resolution'
+import {
+  markDaemonSessionOwnerUnavailable,
+  markDaemonSessionUnavailable
+} from './daemon-session-route-availability'
+import { DaemonSessionOwnerResolutionCache } from './daemon-session-owner-resolution-cache'
 
 export class DaemonSessionRouteTable {
-  private readonly routes = new Map<string, DaemonSessionRoute>()
+  private readonly routes = new DaemonSessionRouteStore()
   private readonly incompleteDiscoveries = new Set<DaemonPtyAdapter>()
+  private readonly ownerResolutions = new DaemonSessionOwnerResolutionCache()
 
   constructor(private readonly adapters: readonly DaemonPtyAdapter[]) {}
 
-  get(sessionId: string): DaemonSessionRoute | undefined {
-    return this.routes.get(sessionId)
-  }
+  readonly get = this.routes.get.bind(this.routes)
 
   getOwned(sessionId: string): DaemonPtyAdapter | undefined {
     const route = this.routes.get(sessionId)
-    return route?.state === 'owned' ? route.owner : undefined
+    return route?.state === 'owned' && isCurrentOwnedDaemonSessionRoute(route)
+      ? route.owner
+      : undefined
   }
 
   shouldForwardEvent(sessionId: string, owner: DaemonPtyAdapter): boolean {
     const route = this.routes.get(sessionId)
-    return !route || (route.state === 'owned' && route.owner === owner)
+    if (!route) {
+      return !this.routes.hasUnavailableRouteEviction()
+    }
+    return (
+      route.state === 'owned' && route.owner === owner && isCurrentOwnedDaemonSessionRoute(route)
+    )
   }
 
   recordDataOwner(sessionId: string, owner: DaemonPtyAdapter): boolean {
     const route = this.routes.get(sessionId)
     if (!route) {
+      if (this.routes.hasUnavailableRouteEviction()) {
+        return false
+      }
       this.routes.set(sessionId, createOwnedDaemonSessionRoute(owner))
       return true
     }
@@ -38,43 +60,78 @@ export class DaemonSessionRouteTable {
       this.recordOwned(sessionId, owner)
       return this.shouldForwardEvent(sessionId, owner)
     }
-    if (route.state === 'ambiguous' || route.owner === owner) {
-      return route.state === 'owned'
+    if (route.state === 'ambiguous') {
+      return false
+    }
+    if (route.owner === owner) {
+      if (isCurrentOwnedDaemonSessionRoute(route)) {
+        return true
+      }
+      this.markUnavailable(sessionId, owner, route.incarnation)
+      return false
     }
     this.recordOwned(sessionId, owner)
     return false
   }
 
   recordOwned(sessionId: string, owner: DaemonPtyAdapter): void {
+    this.recordOwnedIncarnation(sessionId, owner, owner.getLastAuthenticatedDaemonIdentity())
+  }
+
+  recordOwnedIncarnation(
+    sessionId: string,
+    owner: DaemonPtyAdapter,
+    incarnation: ReturnType<DaemonPtyAdapter['getLastAuthenticatedDaemonIdentity']>
+  ): void {
     const route = this.routes.get(sessionId)
     if (!route) {
-      this.routes.set(sessionId, createOwnedDaemonSessionRoute(owner))
+      if (this.routes.hasUnavailableRouteEviction()) {
+        return
+      }
+      this.routes.set(sessionId, createOwnedDaemonSessionRoute(owner, incarnation))
       return
     }
     if (route.state === 'owned' && route.owner === owner) {
-      this.routes.set(sessionId, createOwnedDaemonSessionRoute(owner))
+      if (!sameDaemonIncarnation(route.incarnation, incarnation)) {
+        this.markUnavailable(sessionId, owner, route.incarnation)
+        return
+      }
+      this.routes.set(sessionId, createOwnedDaemonSessionRoute(owner, incarnation))
       return
     }
     if (route.state === 'unavailable') {
-      const incarnation = owner.getLastAuthenticatedDaemonIdentity()
-      if (route.owner !== owner || !sameDaemonIncarnation(route.incarnation, incarnation)) {
-        this.routes.set(sessionId, createOwnedDaemonSessionRoute(owner))
-      }
       return
     }
+    if (route.state === 'ambiguous' && route.candidates.has(owner)) {
+      const candidateIncarnation = route.candidates.get(owner) ?? null
+      if (!sameDaemonIncarnation(candidateIncarnation, incarnation)) {
+        this.markUnavailable(sessionId, owner, candidateIncarnation)
+        return
+      }
+    }
     const candidates =
-      route.state === 'ambiguous' ? new Set(route.candidates) : new Set([route.owner])
-    candidates.add(owner)
+      route.state === 'ambiguous'
+        ? new Map(route.candidates)
+        : new Map([[route.owner, route.incarnation]])
+    candidates.set(owner, incarnation)
     this.routes.set(sessionId, { state: 'ambiguous', candidates })
   }
 
-  transfer(sessionId: string, owner: DaemonPtyAdapter): void {
-    this.routes.set(sessionId, createOwnedDaemonSessionRoute(owner))
+  transfer(
+    sessionId: string,
+    owner: DaemonPtyAdapter,
+    incarnation = owner.getLastAuthenticatedDaemonIdentity()
+  ): void {
+    this.routes.set(sessionId, createOwnedDaemonSessionRoute(owner, incarnation))
   }
 
   recordFreshOwned(sessionId: string, owner: DaemonPtyAdapter): void {
     const route = this.routes.get(sessionId)
-    if (route?.state === 'unavailable' && route.owner === owner) {
+    if (
+      !route ||
+      route.state === 'unavailable' ||
+      (route.state === 'owned' && route.owner === owner && !isCurrentOwnedDaemonSessionRoute(route))
+    ) {
       this.transfer(sessionId, owner)
       return
     }
@@ -85,142 +142,149 @@ export class DaemonSessionRouteTable {
     this.incompleteDiscoveries.add(owner)
   }
 
-  recordCompleteDiscovery(owner: DaemonPtyAdapter, sessionIds: readonly string[]): void {
+  recordCompleteDiscovery(
+    owner: DaemonPtyAdapter,
+    sessionIds: readonly string[],
+    incarnation = owner.getLastAuthenticatedDaemonIdentity()
+  ): void {
     for (const sessionId of sessionIds) {
-      this.recordOwned(sessionId, owner)
+      this.recordOwnedIncarnation(sessionId, owner, incarnation)
     }
     this.incompleteDiscoveries.delete(owner)
   }
 
-  markUnavailable(sessionId: string, owner: DaemonPtyAdapter): void {
-    const route = this.routes.get(sessionId)
-    if (!route) {
-      this.routes.set(sessionId, {
-        state: 'unavailable',
-        owner,
-        incarnation: owner.getLastAuthenticatedDaemonIdentity()
-      })
-      return
-    }
-    if (route.state === 'owned' && route.owner === owner) {
-      this.routes.set(sessionId, {
-        state: 'unavailable',
-        owner,
-        incarnation: route.incarnation
-      })
-      return
-    }
-    if (route.state === 'ambiguous' && route.candidates.has(owner)) {
-      const candidates = new Set(route.candidates)
-      candidates.delete(owner)
-      if (candidates.size === 1) {
-        for (const candidate of candidates) {
-          this.routes.set(sessionId, createOwnedDaemonSessionRoute(candidate))
-        }
-      } else if (candidates.size > 1) {
-        this.routes.set(sessionId, { state: 'ambiguous', candidates })
-      } else {
-        this.routes.set(sessionId, {
-          state: 'unavailable',
-          owner,
-          incarnation: owner.getLastAuthenticatedDaemonIdentity()
-        })
-      }
-    }
+  markUnavailable(
+    sessionId: string,
+    owner: DaemonPtyAdapter,
+    incarnation = owner.getLastAuthenticatedDaemonIdentity()
+  ): void {
+    markDaemonSessionUnavailable(this.routes, sessionId, owner, incarnation)
   }
 
   markOwnerUnavailable(
     owner: DaemonPtyAdapter,
     incarnation = owner.getLastAuthenticatedDaemonIdentity()
   ): void {
-    for (const [sessionId, route] of this.routes) {
-      if (route.state === 'ambiguous' && route.candidates.has(owner)) {
-        this.markUnavailable(sessionId, owner)
-        continue
-      }
-      if (
-        route.state === 'owned' &&
-        route.owner === owner &&
-        sameDaemonIncarnation(route.incarnation, incarnation)
-      ) {
-        this.routes.set(sessionId, {
-          state: 'unavailable',
-          owner,
-          incarnation: route.incarnation
-        })
-      }
-    }
+    markDaemonSessionOwnerUnavailable(this.routes, owner, incarnation)
   }
 
   ownerForFreshSpawn(sessionId: string | undefined, current: DaemonPtyAdapter): DaemonPtyAdapter {
-    if (!sessionId) {
-      return current
-    }
-    const route = this.routes.get(sessionId)
-    if (!route) {
-      return current
-    }
-    if (route.state === 'owned' && route.owner === current) {
-      return current
-    }
-    if (route.state === 'unavailable') {
-      const ownerIncarnation = route.owner.getLastAuthenticatedDaemonIdentity()
-      if (
-        route.incarnation &&
-        ownerIncarnation &&
-        !sameDaemonIncarnation(route.incarnation, ownerIncarnation)
-      ) {
-        this.routes.delete(sessionId)
-        return current
-      }
-      throw new DaemonSessionUnavailableError(sessionId)
-    }
-    throw new DaemonSessionOwnerUnknownError(sessionId)
+    return ownerForFreshDaemonSession(
+      sessionId,
+      sessionId ? this.routes.get(sessionId) : undefined,
+      current,
+      () => sessionId && this.routes.delete(sessionId)
+    )
   }
 
-  async resolveOwner(sessionId: string): Promise<DaemonPtyAdapter> {
+  assertFreshSpawnAvailable(sessionId: string | undefined): void {
+    assertFreshDaemonSessionAvailable(
+      sessionId,
+      sessionId ? this.routes.get(sessionId) : undefined,
+      () => sessionId && this.routes.delete(sessionId)
+    )
+  }
+
+  hasPty(sessionId: string): boolean {
     const route = this.routes.get(sessionId)
-    if (route?.state === 'owned') {
-      return route.owner
+    if (!route && this.routes.hasUnavailableRouteEviction()) {
+      throw new DaemonSessionOwnerUnknownError(sessionId)
     }
     if (route?.state === 'unavailable') {
       throw new DaemonSessionUnavailableError(sessionId)
     }
-    const candidates =
-      route?.state === 'ambiguous' && this.incompleteDiscoveries.size === 0
-        ? [...route.candidates]
-        : this.adapters
-    const results = await Promise.all(
-      candidates.map(async (owner) => ({
-        owner,
-        result: await probeOwner(owner, sessionId)
-      }))
-    )
-    const owners = results.filter(({ result }) => result === true).map(({ owner }) => owner)
-    if (owners.length === 1 && results.every(({ result }) => result !== null)) {
-      this.transfer(sessionId, owners[0])
-      return owners[0]
+    if (route?.state === 'ambiguous') {
+      throw new DaemonSessionOwnerUnknownError(sessionId)
     }
-    if (owners.length > 1) {
-      this.routes.set(sessionId, { state: 'ambiguous', candidates: new Set(owners) })
+    if (route?.state === 'owned') {
+      if (!isCurrentOwnedDaemonSessionRoute(route)) {
+        this.markUnavailable(sessionId, route.owner, route.incarnation)
+        throw new DaemonSessionUnavailableError(sessionId)
+      }
+      return route.owner.hasPty(sessionId)
     }
-    if (
-      owners.length === 0 &&
-      results.every(({ result }) => result === false) &&
-      this.incompleteDiscoveries.size === 0
-    ) {
-      throw new DaemonSessionGoneError(sessionId)
+    try {
+      this.resolveOwnerSync(sessionId)
+      return true
+    } catch (error) {
+      if (error instanceof DaemonSessionGoneError) {
+        return false
+      }
+      throw error
     }
-    throw new DaemonSessionOwnerUnknownError(sessionId)
+  }
+
+  async resolveOwner(sessionId: string): Promise<DaemonPtyAdapter> {
+    const route = this.routes.get(sessionId)
+    if (!route && this.routes.hasUnavailableRouteEviction()) {
+      throw new DaemonSessionOwnerUnknownError(sessionId)
+    }
+    if (route?.state === 'owned') {
+      if (isCurrentOwnedDaemonSessionRoute(route)) {
+        return route.owner
+      }
+      this.markUnavailable(sessionId, route.owner, route.incarnation)
+      throw new DaemonSessionUnavailableError(sessionId)
+    }
+    if (route?.state === 'unavailable') {
+      throw new DaemonSessionUnavailableError(sessionId)
+    }
+    return await this.ownerResolutions.resolve(sessionId, async () => {
+      const discoveryComplete = this.incompleteDiscoveries.size === 0
+      const accept = (): void => {
+        if (this.routes.get(sessionId) !== route) {
+          throw new DaemonSessionOwnerUnknownError(sessionId)
+        }
+      }
+      try {
+        return await resolveDaemonSessionOwner({
+          sessionId,
+          candidates: this.adapters,
+          expectedIncarnations: route?.state === 'ambiguous' ? route.candidates : undefined,
+          discoveryComplete,
+          transfer: (owner, incarnation) => {
+            accept()
+            this.transfer(sessionId, owner, incarnation)
+          },
+          recordAmbiguous: (ambiguousCandidates) => {
+            accept()
+            this.routes.set(sessionId, {
+              state: 'ambiguous',
+              candidates: ambiguousCandidates
+            })
+          }
+        })
+      } catch (error) {
+        if (
+          error instanceof DaemonSessionGoneError &&
+          (this.routes.get(sessionId) !== route ||
+            discoveryComplete !== (this.incompleteDiscoveries.size === 0))
+        ) {
+          throw new DaemonSessionOwnerUnknownError(sessionId)
+        }
+        throw error
+      }
+    })
   }
 
   async probeLiveness(sessionId: string): Promise<boolean | null> {
     const route = this.routes.get(sessionId)
+    if (!route && this.routes.hasUnavailableRouteEviction()) {
+      return null
+    }
     if (route?.state === 'unavailable' || route?.state === 'ambiguous') {
       return null
     }
     if (route?.state === 'owned') {
-      return await probeOwner(route.owner, sessionId)
+      if (!isCurrentOwnedDaemonSessionRoute(route)) {
+        this.markUnavailable(sessionId, route.owner, route.incarnation)
+        return null
+      }
+      const result = await probeDaemonSessionOwner(route.owner, sessionId)
+      return sameDaemonIncarnation(route.incarnation, result.incarnation) &&
+        sameDaemonIncarnation(result.incarnation, result.owner.getLastAuthenticatedDaemonIdentity())
+        ? result.result
+        : null
     }
     try {
       await this.resolveOwner(sessionId)
@@ -232,47 +296,23 @@ export class DaemonSessionRouteTable {
 
   resolveOwnerSync(sessionId: string): DaemonPtyAdapter {
     const route = this.routes.get(sessionId)
-    if (route?.state === 'owned') {
-      return route.owner
+    if (!route && this.routes.hasUnavailableRouteEviction()) {
+      throw new DaemonSessionOwnerUnknownError(sessionId)
     }
-    if (route?.state === 'unavailable') {
+    if (route?.state === 'owned' && !isCurrentOwnedDaemonSessionRoute(route)) {
+      this.markUnavailable(sessionId, route.owner, route.incarnation)
       throw new DaemonSessionUnavailableError(sessionId)
     }
-    if (route?.state === 'ambiguous' || this.incompleteDiscoveries.size > 0) {
-      throw new DaemonSessionOwnerUnknownError(sessionId)
-    }
-    const results = this.adapters.map((owner) => ({
-      owner,
-      result: hasPty(owner, sessionId)
-    }))
-    const owners = results.filter(({ result }) => result === true).map(({ owner }) => owner)
-    if (results.some(({ result }) => result === null)) {
-      throw new DaemonSessionOwnerUnknownError(sessionId)
-    }
-    if (owners.length === 1) {
-      this.transfer(sessionId, owners[0])
-      return owners[0]
-    }
-    if (owners.length > 1) {
-      this.routes.set(sessionId, { state: 'ambiguous', candidates: new Set(owners) })
-      throw new DaemonSessionOwnerUnknownError(sessionId)
-    }
-    throw new DaemonSessionGoneError(sessionId)
+    return resolveDaemonSessionOwnerSync({
+      sessionId,
+      route,
+      discoveryIncomplete: this.incompleteDiscoveries.size > 0,
+      adapters: this.adapters,
+      transfer: (owner, incarnation) => this.transfer(sessionId, owner, incarnation),
+      recordAmbiguous: (candidates) =>
+        this.routes.set(sessionId, { state: 'ambiguous', candidates })
+    })
   }
-}
 
-async function probeOwner(owner: DaemonPtyAdapter, sessionId: string): Promise<boolean | null> {
-  try {
-    return await owner.probePtyLiveness(sessionId)
-  } catch {
-    return null
-  }
-}
-
-function hasPty(owner: DaemonPtyAdapter, sessionId: string): boolean | null {
-  try {
-    return owner.hasPty(sessionId)
-  } catch {
-    return null
-  }
+  readonly getOwnedSessionIds = this.routes.ownedSessionIds.bind(this.routes)
 }

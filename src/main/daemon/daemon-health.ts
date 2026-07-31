@@ -10,7 +10,7 @@ import {
 } from '../../shared/process-output-field-scanner'
 import { isStartupDiagnosticsEnabled, logStartupDiagnostic } from '../startup/startup-diagnostics'
 import { encodeNdjson } from './ndjson'
-import { getDaemonPidPath } from './daemon-spawner'
+import { getDaemonPidPath, unlinkOwnedDaemonPidFile } from './daemon-spawner'
 import {
   PROTOCOL_VERSION,
   type HelloMessage,
@@ -666,6 +666,8 @@ export async function killStaleDaemon(
   const pidPath = getDaemonPidPath(runtimeDir, protocolVersion)
   let killedDaemon = false
   let identifiedDaemon = false
+  let identifiedPid: number | null = null
+  let identifiedLaunchNonce: string | null = null
   try {
     const parsedPid = parseDaemonPidFile(readFileSync(pidPath, 'utf8'))
     if (
@@ -673,6 +675,8 @@ export async function killStaleDaemon(
       (await isDaemonProcess(parsedPid.pid, socketPath, tokenPath, parsedPid.startedAtMs))
     ) {
       identifiedDaemon = true
+      identifiedPid = parsedPid.pid
+      identifiedLaunchNonce = parsedPid.launchNonce
       const { pid, startedAtMs } = parsedPid
       process.kill(pid, 'SIGTERM')
       const deadline = Date.now() + KILL_WAIT_MS
@@ -711,12 +715,8 @@ export async function killStaleDaemon(
     // PID file missing or process already dead
   }
 
-  if (identifiedDaemon) {
-    try {
-      unlinkSync(pidPath)
-    } catch {
-      // Best-effort
-    }
+  if (identifiedDaemon && identifiedPid !== null && identifiedLaunchNonce !== null) {
+    unlinkOwnedDaemonPidFile(pidPath, identifiedPid, identifiedLaunchNonce)
   }
 
   const socketIsLive = await canConnectSocket(socketPath)

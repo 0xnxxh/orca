@@ -533,6 +533,41 @@ describe('DaemonPtyRouter', () => {
     )
   })
 
+  it('fences foreign stream events received before a fresh spawn reply', async () => {
+    const sessionId = 'fresh-stale-events'
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy')
+    let resolveSpawn: ((result: PtySpawnResult) => void) | undefined
+    vi.mocked(current.spawn).mockReturnValue(
+      new Promise((resolve) => {
+        resolveSpawn = resolve
+      })
+    )
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+    const data = vi.fn()
+    const exit = vi.fn()
+    router.onData(data)
+    router.onExit(exit)
+
+    const spawning = router.spawn({
+      sessionId,
+      isNewSession: true,
+      cols: 80,
+      rows: 24
+    })
+    legacy.emitData(sessionId, 'stale legacy frame')
+    legacy.emitExit(sessionId, 0)
+    resolveSpawn?.({ id: sessionId })
+    await spawning
+
+    expect(data).not.toHaveBeenCalled()
+    expect(exit).not.toHaveBeenCalled()
+    expect(router.getSessionRouteState(sessionId)).toBe('owned')
+    await router.sendSignal(sessionId, 'SIGTERM')
+    expect(current.sendSignal).toHaveBeenCalledExactlyOnceWith(sessionId, 'SIGTERM')
+    expect(legacy.sendSignal).not.toHaveBeenCalled()
+  })
+
   it('forwards gap events and explicit sequence accounting from every adapter', () => {
     const current = createAdapter('current')
     const legacy = createAdapter('legacy')

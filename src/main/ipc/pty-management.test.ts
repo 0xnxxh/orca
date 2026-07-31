@@ -383,6 +383,34 @@ describe('pty:management IPC handlers', () => {
       })
     })
 
+    it('does not count a replacement incarnation of the same id as remaining', async () => {
+      const sessionId = 'reused-id'
+      const current = makeAdapter(5, [])
+      vi.mocked(current.listSessions)
+        .mockResolvedValueOnce([
+          makeSession(sessionId, {
+            incarnationId: 'original'
+          }) as Omit<DaemonSessionInfo, 'protocolVersion'>
+        ])
+        .mockResolvedValue([
+          makeSession(sessionId, {
+            incarnationId: 'replacement'
+          }) as Omit<DaemonSessionInfo, 'protocolVersion'>
+        ])
+      const { registerDaemonManagementHandlers } = await importFresh()
+      getDaemonProviderMock.mockReturnValue(await makeRouter(current))
+      registerDaemonManagementHandlers()
+
+      const result = await runKillAllWithPolls(buildHandlerMap()['pty:management:killAll'])
+
+      expect(result).toEqual({
+        killedCount: 1,
+        remainingCount: 0,
+        killedSessionIds: [sessionId]
+      })
+      expect(current.shutdown).toHaveBeenCalledExactlyOnceWith(sessionId, { immediate: true })
+    })
+
     it('swallows per-session shutdown rejections without stopping the batch', async () => {
       const sessionsList = [makeSession('a'), makeSession('b')]
       const current = makeAdapter(5, [])

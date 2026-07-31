@@ -15,7 +15,7 @@ export type DaemonSessionRoute =
     }
   | {
       state: 'ambiguous'
-      candidates: ReadonlySet<DaemonPtyAdapter>
+      candidates: ReadonlyMap<DaemonPtyAdapter, DaemonEndpointIdentity | null>
     }
 
 export class DaemonSessionOwnerUnknownError extends Error {
@@ -40,12 +40,13 @@ export class DaemonSessionGoneError extends Error {
 }
 
 export function createOwnedDaemonSessionRoute(
-  owner: DaemonPtyAdapter
+  owner: DaemonPtyAdapter,
+  incarnation = owner.getLastAuthenticatedDaemonIdentity()
 ): Extract<DaemonSessionRoute, { state: 'owned' }> {
   return {
     state: 'owned',
     owner,
-    incarnation: owner.getLastAuthenticatedDaemonIdentity()
+    incarnation
   }
 }
 
@@ -61,4 +62,13 @@ export function sameDaemonIncarnation(
     left.startedAtMs === right.startedAtMs &&
     left.launchNonce === right.launchNonce
   )
+}
+
+export function isCurrentOwnedDaemonSessionRoute(
+  route: Extract<DaemonSessionRoute, { state: 'owned' }>
+): boolean {
+  if (typeof route.owner.matchesLastAuthenticatedDaemonIdentity === 'function') {
+    return route.owner.matchesLastAuthenticatedDaemonIdentity(route.incarnation)
+  }
+  return sameDaemonIncarnation(route.incarnation, route.owner.getLastAuthenticatedDaemonIdentity())
 }
