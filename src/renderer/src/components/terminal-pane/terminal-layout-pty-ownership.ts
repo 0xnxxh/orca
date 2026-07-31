@@ -32,24 +32,44 @@ function pruneLeaves(
   retainedLeafIdByRemovedLeafId: ReadonlyMap<string, string>,
   retainedSelfLeafIds: Set<string>
 ): TerminalPaneLayoutNode | null {
-  if (node.type === 'leaf') {
-    const retainedLeafId = retainedLeafIdByRemovedLeafId.get(node.leafId)
-    if (!retainedLeafId) {
-      return node
+  const pending: { node: TerminalPaneLayoutNode; visited: boolean }[] = [{ node, visited: false }]
+  const pruned: (TerminalPaneLayoutNode | null)[] = []
+  while (pending.length > 0) {
+    const current = pending.pop()!
+    if (current.node.type === 'leaf') {
+      const retainedLeafId = retainedLeafIdByRemovedLeafId.get(current.node.leafId)
+      if (!retainedLeafId) {
+        pruned.push(current.node)
+      } else if (
+        retainedLeafId === current.node.leafId &&
+        !retainedSelfLeafIds.has(current.node.leafId)
+      ) {
+        retainedSelfLeafIds.add(current.node.leafId)
+        pruned.push(current.node)
+      } else {
+        pruned.push(null)
+      }
+      continue
     }
-    if (retainedLeafId === node.leafId && !retainedSelfLeafIds.has(node.leafId)) {
-      retainedSelfLeafIds.add(node.leafId)
-      return node
+    if (!current.visited) {
+      pending.push({ node: current.node, visited: true })
+      pending.push({ node: current.node.second, visited: false })
+      pending.push({ node: current.node.first, visited: false })
+      continue
     }
-    return null
+    const second = pruned.pop() ?? null
+    const first = pruned.pop() ?? null
+    if (first && second) {
+      pruned.push(
+        first === current.node.first && second === current.node.second
+          ? current.node
+          : { ...current.node, first, second }
+      )
+    } else {
+      pruned.push(first ?? second)
+    }
   }
-
-  const first = pruneLeaves(node.first, retainedLeafIdByRemovedLeafId, retainedSelfLeafIds)
-  const second = pruneLeaves(node.second, retainedLeafIdByRemovedLeafId, retainedSelfLeafIds)
-  if (first && second) {
-    return first === node.first && second === node.second ? node : { ...node, first, second }
-  }
-  return first ?? second
+  return pruned[0] ?? null
 }
 
 function resolveRetainedLeafId(
