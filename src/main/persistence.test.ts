@@ -6099,10 +6099,12 @@ describe('Store', () => {
     })
   })
 
-  it('tolerates a null worktreeMeta map in the durable file', async () => {
-    writeDataFile({ worktreeMeta: null })
+  it.each([null, [], 5])('repairs a corrupt worktreeMeta map (%#)', async (worktreeMeta) => {
+    writeDataFile({ worktreeMeta })
     const store = await createStore()
     expect(store.getAllWorktreeMeta()).toEqual({})
+    store.flush()
+    expect((readDataFile() as PersistedState).worktreeMeta).toEqual({})
   })
 
   // ── GitHub cache sidecar ───────────────────────────────────────────

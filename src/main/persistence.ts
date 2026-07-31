@@ -425,8 +425,15 @@ function gcStaleWorktreeMeta(state: PersistedState): number {
 
 function normalizeWorktreeLinkedItemMetadata(state: PersistedState): boolean {
   let changed = false
-  // Why: a hand-corrupted "worktreeMeta": null overrides the defaults merge, and this runs before gcStaleWorktreeMeta.
-  state.worktreeMeta ??= {}
+  const rawWorktreeMeta = state.worktreeMeta as unknown
+  if (
+    typeof rawWorktreeMeta !== 'object' ||
+    rawWorktreeMeta === null ||
+    Array.isArray(rawWorktreeMeta)
+  ) {
+    state.worktreeMeta = {}
+    changed = rawWorktreeMeta !== undefined
+  }
   for (const [key, meta] of Object.entries(state.worktreeMeta)) {
     // Why: hand-corrupted non-object entries are a real input class; drop them here because gcStaleWorktreeMeta
     // keeps timestamp-less keys forever and every downstream consumer trusts the Record<string, WorktreeMeta> type.
