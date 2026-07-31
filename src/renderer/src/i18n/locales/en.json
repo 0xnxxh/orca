@@ -5320,7 +5320,8 @@
           "4c05b9d7cb": "Preparing setup terminal.",
           "installLabel": "Install",
           "updateLabel": "Update",
-          "setupCommandFailed": "The setup command exited with code {{value0}}, so the skill was not installed. Retry to run the installer again.",
+          "setupCommandFailed": "The setup command exited with code {{value0}}. This error will clear after a successful retry.",
+          "setupFailed": "Setup failed",
           "retrySetup": "Retry"
         },
         "AgentsPane": {

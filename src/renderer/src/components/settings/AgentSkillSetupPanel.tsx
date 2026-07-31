@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Copy, Loader2, RefreshCw, Terminal } from 'lucide-react'
 import { toast } from 'sonner'
 import { IntegrationStatusPill } from '../integration-status-pill'
@@ -59,9 +59,11 @@ export function AgentSkillSetupPanel({
     translate('auto.components.settings.AgentSkillSetupPanel.updateLabel', 'Update')
   const [terminalOpen, setTerminalOpen] = useState(false)
   const [terminalCommand, setTerminalCommand] = useState<string | null>(null)
+  const [terminalAttempt, setTerminalAttempt] = useState(0)
   const [terminalOpening, setTerminalOpening] = useState(false)
+  const [setupAttemptRunning, setSetupAttemptRunning] = useState(false)
   const [setupCommandFailedCode, setSetupCommandFailedCode] = useState<number | null>(null)
-  const [installedSnapshot, setInstalledSnapshot] = useState(installed)
+  const setupAttemptRunningRef = useRef(false)
   const [preInstallNoticeVisible, setPreInstallNoticeVisible] = useState(
     Boolean(preInstallNotice && !installed)
   )
@@ -75,18 +77,12 @@ export function AgentSkillSetupPanel({
   // already-open terminal pinned to the command selected by the user's click.
   const openTerminalCommand = terminalCommand ?? activeCommand
 
-  if (installedSnapshot !== installed) {
-    setInstalledSnapshot(installed)
-    if (installed) {
-      setSetupCommandFailedCode(null)
-    }
-  }
-
   const openSetupTerminal = (): void => {
-    if (terminalOpening) {
+    if (terminalOpening || setupAttemptRunning) {
       return
     }
-    const nextCommand = activeCommand
+    const nextCommand =
+      setupCommandFailedCode !== null && terminalCommand ? terminalCommand : activeCommand
     setTerminalOpening(true)
     void (async () => {
       let shouldOpenTerminal = false
@@ -101,7 +97,10 @@ export function AgentSkillSetupPanel({
           setTerminalOpening(false)
           if (shouldOpenTerminal) {
             setTerminalCommand(nextCommand)
+            setTerminalAttempt((attempt) => attempt + 1)
             setTerminalOpen(true)
+            setupAttemptRunningRef.current = true
+            setSetupAttemptRunning(true)
           }
         }
       }
@@ -111,25 +110,28 @@ export function AgentSkillSetupPanel({
   // Why: PTY exit is the shell's status; OSC 133;D reports the install command.
   const handleSetupCommandFinished = useCallback(
     (bestEffortExitCode: number | null): void => {
+      // Nested shells can emit duplicate completion markers in one PTY chunk.
+      if (!setupAttemptRunningRef.current) {
+        return
+      }
+      setupAttemptRunningRef.current = false
+      setSetupAttemptRunning(false)
       if (bestEffortExitCode !== null) {
         setSetupCommandFailedCode(bestEffortExitCode === 0 ? null : bestEffortExitCode)
-        if (bestEffortExitCode !== 0) {
-          setTerminalOpen(false)
-          setTerminalCommand(null)
-        }
       }
-      void onRecheck()
       if (freshnessSkillName) {
         notifyInstalledAgentSkillsChanged()
       }
+      void onRecheck()
     },
     [freshnessSkillName, onRecheck]
   )
 
   const handleTerminalExit = useCallback((): void => {
     if (mountedRef.current) {
+      setupAttemptRunningRef.current = false
       setTerminalOpen(false)
-      setTerminalCommand(null)
+      setSetupAttemptRunning(false)
     }
     notifyInstalledAgentSkillsChanged()
   }, [mountedRef])
@@ -218,7 +220,7 @@ export function AgentSkillSetupPanel({
               : resolvedInstallLabel}
         </Button>
       ) : null}
-      {!installed || showRecheckWhenInstalled ? (
+      {setupCommandFailedCode !== null || !installed || showRecheckWhenInstalled ? (
         <Button
           type="button"
           variant="ghost"
@@ -236,11 +238,11 @@ export function AgentSkillSetupPanel({
           }}
           disabled={
             setupCommandFailedCode !== null
-              ? terminalOpen || installDisabled || terminalOpening
+              ? installDisabled || terminalOpening || setupAttemptRunning
               : loading
           }
         >
-          <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
+          <RefreshCw className={cn('size-3.5', (loading || terminalOpening) && 'animate-spin')} />
           {setupCommandFailedCode !== null
             ? translate('auto.components.settings.AgentSkillSetupPanel.retrySetup', 'Retry')
             : translate('auto.components.settings.AgentSkillSetupPanel.c689392435', 'Re-check')}
@@ -273,7 +275,7 @@ export function AgentSkillSetupPanel({
           <>
             {error ? <p className="text-[12px] text-destructive">{error}</p> : null}
             {/* hideHeader drops the title row; keep freshness so guided hubs still surface updates. */}
-            {installed && freshnessSkillName ? (
+            {installed && freshnessSkillName && setupCommandFailedCode === null ? (
               <div className="mb-2">
                 <SkillFreshnessStatusPill skillName={freshnessSkillName} />
               </div>
@@ -290,7 +292,14 @@ export function AgentSkillSetupPanel({
             <div className="min-w-0 flex-1 self-center">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <h3 className="text-[15px] font-semibold leading-tight text-foreground">{title}</h3>
-                {loading && !installed ? (
+                {setupCommandFailedCode !== null ? (
+                  <IntegrationStatusPill tone="attention">
+                    {translate(
+                      'auto.components.settings.AgentSkillSetupPanel.setupFailed',
+                      'Setup failed'
+                    )}
+                  </IntegrationStatusPill>
+                ) : loading && !installed ? (
                   <IntegrationStatusPill tone="neutral">
                     {translate(
                       'auto.components.settings.AgentSkillSetupPanel.68a468752e',
@@ -326,7 +335,7 @@ export function AgentSkillSetupPanel({
             <p className="text-[13px] leading-snug text-muted-foreground">{description}</p>
           ) : null}
           {actionRow}
-          {!installed ? <AgentSkillSetupFailureNotice exitCode={setupCommandFailedCode} /> : null}
+          <AgentSkillSetupFailureNotice exitCode={setupCommandFailedCode} />
           {actionHint ? <div className="mt-2">{actionHint}</div> : null}
           {!installed && preInstallNotice && preInstallNoticeVisible ? (
             <p className="mt-3 text-[12px] leading-snug text-muted-foreground">
@@ -378,6 +387,7 @@ export function AgentSkillSetupPanel({
             </Tooltip>
           </div>
           <OnboardingInlineCommandTerminal
+            key={terminalAttempt}
             worktreeId={terminalWorktreeId}
             command={openTerminalCommand}
             title={terminalTitle}

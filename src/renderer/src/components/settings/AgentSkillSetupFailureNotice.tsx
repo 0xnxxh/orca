@@ -10,7 +10,7 @@ export function AgentSkillSetupFailureNotice(props: {
     <p className="mt-2 text-[12px] leading-snug text-destructive">
       {translate(
         'auto.components.settings.AgentSkillSetupPanel.setupCommandFailed',
-        'The setup command exited with code {{value0}}, so the skill was not installed. Retry to run the installer again.',
+        'The setup command exited with code {{value0}}. This error will clear after a successful retry.',
         { value0: props.exitCode }
       )}
     </p>
