@@ -152,7 +152,9 @@ export function connectMobileRelayRpcSession(args: {
       const timer = setTimeout(() => {
         pending.delete(id)
         // Why: the frame was written long ago — the desktop may have processed it.
-        reject(markRpcDeliveryUnknown(new Error(`relay RPC timed out: ${method}`)))
+        const error = markRpcDeliveryUnknown(new Error(`relay RPC timed out: ${method}`))
+        reject(error)
+        fail(error)
       }, timeoutMs)
       pending.set(id, { resolve, reject, timer })
       if (!sendFrame({ id, method, params })) {

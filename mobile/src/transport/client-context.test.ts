@@ -269,7 +269,8 @@ describe('useHostClient', () => {
 
     expect(stale.closeMock).toHaveBeenCalledOnce()
     expect(fresh.sendRequest).toHaveBeenCalledWith('status.get', undefined, {
-      timeoutMs: 15_000
+      timeoutMs: 15_000,
+      budgetSpansConnect: true
     })
     expect(completed).toBe(false)
 

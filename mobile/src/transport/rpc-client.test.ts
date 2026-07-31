@@ -234,7 +234,7 @@ describe('mobile rpc-client connection timeout', () => {
     client.close()
   })
 
-  it('routes browser screencast binary frames to the browser subscriber', async () => {
+  it('routes browser frames without treating them as control liveness', async () => {
     const client = connect('ws://desktop.invalid', 'token', 'server-key')
     const socket = mockSockets[0]!
     const frames: unknown[] = []
@@ -260,16 +260,16 @@ describe('mobile rpc-client connection timeout', () => {
       })}`
     )
 
+    socket.emitCloseOnClose = false
     client.notifyForeground()
-    const probe = sentRequest(socket, 'status.get')
-    socket.receive(`encrypted:${JSON.stringify({ id: probe.id, ok: true, result: {} })}`)
     socket.receive(encodeBrowserFrame())
     await Promise.resolve()
     await Promise.resolve()
     await vi.advanceTimersByTimeAsync(8_000)
 
     expect(frames).toHaveLength(1)
-    expect(socket.close).not.toHaveBeenCalled()
+    expect(socket.close).toHaveBeenCalled()
+    expect(client.getState()).toBe('reconnecting')
     expect(frames[0]).toMatchObject({
       seq: 7,
       format: 'jpeg',

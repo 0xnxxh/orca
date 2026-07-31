@@ -234,6 +234,11 @@ describe('mobile relay RPC session', () => {
         message: 'relay RPC timed out: terminal.send',
         unknown: true
       })
+      expect(session.getFailure()).toMatchObject({
+        message: 'relay RPC timed out: terminal.send'
+      })
+      expect(session.getState()).toBe('disconnected')
+      expect(fakes.close).toHaveBeenCalledOnce()
     } finally {
       vi.useRealTimers()
     }

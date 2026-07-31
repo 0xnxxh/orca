@@ -56,6 +56,14 @@ class MockWebSocket {
   }
 }
 
+function sentRequest(socket: MockWebSocket, method: string): { id: string } {
+  const payload = socket.sent.find((value) => value.includes(`"method":"${method}"`))
+  if (!payload) {
+    throw new Error(`No ${method} request sent`)
+  }
+  return JSON.parse(payload.replace(/^encrypted:/, '')) as { id: string }
+}
+
 const mockSockets: MockWebSocket[] = []
 const originalWebSocket = globalThis.WebSocket
 
@@ -170,5 +178,27 @@ describe('mobile rpc-client request deadline', () => {
       client.close()
       await request.catch(() => undefined)
     }
+  })
+
+  it('does not reconnect when another control response proves the socket live', async () => {
+    const client = connect('ws://desktop.invalid', 'token', 'server-key')
+    const socket = mockSockets[0]!
+    socket.open()
+    const stalled = client.sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+    const stalledOutcome = stalled.catch((error: unknown) => error)
+    const healthy = client.sendRequest('status.get', undefined, { timeoutMs: 100 })
+    await vi.advanceTimersByTimeAsync(0)
+    const healthRequest = sentRequest(socket, 'status.get')
+    socket.receive(`encrypted:${JSON.stringify({ id: healthRequest.id, ok: true, result: {} })}`)
+
+    await expect(healthy).resolves.toMatchObject({ ok: true })
+    await vi.advanceTimersByTimeAsync(100)
+    await expect(stalledOutcome).resolves.toMatchObject({
+      message: 'Request timed out: browser.screenshot'
+    })
+    expect(socket.close).not.toHaveBeenCalled()
+    expect(client.getState()).toBe('connected')
+
+    client.close()
   })
 })

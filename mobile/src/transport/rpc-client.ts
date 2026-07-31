@@ -1024,19 +1024,18 @@ export function connect(
       }
 
       const requestWs = ws
+      const requestControlResponseSequence = controlResponseSequence
       return new Promise((resolve, reject) => {
         const id = nextId()
         const timeoutMs = resolvePostConnectRequestTimeout(budget, REQUEST_TIMEOUT_MS)
         const timeout = setTimeout(() => {
           pending.delete(id)
-          console.log('[net] sendRequest TIMEOUT', {
-            method,
-            timeoutMs,
-            state
-          })
+          console.log('[net] sendRequest TIMEOUT', { method, timeoutMs, state })
           // Why: the frame was written 30s ago — the host may have processed it.
           reject(markRpcDeliveryUnknown(new Error(`Request timed out: ${method}`)))
-          forceSocketReconnect(requestWs)
+          if (controlResponseSequence === requestControlResponseSequence) {
+            forceSocketReconnect(requestWs)
+          }
         }, timeoutMs)
 
         pending.set(id, {

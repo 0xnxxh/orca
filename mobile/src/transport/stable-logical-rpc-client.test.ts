@@ -6,6 +6,7 @@ import {
   createStableLogicalRpcClient,
   LogicalClientCutoverError
 } from './stable-logical-rpc-client'
+import { verifyForceReconnectRpcHealth } from './force-reconnect-rpc-health'
 
 class FakeSession implements RpcClient {
   readonly sendRequest =
@@ -97,6 +98,26 @@ describe('stable logical RPC client', () => {
     nextSession.emitStream('current')
     expect(stream).toHaveBeenCalledOnce()
     expect(stream).toHaveBeenCalledWith('current')
+    pending.resolve(success('late'))
+  })
+
+  it('retries Force Reconnect health verification on the active session after cutover', async () => {
+    const oldSession = new FakeSession('connected')
+    const nextSession = new FakeSession('connected')
+    const pending = deferred<RpcResponse>()
+    oldSession.sendRequest.mockReturnValue(pending.promise)
+    nextSession.sendRequest.mockResolvedValue(success('relay'))
+    const client = createStableLogicalRpcClient(oldSession, 'lan')
+
+    const verifying = verifyForceReconnectRpcHealth(client)
+    await Promise.resolve()
+    await client.migrateTo(nextSession, 'relay')
+
+    await expect(verifying).resolves.toBeUndefined()
+    expect(nextSession.sendRequest).toHaveBeenCalledWith('status.get', undefined, {
+      timeoutMs: expect.any(Number),
+      budgetSpansConnect: true
+    })
     pending.resolve(success('late'))
   })
 
