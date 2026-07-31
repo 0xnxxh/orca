@@ -40,7 +40,8 @@ describe('Force Reconnect RPC health', () => {
     expect(sendRequest).toHaveBeenCalledTimes(2)
     expect(sendRequest).toHaveBeenLastCalledWith('status.get', undefined, {
       timeoutMs: 1_000,
-      budgetSpansConnect: true
+      budgetSpansConnect: true,
+      strictDeadline: true
     })
   })
 })

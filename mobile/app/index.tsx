@@ -37,6 +37,7 @@ import {
   useForceReconnect,
   usePrimeHosts
 } from '../src/transport/client-context'
+import { showForceReconnectError } from '../src/transport/force-reconnect-feedback'
 import { classifyConnection } from '../src/transport/connection-health'
 import { subscribeToDesktopNotifications } from '../src/notifications/mobile-notifications'
 import {
@@ -992,7 +993,7 @@ export default function HomeScreen() {
             icon: RefreshCw,
             onPress: () => {
               setActionTarget(null)
-              void forceReconnectHost(host.id)
+              void forceReconnectHost(host.id).catch(showForceReconnectError)
             }
           })
           if (isLive) {

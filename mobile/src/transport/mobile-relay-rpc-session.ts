@@ -39,6 +39,7 @@ export function connectMobileRelayRpcSession(args: {
   const stateListeners = new Set<(state: ConnectionState) => void>()
   let state: ConnectionState = 'connecting'
   let requestCounter = 0
+  let controlResponseSequence = 0
   let lastConnectedAt: number | null = null
   let leaseExpiresAt: number | null = null
   let resumeConfirmation: DeviceResumeConfirmed | null = null
@@ -148,13 +149,16 @@ export function connectMobileRelayRpcSession(args: {
       return Promise.reject(new Error('relay session not connected'))
     }
     const id = nextId()
+    const requestControlResponseSequence = controlResponseSequence
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id)
         // Why: the frame was written long ago — the desktop may have processed it.
         const error = markRpcDeliveryUnknown(new Error(`relay RPC timed out: ${method}`))
         reject(error)
-        fail(error)
+        if (controlResponseSequence === requestControlResponseSequence) {
+          fail(error)
+        }
       }, timeoutMs)
       pending.set(id, { resolve, reject, timer })
       if (!sendFrame({ id, method, params })) {
@@ -181,6 +185,7 @@ export function connectMobileRelayRpcSession(args: {
     }
     const request = pending.get(value.id)
     if (request) {
+      controlResponseSequence += 1
       clearTimeout(request.timer)
       pending.delete(value.id)
       request.resolve(value)

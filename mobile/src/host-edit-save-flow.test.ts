@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import EditHostScreen from '../app/h/[hostId]/edit'
 
 const dependencies = vi.hoisted(() => ({
+  alert: vi.fn(),
   back: vi.fn(),
   forceReconnectHost: vi.fn(),
   loadHosts: vi.fn(),
@@ -14,6 +15,7 @@ const dependencies = vi.hoisted(() => ({
 
 vi.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
+  Alert: { alert: dependencies.alert },
   KeyboardAvoidingView: 'KeyboardAvoidingView',
   Platform: { OS: 'ios' },
   Pressable: 'Pressable',
@@ -137,6 +139,7 @@ describe('edit host handleSave', () => {
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     dependencies.hostId = 'host-1'
+    dependencies.alert.mockReset()
     dependencies.back.mockReset()
     dependencies.forceReconnectHost.mockReset().mockResolvedValue(undefined)
     dependencies.loadHosts.mockReset().mockResolvedValue([HOST_FIXTURE])
@@ -236,7 +239,7 @@ describe('edit host handleSave', () => {
     act(() => renderer.unmount())
   })
 
-  it('still navigates back and shows no error when the post-save reconnect rejects', async () => {
+  it('still navigates back and alerts when the post-save reconnect rejects', async () => {
     dependencies.forceReconnectHost.mockRejectedValueOnce(new Error('connect failed'))
     const renderer = await renderEditHostRoute()
     setFieldValue(renderer, 'Address', '192.168.1.20:6768')
@@ -248,7 +251,7 @@ describe('edit host handleSave', () => {
 
     expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
     expect(dependencies.back).toHaveBeenCalledTimes(1)
-    expect(findText(renderer, 'connect failed')).toBe(false)
+    expect(dependencies.alert).toHaveBeenCalledWith('Unable to reconnect', 'connect failed')
 
     act(() => renderer.unmount())
   })
@@ -287,6 +290,7 @@ describe('edit host load() error states', () => {
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     dependencies.hostId = 'host-1'
+    dependencies.alert.mockReset()
     dependencies.back.mockReset()
     dependencies.forceReconnectHost.mockReset().mockResolvedValue(undefined)
     dependencies.loadHosts.mockReset().mockResolvedValue([HOST_FIXTURE])

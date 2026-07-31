@@ -59,6 +59,9 @@ export type SendRequestOptions = {
    *  against the post-connect clock, and squeezing them to the floor after a slow
    *  reconnect would fail sends that used to land. */
   budgetSpansConnect?: boolean
+  /** Keep the connect-plus-request deadline strict instead of granting the
+   *  normal post-connect acknowledgement floor. */
+  strictDeadline?: boolean
   /** Reject immediately when not connected — a send parked in the connect wait
    *  replays stale terminal bytes into the PTY after reconnect. */
   failWhenDisconnected?: boolean

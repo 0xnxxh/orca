@@ -243,4 +243,32 @@ describe('mobile relay RPC session', () => {
       vi.useRealTimers()
     }
   })
+
+  it('keeps a Relay session when another control response proves it live', async () => {
+    const { session } = await authenticateSession()
+    vi.useFakeTimers()
+    try {
+      const stalled = session.sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+      const stalledOutcome = stalled.catch((error: unknown) => error)
+      const healthy = session.sendRequest('status.get', undefined, { timeoutMs: 100 })
+      await vi.advanceTimersByTimeAsync(0)
+      const requests = fakes.sendText.mock.calls.map(
+        ([payload]) => JSON.parse(payload as string) as { id: string; method: string }
+      )
+      const healthRequest = requests.find(({ method }) => method === 'status.get')!
+      fakes.linkOptions!.onText(
+        JSON.stringify({ id: healthRequest.id, ok: true, result: {}, _meta: {} })
+      )
+
+      await expect(healthy).resolves.toMatchObject({ ok: true })
+      await vi.advanceTimersByTimeAsync(100)
+      await expect(stalledOutcome).resolves.toMatchObject({
+        message: 'relay RPC timed out: browser.screenshot'
+      })
+      expect(session.getState()).toBe('connected')
+      expect(fakes.close).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

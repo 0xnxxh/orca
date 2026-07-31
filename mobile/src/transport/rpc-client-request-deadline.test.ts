@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { connect } from './rpc-client'
+import { verifyForceReconnectRpcHealth } from './force-reconnect-rpc-health'
 
 vi.mock('./e2ee', () => ({
   generateKeyPair: () => ({
@@ -198,6 +199,27 @@ describe('mobile rpc-client request deadline', () => {
     })
     expect(socket.close).not.toHaveBeenCalled()
     expect(client.getState()).toBe('connected')
+
+    client.close()
+  })
+
+  it('keeps Force Reconnect inside its deadline after a late connection', async () => {
+    const client = connect('ws://desktop.invalid', 'token', 'server-key')
+    const verification = verifyForceReconnectRpcHealth(client)
+    let outcome = 'pending'
+    const settled = verification.catch((error: Error) => {
+      outcome = error.message
+    })
+
+    await vi.advanceTimersByTimeAsync(14_900)
+    mockSockets.at(-1)!.open()
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(99)
+    expect(outcome).toBe('pending')
+
+    await vi.advanceTimersByTimeAsync(1)
+    await settled
+    expect(outcome).toBe('Request timed out: status.get')
 
     client.close()
   })

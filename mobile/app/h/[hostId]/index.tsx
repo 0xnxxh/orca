@@ -37,6 +37,7 @@ import {
   useCloseHost,
   useForceReconnect
 } from '../../../src/transport/client-context'
+import { showForceReconnectError } from '../../../src/transport/force-reconnect-feedback'
 import { useWorktreeResync } from '../../../src/transport/use-worktree-resync'
 import { startHostWorktreeRefresh } from '../../../src/worktree/host-worktree-refresh'
 import {
@@ -814,7 +815,9 @@ export function HostScreen({
                     return (
                       <Pressable
                         style={styles.reconnectButton}
-                        onPress={() => void forceReconnectHost(hostId!)}
+                        onPress={() =>
+                          void forceReconnectHost(hostId!).catch(showForceReconnectError)
+                        }
                         hitSlop={8}
                       >
                         <Text style={styles.reconnectButtonText}>Reconnect</Text>
@@ -1075,7 +1078,7 @@ export function HostScreen({
       {connState === 'auth-failed' && (
         <AuthFailedBanner
           canRetry={!!hostId}
-          onRetry={() => hostId && void forceReconnectHost(hostId)}
+          onRetry={() => hostId && void forceReconnectHost(hostId).catch(showForceReconnectError)}
           onRepair={() => router.push('/pair-scan')}
           onRemove={() => setConfirmRemoveHost(true)}
         />

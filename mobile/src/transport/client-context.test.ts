@@ -270,13 +270,28 @@ describe('useHostClient', () => {
     expect(stale.closeMock).toHaveBeenCalledOnce()
     expect(fresh.sendRequest).toHaveBeenCalledWith('status.get', undefined, {
       timeoutMs: 15_000,
-      budgetSpansConnect: true
+      budgetSpansConnect: true,
+      strictDeadline: true
     })
     expect(completed).toBe(false)
 
     resolveHealthCheck?.()
     await act(async () => reconnect)
     expect(completed).toBe(true)
+
+    harness.unmount()
+  })
+
+  it('rejects Force Reconnect when a replacement client cannot open', async () => {
+    const stale = makeFakeClient('connected')
+    connectMock.mockReturnValue(stale)
+    loadHostsMock.mockResolvedValueOnce([HOST]).mockResolvedValueOnce([])
+
+    const harness = await renderHarness(HOST.id)
+    await expect(harness.forceReconnect(HOST.id)).rejects.toThrow(
+      'Unable to open a replacement connection'
+    )
+    expect(stale.closeMock).toHaveBeenCalledOnce()
 
     harness.unmount()
   })

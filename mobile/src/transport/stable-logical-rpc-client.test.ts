@@ -105,18 +105,21 @@ describe('stable logical RPC client', () => {
     const oldSession = new FakeSession('connected')
     const nextSession = new FakeSession('connected')
     const pending = deferred<RpcResponse>()
-    oldSession.sendRequest.mockReturnValue(pending.promise)
+    oldSession.sendRequest
+      .mockRejectedValueOnce(new Error('Connection interrupted'))
+      .mockReturnValue(pending.promise)
     nextSession.sendRequest.mockResolvedValue(success('relay'))
     const client = createStableLogicalRpcClient(oldSession, 'lan')
 
     const verifying = verifyForceReconnectRpcHealth(client)
-    await Promise.resolve()
+    await vi.waitFor(() => expect(oldSession.sendRequest).toHaveBeenCalledTimes(2))
     await client.migrateTo(nextSession, 'relay')
 
     await expect(verifying).resolves.toBeUndefined()
     expect(nextSession.sendRequest).toHaveBeenCalledWith('status.get', undefined, {
       timeoutMs: expect.any(Number),
-      budgetSpansConnect: true
+      budgetSpansConnect: true,
+      strictDeadline: true
     })
     pending.resolve(success('late'))
   })

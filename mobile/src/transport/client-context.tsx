@@ -211,10 +211,11 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
         storeRef.current.delete(hostId)
       }
       const fresh = await openEntry(hostId)
-      if (fresh) {
-        fresh.refCount = savedRefCount
-        await verifyForceReconnectRpcHealth(fresh.client)
+      if (!fresh) {
+        throw new Error('Unable to open a replacement connection')
       }
+      fresh.refCount = savedRefCount
+      await verifyForceReconnectRpcHealth(fresh.client)
     },
     [openEntry]
   )
@@ -451,8 +452,7 @@ export function useAllHostClients(hostIds: string[]) {
 
 // Why: host-store's removeHost() must close the live client but has no React-side handle; this hook bridges to it.
 export function useCloseHost(): (hostId: string) => void {
-  const ctx = useRpcClientContext()
-  return ctx.closeHost
+  return useRpcClientContext().closeHost
 }
 
 // Why: future-proof "Connection issues — try again" affordance.

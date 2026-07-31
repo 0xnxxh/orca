@@ -196,7 +196,9 @@ export function useMobileDiffReviewInteractions(input: InteractionInput) {
     openSendSheet,
     retryAction: () => {
       if (connState !== 'connected' && hostId) {
-        void onReconnect(hostId)
+        void Promise.resolve(onReconnect(hostId)).catch((error: unknown) => {
+          setActionError(error instanceof Error ? error.message : 'Unable to reconnect')
+        })
         return
       }
       void loadReviewData()

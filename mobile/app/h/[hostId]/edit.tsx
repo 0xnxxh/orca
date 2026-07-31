@@ -18,6 +18,7 @@ import { loadHosts, updateHostNameAndEndpoint } from '../../../src/transport/hos
 import { displayHostEndpoint } from '../../../src/transport/host-endpoint'
 import { resolveHostEndpointEdit } from '../../../src/transport/host-endpoint-edit'
 import { useForceReconnect, usePrimeHosts } from '../../../src/transport/client-context'
+import { showForceReconnectError } from '../../../src/transport/force-reconnect-feedback'
 import type { HostProfile } from '../../../src/transport/types'
 
 export default function EditHostScreen() {
@@ -137,7 +138,7 @@ export default function EditHostScreen() {
       // Why: reconnect is a follow-on side effect of a save that already
       // committed — its failure or a hang must not be reported as a save
       // failure or block navigating back.
-      void forceReconnectHost(host.id).catch(() => {})
+      void forceReconnectHost(host.id).catch(showForceReconnectError)
     }
   }
 

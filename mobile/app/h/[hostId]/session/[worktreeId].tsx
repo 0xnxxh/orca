@@ -59,6 +59,7 @@ import {
   type MobileTerminalLinkOpenMode
 } from '../../../../src/storage/preferences'
 import { useHostClient, useForceReconnect } from '../../../../src/transport/client-context'
+import { showForceReconnectError } from '../../../../src/transport/force-reconnect-feedback'
 import {
   useLastConnectedAt,
   useReconnectAttempt
@@ -4453,7 +4454,7 @@ export default function SessionScreen() {
                 disabled={!showConnectionRetry}
                 onPress={() => {
                   if (hostId) {
-                    void forceReconnectHost(hostId)
+                    void forceReconnectHost(hostId).catch(showForceReconnectError)
                   }
                 }}
                 accessibilityRole={showConnectionRetry ? 'button' : undefined}
