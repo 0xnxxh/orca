@@ -25,6 +25,10 @@ function isNonScreenExpoModule(path: string): boolean {
   )
 }
 
+function isPlatformSpecificApiRoute(path: string): boolean {
+  return /\+api\.(?:android|ios|native|web)\.[jt]sx?$/.test(basename(path))
+}
+
 function hasDefaultExport(path: string, source: string): boolean {
   const extension = extname(path)
   const sourceFile = ts.createSourceFile(
@@ -64,6 +68,13 @@ function hasDefaultExport(path: string, source: string): boolean {
   })
 }
 
+function isInvalidRouteModule(path: string, source: string): boolean {
+  return (
+    isPlatformSpecificApiRoute(path) ||
+    (!isNonScreenExpoModule(path) && !hasDefaultExport(path, source))
+  )
+}
+
 describe('Expo route module boundary', () => {
   it('allows Expo modules that are not screen routes', () => {
     expect(isNonScreenExpoModule(join(appDirectory, 'health+api.ts'))).toBe(true)
@@ -91,11 +102,18 @@ describe('Expo route module boundary', () => {
     ).toBe(false)
   })
 
+  it('rejects platform-specific API routes even with a default export', () => {
+    expect(isPlatformSpecificApiRoute(join(appDirectory, 'health+api.ts'))).toBe(false)
+    for (const platform of ['android', 'ios', 'native', 'web']) {
+      const path = join(appDirectory, `health+api.${platform}.ts`)
+      expect(isInvalidRouteModule(path, 'export default function Route() {}')).toBe(true)
+    }
+  })
+
   it('keeps support modules outside the app route directory', () => {
     const invalidRoutes = sourceFiles(appDirectory)
       .filter((path) => routeSourceExtensions.has(extname(path)))
-      .filter((path) => !isNonScreenExpoModule(path))
-      .filter((path) => !hasDefaultExport(path, readFileSync(path, 'utf8')))
+      .filter((path) => isInvalidRouteModule(path, readFileSync(path, 'utf8')))
       .map((path) => relative(appDirectory, path))
 
     expect(invalidRoutes).toEqual([])
