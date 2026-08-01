@@ -88,14 +88,9 @@ installMonacoPeekReferencesPreviewOptions()
 // so right-click Paste works like Cmd+V (which already works via native events).
 installMonacoContextMenuPaste(monaco)
 
-// Why: models outlive the React panels that opened them, so an OOM report cannot
-// otherwise tell "editor holds 200MB of open files" from "Monaco is retaining models
-// for files whose panel unmounted". Cost is linear in model count and flat in model
-// content — measured ~0.2us per model, and 333MB of open text costs the same as 30KB
-// — with getModels()'s two N-sized allocations as the floor, not the per-model reads.
-// Safe inside a near-OOM breadcrumb at any realistic model count.
-// Why the sum lives in the census module: every suite mocks this file, so anything
-// written here is unreachable under test. Only the registry read stays.
+// Why: models outlive the panels that opened them, so an OOM report cannot otherwise tell
+// open-file bytes from models retained after unmount. ~0.2us per model, flat in content.
+// The sum lives in the census module because every suite mocks this file.
 setMonacoModelCensusReader(() => summarizeMonacoModelSizes(monaco.editor.getModels()))
 
 // Configure Monaco to use the locally bundled editor instead of CDN
