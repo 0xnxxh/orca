@@ -377,6 +377,41 @@ describe('useHostClient', () => {
     harness.unmount()
   })
 
+  it('keeps a host disconnected when it closes with a changed-profile reconnect queued', async () => {
+    const stale = makeFakeClient('connected')
+    const oldReplacement = makeFakeClient('connecting')
+    let resolveOldHealthCheck: (() => void) | null = null
+    oldReplacement.sendRequest = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveOldHealthCheck = () => resolve({ id: 'old-health', ok: true, result: {} })
+        })
+    )
+    connectMock.mockReturnValueOnce(stale).mockReturnValueOnce(oldReplacement)
+    loadHostsMock.mockResolvedValue([HOST])
+
+    const harness = await renderHarness(HOST.id)
+    const first = harness.forceReconnect(HOST.id)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    harness.primeHosts([{ ...HOST, endpoint: 'ws://127.0.0.1:2' }])
+    const queued = harness.forceReconnect(HOST.id)
+    await act(async () => harness.closeHost(HOST.id))
+
+    resolveOldHealthCheck?.()
+    await act(async () => Promise.all([first, queued]))
+
+    expect(connectMock).toHaveBeenCalledTimes(2)
+    expect(oldReplacement.closeMock).toHaveBeenCalledOnce()
+    expect(harness.hook.client).toBeNull()
+    expect(harness.hook.state).toBe('disconnected')
+
+    harness.unmount()
+  })
+
   it('rejects Force Reconnect when a replacement client cannot open', async () => {
     const stale = makeFakeClient('connected')
     connectMock.mockReturnValue(stale)

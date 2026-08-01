@@ -75,6 +75,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
 
   const closeEntry = useCallback((hostId: string) => {
     pendingOpensRef.current.cancel(hostId)
+    forceReconnectCoordinatorRef.current.cancel(hostId)
     primedHostsRef.current.delete(hostId)
     const entry = storeRef.current.get(hostId)
     entry?.unsubState()
@@ -270,6 +271,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     const store = storeRef.current
     return () => {
       pendingOpensRef.current.cancelAll()
+      forceReconnectCoordinatorRef.current.cancelAll()
       for (const [hostId] of store) {
         closeEntry(hostId)
       }
