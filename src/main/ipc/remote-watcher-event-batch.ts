@@ -72,6 +72,7 @@ export function createRemoteWatcherEventBatch({
   let overflowed = false
   let firstEventAt = 0
   let timer: ReturnType<typeof setTimeout> | null = null
+  let closed = false
 
   function flush(): void {
     if (timer) {
@@ -111,6 +112,10 @@ export function createRemoteWatcherEventBatch({
 
   return {
     push(events) {
+      // Why: an in-flight provider receive can land after teardown; re-arming there would strand a timer.
+      if (closed) {
+        return
+      }
       if (!overflowed) {
         if (
           buffered.length + events.length > maxEvents ||
@@ -129,6 +134,7 @@ export function createRemoteWatcherEventBatch({
       schedule()
     },
     close() {
+      closed = true
       if (timer) {
         clearTimeout(timer)
         timer = null

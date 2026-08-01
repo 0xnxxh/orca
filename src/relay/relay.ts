@@ -1235,6 +1235,8 @@ async function main(): Promise<void> {
       })
       .catch((error) => {
         // Why: keep owning a PTY whose native kill was rejected so a transient signal failure doesn't orphan a remote shell.
+        // Why: the pool watches stay registered — the socket server is still listening, so a client can
+        // reconnect and cancel this grace, and that revived relay still needs both re-evaluations.
         shutdownInFlight = false
         relayLogLine(
           `[relay] Shutdown deferred: ${error instanceof Error ? error.message : String(error)}`

@@ -235,6 +235,18 @@ describe('createRemoteWatcherEventBatch', () => {
     expect(deliver).not.toHaveBeenCalled()
   })
 
+  it('ignores a push that lands after close instead of arming a timer', () => {
+    const deliver = vi.fn()
+    const batch = makeBatch(deliver)
+
+    batch.close()
+    batch.push([{ kind: 'update', absolutePath: `${ROOT}/a.ts` }])
+
+    expect(vi.getTimerCount()).toBe(0)
+    vi.advanceTimersByTime(1_000)
+    expect(deliver).not.toHaveBeenCalled()
+  })
+
   // Why: the host platform is irrelevant — the coalesce key must stay shape-based, so a case-sensitive
   // remote pair must survive it on any host, and neither path may pick up drive/backslash rewriting.
   it('keeps case-distinct remote POSIX paths separate and byte-identical', () => {
