@@ -2429,7 +2429,9 @@ function normalizeClaudeSubagentLifecycleEvent(
   hookPayload: Record<string, unknown>
 ): ParsedAgentStatusPayload | null {
   const lifecycleField = eventName === 'TeammateIdle' ? 'teammate_name' : 'agent_id'
-  const lifecycleId = readString(hookPayload, lifecycleField)
+  // Why: inventory ids are trimmed at parse — lifecycle ids must canonicalize identically or a
+  // padded stop misses the trimmed roster key and the row can never drain.
+  const lifecycleId = readString(hookPayload, lifecycleField)?.trim()
   if (!lifecycleId) {
     return null
   }
@@ -2730,7 +2732,9 @@ function normalizeClaudeEvent(
     (eventName === 'Stop' || eventName === 'StopFailure') &&
     hasActiveClaudeNonAgentBackgroundWork(hookPayload)
 
-  const eventAgentId = readString(hookPayload, 'agent_id')
+  // Why: canonicalize like the inventory parser and lifecycle handler — a padded id must hit
+  // the same roster key and wait ownership as its trimmed twin.
+  const eventAgentId = readString(hookPayload, 'agent_id')?.trim() || undefined
   // Why: subagent/teammate events carry `agent_id` (lead's don't); child tool activity keeps its row live but must not become the lead's state or overwrite its tool/prompt caches (a live card would vanish).
   // Two exceptions take the full path below: waiting-inducing events (a child needs human attention on this pane) and the blocked child's own next tool event (approval granted — clear the wait as for the lead).
   const isWaitingInducing = stateName === 'waiting'

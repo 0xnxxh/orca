@@ -3354,6 +3354,17 @@ describe('shared agent-hook-listener', () => {
       expect(stopped?.payload.interactivePrompt).toBeUndefined()
     })
 
+    it('canonicalizes padded lifecycle ids so starts and stops target one row', () => {
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: ' a2 ',
+        agent_type: 'general-purpose'
+      })
+      const stopped = claudeEvent({ hook_event_name: 'SubagentStop', agent_id: ' a2 ' })
+      expect(stopped?.payload.state).toBe('done')
+      expect(stopped?.payload.subagents).toBeUndefined()
+    })
+
     it('tracks whitespace-padded inventory ids canonically so their stops can drain them', () => {
       const first = claudeEvent({
         hook_event_name: 'SubagentStop',
