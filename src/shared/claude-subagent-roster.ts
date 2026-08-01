@@ -73,6 +73,12 @@ export function isClaudeTeammateLifecycleId(id: string): boolean {
   return separator > 1 && id.startsWith('a') && /^[0-9a-f]+$/i.test(id.slice(separator + 1))
 }
 
+/** Pre-check for callers that allocate a roster to upsert into — upsert rejects
+ *  invalid ids silently, which would strand the fresh roster empty forever. */
+export function isValidClaudeSubagentId(id: string): boolean {
+  return id.length > 0 && id.length <= CLAUDE_SUBAGENT_ID_MAX_LENGTH
+}
+
 export function upsertWorkingClaudeSubagent(
   roster: ClaudeSubagentRoster,
   id: string,

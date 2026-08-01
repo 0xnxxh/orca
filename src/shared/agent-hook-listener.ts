@@ -33,6 +33,7 @@ import {
   foldClaudeBackgroundTasksIntoRoster,
   hasActiveClaudeNonAgentBackgroundWork,
   idleClaudeTeammateByName,
+  isValidClaudeSubagentId,
   readClaudeBackgroundAgentTasks,
   reapRestoredClaudeSubagentsWithoutLiveAgent,
   stopClaudeSubagent,
@@ -2446,13 +2447,16 @@ function normalizeClaudeSubagentLifecycleEvent(
   } else {
     const agentId = lifecycleId
     if (eventName === 'SubagentStart') {
-      upsertWorkingClaudeSubagent(
-        getOrCreateClaudeSubagentRoster(state, paneKey),
-        agentId,
-        { agentType: readString(hookPayload, 'agent_type') },
-        Date.now()
-      )
-      rosterChanged = true
+      // Why: upsert rejects invalid ids silently — allocate only for an id it will accept.
+      if (isValidClaudeSubagentId(agentId)) {
+        upsertWorkingClaudeSubagent(
+          getOrCreateClaudeSubagentRoster(state, paneKey),
+          agentId,
+          { agentType: readString(hookPayload, 'agent_type') },
+          Date.now()
+        )
+        rosterChanged = true
+      }
     } else {
       if (roster) {
         // Why: a stop of an untracked id (e.g. compact's start-less SubagentStop) is a roster no-op, not evidence.
@@ -2631,7 +2635,12 @@ function normalizeClaudeEvent(
       eventName === 'PostToolUseFailure')
       ? eventAgentId
       : undefined
-  if (eventAgentId && (subagentOriginId || isWaitingInducing)) {
+  if (
+    eventAgentId &&
+    (subagentOriginId || isWaitingInducing) &&
+    isValidClaudeSubagentId(eventAgentId)
+  ) {
+    // Why: upsert rejects invalid ids silently — allocate only for an id it will accept.
     upsertWorkingClaudeSubagent(
       getOrCreateClaudeSubagentRoster(state, paneKey),
       eventAgentId,

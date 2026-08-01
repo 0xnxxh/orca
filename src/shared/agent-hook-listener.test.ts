@@ -3113,6 +3113,25 @@ describe('shared agent-hook-listener', () => {
       expect(state.claudeSubagentRosterByPaneKey.has(PANE_KEY)).toBe(false)
     })
 
+    it('does not retain a roster when a child tool event carries an id the upsert rejects', () => {
+      // Why: upsert silently drops over-length ids; allocating first would strand
+      // an empty roster per invented pane key with zero emitted payloads.
+      const childTool = claudeEvent({
+        hook_event_name: 'PreToolUse',
+        agent_id: 'a'.repeat(65),
+        tool_name: 'Bash',
+        tool_input: { command: 'true' }
+      })
+      expect(childTool).toBeNull()
+      expect(state.claudeSubagentRosterByPaneKey.has(PANE_KEY)).toBe(false)
+    })
+
+    it('does not retain a roster for a SubagentStart with an id the upsert rejects', () => {
+      const spawned = claudeEvent({ hook_event_name: 'SubagentStart', agent_id: 'a'.repeat(65) })
+      expect(spawned).toBeNull()
+      expect(state.claudeSubagentRosterByPaneKey.has(PANE_KEY)).toBe(false)
+    })
+
     it('re-emits the lead done state on a start-less SubagentStop after a completed turn', () => {
       claudeEvent({ hook_event_name: 'UserPromptSubmit', prompt: 'go' })
       claudeEvent({ hook_event_name: 'Stop', background_tasks: [] })
