@@ -77,7 +77,7 @@ const HOST: HostProfile = {
 type Harness = {
   readonly hook: ReturnType<typeof useHostClient>
   readonly closeHost: (hostId: string) => void
-  readonly forceReconnect: (hostId: string) => Promise<void>
+  readonly forceReconnect: (hostId: string, host?: HostProfile) => Promise<void>
   readonly primeHosts: (hosts: HostProfile[], sourceRevision?: number) => void
   readonly unmount: () => void
 }
@@ -97,7 +97,7 @@ function suppressReactTestRendererDeprecationWarning(): () => void {
 async function renderHarness(hostId: string): Promise<Harness> {
   let hook: ReturnType<typeof useHostClient> | null = null
   let closeHost: ((hostId: string) => void) | null = null
-  let forceReconnect: ((hostId: string) => Promise<void>) | null = null
+  let forceReconnect: ((hostId: string, host?: HostProfile) => Promise<void>) | null = null
   let primeHosts: ((hosts: HostProfile[]) => void) | null = null
   let renderer: ReactTestRenderer | null = null
 
@@ -134,11 +134,11 @@ async function renderHarness(hostId: string): Promise<Harness> {
       }
       closeHost(id)
     },
-    forceReconnect: (id) => {
+    forceReconnect: (id, host) => {
       if (!forceReconnect) {
         throw new Error('forceReconnect not rendered')
       }
-      return forceReconnect(id)
+      return forceReconnect(id, host)
     },
     primeHosts: (hosts, sourceRevision = getHostListLoadRevision()) => {
       if (!primeHosts) {
@@ -409,6 +409,25 @@ describe('useHostClient', () => {
     })
 
     await act(async () => harness.forceReconnect(HOST.id))
+
+    expect(connectMock.mock.calls[1]?.[0]).toEqual(updatedHost)
+    harness.unmount()
+  })
+
+  it('reconnects with an explicit saved profile after stale snapshot priming is rejected', async () => {
+    const stale = makeFakeClient('connected')
+    const fresh = makeFakeClient('connecting')
+    fresh.sendRequest = vi.fn(async () => ({ id: 'health', ok: true, result: {} }))
+    connectMock.mockReturnValueOnce(stale).mockReturnValueOnce(fresh)
+    loadHostsMock.mockResolvedValue([HOST])
+
+    const harness = await renderHarness(HOST.id)
+    const staleSourceRevision = getHostListLoadRevision()
+    dropSharedHostListLoad()
+    const updatedHost = { ...HOST, endpoint: 'ws://127.0.0.1:2' }
+    harness.primeHosts([updatedHost], staleSourceRevision)
+
+    await act(async () => harness.forceReconnect(HOST.id, updatedHost))
 
     expect(connectMock.mock.calls[1]?.[0]).toEqual(updatedHost)
     harness.unmount()

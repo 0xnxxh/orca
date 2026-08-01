@@ -48,7 +48,8 @@ export function connectMobileRelayRpcSession(args: {
   let controlResponseSequence = 0
   const controlProbeFollowUp = new RpcControlProbeFollowUp<boolean>(
     () => (!closed && state === 'connected' ? true : null),
-    probeControlPlane
+    probeControlPlane,
+    (hasQueuedFollowUp) => !hasQueuedFollowUp && timedOutControlRequestIds.clear()
   )
   let controlProbeTimer: ReturnType<typeof setInterval> | null = null
   let lastConnectedAt: number | null = null
@@ -266,7 +267,6 @@ export function connectMobileRelayRpcSession(args: {
   }
 
   function finishControlProbe(): void {
-    timedOutControlRequestIds.clear()
     controlProbeFollowUp.finish(true)
   }
 

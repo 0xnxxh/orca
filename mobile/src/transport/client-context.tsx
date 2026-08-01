@@ -191,11 +191,8 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const forceReconnect = useCallback(
-    (hostId: string): Promise<void> => {
-      const profile = {
-        host: primedHostsRef.current.get(hostId),
-        version: primedHostsRef.current.version(hostId)
-      }
+    (hostId: string, requestedHost?: HostProfile): Promise<void> => {
+      const profile = primedHostsRef.current.reconnectProfile(hostId, requestedHost)
       return forceReconnectCoordinatorRef.current.run({
         hostId,
         profileVersion: profile.version,
@@ -453,7 +450,7 @@ export function useCloseHost(): (hostId: string) => void {
 }
 
 // Why: future-proof "Connection issues — try again" affordance.
-export function useForceReconnect(): (hostId: string) => Promise<void> {
+export function useForceReconnect(): (hostId: string, host?: HostProfile) => Promise<void> {
   return useRpcClientContext().forceReconnect
 }
 

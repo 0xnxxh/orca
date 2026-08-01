@@ -100,6 +100,57 @@ describe('existing host relay endpoint lifecycle publication', () => {
       expect.objectContaining({ relayHostId: 'AbCdEf0123_-new9' })
     )
   })
+
+  it('rechecks credential publication after its metadata read', async () => {
+    let releaseMetadata: ((host: HostProfile | null) => void) | null = null
+    hostStoreMock.loadStoredHostIdentity.mockResolvedValueOnce(HOST).mockImplementationOnce(
+      () =>
+        new Promise<HostProfile | null>((resolve) => {
+          releaseMetadata = resolve
+        })
+    )
+    const oldGeneration = beginHostEndpointPublicationLifecycle(HOST.id)
+    const writeBundle = vi.fn(async () => {})
+    const oldWrite = writeExistingHostRelayCredentialBundle(
+      HOST,
+      credentialBundle(1),
+      writeBundle,
+      oldGeneration
+    )
+    await vi.waitFor(() => expect(hostStoreMock.loadStoredHostIdentity).toHaveBeenCalledTimes(2))
+
+    beginHostEndpointPublicationLifecycle(HOST.id)
+    releaseMetadata?.(HOST)
+
+    await expect(oldWrite).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
+    expect(writeBundle).not.toHaveBeenCalled()
+  })
+
+  it('rechecks routing publication after its credential write', async () => {
+    let releaseCredentialWrite: (() => void) | null = null
+    let markCredentialWriteStarted: (() => void) | null = null
+    const credentialWriteStarted = new Promise<void>((resolve) => {
+      markCredentialWriteStarted = resolve
+    })
+    const oldGeneration = beginHostEndpointPublicationLifecycle(HOST.id)
+    const oldWrite = saveExistingHostRelayRouting(
+      relayHostProfile('AbCdEf0123_-old9'),
+      async () => {
+        markCredentialWriteStarted?.()
+        await new Promise<void>((resolve) => {
+          releaseCredentialWrite = resolve
+        })
+      },
+      oldGeneration
+    )
+    await credentialWriteStarted
+
+    beginHostEndpointPublicationLifecycle(HOST.id)
+    releaseCredentialWrite?.()
+
+    await expect(oldWrite).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
+    expect(overlayStoreMock.saveMobileRelayHostOverlay).not.toHaveBeenCalled()
+  })
 })
 
 function credentialBundle(version: number): MobileRelayCredentialBundle {

@@ -575,4 +575,45 @@ describe('mobile relay RPC session', () => {
       vi.useRealTimers()
     }
   })
+
+  it('keeps late Relay request evidence across a queued probe handoff', async () => {
+    const { session } = await authenticateSession()
+    vi.useFakeTimers()
+    try {
+      session.notifyForeground()
+      const stalled = session.sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+      const stalledOutcome = stalled.catch((error: unknown) => error)
+      const healthy = session.sendRequest('speech.models.list', {}, { timeoutMs: 100 })
+      await vi.advanceTimersByTimeAsync(0)
+      const requests = fakes.sendText.mock.calls.map(
+        ([payload]) => JSON.parse(payload as string) as { id: string; method: string }
+      )
+      const stalledRequest = requests.find(({ method }) => method === 'browser.screenshot')!
+      const healthyRequest = requests.find(({ method }) => method === 'speech.models.list')!
+      fakes.linkOptions!.onText(
+        JSON.stringify({ id: healthyRequest.id, ok: true, result: {}, _meta: {} })
+      )
+
+      await expect(healthy).resolves.toMatchObject({ ok: true })
+      await vi.advanceTimersByTimeAsync(100)
+      await expect(stalledOutcome).resolves.toMatchObject({
+        message: 'relay RPC timed out: browser.screenshot'
+      })
+      await vi.advanceTimersByTimeAsync(7_900)
+      const probes = fakes.sendText.mock.calls
+        .map(([payload]) => JSON.parse(payload as string) as { method: string })
+        .filter(({ method }) => method === 'status.get')
+      expect(probes).toHaveLength(2)
+      fakes.linkOptions!.onText(
+        JSON.stringify({ id: stalledRequest.id, ok: true, result: {}, _meta: {} })
+      )
+
+      await vi.advanceTimersByTimeAsync(8_000)
+      expect(session.getState()).toBe('connected')
+      expect(fakes.close).not.toHaveBeenCalled()
+    } finally {
+      session.close()
+      vi.useRealTimers()
+    }
+  })
 })

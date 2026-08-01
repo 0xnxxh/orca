@@ -5,7 +5,7 @@ export class RpcControlProbeFollowUp<T> {
   constructor(
     private readonly getCurrentTarget: () => T | null,
     private readonly launch: (target: T) => void,
-    private readonly onFinish: () => void = () => {}
+    private readonly onFinish: (hasQueuedFollowUp: boolean) => void = () => {}
   ) {}
 
   begin(target: T, queueAfterCurrent: boolean): boolean {
@@ -21,15 +21,15 @@ export class RpcControlProbeFollowUp<T> {
 
   finish(target?: T): void {
     this.active = false
-    this.onFinish()
     const queued = this.queued
     this.queued = null
-    if (
+    const hasQueuedFollowUp =
       target !== undefined &&
       queued !== null &&
       queued === target &&
       this.getCurrentTarget() === queued
-    ) {
+    this.onFinish(hasQueuedFollowUp)
+    if (hasQueuedFollowUp && queued !== null) {
       queueMicrotask(() => this.launch(queued))
     }
   }

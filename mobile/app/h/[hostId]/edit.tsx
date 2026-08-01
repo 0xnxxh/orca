@@ -17,7 +17,10 @@ import { colors, radii, spacing, typography } from '../../../src/theme/mobile-th
 import { loadHosts, updateHostNameAndEndpoint } from '../../../src/transport/host-store'
 import { getHostListLoadRevision } from '../../../src/transport/host-list-load-sharing'
 import { displayHostEndpoint } from '../../../src/transport/host-endpoint'
-import { resolveHostEndpointEdit } from '../../../src/transport/host-endpoint-edit'
+import {
+  hostProfileAfterEdit,
+  resolveHostEndpointEdit
+} from '../../../src/transport/host-endpoint-edit'
 import { useForceReconnect, usePrimeHosts } from '../../../src/transport/client-context'
 import { showForceReconnectError } from '../../../src/transport/force-reconnect-feedback'
 import type { HostProfile } from '../../../src/transport/types'
@@ -102,6 +105,11 @@ export default function EditHostScreen() {
       router.back()
       return
     }
+    const updates = {
+      ...(willRename ? { name: nextName } : {}),
+      ...(nextEndpoint !== undefined ? { endpoint: nextEndpoint } : {})
+    }
+    const reconnectProfile = hostProfileAfterEdit(host, updates)
 
     savingRef.current = true
     setSaving(true)
@@ -110,10 +118,7 @@ export default function EditHostScreen() {
       // Why: a single mutateStoredHosts pass so name + endpoint commit
       // atomically — a mid-save failure can never persist one without the
       // other, and a host removed mid-edit throws instead of no-oping.
-      await updateHostNameAndEndpoint(host.id, {
-        ...(willRename ? { name: nextName } : {}),
-        ...(nextEndpoint !== undefined ? { endpoint: nextEndpoint } : {})
-      })
+      await updateHostNameAndEndpoint(host.id, updates)
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save host.')
       savingRef.current = false
@@ -140,7 +145,7 @@ export default function EditHostScreen() {
       // Why: reconnect is a follow-on side effect of a save that already
       // committed — its failure or a hang must not be reported as a save
       // failure or block navigating back.
-      void forceReconnectHost(host.id).catch(showForceReconnectError)
+      void forceReconnectHost(host.id, reconnectProfile).catch(showForceReconnectError)
     }
   }
 

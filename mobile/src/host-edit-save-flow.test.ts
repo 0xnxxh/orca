@@ -178,7 +178,10 @@ describe('edit host handleSave', () => {
     expect(dependencies.updateHostNameAndEndpoint).toHaveBeenCalledWith('host-1', {
       endpoint: 'ws://192.168.1.20:6768'
     })
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', {
+      ...HOST_FIXTURE,
+      endpoint: 'ws://192.168.1.20:6768'
+    })
     expect(dependencies.back).toHaveBeenCalledTimes(1)
 
     act(() => renderer.unmount())
@@ -195,7 +198,11 @@ describe('edit host handleSave', () => {
       name: 'Home Desk',
       endpoint: 'ws://192.168.1.20:6768'
     })
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', {
+      ...HOST_FIXTURE,
+      name: 'Home Desk',
+      endpoint: 'ws://192.168.1.20:6768'
+    })
     expect(dependencies.back).toHaveBeenCalledTimes(1)
 
     act(() => renderer.unmount())
@@ -249,7 +256,10 @@ describe('edit host handleSave', () => {
       await Promise.resolve()
     })
 
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', {
+      ...HOST_FIXTURE,
+      endpoint: 'ws://192.168.1.20:6768'
+    })
     expect(dependencies.back).toHaveBeenCalledTimes(1)
     expect(dependencies.alert).toHaveBeenCalledWith('Unable to reconnect', 'connect failed')
 

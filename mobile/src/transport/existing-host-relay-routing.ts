@@ -24,12 +24,14 @@ export async function saveExistingHostRelayRouting(
   await serializeHostProfilePublication(validated.id, async () => {
     requireCurrentPublication(validated.id, revision, endpointGeneration)
     const existing = await requireCurrentHostMetadata(validated)
+    requireCurrentPublication(validated.id, revision, endpointGeneration)
     const { endpoints, relayHostId, relay } = validated
     if (!endpoints || !relayHostId || !relay) {
       throw new Error('mobile relay upgrade routing metadata missing')
     }
     // Why: serialize the credential before its routing overlay so neither side can cross a re-pair.
     await beforePublish?.()
+    requireCurrentPublication(validated.id, revision, endpointGeneration)
     await saveMobileRelayHostOverlay({
       v: 2,
       hostId: validated.id,
@@ -60,6 +62,7 @@ export async function writeExistingHostRelayCredentialBundle(
     if (bundle.hostId !== validated.id || bundle.deviceToken !== validated.deviceToken) {
       throw new MobileRelayUpgradeHostSupersededError('mobile relay credential identity mismatch')
     }
+    requireCurrentPublication(validated.id, revision, endpointGeneration)
     await writeBundle(bundle)
   })
 }

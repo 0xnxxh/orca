@@ -5,7 +5,7 @@ import type { ConnectionState, HostProfile } from './types'
 export type RpcClientContextValue = {
   acquire: (hostId: string, host?: HostProfile) => RpcClient | null
   release: (hostId: string) => void
-  forceReconnect: (hostId: string) => Promise<void>
+  forceReconnect: (hostId: string, host?: HostProfile) => Promise<void>
   closeHost: (hostId: string) => void
   getState: (hostId: string) => ConnectionState
   getReconnectAttempt: (hostId: string) => number

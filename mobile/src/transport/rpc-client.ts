@@ -178,7 +178,7 @@ export function connect(
   const activityProbeFollowUp = new RpcControlProbeFollowUp<WebSocket>(
     () => (state === 'connected' ? ws : null),
     runActivityProbe,
-    () => timedOutControlRequestIds.clear()
+    (hasQueuedFollowUp) => !hasQueuedFollowUp && timedOutControlRequestIds.clear()
   )
   let intentionallyClosed = false
   // Consecutive auth rejections; tolerate up to AUTH_RETRY_BUDGET (issue #5200) before latching to avoid a needless re-pair.

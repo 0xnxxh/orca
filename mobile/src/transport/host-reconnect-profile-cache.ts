@@ -25,6 +25,12 @@ export class HostReconnectProfileCache {
     return version
   }
 
+  reconnectProfile(hostId: string, requestedHost?: HostProfile): HostOpenProfile {
+    return requestedHost
+      ? { host: requestedHost, version: this.prime(requestedHost) }
+      : { host: this.get(hostId), version: this.version(hostId) }
+  }
+
   primeLoaded(host: HostProfile, sourceRevision: number, currentRevision: number): number | null {
     if (sourceRevision !== currentRevision) {
       return null
