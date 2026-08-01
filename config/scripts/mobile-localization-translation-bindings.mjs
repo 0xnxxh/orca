@@ -6,6 +6,7 @@ import { createMobileLocalizationValueFlow } from './mobile-localization-value-f
 
 const MOBILE_I18N_MODULE_RE = /(?:^|\/)mobile-i18n$/
 const TRANSLATOR_PREFIX = 'translator:'
+const PROPERTY_RESOLUTION_KEYS = new WeakMap()
 
 function emptyResolution(unknown = false) {
   return { descriptors: new Set(), unknown }
@@ -32,6 +33,20 @@ function memberParts(node) {
     return { object: node.expression, propertyName: node.argumentExpression.text }
   }
   return undefined
+}
+
+function propertyResolutionKey(object, propertyName, bindings) {
+  const expression = bindings.valueFlow.unwrapExpression(object)
+  const subject = ts.isIdentifier(expression)
+    ? (bindings.resolveBinding(expression) ?? expression)
+    : expression
+  const keys = PROPERTY_RESOLUTION_KEYS.get(subject) ?? new Map()
+  if (!PROPERTY_RESOLUTION_KEYS.has(subject)) {
+    PROPERTY_RESOLUTION_KEYS.set(subject, keys)
+  }
+  const key = keys.get(propertyName) ?? {}
+  keys.set(propertyName, key)
+  return key
 }
 
 function builtInMemberResolution(base, propertyName) {
@@ -65,13 +80,24 @@ function builtInMemberResolution(base, propertyName) {
 }
 
 function propertyResolution(object, propertyName, use, bindings, mode, seen) {
-  const propertyValues = bindings.valueFlow.propertyValues(object, propertyName, use)
+  const key = propertyResolutionKey(object, propertyName, bindings)
+  if (seen.has(key)) {
+    return emptyResolution(true)
+  }
+  const nextSeen = new Set(seen).add(key)
+  const propertyValues = bindings.valueFlow.propertyValues(
+    object,
+    propertyName,
+    use,
+    new Set(nextSeen),
+    mode === 'all'
+  )
   if (propertyValues?.length) {
     return mergeResolutions(
-      propertyValues.map((value) => expressionResolution(value, use, bindings, mode, seen))
+      propertyValues.map((value) => expressionResolution(value, use, bindings, mode, nextSeen))
     )
   }
-  const base = expressionResolution(object, use, bindings, mode, seen)
+  const base = expressionResolution(object, use, bindings, mode, nextSeen)
   return builtInMemberResolution(base, propertyName)
 }
 
@@ -79,9 +105,13 @@ function expressionResolution(node, use, bindings, mode, seen = new Set()) {
   const expression = bindings.valueFlow.unwrapExpression(node)
   if (ts.isIdentifier(expression)) {
     const binding = bindings.resolveBinding(expression)
-    const immutableDescriptor = binding ? bindings.immutableDescriptors?.get(binding) : undefined
-    if (immutableDescriptor) {
-      return { descriptors: new Set([immutableDescriptor]), unknown: false }
+    const stableDescriptor = binding ? bindings.stableDescriptors?.get(binding) : undefined
+    if (
+      stableDescriptor &&
+      (mode === 'all' ||
+        stableDescriptor.writes.every((write) => bindings.valueFlow.writeReachesUse(write, use)))
+    ) {
+      return { descriptors: new Set([stableDescriptor.descriptor]), unknown: false }
     }
     if (!binding || seen.has(binding)) {
       return emptyResolution(true)
@@ -161,11 +191,13 @@ function translationPrefix(node, use, bindings, mode = 'reaching') {
   return prefixes[0]
 }
 
-function collectImmutableDescriptors(valueFlow, rootDescriptors, resolveBinding) {
-  const descriptors = new Map(rootDescriptors)
+function collectStableDescriptors(valueFlow, rootDescriptors, resolveBinding) {
+  const descriptors = new Map(
+    [...rootDescriptors].map(([binding, descriptor]) => [binding, { descriptor, writes: [] }])
+  )
   const dependents = new Map()
   for (const [binding, writes] of valueFlow.bindingWrites()) {
-    if (!valueFlow.isImmutableBinding(binding) || writes.length !== 1 || writes[0].propertyName) {
+    if (writes.length !== 1 || writes[0].propertyName || writes[0].conditional) {
       continue
     }
     const source = valueFlow.unwrapExpression(writes[0].expression)
@@ -177,17 +209,26 @@ function collectImmutableDescriptors(valueFlow, rootDescriptors, resolveBinding)
       continue
     }
     const entries = dependents.get(sourceBinding) ?? []
-    entries.push(binding)
+    entries.push({
+      binding,
+      write: writes[0],
+      always: valueFlow.isImmutableBinding(binding)
+    })
     dependents.set(sourceBinding, entries)
   }
   const queue = [...descriptors.keys()]
   for (let index = 0; index < queue.length; index += 1) {
     const source = queue[index]
-    const descriptor = descriptors.get(source)
+    const sourceDescriptor = descriptors.get(source)
     for (const target of dependents.get(source) ?? []) {
-      if (!descriptors.has(target)) {
-        descriptors.set(target, descriptor)
-        queue.push(target)
+      if (!descriptors.has(target.binding)) {
+        descriptors.set(target.binding, {
+          descriptor: sourceDescriptor.descriptor,
+          writes: target.always
+            ? sourceDescriptor.writes
+            : [...sourceDescriptor.writes, target.write]
+        })
+        queue.push(target.binding)
       }
     }
   }
@@ -293,7 +334,7 @@ export function collectMobileTranslationBindings(sourceFile) {
     translatorNames
   }
   bindings.valueFlow = createMobileLocalizationValueFlow(sourceFile, bindings)
-  bindings.immutableDescriptors = collectImmutableDescriptors(
+  bindings.stableDescriptors = collectStableDescriptors(
     bindings.valueFlow,
     rootDescriptors,
     bindings.resolveBinding

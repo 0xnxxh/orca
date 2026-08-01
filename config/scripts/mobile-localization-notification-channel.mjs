@@ -7,7 +7,8 @@ function unwrapExpression(node) {
   if (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||
-    ts.isSatisfiesExpression(node)
+    ts.isSatisfiesExpression(node) ||
+    ts.isNonNullExpression(node)
   ) {
     return unwrapExpression(node.expression)
   }

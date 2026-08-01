@@ -457,9 +457,6 @@ export function classifyMobileStringNode(node, userVisibleErrorSource, bindings)
   if (renderedVariableStatus === 'reaching') {
     return 'rendered-variable'
   }
-  if (renderedVariableStatus === 'dead') {
-    return undefined
-  }
   if (isNotificationChannelName(node, bindings)) {
     return 'notification-channel-name'
   }
@@ -530,7 +527,7 @@ export function classifyMobileStringNode(node, userVisibleErrorSource, bindings)
   if (hasDisqualifyingBinaryAncestor(node)) {
     return undefined
   }
-  if (isUserVisibleVariableValue(node)) {
+  if (renderedVariableStatus !== 'dead' && isUserVisibleVariableValue(node)) {
     return 'user-visible-variable'
   }
   if (

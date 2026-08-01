@@ -84,9 +84,55 @@ export const labels = [replaced('Raw visible copy'), prefixed('title')]
     expect(calls.map((call) => call.keys)).toEqual([['second.title']])
   })
 
-  it('resolves long reverse alias chains without whole-file fixed-point rescans', () => {
+  it('tracks member and logical assignments at each call', () => {
+    const sourceText = `
+import { t } from '@/i18n/mobile-i18n'
+const replaced = { tr: t }
+replaced.tr = (value) => value
+const assigned = {}
+assigned['tr'] = t
+let logical
+logical ??= t
+let overwritten = t
+overwritten &&= (value) => value
+export const labels = [
+  replaced.tr('Raw member copy'),
+  assigned.tr('example.element'),
+  logical('example.logical'),
+  overwritten('Raw logical copy')
+]
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls.map((call) => call.keys)).toEqual([['example.element'], ['example.logical']])
+  })
+
+  it('unwraps non-null translator expressions', () => {
+    const sourceText = `
+import { t } from '@/i18n/mobile-i18n'
+const tr: typeof t | undefined = t
+export const label = tr!('example.nonNull')
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls.map((call) => call.keys)).toEqual([['example.nonNull']])
+  })
+
+  it('terminates potential analysis for self-referential member writes', () => {
+    const sourceText = `
+const holder = makeHolder()
+holder.current = holder.current.filter(Boolean)
+const next = holder.current.filter(Boolean)
+export const labels = next.map((value) => value.label)
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls).toEqual([])
+  })
+
+  it('resolves long mutable reverse alias chains without whole-file fixed-point rescans', () => {
     const aliases = Array.from({ length: 1500 }, (_, index) =>
-      index === 1499 ? `const alias${index} = t` : `const alias${index} = alias${index + 1}`
+      index === 1499 ? `let alias${index} = t` : `let alias${index} = alias${index + 1}`
     ).join('\n')
     const sourceText = `
 import { t } from '@/i18n/mobile-i18n'

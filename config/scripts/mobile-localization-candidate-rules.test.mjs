@@ -336,9 +336,12 @@ const base = { name: 'Dead fallback name' }
 const assigned = { name: assignedName }
 const overridden = { ...base, name: 'Actual desktop name' }
 const computed = { name: makeName('Not itself the channel name') }
+const assignedAfterCreation = {}
+assignedAfterCreation.name = 'Assigned after creation'
 Notifications.setNotificationChannelAsync('assigned', assigned)
 Notifications.setNotificationChannelAsync('overridden', overridden)
 Notifications.setNotificationChannelAsync('computed', computed)
+Notifications.setNotificationChannelAsync('after-creation', assignedAfterCreation)
 `
     const candidates = collectLocalizationCandidates(
       '/repo/mobile/src/notifications/local-notification-scheduling.ts',
@@ -348,7 +351,28 @@ Notifications.setNotificationChannelAsync('computed', computed)
 
     expect(candidates.map((candidate) => candidate.text)).toEqual([
       'Assigned channel name',
-      'Actual desktop name'
+      'Actual desktop name',
+      'Assigned after creation'
+    ])
+  })
+
+  it('keeps OS-visible channel names when a later assignment reaches JSX', () => {
+    const source = `
+let channelName = 'OS-visible channel name'
+const channel = { name: channelName }
+Notifications.setNotificationChannelAsync('desktop', channel)
+channelName = 'Later rendered value'
+export const label = <Text>{channelName}</Text>
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/notifications/local-notification-scheduling.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual([
+      'OS-visible channel name',
+      'Later rendered value'
     ])
   })
 
@@ -404,6 +428,27 @@ export const label = <Text>{tr('Visible raw copy')}</Text>
     )
 
     expect(candidates.map((candidate) => candidate.text)).toEqual(['Visible raw copy'])
+  })
+
+  it('reports rendered member and logical calls after translator replacement', () => {
+    const source = `
+import { t } from '@/i18n/mobile-i18n'
+const box = { tr: t }
+box.tr = (value) => value
+let logical = t
+logical &&= (value) => value
+export const label = <><Text>{box.tr('Member raw copy')}</Text><Text>{logical('Logical raw copy')}</Text></>
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/Example.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual([
+      'Member raw copy',
+      'Logical raw copy'
+    ])
   })
 
   it('finds user-visible subject fallbacks in returned rows', () => {
