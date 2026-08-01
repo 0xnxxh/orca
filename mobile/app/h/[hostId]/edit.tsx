@@ -109,7 +109,7 @@ export default function EditHostScreen() {
       ...(willRename ? { name: nextName } : {}),
       ...(nextEndpoint !== undefined ? { endpoint: nextEndpoint } : {})
     }
-    let reconnectProfile: HostProfile | null = hostProfileAfterEdit(host, updates)
+    let reconnectProfile: HostProfile | null | undefined = hostProfileAfterEdit(host, updates)
 
     savingRef.current = true
     setSaving(true)
@@ -132,8 +132,13 @@ export default function EditHostScreen() {
       // elsewhere in the app picks up the fresh state regardless.
       const hostLoadRevision = getHostListLoadRevision()
       const hosts = await loadHosts()
-      primeHosts(hosts, hostLoadRevision)
-      reconnectProfile = hosts.find(({ id }) => id === host.id) ?? null
+      if (hostLoadRevision === getHostListLoadRevision()) {
+        primeHosts(hosts, hostLoadRevision)
+        reconnectProfile = hosts.find(({ id }) => id === host.id) ?? null
+      } else {
+        // A concurrent publication already primed a newer reconnect profile.
+        reconnectProfile = undefined
+      }
     } catch {
       // best-effort re-prime; persisted data is unaffected
     }
@@ -142,7 +147,7 @@ export default function EditHostScreen() {
     setSaving(false)
     router.back()
 
-    if (nextEndpoint !== undefined && reconnectProfile) {
+    if (nextEndpoint !== undefined && reconnectProfile !== null) {
       // Why: reconnect is a follow-on side effect of a save that already
       // committed — its failure or a hang must not be reported as a save
       // failure or block navigating back.

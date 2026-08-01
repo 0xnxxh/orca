@@ -7,6 +7,7 @@ const dependencies = vi.hoisted(() => ({
   alert: vi.fn(),
   back: vi.fn(),
   forceReconnectHost: vi.fn(),
+  getHostListLoadRevision: vi.fn(() => 0),
   loadHosts: vi.fn(),
   primeHosts: vi.fn(),
   updateHostNameAndEndpoint: vi.fn(),
@@ -42,6 +43,10 @@ vi.mock('lucide-react-native', () => ({
 vi.mock('./transport/host-store', () => ({
   loadHosts: dependencies.loadHosts,
   updateHostNameAndEndpoint: dependencies.updateHostNameAndEndpoint
+}))
+
+vi.mock('./transport/host-list-load-sharing', () => ({
+  getHostListLoadRevision: dependencies.getHostListLoadRevision
 }))
 
 vi.mock('./transport/client-context', () => ({
@@ -142,6 +147,7 @@ describe('edit host handleSave', () => {
     dependencies.alert.mockReset()
     dependencies.back.mockReset()
     dependencies.forceReconnectHost.mockReset().mockResolvedValue(undefined)
+    dependencies.getHostListLoadRevision.mockReset().mockReturnValue(0)
     dependencies.loadHosts.mockReset().mockResolvedValue([HOST_FIXTURE])
     dependencies.primeHosts.mockReset()
     dependencies.updateHostNameAndEndpoint.mockReset().mockResolvedValue(undefined)
@@ -285,6 +291,20 @@ describe('edit host handleSave', () => {
     act(() => renderer.unmount())
   })
 
+  it('uses the newer cached profile when the persisted snapshot is invalidated mid-load', async () => {
+    const staleHost = { ...HOST_FIXTURE, endpoint: 'ws://192.168.1.20:6768' }
+    dependencies.loadHosts.mockResolvedValueOnce([HOST_FIXTURE]).mockResolvedValueOnce([staleHost])
+    dependencies.getHostListLoadRevision.mockReturnValueOnce(1).mockReturnValueOnce(2)
+    const renderer = await renderEditHostRoute()
+    setFieldValue(renderer, 'Address', '192.168.1.20:6768')
+    await pressSave(renderer)
+
+    expect(dependencies.primeHosts).not.toHaveBeenCalled()
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', undefined)
+
+    act(() => renderer.unmount())
+  })
+
   it('ignores a second Save trigger while a save is already in flight', async () => {
     let resolveSave: () => void = () => {}
     dependencies.updateHostNameAndEndpoint.mockImplementationOnce(
@@ -322,6 +342,7 @@ describe('edit host load() error states', () => {
     dependencies.alert.mockReset()
     dependencies.back.mockReset()
     dependencies.forceReconnectHost.mockReset().mockResolvedValue(undefined)
+    dependencies.getHostListLoadRevision.mockReset().mockReturnValue(0)
     dependencies.loadHosts.mockReset().mockResolvedValue([HOST_FIXTURE])
     dependencies.primeHosts.mockReset()
     dependencies.updateHostNameAndEndpoint.mockReset().mockResolvedValue(undefined)

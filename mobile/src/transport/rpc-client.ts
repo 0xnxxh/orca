@@ -798,6 +798,7 @@ export function connect(
     const timeout = setTimeout(() => {
       timedOut = true
       pending.delete(id)
+      timedOutControlRequestIds.add(id)
       const controlResponded = controlResponseSequence > probeControlResponseSequence
       activityProbeFollowUp.finish(probeWs)
       if (controlResponded) {

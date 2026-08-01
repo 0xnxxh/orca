@@ -356,6 +356,34 @@ describe('mobile rpc-client request deadline', () => {
     client.close()
   })
 
+  it('keeps late activity-probe evidence across a queued probe handoff', async () => {
+    const client = connect('ws://desktop.invalid', 'token', 'server-key')
+    const socket = mockSockets[0]!
+    socket.open()
+    client.notifyForeground()
+    const firstProbe = sentRequest(socket, 'status.get')
+    const stalled = client.sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+    const stalledOutcome = stalled.catch((error: unknown) => error)
+    const healthy = client.sendRequest('speech.models.list', {}, { timeoutMs: 100 })
+    await vi.advanceTimersByTimeAsync(0)
+    const healthyRequest = sentRequest(socket, 'speech.models.list')
+    socket.receive(`encrypted:${JSON.stringify({ id: healthyRequest.id, ok: true, result: {} })}`)
+
+    await expect(healthy).resolves.toMatchObject({ ok: true })
+    await vi.advanceTimersByTimeAsync(100)
+    await expect(stalledOutcome).resolves.toMatchObject({
+      message: 'Request timed out: browser.screenshot'
+    })
+    await vi.advanceTimersByTimeAsync(7_900)
+    expect(sentRequests(socket, 'status.get')).toHaveLength(2)
+    socket.receive(`encrypted:${JSON.stringify({ id: firstProbe.id, ok: true, result: {} })}`)
+
+    await vi.advanceTimersByTimeAsync(8_000)
+    expect(client.getState()).toBe('connected')
+    expect(socket.close).not.toHaveBeenCalled()
+    client.close()
+  })
+
   it('keeps Force Reconnect inside its deadline after a late connection', async () => {
     const client = connect('ws://desktop.invalid', 'token', 'server-key')
     const verification = verifyForceReconnectRpcHealth(client)
