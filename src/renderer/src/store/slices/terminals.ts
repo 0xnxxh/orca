@@ -38,6 +38,7 @@ import {
 } from '../../../../shared/stable-pane-id'
 import { isValidHostTerminalTabId, isValidTerminalTabId } from '../../../../shared/terminal-tab-id'
 import { buildByIdIndex, buildWorktreeByIdIndex } from './worktree-by-id-index'
+import { resolveActiveTabOwnerWorktreeId } from './active-tab-owner-worktree'
 import { isSameCodexRestartNoticeAccount } from './codex-restart-notice-account-identity'
 import {
   getRepoIdFromWorktreeId,
@@ -1905,13 +1906,11 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
   setActiveTab: (tabId) => {
     set((s) => {
       // Why: focusing a terminal tab clears its bell, but only for the active worktree — clearing a not-yet-visible background tab (worktree activation / jump-to-agent) would swallow the signal.
-      let tabOwnerWorktreeId: string | null = null
-      for (const [wId, tabs] of Object.entries(s.tabsByWorktree)) {
-        if (tabs.some((t) => t.id === tabId)) {
-          tabOwnerWorktreeId = wId
-          break
-        }
-      }
+      const tabOwnerWorktreeId = resolveActiveTabOwnerWorktreeId(
+        s.tabsByWorktree,
+        s.activeWorktreeId,
+        tabId
+      )
       const nextUnreadTerminalTabs =
         tabOwnerWorktreeId === s.activeWorktreeId && s.unreadTerminalTabs[tabId]
           ? (() => {

@@ -90,6 +90,7 @@ describe('active-terminal repair effect cannot drive a React #185 update loop', 
       unifiedTabsByWorktree: {}
     })
     expect(measureRepairPasses()).toBeLessThan(10)
+    expect(useAppStore.getState().activeTabId).toBe('t1')
   })
 
   it('settles when another worktree reuses the tab id and is scanned first', () => {
@@ -108,5 +109,28 @@ describe('active-terminal repair effect cannot drive a React #185 update loop', 
       unifiedTabsByWorktree: {}
     })
     expect(measureRepairPasses()).toBeLessThan(10)
+    // Why: settling by refusing to write would leave the repair permanently
+    // unsatisfied — quiet, but with activeTabId stuck on a tab that is gone.
+    expect(useAppStore.getState().activeTabId).toBe('t1')
+    expect(useAppStore.getState().activeTabIdByWorktree['wt-active']).toBe('t1')
+  })
+
+  it('keeps bell attribution off a background worktree tab', () => {
+    useAppStore.setState({
+      activeWorktreeId: 'wt-active',
+      activeTabType: 'terminal',
+      activeTabId: 'visible-tab',
+      activeTabIdByWorktree: {},
+      tabsByWorktree: {
+        'wt-active': [terminalTab('visible-tab', 'wt-active')],
+        'wt-background': [terminalTab('bg-tab', 'wt-background')]
+      },
+      unifiedTabsByWorktree: {}
+    })
+    act(() => {
+      useAppStore.getState().setActiveTab('bg-tab')
+    })
+    expect(useAppStore.getState().activeTabId).toBe('visible-tab')
+    expect(useAppStore.getState().activeTabIdByWorktree['wt-background']).toBe('bg-tab')
   })
 })
