@@ -6,8 +6,11 @@ vi.mock('../../lib/crash-breadcrumb-recorder', () => ({
   recordRendererCrashBreadcrumb: (...args: unknown[]) => recordRendererCrashBreadcrumb(...args)
 }))
 
-const { resolveActiveTabOwnerWorktreeId, _resetDuplicateTabOwnerBreadcrumbsForTests } =
-  await import('./active-tab-owner-worktree')
+const {
+  resolveActiveTabOwnerWorktreeId,
+  isTabInActiveWorktree,
+  _resetDuplicateTabOwnerBreadcrumbsForTests
+} = await import('./active-tab-owner-worktree')
 
 function tab(id: string, worktreeId: string): TerminalTab {
   return { id, worktreeId, title: id, createdAt: 0, sortOrder: 0 } as unknown as TerminalTab
@@ -121,5 +124,35 @@ describe('resolveActiveTabOwnerWorktreeId', () => {
       resolveActiveTabOwnerWorktreeId(maps, 'wt-c', id)
     }
     expect(recordRendererCrashBreadcrumb).toHaveBeenCalledTimes(256)
+  })
+})
+
+describe('isTabInActiveWorktree', () => {
+  it('sees a duplicated tab id in the active worktree whichever key is scanned last', () => {
+    const maps = { 'wt-active': [tab('t1', 'wt-active')], 'wt-other': [tab('t1', 'wt-other')] }
+    expect(isTabInActiveWorktree(maps, 'wt-active', 't1')).toBe(true)
+    expect(isTabInActiveWorktree(maps, 'wt-other', 't1')).toBe(true)
+    expect(isTabInActiveWorktree(maps, 'wt-third', 't1')).toBe(false)
+  })
+
+  it('is false with no active worktree', () => {
+    expect(isTabInActiveWorktree({ 'wt-a': [tab('t1', 'wt-a')] }, null, 't1')).toBe(false)
+  })
+
+  // Why: a plain index would resolve the inherited member and `.some` would throw.
+  it('does not reach an inherited member for a prototype-named active worktree id', () => {
+    expect(isTabInActiveWorktree({ 'wt-a': [tab('t1', 'wt-a')] }, 'toString', 't1')).toBe(false)
+  })
+
+  it('reads an own key that shadows a prototype name', () => {
+    expect(isTabInActiveWorktree({ toString: [tab('t1', 'toString')] }, 'toString', 't1')).toBe(
+      true
+    )
+  })
+
+  // Why: it must not silently answer "yes" for a falsy-but-present worktree id.
+  it('reads an empty-string active worktree id', () => {
+    expect(isTabInActiveWorktree({ '': [tab('t1', '')] }, '', 't1')).toBe(true)
+    expect(isTabInActiveWorktree({ '': [tab('t2', '')] }, '', 't1')).toBe(false)
   })
 })

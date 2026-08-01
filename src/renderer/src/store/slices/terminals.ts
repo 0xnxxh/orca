@@ -38,7 +38,7 @@ import {
 } from '../../../../shared/stable-pane-id'
 import { isValidHostTerminalTabId, isValidTerminalTabId } from '../../../../shared/terminal-tab-id'
 import { buildByIdIndex, buildWorktreeByIdIndex } from './worktree-by-id-index'
-import { resolveActiveTabOwnerWorktreeId } from './active-tab-owner-worktree'
+import { isTabInActiveWorktree, resolveActiveTabOwnerWorktreeId } from './active-tab-owner-worktree'
 import { isSameCodexRestartNoticeAccount } from './codex-restart-notice-account-identity'
 import {
   getRepoIdFromWorktreeId,
@@ -2140,7 +2140,13 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const ownerWorktreeId = classificationChanged
         ? getTerminalTabOwnerWorktreeId(s.tabsByWorktree, tabId)
         : null
-      const isActive = ownerWorktreeId !== null && ownerWorktreeId === s.activeWorktreeId
+      // Why the second test: the owner cache is last-writer-wins, so a tab id
+      // held under two worktrees can name a background one for a pane that is
+      // in the active worktree — reinstating the click-driven re-sort #209 removed.
+      const isActive =
+        ownerWorktreeId !== null &&
+        (ownerWorktreeId === s.activeWorktreeId ||
+          isTabInActiveWorktree(s.tabsByWorktree, s.activeWorktreeId, tabId))
       const shouldBump = classificationChanged && ownerWorktreeId !== null && !isActive
       return {
         runtimePaneTitlesByTabId: {
@@ -2175,7 +2181,12 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const ownerWorktreeId = hadClassification
         ? getTerminalTabOwnerWorktreeId(s.tabsByWorktree, tabId)
         : null
-      const isActive = ownerWorktreeId !== null && ownerWorktreeId === s.activeWorktreeId
+      // Why the second test: see setRuntimePaneTitle — a duplicated tab id makes
+      // the last-writer-wins owner cache name a background worktree.
+      const isActive =
+        ownerWorktreeId !== null &&
+        (ownerWorktreeId === s.activeWorktreeId ||
+          isTabInActiveWorktree(s.tabsByWorktree, s.activeWorktreeId, tabId))
       const shouldBump = hadClassification && ownerWorktreeId !== null && !isActive
       return {
         runtimePaneTitlesByTabId: next,
