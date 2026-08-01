@@ -300,6 +300,26 @@ describe('RelayDispatcher bounded-capacity degradation', () => {
     }
   })
 
+  it('closes the client when pty.replay overflows the control queue', () => {
+    const primary = makeSaturatingClient(65536)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    const bounded = new RelayDispatcher(primary.write, primary.options)
+    try {
+      const clientId = bounded.activeClientIds()[0]
+      for (let index = 0; index < DISPATCHER_CONTROL_QUEUE_MAX_FRAMES; index += 1) {
+        bounded.notifyClient(clientId, `control.${index}`)
+      }
+      expect(primary.closes).toBe(0)
+
+      // Replay is never retried, so an unnoticed drop would strand the pane on a short buffer.
+      bounded.notify('pty.replay', { paneKey: 'tab-1:pane-1', data: 'x' })
+      expect(primary.closes).toBe(1)
+    } finally {
+      stderr.mockRestore()
+      bounded.dispose()
+    }
+  })
+
   it('publishProducerNotification reports its drops like notify', () => {
     const primary = makeBoundedClient(65536)
     const secondary = makeBoundedClient(16384)

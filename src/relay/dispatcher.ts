@@ -486,6 +486,8 @@ export class RelayDispatcher {
           continue
         }
         if (method === 'pty.replay') {
+          // Why: replay is never re-sent, so it takes the control lane where overflow is fatal — the
+          // writer closes the client and reconnect reloads history rather than stranding a short buffer.
           this.enqueueFrame(client, msg, 'control', undefined, frameBytes)
           continue
         }

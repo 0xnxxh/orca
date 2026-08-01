@@ -764,6 +764,8 @@ function configureRelaySessionCallbacks(session: SshRelaySession): void {
           clearRelayLostBackoff(tid)
           return
         }
+        // Why: still mid-transition — re-arm at the max delay without consuming an attempt. It ends once
+        // the transport settles: 'connected' redeploys, a terminal status or a dropped session clears above.
         scheduleRelayRedeploy(RELAY_LOST_MAX_DELAY_MS)
       }, delay)
       relayLostBackoff.set(tid, state)
