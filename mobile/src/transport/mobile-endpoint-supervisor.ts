@@ -180,6 +180,7 @@ export class MobileEndpointSupervisor {
         resumeToken: credential.token
       })
       this.host = await persistRelayHost(this.host, resolved, this.dependencies.saveHost)
+      this.dependencies.onHostUpdated?.(this.host)
       return await this.openAndMigrateRelay(credential)
     } catch (error) {
       return { ok: false, error: toError(error) }
@@ -303,6 +304,7 @@ export class MobileEndpointSupervisor {
       // Why: a scheduled rotation can finish after the old credential enters the rejection gate.
       credentialRefreshed = true
       this.host = await persistRelayHost(this.host, result.relay, this.dependencies.saveHost)
+      this.dependencies.onHostUpdated?.(this.host)
     } catch {
       // Why: pending material remains durable; the next authenticated direct
       // opportunity must reconcile it before creating another install key.

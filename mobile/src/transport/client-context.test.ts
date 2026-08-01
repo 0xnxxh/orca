@@ -297,6 +297,100 @@ describe('useHostClient', () => {
     harness.unmount()
   })
 
+  it('drops the stale client while Force Reconnect reloads an uncached profile', async () => {
+    const stale = makeFakeClient('connected')
+    const fresh = makeFakeClient('connecting')
+    fresh.sendRequest = vi.fn(async () => ({ id: 'health', ok: true, result: {} }))
+    let resolveHosts: ((hosts: HostProfile[]) => void) | null = null
+    const profileLookup = new Promise<HostProfile[]>((resolve) => {
+      resolveHosts = resolve
+    })
+    connectMock.mockReturnValueOnce(stale).mockReturnValueOnce(fresh)
+    loadHostsMock.mockResolvedValueOnce([HOST]).mockReturnValueOnce(profileLookup)
+
+    const harness = await renderHarness(HOST.id)
+    let reconnect: Promise<void> | null = null
+    await act(async () => {
+      reconnect = harness.forceReconnect(HOST.id)
+      await Promise.resolve()
+    })
+
+    expect(stale.closeMock).toHaveBeenCalledOnce()
+    expect(harness.hook.client).toBeNull()
+    expect(harness.hook.state).toBe('disconnected')
+    expect(connectMock).toHaveBeenCalledOnce()
+
+    await act(async () => {
+      resolveHosts?.([HOST])
+      await reconnect!
+    })
+    expect(harness.hook.client).toBe(fresh)
+    harness.unmount()
+  })
+
+  it('reconnects with relay metadata published by the endpoint lifecycle', async () => {
+    const stale = makeFakeClient('connected')
+    const fresh = makeFakeClient('connecting')
+    fresh.sendRequest = vi.fn(async () => ({ id: 'health', ok: true, result: {} }))
+    connectMock.mockReturnValueOnce(stale).mockReturnValueOnce(fresh)
+    loadHostsMock.mockResolvedValue([HOST])
+
+    const harness = await renderHarness(HOST.id)
+    const relayHostId = 'AbCdEf0123_-xyZ9'
+    const upgradedHost: HostProfile = {
+      ...HOST,
+      endpoints: [
+        { id: 'direct-primary', kind: 'lan', url: HOST.endpoint },
+        { id: 'relay-primary', kind: 'relay', url: 'wss://relay.invalid/v1/connect/host' }
+      ],
+      relayHostId,
+      relay: {
+        v: 1,
+        directorUrl: 'https://relay.invalid',
+        cellUrl: 'https://relay.invalid',
+        assignmentEpoch: 1,
+        relayHostId,
+        e2eeFraming: 2
+      }
+    }
+    const publishHostUpdate = connectMock.mock.calls[0]?.[2] as
+      | ((host: HostProfile) => void)
+      | undefined
+    publishHostUpdate?.(upgradedHost)
+
+    await act(async () => harness.forceReconnect(HOST.id))
+
+    expect(connectMock.mock.calls[1]?.[0]).toEqual(upgradedHost)
+    expect(fresh.sendRequest).toHaveBeenCalledOnce()
+    harness.unmount()
+  })
+
+  it('supersedes a pending old-profile open when Force Reconnect uses a saved endpoint', async () => {
+    let resolveOldLookup: ((hosts: HostProfile[]) => void) | null = null
+    const oldLookup = new Promise<HostProfile[]>((resolve) => {
+      resolveOldLookup = resolve
+    })
+    const fresh = makeFakeClient('connecting')
+    fresh.sendRequest = vi.fn(async () => ({ id: 'health', ok: true, result: {} }))
+    loadHostsMock.mockReturnValue(oldLookup)
+    connectMock.mockReturnValue(fresh)
+
+    const harness = await renderHarness(HOST.id)
+    const updatedHost = { ...HOST, endpoint: 'ws://127.0.0.1:2' }
+    harness.primeHosts([updatedHost])
+    await act(async () => harness.forceReconnect(HOST.id))
+
+    expect(connectMock).toHaveBeenCalledOnce()
+    expect(connectMock.mock.calls[0]?.[0]).toEqual(updatedHost)
+
+    await act(async () => {
+      resolveOldLookup?.([HOST])
+      await oldLookup
+    })
+    expect(connectMock).toHaveBeenCalledOnce()
+    harness.unmount()
+  })
+
   it('coalesces overlapping Force Reconnect calls for one host', async () => {
     const stale = makeFakeClient('connected')
     const fresh = makeFakeClient('connecting')

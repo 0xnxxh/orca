@@ -5,7 +5,11 @@ import type { ConnectionLogSink, HostProfile } from './types'
 import { directPathForEndpoint } from './mobile-direct-endpoint-probe'
 import { startMobileEndpointLifecycle } from './mobile-endpoint-lifecycle'
 
-export function openHostLogicalClient(host: HostProfile, onLog: ConnectionLogSink): RpcClient {
+export function openHostLogicalClient(
+  host: HostProfile,
+  onLog: ConnectionLogSink,
+  onHostUpdated: (host: HostProfile) => void = () => {}
+): RpcClient {
   // Why: the stable facade owns app-visible RPC/subscription state while the
   // direct socket remains a replaceable first physical generation.
   const logical = createStableLogicalRpcClient(
@@ -16,7 +20,7 @@ export function openHostLogicalClient(host: HostProfile, onLog: ConnectionLogSin
     return logical
   }
 
-  const endpointLifecycle = startMobileEndpointLifecycle(logical, host, onLog)
+  const endpointLifecycle = startMobileEndpointLifecycle(logical, host, onLog, onHostUpdated)
   endpointLifecycle.setForeground(AppState.currentState === 'active')
   const appStateSubscription = AppState.addEventListener('change', (state) => {
     endpointLifecycle.setForeground(state === 'active')

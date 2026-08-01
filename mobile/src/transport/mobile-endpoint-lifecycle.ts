@@ -25,7 +25,8 @@ type EndpointOwner = EndpointLifecycle & {
 export function startMobileEndpointLifecycle(
   logical: StableLogicalRpcClient,
   initialHost: HostProfile,
-  onLog: ConnectionLogSink
+  onLog: ConnectionLogSink,
+  onHostUpdated: (host: HostProfile) => void = () => {}
 ): EndpointLifecycle {
   let stopped = false
   let foreground = true
@@ -35,7 +36,7 @@ export function startMobileEndpointLifecycle(
     if (stopped) {
       return
     }
-    const supervisor = createSupervisor(logical, host, onLog)
+    const supervisor = createSupervisor(logical, host, onLog, onHostUpdated)
     owner.stop()
     owner = supervisor
     supervisor.setForeground(foreground)
@@ -43,7 +44,7 @@ export function startMobileEndpointLifecycle(
   }
 
   if (initialHost.relay) {
-    owner = createSupervisor(logical, initialHost, onLog)
+    owner = createSupervisor(logical, initialHost, onLog, onHostUpdated)
     void owner.start()
   } else {
     owner = new MobileRelayDirectUpgradeController(logical, initialHost, {
@@ -53,7 +54,10 @@ export function startMobileEndpointLifecycle(
           host,
           dependencies: { randomBytes: ExpoCrypto.getRandomBytes }
         }),
-      onUpgraded: ({ host }) => startSupervisor(host)
+      onUpgraded: async ({ host }) => {
+        onHostUpdated(host)
+        await startSupervisor(host)
+      }
     })
     void owner.start()
   }
@@ -73,7 +77,8 @@ export function startMobileEndpointLifecycle(
 function createSupervisor(
   logical: StableLogicalRpcClient,
   host: HostProfile,
-  onLog: ConnectionLogSink
+  onLog: ConnectionLogSink,
+  onHostUpdated: (host: HostProfile) => void
 ): MobileEndpointSupervisor {
   return new MobileEndpointSupervisor(logical, host, {
     openDirect: (endpoint) => connect(endpoint, host.deviceToken, host.publicKeyB64, { onLog }),
@@ -90,6 +95,7 @@ function createSupervisor(
     readBundle: readMobileRelayCredentialBundle,
     writeBundle: writeMobileRelayCredentialBundle,
     saveHost,
+    onHostUpdated,
     now: Date.now,
     randomBytes: ExpoCrypto.getRandomBytes,
     setTimer: setTimeout,

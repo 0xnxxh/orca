@@ -18,8 +18,9 @@ import { subscribeConnectionRevivalTriggers } from './connection-revival-trigger
 import { HostClientOpenRegistry } from './host-client-open-registry'
 import { loadHosts } from './host-store'
 import { openHostLogicalClient } from './host-logical-client'
-import type { MobileConnectionPath, StableLogicalRpcClient } from './stable-logical-rpc-client'
-import type { ConnectionState, HostProfile } from './types'
+import { clientActivePath } from './rpc-client-active-path'
+import type { MobileConnectionPath } from './stable-logical-rpc-client'
+import type { ConnectionLogSink, ConnectionState, HostProfile } from './types'
 
 type StoreEntry = HostReconnectEntry & {
   state: ConnectionState
@@ -86,7 +87,8 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const openEntry = useCallback(async (hostId: string): Promise<StoreEntry | null> => {
-    const existing = pendingOpensRef.current.getActivePromise(hostId)
+    const profileVersion = primedHostsRef.current.version(hostId)
+    const existing = pendingOpensRef.current.getActivePromise(hostId, profileVersion)
     if (existing) {
       await existing
       return storeRef.current.get(hostId) ?? null
@@ -95,7 +97,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     const promise = new Promise<void>((res) => {
       resolve = res
     })
-    const pendingOpen = pendingOpensRef.current.register(hostId, promise)
+    const pendingOpen = pendingOpensRef.current.register(hostId, profileVersion, promise)
 
     try {
       // Why: prefer the primed cache so we don't serialize a second Keychain pass on cold start.
@@ -129,8 +131,11 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
       }
 
       let client: RpcClient
+      const onLog: ConnectionLogSink = (entry) => connectionLogStore.append(hostId, entry)
       try {
-        client = openHostLogicalClient(host, (entry) => connectionLogStore.append(hostId, entry))
+        client = openHostLogicalClient(host, onLog, (updatedHost) =>
+          primedHostsRef.current.prime(updatedHost)
+        )
       } catch {
         // Why: openHostLogicalClient can throw synchronously (bad public key / invalid URL); notify so the UI leaves 'connecting'.
         notifyHostState(hostId, 'disconnected')
@@ -206,7 +211,11 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
         profileVersion: primedHostsRef.current.version(hostId),
         getEntry: () => storeRef.current.get(hostId),
         getListenerCount: () => stateListenersRef.current.get(hostId)?.size ?? 0,
-        removeEntry: () => storeRef.current.delete(hostId),
+        removeEntry: () => {
+          storeRef.current.delete(hostId)
+          notifyHostState(hostId, 'disconnected')
+          notifyAllHosts()
+        },
         openReplacement: () => openEntry(hostId)
       }),
     [openEntry]
@@ -457,9 +466,4 @@ export function useForceReconnect(): (hostId: string) => Promise<void> {
 export function usePrimeHosts(): (hosts: HostProfile[]) => void {
   const ctx = useRpcClientContext()
   return ctx.primeHosts
-}
-
-function clientActivePath(client: RpcClient | undefined): MobileConnectionPath {
-  const logical = client as Partial<StableLogicalRpcClient> | undefined
-  return typeof logical?.getActivePath === 'function' ? logical.getActivePath() : 'lan'
 }

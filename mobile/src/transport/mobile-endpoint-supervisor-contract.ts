@@ -16,6 +16,7 @@ export type MobileEndpointSupervisorDependencies = {
   readBundle: (hostId: string) => Promise<MobileRelayCredentialBundle | null>
   writeBundle: (bundle: MobileRelayCredentialBundle) => Promise<void>
   saveHost: (host: HostProfile) => Promise<void>
+  onHostUpdated?: (host: HostProfile) => void
   now: () => number
   randomBytes: (length: number) => Uint8Array
   setTimer: typeof setTimeout
