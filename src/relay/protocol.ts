@@ -105,7 +105,7 @@ export const RelayErrorCode = {
   StreamProtocolError: -33007,
   /** Substituted for a response too large for the sink's frame capacity; the request fails
    *  instead of the whole link, so a caller can retry with a narrower scope. */
-  ResponseOverCapacity: -32010
+  ResponseOverCapacity: -33008
 } as const
 
 export type JsonRpcRequest = {
