@@ -3070,6 +3070,17 @@ function createUpdaterApi(): NonNullable<Partial<PreloadApi>['updater']> {
     quitAndInstall: () => Promise.resolve(),
     dismissNudge: () => Promise.resolve(),
     dismissAvailableUpdate: () => Promise.resolve(),
+    // Why: the web client cannot install a desktop build, so channel switching
+    // reports unavailable rather than an empty list that looks like a fetch miss.
+    listBuilds: (channel) =>
+      Promise.resolve({
+        ok: false,
+        channel,
+        message: translate(
+          'auto.components.settings.ReleaseChannelSection.webUnavailable',
+          'Switching builds is only available in the desktop app.'
+        )
+      }),
     onStatus: () => noopUnsubscribe,
     onClearDismissal: () => noopUnsubscribe
   }
@@ -3139,7 +3150,7 @@ function createPtyApi(): NonNullable<Partial<PreloadApi>['pty']> {
     getSize: () => Promise.resolve(null),
     listSessions: () => Promise.resolve([]),
     getAuthoritativeBufferSnapshotCapabilities: (ids) =>
-      ids.map((id) => ({ id, authoritative: false })),
+      Promise.resolve(ids.map((id) => ({ id, authoritative: false }))),
     hasPty: () => Promise.resolve(null),
     getMainBufferSnapshot: () => Promise.resolve(null),
     // Why: remote-runtime PTYs skip local main (no side-effect source); renderer byte parsing stays authoritative.
