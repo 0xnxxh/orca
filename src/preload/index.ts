@@ -1216,8 +1216,7 @@ const api = {
       ipcRenderer.send('pty:serializeBuffer:response', { requestId, snapshot })
     },
 
-    // Why: renderer declares serializer ownership for `paneKey` BEFORE pty:spawn so main suppresses the daemon-snapshot seed.
-    // The returned gen token must be echoed on settle/clear so paneKey reuse during teardown can't defeat the pre-signal. See docs/mobile-prefer-renderer-scrollback.md.
+    // Claim serializer ownership before spawn; echo the generation token on settle/clear to prevent pane-key reuse races.
     declarePendingPaneSerializer: (paneKey: string): Promise<number> =>
       ipcRenderer.invoke('pty:declarePendingPaneSerializer', { paneKey }),
 
@@ -1945,7 +1944,7 @@ const api = {
     onboardingCompleted: (): Promise<void> => ipcRenderer.invoke('star-nag:onboardingCompleted')
   },
 
-  // Why: deliberately loose — main's validator (src/main/telemetry/validator.ts) is the single enforcement point; call sites use the typed wrappers in src/renderer/src/lib/telemetry.ts.
+  // Why: main validates telemetry; renderer call sites use typed wrappers.
   telemetryTrack: (name: string, props: Record<string, unknown>): Promise<void> =>
     ipcRenderer.invoke('telemetry:track', name, props),
   telemetrySetOptIn: (optedIn: boolean): Promise<void> =>

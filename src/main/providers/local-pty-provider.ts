@@ -76,7 +76,7 @@ const PANE_IDENTITY_ENV_KEYS = [
 let ptyCounter = 0
 const ptyProcesses = new Map<string, pty.IPty>()
 const ptyIncarnations = new Map<string, string>()
-// Why: only agent sessions get descendant tree-kill (tool children run in detached groups SIGHUP can't reach); plain terminals skip it so nohup-detached children survive.
+// Why: only agent sessions kill descendant trees; plain terminals preserve nohup children.
 const ptyAgentSessionIds = new Set<string>()
 // Why: descendant capture is async, so reattach/duplicate shutdown must wait for the original owner, not return a dying PTY.
 type PtyShutdownOperation = {
