@@ -56,6 +56,7 @@ vi.mock('../observability/tracer', () => ({
 import { CrashReportStore } from '../crash-reporting/crash-report-store'
 import {
   _resetRendererRecoveryOutcomeForTests,
+  clearRendererRecoveryReloadIssued,
   noteRendererRecoveryReloadIssued,
   resolveRecoveredRendererCrashReports
 } from '../crash-reporting/renderer-recovery-crash-outcome'
@@ -257,6 +258,22 @@ describe('auto-recovered renderer crash reporting', () => {
     noteRendererRecoveryReloadIssued()
 
     await expect(getLatestPending()).resolves.toMatchObject({ id: recorded.id, status: 'pending' })
+  })
+
+  it('still prompts after the recovery breaker opened and the user reloaded by hand', async () => {
+    const store = await createStore()
+    registerCrashReportingHandlers(store)
+    // The crash-on-load loop: every recovery reload dies before bootstrap.
+    const recorded = await store.record({ ...killedRendererCrash(), reason: 'launch-failed' })
+
+    noteRendererRecoveryReloadIssued()
+    // The breaker refuses the next attempt and Orca asks the user to retry.
+    clearRendererRecoveryReloadIssued()
+    // The user's own reload finally boots; it did not auto-recover anything.
+    emitRendererBootstrapRendered()
+
+    await expect(getLatestPending()).resolves.toMatchObject({ id: recorded.id, status: 'pending' })
+    expect((await getLatestReport())?.details.rendererAutoRecovered).toBeUndefined()
   })
 
   it('leaves an unresolved crash from a previous session pending', async () => {

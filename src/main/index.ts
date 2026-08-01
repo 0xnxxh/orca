@@ -281,7 +281,10 @@ import {
   type ExpectedTeardownScope
 } from './crash-reporting/process-gone-classification'
 import { recordProcessGoneCrash as recordProcessGoneCrashEvent } from './crash-reporting/process-gone-recorder'
-import { noteRendererRecoveryReloadIssued } from './crash-reporting/renderer-recovery-crash-outcome'
+import {
+  clearRendererRecoveryReloadIssued,
+  noteRendererRecoveryReloadIssued
+} from './crash-reporting/renderer-recovery-crash-outcome'
 import {
   advanceSyntheticTitleSpinnerEntries,
   type SyntheticTitleSpinnerEntry
@@ -1228,6 +1231,9 @@ function openMainWindow(): BrowserWindow {
         expectedTeardown: getExpectedTeardownScope(webContentsId)
       }),
     onRendererRecoveryExhausted: ({ details, recentRecoveryCount }) => {
+      // Why: the pending arm belongs to a reload that never brought the renderer
+      // back, so the user's retry below must not resolve these as auto-recovered.
+      clearRendererRecoveryReloadIssued()
       recordDurableCrashBreadcrumb('renderer_recovery_circuit_breaker_open', {
         reason: details.reason,
         exitCode: details.exitCode ?? null,

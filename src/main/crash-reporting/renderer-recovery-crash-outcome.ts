@@ -13,6 +13,16 @@ export function noteRendererRecoveryReloadIssued(nowMs = Date.now()): void {
   recoveryReloadIssuedAtMs = nowMs
 }
 
+/**
+ * Disarm the outcome check because auto-recovery gave up.
+ *
+ * Why: the next bootstrap then comes from the user's own retry, and a crash the
+ * breaker refused to keep reloading is the one they most need prompted about.
+ */
+export function clearRendererRecoveryReloadIssued(): void {
+  recoveryReloadIssuedAtMs = null
+}
+
 function takeRendererRecoveryReloadIssuedAt(nowMs: number): number | null {
   const issuedAtMs = recoveryReloadIssuedAtMs
   recoveryReloadIssuedAtMs = null
@@ -55,5 +65,5 @@ export function resolveRecoveredRendererCrashReports(
 }
 
 export function _resetRendererRecoveryOutcomeForTests(): void {
-  recoveryReloadIssuedAtMs = null
+  clearRendererRecoveryReloadIssued()
 }
