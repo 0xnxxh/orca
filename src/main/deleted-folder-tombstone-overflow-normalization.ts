@@ -11,7 +11,7 @@ import {
 
 function normalizeIdentities(value: unknown): { identities: string[]; changed: boolean } {
   if (!Array.isArray(value)) {
-    return { identities: [], changed: value !== undefined }
+    return { identities: [], changed: true }
   }
   const identities = [
     ...new Set(value.filter((identity): identity is string => typeof identity === 'string'))
