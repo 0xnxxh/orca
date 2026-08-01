@@ -133,7 +133,7 @@
     "copyRepository": "Copiar repositorio",
     "repositoryNotOrca": "Repositorio no está en Orca",
     "do": "No ejecutar",
-    "always": "Confía siempre y corre",
+    "always": "Confiar siempre y ejecutar",
     "failedTrust": "No se pudo confiar en el script de configuración.",
     "runHooks": "Ejecutar hooks",
     "setup": "Script de configuración",
@@ -943,6 +943,9 @@
     "quickCommand": "Comando rápido",
     "inserted": "{{commandLabel}} insertado"
   },
+  "localNotificationScheduling": {
+    "desktopNotifications": "Notificaciones de escritorio"
+  },
   "mobileCommitMessageAi": {
     "failed": "No se pudo generar el mensaje de commit",
     "no": "No se generó ningún mensaje de commit"
@@ -1526,7 +1529,6 @@
     "setUpDesktop": "Configurar en el escritorio",
     "api": "Conjunto de claves API",
     "extracting": "· extrayendo…",
-    "open": "API abierta de IA",
     "recommended": "Recomendado",
     "dictation": "Dictado habilitado",
     "setupInstructions": "Descargue un modelo y habilite el dictado en su escritorio, todo desde aquí.",
@@ -1644,7 +1646,6 @@
     "previewRendered": "Vista previa de HTML renderizado"
   },
   "mobileMarkdown": {
-    "x": "[incógnita]",
     "hiddenColumn": "{{hiddenColumnCount}} más columnas",
     "hiddenRow": "{{hiddenRowCount}} más filas",
     "open": "Abrir imagen",
@@ -1715,7 +1716,7 @@
   },
   "setupHookTrustDrawer": {
     "do": "No ejecutar",
-    "always": "Confía siempre y corre",
+    "always": "Confiar siempre y ejecutar",
     "runHooks": "Ejecutar hooks",
     "setup": "Script de configuración",
     "new": "Nuevo script de configuración",

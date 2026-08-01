@@ -171,7 +171,7 @@ export type DetailComment = {
   body: string
   createdAt?: string
   url?: string
-  reactions?: Array<{
+  reactions?: {
     content:
       | 'thumbs_up'
       | 'thumbs_down'
@@ -182,7 +182,7 @@ export type DetailComment = {
       | 'rocket'
       | 'eyes'
     count: number
-  }>
+  }[]
   path?: string
   line?: number
   startLine?: number
@@ -236,14 +236,14 @@ export type DetailPayload =
       comments: DetailComment[]
       labels: string[]
       assignees: string[]
-      pipelineJobs: Array<{
+      pipelineJobs: {
         id?: number
         name: string
         stage: string
         status: string
         webUrl?: string | null
         duration?: number | null
-      }>
+      }[]
     }
   | {
       provider: 'linear'

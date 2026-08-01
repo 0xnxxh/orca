@@ -134,8 +134,8 @@
     "pullRequestMessage": "PR",
     "copyRepository": "リポジトリのコピー",
     "repositoryNotOrca": "Orca に Repos がありません",
-    "do": "走らないで",
-    "always": "常に信じて走ってください",
+    "do": "実行しない",
+    "always": "常に信頼して実行",
     "failedTrust": "セットアップ スクリプトを信頼できませんでした。",
     "runHooks": "フックを実行する",
     "setup": "セットアップスクリプト",
@@ -959,6 +959,9 @@
     "quickCommand": "クイックコマンド",
     "inserted": "{{commandLabel}}を挿入しました"
   },
+  "localNotificationScheduling": {
+    "desktopNotifications": "デスクトップ通知"
+  },
   "mobileCommitMessageAi": {
     "failed": "commit メッセージの生成に失敗しました",
     "no": "commit メッセージは生成されません"
@@ -1675,7 +1678,6 @@
     "previewRendered": "レンダリングされた HTML をプレビューする"
   },
   "mobileMarkdown": {
-    "x": "[×]",
     "hiddenColumn": "{{hiddenColumnCount}} その他の列",
     "hiddenRow": "{{hiddenRowCount}} 行追加",
     "open": "画像を開く",
@@ -1714,7 +1716,7 @@
     "connectRepository": "リポジトリに接続する",
     "runSetup": "セットアップコマンドを実行する",
     "skip": "スキップ",
-    "run": "走る",
+    "run": "実行",
     "setup": "セットアップスクリプト",
     "note": "注記",
     "advanced": "詳細設定",
@@ -1745,8 +1747,8 @@
     "updateOrcaMobile": "Orca モバイルをアップデートする"
   },
   "setupHookTrustDrawer": {
-    "do": "走らないで",
-    "always": "常に信じて走ってください",
+    "do": "実行しない",
+    "always": "常に信頼して実行",
     "runHooks": "フックを実行する",
     "setup": "セットアップスクリプト",
     "new": "新規セットアップ スクリプト",

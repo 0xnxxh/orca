@@ -1045,6 +1045,9 @@
     "quickCommand": "Quick command",
     "inserted": "{{commandLabel}} inserted"
   },
+  "localNotificationScheduling": {
+    "desktopNotifications": "Desktop notifications"
+  },
   "mobileCommitMessageAi": {
     "failed": "Failed to generate commit message",
     "no": "No commit message generated"

@@ -168,6 +168,30 @@ export function labels() {
     expect(calls.map((call) => call.keys)).toEqual([['example.known'], ['example.fixed']])
   })
 
+  it('tracks direct translator factories and ordinary local aliases', () => {
+    const sourceText = `
+import { createMobileTranslator, t } from '@/i18n/mobile-i18n'
+const direct = t
+const prefixed = createMobileTranslator('example')
+const prefixedAlias = prefixed
+const factory = createMobileTranslator
+export const labels = [
+  direct('example.direct'),
+  createMobileTranslator('example')('inline'),
+  prefixedAlias('aliased'),
+  factory('example')('factoryAlias')
+]
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls.map((call) => call.keys)).toEqual([
+      ['example.direct'],
+      ['example.inline'],
+      ['example.aliased'],
+      ['example.factoryAlias']
+    ])
+  })
+
   it('tracks instance and namespace translation calls', () => {
     const sourceText = `
 import { mobileI18n } from '@/i18n/mobile-i18n'
@@ -274,6 +298,21 @@ export const afterCatch = t('example.afterCatch')
     expect(await runFailedVerification(root)).toContain(
       'ja.json copies English instead of using fallback: example.downloadFailed'
     )
+  })
+
+  it('rejects translations of exact language-neutral values', async () => {
+    const root = makeProject({
+      sourceText:
+        "import { t } from '@/i18n/mobile-i18n'\nexport const labels = [t('example.provider'), t('example.marker')]\n",
+      catalogs: {
+        en: { example: { provider: 'OpenAI API', marker: '[x]' } },
+        es: { example: { provider: 'API abierta de IA', marker: '[incógnita]' } }
+      }
+    })
+
+    const report = await runFailedVerification(root)
+    expect(report).toContain('es.json must preserve language-neutral value: example.provider')
+    expect(report).toContain('es.json must preserve language-neutral value: example.marker')
   })
 
   it('does not treat URL-prefixed prose as language-neutral', async () => {

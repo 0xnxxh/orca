@@ -136,8 +136,8 @@
     "pullRequestMessage": "PR",
     "copyRepository": "复制存储库",
     "repositoryNotOrca": "存储库不在 Orca 中",
-    "do": "别跑",
-    "always": "永远信任并奔跑",
+    "do": "不执行",
+    "always": "始终信任并执行",
     "failedTrust": "无法信任安装脚本。",
     "runHooks": "运行钩子",
     "setup": "设置脚本",
@@ -959,6 +959,9 @@
     "quickCommand": "快捷命令",
     "inserted": "已插入{{commandLabel}}"
   },
+  "localNotificationScheduling": {
+    "desktopNotifications": "桌面通知"
+  },
   "mobileCommitMessageAi": {
     "failed": "无法生成 commit 消息",
     "no": "没有生成 commit 消息"
@@ -992,10 +995,10 @@
     "rebase": "重新建立基础",
     "publishBranch": "发布分支",
     "fetch": "fetch",
-    "pushCreate": "推动并创建 PR",
+    "pushCreate": "推送并创建 PR",
     "create": "创建 PR",
     "commitSync": "Commit 并同步",
-    "commitPush": "Commit&推送",
+    "commitPush": "Commit 并推送",
     "pullRequests": "拉取请求不适用于此 repo",
     "checking": "检查分支状态...",
     "publishBranchFirst": "首先发布分支",
@@ -1009,12 +1012,12 @@
     "branchUp": "分支已更新",
     "sync": "同步",
     "syncBehind": "同步（↓{{behindCommitCount}} ↑{{aheadCommitCount}}）",
-    "nothingPull": "没什么可拉的",
-    "pull": "拉",
-    "pullBehind": "拉 ({{behindCommitCount}})",
-    "nothingPush": "没什么可推的",
-    "push": "推",
-    "pushAhead": "推 ({{aheadCommitCount}})"
+    "nothingPull": "没有可拉取的内容",
+    "pull": "拉取",
+    "pullBehind": "拉取 ({{behindCommitCount}})",
+    "nothingPush": "没有可推送的内容",
+    "push": "推送",
+    "pushAhead": "推送 ({{aheadCommitCount}})"
   },
   "useMobileCommitFailureRecovery": {
     "failed": "启动 agent 失败",
@@ -1050,7 +1053,7 @@
   "mobileSourceControlScreenState": {
     "noUpstream": "无上游",
     "ahead": "{{aheadCommitCount}} 领先，{{behindCommitCount}} 落后",
-    "noBranch": "无分行"
+    "noBranch": "无分支"
   },
   "mobileSourceControlConflictAbort": {
     "abortMerge": "中止合并",
@@ -1081,8 +1084,8 @@
   },
   "mobileSourceControlPrimaryAction": {
     "nothing": "没有可 commit 的内容。分支已是最新状态。",
-    "push": "推",
-    "pull": "拉",
+    "push": "推送",
+    "pull": "拉取",
     "forcePushLease": "使用租约强制推送以更新远程分支。",
     "publishBranchOrigin": "将此分支发布到原点。",
     "check": "请先检出分支再发布 commits。",
@@ -1098,10 +1101,10 @@
     "publishBranch": "发布分支",
     "sync": "同步",
     "stageAll": "暂存全部",
-    "forcePush": "强力推",
-    "pullBehind": "拉 {{behindCommitCount}}，推 {{aheadCommitCount}}。",
-    "pullCommitCountCommit": "拉动 {{commitCount}} commit。",
-    "pullCommitCountCommits": "拉动 {{commitCount}} commits。",
+    "forcePush": "强制推送",
+    "pullBehind": "拉取 {{behindCommitCount}}，推送 {{aheadCommitCount}}。",
+    "pullCommitCountCommit": "拉取 {{commitCount}} commit。",
+    "pullCommitCountCommits": "拉取 {{commitCount}} commits。",
     "pushCommitCountCommit": "推送 {{commitCount}} commit。",
     "pushCommitCountCommits": "推送 {{commitCount}} commits。"
   },
@@ -1558,7 +1561,6 @@
     "setUpDesktop": "在桌面上设置",
     "api": "API密钥集",
     "extracting": "· 提取...",
-    "open": "开放人工智能API",
     "recommended": "推荐",
     "dictation": "启用听写",
     "setupInstructions": "下载模型并在桌面上启用听写 - 一切都从这里开始。",
@@ -1747,8 +1749,8 @@
     "updateOrcaMobile": "更新 Orca 移动版"
   },
   "setupHookTrustDrawer": {
-    "do": "别跑",
-    "always": "永远信任并奔跑",
+    "do": "不执行",
+    "always": "始终信任并执行",
     "runHooks": "运行钩子",
     "setup": "设置脚本",
     "new": "新的设置脚本",

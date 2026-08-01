@@ -23,6 +23,7 @@ function isDirectDisplayExpressionParent(parent, child) {
 }
 
 export function isRenderedJsxExpression(node) {
+  let child = node
   let current = node.parent
   while (current) {
     if (ts.isJsxExpression(current)) {
@@ -38,9 +39,10 @@ export function isRenderedJsxExpression(node) {
       ts.isTemplateExpression(current) ||
       ts.isNoSubstitutionTemplateLiteral(current)
     ) {
-      if (ts.isConditionalExpression(current) && current.condition === node) {
+      if (ts.isConditionalExpression(current) && current.condition === child) {
         return false
       }
+      child = current
       current = current.parent
       continue
     }
@@ -53,10 +55,11 @@ export function isRenderedJsxExpression(node) {
           ts.SyntaxKind.BarBarToken,
           ts.SyntaxKind.QuestionQuestionToken
         ].includes(operator) ||
-        (operator !== ts.SyntaxKind.PlusToken && current.left === node)
+        (operator !== ts.SyntaxKind.PlusToken && current.left === child)
       ) {
         return false
       }
+      child = current
       current = current.parent
       continue
     }
@@ -86,6 +89,62 @@ function assignedVariableName(node) {
     ts.isIdentifier(parent.left)
     ? parent.left.text
     : undefined
+}
+
+function functionName(node) {
+  if (node.name && ts.isIdentifier(node.name)) {
+    return node.name.text
+  }
+  const parent = node.parent
+  return (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) &&
+    parent &&
+    ts.isVariableDeclaration(parent) &&
+    ts.isIdentifier(parent.name)
+    ? parent.name.text
+    : undefined
+}
+
+export function directReturnFunctionName(node) {
+  let current = node
+  while (current.parent && isDirectDisplayExpressionParent(current.parent, current)) {
+    current = current.parent
+  }
+  const parent = current.parent
+  if (parent && ts.isReturnStatement(parent) && parent.expression === current) {
+    let owner = parent.parent
+    while (owner && !ts.isFunctionLike(owner)) {
+      owner = owner.parent
+    }
+    return owner ? functionName(owner) : undefined
+  }
+  return parent && ts.isArrowFunction(parent) && parent.body === current
+    ? functionName(parent)
+    : undefined
+}
+
+export function isReturnedByRenderedFunction(node, isRenderedExpression = isRenderedJsxExpression) {
+  const name = directReturnFunctionName(node)
+  if (!name) {
+    return false
+  }
+  let rendered = false
+  function visit(current) {
+    if (rendered) {
+      return
+    }
+    if (
+      ts.isCallExpression(current) &&
+      ts.isIdentifier(current.expression) &&
+      current.expression.text === name &&
+      isRenderedExpression(current)
+    ) {
+      rendered = true
+      return
+    }
+    ts.forEachChild(current, visit)
+  }
+  visit(node.getSourceFile())
+  return rendered
 }
 
 export function isAssignedToRenderedVariable(node, isRenderedExpression = isRenderedJsxExpression) {

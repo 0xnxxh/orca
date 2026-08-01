@@ -244,11 +244,19 @@ export function collectMobileTranslationBindings(sourceFile) {
   function collectLocalTranslators(node) {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
       const binding = bindings.resolveBinding(node.name)
+      if (isTranslatorFactory(node.initializer, bindings)) {
+        factoryBindings.add(binding)
+      }
+      if (isMobileI18nInstance(node.initializer, bindings)) {
+        instanceBindings.add(binding)
+      }
       if (isEnglishFixedTranslator(node.initializer, bindings)) {
         fixedTranslatorBindings.add(binding)
         fixedTranslatorNames.add(node.name.text)
       }
-      const prefix = mobileTranslatorPrefix(node.initializer, bindings)
+      const prefix =
+        mobileTranslatorPrefix(node.initializer, bindings) ??
+        directTranslatorPrefix(node.initializer, bindings)
       if (prefix !== undefined) {
         prefixedTranslatorBindings.set(binding, prefix)
         prefixedTranslatorNames.set(node.name.text, prefix)
@@ -264,6 +272,7 @@ export function collectMobileTranslationBindings(sourceFile) {
 export function mobileTranslationCallPrefix(call, _sourceFile, bindings) {
   return (
     directTranslatorPrefix(call.expression, bindings) ??
+    mobileTranslatorPrefix(call.expression, bindings) ??
     (isEnglishFixedTranslator(call.expression, bindings) ? '' : undefined)
   )
 }

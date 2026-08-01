@@ -136,7 +136,7 @@
     "copyRepository": "저장소 복사",
     "repositoryNotOrca": "Orca에 없는 Repos",
     "do": "실행 안 함",
-    "always": "항상 믿고 달려가세요",
+    "always": "항상 신뢰하고 실행",
     "failedTrust": "설정 스크립트를 신뢰하지 못했습니다.",
     "runHooks": "후크 실행",
     "setup": "설정 스크립트",
@@ -954,6 +954,9 @@
     "quickCommand": "빠른 명령",
     "inserted": "{{commandLabel}} 삽입됨"
   },
+  "localNotificationScheduling": {
+    "desktopNotifications": "데스크톱 알림"
+  },
   "mobileCommitMessageAi": {
     "failed": "commit 메시지를 생성하지 못했습니다.",
     "no": "commit 메시지가 생성되지 않았습니다."
@@ -1553,7 +1556,6 @@
     "setUpDesktop": "데스크톱에서 설정",
     "api": "API 키 세트",
     "extracting": "· 추출 중…",
-    "open": "오픈AI API",
     "recommended": "권장",
     "dictation": "받아쓰기 활성화됨",
     "setupInstructions": "모델을 다운로드하고 데스크톱에서 받아쓰기를 활성화하세요. 모두 여기에서 가능합니다.",
@@ -1672,7 +1674,6 @@
     "previewRendered": "렌더링된 HTML 미리보기"
   },
   "mobileMarkdown": {
-    "x": "[엑스]",
     "hiddenColumn": "{{hiddenColumnCount}}개 열 더보기",
     "hiddenRow": "{{hiddenRowCount}} 행 추가",
     "open": "이미지 열기",
@@ -1743,7 +1744,7 @@
   },
   "setupHookTrustDrawer": {
     "do": "실행 안 함",
-    "always": "항상 믿고 달려가세요",
+    "always": "항상 신뢰하고 실행",
     "runHooks": "후크 실행",
     "setup": "설정 스크립트",
     "new": "새로운 설정 스크립트",

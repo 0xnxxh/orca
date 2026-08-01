@@ -2,8 +2,10 @@
 import ts from 'typescript-api'
 
 import {
+  directReturnFunctionName,
   isAssignedToRenderedVariable,
-  isRenderedJsxExpression
+  isRenderedJsxExpression,
+  isReturnedByRenderedFunction
 } from './mobile-localization-rendered-variable.mjs'
 
 const USER_VISIBLE_JSX_ATTRIBUTES = new Set([
@@ -337,34 +339,6 @@ function directDisplayCollectionName(node) {
     : undefined
 }
 
-function functionName(node) {
-  if (node.name && ts.isIdentifier(node.name)) {
-    return node.name.text
-  }
-  const parent = node.parent
-  return (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) &&
-    parent &&
-    ts.isVariableDeclaration(parent) &&
-    ts.isIdentifier(parent.name)
-    ? parent.name.text
-    : undefined
-}
-
-function directReturnFunctionName(node) {
-  let current = node
-  while (current.parent && isDirectDisplayExpressionParent(current.parent, current)) {
-    current = current.parent
-  }
-  const parent = current.parent
-  if (parent && ts.isReturnStatement(parent) && parent.expression === current) {
-    const owner = findAncestor(parent, (ancestor) => ts.isFunctionLike(ancestor))
-    return owner ? functionName(owner) : undefined
-  }
-  return parent && ts.isArrowFunction(parent) && parent.body === current
-    ? functionName(parent)
-    : undefined
-}
-
 function isDisplayFormatterArgument(node) {
   const call = findAncestor(node, ts.isCallExpression)
   const name = call ? expressionNameText(call.expression)?.split('.').at(-1) : undefined
@@ -411,6 +385,22 @@ function isUserVisibleErrorArgument(node, userVisibleErrorSource) {
   const expression = findAncestor(node, ts.isNewExpression)
   return Boolean(
     expression && ts.isIdentifier(expression.expression) && expression.expression.text === 'Error'
+  )
+}
+
+function isNotificationChannelName(node) {
+  const property = findAncestor(node, ts.isPropertyAssignment)
+  const object = property?.parent
+  const call = object?.parent
+  return Boolean(
+    property &&
+    propertyNameText(property.name) === 'name' &&
+    object &&
+    ts.isObjectLiteralExpression(object) &&
+    call &&
+    ts.isCallExpression(call) &&
+    call.arguments[1] === object &&
+    expressionNameText(call.expression)?.endsWith('setNotificationChannelAsync')
   )
 }
 
@@ -481,6 +471,9 @@ export function classifyMobileStringNode(node, userVisibleErrorSource) {
   if (isComparisonOperand(node)) {
     return undefined
   }
+  if (isNotificationChannelName(node)) {
+    return 'notification-channel-name'
+  }
 
   const jsxAttributeName = isJsxAttributeValue(node)
   if (jsxAttributeName) {
@@ -550,6 +543,16 @@ export function classifyMobileStringNode(node, userVisibleErrorSource) {
       USER_VISIBLE_VARIABLE_SUFFIX_RE.test(returnFunctionName))
   ) {
     return 'user-visible-return'
+  }
+  if (
+    returnFunctionName &&
+    isReturnedByRenderedFunction(
+      node,
+      (expression) =>
+        isRenderedJsxExpression(expression) || isAssignedToRenderedVariable(expression)
+    )
+  ) {
+    return 'rendered-function-return'
   }
   if (isUserVisibleErrorArgument(node, userVisibleErrorSource)) {
     return 'user-visible-error'

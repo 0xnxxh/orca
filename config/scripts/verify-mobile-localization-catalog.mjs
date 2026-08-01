@@ -115,6 +115,7 @@ const LANGUAGE_NEUTRAL_VALUES = new Set([
   'Trae',
   'YYYY-MM-DD'
 ])
+const EXACT_LANGUAGE_NEUTRAL_VALUES = new Set(['[x]', 'OpenAI API'])
 
 function normalizePath(root, filePath) {
   return path.relative(root, filePath).split(path.sep).join('/')
@@ -393,6 +394,9 @@ function verifyLocaleEntries(englishEntries, locale, localeEntries) {
     const localePlaceholders = collectPlaceholderNames(localeValue)
     if (!sameValues(englishPlaceholders, localePlaceholders)) {
       issues.push(`${locale}.json placeholder mismatch: ${key}`)
+    }
+    if (EXACT_LANGUAGE_NEUTRAL_VALUES.has(englishValue) && localeValue !== englishValue) {
+      issues.push(`${locale}.json must preserve language-neutral value: ${key}`)
     }
     issues.push(...verifyProtectedLiterals(englishValue, localeValue, locale, key))
     issues.push(...verifyTerminology(englishValue, localeValue, locale, key))

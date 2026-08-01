@@ -27,14 +27,16 @@ function formatSize(bytes: number | null): string {
 
 function modelMeta(model: MobileSpeechModel): string {
   if (model.provider === 'openai') {
-    return 'OpenAI API'
+    return t('mobileDictationSetupSheet.open')
   }
   const inFlight = isModelInFlight(model)
   if (inFlight && model.progress != null) {
     return `${formatSize(model.sizeBytes)} · ${Math.round(model.progress * 100)}%`
   }
   if (model.status === 'extracting') {
-    return `${formatSize(model.sizeBytes)} · extracting…`
+    return [formatSize(model.sizeBytes), t('mobileDictationSetupSheet.extracting')]
+      .filter(Boolean)
+      .join(' · ')
   }
   return formatSize(model.sizeBytes)
 }

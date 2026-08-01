@@ -166,6 +166,46 @@ export function Example({ comment }) {
     expect(candidates.map((candidate) => candidate.text)).toEqual(['unknown'])
   })
 
+  it('finds copy returned by a helper whose result is rendered', () => {
+    const source = `
+function lookup() {
+  return 'Extracting model'
+}
+function internalValue() {
+  return 'internal-only'
+}
+function projectRowType() {
+  return 'issue'
+}
+export function Example() {
+  return <>{projectRowType() ? <Text>{lookup()}</Text> : null}</>
+}
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/Example.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual(['Extracting model'])
+  })
+
+  it('finds Android notification-channel names', () => {
+    const source = `
+Notifications.setNotificationChannelAsync('orca-desktop', {
+  name: 'Desktop Notifications',
+  importance: Notifications.AndroidImportance.HIGH
+})
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/notifications/local-notification-scheduling.ts',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual(['Desktop Notifications'])
+  })
+
   it('finds user-visible subject fallbacks in returned rows', () => {
     const source = `
 export function toRow(item) {

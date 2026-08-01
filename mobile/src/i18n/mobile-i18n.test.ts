@@ -180,6 +180,53 @@ describe('mobile i18n', () => {
   })
 
   it.each([
+    [
+      'es',
+      [
+        'No ejecutar',
+        'Confiar siempre y ejecutar',
+        'No ejecutar',
+        'Confiar siempre y ejecutar',
+        'Ejecutar'
+      ]
+    ],
+    ['ja', ['実行しない', '常に信頼して実行', '実行しない', '常に信頼して実行', '実行']],
+    ['ko', ['실행 안 함', '항상 신뢰하고 실행', '실행 안 함', '항상 신뢰하고 실행', '실행']],
+    ['zh', ['不执行', '始终信任并执行', '不执行', '始终信任并执行', '执行']]
+  ] as const)('uses software-execution wording for setup trust in %s', async (locale, expected) => {
+    await mobileI18n.changeLanguage(locale)
+
+    expect([
+      t('task.do'),
+      t('task.always'),
+      t('setupHookTrustDrawer.do'),
+      t('setupHookTrustDrawer.always'),
+      t('newWorktreeModal.run')
+    ]).toEqual(expected)
+  })
+
+  it('uses standard Simplified Chinese Git mutation labels', async () => {
+    await mobileI18n.changeLanguage('zh')
+
+    expect([
+      t('mobileSourceControlScreenState.noBranch'),
+      t('mobileSourceControlActions.pull'),
+      t('mobileSourceControlActions.push'),
+      t('mobileSourceControlPrimaryAction.forcePush')
+    ]).toEqual(['无分支', '拉取', '推送', '强制推送'])
+  })
+
+  it('falls back for exact neutral values and localizes notification channels', async () => {
+    await mobileI18n.changeLanguage('es')
+
+    expect([
+      t('mobileDictationSetupSheet.open'),
+      t('mobileMarkdown.x'),
+      t('localNotificationScheduling.desktopNotifications')
+    ]).toEqual(['OpenAI API', '[x]', 'Notificaciones de escritorio'])
+  })
+
+  it.each([
     ['es', ['Omitido', 'Publicando rama...']],
     ['ja', ['スキップ済み', 'ブランチを公開しています...']],
     ['ko', ['건너뜀', '브랜치 게시 중...']],
