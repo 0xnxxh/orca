@@ -8,6 +8,50 @@
  * worktree id while `replaceHydratedRecordKeys` retains the old key verbatim —
  * nothing de-dupes across keys. This drives that from real hydration rather
  * than constructing the duplicate by hand.
+ *
+ * ---------------------------------------------------------------------------
+ * This test pins convergence. It does NOT run React. The link from "the repair
+ * never converges" to "React #185 in the terminal workbench" was closed by a
+ * separate end-to-end run, recorded here because the *method* is the part worth
+ * keeping — the harness itself is not in the repo (see the last paragraph).
+ * Full write-up: PR #11950.
+ *
+ * That run mounts this same hydrated store under the real production
+ * `react-dom` bundle with no `act()` anywhere, and lets React's own scheduler
+ * drive the cascade. The production bundle is reached WITHOUT patching
+ * `node_modules` — `process.env.NODE_ENV = 'production'` in a side-effect module
+ * imported before `react-dom/client` is enough, since ESM evaluates imports in
+ * source order. The run asserts it got there rather than assuming:
+ * `String(createRoot).includes('formatProdErrorMessage')`.
+ *
+ * Verbatim, on unfixed origin/main:
+ *
+ *   E2E driver-only     {"bundleIsProduction":true,
+ *                        "owners":["repoA::/srv/proj/wt","repoA::/srv/proj/wt-renamed"],
+ *                        "renders":54,"activeTabId":null,
+ *                        "captured":[{"source":"window","message":"Minified React error #185; ..."}]}
+ *
+ *   E2E with-descendant {... "renders":54,"activeTabId":null,
+ *                        "frames":["getRootForUpdatedFiber","enqueueConcurrentHookUpdate",
+ *                                  "dispatchSetStateInternal","dispatchSetState",
+ *                                  "commitHookEffectListMount","commitPassiveMountOnFiber", ...]}
+ *
+ * The six frames in the second run match all 13 production crash reports, in
+ * order. The difference between the two runs is one passenger component that
+ * mirrors store state into local `useState` in a passive effect. So: the
+ * component that *throws* #185 is not the component *driving* the loop, and a
+ * `useState`-shaped stack does not rule out a `useSyncExternalStore` driver.
+ * Control, on the fix branch: same passenger, `renders: 2`, nothing captured —
+ * it settles when the loop it rides on settles, so it cannot be the driver.
+ *
+ * Note `owners` is identical in the red and green runs. The fix stops the owner
+ * resolver being fooled by the duplicate; it does not remove the duplicate. That
+ * is a stated limitation of PR #11950, not an oversight, and it is why this test
+ * asserts the duplicate is *produced* and never that it is cleaned up.
+ *
+ * Why the harness is not committed: it sets `NODE_ENV` process-wide, which leaks
+ * to every other test sharing the vitest worker. Reproducing it needs an
+ * isolated config, so it was deliberately left as PR evidence.
  */
 import { describe, expect, it, vi } from 'vitest'
 import type * as AgentStatusModule from '@/lib/agent-status'
