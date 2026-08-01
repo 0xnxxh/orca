@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useAppStore } from '@/store'
 import { isDotfileRelativePath } from './file-explorer-entries'
 import type { DirCache, TreeNode } from './file-explorer-types'
@@ -118,25 +118,17 @@ export function createVisibleFileExplorerRowProjection(
  * exists to bound.
  */
 function useContentStableRelativePaths(relativePaths: string[], enabled: boolean): string[] {
-  const cache = useRef<{ source: string[]; signature: string; value: string[] } | null>(null)
-  // Why: a name-filter list is a different population, so signing it would evict the tree
-  // signature — clearing the filter would then mint a fresh identity and re-issue the very
-  // whole-tree check-ignore this hook exists to prevent.
-  if (!enabled) {
-    return relativePaths
-  }
-  // Why: the caller memoizes, so an unchanged tree hands back the same array — skip rebuilding a
-  // signature over every visible path on re-renders that never touched the tree.
-  if (cache.current?.source === relativePaths) {
-    return cache.current.value
-  }
-  // NUL separator: it is the one byte no path segment can contain.
-  const signature = relativePaths.join('\u0000')
-  cache.current =
-    cache.current?.signature === signature
-      ? { ...cache.current, source: relativePaths }
-      : { source: relativePaths, signature, value: relativePaths }
-  return cache.current.value
+  // Why: filters need fresh identities per keystroke and must not evict the tree signature.
+  // Why: NUL cannot occur in paths, so the signature can reconstruct the list losslessly.
+  const signature = useMemo(
+    () => (enabled ? relativePaths.join('\u0000') : null),
+    [enabled, relativePaths]
+  )
+  const stableTreePaths = useMemo(
+    () => (signature ? signature.split('\u0000') : EMPTY_RELATIVE_PATHS),
+    [signature]
+  )
+  return enabled ? stableTreePaths : relativePaths
 }
 
 export function useFileExplorerVisibleRowProjection(

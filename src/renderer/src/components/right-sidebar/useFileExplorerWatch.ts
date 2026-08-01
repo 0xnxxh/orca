@@ -143,6 +143,10 @@ export function useFileExplorerWatch({
     const scheduler = createFileExplorerWatchRefreshScheduler({
       refreshTree: () => refreshTreeRef.current(),
       refreshDir: (dirPath) => refreshDirRef.current(dirPath),
+      // Why exact-match on `expanded`, not a normalized compare: dirPath already arrives as a
+      // resolved dirCache key (resolveCachedDirPath), and refreshTree re-reads dirCache under the
+      // verbatim expanded strings — a differently-spelled key it never wrote would be reported
+      // covered and left stale. Only the root is normalized: it is keyed by worktreePath.
       isCoveredByFullRefresh: (dirPath) =>
         normalizeRuntimePathForComparison(dirPath) ===
           normalizeRuntimePathForComparison(currentWorktreePath) ||

@@ -51,8 +51,6 @@ export function useFileExplorerTree(
   const staleDirsRef = useRef(new Set<string>())
   // Why: separates a failed root read from a superseded one — loadDir returns false for both.
   const rootReadFailedRef = useRef(false)
-  const expandedRef = useRef(expanded)
-  expandedRef.current = expanded
 
   const loadDir = useCallback(
     async (
@@ -179,11 +177,8 @@ export function useFileExplorerTree(
         staleDirsRef.current.delete(dirPath)
       }
     }
-    for (const dirPath of collectStaleDirCachePaths(
-      dirCacheRef.current,
-      worktreePath,
-      expandedRef.current
-    )) {
+    // Why: callers use the latest refreshTree identity, so this closure has the live expanded set.
+    for (const dirPath of collectStaleDirCachePaths(dirCacheRef.current, worktreePath, expanded)) {
       staleDirsRef.current.add(dirPath)
     }
     const refreshSession = dirLoadTrackerRef.current.getSession()
