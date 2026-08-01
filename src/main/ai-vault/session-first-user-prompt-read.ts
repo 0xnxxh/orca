@@ -57,14 +57,21 @@ export async function readAiVaultFirstUserPrompt(
     return { prompt: null }
   }
 
-  const session = await withFullFirstUserPromptCapture(() =>
-    parseSessionForFullFirstUserPrompt({
-      agent: args.agent,
-      filePath,
-      sessionId: args.sessionId?.trim() || undefined,
-      codexHome: args.codexHome ?? null
-    })
-  )
+  // Why: partial/corrupt transcripts make parsers throw. Resolve null like every
+  // other unavailable case instead of rejecting the IPC call.
+  let session: AiVaultSession | null
+  try {
+    session = await withFullFirstUserPromptCapture(() =>
+      parseSessionForFullFirstUserPrompt({
+        agent: args.agent,
+        filePath,
+        sessionId: args.sessionId?.trim() || undefined,
+        codexHome: args.codexHome ?? null
+      })
+    )
+  } catch {
+    return { prompt: null }
+  }
 
   const prompt = session?.firstUserPrompt?.trim() || null
   return { prompt }

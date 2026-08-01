@@ -19,9 +19,12 @@ describe('AI Vault Grok session parser', () => {
       `<USER_INFO>context</USER_INFO><USER_QUERY>\n${'Grok prompt '.repeat(400)}</USER_QUERY>`
     )
     const trimCalls = trimSpy.mock.calls.length
+    trimSpy.mockRestore()
 
-    // stripGrokUserQueryEnvelope trims the body; that is intentional and cheap.
-    expect(trimCalls).toBeGreaterThanOrEqual(0)
+    // stripGrokUserQueryEnvelope trims the body once; the fold must never trim
+    // per character (the input here is 4800+ chars).
+    expect(trimCalls).toBeGreaterThan(0)
+    expect(trimCalls).toBeLessThan(20)
     expect(result?.startsWith('Grok prompt Grok prompt')).toBe(true)
     expect(result?.endsWith('...')).toBe(true)
     expect(result).not.toContain('USER_QUERY')

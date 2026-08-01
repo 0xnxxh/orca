@@ -21,6 +21,9 @@ export function FirstPromptCard({
   const [copying, setCopying] = useState(false)
   const fullTextRef = useRef<string | null>(null)
   const loadPromiseRef = useRef<Promise<string | null> | null>(null)
+  // Bumped on every session switch so a late response from the previous session
+  // cannot write its body into the refs the Copy button reads.
+  const generationRef = useRef(0)
 
   const loadFullPrompt = useCallback((): Promise<string | null> => {
     if (fullTextRef.current != null) {
@@ -38,6 +41,8 @@ export function FirstPromptCard({
     }
 
     setLoading(true)
+    const generation = generationRef.current
+    const isStale = (): boolean => generationRef.current !== generation
     const promise = getFirstUserPrompt({
       agent: session.agent,
       filePath: session.filePath,
@@ -46,17 +51,27 @@ export function FirstPromptCard({
       codexHome: session.codexHome
     })
       .then((result) => {
+        if (isStale()) {
+          return null
+        }
         const prompt = result.prompt?.trim() || null
         fullTextRef.current = prompt
         setFullText(prompt)
         return prompt
       })
       .catch(() => {
+        if (isStale()) {
+          return null
+        }
         fullTextRef.current = null
         setFullText(null)
         return null
       })
       .finally(() => {
+        // A stale settle must not clear the live request's dedupe handle.
+        if (isStale()) {
+          return
+        }
         setLoading(false)
         loadPromiseRef.current = null
       })
@@ -74,9 +89,11 @@ export function FirstPromptCard({
   // Why: list rows never carry the full first prompt (payload/perf). Load the
   // untruncated body once when this details card mounts.
   useEffect(() => {
+    generationRef.current += 1
     fullTextRef.current = null
     loadPromiseRef.current = null
     setFullText(null)
+    setLoading(false)
     void loadFullPrompt()
   }, [loadFullPrompt, session.id])
 

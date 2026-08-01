@@ -42,41 +42,13 @@ export function normalizePreviewText(value: string): string | null {
   return finalizeNormalizedText(normalizeStringText(value, SESSION_PREVIEW_TEXT_LIMIT))
 }
 
-/** Bounded string fold for first-prompt / other copy fields with a source-scan cap. */
-export function normalizeBoundedSessionText(
-  value: string,
-  limit: number,
-  maxSourceScan?: number
-): string | null {
-  const builder = createTextBuilder(limit)
-  appendNormalizedString(builder, value, maxSourceScan)
-  return finalizeNormalizedText(builder)
-}
-
-/** Multi-part fold used when assembling first-prompt text from typed content blocks. */
-export function normalizeBoundedSessionTextParts(
-  parts: Iterable<string>,
-  limit: number,
-  maxSourceScanForPart?: (partLength: number) => number
-): string | null {
-  const builder = createTextBuilder(limit)
-  for (const part of parts) {
-    if (!part) {
-      continue
-    }
-    appendInterPartSpace(builder)
-    appendNormalizedString(
-      builder,
-      part,
-      maxSourceScanForPart ? maxSourceScanForPart(part.length) : undefined
-    )
-    // Why: break before the next iterable pull so later content blocks are not
-    // materialised after the text budget is already full.
-    if (builder.truncated) {
-      break
-    }
+/** Cut to `limit` UTF-16 code units without splitting a trailing surrogate pair. */
+export function sliceAtCodeUnitLimit(value: string, limit: number): string {
+  if (value.length <= limit) {
+    return value
   }
-  return finalizeNormalizedText(builder)
+  const end = limit > 0 && isHighSurrogate(value.charCodeAt(limit - 1)) ? limit - 1 : limit
+  return value.slice(0, end)
 }
 
 function normalizeContentText(value: unknown, limit: number): string | null {
@@ -278,9 +250,7 @@ function isSuppressedContextPrefix(value: string): boolean {
 }
 
 function truncateWithEllipsis(value: string, limit: number): string {
-  const end = Math.max(0, limit - ELLIPSIS.length)
-  const safeEnd = end > 0 && isHighSurrogate(value.charCodeAt(end - 1)) ? end - 1 : end
-  return `${value.slice(0, safeEnd)}${ELLIPSIS}`
+  return `${sliceAtCodeUnitLimit(value, Math.max(0, limit - ELLIPSIS.length))}${ELLIPSIS}`
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | null {

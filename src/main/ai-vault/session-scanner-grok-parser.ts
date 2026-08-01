@@ -16,7 +16,6 @@ import {
   shouldCaptureFullFirstUserPrompt
 } from './session-scanner-first-user-prompt'
 import {
-  extractGrokDisplayUserText,
   extractGrokFirstUserPromptText,
   stripGrokUserQueryEnvelope
 } from './session-scanner-grok-user-text'
@@ -27,7 +26,8 @@ import {
   normalizePreviewText,
   normalizeTitleText,
   numberValue,
-  parseJsonObject
+  parseJsonObject,
+  sliceAtCodeUnitLimit
 } from './session-scanner-values'
 
 const GROK_USER_QUERY_PREVIEW_SCAN_LIMIT = 4096
@@ -82,10 +82,8 @@ async function consumeGrokChatHistory(
         // Why: first-prompt copy must be the typed ask inside <user_query>, never
         // the injected <user_info> bootstrap row.
         const firstPromptBody = extractGrokFirstUserPromptText(record.content)
-        const displayBody = extractGrokDisplayUserText(record.content)
-        const previewSource = displayBody ?? firstPromptBody
-        const text = previewSource
-          ? normalizePreviewText(capGrokPreviewSource(previewSource))
+        const text = firstPromptBody
+          ? normalizePreviewText(capGrokPreviewSource(firstPromptBody))
           : null
 
         if (firstPromptBody) {
@@ -126,10 +124,7 @@ export function extractGrokContentText(value: unknown): string | null {
 }
 
 function capGrokPreviewSource(text: string): string {
-  if (text.length <= GROK_USER_QUERY_PREVIEW_SCAN_LIMIT) {
-    return text
-  }
-  return text.slice(0, GROK_USER_QUERY_PREVIEW_SCAN_LIMIT)
+  return sliceAtCodeUnitLimit(text, GROK_USER_QUERY_PREVIEW_SCAN_LIMIT)
 }
 
 function extractGrokStringContentText(text: string): string | null {

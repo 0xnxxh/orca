@@ -1,6 +1,9 @@
 import { isKnownHarnessInjectedUserTurnText } from '../../shared/harness-injected-user-turns'
 import { getFirstUserPromptCaptureMode } from './session-scanner-first-user-prompt-capture'
 import { stripGrokUserQueryEnvelope } from './session-scanner-grok-user-text'
+// Direct import: session-scanner-values re-exports this module, so going through
+// it here would close an import cycle.
+import { sliceAtCodeUnitLimit } from './session-scanner-text-normalization'
 
 // Why: safety only for pathological multi-MB pastes. Copy path must not use the
 // 220-char list preview cap.
@@ -70,10 +73,7 @@ function finalizeFullFirstUserPrompt(value: string): string | null {
   if (lower.startsWith('<user_info>') && !lower.includes('<user_query>')) {
     return null
   }
-  if (trimmed.length <= FULL_FIRST_USER_PROMPT_SAFETY_LIMIT) {
-    return trimmed
-  }
-  return trimmed.slice(0, FULL_FIRST_USER_PROMPT_SAFETY_LIMIT)
+  return sliceAtCodeUnitLimit(trimmed, FULL_FIRST_USER_PROMPT_SAFETY_LIMIT)
 }
 
 function isSuppressedFullFirstUserPrompt(value: string): boolean {

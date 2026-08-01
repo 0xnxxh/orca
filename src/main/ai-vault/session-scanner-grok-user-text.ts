@@ -31,11 +31,6 @@ export function extractGrokFirstUserPromptText(value: unknown): string | null {
   return trimmed
 }
 
-/** Preview-friendly body: same unwrapping as full extract, caller may cap length. */
-export function extractGrokDisplayUserText(value: unknown): string | null {
-  return extractGrokFirstUserPromptText(value)
-}
-
 function flattenGrokUserContent(value: unknown): string | null {
   if (typeof value === 'string') {
     return value

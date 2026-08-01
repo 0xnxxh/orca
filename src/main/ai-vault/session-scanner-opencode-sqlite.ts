@@ -26,6 +26,8 @@ const OPENCODE_SQLITE_PREVIEW_LIMIT = 5
 // id) index. Bounds the read to those messages' parts; the 15 s parse timeout
 // caps the residual for a single pathological giant part.
 const OPENCODE_SQLITE_PREVIEW_MESSAGE_WINDOW = 100
+// Bounds a pathological single message; a real typed prompt is a handful of parts.
+const FIRST_USER_PROMPT_PART_LIMIT = 512
 
 type SessionRow = {
   id: string
@@ -171,16 +173,26 @@ function readFirstUserPromptFromOpenCodeDb(db: SyncDatabase, sessionId: string):
   }
 
   try {
+    // Why: pin to the single earliest user message that actually has text parts,
+    // then take all of its parts. Ordering parts across every user message would
+    // pad a short first prompt with later turns and truncate a long one.
     const rows = db
       .prepare(
         `SELECT p.data AS part_data
-         FROM message m
-         JOIN part p ON p.message_id = m.id
-         WHERE m.session_id = ?
-           AND json_extract(m.data, '$.role') = 'user'
+         FROM part p
+         WHERE p.message_id = (
+                 SELECT m.id
+                 FROM message m
+                 JOIN part fp ON fp.message_id = m.id
+                 WHERE m.session_id = ?
+                   AND json_extract(m.data, '$.role') = 'user'
+                   AND json_extract(fp.data, '$.type') = 'text'
+                 ORDER BY m.time_created ASC, m.id ASC
+                 LIMIT 1
+               )
            AND json_extract(p.data, '$.type') = 'text'
-         ORDER BY m.time_created ASC, m.id ASC, p.time_created ASC, p.rowid ASC
-         LIMIT 8`
+         ORDER BY p.time_created ASC, p.rowid ASC
+         LIMIT ${FIRST_USER_PROMPT_PART_LIMIT}`
       )
       .all(sessionId) as { part_data: string }[]
 
