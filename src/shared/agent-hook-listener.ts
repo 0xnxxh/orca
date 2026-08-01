@@ -2470,34 +2470,31 @@ function normalizeClaudeSubagentLifecycleEvent(
       // tracking them keeps their own later drains resolvable instead of start-less-suppressed.
       // Additive only — a complete-inventory reap here would kill a just-parked teammate row
       // before its TeammateIdle confirmation arrives.
+      // Why: stop-time inventories are mutually UNORDERED — any deletion they drive can be a
+      // stale claim against newer live state, so stop-time processing is strictly additive.
+      // Listed-non-running cleanup belongs to turn-serialized lead-Stop folds only.
       const inventory = readClaudeBackgroundAgentTasks(hookPayload)
+      const runningTasks = inventory.tasks.filter(
+        // Why: an id the upsert would reject can neither be tracked nor drained — letting it
+        // allocate or claim liveness recreates the retention/sticky holes through inventory ids.
+        (task) => task.running && !task.teammate && isValidClaudeSubagentId(task.id)
+      )
       if (inventory.present && inventory.tasks.length === 0 && roster) {
-        // Why: an empty complete inventory reaps only claims not backed by live lifecycle events
-        // (restored/inventory-derived phantoms). A delayed stale stop's empty list must not clear
-        // a newer live start's row — that is the uncorrelated-retirement race again. The reap is
-        // same-source-correlated removal evidence: the authority that minted those rows now
-        // reports empty, so a silent drain must not strand the published working.
+        // Why: restored rows are pre-restart claims, so ANY live inventory postdates them —
+        // reaping them on an empty inventory is temporally safe, and counts as removal
+        // evidence (same authority class that persisted the claim now reports empty). Rows
+        // minted by other stop-time inventories stay: those sources are unordered.
         for (const [id, tracked] of roster) {
-          if (tracked.restoredFromSnapshot || tracked.backgroundTasksAuthoritative) {
+          if (tracked.restoredFromSnapshot) {
             roster.delete(id)
             removedRow = true
           }
         }
-      } else if (
-        inventory.present &&
-        (roster ||
-          inventory.tasks.some(
-            // Why: an id the upsert would reject can neither be tracked nor drained — letting it
-            // allocate or claim liveness recreates the retention/sticky holes through inventory ids.
-            (task) => task.running && !task.teammate && isValidClaudeSubagentId(task.id)
-          ))
-      ) {
+      } else if (inventory.present && runningTasks.length > 0) {
         foldClaudeBackgroundTasksIntoRoster(
           getOrCreateClaudeSubagentRoster(state, paneKey),
-          inventory.tasks,
+          runningTasks,
           Date.now(),
-          // Why: additive only — a complete-inventory reap here would kill a just-parked
-          // teammate row before its TeammateIdle confirmation arrives.
           { inventoryComplete: false }
         )
       }
@@ -2624,29 +2621,6 @@ export function clearClaudeAnsweredQuestionWait(
 }
 
 /** Re-emit the lead's cached state on child activity — gated up to 'working' while a child works — without touching the lead's tool/prompt caches, so a live card or permission wait survives child churn. */
-// Why: the roster parser bounds TRACKED rows at the wire cap; this boolean liveness scan of the
-// raw array must still see a running subagent-typed entry hidden past it.
-function rawInventoryHasRunningSubagentTask(hookPayload: Record<string, unknown>): boolean {
-  const raw = hookPayload['background_tasks']
-  return (
-    Array.isArray(raw) &&
-    raw.some((item) => {
-      if (typeof item !== 'object' || item === null) {
-        return false
-      }
-      const task = item as Record<string, unknown>
-      return (
-        task.type === 'subagent' &&
-        task.status === 'running' &&
-        // Why: an id the upsert would reject can never be tracked or drained; letting it claim
-        // liveness would pin an unresolvable working on the pane.
-        typeof task.id === 'string' &&
-        isValidClaudeSubagentId(task.id)
-      )
-    })
-  )
-}
-
 function buildClaudeChildDrivenStatusPayload(
   state: HookListenerState,
   eventName: unknown,
@@ -2677,18 +2651,15 @@ function buildClaudeChildDrivenStatusPayload(
     })
   }
   if (evidence.removedRow) {
-    // Why: live shells/crons veto done, and the uncapped raw scan sees a running subagent hidden
-    // past the parser cap (tracked folding surfaces the listed ones through the working branch).
-    if (
-      hasActiveClaudeNonAgentBackgroundWork(hookPayload) ||
-      rawInventoryHasRunningSubagentTask(hookPayload)
-    ) {
+    // Why: live shells/crons in the payload's own inventory veto done — the pane still works.
+    if (hasActiveClaudeNonAgentBackgroundWork(hookPayload)) {
       return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
         stateName: 'working',
         updateToolSnapshot: false
       })
     }
-    // Why: a truncated inventory with no visible live work is incomplete evidence — claim nothing.
+    // Why: a truncated inventory may hide running children past the parser cap — incomplete
+    // evidence claims nothing (no done, and no working the roster could never resolve).
     const inventory = readClaudeBackgroundAgentTasks(hookPayload)
     if (inventory.present && inventory.truncated) {
       return null

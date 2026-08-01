@@ -3221,9 +3221,9 @@ describe('shared agent-hook-listener', () => {
         agent_id: 'a1',
         background_tasks: cappedTasks
       })
-      // Why: the uncapped raw scan still sees hidden-live running — the pane is
-      // truthfully working, never done.
-      expect(stopped?.payload.state).toBe('working')
+      // Why: hidden-live sits past the parser cap and could never be tracked or
+      // drained — incomplete evidence claims neither done nor an unresolvable working.
+      expect(stopped).toBeNull()
     })
 
     it('claims nothing from a no-lead removal when a truncated inventory shows no live work', () => {
@@ -3372,9 +3372,10 @@ describe('shared agent-hook-listener', () => {
       expect(staleStop?.payload.subagents).toEqual([expect.objectContaining({ id: 'a-new' })])
     })
 
-    it('resolves to done when an empty inventory reaps the last inventory-derived rows', () => {
-      // Why: the authority that minted a1's row now reports empty; a silent
-      // drain would strand the previously published working until the sweeper.
+    it('keeps a newer inventory-derived row through a delayed older empty-inventory stop', () => {
+      // Why: stop-time inventories are mutually unordered — a delayed older empty
+      // list must not retire a row a newer inventory minted. The tracked row keeps
+      // the pane truthfully working and its own stop resolves it.
       const first = claudeEvent({
         hook_event_name: 'SubagentStop',
         agent_id: 'ghost-1',
@@ -3388,8 +3389,27 @@ describe('shared agent-hook-listener', () => {
         agent_id: 'ghost-2',
         background_tasks: []
       })
-      expect(second?.payload.state).toBe('done')
-      expect(second?.payload.subagents).toBeUndefined()
+      expect(second?.payload.state).toBe('working')
+      expect(second?.payload.subagents).toEqual([expect.objectContaining({ id: 'a1' })])
+    })
+
+    it('never lets a stop inventory delete a live row via a non-running listing', () => {
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a1',
+        agent_type: 'general-purpose'
+      })
+      // Why: a stale inventory claiming a live child completed is unordered
+      // evidence; the live row survives and its own stop still resolves done.
+      const staleClaim = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'ghost-1',
+        background_tasks: [{ id: 'a1', type: 'subagent', status: 'completed' }]
+      })
+      expect(staleClaim?.payload.state).toBe('working')
+      expect(staleClaim?.payload.subagents).toEqual([expect.objectContaining({ id: 'a1' })])
+      const drained = claudeEvent({ hook_event_name: 'SubagentStop', agent_id: 'a1' })
+      expect(drained?.payload.state).toBe('done')
     })
 
     it('clears restored phantom rows when a no-lead stop carries a complete empty inventory', () => {
