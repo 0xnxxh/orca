@@ -3383,16 +3383,30 @@ describe('shared agent-hook-listener', () => {
     it('routes a padded child tool event to the canonical roster row', () => {
       claudeEvent({ hook_event_name: 'UserPromptSubmit', prompt: 'go' })
       claudeEvent({ hook_event_name: 'Stop', background_tasks: [] })
-      const childTool = claudeEvent({
+      claudeEvent({
         hook_event_name: 'PreToolUse',
         agent_id: ' a4 ',
         agent_type: 'general-purpose',
         tool_name: 'Bash',
         tool_input: { command: 'true' }
       })
-      expect(childTool?.payload.subagents).toEqual([
-        expect.objectContaining({ id: 'a4', state: 'working' })
-      ])
+      // Why: a clean-id stop must drain the padded tool event's row — under a raw
+      // key it would survive and pin the lead's next Stop on working.
+      claudeEvent({ hook_event_name: 'SubagentStop', agent_id: 'a4' })
+      const leadStop = claudeEvent({ hook_event_name: 'Stop' })
+      expect(leadStop?.payload.state).toBe('done')
+      expect(leadStop?.payload.subagents).toBeUndefined()
+    })
+
+    it('ignores child events whose agent_id is whitespace-only', () => {
+      // Why: agent_id present means child-origin; an unattributable id treated
+      // as the lead would mint a waiting no lead Stop ever clears.
+      const waiting = claudeEvent({
+        hook_event_name: 'PermissionRequest',
+        agent_id: '   ',
+        tool_name: 'Bash'
+      })
+      expect(waiting).toBeNull()
     })
 
     it('tracks whitespace-padded inventory ids canonically so their stops can drain them', () => {
