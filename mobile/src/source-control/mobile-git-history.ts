@@ -20,7 +20,7 @@ export function formatCommitTime(timestampSeconds: number | undefined, nowMs: nu
   }
   const delta = nowMs - timestampSeconds * 1000
   if (delta < 60_000) {
-    return t('m.m8V_LQQ')
+    return t('mobileGitHistory.just')
   }
   const minutes = Math.floor(delta / 60_000)
   if (minutes < 60) {
@@ -36,7 +36,7 @@ export function formatCommitTime(timestampSeconds: number | undefined, nowMs: nu
   }
   const months = Math.floor(days / 30)
   if (months < 12) {
-    return t('m.vuFM3_E', { value0: months })
+    return t('mobileGitHistory.months', { months: months })
   }
   return `${Math.floor(months / 12)}y`
 }
@@ -66,7 +66,7 @@ export async function fetchMobileGitHistory(
     limit
   })
   if (!response.ok) {
-    throw new Error(response.error?.message || t('m.f-93Rxs'))
+    throw new Error(response.error?.message || t('mobileGitHistory.failed'))
   }
   return (response as RpcSuccess).result as GitHistoryResult
 }

@@ -9,23 +9,25 @@ export function formatPrCommentRelativeTime(iso: string, nowMs: number): string 
   }
   const delta = nowMs - ts
   if (delta < 60_000) {
-    return t('m.xbjFHYU')
+    return t('prCommentTime.just')
   }
   const minutes = Math.floor(delta / 60_000)
   if (minutes < 60) {
-    return t('m.XG7ieU0', { value0: minutes })
+    return t('prCommentTime.minutes', { minutes: minutes })
   }
   const hours = Math.floor(minutes / 60)
   if (hours < 24) {
-    return t('m.J9EQWOE', { value0: hours })
+    return t('prCommentTime.hours', { hours: hours })
   }
   const days = Math.floor(hours / 24)
   if (days < 30) {
-    return t('m.3u9-Kuw', { value0: days })
+    return t('prCommentTime.days', { days: days })
   }
   const months = Math.floor(days / 30)
   if (months < 12) {
-    return t('m.5mTslyc', { value0: months })
+    return t('prCommentTime.months', { months: months })
   }
-  return t('m.rBMjMUM', { value0: Math.floor(months / 12) })
+  return t('prCommentTime.years', {
+    years: Math.floor(months / 12)
+  })
 }

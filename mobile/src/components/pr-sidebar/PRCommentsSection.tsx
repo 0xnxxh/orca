@@ -119,20 +119,20 @@ export function PRCommentsSection({
 
   return (
     <>
-      <PRSection title={t('m.6VkqcQk')}>
+      <PRSection title={t('prcommentsSection.description')}>
         {loadingDetails ? (
           <ActivityIndicator color={colors.textSecondary} />
         ) : detailsFailed ? (
-          <Text style={styles.noDescription}>{t('m.hO2eecI')}</Text>
+          <Text style={styles.noDescription}>{t('prcommentsSection.couldNotLoadDescription')}</Text>
         ) : body.trim() ? (
           <CommentMarkdown content={body} variant="document" />
         ) : (
-          <Text style={styles.noDescription}>{t('m.vdfQtbs')}</Text>
+          <Text style={styles.noDescription}>{t('prcommentsSection.noDescription')}</Text>
         )}
       </PRSection>
 
       <PRSection
-        title={t('m._l0TaO0')}
+        title={t('prcommentsSection.comments')}
         trailing={
           comments.length > 0 ? (
             <View style={styles.countChip}>
@@ -144,11 +144,11 @@ export function PRCommentsSection({
         {loadingDetails ? (
           <ActivityIndicator color={colors.textSecondary} />
         ) : detailsFailed ? (
-          <Text style={styles.empty}>{t('m.FVdefgc')}</Text>
+          <Text style={styles.empty}>{t('prcommentsSection.couldNotLoadComments')}</Text>
         ) : (
           <View style={styles.list}>
             {comments.length === 0 ? (
-              <Text style={styles.empty}>{t('m.xX8eZhc')}</Text>
+              <Text style={styles.empty}>{t('prcommentsSection.noComments')}</Text>
             ) : (
               <>
                 {isPr ? (
@@ -197,11 +197,13 @@ export function PRCommentsSection({
                       >
                         <Text style={styles.showMoreText}>
                           {remaining > COMMENT_PAGE
-                            ? t('m.vV46Tns', {
-                                value0: COMMENT_PAGE,
-                                value1: remaining
+                            ? t('prcommentsSection.showVisible', {
+                                visibleCommentCount: COMMENT_PAGE,
+                                remaining: remaining
                               })
-                            : t('m.cHoCGwY', { value0: remaining })}
+                            : t('prcommentsSection.showRemaining', {
+                                remainingCommentCount: remaining
+                              })}
                         </Text>
                       </Pressable>
                     ) : null}
@@ -213,8 +215,8 @@ export function PRCommentsSection({
             {canComment && actions ? (
               <View style={styles.rootComposer}>
                 <PRCommentComposer
-                  placeholder={t('m.2Mrfqx0')}
-                  submitLabel={t('m.eVLkMyE')}
+                  placeholder={t('prcommentsSection.add')}
+                  submitLabel={t('prcommentsSection.comment')}
                   submitting={actions.isRootBusy}
                   onSubmit={actions.addRootComment}
                 />
@@ -263,13 +265,23 @@ function CommentGroupView({
         <Chevron size={14} color={colors.textSecondary} strokeWidth={2.2} />
         <Text style={styles.resolvedHeaderText} numberOfLines={1}>
           {count > 1
-            ? t(group.kind === 'thread' ? 'm.lXnGpvs' : 'm.tQONwOQ', {
-                value0: root.author,
-                value1: count
-              })
-            : t(group.kind === 'thread' ? 'm.dG4O1e4' : 'm.njd-pFg', {
-                value0: root.author
-              })}
+            ? t(
+                group.kind === 'thread'
+                  ? 'prcommentsSection.resolvedThreadAuthorReply'
+                  : 'prcommentsSection.resolvedCommentAuthorReply',
+                {
+                  author: root.author,
+                  replyCount: count
+                }
+              )
+            : t(
+                group.kind === 'thread'
+                  ? 'prcommentsSection.resolvedThreadAuthor'
+                  : 'prcommentsSection.resolvedCommentAuthor',
+                {
+                  author: root.author
+                }
+              )}
         </Text>
       </Pressable>
       {expanded ? <View style={shared.sectionBody}>{cards}</View> : null}

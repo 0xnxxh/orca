@@ -71,18 +71,18 @@ export function useMobileImageAttachment({
       } catch (error) {
         onError()
         if (connState !== 'connected') {
-          showToast(t('m.tu-qlN0'), 1500)
+          showToast(t('useMobileImageAttachment.attachFailedDisconnected'), 1500)
           return
         }
         if (error instanceof ImageLibraryPermissionError) {
-          showToast(t('m.JdGd1Ic'), 1500)
+          showToast(t('useMobileImageAttachment.photo'), 1500)
           return
         }
         if (isClipboardImageTooLargeError(error)) {
-          showToast(t('m.hJYA7AQ'), 1500)
+          showToast(t('useMobileImageAttachment.image'), 1500)
           return
         }
-        showToast(t('m.NSS4Or0'), 1500)
+        showToast(t('useMobileImageAttachment.attachFailed'), 1500)
       } finally {
         setIsAttaching(false)
       }

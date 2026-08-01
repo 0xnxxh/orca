@@ -62,7 +62,8 @@ export function useMobileSourceControlCommitRunners(params: Params) {
           await sendCommitRequest(message)
         } catch (err) {
           recordCommitFailure({
-            error: err instanceof Error ? err.message : t('m.cBrXr-8'),
+            error:
+              err instanceof Error ? err.message : t('useMobileSourceControlCommitRunners.commit'),
             commitMessage: message,
             stagedEntries
           })
@@ -103,7 +104,8 @@ export function useMobileSourceControlCommitRunners(params: Params) {
           return false
         }
         triggerError()
-        const errorMessage = err instanceof Error ? err.message : t('m.Pej4iSQ')
+        const errorMessage =
+          err instanceof Error ? err.message : t('useMobileSourceControlCommitRunners.source')
         if (!didCommit) {
           recordCommitFailure({ error: errorMessage, commitMessage: message, stagedEntries })
         }

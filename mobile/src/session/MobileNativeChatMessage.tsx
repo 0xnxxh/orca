@@ -171,13 +171,13 @@ function Prose({
           source={{ uri }}
           style={styles.imageThumb}
           resizeMode="contain"
-          accessibilityLabel={block.alt ?? t('m.tSzSq0U')}
+          accessibilityLabel={block.alt ?? t('mobileNativeChatMessage.attached')}
         />
       )
     }
     return (
       <Text style={[styles.imageRef, { fontSize: TEXT_SIZE * fontScale }]}>
-        🖼 {block.alt ?? block.path ?? block.url ?? t('m.WL3i_AY')}
+        🖼 {block.alt ?? block.path ?? block.url ?? t('mobileNativeChatMessage.image')}
       </Text>
     )
   }
@@ -218,9 +218,17 @@ function ToolRun({
           ) : (
             <SquareChevronRight size={15} color={colors.textMuted} strokeWidth={2} />
           )}
-          <Text style={styles.toolRunCount}>{t('m.0bAYawM', { value0: callCount })}</Text>
+          <Text style={styles.toolRunCount}>
+            {t('mobileNativeChatMessage.callCountTimes', { callCount: callCount })}
+          </Text>
           <Text style={styles.toolRunLabel} numberOfLines={1}>
-            {summary || t(callCount === 1 ? 'm.uxZVTz8' : 'm.IlwwqQs', { value0: callCount })}
+            {summary ||
+              t(
+                callCount === 1
+                  ? 'mobileNativeChatMessage.callCountToolCall'
+                  : 'mobileNativeChatMessage.callCountToolCalls',
+                { callCount: callCount }
+              )}
           </Text>
         </Pressable>
         {trailing}
@@ -238,7 +246,9 @@ function ToolRun({
           ))}
           {callCount > pairs.length ? (
             <Text style={styles.toolPreview}>
-              {t('m.0mLnbZ0', { value0: callCount - pairs.length })}
+              {t('mobileNativeChatMessage.remaining', {
+                remainingToolCallCount: callCount - pairs.length
+              })}
             </Text>
           ) : null}
         </View>
@@ -262,7 +272,7 @@ function AgentControls({
         style={({ pressed }) => [styles.controlButton, pressed && styles.controlPressed]}
         onPress={onCopy}
         hitSlop={8}
-        accessibilityLabel={t('m.m5GqFPc')}
+        accessibilityLabel={t('mobileNativeChatMessage.copy')}
       >
         <Copy size={14} color={colors.textMuted} strokeWidth={2} />
       </Pressable>
@@ -271,7 +281,7 @@ function AgentControls({
           style={({ pressed }) => [styles.controlButton, pressed && styles.controlPressed]}
           onPress={onScrollToTop}
           hitSlop={8}
-          accessibilityLabel={t('m.85E7hns')}
+          accessibilityLabel={t('mobileNativeChatMessage.scroll')}
         >
           <ArrowUp size={14} color={colors.textMuted} strokeWidth={2} />
         </Pressable>
@@ -348,7 +358,9 @@ function MobileNativeChatMessageImpl({
 
   return (
     <View style={[styles.row, isUser && styles.rowUser]}>
-      {isUser && queued ? <Text style={styles.queuedTag}>{t('m.lHpfBcs')}</Text> : null}
+      {isUser && queued ? (
+        <Text style={styles.queuedTag}>{t('mobileNativeChatMessage.queued')}</Text>
+      ) : null}
       <View
         style={[
           styles.content,

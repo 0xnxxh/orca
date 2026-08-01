@@ -63,7 +63,7 @@ export function useMobileCreatePrRunner({
       const branch = status?.branch
       if (!client || !branch) {
         triggerError()
-        setActionError(t('m.IhhRQcI'))
+        setActionError(t('useMobileCreatePrRunner.check'))
         return
       }
       const created: { current: MobileHostedReviewCreateIntentRunOutcome | null } = {

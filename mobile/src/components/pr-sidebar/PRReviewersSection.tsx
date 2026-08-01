@@ -62,23 +62,23 @@ export function PRReviewersSection({ details, actions, client, worktreeId }: Pro
       style={styles.iconButton}
       onPress={() => setPickerOpen(true)}
       accessibilityRole="button"
-      accessibilityLabel={t('m.E5rQqRQ')}
+      accessibilityLabel={t('prreviewersSection.add')}
     >
       <UserPlus size={16} color={colors.textSecondary} strokeWidth={2.2} />
     </Pressable>
   )
 
   return (
-    <PRSection title={t('m.fX2uAEU')} trailing={addButton}>
+    <PRSection title={t('prreviewersSection.reviewers')} trailing={addButton}>
       {loadingDetails ? (
         <View style={styles.reviewersStatus}>
           <ActivityIndicator color={colors.textSecondary} />
-          <Text style={styles.emptyText}>{t('m.Ryr3DCQ')}</Text>
+          <Text style={styles.emptyText}>{t('prreviewersSection.loading')}</Text>
         </View>
       ) : detailsFailed ? (
-        <Text style={styles.emptyText}>{t('m.T5Uc4Ao')}</Text>
+        <Text style={styles.emptyText}>{t('prreviewersSection.could')}</Text>
       ) : rows.length === 0 ? (
-        <Text style={styles.emptyText}>{t('m.jBToX-I')}</Text>
+        <Text style={styles.emptyText}>{t('prreviewersSection.no')}</Text>
       ) : (
         rows.map((row) => {
           const busy = actions.isBusy({ kind: 'reviewer', login: row.login })
@@ -99,7 +99,7 @@ export function PRReviewersSection({ details, actions, client, worktreeId }: Pro
                 onPress={() => actions.removeReviewer(row.login)}
                 disabled={busy}
                 accessibilityRole="button"
-                accessibilityLabel={t('m.8Est-xI', { value0: row.login })}
+                accessibilityLabel={t('prreviewersSection.remove', { login: row.login })}
               >
                 {busy ? (
                   <ActivityIndicator color={colors.textSecondary} />

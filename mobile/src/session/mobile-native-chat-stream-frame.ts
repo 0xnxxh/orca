@@ -32,7 +32,10 @@ export function applyMobileNativeChatStreamFrame(args: {
 }): AppliedMobileNativeChatFrame {
   const { merger, frame, limit, replaceSnapshot } = args
   if (frame.type === 'error') {
-    return { kind: 'error', error: frame.message ?? frame.error ?? t('m.tod-ra0') }
+    return {
+      kind: 'error',
+      error: frame.message ?? frame.error ?? t('mobileNativeChatStreamFrame.transcript')
+    }
   }
   if (frame.type !== 'snapshot' && frame.type !== 'replacement' && frame.type !== 'appended') {
     return { kind: 'ignored' }

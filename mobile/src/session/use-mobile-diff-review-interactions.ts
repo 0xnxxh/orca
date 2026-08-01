@@ -189,7 +189,7 @@ export function useMobileDiffReviewInteractions(input: InteractionInput) {
         staged: currentItem.scope === 'staged'
       })
       if (!response.ok) {
-        setActionError(response.error?.message || t('m.0hhZYns'))
+        setActionError(response.error?.message || t('useMobileDiffReviewInteractions.unable'))
         return
       }
       onOpenSession()

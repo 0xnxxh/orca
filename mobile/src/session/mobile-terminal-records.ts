@@ -175,7 +175,7 @@ export function getTerminalRecordsFromSessionTabs(
     return [
       {
         handle: tab.terminal,
-        title: tab.title || t('m.BGT_JFw'),
+        title: tab.title || t('mobileTerminalRecords.terminal'),
         terminalTheme: tab.terminalTheme,
         isActive: tab.isActive === true
       }

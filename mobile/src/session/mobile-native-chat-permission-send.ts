@@ -34,7 +34,7 @@ export function useMobileNativeChatPermissionSend(args: {
     async (text: string): Promise<boolean> => {
       const terminal = args.handleRef.current
       if (!args.client || !terminal || !args.enabled) {
-        args.onSendError(t('m.6dxPsys'))
+        args.onSendError(t('mobileNativeChatPermissionSend.responseNotSentDisconnected'))
         return false
       }
       // No stale-input heal here (unlike the text/ask sends): a choice is an
@@ -49,9 +49,9 @@ export function useMobileNativeChatPermissionSend(args: {
       if (outcome === 'unknown') {
         // Why: the response may have been delivered (ack lost / path cutover) —
         // a definite "not sent" would invite a double answer.
-        args.onSendError(t('m.v7vfn5Q'))
+        args.onSendError(t('mobileNativeChatPermissionSend.responseUnconfirmed'))
       } else if (outcome === 'rejected') {
-        args.onSendError(t('m.zGX7CcI'))
+        args.onSendError(t('mobileNativeChatPermissionSend.responseNotSent'))
       }
       return outcome === 'accepted'
     },

@@ -221,7 +221,7 @@ async function verifyTerminalArtifactBaseContent(
       status: 'error',
       error: {
         status: 'error',
-        message: t('m.kYWeCgo'),
+        message: t('mobileFilePreviewRequest.file'),
         reconnect: false
       }
     }

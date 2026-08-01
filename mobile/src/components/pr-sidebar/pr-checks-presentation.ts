@@ -74,7 +74,14 @@ const OUTCOME_BY_STATE: Record<ProviderCheckSummary['state'], CheckOutcome | 'no
 
 export function summarizePRChecks(checks: readonly PRCheckDetail[]): PRChecksSummary {
   if (checks.length === 0) {
-    return { total: 0, passed: 0, pending: 0, failed: 0, outcome: 'none', label: t('m.hCKjn9A') }
+    return {
+      total: 0,
+      passed: 0,
+      pending: 0,
+      failed: 0,
+      outcome: 'none',
+      label: t('prChecksPresentation.no')
+    }
   }
   // Counts and the worst-case rollup come from the shared summarizer; only the label wording is mobile's.
   const { total, passed, pending, failed, neutral, state } = summarizeProviderChecks(checks)
@@ -122,25 +129,27 @@ export function summarizePRChecks(checks: readonly PRCheckDetail[]): PRChecksSum
 // outcome is readable without expanding the row. Mirrors getCheckStatusLabel.
 export function checkStatusLabel(check: PRCheckDetail): string {
   if (check.status !== 'completed') {
-    return check.status === 'in_progress' ? t('m.9XDJxdU') : t('m.NEg29tM')
+    return check.status === 'in_progress'
+      ? t('prChecksPresentation.progress')
+      : t('prChecksPresentation.pending')
   }
   switch (check.conclusion) {
     case 'success':
-      return t('m.6lXfNVk')
+      return t('prChecksPresentation.successful')
     case 'failure':
-      return t('m.NO0ZjtQ')
+      return t('prChecksPresentation.failed')
     case 'cancelled':
-      return t('m.thrHxG4')
+      return t('prChecksPresentation.cancelled')
     case 'timed_out':
-      return t('m.lyHptRM')
+      return t('prChecksPresentation.timed')
     case 'action_required':
       return t('prChecks.status.actionRequired')
     case 'neutral':
-      return t('m.Ba1jOdE')
+      return t('prChecksPresentation.neutral')
     case 'skipped':
-      return t('m.8I2nZuQ')
+      return t('prChecksPresentation.skipped')
     default:
-      return t('m.NEg29tM')
+      return t('prChecksPresentation.pending')
   }
 }
 
@@ -188,10 +197,10 @@ export type PRStateBadge = {
 }
 
 const PR_STATE_LABELS: Record<PRState, string> = {
-  open: t('m.sbQ_yBw'),
-  merged: t('m.AF7gJFU'),
-  draft: t('m.QYCFjQw'),
-  closed: t('m.tNw1xEA')
+  open: t('prChecksPresentation.open'),
+  merged: t('prChecksPresentation.merged'),
+  draft: t('prChecksPresentation.draft'),
+  closed: t('prChecksPresentation.closed')
 }
 
 // State-badge color comes from the shared prStateToken so the sidebar badge and
@@ -215,20 +224,41 @@ function reviewStateLabel(state: string | null | undefined): {
 } {
   switch (state) {
     case 'APPROVED':
-      return { label: t('m.IloG18k'), token: 'statusGreen' }
+      return {
+        label: t('prChecksPresentation.approved'),
+        token: 'statusGreen'
+      }
     case 'CHANGES_REQUESTED':
-      return { label: t('m.rjj84-Y'), token: 'statusRed' }
+      return {
+        label: t('prChecksPresentation.changes'),
+        token: 'statusRed'
+      }
     case 'COMMENTED':
-      return { label: t('m.bF0aphw'), token: 'textSecondary' }
+      return {
+        label: t('prChecksPresentation.commented'),
+        token: 'textSecondary'
+      }
     case 'DISMISSED':
-      return { label: t('m.dmAcep8'), token: 'textSecondary' }
+      return {
+        label: t('prChecksPresentation.dismissed'),
+        token: 'textSecondary'
+      }
     case 'PENDING':
-      return { label: t('m.NEg29tM'), token: 'statusAmber' }
+      return {
+        label: t('prChecksPresentation.pending'),
+        token: 'statusAmber'
+      }
     case null:
     case undefined:
-      return { label: t('m._IeDTL8'), token: 'textSecondary' }
+      return {
+        label: t('prChecksPresentation.reviewed'),
+        token: 'textSecondary'
+      }
     default:
-      return { label: t('m._IeDTL8'), token: 'textSecondary' }
+      return {
+        label: t('prChecksPresentation.reviewed'),
+        token: 'textSecondary'
+      }
   }
 }
 
@@ -250,7 +280,7 @@ export function getPRReviewerRows(item: ReviewDisplayItem): ReviewerRow[] {
       login,
       name: user.name,
       avatarUrl: user.avatarUrl,
-      stateLabel: t('m.RfH2kOg'),
+      stateLabel: t('prChecksPresentation.requested'),
       token: 'statusAmber'
     })
   }

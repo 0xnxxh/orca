@@ -83,7 +83,7 @@ export function createCloseWithBulkActions(
 ) {
   return (target: MobileSessionTab | null, dismiss: () => void): ActionSheetAction[] => [
     {
-      label: t('m.fZbxiK0'),
+      label: t('mobileBulkCloseSheetActions.close'),
       destructive: true,
       onPress: () => {
         dismiss()

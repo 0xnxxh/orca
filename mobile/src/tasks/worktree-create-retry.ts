@@ -72,7 +72,7 @@ export async function createWorktreeWithNameRetry(
       break
     }
   }
-  return { error: lastError ?? t('m.G_aoVj8') }
+  return { error: lastError ?? t('worktreeCreateRetry.failed') }
 }
 
 // Sends worktree.create, re-issuing on a connection-migration cutover only. The

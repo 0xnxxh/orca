@@ -18,12 +18,12 @@ export function SmartWorkspaceAdvancedFields({ composer, selectedRepoIsGit }: Pr
     <>
       {selection ? (
         <View style={styles.field}>
-          <Text style={styles.label}>{t('m.jueQw6Q')}</Text>
+          <Text style={styles.label}>{t('smartWorkspaceAdvancedFields.name')}</Text>
           <TextInput
             style={styles.input}
             value={composer.name}
             onChangeText={composer.setName}
-            placeholder={t('m.MJ_zXUU')}
+            placeholder={t('smartWorkspaceAdvancedFields.workspace')}
             placeholderTextColor={colors.textMuted}
             autoCapitalize="none"
             autoCorrect={false}
@@ -33,12 +33,12 @@ export function SmartWorkspaceAdvancedFields({ composer, selectedRepoIsGit }: Pr
 
       {showBranchOverride ? (
         <View style={styles.field}>
-          <Text style={styles.label}>{t('m.CATZTEM')}</Text>
+          <Text style={styles.label}>{t('smartWorkspaceAdvancedFields.branch')}</Text>
           <TextInput
             style={styles.input}
             value={composer.branchNameOverride ?? ''}
             onChangeText={composer.handleBranchNameOverrideChange}
-            placeholder={t('m.Lkm1Ms4')}
+            placeholder={t('smartWorkspaceAdvancedFields.derived')}
             placeholderTextColor={colors.textMuted}
             autoCapitalize="none"
             autoCorrect={false}
@@ -50,7 +50,9 @@ export function SmartWorkspaceAdvancedFields({ composer, selectedRepoIsGit }: Pr
         <View style={styles.field}>
           <View style={styles.reuseRow}>
             <Text style={styles.reuseLabel} numberOfLines={1}>
-              {t('m.Yz166iM', { value0: composer.reuseEligibleBranch })}
+              {t('smartWorkspaceAdvancedFields.reuse', {
+                reuseEligibleBranch: composer.reuseEligibleBranch
+              })}
             </Text>
             <Switch
               value={composer.reuseSelectedBranch}

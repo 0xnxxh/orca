@@ -37,12 +37,12 @@ export function MobileSourceControlPrChip({ summary, onPress }: Props) {
         <>
           <ActivityIndicator size="small" color={colors.textSecondary} />
           <Text style={hubStyles.chipMutedText} numberOfLines={1}>
-            {t('m.xoN_ZQM')}
+            {t('mobileSourceControlPrChip.loadingPullRequest')}
           </Text>
         </>
       ) : summary.kind === 'none' ? (
         <>
-          <Text style={hubStyles.chipCreateText}>{t('m.Q1mHSX4')}</Text>
+          <Text style={hubStyles.chipCreateText}>{t('mobileSourceControlPrChip.create')}</Text>
           <View style={hubStyles.chipSpacer} />
           <ChevronRight size={16} color={colors.textMuted} strokeWidth={2.1} />
         </>
@@ -106,11 +106,13 @@ function RollupIcon({ kind, color }: { kind: MobilePrChipRollup['kind']; color: 
 function chipAccessibilityLabel(summary: MobilePrChipSummary): string {
   switch (summary.kind) {
     case 'loading':
-      return t('m.MkY5xK4')
+      return t('mobileSourceControlPrChip.loadingPullRequestMessage')
     case 'none':
-      return t('m.Q1mHSX4')
+      return t('mobileSourceControlPrChip.create')
     case 'unavailable':
-      return t('m.oDQaC0g', { value0: summary.message })
+      return t('mobileSourceControlPrChip.pullRequestUnavailable', {
+        summaryMessage: summary.message
+      })
     case 'ready': {
       const comments =
         summary.commentCount != null && summary.commentCount > 0
@@ -121,11 +123,11 @@ function chipAccessibilityLabel(summary: MobilePrChipSummary): string {
               { count: summary.commentCount }
             )
           : ''
-      return t('m.RvLuxao', {
-        value0: summary.number,
-        value1: summary.stateLabel,
-        value2: summary.rollup.text,
-        value3: comments
+      return t('mobileSourceControlPrChip.pullRequestPull', {
+        pullRequestNumber: summary.number,
+        stateLabel: summary.stateLabel,
+        checkSummary: summary.rollup.text,
+        commentSummary: comments
       })
     }
   }

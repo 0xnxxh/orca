@@ -19,7 +19,7 @@ export function useMobileNativeChatCancelAsk(args: {
   return useCallback(async (): Promise<boolean> => {
     const handle = handleRef.current
     if (!client || !handle || !enabled) {
-      onSendError(t('m.Z_x_TcE'))
+      onSendError(t('useMobileNativeChatCancelAsk.cancelNotSentDisconnected'))
       return false
     }
     cancelPending()
@@ -37,9 +37,9 @@ export function useMobileNativeChatCancelAsk(args: {
     if (outcome === 'unknown') {
       // Why: the Escape may have landed (ack lost / path cutover) — a definite
       // "not sent" would invite a second Escape into a changed prompt state.
-      onSendError(t('m.chT2Z44'))
+      onSendError(t('useMobileNativeChatCancelAsk.cancelUnconfirmed'))
     } else if (outcome === 'rejected') {
-      onSendError(t('m.htcCRsA'))
+      onSendError(t('useMobileNativeChatCancelAsk.cancelNotSent'))
     }
     return outcome === 'accepted'
   }, [cancelPending, client, deviceTokenRef, enabled, handleRef, onSendError])

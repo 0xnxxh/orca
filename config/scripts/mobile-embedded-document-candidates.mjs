@@ -4,7 +4,7 @@ import ts from 'typescript-api'
 const EMBEDDED_DOCUMENT_FILE_RE = /(?:-html|webview-html)\.[cm]?[jt]sx?$/
 const USER_VISIBLE_ATTRIBUTE_RE =
   /\b(aria-description|aria-label|alt|data-placeholder|placeholder|title)\s*=\s*(["'])(.*?)\2/gi
-const USER_VISIBLE_PROMPT_RE = /\b(?:window\.)?(alert|confirm|prompt)\(\s*(["'])(.*?)\2/g
+const USER_VISIBLE_PROMPT_START_RE = /\b(?:window\.)?(alert|confirm|prompt)\(\s*/g
 const INSERTED_HTML_CALL_RE = /\bexecCommand\(\s*(["'])insertHTML\1\s*,\s*false\s*,/g
 
 function maskNonMarkupContent(documentText) {
@@ -17,33 +17,57 @@ function capturedOffset(match, capturedValue) {
   return (match.index ?? 0) + match[0].indexOf(capturedValue)
 }
 
+function collectTextCandidates(value, baseOffset, kind, candidates) {
+  if (!value.includes('${')) {
+    candidates.push({
+      start: baseOffset,
+      end: baseOffset + value.length,
+      kind,
+      text: value,
+      dynamic: false
+    })
+    return
+  }
+
+  let cursor = 0
+  while (cursor < value.length) {
+    const interpolationStart = value.indexOf('${', cursor)
+    const segmentEnd = interpolationStart === -1 ? value.length : interpolationStart
+    if (segmentEnd > cursor) {
+      candidates.push({
+        start: baseOffset + cursor,
+        end: baseOffset + segmentEnd,
+        kind,
+        text: value.slice(cursor, segmentEnd),
+        dynamic: true
+      })
+    }
+    if (interpolationStart === -1) {
+      break
+    }
+    cursor = skipTemplateInterpolation(value, interpolationStart)
+  }
+}
+
 function collectMarkupCandidates(markup, baseOffset, candidates) {
   for (const match of markup.matchAll(USER_VISIBLE_ATTRIBUTE_RE)) {
     const value = match[3]
-    if (!value.includes('${')) {
-      const start = baseOffset + capturedOffset(match, value)
-      candidates.push({
-        start,
-        end: start + value.length,
-        kind: `embedded-html-attribute:${match[1].toLowerCase()}`,
-        text: value,
-        dynamic: false
-      })
-    }
+    collectTextCandidates(
+      value,
+      baseOffset + capturedOffset(match, value),
+      `embedded-html-attribute:${match[1].toLowerCase()}`,
+      candidates
+    )
   }
 
   for (const match of markup.matchAll(/>([^<]+)</g)) {
     const value = match[1]
-    if (!value.includes('${')) {
-      const start = baseOffset + capturedOffset(match, value)
-      candidates.push({
-        start,
-        end: start + value.length,
-        kind: 'embedded-html-text',
-        text: value,
-        dynamic: false
-      })
-    }
+    collectTextCandidates(
+      value,
+      baseOffset + capturedOffset(match, value),
+      'embedded-html-text',
+      candidates
+    )
   }
 }
 
@@ -56,13 +80,7 @@ function collectMarkupFragmentCandidates(markup, baseOffset, candidates) {
     }
     const value = match[1]
     const start = baseOffset + capturedOffset(match, value)
-    candidates.push({
-      start,
-      end: start + value.length,
-      kind: 'embedded-html-text',
-      text: value,
-      dynamic: false
-    })
+    collectTextCandidates(value, start, 'embedded-html-text', candidates)
   }
 }
 
@@ -98,6 +116,63 @@ function skipTemplateInterpolation(source, start) {
     }
   }
   return cursor
+}
+
+function templateLiteralEnd(source, start) {
+  let cursor = start + 1
+  while (cursor < source.length) {
+    if (source[cursor] === '\\') {
+      cursor += 2
+    } else if (source.startsWith('${', cursor)) {
+      cursor = skipTemplateInterpolation(source, cursor)
+    } else if (source[cursor] === '`') {
+      return cursor + 1
+    } else {
+      cursor += 1
+    }
+  }
+  return source.length
+}
+
+function escapedTemplateLiteralEnd(source, start) {
+  let cursor = start + 2
+  while (cursor < source.length) {
+    if (source.startsWith('${', cursor)) {
+      cursor = skipTemplateInterpolation(source, cursor)
+    } else if (source.startsWith('\\`', cursor)) {
+      return cursor + 2
+    } else if (source[cursor] === '\\') {
+      cursor += 2
+    } else {
+      cursor += 1
+    }
+  }
+  return source.length
+}
+
+function collectPromptCandidates(documentText, baseOffset, candidates) {
+  for (const match of documentText.matchAll(USER_VISIBLE_PROMPT_START_RE)) {
+    const argumentStart = (match.index ?? 0) + match[0].length
+    const quote = documentText[argumentStart]
+    const escapedTemplate = quote === '\\' && documentText[argumentStart + 1] === '`'
+    if (quote !== '"' && quote !== "'" && quote !== '`' && !escapedTemplate) {
+      continue
+    }
+    const argumentEnd = escapedTemplate
+      ? escapedTemplateLiteralEnd(documentText, argumentStart)
+      : quote === '`'
+        ? templateLiteralEnd(documentText, argumentStart)
+        : skipQuotedString(documentText, argumentStart)
+    const valueStart = argumentStart + (escapedTemplate ? 2 : 1)
+    const valueEnd = argumentEnd - (escapedTemplate ? 2 : 1)
+    const value = documentText.slice(valueStart, valueEnd)
+    collectTextCandidates(
+      value,
+      baseOffset + valueStart,
+      `embedded-web-${match[1].toLowerCase()}`,
+      candidates
+    )
+  }
 }
 
 function insertedHtmlArgumentEnd(source, start) {
@@ -165,17 +240,7 @@ export function collectMobileEmbeddedDocumentCandidates(filePath, sourceText) {
       const baseOffset = node.getStart(sourceFile) + 1
       collectMarkupCandidates(maskNonMarkupContent(documentText), baseOffset, candidates)
 
-      for (const match of documentText.matchAll(USER_VISIBLE_PROMPT_RE)) {
-        const value = match[3]
-        const start = baseOffset + capturedOffset(match, value)
-        candidates.push({
-          start,
-          end: start + value.length,
-          kind: `embedded-web-${match[1].toLowerCase()}`,
-          text: value,
-          dynamic: false
-        })
-      }
+      collectPromptCandidates(documentText, baseOffset, candidates)
 
       for (const match of documentText.matchAll(INSERTED_HTML_CALL_RE)) {
         const argumentStart = (match.index ?? 0) + match[0].length

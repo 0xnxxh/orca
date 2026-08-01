@@ -431,11 +431,11 @@ export function MobileBrowserPane({
       busyRef.current = false
       setBusy(false)
       if (screencastSupported === false) {
-        setError(t('m.X2WJPN4'))
+        setError(t('mobileBrowserPane.update'))
       } else if (screencastSupported === null) {
-        setError(t('m.lBu6FGw'))
+        setError(t('mobileBrowserPane.checking'))
       } else if (!tab.browserPageId) {
-        setError(t('m.YmwDAcU'))
+        setError(t('mobileBrowserPane.browserPage'))
       }
       return
     }
@@ -447,7 +447,7 @@ export function MobileBrowserPane({
       }
       busyRef.current = false
       setBusy(false)
-      setError(t('m.ZoS2fOc'))
+      setError(t('mobileBrowserPane.browserStreamTimed'))
     }, 15_000)
     const clearStartupTimer = (): void => {
       if (startupTimer) {
@@ -503,7 +503,7 @@ export function MobileBrowserPane({
         } else if (event.type === 'dialog') {
           setDialog({
             dialogType: event.dialogType ?? 'alert',
-            message: event.message ?? t('m.a6UgDc8')
+            message: event.message ?? t('mobileBrowserPane.browserDialog')
           })
         } else if (event.type === 'dialogClosed') {
           setDialog(null)
@@ -513,7 +513,8 @@ export function MobileBrowserPane({
             busyRef.current = false
             setBusy(false)
           }
-          const message = event.message ?? event.error?.message ?? t('m.21rrqn0')
+          const message =
+            event.message ?? event.error?.message ?? t('mobileBrowserPane.browserStreamFailed')
           if (shouldSurfaceBrowserError(message)) {
             if (readyRef.current) {
               readyRef.current = false
@@ -579,7 +580,7 @@ export function MobileBrowserPane({
         setError(null)
         return (response as RpcSuccess).result
       } catch (err) {
-        const message = browserErrorMessage(err, t('m.9E99YI8'))
+        const message = browserErrorMessage(err, t('mobileBrowserPane.browserCommand'))
         if (!opts.suppressError && shouldSurfaceBrowserError(message)) {
           setError(message)
         }
@@ -597,7 +598,7 @@ export function MobileBrowserPane({
   const navigateToAddress = useCallback(async () => {
     const url = normalizeBrowserUrl(addressValue)
     if (!url) {
-      setError(t('m.5dQ6Hbc'))
+      setError(t('mobileBrowserPane.enter'))
       return
     }
     const result = (await sendBrowserRequest(
@@ -630,7 +631,7 @@ export function MobileBrowserPane({
             x: pending.point.x,
             y: pending.point.y
           }),
-          t('m.A-4DgN0')
+          t('mobileBrowserPane.browserPointerMove')
         )
         assertRpcOk(
           await client.sendRequest('browser.mouseWheel', {
@@ -638,7 +639,7 @@ export function MobileBrowserPane({
             dx: pending.dx,
             dy: pending.dy
           }),
-          t('m.yrjs9M0')
+          t('mobileBrowserPane.browserScroll')
         )
         setError(null)
       } catch {
@@ -683,15 +684,15 @@ export function MobileBrowserPane({
       try {
         assertRpcOk(
           await client.sendRequest('browser.mouseMove', { ...base, x: point.x, y: point.y }),
-          t('m.A-4DgN0')
+          t('mobileBrowserPane.browserPointerMove')
         )
         assertRpcOk(
           await client.sendRequest('browser.mouseDown', { ...base, button }),
-          t('m.oaarOD4')
+          t('mobileBrowserPane.browserPointerDown')
         )
         assertRpcOk(
           await client.sendRequest('browser.mouseUp', { ...base, button }),
-          t('m._ax72Jw')
+          t('mobileBrowserPane.browserPointerUp')
         )
         setError(null)
       } catch {
@@ -794,7 +795,7 @@ export function MobileBrowserPane({
         }
         rightClickSentRef.current = true
         void sendPointerClick(point, 'right')
-        onToast(t('m.X1FYz1o'))
+        onToast(t('mobileBrowserPane.right'))
       }, LONG_PRESS_MS)
     },
     [clearLongPressTimer, frameGeometry, mapTouchPoint, onToast, sendPointerClick]
@@ -939,7 +940,7 @@ export function MobileBrowserPane({
       { suppressError: true }
     )
     if (result !== null) {
-      onToast(t('m.aJGSaVI'))
+      onToast(t('mobileBrowserPane.sent'))
     } else {
       setKeyboardValue(text)
     }
@@ -1086,21 +1087,21 @@ export function MobileBrowserPane({
       <View style={styles.toolbar}>
         <MobileBrowserToolbarIconButton
           disabled={controlsDisabled || !tab.canGoBack}
-          label={t('m.a_PEZW8')}
+          label={t('mobileBrowserPane.back')}
           onPress={goBack}
         >
           <ChevronLeft size={15} color={buttonColor(!controlsDisabled && tab.canGoBack)} />
         </MobileBrowserToolbarIconButton>
         <MobileBrowserToolbarIconButton
           disabled={controlsDisabled || !tab.canGoForward}
-          label={t('m.-YMBg9U')}
+          label={t('mobileBrowserPane.forward')}
           onPress={goForward}
         >
           <ChevronRight size={15} color={buttonColor(!controlsDisabled && tab.canGoForward)} />
         </MobileBrowserToolbarIconButton>
         <MobileBrowserToolbarIconButton
           disabled={controlsDisabled}
-          label={t('m.GVCAd00')}
+          label={t('mobileBrowserPane.reload')}
           onPress={reloadPage}
         >
           <RefreshCw size={15} color={buttonColor(!controlsDisabled)} />
@@ -1119,7 +1120,7 @@ export function MobileBrowserPane({
           keyboardType={Platform.OS === 'ios' ? 'url' : 'default'}
           numberOfLines={1}
           returnKeyType="go"
-          placeholder={t('m.-00MlTU')}
+          placeholder={t('mobileBrowserPane.url')}
           placeholderTextColor={colors.textMuted}
           editable={!controlsDisabled}
         />
@@ -1229,7 +1230,7 @@ export function MobileBrowserPane({
         {dialog ? (
           <View style={styles.dialogOverlay}>
             <View style={styles.dialogCard}>
-              <Text style={styles.dialogTitle}>{t('m.z1nkBLw')}</Text>
+              <Text style={styles.dialogTitle}>{t('mobileBrowserPane.browserDialogMessage')}</Text>
               <Text style={styles.dialogMessage}>{dialog.message}</Text>
               <View style={styles.dialogActions}>
                 {dialog.dialogType !== 'alert' ? (
@@ -1240,7 +1241,7 @@ export function MobileBrowserPane({
                     ]}
                     onPress={() => void sendDialogCommand('browser.dialogDismiss')}
                   >
-                    <Text style={styles.dialogButtonText}>{t('m.RXEfHVA')}</Text>
+                    <Text style={styles.dialogButtonText}>{t('mobileBrowserPane.cancel')}</Text>
                   </Pressable>
                 ) : null}
                 <Pressable
@@ -1252,7 +1253,7 @@ export function MobileBrowserPane({
                   onPress={() => void sendDialogCommand('browser.dialogAccept')}
                 >
                   <Text style={[styles.dialogButtonText, styles.dialogButtonPrimaryText]}>
-                    {t('m.48esWoc')}
+                    {t('mobileBrowserPane.ok')}
                   </Text>
                 </Pressable>
               </View>
@@ -1281,7 +1282,7 @@ export function MobileBrowserPane({
             style={styles.keyboardInput}
             value={keyboardValue}
             onChangeText={setKeyboardValue}
-            placeholder={t('m.g3GvsOs')}
+            placeholder={t('mobileBrowserPane.type')}
             placeholderTextColor={colors.textMuted}
             autoCapitalize="none"
             autoCorrect={false}
@@ -1292,7 +1293,7 @@ export function MobileBrowserPane({
             style={[styles.sendButton, (controlsDisabled || !keyboardValue) && styles.disabled]}
             disabled={controlsDisabled || !keyboardValue}
             onPress={() => void sendKeyboardText()}
-            accessibilityLabel={t('m.rfYWlSA')}
+            accessibilityLabel={t('mobileBrowserPane.send')}
           >
             <ArrowUp size={18} color={buttonColor(!controlsDisabled && !!keyboardValue)} />
           </Pressable>

@@ -105,9 +105,9 @@ type HomeLinearStatus = {
 
 function taskProviderLabel(provider: TaskProvider): string {
   return {
-    github: t('m.TH4OaOM'),
-    gitlab: t('m.fvIr9H8'),
-    linear: t('m.kZGbeC4')
+    github: t('home.gitHub'),
+    gitlab: t('home.gitLab'),
+    linear: t('home.linear')
   }[provider]
 }
 
@@ -626,11 +626,11 @@ export default function HomeScreen() {
         <ListTodo size={18} color={colors.textSecondary} />
       </View>
       <View style={styles.taskHomeMain}>
-        <Text style={styles.taskHomeTitle}>{t('m.y7w0hIs')}</Text>
+        <Text style={styles.taskHomeTitle}>{t('home.tasks')}</Text>
         <Text style={styles.taskHomeSubtitle} numberOfLines={1}>
           {primaryTaskProviders.length > 0
             ? primaryTaskProviders.map(taskProviderLabel).join(' · ')
-            : t('m.1_sz9cs')}
+            : t('home.no')}
         </Text>
       </View>
       <View style={styles.taskHomeTrailing}>
@@ -642,7 +642,9 @@ export default function HomeScreen() {
             <Pressable
               key={provider}
               accessibilityRole="button"
-              accessibilityLabel={t('m.tNj4XnM', { value0: taskProviderLabel(provider) })}
+              accessibilityLabel={t('home.openTask', {
+                taskProviderLabel: taskProviderLabel(provider)
+              })}
               hitSlop={8}
               style={({ pressed }) => [
                 styles.taskHomeProviderButton,
@@ -674,7 +676,7 @@ export default function HomeScreen() {
     } catch {
       // Why: ConfirmModal closes on confirm; re-open for retry so the failure isn't silent.
       setConfirmRemove(hostToRemove)
-      Alert.alert(t('m.U7WlIpo'), t('m.GLgoz1s'))
+      Alert.alert(t('home.could'), t('home.please'))
     }
   }
 
@@ -686,7 +688,7 @@ export default function HomeScreen() {
           <View style={styles.logoMark}>
             <OrcaLogo size={18} />
           </View>
-          <Text style={styles.brandName}>{t('m.VjaDNq0')}</Text>
+          <Text style={styles.brandName}>{t('home.orca')}</Text>
         </View>
         <Pressable
           style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
@@ -706,16 +708,16 @@ export default function HomeScreen() {
           ]}
         >
           <View style={styles.emptyHero}>
-            <Text style={styles.emptyTitle}>{t('m.8vieqXE')}</Text>
-            <Text style={styles.emptyBody}>{t('m.QT_H7rk')}</Text>
+            <Text style={styles.emptyTitle}>{t('home.connectYour')}</Text>
+            <Text style={styles.emptyBody}>{t('home.pairingDescription')}</Text>
             <Pressable style={styles.primaryButton} onPress={() => router.push('/pair-scan')}>
               <QrCode size={17} color={colors.bgBase} />
-              <Text style={styles.primaryButtonText}>{t('m.lWqrsbM')}</Text>
+              <Text style={styles.primaryButtonText}>{t('home.pair')}</Text>
             </Pressable>
           </View>
 
           <View style={styles.stepsSection}>
-            <Text style={styles.sectionHeading}>{t('m.9HldFAc')}</Text>
+            <Text style={styles.sectionHeading}>{t('home.how')}</Text>
             {getOnboardingSteps().map((step, i) => (
               <View key={step.title} style={[styles.stepRow, i > 0 && styles.stepRowBorder]}>
                 <View style={styles.stepNum}>
@@ -743,7 +745,7 @@ export default function HomeScreen() {
           ListHeaderComponent={
             <View>
               <View style={styles.hero}>
-                <Text style={styles.heroTitle}>{t('m.9i5ZhFo')}</Text>
+                <Text style={styles.heroTitle}>{t('home.welcome')}</Text>
               </View>
 
               {stats && (
@@ -752,20 +754,20 @@ export default function HomeScreen() {
                     <Text style={styles.statValue}>
                       {stats.totalAgentsSpawned.toLocaleString()}
                     </Text>
-                    <Text style={styles.statLabel}>{t('m.qFFbXcQ')}</Text>
+                    <Text style={styles.statLabel}>{t('home.agents')}</Text>
                   </View>
                   <View style={styles.statCard}>
                     <Text style={styles.statValue}>{formatDuration(stats.totalAgentTimeMs)}</Text>
-                    <Text style={styles.statLabel}>{t('m.4uJ9yUY')}</Text>
+                    <Text style={styles.statLabel}>{t('home.agent')}</Text>
                   </View>
                   <View style={styles.statCard}>
                     <Text style={styles.statValue}>{stats.totalPRsCreated.toLocaleString()}</Text>
-                    <Text style={styles.statLabel}>{t('m.TPknwrs')}</Text>
+                    <Text style={styles.statLabel}>{t('home.prs')}</Text>
                   </View>
                 </View>
               )}
 
-              <Text style={styles.sectionHeading}>{t('m.81Qrbno')}</Text>
+              <Text style={styles.sectionHeading}>{t('home.desktops')}</Text>
             </View>
           }
           ItemSeparatorComponent={CardGap}
@@ -803,7 +805,7 @@ export default function HomeScreen() {
               {resumeWorktree ? (
                 <>
                   <Text style={[styles.sectionHeading, styles.sectionHeadingTightTop]}>
-                    {t('m.ROZQW2U')}
+                    {t('home.resume')}
                   </Text>
                   <Pressable
                     style={({ pressed }) => [styles.resumeCard, pressed && styles.hostCardPressed]}
@@ -841,14 +843,14 @@ export default function HomeScreen() {
                     <ChevronRight size={16} color={colors.textMuted} />
                   </Pressable>
                   <Text style={[styles.sectionHeading, styles.sectionHeadingTightTop]}>
-                    {t('m.y7w0hIs')}
+                    {t('home.tasks')}
                   </Text>
                   {renderTaskHomeCard()}
                 </>
               ) : (
                 <>
                   <Text style={[styles.sectionHeading, styles.sectionHeadingTightTop]}>
-                    {t('m.y7w0hIs')}
+                    {t('home.tasks')}
                   </Text>
                   {renderTaskHomeCard()}
                 </>
@@ -856,7 +858,7 @@ export default function HomeScreen() {
 
               {/* ─── Quick actions ─── */}
               <Text style={[styles.sectionHeading, { marginTop: spacing.xl }]}>
-                {t('m.1St5QBU')}
+                {t('home.quick')}
               </Text>
               <View style={styles.quickActions}>
                 <Pressable
@@ -867,7 +869,7 @@ export default function HomeScreen() {
                     <QrCode size={16} color={colors.textSecondary} />
                   </View>
                   <Text style={styles.quickActionLabel} numberOfLines={2}>
-                    {t('m.lWqrsbM')}
+                    {t('home.pair')}
                   </Text>
                 </Pressable>
                 <Pressable
@@ -887,7 +889,7 @@ export default function HomeScreen() {
                     <Plus size={16} color={colors.textSecondary} />
                   </View>
                   <Text style={styles.quickActionLabel} numberOfLines={2}>
-                    {t('m.8CNCPA8')}
+                    {t('home.new')}
                   </Text>
                 </Pressable>
               </View>
@@ -896,7 +898,7 @@ export default function HomeScreen() {
               {accountsHosts.length > 0 ? (
                 <>
                   <Text style={[styles.sectionHeading, { marginTop: spacing.xl }]}>
-                    {t('m.VXpHvL4')}
+                    {t('home.account')}
                   </Text>
                   {accountsHosts.map(({ host, snapshot }) => {
                     const claudeActiveId = snapshot.claude.activeAccountId
@@ -944,17 +946,17 @@ export default function HomeScreen() {
                               </View>
                               <View style={styles.accountsInfo}>
                                 <Text style={styles.accountsEmail} numberOfLines={1}>
-                                  {active?.email ?? t('m.IOLibYw')}
+                                  {active?.email ?? t('home.system')}
                                 </Text>
                                 <View style={styles.accountsBars}>
                                   <UsageBar
-                                    label={t('m._KqkyAU')}
+                                    label={t('home.five')}
                                     usedPercent={sessionBar.usedPercent}
                                     unavailable={sessionBar.unavailable}
                                     loading={sessionBar.loading}
                                   />
                                   <UsageBar
-                                    label={t('m.JnIDr0Y')}
+                                    label={t('home.seven')}
                                     usedPercent={weeklyBar.usedPercent}
                                     unavailable={weeklyBar.unavailable}
                                     loading={weeklyBar.loading}
@@ -986,11 +988,11 @@ export default function HomeScreen() {
             ? (hostLastConnected[actionTarget.id] ?? null) != null
             : false,
           labels: {
-            connect: t('m.X0HdEQ0'),
-            reconnect: t('m.Ho177Ac'),
-            disconnect: t('m.RwT781U'),
-            editHost: t('m.dqjXxV8'),
-            remove: t('m.t1m0jcA')
+            connect: t('home.connect'),
+            reconnect: t('home.reconnect'),
+            disconnect: t('home.disconnect'),
+            editHost: t('home.edit'),
+            remove: t('home.remove')
           },
           onDismiss: () => setActionTarget(null),
           onReconnect: (hostId) => void forceReconnectHost(hostId),
@@ -1003,9 +1005,11 @@ export default function HomeScreen() {
 
       <ConfirmModal
         visible={confirmRemove != null}
-        title={t('m.yOJT3HY')}
-        message={t('m.o8-uNXo', { value0: confirmRemove?.name })}
-        confirmLabel={t('m.t1m0jcA')}
+        title={t('home.removeHost')}
+        message={t('home.removeConfirm', {
+          confirmRemoveName: confirmRemove?.name
+        })}
+        confirmLabel={t('home.remove')}
         destructive
         onConfirm={() => void handleRemove()}
         onCancel={() => setConfirmRemove(null)}
@@ -1020,9 +1024,18 @@ function CardGap() {
 
 function getOnboardingSteps() {
   return [
-    { title: t('m.N1Ra8Og'), desc: t('m.aCJTiqw') },
-    { title: t('m.bKwbnYs'), desc: t('m.-SigWBo') },
-    { title: t('m.rqAbU9s'), desc: t('m.td40qOY') }
+    {
+      title: t('home.openOrca'),
+      desc: t('home.go')
+    },
+    {
+      title: t('home.scan'),
+      desc: t('home.tap')
+    },
+    {
+      title: t('home.youre'),
+      desc: t('home.your')
+    }
   ]
 }
 

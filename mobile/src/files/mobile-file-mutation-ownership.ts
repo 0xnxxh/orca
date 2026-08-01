@@ -7,7 +7,7 @@ import type { RpcFailure, RpcSuccess } from '../transport/types'
 import { t } from '@/i18n/mobile-i18n'
 
 const FILE_MUTATION_TIMEOUT_MS = 15_000
-const SSH_OWNER_CHANGED_MESSAGE = t('m.hf0yXVE')
+const SSH_OWNER_CHANGED_MESSAGE = t('mobileFileMutationOwnership.could')
 
 export type MobileFileMutationOwnership = SshMutationExpectation & {
   expectedExecutionHostId: 'local' | `ssh:${string}`

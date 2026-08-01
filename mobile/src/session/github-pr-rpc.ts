@@ -95,7 +95,10 @@ async function sendGithubPrRead<T>(
   try {
     const response = await client.sendRequest(method, params)
     if (!response.ok) {
-      return { ok: false, error: response.error?.message || t('m.jdt98Vo', { value0: method }) }
+      return {
+        ok: false,
+        error: response.error?.message || t('githubPrRpc.request', { requestMethod: method })
+      }
     }
     return { ok: true, result: parse((response as RpcSuccess).result) }
   } catch (err) {
@@ -103,7 +106,8 @@ async function sendGithubPrRead<T>(
     // rejection — normalize to the `{ ok:false, error }` contract callers expect.
     return {
       ok: false,
-      error: err instanceof Error ? err.message : t('m.jdt98Vo', { value0: method })
+      error:
+        err instanceof Error ? err.message : t('githubPrRpc.request', { requestMethod: method })
     }
   }
 }

@@ -29,7 +29,7 @@ export function MobileAgentWorkingIndicator(): React.JSX.Element {
 
   return (
     <View style={styles.row}>
-      <Text style={styles.label}>{t('m.0EPx-aA')}</Text>
+      <Text style={styles.label}>{t('mobileAgentWorkingIndicator.agent')}</Text>
       <View style={styles.dots}>
         {dots.map((dot, i) => (
           <Animated.View key={i} style={[styles.dot, { opacity: dot }]} />

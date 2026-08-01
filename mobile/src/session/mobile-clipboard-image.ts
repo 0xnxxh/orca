@@ -22,7 +22,7 @@ export function normalizeMobileClipboardImageBase64(data: string): string {
     throw new Error(CLIPBOARD_IMAGE_TOO_LARGE_ERROR)
   }
   if (contentBase64.length % 4 === 1 || !BASE64_PATTERN.test(contentBase64)) {
-    throw new Error(t('m.64b63WI'))
+    throw new Error(t('mobileClipboardImage.clipboard'))
   }
   return contentBase64
 }

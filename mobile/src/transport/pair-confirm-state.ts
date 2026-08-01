@@ -8,12 +8,20 @@ export type PairConfirmRouteState =
 
 export function resolvePairConfirmRouteState(code: string | undefined): PairConfirmRouteState {
   if (!code) {
-    return { kind: 'error', offer: null, errorMessage: t('m.WABgCvg') }
+    return {
+      kind: 'error',
+      offer: null,
+      errorMessage: t('pairConfirmState.missing')
+    }
   }
 
   const offer = parsePairingCode(code)
   if (!offer) {
-    return { kind: 'error', offer: null, errorMessage: t('m.gx2zC4w') }
+    return {
+      kind: 'error',
+      offer: null,
+      errorMessage: t('pairConfirmState.not')
+    }
   }
 
   return { kind: 'ready', offer, errorMessage: '' }

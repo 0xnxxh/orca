@@ -38,7 +38,7 @@ const resizeMobileClipboardImage: MobileClipboardImageResizer = async (source, t
     // Why: empty base64 would pass the downstream base64 check and upload a corrupt
     // image, so fail loudly here instead of silently sending an invalid payload.
     if (!result.base64) {
-      throw new Error(t('m.eH92OqQ'))
+      throw new Error(t('useMobileTerminalPaste.failed'))
     }
     return { data: result.base64, width: result.width, height: result.height }
   } finally {
@@ -140,7 +140,7 @@ export function useMobileTerminalPaste({
         onError()
         // eslint-disable-next-line no-console
         console.warn('[mobile-clip] paste oversized', { wrappedBytes })
-        showToast(t('m.Ezj8Uog'), 1500)
+        showToast(t('useMobileTerminalPaste.pasteToo'), 1500)
         return
       }
       // Why: paste lives in the accessory row and must not overtake pending IME text.
@@ -174,11 +174,11 @@ export function useMobileTerminalPaste({
       // eslint-disable-next-line no-console
       console.warn('[mobile-clip] paste failed', { name: err.name, message: err.message })
       if (isDisconnected) {
-        showToast(t('m.gG0saX0'), 1500)
+        showToast(t('useMobileTerminalPaste.pasteFailedDisconnected'), 1500)
       } else if (isClipboardImageTooLargeError(e)) {
-        showToast(t('m.5dhlsXo'), 1500)
+        showToast(t('useMobileTerminalPaste.image'), 1500)
       } else {
-        showToast(t('m.weTQMew'), 1500)
+        showToast(t('useMobileTerminalPaste.pasteFailed'), 1500)
       }
     }
   }, [

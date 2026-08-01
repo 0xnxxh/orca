@@ -130,7 +130,7 @@ export function useMobileDictation(options: UseMobileDictationOptions): UseMobil
     }
     if (!permission.granted) {
       setStatus('idle')
-      throw new Error(t('m.InUuqhA'))
+      throw new Error(t('useMobileDictation.microphone'))
     }
 
     const initialized = await initialize()
@@ -143,7 +143,7 @@ export function useMobileDictation(options: UseMobileDictationOptions): UseMobil
     }
     if (!initialized) {
       setStatus('idle')
-      throw new Error(t('m.Pwq6G9w'))
+      throw new Error(t('useMobileDictation.failed'))
     }
 
     const dictationId = createMobileDictationId()
@@ -241,7 +241,7 @@ export function useMobileDictation(options: UseMobileDictationOptions): UseMobil
       if (text) {
         onTranscriptRef.current(text)
       } else {
-        reportError(new Error(t('m.qiXFVWc')))
+        reportError(new Error(t('useMobileDictation.no')))
       }
     } catch (err) {
       failActiveDictation(dictationId, err)

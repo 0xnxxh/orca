@@ -305,7 +305,7 @@ export function MobileNativeChatView({
                     {loadingEarlier ? (
                       <ActivityIndicator size="small" color={colors.textMuted} />
                     ) : (
-                      <Text style={styles.loadEarlierText}>{t('m.AexlW6I')}</Text>
+                      <Text style={styles.loadEarlierText}>{t('mobileNativeChatView.load')}</Text>
                     )}
                   </Pressable>
                 ) : null
@@ -324,7 +324,7 @@ export function MobileNativeChatView({
               per-message (the up-arrow in each agent message's controls). */}
           {!atBottom ? (
             <Pressable
-              accessibilityLabel={t('m.MWJZkOQ')}
+              accessibilityLabel={t('mobileNativeChatView.scroll')}
               style={[styles.fab, styles.fabBottom]}
               onPress={() => listRef.current?.scrollToEnd({ animated: true })}
             >
@@ -383,7 +383,7 @@ export function MobileNativeChatView({
               <ChevronsUpDown size={14} color={colors.textMuted} strokeWidth={2} />
             )}
             <Text style={styles.chromeToggleLabel}>
-              {toolsExpanded ? t('m.HgMEzFE') : t('m.J3nTi3Q')}
+              {toolsExpanded ? t('mobileNativeChatView.collapse') : t('mobileNativeChatView.tools')}
             </Text>
           </Pressable>
         </View>
@@ -392,10 +392,10 @@ export function MobileNativeChatView({
             style={({ pressed }) => [styles.stopButton, pressed && styles.pressed]}
             onPress={onStop}
             hitSlop={8}
-            accessibilityLabel={t('m.1oeCDU8')}
+            accessibilityLabel={t('mobileNativeChatView.stopAgent')}
           >
             <Square size={13} color={colors.statusRed} strokeWidth={2.4} fill={colors.statusRed} />
-            <Text style={styles.stopLabel}>{t('m.X8_vuao')}</Text>
+            <Text style={styles.stopLabel}>{t('mobileNativeChatView.stop')}</Text>
           </Pressable>
         ) : null}
       </View>
@@ -425,10 +425,10 @@ export function MobileNativeChatView({
         disabled={lockReason !== null}
         placeholder={
           lockReason === 'disconnected'
-            ? t('m.gFSApKE')
+            ? t('mobileNativeChatView.reconnecting')
             : lockReason === 'waiting'
-              ? t('m.AXyDPsE')
-              : t('m.55yDVNk')
+              ? t('mobileNativeChatView.waiting')
+              : t('mobileNativeChatView.message')
         }
         filePaths={filePaths}
         onNeedFiles={onNeedFiles}

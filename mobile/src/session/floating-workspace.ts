@@ -3,7 +3,7 @@ import { t } from '@/i18n/mobile-i18n'
 // Floating Workspace's synthetic id (no backing repo/worktree; always local runtime).
 export const FLOATING_WORKSPACE_WORKTREE_ID = 'global-floating-terminal'
 
-export const FLOATING_WORKSPACE_TITLE = t('m.m4LECc4')
+export const FLOATING_WORKSPACE_TITLE = t('floatingWorkspace.floating')
 
 export function isFloatingWorkspaceWorktreeId(worktreeId: string | null | undefined): boolean {
   return worktreeId === FLOATING_WORKSPACE_WORKTREE_ID

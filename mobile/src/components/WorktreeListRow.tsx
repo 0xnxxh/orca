@@ -131,7 +131,7 @@ function WorktreeListRowComponent<T extends WorktreeListRowItem>({
           )}
           {isFolderWorkspace && (
             <View style={styles.folderBadge}>
-              <Text style={styles.folderBadgeText}>{t('m.uQ24VuE')}</Text>
+              <Text style={styles.folderBadgeText}>{t('worktreeListRow.folder')}</Text>
             </View>
           )}
           <WorktreeMetaGlyphs
@@ -146,7 +146,7 @@ function WorktreeListRowComponent<T extends WorktreeListRowItem>({
           {lineageDepth > 0 && (
             <View style={styles.childBadge}>
               <GitBranch size={10} color={colors.textMuted} />
-              <Text style={styles.childBadgeText}>{t('m.lCIVZpI')}</Text>
+              <Text style={styles.childBadgeText}>{t('worktreeListRow.child')}</Text>
             </View>
           )}
           {/* Repo glyph+name only when not already grouped under this repo;

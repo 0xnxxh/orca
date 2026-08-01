@@ -40,14 +40,14 @@ export default function EditHostScreen() {
 
   const load = useCallback(async () => {
     if (!hostId) {
-      setLoadError(t('m.yLNjPPk'))
+      setLoadError(t('edit.missing'))
       return
     }
     try {
       const hosts = await loadHosts()
       const found = hosts.find((h) => h.id === hostId) ?? null
       if (!found) {
-        setLoadError(t('m.T_ULLfI'))
+        setLoadError(t('edit.hostRemoved'))
         setHost(null)
         return
       }
@@ -56,7 +56,7 @@ export default function EditHostScreen() {
       setAddress(displayHostEndpoint(found.endpoint))
       setLoadError(null)
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : t('m.koyS6Oc'))
+      setLoadError(err instanceof Error ? err.message : t('edit.failedLoad'))
       setHost(null)
     }
   }, [hostId])
@@ -87,7 +87,7 @@ export default function EditHostScreen() {
     }
     const nextName = name.trim()
     if (!nextName) {
-      setSaveError(t('m.7UECNUc'))
+      setSaveError(t('edit.enter'))
       return
     }
     if (endpointEdit.kind === 'invalid') {
@@ -114,7 +114,7 @@ export default function EditHostScreen() {
         ...(nextEndpoint !== undefined ? { endpoint: nextEndpoint } : {})
       })
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : t('m.sI26LXo'))
+      setSaveError(err instanceof Error ? err.message : t('edit.failedSave'))
       savingRef.current = false
       setSaving(false)
       return
@@ -149,11 +149,11 @@ export default function EditHostScreen() {
           style={styles.backButton}
           onPress={() => router.back()}
           accessibilityRole="button"
-          accessibilityLabel={t('m.K8w9o8U')}
+          accessibilityLabel={t('edit.back')}
         >
           <ChevronLeft size={22} color={colors.textSecondary} />
         </Pressable>
-        <Text style={styles.heading}>{t('m.NKISHlY')}</Text>
+        <Text style={styles.heading}>{t('edit.edit')}</Text>
         <Pressable
           style={({ pressed }) => [
             styles.saveButton,
@@ -162,12 +162,12 @@ export default function EditHostScreen() {
           onPress={() => void handleSave()}
           disabled={!canSave}
           accessibilityRole="button"
-          accessibilityLabel={t('m.ugYhCr4')}
+          accessibilityLabel={t('edit.saveHost')}
         >
           {saving ? (
             <ActivityIndicator size="small" color={colors.bgBase} />
           ) : (
-            <Text style={styles.saveButtonText}>{t('m.OOhGw28')}</Text>
+            <Text style={styles.saveButtonText}>{t('edit.save')}</Text>
           )}
         </Pressable>
       </View>
@@ -176,7 +176,7 @@ export default function EditHostScreen() {
         <View style={styles.errorState}>
           <Text style={styles.errorText}>{loadError}</Text>
           <Pressable style={styles.secondaryButton} onPress={() => router.back()}>
-            <Text style={styles.secondaryButtonText}>{t('m.LS3NecQ')}</Text>
+            <Text style={styles.secondaryButtonText}>{t('edit.go')}</Text>
           </Pressable>
         </View>
       ) : !host ? (
@@ -192,28 +192,28 @@ export default function EditHostScreen() {
             contentContainerStyle={[styles.form, { paddingBottom: insets.bottom + spacing.xl }]}
             keyboardShouldPersistTaps="handled"
           >
-            <Text style={styles.help}>{t('m.KytWtss')}</Text>
+            <Text style={styles.help}>{t('edit.connectionAddressDescription')}</Text>
 
-            <Text style={styles.label}>{t('m.wLjwLQg')}</Text>
+            <Text style={styles.label}>{t('edit.name')}</Text>
             <TextInput
               style={styles.input}
-              accessibilityLabel={t('m.wLjwLQg')}
+              accessibilityLabel={t('edit.name')}
               value={name}
               onChangeText={(value) => {
                 setName(value)
                 setSaveError(null)
               }}
-              placeholder={t('m.jHccG1s')}
+              placeholder={t('edit.hostName')}
               placeholderTextColor={colors.textMuted}
               autoCapitalize="words"
               autoCorrect={false}
               returnKeyType="next"
             />
 
-            <Text style={styles.label}>{t('m.kMmtf5E')}</Text>
+            <Text style={styles.label}>{t('edit.address')}</Text>
             <TextInput
               style={styles.input}
-              accessibilityLabel={t('m.kMmtf5E')}
+              accessibilityLabel={t('edit.address')}
               value={address}
               onChangeText={(value) => {
                 setAddress(value)
@@ -232,11 +232,11 @@ export default function EditHostScreen() {
                 }
               }}
             />
-            <Text style={styles.hint}>{t('m.dYplni8')}</Text>
+            <Text style={styles.hint}>{t('edit.accepts')}</Text>
 
             {endpointEdit == null ? null : endpointEdit.kind !== 'invalid' ? (
               <Text style={styles.preview} numberOfLines={2}>
-                {t('m.eB5hKE4', { value0: endpointEdit.endpoint })}
+                {t('edit.connects', { endpoint: endpointEdit.endpoint })}
               </Text>
             ) : address.trim().length > 0 ? (
               <Text style={styles.previewError}>{endpointEdit.error}</Text>

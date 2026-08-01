@@ -5,15 +5,30 @@ export const DEFAULT_MOBILE_WORKSPACE_STATUS_ID = 'in-progress'
 
 export function getDefaultMobileWorkspaceStatuses(): readonly WorkspaceStatusDefinition[] {
   return [
-    { id: 'completed', label: t('m.EleEi2Q'), color: 'conductor-done', icon: 'conductor-done' },
-    { id: 'in-review', label: t('m.mg8ozqs'), color: 'conductor-review', icon: 'conductor-review' },
+    {
+      id: 'completed',
+      label: t('mobileWorkspaceStatuses.done'),
+      color: 'conductor-done',
+      icon: 'conductor-done'
+    },
+    {
+      id: 'in-review',
+      label: t('mobileWorkspaceStatuses.review'),
+      color: 'conductor-review',
+      icon: 'conductor-review'
+    },
     {
       id: DEFAULT_MOBILE_WORKSPACE_STATUS_ID,
-      label: t('m.hWeTdOM'),
+      label: t('mobileWorkspaceStatuses.progress'),
       color: 'conductor-progress',
       icon: 'conductor-progress'
     },
-    { id: 'todo', label: t('m.zWwi3-o'), color: 'neutral', icon: 'circle' }
+    {
+      id: 'todo',
+      label: t('mobileWorkspaceStatuses.todo'),
+      color: 'neutral',
+      icon: 'circle'
+    }
   ]
 }
 

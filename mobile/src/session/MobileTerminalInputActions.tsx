@@ -53,8 +53,12 @@ export function MobileTerminalInputActions({
         onPress={onAttachImage}
         onLongPress={onAttachFile}
         delayLongPress={350}
-        accessibilityLabel={isAttaching ? t('m.Vl7Dj48') : t('m.THy0254')}
-        accessibilityHint={t('m.diKZlw8')}
+        accessibilityLabel={
+          isAttaching
+            ? t('mobileTerminalInputActions.sending')
+            : t('mobileTerminalInputActions.attach')
+        }
+        accessibilityHint={t('mobileTerminalInputActions.long')}
       >
         {isAttaching ? (
           <ActivityIndicator size="small" color={colors.textSecondary} />
@@ -79,12 +83,12 @@ export function MobileTerminalInputActions({
         }
         accessibilityLabel={
           dictation.isRecording
-            ? t('m.lmt1VYs')
+            ? t('mobileTerminalInputActions.stop')
             : dictation.isProcessing
-              ? t('m.467WHFs')
+              ? t('mobileTerminalInputActions.cancel')
               : dictation.isStarting
-                ? t('m.4Bofttg')
-                : t('m.a4FTXPM')
+                ? t('mobileTerminalInputActions.starting')
+                : t('mobileTerminalInputActions.start')
         }
       >
         {dictation.isProcessing ? (

@@ -72,24 +72,29 @@ export function PRConflictingFilesSection({ pr, isRefreshing = false, triage }: 
   }
 
   return (
-    <PRSection title={t('m.DnSMHG0')}>
+    <PRSection title={t('prconflictingFilesSection.conflicts')}>
       {conflict.commitsBehind !== null && conflict.baseCommit !== null ? (
         <Text style={styles.meta}>
-          {t(conflict.commitsBehind === 1 ? 'm.ngn4NjA' : 'm.93sCYQo', {
-            value0: conflict.commitsBehind
-          })}{' '}
+          {t(
+            conflict.commitsBehind === 1
+              ? 'prconflictingFilesSection.commitsBehindCommit'
+              : 'prconflictingFilesSection.commitsBehindCommits',
+            {
+              commitsBehind: conflict.commitsBehind
+            }
+          )}{' '}
           <Text style={styles.metaMono}>{conflict.baseCommit}</Text>)
         </Text>
       ) : null}
 
       {conflict.fileDetailsUnavailable ? (
         <View>
-          <Text style={styles.noticeTitle}>{t('m.7Qv5eYo')}</Text>
+          <Text style={styles.noticeTitle}>{t('prconflictingFilesSection.branch')}</Text>
           <Text style={styles.noticeBody}>{noticeBody}</Text>
           {conflict.mergeabilityRefreshCommands ? (
             <View style={styles.commandBox}>
               <View style={styles.commandHeader}>
-                <Text style={styles.commandLabel}>{t('m.39Nl8mw')}</Text>
+                <Text style={styles.commandLabel}>{t('prconflictingFilesSection.run')}</Text>
                 <Pressable
                   style={({ pressed }) => [
                     styles.copyCommandButton,
@@ -97,7 +102,7 @@ export function PRConflictingFilesSection({ pr, isRefreshing = false, triage }: 
                   ]}
                   onPress={() => void copyRefreshCommands()}
                   accessibilityRole="button"
-                  accessibilityLabel={t('m.6TXtA4Q')}
+                  accessibilityLabel={t('prconflictingFilesSection.copyMergeability')}
                 >
                   {commandsCopied ? (
                     <Check size={13} color={colors.textPrimary} strokeWidth={2.2} />
@@ -105,7 +110,9 @@ export function PRConflictingFilesSection({ pr, isRefreshing = false, triage }: 
                     <Copy size={13} color={colors.textPrimary} strokeWidth={2.2} />
                   )}
                   <Text style={styles.copyCommandText}>
-                    {commandsCopied ? t('m.7E56l1g') : t('m.KuLUlYc')}
+                    {commandsCopied
+                      ? t('prconflictingFilesSection.copied')
+                      : t('prconflictingFilesSection.copyCommands')}
                   </Text>
                 </Pressable>
               </View>
@@ -119,7 +126,7 @@ export function PRConflictingFilesSection({ pr, isRefreshing = false, triage }: 
         <View>
           <View style={styles.filesHeader}>
             <FileWarning size={14} color={colors.textSecondary} strokeWidth={2} />
-            <Text style={styles.filesHeaderText}>{t('m.w2WcFns')}</Text>
+            <Text style={styles.filesHeaderText}>{t('prconflictingFilesSection.conflicting')}</Text>
           </View>
           <ScrollView
             style={styles.fileList}
@@ -148,14 +155,16 @@ export function PRConflictingFilesSection({ pr, isRefreshing = false, triage }: 
             onPress={triage.resolveConflicts}
             disabled={triage.isBusy}
             accessibilityRole="button"
-            accessibilityLabel={t('m.zrerXGc')}
+            accessibilityLabel={t('prconflictingFilesSection.resolve')}
           >
             {triage.isBusy ? (
               <ActivityIndicator color={colors.textSecondary} />
             ) : (
               <Sparkles size={14} color={colors.textSecondary} strokeWidth={2.2} />
             )}
-            <Text style={triageStyles.triageButtonText}>{t('m.zrerXGc')}</Text>
+            <Text style={triageStyles.triageButtonText}>
+              {t('prconflictingFilesSection.resolve')}
+            </Text>
           </Pressable>
           {triage.error ? <Text style={triageStyles.triageError}>{triage.error}</Text> : null}
         </View>

@@ -32,8 +32,8 @@ describe('terminal live input affordance', () => {
 
     expect(block).toContain('onPress={focusLiveInput}')
     expect(block).toContain('accessibilityRole="button"')
-    expect(block).toContain("accessibilityLabel={t('m.JQAVlGc')}")
-    expect(block).toContain("accessibilityHint={t('m.Rddk0Io')}")
+    expect(block).toContain("accessibilityLabel={tr('show')}")
+    expect(block).toContain("accessibilityHint={tr('typed')}")
     expect(block).toContain('pressed && styles.liveInputFocusTargetPressed')
     expect(block).toContain('!canSend && styles.liveInputFocusTargetDisabled')
     expect(block).toContain('showSoftInputOnFocus')
@@ -49,7 +49,7 @@ describe('terminal live input affordance', () => {
   })
 
   it('makes the live keyboard target visible instead of status-only chrome', () => {
-    expect(liveInputStatusSource).toContain("t('m.7IfxObc')")
+    expect(liveInputStatusSource).toContain("t('mobileTerminalLiveInputStatus.tapShow')")
     expect(commandInputStylesSource).toContain('backgroundColor: colors.bgRaised')
     expect(commandInputStylesSource).toContain('borderWidth: 1')
     expect(commandInputStylesSource).toContain('liveInputFocusTargetPressed')

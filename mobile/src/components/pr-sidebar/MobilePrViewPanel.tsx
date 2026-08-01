@@ -41,12 +41,12 @@ export function MobilePrViewPanelBody({
     : !isGithubRepo
       ? ({
           kind: 'blocked',
-          message: t('m._svp6us')
+          message: t('mobilePrViewPanel.hosted')
         } as const)
       : branch === null
         ? ({
             kind: 'error',
-            message: t('m.LINjP1k')
+            message: t('mobilePrViewPanel.current')
           } as const)
         : controller.prSidebarState
 

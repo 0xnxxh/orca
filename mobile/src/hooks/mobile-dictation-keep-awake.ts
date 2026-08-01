@@ -35,7 +35,7 @@ function isNativeCallTimeout(err: unknown): boolean {
 function withNativeCallTimeout(nativeCall: Promise<void>): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
-      const timeoutError = new Error(t('m.oQrz0NI'))
+      const timeoutError = new Error(t('mobileDictationKeepAwake.keep'))
       timeoutError.name = KEEP_AWAKE_TIMEOUT_ERROR_NAME
       reject(timeoutError)
     }, MOBILE_DICTATION_KEEP_AWAKE_NATIVE_TIMEOUT_MS)

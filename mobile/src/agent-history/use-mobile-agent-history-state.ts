@@ -79,7 +79,12 @@ export function useMobileAgentHistoryState(params: MobileAgentHistoryStateParams
           // (connState flips re-run the load effect) instead of tearing it
           // down to a full-screen error, matching the host list screen.
           setScreenState((prev) =>
-            prev.kind === 'ready' ? prev : { kind: 'error', message: t('m.nSh69OQ') }
+            prev.kind === 'ready'
+              ? prev
+              : {
+                  kind: 'error',
+                  message: t('useMobileAgentHistoryState.waiting')
+                }
           )
         }
         return
@@ -94,7 +99,9 @@ export function useMobileAgentHistoryState(params: MobileAgentHistoryStateParams
           return
         }
         if (!statusResponse.ok) {
-          throw new Error(statusResponse.error?.message || t('m.THbZzp4'))
+          throw new Error(
+            statusResponse.error?.message || t('useMobileAgentHistoryState.unableReach')
+          )
         }
         const status = (statusResponse as RpcSuccess).result as StatusWithCapabilities
         setHostStatusResult(status)
@@ -124,7 +131,7 @@ export function useMobileAgentHistoryState(params: MobileAgentHistoryStateParams
           return
         }
         if (!response.ok) {
-          throw new Error(response.error?.message || t('m.ukxwfJ8'))
+          throw new Error(response.error?.message || t('useMobileAgentHistoryState.unableLoad'))
         }
         const result = (response as RpcSuccess).result as AiVaultListResult
         setScreenState({ kind: 'ready', sessions: result.sessions, issues: result.issues })
@@ -132,7 +139,8 @@ export function useMobileAgentHistoryState(params: MobileAgentHistoryStateParams
         if (!isCurrent()) {
           return
         }
-        const message = err instanceof Error ? err.message : t('m.ukxwfJ8')
+        const message =
+          err instanceof Error ? err.message : t('useMobileAgentHistoryState.unableLoad')
         setHostStatusResult(null)
         setScreenState({ kind: 'error', message })
       }

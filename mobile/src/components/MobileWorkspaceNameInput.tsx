@@ -33,7 +33,7 @@ export function MobileWorkspaceNameInput({
   return (
     <TextInput
       ref={inputRef}
-      placeholder={t('m.UIMZetU')}
+      placeholder={t('mobileWorkspaceNameInput.workspace')}
       autoCapitalize="none"
       autoCorrect={false}
       showSoftInputOnFocus

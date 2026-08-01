@@ -18,8 +18,8 @@ export function ConfirmModal({
   visible,
   title,
   message,
-  confirmLabel = t('m.OxB9eF0'),
-  cancelLabel = t('m.QVUePYc'),
+  confirmLabel = t('confirmModal.confirm'),
+  cancelLabel = t('confirmModal.cancel'),
   destructive = false,
   onConfirm,
   onCancel

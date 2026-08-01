@@ -91,7 +91,8 @@ export function presentCheckDetail(details: PRCheckRunDetails): CheckDetailConte
     summaryLines,
     annotations: details.annotations.slice(0, MAX_ANNOTATIONS).map(mapAnnotation),
     annotationsTruncated: details.annotations.length > MAX_ANNOTATIONS,
-    jobsLabel: failedJobs.length > 0 ? t('m.OJSrr6g') : t('m.g0JLO88'),
+    jobsLabel:
+      failedJobs.length > 0 ? t('prCheckDetailContent.failed') : t('prCheckDetailContent.jobs'),
     jobs: visibleJobs.slice(0, MAX_JOBS).map(mapJob),
     jobsTruncated: details.jobs.length > MAX_JOBS
   }

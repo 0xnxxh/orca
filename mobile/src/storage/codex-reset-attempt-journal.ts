@@ -24,7 +24,7 @@ export const CodexResetCreditExpectedScopeSchema = z
     if (scope.target.runtime === 'host' && scope.target.wslDistro !== null) {
       context.addIssue({
         code: 'custom',
-        message: t('m.TJPBpxE'),
+        message: t('codexResetAttemptJournal.host'),
         path: ['target', 'wslDistro']
       })
     }
@@ -34,7 +34,7 @@ export const CodexResetCreditExpectedScopeSchema = z
     ) {
       context.addIssue({
         code: 'custom',
-        message: t('m.fCVCUqw'),
+        message: t('codexResetAttemptJournal.wsl'),
         path: ['target', 'wslDistro']
       })
     }

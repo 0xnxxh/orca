@@ -12,15 +12,15 @@ export type HostedReviewCopy = {
 }
 
 const PR_COPY: HostedReviewCopy = {
-  shortLabel: t('m.Qic_Aa4'),
-  reviewLabel: t('m.rUwwMh4'),
-  titleLabel: t('m.GqNlrAs')
+  shortLabel: t('hostedReviewCopy.pr'),
+  reviewLabel: t('hostedReviewCopy.pullRequest'),
+  titleLabel: t('hostedReviewCopy.pullRequestTitle')
 }
 
 const MR_COPY: HostedReviewCopy = {
-  shortLabel: t('m.BWWtnQM'),
-  reviewLabel: t('m.OpWJNnA'),
-  titleLabel: t('m.cTkYeR8')
+  shortLabel: t('hostedReviewCopy.mr'),
+  reviewLabel: t('hostedReviewCopy.mergeRequest'),
+  titleLabel: t('hostedReviewCopy.mergeRequestTitle')
 }
 
 export function hostedReviewCopy(provider: HostedReviewProvider | undefined): HostedReviewCopy {

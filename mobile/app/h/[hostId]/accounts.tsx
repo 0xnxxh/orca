@@ -59,7 +59,7 @@ export default function AccountsScreen() {
     // Why: a stale snapshot can expose a finite reset action for the wrong
     // account; fail closed if a host sends a shape this mobile cannot prove.
     setSnapshot(null)
-    setError(t('m.Cop_m2o'))
+    setError(t('accounts.invalid'))
   }, [])
   const {
     supported: codexResetSupported,
@@ -96,7 +96,7 @@ export default function AccountsScreen() {
       }
       const host = hosts.find((h) => h.id === hostId)
       if (!host) {
-        setError(t('m.nnr0WpI'))
+        setError(t('accounts.hostNot'))
         return
       }
       setHostName(host.name)
@@ -176,7 +176,7 @@ export default function AccountsScreen() {
           codexTarget?.runtime === 'wsl' ? { accountId, target: codexTarget } : { accountId }
         const res = await client.sendRequest(method, params)
         if (!res.ok) {
-          Alert.alert(t('m.5TVCgEg'), res.error.message)
+          Alert.alert(t('accounts.could'), res.error.message)
         } else {
           // Why: optimistic refresh — the streaming subscription will also
           // emit, but a one-shot keeps the UI responsive even if the stream
@@ -184,7 +184,7 @@ export default function AccountsScreen() {
           await refresh()
         }
       } catch (e) {
-        Alert.alert(t('m.5TVCgEg'), e instanceof Error ? e.message : String(e))
+        Alert.alert(t('accounts.could'), e instanceof Error ? e.message : String(e))
       } finally {
         setBusyAccountId(null)
       }
@@ -220,22 +220,22 @@ export default function AccountsScreen() {
             disabled={busyAccountId !== null || resettingCodex || connState !== 'connected'}
           >
             <View style={styles.rowMain}>
-              <Text style={styles.rowTitle}>{t('m.uuo9M60')}</Text>
-              <Text style={styles.rowSubtitle}>{t('m.rjJXJpg')}</Text>
+              <Text style={styles.rowTitle}>{t('accounts.system')}</Text>
+              <Text style={styles.rowSubtitle}>{t('accounts.use')}</Text>
               {/* Why: when system default is the active selection, activeUsage
                   holds the system-default login's rate limits — surface them
                   here so non-managed users still see their usage. */}
               {activeAccountId === null && hasActiveProviderUsage(activeUsage) ? (
                 <View style={styles.usageRow}>
                   <UsageBar
-                    label={t('m.YmnN8fw')}
+                    label={t('accounts.five')}
                     usedPercent={activeSessionBar.usedPercent}
                     unavailable={activeSessionBar.unavailable}
                     loading={activeSessionBar.loading}
                     resetText={getWindowResetLabel(activeUsage, 'session', now)}
                   />
                   <UsageBar
-                    label={t('m.08ocQGs')}
+                    label={t('accounts.seven')}
                     usedPercent={activeWeeklyBar.usedPercent}
                     unavailable={activeWeeklyBar.unavailable}
                     loading={activeWeeklyBar.loading}
@@ -283,14 +283,14 @@ export default function AccountsScreen() {
                     </Text>
                     <View style={styles.usageRow}>
                       <UsageBar
-                        label={t('m.YmnN8fw')}
+                        label={t('accounts.five')}
                         usedPercent={sessionBar.usedPercent}
                         unavailable={sessionBar.unavailable}
                         loading={sessionBar.loading}
                         resetText={getWindowResetLabel(usage, 'session', now)}
                       />
                       <UsageBar
-                        label={t('m.08ocQGs')}
+                        label={t('accounts.seven')}
                         usedPercent={weeklyBar.usedPercent}
                         unavailable={weeklyBar.unavailable}
                         loading={weeklyBar.loading}
@@ -335,7 +335,7 @@ export default function AccountsScreen() {
           <ChevronLeft size={22} color={colors.textPrimary} />
         </Pressable>
         <View style={styles.titleWrap}>
-          <Text style={styles.heading}>{t('m.XheJ_p8')}</Text>
+          <Text style={styles.heading}>{t('accounts.accounts')}</Text>
           {hostName ? (
             <Text style={styles.subheading} numberOfLines={1}>
               {hostName}
@@ -369,7 +369,9 @@ export default function AccountsScreen() {
           <View style={styles.placeholder}>
             <ActivityIndicator color={colors.textSecondary} />
             <Text style={styles.placeholderText}>
-              {t('m.sqHaM-Q', { value0: hostName || t('m.esqB5TM') })}
+              {t('accounts.connecting', {
+                hostName: hostName || t('accounts.host')
+              })}
             </Text>
           </View>
         ) : error && !snapshot ? (
@@ -379,7 +381,7 @@ export default function AccountsScreen() {
         ) : !snapshot ? (
           <View style={styles.placeholder}>
             <ActivityIndicator color={colors.textSecondary} />
-            <Text style={styles.placeholderText}>{t('m.z0N4v1Y')}</Text>
+            <Text style={styles.placeholderText}>{t('accounts.loading')}</Text>
           </View>
         ) : (
           <>
@@ -387,7 +389,7 @@ export default function AccountsScreen() {
             {renderProviderSection('codex', 'Codex')}
             <View style={styles.footerHint}>
               <User size={14} color={colors.textMuted} />
-              <Text style={styles.footerHintText}>{t('m.lXRU_hQ')}</Text>
+              <Text style={styles.footerHintText}>{t('accounts.add')}</Text>
             </View>
           </>
         )}

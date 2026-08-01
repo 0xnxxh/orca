@@ -11,8 +11,8 @@ export function WorkspaceDetailPlaceholder() {
       <View style={styles.icon}>
         <SquareTerminal size={28} color={colors.textMuted} />
       </View>
-      <Text style={styles.title}>{t('m.qe5Mx6E')}</Text>
-      <Text style={styles.body}>{t('m.6qylM4Q')}</Text>
+      <Text style={styles.title}>{t('workspaceDetailPlaceholder.no')}</Text>
+      <Text style={styles.body}>{t('workspaceDetailPlaceholder.pick')}</Text>
     </View>
   )
 }

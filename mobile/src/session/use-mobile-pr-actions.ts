@@ -148,7 +148,10 @@ export function useMobilePrActions(input: PrActionsInput) {
 // Stand-in mutations used before a client exists; they never fire (the hook gates
 // on `ready`) but keep the engine constructable.
 function noopMutations(): PrActionMutations {
-  const fail = async () => ({ ok: false as const, error: t('m.AandnA4') })
+  const fail = async () => ({
+    ok: false as const,
+    error: t('useMobilePrActions.not')
+  })
   return {
     mergePR: fail,
     setPRAutoMerge: fail,

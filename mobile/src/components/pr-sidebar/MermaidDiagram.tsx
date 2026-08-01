@@ -26,7 +26,7 @@ export function MermaidDiagram({ source, base }: Props) {
   return (
     <View style={styles.frame}>
       <View style={styles.label}>
-        <Text style={styles.labelText}>{t('m.W6bmrY4')}</Text>
+        <Text style={styles.labelText}>{t('mermaidDiagram.mermaid')}</Text>
       </View>
       <WebView
         style={[styles.webview, { height: height || 120 }]}
@@ -65,7 +65,7 @@ function MermaidFallback({ source, base }: Props) {
   return (
     <View style={styles.frame}>
       <View style={styles.label}>
-        <Text style={styles.labelText}>{t('m.W6bmrY4')}</Text>
+        <Text style={styles.labelText}>{t('mermaidDiagram.mermaid')}</Text>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.fallbackScroll}>
         <Text style={[styles.fallbackText, { fontSize: base - 1 }]}>{source}</Text>

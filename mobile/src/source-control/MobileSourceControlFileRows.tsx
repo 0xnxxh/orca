@@ -46,7 +46,9 @@ export function makeRenderFileRow(
         ]}
         onPress={() => void openFile(item)}
         disabled={rowDisabled}
-        accessibilityLabel={t('m.4a6Yo9s', { value0: item.path })}
+        accessibilityLabel={t('mobileSourceControlFileRows.openChanged', {
+          path: item.path
+        })}
       >
         <View style={styles.statusBadge}>
           <Text style={[styles.statusBadgeText, { color: statusColor(item.status) }]}>
@@ -67,11 +69,13 @@ export function makeRenderFileRow(
           </Text>
           {item.oldPath ? (
             <Text style={styles.fileMeta} numberOfLines={1}>
-              {t('m.SrSDY0M', { value0: item.oldPath })}
+              {t('mobileSourceControlFileRows.old', {
+                oldPath: item.oldPath
+              })}
             </Text>
           ) : item.conflictStatus === 'unresolved' ? (
             <Text style={styles.fileMeta} numberOfLines={1}>
-              {t('m.av_Mh7U')}
+              {t('mobileSourceControlFileRows.unresolved')}
             </Text>
           ) : null}
         </View>
@@ -89,7 +93,9 @@ export function makeRenderFileRow(
               void runGitAction(item.unstageActionId, 'git.unstage', { filePath: item.path })
             }
             hitSlop={8}
-            accessibilityLabel={t('m.9OoD7rs', { value0: item.path })}
+            accessibilityLabel={t('mobileSourceControlFileRows.unstage', {
+              path: item.path
+            })}
           >
             <Minus size={16} color={colors.textSecondary} strokeWidth={2.2} />
           </Pressable>
@@ -107,7 +113,7 @@ export function makeRenderFileRow(
                   void runGitAction(item.stageActionId, 'git.stage', { filePath: item.path })
                 }
                 hitSlop={8}
-                accessibilityLabel={t('m.WTkbKTE', { value0: item.path })}
+                accessibilityLabel={t('mobileSourceControlFileRows.stage', { path: item.path })}
               >
                 <Plus size={16} color={colors.textSecondary} strokeWidth={2.2} />
               </Pressable>
@@ -122,7 +128,9 @@ export function makeRenderFileRow(
                 disabled={ioBusy}
                 onPress={() => setDiscardTarget(item)}
                 hitSlop={8}
-                accessibilityLabel={t('m.IET9hpI', { value0: item.path })}
+                accessibilityLabel={t('mobileSourceControlFileRows.discard', {
+                  path: item.path
+                })}
               >
                 <Trash2 size={16} color={colors.statusRed} strokeWidth={2.1} />
               </Pressable>
@@ -170,7 +178,9 @@ export function BranchCompareFooter({ state }: { state: FooterState }) {
     <View style={styles.branchCompareBlock}>
       <View style={styles.sectionHeader}>
         <View style={styles.branchSectionTitleBlock}>
-          <Text style={styles.sectionTitle}>{t('m.m_C8jkI')}</Text>
+          <Text style={styles.sectionTitle}>
+            {t('mobileSourceControlFileRows.committedBranch')}
+          </Text>
           {branchCompareSummaryText ? (
             <Text style={styles.branchSectionSubtitle} numberOfLines={1}>
               {branchCompareSummaryText}
@@ -182,7 +192,7 @@ export function BranchCompareFooter({ state }: { state: FooterState }) {
       {branchCompareState.kind === 'loading' ? (
         <View style={styles.branchStateRow}>
           <ActivityIndicator size="small" color={colors.textSecondary} />
-          <Text style={styles.branchStateText}>{t('m.tZHFwCg')}</Text>
+          <Text style={styles.branchStateText}>{t('mobileSourceControlFileRows.loading')}</Text>
         </View>
       ) : branchCompareState.kind === 'error' ? (
         <View style={styles.branchStateRow}>
@@ -191,7 +201,8 @@ export function BranchCompareFooter({ state }: { state: FooterState }) {
       ) : branchCompareResult && branchCompareResult.summary.status !== 'ready' ? (
         <View style={styles.branchStateRow}>
           <Text style={styles.branchStateText}>
-            {branchCompareResult.summary.errorMessage ?? t('m.Qpl1k5o')}
+            {branchCompareResult.summary.errorMessage ??
+              t('mobileSourceControlFileRows.committedChanges')}
           </Text>
         </View>
       ) : (
@@ -214,7 +225,9 @@ export function BranchCompareFooter({ state }: { state: FooterState }) {
               ]}
               onPress={() => void openBranchDiff(entry)}
               disabled={rowDisabled}
-              accessibilityLabel={t('m.PW__oVI', { value0: entry.path })}
+              accessibilityLabel={t('mobileSourceControlFileRows.openCommitted', {
+                filePath: entry.path
+              })}
             >
               <View style={styles.statusBadge}>
                 <Text style={[styles.statusBadgeText, { color: statusColor(entry.status) }]}>

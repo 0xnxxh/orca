@@ -38,7 +38,9 @@ export function MobileFilePreviewScreen({ route }: Props) {
   const { client, state: connState } = useHostClient(previewParams?.hostId)
   const forceReconnect = useForceReconnect()
   const [preview, setPreview] = useState<MobileFilePreviewResult>(() =>
-    route.ok ? { status: 'loading', message: t('m.Iqn4mt4') } : previewError(route.message)
+    route.ok
+      ? { status: 'loading', message: t('mobileFilePreviewScreen.loading') }
+      : previewError(route.message)
   )
   const [draftContent, setDraftContent] = useState('')
   const [savedContent, setSavedContent] = useState('')
@@ -89,7 +91,7 @@ export function MobileFilePreviewScreen({ route }: Props) {
   const loadPreview = useCallback(async () => {
     const loadSourceKey = previewSourceKey
     if (!previewParams || !previewSource || loadSourceKey !== routePreviewSourceKey) {
-      setPreview(previewError(route.ok ? t('m.uLXt2Qs') : route.message))
+      setPreview(previewError(route.ok ? t('mobileFilePreviewScreen.unableLoad') : route.message))
       return
     }
     const preserveDirtyDraft =
@@ -97,14 +99,21 @@ export function MobileFilePreviewScreen({ route }: Props) {
       draftContentRef.current !== savedContentRef.current
     if (!client || connState !== 'connected') {
       if (preserveDirtyDraft) {
-        setSaveError(t('m.MCFjuu8'))
+        setSaveError(t('mobileFilePreviewScreen.waiting'))
         return
       }
-      setPreview({ status: 'waiting', message: t('m.MCFjuu8'), reconnect: true })
+      setPreview({
+        status: 'waiting',
+        message: t('mobileFilePreviewScreen.waiting'),
+        reconnect: true
+      })
       return
     }
     if (!preserveDirtyDraft) {
-      setPreview({ status: 'loading', message: t('m.Iqn4mt4') })
+      setPreview({
+        status: 'loading',
+        message: t('mobileFilePreviewScreen.loading')
+      })
     }
     setSaveError('')
     try {
@@ -134,7 +143,7 @@ export function MobileFilePreviewScreen({ route }: Props) {
       }
       setPreview(result)
     } catch (err) {
-      const message = err instanceof Error ? err.message : t('m.uLXt2Qs')
+      const message = err instanceof Error ? err.message : t('mobileFilePreviewScreen.unableLoad')
       if (preserveDirtyDraft) {
         setSaveError(message)
         return
@@ -212,7 +221,7 @@ export function MobileFilePreviewScreen({ route }: Props) {
         setSaveError(saveErrorMessageFromPreviewResult(result))
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : t('m.jogAQ98')
+      const message = err instanceof Error ? err.message : t('mobileFilePreviewScreen.unableSave')
       setSaveError(message)
     } finally {
       setSaving(false)
@@ -224,9 +233,13 @@ export function MobileFilePreviewScreen({ route }: Props) {
       router.back()
       return true
     }
-    Alert.alert(t('m.k969DeE'), t('m.vXalblI'), [
-      { text: t('m.5cnTshE'), style: 'cancel' },
-      { text: t('m.MpjZorw'), style: 'destructive', onPress: () => router.back() }
+    Alert.alert(t('mobileFilePreviewScreen.discardChanges'), t('mobileFilePreviewScreen.unsaved'), [
+      { text: t('mobileFilePreviewScreen.stay'), style: 'cancel' },
+      {
+        text: t('mobileFilePreviewScreen.discard'),
+        style: 'destructive',
+        onPress: () => router.back()
+      }
     ])
     return true
   }, [hasUnsavedTerminalArtifactDraft, router])
@@ -244,13 +257,13 @@ export function MobileFilePreviewScreen({ route }: Props) {
             style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
             onPress={requestBack}
             hitSlop={8}
-            accessibilityLabel={t('m.nxnMGkU')}
+            accessibilityLabel={t('mobileFilePreviewScreen.back')}
           >
             <ChevronLeft size={22} color={colors.textSecondary} strokeWidth={2.2} />
           </Pressable>
           <View style={styles.titleBlock}>
             <Text style={styles.title} numberOfLines={1}>
-              {title || t('m.76ELAmA')}
+              {title || t('mobileFilePreviewScreen.preview')}
             </Text>
             <Text style={styles.meta} numberOfLines={1}>
               {meta}
@@ -261,7 +274,7 @@ export function MobileFilePreviewScreen({ route }: Props) {
               style={[styles.saveButton, (!canSaveArtifact || saving) && styles.saveButtonDisabled]}
               onPress={() => void saveArtifact()}
               disabled={!canSaveArtifact || saving}
-              accessibilityLabel={t('m.BnjL5Ho')}
+              accessibilityLabel={t('mobileFilePreviewScreen.save')}
             >
               <Save size={18} color={colors.textPrimary} strokeWidth={2.2} />
             </Pressable>
@@ -271,7 +284,7 @@ export function MobileFilePreviewScreen({ route }: Props) {
       <MobileFilePreviewBody
         preview={preview}
         relativePath={displayPath}
-        title={title || t('m.9kO5k1s')}
+        title={title || t('mobileFilePreviewScreen.file')}
         editable={isEditableTerminalArtifact}
         draftContent={draftContent}
         saveError={saveError}
@@ -280,7 +293,11 @@ export function MobileFilePreviewScreen({ route }: Props) {
         imageHeight={Math.max(240, height - 160)}
         onDraftChange={setDraftContent}
         onImageError={() =>
-          setPreview({ status: 'error', message: t('m.uLXt2Qs'), reconnect: false })
+          setPreview({
+            status: 'error',
+            message: t('mobileFilePreviewScreen.unableLoad'),
+            reconnect: false
+          })
         }
         onRetry={retry}
       />
@@ -289,5 +306,7 @@ export function MobileFilePreviewScreen({ route }: Props) {
 }
 
 function saveErrorMessageFromPreviewResult(result: MobileFilePreviewResult): string {
-  return result.status === 'error' || result.status === 'waiting' ? result.message : t('m.jogAQ98')
+  return result.status === 'error' || result.status === 'waiting'
+    ? result.message
+    : t('mobileFilePreviewScreen.unableSave')
 }

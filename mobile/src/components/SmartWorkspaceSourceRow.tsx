@@ -22,27 +22,29 @@ function resolveRowContent(row: SourceRow): RowContent {
     case 'use-name':
       return {
         icon: <Sparkles size={16} color={colors.textSecondary} />,
-        title: t('m.uK2T1OQ', { value0: row.name }),
-        subtitle: t('m.Z7csSYQ')
+        title: t('smartWorkspaceSourceRow.use', { rowName: row.name }),
+        subtitle: t('smartWorkspaceSourceRow.name')
       }
     case 'create-branch':
       return {
         icon: <GitBranch size={16} color={colors.accentBlue} />,
-        title: t('m.dDSXnKk', { value0: row.name }),
-        subtitle: t('m.zTK803o')
+        title: t('smartWorkspaceSourceRow.create', {
+          rowName: row.name
+        }),
+        subtitle: t('smartWorkspaceSourceRow.new')
       }
     case 'github':
       return {
         icon: <TaskProviderLogo provider="github" size={16} color={colors.textSecondary} />,
         title: row.item.title,
-        subtitle: `${row.item.type === 'pr' ? t('m.Jq988q0') : t('m.kWDpsSU')}${row.item.number}`,
+        subtitle: `${row.item.type === 'pr' ? t('smartWorkspaceSourceRow.pr') : t('smartWorkspaceSourceRow.issue')}${row.item.number}`,
         status: row.item.state
       }
     case 'gitlab':
       return {
         icon: <TaskProviderLogo provider="gitlab" size={16} color={colors.textSecondary} />,
         title: row.item.title,
-        subtitle: `${row.item.type === 'mr' ? t('m.G_t8Rjg') : t('m.kWDpsSU')}${row.item.number}`,
+        subtitle: `${row.item.type === 'mr' ? t('smartWorkspaceSourceRow.mr') : t('smartWorkspaceSourceRow.issue')}${row.item.number}`,
         status: row.item.state
       }
     case 'branch':
@@ -55,7 +57,7 @@ function resolveRowContent(row: SourceRow): RowContent {
       return {
         icon: <TaskProviderLogo provider="linear" size={16} color={colors.textSecondary} />,
         title: row.issue.title,
-        subtitle: `${row.issue.identifier} · ${row.issue.team?.key ?? t('m.17Ky5K0')}`,
+        subtitle: `${row.issue.identifier} · ${row.issue.team?.key ?? t('smartWorkspaceSourceRow.linear')}`,
         status: row.issue.state?.name
       }
     default:

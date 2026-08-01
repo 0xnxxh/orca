@@ -65,7 +65,7 @@ export function useMobilePrTitleAction(input: PrTitleActionInput) {
       // Why: surface an explicit error when offline/not-ready so Save doesn't
       // silently no-op (the editor stays open with a reason instead of nothing).
       if (!ready || !mutations) {
-        setError(t('m.RqzbvDE'))
+        setError(t('useMobilePrTitleAction.not'))
         return false
       }
       inFlightRef.current = true
@@ -85,7 +85,7 @@ export function useMobilePrTitleAction(input: PrTitleActionInput) {
         // Why: updateTitle/refetch can throw; without this the `void save()`
         // rejection is unhandled — set the error + error haptic and return false.
         triggerError()
-        setError(err instanceof Error ? err.message : t('m.6VPjkF8'))
+        setError(err instanceof Error ? err.message : t('useMobilePrTitleAction.failed'))
         return false
       } finally {
         inFlightRef.current = false

@@ -7,21 +7,37 @@ export function getWorkspaceSortOptions(): PickerOption<MobileSortMode>[] {
     // Why: desktop and persisted state keep the `smart` key, while mobile shows the product label.
     {
       value: 'smart',
-      label: t('m.6gEQgs0'),
-      subtitle: t('m.RcmL46Y')
+      label: t('workspaceListPickerOptions.agent'),
+      subtitle: t('workspaceListPickerOptions.agents')
     },
-    { value: 'name', label: t('m.tQqkyxI'), subtitle: t('m.BaGIgrE') },
-    { value: 'recent', label: t('m.2xJ96AA'), subtitle: t('m.egkm8qI') },
-    { value: 'repo', label: t('m.v5H1mJY'), subtitle: t('m.yH1bPxU') },
-    { value: 'manual', label: t('m.FyGSYV4'), subtitle: t('m.y1TvQWs') }
+    {
+      value: 'name',
+      label: t('workspaceListPickerOptions.name'),
+      subtitle: t('workspaceListPickerOptions.alphabetical')
+    },
+    {
+      value: 'recent',
+      label: t('workspaceListPickerOptions.recent'),
+      subtitle: t('workspaceListPickerOptions.most')
+    },
+    {
+      value: 'repo',
+      label: t('workspaceListPickerOptions.repo'),
+      subtitle: t('workspaceListPickerOptions.repository')
+    },
+    {
+      value: 'manual',
+      label: t('workspaceListPickerOptions.manual'),
+      subtitle: t('workspaceListPickerOptions.server')
+    }
   ]
 }
 
 export function getWorkspaceGroupOptions(): PickerOption<MobileGroupMode>[] {
   return [
-    { value: 'none', label: t('m.Iq3a5so') },
-    { value: 'workspaceStatus', label: t('m.oBZu0_c') },
-    { value: 'repo', label: t('m.BX2Np3Y') },
-    { value: 'prStatus', label: t('m.1Bc_S64') }
+    { value: 'none', label: t('workspaceListPickerOptions.no') },
+    { value: 'workspaceStatus', label: t('workspaceListPickerOptions.status') },
+    { value: 'repo', label: t('task.repository') },
+    { value: 'prStatus', label: t('workspaceListPickerOptions.pr') }
   ]
 }

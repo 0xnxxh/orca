@@ -62,7 +62,7 @@ export function SmartWorkspaceSourceField({
   return (
     <View style={styles.field}>
       <Text style={styles.label}>
-        {label} <Text style={styles.labelHint}>{t('m.eMl2uLM')}</Text>
+        {label} <Text style={styles.labelHint}>{t('smartWorkspaceSourceField.optional')}</Text>
       </Text>
       {selection ? (
         <View style={styles.pill}>
@@ -92,7 +92,7 @@ export function SmartWorkspaceSourceField({
           onChangeText={composer.setName}
           onFocus={openDrawer}
           editable={!disabled && interactive}
-          placeholder={t('m.HHq8Y80')}
+          placeholder={t('smartWorkspaceSourceField.type')}
           placeholderTextColor={colors.textMuted}
           autoCapitalize="none"
           autoCorrect={false}

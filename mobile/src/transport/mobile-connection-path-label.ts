@@ -3,7 +3,9 @@ import { t } from '@/i18n/mobile-i18n'
 
 export function mobileConnectionPathLabel(path: MobileConnectionPath): string {
   if (path === 'relay') {
-    return t('m.Lo_8ioI')
+    return t('mobileConnectionPathLabel.orca')
   }
-  return path === 'tailscale' ? t('m.f3Si3vU') : t('m.hPnnpWc')
+  return path === 'tailscale'
+    ? t('mobileConnectionPathLabel.directTailscale')
+    : t('mobileConnectionPathLabel.directLan')
 }

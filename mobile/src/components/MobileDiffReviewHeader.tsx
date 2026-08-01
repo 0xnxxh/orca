@@ -54,13 +54,13 @@ export function MobileDiffReviewHeader({
           style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
           onPress={onBack}
           accessibilityRole="button"
-          accessibilityLabel={t('m.Xot6WdE')}
+          accessibilityLabel={t('mobileDiffReviewHeader.back')}
         >
           <ChevronLeft size={19} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
         <View style={styles.titleBlock}>
           <Text style={styles.title} numberOfLines={1}>
-            {t('m.1lIaLfU')}
+            {t('mobileDiffReviewHeader.changes')}
           </Text>
           <Text style={styles.subtitle} numberOfLines={1}>
             {worktreeLabel}
@@ -71,7 +71,7 @@ export function MobileDiffReviewHeader({
             style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
             onPress={onOpenPRSidebar}
             accessibilityRole="button"
-            accessibilityLabel={t('m.GAXIVbU')}
+            accessibilityLabel={t('mobileDiffReviewHeader.openPull')}
           >
             <ListChecks size={19} color={colors.textPrimary} strokeWidth={2.2} />
           </Pressable>
@@ -80,14 +80,17 @@ export function MobileDiffReviewHeader({
           style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
           onPress={onOpenActions}
           accessibilityRole="button"
-          accessibilityLabel={t('m.LU8BxDQ')}
+          accessibilityLabel={t('mobileDiffReviewHeader.openReview')}
         >
           <MoreHorizontal size={19} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
       </View>
       <View style={styles.progressRow}>
         <Text style={styles.progressText}>
-          {t('m.fEoGCmQ', { value0: reviewedCount, value1: queueLength })}
+          {t('mobileDiffReviewHeader.reviewed', {
+            reviewedCount: reviewedCount,
+            queueLength: queueLength
+          })}
         </Text>
         <Text style={styles.progressText}>{mobileReviewUnsentNoteCountLabel(unsentCount)}</Text>
       </View>
@@ -107,7 +110,9 @@ export function MobileDiffReviewHeader({
             onPress={() => onSelectFilter(item)}
             accessibilityRole="button"
             accessibilityState={{ selected: filter === item }}
-            accessibilityLabel={t('m.qcWQKWI', { value0: mobileReviewFilterLabel(item) })}
+            accessibilityLabel={t('mobileDiffReviewHeader.show', {
+              mobileReviewFilterLabel: mobileReviewFilterLabel(item)
+            })}
           >
             <Text style={[styles.filterText, filter === item && styles.filterTextActive]}>
               {mobileReviewFilterLabel(item)}

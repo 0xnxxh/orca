@@ -46,9 +46,9 @@ export default function PairRedirectScreen() {
     <View style={styles.container}>
       {missingCode ? (
         <>
-          <Text style={styles.errorText}>{t('m.eQE_ziw')}</Text>
+          <Text style={styles.errorText}>{t('pair.missing')}</Text>
           <Pressable style={styles.primaryButton} onPress={goHome}>
-            <Text style={styles.primaryButtonText}>{t('m.AIhB-fM')}</Text>
+            <Text style={styles.primaryButtonText}>{t('pair.back')}</Text>
           </Pressable>
         </>
       ) : (

@@ -21,9 +21,11 @@ export function MobileCommitFailurePanel({ failure, action }: Props) {
     <View style={styles.commitFailurePanel}>
       <View style={styles.commitFailureHeader}>
         <View style={styles.commitFailureTextBlock}>
-          <Text style={styles.commitFailureTitle}>{t('m.Hol4rtI')}</Text>
+          <Text style={styles.commitFailureTitle}>
+            {t('mobileCommitFailurePanel.commitFailed')}
+          </Text>
           <Text style={styles.commitFailureSummary} numberOfLines={2}>
-            {action.summary ?? t('m.qrdoHLM')}
+            {action.summary ?? t('mobileCommitFailurePanel.commitFailedMessage')}
           </Text>
         </View>
         <Pressable
@@ -35,14 +37,14 @@ export function MobileCommitFailurePanel({ failure, action }: Props) {
           onPress={() => void action.launch()}
           disabled={action.launching}
           accessibilityRole="button"
-          accessibilityLabel={t('m.3iqxoCY')}
+          accessibilityLabel={t('mobileCommitFailurePanel.fixCommit')}
         >
           {action.launching ? (
             <ActivityIndicator color={colors.bgBase} />
           ) : (
             <Sparkles size={14} color={colors.bgBase} strokeWidth={2.2} />
           )}
-          <Text style={styles.commitFailureFixButtonText}>{t('m.-RbEI6M')}</Text>
+          <Text style={styles.commitFailureFixButtonText}>{t('mobileCommitFailurePanel.fix')}</Text>
         </Pressable>
       </View>
       {action.hasDetails && detailsText ? (
@@ -54,11 +56,17 @@ export function MobileCommitFailurePanel({ failure, action }: Props) {
             ]}
             onPress={() => setExpanded((current) => !current)}
             accessibilityRole="button"
-            accessibilityLabel={expanded ? t('m.7eT5oiE') : t('m.6Pb0W84')}
+            accessibilityLabel={
+              expanded
+                ? t('mobileCommitFailurePanel.hideCommit')
+                : t('mobileCommitFailurePanel.showCommit')
+            }
           >
             <Chevron size={14} color={colors.textSecondary} strokeWidth={2.2} />
             <Text style={styles.commitFailureDetailsButtonText}>
-              {expanded ? t('m.eysP-fI') : t('m.P2fbbug')}
+              {expanded
+                ? t('mobileCommitFailurePanel.hideDetails')
+                : t('mobileCommitFailurePanel.showDetails')}
             </Text>
           </Pressable>
           {expanded ? <Text style={styles.commitFailureDetailsText}>{detailsText}</Text> : null}

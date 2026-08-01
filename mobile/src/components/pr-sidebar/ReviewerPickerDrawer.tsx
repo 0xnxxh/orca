@@ -62,7 +62,10 @@ export function ReviewerPickerDrawer({
       })
       .catch(() => {
         if (!cancelled) {
-          setLoad({ status: 'error', message: t('m.dVs-M9I') })
+          setLoad({
+            status: 'error',
+            message: t('reviewerPickerDrawer.failed')
+          })
         }
       })
     return () => {
@@ -92,12 +95,12 @@ export function ReviewerPickerDrawer({
 
   return (
     <BottomDrawer visible={visible} onClose={onClose} dragContentToDismiss={false}>
-      <Text style={styles.pickerTitle}>{t('m.K34xo24')}</Text>
+      <Text style={styles.pickerTitle}>{t('reviewerPickerDrawer.reviewers')}</Text>
       <TextInput
         style={styles.pickerSearch}
         value={query}
         onChangeText={setQuery}
-        placeholder={t('m.Ne-d-yA')}
+        placeholder={t('reviewerPickerDrawer.search')}
         placeholderTextColor={colors.textMuted}
         autoCapitalize="none"
         autoCorrect={false}
@@ -112,7 +115,7 @@ export function ReviewerPickerDrawer({
         </View>
       ) : ordered.length === 0 ? (
         <View style={styles.pickerStateArea}>
-          <Text style={styles.emptyText}>{t('m.6OYLM7w')}</Text>
+          <Text style={styles.emptyText}>{t('reviewerPickerDrawer.no')}</Text>
         </View>
       ) : (
         <View style={styles.pickerList}>
@@ -127,7 +130,9 @@ export function ReviewerPickerDrawer({
                 accessibilityState={{ selected: requested }}
                 accessibilityLabel={
                   requested
-                    ? t('m.8Est-xI', { value0: item.login })
+                    ? t('prreviewersSection.remove', {
+                        login: item.login
+                      })
                     : t('review.requestReviewer', { login: item.login })
                 }
               >

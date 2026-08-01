@@ -272,13 +272,15 @@ import { styles } from './mobile-session-styles'
 import { QuickCommandsTabButton } from './QuickCommandsTabButton'
 import type { DiffComment, TerminalQuickCommand } from '../../../../../src/shared/types'
 import type {
-  DiffCommentActions,
+  DiffLineRowProps,
   DiffNotesDelivery,
   DiffSyntaxState,
   DirtyMarkdownDraft,
   FileDocState,
+  FileReaderProps,
   FileSyntaxState,
   MarkdownDocState,
+  MarkdownReaderProps,
   MobileDisplayMode,
   MobileNewTabAgentLoadState,
   MobileSessionTab,
@@ -291,7 +293,9 @@ import type {
   TerminalGestureInputBucket,
   TerminalGestureInputQueue
 } from './mobile-session-route-types'
-import { t } from '@/i18n/mobile-i18n'
+import { createMobileTranslator, t } from '@/i18n/mobile-i18n'
+
+const tr = createMobileTranslator('worktreeId')
 import { addRefreshTimer, type RefreshTimerLifecycle } from '@/session/session-refresh-timer'
 
 const TERMINAL_KEYBOARD_DISMISS_ACTION_SHEET_FALLBACK_MS = 450
@@ -305,16 +309,7 @@ function MarkdownReader({
   onCopy,
   onDiscard,
   keyboardLift
-}: {
-  documentId: string
-  doc: MarkdownDocState | undefined
-  onRefresh: () => void
-  onChange: (content: string) => void
-  onSave: () => void
-  onCopy: () => void
-  onDiscard: () => void
-  keyboardLift: number
-}) {
+}: MarkdownReaderProps) {
   // Native Keyboard events under-report the WebView editor's covered area, so prefer the larger WebView-measured inset.
   const [webviewKeyboardInset, setWebviewKeyboardInset] = useState(0)
   const effectiveKeyboardLift = Math.max(keyboardLift, webviewKeyboardInset)
@@ -331,7 +326,7 @@ function MarkdownReader({
         <Text style={styles.markdownError}>{doc.message}</Text>
         <Pressable style={styles.markdownRefreshButton} onPress={onRefresh}>
           <RefreshCw size={14} color={colors.textPrimary} />
-          <Text style={styles.markdownRefreshText}>{t('m.8Uro2f0')}</Text>
+          <Text style={styles.markdownRefreshText}>{tr('retry')}</Text>
         </Pressable>
       </View>
     )
@@ -340,9 +335,9 @@ function MarkdownReader({
   const statusText = doc.saveError
     ? doc.saveError
     : doc.readOnlyReason
-      ? t('m.RwIU_9I')
+      ? tr('read')
       : doc.stale
-        ? t('m.V4EVATY')
+        ? tr('changed')
         : null
   const showRefresh = (doc.stale && !doc.isDirty) || !doc.editable
   const showCopy = doc.saveError || !doc.editable
@@ -384,18 +379,18 @@ function MarkdownReader({
           <View style={styles.markdownFloatingActions}>
             {showCopy ? (
               <Pressable style={styles.markdownFloatingButton} onPress={onCopy}>
-                <Text style={styles.markdownFloatingButtonText}>{t('m.i7mE8Wc')}</Text>
+                <Text style={styles.markdownFloatingButtonText}>{tr('copy')}</Text>
               </Pressable>
             ) : null}
             {showRefresh ? (
               <Pressable style={styles.markdownFloatingButton} onPress={onRefresh}>
                 <RefreshCw size={13} color={colors.textPrimary} />
-                <Text style={styles.markdownFloatingButtonText}>{t('m.a6FBCvM')}</Text>
+                <Text style={styles.markdownFloatingButtonText}>{tr('refresh')}</Text>
               </Pressable>
             ) : null}
             {doc.isDirty ? (
               <Pressable style={styles.markdownFloatingButton} onPress={onDiscard}>
-                <Text style={styles.markdownFloatingButtonText}>{t('m.Hy2xmeg')}</Text>
+                <Text style={styles.markdownFloatingButtonText}>{tr('discard')}</Text>
               </Pressable>
             ) : null}
             {showSave ? (
@@ -411,7 +406,7 @@ function MarkdownReader({
                 {doc.saving ? (
                   <ActivityIndicator size="small" color={colors.textPrimary} />
                 ) : (
-                  <Text style={styles.markdownFloatingButtonText}>{t('m.fAJsFIg')}</Text>
+                  <Text style={styles.markdownFloatingButtonText}>{tr('save')}</Text>
                 )}
               </Pressable>
             ) : null}
@@ -435,20 +430,7 @@ function DiffLineRow({
   onDraftChange,
   onSubmitComment,
   onDeleteComment
-}: {
-  line: RenderableDiffLine
-  title: string
-  index: number
-  comments: DiffComment[]
-  activeCommentLine: number | null
-  commentDraft: string
-  commentsBusy: boolean
-  onStartComment: (lineNumber: number) => void
-  onCancelComment: () => void
-  onDraftChange: (value: string) => void
-  onSubmitComment: (lineNumber: number) => void
-  onDeleteComment: (commentId: string) => void
-}) {
+}: DiffLineRowProps) {
   const commentLine = line.newLineNumber
   const isCommenting = commentLine !== undefined && activeCommentLine === commentLine
   const canComment = commentLine !== undefined
@@ -467,7 +449,10 @@ function DiffLineRow({
         <Text
           selectable
           style={styles.diffText}
-          accessibilityLabel={t('m.7su6EMM', { value0: title, value1: index + 1 })}
+          accessibilityLabel={tr('titleDiff', {
+            title: title,
+            lineNumber: index + 1
+          })}
         >
           <Text
             style={[
@@ -493,7 +478,9 @@ function DiffLineRow({
                 onStartComment(commentLine)
               }
             }}
-            accessibilityLabel={t('m.XjRhzvI', { value0: commentLine })}
+            accessibilityLabel={tr('addNote', {
+              commentLine: commentLine
+            })}
           >
             <Plus size={12} color={colors.textSecondary} strokeWidth={2.3} />
           </Pressable>
@@ -506,13 +493,17 @@ function DiffLineRow({
               <View style={styles.diffCommentHeader}>
                 <MessageSquare size={12} color={colors.textMuted} strokeWidth={2.2} />
                 <Text style={styles.diffCommentMeta}>
-                  {t('m.HtCuTmQ', { value0: comment.lineNumber })}
+                  {tr('line', {
+                    lineNumber: comment.lineNumber
+                  })}
                 </Text>
                 <Pressable
                   style={styles.diffCommentDeleteButton}
                   disabled={commentsBusy}
                   onPress={() => onDeleteComment(comment.id)}
-                  accessibilityLabel={t('m.AMX0qpI', { value0: comment.lineNumber })}
+                  accessibilityLabel={tr('delete', {
+                    lineNumber: comment.lineNumber
+                  })}
                 >
                   <X size={12} color={colors.textMuted} strokeWidth={2.2} />
                 </Pressable>
@@ -528,7 +519,7 @@ function DiffLineRow({
             style={[styles.textInput, styles.diffCommentInput]}
             value={commentDraft}
             onChangeText={onDraftChange}
-            placeholder={t('m.vCc2hyw')}
+            placeholder={tr('addReview')}
             placeholderTextColor={colors.textMuted}
             editable={!commentsBusy}
             multiline
@@ -541,7 +532,7 @@ function DiffLineRow({
               disabled={commentsBusy}
               onPress={onCancelComment}
             >
-              <Text style={styles.diffCommentSecondaryText}>{t('m.AJOY4oY')}</Text>
+              <Text style={styles.diffCommentSecondaryText}>{tr('cancel')}</Text>
             </Pressable>
             <Pressable
               style={[
@@ -555,7 +546,7 @@ function DiffLineRow({
                 }
               }}
             >
-              <Text style={styles.diffCommentPrimaryText}>{t('m.bNrgw7Q')}</Text>
+              <Text style={styles.diffCommentPrimaryText}>{tr('saveNote')}</Text>
             </Pressable>
           </View>
         </View>
@@ -564,19 +555,7 @@ function DiffLineRow({
   )
 }
 
-function FileReader({
-  doc,
-  title,
-  relativePath,
-  language,
-  diffCommentActions
-}: {
-  doc: FileDocState | undefined
-  title: string
-  relativePath: string
-  language?: string
-  diffCommentActions?: DiffCommentActions
-}) {
+function FileReader({ doc, title, relativePath, language, diffCommentActions }: FileReaderProps) {
   const syntaxLanguage = useMemo(
     () => resolveMobileSyntaxLanguage(relativePath || title, language),
     [language, relativePath, title]
@@ -733,9 +712,9 @@ function FileReader({
               <MessageSquare size={14} color={colors.textSecondary} strokeWidth={2.2} />
               <Text style={styles.diffNotesTitle}>
                 {commentCount === 0
-                  ? t('m.bjh73HM')
-                  : t(commentCount === 1 ? 'm.qJU9f5Q' : 'm.QGcvPOc', {
-                      value0: commentCount
+                  ? tr('noReview')
+                  : tr(commentCount === 1 ? 'commentCountReviewNote' : 'commentCountReviewNotes', {
+                      commentCount: commentCount
                     })}
               </Text>
             </View>
@@ -747,10 +726,10 @@ function FileReader({
                 ]}
                 disabled={!canCopyNotes}
                 onPress={() => void diffCommentActions.onCopyAll()}
-                accessibilityLabel={t('m.G46090U')}
+                accessibilityLabel={tr('copyReview')}
               >
                 <Copy size={13} color={colors.textSecondary} strokeWidth={2.2} />
-                <Text style={styles.diffNotesActionText}>{t('m.i7mE8Wc')}</Text>
+                <Text style={styles.diffNotesActionText}>{tr('copy')}</Text>
               </Pressable>
               <Pressable
                 style={[
@@ -759,10 +738,10 @@ function FileReader({
                 ]}
                 disabled={!canSendNotes}
                 onPress={diffCommentActions.onSendAll}
-                accessibilityLabel={t('m.Kvcps20')}
+                accessibilityLabel={tr('sendReviewNotesAi')}
               >
                 <Send size={13} color={colors.textSecondary} strokeWidth={2.2} />
-                <Text style={styles.diffNotesActionText}>{t('m.yHsoXLM')}</Text>
+                <Text style={styles.diffNotesActionText}>{tr('send')}</Text>
               </Pressable>
             </View>
           </View>
@@ -799,7 +778,9 @@ function FileReader({
             source={{ uri: doc.dataUri }}
             style={styles.imagePreview}
             resizeMode="contain"
-            accessibilityLabel={t('m.GF9YPY8', { value0: title })}
+            accessibilityLabel={tr('titleImage', {
+              title: title
+            })}
           />
         </ScrollView>
       </View>
@@ -815,7 +796,9 @@ function FileReader({
         <Text
           selectable
           style={styles.filePreviewText}
-          accessibilityLabel={t('m.eIqJOeA', { value0: title })}
+          accessibilityLabel={tr('titlePreview', {
+            title: title
+          })}
         >
           <MobileSyntaxSegments
             segments={
@@ -1231,7 +1214,7 @@ export default function SessionScreen() {
         nativeChatController.setChatComposerText((current) =>
           appendBufferedDictation(current, text)
         )
-        showToast(t('m.X1e46P4'))
+        showToast(tr('dictation'))
         return
       }
       // Live mode inserts the transcript into its PTY as text (no Return); buffered mode appends to the command field.
@@ -1253,13 +1236,13 @@ export default function SessionScreen() {
           }
           const sent = await sendLiveTerminalInput(insertHandle, route.text)
           if (sent) {
-            showToast(t('m.X1e46P4'))
+            showToast(tr('dictation'))
           }
         })()
         return
       }
       setInput((current) => appendBufferedDictation(current, route.text))
-      showToast(t('m.X1e46P4'))
+      showToast(tr('dictation'))
     },
     onError: (err) => {
       dictationRouteContextRef.current = null
@@ -1977,7 +1960,7 @@ export default function SessionScreen() {
           relativePath: tab.relativePath
         })
         if (!fallback.ok) {
-          throw new Error(t('m.I4VlaAs'))
+          throw new Error(tr('unableRead'))
         }
         const fileResult = (fallback as RpcSuccess).result as {
           content: string
@@ -1998,7 +1981,7 @@ export default function SessionScreen() {
         setMarkdownDocs((prev) =>
           new Map(prev).set(tab.id, {
             status: 'error',
-            message: t('m.ElSO0Bs')
+            message: tr('couldNotLoadMarkdown')
           })
         )
       }
@@ -2023,12 +2006,12 @@ export default function SessionScreen() {
         const message = err instanceof Error ? err.message : ''
         const previewMessage =
           message === 'binary_file'
-            ? t('m.8Ho6nkA')
+            ? tr('binary')
             : message === 'file_too_large'
-              ? t('m.sJ7CwDw')
+              ? tr('fileToo')
               : tab.diffSource === 'staged' || tab.diffSource === 'unstaged'
-                ? t('m.XD1EPRc')
-                : t('m.qIT8ceU')
+                ? tr('couldNotLoadDiff')
+                : tr('couldNotLoadFile')
         setFileDocs((prev) =>
           new Map(prev).set(tab.id, {
             status: 'error',
@@ -2060,14 +2043,14 @@ export default function SessionScreen() {
   const persistDiffComments = useCallback(
     async (comments: readonly DiffComment[]): Promise<void> => {
       if (!client || connState !== 'connected') {
-        throw new Error(t('m.-0DsFBU'))
+        throw new Error(tr('waiting'))
       }
       const response = await client.sendRequest('worktree.set', {
         worktree: `id:${worktreeId}`,
         diffComments: comments
       })
       if (!response.ok) {
-        throw new Error((response as RpcFailure).error.message || t('m.5GHrSsw'))
+        throw new Error((response as RpcFailure).error.message || tr('failedSaveReview'))
       }
     },
     [client, connState, worktreeId]
@@ -2100,12 +2083,12 @@ export default function SessionScreen() {
       try {
         await persistDiffComments(result.comments)
         triggerSuccess()
-        showToast(t('m.TX0YgPk'))
+        showToast(tr('note'))
         return true
       } catch (err) {
         setDiffComments(previous)
         triggerError()
-        showToast(err instanceof Error ? err.message : t('m.ya3rgTk'), 1600)
+        showToast(err instanceof Error ? err.message : tr('failedSaveNote'), 1600)
         return false
       } finally {
         setDiffCommentBusy(false)
@@ -2132,7 +2115,7 @@ export default function SessionScreen() {
       } catch (err) {
         setDiffComments(previous)
         triggerError()
-        showToast(err instanceof Error ? err.message : t('m.TDYOpzk'), 1600)
+        showToast(err instanceof Error ? err.message : tr('failedDelete'), 1600)
       } finally {
         setDiffCommentBusy(false)
       }
@@ -2148,10 +2131,10 @@ export default function SessionScreen() {
     try {
       await Clipboard.setStringAsync(formatDiffComments(comments))
       triggerSuccess()
-      showToast(t('m.dl26MWM'))
+      showToast(tr('notesCopied'))
     } catch {
       triggerError()
-      showToast(t('m.XIoxeds'), 1600)
+      showToast(tr('couldNotCopyNotes'), 1600)
     }
   }, [showToast])
 
@@ -2211,7 +2194,7 @@ export default function SessionScreen() {
       }
       await Clipboard.setStringAsync(current.localContent)
       triggerSuccess()
-      showToast(t('m.A6mZ2G0'))
+      showToast(tr('copied'))
     },
     [markdownDocs, showToast]
   )
@@ -2221,7 +2204,11 @@ export default function SessionScreen() {
     for (const [tabId, doc] of markdownDocs) {
       if (doc.status === 'ready' && doc.isDirty) {
         const tab = sessionTabs.find((candidate) => candidate.id === tabId)
-        drafts.push({ tabId, title: tab?.title || t('m.Dy-chOU'), content: doc.localContent })
+        drafts.push({
+          tabId,
+          title: tab?.title || tr('markdown'),
+          content: doc.localContent
+        })
       }
     }
     return drafts
@@ -2330,10 +2317,10 @@ export default function SessionScreen() {
         )
         markdownSaveSeqRef.current.delete(tab.id)
         triggerSuccess()
-        showToast(t('m.JnDupXg'))
+        showToast(tr('saved'))
       } catch (error) {
         triggerError()
-        const message = error instanceof Error ? error.message : t('m.DKTAFXw')
+        const message = error instanceof Error ? error.message : tr('saveFailed')
         if (markdownSaveSeqRef.current.get(tab.id) !== saveSeq) {
           return
         }
@@ -2345,7 +2332,7 @@ export default function SessionScreen() {
           return new Map(prev).set(tab.id, {
             ...existing,
             saving: false,
-            saveError: message || t('m.DKTAFXw')
+            saveError: message || tr('saveFailed')
           })
         })
       } finally {
@@ -2724,7 +2711,7 @@ export default function SessionScreen() {
           response &&
           headlessActivationNeedsHostRenderer(response.result)
         ) {
-          showToast(t('m.RJlcmtM'), 3000)
+          showToast(tr('openOrca'), 3000)
         }
       }
       if (client && created !== '1' && !isFloatingWorkspaceRoute) {
@@ -3084,7 +3071,7 @@ export default function SessionScreen() {
       }
       if (!isTerminalLiveInputWithinByteLimit(text)) {
         triggerError()
-        showToast(t('m.528pc28'), 1500)
+        showToast(tr('input'), 1500)
         return false
       }
       const rpc = clientRef.current
@@ -3473,9 +3460,9 @@ export default function SessionScreen() {
       await client.sendRequest('terminal.clearBuffer', {
         terminal: target.handle
       })
-      showToast(t('m.8hc6lac'))
+      showToast(tr('terminalCleared'))
     } catch {
-      showToast(t('m.m332RRE'), 1500)
+      showToast(tr('couldNotClear'), 1500)
     }
   }
 
@@ -3556,7 +3543,7 @@ export default function SessionScreen() {
         triggerSuccess()
         // Why: Android 13+ shows its own system copy toast; iOS shows none, so only iOS needs our in-app toast.
         if (Platform.OS === 'ios') {
-          showToast(t('m.A6mZ2G0'))
+          showToast(tr('copied'))
         }
         terminalRefs.current.get(handle)?.cancelSelect()
       } catch (e) {
@@ -3567,7 +3554,7 @@ export default function SessionScreen() {
           name: err.name,
           message: err.message
         })
-        showToast(t('m._0rBKLA'), 1500)
+        showToast(tr('couldNotCopy'), 1500)
       }
     },
     [showToast]
@@ -3580,7 +3567,7 @@ export default function SessionScreen() {
       }
       // eslint-disable-next-line no-console
       console.warn('[mobile-clip] selection evicted')
-      showToast(t('m.BYmvBAo'), 1500)
+      showToast(tr('selection'), 1500)
       setSelectModeActive(false)
     },
     [showToast]
@@ -3824,7 +3811,7 @@ export default function SessionScreen() {
           const existing = previousTerminals.find((terminal) => terminal.handle === createdHandle)
           const createdTerminal: Terminal = {
             handle: createdHandle,
-            title: created.title || existing?.title || t('m.1ELofI0'),
+            title: created.title || existing?.title || tr('terminal'),
             terminalTheme: created.terminalTheme ?? existing?.terminalTheme,
             isActive: true
           }
@@ -3851,22 +3838,22 @@ export default function SessionScreen() {
               )
               .then((sendResponse) => {
                 if (!sendResponse.ok) {
-                  throw new Error((sendResponse as RpcFailure).error.message || t('m.v-nMJVc'))
+                  throw new Error((sendResponse as RpcFailure).error.message || tr('failedSend'))
                 }
                 const result = (sendResponse as RpcSuccess).result as {
                   send?: { accepted?: boolean }
                 }
                 if (result.send?.accepted === false) {
-                  throw new Error(t('m.1s8dFXg'))
+                  throw new Error(tr('terminalInput'))
                 }
                 triggerSuccess()
-                showToast(options.successToast ?? t('m.4BJ8B0k'))
+                showToast(options.successToast ?? tr('notesSent'))
                 options.onPromptSent?.()
               })
               .catch((err) => {
                 triggerError()
                 showToast(
-                  options.errorToast ?? (err instanceof Error ? err.message : t('m.OcU2d6s')),
+                  options.errorToast ?? (err instanceof Error ? err.message : tr('couldNotSend')),
                   1800
                 )
               })
@@ -3882,7 +3869,7 @@ export default function SessionScreen() {
         }
         scheduleDelayedAction(() => void fetchSessionTabs(), 500)
       } else {
-        const message = options?.errorToast ?? t('m.BphZ5Gw')
+        const message = options?.errorToast ?? tr('failedCreateTerminal')
         setCreateError(message)
         if (options?.errorToast) {
           triggerError()
@@ -3890,7 +3877,7 @@ export default function SessionScreen() {
         }
       }
     } catch {
-      const message = options?.errorToast ?? t('m.BphZ5Gw')
+      const message = options?.errorToast ?? tr('failedCreateTerminal')
       setCreateError(message)
       if (options?.errorToast) {
         triggerError()
@@ -3918,10 +3905,10 @@ export default function SessionScreen() {
     const launch = buildMobileQuickCommandLaunch(command)
     if (!launch) {
       triggerError()
-      showToast(t('m.6kcq1T8'), 1800)
+      showToast(tr('edit'), 1800)
       return false
     }
-    const label = command.label.trim() || t('m.sgQvHe0')
+    const label = command.label.trim() || tr('quick')
     void handleCreateTerminal(launch.agent, {
       ...launch.options,
       errorToast: t('session.quickCommand.runFailed', { commandLabel: label })
@@ -3952,7 +3939,7 @@ export default function SessionScreen() {
           if (isFileExistsErrorMessage(message) && attempt < 100) {
             continue
           }
-          throw new Error(message || t('m.6oL3kaQ'))
+          throw new Error(message || tr('failedCreateMarkdown'))
         }
 
         const openResponse = await client.sendRequest(
@@ -3966,9 +3953,9 @@ export default function SessionScreen() {
         scheduleDelayedAction(() => void fetchSessionTabs(), 300)
         return
       }
-      throw new Error(t('m.14_Cpwk'))
+      throw new Error(tr('unableCreate'))
     } catch (err) {
-      const message = err instanceof Error ? err.message : t('m.6oL3kaQ')
+      const message = err instanceof Error ? err.message : tr('failedCreateMarkdown')
       setCreateError(message)
       showToast(message, 1800)
     } finally {
@@ -3982,12 +3969,12 @@ export default function SessionScreen() {
     }
     // Why: read via ref so a tap before the capability probe resolves (or a stale callback) still sees the live value.
     if (browserScreencastSupportedRef.current !== true) {
-      showToast(t('m.xdJzAj8'), 1600)
+      showToast(tr('desktopUpdateRequiredMobile'), 1600)
       return false
     }
     const url = normalizeBrowserUrl(rawUrl)
     if (!url) {
-      const message = t('m.HyIWUac')
+      const message = tr('enterValid')
       setCreateError(message)
       showToast(message, 1400)
       return false
@@ -4019,7 +4006,7 @@ export default function SessionScreen() {
       scheduleDelayedAction(() => void fetchPendingBrowserSessionTabs(), 1200)
       return true
     } catch (err) {
-      const message = err instanceof Error ? err.message : t('m.sYGlLWQ')
+      const message = err instanceof Error ? err.message : tr('failedCreateBrowser')
       setCreateError(message)
       showToast(message, 1800)
       return false
@@ -4035,7 +4022,7 @@ export default function SessionScreen() {
     method: 'browser.back' | 'browser.forward' | 'browser.reload'
   ) {
     if (!client || !tab.browserPageId) {
-      showToast(t('m.Ggr0PGg'), 1500)
+      showToast(tr('browserPage'), 1500)
       return
     }
     try {
@@ -4052,7 +4039,7 @@ export default function SessionScreen() {
       }
       scheduleDelayedAction(() => void fetchSessionTabs(), 250)
     } catch (err) {
-      const message = err instanceof Error ? err.message : t('m.6P8BtkA')
+      const message = err instanceof Error ? err.message : tr('browserCommand')
       showToast(message, 1600)
     }
   }
@@ -4073,7 +4060,7 @@ export default function SessionScreen() {
       if (response.ok) {
         const nextTerminals = terminalsRef.current.map((terminal) =>
           terminal.handle === target.handle
-            ? { ...terminal, title: title || t('m.1ELofI0') }
+            ? { ...terminal, title: title || tr('terminal') }
             : terminal
         )
         terminalsRef.current = nextTerminals
@@ -4260,12 +4247,16 @@ export default function SessionScreen() {
   const terminalSummary =
     connState === 'connected'
       ? showLoadingState
-        ? t('m.vFcOLlo')
+        ? tr('loadingTabs')
         : visibleTabs.length === 1
-          ? t('m.KRxO3Ug')
-          : t('m.-4K4pmw', { value0: visibleTabs.length })
+          ? tr('one')
+          : tr('visible', {
+              visibleTabCount: visibleTabs.length
+            })
       : showConnectionRetry
-        ? t('m.S6RbGW8', { value0: verdictDisplayLabel(connectionVerdict) })
+        ? tr('verdict', {
+            verdictDisplayLabel: verdictDisplayLabel(connectionVerdict)
+          })
         : MOBILE_SESSION_STATUS_LABELS[connState]
 
   // Why: iOS keyboard height includes the home-indicator inset; Android IME height does not.
@@ -4301,7 +4292,7 @@ export default function SessionScreen() {
     createTabAgentLoadState === 'loading'
       ? [
           {
-            label: t('m.pUeIX0M'),
+            label: tr('detecting'),
             icon: Bot,
             disabled: true,
             loading: true,
@@ -4320,7 +4311,7 @@ export default function SessionScreen() {
         : createTabAgentLoadState === 'loaded'
           ? [
               {
-                label: t('m.yBLhh9Y'),
+                label: tr('noEnabled'),
                 icon: Bot,
                 disabled: true,
                 onPress: () => {}
@@ -4329,8 +4320,8 @@ export default function SessionScreen() {
           : createTabAgentLoadState === 'error'
             ? [
                 {
-                  label: t('m.m6V9ozk'),
-                  hint: t('m.k5E-6Qo'),
+                  label: tr('agent'),
+                  hint: tr('check'),
                   icon: Bot,
                   disabled: true,
                   onPress: () => {}
@@ -4343,7 +4334,7 @@ export default function SessionScreen() {
       : createTabAgentLoadState === 'loading'
         ? [
             {
-              label: t('m.pUeIX0M'),
+              label: tr('detecting'),
               icon: Bot,
               disabled: true,
               loading: true,
@@ -4353,7 +4344,7 @@ export default function SessionScreen() {
         : createTabAgentOptions.length > 0
           ? createTabAgentOptions.map((option) => ({
               label: option.label,
-              hint: t('m.0IFqHX0'),
+              hint: tr('newAgent'),
               icon: Bot,
               onPress: () => {
                 const delivery = pendingDiffNotesDelivery
@@ -4370,7 +4361,7 @@ export default function SessionScreen() {
           : createTabAgentLoadState === 'loaded'
             ? [
                 {
-                  label: t('m.yBLhh9Y'),
+                  label: tr('noEnabled'),
                   icon: Bot,
                   disabled: true,
                   onPress: () => {}
@@ -4379,8 +4370,8 @@ export default function SessionScreen() {
             : createTabAgentLoadState === 'error'
               ? [
                   {
-                    label: t('m.m6V9ozk'),
-                    hint: t('m.AnvMzjI'),
+                    label: tr('agent'),
+                    hint: tr('copyNotesInstead'),
                     icon: Bot,
                     disabled: true,
                     onPress: () => {}
@@ -4438,14 +4429,14 @@ export default function SessionScreen() {
               style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
               onPress={requestLeaveSession}
               hitSlop={8}
-              accessibilityLabel={t('m.z6d7HxM')}
+              accessibilityLabel={tr('back')}
             >
               <ChevronLeft size={22} color={colors.textSecondary} strokeWidth={2.2} />
             </Pressable>
 
             <View style={styles.sessionTitleBlock}>
               <Text style={styles.sessionTitle} numberOfLines={1}>
-                {worktreeName || t('m.1ELofI0')}
+                {worktreeName || tr('terminal')}
               </Text>
               <Pressable
                 style={styles.sessionMetaRow}
@@ -4456,7 +4447,7 @@ export default function SessionScreen() {
                   }
                 }}
                 accessibilityRole={showConnectionRetry ? 'button' : undefined}
-                accessibilityLabel={showConnectionRetry ? t('m.zUxrlPw') : undefined}
+                accessibilityLabel={showConnectionRetry ? tr('reconnect') : undefined}
               >
                 <StatusDot state={connState} />
                 <Text style={styles.sessionMetaText} numberOfLines={1}>
@@ -4467,7 +4458,7 @@ export default function SessionScreen() {
             {!isFloatingWorkspaceRoute && (
               <MobileSessionHeaderIconButton
                 active={activePanel === 'files'}
-                accessibilityLabel={t('m.8NqLc0E')}
+                accessibilityLabel={tr('openFile')}
                 icon={Folder}
                 onPress={() => handlePanelTap('files')}
               />
@@ -4475,7 +4466,7 @@ export default function SessionScreen() {
             {!isFolderWorkspaceRoute && !isFloatingWorkspaceRoute && (
               <MobileSessionHeaderIconButton
                 active={activePanel === 'sourceControl'}
-                accessibilityLabel={t('m.Td8lqm0')}
+                accessibilityLabel={tr('openSource')}
                 icon={GitBranch}
                 onPress={() => handlePanelTap('sourceControl')}
               />
@@ -4483,7 +4474,7 @@ export default function SessionScreen() {
             {showHeaderMoreButton ? (
               <MobileSessionHeaderIconButton
                 active={activePanel === 'pr'}
-                accessibilityLabel={t('m.uDcv4AM')}
+                accessibilityLabel={tr('more')}
                 icon={MoreHorizontal}
                 onPress={() => setShowHeaderMoreActions(true)}
               />
@@ -4574,7 +4565,7 @@ export default function SessionScreen() {
                   setCreateError('')
                   setShowCreateTabDrawer(true)
                 }}
-                accessibilityLabel={t('m.7IGdkR0')}
+                accessibilityLabel={tr('newTab')}
               >
                 <Plus size={16} color={colors.textSecondary} strokeWidth={2.2} />
               </Pressable>
@@ -4589,7 +4580,9 @@ export default function SessionScreen() {
                     return
                   }
                   showToast(
-                    quickCommandsSupported === false ? t('m.UoNS0D4') : t('m.5g1_I7Y'),
+                    quickCommandsSupported === false
+                      ? tr('desktopUpdateRequiredQuick')
+                      : tr('checking'),
                     1600
                   )
                 }}
@@ -4608,7 +4601,7 @@ export default function SessionScreen() {
                 <Pressable
                   style={styles.createWarningDismiss}
                   onPress={() => setCreateWarningState(dismissMobileSessionCreateWarningState)}
-                  accessibilityLabel={t('m.jBv9pDk')}
+                  accessibilityLabel={tr('dismissWorkspace')}
                   hitSlop={8}
                 >
                   <X size={16} color={colors.textMuted} strokeWidth={2.2} />
@@ -4622,7 +4615,7 @@ export default function SessionScreen() {
               </View>
             ) : showEmptyState ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyText}>{t('m.Xb4fMs0')}</Text>
+                <Text style={styles.emptyText}>{tr('noTabs')}</Text>
                 {createError ? <Text style={styles.createError}>{createError}</Text> : null}
                 <View style={styles.emptyActions}>
                   <Pressable
@@ -4637,7 +4630,7 @@ export default function SessionScreen() {
                     }}
                   >
                     <Text style={styles.createButtonText}>
-                      {createTabBusy ? t('m.S2Yv1rU') : t('m.IdjCS0U')}
+                      {createTabBusy ? tr('creating') : tr('create')}
                     </Text>
                   </Pressable>
                 </View>
@@ -4664,7 +4657,7 @@ export default function SessionScreen() {
               <View style={styles.markdownFrame}>
                 <FileReader
                   doc={fileDocs.get(activeFileTab.id)}
-                  title={activeFileTab.title || t('m.WaegjuQ')}
+                  title={activeFileTab.title || tr('file')}
                   relativePath={activeFileTab.relativePath}
                   language={activeFileTab.language}
                   diffCommentActions={
@@ -4709,7 +4702,7 @@ export default function SessionScreen() {
               <View style={styles.emptyState}>
                 <ActivityIndicator size="small" color={colors.textSecondary} />
                 <Text style={styles.emptyText}>
-                  {activePendingTerminalTab.title || t('m.1Ef6jA8')}
+                  {activePendingTerminalTab.title || tr('loadingTerminal')}
                 </Text>
               </View>
             ) : (
@@ -4793,8 +4786,8 @@ export default function SessionScreen() {
                       onPress={dismissSoftwareKeyboard}
                       hitSlop={8}
                       accessibilityRole="button"
-                      accessibilityLabel={t('m.O4uFjyM')}
-                      accessibilityHint={t('m.jbJql9k')}
+                      accessibilityLabel={tr('dismissKeyboard')}
+                      accessibilityHint={tr('hides')}
                     >
                       <View style={styles.keyboardDismissGlyph}>
                         <KeyboardIcon size={15} color={colors.textSecondary} strokeWidth={2} />
@@ -4829,8 +4822,8 @@ export default function SessionScreen() {
                       }}
                       accessibilityLabel={
                         isTerminalPhoneDisplayMode(activeHandle, terminalModes)
-                          ? t('m.QB6eVqs')
-                          : t('m.CAFCbk0')
+                          ? tr('switchDesktop')
+                          : tr('switchPhone')
                       }
                     >
                       {isTerminalPhoneDisplayMode(activeHandle, terminalModes) ? (
@@ -4855,7 +4848,9 @@ export default function SessionScreen() {
                       // Why: offline, live mode is dead but the buffered box still composes — keep the escape hatch tappable (#6713).
                       disabled={!canCompose}
                       onPress={toggleLiveInput}
-                      accessibilityLabel={liveInputEnabled ? t('m.LNjU0eA') : t('m.g0S-mpY')}
+                      accessibilityLabel={
+                        liveInputEnabled ? tr('switchBuffered') : tr('switchLive')
+                      }
                     >
                       <ChevronsRight
                         size={14}
@@ -4877,7 +4872,7 @@ export default function SessionScreen() {
                         ]}
                         disabled={!canSend}
                         onPress={() => void handlePaste()}
-                        accessibilityLabel={t('m.UjbgRFg')}
+                        accessibilityLabel={tr('pasteClipboard')}
                       >
                         <Text
                           style={[
@@ -4885,7 +4880,7 @@ export default function SessionScreen() {
                             !canSend && styles.accessoryKeyTextDisabled
                           ]}
                         >
-                          {t('m.UDf4wts')}
+                          {tr('paste')}
                         </Text>
                       </Pressable>
                     )}
@@ -4918,7 +4913,10 @@ export default function SessionScreen() {
                           void handleAccessoryKey(createTerminalLiveAccessoryInput(key))
                         }}
                         accessibilityLabel={
-                          key.accessibilityLabel ?? t('m.65j23gQ', { value0: key.label })
+                          key.accessibilityLabel ??
+                          tr('sendKey', {
+                            keyLabel: key.label
+                          })
                         }
                       >
                         <Text
@@ -4947,7 +4945,9 @@ export default function SessionScreen() {
                           setDeleteKeyTarget(key)
                         }}
                         delayLongPress={400}
-                        accessibilityLabel={t('m.65j23gQ', { value0: key.label })}
+                        accessibilityLabel={tr('sendKey', {
+                          keyLabel: key.label
+                        })}
                       >
                         <Text
                           style={[
@@ -4965,7 +4965,7 @@ export default function SessionScreen() {
                         pressed && styles.accessoryKeyPressed
                       ]}
                       onPress={() => setShowCustomKeyModal(true)}
-                      accessibilityLabel={t('m.WbNNU2M')}
+                      accessibilityLabel={tr('addCustom')}
                     >
                       <Plus size={14} color={colors.textSecondary} strokeWidth={2.2} />
                     </Pressable>
@@ -4984,8 +4984,8 @@ export default function SessionScreen() {
                       disabled={!canSend}
                       onPress={focusLiveInput}
                       accessibilityRole="button"
-                      accessibilityLabel={t('m.JQAVlGc')}
-                      accessibilityHint={t('m.Rddk0Io')}
+                      accessibilityLabel={tr('show')}
+                      accessibilityHint={tr('typed')}
                     >
                       <KeyboardIcon size={16} color={colors.textSecondary} strokeWidth={2} />
                       <MobileTerminalLiveInputStatus
@@ -5046,7 +5046,7 @@ export default function SessionScreen() {
                       value={input}
                       // Why: iOS kills active dictation/IME if JS writes a value differing from native text; store raw, normalize at send.
                       onChangeText={setInput}
-                      placeholder={t('m.XNw0eg0')}
+                      placeholder={tr('type')}
                       placeholderTextColor={colors.textMuted}
                       autoCapitalize="none"
                       autoCorrect={autocompleteEnabled}
@@ -5082,7 +5082,7 @@ export default function SessionScreen() {
                       style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
                       disabled={!canSend}
                       onPress={() => void handleSend()}
-                      accessibilityLabel={t('m.ps5grWg')}
+                      accessibilityLabel={tr('sendCommand')}
                     >
                       <ArrowUp size={18} color={colors.textSecondary} strokeWidth={2.5} />
                     </Pressable>
@@ -5130,11 +5130,11 @@ export default function SessionScreen() {
 
       <ActionSheetModal
         visible={showCreateTabDrawer}
-        title={t('m.-95LQlw')}
+        title={tr('newTabTitle')}
         actions={[
           ...createTabAgentActions,
           {
-            label: t('m.1ELofI0'),
+            label: tr('terminal'),
             icon: SquareTerminal,
             onPress: () => {
               setShowCreateTabDrawer(false)
@@ -5148,19 +5148,19 @@ export default function SessionScreen() {
             ? []
             : [
                 {
-                  label: t('m.vL8HgZo'),
+                  label: tr('browser'),
                   icon: Globe,
                   closeBeforePress: true,
                   onPress: () => {
                     if (browserScreencastSupported !== true) {
-                      showToast(t('m.xdJzAj8'), 1600)
+                      showToast(tr('desktopUpdateRequiredMobile'), 1600)
                       return
                     }
                     setShowCreateBrowserModal(true)
                   }
                 },
                 {
-                  label: t('m.c_XP7YM'),
+                  label: tr('markdownNote'),
                   icon: FileText,
                   onPress: () => {
                     setShowCreateTabDrawer(false)
@@ -5174,12 +5174,12 @@ export default function SessionScreen() {
 
       <ActionSheetModal
         visible={pendingDiffNotesDelivery !== null}
-        title={t('m.eBYSC7A')}
-        message={t('m.-So6IQg')}
+        title={tr('sendReviewNotes')}
+        message={tr('choose')}
         actions={[
           ...sendDiffNotesAgentActions,
           {
-            label: t('m._VDitck'),
+            label: tr('copyNotes'),
             icon: Copy,
             onPress: () => {
               const delivery = pendingDiffNotesDelivery
@@ -5190,11 +5190,11 @@ export default function SessionScreen() {
               void Clipboard.setStringAsync(delivery.prompt)
                 .then(() => {
                   triggerSuccess()
-                  showToast(t('m.dl26MWM'))
+                  showToast(tr('notesCopied'))
                 })
                 .catch(() => {
                   triggerError()
-                  showToast(t('m.XIoxeds'), 1500)
+                  showToast(tr('couldNotCopyNotes'), 1500)
                 })
             }
           }
@@ -5204,7 +5204,7 @@ export default function SessionScreen() {
 
       <ActionSheetModal
         visible={actionTarget != null}
-        title={actionTarget?.title || t('m.1ELofI0')}
+        title={actionTarget?.title || tr('terminal')}
         actions={getMobileTerminalActionSheetActions({
           target: actionTarget,
           tabs: sessionTabs.filter((tab) => tab.type === 'terminal'),
@@ -5224,10 +5224,10 @@ export default function SessionScreen() {
       />
       <ActionSheetModal
         visible={markdownActionTarget != null}
-        title={markdownActionTarget?.title || t('m.Dy-chOU')}
+        title={markdownActionTarget?.title || tr('markdown')}
         actions={[
           {
-            label: t('m.a6FBCvM'),
+            label: tr('refresh'),
             icon: RefreshCw,
             // Why: dirty refresh opens ConfirmModal; wait for this sheet's native
             // Modal to unmount first (same dual-Modal race as tab Rename, #10331).
@@ -5240,14 +5240,14 @@ export default function SessionScreen() {
             }
           },
           {
-            label: t('m.a79zJAw'),
+            label: tr('copyPath'),
             icon: FileText,
             onPress: () => {
               const target = markdownActionTarget
               setMarkdownActionTarget(null)
               if (target) {
                 void Clipboard.setStringAsync(target.relativePath || target.filePath)
-                showToast(t('m.HimYt6k'))
+                showToast(tr('path'))
               }
             }
           },
@@ -5257,10 +5257,10 @@ export default function SessionScreen() {
       />
       <ActionSheetModal
         visible={fileActionTarget != null}
-        title={fileActionTarget?.title || t('m.WaegjuQ')}
+        title={fileActionTarget?.title || tr('file')}
         actions={[
           {
-            label: t('m.a6FBCvM'),
+            label: tr('refresh'),
             icon: RefreshCw,
             onPress: () => {
               const target = fileActionTarget
@@ -5283,11 +5283,11 @@ export default function SessionScreen() {
       />
       <ActionSheetModal
         visible={leaveDrafts != null}
-        title={t('m.28Q3TbY')}
-        message={t('m.knjkJaM')}
+        title={tr('unsaved')}
+        message={tr('copyDiscard')}
         actions={[
           {
-            label: t('m.IytTrKE'),
+            label: tr('copyAll'),
             icon: FileText,
             onPress: () => {
               const drafts = leaveDrafts ?? []
@@ -5301,12 +5301,12 @@ export default function SessionScreen() {
                 })
                 .catch(() => {
                   triggerError()
-                  showToast(t('m.TxiIlg0'), 1500)
+                  showToast(tr('couldNotCopyDrafts'), 1500)
                 })
             }
           },
           {
-            label: t('m.psn3klQ'),
+            label: tr('discardLeave'),
             destructive: true,
             onPress: () => {
               setLeaveDrafts(null)
@@ -5318,28 +5318,28 @@ export default function SessionScreen() {
       />
       <ConfirmModal
         visible={discardMarkdownTarget != null}
-        title={t('m.tMSSoFA')}
-        message={t('m.gahpqR8')}
-        confirmLabel={t('m.Hy2xmeg')}
+        title={tr('discardChanges')}
+        message={tr('replace')}
+        confirmLabel={tr('discard')}
         destructive
         onConfirm={confirmDiscardMarkdown}
         onCancel={() => setDiscardMarkdownTarget(null)}
       />
       <TextInputModal
         visible={renameTarget != null}
-        title={t('m.gKi8D7w')}
-        defaultValue={renameTarget?.title || t('m.1ELofI0')}
-        placeholder={t('m.pg8WJ-k')}
+        title={tr('rename')}
+        defaultValue={renameTarget?.title || tr('terminal')}
+        placeholder={tr('terminalName')}
         onSubmit={(value) => void handleRenameTerminal(value)}
         onCancel={() => setRenameTarget(null)}
       />
       <TextInputModal
         visible={showCreateBrowserModal}
-        title={t('m.tKOmSkM')}
-        message={t('m.ZabOoVw')}
+        title={tr('newBrowser')}
+        message={tr('enterUrl')}
         defaultValue=""
-        placeholder={t('m.PKSYVds')}
-        submitLabel={t('m.6BZSEjI')}
+        placeholder={tr('https')}
+        submitLabel={tr('open')}
         allowEmpty
         selectTextOnFocus
         keyboardType={Platform.OS === 'ios' ? 'url' : 'default'}
@@ -5366,11 +5366,11 @@ export default function SessionScreen() {
       />
       <ActionSheetModal
         visible={deleteKeyTarget != null}
-        title={deleteKeyTarget?.label ?? t('m.KVqCyig')}
-        message={t('m.RLWvqn8')}
+        title={deleteKeyTarget?.label ?? tr('shortcut')}
+        message={tr('removeCustom')}
         actions={[
           {
-            label: t('m.j34FFK4'),
+            label: tr('remove'),
             destructive: true,
             onPress: () => {
               if (deleteKeyTarget) {

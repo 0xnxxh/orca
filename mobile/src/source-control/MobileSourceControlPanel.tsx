@@ -246,7 +246,9 @@ export function MobileSourceControlPanel({
     ) : screenState.kind === 'error' || screenState.kind === 'unavailable' ? (
       <View style={styles.state}>
         <Text style={styles.stateTitle}>
-          {screenState.kind === 'unavailable' ? t('m.UgUD08U') : t('m.SlcSA9A')}
+          {screenState.kind === 'unavailable'
+            ? t('mobileSourceControlPanel.source')
+            : t('mobileSourceControlPanel.unable')}
         </Text>
         <Text style={styles.stateText}>{screenState.message}</Text>
         {screenState.kind === 'error' ? (
@@ -261,7 +263,7 @@ export function MobileSourceControlPanel({
               void loadStatus()
             }}
           >
-            <Text style={styles.retryText}>{t('m.dggV318')}</Text>
+            <Text style={styles.retryText}>{t('mobileSourceControlPanel.retry')}</Text>
           </Pressable>
         ) : null}
       </View>

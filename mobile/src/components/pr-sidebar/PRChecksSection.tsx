@@ -71,7 +71,7 @@ export function PRChecksSection({ checks, client, worktreeId, prRepo, actions, t
         // spinning forever — fall back to an error detail.
         entry = {
           status: 'error',
-          message: err instanceof Error ? err.message : t('m.hIvuhiQ')
+          message: err instanceof Error ? err.message : t('prchecksSection.failed')
         }
       }
       setDetailCache((prev) => ({ ...prev, [key]: entry }))
@@ -134,7 +134,7 @@ export function PRChecksSection({ checks, client, worktreeId, prRepo, actions, t
 
   return (
     <PRSection
-      title={t('m.hyZyn8M')}
+      title={t('prchecksSection.checks')}
       trailing={
         <>
           <Text
@@ -152,7 +152,7 @@ export function PRChecksSection({ checks, client, worktreeId, prRepo, actions, t
               onPress={() => actions.rerunFailingChecks()}
               disabled={rerunBusy}
               accessibilityRole="button"
-              accessibilityLabel={t('m.TkRK-a4')}
+              accessibilityLabel={t('prchecksSection.rerun')}
             >
               {rerunBusy ? (
                 <ActivityIndicator color={colors.textSecondary} />
@@ -170,12 +170,17 @@ export function PRChecksSection({ checks, client, worktreeId, prRepo, actions, t
         <View style={triageStyles.triageStrip}>
           <View style={triageStyles.triageStripText}>
             <Text style={triageStyles.triageStripTitle} numberOfLines={1}>
-              {t(summary.failed === 1 ? 'm.lXLSjWw' : 'm.N7XOlnE', {
-                value0: summary.failed
-              })}
+              {t(
+                summary.failed === 1
+                  ? 'prchecksSection.failingCheckCountFailingCheck'
+                  : 'prchecksSection.failingCheckCountFailingChecks',
+                {
+                  failingCheckCount: summary.failed
+                }
+              )}
             </Text>
             <Text style={triageStyles.triageStripSubtitle} numberOfLines={1}>
-              {t('m.t67jzCk')}
+              {t('prchecksSection.inspect')}
             </Text>
           </View>
           <Pressable
@@ -183,14 +188,14 @@ export function PRChecksSection({ checks, client, worktreeId, prRepo, actions, t
             onPress={triage.fixChecks}
             disabled={triage.isBusy}
             accessibilityRole="button"
-            accessibilityLabel={t('m.O95nvcA')}
+            accessibilityLabel={t('prchecksSection.fixFailing')}
           >
             {triage.isBusy ? (
               <ActivityIndicator color={colors.textSecondary} />
             ) : (
               <Sparkles size={13} color={colors.textSecondary} strokeWidth={2.2} />
             )}
-            <Text style={triageStyles.triageStripButtonText}>{t('m.QiC7wz8')}</Text>
+            <Text style={triageStyles.triageStripButtonText}>{t('prchecksSection.fix')}</Text>
           </Pressable>
         </View>
       ) : null}
@@ -207,7 +212,9 @@ export function PRChecksSection({ checks, client, worktreeId, prRepo, actions, t
               style={styles.row}
               onPress={() => toggle(check)}
               accessibilityRole="button"
-              accessibilityLabel={t('m.wKKGPQ8', { value0: check.name })}
+              accessibilityLabel={t('prchecksSection.check', {
+                checkName: check.name
+              })}
             >
               <Chevron size={14} color={colors.textSecondary} strokeWidth={2.2} />
               <View style={[styles.statusDot, { backgroundColor: statusColor(token) }]} />
@@ -227,7 +234,9 @@ export function PRChecksSection({ checks, client, worktreeId, prRepo, actions, t
                   onPress={() => void Linking.openURL(url).catch(() => {})}
                   hitSlop={6}
                   accessibilityRole="button"
-                  accessibilityLabel={t('m.WPX7hnI', { value0: check.name })}
+                  accessibilityLabel={t('prchecksSection.open', {
+                    checkName: check.name
+                  })}
                 >
                   <ExternalLink size={13} color={colors.textSecondary} strokeWidth={2.2} />
                 </Pressable>

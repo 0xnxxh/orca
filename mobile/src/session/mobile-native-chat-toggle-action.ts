@@ -27,7 +27,9 @@ export function getMobileNativeChatToggleActions(args: {
   const isChat = isTabChatView(tab.id)
   return [
     {
-      label: isChat ? t('m.dqKsMqY') : t('m.GmBjriA'),
+      label: isChat
+        ? t('mobileNativeChatToggleAction.switchTerminal')
+        : t('mobileNativeChatToggleAction.switchChat'),
       icon: isChat ? SquareTerminal : MessageSquare,
       onPress: () => {
         onClose()

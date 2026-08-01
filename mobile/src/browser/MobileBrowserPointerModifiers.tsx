@@ -5,10 +5,10 @@ import { t } from '@/i18n/mobile-i18n'
 export type BrowserPointerModifier = 'cmd' | 'ctrl' | 'alt' | 'shift'
 
 const BROWSER_POINTER_MODIFIERS: { id: BrowserPointerModifier; label: string }[] = [
-  { id: 'cmd', label: t('m.IW8xp4k') },
-  { id: 'ctrl', label: t('m.EqW8StQ') },
-  { id: 'alt', label: t('m.fP87QIY') },
-  { id: 'shift', label: t('m.GTbLYFM') }
+  { id: 'cmd', label: t('mobileBrowserPointerModifiers.cmd') },
+  { id: 'ctrl', label: t('mobileBrowserPointerModifiers.ctrl') },
+  { id: 'alt', label: t('mobileBrowserPointerModifiers.alt') },
+  { id: 'shift', label: t('mobileBrowserPointerModifiers.shift') }
 ]
 
 type Props = {
@@ -39,7 +39,9 @@ export function MobileBrowserPointerModifiers({
             onPress={() => onToggle(modifier.id)}
             accessibilityRole="button"
             accessibilityState={{ selected, disabled }}
-            accessibilityLabel={t('m.gZUBadw', { value0: modifier.label })}
+            accessibilityLabel={t('mobileBrowserPointerModifiers.modifier', {
+              modifierLabel: modifier.label
+            })}
           >
             <Text
               style={[

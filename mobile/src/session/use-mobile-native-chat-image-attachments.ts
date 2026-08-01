@@ -163,18 +163,18 @@ export function useMobileNativeChatImageAttachments({
       } catch (error) {
         onError?.()
         if (connStateRef.current !== 'connected') {
-          showToast(t('m.Kc1O9hE'), 1500)
+          showToast(t('useMobileNativeChatImageAttachments.attachFailedDisconnected'), 1500)
           return
         }
         if (error instanceof ImageLibraryPermissionError) {
-          showToast(t('m.jdkmIaw'), 1500)
+          showToast(t('useMobileNativeChatImageAttachments.photo'), 1500)
           return
         }
         if (isClipboardImageTooLargeError(error)) {
-          showToast(t('m.-YjNIcU'), 1500)
+          showToast(t('useMobileNativeChatImageAttachments.image'), 1500)
           return
         }
-        showToast(t('m.JlNqDLA'), 1500)
+        showToast(t('useMobileNativeChatImageAttachments.attachFailed'), 1500)
       } finally {
         if (started) {
           attachingCount.current -= 1
@@ -219,7 +219,7 @@ export function useMobileNativeChatImageAttachments({
       const operationTerminal = activeHandleRef.current
       if (operationTerminal && sendInFlightTerminalsRef.current.has(operationTerminal)) {
         onError?.()
-        onSendError(t('m.c6Kd_Ps'))
+        onSendError(t('useMobileNativeChatImageAttachments.messageNotSent'))
         return false
       }
       if (operationTerminal) {
@@ -244,7 +244,7 @@ export function useMobileNativeChatImageAttachments({
             // image path; the heal retries once the lease is back.
             if (!client || !enabled || connState !== 'connected') {
               onError?.()
-              onSendError(t('m.4Xgw97k'))
+              onSendError(t('useMobileNativeChatImageAttachments.messageNotSentDisconnected'))
               return false
             }
             const healed = await healMobileNativeChatStaleInput({
@@ -257,7 +257,7 @@ export function useMobileNativeChatImageAttachments({
             // clear never touched, so abort rather than reroute it.
             if (!healed || activeHandleRef.current !== staleTerminal) {
               onError?.()
-              onSendError(t('m.c6Kd_Ps'))
+              onSendError(t('useMobileNativeChatImageAttachments.messageNotSent'))
               return false
             }
           }
@@ -268,7 +268,7 @@ export function useMobileNativeChatImageAttachments({
         if (!client || !handle || !enabled || connState !== 'connected') {
           onError?.()
           // Mirror the text path's failure surface (the base send is never reached).
-          onSendError(t('m.4Xgw97k'))
+          onSendError(t('useMobileNativeChatImageAttachments.messageNotSentDisconnected'))
           return false
         }
         try {
@@ -287,7 +287,7 @@ export function useMobileNativeChatImageAttachments({
             // Keep the chips so the user can retry; the failed paste never submitted.
             markMobileNativeChatInputStale(handle)
             onError?.()
-            onSendError(t('m.c6Kd_Ps'))
+            onSendError(t('useMobileNativeChatImageAttachments.messageNotSent'))
             return false
           }
           // The paste's leading Ctrl+U cleared any earlier stale input in `handle`.
@@ -305,7 +305,7 @@ export function useMobileNativeChatImageAttachments({
           if (activeHandleRef.current !== handle) {
             markMobileNativeChatInputStale(handle)
             onError?.()
-            onSendError(t('m.c6Kd_Ps'))
+            onSendError(t('useMobileNativeChatImageAttachments.messageNotSent'))
             return false
           }
           const outcome = await baseSend(
@@ -339,7 +339,7 @@ export function useMobileNativeChatImageAttachments({
           // attempt's leading Ctrl+U clears whatever fraction of the paste landed.
           markMobileNativeChatInputStale(handle)
           onError?.()
-          onSendError(t('m.c6Kd_Ps'))
+          onSendError(t('useMobileNativeChatImageAttachments.messageNotSent'))
           return false
         }
       } finally {

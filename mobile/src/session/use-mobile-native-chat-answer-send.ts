@@ -98,7 +98,7 @@ export function useMobileNativeChatAnswerSend(args: {
     async (prompt: AskPrompt, selections: AskAnswerSelection[]): Promise<boolean> => {
       const handle = handleRef.current
       if (!client || !handle || !enabled) {
-        onSendError(t('m.O2gcQk0'))
+        onSendError(t('useMobileNativeChatAnswerSend.answerNotSentDisconnected'))
         return false
       }
       if (!hasAskAnswer(prompt, selections)) {
@@ -163,7 +163,11 @@ export function useMobileNativeChatAnswerSend(args: {
           // mid-sequence left the remote selector half-stepped, and telling the
           // user nothing was sent invites a retry on top of the advanced state.
           onSendError(
-            sawAcceptedGroup ? t('m.UnHHxag') : sawUnknownOutcome ? t('m.ukuLb_A') : t('m.eOcfBcE')
+            sawAcceptedGroup
+              ? t('useMobileNativeChatAnswerSend.answerPartly')
+              : sawUnknownOutcome
+                ? t('useMobileNativeChatAnswerSend.answerUnconfirmed')
+                : t('useMobileNativeChatAnswerSend.answerNotSent')
           )
         }
         return false
@@ -188,7 +192,7 @@ export function useMobileNativeChatAnswerSend(args: {
           }))
         ) {
           if (generationRef.current === generation) {
-            onSendError(t('m.eOcfBcE'))
+            onSendError(t('useMobileNativeChatAnswerSend.answerNotSent'))
           }
           return false
         }

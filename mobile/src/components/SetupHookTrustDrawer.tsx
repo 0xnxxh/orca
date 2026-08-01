@@ -41,15 +41,21 @@ export function SetupHookTrustDrawer({
           <View style={styles.trustHeader}>
             <Text style={styles.title}>
               {prompt.previouslyApproved
-                ? t('m.egQ-qgQ', { value0: prompt.repoName })
-                : t('m.SSMlLr8', { value0: prompt.repoName })}
+                ? t('setupHookTrustDrawer.repo', {
+                    repoName: prompt.repoName
+                  })
+                : t('setupHookTrustDrawer.runSetup', {
+                    repoName: prompt.repoName
+                  })}
             </Text>
-            <Text style={styles.subtitle}>{t('m.JU7DVfY')}</Text>
+            <Text style={styles.subtitle}>{t('setupHookTrustDrawer.repositorys')}</Text>
           </View>
 
           <View style={styles.trustScriptBox}>
             <Text style={styles.trustScriptLabel}>
-              {prompt.previouslyApproved ? t('m.gxXtGpI') : t('m.m7jxYm8')}
+              {prompt.previouslyApproved
+                ? t('setupHookTrustDrawer.new')
+                : t('setupHookTrustDrawer.setup')}
             </Text>
             <Text style={styles.trustScriptText}>{prompt.scriptContent}</Text>
           </View>
@@ -57,16 +63,16 @@ export function SetupHookTrustDrawer({
           <View style={styles.trustActionGroup}>
             <Pressable style={styles.trustActionRow} disabled={busy} onPress={onRunOnce}>
               <Check size={16} color={colors.textPrimary} />
-              <Text style={styles.trustActionText}>{t('m.wOCs5LA')}</Text>
+              <Text style={styles.trustActionText}>{t('setupHookTrustDrawer.runHooks')}</Text>
             </Pressable>
             <View style={styles.trustActionSeparator} />
             <Pressable style={styles.trustActionRow} disabled={busy} onPress={onAlwaysTrust}>
               <Check size={16} color={colors.textPrimary} />
-              <Text style={styles.trustActionText}>{t('m.hUSRq7I')}</Text>
+              <Text style={styles.trustActionText}>{t('setupHookTrustDrawer.always')}</Text>
             </Pressable>
             <View style={styles.trustActionSeparator} />
             <Pressable style={styles.trustActionRow} disabled={busy} onPress={onDontRun}>
-              <Text style={styles.trustActionText}>{t('m.Pe9Dmhc')}</Text>
+              <Text style={styles.trustActionText}>{t('setupHookTrustDrawer.do')}</Text>
             </Pressable>
           </View>
         </View>

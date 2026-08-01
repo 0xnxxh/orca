@@ -3,17 +3,17 @@ import { t } from '../i18n/mobile-i18n'
 export function githubReviewStateLabel(state: string | null | undefined): string {
   switch (state) {
     case 'APPROVED':
-      return t('m.IloG18k')
+      return t('prChecksPresentation.approved')
     case 'CHANGES_REQUESTED':
-      return t('m.rjj84-Y')
+      return t('prChecksPresentation.changes')
     case 'COMMENTED':
-      return t('m.bF0aphw')
+      return t('prChecksPresentation.commented')
     case 'DISMISSED':
-      return t('m.dmAcep8')
+      return t('prChecksPresentation.dismissed')
     case 'PENDING':
-      return t('m.NEg29tM')
+      return t('prChecksPresentation.pending')
     default:
-      return t('m._IeDTL8')
+      return t('prChecksPresentation.reviewed')
   }
 }
 

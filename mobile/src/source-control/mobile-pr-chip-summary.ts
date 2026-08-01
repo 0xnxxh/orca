@@ -89,12 +89,18 @@ export function buildMobilePrChipSummary(
 function buildChipRollup(state: Extract<PrSidebarState, { kind: 'ready' }>): MobilePrChipRollup {
   // Conflicts win: the checks may be green, but the PR still can't merge.
   if (state.data.pr.mergeable === 'CONFLICTING') {
-    return { kind: 'conflict', text: t('m.hIW5XEU'), token: 'statusAmber' }
+    return { kind: 'conflict', text: t('task.conflicts'), token: 'statusAmber' }
   }
   // Shared classifier so the chip, the Checks list and the tasks grid never disagree about the same PR.
   const checks = summarizeProviderChecks(state.data.checks)
   if (checks.failed > 0) {
-    return { kind: 'failing', text: t('m.L37iq1E', { value0: checks.failed }), token: 'statusRed' }
+    return {
+      kind: 'failing',
+      text: t('mobilePrChipSummary.failing', {
+        failingCheckCount: checks.failed
+      }),
+      token: 'statusRed'
+    }
   }
   if (checks.pending > 0) {
     return {
@@ -109,7 +115,7 @@ function buildChipRollup(state: Extract<PrSidebarState, { kind: 'ready' }>): Mob
   // Checks that exist but resolved to nothing actionable are not "no checks".
   return {
     kind: 'none',
-    text: checks.total === 0 ? t('m.X9M1AcA') : t('m.UMqLjMs'),
+    text: checks.total === 0 ? t('mobilePrChipSummary.no') : t('mobilePrChipSummary.unresolved'),
     token: 'textSecondary'
   }
 }

@@ -32,12 +32,12 @@ type TextSizeValue = 'smallest' | 'smaller' | 'default' | 'large' | 'larger' | '
 // scale = baseline zoom the terminal WebView applies on top of fit-to-width.
 // Keep in sync with TERMINAL_TEXT_SCALES; pinch-to-zoom snaps to these values.
 const TEXT_SIZE_OPTIONS: (PickerOption<TextSizeValue> & { scale: number })[] = [
-  { value: 'smallest', label: t('m.hiouM1M'), scale: 0.5 },
-  { value: 'smaller', label: t('m.CAs8oUM'), scale: 0.75 },
-  { value: 'default', label: t('m.0OKOsKY'), scale: 1 },
-  { value: 'large', label: t('m.HqP6IBw'), scale: 1.25 },
-  { value: 'larger', label: t('m.tAn81tY'), scale: 1.5 },
-  { value: 'largest', label: t('m.75Kr_24'), scale: 2 }
+  { value: 'smallest', label: t('terminalSettings.smallest'), scale: 0.5 },
+  { value: 'smaller', label: t('terminalSettings.smaller'), scale: 0.75 },
+  { value: 'default', label: t('terminalSettings.default'), scale: 1 },
+  { value: 'large', label: t('terminalSettings.large'), scale: 1.25 },
+  { value: 'larger', label: t('terminalSettings.larger'), scale: 1.5 },
+  { value: 'largest', label: t('terminalSettings.largest'), scale: 2 }
 ]
 
 function textSizeValueFromScale(scale: number): TextSizeValue {
@@ -49,10 +49,10 @@ function textSizeSummary(scale: number): string {
 }
 
 const AUTO_RESTORE_FIT_OPTIONS: (PickerOption<RestoreValue> & { ms: number | null })[] = [
-  { value: 'indefinite', label: t('m.q6VQcZE'), ms: null },
-  { value: '60s', label: t('m.gBGOsCI'), ms: 60_000 },
-  { value: '5m', label: t('m.p2EWmRg'), ms: 5 * 60_000 },
-  { value: '30m', label: t('m.rU9qdt0'), ms: 30 * 60_000 }
+  { value: 'indefinite', label: t('terminalSettings.keep'), ms: null },
+  { value: '60s', label: t('terminalSettings.after1'), ms: 60_000 },
+  { value: '5m', label: t('terminalSettings.after5'), ms: 5 * 60_000 },
+  { value: '30m', label: t('terminalSettings.after30'), ms: 30 * 60_000 }
 ]
 
 function valueFromMs(ms: number | null | undefined): RestoreValue {
@@ -90,7 +90,9 @@ function autoRestoreSummary(ms: number | null | undefined): string {
     return AUTO_RESTORE_FIT_OPTIONS[0]!.label
   }
   const exact = AUTO_RESTORE_FIT_OPTIONS.find((o) => o.ms === ms)
-  return exact ? exact.label : t('m.WVNYnak', { value0: Math.round(ms / 1000) })
+  return exact
+    ? exact.label
+    : t('terminalSettings.afterDuration', { durationSeconds: Math.round(ms / 1000) })
 }
 
 function HostFitRow({
@@ -260,7 +262,7 @@ export default function TerminalSettingsScreen() {
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <ChevronLeft size={22} color={colors.textSecondary} />
         </Pressable>
-        <Text style={styles.heading}>{t('m.kJj5Z2g')}</Text>
+        <Text style={styles.heading}>{t('terminalSettings.terminal')}</Text>
       </View>
 
       <Animated.ScrollView
@@ -273,12 +275,14 @@ export default function TerminalSettingsScreen() {
           scrollContentHeight.value = height
         }}
       >
-        <Text style={styles.groupHeading}>{t('m.f9vgUHc')}</Text>
-        <Text style={styles.groupDescription}>{t('m.-fV3Ce8')}</Text>
+        <Text style={styles.groupHeading}>{t('terminalSettings.when')}</Text>
+        <Text style={styles.groupDescription}>
+          {t('terminalSettings.resizeBehaviorDescription')}
+        </Text>
 
         {hosts.length === 0 ? (
           <View style={[styles.section, styles.sectionTopGap]}>
-            <Text style={styles.emptyText}>{t('m.U2mtyZg')}</Text>
+            <Text style={styles.emptyText}>{t('terminalSettings.no')}</Text>
           </View>
         ) : (
           <View style={[styles.section, styles.sectionTopGap]}>
@@ -299,8 +303,10 @@ export default function TerminalSettingsScreen() {
           </View>
         )}
 
-        <Text style={[styles.groupHeading, styles.inputGroupGap]}>{t('m.OS-rNTI')}</Text>
-        <Text style={styles.groupDescription}>{t('m.nzfG92c')}</Text>
+        <Text style={[styles.groupHeading, styles.inputGroupGap]}>
+          {t('terminalSettings.textSize')}
+        </Text>
+        <Text style={styles.groupDescription}>{t('terminalSettings.textScaleDescription')}</Text>
         <View style={[styles.section, styles.sectionTopGap]}>
           <Pressable
             style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
@@ -308,21 +314,23 @@ export default function TerminalSettingsScreen() {
           >
             <Type size={16} color={colors.textSecondary} />
             <View style={styles.rowContent}>
-              <Text style={styles.rowLabel}>{t('m.QcL6LT4')}</Text>
+              <Text style={styles.rowLabel}>{t('terminalSettings.textSizeMessage')}</Text>
               <Text style={styles.rowSublabel}>{textSizeSummary(textScale)}</Text>
             </View>
             <ChevronRight size={16} color={colors.textMuted} />
           </Pressable>
         </View>
 
-        <Text style={[styles.groupHeading, styles.inputGroupGap]}>{t('m.18J3yr0')}</Text>
-        <Text style={styles.groupDescription}>{t('m.mK_kCfI')}</Text>
+        <Text style={[styles.groupHeading, styles.inputGroupGap]}>
+          {t('terminalSettings.keyboard')}
+        </Text>
+        <Text style={styles.groupDescription}>{t('terminalSettings.autocompleteDescription')}</Text>
         <View style={[styles.section, styles.sectionTopGap]}>
           <View style={styles.row}>
             <View style={styles.rowContent}>
-              <Text style={styles.rowLabel}>{t('m.AsTLd6A')}</Text>
+              <Text style={styles.rowLabel}>{t('terminalSettings.autocomplete')}</Text>
               <Text style={styles.rowSublabel}>
-                {autocompleteEnabled ? t('m.qR5mpHo') : t('m.rE4IiF8')}
+                {autocompleteEnabled ? t('terminalSettings.on') : t('terminalSettings.off')}
               </Text>
             </View>
             <Switch
@@ -344,7 +352,13 @@ export default function TerminalSettingsScreen() {
 
       <PickerModal<RestoreValue>
         visible={pickerHost != null}
-        title={pickerHost ? t('m.nN25Xmo', { value0: pickerHost.name }) : ''}
+        title={
+          pickerHost
+            ? t('terminalSettings.restore', {
+                pickerHostName: pickerHost.name
+              })
+            : ''
+        }
         options={AUTO_RESTORE_FIT_OPTIONS}
         selected={valueFromMs(pickerHost ? hostMs[pickerHost.id] : null)}
         onSelect={(v) => {
@@ -357,7 +371,7 @@ export default function TerminalSettingsScreen() {
 
       <PickerModal<TextSizeValue>
         visible={textSizePickerOpen}
-        title={t('m.lfAeAOI')}
+        title={t('terminalSettings.terminalText')}
         options={TEXT_SIZE_OPTIONS}
         selected={textSizeValueFromScale(textScale)}
         onSelect={selectTextSize}

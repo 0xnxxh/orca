@@ -76,16 +76,18 @@ export function getCodexResetCreditSummary(
     expiryLabel =
       count === 1
         ? duration === 'now'
-          ? t('m.aaZ_2qE')
-          : t('m.1neVPtc', { value0: duration })
+          ? t('codexResetCredit.expiresNow')
+          : t('codexResetCredit.expiresDuration', { duration: duration })
         : duration === 'now'
-          ? t('m.nH5aDJ4')
-          : t('m.fA_ezvI', { value0: duration })
+          ? t('codexResetCredit.nextExpiresNow')
+          : t('codexResetCredit.nextExpiresDuration', { duration: duration })
   }
   return {
     availableCount: count,
     availabilityLabel:
-      count === 1 ? t('m.CfvCAaE', { value0: count }) : t('m.myZTLv0', { value0: count }),
+      count === 1
+        ? t('codexResetCredit.resetCountReset', { resetCount: count })
+        : t('codexResetCredit.resetCountResets', { resetCount: count }),
     expiryLabel
   }
 }
@@ -96,18 +98,24 @@ export function getCodexResetCreditOutcomeCopy(outcome: CodexResetCreditOutcome)
 } {
   switch (outcome) {
     case 'reset':
-      return { title: t('m.QiJiFeQ'), message: t('m.3qHVa1w') }
+      return {
+        title: t('codexResetCredit.rate'),
+        message: t('codexResetCredit.codex')
+      }
     case 'alreadyRedeemed':
-      return { title: t('m.9b3h0Pg'), message: t('m.3qHVa1w') }
+      return {
+        title: t('codexResetCredit.resetAlready'),
+        message: t('codexResetCredit.codex')
+      }
     case 'nothingToReset':
       return {
-        title: t('m.JMEauuw'),
-        message: t('m.Um-XfOo')
+        title: t('codexResetCredit.nothing'),
+        message: t('codexResetCredit.noEligible')
       }
     case 'noCredit':
       return {
-        title: t('m._-grAdc'),
-        message: t('m.zFyydp8')
+        title: t('codexResetCredit.noReset'),
+        message: t('codexResetCredit.account')
       }
   }
 }
@@ -164,12 +172,12 @@ function decodeResetResult(
   expectedScope: CodexResetCreditExpectedScope
 ): CodexResetCreditRpcResult {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error(t('m.dWotxRU'))
+    throw new Error(t('codexResetCredit.invalid'))
   }
   const result = value as Record<string, unknown>
   const scope = CodexResetCreditExpectedScopeSchema.safeParse(result.scope)
   if (!scope.success || !scopesEqual(scope.data, expectedScope)) {
-    throw new Error(t('m.dWotxRU'))
+    throw new Error(t('codexResetCredit.invalid'))
   }
   const snapshot = decodeAccountsSnapshot(result.snapshot)
   if (result.status === 'rejectedBeforeProvider') {
@@ -184,7 +192,7 @@ function decodeResetResult(
         reason !== 'offerUnavailable' &&
         reason !== 'offerChanged')
     ) {
-      throw new Error(t('m.dWotxRU'))
+      throw new Error(t('codexResetCredit.invalid'))
     }
     return {
       status: 'rejectedBeforeProvider',
@@ -203,7 +211,7 @@ function decodeResetResult(
       outcome !== 'noCredit' &&
       outcome !== 'alreadyRedeemed')
   ) {
-    throw new Error(t('m.dWotxRU'))
+    throw new Error(t('codexResetCredit.invalid'))
   }
   const snapshotAccount = snapshot.codex.accounts.find(
     (account) => account.id === scope.data.accountId
@@ -214,7 +222,7 @@ function decodeResetResult(
     getActiveCodexAccountIdForRateLimitTarget(snapshot) !== scope.data.accountId ||
     snapshotAccount?.updatedAt !== scope.data.accountRevision
   ) {
-    throw new Error(t('m.dWotxRU'))
+    throw new Error(t('codexResetCredit.invalid'))
   }
   return {
     outcome,

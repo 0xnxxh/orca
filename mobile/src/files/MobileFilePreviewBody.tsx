@@ -37,7 +37,7 @@ export function MobileFilePreviewBody({ preview, ...options }: Props) {
       <View style={styles.state}>
         <Text style={styles.errorText}>{preview.message}</Text>
         <Pressable style={styles.retryButton} onPress={options.onRetry}>
-          <Text style={styles.retryText}>{t('m.zqZaJJo')}</Text>
+          <Text style={styles.retryText}>{t('mobileFilePreviewBody.retry')}</Text>
         </Pressable>
       </View>
     )
@@ -47,7 +47,7 @@ export function MobileFilePreviewBody({ preview, ...options }: Props) {
       <EditablePreviewSource {...options} />
     ) : (
       <View style={styles.state}>
-        <Text style={styles.stateText}>{t('m.0U_34Zg')}</Text>
+        <Text style={styles.stateText}>{t('mobileFilePreviewBody.empty')}</Text>
       </View>
     )
   }
@@ -66,7 +66,9 @@ export function MobileFilePreviewBody({ preview, ...options }: Props) {
             style={[styles.image, { width: options.imageWidth, height: options.imageHeight }]}
             resizeMode="contain"
             onError={options.onImageError}
-            accessibilityLabel={t('m.cDZy2i8', { value0: options.title })}
+            accessibilityLabel={t('mobileFilePreviewBody.title', {
+              title: options.title
+            })}
           />
         </ScrollView>
       </View>

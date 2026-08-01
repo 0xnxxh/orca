@@ -24,18 +24,18 @@ export function MobileHtmlPreview({ html, renderSource }: Props) {
         <Pressable
           style={[styles.toggle, mode === 'preview' && styles.toggleActive]}
           onPress={() => setMode('preview')}
-          accessibilityLabel={t('m.-FhPMsI')}
+          accessibilityLabel={t('mobileHtmlPreview.previewRendered')}
         >
           <Eye size={13} color={colors.textSecondary} strokeWidth={2.2} />
-          <Text style={styles.toggleText}>{t('m.bvUfBWI')}</Text>
+          <Text style={styles.toggleText}>{t('mobileHtmlPreview.preview')}</Text>
         </Pressable>
         <Pressable
           style={[styles.toggle, mode === 'source' && styles.toggleActive]}
           onPress={() => setMode('source')}
-          accessibilityLabel={t('m.BE93iOI')}
+          accessibilityLabel={t('mobileHtmlPreview.view')}
         >
           <Code size={13} color={colors.textSecondary} strokeWidth={2.2} />
-          <Text style={styles.toggleText}>{t('m.HdJ9GVY')}</Text>
+          <Text style={styles.toggleText}>{t('mobileHtmlPreview.source')}</Text>
         </Pressable>
       </View>
       {mode === 'preview' ? (

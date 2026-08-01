@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FlatList } from 'react-native'
 import type { DiffComment } from '../../../src/shared/types'
-import type { ConnectionState } from '../transport/types'
-import type { RpcClient } from '../transport/rpc-client'
 import { getWorktreeLabel } from './worktree-label'
 import { getUnsentMobileDiffComments } from './mobile-diff-comment-edit'
 import {
@@ -12,10 +10,8 @@ import {
   type MobileDiffReviewQueueFilter,
   type MobileDiffReviewQueueItem
 } from './mobile-diff-review-queue'
-import {
-  findMobileDiffReviewInitialIndex,
-  type MobileDiffReviewInitialTarget
-} from './mobile-diff-review-positioning'
+import { findMobileDiffReviewInitialIndex } from './mobile-diff-review-positioning'
+import type { MobileDiffReviewControllerInput } from './mobile-diff-review-controller-input'
 import {
   loadMobileDiffReviewDiff,
   loadMobileDiffReviewSnapshot
@@ -30,21 +26,11 @@ import type {
 } from './mobile-diff-review-screen-model'
 import { useMobileDiffReviewInteractions } from './use-mobile-diff-review-interactions'
 import { useMobilePrSidebarController } from './use-mobile-pr-sidebar-controller'
-import { t } from '@/i18n/mobile-i18n'
+import { createMobileTranslator } from '@/i18n/mobile-i18n'
 
-type ControllerInput = {
-  client: RpcClient | null
-  connState: ConnectionState
-  hostId: string
-  worktreeId: string
-  name: string
-  initialFilter: MobileDiffReviewQueueFilter
-  initialTarget: MobileDiffReviewInitialTarget | null
-  onOpenSession: () => void
-  onReconnect: (hostId: string) => void | Promise<void>
-}
+const tr = createMobileTranslator('diffReview')
 
-export function useMobileDiffReviewController(input: ControllerInput) {
+export function useMobileDiffReviewController(input: MobileDiffReviewControllerInput) {
   const {
     client,
     connState,
@@ -80,11 +66,17 @@ export function useMobileDiffReviewController(input: ControllerInput) {
     loadGenerationRef.current = generation
     const isCurrent = () => generation === loadGenerationRef.current
     if (!worktreeId) {
-      setScreenState({ kind: 'error', message: t('m.HkX9h2s') })
+      setScreenState({
+        kind: 'error',
+        message: tr('missing')
+      })
       return
     }
     if (!client || connState !== 'connected') {
-      setScreenState({ kind: 'error', message: t('m.AtE6oQA') })
+      setScreenState({
+        kind: 'error',
+        message: tr('waiting')
+      })
       return
     }
     setScreenState((prev) => (prev.kind === 'ready' ? prev : { kind: 'loading' }))
@@ -99,7 +91,7 @@ export function useMobileDiffReviewController(input: ControllerInput) {
       if (isCurrent()) {
         setScreenState({
           kind: 'error',
-          message: err instanceof Error ? err.message : t('m.1ymIBpg')
+          message: err instanceof Error ? err.message : tr('unableLoadReview')
         })
       }
     }
@@ -168,7 +160,11 @@ export function useMobileDiffReviewController(input: ControllerInput) {
       return
     }
     if (!client || connState !== 'connected') {
-      setDiffState({ kind: 'error', itemKey: currentItem.key, message: t('m.AtE6oQA') })
+      setDiffState({
+        kind: 'error',
+        itemKey: currentItem.key,
+        message: tr('waiting')
+      })
       return
     }
     let stale = false
@@ -189,7 +185,7 @@ export function useMobileDiffReviewController(input: ControllerInput) {
           setDiffState({
             kind: 'error',
             itemKey: currentItem.key,
-            message: err instanceof Error ? err.message : t('m.MOOmRCc')
+            message: err instanceof Error ? err.message : tr('unableLoadDiff')
           })
         }
       })

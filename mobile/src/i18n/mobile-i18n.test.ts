@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import appConfig from '../../app.json'
 
 import {
+  createMobileTranslator,
   mobileI18n,
   normalizeMobileUiLocale,
   selectPreferredMobileUiLocale,
@@ -42,7 +43,16 @@ describe('mobile i18n', () => {
 
   it('reads and interpolates the English catalog', async () => {
     await mobileI18n.changeLanguage('en')
-    expect(t('m.rOYT-0U', { value0: 'Camera' })).toBe('Allow Camera?')
+    expect(
+      t('mobileNativeChatPermission.allowPermission', {
+        permissionName: 'Camera'
+      })
+    ).toBe('Allow Camera?')
+  })
+
+  it('keeps prefixed translators on the active locale', async () => {
+    await mobileI18n.changeLanguage('es')
+    expect(createMobileTranslator('task')('gitHub')).toBe('GitHub')
   })
 
   it('enables localized native metadata on iOS', () => {
@@ -58,13 +68,13 @@ describe('mobile i18n', () => {
     'uses reviewed task-status copy in %s',
     async (locale, expected) => {
       await mobileI18n.changeLanguage(locale)
-      expect(t('m.zWwi3-o')).toBe(expected)
+      expect(t('mobileWorkspaceStatuses.todo')).toBe(expected)
     }
   )
 
   it('falls back from polluted Simplified Chinese GitLab copy', async () => {
     await mobileI18n.changeLanguage('zh')
-    expect([t('m.k98CNAU'), t('m.roI3I5g'), t('m.pmjWIDk')]).toEqual([
+    expect([t('task.gitLabFilter'), t('task.gitLabView'), t('task.gitLabTodo')]).toEqual([
       'GitLab Filter',
       'GitLab View',
       'GitLab todo'
@@ -94,16 +104,30 @@ describe('mobile i18n', () => {
     await mobileI18n.changeLanguage('ja')
 
     expect([
-      t('m.x1skfkY'),
-      t('m.IhhRQcI'),
-      t('m.-CpqM4g', { value0: 'PR' }),
-      t('m.Kdbzhtg', { value0: 'PR' }),
-      t('m.eeoaUzE', { value0: 'PR' }),
-      t('m.i65iwXo', { value0: 'PR' }),
-      t('m.h5c6qGM', { value0: 'PR' }),
-      t('m.aDj0ISs', { value0: 'PR' }),
-      t('m.eL3YqZQ', { value0: 'PR' }),
-      t('m.fS2uz3k', { value0: 'PR' })
+      t('mobileHostedReviewCreateIntent.resolveStage'),
+      t('useMobileCreatePrRunner.check'),
+      t('mobileCreatePrAction.branch', {
+        reviewType: 'PR'
+      }),
+      t('mobilePrCreate.branch', { reviewType: 'PR' }),
+      t('mobilePrCreate.push', {
+        reviewType: 'PR'
+      }),
+      t('mobilePrCreate.authenticate', {
+        reviewType: 'PR'
+      }),
+      t('mobilePrCreate.sync', {
+        reviewType: 'PR'
+      }),
+      t('mobilePrCreate.publish', {
+        reviewType: 'PR'
+      }),
+      t('mobilePrCreate.check', {
+        reviewType: 'PR'
+      }),
+      t('mobilePrCreate.commit', {
+        reviewType: 'PR'
+      })
     ]).toEqual([
       'PR を作成する前に、変更を解決するかステージングしてください。',
       'PR を作成する前にブランチをチェックアウトしてください。',
@@ -127,18 +151,21 @@ describe('mobile i18n', () => {
     '%s uses Git operation terminology',
     async (locale, expected) => {
       await mobileI18n.changeLanguage(locale)
-      expect([t('m.8I2nZuQ'), t('m.PnL-W2o')]).toEqual(expected)
+      expect([
+        t('prChecksPresentation.skipped'),
+        t('mobileHostedReviewCreateIntent.publishing')
+      ]).toEqual(expected)
     }
   )
 
   it('uses Git push and pull terminology in Japanese', async () => {
     await mobileI18n.changeLanguage('ja')
-    expect([t('m.qgmf_L8'), t('m.0OsPYDw'), t('m.eBZzWkw'), t('m.0pGBpyQ')]).toEqual([
-      'プッシュ',
-      'プル',
-      'プッシュ',
-      'プル'
-    ])
+    expect([
+      t('mobileSourceControlPrimaryAction.push'),
+      t('mobileSourceControlPrimaryAction.pull'),
+      t('mobileSourceControlActions.push'),
+      t('mobileSourceControlActions.pull')
+    ]).toEqual(['プッシュ', 'プル', 'プッシュ', 'プル'])
   })
 
   it.each([
@@ -150,7 +177,7 @@ describe('mobile i18n', () => {
     '%s uses accurate checkout and pull terminology',
     async (locale, expected) => {
       await mobileI18n.changeLanguage(locale)
-      expect([t('m.0fqNjoo'), t('m.GaTugx8')]).toEqual(expected)
+      expect([t('task.full'), t('mobileSourceControlActions.local')]).toEqual(expected)
     }
   )
 
@@ -163,7 +190,11 @@ describe('mobile i18n', () => {
     'preserves source-control glossary terms in %s',
     async (locale, expected) => {
       await mobileI18n.changeLanguage(locale)
-      expect([t('m.hCKjn9A'), t('m.senOKG4'), t('m.2lwuEDc')]).toEqual(expected)
+      expect([
+        t('prChecksPresentation.no'),
+        t('mobileDiffReviewQueue.staged'),
+        t('mobileDiffReviewDrawers.reviewNote')
+      ]).toEqual(expected)
     }
   )
 })

@@ -116,7 +116,7 @@ export function MobileNativeChatAsk({ prompt, onAnswer, onCancel }: Props): Reac
               onPress={() => setIndex(i)}
             >
               <Text style={[styles.tabText, i === index && styles.tabTextActive]} numberOfLines={1}>
-                {qq.header || t('m.aqSqtLI', { value0: i + 1 })}
+                {qq.header || t('mobileNativeChatAsk.step', { stepNumber: i + 1 })}
               </Text>
               {isAnswered(i) ? (
                 <Check size={11} color={colors.statusGreen} strokeWidth={3} />
@@ -139,7 +139,7 @@ export function MobileNativeChatAsk({ prompt, onAnswer, onCancel }: Props): Reac
           />
         ))}
         <OptionRow
-          label={t('m.biG4V5Q')}
+          label={t('mobileNativeChatAsk.other')}
           selected={otherSelected}
           multi={q.multiSelect}
           onPress={() => toggle(index, OTHER, q.multiSelect)}
@@ -149,7 +149,7 @@ export function MobileNativeChatAsk({ prompt, onAnswer, onCancel }: Props): Reac
             style={styles.input}
             value={otherText[index]}
             onChangeText={(v) => setOther(index, v)}
-            placeholder={t('m.7nef7b0')}
+            placeholder={t('mobileNativeChatAsk.type')}
             placeholderTextColor={colors.textMuted}
             multiline
             autoFocus
@@ -175,7 +175,7 @@ export function MobileNativeChatAsk({ prompt, onAnswer, onCancel }: Props): Reac
           disabled={submitting}
           hitSlop={8}
         >
-          <Text style={styles.cancelText}>{t('m.yxcaJwo')}</Text>
+          <Text style={styles.cancelText}>{t('mobileNativeChatAsk.cancel')}</Text>
         </Pressable>
         {total > 1 ? (
           <Text style={styles.progress}>
@@ -188,7 +188,7 @@ export function MobileNativeChatAsk({ prompt, onAnswer, onCancel }: Props): Reac
           disabled={!canAdvance}
         >
           <Text style={[styles.nextText, !canAdvance && styles.nextTextDisabled]}>
-            {isLast ? t('m.ZEWq5OM') : t('m.EwbB5VI')}
+            {isLast ? t('mobileNativeChatAsk.send') : t('mobileNativeChatAsk.next')}
           </Text>
         </Pressable>
       </View>

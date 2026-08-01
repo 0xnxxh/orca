@@ -74,7 +74,7 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
         }
       } catch (err) {
         if (active) {
-          setError(err instanceof Error ? err.message : t('m.c_4jbTI'))
+          setError(err instanceof Error ? err.message : t('mobileGitHistoryList.failed'))
         }
       }
     })()
@@ -165,7 +165,7 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
               {files === 'loading' || files === undefined ? (
                 <ActivityIndicator size="small" color={colors.textSecondary} />
               ) : files.length === 0 ? (
-                <Text style={styles.empty}>{t('m.y0bB4-s')}</Text>
+                <Text style={styles.empty}>{t('mobileGitHistoryList.noFile')}</Text>
               ) : (
                 files.map((file) => (
                   <View key={file.path} style={styles.fileRow}>
@@ -197,10 +197,14 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
     return (
       <View style={styles.state}>
         <Text style={styles.stateText}>
-          {view.kind === 'waiting' ? t('m.kylGvPU') : view.message}
+          {view.kind === 'waiting' ? t('mobileGitHistoryList.waiting') : view.message}
         </Text>
-        <Pressable style={styles.retryButton} onPress={retry} accessibilityLabel={t('m.Qb3CogY')}>
-          <Text style={styles.retryText}>{t('m.Qb3CogY')}</Text>
+        <Pressable
+          style={styles.retryButton}
+          onPress={retry}
+          accessibilityLabel={t('mobileGitHistoryList.retry')}
+        >
+          <Text style={styles.retryText}>{t('mobileGitHistoryList.retry')}</Text>
         </Pressable>
       </View>
     )
@@ -215,7 +219,7 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
   if (view.kind === 'empty') {
     return (
       <View style={styles.state}>
-        <Text style={styles.stateText}>{t('m.fcDHZ1U')}</Text>
+        <Text style={styles.stateText}>{t('mobileGitHistoryList.noCommits')}</Text>
       </View>
     )
   }

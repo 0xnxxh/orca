@@ -41,22 +41,28 @@ export function MobileDiffReviewBody({
   onRetry
 }: Props) {
   if (screenState.kind === 'loading') {
-    return <CenteredState text={t('m.On0H_JY')} busy />
+    return <CenteredState text={t('mobileDiffReviewBody.loadingReview')} busy />
   }
   if (screenState.kind === 'error' || screenState.kind === 'unavailable') {
     return (
       <CenteredState
-        title={screenState.kind === 'unavailable' ? t('m.r-dK9lI') : t('m.e5sIbV0')}
+        title={
+          screenState.kind === 'unavailable'
+            ? t('mobileDiffReviewBody.review')
+            : t('mobileDiffReviewBody.unable')
+        }
         text={screenState.message}
         onRetry={onRetry}
       />
     )
   }
   if (filteredCount === 0) {
-    return <CenteredState title={t('m.3-RMeIo')} text={t('m.Ku2wK-g')} />
+    return (
+      <CenteredState title={t('mobileDiffReviewBody.no')} text={t('mobileDiffReviewBody.try')} />
+    )
   }
   if (diffState.kind === 'loading') {
-    return <CenteredState text={t('m.e6R_IPM')} busy muted />
+    return <CenteredState text={t('mobileDiffReviewBody.loadingDiff')} busy muted />
   }
   if (diffState.kind !== 'ready') {
     return <DiffUnavailableState diffState={diffState} onRetry={onRetry} />
@@ -91,7 +97,9 @@ export function MobileDiffReviewBody({
         })
       }}
       ListFooterComponent={
-        diffState.truncated ? <Text style={styles.truncatedText}>{t('m.W6MLNo0')}</Text> : null
+        diffState.truncated ? (
+          <Text style={styles.truncatedText}>{t('mobileDiffReviewBody.diffTruncated')}</Text>
+        ) : null
       }
     />
   )
@@ -106,22 +114,22 @@ function DiffUnavailableState({
 }) {
   const title =
     diffState.kind === 'binary'
-      ? t('m.Cku_aRM')
+      ? t('mobileDiffReviewBody.binary')
       : diffState.kind === 'too-large'
-        ? t('m.BrE_aCg')
+        ? t('mobileDiffReviewBody.diffTooLarge')
         : diffState.kind === 'deleted'
-          ? t('m.9Sv7Jb4')
-          : t('m.Rajm1co')
+          ? t('mobileDiffReviewBody.deleted')
+          : t('mobileDiffReviewBody.diffUnavailable')
   const text =
     diffState.kind === 'binary'
-      ? t('m.FdOHIhk')
+      ? t('mobileDiffReviewBody.fileCannot')
       : diffState.kind === 'too-large'
-        ? t('m.YeQabYs')
+        ? t('mobileDiffReviewBody.diffTooLargeMobile')
         : diffState.kind === 'deleted'
-          ? t('m.Em5nLwQ')
+          ? t('mobileDiffReviewBody.fileDeleted')
           : diffState.kind === 'error'
             ? diffState.message
-            : t('m.PpZpLWw')
+            : t('mobileDiffReviewBody.select')
   return <CenteredState title={title} text={text} onRetry={onRetry} />
 }
 
@@ -150,10 +158,10 @@ function CenteredState({
           style={({ pressed }) => [styles.retryButton, pressed && styles.buttonPressed]}
           onPress={onRetry}
           accessibilityRole="button"
-          accessibilityLabel={t('m.RF7UWwo')}
+          accessibilityLabel={t('mobileDiffReviewBody.retryLoading')}
         >
           <RefreshCw size={14} color={colors.textPrimary} strokeWidth={2.2} />
-          <Text style={styles.retryText}>{t('m.GWwDGTE')}</Text>
+          <Text style={styles.retryText}>{t('mobileDiffReviewBody.retry')}</Text>
         </Pressable>
       ) : null}
     </View>

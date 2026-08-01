@@ -19,11 +19,17 @@ export async function requestMobileCommitMessage(
     worktree: `id:${worktreeId}`
   })
   if (!response.ok) {
-    return { success: false, error: response.error?.message || t('m.cU7VGGA') }
+    return {
+      success: false,
+      error: response.error?.message || t('mobileCommitMessageAi.failed')
+    }
   }
   const result = (response as RpcSuccess).result as MobileGenerateCommitMessageResult | undefined
   if (!result || typeof result !== 'object') {
-    return { success: false, error: t('m.cU7VGGA') }
+    return {
+      success: false,
+      error: t('mobileCommitMessageAi.failed')
+    }
   }
   if (result.success === true && typeof result.message === 'string' && result.message.length > 0) {
     return { success: true, message: result.message }
@@ -33,7 +39,7 @@ export async function requestMobileCommitMessage(
   const hostError =
     result.success === false && typeof result.error === 'string' && result.error.length > 0
       ? result.error
-      : t('m.R0VwXOs')
+      : t('mobileCommitMessageAi.no')
   return {
     success: false,
     error: hostError,

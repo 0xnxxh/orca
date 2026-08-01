@@ -8,6 +8,14 @@ import ts from 'typescript-api'
 
 import { collectMobileEmbeddedDocumentCandidates } from './mobile-embedded-document-candidates.mjs'
 import { classifyMobileStringNode } from './mobile-localization-candidate-rules.mjs'
+import {
+  isAssignedToRenderedVariable,
+  isRenderedJsxExpression
+} from './mobile-localization-rendered-variable.mjs'
+import {
+  collectMobileTranslationBindings,
+  isMobileTranslationCall
+} from './mobile-localization-translation-bindings.mjs'
 
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts'])
 const SKIP_PATH_PARTS = new Set(['.git', 'dist', 'node_modules', 'out', '__snapshots__', 'assets'])
@@ -161,18 +169,39 @@ function stringParts(node) {
   ]
 }
 
-function isInsideLocalizationCall(node) {
+function isInsideLocalizationCall(node, sourceFile, mobileBindings) {
   let current = node.parent
   while (current) {
     if (ts.isCallExpression(current)) {
+      if (mobileBindings && isMobileTranslationCall(current, sourceFile, mobileBindings)) {
+        return true
+      }
       const name = expressionNameText(current.expression)
-      if (name && LOCALIZATION_CALL_NAMES.has(name.split('.').at(-1) ?? name)) {
+      if (!mobileBindings && name && LOCALIZATION_CALL_NAMES.has(name.split('.').at(-1) ?? name)) {
         return true
       }
     }
     current = current.parent
   }
   return false
+}
+
+function isUnboundRenderedTranslationArgument(node, sourceFile, mobileBindings) {
+  const call = findAncestor(node, ts.isCallExpression)
+  if (!call || !ts.isIdentifier(call.expression)) {
+    return false
+  }
+  const name = call.expression.text
+  const resemblesTranslator =
+    LOCALIZATION_CALL_NAMES.has(name) ||
+    mobileBindings.translatorNames.has(name) ||
+    mobileBindings.fixedTranslatorNames.has(name) ||
+    mobileBindings.prefixedTranslatorNames.has(name)
+  return (
+    resemblesTranslator &&
+    !isMobileTranslationCall(call, sourceFile, mobileBindings) &&
+    (isRenderedJsxExpression(call) || isAssignedToRenderedVariable(call))
+  )
 }
 
 function isJsxAttributeValue(node) {
@@ -207,40 +236,6 @@ function ancestorJsxAttributeName(node) {
     return undefined
   }
   return undefined
-}
-
-function isRenderedJsxExpression(node) {
-  let current = node.parent
-  while (current) {
-    if (ts.isJsxExpression(current)) {
-      return (
-        ts.isJsxElement(current.parent) ||
-        ts.isJsxFragment(current.parent) ||
-        ts.isJsxSelfClosingElement(current.parent)
-      )
-    }
-    if (
-      ts.isConditionalExpression(current) ||
-      ts.isParenthesizedExpression(current) ||
-      ts.isTemplateExpression(current) ||
-      ts.isNoSubstitutionTemplateLiteral(current)
-    ) {
-      if (ts.isConditionalExpression(current) && current.condition === node) {
-        return false
-      }
-      current = current.parent
-      continue
-    }
-    if (ts.isBinaryExpression(current)) {
-      if (current.operatorToken.kind !== ts.SyntaxKind.PlusToken) {
-        return false
-      }
-      current = current.parent
-      continue
-    }
-    return false
-  }
-  return false
 }
 
 function nearestObjectPropertyName(node) {
@@ -406,10 +401,14 @@ export function collectLocalizationCandidates(filePath, sourceText, root = proce
     /^mobile\/src\/(?:agent-history|browser|components|dictation|files|hooks|session|source-control|tasks)\//.test(
       relativePath
     )
+  const mobileBindings = mobileSource ? collectMobileTranslationBindings(sourceFile) : undefined
 
   function pushReport(node, kind, text, dynamic = false) {
     const value = compactText(text)
-    if (!hasHumanLanguageText(value) || isInsideLocalizationCall(node)) {
+    if (
+      !hasHumanLanguageText(value) ||
+      isInsideLocalizationCall(node, sourceFile, mobileBindings)
+    ) {
       return
     }
     const position = lineAndColumn(sourceFile, node)
@@ -433,7 +432,10 @@ export function collectLocalizationCandidates(filePath, sourceText, root = proce
     }
 
     const kind = mobileSource
-      ? classifyMobileStringNode(node, userVisibleErrorSource)
+      ? (classifyMobileStringNode(node, userVisibleErrorSource) ??
+        (isUnboundRenderedTranslationArgument(node, sourceFile, mobileBindings)
+          ? 'unbound-localization-call'
+          : undefined))
       : classifyStringNode(node)
     if (kind) {
       for (const part of stringParts(node)) {

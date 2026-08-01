@@ -23,9 +23,9 @@ export type MobileSourceControlSection<TEntry extends MobileGitStatusEntry = Mob
 const AREA_ORDER: MobileGitStagingArea[] = ['unstaged', 'untracked', 'staged']
 
 const AREA_TITLES: Record<MobileGitStagingArea, string> = {
-  unstaged: t('m.cbaJlCE'),
-  untracked: t('m.cdicUlU'),
-  staged: t('m.-DRFeFw')
+  unstaged: t('mobileGitStatus.changes'),
+  untracked: t('mobileGitStatus.untracked'),
+  staged: t('mobileGitStatus.staged')
 }
 
 export const MOBILE_GIT_STATUS_LABELS: Record<MobileGitFileStatus, string> = {

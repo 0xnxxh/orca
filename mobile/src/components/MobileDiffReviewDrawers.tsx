@@ -22,10 +22,12 @@ export function MobileDiffReviewDrawers({ controller }: Props) {
     <>
       <ActionSheetModal
         visible={controller.showOverflow}
-        title={t('m.oCVOA0w')}
+        title={t('mobileDiffReviewDrawers.reviewActions')}
         message={
           controller.reviewedUnstagedCount > 0
-            ? t('m._TCuNKQ', { value0: controller.reviewedUnstagedCount })
+            ? t('mobileDiffReviewDrawers.reviewedFileCountReviewed', {
+                reviewedFileCount: controller.reviewedUnstagedCount
+              })
             : undefined
         }
         actions={overflowActions}
@@ -33,20 +35,22 @@ export function MobileDiffReviewDrawers({ controller }: Props) {
       />
       <ActionSheetModal
         visible={controller.sendSheet !== null}
-        title={t('m.voLBMwU')}
+        title={t('mobileDiffReviewDrawers.sendNotes')}
         message={sendSheetMessage(controller)}
         actions={sendActions}
         onClose={() => controller.setSendSheet(null)}
       />
       <ConfirmModal
         visible={controller.discardTarget !== null}
-        title={t('m.1V8B5pc')}
+        title={t('mobileDiffReviewDrawers.discardFile')}
         message={
           controller.discardTarget
-            ? t('m.ajcWpiI', { value0: controller.discardTarget.filePath })
+            ? t('mobileDiffReviewDrawers.discardChanges', {
+                filePath: controller.discardTarget.filePath
+              })
             : undefined
         }
-        confirmLabel={t('m.-YeAYjI')}
+        confirmLabel={t('mobileDiffReviewDrawers.discard')}
         destructive
         onConfirm={() => {
           const target = controller.discardTarget
@@ -69,7 +73,7 @@ function useSendActions(controller: ReturnType<typeof useMobileDiffReviewControl
     const terminalActions =
       controller.sendSheet?.kind === 'ready' || controller.sendSheet?.kind === 'error'
         ? controller.sendSheet.terminals.map((terminal) => ({
-            label: `${terminal.title || t('m.4GOORsg')} (${terminal.terminal.slice(0, 6)})`,
+            label: `${terminal.title || t('mobileDiffReviewDrawers.terminal')} (${terminal.terminal.slice(0, 6)})`,
             icon: Send,
             disabled: comments.length === 0,
             skipAutoClose: true,
@@ -79,14 +83,14 @@ function useSendActions(controller: ReturnType<typeof useMobileDiffReviewControl
     return [
       ...terminalActions,
       {
-        label: t('m.qljZwNc'),
+        label: t('mobileDiffReviewDrawers.new'),
         icon: Plus,
         disabled: comments.length === 0,
         skipAutoClose: true,
         onPress: () => void controller.createTerminalAndSend(comments)
       },
       {
-        label: t('m.SGgu3t8'),
+        label: t('mobileDiffReviewDrawers.copy'),
         icon: Copy,
         disabled:
           controller.screenState.kind !== 'ready' || controller.screenState.comments.length === 0,
@@ -100,21 +104,21 @@ function useOverflowActions(controller: ReturnType<typeof useMobileDiffReviewCon
   return useMemo<ActionSheetAction[]>(
     () => [
       {
-        label: t('m.SGgu3t8'),
+        label: t('mobileDiffReviewDrawers.copy'),
         icon: Copy,
         disabled:
           controller.screenState.kind !== 'ready' || controller.screenState.comments.length === 0,
         onPress: () => void controller.copyNotes()
       },
       {
-        label: t('m.bboDcz4'),
+        label: t('mobileDiffReviewDrawers.sendUnsent'),
         icon: Send,
         disabled: controller.unsentComments.length === 0,
         skipAutoClose: true,
         onPress: () => void controller.openSendSheet()
       },
       {
-        label: t('m.AMn9p6c'),
+        label: t('mobileDiffReviewDrawers.clear'),
         icon: Trash2,
         disabled:
           controller.screenState.kind !== 'ready' ||
@@ -123,14 +127,14 @@ function useOverflowActions(controller: ReturnType<typeof useMobileDiffReviewCon
         onPress: () => void controller.clearSentNotes()
       },
       {
-        label: t('m.9YSL2XY'),
+        label: t('mobileDiffReviewDrawers.stageReviewedFiles'),
         icon: Check,
         disabled: controller.reviewedUnstagedCount === 0 || controller.busyAction !== null,
         skipAutoClose: true,
         onPress: () => void controller.stageReviewedFiles()
       },
       {
-        label: t('m.lDOi4xI'),
+        label: t('mobileDiffReviewDrawers.mark'),
         icon: X,
         disabled:
           controller.screenState.kind !== 'ready' ||
@@ -140,7 +144,7 @@ function useOverflowActions(controller: ReturnType<typeof useMobileDiffReviewCon
         onPress: () => void controller.markUnreviewed()
       },
       {
-        label: t('m.QyPs23A'),
+        label: t('mobileDiffReviewDrawers.open'),
         icon: FileText,
         disabled: !controller.currentItem || controller.currentItem.scope === 'branch',
         onPress: () => void controller.openInSession()
@@ -154,10 +158,12 @@ function sendSheetMessage(
   controller: ReturnType<typeof useMobileDiffReviewController>
 ): string | undefined {
   return controller.sendSheet?.kind === 'loading'
-    ? t('m.ycKwNOI')
+    ? t('mobileDiffReviewDrawers.loading')
     : controller.sendSheet?.kind === 'error'
       ? controller.sendSheet.message
-      : t('m.5Rc0T-w', { value0: controller.unsentComments.length })
+      : t('mobileDiffReviewDrawers.unsent', {
+          unsentCommentCount: controller.unsentComments.length
+        })
 }
 
 function NoteComposerDrawer({ controller }: Props) {
@@ -168,19 +174,23 @@ function NoteComposerDrawer({ controller }: Props) {
         <View style={styles.composerHeader}>
           <View>
             <Text style={styles.drawerTitle}>
-              {composer?.mode === 'edit' ? t('m.vX8hCPw') : t('m.SqSZ_D4')}
+              {composer?.mode === 'edit'
+                ? t('mobileDiffReviewDrawers.edit')
+                : t('mobileDiffReviewDrawers.add')}
             </Text>
             <Text style={styles.drawerSubtitle}>
               {composer?.mode === 'create' && composer.lineNumber > 0
-                ? t('m.YlMekyY', { value0: composer.lineNumber })
-                : t('m.K4ExXj0')}
+                ? t('mobileDiffReviewDrawers.line', {
+                    lineNumber: composer.lineNumber
+                  })
+                : t('mobileDiffReviewDrawers.file')}
             </Text>
           </View>
           <Pressable
             style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
             onPress={controller.closeComposer}
             accessibilityRole="button"
-            accessibilityLabel={t('m.cy6hF-c')}
+            accessibilityLabel={t('mobileDiffReviewDrawers.cancel')}
           >
             <X size={18} color={colors.textPrimary} strokeWidth={2.2} />
           </Pressable>
@@ -191,7 +201,7 @@ function NoteComposerDrawer({ controller }: Props) {
           onChangeText={controller.setComposerBody}
           multiline
           autoFocus
-          placeholder={t('m.2lwuEDc')}
+          placeholder={t('mobileDiffReviewDrawers.reviewNote')}
           placeholderTextColor={colors.textMuted}
           accessibilityLabel={composerLabel(composer)}
         />
@@ -210,8 +220,10 @@ function composerLabel(
   composer: { mode: 'create'; lineNumber: number } | { mode: 'edit'; comment: DiffComment } | null
 ): string {
   return composer?.mode === 'create' && composer.lineNumber > 0
-    ? t('m.972Qfrg', { value0: composer.lineNumber })
-    : t('m.2lwuEDc')
+    ? t('mobileDiffReviewDrawers.saveNote', {
+        lineNumber: composer.lineNumber
+      })
+    : t('mobileDiffReviewDrawers.reviewNote')
 }
 
 function DeleteNoteButton({ onPress }: { onPress: () => Promise<void> }) {
@@ -220,10 +232,10 @@ function DeleteNoteButton({ onPress }: { onPress: () => Promise<void> }) {
       style={({ pressed }) => [styles.secondaryButton, pressed && styles.buttonPressed]}
       onPress={() => void onPress()}
       accessibilityRole="button"
-      accessibilityLabel={t('m.7BEb-8o')}
+      accessibilityLabel={t('mobileDiffReviewDrawers.deleteNote')}
     >
       <Trash2 size={14} color={colors.statusRed} strokeWidth={2.2} />
-      <Text style={styles.destructiveText}>{t('m.-bToH9I')}</Text>
+      <Text style={styles.destructiveText}>{t('mobileDiffReviewDrawers.delete')}</Text>
     </Pressable>
   )
 }
@@ -249,7 +261,7 @@ function SaveNoteButton({
       accessibilityLabel={composerLabel(composer)}
     >
       <Check size={14} color={colors.bgBase} strokeWidth={2.2} />
-      <Text style={styles.primaryButtonText}>{t('m.ls_e0g8')}</Text>
+      <Text style={styles.primaryButtonText}>{t('mobileDiffReviewDrawers.save')}</Text>
     </Pressable>
   )
 }
@@ -262,17 +274,17 @@ function CompletionDrawer({ controller }: Props) {
       visible={controller.showCompletion}
       onClose={() => controller.setShowCompletion(false)}
     >
-      <Text style={styles.drawerTitle}>{t('m.du7kB18')}</Text>
+      <Text style={styles.drawerTitle}>{t('mobileDiffReviewDrawers.reviewComplete')}</Text>
       <Text style={styles.drawerSubtitle}>
         {t(
           controller.queue.length === 1
             ? noteCount === 1
-              ? 'm.QlrZNys'
-              : 'm.J7M3gnY'
+              ? 'mobileDiffReviewDrawers.reviewedFileCountFileReviewedNoteCountNote'
+              : 'mobileDiffReviewDrawers.reviewedFileCountFileReviewedNoteCountNotes'
             : noteCount === 1
-              ? 'm.uM2_gxc'
-              : 'm.JrNt3Dk',
-          { value0: controller.queue.length, value1: noteCount }
+              ? 'mobileDiffReviewDrawers.reviewedFileCountFilesReviewedNoteCountNote'
+              : 'mobileDiffReviewDrawers.reviewedFileCountFilesReviewedNoteCountNotes',
+          { reviewedFileCount: controller.queue.length, noteCount: noteCount }
         )}
       </Text>
       <View style={styles.drawerButtonRow}>
@@ -281,20 +293,22 @@ function CompletionDrawer({ controller }: Props) {
           disabled={controller.reviewedUnstagedCount === 0}
           onPress={() => void controller.stageReviewedFiles()}
           accessibilityRole="button"
-          accessibilityLabel={t('m.XhmaYgY')}
+          accessibilityLabel={t('mobileDiffReviewDrawers.stageReviewedFilesAccessibility')}
         >
           <Check size={14} color={colors.textSecondary} strokeWidth={2.2} />
-          <Text style={styles.secondaryButtonText}>{t('m.a1hiCFE')}</Text>
+          <Text style={styles.secondaryButtonText}>
+            {t('mobileDiffReviewDrawers.stageReviewed')}
+          </Text>
         </Pressable>
         <Pressable
           style={({ pressed }) => [styles.primaryButton, pressed && styles.buttonPressed]}
           disabled={controller.unsentComments.length === 0}
           onPress={() => void controller.openSendSheet()}
           accessibilityRole="button"
-          accessibilityLabel={t('m.XNffV5A')}
+          accessibilityLabel={t('mobileDiffReviewDrawers.sendNotesAgent')}
         >
           <Send size={14} color={colors.bgBase} strokeWidth={2.2} />
-          <Text style={styles.primaryButtonText}>{t('m.voLBMwU')}</Text>
+          <Text style={styles.primaryButtonText}>{t('mobileDiffReviewDrawers.sendNotes')}</Text>
         </Pressable>
       </View>
     </BottomDrawer>

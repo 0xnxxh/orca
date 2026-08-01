@@ -6,6 +6,12 @@ import process from 'node:process'
 // TypeScript 7 is a native CLI; AST consumers still need the legacy JavaScript API.
 import ts from 'typescript-api'
 
+import {
+  collectMobileTranslationBindings,
+  isMobileTranslationCall,
+  mobileTranslationCallPrefix
+} from './mobile-localization-translation-bindings.mjs'
+
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx'])
 const SOURCE_RELATIVE_ROOTS = [path.join('mobile', 'app'), path.join('mobile', 'src')]
 const LOCALES_RELATIVE_DIR = path.join('mobile', 'src', 'i18n', 'locales')
@@ -46,10 +52,69 @@ const PROTECTED_LITERALS = [
   'WSL',
   'SSH',
   'HEAD',
-  'MR !'
+  'MR !',
+  'HOOKS'
 ]
 const PLACEHOLDER_RE = /\{\{\s*([^,}\s]+)(?:,[^}]*)?\}\}/g
 const ENCODED_HTML_ENTITY_RE = /&(?:amp|apos|gt|lt|quot);/i
+const INTENT_MESSAGE_ID_RE = /^[a-z][A-Za-z0-9]*(?:\.[a-z][A-Za-z0-9]*)+$/
+const POSITIONAL_PLACEHOLDER_RE = /^value\d+$/
+const LANGUAGE_NEUTRAL_VALUES = new Set([
+  '@orca_build',
+  '[x]',
+  'Aider',
+  'Amp',
+  'Ante',
+  'Antigravity',
+  'Auggie',
+  'Autohand Code',
+  'Charm',
+  'Claude',
+  'Claude Agent Teams',
+  'Cline',
+  'Codebuff',
+  'Codex',
+  'Command Code',
+  'Continue',
+  'Cursor',
+  'Devin',
+  'Droid',
+  'Gemini',
+  'GitHub',
+  'GitHub Copilot',
+  'GitHub Releases',
+  'GitLab',
+  'Goose',
+  'Grok',
+  'HEAD',
+  'Hermes',
+  'Kilocode',
+  'Kimi',
+  'Kiro',
+  'Linear',
+  'Markdown',
+  'MiMo Code',
+  'Mistral Vibe',
+  'MR',
+  'MR !',
+  'OMP',
+  'onOrca.dev',
+  'OpenAI API',
+  'OpenClaude',
+  'OpenClaw',
+  'OpenCode',
+  'Orca',
+  'Orca Relay',
+  'orca.yaml',
+  'ORCA.YAML',
+  'Pi',
+  'PR',
+  'Qwen Code',
+  'Rovo Dev',
+  'stablyai/orca',
+  'Trae',
+  'YYYY-MM-DD'
+])
 
 function normalizePath(root, filePath) {
   return path.relative(root, filePath).split(path.sep).join('/')
@@ -193,6 +258,39 @@ function verifyProtectedLiterals(englishValue, localeValue, locale, key) {
   return issues
 }
 
+function isLanguageNeutralValue(value) {
+  const withoutPlaceholders = value.replace(PLACEHOLDER_RE, '').trim()
+  return (
+    LANGUAGE_NEUTRAL_VALUES.has(value) ||
+    /^(?:Alt|Ctrl|Shift)(?:\+(?:[A-Z]|Tab))?$/.test(value) ||
+    /^(?:Del|Enter|Esc|Ins|PgDn|PgUp|Tab)$/.test(value) ||
+    /^(?:F|H)\d{1,2}$/.test(value) ||
+    /^(?:https?:\/\/|orca:\/\/|lin_api_)/.test(value) ||
+    /^(?:npm run dev|Linux: sudo ufw allow 6768|src\/renderer packages\/ui)$/.test(value) ||
+    withoutPlaceholders === '' ||
+    withoutPlaceholders === '..HEAD' ||
+    withoutPlaceholders === '×'
+  )
+}
+
+function verifyTerminology(englishValue, localeValue, locale, key) {
+  const issues = []
+  if (
+    locale === 'es' &&
+    /\bbranch(?:es)?\b/i.test(englishValue) &&
+    /\bsucursal(?:es)?\b/i.test(localeValue)
+  ) {
+    issues.push(`${locale}.json Git terminology mismatch: ${key} translates branch as sucursal`)
+  }
+  if (locale === 'zh' && /\bhost\b/i.test(englishValue) && localeValue.includes('主人')) {
+    issues.push(`${locale}.json host terminology mismatch: ${key} uses 主人`)
+  }
+  if (locale === 'zh' && /\bagent/i.test(englishValue) && localeValue.includes('检测剂')) {
+    issues.push(`${locale}.json agent terminology mismatch: ${key} uses 检测剂`)
+  }
+  return issues
+}
+
 export function collectMobileTranslationCalls(filePath, sourceText, root = process.cwd()) {
   const sourceKind =
     filePath.endsWith('.tsx') || filePath.endsWith('.jsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
@@ -204,47 +302,17 @@ export function collectMobileTranslationCalls(filePath, sourceText, root = proce
     sourceKind
   )
   const calls = []
-  const fixedTranslatorNames = new Set()
-
-  function isEnglishFixedTranslator(node) {
-    const expression = unwrapExpression(node)
-    return (
-      ts.isCallExpression(expression) &&
-      ts.isPropertyAccessExpression(expression.expression) &&
-      ts.isIdentifier(expression.expression.expression) &&
-      expression.expression.expression.text === 'mobileI18n' &&
-      expression.expression.name.text === 'getFixedT' &&
-      expression.arguments.length === 1 &&
-      ts.isStringLiteralLike(expression.arguments[0]) &&
-      expression.arguments[0].text === 'en'
-    )
-  }
-
-  function collectFixedTranslators(node) {
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.initializer &&
-      isEnglishFixedTranslator(node.initializer)
-    ) {
-      fixedTranslatorNames.add(node.name.text)
-    }
-    ts.forEachChild(node, collectFixedTranslators)
-  }
-
-  collectFixedTranslators(sourceFile)
+  const bindings = collectMobileTranslationBindings(sourceFile)
 
   function visit(node) {
-    if (
-      ts.isCallExpression(node) &&
-      ((ts.isIdentifier(node.expression) &&
-        (node.expression.text === 't' || fixedTranslatorNames.has(node.expression.text))) ||
-        isEnglishFixedTranslator(node.expression))
-    ) {
+    if (ts.isCallExpression(node) && isMobileTranslationCall(node, sourceFile, bindings)) {
       const keyExpression = node.arguments[0]
       if (keyExpression) {
+        const prefix = mobileTranslationCallPrefix(node, sourceFile, bindings)
+        const branches = collectKeyBranches(keyExpression)
         calls.push({
-          ...collectKeyBranches(keyExpression),
+          ...branches,
+          keys: branches.keys.map((key) => (prefix ? `${prefix}.${key}` : key)),
           location: locationFor(root, filePath, sourceFile, keyExpression),
           options: collectOptionNames(node.arguments[1]),
           source: keyExpression.getText(sourceFile)
@@ -290,6 +358,25 @@ function verifyCalls(calls, englishEntries) {
   return issues
 }
 
+function verifyEnglishEntries(calls, englishEntries) {
+  const issues = []
+  const referencedKeys = new Set(calls.flatMap((call) => (call.inspected ? call.keys : [])))
+  for (const [key, value] of englishEntries) {
+    if (!INTENT_MESSAGE_ID_RE.test(key) || key.startsWith('m.')) {
+      issues.push(`en.json message ID must be intent-named: ${key}`)
+    }
+    for (const placeholder of collectPlaceholderNames(value)) {
+      if (POSITIONAL_PLACEHOLDER_RE.test(placeholder)) {
+        issues.push(`en.json placeholder must be intent-named: ${key} uses ${placeholder}`)
+      }
+    }
+    if (!referencedKeys.has(key)) {
+      issues.push(`en.json has orphaned key: ${key}`)
+    }
+  }
+  return issues
+}
+
 function verifyLocaleEntries(englishEntries, locale, localeEntries) {
   const issues = []
   const localeKeys = [...localeEntries.keys()].sort()
@@ -307,6 +394,10 @@ function verifyLocaleEntries(englishEntries, locale, localeEntries) {
       issues.push(`${locale}.json placeholder mismatch: ${key}`)
     }
     issues.push(...verifyProtectedLiterals(englishValue, localeValue, locale, key))
+    issues.push(...verifyTerminology(englishValue, localeValue, locale, key))
+    if (localeValue === englishValue && !isLanguageNeutralValue(englishValue)) {
+      issues.push(`${locale}.json copies English instead of using fallback: ${key}`)
+    }
   }
 
   return issues
@@ -476,6 +567,7 @@ export async function main(root = process.cwd()) {
   }
 
   issues.push(...verifyCalls(calls, englishEntries))
+  issues.push(...verifyEnglishEntries(calls, englishEntries))
   for (const locale of MOBILE_LOCALES.slice(1)) {
     const localeEntries = catalogs.get(locale)
     if (localeEntries) {

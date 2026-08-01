@@ -65,7 +65,7 @@ export function useMobileDiffReviewCommentActions(input: CommentActionsInput) {
   const persistMetadata = useCallback(
     async (comments: readonly DiffComment[], reviewState: MobileDiffReviewState) => {
       if (!client || connState !== 'connected') {
-        throw new Error(t('m.a3rNaLA'))
+        throw new Error(t('useMobileDiffReviewCommentActions.waiting'))
       }
       const response = await client.sendRequest('worktree.set', {
         worktree: `id:${worktreeId}`,
@@ -73,7 +73,9 @@ export function useMobileDiffReviewCommentActions(input: CommentActionsInput) {
         mobileDiffReview: reviewState
       })
       if (!response.ok) {
-        throw new Error(response.error?.message || t('m.dzoAXdg'))
+        throw new Error(
+          response.error?.message || t('useMobileDiffReviewCommentActions.failedSaveReviewState')
+        )
       }
     },
     [client, connState, worktreeId]
@@ -98,7 +100,11 @@ export function useMobileDiffReviewCommentActions(input: CommentActionsInput) {
           setScreenState(previous)
         }
         triggerError()
-        setActionError(err instanceof Error ? err.message : t('m.kOr-gVg'))
+        setActionError(
+          err instanceof Error
+            ? err.message
+            : t('useMobileDiffReviewCommentActions.failedSaveReview')
+        )
         throw err
       }
     },

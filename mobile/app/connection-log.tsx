@@ -87,7 +87,7 @@ export default function ConnectionLogScreen() {
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <ChevronLeft size={22} color={colors.textSecondary} />
         </Pressable>
-        <Text style={styles.heading}>{t('m.x43FzPs')}</Text>
+        <Text style={styles.heading}>{t('connectionLog.connection')}</Text>
       </View>
 
       {hosts.length > 1 && (
@@ -114,7 +114,11 @@ export default function ConnectionLogScreen() {
           <View style={styles.statusRow}>
             <Text style={styles.statusText}>
               {state}
-              {reconnectAttempts > 0 ? t('m.mu5iayg', { value0: reconnectAttempts }) : ''}
+              {reconnectAttempts > 0
+                ? t('connectionLog.attempt', {
+                    reconnectAttempts: reconnectAttempts
+                  })
+                : ''}
             </Text>
             <Pressable style={styles.copyButton} onPress={() => void copyDiagnostics()}>
               {copied ? (
@@ -122,17 +126,19 @@ export default function ConnectionLogScreen() {
               ) : (
                 <Copy size={14} color={colors.textSecondary} />
               )}
-              <Text style={styles.copyButtonText}>{copied ? t('m.DYy9eRs') : t('m.GiZXYb8')}</Text>
+              <Text style={styles.copyButtonText}>
+                {copied ? t('connectionLog.copied') : t('connectionLog.copy')}
+              </Text>
             </Pressable>
           </View>
           {entries.length > 0 ? (
             <ConnectionLog entries={[...entries]} title={selected.name} />
           ) : (
-            <Text style={styles.emptyText}>{t('m.FX9lUwo')}</Text>
+            <Text style={styles.emptyText}>{t('connectionLog.noConnection')}</Text>
           )}
         </>
       ) : (
-        <Text style={styles.emptyText}>{t('m.POUjxlM')}</Text>
+        <Text style={styles.emptyText}>{t('connectionLog.noPaired')}</Text>
       )}
     </View>
   )

@@ -116,7 +116,7 @@ export async function startMobileDictationDesktopSession(
     // Commit in the same continuation as the final stale check; returning first
     // would let a queued cancel resurrect microphone recording after cleanup.
     if (!options.commitRecordingStart()) {
-      throw new Error(t('m.LuqBIhs'))
+      throw new Error(t('mobileDictationDesktopStart.failed'))
     }
   } catch (err) {
     const wasCurrent = isCurrentStart(options)

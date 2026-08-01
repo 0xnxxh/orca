@@ -24,7 +24,8 @@ export function CodexResetCreditAction({
         <View style={styles.copy}>
           <Text style={styles.title}>{summary.availabilityLabel}</Text>
           <Text style={styles.subtitle}>
-            {[summary.expiryLabel, scopeLabel].filter(Boolean).join(' · ') || t('m.wA_0d2E')}
+            {[summary.expiryLabel, scopeLabel].filter(Boolean).join(' · ') ||
+              t('codexResetCreditAction.earned')}
           </Text>
         </View>
         <Pressable
@@ -36,8 +37,16 @@ export function CodexResetCreditAction({
           onPress={onPress}
           disabled={disabled}
           accessibilityRole="button"
-          accessibilityLabel={busy ? t('m.fNZPjTQ') : t('m.7uEIrNQ')}
-          accessibilityHint={scopeLabel ? t('m.Y2o7mgc', { value0: scopeLabel }) : t('m.8CLIWuE')}
+          accessibilityLabel={
+            busy ? t('codexResetCreditAction.resettingCodex') : t('codexResetCreditAction.useCodex')
+          }
+          accessibilityHint={
+            scopeLabel
+              ? t('codexResetCreditAction.usesOneEarnedResetScope', {
+                  scopeLabel: scopeLabel
+                })
+              : t('codexResetCreditAction.usesOneEarnedResetActive')
+          }
           accessibilityState={{ busy, disabled }}
           hitSlop={8}
         >
@@ -46,7 +55,9 @@ export function CodexResetCreditAction({
           ) : (
             <RotateCcw size={14} color={colors.textPrimary} />
           )}
-          <Text style={styles.buttonText}>{busy ? t('m.LN50bQ0') : t('m.2LrOLw8')}</Text>
+          <Text style={styles.buttonText}>
+            {busy ? t('codexResetCreditAction.resetting') : t('codexResetCreditAction.useReset')}
+          </Text>
         </Pressable>
       </View>
     </>

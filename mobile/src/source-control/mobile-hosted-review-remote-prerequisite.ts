@@ -23,7 +23,7 @@ export async function applyMobileHostedReviewRemotePrerequisite(
         client,
         'git.push',
         { worktree: `id:${worktreeId}`, publish: true },
-        t('m.HtBxXOI')
+        t('mobileHostedReviewRemotePrerequisite.failedPublish')
       )
       return result.ok ? { ok: true, ran: true } : result
     }
@@ -33,7 +33,7 @@ export async function applyMobileHostedReviewRemotePrerequisite(
         client,
         'git.push',
         { worktree: `id:${worktreeId}` },
-        t('m.I8tYYd4')
+        t('mobileHostedReviewRemotePrerequisite.failedPush')
       )
       return result.ok ? { ok: true, ran: true } : result
     }
@@ -46,7 +46,7 @@ export async function applyMobileHostedReviewRemotePrerequisite(
         client,
         'git.push',
         { worktree: `id:${worktreeId}`, forceWithLease: true },
-        t('m.2m5o9w0')
+        t('mobileHostedReviewRemotePrerequisite.failedForce')
       )
       return result.ok ? { ok: true, ran: true } : result
     }

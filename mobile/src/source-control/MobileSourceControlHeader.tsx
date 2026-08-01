@@ -31,7 +31,9 @@ export function MobileSourceControlHeader({
         style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
         onPress={onBack}
         hitSlop={8}
-        accessibilityLabel={embedded ? t('m.MDlHRa0') : t('m.OtpFc0w')}
+        accessibilityLabel={
+          embedded ? t('mobileSourceControlHeader.close') : t('mobileSourceControlHeader.back')
+        }
       >
         {embedded ? (
           <X size={22} color={colors.textSecondary} strokeWidth={2.2} />
@@ -41,7 +43,7 @@ export function MobileSourceControlHeader({
       </Pressable>
       <View style={styles.titleBlock}>
         <Text style={styles.title} numberOfLines={1}>
-          {t('m.PjA8ztc')}
+          {t('mobileSourceControlHeader.source')}
         </Text>
         <Text style={styles.meta} numberOfLines={1}>
           {worktreeLabel}
@@ -54,7 +56,11 @@ export function MobileSourceControlHeader({
           hitSlop={8}
           accessibilityRole="link"
           accessibilityLabel={
-            prNumber != null ? t('m.HUC1SZA', { value0: prNumber }) : t('m.5lXW9sQ')
+            prNumber != null
+              ? t('mobileSourceControlHeader.openPullRequestPull', {
+                  pullRequestNumber: prNumber
+                })
+              : t('mobileSourceControlHeader.openPullRequestWeb')
           }
         >
           <ExternalLink size={18} color={colors.textSecondary} strokeWidth={2.1} />
@@ -69,7 +75,7 @@ export function MobileSourceControlHeader({
         onPress={onRefresh}
         disabled={ioBusy}
         hitSlop={8}
-        accessibilityLabel={t('m.Pt1enm0')}
+        accessibilityLabel={t('mobileSourceControlHeader.refresh')}
       >
         <RefreshCw size={18} color={colors.textSecondary} strokeWidth={2.1} />
       </Pressable>

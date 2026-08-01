@@ -14,7 +14,10 @@ export async function readMobileHostedReviewGitStatus(
 ): Promise<MobileHostedReviewStatusReadResult> {
   const response = await client.sendRequest('git.status', { worktree: `id:${worktreeId}` })
   if (!response.ok) {
-    return { ok: false, error: response.error?.message || t('m.Cqqzv8U') }
+    return {
+      ok: false,
+      error: response.error?.message || t('mobileHostedReviewGitPreparation.unable')
+    }
   }
   return { ok: true, status: readMobileGitStatusResult((response as RpcSuccess).result) }
 }
@@ -55,14 +58,23 @@ export async function commitMobileHostedReviewStagedChanges(
       message
     })
     if (!response.ok) {
-      return { ok: false, error: response.error?.message || t('m.X4spS84') }
+      return {
+        ok: false,
+        error: response.error?.message || t('mobileHostedReviewGitPreparation.commit')
+      }
     }
     const result = (response as RpcSuccess).result as { success?: boolean; error?: string }
     if (result?.success !== true) {
-      return { ok: false, error: result?.error || t('m.X4spS84') }
+      return {
+        ok: false,
+        error: result?.error || t('mobileHostedReviewGitPreparation.commit')
+      }
     }
     return { ok: true }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : t('m.X4spS84') }
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : t('mobileHostedReviewGitPreparation.commit')
+    }
   }
 }

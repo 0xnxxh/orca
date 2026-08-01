@@ -36,5 +36,5 @@ export function extractLinearIssueReadItems(result: unknown): LinearMobileIssue[
     return (result as { items: LinearMobileIssue[] }).items
   }
 
-  throw new Error(t('m.AX4IXS0'))
+  throw new Error(t('linearMobileIssueRead.unexpected'))
 }

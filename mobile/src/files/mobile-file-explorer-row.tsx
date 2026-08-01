@@ -30,7 +30,7 @@ export function MobileFileExplorerRow(props: Props) {
       <View style={[styles.inlineStatusRow, { paddingLeft: spacing.lg + item.depth * 18 }]}>
         <View style={styles.chevronSpacer} />
         <ActivityIndicator size="small" color={colors.textSecondary} />
-        <Text style={styles.inlineStatusText}>{t('m.t2QYxhU')}</Text>
+        <Text style={styles.inlineStatusText}>{t('mobileFileExplorerRow.loading')}</Text>
       </View>
     )
   }
@@ -40,7 +40,7 @@ export function MobileFileExplorerRow(props: Props) {
       <View style={[styles.inlineStatusRow, { paddingLeft: spacing.lg + item.depth * 18 }]}>
         <View style={styles.chevronSpacer} />
         <Text style={styles.inlineErrorText} numberOfLines={1}>
-          {item.message || t('m.dZsgG-M')}
+          {item.message || t('mobileFileExplorerRow.unable')}
         </Text>
         <Pressable
           style={({ pressed }) => [styles.inlineRetryButton, pressed && styles.rowPressed]}
@@ -48,9 +48,11 @@ export function MobileFileExplorerRow(props: Props) {
             triggerSelection()
             onRetryDirectory(item.relativePath)
           }}
-          accessibilityLabel={t('m.v4sDG-8', { value0: item.relativePath })}
+          accessibilityLabel={t('mobileFileExplorerRow.retryLoading', {
+            relativePath: item.relativePath
+          })}
         >
-          <Text style={styles.inlineRetryText}>{t('m.CGYoYAY')}</Text>
+          <Text style={styles.inlineRetryText}>{t('mobileFileExplorerRow.retry')}</Text>
         </Pressable>
       </View>
     )
@@ -111,10 +113,12 @@ function TreeRow(props: {
       }}
       accessibilityLabel={
         isDirectory
-          ? t('m.LuU4lSE', { value0: item.name })
+          ? t('mobileFileExplorerRow.open', { itemName: item.name })
           : disabled
-            ? t('m.AnmS3ZU', { value0: item.name })
-            : t('m.F2AHmFI', { value0: item.name })
+            ? t('mobileFileExplorerRow.item', {
+                itemName: item.name
+              })
+            : t('mobileFileExplorerRow.preview', { itemName: item.name })
       }
     >
       {isDirectory ? (
@@ -139,7 +143,9 @@ function TreeRow(props: {
         <Text style={[styles.rowTitle, disabled && styles.rowTitleDisabled]} numberOfLines={1}>
           {item.name}
         </Text>
-        {disabled ? <Text style={styles.rowMeta}>{t('m.m0QdE2U')}</Text> : null}
+        {disabled ? (
+          <Text style={styles.rowMeta}>{t('mobileFileExplorerRow.unavailable')}</Text>
+        ) : null}
       </View>
     </Pressable>
   )

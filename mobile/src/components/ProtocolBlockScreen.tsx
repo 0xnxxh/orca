@@ -17,20 +17,22 @@ export function ProtocolBlockScreen({ verdict }: Props) {
   const mobileUpdateTarget =
     Platform.OS === 'ios'
       ? {
-          label: t('m.oxg5VTs'),
+          label: t('protocolBlockScreen.openApp'),
           url: IOS_APP_STORE_URL,
           storeName: t('protocol.block.appStoreName')
         }
       : {
-          label: t('m.h3ZwGv0'),
+          label: t('protocolBlockScreen.openGit'),
           url: RELEASES_URL,
           storeName: t('protocol.block.githubReleasesName')
         }
   const primaryAction = isMobileTooOld
     ? { label: mobileUpdateTarget.label, url: mobileUpdateTarget.url }
-    : { label: t('m.h3ZwGv0'), url: RELEASES_URL }
+    : { label: t('protocolBlockScreen.openGit'), url: RELEASES_URL }
 
-  const title = isMobileTooOld ? t('m.NkNSfjQ') : t('m.amP19yQ')
+  const title = isMobileTooOld
+    ? t('protocolBlockScreen.updateOrcaMobile')
+    : t('protocolBlockScreen.updateOrcaYour')
   const body = isMobileTooOld
     ? t('protocol.block.mobileTooOldBody', { storeName: mobileUpdateTarget.storeName })
     : t('protocol.block.desktopTooOldBody')
@@ -57,7 +59,7 @@ export function ProtocolBlockScreen({ verdict }: Props) {
             router.replace('/')
           }}
         >
-          <Text style={styles.secondaryButtonText}>{t('m.kA_OuTE')}</Text>
+          <Text style={styles.secondaryButtonText}>{t('protocolBlockScreen.back')}</Text>
         </Pressable>
         <Text style={styles.recoveryNote}>{recoveryNote}</Text>
       </View>

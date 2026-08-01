@@ -24,14 +24,17 @@ export const MobileRelayHostOverlaySchema = z
   .strict()
   .superRefine((overlay, context) => {
     if ((overlay.relayHostId === undefined) !== (overlay.relay === undefined)) {
-      context.addIssue({ code: 'custom', message: t('m.CjbcG3A') })
+      context.addIssue({
+        code: 'custom',
+        message: t('mobileRelayHostOverlay.relayIdentity')
+      })
       return
     }
     if (overlay.relay && overlay.relay.relayHostId !== overlay.relayHostId) {
       context.addIssue({
         code: 'custom',
         path: ['relayHostId'],
-        message: t('m.e-zCiAo')
+        message: t('mobileRelayHostOverlay.relayHost')
       })
     }
     const relayEndpointCount = overlay.endpoints.filter(({ kind }) => kind === 'relay').length
@@ -39,7 +42,7 @@ export const MobileRelayHostOverlaySchema = z
       context.addIssue({
         code: 'custom',
         path: ['endpoints'],
-        message: t('m.lxKZMMw')
+        message: t('mobileRelayHostOverlay.expected')
       })
     }
   })

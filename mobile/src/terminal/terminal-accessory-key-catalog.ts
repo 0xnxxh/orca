@@ -2,61 +2,131 @@ import { t } from '@/i18n/mobile-i18n'
 import type { TerminalAccessoryKey } from './terminal-accessory-keys'
 
 export const TERMINAL_ACCESSORY_KEYS: TerminalAccessoryKey[] = [
-  { id: 'escape', label: t('m.bNejRmQ'), bytes: '\x1b', accessibilityLabel: t('m.jHe6UUU') },
-  { id: 'tab', label: t('m.hM5KUAw'), bytes: '\t', accessibilityLabel: t('m.hM5KUAw') },
-  { id: 'enter', label: t('m.9KFo5zM'), bytes: '\r', accessibilityLabel: t('m.9KFo5zM') },
+  {
+    id: 'escape',
+    label: t('terminalAccessoryKeyCatalog.esc'),
+    bytes: '\x1b',
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.escape')
+  },
+  {
+    id: 'tab',
+    label: t('terminalAccessoryKeyCatalog.tab'),
+    bytes: '\t',
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.tab')
+  },
+  {
+    id: 'enter',
+    label: t('terminalAccessoryKeyCatalog.enter'),
+    bytes: '\r',
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.enter')
+  },
   // Why: terminal apps recognize ESC [ Z as the reverse-tab sequence.
-  { id: 'shiftTab', label: t('m.S9DH8y4'), bytes: '\x1b[Z', accessibilityLabel: t('m.p7_d2FU') },
-  { id: 'space', label: t('m.l6KJT3M'), bytes: ' ', accessibilityLabel: t('m.l6KJT3M') },
+  {
+    id: 'shiftTab',
+    label: t('terminalAccessoryKeyCatalog.shiftPlus'),
+    bytes: '\x1b[Z',
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.shiftTab')
+  },
+  {
+    id: 'space',
+    label: t('terminalAccessoryKeyCatalog.space'),
+    bytes: ' ',
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.space')
+  },
   {
     id: 'backspace',
     label: '⌫',
     bytes: '\x7f',
-    accessibilityLabel: t('m.6TRPiic'),
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.backspace'),
     repeatable: true
   },
   {
     id: 'delete',
-    label: t('m.gmy3A7M'),
+    label: t('terminalAccessoryKeyCatalog.del'),
     bytes: '\x1b[3~',
-    accessibilityLabel: t('m.fNgDk9o'),
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.forward'),
     repeatable: true
   },
   {
     id: 'arrowUp',
     label: '↑',
     bytes: '\x1b[A',
-    accessibilityLabel: t('m.IwJi8TY'),
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.arrowUp'),
     repeatable: true
   },
   {
     id: 'arrowDown',
     label: '↓',
     bytes: '\x1b[B',
-    accessibilityLabel: t('m.vVsy7qk'),
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.arrowDown'),
     repeatable: true
   },
   {
     id: 'arrowLeft',
     label: '←',
     bytes: '\x1b[D',
-    accessibilityLabel: t('m.RiGIavM'),
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.arrowLeft'),
     repeatable: true
   },
   {
     id: 'arrowRight',
     label: '→',
     bytes: '\x1b[C',
-    accessibilityLabel: t('m.v5WSGO0'),
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.arrowRight'),
     repeatable: true
   },
-  { id: 'ctrlC', label: t('m.ke03J5M'), bytes: '\x03', accessibilityLabel: t('m.AzHoQzM') },
-  { id: 'ctrlD', label: t('m.vFYSo0s'), bytes: '\x04', accessibilityLabel: t('m.PBPnPeQ') },
-  { id: 'ctrlL', label: t('m.R6ZcIz8'), bytes: '\x0c', accessibilityLabel: t('m.Eqaj8oY') },
-  { id: 'ctrlZ', label: t('m.NIdsbYo'), bytes: '\x1a', accessibilityLabel: t('m.hqWfNmA') },
-  { id: 'ctrlR', label: t('m.a2Cb3GE'), bytes: '\x12', accessibilityLabel: t('m.mcvHf4o') },
-  { id: 'ctrlA', label: t('m.u9q9lPQ'), bytes: '\x01', accessibilityLabel: t('m.CKFp_QM') },
-  { id: 'ctrlE', label: t('m.5m_ucwE'), bytes: '\x05', accessibilityLabel: t('m.0VWtVO8') },
-  { id: 'ctrlW', label: t('m.jVVj75Y'), bytes: '\x17', accessibilityLabel: t('m.Bd9qfdk') },
-  { id: 'ctrlU', label: t('m.sL5fKGQ'), bytes: '\x15', accessibilityLabel: t('m.HrWsdDM') }
+  {
+    id: 'ctrlC',
+    label: t('terminalAccessoryKeyCatalog.ctrlPlusC'),
+    bytes: '\x03',
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.interrupt')
+  },
+  {
+    id: 'ctrlD',
+    label: t('terminalAccessoryKeyCatalog.ctrlPlusD'),
+    bytes: '\x04',
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.send')
+  },
+  {
+    id: 'ctrlL',
+    label: t('terminalAccessoryKeyCatalog.ctrlPlusL'),
+    bytes: '\x0c',
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.clearScreen')
+  },
+  {
+    id: 'ctrlZ',
+    label: t('terminalAccessoryKeyCatalog.ctrlPlusZ'),
+    bytes: '\x1a',
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.suspend')
+  },
+  {
+    id: 'ctrlR',
+    label: t('terminalAccessoryKeyCatalog.ctrlPlusR'),
+    bytes: '\x12',
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.reverse')
+  },
+  {
+    id: 'ctrlA',
+    label: t('terminalAccessoryKeyCatalog.ctrlPlus'),
+    bytes: '\x01',
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.start')
+  },
+  {
+    id: 'ctrlE',
+    label: t('terminalAccessoryKeyCatalog.ctrlPlusE'),
+    bytes: '\x05',
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.end')
+  },
+  {
+    id: 'ctrlW',
+    label: t('terminalAccessoryKeyCatalog.ctrlPlusW'),
+    bytes: '\x17',
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.delete')
+  },
+  {
+    id: 'ctrlU',
+    label: t('terminalAccessoryKeyCatalog.ctrlPlusU'),
+    bytes: '\x15',
+    accessibilityLabel: t('terminalAccessoryKeyCatalog.clearLine')
+  }
 ]

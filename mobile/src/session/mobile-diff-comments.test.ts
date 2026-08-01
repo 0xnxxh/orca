@@ -135,7 +135,11 @@ describe('mobile diff comments', () => {
     const note = comment({ id: 'a', startLine: 2, lineNumber: 4 })
     await mobileI18n.changeLanguage('es')
 
-    expect(mobileI18n.t('m.ZueS87g', { value0: 2, value1: 4 })).toBe('Líneas: 2-4')
+    expect(
+      mobileI18n.t('pairConfirm.pairingFailed', {
+        errorMessage: 'fallo'
+      })
+    ).toBe('Error de emparejamiento: fallo')
     expect(formatDiffComments([note])).toBe(formatDesktopDiffComment(note))
   })
 

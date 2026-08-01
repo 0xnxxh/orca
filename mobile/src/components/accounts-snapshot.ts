@@ -82,7 +82,7 @@ export const RateLimitRuntimeTargetSchema = z
     if (target.runtime === 'host' && target.wslDistro !== null) {
       context.addIssue({
         code: 'custom',
-        message: t('m.EIhMdN0'),
+        message: t('accountsSnapshot.hostRate'),
         path: ['wslDistro']
       })
     }
@@ -93,7 +93,7 @@ export const RateLimitRuntimeTargetSchema = z
     ) {
       context.addIssue({
         code: 'custom',
-        message: t('m.ZlNO6fQ'),
+        message: t('accountsSnapshot.wslRate'),
         path: ['wslDistro']
       })
     }
@@ -138,7 +138,7 @@ const CodexAccountSummarySchema = z
     if (runtime === 'host' && account.wslDistro != null) {
       context.addIssue({
         code: 'custom',
-        message: t('m.OZiafyo'),
+        message: t('accountsSnapshot.hostCodex'),
         path: ['wslDistro']
       })
     }
@@ -149,7 +149,7 @@ const CodexAccountSummarySchema = z
     ) {
       context.addIssue({
         code: 'custom',
-        message: t('m.95Xks08'),
+        message: t('accountsSnapshot.wslCodex'),
         path: ['wslDistro']
       })
     }
@@ -189,14 +189,14 @@ export const AccountsSnapshotSchema = z
     if (snapshot.rateLimits.claude && snapshot.rateLimits.claude.provider !== 'claude') {
       context.addIssue({
         code: 'custom',
-        message: t('m.OWfo7Qc'),
+        message: t('accountsSnapshot.claude'),
         path: ['rateLimits', 'claude', 'provider']
       })
     }
     if (snapshot.rateLimits.codex && snapshot.rateLimits.codex.provider !== 'codex') {
       context.addIssue({
         code: 'custom',
-        message: t('m.N8kYEP4'),
+        message: t('accountsSnapshot.codex'),
         path: ['rateLimits', 'codex', 'provider']
       })
     }
@@ -204,7 +204,7 @@ export const AccountsSnapshotSchema = z
       if (entry.rateLimits && entry.rateLimits.provider !== 'claude') {
         context.addIssue({
           code: 'custom',
-          message: t('m.4NLLG4A'),
+          message: t('accountsSnapshot.inactiveClaude'),
           path: ['rateLimits', 'inactiveClaudeAccounts', index, 'rateLimits', 'provider']
         })
       }
@@ -213,7 +213,7 @@ export const AccountsSnapshotSchema = z
       if (entry.rateLimits && entry.rateLimits.provider !== 'codex') {
         context.addIssue({
           code: 'custom',
-          message: t('m.CkCg0Xk'),
+          message: t('accountsSnapshot.inactiveCodex'),
           path: ['rateLimits', 'inactiveCodexAccounts', index, 'rateLimits', 'provider']
         })
       }
@@ -230,7 +230,7 @@ export type AccountsSnapshot = z.infer<typeof AccountsSnapshotSchema>
 
 export class InvalidAccountsSnapshotError extends Error {
   constructor() {
-    super(t('m.l0xDyns'))
+    super(t('accountsSnapshot.invalid'))
     this.name = 'InvalidAccountsSnapshotError'
   }
 }

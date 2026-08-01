@@ -30,7 +30,7 @@ export function buildMobileBranchCompareSection<TEntry extends MobileGitBranchCh
     return null
   }
   return {
-    title: t('m.jrzi7yY'),
+    title: t('mobileBranchCompare.committed'),
     data: [...entries].sort(compareBranchEntries)
   }
 }
@@ -42,18 +42,28 @@ export function formatMobileBranchCompareSummary(
     return summary.errorMessage ?? null
   }
   const parts = [
-    t(summary.changedFiles === 1 ? 'm.SM7vigo' : 'm.Dwq_r1o', {
-      value0: summary.changedFiles
-    })
+    t(
+      summary.changedFiles === 1
+        ? 'mobileBranchCompare.changedFileCountFile'
+        : 'mobileBranchCompare.changedFileCountFiles',
+      {
+        changedFileCount: summary.changedFiles
+      }
+    )
   ]
   if (summary.commitsAhead !== undefined) {
     parts.push(
-      t(summary.commitsAhead === 1 ? 'm.mLbULQw' : 'm.TWTFkY0', {
-        value0: summary.commitsAhead
-      })
+      t(
+        summary.commitsAhead === 1
+          ? 'mobileBranchCompare.commitCountCommit'
+          : 'mobileBranchCompare.commitCountCommits',
+        {
+          commitCount: summary.commitsAhead
+        }
+      )
     )
   }
-  parts.push(t('m.t2Awy1s', { value0: summary.baseRef }))
+  parts.push(t('mobileBranchCompare.vs', { baseRef: summary.baseRef }))
   return parts.join(' - ')
 }
 

@@ -297,11 +297,11 @@ function DragReorderRow({
           style={styles.handle}
           accessible
           accessibilityRole="button"
-          accessibilityLabel={t('m.-lwE4Q0')}
-          accessibilityHint={t('m.T-H1CUQ')}
+          accessibilityLabel={t('dragReorderList.drag')}
+          accessibilityHint={t('dragReorderList.use')}
           accessibilityActions={[
-            { name: 'moveUp', label: t('m.ee4D14o') },
-            { name: 'moveDown', label: t('m.uGHhnC0') }
+            { name: 'moveUp', label: t('dragReorderList.moveUp') },
+            { name: 'moveDown', label: t('dragReorderList.moveDown') }
           ]}
           onAccessibilityAction={(event) => {
             if (event.nativeEvent.actionName === 'moveUp') {

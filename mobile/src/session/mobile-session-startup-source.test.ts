@@ -103,7 +103,7 @@ describe('mobile session startup', () => {
       startupEffect.indexOf('await ensureSessionTabs()')
     )
     expect(startupEffect).toContain('headlessActivationNeedsHostRenderer(response.result)')
-    expect(startupEffect).toContain("showToast(t('m.RJlcmtM'), 3000)")
+    expect(startupEffect).toContain("showToast(tr('openOrca'), 3000)")
   })
 
   it('fails runtime capability gates closed before probing a replacement client', () => {
@@ -175,18 +175,18 @@ describe('mobile session startup', () => {
 
   it('keeps dynamic agent rows above fixed New Tab actions', () => {
     const newTabActions = sliceBetween(
-      "title={t('m.-95LQlw')}",
+      "title={tr('newTabTitle')}",
       'onClose={() => setShowCreateTabDrawer'
     )
 
     expect(newTabActions.indexOf('...createTabAgentActions')).toBeLessThan(
-      newTabActions.indexOf("label: t('m.1ELofI0')")
+      newTabActions.indexOf("label: tr('terminal')")
     )
-    expect(newTabActions.indexOf("label: t('m.1ELofI0')")).toBeLessThan(
-      newTabActions.indexOf("label: t('m.vL8HgZo')")
+    expect(newTabActions.indexOf("label: tr('terminal')")).toBeLessThan(
+      newTabActions.indexOf("label: tr('browser')")
     )
-    expect(newTabActions.indexOf("label: t('m.vL8HgZo')")).toBeLessThan(
-      newTabActions.indexOf("label: t('m.c_XP7YM')")
+    expect(newTabActions.indexOf("label: tr('browser')")).toBeLessThan(
+      newTabActions.indexOf("label: tr('markdownNote')")
     )
   })
 })

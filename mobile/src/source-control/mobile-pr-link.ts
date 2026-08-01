@@ -56,7 +56,10 @@ async function setLinkedPr(
       buildWorktreeSetLinkParams(worktreeId, linkedPR)
     )
     if (!response.ok) {
-      return { ok: false, error: response.error?.message || t('m.D8-XyhU') }
+      return {
+        ok: false,
+        error: response.error?.message || t('mobilePrLink.failedUpdateLinkedPull')
+      }
     }
     return { ok: true }
   } catch (err) {
@@ -64,7 +67,7 @@ async function setLinkedPr(
     // to the `{ ok:false, error }` outcome the link flow surfaces.
     return {
       ok: false,
-      error: err instanceof Error ? err.message : t('m.D8-XyhU')
+      error: err instanceof Error ? err.message : t('mobilePrLink.failedUpdateLinkedPull')
     }
   }
 }
@@ -91,7 +94,10 @@ export async function linkMobileHostedReview(
   try {
     const response = await client.sendRequest('worktree.set', params)
     if (!response.ok) {
-      return { ok: false, error: response.error?.message || t('m.DIh5pvA') }
+      return {
+        ok: false,
+        error: response.error?.message || t('mobilePrLink.failedUpdateLinkedReview')
+      }
     }
     return { ok: true }
   } catch (err) {
@@ -99,7 +105,7 @@ export async function linkMobileHostedReview(
     // surface a non-fatal refresh problem instead of losing the created URL.
     return {
       ok: false,
-      error: err instanceof Error ? err.message : t('m.DIh5pvA')
+      error: err instanceof Error ? err.message : t('mobilePrLink.failedUpdateLinkedReview')
     }
   }
 }

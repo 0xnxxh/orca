@@ -128,13 +128,19 @@ export function buildSections(
 
   const sections: Section[] = []
   if (pinned.length > 0) {
-    sections.push(makeSection('pinned', t('m.Rn74bFA'), pinned, 'pin'))
+    sections.push(makeSection('pinned', t('task.pinned'), pinned, 'pin'))
   }
 
   if (groupMode === 'none') {
     if (canonicalGroupWorktrees.length > 0) {
       sections.push(
-        makeSection('all', t('m.IwMISoQ'), canonicalGroupWorktrees, undefined, collapsedGroups)
+        makeSection(
+          'all',
+          t('mobileSmartSourceModes.all'),
+          canonicalGroupWorktrees,
+          undefined,
+          collapsedGroups
+        )
       )
     }
   } else if (groupMode === 'repo') {
@@ -166,7 +172,7 @@ export function buildSections(
     }
     for (const [repoIdentity, items] of byRepo) {
       const missingRepository = repoIdentity === MISSING_REPOSITORY_GROUP_KEY
-      const repo = missingRepository ? t('m.6MEByr4') : repoIdentity
+      const repo = missingRepository ? t('task.unknown') : repoIdentity
       const key = missingRepository ? 'repo:missing' : `repo:${repoIdsByName.get(repo) ?? repo}`
       sections.push(
         makeSection(key, repo, orderMainWorktreeFirst(items), undefined, collapsedGroups)

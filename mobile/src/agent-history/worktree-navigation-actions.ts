@@ -22,7 +22,7 @@ type Args = {
 export function buildWorktreeNavigationActions(args: Args): ActionSheetAction[] {
   const actions: ActionSheetAction[] = [
     {
-      label: t('m.XjyxBLA'),
+      label: t('worktreeNavigationActions.source'),
       icon: GitBranch,
       onPress: () => {
         const params = new URLSearchParams({ name: args.worktreeName, origin: 'host' })
@@ -35,7 +35,7 @@ export function buildWorktreeNavigationActions(args: Args): ActionSheetAction[] 
   ]
   if (args.hostCapabilities.includes(MOBILE_AI_VAULT_CAPABILITY)) {
     actions.push({
-      label: t('m.Au06U2c'),
+      label: t('worktreeNavigationActions.agent'),
       renderIcon: () =>
         MobileAgentSessionHistoryIcon({ size: 16, color: colors.textSecondary, strokeWidth: 2 }),
       onPress: () => {

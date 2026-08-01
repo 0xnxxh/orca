@@ -114,7 +114,9 @@ export function useMobileSourceControlRunners(params: Params) {
           return false
         }
         triggerError()
-        setActionError(err instanceof Error ? err.message : t('m.iO0cooo'))
+        setActionError(
+          err instanceof Error ? err.message : t('useMobileSourceControlRunners.source')
+        )
         return false
       } finally {
         if (busyActionRef.current === actionId) {

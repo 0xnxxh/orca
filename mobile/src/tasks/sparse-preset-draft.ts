@@ -41,7 +41,7 @@ export function parseSparsePresetDirectories(value: string): SparsePresetDirecto
   if (rawEntries.some(isAbsoluteSparseDirectoryPath)) {
     return {
       directories: [],
-      error: t('m.TgLMnDc')
+      error: t('sparsePresetDraft.use')
     }
   }
 
@@ -50,14 +50,14 @@ export function parseSparsePresetDirectories(value: string): SparsePresetDirecto
   if (directories.length === 0) {
     return {
       directories,
-      error: t('m.M0WKvoE')
+      error: t('sparsePresetDraft.add')
     }
   }
 
   if (directories.some((entry) => entry === '.' || entry.split('/').includes('..'))) {
     return {
       directories: [],
-      error: t('m.TgLMnDc')
+      error: t('sparsePresetDraft.use')
     }
   }
 

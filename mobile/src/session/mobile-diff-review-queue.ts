@@ -180,7 +180,8 @@ function statusEntryToQueueItem(
     oldPath: entry.oldPath,
     status: entry.status,
     title: entry.path,
-    subtitle: scope === 'staged' ? t('m.senOKG4') : t('m.FJnzL9Y'),
+    subtitle:
+      scope === 'staged' ? t('mobileDiffReviewQueue.staged') : t('mobileDiffReviewQueue.unstaged'),
     added: entry.added,
     removed: entry.removed,
     canStage: isMobileGitStageableEntry(entry),
@@ -215,7 +216,7 @@ function branchEntryToQueueItem(
     oldPath: entry.oldPath,
     status: entry.status,
     title: entry.path,
-    subtitle: t('m.hKX4q6A'),
+    subtitle: t('mobileDiffReviewQueue.committed'),
     added: entry.added,
     removed: entry.removed,
     canStage: false,

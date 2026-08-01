@@ -40,7 +40,7 @@ export function MobileSourceControlModals({ state, actionSheetActions }: Props) 
 
       <ActionSheetModal
         visible={showActionSheet}
-        title={t('m.7p6X0C0')}
+        title={t('mobileSourceControlModals.source')}
         message={branchLabel}
         actions={actionSheetActions}
         onClose={() => setShowActionSheet(false)}
@@ -48,9 +48,15 @@ export function MobileSourceControlModals({ state, actionSheetActions }: Props) 
 
       <ConfirmModal
         visible={discardTarget !== null}
-        title={t('m.7IMotMA')}
-        message={discardTarget ? t('m.Oh7cEhY', { value0: discardTarget.path }) : undefined}
-        confirmLabel={t('m.aalP-X8')}
+        title={t('mobileSourceControlModals.discardChange')}
+        message={
+          discardTarget
+            ? t('mobileSourceControlModals.discardChanges', {
+                path: discardTarget.path
+              })
+            : undefined
+        }
+        confirmLabel={t('mobileSourceControlModals.discard')}
         destructive
         onConfirm={() => {
           if (discardTarget) {
@@ -66,11 +72,12 @@ export function MobileSourceControlModals({ state, actionSheetActions }: Props) 
 
       <PickerModal
         visible={showBranchPicker}
-        title={t('m.n9UDFoo')}
+        title={t('mobileSourceControlModals.switch')}
         options={(localBranches?.branches ?? []).map((b) => ({
           value: b,
           label: b,
-          subtitle: b === localBranches?.current ? t('m.2t3siE4') : undefined
+          subtitle:
+            b === localBranches?.current ? t('mobileSourceControlModals.current') : undefined
         }))}
         selected={localBranches?.current ?? ''}
         onSelect={(branch) => {
@@ -85,9 +92,15 @@ export function MobileSourceControlModals({ state, actionSheetActions }: Props) 
 
       <ConfirmModal
         visible={createdPrUrl !== null}
-        title={t('m.4E80Be4')}
-        message={createdPrWarning ? t('m.671hHtA', { value0: createdPrWarning }) : t('m.84pwQsY')}
-        confirmLabel={t('m._c5oKe0')}
+        title={t('mobileSourceControlModals.pull')}
+        message={
+          createdPrWarning
+            ? t('mobileSourceControlModals.openYourBrowserCreated', {
+                createdPrWarning: createdPrWarning
+              })
+            : t('mobileSourceControlModals.openYourBrowser')
+        }
+        confirmLabel={t('mobileSourceControlModals.open')}
         onConfirm={() => {
           if (createdPrUrl) {
             openMobilePrUrl(createdPrUrl)

@@ -72,7 +72,7 @@ export function MobileNativeChatComposer({
   onMicPressIn,
   onMicPressOut,
   disabled = false,
-  placeholder = t('m.DAVoau0'),
+  placeholder = t('mobileNativeChatComposer.message'),
   filePaths = NO_FILE_PATHS,
   onNeedFiles
 }: Props): React.JSX.Element {
@@ -175,7 +175,7 @@ export function MobileNativeChatComposer({
               />
               {onRemoveAttachment ? (
                 <Pressable
-                  accessibilityLabel={t('m.8VDRuNk')}
+                  accessibilityLabel={t('mobileNativeChatComposer.remove')}
                   style={styles.attachmentRemove}
                   onPress={() => onRemoveAttachment(attachment.id)}
                   hitSlop={8}
@@ -190,7 +190,7 @@ export function MobileNativeChatComposer({
       <View style={styles.bar}>
         {onAttachImage ? (
           <Pressable
-            accessibilityLabel={t('m.o_uvOaw')}
+            accessibilityLabel={t('mobileNativeChatComposer.attach')}
             style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
             onPress={onAttachImage}
             disabled={isAttaching || disabled}
@@ -223,7 +223,9 @@ export function MobileNativeChatComposer({
         />
         {onMicPress ? (
           <Pressable
-            accessibilityLabel={micActive ? t('m.r9MfglU') : t('m.0JFch-U')}
+            accessibilityLabel={
+              micActive ? t('mobileNativeChatComposer.stop') : t('mobileNativeChatComposer.dictate')
+            }
             style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
             // Hold mode is walkie-talkie (press-in/out); toggle mode taps.
             onPress={dictationMode === 'hold' ? undefined : onMicPress}
@@ -244,7 +246,7 @@ export function MobileNativeChatComposer({
           </Pressable>
         ) : null}
         <Pressable
-          accessibilityLabel={t('m.imHMT2Y')}
+          accessibilityLabel={t('mobileNativeChatComposer.send')}
           style={({ pressed }) => [
             styles.sendButton,
             !canSend && styles.sendButtonDisabled,

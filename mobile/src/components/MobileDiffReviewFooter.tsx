@@ -44,10 +44,10 @@ export function MobileDiffReviewFooter({
             disabled={busyAction !== null}
             onPress={() => onGitMutation('git.stage', item)}
             accessibilityRole="button"
-            accessibilityLabel={t('m.SzcIpKs')}
+            accessibilityLabel={t('mobileDiffReviewFooter.stageFile')}
           >
             <Plus size={14} color={colors.textSecondary} strokeWidth={2.2} />
-            <Text style={styles.secondaryButtonText}>{t('m.JiM1DAU')}</Text>
+            <Text style={styles.secondaryButtonText}>{t('mobileDiffReviewFooter.stage')}</Text>
           </Pressable>
         ) : null}
         {item.canUnstage ? (
@@ -56,10 +56,10 @@ export function MobileDiffReviewFooter({
             disabled={busyAction !== null}
             onPress={() => onGitMutation('git.unstage', item)}
             accessibilityRole="button"
-            accessibilityLabel={t('m.VZPK0FM')}
+            accessibilityLabel={t('mobileDiffReviewFooter.unstageFile')}
           >
             <Undo2 size={14} color={colors.textSecondary} strokeWidth={2.2} />
-            <Text style={styles.secondaryButtonText}>{t('m.v58oW_E')}</Text>
+            <Text style={styles.secondaryButtonText}>{t('mobileDiffReviewFooter.unstage')}</Text>
           </Pressable>
         ) : null}
         {item.canDiscard ? (
@@ -68,10 +68,10 @@ export function MobileDiffReviewFooter({
             disabled={busyAction !== null}
             onPress={() => onDiscard(item)}
             accessibilityRole="button"
-            accessibilityLabel={t('m.TpLj1K8')}
+            accessibilityLabel={t('mobileDiffReviewFooter.discardFile')}
           >
             <Trash2 size={14} color={colors.statusRed} strokeWidth={2.2} />
-            <Text style={styles.destructiveText}>{t('m.lL_q8JA')}</Text>
+            <Text style={styles.destructiveText}>{t('mobileDiffReviewFooter.discard')}</Text>
           </Pressable>
         ) : null}
       </View>
@@ -80,7 +80,7 @@ export function MobileDiffReviewFooter({
           style={({ pressed }) => [styles.navButton, pressed && styles.buttonPressed]}
           onPress={() => onMoveFile('previous')}
           accessibilityRole="button"
-          accessibilityLabel={t('m.0CC3Pjk')}
+          accessibilityLabel={t('mobileDiffReviewFooter.previous')}
         >
           <ChevronLeft size={17} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>
@@ -88,10 +88,10 @@ export function MobileDiffReviewFooter({
           style={({ pressed }) => [styles.footerButton, pressed && styles.buttonPressed]}
           onPress={onAddFileNote}
           accessibilityRole="button"
-          accessibilityLabel={t('m.e_IyR5Y')}
+          accessibilityLabel={t('mobileDiffReviewFooter.add')}
         >
           <FileText size={14} color={colors.textSecondary} strokeWidth={2.2} />
-          <Text style={styles.footerButtonText}>{t('m.vRhESp0')}</Text>
+          <Text style={styles.footerButtonText}>{t('mobileDiffReviewFooter.note')}</Text>
         </Pressable>
         <Pressable
           style={({ pressed }) => [
@@ -101,18 +101,20 @@ export function MobileDiffReviewFooter({
           ]}
           onPress={onMarkReviewed}
           accessibilityRole="button"
-          accessibilityLabel={t('m.a2xZWo8')}
+          accessibilityLabel={t('mobileDiffReviewFooter.markFile')}
         >
           <Check size={14} color={colors.bgBase} strokeWidth={2.2} />
           <Text style={styles.primaryButtonText}>
-            {item.isReviewed ? t('m.gUbQPjk') : t('m.gLGElnY')}
+            {item.isReviewed
+              ? t('mobileDiffReviewFooter.reviewed')
+              : t('mobileDiffReviewFooter.markReviewed')}
           </Text>
         </Pressable>
         <Pressable
           style={({ pressed }) => [styles.navButton, pressed && styles.buttonPressed]}
           onPress={() => onMoveFile('next')}
           accessibilityRole="button"
-          accessibilityLabel={t('m.n5_ZJMM')}
+          accessibilityLabel={t('mobileDiffReviewFooter.next')}
         >
           <ChevronRight size={17} color={colors.textPrimary} strokeWidth={2.2} />
         </Pressable>

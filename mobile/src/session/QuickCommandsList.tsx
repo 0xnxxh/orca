@@ -62,7 +62,7 @@ export function QuickCommandsList({
             style={styles.searchInput}
             value={query}
             onChangeText={onQueryChange}
-            placeholder={t('m.Mlzs2q8')}
+            placeholder={t('quickCommandsList.search')}
             placeholderTextColor={colors.textMuted}
             autoCapitalize="none"
             autoCorrect={false}
@@ -79,15 +79,17 @@ export function QuickCommandsList({
         <ActivityIndicator style={styles.loading} color={colors.textSecondary} />
       ) : null}
 
-      {!loading && totalCount === 0 ? <Text style={styles.empty}>{t('m.WGZgVlw')}</Text> : null}
+      {!loading && totalCount === 0 ? (
+        <Text style={styles.empty}>{t('quickCommandsList.noQuick')}</Text>
+      ) : null}
 
       {!loading && totalCount > 0 && !hasVisible ? (
-        <Text style={styles.empty}>{t('m.stjjcN4')}</Text>
+        <Text style={styles.empty}>{t('quickCommandsList.noMatching')}</Text>
       ) : null}
 
       {repoCommands.length > 0 ? (
         <QuickCommandGroup
-          label={t('m.0ye1crk')}
+          label={t('quickCommandsList.project')}
           commands={repoCommands}
           onLaunch={onLaunch}
           onEdit={onEdit}
@@ -98,7 +100,7 @@ export function QuickCommandsList({
 
       {globalCommands.length > 0 ? (
         <QuickCommandGroup
-          label={t('m.YWp9eI8')}
+          label={t('quickCommandsList.global')}
           commands={globalCommands}
           onLaunch={onLaunch}
           onEdit={onEdit}
@@ -118,7 +120,9 @@ export function QuickCommandsList({
         accessibilityRole="button"
       >
         <Plus size={18} color={colors.textSecondary} />
-        <Text style={styles.addText}>{canAdd ? t('m.LmWWV94') : t('m.Jqxtf0c')}</Text>
+        <Text style={styles.addText}>
+          {canAdd ? t('quickCommandsList.new') : t('quickCommandsList.quick')}
+        </Text>
       </Pressable>
     </View>
   )
@@ -182,7 +186,9 @@ function QuickCommandRow({
         disabled={disabled}
         onPress={() => onLaunch(command)}
         accessibilityRole="button"
-        accessibilityLabel={t('m.VrXVT_A', { value0: command.label })}
+        accessibilityLabel={t('quickCommandsList.run', {
+          commandLabel: command.label
+        })}
       >
         <View style={styles.rowIcon}>
           {isAgent ? (
@@ -204,7 +210,9 @@ function QuickCommandRow({
         style={({ pressed }) => [styles.rowAction, pressed && !disabled && styles.pressed]}
         disabled={disabled}
         onPress={() => onEdit(command)}
-        accessibilityLabel={t('m.N8k0x7U', { value0: command.label })}
+        accessibilityLabel={t('quickCommandsList.edit', {
+          commandLabel: command.label
+        })}
       >
         <Pencil size={15} color={colors.textSecondary} />
       </Pressable>
@@ -212,7 +220,9 @@ function QuickCommandRow({
         style={({ pressed }) => [styles.rowAction, pressed && !disabled && styles.pressed]}
         disabled={disabled}
         onPress={() => onDelete(command)}
-        accessibilityLabel={t('m.r6942Dw', { value0: command.label })}
+        accessibilityLabel={t('voiceModelList.delete', {
+          commandLabel: command.label
+        })}
       >
         <Trash2 size={15} color={colors.statusRed} />
       </Pressable>

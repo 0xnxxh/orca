@@ -133,7 +133,7 @@ export function formatBranchLabel(branch: string | undefined, head: string | und
   if (branch?.startsWith('refs/heads/')) {
     return branch.slice('refs/heads/'.length)
   }
-  return branch || head?.slice(0, 7) || t('m.wL23gbE')
+  return branch || head?.slice(0, 7) || t('mobileSourceControlScreenState.noBranch')
 }
 
 export function formatMobileUpstreamSyncLabel(
@@ -143,8 +143,11 @@ export function formatMobileUpstreamSyncLabel(
     return null
   }
   return upstream.hasUpstream
-    ? t('m.1YRKLD4', { value0: upstream.ahead, value1: upstream.behind })
-    : t('m.GXYBPqk')
+    ? t('mobileSourceControlScreenState.ahead', {
+        aheadCommitCount: upstream.ahead,
+        behindCommitCount: upstream.behind
+      })
+    : t('mobileSourceControlScreenState.noUpstream')
 }
 
 export function statusColor(status: MobileGitFileStatus): string {

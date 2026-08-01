@@ -32,15 +32,17 @@ export function MobileBranchDiffPreviewDrawer({ branchDiffPreview, onClose }: Pr
           </Text>
           <Text style={styles.diffDrawerMeta} numberOfLines={1}>
             {branchDiffPreview.kind === 'ready'
-              ? t('m.6lym-WQ', { value0: branchDiffPreview.summary.baseRef })
-              : t('m.I6GjQO8')}
+              ? t('mobileBranchDiffPreviewDrawer.base', {
+                  baseRef: branchDiffPreview.summary.baseRef
+                })
+              : t('mobileBranchDiffPreviewDrawer.committed')}
           </Text>
         </View>
         <Pressable
           style={({ pressed }) => [styles.diffCloseButton, pressed && styles.iconButtonPressed]}
           onPress={onClose}
           hitSlop={8}
-          accessibilityLabel={t('m.v6-Hc8I')}
+          accessibilityLabel={t('mobileBranchDiffPreviewDrawer.close')}
         >
           <X size={18} color={colors.textSecondary} strokeWidth={2.1} />
         </Pressable>
@@ -51,13 +53,13 @@ export function MobileBranchDiffPreviewDrawer({ branchDiffPreview, onClose }: Pr
         </View>
       ) : branchDiffPreview.kind === 'error' ? (
         <View style={styles.diffState}>
-          <Text style={styles.stateTitle}>{t('m.mZj5XBY')}</Text>
+          <Text style={styles.stateTitle}>{t('mobileBranchDiffPreviewDrawer.unable')}</Text>
           <Text style={styles.stateText}>{branchDiffPreview.message}</Text>
         </View>
       ) : (
         <View style={styles.diffLines}>
           {branchDiffPreview.truncated ? (
-            <Text style={styles.diffTruncatedText}>{t('m.CgVIb2E')}</Text>
+            <Text style={styles.diffTruncatedText}>{t('mobileBranchDiffPreviewDrawer.diff')}</Text>
           ) : null}
           {branchDiffPreview.lines.map((line, index) => (
             <View

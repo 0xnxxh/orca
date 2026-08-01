@@ -87,7 +87,7 @@ export function MobilePrBasePicker({
           }}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          placeholder={t('m.O3OecWo')}
+          placeholder={t('mobilePrBasePicker.main')}
           placeholderTextColor={colors.textMuted}
           autoCapitalize="none"
           autoCorrect={false}

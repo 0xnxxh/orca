@@ -22,12 +22,12 @@ export function MobileBrowserTabActionSheet(props: {
   return (
     <ActionSheetModal
       visible={target != null}
-      title={target ? getMobileSessionTabTitle(target) : t('m.GZwtZCE')}
+      title={target ? getMobileSessionTabTitle(target) : t('mobileBrowserTabActionSheet.browser')}
       actions={[
         ...(target?.canGoBack
           ? [
               {
-                label: t('m.SKku3yE'),
+                label: t('mobileBrowserTabActionSheet.back'),
                 icon: ChevronLeft,
                 onPress: () => {
                   const current = target
@@ -42,7 +42,7 @@ export function MobileBrowserTabActionSheet(props: {
         ...(target?.canGoForward
           ? [
               {
-                label: t('m.m4hO2RY'),
+                label: t('mobileBrowserTabActionSheet.forward'),
                 icon: ChevronRight,
                 onPress: () => {
                   const current = target
@@ -55,7 +55,7 @@ export function MobileBrowserTabActionSheet(props: {
             ]
           : []),
         {
-          label: t('m.8xevGic'),
+          label: t('mobileBrowserTabActionSheet.reload'),
           icon: RefreshCw,
           onPress: () => {
             const current = target
@@ -66,7 +66,7 @@ export function MobileBrowserTabActionSheet(props: {
           }
         },
         {
-          label: t('m.vCnFzKQ'),
+          label: t('task.close'),
           destructive: true,
           onPress: () => {
             const current = target

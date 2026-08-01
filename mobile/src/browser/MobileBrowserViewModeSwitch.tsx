@@ -15,8 +15,8 @@ export function MobileBrowserViewModeSwitch({
   onChange
 }: Props): React.JSX.Element {
   const viewModes: { id: MobileBrowserViewMode; label: string }[] = [
-    { id: 'web', label: t('m.3TuUR-s') },
-    { id: 'mobile', label: t('m.eJJUzYE') }
+    { id: 'web', label: t('mobileBrowserViewModeSwitch.web') },
+    { id: 'mobile', label: t('mobileBrowserViewModeSwitch.mobile') }
   ]
   return (
     <View style={styles.switch}>
@@ -56,7 +56,9 @@ function ViewModeButton({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityState={{ selected, disabled }}
-      accessibilityLabel={t('m.lV607bI', { value0: label.toLowerCase() })}
+      accessibilityLabel={t('mobileBrowserViewModeSwitch.show', {
+        browserLabel: label.toLowerCase()
+      })}
     >
       <Text style={[styles.buttonText, selected && styles.buttonTextSelected]}>{label}</Text>
     </Pressable>

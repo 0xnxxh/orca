@@ -136,8 +136,12 @@ export default function PairConfirmScreen() {
       setStatus('error')
       setErrorMessage(
         timedOut
-          ? t('m.uZiEDJ8', { value0: PAIRING_OVERALL_TIMEOUT_MS / 1000 })
-          : t('m.AHFOidY', { value0: err instanceof Error ? err.message : String(err) })
+          ? t('pairConfirm.could', {
+              pairingOverallTimeoutSeconds: PAIRING_OVERALL_TIMEOUT_MS / 1000
+            })
+          : t('pairConfirm.pairingFailed', {
+              errorMessage: err instanceof Error ? err.message : String(err)
+            })
       )
     }
   }
@@ -153,14 +157,14 @@ export default function PairConfirmScreen() {
       <View style={styles.content}>
         {offer && resolvedStatus === 'awaiting-confirm' && (
           <>
-            <Text style={styles.title}>{t('m.ymuJ-Uc')}</Text>
-            <Text style={styles.subtitle}>{t('m.3LfZ8xU')}</Text>
+            <Text style={styles.title}>{t('pairConfirm.pairDesktop')}</Text>
+            <Text style={styles.subtitle}>{t('pairConfirm.confirmDesktopPairingLink')}</Text>
             <View style={styles.actionStack}>
               <Pressable style={styles.primaryButton} onPress={() => void confirm()}>
-                <Text style={styles.primaryButtonText}>{t('m.V-NORJA')}</Text>
+                <Text style={styles.primaryButtonText}>{t('pairConfirm.pair')}</Text>
               </Pressable>
               <Pressable style={styles.secondaryButton} onPress={cancel}>
-                <Text style={styles.secondaryButtonText}>{t('m.gZ1SfD8')}</Text>
+                <Text style={styles.secondaryButtonText}>{t('pairConfirm.cancel')}</Text>
               </Pressable>
             </View>
           </>
@@ -169,9 +173,9 @@ export default function PairConfirmScreen() {
         {resolvedStatus === 'connecting' && (
           <>
             <ActivityIndicator size="large" color={colors.textSecondary} />
-            <Text style={styles.connectingText}>{t('m.zDZEMlw')}</Text>
+            <Text style={styles.connectingText}>{t('pairConfirm.connecting')}</Text>
             <View style={styles.logSlot}>
-              <ConnectionLog entries={logs} title={t('m.2r4Wqzo')} />
+              <ConnectionLog entries={logs} title={t('pairConfirm.pairingLog')} />
             </View>
           </>
         )}
@@ -181,12 +185,12 @@ export default function PairConfirmScreen() {
             <Text style={styles.errorText}>{resolvedErrorMessage}</Text>
             {logs.length > 0 && (
               <View style={styles.logSlot}>
-                <ConnectionLog entries={logs} title={t('m.2r4Wqzo')} />
+                <ConnectionLog entries={logs} title={t('pairConfirm.pairingLog')} />
               </View>
             )}
             <View style={styles.actionStack}>
               <Pressable style={styles.primaryButton} onPress={cancel}>
-                <Text style={styles.primaryButtonText}>{t('m.sKiKFEI')}</Text>
+                <Text style={styles.primaryButtonText}>{t('pairConfirm.back')}</Text>
               </Pressable>
             </View>
           </>

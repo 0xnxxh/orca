@@ -107,12 +107,12 @@ export function mobileAiVaultResumeTargetBlockMessage(
   status: MobileAiVaultResumeTargetStatus
 ): string {
   if (status === 'runtime') {
-    return t('m.GLFjyPk')
+    return t('agentHistoryResumeTarget.resume')
   }
   if (status === 'ssh') {
-    return t('m.eTFpmzo')
+    return t('agentHistoryResumeTarget.session')
   }
-  return t('m.mWMZ-dk')
+  return t('agentHistoryResumeTarget.open')
 }
 
 export function resolveMobileAiVaultSessionResumeTarget(args: {

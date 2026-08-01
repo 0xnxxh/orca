@@ -197,9 +197,9 @@ export function SmartWorkspaceSourceDrawer({
           top; dock must stay a non-flex sibling so FlatList cannot clip it. */}
       <View style={styles.root}>
         <View style={styles.header}>
-          <Text style={styles.title}>{t('m.J6XOFqM')}</Text>
+          <Text style={styles.title}>{t('smartWorkspaceSourceDrawer.name')}</Text>
           <Pressable onPress={onClose} hitSlop={8}>
-            <Text style={styles.done}>{t('m.A6zs-7I')}</Text>
+            <Text style={styles.done}>{t('smartWorkspaceSourceDrawer.done')}</Text>
           </Pressable>
         </View>
 
@@ -207,21 +207,25 @@ export function SmartWorkspaceSourceDrawer({
           {crossRepoPrompt ? (
             <View style={styles.crossRepo}>
               <Text style={styles.crossRepoText}>
-                {t('m.WDddFyg', {
-                  value0: crossRepoPrompt.link.slug.owner,
-                  value1: crossRepoPrompt.link.slug.repo
+                {t('smartWorkspaceSourceDrawer.item', {
+                  owner: crossRepoPrompt.link.slug.owner,
+                  repo: crossRepoPrompt.link.slug.repo
                 })}
               </Text>
               <View style={styles.crossRepoActions}>
                 <Pressable style={styles.crossRepoDismiss} onPress={dismissCrossRepoPrompt}>
-                  <Text style={styles.crossRepoDismissText}>{t('m.h8XKauY')}</Text>
+                  <Text style={styles.crossRepoDismissText}>
+                    {t('smartWorkspaceSourceDrawer.cancel')}
+                  </Text>
                 </Pressable>
                 <Pressable
                   style={styles.crossRepoSwitch}
                   onPress={() => void handleAcceptCrossRepo()}
                 >
                   <Text style={styles.crossRepoSwitchText}>
-                    {t('m.FLDQvbE', { value0: crossRepoPrompt.matchingRepo.displayName })}
+                    {t('smartWorkspaceSourceDrawer.switch', {
+                      displayName: crossRepoPrompt.matchingRepo.displayName
+                    })}
                   </Text>
                 </Pressable>
               </View>
@@ -229,9 +233,9 @@ export function SmartWorkspaceSourceDrawer({
           ) : null}
 
           {!sshReady && effectiveMode !== 'text' && effectiveMode !== 'linear' ? (
-            <Text style={styles.notice}>{t('m.2sNZWLI')}</Text>
+            <Text style={styles.notice}>{t('smartWorkspaceSourceDrawer.connect')}</Text>
           ) : needsGitHubRemote ? (
-            <Text style={styles.notice}>{t('m.LbOI-wE')}</Text>
+            <Text style={styles.notice}>{t('smartWorkspaceSourceDrawer.ssh')}</Text>
           ) : error ? (
             <Text style={styles.errorNotice}>{error}</Text>
           ) : null}
@@ -250,9 +254,9 @@ export function SmartWorkspaceSourceDrawer({
                   <ActivityIndicator size="small" color={colors.textSecondary} />
                 </View>
               ) : showEmpty ? (
-                <Text style={styles.empty}>{emptyHint || t('m.QjSzvc4')}</Text>
+                <Text style={styles.empty}>{emptyHint || t('smartWorkspaceSourceDrawer.no')}</Text>
               ) : rows.length === 0 && effectiveMode === 'text' ? (
-                <Text style={styles.empty}>{t('m.qNPX_ws')}</Text>
+                <Text style={styles.empty}>{t('smartWorkspaceSourceDrawer.typeWorkspace')}</Text>
               ) : null
             }
             renderItem={({ item }) => (
@@ -305,7 +309,7 @@ export function SmartWorkspaceSourceDrawer({
             style={styles.search}
             value={composer.name}
             onChangeText={composer.setName}
-            placeholder={t('m.qOsqJv0')}
+            placeholder={t('smartWorkspaceSourceDrawer.typeName')}
             placeholderTextColor={colors.textMuted}
             autoCapitalize="none"
             autoCorrect={false}

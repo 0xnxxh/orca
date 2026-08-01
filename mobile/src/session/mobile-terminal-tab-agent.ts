@@ -38,21 +38,23 @@ export function getMobileSessionTabTitle(tab: MobileSessionTab): string {
       return title
     }
     if (isBlankBrowserUrl(tab.url)) {
-      return t('m.tgyhT8Q')
+      return t('mobileTerminalTabAgent.new')
     }
-    return t('m.YHLAtbk')
+    return t('mobileTerminalTabAgent.browser')
   }
   if (tab.type === 'markdown') {
-    return tab.title || t('m.oS6AL4Y')
+    return tab.title || t('mobileTerminalTabAgent.markdown')
   }
   if (tab.type === 'file') {
-    return tab.title || t('m.nMoq2GI')
+    return tab.title || t('mobileTerminalTabAgent.file')
   }
   // Why: strip the leading agent status glyph (✳ etc.) once the tab shows the
   // provider icon. Mobile falls back for glyph-only titles because iOS can
   // render the bare status glyph as a stray colored box beside the icon.
   if (resolveMobileTerminalTabAgentId(tab)) {
-    return stripLeadingAgentTitleDecorationOrEmpty(tab.title) || t('m.ubcC1kU')
+    return (
+      stripLeadingAgentTitleDecorationOrEmpty(tab.title) || t('mobileTerminalTabAgent.terminal')
+    )
   }
-  return tab.title || t('m.ubcC1kU')
+  return tab.title || t('mobileTerminalTabAgent.terminal')
 }

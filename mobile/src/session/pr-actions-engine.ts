@@ -167,7 +167,7 @@ export class PrActionsEngine {
         await this.cfg.refetch()
       } catch (err) {
         if (this.identity === identity) {
-          this.setError(err instanceof Error ? err.message : t('m.vXd8YYA'))
+          this.setError(err instanceof Error ? err.message : t('prActionsEngine.failedRefresh'))
         }
       }
       return
@@ -196,7 +196,7 @@ export class PrActionsEngine {
       await this.settle(identity, outcome, { onSuccess: () => {}, onRevert: () => {} })
     } catch (err) {
       if (this.identity === identity) {
-        this.setError(err instanceof Error ? err.message : t('m.umfRNkc'))
+        this.setError(err instanceof Error ? err.message : t('prActionsEngine.failedMerge'))
       }
     } finally {
       this.clearBusyIfOwned(identity, { kind: 'merge' })

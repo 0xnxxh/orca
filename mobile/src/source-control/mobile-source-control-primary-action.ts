@@ -127,66 +127,76 @@ function getMobileBranchCommitsAhead(
 
 function getMobilePrimaryActionLabel(decision: MobileSourceControlPrimaryActionDecision): string {
   if (decision.requiresForceWithLease) {
-    return t('m.koj5rtA')
+    return t('mobileSourceControlPrimaryAction.forcePush')
   }
   switch (decision.kind) {
     case 'commit':
-      return t('m.7HjRY3c')
+      return t('mobileSourceControlPrimaryAction.commit')
     case 'stage':
-      return t('m.AvE0E2k')
+      return t('mobileSourceControlPrimaryAction.stageAll')
     case 'push':
-      return t('m.qgmf_L8')
+      return t('mobileSourceControlPrimaryAction.push')
     case 'pull':
-      return t('m.0OsPYDw')
+      return t('mobileSourceControlPrimaryAction.pull')
     case 'sync':
-      return t('m.gqhNZGI')
+      return t('mobileSourceControlPrimaryAction.sync')
     case 'publish':
-      return t('m.6Z1Zr78')
+      return t('mobileSourceControlPrimaryAction.publishBranch')
   }
 }
 
 function getMobilePrimaryActionHint(decision: MobileSourceControlPrimaryActionDecision): string {
   switch (decision.titleIntent) {
     case 'commit_in_progress':
-      return t('m.GqPiXjg')
+      return t('mobileSourceControlPrimaryAction.commitProgress')
     case 'force_push_in_progress':
-      return t('m.cOOTv9E')
+      return t('mobileSourceControlPrimaryAction.forcePushProgress')
     case 'action_in_progress':
     case 'remote_operation_in_progress':
-      return t('m.YkxQqGg')
+      return t('mobileSourceControlPrimaryAction.remote')
     case 'remote_operation_blocks_commit':
-      return t('m.aIqyvoY')
+      return t('mobileSourceControlPrimaryAction.try')
     case 'resolve_conflicts_before_commit':
-      return t('m.lBQzq_8')
+      return t('mobileSourceControlPrimaryAction.resolve')
     case 'commit_staged_changes':
-      return t('m.sJ8R-8c')
+      return t('mobileSourceControlPrimaryAction.commitStaged')
     case 'enter_commit_message':
-      return t('m.YnDfQwA')
+      return t('mobileSourceControlPrimaryAction.enter')
     case 'stage_all_changes':
-      return t('m.MM3ixxY')
+      return t('mobileSourceControlPrimaryAction.stageAllChanges')
     case 'stage_file_to_commit':
-      return t('m.eSJfk9k')
+      return t('mobileSourceControlPrimaryAction.stageLeast')
     case 'checkout_branch_before_publish':
-      return t('m.5OKMsK4')
+      return t('mobileSourceControlPrimaryAction.check')
     case 'publish_branch':
-      return t('m.5MUJYGA')
+      return t('mobileSourceControlPrimaryAction.publishBranchOrigin')
     case 'force_push_with_lease':
-      return t('m.gSinyKw')
+      return t('mobileSourceControlPrimaryAction.forcePushLease')
     case 'sync_counts':
-      return t('m.al8M9-M', {
-        value0: decision.behind ?? 0,
-        value1: decision.ahead ?? 0
+      return t('mobileSourceControlPrimaryAction.pullBehind', {
+        behindCommitCount: decision.behind ?? 0,
+        aheadCommitCount: decision.ahead ?? 0
       })
     case 'pull_count':
-      return t(decision.count === 1 ? 'm.UIMnif0' : 'm.35baKac', {
-        value0: decision.count ?? 0
-      })
+      return t(
+        decision.count === 1
+          ? 'mobileSourceControlPrimaryAction.pullCommitCountCommit'
+          : 'mobileSourceControlPrimaryAction.pullCommitCountCommits',
+        {
+          commitCount: decision.count ?? 0
+        }
+      )
     case 'push_count':
-      return t(decision.count === 1 ? 'm.y7z5WcU' : 'm.0yFIngw', {
-        value0: decision.count ?? 0
-      })
+      return t(
+        decision.count === 1
+          ? 'mobileSourceControlPrimaryAction.pushCommitCountCommit'
+          : 'mobileSourceControlPrimaryAction.pushCommitCountCommits',
+        {
+          commitCount: decision.count ?? 0
+        }
+      )
     case 'nothing_to_commit_up_to_date':
-      return t('m.G0fuKJo')
+      return t('mobileSourceControlPrimaryAction.nothing')
   }
 }
 

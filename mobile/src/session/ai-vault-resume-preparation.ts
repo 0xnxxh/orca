@@ -42,7 +42,7 @@ export async function prepareMobileAiVaultSessionResume(
       // Why: older hosts cannot prepare, but their shared home still supports the legacy resume path.
       return session
     }
-    throw new Error(response.error?.message || t('m.KEeLFyA'))
+    throw new Error(response.error?.message || t('aiVaultResumePreparation.could'))
   }
   const result = response.result as {
     useRealCodexHome?: unknown

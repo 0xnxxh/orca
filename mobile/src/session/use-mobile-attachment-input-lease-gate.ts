@@ -61,7 +61,7 @@ export function useMobileAttachmentInputLeaseGate({
       if (nativeChatInputLeaseReadyRef.current) {
         return true
       }
-      showToast(t('m.Lq5nqds'), 1500)
+      showToast(t('useMobileAttachmentInputLeaseGate.attach'), 1500)
       return false
     },
     [

@@ -9,7 +9,9 @@ const MAX_PENDING_AUDIO_SECONDS = 5
 export const MOBILE_DICTATION_MAX_PENDING_AUDIO_BYTES =
   MOBILE_DICTATION_PCM_SAMPLE_RATE * PCM_BYTES_PER_SAMPLE * MAX_PENDING_AUDIO_SECONDS
 
-export const MOBILE_DICTATION_CONNECTION_SLOW_ERROR_MESSAGE = t('m.ueRRwRg')
+export const MOBILE_DICTATION_CONNECTION_SLOW_ERROR_MESSAGE = t(
+  'mobileDictationPendingAudioBudget.connection'
+)
 
 export class MobileDictationPendingAudioBudget {
   private pendingBytes = 0

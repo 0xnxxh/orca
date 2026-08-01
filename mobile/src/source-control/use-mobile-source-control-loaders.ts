@@ -113,7 +113,7 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
             }
             return {
               kind: 'error',
-              message: t('m.v0PMFRE')
+              message: t('useMobileSourceControlLoaders.unableResolve')
             }
           })
           return false
@@ -135,7 +135,9 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
             })
             return false
           }
-          throw new Error(response.error?.message || t('m.Z4IRqv4'))
+          throw new Error(
+            response.error?.message || t('useMobileSourceControlLoaders.unableLoadCommitted')
+          )
         }
         setBranchCompareState({
           kind: 'ready',
@@ -146,7 +148,10 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
         if (!isCurrentLoad()) {
           return false
         }
-        const message = err instanceof Error ? err.message : t('m.Z4IRqv4')
+        const message =
+          err instanceof Error
+            ? err.message
+            : t('useMobileSourceControlLoaders.unableLoadCommitted')
         setBranchCompareState((prev) => {
           if (options?.preserveReadyOnFailure && prev.kind === 'ready') {
             return prev
@@ -184,7 +189,10 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
           if (isCurrentLoad()) {
             setScreenState({
               kind: 'error',
-              message: connState === 'connected' ? t('m.cIZvHNg') : t('m.5jVDzOo')
+              message:
+                connState === 'connected'
+                  ? t('useMobileSourceControlLoaders.connecting')
+                  : t('useMobileSourceControlLoaders.waiting')
             })
           }
           return false
@@ -216,7 +224,7 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
             if (isMobileGitUnavailable(response.error?.code, response.error?.message)) {
               setScreenState({
                 kind: 'unavailable',
-                message: t('m.8lyq50g')
+                message: t('useMobileSourceControlLoaders.update')
               })
               return false
             }
@@ -230,13 +238,16 @@ export function useMobileSourceControlLoaders(params: Params): MobileSourceContr
               }
               continue
             }
-            throw new Error(response.error?.message || t('m.67FHeO0'))
+            throw new Error(
+              response.error?.message || t('useMobileSourceControlLoaders.unableLoadSource')
+            )
           }
         } catch (err) {
           if (!isCurrentLoad()) {
             return false
           }
-          const message = err instanceof Error ? err.message : t('m.67FHeO0')
+          const message =
+            err instanceof Error ? err.message : t('useMobileSourceControlLoaders.unableLoadSource')
           setScreenState((prev) => {
             // Why: git mutations can succeed while the immediate status refresh
             // races a desktop abort; keep the last good screen instead of flashing

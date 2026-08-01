@@ -58,13 +58,25 @@ export function normalizeMobileFilePreviewResponse(
 export function previewError(message: string): MobileFilePreviewResult {
   const normalized = message.toLowerCase()
   if (normalized === 'binary_file' || normalized.includes('binary_file')) {
-    return { status: 'error', message: t('m.UfU4CAU'), reconnect: false }
+    return {
+      status: 'error',
+      message: t('mobileFilePreviewResponse.binary'),
+      reconnect: false
+    }
   }
   if (normalized === 'file_too_large' || normalized.includes('file_too_large')) {
-    return { status: 'error', message: t('m.UFAFIP0'), reconnect: false }
+    return {
+      status: 'error',
+      message: t('mobileFilePreviewResponse.fileToo'),
+      reconnect: false
+    }
   }
   if (isTerminalArtifactGrantError(normalized)) {
-    return { status: 'error', message: t('m.ktGDvZE'), reconnect: false }
+    return {
+      status: 'error',
+      message: t('mobileFilePreviewResponse.reload'),
+      reconnect: false
+    }
   }
   if (
     normalized.includes('remote connection dropped') ||
@@ -72,7 +84,11 @@ export function previewError(message: string): MobileFilePreviewResult {
     normalized.includes('disconnected') ||
     normalized.includes('reconnect the ssh target')
   ) {
-    return { status: 'error', message: t('m.X-whfMo'), reconnect: true }
+    return {
+      status: 'error',
+      message: t('mobileFilePreviewResponse.unableReach'),
+      reconnect: true
+    }
   }
   if (
     normalized.includes('enoent') ||
@@ -80,9 +96,17 @@ export function previewError(message: string): MobileFilePreviewResult {
     normalized.includes('not found') ||
     normalized.includes('does not exist')
   ) {
-    return { status: 'error', message: t('m.Jj_IDwY'), reconnect: false }
+    return {
+      status: 'error',
+      message: t('mobileFilePreviewResponse.fileNot'),
+      reconnect: false
+    }
   }
-  return { status: 'error', message: t('m.nbgr4H0'), reconnect: false }
+  return {
+    status: 'error',
+    message: t('mobileFilePreviewResponse.unableLoad'),
+    reconnect: false
+  }
 }
 
 export function formatPreviewByteLength(byteLength: number): string {
@@ -130,7 +154,7 @@ function normalizeTextPreviewResult(
   result: unknown
 ): MobileFilePreviewResult {
   if (!result || typeof result !== 'object') {
-    return previewError(t('m.nbgr4H0'))
+    return previewError(t('mobileFilePreviewResponse.unableLoad'))
   }
   const preview = result as {
     content?: unknown
@@ -142,7 +166,7 @@ function normalizeTextPreviewResult(
     return previewError('binary_file')
   }
   if (typeof preview.content !== 'string') {
-    return previewError(t('m.nbgr4H0'))
+    return previewError(t('mobileFilePreviewResponse.unableLoad'))
   }
   const kind = textKindForPreviewPath(relativePath)
   if (preview.content.length === 0) {

@@ -131,7 +131,7 @@ export const PRCommentCard = memo(function PRCommentCard({
         ) : null}
         {comment.isResolved ? (
           <View style={styles.resolvedChip}>
-            <Text style={styles.resolvedChipText}>{t('m.C_gXfCo')}</Text>
+            <Text style={styles.resolvedChipText}>{t('prcommentCard.resolved')}</Text>
           </View>
         ) : null}
         {comment.url ? (
@@ -149,8 +149,8 @@ export const PRCommentCard = memo(function PRCommentCard({
       {editOpen && actions ? (
         <View style={styles.composer}>
           <PRCommentComposer
-            placeholder={t('m.Bnwan2Q')}
-            submitLabel={t('m.pZ3OPxE')}
+            placeholder={t('prcommentCard.editComment')}
+            submitLabel={t('prcommentCard.save')}
             submitting={editBusy}
             initialBody={comment.body}
             onSubmit={submitEdit}
@@ -172,10 +172,10 @@ export const PRCommentCard = memo(function PRCommentCard({
             disabled={replyBusy}
             hitSlop={6}
             accessibilityRole="button"
-            accessibilityLabel={t('m.s3o5DeE')}
+            accessibilityLabel={t('prcommentCard.replyComment')}
           >
             <CornerDownRight size={13} color={colors.textSecondary} strokeWidth={2.2} />
-            <Text style={styles.actionButtonText}>{t('m.Ragn9hY')}</Text>
+            <Text style={styles.actionButtonText}>{t('prcommentCard.reply')}</Text>
           </Pressable>
           {canMutate ? (
             <Pressable
@@ -188,10 +188,10 @@ export const PRCommentCard = memo(function PRCommentCard({
               disabled={editBusy}
               hitSlop={6}
               accessibilityRole="button"
-              accessibilityLabel={t('m.Fs36PXM')}
+              accessibilityLabel={t('prcommentCard.editCommentAccessibility')}
             >
               <Pencil size={13} color={colors.textSecondary} strokeWidth={2.2} />
-              <Text style={styles.actionButtonText}>{t('m.wS1VT0I')}</Text>
+              <Text style={styles.actionButtonText}>{t('prcommentCard.edit')}</Text>
             </Pressable>
           ) : null}
           {canMutate ? (
@@ -201,10 +201,12 @@ export const PRCommentCard = memo(function PRCommentCard({
               disabled={deleteBusy}
               hitSlop={6}
               accessibilityRole="button"
-              accessibilityLabel={t('m.u9hUgiY')}
+              accessibilityLabel={t('prcommentCard.deleteComment')}
             >
               <Trash2 size={13} color={colors.textSecondary} strokeWidth={2.2} />
-              <Text style={styles.actionButtonText}>{deleteBusy ? '…' : t('m.4idOoK8')}</Text>
+              <Text style={styles.actionButtonText}>
+                {deleteBusy ? '…' : t('prcommentCard.delete')}
+              </Text>
             </Pressable>
           ) : null}
           {canResolve ? (
@@ -214,7 +216,11 @@ export const PRCommentCard = memo(function PRCommentCard({
               disabled={resolveBusy}
               hitSlop={6}
               accessibilityRole="button"
-              accessibilityLabel={comment.isResolved ? t('m.mkEkYMY') : t('m.2PITe20')}
+              accessibilityLabel={
+                comment.isResolved
+                  ? t('prcommentCard.unresolveThread')
+                  : t('prcommentCard.resolveThread')
+              }
             >
               {comment.isResolved ? (
                 <Undo2 size={13} color={colors.textSecondary} strokeWidth={2.2} />
@@ -222,7 +228,11 @@ export const PRCommentCard = memo(function PRCommentCard({
                 <Check size={13} color={colors.textSecondary} strokeWidth={2.2} />
               )}
               <Text style={styles.actionButtonText}>
-                {resolveBusy ? '…' : comment.isResolved ? t('m.A6XXe-4') : t('m.7oybC2M')}
+                {resolveBusy
+                  ? '…'
+                  : comment.isResolved
+                    ? t('prcommentCard.unresolve')
+                    : t('prcommentCard.resolve')}
               </Text>
             </Pressable>
           ) : null}
@@ -231,8 +241,8 @@ export const PRCommentCard = memo(function PRCommentCard({
       {replyOpen && !editOpen && actions ? (
         <View style={styles.composer}>
           <PRCommentComposer
-            placeholder={t('m.p4p6sek')}
-            submitLabel={t('m.Ragn9hY')}
+            placeholder={t('prcommentCard.write')}
+            submitLabel={t('prcommentCard.reply')}
             submitting={replyBusy}
             onSubmit={submitReply}
             onCancel={() => setReplyOpen(false)}
@@ -243,9 +253,9 @@ export const PRCommentCard = memo(function PRCommentCard({
       {actions ? (
         <ConfirmModal
           visible={confirmDelete}
-          title={t('m.xGeFr98')}
-          message={t('m.W8A4HvA')}
-          confirmLabel={t('m.4idOoK8')}
+          title={t('prcommentCard.deleteCommentTitle')}
+          message={t('prcommentCard.permanently')}
+          confirmLabel={t('prcommentCard.delete')}
           destructive
           onConfirm={() => void actions.deleteComment(comment.id)}
           onCancel={() => setConfirmDelete(false)}

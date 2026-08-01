@@ -27,7 +27,7 @@ const STALE_SINCE_LAST_CONNECT_MS = 60_000
 // the phone's Tailscale tunnel is down or wedged (a known iOS failure mode
 // that only a manual toggle fixes) — not that the desktop moved. Say so
 // instead of leaving the user staring at a generic "Can't connect".
-const TAILSCALE_HINT = t('m.TxG95wU')
+const TAILSCALE_HINT = t('connectionHealth.check')
 
 export type ConnectionVerdict =
   | { kind: 'normal'; label: string }
@@ -39,6 +39,10 @@ export type ConnectionVerdict =
       hint?: string
     }
   | { kind: 'auth-failed'; label: string }
+
+export function isConnectionErrorVerdict(verdict: ConnectionVerdict): boolean {
+  return ['warning', 'unreachable', 'auth-failed'].includes(verdict.kind)
+}
 
 // Why: the rpc-client's lastConnectedAt is a one-shot timestamp; we have
 // to recompute "are we currently stale" against now() each render.
@@ -59,15 +63,18 @@ export function classifyConnection(args: {
   // Why: auth-failed means the desktop no longer recognizes this pairing (e.g. it
   // lost its device registry) — retrying can't fix it, only re-pairing can, so say so.
   if (state === 'auth-failed') {
-    return { kind: 'auth-failed', label: t('m.0BvjSKA') }
+    return {
+      kind: 'auth-failed',
+      label: t('connectionHealth.pairing')
+    }
   }
 
   if (state === 'connected') {
-    return { kind: 'normal', label: t('m.jgGsba4') }
+    return { kind: 'normal', label: t('connectionHealth.connected') }
   }
 
   if (state === 'disconnected') {
-    return { kind: 'normal', label: t('m.G6a1Jqk') }
+    return { kind: 'normal', label: t('connectionHealth.disconnected') }
   }
 
   // connecting / handshaking / reconnecting from here. The gates apply to all
@@ -78,7 +85,7 @@ export function classifyConnection(args: {
     if (lastConnectedAt == null) {
       return {
         kind: 'unreachable',
-        label: t('m.YAPgxBM'),
+        label: t('connectionHealth.cannotReach'),
         reason: 'never-connected',
         hint
       }
@@ -86,7 +93,7 @@ export function classifyConnection(args: {
     if (now - lastConnectedAt >= STALE_SINCE_LAST_CONNECT_MS) {
       return {
         kind: 'unreachable',
-        label: t('m.YAPgxBM'),
+        label: t('connectionHealth.cannotReach'),
         reason: 'stale',
         hint
       }
@@ -94,12 +101,15 @@ export function classifyConnection(args: {
   }
 
   if (reconnectAttempts >= WARNING_ATTEMPTS) {
-    return { kind: 'warning', label: t('m.6_SeqME'), hint }
+    return { kind: 'warning', label: t('connectionHealth.cannotConnect'), hint }
   }
 
   return {
     kind: 'normal',
-    label: state === 'reconnecting' ? t('m.KbmpcZs') : t('m.I-waJyg')
+    label:
+      state === 'reconnecting'
+        ? t('connectionHealth.reconnecting')
+        : t('connectionHealth.connecting')
   }
 }
 

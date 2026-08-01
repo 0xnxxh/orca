@@ -104,16 +104,22 @@ export function QuickCommandsSheet({
   const handleDelete = (command: TerminalQuickCommand) => {
     // Why: quick commands sync with desktop, so an accidental one-tap delete
     // removes shared data rather than only dismissing a local row.
-    Alert.alert(t('m.y7ppLrs', { value0: command.label || t('m.OLmV45U') }), t('m.8mDod7I'), [
-      { text: t('m.jmIvPBQ'), style: 'cancel' },
-      {
-        text: t('m.uVgCcno'),
-        style: 'destructive',
-        onPress: () => {
-          void persist({ type: 'delete', id: command.id })
+    Alert.alert(
+      t('quickCommandsSheet.deleteDelete', {
+        deleteLabel: command.label || t('quickCommandsSheet.untitled')
+      }),
+      t('quickCommandsSheet.quickCommand'),
+      [
+        { text: t('quickCommandsSheet.cancel'), style: 'cancel' },
+        {
+          text: t('quickCommandsSheet.delete'),
+          style: 'destructive',
+          onPress: () => {
+            void persist({ type: 'delete', id: command.id })
+          }
         }
-      }
-    ])
+      ]
+    )
   }
 
   const handleSave = async () => {
@@ -142,11 +148,11 @@ export function QuickCommandsSheet({
   const title =
     view === 'editor'
       ? draft?.id
-        ? t('m.gaaVrjY')
-        : t('m.SbxgQXc')
+        ? t('quickCommandsSheet.edit')
+        : t('quickCommandsSheet.add')
       : view === 'agent'
-        ? t('m.1rvpPn4')
-        : t('m.vXUuukQ')
+        ? t('quickCommandsSheet.choose')
+        : t('quickCommandsSheet.quickCommands')
 
   return (
     <BottomDrawer visible={visible} onClose={onClose}>
@@ -157,7 +163,7 @@ export function QuickCommandsSheet({
           <Pressable
             style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
             onPress={() => setView(view === 'agent' ? 'editor' : 'list')}
-            accessibilityLabel={t('m.XUyBgA4')}
+            accessibilityLabel={t('quickCommandsSheet.back')}
           >
             <ChevronLeft size={18} color={colors.textSecondary} />
           </Pressable>
@@ -168,7 +174,7 @@ export function QuickCommandsSheet({
 
       {view === 'editor' && draft ? (
         <View style={styles.editorDesc}>
-          <Text style={styles.descText}>{t('m.c7kUeNA')}</Text>
+          <Text style={styles.descText}>{t('quickCommandsSheet.save')}</Text>
         </View>
       ) : null}
 

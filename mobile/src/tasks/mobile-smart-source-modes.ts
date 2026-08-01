@@ -17,12 +17,36 @@ export type SmartModeOption = {
 // Order + labels + icons mirror desktop getSmartWorkspaceNameModes():
 // Smart · GitHub · Linear · GitLab · Branch · Name.
 export const SMART_MODE_OPTIONS: readonly SmartModeOption[] = [
-  { id: 'smart', label: t('m.0GQcyjg'), icon: { type: 'lucide', name: 'sparkles' } },
-  { id: 'github', label: t('m.fLijFJI'), icon: { type: 'provider', provider: 'github' } },
-  { id: 'linear', label: t('m.j6H-ZB8'), icon: { type: 'provider', provider: 'linear' } },
-  { id: 'gitlab', label: t('m.JEQaLyM'), icon: { type: 'provider', provider: 'gitlab' } },
-  { id: 'branches', label: t('m.efmLHxE'), icon: { type: 'lucide', name: 'git-branch' } },
-  { id: 'text', label: t('m._NhxpRw'), icon: { type: 'lucide', name: 'case-sensitive' } }
+  {
+    id: 'smart',
+    label: t('mobileSmartSourceModes.smart'),
+    icon: { type: 'lucide', name: 'sparkles' }
+  },
+  {
+    id: 'github',
+    label: t('mobileSmartSourceModes.gitHub'),
+    icon: { type: 'provider', provider: 'github' }
+  },
+  {
+    id: 'linear',
+    label: t('mobileSmartSourceModes.linear'),
+    icon: { type: 'provider', provider: 'linear' }
+  },
+  {
+    id: 'gitlab',
+    label: t('mobileSmartSourceModes.gitLab'),
+    icon: { type: 'provider', provider: 'gitlab' }
+  },
+  {
+    id: 'branches',
+    label: t('mobileSmartSourceModes.branch'),
+    icon: { type: 'lucide', name: 'git-branch' }
+  },
+  {
+    id: 'text',
+    label: t('mobileSmartSourceModes.name'),
+    icon: { type: 'lucide', name: 'case-sensitive' }
+  }
 ]
 
 export type SmartModeAvailabilityInput = {
@@ -85,10 +109,10 @@ export type MrStateFilterOption = { id: MrStateFilter; label: string }
 
 // Desktop getMrStateFilters(): Open · Merged · Closed · All, default 'opened'.
 export const MR_STATE_FILTER_OPTIONS: readonly MrStateFilterOption[] = [
-  { id: 'opened', label: t('m.dGRdl38') },
-  { id: 'merged', label: t('m.sKFSmrM') },
-  { id: 'closed', label: t('m.J54idHw') },
-  { id: 'all', label: t('m.IwMISoQ') }
+  { id: 'opened', label: t('mobileSmartSourceModes.open') },
+  { id: 'merged', label: t('mobileSmartSourceModes.merged') },
+  { id: 'closed', label: t('mobileSmartSourceModes.closed') },
+  { id: 'all', label: t('mobileSmartSourceModes.all') }
 ]
 
 export const DEFAULT_MR_STATE_FILTER: MrStateFilter = 'opened'

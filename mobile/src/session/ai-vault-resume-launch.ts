@@ -186,11 +186,11 @@ export async function resumeAiVaultSessionInTerminal(
     { timeoutMs: RESUME_RPC_TIMEOUT_MS }
   )
   if (!created.ok) {
-    throw new Error(created.error?.message || t('m.GWephQg'))
+    throw new Error(created.error?.message || t('aiVaultResumeLaunch.failedCreate'))
   }
   const terminalTab = readMobileReviewCreatedTerminal(created.result)
   if (!terminalTab) {
-    throw new Error(t('m.n6zBfFc'))
+    throw new Error(t('aiVaultResumeLaunch.created'))
   }
   const sent = await client.sendRequest(
     'terminal.send',
@@ -202,10 +202,10 @@ export async function resumeAiVaultSessionInTerminal(
     { timeoutMs: RESUME_RPC_TIMEOUT_MS }
   )
   if (!sent.ok) {
-    throw new Error(sent.error?.message || t('m.kiGJQl0'))
+    throw new Error(sent.error?.message || t('aiVaultResumeLaunch.failedSend'))
   }
   if (!readMobileReviewTerminalSendAccepted(sent.result)) {
-    throw new Error(t('m.AAVqwEI'))
+    throw new Error(t('aiVaultResumeLaunch.terminal'))
   }
   return terminalTab
 }

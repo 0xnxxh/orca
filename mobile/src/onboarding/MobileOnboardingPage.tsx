@@ -47,8 +47,12 @@ export function MobileOnboardingPage({
             <BellRing size={30} color={colors.textPrimary} />
           )}
         </View>
-        <Text style={styles.title}>{isSessionView ? t('m.o9LxHPg') : t('m.OmdgGNs')}</Text>
-        <Text style={styles.body}>{isSessionView ? t('m.dV8UVHg') : t('m.3vHqv6U')}</Text>
+        <Text style={styles.title}>
+          {isSessionView ? t('mobileOnboardingPage.how') : t('mobileOnboardingPage.stay')}
+        </Text>
+        <Text style={styles.body}>
+          {isSessionView ? t('mobileOnboardingPage.choose') : t('mobileOnboardingPage.get')}
+        </Text>
       </View>
 
       <View style={styles.footer}>
@@ -83,16 +87,16 @@ function SessionViewChoices({
   return (
     <>
       <ChoiceButton
-        label={t('m.KogvSYY')}
-        accessibilityLabel={t('m.tYyQCnY')}
+        label={t('mobileOnboardingPage.use')}
+        accessibilityLabel={t('mobileOnboardingPage.openSessionsChat')}
         primary
         busy={busyChoice === 'chat'}
         disabled={disabled}
         onPress={() => onChoice('chat')}
       />
       <ChoiceButton
-        label={t('m.9bF2iuQ')}
-        accessibilityLabel={t('m.B5cl_6I')}
+        label={t('mobileOnboardingPage.keep')}
+        accessibilityLabel={t('mobileOnboardingPage.openSessionsTerminal')}
         busy={busyChoice === 'terminal'}
         disabled={disabled}
         onPress={() => onChoice('terminal')}
@@ -113,16 +117,16 @@ function NotificationChoices({
   return (
     <>
       <ChoiceButton
-        label={t('m.QM9B4lA')}
-        accessibilityLabel={t('m.sSrQIeg')}
+        label={t('mobileOnboardingPage.enableNotifications')}
+        accessibilityLabel={t('mobileOnboardingPage.enableAgent')}
         primary
         busy={busyChoice === 'enable'}
         disabled={disabled}
         onPress={() => onChoice('enable')}
       />
       <ChoiceButton
-        label={t('m.KP3UPPY')}
-        accessibilityLabel={t('m.K20RdWM')}
+        label={t('mobileOnboardingPage.not')}
+        accessibilityLabel={t('mobileOnboardingPage.skip')}
         busy={busyChoice === 'skip'}
         disabled={disabled}
         onPress={() => onChoice('skip')}

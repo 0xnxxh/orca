@@ -34,7 +34,7 @@ export function PRCheckDetailView({ entry }: { entry: DetailEntry | undefined })
   if (!entry.details) {
     return (
       <View style={styles.checkDetailArea}>
-        <Text style={styles.checkDetailText}>{t('m.xJbH0vA')}</Text>
+        <Text style={styles.checkDetailText}>{t('prcheckDetail.no')}</Text>
       </View>
     )
   }
@@ -48,7 +48,7 @@ export function PRCheckDetailView({ entry }: { entry: DetailEntry | undefined })
   return (
     <View style={styles.checkDetailArea}>
       {isEmpty ? (
-        <Text style={styles.checkDetailText}>{t('m.xJbH0vA')}</Text>
+        <Text style={styles.checkDetailText}>{t('prcheckDetail.no')}</Text>
       ) : (
         <>
           {content.summaryLines.map((line, index) => (
@@ -58,7 +58,7 @@ export function PRCheckDetailView({ entry }: { entry: DetailEntry | undefined })
           ))}
           {content.annotations.length > 0 ? (
             <View style={styles.checkDetailGroup}>
-              <Text style={styles.checkDetailGroupLabel}>{t('m.x1QqPYg')}</Text>
+              <Text style={styles.checkDetailGroupLabel}>{t('prcheckDetail.annotations')}</Text>
               {content.annotations.map((annotation, index) => (
                 <View key={index}>
                   <Text style={styles.checkDetailLocator} numberOfLines={1}>
@@ -72,7 +72,7 @@ export function PRCheckDetailView({ entry }: { entry: DetailEntry | undefined })
                 </View>
               ))}
               {content.annotationsTruncated ? (
-                <Text style={styles.checkDetailText}>{t('m.HW_qZBo')}</Text>
+                <Text style={styles.checkDetailText}>{t('prcheckDetail.showingFirst20')}</Text>
               ) : null}
             </View>
           ) : null}
@@ -83,7 +83,7 @@ export function PRCheckDetailView({ entry }: { entry: DetailEntry | undefined })
                 <JobRow key={index} job={job} />
               ))}
               {content.jobsTruncated ? (
-                <Text style={styles.checkDetailText}>{t('m.q6iGz3o')}</Text>
+                <Text style={styles.checkDetailText}>{t('prcheckDetail.showingFirst100')}</Text>
               ) : null}
             </View>
           ) : null}

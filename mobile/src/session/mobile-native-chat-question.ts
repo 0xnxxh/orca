@@ -120,7 +120,8 @@ export function parseAgentQuestion(text: string): MobileChatQuestion | null {
   const multiSelect = MULTI_SELECT_HINT.test(text) && options.length > 1
 
   return {
-    question: question.length > 0 ? cleanQuestionText(question) : t('m.sxVCOxI'),
+    question:
+      question.length > 0 ? cleanQuestionText(question) : t('mobileNativeChatQuestion.choose'),
     options,
     multiSelect,
     optionTokens

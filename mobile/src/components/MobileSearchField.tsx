@@ -44,7 +44,7 @@ export function MobileSearchField({
   placeholder,
   onClear,
   showClear,
-  clearAccessibilityLabel = t('m.5GRCze0'),
+  clearAccessibilityLabel = t('mobileSearchField.clear'),
   autoFocus = false,
   focusKey,
   returnKeyType = 'search',

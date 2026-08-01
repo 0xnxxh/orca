@@ -19,7 +19,7 @@ export const NEW_WORKTREE_AGENT_OPTIONS: NewWorktreeAgentOption[] = MOBILE_AGENT
 
 export const NEW_WORKTREE_BLANK_AGENT: NewWorktreeAgentOption = {
   id: '__blank__',
-  label: t('m.84CVutM')
+  label: t('newWorktreeAgentSelection.blank')
 }
 
 export function newWorktreeAgentOptionFor(id: string | null | undefined): NewWorktreeAgentOption {

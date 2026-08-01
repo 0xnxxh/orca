@@ -59,11 +59,12 @@ export class MobileRelayRpcStreams {
       .waitForConnected()
       .then(() => {
         if (!stream.cancelled && !this.options.sendFrame({ id, method, params: stream.params })) {
-          this.fail(id, stream, t('m.B2yGeak'))
+          this.fail(id, stream, t('mobileRelayRpcStreams.connection'))
         }
       })
       .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : t('m.B2yGeak')
+        const message =
+          error instanceof Error ? error.message : t('mobileRelayRpcStreams.connection')
         this.fail(id, stream, message, error)
       })
     return () => this.cancel(id)

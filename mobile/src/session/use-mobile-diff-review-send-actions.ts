@@ -45,7 +45,7 @@ export function useMobileDiffReviewSendActions(input: SendActionsInput) {
     }
     await Clipboard.setStringAsync(formatDiffComments(screenState.comments))
     triggerSuccess()
-    setActionError(t('m.LtedJAM'))
+    setActionError(t('useMobileDiffReviewSendActions.reviewNotesCopied'))
   }, [screenState, setActionError])
 
   const clearSentNotes = useCallback(async () => {
@@ -74,12 +74,12 @@ export function useMobileDiffReviewSendActions(input: SendActionsInput) {
   const sendPromptToTerminal = useCallback(
     async (terminal: string, comments: readonly DiffComment[]) => {
       if (!client || connState !== 'connected') {
-        throw new Error(t('m.x0Dr_H8'))
+        throw new Error(t('useMobileDiffReviewSendActions.waiting'))
       }
       // Marked by terminal handle, not by surface, so a paste orphaned here by native
       // chat would ride along with these notes (#10228). Diff review carries no device token.
       if (!(await healMobileNativeChatStaleInput({ client, terminal, deviceToken: null }))) {
-        throw new Error(t('m.tpf9SfA'))
+        throw new Error(t('useMobileDiffReviewSendActions.failedSend'))
       }
       const response = await client.sendRequest('terminal.send', {
         terminal,
@@ -87,14 +87,14 @@ export function useMobileDiffReviewSendActions(input: SendActionsInput) {
         enter: true
       })
       if (!response.ok) {
-        throw new Error(response.error?.message || t('m.tpf9SfA'))
+        throw new Error(response.error?.message || t('useMobileDiffReviewSendActions.failedSend'))
       }
       if (!readMobileReviewTerminalSendAccepted(response.result)) {
-        throw new Error(t('m.-NMYOgc'))
+        throw new Error(t('useMobileDiffReviewSendActions.terminal'))
       }
       await markNotesSent(comments)
       triggerSuccess()
-      setActionError(t('m.U2LqmGk'))
+      setActionError(t('useMobileDiffReviewSendActions.reviewNotesSent'))
       setSendSheet(null)
     },
     [client, connState, markNotesSent, setActionError, setSendSheet]
@@ -103,7 +103,7 @@ export function useMobileDiffReviewSendActions(input: SendActionsInput) {
   const createTerminalAndSend = useCallback(
     async (comments: readonly DiffComment[]) => {
       if (!client || connState !== 'connected') {
-        throw new Error(t('m.x0Dr_H8'))
+        throw new Error(t('useMobileDiffReviewSendActions.waiting'))
       }
       const response = await client.sendRequest('session.tabs.createTerminal', {
         worktree: `id:${worktreeId}`,
@@ -112,11 +112,11 @@ export function useMobileDiffReviewSendActions(input: SendActionsInput) {
         navigation: 'caller'
       })
       if (!response.ok) {
-        throw new Error(response.error?.message || t('m.NhC30K0'))
+        throw new Error(response.error?.message || t('useMobileDiffReviewSendActions.failedCreate'))
       }
       const created = readMobileReviewCreatedTerminal(response.result)
       if (!created) {
-        throw new Error(t('m.LYAe0FE'))
+        throw new Error(t('useMobileDiffReviewSendActions.created'))
       }
       await sendPromptToTerminal(created.terminal, comments)
     },
@@ -125,7 +125,7 @@ export function useMobileDiffReviewSendActions(input: SendActionsInput) {
 
   const openSendSheet = useCallback(async () => {
     if (!client || connState !== 'connected') {
-      setActionError(t('m.x0Dr_H8'))
+      setActionError(t('useMobileDiffReviewSendActions.waiting'))
       return
     }
     setSendSheet({ kind: 'loading' })
@@ -134,13 +134,13 @@ export function useMobileDiffReviewSendActions(input: SendActionsInput) {
         worktree: `id:${worktreeId}`
       })
       if (!response.ok) {
-        throw new Error(response.error?.message || t('m.vMHt0l8'))
+        throw new Error(response.error?.message || t('useMobileDiffReviewSendActions.unable'))
       }
       setSendSheet({ kind: 'ready', terminals: readMobileReviewTerminalTabs(response.result) })
     } catch (err) {
       setSendSheet({
         kind: 'error',
-        message: err instanceof Error ? err.message : t('m.vMHt0l8'),
+        message: err instanceof Error ? err.message : t('useMobileDiffReviewSendActions.unable'),
         terminals: []
       })
     }

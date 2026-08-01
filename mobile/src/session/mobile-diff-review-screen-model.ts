@@ -110,32 +110,40 @@ export function nextReviewIndexAfterMarkReviewed({
 
 export function mobileReviewScopeLabel(item: MobileDiffReviewQueueItem): string {
   if (item.scope === 'branch') {
-    return t('m.ZnNoGOU')
+    return t('mobileDiffReviewScreenModel.branch')
   }
-  return item.scope === 'staged' ? t('m.YcfLGog') : t('m.EiCMRDA')
+  return item.scope === 'staged'
+    ? t('mobileDiffReviewScreenModel.staged')
+    : t('mobileDiffReviewScreenModel.unstaged')
 }
 
 export function mobileReviewFilterLabel(filter: MobileDiffReviewQueueFilter): string {
   switch (filter) {
     case 'all':
-      return t('m.r-agX-k')
+      return t('mobileDiffReviewScreenModel.all')
     case 'unreviewed':
-      return t('m.ZGxcUL4')
+      return t('mobileDiffReviewScreenModel.unreviewed')
     case 'notes':
-      return t('m.08Yk1Go')
+      return t('mobileDiffReviewScreenModel.notes')
     case 'unstaged':
-      return t('m.EiCMRDA')
+      return t('mobileDiffReviewScreenModel.unstaged')
     case 'staged':
-      return t('m.YcfLGog')
+      return t('mobileDiffReviewScreenModel.staged')
     case 'branch':
-      return t('m.ZnNoGOU')
+      return t('mobileDiffReviewScreenModel.branch')
   }
 }
 
 export function mobileReviewUnsentNoteCountLabel(count: number): string {
-  return count === 1 ? t('m.VuvuQv0', { value0: count }) : t('m.5Rc0T-w', { value0: count })
+  return count === 1
+    ? t('mobileDiffReviewScreenModel.unsent', { unsentCount: count })
+    : t('mobileDiffReviewDrawers.unsent', {
+        unsentCommentCount: count
+      })
 }
 
 export function mobileReviewNoteCountLabel(count: number): string {
-  return count === 1 ? t('m.2KfV5_M', { value0: count }) : t('m.87GezVA', { value0: count })
+  return count === 1
+    ? t('mobileDiffReviewScreenModel.noteCountNote', { noteCount: count })
+    : t('mobileDiffReviewScreenModel.noteCountNotes', { noteCount: count })
 }

@@ -180,11 +180,17 @@ async function pushMobileBranchBeforeCreate(
   try {
     const response = await client.sendRequest('git.push', { worktree: `id:${worktreeId}` })
     if (!response.ok) {
-      return { ok: false, error: t('m.QeyCTxE') }
+      return {
+        ok: false,
+        error: t('mobileHostedReviewService.pushFailed')
+      }
     }
     return { ok: true }
   } catch {
-    return { ok: false, error: t('m.QeyCTxE') }
+    return {
+      ok: false,
+      error: t('mobileHostedReviewService.pushFailed')
+    }
   }
 }
 
@@ -200,7 +206,10 @@ function formatMobileHostedReviewCreateError(
     return result.error
   }
   const prefix = new RegExp(`^Create ${shortLabel} failed:\\s*`, 'i')
-  return t('m.VtNQIUo', { value0: shortLabel, value1: result.error.replace(prefix, '') })
+  return t('mobileHostedReviewService.pushSucceeded', {
+    reviewType: shortLabel,
+    errorMessage: result.error.replace(prefix, '')
+  })
 }
 
 async function finishMobileHostedReviewCreateSuccess(
@@ -244,7 +253,10 @@ export async function createMobileHostedReview(
       buildMobileHostedReviewCreateParams(worktreeId, input)
     )
     if (!response.ok) {
-      return { ok: false, error: response.error?.message || t('m.8Tx_eZw') }
+      return {
+        ok: false,
+        error: response.error?.message || t('mobileHostedReviewService.failed')
+      }
     }
     const result = (response as RpcSuccess).result as CreateHostedReviewResult
     if (result.ok) {
@@ -274,14 +286,14 @@ export async function createMobileHostedReview(
           result,
           pushed,
           hostedReviewCopy(input.provider).shortLabel
-        ) || t('m.8Tx_eZw')
+        ) || t('mobileHostedReviewService.failed')
     }
   } catch (err) {
     // Why: create review runs from an inline form; transport drops should surface
     // as form errors instead of escaping as unhandled promise rejections.
     return {
       ok: false,
-      error: err instanceof Error ? err.message : t('m.8Tx_eZw')
+      error: err instanceof Error ? err.message : t('mobileHostedReviewService.failed')
     }
   }
 }

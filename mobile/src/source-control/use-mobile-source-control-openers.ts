@@ -87,7 +87,7 @@ export function useMobileSourceControlOpeners(params: Params) {
         if (!mountedRef.current) {
           return
         }
-        setActionError(t('m.xLlZko0'))
+        setActionError(t('useMobileSourceControlOpeners.waiting'))
         return
       }
       openingPathRef.current = entry.path
@@ -123,7 +123,7 @@ export function useMobileSourceControlOpeners(params: Params) {
           })
         }
         if (!response.ok) {
-          throw new Error(response.error?.message || t('m.0MDy3xU'))
+          throw new Error(response.error?.message || t('useMobileSourceControlOpeners.unableOpen'))
         }
         if (!mountedRef.current) {
           return
@@ -146,7 +146,9 @@ export function useMobileSourceControlOpeners(params: Params) {
           return
         }
         triggerError()
-        setActionError(err instanceof Error ? err.message : t('m.0MDy3xU'))
+        setActionError(
+          err instanceof Error ? err.message : t('useMobileSourceControlOpeners.unableOpen')
+        )
       } finally {
         if (openingPathRef.current === entry.path) {
           openingPathRef.current = null
@@ -183,7 +185,7 @@ export function useMobileSourceControlOpeners(params: Params) {
         if (!mountedRef.current) {
           return
         }
-        setActionError(t('m.xLlZko0'))
+        setActionError(t('useMobileSourceControlOpeners.waiting'))
         return
       }
       if (branchCompareState.kind !== 'ready') {
@@ -227,11 +229,11 @@ export function useMobileSourceControlOpeners(params: Params) {
           }
         })
         if (!response.ok) {
-          throw new Error(response.error?.message || t('m.zniLwck'))
+          throw new Error(response.error?.message || t('useMobileSourceControlOpeners.unableLoad'))
         }
         const result = (response as RpcSuccess).result as GitDiffTextResult | { kind: 'binary' }
         if (result.kind !== 'text') {
-          throw new Error(t('m.q53ZKds'))
+          throw new Error(t('useMobileSourceControlOpeners.binary'))
         }
         const diff = buildMobileDiffLines(result.originalContent, result.modifiedContent)
         const syntaxLanguage = resolveMobileSyntaxLanguage(entry.path)
@@ -254,7 +256,8 @@ export function useMobileSourceControlOpeners(params: Params) {
         setBranchDiffPreview({
           kind: 'error',
           entry,
-          message: err instanceof Error ? err.message : t('m.zniLwck')
+          message:
+            err instanceof Error ? err.message : t('useMobileSourceControlOpeners.unableLoad')
         })
       } finally {
         if (openingBranchPathRef.current === entry.path) {

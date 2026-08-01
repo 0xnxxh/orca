@@ -34,11 +34,18 @@ export function getMobilePrCreateSuccessWarning(
   const copy = hostedReviewCopy(provider)
   if (outcome.existing) {
     return outcome.number
-      ? t('m.89Qhlf4', { value0: copy.titleLabel, value1: outcome.number })
-      : t('m.ACQh2cM', { value0: copy.titleLabel })
+      ? t('mobilePrCreate.reviewTypePull', {
+          reviewType: copy.titleLabel,
+          pullRequestNumber: outcome.number
+        })
+      : t('mobilePrCreate.reviewTypeAlreadyOpen', {
+          reviewType: copy.titleLabel
+        })
   }
   if (outcome.linkError) {
-    return t('m.nUw7_cE', { value0: copy.titleLabel })
+    return t('mobilePrCreate.reviewTypeCreated', {
+      reviewType: copy.titleLabel
+    })
   }
   return undefined
 }
@@ -52,38 +59,62 @@ export function getMobilePrCreateBlockMessage(prefill: MobilePrPrefill): string 
     // mobile has no refresh/review-lookup signal of its own, so it must not
     // offer create, or the needs_push Push & Create path would slip through.
     if (prefill.reviewLookupOutcome !== 'not_found') {
-      return t('m.YnkDu_A', { value0: copy.reviewLabel })
+      return t('mobilePrCreate.orca', { reviewType: copy.reviewLabel })
     }
     return null
   }
   switch (prefill.blockedReason) {
     case 'dirty':
-      return t('m.fS2uz3k', { value0: copy.reviewLabel })
+      return t('mobilePrCreate.commit', {
+        reviewType: copy.reviewLabel
+      })
     case 'detached_head':
-      return t('m.eL3YqZQ', { value0: copy.reviewLabel })
+      return t('mobilePrCreate.check', {
+        reviewType: copy.reviewLabel
+      })
     case 'default_branch':
-      return t('m.J6J02jo', { value0: copy.reviewLabel })
+      return t('mobilePrCreate.switch', {
+        reviewType: copy.reviewLabel
+      })
     case 'no_upstream':
-      return t('m.aDj0ISs', { value0: copy.reviewLabel })
+      return t('mobilePrCreate.publish', {
+        reviewType: copy.reviewLabel
+      })
     case 'needs_sync':
-      return t('m.h5c6qGM', { value0: copy.reviewLabel })
+      return t('mobilePrCreate.sync', {
+        reviewType: copy.reviewLabel
+      })
     case 'auth_required':
-      return t('m.i65iwXo', { value0: copy.reviewLabel })
+      return t('mobilePrCreate.authenticate', {
+        reviewType: copy.reviewLabel
+      })
     case 'unsupported_provider':
-      return t('m.CMzOREY', { value0: copy.reviewLabel })
+      return t('mobilePrCreate.creatingReviewTypeS', {
+        reviewType: copy.reviewLabel
+      })
     case 'existing_review':
-      return t('m.UNrSqqU', { value0: copy.reviewLabel })
+      return t('mobilePrCreate.reviewTypeAlreadyExists', {
+        reviewType: copy.reviewLabel
+      })
     case 'fork_head_unsupported':
-      return t('m.dhReg-4', { value0: copy.reviewLabel })
+      return t('mobilePrCreate.creatingReviewTypeFork', {
+        reviewType: copy.reviewLabel
+      })
     case 'base_not_on_remote':
-      return t('m.eeoaUzE', { value0: copy.reviewLabel })
+      return t('mobilePrCreate.push', {
+        reviewType: copy.reviewLabel
+      })
     case 'needs_push':
     case null:
     case undefined:
-      return t('m.Kdbzhtg', { value0: copy.reviewLabel })
+      return t('mobilePrCreate.branch', {
+        reviewType: copy.reviewLabel
+      })
     default:
       // Why: desktop can add blocked reasons before a long-lived mobile branch
       // catches up; remain safely blocked while preserving merge-ref typechecks.
-      return t('m.Kdbzhtg', { value0: copy.reviewLabel })
+      return t('mobilePrCreate.branch', {
+        reviewType: copy.reviewLabel
+      })
   }
 }

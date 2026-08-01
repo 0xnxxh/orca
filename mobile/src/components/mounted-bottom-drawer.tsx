@@ -295,7 +295,7 @@ export function MountedBottomDrawer({
       <Animated.View
         style={styles.handleHitArea}
         accessibilityRole="button"
-        accessibilityLabel={t('m.V9XaZZ8')}
+        accessibilityLabel={t('mountedBottomDrawer.dismiss')}
       >
         <View style={styles.handle} />
       </Animated.View>

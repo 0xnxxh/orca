@@ -130,11 +130,16 @@ function AgentHistoryCardRow({
       <View style={styles.cardMetaRow}>
         <Text style={styles.cardMetaText}>{card.agentLabel}</Text>
         <Text style={styles.cardMetaText}>
-          {card.messageCount} {card.messageCount === 1 ? t('m.fZXkGhQ') : t('m.tL7Cy3c')}
+          {card.messageCount}{' '}
+          {card.messageCount === 1
+            ? t('mobileAgentSessionHistoryList.message')
+            : t('mobileAgentSessionHistoryList.messages')}
         </Text>
         {showCurrentWorktreeBadge && card.isCurrentWorktree ? (
           <View style={styles.currentBadge}>
-            <Text style={styles.currentBadgeText}>{t('m.f1-v-HM')}</Text>
+            <Text style={styles.currentBadgeText}>
+              {t('mobileAgentSessionHistoryList.current')}
+            </Text>
           </View>
         ) : null}
         {session && onResume ? (
@@ -153,7 +158,7 @@ function AgentHistoryCardRow({
             disabled={resumeActionState?.disabled}
             hitSlop={8}
             accessibilityRole="button"
-            accessibilityLabel={t('m.p7fz5tw')}
+            accessibilityLabel={t('mobileAgentSessionHistoryList.resume')}
           >
             {resumeActionState?.loading ? (
               <ActivityIndicator size="small" color={colors.textPrimary} />

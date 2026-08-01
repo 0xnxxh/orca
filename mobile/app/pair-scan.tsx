@@ -83,7 +83,7 @@ export default function PairScanScreen() {
       const offer = decodePairingUrl(data)
       if (!offer) {
         setStatus('error')
-        setErrorMessage(t('m.iHaWj50'))
+        setErrorMessage(t('pairScan.notValidOrca'))
         processingRef.current = false
         return
       }
@@ -103,7 +103,7 @@ export default function PairScanScreen() {
     const offer = parsePairingCode(input)
     if (!offer) {
       setStatus('error')
-      setErrorMessage(t('m.feaDGg4'))
+      setErrorMessage(t('pairScan.notValidPairing'))
       processingRef.current = false
       return
     }
@@ -180,8 +180,12 @@ export default function PairScanScreen() {
       setStatus('error')
       setErrorMessage(
         timedOut
-          ? t('m.zyTFKp4', { value0: PAIRING_OVERALL_TIMEOUT_MS / 1000 })
-          : t('m.HVl7cpc', { value0: err instanceof Error ? err.message : String(err) })
+          ? t('pairScan.could', {
+              pairingOverallTimeoutSeconds: PAIRING_OVERALL_TIMEOUT_MS / 1000
+            })
+          : t('pairScan.pairingFailed', {
+              errorMessage: err instanceof Error ? err.message : String(err)
+            })
       )
       processingRef.current = false
     }
@@ -225,15 +229,19 @@ export default function PairScanScreen() {
           <ChevronLeft size={22} color={colors.textSecondary} />
         </Pressable>
         <View style={styles.centered}>
-          <Text style={styles.title}>{canAskAgain ? t('m.0VOtRkg') : t('m.sBkGoYA')}</Text>
-          <Text style={styles.subtitle}>{canAskAgain ? t('m.InfekMg') : t('m.b6n4c_8')}</Text>
+          <Text style={styles.title}>
+            {canAskAgain ? t('pairScan.pair') : t('pairScan.camera')}
+          </Text>
+          <Text style={styles.subtitle}>
+            {canAskAgain ? t('pairScan.scanOrPastePairingCode') : t('pairScan.enable')}
+          </Text>
           <Pressable
             style={styles.primaryButton}
             onPress={canAskAgain ? requestPermission : () => void Linking.openSettings()}
           >
             {canAskAgain && <QrCode size={16} color={colors.bgBase} />}
             <Text style={styles.primaryButtonText}>
-              {canAskAgain ? t('m.Scz67W0') : t('m.wvDgXHk')}
+              {canAskAgain ? t('pairScan.continue') : t('pairScan.openSettings')}
             </Text>
           </Pressable>
           <Pressable
@@ -241,14 +249,14 @@ export default function PairScanScreen() {
             onPress={() => setPasteVisible(true)}
           >
             <ClipboardIcon size={16} color={colors.textSecondary} />
-            <Text style={styles.pasteButtonText}>{t('m.Q_qrUNw')}</Text>
+            <Text style={styles.pasteButtonText}>{t('pairScan.pasteCode')}</Text>
           </Pressable>
         </View>
         <TextInputModal
           visible={pasteVisible}
-          title={t('m.klFU7hQ')}
-          message={t('m.G-MJBZU')}
-          placeholder={t('m.-jAAi0E')}
+          title={t('pairScan.pastePairingCode')}
+          message={t('pairScan.copy')}
+          placeholder={t('pairScan.orca')}
           onSubmit={handlePasteSubmit}
           onCancel={() => setPasteVisible(false)}
         />
@@ -263,9 +271,9 @@ export default function PairScanScreen() {
       </Pressable>
 
       <View style={styles.steps}>
-        <Step number={1} text={t('m.dFxLHEw')} />
-        <Step number={2} text={t('m.mPdpsdo')} />
-        <Step number={3} text={t('m.dTFolus')} />
+        <Step number={1} text={t('pairScan.openOrca')} />
+        <Step number={2} text={t('pairScan.go')} />
+        <Step number={3} text={t('pairScan.scan')} />
       </View>
 
       {status === 'scanning' && (
@@ -299,7 +307,7 @@ export default function PairScanScreen() {
             onPress={() => setPasteVisible(true)}
           >
             <ClipboardIcon size={16} color={colors.textSecondary} />
-            <Text style={styles.pasteButtonText}>{t('m.U_fkYz4')}</Text>
+            <Text style={styles.pasteButtonText}>{t('pairScan.pastePairingCodeMessage')}</Text>
           </Pressable>
         </>
       )}
@@ -307,9 +315,9 @@ export default function PairScanScreen() {
       {status === 'connecting' && (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={colors.textSecondary} />
-          <Text style={styles.connectingText}>{t('m.T3HZLEU')}</Text>
+          <Text style={styles.connectingText}>{t('pairScan.connecting')}</Text>
           <View style={styles.logSlot}>
-            <ConnectionLog entries={logs} title={t('m.G_n7Zxg')} />
+            <ConnectionLog entries={logs} title={t('pairScan.pairingLog')} />
           </View>
         </View>
       )}
@@ -319,12 +327,12 @@ export default function PairScanScreen() {
           <Text style={styles.errorText}>{errorMessage}</Text>
           {logs.length > 0 && (
             <View style={styles.logSlot}>
-              <ConnectionLog entries={logs} title={t('m.G_n7Zxg')} />
+              <ConnectionLog entries={logs} title={t('pairScan.pairingLog')} />
             </View>
           )}
           <View style={styles.errorActions}>
             <Pressable style={styles.primaryButton} onPress={retry}>
-              <Text style={styles.primaryButtonText}>{t('m._C6l3j4')}</Text>
+              <Text style={styles.primaryButtonText}>{t('pairScan.try')}</Text>
             </Pressable>
             <Pressable
               style={({ pressed }) => [
@@ -336,7 +344,7 @@ export default function PairScanScreen() {
                 setPasteVisible(true)
               }}
             >
-              <Text style={styles.secondaryButtonText}>{t('m.Q_qrUNw')}</Text>
+              <Text style={styles.secondaryButtonText}>{t('pairScan.pasteCode')}</Text>
             </Pressable>
           </View>
         </View>
@@ -344,9 +352,9 @@ export default function PairScanScreen() {
 
       <TextInputModal
         visible={pasteVisible}
-        title={t('m.klFU7hQ')}
-        message={t('m.G-MJBZU')}
-        placeholder={t('m.-jAAi0E')}
+        title={t('pairScan.pastePairingCode')}
+        message={t('pairScan.copy')}
+        placeholder={t('pairScan.orca')}
         onSubmit={handlePasteSubmit}
         onCancel={() => setPasteVisible(false)}
       />

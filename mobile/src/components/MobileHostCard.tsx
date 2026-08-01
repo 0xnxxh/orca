@@ -22,11 +22,18 @@ export function MobileHostCard(props: {
   const isError = ['warning', 'unreachable', 'auth-failed'].includes(props.verdict.kind)
   const worktreeSummary = props.worktreeCounts
     ? [
-        t(props.worktreeCounts.total === 1 ? 'm.Id8zorY' : 'm.t4PccRo', {
-          value0: props.worktreeCounts.total
-        }),
+        t(
+          props.worktreeCounts.total === 1
+            ? 'mobileHostCard.worktreeCountWorktree'
+            : 'mobileHostCard.worktreeCountWorktrees',
+          {
+            worktreeCount: props.worktreeCounts.total
+          }
+        ),
         props.worktreeCounts.active > 0
-          ? t('m.AYqemqw', { value0: props.worktreeCounts.active })
+          ? t('mobileHostCard.active', {
+              activeWorktreeCount: props.worktreeCounts.active
+            })
           : null
       ]
         .filter(Boolean)
@@ -63,7 +70,7 @@ export function MobileHostCard(props: {
         ) : null}
         {props.verdict.kind === 'unreachable' && !props.host.relay ? (
           <Text style={styles.discoveryHint} numberOfLines={2}>
-            {t('m.4bPe4Ao')}
+            {t('mobileHostCard.update')}
           </Text>
         ) : null}
       </View>

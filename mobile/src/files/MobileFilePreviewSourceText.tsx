@@ -52,7 +52,11 @@ export function MobileFilePreviewSourceText({
       {truncated ? (
         <MobileFilePreviewTruncatedNote byteLength={byteLength ?? content.length} />
       ) : null}
-      <Text selectable style={styles.textPreview} accessibilityLabel={t('m.1_VaWXc')}>
+      <Text
+        selectable
+        style={styles.textPreview}
+        accessibilityLabel={t('mobileFilePreviewSourceText.file')}
+      >
         <MobileSyntaxSegments segments={syntax.segments} />
       </Text>
     </ScrollView>
@@ -62,7 +66,9 @@ export function MobileFilePreviewSourceText({
 export function MobileFilePreviewTruncatedNote({ byteLength }: { byteLength: number }) {
   return (
     <Text style={styles.truncatedNote}>
-      {t('m.mGhZjxw', { value0: formatPreviewByteLength(byteLength) })}
+      {t('mobileFilePreviewSourceText.preview', {
+        formatPreviewByteLength: formatPreviewByteLength(byteLength)
+      })}
     </Text>
   )
 }

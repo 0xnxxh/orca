@@ -110,7 +110,7 @@ function MobileOnboardingFlow({
         await saveDefaultSessionView(view)
         advanceOrContinue()
       } catch {
-        setError(t('m.Dl9ttFI'))
+        setError(t('mobileOnboarding.your'))
         setBusyChoice(null)
         choiceInFlightRef.current = false
       }
@@ -131,7 +131,7 @@ function MobileOnboardingFlow({
         await savePushNotificationsEnabled(enabled)
         advanceOrContinue()
       } catch {
-        setError(t('m.6vGSxlM'))
+        setError(t('mobileOnboarding.notification'))
         setBusyChoice(null)
         choiceInFlightRef.current = false
       }
@@ -145,12 +145,12 @@ function MobileOnboardingFlow({
     <SafeAreaView style={styles.container}>
       <View style={styles.brandRow}>
         <OrcaLogo size={22} />
-        <Text style={styles.brandName}>{t('m.mB8kw4M')}</Text>
+        <Text style={styles.brandName}>{t('mobileOnboarding.orca')}</Text>
         {steps.length > 1 ? (
           <View
             accessible
             accessibilityRole="progressbar"
-            accessibilityLabel={t('m.aOm3VN4')}
+            accessibilityLabel={t('mobileOnboarding.onboarding')}
             accessibilityValue={{
               text: t('onboarding.progress', {
                 currentStep: activeIndex + 1,

@@ -14,27 +14,27 @@ function isWorkspaceSshConnectInProgress(status: SshConnectionStatus | null): bo
 
 export function workspaceSshStatusLabel(status: SshConnectionStatus | null): string {
   if (status === 'connected') {
-    return t('m.GyhUU1I')
+    return t('workspaceSshGate.connected')
   }
   if (status === 'connecting') {
-    return t('m.Y4pY3mY')
+    return t('workspaceSshGate.connecting')
   }
   if (status === 'deploying-relay') {
-    return t('m.XpcB6Lk')
+    return t('workspaceSshGate.deploying')
   }
   if (status === 'reconnecting') {
-    return t('m.uEprraQ')
+    return t('workspaceSshGate.reconnecting')
   }
   if (status === 'auth-failed') {
-    return t('m.55lbvEs')
+    return t('workspaceSshGate.authentication')
   }
   if (status === 'reconnection-failed') {
-    return t('m.wOY1nLM')
+    return t('workspaceSshGate.reconnect')
   }
   if (status === 'error') {
-    return t('m.FZM-PD0')
+    return t('workspaceSshGate.connection')
   }
-  return t('m.7wOLCCY')
+  return t('workspaceSshGate.disconnected')
 }
 
 export function deriveWorkspaceSshGate(args: {

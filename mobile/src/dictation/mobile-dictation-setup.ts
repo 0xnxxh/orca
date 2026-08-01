@@ -34,9 +34,9 @@ export async function fetchDictationSetup(
   const response = await fetchDictationSetupResponse(client)
   if (!response.ok) {
     if (isLegacyDesktopSpeechSetupError(response.error)) {
-      throw new Error(t('m.XOHYcMw'))
+      throw new Error(t('mobileDictationSetup.update'))
     }
-    throw new Error(response.error?.message || t('m.jcVunZ4'))
+    throw new Error(response.error?.message || t('mobileDictationSetup.failedLoad'))
   }
   return (response as RpcSuccess).result as MobileSpeechSetup
 }
@@ -60,7 +60,7 @@ export async function downloadDictationModel(
 ): Promise<void> {
   const response = await client.sendRequest('speech.models.download', { modelId })
   if (!response.ok) {
-    throw new Error(response.error?.message || t('m.hkwxfd0'))
+    throw new Error(response.error?.message || t('mobileDictationSetup.failedStart'))
   }
 }
 
@@ -70,7 +70,7 @@ export async function deleteDictationModel(
 ): Promise<MobileSpeechSetup> {
   const response = await client.sendRequest('speech.models.delete', { modelId })
   if (!response.ok) {
-    throw new Error(response.error?.message || t('m.9VJGb2s'))
+    throw new Error(response.error?.message || t('mobileDictationSetup.failedDelete'))
   }
   return (response as RpcSuccess).result as MobileSpeechSetup
 }
@@ -81,7 +81,7 @@ export async function setDictationConfig(
 ): Promise<MobileSpeechSetup> {
   const response = await client.sendRequest('speech.dictation.setup', params)
   if (!response.ok) {
-    throw new Error(response.error?.message || t('m.CdTon5s'))
+    throw new Error(response.error?.message || t('mobileDictationSetup.failedUpdate'))
   }
   return (response as RpcSuccess).result as MobileSpeechSetup
 }

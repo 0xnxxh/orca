@@ -16,9 +16,12 @@ function describeScope(snapshot: AccountsSnapshot, scope: CodexResetCreditExpect
   const account = snapshot.codex.accounts.find((candidate) => candidate.id === scope.accountId)
   const identity = account?.email ?? t('accounts.selectedManagedAccount')
   if (scope.target.runtime === 'host') {
-    return t('m.TUCQXxI', { value0: identity })
+    return t('useCodexResetCreditAction.identityHost', { identity: identity })
   }
-  return t('m.sDDLSuM', { value0: identity, value1: scope.target.wslDistro })
+  return t('useCodexResetCreditAction.identityWsl', {
+    identity: identity,
+    wslDistro: scope.target.wslDistro
+  })
 }
 
 export function useCodexResetCreditAction({
@@ -69,15 +72,27 @@ export function useCodexResetCreditAction({
         })
         onSnapshot(result.snapshot)
         if ('status' in result) {
-          const cleanupWarning = result.attemptJournalRetained ? t('m.d5V00qM') : ''
-          Alert.alert(t('m.4DQGAog'), t('m.rii7ZAs', { value0: cleanupWarning }))
+          const cleanupWarning = result.attemptJournalRetained
+            ? t('useCodexResetCreditAction.phone')
+            : ''
+          Alert.alert(
+            t('useCodexResetCreditAction.reset'),
+            t('useCodexResetCreditAction.account', {
+              cleanupWarning: cleanupWarning
+            })
+          )
           return
         }
         const copy = getCodexResetCreditOutcomeCopy(result.outcome)
-        const cleanupWarning = result.attemptJournalRetained ? t('m.rXScUPU') : ''
+        const cleanupWarning = result.attemptJournalRetained
+          ? t('useCodexResetCreditAction.host')
+          : ''
         Alert.alert(copy.title, `${copy.message}${cleanupWarning}`)
       } catch (error) {
-        Alert.alert(t('m.TKIeXbw'), error instanceof Error ? error.message : String(error))
+        Alert.alert(
+          t('useCodexResetCreditAction.could'),
+          error instanceof Error ? error.message : String(error)
+        )
       } finally {
         inFlightRef.current = false
         setResetting(false)
@@ -92,10 +107,19 @@ export function useCodexResetCreditAction({
     }
     const confirmedScope = resetScope
     const confirmedLabel = describeScope(snapshot, confirmedScope)
-    Alert.alert(t('m.EzPa9ek'), t('m.5hDxS58', { value0: confirmedLabel }), [
-      { text: t('m._nuDzHY'), style: 'cancel' },
-      { text: t('m.VWnR13E'), onPress: () => void consume(confirmedScope) }
-    ])
+    Alert.alert(
+      t('useCodexResetCreditAction.useRate'),
+      t('useCodexResetCreditAction.spends', {
+        confirmedLabel: confirmedLabel
+      }),
+      [
+        { text: t('useCodexResetCreditAction.cancel'), style: 'cancel' },
+        {
+          text: t('useCodexResetCreditAction.useReset'),
+          onPress: () => void consume(confirmedScope)
+        }
+      ]
+    )
   }, [accountMutationBusy, connected, consume, resetScope, resetting, snapshot, supported])
 
   return { supported, resetting, resetScope, scopeLabel, confirmReset }

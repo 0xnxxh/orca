@@ -69,7 +69,9 @@ export default function NotificationsScreen() {
 
   const switchEnabled = pushEnabled && permissionState.granted
   const notificationsBlocked = permissionState.status === 'denied'
-  const hint = notificationsBlocked ? t('m.uzWRFSg') : t('m.dVAzjOs')
+  const hint = notificationsBlocked
+    ? t('notifications.notificationsDisabled')
+    : t('notifications.get')
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + spacing.sm }]}>
@@ -77,12 +79,12 @@ export default function NotificationsScreen() {
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <ChevronLeft size={22} color={colors.textSecondary} />
         </Pressable>
-        <Text style={styles.heading}>{t('m.GIjQvDw')}</Text>
+        <Text style={styles.heading}>{t('notifications.notifications')}</Text>
       </View>
 
       <View style={styles.section}>
         <View style={styles.row}>
-          <Text style={styles.rowLabel}>{t('m.aXWuT8I')}</Text>
+          <Text style={styles.rowLabel}>{t('notifications.agent')}</Text>
           <Switch
             value={switchEnabled}
             disabled={notificationsBlocked}
@@ -100,7 +102,7 @@ export default function NotificationsScreen() {
             ]}
             onPress={() => void Linking.openSettings()}
           >
-            <Text style={styles.settingsButtonText}>{t('m.x7lqDGA')}</Text>
+            <Text style={styles.settingsButtonText}>{t('notifications.open')}</Text>
           </Pressable>
         )}
       </View>

@@ -50,7 +50,9 @@ export function PRSidebarHeader({
             onPress={openPr}
             disabled={!openPr}
             accessibilityRole="link"
-            accessibilityLabel={t('m.nbfmLgg', { value0: pr.number })}
+            accessibilityLabel={t('prsidebarHeader.open', {
+              pullRequestNumber: pr.number
+            })}
             style={({ pressed }) => [
               styles.badge,
               { borderColor: badgeColor },
@@ -63,7 +65,9 @@ export function PRSidebarHeader({
             style={styles.prMetaStrong}
             onPress={openPr}
             accessibilityRole="link"
-            accessibilityLabel={t('m.nbfmLgg', { value0: pr.number })}
+            accessibilityLabel={t('prsidebarHeader.open', {
+              pullRequestNumber: pr.number
+            })}
           >
             #{pr.number}
           </Text>
@@ -74,7 +78,9 @@ export function PRSidebarHeader({
             onPress={openPr}
             hitSlop={8}
             accessibilityRole="link"
-            accessibilityLabel={t('m.nbfmLgg', { value0: pr.number })}
+            accessibilityLabel={t('prsidebarHeader.open', {
+              pullRequestNumber: pr.number
+            })}
             style={({ pressed }) => [styles.iconButton, pressed && { opacity: 0.6 }]}
           >
             <ExternalLink size={16} color={colors.textSecondary} strokeWidth={2.2} />
@@ -154,21 +160,21 @@ function PRTitle({
             onPress={cancel}
             disabled={titleAction.saving}
             accessibilityRole="button"
-            accessibilityLabel={t('m.D-7jM08')}
+            accessibilityLabel={t('prsidebarHeader.cancelEditing')}
           >
-            <Text style={composerStyles.cancelText}>{t('m.UgBLL4w')}</Text>
+            <Text style={composerStyles.cancelText}>{t('prsidebarHeader.cancel')}</Text>
           </Pressable>
           <Pressable
             style={({ pressed }) => [composerStyles.submit, pressed && composerStyles.pressed]}
             onPress={() => void save()}
             disabled={titleAction.saving}
             accessibilityRole="button"
-            accessibilityLabel={t('m.xOwofss')}
+            accessibilityLabel={t('prsidebarHeader.saveTitle')}
           >
             {titleAction.saving ? (
               <ActivityIndicator size="small" color={colors.bgBase} />
             ) : (
-              <Text style={composerStyles.submitText}>{t('m.oBmCrB8')}</Text>
+              <Text style={composerStyles.submitText}>{t('prsidebarHeader.save')}</Text>
             )}
           </Pressable>
         </View>
@@ -182,7 +188,7 @@ function PRTitle({
       onPress={editable ? startEdit : undefined}
       disabled={!editable}
       accessibilityRole={editable ? 'button' : undefined}
-      accessibilityLabel={editable ? t('m.E2VHius') : undefined}
+      accessibilityLabel={editable ? t('prsidebarHeader.edit') : undefined}
     >
       <Text style={styles.prTitle}>{title}</Text>
       {editable ? (

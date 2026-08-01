@@ -3,12 +3,12 @@ import type { ConnectionState } from '../transport/types'
 import { t } from '@/i18n/mobile-i18n'
 
 export const MOBILE_SESSION_STATUS_LABELS: Record<ConnectionState, string> = {
-  connecting: t('m.S_1cAME'),
-  handshaking: t('m.yqEocVY'),
-  connected: t('m.Fr9Rdq8'),
-  disconnected: t('m.7mbOxzE'),
-  reconnecting: t('m.G1BrrUQ'),
-  'auth-failed': t('m.xEMYAIw')
+  connecting: t('mobileSessionRouteHelpers.connecting'),
+  handshaking: t('mobileSessionRouteHelpers.securing'),
+  connected: t('mobileSessionRouteHelpers.connected'),
+  disconnected: t('mobileSessionRouteHelpers.disconnected'),
+  reconnecting: t('mobileSessionRouteHelpers.reconnecting'),
+  'auth-failed': t('mobileSessionRouteHelpers.pairing')
 }
 
 export const TERMINAL_GESTURE_INPUT_BUCKET_CAPACITY = 64

@@ -243,7 +243,7 @@ export function readMobileReviewTerminalTabs(value: unknown): MobileReviewTermin
       {
         id,
         terminal,
-        title: readString(candidate.title) ?? t('m.OtjVKog')
+        title: readString(candidate.title) ?? t('mobileDiffReviewRpc.terminal')
       }
     ]
   })

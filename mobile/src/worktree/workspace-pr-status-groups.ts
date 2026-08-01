@@ -7,10 +7,10 @@ export type PRGroupKey = 'done' | 'in-review' | 'in-progress' | 'closed'
 
 export function getPRGroupLabel(group: PRGroupKey): string {
   return {
-    done: t('m.LEXdDEk'),
-    'in-review': t('m.sMpsrkY'),
-    'in-progress': t('m.epStUOc'),
-    closed: t('m.sC5iGOA')
+    done: t('workspacePrStatusGroups.done'),
+    'in-review': t('workspacePrStatusGroups.review'),
+    'in-progress': t('workspacePrStatusGroups.progress'),
+    closed: t('workspacePrStatusGroups.closed')
   }[group]
 }
 

@@ -70,11 +70,11 @@ export function useMobileSourceControlActionSheetRunners(params: Params) {
   const runActionSheetRebase = useCallback(async () => {
     await runGitWorkflow('rebase', async () => {
       if (!client) {
-        throw new Error(t('m.rF-O-TA'))
+        throw new Error(t('useMobileSourceControlActionSheetRunners.waiting'))
       }
       const baseRef = await resolveMobileBranchCompareBaseRef(client, worktreeId)
       if (!baseRef) {
-        throw new Error(t('m.aNYrFtc'))
+        throw new Error(t('useMobileSourceControlActionSheetRunners.no'))
       }
       await sendGitRequest<unknown>('git.rebaseFromBase', { baseRef })
     })

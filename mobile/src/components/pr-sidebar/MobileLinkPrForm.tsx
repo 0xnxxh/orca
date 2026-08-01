@@ -47,23 +47,23 @@ export function MobileLinkPrForm({ client, worktreeId, onCancel, onLinked }: Pro
   return (
     <View>
       <View style={styles.headingRow}>
-        <Text style={styles.heading}>{t('m.f8ZsL9k')}</Text>
+        <Text style={styles.heading}>{t('mobileLinkPrForm.linkExisting')}</Text>
         <Pressable
           onPress={onCancel}
           disabled={submitting}
           accessibilityRole="button"
-          accessibilityLabel={t('m.ZLWuIYo')}
+          accessibilityLabel={t('mobileLinkPrForm.cancel')}
           hitSlop={8}
         >
-          <Text style={styles.cancelText}>{t('m.ZLWuIYo')}</Text>
+          <Text style={styles.cancelText}>{t('mobileLinkPrForm.cancel')}</Text>
         </Pressable>
       </View>
-      <Text style={styles.label}>{t('m.D2wJo3U')}</Text>
+      <Text style={styles.label}>{t('mobileLinkPrForm.pr')}</Text>
       <TextInput
         style={styles.input}
         value={input}
         onChangeText={setInput}
-        placeholder={t('m.5tB7Tdg')}
+        placeholder={t('mobileLinkPrForm.pull')}
         placeholderTextColor={colors.textMuted}
         autoCapitalize="none"
         autoCorrect={false}
@@ -83,7 +83,11 @@ export function MobileLinkPrForm({ client, worktreeId, onCancel, onLinked }: Pro
           <ActivityIndicator size="small" color={colors.bgBase} />
         ) : (
           <Text style={styles.submitText}>
-            {parsed ? t('m.UzLJy8Q', { value0: parsed }) : t('m.kPLcd1A')}
+            {parsed
+              ? t('mobileLinkPrForm.linkLinked', {
+                  linkedItemNumber: parsed
+                })
+              : t('mobileLinkPrForm.linkPull')}
           </Text>
         )}
       </Pressable>

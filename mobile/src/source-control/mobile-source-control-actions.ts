@@ -66,13 +66,25 @@ export function buildMobileSourceControlActions(
   const behind = upstream?.behind ?? 0
   const busy =
     args.busyAction !== null || args.openingPath !== null || args.openingBranchPath !== null
-  const commitHint = !hasStaged ? t('m.jzI4z6s') : !hasMessage ? t('m.9tlos5E') : undefined
-  const remoteHint = !upstreamKnown ? t('m.Xh63VTo') : hasUpstream ? undefined : t('m.o8ul7Iw')
-  const prHint = !upstreamKnown ? t('m.Xh63VTo') : !args.prAvailable ? t('m.8TO561E') : undefined
+  const commitHint = !hasStaged
+    ? t('mobileSourceControlActions.stage')
+    : !hasMessage
+      ? t('mobileSourceControlActions.enter')
+      : undefined
+  const remoteHint = !upstreamKnown
+    ? t('mobileSourceControlActions.checking')
+    : hasUpstream
+      ? undefined
+      : t('mobileSourceControlActions.publishBranchFirst')
+  const prHint = !upstreamKnown
+    ? t('mobileSourceControlActions.checking')
+    : !args.prAvailable
+      ? t('mobileSourceControlActions.pullRequests')
+      : undefined
 
   return [
     {
-      label: t('m._Srm4Jk'),
+      label: t('mobileSourceControlActions.commit'),
       iconKey: 'commit',
       disabled: busy || !!commitHint,
       hint: commitHint,
@@ -81,7 +93,7 @@ export function buildMobileSourceControlActions(
       onPress: handlers.commit
     },
     {
-      label: t('m.4pU4zTo'),
+      label: t('mobileSourceControlActions.commitPush'),
       iconKey: 'push',
       disabled: busy || !!commitHint || !upstreamKnown || !hasUpstream,
       hint: commitHint ?? remoteHint,
@@ -90,27 +102,40 @@ export function buildMobileSourceControlActions(
       onPress: handlers.commitPush
     },
     {
-      label: t('m.ZFwznUg'),
+      label: t('mobileSourceControlActions.commitSync'),
       iconKey: 'sync',
       disabled: busy || !!commitHint || !upstreamKnown || !hasUpstream || behind === 0,
       hint:
         commitHint ??
-        (!upstreamKnown || !hasUpstream ? remoteHint : behind === 0 ? t('m.Ia0aBfU') : undefined),
+        (!upstreamKnown || !hasUpstream
+          ? remoteHint
+          : behind === 0
+            ? t('mobileSourceControlActions.nothingPull')
+            : undefined),
       loading: args.busyAction === 'commit-sync',
       skipAutoClose: true,
       onPress: handlers.commitSync
     },
     {
-      label: ahead > 0 ? t('m.9Xtk0Pg', { value0: ahead }) : t('m.eBZzWkw'),
+      label:
+        ahead > 0
+          ? t('mobileSourceControlActions.pushAhead', {
+              aheadCommitCount: ahead
+            })
+          : t('mobileSourceControlActions.push'),
       iconKey: 'push',
       disabled: busy || !upstreamKnown || !hasUpstream || ahead === 0,
-      hint: !hasUpstream ? remoteHint : ahead === 0 ? t('m.zgbzIDs') : undefined,
+      hint: !hasUpstream
+        ? remoteHint
+        : ahead === 0
+          ? t('mobileSourceControlActions.nothingPush')
+          : undefined,
       loading: args.busyAction === 'push',
       skipAutoClose: true,
       onPress: handlers.push
     },
     {
-      label: t('m.IgtghkE'),
+      label: t('mobileSourceControlActions.create'),
       iconKey: 'pr',
       disabled: busy || !args.prAvailable,
       hint: prHint,
@@ -119,7 +144,7 @@ export function buildMobileSourceControlActions(
       onPress: handlers.createPr
     },
     {
-      label: t('m._Pq5EEw'),
+      label: t('mobileSourceControlActions.pushCreate'),
       iconKey: 'pr',
       disabled: busy || !upstreamKnown || !hasUpstream || ahead === 0 || !args.prAvailable,
       hint: prHint ?? (!hasUpstream ? remoteHint : undefined),
@@ -128,10 +153,19 @@ export function buildMobileSourceControlActions(
       onPress: handlers.pushAndCreatePr
     },
     {
-      label: behind > 0 ? t('m.oCECucM', { value0: behind }) : t('m.0pGBpyQ'),
+      label:
+        behind > 0
+          ? t('mobileSourceControlActions.pullBehind', {
+              behindCommitCount: behind
+            })
+          : t('mobileSourceControlActions.pull'),
       iconKey: 'pull',
       disabled: busy || !upstreamKnown || !hasUpstream || behind === 0,
-      hint: !hasUpstream ? remoteHint : behind === 0 ? t('m.Ia0aBfU') : undefined,
+      hint: !hasUpstream
+        ? remoteHint
+        : behind === 0
+          ? t('mobileSourceControlActions.nothingPull')
+          : undefined,
       loading: args.busyAction === 'pull',
       skipAutoClose: true,
       onPress: handlers.pull
@@ -139,22 +173,25 @@ export function buildMobileSourceControlActions(
     {
       label:
         ahead > 0 || behind > 0
-          ? t('m.26SoVIw', { value0: behind, value1: ahead })
-          : t('m.N0HpMMg'),
+          ? t('mobileSourceControlActions.syncBehind', {
+              behindCommitCount: behind,
+              aheadCommitCount: ahead
+            })
+          : t('mobileSourceControlActions.sync'),
       iconKey: 'sync',
       disabled: busy || !upstreamKnown || !hasUpstream || (ahead === 0 && behind === 0),
       hint:
         !upstreamKnown || !hasUpstream
           ? remoteHint
           : ahead === 0 && behind === 0
-            ? t('m.5Vkd48o')
+            ? t('mobileSourceControlActions.branchUp')
             : undefined,
       loading: args.busyAction === 'sync',
       skipAutoClose: true,
       onPress: handlers.sync
     },
     {
-      label: t('m.3blspe8'),
+      label: t('mobileSourceControlActions.fetch'),
       iconKey: 'fetch',
       disabled: busy,
       loading: args.busyAction === 'fetch',
@@ -162,31 +199,40 @@ export function buildMobileSourceControlActions(
       onPress: handlers.fetch
     },
     {
-      label: t('m.r_MPRhE'),
+      label: t('mobileSourceControlActions.publishBranch'),
       iconKey: 'publish',
       disabled: busy || !upstreamKnown || hasUpstream,
-      hint: !upstreamKnown ? t('m.Xh63VTo') : hasUpstream ? t('m.qq_p9K0') : undefined,
+      hint: !upstreamKnown
+        ? t('mobileSourceControlActions.checking')
+        : hasUpstream
+          ? t('mobileSourceControlActions.branchAlready')
+          : undefined,
       loading: args.busyAction === 'publish',
       skipAutoClose: true,
       onPress: handlers.publish
     },
     {
-      label: behind > 0 ? t('m.UWyesQ8', { value0: behind }) : t('m.fp_5pjo'),
+      label:
+        behind > 0
+          ? t('mobileSourceControlActions.fastForwardBehind', {
+              behindCommitCount: behind
+            })
+          : t('mobileSourceControlActions.fastForward'),
       iconKey: 'pull',
       disabled: busy || !upstreamKnown || !hasUpstream || behind === 0 || ahead > 0,
       hint: !hasUpstream
         ? remoteHint
         : behind === 0
-          ? t('m.qajmB_0')
+          ? t('mobileSourceControlActions.nothingFast')
           : ahead > 0
-            ? t('m.GaTugx8')
+            ? t('mobileSourceControlActions.local')
             : undefined,
       loading: args.busyAction === 'fast-forward',
       skipAutoClose: true,
       onPress: handlers.fastForward
     },
     {
-      label: t('m.ntik19Q'),
+      label: t('mobileSourceControlActions.rebase'),
       iconKey: 'branch',
       disabled: busy,
       loading: args.busyAction === 'rebase',
@@ -194,14 +240,14 @@ export function buildMobileSourceControlActions(
       onPress: handlers.rebase
     },
     {
-      label: t('m.bOc3nUM'),
+      label: t('mobileSourceControlActions.switch'),
       iconKey: 'branch',
       disabled: busy,
       skipAutoClose: true,
       onPress: handlers.checkout
     },
     {
-      label: t('m.hjs2AB4'),
+      label: t('mobileSourceControlActions.commits'),
       iconKey: 'history',
       disabled: busy,
       onPress: handlers.history

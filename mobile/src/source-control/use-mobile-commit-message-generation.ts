@@ -54,7 +54,9 @@ export function useMobileCommitMessageGeneration(params: Params) {
       // message are skipped and the rejection escapes the void-called handler.
       if (mountedRef.current) {
         triggerError()
-        setActionError(err instanceof Error ? err.message : t('m.h4RNhQ0'))
+        setActionError(
+          err instanceof Error ? err.message : t('useMobileCommitMessageGeneration.failed')
+        )
       }
     } finally {
       if (mountedRef.current) {

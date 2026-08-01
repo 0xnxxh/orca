@@ -80,7 +80,7 @@ function renderInline(text: string, onOpenFile?: (relativePath: string) => void)
     if (image) {
       parts.push(
         <Text key={key} style={styles.link} onPress={() => openMarkdownUrl(image[2]!)}>
-          {image[1] || t('m.oitC92A')}
+          {image[1] || t('mobileMarkdown.image')}
         </Text>
       )
     } else if (link) {
@@ -190,7 +190,7 @@ function MobileMarkdownInner({ content, fallback = '', textScale = 1, onOpenFile
               style={styles.imageFrame}
               onPress={() => openMarkdownUrl(block.url)}
             >
-              <Text style={styles.link}>{block.alt || t('m.fTbhbgg')}</Text>
+              <Text style={styles.link}>{block.alt || t('mobileMarkdown.open')}</Text>
               <Text style={styles.imageCaption} numberOfLines={1}>
                 {block.url}
               </Text>
@@ -223,9 +223,17 @@ function MobileMarkdownInner({ content, fallback = '', textScale = 1, onOpenFile
                 ))}
                 {hiddenRows > 0 || hiddenColumns > 0 ? (
                   <Text style={styles.tableTruncated}>
-                    {hiddenRows > 0 ? t('m.Jmh-3ik', { value0: hiddenRows }) : ''}
+                    {hiddenRows > 0
+                      ? t('mobileMarkdown.hiddenRow', {
+                          hiddenRowCount: hiddenRows
+                        })
+                      : ''}
                     {hiddenRows > 0 && hiddenColumns > 0 ? ' · ' : ''}
-                    {hiddenColumns > 0 ? t('m.kijMg1M', { value0: hiddenColumns }) : ''}
+                    {hiddenColumns > 0
+                      ? t('mobileMarkdown.hiddenColumn', {
+                          hiddenColumnCount: hiddenColumns
+                        })
+                      : ''}
                   </Text>
                 ) : null}
               </View>
@@ -243,7 +251,7 @@ function MobileMarkdownInner({ content, fallback = '', textScale = 1, onOpenFile
                         ? `${itemIndex + 1}.`
                         : '-'
                       : item.checked
-                        ? t('m.ywMqsWY')
+                        ? t('mobileMarkdown.x')
                         : '[ ]'}
                   </Text>
                   <Text style={[styles.listText, listScale]}>

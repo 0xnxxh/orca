@@ -83,7 +83,9 @@ export function MobileSourceControlContent({ state }: Props) {
         // Surface the reconnect state where the user is looking.
         <View style={styles.reconnectBanner}>
           <ActivityIndicator size="small" color={colors.statusAmber} />
-          <Text style={styles.reconnectBannerText}>{t('m.o_TTJDk')}</Text>
+          <Text style={styles.reconnectBannerText}>
+            {t('mobileSourceControlContent.reconnecting')}
+          </Text>
         </View>
       ) : null}
       <View style={hubStyles.changesControls}>
@@ -115,7 +117,7 @@ export function MobileSourceControlContent({ state }: Props) {
             ) : (
               <Plus size={15} color={colors.textPrimary} strokeWidth={2.2} />
             )}
-            <Text style={styles.bulkButtonText}>{t('m.9pCKA8U')}</Text>
+            <Text style={styles.bulkButtonText}>{t('mobileSourceControlContent.stage')}</Text>
           </Pressable>
           <Pressable
             style={({ pressed }) => [
@@ -131,7 +133,7 @@ export function MobileSourceControlContent({ state }: Props) {
             ) : (
               <Minus size={15} color={colors.textPrimary} strokeWidth={2.2} />
             )}
-            <Text style={styles.bulkButtonText}>{t('m.DHXoi2A')}</Text>
+            <Text style={styles.bulkButtonText}>{t('mobileSourceControlContent.unstage')}</Text>
           </Pressable>
           <Pressable
             style={({ pressed }) => [
@@ -142,7 +144,7 @@ export function MobileSourceControlContent({ state }: Props) {
             onPress={() => setShowActionSheet(true)}
             disabled={ioBusy}
             hitSlop={8}
-            accessibilityLabel={t('m.8E6deJU')}
+            accessibilityLabel={t('mobileSourceControlContent.open')}
           >
             <MoreHorizontal size={18} color={colors.textPrimary} strokeWidth={2.1} />
           </Pressable>
@@ -151,8 +153,8 @@ export function MobileSourceControlContent({ state }: Props) {
 
       {!hasVisibleChanges ? (
         <View style={styles.state}>
-          <Text style={styles.stateTitle}>{t('m.89qgAps')}</Text>
-          <Text style={styles.stateText}>{t('m.yKqTr9E')}</Text>
+          <Text style={styles.stateTitle}>{t('mobileSourceControlContent.noLocal')}</Text>
+          <Text style={styles.stateText}>{t('mobileSourceControlContent.working')}</Text>
         </View>
       ) : sections.length === 0 ? (
         // Why: RN SectionList with empty `sections` often skips ListFooterComponent,
@@ -200,16 +202,18 @@ export function MobileSourceControlContent({ state }: Props) {
               style={[styles.commitInput, styles.commitInputDisabled]}
               accessibilityRole="text"
               accessibilityState={{ disabled: true }}
-              accessibilityLabel={t('m.ELJU7AQ')}
+              accessibilityLabel={t('mobileSourceControlContent.commitMessageDisabled')}
             >
-              <Text style={styles.commitInputDisabledText}>{t('m.2X52pxU')}</Text>
+              <Text style={styles.commitInputDisabledText}>
+                {t('mobileSourceControlContent.noStaged')}
+              </Text>
             </View>
           ) : (
             <TextInput
               style={styles.commitInput}
               value={commitMessage}
               onChangeText={setCommitMessage}
-              placeholder={t('m.uTRYt2U')}
+              placeholder={t('mobileSourceControlContent.commitMessage')}
               placeholderTextColor={colors.textMuted}
               editable={busyAction === null && openingPath === null && openingBranchPath === null}
               returnKeyType="done"
@@ -229,7 +233,11 @@ export function MobileSourceControlContent({ state }: Props) {
               onPress={() =>
                 generatingMessage ? cancelGenerateCommitMessage() : void generateCommitMessage()
               }
-              accessibilityLabel={generatingMessage ? t('m.PTohtCY') : t('m.8tFmU9A')}
+              accessibilityLabel={
+                generatingMessage
+                  ? t('mobileSourceControlContent.cancel')
+                  : t('mobileSourceControlContent.generate')
+              }
             >
               {generatingMessage ? (
                 <ActivityIndicator size="small" color={colors.textSecondary} />

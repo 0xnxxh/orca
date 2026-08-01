@@ -75,3 +75,7 @@ void mobileI18n.init({
 export function t(key: string, options?: TOptions): string {
   return mobileI18n.t(key, options)
 }
+
+export function createMobileTranslator(keyPrefix: string) {
+  return (key: string, options?: TOptions): string => t(`${keyPrefix}.${key}`, options)
+}

@@ -32,7 +32,7 @@ export function useTerminalWebReadyWatchdog(
         watchdogRef.current = setTimeout(fire, WEB_READY_WATCHDOG_MS)
         return
       }
-      reportEngineError(t('m.nEDriRI'), true)
+      reportEngineError(t('terminalWebviewReadyWatchdog.terminal'), true)
     }
     watchdogRef.current = setTimeout(fire, WEB_READY_WATCHDOG_MS)
   }, [clearWebReadyWatchdog, isWebReadyRef, reportEngineError])

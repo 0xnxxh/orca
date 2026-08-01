@@ -40,21 +40,24 @@ function HostStack({ animation }: { animation: 'none' | 'default' }) {
         animation
       }}
     >
-      <Stack.Screen name="[hostId]/index" options={{ title: t('m.esqB5TM') }} />
-      <Stack.Screen name="[hostId]/edit" options={{ title: t('m.0zcPPW8') }} />
-      <Stack.Screen name="[hostId]/accounts" options={{ title: t('m.KVY3pfk') }} />
-      <Stack.Screen name="[hostId]/tasks" options={{ title: t('m.YTfV9-o') }} />
-      <Stack.Screen name="[hostId]/session/[worktreeId]" options={{ title: t('m.wtxV_i4') }} />
+      <Stack.Screen name="[hostId]/index" options={{ title: t('accounts.host') }} />
+      <Stack.Screen name="[hostId]/edit" options={{ title: t('layout.edit') }} />
+      <Stack.Screen name="[hostId]/accounts" options={{ title: t('layout.accounts') }} />
+      <Stack.Screen name="[hostId]/tasks" options={{ title: t('layout.tasks') }} />
+      <Stack.Screen
+        name="[hostId]/session/[worktreeId]"
+        options={{ title: t('layout.terminal') }}
+      />
       <Stack.Screen
         name="[hostId]/source-control/[worktreeId]"
-        options={{ title: t('m.MZqxT8s') }}
+        options={{ title: t('layout.source') }}
       />
       <Stack.Screen
         name="[hostId]/agent-history/[worktreeId]"
-        options={{ title: t('m.atubgYk') }}
+        options={{ title: t('layout.agent') }}
       />
-      <Stack.Screen name="[hostId]/review/[worktreeId]" options={{ title: t('m.AcEIxcI') }} />
-      <Stack.Screen name="[hostId]/pr/[worktreeId]" options={{ title: t('m.fO2nz88') }} />
+      <Stack.Screen name="[hostId]/review/[worktreeId]" options={{ title: t('layout.changes') }} />
+      <Stack.Screen name="[hostId]/pr/[worktreeId]" options={{ title: t('task.pullRequest') }} />
     </Stack>
   )
 }

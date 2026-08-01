@@ -47,13 +47,13 @@ export default function AboutScreen() {
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <ChevronLeft size={22} color={colors.textSecondary} />
         </Pressable>
-        <Text style={styles.heading}>{t('m.qBqOdtg')}</Text>
+        <Text style={styles.heading}>{t('about.about')}</Text>
       </View>
 
       <View style={styles.brand}>
         <OrcaLogo size={28} />
-        <Text style={styles.brandName}>{t('m.o1zkACA')}</Text>
-        <Text style={styles.brandSub}>{t('m.wRf8z4A')}</Text>
+        <Text style={styles.brandName}>{t('about.orca')}</Text>
+        <Text style={styles.brandSub}>{t('about.open')}</Text>
       </View>
 
       <View style={styles.section}>
@@ -62,7 +62,7 @@ export default function AboutScreen() {
           onPress={() => void Linking.openURL('https://onOrca.dev')}
         >
           <Globe size={16} color={colors.textSecondary} />
-          <Text style={styles.rowValue}>{t('m.1sjQKuE')}</Text>
+          <Text style={styles.rowValue}>{t('about.orcaDev')}</Text>
         </Pressable>
         <View style={styles.separator} />
         <Pressable
@@ -70,7 +70,7 @@ export default function AboutScreen() {
           onPress={() => void Linking.openURL('https://github.com/stablyai/orca')}
         >
           <GithubIcon />
-          <Text style={styles.rowValue}>{t('m.qfIlnqY')}</Text>
+          <Text style={styles.rowValue}>{t('about.stablyai')}</Text>
         </Pressable>
         <View style={styles.separator} />
         <Pressable
@@ -78,7 +78,7 @@ export default function AboutScreen() {
           onPress={() => void Linking.openURL('https://x.com/orca_build')}
         >
           <XIcon />
-          <Text style={styles.rowValue}>{t('m.pBOdX2k')}</Text>
+          <Text style={styles.rowValue}>{t('about.orcaBuild')}</Text>
         </Pressable>
       </View>
 

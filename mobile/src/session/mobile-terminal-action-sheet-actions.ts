@@ -46,7 +46,9 @@ export function getMobileTerminalActionSheetActions<
       onToggle: args.onToggleChat
     }),
     {
-      label: phoneMode ? t('m.0XbzIAs') : t('m.502R_mE'),
+      label: phoneMode
+        ? t('mobileTerminalActionSheetActions.switchDesktop')
+        : t('mobileTerminalActionSheetActions.switchPhone'),
       icon: phoneMode ? Monitor : Smartphone,
       onPress: () => {
         args.onDismiss()
@@ -54,14 +56,14 @@ export function getMobileTerminalActionSheetActions<
       }
     },
     {
-      label: t('m.2wFDKaY'),
+      label: t('mobileTerminalActionSheetActions.rename'),
       closeBeforePress: true,
       onPress: () => {
         args.onRename(target)
       }
     },
     {
-      label: t('m.5s4VNsw'),
+      label: t('mobileTerminalActionSheetActions.clear'),
       icon: Eraser,
       onPress: () => {
         args.onDismiss()
@@ -69,7 +71,7 @@ export function getMobileTerminalActionSheetActions<
       }
     },
     {
-      label: t('m.k32XW6w'),
+      label: t('mobileTerminalActionSheetActions.close'),
       destructive: true,
       onPress: () => {
         args.onDismiss()

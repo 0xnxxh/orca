@@ -68,9 +68,9 @@ export function PRCommentComposer({
             onPress={onCancel}
             disabled={submitting}
             accessibilityRole="button"
-            accessibilityLabel={t('m.EXMnl_4')}
+            accessibilityLabel={t('prcommentComposer.cancel')}
           >
-            <Text style={styles.cancelText}>{t('m.EXMnl_4')}</Text>
+            <Text style={styles.cancelText}>{t('prcommentComposer.cancel')}</Text>
           </Pressable>
         ) : null}
         <Pressable

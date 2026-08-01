@@ -28,8 +28,8 @@ export function MobileSessionHeaderMoreActionsSheet({
         ...(showAgentSessionHistory
           ? [
               {
-                label: t('m.6R8BWsw'),
-                hint: t('m.z4-dCLM'),
+                label: t('mobileSessionHeaderMoreActionsSheet.agent'),
+                hint: t('mobileSessionHeaderMoreActionsSheet.browse'),
                 renderIcon: () => (
                   <MobileAgentSessionHistoryIcon
                     size={16}
@@ -44,8 +44,8 @@ export function MobileSessionHeaderMoreActionsSheet({
         ...(showChecks
           ? [
               {
-                label: t('m.u8wilUo'),
-                hint: t('m.ziWbd9A'),
+                label: t('mobileSessionHeaderMoreActionsSheet.checks'),
+                hint: t('mobileSessionHeaderMoreActionsSheet.open'),
                 icon: ListChecks,
                 onPress: onOpenChecks
               }

@@ -20,13 +20,13 @@ export default function BrowserSettingsScreen(): React.JSX.Element {
   const linkModeOptions: PickerOption<MobileTerminalLinkOpenMode>[] = [
     {
       value: 'orca-browser',
-      label: t('m.OcnHGtE'),
-      subtitle: t('m.Z49nZqQ')
+      label: t('browserSettings.orca'),
+      subtitle: t('browserSettings.openStreamed')
     },
     {
       value: 'phone-browser',
-      label: t('m.hIo6XgE'),
-      subtitle: t('m.Wj6QRnE')
+      label: t('browserSettings.phone'),
+      subtitle: t('browserSettings.openSafari')
     }
   ]
   const linkModeLabel =
@@ -47,12 +47,12 @@ export default function BrowserSettingsScreen(): React.JSX.Element {
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <ChevronLeft size={22} color={colors.textSecondary} />
         </Pressable>
-        <Text style={styles.heading}>{t('m.GJwMNak')}</Text>
+        <Text style={styles.heading}>{t('browserSettings.browser')}</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <Text style={styles.groupHeading}>{t('m.gh7VaTc')}</Text>
-        <Text style={styles.groupDescription}>{t('m.K6VU-6c')}</Text>
+        <Text style={styles.groupHeading}>{t('browserSettings.links')}</Text>
+        <Text style={styles.groupDescription}>{t('browserSettings.choose')}</Text>
         <View style={[styles.section, styles.sectionTopGap]}>
           <Pressable
             style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
@@ -60,7 +60,7 @@ export default function BrowserSettingsScreen(): React.JSX.Element {
           >
             <Globe size={16} color={colors.textSecondary} />
             <View style={styles.rowContent}>
-              <Text style={styles.rowLabel}>{t('m.wdyLCXU')}</Text>
+              <Text style={styles.rowLabel}>{t('browserSettings.openTerminal')}</Text>
               <Text style={styles.rowSublabel}>{linkModeLabel}</Text>
             </View>
             <ChevronRight size={16} color={colors.textMuted} />
@@ -70,7 +70,7 @@ export default function BrowserSettingsScreen(): React.JSX.Element {
 
       <PickerModal<MobileTerminalLinkOpenMode>
         visible={pickerOpen}
-        title={t('m.wdyLCXU')}
+        title={t('browserSettings.openTerminal')}
         options={linkModeOptions}
         selected={linkMode}
         onSelect={selectLinkMode}

@@ -54,12 +54,24 @@ export async function loadMobileDiffReviewBranchCompare(
       if (isMobileGitUnavailable(response.error?.code, response.error?.message)) {
         return { result: null }
       }
-      return { result: null, error: response.error?.message || t('m.nKp2Mj0') }
+      return {
+        result: null,
+        error: response.error?.message || t('mobileDiffReviewLoaders.committedChangesUnavailable')
+      }
     }
     const parsed = readMobileBranchCompareResult(response.result)
-    return parsed ? { result: parsed } : { result: null, error: t('m.RSAKe4M') }
+    return parsed
+      ? { result: parsed }
+      : {
+          result: null,
+          error: t('mobileDiffReviewLoaders.committedChangesResponse')
+        }
   } catch (err) {
-    return { result: null, error: err instanceof Error ? err.message : t('m.aLzpW3w') }
+    return {
+      result: null,
+      error:
+        err instanceof Error ? err.message : t('mobileDiffReviewLoaders.committedChangesFailed')
+    }
   }
 }
 
@@ -70,13 +82,16 @@ export async function loadMobileDiffReviewSnapshot(
   const statusResponse = await client.sendRequest('git.status', { worktree: `id:${worktreeId}` })
   if (!statusResponse.ok) {
     if (isMobileGitUnavailable(statusResponse.error?.code, statusResponse.error?.message)) {
-      return { kind: 'unavailable', message: t('m.9OSp60k') }
+      return {
+        kind: 'unavailable',
+        message: t('mobileDiffReviewLoaders.update')
+      }
     }
-    throw new Error(statusResponse.error?.message || t('m.9Z6xNzo'))
+    throw new Error(statusResponse.error?.message || t('mobileDiffReviewLoaders.unableLoadChanges'))
   }
   const status = readMobileGitStatusResult(statusResponse.result)
   if (!status) {
-    throw new Error(t('m.EgST0cw'))
+    throw new Error(t('mobileDiffReviewLoaders.source'))
   }
 
   const [branch, worktreeResponse] = await Promise.all([
@@ -84,7 +99,9 @@ export async function loadMobileDiffReviewSnapshot(
     client.sendRequest('worktree.show', { worktree: `id:${worktreeId}` })
   ])
   if (!worktreeResponse.ok) {
-    throw new Error(worktreeResponse.error?.message || t('m.1eue8fY'))
+    throw new Error(
+      worktreeResponse.error?.message || t('mobileDiffReviewLoaders.unableLoadReview')
+    )
   }
 
   const metadata = readMobileReviewWorktreeMetadata(worktreeResponse.result)
@@ -132,11 +149,11 @@ export async function loadMobileDiffReviewDiff(input: DiffLoadInput): Promise<Re
     if (item.status === 'deleted') {
       return { kind: 'deleted', itemKey: item.key }
     }
-    throw new Error(response.error?.message || t('m.47q1BdE'))
+    throw new Error(response.error?.message || t('mobileDiffReviewLoaders.unableLoadDiff'))
   }
   const result = readMobileReviewGitDiffResult(response.result)
   if (!result) {
-    throw new Error(t('m.qK2AOt0'))
+    throw new Error(t('mobileDiffReviewLoaders.diff'))
   }
   if (result.kind === 'binary') {
     return { kind: 'binary', itemKey: item.key }
@@ -163,7 +180,7 @@ async function loadBranchFileDiff(
 ) {
   const summary = branchCompare?.summary
   if (!summary || !summary.headOid || !summary.mergeBase) {
-    throw new Error(t('m.u_SAyGc'))
+    throw new Error(t('mobileDiffReviewLoaders.committedDiff'))
   }
   return client.sendRequest('git.branchDiff', {
     worktree: `id:${worktreeId}`,

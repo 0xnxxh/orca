@@ -16,7 +16,7 @@ export function mobileNativeChatEmptyState(
   agent: string | null,
   error?: string
 ): NativeChatEmptyStateCopy | null {
-  const agentLabel = agent ? formatAgentTypeLabel(agent) : t('m.57DUHqU')
+  const agentLabel = agent ? formatAgentTypeLabel(agent) : t('mobileNativeChatRenderData.agent')
   switch (status) {
     // A live agent with no transcript yet — and a loaded-but-empty transcript —
     // are both "start a chat"; invite the first message instead of implying the

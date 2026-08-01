@@ -137,10 +137,31 @@ import {
   resolveVisibleTaskProvider,
   type TaskProvider
 } from '../../../src/tasks/mobile-task-providers'
-import {
-  extractLinearIssueReadItems,
-  type LinearMobileIssue
-} from '../../../src/tasks/linear-mobile-issue-read'
+import { extractLinearIssueReadItems } from '../../../src/tasks/linear-mobile-issue-read'
+import type {
+  DetailComment,
+  DetailPayload,
+  GitHubAssignableUser,
+  GitHubDetailCheck,
+  GitHubDetailFile,
+  GitHubPRFileContents,
+  GitHubPRReviewerRow,
+  GitHubPRReviewSummary,
+  GitHubRepoSources,
+  GitHubWorkItem,
+  GitLabTodo,
+  GitLabWorkItem,
+  GitPushTarget,
+  LinearIssue,
+  LinearIssueChild,
+  LinearState,
+  LinearTeam,
+  RepoHooksResponse,
+  RepoSummary,
+  SetupDecision,
+  TaskRuntimeStatus,
+  TasksSupportState
+} from '../../../src/tasks/mobile-tasks-screen-types'
 import { MOBILE_TUI_AGENT_AUTO_PICK_ORDER } from '../../../src/tasks/mobile-tui-agents'
 import { resolveComposerBranchSelection } from '../../../src/tasks/mobile-composer-branch-selection'
 import {
@@ -150,7 +171,6 @@ import {
 import type {
   BaseRefSearchResult,
   GitHubOwnerRepo,
-  ProviderCheckSummary,
   PersistedTrustedOrcaHooks,
   SparsePreset,
   TuiAgent
@@ -161,253 +181,9 @@ import {
   githubProjectHost,
   githubProjectIdentityKey as githubProjectKey
 } from '../../../../src/shared/github-project-identity'
-import { t } from '@/i18n/mobile-i18n'
+import { createMobileTranslator, t } from '@/i18n/mobile-i18n'
 
-type RepoSummary = {
-  id: string
-  displayName: string
-  path: string
-  badgeColor?: string
-  kind?: 'git' | 'folder'
-  connectionId?: string | null
-  issueSourcePreference?: IssueSourcePreference
-}
-
-type IssueSourcePreference = 'upstream' | 'origin' | 'auto'
-
-type GitHubWorkItem = {
-  id: string
-  type: 'issue' | 'pr'
-  number: number
-  title: string
-  state: 'open' | 'closed' | 'merged' | 'draft'
-  url: string
-  labels: string[]
-  updatedAt: string
-  author: string | null
-  branchName?: string
-  baseRefName?: string
-  isCrossRepository?: boolean
-  additions?: number
-  deletions?: number
-  changedFiles?: number
-  repoId: string
-  repoName: string
-  reviewDecision?: string | null
-  reviewRequests?: GitHubAssignableUser[]
-  latestReviews?: GitHubPRReviewSummary[]
-  checksSummary?: ProviderCheckSummary
-  mergeable?: GitHubPRMergeableState
-  mergeStateStatus?: string | null
-}
-type GitHubAssignableUser = {
-  login: string
-  name?: string | null
-  avatarUrl?: string | null
-}
-type GitHubPRReviewSummary = {
-  login: string
-  state?: string | null
-  avatarUrl?: string | null
-}
-type GitHubPRMergeableState = 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
-
-type GitHubPRReviewerRow = {
-  login: string
-  name?: string | null
-  avatarUrl?: string | null
-  stateLabel: string
-}
-type GitHubRepoSources = {
-  issues: GitHubOwnerRepo | null
-  prs: GitHubOwnerRepo | null
-  upstreamCandidate: GitHubOwnerRepo | null
-}
-type TaskRuntimeStatus = {
-  capabilities?: string[]
-}
-
-type TasksSupportState =
-  | { kind: 'unknown'; client: RpcClient | null }
-  | { kind: 'supported'; client: RpcClient }
-  | { kind: 'unsupported'; client: RpcClient }
-type GitLabWorkItem = {
-  id: string
-  type: 'issue' | 'mr'
-  number: number
-  title: string
-  state: 'opened' | 'closed' | 'merged' | 'locked' | 'draft'
-  url: string
-  labels: string[]
-  updatedAt: string
-  author: string | null
-  branchName?: string
-  baseRefName?: string
-  isCrossRepository?: boolean
-  projectRef?: { host: string; path: string }
-  checksSummary?: ProviderCheckSummary
-  mergeable?: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
-  reviewDecision?: HostedReviewDecision
-  reviewerCount?: number
-  repoId: string
-  repoName: string
-}
-
-type GitLabTodo = {
-  id: number
-  actionName: string
-  targetType: string
-  targetIid: number | null
-  targetTitle: string
-  targetUrl: string
-  projectPath: string
-  authorUsername: string
-  updatedAt: string
-  state: 'pending' | 'done'
-}
-
-type GitPushTarget = {
-  remoteName: string
-  branchName: string
-  remoteUrl?: string
-}
-
-type SetupDecision = 'inherit' | 'run' | 'skip'
-type SetupRunPolicy = 'ask' | 'run-by-default' | 'skip-by-default'
-
-type RepoHooksResponse = {
-  hooks: { scripts?: { setup?: string } } | null
-  source: string | null
-  setupRunPolicy?: SetupRunPolicy
-  setupTrust?: {
-    contentHash: string
-    scriptContent: string
-  }
-}
-
-type LinearProject = {
-  id: string
-  name: string
-  url?: string
-  color?: string
-}
-
-type LinearIssueChild = {
-  id: string
-  identifier: string
-  title: string
-  url: string
-}
-
-type LinearIssue = LinearMobileIssue
-
-type LinearState = {
-  id: string
-  name: string
-  type: string
-  color?: string
-}
-
-type LinearTeam = {
-  id: string
-  workspaceId?: string
-  workspaceName?: string
-  name: string
-  key: string
-}
-
-type DetailComment = {
-  id: string | number
-  author?: string
-  authorAvatarUrl?: string
-  user?: { displayName?: string }
-  isBot?: boolean
-  body: string
-  createdAt?: string
-  url?: string
-  reactions?: Array<{
-    content:
-      | 'thumbs_up'
-      | 'thumbs_down'
-      | 'laugh'
-      | 'confused'
-      | 'heart'
-      | 'hooray'
-      | 'rocket'
-      | 'eyes'
-    count: number
-  }>
-  path?: string
-  line?: number
-  startLine?: number
-  threadId?: string
-  isResolved?: boolean
-}
-
-type GitHubDetailFile = {
-  path: string
-  oldPath?: string
-  status?: 'added' | 'modified' | 'removed' | 'renamed' | 'copied' | 'changed' | 'unchanged'
-  additions?: number
-  deletions?: number
-  isBinary?: boolean
-  viewerViewedState?: 'DISMISSED' | 'VIEWED' | 'UNVIEWED'
-}
-
-type GitHubDetailCheck = {
-  name: string
-  status: string
-  conclusion?: string | null
-  url?: string | null
-}
-
-type GitHubPRFileContents = {
-  original: string
-  modified: string
-  originalIsBinary: boolean
-  modifiedIsBinary: boolean
-}
-
-type DetailPayload =
-  | {
-      provider: 'github'
-      body: string
-      comments: DetailComment[]
-      labels: string[]
-      assignees: string[]
-      reviewDecision?: string | null
-      reviewRequests: GitHubAssignableUser[]
-      latestReviews: GitHubPRReviewSummary[]
-      headSha?: string
-      baseSha?: string
-      pullRequestId?: string
-      checks: GitHubDetailCheck[]
-      files: GitHubDetailFile[]
-    }
-  | {
-      provider: 'gitlab'
-      body: string
-      comments: DetailComment[]
-      labels: string[]
-      assignees: string[]
-      pipelineJobs: Array<{
-        id?: number
-        name: string
-        stage: string
-        status: string
-        webUrl?: string | null
-        duration?: number | null
-      }>
-    }
-  | {
-      provider: 'linear'
-      description: string
-      comments: DetailComment[]
-      labels: string[]
-      assignee?: string
-      project?: LinearProject
-      children: LinearIssueChild[]
-    }
+const tr = createMobileTranslator('task')
 
 type GitHubTaskKind = 'issues' | 'prs'
 type GitHubMode = GitHubTaskKind | 'project'
@@ -686,8 +462,8 @@ type TaskListEntry =
 const getProviderOptions = (): PickerOption<TaskProvider>[] => [
   {
     value: 'github',
-    label: t('m.gcczsRA'),
-    subtitle: t('m.monYp5Q'),
+    label: tr('gitHub'),
+    subtitle: tr('issuesPull'),
     renderIcon: (selected) => (
       <TaskProviderLogo
         provider="github"
@@ -698,8 +474,8 @@ const getProviderOptions = (): PickerOption<TaskProvider>[] => [
   },
   {
     value: 'gitlab',
-    label: t('m.BaXOO9M'),
-    subtitle: t('m.cBPoyj8'),
+    label: tr('gitLab'),
+    subtitle: tr('issuesMerge'),
     renderIcon: (selected) => (
       <TaskProviderLogo
         provider="gitlab"
@@ -710,8 +486,8 @@ const getProviderOptions = (): PickerOption<TaskProvider>[] => [
   },
   {
     value: 'linear',
-    label: t('m.R_7ye6M'),
-    subtitle: t('m.L9I1oLA'),
+    label: tr('linear'),
+    subtitle: tr('assignedTeam'),
     renderIcon: (selected) => (
       <TaskProviderLogo
         provider="linear"
@@ -723,22 +499,62 @@ const getProviderOptions = (): PickerOption<TaskProvider>[] => [
 ]
 
 const getGitLabFilterOptions = (): PickerOption<GitLabFilter>[] => [
-  { value: 'opened', label: t('m.czxJ7iQ'), subtitle: t('m.Dm3BEDs') },
-  { value: 'merged', label: t('m.GtruncU'), subtitle: t('m.fM4vagY') },
-  { value: 'closed', label: t('m.BpviSSw'), subtitle: t('m.m5Y69Pc') },
-  { value: 'all', label: t('m.gIF8518'), subtitle: t('m.Svu67QM') }
+  {
+    value: 'opened',
+    label: tr('open'),
+    subtitle: tr('openIssuesMerge')
+  },
+  {
+    value: 'merged',
+    label: tr('merged'),
+    subtitle: tr('mergedMerge')
+  },
+  {
+    value: 'closed',
+    label: tr('closed'),
+    subtitle: tr('closedIssues')
+  },
+  {
+    value: 'all',
+    label: tr('all'),
+    subtitle: tr('any')
+  }
 ]
 
 const getLinearFilterOptions = (): PickerOption<LinearFilter>[] => [
-  { value: 'all', label: t('m.gIF8518'), subtitle: t('m._kT7uQE') },
-  { value: 'assigned', label: t('m.pP-07nE'), subtitle: t('m.eNsBySI') },
-  { value: 'created', label: t('m.o_j-FoE'), subtitle: t('m.kRDldqg') },
-  { value: 'completed', label: t('m.HauqL5Y'), subtitle: t('m.CW8el5g') }
+  {
+    value: 'all',
+    label: tr('all'),
+    subtitle: tr('openIssuesAcross')
+  },
+  {
+    value: 'assigned',
+    label: tr('myIssues'),
+    subtitle: tr('issuesAssigned')
+  },
+  {
+    value: 'created',
+    label: tr('created'),
+    subtitle: tr('issuesCreated')
+  },
+  {
+    value: 'completed',
+    label: tr('completed'),
+    subtitle: tr('recently')
+  }
 ]
 
 const getLinearViewOptions = (): PickerOption<LinearViewMode>[] => [
-  { value: 'list', label: t('m.tIgX1ak'), subtitle: t('m.6GAUUa8') },
-  { value: 'board', label: t('m.uoATjeA'), subtitle: t('m.JKx6Gd0') }
+  {
+    value: 'list',
+    label: tr('list'),
+    subtitle: tr('compact')
+  },
+  {
+    value: 'board',
+    label: tr('board'),
+    subtitle: tr('grouped')
+  }
 ]
 
 function taskWorkspaceFallback(item: ActionableTaskItem): string {
@@ -767,26 +583,26 @@ const COMMENT_REACTION_EMOJI: Record<
 }
 
 const getLinearGroupOptions = (): PickerOption<LinearGroupBy>[] => [
-  { value: 'none', label: t('m.Dd-TzXA') },
-  { value: 'status', label: t('m.Fa6K7yI') },
-  { value: 'assignee', label: t('m.b3RSkG0') },
-  { value: 'priority', label: t('m.ISISlFo') },
-  { value: 'team', label: t('m.czBdX7w') }
+  { value: 'none', label: tr('noGrouping') },
+  { value: 'status', label: tr('status') },
+  { value: 'assignee', label: tr('assignee') },
+  { value: 'priority', label: tr('priority') },
+  { value: 'team', label: tr('team') }
 ]
 
 const getLinearOrderOptions = (): PickerOption<LinearOrderBy>[] => [
-  { value: 'priority', label: t('m.ISISlFo') },
-  { value: 'updated', label: t('m.43utnp4') },
-  { value: 'identifier', label: t('m.kpxCp5s') }
+  { value: 'priority', label: tr('priority') },
+  { value: 'updated', label: tr('updated') },
+  { value: 'identifier', label: tr('identifier') }
 ]
 
 const getLinearDisplayOptions = (): PickerOption<LinearDisplayProperty>[] => [
-  { value: 'state', label: t('m.Fa6K7yI') },
-  { value: 'priority', label: t('m.ISISlFo') },
-  { value: 'assignee', label: t('m.b3RSkG0') },
-  { value: 'team', label: t('m.czBdX7w') },
-  { value: 'labels', label: t('m.GhHLbBA') },
-  { value: 'updated', label: t('m.43utnp4') }
+  { value: 'state', label: tr('status') },
+  { value: 'priority', label: tr('priority') },
+  { value: 'assignee', label: tr('assignee') },
+  { value: 'team', label: tr('team') },
+  { value: 'labels', label: tr('labels') },
+  { value: 'updated', label: tr('updated') }
 ]
 
 const DEFAULT_LINEAR_DISPLAY_PROPERTIES: LinearDisplayProperty[] = [
@@ -799,33 +615,77 @@ const DEFAULT_LINEAR_DISPLAY_PROPERTIES: LinearDisplayProperty[] = [
 ]
 
 const getGitHubKindOptions = (): PickerOption<GitHubMode>[] => [
-  { value: 'issues', label: t('m.41d4YcM'), subtitle: t('m.PAK8mwc') },
-  { value: 'prs', label: t('m.Xj-3fdg'), subtitle: t('m.RU009FY') },
-  { value: 'project', label: t('m.LB-QyhM'), subtitle: t('m.QNj7rUo') }
+  {
+    value: 'issues',
+    label: tr('issues'),
+    subtitle: tr('gitHubIssues')
+  },
+  {
+    value: 'prs',
+    label: tr('prs'),
+    subtitle: tr('gitHubPull')
+  },
+  {
+    value: 'project',
+    label: tr('projects'),
+    subtitle: tr('gitHubProjectsViews')
+  }
 ]
 
 const getIssuePresets = (): PickerOption<GitHubPreset>[] => [
-  { value: 'issues', label: t('m.czxJ7iQ'), subtitle: t('m.4HZ7SXw') },
-  { value: 'my-issues', label: t('m.NeeUliY'), subtitle: t('m.90lx_rw') }
+  {
+    value: 'issues',
+    label: tr('open'),
+    subtitle: tr('openGitHubIssues')
+  },
+  {
+    value: 'my-issues',
+    label: tr('assignedMe'),
+    subtitle: tr('openIssuesAssigned')
+  }
 ]
 
 const getPRPresets = (): PickerOption<GitHubPreset>[] => [
-  { value: 'prs', label: t('m.czxJ7iQ'), subtitle: t('m.4q-Iqts') },
-  { value: 'my-prs', label: t('m.DitaVA4'), subtitle: t('m.Qcb2h_k') },
-  { value: 'review', label: t('m.ox2Q3X4'), subtitle: t('m.Vejw8iE') }
+  {
+    value: 'prs',
+    label: tr('open'),
+    subtitle: tr('openPull')
+  },
+  {
+    value: 'my-prs',
+    label: tr('mine'),
+    subtitle: tr('pullRequestsAuthored')
+  },
+  {
+    value: 'review',
+    label: tr('needs'),
+    subtitle: tr('reviewRequests')
+  }
 ]
 
 const getGitLabViewOptions = (): PickerOption<GitLabView>[] => [
-  { value: 'project', label: t('m.fxhXe98'), subtitle: t('m.CNrYYPU') },
-  { value: 'todos', label: t('m.uLI9QAU'), subtitle: t('m.ncl7fEY') }
+  {
+    value: 'project',
+    label: tr('projectMrs'),
+    subtitle: tr('mergeRequests')
+  },
+  {
+    value: 'todos',
+    label: tr('myTodos'),
+    subtitle: tr('pending')
+  }
 ]
 
 const getSortOptions = (): PickerOption<TaskSort>[] => [
-  { value: 'updated', label: t('m.43utnp4'), subtitle: t('m.45bce5E') },
+  {
+    value: 'updated',
+    label: tr('updated'),
+    subtitle: tr('newest')
+  },
   {
     value: 'repository',
-    label: t('m.RBS8OI4'),
-    subtitle: t('m._96Solc')
+    label: tr('repository'),
+    subtitle: tr('groupRepository')
   }
 ]
 
@@ -987,21 +847,21 @@ function githubProjectOptionColor(color: string | null | undefined): string {
 
 function projectRowStatusLabel(row: GitHubProjectRow): string {
   if (row.itemType === 'DRAFT_ISSUE') {
-    return t('m.1WEmdBA')
+    return tr('draft')
   }
   if (row.itemType === 'REDACTED') {
-    return t('m.BbDPGbM')
+    return tr('redacted')
   }
   if (row.content.isDraft) {
-    return t('m.1WEmdBA')
+    return tr('draft')
   }
   if (row.content.state === 'MERGED') {
-    return t('m.GtruncU')
+    return tr('merged')
   }
   if (row.content.state === 'CLOSED') {
-    return t('m.BpviSSw')
+    return tr('closed')
   }
-  return t('m.czxJ7iQ')
+  return tr('open')
 }
 
 function scopeGitHubTaskSearch(query: string, kind: GitHubTaskKind): string {
@@ -1017,12 +877,12 @@ function scopeGitHubTaskSearch(query: string, kind: GitHubTaskKind): string {
 
 function gitHubStatusLabel(item: GitHubWorkItem): string {
   if (item.state === 'merged') {
-    return t('m.GtruncU')
+    return tr('merged')
   }
   if (item.state === 'draft') {
-    return t('m.1WEmdBA')
+    return tr('draft')
   }
-  return item.state === 'closed' ? t('m.BpviSSw') : t('m.czxJ7iQ')
+  return item.state === 'closed' ? tr('closed') : tr('open')
 }
 
 function gitHubTaskSubtitle(item: GitHubWorkItem): string {
@@ -1044,15 +904,15 @@ function createGitHubTask(repo: RepoSummary, item: Omit<GitHubWorkItem, 'repoId'
 
 function gitLabStatusLabel(item: GitLabWorkItem): string {
   if (item.state === 'opened') {
-    return t('m.czxJ7iQ')
+    return tr('open')
   }
   if (item.state === 'merged') {
-    return t('m.GtruncU')
+    return tr('merged')
   }
   if (item.state === 'draft') {
-    return t('m.1WEmdBA')
+    return tr('draft')
   }
-  return item.state === 'closed' ? t('m.BpviSSw') : t('m.kjZMz_U')
+  return item.state === 'closed' ? tr('closed') : tr('locked')
 }
 
 function createGitLabTask(repo: RepoSummary, item: Omit<GitLabWorkItem, 'repoId' | 'repoName'>) {
@@ -1070,12 +930,12 @@ function createGitLabTask(repo: RepoSummary, item: Omit<GitLabWorkItem, 'repoId'
 
 function gitLabTodoTargetLabel(todo: Pick<GitLabTodo, 'targetType'>): string {
   if (todo.targetType === 'MergeRequest') {
-    return t('m.mYLUh0s')
+    return tr('mergeRequest')
   }
   if (todo.targetType === 'Issue') {
-    return t('m.xcg6mvE')
+    return tr('issue')
   }
-  return t('m.pmjWIDk')
+  return tr('gitLabTodo')
 }
 
 function gitLabTodoTargetRef(todo: Pick<GitLabTodo, 'targetType' | 'targetIid'>): string {
@@ -1152,11 +1012,11 @@ function createLinearTask(issue: LinearIssue): TaskItem {
 
 function getLinearPriorityLabel(priority: number): string {
   const labels: Record<number, string> = {
-    0: t('m.pzBhZI4'),
-    1: t('m.e3kayEE'),
-    2: t('m._pcc0Zw'),
-    3: t('m.7LgwgJM'),
-    4: t('m.xPjEgDM')
+    0: tr('none'),
+    1: tr('urgent'),
+    2: tr('high'),
+    3: tr('medium'),
+    4: tr('low')
   }
   return labels[priority] ?? `P${priority}`
 }
@@ -1179,7 +1039,7 @@ function getGitHubReviewerRows(item: {
       login,
       name: user.name,
       avatarUrl: user.avatarUrl,
-      stateLabel: t('m.7RncVJk')
+      stateLabel: tr('requested')
     })
   }
   for (const review of item.latestReviews ?? []) {
@@ -1204,14 +1064,14 @@ function getGitHubReviewSummary(item: {
   latestReviews?: GitHubPRReviewSummary[]
 }): string {
   if (item.reviewDecision === 'APPROVED') {
-    return t('m.O3Knlx4')
+    return tr('approved')
   }
   if (item.reviewDecision === 'CHANGES_REQUESTED') {
-    return t('m.yMw_C-k')
+    return tr('changes')
   }
   const rows = getGitHubReviewerRows(item)
   if (rows.length === 0) {
-    return t('m.zrt1n24')
+    return tr('noReviewers')
   }
   if (rows.length === 1) {
     return `${rows[0]!.login} - ${rows[0]!.stateLabel}`
@@ -1223,13 +1083,13 @@ function hostedBranchSummary(item: TaskItem): { head: string; base: string } | n
   if (item.provider === 'github' && item.source.type === 'pr') {
     return {
       head: item.source.branchName?.trim() || t('review.branch.unknownHead'),
-      base: item.source.baseRefName?.trim() || t('m.RIaVSo8')
+      base: item.source.baseRefName?.trim() || tr('base')
     }
   }
   if (item.provider === 'gitlab' && item.source.type === 'mr') {
     return {
       head: item.source.branchName?.trim() || t('review.branch.unknownHead'),
-      base: item.source.baseRefName?.trim() || t('m.RIaVSo8')
+      base: item.source.baseRefName?.trim() || tr('base')
     }
   }
   return null
@@ -1237,49 +1097,52 @@ function hostedBranchSummary(item: TaskItem): { head: string; base: string } | n
 
 function getGitHubMergeLabel(item: GitHubWorkItem): string {
   if (item.mergeable === undefined && item.mergeStateStatus === undefined) {
-    return t('m.AXgAxVM')
+    return tr('merge')
   }
   if (item.state === 'merged') {
-    return t('m.GtruncU')
+    return tr('merged')
   }
   if (item.state === 'closed') {
-    return t('m.BpviSSw')
+    return tr('closed')
   }
   if (item.mergeable === 'CONFLICTING') {
-    return t('m.hIW5XEU')
+    return tr('conflicts')
   }
   if (item.mergeStateStatus === 'BEHIND') {
-    return t('m.OXTehpM')
+    return tr('behind')
   }
   if (item.mergeStateStatus === 'BLOCKED') {
-    return t('m.YEiNYxU')
+    return tr('blocked')
   }
   if (item.mergeable === 'MERGEABLE' || item.mergeStateStatus === 'CLEAN') {
-    return t('m.cbIMuqY')
+    return tr('able')
   }
-  return t('m.6MEByr4')
+  return tr('unknown')
 }
 
 function getHostedReviewMergeMethodLabel(method: HostedReviewMergeMethod): string {
   if (method === 'squash') {
-    return t('m.1Shau08')
+    return tr('squashMerge')
   }
   if (method === 'rebase') {
-    return t('m.b9yLdBs')
+    return tr('rebaseMerge')
   }
-  return t('m.PAnLDcM')
+  return tr('createMerge')
 }
 
 function hostedReviewMergeTargetLabel(item: HostedReviewItem): string {
-  return item.provider === 'gitlab' ? t('m.xLFr_Co') : t('m.psZ6Lys')
+  return item.provider === 'gitlab' ? tr('mergeRequestMessage') : tr('pr')
 }
 
 function getHostedMergeConfirmMessage(pending: PendingHostedMerge): string {
   const target = hostedReviewMergeTargetLabel(pending.item)
   if (pending.method === 'squash') {
-    return t('m.dTuoCp0', { value0: target, value1: pending.item.source.number })
+    return tr('squashMergeConfirmation', {
+      reviewType: target,
+      pullRequestNumber: pending.item.source.number
+    })
   }
-  const action = pending.method === 'rebase' ? t('m.b9yLdBs') : t('m.AXgAxVM')
+  const action = pending.method === 'rebase' ? tr('rebaseMerge') : tr('merge')
   return t('hostedReview.mergeConfirm', {
     action,
     target,
@@ -1290,15 +1153,15 @@ function getHostedMergeConfirmMessage(pending: PendingHostedMerge): string {
 function getProjectGitHubMergeConfirmMessage(pending: PendingProjectGitHubMerge): string {
   const number = pending.row.content.number
   if (pending.method === 'squash') {
-    return t('m.LCOEY5w', { value0: number })
+    return tr('squashMergePr', { pullRequestNumber: number })
   }
   return pending.method === 'rebase'
-    ? t('m.X5VvyPQ', { value0: number })
-    : t('m.cAXZUp4', { value0: number })
+    ? tr('rebaseMergePr', { pullRequestNumber: number })
+    : tr('mergePr', { pullRequestNumber: number })
 }
 
 function hostedStateChangeAction(nextState: PendingHostedStateChange['nextState']): string {
-  return nextState === 'closed' ? t('m.gL1buuY') : t('m.zRLzboM')
+  return nextState === 'closed' ? tr('close') : tr('reopen')
 }
 
 function hostedStateChangeTarget(pending: PendingHostedStateChange): {
@@ -1309,21 +1172,21 @@ function hostedStateChangeTarget(pending: PendingHostedStateChange): {
   if (pending.source === 'project') {
     const type = projectRowType(pending.row)
     return {
-      titleTarget: type === 'pr' ? t('m.fO2nz88') : t('m.xcg6mvE'),
-      labelTarget: type === 'pr' ? t('m.psZ6Lys') : t('m.xcg6mvE'),
+      titleTarget: type === 'pr' ? tr('pullRequest') : tr('issue'),
+      labelTarget: type === 'pr' ? tr('pr') : tr('issue'),
       number: pending.row.content.number
     }
   }
   if (pending.item.provider === 'gitlab') {
     return {
-      titleTarget: pending.item.source.type === 'mr' ? t('m.cR4zEEM') : t('m.xcg6mvE'),
-      labelTarget: pending.item.source.type === 'mr' ? t('m.mYLUh0s') : t('m.xcg6mvE'),
+      titleTarget: pending.item.source.type === 'mr' ? tr('mergeRequestTitle') : tr('issue'),
+      labelTarget: pending.item.source.type === 'mr' ? tr('mergeRequest') : tr('issue'),
       number: pending.item.source.number
     }
   }
   return {
-    titleTarget: pending.item.source.type === 'pr' ? t('m.fO2nz88') : t('m.xcg6mvE'),
-    labelTarget: pending.item.source.type === 'pr' ? t('m.psZ6Lys') : t('m.xcg6mvE'),
+    titleTarget: pending.item.source.type === 'pr' ? tr('pullRequest') : tr('issue'),
+    labelTarget: pending.item.source.type === 'pr' ? tr('pr') : tr('issue'),
     number: pending.item.source.number
   }
 }
@@ -1418,7 +1281,7 @@ function hasGitHubIssueSourceChoice(sources: GitHubRepoSources | undefined): boo
 }
 
 function issueSourceSlug(source: GitHubOwnerRepo | null | undefined): string {
-  return source ? `${source.owner}/${source.repo}` : t('m.6MEByr4')
+  return source ? `${source.owner}/${source.repo}` : tr('unknown')
 }
 
 function compareLinearIssues(a: LinearIssue, b: LinearIssue, orderBy: LinearOrderBy): number {
@@ -1446,7 +1309,7 @@ function getLinearIssueGroup(
   if (groupBy === 'assignee') {
     return {
       key: `assignee:${issue.assignee?.id ?? issue.assignee?.displayName ?? 'unassigned'}`,
-      label: issue.assignee?.displayName ?? t('m.7wx0uDo'),
+      label: issue.assignee?.displayName ?? tr('unassigned'),
       color: colors.accentBlue
     }
   }
@@ -1460,7 +1323,7 @@ function getLinearIssueGroup(
   if (groupBy === 'team') {
     return { key: `team:${issue.team.id}`, label: issue.team.name, color: issue.state.color }
   }
-  return { key: 'all', label: t('m.41d4YcM'), color: colors.accentBlue }
+  return { key: 'all', label: tr('issues'), color: colors.accentBlue }
 }
 
 function groupLinearIssues(
@@ -1470,7 +1333,14 @@ function groupLinearIssues(
 ): LinearIssueSection[] {
   const sorted = [...issues].sort((a, b) => compareLinearIssues(a, b, orderBy))
   if (groupBy === 'none') {
-    return [{ key: 'all', label: t('m.41d4YcM'), color: colors.accentBlue, issues: sorted }]
+    return [
+      {
+        key: 'all',
+        label: tr('issues'),
+        color: colors.accentBlue,
+        issues: sorted
+      }
+    ]
   }
   const sections = new Map<
     string,
@@ -1548,7 +1418,7 @@ function editableProjectFields(table: GitHubProjectTable | null): GitHubProjectF
 function projectFieldValueLabel(row: GitHubProjectRow, field: GitHubProjectField): string {
   const value = row.fieldValuesByFieldId?.[field.id]
   if (!value) {
-    return t('m.PoPA1vA')
+    return tr('empty')
   }
   if (value.kind === 'single-select') {
     return value.name
@@ -1557,7 +1427,7 @@ function projectFieldValueLabel(row: GitHubProjectRow, field: GitHubProjectField
     return value.title
   }
   if (value.kind === 'text') {
-    return value.text || t('m.PoPA1vA')
+    return value.text || tr('empty')
   }
   if (value.kind === 'number') {
     return String(value.number)
@@ -1566,29 +1436,29 @@ function projectFieldValueLabel(row: GitHubProjectRow, field: GitHubProjectField
     return value.date
   }
   if (value.kind === 'labels') {
-    return value.labels.map((label) => label.name).join(', ') || t('m.PoPA1vA')
+    return value.labels.map((label) => label.name).join(', ') || tr('empty')
   }
   if (value.kind === 'users') {
-    return value.users.map((user) => user.login).join(', ') || t('m.PoPA1vA')
+    return value.users.map((user) => user.login).join(', ') || tr('empty')
   }
-  return t('m.PoPA1vA')
+  return tr('empty')
 }
 
 function projectFieldDisplayLabel(row: GitHubProjectRow, field: GitHubProjectField): string {
   if (field.dataType === 'ASSIGNEES') {
-    return row.content.assignees.map((user) => user.login).join(', ') || t('m.PoPA1vA')
+    return row.content.assignees.map((user) => user.login).join(', ') || tr('empty')
   }
   if (field.dataType === 'LABELS') {
-    return row.content.labels.map((label) => label.name).join(', ') || t('m.PoPA1vA')
+    return row.content.labels.map((label) => label.name).join(', ') || tr('empty')
   }
   if (field.dataType === 'REPOSITORY') {
-    return row.content.repository ?? t('m.PoPA1vA')
+    return row.content.repository ?? tr('empty')
   }
   if (field.dataType === 'PARENT_ISSUE') {
-    return row.content.parentIssue ? `#${row.content.parentIssue.number}` : t('m.PoPA1vA')
+    return row.content.parentIssue ? `#${row.content.parentIssue.number}` : tr('empty')
   }
   if (field.dataType === 'ISSUE_TYPE') {
-    return row.content.issueType?.name ?? t('m.PoPA1vA')
+    return row.content.issueType?.name ?? tr('empty')
   }
   if (field.dataType === 'TITLE') {
     return row.content.title
@@ -1692,7 +1562,7 @@ function optimisticProjectFieldValue(
       kind: 'single-select',
       fieldId: field.id,
       optionId: value.optionId,
-      name: option?.name ?? t('m.q1Pbqtk'),
+      name: option?.name ?? tr('selected'),
       color: option?.color ?? 'GRAY'
     }
   }
@@ -1702,7 +1572,7 @@ function optimisticProjectFieldValue(
       kind: 'iteration',
       fieldId: field.id,
       iterationId: value.iterationId,
-      title: iteration?.title ?? t('m.ObzOf3Y'),
+      title: iteration?.title ?? tr('iteration'),
       startDate: iteration?.startDate ?? '',
       duration: iteration?.duration ?? 0
     }
@@ -1718,35 +1588,42 @@ function optimisticProjectFieldValue(
 
 function taskKindLabel(item: TaskItem): string {
   if (item.provider === 'github') {
-    return item.source.type === 'pr' ? t('m.Bawm-QY') : t('m.xcg6mvE')
+    return item.source.type === 'pr' ? tr('pullRequestMessage') : tr('issue')
   }
   if (item.provider === 'gitlab') {
-    return item.source.type === 'mr' ? t('m.mYLUh0s') : t('m.xcg6mvE')
+    return item.source.type === 'mr' ? tr('mergeRequest') : tr('issue')
   }
   if (item.provider === 'gitlabTodo') {
-    return t('m.MKTNAHg', { value0: gitLabTodoTargetLabel(item.source) })
+    return tr('todo', {
+      todoTarget: gitLabTodoTargetLabel(item.source)
+    })
   }
-  return t('m.SpAtwKU')
+  return tr('linearTicket')
 }
 
 function taskExternalOpenLabel(item: TaskItem): string {
   if (item.provider === 'github') {
-    return t('m.jKf3DPI')
+    return tr('openGitHub')
   }
   if (item.provider === 'gitlab' || item.provider === 'gitlabTodo') {
-    return t('m.N_IsXzY')
+    return tr('openGitLab')
   }
-  return t('m.6rtcg5s')
+  return tr('openLinear')
 }
 
 function taskStatusActionLabel(item: TaskItem): string {
   const verb =
     item.provider === 'github' || item.provider === 'gitlab'
       ? item.source.state === 'closed'
-        ? t('m.zRLzboM')
-        : t('m.vCnFzKQ')
+        ? tr('reopen')
+        : tr('close')
       : ''
-  return verb ? t('m.p2fnv7c', { value0: verb, value1: taskKindLabel(item) }) : ''
+  return verb
+    ? tr('action', {
+        actionVerb: verb,
+        taskKindLabel: taskKindLabel(item)
+      })
+    : ''
 }
 
 function isGitHubPrMergeBlocked(item: Extract<TaskItem, { provider: 'github' }>): boolean {
@@ -1785,12 +1662,12 @@ function commentSourceLabel(comment: DetailComment): string {
           : String(comment.line)
         : ''
     const location = line ? `${comment.path}:${line}` : comment.path
-    return `${comment.isResolved ? t('m.BWgU598') : t('m.oj0ltFk')} · ${location}`
+    return `${comment.isResolved ? tr('resolvedReview') : tr('review')} · ${location}`
   }
   if (comment.threadId) {
-    return comment.isResolved ? t('m.Ak34AMw') : t('m.br73014')
+    return comment.isResolved ? tr('resolvedReviewThread') : tr('reviewThread')
   }
-  return t('m.PAtCwbU')
+  return tr('top')
 }
 
 function groupDetailComments(comments: DetailComment[]): DetailCommentGroup[] {
@@ -1846,9 +1723,11 @@ function isResolvedDetailCommentGroup(group: DetailCommentGroup): boolean {
 
 function discussionSummary(count: number): string {
   if (count === 0) {
-    return t('m.24Kgyy4')
+    return tr('noCommentsYet')
   }
-  return t(count === 1 ? 'm.px-yCeQ' : 'm.Uv1hPbA', { value0: count })
+  return tr(count === 1 ? 'commentCountComment' : 'commentCountComments', {
+    commentCount: count
+  })
 }
 
 function renderCommentReactions(comment: DetailComment): ReactNode {
@@ -1915,16 +1794,16 @@ function GitHubPrFileDiff({
   const hiddenDiffLineCount = Math.max(0, diffPreview.totalLineCount - visibleDiffLines.length)
 
   if (diffPreview.totalLineCount === 0) {
-    return <Text style={styles.detailMuted}>{t('m.T2C3fss')}</Text>
+    return <Text style={styles.detailMuted}>{tr('noText')}</Text>
   }
 
   return (
     <View style={styles.fileDiff}>
       {hiddenDiffLineCount > 0 ? (
         <Text style={styles.detailMuted}>
-          {t('m.fCKRINY', {
-            value0: MAX_RENDERED_PR_DIFF_LINES,
-            value1: diffPreview.totalLineCount
+          {tr('diffPreviewTruncated', {
+            maxRenderedPrDiffLines: MAX_RENDERED_PR_DIFF_LINES,
+            totalLineCount: diffPreview.totalLineCount
           })}
         </Text>
       ) : null}
@@ -1969,7 +1848,7 @@ function GitHubPrFileDiff({
                   style={[styles.input, styles.replyInput]}
                   value={commentDrafts[draftKey] ?? ''}
                   onChangeText={(next) => onCommentDraftChange(draftKey, next)}
-                  placeholder={t('m._SIoB4k')}
+                  placeholder={tr('addReview')}
                   placeholderTextColor={colors.textMuted}
                   multiline
                   textAlignVertical="top"
@@ -1980,7 +1859,9 @@ function GitHubPrFileDiff({
                   onPress={() => onSubmitComment(commentLine)}
                 >
                   <Text style={styles.inlineSaveText}>
-                    {t('m.0WWDhS8', { value0: commentLine })}
+                    {tr('commentLine', {
+                      commentLine: commentLine
+                    })}
                   </Text>
                 </Pressable>
               </>
@@ -1997,11 +1878,16 @@ function isFailedGitHubCheck(check: { conclusion?: string | null }): boolean {
 }
 
 function repositoryCount(count: number): string {
-  return count === 1 ? t('m.nt1k3hc', { value0: count }) : t('m.qzhASv0', { value0: count })
+  return count === 1
+    ? tr('repositoryCountRepository', { repositoryCount: count })
+    : tr('repositoryCountRepositories', { repositoryCount: count })
 }
 
 function buildPartialRepositoryNotice(failedCount: number, totalCount: number): string {
-  return t('m.jG05lVM', { value0: failedCount, value1: repositoryCount(totalCount) })
+  return tr('failedCount', {
+    failedCount: failedCount,
+    repositoryCount: repositoryCount(totalCount)
+  })
 }
 
 function repoColor(name: string): string {
@@ -2019,12 +1905,12 @@ function getRepoBadgeColor(repo: RepoSummary | undefined, fallbackName: string):
 
 function setupSourceLabel(source: string | null): string {
   if (source === 'orca.yaml') {
-    return t('m.BeBymFk')
+    return tr('orcaYaml')
   }
   if (source === 'legacy') {
-    return t('m.EJg7NQU')
+    return tr('local')
   }
-  return t('m.xYaQ41Y')
+  return tr('repositoryHooks')
 }
 
 function taskRepositoryMeta(
@@ -2907,7 +2793,7 @@ export default function MobileTasksScreen() {
         setMergeMethodTaskItem(null)
         setMergeMethodProjectRow(null)
         resetWorkspaceCreateState()
-        setError(t('m.AmP4Z_A'))
+        setError(tr('updateOrcaDesktopUse'))
         setTaskStateHydrated(false)
         return
       }
@@ -3011,7 +2897,7 @@ export default function MobileTasksScreen() {
       if (stale) {
         return
       }
-      setError(err instanceof Error ? err.message : t('m.jxeDUBI'))
+      setError(err instanceof Error ? err.message : tr('failedLoadTasksSettings'))
       setTaskStateHydrated(false)
     })
 
@@ -3154,7 +3040,7 @@ export default function MobileTasksScreen() {
             return {
               items: [] as Array<Extract<TaskItem, { provider: 'github' }>>,
               repoId: repo.id,
-              error: err instanceof Error ? err.message : t('m.Bt_rGOI')
+              error: err instanceof Error ? err.message : tr('failedLoadGitHub')
             }
           }
         }
@@ -3288,7 +3174,7 @@ export default function MobileTasksScreen() {
             setGithubSourceErrors(page.sourceErrors)
             setGithubSourceFallbacks(page.sourceFallbacks)
             if (page.failedCount === queriedRepos.length) {
-              throw new Error(t('m.Bt_rGOI'))
+              throw new Error(tr('failedLoadGitHub'))
             }
             setGithubPages([page.items])
             setGithubCurrentPage(0)
@@ -3365,7 +3251,7 @@ export default function MobileTasksScreen() {
                 console.warn(`[mobile tasks] failed to fetch ${provider} work items`, repo.id, err)
                 return {
                   items: [] as TaskItem[],
-                  error: err instanceof Error ? err.message : t('m.bNtRw1Q')
+                  error: err instanceof Error ? err.message : tr('failedLoadGitLab')
                 }
               }
             }
@@ -3375,7 +3261,7 @@ export default function MobileTasksScreen() {
           }
           const failedCount = results.filter((result) => result.error).length
           if (failedCount === queriedRepos.length) {
-            throw new Error(results.find((result) => result.error)?.error ?? t('m.bNtRw1Q'))
+            throw new Error(results.find((result) => result.error)?.error ?? tr('failedLoadGitLab'))
           }
           setItems(
             results
@@ -3421,7 +3307,7 @@ export default function MobileTasksScreen() {
         setItems([])
         setGithubSourceErrors([])
         setGithubSourceFallbacks([])
-        setError(err instanceof Error ? err.message : t('m.eVVS8u4'))
+        setError(err instanceof Error ? err.message : tr('failedLoadTasks'))
       } finally {
         if (isCurrent()) {
           setLoading(false)
@@ -3468,7 +3354,7 @@ export default function MobileTasksScreen() {
       }
       const result = response.result as { ok?: boolean; error?: string }
       if (result.ok === false) {
-        throw new Error(result.error ?? t('m.caw13Gk'))
+        throw new Error(result.error ?? tr('failedConnectLinear'))
       }
       setLinearApiKeyDraft('')
       setLinearConnectState('idle')
@@ -3481,7 +3367,7 @@ export default function MobileTasksScreen() {
       await loadLinearContext()
     } catch (err) {
       setLinearConnectState('error')
-      setLinearConnectError(err instanceof Error ? err.message : t('m.bMml9Hw'))
+      setLinearConnectError(err instanceof Error ? err.message : tr('connection'))
     }
   }, [client, connState, linearApiKeyDraft, linearConnectState, loadLinearContext, taskUiReady])
 
@@ -3597,7 +3483,7 @@ export default function MobileTasksScreen() {
         setGithubCurrentPage(nextPage)
         setItems(allPages[nextPage] ?? [])
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.y6brnh8'))
+        setError(err instanceof Error ? err.message : tr('failedLoadMore'))
       } finally {
         setGithubPaginationLoading(false)
         setGithubLoadingTargetPage(null)
@@ -3718,7 +3604,7 @@ export default function MobileTasksScreen() {
         )
       } catch (err) {
         setGithubProjectTable(null)
-        setGithubProjectError(err instanceof Error ? err.message : t('m.XhuO-88'))
+        setGithubProjectError(err instanceof Error ? err.message : tr('failedLoadProject'))
       } finally {
         setGithubProjectLoading(false)
       }
@@ -3776,21 +3662,21 @@ export default function MobileTasksScreen() {
           // replacement view, not as a failed project selection.
           const supportedViews = views.filter((view) => view.layout === 'TABLE_LAYOUT')
           if (supportedViews.length === 0) {
-            throw new Error(t('m.s_tAbdk'))
+            throw new Error(tr('projectHas'))
           }
           setPendingGitHubProjectViewSelection(project)
           setShowGitHubProjectViewPicker(true)
           return
         }
         if (explicitView && explicitView.layout !== 'TABLE_LAYOUT') {
-          throw new Error(t('m.pTwUfTs'))
+          throw new Error(tr('orcaDoes'))
         }
         if (!explicitView && !rememberedView) {
           // Why: desktop asks which Project view to open the first time a project
           // is selected. Mobile should not silently choose the first table view.
           const supportedViews = views.filter((view) => view.layout === 'TABLE_LAYOUT')
           if (supportedViews.length === 0) {
-            throw new Error(t('m.s_tAbdk'))
+            throw new Error(tr('projectHas'))
           }
           setPendingGitHubProjectViewSelection(project)
           setShowGitHubProjectViewPicker(true)
@@ -3801,11 +3687,11 @@ export default function MobileTasksScreen() {
           views.find((view) => view.id === rememberedView && view.layout === 'TABLE_LAYOUT') ??
           undefined
         if (!selectedView) {
-          throw new Error(t('m.s_tAbdk'))
+          throw new Error(tr('projectHas'))
         }
         commitGitHubProjectView(project, selectedView.id)
       } catch (err) {
-        setGithubProjectError(err instanceof Error ? err.message : t('m.6aqSQa0'))
+        setGithubProjectError(err instanceof Error ? err.message : tr('failedSelect'))
       } finally {
         setGithubProjectLoading(false)
       }
@@ -3826,7 +3712,7 @@ export default function MobileTasksScreen() {
     const input = githubProjectPasteInput.trim()
     const parsed = parseProjectInput(input)
     if (!parsed) {
-      setGithubProjectPasteError(t('m.W2b7E0I'))
+      setGithubProjectPasteError(tr('expected'))
       return
     }
     setGithubProjectPasteBusy(true)
@@ -3867,7 +3753,7 @@ export default function MobileTasksScreen() {
         { viewNumber: result.viewNumber }
       )
     } catch (err) {
-      setGithubProjectPasteError(err instanceof Error ? err.message : t('m.-QPTwEw'))
+      setGithubProjectPasteError(err instanceof Error ? err.message : tr('failedAddProject'))
     } finally {
       setGithubProjectPasteBusy(false)
     }
@@ -3935,7 +3821,7 @@ export default function MobileTasksScreen() {
       return
     }
     void loadLinearContext().catch((err) => {
-      setError(err instanceof Error ? err.message : t('m.us3-SEs'))
+      setError(err instanceof Error ? err.message : tr('failedLoadLinearContext'))
     })
   }, [linearConnected, loadLinearContext, provider, taskStateHydrated])
 
@@ -3950,7 +3836,7 @@ export default function MobileTasksScreen() {
       void selectGitHubProject(activeGitHubProject)
     } else {
       void loadGitHubProjects().catch((err) => {
-        setGithubProjectError(err instanceof Error ? err.message : t('m.wpUutIo'))
+        setGithubProjectError(err instanceof Error ? err.message : tr('failedLoadProjects'))
       })
     }
   }, [
@@ -3971,7 +3857,7 @@ export default function MobileTasksScreen() {
       return
     }
     void loadGitHubProjects().catch((err) => {
-      setGithubProjectError(err instanceof Error ? err.message : t('m.wpUutIo'))
+      setGithubProjectError(err instanceof Error ? err.message : tr('failedLoadProjects'))
     })
   }, [loadGitHubProjects, showGitHubProjectPicker, taskUiReady])
 
@@ -4138,7 +4024,7 @@ export default function MobileTasksScreen() {
         })
         .catch((err) => {
           if (!stale) {
-            setItemLabelsError(err instanceof Error ? err.message : t('m.661kq0E'))
+            setItemLabelsError(err instanceof Error ? err.message : tr('failedLoadLabels'))
           }
         })
         .finally(() => {
@@ -4172,7 +4058,9 @@ export default function MobileTasksScreen() {
       })
       .catch((err) => {
         if (!stale) {
-          setItemAssignableUsersError(err instanceof Error ? err.message : t('m.quO-aRc'))
+          setItemAssignableUsersError(
+            err instanceof Error ? err.message : tr('failedLoadAssignees')
+          )
         }
       })
       .finally(() => {
@@ -4238,7 +4126,7 @@ export default function MobileTasksScreen() {
           }>
         } | null
         if (!details) {
-          throw new Error(t('m.-JNPw2M'))
+          throw new Error(tr('details'))
         }
         if (!stale) {
           setDetailPayload({
@@ -4291,7 +4179,7 @@ export default function MobileTasksScreen() {
           approvalState?: { approvalsRequired: number | null; approvalsLeft: number | null }
         } | null
         if (!details) {
-          throw new Error(t('m.-JNPw2M'))
+          throw new Error(tr('details'))
         }
         if (!stale) {
           setDetailPayload({
@@ -4370,7 +4258,7 @@ export default function MobileTasksScreen() {
         ? ((commentsResponse.result as DetailComment[]) ?? [])
         : []
       if (!issue) {
-        throw new Error(t('m.-JNPw2M'))
+        throw new Error(tr('details'))
       }
       if (!stale) {
         setDetailPayload({
@@ -4402,7 +4290,7 @@ export default function MobileTasksScreen() {
     void loadDetails()
       .catch((err) => {
         if (!stale) {
-          setDetailError(err instanceof Error ? err.message : t('m.BRtGSdQ'))
+          setDetailError(err instanceof Error ? err.message : tr('failedLoadDetails'))
         }
       })
       .finally(() => {
@@ -4535,7 +4423,7 @@ export default function MobileTasksScreen() {
       })
       .catch((err) => {
         if (!stale) {
-          setProjectRowDetailError(err instanceof Error ? err.message : t('m.BRtGSdQ'))
+          setProjectRowDetailError(err instanceof Error ? err.message : tr('failedLoadDetails'))
         }
       })
       .finally(() => {
@@ -4586,13 +4474,13 @@ export default function MobileTasksScreen() {
           | { ok: true; labels?: string[] }
           | { ok: false; error?: { message?: string } }
         if (!result.ok) {
-          throw new Error(result.error?.message ?? t('m.661kq0E'))
+          throw new Error(result.error?.message ?? tr('failedLoadLabels'))
         }
         setProjectAvailableLabels(result.labels ?? [])
       })
       .catch((err) => {
         if (!stale) {
-          setProjectLabelsError(err instanceof Error ? err.message : t('m.661kq0E'))
+          setProjectLabelsError(err instanceof Error ? err.message : tr('failedLoadLabels'))
         }
       })
       .finally(() => {
@@ -4641,13 +4529,15 @@ export default function MobileTasksScreen() {
           | { ok: true; users?: GitHubAssignableUser[] }
           | { ok: false; error?: { message?: string } }
         if (!result.ok) {
-          throw new Error(result.error?.message ?? t('m.quO-aRc'))
+          throw new Error(result.error?.message ?? tr('failedLoadAssignees'))
         }
         setProjectAssignableUsers(result.users ?? [])
       })
       .catch((err) => {
         if (!stale) {
-          setProjectAssignableUsersError(err instanceof Error ? err.message : t('m.quO-aRc'))
+          setProjectAssignableUsersError(
+            err instanceof Error ? err.message : tr('failedLoadAssignees')
+          )
         }
       })
       .finally(() => {
@@ -4697,13 +4587,13 @@ export default function MobileTasksScreen() {
           | { ok: true; types?: GitHubIssueType[] }
           | { ok: false; error?: { message?: string } }
         if (!result.ok) {
-          throw new Error(result.error?.message ?? t('m.0uj422Y'))
+          throw new Error(result.error?.message ?? tr('failedLoadIssue'))
         }
         setProjectIssueTypes(result.types ?? [])
       })
       .catch((err) => {
         if (!stale) {
-          setProjectIssueTypesError(err instanceof Error ? err.message : t('m.0uj422Y'))
+          setProjectIssueTypesError(err instanceof Error ? err.message : tr('failedLoadIssue'))
         }
       })
       .finally(() => {
@@ -4769,11 +4659,13 @@ export default function MobileTasksScreen() {
       : null
   const workspaceSparseDraftError =
     workspaceSparseDraft && workspaceSparseDraftName.length === 0
-      ? t('m.RT1HPds')
+      ? tr('nameRequired')
       : workspaceSparseDraftName.length > 80
-        ? t('m.jBhX2v4')
+        ? tr('nameMust')
         : workspaceSparseDraftNameCollision
-          ? t('m.OR0Rh2U', { value0: workspaceSparseDraftNameCollision.name })
+          ? tr('workspaceSparse', {
+              workspaceSparseDraftNameCollisionName: workspaceSparseDraftNameCollision.name
+            })
           : (workspaceSparseDraftParsed?.error ?? null)
   const canSaveWorkspaceSparseDraft =
     workspaceSparseDraft !== null &&
@@ -4813,7 +4705,7 @@ export default function MobileTasksScreen() {
       {
         value: 'blank' as const,
         label: workspaceAgentLabel('blank'),
-        subtitle: t('m.WG-yXgM'),
+        subtitle: tr('openShell'),
         renderIcon: () => <MobileAgentIcon agentId="__blank__" size={18} />
       }
     ]
@@ -4941,7 +4833,9 @@ export default function MobileTasksScreen() {
           setWorkspaceSparsePresets([])
           setWorkspaceSparsePresetsLoaded(false)
           setWorkspaceSparsePresetId(null)
-          setWorkspaceSparsePresetsError(err instanceof Error ? err.message : t('m.f8dRWFk'))
+          setWorkspaceSparsePresetsError(
+            err instanceof Error ? err.message : tr('failedLoadSparse')
+          )
         }
       })
       .finally(() => {
@@ -5010,7 +4904,7 @@ export default function MobileTasksScreen() {
       .catch((err) => {
         if (!stale) {
           setWorkspaceBaseBranchResults([])
-          setWorkspaceBaseBranchError(err instanceof Error ? err.message : t('m.MNvx1_M'))
+          setWorkspaceBaseBranchError(err instanceof Error ? err.message : tr('failedSearch'))
         }
       })
       .finally(() => {
@@ -5092,7 +4986,7 @@ export default function MobileTasksScreen() {
       }
       const saved = (response.result as { preset?: SparsePreset }).preset
       if (!saved) {
-        throw new Error(t('m.xWmoUM8'))
+        throw new Error(tr('failedSave'))
       }
       setWorkspaceSparsePresets((current) => {
         const withoutSaved = current.filter((preset) => preset.id !== saved.id)
@@ -5104,7 +4998,7 @@ export default function MobileTasksScreen() {
       }
       setWorkspaceSparseDraft(null)
     } catch (err) {
-      setWorkspaceSparsePresetsError(err instanceof Error ? err.message : t('m.xWmoUM8'))
+      setWorkspaceSparsePresetsError(err instanceof Error ? err.message : tr('failedSave'))
     } finally {
       setWorkspaceSparseSaving(false)
     }
@@ -5151,7 +5045,7 @@ export default function MobileTasksScreen() {
           setWorkspaceSshState({
             targetId: workspaceCreateTargetConnectionId,
             status: 'error',
-            error: err instanceof Error ? err.message : t('m.CyTKwng'),
+            error: err instanceof Error ? err.message : tr('failedRead'),
             reconnectAttempt: 0
           })
         }
@@ -5195,7 +5089,7 @@ export default function MobileTasksScreen() {
       setWorkspaceSshState({
         targetId: workspaceCreateTargetConnectionId,
         status: 'error',
-        error: err instanceof Error ? err.message : t('m.eCcpIL4'),
+        error: err instanceof Error ? err.message : tr('failedConnectSsh'),
         reconnectAttempt: 0
       })
     } finally {
@@ -5223,7 +5117,11 @@ export default function MobileTasksScreen() {
         setWorkspaceSshState(state)
       }
       if (state?.status !== 'connected') {
-        throw new Error(t('m.AGIjbJU', { value0: repo.displayName }))
+        throw new Error(
+          tr('connectDisplay', {
+            displayName: repo.displayName
+          })
+        )
       }
     },
     [client, tasksSupported, workspaceSshState]
@@ -5362,7 +5260,11 @@ export default function MobileTasksScreen() {
       try {
         const targetRepo = getWorkspaceTargetRepo(item, repoIdOverride)
         if (!targetRepo) {
-          throw new Error(item.provider === 'linear' ? t('m.6kKiG2U') : t('m.4F__ZBY'))
+          throw new Error(
+            item.provider === 'linear'
+              ? tr('addGitRepositoryBeforeCreatingLinear')
+              : tr('repositoryNotFound')
+          )
         }
         await ensureWorkspaceSshReady(targetRepo)
         let latestRuntimeTaskSettings = runtimeTaskSettings
@@ -5390,7 +5292,7 @@ export default function MobileTasksScreen() {
         ) {
           setWorkspaceAgent(selectedAgent)
           setWorkspaceAgentOverridden(false)
-          throw new Error(t('m.QI7iJCw'))
+          throw new Error(tr('selectedAgent'))
         }
         const setupResolution = await resolveCreateSetupDecision(targetRepo, setupOverride)
         const comment = noteOverride?.trim()
@@ -5569,7 +5471,7 @@ export default function MobileTasksScreen() {
           `/h/${hostId}/session/${encodeURIComponent(result.worktree.id)}?${queryParams.toString()}`
         )
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.8r702TY'))
+        setError(err instanceof Error ? err.message : tr('failedCreateWorkspace'))
       } finally {
         setCreatingKey(null)
       }
@@ -5597,14 +5499,14 @@ export default function MobileTasksScreen() {
       const kind = projectRowType(row)
       const repo = findProjectRowRepo(row)
       if (!kind || !row.content.number || !row.content.url) {
-        setError(t('m.aCTe1aA'))
+        setError(tr('addProject'))
         return
       }
       if (!repo) {
         const slug = splitRepositorySlug(row.content.repository)
         setProjectRepoNotInOrca({
-          owner: slug?.owner ?? t('m.6MEByr4'),
-          repo: slug?.repo ?? row.content.repository ?? t('m.BX2Np3Y'),
+          owner: slug?.owner ?? tr('unknown'),
+          repo: slug?.repo ?? row.content.repository ?? tr('repository'),
           url: row.content.url ?? null
         })
         return
@@ -5654,7 +5556,7 @@ export default function MobileTasksScreen() {
       const type = projectRowType(row)
       const slug = splitRepositorySlug(row.content.repository)
       if (!type || !slug || !row.content.number) {
-        setProjectRowDetailError(t('m.2lpu738'))
+        setProjectRowDetailError(tr('projectItemCannot'))
         return
       }
       setProjectMutating(true)
@@ -5677,7 +5579,7 @@ export default function MobileTasksScreen() {
         }
         const result = response.result as { ok?: boolean; error?: { message?: string } }
         if (result.ok === false) {
-          throw new Error(result.error?.message ?? t('m.8U28lt8'))
+          throw new Error(result.error?.message ?? tr('failedUpdateGitHubItem'))
         }
         setProjectRowItem((current) => {
           if (!current || current.id !== row.id) {
@@ -5723,7 +5625,7 @@ export default function MobileTasksScreen() {
           )
         }
       } catch (err) {
-        setProjectRowDetailError(err instanceof Error ? err.message : t('m.TE3rsP8'))
+        setProjectRowDetailError(err instanceof Error ? err.message : tr('failedUpdateItem'))
       } finally {
         setProjectMutating(false)
       }
@@ -5761,7 +5663,7 @@ export default function MobileTasksScreen() {
           | { ok: true; comment?: DetailComment }
           | { ok: false; error?: { message?: string } }
         if (!result.ok) {
-          throw new Error(result.error?.message ?? t('m.-bXRzXk'))
+          throw new Error(result.error?.message ?? tr('failedAddComment'))
         }
         setProjectCommentDraft('')
         if (result.comment) {
@@ -5772,7 +5674,7 @@ export default function MobileTasksScreen() {
           )
         }
       } catch (err) {
-        setProjectRowDetailError(err instanceof Error ? err.message : t('m.-bXRzXk'))
+        setProjectRowDetailError(err instanceof Error ? err.message : tr('failedAddComment'))
       } finally {
         setProjectMutating(false)
       }
@@ -5789,7 +5691,7 @@ export default function MobileTasksScreen() {
       const commentId = Number(comment.id)
       const body = projectEditingCommentDraft.trim()
       if (!slug || !Number.isInteger(commentId) || commentId <= 0 || !body) {
-        setProjectRowDetailError(t('m.fToZEE4'))
+        setProjectRowDetailError(tr('projectCommentCannotEdited'))
         return
       }
       setProjectMutating(true)
@@ -5817,7 +5719,7 @@ export default function MobileTasksScreen() {
           throw new Error(
             typeof result.error === 'string'
               ? result.error
-              : (result.error?.message ?? t('m.Lw1c31w'))
+              : (result.error?.message ?? tr('failedEdit'))
           )
         }
         setProjectRowDetail((current) =>
@@ -5833,7 +5735,7 @@ export default function MobileTasksScreen() {
         setProjectEditingCommentId(null)
         setProjectEditingCommentDraft('')
       } catch (err) {
-        setProjectRowDetailError(err instanceof Error ? err.message : t('m.Lw1c31w'))
+        setProjectRowDetailError(err instanceof Error ? err.message : tr('failedEdit'))
       } finally {
         setProjectMutating(false)
       }
@@ -5849,7 +5751,7 @@ export default function MobileTasksScreen() {
       const slug = splitRepositorySlug(row.content.repository)
       const commentId = Number(comment.id)
       if (!slug || !Number.isInteger(commentId) || commentId <= 0) {
-        setProjectRowDetailError(t('m.22DpbZo'))
+        setProjectRowDetailError(tr('projectCommentCannotDeleted'))
         return
       }
       setProjectMutating(true)
@@ -5876,7 +5778,7 @@ export default function MobileTasksScreen() {
           throw new Error(
             typeof result.error === 'string'
               ? result.error
-              : (result.error?.message ?? t('m.UbvF6N4'))
+              : (result.error?.message ?? tr('failedDelete'))
           )
         }
         setProjectRowDetail((current) =>
@@ -5892,7 +5794,7 @@ export default function MobileTasksScreen() {
           setProjectEditingCommentDraft('')
         }
       } catch (err) {
-        setProjectRowDetailError(err instanceof Error ? err.message : t('m.UbvF6N4'))
+        setProjectRowDetailError(err instanceof Error ? err.message : tr('failedDelete'))
       } finally {
         setProjectMutating(false)
       }
@@ -5930,7 +5832,7 @@ export default function MobileTasksScreen() {
           throw new Error(response.error.message)
         }
         if (response.result !== true) {
-          throw new Error(resolve ? t('m.LVc8Fk0') : t('m.ct__F0Q'))
+          throw new Error(resolve ? tr('failedResolve') : tr('failedReopen'))
         }
         setProjectRowDetail((current) =>
           current?.provider === 'github'
@@ -5945,7 +5847,7 @@ export default function MobileTasksScreen() {
             : current
         )
       } catch (err) {
-        setProjectRowDetailError(err instanceof Error ? err.message : t('m.Akq8bGo'))
+        setProjectRowDetailError(err instanceof Error ? err.message : tr('failedUpdateReview'))
       } finally {
         setProjectMutating(false)
       }
@@ -6007,7 +5909,7 @@ export default function MobileTasksScreen() {
           comment?: DetailComment
         }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m.k4ojp0Y'))
+          throw new Error(result.error ?? tr('failedReply'))
         }
         const reply: DetailComment = result.comment ?? {
           id: `local-${Date.now()}`,
@@ -6029,7 +5931,7 @@ export default function MobileTasksScreen() {
             : current
         )
       } catch (err) {
-        setProjectRowDetailError(err instanceof Error ? err.message : t('m.k4ojp0Y'))
+        setProjectRowDetailError(err instanceof Error ? err.message : tr('failedReply'))
       } finally {
         setProjectMutating(false)
       }
@@ -6052,7 +5954,7 @@ export default function MobileTasksScreen() {
       }
       const slug = splitRepositorySlug(row.content.repository)
       if (!slug || !row.content.number) {
-        setProjectRowDetailError(t('m.2lpu738'))
+        setProjectRowDetailError(tr('projectItemCannot'))
         return
       }
       setProjectMutating(true)
@@ -6073,7 +5975,7 @@ export default function MobileTasksScreen() {
         }
         const result = response.result as { ok?: boolean; error?: { message?: string } }
         if (result.ok === false) {
-          throw new Error(result.error?.message ?? t('m.8U28lt8'))
+          throw new Error(result.error?.message ?? tr('failedUpdateGitHubItem'))
         }
         const applyContentUpdate = (candidate: GitHubProjectRow): GitHubProjectRow => {
           const labels = new Map(candidate.content.labels.map((label) => [label.name, label]))
@@ -6142,7 +6044,7 @@ export default function MobileTasksScreen() {
             : current
         )
       } catch (err) {
-        setProjectRowDetailError(err instanceof Error ? err.message : t('m.TE3rsP8'))
+        setProjectRowDetailError(err instanceof Error ? err.message : tr('failedUpdateItem'))
       } finally {
         setProjectMutating(false)
       }
@@ -6184,7 +6086,7 @@ export default function MobileTasksScreen() {
         }
         const result = response.result as { ok?: boolean; error?: { message?: string } }
         if (result.ok === false) {
-          throw new Error(result.error?.message ?? t('m.QbIagpk'))
+          throw new Error(result.error?.message ?? tr('failedUpdateProject'))
         }
         const patchRow = (candidate: GitHubProjectRow): GitHubProjectRow => {
           const fieldValuesByFieldId = { ...candidate.fieldValuesByFieldId }
@@ -6212,7 +6114,7 @@ export default function MobileTasksScreen() {
           setProjectFieldDrafts((current) => ({ ...current, [field.id]: '' }))
         }
       } catch (err) {
-        setProjectRowDetailError(err instanceof Error ? err.message : t('m.QbIagpk'))
+        setProjectRowDetailError(err instanceof Error ? err.message : tr('failedUpdateProject'))
       } finally {
         setProjectMutating(false)
       }
@@ -6227,7 +6129,7 @@ export default function MobileTasksScreen() {
       }
       const slug = splitRepositorySlug(row.content.repository)
       if (row.itemType !== 'ISSUE' || !slug || !row.content.number) {
-        setProjectRowDetailError(t('m.Z7UA1fA'))
+        setProjectRowDetailError(tr('projectIssue'))
         return
       }
       setProjectMutating(true)
@@ -6248,7 +6150,7 @@ export default function MobileTasksScreen() {
         }
         const result = response.result as { ok?: boolean; error?: { message?: string } }
         if (result.ok === false) {
-          throw new Error(result.error?.message ?? t('m.QKHONdI'))
+          throw new Error(result.error?.message ?? tr('failedUpdateIssueType'))
         }
         const patchRow = (candidate: GitHubProjectRow): GitHubProjectRow => ({
           ...candidate,
@@ -6268,7 +6170,7 @@ export default function MobileTasksScreen() {
             : table
         )
       } catch (err) {
-        setProjectRowDetailError(err instanceof Error ? err.message : t('m.QKHONdI'))
+        setProjectRowDetailError(err instanceof Error ? err.message : tr('failedUpdateIssueType'))
       } finally {
         setProjectMutating(false)
       }
@@ -6304,7 +6206,7 @@ export default function MobileTasksScreen() {
         }
         const result = response.result as { ok?: boolean; error?: string }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m.eYVZBag'))
+          throw new Error(result.error ?? tr('failedRequest'))
         }
         const nextReviewRequests = (() => {
           const byLogin = new Map<string, GitHubAssignableUser>()
@@ -6337,7 +6239,7 @@ export default function MobileTasksScreen() {
           setProjectReviewersDraft('')
         }
       } catch (err) {
-        setProjectRowDetailError(err instanceof Error ? err.message : t('m.eYVZBag'))
+        setProjectRowDetailError(err instanceof Error ? err.message : tr('failedRequest'))
       } finally {
         setProjectMutating(false)
       }
@@ -6382,14 +6284,14 @@ export default function MobileTasksScreen() {
           throw new Error(response.error.message)
         }
         if (!Array.isArray(response.result)) {
-          throw new Error(t('m.lanbga8'))
+          throw new Error(tr('invalid'))
         }
         const checks = response.result as GitHubDetailCheck[]
         setProjectRowDetail((current) =>
           current?.provider === 'github' ? { ...current, checks } : current
         )
       } catch (err) {
-        setProjectRowDetailError(err instanceof Error ? err.message : t('m._sMIbrI'))
+        setProjectRowDetailError(err instanceof Error ? err.message : tr('failedRefresh'))
       } finally {
         setProjectMutating(false)
       }
@@ -6428,11 +6330,11 @@ export default function MobileTasksScreen() {
         }
         const result = response.result as { ok?: boolean; error?: string }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m.ppWaFdk'))
+          throw new Error(result.error ?? tr('failedRerun'))
         }
         setProjectRowDetailRefreshSeq((current) => current + 1)
       } catch (err) {
-        setProjectRowDetailError(err instanceof Error ? err.message : t('m.ppWaFdk'))
+        setProjectRowDetailError(err instanceof Error ? err.message : tr('failedRerun'))
       } finally {
         setProjectMutating(false)
       }
@@ -6447,7 +6349,7 @@ export default function MobileTasksScreen() {
         return
       }
       if (projectRowDetail?.provider !== 'github' || !projectRowDetail.pullRequestId) {
-        setProjectRowDetailError(t('m.HCcPUIo'))
+        setProjectRowDetailError(tr('unableSync'))
         return
       }
       const viewed = file.viewerViewedState !== 'VIEWED'
@@ -6469,7 +6371,7 @@ export default function MobileTasksScreen() {
           throw new Error(response.error.message)
         }
         if (response.result !== true) {
-          throw new Error(t('m.fpX38uo'))
+          throw new Error(tr('failedSync'))
         }
         setProjectRowDetail((current) =>
           current?.provider === 'github'
@@ -6484,7 +6386,7 @@ export default function MobileTasksScreen() {
             : current
         )
       } catch (err) {
-        setProjectRowDetailError(err instanceof Error ? err.message : t('m.3JBRDbM'))
+        setProjectRowDetailError(err instanceof Error ? err.message : tr('failedUpdateViewed'))
       } finally {
         setProjectMutating(false)
       }
@@ -6512,7 +6414,7 @@ export default function MobileTasksScreen() {
         !projectRowDetail.headSha ||
         !projectRowDetail.baseSha
       ) {
-        setProjectRowDetailError(t('m.7sESNDQ'))
+        setProjectRowDetailError(tr('unableLoad'))
         return
       }
       setPrFileLoadingPath(file.path)
@@ -6540,7 +6442,7 @@ export default function MobileTasksScreen() {
           [file.path]: response.result as GitHubPRFileContents
         }))
       } catch (err) {
-        setProjectRowDetailError(err instanceof Error ? err.message : t('m.b6obzk0'))
+        setProjectRowDetailError(err instanceof Error ? err.message : tr('failedLoadFile'))
       } finally {
         setPrFileLoadingPath(null)
       }
@@ -6568,7 +6470,7 @@ export default function MobileTasksScreen() {
         return
       }
       if (projectRowDetail?.provider !== 'github' || !projectRowDetail.headSha) {
-        setProjectRowDetailError(t('m.4Si7jXY'))
+        setProjectRowDetailError(tr('unableComment'))
         return
       }
       const draftKey = `${file.path}:${line}`
@@ -6601,7 +6503,7 @@ export default function MobileTasksScreen() {
           comment?: DetailComment
         }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m.jRm4RmA'))
+          throw new Error(result.error ?? tr('failedAddReview'))
         }
         const comment: DetailComment = result.comment ?? {
           id: `local-${Date.now()}`,
@@ -6622,7 +6524,7 @@ export default function MobileTasksScreen() {
             : current
         )
       } catch (err) {
-        setProjectRowDetailError(err instanceof Error ? err.message : t('m.jRm4RmA'))
+        setProjectRowDetailError(err instanceof Error ? err.message : tr('failedAddReview'))
       } finally {
         setProjectMutating(false)
       }
@@ -6670,7 +6572,7 @@ export default function MobileTasksScreen() {
         }
         const result = response.result as { ok?: boolean; error?: string }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m.qVRnj6M'))
+          throw new Error(result.error ?? tr('failedMergePull'))
         }
         setProjectRowItem((current) =>
           current?.id === row.id
@@ -6690,7 +6592,7 @@ export default function MobileTasksScreen() {
             : table
         )
       } catch (err) {
-        setProjectRowDetailError(err instanceof Error ? err.message : t('m.qVRnj6M'))
+        setProjectRowDetailError(err instanceof Error ? err.message : tr('failedMergePull'))
       } finally {
         setProjectMutating(false)
       }
@@ -6726,12 +6628,12 @@ export default function MobileTasksScreen() {
         }
         const result = response.result as { ok?: boolean; error?: string }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m.lSNLJ4s'))
+          throw new Error(result.error ?? tr('failedUpdateGitHubStatus'))
         }
         setActionItem(null)
         await loadTasks({ silent: true })
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.BvA66yA'))
+        setError(err instanceof Error ? err.message : tr('failedUpdateStatus'))
       } finally {
         setMutatingStatus(false)
       }
@@ -6767,12 +6669,12 @@ export default function MobileTasksScreen() {
         }
         const result = response.result as { ok?: boolean; error?: string }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m.nOlVFQ0'))
+          throw new Error(result.error ?? tr('failedUpdateGitLab'))
         }
         setActionItem(null)
         await loadTasks({ silent: true })
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.nOlVFQ0'))
+        setError(err instanceof Error ? err.message : tr('failedUpdateGitLab'))
       } finally {
         setMutatingStatus(false)
       }
@@ -6812,7 +6714,7 @@ export default function MobileTasksScreen() {
         }
         const result = response.result as { ok?: boolean; error?: string }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m.aulxiV4'))
+          throw new Error(result.error ?? tr('failedUpdateGitHubIssue'))
         }
 
         const nextLabels = [
@@ -6883,7 +6785,7 @@ export default function MobileTasksScreen() {
         setItemRemoveAssigneesDraft('')
         await loadTasks({ silent: true })
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.aulxiV4'))
+        setError(err instanceof Error ? err.message : tr('failedUpdateGitHubIssue'))
       } finally {
         setMutatingStatus(false)
       }
@@ -6923,7 +6825,7 @@ export default function MobileTasksScreen() {
         }
         const result = response.result as { ok?: boolean; error?: string }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m.PA_I94w'))
+          throw new Error(result.error ?? tr('failedUpdateGitHubPull'))
         }
         if (nextTitle !== undefined) {
           setActionItem((current) =>
@@ -6954,7 +6856,7 @@ export default function MobileTasksScreen() {
         }
         await loadTasks({ silent: true })
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.PA_I94w'))
+        setError(err instanceof Error ? err.message : tr('failedUpdateGitHubPull'))
       } finally {
         setMutatingStatus(false)
       }
@@ -7006,7 +6908,7 @@ export default function MobileTasksScreen() {
         }
         const result = response.result as { ok?: boolean; error?: string }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m.nOlVFQ0'))
+          throw new Error(result.error ?? tr('failedUpdateGitLab'))
         }
         const nextLabels = [
           ...new Set([
@@ -7078,7 +6980,7 @@ export default function MobileTasksScreen() {
         }
         await loadTasks({ silent: true })
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.nOlVFQ0'))
+        setError(err instanceof Error ? err.message : tr('failedUpdateGitLab'))
       } finally {
         setMutatingStatus(false)
       }
@@ -7138,7 +7040,7 @@ export default function MobileTasksScreen() {
           comment?: DetailComment
         }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m.-bXRzXk'))
+          throw new Error(result.error ?? tr('failedAddComment'))
         }
         const comment: DetailComment = result.comment ?? {
           id: `local-${Date.now()}`,
@@ -7155,7 +7057,7 @@ export default function MobileTasksScreen() {
             : current
         )
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.-bXRzXk'))
+        setError(err instanceof Error ? err.message : tr('failedAddComment'))
       } finally {
         setMutatingStatus(false)
       }
@@ -7169,7 +7071,7 @@ export default function MobileTasksScreen() {
       setCopiedLinkKey(key)
       scheduleMobileTaskCopyFeedbackReset(copiedLinkResetTimerRef, key, setCopiedLinkKey)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('m.Y45YlXw'))
+      setError(err instanceof Error ? err.message : tr('failedCopyLink'))
     }
   }, [])
 
@@ -7179,7 +7081,7 @@ export default function MobileTasksScreen() {
       setCopiedLinkKey(key)
       scheduleMobileTaskCopyFeedbackReset(copiedLinkResetTimerRef, key, setCopiedLinkKey)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('m.4-krOeE'))
+      setError(err instanceof Error ? err.message : tr('failedCopyText'))
     }
   }, [])
 
@@ -7209,7 +7111,7 @@ export default function MobileTasksScreen() {
         }
         const result = response.result as { ok?: boolean; error?: string }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m.eYVZBag'))
+          throw new Error(result.error ?? tr('failedRequest'))
         }
         const nextReviewRequests = (() => {
           const byLogin = new Map<string, GitHubAssignableUser>()
@@ -7260,7 +7162,7 @@ export default function MobileTasksScreen() {
           setItemReviewersDraft('')
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.eYVZBag'))
+        setError(err instanceof Error ? err.message : tr('failedRequest'))
       } finally {
         setMutatingStatus(false)
       }
@@ -7290,7 +7192,7 @@ export default function MobileTasksScreen() {
           throw new Error(response.error.message)
         }
         if (!Array.isArray(response.result)) {
-          throw new Error(t('m.lanbga8'))
+          throw new Error(tr('invalid'))
         }
         const checks = response.result as GitHubDetailCheck[]
         const checksSummary = buildGitHubCheckSummary(checks)
@@ -7316,7 +7218,7 @@ export default function MobileTasksScreen() {
           )
         )
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m._sMIbrI'))
+        setError(err instanceof Error ? err.message : tr('failedRefresh'))
       } finally {
         setMutatingStatus(false)
       }
@@ -7347,11 +7249,11 @@ export default function MobileTasksScreen() {
         }
         const result = response.result as { ok?: boolean; error?: string }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m.ppWaFdk'))
+          throw new Error(result.error ?? tr('failedRerun'))
         }
         setDetailRefreshSeq((current) => current + 1)
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.ppWaFdk'))
+        setError(err instanceof Error ? err.message : tr('failedRerun'))
       } finally {
         setMutatingStatus(false)
       }
@@ -7368,7 +7270,7 @@ export default function MobileTasksScreen() {
         return
       }
       if (detailPayload?.provider !== 'github' || !detailPayload.pullRequestId) {
-        setError(t('m.HCcPUIo'))
+        setError(tr('unableSync'))
         return
       }
       const viewed = file.viewerViewedState !== 'VIEWED'
@@ -7389,7 +7291,7 @@ export default function MobileTasksScreen() {
           throw new Error(response.error.message)
         }
         if (response.result !== true) {
-          throw new Error(t('m.fpX38uo'))
+          throw new Error(tr('failedSync'))
         }
         setDetailPayload((current) =>
           current?.provider === 'github'
@@ -7404,7 +7306,7 @@ export default function MobileTasksScreen() {
             : current
         )
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.3JBRDbM'))
+        setError(err instanceof Error ? err.message : tr('failedUpdateViewed'))
       } finally {
         setMutatingStatus(false)
       }
@@ -7437,7 +7339,7 @@ export default function MobileTasksScreen() {
           throw new Error(response.error.message)
         }
         if (response.result !== true) {
-          throw new Error(resolve ? t('m.LVc8Fk0') : t('m.ct__F0Q'))
+          throw new Error(resolve ? tr('failedResolve') : tr('failedReopen'))
         }
         setDetailPayload((current) =>
           current?.provider === 'github'
@@ -7452,7 +7354,7 @@ export default function MobileTasksScreen() {
             : current
         )
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.Akq8bGo'))
+        setError(err instanceof Error ? err.message : tr('failedUpdateReview'))
       } finally {
         setMutatingStatus(false)
       }
@@ -7480,7 +7382,7 @@ export default function MobileTasksScreen() {
         !detailPayload.headSha ||
         !detailPayload.baseSha
       ) {
-        setError(t('m.7sESNDQ'))
+        setError(tr('unableLoad'))
         return
       }
       setPrFileLoadingPath(file.path)
@@ -7507,7 +7409,7 @@ export default function MobileTasksScreen() {
           [file.path]: response.result as GitHubPRFileContents
         }))
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.b6obzk0'))
+        setError(err instanceof Error ? err.message : tr('failedLoadFile'))
       } finally {
         setPrFileLoadingPath(null)
       }
@@ -7525,7 +7427,7 @@ export default function MobileTasksScreen() {
         return
       }
       if (detailPayload?.provider !== 'github' || !detailPayload.headSha) {
-        setError(t('m.4Si7jXY'))
+        setError(tr('unableComment'))
         return
       }
       const draftKey = `${file.path}:${line}`
@@ -7557,7 +7459,7 @@ export default function MobileTasksScreen() {
           comment?: DetailComment
         }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m.jRm4RmA'))
+          throw new Error(result.error ?? tr('failedAddReview'))
         }
         const comment: DetailComment = result.comment ?? {
           id: `local-${Date.now()}`,
@@ -7578,7 +7480,7 @@ export default function MobileTasksScreen() {
             : current
         )
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.jRm4RmA'))
+        setError(err instanceof Error ? err.message : tr('failedAddReview'))
       } finally {
         setMutatingStatus(false)
       }
@@ -7640,7 +7542,7 @@ export default function MobileTasksScreen() {
           comment?: DetailComment
         }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m.k4ojp0Y'))
+          throw new Error(result.error ?? tr('failedReply'))
         }
         const reply: DetailComment = result.comment ?? {
           id: `local-${Date.now()}`,
@@ -7662,7 +7564,7 @@ export default function MobileTasksScreen() {
             : current
         )
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.k4ojp0Y'))
+        setError(err instanceof Error ? err.message : tr('failedReply'))
       } finally {
         setMutatingStatus(false)
       }
@@ -7685,7 +7587,7 @@ export default function MobileTasksScreen() {
         return
       }
       if (item.provider === 'github' && isGitHubPrMergeBlocked(item)) {
-        setError(t('m.wPJymlU'))
+        setError(tr('gitHubReportsMergeConflictsOpen'))
         return
       }
       setMutatingStatus(true)
@@ -7717,12 +7619,12 @@ export default function MobileTasksScreen() {
         }
         const result = response.result as { ok?: boolean; error?: string }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m._t92UNY'))
+          throw new Error(result.error ?? tr('failedMerge'))
         }
         setActionItem(null)
         await loadTasks({ silent: true })
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m._t92UNY'))
+        setError(err instanceof Error ? err.message : tr('failedMerge'))
       } finally {
         setMutatingStatus(false)
       }
@@ -7776,7 +7678,7 @@ export default function MobileTasksScreen() {
         })
         await loadTasks({ silent: true })
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.gNpYapQ'))
+        setError(err instanceof Error ? err.message : tr('failedUpdateLinear'))
       } finally {
         setMutatingStatus(false)
       }
@@ -7810,7 +7712,7 @@ export default function MobileTasksScreen() {
         }
         const result = response.result as { ok?: boolean; id?: string; error?: string }
         if (result.ok === false) {
-          throw new Error(result.error ?? t('m.-bXRzXk'))
+          throw new Error(result.error ?? tr('failedAddComment'))
         }
         const comment: DetailComment = {
           id: result.id ?? `local-${Date.now()}`,
@@ -7825,7 +7727,7 @@ export default function MobileTasksScreen() {
             : current
         )
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.YpcHVvo'))
+        setError(err instanceof Error ? err.message : tr('failedAddLinear'))
       } finally {
         setMutatingStatus(false)
       }
@@ -7851,11 +7753,11 @@ export default function MobileTasksScreen() {
         }
         const issue = response.result as LinearIssue | null
         if (!issue) {
-          throw new Error(t('m.KcjImC4'))
+          throw new Error(tr('subIssueNot'))
         }
         setActionItem(createLinearTask(issue) as Extract<TaskItem, { provider: 'linear' }>)
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.GdZdv18'))
+        setError(err instanceof Error ? err.message : tr('failedLoadLinearSub'))
       } finally {
         setMutatingStatus(false)
       }
@@ -7898,7 +7800,7 @@ export default function MobileTasksScreen() {
           error?: string
         }
         if (result.ok === false || !result.id || !result.identifier) {
-          throw new Error(result.error ?? t('m.2cHUFuY'))
+          throw new Error(result.error ?? tr('failedCreateSub'))
         }
         const child: LinearIssueChild = {
           id: result.id,
@@ -7918,7 +7820,7 @@ export default function MobileTasksScreen() {
             : current
         )
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.Sni1IDk'))
+        setError(err instanceof Error ? err.message : tr('failedCreateLinearSub'))
       } finally {
         setMutatingStatus(false)
       }
@@ -7940,7 +7842,11 @@ export default function MobileTasksScreen() {
       if (provider === 'github' || provider === 'gitlab') {
         const repo = hostedRepos.find((entry) => entry.id === createRepoId) ?? hostedRepos[0]
         if (!repo) {
-          throw new Error(t('m.C3TiEsc', { value0: provider === 'github' ? 'GitHub' : 'GitLab' }))
+          throw new Error(
+            tr('addGitRepositoryBeforeCreatingProvider', {
+              provider: provider === 'github' ? 'GitHub' : 'GitLab'
+            })
+          )
         }
         const response = await client.sendRequest(
           provider === 'github' ? 'github.createIssue' : 'gitlab.createIssue',
@@ -7961,7 +7867,10 @@ export default function MobileTasksScreen() {
         }
         if (result.ok === false) {
           throw new Error(
-            result.error ?? t('m.ffJZE1A', { value0: provider === 'github' ? 'GitHub' : 'GitLab' })
+            result.error ??
+              tr('failedCreateProvider', {
+                provider: provider === 'github' ? 'GitHub' : 'GitLab'
+              })
           )
         }
         if (typeof result.number === 'number') {
@@ -7999,7 +7908,7 @@ export default function MobileTasksScreen() {
       } else {
         const team = linearTeams.find((entry) => entry.id === createTeamId) ?? linearTeams[0]
         if (!team) {
-          throw new Error(t('m.T_YfEh0'))
+          throw new Error(tr('selectLinear'))
         }
         const response = await client.sendRequest('linear.createIssue', {
           teamId: team.id,
@@ -8019,7 +7928,7 @@ export default function MobileTasksScreen() {
           error?: string
         }
         if (result.ok === false || !result.id || !result.identifier) {
-          throw new Error(result.error ?? t('m.iD-UhpY'))
+          throw new Error(result.error ?? tr('failedCreateLinearIssue'))
         }
         setActionItem(
           createLinearTask({
@@ -8043,7 +7952,7 @@ export default function MobileTasksScreen() {
       setCreateBody('')
       await loadTasks({ silent: true })
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('m.XuKemqY'))
+      setError(err instanceof Error ? err.message : tr('failedCreateTask'))
     } finally {
       setCreatingTask(false)
     }
@@ -8092,7 +8001,7 @@ export default function MobileTasksScreen() {
         )
         await loadTasks({ silent: true })
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.piHodso'))
+        setError(err instanceof Error ? err.message : tr('failedUpdateIssueSource'))
       }
     },
     [client, loadTasks, taskUiReady]
@@ -8111,7 +8020,7 @@ export default function MobileTasksScreen() {
           style={[styles.input, styles.commentInput, styles.commentComposerInput]}
           value={args.value}
           onChangeText={args.onChangeText}
-          placeholder={t('m._I4A15k')}
+          placeholder={tr('addComment')}
           placeholderTextColor={colors.textMuted}
           editable={!args.disabled}
           multiline
@@ -8121,7 +8030,7 @@ export default function MobileTasksScreen() {
         {hasText ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={t('m.UhoT2i4')}
+            accessibilityLabel={tr('send')}
             style={({ pressed }) => [
               styles.commentComposerSend,
               pressed && !args.disabled && styles.commentComposerSendPressed,
@@ -8173,7 +8082,7 @@ export default function MobileTasksScreen() {
                   onPress={() => void toggleGitHubReviewThread(actionItem, comment)}
                 >
                   <Text style={styles.inlineSaveText}>
-                    {comment.isResolved ? t('m.qEc1OYo') : t('m.Rjjl1iA')}
+                    {comment.isResolved ? tr('reopenThread') : tr('resolve')}
                   </Text>
                 </Pressable>
               ) : null}
@@ -8186,7 +8095,7 @@ export default function MobileTasksScreen() {
                     [String(comment.id)]: next
                   }))
                 }
-                placeholder={t('m.2MyR_iQ')}
+                placeholder={tr('reply')}
                 placeholderTextColor={colors.textMuted}
                 multiline
                 textAlignVertical="top"
@@ -8196,7 +8105,7 @@ export default function MobileTasksScreen() {
                 disabled={mutatingStatus || !(itemReplyDrafts[String(comment.id)] ?? '').trim()}
                 onPress={() => void replyToGitHubComment(actionItem, comment)}
               >
-                <Text style={styles.inlineSaveText}>{t('m.2MyR_iQ')}</Text>
+                <Text style={styles.inlineSaveText}>{tr('reply')}</Text>
               </Pressable>
             </>
           ) : null}
@@ -8226,12 +8135,12 @@ export default function MobileTasksScreen() {
           }
         >
           <Text style={styles.resolvedCommentTitle} numberOfLines={1}>
-            {t(group.kind === 'thread' ? 'm.kYCT6qM' : 'm.ahIRbHk', {
-              value0: commentAuthor(root)
+            {tr(group.kind === 'thread' ? 'resolvedThread' : 'resolvedComment', {
+              commentAuthor: commentAuthor(root)
             })}
           </Text>
           <Text style={styles.detailSectionMeta}>
-            {count > 1 ? t('m.M2j9mpc', { value0: count }) : t('m.z1fMPAI')}
+            {count > 1 ? tr('discussionComment', { commentCount: count }) : tr('show')}
           </Text>
         </Pressable>
       )
@@ -8278,10 +8187,10 @@ export default function MobileTasksScreen() {
       : (linearTeams.find((team) => team.id === createTeamId) ?? linearTeams[0] ?? null)
   const selectedCreateTargetLabel =
     provider === 'github' || provider === 'gitlab'
-      ? ((selectedCreateTarget as RepoSummary | null)?.displayName ?? t('m.x8ioLCA'))
-      : ((selectedCreateTarget as LinearTeam | null)?.name ?? t('m.x8ioLCA'))
+      ? ((selectedCreateTarget as RepoSummary | null)?.displayName ?? tr('selectTarget'))
+      : ((selectedCreateTarget as LinearTeam | null)?.name ?? tr('selectTarget'))
   const providerLabel =
-    provider === 'github' ? t('m.gcczsRA') : provider === 'gitlab' ? t('m.BaXOO9M') : t('m.R_7ye6M')
+    provider === 'github' ? tr('gitHub') : provider === 'gitlab' ? tr('gitLab') : tr('linear')
   const showHeaderCreateTask =
     provider === 'linear' || (provider === 'github' && githubMode === 'items')
   const providerOptions = useMemo(
@@ -8317,13 +8226,17 @@ export default function MobileTasksScreen() {
             ? githubIssueSourceRows[0]!.sources.prs
             : githubIssueSourceRows[0]!.sources.upstreamCandidate
         )
-      : t('m.yX2I5Qc', { value0: githubIssueSourceRows.length })
+      : tr('githubIssue', {
+          githubIssueSourceRowCount: githubIssueSourceRows.length
+        })
   const repoPickerLabel =
     selectedRepoIds.size === 0 || selectedHostedRepos.length === hostedRepos.length
-      ? t('m.dBmZ43Q')
+      ? tr('allRepos')
       : selectedHostedRepos.length === 1
         ? selectedHostedRepos[0]!.displayName
-        : t('m.zrhQGaA', { value0: selectedHostedRepos.length })
+        : tr('selectedHosted', {
+            selectedHostedRepoCount: selectedHostedRepos.length
+          })
   const repoPickerSelectedRepo =
     selectedRepoIds.size > 0 && selectedHostedRepos.length === 1 ? selectedHostedRepos[0]! : null
   const workspaceRepoOptions = useMemo<PickerOption<string>[]>(
@@ -8374,7 +8287,7 @@ export default function MobileTasksScreen() {
     return entries
   }, [reposById, sortedItems, taskSort])
   const sortLabel =
-    getSortOptions().find((option) => option.value === taskSort)?.label ?? t('m.43utnp4')
+    getSortOptions().find((option) => option.value === taskSort)?.label ?? tr('updated')
   const githubProjectFields = githubProjectTable?.selectedView.fields ?? []
   const githubProjectViewSort = githubProjectTable?.selectedView.sortByFields?.[0] ?? null
   const githubProjectSortField = githubProjectSortOverride
@@ -8383,43 +8296,46 @@ export default function MobileTasksScreen() {
   const githubProjectSortDirection =
     githubProjectSortOverride?.direction ?? githubProjectViewSort?.direction ?? null
   const githubProjectSortLabel = githubProjectSortField
-    ? `${githubProjectSortField.name} ${githubProjectSortDirection === 'DESC' ? t('m.2IFEfeA') : t('m.qzEC9yM')}`
-    : t('m.Hs-i62I')
+    ? `${githubProjectSortField.name} ${githubProjectSortDirection === 'DESC' ? tr('descending') : tr('ascending')}`
+    : tr('viewOrder')
   const githubProjectFieldsLabel =
     githubProjectAvailableSummaryFields.length > 0
-      ? t('m.BJUllKs', {
-          value0: githubProjectSummaryFields.length,
-          value1: githubProjectAvailableSummaryFields.length
+      ? tr('githubProject', {
+          githubProjectSummaryFieldCount: githubProjectSummaryFields.length,
+          githubProjectAvailableSummaryFieldCount: githubProjectAvailableSummaryFields.length
         })
-      : t('m.DiuXQZo')
+      : tr('fields')
   const githubProjectSortOptions = useMemo<PickerOption<string>[]>(
     () => [
       {
         value: PROJECT_VIEW_DEFAULT_SORT,
-        label: t('m.Hs-i62I'),
+        label: tr('viewOrder'),
         subtitle: githubProjectViewSort
-          ? t('m.fERYVNg', {
-              value0: githubProjectViewSort.field.name,
-              value1: githubProjectViewSort.direction === 'DESC' ? t('m.2IFEfeA') : t('m.qzEC9yM')
+          ? tr('usesSort', {
+              sortFieldName: githubProjectViewSort.field.name,
+              sortDirection:
+                githubProjectViewSort.direction === 'DESC' ? tr('descending') : tr('ascending')
             })
-          : t('m.P-ZWamw')
+          : tr('usesGit')
       },
       ...githubProjectFields.map((field) => {
         const active = githubProjectSortOverride?.fieldId === field.id
         const nextDirection =
           !active || githubProjectSortOverride.direction === 'DESC'
-            ? t('m.qzEC9yM')
-            : t('m.2IFEfeA')
+            ? tr('ascending')
+            : tr('descending')
         return {
           value: field.id,
           label: field.name,
           subtitle: active
-            ? t('m.YKWIedk', {
-                value0:
-                  githubProjectSortOverride.direction === 'DESC' ? t('m.2IFEfeA') : t('m.qzEC9yM'),
-                value1: nextDirection
+            ? tr('currently', {
+                currentSortDirection:
+                  githubProjectSortOverride.direction === 'DESC'
+                    ? tr('descending')
+                    : tr('ascending'),
+                nextSortDirection: nextDirection
               })
-            : t('m.yvbNVZo')
+            : tr('sortAscending')
         }
       })
     ],
@@ -8431,7 +8347,9 @@ export default function MobileTasksScreen() {
         value: view.id,
         label: view.name,
         subtitle:
-          view.layout === 'TABLE_LAYOUT' ? t('m.hy_B4J8', { value0: view.number }) : t('m.dMUK4L8'),
+          view.layout === 'TABLE_LAYOUT'
+            ? tr('viewProject', { projectViewNumber: view.number })
+            : tr('unsupported'),
         disabled: view.layout !== 'TABLE_LAYOUT'
       })),
     [githubProjectViews]
@@ -8441,38 +8359,35 @@ export default function MobileTasksScreen() {
     option.value === defaultGitHubPreset
       ? {
           ...option,
-          subtitle: option.subtitle ? t('m.dXnxHU4', { value0: option.subtitle }) : t('m.TNd6PjA')
+          subtitle: option.subtitle ? tr('subtitle', { subtitle: option.subtitle }) : tr('default')
         }
       : option
   )
   const githubPresetLabel =
-    githubPresetOptions.find((preset) => preset.value === githubPreset)?.label ?? t('m.czxJ7iQ')
+    githubPresetOptions.find((preset) => preset.value === githubPreset)?.label ?? tr('open')
   const gitlabFilterLabel =
-    getGitLabFilterOptions().find((filter) => filter.value === gitlabFilter)?.label ??
-    t('m.czxJ7iQ')
+    getGitLabFilterOptions().find((filter) => filter.value === gitlabFilter)?.label ?? tr('open')
   const linearFilterLabel =
-    getLinearFilterOptions().find((filter) => filter.value === linearFilter)?.label ??
-    t('m.gIF8518')
+    getLinearFilterOptions().find((filter) => filter.value === linearFilter)?.label ?? tr('all')
   const linearViewLabel =
-    getLinearViewOptions().find((option) => option.value === linearViewMode)?.label ??
-    t('m.tIgX1ak')
+    getLinearViewOptions().find((option) => option.value === linearViewMode)?.label ?? tr('list')
   const linearGroupLabel =
     getLinearGroupOptions().find((option) => option.value === linearGroupBy)?.label ??
-    t('m.Dd-TzXA')
+    tr('noGrouping')
   const linearOrderLabel =
     getLinearOrderOptions().find((option) => option.value === linearOrderBy)?.label ??
-    t('m.ISISlFo')
+    tr('priority')
   const linearWorkspaceLabel =
     selectedLinearWorkspaceId === 'all'
-      ? t('m.-Qqso-0')
+      ? tr('allWorkspaces')
       : (linearWorkspaces.find((workspace) => workspace.id === selectedLinearWorkspaceId)
           ?.organizationName ??
         linearWorkspaces.find((workspace) => workspace.id === selectedLinearWorkspaceId)
           ?.displayName ??
-        t('m.5U1KC3A'))
+        tr('workspace'))
   const linearWorkspaceOptions = useMemo<PickerOption<string>[]>(
     () => [
-      { value: 'all', label: t('m.-Qqso-0') },
+      { value: 'all', label: tr('allWorkspaces') },
       ...linearWorkspaces.map((workspace) => ({
         value: workspace.id,
         label: workspace.organizationName ?? workspace.displayName ?? workspace.id
@@ -8482,10 +8397,10 @@ export default function MobileTasksScreen() {
   )
   const linearTeamLabel =
     selectedLinearTeamIds.size === 0 || selectedLinearTeamIds.size === linearTeams.length
-      ? t('m.dEIGNBo')
+      ? tr('allTeams')
       : selectedLinearTeamIds.size === 1
-        ? (linearTeams.find((team) => selectedLinearTeamIds.has(team.id))?.name ?? t('m.rqyU6Yo'))
-        : t('m.73-jDqg', { value0: selectedLinearTeamIds.size })
+        ? (linearTeams.find((team) => selectedLinearTeamIds.has(team.id))?.name ?? tr('oneTeam'))
+        : tr('teamCount', { teamCount: selectedLinearTeamIds.size })
   const effectiveLinearDisplayProperties = useMemo(() => {
     const next = new Set(linearDisplayProperties)
     if (linearGroupBy === 'status') {
@@ -8550,16 +8465,12 @@ export default function MobileTasksScreen() {
     [linearGroupBy, linearIssuesForView, linearOrderBy]
   )
   const githubModeLabel =
-    githubMode === 'project'
-      ? t('m.LB-QyhM')
-      : githubKind === 'prs'
-        ? t('m.Xj-3fdg')
-        : t('m.41d4YcM')
+    githubMode === 'project' ? tr('projects') : githubKind === 'prs' ? tr('prs') : tr('issues')
   const activeProjectLabel = githubProjectTable
     ? githubProjectTable.project.title
     : activeGitHubProject
       ? `${activeGitHubProject.owner} #${activeGitHubProject.number}`
-      : t('m.inyDHB0')
+      : tr('chooseProject')
   const selectedGitHubProjectViewUrl = githubProjectTable
     ? `${githubProjectTable.project.url}/views/${githubProjectTable.selectedView.number}`
     : null
@@ -8647,14 +8558,14 @@ export default function MobileTasksScreen() {
   })
   const emptyLabel =
     connState !== 'connected'
-      ? t('m.Q9YN3Hk')
+      ? tr('connectHost')
       : query
-        ? t('m.OCkeuqU')
+        ? tr('noMatchingTasks')
         : provider === 'github'
-          ? t('m.haGU2eY')
+          ? tr('noGitHub')
           : provider === 'gitlab'
-            ? t('m.ifuEhog')
-            : t('m.uGLg5VY')
+            ? tr('noGitLab')
+            : tr('noLinear')
   const isGithubProjectSearch = provider === 'github' && githubMode === 'project'
 
   return (
@@ -8666,7 +8577,7 @@ export default function MobileTasksScreen() {
           </Pressable>
           <View style={styles.titleWrap}>
             <StatusDot state={connState} verdict={headerVerdict} />
-            <Text style={styles.title}>{t('m._TeSdI8')}</Text>
+            <Text style={styles.title}>{tr('tasks')}</Text>
           </View>
           <Pressable
             style={styles.iconButton}
@@ -8797,7 +8708,9 @@ export default function MobileTasksScreen() {
                       }}
                     >
                       <Text style={styles.segmentSecondaryText}>
-                        {t('m.3fJQdKo', { value0: githubIssueSourceLabel })}
+                        {tr('source', {
+                          githubIssueSourceLabel: githubIssueSourceLabel
+                        })}
                       </Text>
                     </Pressable>
                   ) : null}
@@ -8844,7 +8757,9 @@ export default function MobileTasksScreen() {
                       }}
                     >
                       <Text style={styles.segmentSecondaryText}>
-                        {t('m.F0yrwZ0', { value0: githubProjectSortLabel })}
+                        {tr('sortGithub', {
+                          githubProjectSortLabel: githubProjectSortLabel
+                        })}
                       </Text>
                     </Pressable>
                   ) : null}
@@ -8860,7 +8775,9 @@ export default function MobileTasksScreen() {
                       }}
                     >
                       <Text style={styles.segmentSecondaryText}>
-                        {t('m.ntCXZ5E', { value0: githubProjectFieldsLabel })}
+                        {tr('fieldsGithub', {
+                          githubProjectFieldsLabel: githubProjectFieldsLabel
+                        })}
                       </Text>
                     </Pressable>
                   ) : null}
@@ -8874,7 +8791,7 @@ export default function MobileTasksScreen() {
                   {selectedGitHubProjectViewUrl ? (
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel={t('m.ybs6rJE')}
+                      accessibilityLabel={tr('openView')}
                       style={styles.segmentIconButton}
                       disabled={!taskUiReady}
                       onPress={() => {
@@ -8905,7 +8822,7 @@ export default function MobileTasksScreen() {
                 }}
               >
                 <Text style={styles.segmentSecondaryText}>
-                  {gitlabView === 'project' ? t('m.fxhXe98') : t('m.uLI9QAU')}
+                  {gitlabView === 'project' ? tr('projectMrs') : tr('myTodos')}
                 </Text>
               </Pressable>
               {gitlabView === 'project' && (
@@ -8988,7 +8905,9 @@ export default function MobileTasksScreen() {
                 }}
               >
                 <Text style={styles.segmentSecondaryText}>
-                  {t('m.rkPw0BI', { value0: linearGroupLabel })}
+                  {tr('groupLinearGroup', {
+                    linearGroupLabel: linearGroupLabel
+                  })}
                 </Text>
               </Pressable>
               <Pressable
@@ -9002,7 +8921,9 @@ export default function MobileTasksScreen() {
                 }}
               >
                 <Text style={styles.segmentSecondaryText}>
-                  {t('m.KPrnw08', { value0: linearOrderLabel })}
+                  {tr('orderLinearOrder', {
+                    linearOrderLabel: linearOrderLabel
+                  })}
                 </Text>
               </Pressable>
               <Pressable
@@ -9015,7 +8936,7 @@ export default function MobileTasksScreen() {
                   setShowLinearDisplayPicker(true)
                 }}
               >
-                <Text style={styles.segmentSecondaryText}>{t('m.niMSGwc')}</Text>
+                <Text style={styles.segmentSecondaryText}>{tr('display')}</Text>
               </Pressable>
             </>
           )}
@@ -9033,7 +8954,9 @@ export default function MobileTasksScreen() {
             >
               <GitBranch size={14} color={colors.textSecondary} />
               <Text style={styles.segmentSecondaryText}>
-                {t('m.F0yrwZ0', { value0: sortLabel })}
+                {tr('sortGithub', {
+                  githubProjectSortLabel: sortLabel
+                })}
               </Text>
             </Pressable>
           ) : null}
@@ -9046,7 +8969,11 @@ export default function MobileTasksScreen() {
               value={isGithubProjectSearch ? githubProjectSearch : query}
               onChangeText={isGithubProjectSearch ? setGithubProjectSearch : setQuery}
               placeholder={
-                isGithubProjectSearch ? t('m.RzsrKAc') : t('m.7WH7i2M', { value0: providerLabel })
+                isGithubProjectSearch
+                  ? tr('searchProject')
+                  : tr('searchProvider', {
+                      providerLabel: providerLabel
+                    })
               }
               // Why: GitHub items seed the field with a preset query, so a bare
               // value.length check would always show clear. Project mode shows clear
@@ -9134,7 +9061,9 @@ export default function MobileTasksScreen() {
               style={styles.sourceNoticeBanner}
             >
               <Text style={styles.sourceNoticeText}>
-                {t('m.p08Gdhs', { value0: fallback.repoLabel })}
+                {tr('preferred', {
+                  repoName: fallback.repoLabel
+                })}
               </Text>
             </View>
           ))
@@ -9150,7 +9079,7 @@ export default function MobileTasksScreen() {
               >
                 <View style={styles.sourceErrorCopy}>
                   <Text style={styles.sourceErrorText}>
-                    {t('m.91ACsJY')}{' '}
+                    {tr('couldNotLoadIssues')}{' '}
                     <Text style={styles.sourceErrorSlug}>
                       {sourceError.source.owner}/{sourceError.source.repo}
                     </Text>
@@ -9162,16 +9091,16 @@ export default function MobileTasksScreen() {
                 </View>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={t('m.QU-Uflw', {
-                    value0: sourceError.source.owner,
-                    value1: sourceError.source.repo
+                  accessibilityLabel={tr('retryLoading', {
+                    owner: sourceError.source.owner,
+                    repo: sourceError.source.repo
                   })}
                   style={styles.sourceErrorRetry}
                   disabled={loading || isRetrying}
                   onPress={() => void retryGitHubIssueSourceFetch(sourceError.repoPath)}
                 >
                   <Text style={styles.sourceErrorRetryText}>
-                    {isRetrying ? t('m.aCzhUtY') : t('m.yF0bGcQ')}
+                    {isRetrying ? tr('retrying') : tr('retry')}
                   </Text>
                 </Pressable>
               </View>
@@ -9185,15 +9114,15 @@ export default function MobileTasksScreen() {
       githubProjectTable?.parentFieldDropped === true ? (
         <View style={styles.projectDataNotice}>
           <AlertTriangle size={15} color={colors.statusAmber} />
-          <Text style={styles.projectDataNoticeText}>{t('m.KQkXL08')}</Text>
+          <Text style={styles.projectDataNoticeText}>{tr('subIssueData')}</Text>
         </View>
       ) : null}
 
       {!tasksSupported ? (
         tasksUnsupported ? (
           <View style={styles.centered}>
-            <Text style={styles.emptyText}>{t('m.iUDJtXI')}</Text>
-            <Text style={styles.centeredHint}>{t('m.J73iv2w')}</Text>
+            <Text style={styles.emptyText}>{tr('updateOrcaDesktop')}</Text>
+            <Text style={styles.centeredHint}>{tr('mobile')}</Text>
           </View>
         ) : (
           <View style={styles.centered}>
@@ -9203,8 +9132,8 @@ export default function MobileTasksScreen() {
       ) : provider === 'linear' && !linearConnected ? (
         <View style={styles.centered}>
           <TaskProviderLogo provider="linear" size={32} color={colors.textSecondary} />
-          <Text style={styles.emptyText}>{t('m.L9oPTag')}</Text>
-          <Text style={styles.centeredHint}>{t('m.42DYBxM')}</Text>
+          <Text style={styles.emptyText}>{tr('connectYour')}</Text>
+          <Text style={styles.centeredHint}>{tr('browseStart')}</Text>
           <Pressable
             style={[styles.targetButton, styles.centerActionButton]}
             disabled={!taskUiReady}
@@ -9218,7 +9147,7 @@ export default function MobileTasksScreen() {
               setShowLinearConnect(true)
             }}
           >
-            <Text style={styles.targetButtonText}>{t('m.IQp4SP8')}</Text>
+            <Text style={styles.targetButtonText}>{tr('connectLinear')}</Text>
           </Pressable>
         </View>
       ) : provider === 'github' && githubMode === 'project' ? (
@@ -9228,7 +9157,7 @@ export default function MobileTasksScreen() {
           </View>
         ) : !activeGitHubProject ? (
           <View style={styles.centered}>
-            <Text style={styles.emptyText}>{t('m.UqRLwDk')}</Text>
+            <Text style={styles.emptyText}>{tr('chooseGit')}</Text>
             <Pressable
               style={[styles.targetButton, styles.centerActionButton]}
               disabled={!taskUiReady}
@@ -9239,7 +9168,7 @@ export default function MobileTasksScreen() {
                 setShowGitHubProjectPicker(true)
               }}
             >
-              <Text style={styles.targetButtonText}>{t('m.F7DoZNU')}</Text>
+              <Text style={styles.targetButtonText}>{tr('browseProjects')}</Text>
             </Pressable>
           </View>
         ) : githubProjectError ? (
@@ -9252,7 +9181,7 @@ export default function MobileTasksScreen() {
           </View>
         ) : !githubProjectTable || visibleGitHubProjectRows.length === 0 ? (
           <View style={styles.centered}>
-            <Text style={styles.emptyText}>{t('m.XHZQUAc')}</Text>
+            <Text style={styles.emptyText}>{tr('noProject')}</Text>
           </View>
         ) : (
           <FlatList
@@ -9289,7 +9218,7 @@ export default function MobileTasksScreen() {
                       style={entry.collapsed ? styles.projectGroupChevronCollapsed : undefined}
                     />
                     <Text style={styles.projectGroupTitle} numberOfLines={1}>
-                      {entry.group.label || t('m.Wg2C-lo')}
+                      {entry.group.label || tr('items')}
                     </Text>
                     <Text style={styles.projectGroupMeta}>{projectGroupMeta(entry.group)}</Text>
                   </Pressable>
@@ -9329,10 +9258,10 @@ export default function MobileTasksScreen() {
                       />
                       <Text style={styles.subtitle} numberOfLines={1}>
                         {row.itemType === 'PULL_REQUEST'
-                          ? t('m.Bawm-QY')
+                          ? tr('pullRequestMessage')
                           : row.itemType === 'ISSUE'
-                            ? t('m.xcg6mvE')
-                            : t('m.NnYhRJs')}{' '}
+                            ? tr('issue')
+                            : tr('projectItem')}{' '}
                         · {row.content.repository ?? githubProjectTable.project.title}
                         {row.content.number ? ` #${row.content.number}` : ''}
                       </Text>
@@ -9358,7 +9287,10 @@ export default function MobileTasksScreen() {
                         {githubProjectSummaryFields.length > 4 ? (
                           <View style={styles.projectFieldPill}>
                             <Text style={styles.projectFieldPillText}>
-                              {t('m.3-41cjc', { value0: githubProjectSummaryFields.length - 4 })}
+                              {tr('plus', {
+                                githubProjectSummaryFieldCount:
+                                  githubProjectSummaryFields.length - 4
+                              })}
                             </Text>
                           </View>
                         ) : null}
@@ -9427,7 +9359,9 @@ export default function MobileTasksScreen() {
                           style={[styles.statusPillSelf, styles.linearStatePill]}
                           disabled={mutatingStatus}
                           accessibilityRole="button"
-                          accessibilityLabel={t('m.SlWRC8A', { value0: issue.state.name })}
+                          accessibilityLabel={tr('changeStatusName', {
+                            fromName: issue.state.name
+                          })}
                           onPress={(event) => {
                             event.stopPropagation()
                             triggerMediumImpact()
@@ -9525,7 +9459,9 @@ export default function MobileTasksScreen() {
                         style={[styles.statusPill, styles.linearStatePill]}
                         disabled={mutatingStatus}
                         accessibilityRole="button"
-                        accessibilityLabel={t('m.SlWRC8A', { value0: issue.state.name })}
+                        accessibilityLabel={tr('changeStatusName', {
+                          fromName: issue.state.name
+                        })}
                         onPress={(event) => {
                           event.stopPropagation()
                           triggerMediumImpact()
@@ -9575,7 +9511,7 @@ export default function MobileTasksScreen() {
               <View style={styles.paginationFooter}>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={t('m.eLSyiVk')}
+                  accessibilityLabel={tr('previous')}
                   accessibilityState={{
                     disabled: githubCurrentPage === 0 || githubPaginationLoading
                   }}
@@ -9593,10 +9529,12 @@ export default function MobileTasksScreen() {
                   accessibilityRole="button"
                   accessibilityLabel={
                     githubTotalCount === null
-                      ? t('m.mDUXZ5M', { value0: githubCurrentPage + 1 })
-                      : t('m.xZ4TQL8', {
-                          value0: githubCurrentPage + 1,
-                          value1: githubTotalPages
+                      ? tr('selectPagePageGithubCurrentPage', {
+                          githubCurrentPage: githubCurrentPage + 1
+                        })
+                      : tr('selectPagePageGithubCurrentPageGithub', {
+                          githubCurrentPage: githubCurrentPage + 1,
+                          githubTotalPages: githubTotalPages
                         })
                   }
                   accessibilityState={{ disabled: githubPaginationLoading }}
@@ -9611,16 +9549,18 @@ export default function MobileTasksScreen() {
                 >
                   <Text style={styles.paginationLabel}>
                     {githubTotalCount === null
-                      ? t('m.7aV6RlU', { value0: githubCurrentPage + 1 })
-                      : t('m.7LorW8k', {
-                          value0: githubCurrentPage + 1,
-                          value1: githubTotalPages
+                      ? tr('pagePage', {
+                          pageNumber: githubCurrentPage + 1
+                        })
+                      : tr('pageGithub', {
+                          githubCurrentPage: githubCurrentPage + 1,
+                          githubTotalPages: githubTotalPages
                         })}
                   </Text>
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={t('m.7L6hVV8')}
+                  accessibilityLabel={tr('next')}
                   accessibilityState={{
                     disabled:
                       (!githubCanLoadUncountedNextPage &&
@@ -9706,7 +9646,7 @@ export default function MobileTasksScreen() {
                         {branchSummary.head}
                       </Text>
                       <Text style={styles.branchMetaBase} numberOfLines={1}>
-                        {t('m.g8lrpKM', { value0: branchSummary.base })}
+                        {tr('baseBranch', { baseBranch: branchSummary.base })}
                       </Text>
                     </View>
                   ) : null}
@@ -9775,7 +9715,7 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && showProviderPicker}
-        title={t('m.JAnflBU')}
+        title={tr('taskSource')}
         options={providerOptions}
         selected={provider}
         onSelect={(next) => {
@@ -9822,8 +9762,8 @@ export default function MobileTasksScreen() {
         onClose={() => setShowRepoPicker(false)}
       >
         <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>{t('m.pMWEK5w')}</Text>
-          <Text style={styles.sheetSubtitle}>{t('m.ec9l6fo')}</Text>
+          <Text style={styles.sheetTitle}>{tr('repositories')}</Text>
+          <Text style={styles.sheetSubtitle}>{tr('chooseWhichRepositories')}</Text>
         </View>
 
         <View style={styles.repoPickerGroup}>
@@ -9836,7 +9776,7 @@ export default function MobileTasksScreen() {
             }}
           >
             <View style={styles.repoPickerTextWrap}>
-              <Text style={styles.repoPickerTitle}>{t('m.FohFTKc')}</Text>
+              <Text style={styles.repoPickerTitle}>{tr('allRepositories')}</Text>
               <Text style={styles.repoPickerSubtitle}>{repositoryCount(hostedRepos.length)}</Text>
             </View>
             {selectedRepoIds.size === 0 ? <Check size={15} color={colors.textPrimary} /> : null}
@@ -9878,14 +9818,14 @@ export default function MobileTasksScreen() {
         onClose={() => setShowGitHubIssueSourcePicker(false)}
       >
         <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>{t('m.aqrdcoU')}</Text>
-          <Text style={styles.sheetSubtitle}>{t('m.LGWybvE')}</Text>
+          <Text style={styles.sheetTitle}>{tr('gitHubIssue')}</Text>
+          <Text style={styles.sheetSubtitle}>{tr('chooseWhether')}</Text>
         </View>
 
         <View style={styles.repoPickerGroup}>
           {githubIssueSourceRows.length === 0 ? (
             <View style={styles.drawerLoadingRow}>
-              <Text style={styles.detailMuted}>{t('m.a5ldOMU')}</Text>
+              <Text style={styles.detailMuted}>{tr('noAlternate')}</Text>
             </View>
           ) : (
             githubIssueSourceRows.map(({ repo, sources }, index) => {
@@ -9902,8 +9842,8 @@ export default function MobileTasksScreen() {
                         {repo.displayName}
                       </Text>
                       <Text style={styles.issueSourceHint} numberOfLines={2}>
-                        {t('m.2x3FfB8', {
-                          value0: issueSourceSlug(
+                        {tr('querying', {
+                          prs: issueSourceSlug(
                             selectedPreference === 'origin'
                               ? sources.prs
                               : sources.upstreamCandidate
@@ -9934,7 +9874,7 @@ export default function MobileTasksScreen() {
                                 selected && styles.issueSourceSegmentTextActive
                               ]}
                             >
-                              {preference === 'upstream' ? t('m.CF9OlC4') : t('m.GbFyuJM')}
+                              {preference === 'upstream' ? tr('upstream') : tr('origin')}
                             </Text>
                             <Text style={styles.issueSourceSlug} numberOfLines={1}>
                               {slug}
@@ -9953,7 +9893,7 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && showGitHubKindPicker}
-        title={t('m.LkEKGa8')}
+        title={tr('gitHubView')}
         options={getGitHubKindOptions()}
         selected={githubMode === 'project' ? 'project' : githubKind}
         onSelect={(kind) => {
@@ -9981,7 +9921,7 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && showGitHubPresetPicker}
-        title={githubKind === 'prs' ? t('m.sQ-iS-M') : t('m.41d4YcM')}
+        title={githubKind === 'prs' ? tr('pullRequests') : tr('issues')}
         options={githubPresetPickerOptions}
         selected={githubPreset}
         onSelect={(preset) => {
@@ -10005,8 +9945,8 @@ export default function MobileTasksScreen() {
         onClose={() => setShowGitHubPagePicker(false)}
       >
         <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>{t('m.Zpsg1Hk')}</Text>
-          <Text style={styles.sheetSubtitle}>{t('m.K80V7xk')}</Text>
+          <Text style={styles.sheetTitle}>{tr('gitHubPages')}</Text>
+          <Text style={styles.sheetSubtitle}>{tr('jump')}</Text>
         </View>
         <ScrollView style={styles.pagePickerList}>
           {githubPagePickerPages.map((index) => {
@@ -10023,9 +9963,11 @@ export default function MobileTasksScreen() {
                 }}
               >
                 <View style={styles.pickerRowContent}>
-                  <Text style={styles.pickerRowLabel}>{t('m.T-_RK2o', { value0: index + 1 })}</Text>
+                  <Text style={styles.pickerRowLabel}>
+                    {tr('pagePage', { pageNumber: index + 1 })}
+                  </Text>
                   <Text style={styles.pickerRowSubtitle}>
-                    {loaded ? t('m.cR6luW0') : t('m.5kq0ekc')}
+                    {loaded ? tr('loaded') : tr('loads')}
                   </Text>
                 </View>
                 {selected ? <Check size={16} color={colors.textPrimary} /> : null}
@@ -10040,8 +9982,8 @@ export default function MobileTasksScreen() {
         onClose={() => setShowGitHubProjectPicker(false)}
       >
         <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>{t('m.4pG_Id0')}</Text>
-          <Text style={styles.sheetSubtitle}>{t('m.6e87BT8')}</Text>
+          <Text style={styles.sheetTitle}>{tr('gitHubProjects')}</Text>
+          <Text style={styles.sheetSubtitle}>{tr('chooseProjectViewTasks')}</Text>
         </View>
 
         <View style={styles.projectPickerControls}>
@@ -10049,7 +9991,7 @@ export default function MobileTasksScreen() {
             style={styles.input}
             value={githubProjectPickerSearch}
             onChangeText={setGithubProjectPickerSearch}
-            placeholder={t('m.gBglOLc')}
+            placeholder={tr('searchProjects')}
             placeholderTextColor={colors.textMuted}
             autoCapitalize="none"
             autoCorrect={false}
@@ -10063,7 +10005,7 @@ export default function MobileTasksScreen() {
                 setGithubProjectPasteError('')
               }}
               onSubmitEditing={() => void resolveGitHubProjectFromInput()}
-              placeholder={t('m.Qyb0AbI')}
+              placeholder={tr('addUrl')}
               placeholderTextColor={colors.textMuted}
               autoCapitalize="none"
               autoCorrect={false}
@@ -10074,7 +10016,7 @@ export default function MobileTasksScreen() {
               onPress={() => void resolveGitHubProjectFromInput()}
             >
               <Text style={styles.inlineSaveText}>
-                {githubProjectPasteBusy ? t('m.i7LVjnE') : t('m.25-g19E')}
+                {githubProjectPasteBusy ? tr('adding') : tr('add')}
               </Text>
             </Pressable>
           </View>
@@ -10092,10 +10034,14 @@ export default function MobileTasksScreen() {
               <Text style={styles.projectWarningTitle}>
                 {githubProjectPartialFailures.length === 1 &&
                 githubProjectPartialFailures[0]!.owner !== '*'
-                  ? t('m.rTimB6Y', { value0: githubProjectPartialFailures[0]!.owner })
-                  : t('m.x8yvGR0', { value0: githubProjectPartialFailures.length })}
+                  ? tr('couldNotLoadProjects', {
+                      owner: githubProjectPartialFailures[0]!.owner
+                    })
+                  : tr('some', {
+                      githubProjectPartialFailureCount: githubProjectPartialFailures.length
+                    })}
               </Text>
-              <Text style={styles.projectWarningText}>{t('m.9srv5vA')}</Text>
+              <Text style={styles.projectWarningText}>{tr('useAdd')}</Text>
               <Text style={styles.projectWarningText} numberOfLines={2}>
                 {githubProjectPartialFailures
                   .map(
@@ -10120,20 +10066,22 @@ export default function MobileTasksScreen() {
               style={styles.repoPickerRow}
               onPress={() =>
                 void loadGitHubProjects().catch((err) => {
-                  setGithubProjectError(err instanceof Error ? err.message : t('m.wpUutIo'))
+                  setGithubProjectError(
+                    err instanceof Error ? err.message : tr('failedLoadProjects')
+                  )
                 })
               }
             >
               <View style={styles.repoPickerTextWrap}>
-                <Text style={styles.repoPickerTitle}>{t('m.dbO6elU')}</Text>
-                <Text style={styles.repoPickerSubtitle}>{t('m.0Dc-Ym0')}</Text>
+                <Text style={styles.repoPickerTitle}>{tr('noProjects')}</Text>
+                <Text style={styles.repoPickerSubtitle}>{tr('tap')}</Text>
               </View>
             </Pressable>
           ) : (
             <>
               {pinnedGitHubProjects.length > 0 ? (
                 <>
-                  <Text style={styles.linearStatesTitle}>{t('m.Rn74bFA')}</Text>
+                  <Text style={styles.linearStatesTitle}>{tr('pinned')}</Text>
                   {pinnedGitHubProjects.map((project, index) => {
                     const key = githubProjectKey(project)
                     const selected =
@@ -10168,7 +10116,7 @@ export default function MobileTasksScreen() {
                               })
                             }}
                           >
-                            <Text style={styles.inlineSaveText}>{t('m.6WVhiZM')}</Text>
+                            <Text style={styles.inlineSaveText}>{tr('remove')}</Text>
                           </Pressable>
                           {selected ? <Check size={15} color={colors.textPrimary} /> : null}
                         </Pressable>
@@ -10180,7 +10128,7 @@ export default function MobileTasksScreen() {
 
               {recentGitHubProjects.length > 0 ? (
                 <>
-                  <Text style={styles.linearStatesTitle}>{t('m.d2YMdrw')}</Text>
+                  <Text style={styles.linearStatesTitle}>{tr('recent')}</Text>
                   {recentGitHubProjects.map((project, index) => {
                     const key = githubProjectKey(project)
                     const selected =
@@ -10221,7 +10169,7 @@ export default function MobileTasksScreen() {
                                 })
                               }}
                             >
-                              <Text style={styles.inlineSaveText}>{t('m.70mLMDk')}</Text>
+                              <Text style={styles.inlineSaveText}>{tr('pin')}</Text>
                             </Pressable>
                           ) : null}
                           {selected ? <Check size={15} color={colors.textPrimary} /> : null}
@@ -10233,11 +10181,11 @@ export default function MobileTasksScreen() {
               ) : null}
 
               <Text style={styles.linearStatesTitle}>
-                {githubProjectLoading ? t('m.2BAkBs4') : t('m.yJYA52k')}
+                {githubProjectLoading ? tr('browseAllLoading') : tr('browseAll')}
               </Text>
               {browseGitHubProjects.length === 0 ? (
                 <Text style={styles.emptyInlineText}>
-                  {githubProjectPickerSearch.trim() ? t('m.HH8i3aE') : t('m.RzP96Tg')}
+                  {githubProjectPickerSearch.trim() ? tr('noMatchingProjects') : tr('noMore')}
                 </Text>
               ) : (
                 browseGitHubProjects.map((project, index) => {
@@ -10275,13 +10223,13 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && showGitHubProjectViewPicker}
-        title={pendingGitHubProjectViewSelection ? t('m.4KsU0uw') : t('m.E_vNSwU')}
+        title={pendingGitHubProjectViewSelection ? tr('chooseProjectView') : tr('projectView')}
         options={githubProjectViewOptions}
         selected={pendingGitHubProjectViewSelection ? '' : (activeGitHubProjectViewId ?? '')}
         onSelect={(viewId) => {
           const view = githubProjectViews.find((candidate) => candidate.id === viewId)
           if (view && view.layout !== 'TABLE_LAYOUT') {
-            setGithubProjectError(t('m.pTwUfTs'))
+            setGithubProjectError(tr('orcaDoes'))
             return
           }
           if (pendingGitHubProjectViewSelection) {
@@ -10304,7 +10252,7 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && showGitHubProjectSortPicker}
-        title={t('m.TcKUEto')}
+        title={tr('projectSort')}
         options={githubProjectSortOptions}
         selected={githubProjectSortOverride?.fieldId ?? PROJECT_VIEW_DEFAULT_SORT}
         onSelect={(fieldId) => {
@@ -10330,12 +10278,12 @@ export default function MobileTasksScreen() {
         onClose={() => setShowGitHubProjectFieldsPicker(false)}
       >
         <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>{t('m.kqKUAww')}</Text>
-          <Text style={styles.sheetSubtitle}>{t('m.3YhoII8')}</Text>
+          <Text style={styles.sheetTitle}>{tr('projectFields')}</Text>
+          <Text style={styles.sheetSubtitle}>{tr('chooseWhichProject')}</Text>
         </View>
         <View style={styles.repoPickerGroup}>
           {githubProjectAvailableSummaryFields.length === 0 ? (
-            <Text style={styles.repoPickerSubtitle}>{t('m.nOtNSyE')}</Text>
+            <Text style={styles.repoPickerSubtitle}>{tr('viewHas')}</Text>
           ) : (
             githubProjectAvailableSummaryFields.map((field, index) => {
               const visible = !githubProjectHiddenFieldIds.has(field.id)
@@ -10351,7 +10299,7 @@ export default function MobileTasksScreen() {
                         {field.name}
                       </Text>
                       <Text style={styles.repoPickerSubtitle} numberOfLines={1}>
-                        {visible ? t('m.p0Rtsu4') : t('m.EQxa0Qk')}
+                        {visible ? tr('shown') : tr('hidden')}
                       </Text>
                     </View>
                     {visible ? <Check size={15} color={colors.textPrimary} /> : null}
@@ -10365,7 +10313,7 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && showGitLabViewPicker}
-        title={t('m.roI3I5g')}
+        title={tr('gitLabView')}
         options={getGitLabViewOptions()}
         selected={gitlabView}
         onSelect={(view) => {
@@ -10383,7 +10331,7 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && showGitLabFilterPicker}
-        title={t('m.k98CNAU')}
+        title={tr('gitLabFilter')}
         options={getGitLabFilterOptions()}
         selected={gitlabFilter}
         onSelect={setGitlabFilter}
@@ -10392,7 +10340,7 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && showLinearFilterPicker}
-        title={t('m.jnRj_2I')}
+        title={tr('linearFilter')}
         options={getLinearFilterOptions()}
         selected={linearFilter}
         onSelect={(filter) => {
@@ -10406,7 +10354,7 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && showLinearWorkspacePicker}
-        title={t('m.3Nokros')}
+        title={tr('linearWorkspace')}
         options={linearWorkspaceOptions}
         selected={selectedLinearWorkspaceId ?? ''}
         onSelect={(workspaceId) => {
@@ -10417,7 +10365,7 @@ export default function MobileTasksScreen() {
               .sendRequest('linear.selectWorkspace', { workspaceId })
               .then(() => loadLinearContext())
               .catch((err) => {
-                setError(err instanceof Error ? err.message : t('m.nLSftbc'))
+                setError(err instanceof Error ? err.message : tr('failedSwitch'))
               })
           }
         }}
@@ -10429,8 +10377,8 @@ export default function MobileTasksScreen() {
         onClose={() => setShowLinearTeamPicker(false)}
       >
         <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>{t('m.ZnNVwOs')}</Text>
-          <Text style={styles.sheetSubtitle}>{t('m.UL55j-A')}</Text>
+          <Text style={styles.sheetTitle}>{tr('linearTeams')}</Text>
+          <Text style={styles.sheetSubtitle}>{tr('chooseWhichTeams')}</Text>
         </View>
         <View style={styles.repoPickerGroup}>
           <Pressable
@@ -10442,9 +10390,9 @@ export default function MobileTasksScreen() {
             }}
           >
             <View style={styles.repoPickerTextWrap}>
-              <Text style={styles.repoPickerTitle}>{t('m.dEIGNBo')}</Text>
+              <Text style={styles.repoPickerTitle}>{tr('allTeams')}</Text>
               <Text style={styles.repoPickerSubtitle}>
-                {t('m.AHMKHtc', { value0: linearTeams.length })}
+                {tr('teamCount', { teamCount: linearTeams.length })}
               </Text>
             </View>
             {selectedLinearTeamIds.size === linearTeams.length ? (
@@ -10495,19 +10443,19 @@ export default function MobileTasksScreen() {
         zIndex={TASK_SECONDARY_DRAWER_Z_INDEX}
       >
         <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>{t('m.xw1L5lQ')}</Text>
+          <Text style={styles.sheetTitle}>{tr('changeStatus')}</Text>
           <Text style={styles.sheetSubtitle}>
-            {linearStatusPickerItem?.source.identifier ?? t('m.kbZvL2g')}
+            {linearStatusPickerItem?.source.identifier ?? tr('linearIssue')}
           </Text>
         </View>
         <View style={styles.repoPickerGroup}>
           {linearStatesLoading ? (
             <View style={styles.detailLoadingInline}>
               <ActivityIndicator size="small" color={colors.textSecondary} />
-              <Text style={styles.detailMuted}>{t('m._mQhK7g')}</Text>
+              <Text style={styles.detailMuted}>{tr('loadingStates')}</Text>
             </View>
           ) : linearStates.length === 0 ? (
-            <Text style={styles.emptyInlineText}>{t('m.GpSeJMA')}</Text>
+            <Text style={styles.emptyInlineText}>{tr('noStates')}</Text>
           ) : (
             linearStates.map((state, index) => {
               const selected =
@@ -10553,7 +10501,7 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && showLinearViewPicker}
-        title={t('m.59_okJI')}
+        title={tr('linearView')}
         options={getLinearViewOptions()}
         selected={linearViewMode}
         onSelect={setLinearViewMode}
@@ -10562,7 +10510,7 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && showLinearGroupPicker}
-        title={t('m.4wjHjFU')}
+        title={tr('groupLinearIssues')}
         options={getLinearGroupOptions()}
         selected={linearGroupBy}
         onSelect={setLinearGroupBy}
@@ -10571,7 +10519,7 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && showLinearOrderPicker}
-        title={t('m.skslBcE')}
+        title={tr('orderLinearIssues')}
         options={getLinearOrderOptions()}
         selected={linearOrderBy}
         onSelect={setLinearOrderBy}
@@ -10583,7 +10531,7 @@ export default function MobileTasksScreen() {
         onClose={() => setShowLinearDisplayPicker(false)}
       >
         <View style={styles.sheetHeader}>
-          <Text style={styles.sheetTitle}>{t('m.Jhimi1k')}</Text>
+          <Text style={styles.sheetTitle}>{tr('displayProperties')}</Text>
         </View>
         <View style={styles.repoPickerGroup}>
           {getLinearDisplayOptions().map((property, index) => {
@@ -10621,7 +10569,7 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && showSortPicker}
-        title={t('m.QoLelVI')}
+        title={tr('sortTasks')}
         options={getSortOptions()}
         selected={taskSort}
         onSelect={setTaskSort}
@@ -10638,16 +10586,20 @@ export default function MobileTasksScreen() {
         <View style={styles.sheetHeader}>
           <View style={styles.sheetTitleRow}>
             <TaskProviderLogo provider={provider} size={16} color={colors.textPrimary} />
-            <Text style={styles.sheetTitle}>{t('m.GRCIny0', { value0: providerLabel })}</Text>
+            <Text style={styles.sheetTitle}>
+              {tr('newProvider', { providerLabel: providerLabel })}
+            </Text>
           </View>
           <Text style={styles.sheetSubtitle}>
-            {provider === 'github' || provider === 'gitlab' ? t('m.V9yDSos') : t('m.ZXVz3A4')}
+            {provider === 'github' || provider === 'gitlab'
+              ? tr('createIssueSelectedRepository')
+              : tr('createIssueSelectedLinear')}
           </Text>
         </View>
 
         <View style={styles.createForm}>
           <Text style={styles.fieldLabel}>
-            {provider === 'github' || provider === 'gitlab' ? t('m.RBS8OI4') : t('m.czBdX7w')}
+            {provider === 'github' || provider === 'gitlab' ? tr('repository') : tr('team')}
           </Text>
           <Pressable
             style={styles.targetButton}
@@ -10684,10 +10636,10 @@ export default function MobileTasksScreen() {
           selectedCreateRepo &&
           hasGitHubIssueSourceChoice(selectedCreateGitHubSources) ? (
             <View style={styles.issueSourceBox}>
-              <Text style={styles.fieldLabel}>{t('m.3U3WMlI')}</Text>
+              <Text style={styles.fieldLabel}>{tr('issueSource')}</Text>
               <Text style={styles.issueSourceHint} numberOfLines={2}>
-                {t('m.z7RLmIM', {
-                  value0:
+                {tr('fileIssue', {
+                  issueSource:
                     selectedCreateIssuePreference === 'origin'
                       ? issueSourceSlug(selectedCreateGitHubSources?.prs)
                       : issueSourceSlug(selectedCreateGitHubSources?.upstreamCandidate)
@@ -10718,7 +10670,7 @@ export default function MobileTasksScreen() {
                           selected && styles.issueSourceSegmentTextActive
                         ]}
                       >
-                        {preference === 'upstream' ? t('m.CF9OlC4') : t('m.GbFyuJM')}
+                        {preference === 'upstream' ? tr('upstream') : tr('origin')}
                       </Text>
                       <Text style={styles.issueSourceSlug} numberOfLines={1}>
                         {slug}
@@ -10730,23 +10682,23 @@ export default function MobileTasksScreen() {
             </View>
           ) : null}
 
-          <Text style={styles.fieldLabel}>{t('m.6b2exyc')}</Text>
+          <Text style={styles.fieldLabel}>{tr('title')}</Text>
           <TextInput
             style={styles.input}
             value={createTitle}
             onChangeText={setCreateTitle}
-            placeholder={t('m.dxkQ090')}
+            placeholder={tr('taskTitle')}
             placeholderTextColor={colors.textMuted}
             autoCapitalize="sentences"
             returnKeyType="next"
           />
 
-          <Text style={styles.fieldLabel}>{t('m.xX2Cp7c')}</Text>
+          <Text style={styles.fieldLabel}>{tr('description')}</Text>
           <TextInput
             style={[styles.input, styles.bodyInput]}
             value={createBody}
             onChangeText={setCreateBody}
-            placeholder={t('m.cnRpEac')}
+            placeholder={tr('addContext')}
             placeholderTextColor={colors.textMuted}
             multiline
             textAlignVertical="top"
@@ -10763,7 +10715,7 @@ export default function MobileTasksScreen() {
             {creatingTask ? (
               <ActivityIndicator size="small" color={colors.bgBase} />
             ) : (
-              <Text style={styles.createButtonText}>{t('m.wSJtlQc')}</Text>
+              <Text style={styles.createButtonText}>{tr('createIssue')}</Text>
             )}
           </Pressable>
         </View>
@@ -10771,7 +10723,7 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && showCreateTask && showCreateTargetPicker}
-        title={provider === 'linear' ? t('m.Xg1P3sw') : t('m.RBS8OI4')}
+        title={provider === 'linear' ? tr('linearTeam') : tr('repository')}
         options={createTargetOptions}
         selected={
           provider === 'github' || provider === 'gitlab'
@@ -10799,12 +10751,12 @@ export default function MobileTasksScreen() {
         <View style={styles.sheetHeader}>
           <View style={styles.sheetTitleRow}>
             <TaskProviderLogo provider="linear" size={16} color={colors.textPrimary} />
-            <Text style={styles.sheetTitle}>{t('m.jbMHil8')}</Text>
+            <Text style={styles.sheetTitle}>{tr('connectLinearWorkspace')}</Text>
           </View>
-          <Text style={styles.sheetSubtitle}>{t('m.6EAEvD4')}</Text>
+          <Text style={styles.sheetSubtitle}>{tr('paste')}</Text>
         </View>
         <View style={styles.createForm}>
-          <Text style={styles.fieldLabel}>{t('m.a4vIye8')}</Text>
+          <Text style={styles.fieldLabel}>{tr('personal')}</Text>
           <TextInput
             style={styles.input}
             value={linearApiKeyDraft}
@@ -10815,7 +10767,7 @@ export default function MobileTasksScreen() {
                 setLinearConnectError('')
               }
             }}
-            placeholder={t('m.CCoHJhM')}
+            placeholder={tr('lin')}
             placeholderTextColor={colors.textMuted}
             autoCapitalize="none"
             autoCorrect={false}
@@ -10831,11 +10783,11 @@ export default function MobileTasksScreen() {
             onPress={() => void Linking.openURL('https://linear.app/settings/account/security')}
           >
             <ExternalLink size={13} color={colors.textSecondary} />
-            <Text style={styles.inlineTextLinkText}>{t('m.KV_5X9g')}</Text>
+            <Text style={styles.inlineTextLinkText}>{tr('linearSettings')}</Text>
           </Pressable>
           <View style={styles.securityHintRow}>
             <Lock size={13} color={colors.textMuted} />
-            <Text style={styles.securityHintText}>{t('m.8aaa0oM')}</Text>
+            <Text style={styles.securityHintText}>{tr('your')}</Text>
           </View>
           <Pressable
             style={[
@@ -10849,7 +10801,7 @@ export default function MobileTasksScreen() {
             {linearConnectState === 'connecting' ? (
               <ActivityIndicator size="small" color={colors.bgBase} />
             ) : (
-              <Text style={styles.createButtonText}>{t('m.eDrVQno')}</Text>
+              <Text style={styles.createButtonText}>{tr('connect')}</Text>
             )}
           </Pressable>
         </View>
@@ -10857,7 +10809,7 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && workspaceRepoPickerItem != null}
-        title={t('m.UHWW7sY')}
+        title={tr('createWorkspace')}
         options={workspaceRepoOptions}
         selected={workspaceRepos[0]?.id ?? ''}
         onSelect={(repoId) => {
@@ -10878,7 +10830,7 @@ export default function MobileTasksScreen() {
         {workspaceCreateDraft ? (
           <View>
             <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>{t('m.14O3-ys')}</Text>
+              <Text style={styles.sheetTitle}>{tr('createWorkspaceMessage')}</Text>
               <Text style={styles.sheetSubtitle} numberOfLines={2}>
                 {workspaceCreateDraft.item.title}
               </Text>
@@ -10886,7 +10838,7 @@ export default function MobileTasksScreen() {
 
             <View style={styles.workspaceCreateForm}>
               <View style={styles.workspaceCreateField}>
-                <Text style={styles.workspaceCreateLabel}>{t('m.RBS8OI4')}</Text>
+                <Text style={styles.workspaceCreateLabel}>{tr('repository')}</Text>
                 <Pressable
                   style={styles.fieldButton}
                   disabled={!workspaceCreateCanPickRepo}
@@ -10912,7 +10864,7 @@ export default function MobileTasksScreen() {
                     ]}
                     numberOfLines={1}
                   >
-                    {workspaceCreateTargetRepo?.displayName ?? t('m.mDtuNkA')}
+                    {workspaceCreateTargetRepo?.displayName ?? tr('selectRepository')}
                   </Text>
                   {workspaceCreateCanPickRepo ? (
                     <ChevronDown size={14} color={colors.textMuted} />
@@ -10922,7 +10874,7 @@ export default function MobileTasksScreen() {
 
               {workspaceCreateTargetConnectionId ? (
                 <View style={styles.workspaceCreateField}>
-                  <Text style={styles.workspaceCreateLabel}>{t('m.hcl0Sms')}</Text>
+                  <Text style={styles.workspaceCreateLabel}>{tr('ssh')}</Text>
                   <View style={styles.sshConnectCard}>
                     <View style={styles.sshStatusRow}>
                       <View
@@ -10937,7 +10889,7 @@ export default function MobileTasksScreen() {
                       />
                       <View style={styles.sshStatusCopy}>
                         <Text style={styles.sshStatusTitle} numberOfLines={1}>
-                          {workspaceCreateTargetRepo?.displayName ?? t('m.EmJ0ZpA')}
+                          {workspaceCreateTargetRepo?.displayName ?? tr('remote')}
                         </Text>
                         <Text style={styles.detailMuted}>
                           {workspaceSshStatusLabel(workspaceCreateSshStatus)}
@@ -10955,7 +10907,7 @@ export default function MobileTasksScreen() {
                           onPress={() => void connectWorkspaceSshRepo()}
                         >
                           <Text style={styles.inlineSaveText}>
-                            {workspaceCreateSshConnectInProgress ? t('m.HIci8AI') : t('m.eDrVQno')}
+                            {workspaceCreateSshConnectInProgress ? tr('connecting') : tr('connect')}
                           </Text>
                         </Pressable>
                       )}
@@ -10969,8 +10921,8 @@ export default function MobileTasksScreen() {
 
               <View style={styles.workspaceCreateField}>
                 <Text style={styles.workspaceCreateLabel}>
-                  {t('m.nr-rmnA')}
-                  <Text style={styles.workspaceCreateLabelHint}>{t('m.5URSVzY')}</Text>
+                  {tr('workspaceName')}
+                  <Text style={styles.workspaceCreateLabelHint}>{tr('optional')}</Text>
                 </Text>
                 <MobileWorkspaceNameInput
                   style={styles.input}
@@ -10982,7 +10934,7 @@ export default function MobileTasksScreen() {
               </View>
 
               <View style={styles.workspaceCreateField}>
-                <Text style={styles.workspaceCreateLabel}>{t('m.wD7tyKU')}</Text>
+                <Text style={styles.workspaceCreateLabel}>{tr('agent')}</Text>
                 <Pressable
                   style={[
                     styles.fieldButton,
@@ -10997,9 +10949,9 @@ export default function MobileTasksScreen() {
                   />
                   <Text style={styles.fieldButtonText} numberOfLines={1}>
                     {workspaceCreateRequiresSshConnection
-                      ? t('m.SRP0mzk')
+                      ? tr('connectRepositoryFirst')
                       : workspaceAgentDetectionPending
-                        ? t('m.phVPn2Q')
+                        ? tr('detecting')
                         : workspaceAgentLabel(resolvedWorkspaceAgent)}
                   </Text>
                   <ChevronDown size={14} color={colors.textMuted} />
@@ -11010,7 +10962,7 @@ export default function MobileTasksScreen() {
                 style={styles.workspaceAdvancedToggle}
                 onPress={() => setShowWorkspaceAdvanced((current) => !current)}
               >
-                <Text style={styles.workspaceAdvancedText}>{t('m.8PDq1d4')}</Text>
+                <Text style={styles.workspaceAdvancedText}>{tr('advanced')}</Text>
                 {showWorkspaceAdvanced ? (
                   <ChevronUp size={14} color={colors.textSecondary} />
                 ) : (
@@ -11020,7 +10972,7 @@ export default function MobileTasksScreen() {
 
               {showWorkspaceAdvanced ? (
                 <View style={styles.workspaceCreateField}>
-                  <Text style={styles.workspaceCreateLabel}>{t('m.naggWL4')}</Text>
+                  <Text style={styles.workspaceCreateLabel}>{tr('start')}</Text>
                   <Pressable
                     style={styles.fieldButton}
                     onPress={() => {
@@ -11030,13 +10982,15 @@ export default function MobileTasksScreen() {
                   >
                     <GitBranch size={14} color={colors.textMuted} />
                     <Text style={styles.fieldButtonText} numberOfLines={1}>
-                      {workspaceBaseBranch?.refName ?? t('m.tJhJMIQ')}
+                      {workspaceBaseBranch?.refName ?? tr('defaultBranch')}
                     </Text>
                     <ChevronDown size={14} color={colors.textMuted} />
                   </Pressable>
                   {workspaceBaseBranch ? (
                     <Text style={styles.detailMuted} numberOfLines={1}>
-                      {t('m.Cb83OoQ', { value0: workspaceBaseBranch.refName })}
+                      {tr('createRef', {
+                        refName: workspaceBaseBranch.refName
+                      })}
                     </Text>
                   ) : null}
                 </View>
@@ -11045,7 +10999,9 @@ export default function MobileTasksScreen() {
 
             {workspaceCreateTargetRepo ? null : (
               <Text style={styles.detailError}>
-                {workspaceCreateDraft.item.provider === 'linear' ? t('m.6kKiG2U') : t('m.4F__ZBY')}
+                {workspaceCreateDraft.item.provider === 'linear'
+                  ? tr('addGitRepositoryBeforeCreatingLinear')
+                  : tr('repositoryNotFound')}
               </Text>
             )}
 
@@ -11090,10 +11046,10 @@ export default function MobileTasksScreen() {
                 ) : (
                   <Text style={styles.createButtonText}>
                     {workspaceAgentDetectionPending
-                      ? t('m.phVPn2Q')
+                      ? tr('detecting')
                       : workspaceCreateRequiresSshConnection
-                        ? t('m.SWOSFtY')
-                        : t('m.14O3-ys')}
+                        ? tr('connectRepository')
+                        : tr('createWorkspaceMessage')}
                   </Text>
                 )}
               </Pressable>
@@ -11104,7 +11060,7 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && workspaceCreateDraft != null && showWorkspaceCreateRepoPicker}
-        title={t('m.RBS8OI4')}
+        title={tr('repository')}
         options={workspaceRepoOptions}
         selected={workspaceCreateTargetRepo?.id ?? ''}
         onSelect={(repoId) => {
@@ -11119,7 +11075,7 @@ export default function MobileTasksScreen() {
 
       <PickerModal
         visible={taskUiReady && workspaceCreateDraft != null && showWorkspaceAgentPicker}
-        title={t('m.wD7tyKU')}
+        title={tr('agent')}
         options={workspaceAgentOptions}
         selected={resolvedWorkspaceAgent}
         onSelect={(agent) => {
@@ -11138,15 +11094,15 @@ export default function MobileTasksScreen() {
       >
         <View>
           <View style={styles.sheetHeader}>
-            <Text style={styles.sheetTitle}>{t('m.vqofDcI')}</Text>
-            <Text style={styles.sheetSubtitle}>{t('m.O0AHKnE')}</Text>
+            <Text style={styles.sheetTitle}>{tr('startMessage')}</Text>
+            <Text style={styles.sheetSubtitle}>{tr('pick')}</Text>
           </View>
           <View style={styles.detailGroup}>
             <TextInput
               style={styles.input}
               value={workspaceBaseBranchQuery}
               onChangeText={setWorkspaceBaseBranchQuery}
-              placeholder={t('m.ww9236A')}
+              placeholder={tr('searchBranches')}
               placeholderTextColor={colors.textMuted}
               autoCapitalize="none"
               autoCorrect={false}
@@ -11163,8 +11119,8 @@ export default function MobileTasksScreen() {
                 ) : null}
               </View>
               <View style={styles.pickerContent}>
-                <Text style={styles.pickerLabel}>{t('m.tJhJMIQ')}</Text>
-                <Text style={styles.pickerSubtitle}>{t('m.ajFYYlY')}</Text>
+                <Text style={styles.pickerLabel}>{tr('defaultBranch')}</Text>
+                <Text style={styles.pickerSubtitle}>{tr('useRepositorys')}</Text>
               </View>
             </Pressable>
             {workspaceBaseBranchLoading ? (
@@ -11174,7 +11130,7 @@ export default function MobileTasksScreen() {
             ) : workspaceBaseBranchError ? (
               <Text style={styles.detailError}>{workspaceBaseBranchError}</Text>
             ) : workspaceBaseBranchQuery.trim() && workspaceBaseBranchResults.length === 0 ? (
-              <Text style={styles.detailMuted}>{t('m.uwfc5JU')}</Text>
+              <Text style={styles.detailMuted}>{tr('noBranches')}</Text>
             ) : null}
             {workspaceBaseBranchResults.map((branch) => (
               <View key={`${branch.refName}:${branch.localBranchName}`}>
@@ -11196,7 +11152,9 @@ export default function MobileTasksScreen() {
                     </Text>
                     {branch.localBranchName !== branch.refName ? (
                       <Text style={styles.pickerSubtitle} numberOfLines={1}>
-                        {t('m.Fg7BUfE', { value0: branch.localBranchName })}
+                        {tr('branch', {
+                          localBranchName: branch.localBranchName
+                        })}
                       </Text>
                     ) : null}
                   </View>
@@ -11214,7 +11172,7 @@ export default function MobileTasksScreen() {
       >
         <View>
           <View style={styles.sheetHeader}>
-            <Text style={styles.sheetTitle}>{t('m.6xj6dHo')}</Text>
+            <Text style={styles.sheetTitle}>{tr('sparse')}</Text>
           </View>
           <View style={styles.detailGroup}>
             <Pressable
@@ -11230,8 +11188,8 @@ export default function MobileTasksScreen() {
                 ) : null}
               </View>
               <View style={styles.pickerContent}>
-                <Text style={styles.pickerLabel}>{t('m.0fqNjoo')}</Text>
-                <Text style={styles.pickerSubtitle}>{t('m.m38OFiM')}</Text>
+                <Text style={styles.pickerLabel}>{tr('full')}</Text>
+                <Text style={styles.pickerSubtitle}>{tr('useWhole')}</Text>
               </View>
             </Pressable>
             {workspaceSparsePresets.map((preset) => (
@@ -11262,7 +11220,9 @@ export default function MobileTasksScreen() {
                   <Pressable
                     style={styles.iconActionButton}
                     accessibilityRole="button"
-                    accessibilityLabel={t('m.3ivaga8', { value0: preset.name })}
+                    accessibilityLabel={tr('editPreset', {
+                      presetName: preset.name
+                    })}
                     onPress={() => startEditWorkspaceSparsePreset(preset)}
                   >
                     <Pencil size={15} color={colors.textMuted} />
@@ -11281,7 +11241,7 @@ export default function MobileTasksScreen() {
             disabled={!workspaceSparsePresetsLoaded || workspaceSparsePresetsLoading}
             onPress={startNewWorkspaceSparsePreset}
           >
-            <Text style={styles.inlineSaveText}>{t('m.6-gKCU8')}</Text>
+            <Text style={styles.inlineSaveText}>{tr('newPreset')}</Text>
           </Pressable>
         </View>
       </BottomDrawer>
@@ -11299,19 +11259,19 @@ export default function MobileTasksScreen() {
           <View>
             <View style={styles.sheetHeader}>
               <Text style={styles.sheetTitle}>
-                {workspaceSparseDraft.mode === 'new' ? t('m.m6fKanI') : t('m.al2hOTo')}
+                {workspaceSparseDraft.mode === 'new' ? tr('newSparse') : tr('editSparse')}
               </Text>
             </View>
             <View style={styles.detailGroup}>
               <View style={styles.detailSection}>
-                <Text style={styles.detailSectionTitle}>{t('m.7dCN6Lk')}</Text>
+                <Text style={styles.detailSectionTitle}>{tr('name')}</Text>
                 <TextInput
                   style={styles.input}
                   value={workspaceSparseDraft.name}
                   onChangeText={(name) =>
                     setWorkspaceSparseDraft({ ...workspaceSparseDraft, name })
                   }
-                  placeholder={t('m.oh8k9MM')}
+                  placeholder={tr('renderer')}
                   placeholderTextColor={colors.textMuted}
                   autoCapitalize="none"
                   autoCorrect={false}
@@ -11319,14 +11279,14 @@ export default function MobileTasksScreen() {
                 />
               </View>
               <View style={styles.detailSection}>
-                <Text style={styles.detailSectionTitle}>{t('m.chkWwSI')}</Text>
+                <Text style={styles.detailSectionTitle}>{tr('directories')}</Text>
                 <TextInput
                   style={[styles.input, styles.bodyInput, styles.monoInput]}
                   value={workspaceSparseDraft.directoriesText}
                   onChangeText={(directoriesText) =>
                     setWorkspaceSparseDraft({ ...workspaceSparseDraft, directoriesText })
                   }
-                  placeholder={t('m.g2mP3mE')}
+                  placeholder={tr('src')}
                   placeholderTextColor={colors.textMuted}
                   autoCapitalize="none"
                   autoCorrect={false}
@@ -11337,9 +11297,9 @@ export default function MobileTasksScreen() {
               <Text style={workspaceSparseDraftError ? styles.detailError : styles.detailMuted}>
                 {workspaceSparseDraftError ??
                   (workspaceSparseDraftParsed?.directories.length === 1
-                    ? t('m.DvuAE90')
-                    : t('m.pjrxOkU', {
-                        value0: workspaceSparseDraftParsed?.directories.length ?? 0
+                    ? tr('oneDirectory')
+                    : tr('directory', {
+                        directoryCount: workspaceSparseDraftParsed?.directories.length ?? 0
                       }))}
               </Text>
             </View>
@@ -11349,7 +11309,7 @@ export default function MobileTasksScreen() {
                 disabled={workspaceSparseSaving}
                 onPress={() => setWorkspaceSparseDraft(null)}
               >
-                <Text style={styles.secondaryActionText}>{t('m.Fv7ly30')}</Text>
+                <Text style={styles.secondaryActionText}>{tr('cancel')}</Text>
               </Pressable>
               <Pressable
                 style={[
@@ -11362,7 +11322,7 @@ export default function MobileTasksScreen() {
                 {workspaceSparseSaving ? (
                   <ActivityIndicator size="small" color={colors.bgBase} />
                 ) : null}
-                <Text style={styles.primaryActionText}>{t('m.xxWLKS8')}</Text>
+                <Text style={styles.primaryActionText}>{tr('save')}</Text>
               </Pressable>
             </View>
           </View>
@@ -11377,9 +11337,11 @@ export default function MobileTasksScreen() {
         {setupPrompt ? (
           <View>
             <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>{t('m.N0pQdfg')}</Text>
+              <Text style={styles.sheetTitle}>{tr('runSetupScript')}</Text>
               <Text style={styles.sheetSubtitle}>
-                {t('m.Cx8BTNg', { value0: setupPrompt.repoName })}
+                {tr('repoNameRequires', {
+                  repoName: setupPrompt.repoName
+                })}
               </Text>
             </View>
 
@@ -11412,7 +11374,7 @@ export default function MobileTasksScreen() {
               >
                 <Check size={16} color={colors.textPrimary} />
                 <Text style={styles.actionText}>
-                  {creatingKey === setupPrompt.item.key ? t('m.ftImAuc') : t('m.b0Ah5tg')}
+                  {creatingKey === setupPrompt.item.key ? tr('creating') : tr('runSetupCreate')}
                 </Text>
               </Pressable>
               <View style={styles.actionSeparator} />
@@ -11434,7 +11396,7 @@ export default function MobileTasksScreen() {
                 }
               >
                 <X size={16} color={colors.textPrimary} />
-                <Text style={styles.actionText}>{t('m.xd1VuYs')}</Text>
+                <Text style={styles.actionText}>{tr('skip')}</Text>
               </Pressable>
             </View>
           </View>
@@ -11451,16 +11413,20 @@ export default function MobileTasksScreen() {
             <View style={styles.sheetHeader}>
               <Text style={styles.sheetTitle}>
                 {orcaYamlTrustPrompt.previouslyApproved
-                  ? t('m.QetdCKc', { value0: orcaYamlTrustPrompt.repoName })
-                  : t('m.M_Pqsow', { value0: orcaYamlTrustPrompt.repoName })}
+                  ? tr('repoNameS', {
+                      repoName: orcaYamlTrustPrompt.repoName
+                    })
+                  : tr('runSetupRepo', {
+                      repoName: orcaYamlTrustPrompt.repoName
+                    })}
               </Text>
-              <Text style={styles.sheetSubtitle}>{t('m.Q3oUbk4')}</Text>
+              <Text style={styles.sheetSubtitle}>{tr('orcaYamlTrustWarning')}</Text>
             </View>
 
             <View style={styles.setupPromptBox}>
               <View style={styles.detailSectionHeader}>
                 <Text style={styles.detailSectionTitle}>
-                  {orcaYamlTrustPrompt.previouslyApproved ? t('m.vtdIQWU') : t('m.XPutx64')}
+                  {orcaYamlTrustPrompt.previouslyApproved ? tr('newSetup') : tr('setup')}
                 </Text>
               </View>
               <Text style={styles.setupPromptCommand}>{orcaYamlTrustPrompt.scriptContent}</Text>
@@ -11492,13 +11458,13 @@ export default function MobileTasksScreen() {
                         orcaYamlTrustPrompt.contentHash
                       )
                     } catch (err) {
-                      setError(err instanceof Error ? err.message : t('m.520CKU4'))
+                      setError(err instanceof Error ? err.message : tr('failedTrust'))
                     }
                   })()
                 }
               >
                 <Check size={16} color={colors.textPrimary} />
-                <Text style={styles.actionText}>{t('m.m-fVevQ')}</Text>
+                <Text style={styles.actionText}>{tr('runHooks')}</Text>
               </Pressable>
               <View style={styles.actionSeparator} />
               <Pressable
@@ -11526,13 +11492,13 @@ export default function MobileTasksScreen() {
                         orcaYamlTrustPrompt.contentHash
                       )
                     } catch (err) {
-                      setError(err instanceof Error ? err.message : t('m.520CKU4'))
+                      setError(err instanceof Error ? err.message : tr('failedTrust'))
                     }
                   })()
                 }
               >
                 <Check size={16} color={colors.textPrimary} />
-                <Text style={styles.actionText}>{t('m.llz-FzM')}</Text>
+                <Text style={styles.actionText}>{tr('always')}</Text>
               </Pressable>
               <View style={styles.actionSeparator} />
               <Pressable
@@ -11555,7 +11521,7 @@ export default function MobileTasksScreen() {
                 }}
               >
                 <X size={16} color={colors.textPrimary} />
-                <Text style={styles.actionText}>{t('m.eNyNmbU')}</Text>
+                <Text style={styles.actionText}>{tr('do')}</Text>
               </Pressable>
             </View>
           </View>
@@ -11571,11 +11537,11 @@ export default function MobileTasksScreen() {
         {projectRepoNotInOrca ? (
           <View>
             <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>{t('m.p3aCd2Y')}</Text>
+              <Text style={styles.sheetTitle}>{tr('repositoryNotOrca')}</Text>
               <Text style={styles.sheetSubtitle}>
-                {t('m.-1cVb10', {
-                  value0: projectRepoNotInOrca.owner,
-                  value1: projectRepoNotInOrca.repo
+                {tr('owner', {
+                  owner: projectRepoNotInOrca.owner,
+                  repo: projectRepoNotInOrca.repo
                 })}
               </Text>
             </View>
@@ -11591,7 +11557,7 @@ export default function MobileTasksScreen() {
                   }}
                 >
                   <ExternalLink size={16} color={colors.textPrimary} />
-                  <Text style={styles.actionText}>{t('m.jKf3DPI')}</Text>
+                  <Text style={styles.actionText}>{tr('openGitHub')}</Text>
                 </Pressable>
               ) : null}
               {projectRepoNotInOrca.url ? <View style={styles.actionSeparator} /> : null}
@@ -11608,8 +11574,8 @@ export default function MobileTasksScreen() {
                 <Text style={styles.actionText}>
                   {copiedLinkKey ===
                   `project-repo:${projectRepoNotInOrca.owner}/${projectRepoNotInOrca.repo}`
-                    ? t('m.xD9cVOU')
-                    : t('m.eGT8LNM')}
+                    ? tr('copied')
+                    : tr('copyRepository')}
                 </Text>
               </Pressable>
             </View>
@@ -11631,9 +11597,11 @@ export default function MobileTasksScreen() {
                 </Text>
               </View>
               <Text style={styles.sheetSubtitle}>
-                {t('m.TLa90Qg', {
-                  value0: projectRowItem.content.repository ?? activeProjectLabel,
-                  value1: projectRowItem.content.number ? ` #${projectRowItem.content.number}` : ''
+                {tr('gitHubProject', {
+                  repository: projectRowItem.content.repository ?? activeProjectLabel,
+                  projectNumber: projectRowItem.content.number
+                    ? ` #${projectRowItem.content.number}`
+                    : ''
                 })}
               </Text>
             </View>
@@ -11641,19 +11609,19 @@ export default function MobileTasksScreen() {
             <View style={styles.detailGroup}>
               <View style={styles.detailMetaGrid}>
                 <View style={styles.detailMetaItem}>
-                  <Text style={styles.detailMetaLabel}>{t('m.o2-QUvU')}</Text>
+                  <Text style={styles.detailMetaLabel}>{tr('type')}</Text>
                   <Text style={styles.detailMetaValue}>
                     {projectRowItem.itemType === 'PULL_REQUEST'
-                      ? t('m.Bawm-QY')
+                      ? tr('pullRequestMessage')
                       : projectRowItem.itemType === 'ISSUE'
-                        ? t('m.xcg6mvE')
+                        ? tr('issue')
                         : projectRowItem.itemType === 'DRAFT_ISSUE'
-                          ? t('m.jGZods8')
-                          : t('m.NnYhRJs')}
+                          ? tr('draftIssue')
+                          : tr('projectItem')}
                   </Text>
                 </View>
                 <View style={styles.detailMetaItem}>
-                  <Text style={styles.detailMetaLabel}>{t('m.Fa6K7yI')}</Text>
+                  <Text style={styles.detailMetaLabel}>{tr('status')}</Text>
                   <Text style={styles.detailMetaValue}>
                     {projectRowStatusLabel(projectRowItem)}
                   </Text>
@@ -11680,20 +11648,20 @@ export default function MobileTasksScreen() {
               {SHOW_MOBILE_PROJECT_METADATA_EDITORS && projectRowItem.itemType === 'ISSUE' ? (
                 <View style={styles.detailSection}>
                   <View style={styles.detailSectionHeader}>
-                    <Text style={styles.detailSectionTitle}>{t('m.1YuDgI8')}</Text>
+                    <Text style={styles.detailSectionTitle}>{tr('issueType')}</Text>
                     <Text style={styles.detailSectionMeta}>
-                      {projectRowItem.content.issueType?.name ?? t('m.I0vv7aw')}
+                      {projectRowItem.content.issueType?.name ?? tr('noType')}
                     </Text>
                   </View>
                   {projectIssueTypesLoading ? (
                     <View style={styles.detailLoadingInline}>
                       <ActivityIndicator size="small" color={colors.textSecondary} />
-                      <Text style={styles.detailMuted}>{t('m.w23rmTc')}</Text>
+                      <Text style={styles.detailMuted}>{tr('loadingIssue')}</Text>
                     </View>
                   ) : projectIssueTypesError ? (
                     <Text style={styles.detailError}>{projectIssueTypesError}</Text>
                   ) : projectIssueTypes.length === 0 ? (
-                    <Text style={styles.detailMuted}>{t('m.5DEGuK4')}</Text>
+                    <Text style={styles.detailMuted}>{tr('noIssue')}</Text>
                   ) : (
                     <View style={styles.chipRow}>
                       {projectIssueTypes.map((issueType) => {
@@ -11728,7 +11696,7 @@ export default function MobileTasksScreen() {
                           disabled={projectMutating}
                           onPress={() => void mutateProjectRowIssueType(projectRowItem, null)}
                         >
-                          <Text style={styles.detailChipText}>{t('m.3p4QMPc')}</Text>
+                          <Text style={styles.detailChipText}>{tr('clearType')}</Text>
                         </Pressable>
                       ) : null}
                     </View>
@@ -11738,7 +11706,7 @@ export default function MobileTasksScreen() {
               {SHOW_MOBILE_PROJECT_METADATA_EDITORS &&
               editableProjectFields(githubProjectTable).length > 0 ? (
                 <View style={styles.detailSection}>
-                  <Text style={styles.detailSectionTitle}>{t('m.JV1Xsds')}</Text>
+                  <Text style={styles.detailSectionTitle}>{tr('projectFieldsMessage')}</Text>
                   {editableProjectFields(githubProjectTable).map((field) => {
                     const currentLabel = projectFieldValueLabel(projectRowItem, field)
                     const draftValue = projectFieldDrafts[field.id] ?? ''
@@ -11746,7 +11714,7 @@ export default function MobileTasksScreen() {
                       if (field.dataType === 'NUMBER') {
                         const number = Number(draftValue)
                         if (!Number.isFinite(number)) {
-                          setProjectRowDetailError(t('m.DqtxPEI'))
+                          setProjectRowDetailError(tr('enterValid'))
                           return
                         }
                         void mutateProjectRowField(projectRowItem, field, {
@@ -11758,7 +11726,7 @@ export default function MobileTasksScreen() {
                       if (field.dataType === 'DATE') {
                         const date = draftValue.trim()
                         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-                          setProjectRowDetailError(t('m.6tQv41I'))
+                          setProjectRowDetailError(tr('enterDate'))
                           return
                         }
                         void mutateProjectRowField(projectRowItem, field, { kind: 'date', date })
@@ -11813,7 +11781,7 @@ export default function MobileTasksScreen() {
                         ) : field.dataType === 'ITERATION' && field.kind === 'iteration' ? (
                           <View style={styles.projectIterationList}>
                             {field.iterations.length === 0 ? (
-                              <Text style={styles.detailMuted}>{t('m.CXQp8Pw')}</Text>
+                              <Text style={styles.detailMuted}>{tr('noIterations')}</Text>
                             ) : (
                               field.iterations.map((iteration) => {
                                 const fieldValue = projectRowItem.fieldValuesByFieldId?.[field.id]
@@ -11836,12 +11804,12 @@ export default function MobileTasksScreen() {
                                     <View style={styles.projectIterationCopy}>
                                       <Text style={styles.actionText}>{iteration.title}</Text>
                                       <Text style={styles.detailMuted}>
-                                        {t('m.sNIGIT0', {
-                                          value0: iteration.completed
-                                            ? t('m.HauqL5Y')
-                                            : t('m.qcFeMQM'),
-                                          value1: iteration.startDate,
-                                          value2: iteration.duration
+                                        {tr('iterationStatus', {
+                                          iterationStatus: iteration.completed
+                                            ? tr('completed')
+                                            : tr('current'),
+                                          startDate: iteration.startDate,
+                                          durationDays: iteration.duration
                                         })}
                                       </Text>
                                     </View>
@@ -11866,10 +11834,10 @@ export default function MobileTasksScreen() {
                               }
                               placeholder={
                                 field.dataType === 'DATE'
-                                  ? t('m.KulyzJY')
+                                  ? tr('yyyy')
                                   : field.dataType === 'NUMBER'
-                                    ? t('m.1jNZjFQ')
-                                    : t('m.5gzka0E')
+                                    ? tr('number')
+                                    : tr('text')
                               }
                               placeholderTextColor={colors.textMuted}
                               keyboardType={field.dataType === 'NUMBER' ? 'numeric' : 'default'}
@@ -11880,7 +11848,7 @@ export default function MobileTasksScreen() {
                               disabled={projectMutating}
                               onPress={saveTextField}
                             >
-                              <Text style={styles.inlineSaveText}>{t('m.akD0kZQ')}</Text>
+                              <Text style={styles.inlineSaveText}>{tr('saveField')}</Text>
                             </Pressable>
                           </>
                         )}
@@ -11891,7 +11859,7 @@ export default function MobileTasksScreen() {
                           }
                           onPress={() => void mutateProjectRowField(projectRowItem, field, null)}
                         >
-                          <Text style={styles.inlineSaveText}>{t('m.GKSPk20')}</Text>
+                          <Text style={styles.inlineSaveText}>{tr('clearField')}</Text>
                         </Pressable>
                       </View>
                     )
@@ -11901,23 +11869,23 @@ export default function MobileTasksScreen() {
               {SHOW_MOBILE_PROJECT_METADATA_EDITORS && projectRowType(projectRowItem) ? (
                 <View style={styles.detailSection}>
                   <View style={styles.detailSectionHeader}>
-                    <Text style={styles.detailSectionTitle}>{t('m.GhHLbBA')}</Text>
+                    <Text style={styles.detailSectionTitle}>{tr('labels')}</Text>
                     <Text style={styles.detailSectionMeta}>
                       {(projectRowDetail?.provider === 'github'
                         ? projectRowDetail.labels
                         : projectRowItem.content.labels.map((label) => label.name)
-                      ).length || t('m.pzBhZI4')}
+                      ).length || tr('none')}
                     </Text>
                   </View>
                   {projectLabelsLoading ? (
                     <View style={styles.detailLoadingInline}>
                       <ActivityIndicator size="small" color={colors.textSecondary} />
-                      <Text style={styles.detailMuted}>{t('m.vYfgNJ8')}</Text>
+                      <Text style={styles.detailMuted}>{tr('loadingLabels')}</Text>
                     </View>
                   ) : projectLabelsError ? (
                     <Text style={styles.detailError}>{projectLabelsError}</Text>
                   ) : projectAvailableLabels.length === 0 ? (
-                    <Text style={styles.detailMuted}>{t('m.ySDu5JQ')}</Text>
+                    <Text style={styles.detailMuted}>{tr('noLabels')}</Text>
                   ) : (
                     <View style={styles.chipRow}>
                       {[
@@ -11962,23 +11930,23 @@ export default function MobileTasksScreen() {
               {SHOW_MOBILE_PROJECT_METADATA_EDITORS && projectRowType(projectRowItem) ? (
                 <View style={styles.detailSection}>
                   <View style={styles.detailSectionHeader}>
-                    <Text style={styles.detailSectionTitle}>{t('m.oL0nsd4')}</Text>
+                    <Text style={styles.detailSectionTitle}>{tr('assignees')}</Text>
                     <Text style={styles.detailSectionMeta}>
                       {(projectRowDetail?.provider === 'github'
                         ? projectRowDetail.assignees
                         : projectRowItem.content.assignees.map((assignee) => assignee.login)
-                      ).length || t('m.pzBhZI4')}
+                      ).length || tr('none')}
                     </Text>
                   </View>
                   {projectAssignableUsersLoading ? (
                     <View style={styles.detailLoadingInline}>
                       <ActivityIndicator size="small" color={colors.textSecondary} />
-                      <Text style={styles.detailMuted}>{t('m.gX4WIW4')}</Text>
+                      <Text style={styles.detailMuted}>{tr('loadingAssignees')}</Text>
                     </View>
                   ) : projectAssignableUsersError ? (
                     <Text style={styles.detailError}>{projectAssignableUsersError}</Text>
                   ) : projectAssignableUsers.length === 0 ? (
-                    <Text style={styles.detailMuted}>{t('m.--H0boQ')}</Text>
+                    <Text style={styles.detailMuted}>{tr('noAssignable')}</Text>
                   ) : (
                     <View style={styles.chipRow}>
                       {[
@@ -12040,12 +12008,12 @@ export default function MobileTasksScreen() {
                   {SHOW_MOBILE_PROJECT_METADATA_EDITORS && projectRowType(projectRowItem) ? (
                     <>
                       <View style={styles.detailSection}>
-                        <Text style={styles.detailSectionTitle}>{t('m.6b2exyc')}</Text>
+                        <Text style={styles.detailSectionTitle}>{tr('title')}</Text>
                         <TextInput
                           style={styles.input}
                           value={projectTitleDraft}
                           onChangeText={setProjectTitleDraft}
-                          placeholder={t('m.6b2exyc')}
+                          placeholder={tr('title')}
                           placeholderTextColor={colors.textMuted}
                         />
                         <Pressable
@@ -12060,16 +12028,16 @@ export default function MobileTasksScreen() {
                             })
                           }
                         >
-                          <Text style={styles.inlineSaveText}>{t('m.OOzqk6Q')}</Text>
+                          <Text style={styles.inlineSaveText}>{tr('saveTitle')}</Text>
                         </Pressable>
                       </View>
                       <View style={styles.detailSection}>
-                        <Text style={styles.detailSectionTitle}>{t('m.xX2Cp7c')}</Text>
+                        <Text style={styles.detailSectionTitle}>{tr('description')}</Text>
                         <TextInput
                           style={[styles.input, styles.bodyInput]}
                           value={projectBodyDraft}
                           onChangeText={setProjectBodyDraft}
-                          placeholder={t('m.xX2Cp7c')}
+                          placeholder={tr('description')}
                           placeholderTextColor={colors.textMuted}
                           multiline
                           textAlignVertical="top"
@@ -12089,20 +12057,20 @@ export default function MobileTasksScreen() {
                             })
                           }
                         >
-                          <Text style={styles.inlineSaveText}>{t('m.bmXEQhk')}</Text>
+                          <Text style={styles.inlineSaveText}>{tr('saveDescription')}</Text>
                         </Pressable>
-                        <MobileMarkdown content={projectBodyDraft} fallback={t('m.s5C2oPk')} />
+                        <MobileMarkdown content={projectBodyDraft} fallback={tr('noDescription')} />
                       </View>
                     </>
                   ) : (
                     <>
                       <View style={styles.detailSection}>
-                        <Text style={styles.detailSectionTitle}>{t('m.6b2exyc')}</Text>
+                        <Text style={styles.detailSectionTitle}>{tr('title')}</Text>
                         <Text style={styles.detailLine}>{projectRowItem.content.title}</Text>
                       </View>
                       <View style={styles.detailSection}>
-                        <Text style={styles.detailSectionTitle}>{t('m.xX2Cp7c')}</Text>
-                        <MobileMarkdown content={projectBodyDraft} fallback={t('m.s5C2oPk')} />
+                        <Text style={styles.detailSectionTitle}>{tr('description')}</Text>
+                        <MobileMarkdown content={projectBodyDraft} fallback={tr('noDescription')} />
                       </View>
                     </>
                   )}
@@ -12113,13 +12081,13 @@ export default function MobileTasksScreen() {
                     <>
                       <View style={styles.detailSection}>
                         <View style={styles.detailSectionHeader}>
-                          <Text style={styles.detailSectionTitle}>{t('m.hDVISbQ')}</Text>
+                          <Text style={styles.detailSectionTitle}>{tr('reviewers')}</Text>
                           <Text style={styles.detailSectionMeta}>
                             {getGitHubReviewSummary(projectRowDetail)}
                           </Text>
                         </View>
                         {getGitHubReviewerRows(projectRowDetail).length === 0 ? (
-                          <Text style={styles.detailMuted}>{t('m.ifA4snA')}</Text>
+                          <Text style={styles.detailMuted}>{tr('noReviewersRequested')}</Text>
                         ) : (
                           getGitHubReviewerRows(projectRowDetail).map((reviewer) => (
                             <View key={reviewer.login} style={styles.reviewerRow}>
@@ -12145,12 +12113,12 @@ export default function MobileTasksScreen() {
                         {projectAssignableUsersLoading ? (
                           <View style={styles.detailLoadingInline}>
                             <ActivityIndicator size="small" color={colors.textSecondary} />
-                            <Text style={styles.detailMuted}>{t('m.Re-pmxo')}</Text>
+                            <Text style={styles.detailMuted}>{tr('loadingReviewers')}</Text>
                           </View>
                         ) : projectAssignableUsersError ? (
                           <Text style={styles.detailError}>{projectAssignableUsersError}</Text>
                         ) : projectReviewerCandidates.length === 0 ? (
-                          <Text style={styles.detailMuted}>{t('m.k2ppyKs')}</Text>
+                          <Text style={styles.detailMuted}>{tr('noReviewer')}</Text>
                         ) : (
                           <View style={styles.chipRow}>
                             {projectReviewerCandidates.map((user) => {
@@ -12184,7 +12152,7 @@ export default function MobileTasksScreen() {
                           style={styles.input}
                           value={projectReviewersDraft}
                           onChangeText={setProjectReviewersDraft}
-                          placeholder={t('m.WTd49qc')}
+                          placeholder={tr('requestReviewers')}
                           placeholderTextColor={colors.textMuted}
                           autoCapitalize="none"
                         />
@@ -12195,21 +12163,21 @@ export default function MobileTasksScreen() {
                           }
                           onPress={() => void requestProjectGitHubReviewers(projectRowItem)}
                         >
-                          <Text style={styles.inlineSaveText}>{t('m.KoPjVCY')}</Text>
+                          <Text style={styles.inlineSaveText}>{tr('requestReview')}</Text>
                         </Pressable>
                       </View>
 
                       {projectRowType(projectRowItem) === 'pr' ? (
                         <View style={styles.detailSection}>
                           <View style={styles.detailSectionHeader}>
-                            <Text style={styles.detailSectionTitle}>{t('m.XlbT3Zg')}</Text>
+                            <Text style={styles.detailSectionTitle}>{tr('checks')}</Text>
                             <View style={styles.inlineActionRow}>
                               <Pressable
                                 style={styles.inlineSaveButtonCompact}
                                 disabled={projectMutating}
                                 onPress={() => void refreshProjectGitHubChecks(projectRowItem)}
                               >
-                                <Text style={styles.inlineSaveText}>{t('m.ruk6BoQ')}</Text>
+                                <Text style={styles.inlineSaveText}>{tr('refresh')}</Text>
                               </Pressable>
                               <Pressable
                                 style={styles.inlineSaveButtonCompact}
@@ -12219,19 +12187,19 @@ export default function MobileTasksScreen() {
                                 }
                                 onPress={() => void rerunProjectGitHubChecks(projectRowItem, true)}
                               >
-                                <Text style={styles.inlineSaveText}>{t('m.jphAkJQ')}</Text>
+                                <Text style={styles.inlineSaveText}>{tr('rerunFailed')}</Text>
                               </Pressable>
                               <Pressable
                                 style={styles.inlineSaveButtonCompact}
                                 disabled={projectMutating || projectRowDetail.checks.length === 0}
                                 onPress={() => void rerunProjectGitHubChecks(projectRowItem, false)}
                               >
-                                <Text style={styles.inlineSaveText}>{t('m.Hhu9oHM')}</Text>
+                                <Text style={styles.inlineSaveText}>{tr('rerunAll')}</Text>
                               </Pressable>
                             </View>
                           </View>
                           {projectRowDetail.checks.length === 0 ? (
-                            <Text style={styles.detailMuted}>{t('m.Ct4OwyY')}</Text>
+                            <Text style={styles.detailMuted}>{tr('noChecks')}</Text>
                           ) : (
                             projectRowDetail.checks.map((check) => (
                               <Pressable
@@ -12258,7 +12226,7 @@ export default function MobileTasksScreen() {
 
                       {projectRowDetail.files.length > 0 ? (
                         <View style={styles.detailSection}>
-                          <Text style={styles.detailSectionTitle}>{t('m.WhM0uCg')}</Text>
+                          <Text style={styles.detailSectionTitle}>{tr('changed')}</Text>
                           {projectRowDetail.files.map((file) => (
                             <View key={file.path} style={styles.fileCard}>
                               <Pressable
@@ -12276,9 +12244,7 @@ export default function MobileTasksScreen() {
                                     : ''}
                                 </Text>
                                 <Text style={styles.detailSectionMeta}>
-                                  {expandedPrFilePath === file.path
-                                    ? t('m._Qr_OQY')
-                                    : t('m.PYs8iJY')}
+                                  {expandedPrFilePath === file.path ? tr('hide') : tr('view')}
                                 </Text>
                               </Pressable>
                               <Pressable
@@ -12290,8 +12256,8 @@ export default function MobileTasksScreen() {
                               >
                                 <Text style={styles.inlineSaveText}>
                                   {file.viewerViewedState === 'VIEWED'
-                                    ? t('m.11IaYcI')
-                                    : t('m.DtNbEWc')}
+                                    ? tr('markUnviewed')
+                                    : tr('markViewed')}
                                 </Text>
                               </Pressable>
                               {expandedPrFilePath === file.path ? (
@@ -12300,7 +12266,7 @@ export default function MobileTasksScreen() {
                                     <ActivityIndicator size="small" color={colors.textSecondary} />
                                   ) : prFileContents[file.path]?.originalIsBinary ||
                                     prFileContents[file.path]?.modifiedIsBinary ? (
-                                    <Text style={styles.detailMuted}>{t('m.jh3_4KI')}</Text>
+                                    <Text style={styles.detailMuted}>{tr('binary')}</Text>
                                   ) : prFileContents[file.path] ? (
                                     <GitHubPrFileDiff
                                       filePath={file.path}
@@ -12322,7 +12288,7 @@ export default function MobileTasksScreen() {
                                       }
                                     />
                                   ) : (
-                                    <Text style={styles.detailMuted}>{t('m.XLoI3kU')}</Text>
+                                    <Text style={styles.detailMuted}>{tr('fileContents')}</Text>
                                   )}
                                 </View>
                               ) : null}
@@ -12335,13 +12301,13 @@ export default function MobileTasksScreen() {
                   {projectRowDetail?.provider === 'github' ? (
                     <View style={styles.detailSection}>
                       <View style={styles.detailSectionHeader}>
-                        <Text style={styles.detailSectionTitle}>{t('m.AXmMT_g')}</Text>
+                        <Text style={styles.detailSectionTitle}>{tr('discussion')}</Text>
                         <Text style={styles.detailSectionMeta}>
                           {discussionSummary(projectRowDetail.comments.length)}
                         </Text>
                       </View>
                       {projectRowDetail.comments.length === 0 ? (
-                        <Text style={styles.detailMuted}>{t('m.D7U7kB4')}</Text>
+                        <Text style={styles.detailMuted}>{tr('noComments')}</Text>
                       ) : (
                         projectDetailCommentGroups.map((group) => {
                           const groupId = detailCommentGroupId(group)
@@ -12364,12 +12330,19 @@ export default function MobileTasksScreen() {
                                 }
                               >
                                 <Text style={styles.resolvedCommentTitle} numberOfLines={1}>
-                                  {t(group.kind === 'thread' ? 'm.kYCT6qM' : 'm.ahIRbHk', {
-                                    value0: commentAuthor(root)
-                                  })}
+                                  {tr(
+                                    group.kind === 'thread' ? 'resolvedThread' : 'resolvedComment',
+                                    {
+                                      commentAuthor: commentAuthor(root)
+                                    }
+                                  )}
                                 </Text>
                                 <Text style={styles.detailSectionMeta}>
-                                  {count > 1 ? t('m.M2j9mpc', { value0: count }) : t('m.z1fMPAI')}
+                                  {count > 1
+                                    ? tr('discussionComment', {
+                                        commentCount: count
+                                      })
+                                    : tr('show')}
                                 </Text>
                               </Pressable>
                             )
@@ -12407,7 +12380,7 @@ export default function MobileTasksScreen() {
                                       style={[styles.input, styles.commentInput]}
                                       value={projectEditingCommentDraft}
                                       onChangeText={setProjectEditingCommentDraft}
-                                      placeholder={t('m.loMCIgM')}
+                                      placeholder={tr('editComment')}
                                       placeholderTextColor={colors.textMuted}
                                       multiline
                                       textAlignVertical="top"
@@ -12423,7 +12396,7 @@ export default function MobileTasksScreen() {
                                           void updateProjectRowComment(projectRowItem, comment)
                                         }
                                       >
-                                        <Text style={styles.inlineSaveText}>{t('m.xxWLKS8')}</Text>
+                                        <Text style={styles.inlineSaveText}>{tr('save')}</Text>
                                       </Pressable>
                                       <Pressable
                                         style={styles.inlineSaveButtonCompact}
@@ -12433,7 +12406,7 @@ export default function MobileTasksScreen() {
                                           setProjectEditingCommentDraft('')
                                         }}
                                       >
-                                        <Text style={styles.inlineSaveText}>{t('m.Fv7ly30')}</Text>
+                                        <Text style={styles.inlineSaveText}>{tr('cancel')}</Text>
                                       </Pressable>
                                     </View>
                                   </>
@@ -12456,7 +12429,9 @@ export default function MobileTasksScreen() {
                                             }
                                           >
                                             <Text style={styles.inlineSaveText}>
-                                              {comment.isResolved ? t('m.qEc1OYo') : t('m.Rjjl1iA')}
+                                              {comment.isResolved
+                                                ? tr('reopenThread')
+                                                : tr('resolve')}
                                             </Text>
                                           </Pressable>
                                         ) : null}
@@ -12469,7 +12444,7 @@ export default function MobileTasksScreen() {
                                               [commentId]: next
                                             }))
                                           }
-                                          placeholder={t('m.2MyR_iQ')}
+                                          placeholder={tr('reply')}
                                           placeholderTextColor={colors.textMuted}
                                           multiline
                                           textAlignVertical="top"
@@ -12487,9 +12462,7 @@ export default function MobileTasksScreen() {
                                             )
                                           }
                                         >
-                                          <Text style={styles.inlineSaveText}>
-                                            {t('m.2MyR_iQ')}
-                                          </Text>
+                                          <Text style={styles.inlineSaveText}>{tr('reply')}</Text>
                                         </Pressable>
                                         <Pressable
                                           style={styles.inlineSaveButtonCompact}
@@ -12499,9 +12472,7 @@ export default function MobileTasksScreen() {
                                             setProjectEditingCommentDraft(comment.body)
                                           }}
                                         >
-                                          <Text style={styles.inlineSaveText}>
-                                            {t('m.BhSglbo')}
-                                          </Text>
+                                          <Text style={styles.inlineSaveText}>{tr('edit')}</Text>
                                         </Pressable>
                                         <Pressable
                                           style={styles.inlineSaveButtonCompact}
@@ -12511,7 +12482,7 @@ export default function MobileTasksScreen() {
                                           }
                                         >
                                           <Text style={styles.inlineDeleteText}>
-                                            {t('m.MVHK0qg')}
+                                            {tr('delete')}
                                           </Text>
                                         </Pressable>
                                       </View>
@@ -12556,10 +12527,10 @@ export default function MobileTasksScreen() {
                   onPress={() => void createWorkspaceFromProjectRow(projectRowItem)}
                 >
                   <Plus size={16} color={colors.textPrimary} />
-                  <Text style={styles.actionText}>{t('m.14O3-ys')}</Text>
+                  <Text style={styles.actionText}>{tr('createWorkspaceMessage')}</Text>
                 </Pressable>
               ) : (
-                <Text style={styles.emptyInlineText}>{t('m.fngWtc4')}</Text>
+                <Text style={styles.emptyInlineText}>{tr('workspaces')}</Text>
               )}
 
               {projectRowItem.content.url ? (
@@ -12576,7 +12547,7 @@ export default function MobileTasksScreen() {
                     }}
                   >
                     <ExternalLink size={16} color={colors.textPrimary} />
-                    <Text style={styles.actionText}>{t('m.jKf3DPI')}</Text>
+                    <Text style={styles.actionText}>{tr('openGitHub')}</Text>
                   </Pressable>
                   <View style={styles.actionSeparator} />
                   <Pressable
@@ -12593,8 +12564,8 @@ export default function MobileTasksScreen() {
                     <Copy size={16} color={colors.textPrimary} />
                     <Text style={styles.actionText}>
                       {copiedLinkKey === `github-project:${projectRowItem.id}`
-                        ? t('m.xD9cVOU')
-                        : t('m.vW7-nd4')}
+                        ? tr('copied')
+                        : tr('copyGit')}
                     </Text>
                   </Pressable>
                 </>
@@ -12631,7 +12602,9 @@ export default function MobileTasksScreen() {
                       <X size={16} color={colors.textPrimary} />
                     )}
                     <Text style={styles.actionText}>
-                      {projectRowItem.content.state === 'CLOSED' ? t('m.vegmy2w') : t('m.9bffkjg')}
+                      {projectRowItem.content.state === 'CLOSED'
+                        ? tr('reopenItem')
+                        : tr('closeItem')}
                     </Text>
                   </Pressable>
                 </>
@@ -12647,10 +12620,10 @@ export default function MobileTasksScreen() {
                     onPress={() => setMergeMethodProjectRow(projectRowItem)}
                   >
                     <GitBranch size={16} color={colors.textPrimary} />
-                    <Text style={styles.actionText}>{t('m.MPMGVuk')}</Text>
+                    <Text style={styles.actionText}>{tr('mergePullRequest')}</Text>
                   </Pressable>
                   {!projectRowHostedRepo ? (
-                    <Text style={styles.emptyInlineText}>{t('m.bS5_420')}</Text>
+                    <Text style={styles.emptyInlineText}>{tr('mergeRequires')}</Text>
                   ) : null}
                 </>
               ) : null}
@@ -12675,7 +12648,7 @@ export default function MobileTasksScreen() {
                 <Pressable
                   style={styles.iconButton}
                   disabled={detailLoading}
-                  accessibilityLabel={t('m.mDTZEr4')}
+                  accessibilityLabel={tr('refreshDetails')}
                   onPress={() => setDetailRefreshSeq((current) => current + 1)}
                 >
                   <RefreshCw
@@ -12700,29 +12673,29 @@ export default function MobileTasksScreen() {
                 <>
                   <View style={styles.detailMetaGrid}>
                     <View style={styles.detailMetaItem}>
-                      <Text style={styles.detailMetaLabel}>{t('m.o2-QUvU')}</Text>
+                      <Text style={styles.detailMetaLabel}>{tr('type')}</Text>
                       <Text style={styles.detailMetaValue}>{taskKindLabel(actionItem)}</Text>
                     </View>
                     <View style={styles.detailMetaItem}>
-                      <Text style={styles.detailMetaLabel}>{t('m.Fa6K7yI')}</Text>
+                      <Text style={styles.detailMetaLabel}>{tr('status')}</Text>
                       <Text style={styles.detailMetaValue}>{actionItem.status}</Text>
                     </View>
                     {detailPayload.provider === 'linear' && detailPayload.assignee ? (
                       <View style={styles.detailMetaItem}>
-                        <Text style={styles.detailMetaLabel}>{t('m.b3RSkG0')}</Text>
+                        <Text style={styles.detailMetaLabel}>{tr('assignee')}</Text>
                         <Text style={styles.detailMetaValue}>{detailPayload.assignee}</Text>
                       </View>
                     ) : null}
                     {detailPayload.provider === 'linear' && detailPayload.project ? (
                       <View style={styles.detailMetaItem}>
-                        <Text style={styles.detailMetaLabel}>{t('m.iM5LG78')}</Text>
+                        <Text style={styles.detailMetaLabel}>{tr('project')}</Text>
                         <Text style={styles.detailMetaValue}>{detailPayload.project.name}</Text>
                       </View>
                     ) : null}
                     {(detailPayload.provider === 'github' || detailPayload.provider === 'gitlab') &&
                     detailPayload.assignees.length > 0 ? (
                       <View style={styles.detailMetaItem}>
-                        <Text style={styles.detailMetaLabel}>{t('m.oL0nsd4')}</Text>
+                        <Text style={styles.detailMetaLabel}>{tr('assignees')}</Text>
                         <Text style={styles.detailMetaValue}>
                           {detailPayload.assignees.join(', ')}
                         </Text>
@@ -12741,7 +12714,7 @@ export default function MobileTasksScreen() {
                   ) : null}
 
                   <View style={styles.detailSection}>
-                    <Text style={styles.detailSectionTitle}>{t('m.xX2Cp7c')}</Text>
+                    <Text style={styles.detailSectionTitle}>{tr('description')}</Text>
                     {SHOW_MOBILE_DETAIL_METADATA_EDITORS &&
                     ((actionItem.provider === 'github' &&
                       detailPayload.provider === 'github' &&
@@ -12755,7 +12728,7 @@ export default function MobileTasksScreen() {
                           style={[styles.input, styles.bodyInput]}
                           value={itemBodyDraft}
                           onChangeText={setItemBodyDraft}
-                          placeholder={t('m.xX2Cp7c')}
+                          placeholder={tr('description')}
                           placeholderTextColor={colors.textMuted}
                           multiline
                           textAlignVertical="top"
@@ -12793,9 +12766,9 @@ export default function MobileTasksScreen() {
                             }
                           }}
                         >
-                          <Text style={styles.inlineSaveText}>{t('m.bmXEQhk')}</Text>
+                          <Text style={styles.inlineSaveText}>{tr('saveDescription')}</Text>
                         </Pressable>
-                        <MobileMarkdown content={itemBodyDraft} fallback={t('m.s5C2oPk')} />
+                        <MobileMarkdown content={itemBodyDraft} fallback={tr('noDescription')} />
                       </>
                     ) : (
                       <MobileMarkdown
@@ -12804,7 +12777,7 @@ export default function MobileTasksScreen() {
                             ? detailPayload.description
                             : detailPayload.body
                         }
-                        fallback={t('m.s5C2oPk')}
+                        fallback={tr('noDescription')}
                       />
                     )}
                   </View>
@@ -12818,12 +12791,12 @@ export default function MobileTasksScreen() {
                       detailPayload.provider === 'gitlab')) ? (
                     <>
                       <View style={styles.detailSection}>
-                        <Text style={styles.detailSectionTitle}>{t('m.6b2exyc')}</Text>
+                        <Text style={styles.detailSectionTitle}>{tr('title')}</Text>
                         <TextInput
                           style={styles.input}
                           value={itemTitleDraft}
                           onChangeText={setItemTitleDraft}
-                          placeholder={t('m.6b2exyc')}
+                          placeholder={tr('title')}
                           placeholderTextColor={colors.textMuted}
                         />
                         <Pressable
@@ -12856,27 +12829,27 @@ export default function MobileTasksScreen() {
                             }
                           }}
                         >
-                          <Text style={styles.inlineSaveText}>{t('m.OOzqk6Q')}</Text>
+                          <Text style={styles.inlineSaveText}>{tr('saveTitle')}</Text>
                         </Pressable>
                       </View>
 
                       <View style={styles.detailSection}>
                         <View style={styles.detailSectionHeader}>
-                          <Text style={styles.detailSectionTitle}>{t('m.GhHLbBA')}</Text>
+                          <Text style={styles.detailSectionTitle}>{tr('labels')}</Text>
                           <Text style={styles.detailSectionMeta}>
-                            {detailPayload.labels.length || t('m.pzBhZI4')}
+                            {detailPayload.labels.length || tr('none')}
                           </Text>
                         </View>
                         {actionItem.provider === 'github' ? (
                           itemLabelsLoading ? (
                             <View style={styles.detailLoadingInline}>
                               <ActivityIndicator size="small" color={colors.textSecondary} />
-                              <Text style={styles.detailMuted}>{t('m.vYfgNJ8')}</Text>
+                              <Text style={styles.detailMuted}>{tr('loadingLabels')}</Text>
                             </View>
                           ) : itemLabelsError ? (
                             <Text style={styles.detailError}>{itemLabelsError}</Text>
                           ) : itemAvailableLabels.length === 0 ? (
-                            <Text style={styles.detailMuted}>{t('m.ySDu5JQ')}</Text>
+                            <Text style={styles.detailMuted}>{tr('noLabels')}</Text>
                           ) : (
                             <View style={styles.chipRow}>
                               {[...new Set([...itemAvailableLabels, ...detailPayload.labels])].map(
@@ -12917,7 +12890,7 @@ export default function MobileTasksScreen() {
                               style={styles.input}
                               value={itemAddLabelsDraft}
                               onChangeText={setItemAddLabelsDraft}
-                              placeholder={t('m.ByJ_aqM')}
+                              placeholder={tr('addLabels')}
                               placeholderTextColor={colors.textMuted}
                               autoCapitalize="none"
                             />
@@ -12925,7 +12898,7 @@ export default function MobileTasksScreen() {
                               style={[styles.input, styles.stackedInput]}
                               value={itemRemoveLabelsDraft}
                               onChangeText={setItemRemoveLabelsDraft}
-                              placeholder={t('m.gyu0Q6w')}
+                              placeholder={tr('removeLabels')}
                               placeholderTextColor={colors.textMuted}
                               autoCapitalize="none"
                             />
@@ -12943,7 +12916,7 @@ export default function MobileTasksScreen() {
                                 })
                               }
                             >
-                              <Text style={styles.inlineSaveText}>{t('m.K9OxCfg')}</Text>
+                              <Text style={styles.inlineSaveText}>{tr('updateLabels')}</Text>
                             </Pressable>
                           </>
                         )}
@@ -12951,21 +12924,21 @@ export default function MobileTasksScreen() {
 
                       <View style={styles.detailSection}>
                         <View style={styles.detailSectionHeader}>
-                          <Text style={styles.detailSectionTitle}>{t('m.oL0nsd4')}</Text>
+                          <Text style={styles.detailSectionTitle}>{tr('assignees')}</Text>
                           <Text style={styles.detailSectionMeta}>
-                            {detailPayload.assignees.length || t('m.pzBhZI4')}
+                            {detailPayload.assignees.length || tr('none')}
                           </Text>
                         </View>
                         {actionItem.provider === 'github' ? (
                           itemAssignableUsersLoading ? (
                             <View style={styles.detailLoadingInline}>
                               <ActivityIndicator size="small" color={colors.textSecondary} />
-                              <Text style={styles.detailMuted}>{t('m.gX4WIW4')}</Text>
+                              <Text style={styles.detailMuted}>{tr('loadingAssignees')}</Text>
                             </View>
                           ) : itemAssignableUsersError ? (
                             <Text style={styles.detailError}>{itemAssignableUsersError}</Text>
                           ) : itemAssignableUsers.length === 0 ? (
-                            <Text style={styles.detailMuted}>{t('m.--H0boQ')}</Text>
+                            <Text style={styles.detailMuted}>{tr('noAssignable')}</Text>
                           ) : (
                             <View style={styles.chipRow}>
                               {[
@@ -13015,7 +12988,7 @@ export default function MobileTasksScreen() {
                               style={styles.input}
                               value={itemAddAssigneesDraft}
                               onChangeText={setItemAddAssigneesDraft}
-                              placeholder={t('m.K9otrEQ')}
+                              placeholder={tr('addUsernames')}
                               placeholderTextColor={colors.textMuted}
                               autoCapitalize="none"
                             />
@@ -13023,7 +12996,7 @@ export default function MobileTasksScreen() {
                               style={[styles.input, styles.stackedInput]}
                               value={itemRemoveAssigneesDraft}
                               onChangeText={setItemRemoveAssigneesDraft}
-                              placeholder={t('m.X_A_K1Q')}
+                              placeholder={tr('removeUsernames')}
                               placeholderTextColor={colors.textMuted}
                               autoCapitalize="none"
                             />
@@ -13041,7 +13014,7 @@ export default function MobileTasksScreen() {
                                 })
                               }
                             >
-                              <Text style={styles.inlineSaveText}>{t('m.FQRH8fY')}</Text>
+                              <Text style={styles.inlineSaveText}>{tr('updateAssignees')}</Text>
                             </Pressable>
                           </>
                         ) : null}
@@ -13054,7 +13027,7 @@ export default function MobileTasksScreen() {
                   actionItem.source.type === 'pr' ? (
                     <View style={styles.detailSection}>
                       <View style={styles.detailSectionHeader}>
-                        <Text style={styles.detailSectionTitle}>{t('m.hDVISbQ')}</Text>
+                        <Text style={styles.detailSectionTitle}>{tr('reviewers')}</Text>
                         {detailPayload.provider === 'github' ? (
                           <Text style={styles.detailSectionMeta}>
                             {getGitHubReviewSummary(detailPayload)}
@@ -13063,7 +13036,7 @@ export default function MobileTasksScreen() {
                       </View>
                       {detailPayload.provider === 'github' ? (
                         getGitHubReviewerRows(detailPayload).length === 0 ? (
-                          <Text style={styles.detailMuted}>{t('m.ifA4snA')}</Text>
+                          <Text style={styles.detailMuted}>{tr('noReviewersRequested')}</Text>
                         ) : (
                           getGitHubReviewerRows(detailPayload).map((reviewer) => (
                             <View key={reviewer.login} style={styles.reviewerRow}>
@@ -13090,12 +13063,12 @@ export default function MobileTasksScreen() {
                       {itemAssignableUsersLoading ? (
                         <View style={styles.detailLoadingInline}>
                           <ActivityIndicator size="small" color={colors.textSecondary} />
-                          <Text style={styles.detailMuted}>{t('m.Re-pmxo')}</Text>
+                          <Text style={styles.detailMuted}>{tr('loadingReviewers')}</Text>
                         </View>
                       ) : itemAssignableUsersError ? (
                         <Text style={styles.detailError}>{itemAssignableUsersError}</Text>
                       ) : itemReviewerCandidates.length === 0 ? (
-                        <Text style={styles.detailMuted}>{t('m.k2ppyKs')}</Text>
+                        <Text style={styles.detailMuted}>{tr('noReviewer')}</Text>
                       ) : (
                         <View style={styles.chipRow}>
                           {itemReviewerCandidates.map((user) => {
@@ -13127,7 +13100,7 @@ export default function MobileTasksScreen() {
                         style={styles.input}
                         value={itemReviewersDraft}
                         onChangeText={setItemReviewersDraft}
-                        placeholder={t('m.WTd49qc')}
+                        placeholder={tr('requestReviewers')}
                         placeholderTextColor={colors.textMuted}
                         autoCapitalize="none"
                       />
@@ -13138,7 +13111,7 @@ export default function MobileTasksScreen() {
                         }
                         onPress={() => void requestGitHubReviewers(actionItem)}
                       >
-                        <Text style={styles.inlineSaveText}>{t('m.KoPjVCY')}</Text>
+                        <Text style={styles.inlineSaveText}>{tr('requestReview')}</Text>
                       </Pressable>
                     </View>
                   ) : null}
@@ -13149,14 +13122,14 @@ export default function MobileTasksScreen() {
                   actionItem.source.type === 'pr' ? (
                     <View style={styles.detailSection}>
                       <View style={styles.detailSectionHeader}>
-                        <Text style={styles.detailSectionTitle}>{t('m.XlbT3Zg')}</Text>
+                        <Text style={styles.detailSectionTitle}>{tr('checks')}</Text>
                         <View style={styles.inlineActionRow}>
                           <Pressable
                             style={styles.inlineSaveButtonCompact}
                             disabled={mutatingStatus}
                             onPress={() => void refreshGitHubChecks(actionItem)}
                           >
-                            <Text style={styles.inlineSaveText}>{t('m.ruk6BoQ')}</Text>
+                            <Text style={styles.inlineSaveText}>{tr('refresh')}</Text>
                           </Pressable>
                           <Pressable
                             style={styles.inlineSaveButtonCompact}
@@ -13165,19 +13138,19 @@ export default function MobileTasksScreen() {
                             }
                             onPress={() => void rerunGitHubChecks(actionItem, true)}
                           >
-                            <Text style={styles.inlineSaveText}>{t('m.jphAkJQ')}</Text>
+                            <Text style={styles.inlineSaveText}>{tr('rerunFailed')}</Text>
                           </Pressable>
                           <Pressable
                             style={styles.inlineSaveButtonCompact}
                             disabled={mutatingStatus || detailPayload.checks.length === 0}
                             onPress={() => void rerunGitHubChecks(actionItem, false)}
                           >
-                            <Text style={styles.inlineSaveText}>{t('m.Hhu9oHM')}</Text>
+                            <Text style={styles.inlineSaveText}>{tr('rerunAll')}</Text>
                           </Pressable>
                         </View>
                       </View>
                       {detailPayload.checks.length === 0 ? (
-                        <Text style={styles.detailMuted}>{t('m.Ct4OwyY')}</Text>
+                        <Text style={styles.detailMuted}>{tr('noChecks')}</Text>
                       ) : (
                         detailPayload.checks.map((check) => (
                           <Pressable
@@ -13206,7 +13179,7 @@ export default function MobileTasksScreen() {
                   detailPayload.provider === 'github' &&
                   detailPayload.files.length > 0 ? (
                     <View style={styles.detailSection}>
-                      <Text style={styles.detailSectionTitle}>{t('m.WhM0uCg')}</Text>
+                      <Text style={styles.detailSectionTitle}>{tr('changed')}</Text>
                       {detailPayload.files.map((file) =>
                         actionItem.provider === 'github' && actionItem.source.type === 'pr' ? (
                           <View key={file.path} style={styles.fileCard}>
@@ -13223,7 +13196,7 @@ export default function MobileTasksScreen() {
                                   : ''}
                               </Text>
                               <Text style={styles.detailSectionMeta}>
-                                {expandedPrFilePath === file.path ? t('m._Qr_OQY') : t('m.PYs8iJY')}
+                                {expandedPrFilePath === file.path ? tr('hide') : tr('view')}
                               </Text>
                             </Pressable>
                             <Pressable
@@ -13233,8 +13206,8 @@ export default function MobileTasksScreen() {
                             >
                               <Text style={styles.inlineSaveText}>
                                 {file.viewerViewedState === 'VIEWED'
-                                  ? t('m.11IaYcI')
-                                  : t('m.DtNbEWc')}
+                                  ? tr('markUnviewed')
+                                  : tr('markViewed')}
                               </Text>
                             </Pressable>
                             {expandedPrFilePath === file.path ? (
@@ -13243,7 +13216,7 @@ export default function MobileTasksScreen() {
                                   <ActivityIndicator size="small" color={colors.textSecondary} />
                                 ) : prFileContents[file.path]?.originalIsBinary ||
                                   prFileContents[file.path]?.modifiedIsBinary ? (
-                                  <Text style={styles.detailMuted}>{t('m.jh3_4KI')}</Text>
+                                  <Text style={styles.detailMuted}>{tr('binary')}</Text>
                                 ) : prFileContents[file.path] ? (
                                   <GitHubPrFileDiff
                                     filePath={file.path}
@@ -13261,7 +13234,7 @@ export default function MobileTasksScreen() {
                                     }
                                   />
                                 ) : (
-                                  <Text style={styles.detailMuted}>{t('m.XLoI3kU')}</Text>
+                                  <Text style={styles.detailMuted}>{tr('fileContents')}</Text>
                                 )}
                               </View>
                             ) : null}
@@ -13285,15 +13258,17 @@ export default function MobileTasksScreen() {
                   actionItem.source.type === 'mr' ? (
                     <View style={styles.detailSection}>
                       <View style={styles.detailSectionHeader}>
-                        <Text style={styles.detailSectionTitle}>{t('m.iaudYyQ')}</Text>
+                        <Text style={styles.detailSectionTitle}>{tr('pipeline')}</Text>
                         <Text style={styles.detailSectionMeta}>
                           {detailPayload.pipelineJobs.length
-                            ? t('m.re5Bmac', { value0: detailPayload.pipelineJobs.length })
-                            : t('m.pzBhZI4')}
+                            ? tr('pipelineJob', {
+                                pipelineJobCount: detailPayload.pipelineJobs.length
+                              })
+                            : tr('none')}
                         </Text>
                       </View>
                       {detailPayload.pipelineJobs.length === 0 ? (
-                        <Text style={styles.detailMuted}>{t('m.-uupizo')}</Text>
+                        <Text style={styles.detailMuted}>{tr('noPipeline')}</Text>
                       ) : (
                         detailPayload.pipelineJobs.map((job) => {
                           const duration = formatDurationSeconds(job.duration)
@@ -13336,13 +13311,13 @@ export default function MobileTasksScreen() {
                   actionItem.provider === 'linear' ? (
                     <View style={styles.detailSection}>
                       <View style={styles.detailSectionHeader}>
-                        <Text style={styles.detailSectionTitle}>{t('m.yIapPk8')}</Text>
+                        <Text style={styles.detailSectionTitle}>{tr('subIssues')}</Text>
                         <Text style={styles.detailSectionMeta}>
-                          {detailPayload.children.length || t('m.pzBhZI4')}
+                          {detailPayload.children.length || tr('none')}
                         </Text>
                       </View>
                       {detailPayload.children.length === 0 ? (
-                        <Text style={styles.detailMuted}>{t('m.8MKn4Lk')}</Text>
+                        <Text style={styles.detailMuted}>{tr('noSub')}</Text>
                       ) : (
                         detailPayload.children.map((child) => (
                           <Pressable
@@ -13356,7 +13331,7 @@ export default function MobileTasksScreen() {
                             <Text style={styles.detailLine}>
                               {child.identifier} · {child.title}
                             </Text>
-                            <Text style={styles.detailSectionMeta}>{t('m.czxJ7iQ')}</Text>
+                            <Text style={styles.detailSectionMeta}>{tr('open')}</Text>
                           </Pressable>
                         ))
                       )}
@@ -13364,7 +13339,7 @@ export default function MobileTasksScreen() {
                         style={[styles.input, styles.stackedInput]}
                         value={linearSubIssueTitle}
                         onChangeText={setLinearSubIssueTitle}
-                        placeholder={t('m.G6AAKyI')}
+                        placeholder={tr('subIssueTitle')}
                         placeholderTextColor={colors.textMuted}
                       />
                       <Pressable
@@ -13372,20 +13347,20 @@ export default function MobileTasksScreen() {
                         disabled={mutatingStatus || linearSubIssueTitle.trim().length === 0}
                         onPress={() => void createLinearSubIssue(actionItem)}
                       >
-                        <Text style={styles.inlineSaveText}>{t('m.z1ts1Vw')}</Text>
+                        <Text style={styles.inlineSaveText}>{tr('addSub')}</Text>
                       </Pressable>
                     </View>
                   ) : null}
 
                   <View style={styles.detailSection}>
                     <View style={styles.detailSectionHeader}>
-                      <Text style={styles.detailSectionTitle}>{t('m.AXmMT_g')}</Text>
+                      <Text style={styles.detailSectionTitle}>{tr('discussion')}</Text>
                       <Text style={styles.detailSectionMeta}>
                         {discussionSummary(detailPayload.comments.length)}
                       </Text>
                     </View>
                     {detailPayload.comments.length === 0 ? (
-                      <Text style={styles.detailMuted}>{t('m.D7U7kB4')}</Text>
+                      <Text style={styles.detailMuted}>{tr('noComments')}</Text>
                     ) : (
                       detailCommentGroups.map(renderDetailCommentGroup)
                     )}
@@ -13425,7 +13400,7 @@ export default function MobileTasksScreen() {
               >
                 <Plus size={16} color={colors.textPrimary} />
                 <Text style={styles.actionText}>
-                  {creatingKey === actionItem.key ? t('m.ftImAuc') : t('m.14O3-ys')}
+                  {creatingKey === actionItem.key ? tr('creating') : tr('createWorkspaceMessage')}
                 </Text>
               </Pressable>
 
@@ -13453,8 +13428,8 @@ export default function MobileTasksScreen() {
                     <Copy size={16} color={colors.textPrimary} />
                     <Text style={styles.actionText}>
                       {copiedLinkKey === `linear-url:${actionItem.key}`
-                        ? t('m.xD9cVOU')
-                        : t('m.tS4SSLM')}
+                        ? tr('copied')
+                        : tr('copyLinear')}
                     </Text>
                   </Pressable>
                 </>
@@ -13471,7 +13446,7 @@ export default function MobileTasksScreen() {
                   >
                     <Copy size={16} color={colors.textPrimary} />
                     <Text style={styles.actionText}>
-                      {copiedLinkKey === `task:${actionItem.key}` ? t('m.xD9cVOU') : t('m.vW7-nd4')}
+                      {copiedLinkKey === `task:${actionItem.key}` ? tr('copied') : tr('copyGit')}
                     </Text>
                   </Pressable>
                 </>
@@ -13517,10 +13492,10 @@ export default function MobileTasksScreen() {
                     }
                   >
                     <GitBranch size={16} color={colors.textPrimary} />
-                    <Text style={styles.actionText}>{t('m.MPMGVuk')}</Text>
+                    <Text style={styles.actionText}>{tr('mergePullRequest')}</Text>
                   </Pressable>
                   {isGitHubPrMergeBlocked(actionItem) ? (
-                    <Text style={styles.emptyInlineText}>{t('m.QnAsBMo')}</Text>
+                    <Text style={styles.emptyInlineText}>{tr('gitHubReportsMergeConflicts')}</Text>
                   ) : null}
                 </>
               ) : null}
@@ -13567,7 +13542,7 @@ export default function MobileTasksScreen() {
                     }
                   >
                     <GitBranch size={16} color={colors.textPrimary} />
-                    <Text style={styles.actionText}>{t('m.Fc7HS-c')}</Text>
+                    <Text style={styles.actionText}>{tr('mergeMerge')}</Text>
                   </Pressable>
                 </>
               ) : null}
@@ -13585,7 +13560,7 @@ export default function MobileTasksScreen() {
                     }}
                   >
                     <GitBranch size={16} color={colors.textPrimary} />
-                    <Text style={styles.actionText}>{t('m.ZDweAzI')}</Text>
+                    <Text style={styles.actionText}>{tr('changeStatusMessage')}</Text>
                   </Pressable>
                 </>
               ) : null}
@@ -13596,8 +13571,8 @@ export default function MobileTasksScreen() {
 
       <ActionSheetModal
         visible={taskUiReady && mergeMethodProjectRow != null}
-        title={t('m.ax5V10c')}
-        message={t('m.l77C_aI')}
+        title={tr('mergeMethod')}
+        message={tr('chooseHowPull')}
         actions={
           mergeMethodProjectRow
             ? (['squash', 'merge', 'rebase'] as const).map((method) => ({
@@ -13613,8 +13588,10 @@ export default function MobileTasksScreen() {
       />
       <ActionSheetModal
         visible={taskUiReady && mergeMethodTaskItem != null}
-        title={t('m.ax5V10c')}
-        message={mergeMethodTaskItem?.provider === 'gitlab' ? t('m.AxbwZZ0') : t('m.l77C_aI')}
+        title={tr('mergeMethod')}
+        message={
+          mergeMethodTaskItem?.provider === 'gitlab' ? tr('chooseHowMerge') : tr('chooseHowPull')
+        }
         actions={
           mergeMethodTaskItem
             ? (mergeMethodTaskItem.provider === 'gitlab'
@@ -13623,7 +13600,7 @@ export default function MobileTasksScreen() {
               ).map((method) => ({
                 label:
                   mergeMethodTaskItem.provider === 'gitlab' && method === 'merge'
-                    ? t('m.AXgAxVM')
+                    ? tr('merge')
                     : getHostedReviewMergeMethodLabel(method),
                 icon: GitBranch,
                 onPress: () => {
@@ -13637,12 +13614,16 @@ export default function MobileTasksScreen() {
       />
       <ConfirmModal
         visible={taskUiReady && pendingHostedMerge != null}
-        title={pendingHostedMerge?.item.provider === 'gitlab' ? t('m.cR4zEEM') : t('m.sSNY3pg')}
+        title={
+          pendingHostedMerge?.item.provider === 'gitlab'
+            ? tr('mergeRequestTitle')
+            : tr('mergePullRequestTitle')
+        }
         message={pendingHostedMerge ? getHostedMergeConfirmMessage(pendingHostedMerge) : undefined}
         confirmLabel={
           pendingHostedMerge
             ? getHostedReviewMergeMethodLabel(pendingHostedMerge.method)
-            : t('m.AXgAxVM')
+            : tr('merge')
         }
         onConfirm={() => {
           if (!taskUiReady || !pendingHostedMerge) {
@@ -13654,7 +13635,7 @@ export default function MobileTasksScreen() {
       />
       <ConfirmModal
         visible={taskUiReady && pendingProjectGitHubMerge != null}
-        title={t('m.sSNY3pg')}
+        title={tr('mergePullRequestTitle')}
         message={
           pendingProjectGitHubMerge
             ? getProjectGitHubMergeConfirmMessage(pendingProjectGitHubMerge)
@@ -13663,7 +13644,7 @@ export default function MobileTasksScreen() {
         confirmLabel={
           pendingProjectGitHubMerge
             ? getHostedReviewMergeMethodLabel(pendingProjectGitHubMerge.method)
-            : t('m.AXgAxVM')
+            : tr('merge')
         }
         onConfirm={() => {
           if (!taskUiReady || !pendingProjectGitHubMerge) {
@@ -13681,7 +13662,7 @@ export default function MobileTasksScreen() {
         title={
           pendingHostedStateChange
             ? getHostedStateConfirmTitle(pendingHostedStateChange)
-            : t('m.ZhTpuGQ')
+            : tr('updateItem')
         }
         message={
           pendingHostedStateChange
@@ -13691,7 +13672,7 @@ export default function MobileTasksScreen() {
         confirmLabel={
           pendingHostedStateChange
             ? getHostedStateConfirmLabel(pendingHostedStateChange)
-            : t('m.y2BBXrA')
+            : tr('confirm')
         }
         destructive={pendingHostedStateChange?.nextState === 'closed'}
         onConfirm={() => {

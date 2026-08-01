@@ -57,7 +57,7 @@ const EMPTY_GROUP_KEY = '__empty__'
 const UNKNOWN_INDEX_SENTINEL = Number.MAX_SAFE_INTEGER
 
 function labelForEmpty(field: GitHubProjectField): string {
-  return t('m.QNvTsRo', { value0: field.name })
+  return t('mobileGithubProjectGroupSort.no', { fieldName: field.name })
 }
 
 function deriveStringValue(value: GitHubProjectFieldValue): string {
@@ -98,7 +98,7 @@ function getFieldValueForGrouping(
     const meta = iterations.find((it) => it.id === value.iterationId)
     return {
       key: value.iterationId,
-      label: value.title || meta?.title || t('m.AXVCL9g'),
+      label: value.title || meta?.title || t('mobileGithubProjectGroupSort.iteration'),
       orderHint: idx === -1 ? UNKNOWN_INDEX_SENTINEL - 1 : idx,
       iteration: meta
         ? { startDate: meta.startDate, duration: meta.duration, completed: meta.completed }

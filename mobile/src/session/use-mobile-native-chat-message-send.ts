@@ -76,7 +76,7 @@ export function useMobileNativeChatMessageSend(args: {
       // answer (which reaches this send directly) would otherwise burn the whole
       // 15s heal+send budget waiting on a socket that is already gone.
       if (!client || !handle || !origin || !enabled) {
-        onSendError(t('m.t_qfHRA'))
+        onSendError(t('useMobileNativeChatMessageSend.messageNotSentDisconnected'))
         return 'rejected'
       }
       // The agent's input may still hold an orphaned image paste from an earlier
@@ -94,7 +94,7 @@ export function useMobileNativeChatMessageSend(args: {
         deadline
       }
       if (!(await healMobileNativeChatStaleInput(healArgs))) {
-        onSendError(t('m.ZkABdzg'))
+        onSendError(t('useMobileNativeChatMessageSend.messageNotSent'))
         return 'rejected'
       }
       // Why: empty the composer at send time, not on the ack — over relay the
@@ -129,7 +129,7 @@ export function useMobileNativeChatMessageSend(args: {
           if (syncComposer) {
             restoreRejectedDraft(origin, text)
           }
-          onSendError(t('m.ZkABdzg'))
+          onSendError(t('useMobileNativeChatMessageSend.messageNotSent'))
           return 'rejected'
         }
       }
@@ -165,14 +165,16 @@ export function useMobileNativeChatMessageSend(args: {
       if (outcome === 'unknown') {
         // Why: an ack-lost send usually WAS delivered (issue seen on cellular
         // relay) — verify via the transcript echo instead of a false "not sent".
-        holdUnconfirmedSend(origin, text, () => onSendError(t('m.klTsRAk')))
+        holdUnconfirmedSend(origin, text, () =>
+          onSendError(t('useMobileNativeChatMessageSend.delivery'))
+        )
         return 'unknown'
       }
       if (outcome === 'rejected') {
         if (syncComposer) {
           restoreRejectedDraft(origin, text)
         }
-        onSendError(t('m.ZkABdzg'))
+        onSendError(t('useMobileNativeChatMessageSend.messageNotSent'))
         return 'rejected'
       }
       // `images` are local preview URIs for the optimistic echo only — the actual

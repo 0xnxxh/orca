@@ -49,11 +49,13 @@ export function parseApprovalFromStatus(
   }
   const summary = (approval as { summary?: unknown }).summary
   return {
-    title: t('m.rOYT-0U', { value0: tool }),
+    title: t('mobileNativeChatPermission.allowPermission', {
+      permissionName: tool
+    }),
     detail: typeof summary === 'string' && summary.length > 0 ? summary : undefined,
     options: [
-      { label: t('m.sjphObI'), send: '1' },
-      { label: t('m.3EBdICM'), send: ESCAPE }
+      { label: t('mobileNativeChatPermission.allow'), send: '1' },
+      { label: t('mobileNativeChatPermission.deny'), send: ESCAPE }
     ]
   }
 }
@@ -126,7 +128,7 @@ function buildNumberedPermission(
   detail: string | undefined
 ): MobileChatPermission {
   return {
-    title: t('m.LHMnD5o'),
+    title: t('mobileNativeChatPermission.permission'),
     detail,
     options: options.map((opt) => ({ label: shortLabel(opt.text), send: opt.num }))
   }
@@ -169,12 +171,19 @@ export function detectAgentPermission(input: PermissionInput): MobileChatPermiss
   // text actually offers a persistent option, to avoid sending a token the agent
   // doesn't understand.
   const options: MobileChatPermission['options'] = [
-    { label: t('m.sjphObI'), send: 'y' },
-    { label: t('m.3EBdICM'), send: 'n' }
+    { label: t('mobileNativeChatPermission.allow'), send: 'y' },
+    { label: t('mobileNativeChatPermission.deny'), send: 'n' }
   ]
   if (isAlwaysLabel(text)) {
-    options.splice(1, 0, { label: t('m.zqu69ik'), send: 'a' })
+    options.splice(1, 0, {
+      label: t('mobileNativeChatPermission.allowAlways'),
+      send: 'a'
+    })
   }
 
-  return { title: t('m.LHMnD5o'), detail, options }
+  return {
+    title: t('mobileNativeChatPermission.permission'),
+    detail,
+    options
+  }
 }

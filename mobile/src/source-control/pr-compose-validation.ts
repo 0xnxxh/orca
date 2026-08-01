@@ -41,16 +41,18 @@ export function getPrComposeDisabledReason({
   reviewLabel: string
 }): string | null {
   if (generating) {
-    return t('m.E7yK5NU')
+    return t('prComposeValidation.wait')
   }
   if (title.trim().length === 0) {
-    return t('m.b89N2ws', { value0: reviewLabel })
+    return t('prComposeValidation.enter', {
+      reviewType: reviewLabel
+    })
   }
   if (base.trim().length === 0) {
-    return t('m.yBuJIFU')
+    return t('prComposeValidation.choose')
   }
   if (!isBaseHeadDistinct(base, head)) {
-    return t('m.tKcJoxk')
+    return t('prComposeValidation.base')
   }
   return null
 }

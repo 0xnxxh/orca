@@ -37,17 +37,17 @@ export function agentDotState(
 export function agentStateLabel(state: AgentDotState): string {
   switch (state) {
     case 'working':
-      return t('m.xLtCpIk')
+      return t('agentRowDisplay.working')
     case 'blocked':
-      return t('m.CeMk5QY')
+      return t('agentRowDisplay.blocked')
     case 'waiting':
-      return t('m.clLXJRk')
+      return t('agentRowDisplay.waiting')
     case 'interrupted':
-      return t('m.eSniHCo')
+      return t('agentRowDisplay.interrupted')
     case 'done':
-      return t('m.cfFE9JM')
+      return t('agentRowDisplay.done')
     case 'idle':
-      return t('m.cuSNE9k')
+      return t('agentRowDisplay.idle')
   }
 }
 
@@ -91,7 +91,7 @@ export function agentIdentityLabel(agentType: string | null): string {
 export function formatTimeAgo(ts: number, now: number): string {
   const delta = now - ts
   if (delta < 60_000) {
-    return t('m.3OzvpCE')
+    return t('agentRowDisplay.just')
   }
   const minutes = Math.floor(delta / 60_000)
   if (minutes < 60) {

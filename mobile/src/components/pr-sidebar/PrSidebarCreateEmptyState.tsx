@@ -98,7 +98,7 @@ export function PrSidebarCreateEmptyState({
     setLoading(true)
     try {
       if (!gitBranch) {
-        setCreateWarning(t('m.EMFMGnw'))
+        setCreateWarning(t('prSidebarCreateEmptyState.check'))
         return
       }
       // Why: mobile skips the local compose step here and runs the hosted create
@@ -132,7 +132,7 @@ export function PrSidebarCreateEmptyState({
       openMobilePrUrl(outcome.url)
       onCreated()
     } catch (err) {
-      setCreateWarning(err instanceof Error ? err.message : t('m.tca0V2E'))
+      setCreateWarning(err instanceof Error ? err.message : t('prSidebarCreateEmptyState.failed'))
     } finally {
       setLoading(false)
     }
@@ -161,14 +161,14 @@ export function PrSidebarCreateEmptyState({
       <View style={styles.header}>
         <View style={styles.headerTitle}>
           <GitPullRequestArrow size={14} color={colors.textSecondary} strokeWidth={2.2} />
-          <Text style={styles.headerLabel}>{t('m.TSDVcKU')}</Text>
+          <Text style={styles.headerLabel}>{t('prSidebarCreateEmptyState.pull')}</Text>
         </View>
         <View style={styles.headerActions}>
           <Pressable
             style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
             onPress={refreshPrState}
             accessibilityRole="button"
-            accessibilityLabel={t('m.YZFe3Qg')}
+            accessibilityLabel={t('prSidebarCreateEmptyState.refreshPull')}
             hitSlop={6}
           >
             <RefreshCw size={16} color={colors.textSecondary} strokeWidth={2.2} />
@@ -178,27 +178,31 @@ export function PrSidebarCreateEmptyState({
             onPress={() => void openComposer()}
             disabled={!canCreate || loading}
             accessibilityRole="button"
-            accessibilityLabel={t('m.Y_NnJ9M')}
+            accessibilityLabel={t('prSidebarCreateEmptyState.createPull')}
           >
             {loading ? (
               <ActivityIndicator color={colors.bgBase} />
             ) : (
               <GitPullRequestArrow size={14} color={colors.bgBase} strokeWidth={2.2} />
             )}
-            <Text style={styles.createButtonText}>{t('m.5kE-iVM')}</Text>
+            <Text style={styles.createButtonText}>{t('prSidebarCreateEmptyState.createPr')}</Text>
           </Pressable>
         </View>
       </View>
       <View style={styles.body}>
         <Text style={styles.bodyTitle}>
-          {orphanLinkedPR ? t('m.I3xSuPA', { value0: orphanLinkedPR }) : t('m.G2BaE-Y')}
+          {orphanLinkedPR
+            ? t('prSidebarCreateEmptyState.linked', {
+                pullRequestNumber: orphanLinkedPR
+              })
+            : t('prSidebarCreateEmptyState.no')}
         </Text>
         <Text style={styles.bodyText}>
           {orphanLinkedPR
-            ? t('m.maf-eds')
+            ? t('prSidebarCreateEmptyState.refreshCheck')
             : gitBranch
-              ? t('m.CmpszXU', { value0: gitBranch })
-              : t('m.SRr0o4U')}
+              ? t('prSidebarCreateEmptyState.git', { gitBranch: gitBranch })
+              : t('prSidebarCreateEmptyState.current')}
         </Text>
         {commitFailureRecovery ? (
           <MobileCommitFailurePanel
@@ -217,7 +221,7 @@ export function PrSidebarCreateEmptyState({
           onPress={() => setMode('link')}
           disabled={!client}
           accessibilityRole="button"
-          accessibilityLabel={t('m._mT5R7M')}
+          accessibilityLabel={t('prSidebarCreateEmptyState.linkExistingPull')}
           accessibilityState={{ disabled: !client }}
           hitSlop={6}
         >
@@ -226,7 +230,7 @@ export function PrSidebarCreateEmptyState({
             color={client ? colors.textSecondary : colors.textMuted}
             strokeWidth={2.2}
           />
-          <Text style={styles.linkButtonText}>{t('m.eNX9Nmo')}</Text>
+          <Text style={styles.linkButtonText}>{t('prSidebarCreateEmptyState.linkExistingPr')}</Text>
         </Pressable>
       </View>
     </View>

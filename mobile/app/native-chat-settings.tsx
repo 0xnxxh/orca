@@ -18,31 +18,31 @@ export default function NativeChatSettingsScreen() {
       <View style={styles.topRow}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={t('m.yTJLwao')}
+          accessibilityLabel={t('nativeChatSettings.back')}
           style={styles.backButton}
           onPress={() => router.back()}
         >
           <ChevronLeft size={22} color={colors.textSecondary} />
         </Pressable>
-        <Text style={styles.heading}>{t('m.ao09T48')}</Text>
+        <Text style={styles.heading}>{t('nativeChatSettings.chat')}</Text>
       </View>
 
       <ScrollView
         contentContainerStyle={{ paddingBottom: insets.bottom + spacing.lg }}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.groupHeading}>{t('m.R7mksio')}</Text>
-        <Text style={styles.groupDescription}>{t('m.sW_6PG4')}</Text>
+        <Text style={styles.groupHeading}>{t('nativeChatSettings.default')}</Text>
+        <Text style={styles.groupDescription}>{t('nativeChatSettings.choose')}</Text>
         <View style={[styles.section, styles.sectionTopGap]}>
           <View style={styles.row}>
             <View style={styles.rowContent}>
-              <Text style={styles.rowLabel}>{t('m.LutlQWg')}</Text>
+              <Text style={styles.rowLabel}>{t('nativeChatSettings.open')}</Text>
               <Text style={styles.rowSublabel}>
-                {chatDefault ? t('m.OXcAS68') : t('m.p0ydSMw')}
+                {chatDefault ? t('nativeChatSettings.on') : t('nativeChatSettings.off')}
               </Text>
             </View>
             <Switch
-              accessibilityLabel={t('m.LutlQWg')}
+              accessibilityLabel={t('nativeChatSettings.open')}
               value={chatDefault}
               onValueChange={(next) => setDefaultView(next ? 'chat' : 'terminal')}
               trackColor={{ false: colors.bgRaised, true: colors.textSecondary }}

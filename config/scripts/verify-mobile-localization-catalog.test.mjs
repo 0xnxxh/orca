@@ -4,7 +4,10 @@ import path from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { main as verifyMobileCatalog } from './verify-mobile-localization-catalog.mjs'
+import {
+  collectMobileTranslationCalls,
+  main as verifyMobileCatalog
+} from './verify-mobile-localization-catalog.mjs'
 
 const LOCALES = ['en', 'es', 'ja', 'ko', 'zh']
 const NATIVE_LOCALES = ['en', 'es', 'ja', 'ko', 'zh-Hans']
@@ -62,7 +65,10 @@ function makeProject({ sourceText, catalogs, nativeCatalogs, appConfig }) {
   writeJson(path.join(root, 'mobile', 'app.json'), appConfig ?? defaultAppConfig())
 
   for (const locale of LOCALES) {
-    writeJson(path.join(localeDirectory, `${locale}.json`), catalogs?.[locale] ?? catalogs.en)
+    writeJson(
+      path.join(localeDirectory, `${locale}.json`),
+      catalogs?.[locale] ?? (locale === 'en' ? catalogs.en : {})
+    )
   }
   for (const locale of NATIVE_LOCALES) {
     writeJson(
@@ -85,10 +91,10 @@ async function runFailedVerification(root) {
 
 describe('verify-mobile-localization-catalog', () => {
   it('verifies literal and conditional keys with matching options', async () => {
-    const catalog = { m: { greeting: 'Hello {{name}}', farewell: 'Bye {{name}}' } }
+    const catalog = { example: { greeting: 'Hello {{name}}', farewell: 'Bye {{name}}' } }
     const root = makeProject({
       sourceText:
-        "import { t } from '@/i18n/mobile-i18n'\nconst name = 'Orca'\nexport const label = t(name ? 'm.greeting' : 'm.farewell', { name })\n",
+        "import { t } from '@/i18n/mobile-i18n'\nconst name = 'Orca'\nexport const label = t(name ? 'example.greeting' : 'example.farewell', { name })\n",
       catalogs: { en: catalog }
     })
 
@@ -115,6 +121,43 @@ describe('verify-mobile-localization-catalog', () => {
     expect(await runFailedVerification(root)).toContain('missing English key: m.missing')
   })
 
+  it('tracks aliased imports without treating shadowed names as translators', async () => {
+    const sourceText = `
+import { t as translateMobile } from '@/i18n/mobile-i18n'
+export const label = translateMobile('example.known')
+export function local(translateMobile) {
+  return translateMobile('not-a-translation-key')
+}
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls.map((call) => call.keys)).toEqual([['example.known']])
+  })
+
+  it('expands statically prefixed translators without accepting shadowed calls', () => {
+    const sourceText = `
+import { createMobileTranslator as makeTranslator } from '@/i18n/mobile-i18n'
+const translate = makeTranslator('example')
+export const label = translate('known')
+export function local(translate) {
+  return translate('not-a-translation-key')
+}
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls.map((call) => call.keys)).toEqual([['example.known']])
+  })
+
+  it('ignores unrelated local t functions', () => {
+    const calls = collectMobileTranslationCalls(
+      '/repo/mobile/app/Example.tsx',
+      "function t(value) { return value }\nexport const label = t('not-a-translation-key')\n",
+      '/repo'
+    )
+
+    expect(calls).toEqual([])
+  })
+
   it('rejects translation keys that cannot be statically inspected', async () => {
     const root = makeProject({
       sourceText: "import { t } from '@/i18n/mobile-i18n'\nexport const label = t(runtimeKey)\n",
@@ -137,17 +180,62 @@ describe('verify-mobile-localization-catalog', () => {
   })
 
   it('allows missing translations in sparse locale catalogs', async () => {
-    const en = { m: { greeting: 'Hello {{name}}', farewell: 'Bye' } }
+    const en = { example: { greeting: 'Hello {{name}}' } }
     const root = makeProject({
       sourceText:
-        "import { t } from '@/i18n/mobile-i18n'\nexport const label = t('m.greeting', { name: 'Orca' })\n",
+        "import { t } from '@/i18n/mobile-i18n'\nexport const label = t('example.greeting', { name: 'Orca' })\n",
       catalogs: {
         en,
-        es: { m: { greeting: 'Hola {{name}}' } }
+        es: { example: { greeting: 'Hola {{name}}' } }
       }
     })
 
     await expect(verifyMobileCatalog(root)).resolves.toBe(0)
+  })
+
+  it('rejects opaque IDs, positional placeholders, and orphaned English keys', async () => {
+    const root = makeProject({
+      sourceText:
+        "import { t } from '@/i18n/mobile-i18n'\nexport const label = t('m.opaque', { value0: 'Orca' })\n",
+      catalogs: { en: { m: { opaque: 'Hello {{value0}}', orphan: 'Unused' } } }
+    })
+
+    const report = await runFailedVerification(root)
+    expect(report).toContain('message ID must be intent-named: m.opaque')
+    expect(report).toContain('placeholder must be intent-named: m.opaque uses value0')
+    expect(report).toContain('en.json has orphaned key: m.orphan')
+  })
+
+  it('rejects copied English target entries unless they are language-neutral', async () => {
+    const root = makeProject({
+      sourceText:
+        "import { t } from '@/i18n/mobile-i18n'\nexport const label = t('example.downloadFailed')\n",
+      catalogs: {
+        en: { example: { downloadFailed: 'Download failed' } },
+        ja: { example: { downloadFailed: 'Download failed' } }
+      }
+    })
+
+    expect(await runFailedVerification(root)).toContain(
+      'ja.json copies English instead of using fallback: example.downloadFailed'
+    )
+  })
+
+  it('enforces Git and agent terminology', async () => {
+    const root = makeProject({
+      sourceText:
+        "import { t } from '@/i18n/mobile-i18n'\nexport const branch = t('example.branch')\nexport const host = t('example.host')\n",
+      catalogs: {
+        en: { example: { branch: 'Switch branch', host: 'Detecting agents on host' } },
+        es: { example: { branch: 'Cambiar sucursal' } },
+        zh: { example: { host: '主人正在检测剂' } }
+      }
+    })
+
+    const report = await runFailedVerification(root)
+    expect(report).toContain('translates branch as sucursal')
+    expect(report).toContain('uses 主人')
+    expect(report).toContain('uses 检测剂')
   })
 
   it('validates placeholders and extra keys in present translations', async () => {

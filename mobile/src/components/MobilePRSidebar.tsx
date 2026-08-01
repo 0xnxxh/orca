@@ -167,12 +167,12 @@ function PrSidebarContent({
     return (
       <View style={styles.stateArea}>
         <ActivityIndicator color={colors.textSecondary} />
-        <Text style={styles.stateText}>{t('m.-ZCN2f0')}</Text>
+        <Text style={styles.stateText}>{t('mobilePrsidebar.loading')}</Text>
       </View>
     )
   }
   if (branch === 'error') {
-    const message = state.kind === 'error' ? state.message : t('m.nfDKqg4')
+    const message = state.kind === 'error' ? state.message : t('mobilePrsidebar.something')
     return (
       <View style={styles.stateArea}>
         <Text style={styles.stateText}>{message}</Text>
@@ -180,10 +180,10 @@ function PrSidebarContent({
           style={styles.retryButton}
           onPress={onRetry}
           accessibilityRole="button"
-          accessibilityLabel={t('m.Re9yZkw')}
+          accessibilityLabel={t('mobilePrsidebar.retryLoading')}
         >
           <RotateCw size={14} color={colors.textPrimary} strokeWidth={2.2} />
-          <Text style={styles.retryText}>{t('m.viizK3M')}</Text>
+          <Text style={styles.retryText}>{t('mobilePrsidebar.retry')}</Text>
         </Pressable>
       </View>
     )
@@ -191,7 +191,8 @@ function PrSidebarContent({
   if (branch === 'blocked' || actions.blocked) {
     // Permanent failure (R9): explanatory, no retry-encouragement styling. A
     // mutation-time block (actions.blocked) routes here even from a ready state.
-    const message = actions.blocked ?? (state.kind === 'blocked' ? state.message : t('m.UL6zDWw'))
+    const message =
+      actions.blocked ?? (state.kind === 'blocked' ? state.message : t('mobilePrsidebar.not'))
     return (
       <View style={styles.stateArea}>
         <Text style={styles.blockedText}>{message}</Text>

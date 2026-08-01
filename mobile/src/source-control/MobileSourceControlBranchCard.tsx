@@ -53,10 +53,22 @@ export function MobileSourceControlBranchCard({
         {syncLabel ? <Text style={styles.syncText}>{syncLabel}</Text> : null}
       </View>
       <View style={styles.countRow}>
-        <Text style={styles.countText}>{t('m.O_0cF4M', { value0: unstagedCount })}</Text>
-        <Text style={styles.countText}>{t('m.cLOWzDM', { value0: stagedCount })}</Text>
+        <Text style={styles.countText}>
+          {t('mobileSourceControlBranchCard.unstaged', {
+            unstagedCount: unstagedCount
+          })}
+        </Text>
+        <Text style={styles.countText}>
+          {t('mobileSourceControlBranchCard.staged', {
+            stagedCount: stagedCount
+          })}
+        </Text>
         {branchCount > 0 ? (
-          <Text style={styles.countText}>{t('m.Dysvcf0', { value0: branchCount })}</Text>
+          <Text style={styles.countText}>
+            {t('mobileSourceControlBranchCard.branch', {
+              branchCount: branchCount
+            })}
+          </Text>
         ) : null}
       </View>
       {/* Own row so Abort never overflows past the card when counts are long. */}

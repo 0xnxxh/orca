@@ -44,7 +44,7 @@ export function useMobileNativeChatStop(args: {
   return useCallback(() => {
     const handle = handleRef.current
     if (!client || !handle || !enabled) {
-      onSendError(t('m.ZhefrDE'))
+      onSendError(t('useMobileNativeChatStop.stopNotSentTerminal'))
       return
     }
     cancelPending()
@@ -74,7 +74,11 @@ export function useMobileNativeChatStop(args: {
       // Why: an ack lost after the frame was written (or a logical cutover) may
       // still have stopped the agent — a definite "not sent" would invite a second
       // Escape into changed state. Mirrors the cancel/answer wording.
-      onSendError(sawUnknown ? t('m.i8UxPTM') : t('m.S9MYUPk'))
+      onSendError(
+        sawUnknown
+          ? t('useMobileNativeChatStop.stopUnconfirmed')
+          : t('useMobileNativeChatStop.stopNotSent')
+      )
     }
     const sendEscape = (): void => {
       const activeRoute = activeRouteRef.current

@@ -50,7 +50,9 @@ export function MobileFilePreviewEditableSource({
         autoCorrect={false}
         selection={selection ?? undefined}
         onSelectionChange={() => setSelection(null)}
-        accessibilityLabel={t('m.yc-xh3U', { value0: title })}
+        accessibilityLabel={t('mobileFilePreviewEditableSource.title', {
+          title: title
+        })}
       />
     </View>
   )

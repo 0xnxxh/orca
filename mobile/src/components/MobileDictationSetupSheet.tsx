@@ -49,7 +49,7 @@ export function MobileDictationSetupSheet({ visible, client, onClose, onReady }:
       setError(null)
       return next.models.some(isModelInFlight)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('m.lUsptPY'))
+      setError(err instanceof Error ? err.message : t('mobileDictationSetupSheet.failed'))
       return undefined
     }
   }, [client])
@@ -80,7 +80,7 @@ export function MobileDictationSetupSheet({ visible, client, onClose, onReady }:
         await refreshSetup()
       } catch (err) {
         triggerError()
-        setError(err instanceof Error ? err.message : t('m.0rsS1Dw'))
+        setError(err instanceof Error ? err.message : t('mobileDictationSetupSheet.downloadFailed'))
       } finally {
         setBusy(null)
       }
@@ -102,7 +102,7 @@ export function MobileDictationSetupSheet({ visible, client, onClose, onReady }:
         onReady?.()
       } catch (err) {
         triggerError()
-        setError(err instanceof Error ? err.message : t('m.jX7Yn3E'))
+        setError(err instanceof Error ? err.message : t('mobileDictationSetupSheet.couldNotSelect'))
       } finally {
         setBusy(null)
       }
@@ -119,7 +119,7 @@ export function MobileDictationSetupSheet({ visible, client, onClose, onReady }:
       try {
         setSetup(await setDictationConfig(client, { enabled }))
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.kocNlo8'))
+        setError(err instanceof Error ? err.message : t('mobileDictationSetupSheet.couldNotUpdate'))
       }
     },
     [client]
@@ -130,8 +130,8 @@ export function MobileDictationSetupSheet({ visible, client, onClose, onReady }:
       {/* Why: BottomDrawer already scrolls its children in a keyboard-aware container;
           a nested capped ScrollView cut off the lower controls. */}
       <View>
-        <Text style={styles.heading}>{t('m.13hFHO4')}</Text>
-        <Text style={styles.subtitle}>{t('m.D5YFHLU')}</Text>
+        <Text style={styles.heading}>{t('mobileDictationSetupSheet.setUpVoice')}</Text>
+        <Text style={styles.subtitle}>{t('mobileDictationSetupSheet.setupInstructions')}</Text>
 
         {setup === null ? (
           <View style={styles.loading}>
@@ -140,7 +140,7 @@ export function MobileDictationSetupSheet({ visible, client, onClose, onReady }:
         ) : (
           <>
             <View style={styles.enableRow}>
-              <Text style={styles.enableLabel}>{t('m.6WwF0_8')}</Text>
+              <Text style={styles.enableLabel}>{t('mobileDictationSetupSheet.dictation')}</Text>
               <Switch value={setup.enabled} onValueChange={(v) => void handleToggleEnabled(v)} />
             </View>
 
@@ -154,27 +154,35 @@ export function MobileDictationSetupSheet({ visible, client, onClose, onReady }:
                     <View style={styles.modelTitleRow}>
                       <Text style={styles.modelLabel}>{model.label}</Text>
                       {model.recommended ? (
-                        <Text style={styles.recommended}>{t('m.TJd8_nE')}</Text>
+                        <Text style={styles.recommended}>
+                          {t('mobileDictationSetupSheet.recommended')}
+                        </Text>
                       ) : null}
                     </View>
                     <Text style={styles.modelMeta}>
-                      {model.provider === 'openai' ? t('m.bh_QQps') : formatSize(model.sizeBytes)}
+                      {model.provider === 'openai'
+                        ? t('mobileDictationSetupSheet.open')
+                        : formatSize(model.sizeBytes)}
                       {inFlight && model.progress != null
                         ? ` · ${Math.round(model.progress * 100)}%`
                         : model.status === 'extracting'
-                          ? t('m.PG_Pfbo')
+                          ? t('mobileDictationSetupSheet.extracting')
                           : ''}
                     </Text>
                   </View>
                   {model.provider === 'openai' ? (
                     <Text style={styles.modelStateText}>
-                      {model.status === 'ready' ? t('m.D90AZhs') : t('m.qf7IWvA')}
+                      {model.status === 'ready'
+                        ? t('mobileDictationSetupSheet.api')
+                        : t('mobileDictationSetupSheet.setUpDesktop')}
                     </Text>
                   ) : model.status === 'ready' ? (
                     isSelected ? (
                       <View style={styles.selectedTag}>
                         <Check size={14} color={colors.statusGreen} strokeWidth={2.4} />
-                        <Text style={styles.selectedText}>{t('m.ri8swSc')}</Text>
+                        <Text style={styles.selectedText}>
+                          {t('mobileDictationSetupSheet.use')}
+                        </Text>
                       </View>
                     ) : (
                       <Pressable
@@ -185,7 +193,9 @@ export function MobileDictationSetupSheet({ visible, client, onClose, onReady }:
                         disabled={rowBusy}
                         onPress={() => void handleUseModel(model)}
                       >
-                        <Text style={styles.actionText}>{t('m.N18umz0')}</Text>
+                        <Text style={styles.actionText}>
+                          {t('mobileDictationSetupSheet.useMessage')}
+                        </Text>
                       </Pressable>
                     )
                   ) : inFlight ? (
@@ -204,7 +214,9 @@ export function MobileDictationSetupSheet({ visible, client, onClose, onReady }:
                       ) : (
                         <>
                           <Download size={13} color={colors.textSecondary} strokeWidth={2.2} />
-                          <Text style={styles.actionText}>{t('m.oJ3sUM4')}</Text>
+                          <Text style={styles.actionText}>
+                            {t('mobileDictationSetupSheet.download')}
+                          </Text>
                         </>
                       )}
                     </Pressable>

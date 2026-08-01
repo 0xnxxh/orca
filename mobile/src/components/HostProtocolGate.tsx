@@ -16,7 +16,7 @@ const HostStatusGatesContext = createContext<HostStatusGates | null>(null)
 export function useHostProtocolGates(): HostStatusGates {
   const gates = useContext(HostStatusGatesContext)
   if (!gates) {
-    const invariantViolation = new Error(t('m.3cWf_os'))
+    const invariantViolation = new Error(t('hostProtocolGate.use'))
     throw invariantViolation
   }
   return gates
@@ -37,7 +37,10 @@ export function HostProtocolGate({ hostId, children }: Props) {
     // Why: child routes may call newer RPCs on mount, so wait until compatibility is known.
     return (
       <View style={styles.pending}>
-        <ActivityIndicator color={colors.textSecondary} accessibilityLabel={t('m.qvnQ47I')} />
+        <ActivityIndicator
+          color={colors.textSecondary}
+          accessibilityLabel={t('hostProtocolGate.checking')}
+        />
       </View>
     )
   }

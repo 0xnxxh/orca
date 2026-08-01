@@ -3,9 +3,9 @@ export type BulkTabCloseMode = 'others' | 'left' | 'right'
 
 /** Long-press sheet entries, in display order. */
 export const BULK_TAB_CLOSE_ACTIONS: { mode: BulkTabCloseMode; label: string }[] = [
-  { mode: 'others', label: t('m.XxfyMlc') },
-  { mode: 'left', label: t('m._ijK2wo') },
-  { mode: 'right', label: t('m.QX9RTgc') }
+  { mode: 'others', label: t('mobileTabCloseSelection.closeOther') },
+  { mode: 'left', label: t('mobileTabCloseSelection.closeTabsLeft') },
+  { mode: 'right', label: t('mobileTabCloseSelection.closeTabsRight') }
 ]
 
 type BulkClosableTab = {

@@ -81,13 +81,13 @@ export function TerminalWebViewEngineErrorOverlay({
 }: TerminalWebViewEngineErrorOverlayProps) {
   return (
     <View style={styles.errorOverlay}>
-      <Text style={styles.errorTitle}>{t('m.p2soPzg')}</Text>
+      <Text style={styles.errorTitle}>{t('terminalWebviewEngineErrorState.terminal')}</Text>
       <Text style={styles.errorDetail} numberOfLines={4}>
         {message}
       </Text>
       <Pressable accessibilityRole="button" style={styles.reloadButton} onPress={onReload}>
         <RefreshCw size={16} color={colors.terminalBg} />
-        <Text style={styles.reloadButtonText}>{t('m.UnBBA1A')}</Text>
+        <Text style={styles.reloadButtonText}>{t('terminalWebviewEngineErrorState.reload')}</Text>
       </Pressable>
     </View>
   )

@@ -12,50 +12,62 @@ export type MobileHostedReviewStatus = {
 
 export function getHostedReviewLabel(item: MobileHostedReviewStatus): string {
   if (item.reviewDecision === 'approved' || item.reviewDecision === 'APPROVED') {
-    return t('m.O3Knlx4')
+    return t('task.approved')
   }
   if (item.reviewDecision === 'changes_requested' || item.reviewDecision === 'CHANGES_REQUESTED') {
-    return t('m.yMw_C-k')
+    return t('task.changes')
   }
   if (item.reviewDecision === 'review_required' || item.reviewDecision === 'REVIEW_REQUIRED') {
-    return t('m.97h575A')
+    return t('mobileHostedCheckStatus.review')
   }
   const reviewerCount = item.reviewerCount ?? item.reviewRequests?.length
   return reviewerCount
-    ? t(reviewerCount === 1 ? 'm.39Q08OU' : 'm.d8cyKVY', { value0: reviewerCount })
-    : t('m.zrt1n24')
+    ? t(
+        reviewerCount === 1
+          ? 'mobileHostedCheckStatus.reviewerCountReviewer'
+          : 'mobileHostedCheckStatus.reviewerCountReviewers',
+        { reviewerCount: reviewerCount }
+      )
+    : t('task.noReviewers')
 }
 
 export function getHostedMergeLabel(item: MobileHostedReviewStatus): string {
   if (item.mergeable === 'CONFLICTING' || item.mergeStateStatus === 'BLOCKED') {
-    return t('m.hIW5XEU')
+    return t('task.conflicts')
   }
   if (item.mergeStateStatus === 'BEHIND' || item.checksSummary?.state === 'pending') {
-    return t('m.OXTehpM')
+    return t('task.behind')
   }
   if (item.mergeable === 'MERGEABLE' || item.mergeStateStatus === 'CLEAN') {
-    return t('m.cbIMuqY')
+    return t('task.able')
   }
-  return t('m.6MEByr4')
+  return t('task.unknown')
 }
 
 export function getHostedChecksLabel(item: { checksSummary?: ProviderCheckSummary }): string {
   const summary = item.checksSummary
   if (!summary) {
-    return t('m.XlbT3Zg')
+    return t('task.checks')
   }
   if (summary.total === 0) {
-    return t('m.X9M1AcA')
+    return t('mobilePrChipSummary.no')
   }
   if (summary.failed > 0) {
-    return t('m.L37iq1E', { value0: summary.failed })
+    return t('mobilePrChipSummary.failing', {
+      failingCheckCount: summary.failed
+    })
   }
   if (summary.pending > 0) {
-    return t('m.Uc3hFHs', { value0: summary.pending })
+    return t('mobileHostedCheckStatus.pending', {
+      pendingCheckCount: summary.pending
+    })
   }
   return summary.state === 'neutral'
-    ? t('m.UMqLjMs')
-    : t('m.Sos7PxI', { value0: summary.passed, value1: summary.total })
+    ? t('mobilePrChipSummary.unresolved')
+    : t('mobileHostedCheckStatus.passed', {
+        passedCheckCount: summary.passed,
+        totalCheckCount: summary.total
+      })
 }
 
 export function getHostedReviewSignalTone(

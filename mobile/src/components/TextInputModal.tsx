@@ -32,7 +32,7 @@ export function TextInputModal({
   message,
   defaultValue = '',
   placeholder,
-  submitLabel = t('m.GbS1Gw0'),
+  submitLabel = t('textInputModal.save'),
   selectTextOnFocus = false,
   allowEmpty = false,
   keyboardType,
@@ -91,7 +91,7 @@ export function TextInputModal({
           style={({ pressed }) => [styles.cancelButton, pressed && styles.buttonPressed]}
           onPress={onCancel}
         >
-          <Text style={styles.cancelText}>{t('m.NOYO7QE')}</Text>
+          <Text style={styles.cancelText}>{t('textInputModal.cancel')}</Text>
         </Pressable>
         <Pressable
           style={({ pressed }) => [

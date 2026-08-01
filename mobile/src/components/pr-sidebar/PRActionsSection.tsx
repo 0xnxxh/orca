@@ -66,7 +66,7 @@ export function PRActionsSection({ pr, actions, client, worktreeId, onUnlinked }
         setUnlinkError(outcome.error)
       }
     } catch (err) {
-      setUnlinkError(err instanceof Error ? err.message : t('m.uLhV2xU'))
+      setUnlinkError(err instanceof Error ? err.message : t('practionsSection.failed'))
     } finally {
       setUnlinking(false)
     }
@@ -75,22 +75,26 @@ export function PRActionsSection({ pr, actions, client, worktreeId, onUnlinked }
   const confirmCopy = (): { title: string; message: string; confirmLabel: string } => {
     if (confirm?.kind === 'merge') {
       return {
-        title: t('m._0lAHWg'),
-        message: t('m.zNuHY-c', { value0: pr.number }),
-        confirmLabel: t('m.4DTdO1w')
+        title: t('practionsSection.mergePullRequest'),
+        message: t('practionsSection.will', { pullRequestNumber: pr.number }),
+        confirmLabel: t('practionsSection.merge')
       }
     }
     if (confirm?.kind === 'state' && confirm.state === 'closed') {
       return {
-        title: t('m.02Qj2V4'),
-        message: t('m.b_7nPgo', { value0: pr.number }),
-        confirmLabel: t('m.gL1buuY')
+        title: t('practionsSection.closePullRequest'),
+        message: t('practionsSection.pullRequestNumberWillClosed', {
+          pullRequestNumber: pr.number
+        }),
+        confirmLabel: t('task.close')
       }
     }
     return {
-      title: t('m.oCXRjL8'),
-      message: t('m.3XhqaKU', { value0: pr.number }),
-      confirmLabel: t('m.zRLzboM')
+      title: t('practionsSection.reopenPullRequest'),
+      message: t('practionsSection.pullRequestNumberWillReopened', {
+        pullRequestNumber: pr.number
+      }),
+      confirmLabel: t('task.reopen')
     }
   }
 
@@ -124,7 +128,7 @@ export function PRActionsSection({ pr, actions, client, worktreeId, onUnlinked }
           }}
           disabled={mergeBusy}
           accessibilityRole="button"
-          accessibilityLabel={t('m.8xiSsiA')}
+          accessibilityLabel={t('practionsSection.mergePullRequestAccessibility')}
         >
           {mergeBusy ? (
             <ActivityIndicator color={colors.onMergeGreen} />
@@ -132,14 +136,14 @@ export function PRActionsSection({ pr, actions, client, worktreeId, onUnlinked }
             <GitMerge size={16} color={colors.onMergeGreen} strokeWidth={2.2} />
           )}
           <Text style={[styles.actionButtonText, styles.actionButtonTextMerge]}>
-            {t('m.8xiSsiA')}
+            {t('practionsSection.mergePullRequestAccessibility')}
           </Text>
         </Pressable>
       ) : null}
 
       {showAutoMerge ? (
         <View style={styles.toggleRow}>
-          <Text style={styles.toggleLabel}>{t('m.0J91CIk')}</Text>
+          <Text style={styles.toggleLabel}>{t('practionsSection.auto')}</Text>
           <Pressable
             style={[styles.togglePill, autoMerge && styles.togglePillOn]}
             onPress={() => {
@@ -149,13 +153,13 @@ export function PRActionsSection({ pr, actions, client, worktreeId, onUnlinked }
             disabled={autoMergeBusy}
             accessibilityRole="switch"
             accessibilityState={{ checked: autoMerge }}
-            accessibilityLabel={t('m.X0q7qvA')}
+            accessibilityLabel={t('practionsSection.toggle')}
           >
             {autoMergeBusy ? (
               <ActivityIndicator color={colors.textSecondary} />
             ) : (
               <Text style={[styles.togglePillText, autoMerge && styles.togglePillTextOn]}>
-                {autoMerge ? t('m.oSg4C5A') : t('m.Al6-RQA')}
+                {autoMerge ? t('practionsSection.on') : t('practionsSection.off')}
               </Text>
             )}
           </Pressable>
@@ -177,7 +181,11 @@ export function PRActionsSection({ pr, actions, client, worktreeId, onUnlinked }
               }}
               disabled={stateBusy}
               accessibilityRole="button"
-              accessibilityLabel={avail.canClose ? t('m.Pz82S8w') : t('m.2xdqaDc')}
+              accessibilityLabel={
+                avail.canClose
+                  ? t('practionsSection.closePullRequestAccessibility')
+                  : t('practionsSection.reopenPullRequestAccessibility')
+              }
             >
               {stateBusy ? <ActivityIndicator color={colors.textSecondary} /> : null}
               <Text
@@ -186,7 +194,7 @@ export function PRActionsSection({ pr, actions, client, worktreeId, onUnlinked }
                   avail.canClose && styles.actionButtonDestructiveText
                 ]}
               >
-                {avail.canClose ? t('m.gL1buuY') : t('m.zRLzboM')}
+                {avail.canClose ? t('task.close') : t('task.reopen')}
               </Text>
             </Pressable>
           ) : null}
@@ -200,14 +208,14 @@ export function PRActionsSection({ pr, actions, client, worktreeId, onUnlinked }
               onPress={() => void unlink()}
               disabled={unlinkBusy}
               accessibilityRole="button"
-              accessibilityLabel={t('m.ZqSwRWA')}
+              accessibilityLabel={t('practionsSection.unlinkPull')}
             >
               {unlinking ? (
                 <ActivityIndicator color={colors.textSecondary} />
               ) : (
                 <Link2Off size={16} color={colors.textSecondary} strokeWidth={2.2} />
               )}
-              <Text style={styles.actionButtonText}>{t('m.nO4i6C8')}</Text>
+              <Text style={styles.actionButtonText}>{t('practionsSection.unlink')}</Text>
             </Pressable>
           ) : null}
         </View>

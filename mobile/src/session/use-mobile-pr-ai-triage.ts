@@ -32,7 +32,7 @@ export function useMobilePrAiTriage(input: Input) {
         return false
       }
       if (!client || connState !== 'connected') {
-        setError(t('m.WXv-mcQ'))
+        setError(t('useMobilePrAiTriage.waiting'))
         triggerError()
         return false
       }
@@ -45,7 +45,7 @@ export function useMobilePrAiTriage(input: Input) {
         return true
       } catch (err) {
         triggerError()
-        setError(err instanceof Error ? err.message : t('m.62Wqvcg'))
+        setError(err instanceof Error ? err.message : t('useMobilePrAiTriage.failed'))
         return false
       } finally {
         inFlightRef.current = false

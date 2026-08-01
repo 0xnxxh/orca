@@ -110,7 +110,7 @@ export function MobileNativeChatQuestion({ question, onAnswer }: Props): React.J
 
       {question.multiSelect && hasOptions ? (
         <Pressable
-          accessibilityLabel={t('m.NR7KpaA')}
+          accessibilityLabel={t('mobileNativeChatQuestion.submitSelectedOptions')}
           style={({ pressed }) => [
             styles.submit,
             !canSubmitMulti && styles.submitDisabled,
@@ -120,7 +120,9 @@ export function MobileNativeChatQuestion({ question, onAnswer }: Props): React.J
           disabled={!canSubmitMulti}
         >
           <Text style={[styles.submitText, !canSubmitMulti && styles.submitTextDisabled]}>
-            {t('m.BcZ8-jY', { value0: selected.length > 0 ? ` (${selected.length})` : '' })}
+            {t('mobileNativeChatQuestion.submitSelectedCommand', {
+              selectedCommandCount: selected.length > 0 ? ` (${selected.length})` : ''
+            })}
           </Text>
         </Pressable>
       ) : null}
@@ -130,7 +132,11 @@ export function MobileNativeChatQuestion({ question, onAnswer }: Props): React.J
           style={styles.freeInput}
           value={freeText}
           onChangeText={setFreeText}
-          placeholder={hasOptions ? t('m.bSeVb4U') : t('m.psOJLjQ')}
+          placeholder={
+            hasOptions
+              ? t('mobileNativeChatQuestion.typeReply')
+              : t('mobileNativeChatQuestion.typeYour')
+          }
           placeholderTextColor={colors.textMuted}
           selectionColor={colors.accentBlue}
           onSubmitEditing={submitFreeText}
@@ -138,7 +144,7 @@ export function MobileNativeChatQuestion({ question, onAnswer }: Props): React.J
           multiline
         />
         <Pressable
-          accessibilityLabel={t('m.O8aNMg0')}
+          accessibilityLabel={t('mobileNativeChatQuestion.send')}
           style={({ pressed }) => [
             styles.freeSend,
             !canSendFreeText && styles.freeSendDisabled,

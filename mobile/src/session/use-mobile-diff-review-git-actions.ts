@@ -23,7 +23,7 @@ export function useMobileDiffReviewGitActions(input: GitActionsInput) {
   const runGitMutation = useCallback(
     async (method: GitMutationMethod, item: MobileDiffReviewQueueItem) => {
       if (!client || connState !== 'connected') {
-        setActionError(t('m.L-xz6vw'))
+        setActionError(t('useMobileDiffReviewGitActions.waiting'))
         return
       }
       setBusyAction(`${method}:${item.filePath}`)
@@ -34,13 +34,15 @@ export function useMobileDiffReviewGitActions(input: GitActionsInput) {
           filePath: item.filePath
         })
         if (!response.ok) {
-          throw new Error(response.error?.message || t('m.MOtwYRI'))
+          throw new Error(response.error?.message || t('useMobileDiffReviewGitActions.source'))
         }
         triggerSuccess()
         await loadReviewData()
       } catch (err) {
         triggerError()
-        setActionError(err instanceof Error ? err.message : t('m.MOtwYRI'))
+        setActionError(
+          err instanceof Error ? err.message : t('useMobileDiffReviewGitActions.source')
+        )
       } finally {
         setBusyAction(null)
       }
@@ -50,7 +52,7 @@ export function useMobileDiffReviewGitActions(input: GitActionsInput) {
 
   const stageReviewedFiles = useCallback(async () => {
     if (!client || connState !== 'connected') {
-      setActionError(t('m.L-xz6vw'))
+      setActionError(t('useMobileDiffReviewGitActions.waiting'))
       return
     }
     const files = queue.filter(
@@ -78,8 +80,16 @@ export function useMobileDiffReviewGitActions(input: GitActionsInput) {
     triggerSuccess()
     setActionError(
       failed > 0
-        ? t('m.tyXkf4g', { value0: staged, value1: failed })
-        : t(staged === 1 ? 'm.S-avV-Y' : 'm.IPu47z8', { value0: staged })
+        ? t('useMobileDiffReviewGitActions.stagedFile', {
+            stagedFileCount: staged,
+            failedFileCount: failed
+          })
+        : t(
+            staged === 1
+              ? 'useMobileDiffReviewGitActions.stagedReviewedFile'
+              : 'useMobileDiffReviewGitActions.stagedReviewedFiles',
+            { staged: staged }
+          )
     )
     await loadReviewData()
   }, [client, connState, loadReviewData, queue, setActionError, setBusyAction, worktreeId])

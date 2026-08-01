@@ -16,7 +16,9 @@ export function isMobileConflictAborting(
 /** Label for the Abort control — never says "Aborting…" for unrelated busy work. */
 export function mobileConflictAbortLabel(conflictOperation: string, aborting: boolean): string {
   if (aborting) {
-    return t('m.wFxT3pM')
+    return t('mobileSourceControlConflictAbort.aborting')
   }
-  return conflictOperation === 'rebase' ? t('m.S5cNB0c') : t('m.3fVn1VI')
+  return conflictOperation === 'rebase'
+    ? t('mobileSourceControlConflictAbort.abortRebase')
+    : t('mobileSourceControlConflictAbort.abortMerge')
 }

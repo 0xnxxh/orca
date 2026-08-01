@@ -69,21 +69,21 @@ export function VoiceModelList({
                     {model.label}
                   </Text>
                   {model.recommended ? (
-                    <Text style={styles.recommended}>{t('m.B45mQIQ')}</Text>
+                    <Text style={styles.recommended}>{t('voiceModelList.recommended')}</Text>
                   ) : null}
                 </View>
                 <Text style={styles.modelMeta}>{modelMeta(model)}</Text>
               </View>
               {model.provider === 'openai' ? (
                 <Text style={styles.modelStateText}>
-                  {model.status === 'ready' ? t('m.JnTRemk') : t('m.j2yOGiA')}
+                  {model.status === 'ready' ? t('voiceModelList.api') : t('voiceModelList.set')}
                 </Text>
               ) : model.status === 'ready' ? (
                 <View style={styles.readyActions}>
                   {isSelected ? (
                     <View style={styles.selectedTag}>
                       <Check size={14} color={colors.statusGreen} strokeWidth={2.4} />
-                      <Text style={styles.selectedText}>{t('m.kg-vs7o')}</Text>
+                      <Text style={styles.selectedText}>{t('voiceModelList.use')}</Text>
                     </View>
                   ) : (
                     <Pressable
@@ -97,7 +97,7 @@ export function VoiceModelList({
                       {selectBusy ? (
                         <ActivityIndicator size="small" color={colors.textSecondary} />
                       ) : (
-                        <Text style={styles.actionText}>{t('m.EorN5mI')}</Text>
+                        <Text style={styles.actionText}>{t('voiceModelList.useMessage')}</Text>
                       )}
                     </Pressable>
                   )}
@@ -105,7 +105,9 @@ export function VoiceModelList({
                     style={({ pressed }) => [styles.iconButton, pressed && styles.actionPressed]}
                     disabled={anyBusy}
                     onPress={() => onDelete(model)}
-                    accessibilityLabel={t('m.r6942Dw', { value0: model.label })}
+                    accessibilityLabel={t('voiceModelList.delete', {
+                      commandLabel: model.label
+                    })}
                   >
                     {deleteBusy ? (
                       <ActivityIndicator size="small" color={colors.statusRed} />

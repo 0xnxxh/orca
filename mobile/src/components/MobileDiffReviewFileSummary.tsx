@@ -66,7 +66,11 @@ export function MobileDiffReviewFileSummary({
           </Text>
           <Text style={styles.fileMeta} numberOfLines={1}>
             {mobileReviewScopeLabel(item)}
-            {item.oldPath ? t('m.Tqe6zfQ', { value0: item.oldPath }) : ''}
+            {item.oldPath
+              ? t('mobileDiffReviewFileSummary.old', {
+                  oldPath: item.oldPath
+                })
+              : ''}
           </Text>
         </View>
       </View>
@@ -74,13 +78,21 @@ export function MobileDiffReviewFileSummary({
         <Text style={styles.fileMeta}>
           {currentIndex + 1}/{filteredCount}
         </Text>
-        {item.isReviewed ? <Text style={styles.reviewedPill}>{t('m.TGeBFA8')}</Text> : null}
-        {item.changedSinceReview ? <Text style={styles.stalePill}>{t('m.cV_5zt0')}</Text> : null}
+        {item.isReviewed ? (
+          <Text style={styles.reviewedPill}>{t('mobileDiffReviewFileSummary.reviewed')}</Text>
+        ) : null}
+        {item.changedSinceReview ? (
+          <Text style={styles.stalePill}>{t('mobileDiffReviewFileSummary.changed')}</Text>
+        ) : null}
         {item.noteCount > 0 ? (
           <Text style={styles.fileMeta}>{mobileReviewNoteCountLabel(item.noteCount)}</Text>
         ) : null}
         {item.staleNoteCount > 0 ? (
-          <Text style={styles.staleText}>{t('m.OAIsqbU', { value0: item.staleNoteCount })}</Text>
+          <Text style={styles.staleText}>
+            {t('mobileDiffReviewFileSummary.staleNote', {
+              staleNoteCount: item.staleNoteCount
+            })}
+          </Text>
         ) : null}
       </View>
       {fileNotes.length > 0 ? (
@@ -91,13 +103,13 @@ export function MobileDiffReviewFileSummary({
               style={({ pressed }) => [styles.fileNote, pressed && styles.fileNotePressed]}
               onPress={() => onEditNote(note)}
               accessibilityRole="button"
-              accessibilityLabel={t('m.6NQSDSg')}
+              accessibilityLabel={t('mobileDiffReviewFileSummary.edit')}
             >
               <Text style={styles.fileNoteText} numberOfLines={2}>
                 {note.body}
               </Text>
               {staleCommentIds.has(note.id) ? (
-                <Text style={styles.staleText}>{t('m.PpqbMu4')}</Text>
+                <Text style={styles.staleText}>{t('mobileDiffReviewFileSummary.stale')}</Text>
               ) : null}
             </Pressable>
           ))}
@@ -109,20 +121,20 @@ export function MobileDiffReviewFileSummary({
           disabled={hunkDisabled}
           onPress={() => onJumpHunk('previous')}
           accessibilityRole="button"
-          accessibilityLabel={t('m.co1PXQY')}
+          accessibilityLabel={t('mobileDiffReviewFileSummary.previous')}
         >
           <ArrowUp size={14} color={colors.textSecondary} strokeWidth={2.2} />
-          <Text style={styles.hunkButtonText}>{t('m.N0W7j-Y')}</Text>
+          <Text style={styles.hunkButtonText}>{t('mobileDiffReviewFileSummary.hunk')}</Text>
         </Pressable>
         <Pressable
           style={({ pressed }) => [styles.hunkButton, pressed && styles.hunkButtonPressed]}
           disabled={hunkDisabled}
           onPress={() => onJumpHunk('next')}
           accessibilityRole="button"
-          accessibilityLabel={t('m.-v8Njek')}
+          accessibilityLabel={t('mobileDiffReviewFileSummary.next')}
         >
           <ArrowDown size={14} color={colors.textSecondary} strokeWidth={2.2} />
-          <Text style={styles.hunkButtonText}>{t('m.N0W7j-Y')}</Text>
+          <Text style={styles.hunkButtonText}>{t('mobileDiffReviewFileSummary.hunk')}</Text>
         </Pressable>
       </View>
     </View>

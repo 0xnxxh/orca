@@ -23,11 +23,11 @@ export async function createTerminalAndSendPrompt(
     navigation: 'caller'
   })
   if (!created.ok) {
-    throw new Error(created.error?.message || t('m.p20YlWo'))
+    throw new Error(created.error?.message || t('prAiTriageLaunch.failedCreate'))
   }
   const terminalTab = readMobileReviewCreatedTerminal(created.result)
   if (!terminalTab) {
-    throw new Error(t('m.8WPx578'))
+    throw new Error(t('prAiTriageLaunch.created'))
   }
   const sent = await client.sendRequest('terminal.send', {
     terminal: terminalTab.terminal,
@@ -35,9 +35,9 @@ export async function createTerminalAndSendPrompt(
     enter: true
   })
   if (!sent.ok) {
-    throw new Error(sent.error?.message || t('m.-j2Yzyc'))
+    throw new Error(sent.error?.message || t('prAiTriageLaunch.failedSend'))
   }
   if (!readMobileReviewTerminalSendAccepted(sent.result)) {
-    throw new Error(t('m.kyy8tNA'))
+    throw new Error(t('prAiTriageLaunch.terminal'))
   }
 }

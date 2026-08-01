@@ -28,7 +28,7 @@ export function NewWorkspaceFab({ onPress, disabled }: NewWorkspaceFabProps): Re
       onPress={onPress}
       disabled={disabled}
       accessibilityRole="button"
-      accessibilityLabel={t('m.ybPEhxk')}
+      accessibilityLabel={t('newWorkspaceFab.new')}
       hitSlop={8}
     >
       <Plus size={24} color={colors.bgBase} strokeWidth={2.75} />

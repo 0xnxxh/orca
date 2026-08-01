@@ -19,18 +19,20 @@ export function AuthFailedBanner({
 }) {
   return (
     <View style={styles.banner}>
-      <Text style={styles.text}>{t('m.IrfKQh8')}</Text>
+      <Text style={styles.text}>{t('authFailedBanner.authentication')}</Text>
       <View style={styles.actions}>
         {canRetry && (
           <Pressable style={styles.action} onPress={onRetry}>
-            <Text style={styles.actionText}>{t('m.ujiecek')}</Text>
+            <Text style={styles.actionText}>{t('authFailedBanner.retry')}</Text>
           </Pressable>
         )}
         <Pressable style={styles.action} onPress={onRepair}>
-          <Text style={styles.actionText}>{t('m.KuqR8FY')}</Text>
+          <Text style={styles.actionText}>{t('authFailedBanner.re')}</Text>
         </Pressable>
         <Pressable style={styles.action} onPress={onRemove}>
-          <Text style={[styles.actionText, { color: colors.statusRed }]}>{t('m.q-MNnd4')}</Text>
+          <Text style={[styles.actionText, { color: colors.statusRed }]}>
+            {t('authFailedBanner.remove')}
+          </Text>
         </Pressable>
       </View>
     </View>

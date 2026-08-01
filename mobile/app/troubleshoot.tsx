@@ -96,14 +96,22 @@ export default function TroubleshootScreen() {
       results.push(
         hosts.length > 0
           ? {
-              label: t('m._IfUZ2s'),
+              label: t('troubleshoot.paired'),
               status: 'pass',
-              detail: t('m.OCWSDG0', { value0: hosts.length })
+              detail: t('troubleshoot.host', { hostCount: hosts.length })
             }
-          : { label: t('m._IfUZ2s'), status: 'fail', detail: t('m.AtwKjZ4') }
+          : {
+              label: t('troubleshoot.paired'),
+              status: 'fail',
+              detail: t('troubleshoot.none')
+            }
       )
     } catch {
-      results.push({ label: t('m._IfUZ2s'), status: 'warn', detail: t('m.uJRC49k') })
+      results.push({
+        label: t('troubleshoot.paired'),
+        status: 'warn',
+        detail: t('troubleshoot.couldNotRead')
+      })
     }
 
     if (!isCurrentRun()) {
@@ -122,14 +130,26 @@ export default function TroubleshootScreen() {
       }
       results.push(
         resp.ok
-          ? { label: t('m.3gA9qeo'), status: 'pass', detail: t('m.O1SHffI') }
-          : { label: t('m.3gA9qeo'), status: 'warn', detail: t('m.DxL3QsM') }
+          ? {
+              label: t('troubleshoot.internet'),
+              status: 'pass',
+              detail: t('troubleshoot.connected')
+            }
+          : {
+              label: t('troubleshoot.internet'),
+              status: 'warn',
+              detail: t('troubleshoot.unexpected')
+            }
       )
     } catch {
       if (!isCurrentRun()) {
         return
       }
-      results.push({ label: t('m.3gA9qeo'), status: 'fail', detail: t('m.gdHptko') })
+      results.push({
+        label: t('troubleshoot.internet'),
+        status: 'fail',
+        detail: t('troubleshoot.no')
+      })
     } finally {
       internetCheck.dispose()
       if (activeInternetCheckRef.current === internetCheck) {
@@ -156,13 +176,19 @@ export default function TroubleshootScreen() {
           label: host.name,
           status: reachable ? 'pass' : 'fail',
           detail: reachable
-            ? t('m.ImyX3J0', { value0: formatEndpoint(host.endpoint) })
+            ? t('troubleshoot.reachable', {
+                endpoint: formatEndpoint(host.endpoint)
+              })
             : unreachableHostDetail(host.endpoint)
         })
         setChecks([...results])
       }
     } catch {
-      results.push({ label: t('m.Ie918PM'), status: 'warn', detail: t('m._wFCKE8') })
+      results.push({
+        label: t('troubleshoot.hosts'),
+        status: 'warn',
+        detail: t('troubleshoot.couldNotTest')
+      })
     }
 
     if (!isCurrentRun()) {
@@ -170,7 +196,7 @@ export default function TroubleshootScreen() {
     }
 
     results.push({
-      label: t('m.8sOFcoA'),
+      label: t('troubleshoot.platform'),
       status: 'pass',
       detail: `${Platform.OS} ${Platform.Version ?? ''}`
     })
@@ -188,7 +214,7 @@ export default function TroubleshootScreen() {
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <ChevronLeft size={22} color={colors.textSecondary} />
         </Pressable>
-        <Text style={styles.heading}>{t('m.DIEmGuM')}</Text>
+        <Text style={styles.heading}>{t('troubleshoot.troubleshooting')}</Text>
       </View>
 
       <ScrollView
@@ -212,10 +238,10 @@ export default function TroubleshootScreen() {
           )}
           <Text style={styles.diagnosticButtonLabel}>
             {diagnosticStatus === 'running'
-              ? t('m.dQs8-jc')
+              ? t('troubleshoot.running')
               : diagnosticStatus === 'done'
-                ? t('m.B5C2aso')
-                : t('m.5xQU6vw')}
+                ? t('troubleshoot.runAgain')
+                : t('troubleshoot.runDiagnostics')}
           </Text>
         </Pressable>
 
@@ -227,7 +253,7 @@ export default function TroubleshootScreen() {
           onPress={() => router.push('/connection-log')}
         >
           <ScrollText size={16} color={colors.textPrimary} />
-          <Text style={styles.diagnosticButtonLabel}>{t('m.bwJLtK4')}</Text>
+          <Text style={styles.diagnosticButtonLabel}>{t('troubleshoot.view')}</Text>
         </Pressable>
 
         {checks.length > 0 && (
@@ -249,7 +275,7 @@ export default function TroubleshootScreen() {
           </View>
         )}
 
-        <Text style={styles.sectionHeading}>{t('m.2J8vm70')}</Text>
+        <Text style={styles.sectionHeading}>{t('troubleshoot.common')}</Text>
 
         <View style={styles.section}>
           {getTroubleshootCommonIssues().map((section, i) => (

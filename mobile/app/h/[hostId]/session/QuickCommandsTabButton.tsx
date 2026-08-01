@@ -22,7 +22,7 @@ export function QuickCommandsTabButton({ disabled, onPress }: Props) {
         ]}
         disabled={disabled}
         onPress={onPress}
-        accessibilityLabel={t('m.Y1upIE8')}
+        accessibilityLabel={t('quickCommandsTabButton.quick')}
       >
         <SquareChevronRight size={16} color={colors.textSecondary} strokeWidth={2.2} />
       </Pressable>

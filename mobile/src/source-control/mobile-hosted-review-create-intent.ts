@@ -51,19 +51,19 @@ export function mobileHostedReviewCreateIntentProgressMessage(
 ): string {
   switch (progress) {
     case 'staging':
-      return t('m.eCa7Me8')
+      return t('mobileHostedReviewCreateIntent.staging')
     case 'generating_commit_message':
-      return t('m.us6yszU')
+      return t('mobileHostedReviewCreateIntent.generating')
     case 'committing':
-      return t('m.uN9IaYI')
+      return t('mobileHostedReviewCreateIntent.committing')
     case 'publishing':
-      return t('m.PnL-W2o')
+      return t('mobileHostedReviewCreateIntent.publishing')
     case 'pushing':
-      return t('m.0BMXLfE')
+      return t('mobileHostedReviewCreateIntent.pushing')
     case 'force_pushing':
-      return t('m.JokOS5o')
+      return t('mobileHostedReviewCreateIntent.force')
     case 'creating_review':
-      return t('m.qE1-68U')
+      return t('mobileHostedReviewCreateIntent.creating')
   }
 }
 
@@ -100,7 +100,7 @@ async function ensureLocalChangesCommitted(
   if (hasUnresolvedConflicts(currentStatus)) {
     return {
       ok: false,
-      error: t('m.695pbL4'),
+      error: t('mobileHostedReviewCreateIntent.resolveConflicts'),
       committed: false,
       status: currentStatus
     }
@@ -113,7 +113,7 @@ async function ensureLocalChangesCommitted(
       client,
       'git.bulkStage',
       { worktree: `id:${worktreeId}`, filePaths: stagePaths },
-      t('m.knjcZG0')
+      t('mobileHostedReviewCreateIntent.failed')
     )
     if (!staged.ok) {
       return staged
@@ -131,7 +131,7 @@ async function ensureLocalChangesCommitted(
     if (!mobileHostedReviewBranchStillMatches(input.branch, currentStatus)) {
       return {
         ok: false,
-        error: t('m.8fhgeQQ'),
+        error: t('mobileHostedReviewCreateIntent.branch'),
         committed: false,
         status: currentStatus
       }
@@ -142,7 +142,7 @@ async function ensureLocalChangesCommitted(
   if (!hasStagedChanges) {
     return {
       ok: false,
-      error: t('m.x1skfkY'),
+      error: t('mobileHostedReviewCreateIntent.resolveStage'),
       committed: false,
       status: currentStatus
     }
@@ -155,7 +155,7 @@ async function ensureLocalChangesCommitted(
     if (!generated.success) {
       return {
         ok: false,
-        error: t('m.zAg6hUc'),
+        error: t('mobileHostedReviewCreateIntent.could'),
         committed: false,
         status: currentStatus
       }
@@ -181,7 +181,7 @@ async function ensureLocalChangesCommitted(
   if (!mobileHostedReviewBranchStillMatches(input.branch, currentStatus)) {
     return {
       ok: false,
-      error: t('m.8fhgeQQ'),
+      error: t('mobileHostedReviewCreateIntent.branch'),
       committed: true,
       status: currentStatus
     }
@@ -199,7 +199,7 @@ export async function prepareMobileHostedReviewCreateIntent(
   if (!mobileHostedReviewBranchStillMatches(input.branch, currentStatus)) {
     return {
       ok: false,
-      error: initialStatus.ok ? t('m.8fhgeQQ') : initialStatus.error,
+      error: initialStatus.ok ? t('mobileHostedReviewCreateIntent.branch') : initialStatus.error,
       status: currentStatus
     }
   }
@@ -241,7 +241,7 @@ export async function prepareMobileHostedReviewCreateIntent(
     if (!mobileHostedReviewBranchStillMatches(input.branch, currentStatus)) {
       return {
         ok: false,
-        error: t('m.8fhgeQQ'),
+        error: t('mobileHostedReviewCreateIntent.branch'),
         committed: committed.committed,
         status: currentStatus
       }

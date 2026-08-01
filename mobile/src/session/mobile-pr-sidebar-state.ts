@@ -120,7 +120,7 @@ export async function loadPrSidebarData(
   } catch (err) {
     // Why: a dep that rejects (instead of returning `{ ok:false }`) must still
     // resolve to an error state, not escape as an unhandled rejection.
-    return failureState(err instanceof Error ? err.message : t('m.-D7_HMY'))
+    return failureState(err instanceof Error ? err.message : t('mobilePrSidebarState.unable'))
   }
 }
 

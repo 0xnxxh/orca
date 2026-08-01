@@ -18,21 +18,21 @@ export function MobileTerminalLiveInputStatus({
   isAttaching
 }: MobileTerminalLiveInputStatusProps) {
   const title = dictation.isRecording
-    ? t('m.y6GQnVA')
+    ? t('mobileTerminalLiveInputStatus.listening')
     : dictation.isProcessing
-      ? t('m.Q7SP9fo')
+      ? t('mobileTerminalLiveInputStatus.processing')
       : dictation.isStarting
-        ? t('m._MGGD5E')
-        : t('m.kbozpKo')
+        ? t('mobileTerminalLiveInputStatus.starting')
+        : t('mobileTerminalLiveInputStatus.live')
   const detail = dictation.isRecording
-    ? t('m.GGXoono')
+    ? t('mobileTerminalLiveInputStatus.tapMic')
     : dictation.isProcessing
-      ? t('m._-dmI2A')
+      ? t('mobileTerminalLiveInputStatus.transcribing')
       : dictation.isStarting
-        ? t('m.ha7j7qM')
+        ? t('mobileTerminalLiveInputStatus.preparing')
         : isAttaching
-          ? t('m.quM4RwQ')
-          : t('m.7IfxObc')
+          ? t('mobileTerminalLiveInputStatus.uploading')
+          : t('mobileTerminalLiveInputStatus.tapShow')
 
   return (
     <View style={styles.status}>

@@ -87,7 +87,7 @@ export async function resolveMobileBranchCompareBaseRef(
     if (isMobileGitUnavailable(defaultResponse.error?.code, defaultResponse.error?.message)) {
       return null
     }
-    throw new Error(defaultResponse.error?.message || t('m.SX56B0U'))
+    throw new Error(defaultResponse.error?.message || t('mobileBranchBaseRef.unable'))
   }
   return readDefaultBaseRef(defaultResponse.result)
 }

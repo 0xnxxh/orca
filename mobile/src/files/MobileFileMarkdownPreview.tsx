@@ -46,7 +46,7 @@ export function MobileFileMarkdownPreview({
           onPress={() => setMode('source')}
           accessibilityRole="button"
           accessibilityState={{ selected: sourceSelected }}
-          accessibilityLabel={t('m.12QKL8A')}
+          accessibilityLabel={t('mobileFileMarkdownPreview.viewMarkdown')}
         >
           <Code
             size={15}
@@ -59,7 +59,7 @@ export function MobileFileMarkdownPreview({
           onPress={() => setMode('preview')}
           accessibilityRole="button"
           accessibilityState={{ selected: previewSelected }}
-          accessibilityLabel={t('m.ujEE5Aw')}
+          accessibilityLabel={t('mobileFileMarkdownPreview.viewRendered')}
         >
           <Pencil
             size={15}

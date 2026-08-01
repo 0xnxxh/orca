@@ -50,7 +50,7 @@ export function useMobileCommitFailureRecovery({ client, connState, worktreeId, 
       return false
     }
     if (!client || connState !== 'connected') {
-      setLaunchError(t('m.Ngsl81c'))
+      setLaunchError(t('useMobileCommitFailureRecovery.waiting'))
       triggerError()
       return false
     }
@@ -62,7 +62,9 @@ export function useMobileCommitFailureRecovery({ client, connState, worktreeId, 
       return true
     } catch (err) {
       triggerError()
-      setLaunchError(err instanceof Error ? err.message : t('m.s7LT0Wk'))
+      setLaunchError(
+        err instanceof Error ? err.message : t('useMobileCommitFailureRecovery.failed')
+      )
       return false
     } finally {
       setLaunching(false)

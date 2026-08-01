@@ -33,8 +33,8 @@ import { t } from '@/i18n/mobile-i18n'
 const POLL_INTERVAL_MS = 1500
 
 const DICTATION_MODES = [
-  { value: 'toggle', label: t('m.yxHp0Uc') },
-  { value: 'hold', label: t('m.hYUl_w0') }
+  { value: 'toggle', label: t('voiceSettings.toggle') },
+  { value: 'hold', label: t('voiceSettings.hold') }
 ] as const
 
 type ModelBusyAction = { modelId: string; type: 'download' | 'select' | 'delete' }
@@ -79,7 +79,7 @@ export default function VoiceSettingsScreen(): React.JSX.Element {
       setError(null)
       return next.models.some(isModelInFlight)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('m.wFKD2Es'))
+      setError(err instanceof Error ? err.message : t('voiceSettings.failedLoadVoiceSettings'))
       return undefined
     } finally {
       setLoading(false)
@@ -111,7 +111,7 @@ export default function VoiceSettingsScreen(): React.JSX.Element {
       try {
         setSetup(await setDictationConfig(client, { enabled }))
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.PiXz3AQ'))
+        setError(err instanceof Error ? err.message : t('voiceSettings.couldNotUpdate'))
         void refreshSetup()
       }
     },
@@ -128,7 +128,7 @@ export default function VoiceSettingsScreen(): React.JSX.Element {
       try {
         setSetup(await setDictationConfig(client, { dictationMode }))
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.PiXz3AQ'))
+        setError(err instanceof Error ? err.message : t('voiceSettings.couldNotUpdate'))
         void refreshSetup()
       }
     },
@@ -146,7 +146,7 @@ export default function VoiceSettingsScreen(): React.JSX.Element {
         setSetup(await setDictationConfig(client, { enabled: true, modelId: model.id }))
         setModelDrawerOpen(false)
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.cpL32fY'))
+        setError(err instanceof Error ? err.message : t('voiceSettings.couldNotSelect'))
       } finally {
         setBusyAction(null)
       }
@@ -165,7 +165,7 @@ export default function VoiceSettingsScreen(): React.JSX.Element {
         await downloadDictationModel(client, model.id)
         await refreshSetup()
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.O-GK4L4'))
+        setError(err instanceof Error ? err.message : t('voiceSettings.download'))
       } finally {
         setBusyAction(null)
       }
@@ -187,7 +187,7 @@ export default function VoiceSettingsScreen(): React.JSX.Element {
           setModelDrawerOpen(false)
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : t('m.Wgx1aTY'))
+        setError(err instanceof Error ? err.message : t('voiceSettings.delete'))
       } finally {
         setBusyAction(null)
       }
@@ -197,7 +197,7 @@ export default function VoiceSettingsScreen(): React.JSX.Element {
 
   const enabled = setup?.enabled ?? false
   const selectedModel = setup?.models.find((m) => m.id === setup.selectedModelId)
-  const selectedModelLabel = selectedModel?.label ?? t('m.J055vls')
+  const selectedModelLabel = selectedModel?.label ?? t('voiceSettings.none')
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + spacing.sm }]}>
@@ -205,12 +205,12 @@ export default function VoiceSettingsScreen(): React.JSX.Element {
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <ChevronLeft size={22} color={colors.textSecondary} />
         </Pressable>
-        <Text style={styles.heading}>{t('m.pSmQbNo')}</Text>
+        <Text style={styles.heading}>{t('voiceSettings.voice')}</Text>
       </View>
 
       {!client ? (
         <View style={[styles.section, styles.sectionTopGap]}>
-          <Text style={styles.emptyText}>{t('m.pJrwjt0')}</Text>
+          <Text style={styles.emptyText}>{t('voiceSettings.connect')}</Text>
         </View>
       ) : loading && setup === null ? (
         <View style={styles.loading}>
@@ -218,19 +218,21 @@ export default function VoiceSettingsScreen(): React.JSX.Element {
         </View>
       ) : setup === null ? (
         <View style={[styles.section, styles.sectionTopGap]}>
-          <Text style={styles.errorText}>{error ?? t('m.Fbnf310')}</Text>
+          <Text style={styles.errorText}>
+            {error ?? t('voiceSettings.failedLoadVoiceSettingsMessage')}
+          </Text>
         </View>
       ) : (
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.groupHeading}>{t('m.L4c5Sxw')}</Text>
+          <Text style={styles.groupHeading}>{t('voiceSettings.dictation')}</Text>
           <View style={[styles.section, styles.sectionTopGap]}>
             <View style={styles.row}>
               <View style={styles.rowContent}>
-                <Text style={styles.rowLabel}>{t('m.23v3WVE')}</Text>
-                <Text style={styles.rowSublabel}>{t('m.4g1gMYA')}</Text>
+                <Text style={styles.rowLabel}>{t('voiceSettings.enable')}</Text>
+                <Text style={styles.rowSublabel}>{t('voiceSettings.dictate')}</Text>
               </View>
               <Switch
                 value={enabled}
@@ -247,8 +249,8 @@ export default function VoiceSettingsScreen(): React.JSX.Element {
               pointerEvents={enabled ? 'auto' : 'none'}
             >
               <View style={styles.rowContent}>
-                <Text style={styles.rowLabel}>{t('m.Jh4zuEU')}</Text>
-                <Text style={styles.rowSublabel}>{t('m.uwVWBGE')}</Text>
+                <Text style={styles.rowLabel}>{t('voiceSettings.dictationMode')}</Text>
+                <Text style={styles.rowSublabel}>{t('voiceSettings.togglePress')}</Text>
               </View>
               <View style={styles.segmented}>
                 {DICTATION_MODES.map((mode) => {
@@ -269,7 +271,9 @@ export default function VoiceSettingsScreen(): React.JSX.Element {
             </View>
           </View>
 
-          <Text style={[styles.groupHeading, styles.inputGroupGap]}>{t('m.n-BJK-c')}</Text>
+          <Text style={[styles.groupHeading, styles.inputGroupGap]}>
+            {t('voiceSettings.speechModel')}
+          </Text>
           <View style={[styles.section, styles.sectionTopGap]}>
             <Pressable
               style={({ pressed }) => [
@@ -281,7 +285,7 @@ export default function VoiceSettingsScreen(): React.JSX.Element {
               onPress={() => setModelDrawerOpen(true)}
             >
               <View style={styles.rowContent}>
-                <Text style={styles.rowLabel}>{t('m.C-t7pm8')}</Text>
+                <Text style={styles.rowLabel}>{t('voiceSettings.speechModelMessage')}</Text>
                 <Text style={styles.rowSublabel} numberOfLines={1}>
                   {selectedModelLabel}
                 </Text>
@@ -295,7 +299,7 @@ export default function VoiceSettingsScreen(): React.JSX.Element {
       )}
 
       <BottomDrawer visible={modelDrawerOpen} onClose={() => setModelDrawerOpen(false)}>
-        <Text style={styles.drawerTitle}>{t('m.C-t7pm8')}</Text>
+        <Text style={styles.drawerTitle}>{t('voiceSettings.speechModelMessage')}</Text>
         {setup ? (
           <VoiceModelList
             setup={setup}

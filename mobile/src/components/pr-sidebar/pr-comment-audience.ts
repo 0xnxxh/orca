@@ -14,9 +14,9 @@ export { createBotAuthorOverrideSet }
 export type PRCommentAudienceFilter = 'all' | 'human' | 'bot'
 
 export const PR_COMMENT_AUDIENCE_FILTERS: { value: PRCommentAudienceFilter; label: string }[] = [
-  { value: 'all', label: t('m.rkpE-Mg') },
-  { value: 'human', label: t('m.4fGywsA') },
-  { value: 'bot', label: t('m._RfDeuw') }
+  { value: 'all', label: t('prCommentAudience.all') },
+  { value: 'human', label: t('prCommentAudience.humans') },
+  { value: 'bot', label: t('prCommentAudience.bots') }
 ]
 
 const BOT_LOGIN_SUFFIX = '[bot]'
@@ -100,10 +100,10 @@ export function filterPRCommentsByAudience(
 export function getPRCommentAudienceEmptyLabel(filter: PRCommentAudienceFilter): string {
   switch (filter) {
     case 'bot':
-      return t('m.BvW_4OE')
+      return t('prCommentAudience.noBot')
     case 'human':
-      return t('m.znwGBr8')
+      return t('prCommentAudience.noHuman')
     case 'all':
-      return t('m.AXw1J4E')
+      return t('prCommentAudience.noComments')
   }
 }

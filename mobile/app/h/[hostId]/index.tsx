@@ -45,7 +45,7 @@ import {
 } from '../../../src/transport/client-context-connection-metrics'
 import {
   classifyConnection,
-  type ConnectionVerdict
+  isConnectionErrorVerdict
 } from '../../../src/transport/connection-health'
 import type { RpcSuccess } from '../../../src/transport/types'
 import { StatusDot } from '../../../src/components/StatusDot'
@@ -101,31 +101,22 @@ import {
   getWorkspaceSortOptions
 } from '../../../src/worktree/workspace-list-picker-options'
 import type { RepoSummary } from '../../../src/worktree/host-worktree-rpc-types'
+import type { MobileHostScreenProps } from '../../../src/worktree/mobile-host-screen-props'
 import type { WorkspaceStatusDefinition } from '../../../../src/shared/types'
 import { getDefaultMobileWorkspaceStatuses } from '../../../src/worktree/mobile-workspace-statuses'
-import { t } from '@/i18n/mobile-i18n'
+import { createMobileTranslator } from '@/i18n/mobile-i18n'
 
-function isErrorVerdict(v: ConnectionVerdict): boolean {
-  return v.kind === 'warning' || v.kind === 'unreachable' || v.kind === 'auth-failed'
-}
+const tr = createMobileTranslator('host')
+const filterLabel = (activeFilterCount: string) => tr('filterActive', { activeFilterCount })
 
 const REPO_METADATA_REFRESH_MS = 60_000
-
-type HostScreenProps = {
-  // When true, rendered as the persistent tablet sidebar by the host layout, not as its own routed screen.
-  embedded?: boolean
-  // Route params aren't in scope when rendered from the layout, so the caller passes these explicitly.
-  hostId?: string
-  action?: string
-  onHideSidebar?: () => void
-}
 
 export function HostScreen({
   embedded = false,
   hostId: hostIdProp,
   action: actionProp,
   onHideSidebar
-}: HostScreenProps = {}) {
+}: MobileHostScreenProps = {}) {
   const params = useLocalSearchParams<{ hostId: string; action?: string }>()
   const hostId = hostIdProp ?? params.hostId
   const action = actionProp ?? params.action
@@ -346,7 +337,7 @@ export function HostScreen({
       }
       const host = hosts.find((h) => h.id === hostId)
       if (!host) {
-        setError(t('m.2FRJWFs'))
+        setError(tr('hostNot'))
         return
       }
       setHostName(host.name)
@@ -619,7 +610,7 @@ export function HostScreen({
     } catch {
       // Why: removal can fail while still paired; re-open confirm (ConfirmModal closes on confirm).
       setConfirmRemoveHost(true)
-      Alert.alert(t('m.P_OTj14'), t('m.QHBQ8yI'))
+      Alert.alert(tr('could'), tr('please'))
     }
   }, [hostId, leaveHost, closeHostClient])
 
@@ -709,7 +700,7 @@ export function HostScreen({
     return count
   }, [filters])
   const selectedSortLabel =
-    getWorkspaceSortOptions().find((option) => option.value === sortMode)?.label ?? t('m.qVCBvFg')
+    getWorkspaceSortOptions().find((option) => option.value === sortMode)?.label ?? tr('recent')
 
   const handleGroupChange = useCallback(
     (value: MobileGroupMode) => {
@@ -787,7 +778,7 @@ export function HostScreen({
             style={styles.backButton}
             onPress={leaveHost}
             accessibilityRole="button"
-            accessibilityLabel={t('m.IDkp2AI')}
+            accessibilityLabel={tr('back')}
             hitSlop={8}
           >
             <ChevronLeft size={22} color={colors.textPrimary} />
@@ -803,14 +794,14 @@ export function HostScreen({
                 <View style={styles.hostIdentity}>
                   <StatusDot state={connState} verdict={headerVerdict} />
                   <Text style={styles.hostNameText} numberOfLines={1}>
-                    {hostName || t('m.3GdsXVQ')}
+                    {hostName || tr('host')}
                   </Text>
                 </View>
                 {connState !== 'connected' &&
                   (() => {
                     // Why: auth-failed has its own banner, so suppress the Reconnect button for that verdict.
                     const verdict = headerVerdict
-                    const isError = isErrorVerdict(verdict)
+                    const isError = isConnectionErrorVerdict(verdict)
                     const showReconnectButton = isError && hostId && verdict.kind !== 'auth-failed'
                     if (!showReconnectButton) {
                       return null
@@ -821,7 +812,7 @@ export function HostScreen({
                         onPress={() => void forceReconnectHost(hostId!)}
                         hitSlop={8}
                       >
-                        <Text style={styles.reconnectButtonText}>{t('m.2FFC6Og')}</Text>
+                        <Text style={styles.reconnectButtonText}>{tr('reconnect')}</Text>
                       </Pressable>
                     )
                   })()}
@@ -837,7 +828,7 @@ export function HostScreen({
               onPress={openFloatingWorkspace}
               disabled={connState !== 'connected'}
               accessibilityRole="button"
-              accessibilityLabel={t('m.qs3IfgE')}
+              accessibilityLabel={tr('floating')}
               hitSlop={8}
             >
               <SquareTerminal
@@ -851,7 +842,7 @@ export function HostScreen({
               style={styles.sidebarCollapseButton}
               onPress={onHideSidebar}
               accessibilityRole="button"
-              accessibilityLabel={t('m.Iq0v42M')}
+              accessibilityLabel={tr('hideSidebar')}
               hitSlop={8}
             >
               <PanelLeftClose size={14} color={colors.textSecondary} />
@@ -873,10 +864,12 @@ export function HostScreen({
                 accessibilityRole="button"
                 accessibilityLabel={
                   activeFilterCount === 0
-                    ? t('m.kz_Kdkw')
+                    ? tr('filterWorkspaces')
                     : activeFilterCount === 1
-                      ? t('m.6oNXq-k')
-                      : t('m.DxBfvEc', { value0: activeFilterCount })
+                      ? tr('filterWorkspaces1')
+                      : tr('filterWorkspacesActive', {
+                          activeFilterCount: activeFilterCount
+                        })
                 }
               >
                 <Filter
@@ -890,7 +883,7 @@ export function HostScreen({
                   ]}
                   numberOfLines={1}
                 >
-                  {t('m.2hirWvg', { value0: activeFilterCount ? ` (${activeFilterCount})` : '' })}
+                  {filterLabel(activeFilterCount ? ` (${activeFilterCount})` : '')}
                 </Text>
               </Pressable>
 
@@ -898,7 +891,9 @@ export function HostScreen({
                 style={[styles.modeButton, styles.embeddedModeButton]}
                 onPress={() => setShowSortPicker(true)}
                 accessibilityRole="button"
-                accessibilityLabel={t('m.jZR1hFw', { value0: selectedSortLabel })}
+                accessibilityLabel={tr('sortSelected', {
+                  selectedSortLabel: selectedSortLabel
+                })}
               >
                 <SlidersHorizontal size={14} color={colors.textSecondary} />
                 <Text style={styles.sortLabel} numberOfLines={1}>
@@ -910,17 +905,17 @@ export function HostScreen({
                 style={[styles.modeButton, styles.embeddedModeButton]}
                 onPress={() => setShowGroupPicker(true)}
                 accessibilityRole="button"
-                accessibilityLabel={t('m.KYYIQO4')}
+                accessibilityLabel={tr('groupWorkspaces')}
               >
                 <Layers size={14} color={colors.textSecondary} />
                 <Text style={styles.sortLabel} numberOfLines={1}>
                   {groupMode === 'none'
-                    ? t('m.mZ5NlSU')
+                    ? tr('group')
                     : groupMode === 'workspaceStatus'
-                      ? t('m.GAUYfWk')
+                      ? tr('status')
                       : groupMode === 'repo'
-                        ? t('m.CzGUIP8')
-                        : t('m.sUx-id0')}
+                        ? tr('repo')
+                        : tr('pr')}
                 </Text>
               </Pressable>
             </View>
@@ -934,7 +929,7 @@ export function HostScreen({
                 onPress={() => navigateFromHostList(`/h/${hostId}/accounts`)}
                 disabled={connState !== 'connected'}
                 accessibilityRole="button"
-                accessibilityLabel={t('m.CVlu0tE')}
+                accessibilityLabel={tr('accounts')}
               >
                 <UserCircle
                   size={16}
@@ -950,7 +945,7 @@ export function HostScreen({
                 onPress={() => navigateFromHostList(`/h/${hostId}/tasks`)}
                 disabled={connState !== 'connected'}
                 accessibilityRole="button"
-                accessibilityLabel={t('m.V5DOCOQ')}
+                accessibilityLabel={tr('tasks')}
               >
                 <List
                   size={16}
@@ -967,7 +962,7 @@ export function HostScreen({
                   onPress={openFloatingWorkspace}
                   disabled={connState !== 'connected'}
                   accessibilityRole="button"
-                  accessibilityLabel={t('m.qs3IfgE')}
+                  accessibilityLabel={tr('floating')}
                 >
                   <SquareTerminal
                     size={18}
@@ -984,7 +979,7 @@ export function HostScreen({
                 onPress={openNewWorktreeModal}
                 disabled={connState !== 'connected'}
                 accessibilityRole="button"
-                accessibilityLabel={t('m.LIEbwVI')}
+                accessibilityLabel={tr('new')}
               >
                 <Plus
                   size={16}
@@ -996,7 +991,7 @@ export function HostScreen({
                 style={styles.embeddedToolbarIconButton}
                 onPress={() => setShowSearch((s) => !s)}
                 accessibilityRole="button"
-                accessibilityLabel={showSearch ? t('m.AYkrJs8') : t('m.LgVSSVY')}
+                accessibilityLabel={showSearch ? tr('close') : tr('searchWorkspaces')}
               >
                 {showSearch ? (
                   <X size={16} color={colors.textSecondary} />
@@ -1022,7 +1017,7 @@ export function HostScreen({
                   activeFilterCount > 0 && styles.filterChipTextActive
                 ]}
               >
-                {t('m.2hirWvg', { value0: activeFilterCount > 0 ? ` (${activeFilterCount})` : '' })}
+                {filterLabel(activeFilterCount > 0 ? ` (${activeFilterCount})` : '')}
               </Text>
             </Pressable>
 
@@ -1037,12 +1032,12 @@ export function HostScreen({
               <Layers size={14} color={colors.textSecondary} />
               <Text style={styles.sortLabel} numberOfLines={1}>
                 {groupMode === 'none'
-                  ? t('m.mZ5NlSU')
+                  ? tr('group')
                   : groupMode === 'workspaceStatus'
-                    ? t('m.GAUYfWk')
+                    ? tr('status')
                     : groupMode === 'repo'
-                      ? t('m.CzGUIP8')
-                      : t('m.sUx-id0')}
+                      ? tr('repo')
+                      : tr('pr')}
               </Text>
             </Pressable>
 
@@ -1097,11 +1092,11 @@ export function HostScreen({
           <MobileSearchField
             value={search}
             onChangeText={setSearch}
-            placeholder={t('m.ThGUKR8')}
+            placeholder={tr('searchWorktrees')}
             autoFocus
             // Why: new key per open remounts the focus effect across rapid toggles so the keyboard reappears.
             focusKey={showSearch}
-            accessibilityLabel={t('m.Y4yzly8')}
+            accessibilityLabel={tr('searchWorktreesAccessibility')}
           />
         </View>
       )}
@@ -1119,7 +1114,11 @@ export function HostScreen({
       {connState === 'connected' && worktreesLoaded && sections.length === 0 && (
         <View style={styles.centered}>
           <Text style={styles.emptyText}>
-            {search ? t('m.d-FojRM') : activeFilterCount > 0 ? t('m.oRXGJpo') : t('m.4HGax2g')}
+            {search
+              ? tr('noMatching')
+              : activeFilterCount > 0
+                ? tr('noWorktreesMatch')
+                : tr('noWorktrees')}
           </Text>
         </View>
       )}
@@ -1210,7 +1209,7 @@ export function HostScreen({
 
       <PickerModal
         visible={showSortPicker}
-        title={t('m.hFsVshM')}
+        title={tr('sort')}
         options={getWorkspaceSortOptions()}
         selected={sortMode}
         onSelect={handleSortChange}
@@ -1219,7 +1218,7 @@ export function HostScreen({
 
       <PickerModal
         visible={showGroupPicker}
-        title={t('m.fVWdjBk')}
+        title={tr('groupTitle')}
         options={getWorkspaceGroupOptions()}
         selected={groupMode}
         onSelect={handleGroupChange}
@@ -1228,30 +1227,30 @@ export function HostScreen({
 
       <BottomDrawer visible={showFilterModal} onClose={() => setShowFilterModal(false)}>
         <View style={styles.filterModalHeader}>
-          <Text style={styles.filterModalTitle}>{t('m.S8jJ9v4')}</Text>
+          <Text style={styles.filterModalTitle}>{tr('filter')}</Text>
           {activeFilterCount > 0 && (
             <Pressable onPress={clearFilters}>
-              <Text style={styles.clearFiltersText}>{t('m.5IYckMg')}</Text>
+              <Text style={styles.clearFiltersText}>{tr('clear')}</Text>
             </Pressable>
           )}
         </View>
 
-        <Text style={styles.filterSectionLabel}>{t('m.bd8B2ME')}</Text>
+        <Text style={styles.filterSectionLabel}>{tr('workspaces')}</Text>
         <View style={styles.filterGroup}>
           <Pressable style={styles.filterRow} onPress={toggleHideSleeping}>
-            <Text style={styles.filterRowText}>{t('m.1w-t3vQ')}</Text>
+            <Text style={styles.filterRowText}>{tr('hideSleeping')}</Text>
             {filters.hideSleeping && <Check size={14} color={colors.textPrimary} />}
           </Pressable>
           <View style={styles.filterSeparator} />
           <Pressable style={styles.filterRow} onPress={toggleHideDefaultBranch}>
-            <Text style={styles.filterRowText}>{t('m.MFWDh4g')}</Text>
+            <Text style={styles.filterRowText}>{tr('hideDefault')}</Text>
             {filters.hideDefaultBranch && <Check size={14} color={colors.textPrimary} />}
           </Pressable>
         </View>
 
         {uniqueRepos.length > 1 && (
           <>
-            <Text style={styles.filterSectionLabel}>{t('m.aCNuYPE')}</Text>
+            <Text style={styles.filterSectionLabel}>{tr('repositories')}</Text>
             <View style={styles.filterGroup}>
               {uniqueRepos.map((repo, i) => (
                 <View key={repo.id}>
@@ -1283,11 +1282,11 @@ export function HostScreen({
         {confirmDelete ? (
           <View>
             <View style={styles.confirmContent}>
-              <Text style={styles.confirmTitle}>{t('m.sCHpXNI')}</Text>
+              <Text style={styles.confirmTitle}>{tr('deleteWorktree')}</Text>
               <Text style={styles.confirmMessage}>
-                {t('m.asTmnrM', {
-                  value0: confirmDelete.displayName || confirmDelete.repo,
-                  value1: confirmDelete.branch
+                {tr('deleteDisplay', {
+                  displayName: confirmDelete.displayName || confirmDelete.repo,
+                  branch: confirmDelete.branch
                 })}
               </Text>
             </View>
@@ -1300,7 +1299,7 @@ export function HostScreen({
                 ]}
                 onPress={() => setConfirmDelete(null)}
               >
-                <Text style={styles.confirmBtnCancelText}>{t('m.jQgIadE')}</Text>
+                <Text style={styles.confirmBtnCancelText}>{tr('cancel')}</Text>
               </Pressable>
               <Pressable
                 style={({ pressed }) => [
@@ -1316,7 +1315,7 @@ export function HostScreen({
                   setActionTarget(null)
                 }}
               >
-                <Text style={styles.confirmBtnDestructiveText}>{t('m.PCaw7X8')}</Text>
+                <Text style={styles.confirmBtnDestructiveText}>{tr('delete')}</Text>
               </Pressable>
             </View>
           </View>
@@ -1336,7 +1335,7 @@ export function HostScreen({
                       onDone: () => setActionTarget(null)
                     }),
                     {
-                      label: t('m.7b05QJE'),
+                      label: tr('sleep'),
                       icon: Moon,
                       onPress: () => {
                         if (client) {
@@ -1351,16 +1350,14 @@ export function HostScreen({
                       }
                     },
                     {
-                      label: isWorktreePinned(actionTarget, pinnedIds)
-                        ? t('m.dgZsiv8')
-                        : t('m.JwcgRbU'),
+                      label: isWorktreePinned(actionTarget, pinnedIds) ? tr('unpin') : tr('pin'),
                       onPress: () => {
                         togglePin(actionTarget.worktreeId)
                         setActionTarget(null)
                       }
                     },
                     {
-                      label: t('m.PCaw7X8'),
+                      label: tr('delete'),
                       destructive: true,
                       onPress: () => setConfirmDelete(actionTarget)
                     }
@@ -1374,9 +1371,9 @@ export function HostScreen({
       {/* Host remove confirmation */}
       <ConfirmModal
         visible={confirmRemoveHost}
-        title={t('m.tndsmJE')}
-        message={t('m.HbMqJ5k', { value0: hostName })}
-        confirmLabel={t('m.EaX2_X8')}
+        title={tr('removeHost')}
+        message={tr('removeHostName', { hostName: hostName })}
+        confirmLabel={tr('remove')}
         destructive
         onConfirm={() => void handleRemoveHost()}
         onCancel={() => setConfirmRemoveHost(false)}

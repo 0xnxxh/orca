@@ -41,6 +41,26 @@ export const HTML = \`<!doctype html>
     ])
   })
 
+  it('finds static copy around dynamic WebView values and prompts', () => {
+    const source = [
+      'export const HTML = `<!doctype html>',
+      '<button title="Copy ${name}">Retry ${name}</button>',
+      '<script>window.alert(\\`Could not load ${name}\\`);</script>',
+      '`'
+    ].join('\n')
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/example-webview-html.ts',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map(({ dynamic, text }) => ({ dynamic, text }))).toEqual([
+      { dynamic: true, text: 'Copy' },
+      { dynamic: true, text: 'Retry' },
+      { dynamic: true, text: 'Could not load' }
+    ])
+  })
+
   it('finds literals assigned to variables that later render in JSX', () => {
     const source = `
 export function Example({ alternate }) {
@@ -80,5 +100,22 @@ export function toRow(item) {
     )
 
     expect(candidates.map((candidate) => candidate.text)).toEqual(['(no commit message)'])
+  })
+
+  it('recognizes aliased translators and reports calls shadowed by parameters', () => {
+    const source = `
+import { t as translateMobile } from '@/i18n/mobile-i18n'
+const localized = translateMobile('example.localized')
+export function Example(translateMobile) {
+  return <Text>{translateMobile('Unlocalized shadowed copy')}</Text>
+}
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/Example.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual(['Unlocalized shadowed copy'])
   })
 })

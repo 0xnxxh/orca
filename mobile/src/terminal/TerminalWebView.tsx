@@ -382,9 +382,15 @@ export const TerminalWebView = forwardRef<TerminalWebViewHandle, Props>(function
         textZoom={100}
         onLoadStart={handleLoadStart}
         onMessage={handleMessage}
-        onError={(event) => reportNativeEngineError(t('m.GY53tDU'), event)}
-        onHttpError={(event) => reportNativeEngineError(t('m.9IP25z8'), event)}
-        onRenderProcessGone={(event) => reportNativeEngineError(t('m.QESpnhs'), event)}
+        onError={(event) =>
+          reportNativeEngineError(t('terminalWebView.terminalWebViewLoad'), event)
+        }
+        onHttpError={(event) =>
+          reportNativeEngineError(t('terminalWebView.terminalWebViewHttp'), event)
+        }
+        onRenderProcessGone={(event) =>
+          reportNativeEngineError(t('terminalWebView.terminalWebViewRender'), event)
+        }
         onContentProcessDidTerminate={handleContentProcessDidTerminate}
       />
       {engineError ? (

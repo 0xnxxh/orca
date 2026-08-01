@@ -108,7 +108,7 @@ export function normalizeHostEndpoint(
 ): NormalizeHostEndpointResult {
   const trimmed = input.trim()
   if (!trimmed) {
-    return { ok: false, error: t('m.z85IfPo') }
+    return { ok: false, error: t('hostEndpoint.enter') }
   }
 
   const fallbackPort = resolveFallbackPort(options?.fallbackPort)
@@ -135,56 +135,56 @@ function resolveFallbackPort(value: string | number | undefined): string {
 function normalizeSchemeUrl(input: string, fallbackPort: string): NormalizeHostEndpointResult {
   const explicitPort = resolveWebsocketUrlPort(input)
   if (explicitPort.kind === 'invalid') {
-    return { ok: false, error: t('m.HguWCpQ') }
+    return { ok: false, error: t('hostEndpoint.port') }
   }
   const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//.exec(input)?.[1]?.toLowerCase()
   if (scheme !== 'ws' && scheme !== 'wss') {
-    return { ok: false, error: t('m.HQMAFdE') }
+    return { ok: false, error: t('hostEndpoint.use') }
   }
 
   const rawAuthority = parseRawSchemeAuthority(input)
   if (rawAuthority.hasUserInfo) {
-    return { ok: false, error: t('m.CshxztM') }
+    return { ok: false, error: t('hostEndpoint.notValidAddress') }
   }
   if (rawAuthority.hasPathOrQuery) {
-    return { ok: false, error: t('m.fX92Peg') }
+    return { ok: false, error: t('hostEndpoint.host') }
   }
   if (
     rawAuthority.hostname &&
     validateNumericIpv4Candidate(normalizeRawNumericIpv4Candidate(rawAuthority.hostname))
   ) {
-    return { ok: false, error: t('m.6lctDfQ') }
+    return { ok: false, error: t('hostEndpoint.notValidHostname') }
   }
 
   let url: URL
   try {
     url = new URL(input)
   } catch {
-    return { ok: false, error: t('m.CshxztM') }
+    return { ok: false, error: t('hostEndpoint.notValidAddress') }
   }
 
   if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
-    return { ok: false, error: t('m.HQMAFdE') }
+    return { ok: false, error: t('hostEndpoint.use') }
   }
   if (!url.hostname) {
-    return { ok: false, error: t('m.dRmw4EQ') }
+    return { ok: false, error: t('hostEndpoint.missing') }
   }
 
   // Why: edit-host persists a bare host:port WebSocket endpoint. Path/query/
   // userinfo are not part of the pairing contract — reject rather than strip
   // so typos like desk/path or desk?route cannot be saved silently.
   if (url.username || url.password) {
-    return { ok: false, error: t('m.CshxztM') }
+    return { ok: false, error: t('hostEndpoint.notValidAddress') }
   }
   if ((url.pathname && url.pathname !== '/') || url.search || url.hash) {
-    return { ok: false, error: t('m.fX92Peg') }
+    return { ok: false, error: t('hostEndpoint.host') }
   }
 
   const hostname = unwrapHostname(url.hostname)
   // Why: WHATWG URL accepts legacy aliases and rewrites them to a different
   // IPv4 address. Only an already-canonical raw dotted quad may become IPv4.
   if (rawAuthority.hostname && isCanonicalIpv4(hostname) && rawAuthority.hostname !== hostname) {
-    return { ok: false, error: t('m.6lctDfQ') }
+    return { ok: false, error: t('hostEndpoint.notValidHostname') }
   }
   const hostError = validateHostname(hostname)
   if (hostError) {
@@ -195,7 +195,7 @@ function normalizeSchemeUrl(input: string, fallbackPort: string): NormalizeHostE
   // of rewriting them to fallbackPort (usually 6768).
   const resolvedPort = resolveWebsocketUrlPort(input, url)
   if (resolvedPort.kind === 'invalid') {
-    return { ok: false, error: t('m.HguWCpQ') }
+    return { ok: false, error: t('hostEndpoint.port') }
   }
   const port = resolvedPort.kind === 'valid' ? resolvedPort.port : fallbackPort
 
@@ -241,14 +241,14 @@ function normalizeHostPort(
   if (input.startsWith('[')) {
     const close = input.indexOf(']')
     if (close <= 1) {
-      return { ok: false, error: t('m.CshxztM') }
+      return { ok: false, error: t('hostEndpoint.notValidAddress') }
     }
     host = input.slice(1, close)
     const rest = input.slice(close + 1)
     if (rest.startsWith(':')) {
       port = rest.slice(1)
     } else if (rest.length > 0) {
-      return { ok: false, error: t('m.CshxztM') }
+      return { ok: false, error: t('hostEndpoint.notValidAddress') }
     }
   } else {
     const firstColon = input.indexOf(':')
@@ -264,7 +264,7 @@ function normalizeHostPort(
 
   host = host.trim()
   if (!host) {
-    return { ok: false, error: t('m.dRmw4EQ') }
+    return { ok: false, error: t('hostEndpoint.missing') }
   }
 
   // Why: bare input is not a URL, so characters that only make sense in a URL
@@ -277,7 +277,7 @@ function normalizeHostPort(
   if (port !== undefined) {
     port = port.trim()
     if (!isValidPort(port)) {
-      return { ok: false, error: t('m.HguWCpQ') }
+      return { ok: false, error: t('hostEndpoint.port') }
     }
   }
 
@@ -295,11 +295,11 @@ function formatHostForUrl(host: string): string {
  */
 function validateHostname(host: string): string | null {
   if (!host) {
-    return t('m.dRmw4EQ')
+    return t('hostEndpoint.missing')
   }
   // Spaces, path/query/fragment separators, userinfo separators, brackets.
   if (/[\s/?#@[\]]/.test(host)) {
-    return t('m.6lctDfQ')
+    return t('hostEndpoint.notValidHostname')
   }
   const numericIpv4Error = validateNumericIpv4Candidate(host)
   if (numericIpv4Error) {
@@ -309,12 +309,12 @@ function validateHostname(host: string): string | null {
     // Why: a hex/colon regex accepts malformed forms such as two `::` runs.
     // Reuse the URL parser that WebSocket will ultimately use.
     if (!/^[0-9a-fA-F:]+$/.test(host)) {
-      return t('m.6lctDfQ')
+      return t('hostEndpoint.notValidHostname')
     }
     try {
       new URL(`ws://[${host}]:${DEFAULT_PORT}`)
     } catch {
-      return t('m.6lctDfQ')
+      return t('hostEndpoint.notValidHostname')
     }
     return null
   }
@@ -324,7 +324,7 @@ function validateHostname(host: string): string | null {
       host
     )
   ) {
-    return t('m.6lctDfQ')
+    return t('hostEndpoint.notValidHostname')
   }
   return null
 }
@@ -334,7 +334,7 @@ function validateNumericIpv4Candidate(host: string): string | null {
     return null
   }
   if (!isCanonicalIpv4(host)) {
-    return t('m.6lctDfQ')
+    return t('hostEndpoint.notValidHostname')
   }
   return null
 }

@@ -223,8 +223,10 @@ export function TerminalShortcutSettings({
 
   return (
     <>
-      <Text style={[styles.groupHeading, styles.groupTopGap]}>{t('m.u1ZHouk')}</Text>
-      <Text style={styles.groupDescription}>{t('m.Odmd4jg')}</Text>
+      <Text style={[styles.groupHeading, styles.groupTopGap]}>
+        {t('terminalShortcutSettings.shortcut')}
+      </Text>
+      <Text style={styles.groupDescription}>{t('terminalShortcutSettings.toggle')}</Text>
       <View style={[styles.section, styles.sectionTopGap]}>
         <DragReorderList
           items={orderedAccessoryKeys}
@@ -248,18 +250,20 @@ export function TerminalShortcutSettings({
           onPress={resetBuiltInKeys}
         >
           <View style={styles.rowContent}>
-            <Text style={styles.rowLabel}>{t('m.P0qiUsA')}</Text>
-            <Text style={styles.rowSublabel}>{t('m._YyvrjM')}</Text>
+            <Text style={styles.rowLabel}>{t('terminalShortcutSettings.reset')}</Text>
+            <Text style={styles.rowSublabel}>{t('terminalShortcutSettings.show')}</Text>
           </View>
         </Pressable>
       </View>
 
-      <Text style={[styles.groupHeading, styles.groupTopGap]}>{t('m.EGxWrwk')}</Text>
+      <Text style={[styles.groupHeading, styles.groupTopGap]}>
+        {t('terminalShortcutSettings.custom')}
+      </Text>
       <View style={[styles.section, styles.sectionTopGap]}>
         {customKeys.length === 0 ? (
           <>
             <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>{t('m.AwkMohI')}</Text>
+              <Text style={styles.emptyText}>{t('terminalShortcutSettings.no')}</Text>
             </View>
             <View style={styles.separator} />
           </>
@@ -302,8 +306,8 @@ export function TerminalShortcutSettings({
           onPress={() => setShowCustomKeyModal(true)}
         >
           <View style={styles.rowContent}>
-            <Text style={styles.rowLabel}>{t('m.d-64Q0E')}</Text>
-            <Text style={styles.rowSublabel}>{t('m.CgJBkqk')}</Text>
+            <Text style={styles.rowLabel}>{t('terminalShortcutSettings.add')}</Text>
+            <Text style={styles.rowSublabel}>{t('terminalShortcutSettings.create')}</Text>
           </View>
           <ChevronRight size={16} color={colors.textMuted} />
         </Pressable>

@@ -99,7 +99,7 @@ export function useMobileComposerSource(args: UseMobileComposerSourceArgs) {
             return
           }
           setBase(EMPTY_BASE)
-          onError?.(error instanceof Error ? error.message : t('m.x04i9ik'))
+          onError?.(error instanceof Error ? error.message : t('useMobileComposerSource.failed'))
         })
         .finally(() => {
           if (resolveTokenRef.current === token) {
