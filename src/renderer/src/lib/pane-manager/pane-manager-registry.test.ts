@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { collectRendererMemoryProfileCounts } from '../renderer-memory-profile'
+import { PaneManager } from './pane-manager'
 import {
   forEachLivePaneForDesyncSentinel,
   getLivePaneCensus,
@@ -280,7 +281,8 @@ describe('live terminal buffer census', () => {
       panes: 2,
       lines: 50_024,
       cells: 6_002_880,
-      altScreenPanes: 0
+      altScreenPanes: 0,
+      droppedPanes: 0
     })
   })
 
@@ -298,7 +300,8 @@ describe('live terminal buffer census', () => {
       panes: 2,
       lines: 50_024,
       cells: 6_002_880,
-      altScreenPanes: 1
+      altScreenPanes: 1,
+      droppedPanes: 0
     })
   })
 
@@ -309,8 +312,48 @@ describe('live terminal buffer census', () => {
       'liveTerminalBuffers.panes': 1,
       'liveTerminalBuffers.lines': 5_000,
       'liveTerminalBuffers.cells': 400_000,
-      'liveTerminalBuffers.altScreenPanes': 1
+      'liveTerminalBuffers.altScreenPanes': 1,
+      'liveTerminalBuffers.droppedPanes': 0
     })
+  })
+
+  // Why this counter exists: without it a census that threw on every pane reports
+  // `panes: 0`, which reads as "no terminals were live" — the opposite conclusion.
+  it('says how many panes it failed to read when a whole manager throws', () => {
+    const broken = {
+      resetWebglTextureAtlases: vi.fn<() => void>(),
+      getPaneCount: () => 7,
+      getPaneBufferCensus: (): never => {
+        throw new Error('manager tearing down')
+      }
+    }
+    registerLivePaneManager(broken)
+    registeredManagers.push(broken)
+    registerPanes({ id: 1, terminal: terminal(80, 10) })
+
+    expect(getLiveTerminalBufferCensus()).toEqual({
+      panes: 1,
+      lines: 10,
+      cells: 800,
+      altScreenPanes: 0,
+      droppedPanes: 7
+    })
+  })
+
+  it('still reports at least one dropped pane when the count is unreadable too', () => {
+    const broken = {
+      resetWebglTextureAtlases: vi.fn<() => void>(),
+      getPaneCount: (): never => {
+        throw new Error('gone')
+      },
+      getPaneBufferCensus: (): never => {
+        throw new Error('gone')
+      }
+    }
+    registerLivePaneManager(broken)
+    registeredManagers.push(broken)
+
+    expect(getLiveTerminalBufferCensus().droppedPanes).toBe(1)
   })
 
   it('keeps counting siblings when a terminal throws on buffer access', () => {
@@ -330,14 +373,21 @@ describe('live terminal buffer census', () => {
       panes: 1,
       lines: 10,
       cells: 1_000,
-      altScreenPanes: 0
+      altScreenPanes: 0,
+      droppedPanes: 1
     })
   })
 
   it('prefers a manager census over materializing public pane views', () => {
     const counted = {
       resetWebglTextureAtlases: vi.fn<() => void>(),
-      getPaneBufferCensus: () => ({ panes: 2, lines: 30, cells: 3_000, altScreenPanes: 1 }),
+      getPaneBufferCensus: () => ({
+        panes: 2,
+        lines: 30,
+        cells: 3_000,
+        altScreenPanes: 1,
+        droppedPanes: 0
+      }),
       getPanes: vi.fn(() => [{ id: 1, terminal: terminal(80, 10) }])
     }
     registerLivePaneManager(counted)
@@ -347,7 +397,8 @@ describe('live terminal buffer census', () => {
       panes: 2,
       lines: 30,
       cells: 3_000,
-      altScreenPanes: 1
+      altScreenPanes: 1,
+      droppedPanes: 0
     })
     expect(counted.getPanes).not.toHaveBeenCalled()
   })
@@ -359,7 +410,30 @@ describe('live terminal buffer census', () => {
       panes: 1,
       lines: 0,
       cells: 0,
-      altScreenPanes: 0
+      altScreenPanes: 0,
+      droppedPanes: 0
+    })
+  })
+
+  // Why the prototype and not a constructed manager: PaneManager needs a mounted DOM
+  // root, and the only thing unpinned is that its census reads the live pane map
+  // instead of some other source. A manager that returns zeros here is otherwise green.
+  it('sums the real manager pane map, not a stale or empty source', () => {
+    const panes = new Map<number, { terminal: unknown }>([
+      [1, { terminal: terminal(80, 10) }],
+      [2, { terminal: terminal(100, 20, true) }]
+    ])
+
+    const census = PaneManager.prototype.getPaneBufferCensus.call({
+      panes
+    } as unknown as PaneManager)
+
+    expect(census).toEqual({
+      panes: 2,
+      lines: 30,
+      cells: 2_800,
+      altScreenPanes: 1,
+      droppedPanes: 0
     })
   })
 })

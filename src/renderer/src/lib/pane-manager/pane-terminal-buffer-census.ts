@@ -16,6 +16,8 @@ export type TerminalBufferCensus = {
   lines: number
   cells: number
   altScreenPanes: number
+  /** Panes whose buffer could not be read — a lower bound, never decremented. */
+  droppedPanes: number
 }
 
 export function sumTerminalBufferSizes(
@@ -25,6 +27,7 @@ export function sumTerminalBufferSizes(
   let lines = 0
   let cells = 0
   let altScreenPanes = 0
+  let droppedPanes = 0
   for (const pane of managedPanes) {
     try {
       const terminal = pane.terminal as XtermBufferShape | undefined
@@ -45,8 +48,10 @@ export function sumTerminalBufferSizes(
     } catch {
       // Why kept although a disposed xterm returns values rather than throwing
       // (measured): `terminal` is reached through a pane the caller may be tearing
-      // down, and one bad pane must not sink the census for its siblings.
+      // down, and one bad pane must not sink the census for its siblings. Counted
+      // rather than swallowed so a low `panes` cannot read as "few terminals live".
+      droppedPanes += 1
     }
   }
-  return { panes, lines, cells, altScreenPanes }
+  return { panes, lines, cells, altScreenPanes, droppedPanes }
 }

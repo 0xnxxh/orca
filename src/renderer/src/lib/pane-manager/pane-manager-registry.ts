@@ -125,12 +125,15 @@ export function getLivePaneCensus(): { managers: number; panes: number } {
  *
  * `lines`/`cells` count the normal buffer only; `altScreenPanes` says how many panes
  * were additionally holding a viewport-sized alternate buffer at collection time.
+ * `droppedPanes` is what `panes` is missing, so a small `panes` cannot be read as
+ * "few terminals were live" when it really means "most reads threw".
  */
 export function getLiveTerminalBufferCensus(): TerminalBufferCensus {
   let panes = 0
   let lines = 0
   let cells = 0
   let altScreenPanes = 0
+  let droppedPanes = 0
   for (const manager of liveManagers) {
     let census: TerminalBufferCensus
     try {
@@ -138,14 +141,26 @@ export function getLiveTerminalBufferCensus(): TerminalBufferCensus {
       // per pane, which is waste on the crash path. Same trade as getPaneCount above.
       census = manager.getPaneBufferCensus?.() ?? sumTerminalBufferSizes(manager.getPanes?.() ?? [])
     } catch {
+      droppedPanes += countPanesLostToFailedCensus(manager)
       continue
     }
     panes += census.panes
     lines += census.lines
     cells += census.cells
     altScreenPanes += census.altScreenPanes
+    droppedPanes += census.droppedPanes
   }
-  return { panes, lines, cells, altScreenPanes }
+  return { panes, lines, cells, altScreenPanes, droppedPanes }
+}
+
+/** How many panes a failed manager census lost, as a lower bound: a manager that
+ *  cannot report its count still lost at least one. */
+function countPanesLostToFailedCensus(manager: { getPaneCount?: () => number }): number {
+  try {
+    return Math.max(manager.getPaneCount?.() ?? 1, 1)
+  } catch {
+    return 1
+  }
 }
 
 registerRendererMemoryProfileContributor('liveTerminalBuffers', getLiveTerminalBufferCensus)
