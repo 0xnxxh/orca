@@ -71,11 +71,32 @@ describe('resolveActiveTabOwnerWorktreeId', () => {
     expect(owner).toBe('')
   })
 
-  it('breadcrumbs a given tab id only once so it cannot flood the ring', () => {
+  it('breadcrumbs a given tab id once per verdict so it cannot flood the ring', () => {
     const maps = { 'wt-a': [tab('t1', 'wt-a')], 'wt-b': [tab('t1', 'wt-b')] }
     for (let i = 0; i < 5; i += 1) {
       resolveActiveTabOwnerWorktreeId(maps, 'wt-a', 't1')
     }
     expect(recordRendererCrashBreadcrumb).toHaveBeenCalledTimes(1)
+  })
+
+  // Why: the active worktree changes under a persisting duplicate, and a guard
+  // keyed on the tab id alone drops the non-converging sample once that tab has
+  // already reported a benign one — the exact payload the crumb exists to catch.
+  it('still reports a non-converging verdict after that tab id reported a converging one', () => {
+    const maps = { 'wt-other': [tab('t1', 'wt-other')], 'wt-active': [tab('t1', 'wt-active')] }
+    resolveActiveTabOwnerWorktreeId(maps, 'wt-active', 't1')
+    resolveActiveTabOwnerWorktreeId(maps, 'wt-third', 't1')
+    resolveActiveTabOwnerWorktreeId(maps, 'wt-third', 't1')
+
+    expect(recordRendererCrashBreadcrumb.mock.calls).toEqual([
+      [
+        'terminal_tab_id_owned_by_multiple_worktrees',
+        { ownerCount: 2, resolvedToActiveWorktree: true }
+      ],
+      [
+        'terminal_tab_id_owned_by_multiple_worktrees',
+        { ownerCount: 2, resolvedToActiveWorktree: false }
+      ]
+    ])
   })
 })

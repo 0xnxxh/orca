@@ -1,11 +1,11 @@
 import type { TerminalTab } from '../../../../shared/types'
 import { recordRendererCrashBreadcrumb } from '../../lib/crash-breadcrumb-recorder'
 
-const reportedDuplicateTabIds = new Set<string>()
+const reportedDuplicateTabVerdicts = new Set<string>()
 
-/** Test seam: the duplicate breadcrumb is once-per-tab-id per session. */
+/** Test seam: the duplicate breadcrumb is once-per-tab-id-per-verdict per session. */
 export function _resetDuplicateTabOwnerBreadcrumbsForTests(): void {
-  reportedDuplicateTabIds.clear()
+  reportedDuplicateTabVerdicts.clear()
 }
 
 /**
@@ -44,11 +44,19 @@ export function resolveActiveTabOwnerWorktreeId(
 
   // Why breadcrumb: no production origin for a duplicated tab id is known yet,
   // so a crash bundle carrying this is what proves or kills the hypothesis.
-  if (ownerCount > 1 && !reportedDuplicateTabIds.has(tabId)) {
-    reportedDuplicateTabIds.add(tabId)
+  // Why the verdict is part of the guard key: only `false` says the activation
+  // could not converge activeTabId, and the active worktree changes under a
+  // persisting duplicate — keyed on the id alone, a tab whose first duplicate
+  // resolved benignly would suppress the sample the crumb exists to capture.
+  // Still at most two per tab id, and the main process coalesces each verdict
+  // into its own single ring entry, so the flood bound is unchanged.
+  const resolvedToActiveWorktree = activeOwnerId !== null
+  const verdictKey = `${tabId}:${resolvedToActiveWorktree}`
+  if (ownerCount > 1 && !reportedDuplicateTabVerdicts.has(verdictKey)) {
+    reportedDuplicateTabVerdicts.add(verdictKey)
     recordRendererCrashBreadcrumb('terminal_tab_id_owned_by_multiple_worktrees', {
       ownerCount,
-      resolvedToActiveWorktree: activeOwnerId !== null
+      resolvedToActiveWorktree
     })
   }
 
