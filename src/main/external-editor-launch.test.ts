@@ -32,47 +32,95 @@ describe('resolveExternalEditorLaunchSpec', () => {
     })
   })
 
-  it('prefers JetBrains *64.exe GUI launchers over idea.cmd on Windows', () => {
-    resolveCliCommandMock.mockImplementation((command: string) => {
-      if (command === 'idea64') {
-        return 'C:\\Program Files\\JetBrains\\IntelliJ IDEA\\bin\\idea64.exe'
-      }
-      if (command === 'idea') {
-        return 'C:\\Users\\me\\AppData\\Local\\JetBrains\\Toolbox\\scripts\\idea.cmd'
-      }
-      return command
-    })
+  it('prefers the JetBrains *64.exe colocated with the resolved idea.cmd on Windows', () => {
+    const installBin = 'C:\\Program Files\\JetBrains\\IntelliJ IDEA\\bin'
+    resolveCliCommandMock.mockImplementation((command: string) =>
+      command === 'idea' ? `${installBin}\\idea.cmd` : command
+    )
 
     expect(
-      resolveExternalEditorLaunchSpec('idea', 'C:\\workspaces\\orca', { platform: 'win32' })
+      resolveExternalEditorLaunchSpec('idea', 'C:\\workspaces\\orca', {
+        platform: 'win32',
+        fileExists: (candidate) => candidate === `${installBin}\\idea64.exe`
+      })
     ).toEqual({
       kind: 'executable',
       hideWindowsConsole: true,
-      spawnCmd: 'C:\\Program Files\\JetBrains\\IntelliJ IDEA\\bin\\idea64.exe',
+      spawnCmd: `${installBin}\\idea64.exe`,
       spawnArgs: ['C:\\workspaces\\orca']
     })
-    expect(resolveCliCommandMock).toHaveBeenCalledWith('idea64', { platform: 'win32' })
-    expect(resolveCliCommandMock).not.toHaveBeenCalledWith('idea', expect.anything())
+    // Why: a bare PATH `idea64` may belong to a different, stale install.
+    expect(resolveCliCommandMock).toHaveBeenCalledWith('idea', { platform: 'win32' })
+    expect(resolveCliCommandMock).not.toHaveBeenCalledWith('idea64', expect.anything())
   })
 
-  it('falls back to the idea.cmd shim when idea64 is not installed', () => {
-    resolveCliCommandMock.mockImplementation((command: string) => {
-      if (command === 'idea64') {
-        return 'idea64'
-      }
-      if (command === 'idea') {
-        return 'C:\\Users\\me\\AppData\\Local\\JetBrains\\Toolbox\\scripts\\idea.cmd'
-      }
-      return command
-    })
+  it('prefers a colocated .exe over an idea64.cmd shim when the user names idea64', () => {
+    const installBin = 'C:\\Program Files\\JetBrains\\GoLand\\bin'
+    resolveCliCommandMock.mockImplementation((command: string) =>
+      command === 'goland64' ? `${installBin}\\goland64.cmd` : command
+    )
 
     expect(
-      resolveExternalEditorLaunchSpec('idea', 'C:\\workspaces\\orca', { platform: 'win32' })
+      resolveExternalEditorLaunchSpec('goland64', 'C:\\workspaces\\orca', {
+        platform: 'win32',
+        fileExists: (candidate) => candidate === `${installBin}\\goland64.exe`
+      }).spawnCmd
+    ).toBe(`${installBin}\\goland64.exe`)
+  })
+
+  it('keeps the Toolbox idea.cmd shim and detaches it when no GUI exe sits beside it', () => {
+    const toolboxShim = 'C:\\Users\\me\\AppData\\Local\\JetBrains\\Toolbox\\scripts\\idea.cmd'
+    resolveCliCommandMock.mockImplementation((command: string) =>
+      command === 'idea' ? toolboxShim : command
+    )
+
+    expect(
+      resolveExternalEditorLaunchSpec('idea', 'C:\\workspaces\\orca', {
+        platform: 'win32',
+        fileExists: () => false
+      })
     ).toEqual({
       kind: 'executable',
       hideWindowsConsole: true,
-      spawnCmd: 'C:\\Users\\me\\AppData\\Local\\JetBrains\\Toolbox\\scripts\\idea.cmd',
+      detachedGui: true,
+      spawnCmd: toolboxShim,
       spawnArgs: ['C:\\workspaces\\orca']
+    })
+  })
+
+  it('detaches a directly configured JetBrains shim path', () => {
+    expect(
+      resolveExternalEditorLaunchSpec('C:\\Tools\\WebStorm\\bin\\webstorm.bat', 'C:\\ws', {
+        platform: 'win32',
+        fileExists: () => false
+      })
+    ).toEqual({
+      kind: 'executable',
+      hideWindowsConsole: true,
+      detachedGui: true,
+      spawnCmd: 'C:\\Tools\\WebStorm\\bin\\webstorm.bat',
+      spawnArgs: ['C:\\ws']
+    })
+  })
+
+  // Why: `start` re-parses argv, so only JetBrains shims may take that path.
+  it.each([
+    ['code', 'C:\\Tools\\code.cmd', ['C:\\workspaces\\orca']],
+    [
+      'cursor',
+      'C:\\Users\\me\\AppData\\Local\\Programs\\cursor\\bin\\cursor.cmd',
+      ['--new-window', 'C:\\workspaces\\orca']
+    ]
+  ])('does not detach the %s batch shim through start', (command, resolvedCommand, spawnArgs) => {
+    resolveCliCommandMock.mockImplementation(() => resolvedCommand)
+
+    expect(
+      resolveExternalEditorLaunchSpec(command, 'C:\\workspaces\\orca', { platform: 'win32' })
+    ).toEqual({
+      kind: 'executable',
+      hideWindowsConsole: true,
+      spawnCmd: resolvedCommand,
+      spawnArgs
     })
   })
 
@@ -129,7 +177,7 @@ describe('resolveExternalEditorLaunchSpec', () => {
     })
   })
 
-  it('wraps non-start GUI compound Windows commands with start /B', () => {
+  it('runs GUI compound Windows commands verbatim instead of re-parsing them under start', () => {
     expect(
       resolveExternalEditorLaunchSpec('code --reuse-window', 'C:\\workspaces\\orca', {
         platform: 'win32'
@@ -138,7 +186,7 @@ describe('resolveExternalEditorLaunchSpec', () => {
       kind: 'shell',
       hideWindowsConsole: true,
       spawnCmd: getCmdExePath(),
-      spawnArgs: ['/d', '/s', '/c', 'start "" /B code --reuse-window C:\\workspaces\\orca']
+      spawnArgs: ['/d', '/s', '/c', 'code --reuse-window C:\\workspaces\\orca']
     })
   })
 
@@ -311,7 +359,7 @@ describe('resolveExternalEditorLaunchSpec', () => {
       kind: 'shell',
       hideWindowsConsole: true,
       spawnCmd: getCmdExePath(),
-      spawnArgs: ['/d', '/s', '/c', `start "" /B code --reuse-window ${pathValue}`]
+      spawnArgs: ['/d', '/s', '/c', `code --reuse-window ${pathValue}`]
     })
   })
 })

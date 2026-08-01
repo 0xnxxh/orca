@@ -1,45 +1,46 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { basename, posix, win32 } from 'node:path'
+import { posix, win32 } from 'node:path'
 import { parseWslUncPath } from '../shared/wsl-paths'
 import { isVsCodeLauncherExecutable } from '../shared/vscode-remote-ssh-launcher'
 import { resolveCliCommand } from './codex-cli/command'
+import {
+  getLauncherBaseName,
+  hasMatchingOuterQuotes,
+  stripMatchingQuotes
+} from './editor-launcher-name'
+import {
+  isJetBrainsConsoleShim,
+  resolveColocatedJetBrainsGuiExecutable
+} from './jetbrains-windows-gui-launchers'
 import { getCmdExePath, getSpawnArgsForWindows } from './win32-utils'
 
 export const EXTERNAL_EDITOR_CLI_COMMAND = 'code'
 const WINDOWS_CONSOLE_EDITORS = new Set(['nvim', 'vim'])
 
-// Why: JetBrains installers ship `*64.exe` GUI-subsystem binaries. The
-// Toolbox/installer `.cmd`/`.bat` shims often chain through console helpers
-// (`java.exe`), which allocate a visible Command Prompt even when the parent
-// spawn uses windowsHide — the STA-3040 "prompt window" loop on Windows.
-const JETBRAINS_WINDOWS_GUI_LAUNCHERS: Readonly<Record<string, string>> = {
-  idea: 'idea64',
-  webstorm: 'webstorm64',
-  pycharm: 'pycharm64',
-  phpstorm: 'phpstorm64',
-  goland: 'goland64',
-  rider: 'rider64',
-  clion: 'clion64',
-  rubymine: 'rubymine64',
-  datagrip: 'datagrip64',
-  rustrover: 'rustrover64',
-  studio: 'studio64'
+export type ExternalEditorExecutableLaunchSpec = {
+  kind: 'executable'
+  hideWindowsConsole: boolean
+  /**
+   * Set only for Windows batch shims that would otherwise leave a Command
+   * Prompt behind; routes the spawn through `start "" /B`. Left unset
+   * elsewhere because `start` re-parses quoted argv.
+   */
+  detachedGui?: boolean
+  spawnCmd: string
+  spawnArgs: string[]
+}
+
+export type ExternalEditorShellLaunchSpec = {
+  kind: 'shell'
+  hideWindowsConsole: boolean
+  spawnCmd: string
+  spawnArgs: string[]
 }
 
 export type ExternalEditorLaunchSpec =
-  | {
-      kind: 'executable'
-      hideWindowsConsole: boolean
-      spawnCmd: string
-      spawnArgs: string[]
-    }
-  | {
-      kind: 'shell'
-      hideWindowsConsole: boolean
-      spawnCmd: string
-      spawnArgs: string[]
-    }
+  | ExternalEditorExecutableLaunchSpec
+  | ExternalEditorShellLaunchSpec
 
 function escapePosixPathForShell(pathValue: string): string {
   if (/^[a-zA-Z0-9_./@:-]+$/.test(pathValue)) {
@@ -56,41 +57,6 @@ function escapePathForShell(pathValue: string, platform: NodeJS.Platform): strin
   return platform === 'win32'
     ? escapeWindowsPathForShell(pathValue)
     : escapePosixPathForShell(pathValue)
-}
-
-function getLauncherBaseName(command: string, options: { shellCommand?: boolean } = {}): string {
-  const normalized = options.shellCommand
-    ? getLeadingShellCommandToken(command)
-    : stripMatchingQuotes(command)
-  const name = normalized.includes('\\') ? win32.basename(normalized) : basename(normalized)
-  return name.replace(/\.(?:cmd|exe|bat)$/i, '').toLowerCase()
-}
-
-function getLeadingShellCommandToken(command: string): string {
-  const trimmed = command.trim()
-  const quote = trimmed[0]
-  if (quote === '"' || quote === "'") {
-    const closingIndex = trimmed.indexOf(quote, 1)
-    if (closingIndex > 0) {
-      return trimmed.slice(1, closingIndex)
-    }
-  }
-  return trimmed.split(/\s+/, 1)[0] ?? ''
-}
-
-function stripMatchingQuotes(value: string): string {
-  const trimmed = value.trim()
-  const quote = trimmed[0]
-  if ((quote === '"' || quote === "'") && trimmed.endsWith(quote)) {
-    return trimmed.slice(1, -1)
-  }
-  return trimmed
-}
-
-function hasMatchingOuterQuotes(value: string): boolean {
-  const trimmed = value.trim()
-  const quote = trimmed[0]
-  return (quote === '"' || quote === "'") && trimmed.endsWith(quote)
 }
 
 function isWindowsExecutablePath(command: string): boolean {
@@ -152,18 +118,33 @@ function isCompoundShellCommand(command: string): boolean {
   return /\s/.test(command)
 }
 
-function resolveSimpleEditorCommand(command: string, platform: NodeJS.Platform): string {
-  if (platform === 'win32') {
-    const jetbrainsGui = JETBRAINS_WINDOWS_GUI_LAUNCHERS[command.toLowerCase()]
-    if (jetbrainsGui) {
-      const resolvedGui = resolveCliCommand(jetbrainsGui, { platform })
-      // Why: resolveCliCommand returns the input name when nothing is found.
-      if (resolvedGui !== jetbrainsGui) {
-        return resolvedGui
-      }
-    }
+function resolveSimpleEditorCommand(
+  command: string,
+  platform: NodeJS.Platform,
+  fileExists: (path: string) => boolean
+): string {
+  const resolved = resolveCliCommand(command, { platform })
+  if (platform !== 'win32') {
+    return resolved
   }
-  return resolveCliCommand(command, { platform })
+  return resolveColocatedJetBrainsGuiExecutable(resolved, fileExists) ?? resolved
+}
+
+function buildExecutableLaunchSpec(
+  editorCommand: string,
+  pathValue: string,
+  platform: NodeJS.Platform
+): ExternalEditorExecutableLaunchSpec {
+  const spec: ExternalEditorExecutableLaunchSpec = {
+    kind: 'executable',
+    hideWindowsConsole: !shouldShowWindowsConsole(editorCommand, platform),
+    spawnCmd: editorCommand,
+    spawnArgs: buildExecutableArgs(editorCommand, pathValue, platform)
+  }
+  if (spec.hideWindowsConsole && isJetBrainsConsoleShim(editorCommand, platform)) {
+    spec.detachedGui = true
+  }
+  return spec
 }
 
 function buildShellLaunchSpec(
@@ -173,19 +154,16 @@ function buildShellLaunchSpec(
 ): ExternalEditorLaunchSpec {
   const shellCommand = `${command} ${escapePathForShell(pathValue, platform)}`
   if (platform === 'win32') {
-    const hideWindowsConsole = !shouldShowWindowsConsole(command, platform, {
-      shellCommand: true
-    })
-    // Why: GUI compound commands (not terminal editors) use start /B so a
-    // Command Prompt does not linger; skip when the user already used `start`.
-    const alreadyUsesStart = /^\s*start(\.exe)?\b/i.test(command)
-    const wrappedCommand =
-      hideWindowsConsole && !alreadyUsesStart ? `start "" /B ${shellCommand}` : shellCommand
+    // Why: no `start` wrap here. `start` re-parses the line — it swallows the
+    // first quoted operand as a window title and mangles remote paths with
+    // spaces — and on a batch target it leaves a resident nested `cmd /K`.
+    // User-authored compound commands run verbatim; users who want a detached
+    // launch already write `start` themselves.
     return {
       kind: 'shell',
-      hideWindowsConsole,
+      hideWindowsConsole: !shouldShowWindowsConsole(command, platform, { shellCommand: true }),
       spawnCmd: getCmdExePath(),
-      spawnArgs: ['/d', '/s', '/c', wrappedCommand]
+      spawnArgs: ['/d', '/s', '/c', shellCommand]
     }
   }
   return {
@@ -206,26 +184,18 @@ export function resolveExternalEditorLaunchSpec(
   const trimmed = command?.trim() || EXTERNAL_EDITOR_CLI_COMMAND
 
   if (isDirectExecutablePath(trimmed, platform, fileExists)) {
-    const editorCommand = stripMatchingQuotes(trimmed)
-    return {
-      kind: 'executable',
-      hideWindowsConsole: !shouldShowWindowsConsole(editorCommand, platform),
-      spawnCmd: editorCommand,
-      spawnArgs: buildExecutableArgs(editorCommand, pathValue, platform)
-    }
+    return buildExecutableLaunchSpec(stripMatchingQuotes(trimmed), pathValue, platform)
   }
 
   if (isCompoundShellCommand(trimmed)) {
     return buildShellLaunchSpec(trimmed, pathValue, platform)
   }
 
-  const editorCommand = resolveSimpleEditorCommand(trimmed, platform)
-  return {
-    kind: 'executable',
-    hideWindowsConsole: !shouldShowWindowsConsole(editorCommand, platform),
-    spawnCmd: editorCommand,
-    spawnArgs: buildExecutableArgs(editorCommand, pathValue, platform)
-  }
+  return buildExecutableLaunchSpec(
+    resolveSimpleEditorCommand(trimmed, platform, fileExists),
+    pathValue,
+    platform
+  )
 }
 
 export function resolveVsCodeRemoteSshLaunchSpec(
@@ -264,11 +234,11 @@ function resolveExternalEditorSpawn(launchSpec: ExternalEditorLaunchSpec): {
   spawnArgs: string[]
   windowsHide: boolean
 } {
-  // Why: GUI Open In .cmd shims (idea.cmd) use start /B so no Command Prompt
-  // lingers; terminal editors keep the waiting form (nvim needs a console).
+  // Why: only shims flagged during resolution (JetBrains) take the start /B
+  // detach; every other launcher keeps the waiting form so its argv survives.
   if (launchSpec.kind === 'executable') {
     const spawned = getSpawnArgsForWindows(launchSpec.spawnCmd, launchSpec.spawnArgs, {
-      detachedGui: launchSpec.hideWindowsConsole
+      detachedGui: launchSpec.detachedGui === true
     })
     return { ...spawned, windowsHide: launchSpec.hideWindowsConsole }
   }

@@ -301,7 +301,7 @@ describe('registerShellHandlers', () => {
         'editor-cli',
         [normalize(workspacePath)],
         {
-          detachedGui: true
+          detachedGui: false
         }
       )
       expect(spawnMock).toHaveBeenCalledWith('editor-cli', [normalize(workspacePath)], {
@@ -328,7 +328,7 @@ describe('registerShellHandlers', () => {
         'editor-cli',
         [normalize(workspacePath)],
         {
-          detachedGui: true
+          detachedGui: false
         }
       )
       expect(spawnMock).toHaveBeenCalledWith('editor-cli', [normalize(workspacePath)], {
@@ -353,7 +353,7 @@ describe('registerShellHandlers', () => {
         'editor-cli',
         [normalize(workspacePath)],
         {
-          detachedGui: true
+          detachedGui: false
         }
       )
     })
@@ -373,7 +373,7 @@ describe('registerShellHandlers', () => {
           codeShim,
           ['--remote', 'wsl+Ubuntu Preview', '/home/Ada Lovelace/project'],
           {
-            detachedGui: true
+            detachedGui: false
           }
         )
       }
@@ -410,6 +410,37 @@ describe('registerShellHandlers', () => {
       }
     })
 
+    it('detaches JetBrains batch shims on Windows but leaves other launchers waiting', async () => {
+      const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      const workspacePath = normalize(resolve('workspace'))
+      const ideaShim = 'C:\\Users\\me\\AppData\\Local\\JetBrains\\Toolbox\\scripts\\idea.cmd'
+      const codeShim = 'C:\\Tools\\code.cmd'
+      const handler = getHandler('shell:openInExternalEditor')
+
+      try {
+        resolveCliCommandMock.mockReturnValueOnce(ideaShim)
+        await expect(handler({}, { path: workspacePath, command: 'idea' })).resolves.toEqual({
+          ok: true
+        })
+        expect(getSpawnArgsForWindowsMock).toHaveBeenLastCalledWith(ideaShim, [workspacePath], {
+          detachedGui: true
+        })
+
+        resolveCliCommandMock.mockReturnValueOnce(codeShim)
+        await expect(handler({}, { path: workspacePath, command: 'code' })).resolves.toEqual({
+          ok: true
+        })
+        expect(getSpawnArgsForWindowsMock).toHaveBeenLastCalledWith(codeShim, [workspacePath], {
+          detachedGui: false
+        })
+      } finally {
+        if (platformDescriptor) {
+          Object.defineProperty(process, 'platform', platformDescriptor)
+        }
+      }
+    })
+
     it('forces Cursor launcher folders into a new window', async () => {
       resolveCliCommandMock.mockReturnValueOnce('/usr/local/bin/cursor')
       const workspacePath = resolve('workspace')
@@ -422,7 +453,7 @@ describe('registerShellHandlers', () => {
         '/usr/local/bin/cursor',
         ['--new-window', normalize(workspacePath)],
         {
-          detachedGui: true
+          detachedGui: false
         }
       )
       resolveCliCommandMock.mockReturnValueOnce('C:\\Cursor\\cursor.cmd')
@@ -433,7 +464,7 @@ describe('registerShellHandlers', () => {
         'C:\\Cursor\\cursor.cmd',
         ['--new-window', normalize(workspacePath)],
         {
-          detachedGui: true
+          detachedGui: false
         }
       )
     })
@@ -466,7 +497,7 @@ describe('registerShellHandlers', () => {
         'editor-cli',
         [normalize(workspacePath)],
         {
-          detachedGui: true
+          detachedGui: false
         }
       )
       expect(spawnMock).toHaveBeenCalledWith('platform-runner', ['platform-arg'], {
@@ -542,7 +573,7 @@ describe('registerShellHandlers', () => {
         '/usr/local/bin/code',
         ['--remote', 'ssh-remote+builder', remotePath],
         {
-          detachedGui: true
+          detachedGui: false
         }
       )
     })
@@ -569,7 +600,7 @@ describe('registerShellHandlers', () => {
         'C:\\Tools\\code.cmd',
         ['--remote', 'ssh-remote+Ada@win-builder.example.com', remotePath],
         {
-          detachedGui: true
+          detachedGui: false
         }
       )
     })
@@ -594,7 +625,7 @@ describe('registerShellHandlers', () => {
         '/usr/local/bin/code',
         ['--remote', 'ssh-remote+builder.example.com', '/srv/project'],
         {
-          detachedGui: true
+          detachedGui: false
         }
       )
     })

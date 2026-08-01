@@ -44,6 +44,10 @@ export type GetSpawnArgsForWindowsOptions = {
    * GUI launchers (Open In apps) should not leave a lingering Command Prompt.
    * `start "" /B` returns immediately and keeps console-subsystem children of
    * `.cmd`/`.bat` shims from allocating a fresh visible prompt window.
+   *
+   * Opt-in only: `start` re-parses the command line, so callers whose argv can
+   * carry quoted operands (VS Code `--remote` authorities and remote paths with
+   * spaces) must leave this off.
    */
   detachedGui?: boolean
 }
@@ -62,11 +66,15 @@ export function getSpawnArgsForWindows(
 
     // Why: separate argv entries let Node quote spaces without breaking cmd.
     if (options.detachedGui) {
-      // Why: empty title (`""`) is required so `start` does not treat the first
-      // quoted path as a window title; `/B` avoids a new console window.
+      // Why: `start` launches a batch target through a nested `cmd /K`, which
+      // stays resident after the script ends — `/B` only suppresses a *new*
+      // console, so the shim leaks a hidden cmd.exe. Handing `start` an inner
+      // `cmd /d /c` makes that interpreter exit with the script. The empty
+      // title (`""`) keeps `start` from eating a quoted path as a window title.
+      const cmdExePath = getCmdExePath()
       return {
-        spawnCmd: getCmdExePath(),
-        spawnArgs: ['/d', '/c', 'start', '""', '/B', command, ...args]
+        spawnCmd: cmdExePath,
+        spawnArgs: ['/d', '/c', 'start', '""', '/B', cmdExePath, '/d', '/c', command, ...args]
       }
     }
     return { spawnCmd: getCmdExePath(), spawnArgs: ['/d', '/c', command, ...args] }
