@@ -13,7 +13,7 @@ import {
   type AiVaultSession
 } from '../../../../shared/ai-vault-types'
 import { translate } from '@/i18n/i18n'
-import { SessionTime } from './AiVaultSessionDetails'
+import { SessionTime } from './ai-vault-session-time'
 import { sessionModelLabel } from './ai-vault-session-display'
 import { agentLabel } from './ai-vault-session-filters'
 import {
