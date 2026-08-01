@@ -1,12 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { getDefaultWorkspaceSession } from '../../shared/constants'
 import { makePaneKey } from '../../shared/stable-pane-id'
-import type {
-  FolderWorkspace,
-  ProjectGroup,
-  RuntimeMobileSessionTabsResult,
-  WorkspaceSessionState
-} from '../../shared/types'
+import type { FolderWorkspace, ProjectGroup, WorkspaceSessionState } from '../../shared/types'
+import type { RuntimeMobileSessionTabsResult } from '../../shared/runtime-types'
 import { OrcaRuntimeService } from './orca-runtime'
 
 const electronMocks = vi.hoisted(() => {
