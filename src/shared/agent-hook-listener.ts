@@ -2471,7 +2471,16 @@ function normalizeClaudeSubagentLifecycleEvent(
       // Additive only — a complete-inventory reap here would kill a just-parked teammate row
       // before its TeammateIdle confirmation arrives.
       const inventory = readClaudeBackgroundAgentTasks(hookPayload)
-      if (
+      if (inventory.present && inventory.tasks.length === 0 && roster) {
+        // Why: an empty complete inventory reaps only claims not backed by live lifecycle events
+        // (restored/inventory-derived phantoms). A delayed stale stop's empty list must not clear
+        // a newer live start's row — that is the uncorrelated-retirement race again.
+        for (const [id, tracked] of roster) {
+          if (tracked.restoredFromSnapshot || tracked.backgroundTasksAuthoritative) {
+            roster.delete(id)
+          }
+        }
+      } else if (
         inventory.present &&
         (roster ||
           inventory.tasks.some(
@@ -2484,11 +2493,9 @@ function normalizeClaudeSubagentLifecycleEvent(
           getOrCreateClaudeSubagentRoster(state, paneKey),
           inventory.tasks,
           Date.now(),
-          // Why: an empty inventory is complete by construction and proves nothing is left
-          // alive (lead-path rule), clearing restored phantoms; a non-empty one folds
-          // additively — its reap would kill a just-parked teammate row before its
-          // TeammateIdle confirmation arrives.
-          { inventoryComplete: inventory.tasks.length === 0 }
+          // Why: additive only — a complete-inventory reap here would kill a just-parked
+          // teammate row before its TeammateIdle confirmation arrives.
+          { inventoryComplete: false }
         )
       }
       // Why: a blocked child that dies without another tool event would pin its permission/question wait on the pane forever — nothing else references that agent again.

@@ -3350,6 +3350,28 @@ describe('shared agent-hook-listener', () => {
       expect(stopped?.payload.subagents).toBeUndefined()
     })
 
+    it('keeps a newer live start alive through a delayed stale stop with an empty inventory', () => {
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a-old',
+        agent_type: 'general-purpose'
+      })
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a-new',
+        agent_type: 'general-purpose'
+      })
+      // Why: a-old's delayed stop reports the empty inventory captured before
+      // a-new existed; clearing a-new from it would retire newer live work.
+      const staleStop = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'a-old',
+        background_tasks: []
+      })
+      expect(staleStop?.payload.state).toBe('working')
+      expect(staleStop?.payload.subagents).toEqual([expect.objectContaining({ id: 'a-new' })])
+    })
+
     it('clears restored phantom rows when a no-lead stop carries a complete empty inventory', () => {
       seedClaudeSubagentRosterFromSnapshots(state, PANE_KEY, [
         { id: 'a1', state: 'working', startedAt: 1, agentType: 'general-purpose' },
