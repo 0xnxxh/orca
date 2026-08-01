@@ -219,7 +219,7 @@ export class PaneManager {
   }
 
   /** Why separate from getPanes: same crash-path reason as getPaneCount —
-   *  measured 3.2x cheaper at 200 panes than materializing a view per pane. */
+   *  measured 2.5x cheaper at 200 panes than materializing a view per pane. */
   getPaneBufferCensus(): TerminalBufferCensus {
     return sumTerminalBufferSizes(this.panes.values())
   }
