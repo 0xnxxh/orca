@@ -7,8 +7,16 @@ const storeState = {
   tabsByWorktree: {
     'repo::worktree': [{ id: 'tab-1', ptyId: 'ssh:target@@pty-1' }]
   },
-  ptyIdsByTabId: { 'tab-1': ['ssh:target@@pty-1'] }
+  ptyIdsByTabId: { 'tab-1': ['ssh:target@@pty-1'] },
+  pendingReconnectPtyIdByTabId: { 'tab-2': 'ssh:target@@pty-pending' },
+  terminalLayoutsByTabId: { 'tab-1': { ptyIdsByLeafId: { leaf: 'ssh:target@@pty-split' } } }
 }
+
+/** Collection order: tab bindings, then pending reconnects, then split-pane layouts. */
+const BOUND_PTY_IDS = ['ssh:target@@pty-1', 'ssh:target@@pty-pending', 'ssh:target@@pty-split']
+
+const definitive = (ids: string[]): { id: string; authoritative: boolean }[] =>
+  ids.map((id) => ({ id, authoritative: false }))
 
 vi.mock('@/store', () => ({
   useAppStore: (selector: (state: typeof storeState) => unknown) => selector(storeState)
@@ -33,7 +41,7 @@ describe('useTerminalProviderSnapshotCapability', () => {
   })
 
   it('prefetches restored PTYs after render before activation is enabled', async () => {
-    resolveCapabilities.mockResolvedValue([{ id: 'ssh:target@@pty-1', authoritative: false }])
+    resolveCapabilities.mockResolvedValue(definitive(BOUND_PTY_IDS))
 
     renderHook(() => {
       useTerminalProviderSnapshotCapability(false)
@@ -41,12 +49,14 @@ describe('useTerminalProviderSnapshotCapability', () => {
     })
 
     await waitFor(() => expect(resolveCapabilities).toHaveBeenCalledOnce())
-    expect(resolveCapabilities).toHaveBeenCalledWith(['ssh:target@@pty-1'])
+    // Every id source, not just the tab bindings: synchronization prunes its cache to the
+    // ids it is handed, so a narrower list evicts what the startup prefetch resolved.
+    expect(resolveCapabilities).toHaveBeenCalledWith(BOUND_PTY_IDS)
   })
 
   it('does not poll again after a provider returns a definitive result', async () => {
     vi.useFakeTimers()
-    resolveCapabilities.mockResolvedValue([{ id: 'ssh:target@@pty-1', authoritative: false }])
+    resolveCapabilities.mockResolvedValue(definitive(BOUND_PTY_IDS))
     const hook = renderHook(() => useTerminalProviderSnapshotCapability(true))
     await vi.runAllTimersAsync()
 

@@ -137,28 +137,36 @@ export async function synchronizeTerminalProviderSnapshotCapabilities(
     refreshEarliestUnknownCapabilityRetry()
     return unknownCapabilityRetryDelayMs(nowMs)
   }
+  let settledAtMs = nowMs
   for (let offset = 0; offset < missing.length; offset += 512) {
     const batch = missing.slice(offset, offset + 512)
-    let resolved: SnapshotCapability[] | null
+    let resolved: SnapshotCapability[] | null = null
+    let resolutionFailed = false
     try {
       resolved = await resolveSnapshotCapabilityBatch(resolve, batch)
     } catch {
-      if (generation !== synchronizationGeneration) {
-        return null
-      }
+      resolutionFailed = true
+    }
+    // Why re-read: the await can span the resolution timeout, so a backoff scheduled
+    // from the pre-await instant is already due the moment it is written.
+    settledAtMs = observedAtMs ?? Date.now()
+    // Why not null: a superseded batch must not publish stale results, but the retry
+    // schedule is process-wide, so the caller still needs the live delay — reporting
+    // "nothing pending" here permanently stops its self-rescheduling loop.
+    if (generation !== synchronizationGeneration) {
+      return unknownCapabilityRetryDelayMs(settledAtMs)
+    }
+    if (resolutionFailed) {
       // Why: unknown capability must keep the pane mounted. Do not cache the
       // failure as supported; back off before retrying daemon startup.
       for (const id of batch) {
-        backOffUnknownCapability(id, nowMs)
+        backOffUnknownCapability(id, settledAtMs)
       }
       continue
     }
-    if (generation !== synchronizationGeneration) {
-      return null
-    }
     if (!resolved) {
       for (const id of missing.slice(offset)) {
-        backOffUnknownCapability(id, nowMs)
+        backOffUnknownCapability(id, settledAtMs)
       }
       break
     }
@@ -170,12 +178,12 @@ export async function synchronizeTerminalProviderSnapshotCapabilities(
         unknownCapabilityRetryAtByPtyId.delete(id)
         unknownCapabilityAttemptsByPtyId.delete(id)
       } else {
-        backOffUnknownCapability(id, nowMs)
+        backOffUnknownCapability(id, settledAtMs)
       }
     }
   }
   refreshEarliestUnknownCapabilityRetry()
-  return unknownCapabilityRetryDelayMs(observedAtMs === undefined ? Date.now() : nowMs)
+  return unknownCapabilityRetryDelayMs(settledAtMs)
 }
 
 export function startTerminalProviderSnapshotCapabilitySynchronization(
@@ -184,7 +192,15 @@ export function startTerminalProviderSnapshotCapabilitySynchronization(
   let disposed = false
   let retryTimer: ReturnType<typeof setTimeout> | undefined
   const synchronize = async (): Promise<void> => {
-    const retryDelayMs = await synchronizeTerminalProviderSnapshotCapabilities(livePtyIds)
+    // Why swallow into a stop: resolver failures are already handled inside, so a throw
+    // here is a programming error that would retry at 1 Hz forever. Giving up leaves the
+    // ids unresolved, which is the same eager-mount fallback an unknown capability gets.
+    const retryDelayMs = await synchronizeTerminalProviderSnapshotCapabilities(livePtyIds).catch(
+      (error: unknown) => {
+        console.error('[terminal] snapshot capability synchronization failed:', error)
+        return null
+      }
+    )
     if (!disposed && retryDelayMs !== null) {
       retryTimer = setTimeout(() => void synchronize(), Math.max(1, retryDelayMs))
     }

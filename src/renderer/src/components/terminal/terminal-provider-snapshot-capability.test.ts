@@ -200,6 +200,29 @@ describe('terminal provider snapshot capabilities', () => {
     expect(retryDelayMs).toBeNull()
   })
 
+  it('still reports a retry delay when a newer synchronization supersedes it', async () => {
+    // The startup prefetch can land mid-flight. Reporting "nothing pending" to the
+    // superseded caller stops its self-rescheduling loop for the life of the binding.
+    let releaseSuperseded: (
+      value: { id: string; authoritative: boolean | null }[]
+    ) => void = () => {}
+    const resolve = vi.fn(
+      async (ids: string[]): Promise<{ id: string; authoritative: boolean | null }[]> =>
+        ids[0] === 'slow-pty'
+          ? new Promise((release) => {
+              releaseSuperseded = release
+            })
+          : ids.map((id) => ({ id, authoritative: null }))
+    )
+
+    const superseded = synchronizeTerminalProviderSnapshotCapabilities(['slow-pty'], resolve, 1_000)
+    await Promise.resolve()
+    await synchronizeTerminalProviderSnapshotCapabilities(['other-pty'], resolve, 1_000)
+    releaseSuperseded([{ id: 'slow-pty', authoritative: null }])
+
+    expect(await superseded).not.toBeNull()
+  })
+
   it('re-probes an unknown PTY from scratch after it closes and a new one appears', async () => {
     const resolve = vi.fn(async () => [{ id: 'gone-pty', authoritative: null }])
 
