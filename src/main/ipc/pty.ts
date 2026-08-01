@@ -217,6 +217,7 @@ import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import { resolveLocalProjectRuntimeForWorktreeId } from '../local-project-runtime-resolution'
 import { isPtyIncarnationId } from '../../shared/pty-incarnation'
 import type { PtyListedSession } from '../../shared/pty-listed-session'
+import type { PtySpawnDisposition } from '../../shared/pty-spawn-disposition'
 
 // ─── Provider Registry ──────────────────────────────────────────────
 // Routes PTY operations by connectionId (null = local provider).
@@ -311,6 +312,7 @@ type PaneSpawnReservation = {
 }
 type PaneSpawnReservationResult = {
   id: string
+  spawnDisposition: PtySpawnDisposition
   launchConfig?: SleepingAgentLaunchConfig
 } & Partial<PtySpawnResult>
 // Why: mobile materialization and a newly-focused pane can race to spawn the same leaf; key by paneKey so the loser adopts the winner's PTY.
@@ -507,6 +509,12 @@ function resolvePaneSpawnReservation<T extends PaneSpawnReservationResult>(
     clearPaneSpawnReservation(paneKey, reservation)
   }
   return response
+}
+
+async function awaitPaneSpawnReservation(
+  reservation: PaneSpawnReservation
+): Promise<PaneSpawnReservationResult> {
+  return { ...(await reservation.promise), spawnDisposition: 'awaited' }
 }
 
 function settlePendingPaneSerializer(paneKey: string, gen: number): boolean {
@@ -4107,7 +4115,7 @@ export function registerPtyHandlers(
         ? paneSpawnReservationsByPaneKey.get(materializedPaneKey)
         : undefined
       if (existingPaneSpawn) {
-        return await existingPaneSpawn.promise
+        return await awaitPaneSpawnReservation(existingPaneSpawn)
       }
       const finishTerminalInstall = beginPtySpawnForWorktree(
         args.worktreeId,
@@ -4334,11 +4342,13 @@ export function registerPtyHandlers(
             leafId: owner.surface.leafId,
             ...(result.incarnationId ? { incarnationId: result.incarnationId } : {})
           })
-          return {
+          return resolvePaneSpawnReservation(materializedPaneKey, paneSpawnReservation, {
             id: result.id,
+            isReattach: true,
+            spawnDisposition: 'reattached',
             ...(result.incarnationId ? { incarnationId: result.incarnationId } : {}),
             agentSessionEnsure: result.agentSessionEnsure
-          }
+          })
         }
         ptyOwnership.set(result.id, args.connectionId ?? null)
         if (result.incarnationId) {
@@ -4495,6 +4505,8 @@ export function registerPtyHandlers(
         sendPtySpawnedToRenderer(result.id)
         const response = {
           id: result.id,
+          ...(result.isReattach ? { isReattach: true as const } : {}),
+          spawnDisposition: result.isReattach ? ('reattached' as const) : ('created' as const),
           ...(result.incarnationId ? { incarnationId: result.incarnationId } : {}),
           ...(result.agentSessionEnsure ? { agentSessionEnsure: result.agentSessionEnsure } : {})
         }
@@ -5311,7 +5323,7 @@ export function registerPtyHandlers(
         ? paneSpawnReservationsByPaneKey.get(reservationPaneKey)
         : undefined
       if (existingPaneSpawn) {
-        return await existingPaneSpawn.promise
+        return await awaitPaneSpawnReservation(existingPaneSpawn)
       }
       const finishTerminalInstall = beginPtySpawnForWorktree(
         args.worktreeId,
@@ -5707,6 +5719,7 @@ export function registerPtyHandlers(
         }
         const response = {
           ...result,
+          spawnDisposition: result.isReattach ? ('reattached' as const) : ('created' as const),
           ...(!result.isReattach && effectiveLaunchConfig
             ? { launchConfig: effectiveLaunchConfig }
             : {}),

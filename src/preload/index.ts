@@ -23,6 +23,7 @@ import type {
 import type { MobileRelayStatus } from '../shared/mobile-relay-status'
 import type { MobilePairingConnectionMode } from '../shared/mobile-pairing-connection-mode'
 import type { MobileRelayMintFailure } from '../shared/mobile-relay-mint-failure'
+import type { PtySpawnDisposition } from '../shared/pty-spawn-disposition'
 import type { VerifyAndAddRuntimeEnvironmentResult } from '../shared/remote-pairing-verification'
 import type {
   SshMutationExpectation,
@@ -926,6 +927,7 @@ const api = {
       telemetry?: { agent_kind: AgentKind; launch_source: LaunchSource; request_kind: RequestKind }
     }): Promise<{
       id: string
+      spawnDisposition: PtySpawnDisposition
       launchConfig?: SleepingAgentLaunchConfig
       snapshot?: string
       snapshotCols?: number

@@ -308,7 +308,7 @@ describe('mobile folder session mutation races', () => {
     })
     const spawn = vi.fn(async () => {
       await pendingSpawn
-      return { id: ptyId }
+      return { id: ptyId, spawnDisposition: 'reattached' as const }
     })
     const kill = vi.fn(() => true)
     runtime.setPtyController({
@@ -341,7 +341,7 @@ describe('mobile folder session mutation races', () => {
       })
     })
     expect(spawn).toHaveBeenCalledOnce()
-    expect(kill).toHaveBeenCalledWith(ptyId)
+    expect(kill).not.toHaveBeenCalled()
     expect(focusTerminal).not.toHaveBeenCalled()
     expect(published).not.toContainEqual(
       expect.objectContaining({ activeTabId: `${TAB_ID}::${LEAF_ID}` })
@@ -413,97 +413,108 @@ describe('mobile folder session mutation races', () => {
     }
   )
 
-  it('kills a pending materialization when folder routing changes during spawn', async () => {
-    const folder: FolderWorkspace = {
-      id: 'materialize-race-folder',
-      projectGroupId: 'materialize-race-group',
-      name: 'Materialize race',
-      folderPath: '/workspace/materialize-race',
-      connectionId: null,
-      linkedTask: null,
-      comment: '',
-      isArchived: false,
-      isUnread: false,
-      isPinned: false,
-      sortOrder: 0,
-      lastActivityAt: 1,
-      createdAt: 1,
-      updatedAt: 1
-    }
-    const group: ProjectGroup = {
-      id: folder.projectGroupId,
-      name: folder.projectGroupId,
-      parentPath: folder.folderPath,
-      connectionId: null,
-      parentGroupId: null,
-      createdFrom: 'manual',
-      tabOrder: 0,
-      isCollapsed: false,
-      color: null,
-      createdAt: 1,
-      updatedAt: 1
-    }
-    const folderKey = `folder:${folder.id}`
-    const folders = [folder]
-    const runtime = createRuntime(folders, group)
-    const focusTerminal = vi.fn()
-    const published: RuntimeMobileSessionTabsResult[] = []
-    runtime.setNotifier({ focusTerminal } as never)
-    runtime.onMobileSessionTabsChanged((snapshot) => published.push(snapshot))
-    vi.spyOn(
-      runtime as unknown as {
-        resolveTerminalWorkspaceLaunchScope: () => Promise<{
-          id: string
-          path: string
-          connectionId: null
-          repo: null
-          folderWorkspace: FolderWorkspace
-        }>
-      },
-      'resolveTerminalWorkspaceLaunchScope'
-    ).mockImplementation(async () => ({
-      id: folderKey,
-      path: folder.folderPath,
-      connectionId: null,
-      repo: null,
-      folderWorkspace: folder
-    }))
-    let releaseSpawn!: (value: { id: string }) => void
-    const spawn = vi.fn(
-      () =>
-        new Promise<{ id: string }>((resolve) => {
-          releaseSpawn = resolve
-        })
-    )
-    const kill = vi.fn(() => true)
-    runtime.setPtyController({
-      write: () => true,
-      kill,
-      getForegroundProcess: async () => null,
-      listProcesses: async () => [],
-      spawn
-    })
-
-    const activations = Promise.allSettled([
-      runtime.activateMobileSessionTab(`id:${folderKey}`, TAB_ID),
-      runtime.activateMobileSessionTab(`id:${folderKey}`, TAB_ID)
-    ])
-    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
-    folders.length = 0
-    folders.push({ ...folder, folderPath: '/workspace/materialize-race-moved' })
-    releaseSpawn({ id: 'stale-materialized-pty' })
-
-    const results = await activations
-    results.forEach((result) => {
-      expect(result.status === 'rejected' ? result.reason : null).toMatchObject({
-        message: 'tab_not_found'
+  it.each([
+    ['creator', 'created', true],
+    ['waiter', 'awaited', false],
+    ['reattach consumer', 'reattached', false]
+  ] as const)(
+    'lets only the %s retire a stale materialization',
+    async (_consumer, spawnDisposition, shouldKill) => {
+      const folder: FolderWorkspace = {
+        id: 'materialize-race-folder',
+        projectGroupId: 'materialize-race-group',
+        name: 'Materialize race',
+        folderPath: '/workspace/materialize-race',
+        connectionId: null,
+        linkedTask: null,
+        comment: '',
+        isArchived: false,
+        isUnread: false,
+        isPinned: false,
+        sortOrder: 0,
+        lastActivityAt: 1,
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const group: ProjectGroup = {
+        id: folder.projectGroupId,
+        name: folder.projectGroupId,
+        parentPath: folder.folderPath,
+        connectionId: null,
+        parentGroupId: null,
+        createdFrom: 'manual',
+        tabOrder: 0,
+        isCollapsed: false,
+        color: null,
+        createdAt: 1,
+        updatedAt: 1
+      }
+      const folderKey = `folder:${folder.id}`
+      const folders = [folder]
+      const runtime = createRuntime(folders, group)
+      const focusTerminal = vi.fn()
+      const published: RuntimeMobileSessionTabsResult[] = []
+      runtime.setNotifier({ focusTerminal } as never)
+      runtime.onMobileSessionTabsChanged((snapshot) => published.push(snapshot))
+      vi.spyOn(
+        runtime as unknown as {
+          resolveTerminalWorkspaceLaunchScope: () => Promise<{
+            id: string
+            path: string
+            connectionId: null
+            repo: null
+            folderWorkspace: FolderWorkspace
+          }>
+        },
+        'resolveTerminalWorkspaceLaunchScope'
+      ).mockImplementation(async () => ({
+        id: folderKey,
+        path: folder.folderPath,
+        connectionId: null,
+        repo: null,
+        folderWorkspace: folder
+      }))
+      let releaseSpawn!: (value: { id: string; spawnDisposition: typeof spawnDisposition }) => void
+      const spawn = vi.fn(
+        () =>
+          new Promise<{ id: string; spawnDisposition: typeof spawnDisposition }>((resolve) => {
+            releaseSpawn = resolve
+          })
+      )
+      const kill = vi.fn(() => true)
+      runtime.setPtyController({
+        write: () => true,
+        kill,
+        getForegroundProcess: async () => null,
+        listProcesses: async () => [],
+        spawn
       })
-    })
-    expect(spawn).toHaveBeenCalledOnce()
-    expect(kill).toHaveBeenCalledWith('stale-materialized-pty')
-    expect(focusTerminal).not.toHaveBeenCalled()
-    expect(published).not.toContainEqual(
-      expect.objectContaining({ activeTabId: `${TAB_ID}::${LEAF_ID}` })
-    )
-  })
+
+      const activations = Promise.allSettled([
+        runtime.activateMobileSessionTab(`id:${folderKey}`, TAB_ID),
+        runtime.activateMobileSessionTab(`id:${folderKey}`, TAB_ID)
+      ])
+      await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+      folders.length = 0
+      folders.push({ ...folder, folderPath: '/workspace/materialize-race-moved' })
+      releaseSpawn({ id: 'stale-materialized-pty', spawnDisposition })
+
+      const results = await activations
+      results.forEach((result) => {
+        expect(result.status === 'rejected' ? result.reason : null).toMatchObject({
+          message: 'tab_not_found'
+        })
+      })
+      expect(spawn).toHaveBeenCalledOnce()
+      if (shouldKill) {
+        expect(kill).toHaveBeenCalledWith('stale-materialized-pty')
+      } else {
+        expect(kill).not.toHaveBeenCalled()
+      }
+      expect(focusTerminal).not.toHaveBeenCalled()
+      expect(published).not.toContainEqual(
+        expect.objectContaining({ activeTabId: `${TAB_ID}::${LEAF_ID}` })
+      )
+    }
+  )
 })

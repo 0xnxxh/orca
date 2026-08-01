@@ -337,6 +337,148 @@ describe('mobile PTY inventory fencing', () => {
     })
   })
 
+  it('hydrates an attached explicit Git read from its scoped owner alias', async () => {
+    const worktreeId = `${REPO_ID}::/workspace/scoped-explicit`
+    const ownerKey = worktreeWorkspaceKey(worktreeId)
+    const tabId = 'scoped-explicit-tab'
+    const leafId = '12121212-1212-4212-8212-121212121212'
+    const session = makeSession({
+      worktreeId: ownerKey,
+      ptyId: 'serve-scoped-explicit-pty',
+      tabId,
+      leafId
+    })
+    const runtime = createRuntime({
+      repos: [
+        {
+          id: REPO_ID,
+          path: '/workspace/scoped-explicit',
+          displayName: 'Scoped explicit',
+          badgeColor: 'blue',
+          connectionId: null,
+          executionHostId: null,
+          addedAt: 1
+        }
+      ],
+      sessions: new Map([['local', session]])
+    })
+    runtime.attachWindow(17)
+
+    const snapshot = await runtime.listMobileSessionTabs(`id:${worktreeId}`)
+
+    expect(snapshot).toMatchObject({
+      worktree: worktreeId,
+      tabs: [{ parentTabId: tabId, leafId, ptyId: 'serve-scoped-explicit-pty' }]
+    })
+  })
+
+  it('hydrates scoped serve and SSH tabs during isolated relay recovery', async () => {
+    const connectionId = 'scoped-owner-relay'
+    const worktreeId = `${REPO_ID}::/remote/scoped-owner`
+    const ownerKey = worktreeWorkspaceKey(worktreeId)
+    const sshTabId = 'scoped-relay-ssh-tab'
+    const sshLeafId = '23232323-2323-4232-8232-232323232323'
+    const serveTabId = 'scoped-relay-serve-tab'
+    const serveLeafId = '34343434-3434-4343-8343-343434343434'
+    const sshPtyId = `ssh:${connectionId}@@scoped-relay-pty`
+    const session = makeSession({
+      worktreeId: ownerKey,
+      ptyId: sshPtyId,
+      tabId: sshTabId,
+      leafId: sshLeafId
+    })
+    session.tabsByWorktree[ownerKey]!.push({
+      id: serveTabId,
+      ptyId: 'serve-scoped-relay-pty',
+      worktreeId: ownerKey,
+      title: 'Scoped serve',
+      customTitle: null,
+      color: null,
+      sortOrder: 1,
+      createdAt: 1
+    })
+    session.terminalLayoutsByTabId[serveTabId] = {
+      root: { type: 'leaf', leafId: serveLeafId },
+      activeLeafId: serveLeafId,
+      expandedLeafId: null,
+      ptyIdsByLeafId: { [serveLeafId]: 'serve-scoped-relay-pty' }
+    }
+    const unrelatedWorktreeId = `${REPO_ID}::/local/unrelated`
+    const unrelatedSession = makeSession({
+      worktreeId: unrelatedWorktreeId,
+      ptyId: 'serve-unrelated-pty',
+      tabId: 'unrelated-tab',
+      leafId: '45454545-4545-4454-8454-454545454545'
+    })
+    const runtime = createRuntime({
+      repos: [
+        {
+          id: REPO_ID,
+          path: '/local/unrelated',
+          displayName: 'Unrelated local',
+          badgeColor: 'blue',
+          connectionId: null,
+          executionHostId: null,
+          addedAt: 1
+        },
+        {
+          id: REPO_ID,
+          path: '/remote/scoped-owner',
+          displayName: 'Scoped relay',
+          badgeColor: 'blue',
+          connectionId,
+          executionHostId: null,
+          addedAt: 1
+        }
+      ],
+      sessions: new Map([
+        ['local', unrelatedSession],
+        [toSshExecutionHostId(connectionId), session]
+      ])
+    })
+    const listProcesses = vi.fn(async () => [
+      {
+        id: sshPtyId,
+        cwd: '/remote/scoped-owner',
+        title: 'Scoped SSH',
+        worktreeId,
+        terminalHandle: 'term_scoped_relay',
+        incarnationId: INCARNATION_ID
+      }
+    ])
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      listProcesses
+    })
+    vi.spyOn(
+      runtime as unknown as { refreshRestoredOrchestrationAuthority: () => Promise<void> },
+      'refreshRestoredOrchestrationAuthority'
+    ).mockResolvedValue()
+    vi.spyOn(runtime, 'reconcileLegacyWorkerTerminals').mockReturnValue(
+      new Promise(() => undefined)
+    )
+    const events: Awaited<ReturnType<OrcaRuntimeService['listMobileSessionTabs']>>[] = []
+    runtime.onMobileSessionTabsChanged((snapshot) => events.push(snapshot))
+
+    runtime.notifySshRelayReady(connectionId)
+
+    await vi.waitFor(() =>
+      expect(
+        events
+          .at(-1)
+          ?.tabs.filter((tab) => tab.type === 'terminal')
+          .map((tab) => tab.parentTabId)
+      ).toEqual(expect.arrayContaining([sshTabId, serveTabId]))
+    )
+    expect(events.at(-1)?.worktree).toBe(worktreeId)
+    expect(events.flatMap((snapshot) => snapshot.tabs)).not.toContainEqual(
+      expect.objectContaining({ parentTabId: 'unrelated-tab' })
+    )
+    expect(listProcesses).toHaveBeenCalledWith(connectionId)
+  })
+
   it('fences PTY mutations when a folder path changes in place during inventory', async () => {
     const folder: FolderWorkspace = {
       id: 'moved-during-inventory',

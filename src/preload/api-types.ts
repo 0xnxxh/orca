@@ -8,6 +8,7 @@ import type {
   HostedReviewInfo,
   HostedReviewProvider
 } from '../shared/hosted-review'
+import type { PtySpawnDisposition } from '../shared/pty-spawn-disposition'
 import type { NativeFileDropPayload } from '../shared/native-file-drop'
 import type { BrowserFindSource } from '../shared/browser-find-source'
 import type { DashboardSnapshot, DashboardRevealAgentArgs } from '../shared/dashboard-snapshot'
@@ -1496,6 +1497,7 @@ export type PreloadApi = {
       telemetry?: { agent_kind: AgentKind; launch_source: LaunchSource; request_kind: RequestKind }
     }) => Promise<{
       id: string
+      spawnDisposition: PtySpawnDisposition
       launchAgent?: TuiAgent
       launchConfig?: SleepingAgentLaunchConfig
       snapshot?: string

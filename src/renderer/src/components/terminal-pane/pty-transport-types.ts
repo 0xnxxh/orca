@@ -14,6 +14,7 @@ import type { TerminalOscColorQueryReplyColors } from '../../../../shared/termin
 import type { TuiAgent } from '../../../../shared/types'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
 import type { PtyDataMeta } from './pty-dispatcher'
+import type { PtySpawnDisposition } from '../../../../shared/pty-spawn-disposition'
 
 export type PtyBufferSnapshot = {
   data: string
@@ -47,6 +48,7 @@ export type LocalPtySessionMetadata = {
 
 export type PtyConnectResult = {
   id: string
+  spawnDisposition?: PtySpawnDisposition
   /** The requested session exited while it had no primary pane handler. Its
    *  buffered final data/exit were delivered, so callers must not fresh-spawn. */
   exitedBeforeAttach?: boolean

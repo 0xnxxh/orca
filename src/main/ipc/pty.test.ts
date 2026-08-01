@@ -8229,8 +8229,16 @@ describe('registerPtyHandlers', () => {
     )
     resolveSpawn({ id: 'pty-shared', isReattach: true })
     const [runtimeResult, rendererResult] = await Promise.all([runtimeSpawn, rendererSpawn])
-    expect(runtimeResult).toEqual({ id: 'pty-shared' })
-    expect(rendererResult).toEqual({ id: 'pty-shared' })
+    expect(runtimeResult).toEqual({
+      id: 'pty-shared',
+      isReattach: true,
+      spawnDisposition: 'reattached'
+    })
+    expect(rendererResult).toEqual({
+      id: 'pty-shared',
+      isReattach: true,
+      spawnDisposition: 'awaited'
+    })
     expect(providerSpawn).toHaveBeenCalledTimes(1)
     expect(store.persistPtyBinding).toHaveBeenCalledWith({
       worktreeId: 'repo-1::/tmp',
@@ -8342,8 +8350,8 @@ describe('registerPtyHandlers', () => {
     expect(providerSpawn).toHaveBeenCalledTimes(1)
     resolveSpawn({ id: 'pty-renderer' })
     await expect(Promise.all([rendererSpawn, runtimeSpawn])).resolves.toEqual([
-      { id: 'pty-renderer' },
-      { id: 'pty-renderer' }
+      { id: 'pty-renderer', spawnDisposition: 'created' },
+      { id: 'pty-renderer', spawnDisposition: 'awaited' }
     ])
     expect(providerSpawn).toHaveBeenCalledTimes(1)
     expect(store.persistPtyBinding).toHaveBeenCalledWith({
@@ -14782,7 +14790,8 @@ describe('registerPtyHandlers', () => {
       expect(result).toEqual({
         id: expect.any(String),
         pid: 12345,
-        incarnationId: expect.any(String)
+        incarnationId: expect.any(String),
+        spawnDisposition: 'created'
       })
       expect(spawnMock).toHaveBeenCalledTimes(1)
       expect(spawnMock).toHaveBeenCalledWith(

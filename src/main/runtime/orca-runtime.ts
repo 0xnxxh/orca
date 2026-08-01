@@ -378,6 +378,7 @@ import {
   type TerminalQuickCommandMutation
 } from '../../shared/terminal-quick-commands'
 import type { PtyIncarnationId } from '../../shared/pty-incarnation'
+import type { PtySpawnDisposition } from '../../shared/pty-spawn-disposition'
 import {
   buildAgentDraftLaunchPlan,
   buildAgentResumeStartupPlan,
@@ -1550,7 +1551,9 @@ type RuntimePtyController = {
   }): Promise<{
     id: string
     incarnationId?: PtyIncarnationId
-    wslDistro?: string
+    wslDistro?: string | null
+    isReattach?: boolean
+    spawnDisposition?: PtySpawnDisposition
     agentSessionEnsure?: AgentSessionClaimedSpawnResult
   }>
   write(ptyId: string, data: string): boolean
@@ -6418,6 +6421,9 @@ export class OrcaRuntimeService {
     // every worktree — skip the per-worktree rebuild entirely (hot on every
     // graph sync). Scoped to onlyRuntimeOwnedTerminals so full hydrates are
     // untouched.
+    const scopedOwnerKey = worktreeId
+      ? resolveWorkspaceSessionRecordOwnerKey(session.tabsByWorktree, worktreeId)
+      : null
     if (
       options.onlyRuntimeOwnedTerminals === true &&
       !this.offscreenBrowserBackend &&
@@ -6426,7 +6432,7 @@ export class OrcaRuntimeService {
         ? this.workspaceSessionWorktreeHasRuntimeOwnedPtyCandidate(
             session,
             worktreeId,
-            session.tabsByWorktree[worktreeId] ?? []
+            scopedOwnerKey ? (session.tabsByWorktree[scopedOwnerKey] ?? []) : []
           )
         : this.workspaceSessionHasRuntimeOwnedPtyCandidate(session))
     ) {
@@ -6434,13 +6440,9 @@ export class OrcaRuntimeService {
     }
     const entries: readonly (readonly [string, string, readonly TerminalTab[]])[] =
       worktreeId !== undefined
-        ? (() => {
-            const ownerKey = resolveWorkspaceSessionRecordOwnerKey(
-              session.tabsByWorktree,
-              worktreeId
-            )
-            return ownerKey ? [[worktreeId, ownerKey, session.tabsByWorktree[ownerKey] ?? []]] : []
-          })()
+        ? scopedOwnerKey
+          ? [[worktreeId, scopedOwnerKey, session.tabsByWorktree[scopedOwnerKey] ?? []]]
+          : []
         : Object.entries(session.tabsByWorktree ?? {}).flatMap(([ownerKey, tabs]) => {
             const normalizedOwnerKey = normalizeWorkspaceSessionOwnerKey(ownerKey)
             return resolveWorkspaceSessionRecordOwnerKey(
@@ -25439,8 +25441,10 @@ export class OrcaRuntimeService {
           : {})
       })
       if (launchOpts.acceptWorkspaceInventory?.() === false) {
-        this.ptyController.kill(result.id)
-        this.releaseRejectedPtyRegistrationFence(result.id, result.incarnationId)
+        if (result.spawnDisposition === 'created') {
+          this.ptyController.kill(result.id)
+          this.releaseRejectedPtyRegistrationFence(result.id, result.incarnationId)
+        }
         throw new Error('tab_not_found')
       }
       reportPtySpawnCommitted()
