@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mobileTasksRoute, navigateToMobileTasks } from './mobile-task-navigation'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('mobileTasksRoute', () => {
   it('builds a concrete encoded host route', () => {
@@ -16,12 +20,11 @@ describe('mobileTasksRoute', () => {
       return 1
     })
 
-    navigateToMobileTasks({ push, replace }, 'host-1', 'github')
-    expect(push).toHaveBeenCalledWith('/h/host-1')
+    navigateToMobileTasks({ push, replace }, 'host/1', 'github')
+    expect(push).toHaveBeenCalledWith('/h/host%2F1')
     expect(replace).not.toHaveBeenCalled()
 
     nextFrame?.(0)
-    expect(replace).toHaveBeenCalledWith(mobileTasksRoute('host-1', 'github'))
-    vi.unstubAllGlobals()
+    expect(replace).toHaveBeenCalledWith(mobileTasksRoute('host/1', 'github'))
   })
 })

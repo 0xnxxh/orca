@@ -21,7 +21,7 @@ export function navigateToMobileTasks(
   provider?: TaskProvider
 ): void {
   // Why: a cold nested host navigator resolves a deep push to its index route.
-  router.push(`/h/${hostId}`)
+  router.push(`/h/${encodeURIComponent(hostId)}`)
   requestAnimationFrame(() => {
     router.replace(mobileTasksRoute(hostId, provider))
   })
