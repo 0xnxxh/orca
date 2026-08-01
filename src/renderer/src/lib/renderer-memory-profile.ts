@@ -132,7 +132,10 @@ function collectionSize(value: unknown): number | null {
   }
   if (typeof value === 'object' && value !== null) {
     let size = 0
-    // Why: Object.keys allocates an array proportional to the leaking collection.
+    // This is not cheaper than Object.keys: V8 materializes a key array for for...in
+    // too, and measured slower on a 1M-entry Record (139ms vs 104ms). What makes it
+    // survivable on the OOM path is frequency — collection runs at most twice per
+    // renderer session, on the 0.6 and 0.8 highwater thresholds. Not per interaction.
     for (const key in value) {
       if (Object.hasOwn(value, key)) {
         size += 1

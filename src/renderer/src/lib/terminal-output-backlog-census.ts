@@ -16,6 +16,8 @@
  */
 import { registerRendererMemoryProfileContributor } from './renderer-memory-profile'
 
+/** `chars`/`maxTerminalChars` are UTF-16 code units, not bytes — CJK and emoji
+ *  under-report up to 3x. */
 export type TerminalOutputBacklogCensus = {
   terminals: number
   chars: number

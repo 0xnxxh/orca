@@ -16,6 +16,7 @@
  */
 import { registerRendererMemoryProfileContributor } from './renderer-memory-profile'
 
+/** `chars` is UTF-16 code units, not bytes — CJK and emoji under-report up to 3x. */
 export type MonacoModelCensus = { models: number; chars: number; lines: number }
 
 const EMPTY_CENSUS: MonacoModelCensus = { models: 0, chars: 0, lines: 0 }

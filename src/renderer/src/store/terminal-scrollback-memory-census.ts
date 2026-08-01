@@ -15,6 +15,8 @@
  */
 import type { TerminalLayoutSnapshot } from '../../../shared/types'
 
+/** `chars`/`coldRestoreChars` are UTF-16 code units, not bytes — CJK and emoji
+ *  under-report up to 3x. */
 export type TerminalScrollbackCensus = {
   layouts: number
   buffers: number
