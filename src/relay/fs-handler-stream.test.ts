@@ -453,7 +453,7 @@ describe('FsHandler readFileStream', () => {
 
   it('caps undelivered terminal frames so they cannot overflow the link-killing control lane', async () => {
     const filePath = path.join(tmpDir, 'terminal-budget.png')
-    writeFileSync(filePath, Buffer.alloc(64 * 1024, 0x42)) // one chunk per stream
+    writeFileSync(filePath, Buffer.alloc(STREAM_CHUNK_SIZE, 0x42)) // one chunk per stream
     // A socket that accepts nothing: control frames queue, and the real writer destroys the
     // client once 256 of them pile up.
     dispatcher.holdControlSettlements()

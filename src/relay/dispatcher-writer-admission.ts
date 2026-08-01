@@ -15,6 +15,8 @@ export type DispatcherWriterEntry = {
   estimatedBytes: number
   onSettled: (result: DispatcherWriterSettlement) => void
   settled: boolean
+  // Why: control overflow closes the client by default; best-effort frames opt out of that instead.
+  overflowIsNonFatal?: boolean
 }
 
 type AdmissionResult =
@@ -26,13 +28,6 @@ export const DISPATCHER_CONTROL_QUEUE_MAX_BYTES = 1024 * 1024
 const LIVENESS_QUEUE_MAX_FRAMES = 2
 
 export const DEFAULT_PRODUCER_QUEUE_MAX_BYTES = 2 * 1024 * 1024
-
-const nonFatalControlEncodes = new WeakSet<() => Buffer>()
-
-export function markControlOverflowNonFatal(encode: () => Buffer): () => Buffer {
-  nonFatalControlEncodes.add(encode)
-  return encode
-}
 
 export function onceDispatcherWriterSettlement(
   callback: (result: DispatcherWriterSettlement) => void
@@ -151,7 +146,7 @@ export class DispatcherWriterAdmission {
 
   private admitControl(entry: DispatcherWriterEntry): AdmissionResult {
     // Why: best-effort controls may fail soft without weakening protocol-critical admission.
-    const overflowIsNonFatal = nonFatalControlEncodes.delete(entry.encode)
+    const overflowIsNonFatal = entry.overflowIsNonFatal === true
     if (
       this.controlFrames >= DISPATCHER_CONTROL_QUEUE_MAX_FRAMES ||
       this.controlBytes + entry.estimatedBytes > DISPATCHER_CONTROL_QUEUE_MAX_BYTES

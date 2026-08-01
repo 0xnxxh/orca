@@ -745,7 +745,7 @@ function configureRelaySessionCallbacks(session: SshRelaySession): void {
       return
     }
 
-    const scheduleRelayRedeploy = (delay: number): void => {
+    const scheduleRelayRedeploy = (delay: number, attemptCharged: boolean): void => {
       state.reconnectTimer = setTimeout(() => {
         state.reconnectTimer = null
         relayLostBackoff.set(tid, state)
@@ -756,6 +756,11 @@ function configureRelaySessionCallbacks(session: SshRelaySession): void {
         }
         const status = connectionManager?.getState(tid)?.status
         if (status === 'connected') {
+          if (!attemptCharged) {
+            // Why: waiting is free, but the deploy it defers is real — charge it here so a transport that
+            // flaps back to 'connected' can't redeploy forever on an uncharged budget.
+            state.attempts += 1
+          }
           void s.reconnect(liveConn, relayGracePeriodForTarget(t))
           return
         }
@@ -766,7 +771,7 @@ function configureRelaySessionCallbacks(session: SshRelaySession): void {
         }
         // Why: still mid-transition — re-arm at the max delay without consuming an attempt. It ends once
         // the transport settles: 'connected' redeploys, a terminal status or a dropped session clears above.
-        scheduleRelayRedeploy(RELAY_LOST_MAX_DELAY_MS)
+        scheduleRelayRedeploy(RELAY_LOST_MAX_DELAY_MS, false)
       }, delay)
       relayLostBackoff.set(tid, state)
     }
@@ -779,7 +784,7 @@ function configureRelaySessionCallbacks(session: SshRelaySession): void {
         'Relay channel lost. Reconnecting...',
         state.attempts
       )
-      scheduleRelayRedeploy(RELAY_LOST_MAX_DELAY_MS)
+      scheduleRelayRedeploy(RELAY_LOST_MAX_DELAY_MS, false)
       console.warn(
         `[ssh] Relay channel for ${tid} lost while the SSH transport is ${transportStatus ?? 'unknown'}; waiting ${RELAY_LOST_MAX_DELAY_MS}ms without consuming an attempt`
       )
@@ -795,7 +800,7 @@ function configureRelaySessionCallbacks(session: SshRelaySession): void {
       'Relay channel lost. Reconnecting...',
       state.attempts
     )
-    scheduleRelayRedeploy(delay)
+    scheduleRelayRedeploy(delay, true)
     console.warn(
       `[ssh] Relay channel for ${tid} lost; reconnect attempt ${state.attempts}/${RELAY_LOST_MAX_ATTEMPTS} in ${delay}ms`
     )

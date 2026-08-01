@@ -23,7 +23,6 @@ import {
   type RelayClientWrite,
   type SinkWriteSettlement
 } from './dispatcher-client-writer'
-import { markControlOverflowNonFatal } from './dispatcher-writer-admission'
 import {
   LegacyRelayPublicationLedger,
   type LegacyPublicationLease
@@ -991,11 +990,10 @@ export class RelayDispatcher {
     }
     return client.writer.enqueue(
       lane,
-      lane === 'control' && controlOverflow === 'reject'
-        ? markControlOverflowNonFatal(encode)
-        : encode,
+      encode,
       frameBytes,
-      onSettled
+      onSettled,
+      lane === 'control' && controlOverflow === 'reject'
     )
   }
 
