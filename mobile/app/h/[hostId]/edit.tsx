@@ -17,10 +17,7 @@ import { colors, radii, spacing, typography } from '../../../src/theme/mobile-th
 import { loadHosts, updateHostNameAndEndpoint } from '../../../src/transport/host-store'
 import { getHostListLoadRevision } from '../../../src/transport/host-list-load-sharing'
 import { displayHostEndpoint } from '../../../src/transport/host-endpoint'
-import {
-  hostProfileAfterEdit,
-  resolveHostEndpointEdit
-} from '../../../src/transport/host-endpoint-edit'
+import { resolveHostEndpointEdit } from '../../../src/transport/host-endpoint-edit'
 import { useForceReconnect, usePrimeHosts } from '../../../src/transport/client-context'
 import { showForceReconnectError } from '../../../src/transport/force-reconnect-feedback'
 import type { HostProfile } from '../../../src/transport/types'
@@ -109,7 +106,7 @@ export default function EditHostScreen() {
       ...(willRename ? { name: nextName } : {}),
       ...(nextEndpoint !== undefined ? { endpoint: nextEndpoint } : {})
     }
-    let reconnectProfile: HostProfile | null = hostProfileAfterEdit(host, updates)
+    let reconnectWithCurrentProfile = false
 
     savingRef.current = true
     setSaving(true)
@@ -130,11 +127,20 @@ export default function EditHostScreen() {
       // Why: the write already committed above; a re-prime failure here
       // must not be reported as a save failure — the next loadHosts() call
       // elsewhere in the app picks up the fresh state regardless.
-      const hostLoadRevision = getHostListLoadRevision()
-      const hosts = await loadHosts()
-      if (hostLoadRevision === getHostListLoadRevision()) {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const hostLoadRevision = getHostListLoadRevision()
+        const hosts = await loadHosts()
+        if (hostLoadRevision !== getHostListLoadRevision()) {
+          continue
+        }
+        if (!hosts.some(({ id }) => id === host.id)) {
+          break
+        }
         primeHosts(hosts, hostLoadRevision)
-        reconnectProfile = hosts.find(({ id }) => id === host.id) ?? null
+        if (hostLoadRevision === getHostListLoadRevision()) {
+          reconnectWithCurrentProfile = true
+          break
+        }
       }
     } catch {
       // best-effort re-prime; persisted data is unaffected
@@ -144,11 +150,11 @@ export default function EditHostScreen() {
     setSaving(false)
     router.back()
 
-    if (nextEndpoint !== undefined && reconnectProfile !== null) {
+    if (nextEndpoint !== undefined && reconnectWithCurrentProfile) {
       // Why: reconnect is a follow-on side effect of a save that already
       // committed — its failure or a hang must not be reported as a save
       // failure or block navigating back.
-      void forceReconnectHost(host.id, reconnectProfile).catch(showForceReconnectError)
+      void forceReconnectHost(host.id).catch(showForceReconnectError)
     }
   }
 

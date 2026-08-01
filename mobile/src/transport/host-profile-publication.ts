@@ -4,18 +4,30 @@ const pendingByHost = new Map<string, Promise<void>>()
 const revisionByHost = new Map<string, number>()
 const endpointGenerationByHost = new Map<string, number>()
 
+export type HostEndpointPublicationLifecycle = Readonly<{
+  generation: number
+  profileRevision: number
+}>
+
 export function getHostProfilePublicationRevision(hostId: string): number {
   return revisionByHost.get(hostId) ?? 0
 }
 
-export function beginHostEndpointPublicationLifecycle(hostId: string): number {
+export function beginHostEndpointPublicationLifecycle(
+  hostId: string
+): HostEndpointPublicationLifecycle {
   const generation = (endpointGenerationByHost.get(hostId) ?? 0) + 1
   endpointGenerationByHost.set(hostId, generation)
-  return generation
+  return { generation, profileRevision: getHostProfilePublicationRevision(hostId) }
 }
 
-export function getHostEndpointPublicationGeneration(hostId: string): number {
-  return endpointGenerationByHost.get(hostId) ?? 0
+export function getHostEndpointPublicationLifecycle(
+  hostId: string
+): HostEndpointPublicationLifecycle {
+  return {
+    generation: endpointGenerationByHost.get(hostId) ?? 0,
+    profileRevision: getHostProfilePublicationRevision(hostId)
+  }
 }
 
 export function serializeHostProfilePublication<T>(

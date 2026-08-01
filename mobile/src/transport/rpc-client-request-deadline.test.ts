@@ -231,6 +231,31 @@ describe('mobile rpc-client request deadline', () => {
     await request.catch(() => undefined)
   })
 
+  it('retains late reply evidence after an earlier probe completes', async () => {
+    const client = connect('ws://desktop.invalid', 'token', 'server-key')
+    const socket = mockSockets[0]!
+    socket.open()
+    const request = client.sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+    const outcome = track(request)
+    await vi.advanceTimersByTimeAsync(0)
+    const timedOutRequest = sentRequest(socket, 'browser.screenshot')
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(outcome.read()).toBe('Request timed out: browser.screenshot')
+    const firstProbe = sentRequest(socket, 'status.get')
+    socket.receive(`encrypted:${JSON.stringify({ id: firstProbe.id, ok: true, result: {} })}`)
+    await vi.advanceTimersByTimeAsync(0)
+
+    client.notifyForeground()
+    socket.receive(`encrypted:${JSON.stringify({ id: timedOutRequest.id, ok: true, result: {} })}`)
+    await vi.advanceTimersByTimeAsync(8_000)
+
+    expect(socket.close).not.toHaveBeenCalled()
+    expect(client.getState()).toBe('connected')
+    client.close()
+    await request.catch(() => undefined)
+  })
+
   it('demotes when the post-timeout control probe also stalls', async () => {
     const client = connect('ws://desktop.invalid', 'token', 'server-key')
     const socket = mockSockets[0]!

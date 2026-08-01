@@ -1,5 +1,3 @@
-import type { RpcResponse, RpcSuccess } from './types'
-
 export function isTerminalSubscribedResult(
   value: unknown
 ): value is { type: 'subscribed'; streamId: number } {
@@ -22,23 +20,12 @@ export function isStreamingSubscriptionReadyResult(
   )
 }
 
-export function isStreamControlResponse(response: RpcResponse): boolean {
-  if (!response.ok) {
-    return true
-  }
-  const result = (response as RpcSuccess).result
-  if (!result || typeof result !== 'object') {
+export function consumeFirstStreamControlResponse(
+  stream: { sent?: 'awaiting' | 'received' } | undefined
+): boolean {
+  if (stream?.sent !== 'awaiting') {
     return false
   }
-  const metadata = result as {
-    type?: unknown
-    subscriptionId?: unknown
-    streamId?: unknown
-  }
-  return (
-    metadata.type === 'end' ||
-    metadata.type === 'error' ||
-    typeof metadata.subscriptionId === 'string' ||
-    typeof metadata.streamId === 'number'
-  )
+  stream.sent = 'received'
+  return true
 }

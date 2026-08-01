@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient, SendRequestOptions } from './rpc-client'
 import type { ConnectionState, RpcResponse } from './types'
 import { verifyForceReconnectRpcHealth } from './force-reconnect-rpc-health'
+import { markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
 import { LogicalClientCutoverError } from './stable-logical-rpc-client'
 
 describe('Force Reconnect RPC health', () => {
@@ -78,5 +79,35 @@ describe('Force Reconnect RPC health', () => {
       'Unauthorized — pairing may be revoked'
     )
     expect(sendRequest).toHaveBeenCalledOnce()
+  })
+
+  it('waits for a Relay replacement after the active session drops', async () => {
+    let state: ConnectionState = 'connected'
+    const listeners = new Set<(next: ConnectionState) => void>()
+    const sendRequest = vi
+      .fn<() => Promise<RpcResponse>>()
+      .mockImplementationOnce(async () => {
+        state = 'disconnected'
+        throw markRpcDeliveryUnknown(new Error('relay RPC interrupted'))
+      })
+      .mockResolvedValueOnce({ id: 'rpc-2', ok: true, result: {} })
+    const client = {
+      sendRequest,
+      getState: () => state,
+      onStateChange: (listener: (next: ConnectionState) => void) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      }
+    } as unknown as RpcClient
+
+    const verification = verifyForceReconnectRpcHealth(client)
+    await vi.waitFor(() => expect(listeners.size).toBe(1))
+    state = 'connected'
+    for (const listener of listeners) {
+      listener(state)
+    }
+
+    await expect(verification).resolves.toBeUndefined()
+    expect(sendRequest).toHaveBeenCalledTimes(2)
   })
 })

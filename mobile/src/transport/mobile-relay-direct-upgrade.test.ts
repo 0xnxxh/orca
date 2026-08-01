@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { MobileRelayEndpoint } from '../../../src/shared/mobile-relay-credential-contract'
 import {
+  MobileRelayUpgradeLifecycleRetiredError,
   MobileRelayUpgradeHostRemovedError,
   MobileRelayUpgradeHostSupersededError
 } from './existing-host-relay-routing'
@@ -179,6 +180,30 @@ describe('existing direct pairing relay upgrade', () => {
     ).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
 
     await expect(deps.readJournal()).resolves.toEqual(replacement)
+  })
+
+  it('retains a committed journal when an endpoint lifecycle is retired', async () => {
+    const journal = createMobileRelayDirectUpgradeJournal(host.id, (length) =>
+      new Uint8Array(length).fill(6)
+    )
+    const committed = installed(journal)
+    const deps = dependencies(journal)
+    deps.saveHost.mockRejectedValue(
+      new MobileRelayUpgradeLifecycleRetiredError('mobile relay endpoint lifecycle was retired')
+    )
+    const client = clientWith([
+      success({
+        v: 1,
+        relay,
+        installStatus: { v: 1, reqId: journal.reqId, state: 'committed', result: committed }
+      })
+    ])
+
+    await expect(
+      upgradeDirectMobileRelay({ client, host, dependencies: deps })
+    ).rejects.toBeInstanceOf(MobileRelayUpgradeLifecycleRetiredError)
+    expect(deps.clearJournal).not.toHaveBeenCalled()
+    await expect(deps.readJournal()).resolves.toEqual(journal)
   })
 
   it('retains recovery state when host identity credentials are temporarily unavailable', async () => {

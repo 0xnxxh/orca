@@ -22,15 +22,61 @@ export async function verifyForceReconnectRpcHealth(
       })
       return
     } catch (error) {
-      if (
-        client.getState() !== 'reconnecting' &&
-        !isLogicalClientCutoverError(error) &&
-        !isRpcDeliveryUnknown(error) &&
-        !(error instanceof Error && error.message === 'Connection interrupted')
-      ) {
+      const state = client.getState()
+      if (state === 'auth-failed' || !isRecoverableHealthError(error, state)) {
         throw error
       }
       lastError = error
+      if (state === 'disconnected') {
+        await waitForReconnectState(client, deadline, error)
+      }
     }
   }
+}
+
+function isRecoverableHealthError(
+  error: unknown,
+  state: ReturnType<RpcClient['getState']>
+): boolean {
+  return (
+    state === 'reconnecting' ||
+    isLogicalClientCutoverError(error) ||
+    isRpcDeliveryUnknown(error) ||
+    (error instanceof Error &&
+      ['Connection interrupted', 'relay session not connected'].includes(error.message))
+  )
+}
+
+function waitForReconnectState(
+  client: RpcClient,
+  deadline: number,
+  lastError: unknown
+): Promise<void> {
+  if (client.getState() !== 'disconnected') {
+    return Promise.resolve()
+  }
+  return new Promise((resolve, reject) => {
+    const timeoutMs = deadline - Date.now()
+    if (timeoutMs <= 0) {
+      reject(lastError)
+      return
+    }
+    const timer = setTimeout(() => finish(() => reject(lastError)), timeoutMs)
+    const unsubscribe = client.onStateChange((state) => {
+      if (state === 'disconnected') {
+        return
+      }
+      finish(state === 'auth-failed' ? () => reject(lastError) : resolve)
+    })
+    const currentState = client.getState()
+    if (currentState !== 'disconnected') {
+      finish(currentState === 'auth-failed' ? () => reject(lastError) : resolve)
+    }
+
+    function finish(settle: () => void): void {
+      clearTimeout(timer)
+      unsubscribe()
+      settle()
+    }
+  })
 }

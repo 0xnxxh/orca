@@ -12,6 +12,7 @@ vi.mock('./mobile-relay-host-overlay-store', () => overlayStoreMock)
 vi.mock('./host-list-load-sharing', () => ({ dropSharedHostListLoad: vi.fn() }))
 
 import {
+  MobileRelayUpgradeLifecycleRetiredError,
   MobileRelayUpgradeHostSupersededError,
   saveExistingHostRelayRouting,
   writeExistingHostRelayCredentialBundle
@@ -69,7 +70,7 @@ describe('existing host relay endpoint lifecycle publication', () => {
     )
     releaseOldToken?.(HOST.deviceToken)
 
-    await expect(oldWrite).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
+    await expect(oldWrite).rejects.toBeInstanceOf(MobileRelayUpgradeLifecycleRetiredError)
     expect(writes).toEqual(['replacement'])
   })
 
@@ -97,7 +98,7 @@ describe('existing host relay endpoint lifecycle publication', () => {
     )
     releaseOldToken?.(HOST.deviceToken)
 
-    await expect(stalePublication).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
+    await expect(stalePublication).rejects.toBeInstanceOf(MobileRelayUpgradeLifecycleRetiredError)
     expect(overlayStoreMock.saveMobileRelayHostOverlay).toHaveBeenCalledOnce()
     expect(overlayStoreMock.saveMobileRelayHostOverlay).toHaveBeenCalledWith(
       expect.objectContaining({ relayHostId: 'AbCdEf0123_-new9' })
@@ -125,7 +126,7 @@ describe('existing host relay endpoint lifecycle publication', () => {
     beginHostEndpointPublicationLifecycle(HOST.id)
     releaseMetadata?.(HOST)
 
-    await expect(oldWrite).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
+    await expect(oldWrite).rejects.toBeInstanceOf(MobileRelayUpgradeLifecycleRetiredError)
     expect(writeBundle).not.toHaveBeenCalled()
   })
 
@@ -151,7 +152,7 @@ describe('existing host relay endpoint lifecycle publication', () => {
     beginHostEndpointPublicationLifecycle(HOST.id)
     releaseCredentialWrite?.()
 
-    await expect(oldWrite).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
+    await expect(oldWrite).rejects.toBeInstanceOf(MobileRelayUpgradeLifecycleRetiredError)
     expect(overlayStoreMock.saveMobileRelayHostOverlay).not.toHaveBeenCalled()
   })
 
@@ -189,6 +190,40 @@ describe('existing host relay endpoint lifecycle publication', () => {
 
     await replacement
     await expect(staleWrite).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
+    expect(writeBundle).not.toHaveBeenCalled()
+  })
+
+  it('binds an endpoint lifecycle to the profile revision before same-identity recovery', async () => {
+    let releaseRecovery: (() => void) | null = null
+    let markRecoveryStarted: (() => void) | null = null
+    const recoveryStarted = new Promise<void>((resolve) => {
+      markRecoveryStarted = resolve
+    })
+    const recoveryPending = new Promise<void>((resolve) => {
+      releaseRecovery = resolve
+    })
+    const oldLifecycle = beginHostEndpointPublicationLifecycle(HOST.id)
+    const recovery = publishHostProfileTransaction(
+      HOST,
+      async () => {
+        markRecoveryStarted?.()
+        await recoveryPending
+      },
+      async () => {}
+    )
+    await recoveryStarted
+
+    const writeBundle = vi.fn(async () => {})
+    const staleWrite = writeExistingHostRelayCredentialBundle(
+      HOST,
+      credentialBundle(1),
+      writeBundle,
+      oldLifecycle
+    )
+    releaseRecovery?.()
+
+    await recovery
+    await expect(staleWrite).rejects.toBeInstanceOf(MobileRelayUpgradeLifecycleRetiredError)
     expect(writeBundle).not.toHaveBeenCalled()
   })
 })

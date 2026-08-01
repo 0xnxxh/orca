@@ -8,20 +8,19 @@ import { MobileRelayRpcStreams } from './mobile-relay-rpc-streams'
 import { waitForMobileRelayRpcConnected } from './mobile-relay-rpc-connect-wait'
 import { MobileE2EEAuthenticationError } from './mobile-e2ee-v2-physical-channel'
 import { isRpcDeliveryUnknown, markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
+import {
+  rejectMobileRelayPendingRequests,
+  type MobileRelayPendingRequest
+} from './mobile-relay-pending-requests'
 import { RpcControlProbeFollowUp } from './rpc-control-probe-follow-up'
 import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-request-budget'
 import { isRpcResponse } from './rpc-response-shape'
 import type { RpcClient } from './rpc-client'
 import type { ConnectionState, RpcResponse } from './types'
+import { TimedOutControlRequestIndex } from './timed-out-control-request-index'
 
 const CONTROL_PROBE_TIMEOUT_MS = 8_000
 const CONTROL_PROBE_INTERVAL_MS = 20_000
-
-type PendingRequest = {
-  resolve: (response: RpcResponse) => void
-  reject: (error: Error) => void
-  timer: ReturnType<typeof setTimeout>
-}
 
 export type MobileRelayRpcSession = RpcClient & {
   getLeaseExpiresAt(): number | null
@@ -40,16 +39,15 @@ export function connectMobileRelayRpcSession(args: {
   createSocket?: (url: string) => WebSocket
 }): MobileRelayRpcSession {
   const requestTimeoutMs = args.requestTimeoutMs ?? 30_000
-  const pending = new Map<string, PendingRequest>()
-  const timedOutControlRequestIds = new Set<string>()
+  const pending = new Map<string, MobileRelayPendingRequest>()
+  const timedOutControlRequestIds = new TimedOutControlRequestIndex()
   const stateListeners = new Set<(state: ConnectionState) => void>()
   let state: ConnectionState = 'connecting'
   let requestCounter = 0
   let controlResponseSequence = 0
   const controlProbeFollowUp = new RpcControlProbeFollowUp<boolean>(
     () => (!closed && state === 'connected' ? true : null),
-    probeControlPlane,
-    (hasQueuedFollowUp) => !hasQueuedFollowUp && timedOutControlRequestIds.clear()
+    probeControlPlane
   )
   let controlProbeTimer: ReturnType<typeof setInterval> | null = null
   let lastConnectedAt: number | null = null
@@ -121,8 +119,9 @@ export function connectMobileRelayRpcSession(args: {
       }
       closed = true
       stopControlProbeTimer()
+      timedOutControlRequestIds.clear()
       link.close()
-      rejectPending(new Error('Client closed'))
+      rejectMobileRelayPendingRequests(pending, new Error('Client closed'))
       streams.clear()
       publishState('disconnected')
     },
@@ -170,7 +169,7 @@ export function connectMobileRelayRpcSession(args: {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id)
-        timedOutControlRequestIds.add(id)
+        timedOutControlRequestIds.remember(id)
         // Why: the frame was written long ago — the desktop may have processed it.
         const error = markRpcDeliveryUnknown(new Error(`relay RPC timed out: ${method}`))
         reject(error)
@@ -213,7 +212,11 @@ export function connectMobileRelayRpcSession(args: {
       fail(error, new Error(error.message))
       return
     }
-    if (request || timedOutControlRequestIds.delete(value.id) || streams.isControlResponse(value)) {
+    if (
+      request ||
+      timedOutControlRequestIds.consume(value.id) ||
+      streams.isControlResponse(value)
+    ) {
       controlResponseSequence += 1
     }
     if (request) {
@@ -297,25 +300,11 @@ export function connectMobileRelayRpcSession(args: {
     }
     closed = true
     stopControlProbeTimer()
+    timedOutControlRequestIds.clear()
     failure = error
     link.close()
-    rejectPending(pendingError)
+    rejectMobileRelayPendingRequests(pending, pendingError)
     publishState(error instanceof MobileE2EEAuthenticationError ? 'auth-failed' : 'disconnected')
-  }
-
-  function rejectPending(error: Error): void {
-    if (pending.size === 0) {
-      return
-    }
-    // Why: pending entries only exist after their frame reached the authenticated
-    // link (sendFrame failures delete them synchronously), so the desktop may
-    // have processed them — mark the ambiguity for callers.
-    markRpcDeliveryUnknown(error)
-    for (const request of pending.values()) {
-      clearTimeout(request.timer)
-      request.reject(error)
-    }
-    pending.clear()
   }
 
   function nextId(): string {

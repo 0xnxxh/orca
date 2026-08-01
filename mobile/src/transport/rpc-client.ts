@@ -38,11 +38,12 @@ import { RpcControlProbeFollowUp } from './rpc-control-probe-follow-up'
 import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-request-budget'
 import { isRpcResponse } from './rpc-response-shape'
 import {
-  isStreamControlResponse,
+  consumeFirstStreamControlResponse,
   isStreamingSubscriptionReadyResult,
   isTerminalSubscribedResult
 } from './rpc-stream-response-shape'
 import { websocketPayloadToUint8 } from './websocket-payload-bytes'
+import { TimedOutControlRequestIndex } from './timed-out-control-request-index'
 
 type PendingRequest = {
   resolve: (response: RpcResponse) => void
@@ -86,7 +87,7 @@ type StreamRequest = {
   onBinaryFrame?: (frame: BrowserScreencastFrame) => void
   subscriptionId?: string
   cancelled?: boolean
-  sent?: boolean
+  sent?: 'awaiting' | 'received'
 }
 
 export type RpcClient = {
@@ -177,8 +178,7 @@ export function connect(
   let activityProbeTimer: ReturnType<typeof setInterval> | null = null
   const activityProbeFollowUp = new RpcControlProbeFollowUp<WebSocket>(
     () => (state === 'connected' ? ws : null),
-    runActivityProbe,
-    (hasQueuedFollowUp) => !hasQueuedFollowUp && timedOutControlRequestIds.clear()
+    runActivityProbe
   )
   let intentionallyClosed = false
   // Consecutive auth rejections; tolerate up to AUTH_RETRY_BUDGET (issue #5200) before latching to avoid a needless re-pair.
@@ -196,7 +196,7 @@ export function connect(
   const serverPublicKey = publicKeyFromBase64(serverPublicKeyB64)
 
   const pending = new Map<string, PendingRequest>()
-  const timedOutControlRequestIds = new Set<string>()
+  const timedOutControlRequestIds = new TimedOutControlRequestIndex()
   const streamListeners = new Map<string, StreamRequest>()
   const terminalStreamListeners = new Map<number, StreamingListener>()
   const terminalStreamIdsByRequest = new Map<string, Set<number>>()
@@ -458,7 +458,7 @@ export function connect(
               if (
                 sendEncrypted({ id, deviceToken, method: stream.method, params: stream.params })
               ) {
-                stream.sent = true
+                stream.sent = 'awaiting'
               } else {
                 emitStreamError(stream, 'Connection interrupted')
                 removeStreamListener(id)
@@ -515,8 +515,8 @@ export function connect(
       }
       if (
         pending.has(response.id) ||
-        timedOutControlRequestIds.delete(response.id) ||
-        (streamListeners.has(response.id) && isStreamControlResponse(response))
+        timedOutControlRequestIds.consume(response.id) ||
+        consumeFirstStreamControlResponse(streamListeners.get(response.id))
       ) {
         controlResponseSequence++
       }
@@ -798,7 +798,7 @@ export function connect(
     const timeout = setTimeout(() => {
       timedOut = true
       pending.delete(id)
-      timedOutControlRequestIds.add(id)
+      timedOutControlRequestIds.remember(id)
       const controlResponded = controlResponseSequence > probeControlResponseSequence
       activityProbeFollowUp.finish(probeWs)
       if (controlResponded) {
@@ -892,7 +892,7 @@ export function connect(
 
   function markStreamsForReplay(): void {
     for (const [id, stream] of streamListeners) {
-      stream.sent = false
+      stream.sent = undefined
       resetTerminalStreamRoutingForRequest(id)
     }
   }
@@ -1056,7 +1056,7 @@ export function connect(
           // Why: the frame was written 30s ago — the host may have processed it.
           reject(markRpcDeliveryUnknown(new Error(`Request timed out: ${method}`)))
           if (requestWs === ws) {
-            timedOutControlRequestIds.add(id)
+            timedOutControlRequestIds.remember(id)
           }
           runActivityProbe(requestWs, true)
         }, timeoutMs)
@@ -1108,7 +1108,7 @@ export function connect(
 
       if (state === 'connected') {
         if (sendEncrypted({ id, deviceToken, method, params })) {
-          stream.sent = true
+          stream.sent = 'awaiting'
         } else {
           emitStreamError(stream, 'Connection interrupted')
           removeStreamListener(id)

@@ -798,10 +798,13 @@ describe('mobile rpc-client connection timeout', () => {
     })
 
     it.each([
-      ['subscribed', { ok: true, streaming: true, result: { type: 'subscribed', streamId: 42 } }],
+      [
+        'lease-only subscribed',
+        { ok: true, streaming: true, result: { type: 'subscribed', streamId: null } }
+      ],
       ['ready', { ok: true, streaming: true, result: { type: 'ready', subscriptionId: 'sub-1' } }],
-      ['error', { ok: false, error: { code: 'stream_failed', message: 'stream failed' } }],
-      ['end', { ok: true, result: { type: 'end' } }]
+      ['native-chat snapshot', { ok: true, streaming: true, result: { type: 'snapshot' } }],
+      ['session-tabs snapshot', { ok: true, streaming: true, result: { type: 'snapshot' } }]
     ])('counts a subscription %s reply as control liveness', async (_name, reply) => {
       const { client, socket } = connectAuthenticated()
       client.subscribe('terminal.subscribe', { terminal: 'term-1' }, () => {})
@@ -813,6 +816,27 @@ describe('mobile rpc-client connection timeout', () => {
 
       expect(socket.close).not.toHaveBeenCalled()
       expect(client.getState()).toBe('connected')
+      client.close()
+    })
+
+    it('does not count repeated subscription frames as fresh control responses', async () => {
+      const { client, socket } = connectAuthenticated()
+      client.subscribe('nativeChat.subscribe', {}, () => {})
+      const subscribe = sentRequest(socket, 'nativeChat.subscribe')
+      const snapshot = {
+        id: subscribe.id,
+        ok: true,
+        streaming: true,
+        result: { type: 'ready', subscriptionId: 'sub-1' }
+      }
+      socket.receive(`encrypted:${JSON.stringify(snapshot)}`)
+
+      client.notifyForeground()
+      socket.receive(`encrypted:${JSON.stringify(snapshot)}`)
+      await vi.advanceTimersByTimeAsync(8_000)
+
+      expect(socket.close).toHaveBeenCalled()
+      expect(client.getState()).toBe('reconnecting')
       client.close()
     })
 

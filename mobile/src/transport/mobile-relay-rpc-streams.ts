@@ -9,7 +9,6 @@ import {
 } from './rpc-client-terminal-subscription'
 import type { RpcClient } from './rpc-client'
 import type { RpcResponse, RpcSuccess } from './types'
-import { isStreamControlResponse } from './rpc-stream-response-shape'
 
 type StreamRecord = {
   method: string
@@ -23,6 +22,8 @@ type StreamRecord = {
   streamIds: Set<number>
   subscriptionId?: string
   cancelled: boolean
+  sent: boolean
+  controlResponseReceived: boolean
 }
 
 type StreamManagerOptions = {
@@ -52,14 +53,19 @@ export class MobileRelayRpcStreams {
       listener,
       onBinaryFrame: subscribeOptions?.onBinaryFrame,
       streamIds: new Set(),
-      cancelled: false
+      cancelled: false,
+      sent: false,
+      controlResponseReceived: false
     }
     this.streams.set(id, stream)
     void this.options
       .waitForConnected()
       .then(() => {
-        if (!stream.cancelled && !this.options.sendFrame({ id, method, params: stream.params })) {
-          this.fail(id, stream, 'Connection interrupted')
+        if (!stream.cancelled) {
+          stream.sent = this.options.sendFrame({ id, method, params: stream.params })
+          if (!stream.sent) {
+            this.fail(id, stream, 'Connection interrupted')
+          }
         }
       })
       .catch((error: unknown) => {
@@ -108,7 +114,12 @@ export class MobileRelayRpcStreams {
   }
 
   isControlResponse(response: RpcResponse): boolean {
-    return this.streams.has(response.id) && isStreamControlResponse(response)
+    const stream = this.streams.get(response.id)
+    if (!stream?.sent || stream.controlResponseReceived) {
+      return false
+    }
+    stream.controlResponseReceived = true
+    return true
   }
 
   handleBinary(bytes: Uint8Array): void {

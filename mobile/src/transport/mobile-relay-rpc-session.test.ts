@@ -334,6 +334,63 @@ describe('mobile relay RPC session', () => {
     }
   })
 
+  it.each([
+    ['lease-only terminal', { type: 'subscribed', streamId: null }],
+    ['native-chat snapshot', { type: 'snapshot' }],
+    ['session-tabs snapshot', { type: 'snapshot' }]
+  ])('counts a Relay %s reply as control-plane liveness', async (_name, result) => {
+    const { session } = await authenticateSession()
+    vi.useFakeTimers()
+    try {
+      session.subscribe('nativeChat.subscribe', {}, vi.fn())
+      await vi.advanceTimersByTimeAsync(0)
+      const subscribe = fakes.sendText.mock.calls
+        .map(([payload]) => JSON.parse(payload as string) as { id: string; method: string })
+        .find(({ method }) => method === 'nativeChat.subscribe')!
+
+      session.notifyForeground()
+      fakes.linkOptions!.onText(
+        JSON.stringify({ id: subscribe.id, ok: true, streaming: true, result, _meta: {} })
+      )
+      await vi.advanceTimersByTimeAsync(8_000)
+
+      expect(session.getState()).toBe('connected')
+      expect(fakes.close).not.toHaveBeenCalled()
+    } finally {
+      session.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not count repeated Relay subscription frames as fresh control responses', async () => {
+    const { session } = await authenticateSession()
+    vi.useFakeTimers()
+    try {
+      session.subscribe('nativeChat.subscribe', {}, vi.fn())
+      await vi.advanceTimersByTimeAsync(0)
+      const subscribe = fakes.sendText.mock.calls
+        .map(([payload]) => JSON.parse(payload as string) as { id: string; method: string })
+        .find(({ method }) => method === 'nativeChat.subscribe')!
+      const response = JSON.stringify({
+        id: subscribe.id,
+        ok: true,
+        streaming: true,
+        result: { type: 'snapshot' },
+        _meta: {}
+      })
+      fakes.linkOptions!.onText(response)
+
+      session.notifyForeground()
+      fakes.linkOptions!.onText(response)
+      await vi.advanceTimersByTimeAsync(8_000)
+
+      expect(session.getState()).toBe('disconnected')
+      expect(fakes.close).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not let Relay terminal payload traffic mask a stalled control channel', async () => {
     const { session } = await authenticateSession()
     vi.useFakeTimers()
@@ -614,6 +671,43 @@ describe('mobile relay RPC session', () => {
           .map(([payload]) => JSON.parse(payload as string) as { method: string })
           .filter(({ method }) => method === 'status.get')
       ).toHaveLength(2)
+      expect(session.getState()).toBe('connected')
+      expect(fakes.close).not.toHaveBeenCalled()
+    } finally {
+      session.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('retains late Relay reply evidence after an earlier probe completes', async () => {
+    const { session } = await authenticateSession()
+    vi.useFakeTimers()
+    try {
+      const request = session.sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+      const outcome = request.catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(0)
+      const timedOutRequest = fakes.sendText.mock.calls
+        .map(([payload]) => JSON.parse(payload as string) as { id: string; method: string })
+        .find(({ method }) => method === 'browser.screenshot')!
+
+      await vi.advanceTimersByTimeAsync(100)
+      await expect(outcome).resolves.toMatchObject({
+        message: 'relay RPC timed out: browser.screenshot'
+      })
+      const firstProbe = fakes.sendText.mock.calls
+        .map(([payload]) => JSON.parse(payload as string) as { id: string; method: string })
+        .find(({ method }) => method === 'status.get')!
+      fakes.linkOptions!.onText(
+        JSON.stringify({ id: firstProbe.id, ok: true, result: {}, _meta: {} })
+      )
+      await vi.advanceTimersByTimeAsync(0)
+
+      session.notifyForeground()
+      fakes.linkOptions!.onText(
+        JSON.stringify({ id: timedOutRequest.id, ok: true, result: {}, _meta: {} })
+      )
+      await vi.advanceTimersByTimeAsync(8_000)
+
       expect(session.getState()).toBe('connected')
       expect(fakes.close).not.toHaveBeenCalled()
     } finally {

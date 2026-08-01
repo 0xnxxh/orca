@@ -186,7 +186,8 @@ describe('edit host handleSave', () => {
     expect(dependencies.updateHostNameAndEndpoint).toHaveBeenCalledWith('host-1', {
       endpoint: 'ws://192.168.1.20:6768'
     })
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', savedHost)
+    expect(dependencies.primeHosts).toHaveBeenCalledWith([savedHost], 0)
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
     expect(dependencies.back).toHaveBeenCalledTimes(1)
 
     act(() => renderer.unmount())
@@ -209,7 +210,8 @@ describe('edit host handleSave', () => {
       name: 'Home Desk',
       endpoint: 'ws://192.168.1.20:6768'
     })
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', savedHost)
+    expect(dependencies.primeHosts).toHaveBeenCalledWith([savedHost], 0)
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
     expect(dependencies.back).toHaveBeenCalledTimes(1)
 
     act(() => renderer.unmount())
@@ -265,7 +267,7 @@ describe('edit host handleSave', () => {
       await Promise.resolve()
     })
 
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', savedHost)
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
     expect(dependencies.back).toHaveBeenCalledTimes(1)
     expect(dependencies.alert).toHaveBeenCalledWith('Unable to reconnect', 'connect failed')
 
@@ -286,24 +288,29 @@ describe('edit host handleSave', () => {
     setFieldValue(renderer, 'Address', '192.168.1.20:6768')
     await pressSave(renderer)
 
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', relayHost)
+    expect(dependencies.primeHosts).toHaveBeenCalledWith([relayHost], 0)
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
 
     act(() => renderer.unmount())
   })
 
-  it('preserves the edited profile when an unrelated write invalidates the loaded snapshot', async () => {
+  it('reloads the current edited profile when an unrelated write invalidates a snapshot', async () => {
     const editedHost = { ...HOST_FIXTURE, endpoint: 'ws://192.168.1.20:6768' }
     const invalidatedHost = { ...HOST_FIXTURE, name: 'Stale snapshot' }
     dependencies.loadHosts
       .mockResolvedValueOnce([HOST_FIXTURE])
       .mockResolvedValueOnce([invalidatedHost])
-    dependencies.getHostListLoadRevision.mockReturnValueOnce(1).mockReturnValueOnce(2)
+      .mockResolvedValueOnce([editedHost])
+    dependencies.getHostListLoadRevision
+      .mockReturnValueOnce(1)
+      .mockReturnValueOnce(2)
+      .mockReturnValue(2)
     const renderer = await renderEditHostRoute()
     setFieldValue(renderer, 'Address', '192.168.1.20:6768')
     await pressSave(renderer)
 
-    expect(dependencies.primeHosts).not.toHaveBeenCalled()
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', editedHost)
+    expect(dependencies.primeHosts).toHaveBeenCalledWith([editedHost], 2)
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
 
     act(() => renderer.unmount())
   })

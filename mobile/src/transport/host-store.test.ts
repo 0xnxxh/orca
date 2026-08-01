@@ -432,7 +432,6 @@ describe('host-store list mutations', () => {
           releaseOldToken = resolve
         })
     )
-    const relayHostId = 'AbCdEf0123_-xyZ9'
     const stalePublication = saveExistingHostRelayRouting({
       ...HOST_ONE,
       deviceToken: 'token-1',
@@ -440,13 +439,13 @@ describe('host-store list mutations', () => {
         { id: 'direct-primary', kind: 'lan', url: HOST_ONE.endpoint },
         { id: 'relay-primary', kind: 'relay', url: 'wss://relay.onorca.dev/v1/connect/host' }
       ],
-      relayHostId,
+      relayHostId: 'AbCdEf0123_-xyZ9',
       relay: {
         v: 1,
         directorUrl: 'https://relay.onorca.dev',
         cellUrl: 'https://relay.onorca.dev',
         assignmentEpoch: 1,
-        relayHostId,
+        relayHostId: 'AbCdEf0123_-xyZ9',
         e2eeFraming: 2
       }
     })
@@ -476,13 +475,14 @@ describe('host-store list mutations', () => {
 
   it('lets same-host re-pair supersede a publication stalled on identity lookup', async () => {
     let releaseOldToken: ((token: string | null) => void) | null = null
-    secureStoreMock.getItemAsync.mockImplementationOnce(
-      () =>
-        new Promise<string | null>((resolve) => {
-          releaseOldToken = resolve
-        })
-    )
-    const relayHostId = 'AbCdEf0123_-xyZ9'
+    secureStoreMock.getItemAsync
+      .mockImplementationOnce(
+        () =>
+          new Promise<string | null>((resolve) => {
+            releaseOldToken = resolve
+          })
+      )
+      .mockResolvedValue('replacement-token')
     const stalePublication = saveExistingHostRelayRouting({
       ...HOST_ONE,
       deviceToken: 'token-1',
@@ -490,13 +490,13 @@ describe('host-store list mutations', () => {
         { id: 'direct-primary', kind: 'lan', url: HOST_ONE.endpoint },
         { id: 'relay-primary', kind: 'relay', url: 'wss://relay.onorca.dev/v1/connect/host' }
       ],
-      relayHostId,
+      relayHostId: 'AbCdEf0123_-xyZ9',
       relay: {
         v: 1,
         directorUrl: 'https://relay.onorca.dev',
         cellUrl: 'https://relay.onorca.dev',
         assignmentEpoch: 1,
-        relayHostId,
+        relayHostId: 'AbCdEf0123_-xyZ9',
         e2eeFraming: 2
       }
     })
