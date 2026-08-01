@@ -1,7 +1,7 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ConnectionState } from './types'
+import type { ConnectionState, HostProfile } from './types'
 import type { RpcClient } from './rpc-client'
 
 const connectMock = vi.fn()
@@ -20,7 +20,13 @@ vi.mock('./connection-revival-triggers', () => ({
   subscribeConnectionRevivalTriggers: () => () => {}
 }))
 
-import { RpcClientProvider, useCloseHost, useForceReconnect, useHostClient } from './client-context'
+import {
+  RpcClientProvider,
+  useCloseHost,
+  useForceReconnect,
+  useHostClient,
+  usePrimeHosts
+} from './client-context'
 
 type FakeClient = RpcClient & {
   emitState: (state: ConnectionState) => void
@@ -54,7 +60,7 @@ function makeFakeClient(initialState: ConnectionState): FakeClient {
   } as FakeClient
 }
 
-const HOST = {
+const HOST: HostProfile = {
   id: 'host-1',
   name: 'Host 1',
   endpoint: 'ws://127.0.0.1:1',
@@ -67,6 +73,7 @@ type Harness = {
   readonly hook: ReturnType<typeof useHostClient>
   readonly closeHost: (hostId: string) => void
   readonly forceReconnect: (hostId: string) => Promise<void>
+  readonly primeHosts: (hosts: HostProfile[]) => void
   readonly unmount: () => void
 }
 
@@ -86,12 +93,14 @@ async function renderHarness(hostId: string): Promise<Harness> {
   let hook: ReturnType<typeof useHostClient> | null = null
   let closeHost: ((hostId: string) => void) | null = null
   let forceReconnect: ((hostId: string) => Promise<void>) | null = null
+  let primeHosts: ((hosts: HostProfile[]) => void) | null = null
   let renderer: ReactTestRenderer | null = null
 
   function Probe(): null {
     hook = useHostClient(hostId)
     closeHost = useCloseHost()
     forceReconnect = useForceReconnect()
+    primeHosts = usePrimeHosts()
     return null
   }
 
@@ -103,7 +112,7 @@ async function renderHarness(hostId: string): Promise<Harness> {
   } finally {
     restore()
   }
-  if (!hook || !closeHost || !forceReconnect || !renderer) {
+  if (!hook || !closeHost || !forceReconnect || !primeHosts || !renderer) {
     throw new Error('harness did not render')
   }
   const mounted = renderer as ReactTestRenderer
@@ -125,6 +134,12 @@ async function renderHarness(hostId: string): Promise<Harness> {
         throw new Error('forceReconnect not rendered')
       }
       return forceReconnect(id)
+    },
+    primeHosts: (hosts) => {
+      if (!primeHosts) {
+        throw new Error('primeHosts hook not rendered')
+      }
+      primeHosts(hosts)
     },
     unmount: () => mounted.unmount()
   }
@@ -310,6 +325,54 @@ describe('useHostClient', () => {
 
     resolveHealthCheck?.()
     await act(async () => Promise.all([first, second]))
+
+    harness.unmount()
+  })
+
+  it('queues a changed endpoint behind an older reconnect health probe', async () => {
+    const stale = makeFakeClient('connected')
+    const oldReplacement = makeFakeClient('connecting')
+    const newReplacement = makeFakeClient('connecting')
+    let resolveOldHealthCheck: (() => void) | null = null
+    oldReplacement.sendRequest = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveOldHealthCheck = () => resolve({ id: 'old-health', ok: true, result: {} })
+        })
+    )
+    newReplacement.sendRequest = vi.fn(async () => ({ id: 'new-health', ok: true, result: {} }))
+    connectMock
+      .mockReturnValueOnce(stale)
+      .mockReturnValueOnce(oldReplacement)
+      .mockReturnValueOnce(newReplacement)
+    loadHostsMock.mockResolvedValue([HOST])
+
+    const harness = await renderHarness(HOST.id)
+    const first = harness.forceReconnect(HOST.id)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const updatedHost = { ...HOST, endpoint: 'ws://127.0.0.1:2' }
+    harness.primeHosts([updatedHost])
+    const second = harness.forceReconnect(HOST.id)
+    expect(second).not.toBe(first)
+    expect(connectMock).toHaveBeenCalledTimes(2)
+
+    resolveOldHealthCheck?.()
+    await act(async () => {
+      await Promise.all([first, second])
+    })
+
+    expect(connectMock).toHaveBeenCalledTimes(3)
+    expect(connectMock.mock.calls[2]?.[0]).toEqual(updatedHost)
+    expect(oldReplacement.closeMock).toHaveBeenCalledOnce()
+    expect(newReplacement.sendRequest).toHaveBeenCalledWith('status.get', undefined, {
+      timeoutMs: 15_000,
+      budgetSpansConnect: true,
+      strictDeadline: true
+    })
 
     harness.unmount()
   })

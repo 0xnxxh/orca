@@ -9,24 +9,36 @@ export type HostReconnectEntry = {
 
 type HostReconnectOperation = {
   hostId: string
-  entry: HostReconnectEntry | undefined
-  listenerCount: number
+  profileVersion: number
+  getEntry: () => HostReconnectEntry | undefined
+  getListenerCount: () => number
   removeEntry: () => void
   openReplacement: () => Promise<HostReconnectEntry | null>
 }
 
+type PendingReconnect = {
+  profileVersion: number
+  promise: Promise<void>
+}
+
 export class HostForceReconnectCoordinator {
-  private readonly pendingByHost = new Map<string, Promise<void>>()
+  private readonly pendingByHost = new Map<string, PendingReconnect>()
 
   run(operation: HostReconnectOperation): Promise<void> {
     const pending = this.pendingByHost.get(operation.hostId)
-    if (pending) {
-      return pending
+    if (pending?.profileVersion === operation.profileVersion) {
+      return pending.promise
     }
-    const reconnect = this.replaceAndVerify(operation)
-    this.pendingByHost.set(operation.hostId, reconnect)
+    // Why: a changed endpoint must supersede the in-flight profile without racing its health probe.
+    const reconnect = pending
+      ? pending.promise.catch(() => undefined).then(() => this.replaceAndVerify(operation))
+      : this.replaceAndVerify(operation)
+    this.pendingByHost.set(operation.hostId, {
+      profileVersion: operation.profileVersion,
+      promise: reconnect
+    })
     const clearPending = () => {
-      if (this.pendingByHost.get(operation.hostId) === reconnect) {
+      if (this.pendingByHost.get(operation.hostId)?.promise === reconnect) {
         this.pendingByHost.delete(operation.hostId)
       }
     }
@@ -35,10 +47,11 @@ export class HostForceReconnectCoordinator {
   }
 
   private async replaceAndVerify(operation: HostReconnectOperation): Promise<void> {
-    const savedRefCount = operation.entry?.refCount ?? Math.max(1, operation.listenerCount)
-    if (operation.entry) {
-      operation.entry.unsubState()
-      operation.entry.client.close()
+    const entry = operation.getEntry()
+    const savedRefCount = entry?.refCount ?? Math.max(1, operation.getListenerCount())
+    if (entry) {
+      entry.unsubState()
+      entry.client.close()
       operation.removeEntry()
     }
     const fresh = await operation.openReplacement()

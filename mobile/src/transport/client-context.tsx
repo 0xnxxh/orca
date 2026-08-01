@@ -13,6 +13,7 @@ import {
 import type { RpcClient } from './rpc-client'
 import { connectionLogStore } from './connection-log-buffer'
 import { HostForceReconnectCoordinator, type HostReconnectEntry } from './host-force-reconnect'
+import { HostReconnectProfileCache } from './host-reconnect-profile-cache'
 import { subscribeConnectionRevivalTriggers } from './connection-revival-triggers'
 import { HostClientOpenRegistry } from './host-client-open-registry'
 import { loadHosts } from './host-store'
@@ -54,7 +55,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
   const forceReconnectCoordinatorRef = useRef(new HostForceReconnectCoordinator())
 
   // Why: cache of already-loaded HostProfiles so openEntry can skip a second loadHosts()/Keychain pass on cold start.
-  const primedHostsRef = useRef<Map<string, HostProfile>>(new Map())
+  const primedHostsRef = useRef(new HostReconnectProfileCache())
 
   function notifyHostState(hostId: string, state: ConnectionState) {
     const set = stateListenersRef.current.get(hostId)
@@ -163,7 +164,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
   const acquire = useCallback(
     (hostId: string, host?: HostProfile): RpcClient | null => {
       if (host) {
-        primedHostsRef.current.set(hostId, host)
+        primedHostsRef.current.prime(host)
       }
       const existing = storeRef.current.get(hostId)
       if (existing) {
@@ -184,7 +185,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
 
   const primeHosts = useCallback((hosts: HostProfile[]) => {
     for (const host of hosts) {
-      primedHostsRef.current.set(host.id, host)
+      primedHostsRef.current.prime(host)
     }
   }, [])
 
@@ -201,8 +202,9 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     (hostId: string): Promise<void> =>
       forceReconnectCoordinatorRef.current.run({
         hostId,
-        entry: storeRef.current.get(hostId),
-        listenerCount: stateListenersRef.current.get(hostId)?.size ?? 0,
+        profileVersion: primedHostsRef.current.version(hostId),
+        getEntry: () => storeRef.current.get(hostId),
+        getListenerCount: () => stateListenersRef.current.get(hostId)?.size ?? 0,
         removeEntry: () => storeRef.current.delete(hostId),
         openReplacement: () => openEntry(hostId)
       }),
