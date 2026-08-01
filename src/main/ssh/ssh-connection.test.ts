@@ -17,6 +17,7 @@ let execBehavior: 'callback' | 'pending' = 'callback'
 let pendingExecCallback: ((err: Error | undefined, channel: unknown) => void) | null = null
 let sftpBehavior: 'callback' | 'pending' = 'callback'
 let pendingSftpCallback: ((err: Error | undefined, channel: unknown) => void) | null = null
+let notifyClientCreated: (() => void) | undefined
 
 type MockSshClient = {
   setNoDelay: ReturnType<typeof vi.fn>
@@ -34,6 +35,27 @@ function emitSshEvent(event: string, ...args: unknown[]): void {
   }
 }
 
+function nextSshClientCreation(): Promise<void> {
+  return new Promise((resolve) => {
+    notifyClientCreated = resolve
+  })
+}
+
+async function connectWithFakeTimers(conn: SshConnection): Promise<void> {
+  const clientCreated = nextSshClientCreation()
+  const connected = conn.connect()
+  await clientCreated
+  await vi.advanceTimersByTimeAsync(1)
+  await connected
+}
+
+async function advanceToNextSshClient(delayMs: number): Promise<void> {
+  const clientCreated = nextSshClientCreation()
+  await vi.advanceTimersByTimeAsync(delayMs)
+  await clientCreated
+  await vi.advanceTimersByTimeAsync(1)
+}
+
 vi.mock('ssh2', () => {
   class MockBaseAgent {}
   class MockSshClient {
@@ -46,6 +68,8 @@ vi.mock('ssh2', () => {
     lastConnectConfig?: unknown
     constructor() {
       clientInstances.push(this)
+      notifyClientCreated?.()
+      notifyClientCreated = undefined
     }
     on(event: string, handler: (...args: unknown[]) => void) {
       const handlers = eventHandlers?.get(event) ?? new Set<(...args: unknown[]) => void>()
@@ -171,6 +195,10 @@ import {
 import { getRemoteHostPlatform } from './ssh-remote-platform'
 import { CONNECT_TIMEOUT_MS, RECONNECT_BACKOFF_MS } from './ssh-connection-utils'
 import { MIN_SSH_RELAY_GRACE_PERIOD_SECONDS, type SshTarget } from '../../shared/ssh-types'
+import {
+  createOpenSshPrivateKeyFixture,
+  createOpenSshPublicKeyFixture
+} from './ssh-security-key-identity.test-fixture'
 
 function createTarget(overrides?: Partial<SshTarget>): SshTarget {
   return {
@@ -282,6 +310,7 @@ describe('SshConnection', () => {
     pendingExecCallback = null
     sftpBehavior = 'callback'
     pendingSftpCallback = null
+    notifyClientCreated = undefined
     clientInstances = []
     getOrcaControlSocketPathMock.mockReset()
     getOrcaControlSocketPathMock.mockReturnValue(null)
@@ -420,23 +449,20 @@ describe('SshConnection', () => {
     vi.useFakeTimers()
     try {
       const conn = new SshConnection(createTarget(), createCallbacks())
-      const connected = conn.connect()
-      await vi.advanceTimersByTimeAsync(1)
-      await connected
+      await connectWithFakeTimers(conn)
       expect(clientInstances).toHaveLength(1)
 
       emitSshEvent('close')
       await vi.advanceTimersByTimeAsync(999)
       expect(clientInstances).toHaveLength(1)
-      await vi.advanceTimersByTimeAsync(1)
+      await advanceToNextSshClient(1)
       expect(clientInstances).toHaveLength(2)
-      await vi.advanceTimersByTimeAsync(1)
 
       // Why: a single published counter pinned every post-handshake drop at the 1000ms head step.
       emitSshEvent('close')
       await vi.advanceTimersByTimeAsync(1999)
       expect(clientInstances).toHaveLength(2)
-      await vi.advanceTimersByTimeAsync(1)
+      await advanceToNextSshClient(1)
       expect(clientInstances).toHaveLength(3)
     } finally {
       vi.useRealTimers()
@@ -455,13 +481,11 @@ describe('SshConnection', () => {
           )
         })
       )
-      const connected = conn.connect()
-      await vi.advanceTimersByTimeAsync(1)
-      await connected
+      await connectWithFakeTimers(conn)
 
       for (let drop = 0; drop < 3; drop++) {
         emitSshEvent('close')
-        await vi.advanceTimersByTimeAsync(30_000)
+        await advanceToNextSshClient(30_000)
       }
 
       expect(
@@ -490,15 +514,15 @@ describe('SshConnection', () => {
           )
         })
       )
-      const connected = conn.connect()
-      await vi.advanceTimersByTimeAsync(1)
-      await connected
+      await connectWithFakeTimers(conn)
 
       connectBehavior = 'error'
       connectErrorMessage = 'connect ETIMEDOUT 10.0.0.5:22'
       connectErrorCode = 'ETIMEDOUT'
       published.length = 0
+      const clientCreated = nextSshClientCreation()
       const reconnected = conn.reconnect()
+      await clientCreated
       await vi.advanceTimersByTimeAsync(1)
       await reconnected
 
@@ -521,16 +545,15 @@ describe('SshConnection', () => {
           onStateChange: vi.fn((_id, state) => statuses.push(state.status))
         })
       )
-      const connected = conn.connect()
-      await vi.advanceTimersByTimeAsync(1)
-      await connected
+      await connectWithFakeTimers(conn)
 
       connectBehavior = 'error'
       connectErrorMessage = 'connect ETIMEDOUT 10.0.0.5:22'
       connectErrorCode = 'ETIMEDOUT'
       emitSshEvent('close')
-      // The full ladder sums to 103s; drain well past it.
-      await vi.advanceTimersByTimeAsync(200_000)
+      for (const delayMs of RECONNECT_BACKOFF_MS) {
+        await advanceToNextSshClient(delayMs)
+      }
 
       expect(statuses).toContain('reconnection-failed')
       // Pin the budget itself: the initial success plus exactly RECONNECT_BACKOFF_MS.length retries.
@@ -545,15 +568,13 @@ describe('SshConnection', () => {
     vi.useFakeTimers()
     try {
       const conn = new SshConnection(createTarget(), createCallbacks())
-      const connected = conn.connect()
-      await vi.advanceTimersByTimeAsync(1)
-      await connected
+      await connectWithFakeTimers(conn)
 
       // Saturate the delay ladder on flaps alone; 45s reconnects each drop while staying under
       // STABLE_CONNECTION_MS, so the ladder never resets to the head.
       for (let drop = 0; drop < 12; drop++) {
         emitSshEvent('close')
-        await vi.advanceTimersByTimeAsync(45_000)
+        await advanceToNextSshClient(45_000)
       }
       expect(conn.getState().status).toBe('connected')
 
@@ -561,7 +582,7 @@ describe('SshConnection', () => {
       emitSshEvent('close')
       // The retry plus a worst-case handshake must land inside the shortest configurable relay grace,
       // or the remote daemon shuts down and takes every PTY on that host with it.
-      await vi.advanceTimersByTimeAsync(
+      await advanceToNextSshClient(
         MIN_SSH_RELAY_GRACE_PERIOD_SECONDS * 1000 - CONNECT_TIMEOUT_MS - 1
       )
       expect(clientInstances.length).toBeGreaterThan(before)
@@ -575,13 +596,11 @@ describe('SshConnection', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       const conn = new SshConnection(createTarget(), createCallbacks())
-      const connected = conn.connect()
-      await vi.advanceTimersByTimeAsync(1)
-      await connected
+      await connectWithFakeTimers(conn)
 
       for (let drop = 0; drop < 12; drop++) {
         emitSshEvent('close')
-        await vi.advanceTimersByTimeAsync(45_000)
+        await advanceToNextSshClient(45_000)
       }
 
       const lastReconnectLog = warn.mock.calls
@@ -606,19 +625,17 @@ describe('SshConnection', () => {
           onStateChange: vi.fn((_id, state) => statuses.push(state.status))
         })
       )
-      const connected = conn.connect()
-      await vi.advanceTimersByTimeAsync(1)
-      await connected
+      await connectWithFakeTimers(conn)
 
       // 12 flaps saturate the delay ladder without ever touching the failure streak.
       for (let drop = 0; drop < 12; drop++) {
         emitSshEvent('close')
-        await vi.advanceTimersByTimeAsync(30_000)
+        await advanceToNextSshClient(30_000)
       }
       connectSequence = [new Error('connect ETIMEDOUT 10.0.0.5:22')]
       emitSshEvent('close')
-      await vi.advanceTimersByTimeAsync(30_000)
-      await vi.advanceTimersByTimeAsync(30_000)
+      await advanceToNextSshClient(30_000)
+      await advanceToNextSshClient(30_000)
 
       expect(statuses).not.toContain('reconnection-failed')
       expect(conn.getState().status).toBe('connected')
@@ -677,10 +694,11 @@ describe('SshConnection', () => {
     const callbacks = createCallbacks()
     const conn = new SshConnection(createTarget(), callbacks)
 
+    const clientCreated = new Promise<void>((resolve) => {
+      notifyClientCreated = resolve
+    })
     const connectResult = conn.connect().catch((error: Error) => error)
-    for (let i = 0; i < 5 && clientInstances.length === 0; i++) {
-      await Promise.resolve()
-    }
+    await clientCreated
     expect(clientInstances).toHaveLength(1)
     await conn.disconnect()
 
@@ -700,10 +718,11 @@ describe('SshConnection', () => {
     const callbacks = createCallbacks()
     const conn = new SshConnection(createTarget(), callbacks)
 
+    const clientCreated = new Promise<void>((resolve) => {
+      notifyClientCreated = resolve
+    })
     const connectResult = conn.connect().catch((error: Error) => error)
-    for (let i = 0; i < 5 && clientInstances.length === 0; i++) {
-      await Promise.resolve()
-    }
+    await clientCreated
     expect(clientInstances).toHaveLength(1)
     await conn.disconnect()
 
@@ -1675,6 +1694,47 @@ describe('SshConnection', () => {
       'echo ORCA-SYSTEM-SSH-OK',
       { wrapCommand: false }
     )
+  })
+
+  it('uses system SSH before ssh2 parses a security-key private key', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'orca-security-key-connect-'))
+    const keyPath = join(directory, 'id_ed25519_sk')
+    writeFileSync(
+      keyPath,
+      createOpenSshPrivateKeyFixture(['sk-ssh-ed25519@openssh.com'], { encrypted: true })
+    )
+    const conn = new SshConnection(createTarget({ identityFile: keyPath }), createCallbacks())
+
+    try {
+      await conn.connect()
+
+      expect(conn.getState().status).toBe('connected')
+      expect(conn.usesSystemSshTransport()).toBe(true)
+      expect(clientInstances).toHaveLength(0)
+      expect(spawnSystemSshCommandMock).toHaveBeenCalledTimes(1)
+    } finally {
+      rmSync(directory, { recursive: true })
+    }
+  })
+
+  it('uses system SSH for an agent-backed security-key public identity', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'orca-security-key-agent-connect-'))
+    const identityPath = join(directory, 'id_ed25519_sk')
+    writeFileSync(
+      `${identityPath}.pub`,
+      createOpenSshPublicKeyFixture('sk-ssh-ed25519@openssh.com')
+    )
+    const conn = new SshConnection(createTarget({ identityFile: identityPath }), createCallbacks())
+
+    try {
+      await conn.connect()
+
+      expect(conn.usesSystemSshTransport()).toBe(true)
+      expect(clientInstances).toHaveLength(0)
+      expect(spawnSystemSshCommandMock).toHaveBeenCalledTimes(1)
+    } finally {
+      rmSync(directory, { recursive: true })
+    }
   })
 
   it('falls back to system SSH when ssh2 hits a local network policy reachability error', async () => {
