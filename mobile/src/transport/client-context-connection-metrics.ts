@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { useRpcClientContext, type RpcClientContextValue } from './client-context'
+import { useRpcClientContext } from './client-context'
+import type { RpcClientContextValue } from './rpc-client-context-contract'
 
 export function useReconnectAttempt(hostId: string | undefined): number {
   return useHostMetric(hostId, (context, id) => context.getReconnectAttempt(id), 0)

@@ -8,7 +8,7 @@ import {
   readMobileRelayCredentialBundle,
   writeMobileRelayCredentialBundle
 } from './mobile-relay-credential-bundle'
-import { saveHost } from './host-store'
+import { saveExistingHostRelayRouting } from './existing-host-relay-routing'
 import { upgradeDirectMobileRelay } from './mobile-relay-direct-upgrade'
 import { MobileRelayDirectUpgradeController } from './mobile-relay-direct-upgrade-controller'
 import type { StableLogicalRpcClient } from './stable-logical-rpc-client'
@@ -99,7 +99,7 @@ function createSupervisor(
     resolveRelay: resolveMobileRelayEndpoint,
     readBundle: readMobileRelayCredentialBundle,
     writeBundle: writeMobileRelayCredentialBundle,
-    saveHost,
+    saveHost: saveExistingHostRelayRouting,
     onHostUpdated,
     now: Date.now,
     randomBytes: ExpoCrypto.getRandomBytes,

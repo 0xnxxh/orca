@@ -186,14 +186,16 @@ async function readStoredHostsForMutation(): Promise<StoredHostProfile[]> {
   }
 }
 
-async function mutateStoredHosts(
+export async function mutateStoredHosts(
   update: (hosts: StoredHostProfile[]) => StoredHostProfile[]
 ): Promise<void> {
   const mutation = hostListMutation.then(async () => {
     const current = await readStoredHostsForMutation()
     const next = update(current)
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-    hostListLoads.dropSharedHostListLoad()
+    if (next !== current) {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+      hostListLoads.dropSharedHostListLoad()
+    }
   })
   hostListMutation = mutation.catch(() => {})
   return mutation
@@ -209,17 +211,11 @@ function toStored(host: HostProfile): StoredHostProfile {
   }
 }
 
-export class MobileRelayUpgradeHostRemovedError extends Error {}
-
 export async function saveHost(host: HostProfile): Promise<void> {
-  await persistHost(host, false)
+  await persistHost(host)
 }
 
-export async function saveExistingHostRelayUpgrade(host: HostProfile): Promise<void> {
-  await persistHost(host, true)
-}
-
-async function persistHost(host: HostProfile, requireExisting: boolean): Promise<void> {
+async function persistHost(host: HostProfile): Promise<void> {
   const validated = HostProfileSchema.parse(host)
   const stored = toStored(validated)
   const duplicateHostIds = new Set<string>()
@@ -237,10 +233,6 @@ async function persistHost(host: HostProfile, requireExisting: boolean): Promise
       return hosts
         .filter(({ id }) => !duplicateHostIds.has(id))
         .map((candidate) => (candidate.id === stored.id ? stored : candidate))
-    }
-    if (requireExisting) {
-      // Why: an in-flight relay upgrade must not resurrect a host the user removed.
-      throw new MobileRelayUpgradeHostRemovedError('mobile relay upgrade host was removed')
     }
     return [...hosts.filter(({ id }) => !duplicateHostIds.has(id)), stored]
   })

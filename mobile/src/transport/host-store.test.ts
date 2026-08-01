@@ -36,15 +36,17 @@ vi.mock('./host-credential-cleanup', () => ({
 
 import {
   loadHosts,
-  MobileRelayUpgradeHostRemovedError,
   removeHost,
   resolvePairingHostIdentity,
   resetHostStoreForTests,
   saveHost,
-  saveExistingHostRelayUpgrade,
   updateHostNameAndEndpoint,
   updateLastConnected
 } from './host-store'
+import {
+  MobileRelayUpgradeHostRemovedError,
+  saveExistingHostRelayRouting
+} from './existing-host-relay-routing'
 import { resetMobileRelayHostOverlayStoreForTests } from './mobile-relay-host-overlay-store'
 
 const HOSTS_STORAGE_KEY = 'orca:hosts'
@@ -247,11 +249,41 @@ describe('host-store list mutations', () => {
     storedHostsRaw = JSON.stringify([HOST_TWO])
 
     await expect(
-      saveExistingHostRelayUpgrade({ ...HOST_ONE, deviceToken: 'token-1' })
+      saveExistingHostRelayRouting({ ...HOST_ONE, deviceToken: 'token-1' })
     ).rejects.toBeInstanceOf(MobileRelayUpgradeHostRemovedError)
 
     expect(JSON.parse(storedHostsRaw)).toEqual([HOST_TWO])
     expect(secureStoreMock.setItemAsync).not.toHaveBeenCalled()
+  })
+
+  it('publishes relay routing without overwriting a newer endpoint edit', async () => {
+    const relayHostId = 'AbCdEf0123_-xyZ9'
+    await updateHostNameAndEndpoint(HOST_ONE.id, { endpoint: 'ws://127.0.0.1:9' })
+
+    await saveExistingHostRelayRouting({
+      ...HOST_ONE,
+      deviceToken: 'token-1',
+      endpoints: [
+        { id: 'direct-primary', kind: 'lan', url: HOST_ONE.endpoint },
+        { id: 'relay-primary', kind: 'relay', url: 'wss://relay.onorca.dev/v1/connect/host' }
+      ],
+      relayHostId,
+      relay: {
+        v: 1,
+        directorUrl: 'https://relay.onorca.dev',
+        cellUrl: 'https://relay.onorca.dev',
+        assignmentEpoch: 1,
+        relayHostId,
+        e2eeFraming: 2
+      }
+    })
+
+    expect(JSON.parse(storedHostsRaw)).toContainEqual(
+      expect.objectContaining({ id: HOST_ONE.id, endpoint: 'ws://127.0.0.1:9' })
+    )
+    expect(JSON.parse(storedOverlayRaw ?? '[]')).toContainEqual(
+      expect.objectContaining({ hostId: HOST_ONE.id, relayHostId })
+    )
   })
 
   it('awaits cleanup scheduling after metadata commit', async () => {

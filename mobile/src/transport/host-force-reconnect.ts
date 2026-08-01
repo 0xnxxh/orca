@@ -13,6 +13,7 @@ type HostReconnectOperation = {
   getEntry: () => HostReconnectEntry | undefined
   getListenerCount: () => number
   removeEntry: () => void
+  cancelPendingOpen: () => void
   openReplacement: () => Promise<HostReconnectEntry | null>
 }
 
@@ -38,17 +39,17 @@ export class HostForceReconnectCoordinator {
   }
 
   run(operation: HostReconnectOperation): Promise<void> {
-    const generation = this.generation(operation.hostId)
     const pending = this.pendingByHost.get(operation.hostId)
+    let generation = this.generation(operation.hostId)
     if (pending?.profileVersion === operation.profileVersion && pending.generation === generation) {
       return pending.promise
     }
-    // Why: a changed endpoint must supersede the in-flight profile without racing its health probe.
-    const reconnect = pending
-      ? pending.promise
-          .catch(() => undefined)
-          .then(() => this.replaceAndVerify(operation, generation))
-      : this.replaceAndVerify(operation, generation)
+    if (pending) {
+      generation += 1
+      this.generations.set(operation.hostId, generation)
+      operation.cancelPendingOpen()
+    }
+    const reconnect = this.replaceAndVerify(operation, generation)
     this.pendingByHost.set(operation.hostId, {
       profileVersion: operation.profileVersion,
       generation,

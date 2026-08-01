@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { MobileRelayEndpoint } from '../../../src/shared/mobile-relay-credential-contract'
-import { MobileRelayUpgradeHostRemovedError } from './host-store'
+import { MobileRelayUpgradeHostRemovedError } from './existing-host-relay-routing'
 import {
   createMobileRelayDirectUpgradeJournal,
   type MobileRelayDirectUpgradeJournal

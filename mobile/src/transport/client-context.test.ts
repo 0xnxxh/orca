@@ -365,6 +365,30 @@ describe('useHostClient', () => {
     harness.unmount()
   })
 
+  it('ignores relay metadata published by a superseded lifecycle', async () => {
+    const stale = makeFakeClient('connected')
+    const fresh = makeFakeClient('connecting')
+    fresh.sendRequest = vi.fn(async () => ({ id: 'health', ok: true, result: {} }))
+    connectMock.mockReturnValueOnce(stale).mockReturnValueOnce(fresh)
+    loadHostsMock.mockResolvedValue([HOST])
+
+    const harness = await renderHarness(HOST.id)
+    const updatedHost = { ...HOST, endpoint: 'ws://127.0.0.1:2' }
+    harness.primeHosts([updatedHost])
+    const publishHostUpdate = connectMock.mock.calls[0]?.[2] as
+      | ((host: HostProfile) => void)
+      | undefined
+    publishHostUpdate?.({
+      ...HOST,
+      endpoints: [{ id: 'direct-primary', kind: 'lan', url: HOST.endpoint }]
+    })
+
+    await act(async () => harness.forceReconnect(HOST.id))
+
+    expect(connectMock.mock.calls[1]?.[0]).toEqual(updatedHost)
+    harness.unmount()
+  })
+
   it('supersedes a pending old-profile open when Force Reconnect uses a saved endpoint', async () => {
     let resolveOldLookup: ((hosts: HostProfile[]) => void) | null = null
     const oldLookup = new Promise<HostProfile[]>((resolve) => {
@@ -423,17 +447,43 @@ describe('useHostClient', () => {
     harness.unmount()
   })
 
-  it('queues a changed endpoint behind an older reconnect health probe', async () => {
+  it('opens a changed endpoint without waiting for a superseded host lookup', async () => {
+    const stale = makeFakeClient('connected')
+    const fresh = makeFakeClient('connecting')
+    fresh.sendRequest = vi.fn(async () => ({ id: 'health', ok: true, result: {} }))
+    loadHostsMock.mockResolvedValueOnce([HOST]).mockReturnValueOnce(new Promise<never>(() => {}))
+    connectMock.mockReturnValueOnce(stale).mockReturnValueOnce(fresh)
+
+    const harness = await renderHarness(HOST.id)
+    void harness.forceReconnect(HOST.id)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const updatedHost = { ...HOST, endpoint: 'ws://127.0.0.1:2' }
+    harness.primeHosts([updatedHost])
+    await act(async () => harness.forceReconnect(HOST.id))
+
+    expect(connectMock).toHaveBeenCalledTimes(2)
+    expect(connectMock.mock.calls[1]?.[0]).toEqual(updatedHost)
+    harness.unmount()
+  })
+
+  it('supersedes an older reconnect health probe immediately', async () => {
     const stale = makeFakeClient('connected')
     const oldReplacement = makeFakeClient('connecting')
     const newReplacement = makeFakeClient('connecting')
-    let resolveOldHealthCheck: (() => void) | null = null
+    let rejectOldHealthCheck: ((error: Error) => void) | null = null
     oldReplacement.sendRequest = vi.fn(
       () =>
-        new Promise((resolve) => {
-          resolveOldHealthCheck = () => resolve({ id: 'old-health', ok: true, result: {} })
+        new Promise((_resolve, reject) => {
+          rejectOldHealthCheck = reject
         })
     )
+    oldReplacement.closeMock.mockImplementation(() => {
+      rejectOldHealthCheck?.(new Error('Client closed'))
+    })
     newReplacement.sendRequest = vi.fn(async () => ({ id: 'new-health', ok: true, result: {} }))
     connectMock
       .mockReturnValueOnce(stale)
@@ -452,14 +502,12 @@ describe('useHostClient', () => {
     harness.primeHosts([updatedHost])
     const second = harness.forceReconnect(HOST.id)
     expect(second).not.toBe(first)
-    expect(connectMock).toHaveBeenCalledTimes(2)
+    expect(connectMock).toHaveBeenCalledTimes(3)
 
-    resolveOldHealthCheck?.()
     await act(async () => {
       await Promise.all([first, second])
     })
 
-    expect(connectMock).toHaveBeenCalledTimes(3)
     expect(connectMock.mock.calls[2]?.[0]).toEqual(updatedHost)
     expect(oldReplacement.closeMock).toHaveBeenCalledOnce()
     expect(newReplacement.sendRequest).toHaveBeenCalledWith('status.get', undefined, {
@@ -471,9 +519,11 @@ describe('useHostClient', () => {
     harness.unmount()
   })
 
-  it('keeps a host disconnected when it closes with a changed-profile reconnect queued', async () => {
+  it('keeps a host disconnected when it closes during a changed-profile reconnect', async () => {
     const stale = makeFakeClient('connected')
     const oldReplacement = makeFakeClient('connecting')
+    const newReplacement = makeFakeClient('connecting')
+    newReplacement.sendRequest = vi.fn(async () => ({ id: 'new-health', ok: true, result: {} }))
     let rejectOldHealthCheck: ((error: Error) => void) | null = null
     oldReplacement.sendRequest = vi.fn(
       () =>
@@ -484,7 +534,10 @@ describe('useHostClient', () => {
     oldReplacement.closeMock.mockImplementation(() => {
       rejectOldHealthCheck?.(new Error('Client closed'))
     })
-    connectMock.mockReturnValueOnce(stale).mockReturnValueOnce(oldReplacement)
+    connectMock
+      .mockReturnValueOnce(stale)
+      .mockReturnValueOnce(oldReplacement)
+      .mockReturnValueOnce(newReplacement)
     loadHostsMock.mockResolvedValue([HOST])
 
     const harness = await renderHarness(HOST.id)
@@ -500,8 +553,9 @@ describe('useHostClient', () => {
 
     await act(async () => Promise.all([first, queued]))
 
-    expect(connectMock).toHaveBeenCalledTimes(2)
+    expect(connectMock).toHaveBeenCalledTimes(3)
     expect(oldReplacement.closeMock).toHaveBeenCalledOnce()
+    expect(newReplacement.closeMock).toHaveBeenCalledOnce()
     expect(harness.hook.client).toBeNull()
     expect(harness.hook.state).toBe('disconnected')
 

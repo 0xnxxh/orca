@@ -275,6 +275,66 @@ describe('mobile relay RPC session', () => {
     }
   })
 
+  it('counts a late timed-out reply as relay control-plane liveness', async () => {
+    const { session } = await authenticateSession()
+    vi.useFakeTimers()
+    try {
+      const request = session.sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+      const outcome = request.catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(0)
+      const timedOutRequest = fakes.sendText.mock.calls
+        .map(([payload]) => JSON.parse(payload as string) as { id: string; method: string })
+        .find(({ method }) => method === 'browser.screenshot')!
+
+      await vi.advanceTimersByTimeAsync(100)
+      await expect(outcome).resolves.toMatchObject({
+        message: 'relay RPC timed out: browser.screenshot'
+      })
+      fakes.linkOptions!.onText(
+        JSON.stringify({ id: timedOutRequest.id, ok: true, result: {}, _meta: {} })
+      )
+
+      await vi.advanceTimersByTimeAsync(8_000)
+      expect(session.getState()).toBe('connected')
+      expect(fakes.close).not.toHaveBeenCalled()
+    } finally {
+      session.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('periodically demotes a silent half-open Relay session', async () => {
+    vi.useFakeTimers()
+    try {
+      const { session } = await authenticateSession()
+
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(
+        fakes.sendText.mock.calls.map(([payload]) => JSON.parse(payload as string)).at(-1)
+      ).toMatchObject({ method: 'status.get' })
+      expect(session.getState()).toBe('connected')
+
+      await vi.advanceTimersByTimeAsync(8_000)
+      expect(session.getState()).toBe('disconnected')
+      expect(fakes.close).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops periodic Relay probing when the session closes', async () => {
+    vi.useFakeTimers()
+    try {
+      const { session } = await authenticateSession()
+      session.close()
+
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(fakes.sendText).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps a Relay session when a fresh timeout probe proves it live', async () => {
     const { session } = await authenticateSession()
     vi.useFakeTimers()

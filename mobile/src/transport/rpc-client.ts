@@ -36,6 +36,10 @@ import {
 import { markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
 import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-request-budget'
 import { isRpcResponse } from './rpc-response-shape'
+import {
+  isStreamingSubscriptionReadyResult,
+  isTerminalSubscribedResult
+} from './rpc-stream-response-shape'
 import { websocketPayloadToUint8 } from './websocket-payload-bytes'
 
 type PendingRequest = {
@@ -186,6 +190,7 @@ export function connect(
   const serverPublicKey = publicKeyFromBase64(serverPublicKeyB64)
 
   const pending = new Map<string, PendingRequest>()
+  const timedOutControlRequestIds = new Set<string>()
   const streamListeners = new Map<string, StreamRequest>()
   const terminalStreamListeners = new Map<number, StreamingListener>()
   const terminalStreamIdsByRequest = new Map<string, Set<number>>()
@@ -502,7 +507,7 @@ export function connect(
       if (!isRpcResponse(response)) {
         return
       }
-      if (pending.has(response.id)) {
+      if (pending.has(response.id) || timedOutControlRequestIds.delete(response.id)) {
         controlResponseSequence++
       }
 
@@ -658,6 +663,7 @@ export function connect(
       handshakeTimer = null
     }
     stopActivityProbe()
+    finishActivityProbe()
     if (intentionallyClosed) {
       console.log('[net] handleSocketClosed — intentional close')
       setState('disconnected')
@@ -779,9 +785,10 @@ export function connect(
     let timedOut = false
     const timeout = setTimeout(() => {
       timedOut = true
-      activityProbeInFlight = false
       pending.delete(id)
-      if (controlResponseSequence > probeControlResponseSequence) {
+      const controlResponded = controlResponseSequence > probeControlResponseSequence
+      finishActivityProbe()
+      if (controlResponded) {
         return
       }
       console.log('[net] activity-probe TIMEOUT — forcing reconnect', { state })
@@ -792,22 +799,27 @@ export function connect(
         if (timedOut) {
           return
         }
-        activityProbeInFlight = false
         clearTimeout(timeout)
+        finishActivityProbe()
       },
       reject: () => {
         if (timedOut) {
           return
         }
-        activityProbeInFlight = false
         clearTimeout(timeout)
+        finishActivityProbe()
       }
     })
     if (!sendEncrypted({ id, deviceToken, method: 'status.get' })) {
-      activityProbeInFlight = false
       clearTimeout(timeout)
       pending.delete(id)
+      finishActivityProbe()
     }
+  }
+
+  function finishActivityProbe(): void {
+    activityProbeInFlight = false
+    timedOutControlRequestIds.clear()
   }
 
   function forceSocketReconnect(socket: WebSocket | null): void {
@@ -1037,6 +1049,9 @@ export function connect(
           // Why: the frame was written 30s ago — the host may have processed it.
           reject(markRpcDeliveryUnknown(new Error(`Request timed out: ${method}`)))
           if (controlResponseSequence === requestControlResponseSequence) {
+            if (requestWs === ws) {
+              timedOutControlRequestIds.add(id)
+            }
             runActivityProbe(requestWs)
           }
         }, timeoutMs)
@@ -1191,6 +1206,7 @@ export function connect(
         handshakeTimer = null
       }
       stopActivityProbe()
+      finishActivityProbe()
       if (ws) {
         ws.close()
         ws = null
@@ -1201,26 +1217,4 @@ export function connect(
       rejectAllPending('Client closed', { deliveryUnknown: true })
     }
   }
-}
-
-function isTerminalSubscribedResult(
-  value: unknown
-): value is { type: 'subscribed'; streamId: number } {
-  return (
-    !!value &&
-    typeof value === 'object' &&
-    (value as { type?: unknown }).type === 'subscribed' &&
-    typeof (value as { streamId?: unknown }).streamId === 'number'
-  )
-}
-
-function isStreamingSubscriptionReadyResult(
-  value: unknown
-): value is { type: 'ready'; subscriptionId: string } {
-  return (
-    !!value &&
-    typeof value === 'object' &&
-    (value as { type?: unknown }).type === 'ready' &&
-    typeof (value as { subscriptionId?: unknown }).subscriptionId === 'string'
-  )
 }

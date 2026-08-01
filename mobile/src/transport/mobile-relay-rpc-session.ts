@@ -13,6 +13,7 @@ import type { RpcClient } from './rpc-client'
 import type { ConnectionState, RpcResponse } from './types'
 
 const CONTROL_PROBE_TIMEOUT_MS = 8_000
+const CONTROL_PROBE_INTERVAL_MS = 20_000
 
 type PendingRequest = {
   resolve: (response: RpcResponse) => void
@@ -38,11 +39,13 @@ export function connectMobileRelayRpcSession(args: {
 }): MobileRelayRpcSession {
   const requestTimeoutMs = args.requestTimeoutMs ?? 30_000
   const pending = new Map<string, PendingRequest>()
+  const timedOutControlRequestIds = new Set<string>()
   const stateListeners = new Set<(state: ConnectionState) => void>()
   let state: ConnectionState = 'connecting'
   let requestCounter = 0
   let controlResponseSequence = 0
   let controlProbeInFlight = false
+  let controlProbeTimer: ReturnType<typeof setInterval> | null = null
   let lastConnectedAt: number | null = null
   let leaseExpiresAt: number | null = null
   let resumeConfirmation: DeviceResumeConfirmed | null = null
@@ -102,12 +105,16 @@ export function connectMobileRelayRpcSession(args: {
       stateListeners.add(listener)
       return () => stateListeners.delete(listener)
     },
-    notifyForeground: () => {},
+    notifyForeground() {
+      startControlProbeTimer()
+      probeControlPlane()
+    },
     close() {
       if (closed) {
         return
       }
       closed = true
+      stopControlProbeTimer()
       link.close()
       rejectPending(new Error('Client closed'))
       streams.clear()
@@ -137,6 +144,7 @@ export function connectMobileRelayRpcSession(args: {
       resumeConfirmation = result.resumeConfirmation
       lastConnectedAt = Date.now()
       publishState('connected')
+      startControlProbeTimer()
     } catch (error) {
       fail(asError(error))
     }
@@ -155,6 +163,7 @@ export function connectMobileRelayRpcSession(args: {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id)
+        timedOutControlRequestIds.add(id)
         // Why: the frame was written long ago — the desktop may have processed it.
         const error = markRpcDeliveryUnknown(new Error(`relay RPC timed out: ${method}`))
         reject(error)
@@ -184,8 +193,10 @@ export function connectMobileRelayRpcSession(args: {
       return
     }
     const request = pending.get(value.id)
-    if (request) {
+    if (request || timedOutControlRequestIds.delete(value.id)) {
       controlResponseSequence += 1
+    }
+    if (request) {
       clearTimeout(request.timer)
       pending.delete(value.id)
       request.resolve(value)
@@ -206,23 +217,39 @@ export function connectMobileRelayRpcSession(args: {
     const probeControlResponseSequence = controlResponseSequence
     void sendRpc('status.get', undefined, CONTROL_PROBE_TIMEOUT_MS).then(
       () => {
-        controlProbeInFlight = false
+        finishControlProbe()
       },
       (error: unknown) => {
-        controlProbeInFlight = false
+        const controlResponded = controlResponseSequence > probeControlResponseSequence
+        finishControlProbe()
         if (closed || state !== 'connected') {
           return
         }
-        if (
-          !isRpcDeliveryUnknown(error) ||
-          controlResponseSequence === probeControlResponseSequence
-        ) {
+        if (!isRpcDeliveryUnknown(error) || !controlResponded) {
           fail(asError(error))
-        } else {
-          probeControlPlane()
         }
       }
     )
+  }
+
+  function startControlProbeTimer(): void {
+    if (closed || state !== 'connected' || controlProbeTimer) {
+      return
+    }
+    controlProbeTimer = setInterval(probeControlPlane, CONTROL_PROBE_INTERVAL_MS)
+  }
+
+  function stopControlProbeTimer(): void {
+    if (controlProbeTimer) {
+      clearInterval(controlProbeTimer)
+      controlProbeTimer = null
+    }
+    finishControlProbe()
+  }
+
+  function finishControlProbe(): void {
+    controlProbeInFlight = false
+    timedOutControlRequestIds.clear()
   }
 
   function waitForConnected(timeoutMs = requestTimeoutMs): Promise<void> {
@@ -268,6 +295,7 @@ export function connectMobileRelayRpcSession(args: {
       return
     }
     closed = true
+    stopControlProbeTimer()
     failure = error
     link.close()
     rejectPending(error)
