@@ -380,13 +380,16 @@ describe('useHostClient', () => {
   it('keeps a host disconnected when it closes with a changed-profile reconnect queued', async () => {
     const stale = makeFakeClient('connected')
     const oldReplacement = makeFakeClient('connecting')
-    let resolveOldHealthCheck: (() => void) | null = null
+    let rejectOldHealthCheck: ((error: Error) => void) | null = null
     oldReplacement.sendRequest = vi.fn(
       () =>
-        new Promise((resolve) => {
-          resolveOldHealthCheck = () => resolve({ id: 'old-health', ok: true, result: {} })
+        new Promise((_resolve, reject) => {
+          rejectOldHealthCheck = reject
         })
     )
+    oldReplacement.closeMock.mockImplementation(() => {
+      rejectOldHealthCheck?.(new Error('Client closed'))
+    })
     connectMock.mockReturnValueOnce(stale).mockReturnValueOnce(oldReplacement)
     loadHostsMock.mockResolvedValue([HOST])
 
@@ -401,7 +404,6 @@ describe('useHostClient', () => {
     const queued = harness.forceReconnect(HOST.id)
     await act(async () => harness.closeHost(HOST.id))
 
-    resolveOldHealthCheck?.()
     await act(async () => Promise.all([first, queued]))
 
     expect(connectMock).toHaveBeenCalledTimes(2)

@@ -85,7 +85,13 @@ export class HostForceReconnectCoordinator {
       throw new Error('Unable to open a replacement connection')
     }
     fresh.refCount = savedRefCount
-    await verifyForceReconnectRpcHealth(fresh.client)
+    try {
+      await verifyForceReconnectRpcHealth(fresh.client)
+    } catch (error) {
+      if (!this.wasCancelled(operation.hostId, generation)) {
+        throw error
+      }
+    }
   }
 
   private generation(hostId: string): number {
