@@ -52,6 +52,13 @@ function toWholeProgressPercent(progress: number | undefined): number {
   return progress === undefined ? -1 : Math.round(progress * 100)
 }
 
+/** The precision the UI actually renders, so polled replies match the fan-out. */
+function toWholePercentState(state: SpeechModelState): SpeechModelState {
+  return state.progress === undefined
+    ? state
+    : { ...state, progress: toWholeProgressPercent(state.progress) / 100 }
+}
+
 const DOWNLOAD_IDLE_TIMEOUT_MS = 120_000
 // Why: flaky networks/proxies often kill long CDN transfers near the end; Range-resume lets them finish.
 const DOWNLOAD_RETRY_DELAYS_MS = [1_000, 2_000, 4_000]
@@ -217,7 +224,10 @@ export class ModelManager {
     await this.migrationReady
     const cached = this.modelStates.get(modelId)
     if (cached && (cached.status === 'downloading' || cached.status === 'extracting')) {
-      return cached
+      // Why quantise here too: the renderer ignores the progress event payload and
+      // re-polls, so returning the raw sub-percent cache would hand it a new value
+      // per chunk and defeat the whole-percent coalescing the fan-out already does.
+      return toWholePercentState(cached)
     }
 
     const manifest = getCatalogModel(modelId)
@@ -401,9 +411,12 @@ export class ModelManager {
     // notification costs the renderer an IPC round-trip plus a full re-render of the
     // open speech-model menu. The UI only ever shows whole percent, so emitting at
     // that granularity keeps every visible transition and drops the rest.
+    // Why only 'downloading': every other transition is one-shot, and the
+    // already-ready branch of downloadModel is the sole notification that window
+    // gets — deduplicating it strands a stale pane on a dead click.
     if (
-      previous !== undefined &&
-      previous.status === status &&
+      status === 'downloading' &&
+      previous?.status === 'downloading' &&
       previous.error === error &&
       toWholeProgressPercent(previous.progress) === toWholeProgressPercent(progress)
     ) {

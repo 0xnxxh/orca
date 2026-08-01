@@ -162,7 +162,9 @@ async function runDownloadProgressBurst(events: number): Promise<number> {
 
   const rendersBeforeBurst = subscriberRenders
   for (let index = 0; index < events; index += 1) {
-    // Whole-percent granularity: what the UI actually renders.
+    // Mirrors what main now returns: getModelState quantises the polled reply, so
+    // raw sub-percent progress never reaches the renderer. Without that, this mock
+    // would flatter the renderer-side stabilisation it is meant to measure.
     reportedProgress = Math.floor((index / events) * 100) / 100
     await act(async () => {
       emitDownloadProgress?.({ modelId: MODEL_ID, progress: reportedProgress })
@@ -173,7 +175,7 @@ async function runDownloadProgressBurst(events: number): Promise<number> {
   return subscriberRenders - rendersBeforeBurst
 }
 
-describe('speech model download progress storm (React #185)', () => {
+describe('speech model download progress storm (render pressure)', () => {
   it('does not re-render the open speech-model menu once per download chunk', async () => {
     // A 500MB model over a 64KB chunk stream emits thousands of these; the menu
     // stays open by design while a download runs, so each one re-renders the
