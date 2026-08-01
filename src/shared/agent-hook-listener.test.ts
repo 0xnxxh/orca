@@ -3355,14 +3355,44 @@ describe('shared agent-hook-listener', () => {
     })
 
     it('canonicalizes padded lifecycle ids so starts and stops target one row', () => {
+      // Why: mixed forms — padded start, clean stop — so the test fails if either
+      // read point stops trimming (identical padding would share a raw key).
       claudeEvent({
         hook_event_name: 'SubagentStart',
         agent_id: ' a2 ',
         agent_type: 'general-purpose'
       })
-      const stopped = claudeEvent({ hook_event_name: 'SubagentStop', agent_id: ' a2 ' })
+      const stopped = claudeEvent({ hook_event_name: 'SubagentStop', agent_id: 'a2' })
       expect(stopped?.payload.state).toBe('done')
       expect(stopped?.payload.subagents).toBeUndefined()
+    })
+
+    it('drains an inventory-minted row via a padded lifecycle stop', () => {
+      const first = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'ghost-1',
+        background_tasks: [
+          { id: 'a3', type: 'subagent', status: 'running', agent_type: 'general-purpose' }
+        ]
+      })
+      expect(first?.payload.state).toBe('working')
+      const drained = claudeEvent({ hook_event_name: 'SubagentStop', agent_id: ' a3 ' })
+      expect(drained?.payload.state).toBe('done')
+    })
+
+    it('routes a padded child tool event to the canonical roster row', () => {
+      claudeEvent({ hook_event_name: 'UserPromptSubmit', prompt: 'go' })
+      claudeEvent({ hook_event_name: 'Stop', background_tasks: [] })
+      const childTool = claudeEvent({
+        hook_event_name: 'PreToolUse',
+        agent_id: ' a4 ',
+        agent_type: 'general-purpose',
+        tool_name: 'Bash',
+        tool_input: { command: 'true' }
+      })
+      expect(childTool?.payload.subagents).toEqual([
+        expect.objectContaining({ id: 'a4', state: 'working' })
+      ])
     })
 
     it('tracks whitespace-padded inventory ids canonically so their stops can drain them', () => {
