@@ -45,8 +45,10 @@ export function collectRendererMemoryProfileCounts(): RendererMemoryProfileCount
   const counts: RendererMemoryProfileCounts = {}
   let collected = 0
   let visited = 0
+  let truncated = false
   for (const [name, contributor] of contributors) {
     if (collected >= MAX_PROFILE_COUNTS || visited >= MAX_PROFILE_CONTRIBUTORS) {
+      truncated = true
       break
     }
     visited += 1
@@ -56,6 +58,7 @@ export function collectRendererMemoryProfileCounts(): RendererMemoryProfileCount
       let inspected = 0
       for (const key in contribution) {
         if (inspected >= MAX_COUNTS_PER_CONTRIBUTOR || collected >= MAX_PROFILE_COUNTS) {
+          truncated = true
           break
         }
         inspected += 1
@@ -75,8 +78,18 @@ export function collectRendererMemoryProfileCounts(): RendererMemoryProfileCount
       if (collected < MAX_PROFILE_COUNTS) {
         counts[`${name}.error`] = 1
         collected += 1
+      } else {
+        truncated = true
       }
     }
+  }
+  // Why one key over budget rather than dropping it: contributors are visited in
+  // registration order, which is module-import order, so a budget overrun silently
+  // omits whichever subsystem happens to load last. Without this marker a reader
+  // scanning an OOM report for monacoModels.* and finding nothing concludes "measured,
+  // not leaking" — the exact opposite of the truth — and rules out the real culprit.
+  if (truncated) {
+    counts['profile.truncated'] = 1
   }
   return counts
 }
