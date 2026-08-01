@@ -167,7 +167,8 @@ import {
   writeFileViaSystemSsh
 } from './ssh-system-fallback'
 import { getRemoteHostPlatform } from './ssh-remote-platform'
-import type { SshTarget } from '../../shared/ssh-types'
+import { CONNECT_TIMEOUT_MS } from './ssh-connection-utils'
+import { MIN_SSH_RELAY_GRACE_PERIOD_SECONDS, type SshTarget } from '../../shared/ssh-types'
 
 function createTarget(overrides?: Partial<SshTarget>): SshTarget {
   return {
@@ -530,6 +531,61 @@ describe('SshConnection', () => {
 
       expect(statuses).toContain('reconnection-failed')
     } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retries a saturated flap streak while the remote relay is still in grace', async () => {
+    vi.useFakeTimers()
+    try {
+      const conn = new SshConnection(createTarget(), createCallbacks())
+      const connected = conn.connect()
+      await vi.advanceTimersByTimeAsync(1)
+      await connected
+
+      // Saturate the delay ladder on flaps alone; 45s reconnects each drop while staying under
+      // STABLE_CONNECTION_MS, so the ladder never resets to the head.
+      for (let drop = 0; drop < 12; drop++) {
+        emitSshEvent('close')
+        await vi.advanceTimersByTimeAsync(45_000)
+      }
+      expect(conn.getState().status).toBe('connected')
+
+      const before = clientInstances.length
+      emitSshEvent('close')
+      // The retry plus a worst-case handshake must land inside the shortest configurable relay grace,
+      // or the remote daemon shuts down and takes every PTY on that host with it.
+      await vi.advanceTimersByTimeAsync(
+        MIN_SSH_RELAY_GRACE_PERIOD_SECONDS * 1000 - CONNECT_TIMEOUT_MS - 1
+      )
+      expect(clientInstances.length).toBeGreaterThan(before)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('logs the delay ladder position separately from the failure streak', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const conn = new SshConnection(createTarget(), createCallbacks())
+      const connected = conn.connect()
+      await vi.advanceTimersByTimeAsync(1)
+      await connected
+
+      for (let drop = 0; drop < 12; drop++) {
+        emitSshEvent('close')
+        await vi.advanceTimersByTimeAsync(45_000)
+      }
+
+      const lastReconnectLog = warn.mock.calls
+        .map((call) => String(call[0]))
+        .findLast((line) => line.includes('Reconnecting to'))
+      // A saturated flap ladder must not read like the connection is one step from giving up.
+      expect(lastReconnectLog).toContain('delay step 9/9')
+      expect(lastReconnectLog).toContain('failed handshakes 0/9')
+    } finally {
+      warn.mockRestore()
       vi.useRealTimers()
     }
   })

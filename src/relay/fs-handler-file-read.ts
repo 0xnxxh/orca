@@ -1,8 +1,14 @@
 import { open, readFile, stat } from 'node:fs/promises'
+import type { FileHandle } from 'node:fs/promises'
 import { extname } from 'node:path'
 import type { RelayDispatcher, RequestContext } from './dispatcher'
-import { STREAM_ACK_WINDOW_CHUNKS, STREAM_CHUNK_SIZE, RelayErrorCode } from './protocol'
-import type { RelayStreamRegistry, TooManyStreamsError } from './fs-stream-registry'
+import {
+  MAX_CONCURRENT_STREAMS,
+  STREAM_ACK_WINDOW_CHUNKS,
+  STREAM_CHUNK_SIZE,
+  RelayErrorCode
+} from './protocol'
+import { TooManyStreamsError, type RelayStreamRegistry } from './fs-stream-registry'
 import {
   BINARY_PROBE_BYTES,
   IMAGE_MIME_TYPES,
@@ -102,12 +108,17 @@ export async function readRelayFileStreamMetadata(
     return { totalSize: 0, isBinary: true, empty: true }
   }
 
-  const handle = await open(filePath, 'r')
+  // Why: reserved before the fd opens so a refusal costs nothing, and released only
+  // once the terminal frame settles — see reserveTerminalFrameSlot.
+  const releaseTerminalFrameSlot = reserveTerminalFrameSlot(registry)
+  let handle: FileHandle | undefined
   let streamId: number
   try {
+    handle = await open(filePath, 'r')
     streamId = registry.register(handle)
   } catch (err) {
-    await handle.close()
+    await handle?.close()
+    releaseTerminalFrameSlot()
     throw err
   }
 
@@ -118,7 +129,15 @@ export async function readRelayFileStreamMetadata(
   // sees the response before the first chunk frame.
   const resolvedPumpOptions = pumpOptions ?? { paceWithAcks: false }
   setImmediate(() => {
-    void pumpChunks(streamId, stats.size, dispatcher, registry, context, resolvedPumpOptions)
+    void pumpChunks(
+      streamId,
+      stats.size,
+      dispatcher,
+      registry,
+      context,
+      resolvedPumpOptions,
+      releaseTerminalFrameSlot
+    )
   })
 
   return {
@@ -132,16 +151,46 @@ export async function readRelayFileStreamMetadata(
   }
 }
 
+/**
+ * Terminal frames (fs.streamEnd/fs.streamError) ride the control lane, which does not
+ * drop on overflow — it destroys the link at 256 queued frames / 1 MB. A stream's
+ * registry slot is gone the moment its last chunk is read, so on a socket that is not
+ * draining, back-to-back reads could stack one undelivered terminal frame each until
+ * that budget blew. Holding the slot until the frame settles keeps the number of queued
+ * terminal frames at MAX_CONCURRENT_STREAMS, far below the killing threshold; the
+ * overflow now costs one refused read (TooManyStreams, which clients already handle)
+ * instead of the whole connection.
+ */
+const pendingTerminalFrames = new WeakMap<RelayStreamRegistry, number>()
+
+function reserveTerminalFrameSlot(registry: RelayStreamRegistry): () => void {
+  const pending = pendingTerminalFrames.get(registry) ?? 0
+  if (pending >= MAX_CONCURRENT_STREAMS) {
+    throw new TooManyStreamsError()
+  }
+  pendingTerminalFrames.set(registry, pending + 1)
+  let released = false
+  return () => {
+    if (released) {
+      return
+    }
+    released = true
+    pendingTerminalFrames.set(registry, (pendingTerminalFrames.get(registry) ?? 1) - 1)
+  }
+}
+
 async function pumpChunks(
   streamId: number,
   totalSize: number,
   dispatcher: RelayDispatcher,
   registry: RelayStreamRegistry,
   context: RequestContext,
-  pumpOptions: StreamPumpOptions
+  pumpOptions: StreamPumpOptions,
+  releaseTerminalFrameSlot: () => void
 ): Promise<void> {
   const entry = registry.get(streamId)
   if (!entry) {
+    releaseTerminalFrameSlot()
     return
   }
   const buffer = Buffer.allocUnsafe(STREAM_CHUNK_SIZE)
@@ -150,6 +199,7 @@ async function pumpChunks(
   let endReason: 'end' | 'aborted' | 'stale' | 'error' = 'end'
   let errorCode: string | null = null
   let errorMessage: string | null = null
+  let slotReleaseDeferred = false
 
   try {
     try {
@@ -226,14 +276,22 @@ async function pumpChunks(
     }
 
     try {
-      // Why: the terminal frame must not be droppable by the producer-lane capacity check, and the
-      // per-chunk await already settled every chunk so a control frame cannot overtake stream data.
+      // Why: a dropped terminal frame hangs the reader forever, so it takes the control lane, which
+      // never drops — but that lane KILLS the link when it overflows, hence the reserved slot held
+      // until this frame settles. The per-chunk await already settled every chunk, so the control
+      // frame cannot overtake stream data.
       const publishTerminal = (method: string, params: Record<string, unknown>): void => {
-        if (pumpOptions.clientId !== undefined) {
-          dispatcher.notifyClient(pumpOptions.clientId, method, params)
-        } else {
+        if (pumpOptions.clientId === undefined) {
+          // Legacy broadcast path (direct calls/tests): no per-frame settlement to hold the slot on.
           dispatcher.notifyControl(method, params)
+          return
         }
+        slotReleaseDeferred = dispatcher.tryNotifyClient(
+          pumpOptions.clientId,
+          method,
+          params,
+          releaseTerminalFrameSlot
+        )
       }
       if (endReason === 'end') {
         publishTerminal('fs.streamEnd', { streamId })
@@ -256,7 +314,12 @@ async function pumpChunks(
       )
     }
   } finally {
+    // Why: the fd goes back first — a terminal frame that can never be delivered must not
+    // strand it. Cancelled/stale streams publish nothing, so nothing else frees their slot.
     await registry.release(streamId)
+    if (!slotReleaseDeferred) {
+      releaseTerminalFrameSlot()
+    }
   }
 }
 

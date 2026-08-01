@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { RECONNECT_BACKOFF_MS } from './ssh-connection-utils'
-import { SshReconnectLadder, STABLE_CONNECTION_MS } from './ssh-reconnect-ladder'
+import { MIN_SSH_RELAY_GRACE_PERIOD_SECONDS } from '../../shared/ssh-types'
+import { CONNECT_TIMEOUT_MS, RECONNECT_BACKOFF_MS } from './ssh-connection-utils'
+import { FLAP_DELAY_CAP_MS, SshReconnectLadder, STABLE_CONNECTION_MS } from './ssh-reconnect-ladder'
 
 describe('SshReconnectLadder', () => {
   it('climbs the table across consecutive post-handshake drops', () => {
@@ -11,27 +12,72 @@ describe('SshReconnectLadder', () => {
     ladder.markConnected(60)
     expect(ladder.next(110)).toEqual({ kind: 'retry', delayMs: 2000, attemptIndex: 1 })
 
+    // Table steps past FLAP_DELAY_CAP_MS are clamped so the retry still fits inside the relay grace floor.
     const rest = [5000, 5000, 10000, 10000, 10000, 30000, 30000]
     let now = 200
     rest.forEach((delayMs, index) => {
       ladder.markConnected(now)
       now += 50
-      expect(ladder.next(now)).toEqual({ kind: 'retry', delayMs, attemptIndex: index + 2 })
+      expect(ladder.next(now)).toEqual({
+        kind: 'retry',
+        delayMs: Math.min(delayMs, FLAP_DELAY_CAP_MS),
+        attemptIndex: index + 2
+      })
     })
 
     // Saturates at the last step instead of going terminal.
     for (let i = 0; i < 3; i++) {
       ladder.markConnected(now)
       now += 50
-      expect(ladder.next(now)).toEqual({ kind: 'retry', delayMs: 30000, attemptIndex: 8 })
+      expect(ladder.next(now)).toEqual({
+        kind: 'retry',
+        delayMs: Math.min(30000, FLAP_DELAY_CAP_MS),
+        attemptIndex: 8
+      })
     }
+  })
+
+  it('caps every flap delay so a full handshake still beats the shortest relay grace', () => {
+    const ladder = new SshReconnectLadder()
+    let now = 0
+
+    for (let i = 0; i < RECONNECT_BACKOFF_MS.length + 4; i++) {
+      ladder.markConnected(now)
+      now += 50
+      const decision = ladder.next(now)
+      expect(decision.kind).toBe('retry')
+      if (decision.kind === 'retry') {
+        expect(decision.delayMs + CONNECT_TIMEOUT_MS).toBeLessThan(
+          MIN_SSH_RELAY_GRACE_PERIOD_SECONDS * 1000
+        )
+        now += decision.delayMs
+      }
+    }
+  })
+
+  it('keeps the uncapped table for a host whose handshakes fail', () => {
+    const ladder = new SshReconnectLadder()
+    const delays: number[] = []
+
+    for (let i = 0; i < RECONNECT_BACKOFF_MS.length - 1; i++) {
+      ladder.markAttemptFailed()
+      const decision = ladder.next(i * 1000)
+      if (decision.kind === 'retry') {
+        delays.push(decision.delayMs)
+      }
+      expect(ladder.failedAttemptStreak).toBe(i + 1)
+    }
+
+    expect(delays).toEqual(RECONNECT_BACKOFF_MS.slice(0, -1))
+    expect(delays.some((delayMs) => delayMs > FLAP_DELAY_CAP_MS)).toBe(true)
   })
 
   it('escalates a post-handshake drop identically to a handshake failure', () => {
     const dropLadder = new SshReconnectLadder()
     const failureLadder = new SshReconnectLadder()
     const dropDelays: number[] = []
-    const failureDelays: number[] = []
+    const dropIndexes: number[] = []
+    const failureIndexes: number[] = []
 
     let now = 0
     for (let i = 0; i < RECONNECT_BACKOFF_MS.length; i++) {
@@ -43,16 +89,18 @@ describe('SshReconnectLadder', () => {
       expect(failureDecision.kind).toBe('retry')
       if (dropDecision.kind === 'retry') {
         dropDelays.push(dropDecision.delayMs)
+        dropIndexes.push(dropDecision.attemptIndex)
       }
       if (failureDecision.kind === 'retry') {
-        failureDelays.push(failureDecision.delayMs)
+        failureIndexes.push(failureDecision.attemptIndex)
       }
       failureLadder.markAttemptFailed()
       now += 50
     }
 
-    expect(dropDelays).toEqual(RECONNECT_BACKOFF_MS)
-    expect(failureDelays).toEqual(dropDelays)
+    // Same ladder position; the flap path only clamps the wall-clock delay to the grace budget.
+    expect(dropIndexes).toEqual(failureIndexes)
+    expect(dropDelays).toEqual(RECONNECT_BACKOFF_MS.map((d) => Math.min(d, FLAP_DELAY_CAP_MS)))
   })
 
   it('never reaches give-up on a flap streak, even with a later handshake failure', () => {

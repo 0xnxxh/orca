@@ -1,7 +1,11 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { WatcherProcessEvent } from '../main/ipc/parcel-watcher-process-protocol'
 import { RelayDispatcher } from './dispatcher'
+import { DEFAULT_PRODUCER_QUEUE_MAX_BYTES } from './dispatcher-writer-admission'
 import type { RelayClientSinkOptions, RelayClientWrite } from './dispatcher-writer-sink'
+import { LEGACY_CLIENT_RETAINED_BYTES_LOW } from './legacy-relay-publication-ledger'
 import { HEADER_LENGTH, parseJsonRpcMessage } from './protocol'
 import { emitRelayWatcherEvents, emitRelayWatcherOverflow } from './relay-watcher-event-emitter'
 
@@ -98,6 +102,21 @@ function saturateProducerQueue(dispatcher: RelayDispatcher): void {
   expect(admitted).toBeLessThan(5_000)
 }
 
+// Parks PTY frames in the producer queue of a stalled sink without filling it.
+function parkProducerBytes(dispatcher: RelayDispatcher, bytes: number): number {
+  const chunk = 'x'.repeat(40_000)
+  let parked = 0
+  while (parked < bytes && dispatcher.tryNotifyPtyData({ paneId: 'pane', data: chunk })) {
+    parked += chunk.length
+  }
+  expect(parked).toBeGreaterThanOrEqual(bytes)
+  return parked
+}
+
+function isOverflowFrame(frame: Buffer): boolean {
+  return frameEvents(frame).some((event) => event.kind === 'overflow')
+}
+
 describe('relay watcher writer admission', () => {
   it('keeps watcher batches on the producer lane while overflow markers ride the control lane', () => {
     const sink = createRecordingSink()
@@ -118,6 +137,38 @@ describe('relay watcher writer admission', () => {
       expect(frameEvents(sink.frames[1])).toEqual([
         { kind: 'overflow', absolutePath: '/workspace' }
       ])
+    } finally {
+      dispatcher.dispose()
+    }
+  })
+})
+
+describe('relay watcher overflow suppression key', () => {
+  it('keeps the source free of NUL bytes so git and grep still see text', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('./relay-watcher-event-emitter.ts', import.meta.url))
+    )
+    expect(source.includes(0)).toBe(false)
+  })
+
+  it('scopes the outstanding marker per client as well as per root', () => {
+    const primary = createRecordingSink(65536)
+    const secondary = createRecordingSink(65536)
+    primary.blockNextWrite()
+    secondary.blockNextWrite()
+    const dispatcher = new RelayDispatcher(primary.write, primary.options)
+
+    try {
+      dispatcher.attachClient(secondary.write, secondary.options)
+      // Two clients, same root: a key that collapses them would silently desync the second tree.
+      emitRelayWatcherOverflow(dispatcher, '/workspace', false)
+      primary.drainWaiters.shift()?.()
+      secondary.drainWaiters.shift()?.()
+
+      for (const sink of [primary, secondary]) {
+        expect(sink.frames.filter((frame) => frameMethod(frame) === 'fs.changed')).toHaveLength(1)
+        expect(sink.closes()).toBe(0)
+      }
     } finally {
       dispatcher.dispose()
     }
@@ -296,6 +347,52 @@ describe('relay watcher batch chunking', () => {
       for (const frame of sink.frames.slice(0, -1)) {
         expect(frame.length).toBeGreaterThanOrEqual(capacity * 0.9)
       }
+    } finally {
+      dispatcher.dispose()
+    }
+  })
+
+  it('stops the chunk walk while the producer queue sits past its retention reserve', () => {
+    const sink = createRecordingSink(65536)
+    sink.blockNextWrite()
+    const dispatcher = new RelayDispatcher(sink.write, sink.options)
+
+    try {
+      // Past the retention reserve but far from the 2 MB queue limit: every chunk would still be admitted.
+      const parked = parkProducerBytes(dispatcher, LEGACY_CLIENT_RETAINED_BYTES_LOW)
+      expect(parked).toBeLessThan(DEFAULT_PRODUCER_QUEUE_MAX_BYTES / 2 + 256 * 1024)
+
+      emitRelayWatcherEvents(dispatcher, '/workspace', false, watcherBatch(5000))
+      sink.drainWaiters.shift()?.()
+
+      const watcherFrames = sink.frames.filter((frame) => frameMethod(frame) === 'fs.changed')
+      expect(watcherFrames.map(isOverflowFrame)).toEqual([true])
+      // The flood injected nothing: the interactive lane keeps the whole reserve instead of ~425 KB less.
+      const injected = watcherFrames
+        .filter((frame) => !isOverflowFrame(frame))
+        .reduce((total, frame) => total + frame.length, 0)
+      expect(injected).toBe(0)
+      expect(injected).toBeLessThan(
+        DEFAULT_PRODUCER_QUEUE_MAX_BYTES - LEGACY_CLIENT_RETAINED_BYTES_LOW
+      )
+      expect(sink.closes()).toBe(0)
+    } finally {
+      dispatcher.dispose()
+    }
+  })
+
+  it('still delivers a flood larger than the reserve while the sink keeps draining', () => {
+    const sink = createRecordingSink(16384)
+    const dispatcher = new RelayDispatcher(sink.write, sink.options)
+    const events = watcherBatch(20_000)
+
+    try {
+      emitRelayWatcherEvents(dispatcher, '/workspace', false, events)
+
+      const totalBytes = sink.frames.reduce((total, frame) => total + frame.length, 0)
+      expect(totalBytes).toBeGreaterThan(LEGACY_CLIENT_RETAINED_BYTES_LOW)
+      expect(sink.frames.some(isOverflowFrame)).toBe(false)
+      expect(sink.frames.flatMap(frameEvents)).toHaveLength(events.length)
     } finally {
       dispatcher.dispose()
     }

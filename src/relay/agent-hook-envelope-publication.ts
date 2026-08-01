@@ -7,39 +7,182 @@ import type { RelayDispatcher } from './dispatcher'
 // Why: shed the biggest, most reconstructible fields first — state/paneKey must survive or the pane
 // stays stuck on its last spinner, and an over-capacity frame is now dropped rather than sent.
 // Why: interactivePrompt is last on purpose — a blocking question is load-bearing (without its card
-// the pane sits on `waiting` with no way to answer from web or mobile) while the roster is cosmetic.
+// the pane sits on `waiting` with no way to answer from web or mobile). The roster is shed earlier
+// only because it is cheaper to rebuild, NOT because it is cosmetic: a missing roster blanks live
+// subagent rows and unblocks pane hibernation, which is why shed fields are named on the wire.
 const SHED_ORDER = ['lastAssistantMessage', 'subagents', 'interactivePrompt'] as const
 
-function fitsProducerFrame(dispatcher: RelayDispatcher, envelope: AgentHookRelayEnvelope): boolean {
-  return (
-    dispatcher.producerEnvelopeBudget(
-      AGENT_HOOK_NOTIFICATION_METHOD,
-      envelope as unknown as Record<string, unknown>
-    ) >= 0
-  )
+/** Wire marker listing the fields dropped to fit the frame, so a consumer can tell "shed" from
+ *  "genuinely absent" and keep its current value instead of overwriting it with a gap. */
+const SHED_FIELDS_KEY = 'shedFields'
+
+// Why: these envelopes are fire-and-forget state snapshots — no ack, no producer-side retry — and
+// the only other delivery path is the reattach replay. A queue-full drop would otherwise leave the
+// pane on a stale spinner until the SSH link cycles, so a rejected snapshot is retried briefly.
+const REDELIVERY_INTERVAL_MS = 250
+const MAX_REDELIVERY_ATTEMPTS = 40
+// Why: a wedged link must not pin snapshots for panes that are already gone; recency-evict the rest.
+const MAX_PENDING_PANES = 64
+
+type PendingEnvelope = {
+  params: Record<string, unknown>
+  clientIds: readonly number[]
+  attemptsLeft: number
+}
+
+type RedeliveryState = {
+  pending: Map<string, PendingEnvelope>
+  timer: ReturnType<typeof setInterval> | null
+}
+
+const redeliveryByDispatcher = new WeakMap<RelayDispatcher, RedeliveryState>()
+
+function fitsProducerFrame(dispatcher: RelayDispatcher, params: Record<string, unknown>): boolean {
+  return dispatcher.producerEnvelopeBudget(AGENT_HOOK_NOTIFICATION_METHOD, params) >= 0
+}
+
+function toNotificationParams(
+  envelope: AgentHookRelayEnvelope,
+  shedFields: readonly string[]
+): Record<string, unknown> {
+  const params = envelope as unknown as Record<string, unknown>
+  return shedFields.length === 0 ? params : { ...params, [SHED_FIELDS_KEY]: [...shedFields] }
+}
+
+/** Returns the ids of the clients that rejected the frame; a rejected client is never written to. */
+function publishToClients(
+  dispatcher: RelayDispatcher,
+  params: Record<string, unknown>,
+  clientIds: readonly number[]
+): number[] {
+  const rejected: number[] = []
+  for (const clientId of clientIds) {
+    if (!dispatcher.publishProducerNotification(clientId, AGENT_HOOK_NOTIFICATION_METHOD, params)) {
+      rejected.push(clientId)
+    }
+  }
+  return rejected
 }
 
 /** Publishes an agent-hook envelope, dropping optional detail fields until the frame fits the
- *  smallest attached sink. Publishes the trimmed envelope even if it still does not fit. */
+ *  smallest attached sink. A frame the sink queue merely has no room for is retried in the
+ *  background; one that no shedding can fit is dropped. */
 export function publishAgentHookEnvelope(
   dispatcher: RelayDispatcher,
   envelope: AgentHookRelayEnvelope
 ): void {
+  const clientIds = dispatcher.activeClientIds()
+  if (clientIds.length === 0) {
+    return
+  }
+  // Why: a fan-out must choose one payload before it writes anything, or the first client keeps a
+  // frame a smaller later client forces us to shed. A single sink writes nothing when it rejects,
+  // so there the attempt itself is the measurement — one encode instead of a probe plus a publish.
+  const measureBeforePublish = clientIds.length > 1
   let candidate = envelope
-  // Why: re-encoding is the expensive part, so only re-measure after a field was actually dropped.
-  let fits = fitsProducerFrame(dispatcher, candidate)
-  for (const field of SHED_ORDER) {
-    if (fits) {
-      break
+  const shedFields: string[] = []
+  let step = 0
+  for (;;) {
+    const params = toNotificationParams(candidate, shedFields)
+    if (!measureBeforePublish || fitsProducerFrame(dispatcher, params)) {
+      const rejected = publishToClients(dispatcher, params, clientIds)
+      if (rejected.length === 0) {
+        clearPendingEnvelope(dispatcher, envelope.paneKey)
+        return
+      }
+      // Rejection is ambiguous: an over-capacity frame must shed, a full producer queue must wait.
+      if (measureBeforePublish || fitsProducerFrame(dispatcher, params)) {
+        setPendingEnvelope(dispatcher, envelope.paneKey, params, rejected)
+        return
+      }
     }
-    if (candidate.payload[field] === undefined) {
-      continue
+    while (step < SHED_ORDER.length && candidate.payload[SHED_ORDER[step]] === undefined) {
+      step += 1
     }
+    if (step >= SHED_ORDER.length) {
+      // Nothing left to shed and it still does not fit: waiting cannot make it sendable, and this
+      // snapshot supersedes any pending one, which is now stale.
+      clearPendingEnvelope(dispatcher, envelope.paneKey)
+      return
+    }
+    const field = SHED_ORDER[step]
+    step += 1
     // Why: the hook server caches envelopes and replays them after --connect, so shedding in place
     // would permanently strip the cached copy too.
     candidate = { ...candidate, payload: { ...candidate.payload } }
     delete candidate.payload[field]
-    fits = fitsProducerFrame(dispatcher, candidate)
+    shedFields.push(field)
   }
-  dispatcher.notify(AGENT_HOOK_NOTIFICATION_METHOD, candidate as unknown as Record<string, unknown>)
+}
+
+function setPendingEnvelope(
+  dispatcher: RelayDispatcher,
+  paneKey: string,
+  params: Record<string, unknown>,
+  clientIds: readonly number[]
+): void {
+  let state = redeliveryByDispatcher.get(dispatcher)
+  if (!state) {
+    state = { pending: new Map(), timer: null }
+    redeliveryByDispatcher.set(dispatcher, state)
+    // A disposed dispatcher can never accept the retry, and pending params pin the cached payload.
+    dispatcher.onDisposed(() => stopRedelivery(dispatcher))
+  }
+  // Latest-wins: one snapshot per pane, never a growing queue. Delete-then-set keeps Map insertion
+  // order = recency so the cap below evicts the longest-idle pane.
+  state.pending.delete(paneKey)
+  state.pending.set(paneKey, { params, clientIds, attemptsLeft: MAX_REDELIVERY_ATTEMPTS })
+  while (state.pending.size > MAX_PENDING_PANES) {
+    state.pending.delete(state.pending.keys().next().value as string)
+  }
+  if (!state.timer) {
+    const timer = setInterval(() => runRedeliveryPass(dispatcher), REDELIVERY_INTERVAL_MS)
+    if (typeof timer.unref === 'function') {
+      timer.unref()
+    }
+    state.timer = timer
+  }
+}
+
+function clearPendingEnvelope(dispatcher: RelayDispatcher, paneKey: string): void {
+  const state = redeliveryByDispatcher.get(dispatcher)
+  if (!state?.pending.delete(paneKey) || state.pending.size > 0) {
+    return
+  }
+  stopRedelivery(dispatcher)
+}
+
+function stopRedelivery(dispatcher: RelayDispatcher): void {
+  const state = redeliveryByDispatcher.get(dispatcher)
+  if (!state) {
+    return
+  }
+  state.pending.clear()
+  if (state.timer) {
+    clearInterval(state.timer)
+    state.timer = null
+  }
+}
+
+function runRedeliveryPass(dispatcher: RelayDispatcher): void {
+  const state = redeliveryByDispatcher.get(dispatcher)
+  if (!state) {
+    return
+  }
+  const active = new Set(dispatcher.activeClientIds())
+  for (const [paneKey, pending] of Array.from(state.pending)) {
+    // A client that detached gets caught up by the reattach replay, so stop tracking it.
+    const targets = pending.clientIds.filter((clientId) => active.has(clientId))
+    const rejected =
+      targets.length === 0 ? [] : publishToClients(dispatcher, pending.params, targets)
+    pending.attemptsLeft -= 1
+    if (rejected.length === 0 || pending.attemptsLeft <= 0) {
+      state.pending.delete(paneKey)
+      continue
+    }
+    pending.clientIds = rejected
+  }
+  if (state.pending.size === 0) {
+    stopRedelivery(dispatcher)
+  }
 }

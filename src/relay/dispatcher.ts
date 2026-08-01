@@ -77,6 +77,8 @@ type RelayClient = {
 // grow it inside one generation — cap it well above the fixed relay method vocabulary.
 const DROPPED_NOTIFICATION_LOG_KEY_LIMIT = 64
 
+const RESPONSE_OVER_CAPACITY_MESSAGE = 'Relay response exceeded the bounded transport capacity'
+
 type DroppedProducerNotificationLog = {
   generation: number
   loggedKeys: Set<string>
@@ -385,10 +387,19 @@ export class RelayDispatcher {
     params: Record<string, unknown>,
     clientId?: number
   ): number {
-    const targets =
-      clientId === undefined
-        ? this.activeClients()
-        : [this.clients.get(clientId)].filter((client): client is RelayClient => !!client)
+    if (clientId !== undefined) {
+      const client = this.clients.get(clientId)
+      // Why: a detached or closed target has no room at all — reporting infinite capacity passes a
+      // fits-check and the frame is then dropped by the publish seam instead.
+      if (!client || client.closed) {
+        return Number.MIN_SAFE_INTEGER
+      }
+      return (
+        client.writer.producerFrameCapacity -
+        this.estimateFrameBytes({ jsonrpc: '2.0', method, params })
+      )
+    }
+    const targets = this.activeClients()
     if (targets.length === 0) {
       return Number.MAX_SAFE_INTEGER
     }
@@ -433,19 +444,20 @@ export class RelayDispatcher {
       method,
       ...(params !== undefined ? { params } : {})
     }
+    const frameBytes = this.estimateFrameBytes(msg)
     this.runPublicationTransaction(() => {
       for (const client of this.clients.values()) {
         if (client.closed) {
           continue
         }
         if (method === 'pty.replay') {
-          this.enqueueFrame(client, msg, 'control')
+          this.enqueueFrame(client, msg, 'control', undefined, frameBytes)
           continue
         }
         // Why: closing can never make an oversized frame sendable — the producer regenerates it after
         // reattach and re-kills the link, turning a recoverable drop into an endless reconnect loop.
-        if (!this.publishToClient(client, msg, 'ordinary')) {
-          this.logDroppedProducerNotification(client, method, msg)
+        if (!this.publishToClient(client, msg, 'ordinary', undefined, frameBytes)) {
+          this.logDroppedProducerNotification(client, method, frameBytes)
         }
       }
     })
@@ -465,25 +477,23 @@ export class RelayDispatcher {
     if (!client || client.closed) {
       return false
     }
-    return this.publishToClient(
-      client,
-      {
-        jsonrpc: '2.0',
-        method,
-        ...(params !== undefined ? { params } : {})
-      },
-      'ordinary'
-    )
+    const msg: JsonRpcNotification = {
+      jsonrpc: '2.0',
+      method,
+      ...(params !== undefined ? { params } : {})
+    }
+    const frameBytes = this.estimateFrameBytes(msg)
+    if (this.publishToClient(client, msg, 'ordinary', undefined, frameBytes)) {
+      return true
+    }
+    // Why: same diagnostics as notify() — a producer that drops here must not do so silently.
+    this.logDroppedProducerNotification(client, method, frameBytes)
+    return false
   }
 
   // Why: one line per generation, method and drop reason — a flooding producer retries every batch and would
   // spam stderr, but a transient queue-full drop must not consume the slot a real over-capacity drop needs.
-  private logDroppedProducerNotification(
-    client: RelayClient,
-    method: string,
-    msg: JsonRpcNotification
-  ): void {
-    const bytes = this.estimateFrameBytes(msg)
+  private logDroppedProducerNotification(client: RelayClient, method: string, bytes: number): void {
     const capacity = client.writer.producerFrameCapacity
     const overCapacity = bytes > capacity
     const key = `${method}:${overCapacity ? 'over-capacity' : 'queue-full'}`
@@ -900,10 +910,17 @@ export class RelayDispatcher {
       {
         jsonrpc: '2.0',
         id,
-        error: { code: -32010, message: 'Relay response exceeded the bounded transport capacity' }
+        error: { code: -32010, message: RESPONSE_OVER_CAPACITY_MESSAGE }
       },
       'control',
-      onSettled
+      // Why: writing the substitute is not delivering the result — a settlement fence must never read
+      // the capacity error's successful write as "the peer received your result".
+      (settlement) =>
+        onSettled(
+          settlement.ok
+            ? { ok: false, error: new Error(RESPONSE_OVER_CAPACITY_MESSAGE) }
+            : settlement
+        )
     )
   }
 
@@ -1027,9 +1044,11 @@ export class RelayDispatcher {
     client: RelayClient,
     msg: JsonRpcNotification,
     lane: 'interactive' | 'ordinary' | 'fixed-bulk' | 'bulk',
-    onSettled: (result: SinkWriteSettlement) => void = () => {}
+    onSettled: (result: SinkWriteSettlement) => void = () => {},
+    // Why: broadcast callers size the frame once for every client; avoid a redundant encode.
+    estimatedBytes?: number
   ): boolean {
-    const bytes = this.estimateFrameBytes(msg)
+    const bytes = estimatedBytes ?? this.estimateFrameBytes(msg)
     const fixedBlocked =
       lane === 'fixed-bulk' &&
       (client.writer.retainedProducerBytes > 0 || bytes > client.writer.fixedFrameCapacity)

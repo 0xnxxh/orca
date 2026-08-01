@@ -1,6 +1,25 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { RelayDispatcher, type RelayClientSinkOptions } from './dispatcher'
+import {
+  RelayDispatcher,
+  type RelayClientSinkOptions,
+  type SinkWriteSettlement
+} from './dispatcher'
+import type * as ProtocolModule from './protocol'
 import { encodeJsonRpcFrame } from './protocol'
+
+// Counts every frame encode (including the estimate-only ones) so a redundant re-encode is observable.
+const encodeCalls = vi.hoisted(() => ({ count: 0 }))
+
+vi.mock('./protocol', async (importOriginal) => {
+  const actual = await importOriginal<typeof ProtocolModule>()
+  return {
+    ...actual,
+    encodeJsonRpcFrame: (...args: Parameters<typeof actual.encodeJsonRpcFrame>) => {
+      encodeCalls.count++
+      return actual.encodeJsonRpcFrame(...args)
+    }
+  }
+})
 
 type BoundedClient = {
   frames: Buffer[]
@@ -90,8 +109,28 @@ describe('RelayDispatcher bounded-capacity degradation', () => {
         12288 - envelopeBytes
       )
       expect(bounded.producerEnvelopeBudget('fs.changed', params, 999)).toBe(
-        Number.MAX_SAFE_INTEGER
+        Number.MIN_SAFE_INTEGER
       )
+    } finally {
+      bounded.dispose()
+    }
+  })
+
+  it('producerEnvelopeBudget reports no capacity for a named client that is gone', () => {
+    const primary = makeBoundedClient(65536)
+    const secondary = makeBoundedClient(65536)
+    const bounded = new RelayDispatcher(primary.write, primary.options)
+    try {
+      const secondaryId = bounded.attachClient(secondary.write, secondary.options)
+      const params = { events: ['x'.repeat(64)] }
+      expect(bounded.producerEnvelopeBudget('fs.changed', params, secondaryId)).toBeGreaterThan(0)
+
+      // A client that detached between activeClientIds() and publication must never look like it fits.
+      bounded.detachClient(secondaryId)
+      expect(bounded.producerEnvelopeBudget('fs.changed', params, secondaryId)).toBeLessThan(0)
+      expect(bounded.producerEnvelopeBudget('fs.changed', params, 999)).toBeLessThan(0)
+      // The no-target broadcast case still reports unbounded room.
+      expect(bounded.producerEnvelopeBudget('fs.changed', params)).toBeGreaterThan(0)
     } finally {
       bounded.dispose()
     }
@@ -103,9 +142,8 @@ describe('RelayDispatcher bounded-capacity degradation', () => {
     try {
       // Snapshot of the shipped formula: 49152-byte producer capacity minus the 96-byte empty-data frame.
       expect(bounded.producerDataBudget('pty.data', { ptyId: 'pty-7', seq: 42 })).toBe(49056)
-      expect(bounded.producerDataBudget('pty.data', { ptyId: 'pty-7', seq: 42 }, 999)).toBe(
-        Number.MAX_SAFE_INTEGER
-      )
+      // A vanished client leaves no room for data at all.
+      expect(bounded.producerDataBudget('pty.data', { ptyId: 'pty-7', seq: 42 }, 999)).toBe(0)
     } finally {
       bounded.dispose()
     }
@@ -241,6 +279,50 @@ describe('RelayDispatcher bounded-capacity degradation', () => {
     }
   })
 
+  it('publishProducerNotification reports its drops like notify', () => {
+    const primary = makeBoundedClient(65536)
+    const secondary = makeBoundedClient(16384)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    const bounded = new RelayDispatcher(primary.write, primary.options)
+    try {
+      const secondaryId = bounded.attachClient(secondary.write, secondary.options)
+      const flood = { events: ['x'.repeat(20_000)] }
+
+      expect(bounded.publishProducerNotification(secondaryId, 'fs.changed', flood)).toBe(false)
+      expect(stderr).toHaveBeenCalledTimes(1)
+      expect(stderr.mock.calls[0][0]).toMatch(
+        /^\[relay\] Dropped fs\.changed \(\d+B > producer frame capacity 12288B\)\n$/
+      )
+
+      // Same one-line-per-generation budget as notify().
+      expect(bounded.publishProducerNotification(secondaryId, 'fs.changed', flood)).toBe(false)
+      expect(stderr).toHaveBeenCalledTimes(1)
+    } finally {
+      stderr.mockRestore()
+      bounded.dispose()
+    }
+  })
+
+  it('does not re-encode a dropped frame when its log line is suppressed', () => {
+    const primary = makeBoundedClient(16384)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    const bounded = new RelayDispatcher(primary.write, primary.options)
+    try {
+      const flood = { events: ['x'.repeat(20_000)] }
+      bounded.notify('fs.changed', flood)
+      expect(stderr).toHaveBeenCalledTimes(1)
+
+      // The suppressed drop must size the frame once, not once to publish and again to log.
+      encodeCalls.count = 0
+      bounded.notify('fs.changed', flood)
+      expect(stderr).toHaveBeenCalledTimes(1)
+      expect(encodeCalls.count).toBe(1)
+    } finally {
+      stderr.mockRestore()
+      bounded.dispose()
+    }
+  })
+
   it('sendResponse substitutes a JSON-RPC error instead of closing when the legacy lane rejects', async () => {
     const primary = makeBoundedClient(65536)
     const bounded = new RelayDispatcher(primary.write, primary.options)
@@ -258,6 +340,30 @@ describe('RelayDispatcher bounded-capacity degradation', () => {
       expect(response.id).toBe(77)
       expect(response.error.code).toBe(-32010)
       expect(response.error.message).toBe('Relay response exceeded the bounded transport capacity')
+    } finally {
+      bounded.dispose()
+    }
+  })
+
+  it('settles the response fence as failed when the substitute error replaces the result', async () => {
+    const primary = makeBoundedClient(65536)
+    const bounded = new RelayDispatcher(primary.write, primary.options)
+    try {
+      const settlements: SinkWriteSettlement[] = []
+      bounded.onRequest('fs.listFiles', async (_params, context) => {
+        context.onResponseSettled?.((result) => settlements.push(result))
+        return { paths: 'x'.repeat(3 * 1024 * 1024) }
+      })
+      bounded.feed(encodeJsonRpcFrame({ jsonrpc: '2.0', id: 79, method: 'fs.listFiles' }, 1, 0))
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(primary.closes).toBe(0)
+      expect(settlements).toHaveLength(1)
+      // The peer got a capacity error, not the result — the fence must not claim delivery.
+      expect(settlements[0]).toEqual({
+        ok: false,
+        error: new Error('Relay response exceeded the bounded transport capacity')
+      })
     } finally {
       bounded.dispose()
     }

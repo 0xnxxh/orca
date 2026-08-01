@@ -1241,7 +1241,7 @@ export class SshConnection {
     this.state.reconnectAttempt = decision.attemptIndex
     this.setState('reconnecting')
     console.warn(
-      `[ssh] Reconnecting to ${this.target.label} in ${decision.delayMs}ms (step ${decision.attemptIndex + 1}/${RECONNECT_BACKOFF_MS.length})`
+      `[ssh] Reconnecting to ${this.target.label} in ${decision.delayMs}ms (delay step ${decision.attemptIndex + 1}/${RECONNECT_BACKOFF_MS.length}, failed handshakes ${this.reconnectLadder.failedAttemptStreak}/${RECONNECT_BACKOFF_MS.length})`
     )
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null

@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { FsHandler } from './fs-handler'
 import { RelayContext } from './context'
 import type { RelayDispatcher } from './dispatcher'
-import { STREAM_CHUNK_SIZE } from './protocol'
+import { MAX_CONCURRENT_STREAMS, STREAM_CHUNK_SIZE } from './protocol'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { mkdtempSync, writeFileSync } from 'node:fs'
@@ -29,6 +29,8 @@ function createMockDispatcher() {
   const droppedProducerFrames: Notification[] = []
   // Mirrors the real lane split: a saturated producer queue drops frames, control frames still land.
   let producerSaturated = false
+  let holdControlSettlement = false
+  const heldControlSettlements: (() => void)[] = []
   return {
     onRequest: vi.fn(
       (
@@ -61,6 +63,25 @@ function createMockDispatcher() {
     notifyClient: vi.fn((clientId: number, method: string, params?: Record<string, unknown>) => {
       notifications.push({ method, params, lane: 'control', clientId })
     }),
+    // Mirrors the real control lane: the frame is queued on enqueue, but settles only once the
+    // sink actually wrote it — holding settlement models a socket that is not draining.
+    tryNotifyClient: vi.fn(
+      (
+        clientId: number,
+        method: string,
+        params?: Record<string, unknown>,
+        onSettled?: (result: { ok: boolean }) => void
+      ): boolean => {
+        notifications.push({ method, params, lane: 'control', clientId })
+        const settle = () => onSettled?.({ ok: true })
+        if (holdControlSettlement) {
+          heldControlSettlements.push(settle)
+        } else {
+          settle()
+        }
+        return true
+      }
+    ),
     notifyControl: vi.fn((method: string, params?: Record<string, unknown>) => {
       notifications.push({ method, params, lane: 'control' })
     }),
@@ -68,6 +89,15 @@ function createMockDispatcher() {
     _droppedProducerFrames: droppedProducerFrames,
     saturateProducerLane() {
       producerSaturated = true
+    },
+    holdControlSettlements() {
+      holdControlSettlement = true
+    },
+    settleHeldControlFrames() {
+      holdControlSettlement = false
+      for (const settle of heldControlSettlements.splice(0)) {
+        settle()
+      }
     },
     callRequest(
       method: string,
@@ -419,6 +449,39 @@ describe('FsHandler readFileStream', () => {
     const { end, err } = collectStream(dispatcher)
     expect(end).toBeNull()
     expect(err).toBeNull()
+  })
+
+  it('caps undelivered terminal frames so they cannot overflow the link-killing control lane', async () => {
+    const filePath = path.join(tmpDir, 'terminal-budget.png')
+    writeFileSync(filePath, Buffer.alloc(64 * 1024, 0x42)) // one chunk per stream
+    // A socket that accepts nothing: control frames queue, and the real writer destroys the
+    // client once 256 of them pile up.
+    dispatcher.holdControlSettlements()
+
+    const registry = (handler as unknown as { streamRegistry: { size(): number } }).streamRegistry
+    const context = { clientId: 5, isStale: () => false }
+    const terminalFrames = () =>
+      dispatcher._notifications.filter(
+        (n) => n.method === 'fs.streamEnd' || n.method === 'fs.streamError'
+      )
+
+    for (let i = 0; i < MAX_CONCURRENT_STREAMS; i++) {
+      await dispatcher.callRequest('fs.readFileStream', { filePath }, context)
+      await waitFor(() => terminalFrames().length === i + 1)
+    }
+    // The fd must go back even though its terminal frame is still undelivered.
+    await waitFor(() => registry.size() === 0)
+
+    await expect(
+      dispatcher.callRequest('fs.readFileStream', { filePath }, context)
+    ).rejects.toThrow(/Too many concurrent streams/)
+    await flush(10)
+    expect(terminalFrames()).toHaveLength(MAX_CONCURRENT_STREAMS)
+
+    // Draining the sink settles the queued frames and hands the budget back.
+    dispatcher.settleHeldControlFrames()
+    await dispatcher.callRequest('fs.readFileStream', { filePath }, context)
+    await waitFor(() => terminalFrames().length === MAX_CONCURRENT_STREAMS + 1)
   })
 
   it('rejects the 17th concurrent stream with TooManyStreams', async () => {
