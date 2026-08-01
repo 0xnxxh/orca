@@ -90,8 +90,10 @@ installMonacoContextMenuPaste(monaco)
 
 // Why: models outlive the React panels that opened them, so an OOM report cannot
 // otherwise tell "editor holds 200MB of open files" from "Monaco is retaining models
-// for files whose panel unmounted". getValueLength/getLineCount are both O(1) reads
-// off the piece tree, so this stays safe to run inside a near-OOM breadcrumb.
+// for files whose panel unmounted". Cost is linear in model count and flat in model
+// content — measured ~0.2us per model, and 333MB of open text costs the same as 30KB
+// — with getModels()'s two N-sized allocations as the floor, not the per-model reads.
+// Safe inside a near-OOM breadcrumb at any realistic model count.
 setMonacoModelCensusReader(() => {
   let models = 0
   let chars = 0
