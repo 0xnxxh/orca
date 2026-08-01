@@ -218,6 +218,9 @@ function ancestorJsxAttributeName(node) {
       ts.isJsxExpression(current) ||
       ts.isConditionalExpression(current) ||
       ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isSatisfiesExpression(current) ||
+      ts.isNonNullExpression(current) ||
       ts.isBinaryExpression(current)
     ) {
       current = current.parent

@@ -92,6 +92,25 @@ function isDefiniteBefore(write, use) {
   return !write.conditional && isOrderedBefore(write, use)
 }
 
+function functionOwner(node) {
+  let current = node.parent
+  while (current && !ts.isSourceFile(current)) {
+    if (ts.isFunctionLike(current)) {
+      return current
+    }
+    current = current.parent
+  }
+  return undefined
+}
+
+function canReachUse(write, use, sourceFile) {
+  if (write.position < use.getStart(sourceFile)) {
+    return true
+  }
+  const useOwner = functionOwner(use)
+  return Boolean(useOwner && functionOwner(write.node) !== useOwner)
+}
+
 function destructuredTargets(name) {
   const target = unwrapExpression(name)
   if (ts.isObjectBindingPattern(target)) {
@@ -256,8 +275,7 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
     if (all || (binding && isConstBinding(binding))) {
       return entries
     }
-    const usePosition = use.getStart(sourceFile)
-    const available = entries.filter((entry) => entry.position < usePosition)
+    const available = entries.filter((entry) => canReachUse(entry, use, sourceFile))
     let selected = []
     for (const entry of available) {
       const action = entry.conditional
@@ -348,8 +366,9 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
       : []
     const rightKeys = new Set(rightLocations.map(locationKey))
     const selfAssignment =
-      targetLocations.length > 0 &&
-      targetLocations.every((location) => rightKeys.has(locationKey(location)))
+      targetLocations.length === 1 &&
+      rightLocations.length === 1 &&
+      rightKeys.has(locationKey(targetLocations[0]))
     const indexed = { ...entry, selfAssignment }
     for (const location of targetLocations) {
       indexedPropertyWrites(location).push(indexed)
@@ -362,14 +381,15 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
   }
 
   function propertyWriteEntries(node, propertyName, use, all) {
-    const usePosition = use.getStart(sourceFile)
     const entries = objectLocations(node, use).flatMap((location) => {
       const key = [...location.path, propertyName].join('\0')
       return propertyWrites.get(location.binding)?.get(key) ?? []
     })
     return [
       ...new Set(
-        entries.filter((entry) => !entry.selfAssignment && (all || entry.position < usePosition))
+        entries.filter(
+          (entry) => !entry.selfAssignment && (all || canReachUse(entry, use, sourceFile))
+        )
       )
     ].sort((left, right) => left.position - right.position)
   }
@@ -407,17 +427,24 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
         return undefined
       }
       const nextSeen = new Set(seen).add(binding)
-      const values = all
-        ? allValueExpressions(expression, use, nextSeen)
-        : valueExpressions(expression, use, nextSeen)
+      const sources = valueSources(expression, use, all)
       const resolved = []
-      let known = values !== undefined
-      for (const value of values ?? []) {
-        const matches = propertyValues(value, propertyName, use, nextSeen, all)
-        if (matches === undefined) {
+      let known = true
+      for (const source of sources) {
+        const values = source.propertyName
+          ? propertyValues(source.expression, source.propertyName, source.node, nextSeen, all)
+          : [source.expression]
+        if (values === undefined) {
           known = false
-        } else {
-          resolved.push(...matches)
+          continue
+        }
+        for (const value of values) {
+          const matches = propertyValues(value, propertyName, source.node, nextSeen, all)
+          if (matches === undefined) {
+            known = false
+          } else {
+            resolved.push(...matches)
+          }
         }
       }
       known = applyPropertyWrites(resolved, known, expression, propertyName, use, all)

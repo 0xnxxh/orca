@@ -224,9 +224,13 @@ function expressionTargetsFunction(node, owner, bindings, valueFlow, seen = new 
   if (!object || !propertyName) {
     return false
   }
+  if (seen.has(expression)) {
+    return false
+  }
+  const nextSeen = new Set(seen).add(expression)
   const values = valueFlow.propertyValues(object, propertyName, node)
   return Boolean(
-    values?.some((value) => expressionTargetsFunction(value, owner, bindings, valueFlow, seen))
+    values?.some((value) => expressionTargetsFunction(value, owner, bindings, valueFlow, nextSeen))
   )
 }
 

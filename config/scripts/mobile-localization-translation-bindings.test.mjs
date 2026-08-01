@@ -94,9 +94,13 @@ source = t
 const box = { tr: raw }
 const { tr: memberSnapshot } = box
 box.tr = t
+let objectSource = { tr: raw }
+const objectSnapshot = objectSource
+objectSource = { tr: t }
 export const labels = [
   snapshot('Raw binding snapshot'),
   memberSnapshot('Raw member snapshot'),
+  objectSnapshot.tr('Raw object snapshot'),
   source('example.binding'),
   box.tr('example.member')
 ]
@@ -104,6 +108,24 @@ export const labels = [
     const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
 
     expect(calls.map((call) => call.keys)).toEqual([['example.binding'], ['example.member']])
+  })
+
+  it('includes later outer writes that can reach closure calls', () => {
+    const sourceText = `
+import { t } from '@/i18n/mobile-i18n'
+const raw = (value) => value
+let closure = t
+const box = { tr: t }
+function render() {
+  return [closure('Raw scalar closure'), box.tr('Raw member closure')]
+}
+closure = raw
+box.tr = raw
+export const labels = render()
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls).toEqual([])
   })
 
   it('tracks member and logical assignments at each call', () => {
@@ -216,7 +238,12 @@ export const labels = next.map((value) => value.label)
 import { t } from '@/i18n/mobile-i18n'
 const holder = { current: t }
 holder.current = holder.current
-export const label = holder.current('example.selfReference')
+const a = { tr: t }
+const b = { tr: (value) => value }
+let y = a
+y &&= b
+a.tr = y.tr
+export const labels = [holder.current('example.selfReference'), a.tr('Raw ambiguous write')]
 `
     const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
 

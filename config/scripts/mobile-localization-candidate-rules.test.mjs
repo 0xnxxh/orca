@@ -133,12 +133,12 @@ export function Example() {
     expect(candidates.map((candidate) => candidate.text)).toEqual(['Actually rendered value'])
   })
 
-  it('finds literals assigned to variables rendered through user-visible JSX attributes', () => {
+  it('finds direct and assigned literals in user-visible JSX attributes', () => {
     const source = `
 export function Example() {
   const copy = 'Save changes'
   const className = 'not-visible-copy'
-  return <Button title={copy} className={className} />
+  return <><Button title={copy} className={className} /><Button title={'Direct save'!} /><Button title={('Open menu' as string)} /><Button title={('Choose host' satisfies string)} /></>
 }
 `
     const candidates = collectLocalizationCandidates(
@@ -147,7 +147,12 @@ export function Example() {
       '/repo'
     )
 
-    expect(candidates.map((candidate) => candidate.text)).toEqual(['Save changes'])
+    expect(candidates.map((candidate) => candidate.text)).toEqual([
+      'Save changes',
+      'Direct save',
+      'Open menu',
+      'Choose host'
+    ])
   })
 
   it('finds unlocalized success-toast object copy', () => {
@@ -437,7 +442,17 @@ const box = { tr: t }
 box.tr = (value) => value
 let logical = t
 logical &&= (value) => value
-export const label = <><Text>{box.tr('Member raw copy')}</Text><Text>{logical('Logical raw copy')}</Text></>
+let closure = t
+const closureBox = { tr: t }
+function Later() { return <><Text>{closure('Scalar closure raw')}</Text><Text>{closureBox.tr('Member closure raw')}</Text></> }
+closure = (value) => value
+closureBox.tr = (value) => value
+const a = { tr: t }
+const b = { tr: (value) => value }
+let y = a
+y &&= b
+a.tr = y.tr
+export const label = <><Text>{box.tr('Member raw copy')}</Text><Text>{logical('Logical raw copy')}</Text><Text>{a.tr('Ambiguous property raw')}</Text><Later /></>
 `
     const candidates = collectLocalizationCandidates(
       '/repo/mobile/src/components/Example.tsx',
@@ -446,8 +461,11 @@ export const label = <><Text>{box.tr('Member raw copy')}</Text><Text>{logical('L
     )
 
     expect(candidates.map((candidate) => candidate.text)).toEqual([
+      'Scalar closure raw',
+      'Member closure raw',
       'Member raw copy',
-      'Logical raw copy'
+      'Logical raw copy',
+      'Ambiguous property raw'
     ])
   })
 
@@ -463,9 +481,12 @@ const alias = box
 alias.tr = raw
 const holder = { inner: { tr: t } }
 holder.inner.tr = raw
+let objectSource = { tr: raw }
+const objectSnapshot = objectSource
+objectSource = { tr: t }
 const visible = 'Visible non-null copy'
 function render() { return 'Helper non-null copy' }
-export const label = <><Text>{snapshot('Raw snapshot copy')}</Text><Text>{box.tr('Raw alias mutation')}</Text><Text>{holder.inner.tr('Raw nested mutation')}</Text><Text>{visible!}</Text><Text>{'Direct non-null copy'!}</Text><Text>{render!()}</Text></>
+export const label = <><Text>{snapshot('Raw snapshot copy')}</Text><Text>{box.tr('Raw alias mutation')}</Text><Text>{holder.inner.tr('Raw nested mutation')}</Text><Text>{objectSnapshot.tr('Raw object snapshot')}</Text><Text>{visible!}</Text><Text>{'Direct non-null copy'!}</Text><Text>{render!()}</Text></>
 `
     const candidates = collectLocalizationCandidates(
       '/repo/mobile/src/components/Example.tsx',
@@ -479,6 +500,7 @@ export const label = <><Text>{snapshot('Raw snapshot copy')}</Text><Text>{box.tr
       'Raw snapshot copy',
       'Raw alias mutation',
       'Raw nested mutation',
+      'Raw object snapshot',
       'Direct non-null copy'
     ])
   })
