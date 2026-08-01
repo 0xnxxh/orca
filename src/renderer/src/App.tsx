@@ -137,7 +137,6 @@ import {
   collectFolderWorkspaceKeysFromSession,
   collectWorktreeHydrationRepoIdsFromSession
 } from './lib/workspace-session-hydration-keys'
-import { capRestoredOpenFilesByWorktree } from './lib/workspace-session-open-file-cap'
 import {
   getStartupErrorFallbackUI,
   hydratePersistedUIAfterStartupRead
@@ -964,9 +963,7 @@ function App(): React.JSX.Element {
           actions.awaitLocalRepoCatalogSettlement()
         )
         if (!cancelled) {
-          // Why: cap before any slice reads it — editor, tab and tab-group hydration
-          // all derive from openFilesByWorktree and must agree on the same list.
-          const restoredSession = capRestoredOpenFilesByWorktree(sessionRead.session)
+          const restoredSession = sessionRead.session
           const sessionHydrationOptions = {
             additionalValidWorkspaceKeys: collectFolderWorkspaceKeysFromSession(restoredSession)
           }
