@@ -3,7 +3,11 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConnectionState, HostProfile } from './types'
 import type { RpcClient } from './rpc-client'
-import { dropSharedHostListLoad, shareHostListLoad } from './host-list-load-sharing'
+import {
+  dropSharedHostListLoad,
+  getHostListLoadRevision,
+  shareHostListLoad
+} from './host-list-load-sharing'
 
 const connectMock = vi.fn()
 const loadHostsMock = vi.fn()
@@ -74,7 +78,7 @@ type Harness = {
   readonly hook: ReturnType<typeof useHostClient>
   readonly closeHost: (hostId: string) => void
   readonly forceReconnect: (hostId: string) => Promise<void>
-  readonly primeHosts: (hosts: HostProfile[]) => void
+  readonly primeHosts: (hosts: HostProfile[], sourceRevision?: number) => void
   readonly unmount: () => void
 }
 
@@ -136,11 +140,11 @@ async function renderHarness(hostId: string): Promise<Harness> {
       }
       return forceReconnect(id)
     },
-    primeHosts: (hosts) => {
+    primeHosts: (hosts, sourceRevision = getHostListLoadRevision()) => {
       if (!primeHosts) {
         throw new Error('primeHosts hook not rendered')
       }
-      primeHosts(hosts)
+      primeHosts(hosts, sourceRevision)
     },
     unmount: () => mounted.unmount()
   }

@@ -34,6 +34,7 @@ import {
   RpcSynthesizedCloseIndex
 } from './rpc-socket-close-evidence'
 import { markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
+import { RpcControlProbeFollowUp } from './rpc-control-probe-follow-up'
 import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-request-budget'
 import { isRpcResponse } from './rpc-response-shape'
 import {
@@ -174,7 +175,11 @@ export function connect(
   let connectTimer: ReturnType<typeof setTimeout> | null = null
   let handshakeTimer: ReturnType<typeof setTimeout> | null = null
   let activityProbeTimer: ReturnType<typeof setInterval> | null = null
-  let activityProbeInFlight = false
+  const activityProbeFollowUp = new RpcControlProbeFollowUp<WebSocket>(
+    () => (state === 'connected' ? ws : null),
+    runActivityProbe,
+    () => timedOutControlRequestIds.clear()
+  )
   let intentionallyClosed = false
   // Consecutive auth rejections; tolerate up to AUTH_RETRY_BUDGET (issue #5200) before latching to avoid a needless re-pair.
   let authRejectionCount = 0
@@ -668,7 +673,7 @@ export function connect(
       handshakeTimer = null
     }
     stopActivityProbe()
-    finishActivityProbe()
+    activityProbeFollowUp.finish()
     if (intentionallyClosed) {
       console.log('[net] handleSocketClosed — intentional close')
       setState('disconnected')
@@ -779,11 +784,13 @@ export function connect(
   }
 
   // Why: stream frames can flow while control RPC is wedged; only a control response satisfies this probe.
-  function runActivityProbe(expectedWs: WebSocket | null = ws) {
-    if (state !== 'connected' || !ws || ws !== expectedWs || activityProbeInFlight) {
+  function runActivityProbe(expectedWs: WebSocket | null = ws, queueAfterCurrent = false): void {
+    if (state !== 'connected' || !ws || ws !== expectedWs) {
       return
     }
-    activityProbeInFlight = true
+    if (!activityProbeFollowUp.begin(expectedWs, queueAfterCurrent)) {
+      return
+    }
     const probeWs = ws
     const id = nextId()
     const probeControlResponseSequence = controlResponseSequence
@@ -792,7 +799,7 @@ export function connect(
       timedOut = true
       pending.delete(id)
       const controlResponded = controlResponseSequence > probeControlResponseSequence
-      finishActivityProbe()
+      activityProbeFollowUp.finish(probeWs)
       if (controlResponded) {
         return
       }
@@ -805,26 +812,21 @@ export function connect(
           return
         }
         clearTimeout(timeout)
-        finishActivityProbe()
+        activityProbeFollowUp.finish(probeWs)
       },
       reject: () => {
         if (timedOut) {
           return
         }
         clearTimeout(timeout)
-        finishActivityProbe()
+        activityProbeFollowUp.finish(probeWs)
       }
     })
     if (!sendEncrypted({ id, deviceToken, method: 'status.get' })) {
       clearTimeout(timeout)
       pending.delete(id)
-      finishActivityProbe()
+      activityProbeFollowUp.finish(probeWs)
     }
-  }
-
-  function finishActivityProbe(): void {
-    activityProbeInFlight = false
-    timedOutControlRequestIds.clear()
   }
 
   function forceSocketReconnect(socket: WebSocket | null): void {
@@ -1055,7 +1057,7 @@ export function connect(
           if (requestWs === ws) {
             timedOutControlRequestIds.add(id)
           }
-          runActivityProbe(requestWs)
+          runActivityProbe(requestWs, true)
         }, timeoutMs)
 
         pending.set(id, {
@@ -1208,7 +1210,7 @@ export function connect(
         handshakeTimer = null
       }
       stopActivityProbe()
-      finishActivityProbe()
+      activityProbeFollowUp.finish()
       if (ws) {
         ws.close()
         ws = null

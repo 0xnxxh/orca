@@ -16,6 +16,7 @@ import {
 } from '../src/components/AccountUsage'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { loadHosts } from '../src/transport/host-store'
+import { getHostListLoadRevision } from '../src/transport/host-list-load-sharing'
 import { navigateToMobileHostEdit } from '../src/transport/host-edit-navigation'
 import { removeHostAndCloseClient } from '../src/transport/host-removal-lifecycle'
 import { pickResumeWorktree } from '../src/worktree/resume-worktree'
@@ -319,12 +320,6 @@ export default function HomeScreen() {
   const closeHostClient = useCloseHost()
   const forceReconnectHost = useForceReconnect()
   const primeHosts = usePrimeHosts()
-  // Why: prime the cache with loaded HostProfiles to avoid a second serialized Keychain pass (multi-second connect latency) on cold start.
-  useEffect(() => {
-    if (hosts.length > 0) {
-      primeHosts(hosts)
-    }
-  }, [hosts, primeHosts])
   const allClientsRef = useRef<Array<{ hostId: string; client: RpcClient }>>([])
   // Why: keep the focus callback stable (no refetch per render) while still exposing the latest host clients.
   allClientsRef.current = allClients.map((entry) => ({
@@ -374,10 +369,12 @@ export default function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       let stale = false
+      const hostLoadRevision = getHostListLoadRevision()
       void loadHosts().then(async (h) => {
         if (stale) {
           return
         }
+        primeHosts(h, hostLoadRevision)
         setHosts(h)
         if (h.length === 0 || onboardingOptInCheckedRef.current) {
           return
@@ -410,7 +407,7 @@ export default function HomeScreen() {
       return () => {
         stale = true
       }
-    }, [router])
+    }, [primeHosts, router])
   )
 
   const sortedHosts = useMemo(
@@ -670,7 +667,10 @@ export default function HomeScreen() {
     try {
       await removeHostAndCloseClient(hostToRemove.id, closeHostClient)
       setConfirmRemove(null)
-      setHosts(await loadHosts())
+      const hostLoadRevision = getHostListLoadRevision()
+      const remainingHosts = await loadHosts()
+      primeHosts(remainingHosts, hostLoadRevision)
+      setHosts(remainingHosts)
     } catch {
       // Why: ConfirmModal closes on confirm; re-open for retry so the failure isn't silent.
       setConfirmRemove(hostToRemove)

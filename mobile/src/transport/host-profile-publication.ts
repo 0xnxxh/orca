@@ -2,9 +2,20 @@ import type { HostProfile } from './types'
 
 const pendingByHost = new Map<string, Promise<void>>()
 const revisionByHost = new Map<string, number>()
+const endpointGenerationByHost = new Map<string, number>()
 
 export function getHostProfilePublicationRevision(hostId: string): number {
   return revisionByHost.get(hostId) ?? 0
+}
+
+export function beginHostEndpointPublicationLifecycle(hostId: string): number {
+  const generation = (endpointGenerationByHost.get(hostId) ?? 0) + 1
+  endpointGenerationByHost.set(hostId, generation)
+  return generation
+}
+
+export function getHostEndpointPublicationGeneration(hostId: string): number {
+  return endpointGenerationByHost.get(hostId) ?? 0
 }
 
 export function serializeHostProfilePublication<T>(

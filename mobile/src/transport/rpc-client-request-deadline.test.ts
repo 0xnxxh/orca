@@ -301,6 +301,33 @@ describe('mobile rpc-client request deadline', () => {
     client.close()
   })
 
+  it('queues a fresh timeout probe behind an older in-flight probe', async () => {
+    const client = connect('ws://desktop.invalid', 'token', 'server-key')
+    const socket = mockSockets[0]!
+    socket.open()
+    client.notifyForeground()
+    const stalled = client.sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+    const stalledOutcome = stalled.catch((error: unknown) => error)
+    const healthy = client.sendRequest('speech.models.list', {}, { timeoutMs: 100 })
+    await vi.advanceTimersByTimeAsync(0)
+    const healthyRequest = sentRequest(socket, 'speech.models.list')
+    socket.receive(`encrypted:${JSON.stringify({ id: healthyRequest.id, ok: true, result: {} })}`)
+
+    await expect(healthy).resolves.toMatchObject({ ok: true })
+    await vi.advanceTimersByTimeAsync(100)
+    await expect(stalledOutcome).resolves.toMatchObject({
+      message: 'Request timed out: browser.screenshot'
+    })
+    await vi.advanceTimersByTimeAsync(7_900)
+    expect(sentRequests(socket, 'status.get')).toHaveLength(2)
+    expect(client.getState()).toBe('connected')
+
+    await vi.advanceTimersByTimeAsync(8_000)
+    expect(client.getState()).toBe('reconnecting')
+    expect(socket.close).toHaveBeenCalled()
+    client.close()
+  })
+
   it('keeps Force Reconnect inside its deadline after a late connection', async () => {
     const client = connect('ws://desktop.invalid', 'token', 'server-key')
     const verification = verifyForceReconnectRpcHealth(client)

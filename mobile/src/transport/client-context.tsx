@@ -17,6 +17,7 @@ import { HostReconnectProfileCache, type HostOpenProfile } from './host-reconnec
 import { subscribeConnectionRevivalTriggers } from './connection-revival-triggers'
 import { HostClientOpenRegistry } from './host-client-open-registry'
 import { cancelHostClientOpenProfile, loadHostClientOpenProfile } from './host-client-open-profile'
+import { getHostListLoadRevision } from './host-list-load-sharing'
 import { loadHosts } from './host-store'
 import { openHostLogicalClient } from './host-logical-client'
 import { clientActivePath } from './rpc-client-active-path'
@@ -176,10 +177,8 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     [openEntry]
   )
 
-  const primeHosts = useCallback((hosts: HostProfile[]) => {
-    for (const host of hosts) {
-      primedHostsRef.current.prime(host)
-    }
+  const primeHosts = useCallback((hosts: HostProfile[], sourceRevision: number) => {
+    primedHostsRef.current.primeLoadedHosts(hosts, sourceRevision, getHostListLoadRevision())
   }, [])
 
   // Why: no idle-close on refcount→0 — transient nav gaps flashed false 'disconnected', so keep sockets alive while foregrounded.
@@ -202,7 +201,10 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
         profileVersion: profile.version,
         getEntry: () => storeRef.current.get(hostId),
         getListenerCount: () => stateListenersRef.current.get(hostId)?.size ?? 0,
-        removeEntry: () => {
+        removeEntry: (expected) => {
+          if (storeRef.current.get(hostId) !== expected) {
+            return
+          }
           storeRef.current.delete(hostId)
           notifyHostState(hostId, 'disconnected')
           notifyAllHosts()
@@ -456,6 +458,6 @@ export function useForceReconnect(): (hostId: string) => Promise<void> {
 }
 
 // Why: primes already-loaded HostProfiles so the provider can skip a second loadHosts()/Keychain pass on cold start.
-export function usePrimeHosts(): (hosts: HostProfile[]) => void {
+export function usePrimeHosts(): (hosts: HostProfile[], sourceRevision: number) => void {
   return useRpcClientContext().primeHosts
 }

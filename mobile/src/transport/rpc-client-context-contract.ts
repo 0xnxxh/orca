@@ -14,5 +14,5 @@ export type RpcClientContextValue = {
   subscribeHostState: (hostId: string, listener: (state: ConnectionState) => void) => () => void
   getAllClients: () => { hostId: string; client: RpcClient }[]
   subscribeAllHosts: (listener: () => void) => () => void
-  primeHosts: (hosts: HostProfile[]) => void
+  primeHosts: (hosts: HostProfile[], sourceRevision: number) => void
 }

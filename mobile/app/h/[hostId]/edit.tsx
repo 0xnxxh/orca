@@ -15,6 +15,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import { ChevronLeft } from 'lucide-react-native'
 import { colors, radii, spacing, typography } from '../../../src/theme/mobile-theme'
 import { loadHosts, updateHostNameAndEndpoint } from '../../../src/transport/host-store'
+import { getHostListLoadRevision } from '../../../src/transport/host-list-load-sharing'
 import { displayHostEndpoint } from '../../../src/transport/host-endpoint'
 import { resolveHostEndpointEdit } from '../../../src/transport/host-endpoint-edit'
 import { useForceReconnect, usePrimeHosts } from '../../../src/transport/client-context'
@@ -124,8 +125,9 @@ export default function EditHostScreen() {
       // Why: the write already committed above; a re-prime failure here
       // must not be reported as a save failure — the next loadHosts() call
       // elsewhere in the app picks up the fresh state regardless.
+      const hostLoadRevision = getHostListLoadRevision()
       const hosts = await loadHosts()
-      primeHosts(hosts)
+      primeHosts(hosts, hostLoadRevision)
     } catch {
       // best-effort re-prime; persisted data is unaffected
     }

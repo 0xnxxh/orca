@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { HostForceReconnectCoordinator } from './host-force-reconnect'
+import { HostForceReconnectCoordinator, type HostReconnectEntry } from './host-force-reconnect'
+import type { RpcClient } from './rpc-client'
 
 describe('HostForceReconnectCoordinator', () => {
   afterEach(() => vi.useRealTimers())
@@ -48,5 +49,45 @@ describe('HostForceReconnectCoordinator', () => {
     expect(cancelPendingOpen).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(15_000)
     await expect(reconnect).resolves.toBeUndefined()
+  })
+
+  it('retires a replacement that fails RPC health verification', async () => {
+    const close = vi.fn()
+    const unsubState = vi.fn()
+    const client = {
+      sendRequest: vi.fn(async () => {
+        throw new Error('health failed')
+      }),
+      getState: () => 'connected',
+      close
+    } as unknown as RpcClient
+    const fresh: HostReconnectEntry = { client, refCount: 0, unsubState }
+    let current: HostReconnectEntry | undefined
+    const removeEntry = vi.fn((expected: HostReconnectEntry) => {
+      if (current === expected) {
+        current = undefined
+      }
+    })
+    const coordinator = new HostForceReconnectCoordinator()
+
+    await expect(
+      coordinator.run({
+        hostId: 'host-1',
+        profileVersion: 0,
+        getEntry: () => current,
+        getListenerCount: () => 1,
+        removeEntry,
+        cancelPendingOpen: vi.fn(),
+        openReplacement: async () => {
+          current = fresh
+          return fresh
+        }
+      })
+    ).rejects.toThrow('health failed')
+
+    expect(unsubState).toHaveBeenCalledOnce()
+    expect(close).toHaveBeenCalledOnce()
+    expect(removeEntry).toHaveBeenCalledWith(fresh)
+    expect(current).toBeUndefined()
   })
 })

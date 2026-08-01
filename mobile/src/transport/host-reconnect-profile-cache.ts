@@ -25,6 +25,19 @@ export class HostReconnectProfileCache {
     return version
   }
 
+  primeLoaded(host: HostProfile, sourceRevision: number, currentRevision: number): number | null {
+    if (sourceRevision !== currentRevision) {
+      return null
+    }
+    return this.prime(host)
+  }
+
+  primeLoadedHosts(hosts: HostProfile[], sourceRevision: number, currentRevision: number): void {
+    for (const host of hosts) {
+      this.primeLoaded(host, sourceRevision, currentRevision)
+    }
+  }
+
   primeFromVersion(host: HostProfile, sourceVersion: number): number | null {
     if (this.version(host.id) !== sourceVersion) {
       return null

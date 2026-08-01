@@ -15,7 +15,7 @@ type HostReconnectOperation = {
   profileVersion: number
   getEntry: () => HostReconnectEntry | undefined
   getListenerCount: () => number
-  removeEntry: () => void
+  removeEntry: (expected: HostReconnectEntry) => void
   cancelPendingOpen: () => void
   openReplacement: () => Promise<HostReconnectEntry | null>
 }
@@ -96,9 +96,7 @@ export class HostForceReconnectCoordinator {
     const entry = operation.getEntry()
     const savedRefCount = entry?.refCount ?? Math.max(1, operation.getListenerCount())
     if (entry) {
-      entry.unsubState()
-      entry.client.close()
-      operation.removeEntry()
+      this.retireCurrentEntry(operation, entry)
     }
     const fresh = await this.openBeforeDeadline(operation, deadline, cancelled)
     if (this.wasCancelled(operation.hostId, generation)) {
@@ -112,9 +110,22 @@ export class HostForceReconnectCoordinator {
       await verifyForceReconnectRpcHealth(fresh.client, deadline)
     } catch (error) {
       if (!this.wasCancelled(operation.hostId, generation)) {
+        this.retireCurrentEntry(operation, fresh)
         throw error
       }
     }
+  }
+
+  private retireCurrentEntry(
+    operation: HostReconnectOperation,
+    expected: HostReconnectEntry
+  ): void {
+    if (operation.getEntry() !== expected) {
+      return
+    }
+    expected.unsubState()
+    expected.client.close()
+    operation.removeEntry(expected)
   }
 
   private async openBeforeDeadline(

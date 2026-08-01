@@ -2,6 +2,7 @@ import { HostProfileSchema, type HostProfile } from './types'
 import { loadStoredHostIdentity } from './host-store'
 import { readHostDeviceToken } from './host-device-token-store'
 import {
+  getHostEndpointPublicationGeneration,
   getHostProfilePublicationRevision,
   serializeHostProfilePublication
 } from './host-profile-publication'
@@ -14,13 +15,14 @@ export class MobileRelayUpgradeHostSupersededError extends Error {}
 
 export async function saveExistingHostRelayRouting(
   host: HostProfile,
-  beforePublish?: () => Promise<void>
+  beforePublish?: () => Promise<void>,
+  endpointGeneration = getHostEndpointPublicationGeneration(host.id)
 ): Promise<void> {
   const validated = HostProfileSchema.parse(host)
   const revision = getHostProfilePublicationRevision(validated.id)
   await requireCurrentHostCredential(validated)
   await serializeHostProfilePublication(validated.id, async () => {
-    requireUnchangedPublicationRevision(validated.id, revision)
+    requireCurrentPublication(validated.id, revision, endpointGeneration)
     const existing = await requireCurrentHostMetadata(validated)
     const { endpoints, relayHostId, relay } = validated
     if (!endpoints || !relayHostId || !relay) {
@@ -46,13 +48,14 @@ export async function saveExistingHostRelayRouting(
 export async function writeExistingHostRelayCredentialBundle(
   host: HostProfile,
   bundle: MobileRelayCredentialBundle,
-  writeBundle: (bundle: MobileRelayCredentialBundle) => Promise<void>
+  writeBundle: (bundle: MobileRelayCredentialBundle) => Promise<void>,
+  endpointGeneration = getHostEndpointPublicationGeneration(host.id)
 ): Promise<void> {
   const validated = HostProfileSchema.parse(host)
   const revision = getHostProfilePublicationRevision(validated.id)
   await requireCurrentHostCredential(validated)
   await serializeHostProfilePublication(validated.id, async () => {
-    requireUnchangedPublicationRevision(validated.id, revision)
+    requireCurrentPublication(validated.id, revision, endpointGeneration)
     await requireCurrentHostMetadata(validated)
     if (bundle.hostId !== validated.id || bundle.deviceToken !== validated.deviceToken) {
       throw new MobileRelayUpgradeHostSupersededError('mobile relay credential identity mismatch')
@@ -90,8 +93,15 @@ function requireMatchingHostMetadata(
   }
 }
 
-function requireUnchangedPublicationRevision(hostId: string, revision: number): void {
-  if (getHostProfilePublicationRevision(hostId) !== revision) {
+function requireCurrentPublication(
+  hostId: string,
+  revision: number,
+  endpointGeneration: number
+): void {
+  if (
+    getHostProfilePublicationRevision(hostId) !== revision ||
+    getHostEndpointPublicationGeneration(hostId) !== endpointGeneration
+  ) {
     throw new MobileRelayUpgradeHostSupersededError('mobile relay upgrade host was re-paired')
   }
 }
