@@ -52,8 +52,8 @@ import {
 import { resolveSetupAgentSequenceLaunchCommand } from '../shared/setup-agent-sequencing'
 import { pickRemoteCliEnv } from './remote-cli-env'
 import {
+  applyRelayGraceTimeConfiguration,
   decideRelayGrace,
-  decideRelayGraceReconfigure,
   type RelayGraceBranch
 } from './relay-grace-branch'
 import { relayLogLine } from './relay-diagnostic-log'
@@ -685,25 +685,14 @@ async function main(): Promise<void> {
   })
 
   function configureRelayGraceTime(params: Record<string, unknown>): { graceTimeMs: number } {
-    const seconds = Number(params.graceTimeSeconds)
-    if (Number.isFinite(seconds) && seconds >= 0) {
-      const previousGraceMs = ptyHandler.configuredGraceTimeMs
-      // Why: the host sends 0 before system sleep so live remote PTYs survive longer than the ordinary grace window.
-      ptyHandler.setGraceTimeMs(Math.floor(seconds) * 1000)
-      const reconfigure = decideRelayGraceReconfigure({
-        previousConfiguredGraceMs: previousGraceMs,
-        nextConfiguredGraceMs: ptyHandler.configuredGraceTimeMs,
-        graceTimerArmed: graceDeadlineAt !== null && graceReason !== null,
-        shutdownInFlight,
-        currentBranch: graceBranch
-      })
-      if (reconfigure.rearm) {
-        startGrace('grace reconfigured', {
-          retryDeferredShutdown: reconfigure.retryDeferredShutdown
-        })
-      }
-    }
-    return { graceTimeMs: ptyHandler.configuredGraceTimeMs }
+    return applyRelayGraceTimeConfiguration(params.graceTimeSeconds, {
+      readConfiguredGraceMs: () => ptyHandler.configuredGraceTimeMs,
+      writeConfiguredGraceMs: (graceMs) => ptyHandler.setGraceTimeMs(graceMs),
+      isGraceTimerArmed: () => graceDeadlineAt !== null && graceReason !== null,
+      isShutdownInFlight: () => shutdownInFlight,
+      readGraceBranch: () => graceBranch,
+      startGrace
+    })
   }
 
   dispatcher.onNotification(SSH_RELAY_CONFIGURE_GRACE_TIME_METHOD, (params) => {

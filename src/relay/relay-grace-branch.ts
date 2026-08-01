@@ -36,6 +36,48 @@ export type RelayGraceReconfigureDecision =
   | { rearm: false }
   | { rearm: true; retryDeferredShutdown: boolean }
 
+/** Live relay grace state, read through accessors so the caller's `let` bindings stay authoritative. */
+export type RelayGraceTimeConfigurationInput = {
+  readConfiguredGraceMs: () => number
+  /** Writes the new grace; the value is read back so a normalizing setter wins. */
+  writeConfiguredGraceMs: (graceMs: number) => void
+  isGraceTimerArmed: () => boolean
+  isShutdownInFlight: () => boolean
+  readGraceBranch: () => RelayGraceBranch | null
+  startGrace: (reason: string, options?: { retryDeferredShutdown?: boolean }) => void
+}
+
+/**
+ * Applies a `relay.configureGraceTime` payload, re-arming the running window when the value changed.
+ *
+ * Why extracted from relay.ts: that file runs `main()` on import and exports nothing, so the call site
+ * — including the `retryDeferredShutdown` hand-off into `startGrace` — is otherwise untestable.
+ */
+export function applyRelayGraceTimeConfiguration(
+  graceTimeSeconds: unknown,
+  state: RelayGraceTimeConfigurationInput
+): { graceTimeMs: number } {
+  const seconds = Number(graceTimeSeconds)
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    const previousConfiguredGraceMs = state.readConfiguredGraceMs()
+    // Why: the host sends 0 before system sleep so live remote PTYs survive longer than the ordinary grace window.
+    state.writeConfiguredGraceMs(Math.floor(seconds) * 1000)
+    const reconfigure = decideRelayGraceReconfigure({
+      previousConfiguredGraceMs,
+      nextConfiguredGraceMs: state.readConfiguredGraceMs(),
+      graceTimerArmed: state.isGraceTimerArmed(),
+      shutdownInFlight: state.isShutdownInFlight(),
+      currentBranch: state.readGraceBranch()
+    })
+    if (reconfigure.rearm) {
+      state.startGrace('grace reconfigured', {
+        retryDeferredShutdown: reconfigure.retryDeferredShutdown
+      })
+    }
+  }
+  return { graceTimeMs: state.readConfiguredGraceMs() }
+}
+
 /**
  * Decides whether a live grace change must re-arm the running grace timer.
  *

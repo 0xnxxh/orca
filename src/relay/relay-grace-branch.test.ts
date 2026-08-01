@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
+  applyRelayGraceTimeConfiguration,
   decideRelayGrace,
   decideRelayGraceReconfigure,
+  type RelayGraceBranch,
   type RelayGraceDecisionInput,
   type RelayGraceReconfigureInput
 } from './relay-grace-branch'
@@ -146,5 +148,107 @@ describe('decideRelayGraceReconfigure', () => {
 
   it('does not re-arm once shutdown is in flight', () => {
     expect(reconfigure({ shutdownInFlight: true })).toEqual({ rearm: false })
+  })
+})
+
+/**
+ * Models relay.ts's grace state around the configureGraceTime call site: `startGrace` re-decides the
+ * branch exactly as the relay does, so a dropped `retryDeferredShutdown` shows up as a branch downgrade.
+ */
+function relayGraceHost(
+  overrides: {
+    configuredGraceMs?: number
+    graceTimerArmed?: boolean
+    shutdownInFlight?: boolean
+    graceBranch?: RelayGraceBranch | null
+    relayIdle?: boolean
+    activePtyCount?: number
+  } = {}
+) {
+  let configuredGraceMs = overrides.configuredGraceMs ?? 10_000
+  let graceBranch: RelayGraceBranch | null = overrides.graceBranch ?? 'configured'
+  const startGrace = vi.fn(
+    (_reason: string, options?: { retryDeferredShutdown?: boolean }): void => {
+      graceBranch = decide({
+        configuredGraceMs,
+        relayIdle: overrides.relayIdle ?? true,
+        activePtyCount: overrides.activePtyCount ?? 0,
+        retryDeferredShutdown: options?.retryDeferredShutdown === true
+      }).branch
+    }
+  )
+
+  return {
+    startGrace,
+    branch: () => graceBranch,
+    configuredGraceMs: () => configuredGraceMs,
+    apply: (graceTimeSeconds: unknown) =>
+      applyRelayGraceTimeConfiguration(graceTimeSeconds, {
+        readConfiguredGraceMs: () => configuredGraceMs,
+        // Mirrors PtyHandler.setGraceTimeMs's clamp so the decision sees the stored value.
+        writeConfiguredGraceMs: (graceMs) => {
+          configuredGraceMs = Math.max(0, Math.floor(graceMs))
+        },
+        isGraceTimerArmed: () => overrides.graceTimerArmed ?? true,
+        isShutdownInFlight: () => overrides.shutdownInFlight ?? false,
+        readGraceBranch: () => graceBranch,
+        startGrace
+      })
+  }
+}
+
+describe('applyRelayGraceTimeConfiguration', () => {
+  it('re-arms a deferred shutdown without downgrading it to an ordinary configured window', () => {
+    // Why: the call site the branch selector alone cannot cover — dropping the startGrace option here
+    // would leave a refused kill with nothing left to retry it.
+    const host = relayGraceHost({ graceBranch: 'shutdown-deferred', configuredGraceMs: 0 })
+
+    expect(host.apply(86_400)).toEqual({ graceTimeMs: 86_400_000 })
+    expect(host.startGrace).toHaveBeenCalledWith('grace reconfigured', {
+      retryDeferredShutdown: true
+    })
+    expect(host.branch()).toBe('shutdown-deferred')
+  })
+
+  it('re-arms an ordinary window at the raised grace', () => {
+    const host = relayGraceHost()
+
+    expect(host.apply(86_400)).toEqual({ graceTimeMs: 86_400_000 })
+    expect(host.startGrace).toHaveBeenCalledWith('grace reconfigured', {
+      retryDeferredShutdown: false
+    })
+    expect(host.branch()).toBe('configured')
+  })
+
+  it('stores the host-sleep zero and lets the idle cap own the window', () => {
+    const host = relayGraceHost()
+
+    expect(host.apply(0)).toEqual({ graceTimeMs: 0 })
+    expect(host.startGrace).toHaveBeenCalledTimes(1)
+    expect(host.branch()).toBe('idle-no-ptys')
+  })
+
+  it('does not re-arm on a re-asserted grace', () => {
+    const host = relayGraceHost({ configuredGraceMs: 86_400_000 })
+
+    expect(host.apply(86_400)).toEqual({ graceTimeMs: 86_400_000 })
+    expect(host.startGrace).not.toHaveBeenCalled()
+  })
+
+  it('does not arm a window that was never running', () => {
+    const host = relayGraceHost({ graceTimerArmed: false })
+
+    expect(host.apply(86_400)).toEqual({ graceTimeMs: 86_400_000 })
+    expect(host.startGrace).not.toHaveBeenCalled()
+  })
+
+  it('ignores a malformed or negative payload without touching the stored grace', () => {
+    for (const payload of [undefined, 'later', Number.NaN, -1]) {
+      const host = relayGraceHost()
+
+      expect(host.apply(payload)).toEqual({ graceTimeMs: 10_000 })
+      expect(host.configuredGraceMs()).toBe(10_000)
+      expect(host.startGrace).not.toHaveBeenCalled()
+    }
   })
 })
