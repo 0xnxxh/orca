@@ -37,4 +37,27 @@ describe('mobile relay direct upgrade journal retirement', () => {
       JSON.stringify(journal)
     )
   })
+
+  it('does not clear a replacement journal after the owning lifecycle stops', async () => {
+    const journal = createMobileRelayDirectUpgradeJournal('host-1', (length) =>
+      new Uint8Array(length).fill(8)
+    )
+    let resolveRead: ((raw: string) => void) | null = null
+    keychain.readPairingKeychainItem.mockReturnValueOnce(
+      new Promise<string>((resolve) => {
+        resolveRead = resolve
+      })
+    )
+    let active = true
+    const retirement = retireMobileRelayDirectUpgradeJournalForRelayHost(
+      journal.hostId,
+      () => active
+    )
+
+    active = false
+    resolveRead?.(JSON.stringify(journal))
+    await retirement
+
+    expect(keychain.deletePairingKeychainItemIfMatches).not.toHaveBeenCalled()
+  })
 })

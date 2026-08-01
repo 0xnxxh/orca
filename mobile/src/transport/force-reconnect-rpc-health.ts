@@ -15,11 +15,15 @@ export async function verifyForceReconnectRpcHealth(
       throw lastError ?? new Error('Force Reconnect health check timed out')
     }
     try {
-      await client.sendRequest('status.get', undefined, {
-        timeoutMs,
-        budgetSpansConnect: true,
-        strictDeadline: true
-      })
+      await client.sendRequest(
+        'worktree.list',
+        { limit: 1 },
+        {
+          timeoutMs,
+          budgetSpansConnect: true,
+          strictDeadline: true
+        }
+      )
       if (client.getRpcUnresponsiveSince?.() != null) {
         throw new Error('Application RPC channel is still not responding')
       }

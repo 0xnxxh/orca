@@ -31,12 +31,12 @@ export function useAllHostClients(hostIds: string[]) {
   }, [key])
 
   return useMemo(() => {
-    const clients: Array<{
+    const clients: {
       hostId: string
       client: RpcClient
       state: ConnectionState
       path: MobileConnectionPath
-    }> = []
+    }[] = []
     for (const id of hostIds) {
       const found = context.getAllClients().find((entry) => entry.hostId === id)
       if (found) {

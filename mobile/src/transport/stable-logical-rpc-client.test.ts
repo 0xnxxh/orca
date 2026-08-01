@@ -116,11 +116,15 @@ describe('stable logical RPC client', () => {
     await client.migrateTo(nextSession, 'relay')
 
     await expect(verifying).resolves.toBeUndefined()
-    expect(nextSession.sendRequest).toHaveBeenCalledWith('status.get', undefined, {
-      timeoutMs: expect.any(Number),
-      budgetSpansConnect: true,
-      strictDeadline: true
-    })
+    expect(nextSession.sendRequest).toHaveBeenCalledWith(
+      'worktree.list',
+      { limit: 1 },
+      {
+        timeoutMs: expect.any(Number),
+        budgetSpansConnect: true,
+        strictDeadline: true
+      }
+    )
     pending.resolve(success('late'))
   })
 

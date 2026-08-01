@@ -14,6 +14,7 @@ import {
 } from './existing-host-relay-routing'
 import {
   beginHostEndpointPublicationLifecycle,
+  getHostEndpointPublicationLifecycle,
   type HostEndpointPublicationLifecycle
 } from './host-profile-publication'
 import { upgradeDirectMobileRelay } from './mobile-relay-direct-upgrade'
@@ -78,7 +79,14 @@ export function startMobileEndpointLifecycle(
 
   if (initialHost.relay) {
     // Why: relay publication supersedes any committed journal retained by the retired direct owner.
-    void retireMobileRelayDirectUpgradeJournalForRelayHost(initialHost.id).catch(() => {})
+    void retireMobileRelayDirectUpgradeJournalForRelayHost(initialHost.id, () => {
+      const current = getHostEndpointPublicationLifecycle(initialHost.id)
+      return (
+        !stopped &&
+        current.generation === endpointLifecycle.generation &&
+        current.profileRevision === endpointLifecycle.profileRevision
+      )
+    }).catch(() => {})
     owner = createSupervisor(
       logical,
       initialHost,

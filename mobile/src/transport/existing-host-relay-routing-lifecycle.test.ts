@@ -219,6 +219,37 @@ describe('existing host relay endpoint lifecycle publication', () => {
     expect(events).toEqual(['publication-started', 'publication-finished', 'removed'])
   })
 
+  it('fences a queued stale publication before it mutates credentials', async () => {
+    let releaseFirstPublication: (() => void) | null = null
+    let markFirstPublicationStarted: (() => void) | null = null
+    const firstPublicationStarted = new Promise<void>((resolve) => {
+      markFirstPublicationStarted = resolve
+    })
+    const firstPublication = publishHostProfileTransaction(
+      HOST,
+      async () => {
+        markFirstPublicationStarted?.()
+        await new Promise<void>((resolve) => {
+          releaseFirstPublication = resolve
+        })
+      },
+      async () => {}
+    )
+    await firstPublicationStarted
+
+    const staleCredentialWrite = vi.fn(async () => {})
+    const stalePublication = publishHostProfileTransaction(
+      { ...HOST, deviceToken: 'token-2' },
+      staleCredentialWrite,
+      async () => {}
+    )
+    releaseFirstPublication?.()
+
+    await firstPublication
+    await expect(stalePublication).rejects.toThrow('host profile publication was retired')
+    expect(staleCredentialWrite).not.toHaveBeenCalled()
+  })
+
   it('rejects an old credential write that starts during same-host re-pair publication', async () => {
     let releaseReplacement: (() => void) | null = null
     let markReplacementStarted: (() => void) | null = null

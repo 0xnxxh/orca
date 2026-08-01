@@ -4457,7 +4457,7 @@ export default function SessionScreen() {
                 accessibilityRole={showConnectionRetry ? 'button' : undefined}
                 accessibilityLabel={showConnectionRetry ? 'Reconnect to desktop' : undefined}
               >
-                <StatusDot state={connState} />
+                <StatusDot state={connState} verdict={connectionVerdict} />
                 <Text style={styles.sessionMetaText} numberOfLines={1}>
                   {terminalSummary}
                 </Text>

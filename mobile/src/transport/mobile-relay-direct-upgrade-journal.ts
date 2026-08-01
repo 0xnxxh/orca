@@ -82,10 +82,11 @@ export function deleteMobileRelayDirectUpgradeJournalIfCurrent(
 }
 
 export async function retireMobileRelayDirectUpgradeJournalForRelayHost(
-  hostId: string
+  hostId: string,
+  shouldRetire: () => boolean = () => true
 ): Promise<void> {
   const journal = await readMobileRelayDirectUpgradeJournal(hostId)
-  if (journal) {
+  if (journal && shouldRetire()) {
     await deleteMobileRelayDirectUpgradeJournalIfCurrent(journal)
   }
 }

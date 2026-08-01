@@ -41,11 +41,15 @@ describe('Force Reconnect RPC health', () => {
 
     expect(outcome).toBe('stalled')
     expect(sendRequest).toHaveBeenCalledTimes(2)
-    expect(sendRequest).toHaveBeenLastCalledWith('status.get', undefined, {
-      timeoutMs: 1_000,
-      budgetSpansConnect: true,
-      strictDeadline: true
-    })
+    expect(sendRequest).toHaveBeenLastCalledWith(
+      'worktree.list',
+      { limit: 1 },
+      {
+        timeoutMs: 1_000,
+        budgetSpansConnect: true,
+        strictDeadline: true
+      }
+    )
   })
 
   it('waits through a transient authorization retry', async () => {
@@ -67,22 +71,26 @@ describe('Force Reconnect RPC health', () => {
     expect(sendRequest).toHaveBeenCalledTimes(2)
   })
 
-  it('rejects a successful probe until a real application response clears the shared latch', async () => {
+  it('clears the shared latch with an application-level replacement probe', async () => {
     const responsiveness = new RpcApplicationResponsiveness()
     responsiveness.recordTimeout('browser.screenshot', 123)
-    const sendRequest = vi.fn(async () => ({ id: 'rpc-1', ok: true, result: {} }) as RpcResponse)
+    const sendRequest = vi.fn(async (method: string) => {
+      responsiveness.recordResponse(method)
+      return { id: 'rpc-1', ok: true, result: {} } as RpcResponse
+    })
     const client = {
       sendRequest,
       getState: () => 'connected' as const,
       getRpcUnresponsiveSince: () => responsiveness.getUnresponsiveSince()
     } as unknown as RpcClient
 
-    await expect(verifyForceReconnectRpcHealth(client)).rejects.toThrow(
-      'Application RPC channel is still not responding'
-    )
-    responsiveness.recordResponse('worktree.list')
     await expect(verifyForceReconnectRpcHealth(client)).resolves.toBeUndefined()
-    expect(sendRequest).toHaveBeenCalledTimes(2)
+    expect(sendRequest).toHaveBeenCalledWith(
+      'worktree.list',
+      { limit: 1 },
+      expect.objectContaining({ strictDeadline: true })
+    )
+    expect(responsiveness.getUnresponsiveSince()).toBeNull()
   })
 
   it('fails when authorization retries reach auth-failed', async () => {

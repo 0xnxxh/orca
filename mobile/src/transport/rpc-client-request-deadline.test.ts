@@ -442,7 +442,7 @@ describe('mobile rpc-client request deadline', () => {
 
     await vi.advanceTimersByTimeAsync(1)
     await settled
-    expect(outcome).toBe('Request timed out: status.get')
+    expect(outcome).toBe('Request timed out: worktree.list')
 
     client.close()
   })

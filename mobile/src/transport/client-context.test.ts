@@ -289,11 +289,15 @@ describe('useHostClient', () => {
     })
 
     expect(stale.closeMock).toHaveBeenCalledOnce()
-    expect(fresh.sendRequest).toHaveBeenCalledWith('status.get', undefined, {
-      timeoutMs: expect.any(Number),
-      budgetSpansConnect: true,
-      strictDeadline: true
-    })
+    expect(fresh.sendRequest).toHaveBeenCalledWith(
+      'worktree.list',
+      { limit: 1 },
+      {
+        timeoutMs: expect.any(Number),
+        budgetSpansConnect: true,
+        strictDeadline: true
+      }
+    )
     expect(completed).toBe(false)
 
     resolveHealthCheck?.()
@@ -623,11 +627,15 @@ describe('useHostClient', () => {
 
     expect(connectMock.mock.calls[2]?.[0]).toEqual(updatedHost)
     expect(oldReplacement.closeMock).toHaveBeenCalledOnce()
-    expect(newReplacement.sendRequest).toHaveBeenCalledWith('status.get', undefined, {
-      timeoutMs: expect.any(Number),
-      budgetSpansConnect: true,
-      strictDeadline: true
-    })
+    expect(newReplacement.sendRequest).toHaveBeenCalledWith(
+      'worktree.list',
+      { limit: 1 },
+      {
+        timeoutMs: expect.any(Number),
+        budgetSpansConnect: true,
+        strictDeadline: true
+      }
+    )
 
     harness.unmount()
   })
