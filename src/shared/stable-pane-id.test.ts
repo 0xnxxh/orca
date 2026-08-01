@@ -3,6 +3,7 @@ import {
   isStablePaneId,
   isTerminalLeafId,
   makePaneKey,
+  makePaneSpawnReservationKey,
   parseLegacyNumericPaneKey,
   parsePaneKey
 } from './stable-pane-id'
@@ -54,5 +55,44 @@ describe('stable pane ids', () => {
     })
     expect(parseLegacyNumericPaneKey(`tab-1:${LEAF_ID}`)).toBeNull()
     expect(parseLegacyNumericPaneKey('tab:1:12')).toBeNull()
+  })
+
+  it('canonicalizes worktree aliases without collapsing independent PTY scopes', () => {
+    const paneKey = makePaneKey('tab-1', LEAF_ID)
+    const base = {
+      paneKey,
+      providerId: 'provider-1',
+      connectionId: 'ssh-1',
+      executionRuntime: 'wsl:Ubuntu',
+      workspaceId: 'worktree:repo-1::C:\\Work\\Project\\',
+      sessionId: 'session-1'
+    }
+    const canonical = makePaneSpawnReservationKey(base)
+
+    expect(canonical).toBe(
+      makePaneSpawnReservationKey({
+        ...base,
+        workspaceId: 'repo-1::c:/work/project'
+      })
+    )
+    for (const distinct of [
+      { providerId: 'provider-2' },
+      { connectionId: 'ssh-2' },
+      { executionRuntime: 'native' },
+      { workspaceId: 'repo-1::C:\\Work\\Other' },
+      { workspaceId: 'folder:repo-1::C:\\Work\\Project' },
+      { sessionId: 'session-2' }
+    ]) {
+      expect(makePaneSpawnReservationKey({ ...base, ...distinct })).not.toBe(canonical)
+    }
+  })
+
+  it('does not reserve an unscoped pane identity', () => {
+    expect(
+      makePaneSpawnReservationKey({
+        paneKey: makePaneKey('tab-1', LEAF_ID),
+        providerId: 'provider-1'
+      })
+    ).toBeNull()
   })
 })

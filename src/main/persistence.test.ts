@@ -10859,6 +10859,49 @@ describe('Store', () => {
     ])
   })
 
+  it('rolls back only the exact fresh PTY binding and incarnation', async () => {
+    const store = await createStore()
+    store.persistPtyBinding({
+      worktreeId: 'wt1',
+      tabId: 'fresh-binding-tab',
+      leafId: TEST_LEAF_1,
+      ptyId: 'fresh-pty',
+      incarnationId: 'fresh-incarnation'
+    })
+    store.persistPtyBinding({
+      worktreeId: 'wt1',
+      tabId: 'fresh-binding-tab',
+      leafId: TEST_LEAF_1,
+      ptyId: 'fresh-pty',
+      incarnationId: 'replacement-incarnation'
+    })
+
+    store.removePtyBindingIfMatches({
+      worktreeId: 'wt1',
+      tabId: 'fresh-binding-tab',
+      leafId: TEST_LEAF_1,
+      ptyId: 'fresh-pty',
+      incarnationId: 'fresh-incarnation'
+    })
+    let session = store.getWorkspaceSession()
+    expect(session.tabsByWorktree.wt1[0].ptyId).toBe('fresh-pty')
+    expect(session.terminalPtyIncarnationsByPaneKey?.[`fresh-binding-tab:${TEST_LEAF_1}`]).toBe(
+      'replacement-incarnation'
+    )
+
+    store.removePtyBindingIfMatches({
+      worktreeId: 'wt1',
+      tabId: 'fresh-binding-tab',
+      leafId: TEST_LEAF_1,
+      ptyId: 'fresh-pty',
+      incarnationId: 'replacement-incarnation'
+    })
+    session = store.getWorkspaceSession()
+    expect(session.tabsByWorktree.wt1[0].ptyId).toBeNull()
+    expect(session.terminalLayoutsByTabId['fresh-binding-tab'].ptyIdsByLeafId).toEqual({})
+    expect(session.terminalPtyIncarnationsByPaneKey).toEqual({})
+  })
+
   it('preserves a durable PTY when a stale write switches Git owner aliases', async () => {
     const store = await createStore()
     const worktreeId = 'stale-binding-alias-repo::/worktrees/feature'

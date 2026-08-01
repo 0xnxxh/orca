@@ -126,6 +126,7 @@ import { readShellStartupEnvVar } from '../pty/shell-startup-env'
 import {
   isTerminalLeafId,
   makePaneKey,
+  makePaneSpawnReservationKey,
   parseLegacyNumericPaneKey,
   parsePaneKey
 } from '../../shared/stable-pane-id'
@@ -315,8 +316,10 @@ type PaneSpawnReservationResult = {
   spawnDisposition: PtySpawnDisposition
   launchConfig?: SleepingAgentLaunchConfig
 } & Partial<PtySpawnResult>
-// Why: mobile materialization and a newly-focused pane can race to spawn the same leaf; key by paneKey so the loser adopts the winner's PTY.
-const paneSpawnReservationsByPaneKey = new Map<string, PaneSpawnReservation>()
+// Why: paired clients may share one physical spawn, but identical pane ids in another execution/workspace/session scope must remain independent.
+const paneSpawnReservationsByScope = new Map<string, PaneSpawnReservation>()
+const paneSpawnProviderIds = new WeakMap<IPtyProvider, string>()
+let nextPaneSpawnProviderId = 0
 // Why: one main process can route the same remote provider namespace through
 // multiple SSH relays; coordinate claims above every provider boundary too.
 const agentSessionOwners = new ClaimedAgentPtyOwnerRegistry()
@@ -463,6 +466,30 @@ function declarePendingPaneSerializer(paneKey: string, sender: WebContents | und
   return gen
 }
 
+function getPaneSpawnProviderId(provider: IPtyProvider): string {
+  const existing = paneSpawnProviderIds.get(provider)
+  if (existing) {
+    return existing
+  }
+  const providerId = `provider-${++nextPaneSpawnProviderId}`
+  paneSpawnProviderIds.set(provider, providerId)
+  return providerId
+}
+
+function getPaneSpawnExecutionRuntimeId(args: {
+  connectionId?: string | null
+  shellOverride?: string
+  cwd?: string
+  wslDistro?: string | null
+}): string {
+  if (args.connectionId) {
+    return 'ssh'
+  }
+  return shouldSkipCodexHomeEnvForWindowsShell(args.shellOverride, args.cwd)
+    ? `wsl:${args.wslDistro ?? 'default'}`
+    : 'native'
+}
+
 function reservePaneSpawn(paneKey: string): PaneSpawnReservation {
   let resolve!: (result: PaneSpawnReservationResult) => void
   let reject!: (error: unknown) => void
@@ -472,13 +499,13 @@ function reservePaneSpawn(paneKey: string): PaneSpawnReservation {
   })
   promise.catch(() => {})
   const reservation = { promise, resolve, reject }
-  paneSpawnReservationsByPaneKey.set(paneKey, reservation)
+  paneSpawnReservationsByScope.set(paneKey, reservation)
   return reservation
 }
 
 function clearPaneSpawnReservation(paneKey: string, reservation: PaneSpawnReservation): void {
-  if (paneSpawnReservationsByPaneKey.get(paneKey) === reservation) {
-    paneSpawnReservationsByPaneKey.delete(paneKey)
+  if (paneSpawnReservationsByScope.get(paneKey) === reservation) {
+    paneSpawnReservationsByScope.delete(paneKey)
   }
 }
 
@@ -515,6 +542,61 @@ async function awaitPaneSpawnReservation(
   reservation: PaneSpawnReservation
 ): Promise<PaneSpawnReservationResult> {
   return { ...(await reservation.promise), spawnDisposition: 'awaited' }
+}
+
+type FreshPtySetupRetirement = {
+  retired: boolean
+  result: PtySpawnResult
+  provider: IPtyProvider
+  connectionId: string | null
+  runtime?: OrcaRuntimeService
+  store?: Store
+  binding?: { worktreeId: string; tabId: string; leafId: string }
+}
+
+function createFreshPtySetupRetirement(args: Omit<FreshPtySetupRetirement, 'retired'>) {
+  return args.result.isReattach || args.result.agentSessionEnsure?.disposition === 'adopted'
+    ? null
+    : { ...args, retired: false }
+}
+
+async function retireFreshPtyAfterSetupFailure(
+  retirement: FreshPtySetupRetirement | null
+): Promise<void> {
+  if (!retirement || retirement.retired) {
+    return
+  }
+  retirement.retired = true
+  const { result, provider, connectionId, runtime, store, binding } = retirement
+  try {
+    await provider.shutdown(result.id, { immediate: true })
+  } catch (error) {
+    console.warn('[pty] failed to retire PTY after spawn setup failure:', error)
+  }
+  try {
+    runtime?.retireFreshPtyRegistration?.(result.id, result.incarnationId)
+  } catch (error) {
+    console.warn('[pty] failed to roll back runtime PTY registration:', error)
+  }
+  try {
+    if (binding) {
+      store?.removePtyBindingIfMatches(
+        {
+          ...binding,
+          ptyId: result.id,
+          ...(result.incarnationId ? { incarnationId: result.incarnationId } : {})
+        },
+        connectionId ? toSshExecutionHostId(connectionId) : null
+      )
+    }
+    if (connectionId) {
+      store?.removeSshRemotePtyLease(connectionId, getRelayPtyId(connectionId, result.id))
+    }
+  } catch (error) {
+    console.warn('[pty] failed to roll back persisted PTY ownership:', error)
+  }
+  clearProviderPtyState(result.id)
+  deletePtyOwnership(result.id)
 }
 
 function settlePendingPaneSerializer(paneKey: string, gen: number): boolean {
@@ -4058,6 +4140,23 @@ export function registerPtyHandlers(
       const materializedPaneKey = hostSessionBinding
         ? makePaneKey(hostSessionBinding.tabId, hostSessionBinding.leafId)
         : null
+      const paneSpawnReservationKey = materializedPaneKey
+        ? makePaneSpawnReservationKey({
+            paneKey: materializedPaneKey,
+            providerId: getPaneSpawnProviderId(provider),
+            connectionId: args.connectionId,
+            executionRuntime: getPaneSpawnExecutionRuntimeId({
+              connectionId: args.connectionId,
+              shellOverride: daemonShellOverride,
+              cwd,
+              wslDistro: expectedWslDistro
+            }),
+            workspaceId: hostSessionBinding?.worktreeId,
+            sessionId: callerRequestedSessionId
+              ? getRelayPtyId(args.connectionId, callerRequestedSessionId)
+              : null
+          })
+        : null
       const metadataLeafId =
         typeof args.leafId === 'string' && isTerminalLeafId(args.leafId) ? args.leafId : null
       const metadataPaneKey =
@@ -4111,8 +4210,8 @@ export function registerPtyHandlers(
         spawnOptions.onPtySpawnCommitted = reportPtySpawnCommitted
       }
 
-      const existingPaneSpawn = materializedPaneKey
-        ? paneSpawnReservationsByPaneKey.get(materializedPaneKey)
+      const existingPaneSpawn = paneSpawnReservationKey
+        ? paneSpawnReservationsByScope.get(paneSpawnReservationKey)
         : undefined
       if (existingPaneSpawn) {
         return await awaitPaneSpawnReservation(existingPaneSpawn)
@@ -4122,12 +4221,20 @@ export function registerPtyHandlers(
         cwd,
         args.connectionId
       )
-      const paneSpawnReservation = materializedPaneKey
-        ? reservePaneSpawn(materializedPaneKey)
+      const paneSpawnReservation = paneSpawnReservationKey
+        ? reservePaneSpawn(paneSpawnReservationKey)
         : null
+      const spawnRetirementBinding =
+        typeof args.worktreeId === 'string' &&
+        typeof args.tabId === 'string' &&
+        isValidTerminalTabId(args.tabId) &&
+        metadataLeafId
+          ? { worktreeId: args.worktreeId, tabId: args.tabId, leafId: metadataLeafId }
+          : undefined
       let result: PtySpawnResult
       let rejectedRegistrationCandidate: PtySpawnResult | null = null
       let pendingRegistrationPtyId: string | null = null
+      let freshPtySetupRetirement: FreshPtySetupRetirement | null = null
       let preparedProvisionalExecutionContext = false
       let releaseWorktreeSpawn: (() => void) | undefined
       try {
@@ -4199,6 +4306,14 @@ export function registerPtyHandlers(
                 assertWorkspaceInventoryAccepted()
                 providerResult = await provider.spawn(spawnOptions)
                 await rejectStaleWorkspaceSpawn(providerResult)
+                freshPtySetupRetirement = createFreshPtySetupRetirement({
+                  result: providerResult,
+                  provider,
+                  connectionId: args.connectionId ?? null,
+                  runtime,
+                  store,
+                  ...(spawnRetirementBinding ? { binding: spawnRetirementBinding } : {})
+                })
                 rejectedRegistrationCandidate = providerResult
                 // Why: a successful lower-owner return proves physical work committed even if admission sees an early exit.
                 reportPtySpawnCommitted()
@@ -4247,6 +4362,14 @@ export function registerPtyHandlers(
             assertWorkspaceInventoryAccepted()
             result = await provider.spawn(spawnOptions)
             await rejectStaleWorkspaceSpawn(result)
+            freshPtySetupRetirement = createFreshPtySetupRetirement({
+              result,
+              provider,
+              connectionId: args.connectionId ?? null,
+              runtime,
+              store,
+              ...(spawnRetirementBinding ? { binding: spawnRetirementBinding } : {})
+            })
             rejectedRegistrationCandidate = result
             // Why: daemon/relay returns cross the physical commit boundary before controller admission.
             reportPtySpawnCommitted()
@@ -4342,7 +4465,7 @@ export function registerPtyHandlers(
             leafId: owner.surface.leafId,
             ...(result.incarnationId ? { incarnationId: result.incarnationId } : {})
           })
-          return resolvePaneSpawnReservation(materializedPaneKey, paneSpawnReservation, {
+          return resolvePaneSpawnReservation(paneSpawnReservationKey, paneSpawnReservation, {
             id: result.id,
             isReattach: true,
             spawnDisposition: 'reattached',
@@ -4419,14 +4542,6 @@ export function registerPtyHandlers(
           } catch (err) {
             console.error('[pty] failed to persist runtime PTY binding after spawn:', err)
             deletePtyOwnership(result.id)
-            if (!result.isReattach) {
-              try {
-                await provider.shutdown(result.id, { immediate: true })
-              } catch (shutdownErr) {
-                console.warn('[pty] failed to clean up PTY after persistence failure:', shutdownErr)
-              }
-              clearProviderPtyState(result.id)
-            }
             throw Object.assign(new Error(createTerminalSessionStateSaveFailureMessage()), {
               agentSessionOperationOutcome: 'unknown' as const
             })
@@ -4510,8 +4625,9 @@ export function registerPtyHandlers(
           ...(result.incarnationId ? { incarnationId: result.incarnationId } : {}),
           ...(result.agentSessionEnsure ? { agentSessionEnsure: result.agentSessionEnsure } : {})
         }
-        return resolvePaneSpawnReservation(materializedPaneKey, paneSpawnReservation, response)
+        return resolvePaneSpawnReservation(paneSpawnReservationKey, paneSpawnReservation, response)
       } catch (err) {
+        await retireFreshPtyAfterSetupFailure(freshPtySetupRetirement)
         if (pendingRegistrationPtyId) {
           runtime?.cancelPendingPtyRegistration?.(
             pendingRegistrationPtyId,
@@ -4522,10 +4638,10 @@ export function registerPtyHandlers(
         // Why: once the reservation is created, any later throw — spawn
         // failure, persist failure, or a post-spawn helper such as
         // registerPty/rememberPaneKeyForPty/track — must settle it. Otherwise
-        // it lingers in paneSpawnReservationsByPaneKey and every future spawn
+        // it lingers in paneSpawnReservationsByScope and every future spawn
         // for this pane awaits a promise that never resolves. reject is a
         // no-op once the reservation has already resolved.
-        rejectPaneSpawnReservation(materializedPaneKey, paneSpawnReservation, err)
+        rejectPaneSpawnReservation(paneSpawnReservationKey, paneSpawnReservation, err)
         throw err
       } finally {
         releaseWorktreeSpawn?.()
@@ -5108,6 +5224,21 @@ export function registerPtyHandlers(
       const reservationPaneKey = metadataPaneKey ?? validatedPaneKey
       const validatedLeafId = verifiedLeafId ?? metadataLeafId
       const effectiveShellOverride = terminalRuntimeOptions.shellOverride
+      const paneSpawnReservationKey = reservationPaneKey
+        ? makePaneSpawnReservationKey({
+            paneKey: reservationPaneKey,
+            providerId: getPaneSpawnProviderId(provider),
+            connectionId: args.connectionId,
+            executionRuntime: getPaneSpawnExecutionRuntimeId({
+              connectionId: args.connectionId,
+              shellOverride: effectiveShellOverride,
+              cwd,
+              wslDistro: expectedWslDistro
+            }),
+            workspaceId: args.worktreeId,
+            sessionId: args.sessionId ? getRelayPtyId(args.connectionId, args.sessionId) : null
+          })
+        : null
       const nativeWindowsConptySpawn = isNativeWindowsLocalPtySpawn({
         connectionId: args.connectionId,
         cwd: args.cwd,
@@ -5319,8 +5450,8 @@ export function registerPtyHandlers(
           deadlineMs: 5_000
         }
       }
-      const existingPaneSpawn = reservationPaneKey
-        ? paneSpawnReservationsByPaneKey.get(reservationPaneKey)
+      const existingPaneSpawn = paneSpawnReservationKey
+        ? paneSpawnReservationsByScope.get(paneSpawnReservationKey)
         : undefined
       if (existingPaneSpawn) {
         return await awaitPaneSpawnReservation(existingPaneSpawn)
@@ -5330,7 +5461,9 @@ export function registerPtyHandlers(
         cwd,
         args.connectionId
       )
-      const paneSpawnReservation = reservationPaneKey ? reservePaneSpawn(reservationPaneKey) : null
+      const paneSpawnReservation = paneSpawnReservationKey
+        ? reservePaneSpawn(paneSpawnReservationKey)
+        : null
       const initiallyHidden = args.initiallyHidden === true
       // Why: daemon PTYs can emit before spawn() resolves, so the hidden mark must beat byte zero (terminal-query-authority.md §races); other providers are safe with the post-spawn mark below.
       const preSpawnHiddenMarkId =
@@ -5340,9 +5473,17 @@ export function registerPtyHandlers(
       if (preSpawnHiddenMarkId !== null) {
         transitionSpawnHiddenRendererPtyDeliveryState(preSpawnHiddenMarkId, true)
       }
+      const spawnRetirementBinding =
+        typeof args.worktreeId === 'string' &&
+        typeof args.tabId === 'string' &&
+        isValidTerminalTabId(args.tabId) &&
+        validatedLeafId
+          ? { worktreeId: args.worktreeId, tabId: args.tabId, leafId: validatedLeafId }
+          : undefined
       let result: PtySpawnResult
       let rejectedRegistrationCandidate: PtySpawnResult | null = null
       let pendingRegistrationPtyId: string | null = null
+      let freshPtySetupRetirement: FreshPtySetupRetirement | null = null
       let preparedProvisionalExecutionContext = false
       let releaseWorktreeSpawn: (() => void) | undefined
       try {
@@ -5368,6 +5509,14 @@ export function registerPtyHandlers(
             ? (runtime?.getPtyOutputSequence?.(expectedPtyId) ?? 0)
             : 0
           result = await provider.spawn(spawnOptions)
+          freshPtySetupRetirement = createFreshPtySetupRetirement({
+            result,
+            provider,
+            connectionId: args.connectionId ?? null,
+            runtime,
+            store,
+            ...(spawnRetirementBinding ? { binding: spawnRetirementBinding } : {})
+          })
           rejectedRegistrationCandidate = result
           if (pendingRegistrationPtyId !== result.id) {
             if (pendingRegistrationPtyId) {
@@ -5543,18 +5692,6 @@ export function registerPtyHandlers(
             }
           } catch (err) {
             console.error('[pty] failed to persist PTY binding after spawn:', err)
-            if (!result.isReattach) {
-              try {
-                await provider.shutdown(result.id, { immediate: true })
-              } catch (shutdownErr) {
-                console.warn('[pty] failed to clean up PTY after persistence failure:', shutdownErr)
-              }
-              clearProviderPtyState(result.id)
-              deletePtyOwnership(result.id)
-            }
-            if (!result.isReattach && args.connectionId && store) {
-              store.removeSshRemotePtyLease(args.connectionId, relayResultId)
-            }
             throw Object.assign(new Error(createTerminalSessionStateSaveFailureMessage()), {
               agentSessionOperationOutcome: 'unknown' as const
             })
@@ -5733,8 +5870,9 @@ export function registerPtyHandlers(
         }
         // Why: renderer tab state cannot reliably infer background and reattached PTYs in the daemon inventory.
         sendPtySpawnedToRenderer(result.id)
-        return resolvePaneSpawnReservation(reservationPaneKey, paneSpawnReservation, response)
+        return resolvePaneSpawnReservation(paneSpawnReservationKey, paneSpawnReservation, response)
       } catch (err) {
+        await retireFreshPtyAfterSetupFailure(freshPtySetupRetirement)
         if (pendingRegistrationPtyId) {
           runtime?.cancelPendingPtyRegistration?.(
             pendingRegistrationPtyId,
@@ -5745,10 +5883,10 @@ export function registerPtyHandlers(
         // Why: once the reservation is created, any later throw —
         // spawn failure, persist failure, or a post-spawn helper such as
         // seedHeadlessTerminal/registerPty/track — must settle it. Otherwise
-        // it lingers in paneSpawnReservationsByPaneKey and every future spawn
+        // it lingers in paneSpawnReservationsByScope and every future spawn
         // for this pane awaits a promise that never resolves. reject is a
         // no-op once the reservation has already resolved.
-        rejectPaneSpawnReservation(reservationPaneKey, paneSpawnReservation, err)
+        rejectPaneSpawnReservation(paneSpawnReservationKey, paneSpawnReservation, err)
         throw err
       } finally {
         releaseWorktreeSpawn?.()

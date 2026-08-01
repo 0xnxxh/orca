@@ -10109,6 +10109,26 @@ export class OrcaRuntimeService {
     }
   }
 
+  retireFreshPtyRegistration(ptyId: string, incarnationId?: PtyIncarnationId): void {
+    const pty = this.ptysById.get(ptyId)
+    if (incarnationId && pty?.incarnationId && pty.incarnationId !== incarnationId) {
+      return
+    }
+    const pending = this.pendingPtyRegistrationIncarnations.get(ptyId)
+    const hasMatchingPending =
+      this.pendingPtyRegistrationIncarnations.has(ptyId) &&
+      (pending === null || incarnationId === undefined || pending === incarnationId)
+    this.cancelPendingPtyRegistration(ptyId, incarnationId)
+    if (!pty?.connected) {
+      if (hasMatchingPending) {
+        this.invalidateAllHandlesForPty(ptyId)
+        this.disposeHeadlessTerminal(ptyId)
+      }
+      return
+    }
+    this.onPtyExit(ptyId, 1, incarnationId)
+  }
+
   private assertPtyDidNotExitBeforeRegistration(
     ptyId: string,
     candidateIncarnation?: PtyIncarnationId

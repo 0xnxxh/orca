@@ -8363,19 +8363,166 @@ describe('registerPtyHandlers', () => {
     })
   })
 
-  it('settles the pane reservation when a post-spawn step throws so later spawns do not hang', async () => {
-    // Why: reservation-leak regression — a post-spawn throw after provider.spawn resolves must reject/clear the reservation, else later spawns for the same pane key hang forever.
+  it('keeps identical pane ids independent across worktrees and sessions', async () => {
+    const resolvers: ((result: { id: string }) => void)[] = []
+    const providerSpawn = vi.fn(
+      () =>
+        new Promise<{ id: string }>((resolve) => {
+          resolvers.push(resolve)
+        })
+    )
+    installDaemonTestProvider({ spawn: providerSpawn })
     registerPtyHandlers(mainWindow as never)
+    const leafId = '77777777-7777-4777-8777-777777777777'
+    const base = {
+      cols: 80,
+      rows: 24,
+      tabId: 'tab-collision',
+      leafId,
+      sessionId: 'session-1'
+    }
+    const spawns = [
+      handlers.get('pty:spawn')!(null, { ...base, worktreeId: 'repo-1::/workspace-a' }),
+      handlers.get('pty:spawn')!(null, { ...base, worktreeId: 'repo-1::/workspace-b' }),
+      handlers.get('pty:spawn')!(null, {
+        ...base,
+        worktreeId: 'repo-1::/workspace-a',
+        sessionId: 'session-2'
+      })
+    ] as Promise<{ id: string }>[]
+
+    await vi.waitFor(() => expect(providerSpawn).toHaveBeenCalledTimes(3))
+    resolvers.forEach((resolve, index) => resolve({ id: `scoped-pty-${index + 1}` }))
+    await expect(Promise.all(spawns)).resolves.toEqual([
+      expect.objectContaining({ id: 'scoped-pty-1' }),
+      expect.objectContaining({ id: 'scoped-pty-2' }),
+      expect.objectContaining({ id: 'scoped-pty-3' })
+    ])
+  })
+
+  it('keeps identical pane ids independent across local and SSH providers', async () => {
+    const createProvider = (id: string) => {
+      let resolveSpawn!: (result: { id: string }) => void
+      return {
+        provider: {
+          spawn: vi.fn(
+            () =>
+              new Promise<{ id: string }>((resolve) => {
+                resolveSpawn = resolve
+              })
+          ),
+          write: vi.fn(),
+          resize: vi.fn(),
+          kill: vi.fn(),
+          shutdown: vi.fn(),
+          sendSignal: vi.fn(),
+          getCwd: vi.fn(),
+          getInitialCwd: vi.fn(),
+          clearBuffer: vi.fn(),
+          acknowledgeDataEvent: vi.fn(),
+          hasChildProcesses: vi.fn(),
+          getForegroundProcess: vi.fn(),
+          serialize: vi.fn(),
+          revive: vi.fn(),
+          onData: vi.fn(() => () => {}),
+          onReplay: vi.fn(() => () => {}),
+          onExit: vi.fn(() => () => {}),
+          listProcesses: vi.fn(async () => []),
+          attach: vi.fn(),
+          getDefaultShell: vi.fn(),
+          getProfiles: vi.fn()
+        },
+        resolve: () => resolveSpawn({ id })
+      }
+    }
+    const local = createProvider('local-pty')
+    const sshOne = createProvider('ssh:ssh-scope-1@@remote-pty-1')
+    const sshTwo = createProvider('ssh:ssh-scope-2@@remote-pty-2')
+    setLocalPtyProvider(local.provider as never)
+    registerSshPtyProvider('ssh-scope-1', sshOne.provider as never)
+    registerSshPtyProvider('ssh-scope-2', sshTwo.provider as never)
+    registerPtyHandlers(mainWindow as never)
+    const args = {
+      cols: 80,
+      rows: 24,
+      worktreeId: 'repo-1::/same-path',
+      tabId: 'tab-host-collision',
+      leafId: '88888888-8888-4888-8888-888888888888',
+      sessionId: 'same-session'
+    }
+
+    const spawns = [
+      handlers.get('pty:spawn')!(null, args),
+      handlers.get('pty:spawn')!(null, { ...args, connectionId: 'ssh-scope-1' }),
+      handlers.get('pty:spawn')!(null, { ...args, connectionId: 'ssh-scope-2' })
+    ]
+    await vi.waitFor(() => {
+      expect(local.provider.spawn).toHaveBeenCalledTimes(1)
+      expect(sshOne.provider.spawn).toHaveBeenCalledTimes(1)
+      expect(sshTwo.provider.spawn).toHaveBeenCalledTimes(1)
+    })
+    local.resolve()
+    sshOne.resolve()
+    sshTwo.resolve()
+
+    await expect(Promise.all(spawns)).resolves.toEqual([
+      expect.objectContaining({ id: 'local-pty' }),
+      expect.objectContaining({ id: 'ssh:ssh-scope-1@@remote-pty-1' }),
+      expect.objectContaining({ id: 'ssh:ssh-scope-2@@remote-pty-2' })
+    ])
+  })
+
+  it('settles the pane reservation when a post-spawn step throws so later spawns do not hang', async () => {
+    let resolveFirstSpawn!: (result: { id: string }) => void
+    let spawnCount = 0
+    const shutdown = vi.fn().mockRejectedValueOnce(new Error('cleanup failed'))
+    const providerSpawn = vi.fn(() =>
+      ++spawnCount === 1
+        ? new Promise<{ id: string }>((resolve) => {
+            resolveFirstSpawn = resolve
+          })
+        : Promise.resolve({ id: `pty-${spawnCount}` })
+    )
+    installDaemonTestProvider({ spawn: providerSpawn, shutdown })
+    const store = {
+      persistPtyBinding: vi.fn(),
+      removePtyBindingIfMatches: vi.fn()
+    }
+    registerPtyHandlers(
+      mainWindow as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      store as never
+    )
     const leafId = '44444444-4444-4444-8444-444444444444'
-    const spawnArgs = { cols: 80, rows: 24, tabId: 'tab-reservation', leafId }
+    const spawnArgs = {
+      cols: 80,
+      rows: 24,
+      worktreeId: 'repo-1::/tmp',
+      tabId: 'tab-reservation',
+      leafId
+    }
 
     registerPtyMock.mockImplementationOnce(() => {
       throw new Error('boom: post-spawn registration failed')
     })
 
-    await expect(handlers.get('pty:spawn')!(null, spawnArgs)).rejects.toThrow('boom')
+    const creator = handlers.get('pty:spawn')!(null, spawnArgs) as Promise<unknown>
+    await vi.waitFor(() => expect(providerSpawn).toHaveBeenCalledTimes(1))
+    const waiter = handlers.get('pty:spawn')!(null, spawnArgs) as Promise<unknown>
+    resolveFirstSpawn({ id: 'pty-1' })
 
-    // A second spawn for the same pane must run a fresh spawn rather than await the leaked (never-settled) reservation promise.
+    await expect(creator).rejects.toThrow('boom: post-spawn registration failed')
+    await expect(waiter).rejects.toThrow('boom: post-spawn registration failed')
+    expect(shutdown).toHaveBeenCalledTimes(1)
+    expect(shutdown).toHaveBeenCalledWith('pty-1', { immediate: true })
+    expect(store.removePtyBindingIfMatches).toHaveBeenCalledWith(
+      { worktreeId: 'repo-1::/tmp', tabId: 'tab-reservation', leafId, ptyId: 'pty-1' },
+      null
+    )
+
     let hangTimer: ReturnType<typeof setTimeout> | undefined
     const second = handlers.get('pty:spawn')!(null, spawnArgs) as Promise<{ id: string }>
     const result = await Promise.race([
@@ -8388,8 +8535,9 @@ describe('registerPtyHandlers', () => {
       })
     ]).finally(() => clearTimeout(hangTimer))
 
-    expect(result.id).toEqual(expect.any(String))
-    expect(spawnMock).toHaveBeenCalledTimes(2)
+    expect(result.id).toBe('pty-2')
+    expect(providerSpawn).toHaveBeenCalledTimes(2)
+    expect(shutdown).toHaveBeenCalledTimes(1)
   })
 
   it('settles the runtime-owned pane reservation when a post-spawn step throws so later spawns do not hang', async () => {
@@ -8400,6 +8548,7 @@ describe('registerPtyHandlers', () => {
         rows: number
         cwd?: string
         worktreeId?: string
+        connectionId?: string
         env?: Record<string, string>
         tabId?: string
         leafId?: string
@@ -8407,13 +8556,16 @@ describe('registerPtyHandlers', () => {
       }): Promise<{ id: string }>
     }
     let spawnCount = 0
-    const providerSpawn = vi.fn(async () => ({ id: `pty-${++spawnCount}` }))
-    setLocalPtyProvider({
+    const providerSpawn = vi.fn(async () => ({
+      id: `ssh:ssh-fresh-fail@@pty-${++spawnCount}`
+    }))
+    const shutdown = vi.fn()
+    registerSshPtyProvider('ssh-fresh-fail', {
       spawn: providerSpawn,
       write: vi.fn(),
       resize: vi.fn(),
       kill: vi.fn(),
-      shutdown: vi.fn(),
+      shutdown,
       sendSignal: vi.fn(),
       getCwd: vi.fn(),
       getInitialCwd: vi.fn(),
@@ -8432,7 +8584,10 @@ describe('registerPtyHandlers', () => {
       getProfiles: vi.fn()
     } as never)
     const store = {
-      persistPtyBinding: vi.fn()
+      persistPtyBinding: vi.fn(),
+      upsertSshRemotePtyLease: vi.fn(),
+      removeSshRemotePtyLease: vi.fn(),
+      removePtyBindingIfMatches: vi.fn()
     }
     let controller: RuntimeSpawnController | null = null
     const runtime = {
@@ -8445,6 +8600,7 @@ describe('registerPtyHandlers', () => {
       registerPty: vi.fn().mockImplementationOnce(() => {
         throw new Error('boom: runtime registration failed')
       }),
+      retireFreshPtyRegistration: vi.fn(),
       onPtySpawned: vi.fn(),
       onPtyExit: vi.fn(),
       onPtyData: vi.fn()
@@ -8465,6 +8621,7 @@ describe('registerPtyHandlers', () => {
       cols: 80,
       rows: 24,
       cwd: '/tmp',
+      connectionId: 'ssh-fresh-fail',
       worktreeId: 'wt-1',
       tabId: 'tab-runtime-reservation',
       leafId,
@@ -8486,7 +8643,65 @@ describe('registerPtyHandlers', () => {
         )
       })
     ]).finally(() => clearTimeout(hangTimer))
-    expect(result.id).toEqual(expect.any(String))
+    expect(result.id).toBe('ssh:ssh-fresh-fail@@pty-2')
+    expect(providerSpawn).toHaveBeenCalledTimes(2)
+    expect(shutdown).toHaveBeenCalledTimes(1)
+    expect(shutdown).toHaveBeenCalledWith('ssh:ssh-fresh-fail@@pty-1', { immediate: true })
+    expect(store.removePtyBindingIfMatches).toHaveBeenCalledWith(
+      {
+        worktreeId: 'wt-1',
+        tabId: 'tab-runtime-reservation',
+        leafId,
+        ptyId: 'ssh:ssh-fresh-fail@@pty-1'
+      },
+      'ssh:ssh-fresh-fail'
+    )
+    expect(store.removeSshRemotePtyLease).toHaveBeenCalledWith('ssh-fresh-fail', 'pty-1')
+    expect(runtime.retireFreshPtyRegistration).toHaveBeenCalledTimes(1)
+    expect(runtime.retireFreshPtyRegistration).toHaveBeenCalledWith(
+      'ssh:ssh-fresh-fail@@pty-1',
+      undefined
+    )
+  })
+
+  it('does not retire a reattached PTY when later registration fails', async () => {
+    const shutdown = vi.fn()
+    const providerSpawn = vi.fn(async () => ({ id: 'reattached-pty', isReattach: true }))
+    installDaemonTestProvider({ spawn: providerSpawn, shutdown })
+    const store = {
+      persistPtyBinding: vi.fn(),
+      removePtyBindingIfMatches: vi.fn()
+    }
+    registerPtyHandlers(
+      mainWindow as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      store as never
+    )
+    const leafId = '66666666-6666-4666-8666-666666666666'
+    const args = {
+      cols: 80,
+      rows: 24,
+      worktreeId: 'repo-1::/tmp',
+      tabId: 'tab-reattach-registration',
+      leafId,
+      sessionId: 'reattached-pty'
+    }
+    registerPtyMock.mockImplementationOnce(() => {
+      throw new Error('boom: reattach registration failed')
+    })
+
+    await expect(handlers.get('pty:spawn')!(null, args)).rejects.toThrow(
+      'boom: reattach registration failed'
+    )
+    expect(shutdown).not.toHaveBeenCalled()
+    expect(store.removePtyBindingIfMatches).not.toHaveBeenCalled()
+    await expect(handlers.get('pty:spawn')!(null, args)).resolves.toMatchObject({
+      id: 'reattached-pty',
+      spawnDisposition: 'reattached'
+    })
     expect(providerSpawn).toHaveBeenCalledTimes(2)
   })
 

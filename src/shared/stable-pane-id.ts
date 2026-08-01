@@ -1,3 +1,7 @@
+import { normalizeRuntimePathForComparison } from './cross-platform-path'
+import { parseWorkspaceKey } from './workspace-scope'
+import { splitWorktreeId } from './worktree-id'
+
 // Why: paneKey crosses renderer reloads, PTY env, hook IPC, and retained UI
 // rows, so it must use the durable terminal-layout leaf UUID instead of the
 // renderer-local numeric PaneManager id.
@@ -6,10 +10,14 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 declare const stablePaneIdBrand: unique symbol
 declare const terminalLeafIdBrand: unique symbol
 declare const paneKeyBrand: unique symbol
+declare const paneSpawnReservationKeyBrand: unique symbol
 
 export type StablePaneId = string & { readonly [stablePaneIdBrand]: true }
 export type TerminalLeafId = StablePaneId & { readonly [terminalLeafIdBrand]: true }
 export type PaneKey = string & { readonly [paneKeyBrand]: true }
+export type PaneSpawnReservationKey = string & {
+  readonly [paneSpawnReservationKeyBrand]: true
+}
 
 export function isStablePaneId(value: string): value is StablePaneId {
   return UUID_RE.test(value)
@@ -27,6 +35,58 @@ export function makePaneKey(tabId: string, stableLeafId: string): PaneKey {
     throw new Error('stableLeafId must be a UUID')
   }
   return `${tabId}:${stableLeafId}` as PaneKey
+}
+
+function canonicalWorkspaceIdentity(workspaceId: string): readonly string[] | null {
+  const trimmed = workspaceId.trim()
+  if (!trimmed || trimmed.length > 1024) {
+    return null
+  }
+  const scope = parseWorkspaceKey(trimmed)
+  const kind = scope?.type ?? 'worktree'
+  const unscopedId =
+    scope?.type === 'worktree'
+      ? scope.worktreeId
+      : scope?.type === 'folder'
+        ? scope.folderWorkspaceId
+        : trimmed
+  const parsed = splitWorktreeId(unscopedId)
+  return parsed
+    ? [kind, parsed.repoId, normalizeRuntimePathForComparison(parsed.worktreePath)]
+    : [kind, unscopedId]
+}
+
+export function makePaneSpawnReservationKey(args: {
+  paneKey: PaneKey
+  providerId: string
+  connectionId?: string | null
+  executionRuntime?: string | null
+  workspaceId?: string
+  sessionId?: string | null
+}): PaneSpawnReservationKey | null {
+  const workspace = args.workspaceId ? canonicalWorkspaceIdentity(args.workspaceId) : null
+  const providerId = args.providerId.trim()
+  const connectionId = args.connectionId?.trim() || null
+  const executionRuntime = args.executionRuntime?.trim() || null
+  const sessionId = args.sessionId?.trim() || null
+  if (
+    !workspace ||
+    !providerId ||
+    providerId.length > 256 ||
+    (connectionId?.length ?? 0) > 512 ||
+    (executionRuntime?.length ?? 0) > 256 ||
+    (sessionId?.length ?? 0) > 512
+  ) {
+    return null
+  }
+  return JSON.stringify([
+    providerId,
+    connectionId,
+    executionRuntime,
+    workspace,
+    sessionId,
+    args.paneKey
+  ]) as PaneSpawnReservationKey
 }
 
 export function parsePaneKey(

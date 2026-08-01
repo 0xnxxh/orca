@@ -7841,6 +7841,58 @@ export class Store {
     }
   }
 
+  // ── PTY Binding Rollback ───────────────────────────────────────────
+
+  // Why: failed fresh-spawn setup may only erase its exact binding, never a replacement incarnation.
+  removePtyBindingIfMatches(
+    args: {
+      worktreeId: string
+      tabId: string
+      leafId: string
+      ptyId: string
+      incarnationId?: string
+    },
+    hostId?: string | null
+  ): void {
+    const session = this.getWorkspaceSession(this.resolveHostId(hostId))
+    const ownerKey = resolveWorkspaceSessionRecordOwnerKey(session.tabsByWorktree, args.worktreeId)
+    if (!ownerKey) {
+      return
+    }
+    let changed = false
+    const paneKey = `${args.tabId}:${args.leafId}`
+    if (
+      args.incarnationId &&
+      session.terminalPtyIncarnationsByPaneKey?.[paneKey] !== args.incarnationId
+    ) {
+      return
+    }
+    const tab = session.tabsByWorktree[ownerKey]?.find((candidate) => candidate.id === args.tabId)
+    if (tab?.ptyId === args.ptyId) {
+      tab.ptyId = null
+      changed = true
+    }
+    const layout = session.terminalLayoutsByTabId[args.tabId]
+    if (layout?.ptyIdsByLeafId?.[args.leafId] === args.ptyId) {
+      layout.ptyIdsByLeafId = { ...layout.ptyIdsByLeafId }
+      delete layout.ptyIdsByLeafId[args.leafId]
+      changed = true
+    }
+    if (
+      args.incarnationId &&
+      session.terminalPtyIncarnationsByPaneKey?.[paneKey] === args.incarnationId
+    ) {
+      session.terminalPtyIncarnationsByPaneKey = {
+        ...session.terminalPtyIncarnationsByPaneKey
+      }
+      delete session.terminalPtyIncarnationsByPaneKey[paneKey]
+      changed = true
+    }
+    if (changed) {
+      this.flush()
+    }
+  }
+
   // ── SSH Targets ────────────────────────────────────────────────────
 
   getSshTargets(): SshTarget[] {
