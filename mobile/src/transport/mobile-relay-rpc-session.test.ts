@@ -609,6 +609,11 @@ describe('mobile relay RPC session', () => {
       )
 
       await vi.advanceTimersByTimeAsync(8_000)
+      expect(
+        fakes.sendText.mock.calls
+          .map(([payload]) => JSON.parse(payload as string) as { method: string })
+          .filter(({ method }) => method === 'status.get')
+      ).toHaveLength(2)
       expect(session.getState()).toBe('connected')
       expect(fakes.close).not.toHaveBeenCalled()
     } finally {

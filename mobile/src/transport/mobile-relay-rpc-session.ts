@@ -160,7 +160,8 @@ export function connectMobileRelayRpcSession(args: {
     method: string,
     params: unknown,
     timeoutMs = requestTimeoutMs,
-    beforeConnected = false
+    beforeConnected = false,
+    probeAfterTimeout = true
   ): Promise<RpcResponse> {
     if (closed || (!beforeConnected && state !== 'connected')) {
       return Promise.reject(new Error('relay session not connected'))
@@ -173,7 +174,9 @@ export function connectMobileRelayRpcSession(args: {
         // Why: the frame was written long ago — the desktop may have processed it.
         const error = markRpcDeliveryUnknown(new Error(`relay RPC timed out: ${method}`))
         reject(error)
-        probeControlPlane(true)
+        if (probeAfterTimeout) {
+          probeControlPlane(true)
+        }
       }, timeoutMs)
       pending.set(id, { resolve, reject, timer })
       if (!sendFrame({ id, method, params })) {
@@ -234,7 +237,7 @@ export function connectMobileRelayRpcSession(args: {
       return
     }
     const probeControlResponseSequence = controlResponseSequence
-    void sendRpc('status.get', undefined, CONTROL_PROBE_TIMEOUT_MS).then(
+    void sendRpc('status.get', undefined, CONTROL_PROBE_TIMEOUT_MS, false, false).then(
       () => {
         finishControlProbe()
       },

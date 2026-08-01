@@ -171,6 +171,8 @@ describe('edit host handleSave', () => {
   })
 
   it('endpoint-only save updates only the endpoint and reconnects', async () => {
+    const savedHost = { ...HOST_FIXTURE, endpoint: 'ws://192.168.1.20:6768' }
+    dependencies.loadHosts.mockResolvedValueOnce([HOST_FIXTURE]).mockResolvedValueOnce([savedHost])
     const renderer = await renderEditHostRoute()
     setFieldValue(renderer, 'Address', '192.168.1.20:6768')
     await pressSave(renderer)
@@ -178,16 +180,19 @@ describe('edit host handleSave', () => {
     expect(dependencies.updateHostNameAndEndpoint).toHaveBeenCalledWith('host-1', {
       endpoint: 'ws://192.168.1.20:6768'
     })
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', {
-      ...HOST_FIXTURE,
-      endpoint: 'ws://192.168.1.20:6768'
-    })
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', savedHost)
     expect(dependencies.back).toHaveBeenCalledTimes(1)
 
     act(() => renderer.unmount())
   })
 
   it('saves name and endpoint together in one call, then reconnects', async () => {
+    const savedHost = {
+      ...HOST_FIXTURE,
+      name: 'Home Desk',
+      endpoint: 'ws://192.168.1.20:6768'
+    }
+    dependencies.loadHosts.mockResolvedValueOnce([HOST_FIXTURE]).mockResolvedValueOnce([savedHost])
     const renderer = await renderEditHostRoute()
     setFieldValue(renderer, 'Name', 'Home Desk')
     setFieldValue(renderer, 'Address', '192.168.1.20:6768')
@@ -198,11 +203,7 @@ describe('edit host handleSave', () => {
       name: 'Home Desk',
       endpoint: 'ws://192.168.1.20:6768'
     })
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', {
-      ...HOST_FIXTURE,
-      name: 'Home Desk',
-      endpoint: 'ws://192.168.1.20:6768'
-    })
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', savedHost)
     expect(dependencies.back).toHaveBeenCalledTimes(1)
 
     act(() => renderer.unmount())
@@ -247,6 +248,8 @@ describe('edit host handleSave', () => {
   })
 
   it('still navigates back and alerts when the post-save reconnect rejects', async () => {
+    const savedHost = { ...HOST_FIXTURE, endpoint: 'ws://192.168.1.20:6768' }
+    dependencies.loadHosts.mockResolvedValueOnce([HOST_FIXTURE]).mockResolvedValueOnce([savedHost])
     dependencies.forceReconnectHost.mockRejectedValueOnce(new Error('connect failed'))
     const renderer = await renderEditHostRoute()
     setFieldValue(renderer, 'Address', '192.168.1.20:6768')
@@ -256,12 +259,28 @@ describe('edit host handleSave', () => {
       await Promise.resolve()
     })
 
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', {
-      ...HOST_FIXTURE,
-      endpoint: 'ws://192.168.1.20:6768'
-    })
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', savedHost)
     expect(dependencies.back).toHaveBeenCalledTimes(1)
     expect(dependencies.alert).toHaveBeenCalledWith('Unable to reconnect', 'connect failed')
+
+    act(() => renderer.unmount())
+  })
+
+  it('reconnects with the fresh persisted profile when relay routing changed mid-edit', async () => {
+    const relayHost = {
+      ...HOST_FIXTURE,
+      endpoint: 'ws://192.168.1.20:6768',
+      endpoints: [
+        { id: 'direct-primary', kind: 'lan' as const, url: 'ws://192.168.1.20:6768' },
+        { id: 'relay-primary', kind: 'relay' as const, url: 'wss://relay.invalid/host-1' }
+      ]
+    }
+    dependencies.loadHosts.mockResolvedValueOnce([HOST_FIXTURE]).mockResolvedValueOnce([relayHost])
+    const renderer = await renderEditHostRoute()
+    setFieldValue(renderer, 'Address', '192.168.1.20:6768')
+    await pressSave(renderer)
+
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', relayHost)
 
     act(() => renderer.unmount())
   })
