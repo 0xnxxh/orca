@@ -3,10 +3,7 @@ import { useCallback, useRef, useState } from 'react'
 import type { DirCache } from './file-explorer-types'
 import { splitPathSegments } from './path-tree'
 import { statRuntimePath } from '@/runtime/runtime-file-client'
-import {
-  createFileExplorerDirLoadTracker,
-  type FileExplorerDirLoadTracker
-} from './file-explorer-dir-load-tracker'
+import { createFileExplorerDirLoadTracker } from './file-explorer-dir-load-tracker'
 import {
   getFileExplorerOperationOwner,
   getFileExplorerOwnerUnresolvedMessage,
@@ -14,9 +11,11 @@ import {
 } from './file-explorer-operation-owner'
 import {
   fileExplorerEntriesToTreeNodes,
-  readFileExplorerDirectory,
-  type FileExplorerDirectoryListing
+  readFileExplorerDirectory
 } from './file-explorer-directory-listing'
+import { refreshFileExplorerExpandedDirs } from './file-explorer-expanded-dirs-refresh'
+import { collectStaleDirCachePaths } from './file-explorer-stale-dir-cache'
+import { fileExplorerRefreshConcurrency } from './file-explorer-refresh-concurrency'
 
 type UseFileExplorerTreeResult = {
   dirCache: Record<string, DirCache>
@@ -32,109 +31,9 @@ type UseFileExplorerTreeResult = {
   markPathAsDirectory: (path: string) => void
   refreshTree: () => Promise<void>
   refreshDir: (dirPath: string) => Promise<void>
+  /** True while a dir's cached listing predates the last full refresh that skipped it. */
+  isDirStale: (dirPath: string) => boolean
   resetAndLoad: () => void
-}
-
-type RefreshFileExplorerTreeDir = {
-  dirPath: string
-  depth: number
-}
-
-type RefreshFileExplorerExpandedDirsParams = {
-  dirs: RefreshFileExplorerTreeDir[]
-  worktreePath: string
-  dirLoadTracker: FileExplorerDirLoadTracker
-  setDirCache: Dispatch<SetStateAction<Record<string, DirCache>>>
-  readDirectory: (dirPath: string) => Promise<FileExplorerDirectoryListing>
-}
-
-export async function refreshFileExplorerExpandedDirs({
-  dirs,
-  worktreePath,
-  dirLoadTracker,
-  setDirCache,
-  readDirectory
-}: RefreshFileExplorerExpandedDirsParams): Promise<boolean> {
-  if (dirs.length === 0) {
-    return true
-  }
-
-  const uniqueDirs = Array.from(new Map(dirs.map((dir) => [dir.dirPath, dir])).values())
-  const loadTokens = new Map(
-    uniqueDirs.map((dir) => [dir.dirPath, dirLoadTracker.begin(dir.dirPath)])
-  )
-
-  // Why: expanded refresh can touch many directories; commit the loading and
-  // result states in two batched setDirCache writes (rather than per-directory)
-  // so refreshing large worktrees stays O(N) instead of O(N²) cache spreads.
-  setDirCache((prev) => {
-    const next = { ...prev }
-    for (const { dirPath } of uniqueDirs) {
-      next[dirPath] = {
-        children: prev[dirPath]?.children ?? [],
-        loading: true
-      }
-    }
-    return next
-  })
-
-  const results = await Promise.all(
-    uniqueDirs.map(async ({ dirPath, depth }) => {
-      const loadToken = loadTokens.get(dirPath)!
-      try {
-        const listing = await readDirectory(dirPath)
-        if (!dirLoadTracker.isCurrent(loadToken)) {
-          return { current: false as const }
-        }
-        return {
-          current: true as const,
-          dirPath,
-          cache: {
-            children: fileExplorerEntriesToTreeNodes(
-              listing.entries,
-              dirPath,
-              depth,
-              worktreePath,
-              listing.operationOwner
-            ),
-            loading: false,
-            operationOwner: listing.operationOwner
-          }
-        }
-      } catch {
-        if (!dirLoadTracker.isCurrent(loadToken)) {
-          return { current: false as const }
-        }
-        return {
-          current: true as const,
-          dirPath,
-          cache: { children: [], loading: false }
-        }
-      }
-    })
-  )
-
-  // Why: the batch commits only after the slowest read, so a dir can be
-  // superseded (watcher refreshDir, worktree reset) after its own read
-  // resolved. Re-check tokens at commit time so the batched write never
-  // clobbers a newer load — preserving the old per-dir commit ordering.
-  const currentResults = results.filter(
-    (result): result is Extract<typeof result, { current: true }> =>
-      result.current && dirLoadTracker.isCurrent(loadTokens.get(result.dirPath)!)
-  )
-  if (currentResults.length === 0) {
-    return false
-  }
-
-  setDirCache((prev) => {
-    const next = { ...prev }
-    for (const result of currentResults) {
-      next[result.dirPath] = result.cache
-    }
-    return next
-  })
-
-  return currentResults.length === uniqueDirs.length
 }
 
 export function useFileExplorerTree(
@@ -147,6 +46,11 @@ export function useFileExplorerTree(
   const dirCacheRef = useRef(dirCache)
   dirCacheRef.current = dirCache
   const dirLoadTrackerRef = useRef(createFileExplorerDirLoadTracker())
+  // Why: a ref, not state — the expansion effect must read the mark set by a refresh that landed
+  // after the effect's render, and a state write would only be visible one render too late.
+  const staleDirsRef = useRef(new Set<string>())
+  const expandedRef = useRef(expanded)
+  expandedRef.current = expanded
 
   const loadDir = useCallback(
     async (
@@ -159,6 +63,8 @@ export function useFileExplorerTree(
         return true
       }
       const loadToken = dirLoadTrackerRef.current.begin(dirPath)
+      // Why: this read starts after the refresh that marked the dir, so its result is current.
+      staleDirsRef.current.delete(dirPath)
       // Why: when force-reloading a directory (e.g. after a file is created,
       // duplicated, or deleted), keep the previous children visible while the
       // fresh listing loads. Clearing to [] would momentarily shrink the
@@ -255,6 +161,12 @@ export function useFileExplorerTree(
     // Why: clearing the entire dirCache here would momentarily empty the
     // visible projection and jump the virtualizer to the top. Instead we rely
     // on force-reload keeping existing children visible until fresh data lands.
+    // Why: mark before the first read, against the live expanded set — a dir expanded after this
+    // point loads through the expansion effect, which would otherwise trust a listing this refresh
+    // never re-read. Replacing (not merging) also clears dirs this refresh does cover.
+    staleDirsRef.current = new Set(
+      collectStaleDirCachePaths(dirCacheRef.current, worktreePath, expandedRef.current)
+    )
     const refreshSession = dirLoadTrackerRef.current.getSession()
     const rootLoadCompleted = await loadDir(worktreePath, -1, { force: true })
     if (!rootLoadCompleted || !dirLoadTrackerRef.current.isSessionCurrent(refreshSession)) {
@@ -273,7 +185,11 @@ export function useFileExplorerTree(
       worktreePath,
       dirLoadTracker: dirLoadTrackerRef.current,
       setDirCache,
-      readDirectory: (dirPath) => readFileExplorerDirectory(activeWorktreeId, worktreePath, dirPath)
+      readDirectory: (dirPath) =>
+        readFileExplorerDirectory(activeWorktreeId, worktreePath, dirPath),
+      maxConcurrentReads: fileExplorerRefreshConcurrency(
+        getFileExplorerOperationOwner(activeWorktreeId)
+      )
     })
   }, [activeWorktreeId, expanded, loadDir, worktreePath])
 
@@ -291,12 +207,15 @@ export function useFileExplorerTree(
     [worktreePath, loadDir]
   )
 
+  const isDirStale = useCallback((dirPath: string) => staleDirsRef.current.has(dirPath), [])
+
   const rootCache = worktreePath ? dirCache[worktreePath] : undefined
 
   const resetAndLoad = useCallback(() => {
     // Why: stale readDir responses from the previous worktree/reset session
     // must not repopulate the explorer after the tree has been cleared.
     dirLoadTrackerRef.current.reset()
+    staleDirsRef.current.clear()
     setDirCache({})
     setRootError(null)
     if (worktreePath) {
@@ -314,6 +233,7 @@ export function useFileExplorerTree(
     markPathAsDirectory,
     refreshTree,
     refreshDir,
+    isDirStale,
     resetAndLoad
   }
 }

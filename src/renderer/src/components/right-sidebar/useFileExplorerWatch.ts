@@ -4,10 +4,14 @@ import type { DirCache, FileExplorerOperationOwner } from './file-explorer-types
 import type { InlineInput } from './FileExplorerRow'
 import { useAppStore } from '@/store'
 import { subscribeRuntimeFileChanges } from '@/runtime/runtime-file-client'
+import { normalizeRuntimePathForComparison } from '../../../../shared/cross-platform-path'
 import {
+  getFileExplorerOperationOwner,
   getFileExplorerOperationOwnerFromState,
   type FileExplorerOwnerState
 } from './file-explorer-operation-owner'
+import { fileExplorerRefreshConcurrency } from './file-explorer-refresh-concurrency'
+import { createFileExplorerWatchRefreshScheduler } from './file-explorer-watch-refresh-scheduler'
 import { processFileExplorerFsPayload } from './file-explorer-watch-reconcile'
 
 export {
@@ -127,6 +131,22 @@ export function useFileExplorerWatch({
 
     const currentWorktreePath = worktreePath
 
+    // Why: one scheduler per subscription covers BOTH remote transports (the
+    // Electron fs:changed bus and the runtime-RPC subscription below), and its
+    // lifetime is tied to the watched worktree so a switch can't refresh the
+    // previous root.
+    const scheduler = createFileExplorerWatchRefreshScheduler({
+      refreshTree: () => refreshTreeRef.current(),
+      refreshDir: (dirPath) => refreshDirRef.current(dirPath),
+      isCoveredByFullRefresh: (dirPath) =>
+        normalizeRuntimePathForComparison(dirPath) ===
+          normalizeRuntimePathForComparison(currentWorktreePath) ||
+        expandedRef.current.has(dirPath),
+      dirConcurrency: fileExplorerRefreshConcurrency(
+        getFileExplorerOperationOwner(worktreeIdRef.current)
+      )
+    })
+
     function processPayload(payload: FsChangedPayload): void {
       const wtId = worktreeIdRef.current
       if (!wtId) {
@@ -140,12 +160,8 @@ export function useFileExplorerWatch({
         expanded: expandedRef.current,
         setDirCache,
         setSelectedPath,
-        refreshDir: (dirPath) => {
-          void refreshDirRef.current(dirPath)
-        },
-        refreshTree: () => {
-          void refreshTreeRef.current()
-        }
+        refreshDir: scheduler.requestDirRefresh,
+        refreshTree: scheduler.requestFullRefresh
       })
     }
 
@@ -207,6 +223,7 @@ export function useFileExplorerWatch({
     return () => {
       disposed = true
       unsubscribeListener?.()
+      scheduler.cancel()
       deferredRef.current = []
       processPayloadRef.current = null
     }

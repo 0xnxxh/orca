@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useRef } from 'react'
 import { useAppStore } from '@/store'
 import { isDotfileRelativePath } from './file-explorer-entries'
 import type { DirCache, TreeNode } from './file-explorer-types'
@@ -109,6 +109,24 @@ export function createVisibleFileExplorerRowProjection(
   return createFileExplorerRowProjectionFromParts(visibleFlatRows, rowsByPath)
 }
 
+/**
+ * Holds the array identity while its contents are unchanged.
+ *
+ * Why: a tree refresh commits dirCache once per read wave, and every commit
+ * rebuilds this list. Each new identity would re-issue the uncancellable git
+ * check-ignore over the whole visible tree — the remote round trips the wave cap
+ * exists to bound.
+ */
+function useContentStableRelativePaths(relativePaths: string[]): string[] {
+  // NUL separator: it is the one byte no path segment can contain.
+  const signature = relativePaths.join('\u0000')
+  const cacheRef = useRef<{ signature: string; value: string[] } | null>(null)
+  if (cacheRef.current === null || cacheRef.current.signature !== signature) {
+    cacheRef.current = { signature, value: relativePaths }
+  }
+  return cacheRef.current.value
+}
+
 export function useFileExplorerVisibleRowProjection(
   activeWorktreeId: string | null,
   worktreePath: string | null,
@@ -128,7 +146,7 @@ export function useFileExplorerVisibleRowProjection(
   const settings = useAppStore((s) => s.settings)
   const updateSettings = useAppStore((s) => s.updateSettings)
   const showGitIgnoredFiles = settings?.showGitIgnoredFiles ?? true
-  const relativePaths = useMemo(
+  const rebuiltRelativePaths = useMemo(
     () =>
       activeRepoSupportsGit
         ? nameFilter
@@ -140,6 +158,10 @@ export function useFileExplorerVisibleRowProjection(
         : EMPTY_RELATIVE_PATHS,
     [activeRepoSupportsGit, dirCache, expanded, nameFilter, showDotfiles, worktreePath]
   )
+  const stableTreeRelativePaths = useContentStableRelativePaths(rebuiltRelativePaths)
+  // Why: the name-filter list is debounced per keystroke, so it must keep a fresh
+  // identity; only the dirCache-derived list needs stability across wave commits.
+  const relativePaths = nameFilter ? rebuiltRelativePaths : stableTreeRelativePaths
   const canLoadIgnoredPaths =
     activeRepoSupportsGit &&
     Boolean(activeWorktreeId) &&

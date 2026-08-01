@@ -16,6 +16,11 @@ import {
   onSshFilesystemProviderRegistered
 } from '../providers/ssh-filesystem-dispatch'
 import { MAX_BATCHED_WATCHER_EVENTS, queueWatcherEvents } from './filesystem-watcher-event-batch'
+import { createRemoteWatcherEventBatch } from './remote-watcher-event-batch'
+import {
+  WATCH_BATCH_MAX_WAIT_MS,
+  WATCH_BATCH_TRAILING_MS
+} from '../../shared/filesystem-watch-batch-window'
 import { disposeWatcherProcess, subscribeViaWatcherProcess } from './parcel-watcher-process'
 import { isWatcherProcessFailure } from './parcel-watcher-process-failure'
 import {
@@ -31,11 +36,6 @@ import {
 } from './watcher-removal-drain'
 // Why: suppress high-churn dirs at the watcher level (separate from the File Explorer display filter, which only hides rows).
 import { WATCHER_IGNORE_DIRS, buildParcelWatcherIgnoreOptions } from './filesystem-watcher-ignore'
-
-// ── Debounce helpers ─────────────────────────────────────────────────
-
-const DEBOUNCE_TRAILING_MS = 150
-const DEBOUNCE_MAX_WAIT_MS = 500
 
 // ── Per-root watcher state ───────────────────────────────────────────
 // WatchedRoot/WatcherSubscription live in filesystem-watcher-wsl.ts so native and WSL watchers share one shape.
@@ -349,7 +349,7 @@ function scheduleBatchFlush(root: WatchedRoot): void {
   }
 
   // If we've exceeded the max wait, flush immediately
-  if (now - root.batch.firstEventAt >= DEBOUNCE_MAX_WAIT_MS) {
+  if (now - root.batch.firstEventAt >= WATCH_BATCH_MAX_WAIT_MS) {
     if (root.batch.timer) {
       clearTimeout(root.batch.timer)
     }
@@ -361,7 +361,7 @@ function scheduleBatchFlush(root: WatchedRoot): void {
   if (root.batch.timer) {
     clearTimeout(root.batch.timer)
   }
-  root.batch.timer = setTimeout(() => void flushBatch(root), DEBOUNCE_TRAILING_MS)
+  root.batch.timer = setTimeout(() => void flushBatch(root), WATCH_BATCH_TRAILING_MS)
 }
 
 // ── Watcher creation ─────────────────────────────────────────────────
@@ -1287,23 +1287,36 @@ async function doInstallRemoteWatcher(
   cancelToken: RemoteWatcherInstallToken
 ): Promise<RemoteWatcherInstallResult> {
   let unwatch: () => void
+  // Why: only the two abandon paths below close this batch; a timer that outlives any other teardown by
+  // ≤500ms fires into deliver, fails the installToken check and drops — today's behavior for late events.
+  const batch = createRemoteWatcherEventBatch({
+    rootPath: worktreePath,
+    trailingMs: WATCH_BATCH_TRAILING_MS,
+    maxWaitMs: WATCH_BATCH_MAX_WAIT_MS,
+    maxEvents: MAX_BATCHED_WATCHER_EVENTS,
+    deliver: (events) => {
+      const state = remoteWatchers.get(key)
+      // Why: buffering defers delivery past install, so a bare non-null check would let a stale flush
+      // land on a different install generation.
+      if (!state || state.installToken !== cancelToken) {
+        return
+      }
+      for (const listener of state.listeners.values()) {
+        if (listener.isDestroyed()) {
+          continue
+        }
+        listener.send('fs:changed', {
+          worktreePath,
+          events
+        } satisfies FsChangedPayload)
+      }
+    }
+  })
   try {
     unwatch = await provider.watch(
       worktreePath,
       (events) => {
-        const state = remoteWatchers.get(key)
-        if (!state) {
-          return
-        }
-        for (const listener of state.listeners.values()) {
-          if (listener.isDestroyed()) {
-            continue
-          }
-          listener.send('fs:changed', {
-            worktreePath,
-            events
-          } satisfies FsChangedPayload)
-        }
+        batch.push(events)
       },
       {
         signal: cancelToken.abortController.signal,
@@ -1326,6 +1339,7 @@ async function doInstallRemoteWatcher(
     Array.from(cancelToken.listeners.entries()).filter(([, listener]) => !listener.isDestroyed())
   )
   if (cancelToken.cancelled || liveListeners.size === 0) {
+    batch.close()
     try {
       unwatch()
     } catch (err) {
@@ -1334,6 +1348,7 @@ async function doInstallRemoteWatcher(
     return 'cancelled'
   }
   if (cancelToken.terminalError) {
+    batch.close()
     return 'unavailable'
   }
   remoteWatchers.set(key, { unwatch, listeners: liveListeners, installToken: cancelToken })

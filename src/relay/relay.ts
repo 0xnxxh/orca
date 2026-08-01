@@ -68,6 +68,9 @@ const EMPTY_DETACHED_STARTUP_GRACE_MS = parseNonNegativeIntEnv(
   'ORCA_RELAY_EMPTY_STARTUP_GRACE_MS',
   60_000
 )
+// Why: a relay holding zero PTYs preserves nothing, so an unlimited grace only accumulates idle daemons.
+// The env override is test-only — the remote relay is launched over a non-interactive SSH exec channel that carries no client env.
+const IDLE_RELAY_GRACE_MS = parseNonNegativeIntEnv('ORCA_RELAY_IDLE_GRACE_MS', 15 * 60_000)
 
 type SocketIdentity = {
   dev: bigint
@@ -829,6 +832,9 @@ async function main(): Promise<void> {
   let hasAcceptedSocketClient = false
   let graceDeadlineAt: number | null = null
   let graceReason: string | null = null
+  // Why: only the idle branch is a "nothing left to preserve" bet, so only it may be revoked when a
+  // PTY appears mid-window; the other branches keep their armed deadline.
+  let graceBranch: 'startup-empty-detached' | 'idle-no-ptys' | 'configured' | null = null
 
   dispatcher.onRequest('relay.status', async () => ({
     pid: process.pid,
@@ -864,6 +870,7 @@ async function main(): Promise<void> {
     }
     graceDeadlineAt = null
     graceReason = null
+    graceBranch = null
     ptyHandler.cancelGraceTimer()
   }
 
@@ -1120,20 +1127,44 @@ async function main(): Promise<void> {
     const startupEmptyDetached =
       detached && !hasAcceptedSocketClient && ptyHandler.activePtyCount === 0
     // Why: a detached relay that never accepted a client has no PTY state and shouldn't linger forever.
-    const timeoutMs = startupEmptyDetached
-      ? graceTimeMs === 0
-        ? EMPTY_DETACHED_STARTUP_GRACE_MS
-        : Math.min(graceTimeMs, EMPTY_DETACHED_STARTUP_GRACE_MS)
-      : graceTimeMs
+    // Why: zero PTYs means nothing left to preserve, so only the unlimited default is capped — an
+    // explicitly configured grace is honored verbatim rather than clamped down to the idle cap.
+    // Why: a spawn parked mid-creation is not in the pool yet, so capping on it would kill the live shell it is about to produce.
+    const idleNoPtys = isRelayIdle() && graceTimeMs === 0
+    graceBranch = startupEmptyDetached
+      ? 'startup-empty-detached'
+      : idleNoPtys
+        ? 'idle-no-ptys'
+        : 'configured'
+    const timeoutMs =
+      graceBranch === 'startup-empty-detached'
+        ? graceTimeMs === 0
+          ? EMPTY_DETACHED_STARTUP_GRACE_MS
+          : Math.min(graceTimeMs, EMPTY_DETACHED_STARTUP_GRACE_MS)
+        : graceBranch === 'idle-no-ptys'
+          ? IDLE_RELAY_GRACE_MS
+          : graceTimeMs
     graceDeadlineAt = timeoutMs === 0 ? null : Date.now() + timeoutMs
     graceReason = reason
     relayLogLine(
-      `[relay] Grace started (${reason}): timeoutMs=${timeoutMs}, startupEmptyDetached=${startupEmptyDetached}, ptys=${ptyHandler.activePtyCount}, clients=${socketClients.size}`
+      `[relay] Grace started (${reason}): timeoutMs=${timeoutMs}, branch=${graceBranch}, ptys=${ptyHandler.activePtyCount}, clients=${socketClients.size}`
     )
     ptyHandler.startGraceTimer(() => {
+      // Why: last line of defense for the idle cap — a PTY that appeared without announcing itself
+      // must not be killed by a timer armed while the relay was still empty (#6955).
+      if (graceBranch === 'idle-no-ptys' && !isRelayIdle()) {
+        relayLogLine(`[relay] Grace expired (${reason}) but relay is no longer idle; re-evaluating`)
+        startGrace(reason)
+        return
+      }
       relayLogLine(`[relay] Grace expired (${reason}); shutting down`)
       shutdown()
     }, timeoutMs)
+  }
+
+  // Why: a creation admitted but not yet pooled already owns a shell, so it counts as non-idle.
+  function isRelayIdle(): boolean {
+    return ptyHandler.activePtyCount === 0 && ptyHandler.pendingPtyCreationCount === 0
   }
 
   if (detached) {
@@ -1176,9 +1207,12 @@ async function main(): Promise<void> {
     )
     graceDeadlineAt = null
     graceReason = null
+    graceBranch = null
     void ptyHandler
       .dispose()
       .then(() => {
+        stopPoolWatch()
+        stopPoolActiveWatch()
         dispatcher.dispose()
         fsHandler.dispose()
         gitHandler.dispose()
@@ -1196,8 +1230,34 @@ async function main(): Promise<void> {
         relayLogLine(
           `[relay] Shutdown deferred: ${error instanceof Error ? error.message : String(error)}`
         )
+        // Why: shutdown() already cleared graceReason, so without re-arming a client-less relay
+        // whose kill was refused would stay resident forever with nothing left to retry it.
+        if (socketClients.size === 0) {
+          startGrace('shutdown deferred')
+        }
       })
   }
+
+  // Why: with the shipped unlimited default the grace timer is never armed, so an expiry can't
+  // notice the pool emptying; re-evaluate on the last exit instead. graceReason (not
+  // graceTimerActive) is the only signal that a grace window is open in that configuration.
+  // Why: a null deadline is exactly that unlimited case; re-arming a scheduled one would restart
+  // an explicitly configured window and double it.
+  const stopPoolWatch = ptyHandler.onPtyPoolEmpty(() => {
+    if (graceReason !== null && graceDeadlineAt === null && !shutdownInFlight) {
+      startGrace('last pty exited')
+    }
+  })
+
+  // Why: the idle cap is armed on an empty pool, but creation is asynchronous — a spawn or revive
+  // admitted after that decision (the client dropped mid-`pty.revive`, say) makes the relay non-idle
+  // again, and re-evaluating disarms the timer instead of letting it kill a live PTY (#6955).
+  // The grace window itself stays open, so the PTY's own exit still re-arms the cap.
+  const stopPoolActiveWatch = ptyHandler.onPtyPoolActive(() => {
+    if (graceBranch === 'idle-no-ptys' && graceReason !== null && !shutdownInFlight) {
+      startGrace(graceReason)
+    }
+  })
 
   process.on('SIGTERM', shutdown)
   process.on('SIGINT', shutdown)
