@@ -3269,9 +3269,11 @@ describe('shared agent-hook-listener', () => {
       expect(drained?.payload.state).toBe('done')
     })
 
-    it('clears a fresh-pane teammate wait card with done when its owner parks', () => {
-      // Why: the wait is identity-owned; its owner parking must clear the amber
-      // card instead of leaving it fresh for the stale sweeper.
+    it('stays silent when a fresh-pane teammate wait owner parks with its row still tracked', () => {
+      // Why: a parked owner is indistinguishable from a delayed prior-turn stop
+      // against a newer start of the same reused id — claiming done could retire
+      // newer real work (the #11353 race). The stale amber card is bounded by
+      // the stale sweeper instead.
       claudeEvent({
         hook_event_name: 'PermissionRequest',
         agent_id: 'alane-6d3cb5b52120b7bf',
@@ -3282,7 +3284,56 @@ describe('shared agent-hook-listener', () => {
         hook_event_name: 'SubagentStop',
         agent_id: 'alane-6d3cb5b52120b7bf'
       })
-      expect(parked?.payload.state).toBe('done')
+      expect(parked).toBeNull()
+    })
+
+    it('never retires a newer same-id start via a delayed prior-turn stop clearing its wait', () => {
+      claudeEvent({
+        hook_event_name: 'PermissionRequest',
+        agent_id: 'alane-6d3cb5b52120b7bf',
+        agent_type: 'lane',
+        tool_name: 'Bash'
+      })
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'alane-6d3cb5b52120b7bf',
+        agent_type: 'lane'
+      })
+      const staleStop = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'alane-6d3cb5b52120b7bf'
+      })
+      expect(staleStop?.payload.state ?? null).not.toBe('done')
+    })
+
+    it('resolves a drain to done when over-length ids fill the inventory', () => {
+      // Why: untrackable ids must not consume parser cap slots — 33 of them is
+      // not a truncated inventory, just noise.
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a1',
+        agent_type: 'general-purpose'
+      })
+      const junk = Array.from({ length: 33 }, (_, i) => ({
+        id: 'x'.repeat(65) + i,
+        type: 'subagent',
+        status: 'running'
+      }))
+      const drained = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'a1',
+        background_tasks: junk
+      })
+      expect(drained?.payload.state).toBe('done')
+    })
+
+    it('does not mint a waiting card for an untrackable child id', () => {
+      const waiting = claudeEvent({
+        hook_event_name: 'PermissionRequest',
+        agent_id: 'w'.repeat(65),
+        tool_name: 'Bash'
+      })
+      expect(waiting).toBeNull()
     })
 
     it('resolves a fresh-pane child permission wait whose child dies to done, not phantom working', () => {

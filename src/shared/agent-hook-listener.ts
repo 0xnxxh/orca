@@ -2499,9 +2499,19 @@ function normalizeClaudeSubagentLifecycleEvent(
       )
     }
   }
+  // Why: a wait owner that still has a roster row was PARKED, not finished — a delayed stop from
+  // a prior turn can park a newly working reused id, so claiming done there would retire newer
+  // real work (the #11353 race). The clearing done fires only for an owner with no row left;
+  // a parked owner's stale amber card is bounded by the stale sweeper instead.
+  const waitOwnerStillTracked =
+    clearedOwnWait === 'deleted' &&
+    roster !== undefined &&
+    (eventName === 'TeammateIdle'
+      ? [...roster.keys()].some((id) => claudeTeammateIdMatchesName(id, lifecycleId))
+      : roster.has(lifecycleId))
   return buildClaudeChildDrivenStatusPayload(state, eventName, paneKey, hookPayload, {
     removedRow,
-    clearedOwnWait: clearedOwnWait === 'deleted'
+    clearedOwnWait: clearedOwnWait === 'deleted' && !waitOwnerStillTracked
   })
 }
 
@@ -2731,6 +2741,11 @@ function normalizeClaudeEvent(
   // Why: subagent/teammate events carry `agent_id` (lead's don't); child tool activity keeps its row live but must not become the lead's state or overwrite its tool/prompt caches (a live card would vanish).
   // Two exceptions take the full path below: waiting-inducing events (a child needs human attention on this pane) and the blocked child's own next tool event (approval granted — clear the wait as for the lead).
   const isWaitingInducing = stateName === 'waiting'
+  // Why: an untrackable child id can neither appear in the roster nor reliably clear its wait —
+  // recording it would mint an unresolvable amber card (STA-2915 review).
+  if (isWaitingInducing && eventAgentId && !isValidClaudeSubagentId(eventAgentId)) {
+    return null
+  }
   const subagentOriginId =
     !isWaitingInducing &&
     (eventName === 'PreToolUse' ||

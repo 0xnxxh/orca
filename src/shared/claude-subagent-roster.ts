@@ -191,7 +191,12 @@ export function readClaudeBackgroundAgentTasks(hookPayload: Record<string, unkno
     if (obj.type !== 'subagent' && obj.type !== 'teammate') {
       continue
     }
-    if (typeof obj.id !== 'string' || obj.id.trim().length === 0) {
+    // Why: an id the upsert rejects can never be tracked — it must not consume a cap slot either.
+    if (
+      typeof obj.id !== 'string' ||
+      obj.id.trim().length === 0 ||
+      !isValidClaudeSubagentId(obj.id)
+    ) {
       continue
     }
     if (tasks.length >= AGENT_STATUS_MAX_SUBAGENTS) {
