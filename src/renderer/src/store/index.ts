@@ -110,17 +110,22 @@ export const useAppStore = create<AppState>()((...a) => {
 
 registerHttpLinkStoreAccessor(() => useAppStore.getState())
 
-// Why: names the fattest store slices in renderer_memory_highwater breadcrumbs
-// so OOM crash reports identify what grew without a local repro.
-registerRendererMemoryProfileContributor('store', () =>
-  summarizeStateCollectionSizes(useAppStore.getState(), 20)
-)
-
-// Why: the 'store' profile above counts keys without recursing, so a scrollback
+// Why: the 'store' profile below counts keys without recursing, so a scrollback
 // blowup reads as an unchanged tab count while each tab hides leaf buffers of up
 // to 512KB. Char sums are what separate "170 tabs" from "170 tabs holding 800MB".
 registerRendererMemoryProfileContributor('terminalScrollback', () =>
   measureTerminalScrollbackBuffers(useAppStore.getState())
+)
+
+// Why: names the fattest store slices in renderer_memory_highwater breadcrumbs
+// so OOM crash reports identify what grew without a local repro.
+//
+// Why registered last: contributors are walked in registration order, and this is the
+// only one whose key count grows with session state (up to 20 slices). Last means a
+// count-budget overrun drops slice sizes — which `store.unreportedCollections` already
+// signals — instead of silently omitting a fixed census like terminalScrollback.
+registerRendererMemoryProfileContributor('store', () =>
+  summarizeStateCollectionSizes(useAppStore.getState(), 20)
 )
 
 export type { AppState } from './types'

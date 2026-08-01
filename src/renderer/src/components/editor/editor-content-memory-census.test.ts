@@ -139,6 +139,121 @@ describe('editor content memory profile contributor', () => {
     })
   })
 
+  it('counts a panel that mounted past the cap once a sibling frees its slot', () => {
+    // Why: panels register once in a mount effect, so a panel dropped at the cap would
+    // stay invisible for its whole life — a permanent undercount of the live heap.
+    const releases = Array.from({ length: 64 }, () =>
+      registerEditorContentCensusReader(() => ({ files: 1, chars: 10, diffTabs: 0, diffChars: 0 }))
+    )
+    const lateRelease = registerEditorContentCensusReader(() => ({
+      files: 1,
+      chars: 5_000,
+      diffTabs: 0,
+      diffChars: 0
+    }))
+
+    expect(collectRendererMemoryProfileCounts()).toMatchObject({
+      'editorContent.chars': 640,
+      'editorContent.droppedPanels': 1
+    })
+
+    releases[0]()
+    expect(collectRendererMemoryProfileCounts()).toMatchObject({
+      'editorContent.panels': 64,
+      'editorContent.chars': 5_630,
+      'editorContent.droppedPanels': 0
+    })
+
+    lateRelease()
+    for (const release of releases.slice(1)) {
+      release()
+    }
+  })
+
+  it('forgets a waiting panel that unmounts before a slot frees', () => {
+    const releases = Array.from({ length: 64 }, () =>
+      registerEditorContentCensusReader(() => ({ files: 1, chars: 10, diffTabs: 0, diffChars: 0 }))
+    )
+    const waitingRelease = registerEditorContentCensusReader(() => ({
+      files: 1,
+      chars: 5_000,
+      diffTabs: 0,
+      diffChars: 0
+    }))
+
+    waitingRelease()
+    releases[0]()
+
+    expect(collectRendererMemoryProfileCounts()).toMatchObject({
+      'editorContent.panels': 63,
+      'editorContent.chars': 630,
+      'editorContent.droppedPanels': 0
+    })
+
+    for (const release of releases.slice(1)) {
+      release()
+    }
+  })
+
+  it('stops reporting a panel dropped past both caps once it unmounts', () => {
+    // Why: `droppedPanels` names what this collect could not see, so a cumulative count
+    // would keep claiming omissions after every mounted panel is back under the cap.
+    const releases = Array.from({ length: 128 }, () =>
+      registerEditorContentCensusReader(() => ({ files: 1, chars: 10, diffTabs: 0, diffChars: 0 }))
+    )
+    const droppedRelease = registerEditorContentCensusReader(() => ({
+      files: 1,
+      chars: 5_000,
+      diffTabs: 0,
+      diffChars: 0
+    }))
+
+    expect(collectRendererMemoryProfileCounts()).toMatchObject({
+      'editorContent.panels': 64,
+      'editorContent.droppedPanels': 65
+    })
+
+    droppedRelease()
+    expect(collectRendererMemoryProfileCounts()).toMatchObject({
+      'editorContent.droppedPanels': 64
+    })
+
+    droppedRelease()
+    expect(collectRendererMemoryProfileCounts()).toMatchObject({
+      'editorContent.droppedPanels': 64
+    })
+
+    for (const release of releases) {
+      release()
+    }
+  })
+
+  it('keeps summing panels when one reader throws, instead of zeroing the subsystem', () => {
+    // Why: a panel tearing down mid-collect used to fail the whole contributor, which
+    // reports only `editorContent.error` — erasing every other panel's file bodies.
+    const releaseThrowing = registerEditorContentCensusReader(() => {
+      throw new Error('panel torn down')
+    })
+    const releaseHealthy = registerEditorContentCensusReader(() => ({
+      files: 2,
+      chars: 900,
+      diffTabs: 1,
+      diffChars: 100
+    }))
+
+    expect(collectRendererMemoryProfileCounts()).toMatchObject({
+      'editorContent.panels': 1,
+      'editorContent.files': 2,
+      'editorContent.chars': 900,
+      'editorContent.diffChars': 100,
+      'editorContent.readErrors': 1
+    })
+    expect(collectRendererMemoryProfileCounts()).not.toHaveProperty('editorContent.error')
+
+    releaseThrowing()
+    releaseHealthy()
+  })
+
   afterEach(() => {
     resetEditorContentCensusForTesting()
   })

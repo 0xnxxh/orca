@@ -38,6 +38,32 @@ describe('summarizeMonacoModelSizes', () => {
     })
   })
 
+  // Why: monaco can dispose a model between the isDisposed() guard and the read, and
+  // one throw aborting the loop wipes every other model's size from the OOM report.
+  it('counts a model that throws after the disposed guard without losing its siblings', () => {
+    const racing = {
+      isDisposed: () => false,
+      getValueLength: raise,
+      getLineCount: raise
+    }
+
+    expect(summarizeMonacoModelSizes([racing, model(1_000, 40)])).toEqual({
+      models: 2,
+      chars: 1_000,
+      lines: 40
+    })
+  })
+
+  it('counts no size for a model that throws between its two reads', () => {
+    const halfRead = {
+      isDisposed: () => false,
+      getValueLength: () => 1_000,
+      getLineCount: raise
+    }
+
+    expect(summarizeMonacoModelSizes([halfRead])).toEqual({ models: 1, chars: 0, lines: 0 })
+  })
+
   it('reports zeros for an empty registry rather than omitting fields', () => {
     expect(summarizeMonacoModelSizes([])).toEqual({ models: 0, chars: 0, lines: 0 })
   })

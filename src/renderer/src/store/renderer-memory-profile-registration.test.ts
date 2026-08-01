@@ -20,6 +20,7 @@ describe('renderer memory profile registration', () => {
       'editorContent.diffTabs': 0,
       'editorContent.diffChars': 0,
       'editorContent.droppedPanels': 0,
+      'editorContent.readErrors': 0,
       'terminalOutputBacklog.terminals': 0,
       'terminalOutputBacklog.chars': 0,
       'terminalOutputBacklog.maxTerminalChars': 0,
@@ -41,8 +42,22 @@ describe('renderer memory profile registration', () => {
   })
 
   it('leaves room in the 64-count budget for the store walk', () => {
-    // Why: contributors are walked in registration order and 'store' registers last,
-    // so an overrun drops the slice sizes rather than the new censuses.
     expect(Object.keys(collectRendererMemoryProfileCounts()).length).toBeLessThan(64)
+  })
+
+  it("walks every fixed census before 'store', so a budget overrun drops slice sizes", () => {
+    // Why order is the contract: contributors are walked in registration order and the
+    // profile stops at 64 counts, so whatever registers last is what an overrun omits.
+    // 'store' is the only contributor whose key count grows with session state, and its
+    // own `unreportedCollections` already says when it was cut short — a fixed census
+    // dropped instead reads as "measured, nothing held".
+    const keys = Object.keys(collectRendererMemoryProfileCounts())
+    const firstStoreKey = keys.findIndex((key) => key.startsWith('store.'))
+    const lastFixedCensusKey = keys.findLastIndex(
+      (key) => !key.startsWith('store.') && !key.startsWith('profile.')
+    )
+
+    expect(firstStoreKey).toBeGreaterThan(-1)
+    expect(lastFixedCensusKey).toBeLessThan(firstStoreKey)
   })
 })

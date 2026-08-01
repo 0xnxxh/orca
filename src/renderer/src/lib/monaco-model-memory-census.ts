@@ -42,13 +42,20 @@ export function summarizeMonacoModelSizes(
   let lines = 0
   for (const model of registry) {
     models += 1
-    // Why guarded although getModels() drops disposed models: reading a disposed model
-    // throws, and one stale entry must not sink the census for its siblings.
-    if (model.isDisposed()) {
-      continue
+    try {
+      // Why guarded although getModels() drops disposed models: reading a disposed model
+      // throws, and one stale entry must not sink the census for its siblings.
+      if (model.isDisposed()) {
+        continue
+      }
+      const valueLength = model.getValueLength()
+      const lineCount = model.getLineCount()
+      chars += valueLength
+      lines += lineCount
+    } catch {
+      // Why a throw is treated as disposed: monaco can dispose between the guard and the
+      // read, and the whole loop aborting would wipe every other model's size.
     }
-    chars += model.getValueLength()
-    lines += model.getLineCount()
   }
   return { models, chars, lines }
 }
