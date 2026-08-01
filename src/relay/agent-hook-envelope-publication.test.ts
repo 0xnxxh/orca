@@ -131,43 +131,86 @@ describe('publishAgentHookEnvelope', () => {
     }
   })
 
-  it('sheds interactivePrompt next when dropping the assistant message is not enough', () => {
+  it('sheds subagents next when dropping the assistant message is not enough', () => {
     const primary = makeBoundedClient(16384)
     const dispatcher = new RelayDispatcher(primary.write, primary.options)
     try {
       publishAgentHookEnvelope(
         dispatcher,
-        makeEnvelope({ lastAssistantMessage: 8_000, interactivePrompt: 13_000, subagents: 2 })
+        makeEnvelope({ lastAssistantMessage: 8_000, interactivePrompt: 6_000, subagents: 40 })
       )
 
       const published = decodeEnvelopes(primary)
       expect(published).toHaveLength(1)
       expect(published[0].payload.lastAssistantMessage).toBeUndefined()
-      expect(published[0].payload.interactivePrompt).toBeUndefined()
-      expect(published[0].payload.subagents).toHaveLength(2)
+      expect(published[0].payload.subagents).toBeUndefined()
+      expect(published[0].payload.interactivePrompt).toBe('q'.repeat(6_000))
       expect(primary.closes).toBe(0)
     } finally {
       dispatcher.dispose()
     }
   })
 
-  it('sheds subagents last and still delivers the status', () => {
+  it('keeps the blocking question card when a waiting envelope has to shed', () => {
+    const primary = makeBoundedClient(16384)
+    const dispatcher = new RelayDispatcher(primary.write, primary.options)
+    try {
+      // A blocked pane is only answerable from web/mobile if interactivePrompt survives the ladder.
+      const envelope = makeEnvelope({
+        lastAssistantMessage: 8_000,
+        interactivePrompt: 4_000,
+        subagents: 40
+      })
+      envelope.payload.state = 'waiting'
+      publishAgentHookEnvelope(dispatcher, envelope)
+
+      const published = decodeEnvelopes(primary)
+      expect(published).toHaveLength(1)
+      expect(published[0].payload.state).toBe('waiting')
+      expect(published[0].payload.interactivePrompt).toBe('q'.repeat(4_000))
+      expect(published[0].payload.subagents).toBeUndefined()
+      expect(published[0].payload.lastAssistantMessage).toBeUndefined()
+      expect(primary.closes).toBe(0)
+    } finally {
+      dispatcher.dispose()
+    }
+  })
+
+  it('sheds interactivePrompt last and still delivers the status', () => {
     const primary = makeBoundedClient(16384)
     const dispatcher = new RelayDispatcher(primary.write, primary.options)
     try {
       publishAgentHookEnvelope(
         dispatcher,
-        makeEnvelope({ lastAssistantMessage: 6_000, interactivePrompt: 6_000, subagents: 40 })
+        makeEnvelope({ lastAssistantMessage: 6_000, interactivePrompt: 13_000, subagents: 2 })
       )
 
       const published = decodeEnvelopes(primary)
       expect(published).toHaveLength(1)
       expect(published[0].payload.lastAssistantMessage).toBeUndefined()
-      expect(published[0].payload.interactivePrompt).toBeUndefined()
       expect(published[0].payload.subagents).toBeUndefined()
+      expect(published[0].payload.interactivePrompt).toBeUndefined()
       expect(published[0].payload.state).toBe('working')
       expect(primary.closes).toBe(0)
     } finally {
+      dispatcher.dispose()
+    }
+  })
+
+  it('measures the frame budget once up front and once per real shed', () => {
+    const primary = makeBoundedClient(16384)
+    const dispatcher = new RelayDispatcher(primary.write, primary.options)
+    const probe = vi.spyOn(dispatcher, 'producerEnvelopeBudget')
+    try {
+      publishAgentHookEnvelope(dispatcher, makeEnvelope({ lastAssistantMessage: 128 }))
+      expect(probe).toHaveBeenCalledTimes(1)
+
+      probe.mockClear()
+      // Two of the three ladder steps are absent here; skipping them must not cost an extra encode.
+      publishAgentHookEnvelope(dispatcher, makeEnvelope({ interactivePrompt: 20_000 }))
+      expect(probe).toHaveBeenCalledTimes(2)
+    } finally {
+      probe.mockRestore()
       dispatcher.dispose()
     }
   })

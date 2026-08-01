@@ -9,6 +9,17 @@ type BoundedClient = {
   write: (data: Buffer) => boolean
 }
 
+// Why: a sink that never accepts a write and never drains retains producer bytes, so the queue saturates
+// while every individual frame stays comfortably inside the per-frame capacity.
+function makeSaturatingClient(highWaterMark: number): BoundedClient {
+  const client = makeBoundedClient(highWaterMark)
+  client.write = (data: Buffer) => {
+    client.frames.push(Buffer.from(data))
+    return false
+  }
+  return client
+}
+
 function makeBoundedClient(highWaterMark: number): BoundedClient {
   const client: BoundedClient = {
     frames: [],
@@ -121,7 +132,7 @@ describe('RelayDispatcher bounded-capacity degradation', () => {
       expect(primary.frames).toHaveLength(0)
       expect(stderr).toHaveBeenCalledTimes(1)
       expect(stderr.mock.calls[0][0]).toMatch(
-        /^\[relay\] Dropped fs\.changed \(\d+B > producer capacity 12288B\)\n$/
+        /^\[relay\] Dropped fs\.changed \(\d+B > producer frame capacity 12288B\)\n$/
       )
 
       bounded.notify('pty.exit', { id: 'pty-1' })
@@ -147,6 +158,56 @@ describe('RelayDispatcher bounded-capacity degradation', () => {
       bounded.setWrite(reattached.write, reattached.options)
       bounded.notify('fs.changed', flood)
       expect(stderr).toHaveBeenCalledTimes(2)
+    } finally {
+      stderr.mockRestore()
+      bounded.dispose()
+    }
+  })
+
+  it('distinguishes an over-capacity drop from a producer-queue-full drop on one client', () => {
+    const primary = makeSaturatingClient(4 * 1024 * 1024)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    const bounded = new RelayDispatcher(primary.write, primary.options)
+    try {
+      // The first 1.5MB frame is retained by the stalled sink; the second exceeds the 2MB producer queue.
+      bounded.notify('fs.changed', { events: ['x'.repeat(1_500_000)] })
+      expect(primary.frames).toHaveLength(1)
+      bounded.notify('fs.changed', { events: ['x'.repeat(1_500_000)] })
+      bounded.notify('fs.changed', { events: ['x'.repeat(5_000_000)] })
+
+      expect(primary.closes).toBe(0)
+      expect(stderr).toHaveBeenCalledTimes(2)
+      expect(stderr.mock.calls[0][0]).toMatch(
+        /^\[relay\] Dropped fs\.changed \(\d+B, producer queue full; frame capacity 4128768B\)\n$/
+      )
+      expect(stderr.mock.calls[1][0]).toMatch(
+        /^\[relay\] Dropped fs\.changed \(\d+B > producer frame capacity 4128768B\)\n$/
+      )
+
+      // Both classifications stay one-per-generation once logged.
+      bounded.notify('fs.changed', { events: ['x'.repeat(1_500_000)] })
+      bounded.notify('fs.changed', { events: ['x'.repeat(5_000_000)] })
+      expect(stderr).toHaveBeenCalledTimes(2)
+    } finally {
+      stderr.mockRestore()
+      bounded.dispose()
+    }
+  })
+
+  it('logs each dropped method once instead of letting the first method silence the rest', () => {
+    const primary = makeBoundedClient(16384)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    const bounded = new RelayDispatcher(primary.write, primary.options)
+    try {
+      const flood = { events: ['x'.repeat(20_000)] }
+      bounded.notify('fs.changed', flood)
+      bounded.notify('pty.data', flood)
+      bounded.notify('fs.changed', flood)
+      bounded.notify('pty.data', flood)
+
+      expect(stderr).toHaveBeenCalledTimes(2)
+      expect(stderr.mock.calls[0][0]).toContain('Dropped fs.changed')
+      expect(stderr.mock.calls[1][0]).toContain('Dropped pty.data')
     } finally {
       stderr.mockRestore()
       bounded.dispose()

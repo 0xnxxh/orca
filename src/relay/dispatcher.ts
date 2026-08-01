@@ -69,8 +69,17 @@ type RelayClient = {
   highestReceivedSeq: number
   generation: number
   closed: boolean
-  droppedNotificationLogGeneration: number | null
+  droppedNotificationLog: DroppedProducerNotificationLog | null
   sessionIdentity: RelayClientSessionIdentity
+}
+
+// Why: the log key set is rebuilt per generation, but a producer minting synthetic method names would still
+// grow it inside one generation — cap it well above the fixed relay method vocabulary.
+const DROPPED_NOTIFICATION_LOG_KEY_LIMIT = 64
+
+type DroppedProducerNotificationLog = {
+  generation: number
+  loggedKeys: Set<string>
 }
 
 type PendingRelayRequest = {
@@ -467,18 +476,30 @@ export class RelayDispatcher {
     )
   }
 
-  // Why: one line per connection generation — a flooding producer retries every batch and would spam stderr.
+  // Why: one line per generation, method and drop reason — a flooding producer retries every batch and would
+  // spam stderr, but a transient queue-full drop must not consume the slot a real over-capacity drop needs.
   private logDroppedProducerNotification(
     client: RelayClient,
     method: string,
     msg: JsonRpcNotification
   ): void {
-    if (client.droppedNotificationLogGeneration === client.generation) {
+    const bytes = this.estimateFrameBytes(msg)
+    const capacity = client.writer.producerFrameCapacity
+    const overCapacity = bytes > capacity
+    const key = `${method}:${overCapacity ? 'over-capacity' : 'queue-full'}`
+    let log = client.droppedNotificationLog
+    if (!log || log.generation !== client.generation) {
+      log = { generation: client.generation, loggedKeys: new Set() }
+      client.droppedNotificationLog = log
+    }
+    if (log.loggedKeys.has(key) || log.loggedKeys.size >= DROPPED_NOTIFICATION_LOG_KEY_LIMIT) {
       return
     }
-    client.droppedNotificationLogGeneration = client.generation
+    log.loggedKeys.add(key)
     process.stderr.write(
-      `[relay] Dropped ${method} (${this.estimateFrameBytes(msg)}B > producer capacity ${client.writer.producerFrameCapacity}B)\n`
+      overCapacity
+        ? `[relay] Dropped ${method} (${bytes}B > producer frame capacity ${capacity}B)\n`
+        : `[relay] Dropped ${method} (${bytes}B, producer queue full; frame capacity ${capacity}B)\n`
     )
   }
 
@@ -674,7 +695,7 @@ export class RelayDispatcher {
       highestReceivedSeq: 0,
       generation: 0,
       closed: false,
-      droppedNotificationLogGeneration: null,
+      droppedNotificationLog: null,
       sessionIdentity: sessionIdentity ?? {
         principal: `unproved:${id}`,
         authenticated: false,

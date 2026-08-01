@@ -194,9 +194,12 @@ describe('FsHandler readFileStream', () => {
     expect(frames[lastChunkIndex].clientId).toBe(7)
   })
 
-  it('delivers fs.streamEnd on the control lane and releases the stream when the producer lane is saturated', async () => {
-    const filePath = path.join(tmpDir, 'saturated.png')
+  // Real saturation is not constructible: the fixed-bulk lane admits a chunk only while producerBytes is 0,
+  // so a real backlog parks the chunk pump long before the terminal frame — hence the lane-tagging mock.
+  it('orders fs.streamEnd after the final chunk on the control lane and releases the stream', async () => {
+    const filePath = path.join(tmpDir, 'stream-end-release.png')
     writeFileSync(filePath, Buffer.alloc(300 * 1024, 0x42))
+    // Producer-lane frames now divert to the drop log, so an empty log proves no stream frame took that lane.
     dispatcher.saturateProducerLane()
 
     const meta = (await dispatcher.callRequest(
@@ -208,6 +211,13 @@ describe('FsHandler readFileStream', () => {
     await waitFor(() => collectStream(dispatcher).end !== null)
     expect(dispatcher._droppedProducerFrames).toHaveLength(0)
     expect(collectStream(dispatcher).end).toEqual({ streamId: meta.streamId })
+
+    const frames = dispatcher._notifications
+    const endIndex = frames.findIndex((n) => n.method === 'fs.streamEnd')
+    const lastChunkIndex = frames.map((n) => n.method).lastIndexOf('fs.streamChunk')
+    expect(lastChunkIndex).toBeGreaterThanOrEqual(0)
+    expect(endIndex).toBe(lastChunkIndex + 1)
+    expect(frames[endIndex].lane).toBe('control')
 
     const registry = (handler as unknown as { streamRegistry: { size(): number } }).streamRegistry
     await waitFor(() => registry.size() === 0)

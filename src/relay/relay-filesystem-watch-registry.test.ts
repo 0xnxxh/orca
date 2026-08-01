@@ -72,6 +72,19 @@ function createDispatcher() {
     fsChanged,
     notify: vi.fn(),
     notifyClient: vi.fn(record),
+    tryNotifyClient: vi.fn(
+      (
+        clientId: number,
+        method: string,
+        params?: Record<string, unknown>,
+        onSettled?: (result: { ok: true } | { ok: false; error: Error }) => void
+      ) => {
+        record(clientId, method, params)
+        // A healthy sink settles as the frame is written, which releases the emitter's outstanding-marker slot.
+        onSettled?.({ ok: true })
+        return true
+      }
+    ),
     activeClientIds: vi.fn(() => [1]),
     producerEnvelopeBudget: vi.fn(() => Number.MAX_SAFE_INTEGER),
     publishProducerNotification: vi.fn(

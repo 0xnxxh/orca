@@ -58,22 +58,21 @@ function buildMaximalHookEnvelope(): Record<string, unknown> {
   } as unknown as Record<string, unknown>
 }
 
-/** Pure measurement shape only: the real emitter never emits `watchId`. */
-function buildWatcherBatch(count: number): Record<string, unknown> {
-  return {
-    watchId: 'watch-1',
-    events: Array.from({ length: count }, (_, i) => ({
-      type: 'update',
-      path: `${WATCHER_ROOT}/node_modules/.vite/deps/chunk-${String(i).padStart(6, '0')}.js`
-    }))
-  }
-}
-
 function watcherProcessEvents(count: number): WatcherProcessEvent[] {
   return Array.from({ length: count }, (_, i) => ({
     type: 'update',
     path: `${WATCHER_ROOT}/node_modules/.vite/deps/chunk-${String(i).padStart(6, '0')}.js`
   })) as unknown as WatcherProcessEvent[]
+}
+
+/** The exact `fs.changed` params emitRelayWatcherEvents publishes, so the pinned sizes measure reality. */
+function buildWatcherBatch(count: number): Record<string, unknown> {
+  return {
+    events: watcherProcessEvents(count).map((event) => ({
+      kind: event.type,
+      absolutePath: event.path
+    }))
+  }
 }
 
 function frameBytes(method: string, params: Record<string, unknown>): number {
@@ -102,6 +101,20 @@ function createDispatcher(hwm: number, onClose: () => void, sink: Buffer[]): Rel
 }
 
 describe('relay oversized notification survival', () => {
+  // Without this the pinned byte counts below could measure a payload the emitter never sends.
+  it('measures the params emitRelayWatcherEvents actually publishes', () => {
+    const sink: Buffer[] = []
+    const dispatcher = createDispatcher(NODE22_HWM, () => {}, sink)
+
+    try {
+      emitRelayWatcherEvents(dispatcher, WATCHER_ROOT, false, watcherProcessEvents(1))
+      expect(sink).toHaveLength(1)
+      expect(frameParams(sink[0])).toEqual(buildWatcherBatch(1))
+    } finally {
+      dispatcher.dispose()
+    }
+  })
+
   it('measures both producers against both Node tiers', () => {
     const hookBytes = frameBytes(AGENT_HOOK_NOTIFICATION_METHOD, buildMaximalHookEnvelope())
     const fullBatchBytes = frameBytes('fs.changed', buildWatcherBatch(MAX_BATCHED_WATCHER_EVENTS))
@@ -124,9 +137,9 @@ describe('relay oversized notification survival', () => {
     expect(capacityFor(NODE22_HWM)).toBe(49152)
     expect(capacityFor(NODE21_HWM)).toBe(12288)
     expect(hookBytes).toBe(29894)
-    expect(fullBatchBytes).toBe(425094)
-    expect(trip(capacityFor(NODE22_HWM))).toBe(577)
-    expect(trip(capacityFor(NODE21_HWM))).toBe(143)
+    expect(fullBatchBytes).toBe(465074)
+    expect(trip(capacityFor(NODE22_HWM))).toBe(527)
+    expect(trip(capacityFor(NODE21_HWM))).toBe(131)
 
     // agent.hook: fits a modern remote, over-cap on an older one.
     expect(hookBytes).toBeLessThan(capacityFor(NODE22_HWM))

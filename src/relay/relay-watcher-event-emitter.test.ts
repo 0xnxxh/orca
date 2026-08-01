@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { WatcherProcessEvent } from '../main/ipc/parcel-watcher-process-protocol'
 import { RelayDispatcher } from './dispatcher'
 import type { RelayClientSinkOptions, RelayClientWrite } from './dispatcher-writer-sink'
 import { HEADER_LENGTH, parseJsonRpcMessage } from './protocol'
@@ -76,6 +77,25 @@ function watcherBatch(count: number): { type: 'create'; path: string; isDirector
     path: `/workspace/project/src/module-${index}/component-${index}.tsx`,
     isDirectory: false as const
   }))
+}
+
+function parentDir(absolutePath: string): string {
+  return absolutePath.slice(0, absolutePath.lastIndexOf('/'))
+}
+
+// Fills the 2 MB producer queue so every subsequent watcher batch is rejected on the producer lane.
+function saturateProducerQueue(dispatcher: RelayDispatcher): void {
+  let admitted = 0
+  for (const chunk of [40_000, 1_000, 1]) {
+    while (
+      admitted < 5_000 &&
+      dispatcher.tryNotifyPtyData({ paneId: 'pane', data: 'x'.repeat(chunk) })
+    ) {
+      admitted += 1
+    }
+  }
+  expect(admitted).toBeGreaterThan(0)
+  expect(admitted).toBeLessThan(5_000)
 }
 
 describe('relay watcher writer admission', () => {
@@ -158,17 +178,7 @@ describe('relay watcher batch chunking', () => {
 
     try {
       // Fill the 2 MB producer queue down to a residue smaller than a one-event fs.changed frame.
-      let admitted = 0
-      for (const chunk of [40_000, 1_000, 1]) {
-        while (
-          admitted < 5_000 &&
-          dispatcher.tryNotifyPtyData({ paneId: 'pane', data: 'x'.repeat(chunk) })
-        ) {
-          admitted += 1
-        }
-      }
-      expect(admitted).toBeGreaterThan(0)
-      expect(admitted).toBeLessThan(5_000)
+      saturateProducerQueue(dispatcher)
 
       emitRelayWatcherEvents(dispatcher, '/workspace', false, [
         { type: 'create', path: '/workspace/first', isDirectory: false }
@@ -181,6 +191,111 @@ describe('relay watcher batch chunking', () => {
       // Control lane preempts: the marker lands before the producer frames still queued behind it.
       expect(sink.frames.indexOf(markers[0])).toBeLessThan(sink.frames.length - 1)
       expect(sink.closes()).toBe(0)
+    } finally {
+      dispatcher.dispose()
+    }
+  })
+
+  it('keeps at most one outstanding overflow marker per root without closing the client', () => {
+    const sink = createRecordingSink(65536)
+    sink.blockNextWrite()
+    const dispatcher = new RelayDispatcher(sink.write, sink.options)
+
+    try {
+      saturateProducerQueue(dispatcher)
+
+      // More rejected batches than the 256-frame control queue can hold: one marker each would close the link.
+      for (let index = 0; index < 300; index += 1) {
+        emitRelayWatcherEvents(dispatcher, '/workspace', false, [
+          { type: 'create', path: `/workspace/file-${index}`, isDirectory: false }
+        ])
+      }
+      // A second root must still get its own marker, or that tree silently desyncs.
+      emitRelayWatcherEvents(dispatcher, '/other', false, [
+        { type: 'create', path: '/other/file', isDirectory: false }
+      ])
+      expect(sink.closes()).toBe(0)
+
+      sink.drainWaiters.shift()?.()
+      const markers = sink.frames
+        .filter((frame) => frameMethod(frame) === 'fs.changed')
+        .flatMap(frameEvents)
+      expect(markers).toEqual([
+        { kind: 'overflow', absolutePath: '/workspace' },
+        { kind: 'overflow', absolutePath: '/other' }
+      ])
+      expect(sink.closes()).toBe(0)
+
+      // The slot clears once the marker drains, so a later batch can still resync the same root.
+      emitRelayWatcherEvents(dispatcher, '/workspace', false, [
+        { type: 'create', path: '/workspace/later', isDirectory: false }
+      ])
+      expect(
+        sink.frames.filter((frame) => frameMethod(frame) === 'fs.changed').flatMap(frameEvents)
+      ).toHaveLength(3)
+    } finally {
+      dispatcher.dispose()
+    }
+  })
+
+  it('keeps one directory in one chunk when the batch interleaves directories', () => {
+    const sink = createRecordingSink(16384)
+    const dispatcher = new RelayDispatcher(sink.write, sink.options)
+    const directoryCount = 8
+    const replacedPath = '/workspace/project/src/module-7/component-0.tsx'
+    const events: WatcherProcessEvent[] = [
+      ...Array.from({ length: 200 }, (_unused, index) => ({
+        type: 'create' as const,
+        path: `/workspace/project/src/module-${index % directoryCount}/component-${Math.floor(index / directoryCount)}.tsx`,
+        isDirectory: false
+      })),
+      { type: 'delete' as const, path: replacedPath }
+    ]
+
+    try {
+      emitRelayWatcherEvents(dispatcher, '/workspace', false, events)
+
+      expect(sink.frames.length).toBeGreaterThan(1)
+      const frameDirs = sink.frames.map(
+        (frame) => new Set(frameEvents(frame).map((event) => parentDir(event.absolutePath)))
+      )
+      const dirs = Array.from(new Set(events.map((event) => parentDir(event.path))))
+      expect(dirs).toHaveLength(directoryCount)
+      // Each directory in one frame; the renderer dedupes refreshes per payload, so extra frames = extra readDir RPCs.
+      const refreshes = frameDirs.reduce((total, frameDir) => total + frameDir.size, 0)
+      expect(refreshes).toBeLessThanOrEqual(directoryCount + sink.frames.length - 1)
+
+      const delivered = sink.frames.flatMap(frameEvents)
+      for (const dir of dirs) {
+        const positions = delivered
+          .map((event, index) => ({ event, index }))
+          .filter((entry) => parentDir(entry.event.absolutePath) === dir)
+          .map((entry) => entry.index)
+        expect(positions.at(-1)! - positions[0]).toBe(positions.length - 1)
+      }
+      // Stable grouping keeps per-path order: the create still precedes the delete of the same path.
+      expect(
+        delivered.filter((event) => event.absolutePath === replacedPath).map((event) => event.kind)
+      ).toEqual(['create', 'delete'])
+      expect(delivered).toHaveLength(events.length)
+    } finally {
+      dispatcher.dispose()
+    }
+  })
+
+  it('sizes chunks near the byte minimum instead of overshooting it', () => {
+    const sink = createRecordingSink(16384)
+    const capacity = 12288
+    const dispatcher = new RelayDispatcher(sink.write, sink.options)
+
+    try {
+      emitRelayWatcherEvents(dispatcher, '/workspace', false, watcherBatch(5000))
+
+      const totalBytes = sink.frames.reduce((total, frame) => total + frame.length, 0)
+      expect(sink.frames.length).toBeLessThanOrEqual(Math.ceil(totalBytes / capacity) + 1)
+      for (const frame of sink.frames.slice(0, -1)) {
+        expect(frame.length).toBeGreaterThanOrEqual(capacity * 0.9)
+      }
     } finally {
       dispatcher.dispose()
     }
