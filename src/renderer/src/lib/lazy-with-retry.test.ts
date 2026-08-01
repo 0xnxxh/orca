@@ -5,6 +5,9 @@ import type { ComponentType } from 'react'
 import { isLazyChunkLoadError, loadLazyWithRetry } from './lazy-with-retry'
 
 const RELOAD_GUARD_KEY = 'orca:lazy-chunk-reload-attempted'
+// A guard holding a *different* document's token is the only proof the reload
+// landed; a token matching this document means the reload was vetoed.
+const LANDED_RELOAD_GUARD_VALUE = 'doc-before-the-reload'
 const Comp: ComponentType = () => null
 const chunkParseError = (): SyntaxError => new SyntaxError("Unexpected token ']'")
 const chunkFetchError = (): TypeError =>
@@ -103,15 +106,45 @@ describe('loadLazyWithRetry', () => {
 
     expect(factory).toHaveBeenCalledTimes(3)
     expect(reload).toHaveBeenCalledTimes(1)
-    expect(window.sessionStorage.getItem(RELOAD_GUARD_KEY)).toBe('1')
-    // The load promise must suspend (never settle) while the page reloads, so the
-    // error boundary never flashes.
+    // The guard stores the requesting document's identity, not a bare flag.
+    expect(window.sessionStorage.getItem(RELOAD_GUARD_KEY)).toBe(String(performance.timeOrigin))
+    // The load promise must stay pending across the reload window, so the error
+    // boundary never flashes ahead of the navigation.
     expect(settled).toBe(false)
+  })
+
+  // Crash b860def2: reload() was called at 19:05 and the document was still alive at
+  // 19:49 (no renderer bootstrap in between), so the requesting pane suspended forever.
+  it('surfaces the original error when the guarded reload never tears the document down', async () => {
+    const reload = spyOnReload()
+    stubCrashReportsBreadcrumb()
+    const error = chunkParseError()
+    const factory = vi.fn(() => Promise.reject(error))
+
+    const loaded = loadLazyWithRetry(factory, { retries: 0 })
+    let settled: unknown = 'pending'
+    void loaded.then(
+      (value) => {
+        settled = value
+      },
+      (rejection) => {
+        settled = rejection
+      }
+    )
+
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(reload).toHaveBeenCalledTimes(1)
+    // Still suspended inside the grace window, so a landed reload shows no fallback.
+    expect(settled).toBe('pending')
+
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(settled).toBe(error)
+    expect(reload).toHaveBeenCalledTimes(1)
   })
 
   it('does NOT reload twice — wraps known chunk failures once the guard is already set', async () => {
     const reload = spyOnReload()
-    window.sessionStorage.setItem(RELOAD_GUARD_KEY, '1')
+    window.sessionStorage.setItem(RELOAD_GUARD_KEY, LANDED_RELOAD_GUARD_VALUE)
     const error = chunkFetchError()
     const factory = vi.fn(() => Promise.reject(error))
 
@@ -128,9 +161,29 @@ describe('loadLazyWithRetry', () => {
     expect(isLazyChunkLoadError(caught)).toBe(true)
   })
 
+  // Crash b860def2: the guarded reload() was vetoed, the document lived on for 44
+  // minutes, and the still-set guard turned the next failure into the sentinel that
+  // error boundaries suppress — hiding a recovery that never ran.
+  it('reports the original error when the guard belongs to this same document (reload vetoed)', async () => {
+    const reload = spyOnReload()
+    window.sessionStorage.setItem(RELOAD_GUARD_KEY, String(performance.timeOrigin))
+    const error = chunkParseError()
+    const factory = vi.fn(() => Promise.reject(error))
+
+    const loaded = loadLazyWithRetry(factory, { retries: 0 })
+    const assertion = expect(loaded).rejects.toBe(error)
+    await vi.advanceTimersByTimeAsync(5000)
+    await assertion
+
+    // Re-arming the reload here would loop against whatever vetoed the first one.
+    expect(reload).not.toHaveBeenCalled()
+    const caught = await loaded.catch((rejection) => rejection)
+    expect(isLazyChunkLoadError(caught)).toBe(false)
+  })
+
   it('preserves the original error when the guarded failure is not a dynamic import failure', async () => {
     const reload = spyOnReload()
-    window.sessionStorage.setItem(RELOAD_GUARD_KEY, '1')
+    window.sessionStorage.setItem(RELOAD_GUARD_KEY, LANDED_RELOAD_GUARD_VALUE)
     const error = new Error('render bug from lazy module evaluation')
     const factory = vi.fn(() => Promise.reject(error))
 
@@ -152,7 +205,7 @@ describe('loadLazyWithRetry', () => {
     // same dead import). Regression guard for crash report e08749bb (right
     // sidebar, "Unexpected token ')'").
     const reload = spyOnReload()
-    window.sessionStorage.setItem(RELOAD_GUARD_KEY, '1')
+    window.sessionStorage.setItem(RELOAD_GUARD_KEY, LANDED_RELOAD_GUARD_VALUE)
     const error = chunkParseError()
     const factory = vi.fn(() => Promise.reject(error))
 
@@ -172,7 +225,7 @@ describe('loadLazyWithRetry', () => {
     // An ordinary Error from a lazy module is a genuine evaluation bug, not a
     // corrupt chunk; it must still surface raw after the guard is set.
     const reload = spyOnReload()
-    window.sessionStorage.setItem(RELOAD_GUARD_KEY, '1')
+    window.sessionStorage.setItem(RELOAD_GUARD_KEY, LANDED_RELOAD_GUARD_VALUE)
     const error = new Error('render bug from lazy module evaluation')
     const factory = vi.fn(() => Promise.reject(error))
 
@@ -250,14 +303,14 @@ describe('loadLazyWithRetry', () => {
 
   it('keeps the reload guard set across a successful load (no second reload in one session)', async () => {
     const reload = spyOnReload()
-    window.sessionStorage.setItem(RELOAD_GUARD_KEY, '1')
+    window.sessionStorage.setItem(RELOAD_GUARD_KEY, LANDED_RELOAD_GUARD_VALUE)
     const factory = vi.fn(() => Promise.resolve({ default: Comp }))
 
     await loadLazyWithRetry(factory)
 
     // The guard must survive a healthy load — otherwise a sibling chunk's success
     // would re-arm the reload and an auto-mounted corrupt chunk would loop.
-    expect(window.sessionStorage.getItem(RELOAD_GUARD_KEY)).toBe('1')
+    expect(window.sessionStorage.getItem(RELOAD_GUARD_KEY)).toBe(LANDED_RELOAD_GUARD_VALUE)
     expect(reload).not.toHaveBeenCalled()
   })
 })

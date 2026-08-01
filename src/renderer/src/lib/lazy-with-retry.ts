@@ -18,7 +18,7 @@ type AnyComponent = ComponentType<any>
 
 type LazyFactory<T extends AnyComponent> = () => Promise<{ default: T }>
 
-type ReloadGuardState = 'not-attempted' | 'attempted' | 'unavailable'
+type ReloadGuardState = 'not-attempted' | 'reload-landed' | 'reload-not-landed' | 'unavailable'
 
 export type LazyWithRetryOptions = {
   retries?: number
@@ -46,15 +46,31 @@ export function isLazyChunkLoadError(error: unknown): error is LazyChunkLoadErro
 // otherwise a sibling chunk's healthy load would re-arm the reload and an
 // auto-mounted corrupt chunk would loop.
 const RELOAD_GUARD_KEY = 'orca:lazy-chunk-reload-attempted'
+// Stand-in document identity for hosts without a usable performance.timeOrigin; a
+// reload re-evaluates this module, so a fresh value still means the reload landed.
+const FALLBACK_RELOAD_TOKEN = `doc-${Math.random().toString(36).slice(2)}`
 const DEFAULT_RETRIES = 2
 const DEFAULT_BASE_DELAY_MS = 250
+
+// The guard stores the requesting document's identity, not a bare flag: reload() can be
+// vetoed (beforeunload preventDefault → Electron cancels the navigation) and a bare flag
+// would then read as "recovery ran" forever inside a document that never reloaded (crash
+// b860def2). timeOrigin changes per navigation, so a value still ours means no reload.
+function currentDocumentReloadToken(): string {
+  const timeOrigin = typeof performance === 'undefined' ? Number.NaN : performance.timeOrigin
+  return Number.isFinite(timeOrigin) && timeOrigin > 0 ? String(timeOrigin) : FALLBACK_RELOAD_TOKEN
+}
 
 function readChunkReloadGuardState(): ReloadGuardState {
   if (typeof window === 'undefined') {
     return 'unavailable'
   }
   try {
-    return window.sessionStorage.getItem(RELOAD_GUARD_KEY) === '1' ? 'attempted' : 'not-attempted'
+    const stored = window.sessionStorage.getItem(RELOAD_GUARD_KEY)
+    if (stored === null) {
+      return 'not-attempted'
+    }
+    return stored === currentDocumentReloadToken() ? 'reload-not-landed' : 'reload-landed'
   } catch {
     // Why: when storage is blocked we cannot prove a reload happened, but still
     // fail closed on reloads so a broken chunk never loops.
@@ -64,7 +80,7 @@ function readChunkReloadGuardState(): ReloadGuardState {
 
 function markChunkReloadAttempted(): boolean {
   try {
-    window.sessionStorage.setItem(RELOAD_GUARD_KEY, '1')
+    window.sessionStorage.setItem(RELOAD_GUARD_KEY, currentDocumentReloadToken())
     return true
   } catch {
     // A reload without a durable guard can loop, so treat write failure as unavailable.
@@ -86,9 +102,19 @@ function recordReloadBreadcrumb(reloadKey: string, message: string): void {
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
-// Suspends the React.lazy boundary while window.location.reload() tears the page
-// down, so the error fallback never flashes in the moment before the reload lands.
-const SUSPEND_UNTIL_RELOAD = new Promise<never>(() => undefined)
+// Grace window for reload() to tear the document down. Long enough that the error
+// fallback never flashes ahead of a real navigation.
+const RELOAD_SETTLE_GRACE_MS = 10_000
+
+// Suspends the boundary while reload() tears the page down. Suspending forever would
+// hang the pane on a spinner when the reload is vetoed (Orca preventDefault()s
+// beforeunload for dirty editor tabs), so surface the real failure once the grace
+// window proves the navigation never happened.
+function suspendUntilReloadLands(loadError: unknown): Promise<never> {
+  return new Promise<never>((_resolve, reject) => {
+    setTimeout(() => reject(loadError), RELOAD_SETTLE_GRACE_MS)
+  })
+}
 
 function isKnownDynamicImportFailure(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -150,15 +176,17 @@ export async function loadLazyWithRetry<T extends AnyComponent>(
       lastError instanceof Error ? lastError.message : String(lastError)
     )
     window.location.reload()
-    return SUSPEND_UNTIL_RELOAD
+    return suspendUntilReloadLands(lastError)
   }
 
-  if (reloadGuardState === 'attempted' && isKnownDynamicImportFailure(lastError)) {
+  if (reloadGuardState === 'reload-landed' && isKnownDynamicImportFailure(lastError)) {
     throw new LazyChunkLoadError(lastError)
   }
 
-  // No proven reload attempt (SSR / node / blocked storage) or unknown failure:
-  // re-throw the original error so normal error reporting semantics stay intact.
+  // No proven reload (SSR / node / blocked storage / a reload this document asked
+  // for but never got) or unknown failure: re-throw the original error so normal
+  // error reporting semantics stay intact. Boundaries suppress the sentinel, so
+  // wrapping an unproven recovery here would hide the failure entirely.
   throw lastError
 }
 

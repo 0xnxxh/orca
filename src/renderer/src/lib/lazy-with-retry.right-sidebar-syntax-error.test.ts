@@ -13,8 +13,8 @@ import { isLazyChunkLoadError, loadLazyWithRetry } from './lazy-with-retry'
 //     const SourceControl = lazy(() => import('./SourceControl'))   // lazyWithRetry
 //
 // So the corrupt-chunk recovery IS wired in. The crash was a BLIND SPOT in that
-// recovery: after the single guarded window.location.reload() has already fired
-// once this session (sessionStorage 'orca:lazy-chunk-reload-attempted' === '1'),
+// recovery: after the single guarded window.location.reload() has already landed
+// once this session (the guard holds a *previous* document's identity),
 // loadLazyWithRetry only converted the failure into a recoverable
 // LazyChunkLoadError when isKnownDynamicImportFailure(error) was true. A corrupt /
 // truncated chunk that parses as invalid JS rejects import() with a native
@@ -25,6 +25,10 @@ import { isLazyChunkLoadError, loadLazyWithRetry } from './lazy-with-retry'
 // corrupt-chunk failure; these tests pin that behavior.
 
 const RELOAD_GUARD_KEY = 'orca:lazy-chunk-reload-attempted'
+// Only a token left by a *different* document proves the reload landed; a token
+// matching this document means the reload was requested and vetoed.
+const LANDED_RELOAD_GUARD_VALUE = 'doc-before-the-reload'
+const VETOED_RELOAD_GUARD_VALUE = (): string => String(performance.timeOrigin)
 
 // The exact error the renderer received from the corrupt right-sidebar chunk.
 const reportedCrashError = (): SyntaxError => new SyntaxError("Unexpected token ')'")
@@ -57,9 +61,9 @@ afterEach(() => {
 describe('right-sidebar lazy chunk SyntaxError crash (regression)', () => {
   it('recovers a corrupt right-sidebar chunk SyntaxError instead of surfacing it to the boundary', async () => {
     const reload = spyOnReload()
-    // The one guarded reload already happened earlier this session: the user has
-    // navigated/reloaded once after the stale chunk was first hit.
-    window.sessionStorage.setItem(RELOAD_GUARD_KEY, '1')
+    // The one guarded reload already landed earlier this session: the guard was
+    // written by the document that reloaded, not by this one.
+    window.sessionStorage.setItem(RELOAD_GUARD_KEY, LANDED_RELOAD_GUARD_VALUE)
 
     // import('./SourceControl') rejects with the native parse error from the
     // corrupt chunk — exactly what the crash report captured.
@@ -87,7 +91,7 @@ describe('right-sidebar lazy chunk SyntaxError crash (regression)', () => {
     // chunk, surfaced as a fetch failure, IS recovered; surfaced as a parse error,
     // it is not. Both are the same unrecoverable corrupt right-sidebar chunk.
     const recover = async (makeError: () => Error): Promise<unknown> => {
-      window.sessionStorage.setItem(RELOAD_GUARD_KEY, '1')
+      window.sessionStorage.setItem(RELOAD_GUARD_KEY, LANDED_RELOAD_GUARD_VALUE)
       const factory = vi.fn(() => Promise.reject(makeError()))
       const loaded = loadLazyWithRetry(factory, { retries: 0, reloadKey: 'right-sidebar' })
       try {
@@ -108,5 +112,32 @@ describe('right-sidebar lazy chunk SyntaxError crash (regression)', () => {
     expect(isLazyChunkLoadError(fetchOutcome)).toBe(true) // recovered
     // The parse error from the very same corrupt chunk must be recovered too.
     expect(isLazyChunkLoadError(parseOutcome)).toBe(true)
+  })
+
+  // Deliberate narrowing of the recovery above: a guard this document wrote itself
+  // means its reload() was vetoed, so no refetch ever happened and the sentinel
+  // would hide a live failure from the boundary.
+  it('surfaces the raw SyntaxError when this document is the one whose reload was vetoed', async () => {
+    const reload = spyOnReload()
+    window.sessionStorage.setItem(RELOAD_GUARD_KEY, VETOED_RELOAD_GUARD_VALUE())
+    const error = reportedCrashError()
+    const factory = vi.fn(() => Promise.reject(error))
+
+    const loaded = loadLazyWithRetry(factory, { retries: 0, reloadKey: 'right-sidebar' })
+    // Track settlement rather than awaiting: a regression leaves this pending forever.
+    let caught: unknown = 'pending'
+    void loaded.then(
+      (value) => {
+        caught = value
+      },
+      (rejection: unknown) => {
+        caught = rejection
+      }
+    )
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(caught).toBe(error)
+    expect(isLazyChunkLoadError(caught)).toBe(false)
+    expect(reload).not.toHaveBeenCalled() // re-arming would loop against the veto
   })
 })

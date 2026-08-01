@@ -1,4 +1,5 @@
 import React from 'react'
+import { recordRendererCrashBreadcrumb } from '@/lib/crash-breadcrumb-recorder'
 import { isLazyChunkLoadError } from '@/lib/lazy-with-retry'
 import { reportReactErrorBoundaryCrash } from '@/lib/react-error-boundary-reporting'
 import { translate } from '@/i18n/i18n'
@@ -11,6 +12,20 @@ type Props = {
 type State = {
   error: Error | null
   fileId: string
+}
+
+// Module-scoped, not per instance: EditorContent re-keys this boundary per open file,
+// so an instance field would re-record on every markdown tab switch and flush the
+// 30-entry breadcrumb ring that this very evidence lives in. Bounded by the number of
+// distinct chunk failures a document can see (effectively one).
+const recordedLazyChunkCauses = new Set<string>()
+
+function describeLazyChunkCause(error: Error): string {
+  const cause = (error as { cause?: unknown }).cause
+  if (cause instanceof Error) {
+    return `${cause.name}: ${cause.message}`
+  }
+  return cause === undefined ? 'unknown' : String(cause)
 }
 
 // Why: a thrown exception inside the TipTap/ProseMirror render or in the
@@ -39,10 +54,18 @@ export class RichMarkdownErrorBoundary extends React.Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
     console.error('[RichMarkdownEditor] render crash contained by boundary', error, info)
-    // Why: lazy-with-retry already spent its retries and its one guarded reload, so a
-    // chunk-hash swap after an app update is expected degradation, not a crash. The
-    // fallback below still renders (matches RecoverableRenderErrorBoundary).
+    // Retries and the one guarded reload are already spent, so a crash report is not
+    // actionable — but it was the only artifact naming this surface, so leave a
+    // breadcrumb. Fallback still renders (matches RecoverableRenderErrorBoundary).
     if (isLazyChunkLoadError(error)) {
+      const cause = describeLazyChunkCause(error)
+      if (!recordedLazyChunkCauses.has(cause)) {
+        recordedLazyChunkCauses.add(cause)
+        recordRendererCrashBreadcrumb('lazy_chunk_boundary_degraded', {
+          boundaryId: 'editor.rich-markdown',
+          cause
+        })
+      }
       return
     }
     void reportReactErrorBoundaryCrash({
