@@ -77,7 +77,7 @@ describe('sanitizeWorktreeName', () => {
   it('uses readable git-safe shortcodes for known emoji', () => {
     expect(sanitizeWorktreeName('🚀')).toBe('rocket')
     expect(sanitizeWorktreeName('👩‍💻✨')).toBe('woman-technologist-sparkles')
-    expect(sanitizeWorktreeName('🇯🇵')).toBe('jp')
+    expect(sanitizeWorktreeName('🇯🇵')).toBe('flag-jp')
     expect(sanitizeWorktreeName('1️⃣')).toBe('one')
   })
 
@@ -86,7 +86,8 @@ describe('sanitizeWorktreeName', () => {
   })
 
   it('uses a git-safe fallback for emoji newer than the shortcode catalog', () => {
-    expect(sanitizeWorktreeName('\u{1fae9}')).toBe('workspace')
+    // Unassigned in Unicode 17, so no emojibase shortcode can cover it yet.
+    expect(sanitizeWorktreeName('\u{1faeb}')).toBe('workspace')
   })
 
   it('does not treat arbitrary punctuation as a workspace name', () => {

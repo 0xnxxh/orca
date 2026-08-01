@@ -1,23 +1,29 @@
-import emojiShortcodes from 'emojibase-data/en/shortcodes/github.json'
+import emojiShortcodes from 'emojibase-data/en/shortcodes/emojibase.json'
 
 export type StandardEmojiShortcodeEntry = {
   emoji: string
   shortcode: string
 }
 
+// Skin-tone aliases (`wave_tone3`) are ~40% of the dataset and would drown the suggestion list.
+const SKIN_TONE_SHORTCODE = /_tone\d(?:-\d)?$/
+
+const CATALOG = Object.entries(emojiShortcodes).flatMap(([hexcode, value]) => {
+  const shortcodes = (typeof value === 'string' ? [value] : value).filter(
+    (shortcode) => !SKIN_TONE_SHORTCODE.test(shortcode)
+  )
+  return shortcodes.length > 0 ? [{ emoji: hexcodeToEmoji(hexcode), shortcodes }] : []
+})
+
 export const STANDARD_EMOJI_SHORTCODE_ENTRIES: readonly StandardEmojiShortcodeEntry[] =
-  Object.entries(emojiShortcodes).flatMap(([hexcode, value]) => {
-    const shortcodes = typeof value === 'string' ? [value] : value
-    const emoji = hexcodeToEmoji(hexcode)
-    return shortcodes.map((shortcode) => ({ emoji, shortcode }))
-  })
+  CATALOG.flatMap(({ emoji, shortcodes }) => shortcodes.map((shortcode) => ({ emoji, shortcode })))
 
 const PRIMARY_SHORTCODE_BY_EMOJI = new Map(
-  Object.entries(emojiShortcodes).map(([hexcode, value]) => {
-    const shortcodes = typeof value === 'string' ? [value] : value
-    const shortcode = shortcodes.find((candidate) => /^[a-z]/i.test(candidate)) ?? shortcodes[0]
-    return [normalizeEmojiLookup(hexcodeToEmoji(hexcode)), shortcode]
-  })
+  CATALOG.map(({ emoji, shortcodes }) => [
+    normalizeEmojiLookup(emoji),
+    // Skip `+1`/`-1` so derived branch and directory names start with a letter.
+    shortcodes.find((candidate) => /^[a-z]/i.test(candidate)) ?? shortcodes[0]
+  ])
 )
 
 const EMOJI_SEGMENTER = new Intl.Segmenter('en', { granularity: 'grapheme' })
