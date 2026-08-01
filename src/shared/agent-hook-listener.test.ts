@@ -3177,6 +3177,40 @@ describe('shared agent-hook-listener', () => {
       expect(duplicatePark).toBeNull()
     })
 
+    it('keeps working when a no-lead stop carries an inventory with another live child', () => {
+      // Why: after a restart the listener can miss a2's start; a1's stop still
+      // lists a2 running in background_tasks — the removal must not retire it.
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a1',
+        agent_type: 'general-purpose'
+      })
+      const stopped = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'a1',
+        background_tasks: [
+          { id: 'a2', type: 'subagent', status: 'running', agent_type: 'general-purpose' }
+        ]
+      })
+      // Why: veto only — a2's row materializes from its own events or the next
+      // lead Stop's fold; the stop must merely not retire the pane.
+      expect(stopped?.payload.state).toBe('working')
+    })
+
+    it('keeps working when a no-lead drain leaves a live shell in the inventory', () => {
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a1',
+        agent_type: 'general-purpose'
+      })
+      const stopped = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'a1',
+        background_tasks: [{ id: 's1', type: 'shell', status: 'running' }]
+      })
+      expect(stopped?.payload.state).toBe('working')
+    })
+
     it('never claims done from a no-lead TeammateIdle park', () => {
       claudeEvent({
         hook_event_name: 'SubagentStart',

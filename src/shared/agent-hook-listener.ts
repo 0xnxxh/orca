@@ -2594,8 +2594,16 @@ function buildClaudeChildDrivenStatusPayload(
     })
   }
   if (evidence.removedRow) {
+    // Why: the stop's own inventory can list work this listener never saw start (post-restart);
+    // a running non-teammate task or live shell/cron vetoes done. Teammate-typed entries prove
+    // nothing ("running" even while idle), and full folding here would reap a just-parked
+    // teammate row before its TeammateIdle confirmation arrives — veto only, no reconcile.
+    const inventory = readClaudeBackgroundAgentTasks(hookPayload)
+    const inventoryShowsLiveWork =
+      inventory.tasks.some((task) => task.running && !task.teammate) ||
+      hasActiveClaudeNonAgentBackgroundWork(hookPayload)
     return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
-      stateName: 'done',
+      stateName: inventoryShowsLiveWork ? 'working' : 'done',
       updateToolSnapshot: false
     })
   }
