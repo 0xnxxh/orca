@@ -215,7 +215,11 @@ export async function captureFailureDiagnostics(page, dir, label) {
 
 /** Wait until the visible terminal surface and its xterm container are mounted.
  *  An expected tab id prevents post-restore probes from accepting another tab. */
-export async function waitForTerminalReady(page, timeoutMs = 60_000, terminalTabId = null) {
+export async function waitForTerminalReady(
+  page,
+  timeoutMs = 60_000,
+  terminalTabId = /** @type {string | null} */ (null)
+) {
   const selector = terminalTabId
     ? `[data-terminal-tab-id="${terminalTabId}"]:visible`
     : TERMINAL_SURFACE_VISIBLE
@@ -394,7 +398,10 @@ export async function listTabIds(page) {
  * off-screen helper textarea alone does not, which is why typed input was being
  * dropped. Click the pane, then focus the helper textarea as a belt-and-braces.
  */
-export async function focusActiveTerminal(page, terminalTabId = null) {
+export async function focusActiveTerminal(
+  page,
+  terminalTabId = /** @type {string | null} */ (null)
+) {
   // A feature-tip modal can appear late and swallow keystrokes; clear any before
   // focusing so typed commands actually reach the shell.
   await dismissKnownOverlays(page)

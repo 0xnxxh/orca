@@ -76,7 +76,10 @@ function findSetupExe(dir) {
  * cannot be quoted, so the path must be spaces-free (validated upstream) and is
  * passed as a single unquoted argv entry.
  */
-export function silentInstall(setupExe, { timeoutMs = 180_000, installDir = null } = {}) {
+export function silentInstall(
+  setupExe,
+  { timeoutMs = 180_000, installDir = /** @type {string | null} */ (null) } = {}
+) {
   assertWin32('silentInstall')
   if (!existsSync(setupExe)) {
     throw new Error(`Installer not found: ${setupExe}`)
