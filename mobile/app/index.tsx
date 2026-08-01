@@ -50,6 +50,7 @@ import {
   type TaskProvider
 } from '../src/tasks/mobile-task-providers'
 import { useResponsiveLayout } from '../src/layout/responsive-layout'
+import { createMobileSessionHref } from '../src/session/mobile-session-route'
 
 function endpointLabel(endpoint: string): string {
   try {
@@ -807,7 +808,11 @@ export default function HomeScreen() {
                     style={({ pressed }) => [styles.resumeCard, pressed && styles.hostCardPressed]}
                     onPress={() =>
                       router.push(
-                        `/h/${resumeWorktree.hostId}/session/${encodeURIComponent(resumeWorktree.worktree.worktreeId)}`
+                        createMobileSessionHref({
+                          hostId: resumeWorktree.hostId,
+                          worktreeId: resumeWorktree.worktree.worktreeId,
+                          name: resumeWorktree.worktree.displayName || resumeWorktree.worktree.repo
+                        })
                       )
                     }
                   >
