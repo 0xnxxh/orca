@@ -139,7 +139,7 @@ describe('hosted review branch cache (#11532)', () => {
     expect(lookup).toHaveBeenCalledTimes(2)
   })
 
-  it('serves the last known review during a backoff instead of an error', async () => {
+  it('serves the last known review from the failure itself, not only the backoff', async () => {
     const lookup = vi
       .fn<() => Promise<HostedReviewInfo | null>>()
       .mockResolvedValueOnce(openReview)
@@ -147,8 +147,10 @@ describe('hosted review branch cache (#11532)', () => {
 
     await withHostedReviewBranchCache(identity, { headOid: null }, lookup)
     vi.setSystemTime(1_000_000 + 60_001)
-    await expect(withHostedReviewBranchCache(identity, { headOid: null }, lookup)).rejects.toThrow(
-      'transient'
+    // The review must not blink out on the first failure and reappear on the next
+    // poll once the backoff window is what serves it.
+    await expect(withHostedReviewBranchCache(identity, { headOid: null }, lookup)).resolves.toEqual(
+      openReview
     )
 
     vi.setSystemTime(1_000_000 + 60_001 + 1_000)
@@ -175,10 +177,11 @@ describe('hosted review branch cache (#11532)', () => {
     )
 
     // The success clears the counter, so the next failure starts at the base
-    // window again rather than resuming a doubled one.
+    // window again rather than resuming a doubled one. That failure is served
+    // from the stale entry, but it still counts.
     vi.setSystemTime(1_000_000 + 2 * 60_001)
-    await expect(withHostedReviewBranchCache(identity, { headOid: null }, lookup)).rejects.toThrow(
-      'second'
+    await expect(withHostedReviewBranchCache(identity, { headOid: null }, lookup)).resolves.toEqual(
+      openReview
     )
     vi.setSystemTime(1_000_000 + 3 * 60_001)
     await expect(withHostedReviewBranchCache(identity, { headOid: null }, lookup)).resolves.toEqual(
@@ -200,6 +203,50 @@ describe('hosted review branch cache (#11532)', () => {
       openReview
     )
     expect(lookup).toHaveBeenCalledTimes(2)
+  })
+
+  it('discards a lookup that was already in flight when Orca opened a review', async () => {
+    let resolveLookup: (value: HostedReviewInfo | null) => void = () => {}
+    const lookup = vi
+      .fn<() => Promise<HostedReviewInfo | null>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<HostedReviewInfo | null>((resolve) => {
+            resolveLookup = resolve
+          })
+      )
+      .mockResolvedValue(openReview)
+
+    const inflight = withHostedReviewBranchCache(identity, { headOid: null }, lookup)
+    invalidateHostedReviewBranchCache('/repo', null)
+    // The poll started before the review existed, so its "no review" answer is
+    // older than the invalidation and must not be cached back over it.
+    resolveLookup(null)
+    await expect(inflight).resolves.toBeNull()
+
+    await expect(withHostedReviewBranchCache(identity, { headOid: null }, lookup)).resolves.toEqual(
+      openReview
+    )
+    expect(lookup).toHaveBeenCalledTimes(2)
+  })
+
+  it('leaves another repo in-flight lookup cacheable across an invalidation', async () => {
+    let resolveLookup: (value: HostedReviewInfo | null) => void = () => {}
+    const other = { ...identity, repoPath: '/other' }
+    const lookup = vi.fn<() => Promise<HostedReviewInfo | null>>().mockImplementationOnce(
+      () =>
+        new Promise<HostedReviewInfo | null>((resolve) => {
+          resolveLookup = resolve
+        })
+    )
+
+    const inflight = withHostedReviewBranchCache(other, { headOid: null }, lookup)
+    invalidateHostedReviewBranchCache('/repo', null)
+    resolveLookup(null)
+    await inflight
+
+    await withHostedReviewBranchCache(other, { headOid: null }, lookup)
+    expect(lookup).toHaveBeenCalledTimes(1)
   })
 
   it('scopes invalidation to one repo', async () => {

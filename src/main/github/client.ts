@@ -233,10 +233,12 @@ export async function getGitHubPRLookupRateLimitBlock(
     // failure must fail open rather than block the lookup (#7553).
     await getRateLimit().catch(() => undefined)
   }
-  const blocked = PR_BRANCH_LOOKUP_BUCKETS.map((bucket) =>
+  // Why: retrying at the earlier reset would fail again on the bucket that has
+  // not reset yet, so the latest blocked reset is the only honest retry time.
+  const resets = PR_BRANCH_LOOKUP_BUCKETS.map((bucket) =>
     repositoryRateLimitGuard(repository, bucket, executionOptions)
-  ).find((guard) => guard.blocked)
-  return blocked?.blocked ? { resetAt: blocked.resetAt } : null
+  ).flatMap((guard) => (guard.blocked ? [guard.resetAt] : []))
+  return resets.length > 0 ? { resetAt: Math.max(...resets) } : null
 }
 
 function prRefreshUpstreamError(

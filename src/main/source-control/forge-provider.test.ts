@@ -109,6 +109,8 @@ describe('forge provider interface', () => {
     getPRForBranchOutcomeMock.mockReset()
     getRepoSlugMock.mockReset()
     getEnterpriseGitHubRepoSlugMock.mockReset()
+    getGitHubPRLookupRateLimitBlockMock.mockReset()
+    getGitHubPRLookupRateLimitBlockMock.mockResolvedValue(null)
   })
 
   it('preserves the existing hosted provider detection order', async () => {
@@ -426,6 +428,5 @@ describe('forge provider interface', () => {
         branch: 'feature/x'
       })
     ).resolves.toBeNull()
-    getGitHubPRLookupRateLimitBlockMock.mockResolvedValue(null as never)
   })
 })

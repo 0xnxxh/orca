@@ -4643,6 +4643,34 @@ describe('getGitHubPRLookupRateLimitBlock', () => {
     })
   })
 
+  it('reports the latest reset when both lookup buckets are exhausted', async () => {
+    rateLimitGuardMock.mockImplementation(((bucket: string) => ({
+      blocked: true,
+      remaining: 4,
+      limit: 5000,
+      // Why: core resets first, so returning it would retry into graphql's block.
+      resetAt: bucket === 'core' ? 1_800_000_000 : 1_800_003_600
+    })) as () => RateLimitGuardResult)
+
+    await expect(getGitHubPRLookupRateLimitBlock('/repo-root')).resolves.toEqual({
+      resetAt: 1_800_003_600
+    })
+  })
+
+  it('reports the latest reset when both lookup buckets are exhausted', async () => {
+    // Retrying at the earlier reset would fail again on the bucket still blocked.
+    rateLimitGuardMock.mockImplementation(((bucket: string) => ({
+      blocked: true,
+      remaining: 0,
+      limit: 5000,
+      resetAt: bucket === 'graphql' ? 1_800_000_600 : 1_800_000_000
+    })) as () => RateLimitGuardResult)
+
+    await expect(getGitHubPRLookupRateLimitBlock('/repo-root')).resolves.toEqual({
+      resetAt: 1_800_000_600
+    })
+  })
+
   it('fails open when the exempt rate-limit probe itself fails', async () => {
     getRateLimitMock.mockRejectedValue(new Error('probe offline'))
 

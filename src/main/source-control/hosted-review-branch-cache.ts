@@ -37,6 +37,8 @@ const inflight = new Map<string, Promise<HostedReviewInfo | null>>()
 const failureBackoff = new Map<string, { until: number; failures: number }>()
 /** Branches a caller reported as its current selection, least recent first. */
 const activeClaims = new Map<string, number>()
+/** Bumped per repo on invalidation so a lookup that predates it cannot store. */
+const scopeGenerations = new Map<string, number>()
 
 // Why: NUL is the one byte a repo path or branch name cannot contain, so a
 // scope prefix cannot straddle a component boundary — invalidating `/a/b` must
@@ -177,6 +179,25 @@ function noteFailure(key: string): void {
   }
 }
 
+function scopeGeneration(scope: string): number {
+  return scopeGenerations.get(scope) ?? 0
+}
+
+function bumpScopeGeneration(scope: string): void {
+  const next = scopeGeneration(scope) + 1
+  scopeGenerations.delete(scope)
+  scopeGenerations.set(scope, next)
+  // Why: an evicted scope reads as generation 0, which only makes a lookup in
+  // flight at eviction discard its result — a wasted call, never a stale one.
+  while (scopeGenerations.size > MAX_ENTRIES) {
+    const oldest = scopeGenerations.keys().next().value
+    if (oldest === undefined) {
+      break
+    }
+    scopeGenerations.delete(oldest)
+  }
+}
+
 /**
  * Drops every cached answer for a repo. Called when Orca itself opens a review,
  * so the new one is visible immediately instead of after the no-review interval.
@@ -185,7 +206,9 @@ export function invalidateHostedReviewBranchCache(
   repoPath: string,
   connectionId?: string | null
 ): void {
-  const prefix = `${repoScope(repoPath, connectionId)}${KEY_SEPARATOR}`
+  const scope = repoScope(repoPath, connectionId)
+  bumpScopeGeneration(scope)
+  const prefix = `${scope}${KEY_SEPARATOR}`
   for (const key of entries.keys()) {
     if (key.startsWith(prefix)) {
       entries.delete(key)
@@ -204,6 +227,7 @@ export function __resetHostedReviewBranchCacheForTests(): void {
   inflight.clear()
   failureBackoff.clear()
   activeClaims.clear()
+  scopeGenerations.clear()
 }
 
 /**
@@ -251,14 +275,27 @@ export async function withHostedReviewBranchCache(
     )
   }
 
+  const scope = repoScope(identity.repoPath, identity.connectionId)
   const request = (async () => {
+    const generation = scopeGeneration(scope)
     try {
       const review = await lookup()
-      storeEntry(key, { review, fetchedAt: Date.now(), headOid })
-      failureBackoff.delete(key)
+      // Why: a review created while this lookup was out makes its answer older
+      // than the invalidation; storing it would re-pin the stale "no review".
+      if (generation === scopeGeneration(scope)) {
+        storeEntry(key, { review, fetchedAt: Date.now(), headOid })
+        failureBackoff.delete(key)
+      }
       return review
     } catch (error) {
       noteFailure(key)
+      // Why: the last good review beats an error card here just as it does on
+      // the backed-off path — otherwise it blinks out on the first failure.
+      // An invalidation drops the entry, so this cannot revive a retired answer.
+      const stale = entries.get(key)
+      if (stale) {
+        return stale.review
+      }
       throw error
     } finally {
       inflight.delete(key)
