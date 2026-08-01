@@ -3348,6 +3348,24 @@ describe('shared agent-hook-listener', () => {
       const stopped = claudeEvent({ hook_event_name: 'SubagentStop', agent_id: 'w1' })
       expect(stopped?.payload.state).toBe('done')
       expect(stopped?.payload.subagents).toBeUndefined()
+      // Why: the wait's cached card died with its owner — a done payload carrying
+      // the stale tool/interactive card would remain actionable in the chat UI.
+      expect(stopped?.payload.toolName).toBeUndefined()
+      expect(stopped?.payload.interactivePrompt).toBeUndefined()
+    })
+
+    it('tracks whitespace-padded inventory ids canonically so their stops can drain them', () => {
+      const first = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'ghost-1',
+        background_tasks: [
+          { id: ' a2 ', type: 'subagent', status: 'running', agent_type: 'general-purpose' }
+        ]
+      })
+      expect(first?.payload.state).toBe('working')
+      expect(first?.payload.subagents).toEqual([expect.objectContaining({ id: 'a2' })])
+      const drained = claudeEvent({ hook_event_name: 'SubagentStop', agent_id: 'a2' })
+      expect(drained?.payload.state).toBe('done')
     })
 
     it('keeps a newer live start alive through a delayed stale stop with an empty inventory', () => {

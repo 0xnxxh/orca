@@ -191,12 +191,11 @@ export function readClaudeBackgroundAgentTasks(hookPayload: Record<string, unkno
     if (obj.type !== 'subagent' && obj.type !== 'teammate') {
       continue
     }
+    // Why: canonicalize before validating — a whitespace-padded id stored raw would publish
+    // trimmed in snapshots yet never match its own lifecycle SubagentStop, so it could not drain.
+    const id = typeof obj.id === 'string' ? obj.id.trim() : ''
     // Why: an id the upsert rejects can never be tracked — it must not consume a cap slot either.
-    if (
-      typeof obj.id !== 'string' ||
-      obj.id.trim().length === 0 ||
-      !isValidClaudeSubagentId(obj.id)
-    ) {
+    if (id.length === 0 || !isValidClaudeSubagentId(id)) {
       continue
     }
     if (tasks.length >= AGENT_STATUS_MAX_SUBAGENTS) {
@@ -206,7 +205,7 @@ export function readClaudeBackgroundAgentTasks(hookPayload: Record<string, unkno
       break
     }
     tasks.push({
-      id: obj.id,
+      id,
       agentType: typeof obj.agent_type === 'string' ? obj.agent_type : undefined,
       description: typeof obj.description === 'string' ? obj.description : undefined,
       running: obj.status === 'running',

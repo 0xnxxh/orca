@@ -2516,6 +2516,18 @@ function normalizeClaudeSubagentLifecycleEvent(
     (eventName === 'TeammateIdle'
       ? [...roster.keys()].some((id) => claudeTeammateIdMatchesName(id, lifecycleId))
       : roster.has(lifecycleId))
+  if (clearedOwnWait === 'deleted') {
+    // Why: the wait's cached card (interactivePrompt/tool preview) died with its owner; carrying
+    // it into the clearing emission would leave an actionable card on a resolved pane. Mirrors
+    // clearClaudeAnsweredQuestionWait's cache reset.
+    const previousTool = state.lastToolByPaneKey.get(paneKey)
+    state.lastToolByPaneKey.set(
+      paneKey,
+      previousTool?.lastAssistantMessage
+        ? { lastAssistantMessage: previousTool.lastAssistantMessage }
+        : {}
+    )
+  }
   return buildClaudeChildDrivenStatusPayload(state, eventName, paneKey, hookPayload, {
     removedRow,
     clearedOwnWait: clearedOwnWait === 'deleted' && !waitOwnerStillTracked
