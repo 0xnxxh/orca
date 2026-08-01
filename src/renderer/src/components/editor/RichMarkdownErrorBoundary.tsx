@@ -1,4 +1,5 @@
 import React from 'react'
+import { isLazyChunkLoadError } from '@/lib/lazy-with-retry'
 import { reportReactErrorBoundaryCrash } from '@/lib/react-error-boundary-reporting'
 import { translate } from '@/i18n/i18n'
 
@@ -38,6 +39,12 @@ export class RichMarkdownErrorBoundary extends React.Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo): void {
     console.error('[RichMarkdownEditor] render crash contained by boundary', error, info)
+    // Why: lazy-with-retry already spent its retries and its one guarded reload, so a
+    // chunk-hash swap after an app update is expected degradation, not a crash. The
+    // fallback below still renders (matches RecoverableRenderErrorBoundary).
+    if (isLazyChunkLoadError(error)) {
+      return
+    }
     void reportReactErrorBoundaryCrash({
       boundaryId: 'editor.rich-markdown',
       surface: 'rich-markdown-editor',
