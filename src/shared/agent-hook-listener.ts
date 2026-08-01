@@ -2478,7 +2478,11 @@ function normalizeClaudeSubagentLifecycleEvent(
           getOrCreateClaudeSubagentRoster(state, paneKey),
           inventory.tasks,
           Date.now(),
-          { inventoryComplete: false }
+          // Why: an empty inventory is complete by construction and proves nothing is left
+          // alive (lead-path rule), clearing restored phantoms; a non-empty one folds
+          // additively — its reap would kill a just-parked teammate row before its
+          // TeammateIdle confirmation arrives.
+          { inventoryComplete: inventory.tasks.length === 0 }
         )
       }
       // Why: a blocked child that dies without another tool event would pin its permission/question wait on the pane forever — nothing else references that agent again.
@@ -2552,7 +2556,14 @@ function clearClaudePendingWaitForAgent(
   if (lead?.state !== 'waiting' || !lead.waitingAgentId || !ownsWait(lead.waitingAgentId)) {
     return
   }
-  state.claudeLeadStateByPaneKey.set(paneKey, lead.stateBeforeWait ?? { state: 'working' })
+  if (lead.stateBeforeWait) {
+    state.claudeLeadStateByPaneKey.set(paneKey, lead.stateBeforeWait)
+    return
+  }
+  // Why: no stash means the wait was this pane's FIRST lead record (child wait on a fresh
+  // process); fabricating 'working' here becomes a stuck card when the waiting child dies —
+  // drop the record and let the evidence rules decide downstream (STA-2915 review).
+  state.claudeLeadStateByPaneKey.delete(paneKey)
 }
 
 /** Clear an AskUserQuestion wait after the answer is typed (answering emits no hook event; the caller infers it from the submit keystroke). Restores the stashed pre-wait lead state or 'working', drops the cached card, and returns the pane state to emit (gated up to 'working' while children run). */
@@ -2580,6 +2591,22 @@ export function clearClaudeAnsweredQuestionWait(
 }
 
 /** Re-emit the lead's cached state on child activity — gated up to 'working' while a child works — without touching the lead's tool/prompt caches, so a live card or permission wait survives child churn. */
+// Why: the roster parser bounds TRACKED rows at the wire cap; this boolean liveness scan of the
+// raw array must still see a running subagent-typed entry hidden past it.
+function rawInventoryHasRunningSubagentTask(hookPayload: Record<string, unknown>): boolean {
+  const raw = hookPayload['background_tasks']
+  return (
+    Array.isArray(raw) &&
+    raw.some((item) => {
+      if (typeof item !== 'object' || item === null) {
+        return false
+      }
+      const task = item as Record<string, unknown>
+      return task.type === 'subagent' && task.status === 'running'
+    })
+  )
+}
+
 function buildClaudeChildDrivenStatusPayload(
   state: HookListenerState,
   eventName: unknown,
@@ -2610,16 +2637,18 @@ function buildClaudeChildDrivenStatusPayload(
     })
   }
   if (evidence.removedRow) {
-    // Why: live shells/crons veto done (the raw-array check is uncapped). A truncated agent-task
-    // inventory is incomplete evidence — a running child past the parser cap would be invisible —
-    // so it claims neither done nor working. Running non-teammate tasks were already folded into
-    // the roster above and surface through the working branch.
-    if (hasActiveClaudeNonAgentBackgroundWork(hookPayload)) {
+    // Why: live shells/crons veto done, and the uncapped raw scan sees a running subagent hidden
+    // past the parser cap (tracked folding surfaces the listed ones through the working branch).
+    if (
+      hasActiveClaudeNonAgentBackgroundWork(hookPayload) ||
+      rawInventoryHasRunningSubagentTask(hookPayload)
+    ) {
       return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
         stateName: 'working',
         updateToolSnapshot: false
       })
     }
+    // Why: a truncated inventory with no visible live work is incomplete evidence — claim nothing.
     const inventory = readClaudeBackgroundAgentTasks(hookPayload)
     if (inventory.present && inventory.truncated) {
       return null

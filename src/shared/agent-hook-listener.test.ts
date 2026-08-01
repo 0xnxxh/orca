@@ -3221,7 +3221,58 @@ describe('shared agent-hook-listener', () => {
         agent_id: 'a1',
         background_tasks: cappedTasks
       })
+      // Why: the uncapped raw scan still sees hidden-live running — the pane is
+      // truthfully working, never done.
+      expect(stopped?.payload.state).toBe('working')
+    })
+
+    it('claims nothing from a no-lead removal when a truncated inventory shows no live work', () => {
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a1',
+        agent_type: 'general-purpose'
+      })
+      const teammateOnly = Array.from({ length: 33 }, (_, i) => ({
+        id: `t${i}`,
+        type: 'teammate',
+        status: 'running'
+      }))
+      const stopped = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'a1',
+        background_tasks: teammateOnly
+      })
       expect(stopped).toBeNull()
+    })
+
+    it('resolves a fresh-pane child permission wait whose child dies to done, not phantom working', () => {
+      // Why: the wait is this pane's FIRST lead record; the old no-stash fallback
+      // fabricated 'working' when the waiting child stopped — a stuck card.
+      claudeEvent({
+        hook_event_name: 'PermissionRequest',
+        agent_id: 'w1',
+        agent_type: 'general-purpose',
+        tool_name: 'Bash'
+      })
+      const stopped = claudeEvent({ hook_event_name: 'SubagentStop', agent_id: 'w1' })
+      expect(stopped?.payload.state).toBe('done')
+      expect(stopped?.payload.subagents).toBeUndefined()
+    })
+
+    it('clears restored phantom rows when a no-lead stop carries a complete empty inventory', () => {
+      seedClaudeSubagentRosterFromSnapshots(state, PANE_KEY, [
+        { id: 'a1', state: 'working', startedAt: 1, agentType: 'general-purpose' },
+        { id: 'a2', state: 'working', startedAt: 1, agentType: 'general-purpose' }
+      ])
+      // Why: a2's finish hook was lost while Orca was down; a1's stop reports an
+      // authoritative empty inventory, which must not leave a2 spinning forever.
+      const stopped = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'a1',
+        background_tasks: []
+      })
+      expect(stopped?.payload.state).toBe('done')
+      expect(stopped?.payload.subagents).toBeUndefined()
     })
 
     it('keeps working when a no-lead drain leaves a live shell in the inventory', () => {
