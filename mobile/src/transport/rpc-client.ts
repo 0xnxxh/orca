@@ -37,6 +37,7 @@ import { markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
 import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-request-budget'
 import { isRpcResponse } from './rpc-response-shape'
 import {
+  isStreamControlResponse,
   isStreamingSubscriptionReadyResult,
   isTerminalSubscribedResult
 } from './rpc-stream-response-shape'
@@ -507,7 +508,11 @@ export function connect(
       if (!isRpcResponse(response)) {
         return
       }
-      if (pending.has(response.id) || timedOutControlRequestIds.delete(response.id)) {
+      if (
+        pending.has(response.id) ||
+        timedOutControlRequestIds.delete(response.id) ||
+        (streamListeners.has(response.id) && isStreamControlResponse(response))
+      ) {
         controlResponseSequence++
       }
 
@@ -1039,7 +1044,6 @@ export function connect(
       }
 
       const requestWs = ws
-      const requestControlResponseSequence = controlResponseSequence
       return new Promise((resolve, reject) => {
         const id = nextId()
         const timeoutMs = resolvePostConnectRequestTimeout(budget, REQUEST_TIMEOUT_MS)
@@ -1048,12 +1052,10 @@ export function connect(
           console.log('[net] sendRequest TIMEOUT', { method, timeoutMs, state })
           // Why: the frame was written 30s ago — the host may have processed it.
           reject(markRpcDeliveryUnknown(new Error(`Request timed out: ${method}`)))
-          if (controlResponseSequence === requestControlResponseSequence) {
-            if (requestWs === ws) {
-              timedOutControlRequestIds.add(id)
-            }
-            runActivityProbe(requestWs)
+          if (requestWs === ws) {
+            timedOutControlRequestIds.add(id)
           }
+          runActivityProbe(requestWs)
         }, timeoutMs)
 
         pending.set(id, {

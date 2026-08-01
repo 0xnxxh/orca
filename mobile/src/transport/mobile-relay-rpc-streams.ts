@@ -9,6 +9,7 @@ import {
 } from './rpc-client-terminal-subscription'
 import type { RpcClient } from './rpc-client'
 import type { RpcResponse, RpcSuccess } from './types'
+import { isStreamControlResponse } from './rpc-stream-response-shape'
 
 type StreamRecord = {
   method: string
@@ -104,6 +105,10 @@ export class MobileRelayRpcStreams {
       stream.listener(result)
     }
     return true
+  }
+
+  isControlResponse(response: RpcResponse): boolean {
+    return this.streams.has(response.id) && isStreamControlResponse(response)
   }
 
   handleBinary(bytes: Uint8Array): void {

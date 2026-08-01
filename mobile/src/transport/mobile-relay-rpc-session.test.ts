@@ -305,6 +305,71 @@ describe('mobile relay RPC session', () => {
     }
   })
 
+  it('counts a Relay subscription reply as control-plane liveness', async () => {
+    const { session } = await authenticateSession()
+    vi.useFakeTimers()
+    try {
+      session.subscribe('terminal.subscribe', { terminal: 'term-1' }, vi.fn())
+      await vi.advanceTimersByTimeAsync(0)
+      const subscribe = fakes.sendText.mock.calls
+        .map(([payload]) => JSON.parse(payload as string) as { id: string; method: string })
+        .find(({ method }) => method === 'terminal.subscribe')!
+
+      session.notifyForeground()
+      fakes.linkOptions!.onText(
+        JSON.stringify({
+          id: subscribe.id,
+          ok: true,
+          result: { type: 'subscribed', streamId: 42 },
+          _meta: {}
+        })
+      )
+      await vi.advanceTimersByTimeAsync(8_000)
+
+      expect(session.getState()).toBe('connected')
+      expect(fakes.close).not.toHaveBeenCalled()
+    } finally {
+      session.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not let Relay terminal payload traffic mask a stalled control channel', async () => {
+    const { session } = await authenticateSession()
+    vi.useFakeTimers()
+    try {
+      session.subscribe('terminal.subscribe', { terminal: 'term-1' }, vi.fn())
+      await vi.advanceTimersByTimeAsync(0)
+      const subscribe = fakes.sendText.mock.calls
+        .map(([payload]) => JSON.parse(payload as string) as { id: string; method: string })
+        .find(({ method }) => method === 'terminal.subscribe')!
+      fakes.linkOptions!.onText(
+        JSON.stringify({
+          id: subscribe.id,
+          ok: true,
+          result: { type: 'subscribed', streamId: 42 },
+          _meta: {}
+        })
+      )
+
+      session.notifyForeground()
+      fakes.linkOptions!.onBinary(
+        encodeTerminalStreamFrame({
+          opcode: TerminalStreamOpcode.Output,
+          streamId: 42,
+          seq: 1,
+          payload: new TextEncoder().encode('still alive')
+        })
+      )
+      await vi.advanceTimersByTimeAsync(8_000)
+
+      expect(session.getState()).toBe('disconnected')
+      expect(fakes.close).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('periodically demotes a silent half-open Relay session', async () => {
     vi.useFakeTimers()
     try {

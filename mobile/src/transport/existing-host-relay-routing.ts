@@ -1,6 +1,10 @@
 import { HostProfileSchema, type HostProfile } from './types'
-import { loadStoredHostCredentialIdentity } from './host-store'
-import { serializeHostProfilePublication } from './host-profile-publication'
+import { loadStoredHostIdentity } from './host-store'
+import { readHostDeviceToken } from './host-device-token-store'
+import {
+  getHostProfilePublicationRevision,
+  serializeHostProfilePublication
+} from './host-profile-publication'
 import * as hostListLoads from './host-list-load-sharing'
 import { saveMobileRelayHostOverlay } from './mobile-relay-host-overlay-store'
 import type { MobileRelayCredentialBundle } from './mobile-relay-credential-bundle'
@@ -13,8 +17,11 @@ export async function saveExistingHostRelayRouting(
   beforePublish?: () => Promise<void>
 ): Promise<void> {
   const validated = HostProfileSchema.parse(host)
+  const revision = getHostProfilePublicationRevision(validated.id)
+  await requireCurrentHostCredential(validated)
   await serializeHostProfilePublication(validated.id, async () => {
-    const existing = await requireCurrentHostIdentity(validated)
+    requireUnchangedPublicationRevision(validated.id, revision)
+    const existing = await requireCurrentHostMetadata(validated)
     const { endpoints, relayHostId, relay } = validated
     if (!endpoints || !relayHostId || !relay) {
       throw new Error('mobile relay upgrade routing metadata missing')
@@ -42,8 +49,11 @@ export async function writeExistingHostRelayCredentialBundle(
   writeBundle: (bundle: MobileRelayCredentialBundle) => Promise<void>
 ): Promise<void> {
   const validated = HostProfileSchema.parse(host)
+  const revision = getHostProfilePublicationRevision(validated.id)
+  await requireCurrentHostCredential(validated)
   await serializeHostProfilePublication(validated.id, async () => {
-    await requireCurrentHostIdentity(validated)
+    requireUnchangedPublicationRevision(validated.id, revision)
+    await requireCurrentHostMetadata(validated)
     if (bundle.hostId !== validated.id || bundle.deviceToken !== validated.deviceToken) {
       throw new MobileRelayUpgradeHostSupersededError('mobile relay credential identity mismatch')
     }
@@ -51,15 +61,37 @@ export async function writeExistingHostRelayCredentialBundle(
   })
 }
 
-async function requireCurrentHostIdentity(
+async function requireCurrentHostCredential(host: HostProfile): Promise<void> {
+  const existing = await loadStoredHostIdentity(host.id)
+  requireMatchingHostMetadata(host, existing)
+  const deviceToken = await readHostDeviceToken(host.id)
+  if (!deviceToken) {
+    throw new Error('host credential unavailable')
+  }
+  if (deviceToken !== host.deviceToken) {
+    throw new MobileRelayUpgradeHostSupersededError('mobile relay upgrade host was re-paired')
+  }
+}
+
+async function requireCurrentHostMetadata(
   host: HostProfile
 ): Promise<Pick<HostProfile, 'endpoint'>> {
-  const existing = await loadStoredHostCredentialIdentity(host.id)
+  const existing = await loadStoredHostIdentity(host.id)
+  requireMatchingHostMetadata(host, existing)
+  return existing
+}
+
+function requireMatchingHostMetadata(
+  host: HostProfile,
+  existing: Pick<HostProfile, 'endpoint' | 'publicKeyB64'> | null
+): asserts existing is Pick<HostProfile, 'endpoint' | 'publicKeyB64'> {
   if (!existing || existing.publicKeyB64 !== host.publicKeyB64) {
     throw new MobileRelayUpgradeHostRemovedError('mobile relay upgrade host was removed')
   }
-  if (existing.deviceToken !== host.deviceToken) {
+}
+
+function requireUnchangedPublicationRevision(hostId: string, revision: number): void {
+  if (getHostProfilePublicationRevision(hostId) !== revision) {
     throw new MobileRelayUpgradeHostSupersededError('mobile relay upgrade host was re-paired')
   }
-  return existing
 }

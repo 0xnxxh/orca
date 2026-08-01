@@ -797,6 +797,25 @@ describe('mobile rpc-client connection timeout', () => {
       client.close()
     })
 
+    it.each([
+      ['subscribed', { ok: true, streaming: true, result: { type: 'subscribed', streamId: 42 } }],
+      ['ready', { ok: true, streaming: true, result: { type: 'ready', subscriptionId: 'sub-1' } }],
+      ['error', { ok: false, error: { code: 'stream_failed', message: 'stream failed' } }],
+      ['end', { ok: true, result: { type: 'end' } }]
+    ])('counts a subscription %s reply as control liveness', async (_name, reply) => {
+      const { client, socket } = connectAuthenticated()
+      client.subscribe('terminal.subscribe', { terminal: 'term-1' }, () => {})
+      const subscribe = sentRequest(socket, 'terminal.subscribe')
+
+      client.notifyForeground()
+      socket.receive(`encrypted:${JSON.stringify({ id: subscribe.id, ...reply })}`)
+      await vi.advanceTimersByTimeAsync(8_000)
+
+      expect(socket.close).not.toHaveBeenCalled()
+      expect(client.getState()).toBe('connected')
+      client.close()
+    })
+
     it('does not let terminal stream traffic mask a stalled control channel', async () => {
       const { client, socket } = connectAuthenticated()
       const events: unknown[] = []

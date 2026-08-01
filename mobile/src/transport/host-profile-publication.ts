@@ -1,6 +1,11 @@
 import type { HostProfile } from './types'
 
 const pendingByHost = new Map<string, Promise<void>>()
+const revisionByHost = new Map<string, number>()
+
+export function getHostProfilePublicationRevision(hostId: string): number {
+  return revisionByHost.get(hostId) ?? 0
+}
 
 export function serializeHostProfilePublication<T>(
   hostId: string,
@@ -26,6 +31,7 @@ export function publishHostProfileTransaction(
   beforeHostSave: (() => Promise<void>) | null,
   saveHost: (host: HostProfile) => Promise<void>
 ): Promise<void> {
+  revisionByHost.set(host.id, getHostProfilePublicationRevision(host.id) + 1)
   return serializeHostProfilePublication(host.id, async () => {
     await beforeHostSave?.()
     await saveHost(host)

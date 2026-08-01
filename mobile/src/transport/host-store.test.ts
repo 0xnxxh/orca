@@ -424,7 +424,57 @@ describe('host-store list mutations', () => {
     expect(JSON.parse(storedOverlayRaw ?? '[]')).toEqual([])
   })
 
-  it('orders an in-flight relay publication before same-host re-pair persistence', async () => {
+  it('does not let a stalled identity read block same-host endpoint edits', async () => {
+    let releaseOldToken: ((token: string | null) => void) | null = null
+    secureStoreMock.getItemAsync.mockImplementationOnce(
+      () =>
+        new Promise<string | null>((resolve) => {
+          releaseOldToken = resolve
+        })
+    )
+    const relayHostId = 'AbCdEf0123_-xyZ9'
+    const stalePublication = saveExistingHostRelayRouting({
+      ...HOST_ONE,
+      deviceToken: 'token-1',
+      endpoints: [
+        { id: 'direct-primary', kind: 'lan', url: HOST_ONE.endpoint },
+        { id: 'relay-primary', kind: 'relay', url: 'wss://relay.onorca.dev/v1/connect/host' }
+      ],
+      relayHostId,
+      relay: {
+        v: 1,
+        directorUrl: 'https://relay.onorca.dev',
+        cellUrl: 'https://relay.onorca.dev',
+        assignmentEpoch: 1,
+        relayHostId,
+        e2eeFraming: 2
+      }
+    })
+    await vi.waitFor(() => expect(secureStoreMock.getItemAsync).toHaveBeenCalledOnce())
+
+    await expect(
+      updateHostNameAndEndpoint(HOST_ONE.id, {
+        name: 'Renamed while Keychain is stalled',
+        endpoint: 'ws://127.0.0.1:9'
+      })
+    ).resolves.toBeUndefined()
+    expect(JSON.parse(storedHostsRaw)).toContainEqual({
+      ...HOST_ONE,
+      name: 'Renamed while Keychain is stalled',
+      endpoint: 'ws://127.0.0.1:9'
+    })
+
+    releaseOldToken?.('token-1')
+    await stalePublication
+    const [overlay] = JSON.parse(storedOverlayRaw ?? '[]') as MobileRelayHostOverlay[]
+    expect(overlay?.endpoints).toContainEqual({
+      id: 'direct-primary',
+      kind: 'lan',
+      url: 'ws://127.0.0.1:9'
+    })
+  })
+
+  it('lets same-host re-pair supersede a publication stalled on identity lookup', async () => {
     let releaseOldToken: ((token: string | null) => void) | null = null
     secureStoreMock.getItemAsync.mockImplementationOnce(
       () =>
@@ -457,11 +507,10 @@ describe('host-store list mutations', () => {
       null,
       saveHost
     )
-    await Promise.resolve()
-    expect(secureStoreMock.setItemAsync).not.toHaveBeenCalled()
+    await expect(replacement).resolves.toBeUndefined()
 
     releaseOldToken?.('token-1')
-    await Promise.all([stalePublication, replacement])
+    await expect(stalePublication).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
     expect(JSON.parse(storedOverlayRaw ?? '[]')).toEqual([])
   })
 

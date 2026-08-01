@@ -30,6 +30,7 @@ import {
 } from './host-device-token-store'
 
 const STORAGE_KEY = 'orca:hosts'
+type StoredHostIdentity = Pick<HostProfile, 'endpoint' | 'publicKeyB64'>
 
 async function deleteHostCredentials(hostId: string): Promise<void> {
   await deleteHostDeviceToken(hostId)
@@ -127,19 +128,10 @@ async function doLoadHosts(): Promise<HostProfile[]> {
   return out
 }
 
-export async function loadStoredHostCredentialIdentity(
-  hostId: string
-): Promise<Pick<HostProfile, 'endpoint' | 'publicKeyB64' | 'deviceToken'> | null> {
+export async function loadStoredHostIdentity(hostId: string): Promise<StoredHostIdentity | null> {
   await hostListMutation
   const stored = (await readStoredHostsForMutation()).find(({ id }) => id === hostId)
-  if (!stored) {
-    return null
-  }
-  const deviceToken = await readHostDeviceToken(hostId)
-  if (!deviceToken) {
-    throw new Error('host credential unavailable')
-  }
-  return { endpoint: stored.endpoint, publicKeyB64: stored.publicKeyB64, deviceToken }
+  return stored ? { endpoint: stored.endpoint, publicKeyB64: stored.publicKeyB64 } : null
 }
 
 export async function resolvePairingHostIdentity(

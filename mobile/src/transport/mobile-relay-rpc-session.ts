@@ -205,7 +205,7 @@ export function connectMobileRelayRpcSession(args: {
       fail(error, new Error(error.message))
       return
     }
-    if (request || timedOutControlRequestIds.delete(value.id)) {
+    if (request || timedOutControlRequestIds.delete(value.id) || streams.isControlResponse(value)) {
       controlResponseSequence += 1
     }
     if (request) {

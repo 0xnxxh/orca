@@ -65,6 +65,12 @@ function sentRequest(socket: MockWebSocket, method: string): { id: string } {
   return JSON.parse(payload.replace(/^encrypted:/, '')) as { id: string }
 }
 
+function sentRequests(socket: MockWebSocket, method: string): { id: string }[] {
+  return socket.sent
+    .filter((value) => value.includes(`"method":"${method}"`))
+    .map((payload) => JSON.parse(payload.replace(/^encrypted:/, '')) as { id: string })
+}
+
 const mockSockets: MockWebSocket[] = []
 const originalWebSocket = globalThis.WebSocket
 
@@ -245,7 +251,7 @@ describe('mobile rpc-client request deadline', () => {
     await request.catch(() => undefined)
   })
 
-  it('does not reconnect when another control response proves the socket live', async () => {
+  it('keeps the socket when a fresh post-timeout probe proves it live', async () => {
     const client = connect('ws://desktop.invalid', 'token', 'server-key')
     const socket = mockSockets[0]!
     socket.open()
@@ -261,8 +267,36 @@ describe('mobile rpc-client request deadline', () => {
     await expect(stalledOutcome).resolves.toMatchObject({
       message: 'Request timed out: browser.screenshot'
     })
+    const freshProbe = sentRequests(socket, 'status.get').find(({ id }) => id !== healthRequest.id)!
+    socket.receive(`encrypted:${JSON.stringify({ id: freshProbe.id, ok: true, result: {} })}`)
+    await vi.advanceTimersByTimeAsync(8_000)
     expect(socket.close).not.toHaveBeenCalled()
     expect(client.getState()).toBe('connected')
+
+    client.close()
+  })
+
+  it('demotes when an earlier response precedes a later control-plane stall', async () => {
+    const client = connect('ws://desktop.invalid', 'token', 'server-key')
+    const socket = mockSockets[0]!
+    socket.open()
+    const stalled = client.sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+    const stalledOutcome = stalled.catch((error: unknown) => error)
+    const healthy = client.sendRequest('status.get', undefined, { timeoutMs: 100 })
+    await vi.advanceTimersByTimeAsync(0)
+    const healthRequest = sentRequest(socket, 'status.get')
+    socket.receive(`encrypted:${JSON.stringify({ id: healthRequest.id, ok: true, result: {} })}`)
+
+    await expect(healthy).resolves.toMatchObject({ ok: true })
+    await vi.advanceTimersByTimeAsync(100)
+    await expect(stalledOutcome).resolves.toMatchObject({
+      message: 'Request timed out: browser.screenshot'
+    })
+    expect(sentRequests(socket, 'status.get')).toHaveLength(2)
+
+    await vi.advanceTimersByTimeAsync(8_000)
+    expect(socket.close).toHaveBeenCalled()
+    expect(client.getState()).toBe('reconnecting')
 
     client.close()
   })
