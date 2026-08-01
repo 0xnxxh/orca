@@ -6341,14 +6341,19 @@ export function registerPtyHandlers(
         }
         seen.add(value)
         const provider = tryGetProviderForPty(value)
-        // Why: degraded routing mixes preserved daemons with an in-process fallback; keep all panes mounted rather than guess ownership.
+        // Why null is reserved for an unresolved route: the renderer never caches
+        // it and keeps re-arming, so a provider that merely omits the optional
+        // method would poll forever. Omitting it means "no authoritative
+        // snapshot" — the same mount-eagerly outcome null already produced, but
+        // cacheable. Degraded routing keeps its explicit false for the same reason.
         capabilities.push({
           id: value,
-          authoritative: provider?.canProvideAuthoritativeBufferSnapshot
-            ? provider.canProvideAuthoritativeBufferSnapshot(value)
-            : provider && routesFreshSpawnsToLocalProvider(provider)
-              ? false
-              : null
+          authoritative:
+            provider === undefined || provider === null
+              ? null
+              : provider.canProvideAuthoritativeBufferSnapshot
+                ? provider.canProvideAuthoritativeBufferSnapshot(value)
+                : false
         })
       }
       return capabilities

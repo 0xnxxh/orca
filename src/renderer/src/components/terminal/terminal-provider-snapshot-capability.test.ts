@@ -138,4 +138,63 @@ describe('terminal provider snapshot capabilities', () => {
     expect(terminalProviderHasAuthoritativeSnapshot('old-pty')).toBe(false)
     expect(terminalProviderHasAuthoritativeSnapshot('current-pty')).toBe(true)
   })
+
+  it('stops polling for a PTY whose route never resolves', async () => {
+    // The retry re-arms this module's own timer, so a fixed delay is a 1 Hz IPC
+    // plus a full all-PTY scan for the life of the app.
+    const resolve = vi.fn(async () => [{ id: 'gone-pty', authoritative: null }])
+    const backoffSchedule = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]
+
+    let nowMs = 1_000
+    await synchronizeTerminalProviderSnapshotCapabilities(['gone-pty'], resolve, nowMs)
+    for (const delayMs of backoffSchedule) {
+      await synchronizeTerminalProviderSnapshotCapabilities(
+        ['gone-pty'],
+        resolve,
+        nowMs + delayMs - 1
+      )
+      nowMs += delayMs
+      await synchronizeTerminalProviderSnapshotCapabilities(['gone-pty'], resolve, nowMs)
+    }
+    const settledCallCount = resolve.mock.calls.length
+
+    for (let index = 1; index <= 1_000; index += 1) {
+      await synchronizeTerminalProviderSnapshotCapabilities(
+        ['gone-pty'],
+        resolve,
+        nowMs + index * 60_000
+      )
+    }
+
+    expect(settledCallCount).toBe(backoffSchedule.length + 1)
+    expect(resolve).toHaveBeenCalledTimes(settledCallCount)
+    expect(terminalProviderHasAuthoritativeSnapshot('gone-pty')).toBe(false)
+  })
+
+  it('stops rescheduling once an unresolvable PTY has settled', async () => {
+    const resolve = vi.fn(async () => [{ id: 'gone-pty', authoritative: null }])
+
+    let nowMs = 1_000
+    let retryDelayMs: number | null = null
+    for (const delayMs of [0, 1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]) {
+      nowMs += delayMs
+      retryDelayMs = await synchronizeTerminalProviderSnapshotCapabilities(
+        ['gone-pty'],
+        resolve,
+        nowMs
+      )
+    }
+
+    expect(retryDelayMs).toBeNull()
+  })
+
+  it('re-probes an unknown PTY from scratch after it closes and a new one appears', async () => {
+    const resolve = vi.fn(async () => [{ id: 'gone-pty', authoritative: null }])
+
+    await synchronizeTerminalProviderSnapshotCapabilities(['gone-pty'], resolve, 1_000)
+    await synchronizeTerminalProviderSnapshotCapabilities([], resolve, 2_000)
+    await synchronizeTerminalProviderSnapshotCapabilities(['gone-pty'], resolve, 2_001)
+
+    expect(resolve).toHaveBeenCalledTimes(2)
+  })
 })

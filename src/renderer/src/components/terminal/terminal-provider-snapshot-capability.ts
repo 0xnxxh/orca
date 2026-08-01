@@ -12,7 +12,11 @@ type SnapshotCapabilityBindingState = {
 
 const authoritativeSnapshotByPtyId = new Map<string, boolean>()
 const unknownCapabilityRetryAtByPtyId = new Map<string, number>()
+const unknownCapabilityAttemptsByPtyId = new Map<string, number>()
 const UNKNOWN_CAPABILITY_RETRY_MS = 1_000
+const UNKNOWN_CAPABILITY_MAX_RETRY_MS = 30_000
+/** 1/2/4/8/16/30/30 s — ~91 s of daemon-startup grace, then settle conservatively. */
+const UNKNOWN_CAPABILITY_MAX_ATTEMPTS = 8
 const CAPABILITY_RESOLUTION_TIMEOUT_MS = 1_000
 let lastSynchronizedLivePtyIds: readonly string[] | null = null
 let earliestUnknownCapabilityRetryAtMs = Number.POSITIVE_INFINITY
@@ -48,6 +52,28 @@ function refreshEarliestUnknownCapabilityRetry(): void {
   for (const retryAtMs of unknownCapabilityRetryAtByPtyId.values()) {
     earliestUnknownCapabilityRetryAtMs = Math.min(earliestUnknownCapabilityRetryAtMs, retryAtMs)
   }
+}
+
+/**
+ * Why bounded: an id that stays unknown re-arms this resolver's own retry timer,
+ * so a fixed delay is a 1 Hz main-process IPC plus a full all-PTY scan for the
+ * life of the app. Settling on `false` is the same mount-eagerly behaviour an
+ * unresolved id already gets, and it lets the loop converge.
+ */
+function backOffUnknownCapability(ptyId: string, nowMs: number): void {
+  const attempts = (unknownCapabilityAttemptsByPtyId.get(ptyId) ?? 0) + 1
+  if (attempts >= UNKNOWN_CAPABILITY_MAX_ATTEMPTS) {
+    authoritativeSnapshotByPtyId.set(ptyId, false)
+    unknownCapabilityAttemptsByPtyId.delete(ptyId)
+    unknownCapabilityRetryAtByPtyId.delete(ptyId)
+    return
+  }
+  unknownCapabilityAttemptsByPtyId.set(ptyId, attempts)
+  unknownCapabilityRetryAtByPtyId.set(
+    ptyId,
+    nowMs +
+      Math.min(UNKNOWN_CAPABILITY_RETRY_MS * 2 ** (attempts - 1), UNKNOWN_CAPABILITY_MAX_RETRY_MS)
+  )
 }
 
 function unknownCapabilityRetryDelayMs(nowMs: number): number | null {
@@ -99,6 +125,7 @@ export async function synchronizeTerminalProviderSnapshotCapabilities(
   for (const pendingId of unknownCapabilityRetryAtByPtyId.keys()) {
     if (!live.has(pendingId)) {
       unknownCapabilityRetryAtByPtyId.delete(pendingId)
+      unknownCapabilityAttemptsByPtyId.delete(pendingId)
     }
   }
 
@@ -110,7 +137,7 @@ export async function synchronizeTerminalProviderSnapshotCapabilities(
   const resolve = resolveCapabilities ?? window.api.pty.getAuthoritativeBufferSnapshotCapabilities
   if (!resolve) {
     for (const id of missing) {
-      unknownCapabilityRetryAtByPtyId.set(id, nowMs + UNKNOWN_CAPABILITY_RETRY_MS)
+      backOffUnknownCapability(id, nowMs)
     }
     refreshEarliestUnknownCapabilityRetry()
     return unknownCapabilityRetryDelayMs(nowMs)
@@ -127,7 +154,7 @@ export async function synchronizeTerminalProviderSnapshotCapabilities(
       // Why: unknown capability must keep the pane mounted. Do not cache the
       // failure as supported; back off before retrying daemon startup.
       for (const id of batch) {
-        unknownCapabilityRetryAtByPtyId.set(id, nowMs + UNKNOWN_CAPABILITY_RETRY_MS)
+        backOffUnknownCapability(id, nowMs)
       }
       continue
     }
@@ -136,7 +163,7 @@ export async function synchronizeTerminalProviderSnapshotCapabilities(
     }
     if (!resolved) {
       for (const id of missing.slice(offset)) {
-        unknownCapabilityRetryAtByPtyId.set(id, nowMs + UNKNOWN_CAPABILITY_RETRY_MS)
+        backOffUnknownCapability(id, nowMs)
       }
       break
     }
@@ -146,8 +173,9 @@ export async function synchronizeTerminalProviderSnapshotCapabilities(
       if (typeof authoritative === 'boolean') {
         authoritativeSnapshotByPtyId.set(id, authoritative)
         unknownCapabilityRetryAtByPtyId.delete(id)
+        unknownCapabilityAttemptsByPtyId.delete(id)
       } else {
-        unknownCapabilityRetryAtByPtyId.set(id, nowMs + UNKNOWN_CAPABILITY_RETRY_MS)
+        backOffUnknownCapability(id, nowMs)
       }
     }
   }
@@ -180,6 +208,7 @@ export function terminalProviderHasAuthoritativeSnapshot(ptyId: string): boolean
 export function clearTerminalProviderSnapshotCapabilities(): void {
   authoritativeSnapshotByPtyId.clear()
   unknownCapabilityRetryAtByPtyId.clear()
+  unknownCapabilityAttemptsByPtyId.clear()
   lastSynchronizedLivePtyIds = null
   earliestUnknownCapabilityRetryAtMs = Number.POSITIVE_INFINITY
   synchronizationGeneration += 1

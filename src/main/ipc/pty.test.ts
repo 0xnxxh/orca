@@ -6671,6 +6671,19 @@ describe('registerPtyHandlers', () => {
     ])
   })
 
+  it('answers false, not null, for a resolved provider with no snapshot capability', async () => {
+    // Why: null is never cached, so a provider that merely omits the optional
+    // method would keep the renderer's retry timer armed for the whole session.
+    registerPtyHandlers(mainWindow as never)
+    setLocalPtyProvider({ spawn: vi.fn(), write: vi.fn() } as never)
+
+    const result = await handlers.get('pty:getAuthoritativeBufferSnapshotCapabilities')?.(null, {
+      ids: ['local-pty']
+    })
+
+    expect(result).toEqual([{ id: 'local-pty', authoritative: false }])
+  })
+
   it('checks single-PTY liveness without listing every session', async () => {
     const hasPty = vi.fn((id: string) => id === 'live-pty')
     const listProcesses = vi.fn(async () => {
