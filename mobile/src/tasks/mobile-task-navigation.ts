@@ -16,7 +16,7 @@ export type MobileTasksNavigationRoute = Readonly<{
 }>
 
 export type MobileTasksRootNavigation = {
-  addListener: (event: 'state' | 'transitionEnd', listener: () => void) => () => void
+  addListener: (event: 'state', listener: () => void) => () => void
   dispatch: (action: MobileTasksHostReplaceAction) => void
   getState: () => MobileTasksNavigationState
 }
@@ -69,19 +69,6 @@ function mountedHostStack(
   return { key: hostState.key, routeKey: hostRoute.key }
 }
 
-function activeHostId(state: MobileTasksNavigationState): string | undefined {
-  const hostContainer = state.routes[state.index]
-  if (hostContainer?.name !== 'h') {
-    return undefined
-  }
-  if (typeof hostContainer.params?.hostId === 'string') {
-    return hostContainer.params.hostId
-  }
-  const hostState = hostContainer.state
-  const hostRoute = hostState?.routes[hostState.index]
-  return typeof hostRoute?.params?.hostId === 'string' ? hostRoute.params.hostId : undefined
-}
-
 export function navigateToMobileTasks(
   navigation: MobileTasksRootNavigation,
   router: MobileTasksRouter,
@@ -89,16 +76,15 @@ export function navigateToMobileTasks(
   provider?: TaskProvider
 ): MobileTasksNavigationController {
   let active = true
+  let hostRouteSeen = false
   let selectedProvider = provider
   let unsubscribeState = () => {}
-  let unsubscribeTransition = () => {}
   const dispose = () => {
     if (!active) {
       return
     }
     active = false
     unsubscribeState()
-    unsubscribeTransition()
   }
 
   // Why: cold Expo deep links resolve to index; target Tasks only after its HostStack exists.
@@ -107,6 +93,13 @@ export function navigateToMobileTasks(
       return
     }
     const state = navigation.getState()
+    const currentRoute = state.routes[state.index]
+    if (currentRoute?.name === 'h') {
+      hostRouteSeen = true
+    } else if (hostRouteSeen) {
+      dispose()
+      return
+    }
     const hostStack = mountedHostStack(state, hostId)
     if (!hostStack) {
       return
@@ -126,11 +119,6 @@ export function navigateToMobileTasks(
 
   try {
     unsubscribeState = navigation.addListener('state', onState)
-    unsubscribeTransition = navigation.addListener('transitionEnd', () => {
-      if (activeHostId(navigation.getState()) === hostId) {
-        dispose()
-      }
-    })
     router.push(mobileTasksHostRoute(hostId))
   } catch (error) {
     dispose()

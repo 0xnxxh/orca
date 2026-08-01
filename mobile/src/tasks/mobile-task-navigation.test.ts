@@ -8,33 +8,23 @@ import {
 
 function navigationHarness(initialState: MobileTasksNavigationState) {
   let stateListener = () => {}
-  let transitionEndListener = () => {}
   let state = initialState
   const unsubscribeState = vi.fn()
-  const unsubscribeTransition = vi.fn()
   const navigation = {
-    addListener: vi.fn((event: 'state' | 'transitionEnd', listener: () => void) => {
-      if (event === 'state') {
-        stateListener = listener
-        return unsubscribeState
-      }
-      transitionEndListener = listener
-      return unsubscribeTransition
+    addListener: vi.fn((_event: 'state', listener: () => void) => {
+      stateListener = listener
+      return unsubscribeState
     }),
     dispatch: vi.fn(),
     getState: () => state
   }
   return {
     navigation,
-    finishTransition() {
-      transitionEndListener()
-    },
     setState(nextState: MobileTasksNavigationState) {
       state = nextState
       stateListener()
     },
-    unsubscribeState,
-    unsubscribeTransition
+    unsubscribeState
   }
 }
 
@@ -73,7 +63,6 @@ describe('mobile task navigation', () => {
     })
 
     expect(harness.unsubscribeState).toHaveBeenCalledOnce()
-    expect(harness.unsubscribeTransition).toHaveBeenCalledOnce()
     expect(harness.unsubscribeState.mock.invocationCallOrder[0]).toBeLessThan(
       harness.navigation.dispatch.mock.invocationCallOrder[0]!
     )
@@ -125,7 +114,6 @@ describe('mobile task navigation', () => {
     harness.setState({ index: 0, routes: [{ name: 'h', params: { hostId: 'host-1' } }] })
 
     expect(harness.unsubscribeState).toHaveBeenCalledOnce()
-    expect(harness.unsubscribeTransition).toHaveBeenCalledOnce()
     expect(harness.navigation.dispatch).not.toHaveBeenCalled()
   })
 
@@ -173,12 +161,13 @@ describe('mobile task navigation', () => {
     )
   })
 
-  it('cleans up if the host transition ends without mounting its stack', () => {
+  it('keeps waiting through host setup and cleans up when navigation leaves', () => {
     const harness = navigationHarness({ index: 0, routes: [{ name: 'index' }] })
 
     navigateToMobileTasks(harness.navigation, { push: vi.fn() }, 'host-1')
     harness.setState({ index: 0, routes: [{ name: 'h', params: { hostId: 'host-1' } }] })
-    harness.finishTransition()
+    expect(harness.unsubscribeState).not.toHaveBeenCalled()
+    harness.setState({ index: 0, routes: [{ name: 'index' }] })
     harness.setState({
       index: 0,
       routes: [
@@ -194,7 +183,6 @@ describe('mobile task navigation', () => {
     })
 
     expect(harness.unsubscribeState).toHaveBeenCalledOnce()
-    expect(harness.unsubscribeTransition).toHaveBeenCalledOnce()
     expect(harness.navigation.dispatch).not.toHaveBeenCalled()
   })
 
@@ -214,6 +202,5 @@ describe('mobile task navigation', () => {
       )
     ).toThrow(error)
     expect(harness.unsubscribeState).toHaveBeenCalledOnce()
-    expect(harness.unsubscribeTransition).toHaveBeenCalledOnce()
   })
 })
