@@ -14,7 +14,7 @@ export function VoiceDictationFeatureTipVisual(): JSX.Element {
   const shortcut = useShortcutKeyDetails('voice.dictation')
   const dictatedPrompt = translate(
     'featureTips.voice.demoPrompt',
-    'Refactor the voice setup flow and add coverage for the permission states.'
+    'Review this diff for edge cases and add tests for anything you find.'
   )
   const [typedLength, setTypedLength] = useState(0)
   const effectiveTypedLength = reducedMotion ? dictatedPrompt.length : typedLength

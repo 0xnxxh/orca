@@ -14689,7 +14689,7 @@
   },
   "featureTips": {
     "voice": {
-      "demoPrompt": "Refactor the voice setup flow and add coverage for the permission states.",
+      "demoPrompt": "Review this diff for edge cases and add tests for anything you find.",
       "startDictation": "Start dictation",
       "agentPromptTitle": "Agent prompt",
       "listening": "Listening...",

@@ -47,7 +47,7 @@ describe('VoiceDictationFeatureTipVisual', () => {
     expect(prompt?.textContent).toBe('R')
     await act(async () => vi.runAllTimers())
     expect(prompt?.textContent).toBe(
-      'Refactor the voice setup flow and add coverage for the permission states.'
+      'Review this diff for edge cases and add tests for anything you find.'
     )
     expect(vi.getTimerCount()).toBe(0)
 
@@ -69,7 +69,7 @@ describe('VoiceDictationFeatureTipVisual', () => {
     const { container, root } = await renderVisual()
 
     expect(container.textContent).toContain(
-      'Refactor the voice setup flow and add coverage for the permission states.'
+      'Review this diff for edge cases and add tests for anything you find.'
     )
     expect(container.innerHTML).not.toContain('animate-waveform')
     expect(setTimeoutSpy).not.toHaveBeenCalled()
