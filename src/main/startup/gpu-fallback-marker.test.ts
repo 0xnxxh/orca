@@ -44,6 +44,7 @@ vi.mock('../durable-file-write', async (importOriginal) => {
 import {
   GPU_FALLBACK_MARKER_FILE,
   clearGpuFallbackMarker,
+  gpuFallbackMarkerFileExists,
   readActiveGpuFallbackMarker,
   readGpuFallbackMarker,
   sweepStaleGpuFallbackMarkerTempFiles,
@@ -73,20 +74,71 @@ describe('gpu-fallback-marker', () => {
   })
 
   it('round-trips a written marker', () => {
-    writeGpuFallbackMarker(userDataPath, { engagedAt: 123, crashesInWindow: 3 }, environment)
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: 123, crashesInWindow: 3, consented: false },
+      environment
+    )
     expect(readGpuFallbackMarker(userDataPath)).toEqual({
-      schemeVersion: 2,
+      schemeVersion: 3,
       engagedAt: 123,
       crashesInWindow: 3,
+      consented: false,
       appVersion: '1.2.3',
       electronVersion: '42.3.3',
       platform: 'win32'
     })
   })
 
+  it('round-trips the consent flag that separates a latch from a chosen restart', () => {
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: 123, crashesInWindow: 3, consented: true },
+      environment
+    )
+    expect(readGpuFallbackMarker(userDataPath)?.consented).toBe(true)
+  })
+
+  it('rejects a scheme-2 marker that predates the consent flag', () => {
+    // Why: without `consented` there is no way to tell a user-confirmed latch from
+    // one the crash imposed, so the bump must invalidate the old shape outright.
+    writeFileSync(
+      join(userDataPath, GPU_FALLBACK_MARKER_FILE),
+      JSON.stringify({
+        schemeVersion: 2,
+        engagedAt: 1,
+        crashesInWindow: 3,
+        ...environment
+      })
+    )
+    expect(readGpuFallbackMarker(userDataPath)).toBeNull()
+  })
+
+  it('rejects a marker whose consent flag is not a boolean', () => {
+    writeFileSync(
+      join(userDataPath, GPU_FALLBACK_MARKER_FILE),
+      JSON.stringify({
+        schemeVersion: 3,
+        engagedAt: 1,
+        crashesInWindow: 3,
+        consented: 'yes',
+        ...environment
+      })
+    )
+    expect(readGpuFallbackMarker(userDataPath)).toBeNull()
+  })
+
   it('overwrites an existing marker and leaves no temp file behind', () => {
-    writeGpuFallbackMarker(userDataPath, { engagedAt: 1, crashesInWindow: 3 }, environment)
-    writeGpuFallbackMarker(userDataPath, { engagedAt: 2, crashesInWindow: 5 }, environment)
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: 1, crashesInWindow: 3, consented: false },
+      environment
+    )
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: 2, crashesInWindow: 5, consented: false },
+      environment
+    )
 
     expect(readGpuFallbackMarker(userDataPath)?.engagedAt).toBe(2)
     // Why: the durable write renames through a temp file; an orphan would accumulate
@@ -99,7 +151,11 @@ describe('gpu-fallback-marker', () => {
     // lands. This path must never end up worse than a plain writeFileSync.
     durableWrite.failWith = Object.assign(new Error('EPERM: rename'), { code: 'EPERM' })
 
-    writeGpuFallbackMarker(userDataPath, { engagedAt: 7, crashesInWindow: 3 }, environment)
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: 7, crashesInWindow: 3, consented: false },
+      environment
+    )
 
     // Why assert the call: an ineffective mock would leave this green while
     // covering nothing but the happy path.
@@ -116,7 +172,11 @@ describe('gpu-fallback-marker', () => {
 
     // Why the durable error, not the fallback's: it names the real cause.
     expect(() =>
-      writeGpuFallbackMarker(userDataPath, { engagedAt: 9, crashesInWindow: 3 }, environment)
+      writeGpuFallbackMarker(
+        userDataPath,
+        { engagedAt: 9, crashesInWindow: 3, consented: false },
+        environment
+      )
     ).toThrow(durableError)
   })
 
@@ -126,7 +186,11 @@ describe('gpu-fallback-marker', () => {
   })
 
   it('keeps an active marker for repeated launches on the same build', () => {
-    writeGpuFallbackMarker(userDataPath, { engagedAt: 1, crashesInWindow: 4 }, environment)
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: 1, crashesInWindow: 4, consented: false },
+      environment
+    )
     expect(existsSync(join(userDataPath, GPU_FALLBACK_MARKER_FILE))).toBe(true)
 
     const firstRead = readActiveGpuFallbackMarker(userDataPath, environment)
@@ -138,7 +202,11 @@ describe('gpu-fallback-marker', () => {
   })
 
   it('clears an active marker when the app build changes', () => {
-    writeGpuFallbackMarker(userDataPath, { engagedAt: 1, crashesInWindow: 4 }, environment)
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: 1, crashesInWindow: 4, consented: false },
+      environment
+    )
 
     expect(
       readActiveGpuFallbackMarker(userDataPath, {
@@ -150,7 +218,11 @@ describe('gpu-fallback-marker', () => {
   })
 
   it('clears an active marker outside Windows', () => {
-    writeGpuFallbackMarker(userDataPath, { engagedAt: 1, crashesInWindow: 4 }, environment)
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: 1, crashesInWindow: 4, consented: false },
+      environment
+    )
 
     expect(
       readActiveGpuFallbackMarker(userDataPath, {
@@ -165,7 +237,11 @@ describe('gpu-fallback-marker', () => {
   // carries the macOS disable-skia-graphite fix. A marker that survived on darwin would silently
   // strip the fix from the Macs it targets, so pin the platform gate for darwin specifically.
   it('clears an active marker on macOS so the Graphite fix is never skipped', () => {
-    writeGpuFallbackMarker(userDataPath, { engagedAt: 1, crashesInWindow: 4 }, environment)
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: 1, crashesInWindow: 4, consented: false },
+      environment
+    )
 
     expect(
       readActiveGpuFallbackMarker(userDataPath, {
@@ -191,8 +267,20 @@ describe('gpu-fallback-marker', () => {
     expect(existsSync(join(userDataPath, GPU_FALLBACK_MARKER_FILE))).toBe(false)
   })
 
+  it('reports a marker file that exists but does not parse, so the sweep still runs', () => {
+    // Why: the startup sweep is gated on this, and gating it on a *readable* marker
+    // would skip the reclaim in exactly the torn-write case it exists for.
+    expect(gpuFallbackMarkerFileExists(userDataPath)).toBe(false)
+    writeFileSync(join(userDataPath, GPU_FALLBACK_MARKER_FILE), '{ not json')
+    expect(gpuFallbackMarkerFileExists(userDataPath)).toBe(true)
+  })
+
   it('sweeps temp files orphaned by a kill between write and rename', async () => {
-    writeGpuFallbackMarker(userDataPath, { engagedAt: 1, crashesInWindow: 3 }, environment)
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: 1, crashesInWindow: 3, consented: false },
+      environment
+    )
     // A foreign pid: the sweeper deliberately skips this process's own in-flight temps.
     const orphan = join(userDataPath, `${GPU_FALLBACK_MARKER_FILE}.999999.123.abc.tmp`)
     writeFileSync(orphan, '{}')
@@ -205,7 +293,11 @@ describe('gpu-fallback-marker', () => {
   })
 
   it('retries a marker delete that is briefly refused', () => {
-    writeGpuFallbackMarker(userDataPath, { engagedAt: 1, crashesInWindow: 3 }, environment)
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: 1, crashesInWindow: 3, consented: false },
+      environment
+    )
     rmControl.calls = 0
     rmControl.failuresLeft = 2
 
@@ -216,7 +308,11 @@ describe('gpu-fallback-marker', () => {
   })
 
   it('reports a marker delete that never succeeds, after backing off', () => {
-    writeGpuFallbackMarker(userDataPath, { engagedAt: 1, crashesInWindow: 3 }, environment)
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: 1, crashesInWindow: 3, consented: false },
+      environment
+    )
     rmControl.failuresLeft = Number.MAX_SAFE_INTEGER
 
     const startedAt = Date.now()
@@ -231,7 +327,11 @@ describe('gpu-fallback-marker', () => {
   })
 
   it('never blocks startup revalidation on an undeletable marker', () => {
-    writeGpuFallbackMarker(userDataPath, { engagedAt: 1, crashesInWindow: 3 }, environment)
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: 1, crashesInWindow: 3, consented: false },
+      environment
+    )
     rmControl.failuresLeft = Number.MAX_SAFE_INTEGER
 
     const startedAt = Date.now()
@@ -261,7 +361,11 @@ describe('gpu-fallback-marker', () => {
     rmControl.failuresLeft = Number.MAX_SAFE_INTEGER
 
     const startedAt = Date.now()
-    writeGpuFallbackMarker(userDataPath, { engagedAt: 5, crashesInWindow: 3 }, environment)
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: 5, crashesInWindow: 3, consented: false },
+      environment
+    )
     const elapsed = Date.now() - startedAt
 
     expect(readGpuFallbackMarker(userDataPath)?.engagedAt).toBe(5)
@@ -271,7 +375,11 @@ describe('gpu-fallback-marker', () => {
   })
 
   it('can explicitly clear the marker', () => {
-    writeGpuFallbackMarker(userDataPath, { engagedAt: 1, crashesInWindow: 4 }, environment)
+    writeGpuFallbackMarker(
+      userDataPath,
+      { engagedAt: 1, crashesInWindow: 4, consented: false },
+      environment
+    )
     clearGpuFallbackMarker(userDataPath)
     expect(readGpuFallbackMarker(userDataPath)).toBeNull()
   })

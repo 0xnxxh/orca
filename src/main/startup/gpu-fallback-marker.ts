@@ -16,7 +16,8 @@ import {
  */
 
 export const GPU_FALLBACK_MARKER_FILE = 'gpu-fallback.json'
-export const GPU_FALLBACK_SCHEME_VERSION = 2
+// Bumped to 3 for `consented`, which self-invalidates markers written without it.
+export const GPU_FALLBACK_SCHEME_VERSION = 3
 
 export type GpuFallbackEnvironment = {
   appVersion: string
@@ -30,6 +31,8 @@ export type GpuFallbackMarker = {
   schemeVersion: number
   engagedAt: number
   crashesInWindow: number
+  /** False while the marker is only a pre-prompt latch; true once the user chose to restart. */
+  consented: boolean
   appVersion: string
   electronVersion: string
   platform: 'win32'
@@ -37,6 +40,11 @@ export type GpuFallbackMarker = {
 
 function markerPath(userDataPath: string): string {
   return join(userDataPath, GPU_FALLBACK_MARKER_FILE)
+}
+
+/** Why exported: the startup temp sweep is gated on a fallback file having existed. */
+export function gpuFallbackMarkerFileExists(userDataPath: string): boolean {
+  return existsSync(markerPath(userDataPath))
 }
 
 export function readGpuFallbackMarker(userDataPath: string): GpuFallbackMarker | null {
@@ -52,6 +60,7 @@ export function readGpuFallbackMarker(userDataPath: string): GpuFallbackMarker |
       !Number.isFinite(parsed.engagedAt) ||
       typeof parsed.crashesInWindow !== 'number' ||
       !Number.isFinite(parsed.crashesInWindow) ||
+      typeof parsed.consented !== 'boolean' ||
       typeof parsed.appVersion !== 'string' ||
       typeof parsed.electronVersion !== 'string' ||
       parsed.platform !== 'win32'
@@ -62,6 +71,7 @@ export function readGpuFallbackMarker(userDataPath: string): GpuFallbackMarker |
       schemeVersion: GPU_FALLBACK_SCHEME_VERSION,
       engagedAt: parsed.engagedAt,
       crashesInWindow: parsed.crashesInWindow,
+      consented: parsed.consented,
       appVersion: parsed.appVersion,
       electronVersion: parsed.electronVersion,
       platform: parsed.platform
@@ -74,13 +84,14 @@ export function readGpuFallbackMarker(userDataPath: string): GpuFallbackMarker |
 
 export function writeGpuFallbackMarker(
   userDataPath: string,
-  info: { engagedAt: number; crashesInWindow: number },
+  info: { engagedAt: number; crashesInWindow: number; consented: boolean },
   environment: WindowsGpuFallbackEnvironment
 ): void {
   const marker: GpuFallbackMarker = {
     schemeVersion: GPU_FALLBACK_SCHEME_VERSION,
     engagedAt: info.engagedAt,
     crashesInWindow: info.crashesInWindow,
+    consented: info.consented,
     appVersion: environment.appVersion,
     electronVersion: environment.electronVersion,
     platform: 'win32'

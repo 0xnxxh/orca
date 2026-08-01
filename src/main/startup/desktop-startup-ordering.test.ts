@@ -137,15 +137,109 @@ describe('startup ordering', () => {
     expect(persistBody).not.toMatch(/\bawait[\s(]/)
 
     // Why exactly two writers: the pre-prompt persist, plus the re-persist that
-    // recovers a consented restart whose marker a session-end drop already took.
+    // records consent (and recovers a marker a session-end drop already took).
     expect(handler.split('writeGpuFallbackMarker(')).toHaveLength(3)
-    const confirmedQuittingIndex = handler.indexOf("outcome === 'confirmed-quitting'")
-    expect(confirmedQuittingIndex).toBeGreaterThanOrEqual(0)
-    expect(handler.lastIndexOf('writeGpuFallbackMarker(')).toBeGreaterThan(confirmedQuittingIndex)
+    const resolutionIndex = handler.indexOf('resolveGpuFallbackEngagement(outcome')
+    expect(resolutionIndex).toBeGreaterThanOrEqual(0)
+    expect(handler.lastIndexOf('writeGpuFallbackMarker(')).toBeGreaterThan(resolutionIndex)
 
-    // Why pinned: the outcome -> retry mapping is unit-tested, so the handler must
-    // defer to it rather than re-deriving the outcome list inline.
-    expect(handler).toContain('if (!shouldKeepProvisionalGpuFallbackMarker(outcome)) {')
+    // Why pinned: the outcome -> bookkeeping mapping is unit-tested in
+    // gpu-fallback-engagement-resolution, so re-deriving it inline here would
+    // restore the zero-coverage gap this extraction closed.
+    expect(handler).toContain(
+      'provisionalGpuFallbackUserDataPath = resolution.provisionalMarkerPath'
+    )
+    expect(handler).toContain('if (resolution.rePersistConsentedMarker) {')
+    expect(handler).toContain('if (!resolution.relaunch) {')
+    expect(handler).not.toContain('shouldKeepProvisionalGpuFallbackMarker(')
+
+    // Why: consent is what separates a latch the user chose from one the crash
+    // imposed, and without it on disk the fix's own efficacy is unmeasurable.
+    expect(handler).toContain('consented: false')
+    expect(handler).toContain('consented: true')
+  })
+
+  it('counts GPU crashes across launches, not just within one', () => {
+    const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const start = source.indexOf('async function handleGpuChildCrash(')
+    const end = source.indexOf('function recordProcessGoneCrash(', start)
+    const handler = source.slice(start, end)
+
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(end).toBeGreaterThan(start)
+
+    // Why both: the in-process burst path is what catches a driver that fails
+    // mid-session; the durable path is the only one reachable when the crash
+    // kills the launch in 0.8s.
+    const inProcessIndex = handler.indexOf('gpuCrashFallbackTracker.recordGpuCrash(')
+    const durableIndex = handler.indexOf('evaluateGpuCrashHistory(')
+    const gateIndex = handler.indexOf(
+      'if (!inProcess.shouldEngageFallback && !durable.crossesThreshold) {'
+    )
+    const persistIndex = handler.indexOf('persistGpuCrashTimes(')
+    expect(inProcessIndex).toBeGreaterThanOrEqual(0)
+    expect(durableIndex).toBeGreaterThan(inProcessIndex)
+    expect(gateIndex).toBeGreaterThan(durableIndex)
+    // Why inside the non-firing branch: on the crash that fires, this write's fsync
+    // would land in front of the marker write that is racing Chromium's kill.
+    expect(persistIndex).toBeGreaterThan(gateIndex)
+    expect(persistIndex).toBeLessThan(handler.indexOf('gpuFallbackEngagementStarted = true'))
+    expect(handler.split('persistGpuCrashTimes(')).toHaveLength(2)
+
+    // Why inert off Windows: the environment check must precede every write.
+    const environmentIndex = handler.indexOf('getWindowsGpuFallbackEnvironment()')
+    expect(environmentIndex).toBeGreaterThanOrEqual(0)
+    expect(environmentIndex).toBeLessThan(inProcessIndex)
+    expect(handler.indexOf('getCanonicalUserDataPath()')).toBeGreaterThan(environmentIndex)
+
+    // Why cleared only after the prompt resolved: a kill while the modal is up must
+    // leave the count armed to fire again, while a decline must not re-prompt on the
+    // very next crash.
+    const clearIndex = handler.indexOf('clearGpuCrashHistory(userDataPath)')
+    expect(clearIndex).toBeGreaterThan(handler.indexOf('await engageGpuFallback({'))
+    // Why latched: either counter can fire, so a later same-session crash would
+    // otherwise stack a second modal on top of the first.
+    expect(handler).toContain('gpuFallbackEngagementStarted = true')
+    expect(handler).toContain('gpuFallbackEngagementStarted ||')
+  })
+
+  // Why one test over three call sites: they are the whole lifecycle of the durable
+  // count, each is a one-token deletion away from silently reverting the feature to
+  // the in-process tracker, and each survived the suite until this test existed.
+  it('writes and clears the cross-launch GPU crash count at exactly three places', () => {
+    const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const slice = (from: string, to: string): string => {
+      const start = source.indexOf(from)
+      const end = source.indexOf(to, start)
+      expect(start).toBeGreaterThanOrEqual(0)
+      expect(end).toBeGreaterThan(start)
+      return source.slice(start, end)
+    }
+
+    // Why guarded: an excluded reason (`launch-failed`) evaluates to the inert
+    // decision, whose crashTimes is []. Persisting that truncates the real count to
+    // zero, so one excluded death silently erases the whole accumulated history.
+    const handler = slice('async function handleGpuChildCrash(', 'function recordProcessGoneCrash(')
+    expect(handler).toContain('const countsDurably = countsTowardDurableGpuCrashHistory(reason)')
+    expect(handler).toContain(
+      'if (countsDurably) {\n      persistGpuCrashTimes(userDataPath, environment, durable.crashTimes)\n    }'
+    )
+
+    // Why cleared on a safe-graphics launch: the marker is already applied, so the
+    // pre-fallback times must not re-fire the prompt on the first GPU hiccup here.
+    const reader = slice(
+      'function maybeApplyGpuFallbackForThisLaunch()',
+      'function recordGpuFallbackMarkerPersisted('
+    )
+    expect(reader).toContain('clearGpuCrashHistory(userDataPath)')
+
+    // Why cleared on an orderly quit: a shutdown that reached 'quit' proves the
+    // burst was survivable, so an unconfirmed marker's count must not outlive it.
+    const drop = slice(
+      'function dropUnconfirmedGpuFallbackMarker()',
+      'function recordProcessGoneCrash('
+    )
+    expect(drop).toContain('clearGpuCrashHistory(provisionalGpuFallbackUserDataPath)')
   })
 
   it('drops an unconfirmed GPU fallback marker only once the quit is committed', () => {
@@ -166,9 +260,37 @@ describe('startup ordering', () => {
       'dropUnconfirmedGpuFallbackMarker'
     )
 
-    // Why source-wide: the marker may only be dropped by the shutdown helper and
-    // by the explicit "Keep Running" answer.
-    expect(source.split('clearGpuFallbackMarker(')).toHaveLength(3)
+    // Why source-wide: the marker may only be dropped by the shutdown helper, by
+    // the explicit "Keep Running" answer, and by the Help-menu opt-out.
+    expect(source.split('clearGpuFallbackMarker(')).toHaveLength(4)
+    expect(source).toContain('function turnOffGpuFallback()')
+  })
+
+  it('gives a latched user a way out that does not come straight back', () => {
+    const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const start = source.indexOf('function turnOffGpuFallback()')
+    const end = source.indexOf('function dropUnconfirmedGpuFallbackMarker()', start)
+    const optOut = source.slice(start, end)
+
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(end).toBeGreaterThan(start)
+
+    // Why both: the marker latches the next launch and the count would re-latch the
+    // one after it, so clearing only one of them leaves the user still stuck.
+    expect(optOut).toContain('clearGpuCrashHistory(userDataPath)')
+    expect(optOut).toContain('clearGpuFallbackMarker(userDataPath)')
+    // Why gated on the clear: relaunching over a marker still on disk returns the
+    // user straight to safe graphics, having promised otherwise.
+    const clearIndex = optOut.indexOf('if (!clearGpuFallbackMarker(userDataPath)) {')
+    const relaunchIndex = optOut.indexOf("relaunchApp('gpu-fallback-opt-out'")
+    expect(clearIndex).toBeGreaterThanOrEqual(0)
+    expect(relaunchIndex).toBeGreaterThan(clearIndex)
+    // Why canonical: a split path would clear a marker the next launch never reads.
+    expect(optOut).toContain('getCanonicalUserDataPath()')
+
+    // Why surfaced only while latched: the menu item is meaningless otherwise.
+    expect(source).toContain('isGpuFallbackActive: () => gpuFallbackActiveThisLaunch')
+    expect(source).toContain('onTurnOffGpuFallback: turnOffGpuFallback')
   })
 
   it('reads and writes the GPU fallback marker through the same userData path', () => {
@@ -184,11 +306,19 @@ describe('startup ordering', () => {
     // Why: a split between reader and writer paths turns the whole fallback into
     // a silent no-op — the marker lands somewhere the next launch never looks.
     expect(source.slice(readerStart, readerEnd)).toContain('getCanonicalUserDataPath()')
-    // Why here: a kill between the marker's write and rename orphans a temp file,
-    // and this is the only launch-time site that reclaims them.
-    expect(source.slice(readerStart, readerEnd)).toContain(
-      'sweepStaleGpuFallbackMarkerTempFiles(userDataPath)'
-    )
+    // Why here: a kill between a write and its rename orphans a temp file, and
+    // this is the only launch-time site that reclaims them.
+    const reader = source.slice(readerStart, readerEnd)
+    expect(reader).toContain('sweepStaleGpuFallbackMarkerTempFiles(userDataPath)')
+    expect(reader).toContain('sweepStaleGpuCrashHistoryTempFiles(userDataPath)')
+    // Why gated: the sweep readdirs all of userData (Cache / GPUCache / Local
+    // Storage) on a pre-whenReady path that runs on every Windows launch.
+    expect(reader).toContain('if (sweepForOrphans) {')
+    expect(reader).toContain('gpuFallbackMarkerFileExists(userDataPath)')
+    expect(reader).toContain('gpuCrashHistoryFileExists(userDataPath)')
+    // Why platform-gated: safe graphics is a Windows-only remedy, and
+    // enableMainProcessGpuFeatures() carries the macOS Graphite fix it skips.
+    expect(reader).toContain("process.platform !== 'win32'")
     expect(source.slice(readerEnd, writerEnd)).toContain('getCanonicalUserDataPath()')
     expect(source.slice(readerStart, writerEnd)).not.toContain("app.getPath('userData')")
   })
