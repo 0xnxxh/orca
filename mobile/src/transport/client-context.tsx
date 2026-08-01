@@ -286,10 +286,10 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     []
   )
 
-  const getAllClients = useCallback((): Array<{
+  const getAllClients = useCallback((): {
     hostId: string
     client: RpcClient
-  }> => {
+  }[] => {
     const out: Array<{ hostId: string; client: RpcClient }> = []
     for (const [hostId, entry] of storeRef.current) {
       out.push({ hostId, client: entry.client })
