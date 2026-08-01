@@ -53,15 +53,16 @@ The gate scans the desktop renderer plus both mobile source roots. Mobile uses
 `config/mobile-localization-coverage-allowlist.json`, which is also committed
 empty.
 
-Verify mobile catalog references, conditional keys, interpolation options, and
-the translations present in each sparse locale:
+Verify mobile catalog references, conditional keys, interpolation options,
+protected technical literals, and non-empty translations. The same gate checks
+Expo native locale mappings, required permission keys, and English fallbacks:
 
 ```sh
 pnpm run verify:mobile-localization-catalog
 ```
 
-The checked-in mobile runtime JSON is a temporary bridge to the planned
-canonical PO source and read-only compiler. Feature work updates English only;
+The checked-in mobile runtime JSON is a temporary bridge to the canonical PO
+source and read-only compiler. Feature work updates English only;
 missing target values intentionally use runtime English fallback. Whole-catalog
 translation commands are not part of the maintained workflow.
 

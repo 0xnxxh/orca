@@ -2180,7 +2180,38 @@
     "status": {
       "actionRequired": "Action required"
     },
-    "annotationFallback": "Annotation"
+    "annotationFallback": "Annotation",
+    "summary": {
+      "failing": {
+        "one": "{{count}} failing",
+        "other": "{{count}} failing"
+      },
+      "pending": {
+        "one": "{{count}} pending",
+        "other": "{{count}} pending"
+      },
+      "passed": {
+        "one": "{{count}} passed",
+        "other": "{{count}} passed"
+      },
+      "neutral": {
+        "one": "{{count}} neutral",
+        "other": "{{count}} neutral"
+      }
+    }
+  },
+  "richMarkdown": {
+    "startWriting": "Start writing...",
+    "codePlaceholder": "code",
+    "taskPlaceholder": "Task",
+    "linkUrlPrompt": "Link URL",
+    "imageUrlPrompt": "Image URL"
+  },
+  "terminal": {
+    "selection": {
+      "copy": "Copy",
+      "selectAll": "Select All"
+    }
   },
   "session": {
     "quickCommand": {

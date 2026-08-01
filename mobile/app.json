@@ -26,7 +26,7 @@
       "buildNumber": "1",
       "infoPlist": {
         "CFBundleAllowMixedLocalizations": true,
-        "NSLocalNetworkUsageDescription": "Orca connects to the desktop app on your LAN.",
+        "NSLocalNetworkUsageDescription": "Orca connects to the desktop app on your local network.",
         "NSMicrophoneUsageDescription": "Allow Orca to record voice dictation and transcribe it on your paired desktop.",
         "NSPhotoLibraryUsageDescription": "Allow Orca to attach photos from your library to a terminal session on your paired desktop.",
         "NSAppTransportSecurity": {
@@ -105,7 +105,7 @@
         "expo-camera",
         {
           "cameraPermission": "Allow Orca to use the camera for QR code scanning.",
-          "microphonePermission": "Allow Orca to use your microphone for voice dictation sent to your paired desktop for transcription.",
+          "microphonePermission": "Allow Orca to record voice dictation and transcribe it on your paired desktop.",
           "recordAudioAndroid": false
         }
       ],

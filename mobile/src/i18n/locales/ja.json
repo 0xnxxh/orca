@@ -87,7 +87,7 @@
     "mZj5XBY": "差分をロードできません",
     "v6-Hc8I": "コミットされた差分プレビューを閉じる",
     "I6GjQO8": "ブランチにコミット",
-    "6lym-WQ": "{{value0}}..頭",
+    "6lym-WQ": "{{value0}}..HEAD",
     "P2fbbug": "詳細を表示",
     "eysP-fI": "詳細を非表示",
     "6Pb0W84": "commit 失敗の詳細を表示する",
@@ -221,7 +221,7 @@
     "S9UUSi8": "追加 Enter",
     "MsJOHDg": "詳細設定",
     "WFigoqY": "スキル、ファイル パス、組み込みコマンドをサポートします。",
-    "YGxS8ck": "npm 実行開発",
+    "YGxS8ck": "npm run dev",
     "j_uWjuQ": "agent にこのワークスペースを調査するよう依頼します",
     "2WUowpg": "コマンドテキスト",
     "v512Bqc": "プロンプト",
@@ -343,7 +343,7 @@
     "UfU4CAU": "バイナリ プレビューは利用できません",
     "2t0lh6U": "プレビューを読み込めません",
     "jLhPXXQ": "その他の VPN 干渉",
-    "ngjn4tY": "テールスケール ホストに到達できません",
+    "ngjn4tY": "Tailscale ホストに到達できません",
     "AE3mc7A": "接続タイムアウト",
     "MED_8yU": "デスクトップアプリが実行されていない",
     "amY3iCs": "ファイアウォールがポート 6768 をブロックしている",
@@ -774,7 +774,7 @@
     "Au06U2c": "Agent セッション履歴",
     "XjyxBLA": "ソース管理",
     "pBOdX2k": "@orca_build",
-    "qfIlnqY": "スタビライ/シャチ",
+    "qfIlnqY": "stablyai/orca",
     "1sjQKuE": "onOrca.dev",
     "wRf8z4A": "100x ビルダー向けのオープンソース agent IDE",
     "o1zkACA": "Orca",
@@ -1454,7 +1454,7 @@
     "76ELAmA": "プレビュー",
     "dZsgG-M": "フォルダーをロードできません",
     "wA_0d2E": "獲得した Codex レート制限のリセット",
-    "CiFc9DQ": "例えばpnpmビルド",
+    "CiFc9DQ": "例: pnpm build",
     "d0JpJz4": "例えば建てる",
     "rMV0BMU": "キーを選択してください",
     "fTbhbgg": "画像を開く",
@@ -1615,7 +1615,7 @@
     "V4EVATY": "デスクトップで変更されました",
     "RwIU_9I": "読み取り専用",
     "hPnnpWc": "ダイレクト・LAN",
-    "f3Si3vU": "ダイレクト・テールスケール",
+    "f3Si3vU": "ダイレクト · Tailscale",
     "Lo_8ioI": "Orca Relay",
     "QNvTsRo": "いいえ{{value0}}",
     "nDyX2e8": "ブランク Terminal",
@@ -1721,7 +1721,7 @@
     "OLmV45U": "無題",
     "S-avV-Y": "レビュー済みファイル {{value0}} 件をステージしました",
     "IPu47z8": "レビュー済みファイル {{value0}} 件をステージしました",
-    "TxG95wU": "テールスケールをチェックする",
+    "TxG95wU": "Tailscale を確認",
     "oBMMuM8": "GitHub ワークアイテムには SSH リポジトリ用の GitHub リモートが必要です",
     "m4LECc4": "フローティングワークスペース",
     "ueRRwRg": "接続が遅すぎて音声ディクテーションができません。接続が改善されてからもう一度お試しください。",
@@ -1857,7 +1857,7 @@
     "Gli-J-E": "SSH 接続状態の読み取りに失敗しました。",
     "17Ky5K0": "Linear",
     "kWDpsSU": "問題 ＃",
-    "G_t8Rjg": "氏 ！",
+    "G_t8Rjg": "MR !",
     "Jq988q0": "PR 番号",
     "a6UgDc8": "ブラウザダイアログ",
     "VgO3m0E": "無題のセッション",
@@ -2145,7 +2145,7 @@
     "hRiZhQg": "ワークスペースのメタデータをロードできません。",
     "THbZzp4": "ホストにアクセスできません",
     "MJ1SglY": "その VPN を無効にするか、スプリット トンネリング / 「LAN を許可」を有効にします。",
-    "n-WXtiA": "非テールスケール VPN は、ローカル トラフィックをリモート サーバー経由でルーティングできます。",
+    "n-WXtiA": "Tailscale 以外の VPN は、ローカル トラフィックをリモート サーバー経由でルーティングできます。",
     "PxeuBQc": "Tailscale アプリを更新します。最近のリリースでは再接続のバグが修正されています。",
     "j0KeldQ": "デスクトップが起動しており、テールネットに接続されていることが表示されていることを確認します。",
     "rmMn9Xc": "iOS/Android はサイレントにトンネルを遮断できます。Tailscale アプリで Tailscale をオフにしてからオンに戻します。",
@@ -2157,7 +2157,7 @@
     "WkJ-I-g": "Orca を再起動してみてください。起動時にコンパニオン サーバーが開始されます。",
     "i4fV_jk": "接続を受け入れるには、デスクトップ上で Orca が開いている必要があります。",
     "rtC8ngI": "企業/学校のネットワークは P2P をブロックする可能性があります。個人用ホットスポットを試す。",
-    "401zg0M": "Linux: sudo ufw 許可 6768",
+    "401zg0M": "Linux: sudo ufw allow 6768",
     "ayekp1A": "Windows: Defender ファイアウォール → アプリを許可 — プライベート ネットワークに対して Orca を有効にします。",
     "REilmMs": "macOS: システム設定 → ネットワーク → ファイアウォール — Orca を許可します。",
     "jEL8NQc": "両方のデバイスで WiFi を再接続してみてください。",
@@ -2175,5 +2175,38 @@
     "39Q08OU": "レビュアー {{value0}} 人",
     "d8cyKVY": "レビュアー {{value0}} 人",
     "UMqLjMs": "未解決のチェック"
+  },
+  "prChecks": {
+    "summary": {
+      "failing": {
+        "one": "{{count}} 件失敗",
+        "other": "{{count}} 件失敗"
+      },
+      "pending": {
+        "one": "{{count}} 件保留中",
+        "other": "{{count}} 件保留中"
+      },
+      "passed": {
+        "one": "{{count}} 件成功",
+        "other": "{{count}} 件成功"
+      },
+      "neutral": {
+        "one": "{{count}} 件中立",
+        "other": "{{count}} 件中立"
+      }
+    }
+  },
+  "richMarkdown": {
+    "startWriting": "入力を開始...",
+    "codePlaceholder": "コード",
+    "taskPlaceholder": "タスク",
+    "linkUrlPrompt": "リンク URL",
+    "imageUrlPrompt": "画像 URL"
+  },
+  "terminal": {
+    "selection": {
+      "copy": "コピー",
+      "selectAll": "すべて選択"
+    }
   }
 }

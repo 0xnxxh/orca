@@ -13,4 +13,30 @@ function repositoryCount(count) {
 
     expect(candidates.map((candidate) => candidate.text)).toEqual(['repository', 'repositories'])
   })
+
+  it('finds copy embedded in mobile WebView documents', () => {
+    const source = String.raw`
+export const HTML = \`<!doctype html>
+<main data-placeholder="Start writing..."></main>
+<button>Copy</button><button>Select All</button>
+<script>
+  window.prompt('Link URL');
+  document.execCommand('insertHTML', false, '<p>Task</p>');
+</script>
+\`
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/example-html.ts',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual([
+      'Start writing...',
+      'Copy',
+      'Select All',
+      'Link URL',
+      'Task'
+    ])
+  })
 })

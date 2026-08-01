@@ -338,6 +338,9 @@ function normalizeModifiers(modifiers: TerminalShortcutModifier[]): TerminalShor
 }
 
 function normalizeShortcutKey(key: string): string | null {
+  if (key === ' ') {
+    return 'space'
+  }
   if (SPECIAL_KEY_LABELS[key]) {
     return key
   }
@@ -359,9 +362,6 @@ function formatShortcutLabel(key: string, modifiers: TerminalShortcutModifier[])
 function displayKeyLabel(key: string): string {
   if (SPECIAL_KEY_LABELS[key]) {
     return SPECIAL_KEY_LABELS[key]
-  }
-  if (key === ' ') {
-    return t('m.l6KJT3M')
   }
   return key.length === 1 && key >= 'a' && key <= 'z' ? key.toUpperCase() : key
 }

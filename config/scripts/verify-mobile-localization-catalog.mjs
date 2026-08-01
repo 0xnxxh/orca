@@ -10,6 +10,44 @@ const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx'])
 const SOURCE_RELATIVE_ROOTS = [path.join('mobile', 'app'), path.join('mobile', 'src')]
 const LOCALES_RELATIVE_DIR = path.join('mobile', 'src', 'i18n', 'locales')
 const MOBILE_LOCALES = ['en', 'es', 'ja', 'ko', 'zh']
+const NATIVE_LOCALES = ['en', 'es', 'ja', 'ko', 'zh-Hans']
+const NATIVE_LOCALES_RELATIVE_DIR = path.join('mobile', 'locales')
+const NATIVE_REQUIRED_KEYS = [
+  'ios.CFBundleDisplayName',
+  'ios.NSCameraUsageDescription',
+  'ios.NSLocalNetworkUsageDescription',
+  'ios.NSMicrophoneUsageDescription',
+  'ios.NSPhotoLibraryUsageDescription',
+  'android.app_name'
+]
+const NATIVE_LOCALE_PATHS = new Map(
+  NATIVE_LOCALES.map((locale) => [locale, `./locales/${locale}.json`])
+)
+const RUNTIME_TO_NATIVE_LOCALE = new Map([
+  ['en', 'en'],
+  ['es', 'es'],
+  ['ja', 'ja'],
+  ['ko', 'ko'],
+  ['zh', 'zh-Hans']
+])
+const PROTECTED_LITERALS = [
+  'sudo ufw allow 6768',
+  'npm run dev',
+  'pnpm build',
+  'stablyai/orca',
+  'onOrca.dev',
+  'orca.yaml',
+  'Tailscale',
+  'GitHub',
+  'GitLab',
+  'Codex',
+  'Claude',
+  'Orca',
+  'WSL',
+  'SSH',
+  'HEAD',
+  'MR !'
+]
 const PLACEHOLDER_RE = /\{\{\s*([^,}\s]+)(?:,[^}]*)?\}\}/g
 const ENCODED_HTML_ENTITY_RE = /&(?:amp|apos|gt|lt|quot);/i
 
@@ -45,6 +83,9 @@ async function collectSourceFiles(directory) {
 function flattenCatalog(value, catalogName, prefix = '', entries = new Map(), issues = []) {
   if (typeof value === 'string') {
     entries.set(prefix, value)
+    if (value.trim().length === 0) {
+      issues.push(`${catalogName}: ${prefix} must not be empty`)
+    }
     if (ENCODED_HTML_ENTITY_RE.test(value)) {
       issues.push(`${catalogName}: ${prefix} contains an encoded HTML entity`)
     }
@@ -138,6 +179,20 @@ function sameValues(left, right) {
   return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
+function occurrenceCount(value, literal) {
+  return value.split(literal).length - 1
+}
+
+function verifyProtectedLiterals(englishValue, localeValue, locale, key) {
+  const issues = []
+  for (const literal of PROTECTED_LITERALS) {
+    if (occurrenceCount(localeValue, literal) < occurrenceCount(englishValue, literal)) {
+      issues.push(`${locale}.json protected literal mismatch: ${key} must preserve ${literal}`)
+    }
+  }
+  return issues
+}
+
 export function collectMobileTranslationCalls(filePath, sourceText, root = process.cwd()) {
   const sourceKind =
     filePath.endsWith('.tsx') || filePath.endsWith('.jsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
@@ -216,12 +271,126 @@ function verifyLocaleEntries(englishEntries, locale, localeEntries) {
       continue
     }
     const englishPlaceholders = collectPlaceholderNames(englishValue)
-    const localePlaceholders = collectPlaceholderNames(localeEntries.get(key))
+    const localeValue = localeEntries.get(key)
+    const localePlaceholders = collectPlaceholderNames(localeValue)
     if (!sameValues(englishPlaceholders, localePlaceholders)) {
       issues.push(`${locale}.json placeholder mismatch: ${key}`)
     }
+    issues.push(...verifyProtectedLiterals(englishValue, localeValue, locale, key))
   }
 
+  return issues
+}
+
+function findPluginOptions(expoConfig, pluginName) {
+  const plugin = expoConfig.plugins?.find(
+    (entry) => Array.isArray(entry) && entry[0] === pluginName
+  )
+  return Array.isArray(plugin) && typeof plugin[1] === 'object' && plugin[1] !== null
+    ? plugin[1]
+    : {}
+}
+
+function verifyNativeFallbacks(expoConfig, englishEntries) {
+  const camera = findPluginOptions(expoConfig, 'expo-camera')
+  const imagePicker = findPluginOptions(expoConfig, 'expo-image-picker')
+  const infoPlist = expoConfig.ios?.infoPlist ?? {}
+  const fallbackValues = new Map([
+    ['ios.CFBundleDisplayName', [expoConfig.name]],
+    ['ios.NSCameraUsageDescription', [camera.cameraPermission]],
+    ['ios.NSLocalNetworkUsageDescription', [infoPlist.NSLocalNetworkUsageDescription]],
+    [
+      'ios.NSMicrophoneUsageDescription',
+      [infoPlist.NSMicrophoneUsageDescription, camera.microphonePermission]
+    ],
+    [
+      'ios.NSPhotoLibraryUsageDescription',
+      [infoPlist.NSPhotoLibraryUsageDescription, imagePicker.photosPermission]
+    ],
+    ['android.app_name', [expoConfig.name]]
+  ])
+  const issues = []
+
+  for (const [key, values] of fallbackValues) {
+    const englishValue = englishEntries.get(key)
+    for (const value of values) {
+      if (typeof value !== 'string' || value !== englishValue) {
+        issues.push(`mobile/app.json English native fallback mismatch: ${key}`)
+        break
+      }
+    }
+  }
+  return issues
+}
+
+async function verifyNativeCatalogs(root) {
+  const issues = []
+  const appConfigPath = path.join(root, 'mobile', 'app.json')
+  let appConfig
+  try {
+    appConfig = JSON.parse(await fs.readFile(appConfigPath, 'utf8'))
+  } catch (error) {
+    return [
+      `${normalizePath(root, appConfigPath)} could not be read: ${error instanceof Error ? error.message : String(error)}`
+    ]
+  }
+
+  const expoConfig = appConfig.expo ?? {}
+  const configuredLocales = expoConfig.locales ?? {}
+  for (const [locale, expectedPath] of NATIVE_LOCALE_PATHS) {
+    if (configuredLocales[locale] !== expectedPath) {
+      issues.push(`mobile/app.json locale ${locale} must map to ${expectedPath}`)
+    }
+  }
+  for (const locale of Object.keys(configuredLocales)) {
+    if (!NATIVE_LOCALE_PATHS.has(locale)) {
+      issues.push(`mobile/app.json has unsupported native locale mapping: ${locale}`)
+    }
+  }
+
+  const localizationPlugin = findPluginOptions(expoConfig, 'expo-localization')
+  if (!sameValues(localizationPlugin.supportedLocales ?? [], NATIVE_LOCALES)) {
+    issues.push('mobile/app.json expo-localization supportedLocales mismatch')
+  }
+  for (const [runtimeLocale, nativeLocale] of RUNTIME_TO_NATIVE_LOCALE) {
+    if (!MOBILE_LOCALES.includes(runtimeLocale) || !NATIVE_LOCALE_PATHS.has(nativeLocale)) {
+      issues.push(`mobile locale mapping is incomplete: ${runtimeLocale} -> ${nativeLocale}`)
+    }
+  }
+
+  const nativeCatalogs = new Map()
+  for (const locale of NATIVE_LOCALES) {
+    const catalogPath = path.join(root, NATIVE_LOCALES_RELATIVE_DIR, `${locale}.json`)
+    try {
+      const flattened = flattenCatalog(
+        JSON.parse(await fs.readFile(catalogPath, 'utf8')),
+        `mobile/locales/${locale}.json`
+      )
+      nativeCatalogs.set(locale, flattened.entries)
+      issues.push(...flattened.issues)
+    } catch (error) {
+      issues.push(
+        `${normalizePath(root, catalogPath)} could not be read: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  }
+
+  for (const [locale, entries] of nativeCatalogs) {
+    for (const key of NATIVE_REQUIRED_KEYS) {
+      if (!entries.has(key)) {
+        issues.push(`mobile/locales/${locale}.json missing required native key: ${key}`)
+      }
+    }
+    for (const key of entries.keys()) {
+      if (!NATIVE_REQUIRED_KEYS.includes(key)) {
+        issues.push(`mobile/locales/${locale}.json has unsupported native key: ${key}`)
+      }
+    }
+  }
+  const englishEntries = nativeCatalogs.get('en')
+  if (englishEntries) {
+    issues.push(...verifyNativeFallbacks(expoConfig, englishEntries))
+  }
   return issues
 }
 
@@ -259,6 +428,7 @@ function reportIssues(issues) {
 
 export async function main(root = process.cwd()) {
   const { catalogs, issues } = await readCatalogs(root)
+  issues.push(...(await verifyNativeCatalogs(root)))
   const englishEntries = catalogs.get('en')
   if (!englishEntries) {
     reportIssues(issues)

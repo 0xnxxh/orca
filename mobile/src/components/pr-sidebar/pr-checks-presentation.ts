@@ -81,16 +81,32 @@ export function summarizePRChecks(checks: readonly PRCheckDetail[]): PRChecksSum
   const outcome = OUTCOME_BY_STATE[state]
   const parts: string[] = []
   if (failed > 0) {
-    parts.push(`${failed} failing`)
+    parts.push(
+      t(failed === 1 ? 'prChecks.summary.failing.one' : 'prChecks.summary.failing.other', {
+        count: failed
+      })
+    )
   }
   if (pending > 0) {
-    parts.push(`${pending} pending`)
+    parts.push(
+      t(pending === 1 ? 'prChecks.summary.pending.one' : 'prChecks.summary.pending.other', {
+        count: pending
+      })
+    )
   }
   if (passed > 0) {
-    parts.push(`${passed} passed`)
+    parts.push(
+      t(passed === 1 ? 'prChecks.summary.passed.one' : 'prChecks.summary.passed.other', {
+        count: passed
+      })
+    )
   }
   if (neutral > 0) {
-    parts.push(`${neutral} neutral`)
+    parts.push(
+      t(neutral === 1 ? 'prChecks.summary.neutral.one' : 'prChecks.summary.neutral.other', {
+        count: neutral
+      })
+    )
   }
   return {
     total,

@@ -6,6 +6,7 @@ import process from 'node:process'
 // TypeScript 7 is a native CLI; AST consumers still need the legacy JavaScript API.
 import ts from 'typescript-api'
 
+import { collectMobileEmbeddedDocumentCandidates } from './mobile-embedded-document-candidates.mjs'
 import { classifyMobileStringNode } from './mobile-localization-candidate-rules.mjs'
 
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts'])
@@ -444,6 +445,23 @@ export function collectLocalizationCandidates(filePath, sourceText, root = proce
   }
 
   visit(sourceFile)
+  if (mobileSource) {
+    for (const candidate of collectMobileEmbeddedDocumentCandidates(relativePath, sourceText)) {
+      const value = compactText(candidate.text)
+      if (!hasHumanLanguageText(value)) {
+        continue
+      }
+      const position = sourceFile.getLineAndCharacterOfPosition(candidate.start)
+      reports.push({
+        area: areaForFile(relativePath),
+        filePath: relativePath,
+        ...candidate,
+        line: position.line + 1,
+        column: position.character + 1,
+        text: value
+      })
+    }
+  }
   return reports
 }
 

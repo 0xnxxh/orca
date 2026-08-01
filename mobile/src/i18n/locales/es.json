@@ -87,7 +87,7 @@
     "mZj5XBY": "No se puede cargar la diferencia",
     "v6-Hc8I": "Cerrar vista previa de diferencias comprometidas",
     "I6GjQO8": "Comprometidos en sucursal",
-    "6lym-WQ": "{{value0}}..CABEZA",
+    "6lym-WQ": "{{value0}}..HEAD",
     "P2fbbug": "Mostrar detalles",
     "eysP-fI": "Ocultar detalles",
     "6Pb0W84": "Mostrar detalles del error de commit",
@@ -343,7 +343,7 @@
     "UfU4CAU": "Vista previa binaria no disponible",
     "2t0lh6U": "No se puede cargar la vista previa",
     "jLhPXXQ": "Otra interferencia de VPN",
-    "ngjn4tY": "Host de escala final inalcanzable",
+    "ngjn4tY": "Host de Tailscale inaccesible",
     "AE3mc7A": "Tiempo de espera de conexión",
     "MED_8yU": "La aplicación de escritorio no se ejecuta",
     "amY3iCs": "Puerto de bloqueo de firewall 6768",
@@ -524,7 +524,7 @@
     "wOCs5LA": "Ejecutar hooks",
     "m7jxYm8": "Script de configuración",
     "gxXtGpI": "Nuevo script de configuración",
-    "JU7DVfY": "Orca.yaml de este repositorio se ejecuta antes de que comience el espacio de trabajo. Ejecútelo solo si confía en este repositorio.",
+    "JU7DVfY": "El orca.yaml de este repositorio se ejecuta antes de que comience el espacio de trabajo. Ejecútelo solo si confía en este repositorio.",
     "SSMlLr8": "¿Ejecutar la configuración desde {{value0}}?",
     "egQ-qgQ": "El script de configuración de {{value0}} cambió",
     "Lkm1Ms4": "Derivado del nombre",
@@ -774,14 +774,14 @@
     "Au06U2c": "Historial de sesiones de Agents",
     "XjyxBLA": "Control de código fuente",
     "pBOdX2k": "@orca_build",
-    "qfIlnqY": "estableai/orca",
-    "1sjQKuE": "enOrca.dev",
+    "qfIlnqY": "stablyai/orca",
+    "1sjQKuE": "onOrca.dev",
     "wRf8z4A": "IDE de agent de código abierto para constructores 100x",
     "o1zkACA": "Orca",
     "qBqOdtg": "Acerca de",
     "wdyLCXU": "Abrir enlaces de terminales",
     "K6VU-6c": "Elija dónde se abren los enlaces HTTP(S) seleccionados en la salida del terminal.",
-    "gh7VaTc": "CAMPO DE GOLF",
+    "gh7VaTc": "ENLACES",
     "GJwMNak": "Navegador",
     "Wj6QRnE": "Ábralo en Safari, Chrome u otro navegador en este teléfono.",
     "hIo6XgE": "Navegador de teléfono",
@@ -1110,7 +1110,7 @@
     "m-fVevQ": "Ejecutar hooks",
     "XPutx64": "Script de configuración",
     "vtdIQWU": "Nuevo script de configuración",
-    "Q3oUbk4": "Orca.yaml de este repositorio se ejecuta en su máquina antes de que comience el espacio de trabajo. Ejecútelo solo si confía en este repositorio.",
+    "Q3oUbk4": "El orca.yaml de este repositorio se ejecuta en su máquina antes de que comience el espacio de trabajo. Ejecútelo solo si confía en este repositorio.",
     "M_Pqsow": "¿Ejecutar la configuración desde {{value0}}?",
     "QetdCKc": "El script de configuración de {{value0}} cambió",
     "xd1VuYs": "Saltar configuración y crear",
@@ -1454,7 +1454,7 @@
     "76ELAmA": "Vista previa",
     "dZsgG-M": "No se puede cargar la carpeta",
     "wA_0d2E": "Restablecimiento del límite de velocidad del Codex obtenido",
-    "CiFc9DQ": "p.ej. compilación pnpm",
+    "CiFc9DQ": "p. ej. pnpm build",
     "d0JpJz4": "p.ej. Construir",
     "rMV0BMU": "Elige una llave",
     "fTbhbgg": "Abrir imagen",
@@ -1615,7 +1615,7 @@
     "V4EVATY": "Cambiado en el escritorio",
     "RwIU_9I": "Solo lectura",
     "hPnnpWc": "Directo · LAN",
-    "f3Si3vU": "Directo · Escala trasera",
+    "f3Si3vU": "Directo · Tailscale",
     "Lo_8ioI": "Orca Relay",
     "QNvTsRo": "Sin {{value0}}",
     "nDyX2e8": "Terminal en blanco",
@@ -1721,7 +1721,7 @@
     "OLmV45U": "Sin título",
     "S-avV-Y": "{{value0}} archivo revisado añadido al staging",
     "IPu47z8": "{{value0}} archivos revisados añadidos al staging",
-    "TxG95wU": "comprobar escala trasera",
+    "TxG95wU": "Comprobar Tailscale",
     "oBMMuM8": "Los elementos de trabajo de GitHub requieren un control remoto de GitHub para repositorios SSH",
     "m4LECc4": "Espacio de trabajo flotante",
     "ueRRwRg": "La conexión es demasiado lenta para el dictado por voz. Inténtalo de nuevo cuando la conexión mejore.",
@@ -1857,7 +1857,7 @@
     "Gli-J-E": "No se pudo leer el estado de la conexión SSH.",
     "17Ky5K0": "Linear",
     "kWDpsSU": "Asunto #",
-    "G_t8Rjg": "SEÑOR !",
+    "G_t8Rjg": "MR !",
     "Jq988q0": "PR #",
     "a6UgDc8": "Diálogo del navegador",
     "VgO3m0E": "Sesión sin título",
@@ -2145,7 +2145,7 @@
     "hRiZhQg": "No se pueden cargar los metadatos del espacio de trabajo.",
     "THbZzp4": "No se puede contactar con el anfitrión",
     "MJ1SglY": "Deshabilite esa VPN o habilite el túnel dividido / \"Permitir LAN\".",
-    "n-WXtiA": "Las VPN que no son de escala final pueden enrutar el tráfico local a través de un servidor remoto.",
+    "n-WXtiA": "Las VPN que no son de Tailscale pueden enrutar el tráfico local a través de un servidor remoto.",
     "PxeuBQc": "Actualice la aplicación Tailscale: las versiones recientes corrigen errores de reconexión.",
     "j0KeldQ": "Verifique que el escritorio esté activo y se muestre como conectado en su tailnet.",
     "rmMn9Xc": "iOS/Android puede bloquear silenciosamente el túnel: desactive y vuelva a activar Tailscale en la aplicación Tailscale.",
@@ -2157,7 +2157,7 @@
     "WkJ-I-g": "Intente reiniciar Orca: el servidor complementario se inicia al iniciarse.",
     "i4fV_jk": "Orca debe estar abierto en su escritorio para aceptar conexiones.",
     "rtC8ngI": "Las redes corporativas/escolares pueden bloquear el P2P; pruebe con un punto de acceso personal.",
-    "401zg0M": "Linux: sudo ufw permite 6768",
+    "401zg0M": "Linux: sudo ufw allow 6768",
     "ayekp1A": "Windows: Defender Firewall → Permitir aplicación: habilite Orca para redes privadas.",
     "REilmMs": "macOS: Configuración del sistema → Red → Firewall: permitir Orca.",
     "jEL8NQc": "Intente volver a conectar WiFi en ambos dispositivos.",
@@ -2175,5 +2175,38 @@
     "39Q08OU": "{{value0}} revisor",
     "d8cyKVY": "{{value0}} revisores",
     "UMqLjMs": "Comprobaciones sin resolver"
+  },
+  "prChecks": {
+    "summary": {
+      "failing": {
+        "one": "{{count}} con errores",
+        "other": "{{count}} con errores"
+      },
+      "pending": {
+        "one": "{{count}} pendiente",
+        "other": "{{count}} pendientes"
+      },
+      "passed": {
+        "one": "{{count}} aprobada",
+        "other": "{{count}} aprobadas"
+      },
+      "neutral": {
+        "one": "{{count}} neutral",
+        "other": "{{count}} neutrales"
+      }
+    }
+  },
+  "richMarkdown": {
+    "startWriting": "Empieza a escribir...",
+    "codePlaceholder": "código",
+    "taskPlaceholder": "Tarea",
+    "linkUrlPrompt": "URL del enlace",
+    "imageUrlPrompt": "URL de la imagen"
+  },
+  "terminal": {
+    "selection": {
+      "copy": "Copiar",
+      "selectAll": "Seleccionar todo"
+    }
   }
 }

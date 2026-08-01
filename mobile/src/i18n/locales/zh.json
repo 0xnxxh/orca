@@ -579,7 +579,7 @@
     "EIhMdN0": "主机速率限制目标无法命名 WSL 发行版",
     "zFyydp8": "此帐户没有可用的重置积分。",
     "_-grAdc": "无法重置",
-    "Um-XfOo": "符合条件的食典速率限制窗口未用尽。",
+    "Um-XfOo": "符合条件的 Codex 速率限制窗口未用尽。",
     "JMEauuw": "没有什么可以重置的",
     "3qHVa1w": "Codex 用法已刷新。",
     "9b3h0Pg": "重置已应用",
@@ -774,7 +774,7 @@
     "Au06U2c": "Agent 会话历史",
     "XjyxBLA": "源代码控制",
     "pBOdX2k": "@orca_build",
-    "qfIlnqY": "斯特布利艾/逆戟鲸",
+    "qfIlnqY": "stablyai/orca",
     "1sjQKuE": "onOrca.dev",
     "wRf8z4A": "适用于 100x 构建器的开源 agent IDE",
     "o1zkACA": "Orca",
@@ -1452,7 +1452,7 @@
     "76ELAmA": "预览",
     "dZsgG-M": "无法加载文件夹",
     "wA_0d2E": "已获得 Codex 速率限制重置",
-    "CiFc9DQ": "例如PNPM 构建",
+    "CiFc9DQ": "例如：pnpm build",
     "d0JpJz4": "例如建造",
     "rMV0BMU": "选择一把钥匙",
     "fTbhbgg": "打开图片",
@@ -1718,7 +1718,7 @@
     "OLmV45U": "无题",
     "S-avV-Y": "已暂存 {{value0}} 个已审查文件",
     "IPu47z8": "已暂存 {{value0}} 个已审查文件",
-    "TxG95wU": "检查尾标",
+    "TxG95wU": "检查 Tailscale",
     "oBMMuM8": "GitHub 工作项需要 SSH 存储库的 GitHub 远程",
     "m4LECc4": "浮动工作区",
     "ueRRwRg": "连接速度太慢，无法进行语音听写。当连接改善时重试。",
@@ -1854,7 +1854,7 @@
     "Gli-J-E": "无法读取 SSH 连接状态。",
     "17Ky5K0": "Linear",
     "kWDpsSU": "问题 ＃",
-    "G_t8Rjg": "先生 ！",
+    "G_t8Rjg": "MR !",
     "Jq988q0": "PR 号#",
     "a6UgDc8": "浏览器对话框",
     "VgO3m0E": "无标题会话",
@@ -2154,7 +2154,7 @@
     "WkJ-I-g": "尝试重新启动 Orca — 配套服务器在启动时启动。",
     "i4fV_jk": "Orca 必须在桌面上打开才能接受连接。",
     "rtC8ngI": "公司/学校网络可能会阻止 P2P — 尝试使用个人热点。",
-    "401zg0M": "Linux：sudo ufw 允许 6768",
+    "401zg0M": "Linux: sudo ufw allow 6768",
     "ayekp1A": "Windows：Defender 防火墙 → 允许应用程序 — 为专用网络启用 Orca。",
     "REilmMs": "macOS：系统设置 → 网络 → 防火墙 — 允许 Orca。",
     "jEL8NQc": "尝试在两台设备上重新连接 WiFi。",
@@ -2172,5 +2172,38 @@
     "39Q08OU": "{{value0}} 位评审人",
     "d8cyKVY": "{{value0}} 位评审人",
     "UMqLjMs": "未解决的检查"
+  },
+  "prChecks": {
+    "summary": {
+      "failing": {
+        "one": "{{count}} 项失败",
+        "other": "{{count}} 项失败"
+      },
+      "pending": {
+        "one": "{{count}} 项待处理",
+        "other": "{{count}} 项待处理"
+      },
+      "passed": {
+        "one": "{{count}} 项通过",
+        "other": "{{count}} 项通过"
+      },
+      "neutral": {
+        "one": "{{count}} 项中立",
+        "other": "{{count}} 项中立"
+      }
+    }
+  },
+  "richMarkdown": {
+    "startWriting": "开始输入...",
+    "codePlaceholder": "代码",
+    "taskPlaceholder": "任务",
+    "linkUrlPrompt": "链接 URL",
+    "imageUrlPrompt": "图片 URL"
+  },
+  "terminal": {
+    "selection": {
+      "copy": "复制",
+      "selectAll": "全选"
+    }
   }
 }
