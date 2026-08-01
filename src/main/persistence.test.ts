@@ -5216,9 +5216,12 @@ describe('Store', () => {
     expect(tombstones?.[workspaceKeys[0]!]).toBeUndefined()
     expect(tombstones?.[workspaceKeys[1]!]).toBeUndefined()
     expect(tombstones?.[workspaceKeys.at(-1)!]).toBeDefined()
+    expect(
+      (readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt
+    ).toBe(deletedAt + 1 + 30 * 24 * 60 * 60 * 1000)
   })
 
-  it('retains recent deletion fences before applying the tombstone soft cap', async () => {
+  it('hard-bounds recent deletion fences with conservative overflow evidence', async () => {
     const store = await createStore()
     const group = store.createProjectGroup({
       name: 'Tombstone churn',
@@ -5239,8 +5242,11 @@ describe('Store', () => {
       }
       store.flush()
       let tombstones = (readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstones
-      expect(Object.keys(tombstones ?? {})).toHaveLength(514)
-      expect(tombstones?.[workspaceKeys[0]!]).toBeDefined()
+      expect(Object.keys(tombstones ?? {})).toHaveLength(512)
+      expect(tombstones?.[workspaceKeys[0]!]).toBeUndefined()
+      expect(
+        (readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt
+      ).toBeGreaterThan(Date.now())
 
       vi.setSystemTime(new Date('2026-01-02T00:00:00.001Z'))
       const latest = store.createFolderWorkspace({ projectGroupId: group.id, name: 'Latest' })
@@ -5269,6 +5275,7 @@ describe('Store', () => {
         tabConnectionIdsByHostId: {}
       }
     }
+    state.deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt = Date.now() - 1
     writeDataFile(state)
 
     vi.useFakeTimers()
@@ -5280,7 +5287,9 @@ describe('Store', () => {
       vi.useRealTimers()
     }
 
-    expect((readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstones).toEqual({})
+    const persisted = readDataFile() as PersistedState
+    expect(persisted.deletedFolderWorkspaceSessionTombstones).toEqual({})
+    expect(persisted.deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt).toBeUndefined()
   })
 
   it('backfills folder-scope SSH provenance from unambiguous child repos on load', async () => {
@@ -6850,6 +6859,7 @@ describe('Store', () => {
     const staleSession = {
       ...getDefaultWorkspaceSession(),
       activeWorkspaceKey: workspaceKey,
+      activeConnectionIdsAtShutdown: [connectionId],
       tabsByWorktree: {
         [workspaceKey]: [makeTerminalTab({ id: 'rapid-churn-stale-tab', worktreeId: workspaceKey })]
       }
@@ -6863,6 +6873,11 @@ describe('Store', () => {
       })
       expect(store.removeFolderWorkspace(churned.id)).toBe(true)
     }
+    const persisted = (store as unknown as { state: PersistedState }).state
+    expect(persisted.deletedFolderWorkspaceSessionTombstones?.[workspaceKey]).toBeUndefined()
+    expect(persisted.deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt).toBeGreaterThan(
+      Date.now()
+    )
 
     store.setWorkspaceSession(staleSession, hostId)
     store.upsertSshRemotePtyLease({
@@ -6875,7 +6890,40 @@ describe('Store', () => {
     })
 
     expect(store.getWorkspaceSession(hostId).tabsByWorktree[workspaceKey]).toBeUndefined()
+    expect(store.getWorkspaceSession(hostId).activeConnectionIdsAtShutdown).toBeUndefined()
     expect(store.getSshRemotePtyLeases()).toEqual([])
+  })
+
+  it('batches deletion evidence commits for folders with many tabs', async () => {
+    const store = await createStore()
+    const group = store.createProjectGroup({
+      name: 'Many tabs',
+      parentPath: '/workspace/many-tabs',
+      createdFrom: 'folder-scan'
+    })
+    const workspace = store.createFolderWorkspace({ projectGroupId: group.id })
+    const workspaceKey = folderWorkspaceKey(workspace.id)
+    store.setWorkspaceSession({
+      ...getDefaultWorkspaceSession(),
+      tabsByWorktree: {
+        [workspaceKey]: Array.from({ length: 256 }, (_, index) =>
+          makeTerminalTab({ id: `many-tabs-${index}`, worktreeId: workspaceKey })
+        )
+      }
+    })
+    const tombstoneSetter = vi.spyOn(
+      store as unknown as {
+        setDeletedFolderWorkspaceSessionTombstone: (
+          workspaceKey: string,
+          tombstone: unknown
+        ) => void
+      },
+      'setDeletedFolderWorkspaceSessionTombstone'
+    )
+
+    expect(store.removeFolderWorkspace(workspace.id)).toBe(true)
+
+    expect(tombstoneSetter).toHaveBeenCalledTimes(2)
   })
 
   it('bounds detailed tab-owner evidence for one deleted folder', async () => {

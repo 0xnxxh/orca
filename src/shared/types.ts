@@ -3583,6 +3583,7 @@ export type PersistedState = {
   deletedFolderWorkspaceSessionTombstones?: Partial<
     Record<WorkspaceKey, DeletedFolderWorkspaceSessionTombstone>
   >
+  deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt?: number
   /** Sparse-checkout presets keyed by repoId. */
   sparsePresetsByRepo: Record<string, SparsePreset[]>
   /** Per paired device last tab selection by worktree; keeps mobile navigation across host restarts. */

@@ -6,7 +6,6 @@ import type {
 } from '../shared/types'
 
 const MAX_TOMBSTONES = 512
-export const MIN_DELETED_FOLDER_TOMBSTONE_RETENTION_MS = 24 * 60 * 60 * 1000
 export const MAX_DELETED_FOLDER_TOMBSTONE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const MAX_HOST_IDS = 32
 const MAX_TAB_OWNERS = 256
@@ -47,10 +46,10 @@ export function boundDeletedFolderTombstoneEvidence(
   }
 }
 
-export function getDeletedFolderTombstoneEvictionKeys(
+export function getDeletedFolderTombstoneEviction(
   tombstones: NonNullable<PersistedState['deletedFolderWorkspaceSessionTombstones']>,
   now: number
-): WorkspaceKey[] {
+): { workspaceKeys: WorkspaceKey[]; overflowExpiresAt: number | undefined } {
   const entries = Object.entries(tombstones).flatMap(([workspaceKey, tombstone], index) =>
     tombstone ? [{ index, workspaceKey: workspaceKey as WorkspaceKey, tombstone }] : []
   )
@@ -60,21 +59,23 @@ export function getDeletedFolderTombstoneEvictionKeys(
   const expiredKeys = new Set(expired.map(({ workspaceKey }) => workspaceKey))
   const retained = entries.filter(({ workspaceKey }) => !expiredKeys.has(workspaceKey))
   const excess = Math.max(0, retained.length - MAX_TOMBSTONES)
-  if (excess === 0) {
-    return expired.map(({ workspaceKey }) => workspaceKey)
-  }
-  const softEvictions = retained
-    .filter(
-      ({ tombstone }) => now - tombstone.deletedAt >= MIN_DELETED_FOLDER_TOMBSTONE_RETENTION_MS
-    )
+  const capEvictions = retained
     .sort((left, right) =>
       left.tombstone.deletedAt === right.tombstone.deletedAt
         ? left.index - right.index
         : left.tombstone.deletedAt - right.tombstone.deletedAt
     )
     .slice(0, excess)
-  return [
-    ...expired.map(({ workspaceKey }) => workspaceKey),
-    ...softEvictions.map(({ workspaceKey }) => workspaceKey)
-  ]
+  const overflowExpiresAt = capEvictions.reduce<number | undefined>(
+    (latest, { tombstone }) =>
+      Math.max(latest ?? 0, tombstone.deletedAt + MAX_DELETED_FOLDER_TOMBSTONE_RETENTION_MS),
+    undefined
+  )
+  return {
+    workspaceKeys: [
+      ...expired.map(({ workspaceKey }) => workspaceKey),
+      ...capEvictions.map(({ workspaceKey }) => workspaceKey)
+    ],
+    overflowExpiresAt
+  }
 }
