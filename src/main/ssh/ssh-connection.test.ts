@@ -168,6 +168,10 @@ import {
 } from './ssh-system-fallback'
 import { getRemoteHostPlatform } from './ssh-remote-platform'
 import type { SshTarget } from '../../shared/ssh-types'
+import {
+  createOpenSshPrivateKeyFixture,
+  createOpenSshPublicKeyFixture
+} from './ssh-security-key-identity.test-fixture'
 
 function createTarget(overrides?: Partial<SshTarget>): SshTarget {
   return {
@@ -1460,6 +1464,47 @@ describe('SshConnection', () => {
       'echo ORCA-SYSTEM-SSH-OK',
       { wrapCommand: false }
     )
+  })
+
+  it('uses system SSH before ssh2 parses a security-key private key', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'orca-security-key-connect-'))
+    const keyPath = join(directory, 'id_ed25519_sk')
+    writeFileSync(
+      keyPath,
+      createOpenSshPrivateKeyFixture(['sk-ssh-ed25519@openssh.com'], { encrypted: true })
+    )
+    const conn = new SshConnection(createTarget({ identityFile: keyPath }), createCallbacks())
+
+    try {
+      await conn.connect()
+
+      expect(conn.getState().status).toBe('connected')
+      expect(conn.usesSystemSshTransport()).toBe(true)
+      expect(clientInstances).toHaveLength(0)
+      expect(spawnSystemSshCommandMock).toHaveBeenCalledTimes(1)
+    } finally {
+      rmSync(directory, { recursive: true })
+    }
+  })
+
+  it('uses system SSH for an agent-backed security-key public identity', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'orca-security-key-agent-connect-'))
+    const identityPath = join(directory, 'id_ed25519_sk')
+    writeFileSync(
+      `${identityPath}.pub`,
+      createOpenSshPublicKeyFixture('sk-ssh-ed25519@openssh.com')
+    )
+    const conn = new SshConnection(createTarget({ identityFile: identityPath }), createCallbacks())
+
+    try {
+      await conn.connect()
+
+      expect(conn.usesSystemSshTransport()).toBe(true)
+      expect(clientInstances).toHaveLength(0)
+      expect(spawnSystemSshCommandMock).toHaveBeenCalledTimes(1)
+    } finally {
+      rmSync(directory, { recursive: true })
+    }
   })
 
   it('falls back to system SSH when ssh2 hits a local network policy reachability error', async () => {

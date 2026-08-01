@@ -155,6 +155,7 @@ function createMockChildProcess(): EventEmitter & {
 describe('findSystemSsh', () => {
   beforeEach(() => {
     existsSyncMock.mockReset()
+    vi.unstubAllEnvs()
   })
 
   it('returns the first existing ssh path', () => {
@@ -165,6 +166,31 @@ describe('findSystemSsh', () => {
   it('returns null when no ssh binary is found', () => {
     existsSyncMock.mockReturnValue(false)
     expect(findSystemSsh()).toBeNull()
+  })
+
+  it('finds a PATH-installed ssh.exe on Windows', () => {
+    const platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    vi.stubEnv('PATH', 'C:\\Git\\usr\\bin;C:\\Tools')
+    existsSyncMock.mockImplementation((path: string) => path === 'C:\\Git\\usr\\bin\\ssh.exe')
+
+    try {
+      expect(findSystemSsh()).toBe('C:\\Git\\usr\\bin\\ssh.exe')
+    } finally {
+      platformSpy.mockRestore()
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('keeps an explicit system ssh override authoritative', () => {
+    vi.stubEnv('ORCA_SYSTEM_SSH_PATH', 'C:\\Custom\\ssh.exe')
+    existsSyncMock.mockReturnValue(false)
+
+    try {
+      expect(findSystemSsh()).toBe('C:\\Custom\\ssh.exe')
+      expect(existsSyncMock).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 })
 

@@ -97,7 +97,10 @@ function resolveExplicitPrivateKeyPaths(
   return resolvedIdentities
 }
 
-function resolvePrivateKeyPaths(target: SshTarget, resolved: SshResolvedConfig | null): string[] {
+export function resolveIdentityFilePaths(
+  target: SshTarget,
+  resolved: Pick<SshResolvedConfig, 'identityFile'> | null
+): string[] {
   if (isOpenSshConfigBackedTarget(target) && resolved) {
     return resolved.identityFile
   }
@@ -138,7 +141,7 @@ export function resolvePrivateKeys(
   target: SshTarget,
   resolved: SshResolvedConfig | null
 ): PrivateKeyFile[] {
-  const keyPaths = resolvePrivateKeyPaths(target, resolved)
+  const keyPaths = resolveIdentityFilePaths(target, resolved)
   if (keyPaths.length > 0 || resolved || target.identityFile) {
     return readPrivateKeys(keyPaths)
   }
@@ -172,16 +175,6 @@ export function findEncryptedPrivateKeyPath(keys: PrivateKeyFile[]): string | un
     }
   }
   return undefined
-}
-
-function resolveIdentityFilePaths(target: SshTarget, resolved: SshResolvedConfig | null): string[] {
-  if (isOpenSshConfigBackedTarget(target) && resolved) {
-    return resolved.identityFile
-  }
-  if (target.identityFile) {
-    return [target.identityFile]
-  }
-  return resolved?.identityFile ?? []
 }
 
 export function resolveAgentConfigValue(
