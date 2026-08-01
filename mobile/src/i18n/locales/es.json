@@ -1540,7 +1540,7 @@
     "0dIGtV8": "Línea: {{value0}}",
     "ZueS87g": "Líneas: {{value0}}-{{value1}}",
     "hLNcWyo": "Alcance: archivo",
-    "57DUHqU": "el agent",
+    "57DUHqU": "un agente",
     "0hhZYns": "No se puede abrir en sesión",
     "1Z6vya0": "No se pueden cargar archivos",
     "FuhqCI4": "Esperando el escritorio...",
@@ -2208,5 +2208,19 @@
       "copy": "Copiar",
       "selectAll": "Seleccionar todo"
     }
+  },
+  "nativeChat": {
+    "empty": {
+      "title": "Inicia un chat con {{agentLabel}}",
+      "subtitle": "Pide a {{agentLabel}} que inspeccione código, explique resultados o haga un cambio."
+    },
+    "error": {
+      "title": "No se pudo cargar la conversación",
+      "subtitle": "No se pudo leer la transcripción. Vuelve al terminal para seguir trabajando."
+    }
+  },
+  "accountUsage": {
+    "resetNow": "Se restablece ahora",
+    "resetIn": "Se restablece en {{duration}}"
   }
 }

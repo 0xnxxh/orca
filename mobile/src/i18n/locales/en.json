@@ -2213,6 +2213,20 @@
       "selectAll": "Select All"
     }
   },
+  "nativeChat": {
+    "empty": {
+      "title": "Start a chat with {{agentLabel}}",
+      "subtitle": "Ask {{agentLabel}} to inspect code, explain output, or make a change."
+    },
+    "error": {
+      "title": "Could not load conversation",
+      "subtitle": "The transcript could not be read. Toggle back to the terminal to keep working."
+    }
+  },
+  "accountUsage": {
+    "resetNow": "Resets now",
+    "resetIn": "Resets in {{duration}}"
+  },
   "session": {
     "quickCommand": {
       "runFailed": "Couldn't run {{commandLabel}}"

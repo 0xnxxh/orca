@@ -1,8 +1,5 @@
 import { formatAgentTypeLabel } from '../../../src/shared/agent-type-label'
-import {
-  formatNativeChatEmptyStateCopy,
-  type NativeChatEmptyStateCopy
-} from '../../../src/shared/native-chat-empty-state'
+import type { NativeChatEmptyStateCopy } from '../../../src/shared/native-chat-empty-state'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { foldToolMessages } from './mobile-native-chat-blocks'
 import { normalizeImageTranscriptMessages } from './mobile-native-chat-image-transcript-markers'
@@ -26,10 +23,15 @@ export function mobileNativeChatEmptyState(
     // agent is still starting up.
     case 'waiting-session':
     case 'ready':
-      return formatNativeChatEmptyStateCopy('empty', agentLabel)
+      return {
+        title: t('nativeChat.empty.title', { agentLabel }),
+        subtitle: t('nativeChat.empty.subtitle', { agentLabel })
+      }
     case 'error': {
-      const copy = formatNativeChatEmptyStateCopy('error', agentLabel)
-      return error ? { ...copy, subtitle: error } : copy
+      return {
+        title: t('nativeChat.error.title'),
+        subtitle: error || t('nativeChat.error.subtitle')
+      }
     }
     default:
       return null

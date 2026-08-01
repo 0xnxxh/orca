@@ -1540,7 +1540,7 @@
     "0dIGtV8": "行: {{value0}}",
     "ZueS87g": "行数: {{value0}}-{{value1}}",
     "hLNcWyo": "スコープ: ファイル",
-    "57DUHqU": "agent",
+    "57DUHqU": "エージェント",
     "0hhZYns": "セッション中に開けません",
     "1Z6vya0": "ファイルをロードできません",
     "FuhqCI4": "デスクトップを待っています...",
@@ -2208,5 +2208,19 @@
       "copy": "コピー",
       "selectAll": "すべて選択"
     }
+  },
+  "nativeChat": {
+    "empty": {
+      "title": "{{agentLabel}} とチャットを開始",
+      "subtitle": "{{agentLabel}} にコードの確認、出力の説明、変更を依頼できます。"
+    },
+    "error": {
+      "title": "会話を読み込めませんでした",
+      "subtitle": "トランスクリプトを読み取れませんでした。ターミナルに戻って作業を続けてください。"
+    }
+  },
+  "accountUsage": {
+    "resetNow": "今すぐリセット",
+    "resetIn": "{{duration}}後にリセット"
   }
 }

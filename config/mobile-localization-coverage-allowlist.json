@@ -5,5 +5,26 @@
     "text": "pairing keychain generation record is invalid",
     "dynamic": false,
     "count": 1
+  },
+  {
+    "filePath": "mobile/src/session/mobile-diff-comments.ts",
+    "kind": "user-visible-variable",
+    "text": "Scope: file",
+    "dynamic": false,
+    "count": 1
+  },
+  {
+    "filePath": "mobile/src/session/mobile-diff-comments.ts",
+    "kind": "user-visible-variable",
+    "text": "Lines:",
+    "dynamic": true,
+    "count": 1
+  },
+  {
+    "filePath": "mobile/src/session/mobile-diff-comments.ts",
+    "kind": "user-visible-variable",
+    "text": "Line:",
+    "dynamic": true,
+    "count": 1
   }
 ]

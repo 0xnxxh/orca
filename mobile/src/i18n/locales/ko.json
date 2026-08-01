@@ -1540,7 +1540,7 @@
     "0dIGtV8": "줄: {{value0}}",
     "ZueS87g": "줄: {{value0}}-{{value1}}",
     "hLNcWyo": "범위: 파일",
-    "57DUHqU": "대리인",
+    "57DUHqU": "에이전트",
     "0hhZYns": "세션에서 열 수 없습니다.",
     "1Z6vya0": "파일을 로드할 수 없습니다.",
     "FuhqCI4": "데스크톱을 기다리는 중...",
@@ -2208,5 +2208,19 @@
       "copy": "복사",
       "selectAll": "모두 선택"
     }
+  },
+  "nativeChat": {
+    "empty": {
+      "title": "{{agentLabel}}와 채팅 시작",
+      "subtitle": "{{agentLabel}}에게 코드 검사, 출력 설명 또는 변경 작업을 요청하세요."
+    },
+    "error": {
+      "title": "대화를 불러올 수 없음",
+      "subtitle": "대화 기록을 읽을 수 없습니다. 계속 작업하려면 터미널로 돌아가세요."
+    }
+  },
+  "accountUsage": {
+    "resetNow": "지금 재설정",
+    "resetIn": "{{duration}} 후 재설정"
   }
 }

@@ -1538,7 +1538,7 @@
     "0dIGtV8": "行： {{value0}}",
     "ZueS87g": "行： {{value0}}-{{value1}}",
     "hLNcWyo": "范围：文件",
-    "57DUHqU": "agent 人",
+    "57DUHqU": "智能体",
     "0hhZYns": "无法在会话中打开",
     "1Z6vya0": "无法加载文件",
     "FuhqCI4": "等待桌面...",
@@ -2205,5 +2205,19 @@
       "copy": "复制",
       "selectAll": "全选"
     }
+  },
+  "nativeChat": {
+    "empty": {
+      "title": "与 {{agentLabel}} 开始聊天",
+      "subtitle": "让 {{agentLabel}} 检查代码、解释输出或进行更改。"
+    },
+    "error": {
+      "title": "无法加载对话",
+      "subtitle": "无法读取对话记录。请切换回终端以继续工作。"
+    }
+  },
+  "accountUsage": {
+    "resetNow": "立即重置",
+    "resetIn": "{{duration}}后重置"
   }
 }

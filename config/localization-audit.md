@@ -50,8 +50,9 @@ pnpm run verify:localization-coverage
 ```
 
 The gate scans the desktop renderer plus both mobile source roots. Mobile uses
-`config/mobile-localization-coverage-allowlist.json`, which is also committed
-empty.
+`config/mobile-localization-coverage-allowlist.json`, which contains one reviewed
+internal pairing-keychain diagnostic and three canonical diff-note envelope
+labels sent to agents; none is translated UI copy.
 
 Verify mobile catalog references, conditional keys, interpolation options,
 protected technical literals, and non-empty translations. The same gate checks
