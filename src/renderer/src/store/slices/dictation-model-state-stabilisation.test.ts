@@ -1,5 +1,5 @@
 /** @vitest-environment happy-dom */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { create, type StateCreator, type StoreApi, type UseBoundStore } from 'zustand'
 import type { SpeechModelState } from '../../../../shared/speech-types'
 import type { AppState } from '../types'
@@ -11,9 +11,30 @@ const dictationSlice = createDictationSlice as unknown as StateCreator<Dictation
 let reply: SpeechModelState[] = []
 let recordBreadcrumb: ReturnType<typeof vi.fn>
 
+// Mirrors CHURN_WINDOW_MS in ./dictation; enough to roll the window.
+const PAST_CHURN_WINDOW_MS = 5_001
+
 // Why a fresh store per test: the churn window is per-slice closure state.
 function newStore(): UseBoundStore<StoreApi<DictationTestStore>> {
   return create<DictationTestStore>(dictationSlice)
+}
+
+// Why pin Date.now: the churn rule is "per window", so a test that lets real time
+// pass measures the machine, not the rule.
+function pinClock(): { advance: (ms: number) => void } {
+  let now = 1_000_000
+  vi.spyOn(Date, 'now').mockImplementation(() => now)
+  return {
+    advance: (ms) => {
+      now += ms
+    }
+  }
+}
+
+function churnBreadcrumbs(): { name: string; data?: Record<string, number> }[] {
+  return recordBreadcrumb.mock.calls
+    .map((call) => call[0] as { name: string; data?: Record<string, number> })
+    .filter((entry) => entry.name === SPEECH_MODEL_STATE_CHURN_BREADCRUMB)
 }
 
 beforeEach(() => {
@@ -26,6 +47,10 @@ beforeEach(() => {
       speech: { getModelStates: vi.fn(async () => reply.map((state) => ({ ...state }))) }
     }
   })
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('dictation model-state stabilisation', () => {
@@ -105,10 +130,38 @@ describe('dictation model-state stabilisation', () => {
       await store.getState().refreshModelStates()
     }
 
-    const churn = recordBreadcrumb.mock.calls
-      .map((call) => call[0] as { name: string; data?: Record<string, number> })
-      .filter((entry) => entry.name === SPEECH_MODEL_STATE_CHURN_BREADCRUMB)
+    const churn = churnBreadcrumbs()
     expect(churn).toHaveLength(1)
     expect(churn[0].data).toMatchObject({ refreshes: 250, noOpRefreshes: 249 })
+  })
+
+  // Stopping at exactly the threshold cannot tell "fires once" from "fires on every
+  // refresh after", and the second floods the 30-entry ring this breadcrumb is
+  // coalesced into to protect.
+  it('records the churn breadcrumb at most once per window', async () => {
+    pinClock()
+    const store = newStore()
+    reply = [{ id: 'whisper-tiny', status: 'downloading', progress: 0.42 }]
+    for (let refresh = 0; refresh < 400; refresh += 1) {
+      await store.getState().refreshModelStates()
+    }
+
+    expect(churnBreadcrumbs()).toHaveLength(1)
+  })
+
+  // The threshold is a rate, not a lifetime total. Without a per-window reset three
+  // healthy downloads (3 x 91) cross 250 and the breadcrumb cries wolf again.
+  it('counts per window, so healthy downloads never accumulate into a false alarm', async () => {
+    const clock = pinClock()
+    const store = newStore()
+    reply = [{ id: 'whisper-tiny', status: 'downloading', progress: 0.42 }]
+    for (let download = 0; download < 4; download += 1) {
+      for (let refresh = 0; refresh <= 90; refresh += 1) {
+        await store.getState().refreshModelStates()
+      }
+      clock.advance(PAST_CHURN_WINDOW_MS)
+    }
+
+    expect(churnBreadcrumbs()).toEqual([])
   })
 })
