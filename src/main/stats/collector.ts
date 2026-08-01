@@ -1,6 +1,6 @@
 import { app } from 'electron'
-import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from 'node:fs'
-import { writeFile, mkdir, rm } from 'node:fs/promises'
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, unlinkSync } from 'node:fs'
+import { writeFile, mkdir, rm, rename } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import type { StatsSummary } from '../../shared/types'
 import type { StatsEvent, StatsAggregates, StatsFile } from './types'
@@ -60,6 +60,11 @@ export class StatsCollector {
   // wins so a slow in-flight async write can't clobber a newer sync flush.
   private writeGeneration = 0
   private lastCommittedGeneration = 0
+  private writeChain: Promise<void> = Promise.resolve()
+  /** Temp path of the async write awaiting its rename; writeToDiskSync removes it to veto that rename. */
+  private inFlightAsyncTmpFile: string | null = null
+  /** Set by flushAsync so the quit flush is the final write; see scheduleSave. */
+  private quitFlushStarted = false
   // Why: star-nag lives in its own service but needs to observe the running
   // agent-spawned counter. A lightweight listener avoids cyclic imports and
   // keeps StatsCollector unaware of how the counter is consumed.
@@ -146,6 +151,34 @@ export class StatsCollector {
    * a second flush() after resumed activity works correctly.
    */
   flush(): void {
+    this.closeOutLiveAgents()
+    this.cancelPendingSave()
+    this.writeToDiskSync()
+  }
+
+  /**
+   * Async twin of flush() for the quit path.
+   *
+   * Why the quit path needs one: writeToDiskSync parks the Electron main thread for the
+   * whole ~900KB write, and on a stalled network profile mount that park is uninterruptible
+   * — the app stops repainting and stops responding to Force Quit.
+   *
+   * Why the agent closeout stays synchronous: will-quit calls this before killAllPty(),
+   * which skips runtime.onPtyExit(), so live agents must be stopped before the kill even
+   * though the write itself is awaited later.
+   *
+   * Never throws — it joins the quit teardown barrier, where a rejection is noise.
+   */
+  flushAsync(): Promise<void> {
+    this.quitFlushStarted = true
+    this.closeOutLiveAgents()
+    this.cancelPendingSave()
+    return this.enqueueWrite().catch((err) => {
+      console.error('[stats] Failed to flush stats:', err)
+    })
+  }
+
+  private closeOutLiveAgents(): void {
     const now = Date.now()
     // Why snapshot keys: onAgentStop mutates liveAgents, so we snapshot
     // the keys first to avoid iterator invalidation.
@@ -153,8 +186,6 @@ export class StatsCollector {
     for (const ptyId of livePtyIds) {
       this.onAgentStop(ptyId, now)
     }
-    this.cancelPendingSave()
-    this.writeToDiskSync()
   }
 
   // ── Persistence ───────────────────────────────────────────────────
@@ -226,6 +257,11 @@ export class StatsCollector {
   }
 
   private scheduleSave(): void {
+    // Why: once the quit flush has run, a newly debounced write would fire during teardown
+    // with nothing awaiting it, and the process can exit mid-rename.
+    if (this.quitFlushStarted) {
+      return
+    }
     if (this.writeTimer) {
       return // already scheduled
     }
@@ -235,9 +271,10 @@ export class StatsCollector {
       // state, so it uses the async writer to move the ~900KB tmp-file write
       // off the main thread (the stringify stays sync — see prepareWritePayload).
       // A chatty multi-agent session re-arms this every 5s; a fully-sync write
-      // is a recurring main-thread stall. Shutdown flush() stays synchronous;
-      // the generation guard keeps the two paths race-safe.
-      void this.writeToDiskAsync().catch((err) => {
+      // is a recurring main-thread stall. The quit path uses flushAsync(); the sync
+      // flush() remains for callers that cannot await, and writeToDiskSync keeps the
+      // two paths race-safe.
+      void this.enqueueWrite().catch((err) => {
         console.error('[stats] Failed to write stats:', err)
       })
     }, DEBOUNCE_MS)
@@ -286,32 +323,60 @@ export class StatsCollector {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true })
     }
+    // Why remove the async writer's temp file: once it is parked on `await rename` it has
+    // already cleared the generation guard, so nothing downstream can stop it clobbering the
+    // fuller state below. Deleting what it would rename turns that swap into a swallowed ENOENT.
+    if (this.inFlightAsyncTmpFile) {
+      try {
+        unlinkSync(this.inFlightAsyncTmpFile)
+      } catch {
+        // Already renamed or never created.
+      }
+      this.inFlightAsyncTmpFile = null
+    }
     const { statsFile, tmpFile, json, generation } = this.prepareWritePayload()
     writeFileSync(tmpFile, json, 'utf-8')
     renameSync(tmpFile, statsFile)
     this.lastCommittedGeneration = Math.max(this.lastCommittedGeneration, generation)
   }
 
+  // Why serialize: the rename below is async, so two overlapping writes could land in
+  // either order and let an older payload win. One writer at a time makes the generation
+  // guard sufficient again — it only has to veto payloads staler than what was committed.
+  private enqueueWrite(): Promise<void> {
+    const next = this.writeChain.then(() => this.writeToDiskAsync())
+    this.writeChain = next.catch(() => {})
+    return next
+  }
+
   private async writeToDiskAsync(): Promise<void> {
     const dir = dirname(getStatsFile())
-    if (!existsSync(dir)) {
-      await mkdir(dir, { recursive: true })
-    }
+    // Why not existsSync first: that probe parks the main thread on a stalled network
+    // profile mount, and recursive mkdir is already a no-op when the directory exists.
+    await mkdir(dir, { recursive: true }).catch(() => {})
     const { statsFile, tmpFile, json, generation } = this.prepareWritePayload()
-    // Only the ~900KB tmp write moves off the main thread; stringify stayed sync
-    // above (torn-snapshot constraint). The rename is a trivial metadata op done
-    // SYNCHRONOUSLY so it stays ordered with the shutdown flush's renameSync —
-    // an async rename could land after flush and clobber the more-complete
-    // shutdown data. The generation guard vetoes this write if a newer one (a
-    // later debounce OR the shutdown flush) already committed while we were
-    // writing; the check + rename run with no await between them, so the sync
-    // flush cannot interleave.
+    // Stringify stayed sync above (torn-snapshot constraint); every syscall from here is
+    // async so the main thread never parks on the profile mount. The generation guard
+    // vetoes this write if a newer one already committed while we were writing.
     await writeFile(tmpFile, json, 'utf-8')
     if (this.lastCommittedGeneration >= generation) {
       await rm(tmpFile, { force: true }).catch(() => {})
       return
     }
-    renameSync(tmpFile, statsFile)
-    this.lastCommittedGeneration = generation
+    this.inFlightAsyncTmpFile = tmpFile
+    try {
+      await rename(tmpFile, statsFile)
+      this.lastCommittedGeneration = generation
+    } catch (err) {
+      // Why swallow ENOENT: writeToDiskSync removed our temp file to keep this stale swap
+      // from overwriting the shutdown state it just committed. Anything else is a real error.
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw err
+      }
+    } finally {
+      if (this.inFlightAsyncTmpFile === tmpFile) {
+        this.inFlightAsyncTmpFile = null
+      }
+    }
   }
 }

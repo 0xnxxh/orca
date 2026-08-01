@@ -11,7 +11,7 @@ import {
   statSync,
   realpathSync
 } from 'node:fs'
-import { rename, mkdir, rm, copyFile, open, stat, access } from 'node:fs/promises'
+import { rename, mkdir, rm, copyFile, open, stat, access, writeFile } from 'node:fs/promises'
 import { renameDurable, writeFileDurableSync } from './durable-file-write'
 import { join, dirname, isAbsolute, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
@@ -2754,6 +2754,8 @@ export class Store {
   private backupRotationInFlight = false
   // Why: after a profile transfer rewrites this file on disk, a late flush of stale in-memory state would resurrect the moved project.
   private writesFrozen = false
+  /** Set by flushAsync so the quit flush is the final write; see scheduleSave. */
+  private quitFlushStarted = false
   // Content hash at last write, to skip no-op writes; derived from the payload with encrypted blobs normalized back to plaintext (see buildStateToSave), since encrypt() uses a random IV per call.
   private lastWrittenStateHash: string | null = null
   private firstPendingSaveAt: number | null = null
@@ -3780,6 +3782,12 @@ export class Store {
   private static SAVE_MAX_WAIT_MS = 5_000
 
   private scheduleSave(): void {
+    // Why: once the quit flush has snapshotted, a newly debounced write would fire during
+    // teardown with nothing awaiting it, and the process can exit mid-rename. The quit
+    // flush is the last write by construction.
+    if (this.quitFlushStarted) {
+      return
+    }
     const now = Date.now()
     this.firstPendingSaveAt ??= now
     if (this.writeTimer) {
@@ -6995,6 +7003,56 @@ export class Store {
       console.error('[active-view] Failed to flush preference:', err)
     }
     this.writeGithubCacheSnapshotSync()
+  }
+
+  /**
+   * Async twin of flush() for the quit path.
+   *
+   * Why the quit path needs one: writeToDiskSync fsyncs a multi-MB file from the Electron
+   * main thread. On a stalled network profile mount that syscall is uninterruptible, so the
+   * app stops repainting and Force Quit stops working — and no main-thread deadline can
+   * bound it, because the deadline's own timer is stuck behind the same block.
+   *
+   * Never throws — it joins the quit teardown barrier, where a rejection is noise.
+   */
+  async flushAsync(): Promise<void> {
+    this.quitFlushStarted = true
+    if (this.writeTimer) {
+      clearTimeout(this.writeTimer)
+      this.writeTimer = null
+    }
+    this.firstPendingSaveAt = null
+    // Why drain instead of vetoing by generation like flushOrThrow: an in-flight write
+    // owns the tmp path and the backup ring, and letting it finish is what makes the
+    // follow-up write's dirty check meaningful rather than a forced duplicate write.
+    await (this.pendingWrite ?? Promise.resolve()).catch(() => {})
+    await this.writeToDiskAsync().catch((err) => {
+      console.error('[persistence] Failed to flush state:', err)
+    })
+    await this.activeViewPreference.flushAsync()
+    await this.writeGithubCacheSnapshotAsync()
+  }
+
+  // Why best-effort: the sidecar is a refetchable cache; a failed write only costs a cold badge paint next launch, never data.
+  private async writeGithubCacheSnapshotAsync(): Promise<void> {
+    if (!this.githubCacheDirty) {
+      return
+    }
+    const cacheFile = getGithubCacheFile(this.dataFile)
+    const tmpFile = `${cacheFile}.${process.pid}.tmp`
+    let renamed = false
+    try {
+      await writeFile(tmpFile, JSON.stringify(this.state.githubCache), 'utf-8')
+      await rename(tmpFile, cacheFile)
+      renamed = true
+      this.githubCacheDirty = false
+    } catch (err) {
+      console.warn('[persistence] Failed to write github cache snapshot:', err)
+    } finally {
+      if (!renamed) {
+        await rm(tmpFile).catch(() => {})
+      }
+    }
   }
 
   // Why: a project move rewrote the data file directly; in-memory state is now stale and any write would undo the transfer.

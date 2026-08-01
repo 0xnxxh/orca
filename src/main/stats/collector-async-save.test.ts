@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Why: the debounced stats save must be async (off the main thread), while the
-// shutdown flush() must stay synchronous. These tests pin both behaviors, prove
-// the async path leaves no stray temp files, and — critically — prove an
-// in-flight async write can never clobber the more-complete shutdown flush.
+// Why: the debounced stats save must be async (off the main thread), while flush()
+// stays synchronous for callers that cannot await. These tests pin both behaviors,
+// prove the async path leaves no stray temp files, and — critically — prove an
+// in-flight async write can never clobber the more-complete flush, at either of the
+// two points it can park: before its temp write, and after, on the rename itself.
 
 let userDataDir: string
 const statsPath = (): string => join(userDataDir, 'orca-stats.json')
@@ -20,8 +21,11 @@ vi.mock('electron', () => ({
 // debounced async write "in flight" while it drives a synchronous shutdown flush.
 const gate = vi.hoisted(() => ({
   blocked: false,
+  blockRename: false,
   waiters: [] as (() => void)[],
-  writeFileCalls: 0
+  renameWaiters: [] as (() => void)[],
+  writeFileCalls: 0,
+  renameCalls: 0
 }))
 
 vi.mock('node:fs/promises', async () => {
@@ -33,7 +37,14 @@ vi.mock('node:fs/promises', async () => {
     }
     return actual.writeFile(...args)
   }) as typeof actual.writeFile
-  return { ...actual, writeFile }
+  const rename = (async (...args: Parameters<typeof actual.rename>) => {
+    gate.renameCalls += 1
+    if (gate.blockRename) {
+      await new Promise<void>((resolve) => gate.renameWaiters.push(resolve))
+    }
+    return actual.rename(...args)
+  }) as typeof actual.rename
+  return { ...actual, writeFile, rename }
 })
 
 async function importCollector() {
@@ -44,8 +55,11 @@ describe('StatsCollector async debounced save', () => {
   beforeEach(() => {
     userDataDir = mkdtempSync(join(tmpdir(), 'orca-stats-test-'))
     gate.blocked = false
+    gate.blockRename = false
     gate.waiters = []
+    gate.renameWaiters = []
     gate.writeFileCalls = 0
+    gate.renameCalls = 0
     vi.resetModules()
   })
 
@@ -103,10 +117,11 @@ describe('StatsCollector async debounced save', () => {
     collector.onAgentStart('pty-b', 1_000)
 
     // Start the async write; it parks inside the blocked writeFile, before rename.
+    // Why waitFor and not one tick: the writer awaits mkdir first, so the number of
+    // microtask turns before writeFile is reached is an implementation detail.
     gate.blocked = true
     const inflight = internals.writeToDiskAsync()
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(gate.writeFileCalls).toBeGreaterThan(0)
+    await vi.waitFor(() => expect(gate.writeFileCalls).toBeGreaterThan(0))
 
     // App quits: close out both agents and flush the COMPLETE state synchronously
     // (newer generation) while the async write is still parked.
@@ -120,6 +135,35 @@ describe('StatsCollector async debounced save', () => {
     gate.blocked = false
     gate.waiters.splice(0).forEach((resolve) => resolve())
     await inflight
+
+    expect(JSON.parse(readFileSync(statsPath(), 'utf-8')).aggregates.totalAgentTimeMs).toBe(8_000)
+    expect(readdirSync(userDataDir).filter((f) => f.endsWith('.tmp'))).toHaveLength(0)
+  })
+
+  it('an async write already parked on its rename cannot clobber a shutdown flush', async () => {
+    // The generation guard alone stopped covering this once the swap became async: a writer
+    // parked on `await rename` has already cleared the guard, so only removing the temp file
+    // it would rename keeps the flush's fuller state from being overwritten.
+    const { StatsCollector, initStatsPath } = await importCollector()
+    initStatsPath()
+    const collector = new StatsCollector()
+    const internals = collector as unknown as { writeToDiskAsync: () => Promise<void> }
+
+    collector.onAgentStart('pty-a', 1_000)
+    collector.onAgentStart('pty-b', 1_000)
+
+    gate.blockRename = true
+    const inflight = internals.writeToDiskAsync()
+    await vi.waitFor(() => expect(gate.renameCalls).toBeGreaterThan(0))
+
+    collector.onAgentStop('pty-a', 5_000)
+    collector.onAgentStop('pty-b', 5_000)
+    collector.flush()
+    expect(JSON.parse(readFileSync(statsPath(), 'utf-8')).aggregates.totalAgentTimeMs).toBe(8_000)
+
+    gate.blockRename = false
+    gate.renameWaiters.splice(0).forEach((resolve) => resolve())
+    await expect(inflight).resolves.toBeUndefined()
 
     expect(JSON.parse(readFileSync(statsPath(), 'utf-8')).aggregates.totalAgentTimeMs).toBe(8_000)
     expect(readdirSync(userDataDir).filter((f) => f.endsWith('.tmp'))).toHaveLength(0)
