@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient, SendRequestOptions } from './rpc-client'
+import type { ConnectionState, RpcResponse } from './types'
 import { verifyForceReconnectRpcHealth } from './force-reconnect-rpc-health'
 import { LogicalClientCutoverError } from './stable-logical-rpc-client'
 
@@ -24,7 +25,7 @@ describe('Force Reconnect RPC health', () => {
         })
       }
     )
-    const client = { sendRequest } as unknown as RpcClient
+    const client = { sendRequest, getState: () => 'connected' as const } as unknown as RpcClient
     let outcome = 'pending'
     const verification = verifyForceReconnectRpcHealth(client).catch((error: Error) => {
       outcome = error.message
@@ -43,5 +44,39 @@ describe('Force Reconnect RPC health', () => {
       budgetSpansConnect: true,
       strictDeadline: true
     })
+  })
+
+  it('waits through a transient authorization retry', async () => {
+    let state: ConnectionState = 'connecting'
+    const sendRequest = vi.fn<() => Promise<RpcResponse>>()
+    sendRequest
+      .mockImplementationOnce(async () => {
+        state = 'reconnecting'
+        throw new Error('Unauthorized — pairing may be revoked')
+      })
+      .mockImplementationOnce(async () => {
+        state = 'connected'
+        return { id: 'rpc-1', ok: true, result: {} }
+      })
+    const client = { sendRequest, getState: () => state } as unknown as RpcClient
+
+    await expect(verifyForceReconnectRpcHealth(client)).resolves.toBeUndefined()
+
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it('fails when authorization retries reach auth-failed', async () => {
+    const sendRequest = vi.fn(async () => {
+      throw new Error('Unauthorized — pairing may be revoked')
+    })
+    const client = {
+      sendRequest,
+      getState: () => 'auth-failed' as const
+    } as unknown as RpcClient
+
+    await expect(verifyForceReconnectRpcHealth(client)).rejects.toThrow(
+      'Unauthorized — pairing may be revoked'
+    )
+    expect(sendRequest).toHaveBeenCalledOnce()
   })
 })

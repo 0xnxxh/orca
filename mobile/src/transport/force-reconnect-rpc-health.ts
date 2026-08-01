@@ -23,6 +23,7 @@ export async function verifyForceReconnectRpcHealth(
       return
     } catch (error) {
       if (
+        client.getState() !== 'reconnecting' &&
         !isLogicalClientCutoverError(error) &&
         !isRpcDeliveryUnknown(error) &&
         !(error instanceof Error && error.message === 'Connection interrupted')
