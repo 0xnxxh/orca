@@ -326,12 +326,13 @@ function buildUncapturedCrashReportText(
 // storm, #8260) can flush the whole fixed-size breadcrumb ring in seconds,
 // erasing the pre-crash trail. Coalesce repeats into one entry that carries a
 // suppressed count instead.
+const DUPLICATE_TAB_OWNER_BREADCRUMB = 'terminal_tab_id_owned_by_multiple_worktrees'
 const COALESCED_RENDERER_BREADCRUMB_NAMES = new Set([
   'renderer_error',
   'renderer_unhandled_rejection',
   'terminal_park_verdict_churn',
   'terminal_safe_fit_retry_exhausted',
-  'terminal_tab_id_owned_by_multiple_worktrees',
+  DUPLICATE_TAB_OWNER_BREADCRUMB,
   TERMINAL_WEBGL_DIAGNOSTIC_BREADCRUMB
 ])
 const RENDERER_BREADCRUMB_COALESCE_MS = 30_000
@@ -344,14 +345,9 @@ const RENDERER_BREADCRUMB_COALESCE_MS = 30_000
 // mounted pane within ~60ms. Windows crash F0BKR84AHEH lost 26-90% of its
 // 30-entry ring to two such bursts. `suppressedSinceLast` keeps the pane count
 // — the only signal these carry — in one slot.
-//
-// terminal_tab_id_owned_by_multiple_worktrees: its renderer-side guard is
-// once-per-tab-id, not once-per-session, so one stale worktree map duplicates
-// every tab id at once and emits a crumb per tab.
 const NAME_ONLY_COALESCED_BREADCRUMB_NAMES = new Set([
   'terminal_park_verdict_churn',
-  'terminal_safe_fit_retry_exhausted',
-  'terminal_tab_id_owned_by_multiple_worktrees'
+  'terminal_safe_fit_retry_exhausted'
 ])
 
 function rendererBreadcrumbCoalesceKey(
@@ -367,6 +363,16 @@ function rendererBreadcrumbCoalesceKey(
   // live pane emits on a GPU death.
   if (name === TERMINAL_WEBGL_DIAGNOSTIC_BREADCRUMB) {
     return `${name}:${String(data?.kind ?? '')}`
+  }
+  // Why coalesce at all: the renderer guard is once-per-tab-id, not
+  // once-per-session, so one stale worktree map duplicates every tab id at once
+  // and emits a crumb per tab. Why keyed on the flag rather than name alone:
+  // `false` is the only value that says the activation still could not converge
+  // activeTabId, and coalescing keeps just the newest payload — a later benign
+  // `true` would erase the sample the crumb exists to capture. Two keys still
+  // bound the storm.
+  if (name === DUPLICATE_TAB_OWNER_BREADCRUMB) {
+    return `${name}:${String(data?.resolvedToActiveWorktree ?? '')}`
   }
   const primaryMessage = name === 'renderer_error' ? data?.message : data?.reasonMessage
   const fallbackMessage = name === 'renderer_error' ? data?.errorMessage : undefined

@@ -6,9 +6,8 @@ vi.mock('../../lib/crash-breadcrumb-recorder', () => ({
   recordRendererCrashBreadcrumb: (...args: unknown[]) => recordRendererCrashBreadcrumb(...args)
 }))
 
-const { resolveActiveTabOwnerWorktreeId, _resetDuplicateTabOwnerBreadcrumbsForTests } = await import(
-  './active-tab-owner-worktree'
-)
+const { resolveActiveTabOwnerWorktreeId, _resetDuplicateTabOwnerBreadcrumbsForTests } =
+  await import('./active-tab-owner-worktree')
 
 function tab(id: string, worktreeId: string): TerminalTab {
   return { id, worktreeId, title: id, createdAt: 0, sortOrder: 0 } as unknown as TerminalTab
@@ -60,6 +59,16 @@ describe('resolveActiveTabOwnerWorktreeId', () => {
       'terminal_tab_id_owned_by_multiple_worktrees',
       { ownerCount: 2, resolvedToActiveWorktree: false }
     )
+  })
+
+  // Why: a truthiness guard on the active id would drop this back to first-match.
+  it('prefers a falsy-but-valid active worktree id', () => {
+    const owner = resolveActiveTabOwnerWorktreeId(
+      { 'wt-other': [tab('t1', 'wt-other')], '': [tab('t1', '')] },
+      '',
+      't1'
+    )
+    expect(owner).toBe('')
   })
 
   it('breadcrumbs a given tab id only once so it cannot flood the ring', () => {

@@ -25,7 +25,10 @@ export function resolveActiveTabOwnerWorktreeId(
   let ownerCount = 0
   // Why tracked in-loop rather than re-read by key: `tabsByWorktree[activeWorktreeId]`
   // resolves inherited members for ids like `toString`, and `?.some` would then throw.
-  let activeWorktreeOwnsTab = false
+  // Why the id and not a boolean: a falsy-but-valid active id ('') would fail a
+  // truthiness guard below and silently fall back to the first match — the very
+  // misattribution this function exists to remove.
+  let activeOwnerId: string | null = null
   for (const [worktreeId, tabs] of Object.entries(tabsByWorktree)) {
     if (!tabs.some((tab) => tab.id === tabId)) {
       continue
@@ -35,7 +38,7 @@ export function resolveActiveTabOwnerWorktreeId(
       firstOwnerId = worktreeId
     }
     if (worktreeId === activeWorktreeId) {
-      activeWorktreeOwnsTab = true
+      activeOwnerId = worktreeId
     }
   }
 
@@ -45,12 +48,12 @@ export function resolveActiveTabOwnerWorktreeId(
     reportedDuplicateTabIds.add(tabId)
     recordRendererCrashBreadcrumb('terminal_tab_id_owned_by_multiple_worktrees', {
       ownerCount,
-      resolvedToActiveWorktree: activeWorktreeOwnsTab
+      resolvedToActiveWorktree: activeOwnerId !== null
     })
   }
 
-  if (ownerCount > 1 && activeWorktreeId && activeWorktreeOwnsTab) {
-    return activeWorktreeId
+  if (ownerCount > 1 && activeOwnerId !== null) {
+    return activeOwnerId
   }
   return firstOwnerId
 }
