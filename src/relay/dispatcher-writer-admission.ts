@@ -21,11 +21,18 @@ type AdmissionResult =
   | { accepted: true; replaced?: DispatcherWriterEntry }
   | { accepted: false; error?: Error }
 
-const CONTROL_QUEUE_MAX_FRAMES = 256
+export const DISPATCHER_CONTROL_QUEUE_MAX_FRAMES = 256
 export const DISPATCHER_CONTROL_QUEUE_MAX_BYTES = 1024 * 1024
 const LIVENESS_QUEUE_MAX_FRAMES = 2
 
 export const DEFAULT_PRODUCER_QUEUE_MAX_BYTES = 2 * 1024 * 1024
+
+const nonFatalControlEncodes = new WeakSet<() => Buffer>()
+
+export function markControlOverflowNonFatal(encode: () => Buffer): () => Buffer {
+  nonFatalControlEncodes.add(encode)
+  return encode
+}
 
 export function onceDispatcherWriterSettlement(
   callback: (result: DispatcherWriterSettlement) => void
@@ -143,10 +150,15 @@ export class DispatcherWriterAdmission {
   }
 
   private admitControl(entry: DispatcherWriterEntry): AdmissionResult {
+    // Why: best-effort controls may fail soft without weakening protocol-critical admission.
+    const overflowIsNonFatal = nonFatalControlEncodes.delete(entry.encode)
     if (
-      this.controlFrames >= CONTROL_QUEUE_MAX_FRAMES ||
+      this.controlFrames >= DISPATCHER_CONTROL_QUEUE_MAX_FRAMES ||
       this.controlBytes + entry.estimatedBytes > DISPATCHER_CONTROL_QUEUE_MAX_BYTES
     ) {
+      if (overflowIsNonFatal) {
+        return { accepted: false }
+      }
       return {
         accepted: false,
         error: new Error('Relay control queue exceeded its bounded capacity')

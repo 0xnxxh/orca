@@ -23,6 +23,7 @@ import {
   type RelayClientWrite,
   type SinkWriteSettlement
 } from './dispatcher-client-writer'
+import { markControlOverflowNonFatal } from './dispatcher-writer-admission'
 import {
   LegacyRelayPublicationLedger,
   type LegacyPublicationLease
@@ -540,7 +541,8 @@ export class RelayDispatcher {
     clientId: number,
     method: string,
     params?: Record<string, unknown>,
-    onSettled: (result: SinkWriteSettlement) => void = () => {}
+    onSettled: (result: SinkWriteSettlement) => void = () => {},
+    options: { controlOverflow?: 'close-client' | 'reject' } = {}
   ): boolean {
     if (this.disposed) {
       onSettled({ ok: false, error: new Error('Relay dispatcher is disposed') })
@@ -559,7 +561,9 @@ export class RelayDispatcher {
         ...(params !== undefined ? { params } : {})
       },
       'control',
-      onSettled
+      onSettled,
+      undefined,
+      options.controlOverflow
     )
   }
 
@@ -952,18 +956,22 @@ export class RelayDispatcher {
     lane: DispatcherWriterLane,
     onSettled: (result: SinkWriteSettlement) => void = () => {},
     // Why: publish paths already sized the frame; avoid a redundant encode.
-    estimatedBytes?: number
+    estimatedBytes?: number,
+    controlOverflow: 'close-client' | 'reject' = 'close-client'
   ): boolean {
     if (this.disposed || client.closed) {
       return false
     }
     const frameBytes = estimatedBytes ?? this.estimateFrameBytes(msg)
+    const encode = (): Buffer => {
+      const seq = client.nextOutgoingSeq++
+      return encodeJsonRpcFrame(msg, seq, client.highestReceivedSeq)
+    }
     return client.writer.enqueue(
       lane,
-      () => {
-        const seq = client.nextOutgoingSeq++
-        return encodeJsonRpcFrame(msg, seq, client.highestReceivedSeq)
-      },
+      lane === 'control' && controlOverflow === 'reject'
+        ? markControlOverflowNonFatal(encode)
+        : encode,
       frameBytes,
       onSettled
     )

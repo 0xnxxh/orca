@@ -1141,6 +1141,26 @@ describe('SSH IPC handlers', () => {
       }
     })
 
+    it('resets the relay budget when the connection disappears before retry', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(0)
+      try {
+        await connectWithLiveTransport()
+        getLatestRelayDisposeCallback()('connection_lost')
+
+        mockConnectionManager.getConnection.mockReturnValue(undefined)
+        await vi.advanceTimersByTimeAsync(relayReconnectDelaysMs[0])
+
+        mockConnectionManager.getConnection.mockReturnValue({})
+        getLatestRelayDisposeCallback()('connection_lost')
+        expect(handlers.get('ssh:getState')!(null, { targetId: 'ssh-1' })).toEqual(
+          expect.objectContaining({ reconnectAttempt: 1 })
+        )
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
     it('still reaches the manual-reconnect banner when the transport is healthy', async () => {
       vi.useFakeTimers()
       vi.setSystemTime(0)

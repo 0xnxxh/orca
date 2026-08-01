@@ -1802,8 +1802,7 @@ export class AgentHookServer {
     if (!validatedPayload) {
       return
     }
-    // Why: a field the relay shed to fit the frame is absent, not cleared; restore it from the
-    // cached payload or a live subagent roster blanks and its pane becomes hibernation-eligible.
+    // Why: restore a shed roster only when its digest and turn identity still match the cache.
     const normalizedPayload = restoreShedStatusFields(
       validatedPayload,
       envelope.shedFields,

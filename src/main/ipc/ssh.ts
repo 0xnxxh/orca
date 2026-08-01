@@ -751,6 +751,7 @@ function configureRelaySessionCallbacks(session: SshRelaySession): void {
         relayLostBackoff.set(tid, state)
         const liveConn = connectionManager?.getConnection(tid)
         if (!liveConn || !activeSessions.has(tid)) {
+          clearRelayLostBackoff(tid)
           return
         }
         const status = connectionManager?.getState(tid)?.status

@@ -3,7 +3,10 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import type { WatcherProcessEvent } from '../main/ipc/parcel-watcher-process-protocol'
 import { RelayDispatcher } from './dispatcher'
-import { DEFAULT_PRODUCER_QUEUE_MAX_BYTES } from './dispatcher-writer-admission'
+import {
+  DEFAULT_PRODUCER_QUEUE_MAX_BYTES,
+  DISPATCHER_CONTROL_QUEUE_MAX_FRAMES
+} from './dispatcher-writer-admission'
 import type { RelayClientSinkOptions, RelayClientWrite } from './dispatcher-writer-sink'
 import { LEGACY_CLIENT_RETAINED_BYTES_LOW } from './legacy-relay-publication-ledger'
 import { HEADER_LENGTH, parseJsonRpcMessage } from './protocol'
@@ -218,6 +221,32 @@ describe('relay watcher overflow suppression key', () => {
       dispatcher.dispose()
     }
   })
+
+  it('fails soft and releases the outstanding key when the control queue is full', () => {
+    const sink = createRecordingSink(65536)
+    sink.blockNextWrite()
+    const dispatcher = new RelayDispatcher(sink.write, sink.options)
+
+    try {
+      const clientId = dispatcher.activeClientIds()[0]
+      for (let index = 0; index < DISPATCHER_CONTROL_QUEUE_MAX_FRAMES; index += 1) {
+        dispatcher.notifyClient(clientId, `control.${index}`)
+      }
+
+      emitRelayWatcherOverflow(dispatcher, '/workspace', false)
+      expect(watcherFrames(sink.frames)).toHaveLength(0)
+      expect(sink.closes()).toBe(0)
+
+      sink.drainWaiters.shift()?.()
+      emitRelayWatcherOverflow(dispatcher, '/workspace', false)
+      expect(watcherFrames(sink.frames).flatMap(frameEvents)).toEqual([
+        { kind: 'overflow', absolutePath: '/workspace' }
+      ])
+      expect(sink.closes()).toBe(0)
+    } finally {
+      dispatcher.dispose()
+    }
+  })
 })
 
 describe('relay watcher batch chunking', () => {
@@ -259,6 +288,32 @@ describe('relay watcher batch chunking', () => {
       expect(sink.frames.flatMap(frameEvents)).toHaveLength(5000)
     } finally {
       budget.mockRestore()
+      dispatcher.dispose()
+    }
+  })
+
+  it('sizes each event once across clients that need different chunk cuts', () => {
+    const primary = createRecordingSink(16384)
+    const secondary = createRecordingSink(65536)
+    const dispatcher = new RelayDispatcher(primary.write, primary.options)
+    const stringify = vi.spyOn(JSON, 'stringify')
+    const events = watcherBatch(5000)
+
+    try {
+      dispatcher.attachClient(secondary.write, secondary.options)
+      emitRelayWatcherEvents(dispatcher, '/workspace', false, events)
+
+      const sizedEvents = stringify.mock.calls.filter(([value]) => {
+        if (typeof value !== 'object' || value === null) {
+          return false
+        }
+        return 'kind' in value && 'absolutePath' in value
+      })
+      expect(sizedEvents).toHaveLength(events.length)
+      expect(primary.frames.flatMap(frameEvents)).toHaveLength(events.length)
+      expect(secondary.frames.flatMap(frameEvents)).toHaveLength(events.length)
+    } finally {
+      stringify.mockRestore()
       dispatcher.dispose()
     }
   })

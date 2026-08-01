@@ -4,6 +4,7 @@ import {
   type RelayClientSinkOptions,
   type SinkWriteSettlement
 } from './dispatcher'
+import { DISPATCHER_CONTROL_QUEUE_MAX_FRAMES } from './dispatcher-writer-admission'
 import { LEGACY_CLIENT_RETAINED_BYTES_LOW } from './legacy-relay-publication-ledger'
 import type * as ProtocolModule from './protocol'
 import { encodeJsonRpcFrame, RelayErrorCode } from './protocol'
@@ -276,6 +277,25 @@ describe('RelayDispatcher bounded-capacity degradation', () => {
 
       expect(bounded.publishProducerNotification(999, 'fs.changed')).toBe(false)
     } finally {
+      bounded.dispose()
+    }
+  })
+
+  it('still closes on protocol-critical control queue overflow', () => {
+    const primary = makeSaturatingClient(65536)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    const bounded = new RelayDispatcher(primary.write, primary.options)
+    try {
+      const clientId = bounded.activeClientIds()[0]
+      for (let index = 0; index < DISPATCHER_CONTROL_QUEUE_MAX_FRAMES; index += 1) {
+        bounded.notifyClient(clientId, `control.${index}`)
+      }
+      expect(primary.closes).toBe(0)
+
+      bounded.notifyClient(clientId, 'control.overflow')
+      expect(primary.closes).toBe(1)
+    } finally {
+      stderr.mockRestore()
       bounded.dispose()
     }
   })

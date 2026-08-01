@@ -1,6 +1,7 @@
 import {
   AGENT_HOOK_NOTIFICATION_METHOD,
   AGENT_HOOK_SHED_FIELDS_KEY,
+  createShedSubagentsField,
   type AgentHookRelayEnvelope
 } from '../shared/agent-hook-relay'
 import type { RelayDispatcher } from './dispatcher'
@@ -25,6 +26,7 @@ const MAX_PENDING_PANES = 64
 type PendingEnvelope = {
   params: Record<string, unknown>
   clientIds: readonly number[]
+  /** Zero means the timer budget is exhausted and one capacity-driven attempt remains. */
   attemptsLeft: number
 }
 
@@ -34,6 +36,14 @@ type RedeliveryState = {
 }
 
 const redeliveryByDispatcher = new WeakMap<RelayDispatcher, RedeliveryState>()
+// Why: some agents submit option labels verbatim, so only presentation-only fields may shrink.
+const COMPACTABLE_INTERACTIVE_PROMPT_FIELDS = new Set([
+  'description',
+  'detail',
+  'header',
+  'question',
+  'summary'
+])
 
 function fitsProducerFrame(dispatcher: RelayDispatcher, params: Record<string, unknown>): boolean {
   return dispatcher.producerEnvelopeBudget(AGENT_HOOK_NOTIFICATION_METHOD, params) >= 0
@@ -47,6 +57,61 @@ function toNotificationParams(
   return shedFields.length === 0
     ? params
     : { ...params, [AGENT_HOOK_SHED_FIELDS_KEY]: [...shedFields] }
+}
+
+function compactInteractivePromptValue(value: unknown, maxStringLength: number): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => compactInteractivePromptValue(item, maxStringLength))
+  }
+  if (!value || typeof value !== 'object') {
+    return value
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      typeof item === 'string' && COMPACTABLE_INTERACTIVE_PROMPT_FIELDS.has(key)
+        ? item.slice(0, maxStringLength)
+        : compactInteractivePromptValue(item, maxStringLength)
+    ])
+  )
+}
+
+function fitWaitingInteractivePrompt(
+  dispatcher: RelayDispatcher,
+  envelope: AgentHookRelayEnvelope,
+  shedFields: readonly string[]
+): AgentHookRelayEnvelope | null {
+  const prompt = envelope.payload.interactivePrompt
+  if (!prompt) {
+    return null
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(prompt)
+  } catch {
+    parsed = undefined
+  }
+  const promptAtLimit = (limit: number): string =>
+    parsed === undefined
+      ? prompt.slice(0, limit)
+      : JSON.stringify(compactInteractivePromptValue(parsed, limit))
+  let low = 1
+  let high = prompt.length
+  let fitted: AgentHookRelayEnvelope | null = null
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2)
+    const candidate = {
+      ...envelope,
+      payload: { ...envelope.payload, interactivePrompt: promptAtLimit(mid) }
+    }
+    if (fitsProducerFrame(dispatcher, toNotificationParams(candidate, shedFields))) {
+      fitted = candidate
+      low = mid + 1
+    } else {
+      high = mid - 1
+    }
+  }
+  return fitted
 }
 
 /** Returns the ids of the clients that rejected the frame; a rejected client is never written to. */
@@ -70,6 +135,20 @@ function publishToClients(
     }
   }
   return rejected
+}
+
+function logUnsendableEnvelope(
+  dispatcher: RelayDispatcher,
+  params: Record<string, unknown>,
+  clientIds: readonly number[]
+): void {
+  const rejectedClientId = clientIds.find(
+    (clientId) =>
+      dispatcher.producerEnvelopeBudget(AGENT_HOOK_NOTIFICATION_METHOD, params, clientId) < 0
+  )
+  if (rejectedClientId !== undefined) {
+    publishToClients(dispatcher, params, [rejectedClientId], true)
+  }
 }
 
 /** Publishes an agent-hook envelope, dropping optional detail fields until the frame fits the
@@ -116,16 +195,32 @@ export function publishAgentHookEnvelope(
     if (step >= SHED_ORDER.length) {
       // Nothing left to shed and it still does not fit: waiting cannot make it sendable, and this
       // snapshot supersedes any pending one, which is now stale.
+      if (measureBeforePublish) {
+        logUnsendableEnvelope(dispatcher, params, clientIds)
+      }
       clearPendingEnvelope(dispatcher, envelope.paneKey)
       return
     }
     const field = SHED_ORDER[step]
     step += 1
+    if (field === 'interactivePrompt' && candidate.payload.state === 'waiting') {
+      const fitted = fitWaitingInteractivePrompt(dispatcher, candidate, shedFields)
+      if (fitted) {
+        candidate = fitted
+        continue
+      }
+      // A waiting snapshot without an answerable card must not reach web/mobile.
+      logUnsendableEnvelope(dispatcher, params, clientIds)
+      clearPendingEnvelope(dispatcher, envelope.paneKey)
+      return
+    }
     // Why: the hook server caches envelopes and replays them after --connect, so shedding in place
     // would permanently strip the cached copy too.
     candidate = { ...candidate, payload: { ...candidate.payload } }
+    const shedField =
+      field === 'subagents' ? createShedSubagentsField(candidate.payload.subagents ?? []) : field
     delete candidate.payload[field]
-    shedFields.push(field)
+    shedFields.push(shedField)
   }
 }
 
@@ -141,6 +236,7 @@ function setPendingEnvelope(
     redeliveryByDispatcher.set(dispatcher, state)
     // A disposed dispatcher can never accept the retry, and pending params pin the cached payload.
     dispatcher.onDisposed(() => stopRedelivery(dispatcher))
+    dispatcher.onLegacyPtyCapacity(() => runFinalCapacityPass(dispatcher))
   }
   // Latest-wins: one snapshot per pane, never a growing queue. Delete-then-set keeps Map insertion
   // order = recency so the cap below evicts the longest-idle pane.
@@ -178,6 +274,13 @@ function stopRedelivery(dispatcher: RelayDispatcher): void {
   }
 }
 
+function stopRedeliveryTimer(state: RedeliveryState): void {
+  if (state.timer) {
+    clearInterval(state.timer)
+    state.timer = null
+  }
+}
+
 function runRedeliveryPass(dispatcher: RelayDispatcher): void {
   const state = redeliveryByDispatcher.get(dispatcher)
   if (!state) {
@@ -185,16 +288,43 @@ function runRedeliveryPass(dispatcher: RelayDispatcher): void {
   }
   const active = new Set(dispatcher.activeClientIds())
   for (const [paneKey, pending] of Array.from(state.pending)) {
+    if (pending.attemptsLeft <= 0) {
+      continue
+    }
     // A client that detached gets caught up by the reattach replay, so stop tracking it.
     const targets = pending.clientIds.filter((clientId) => active.has(clientId))
     const rejected =
       targets.length === 0 ? [] : publishToClients(dispatcher, pending.params, targets)
     pending.attemptsLeft -= 1
-    if (rejected.length === 0 || pending.attemptsLeft <= 0) {
+    if (rejected.length === 0) {
       state.pending.delete(paneKey)
       continue
     }
     pending.clientIds = rejected
+  }
+  if (state.pending.size === 0) {
+    stopRedelivery(dispatcher)
+  } else if (Array.from(state.pending.values()).every((pending) => pending.attemptsLeft <= 0)) {
+    stopRedeliveryTimer(state)
+  }
+}
+
+function runFinalCapacityPass(dispatcher: RelayDispatcher): void {
+  const state = redeliveryByDispatcher.get(dispatcher)
+  if (!state) {
+    return
+  }
+  const active = new Set(dispatcher.activeClientIds())
+  for (const [paneKey, pending] of Array.from(state.pending)) {
+    if (pending.attemptsLeft > 0) {
+      continue
+    }
+    // Delete before publishing because a synchronous sink settlement emits capacity reentrantly.
+    state.pending.delete(paneKey)
+    const targets = pending.clientIds.filter((clientId) => active.has(clientId))
+    if (targets.length > 0) {
+      publishToClients(dispatcher, pending.params, targets)
+    }
   }
   if (state.pending.size === 0) {
     stopRedelivery(dispatcher)

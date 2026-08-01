@@ -22,7 +22,9 @@
 //   POST body so Orca's warn-once protocol diagnostics still fire. The relay
 //   default env is `remote`, a location marker ignored by dev-vs-prod checks.
 
-import type { ParsedAgentStatusPayload } from './agent-status-types'
+import { createHash } from 'node:crypto'
+
+import type { AgentSubagentSnapshot, ParsedAgentStatusPayload } from './agent-status-types'
 import type { AgentProviderSessionMetadata } from './agent-session-resume'
 import type { AgentHookTarget } from './agent-hook-types'
 
@@ -99,10 +101,50 @@ export type AgentHookRelayEnvelope = {
 /** JSON-RPC notification method name carried over the relay control channel. */
 export const AGENT_HOOK_NOTIFICATION_METHOD = 'agent.hook' as const
 
-/** Names the optional payload fields the relay dropped to fit an oversized frame
+/** Identifies optional payload fields the relay dropped to fit an oversized frame
  *  (see `src/relay/agent-hook-envelope-publication.ts`), so `ingestRemote` can tell
- *  "shed in transit" from "the agent cleared it". */
+ *  "shed in transit" from "the agent cleared it"; rosters include their digest. */
 export const AGENT_HOOK_SHED_FIELDS_KEY = 'shedFields' as const
+const AGENT_HOOK_SHED_SUBAGENTS_DIGEST_PREFIX = 'subagents:sha256:'
+
+function subagentRosterDigest(subagents: readonly AgentSubagentSnapshot[]): string {
+  const stableRoster = subagents.map(({ id, state, startedAt, agentType, model, description }) => [
+    id,
+    state,
+    startedAt,
+    agentType ?? null,
+    model ?? null,
+    description ?? null
+  ])
+  return createHash('sha256').update(JSON.stringify(stableRoster)).digest('base64url')
+}
+
+/** Carries the dropped roster identity without carrying its full rows. */
+export function createShedSubagentsField(subagents: readonly AgentSubagentSnapshot[]): string {
+  return `${AGENT_HOOK_SHED_SUBAGENTS_DIGEST_PREFIX}${subagentRosterDigest(subagents)}`
+}
+
+function hasMatchingShedSubagentsField(
+  shedFields: readonly unknown[],
+  previous: ParsedAgentStatusPayload
+): boolean {
+  if (!previous.subagents) {
+    return false
+  }
+  const expected = createShedSubagentsField(previous.subagents)
+  return shedFields.some((field) => field === expected)
+}
+
+function hasMatchingTurnIdentity(
+  payload: ParsedAgentStatusPayload,
+  previous: ParsedAgentStatusPayload
+): boolean {
+  return (
+    payload.prompt === previous.prompt &&
+    payload.agentType === previous.agentType &&
+    payload.model === previous.model
+  )
+}
 
 /**
  * Re-attaches shed fields from Orca's cached payload for this pane, so a transport-level
@@ -110,7 +152,7 @@ export const AGENT_HOOK_SHED_FIELDS_KEY = 'shedFields' as const
  * unblocks hibernation for a pane whose teammates are still running.
  *
  * `interactivePrompt` and `lastAssistantMessage` are deliberately not restored: cached prose can
- * belong to an earlier turn, while subagent continuity is required for correct hibernation.
+ * belong to an earlier turn. A roster returns only when its wire digest and turn identity match.
  */
 export function restoreShedStatusFields(
   payload: ParsedAgentStatusPayload,
@@ -120,9 +162,12 @@ export function restoreShedStatusFields(
   if (!previous || !Array.isArray(shedFields) || shedFields.length === 0) {
     return payload
   }
-  const shed = new Set(shedFields.filter((field): field is string => typeof field === 'string'))
   const subagents =
-    shed.has('subagents') && payload.subagents === undefined ? previous.subagents : undefined
+    payload.subagents === undefined &&
+    hasMatchingTurnIdentity(payload, previous) &&
+    hasMatchingShedSubagentsField(shedFields, previous)
+      ? previous.subagents
+      : undefined
   if (subagents === undefined) {
     return payload
   }

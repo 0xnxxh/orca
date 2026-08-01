@@ -5,6 +5,7 @@ import {
   AGENT_HOOK_REQUEST_REPLAY_METHOD,
   AGENT_HOOK_SHED_FIELDS_KEY,
   ORCA_FEATURE_REMOTE_AGENT_HOOKS_ENV,
+  createShedSubagentsField,
   isRemoteAgentHooksEnabled,
   restoreShedStatusFields,
   type AgentHookRelayEnvelope
@@ -71,24 +72,38 @@ describe('restoreShedStatusFields', () => {
   }
   const shed: ParsedAgentStatusPayload = { state: 'done', prompt: 'p', agentType: 'claude' }
 
-  it('restores a roster the relay shed, so a done pane is not falsely hibernation-eligible', () => {
-    const restored = restoreShedStatusFields(shed, ['subagents'], cached)
+  it('restores a matching shed roster, so a done pane is not falsely hibernation-eligible', () => {
+    const restored = restoreShedStatusFields(shed, [createShedSubagentsField(roster)], cached)
     expect(restored.subagents).toEqual(roster)
     expect(restored.state).toBe('done')
     // Only the named field comes back.
     expect(restored.lastAssistantMessage).toBeUndefined()
   })
 
-  it('restores shed subagents without resurrecting stale prose for a new state and prompt', () => {
+  it('does not restore a shed roster across a prompt identity change', () => {
     expect(AGENT_HOOK_SHED_FIELDS_KEY).toBe('shedFields')
     const nextTurn = { ...shed, prompt: 'next prompt' }
     const restored = restoreShedStatusFields(
       nextTurn,
-      ['lastAssistantMessage', 'subagents'],
+      ['lastAssistantMessage', createShedSubagentsField(roster)],
       cached
     )
     expect(restored.lastAssistantMessage).toBeUndefined()
-    expect(restored.subagents).toEqual(roster)
+    expect(restored.subagents).toBeUndefined()
+    expect(restored).toBe(nextTurn)
+  })
+
+  it('does not restore the cached roster when the shed roster digest changed', () => {
+    const changedRoster = [
+      { id: 'child-2', agentType: 'reviewer', state: 'working' as const, startedAt: 2 }
+    ]
+    const restored = restoreShedStatusFields(
+      shed,
+      [createShedSubagentsField(changedRoster)],
+      cached
+    )
+    expect(restored.subagents).toBeUndefined()
+    expect(restored).toBe(shed)
   })
 
   it('never restores interactivePrompt — a stale answerable card is worse than none', () => {
@@ -103,6 +118,7 @@ describe('restoreShedStatusFields', () => {
     expect(restoreShedStatusFields(shed, [], cached).lastAssistantMessage).toBeUndefined()
     // A hostile/garbled marker must not throw or restore.
     expect(restoreShedStatusFields(shed, 'subagents', cached)).toBe(shed)
+    expect(restoreShedStatusFields(shed, ['subagents'], cached)).toBe(shed)
     expect(restoreShedStatusFields(shed, [{ toString: () => 'subagents' }], cached)).toBe(shed)
   })
 

@@ -8,8 +8,12 @@ type MappedWatcherEvent = {
   isDirectory?: boolean
 }
 
-// Why: markers ride the bounded control lane, whose overflow CLOSES the client; one outstanding marker
-// per (client, root) keeps sustained backpressure from turning a recoverable resync into a link drop.
+type WatcherBatchSizing = {
+  eventBytes: Map<MappedWatcherEvent, number>
+  batchBytes: number
+}
+
+// Why: one outstanding marker per (client, root) keeps sustained backpressure bounded.
 const outstandingOverflowMarkers = new WeakMap<RelayDispatcher, Set<string>>()
 
 export function emitRelayWatcherEvents(
@@ -30,8 +34,17 @@ export function emitRelayWatcherEvents(
   let grouped: MappedWatcherEvent[] | null = null
   const groupedByDirectory = (): MappedWatcherEvent[] =>
     (grouped ??= groupWatcherEventsByDirectory(mapped))
+  let sizing: WatcherBatchSizing | null = null
+  const batchSizing = (): WatcherBatchSizing => (sizing ??= measureWatcherBatch(mapped))
   for (const clientId of dispatcher.activeClientIds()) {
-    publishWatcherBatchToClient(dispatcher, clientId, rootPath, mapped, groupedByDirectory)
+    publishWatcherBatchToClient(
+      dispatcher,
+      clientId,
+      rootPath,
+      mapped,
+      groupedByDirectory,
+      batchSizing
+    )
   }
 }
 
@@ -61,13 +74,25 @@ function encodedWatcherEventBytes(event: MappedWatcherEvent): number {
   return Buffer.byteLength(JSON.stringify(event))
 }
 
+function measureWatcherBatch(mapped: readonly MappedWatcherEvent[]): WatcherBatchSizing {
+  const eventBytes = new Map<MappedWatcherEvent, number>()
+  let batchBytes = Math.max(0, mapped.length - 1)
+  for (const event of mapped) {
+    const bytes = encodedWatcherEventBytes(event)
+    eventBytes.set(event, bytes)
+    batchBytes += bytes
+  }
+  return { eventBytes, batchBytes }
+}
+
 // Batches are sized to each sink's frame capacity; a batch that cannot be sized degrades to an overflow resync.
 function publishWatcherBatchToClient(
   dispatcher: RelayDispatcher,
   clientId: number,
   rootPath: string,
   mapped: readonly MappedWatcherEvent[],
-  groupedByDirectory: () => readonly MappedWatcherEvent[]
+  groupedByDirectory: () => readonly MappedWatcherEvent[],
+  batchSizing: () => WatcherBatchSizing
 ): void {
   const publish = (events: readonly MappedWatcherEvent[]): boolean =>
     dispatcher.publishProducerNotification(clientId, 'fs.changed', { events })
@@ -95,13 +120,7 @@ function publishWatcherBatchToClient(
     emitWatcherOverflowToClient(dispatcher, clientId, rootPath)
     return
   }
-  const eventBytes = new Map<MappedWatcherEvent, number>()
-  let batchBytes = Math.max(0, mapped.length - 1)
-  for (const event of mapped) {
-    const bytes = encodedWatcherEventBytes(event)
-    eventBytes.set(event, bytes)
-    batchBytes += bytes
-  }
+  const { eventBytes, batchBytes } = batchSizing()
   if (batchBytes <= eventsCapacity) {
     emitWatcherOverflowToClient(dispatcher, clientId, rootPath)
     return
@@ -166,9 +185,10 @@ function emitWatcherOverflowToClient(
     () => {
       // Settles on write, drop, or client close, so the slot can never leak.
       release()
-    }
+    },
+    { controlOverflow: 'reject' }
   )
-  // A close/dispose race may reject between tryNotifyClient's pre-check and enqueue settlement.
+  // Admission rejection has no settlement callback, so release the slot directly.
   if (!accepted) {
     release()
   }

@@ -1,7 +1,10 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { RelayDispatcher, type RelayClientSinkOptions } from './dispatcher'
 import { publishAgentHookEnvelope } from './agent-hook-envelope-publication'
-import { AGENT_HOOK_NOTIFICATION_METHOD } from '../shared/agent-hook-relay'
+import {
+  AGENT_HOOK_NOTIFICATION_METHOD,
+  createShedSubagentsField
+} from '../shared/agent-hook-relay'
 import type { AgentHookRelayEnvelope } from '../shared/agent-hook-relay'
 import type { AgentSubagentSnapshot } from '../shared/agent-status-types'
 
@@ -254,6 +257,64 @@ describe('publishAgentHookEnvelope', () => {
     }
   })
 
+  it('shrinks an oversized waiting card instead of publishing waiting without it', () => {
+    const primary = makeBoundedClient(16384)
+    const dispatcher = new RelayDispatcher(primary.write, primary.options)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    try {
+      const envelope = makeEnvelope({
+        lastAssistantMessage: 6_000,
+        subagents: 2
+      })
+      envelope.payload.state = 'waiting'
+      envelope.payload.interactivePrompt = JSON.stringify({
+        questions: [
+          {
+            question: 'q'.repeat(13_000),
+            options: [{ label: 'Keep' }, { label: 'Discard' }]
+          }
+        ]
+      })
+      publishAgentHookEnvelope(dispatcher, envelope)
+
+      const published = decodeEnvelopes(primary)
+      expect(published).toHaveLength(1)
+      expect(published[0].payload.state).toBe('waiting')
+      const card = JSON.parse(published[0].payload.interactivePrompt!) as {
+        questions: { question: string; options: { label: string }[] }[]
+      }
+      expect(card.questions[0].question.length).toBeLessThan(13_000)
+      expect(card.questions[0].options).toEqual([{ label: 'Keep' }, { label: 'Discard' }])
+      expect(stderr).not.toHaveBeenCalled()
+      expect(primary.closes).toBe(0)
+    } finally {
+      stderr.mockRestore()
+      dispatcher.dispose()
+    }
+  })
+
+  it('drops an oversized waiting card when preserving its answer labels cannot fit', () => {
+    const primary = makeBoundedClient(16384)
+    const dispatcher = new RelayDispatcher(primary.write, primary.options)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    try {
+      const envelope = makeEnvelope({})
+      envelope.payload.state = 'waiting'
+      envelope.payload.interactivePrompt = JSON.stringify({
+        questions: [{ options: [{ label: 'answer'.repeat(3_000) }] }]
+      })
+      publishAgentHookEnvelope(dispatcher, envelope)
+
+      expect(decodeEnvelopes(primary)).toHaveLength(0)
+      expect(stderr).toHaveBeenCalledTimes(1)
+      expect(String(stderr.mock.calls[0][0])).toContain('Dropped agent.hook')
+      expect(primary.closes).toBe(0)
+    } finally {
+      stderr.mockRestore()
+      dispatcher.dispose()
+    }
+  })
+
   it('never probes the budget for a single sink that accepts the frame', () => {
     const primary = makeBoundedClient(16384)
     const dispatcher = new RelayDispatcher(primary.write, primary.options)
@@ -366,6 +427,28 @@ describe('publishAgentHookEnvelope', () => {
       dispatcher.dispose()
     }
   })
+
+  it('logs one multi-sink drop when the fully shed envelope remains unsendable', () => {
+    const primary = makeBoundedClient(65536)
+    const dispatcher = new RelayDispatcher(primary.write, primary.options)
+    const secondary = makeBoundedClient(16384)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    try {
+      dispatcher.attachClient(secondary.write, secondary.options)
+      const envelope = makeEnvelope({})
+      envelope.payload.prompt = 'p'.repeat(40_000)
+      publishAgentHookEnvelope(dispatcher, envelope)
+      publishAgentHookEnvelope(dispatcher, envelope)
+
+      expect(decodeEnvelopes(primary)).toHaveLength(0)
+      expect(decodeEnvelopes(secondary)).toHaveLength(0)
+      expect(stderr).toHaveBeenCalledTimes(1)
+      expect(String(stderr.mock.calls[0][0])).toContain('Dropped agent.hook')
+    } finally {
+      stderr.mockRestore()
+      dispatcher.dispose()
+    }
+  })
 })
 
 describe('publishAgentHookEnvelope shed marker', () => {
@@ -382,7 +465,10 @@ describe('publishAgentHookEnvelope shed marker', () => {
       expect(published).toHaveLength(1)
       // Without this marker the renderer overwrites a populated roster with undefined, blanking live
       // subagent rows and unblocking hibernation for a pane that is still working.
-      expect(published[0].shedFields).toEqual(['lastAssistantMessage', 'subagents'])
+      expect(published[0].shedFields).toEqual([
+        'lastAssistantMessage',
+        createShedSubagentsField(makeSubagents(40))
+      ])
       expect(published[0].payload.subagents).toBeUndefined()
       expect(published[0].payload.interactivePrompt).toBe('q'.repeat(6_000))
     } finally {
@@ -468,7 +554,7 @@ describe('publishAgentHookEnvelope redelivery', () => {
     }
   })
 
-  it('stops retrying a wedged client instead of pinning the payload forever', () => {
+  it('makes one final retry when capacity returns after the timer budget is exhausted', () => {
     const primary = makeBoundedClient(16384)
     const dispatcher = new RelayDispatcher(primary.write, primary.options)
     try {
@@ -482,8 +568,11 @@ describe('publishAgentHookEnvelope redelivery', () => {
 
       primary.blocked = false
       primary.drain()
+      expect(decodeEnvelopes(primary)).toHaveLength(1)
+
+      primary.drain()
       vi.advanceTimersByTime(10_000)
-      expect(decodeEnvelopes(primary)).toHaveLength(0)
+      expect(decodeEnvelopes(primary)).toHaveLength(1)
     } finally {
       dispatcher.dispose()
     }

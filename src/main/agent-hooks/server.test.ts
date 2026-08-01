@@ -31,6 +31,7 @@ import {
   type HookListenerState
 } from '../../shared/agent-hook-listener'
 import { makePaneKey } from '../../shared/stable-pane-id'
+import { createShedSubagentsField } from '../../shared/agent-hook-relay'
 
 const { getCohortAtEmitMock, trackMock } = vi.hoisted(() => ({
   getCohortAtEmitMock: vi.fn(),
@@ -203,7 +204,7 @@ describe('AgentHookServer listener replay', () => {
     server.ingestRemote(
       {
         paneKey: PANE,
-        shedFields: ['lastAssistantMessage', 'subagents'],
+        shedFields: ['lastAssistantMessage', createShedSubagentsField(roster)],
         payload: { state: 'done', prompt: 'review', agentType: 'claude' }
       },
       'conn-1'
