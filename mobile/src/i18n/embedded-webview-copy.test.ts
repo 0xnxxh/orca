@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { buildMobileRichMarkdownEditorHtml } from '../components/mobile-rich-markdown-editor-html'
+import {
+  buildMobileRichMarkdownEditorHtml,
+  escapeInjectedJavaScriptString
+} from '../components/mobile-rich-markdown-editor-html'
 import { buildTerminalWebViewHtml } from '../terminal/terminal-webview-html'
 import { escapeEmbeddedHtmlCopy } from './embedded-webview-copy'
 import { mobileI18n } from './mobile-i18n'
@@ -30,6 +33,10 @@ describe('embedded WebView copy', () => {
     const terminalHtml = buildTerminalWebViewHtml()
     expect(terminalHtml).toContain('id="sel-menu-copy">Copiar</button>')
     expect(terminalHtml).toContain('id="sel-menu-all">Seleccionar todo</button>')
+  })
+
+  it('escapes script-state delimiters in translated JavaScript strings', () => {
+    expect(escapeInjectedJavaScriptString('<!--<script>')).toBe('"\\u003c!--\\u003cscript>"')
   })
 
   it('HTML-escapes rich-editor placeholders before insertHTML parses them', () => {

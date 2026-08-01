@@ -21,7 +21,7 @@ export const HTML = \`<!doctype html>
 <button>Copy</button><button>Select All</button>
 <script>
   window.prompt('Link URL');
-  document.execCommand('insertHTML', false, '<p>Task</p>');
+  document.execCommand('insertHTML', false, '<p>Task ' + localized + '</p><p>Follow up</p>');
 </script>
 \`
 `
@@ -36,7 +36,8 @@ export const HTML = \`<!doctype html>
       'Copy',
       'Select All',
       'Link URL',
-      'Task'
+      'Task',
+      'Follow up'
     ])
   })
 })

@@ -94,21 +94,50 @@ describe('mobile i18n', () => {
     await mobileI18n.changeLanguage('ja')
 
     expect([
+      t('m.x1skfkY'),
+      t('m.IhhRQcI'),
       t('m.-CpqM4g', { value0: 'PR' }),
       t('m.Kdbzhtg', { value0: 'PR' }),
+      t('m.eeoaUzE', { value0: 'PR' }),
       t('m.i65iwXo', { value0: 'PR' }),
       t('m.h5c6qGM', { value0: 'PR' }),
       t('m.aDj0ISs', { value0: 'PR' }),
       t('m.eL3YqZQ', { value0: 'PR' }),
       t('m.fS2uz3k', { value0: 'PR' })
     ]).toEqual([
+      'PR を作成する前に、変更を解決するかステージングしてください。',
+      'PR を作成する前にブランチをチェックアウトしてください。',
       'このブランチはまだ PR の準備ができていません。',
       'このブランチはまだ PR の準備ができていません。',
+      'PR を作成する前にベース ブランチをプッシュしてください。',
       '認証してから PR を作成してください。',
       'このブランチを同期してから PR を作成してください。',
       'コミットを公開してから PR を作成してください。',
       'ブランチをチェックアウトしてから PR を作成してください。',
       '変更をコミットしてから PR を作成してください。'
+    ])
+  })
+
+  it.each([
+    ['es', ['Omitido', 'Publicando rama...']],
+    ['ja', ['スキップ済み', 'ブランチを公開しています...']],
+    ['ko', ['건너뜀', '브랜치 게시 중...']],
+    ['zh', ['已跳过', '正在发布分支...']]
+  ] satisfies [MobileUiLocale, string[]][])(
+    '%s uses Git operation terminology',
+    async (locale, expected) => {
+      await mobileI18n.changeLanguage(locale)
+      expect([t('m.8I2nZuQ'), t('m.PnL-W2o')]).toEqual(expected)
+    }
+  )
+
+  it('uses Git push and pull terminology in Japanese', async () => {
+    await mobileI18n.changeLanguage('ja')
+    expect([t('m.qgmf_L8'), t('m.0OsPYDw'), t('m.eBZzWkw'), t('m.0pGBpyQ')]).toEqual([
+      'プッシュ',
+      'プル',
+      'プッシュ',
+      'プル'
     ])
   })
 

@@ -4,7 +4,7 @@ import { t } from '../i18n/mobile-i18n'
 import { MOBILE_RICH_MARKDOWN_KEYBOARD_INSET_SCRIPT } from './mobile-rich-markdown-editor-keyboard-inset-script'
 
 export function escapeInjectedJavaScriptString(value: string): string {
-  return JSON.stringify(value).replace(/<\/script/gi, '<\\/script')
+  return JSON.stringify(value).replaceAll('<', '\\u003c')
 }
 
 export function buildMobileRichMarkdownEditorHtml(): string {
