@@ -259,6 +259,29 @@ describe('host-store list mutations', () => {
     expect(secureStoreMock.setItemAsync).not.toHaveBeenCalled()
   })
 
+  it('does not treat a transient credential read failure as durable host removal', async () => {
+    secureStoreMock.getItemAsync.mockRejectedValueOnce(new Error('keychain locked'))
+
+    const error = await saveExistingHostRelayRouting({
+      ...HOST_ONE,
+      deviceToken: 'token-1',
+      endpoints: [{ id: 'direct-primary', kind: 'lan', url: HOST_ONE.endpoint }],
+      relayHostId: 'AbCdEf0123_-xyZ9',
+      relay: {
+        v: 1,
+        directorUrl: 'https://relay.onorca.dev',
+        cellUrl: 'https://relay.onorca.dev',
+        assignmentEpoch: 1,
+        relayHostId: 'AbCdEf0123_-xyZ9',
+        e2eeFraming: 2
+      }
+    }).catch((reason: unknown) => reason)
+
+    expect(error).toMatchObject({ message: 'keychain locked' })
+    expect(error).not.toBeInstanceOf(MobileRelayUpgradeHostRemovedError)
+    expect(storedOverlayRaw).toBeNull()
+  })
+
   it('publishes relay routing without overwriting a newer endpoint edit', async () => {
     const relayHostId = 'AbCdEf0123_-xyZ9'
     await updateHostNameAndEndpoint(HOST_ONE.id, { endpoint: 'ws://127.0.0.1:9' })

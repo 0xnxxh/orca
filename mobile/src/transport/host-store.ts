@@ -1,5 +1,4 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import { Platform } from 'react-native'
 import {
   HostProfileSchema,
   StoredHostProfileSchema,
@@ -8,12 +7,7 @@ import {
 } from './types'
 import { getNextHostNameFromHosts } from './host-names'
 import * as hostListLoads from './host-list-load-sharing'
-import {
-  deletePairingKeychainItem,
-  readPairingKeychainItem,
-  resetPairingKeychainForTests,
-  writePairingKeychainItem
-} from './pairing-keychain'
+import { resetPairingKeychainForTests } from './pairing-keychain'
 import {
   retryPendingHostCredentialCleanups,
   scheduleHostCredentialCleanup
@@ -29,38 +23,16 @@ import { deleteMobileRelayCredentialBundle } from './mobile-relay-credential-bun
 import { deleteMobileRelayDirectUpgradeJournal } from './mobile-relay-direct-upgrade-journal'
 import { scheduleOrphanedMobileRelayCleanup } from './mobile-relay-orphan-cleanup'
 import { serializeHostProfilePublication } from './host-profile-publication'
+import {
+  deleteHostDeviceToken,
+  readHostDeviceToken,
+  writeHostDeviceToken
+} from './host-device-token-store'
 
 const STORAGE_KEY = 'orca:hosts'
-// Why: SecureStore keys must match [A-Za-z0-9._-] (colons rejected), so use dots as the separator.
-const TOKEN_KEY_PREFIX = 'orca.host-token.'
-const WEB_TOKEN_KEY_PREFIX = 'orca:web-host-token:'
-
-async function readDeviceToken(hostId: string): Promise<string | null> {
-  // Why: Expo SecureStore has no working web backend; fall back to AsyncStorage only on web so native still uses the keychain.
-  if (Platform.OS === 'web') {
-    return AsyncStorage.getItem(`${WEB_TOKEN_KEY_PREFIX}${hostId}`)
-  }
-  return readPairingKeychainItem(`${TOKEN_KEY_PREFIX}${hostId}`)
-}
-
-async function writeDeviceToken(hostId: string, token: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    await AsyncStorage.setItem(`${WEB_TOKEN_KEY_PREFIX}${hostId}`, token)
-    return
-  }
-  await writePairingKeychainItem(`${TOKEN_KEY_PREFIX}${hostId}`, token)
-}
-
-async function deleteDeviceToken(hostId: string): Promise<void> {
-  if (Platform.OS === 'web') {
-    await AsyncStorage.removeItem(`${WEB_TOKEN_KEY_PREFIX}${hostId}`)
-    return
-  }
-  await deletePairingKeychainItem(`${TOKEN_KEY_PREFIX}${hostId}`)
-}
 
 async function deleteHostCredentials(hostId: string): Promise<void> {
-  await deleteDeviceToken(hostId)
+  await deleteHostDeviceToken(hostId)
   await deleteMobileRelayCredentialBundle(hostId)
   await deleteMobileRelayDirectUpgradeJournal(hostId)
 }
@@ -92,14 +64,19 @@ function parseStoredHosts(raw: string | null): StoredHostProfile[] | null {
   }
 }
 
-export async function loadHosts(): Promise<HostProfile[]> {
+export async function loadHosts(
+  options: { requireCredentials?: boolean } = {}
+): Promise<HostProfile[]> {
   // Why: writers hold the mutation chain across their full RMW; wait so a load doesn't race a half-written list.
   await hostListMutation
+  if (options.requireCredentials) {
+    return doLoadHosts(true)
+  }
   // Why: deduplicate concurrent loadHosts() calls so simultaneously mounting screens share one Keychain read pass.
-  return hostListLoads.shareHostListLoad(doLoadHosts)
+  return hostListLoads.shareHostListLoad(() => doLoadHosts(false))
 }
 
-async function doLoadHosts(): Promise<HostProfile[]> {
+async function doLoadHosts(requireCredentials: boolean): Promise<HostProfile[]> {
   const raw = await AsyncStorage.getItem(STORAGE_KEY)
   const storedHosts = parseStoredHosts(raw)
   if (!storedHosts) {
@@ -121,12 +98,18 @@ async function doLoadHosts(): Promise<HostProfile[]> {
       const readRevision = hostListLoads.getHostListLoadRevision()
       let fetched: string | null
       try {
-        fetched = await readDeviceToken(stored.id)
-      } catch {
+        fetched = await readHostDeviceToken(stored.id)
+      } catch (error) {
+        if (requireCredentials) {
+          throw error
+        }
         // Why: a transient Keychain failure for one entry (e.g. errSecInteractionNotAllowed while locked) must not blank the whole host list; skip it.
         continue
       }
       if (!fetched) {
+        if (requireCredentials) {
+          throw new Error('host credential unavailable')
+        }
         // Why: orphaned metadata with no matching keychain entry; skip rather than surface a half-broken host.
         continue
       }
@@ -231,7 +214,7 @@ async function persistHost(host: HostProfile): Promise<void> {
     return [...hosts.filter(({ id }) => !duplicateHostIds.has(id)), stored]
   })
   // Why: write metadata before the keychain token so a crash leaves recoverable orphaned metadata, not an orphaned token that persists forever.
-  await writeDeviceToken(stored.id, validated.deviceToken)
+  await writeHostDeviceToken(stored.id, validated.deviceToken)
   tokenCache.set(stored.id, validated.deviceToken)
   hostListLoads.dropSharedHostListLoad()
   if (validated.endpoints) {

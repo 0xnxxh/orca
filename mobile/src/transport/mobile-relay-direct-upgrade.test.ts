@@ -149,6 +149,29 @@ describe('existing direct pairing relay upgrade', () => {
     expect(deps.clearJournal).toHaveBeenCalledWith(host.id)
   })
 
+  it('retains recovery state when host identity credentials are temporarily unavailable', async () => {
+    const journal = createMobileRelayDirectUpgradeJournal(host.id, (length) =>
+      new Uint8Array(length).fill(8)
+    )
+    const committed = installed(journal)
+    const deps = dependencies(journal)
+    deps.saveHost.mockRejectedValue(new Error('keychain locked'))
+    const client = clientWith([
+      success({
+        v: 1,
+        relay,
+        installStatus: { v: 1, reqId: journal.reqId, state: 'committed', result: committed }
+      })
+    ])
+
+    await expect(upgradeDirectMobileRelay({ client, host, dependencies: deps })).rejects.toThrow(
+      'keychain locked'
+    )
+    expect(deps.writeBundle).not.toHaveBeenCalled()
+    expect(deps.deleteBundle).not.toHaveBeenCalled()
+    expect(deps.clearJournal).not.toHaveBeenCalled()
+  })
+
   it('recovers an already committed install without authorizing a second one', async () => {
     const journal = createMobileRelayDirectUpgradeJournal(host.id, (length) =>
       new Uint8Array(length).fill(3)

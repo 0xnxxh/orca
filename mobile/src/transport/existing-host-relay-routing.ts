@@ -51,8 +51,10 @@ export async function writeExistingHostRelayCredentialBundle(
   })
 }
 
-async function requireCurrentHostIdentity(host: HostProfile): Promise<HostProfile> {
-  const existing = (await loadHosts()).find(({ id }) => id === host.id)
+async function requireCurrentHostIdentity(
+  host: HostProfile
+): Promise<Pick<HostProfile, 'endpoint'>> {
+  const existing = (await loadHosts({ requireCredentials: true })).find(({ id }) => id === host.id)
   if (!existing || existing.publicKeyB64 !== host.publicKeyB64) {
     throw new MobileRelayUpgradeHostRemovedError('mobile relay upgrade host was removed')
   }
