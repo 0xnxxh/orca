@@ -22,47 +22,41 @@ import {
   loadMobileRelayHostOverlayState,
   removeMobileRelayHostOverlay,
   removeMobileRelayHostOverlays,
-  saveMobileRelayHostOverlay
+  saveMobileRelayHostOverlay,
+  updateMobileRelayHostOverlayDirectEndpoint
 } from './mobile-relay-host-overlay-store'
 import { deleteMobileRelayCredentialBundle } from './mobile-relay-credential-bundle'
 import { deleteMobileRelayDirectUpgradeJournal } from './mobile-relay-direct-upgrade-journal'
 import { scheduleOrphanedMobileRelayCleanup } from './mobile-relay-orphan-cleanup'
+import { serializeHostProfilePublication } from './host-profile-publication'
 
 const STORAGE_KEY = 'orca:hosts'
 // Why: SecureStore keys must match [A-Za-z0-9._-] (colons rejected), so use dots as the separator.
 const TOKEN_KEY_PREFIX = 'orca.host-token.'
 const WEB_TOKEN_KEY_PREFIX = 'orca:web-host-token:'
 
-function tokenKey(hostId: string): string {
-  return `${TOKEN_KEY_PREFIX}${hostId}`
-}
-
-function webTokenKey(hostId: string): string {
-  return `${WEB_TOKEN_KEY_PREFIX}${hostId}`
-}
-
 async function readDeviceToken(hostId: string): Promise<string | null> {
   // Why: Expo SecureStore has no working web backend; fall back to AsyncStorage only on web so native still uses the keychain.
   if (Platform.OS === 'web') {
-    return AsyncStorage.getItem(webTokenKey(hostId))
+    return AsyncStorage.getItem(`${WEB_TOKEN_KEY_PREFIX}${hostId}`)
   }
-  return readPairingKeychainItem(tokenKey(hostId))
+  return readPairingKeychainItem(`${TOKEN_KEY_PREFIX}${hostId}`)
 }
 
 async function writeDeviceToken(hostId: string, token: string): Promise<void> {
   if (Platform.OS === 'web') {
-    await AsyncStorage.setItem(webTokenKey(hostId), token)
+    await AsyncStorage.setItem(`${WEB_TOKEN_KEY_PREFIX}${hostId}`, token)
     return
   }
-  await writePairingKeychainItem(tokenKey(hostId), token)
+  await writePairingKeychainItem(`${TOKEN_KEY_PREFIX}${hostId}`, token)
 }
 
 async function deleteDeviceToken(hostId: string): Promise<void> {
   if (Platform.OS === 'web') {
-    await AsyncStorage.removeItem(webTokenKey(hostId))
+    await AsyncStorage.removeItem(`${WEB_TOKEN_KEY_PREFIX}${hostId}`)
     return
   }
-  await deletePairingKeychainItem(tokenKey(hostId))
+  await deletePairingKeychainItem(`${TOKEN_KEY_PREFIX}${hostId}`)
 }
 
 async function deleteHostCredentials(hostId: string): Promise<void> {
@@ -299,18 +293,25 @@ export async function updateHostNameAndEndpoint(
   hostId: string,
   updates: { name?: string; endpoint?: string }
 ): Promise<void> {
-  await mutateStoredHosts((hosts) => {
-    const index = hosts.findIndex((host) => host.id === hostId)
-    if (index < 0) {
-      throw new Error('Host not found')
+  await serializeHostProfilePublication(hostId, async () => {
+    await mutateStoredHosts((hosts) => {
+      const index = hosts.findIndex((host) => host.id === hostId)
+      if (index < 0) {
+        throw new Error('Host not found')
+      }
+      const next = hosts.slice()
+      if (updates.name !== undefined) {
+        next[index] = { ...next[index]!, name: updates.name }
+      }
+      if (updates.endpoint !== undefined) {
+        next[index] = { ...next[index]!, endpoint: updates.endpoint }
+      }
+      return next
+    })
+    if (updates.endpoint !== undefined) {
+      await updateMobileRelayHostOverlayDirectEndpoint(hostId, updates.endpoint)
+      hostListLoads.dropSharedHostListLoad()
     }
-    const next = hosts.slice()
-    next[index] = {
-      ...next[index]!,
-      ...(updates.name !== undefined ? { name: updates.name } : {}),
-      ...(updates.endpoint !== undefined ? { endpoint: updates.endpoint } : {})
-    }
-    return next
   })
 }
 

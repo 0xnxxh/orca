@@ -381,6 +381,33 @@ describe('mobile relay RPC session', () => {
     expect(session.getState()).toBe('auth-failed')
   })
 
+  it('keeps concurrent written RPCs delivery-ambiguous when one request is unauthorized', async () => {
+    const { session } = await authenticateSession()
+    const rejected = session.sendRequest('status.get').catch((error: unknown) => error)
+    const concurrent = session
+      .sendRequest('terminal.send', { terminal: 'term', text: 'hi' })
+      .catch((error: unknown) => error)
+    await vi.waitFor(() => expect(fakes.sendText).toHaveBeenCalledTimes(2))
+    const requests = fakes.sendText.mock.calls.map(
+      ([payload]) => JSON.parse(payload as string) as { id: string; method: string }
+    )
+    const rejectedRequest = requests.find(({ method }) => method === 'status.get')!
+
+    fakes.linkOptions!.onText(
+      JSON.stringify({
+        id: rejectedRequest.id,
+        ok: false,
+        error: { code: 'unauthorized', message: 'Invalid device token' },
+        _meta: {}
+      })
+    )
+
+    await expect(rejected).resolves.toBeInstanceOf(MobileE2EEAuthenticationError)
+    await expect(rejected.then(isRpcDeliveryUnknown)).resolves.toBe(false)
+    await expect(concurrent.then(isRpcDeliveryUnknown)).resolves.toBe(true)
+    expect(session.getState()).toBe('auth-failed')
+  })
+
   it('keeps a Relay session when a fresh timeout probe proves it live', async () => {
     const { session } = await authenticateSession()
     vi.useFakeTimers()

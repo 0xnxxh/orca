@@ -8,7 +8,10 @@ import {
   readMobileRelayCredentialBundle,
   writeMobileRelayCredentialBundle
 } from './mobile-relay-credential-bundle'
-import { saveExistingHostRelayRouting } from './existing-host-relay-routing'
+import {
+  saveExistingHostRelayRouting,
+  writeExistingHostRelayCredentialBundle
+} from './existing-host-relay-routing'
 import { upgradeDirectMobileRelay } from './mobile-relay-direct-upgrade'
 import { MobileRelayDirectUpgradeController } from './mobile-relay-direct-upgrade-controller'
 import type { StableLogicalRpcClient } from './stable-logical-rpc-client'
@@ -98,7 +101,8 @@ function createSupervisor(
       }),
     resolveRelay: resolveMobileRelayEndpoint,
     readBundle: readMobileRelayCredentialBundle,
-    writeBundle: writeMobileRelayCredentialBundle,
+    writeBundle: (bundle) =>
+      writeExistingHostRelayCredentialBundle(host, bundle, writeMobileRelayCredentialBundle),
     saveHost: saveExistingHostRelayRouting,
     onHostUpdated,
     now: Date.now,

@@ -193,11 +193,18 @@ export function connectMobileRelayRpcSession(args: {
     if (!isRpcResponse(value)) {
       return
     }
+    const request = pending.get(value.id)
     if (!value.ok && value.error.code === 'unauthorized') {
-      fail(new MobileE2EEAuthenticationError())
+      const error = new MobileE2EEAuthenticationError()
+      if (request) {
+        clearTimeout(request.timer)
+        pending.delete(value.id)
+        request.reject(error)
+      }
+      // Why: only the rejected request is definite; concurrent written RPCs may have executed.
+      fail(error, new Error(error.message))
       return
     }
-    const request = pending.get(value.id)
     if (request || timedOutControlRequestIds.delete(value.id)) {
       controlResponseSequence += 1
     }
@@ -275,7 +282,7 @@ export function connectMobileRelayRpcSession(args: {
     }
   }
 
-  function fail(error: Error): void {
+  function fail(error: Error, pendingError = error): void {
     if (closed) {
       return
     }
@@ -283,7 +290,7 @@ export function connectMobileRelayRpcSession(args: {
     stopControlProbeTimer()
     failure = error
     link.close()
-    rejectPending(error)
+    rejectPending(pendingError)
     publishState(error instanceof MobileE2EEAuthenticationError ? 'auth-failed' : 'disconnected')
   }
 
@@ -294,9 +301,7 @@ export function connectMobileRelayRpcSession(args: {
     // Why: pending entries only exist after their frame reached the authenticated
     // link (sendFrame failures delete them synchronously), so the desktop may
     // have processed them — mark the ambiguity for callers.
-    if (!(error instanceof MobileE2EEAuthenticationError)) {
-      markRpcDeliveryUnknown(error)
-    }
+    markRpcDeliveryUnknown(error)
     for (const request of pending.values()) {
       clearTimeout(request.timer)
       request.reject(error)

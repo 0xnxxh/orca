@@ -24,6 +24,7 @@ type PendingReconnect = {
   profileVersion: number
   generation: number
   promise: Promise<void>
+  cancel: () => void
 }
 
 export class HostForceReconnectCoordinator {
@@ -32,6 +33,7 @@ export class HostForceReconnectCoordinator {
 
   cancel(hostId: string): void {
     this.generations.set(hostId, this.generation(hostId) + 1)
+    this.pendingByHost.get(hostId)?.cancel()
     this.pendingByHost.delete(hostId)
   }
 
@@ -50,18 +52,28 @@ export class HostForceReconnectCoordinator {
     if (pending) {
       generation += 1
       this.generations.set(operation.hostId, generation)
+      pending.cancel()
     }
     // Why: a first reconnect must not join an ordinary open whose Keychain read may never settle.
     operation.cancelPendingOpen()
+    let cancelReconnect: () => void = () => {}
+    const cancelled = new Promise<void>((resolve) => {
+      cancelReconnect = () => {
+        operation.cancelPendingOpen()
+        resolve()
+      }
+    })
     const reconnect = this.replaceAndVerify(
       operation,
       generation,
-      Date.now() + FORCE_RECONNECT_TIMEOUT_MS
+      Date.now() + FORCE_RECONNECT_TIMEOUT_MS,
+      cancelled
     )
     this.pendingByHost.set(operation.hostId, {
       profileVersion: operation.profileVersion,
       generation,
-      promise: reconnect
+      promise: reconnect,
+      cancel: cancelReconnect
     })
     const clearPending = () => {
       if (this.pendingByHost.get(operation.hostId)?.promise === reconnect) {
@@ -75,7 +87,8 @@ export class HostForceReconnectCoordinator {
   private async replaceAndVerify(
     operation: HostReconnectOperation,
     generation: number,
-    deadline: number
+    deadline: number,
+    cancelled: Promise<void>
   ): Promise<void> {
     if (this.wasCancelled(operation.hostId, generation)) {
       return
@@ -87,7 +100,7 @@ export class HostForceReconnectCoordinator {
       entry.client.close()
       operation.removeEntry()
     }
-    const fresh = await this.openBeforeDeadline(operation, deadline)
+    const fresh = await this.openBeforeDeadline(operation, deadline, cancelled)
     if (this.wasCancelled(operation.hostId, generation)) {
       return
     }
@@ -106,7 +119,8 @@ export class HostForceReconnectCoordinator {
 
   private async openBeforeDeadline(
     operation: HostReconnectOperation,
-    deadline: number
+    deadline: number,
+    cancelled: Promise<void>
   ): Promise<HostReconnectEntry | null> {
     const timeoutMs = deadline - Date.now()
     if (timeoutMs <= 0) {
@@ -116,6 +130,7 @@ export class HostForceReconnectCoordinator {
     try {
       return await Promise.race([
         operation.openReplacement(),
+        cancelled.then(() => null),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => {
             operation.cancelPendingOpen()
