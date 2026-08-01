@@ -2,7 +2,7 @@ import { useEffect, useState, type JSX } from 'react'
 import { Mic, Square } from 'lucide-react'
 import { ShortcutKeyCombo } from '@/components/ShortcutKeyCombo'
 import { usePrefersReducedMotion } from '@/components/feature-wall/feature-wall-modal-helpers'
-import { formatShortcutKeyComboDetails, useShortcutKeyDetails } from '@/hooks/useShortcutLabel'
+import { useShortcutKeyDetails } from '@/hooks/useShortcutLabel'
 import { translate } from '@/i18n/i18n'
 
 const TYPE_START_DELAY_MS = 650
@@ -12,8 +12,6 @@ const WAVEFORM_BAR_HEIGHTS = [38, 70, 100, 58, 82]
 export function VoiceDictationFeatureTipVisual(): JSX.Element {
   const reducedMotion = usePrefersReducedMotion()
   const shortcut = useShortcutKeyDetails('voice.dictation')
-  const displayShortcut =
-    shortcut.keys.length > 0 ? shortcut : formatShortcutKeyComboDetails('voice.dictation')[0]
   const dictatedPrompt = translate(
     'featureTips.voice.demoPrompt',
     'Refactor the voice setup flow and add coverage for the permission states.'
@@ -55,11 +53,11 @@ export function VoiceDictationFeatureTipVisual(): JSX.Element {
       className="relative flex h-full min-h-[23rem] flex-col items-center justify-center overflow-hidden px-6 py-7"
       aria-hidden="true"
     >
-      {displayShortcut && displayShortcut.keys.length > 0 ? (
+      {shortcut.keys.length > 0 ? (
         <div className="flex items-center gap-2.5">
           <ShortcutKeyCombo
-            keys={displayShortcut.keys}
-            doubleTap={displayShortcut.doubleTap}
+            keys={shortcut.keys}
+            doubleTap={shortcut.doubleTap}
             keyCapClassName="h-7 min-w-7 bg-foreground/[0.08] px-2 font-semibold shadow-xs"
           />
           <span className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">

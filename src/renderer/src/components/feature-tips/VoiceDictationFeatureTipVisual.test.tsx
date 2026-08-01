@@ -8,15 +8,13 @@ import { VoiceDictationFeatureTipVisual } from './VoiceDictationFeatureTipVisual
 
 const prefersReducedMotionMock = vi.hoisted(() => vi.fn(() => false))
 const shortcutMock = vi.hoisted(() => vi.fn(() => ({ keys: ['⌘', 'E'], doubleTap: false })))
-const formatShortcutMock = vi.hoisted(() => vi.fn(() => [{ keys: ['⌘', 'E'], doubleTap: false }]))
 
 vi.mock('@/components/feature-wall/feature-wall-modal-helpers', () => ({
   usePrefersReducedMotion: prefersReducedMotionMock
 }))
 
 vi.mock('@/hooks/useShortcutLabel', () => ({
-  useShortcutKeyDetails: shortcutMock,
-  formatShortcutKeyComboDetails: formatShortcutMock
+  useShortcutKeyDetails: shortcutMock
 }))
 
 async function renderVisual(): Promise<{ container: HTMLDivElement; root: Root }> {
@@ -31,7 +29,6 @@ describe('VoiceDictationFeatureTipVisual', () => {
   beforeEach(() => {
     prefersReducedMotionMock.mockReturnValue(false)
     shortcutMock.mockReturnValue({ keys: ['⌘', 'E'], doubleTap: false })
-    formatShortcutMock.mockReturnValue([{ keys: ['⌘', 'E'], doubleTap: false }])
   })
 
   afterEach(() => {
@@ -80,14 +77,12 @@ describe('VoiceDictationFeatureTipVisual', () => {
     await act(async () => root.unmount())
   })
 
-  it('falls back to the default shortcut when the live binding is unassigned', () => {
+  it('does not show a shortcut that the user has unassigned', () => {
     shortcutMock.mockReturnValue({ keys: [], doubleTap: false })
-    formatShortcutMock.mockReturnValue([{ keys: ['Ctrl', 'E'], doubleTap: false }])
 
     const html = renderToStaticMarkup(<VoiceDictationFeatureTipVisual />)
 
-    expect(formatShortcutMock).toHaveBeenCalledWith('voice.dictation')
-    expect(html).toContain('Ctrl')
-    expect(html).toContain('E')
+    expect(html).not.toContain('Start dictation')
+    expect(html).not.toContain('Ctrl')
   })
 })

@@ -1,4 +1,4 @@
-import type { JSX } from 'react'
+import { useRef, type JSX } from 'react'
 import type { FeatureTip } from '../../../../shared/feature-tips'
 import { ShortcutKeyCombo } from '@/components/ShortcutKeyCombo'
 import { Badge } from '@/components/ui/badge'
@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog'
-import { formatShortcutKeyComboDetails, useShortcutKeyDetails } from '@/hooks/useShortcutLabel'
+import { useShortcutKeyDetails } from '@/hooks/useShortcutLabel'
 import { translate } from '@/i18n/i18n'
 import { FeatureTipActions } from './FeatureTipActions'
 import { VoiceDictationFeatureTipVisual } from './VoiceDictationFeatureTipVisual'
@@ -33,15 +33,17 @@ export function VoiceDictationTipDialog({
   onVoiceSettingsClick: () => void
 }): JSX.Element {
   const shortcut = useShortcutKeyDetails('voice.dictation')
-  const displayShortcut =
-    shortcut.keys.length > 0 ? shortcut : formatShortcutKeyComboDetails('voice.dictation')[0]
+  const primaryButtonRef = useRef<HTMLButtonElement>(null)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className="!flex max-h-[calc(100vh-2rem)] flex-col gap-0 overflow-hidden bg-[color-mix(in_srgb,var(--foreground)_8%,var(--background))] p-0 dark:bg-[color-mix(in_srgb,var(--foreground)_16%,var(--background))] sm:max-w-4xl md:!h-[min(27rem,calc(100vh-2rem))] md:!flex-row"
         showCloseButton
-        onOpenAutoFocus={(event) => event.preventDefault()}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault()
+          primaryButtonRef.current?.focus()
+        }}
       >
         <div className="scrollbar-sleek flex min-h-0 min-w-0 flex-1 flex-col justify-between overflow-y-auto px-8 py-9 md:shrink-0 md:basis-1/2">
           <DialogHeader className="gap-4 text-left">
@@ -56,37 +58,38 @@ export function VoiceDictationTipDialog({
                 {tip.title}
               </DialogTitle>
               <DialogDescription className="mt-3 max-w-2xl space-y-3 text-sm leading-relaxed">
-                <span className="block">
-                  {translate(
-                    'featureTips.voice.focusPaneInstruction',
-                    'Focus a terminal, editor, or agent prompt, then press'
-                  )}{' '}
-                  {displayShortcut && displayShortcut.keys.length > 0 ? (
+                {shortcut.keys.length > 0 ? (
+                  <span className="block">
+                    {translate(
+                      'featureTips.voice.focusPaneInstruction',
+                      'Focus a terminal, editor, or agent prompt, then press'
+                    )}{' '}
                     <ShortcutKeyCombo
-                      keys={displayShortcut.keys}
-                      doubleTap={displayShortcut.doubleTap}
+                      keys={shortcut.keys}
+                      doubleTap={shortcut.doubleTap}
                       className="mx-1 align-middle"
                       keyCapClassName="min-w-0 bg-card px-1.5 py-0 text-[11px] text-foreground shadow-none"
-                    />
-                  ) : (
-                    translate('featureTips.voice.theShortcut', 'the dictation shortcut')
-                  )}{' '}
-                  {translate(
-                    'featureTips.voice.startInstruction',
-                    'to start voice dictation. Press'
-                  )}{' '}
-                  {displayShortcut && displayShortcut.keys.length > 0 ? (
+                    />{' '}
+                    {translate(
+                      'featureTips.voice.startInstruction',
+                      'to start voice dictation. Press'
+                    )}{' '}
                     <ShortcutKeyCombo
-                      keys={displayShortcut.keys}
-                      doubleTap={displayShortcut.doubleTap}
+                      keys={shortcut.keys}
+                      doubleTap={shortcut.doubleTap}
                       className="mx-1 align-middle"
                       keyCapClassName="min-w-0 bg-card px-1.5 py-0 text-[11px] text-foreground shadow-none"
-                    />
-                  ) : (
-                    translate('featureTips.voice.theShortcut', 'the dictation shortcut')
-                  )}{' '}
-                  {translate('featureTips.voice.stopInstruction', 'again to stop.')}
-                </span>
+                    />{' '}
+                    {translate('featureTips.voice.stopInstruction', 'again to stop.')}
+                  </span>
+                ) : (
+                  <span className="block">
+                    {translate(
+                      'featureTips.voice.unassignedInstruction',
+                      'Assign a dictation shortcut before starting voice dictation in a focused pane.'
+                    )}
+                  </span>
+                )}
                 <span className="block text-muted-foreground">
                   {translate(
                     'featureTips.voice.settingsInstruction',
@@ -113,6 +116,7 @@ export function VoiceDictationTipDialog({
               onSkip={onSkip}
               showSkip={false}
               fullWidth
+              primaryButtonRef={primaryButtonRef}
             />
           </DialogFooter>
         </div>

@@ -14694,9 +14694,9 @@
       "agentPromptTitle": "Agent prompt",
       "listening": "Listening...",
       "focusPaneInstruction": "Focus a terminal, editor, or agent prompt, then press",
-      "theShortcut": "the dictation shortcut",
       "startInstruction": "to start voice dictation. Press",
       "stopInstruction": "again to stop.",
+      "unassignedInstruction": "Assign a dictation shortcut before starting voice dictation in a focused pane.",
       "settingsInstruction": "Change the model, dictation mode, or shortcut anytime in",
       "settingsLink": "Settings → Voice"
     }

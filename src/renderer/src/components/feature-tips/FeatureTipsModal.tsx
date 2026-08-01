@@ -365,6 +365,11 @@ export default function FeatureTipsModal(): JSX.Element | null {
     )
   }
 
+  if (currentTip.action !== 'enable-voice') {
+    currentTip.action satisfies never
+    return null
+  }
+
   return (
     <VoiceDictationTipDialog
       open={isOpen}
