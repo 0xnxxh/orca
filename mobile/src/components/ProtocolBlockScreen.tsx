@@ -16,18 +16,25 @@ export function ProtocolBlockScreen({ verdict }: Props) {
   // Why: Android APKs ship through GitHub Releases until a Play Store listing exists.
   const mobileUpdateTarget =
     Platform.OS === 'ios'
-      ? { label: t('m.oxg5VTs'), url: IOS_APP_STORE_URL, storeName: 'the App Store' }
-      : { label: t('m.h3ZwGv0'), url: RELEASES_URL, storeName: 'GitHub Releases' }
+      ? {
+          label: t('m.oxg5VTs'),
+          url: IOS_APP_STORE_URL,
+          storeName: t('protocol.block.appStoreName')
+        }
+      : {
+          label: t('m.h3ZwGv0'),
+          url: RELEASES_URL,
+          storeName: t('protocol.block.githubReleasesName')
+        }
   const primaryAction = isMobileTooOld
     ? { label: mobileUpdateTarget.label, url: mobileUpdateTarget.url }
     : { label: t('m.h3ZwGv0'), url: RELEASES_URL }
 
   const title = isMobileTooOld ? t('m.NkNSfjQ') : t('m.amP19yQ')
   const body = isMobileTooOld
-    ? `This desktop needs a newer Orca Mobile app. Update Orca Mobile from ${mobileUpdateTarget.storeName}, then try this host again.`
-    : 'This paired desktop app is too old for your current Orca Mobile app. Update Orca on your computer, then try this host again.'
-  const recoveryNote =
-    'Already updated? Go back to Hosts and refresh the connection. If this message stays, remove this host and pair it again.'
+    ? t('protocol.block.mobileTooOldBody', { storeName: mobileUpdateTarget.storeName })
+    : t('protocol.block.desktopTooOldBody')
+  const recoveryNote = t('protocol.block.recoveryNote')
 
   return (
     <View style={styles.container}>

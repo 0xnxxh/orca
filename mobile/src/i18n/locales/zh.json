@@ -1124,7 +1124,7 @@
     "m6fKanI": "新的稀疏预设",
     "6-gKCU8": "新预设",
     "m38OFiM": "使用整个存储库",
-    "0fqNjoo": "全面结帐",
+    "0fqNjoo": "完整检出",
     "6xj6dHo": "稀疏结帐",
     "uwfc5JU": "没有分支匹配。",
     "ajFYYlY": "使用此存储库的配置基础",
@@ -1813,7 +1813,7 @@
     "8Tx_eZw": "无法创建拉取请求",
     "DIh5pvA": "无法更新链接的评论",
     "D8-XyhU": "无法更新链接的拉取请求",
-    "GaTugx8": "本地 commits 将会丢失；拉代替",
+    "GaTugx8": "本地提交将丢失；请改用拉取",
     "qajmB_0": "没有什么可以快进的",
     "fp_5pjo": "快进",
     "UWyesQ8": "快进 ({{value0}})",
@@ -2207,6 +2207,7 @@
     }
   },
   "nativeChat": {
+    "toolResultLabel": "结果",
     "empty": {
       "title": "与 {{agentLabel}} 开始聊天",
       "subtitle": "让 {{agentLabel}} 检查代码、解释输出或进行更改。"
@@ -2219,5 +2220,29 @@
   "accountUsage": {
     "resetNow": "立即重置",
     "resetIn": "{{duration}}后重置"
+  },
+  "sourceControl": {
+    "history": {
+      "noCommitMessage": "(无提交消息)"
+    }
+  },
+  "pullRequest": {
+    "conflicts": {
+      "fileDetailsUnavailable": "无法获取冲突文件详情",
+      "refreshing": "正在刷新冲突详情…",
+      "localMergeClean": "GitHub 报告存在冲突，但本地 Git 未能复现。请刷新 PR 或推送分支，以重新计算可合并状态。"
+    }
+  },
+  "protocol": {
+    "block": {
+      "appStoreName": "App Store",
+      "githubReleasesName": "GitHub Releases",
+      "mobileTooOldBody": "此桌面需要更新版本的 Orca Mobile 应用。请从 {{storeName}} 更新 Orca Mobile，然后重试此主机。",
+      "desktopTooOldBody": "已配对的桌面应用版本太旧，无法与当前 Orca Mobile 应用配合使用。请在电脑上更新 Orca，然后重试此主机。",
+      "recoveryNote": "已经更新？请返回主机列表并刷新连接。如果仍显示此消息，请删除此主机并重新配对。"
+    }
+  },
+  "filePreview": {
+    "metaFallback": "预览"
   }
 }

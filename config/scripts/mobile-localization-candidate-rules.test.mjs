@@ -40,4 +40,45 @@ export const HTML = \`<!doctype html>
       'Follow up'
     ])
   })
+
+  it('finds literals assigned to variables that later render in JSX', () => {
+    const source = `
+export function Example({ alternate }) {
+  const copy = alternate ? 'Primary explanation' : 'Alternate explanation'
+  let followUp = 'Initial recovery note'
+  const fileLocation = \`\${path}:L\${line}\`
+  if (alternate) {
+    followUp = 'Updated recovery note'
+  }
+  return <><Text>{copy}</Text><Text>{followUp}</Text><Text>{fileLocation}</Text></>
+}
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/Example.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual([
+      'Primary explanation',
+      'Alternate explanation',
+      'Initial recovery note',
+      'Updated recovery note'
+    ])
+  })
+
+  it('finds user-visible subject fallbacks in returned rows', () => {
+    const source = `
+export function toRow(item) {
+  return { subject: item.subject || '(no commit message)' }
+}
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/source-control/mobile-git-history.ts',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual(['(no commit message)'])
+  })
 })

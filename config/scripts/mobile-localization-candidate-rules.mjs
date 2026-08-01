@@ -1,6 +1,11 @@
 // TypeScript 7 is a native CLI; AST consumers still need the legacy JavaScript API.
 import ts from 'typescript-api'
 
+import {
+  isAssignedToRenderedVariable,
+  isRenderedJsxExpression
+} from './mobile-localization-rendered-variable.mjs'
+
 const USER_VISIBLE_JSX_ATTRIBUTES = new Set([
   'ariaLabel',
   'aria-label',
@@ -34,6 +39,7 @@ const USER_VISIBLE_OBJECT_KEYS = new Set([
   'label',
   'message',
   'placeholder',
+  'subject',
   'subtitle',
   'title',
   'toggleDescription',
@@ -214,49 +220,6 @@ function ancestorJsxAttributeName(node) {
     return undefined
   }
   return undefined
-}
-
-function isRenderedJsxExpression(node) {
-  let current = node.parent
-  while (current) {
-    if (ts.isJsxExpression(current)) {
-      return (
-        ts.isJsxElement(current.parent) ||
-        ts.isJsxFragment(current.parent) ||
-        ts.isJsxSelfClosingElement(current.parent)
-      )
-    }
-    if (
-      ts.isConditionalExpression(current) ||
-      ts.isParenthesizedExpression(current) ||
-      ts.isTemplateExpression(current) ||
-      ts.isNoSubstitutionTemplateLiteral(current)
-    ) {
-      if (ts.isConditionalExpression(current) && current.condition === node) {
-        return false
-      }
-      current = current.parent
-      continue
-    }
-    if (ts.isBinaryExpression(current)) {
-      const operator = current.operatorToken.kind
-      if (
-        ![
-          ts.SyntaxKind.PlusToken,
-          ts.SyntaxKind.AmpersandAmpersandToken,
-          ts.SyntaxKind.BarBarToken,
-          ts.SyntaxKind.QuestionQuestionToken
-        ].includes(operator) ||
-        (operator !== ts.SyntaxKind.PlusToken && current.left === node)
-      ) {
-        return false
-      }
-      current = current.parent
-      continue
-    }
-    return false
-  }
-  return false
 }
 
 function nearestObjectPropertyName(node) {
@@ -494,10 +457,13 @@ function isComparisonOperand(node) {
 }
 
 export function classifyMobileStringNode(node, userVisibleErrorSource) {
-  if (
-    hasAncestorObjectPropertyName(node, new Set(['className', 'classNames'])) ||
-    isComparisonOperand(node)
-  ) {
+  if (hasAncestorObjectPropertyName(node, new Set(['className', 'classNames']))) {
+    return undefined
+  }
+  if (isAssignedToRenderedVariable(node)) {
+    return 'rendered-variable'
+  }
+  if (isComparisonOperand(node)) {
     return undefined
   }
 

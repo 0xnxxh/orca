@@ -88,7 +88,7 @@ function ToolLine({
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(defaultExpanded)
   const { call, result } = pair
-  const name = call ? call.name : 'Result'
+  const name = call ? call.name : t('nativeChat.toolResultLabel')
   const preview = call
     ? summarizeToolInput(call.input)
     : (result?.output.split('\n')[0]?.slice(0, 80) ?? '')

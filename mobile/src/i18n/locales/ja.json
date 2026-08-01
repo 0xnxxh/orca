@@ -1816,7 +1816,7 @@
     "8Tx_eZw": "PR の作成に失敗しました",
     "DIh5pvA": "リンクされたレビューを更新できませんでした",
     "D8-XyhU": "リンクされた PR の更新に失敗しました",
-    "GaTugx8": "ローカル commits は失われます。代わりに引っ張る",
+    "GaTugx8": "ローカルコミットが失われます。代わりにプルしてください",
     "qajmB_0": "早送りするものはありません",
     "fp_5pjo": "早送り",
     "UWyesQ8": "早送り ({{value0}})",
@@ -2210,6 +2210,7 @@
     }
   },
   "nativeChat": {
+    "toolResultLabel": "結果",
     "empty": {
       "title": "{{agentLabel}} とチャットを開始",
       "subtitle": "{{agentLabel}} にコードの確認、出力の説明、変更を依頼できます。"
@@ -2222,5 +2223,29 @@
   "accountUsage": {
     "resetNow": "今すぐリセット",
     "resetIn": "{{duration}}後にリセット"
+  },
+  "sourceControl": {
+    "history": {
+      "noCommitMessage": "(コミットメッセージなし)"
+    }
+  },
+  "pullRequest": {
+    "conflicts": {
+      "fileDetailsUnavailable": "競合ファイルの詳細を取得できません",
+      "refreshing": "競合の詳細を更新しています…",
+      "localMergeClean": "GitHub は競合を報告していますが、ローカル Git では再現できませんでした。PR を更新するかブランチをプッシュして、マージ可能性を再計算してください。"
+    }
+  },
+  "protocol": {
+    "block": {
+      "appStoreName": "App Store",
+      "githubReleasesName": "GitHub Releases",
+      "mobileTooOldBody": "このデスクトップには、より新しい Orca Mobile アプリが必要です。{{storeName}} から Orca Mobile を更新してから、このホストをもう一度お試しください。",
+      "desktopTooOldBody": "ペアリング済みのデスクトップアプリは、現在の Orca Mobile アプリに対して古すぎます。コンピューター上の Orca を更新してから、このホストをもう一度お試しください。",
+      "recoveryNote": "すでに更新しましたか？ホスト一覧に戻って接続を更新してください。このメッセージが消えない場合は、このホストを削除してもう一度ペアリングしてください。"
+    }
+  },
+  "filePreview": {
+    "metaFallback": "プレビュー"
   }
 }

@@ -45,7 +45,7 @@ export function toMobileCommitRow(item: GitHistoryItem, nowMs: number): MobileCo
   return {
     id: item.id,
     shortId: item.displayId ?? item.id.slice(0, 7),
-    subject: item.subject || '(no commit message)',
+    subject: item.subject || t('sourceControl.history.noCommitMessage'),
     author: item.author ?? '',
     parentId: item.parentIds[0] ?? null,
     relativeTime: formatCommitTime(item.timestamp, nowMs)

@@ -180,7 +180,7 @@ export function MobileFilePreviewScreen({ route }: Props) {
     previewParams?.worktreeName,
     previewParams?.worktreeId ?? ''
   )
-  const meta = previewParams ? `${worktreeLabel} - ${displayPath}` : 'Preview'
+  const meta = previewParams ? `${worktreeLabel} - ${displayPath}` : t('filePreview.metaFallback')
   const isEditableTerminalArtifact =
     previewSource?.source === 'terminalArtifact' && isEditableMobileTerminalArtifactPreview(preview)
   const canSaveArtifact =

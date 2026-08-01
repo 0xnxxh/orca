@@ -105,6 +105,16 @@ describe('verify-mobile-localization-catalog', () => {
     expect(await runFailedVerification(root)).toContain('missing English key: m.missing')
   })
 
+  it('reports missing keys used by an English fixed translator', async () => {
+    const root = makeProject({
+      sourceText:
+        "import { mobileI18n } from '@/i18n/mobile-i18n'\nconst canonicalLabel = mobileI18n.getFixedT('en')\nexport const label = canonicalLabel('m.missing')\n",
+      catalogs: { en: { m: { known: 'Known' } } }
+    })
+
+    expect(await runFailedVerification(root)).toContain('missing English key: m.missing')
+  })
+
   it('rejects translation keys that cannot be statically inspected', async () => {
     const root = makeProject({
       sourceText: "import { t } from '@/i18n/mobile-i18n'\nexport const label = t(runtimeKey)\n",

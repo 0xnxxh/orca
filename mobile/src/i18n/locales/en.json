@@ -2214,6 +2214,7 @@
     }
   },
   "nativeChat": {
+    "toolResultLabel": "Result",
     "empty": {
       "title": "Start a chat with {{agentLabel}}",
       "subtitle": "Ask {{agentLabel}} to inspect code, explain output, or make a change."
@@ -2237,6 +2238,9 @@
       "checking": "Checking review status…",
       "unavailable": "Review status unavailable",
       "unsupportedProvider": "Review creation unavailable for this provider"
+    },
+    "history": {
+      "noCommitMessage": "(no commit message)"
     }
   },
   "accounts": {
@@ -2252,7 +2256,24 @@
     "unresolvedComments": {
       "one": ", {{count}} unresolved comment",
       "other": ", {{count}} unresolved comments"
+    },
+    "conflicts": {
+      "fileDetailsUnavailable": "Conflict file details are unavailable",
+      "refreshing": "Refreshing conflict details…",
+      "localMergeClean": "GitHub reports conflicts, but local Git did not reproduce them. Refresh the PR or push the branch to recalculate mergeability."
     }
+  },
+  "protocol": {
+    "block": {
+      "appStoreName": "the App Store",
+      "githubReleasesName": "GitHub Releases",
+      "mobileTooOldBody": "This desktop needs a newer Orca Mobile app. Update Orca Mobile from {{storeName}}, then try this host again.",
+      "desktopTooOldBody": "This paired desktop app is too old for your current Orca Mobile app. Update Orca on your computer, then try this host again.",
+      "recoveryNote": "Already updated? Go back to Hosts and refresh the connection. If this message stays, remove this host and pair it again."
+    }
+  },
+  "filePreview": {
+    "metaFallback": "Preview"
   },
   "voiceModels": {
     "downloadLabel": "Download {{modelName}}"

@@ -1124,7 +1124,7 @@
     "m6fKanI": "새로운 희소 사전 설정",
     "6-gKCU8": "새로운 사전 설정",
     "m38OFiM": "전체 저장소 사용",
-    "0fqNjoo": "전체 결제",
+    "0fqNjoo": "전체 체크아웃",
     "6xj6dHo": "스파스 체크아웃",
     "uwfc5JU": "일치하는 브랜치가 없습니다.",
     "ajFYYlY": "이 저장소의 구성된 기반을 사용하십시오.",
@@ -1816,7 +1816,7 @@
     "8Tx_eZw": "PR을 생성하지 못했습니다.",
     "DIh5pvA": "연결된 리뷰를 업데이트하지 못했습니다.",
     "D8-XyhU": "연결된 PR을 업데이트하지 못했습니다.",
-    "GaTugx8": "로컬 commits이 손실됩니다. 대신 당겨",
+    "GaTugx8": "로컬 커밋이 손실됩니다. 대신 풀하세요",
     "qajmB_0": "빨리 감을 항목이 없습니다.",
     "fp_5pjo": "빨리감기",
     "UWyesQ8": "빨리 감기({{value0}})",
@@ -2210,6 +2210,7 @@
     }
   },
   "nativeChat": {
+    "toolResultLabel": "결과",
     "empty": {
       "title": "{{agentLabel}}와 채팅 시작",
       "subtitle": "{{agentLabel}}에게 코드 검사, 출력 설명 또는 변경 작업을 요청하세요."
@@ -2222,5 +2223,29 @@
   "accountUsage": {
     "resetNow": "지금 재설정",
     "resetIn": "{{duration}} 후 재설정"
+  },
+  "sourceControl": {
+    "history": {
+      "noCommitMessage": "(커밋 메시지 없음)"
+    }
+  },
+  "pullRequest": {
+    "conflicts": {
+      "fileDetailsUnavailable": "충돌 파일 세부 정보를 사용할 수 없습니다",
+      "refreshing": "충돌 세부 정보 새로 고치는 중…",
+      "localMergeClean": "GitHub에서는 충돌을 보고하지만 로컬 Git에서는 재현되지 않았습니다. PR을 새로 고치거나 브랜치를 푸시하여 병합 가능 여부를 다시 계산하세요."
+    }
+  },
+  "protocol": {
+    "block": {
+      "appStoreName": "App Store",
+      "githubReleasesName": "GitHub Releases",
+      "mobileTooOldBody": "이 데스크톱에는 최신 Orca Mobile 앱이 필요합니다. {{storeName}}에서 Orca Mobile을 업데이트한 후 이 호스트를 다시 시도하세요.",
+      "desktopTooOldBody": "페어링된 데스크톱 앱이 현재 Orca Mobile 앱에 비해 너무 오래되었습니다. 컴퓨터에서 Orca를 업데이트한 후 이 호스트를 다시 시도하세요.",
+      "recoveryNote": "이미 업데이트했나요? 호스트 목록으로 돌아가 연결을 새로 고치세요. 이 메시지가 계속 표시되면 이 호스트를 삭제하고 다시 페어링하세요."
+    }
+  },
+  "filePreview": {
+    "metaFallback": "미리보기"
   }
 }

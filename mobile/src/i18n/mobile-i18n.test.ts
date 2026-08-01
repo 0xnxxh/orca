@@ -142,6 +142,19 @@ describe('mobile i18n', () => {
   })
 
   it.each([
+    ['es', ['Checkout completo', 'Los commits locales se perderían; haz pull en su lugar']],
+    ['ja', ['フルチェックアウト', 'ローカルコミットが失われます。代わりにプルしてください']],
+    ['ko', ['전체 체크아웃', '로컬 커밋이 손실됩니다. 대신 풀하세요']],
+    ['zh', ['完整检出', '本地提交将丢失；请改用拉取']]
+  ] satisfies [MobileUiLocale, string[]][])(
+    '%s uses accurate checkout and pull terminology',
+    async (locale, expected) => {
+      await mobileI18n.changeLanguage(locale)
+      expect([t('m.0fqNjoo'), t('m.GaTugx8')]).toEqual(expected)
+    }
+  )
+
+  it.each([
     ['es', ['Sin comprobaciones', 'En staging', 'Nota de revisión']],
     ['ja', ['チェックなし', 'ステージ済み', 'レビューメモ']],
     ['ko', ['체크 없음', '스테이징됨', '리뷰 노트']],

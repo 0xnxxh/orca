@@ -204,12 +204,42 @@ export function collectMobileTranslationCalls(filePath, sourceText, root = proce
     sourceKind
   )
   const calls = []
+  const fixedTranslatorNames = new Set()
+
+  function isEnglishFixedTranslator(node) {
+    const expression = unwrapExpression(node)
+    return (
+      ts.isCallExpression(expression) &&
+      ts.isPropertyAccessExpression(expression.expression) &&
+      ts.isIdentifier(expression.expression.expression) &&
+      expression.expression.expression.text === 'mobileI18n' &&
+      expression.expression.name.text === 'getFixedT' &&
+      expression.arguments.length === 1 &&
+      ts.isStringLiteralLike(expression.arguments[0]) &&
+      expression.arguments[0].text === 'en'
+    )
+  }
+
+  function collectFixedTranslators(node) {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      isEnglishFixedTranslator(node.initializer)
+    ) {
+      fixedTranslatorNames.add(node.name.text)
+    }
+    ts.forEachChild(node, collectFixedTranslators)
+  }
+
+  collectFixedTranslators(sourceFile)
 
   function visit(node) {
     if (
       ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === 't'
+      ((ts.isIdentifier(node.expression) &&
+        (node.expression.text === 't' || fixedTranslatorNames.has(node.expression.text))) ||
+        isEnglishFixedTranslator(node.expression))
     ) {
       const keyExpression = node.arguments[0]
       if (keyExpression) {

@@ -9,10 +9,7 @@ import {
   markMobileNativeChatInputStale,
   resetMobileNativeChatStaleInputForTests
 } from './mobile-native-chat-stale-input'
-import {
-  MOBILE_DIFF_REVIEW_SEND_TIMEOUT_MS,
-  useMobileDiffReviewSendActions
-} from './use-mobile-diff-review-send-actions'
+import { useMobileDiffReviewSendActions } from './use-mobile-diff-review-send-actions'
 
 type SendActions = ReturnType<typeof useMobileDiffReviewSendActions>
 
@@ -173,10 +170,7 @@ describe('useMobileDiffReviewSendActions', () => {
     expect(sendRequest).toHaveBeenCalledTimes(1)
     expect(sendRequest.mock.calls[0]?.[0]).toBe('terminal.send')
     expect(sendRequest.mock.calls[0]?.[1]).toMatchObject({ terminal: 'terminal-1', enter: true })
-    expect(sendRequest.mock.calls[0]?.[2]).toMatchObject({
-      timeoutMs: expect.any(Number),
-      budgetSpansConnect: true
-    })
+    expect(sendRequest.mock.calls[0]?.[2]).toBeUndefined()
     expect(saveCommentsAndReviewState).toHaveBeenCalledTimes(1)
     expect(setActionError).toHaveBeenCalledWith('Review notes sent')
     expect(setSendSheet).toHaveBeenCalledWith(null)
@@ -212,38 +206,25 @@ describe('useMobileDiffReviewSendActions', () => {
     expect(saveCommentsAndReviewState).not.toHaveBeenCalled()
   })
 
-  it('spends one deadline across terminal creation and note delivery', async () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(1_000)
+  it('keeps normal RPC timeouts independent for terminal creation and note delivery', async () => {
     const sendRequest = vi
       .fn()
-      .mockImplementationOnce(async () => {
-        vi.setSystemTime(2_500)
-        return {
-          id: 'create',
-          ok: true,
-          result: { tab: { id: 'tab-1', type: 'terminal', terminal: 'terminal-1' } }
-        }
+      .mockResolvedValueOnce({
+        id: 'create',
+        ok: true,
+        result: { tab: { id: 'tab-1', type: 'terminal', terminal: 'terminal-1' } }
       })
       .mockResolvedValueOnce(sendResponse(true))
-    try {
-      await mount({ sendRequest } as unknown as RpcClient)
+    await mount({ sendRequest } as unknown as RpcClient)
 
-      await act(async () => {
-        await actions?.createTerminalAndSend([COMMENT])
-      })
+    await act(async () => {
+      await actions?.createTerminalAndSend([COMMENT])
+    })
 
-      expect(sendRequest.mock.calls[0]?.[2]).toEqual({
-        timeoutMs: MOBILE_DIFF_REVIEW_SEND_TIMEOUT_MS,
-        budgetSpansConnect: true
-      })
-      expect(sendRequest.mock.calls[1]?.[2]).toEqual({
-        timeoutMs: MOBILE_DIFF_REVIEW_SEND_TIMEOUT_MS - 1_500,
-        budgetSpansConnect: true
-      })
-    } finally {
-      vi.useRealTimers()
-    }
+    expect(sendRequest.mock.calls[0]?.[0]).toBe('session.tabs.createTerminal')
+    expect(sendRequest.mock.calls[0]?.[2]).toBeUndefined()
+    expect(sendRequest.mock.calls[1]?.[0]).toBe('terminal.send')
+    expect(sendRequest.mock.calls[1]?.[2]).toBeUndefined()
   })
 
   it('reports a failed terminal.send response', async () => {

@@ -1124,7 +1124,7 @@
     "m6fKanI": "Nuevo preajuste disperso",
     "6-gKCU8": "Nuevo preset",
     "m38OFiM": "Utilice todo el repositorio",
-    "0fqNjoo": "Pago completo",
+    "0fqNjoo": "Checkout completo",
     "6xj6dHo": "Pago escaso",
     "uwfc5JU": "Ninguna rama coincide.",
     "ajFYYlY": "Utilice la base configurada de este repositorio",
@@ -1816,7 +1816,7 @@
     "8Tx_eZw": "No se pudo crear la solicitud de extracción",
     "DIh5pvA": "No se pudo actualizar la reseña vinculada",
     "D8-XyhU": "No se pudo actualizar la solicitud de extracción vinculada",
-    "GaTugx8": "Se perderían las commits locales; tirar en su lugar",
+    "GaTugx8": "Los commits locales se perderían; haz pull en su lugar",
     "qajmB_0": "Nada que adelantar",
     "fp_5pjo": "avance rápido",
     "UWyesQ8": "Avance rápido ({{value0}})",
@@ -2210,6 +2210,7 @@
     }
   },
   "nativeChat": {
+    "toolResultLabel": "Resultado",
     "empty": {
       "title": "Inicia un chat con {{agentLabel}}",
       "subtitle": "Pide a {{agentLabel}} que inspeccione código, explique resultados o haga un cambio."
@@ -2222,5 +2223,29 @@
   "accountUsage": {
     "resetNow": "Se restablece ahora",
     "resetIn": "Se restablece en {{duration}}"
+  },
+  "sourceControl": {
+    "history": {
+      "noCommitMessage": "(sin mensaje de commit)"
+    }
+  },
+  "pullRequest": {
+    "conflicts": {
+      "fileDetailsUnavailable": "Los detalles de los archivos en conflicto no están disponibles",
+      "refreshing": "Actualizando los detalles de los conflictos…",
+      "localMergeClean": "GitHub informa de conflictos, pero Git local no pudo reproducirlos. Actualiza el PR o publica la rama para volver a calcular si se puede fusionar."
+    }
+  },
+  "protocol": {
+    "block": {
+      "appStoreName": "App Store",
+      "githubReleasesName": "GitHub Releases",
+      "mobileTooOldBody": "Este equipo necesita una versión más reciente de la app Orca Mobile. Actualiza Orca Mobile desde {{storeName}} y vuelve a probar este host.",
+      "desktopTooOldBody": "La app de escritorio emparejada es demasiado antigua para tu app Orca Mobile actual. Actualiza Orca en tu equipo y vuelve a probar este host.",
+      "recoveryNote": "¿Ya la actualizaste? Vuelve a Hosts y actualiza la conexión. Si este mensaje sigue apareciendo, elimina este host y vuelve a emparejarlo."
+    }
+  },
+  "filePreview": {
+    "metaFallback": "Vista previa"
   }
 }

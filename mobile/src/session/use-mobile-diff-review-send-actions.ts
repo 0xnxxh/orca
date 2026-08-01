@@ -28,20 +28,6 @@ type SendActionsInput = {
   ) => Promise<void>
 }
 
-export const MOBILE_DIFF_REVIEW_SEND_TIMEOUT_MS = 30_000
-
-function openMobileDiffReviewSendDeadline(): number {
-  return Date.now() + MOBILE_DIFF_REVIEW_SEND_TIMEOUT_MS
-}
-
-function remainingRequestBudget(deadline: number, errorMessage: string) {
-  const timeoutMs = deadline - Date.now()
-  if (timeoutMs <= 0) {
-    throw new Error(errorMessage)
-  }
-  return { timeoutMs, budgetSpansConnect: true as const }
-}
-
 export function useMobileDiffReviewSendActions(input: SendActionsInput) {
   const {
     client,
@@ -86,30 +72,20 @@ export function useMobileDiffReviewSendActions(input: SendActionsInput) {
   )
 
   const sendPromptToTerminal = useCallback(
-    async (
-      terminal: string,
-      comments: readonly DiffComment[],
-      deadline = openMobileDiffReviewSendDeadline()
-    ) => {
+    async (terminal: string, comments: readonly DiffComment[]) => {
       if (!client || connState !== 'connected') {
         throw new Error(t('m.x0Dr_H8'))
       }
       // Marked by terminal handle, not by surface, so a paste orphaned here by native
       // chat would ride along with these notes (#10228). Diff review carries no device token.
-      if (
-        !(await healMobileNativeChatStaleInput({ client, terminal, deviceToken: null, deadline }))
-      ) {
+      if (!(await healMobileNativeChatStaleInput({ client, terminal, deviceToken: null }))) {
         throw new Error(t('m.tpf9SfA'))
       }
-      const response = await client.sendRequest(
-        'terminal.send',
-        {
-          terminal,
-          text: formatMobileDiffReviewPrompt(comments),
-          enter: true
-        },
-        remainingRequestBudget(deadline, t('m.tpf9SfA'))
-      )
+      const response = await client.sendRequest('terminal.send', {
+        terminal,
+        text: formatMobileDiffReviewPrompt(comments),
+        enter: true
+      })
       if (!response.ok) {
         throw new Error(response.error?.message || t('m.tpf9SfA'))
       }
@@ -129,17 +105,12 @@ export function useMobileDiffReviewSendActions(input: SendActionsInput) {
       if (!client || connState !== 'connected') {
         throw new Error(t('m.x0Dr_H8'))
       }
-      const deadline = openMobileDiffReviewSendDeadline()
-      const response = await client.sendRequest(
-        'session.tabs.createTerminal',
-        {
-          worktree: `id:${worktreeId}`,
-          activate: false,
-          select: true,
-          navigation: 'caller'
-        },
-        remainingRequestBudget(deadline, t('m.NhC30K0'))
-      )
+      const response = await client.sendRequest('session.tabs.createTerminal', {
+        worktree: `id:${worktreeId}`,
+        activate: false,
+        select: true,
+        navigation: 'caller'
+      })
       if (!response.ok) {
         throw new Error(response.error?.message || t('m.NhC30K0'))
       }
@@ -147,7 +118,7 @@ export function useMobileDiffReviewSendActions(input: SendActionsInput) {
       if (!created) {
         throw new Error(t('m.LYAe0FE'))
       }
-      await sendPromptToTerminal(created.terminal, comments, deadline)
+      await sendPromptToTerminal(created.terminal, comments)
     },
     [client, connState, sendPromptToTerminal, worktreeId]
   )
@@ -159,12 +130,9 @@ export function useMobileDiffReviewSendActions(input: SendActionsInput) {
     }
     setSendSheet({ kind: 'loading' })
     try {
-      const deadline = openMobileDiffReviewSendDeadline()
-      const response = await client.sendRequest(
-        'session.tabs.list',
-        { worktree: `id:${worktreeId}` },
-        remainingRequestBudget(deadline, t('m.vMHt0l8'))
-      )
+      const response = await client.sendRequest('session.tabs.list', {
+        worktree: `id:${worktreeId}`
+      })
       if (!response.ok) {
         throw new Error(response.error?.message || t('m.vMHt0l8'))
       }

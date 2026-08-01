@@ -45,12 +45,11 @@ export function PRConflictingFilesSection({ pr, isRefreshing = false, triage }: 
   if (!conflict) {
     return null
   }
-  let noticeBody = 'Conflict file details are unavailable'
+  let noticeBody = t('pullRequest.conflicts.fileDetailsUnavailable')
   if (isRefreshing) {
-    noticeBody = 'Refreshing conflict details…'
+    noticeBody = t('pullRequest.conflicts.refreshing')
   } else if (conflict.localMergeClean) {
-    noticeBody =
-      'GitHub reports conflicts, but local Git did not reproduce them. Refresh the PR or push the branch to recalculate mergeability.'
+    noticeBody = t('pullRequest.conflicts.localMergeClean')
   }
 
   const copyRefreshCommands = async () => {
