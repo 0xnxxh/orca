@@ -191,6 +191,42 @@ export function Example() {
     expect(candidates.map((candidate) => candidate.text)).toEqual(['Extracting model'])
   })
 
+  it('finds copy returned through a rendered helper object', () => {
+    const source = `
+function lookup() {
+  return 'Extracting object model'
+}
+export function Example() {
+  const renderers = { lookup }
+  return <Text>{renderers.lookup()}</Text>
+}
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/Example.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual(['Extracting object model'])
+  })
+
+  it('matches rendered variables by binding instead of identifier text', () => {
+    const source = `
+const value = 'internal mode name'
+export function Example() {
+  const value = 'Visible nested value'
+  return <Text>{value}</Text>
+}
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/Example.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual(['Visible nested value'])
+  })
+
   it('finds Android notification-channel names', () => {
     const source = `
 const channel = {
@@ -206,6 +242,45 @@ Notifications.setNotificationChannelAsync('orca-desktop', channel)
     )
 
     expect(candidates.map((candidate) => candidate.text)).toEqual(['Desktop Notifications'])
+  })
+
+  it('finds bound and spread Android notification-channel names', () => {
+    const source = `
+const channelName = 'Desktop Notifications'
+const channel = { name: channelName }
+const baseChannel = { name: 'Background Notifications' }
+const spreadChannel = { ...baseChannel }
+Notifications.setNotificationChannelAsync('orca-desktop', channel)
+Notifications.setNotificationChannelAsync('orca-background', spreadChannel)
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/notifications/local-notification-scheduling.ts',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual([
+      'Desktop Notifications',
+      'Background Notifications'
+    ])
+  })
+
+  it('reports raw copy from a namespace-local translator', () => {
+    const source = `
+import { t } from '@/i18n/mobile-i18n'
+namespace Local {
+  var t = (value) => value
+  export const label = <Text>{t('Namespace raw copy')}</Text>
+}
+export const translated = t('example.translated')
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/Example.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual(['Namespace raw copy'])
   })
 
   it('finds user-visible subject fallbacks in returned rows', () => {

@@ -486,6 +486,53 @@ export const labels = [
     expect(report).toContain('es.json product terminology mismatch: example.openSource')
   })
 
+  it('protects terminal legends and reviewed domain terminology', async () => {
+    const root = makeProject({
+      sourceText: `
+import { t } from '@/i18n/mobile-i18n'
+export const labels = [
+  t('terminalAccessoryKeyCatalog.del'),
+  t('mobileRichMarkdownEditor.h2'),
+  t('task.pipelineJob', { pipelineJobCount: 2 }),
+  t('task.openShell'),
+  t('voiceSettings.togglePress')
+]
+`,
+      catalogs: {
+        en: {
+          terminalAccessoryKeyCatalog: { del: 'Del' },
+          mobileRichMarkdownEditor: { h2: 'H2' },
+          task: { pipelineJob: '{{pipelineJobCount}} jobs', openShell: 'Open a shell' },
+          voiceSettings: {
+            togglePress: 'Toggle: press once to start, again to stop. Hold: dictate while held.'
+          }
+        },
+        es: {
+          terminalAccessoryKeyCatalog: { del: 'Supr' },
+          task: { pipelineJob: '{{pipelineJobCount}} empleos', openShell: 'Abrir una concha' }
+        },
+        ko: {
+          voiceSettings: {
+            togglePress:
+              '토글: 한 번 누르면 시작되고 다시 누르면 중지됩니다. 보류: 누르고 있는 동안 지시합니다.'
+          }
+        },
+        zh: { mobileRichMarkdownEditor: { h2: '氢2' } }
+      }
+    })
+
+    const report = await runFailedVerification(root)
+    expect(report).toContain(
+      'es.json must preserve language-neutral value: terminalAccessoryKeyCatalog.del'
+    )
+    expect(report).toContain(
+      'zh.json must preserve language-neutral value: mobileRichMarkdownEditor.h2'
+    )
+    expect(report).toContain('es.json product terminology mismatch: task.pipelineJob')
+    expect(report).toContain('es.json product terminology mismatch: task.openShell')
+    expect(report).toContain('ko.json product terminology mismatch: voiceSettings.togglePress')
+  })
+
   it('validates placeholders and extra keys in present translations', async () => {
     const en = { m: { greeting: 'Hello {{name}}' } }
     const root = makeProject({

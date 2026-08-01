@@ -60,7 +60,7 @@
     "subIssues": "Subtemas",
     "noPipeline": "No hay ejecuciones de pipeline para este MR.",
     "none": "Ninguno",
-    "pipelineJob": "{{pipelineJobCount}} empleos",
+    "pipelineJob": "{{pipelineJobCount}} trabajos del pipeline",
     "fileContents": "Contenido del archivo no disponible.",
     "binary": "Archivo binario.",
     "markViewed": "Marcar visto",
@@ -68,7 +68,7 @@
     "view": "Vista",
     "hide": "Ocultar",
     "changed": "Archivos modificados",
-    "noChecks": "No se encontraron cheques.",
+    "noChecks": "No se encontraron comprobaciones.",
     "rerunAll": "Vuelva a ejecutar todo",
     "rerunFailed": "Error al volver a ejecutar",
     "refresh": "Actualizar",
@@ -188,8 +188,8 @@
     "createIssueSelectedRepository": "Cree un problema en el repositorio seleccionado.",
     "sortTasks": "Ordenar tareas",
     "displayProperties": "Propiedades de visualización",
-    "orderLinearIssues": "Ordenar cuestiones Lineares",
-    "groupLinearIssues": "Problemas Lineares del grupo",
+    "orderLinearIssues": "Ordenar incidencias de Linear",
+    "groupLinearIssues": "Agrupar incidencias de Linear",
     "linearView": "Vista Linear",
     "noStates": "No hay estados disponibles",
     "loadingStates": "Cargando estados...",
@@ -266,7 +266,7 @@
     "display": "Mostrar",
     "tasks": "Tareas",
     "allWorkspaces": "Todos los espacios de trabajo",
-    "viewOrder": "Ver pedido",
+    "viewOrder": "Orden de vista",
     "send": "Enviar comentario",
     "addComment": "Agregar un comentario",
     "failedUpdateIssueSource": "No se pudo actualizar la fuente del problema",
@@ -276,7 +276,7 @@
     "failedAddLinear": "No se pudo agregar el comentario Linear",
     "failedUpdateLinear": "No se pudo actualizar el problema Linear",
     "failedMerge": "No se pudo fusionar",
-    "gitHubReportsMergeConflictsOpen": "GitHub informa conflictos de fusión. Open in GitHub to continue.",
+    "gitHubReportsMergeConflictsOpen": "GitHub informa de conflictos de fusión. Abre GitHub para continuar.",
     "failedReply": "No se pudo responder",
     "failedAddReview": "No se pudo agregar el comentario de revisión",
     "unableComment": "No se puede comentar sin el SHA del head del PR.",
@@ -310,7 +310,7 @@
     "failedSave": "No se pudo guardar el ajuste preestablecido disperso.",
     "failedSearch": "No se pudieron buscar ramas.",
     "failedLoadSparse": "No se pudieron cargar ajustes preestablecidos escasos.",
-    "openShell": "abrir un caparazón",
+    "openShell": "Abrir un shell",
     "failedLoadIssue": "No se pudieron cargar los tipos de problemas",
     "failedLoadAssignees": "No se pudieron cargar los asignados",
     "failedLoadLabels": "No se pudieron cargar las etiquetas",
@@ -471,7 +471,7 @@
     "failedReopen": "No se pudo reabrir el hilo",
     "failedResolve": "No se pudo resolver el hilo",
     "failedSync": "No se pudo sincronizar el estado visto con GitHub.",
-    "invalid": "Respuesta de cheques no válidos",
+    "invalid": "Respuesta de comprobaciones no válida",
     "failedUpdateGitHubStatus": "No se pudo actualizar el estado de GitHub",
     "failedUpdateGitHubItem": "No se pudo actualizar el elemento de GitHub",
     "selectedAgent": "El agent seleccionado está deshabilitado. Elige un agent habilitado antes de crear.",
@@ -762,7 +762,7 @@
     "backspace": "Retroceso",
     "space": "Espacio",
     "shiftTab": "Pestaña Mayús",
-    "shiftPlus": "Mayús+Tab",
+    "shiftPlus": "Shift+Tab",
     "escape": "Escapar"
   },
   "terminalWebviewEngineErrorState": {
@@ -787,11 +787,11 @@
     "arrowDown": "Flecha hacia abajo",
     "arrowUp": "flecha arriba",
     "insert": "Insertar",
-    "pgDn": "AvPág",
-    "pgUp": "Re Pág",
-    "shift": "Cambio",
-    "alt": "Alt.",
-    "ctrl": "Control"
+    "pgDn": "PgDn",
+    "pgUp": "PgUp",
+    "shift": "Shift",
+    "alt": "Alt",
+    "ctrl": "Ctrl"
   },
   "terminalWebviewReadyWatchdog": {
     "terminal": "El terminal no se inicializó: no hay señal de listo desde la vista del terminal"
@@ -961,8 +961,8 @@
     "resolveStage": "Resuelva o organice cambios antes de crear una solicitud de extracción.",
     "resolveConflicts": "Resuelva los conflictos antes de crear una solicitud de extracción.",
     "creating": "Creando reseña...",
-    "force": "Fuerza empujando con arrendamiento...",
-    "pushing": "Impulsando commits...",
+    "force": "Haciendo push forzado con lease...",
+    "pushing": "Haciendo push de commits...",
     "publishing": "Publicando rama...",
     "committing": "Confirmando cambios...",
     "generating": "Generando mensaje de commit...",
@@ -970,7 +970,7 @@
     "failed": "No se han podido realizar cambios en la etapa"
   },
   "mobileHostedReviewService": {
-    "pushFailed": "El empujón falló. Resuelva el error de inserción y vuelva a intentarlo.",
+    "pushFailed": "Falló el push. Resuelve el error de push y vuelve a intentarlo.",
     "pushSucceeded": "El push se realizó correctamente, pero falló la creación de {{reviewType}}: {{errorMessage}}",
     "failed": "No se pudo crear la solicitud de extracción"
   },
@@ -978,10 +978,10 @@
     "switch": "Cambiar rama",
     "rebase": "Rebase sobre la base",
     "publishBranch": "Publicar rama",
-    "pushCreate": "Impulsar y crear PR",
+    "pushCreate": "Hacer push y crear PR",
     "create": "Crear PR",
     "commitSync": "Commit y sincronizar",
-    "commitPush": "Commit y presionar",
+    "commitPush": "Commit y push",
     "pullRequests": "Las solicitudes de extracción no están disponibles para este repo",
     "checking": "Comprobando el estado de la rama...",
     "publishBranchFirst": "Publicar rama primero",
@@ -995,10 +995,10 @@
     "branchUp": "La rama está actualizada.",
     "sync": "Sincronizar",
     "syncBehind": "Sincronización (↓{{behindCommitCount}} ↑{{aheadCommitCount}})",
-    "nothingPull": "Nada que tirar",
-    "pullBehind": "Tirar ({{behindCommitCount}})",
-    "nothingPush": "Nada que empujar",
-    "pushAhead": "Empujar ({{aheadCommitCount}})"
+    "nothingPull": "No hay cambios para pull",
+    "pullBehind": "Hacer pull ({{behindCommitCount}})",
+    "nothingPush": "No hay commits para push",
+    "pushAhead": "Hacer push ({{aheadCommitCount}})"
   },
   "useMobileCommitFailureRecovery": {
     "failed": "No se pudo iniciar el agent",
@@ -1048,7 +1048,7 @@
   },
   "mobilePrCreate": {
     "branch": "Esta rama aún no está lista para un {{reviewType}}.",
-    "push": "Empuje la rama base antes de crear un {{reviewType}}.",
+    "push": "Haz push de la rama base antes de crear un {{reviewType}}.",
     "creatingReviewTypeFork": "No se admite la creación de un {{reviewType}} desde esta bifurcación.",
     "reviewTypeAlreadyExists": "Ya existe un {{reviewType}} para esta rama.",
     "creatingReviewTypeS": "La creación de {{reviewType}} no es compatible con este repo.",
@@ -1065,7 +1065,7 @@
   },
   "mobileSourceControlPrimaryAction": {
     "nothing": "No hay nada para hacer commit. La rama está actualizada.",
-    "forcePushLease": "Fuerce el envío con arrendamiento para actualizar la rama remota.",
+    "forcePushLease": "Haz un push forzado con lease para actualizar la rama remota.",
     "publishBranchOrigin": "Publicar esta rama en origen.",
     "check": "Haz checkout de una rama antes de publicar commits.",
     "stageLeast": "Prepare al menos un archivo para commit.",
@@ -1075,16 +1075,16 @@
     "resolve": "Resolver conflictos antes de comprometerse.",
     "try": "Inténtelo nuevamente una vez que finalice la operación remota.",
     "remote": "Operación remota en progreso.",
-    "forcePushProgress": "Empuje forzado en curso.",
+    "forcePushProgress": "Push forzado en curso.",
     "commitProgress": "Compromiso en progreso.",
     "publishBranch": "Publicar rama",
     "sync": "Sincronizar",
     "stageAll": "Hacer stage de todo",
-    "pullBehind": "Tire de {{behindCommitCount}}, presione {{aheadCommitCount}}.",
-    "pullCommitCountCommit": "Tire del commit {{commitCount}}.",
-    "pullCommitCountCommits": "Extraiga las commits de {{commitCount}}.",
-    "pushCommitCountCommit": "Empuje el commit {{commitCount}}.",
-    "pushCommitCountCommits": "Empuje {{commitCount}} commits."
+    "pullBehind": "Pull: {{behindCommitCount}}; push: {{aheadCommitCount}}.",
+    "pullCommitCountCommit": "Haz pull de {{commitCount}} commit.",
+    "pullCommitCountCommits": "Haz pull de {{commitCount}} commits.",
+    "pushCommitCountCommit": "Haz push de {{commitCount}} commit.",
+    "pushCommitCountCommits": "Haz push de {{commitCount}} commits."
   },
   "mobileHostedReviewGitPreparation": {
     "commit": "La Commit falló",
@@ -1496,7 +1496,7 @@
     "label": "Etiqueta",
     "add": "Agregar",
     "more": "Más teclas: tabulador, flechas, F1–F12…",
-    "key": "Clave",
+    "key": "Tecla",
     "modifiers": "Modificadores",
     "show": "Mostrar, ocultar o reordenar las teclas de método abreviado",
     "manage": "Administrar atajos",
@@ -1509,8 +1509,8 @@
     "navigation": "Navegación",
     "editing": "Edición",
     "eGPnpm": "p. ej. pnpm build",
-    "eGBuild": "p.ej. Construir",
-    "pick": "Elige una llave"
+    "eGBuild": "p. ej., Compilar",
+    "pick": "Elige una tecla"
   },
   "dragReorderList": {
     "moveDown": "Bajar",
@@ -1670,7 +1670,7 @@
     "strike": "Tachado",
     "italic": "Cursiva",
     "bold": "Negrita",
-    "body": "Cuerpo"
+    "body": "Texto normal"
   },
   "mobileWorkspaceNameInput": {
     "workspace": "Nombre del espacio de trabajo"
@@ -1833,8 +1833,8 @@
   "mobilePrComposeForm": {
     "createReview": "Crear {{reviewType}}",
     "createDraftReview": "Crear borrador {{reviewType}}",
-    "pushCreateReview": "Empujar y crear {{reviewType}}",
-    "pushCreateDraft": "Enviar y crear borrador {{reviewType}}",
+    "pushCreateReview": "Hacer push y crear {{reviewType}}",
+    "pushCreateDraft": "Hacer push y crear borrador de {{reviewType}}",
     "createDraft": "Crear como borrador",
     "generatingTitle": "Generando título y descripción…",
     "reviewTypeDescription": "{{reviewType}} descripción",
@@ -1883,9 +1883,9 @@
     "fixFailing": "Solucionar controles fallidos con IA",
     "inspect": "Inspecciona los detalles o inicia una pasada de corrección con IA.",
     "rerun": "Volver a ejecutar comprobaciones fallidas",
-    "failingCheckCountFailingCheck": "{{failingCheckCount}} cheque fallido",
-    "failingCheckCountFailingChecks": "{{failingCheckCount}} controles fallidos",
-    "failed": "No se pudieron cargar los detalles del cheque"
+    "failingCheckCountFailingCheck": "{{failingCheckCount}} comprobación fallida",
+    "failingCheckCountFailingChecks": "{{failingCheckCount}} comprobaciones fallidas",
+    "failed": "No se pudieron cargar los detalles de la comprobación"
   },
   "prcommentCard": {
     "permanently": "Esto elimina permanentemente el comentario en GitHub.",
@@ -2059,7 +2059,7 @@
   },
   "mobileFilePreviewScreen": {
     "unableLoad": "No se puede cargar la vista previa",
-    "save": "Guardar artefacto terminal",
+    "save": "Guardar artefacto de terminal",
     "back": "Volver a archivos",
     "unsaved": "Las ediciones no guardadas se perderán.",
     "discardChanges": "¿Descartar cambios?",
@@ -2386,7 +2386,7 @@
   },
   "voiceSettings": {
     "speechModelMessage": "Modelo de voz",
-    "speechModel": "MODELO DE DISCURSO",
+    "speechModel": "MODELO DE VOZ",
     "togglePress": "Alternar: presione una vez para comenzar y nuevamente para detener. Mantener: dictar mientras se mantiene presionado.",
     "dictationMode": "Modo de dictado",
     "dictate": "Dicta texto en cualquier panel enfocado de tu escritorio.",

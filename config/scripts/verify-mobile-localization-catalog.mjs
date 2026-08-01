@@ -12,7 +12,9 @@ import {
   mobileTranslationCallPrefix
 } from './mobile-localization-translation-bindings.mjs'
 import {
+  EXACT_LANGUAGE_NEUTRAL_KEYS,
   PRODUCT_GLOSSARY,
+  REVIEWED_KEY_TRANSLATIONS,
   REQUIRED_TARGET_TRANSLATIONS
 } from './mobile-localization-product-glossary.mjs'
 
@@ -294,7 +296,8 @@ function verifyTerminology(englishValue, localeValue, locale, catalogName, key) 
   if (locale === 'zh' && /\bagent/i.test(englishValue) && localeValue.includes('检测剂')) {
     issues.push(`${catalogName} agent terminology mismatch: ${key} uses 检测剂`)
   }
-  const expectedValue = PRODUCT_GLOSSARY.get(englishValue)?.[locale]
+  const expectedValue =
+    REVIEWED_KEY_TRANSLATIONS.get(key)?.[locale] ?? PRODUCT_GLOSSARY.get(englishValue)?.[locale]
   if (expectedValue && localeValue !== expectedValue) {
     issues.push(`${catalogName} product terminology mismatch: ${key} must use ${expectedValue}`)
   }
@@ -415,7 +418,10 @@ function verifyLocaleEntries(
     if (!sameValues(englishPlaceholders, localePlaceholders)) {
       issues.push(`${catalogName} placeholder mismatch: ${key}`)
     }
-    if (EXACT_LANGUAGE_NEUTRAL_VALUES.has(englishValue) && localeValue !== englishValue) {
+    if (
+      (EXACT_LANGUAGE_NEUTRAL_VALUES.has(englishValue) || EXACT_LANGUAGE_NEUTRAL_KEYS.has(key)) &&
+      localeValue !== englishValue
+    ) {
       issues.push(`${catalogName} must preserve language-neutral value: ${key}`)
     }
     issues.push(...verifyProtectedLiterals(englishValue, localeValue, catalogName, key))

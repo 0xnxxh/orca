@@ -8,6 +8,8 @@ import {
   isReturnedByRenderedFunction
 } from './mobile-localization-rendered-variable.mjs'
 
+const NOTIFICATION_CHANNEL_NAME_NODES = new WeakMap()
+
 const USER_VISIBLE_JSX_ATTRIBUTES = new Set([
   'ariaLabel',
   'aria-label',
@@ -388,57 +390,80 @@ function isUserVisibleErrorArgument(node, userVisibleErrorSource) {
   )
 }
 
-function resolveObjectLiteral(node, bindings, seen = new Set()) {
+function resolveBoundInitializer(node, bindings, seen = new Set()) {
   if (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||
     ts.isSatisfiesExpression(node)
   ) {
-    return resolveObjectLiteral(node.expression, bindings, seen)
-  }
-  if (ts.isObjectLiteralExpression(node)) {
-    return node
+    return resolveBoundInitializer(node.expression, bindings, seen)
   }
   if (!bindings || !ts.isIdentifier(node)) {
-    return undefined
+    return node
   }
   const binding = bindings.resolveBinding(node)
   if (!binding || seen.has(binding) || !ts.isVariableDeclaration(binding) || !binding.initializer) {
-    return undefined
+    return node
   }
   seen.add(binding)
-  return resolveObjectLiteral(binding.initializer, bindings, seen)
+  return resolveBoundInitializer(binding.initializer, bindings, seen)
+}
+
+function objectPropertyValues(node, propertyName, bindings, seen = new Set()) {
+  const expression = resolveBoundInitializer(node, bindings, seen)
+  if (!ts.isObjectLiteralExpression(expression)) {
+    return []
+  }
+  return expression.properties.flatMap((property) => {
+    if (ts.isPropertyAssignment(property) && propertyNameText(property.name) === propertyName) {
+      return [property.initializer]
+    }
+    if (ts.isShorthandPropertyAssignment(property) && property.name.text === propertyName) {
+      return [property.name]
+    }
+    return ts.isSpreadAssignment(property)
+      ? objectPropertyValues(property.expression, propertyName, bindings, new Set(seen))
+      : []
+  })
+}
+
+function collectBoundStringNodes(expression, bindings, nodes, seen = new Set()) {
+  const resolved = resolveBoundInitializer(expression, bindings, seen)
+  if (ts.isStringLiteralLike(resolved) || ts.isTemplateExpression(resolved)) {
+    nodes.add(resolved)
+    return
+  }
+  ts.forEachChild(resolved, (child) =>
+    collectBoundStringNodes(child, bindings, nodes, new Set(seen))
+  )
 }
 
 function isNotificationChannelName(node, bindings) {
-  const property = findAncestor(node, ts.isPropertyAssignment)
-  const object = property?.parent
-  if (
-    !property ||
-    propertyNameText(property.name) !== 'name' ||
-    !object ||
-    !ts.isObjectLiteralExpression(object)
-  ) {
-    return false
+  const sourceFile = node.getSourceFile()
+  const cached = NOTIFICATION_CHANNEL_NAME_NODES.get(sourceFile)
+  if (cached) {
+    return cached.has(node)
   }
-  let found = false
+  const nodes = new Set()
   function visit(current) {
-    if (found) {
-      return
-    }
     if (
       ts.isCallExpression(current) &&
       current.arguments[1] &&
-      expressionNameText(current.expression)?.endsWith('setNotificationChannelAsync') &&
-      resolveObjectLiteral(current.arguments[1], bindings) === object
+      expressionNameText(current.expression)?.endsWith('setNotificationChannelAsync')
     ) {
-      found = true
-      return
+      for (const value of objectPropertyValues(current.arguments[1], 'name', bindings)) {
+        collectBoundStringNodes(value, bindings, nodes)
+      }
     }
     ts.forEachChild(current, visit)
   }
-  visit(node.getSourceFile())
-  return found
+  visit(sourceFile)
+  NOTIFICATION_CHANNEL_NAME_NODES.set(sourceFile, nodes)
+  return nodes.has(node)
+}
+
+function isRenderedMobileExpression(expression) {
+  return isRenderedJsxExpression(expression) || isAssignedToRenderedVariable(expression)
 }
 
 function hasDisqualifyingBinaryAncestor(node) {
@@ -581,14 +606,7 @@ export function classifyMobileStringNode(node, userVisibleErrorSource, bindings)
   ) {
     return 'user-visible-return'
   }
-  if (
-    returnFunctionName &&
-    isReturnedByRenderedFunction(
-      node,
-      (expression) =>
-        isRenderedJsxExpression(expression) || isAssignedToRenderedVariable(expression)
-    )
-  ) {
+  if (returnFunctionName && isReturnedByRenderedFunction(node, isRenderedMobileExpression)) {
     return 'rendered-function-return'
   }
   if (isUserVisibleErrorArgument(node, userVisibleErrorSource)) {

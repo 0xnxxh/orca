@@ -19,6 +19,7 @@ function isLexicalScope(node) {
   return (
     ts.isSourceFile(node) ||
     ts.isFunctionLike(node) ||
+    ts.isModuleBlock(node) ||
     ts.isBlock(node) ||
     ts.isCaseBlock(node) ||
     ts.isCatchClause(node) ||
@@ -39,8 +40,12 @@ function nearestScope(node, sourceFile, predicate = isLexicalScope) {
   return sourceFile
 }
 
-function functionScope(node, sourceFile) {
-  return nearestScope(node, sourceFile, ts.isFunctionLike)
+function varScope(node, sourceFile) {
+  return nearestScope(
+    node,
+    sourceFile,
+    (scope) => ts.isFunctionLike(scope) || ts.isModuleBlock(scope)
+  )
 }
 
 function collectDeclarations(sourceFile) {
@@ -77,7 +82,7 @@ function collectDeclarations(sourceFile) {
       const scope =
         ts.isVariableDeclarationList(declarationList) &&
         (declarationList.flags & ts.NodeFlags.BlockScoped) === 0
-          ? functionScope(node, sourceFile)
+          ? varScope(node, sourceFile)
           : nearestScope(node, sourceFile)
       for (const [name, declaration] of bindingDeclarations(node.name, node)) {
         add(scope, name, declaration)

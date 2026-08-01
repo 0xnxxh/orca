@@ -1,35 +1,37 @@
-import { t } from '@/i18n/mobile-i18n'
+import { mobileI18n, t } from '@/i18n/mobile-i18n'
 import type { TerminalAccessoryKey } from './terminal-accessory-keys'
+
+const canonicalTerminalLabel = mobileI18n.getFixedT('en')
 
 export const TERMINAL_ACCESSORY_KEYS: TerminalAccessoryKey[] = [
   {
     id: 'escape',
-    label: t('terminalAccessoryKeyCatalog.esc'),
+    label: canonicalTerminalLabel('terminalAccessoryKeyCatalog.esc'),
     bytes: '\x1b',
     accessibilityLabel: t('terminalAccessoryKeyCatalog.escape')
   },
   {
     id: 'tab',
-    label: t('terminalAccessoryKeyCatalog.tab'),
+    label: canonicalTerminalLabel('terminalAccessoryKeyCatalog.tab'),
     bytes: '\t',
     accessibilityLabel: t('terminalAccessoryKeyCatalog.tab')
   },
   {
     id: 'enter',
-    label: t('terminalAccessoryKeyCatalog.enter'),
+    label: canonicalTerminalLabel('terminalAccessoryKeyCatalog.enter'),
     bytes: '\r',
     accessibilityLabel: t('terminalAccessoryKeyCatalog.enter')
   },
   // Why: terminal apps recognize ESC [ Z as the reverse-tab sequence.
   {
     id: 'shiftTab',
-    label: t('terminalAccessoryKeyCatalog.shiftPlus'),
+    label: canonicalTerminalLabel('terminalAccessoryKeyCatalog.shiftPlus'),
     bytes: '\x1b[Z',
     accessibilityLabel: t('terminalAccessoryKeyCatalog.shiftTab')
   },
   {
     id: 'space',
-    label: t('terminalAccessoryKeyCatalog.space'),
+    label: canonicalTerminalLabel('terminalAccessoryKeyCatalog.space'),
     bytes: ' ',
     accessibilityLabel: t('terminalAccessoryKeyCatalog.space')
   },
@@ -42,7 +44,7 @@ export const TERMINAL_ACCESSORY_KEYS: TerminalAccessoryKey[] = [
   },
   {
     id: 'delete',
-    label: t('terminalAccessoryKeyCatalog.del'),
+    label: canonicalTerminalLabel('terminalAccessoryKeyCatalog.del'),
     bytes: '\x1b[3~',
     accessibilityLabel: t('terminalAccessoryKeyCatalog.forward'),
     repeatable: true
@@ -77,55 +79,55 @@ export const TERMINAL_ACCESSORY_KEYS: TerminalAccessoryKey[] = [
   },
   {
     id: 'ctrlC',
-    label: t('terminalAccessoryKeyCatalog.ctrlPlusC'),
+    label: canonicalTerminalLabel('terminalAccessoryKeyCatalog.ctrlPlusC'),
     bytes: '\x03',
     accessibilityLabel: t('terminalAccessoryKeyCatalog.interrupt')
   },
   {
     id: 'ctrlD',
-    label: t('terminalAccessoryKeyCatalog.ctrlPlusD'),
+    label: canonicalTerminalLabel('terminalAccessoryKeyCatalog.ctrlPlusD'),
     bytes: '\x04',
     accessibilityLabel: t('terminalAccessoryKeyCatalog.send')
   },
   {
     id: 'ctrlL',
-    label: t('terminalAccessoryKeyCatalog.ctrlPlusL'),
+    label: canonicalTerminalLabel('terminalAccessoryKeyCatalog.ctrlPlusL'),
     bytes: '\x0c',
     accessibilityLabel: t('terminalAccessoryKeyCatalog.clearScreen')
   },
   {
     id: 'ctrlZ',
-    label: t('terminalAccessoryKeyCatalog.ctrlPlusZ'),
+    label: canonicalTerminalLabel('terminalAccessoryKeyCatalog.ctrlPlusZ'),
     bytes: '\x1a',
     accessibilityLabel: t('terminalAccessoryKeyCatalog.suspend')
   },
   {
     id: 'ctrlR',
-    label: t('terminalAccessoryKeyCatalog.ctrlPlusR'),
+    label: canonicalTerminalLabel('terminalAccessoryKeyCatalog.ctrlPlusR'),
     bytes: '\x12',
     accessibilityLabel: t('terminalAccessoryKeyCatalog.reverse')
   },
   {
     id: 'ctrlA',
-    label: t('terminalAccessoryKeyCatalog.ctrlPlus'),
+    label: canonicalTerminalLabel('terminalAccessoryKeyCatalog.ctrlPlus'),
     bytes: '\x01',
     accessibilityLabel: t('terminalAccessoryKeyCatalog.start')
   },
   {
     id: 'ctrlE',
-    label: t('terminalAccessoryKeyCatalog.ctrlPlusE'),
+    label: canonicalTerminalLabel('terminalAccessoryKeyCatalog.ctrlPlusE'),
     bytes: '\x05',
     accessibilityLabel: t('terminalAccessoryKeyCatalog.end')
   },
   {
     id: 'ctrlW',
-    label: t('terminalAccessoryKeyCatalog.ctrlPlusW'),
+    label: canonicalTerminalLabel('terminalAccessoryKeyCatalog.ctrlPlusW'),
     bytes: '\x17',
     accessibilityLabel: t('terminalAccessoryKeyCatalog.delete')
   },
   {
     id: 'ctrlU',
-    label: t('terminalAccessoryKeyCatalog.ctrlPlusU'),
+    label: canonicalTerminalLabel('terminalAccessoryKeyCatalog.ctrlPlusU'),
     bytes: '\x15',
     accessibilityLabel: t('terminalAccessoryKeyCatalog.clearLine')
   }
