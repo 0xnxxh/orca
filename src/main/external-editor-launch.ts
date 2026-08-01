@@ -23,8 +23,8 @@ export type ExternalEditorExecutableLaunchSpec = {
   hideWindowsConsole: boolean
   /**
    * Set only for Windows batch shims that would otherwise leave a Command
-   * Prompt behind; routes the spawn through `start "" /B`. Left unset
-   * elsewhere because `start` re-parses quoted argv.
+   * Prompt behind; routes the spawn through `start` with an empty title and
+   * `/B`. Left unset elsewhere because `start` re-parses quoted argv.
    */
   detachedGui?: boolean
   spawnCmd: string
@@ -118,16 +118,27 @@ function isCompoundShellCommand(command: string): boolean {
   return /\s/.test(command)
 }
 
+function preferJetBrainsGuiExecutable(
+  editorCommand: string,
+  platform: NodeJS.Platform,
+  fileExists: (path: string) => boolean
+): string {
+  if (platform !== 'win32') {
+    return editorCommand
+  }
+  return resolveColocatedJetBrainsGuiExecutable(editorCommand, fileExists) ?? editorCommand
+}
+
 function resolveSimpleEditorCommand(
   command: string,
   platform: NodeJS.Platform,
   fileExists: (path: string) => boolean
 ): string {
-  const resolved = resolveCliCommand(command, { platform })
-  if (platform !== 'win32') {
-    return resolved
-  }
-  return resolveColocatedJetBrainsGuiExecutable(resolved, fileExists) ?? resolved
+  return preferJetBrainsGuiExecutable(
+    resolveCliCommand(command, { platform }),
+    platform,
+    fileExists
+  )
 }
 
 function buildExecutableLaunchSpec(
@@ -184,7 +195,13 @@ export function resolveExternalEditorLaunchSpec(
   const trimmed = command?.trim() || EXTERNAL_EDITOR_CLI_COMMAND
 
   if (isDirectExecutablePath(trimmed, platform, fileExists)) {
-    return buildExecutableLaunchSpec(stripMatchingQuotes(trimmed), pathValue, platform)
+    // Why: settings often store a full path to idea.cmd / idea.exe; upgrade
+    // those the same way as PATH-resolved names when *64.exe is colocated.
+    return buildExecutableLaunchSpec(
+      preferJetBrainsGuiExecutable(stripMatchingQuotes(trimmed), platform, fileExists),
+      pathValue,
+      platform
+    )
   }
 
   if (isCompoundShellCommand(trimmed)) {

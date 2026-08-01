@@ -69,12 +69,18 @@ export function getSpawnArgsForWindows(
       // Why: `start` launches a batch target through a nested `cmd /K`, which
       // stays resident after the script ends — `/B` only suppresses a *new*
       // console, so the shim leaks a hidden cmd.exe. Handing `start` an inner
-      // `cmd /d /c` makes that interpreter exit with the script. The empty
-      // title (`""`) keeps `start` from eating a quoted path as a window title.
+      // `cmd /d /c` makes that interpreter exit with the script.
+      //
+      // Window title must be an *empty argv entry* (`''`). libuv's Windows
+      // quoter turns empty into `""` on the CreateProcess command line — the
+      // empty title `start` requires so a later quoted path is not eaten as
+      // the title. The two-character string `'""'` is wrong: libuv re-escapes
+      // it to `"\"\""`. (Default ComSpec has no spaces, so the bad form often
+      // still "works"; quoted Program Files paths are where it breaks.)
       const cmdExePath = getCmdExePath()
       return {
         spawnCmd: cmdExePath,
-        spawnArgs: ['/d', '/c', 'start', '""', '/B', cmdExePath, '/d', '/c', command, ...args]
+        spawnArgs: ['/d', '/c', 'start', '', '/B', cmdExePath, '/d', '/c', command, ...args]
       }
     }
     return { spawnCmd: getCmdExePath(), spawnArgs: ['/d', '/c', command, ...args] }

@@ -342,15 +342,20 @@ describe('registerShellHandlers', () => {
     })
 
     it('uses a provided launcher command', async () => {
+      resolveCliCommandMock.mockReturnValueOnce('custom-editor')
       const workspacePath = resolve('workspace')
       const handler = getHandler('shell:openInExternalEditor')
 
-      await expect(handler({}, { path: workspacePath, command: 'cursor' })).resolves.toEqual({
-        ok: true
+      await expect(handler({}, { path: workspacePath, command: 'custom-editor' })).resolves.toEqual(
+        {
+          ok: true
+        }
+      )
+      expect(resolveCliCommandMock).toHaveBeenCalledWith('custom-editor', {
+        platform: process.platform
       })
-      expect(resolveCliCommandMock).toHaveBeenCalledWith('cursor', { platform: process.platform })
       expect(getSpawnArgsForWindowsMock).toHaveBeenCalledWith(
-        'editor-cli',
+        'custom-editor',
         [normalize(workspacePath)],
         {
           detachedGui: false

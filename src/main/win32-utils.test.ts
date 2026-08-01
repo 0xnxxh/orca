@@ -92,11 +92,12 @@ describe('getSpawnArgsForWindows', () => {
       expect(spawnCmd).toBe(getCmdExePath())
       // Why: `start` runs a batch target under a nested `cmd /K` that never
       // exits; the inner `cmd /d /c` is what keeps the hidden shell from leaking.
+      // Title is empty string so libuv emits `""` — not the two-char `'""'`.
       expect(spawnArgs).toEqual([
         '/d',
         '/c',
         'start',
-        '""',
+        '',
         '/B',
         getCmdExePath(),
         '/d',
@@ -104,7 +105,9 @@ describe('getSpawnArgsForWindows', () => {
         'C:\\Tools\\idea.cmd',
         'C:\\workspaces\\orca'
       ])
+      expect(spawnArgs[3]).toBe('')
       expect(spawnArgs).not.toContain('/K')
+      expect(spawnArgs).not.toContain('""')
       expect(spawnArgs[spawnArgs.indexOf('/B') + 1]).not.toMatch(/\.(?:cmd|bat)$/i)
     })
   })

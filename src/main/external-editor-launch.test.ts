@@ -88,7 +88,7 @@ describe('resolveExternalEditorLaunchSpec', () => {
     })
   })
 
-  it('detaches a directly configured JetBrains shim path', () => {
+  it('detaches a directly configured JetBrains shim path when no GUI exe is beside it', () => {
     expect(
       resolveExternalEditorLaunchSpec('C:\\Tools\\WebStorm\\bin\\webstorm.bat', 'C:\\ws', {
         platform: 'win32',
@@ -99,6 +99,76 @@ describe('resolveExternalEditorLaunchSpec', () => {
       hideWindowsConsole: true,
       detachedGui: true,
       spawnCmd: 'C:\\Tools\\WebStorm\\bin\\webstorm.bat',
+      spawnArgs: ['C:\\ws']
+    })
+  })
+
+  it('upgrades a direct JetBrains .cmd path to the colocated *64.exe', () => {
+    const installBin = 'C:\\Program Files\\JetBrains\\WebStorm\\bin'
+    expect(
+      resolveExternalEditorLaunchSpec(`${installBin}\\webstorm.cmd`, 'C:\\ws', {
+        platform: 'win32',
+        fileExists: (candidate) => candidate === `${installBin}\\webstorm64.exe`
+      })
+    ).toEqual({
+      kind: 'executable',
+      hideWindowsConsole: true,
+      spawnCmd: `${installBin}\\webstorm64.exe`,
+      spawnArgs: ['C:\\ws']
+    })
+  })
+
+  it('upgrades a short-name console idea.exe stub to the colocated idea64.exe', () => {
+    const installBin = 'C:\\Program Files\\JetBrains\\IntelliJ IDEA\\bin'
+    expect(
+      resolveExternalEditorLaunchSpec(`${installBin}\\idea.exe`, 'C:\\ws', {
+        platform: 'win32',
+        fileExists: (candidate) => candidate === `${installBin}\\idea64.exe`
+      })
+    ).toEqual({
+      kind: 'executable',
+      hideWindowsConsole: true,
+      spawnCmd: `${installBin}\\idea64.exe`,
+      spawnArgs: ['C:\\ws']
+    })
+  })
+
+  it('leaves a direct idea64.exe path unchanged even when a sibling exists', () => {
+    const guiExe = 'C:\\Program Files\\JetBrains\\IntelliJ IDEA\\bin\\idea64.exe'
+    expect(
+      resolveExternalEditorLaunchSpec(guiExe, 'C:\\ws', {
+        platform: 'win32',
+        fileExists: () => true
+      })
+    ).toEqual({
+      kind: 'executable',
+      hideWindowsConsole: true,
+      spawnCmd: guiExe,
+      spawnArgs: ['C:\\ws']
+    })
+  })
+
+  it('does not rewrite non-JetBrains .exe launchers via colocation', () => {
+    const codeExe = 'C:\\Program Files\\Microsoft VS Code\\Code.exe'
+    expect(
+      resolveExternalEditorLaunchSpec(codeExe, 'C:\\ws', {
+        platform: 'win32',
+        fileExists: () => true
+      }).spawnCmd
+    ).toBe(codeExe)
+  })
+
+  it('keeps idea.exe when no colocated idea64.exe exists', () => {
+    const consoleExe = 'C:\\Program Files\\JetBrains\\IntelliJ IDEA\\bin\\idea.exe'
+    expect(
+      resolveExternalEditorLaunchSpec(consoleExe, 'C:\\ws', {
+        platform: 'win32',
+        fileExists: () => false
+      })
+    ).toEqual({
+      kind: 'executable',
+      hideWindowsConsole: true,
+      spawnCmd: consoleExe,
       spawnArgs: ['C:\\ws']
     })
   })
