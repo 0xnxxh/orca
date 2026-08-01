@@ -1924,9 +1924,14 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const isActiveWorktreeTab = tabOwnerWorktreeId === s.activeWorktreeId
       return {
         activeTabId: isActiveWorktreeTab ? tabId : s.activeTabId,
-        activeTabIdByWorktree: tabOwnerWorktreeId
-          ? { ...s.activeTabIdByWorktree, [tabOwnerWorktreeId]: tabId }
-          : s.activeTabIdByWorktree,
+        // Why: a redundant activation must not reallocate this map — Terminal's
+        // active-terminal repair effect depends on it, so a re-activation that
+        // can't converge activeTabId (tab id reused by an earlier-scanned
+        // worktree) would otherwise re-trigger itself into React error #185.
+        activeTabIdByWorktree:
+          tabOwnerWorktreeId && s.activeTabIdByWorktree[tabOwnerWorktreeId] !== tabId
+            ? { ...s.activeTabIdByWorktree, [tabOwnerWorktreeId]: tabId }
+            : s.activeTabIdByWorktree,
         unreadTerminalTabs: nextUnreadTerminalTabs
       }
     })
