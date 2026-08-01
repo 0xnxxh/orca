@@ -8122,7 +8122,7 @@ describe('registerPtyHandlers', () => {
     clearProviderPtyState('pty-claimed-admission')
   })
 
-  it('reuses runtime materialization when renderer focuses the same pane during spawn', async () => {
+  it('reuses a restored runtime reattach when the paired renderer focuses the same pane', async () => {
     type RuntimeSpawnController = {
       spawn(args: {
         cols: number
@@ -8132,13 +8132,14 @@ describe('registerPtyHandlers', () => {
         env?: Record<string, string>
         tabId?: string
         leafId?: string
+        sessionId?: string
         persistHostSessionBinding?: boolean
       }): Promise<{ id: string }>
     }
-    let resolveSpawn!: (result: { id: string }) => void
+    let resolveSpawn!: (result: { id: string; isReattach?: boolean }) => void
     const providerSpawn = vi.fn(
       () =>
-        new Promise<{ id: string }>((resolve) => {
+        new Promise<{ id: string; isReattach?: boolean }>((resolve) => {
           resolveSpawn = resolve
         })
     )
@@ -8200,6 +8201,7 @@ describe('registerPtyHandlers', () => {
       worktreeId: 'repo-1::/tmp',
       tabId: 'tab-race',
       leafId,
+      sessionId: 'restored-paired-session',
       env: { ORCA_PANE_KEY: paneKey },
       persistHostSessionBinding: true
     })
@@ -8213,6 +8215,7 @@ describe('registerPtyHandlers', () => {
       worktreeId: 'repo-1::/tmp',
       tabId: 'tab-race',
       leafId,
+      sessionId: 'restored-paired-session',
       env: {
         ORCA_TAB_ID: 'tab-race',
         ORCA_WORKTREE_ID: 'repo-1::/tmp'
@@ -8221,11 +8224,13 @@ describe('registerPtyHandlers', () => {
     await Promise.resolve()
 
     expect(providerSpawn).toHaveBeenCalledTimes(1)
-    resolveSpawn({ id: 'pty-shared' })
-    await expect(Promise.all([runtimeSpawn, rendererSpawn])).resolves.toEqual([
-      { id: 'pty-shared' },
-      { id: 'pty-shared' }
-    ])
+    expect(providerSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'restored-paired-session' })
+    )
+    resolveSpawn({ id: 'pty-shared', isReattach: true })
+    const [runtimeResult, rendererResult] = await Promise.all([runtimeSpawn, rendererSpawn])
+    expect(runtimeResult).toEqual({ id: 'pty-shared' })
+    expect(rendererResult).toEqual({ id: 'pty-shared' })
     expect(providerSpawn).toHaveBeenCalledTimes(1)
     expect(store.persistPtyBinding).toHaveBeenCalledWith({
       worktreeId: 'repo-1::/tmp',

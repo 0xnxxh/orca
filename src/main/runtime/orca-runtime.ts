@@ -243,6 +243,7 @@ import {
   navigationTargetsHost,
   type RuntimeNavigationTarget
 } from '../../shared/runtime-navigation'
+import { mobileTerminalMaterializationKey } from './mobile-terminal-materialization-key'
 import type { SshConnectionState } from '../../shared/ssh-types'
 import { getPublicSshState } from './public-ssh-state'
 import { closeTerminalTabInWorkspaceSession } from '../../shared/workspace-session-terminal-tab-close'
@@ -2813,6 +2814,7 @@ export class OrcaRuntimeService {
       fence: (() => boolean) | null
     }
   >()
+  private pendingMobileTerminalMaterializations = new Map<string, Promise<void>>()
   private leaves = new Map<string, RuntimeLeafRecord>()
   // Why: PTY output is a per-keystroke hot path. Looking up affected leaves by
   // ptyId keeps active TUI redraws independent of the total open terminal count.
@@ -8101,44 +8103,100 @@ export class OrcaRuntimeService {
           this.shouldMaterializeHeadlessMobileSessionTab(snapshot!, tab))
       if (shouldMaterializePendingTerminal) {
         const sessionId = tab.ptyId ?? tab.parentLayout?.ptyIdsByLeafId?.[tab.leafId] ?? undefined
+        const sshConnectionId = sessionId ? parseAppSshPtyId(sessionId)?.connectionId : undefined
+        const reconnectGeneration = sshConnectionId
+          ? (this.sshRelayRecoveryGenerationByTargetId.get(sshConnectionId) ?? 0)
+          : null
+        const acceptMaterialization = () =>
+          acceptWorkspaceInventory?.() !== false &&
+          (sshConnectionId === undefined ||
+            (this.sshRelayRecoveryGenerationByTargetId.get(sshConnectionId) ?? 0) ===
+              reconnectGeneration)
         const targetGroupId = snapshot?.tabGroups?.find((group) =>
           group.tabOrder.includes(tab.parentTabId)
         )?.id
-        // Why: a pending agent tab may exist without its startup command ever
-        // having been delivered (the create's renderer stalled, #7587), so a
-        // bare materialize would put a plain shell under the agent icon.
-        // Re-resolve the launch like the create path; providers skip startup
-        // commands when attaching to live sessions, so this cannot double-launch.
-        let agentStartup: Awaited<
-          ReturnType<OrcaRuntimeService['resolveMobileSessionTerminalCommand']>
-        > = {}
-        if (tab.launchAgent) {
-          try {
-            const workspace = await this.resolveTerminalWorkspaceLaunchScope(`id:${worktreeId}`)
-            agentStartup = await this.resolveMobileSessionTerminalCommand(workspace, {
-              agent: tab.launchAgent
+        const executionHostId = this.getWorkspaceSessionHostIdForWorktree(worktreeId)
+        const parsedExecutionHost = parseExecutionHostId(executionHostId)
+        const connectionId =
+          sshConnectionId ??
+          (parsedExecutionHost?.kind === 'ssh' ? parsedExecutionHost.targetId : null)
+        const materializationKey = mobileTerminalMaterializationKey({
+          executionHostId,
+          connectionId,
+          worktreeId,
+          parentTabId: tab.parentTabId,
+          leafId: tab.leafId,
+          sessionId
+        })
+        let materialization = this.pendingMobileTerminalMaterializations.get(materializationKey)
+        if (!materialization) {
+          materialization = (async () => {
+            // Why: a stalled renderer may leave a pending agent tab without its startup command.
+            let agentStartup: Awaited<
+              ReturnType<OrcaRuntimeService['resolveMobileSessionTerminalCommand']>
+            > = {}
+            if (tab.launchAgent) {
+              try {
+                const workspace = await this.resolveTerminalWorkspaceLaunchScope(`id:${worktreeId}`)
+                agentStartup = await this.resolveMobileSessionTerminalCommand(workspace, {
+                  agent: tab.launchAgent
+                })
+              } catch {
+                // Why: an unavailable agent must not make its restored tab untappable.
+              }
+            }
+            if (this.hasLiveRuntimeSessionOwnedPtyBinding(worktreeId, tab)) {
+              return
+            }
+            try {
+              await this.createRuntimeOwnedMobileSessionTerminal(
+                worktreeId,
+                targetsHost,
+                undefined,
+                {
+                  identity: {
+                    tabId: tab.parentTabId,
+                    leafId: tab.leafId,
+                    sessionId
+                  },
+                  cwd: tab.startupCwd,
+                  command: agentStartup.command,
+                  env: agentStartup.env,
+                  startupCommandDelivery: agentStartup.startupCommandDelivery,
+                  launchConfig: agentStartup.launchConfig,
+                  launchAgent: tab.launchAgent,
+                  targetGroupId,
+                  acceptWorkspaceInventory: () =>
+                    acceptMaterialization() &&
+                    !this.hasLiveRuntimeSessionOwnedPtyBinding(worktreeId, tab)
+                }
+              )
+            } catch (error) {
+              if (
+                error instanceof Error &&
+                error.message === 'tab_not_found' &&
+                acceptMaterialization() &&
+                this.hasLiveRuntimeSessionOwnedPtyBinding(worktreeId, tab)
+              ) {
+                return
+              }
+              throw error
+            }
+          })()
+          this.pendingMobileTerminalMaterializations.set(materializationKey, materialization)
+          void materialization
+            .finally(() => {
+              if (
+                this.pendingMobileTerminalMaterializations.get(materializationKey) ===
+                materialization
+              ) {
+                this.pendingMobileTerminalMaterializations.delete(materializationKey)
+              }
             })
-          } catch {
-            // Why: a disabled or unresolvable agent must not make the tab
-            // untappable; fall back to the plain-shell materialize.
-          }
+            .catch(() => undefined)
         }
         try {
-          await this.createRuntimeOwnedMobileSessionTerminal(worktreeId, targetsHost, undefined, {
-            identity: {
-              tabId: tab.parentTabId,
-              leafId: tab.leafId,
-              sessionId
-            },
-            cwd: tab.startupCwd,
-            command: agentStartup.command,
-            env: agentStartup.env,
-            startupCommandDelivery: agentStartup.startupCommandDelivery,
-            launchConfig: agentStartup.launchConfig,
-            launchAgent: tab.launchAgent,
-            targetGroupId,
-            acceptWorkspaceInventory
-          })
+          await materialization
         } catch (err) {
           if (sessionId && parseAppSshPtyId(sessionId)) {
             // Why: an expired SSH reattach clears durable bindings in the store,
@@ -8146,6 +8204,9 @@ export class OrcaRuntimeService {
             this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId, { force: true })
           }
           throw err
+        }
+        if (!acceptMaterialization()) {
+          throw new Error('tab_not_found')
         }
         return this.applyMobileSessionTabNavigation(
           this.getMobileSessionTabsForWorktree(worktreeId),

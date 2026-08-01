@@ -142,7 +142,12 @@ describe('mobile folder session mutation races', () => {
       folderWorkspace: folder
     })
     let attached = false
+    let releaseAttach!: () => void
+    const attach = new Promise<void>((resolve) => {
+      releaseAttach = resolve
+    })
     const spawn = vi.fn(async () => {
+      await attach
       attached = true
       return { id: ptyId, incarnationId }
     })
@@ -172,19 +177,118 @@ describe('mobile folder session mutation races', () => {
       })
     ).rejects.toThrow('terminal_not_writable')
 
-    const activated = await runtime.activateMobileSessionTab(`id:${folderKey}`, TAB_ID)
-    const activatedTab = activated.tabs[0]
+    const activations = Promise.all([
+      runtime.activateMobileSessionTab(`id:${folderKey}`, TAB_ID),
+      runtime.activateMobileSessionTab(`id:${folderKey}`, TAB_ID)
+    ])
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    releaseAttach()
+    const activated = await activations
+    const activatedTab = activated[0].tabs[0]
+    expect(activated[1].tabs[0]).toMatchObject({ status: 'ready' })
     await expect(
       runtime.sendTerminal(activatedTab?.type === 'terminal' ? activatedTab.terminal! : 'missing', {
         text: 'folder input'
       })
     ).resolves.toMatchObject({ accepted: true, bytesWritten: 12 })
-    await runtime.activateMobileSessionTab(`id:${folderKey}`, TAB_ID)
-
     expect(spawn).toHaveBeenCalledOnce()
     expect(spawn).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: ptyId, worktreeId: folderKey })
     )
+  })
+
+  it('fences shared SSH reattachment when the reconnect generation changes', async () => {
+    const connectionId = 'reattach-generation'
+    const ptyId = `ssh:${connectionId}@@restored-pty`
+    const folder: FolderWorkspace = {
+      id: 'reconnect-folder',
+      projectGroupId: 'reconnect-group',
+      name: 'Reconnect folder',
+      folderPath: '/workspace/reconnect-folder',
+      connectionId,
+      linkedTask: null,
+      comment: '',
+      isArchived: false,
+      isUnread: false,
+      isPinned: false,
+      sortOrder: 0,
+      lastActivityAt: 1,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const group: ProjectGroup = {
+      id: folder.projectGroupId,
+      name: folder.projectGroupId,
+      parentPath: folder.folderPath,
+      connectionId: null,
+      parentGroupId: null,
+      createdFrom: 'manual',
+      tabOrder: 0,
+      isCollapsed: false,
+      color: null,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const folderKey = `folder:${folder.id}`
+    const runtime = createRuntime([folder], group, ptyId)
+    vi.spyOn(
+      runtime as unknown as {
+        resolveTerminalWorkspaceLaunchScope: () => Promise<{
+          id: string
+          path: string
+          connectionId: string
+          repo: null
+          folderWorkspace: FolderWorkspace
+        }>
+      },
+      'resolveTerminalWorkspaceLaunchScope'
+    ).mockResolvedValue({
+      id: folderKey,
+      path: folder.folderPath,
+      connectionId,
+      repo: null,
+      folderWorkspace: folder
+    })
+    let releaseSpawn!: () => void
+    const pendingSpawn = new Promise<void>((resolve) => {
+      releaseSpawn = resolve
+    })
+    const spawn = vi.fn(async () => {
+      await pendingSpawn
+      return { id: ptyId }
+    })
+    const kill = vi.fn(() => true)
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill,
+      getForegroundProcess: async () => null,
+      listProcesses: async () => []
+    })
+
+    const activations = Promise.allSettled([
+      runtime.activateMobileSessionTab(`id:${folderKey}`, TAB_ID),
+      runtime.activateMobileSessionTab(`id:${folderKey}`, TAB_ID)
+    ])
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    runtime.notifySshStateChanged(connectionId, {
+      targetId: connectionId,
+      status: 'disconnected',
+      error: null,
+      reconnectAttempt: 0
+    })
+    releaseSpawn()
+
+    const results = await activations
+    expect(results).toHaveLength(2)
+    results.forEach((result) => {
+      expect(result).toMatchObject({ status: 'rejected' })
+      expect(result.status === 'rejected' ? result.reason : null).toMatchObject({
+        message: 'tab_not_found'
+      })
+    })
+    expect(spawn).toHaveBeenCalledOnce()
+    expect(kill).toHaveBeenCalledWith(ptyId)
   })
 
   it.each(['activate', 'close'] as const)(
@@ -283,7 +387,8 @@ describe('mobile folder session mutation races', () => {
       updatedAt: 1
     }
     const folderKey = `folder:${folder.id}`
-    const runtime = createRuntime([folder], group)
+    const folders = [folder]
+    const runtime = createRuntime(folders, group)
     vi.spyOn(
       runtime as unknown as {
         resolveTerminalWorkspaceLaunchScope: () => Promise<{
@@ -318,12 +423,22 @@ describe('mobile folder session mutation races', () => {
       spawn
     })
 
-    const activation = runtime.activateMobileSessionTab(`id:${folderKey}`, TAB_ID)
+    const activations = Promise.allSettled([
+      runtime.activateMobileSessionTab(`id:${folderKey}`, TAB_ID),
+      runtime.activateMobileSessionTab(`id:${folderKey}`, TAB_ID)
+    ])
     await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
-    folder.folderPath = '/workspace/materialize-race-moved'
+    folders.length = 0
+    folders.push({ ...folder, folderPath: '/workspace/materialize-race-moved' })
     releaseSpawn({ id: 'stale-materialized-pty' })
 
-    await expect(activation).rejects.toThrow('tab_not_found')
+    const results = await activations
+    results.forEach((result) => {
+      expect(result.status === 'rejected' ? result.reason : null).toMatchObject({
+        message: 'tab_not_found'
+      })
+    })
+    expect(spawn).toHaveBeenCalledOnce()
     expect(kill).toHaveBeenCalledWith('stale-materialized-pty')
   })
 })

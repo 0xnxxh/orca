@@ -28287,7 +28287,12 @@ describe('OrcaRuntimeService', () => {
       })
     )
     let attached = false
+    let releaseAttach!: () => void
+    const attach = new Promise<void>((resolve) => {
+      releaseAttach = resolve
+    })
     const spawn = vi.fn(async () => {
+      await attach
       attached = true
       return { id: ptyId, incarnationId }
     })
@@ -28319,15 +28324,20 @@ describe('OrcaRuntimeService', () => {
       })
     ).rejects.toThrow('terminal_not_writable')
 
-    const activated = await runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab')
-    const activatedTab = activated.tabs[0]
+    const activations = Promise.all([
+      runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab'),
+      runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab')
+    ])
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    releaseAttach()
+    const activated = await activations
+    const activatedTab = activated[0].tabs[0]
+    expect(activated[1].tabs[0]).toMatchObject({ status: 'ready' })
     await expect(
       runtime.sendTerminal(activatedTab?.type === 'terminal' ? activatedTab.terminal! : 'missing', {
         text: 'after attach'
       })
     ).resolves.toMatchObject({ accepted: true, bytesWritten: 12 })
-    await runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab')
-
     expect(spawn).toHaveBeenCalledOnce()
     expect(spawn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -28373,7 +28383,20 @@ describe('OrcaRuntimeService', () => {
       getRepos: () => [remoteRepo],
       getRepo: (id: string) => (id === TEST_REPO_ID ? remoteRepo : undefined)
     }
-    const spawn = vi.fn().mockResolvedValue({ id: 'ssh:ssh-1@@relay-pty', isReattach: true })
+    let releaseAttach!: () => void
+    const attachResult = new Promise<void>((resolve) => {
+      releaseAttach = resolve
+    })
+    const ptyAttach = vi.fn(async () => {
+      if (ptyAttach.mock.calls.length > 1) {
+        throw new Error('Unknown or stale SSH PTY source token')
+      }
+      await attachResult
+    })
+    const spawn = vi.fn(async () => {
+      await ptyAttach()
+      return { id: 'ssh:ssh-1@@relay-pty', isReattach: true }
+    })
     const runtime = new OrcaRuntimeService(remoteStore as never)
     runtime.setPtyController({
       spawn,
@@ -28393,10 +28416,16 @@ describe('OrcaRuntimeService', () => {
     })
     runtime.syncWindowGraph(0, { tabs: [], leaves: [] })
 
-    await runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab')
-    await runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab')
+    const activations = Promise.all([
+      runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab'),
+      runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab')
+    ])
+    await vi.waitFor(() => expect(ptyAttach).toHaveBeenCalledOnce())
+    releaseAttach()
+    await expect(activations).resolves.toHaveLength(2)
 
     expect(spawn).toHaveBeenCalledOnce()
+    expect(ptyAttach).toHaveBeenCalledOnce()
     expect(spawn).toHaveBeenCalledWith(
       expect.objectContaining({
         connectionId: 'ssh-1',
@@ -28437,9 +28466,14 @@ describe('OrcaRuntimeService', () => {
       getRepos: () => [remoteRepo],
       getRepo: (id: string) => (id === TEST_REPO_ID ? remoteRepo : undefined)
     }
+    let releaseFirstAttach!: () => void
+    const firstAttach = new Promise<void>((resolve) => {
+      releaseFirstAttach = resolve
+    })
     const spawn = vi
       .fn()
       .mockImplementationOnce(async () => {
+        await firstAttach
         const session = getSession()
         ;(runtimeStore.setWorkspaceSession as unknown as (next: WorkspaceSessionState) => void)({
           ...session,
@@ -28470,9 +28504,16 @@ describe('OrcaRuntimeService', () => {
     })
     runtime.syncWindowGraph(0, { tabs: [], leaves: [] })
 
-    await expect(
+    const firstActivations = Promise.allSettled([
+      runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab'),
       runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab')
-    ).rejects.toThrow('SSH session expired')
+    ])
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    releaseFirstAttach()
+    await expect(firstActivations).resolves.toEqual([
+      expect.objectContaining({ status: 'rejected', reason: expect.any(Error) }),
+      expect.objectContaining({ status: 'rejected', reason: expect.any(Error) })
+    ])
     await runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab')
 
     expect(spawn).toHaveBeenNthCalledWith(
