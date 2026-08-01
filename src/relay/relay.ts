@@ -36,9 +36,9 @@ import { endpointDirForRelaySocket, RelayAgentHookServer } from './agent-hook-se
 import { PluginOverlayManager } from './plugin-overlay'
 import {
   AGENT_HOOK_INSTALL_PLUGINS_METHOD,
-  AGENT_HOOK_NOTIFICATION_METHOD,
   AGENT_HOOK_REQUEST_REPLAY_METHOD
 } from '../shared/agent-hook-relay'
+import { publishAgentHookEnvelope } from './agent-hook-envelope-publication'
 import {
   DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS,
   SSH_RELAY_CONFIGURE_GRACE_TIME_METHOD
@@ -714,13 +714,8 @@ async function main(): Promise<void> {
   const hookServer = new RelayAgentHookServer({
     // Why: scope endpoint.env/cmd by socket path so multiple relay daemons on one account can't overwrite each other's hook tokens.
     endpointDir: endpointDir ?? endpointDirForRelaySocket(sockPath),
-    forward: (envelope) => {
-      // Why: notify is fire-and-forget and drops during reconnect; the per-paneKey cache lets us replay last status after --connect.
-      dispatcher.notify(
-        AGENT_HOOK_NOTIFICATION_METHOD,
-        envelope as unknown as Record<string, unknown>
-      )
-    }
+    // Why: publication is fire-and-forget and drops during reconnect; the per-paneKey cache lets us replay last status after --connect.
+    forward: (envelope) => publishAgentHookEnvelope(dispatcher, envelope)
   })
   // Why: await the bind before announcing readiness so the first PTY spawn already sees ORCA_AGENT_HOOK_* env; bind failure is soft (log and continue).
   try {
