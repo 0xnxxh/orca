@@ -97,6 +97,7 @@ import { hardenExistingSecureFile } from '../shared/secure-file'
 import {
   LEGACY_DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS,
   type RemovedSshTargetTombstone,
+  type SshPtyConsumerRecovery,
   type SshRemotePtyLease,
   type SshTarget
 } from '../shared/ssh-types'
@@ -169,6 +170,11 @@ import {
 import { normalizeTerminalQuickCommands } from '../shared/terminal-quick-commands'
 import { normalizeTaskProviderSettings } from '../shared/task-providers'
 import { normalizeAutoRenameBranchFromWorkDefaultOn } from '../shared/auto-rename-branch-from-work-settings'
+import {
+  addMobilePairingCustomAddress,
+  normalizeMobilePairingCustomAddress,
+  normalizeMobilePairingCustomAddresses
+} from '../shared/mobile-pairing-custom-address'
 import { normalizeOpenInApplications } from '../shared/open-in-applications'
 import { normalizeTerminalShortcutPolicy } from '../shared/keybindings'
 import { normalizeSourceControlGroupOrder } from '../shared/source-control-group-order'
@@ -1585,6 +1591,57 @@ function normalizeSshRemotePtyLease(value: unknown): SshRemotePtyLease | null {
   }
 }
 
+const SSH_PTY_OWNER_LEASE_MAX_LENGTH = 512
+const ENCRYPTED_SSH_PTY_OWNER_LEASE_MAX_LENGTH = 4096
+
+function normalizeSshPtyConsumerRecovery(
+  value: unknown,
+  ownerLeaseMaxLength = SSH_PTY_OWNER_LEASE_MAX_LENGTH
+): SshPtyConsumerRecovery | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+  const raw = value as Partial<SshPtyConsumerRecovery>
+  const clientGeneration = raw.clientGeneration
+  const ownerGeneration = raw.ownerGeneration
+  if (
+    typeof raw.targetId !== 'string' ||
+    raw.targetId.length === 0 ||
+    raw.targetId.length > 512 ||
+    typeof raw.clientInstanceId !== 'string' ||
+    raw.clientInstanceId.length === 0 ||
+    raw.clientInstanceId.length > 512 ||
+    typeof raw.serverBuildId !== 'string' ||
+    raw.serverBuildId.length === 0 ||
+    raw.serverBuildId.length > 512 ||
+    typeof clientGeneration !== 'number' ||
+    !Number.isSafeInteger(clientGeneration) ||
+    clientGeneration <= 0 ||
+    typeof ownerGeneration !== 'number' ||
+    !Number.isSafeInteger(ownerGeneration) ||
+    ownerGeneration <= 0 ||
+    typeof raw.ownerLease !== 'string' ||
+    raw.ownerLease.length === 0 ||
+    raw.ownerLease.length > ownerLeaseMaxLength
+  ) {
+    return null
+  }
+  const flow = raw.outputFlowControl
+  const outputFlowControl =
+    flow?.version === 1 && Number.isSafeInteger(flow.windowSu) && flow.windowSu > 0
+      ? { version: 1 as const, windowSu: flow.windowSu }
+      : undefined
+  return {
+    targetId: raw.targetId,
+    clientInstanceId: raw.clientInstanceId,
+    serverBuildId: raw.serverBuildId,
+    clientGeneration,
+    ownerGeneration,
+    ownerLease: raw.ownerLease,
+    ...(outputFlowControl ? { outputFlowControl } : {})
+  }
+}
+
 type LayoutLeafNormalization = {
   snapshot: TerminalLayoutSnapshot
   changed: boolean
@@ -2931,6 +2988,16 @@ export class Store {
         if (parsed.ui?.browserKagiSessionLink) {
           parsed.ui.browserKagiSessionLink = decryptOptionalSecret(parsed.ui.browserKagiSessionLink)
         }
+        parsed.sshPtyConsumerRecoveries = (
+          Array.isArray(parsed.sshPtyConsumerRecoveries) ? parsed.sshPtyConsumerRecoveries : []
+        )
+          .map((record) =>
+            normalizeSshPtyConsumerRecovery(record, ENCRYPTED_SSH_PTY_OWNER_LEASE_MAX_LENGTH)
+          )
+          .filter((record): record is SshPtyConsumerRecovery => record !== null)
+          .map((record) => ({ ...record, ownerLease: decrypt(record.ownerLease) }))
+          .map((record) => normalizeSshPtyConsumerRecovery(record))
+          .filter((record): record is SshPtyConsumerRecovery => record !== null)
 
         // Merge with defaults in case new fields were added
         const homeDir = homedir()
@@ -3146,6 +3213,34 @@ export class Store {
           parsed.settings?.compactWorktreeCards ??
           parsed.settings?.experimentalCompactWorktreeCards ??
           defaults.settings.compactWorktreeCards
+        const mobilePairingCustomAddress = normalizeMobilePairingCustomAddress(
+          parsed.settings?.mobilePairingCustomAddress
+        )
+        const rawMobilePairingCustomAddresses = parsed.settings?.mobilePairingCustomAddresses
+        const mobilePairingCustomAddresses = mobilePairingCustomAddress
+          ? addMobilePairingCustomAddress(
+              normalizeMobilePairingCustomAddresses(rawMobilePairingCustomAddresses),
+              mobilePairingCustomAddress
+            )
+          : normalizeMobilePairingCustomAddresses(rawMobilePairingCustomAddresses)
+        if (
+          parsed.settings?.mobilePairingCustomAddress !== undefined &&
+          parsed.settings.mobilePairingCustomAddress !== mobilePairingCustomAddress
+        ) {
+          this.loadNeedsSave = true
+        }
+        const customAddressesMatch =
+          Array.isArray(rawMobilePairingCustomAddresses) &&
+          rawMobilePairingCustomAddresses.length === mobilePairingCustomAddresses.length &&
+          rawMobilePairingCustomAddresses.every(
+            (address, index) => address === mobilePairingCustomAddresses[index]
+          )
+        if (
+          (rawMobilePairingCustomAddresses !== undefined || mobilePairingCustomAddress !== null) &&
+          !customAddressesMatch
+        ) {
+          this.loadNeedsSave = true
+        }
         const normalizedSourceControlGroupOrder = normalizeSourceControlGroupOrder(
           parsed.settings?.sourceControlGroupOrder
         )
@@ -3229,6 +3324,8 @@ export class Store {
               parsed.settings?.terminalCustomThemes
             ),
             appIcon: normalizeAppIconId(parsed.settings?.appIcon),
+            mobilePairingCustomAddress,
+            mobilePairingCustomAddresses,
             // Why: persisted settings may be hand-edited or from older builds; keep tray-minimize false unless stored value is true.
             minimizeToTrayOnClose: parsed.settings?.minimizeToTrayOnClose === true,
             // Why: missing means default-on; round-trips unchanged on non-mac since darwin consumers gate the effect.
@@ -3460,6 +3557,7 @@ export class Store {
           sshRemotePtyLeases: (parsed.sshRemotePtyLeases ?? [])
             .map(normalizeSshRemotePtyLease)
             .filter((lease): lease is SshRemotePtyLease => lease !== null),
+          sshPtyConsumerRecoveries: parsed.sshPtyConsumerRecoveries,
           claudeLivePtySessionIds: normalizeClaudeLivePtySessionIds(parsed.claudeLivePtySessionIds),
           migrationUnsupportedPtyEntries: normalizeMigrationUnsupportedPtyEntries(
             parsed.migrationUnsupportedPtyEntries
@@ -3712,6 +3810,10 @@ export class Store {
     // Why: clone before encrypting secrets so in-memory this.state stays plaintext.
     const stateToSave = {
       ...this.getDurableState(),
+      sshPtyConsumerRecoveries: (this.state.sshPtyConsumerRecoveries ?? []).map((record) => ({
+        ...record,
+        ownerLease: encryptToSentinel(record.ownerLease)
+      })),
       settings: {
         ...this.state.settings,
         opencodeSessionCookie: encryptToSentinel(this.state.settings.opencodeSessionCookie),
@@ -5523,6 +5625,33 @@ export class Store {
         updates.prBotAuthorOverrides
       )
     }
+    if ('mobilePairingCustomAddress' in updates) {
+      sanitizedUpdates.mobilePairingCustomAddress = normalizeMobilePairingCustomAddress(
+        updates.mobilePairingCustomAddress
+      )
+    }
+    if ('mobilePairingCustomAddresses' in updates) {
+      sanitizedUpdates.mobilePairingCustomAddresses = normalizeMobilePairingCustomAddresses(
+        updates.mobilePairingCustomAddresses
+      )
+    }
+    if (
+      'mobilePairingCustomAddress' in sanitizedUpdates ||
+      'mobilePairingCustomAddresses' in sanitizedUpdates
+    ) {
+      const mobilePairingCustomAddress =
+        'mobilePairingCustomAddress' in sanitizedUpdates
+          ? sanitizedUpdates.mobilePairingCustomAddress
+          : this.state.settings.mobilePairingCustomAddress
+      if (mobilePairingCustomAddress) {
+        sanitizedUpdates.mobilePairingCustomAddresses = addMobilePairingCustomAddress(
+          sanitizedUpdates.mobilePairingCustomAddresses ??
+            this.state.settings.mobilePairingCustomAddresses ??
+            [],
+          mobilePairingCustomAddress
+        )
+      }
+    }
     const historyWithPreviousLayout = buildWorkspaceDirHistoryForUpdate(
       this.state.settings,
       sanitizedUpdates
@@ -6378,10 +6507,15 @@ export class Store {
   }
 
   removeSshTarget(id: string): void {
-    if (!this.state.sshTargets) {
+    const targets = this.state.sshTargets ?? []
+    const recoveries = this.state.sshPtyConsumerRecoveries ?? []
+    const nextTargets = targets.filter((target) => target.id !== id)
+    const nextRecoveries = recoveries.filter((record) => record.targetId !== id)
+    if (nextTargets.length === targets.length && nextRecoveries.length === recoveries.length) {
       return
     }
-    this.state.sshTargets = this.state.sshTargets.filter((t) => t.id !== id)
+    this.state.sshTargets = nextTargets
+    this.state.sshPtyConsumerRecoveries = nextRecoveries
     this.scheduleSave()
   }
 
@@ -6528,6 +6662,12 @@ export class Store {
         carrierChanged = true
       }
     }
+    const recoveries = this.state.sshPtyConsumerRecoveries ?? []
+    const retainedRecoveries = recoveries.filter((record) => record.targetId !== oldTargetId)
+    if (retainedRecoveries.length !== recoveries.length) {
+      this.state.sshPtyConsumerRecoveries = retainedRecoveries
+      carrierChanged = true
+    }
     let setupsChanged = false
     const keptSetups: ProjectHostSetup[] = []
     for (const setup of this.state.projectHostSetups) {
@@ -6560,6 +6700,47 @@ export class Store {
       this.scheduleSave()
     }
     return [...repoIds]
+  }
+
+  // ── SSH PTY Consumer Recovery ──────────────────────────────────────
+
+  getSshPtyConsumerRecovery(targetId: string): SshPtyConsumerRecovery | null {
+    const record = (this.state.sshPtyConsumerRecoveries ?? []).find(
+      (candidate) => candidate.targetId === targetId
+    )
+    return record ? structuredClone(record) : null
+  }
+
+  upsertSshPtyConsumerRecovery(record: SshPtyConsumerRecovery): void {
+    const normalized = normalizeSshPtyConsumerRecovery(record)
+    if (!normalized) {
+      throw new Error('Invalid SSH PTY consumer recovery record')
+    }
+    const recoveries = this.state.sshPtyConsumerRecoveries ?? []
+    this.state.sshPtyConsumerRecoveries = [
+      ...recoveries.filter((candidate) => candidate.targetId !== normalized.targetId),
+      normalized
+    ]
+    this.flushSshPtyConsumerRecovery()
+  }
+
+  removeSshPtyConsumerRecovery(targetId: string): void {
+    const recoveries = this.state.sshPtyConsumerRecoveries ?? []
+    const next = recoveries.filter((record) => record.targetId !== targetId)
+    if (next.length === recoveries.length) {
+      return
+    }
+    this.state.sshPtyConsumerRecoveries = next
+    this.flushSshPtyConsumerRecovery()
+  }
+
+  private flushSshPtyConsumerRecovery(): void {
+    try {
+      // Why: ownership must be durable before relay setup continues, but active-view and GitHub sidecars are unrelated startup work.
+      this.flushOrThrow()
+    } catch (err) {
+      console.error('[persistence] Failed to flush SSH PTY consumer recovery:', err)
+    }
   }
 
   // ── SSH Remote PTY Leases ──────────────────────────────────────────
