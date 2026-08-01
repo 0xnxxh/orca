@@ -51,7 +51,11 @@ import {
 } from '../shared/pi-agent-kind'
 import { resolveSetupAgentSequenceLaunchCommand } from '../shared/setup-agent-sequencing'
 import { pickRemoteCliEnv } from './remote-cli-env'
-import { decideRelayGrace, type RelayGraceBranch } from './relay-grace-branch'
+import {
+  decideRelayGrace,
+  retryDeferredShutdownAfterGraceReconfigure,
+  type RelayGraceBranch
+} from './relay-grace-branch'
 import { relayLogLine } from './relay-diagnostic-log'
 import { remoteCliRequestTimeoutMs } from './remote-cli-timeout'
 import { shouldReadRemoteCliStdin } from './remote-cli-stdin'
@@ -696,7 +700,9 @@ async function main(): Promise<void> {
         graceReason !== null &&
         !shutdownInFlight
       ) {
-        startGrace('grace reconfigured')
+        startGrace('grace reconfigured', {
+          retryDeferredShutdown: retryDeferredShutdownAfterGraceReconfigure(graceBranch)
+        })
       }
     }
     return { graceTimeMs: ptyHandler.configuredGraceTimeMs }

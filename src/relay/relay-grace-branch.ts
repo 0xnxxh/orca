@@ -23,6 +23,12 @@ export type RelayGraceDecision = {
   timeoutMs: number
 }
 
+export function retryDeferredShutdownAfterGraceReconfigure(
+  currentBranch: RelayGraceBranch | null
+): boolean {
+  return currentBranch === 'shutdown-deferred'
+}
+
 /**
  * Picks the relay's shutdown grace window.
  *

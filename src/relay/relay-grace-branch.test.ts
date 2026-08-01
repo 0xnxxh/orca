@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { decideRelayGrace, type RelayGraceDecisionInput } from './relay-grace-branch'
+import {
+  decideRelayGrace,
+  retryDeferredShutdownAfterGraceReconfigure,
+  type RelayGraceDecisionInput
+} from './relay-grace-branch'
 
 const EMPTY_DETACHED_STARTUP_GRACE_MS = 30_000
 const IDLE_RELAY_GRACE_MS = 15 * 60_000
@@ -60,6 +64,19 @@ describe('decideRelayGrace', () => {
           hasAcceptedSocketClient: false,
           relayIdle: true,
           activePtyCount: 0
+        })
+      ).toEqual({ branch: 'shutdown-deferred', timeoutMs: IDLE_RELAY_GRACE_MS })
+    })
+
+    it('preserves shutdown-deferred when grace is reconfigured to zero', () => {
+      // Why a non-zero starting grace: configureRelayGraceTime only re-arms on an actual change,
+      // so the reconfiguration this models must cross a real boundary, not 0 → 0.
+      const current = decide({ configuredGraceMs: 10_000, retryDeferredShutdown: true })
+
+      expect(
+        decide({
+          configuredGraceMs: 0,
+          retryDeferredShutdown: retryDeferredShutdownAfterGraceReconfigure(current.branch)
         })
       ).toEqual({ branch: 'shutdown-deferred', timeoutMs: IDLE_RELAY_GRACE_MS })
     })
