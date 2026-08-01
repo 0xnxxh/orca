@@ -3096,6 +3096,42 @@ describe('shared agent-hook-listener', () => {
       expect(stopped?.payload.subagents).toBeUndefined()
     })
 
+    it('does not mint working from a start-less SubagentStop on a pane with no lead record', () => {
+      // Why: the live /compact flow on claude 2.1.186–2.1.220 is PreCompact → SubagentStop
+      // (never started) → SessionStart(compact) → PostCompact. On a resumed session in a
+      // fresh process this minted a sticky empty-prompt 'working' no Stop ever clears (STA-2915).
+      const stopped = claudeEvent({ hook_event_name: 'SubagentStop', agent_id: 'compact-1' })
+      expect(stopped).toBeNull()
+    })
+
+    it('re-emits the lead done state on a start-less SubagentStop after a completed turn', () => {
+      claudeEvent({ hook_event_name: 'UserPromptSubmit', prompt: 'go' })
+      claudeEvent({ hook_event_name: 'Stop', background_tasks: [] })
+      const stopped = claudeEvent({ hook_event_name: 'SubagentStop', agent_id: 'compact-1' })
+      expect(stopped?.payload.state).toBe('done')
+    })
+
+    it('still emits working for a spawn on a pane with no lead record', () => {
+      const spawned = claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a1',
+        agent_type: 'general-purpose'
+      })
+      expect(spawned?.payload.state).toBe('working')
+      expect(spawned?.payload.subagents).toEqual([expect.objectContaining({ id: 'a1' })])
+    })
+
+    it('keeps child-driven working when a live child survives an unknown stop with no lead record', () => {
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a1',
+        agent_type: 'general-purpose'
+      })
+      const stopped = claudeEvent({ hook_event_name: 'SubagentStop', agent_id: 'ghost' })
+      expect(stopped?.payload.state).toBe('working')
+      expect(stopped?.payload.subagents).toEqual([expect.objectContaining({ id: 'a1' })])
+    })
+
     it('keeps gating on tracked children when background_tasks is absent (older Claude)', () => {
       claudeEvent({
         hook_event_name: 'SubagentStart',

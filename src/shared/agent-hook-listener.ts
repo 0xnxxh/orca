@@ -2433,10 +2433,11 @@ function normalizeClaudeSubagentLifecycleEvent(
     return null
   }
   const roster = getOrCreateClaudeSubagentRoster(state, paneKey)
+  let rosterChanged = false
   if (eventName === 'TeammateIdle') {
     const teammateName = lifecycleId
     // Why: on claude 2.1.21x teammates are turn-based — TeammateIdle means "turn over, awaiting mail", not finished. The row parks as idle (confirmed teammate) instead of leaving, so the sidebar keeps showing resumable children.
-    idleClaudeTeammateByName(roster, teammateName)
+    rosterChanged = idleClaudeTeammateByName(roster, teammateName)
     clearClaudePendingWaitForAgent(state, paneKey, (waitingAgentId) =>
       claudeTeammateIdMatchesName(waitingAgentId, teammateName)
     )
@@ -2449,14 +2450,17 @@ function normalizeClaudeSubagentLifecycleEvent(
         { agentType: readString(hookPayload, 'agent_type') },
         Date.now()
       )
+      rosterChanged = true
     } else {
+      // Why: a stop of an untracked id (e.g. compact's start-less SubagentStop) is a roster no-op, not evidence.
+      rosterChanged = roster.has(agentId)
       // Why: one-shot stops are true finishes (row removed); teammate-shaped stops are turn ends on 2.1.21x — the row parks idle and a later SubagentStart revives it.
       stopClaudeSubagent(roster, agentId)
       // Why: a blocked child that dies without another tool event would pin its permission/question wait on the pane forever — nothing else references that agent again.
       clearClaudePendingWaitForAgent(state, paneKey, (waitingAgentId) => waitingAgentId === agentId)
     }
   }
-  return buildClaudeChildDrivenStatusPayload(state, eventName, paneKey, hookPayload)
+  return buildClaudeChildDrivenStatusPayload(state, eventName, paneKey, hookPayload, rosterChanged)
 }
 
 /** Sync the Claude lead-turn record when the SERVER infers an interrupt outside the hook stream (Ctrl+C with a missed Stop); else a later child lifecycle event resurrects the cancelled pane. */
@@ -2553,12 +2557,19 @@ function buildClaudeChildDrivenStatusPayload(
   state: HookListenerState,
   eventName: unknown,
   paneKey: string,
-  hookPayload: Record<string, unknown>
+  hookPayload: Record<string, unknown>,
+  rosterChanged = false
 ): ParsedAgentStatusPayload | null {
-  // Why: default 'working' — a spawn proves activity even before the lead's first state-bearing event (e.g. Orca restarted mid-session).
   const lead = state.claudeLeadStateByPaneKey.get(paneKey)
-  const leadState = lead?.state ?? 'working'
   const roster = state.claudeSubagentRosterByPaneKey.get(paneKey)
+  // Why: no lead record, no live child, and an unchanged roster mean the event proves nothing is
+  // running. Compact's start-less SubagentStop is exactly that; minting the default below left a
+  // sticky 'working' no Stop ever clears on freshly resumed panes (STA-2915).
+  if (!lead && !rosterChanged && !claudeRosterHasWorkingSubagent(roster)) {
+    return null
+  }
+  // Why: default 'working' — a spawn proves activity even before the lead's first state-bearing event (e.g. Orca restarted mid-session).
+  const leadState = lead?.state ?? 'working'
   return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
     stateName:
       leadState === 'done' && claudeRosterHasWorkingSubagent(roster) ? 'working' : leadState,
