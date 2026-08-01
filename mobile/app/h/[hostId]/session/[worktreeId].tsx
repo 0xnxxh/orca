@@ -62,7 +62,8 @@ import { useHostClient, useForceReconnect } from '../../../../src/transport/clie
 import { showForceReconnectError } from '../../../../src/transport/force-reconnect-feedback'
 import {
   useLastConnectedAt,
-  useReconnectAttempt
+  useReconnectAttempt,
+  useRpcUnresponsiveSince
 } from '../../../../src/transport/client-context-connection-metrics'
 import {
   classifyConnection,
@@ -853,6 +854,7 @@ export default function SessionScreen() {
   const { client, state: connState } = useHostClient(hostId)
   const reconnectAttempts = useReconnectAttempt(hostId)
   const lastConnectedAt = useLastConnectedAt(hostId)
+  const rpcUnresponsiveSince = useRpcUnresponsiveSince(hostId)
   const forceReconnectHost = useForceReconnect()
   const worktreeName = useLiveWorktreeName({
     client,
@@ -4249,21 +4251,21 @@ export default function SessionScreen() {
     state: connState,
     reconnectAttempts,
     lastConnectedAt,
+    rpcUnresponsiveSince,
     endpoint: hostEndpoint
   })
   const showConnectionRetry =
     connectionVerdict.kind === 'warning' || connectionVerdict.kind === 'unreachable'
 
-  const terminalSummary =
-    connState === 'connected'
+  const terminalSummary = showConnectionRetry
+    ? `${verdictDisplayLabel(connectionVerdict)} — tap to retry`
+    : connState === 'connected'
       ? showLoadingState
         ? 'Loading tabs'
         : visibleTabs.length === 1
           ? '1 tab'
           : `${visibleTabs.length} tabs`
-      : showConnectionRetry
-        ? `${verdictDisplayLabel(connectionVerdict)} — tap to retry`
-        : MOBILE_SESSION_STATUS_LABELS[connState]
+      : MOBILE_SESSION_STATUS_LABELS[connState]
 
   // Why: iOS keyboard height includes the home-indicator inset; Android IME height does not.
   const keyboardLift =

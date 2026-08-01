@@ -1,10 +1,4 @@
-import type {
-  RpcResponse,
-  RpcSuccess,
-  ConnectionState,
-  ConnectionLogLevel,
-  ConnectionLogSink
-} from './types'
+import type { RpcResponse, RpcSuccess, ConnectionState, ConnectionLogLevel } from './types'
 import {
   generateKeyPair,
   deriveSharedKey,
@@ -22,6 +16,13 @@ import {
   decodeBrowserScreencastFrame,
   type BrowserScreencastFrame
 } from './browser-screencast-protocol'
+import type {
+  ConnectOptions,
+  RpcClient,
+  SendRequestOptions,
+  SubscribeOptions
+} from './rpc-client-contract'
+export type { ConnectOptions, RpcClient, SendRequestOptions } from './rpc-client-contract'
 import {
   buildStreamUnsubscribe,
   buildTerminalUnsubscribeParams,
@@ -44,38 +45,18 @@ import {
 } from './rpc-stream-response-shape'
 import { websocketPayloadToUint8 } from './websocket-payload-bytes'
 import { TimedOutControlRequestIndex } from './timed-out-control-request-index'
+import { RpcApplicationResponseTracker } from './rpc-application-response-tracker'
 
 type PendingRequest = {
   resolve: (response: RpcResponse) => void
   reject: (error: Error) => void
+  method?: string
 }
 
 type ConnectWaiter = {
   resolve: () => void
   reject: (error: Error) => void
   timeout: ReturnType<typeof setTimeout> | null
-}
-
-export type SendRequestOptions = {
-  timeoutMs?: number
-  /** Spend `timeoutMs` across connect-wait AND the request instead of giving each
-   *  phase its own. Interactive chat writes need it: they run as sequential loops
-   *  under one shared budget, so a per-phase clock lets the composer sit `sending`
-   *  for a multiple of the stated ceiling. Off by default — the long-running
-   *  callers (worktree create, dictation finish, credit reset) sized their budgets
-   *  against the post-connect clock, and squeezing them to the floor after a slow
-   *  reconnect would fail sends that used to land. */
-  budgetSpansConnect?: boolean
-  /** Keep the connect-plus-request deadline strict instead of granting the
-   *  normal post-connect acknowledgement floor. */
-  strictDeadline?: boolean
-  /** Reject immediately when not connected — a send parked in the connect wait
-   *  replays stale terminal bytes into the PTY after reconnect. */
-  failWhenDisconnected?: boolean
-}
-
-type SubscribeOptions = {
-  onBinaryFrame?: (frame: BrowserScreencastFrame) => void
 }
 
 type StreamingListener = (result: unknown) => void
@@ -88,33 +69,6 @@ type StreamRequest = {
   subscriptionId?: string
   cancelled?: boolean
   sent?: 'awaiting' | 'received'
-}
-
-export type RpcClient = {
-  sendRequest: (
-    method: string,
-    params?: unknown,
-    options?: SendRequestOptions
-  ) => Promise<RpcResponse>
-  subscribe: (
-    method: string,
-    params: unknown,
-    onData: StreamingListener,
-    options?: SubscribeOptions
-  ) => () => void
-  updateTerminalSubscriptionViewport: (
-    terminal: string,
-    viewport: { cols: number; rows: number }
-  ) => void
-  getState: () => ConnectionState
-  // 0 means never failed (reset once the handshake authenticates); the UI escalates "Reconnecting…" to "Can't connect" past a threshold.
-  getReconnectAttempt: () => number
-  // Last 'connected' timestamp (ms epoch); null = never connected. Lets the UI tell "never reachable" from "transient blip".
-  getLastConnectedAt: () => number | null
-  onStateChange: (listener: (state: ConnectionState) => void) => () => void
-  // Why: app-resume hook — iOS/Android can kill the TCP path while backgrounded; call on AppState 'active' to recover.
-  notifyForeground: () => void
-  close: () => void
 }
 
 // Why: tiered backoff — fast early entries recover blips; the slow tail avoids burning a SYN every 4s on an unreachable desktop.
@@ -138,12 +92,6 @@ const WEBSOCKET_CONNECTING_STATE = 0
 
 // Why: RN auto-pongs pings natively, so JS needs an app-level probe to detect half-open sockets.
 const ACTIVITY_PROBE_INTERVAL_MS = 20_000
-
-export type ConnectOptions = {
-  onStateChange?: (state: ConnectionState) => void
-  // Fires for every lifecycle event so the UI can show where 'Connecting…' is stuck (e.g. broken Tailscale route).
-  onLog?: ConnectionLogSink
-}
 
 export function connect(
   endpoint: string,
@@ -197,6 +145,14 @@ export function connect(
 
   const pending = new Map<string, PendingRequest>()
   const timedOutControlRequestIds = new TimedOutControlRequestIndex()
+  const applicationResponseTracker = new RpcApplicationResponseTracker(
+    options.applicationResponsiveness,
+    {
+      onLatched: (method) => emitLog('warn', 'RPC channel not responding', `${method} timed out`),
+      onRecovered: () =>
+        emitLog('success', 'RPC channel recovered', 'An application request completed')
+    }
+  )
   const streamListeners = new Map<string, StreamRequest>()
   const terminalStreamListeners = new Map<number, StreamingListener>()
   const terminalStreamIdsByRequest = new Map<string, Set<number>>()
@@ -513,9 +469,12 @@ export function connect(
       if (!isRpcResponse(response)) {
         return
       }
+      const request = pending.get(response.id)
+      const lateApplicationResponse = applicationResponseTracker.consumeLateResponse(response.id)
       if (
-        pending.has(response.id) ||
+        request ||
         timedOutControlRequestIds.consume(response.id) ||
+        lateApplicationResponse ||
         consumeFirstStreamControlResponse(streamListeners.get(response.id))
       ) {
         controlResponseSequence++
@@ -526,7 +485,6 @@ export function connect(
         handleAuthRejection('Unauthorized — pairing may be revoked')
         return
       }
-
       const isStreaming = response.ok && (response as RpcSuccess).streaming === true
 
       if (isStreaming) {
@@ -1057,6 +1015,11 @@ export function connect(
           reject(markRpcDeliveryUnknown(new Error(`Request timed out: ${method}`)))
           if (requestWs === ws) {
             timedOutControlRequestIds.remember(id)
+            if (applicationResponseTracker.recordTimeout(id, method, true)) {
+              emitLog('error', 'RPC channel unresponsive', 'Recycling the connection')
+              forceSocketReconnect(requestWs)
+              return
+            }
           }
           runActivityProbe(requestWs, true)
         }, timeoutMs)
@@ -1064,12 +1027,14 @@ export function connect(
         pending.set(id, {
           resolve: (response) => {
             clearTimeout(timeout)
+            applicationResponseTracker.recordResponse(method)
             resolve(response)
           },
           reject: (error) => {
             clearTimeout(timeout)
             reject(error)
-          }
+          },
+          method
         })
 
         if (!sendEncrypted({ id, deviceToken, method, params })) {
@@ -1166,6 +1131,10 @@ export function connect(
 
     getLastConnectedAt(): number | null {
       return lastConnectedAt
+    },
+
+    getRpcUnresponsiveSince(): number | null {
+      return applicationResponseTracker.getUnresponsiveSince()
     },
 
     onStateChange(listener: (state: ConnectionState) => void): () => void {

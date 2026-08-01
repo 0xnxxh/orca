@@ -277,6 +277,41 @@ describe('mobile relay RPC session', () => {
     }
   })
 
+  it('keeps Relay application stalls latched through probes and recycles a repeated stall', async () => {
+    const { session } = await authenticateSession()
+    vi.useFakeTimers()
+    try {
+      const first = session
+        .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+        .catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(100)
+      await expect(first).resolves.toMatchObject({
+        message: 'relay RPC timed out: browser.screenshot'
+      })
+      const probe = fakes.sendText.mock.calls
+        .map(([payload]) => JSON.parse(payload as string) as { id: string; method: string })
+        .find(({ method }) => method === 'status.get')!
+      fakes.linkOptions!.onText(
+        JSON.stringify({ id: probe.id, ok: true, result: {}, _meta: { runtimeId: 'runtime-1' } })
+      )
+
+      expect(session.getRpcUnresponsiveSince?.()).not.toBeNull()
+      expect(session.getState()).toBe('connected')
+      const second = session
+        .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+        .catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(100)
+
+      await expect(second).resolves.toMatchObject({
+        message: 'relay RPC timed out: browser.screenshot'
+      })
+      expect(session.getState()).toBe('disconnected')
+      expect(fakes.close).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('counts a late timed-out reply as relay control-plane liveness', async () => {
     const { session } = await authenticateSession()
     vi.useFakeTimers()

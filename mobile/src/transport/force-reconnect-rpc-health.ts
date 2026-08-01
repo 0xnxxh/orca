@@ -20,6 +20,9 @@ export async function verifyForceReconnectRpcHealth(
         budgetSpansConnect: true,
         strictDeadline: true
       })
+      if (client.getRpcUnresponsiveSince?.() != null) {
+        throw new Error('Application RPC channel is still not responding')
+      }
       return
     } catch (error) {
       const state = client.getState()

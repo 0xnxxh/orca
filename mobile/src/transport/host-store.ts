@@ -19,8 +19,6 @@ import {
   saveMobileRelayHostOverlay,
   updateMobileRelayHostOverlayDirectEndpoint
 } from './mobile-relay-host-overlay-store'
-import { deleteMobileRelayCredentialBundle } from './mobile-relay-credential-bundle'
-import { deleteMobileRelayDirectUpgradeJournal } from './mobile-relay-direct-upgrade-journal'
 import { scheduleOrphanedMobileRelayCleanup } from './mobile-relay-orphan-cleanup'
 import {
   recordDurableHostIdentity,
@@ -28,20 +26,11 @@ import {
   retireHostProfilePublication,
   serializeHostProfilePublication
 } from './host-profile-publication'
-import {
-  deleteHostDeviceToken,
-  readHostDeviceToken,
-  writeHostDeviceToken
-} from './host-device-token-store'
+import { readHostDeviceToken, writeHostDeviceToken } from './host-device-token-store'
+import { createRemovedHostCredentialDelete, deleteHostCredentials } from './host-credential-delete'
 
 const STORAGE_KEY = 'orca:hosts'
 type StoredHostIdentity = Pick<HostProfile, 'endpoint' | 'publicKeyB64'>
-
-async function deleteHostCredentials(hostId: string): Promise<void> {
-  await deleteHostDeviceToken(hostId)
-  await deleteMobileRelayCredentialBundle(hostId)
-  await deleteMobileRelayDirectUpgradeJournal(hostId)
-}
 
 // Why: Keychain reads are slow (50-200ms) and loadHosts() runs on every screen mount; cache per-hostId in memory, invalidate on save/remove.
 const tokenCache = new Map<string, string>()
@@ -139,6 +128,10 @@ export async function loadStoredHostIdentity(hostId: string): Promise<StoredHost
   return stored ? { endpoint: stored.endpoint, publicKeyB64: stored.publicKeyB64 } : null
 }
 
+const deleteRemovedHostCredentials = createRemovedHostCredentialDelete(async (hostId) =>
+  Boolean(await loadStoredHostIdentity(hostId))
+)
+
 export async function resolvePairingHostIdentity(
   publicKeyB64: string,
   newHostId: string
@@ -196,10 +189,6 @@ function toStored(host: HostProfile): StoredHostProfile {
 }
 
 export async function saveHost(host: HostProfile): Promise<void> {
-  await persistHost(host)
-}
-
-async function persistHost(host: HostProfile): Promise<void> {
   const validated = HostProfileSchema.parse(host)
   const stored = toStored(validated)
   const duplicateHostIds = new Set<string>()
@@ -256,10 +245,10 @@ async function persistHost(host: HostProfile): Promise<void> {
 }
 
 export async function removeHost(hostId: string): Promise<void> {
+  const retiredPublication = retireHostProfilePublication(hostId)
   await serializeHostProfilePublication(hostId, async () => {
     await mutateStoredHosts((hosts) => hosts.filter((h) => h.id !== hostId))
     tokenCache.delete(hostId)
-    retireHostProfilePublication(hostId)
     try {
       await removeMobileRelayHostOverlay(hostId)
       hostListLoads.dropSharedHostListLoad()
@@ -268,11 +257,17 @@ export async function removeHost(hostId: string): Promise<void> {
     }
     // Why: keychain delete can stall/reject; await only the durable cleanup intent so removeHost can't freeze the UI.
     try {
-      await scheduleHostCredentialCleanup(hostId, deleteHostCredentials)
+      await scheduleHostCredentialCleanup(hostId, deleteRemovedHostCredentials)
     } catch {
       // Metadata is already committed; orphan-token recovery is best-effort.
     }
   })
+  if (retiredPublication) {
+    // Why: a retired native write may land after the first delete was attempted.
+    void retiredPublication.then(() =>
+      scheduleHostCredentialCleanup(hostId, deleteRemovedHostCredentials).catch(() => {})
+    )
+  }
 }
 
 export async function retryPendingHostCredentialCleanup(): Promise<{

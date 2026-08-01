@@ -46,6 +46,7 @@ export function classifyConnection(args: {
   state: ConnectionState
   reconnectAttempts: number
   lastConnectedAt: number | null
+  rpcUnresponsiveSince?: number | null
   // Optional pinned host endpoint — enables the Tailscale hint on
   // warning/unreachable verdicts. Callers without it get plain labels.
   endpoint?: string | null
@@ -62,6 +63,9 @@ export function classifyConnection(args: {
   }
 
   if (state === 'connected') {
+    if (args.rpcUnresponsiveSince != null) {
+      return { kind: 'warning', label: 'Connected, not responding', hint }
+    }
     return { kind: 'normal', label: 'Connected' }
   }
 

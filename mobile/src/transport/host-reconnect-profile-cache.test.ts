@@ -48,4 +48,36 @@ describe('HostReconnectProfileCache', () => {
       version: cachedVersion + 1
     })
   })
+
+  it('publishes relay routing at the exact revision returned by its save', () => {
+    const cache = new HostReconnectProfileCache()
+    let currentRevision = 4
+    const initialVersion = cache.prime(HOST, currentRevision)
+    const publish = cache.publisher(HOST.id, initialVersion, () => currentRevision)
+    const relayHost = {
+      ...HOST,
+      relayHostId: 'AbCdEf0123_-xyZ9',
+      endpoints: [
+        { id: 'direct-primary', kind: 'lan' as const, url: HOST.endpoint },
+        {
+          id: 'relay-primary',
+          kind: 'relay' as const,
+          url: 'wss://relay.invalid/v1/connect/host'
+        }
+      ],
+      relay: {
+        v: 1 as const,
+        directorUrl: 'https://relay.invalid',
+        cellUrl: 'https://relay.invalid',
+        assignmentEpoch: 1,
+        relayHostId: 'AbCdEf0123_-xyZ9',
+        e2eeFraming: 2 as const
+      }
+    }
+
+    currentRevision = 5
+    publish(relayHost, 5)
+
+    expect(cache.get(HOST.id, 5)).toEqual(relayHost)
+  })
 })

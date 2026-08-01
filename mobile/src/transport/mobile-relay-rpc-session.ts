@@ -1,7 +1,6 @@
 import {
   PairingGetEndpointsResultSchema,
-  type DeviceResumeConfirmed,
-  type MobileRelayEndpoint
+  type DeviceResumeConfirmed
 } from '../../../src/shared/mobile-relay-credential-contract'
 import { MobileRelayE2eeLink } from './mobile-relay-e2ee-link'
 import { MobileRelayRpcStreams } from './mobile-relay-rpc-streams'
@@ -15,32 +14,27 @@ import {
 import { RpcControlProbeFollowUp } from './rpc-control-probe-follow-up'
 import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-request-budget'
 import { isRpcResponse } from './rpc-response-shape'
-import type { RpcClient } from './rpc-client'
 import type { ConnectionState, RpcResponse } from './types'
 import { TimedOutControlRequestIndex } from './timed-out-control-request-index'
+import { RpcApplicationResponseTracker } from './rpc-application-response-tracker'
+import type {
+  MobileRelayRpcSession,
+  MobileRelayRpcSessionOptions
+} from './mobile-relay-rpc-session-contract'
+export type { MobileRelayRpcSession } from './mobile-relay-rpc-session-contract'
 
 const CONTROL_PROBE_TIMEOUT_MS = 8_000
 const CONTROL_PROBE_INTERVAL_MS = 20_000
 
-export type MobileRelayRpcSession = RpcClient & {
-  getLeaseExpiresAt(): number | null
-  getResumeConfirmation(): DeviceResumeConfirmed | null
-  getFailure(): Error | null
-}
-
-export function connectMobileRelayRpcSession(args: {
-  relay: MobileRelayEndpoint
-  resumeToken: string
-  resumeCredentialVersion: number
-  resumeConfirmReqId: string
-  deviceToken: string
-  desktopPublicKeyB64: string
-  requestTimeoutMs?: number
-  createSocket?: (url: string) => WebSocket
-}): MobileRelayRpcSession {
+export function connectMobileRelayRpcSession(
+  args: MobileRelayRpcSessionOptions
+): MobileRelayRpcSession {
   const requestTimeoutMs = args.requestTimeoutMs ?? 30_000
   const pending = new Map<string, MobileRelayPendingRequest>()
   const timedOutControlRequestIds = new TimedOutControlRequestIndex()
+  const applicationResponseTracker = new RpcApplicationResponseTracker(
+    args.applicationResponsiveness
+  )
   const stateListeners = new Set<(state: ConnectionState) => void>()
   let state: ConnectionState = 'connecting'
   let requestCounter = 0
@@ -105,6 +99,7 @@ export function connectMobileRelayRpcSession(args: {
     getState: () => state,
     getReconnectAttempt: () => 0,
     getLastConnectedAt: () => lastConnectedAt,
+    getRpcUnresponsiveSince: () => applicationResponseTracker.getUnresponsiveSince(),
     onStateChange(listener) {
       stateListeners.add(listener)
       return () => stateListeners.delete(listener)
@@ -173,11 +168,15 @@ export function connectMobileRelayRpcSession(args: {
         // Why: the frame was written long ago — the desktop may have processed it.
         const error = markRpcDeliveryUnknown(new Error(`relay RPC timed out: ${method}`))
         reject(error)
+        if (applicationResponseTracker.recordTimeout(id, method, state === 'connected')) {
+          fail(error)
+          return
+        }
         if (probeAfterTimeout) {
           probeControlPlane(true)
         }
       }, timeoutMs)
-      pending.set(id, { resolve, reject, timer })
+      pending.set(id, { resolve, reject, timer, method })
       if (!sendFrame({ id, method, params })) {
         clearTimeout(timer)
         pending.delete(id)
@@ -201,6 +200,7 @@ export function connectMobileRelayRpcSession(args: {
       return
     }
     const request = pending.get(value.id)
+    const lateApplicationResponse = applicationResponseTracker.consumeLateResponse(value.id)
     if (!value.ok && value.error.code === 'unauthorized') {
       const error = new MobileE2EEAuthenticationError()
       if (request) {
@@ -215,6 +215,7 @@ export function connectMobileRelayRpcSession(args: {
     if (
       request ||
       timedOutControlRequestIds.consume(value.id) ||
+      lateApplicationResponse ||
       streams.isControlResponse(value)
     ) {
       controlResponseSequence += 1
@@ -222,6 +223,7 @@ export function connectMobileRelayRpcSession(args: {
     if (request) {
       clearTimeout(request.timer)
       pending.delete(value.id)
+      applicationResponseTracker.recordResponse(request.method)
       request.resolve(value)
       return
     }

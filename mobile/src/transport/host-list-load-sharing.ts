@@ -25,9 +25,10 @@ export function shareHostListLoad(load: () => Promise<HostProfile[]>): Promise<H
 }
 
 /** Call after every durable host write so no later read is served a pre-write pass. */
-export function dropSharedHostListLoad(): void {
+export function dropSharedHostListLoad(): number {
   revision += 1
   inflight = null
+  return revision
 }
 
 /** Stop offering a possibly stalled pass without invalidating durable snapshot revisions. */

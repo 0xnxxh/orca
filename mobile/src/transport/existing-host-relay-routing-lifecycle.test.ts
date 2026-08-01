@@ -10,6 +10,9 @@ vi.mock('./host-store', () => hostStoreMock)
 vi.mock('./host-device-token-store', () => tokenStoreMock)
 vi.mock('./mobile-relay-host-overlay-store', () => overlayStoreMock)
 vi.mock('./host-list-load-sharing', () => ({ dropSharedHostListLoad: vi.fn() }))
+vi.mock('./mobile-relay-credential-bundle', () => ({
+  deleteMobileRelayCredentialBundleIfCurrent: vi.fn(async () => false)
+}))
 
 import {
   MobileRelayUpgradeLifecycleRetiredError,
@@ -134,6 +137,37 @@ describe('existing host relay endpoint lifecycle publication', () => {
 
     await expect(oldWrite).rejects.toBeInstanceOf(MobileRelayUpgradeLifecycleRetiredError)
     expect(writeBundle).not.toHaveBeenCalled()
+  })
+
+  it('conditionally cleans a bundle written after its endpoint lifecycle retires', async () => {
+    let releaseWrite: (() => void) | null = null
+    let markWriteStarted: (() => void) | null = null
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve
+    })
+    const staleBundle = credentialBundle(1)
+    const cleanupBundle = vi.fn(async () => false)
+    const lifecycle = beginHostEndpointPublicationLifecycle(HOST.id)
+    const staleWrite = writeExistingHostRelayCredentialBundle(
+      HOST,
+      staleBundle,
+      async () => {
+        markWriteStarted?.()
+        await new Promise<void>((resolve) => {
+          releaseWrite = resolve
+        })
+      },
+      lifecycle,
+      cleanupBundle
+    )
+    await writeStarted
+
+    beginHostEndpointPublicationLifecycle(HOST.id)
+    releaseWrite?.()
+
+    await expect(staleWrite).rejects.toBeInstanceOf(MobileRelayUpgradeLifecycleRetiredError)
+    await vi.waitFor(() => expect(cleanupBundle).toHaveBeenCalledWith(staleBundle))
+    expect(await cleanupBundle.mock.results[0]!.value).toBe(false)
   })
 
   it('rechecks routing publication after its credential write', async () => {

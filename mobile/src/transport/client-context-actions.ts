@@ -1,4 +1,4 @@
-import { useRpcClientContext } from './client-context'
+import { useRpcClientContext } from './rpc-client-react-context'
 
 export const useCloseHost = () => useRpcClientContext().closeHost
 export const useForceReconnect = () => useRpcClientContext().forceReconnect

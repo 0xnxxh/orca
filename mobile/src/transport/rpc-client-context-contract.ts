@@ -10,6 +10,7 @@ export type RpcClientContextValue = {
   getState: (hostId: string) => ConnectionState
   getReconnectAttempt: (hostId: string) => number
   getLastConnectedAt: (hostId: string) => number | null
+  getRpcUnresponsiveSince: (hostId: string) => number | null
   getActivePath: (hostId: string) => MobileConnectionPath
   subscribeHostState: (hostId: string, listener: (state: ConnectionState) => void) => () => void
   getAllClients: () => { hostId: string; client: RpcClient }[]

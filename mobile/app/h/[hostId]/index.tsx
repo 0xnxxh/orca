@@ -42,7 +42,8 @@ import { useWorktreeResync } from '../../../src/transport/use-worktree-resync'
 import { startHostWorktreeRefresh } from '../../../src/worktree/host-worktree-refresh'
 import {
   useLastConnectedAt,
-  useReconnectAttempt
+  useReconnectAttempt,
+  useRpcUnresponsiveSince
 } from '../../../src/transport/client-context-connection-metrics'
 import {
   classifyConnection,
@@ -141,6 +142,7 @@ export function HostScreen({
   const { client, state: connState } = useHostClient(hostId)
   const reconnectAttempts = useReconnectAttempt(hostId)
   const lastConnectedAt = useLastConnectedAt(hostId)
+  const rpcUnresponsiveSince = useRpcUnresponsiveSince(hostId)
   const clientRef = useRef<RpcClient | null>(null)
   const fetchWorktreesInFlightRef = useRef(false)
   // Why: useRef, not useMemo — React may discard memoized values, which would silently
@@ -796,7 +798,8 @@ export function HostScreen({
             const headerVerdict = classifyConnection({
               state: connState,
               reconnectAttempts,
-              lastConnectedAt
+              lastConnectedAt,
+              rpcUnresponsiveSince
             })
             return (
               <>
@@ -806,27 +809,26 @@ export function HostScreen({
                     {hostName || 'Host'}
                   </Text>
                 </View>
-                {connState !== 'connected' &&
-                  (() => {
-                    // Why: auth-failed has its own banner, so suppress the Reconnect button for that verdict.
-                    const verdict = headerVerdict
-                    const isError = isErrorVerdict(verdict)
-                    const showReconnectButton = isError && hostId && verdict.kind !== 'auth-failed'
-                    if (!showReconnectButton) {
-                      return null
-                    }
-                    return (
-                      <Pressable
-                        style={styles.reconnectButton}
-                        onPress={() =>
-                          void forceReconnectHost(hostId!).catch(showForceReconnectError)
-                        }
-                        hitSlop={8}
-                      >
-                        <Text style={styles.reconnectButtonText}>Reconnect</Text>
-                      </Pressable>
-                    )
-                  })()}
+                {(() => {
+                  // Why: auth-failed has its own banner, so suppress the Reconnect button for that verdict.
+                  const verdict = headerVerdict
+                  const isError = isErrorVerdict(verdict)
+                  const showReconnectButton = isError && hostId && verdict.kind !== 'auth-failed'
+                  if (!showReconnectButton) {
+                    return null
+                  }
+                  return (
+                    <Pressable
+                      style={styles.reconnectButton}
+                      onPress={() =>
+                        void forceReconnectHost(hostId!).catch(showForceReconnectError)
+                      }
+                      hitSlop={8}
+                    >
+                      <Text style={styles.reconnectButtonText}>Reconnect</Text>
+                    </Pressable>
+                  )
+                })()}
               </>
             )
           })()}

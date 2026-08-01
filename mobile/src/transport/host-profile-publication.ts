@@ -29,10 +29,13 @@ export function recordDurableHostIdentity(
   })
 }
 
-export function retireHostProfilePublication(hostId: string): void {
+export function retireHostProfilePublication(hostId: string): Promise<void> | null {
   revisionByHost.set(hostId, getHostProfilePublicationRevision(hostId) + 1)
   endpointGenerationByHost.set(hostId, (endpointGenerationByHost.get(hostId) ?? 0) + 1)
   publishedIdentityByHost.delete(hostId)
+  const pending = pendingByHost.get(hostId) ?? null
+  pendingByHost.delete(hostId)
+  return pending
 }
 
 export function beginHostEndpointPublicationLifecycle(
@@ -77,11 +80,20 @@ export function publishHostProfileTransaction(
   saveHost: (host: HostProfile) => Promise<void>
 ): Promise<void> {
   return serializeHostProfilePublication(host.id, async () => {
+    const publicationRevision = getHostProfilePublicationRevision(host.id)
     await beforeHostSave?.()
+    requirePublicationRevision(host.id, publicationRevision)
     await saveHost(host)
-    revisionByHost.set(host.id, getHostProfilePublicationRevision(host.id) + 1)
+    requirePublicationRevision(host.id, publicationRevision)
+    revisionByHost.set(host.id, publicationRevision + 1)
     recordDurableHostIdentity(host)
   })
+}
+
+function requirePublicationRevision(hostId: string, expected: number): void {
+  if (getHostProfilePublicationRevision(hostId) !== expected) {
+    throw new Error('host profile publication was retired')
+  }
 }
 
 /** Test-only: reset publication state between module-level storage cases. */

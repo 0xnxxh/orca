@@ -20,7 +20,7 @@ export function relayWebSocketUrl(relay: { cellUrl: string; relayHostId: string 
 export async function persistRelayHost(
   host: HostProfile,
   relay: MobileRelayEndpoint,
-  saveHost: (host: HostProfile, beforePublish?: () => Promise<void>) => Promise<void>,
+  saveHost: (host: HostProfile, beforePublish?: () => Promise<void>) => Promise<unknown>,
   beforePublish?: () => Promise<void>
 ): Promise<HostProfile> {
   const endpoints = [

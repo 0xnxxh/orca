@@ -4,6 +4,7 @@ import type { ConnectionState, RpcResponse } from './types'
 import { verifyForceReconnectRpcHealth } from './force-reconnect-rpc-health'
 import { markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
 import { LogicalClientCutoverError } from './stable-logical-rpc-client'
+import { RpcApplicationResponsiveness } from './rpc-application-responsiveness'
 
 describe('Force Reconnect RPC health', () => {
   afterEach(() => vi.useRealTimers())
@@ -63,6 +64,24 @@ describe('Force Reconnect RPC health', () => {
 
     await expect(verifyForceReconnectRpcHealth(client)).resolves.toBeUndefined()
 
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects a successful probe until a real application response clears the shared latch', async () => {
+    const responsiveness = new RpcApplicationResponsiveness()
+    responsiveness.recordTimeout('browser.screenshot', 123)
+    const sendRequest = vi.fn(async () => ({ id: 'rpc-1', ok: true, result: {} }) as RpcResponse)
+    const client = {
+      sendRequest,
+      getState: () => 'connected' as const,
+      getRpcUnresponsiveSince: () => responsiveness.getUnresponsiveSince()
+    } as unknown as RpcClient
+
+    await expect(verifyForceReconnectRpcHealth(client)).rejects.toThrow(
+      'Application RPC channel is still not responding'
+    )
+    responsiveness.recordResponse('worktree.list')
+    await expect(verifyForceReconnectRpcHealth(client)).resolves.toBeUndefined()
     expect(sendRequest).toHaveBeenCalledTimes(2)
   })
 

@@ -3,6 +3,7 @@ import type { HostProfile } from './types'
 type CachedHostProfile = {
   host: HostProfile
   version: number
+  publicationVersion: number
   sourceRevision: number
 }
 
@@ -15,15 +16,22 @@ export type HostOpenProfile = {
 export class HostReconnectProfileCache {
   private readonly profiles = new Map<string, CachedHostProfile>()
   private readonly latestVersions = new Map<string, number>()
+  private readonly publicationVersions = new Map<string, number>()
 
   prime(host: HostProfile, sourceRevision: number): number {
+    const previous = this.profiles.get(host.id)
     const current = this.freshProfile(host.id, sourceRevision)
     const version =
       current && reconnectProfileMatches(current.host, host)
         ? current.version
         : (this.latestVersions.get(host.id) ?? 0) + 1
     this.latestVersions.set(host.id, version)
-    this.profiles.set(host.id, { host, version, sourceRevision })
+    const publicationVersion =
+      previous && reconnectProfileMatches(previous.host, host)
+        ? previous.publicationVersion
+        : (this.publicationVersions.get(host.id) ?? 0) + 1
+    this.publicationVersions.set(host.id, publicationVersion)
+    this.profiles.set(host.id, { host, version, publicationVersion, sourceRevision })
     return version
   }
 
@@ -74,28 +82,39 @@ export class HostReconnectProfileCache {
 
   primeFromVersion(
     host: HostProfile,
-    sourceVersion: number,
+    sourcePublicationVersion: number,
     sourceRevision: number
   ): number | null {
-    if (this.version(host.id, sourceRevision) !== sourceVersion) {
+    if ((this.publicationVersions.get(host.id) ?? 0) !== sourcePublicationVersion) {
       return null
     }
-    return this.prime(host, sourceRevision)
+    const version = (this.latestVersions.get(host.id) ?? 0) + 1
+    const publicationVersion = sourcePublicationVersion + 1
+    this.latestVersions.set(host.id, version)
+    this.publicationVersions.set(host.id, publicationVersion)
+    this.profiles.set(host.id, { host, version, publicationVersion, sourceRevision })
+    return version
   }
 
   publisher(
     hostId: string,
     initialVersion: number,
     getCurrentRevision: () => number
-  ): (host: HostProfile) => void {
-    let sourceVersion = initialVersion
-    return (host) => {
-      if (host.id !== hostId) {
+  ): (host: HostProfile, sourceRevision?: number) => void {
+    const initial = this.profiles.get(hostId)
+    let sourcePublicationVersion =
+      initial?.version === initialVersion
+        ? initial.publicationVersion
+        : (this.publicationVersions.get(hostId) ?? 0)
+    return (host, publishedSourceRevision) => {
+      const currentRevision = getCurrentRevision()
+      const sourceRevision = publishedSourceRevision ?? currentRevision
+      if (host.id !== hostId || sourceRevision !== currentRevision) {
         return
       }
-      const nextVersion = this.primeFromVersion(host, sourceVersion, getCurrentRevision())
+      const nextVersion = this.primeFromVersion(host, sourcePublicationVersion, sourceRevision)
       if (nextVersion !== null) {
-        sourceVersion = nextVersion
+        sourcePublicationVersion = this.publicationVersions.get(hostId) ?? sourcePublicationVersion
       }
     }
   }
@@ -111,6 +130,7 @@ export class HostReconnectProfileCache {
 
   delete(hostId: string): void {
     this.profiles.delete(hostId)
+    this.publicationVersions.set(hostId, (this.publicationVersions.get(hostId) ?? 0) + 1)
   }
 
   private freshProfile(hostId: string, currentRevision: number): CachedHostProfile | undefined {

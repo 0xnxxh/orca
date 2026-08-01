@@ -30,6 +30,7 @@ import {
   usePrimeHosts
 } from '../src/transport/client-context'
 import { showForceReconnectError } from '../src/transport/force-reconnect-feedback'
+import { useRpcUnresponsiveByHost } from '../src/transport/client-context-connection-metrics'
 import { classifyConnection } from '../src/transport/connection-health'
 import { subscribeToDesktopNotifications } from '../src/notifications/mobile-notifications'
 import {
@@ -312,6 +313,7 @@ export default function HomeScreen() {
 
   // Why: shared clients from the per-host store, not N independent WebSockets. See docs/mobile-shared-client-per-host.md.
   const hostIds = useMemo(() => hosts.map((h) => h.id), [hosts])
+  const hostRpcUnresponsive = useRpcUnresponsiveByHost(hostIds)
   const allClients = useAllHostClients(hostIds)
   const hostPaths = useMemo(
     () => Object.fromEntries(allClients.map(({ hostId, path }) => [hostId, path])),
@@ -781,6 +783,7 @@ export default function HomeScreen() {
               state,
               reconnectAttempts: attempts,
               lastConnectedAt,
+              rpcUnresponsiveSince: hostRpcUnresponsive[item.id] ?? null,
               endpoint: item.endpoint
             })
             return (

@@ -1,13 +1,4 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { RpcClient } from './rpc-client'
 import { connectionLogStore } from './connection-log-buffer'
 import { HostForceReconnectCoordinator, type HostReconnectEntry } from './host-force-reconnect'
@@ -22,10 +13,11 @@ import { clientActivePath } from './rpc-client-active-path'
 import type { RpcClientContextValue } from './rpc-client-context-contract'
 import type { MobileConnectionPath } from './stable-logical-rpc-client'
 import type { ConnectionLogSink, ConnectionState, HostProfile } from './types'
+import { RpcApplicationResponsiveness } from './rpc-application-responsiveness'
+import { RpcClientContextBoundary, useRpcClientContext } from './rpc-client-react-context'
+export { useRpcClientContext } from './rpc-client-react-context'
 
 type StoreEntry = HostReconnectEntry & { state: ConnectionState }
-
-const Ctx = createContext<RpcClientContextValue | null>(null)
 
 export function RpcClientProvider({ children }: { children: ReactNode }) {
   const storeRef = useRef<Map<string, StoreEntry>>(new Map())
@@ -36,6 +28,16 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
   const forceReconnectCoordinatorRef = useRef(new HostForceReconnectCoordinator())
 
   const primedHostsRef = useRef(new HostReconnectProfileCache())
+  const responsivenessRef = useRef(new Map<string, RpcApplicationResponsiveness>())
+
+  function getHostResponsiveness(hostId: string): RpcApplicationResponsiveness {
+    let responsiveness = responsivenessRef.current.get(hostId)
+    if (!responsiveness) {
+      responsiveness = new RpcApplicationResponsiveness()
+      responsivenessRef.current.set(hostId, responsiveness)
+    }
+    return responsiveness
+  }
 
   function notifyHostState(hostId: string, state: ConnectionState) {
     const set = stateListenersRef.current.get(hostId)
@@ -57,6 +59,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     pendingOpensRef.current.cancel(hostId)
     forceReconnectCoordinatorRef.current.cancel(hostId)
     primedHostsRef.current.delete(hostId)
+    responsivenessRef.current.delete(hostId)
     const entry = storeRef.current.get(hostId)
     entry?.unsubState()
     storeRef.current.delete(hostId)
@@ -121,7 +124,8 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
           client = openHostLogicalClient(
             profile.host,
             onLog,
-            primedHostsRef.current.publisher(hostId, profile.version, getHostListLoadRevision)
+            primedHostsRef.current.publisher(hostId, profile.version, getHostListLoadRevision),
+            getHostResponsiveness(hostId)
           )
         } catch {
           // Why: openHostLogicalClient can throw synchronously (bad public key / invalid URL); notify so the UI leaves 'connecting'.
@@ -228,6 +232,10 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     return storeRef.current.get(hostId)?.client.getLastConnectedAt() ?? null
   }, [])
 
+  const getRpcUnresponsiveSince = useCallback((hostId: string): number | null => {
+    return responsivenessRef.current.get(hostId)?.getUnresponsiveSince() ?? null
+  }, [])
+
   const getActivePath = useCallback((hostId: string): MobileConnectionPath => {
     return clientActivePath(storeRef.current.get(hostId)?.client)
   }, [])
@@ -298,6 +306,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
       getState,
       getReconnectAttempt,
       getLastConnectedAt,
+      getRpcUnresponsiveSince,
       getActivePath,
       subscribeHostState,
       getAllClients,
@@ -312,6 +321,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
       getState,
       getReconnectAttempt,
       getLastConnectedAt,
+      getRpcUnresponsiveSince,
       getActivePath,
       subscribeHostState,
       getAllClients,
@@ -320,15 +330,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     ]
   )
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>
-}
-
-export function useRpcClientContext(): RpcClientContextValue {
-  const ctx = useContext(Ctx)
-  if (!ctx) {
-    throw new Error('useHostClient must be used inside <RpcClientProvider>')
-  }
-  return ctx
+  return <RpcClientContextBoundary value={value}>{children}</RpcClientContextBoundary>
 }
 
 export function useHostClient(hostId: string | undefined): {
@@ -391,56 +393,6 @@ export function useHostClient(hostId: string | undefined): {
   return { client: bound ? clientRef.current : null, state: boundState }
 }
 
-export function useAllHostClients(hostIds: string[]) {
-  const ctx = useRpcClientContext()
-  const key = useMemo(() => [...hostIds].sort().join(','), [hostIds])
-  const [tick, setTick] = useState(0)
-
-  useEffect(() => {
-    if (hostIds.length === 0) {
-      return
-    }
-    for (const id of hostIds) {
-      ctx.acquire(id)
-    }
-    const unsubs: Array<() => void> = []
-    for (const id of hostIds) {
-      unsubs.push(ctx.subscribeHostState(id, () => setTick((n) => n + 1)))
-    }
-    unsubs.push(ctx.subscribeAllHosts(() => setTick((n) => n + 1)))
-    return () => {
-      for (const u of unsubs) {
-        u()
-      }
-      for (const id of hostIds) {
-        ctx.release(id)
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key])
-
-  return useMemo(() => {
-    const out: Array<{
-      hostId: string
-      client: RpcClient
-      state: ConnectionState
-      path: MobileConnectionPath
-    }> = []
-    for (const id of hostIds) {
-      const all = ctx.getAllClients().find((entry) => entry.hostId === id)
-      if (all) {
-        out.push({
-          hostId: id,
-          client: all.client,
-          state: ctx.getState(id),
-          path: ctx.getActivePath(id)
-        })
-      }
-    }
-    return out
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, tick])
-}
-
 // Why: host-store's removeHost() must close the live client but has no React-side handle; this hook bridges to it.
 export { useCloseHost, useForceReconnect, usePrimeHosts } from './client-context-actions'
+export { useAllHostClients } from './client-context-all-host-clients'

@@ -10,7 +10,10 @@ import {
 } from './host-profile-publication'
 import * as hostListLoads from './host-list-load-sharing'
 import { saveMobileRelayHostOverlay } from './mobile-relay-host-overlay-store'
-import type { MobileRelayCredentialBundle } from './mobile-relay-credential-bundle'
+import {
+  deleteMobileRelayCredentialBundleIfCurrent,
+  type MobileRelayCredentialBundle
+} from './mobile-relay-credential-bundle'
 
 export class MobileRelayUpgradeHostRemovedError extends Error {}
 export class MobileRelayUpgradeHostSupersededError extends Error {}
@@ -20,10 +23,10 @@ export async function saveExistingHostRelayRouting(
   host: HostProfile,
   beforePublish?: () => Promise<void>,
   endpointLifecycle = getHostEndpointPublicationLifecycle(host.id)
-): Promise<void> {
+): Promise<number> {
   const validated = HostProfileSchema.parse(host)
   await requireCurrentHostCredential(validated)
-  await serializeHostProfilePublication(validated.id, async () => {
+  return serializeHostProfilePublication(validated.id, async () => {
     requireCurrentEndpointGeneration(validated.id, endpointLifecycle)
     const existing = await requireCurrentHostMetadata(validated)
     requireCurrentPublication(validated, endpointLifecycle)
@@ -45,7 +48,7 @@ export async function saveExistingHostRelayRouting(
       relayHostId,
       relay
     })
-    hostListLoads.dropSharedHostListLoad()
+    return hostListLoads.dropSharedHostListLoad()
   })
 }
 
@@ -53,7 +56,8 @@ export async function writeExistingHostRelayCredentialBundle(
   host: HostProfile,
   bundle: MobileRelayCredentialBundle,
   writeBundle: (bundle: MobileRelayCredentialBundle) => Promise<void>,
-  endpointLifecycle = getHostEndpointPublicationLifecycle(host.id)
+  endpointLifecycle = getHostEndpointPublicationLifecycle(host.id),
+  cleanupBundle = deleteMobileRelayCredentialBundleIfCurrent
 ): Promise<void> {
   const validated = HostProfileSchema.parse(host)
   await requireCurrentHostCredential(validated)
@@ -65,6 +69,12 @@ export async function writeExistingHostRelayCredentialBundle(
     }
     requireCurrentPublication(validated, endpointLifecycle)
     await writeBundle(bundle)
+    try {
+      requireCurrentPublication(validated, endpointLifecycle)
+    } catch (error) {
+      void cleanupBundle(bundle).catch(() => {})
+      throw error
+    }
   })
 }
 

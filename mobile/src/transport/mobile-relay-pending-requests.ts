@@ -5,6 +5,7 @@ export type MobileRelayPendingRequest = {
   resolve: (response: RpcResponse) => void
   reject: (error: Error) => void
   timer: ReturnType<typeof setTimeout>
+  method: string
 }
 
 export function rejectMobileRelayPendingRequests(
