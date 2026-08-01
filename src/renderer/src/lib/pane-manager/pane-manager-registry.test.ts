@@ -252,8 +252,14 @@ describe('live terminal buffer census', () => {
     registeredManagers.push(manager)
   }
 
-  function terminal(cols: number, lines: number): unknown {
-    return { cols, buffer: { active: { length: lines } } }
+  function terminal(cols: number, lines: number, altScreen = false): unknown {
+    return {
+      cols,
+      buffer: {
+        normal: { length: lines },
+        active: { type: altScreen ? 'alternate' : 'normal' }
+      }
+    }
   }
 
   afterEach(() => {
@@ -273,52 +279,87 @@ describe('live terminal buffer census', () => {
     expect(getLiveTerminalBufferCensus()).toEqual({
       panes: 2,
       lines: 50_024,
-      cells: 6_002_880
+      cells: 6_002_880,
+      altScreenPanes: 0
+    })
+  })
+
+  // Why: `buffer.active` is the alternate buffer while vim/less/an agent TUI is up,
+  // and that buffer is viewport-sized — measured on @xterm/headless at 24 rows while
+  // `normal` still held 5001. Reading `active` reports a pane retaining 50k lines as
+  // retaining a screenful, which clears terminals of a leak they are causing.
+  it('counts scrollback held behind an alt-screen app, not its viewport', () => {
+    registerPanes(
+      { id: 1, terminal: terminal(120, 50_000, true) },
+      { id: 2, terminal: terminal(120, 24) }
+    )
+
+    expect(getLiveTerminalBufferCensus()).toEqual({
+      panes: 2,
+      lines: 50_024,
+      cells: 6_002_880,
+      altScreenPanes: 1
     })
   })
 
   it('reports into the renderer memory profile', () => {
-    registerPanes({ id: 1, terminal: terminal(80, 5_000) })
+    registerPanes({ id: 1, terminal: terminal(80, 5_000, true) })
 
     expect(collectRendererMemoryProfileCounts()).toMatchObject({
       'liveTerminalBuffers.panes': 1,
       'liveTerminalBuffers.lines': 5_000,
-      'liveTerminalBuffers.cells': 400_000
+      'liveTerminalBuffers.cells': 400_000,
+      'liveTerminalBuffers.altScreenPanes': 1
     })
   })
 
-  it('keeps counting siblings when a disposed terminal throws on buffer access', () => {
+  it('keeps counting siblings when a terminal throws on buffer access', () => {
     registerPanes(
       {
         id: 1,
         terminal: {
           get buffer(): never {
-            throw new Error('disposed')
+            throw new Error('torn down')
           }
         }
       },
       { id: 2, terminal: terminal(100, 10) }
     )
 
-    expect(getLiveTerminalBufferCensus()).toEqual({ panes: 1, lines: 10, cells: 1_000 })
+    expect(getLiveTerminalBufferCensus()).toEqual({
+      panes: 1,
+      lines: 10,
+      cells: 1_000,
+      altScreenPanes: 0
+    })
   })
 
   it('prefers a manager census over materializing public pane views', () => {
     const counted = {
       resetWebglTextureAtlases: vi.fn<() => void>(),
-      getPaneBufferCensus: () => ({ panes: 2, lines: 30, cells: 3_000 }),
+      getPaneBufferCensus: () => ({ panes: 2, lines: 30, cells: 3_000, altScreenPanes: 1 }),
       getPanes: vi.fn(() => [{ id: 1, terminal: terminal(80, 10) }])
     }
     registerLivePaneManager(counted)
     registeredManagers.push(counted)
 
-    expect(getLiveTerminalBufferCensus()).toEqual({ panes: 2, lines: 30, cells: 3_000 })
+    expect(getLiveTerminalBufferCensus()).toEqual({
+      panes: 2,
+      lines: 30,
+      cells: 3_000,
+      altScreenPanes: 1
+    })
     expect(counted.getPanes).not.toHaveBeenCalled()
   })
 
   it('tolerates a terminal with no buffer rather than emitting NaN', () => {
     registerPanes({ id: 1, terminal: {} })
 
-    expect(getLiveTerminalBufferCensus()).toEqual({ panes: 1, lines: 0, cells: 0 })
+    expect(getLiveTerminalBufferCensus()).toEqual({
+      panes: 1,
+      lines: 0,
+      cells: 0,
+      altScreenPanes: 0
+    })
   })
 })

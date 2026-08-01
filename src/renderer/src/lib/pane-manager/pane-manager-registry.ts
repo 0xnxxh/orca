@@ -122,11 +122,15 @@ export function getLivePaneCensus(): { managers: number; panes: number } {
  * live terminals is therefore consistent with anything from megabytes to gigabytes
  * — the same ambiguity the scrollback census resolves for stored buffers, for the
  * larger live copy. Safe to run inside a near-OOM highwater breadcrumb.
+ *
+ * `lines`/`cells` count the normal buffer only; `altScreenPanes` says how many panes
+ * were additionally holding a viewport-sized alternate buffer at collection time.
  */
 export function getLiveTerminalBufferCensus(): TerminalBufferCensus {
   let panes = 0
   let lines = 0
   let cells = 0
+  let altScreenPanes = 0
   for (const manager of liveManagers) {
     let census: TerminalBufferCensus
     try {
@@ -139,8 +143,9 @@ export function getLiveTerminalBufferCensus(): TerminalBufferCensus {
     panes += census.panes
     lines += census.lines
     cells += census.cells
+    altScreenPanes += census.altScreenPanes
   }
-  return { panes, lines, cells }
+  return { panes, lines, cells, altScreenPanes }
 }
 
 registerRendererMemoryProfileContributor('liveTerminalBuffers', getLiveTerminalBufferCensus)
