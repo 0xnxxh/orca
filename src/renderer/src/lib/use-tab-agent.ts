@@ -291,7 +291,8 @@ export function useTabAgent(tab: TerminalTab): TuiAgent | null {
   ])
 
   useEffect(() => {
-    if (!tab.launchAgent) {
+    // Why: an unresolved hydration title blocks heuristic clearing, but current shell-foreground proof remains authoritative.
+    if (!tab.launchAgent || (tab.titleHydrationPending && !processShellForeground)) {
       return
     }
     // Why: AND ref with state — the ref is generation-safe this commit while state can lag one render behind a respawn.
@@ -321,6 +322,7 @@ export function useTabAgent(tab: TerminalTab): TuiAgent | null {
     tab.defaultTitle,
     tab.id,
     tab.launchAgent,
+    tab.titleHydrationPending,
     tab.title
   ])
 
