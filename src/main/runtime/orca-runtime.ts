@@ -8149,28 +8149,24 @@ export class OrcaRuntimeService {
               return
             }
             try {
-              await this.createRuntimeOwnedMobileSessionTerminal(
-                worktreeId,
-                targetsHost,
-                undefined,
-                {
-                  identity: {
-                    tabId: tab.parentTabId,
-                    leafId: tab.leafId,
-                    sessionId
-                  },
-                  cwd: tab.startupCwd,
-                  command: agentStartup.command,
-                  env: agentStartup.env,
-                  startupCommandDelivery: agentStartup.startupCommandDelivery,
-                  launchConfig: agentStartup.launchConfig,
-                  launchAgent: tab.launchAgent,
-                  targetGroupId,
-                  acceptWorkspaceInventory: () =>
-                    acceptMaterialization() &&
-                    !this.hasLiveRuntimeSessionOwnedPtyBinding(worktreeId, tab)
-                }
-              )
+              // Why: coalescing shares attachment, not a caller's host navigation intent.
+              await this.createRuntimeOwnedMobileSessionTerminal(worktreeId, false, undefined, {
+                identity: {
+                  tabId: tab.parentTabId,
+                  leafId: tab.leafId,
+                  sessionId
+                },
+                cwd: tab.startupCwd,
+                command: agentStartup.command,
+                env: agentStartup.env,
+                startupCommandDelivery: agentStartup.startupCommandDelivery,
+                launchConfig: agentStartup.launchConfig,
+                launchAgent: tab.launchAgent,
+                targetGroupId,
+                acceptWorkspaceInventory: () =>
+                  acceptMaterialization() &&
+                  !this.hasLiveRuntimeSessionOwnedPtyBinding(worktreeId, tab)
+              })
             } catch (error) {
               if (
                 error instanceof Error &&
@@ -8208,9 +8204,30 @@ export class OrcaRuntimeService {
         if (!acceptMaterialization()) {
           throw new Error('tab_not_found')
         }
+        const materializedSnapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
+        const materializedTab = materializedSnapshot?.tabs.find(
+          (candidate): candidate is RuntimeMobileSessionTerminalTab =>
+            candidate.type === 'terminal' && candidate.id === tab.id
+        )
+        if (!materializedSnapshot || !materializedTab) {
+          throw new Error('tab_not_found')
+        }
+        if (targetsHost && !materializedTab.isActive) {
+          this.activateHeadlessMobileSessionTerminalTab(
+            worktreeId,
+            materializedSnapshot,
+            materializedTab,
+            {
+              persistWorkspaceSession: this.shouldPersistHeadlessMobileSessionActivation(
+                materializedSnapshot,
+                materializedTab
+              )
+            }
+          )
+        }
         return this.applyMobileSessionTabNavigation(
           this.getMobileSessionTabsForWorktree(worktreeId),
-          tab.id,
+          materializedTab.id,
           navigation,
           opts.clientNavigationId
         )
@@ -8337,7 +8354,8 @@ export class OrcaRuntimeService {
   private activateHeadlessMobileSessionTerminalTab(
     worktreeId: string,
     snapshot: RuntimeMobileSessionTabsSnapshot,
-    activeTab: RuntimeMobileSessionTerminalTab
+    activeTab: RuntimeMobileSessionTerminalTab,
+    options: { persistWorkspaceSession?: boolean } = {}
   ): void {
     const tabs = snapshot.tabs.map((candidate) => ({
       ...candidate,
@@ -8357,7 +8375,9 @@ export class OrcaRuntimeService {
       ),
       tabs
     }
-    this.persistHeadlessTerminalActiveLeaf(worktreeId, activeTab)
+    if (options.persistWorkspaceSession !== false) {
+      this.persistHeadlessTerminalActiveLeaf(worktreeId, activeTab)
+    }
     this.mobileSessionTabsByWorktree.set(worktreeId, nextSnapshot)
     this.emitMobileSessionTabsSnapshot(nextSnapshot)
   }
