@@ -128,7 +128,9 @@ export function useFileExplorerWatch({
 
   // Why: one atomic effect avoids a cleanup-ordering race that drops events on rapid worktree switches (review issue §3).
   useEffect(() => {
-    if (!worktreePath || activeRuntimeEnvironmentId === undefined) {
+    // Why require a worktree id: it is half of every watch key, and reconciliation already needs it —
+    // a null-keyed subscription would only park resync state no correctly-keyed one can consume.
+    if (!worktreePath || !activeWorktreeId || activeRuntimeEnvironmentId === undefined) {
       return
     }
 
@@ -172,9 +174,6 @@ export function useFileExplorerWatch({
     }
 
     function processPayload(payload: FsChangedPayload): void {
-      if (!currentWorktreeId) {
-        return
-      }
       processFileExplorerFsPayload({
         payload,
         currentWorktreePath,

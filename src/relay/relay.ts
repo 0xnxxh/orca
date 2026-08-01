@@ -52,8 +52,8 @@ import {
 import { resolveSetupAgentSequenceLaunchCommand } from '../shared/setup-agent-sequencing'
 import { pickRemoteCliEnv } from './remote-cli-env'
 import {
+  applyRelayGraceTimeConfiguration,
   decideRelayGrace,
-  retryDeferredShutdownAfterGraceReconfigure,
   type RelayGraceBranch
 } from './relay-grace-branch'
 import { relayLogLine } from './relay-diagnostic-log'
@@ -685,27 +685,14 @@ async function main(): Promise<void> {
   })
 
   function configureRelayGraceTime(params: Record<string, unknown>): { graceTimeMs: number } {
-    const seconds = Number(params.graceTimeSeconds)
-    if (Number.isFinite(seconds) && seconds >= 0) {
-      const previousGraceMs = ptyHandler.configuredGraceTimeMs
-      // Why: the host sends 0 before system sleep so live remote PTYs survive longer than the ordinary grace window.
-      ptyHandler.setGraceTimeMs(Math.floor(seconds) * 1000)
-      // Why: startGrace samples the configured value at arm time, so a raise that lands while the idle
-      // timer is already running would still fire at the old deadline. Re-arm only on an actual change
-      // — the host re-asserts the same value on every establish, and restarting the window on those
-      // would keep a grace alive indefinitely.
-      if (
-        ptyHandler.configuredGraceTimeMs !== previousGraceMs &&
-        graceDeadlineAt !== null &&
-        graceReason !== null &&
-        !shutdownInFlight
-      ) {
-        startGrace('grace reconfigured', {
-          retryDeferredShutdown: retryDeferredShutdownAfterGraceReconfigure(graceBranch)
-        })
-      }
-    }
-    return { graceTimeMs: ptyHandler.configuredGraceTimeMs }
+    return applyRelayGraceTimeConfiguration(params.graceTimeSeconds, {
+      readConfiguredGraceMs: () => ptyHandler.configuredGraceTimeMs,
+      writeConfiguredGraceMs: (graceMs) => ptyHandler.setGraceTimeMs(graceMs),
+      isGraceTimerArmed: () => graceDeadlineAt !== null && graceReason !== null,
+      isShutdownInFlight: () => shutdownInFlight,
+      readGraceBranch: () => graceBranch,
+      startGrace
+    })
   }
 
   dispatcher.onNotification(SSH_RELAY_CONFIGURE_GRACE_TIME_METHOD, (params) => {
