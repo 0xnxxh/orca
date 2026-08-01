@@ -44,7 +44,7 @@ export async function refreshFileExplorerExpandedDirs({
   )
   const commitBatchSize =
     maxConcurrentReads === Number.POSITIVE_INFINITY
-      ? uniqueDirs.length
+      ? Math.max(1, uniqueDirs.length)
       : Number.isFinite(maxConcurrentReads)
         ? Math.max(1, Math.floor(maxConcurrentReads))
         : 1
@@ -82,10 +82,24 @@ export async function refreshFileExplorerExpandedDirs({
       }
       return next
     })
-    for (const result of currentResults) {
-      onDirCommitted?.(result.dirPath)
-    }
     committedDirs += currentResults.length
+    // Why: the cache write above already landed for every result, so a throwing callback must not
+    // strand the rest of the batch with a staleness mark no later commit will clear.
+    let firstCommitError: unknown
+    let commitFailed = false
+    for (const result of currentResults) {
+      try {
+        onDirCommitted?.(result.dirPath)
+      } catch (error) {
+        if (!commitFailed) {
+          commitFailed = true
+          firstCommitError = error
+        }
+      }
+    }
+    if (commitFailed) {
+      throw firstCommitError
+    }
   }
 
   const settleRead = (result?: { dirPath: string; cache: DirCache }): void => {

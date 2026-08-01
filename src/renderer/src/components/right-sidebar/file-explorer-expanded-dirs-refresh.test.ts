@@ -375,6 +375,44 @@ describe('refreshFileExplorerExpandedDirs', () => {
     })
   })
 
+  it('still notifies the rest of a commit batch after one commit callback throws', async () => {
+    let cache: Record<string, DirCache> = {}
+    const setDirCache = vi.fn((update: CacheUpdate) => {
+      cache = typeof update === 'function' ? update(cache) : update
+    })
+    const commitError = new Error('commit failed')
+    const onDirCommitted = vi.fn((dirPath: string) => {
+      if (dirPath === '/repo/a') {
+        throw commitError
+      }
+    })
+
+    await expect(
+      refreshFileExplorerExpandedDirs({
+        dirs: [
+          { dirPath: '/repo/a', depth: 0 },
+          { dirPath: '/repo/b', depth: 0 }
+        ],
+        worktreePath: '/repo',
+        dirLoadTracker: createFileExplorerDirLoadTracker(),
+        setDirCache,
+        readDirectory: async () => ({
+          entries: [entry('index.ts')],
+          operationOwner: { kind: 'local' as const }
+        }),
+        // Both dirs land in one commit batch, so the throw must not strand the other's mark.
+        maxConcurrentReads: 2,
+        onDirCommitted
+      })
+    ).rejects.toBe(commitError)
+
+    expect(onDirCommitted.mock.calls.map(([dirPath]) => dirPath).sort()).toEqual([
+      '/repo/a',
+      '/repo/b'
+    ])
+    expect(cache['/repo/b']).toMatchObject({ loading: false, children: [{ name: 'index.ts' }] })
+  })
+
   it('drops a queued directory superseded while an earlier read is blocked', async () => {
     const tracker = createFileExplorerDirLoadTracker()
     let cache: Record<string, DirCache> = {}

@@ -158,7 +158,10 @@ export function useFileExplorerWatch({
           normalizeRuntimePathForComparison(currentWorktreePath) ||
         expandedRef.current.has(dirPath),
       dirConcurrency: fileExplorerRefreshConcurrency(owner),
-      // Every producer batches before delivery; a 0ms turn keeps renderer dedup without another 150ms.
+      // Why 0ms for every transport: each producer already flushes on the shared
+      // WATCH_BATCH_* window — local/SSH via filesystem-watcher, runtime files.watch via
+      // createFileWatchEventBatcher — so a second 150ms here only adds latency, not coalescing.
+      // A new transport must batch at the producer before joining this path.
       trailingMs: 0,
       maxWaitMs: 0
     })
@@ -188,6 +191,9 @@ export function useFileExplorerWatch({
     // Why: expose processPayload to the flush effect so it can replay deferred payloads without re-subscribing.
     processPayloadRef.current = processPayload
 
+    // Declared before handleFsChanged so its `disposed` read can never hit the temporal dead zone.
+    let disposed = false
+
     const handleFsChanged = (payload: FsChangedPayload): void => {
       if (disposed) {
         if (
@@ -216,7 +222,6 @@ export function useFileExplorerWatch({
       processPayload(payload)
     }
 
-    let disposed = false
     let unsubscribeListener: (() => void) | null = null
     if (activeRuntimeEnvironmentId?.trim() && activeWorktreeId) {
       // Why: remote runtime watch events don't enter the local Electron fs:changed bus, so subscribe directly.

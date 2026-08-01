@@ -239,6 +239,21 @@ describe('createFileExplorerWatchRefreshScheduler', () => {
     expect(scheduler.cancel()).toBe(false)
   })
 
+  it('reports discarded work when cancelled with a refresh in flight and nothing queued', async () => {
+    const gate = createDeferred()
+    const { refreshTree, scheduler } = setup({ refreshTree: () => gate.promise })
+
+    scheduler.requestFullRefresh()
+    await vi.advanceTimersByTimeAsync(TRAILING_MS)
+    expect(refreshTree).toHaveBeenCalledTimes(1)
+
+    // Nothing pending and no timer armed: the in-flight run is the only discarded work.
+    expect(scheduler.cancel()).toBe(true)
+
+    gate.resolve()
+    await vi.advanceTimersByTimeAsync(MAX_WAIT_MS)
+  })
+
   it('stops refreshing queued dirs when cancelled mid-run', async () => {
     // Regression guard: refreshDir is bound to a live ref that React reassigns
     // before the effect cleanup runs, so a queued path surviving cancel() would

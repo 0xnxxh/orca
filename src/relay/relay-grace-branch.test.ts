@@ -69,7 +69,9 @@ describe('decideRelayGrace', () => {
     })
 
     it('preserves shutdown-deferred when grace is reconfigured to zero', () => {
-      const current = decide({ retryDeferredShutdown: true })
+      // Why a non-zero starting grace: configureRelayGraceTime only re-arms on an actual change,
+      // so the reconfiguration this models must cross a real boundary, not 0 → 0.
+      const current = decide({ configuredGraceMs: 10_000, retryDeferredShutdown: true })
 
       expect(
         decide({
