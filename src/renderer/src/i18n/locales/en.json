@@ -14691,7 +14691,7 @@
     "voice": {
       "demoPrompt": "Refactor the voice setup flow and add coverage for the permission states.",
       "startDictation": "Start dictation",
-      "agentPromptTitle": "Agent prompt · bonito",
+      "agentPromptTitle": "Agent prompt",
       "listening": "Listening...",
       "focusPaneInstruction": "Focus a terminal, editor, or agent prompt, then press",
       "theShortcut": "the dictation shortcut",

@@ -71,7 +71,7 @@ export function VoiceDictationFeatureTipVisual(): JSX.Element {
       <div className="relative mt-4 h-56 w-full max-w-[21rem] overflow-hidden rounded-xl border border-border/80 bg-card text-left shadow-xs">
         <div className="flex h-10 items-center gap-2 border-b border-border px-3 text-[11px] text-muted-foreground">
           <span className="size-2 rounded-full bg-foreground/35" />
-          <span>{translate('featureTips.voice.agentPromptTitle', 'Agent prompt · bonito')}</span>
+          <span>{translate('featureTips.voice.agentPromptTitle', 'Agent prompt')}</span>
         </div>
 
         <div className="absolute inset-x-0 bottom-0 top-10 bg-[var(--editor-surface)] px-4 py-5 font-mono text-xs leading-relaxed">
