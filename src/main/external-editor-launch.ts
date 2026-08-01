@@ -1,12 +1,31 @@
+import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { basename, posix, win32 } from 'node:path'
 import { parseWslUncPath } from '../shared/wsl-paths'
 import { isVsCodeLauncherExecutable } from '../shared/vscode-remote-ssh-launcher'
 import { resolveCliCommand } from './codex-cli/command'
-import { getCmdExePath } from './win32-utils'
+import { getCmdExePath, getSpawnArgsForWindows } from './win32-utils'
 
 export const EXTERNAL_EDITOR_CLI_COMMAND = 'code'
 const WINDOWS_CONSOLE_EDITORS = new Set(['nvim', 'vim'])
+
+// Why: JetBrains installers ship `*64.exe` GUI-subsystem binaries. The
+// Toolbox/installer `.cmd`/`.bat` shims often chain through console helpers
+// (`java.exe`), which allocate a visible Command Prompt even when the parent
+// spawn uses windowsHide — the STA-3040 "prompt window" loop on Windows.
+const JETBRAINS_WINDOWS_GUI_LAUNCHERS: Readonly<Record<string, string>> = {
+  idea: 'idea64',
+  webstorm: 'webstorm64',
+  pycharm: 'pycharm64',
+  phpstorm: 'phpstorm64',
+  goland: 'goland64',
+  rider: 'rider64',
+  clion: 'clion64',
+  rubymine: 'rubymine64',
+  datagrip: 'datagrip64',
+  rustrover: 'rustrover64',
+  studio: 'studio64'
+}
 
 export type ExternalEditorLaunchSpec =
   | {
@@ -133,6 +152,20 @@ function isCompoundShellCommand(command: string): boolean {
   return /\s/.test(command)
 }
 
+function resolveSimpleEditorCommand(command: string, platform: NodeJS.Platform): string {
+  if (platform === 'win32') {
+    const jetbrainsGui = JETBRAINS_WINDOWS_GUI_LAUNCHERS[command.toLowerCase()]
+    if (jetbrainsGui) {
+      const resolvedGui = resolveCliCommand(jetbrainsGui, { platform })
+      // Why: resolveCliCommand returns the input name when nothing is found.
+      if (resolvedGui !== jetbrainsGui) {
+        return resolvedGui
+      }
+    }
+  }
+  return resolveCliCommand(command, { platform })
+}
+
 function buildShellLaunchSpec(
   command: string,
   pathValue: string,
@@ -140,11 +173,19 @@ function buildShellLaunchSpec(
 ): ExternalEditorLaunchSpec {
   const shellCommand = `${command} ${escapePathForShell(pathValue, platform)}`
   if (platform === 'win32') {
+    const hideWindowsConsole = !shouldShowWindowsConsole(command, platform, {
+      shellCommand: true
+    })
+    // Why: GUI compound commands (not terminal editors) use start /B so a
+    // Command Prompt does not linger; skip when the user already used `start`.
+    const alreadyUsesStart = /^\s*start(\.exe)?\b/i.test(command)
+    const wrappedCommand =
+      hideWindowsConsole && !alreadyUsesStart ? `start "" /B ${shellCommand}` : shellCommand
     return {
       kind: 'shell',
-      hideWindowsConsole: !shouldShowWindowsConsole(command, platform, { shellCommand: true }),
+      hideWindowsConsole,
       spawnCmd: getCmdExePath(),
-      spawnArgs: ['/d', '/s', '/c', shellCommand]
+      spawnArgs: ['/d', '/s', '/c', wrappedCommand]
     }
   }
   return {
@@ -178,7 +219,7 @@ export function resolveExternalEditorLaunchSpec(
     return buildShellLaunchSpec(trimmed, pathValue, platform)
   }
 
-  const editorCommand = resolveCliCommand(trimmed, { platform })
+  const editorCommand = resolveSimpleEditorCommand(trimmed, platform)
   return {
     kind: 'executable',
     hideWindowsConsole: !shouldShowWindowsConsole(editorCommand, platform),
@@ -216,4 +257,53 @@ export function resolveVsCodeRemoteSshLaunchSpec(
     spawnCmd: editorCommand,
     spawnArgs: ['--remote', `ssh-remote+${authority}`, pathValue]
   }
+}
+
+function resolveExternalEditorSpawn(launchSpec: ExternalEditorLaunchSpec): {
+  spawnCmd: string
+  spawnArgs: string[]
+  windowsHide: boolean
+} {
+  // Why: GUI Open In .cmd shims (idea.cmd) use start /B so no Command Prompt
+  // lingers; terminal editors keep the waiting form (nvim needs a console).
+  if (launchSpec.kind === 'executable') {
+    const spawned = getSpawnArgsForWindows(launchSpec.spawnCmd, launchSpec.spawnArgs, {
+      detachedGui: launchSpec.hideWindowsConsole
+    })
+    return { ...spawned, windowsHide: launchSpec.hideWindowsConsole }
+  }
+  return {
+    spawnCmd: launchSpec.spawnCmd,
+    spawnArgs: launchSpec.spawnArgs,
+    windowsHide: launchSpec.hideWindowsConsole
+  }
+}
+
+export async function launchExternalEditor(launchSpec: ExternalEditorLaunchSpec): Promise<void> {
+  const { spawnCmd, spawnArgs, windowsHide } = resolveExternalEditorSpawn(launchSpec)
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    const child = spawn(spawnCmd, spawnArgs, { detached: true, stdio: 'ignore', windowsHide })
+    let settled = false
+    function cleanup(): void {
+      child.off('error', onError)
+      child.off('spawn', onSpawn)
+    }
+    function settle(callback: () => void): void {
+      if (settled) {
+        return
+      }
+      settled = true
+      cleanup()
+      callback()
+    }
+    function onError(error: Error): void {
+      settle(() => rejectPromise(error))
+    }
+    function onSpawn(): void {
+      child.unref()
+      settle(resolvePromise)
+    }
+    child.once('error', onError)
+    child.once('spawn', onSpawn)
+  })
 }

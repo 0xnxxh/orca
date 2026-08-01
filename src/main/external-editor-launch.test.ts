@@ -32,6 +32,50 @@ describe('resolveExternalEditorLaunchSpec', () => {
     })
   })
 
+  it('prefers JetBrains *64.exe GUI launchers over idea.cmd on Windows', () => {
+    resolveCliCommandMock.mockImplementation((command: string) => {
+      if (command === 'idea64') {
+        return 'C:\\Program Files\\JetBrains\\IntelliJ IDEA\\bin\\idea64.exe'
+      }
+      if (command === 'idea') {
+        return 'C:\\Users\\me\\AppData\\Local\\JetBrains\\Toolbox\\scripts\\idea.cmd'
+      }
+      return command
+    })
+
+    expect(
+      resolveExternalEditorLaunchSpec('idea', 'C:\\workspaces\\orca', { platform: 'win32' })
+    ).toEqual({
+      kind: 'executable',
+      hideWindowsConsole: true,
+      spawnCmd: 'C:\\Program Files\\JetBrains\\IntelliJ IDEA\\bin\\idea64.exe',
+      spawnArgs: ['C:\\workspaces\\orca']
+    })
+    expect(resolveCliCommandMock).toHaveBeenCalledWith('idea64', { platform: 'win32' })
+    expect(resolveCliCommandMock).not.toHaveBeenCalledWith('idea', expect.anything())
+  })
+
+  it('falls back to the idea.cmd shim when idea64 is not installed', () => {
+    resolveCliCommandMock.mockImplementation((command: string) => {
+      if (command === 'idea64') {
+        return 'idea64'
+      }
+      if (command === 'idea') {
+        return 'C:\\Users\\me\\AppData\\Local\\JetBrains\\Toolbox\\scripts\\idea.cmd'
+      }
+      return command
+    })
+
+    expect(
+      resolveExternalEditorLaunchSpec('idea', 'C:\\workspaces\\orca', { platform: 'win32' })
+    ).toEqual({
+      kind: 'executable',
+      hideWindowsConsole: true,
+      spawnCmd: 'C:\\Users\\me\\AppData\\Local\\JetBrains\\Toolbox\\scripts\\idea.cmd',
+      spawnArgs: ['C:\\workspaces\\orca']
+    })
+  })
+
   it('appends escaped paths to compound macOS open commands', () => {
     expect(
       resolveExternalEditorLaunchSpec('open -a "Typora"', "/tmp/note's.md", {
@@ -82,6 +126,19 @@ describe('resolveExternalEditorLaunchSpec', () => {
       hideWindowsConsole: true,
       spawnCmd: getCmdExePath(),
       spawnArgs: ['/d', '/s', '/c', 'start "" notepad C:\\note.md']
+    })
+  })
+
+  it('wraps non-start GUI compound Windows commands with start /B', () => {
+    expect(
+      resolveExternalEditorLaunchSpec('code --reuse-window', 'C:\\workspaces\\orca', {
+        platform: 'win32'
+      })
+    ).toEqual({
+      kind: 'shell',
+      hideWindowsConsole: true,
+      spawnCmd: getCmdExePath(),
+      spawnArgs: ['/d', '/s', '/c', 'start "" /B code --reuse-window C:\\workspaces\\orca']
     })
   })
 
@@ -245,7 +302,7 @@ describe('resolveExternalEditorLaunchSpec', () => {
     ).toEqual([pathValue])
   })
 
-  it('does not rewrite compound VS Code commands', () => {
+  it('does not rewrite compound VS Code commands into WSL remote args', () => {
     const pathValue = '\\\\wsl.localhost\\Ubuntu\\home\\ada\\project'
 
     expect(
@@ -254,7 +311,7 @@ describe('resolveExternalEditorLaunchSpec', () => {
       kind: 'shell',
       hideWindowsConsole: true,
       spawnCmd: getCmdExePath(),
-      spawnArgs: ['/d', '/s', '/c', `code --reuse-window ${pathValue}`]
+      spawnArgs: ['/d', '/s', '/c', `start "" /B code --reuse-window ${pathValue}`]
     })
   })
 })

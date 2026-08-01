@@ -39,9 +39,19 @@ function hasUnsafeWindowsBatchSyntax(value: string): boolean {
   return UNSAFE_WINDOWS_BATCH_SYNTAX.test(value)
 }
 
+export type GetSpawnArgsForWindowsOptions = {
+  /**
+   * GUI launchers (Open In apps) should not leave a lingering Command Prompt.
+   * `start "" /B` returns immediately and keeps console-subsystem children of
+   * `.cmd`/`.bat` shims from allocating a fresh visible prompt window.
+   */
+  detachedGui?: boolean
+}
+
 export function getSpawnArgsForWindows(
   command: string,
-  args: string[]
+  args: string[],
+  options: GetSpawnArgsForWindowsOptions = {}
 ): { spawnCmd: string; spawnArgs: string[] } {
   if (isWindowsBatchScript(command)) {
     for (const value of [command, ...args]) {
@@ -51,6 +61,14 @@ export function getSpawnArgsForWindows(
     }
 
     // Why: separate argv entries let Node quote spaces without breaking cmd.
+    if (options.detachedGui) {
+      // Why: empty title (`""`) is required so `start` does not treat the first
+      // quoted path as a window title; `/B` avoids a new console window.
+      return {
+        spawnCmd: getCmdExePath(),
+        spawnArgs: ['/d', '/c', 'start', '""', '/B', command, ...args]
+      }
+    }
     return { spawnCmd: getCmdExePath(), spawnArgs: ['/d', '/c', command, ...args] }
   }
   return { spawnCmd: command, spawnArgs: args }

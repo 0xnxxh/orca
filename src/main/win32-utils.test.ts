@@ -82,6 +82,26 @@ describe('getSpawnArgsForWindows', () => {
     }
   })
 
+  it('routes GUI Open In .cmd launches through start /B so no prompt window lingers', () => {
+    withPlatform('win32', () => {
+      const { spawnCmd, spawnArgs } = getSpawnArgsForWindows(
+        'C:\\Tools\\idea.cmd',
+        ['C:\\workspaces\\orca'],
+        { detachedGui: true }
+      )
+      expect(spawnCmd).toBe(getCmdExePath())
+      expect(spawnArgs).toEqual([
+        '/d',
+        '/c',
+        'start',
+        '""',
+        '/B',
+        'C:\\Tools\\idea.cmd',
+        'C:\\workspaces\\orca'
+      ])
+    })
+  })
+
   it('preserves VS Code WSL remote arguments with spaces through .cmd launchers', () => {
     withPlatform('win32', () => {
       const { spawnCmd, spawnArgs } = getSpawnArgsForWindows('C:\\tools\\code.cmd', [
