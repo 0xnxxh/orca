@@ -3575,10 +3575,9 @@ export type DeletedFolderWorkspaceSessionTombstone = {
 export type DeletedFolderWorkspaceSessionTombstoneOverflowBucket = {
   bucketStart: number
   expiresAt: number
-  workspaceKeyBits: string
-  tabOwnerBits?: string
-  connectionIdBits?: string
-  evidenceTruncated: boolean
+  workspaceKeys: WorkspaceKey[]
+  tabOwnerKeys: string[]
+  connectionIds: string[]
 }
 
 // ─── Persistence shape ──────────────────────────────────────────────

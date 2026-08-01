@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import type { ExecutionHostId } from '../shared/execution-host'
 import type {
   DeletedFolderWorkspaceSessionTombstone,
@@ -9,59 +8,107 @@ import type {
 
 const MAX_TOMBSTONES = 512
 export const MAX_DELETED_FOLDER_TOMBSTONE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
-// Why: daily keyed filters bound churn without turning unrelated remote folder identities into deletions.
 export const DELETED_FOLDER_OVERFLOW_BUCKET_MS = 24 * 60 * 60 * 1000
 export const MAX_DELETED_FOLDER_OVERFLOW_BUCKETS = 31
-export const DELETED_FOLDER_OVERFLOW_FILTER_BYTES = 8 * 1024
-const OVERFLOW_BUCKET_MS = DELETED_FOLDER_OVERFLOW_BUCKET_MS
-const MAX_OVERFLOW_BUCKETS = MAX_DELETED_FOLDER_OVERFLOW_BUCKETS
-const OVERFLOW_FILTER_BYTES = DELETED_FOLDER_OVERFLOW_FILTER_BYTES
-const OVERFLOW_FILTER_HASHES = 4
+export const MAX_DELETED_FOLDER_OVERFLOW_IDENTITIES_PER_KIND = 512
 const MAX_HOST_IDS = 32
 const MAX_TAB_OWNERS = 256
-const overflowFilterCache = new WeakMap<
+const overflowIdentityCache = new WeakMap<
   DeletedFolderWorkspaceSessionTombstoneOverflowBucket,
-  Partial<Record<'workspaceKeyBits' | 'tabOwnerBits' | 'connectionIdBits', Buffer | null>>
+  {
+    workspaceKeys: ReadonlySet<string>
+    tabOwnerKeys: ReadonlySet<string>
+    connectionIds: ReadonlySet<string>
+  }
 >()
 
 export type DeletedFolderTombstoneOverflowEntry = {
-  workspaceKey: WorkspaceKey
-  tombstone: DeletedFolderWorkspaceSessionTombstone
+  deletedAt: number
+  workspaceKey?: WorkspaceKey
+  tabOwners?: readonly { hostId: ExecutionHostId; tabId: string }[]
+  connectionIds?: readonly string[]
 }
 
-export function boundDeletedFolderTombstoneEvidence(
+export type BoundedDeletedFolderTombstoneEvidence = {
   tombstone: DeletedFolderWorkspaceSessionTombstone
-): DeletedFolderWorkspaceSessionTombstone {
-  const tabEntries = Object.entries(tombstone.tabConnectionIdsByHostId).flatMap(([hostId, tabs]) =>
+  overflowEntry: DeletedFolderTombstoneOverflowEntry | null
+}
+
+function getTabOwnerKey(hostId: ExecutionHostId, tabId: string): string {
+  return `${hostId}\0${tabId}`
+}
+
+function getTombstoneTabEntries(tombstone: DeletedFolderWorkspaceSessionTombstone) {
+  return Object.entries(tombstone.tabConnectionIdsByHostId).flatMap(([hostId, tabs]) =>
     Object.entries(tabs ?? {}).map(
       ([tabId, connectionId]) => [hostId as ExecutionHostId, tabId, connectionId] as const
     )
   )
-  const retainedTabEntries = tabEntries.slice(Math.max(0, tabEntries.length - MAX_TAB_OWNERS))
+}
+
+export function getBoundedDeletedFolderTombstoneEvidence(
+  tombstone: DeletedFolderWorkspaceSessionTombstone
+): BoundedDeletedFolderTombstoneEvidence {
+  const tabEntries = getTombstoneTabEntries(tombstone)
+  const retainedTabCandidates = tabEntries.slice(Math.max(0, tabEntries.length - MAX_TAB_OWNERS))
   const candidateHostIds = [
-    ...new Set([...tombstone.hostIds, ...retainedTabEntries.map(([hostId]) => hostId)])
+    ...new Set([...tombstone.hostIds, ...retainedTabCandidates.map(([hostId]) => hostId)])
   ]
   const retainedHostIds = candidateHostIds.slice(-MAX_HOST_IDS)
   const retainedHostIdSet = new Set(retainedHostIds)
+  const retainedTabOwnerKeys = new Set<string>()
   const tabConnectionIdsByHostId: DeletedFolderWorkspaceSessionTombstone['tabConnectionIdsByHostId'] =
     {}
-  for (const [hostId, tabId, connectionId] of retainedTabEntries) {
+  for (const [hostId, tabId, connectionId] of retainedTabCandidates) {
     if (!retainedHostIdSet.has(hostId)) {
       continue
     }
+    retainedTabOwnerKeys.add(getTabOwnerKey(hostId, tabId))
     tabConnectionIdsByHostId[hostId] = {
       ...tabConnectionIdsByHostId[hostId],
       [tabId]: connectionId
     }
   }
+  const discardedTabEntries = tabEntries.filter(
+    ([hostId, tabId]) => !retainedTabOwnerKeys.has(getTabOwnerKey(hostId, tabId))
+  )
+  const evidenceTruncated =
+    tombstone.evidenceTruncated ||
+    discardedTabEntries.length > 0 ||
+    candidateHostIds.length > MAX_HOST_IDS
   return {
-    ...tombstone,
-    evidenceTruncated:
-      tombstone.evidenceTruncated ||
-      tabEntries.length > MAX_TAB_OWNERS ||
-      candidateHostIds.length > MAX_HOST_IDS,
-    hostIds: retainedHostIds,
-    tabConnectionIdsByHostId
+    tombstone: {
+      ...tombstone,
+      evidenceTruncated,
+      hostIds: retainedHostIds,
+      tabConnectionIdsByHostId
+    },
+    overflowEntry:
+      discardedTabEntries.length > 0
+        ? {
+            deletedAt: tombstone.deletedAt,
+            tabOwners: discardedTabEntries.map(([hostId, tabId]) => ({ hostId, tabId })),
+            connectionIds: discardedTabEntries.flatMap(([, , connectionId]) =>
+              connectionId ? [connectionId] : []
+            )
+          }
+        : null
+  }
+}
+
+function getTombstoneOverflowEntry(
+  workspaceKey: WorkspaceKey,
+  tombstone: DeletedFolderWorkspaceSessionTombstone
+): DeletedFolderTombstoneOverflowEntry {
+  const tabEntries = getTombstoneTabEntries(tombstone)
+  return {
+    deletedAt: tombstone.deletedAt,
+    workspaceKey,
+    tabOwners: tabEntries.map(([hostId, tabId]) => ({ hostId, tabId })),
+    connectionIds: [
+      ...(tombstone.connectionId ? [tombstone.connectionId] : []),
+      ...tabEntries.flatMap(([, , connectionId]) => (connectionId ? [connectionId] : []))
+    ]
   }
 }
 
@@ -93,53 +140,19 @@ export function getDeletedFolderTombstoneEviction(
       ...expired.map(({ workspaceKey }) => workspaceKey),
       ...capEvictions.map(({ workspaceKey }) => workspaceKey)
     ],
-    overflowEntries: capEvictions.map(({ workspaceKey, tombstone }) => ({
-      workspaceKey,
-      tombstone
-    }))
+    overflowEntries: capEvictions.map(({ workspaceKey, tombstone }) =>
+      getTombstoneOverflowEntry(workspaceKey, tombstone)
+    )
   }
 }
 
-function getOverflowFilterOffsets(value: string): number[] {
-  const digest = createHash('sha256').update(value).digest()
-  return Array.from(
-    { length: OVERFLOW_FILTER_HASHES },
-    (_, index) => digest.readUInt32BE(index * 4) % (OVERFLOW_FILTER_BYTES * 8)
-  )
-}
-
-function addOverflowFilterValue(filter: Buffer, value: string): void {
-  for (const offset of getOverflowFilterOffsets(value)) {
-    filter[offset >> 3] |= 1 << (offset & 7)
+function addBoundedIdentities(retained: Set<string>, additions: readonly string[]): void {
+  for (const addition of additions) {
+    if (retained.size >= MAX_DELETED_FOLDER_OVERFLOW_IDENTITIES_PER_KIND) {
+      break
+    }
+    retained.add(addition)
   }
-}
-
-function overflowBucketFilterHasValue(
-  bucket: DeletedFolderWorkspaceSessionTombstoneOverflowBucket,
-  field: 'workspaceKeyBits' | 'tabOwnerBits' | 'connectionIdBits',
-  value: string
-): boolean {
-  const cached = overflowFilterCache.get(bucket) ?? {}
-  let filter = cached[field]
-  if (filter === undefined) {
-    filter = decodeDeletedFolderOverflowFilter(bucket[field])
-    cached[field] = filter
-    overflowFilterCache.set(bucket, cached)
-  }
-  if (!filter) {
-    return false
-  }
-  return getOverflowFilterOffsets(value).every(
-    (offset) => (filter[offset >> 3]! & (1 << (offset & 7))) !== 0
-  )
-}
-
-export function decodeDeletedFolderOverflowFilter(value: unknown): Buffer | null {
-  if (typeof value !== 'string') {
-    return null
-  }
-  const decoded = Buffer.from(value, 'base64')
-  return decoded.length === OVERFLOW_FILTER_BYTES ? decoded : null
 }
 
 export function addDeletedFolderTombstoneOverflowEntries(
@@ -151,64 +164,51 @@ export function addDeletedFolderTombstoneOverflowEntries(
   if (entries.length === 0) {
     return buckets
   }
-  const mutableByStart = new Map(
-    buckets.map((bucket) => [
-      bucket.bucketStart,
-      {
-        ...bucket,
-        workspaceKeyFilter: Buffer.from(bucket.workspaceKeyBits, 'base64'),
-        tabOwnerFilter: bucket.tabOwnerBits
-          ? Buffer.from(bucket.tabOwnerBits, 'base64')
-          : Buffer.alloc(OVERFLOW_FILTER_BYTES),
-        connectionIdFilter: bucket.connectionIdBits
-          ? Buffer.from(bucket.connectionIdBits, 'base64')
-          : Buffer.alloc(OVERFLOW_FILTER_BYTES)
-      }
-    ])
-  )
-  for (const { workspaceKey, tombstone } of entries) {
-    const bucketStart = Math.floor(tombstone.deletedAt / OVERFLOW_BUCKET_MS) * OVERFLOW_BUCKET_MS
-    const bucket = mutableByStart.get(bucketStart) ?? {
-      bucketStart,
-      expiresAt: tombstone.deletedAt + MAX_DELETED_FOLDER_TOMBSTONE_RETENTION_MS,
-      workspaceKeyBits: '',
-      evidenceTruncated: false,
-      workspaceKeyFilter: Buffer.alloc(OVERFLOW_FILTER_BYTES),
-      tabOwnerFilter: Buffer.alloc(OVERFLOW_FILTER_BYTES),
-      connectionIdFilter: Buffer.alloc(OVERFLOW_FILTER_BYTES)
+  const bucketsByStart = new Map(buckets.map((bucket) => [bucket.bucketStart, bucket]))
+  const mutableByStart = new Map<
+    number,
+    {
+      expiresAt: number
+      workspaceKeys: Set<string>
+      tabOwnerKeys: Set<string>
+      connectionIds: Set<string>
     }
-    addOverflowFilterValue(bucket.workspaceKeyFilter, workspaceKey)
-    if (tombstone.connectionId) {
-      addOverflowFilterValue(bucket.connectionIdFilter, tombstone.connectionId)
+  >()
+  for (const entry of entries) {
+    const bucketStart =
+      Math.floor(entry.deletedAt / DELETED_FOLDER_OVERFLOW_BUCKET_MS) *
+      DELETED_FOLDER_OVERFLOW_BUCKET_MS
+    const existing = bucketsByStart.get(bucketStart)
+    const mutable = mutableByStart.get(bucketStart) ?? {
+      expiresAt: existing?.expiresAt ?? 0,
+      workspaceKeys: new Set(existing?.workspaceKeys ?? []),
+      tabOwnerKeys: new Set(existing?.tabOwnerKeys ?? []),
+      connectionIds: new Set(existing?.connectionIds ?? [])
     }
-    for (const [hostId, tabConnectionIds] of Object.entries(tombstone.tabConnectionIdsByHostId)) {
-      for (const [tabId, connectionId] of Object.entries(tabConnectionIds ?? {})) {
-        addOverflowFilterValue(bucket.tabOwnerFilter, `${hostId}\0${tabId}`)
-        if (connectionId) {
-          addOverflowFilterValue(bucket.connectionIdFilter, connectionId)
-        }
-      }
-    }
-    bucket.expiresAt = Math.max(
-      bucket.expiresAt,
-      tombstone.deletedAt + MAX_DELETED_FOLDER_TOMBSTONE_RETENTION_MS
+    addBoundedIdentities(mutable.workspaceKeys, entry.workspaceKey ? [entry.workspaceKey] : [])
+    addBoundedIdentities(
+      mutable.tabOwnerKeys,
+      (entry.tabOwners ?? []).map(({ hostId, tabId }) => getTabOwnerKey(hostId, tabId))
     )
-    bucket.evidenceTruncated ||= tombstone.evidenceTruncated
-    mutableByStart.set(bucketStart, bucket)
+    addBoundedIdentities(mutable.connectionIds, entry.connectionIds ?? [])
+    mutable.expiresAt = Math.max(
+      mutable.expiresAt,
+      entry.deletedAt + MAX_DELETED_FOLDER_TOMBSTONE_RETENTION_MS
+    )
+    mutableByStart.set(bucketStart, mutable)
   }
-  return [...mutableByStart.values()]
+  for (const [bucketStart, mutable] of mutableByStart) {
+    bucketsByStart.set(bucketStart, {
+      bucketStart,
+      expiresAt: mutable.expiresAt,
+      workspaceKeys: [...mutable.workspaceKeys] as WorkspaceKey[],
+      tabOwnerKeys: [...mutable.tabOwnerKeys],
+      connectionIds: [...mutable.connectionIds]
+    })
+  }
+  return [...bucketsByStart.values()]
     .sort((left, right) => left.bucketStart - right.bucketStart)
-    .slice(-MAX_OVERFLOW_BUCKETS)
-    .map(({ workspaceKeyFilter, tabOwnerFilter, connectionIdFilter, ...bucket }) => ({
-      ...bucket,
-      workspaceKeyBits: workspaceKeyFilter.toString('base64'),
-      ...(tabOwnerFilter.some((byte) => byte !== 0)
-        ? { tabOwnerBits: tabOwnerFilter.toString('base64') }
-        : {}),
-      ...(connectionIdFilter.some((byte) => byte !== 0)
-        ? { connectionIdBits: connectionIdFilter.toString('base64') }
-        : {})
-    }))
+    .slice(-MAX_DELETED_FOLDER_OVERFLOW_BUCKETS)
 }
 
 export function pruneDeletedFolderTombstoneOverflowBuckets(
@@ -222,6 +222,20 @@ export function pruneDeletedFolderTombstoneOverflowBuckets(
   return retained.length === current.length ? current : retained
 }
 
+function getOverflowIdentities(bucket: DeletedFolderWorkspaceSessionTombstoneOverflowBucket) {
+  const cached = overflowIdentityCache.get(bucket)
+  if (cached) {
+    return cached
+  }
+  const identities = {
+    workspaceKeys: new Set(bucket.workspaceKeys),
+    tabOwnerKeys: new Set(bucket.tabOwnerKeys),
+    connectionIds: new Set(bucket.connectionIds)
+  }
+  overflowIdentityCache.set(bucket, identities)
+  return identities
+}
+
 export function hasDeletedFolderWorkspaceKeyOverflowEvidence(
   buckets: readonly DeletedFolderWorkspaceSessionTombstoneOverflowBucket[] | undefined,
   workspaceKey: string,
@@ -229,8 +243,7 @@ export function hasDeletedFolderWorkspaceKeyOverflowEvidence(
 ): boolean {
   return (buckets ?? []).some(
     (bucket) =>
-      bucket.expiresAt > now &&
-      overflowBucketFilterHasValue(bucket, 'workspaceKeyBits', workspaceKey)
+      bucket.expiresAt > now && getOverflowIdentities(bucket).workspaceKeys.has(workspaceKey)
   )
 }
 
@@ -240,10 +253,10 @@ export function hasDeletedFolderTabOwnerOverflowEvidence(
   tabId: string,
   now: number
 ): boolean {
+  const tabOwnerKey = getTabOwnerKey(hostId, tabId)
   return (buckets ?? []).some(
     (bucket) =>
-      bucket.expiresAt > now &&
-      overflowBucketFilterHasValue(bucket, 'tabOwnerBits', `${hostId}\0${tabId}`)
+      bucket.expiresAt > now && getOverflowIdentities(bucket).tabOwnerKeys.has(tabOwnerKey)
   )
 }
 
@@ -254,14 +267,6 @@ export function hasDeletedFolderConnectionOverflowEvidence(
 ): boolean {
   return (buckets ?? []).some(
     (bucket) =>
-      bucket.expiresAt > now &&
-      overflowBucketFilterHasValue(bucket, 'connectionIdBits', connectionId)
+      bucket.expiresAt > now && getOverflowIdentities(bucket).connectionIds.has(connectionId)
   )
-}
-
-export function hasTruncatedDeletedFolderOverflowEvidence(
-  buckets: readonly DeletedFolderWorkspaceSessionTombstoneOverflowBucket[] | undefined,
-  now: number
-): boolean {
-  return (buckets ?? []).some((bucket) => bucket.expiresAt > now && bucket.evidenceTruncated)
 }

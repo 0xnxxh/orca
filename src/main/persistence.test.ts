@@ -5281,8 +5281,9 @@ describe('Store', () => {
       {
         bucketStart: Date.now() - 31 * 24 * 60 * 60 * 1000,
         expiresAt: Date.now() - 24 * 60 * 60 * 1000,
-        workspaceKeyBits: Buffer.alloc(8 * 1024).toString('base64'),
-        evidenceTruncated: false
+        workspaceKeys: [],
+        tabOwnerKeys: [],
+        connectionIds: []
       }
     ]
     writeDataFile(state)
@@ -7058,6 +7059,23 @@ describe('Store', () => {
     )
     expect(store.getWorkspaceSession(hostId).terminalLayoutsByTabId).toEqual({})
     expect(store.getWorkspaceSession(hostId).terminalPtyIncarnationsByPaneKey).toEqual({})
+
+    store.patchWorkspaceSession(
+      {
+        terminalLayoutsByTabId: {
+          'unrelated-ownerless-tab': {
+            root: { type: 'leaf', leafId: TEST_LEAF_1 },
+            activeLeafId: TEST_LEAF_1,
+            expandedLeafId: null,
+            ptyIdsByLeafId: { [TEST_LEAF_1]: 'unrelated-ownerless-pty' }
+          }
+        }
+      },
+      hostId
+    )
+    expect(store.getWorkspaceSession(hostId).terminalLayoutsByTabId).toHaveProperty(
+      'unrelated-ownerless-tab'
+    )
   })
 
   it('bounds host-partition evidence for one deleted folder', async () => {

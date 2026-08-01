@@ -1,22 +1,26 @@
-import type { DeletedFolderWorkspaceSessionTombstoneOverflowBucket } from '../shared/types'
+import type {
+  DeletedFolderWorkspaceSessionTombstoneOverflowBucket,
+  WorkspaceKey
+} from '../shared/types'
 import {
-  decodeDeletedFolderOverflowFilter,
   DELETED_FOLDER_OVERFLOW_BUCKET_MS,
-  DELETED_FOLDER_OVERFLOW_FILTER_BYTES,
   MAX_DELETED_FOLDER_OVERFLOW_BUCKETS,
+  MAX_DELETED_FOLDER_OVERFLOW_IDENTITIES_PER_KIND,
   MAX_DELETED_FOLDER_TOMBSTONE_RETENTION_MS
 } from './deleted-folder-session-tombstones'
 
-function mergeOverflowFilter(target: Buffer, encodedSource: string | undefined): void {
-  if (!encodedSource) {
-    return
+function normalizeIdentities(value: unknown): { identities: string[]; changed: boolean } {
+  if (!Array.isArray(value)) {
+    return { identities: [], changed: value !== undefined }
   }
-  const source = Buffer.from(encodedSource, 'base64')
-  if (source.length !== DELETED_FOLDER_OVERFLOW_FILTER_BYTES) {
-    return
-  }
-  for (let index = 0; index < target.length; index += 1) {
-    target[index] |= source[index]!
+  const identities = [
+    ...new Set(value.filter((identity): identity is string => typeof identity === 'string'))
+  ].slice(0, MAX_DELETED_FOLDER_OVERFLOW_IDENTITIES_PER_KIND)
+  return {
+    identities,
+    changed:
+      identities.length !== value.length ||
+      identities.some((identity, index) => identity !== value[index])
   }
 }
 
@@ -30,27 +34,17 @@ export function normalizeDeletedFolderTombstoneOverflowBuckets(
   if (!Array.isArray(value)) {
     return { buckets: [], changed: value !== undefined }
   }
-  const bucketsByStart = new Map<
-    number,
-    {
-      bucket: DeletedFolderWorkspaceSessionTombstoneOverflowBucket
-      workspaceKeyFilter: Buffer
-      tabOwnerFilter: Buffer | null
-      connectionIdFilter: Buffer | null
-    }
-  >()
+  const bucketsByStart = new Map<number, DeletedFolderWorkspaceSessionTombstoneOverflowBucket>()
   let changed = false
   for (const candidate of value) {
     const raw = candidate as Partial<DeletedFolderWorkspaceSessionTombstoneOverflowBucket> | null
-    const workspaceKeyFilter = decodeDeletedFolderOverflowFilter(raw?.workspaceKeyBits)
     if (
       !raw ||
       typeof raw.bucketStart !== 'number' ||
       !Number.isFinite(raw.bucketStart) ||
       typeof raw.expiresAt !== 'number' ||
       !Number.isFinite(raw.expiresAt) ||
-      raw.expiresAt <= now ||
-      !workspaceKeyFilter
+      raw.expiresAt <= now
     ) {
       changed = true
       continue
@@ -62,19 +56,15 @@ export function normalizeDeletedFolderTombstoneOverflowBuckets(
       raw.expiresAt,
       bucketStart + DELETED_FOLDER_OVERFLOW_BUCKET_MS + MAX_DELETED_FOLDER_TOMBSTONE_RETENTION_MS
     )
-    const tabOwnerFilter = raw.tabOwnerBits
-      ? decodeDeletedFolderOverflowFilter(raw.tabOwnerBits)
-      : null
-    const connectionIdFilter = raw.connectionIdBits
-      ? decodeDeletedFolderOverflowFilter(raw.connectionIdBits)
-      : null
+    const workspaceKeys = normalizeIdentities(raw.workspaceKeys)
+    const tabOwnerKeys = normalizeIdentities(raw.tabOwnerKeys)
+    const connectionIds = normalizeIdentities(raw.connectionIds)
     if (
       bucketStart !== raw.bucketStart ||
       expiresAt !== raw.expiresAt ||
-      workspaceKeyFilter.toString('base64') !== raw.workspaceKeyBits ||
-      Boolean(raw.tabOwnerBits) !== Boolean(tabOwnerFilter) ||
-      Boolean(raw.connectionIdBits) !== Boolean(connectionIdFilter) ||
-      typeof raw.evidenceTruncated !== 'boolean'
+      workspaceKeys.changed ||
+      tabOwnerKeys.changed ||
+      connectionIds.changed
     ) {
       changed = true
     }
@@ -84,42 +74,32 @@ export function normalizeDeletedFolderTombstoneOverflowBuckets(
     }
     const existing = bucketsByStart.get(bucketStart)
     if (existing) {
-      mergeOverflowFilter(existing.workspaceKeyFilter, workspaceKeyFilter.toString('base64'))
-      if (tabOwnerFilter) {
-        existing.tabOwnerFilter ??= Buffer.alloc(DELETED_FOLDER_OVERFLOW_FILTER_BYTES)
-        mergeOverflowFilter(existing.tabOwnerFilter, raw.tabOwnerBits)
-      }
-      if (connectionIdFilter) {
-        existing.connectionIdFilter ??= Buffer.alloc(DELETED_FOLDER_OVERFLOW_FILTER_BYTES)
-        mergeOverflowFilter(existing.connectionIdFilter, raw.connectionIdBits)
-      }
-      existing.bucket.expiresAt = Math.max(existing.bucket.expiresAt, expiresAt)
-      existing.bucket.evidenceTruncated ||= raw.evidenceTruncated === true
+      existing.workspaceKeys = normalizeIdentities([
+        ...existing.workspaceKeys,
+        ...workspaceKeys.identities
+      ]).identities as WorkspaceKey[]
+      existing.tabOwnerKeys = normalizeIdentities([
+        ...existing.tabOwnerKeys,
+        ...tabOwnerKeys.identities
+      ]).identities
+      existing.connectionIds = normalizeIdentities([
+        ...existing.connectionIds,
+        ...connectionIds.identities
+      ]).identities
+      existing.expiresAt = Math.max(existing.expiresAt, expiresAt)
       changed = true
       continue
     }
     bucketsByStart.set(bucketStart, {
-      bucket: {
-        bucketStart,
-        expiresAt,
-        workspaceKeyBits: workspaceKeyFilter.toString('base64'),
-        ...(tabOwnerFilter ? { tabOwnerBits: tabOwnerFilter.toString('base64') } : {}),
-        ...(connectionIdFilter ? { connectionIdBits: connectionIdFilter.toString('base64') } : {}),
-        evidenceTruncated: raw.evidenceTruncated === true
-      },
-      workspaceKeyFilter,
-      tabOwnerFilter,
-      connectionIdFilter
+      bucketStart,
+      expiresAt,
+      workspaceKeys: workspaceKeys.identities as WorkspaceKey[],
+      tabOwnerKeys: tabOwnerKeys.identities,
+      connectionIds: connectionIds.identities
     })
   }
   const retained = [...bucketsByStart.values()]
-    .sort((left, right) => left.bucket.bucketStart - right.bucket.bucketStart)
+    .sort((left, right) => left.bucketStart - right.bucketStart)
     .slice(-MAX_DELETED_FOLDER_OVERFLOW_BUCKETS)
-    .map(({ bucket, workspaceKeyFilter, tabOwnerFilter, connectionIdFilter }) => ({
-      ...bucket,
-      workspaceKeyBits: workspaceKeyFilter.toString('base64'),
-      ...(tabOwnerFilter ? { tabOwnerBits: tabOwnerFilter.toString('base64') } : {}),
-      ...(connectionIdFilter ? { connectionIdBits: connectionIdFilter.toString('base64') } : {})
-    }))
   return { buckets: retained, changed: changed || retained.length !== value.length }
 }

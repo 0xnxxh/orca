@@ -90,12 +90,12 @@ import type { MigrationUnsupportedPtyEntry } from '../shared/agent-status-types'
 import { MOBILE_PAIRING_USERDATA_FILES } from './runtime/mobile-pairing-files'
 import {
   addDeletedFolderTombstoneOverflowEntries,
-  boundDeletedFolderTombstoneEvidence,
+  type DeletedFolderTombstoneOverflowEntry,
+  getBoundedDeletedFolderTombstoneEvidence,
   getDeletedFolderTombstoneEviction,
   hasDeletedFolderConnectionOverflowEvidence,
   hasDeletedFolderTabOwnerOverflowEvidence,
   hasDeletedFolderWorkspaceKeyOverflowEvidence,
-  hasTruncatedDeletedFolderOverflowEvidence,
   pruneDeletedFolderTombstoneOverflowBuckets,
   MAX_DELETED_FOLDER_TOMBSTONE_RETENTION_MS
 } from './deleted-folder-session-tombstones'
@@ -2882,6 +2882,7 @@ function normalizeDeletedFolderWorkspaceSessionTombstones(
 } {
   const now = Date.now()
   const tombstones: NonNullable<PersistedState['deletedFolderWorkspaceSessionTombstones']> = {}
+  const boundedOverflowEntries: DeletedFolderTombstoneOverflowEntry[] = []
   const normalizedOverflow = normalizeDeletedFolderTombstoneOverflowBuckets(rawOverflowBuckets, now)
   let changed =
     normalizedOverflow.changed ||
@@ -2946,13 +2947,17 @@ function normalizeDeletedFolderWorkspaceSessionTombstones(
         )
       }
     }
-    const normalizedTombstone = boundDeletedFolderTombstoneEvidence({
+    const boundedEvidence = getBoundedDeletedFolderTombstoneEvidence({
       connectionId,
       deletedAt,
       evidenceTruncated: raw.evidenceTruncated === true,
       hostIds: [...hostIds],
       tabConnectionIdsByHostId
     })
+    const normalizedTombstone = boundedEvidence.tombstone
+    if (boundedEvidence.overflowEntry) {
+      boundedOverflowEntries.push(boundedEvidence.overflowEntry)
+    }
     tombstones[workspaceKey as WorkspaceKey] = normalizedTombstone
     if (JSON.stringify(rawTombstone) !== JSON.stringify(normalizedTombstone)) {
       changed = true
@@ -2965,7 +2970,7 @@ function normalizeDeletedFolderWorkspaceSessionTombstones(
   }
   const overflowBuckets = addDeletedFolderTombstoneOverflowEntries(
     normalizedOverflow.buckets,
-    eviction.overflowEntries,
+    [...boundedOverflowEntries, ...eviction.overflowEntries],
     now
   )
   return { tombstones, overflowBuckets, changed }
@@ -4793,7 +4798,8 @@ export class Store {
     workspaceKey: string,
     tombstone: DeletedFolderWorkspaceSessionTombstone
   ): void {
-    tombstone = boundDeletedFolderTombstoneEvidence(tombstone)
+    const boundedEvidence = getBoundedDeletedFolderTombstoneEvidence(tombstone)
+    tombstone = boundedEvidence.tombstone
     const tombstones = { ...this.state.deletedFolderWorkspaceSessionTombstones }
     delete tombstones[workspaceKey as WorkspaceKey]
     tombstones[workspaceKey as WorkspaceKey] = tombstone
@@ -4806,7 +4812,10 @@ export class Store {
     }
     const overflowBuckets = addDeletedFolderTombstoneOverflowEntries(
       this.state.deletedFolderWorkspaceSessionTombstoneOverflowBuckets,
-      eviction.overflowEntries,
+      [
+        ...(boundedEvidence.overflowEntry ? [boundedEvidence.overflowEntry] : []),
+        ...eviction.overflowEntries
+      ],
       Date.now()
     )
     if (overflowBuckets.length > 0) {
@@ -5017,7 +5026,7 @@ export class Store {
         !tombstone ||
         scope?.type !== 'folder' ||
         liveFolderIds.has(scope.folderWorkspaceId) ||
-        (!tombstone.hostIds.includes(hostId) && !tombstone.evidenceTruncated)
+        !tombstone.hostIds.includes(hostId)
       ) {
         continue
       }
@@ -5214,12 +5223,6 @@ export class Store {
       (this.state.folderWorkspaces ?? []).map((workspace) => workspace.id)
     )
     const deletedFolderTombstones = this.state.deletedFolderWorkspaceSessionTombstones ?? {}
-    const hasTruncatedDeletedFolderEvidence =
-      Object.values(deletedFolderTombstones).some((tombstone) => tombstone?.evidenceTruncated) ||
-      hasTruncatedDeletedFolderOverflowEvidence(
-        this.state.deletedFolderWorkspaceSessionTombstoneOverflowBuckets,
-        Date.now()
-      )
     const ownerKeys = new Set<string>()
     const ownerKeysByTabId = new Map<string, Set<string>>()
     const directPtyIdsByOwnerAndTabId = new Map<string, Map<string, string>>()
@@ -5359,10 +5362,8 @@ export class Store {
         tabId,
         Date.now()
       )
-    const hasUnownedTruncatedTabState = [...tabScopedStateIds].some(
-      (tabId) =>
-        (ownerKeysByTabId.get(tabId)?.size ?? 0) === 0 &&
-        (hasTruncatedDeletedFolderEvidence || hasOverflowTabOwner(tabId))
+    const hasUnownedDeletedTabState = [...tabScopedStateIds].some(
+      (tabId) => (ownerKeysByTabId.get(tabId)?.size ?? 0) === 0 && hasOverflowTabOwner(tabId)
     )
     if (
       !session.activeWorkspaceKey &&
@@ -5372,7 +5373,7 @@ export class Store {
       session = { ...session, activeWorkspaceExecutionHostId: null }
     }
     const tombstonedConnectionIds = this.getDeletedFolderConnectionIdsForHost(hostId)
-    if (ownerKeys.size === 0 && !hasUnownedTruncatedTabState) {
+    if (ownerKeys.size === 0 && !hasUnownedDeletedTabState) {
       return this.pruneDeletedFolderReconnectTargets(
         session,
         hostId,
@@ -5436,7 +5437,7 @@ export class Store {
       const deletedOwner = [...(currentDeletedOwnersByTabId?.get(tabId)?.entries() ?? [])].find(
         ([workspaceKey]) => ownerKeys.has(workspaceKey)
       )
-      if (!deletedOwner && !hasTruncatedDeletedFolderEvidence && !hasOverflowTabOwner(tabId)) {
+      if (!deletedOwner && !hasOverflowTabOwner(tabId)) {
         continue
       }
       exclusivelyDeletedTabIds.add(tabId)

@@ -6,6 +6,7 @@ import type {
 } from '../shared/types'
 import {
   addDeletedFolderTombstoneOverflowEntries,
+  getBoundedDeletedFolderTombstoneEvidence,
   getDeletedFolderTombstoneEviction,
   hasDeletedFolderConnectionOverflowEvidence,
   hasDeletedFolderTabOwnerOverflowEvidence,
@@ -44,15 +45,16 @@ describe('deleted folder session tombstones', () => {
 
   it('keeps overflow evidence keyed to deleted workspace, tab, and connection identities', () => {
     const workspaceKey = 'folder:deleted' as WorkspaceKey
-    const deleted = tombstone(NOW, 'deleted-connection')
-    deleted.hostIds = ['runtime:deleted-host']
-    deleted.tabConnectionIdsByHostId = {
-      'runtime:deleted-host': { 'deleted-tab': 'deleted-connection' }
-    }
-
     const buckets = addDeletedFolderTombstoneOverflowEntries(
       undefined,
-      [{ workspaceKey, tombstone: deleted }],
+      [
+        {
+          deletedAt: NOW,
+          workspaceKey,
+          tabOwners: [{ hostId: 'runtime:deleted-host', tabId: 'deleted-tab' }],
+          connectionIds: ['deleted-connection']
+        }
+      ],
       NOW
     )
 
@@ -82,7 +84,7 @@ describe('deleted folder session tombstones', () => {
   it('expires overflow buckets without cloning active evidence', () => {
     const buckets = addDeletedFolderTombstoneOverflowEntries(
       undefined,
-      [{ workspaceKey: 'folder:deleted' as WorkspaceKey, tombstone: tombstone() }],
+      [{ deletedAt: NOW, workspaceKey: 'folder:deleted' as WorkspaceKey }],
       NOW
     )
 
@@ -90,5 +92,68 @@ describe('deleted folder session tombstones', () => {
     expect(
       pruneDeletedFolderTombstoneOverflowBuckets(buckets, NOW + 30 * 24 * 60 * 60 * 1000)
     ).toEqual([])
+  })
+
+  it('fails open instead of returning probabilistic positives when exact evidence is full', () => {
+    const entries = Array.from({ length: 513 }, (_, index) => ({
+      deletedAt: NOW,
+      workspaceKey: `folder:deleted-${index}` as WorkspaceKey
+    }))
+
+    const buckets = addDeletedFolderTombstoneOverflowEntries(undefined, entries, NOW)
+
+    expect(hasDeletedFolderWorkspaceKeyOverflowEvidence(buckets, 'folder:deleted-0', NOW)).toBe(
+      true
+    )
+    expect(hasDeletedFolderWorkspaceKeyOverflowEvidence(buckets, 'folder:deleted-511', NOW)).toBe(
+      true
+    )
+    expect(hasDeletedFolderWorkspaceKeyOverflowEvidence(buckets, 'folder:deleted-512', NOW)).toBe(
+      false
+    )
+    expect(hasDeletedFolderWorkspaceKeyOverflowEvidence(buckets, 'folder:unrelated', NOW)).toBe(
+      false
+    )
+  })
+
+  it('spills discarded tab identities into exact host-scoped evidence', () => {
+    const deleted = tombstone()
+    deleted.hostIds = ['runtime:deleted-host']
+    deleted.tabConnectionIdsByHostId = {
+      'runtime:deleted-host': Object.fromEntries(
+        Array.from({ length: 257 }, (_, index) => [
+          `deleted-tab-${index}`,
+          `deleted-connection-${index}`
+        ])
+      )
+    }
+
+    const bounded = getBoundedDeletedFolderTombstoneEvidence(deleted)
+    const buckets = addDeletedFolderTombstoneOverflowEntries(
+      undefined,
+      bounded.overflowEntry ? [bounded.overflowEntry] : [],
+      NOW
+    )
+
+    expect(bounded.tombstone.evidenceTruncated).toBe(true)
+    expect(bounded.tombstone.tabConnectionIdsByHostId['runtime:deleted-host']).not.toHaveProperty(
+      'deleted-tab-0'
+    )
+    expect(
+      hasDeletedFolderTabOwnerOverflowEvidence(
+        buckets,
+        'runtime:deleted-host',
+        'deleted-tab-0',
+        NOW
+      )
+    ).toBe(true)
+    expect(
+      hasDeletedFolderTabOwnerOverflowEvidence(
+        buckets,
+        'runtime:unrelated-host',
+        'deleted-tab-0',
+        NOW
+      )
+    ).toBe(false)
   })
 })
