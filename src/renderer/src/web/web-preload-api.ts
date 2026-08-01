@@ -1534,6 +1534,8 @@ function createAiVaultApi(): NonNullable<Partial<PreloadApi>['aiVault']> {
       callRuntimeResult<AiVaultPrepareSessionResumeResult>('aiVault.prepareSessionResume', args),
     // Why: no server-side RPC for subagent transcript listing yet, so report an empty (not erroring) result.
     listSubagentSessions: () => Promise.resolve({ sessions: [], issues: [] }),
+    // Why: full first-prompt re-parse is local-FS only; web/runtime falls back to preview text.
+    getFirstUserPrompt: () => Promise.resolve({ prompt: null }),
     onWindowFocused: () => noopUnsubscribe
   }
 }

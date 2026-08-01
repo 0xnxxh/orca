@@ -5,6 +5,10 @@ import {
   finalizeSession,
   updateTimeline
 } from './session-scanner-accumulator'
+import {
+  normalizeFullFirstUserPromptText,
+  shouldCaptureFullFirstUserPrompt
+} from './session-scanner-first-user-prompt'
 import { normalizeTitleText } from './session-scanner-values'
 import SyncDatabase from '../sqlite/sync-database'
 import { columnExists, tableExists } from '../opencode-usage/schema-helpers'
@@ -154,6 +158,48 @@ function extractPartText(partData: string): string | null {
   }
 }
 
+function readFirstUserPromptFromOpenCodeDb(db: SyncDatabase, sessionId: string): string | null {
+  if (
+    !canCountOpenCodeMessages(db) ||
+    !tableExists(db, 'part') ||
+    !columnExists(db, 'message', 'id') ||
+    !columnExists(db, 'part', 'message_id') ||
+    !columnExists(db, 'part', 'time_created') ||
+    !columnExists(db, 'part', 'data')
+  ) {
+    return null
+  }
+
+  try {
+    const rows = db
+      .prepare(
+        `SELECT p.data AS part_data
+         FROM message m
+         JOIN part p ON p.message_id = m.id
+         WHERE m.session_id = ?
+           AND json_extract(m.data, '$.role') = 'user'
+           AND json_extract(p.data, '$.type') = 'text'
+         ORDER BY m.time_created ASC, m.id ASC, p.time_created ASC, p.rowid ASC
+         LIMIT 8`
+      )
+      .all(sessionId) as { part_data: string }[]
+
+    const parts: string[] = []
+    for (const row of rows) {
+      const text = extractPartText(row.part_data)
+      if (text) {
+        parts.push(text)
+      }
+    }
+    if (parts.length === 0) {
+      return null
+    }
+    return normalizeFullFirstUserPromptText(parts.join('\n'))
+  } catch {
+    return null
+  }
+}
+
 function buildPreviewQuery(db: SyncDatabase): string | null {
   if (
     !canCountOpenCodeMessages(db) ||
@@ -254,7 +300,9 @@ export async function parseOpenCodeSqliteSession(args: {
         addPreviewMessage(accumulator, {
           role: mapPreviewRole(previewRow.role),
           text,
-          timestamp: previewRow.time_created
+          timestamp: previewRow.time_created,
+          // Preview window is newest-N; first-prompt is loaded separately below.
+          seedFirstUserPrompt: false
         })
         if (previewRow.role === 'user' && !accumulator.title) {
           accumulator.title =
@@ -262,6 +310,12 @@ export async function parseOpenCodeSqliteSession(args: {
             normalizeTitleText(previewRow.summary_body ?? '')
         }
       }
+    }
+
+    // Why: list preview only joins the newest messages. On-demand copy needs the
+    // session's earliest real user text part, not a later turn still in the window.
+    if (shouldCaptureFullFirstUserPrompt()) {
+      accumulator.firstUserPrompt = readFirstUserPromptFromOpenCodeDb(db, sessionId)
     }
 
     return finalizeSession(accumulator, platform)

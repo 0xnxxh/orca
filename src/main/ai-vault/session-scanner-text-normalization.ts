@@ -42,6 +42,43 @@ export function normalizePreviewText(value: string): string | null {
   return finalizeNormalizedText(normalizeStringText(value, SESSION_PREVIEW_TEXT_LIMIT))
 }
 
+/** Bounded string fold for first-prompt / other copy fields with a source-scan cap. */
+export function normalizeBoundedSessionText(
+  value: string,
+  limit: number,
+  maxSourceScan?: number
+): string | null {
+  const builder = createTextBuilder(limit)
+  appendNormalizedString(builder, value, maxSourceScan)
+  return finalizeNormalizedText(builder)
+}
+
+/** Multi-part fold used when assembling first-prompt text from typed content blocks. */
+export function normalizeBoundedSessionTextParts(
+  parts: Iterable<string>,
+  limit: number,
+  maxSourceScanForPart?: (partLength: number) => number
+): string | null {
+  const builder = createTextBuilder(limit)
+  for (const part of parts) {
+    if (!part) {
+      continue
+    }
+    appendInterPartSpace(builder)
+    appendNormalizedString(
+      builder,
+      part,
+      maxSourceScanForPart ? maxSourceScanForPart(part.length) : undefined
+    )
+    // Why: break before the next iterable pull so later content blocks are not
+    // materialised after the text budget is already full.
+    if (builder.truncated) {
+      break
+    }
+  }
+  return finalizeNormalizedText(builder)
+}
+
 function normalizeContentText(value: unknown, limit: number): string | null {
   if (typeof value === 'string') {
     return finalizeNormalizedText(normalizeStringText(value, limit))
@@ -112,15 +149,18 @@ function appendInterPartSpace(builder: TextBuilder): void {
   }
 }
 
-function appendNormalizedString(builder: TextBuilder, value: string): void {
+function appendNormalizedString(builder: TextBuilder, value: string, maxScanLength?: number): void {
+  const scanEnd = maxScanLength == null ? value.length : Math.min(value.length, maxScanLength)
   let index = 0
-  while (index < value.length && !builder.truncated) {
+  while (index < scanEnd && !builder.truncated) {
     const hiddenBlockEnd = hiddenTextBlockEnd(value, index)
     if (hiddenBlockEnd !== null) {
       if (builder.text.length > 0) {
         builder.pendingSpace = true
       }
-      index = hiddenBlockEnd
+      // Why: hidden blocks may jump past the scan budget; clamp so multi-MB
+      // suppressed context cannot keep the first-prompt path busy.
+      index = Math.min(hiddenBlockEnd, scanEnd)
       continue
     }
 
@@ -142,8 +182,16 @@ function appendNormalizedString(builder: TextBuilder, value: string): void {
     }
 
     const charLength = codePointLength(value, index)
+    // Why: do not read past scanEnd mid code-point when the budget lands inside
+    // a surrogate pair — drop the incomplete char instead.
+    if (index + charLength > scanEnd) {
+      break
+    }
     appendVisibleText(builder, value.slice(index, index + charLength))
     index += charLength
+  }
+  if (!builder.truncated && scanEnd < value.length && builder.text.length > 0) {
+    builder.truncated = true
   }
 }
 

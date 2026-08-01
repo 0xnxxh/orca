@@ -230,7 +230,11 @@ import type {
   AutomationUpdateInput
 } from '../shared/automations-types'
 import type { KeybindingActionId, KeybindingFileSnapshot } from '../shared/keybindings'
-import type { AiVaultListArgs, AiVaultSubagentListArgs } from '../shared/ai-vault-types'
+import type {
+  AiVaultFirstUserPromptArgs,
+  AiVaultListArgs,
+  AiVaultSubagentListArgs
+} from '../shared/ai-vault-types'
 import type { AiVaultPrepareSessionResumeArgs } from '../shared/ai-vault-resume-preparation'
 import type { AgentType } from '../shared/native-chat-types'
 import {
@@ -4164,6 +4168,8 @@ const api = {
       ipcRenderer.invoke('aiVault:prepareSessionResume', args),
     listSubagentSessions: (args: AiVaultSubagentListArgs): Promise<unknown> =>
       ipcRenderer.invoke('aiVault:listSubagentSessions', args),
+    getFirstUserPrompt: (args: AiVaultFirstUserPromptArgs): Promise<unknown> =>
+      ipcRenderer.invoke('aiVault:getFirstUserPrompt', args),
     onWindowFocused: (callback: () => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent) => callback()
       ipcRenderer.on('aiVault:windowFocused', listener)

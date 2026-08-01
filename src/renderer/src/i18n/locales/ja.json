@@ -11188,7 +11188,14 @@
             "recoverableEmptyOpenLogHint": "ログを開いて復元できます。",
             "emptyConversationDetail": "このセッションには保存された会話がなく、再開できません。",
             "queuedMessages": "キュー内のメッセージ {{value0}} 件",
-            "subagentTranscripts": "サブエージェントの履歴 {{value0}} 件"
+            "subagentTranscripts": "サブエージェントの履歴 {{value0}} 件",
+            "firstPrompt": "最初のプロンプト",
+            "firstPromptCopied": "最初のプロンプトをコピーしました",
+            "copyFirstPrompt": "最初のプロンプトをコピー",
+            "copied": "コピーしました",
+            "copy": "コピー",
+            "noFirstPromptAvailable": "最初のプロンプトはありません",
+            "loadingFirstPrompt": "最初のプロンプトを読み込み中…"
           },
           "AiVaultSessionRow": {
             "resumeAgentSession": "{{value0}} セッションを再開",
