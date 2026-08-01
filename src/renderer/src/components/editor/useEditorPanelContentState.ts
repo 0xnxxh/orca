@@ -21,6 +21,7 @@ import {
   type FileContent
 } from './editor-panel-content-types'
 import {
+  measureEditorDiffContents,
   measureEditorFileContents,
   registerEditorContentCensusReader
 } from './editor-content-memory-census'
@@ -112,7 +113,10 @@ export function useEditorPanelContentState({
   // cannot walk — without this an OOM report never names them.
   useEffect(
     () =>
-      registerEditorContentCensusReader(() => measureEditorFileContents(fileContentsRef.current)),
+      registerEditorContentCensusReader(() => ({
+        ...measureEditorFileContents(fileContentsRef.current),
+        ...measureEditorDiffContents(diffContentsRef.current)
+      })),
     []
   )
   const fileLoadRetryAttemptsRef = useRef<Record<string, number>>({})

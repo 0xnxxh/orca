@@ -6,9 +6,13 @@
  * contents — are structurally invisible when an OOM highwater breadcrumb fires.
  */
 import { registerRendererMemoryProfileContributor } from '../../lib/renderer-memory-profile'
-import type { FileContent } from './editor-panel-content-types'
+import type { DiffContent, FileContent } from './editor-panel-content-types'
 
-export type EditorContentCensus = { files: number; chars: number }
+export type EditorFileContentCensus = { files: number; chars: number }
+/** Separate from file bodies: a diff tab holds two of them, so folding the sums
+ *  together hides which of the two shapes filled the heap. */
+export type EditorDiffContentCensus = { diffTabs: number; diffChars: number }
+export type EditorContentCensus = EditorFileContentCensus & EditorDiffContentCensus
 
 const readers = new Set<() => EditorContentCensus>()
 
@@ -36,7 +40,7 @@ export function registerEditorContentCensusReader(read: () => EditorContentCensu
 
 export function measureEditorFileContents(
   fileContents: Record<string, FileContent>
-): EditorContentCensus {
+): EditorFileContentCensus {
   let files = 0
   let chars = 0
   for (const key in fileContents) {
@@ -49,17 +53,45 @@ export function measureEditorFileContents(
   return { files, chars }
 }
 
+/**
+ * Why measured at all: a diff tab retains `originalContent` *and* `modifiedContent`,
+ * so a review session with many diff tabs holds two full file bodies per tab and
+ * shows up nowhere in the file-contents census — the most plausible heap shape for
+ * a reviewer's OOM, and previously invisible.
+ */
+export function measureEditorDiffContents(
+  diffContents: Record<string, DiffContent>
+): EditorDiffContentCensus {
+  let diffTabs = 0
+  let diffChars = 0
+  for (const key in diffContents) {
+    if (!Object.hasOwn(diffContents, key)) {
+      continue
+    }
+    const diff = diffContents[key]
+    diffTabs += 1
+    diffChars += (diff?.originalContent?.length ?? 0) + (diff?.modifiedContent?.length ?? 0)
+  }
+  return { diffTabs, diffChars }
+}
+
 registerRendererMemoryProfileContributor('editorContent', () => {
   let panels = 0
   let files = 0
   let chars = 0
+  let diffTabs = 0
+  let diffChars = 0
   for (const read of readers) {
     const census = read()
     panels += 1
     files += census.files
     chars += census.chars
+    diffTabs += census.diffTabs
+    diffChars += census.diffChars
   }
-  return { panels, files, chars, droppedPanels: droppedReaders }
+  // `chars`/`diffChars` are UTF-16 code units, not bytes: CJK and emoji bodies
+  // under-report against a byte budget by up to 3x.
+  return { panels, files, chars, diffTabs, diffChars, droppedPanels: droppedReaders }
 })
 
 /** Test-only: the cap is process-wide, so suites must be able to clear it. */

@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { collectRendererMemoryProfileCounts } from '../../lib/renderer-memory-profile'
 import {
+  measureEditorDiffContents,
   measureEditorFileContents,
   registerEditorContentCensusReader,
   resetEditorContentCensusForTesting
 } from './editor-content-memory-census'
+import type { DiffContent } from './editor-panel-content-types'
 
 describe('measureEditorFileContents', () => {
   it('counts entries and total characters of the loaded file bodies', () => {
@@ -25,11 +27,64 @@ describe('measureEditorFileContents', () => {
   })
 })
 
+describe('measureEditorDiffContents', () => {
+  // Why both sides: a diff tab retains the original and the modified body, so
+  // counting one of them halves the number in the report meant to settle where
+  // the heap went.
+  it('counts both sides of every open diff', () => {
+    expect(
+      measureEditorDiffContents({
+        a: {
+          kind: 'text',
+          originalContent: 'abcd',
+          modifiedContent: 'ef',
+          originalIsBinary: false,
+          modifiedIsBinary: false
+        },
+        b: {
+          kind: 'text',
+          originalContent: '',
+          modifiedContent: 'ghi',
+          originalIsBinary: false,
+          modifiedIsBinary: false
+        }
+      })
+    ).toEqual({ diffTabs: 2, diffChars: 9 })
+  })
+
+  it('counts a binary diff, whose base64 bodies are the largest of all', () => {
+    expect(
+      measureEditorDiffContents({
+        a: {
+          kind: 'binary',
+          originalContent: 'x'.repeat(1_000),
+          modifiedContent: 'y'.repeat(2_000),
+          originalIsBinary: true,
+          modifiedIsBinary: true
+        }
+      })
+    ).toEqual({ diffTabs: 1, diffChars: 3_000 })
+  })
+
+  it('tolerates an entry with no content strings', () => {
+    expect(
+      measureEditorDiffContents({
+        a: { kind: 'text' } as unknown as DiffContent
+      })
+    ).toEqual({ diffTabs: 1, diffChars: 0 })
+  })
+})
+
 describe('editor content memory profile contributor', () => {
   it('reports React-held file bodies, which the store-only profile cannot see', () => {
     // Why: crash bundles show gigabytes retained with every store collection
     // count unchanged. File contents live in useState, outside that profile.
-    const release = registerEditorContentCensusReader(() => ({ files: 3, chars: 4_000_000 }))
+    const release = registerEditorContentCensusReader(() => ({
+      files: 3,
+      chars: 4_000_000,
+      diffTabs: 0,
+      diffChars: 0
+    }))
 
     expect(collectRendererMemoryProfileCounts()).toMatchObject({
       'editorContent.panels': 1,
@@ -46,13 +101,25 @@ describe('editor content memory profile contributor', () => {
   })
 
   it('sums every mounted panel so a split editor is not undercounted', () => {
-    const releaseA = registerEditorContentCensusReader(() => ({ files: 2, chars: 100 }))
-    const releaseB = registerEditorContentCensusReader(() => ({ files: 5, chars: 900 }))
+    const releaseA = registerEditorContentCensusReader(() => ({
+      files: 2,
+      chars: 100,
+      diffTabs: 1,
+      diffChars: 40
+    }))
+    const releaseB = registerEditorContentCensusReader(() => ({
+      files: 5,
+      chars: 900,
+      diffTabs: 2,
+      diffChars: 60
+    }))
 
     expect(collectRendererMemoryProfileCounts()).toMatchObject({
       'editorContent.panels': 2,
       'editorContent.files': 7,
-      'editorContent.chars': 1000
+      'editorContent.chars': 1000,
+      'editorContent.diffTabs': 3,
+      'editorContent.diffChars': 100
     })
 
     releaseA()
@@ -63,7 +130,7 @@ describe('editor content memory profile contributor', () => {
     // Why: past the cap the census stops seeing new panels. A stuck `panels: 64`
     // is indistinguishable from "exactly 64 panels" unless the drops are named.
     for (let i = 0; i < 66; i += 1) {
-      registerEditorContentCensusReader(() => ({ files: 1, chars: 10 }))
+      registerEditorContentCensusReader(() => ({ files: 1, chars: 10, diffTabs: 0, diffChars: 0 }))
     }
 
     expect(collectRendererMemoryProfileCounts()).toMatchObject({
