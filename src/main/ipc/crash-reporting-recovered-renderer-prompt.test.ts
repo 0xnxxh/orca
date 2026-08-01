@@ -254,6 +254,34 @@ describe('auto-recovered renderer crash reporting', () => {
     await expect(getLatestPending()).resolves.toMatchObject({ id: stale.id, status: 'pending' })
   })
 
+  // Why: the recovery reload is armed by a 250ms timer that a loaded machine can
+  // run seconds late, so the crash that armed it must stay in scope past that.
+  it('credits the crash that armed a recovery reload the main process ran late', async () => {
+    const store = await createStore()
+    registerCrashReportingHandlers(store)
+    const recorded = await store.record(killedRendererCrash())
+
+    const armedMs = Date.parse(recorded.createdAt) + 4_000
+    noteRendererRecoveryReloadIssued(armedMs)
+    resolveRecoveredRendererCrashReports(store, armedMs)
+
+    await expect(getLatestPending()).resolves.toBeNull()
+  })
+
+  // Why: the arm outlives the reload by far longer than the lookback, because
+  // session restore over SSH can push the first render many seconds out.
+  it('resolves the crash when the recovered renderer takes many seconds to boot', async () => {
+    const store = await createStore()
+    registerCrashReportingHandlers(store)
+    await store.record(killedRendererCrash())
+
+    const armedMs = Date.now()
+    noteRendererRecoveryReloadIssued(armedMs)
+    resolveRecoveredRendererCrashReports(store, armedMs + 20_000)
+
+    await expect(getLatestPending()).resolves.toBeNull()
+  })
+
   it('still prompts when the renderer booted without an auto-recovery reload', async () => {
     const store = await createStore()
     registerCrashReportingHandlers(store)
