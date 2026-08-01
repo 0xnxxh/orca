@@ -7163,7 +7163,8 @@ export class Store {
   }
 
   flushPendingAsync(): Promise<void> {
-    return this.flushCurrentStateAsync(false).catch(() => {})
+    // Best-effort callers must not livelock while the live app keeps mutating state.
+    return this.flushCurrentStateAsync(false, undefined, false).catch(() => {})
   }
 
   flushPendingOrThrowAsync(options: { signal?: AbortSignal } = {}): Promise<void> {
@@ -7173,7 +7174,11 @@ export class Store {
     return this.flushCurrentStateAsync(false, options.signal)
   }
 
-  private async flushCurrentStateAsync(final: boolean, signal?: AbortSignal): Promise<void> {
+  private async flushCurrentStateAsync(
+    final: boolean,
+    signal?: AbortSignal,
+    drainToStableGeneration = true
+  ): Promise<void> {
     for (;;) {
       if (signal?.aborted) {
         throw new Error('Persistence flush aborted')
@@ -7200,7 +7205,7 @@ export class Store {
       if (signal?.aborted) {
         throw new Error('Persistence flush aborted')
       }
-      if (generation === this.writeGeneration) {
+      if (!drainToStableGeneration || generation === this.writeGeneration) {
         break
       }
     }

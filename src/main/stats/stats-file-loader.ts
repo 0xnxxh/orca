@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import type { StatsAggregates, StatsFile } from './types'
 
-const STATS_SCHEMA_VERSION = 1
+export const STATS_SCHEMA_VERSION = 1
 
 function defaultAggregates(): StatsAggregates {
   return {

@@ -55,7 +55,7 @@ export class StatsSnapshotWriter {
         }
       }
     }
-    const { tmpFile, json, generation } = this.preparePayload(serialize)
+    const { tmpFile, json, generation } = this.preparePayload(statsFile, serialize)
     writeFileSync(tmpFile, json, 'utf-8')
     renameSync(tmpFile, statsFile)
     this.lastCommittedGeneration = Math.max(this.lastCommittedGeneration, generation)
@@ -65,14 +65,14 @@ export class StatsSnapshotWriter {
     return this.pendingWrite ?? Promise.resolve()
   }
 
-  private preparePayload(serialize: () => string): {
+  private preparePayload(finalPath: string, serialize: () => string): {
     tmpFile: string
     json: string
     generation: number
   } {
     const generation = ++this.writeGeneration
     return {
-      tmpFile: durableWriteTempPath(this.resolveFile()),
+      tmpFile: durableWriteTempPath(finalPath),
       json: serialize(),
       generation
     }
@@ -101,7 +101,7 @@ export class StatsSnapshotWriter {
   private async writeToDiskAsync(serialize: () => string): Promise<void> {
     const statsFile = this.resolveFile()
     await mkdir(dirname(statsFile), { recursive: true }).catch(() => {})
-    const { tmpFile, json, generation } = this.preparePayload(serialize)
+    const { tmpFile, json, generation } = this.preparePayload(statsFile, serialize)
     let renamed = false
     try {
       await writeFile(tmpFile, json, 'utf-8')

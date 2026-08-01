@@ -2,10 +2,9 @@ import { app } from 'electron'
 import { join } from 'node:path'
 import type { StatsSummary } from '../../shared/types'
 import type { StatsEvent, StatsAggregates } from './types'
-import { loadStatsFile } from './stats-file-loader'
+import { loadStatsFile, STATS_SCHEMA_VERSION } from './stats-file-loader'
 import { StatsSnapshotWriter } from './stats-snapshot-writer'
 
-const STATS_SCHEMA_VERSION = 1
 const MAX_EVENTS = 10_000
 // Why: countedPRs is a deduplication registry that grows with every PR created
 // through Orca. Without a cap, a heavily-used instance accumulates thousands of
@@ -225,13 +224,7 @@ export class StatsCollector {
     }
     this.writeTimer = setTimeout(() => {
       this.writeTimer = null
-      // Why: the debounced save is fun-stats telemetry, not crash-critical
-      // state, so it uses the async writer to move the ~900KB tmp-file write
-      // off the main thread (the stringify stays sync — see prepareWritePayload).
-      // A chatty multi-agent session re-arms this every 5s; a fully-sync write
-      // is a recurring main-thread stall. The quit path uses flushAsync(); the sync
-      // flush() remains for callers that cannot await, and writeToDiskSync keeps the
-      // two paths race-safe.
+      // Why async: a chatty session can write ~900KB every 5s and stall the main thread.
       void this.enqueueWrite().catch((err) => {
         console.error('[stats] Failed to write stats:', err)
       })

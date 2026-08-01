@@ -416,6 +416,43 @@ describe('async persistence write path avoids synchronous fs syscalls', () => {
     expect(JSON.parse(readFileSync(dataFile(dir), 'utf-8')).ui.sidebarWidth).toBe(602)
   })
 
+  it('bounds a best-effort flush to one state generation', async () => {
+    const dir = makeDir()
+    const store = await createStore(dir)
+    let releaseRename!: () => void
+    const renameRelease = new Promise<void>((resolve) => {
+      releaseRename = resolve
+    })
+    let signalRename!: () => void
+    const renameStarted = new Promise<void>((resolve) => {
+      signalRename = resolve
+    })
+    let held = false
+    fsCalls.waitAsync = (fn, target) => {
+      if (held || fn !== 'rename' || !target.startsWith(dataFile(dir))) {
+        return null
+      }
+      held = true
+      signalRename()
+      return renameRelease
+    }
+    fsCalls.dirPrefix = dir
+    fsCalls.recording = true
+
+    store.updateUI({ sidebarWidth: 621 })
+    const flush = store.flushPendingAsync()
+    await renameStarted
+    store.updateUI({ sidebarWidth: 622 })
+    releaseRename()
+    await flush
+    fsCalls.recording = false
+
+    expect(JSON.parse(readFileSync(dataFile(dir), 'utf-8')).ui.sidebarWidth).toBe(621)
+
+    await store.flushPendingOrThrowAsync()
+    expect(JSON.parse(readFileSync(dataFile(dir), 'utf-8')).ui.sidebarWidth).toBe(622)
+  })
+
   it('the throwing async barrier drains mutations made during sidecar I/O', async () => {
     const dir = makeDir()
     const store = await createStore(dir)

@@ -162,9 +162,7 @@ describe('registerOrcaProfileHandlers', () => {
     expect(flush.mock.invocationCallOrder[0]).toBeLessThan(
       setActiveOrcaProfileMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
     )
-    expect(flush.mock.invocationCallOrder[0]).toBeLessThan(
-      onBeforeRelaunch.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
-    )
+    expect(flush).toHaveBeenCalledBefore(onBeforeRelaunch)
     expect(appRelaunchMock).not.toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(150)
