@@ -131,7 +131,9 @@ describe('stable pane ids', () => {
       executionRuntime: 'wsl:Ubuntu',
       pathFlavor: 'windows' as const,
       workspaceId: 'worktree:repo-1::/workspaces/project',
-      sessionId: 'session-1'
+      sessionId: 'session-1',
+      spawnPath: 'C:\\Workspaces\\Project',
+      routeOrReconnectFreshness: 'route-1'
     }
     const canonical = makePaneSpawnReservationKey(base)
 
@@ -141,7 +143,9 @@ describe('stable pane ids', () => {
       { executionRuntime: 'native' },
       { workspaceId: 'repo-1::/workspaces/other' },
       { workspaceId: 'folder:repo-1::/workspaces/project' },
-      { sessionId: 'session-2' }
+      { sessionId: 'session-2' },
+      { spawnPath: 'C:\\Workspaces\\Other' },
+      { routeOrReconnectFreshness: 'route-2' }
     ]) {
       expect(makePaneSpawnReservationKey({ ...base, ...distinct })).not.toBe(canonical)
     }
@@ -155,5 +159,25 @@ describe('stable pane ids', () => {
         pathFlavor: 'unknown'
       })
     ).toBeNull()
+  })
+
+  it('canonicalizes the final spawn path with execution-host semantics', () => {
+    const base = {
+      paneKey: PANE_KEY,
+      providerId: 'provider-1',
+      pathFlavor: 'windows' as const,
+      workspaceId: 'folder:folder-1',
+      spawnPath: '\\\\Server\\Share\\Project\\'
+    }
+    expect(makePaneSpawnReservationKey(base)).toBe(
+      makePaneSpawnReservationKey({ ...base, spawnPath: '//server/share/project' })
+    )
+    expect(makePaneSpawnReservationKey({ ...base, pathFlavor: 'posix' })).not.toBe(
+      makePaneSpawnReservationKey({
+        ...base,
+        pathFlavor: 'posix',
+        spawnPath: '//server/share/project'
+      })
+    )
   })
 })

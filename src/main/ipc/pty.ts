@@ -3858,6 +3858,10 @@ export function registerPtyHandlers(
   // Why: route through getProviderForPty() so CLI commands work for remote PTYs too; localProvider would silently fail for them.
   runtime?.setPtyController({
     spawn: async (args) => {
+      const spawnReservationFreshness =
+        args.spawnReservationFreshness ??
+        runtime?.getTerminalSpawnReservationFreshness?.(args.worktreeId, args.connectionId) ??
+        null
       const startupPromise = getLocalPtyStartupPromise(args.connectionId)
       if (startupPromise) {
         await startupPromise
@@ -4148,6 +4152,8 @@ export function registerPtyHandlers(
               remotePathFlavor: (provider as IPtyProvider).getExecutionHostPathFlavor?.()
             }),
             workspaceId: hostSessionBinding?.worktreeId,
+            spawnPath: cwd,
+            routeOrReconnectFreshness: spawnReservationFreshness,
             sessionId: callerRequestedSessionId
               ? getRelayPtyId(args.connectionId, callerRequestedSessionId)
               : null
@@ -5048,6 +5054,8 @@ export function registerPtyHandlers(
         }
       }
     ) => {
+      const spawnReservationFreshness =
+        runtime?.getTerminalSpawnReservationFreshness?.(args.worktreeId, args.connectionId) ?? null
       const spawnTiming = createPtySpawnTiming()
       const startupPromise = getLocalPtyStartupPromise(args.connectionId)
       if (startupPromise) {
@@ -5251,6 +5259,8 @@ export function registerPtyHandlers(
               remotePathFlavor: (provider as IPtyProvider).getExecutionHostPathFlavor?.()
             }),
             workspaceId: args.worktreeId,
+            spawnPath: cwd,
+            routeOrReconnectFreshness: spawnReservationFreshness,
             sessionId: args.sessionId ? getRelayPtyId(args.connectionId, args.sessionId) : null
           })
         : null

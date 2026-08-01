@@ -244,6 +244,7 @@ import {
   type RuntimeNavigationTarget
 } from '../../shared/runtime-navigation'
 import { mobileTerminalMaterializationKey } from './mobile-terminal-materialization-key'
+import { terminalSpawnReservationFreshness } from '../../shared/terminal-spawn-reservation-freshness'
 import type { SshConnectionState } from '../../shared/ssh-types'
 import { getPublicSshState } from './public-ssh-state'
 import { closeTerminalTabInWorkspaceSession } from '../../shared/workspace-session-terminal-tab-close'
@@ -1294,6 +1295,7 @@ type TerminalCreateOptions = {
   agentSessionCreateOperationId?: string
   signal?: AbortSignal
   acceptWorkspaceInventory?: () => boolean
+  spawnReservationFreshness?: string
   // Why: idempotent create operations must retain their fence after the PTY
   // exists, even if later runtime publication fails.
   onPtySpawnCommitted?: () => void
@@ -1547,6 +1549,7 @@ type RuntimePtyController = {
     agentSessionCreateOperationId?: string
     signal?: AbortSignal
     acceptWorkspaceInventory?: () => boolean
+    spawnReservationFreshness?: string
     onPtySpawnCommitted?: () => void
   }): Promise<{
     id: string
@@ -4996,6 +4999,19 @@ export class OrcaRuntimeService {
     }
   }
 
+  getTerminalSpawnReservationFreshness(
+    worktreeId: string | undefined,
+    connectionId: string | null | undefined
+  ): string | null {
+    const workspaceFreshness = worktreeId
+      ? (this.createMobileSessionFolderWorkspaceMutationFence(worktreeId)?.freshness ?? null)
+      : null
+    const reconnectGeneration = connectionId
+      ? (this.sshRelayRecoveryGenerationByTargetId.get(connectionId) ?? 0)
+      : null
+    return terminalSpawnReservationFreshness({ workspaceFreshness, reconnectGeneration })
+  }
+
   private createFolderWorkspaceInventoryFence(
     folderWorkspaces: readonly FolderWorkspace[]
   ): () => boolean {
@@ -8128,6 +8144,10 @@ export class OrcaRuntimeService {
           (connectionId === null ||
             (this.sshRelayRecoveryGenerationByTargetId.get(connectionId) ?? 0) ===
               reconnectGeneration)
+        const spawnReservationFreshness = terminalSpawnReservationFreshness({
+          workspaceFreshness: workspaceMutationFence?.freshness ?? null,
+          reconnectGeneration
+        })
         const materializationKey = mobileTerminalMaterializationKey({
           executionHostId,
           connectionId,
@@ -8173,6 +8193,7 @@ export class OrcaRuntimeService {
                 launchConfig: agentStartup.launchConfig,
                 launchAgent: tab.launchAgent,
                 targetGroupId,
+                spawnReservationFreshness,
                 acceptWorkspaceInventory: () =>
                   acceptMaterialization() &&
                   !this.hasLiveRuntimeSessionOwnedPtyBinding(worktreeId, tab)
@@ -25457,6 +25478,9 @@ export class OrcaRuntimeService {
         ...(launchOpts.acceptWorkspaceInventory
           ? { acceptWorkspaceInventory: launchOpts.acceptWorkspaceInventory }
           : {}),
+        ...(launchOpts.spawnReservationFreshness
+          ? { spawnReservationFreshness: launchOpts.spawnReservationFreshness }
+          : {}),
         ...(launchOpts.onPtySpawnCommitted ? { onPtySpawnCommitted: reportPtySpawnCommitted } : {}),
         ...(launchOpts.sessionId ? { sessionId: launchOpts.sessionId } : {}),
         // Why: a headless-created pane has no renderer session writer. Persist
@@ -26221,6 +26245,7 @@ export class OrcaRuntimeService {
       launchConfig?: SleepingAgentLaunchConfig
       signal?: AbortSignal
       acceptWorkspaceInventory?: () => boolean
+      spawnReservationFreshness?: string | null
     } = {}
   ): Promise<RuntimeMobileSessionCreateTerminalResult> {
     const workspace = await this.resolveTerminalWorkspaceLaunchScope(`id:${worktreeId}`)
@@ -26251,7 +26276,10 @@ export class OrcaRuntimeService {
       // Why: this method publishes the authoritative snapshot below; skip the intermediate publish to avoid a wrong-group flash.
       deferMobileSessionPublish: true,
       signal: opts.signal,
-      acceptWorkspaceInventory: opts.acceptWorkspaceInventory
+      acceptWorkspaceInventory: opts.acceptWorkspaceInventory,
+      ...(opts.spawnReservationFreshness
+        ? { spawnReservationFreshness: opts.spawnReservationFreshness }
+        : {})
     })
     const livePty = this.getLivePtyForHandle(terminal.handle)
     if (!livePty) {

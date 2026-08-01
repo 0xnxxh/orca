@@ -8255,6 +8255,7 @@ describe('registerPtyHandlers', () => {
       setPtyController: vi.fn((value) => {
         controller = value
       }),
+      getTerminalSpawnReservationFreshness: vi.fn(() => 'unchanged-route'),
       createPreAllocatedTerminalHandle: vi.fn(() => 'term_trusted'),
       preAllocateHandleForPty: vi.fn(() => 'term_trusted'),
       registerPreAllocatedHandleForPty: vi.fn(),
@@ -8381,6 +8382,7 @@ describe('registerPtyHandlers', () => {
       setPtyController: vi.fn((value) => {
         controller = value
       }),
+      getTerminalSpawnReservationFreshness: vi.fn(() => 'unchanged-route'),
       createPreAllocatedTerminalHandle: vi.fn(() => 'term_trusted'),
       preAllocateHandleForPty: vi.fn(() => 'term_trusted'),
       registerPreAllocatedHandleForPty: vi.fn(),
@@ -8451,6 +8453,148 @@ describe('registerPtyHandlers', () => {
       startupCwd: '/tmp'
     })
   })
+
+  it.each(['runtime', 'renderer'] as const)(
+    'isolates a current folder route from a stale %s reservation creator',
+    async (staleCreator) => {
+      type RuntimeSpawnController = {
+        spawn(args: {
+          cols: number
+          rows: number
+          cwd: string
+          worktreeId: string
+          tabId: string
+          leafId: string
+          sessionId: string
+          persistHostSessionBinding: true
+          spawnReservationFreshness?: string
+          acceptWorkspaceInventory?: () => boolean
+        }): Promise<{ id: string }>
+      }
+      const folder = {
+        id: 'route-race-folder',
+        projectGroupId: 'route-race-group',
+        folderPath: process.cwd(),
+        connectionId: null
+      }
+      const group = {
+        id: folder.projectGroupId,
+        parentPath: folder.folderPath,
+        connectionId: null
+      }
+      const pending: {
+        cwd: string | undefined
+        resolve: (result: { id: string }) => void
+      }[] = []
+      const providerSpawn = vi.fn(
+        (options: { cwd?: string }) =>
+          new Promise<{ id: string }>((resolve) => {
+            pending.push({ cwd: options.cwd, resolve })
+          })
+      )
+      const shutdown = vi.fn()
+      installDaemonTestProvider({ spawn: providerSpawn, shutdown })
+      const store = {
+        getFolderWorkspace: vi.fn(() => folder),
+        getFolderWorkspaces: vi.fn(() => [folder]),
+        getProjectGroups: vi.fn(() => [group]),
+        getRepos: vi.fn(() => []),
+        persistPtyBinding: vi.fn(),
+        removePtyBindingIfMatches: vi.fn()
+      }
+      let controller: RuntimeSpawnController | null = null
+      const runtime = {
+        setPtyController: vi.fn((value) => {
+          controller = value
+        }),
+        getTerminalSpawnReservationFreshness: vi.fn(() => `folder-route:${folder.folderPath}`),
+        createPreAllocatedTerminalHandle: vi.fn(() => 'term_route_race'),
+        preAllocateHandleForPty: vi.fn(() => 'term_route_race'),
+        registerPreAllocatedHandleForPty: vi.fn(),
+        registerPty: vi.fn(),
+        retireFreshPtyRegistration: vi.fn(),
+        cancelPendingPtyRegistration: vi.fn(),
+        releaseRejectedPtyRegistrationFence: vi.fn(),
+        onPtySpawned: vi.fn(),
+        onPtyExit: vi.fn(),
+        onPtyData: vi.fn()
+      }
+      registerPtyHandlers(
+        mainWindow as never,
+        runtime as never,
+        undefined,
+        undefined,
+        undefined,
+        store as never
+      )
+      const spawnController = controller as unknown as RuntimeSpawnController
+      const worktreeId = `folder:${folder.id}`
+      const tabId = 'tab-route-race'
+      const leafId = '44444444-4444-4444-8444-444444444444'
+      const paneKey = makePaneKey(tabId, leafId)
+      const sessionId = 'route-race-session'
+      const runtimeSpawn = (cwd: string, freshness: string, accept: () => boolean) =>
+        spawnController.spawn({
+          cols: 80,
+          rows: 24,
+          cwd,
+          worktreeId,
+          tabId,
+          leafId,
+          sessionId,
+          persistHostSessionBinding: true,
+          spawnReservationFreshness: freshness,
+          acceptWorkspaceInventory: accept
+        })
+      const rendererSpawn = (cwd: string) =>
+        handlers.get('pty:spawn')!(null, {
+          cols: 80,
+          rows: 24,
+          cwd,
+          worktreeId,
+          tabId,
+          leafId,
+          sessionId,
+          env: { ORCA_PANE_KEY: paneKey }
+        }) as Promise<{ id: string }>
+      const oldPath = folder.folderPath
+      const oldFreshness = runtime.getTerminalSpawnReservationFreshness()
+      const stale =
+        staleCreator === 'runtime'
+          ? runtimeSpawn(oldPath, oldFreshness, () => folder.folderPath === oldPath)
+          : rendererSpawn(oldPath)
+      await vi.waitFor(() => expect(providerSpawn).toHaveBeenCalledOnce())
+
+      folder.folderPath = join(process.cwd(), 'src')
+      group.parentPath = folder.folderPath
+      const newFreshness = runtime.getTerminalSpawnReservationFreshness()
+      const current =
+        staleCreator === 'runtime'
+          ? rendererSpawn(folder.folderPath)
+          : runtimeSpawn(folder.folderPath, newFreshness, () => true)
+      await vi.waitFor(() => expect(providerSpawn).toHaveBeenCalledTimes(2))
+      expect(pending.map(({ cwd }) => cwd)).toEqual([oldPath, folder.folderPath])
+
+      pending[0]!.resolve({ id: 'pty-stale-old-route' })
+      await (staleCreator === 'runtime'
+        ? expect(stale).rejects.toThrow('tab_not_found')
+        : expect(stale).resolves.toMatchObject({ id: 'pty-stale-old-route' }))
+      pending[1]!.resolve({ id: 'pty-current-new-route' })
+      await expect(current).resolves.toMatchObject({ id: 'pty-current-new-route' })
+
+      expect(providerSpawn).toHaveBeenCalledTimes(2)
+      if (staleCreator === 'runtime') {
+        expect(shutdown).toHaveBeenCalledWith('pty-stale-old-route', { immediate: true })
+      }
+      expect(shutdown).not.toHaveBeenCalledWith('pty-current-new-route', expect.anything())
+      expect(store.persistPtyBinding).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          ptyId: 'pty-current-new-route',
+          startupCwd: join(process.cwd(), 'src')
+        })
+      )
+    }
+  )
 
   it('keeps identical pane ids independent across worktrees and sessions', async () => {
     const resolvers: ((result: { id: string }) => void)[] = []
