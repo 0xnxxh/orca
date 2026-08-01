@@ -3,8 +3,7 @@ import {
   clearPendingMobileTasksNavigation,
   getPendingMobileTasksNavigation,
   mobileTasksHostRoute,
-  mobileTasksRoute,
-  mobileTasksRouteForMountedHost,
+  mobileTasksScreenParamsForMountedHost,
   navigateToMobileTasks
 } from './mobile-task-navigation'
 
@@ -15,34 +14,29 @@ afterEach(() => {
   }
 })
 
-describe('mobileTasksRoute', () => {
-  it('builds a concrete encoded host route', () => {
-    expect(mobileTasksRoute('host/1')).toBe('/h/host%2F1/tasks')
-    expect(mobileTasksRoute('host/1', 'linear')).toBe('/h/host%2F1/tasks?taskSource=linear')
+describe('mobile task navigation', () => {
+  it('builds an encoded host route', () => {
+    expect(mobileTasksHostRoute('host/1')).toBe('/h/host%2F1')
   })
 
-  it('publishes the concrete route before mounting the encoded host index', () => {
+  it('publishes direct screen params before mounting the encoded host index', () => {
     const push = vi.fn()
 
-    navigateToMobileTasks({ push }, 'host/1', 'github')
+    navigateToMobileTasks({ push }, 'host/1')
     expect(push).toHaveBeenCalledWith(mobileTasksHostRoute('host/1'))
-    expect(getPendingMobileTasksNavigation()).toEqual({
-      hostId: 'host/1',
-      route: '/h/host%2F1/tasks?taskSource=github'
-    })
+    expect(getPendingMobileTasksNavigation()).toEqual({ hostId: 'host/1' })
   })
 
-  it('uses a pending route only for its intended host or a cold host with lost params', () => {
+  it('uses pending params only for the intended host or a cold host with lost params', () => {
     navigateToMobileTasks({ push: vi.fn() }, 'host-1', 'linear')
     const pending = getPendingMobileTasksNavigation()
 
-    expect(mobileTasksRouteForMountedHost('host-1', pending)).toBe(
-      '/h/host-1/tasks?taskSource=linear'
-    )
-    expect(mobileTasksRouteForMountedHost(undefined, pending)).toBe(
-      '/h/host-1/tasks?taskSource=linear'
-    )
-    expect(mobileTasksRouteForMountedHost('host-2', pending)).toBeNull()
+    expect(mobileTasksScreenParamsForMountedHost('host-1', pending)).toEqual({
+      hostId: 'host-1',
+      taskSource: 'linear'
+    })
+    expect(mobileTasksScreenParamsForMountedHost(undefined, pending)).toBe(pending)
+    expect(mobileTasksScreenParamsForMountedHost('host-2', pending)).toBeNull()
   })
 
   it('keeps a newer intent when stale cleanup races repeated navigation', () => {
@@ -53,7 +47,7 @@ describe('mobileTasksRoute', () => {
 
     clearPendingMobileTasksNavigation(first)
     expect(getPendingMobileTasksNavigation()).toBe(second)
-    expect(second).toEqual({ hostId: 'host-2', route: '/h/host-2/tasks?taskSource=gitlab' })
+    expect(second).toEqual({ hostId: 'host-2', taskSource: 'gitlab' })
     clearPendingMobileTasksNavigation(second)
     expect(getPendingMobileTasksNavigation()).toBeNull()
   })

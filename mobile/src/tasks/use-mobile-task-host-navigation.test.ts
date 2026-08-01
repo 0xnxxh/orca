@@ -5,26 +5,33 @@ import {
   clearPendingMobileTasksNavigation,
   getPendingMobileTasksNavigation,
   navigateToMobileTasks,
-  type MobileTasksRoute
+  type MobileTasksScreenParams
 } from './mobile-task-navigation'
-import { useMobileTaskHostNavigation } from './use-mobile-task-host-navigation'
+import {
+  useMobileTaskHostNavigation,
+  type MobileTasksHostNavigation
+} from './use-mobile-task-host-navigation'
 
 function HostStackContent({ onCommit }: { onCommit: () => void }) {
   useEffect(onCommit, [onCommit])
   return createElement('HostScreen')
 }
 
-function HostLayoutHarness({
+function HostStackHarness({
   children,
   hostId,
   replace
 }: {
   children: ReactNode
   hostId?: string
-  replace: (route: MobileTasksRoute) => void
+  replace: MobileTasksHostNavigation['replace']
 }) {
   useMobileTaskHostNavigation({ replace }, hostId)
   return children
+}
+
+function HostProtocolGateHarness({ children, ready }: { children: ReactNode; ready: boolean }) {
+  return ready ? children : createElement('CompatibilityScreen')
 }
 
 describe('useMobileTaskHostNavigation', () => {
@@ -47,7 +54,8 @@ describe('useMobileTaskHostNavigation', () => {
   async function renderLayout(args: {
     hostId?: string
     onCommit: () => void
-    replace: (route: MobileTasksRoute) => void
+    replace: MobileTasksHostNavigation['replace']
+    ready?: boolean
   }): Promise<void> {
     const consoleError = vi.spyOn(console, 'error').mockImplementation((...errorArgs) => {
       if (
@@ -61,9 +69,13 @@ describe('useMobileTaskHostNavigation', () => {
       await act(async () => {
         renderer = create(
           createElement(
-            HostLayoutHarness,
-            { hostId: args.hostId, replace: args.replace },
-            createElement(HostStackContent, { onCommit: args.onCommit })
+            HostProtocolGateHarness,
+            { ready: args.ready ?? true },
+            createElement(
+              HostStackHarness,
+              { hostId: args.hostId, replace: args.replace },
+              createElement(HostStackContent, { onCommit: args.onCommit })
+            )
           )
         )
       })
@@ -72,19 +84,42 @@ describe('useMobileTaskHostNavigation', () => {
     }
   }
 
-  it('waits for host content to commit before replacing a cold route with lost params', async () => {
+  it('waits for the gated host stack to mount and commit before replacing', async () => {
     let hostCommitted = false
     navigateToMobileTasks({ push: vi.fn() }, 'host/1', 'github')
-    const replace = vi.fn((route: MobileTasksRoute) => {
+    const replace = vi.fn((screen: '[hostId]/tasks', params: MobileTasksScreenParams) => {
       expect(hostCommitted).toBe(true)
-      expect(route).toBe('/h/host%2F1/tasks?taskSource=github')
+      expect(screen).toBe('[hostId]/tasks')
+      expect(params).toEqual({ hostId: 'host/1', taskSource: 'github' })
     })
 
     await renderLayout({
       onCommit: () => {
         hostCommitted = true
       },
+      ready: false,
       replace
+    })
+
+    expect(replace).not.toHaveBeenCalled()
+    expect(getPendingMobileTasksNavigation()).not.toBeNull()
+
+    await act(async () => {
+      renderer?.update(
+        createElement(
+          HostProtocolGateHarness,
+          { ready: true },
+          createElement(
+            HostStackHarness,
+            { hostId: undefined, replace },
+            createElement(HostStackContent, {
+              onCommit: () => {
+                hostCommitted = true
+              }
+            })
+          )
+        )
+      )
     })
 
     expect(replace).toHaveBeenCalledOnce()
@@ -108,7 +143,10 @@ describe('useMobileTaskHostNavigation', () => {
 
     await renderLayout({ hostId: 'host-2', onCommit: vi.fn(), replace })
 
-    expect(replace).toHaveBeenCalledWith('/h/host-2/tasks?taskSource=gitlab')
+    expect(replace).toHaveBeenCalledWith('[hostId]/tasks', {
+      hostId: 'host-2',
+      taskSource: 'gitlab'
+    })
     expect(getPendingMobileTasksNavigation()).toBeNull()
   })
 })

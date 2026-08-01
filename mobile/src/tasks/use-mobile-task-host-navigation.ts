@@ -2,31 +2,31 @@ import { useEffect } from 'react'
 import {
   clearPendingMobileTasksNavigation,
   getPendingMobileTasksNavigation,
-  mobileTasksRouteForMountedHost,
-  type MobileTasksRoute
+  mobileTasksScreenParamsForMountedHost,
+  type MobileTasksScreenParams
 } from './mobile-task-navigation'
 
-type MobileTasksReplaceRouter = {
-  replace: (route: MobileTasksRoute) => void
+export type MobileTasksHostNavigation = {
+  replace: (screen: '[hostId]/tasks', params: MobileTasksScreenParams) => void
 }
 
 export function useMobileTaskHostNavigation(
-  router: MobileTasksReplaceRouter,
+  navigation: MobileTasksHostNavigation,
   hostId: string | undefined
 ): void {
-  // Why: this host-layout effect runs after HostStack's children commit, when nested replace is valid.
+  // Why: the routed index owns the mounted HostStack navigation context, bypassing cold URL parsing.
   useEffect(() => {
     const intent = getPendingMobileTasksNavigation()
     if (!intent) {
       return
     }
     try {
-      const route = mobileTasksRouteForMountedHost(hostId, intent)
-      if (route) {
-        router.replace(route)
+      const params = mobileTasksScreenParamsForMountedHost(hostId, intent)
+      if (params) {
+        navigation.replace('[hostId]/tasks', params)
       }
     } finally {
       clearPendingMobileTasksNavigation(intent)
     }
-  }, [hostId, router])
+  }, [hostId, navigation])
 }
