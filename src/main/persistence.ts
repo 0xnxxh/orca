@@ -89,10 +89,17 @@ import { isWorkspaceLinkedItemSourceContextMatch } from '../shared/workspace-lin
 import type { MigrationUnsupportedPtyEntry } from '../shared/agent-status-types'
 import { MOBILE_PAIRING_USERDATA_FILES } from './runtime/mobile-pairing-files'
 import {
+  addDeletedFolderTombstoneOverflowEntries,
   boundDeletedFolderTombstoneEvidence,
   getDeletedFolderTombstoneEviction,
+  hasDeletedFolderConnectionOverflowEvidence,
+  hasDeletedFolderTabOwnerOverflowEvidence,
+  hasDeletedFolderWorkspaceKeyOverflowEvidence,
+  hasTruncatedDeletedFolderOverflowEvidence,
+  pruneDeletedFolderTombstoneOverflowBuckets,
   MAX_DELETED_FOLDER_TOMBSTONE_RETENTION_MS
 } from './deleted-folder-session-tombstones'
+import { normalizeDeletedFolderTombstoneOverflowBuckets } from './deleted-folder-tombstone-overflow-normalization'
 import { normalizePersistedMobileClientTabSelections } from './runtime/client-session-tab-selection-persistence'
 import { sanitizeWorkspaceSessionTerminalRetirements } from './runtime/mobile-session-terminal-persistence-retirement'
 import {
@@ -2865,26 +2872,22 @@ function backfillFolderScopeConnectionIds(state: PersistedState): {
 function normalizeDeletedFolderWorkspaceSessionTombstones(
   value: unknown,
   liveFolderIds: ReadonlySet<string>,
-  rawOverflowExpiresAt: unknown
+  rawOverflowBuckets: unknown
 ): {
   tombstones: NonNullable<PersistedState['deletedFolderWorkspaceSessionTombstones']>
-  overflowExpiresAt: number | undefined
+  overflowBuckets: NonNullable<
+    PersistedState['deletedFolderWorkspaceSessionTombstoneOverflowBuckets']
+  >
   changed: boolean
 } {
   const now = Date.now()
   const tombstones: NonNullable<PersistedState['deletedFolderWorkspaceSessionTombstones']> = {}
-  let changed = value !== undefined && (!value || typeof value !== 'object' || Array.isArray(value))
-  let overflowExpiresAt =
-    typeof rawOverflowExpiresAt === 'number' &&
-    Number.isFinite(rawOverflowExpiresAt) &&
-    rawOverflowExpiresAt > now
-      ? Math.min(rawOverflowExpiresAt, now + MAX_DELETED_FOLDER_TOMBSTONE_RETENTION_MS)
-      : undefined
-  if (rawOverflowExpiresAt !== undefined && overflowExpiresAt !== rawOverflowExpiresAt) {
-    changed = true
-  }
+  const normalizedOverflow = normalizeDeletedFolderTombstoneOverflowBuckets(rawOverflowBuckets, now)
+  let changed =
+    normalizedOverflow.changed ||
+    (value !== undefined && (!value || typeof value !== 'object' || Array.isArray(value)))
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return { tombstones, overflowExpiresAt, changed }
+    return { tombstones, overflowBuckets: normalizedOverflow.buckets, changed }
   }
   for (const [workspaceKey, rawTombstone] of Object.entries(value)) {
     const scope = parseWorkspaceKey(workspaceKey)
@@ -2960,8 +2963,12 @@ function normalizeDeletedFolderWorkspaceSessionTombstones(
     delete tombstones[workspaceKey]
     changed = true
   }
-  overflowExpiresAt = Math.max(overflowExpiresAt ?? 0, eviction.overflowExpiresAt ?? 0) || undefined
-  return { tombstones, overflowExpiresAt, changed }
+  const overflowBuckets = addDeletedFolderTombstoneOverflowEntries(
+    normalizedOverflow.buckets,
+    eviction.overflowEntries,
+    now
+  )
+  return { tombstones, overflowBuckets, changed }
 }
 
 function deleteRemovedTerminalScrollbackSnapshots(
@@ -3495,7 +3502,7 @@ export class Store {
         const normalizedDeletedFolderTombstones = normalizeDeletedFolderWorkspaceSessionTombstones(
           parsed.deletedFolderWorkspaceSessionTombstones,
           new Set(normalizedFolderWorkspaces.map((workspace) => workspace.id)),
-          parsed.deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt
+          parsed.deletedFolderWorkspaceSessionTombstoneOverflowBuckets
         )
         if (normalizedDeletedFolderTombstones.changed) {
           this.loadNeedsSave = true
@@ -3550,8 +3557,10 @@ export class Store {
           projectGroups: normalizedProjectGroups,
           folderWorkspaces: normalizedFolderWorkspaces,
           deletedFolderWorkspaceSessionTombstones: normalizedDeletedFolderTombstones.tombstones,
-          deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt:
-            normalizedDeletedFolderTombstones.overflowExpiresAt,
+          deletedFolderWorkspaceSessionTombstoneOverflowBuckets:
+            normalizedDeletedFolderTombstones.overflowBuckets.length > 0
+              ? normalizedDeletedFolderTombstones.overflowBuckets
+              : undefined,
           worktreeLineageById: parsed.worktreeLineageById ?? {},
           mobileClientTabSelectionsByDeviceId: normalizePersistedMobileClientTabSelections(
             parsed.mobileClientTabSelectionsByDeviceId
@@ -4795,11 +4804,15 @@ export class Store {
       delete tombstones[evictedWorkspaceKey]
       this.forgetDeletedFolderWorkspaceSessionTombstone(evictedWorkspaceKey)
     }
-    if (eviction.overflowExpiresAt) {
-      this.state.deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt = Math.max(
-        this.state.deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt ?? 0,
-        eviction.overflowExpiresAt
-      )
+    const overflowBuckets = addDeletedFolderTombstoneOverflowEntries(
+      this.state.deletedFolderWorkspaceSessionTombstoneOverflowBuckets,
+      eviction.overflowEntries,
+      Date.now()
+    )
+    if (overflowBuckets.length > 0) {
+      this.state.deletedFolderWorkspaceSessionTombstoneOverflowBuckets = overflowBuckets
+    } else {
+      delete this.state.deletedFolderWorkspaceSessionTombstoneOverflowBuckets
     }
     this.state.deletedFolderWorkspaceSessionTombstones = tombstones
   }
@@ -4808,12 +4821,13 @@ export class Store {
     const now = Date.now()
     const current = this.state.deletedFolderWorkspaceSessionTombstones ?? {}
     const eviction = getDeletedFolderTombstoneEviction(current, now)
-    const overflowExpiresAt = this.state.deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt
-    const overflowExpired = overflowExpiresAt !== undefined && overflowExpiresAt <= now
-    const overflowExtended =
-      eviction.overflowExpiresAt !== undefined &&
-      eviction.overflowExpiresAt > (overflowExpiresAt ?? 0)
-    if (eviction.workspaceKeys.length === 0 && !overflowExpired && !overflowExtended) {
+    const currentOverflow = this.state.deletedFolderWorkspaceSessionTombstoneOverflowBuckets
+    const prunedOverflow = pruneDeletedFolderTombstoneOverflowBuckets(currentOverflow, now)
+    if (
+      eviction.workspaceKeys.length === 0 &&
+      eviction.overflowEntries.length === 0 &&
+      prunedOverflow === currentOverflow
+    ) {
       return
     }
     const tombstones = { ...current }
@@ -4821,18 +4835,26 @@ export class Store {
       delete tombstones[workspaceKey]
       this.forgetDeletedFolderWorkspaceSessionTombstone(workspaceKey)
     }
-    if (overflowExtended) {
-      this.state.deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt =
-        eviction.overflowExpiresAt
-    } else if (overflowExpired) {
-      delete this.state.deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt
+    const overflowBuckets = addDeletedFolderTombstoneOverflowEntries(
+      prunedOverflow,
+      eviction.overflowEntries,
+      now
+    )
+    if (overflowBuckets.length > 0) {
+      this.state.deletedFolderWorkspaceSessionTombstoneOverflowBuckets = overflowBuckets
+    } else {
+      delete this.state.deletedFolderWorkspaceSessionTombstoneOverflowBuckets
     }
     this.state.deletedFolderWorkspaceSessionTombstones = tombstones
     this.scheduleSave()
   }
 
-  private hasDeletedFolderWorkspaceSessionTombstoneOverflow(): boolean {
-    return (this.state.deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt ?? 0) > Date.now()
+  private hasDeletedFolderWorkspaceKeyOverflowEvidence(workspaceKey: string): boolean {
+    return hasDeletedFolderWorkspaceKeyOverflowEvidence(
+      this.state.deletedFolderWorkspaceSessionTombstoneOverflowBuckets,
+      workspaceKey,
+      Date.now()
+    )
   }
 
   private forgetDeletedFolderWorkspaceSessionTombstone(workspaceKey: string): void {
@@ -4967,6 +4989,10 @@ export class Store {
 
   private isDeletedFolderWorkspaceKey(worktreeId: string): boolean {
     this.pruneDeletedFolderWorkspaceSessionTombstones()
+    return this.isDeletedFolderWorkspaceKeyWithoutPruning(worktreeId)
+  }
+
+  private isDeletedFolderWorkspaceKeyWithoutPruning(worktreeId: string): boolean {
     const scope = parseWorkspaceKey(worktreeId)
     return Boolean(
       scope?.type === 'folder' &&
@@ -4974,7 +5000,7 @@ export class Store {
         (workspace) => workspace.id === scope.folderWorkspaceId
       ) &&
       (this.state.deletedFolderWorkspaceSessionTombstones?.[worktreeId as WorkspaceKey] ||
-        this.hasDeletedFolderWorkspaceSessionTombstoneOverflow())
+        this.hasDeletedFolderWorkspaceKeyOverflowEvidence(worktreeId))
     )
   }
 
@@ -5017,9 +5043,18 @@ export class Store {
     if (!originalConnectionIds) {
       return session
     }
-    const removalCandidates = this.hasDeletedFolderWorkspaceSessionTombstoneOverflow()
-      ? new Set(originalConnectionIds)
-      : removedConnectionIds
+    const removalCandidates = new Set(removedConnectionIds)
+    for (const connectionId of originalConnectionIds) {
+      if (
+        hasDeletedFolderConnectionOverflowEvidence(
+          this.state.deletedFolderWorkspaceSessionTombstoneOverflowBuckets,
+          connectionId,
+          Date.now()
+        )
+      ) {
+        removalCandidates.add(connectionId)
+      }
+    }
     if (removalCandidates.size === 0) {
       return session
     }
@@ -5030,7 +5065,8 @@ export class Store {
     const retainedConnectionIds = this.collectWorkspaceSessionRemoteConnectionIds(
       retainedPartitions,
       (worktreeId) =>
-        !removedOwnerKeys.has(worktreeId) && !this.isDeletedFolderWorkspaceKey(worktreeId)
+        !removedOwnerKeys.has(worktreeId) &&
+        !this.isDeletedFolderWorkspaceKeyWithoutPruning(worktreeId)
     )
     for (const connectionId of this.collectCatalogConnectionIds(removedOwnerKeys)) {
       retainedConnectionIds.add(connectionId)
@@ -5178,11 +5214,12 @@ export class Store {
       (this.state.folderWorkspaces ?? []).map((workspace) => workspace.id)
     )
     const deletedFolderTombstones = this.state.deletedFolderWorkspaceSessionTombstones ?? {}
-    const hasDeletedFolderTombstoneOverflow =
-      this.hasDeletedFolderWorkspaceSessionTombstoneOverflow()
     const hasTruncatedDeletedFolderEvidence =
-      hasDeletedFolderTombstoneOverflow ||
-      Object.values(deletedFolderTombstones).some((tombstone) => tombstone?.evidenceTruncated)
+      Object.values(deletedFolderTombstones).some((tombstone) => tombstone?.evidenceTruncated) ||
+      hasTruncatedDeletedFolderOverflowEvidence(
+        this.state.deletedFolderWorkspaceSessionTombstoneOverflowBuckets,
+        Date.now()
+      )
     const ownerKeys = new Set<string>()
     const ownerKeysByTabId = new Map<string, Set<string>>()
     const directPtyIdsByOwnerAndTabId = new Map<string, Map<string, string>>()
@@ -5221,7 +5258,7 @@ export class Store {
         !liveFolderIds.has(scope.folderWorkspaceId) &&
         (hostId === LOCAL_EXECUTION_HOST_ID ||
           tombstone !== undefined ||
-          hasDeletedFolderTombstoneOverflow)
+          this.hasDeletedFolderWorkspaceKeyOverflowEvidence(worktreeId))
       ) {
         ownerKeys.add(worktreeId)
       }
@@ -5315,9 +5352,18 @@ export class Store {
         collectOwnerKey(workspaceKey)
       }
     }
-    const hasUnownedTruncatedTabState =
-      hasTruncatedDeletedFolderEvidence &&
-      [...tabScopedStateIds].some((tabId) => (ownerKeysByTabId.get(tabId)?.size ?? 0) === 0)
+    const hasOverflowTabOwner = (tabId: string): boolean =>
+      hasDeletedFolderTabOwnerOverflowEvidence(
+        this.state.deletedFolderWorkspaceSessionTombstoneOverflowBuckets,
+        hostId,
+        tabId,
+        Date.now()
+      )
+    const hasUnownedTruncatedTabState = [...tabScopedStateIds].some(
+      (tabId) =>
+        (ownerKeysByTabId.get(tabId)?.size ?? 0) === 0 &&
+        (hasTruncatedDeletedFolderEvidence || hasOverflowTabOwner(tabId))
+    )
     if (
       !session.activeWorkspaceKey &&
       !session.activeWorktreeId &&
@@ -5390,7 +5436,7 @@ export class Store {
       const deletedOwner = [...(currentDeletedOwnersByTabId?.get(tabId)?.entries() ?? [])].find(
         ([workspaceKey]) => ownerKeys.has(workspaceKey)
       )
-      if (!deletedOwner && !hasTruncatedDeletedFolderEvidence) {
+      if (!deletedOwner && !hasTruncatedDeletedFolderEvidence && !hasOverflowTabOwner(tabId)) {
         continue
       }
       exclusivelyDeletedTabIds.add(tabId)

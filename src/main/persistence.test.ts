@@ -5216,9 +5216,10 @@ describe('Store', () => {
     expect(tombstones?.[workspaceKeys[0]!]).toBeUndefined()
     expect(tombstones?.[workspaceKeys[1]!]).toBeUndefined()
     expect(tombstones?.[workspaceKeys.at(-1)!]).toBeDefined()
-    expect(
-      (readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt
-    ).toBe(deletedAt + 1 + 30 * 24 * 60 * 60 * 1000)
+    const overflowBuckets = (readDataFile() as PersistedState)
+      .deletedFolderWorkspaceSessionTombstoneOverflowBuckets
+    expect(overflowBuckets).toHaveLength(1)
+    expect(overflowBuckets?.[0]?.expiresAt).toBe(deletedAt + 1 + 30 * 24 * 60 * 60 * 1000)
   })
 
   it('hard-bounds recent deletion fences with conservative overflow evidence', async () => {
@@ -5244,9 +5245,10 @@ describe('Store', () => {
       let tombstones = (readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstones
       expect(Object.keys(tombstones ?? {})).toHaveLength(512)
       expect(tombstones?.[workspaceKeys[0]!]).toBeUndefined()
-      expect(
-        (readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt
-      ).toBeGreaterThan(Date.now())
+      const overflowBuckets = (readDataFile() as PersistedState)
+        .deletedFolderWorkspaceSessionTombstoneOverflowBuckets
+      expect(overflowBuckets).toHaveLength(1)
+      expect(overflowBuckets?.[0]?.expiresAt).toBeGreaterThan(Date.now())
 
       vi.setSystemTime(new Date('2026-01-02T00:00:00.001Z'))
       const latest = store.createFolderWorkspace({ projectGroupId: group.id, name: 'Latest' })
@@ -5275,7 +5277,14 @@ describe('Store', () => {
         tabConnectionIdsByHostId: {}
       }
     }
-    state.deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt = Date.now() - 1
+    state.deletedFolderWorkspaceSessionTombstoneOverflowBuckets = [
+      {
+        bucketStart: Date.now() - 31 * 24 * 60 * 60 * 1000,
+        expiresAt: Date.now() - 24 * 60 * 60 * 1000,
+        workspaceKeyBits: Buffer.alloc(8 * 1024).toString('base64'),
+        evidenceTruncated: false
+      }
+    ]
     writeDataFile(state)
 
     vi.useFakeTimers()
@@ -5289,7 +5298,7 @@ describe('Store', () => {
 
     const persisted = readDataFile() as PersistedState
     expect(persisted.deletedFolderWorkspaceSessionTombstones).toEqual({})
-    expect(persisted.deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt).toBeUndefined()
+    expect(persisted.deletedFolderWorkspaceSessionTombstoneOverflowBuckets).toBeUndefined()
   })
 
   it('backfills folder-scope SSH provenance from unambiguous child repos on load', async () => {
@@ -6875,9 +6884,25 @@ describe('Store', () => {
     }
     const persisted = (store as unknown as { state: PersistedState }).state
     expect(persisted.deletedFolderWorkspaceSessionTombstones?.[workspaceKey]).toBeUndefined()
-    expect(persisted.deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt).toBeGreaterThan(
-      Date.now()
+    expect(persisted.deletedFolderWorkspaceSessionTombstoneOverflowBuckets).toHaveLength(1)
+    expect(
+      persisted.deletedFolderWorkspaceSessionTombstoneOverflowBuckets?.[0]?.expiresAt
+    ).toBeGreaterThan(Date.now())
+
+    store.patchWorkspaceSession(
+      {
+        terminalLayoutsByTabId: {
+          'rapid-churn-stale-tab': {
+            root: { type: 'leaf', leafId: TEST_LEAF_1 },
+            activeLeafId: TEST_LEAF_1,
+            expandedLeafId: null,
+            ptyIdsByLeafId: { [TEST_LEAF_1]: 'rapid-churn-stale-pty' }
+          }
+        }
+      },
+      hostId
     )
+    expect(store.getWorkspaceSession(hostId).terminalLayoutsByTabId).toEqual({})
 
     store.setWorkspaceSession(staleSession, hostId)
     store.upsertSshRemotePtyLease({
@@ -6892,6 +6917,57 @@ describe('Store', () => {
     expect(store.getWorkspaceSession(hostId).tabsByWorktree[workspaceKey]).toBeUndefined()
     expect(store.getWorkspaceSession(hostId).activeConnectionIdsAtShutdown).toBeUndefined()
     expect(store.getSshRemotePtyLeases()).toEqual([])
+  })
+
+  it('preserves unrelated runtime-owned folders through deletion overflow', async () => {
+    const store = await createStore()
+    vi.useFakeTimers()
+    try {
+      const group = store.createProjectGroup({
+        name: 'Unrelated churn',
+        parentPath: '/workspace/unrelated-churn',
+        createdFrom: 'folder-scan'
+      })
+      for (let index = 0; index < 513; index += 1) {
+        const workspace = store.createFolderWorkspace({
+          projectGroupId: group.id,
+          name: `Unrelated ${index}`
+        })
+        expect(store.removeFolderWorkspace(workspace.id)).toBe(true)
+      }
+      const hostId = toRuntimeExecutionHostId('unrelated-runtime-folder')
+      const workspaceKey = 'folder:runtime-owned-without-local-catalog'
+      const connectionId = 'unrelated-runtime-connection'
+      store.setWorkspaceSession(
+        {
+          ...getDefaultWorkspaceSession(),
+          activeConnectionIdsAtShutdown: [connectionId],
+          tabsByWorktree: {
+            [workspaceKey]: [
+              makeTerminalTab({ id: 'unrelated-runtime-tab', worktreeId: workspaceKey })
+            ]
+          },
+          remoteSessionIdsByTabId: { 'unrelated-runtime-tab': 'unrelated-runtime-pty' }
+        },
+        hostId
+      )
+      store.upsertSshRemotePtyLease({
+        targetId: connectionId,
+        ptyId: 'unrelated-runtime-pty',
+        worktreeId: workspaceKey,
+        tabId: 'unrelated-runtime-tab',
+        leafId: TEST_LEAF_1,
+        state: 'detached'
+      })
+
+      expect(store.getWorkspaceSession(hostId).tabsByWorktree[workspaceKey]).toHaveLength(1)
+      expect(store.getWorkspaceSession(hostId).activeConnectionIdsAtShutdown).toEqual([
+        connectionId
+      ])
+      expect(store.getSshRemotePtyLeases()).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('batches deletion evidence commits for folders with many tabs', async () => {

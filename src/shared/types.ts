@@ -3572,6 +3572,15 @@ export type DeletedFolderWorkspaceSessionTombstone = {
   tabConnectionIdsByHostId: Partial<Record<ExecutionHostId, Record<string, string | null>>>
 }
 
+export type DeletedFolderWorkspaceSessionTombstoneOverflowBucket = {
+  bucketStart: number
+  expiresAt: number
+  workspaceKeyBits: string
+  tabOwnerBits?: string
+  connectionIdBits?: string
+  evidenceTruncated: boolean
+}
+
 // ─── Persistence shape ──────────────────────────────────────────────
 export type PersistedState = {
   schemaVersion: number
@@ -3583,7 +3592,7 @@ export type PersistedState = {
   deletedFolderWorkspaceSessionTombstones?: Partial<
     Record<WorkspaceKey, DeletedFolderWorkspaceSessionTombstone>
   >
-  deletedFolderWorkspaceSessionTombstoneOverflowExpiresAt?: number
+  deletedFolderWorkspaceSessionTombstoneOverflowBuckets?: DeletedFolderWorkspaceSessionTombstoneOverflowBucket[]
   /** Sparse-checkout presets keyed by repoId. */
   sparsePresetsByRepo: Record<string, SparsePreset[]>
   /** Per paired device last tab selection by worktree; keeps mobile navigation across host restarts. */
