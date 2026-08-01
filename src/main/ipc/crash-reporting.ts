@@ -332,6 +332,7 @@ const COALESCED_RENDERER_BREADCRUMB_NAMES = new Set([
   'renderer_unhandled_rejection',
   'terminal_park_verdict_churn',
   'terminal_safe_fit_retry_exhausted',
+  'speech_model_state_churn',
   DUPLICATE_TAB_OWNER_BREADCRUMB,
   TERMINAL_WEBGL_DIAGNOSTIC_BREADCRUMB
 ])
@@ -345,9 +346,14 @@ const RENDERER_BREADCRUMB_COALESCE_MS = 30_000
 // mounted pane within ~60ms. Windows crash F0BKR84AHEH lost 26-90% of its
 // 30-entry ring to two such bursts. `suppressedSinceLast` keeps the pane count
 // — the only signal these carry — in one slot.
+//
+// speech_model_state_churn: a model download that outruns its coalescing fires this
+// once per 5s window for as long as the storm lasts. The rate is the signal, so one
+// entry plus `suppressedSinceLast` preserves it without evicting the crash itself.
 const NAME_ONLY_COALESCED_BREADCRUMB_NAMES = new Set([
   'terminal_park_verdict_churn',
-  'terminal_safe_fit_retry_exhausted'
+  'terminal_safe_fit_retry_exhausted',
+  'speech_model_state_churn'
 ])
 
 function rendererBreadcrumbCoalesceKey(

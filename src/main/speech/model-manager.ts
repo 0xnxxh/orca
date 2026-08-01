@@ -47,6 +47,11 @@ type DownloadTotals = {
 }
 type ContentRange = { start: number; end: number; totalBytes?: number }
 
+// Why: -1 stands in for "no progress reported" so undefined never equals 0%.
+function toWholeProgressPercent(progress: number | undefined): number {
+  return progress === undefined ? -1 : Math.round(progress * 100)
+}
+
 const DOWNLOAD_IDLE_TIMEOUT_MS = 120_000
 // Why: flaky networks/proxies often kill long CDN transfers near the end; Range-resume lets them finish.
 const DOWNLOAD_RETRY_DELAYS_MS = [1_000, 2_000, 4_000]
@@ -387,10 +392,23 @@ export class ModelManager {
     progress?: number,
     error?: string
   ): void {
+    const previous = this.modelStates.get(modelId)
     const state: SpeechModelState = { id: modelId, status, progress, error }
     this.modelStates.set(modelId, state)
     // Why: notify on every state change (not just progress) so extracting/ready/error transitions reach the UI.
     const progressValue = progress ?? (status === 'extracting' ? 0.95 : -1)
+    // Why: downloads call this once per HTTP chunk (thousands per model), and each
+    // notification costs the renderer an IPC round-trip plus a full re-render of the
+    // open speech-model menu. The UI only ever shows whole percent, so emitting at
+    // that granularity keeps every visible transition and drops the rest.
+    if (
+      previous !== undefined &&
+      previous.status === status &&
+      previous.error === error &&
+      toWholeProgressPercent(previous.progress) === toWholeProgressPercent(progress)
+    ) {
+      return
+    }
     for (const callback of this.progressCallbacks) {
       callback(modelId, progressValue)
     }
