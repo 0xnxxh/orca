@@ -173,9 +173,10 @@ export class MacosLoginSessionDeathWatch {
     }
     this.scheduledProbeAtMs = this.clock.now() + delayMs
     this.scheduledProbeTimer = this.clock.setTimeout(() => {
+      const scheduledAtMs = this.scheduledProbeAtMs
       this.scheduledProbeTimer = null
       this.scheduledProbeAtMs = null
-      void this.runProbe(trigger)
+      void this.runProbe(trigger, scheduledAtMs ?? undefined)
     }, delayMs)
   }
 
@@ -207,7 +208,7 @@ export class MacosLoginSessionDeathWatch {
     }
   }
 
-  private async runProbe(trigger: string): Promise<void> {
+  private async runProbe(trigger: string, scheduledAtMs?: number): Promise<void> {
     if (this.stopped || this.retired) {
       return
     }
@@ -216,12 +217,19 @@ export class MacosLoginSessionDeathWatch {
       this.retainPendingProbe(trigger)
       return
     }
-    if (
-      this.consecutiveRejections > 0 &&
-      this.scheduledProbeAtMs !== null &&
-      this.clock.now() < this.scheduledProbeAtMs
-    ) {
+    if (this.consecutiveRejections > 0 && scheduledAtMs === undefined) {
       return
+    }
+    const timerGapMs =
+      scheduledAtMs === undefined ? 0 : Math.max(0, this.clock.now() - scheduledAtMs)
+    if (this.consecutiveRejections > 0 && timerGapMs > this.minProbeGapMs * 3) {
+      // Why: sleep/App Nap pauses probes; elapsed wall time is not rejection evidence.
+      this.consecutiveRejections = 0
+      this.firstRejectionAtMs = null
+      this.log.log('login-session-rejection-window-reset', {
+        cause: 'timer-gap',
+        timerGapMs
+      })
     }
     const elapsedSinceProbe =
       this.lastProbeStartedAtMs === null ? null : this.clock.now() - this.lastProbeStartedAtMs

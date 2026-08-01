@@ -26,13 +26,13 @@
       "providers": ["local-daemon"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["local-daemon"],
-      "coverageNotes": "A deterministic fake clock covers short-burst recovery, sustained session death, event-trigger preemption, resolver corroboration, and shutdown cancellation. The production-only watch remains behind the macOS GUI launch flag; SSH/headless, WSL, Linux, Windows, mobile, and relay paths are unaffected.",
+      "coverageNotes": "A deterministic fake clock covers short-burst recovery, sustained session death, event-trigger preemption, timer suspension, resolver corroboration, and shutdown cancellation. The production-only watch remains behind the macOS GUI launch flag; SSH/headless, WSL, Linux, Windows, mobile, and relay paths are unaffected.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/issues/11749",
         "https://github.com/stablyai/orca/issues/7936"
       ],
-      "invariant": "A GUI-spawned macOS daemon may retire for PAM rejections only after it previously accepted login wrapping, receives three conclusive rejections spanning at least one 120-second periodic window, and observes explicitly unhealthy in-process resolver state. A conclusive acceptance resets the rejection window, and client or PTY activity cannot shorten its scheduled backoff.",
-      "oracle": "Arm the watch with an accepted probe, inject three rejections over 20 seconds plus unhealthy resolver state, then inject client and PTY activity and require zero resolver reads, zero retirement calls, and exactly four probes until the 120-second boundary. Return acceptance at that boundary and require the daemon to survive. Separately keep rejecting through the boundary and require one retirement, while healthy or unknown resolver state suppresses it and stop aborts an in-flight resolver check.",
+      "invariant": "A GUI-spawned macOS daemon may retire for PAM rejections only after it previously accepted login wrapping, receives three conclusive rejections spanning at least one uninterrupted 120-second observation window, and observes explicitly unhealthy in-process resolver state. A conclusive acceptance or a sleep/App Nap-sized timer gap resets the rejection window, and client or PTY activity cannot shorten its scheduled backoff.",
+      "oracle": "Arm the watch with an accepted probe, inject three rejections over 20 seconds plus unhealthy resolver state, then inject client and PTY activity and require zero resolver reads, zero retirement calls, and exactly four probes until the 120-second boundary. Return acceptance at that boundary and require the daemon to survive. Jump wall time by one hour without firing the scheduled timer, require rejection evidence to restart after wake, and again recover without retirement. Separately keep rejecting through an uninterrupted boundary and require one retirement, while healthy or unknown resolver state suppresses it and stop aborts an in-flight resolver check.",
       "commands": [
         "pnpm exec vitest run --config config/vitest.config.ts src/main/daemon/macos-login-session-death-watch.test.ts --reporter=dot"
       ],
@@ -42,6 +42,7 @@
           "file": "src/main/daemon/macos-login-session-death-watch.test.ts",
           "assertions": [
             "preserves the daemon when a short PAM rejection burst recovers after wake",
+            "does not count a suspended timer gap as rejection evidence",
             "retires only after sustained conclusive rejections with a degraded resolver",
             "suppresses retirement while resolver health is healthy or unknown, then retires on explicit degradation",
             "stop prevents an in-flight resolver check from retiring the daemon"
@@ -55,8 +56,8 @@
           "platform": "macos",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/daemon/macos-login-session-death-watch.test.ts --reporter=dot",
           "result": "passed",
-          "durationSeconds": 0.101,
-          "summary": "The focused state-machine suite passed 18 tests, including the field-shaped 20-second rejection burst, bounded recovery retry, sustained-death convergence, resolver suppression, trigger coalescing, and shutdown cancellation."
+          "durationSeconds": 0.1,
+          "summary": "The focused state-machine suite passed 19 tests, including the field-shaped 20-second rejection burst, suspended-timer rebaselining, bounded recovery retry, sustained-death convergence, resolver suppression, trigger coalescing, and shutdown cancellation."
         }
       ],
       "runtimeBudget": {
@@ -82,7 +83,7 @@
       ],
       "knownGaps": [
         "A real dead macOS GUI login session cannot be fabricated without ending the runner's login session; sustained-death coverage uses deterministic PAM and resolver oracles.",
-        "The two-minute production window is covered by fake-clock tests rather than a wall-clock run.",
+        "The two-minute production window and one-hour timer suspension are covered by fake-clock tests rather than a real sleep/wake run.",
         "No multi-process aggregate throttle is added; each stale daemon independently obeys the same non-preemptible observation window."
       ],
       "demotionRule": "Keep experimental or demote if any activity trigger shortens the rejection window, a transient burst reaches resolver retirement authority, sustained dead-session evidence no longer converges, shutdown permits late retirement, or the focused gate flakes without an identified product or harness fault."

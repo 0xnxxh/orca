@@ -38,13 +38,17 @@ class FakeClock {
       if (!due) {
         break
       }
-      this.nowMs = due.at
+      this.nowMs = Math.max(this.nowMs, due.at)
       due.cleared = true
       due.callback()
       // Why: probes are async; let their promise chains settle before firing the next timer.
       await drainMicrotasks()
     }
     this.nowMs = target
+  }
+
+  suspend(ms: number): void {
+    this.nowMs += ms
   }
 
   pendingCount(): number {
@@ -148,6 +152,30 @@ describe('MacosLoginSessionDeathWatch', () => {
     await clock.advance(1)
     expect(probe).toHaveBeenCalledTimes(5)
     expect(readResolverHealth).not.toHaveBeenCalled()
+    expect(onRetire).not.toHaveBeenCalled()
+  })
+
+  it('does not count a suspended timer gap as rejection evidence', async () => {
+    const readResolverHealth = vi.fn(async () => 'unhealthy' as const)
+    const { watch, clock, onRetire, probe } = createWatch({
+      outcomes: [ACCEPTED, REJECTED, REJECTED, REJECTED, REJECTED, ACCEPTED],
+      readResolverHealth
+    })
+    watch.start()
+    await drainMicrotasks()
+
+    await clock.advance(120_000)
+    clock.suspend(60 * 60 * 1000)
+    await clock.advance(0)
+    await clock.advance(10_000)
+    await clock.advance(10_000)
+
+    expect(probe).toHaveBeenCalledTimes(5)
+    expect(readResolverHealth).not.toHaveBeenCalled()
+    expect(onRetire).not.toHaveBeenCalled()
+
+    await clock.advance(100_000)
+    expect(probe).toHaveBeenCalledTimes(6)
     expect(onRetire).not.toHaveBeenCalled()
   })
 
