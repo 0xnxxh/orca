@@ -4148,6 +4148,25 @@ export function registerPtyHandlers(
               throw new Error('client_disconnected')
             }
           }
+          const assertWorkspaceInventoryAccepted = (): void => {
+            if (args.acceptWorkspaceInventory?.() === false) {
+              throw new Error('tab_not_found')
+            }
+          }
+          const rejectStaleWorkspaceSpawn = async (candidate: PtySpawnResult): Promise<void> => {
+            if (args.acceptWorkspaceInventory?.() !== false) {
+              return
+            }
+            if (candidate.isReattach !== true) {
+              try {
+                await provider.shutdown(candidate.id, { immediate: true })
+              } catch (error) {
+                console.warn('[pty] failed to clean up stale workspace spawn:', error)
+              }
+              clearProviderPtyState(candidate.id)
+            }
+            throw new Error('tab_not_found')
+          }
           if (args.agentSessionEnsure) {
             // Why: daemon-backed claims can outlive this controller; import all
             // proven owners before deciding that an identity is absent.
@@ -4169,7 +4188,9 @@ export function registerPtyHandlers(
               surface: args.agentSessionEnsure.surface,
               spawn: async () => {
                 assertClientStillConnected()
+                assertWorkspaceInventoryAccepted()
                 providerResult = await provider.spawn(spawnOptions)
+                await rejectStaleWorkspaceSpawn(providerResult)
                 rejectedRegistrationCandidate = providerResult
                 // Why: a successful lower-owner return proves physical work committed even if admission sees an early exit.
                 reportPtySpawnCommitted()
@@ -4212,9 +4233,12 @@ export function registerPtyHandlers(
               incarnationId: ptyIncarnationById.get(ensured.owner.ptyId)
             }
             result.agentSessionEnsure = ensured
+            assertWorkspaceInventoryAccepted()
           } else {
             assertClientStillConnected()
+            assertWorkspaceInventoryAccepted()
             result = await provider.spawn(spawnOptions)
+            await rejectStaleWorkspaceSpawn(result)
             rejectedRegistrationCandidate = result
             // Why: daemon/relay returns cross the physical commit boundary before controller admission.
             reportPtySpawnCommitted()

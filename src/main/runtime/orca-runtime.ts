@@ -1291,6 +1291,7 @@ type TerminalCreateOptions = {
   agentSessionClaim?: AgentSessionExecutionClaim
   agentSessionCreateOperationId?: string
   signal?: AbortSignal
+  acceptWorkspaceInventory?: () => boolean
   // Why: idempotent create operations must retain their fence after the PTY
   // exists, even if later runtime publication fails.
   onPtySpawnCommitted?: () => void
@@ -1543,6 +1544,7 @@ type RuntimePtyController = {
     }
     agentSessionCreateOperationId?: string
     signal?: AbortSignal
+    acceptWorkspaceInventory?: () => boolean
     onPtySpawnCommitted?: () => void
   }): Promise<{
     id: string
@@ -4934,6 +4936,55 @@ export class OrcaRuntimeService {
     throw new Error('tab_not_found')
   }
 
+  private getFolderWorkspaceInventoryFingerprint(
+    workspace: FolderWorkspace,
+    inventory = {
+      repos: this.store?.getRepos?.() ?? [],
+      projectGroups: this.store?.getProjectGroups?.() ?? []
+    }
+  ): string {
+    let connectionId: string | null | 'ambiguous' = 'ambiguous'
+    let hostId: ExecutionHostId | 'ambiguous' = 'ambiguous'
+    try {
+      connectionId = this.resolveFolderWorkspaceConnectionId(workspace, inventory)
+      hostId = this.getWorkspaceSessionHostIdForFolderWorkspace(workspace, inventory)
+    } catch {
+      // Why: a routing error is stable until the catalog fields below change.
+    }
+    return JSON.stringify([
+      workspace.projectGroupId,
+      workspace.folderPath,
+      workspace.connectionId,
+      workspace.executionHostId,
+      connectionId,
+      hostId
+    ])
+  }
+
+  private createMobileSessionFolderWorkspaceMutationFence(
+    worktreeId: string
+  ): (() => boolean) | undefined {
+    const scope = parseWorkspaceKey(worktreeId)
+    if (scope?.type !== 'folder' || !this.store?.getFolderWorkspaces) {
+      return undefined
+    }
+    const workspace = this.store
+      .getFolderWorkspaces()
+      .find((candidate) => candidate.id === scope.folderWorkspaceId)
+    if (!workspace) {
+      return () => false
+    }
+    const expectedFingerprint = this.getFolderWorkspaceInventoryFingerprint(workspace)
+    return () => {
+      const current = this.store
+        ?.getFolderWorkspaces?.()
+        .find((candidate) => candidate.id === scope.folderWorkspaceId)
+      return Boolean(
+        current && this.getFolderWorkspaceInventoryFingerprint(current) === expectedFingerprint
+      )
+    }
+  }
+
   private createFolderWorkspaceInventoryFence(
     folderWorkspaces: readonly FolderWorkspace[]
   ): () => boolean {
@@ -4946,27 +4997,10 @@ export class OrcaRuntimeService {
         projectGroups: this.store?.getProjectGroups?.() ?? []
       }
       return new Map(
-        workspaces.map((workspace) => {
-          let connectionId: string | null | 'ambiguous' = 'ambiguous'
-          let hostId: ExecutionHostId | 'ambiguous' = 'ambiguous'
-          try {
-            connectionId = this.resolveFolderWorkspaceConnectionId(workspace, inventory)
-            hostId = this.getWorkspaceSessionHostIdForFolderWorkspace(workspace, inventory)
-          } catch {
-            // Why: a routing error is itself stable until the underlying inventory changes.
-          }
-          return [
-            workspace.id,
-            JSON.stringify([
-              workspace.projectGroupId,
-              workspace.folderPath,
-              workspace.connectionId,
-              workspace.executionHostId,
-              connectionId,
-              hostId
-            ])
-          ]
-        })
+        workspaces.map((workspace) => [
+          workspace.id,
+          this.getFolderWorkspaceInventoryFingerprint(workspace, inventory)
+        ])
       )
     }
     const expectedById = capture(folderWorkspaces)
@@ -8018,9 +8052,15 @@ export class OrcaRuntimeService {
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
     const worktreeId =
       explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
+    this.assertMobileSessionFolderWorkspaceExists(worktreeId)
+    const acceptWorkspaceInventory =
+      this.createMobileSessionFolderWorkspaceMutationFence(worktreeId)
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
     await this.refreshMobileSessionPtyRecords(worktreeId)
     this.assertMobileSessionFolderWorkspaceExists(worktreeId)
+    if (acceptWorkspaceInventory?.() === false) {
+      throw new Error('tab_not_found')
+    }
     const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
     const directTab = snapshot?.tabs.find((candidate) => candidate.id === tabId)
     const tab = leafId
@@ -8093,7 +8133,8 @@ export class OrcaRuntimeService {
             startupCommandDelivery: agentStartup.startupCommandDelivery,
             launchConfig: agentStartup.launchConfig,
             launchAgent: tab.launchAgent,
-            targetGroupId
+            targetGroupId,
+            acceptWorkspaceInventory
           })
         } catch (err) {
           if (sessionId && parseAppSshPtyId(sessionId)) {
@@ -8363,9 +8404,15 @@ export class OrcaRuntimeService {
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
     const worktreeId =
       explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
+    this.assertMobileSessionFolderWorkspaceExists(worktreeId)
+    const acceptWorkspaceInventory =
+      this.createMobileSessionFolderWorkspaceMutationFence(worktreeId)
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
     const observedPtyIds = await this.refreshMobileSessionPtyRecords()
     this.assertMobileSessionFolderWorkspaceExists(worktreeId)
+    if (acceptWorkspaceInventory?.() === false) {
+      throw new Error('tab_not_found')
+    }
     if (graphEpoch !== null) {
       this.assertStableReadyGraph(graphEpoch)
     }
@@ -25250,6 +25297,9 @@ export class OrcaRuntimeService {
       if (launchOpts.signal?.aborted) {
         throw new Error('client_disconnected')
       }
+      if (launchOpts.acceptWorkspaceInventory?.() === false) {
+        throw new Error('tab_not_found')
+      }
       const result = await this.ptyController.spawn({
         cols: 120,
         rows: 40,
@@ -25290,6 +25340,9 @@ export class OrcaRuntimeService {
           ? { agentSessionCreateOperationId: launchOpts.agentSessionCreateOperationId }
           : {}),
         ...(launchOpts.signal ? { signal: launchOpts.signal } : {}),
+        ...(launchOpts.acceptWorkspaceInventory
+          ? { acceptWorkspaceInventory: launchOpts.acceptWorkspaceInventory }
+          : {}),
         ...(launchOpts.onPtySpawnCommitted ? { onPtySpawnCommitted: reportPtySpawnCommitted } : {}),
         ...(launchOpts.sessionId ? { sessionId: launchOpts.sessionId } : {}),
         // Why: a headless-created pane has no renderer session writer. Persist
@@ -25301,6 +25354,11 @@ export class OrcaRuntimeService {
           ? { persistHostSessionBinding: true }
           : {})
       })
+      if (launchOpts.acceptWorkspaceInventory?.() === false) {
+        this.ptyController.kill(result.id)
+        this.releaseRejectedPtyRegistrationFence(result.id, result.incarnationId)
+        throw new Error('tab_not_found')
+      }
       reportPtySpawnCommitted()
       if (result.agentSessionEnsure) {
         const canonicalSurface = result.agentSessionEnsure.owner.surface
@@ -26037,6 +26095,7 @@ export class OrcaRuntimeService {
       targetGroupId?: string
       launchConfig?: SleepingAgentLaunchConfig
       signal?: AbortSignal
+      acceptWorkspaceInventory?: () => boolean
     } = {}
   ): Promise<RuntimeMobileSessionCreateTerminalResult> {
     const workspace = await this.resolveTerminalWorkspaceLaunchScope(`id:${worktreeId}`)
@@ -26066,7 +26125,8 @@ export class OrcaRuntimeService {
       persistHostSessionBinding: true,
       // Why: this method publishes the authoritative snapshot below; skip the intermediate publish to avoid a wrong-group flash.
       deferMobileSessionPublish: true,
-      signal: opts.signal
+      signal: opts.signal,
+      acceptWorkspaceInventory: opts.acceptWorkspaceInventory
     })
     const livePty = this.getLivePtyForHandle(terminal.handle)
     if (!livePty) {

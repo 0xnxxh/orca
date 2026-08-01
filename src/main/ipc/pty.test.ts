@@ -7901,6 +7901,64 @@ describe('registerPtyHandlers', () => {
     })
   })
 
+  it('rejects and cleans up a runtime spawn when its workspace inventory fence changes', async () => {
+    type RuntimeSpawnController = {
+      spawn(args: {
+        cols: number
+        rows: number
+        worktreeId: string
+        tabId: string
+        leafId: string
+        persistHostSessionBinding: true
+        acceptWorkspaceInventory: () => boolean
+      }): Promise<{ id: string }>
+    }
+    const provider = createAgentClaimProvider({
+      spawn: vi.fn(async () => ({ id: 'stale-workspace-spawn' }))
+    })
+    setLocalPtyProvider(provider as never)
+    const store = { persistPtyBinding: vi.fn() }
+    let controller: RuntimeSpawnController | null = null
+    const runtime = {
+      setPtyController: vi.fn((value) => {
+        controller = value
+      }),
+      createPreAllocatedTerminalHandle: vi.fn(() => 'term_stale_spawn'),
+      preAllocateHandleForPty: vi.fn(() => 'term_stale_spawn'),
+      registerPreAllocatedHandleForPty: vi.fn(),
+      registerPty: vi.fn(),
+      noteTerminalSpawnCommand: vi.fn(),
+      onPtySpawned: vi.fn(),
+      onPtyExit: vi.fn(),
+      onPtyData: vi.fn()
+    }
+    registerPtyHandlers(
+      mainWindow as never,
+      runtime as never,
+      undefined,
+      undefined,
+      undefined,
+      store as never
+    )
+    const acceptWorkspaceInventory = vi.fn().mockReturnValueOnce(true).mockReturnValue(false)
+    const leafId = '11111111-1111-4111-8111-111111111111'
+
+    await expect(
+      (controller as unknown as RuntimeSpawnController).spawn({
+        cols: 80,
+        rows: 24,
+        worktreeId: 'wt-stale-spawn',
+        tabId: 'tab-stale-spawn',
+        leafId,
+        persistHostSessionBinding: true,
+        acceptWorkspaceInventory
+      })
+    ).rejects.toThrow('tab_not_found')
+
+    expect(provider.shutdown).toHaveBeenCalledWith('stale-workspace-spawn', { immediate: true })
+    expect(store.persistPtyBinding).not.toHaveBeenCalled()
+  })
+
   it('reports lower-owner commit before rejecting an early-exited runtime incarnation', async () => {
     const persistPtyBinding = vi.fn()
     const onPtySpawnCommitted = vi.fn()

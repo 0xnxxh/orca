@@ -5149,6 +5149,7 @@ describe('Store', () => {
       'folder:partial-tombstone': {
         connectionId: null,
         deletedAt: undefined as unknown as number,
+        evidenceTruncated: undefined as unknown as boolean,
         hostIds: ['local'],
         tabConnectionIdsByHostId: {
           local: { valid: null, invalid: 42 as unknown as string }
@@ -5173,6 +5174,7 @@ describe('Store', () => {
     ).toEqual({
       connectionId: null,
       deletedAt: expect.any(Number),
+      evidenceTruncated: false,
       hostIds: ['local'],
       tabConnectionIdsByHostId: { local: { valid: null } }
     })
@@ -5192,6 +5194,7 @@ describe('Store', () => {
         {
           connectionId: null,
           deletedAt: deletedAt + index,
+          evidenceTruncated: false,
           hostIds: ['local'],
           tabConnectionIdsByHostId: {}
         }
@@ -5261,6 +5264,7 @@ describe('Store', () => {
       'folder:expired-tombstone': {
         connectionId: null,
         deletedAt: Date.now() - 31 * 24 * 60 * 60 * 1000,
+        evidenceTruncated: false,
         hostIds: ['local'],
         tabConnectionIdsByHostId: {}
       }
@@ -6903,6 +6907,7 @@ describe('Store', () => {
     const tombstone = (readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstones?.[
       workspaceKey
     ]
+    expect(tombstone?.evidenceTruncated).toBe(true)
     expect(Object.keys(tombstone?.tabConnectionIdsByHostId[hostId] ?? {})).toHaveLength(256)
     const ownerIndex = (
       store as unknown as {
@@ -6910,6 +6915,25 @@ describe('Store', () => {
       }
     ).deletedFolderOwnersByHostAndTabId
     expect(ownerIndex.get(hostId)?.size).toBe(256)
+
+    const evictedTabId = 'delayed-tab-0'
+    const evictedPaneKey = makePaneKey(evictedTabId, TEST_LEAF_1)
+    store.patchWorkspaceSession(
+      {
+        terminalLayoutsByTabId: {
+          [evictedTabId]: {
+            root: { type: 'leaf', leafId: TEST_LEAF_1 },
+            activeLeafId: TEST_LEAF_1,
+            expandedLeafId: null,
+            ptyIdsByLeafId: { [TEST_LEAF_1]: 'evicted-delayed-pty' }
+          }
+        },
+        terminalPtyIncarnationsByPaneKey: { [evictedPaneKey]: 'evicted-incarnation' }
+      },
+      hostId
+    )
+    expect(store.getWorkspaceSession(hostId).terminalLayoutsByTabId).toEqual({})
+    expect(store.getWorkspaceSession(hostId).terminalPtyIncarnationsByPaneKey).toEqual({})
   })
 
   it('bounds host-partition evidence for one deleted folder', async () => {
@@ -6941,6 +6965,7 @@ describe('Store', () => {
     const tombstone = (readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstones?.[
       workspaceKey
     ]
+    expect(tombstone?.evidenceTruncated).toBe(true)
     expect(tombstone?.hostIds).toHaveLength(32)
     expect(Object.keys(tombstone?.tabConnectionIdsByHostId ?? {})).toHaveLength(32)
     const ownerIndex = (
@@ -6949,6 +6974,23 @@ describe('Store', () => {
       }
     ).deletedFolderOwnersByHostAndTabId
     expect(ownerIndex.size).toBe(32)
+
+    const evictedHostId = toRuntimeExecutionHostId('host-evidence-0')
+    const evictedTabId = 'host-evidence-tab-0'
+    store.patchWorkspaceSession(
+      {
+        terminalLayoutsByTabId: {
+          [evictedTabId]: {
+            root: { type: 'leaf', leafId: TEST_LEAF_1 },
+            activeLeafId: TEST_LEAF_1,
+            expandedLeafId: null,
+            ptyIdsByLeafId: { [TEST_LEAF_1]: 'evicted-host-pty' }
+          }
+        }
+      },
+      evictedHostId
+    )
+    expect(store.getWorkspaceSession(evictedHostId).terminalLayoutsByTabId).toEqual({})
   })
 
   it('durably fences a delayed unified-only folder tab before a layout-only write', async () => {

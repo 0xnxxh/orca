@@ -2936,6 +2936,7 @@ function normalizeDeletedFolderWorkspaceSessionTombstones(
     const normalizedTombstone = boundDeletedFolderTombstoneEvidence({
       connectionId,
       deletedAt,
+      evidenceTruncated: raw.evidenceTruncated === true,
       hostIds: [...hostIds],
       tabConnectionIdsByHostId
     })
@@ -4583,6 +4584,7 @@ export class Store {
     this.setDeletedFolderWorkspaceSessionTombstone(workspaceKey, {
       connectionId: connectionId ?? prior?.connectionId ?? null,
       deletedAt: prior?.deletedAt ?? Date.now(),
+      evidenceTruncated: prior?.evidenceTruncated ?? false,
       hostIds: [...new Set([...(prior?.hostIds ?? []), ...hostIds])],
       tabConnectionIdsByHostId: prior?.tabConnectionIdsByHostId ?? {}
     })
@@ -4730,6 +4732,7 @@ export class Store {
     this.setDeletedFolderWorkspaceSessionTombstone(workspaceKey, {
       connectionId: prior?.connectionId ?? connectionId,
       deletedAt: prior?.deletedAt ?? Date.now(),
+      evidenceTruncated: prior?.evidenceTruncated ?? false,
       hostIds: [
         ...new Set([...retainedHostIds, hostId, ...(connectionHostId ? [connectionHostId] : [])])
       ],
@@ -4927,7 +4930,7 @@ export class Store {
         !tombstone ||
         scope?.type !== 'folder' ||
         liveFolderIds.has(scope.folderWorkspaceId) ||
-        !tombstone.hostIds.includes(hostId)
+        (!tombstone.hostIds.includes(hostId) && !tombstone.evidenceTruncated)
       ) {
         continue
       }
@@ -5108,6 +5111,9 @@ export class Store {
       (this.state.folderWorkspaces ?? []).map((workspace) => workspace.id)
     )
     const deletedFolderTombstones = this.state.deletedFolderWorkspaceSessionTombstones ?? {}
+    const hasTruncatedDeletedFolderEvidence = Object.values(deletedFolderTombstones).some(
+      (tombstone) => tombstone?.evidenceTruncated
+    )
     const ownerKeys = new Set<string>()
     const ownerKeysByTabId = new Map<string, Set<string>>()
     const directPtyIdsByOwnerAndTabId = new Map<string, Map<string, string>>()
@@ -5246,7 +5252,7 @@ export class Store {
       session = { ...session, activeWorkspaceExecutionHostId: null }
     }
     const tombstonedConnectionIds = this.getDeletedFolderConnectionIdsForHost(hostId)
-    if (ownerKeys.size === 0) {
+    if (ownerKeys.size === 0 && !hasTruncatedDeletedFolderEvidence) {
       return this.pruneDeletedFolderReconnectTargets(
         session,
         hostId,
@@ -5286,7 +5292,10 @@ export class Store {
     for (const connectionId of tombstonedConnectionIds) {
       removedConnectionIds.add(connectionId)
     }
-    const pruned = removeWorkspaceSessionOwners(session, ownerKeys)!
+    const pruned =
+      ownerKeys.size > 0
+        ? removeWorkspaceSessionOwners(session, ownerKeys)!
+        : cloneWorkspaceSessionState(session)
     const currentDeletedOwnersByTabId = this.deletedFolderOwnersByHostAndTabId.get(hostId)
     const exclusivelyDeletedTabIds = new Set<string>()
     for (const tabId of tabScopedStateIds) {
@@ -5299,12 +5308,13 @@ export class Store {
       const deletedOwner = [...(currentDeletedOwnersByTabId?.get(tabId)?.entries() ?? [])].find(
         ([workspaceKey]) => ownerKeys.has(workspaceKey)
       )
-      if (!deletedOwner) {
+      if (!deletedOwner && !hasTruncatedDeletedFolderEvidence) {
         continue
       }
       exclusivelyDeletedTabIds.add(tabId)
       const ptyId = pruned.remoteSessionIdsByTabId?.[tabId]
-      const connectionId = (ptyId ? parseAppSshPtyId(ptyId)?.connectionId : null) ?? deletedOwner[1]
+      const connectionId =
+        (ptyId ? parseAppSshPtyId(ptyId)?.connectionId : null) ?? deletedOwner?.[1]
       if (connectionId) {
         removedConnectionIds.add(connectionId)
       }

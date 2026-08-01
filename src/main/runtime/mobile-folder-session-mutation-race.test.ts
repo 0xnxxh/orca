@@ -150,4 +150,79 @@ describe('mobile folder session mutation races', () => {
       })
     }
   )
+
+  it('kills a pending materialization when folder routing changes during spawn', async () => {
+    const folder: FolderWorkspace = {
+      id: 'materialize-race-folder',
+      projectGroupId: 'materialize-race-group',
+      name: 'Materialize race',
+      folderPath: '/workspace/materialize-race',
+      connectionId: null,
+      linkedTask: null,
+      comment: '',
+      isArchived: false,
+      isUnread: false,
+      isPinned: false,
+      sortOrder: 0,
+      lastActivityAt: 1,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const group: ProjectGroup = {
+      id: folder.projectGroupId,
+      name: folder.projectGroupId,
+      parentPath: folder.folderPath,
+      connectionId: null,
+      parentGroupId: null,
+      createdFrom: 'manual',
+      tabOrder: 0,
+      isCollapsed: false,
+      color: null,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const folderKey = `folder:${folder.id}`
+    const runtime = createRuntime([folder], group)
+    vi.spyOn(
+      runtime as unknown as {
+        resolveTerminalWorkspaceLaunchScope: () => Promise<{
+          id: string
+          path: string
+          connectionId: null
+          repo: null
+          folderWorkspace: FolderWorkspace
+        }>
+      },
+      'resolveTerminalWorkspaceLaunchScope'
+    ).mockImplementation(async () => ({
+      id: folderKey,
+      path: folder.folderPath,
+      connectionId: null,
+      repo: null,
+      folderWorkspace: folder
+    }))
+    let releaseSpawn!: (value: { id: string }) => void
+    const spawn = vi.fn(
+      () =>
+        new Promise<{ id: string }>((resolve) => {
+          releaseSpawn = resolve
+        })
+    )
+    const kill = vi.fn(() => true)
+    runtime.setPtyController({
+      write: () => true,
+      kill,
+      getForegroundProcess: async () => null,
+      listProcesses: async () => [],
+      spawn
+    })
+
+    const activation = runtime.activateMobileSessionTab(`id:${folderKey}`, TAB_ID)
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    folder.folderPath = '/workspace/materialize-race-moved'
+    releaseSpawn({ id: 'stale-materialized-pty' })
+
+    await expect(activation).rejects.toThrow('tab_not_found')
+    expect(kill).toHaveBeenCalledWith('stale-materialized-pty')
+  })
 })

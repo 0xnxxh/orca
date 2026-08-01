@@ -20,9 +20,10 @@ export function boundDeletedFolderTombstoneEvidence(
     )
   )
   const retainedTabEntries = tabEntries.slice(Math.max(0, tabEntries.length - MAX_TAB_OWNERS))
-  const retainedHostIds = [
+  const candidateHostIds = [
     ...new Set([...tombstone.hostIds, ...retainedTabEntries.map(([hostId]) => hostId)])
-  ].slice(-MAX_HOST_IDS)
+  ]
+  const retainedHostIds = candidateHostIds.slice(-MAX_HOST_IDS)
   const retainedHostIdSet = new Set(retainedHostIds)
   const tabConnectionIdsByHostId: DeletedFolderWorkspaceSessionTombstone['tabConnectionIdsByHostId'] =
     {}
@@ -35,7 +36,15 @@ export function boundDeletedFolderTombstoneEvidence(
       [tabId]: connectionId
     }
   }
-  return { ...tombstone, hostIds: retainedHostIds, tabConnectionIdsByHostId }
+  return {
+    ...tombstone,
+    evidenceTruncated:
+      tombstone.evidenceTruncated ||
+      tabEntries.length > MAX_TAB_OWNERS ||
+      candidateHostIds.length > MAX_HOST_IDS,
+    hostIds: retainedHostIds,
+    tabConnectionIdsByHostId
+  }
 }
 
 export function getDeletedFolderTombstoneEvictionKeys(
