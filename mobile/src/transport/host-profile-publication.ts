@@ -79,8 +79,8 @@ export function publishHostProfileTransaction(
   beforeHostSave: (() => Promise<void>) | null,
   saveHost: (host: HostProfile) => Promise<void>
 ): Promise<void> {
+  const publicationRevision = getHostProfilePublicationRevision(host.id)
   return serializeHostProfilePublication(host.id, async () => {
-    const publicationRevision = getHostProfilePublicationRevision(host.id)
     await beforeHostSave?.()
     requirePublicationRevision(host.id, publicationRevision)
     await saveHost(host)

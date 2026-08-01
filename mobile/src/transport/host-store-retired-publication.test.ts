@@ -71,4 +71,36 @@ describe('host removal with a retired publication', () => {
     expect(JSON.parse(storedHostsRaw)).toEqual([])
     expect(scheduleCleanup).toHaveBeenCalledOnce()
   })
+
+  it('fences a queued publication submitted before removal', async () => {
+    let releaseFirst: (() => void) | null = null
+    let markFirstStarted: (() => void) | null = null
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve
+    })
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    const first = publishHostProfileTransaction(
+      { ...HOST, deviceToken: 'token-1' },
+      async () => {
+        markFirstStarted?.()
+        await firstGate
+      },
+      saveHost
+    )
+    await firstStarted
+    const queued = publishHostProfileTransaction(
+      { ...HOST, name: 'Queued host', deviceToken: 'token-2' },
+      null,
+      saveHost
+    )
+
+    await expect(removeHost(HOST.id)).resolves.toBeUndefined()
+    releaseFirst?.()
+
+    await expect(first).rejects.toThrow('host profile publication was retired')
+    await expect(queued).rejects.toThrow('host profile publication was retired')
+    expect(JSON.parse(storedHostsRaw)).toEqual([])
+  })
 })

@@ -28,7 +28,6 @@ export function useAllHostClients(hostIds: string[]) {
         context.release(id)
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
 
   return useMemo(() => {
@@ -50,6 +49,5 @@ export function useAllHostClients(hostIds: string[]) {
       }
     }
     return clients
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, tick])
 }

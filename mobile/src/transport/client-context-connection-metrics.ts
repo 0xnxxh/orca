@@ -53,16 +53,14 @@ function useHostMetric<T>(
     if (!hostId) {
       return
     }
-    const unsubscribe = context.subscribeHostState(hostId, () => force((count) => count + 1))
-    const interval = options.pollMs
-      ? setInterval(() => force((count) => count + 1), options.pollMs)
-      : null
-    return () => {
-      unsubscribe()
-      if (interval) {
-        clearInterval(interval)
-      }
+    return context.subscribeHostState(hostId, () => force((count) => count + 1))
+  }, [context, hostId])
+  useEffect(() => {
+    if (!hostId || !options.pollMs) {
+      return
     }
-  }, [context, hostId, options.pollMs])
+    const interval = setInterval(() => force((count) => count + 1), options.pollMs)
+    return () => clearInterval(interval)
+  }, [hostId, options.pollMs])
   return hostId ? read(context, hostId) : fallback
 }

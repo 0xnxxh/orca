@@ -83,7 +83,9 @@ export function connectMobileRelayRpcSession(
     async sendRequest(method, params, options) {
       const budget = openRpcRequestBudget(options)
       await waitForConnected(budget.timeoutMs)
-      return sendRpc(method, params, resolvePostConnectRequestTimeout(budget, requestTimeoutMs))
+      const timeoutError = `relay RPC timed out: ${method}`
+      const timeoutMs = resolvePostConnectRequestTimeout(budget, requestTimeoutMs, timeoutError)
+      return sendRpc(method, params, timeoutMs)
     },
 
     subscribe(method, params, listener, options) {

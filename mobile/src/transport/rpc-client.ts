@@ -1005,9 +1005,13 @@ export function connect(
       }
 
       const requestWs = ws
+      const timeoutMs = resolvePostConnectRequestTimeout(
+        budget,
+        REQUEST_TIMEOUT_MS,
+        `Request timed out: ${method}`
+      )
       return new Promise((resolve, reject) => {
         const id = nextId()
-        const timeoutMs = resolvePostConnectRequestTimeout(budget, REQUEST_TIMEOUT_MS)
         const timeout = setTimeout(() => {
           pending.delete(id)
           console.log('[net] sendRequest TIMEOUT', { method, timeoutMs, state })

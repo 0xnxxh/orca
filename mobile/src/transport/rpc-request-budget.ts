@@ -29,6 +29,7 @@ export function openRpcRequestBudget(
 export function resolvePostConnectRequestTimeout(
   budget: RpcRequestBudget,
   fallbackMs: number,
+  exhaustedMessage: string,
   now = Date.now()
 ): number {
   if (budget.deadline === null) {
@@ -36,7 +37,10 @@ export function resolvePostConnectRequestTimeout(
   }
   const remainingMs = budget.deadline - now
   if (budget.strictDeadline) {
-    return Math.max(0, remainingMs)
+    if (remainingMs <= 0) {
+      throw new Error(exhaustedMessage)
+    }
+    return remainingMs
   }
   return Math.max(Math.min(RPC_REQUEST_MIN_ACK_MS, budget.deadline - budget.startedAt), remainingMs)
 }

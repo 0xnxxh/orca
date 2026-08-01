@@ -101,6 +101,23 @@ describe('mobile rpc-client request deadline', () => {
     globalThis.WebSocket = originalWebSocket
   })
 
+  it('does not send a strict request after its budget is exhausted', async () => {
+    const client = connect('ws://desktop.invalid', 'token', 'server-key')
+    const socket = mockSockets[0]!
+    socket.open()
+
+    await expect(
+      client.sendRequest('status.get', undefined, {
+        timeoutMs: 0,
+        budgetSpansConnect: true,
+        strictDeadline: true
+      })
+    ).rejects.toThrow('Request timed out: status.get')
+    expect(sentRequests(socket, 'status.get')).toEqual([])
+
+    client.close()
+  })
+
   it('spends one deadline across connect-wait and request, not one each', async () => {
     const client = connect('ws://desktop.invalid', 'token', 'server-key')
     const socket = mockSockets[0]!

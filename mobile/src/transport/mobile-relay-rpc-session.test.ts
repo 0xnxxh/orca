@@ -124,6 +124,21 @@ describe('mobile relay RPC session', () => {
     expect(session.getLeaseExpiresAt()).toEqual(expect.any(Number))
   })
 
+  it('does not send a strict Relay request after its budget is exhausted', async () => {
+    const { session } = await authenticateSession()
+
+    await expect(
+      session.sendRequest('status.get', undefined, {
+        timeoutMs: 0,
+        budgetSpansConnect: true,
+        strictDeadline: true
+      })
+    ).rejects.toThrow('relay RPC timed out: status.get')
+    expect(fakes.sendText).not.toHaveBeenCalled()
+
+    session.close()
+  })
+
   it('rejects a mismatched outer credential version and closes the physical link', () => {
     const session = openSession()
     fakes.linkOptions!.onHello({
