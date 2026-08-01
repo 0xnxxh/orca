@@ -484,14 +484,12 @@ const api = {
       }
     },
     reload: (): Promise<void> => ipcRenderer.invoke('app:reload'),
-    persistBeforeUnloadSync: (
-      args: Parameters<PreloadApi['app']['persistBeforeUnloadSync']>[0]
-    ) => {
-      const result = ipcRenderer.sendSync('app:persist-before-unload-sync', args) as {
+    stageBeforeUnloadSync: (args: Parameters<PreloadApi['app']['stageBeforeUnloadSync']>[0]) => {
+      const result = ipcRenderer.sendSync('app:stage-before-unload-sync', args) as {
         ok?: unknown
       }
       if (result?.ok !== true) {
-        throw new Error('Failed to persist renderer state before unload.')
+        throw new Error('Failed to stage renderer state before unload.')
       }
     },
     awaitFirstWindowStartupServices: (): Promise<void> =>

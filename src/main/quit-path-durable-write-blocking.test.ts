@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, existsSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import type * as NodeFs from 'node:fs'
 import type * as NodeFsPromises from 'node:fs/promises'
 import { join } from 'node:path'
@@ -20,9 +20,11 @@ const fsCalls = vi.hoisted(() => {
     syncCalls: [] as string[],
     /** Set to park every in-scope async fs call — a stalled mount, without stalling the thread. */
     holdAsync: null as Promise<void> | null,
+    waitAsync: null as ((fn: string, target: string) => Promise<void> | null) | null,
     reset(): void {
       calls.syncCalls.length = 0
       calls.holdAsync = null
+      calls.waitAsync = null
     },
     inScope(target: unknown): target is string {
       return (
@@ -65,6 +67,9 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       if (fsCalls.inScope(args[0]) && fsCalls.holdAsync) {
         await fsCalls.holdAsync
       }
+      if (fsCalls.inScope(args[0]) && typeof args[0] === 'string') {
+        await fsCalls.waitAsync?.(name, args[0])
+      }
       return fn(...args)
     }
   }
@@ -96,6 +101,8 @@ type TestStore = {
   setGitHubCache(cache: unknown): void
   waitForPendingWrite(): Promise<void>
   flushAsync(): Promise<void>
+  flushOrThrow(): void
+  stageWorkspaceSessionBeforeUnload(session: Record<string, unknown>): void
 }
 
 type TestStatsCollector = {
@@ -165,8 +172,57 @@ describe('quit-path durable writes never park the main thread', () => {
     expect(JSON.parse(readFileSync(dataFile(dir), 'utf-8')).ui.sidebarWidth).toBe(321)
   })
 
+  it('renderer unload staging issues no synchronous fs syscalls', async () => {
+    const dir = makeDir()
+    const store = await createStore(dir)
+
+    fsCalls.dirPrefix = dir
+    fsCalls.recording = true
+    const leafId = '11111111-1111-4111-8111-111111111111'
+    store.stageWorkspaceSessionBeforeUnload({
+      tabsByWorktree: {
+        'remote-repo::/remote': [
+          {
+            id: 'remote-tab',
+            ptyId: 'remote-pty',
+            worktreeId: 'remote-repo::/remote',
+            title: 'Remote',
+            customTitle: null,
+            color: null,
+            sortOrder: 0,
+            createdAt: 1
+          }
+        ]
+      },
+      terminalLayoutsByTabId: {
+        'remote-tab': {
+          root: { type: 'leaf', leafId },
+          activeLeafId: leafId,
+          expandedLeafId: null,
+          buffersByLeafId: { [leafId]: 'remote-scrollback' }
+        }
+      },
+      openFilesByWorktree: {}
+    })
+    fsCalls.recording = false
+
+    expect(fsCalls.syncCalls).toEqual([])
+    await store.flushAsync()
+    const layout = JSON.parse(readFileSync(dataFile(dir), 'utf-8')).workspaceSession
+      .terminalLayoutsByTabId['remote-tab']
+    const ref = layout.scrollbackRefsByLeafId[leafId]
+    expect(layout.buffersByLeafId).toBeUndefined()
+    expect(readFileSync(join(dir, 'terminal-scrollback', `${ref}.bin`), 'utf-8')).toBe(
+      'remote-scrollback'
+    )
+  })
+
   it('store.flushAsync() also moves the active-view and github-cache sidecars off the thread', async () => {
     const dir = makeDir()
+    const staleCacheTemp = join(dir, 'orca-github-cache.json.999999.1.orphan.tmp')
+    writeFileSync(staleCacheTemp, 'stale', 'utf-8')
+    const staleSeconds = (Date.now() - 25 * 60 * 60 * 1000) / 1000
+    utimesSync(staleCacheTemp, staleSeconds, staleSeconds)
     const store = await createStore(dir)
     store.updateUI({ activeView: 'activity' })
     store.setGitHubCache({ pullRequestsByWorktree: {} })
@@ -179,6 +235,7 @@ describe('quit-path durable writes never park the main thread', () => {
     expect(fsCalls.syncCalls).toEqual([])
     expect(JSON.parse(readFileSync(activeViewFile(dir), 'utf-8')).activeView).toBe('activity')
     expect(existsSync(join(dir, 'orca-github-cache.json'))).toBe(true)
+    expect(existsSync(staleCacheTemp)).toBe(false)
   })
 
   it('stats.flushAsync() issues no synchronous fs syscalls', async () => {
@@ -262,6 +319,57 @@ describe('quit-path durable writes never park the main thread', () => {
     expect(JSON.parse(readFileSync(dataFile(dir), 'utf-8')).ui.sidebarWidth).toBe(200)
   })
 
+  it('store.flushAsync() is one idempotent final barrier', async () => {
+    const dir = makeDir()
+    const store = await createStore(dir)
+    store.updateUI({ sidebarWidth: 777 })
+
+    const first = store.flushAsync()
+    const second = store.flushAsync()
+
+    expect(second).toBe(first)
+    expect(() => store.flushOrThrow()).toThrow('final persistence')
+    await first
+    expect(JSON.parse(readFileSync(dataFile(dir), 'utf-8')).ui.sidebarWidth).toBe(777)
+  })
+
+  it('serializes github-cache snapshots and keeps the newest generation', async () => {
+    const dir = makeDir()
+    const store = await createStore(dir)
+    let releaseWrite!: () => void
+    const writeRelease = new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    })
+    let signalWrite!: () => void
+    const writeStarted = new Promise<void>((resolve) => {
+      signalWrite = resolve
+    })
+    let held = false
+    fsCalls.dirPrefix = dir
+    fsCalls.recording = true
+    fsCalls.waitAsync = (fn, target) => {
+      if (held || fn !== 'writeFile' || !target.includes('orca-github-cache.json')) {
+        return null
+      }
+      held = true
+      signalWrite()
+      return writeRelease
+    }
+
+    store.setGitHubCache({ version: 1 })
+    const finalFlush = store.flushAsync()
+    await writeStarted
+    store.setGitHubCache({ version: 2 })
+
+    releaseWrite()
+    await finalFlush
+    fsCalls.recording = false
+
+    expect(JSON.parse(readFileSync(join(dir, 'orca-github-cache.json'), 'utf-8'))).toEqual({
+      version: 2
+    })
+  })
+
   it('stats.flushAsync() wins over a debounced write already in flight', async () => {
     const dir = makeDir()
     const stats = await createStatsCollector(dir)
@@ -297,6 +405,30 @@ describe('quit-path durable writes never park the main thread', () => {
 
     expect(fsCalls.syncCalls).toEqual([])
     expect(JSON.parse(readFileSync(dataFile(dir), 'utf-8')).ui.sidebarWidth).toBe(10)
+    expect(JSON.parse(readFileSync(activeViewFile(dir), 'utf-8')).activeView).toBe('terminal')
+  })
+
+  it('sweeps orphaned state and stats temp files before the final write', async () => {
+    const dir = makeDir()
+    const stateTemp = `${dataFile(dir)}.999999.1.orphan.tmp`
+    const statsTemp = `${statsFile(dir)}.999999.1.orphan.tmp`
+    const freshOtherProcessTemp = `${dataFile(dir)}.999998.1.live.tmp`
+    writeFileSync(stateTemp, 'stale', 'utf-8')
+    writeFileSync(statsTemp, 'stale', 'utf-8')
+    writeFileSync(freshOtherProcessTemp, 'in-flight', 'utf-8')
+    const staleSeconds = (Date.now() - 25 * 60 * 60 * 1000) / 1000
+    utimesSync(stateTemp, staleSeconds, staleSeconds)
+    utimesSync(statsTemp, staleSeconds, staleSeconds)
+
+    const store = await createStore(dir)
+    const stats = await createStatsCollector(dir)
+    store.updateUI({ sidebarWidth: 123 })
+    stats.onAgentStart('pty-sweep', Date.now())
+    await Promise.all([store.flushAsync(), stats.flushAsync()])
+
+    expect(existsSync(stateTemp)).toBe(false)
+    expect(existsSync(statsTemp)).toBe(false)
+    expect(existsSync(freshOtherProcessTemp)).toBe(true)
   })
 
   it('store.flushAsync() resolves instead of throwing when the profile mount rejects writes', async () => {

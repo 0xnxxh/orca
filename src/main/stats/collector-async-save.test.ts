@@ -25,7 +25,9 @@ const gate = vi.hoisted(() => ({
   waiters: [] as (() => void)[],
   renameWaiters: [] as (() => void)[],
   writeFileCalls: 0,
-  renameCalls: 0
+  renameCalls: 0,
+  failNextWrite: false,
+  failNextRenameEnoent: false
 }))
 
 vi.mock('node:fs/promises', async () => {
@@ -35,10 +37,18 @@ vi.mock('node:fs/promises', async () => {
     if (gate.blocked) {
       await new Promise<void>((resolve) => gate.waiters.push(resolve))
     }
+    if (gate.failNextWrite) {
+      gate.failNextWrite = false
+      throw new Error('transient write failure')
+    }
     return actual.writeFile(...args)
   }) as typeof actual.writeFile
   const rename = (async (...args: Parameters<typeof actual.rename>) => {
     gate.renameCalls += 1
+    if (gate.failNextRenameEnoent) {
+      gate.failNextRenameEnoent = false
+      throw Object.assign(new Error('missing temp'), { code: 'ENOENT' })
+    }
     if (gate.blockRename) {
       await new Promise<void>((resolve) => gate.renameWaiters.push(resolve))
     }
@@ -60,6 +70,8 @@ describe('StatsCollector async debounced save', () => {
     gate.renameWaiters = []
     gate.writeFileCalls = 0
     gate.renameCalls = 0
+    gate.failNextWrite = false
+    gate.failNextRenameEnoent = false
     vi.resetModules()
   })
 
@@ -92,6 +104,70 @@ describe('StatsCollector async debounced save', () => {
     expect(Array.isArray(parsed.events)).toBe(true)
   })
 
+  it('coalesces timer saves while one write is stalled', async () => {
+    vi.useFakeTimers()
+    const { StatsCollector, initStatsPath } = await importCollector()
+    initStatsPath()
+    const collector = new StatsCollector()
+
+    gate.blocked = true
+    collector.onAgentStart('pty-1', 1_000)
+    await vi.advanceTimersByTimeAsync(5_000)
+    await vi.waitFor(() => expect(gate.writeFileCalls).toBe(1))
+
+    for (let index = 2; index <= 5; index += 1) {
+      collector.onAgentStart(`pty-${index}`, index * 1_000)
+      await vi.advanceTimersByTimeAsync(5_000)
+    }
+    expect(gate.writeFileCalls).toBe(1)
+
+    gate.blocked = false
+    gate.waiters.splice(0).forEach((resolve) => resolve())
+    await vi.waitFor(() => expect(gate.writeFileCalls).toBe(2))
+    await (
+      collector as unknown as { snapshotWriter: { waitForPendingWrite(): Promise<void> } }
+    ).snapshotWriter.waitForPendingWrite()
+
+    expect(JSON.parse(readFileSync(statsPath(), 'utf-8')).aggregates.totalAgentsSpawned).toBe(5)
+  })
+
+  it('retries a queued final snapshot after the active write fails', async () => {
+    const { StatsCollector, initStatsPath } = await importCollector()
+    initStatsPath()
+    const collector = new StatsCollector()
+    const internals = collector as unknown as { enqueueWrite(): Promise<void> }
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    collector.onAgentStart('pty-final', 1_000)
+    gate.blocked = true
+    void internals.enqueueWrite()
+    await vi.waitFor(() => expect(gate.writeFileCalls).toBe(1))
+    const finalWrite = collector.flushAsync()
+
+    gate.failNextWrite = true
+    gate.blocked = false
+    gate.waiters.splice(0).forEach((resolve) => resolve())
+    await finalWrite
+    errors.mockRestore()
+
+    expect(gate.writeFileCalls).toBe(2)
+    expect(JSON.parse(readFileSync(statsPath(), 'utf-8')).aggregates.totalAgentsSpawned).toBe(1)
+  })
+
+  it('does not treat a genuine rename ENOENT as a committed snapshot', async () => {
+    const { StatsCollector, initStatsPath } = await importCollector()
+    initStatsPath()
+    const collector = new StatsCollector()
+    const internals = collector as unknown as { enqueueWrite(): Promise<void> }
+    collector.onAgentStart('pty-enoent', 1_000)
+
+    gate.failNextRenameEnoent = true
+    await expect(internals.enqueueWrite()).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(internals.enqueueWrite()).resolves.toBeUndefined()
+
+    expect(JSON.parse(readFileSync(statsPath(), 'utf-8')).aggregates.totalAgentsSpawned).toBe(1)
+  })
+
   it('flush() writes synchronously (no timer, immediately on disk)', async () => {
     const { StatsCollector, initStatsPath } = await importCollector()
     initStatsPath()
@@ -110,8 +186,7 @@ describe('StatsCollector async debounced save', () => {
     initStatsPath()
     const collector = new StatsCollector()
     // White-box: drive the two writers directly so the race is deterministic
-    // (the debounce path calls writeToDiskAsync; flush() calls writeToDiskSync).
-    const internals = collector as unknown as { writeToDiskAsync: () => Promise<void> }
+    const internals = collector as unknown as { enqueueWrite: () => Promise<void> }
 
     collector.onAgentStart('pty-a', 1_000)
     collector.onAgentStart('pty-b', 1_000)
@@ -120,7 +195,7 @@ describe('StatsCollector async debounced save', () => {
     // Why waitFor and not one tick: the writer awaits mkdir first, so the number of
     // microtask turns before writeFile is reached is an implementation detail.
     gate.blocked = true
-    const inflight = internals.writeToDiskAsync()
+    const inflight = internals.enqueueWrite()
     await vi.waitFor(() => expect(gate.writeFileCalls).toBeGreaterThan(0))
 
     // App quits: close out both agents and flush the COMPLETE state synchronously
@@ -147,13 +222,13 @@ describe('StatsCollector async debounced save', () => {
     const { StatsCollector, initStatsPath } = await importCollector()
     initStatsPath()
     const collector = new StatsCollector()
-    const internals = collector as unknown as { writeToDiskAsync: () => Promise<void> }
+    const internals = collector as unknown as { enqueueWrite: () => Promise<void> }
 
     collector.onAgentStart('pty-a', 1_000)
     collector.onAgentStart('pty-b', 1_000)
 
     gate.blockRename = true
-    const inflight = internals.writeToDiskAsync()
+    const inflight = internals.enqueueWrite()
     await vi.waitFor(() => expect(gate.renameCalls).toBeGreaterThan(0))
 
     collector.onAgentStop('pty-a', 5_000)

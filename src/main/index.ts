@@ -250,6 +250,7 @@ import { buildHeadlessAutomationWorktreeCreateArgs } from './automations/headles
 import { AgentAwakeService } from './agent-awake-service'
 import { registerSystemResumeBroadcast } from './system-resume-broadcast'
 import { settleTeardownWithinDeadline } from './quit-teardown-deadline'
+import { QuitTeardownStartGate } from './quit-teardown-start-gate'
 import { PluginService } from './plugins/plugin-service'
 import { PluginKillListService } from './plugins/plugin-kill-list-service'
 import { getPluginsDataDir } from './plugins/plugin-discovery'
@@ -2936,6 +2937,7 @@ app.on('before-quit', () => {
 
 // Why: will-quit fires twice — first pass preventDefaults and runs teardown; second pass exits.
 let daemonDisconnectDone = false
+const quitTeardownStartGate = new QuitTeardownStartGate()
 app.on('will-quit', (e) => {
   // Why return instead of re-running teardown: the second pass is Electron re-firing after
   // our own app.quit(), so every step below already ran and every durable write already
@@ -2948,7 +2950,9 @@ app.on('will-quit', (e) => {
   // network profile mount. The teardown deadline cannot rescue that, because its timer
   // lives on the same thread it would need to bound (#9447 covers the wedged-transport
   // half; this covers the blocked-syscall half).
-  e.preventDefault()
+  if (!quitTeardownStartGate.tryStart(e)) {
+    return
+  }
   // Why: renderer guards can still cancel before this committed phase; `log stream` must survive those vetoes.
   stopTccPromptNotice()
   const updateQuitInProgress = isQuittingForUpdate()

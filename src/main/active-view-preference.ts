@@ -34,11 +34,15 @@ export class ActiveViewPreference {
   private persistedActiveView: TopLevelView | null
   private writeTimer: ReturnType<typeof setTimeout> | null = null
   private pendingWrite: Promise<void> | null = null
+  private pendingFlush: Promise<void> | null = null
+  private flushSignals = new Set<AbortSignal>()
+  private unabortableFlushConsumers = 0
   private writeGeneration = 0
   /** Temp path of the write awaiting its rename; flushOrThrow removes it to veto that rename. */
   private inFlightTmpFile: string | null = null
   /** Set by flushAsync so the quit flush is the final write; see scheduleSave. */
   private quitFlushStarted = false
+  private quitFlushPromise: Promise<void> | null = null
 
   constructor(dataFile: string, legacyActiveView: unknown) {
     this.file = getActiveViewPreferenceFile(dataFile)
@@ -115,10 +119,15 @@ export class ActiveViewPreference {
       try {
         await rename(tmpFile, this.file)
         renamed = true
-        this.persistedActiveView = activeView
+        if (generation === this.writeGeneration) {
+          this.persistedActiveView = activeView
+        }
       } catch (err) {
         // ENOENT: flushOrThrow removed this temp file because it already wrote a fresher view.
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        if (
+          (err as NodeJS.ErrnoException).code !== 'ENOENT' ||
+          generation === this.writeGeneration
+        ) {
           throw err
         }
       } finally {
@@ -134,13 +143,15 @@ export class ActiveViewPreference {
   }
 
   flushOrThrow(): void {
+    if (this.quitFlushStarted) {
+      throw new Error('Cannot synchronously flush active view after final persistence has started')
+    }
     if (this.writeTimer) {
       clearTimeout(this.writeTimer)
       this.writeTimer = null
     }
     const asyncWriteWasInFlight = this.pendingWrite !== null
     this.writeGeneration += 1
-    this.pendingWrite = null
     if (!asyncWriteWasInFlight && this.activeView === this.persistedActiveView) {
       return
     }
@@ -150,10 +161,13 @@ export class ActiveViewPreference {
     if (this.inFlightTmpFile) {
       try {
         unlinkSync(this.inFlightTmpFile)
-      } catch {
-        // Already renamed or never created.
+        this.inFlightTmpFile = null
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          void this.enqueueWrite(this.activeView, this.writeGeneration)
+          throw error
+        }
       }
-      this.inFlightTmpFile = null
     }
     mkdirSync(dirname(this.file), { recursive: true })
     const tmpFile = `${this.file}.${process.pid}.${this.writeGeneration}.tmp`
@@ -164,18 +178,67 @@ export class ActiveViewPreference {
 
   /** Async twin of flushOrThrow() for the quit path; never throws so it can join the teardown barrier. */
   flushAsync(): Promise<void> {
+    if (this.quitFlushPromise) {
+      return this.quitFlushPromise
+    }
     this.quitFlushStarted = true
-    if (this.writeTimer) {
-      clearTimeout(this.writeTimer)
-      this.writeTimer = null
+    this.quitFlushPromise = this.flushPendingAsync()
+    return this.quitFlushPromise
+  }
+
+  flushPendingAsync(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) {
+      return Promise.reject(new Error('Active-view flush aborted'))
     }
-    // Why still write when a write is already in flight: that one may carry a stale view,
-    // and its generation guard would drop it — matching flushOrThrow's `force` reasoning.
-    if (this.pendingWrite === null && this.activeView === this.persistedActiveView) {
-      return Promise.resolve()
+    if (signal) {
+      this.flushSignals.add(signal)
+    } else {
+      this.unabortableFlushConsumers += 1
     }
-    this.writeGeneration += 1
-    return this.enqueueWrite(this.activeView, this.writeGeneration)
+    if (this.pendingFlush) {
+      return this.pendingFlush
+    }
+    const run = this.drainPendingWrites()
+    const tracked = run.finally(() => {
+      if (this.pendingFlush === tracked) {
+        this.pendingFlush = null
+        this.flushSignals.clear()
+        this.unabortableFlushConsumers = 0
+      }
+    })
+    this.pendingFlush = tracked
+    return tracked
+  }
+
+  private async drainPendingWrites(): Promise<void> {
+    for (;;) {
+      if (this.allFlushConsumersAborted()) {
+        throw new Error('Active-view flush aborted')
+      }
+      if (this.writeTimer) {
+        clearTimeout(this.writeTimer)
+        this.writeTimer = null
+      }
+      if (this.pendingWrite === null && this.activeView === this.persistedActiveView) {
+        return
+      }
+      const generation = ++this.writeGeneration
+      await this.enqueueWrite(this.activeView, generation)
+      if (this.allFlushConsumersAborted()) {
+        throw new Error('Active-view flush aborted')
+      }
+      if (generation === this.writeGeneration) {
+        return
+      }
+    }
+  }
+
+  private allFlushConsumersAborted(): boolean {
+    return (
+      this.unabortableFlushConsumers === 0 &&
+      this.flushSignals.size > 0 &&
+      [...this.flushSignals].every((signal) => signal.aborted)
+    )
   }
 
   async waitForPendingWrite(): Promise<void> {
