@@ -35,6 +35,7 @@ export function listStaleCodexPanes(args: {
     const homeRouteChanged =
       record.selectionKey === 'host' &&
       record.homeRoute !== undefined &&
+      record.homeRoute !== 'custom-home' &&
       args.activeHostHomeRoute !== undefined &&
       record.homeRoute !== args.activeHostHomeRoute
     const accountChanged = record.accountId !== activeAccountId

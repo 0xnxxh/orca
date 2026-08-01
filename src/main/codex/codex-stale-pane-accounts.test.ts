@@ -102,6 +102,11 @@ describe('codex pane account registry', () => {
       accountId: null,
       homeRoute: 'wsl-home'
     })
+    recordCodexPaneAccount('pty-custom', {
+      selectionKey: 'host',
+      accountId: null,
+      homeRoute: 'custom-home'
+    })
 
     expect(hasRecordedLegacySharedCodexPane()).toBe(false)
 
@@ -293,6 +298,22 @@ describe('listStaleCodexPanes', () => {
 
   it('does not guess a route for panes recorded before route provenance', () => {
     recordCodexPaneAccount('pty-1', { selectionKey: 'host', accountId: null })
+
+    expect(
+      listStaleCodexPanes({
+        ptyIds: ['pty-1'],
+        settings: settingsWithSelection(null),
+        activeHostHomeRoute: 'real-home'
+      })
+    ).toEqual([])
+  })
+
+  it('does not compare a pane-local custom home with the selected host route', () => {
+    recordCodexPaneAccount('pty-1', {
+      selectionKey: 'host',
+      accountId: null,
+      homeRoute: 'custom-home'
+    })
 
     expect(
       listStaleCodexPanes({

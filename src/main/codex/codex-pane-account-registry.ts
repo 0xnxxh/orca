@@ -16,7 +16,12 @@ import type {
  * the old account and the user is stuck there with no prompt to escape it.
  */
 
-export type CodexPaneHomeRoute = 'real-home' | 'shared-home' | 'account-home' | 'wsl-home'
+export type CodexPaneHomeRoute =
+  | 'real-home'
+  | 'shared-home'
+  | 'account-home'
+  | 'custom-home'
+  | 'wsl-home'
 
 export type CodexPaneAccountRecord = {
   /** 'host' or 'wsl:<distro>' — the selection lane this pane launched from. */
@@ -127,6 +132,7 @@ function isPaneHomeRoute(value: unknown): value is CodexPaneHomeRoute {
     value === 'real-home' ||
     value === 'shared-home' ||
     value === 'account-home' ||
+    value === 'custom-home' ||
     value === 'wsl-home'
   )
 }

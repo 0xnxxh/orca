@@ -32,7 +32,7 @@ type CodexPaneLaunchAccountSettings = Pick<
 export function resolveCodexPaneLaunchAccount(args: {
   pinnedByResume: boolean
   launchCodexHomePath: string | null
-  recordHomeRoute?: boolean
+  recordComparableHomeRoute?: boolean
   shellStartupHomeOverride?: CodexShellStartupHomeOverride
   environmentHomeOverride?: CodexEnvironmentHomeOverride
   systemCodexHomePath: string
@@ -40,7 +40,8 @@ export function resolveCodexPaneLaunchAccount(args: {
   target: CodexAccountSelectionTarget
 }): CodexPaneAccountRecord | null {
   const selectionKey = getCodexSelectionLaneKey(args.target)
-  const homeRoute = args.recordHomeRoute === false ? undefined : resolveCodexPaneHomeRoute(args)
+  const homeRoute =
+    args.recordComparableHomeRoute === false ? 'custom-home' : resolveCodexPaneHomeRoute(args)
   if (!args.pinnedByResume) {
     return {
       selectionKey,

@@ -74,17 +74,17 @@ describe('resolveCodexPaneLaunchAccount', () => {
     })
   })
 
-  it('omits route provenance for a pane-local custom home', () => {
+  it('records a non-comparable route for a pane-local custom home', () => {
     expect(
       resolveCodexPaneLaunchAccount({
         pinnedByResume: false,
         launchCodexHomePath: '/data/codex-runtime-home/home',
-        recordHomeRoute: false,
+        recordComparableHomeRoute: false,
         systemCodexHomePath: SYSTEM_HOME,
         settings: settings({ host: null }),
         target: { runtime: 'host' }
       })
-    ).toEqual({ selectionKey: 'host', accountId: null })
+    ).toEqual({ selectionKey: 'host', accountId: null, homeRoute: 'custom-home' })
   })
 
   it('records the same account a resume pinned to when it is already selected', () => {

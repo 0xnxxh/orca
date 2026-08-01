@@ -15059,7 +15059,8 @@ describe('registerPtyHandlers', () => {
 
       expect(recordCodexPaneAccountMock).toHaveBeenCalledWith('pty-custom-home', {
         selectionKey: 'host',
-        accountId: null
+        accountId: null,
+        homeRoute: 'custom-home'
       })
     }
   )
@@ -15131,7 +15132,8 @@ describe('registerPtyHandlers', () => {
 
     expect(recordCodexPaneAccountMock).toHaveBeenCalledWith('pty-pane-env-home', {
       selectionKey: 'host',
-      accountId: null
+      accountId: null,
+      homeRoute: 'custom-home'
     })
   })
 
