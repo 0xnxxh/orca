@@ -30,6 +30,7 @@ type StreamManagerOptions = {
   nextId: () => string
   sendFrame: (request: { id: string; method: string; params?: unknown }) => boolean
   waitForConnected: () => Promise<void>
+  onApplicationResponse?: (method: string) => void
 }
 
 export class MobileRelayRpcStreams {
@@ -62,7 +63,11 @@ export class MobileRelayRpcStreams {
       .waitForConnected()
       .then(() => {
         if (!stream.cancelled) {
-          stream.sent = this.options.sendFrame({ id, method, params: stream.params })
+          stream.sent = this.options.sendFrame({
+            id,
+            method,
+            params: stream.params
+          })
           if (!stream.sent) {
             this.fail(id, stream, 'Connection interrupted')
           }
@@ -90,7 +95,11 @@ export class MobileRelayRpcStreams {
     }
     const result = (response as RpcSuccess).result
     if (result && typeof result === 'object') {
-      const metadata = result as { subscriptionId?: unknown; streamId?: unknown; type?: unknown }
+      const metadata = result as {
+        subscriptionId?: unknown
+        streamId?: unknown
+        type?: unknown
+      }
       if (typeof metadata.subscriptionId === 'string') {
         stream.subscriptionId = metadata.subscriptionId
       }
@@ -119,6 +128,9 @@ export class MobileRelayRpcStreams {
       return false
     }
     stream.controlResponseReceived = true
+    if (response.ok) {
+      this.options.onApplicationResponse?.(stream.method)
+    }
     return true
   }
 

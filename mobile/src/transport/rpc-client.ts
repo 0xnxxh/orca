@@ -8,14 +8,12 @@ import {
   decrypt,
   decryptBytes
 } from './e2ee'
+import type { TerminalSnapshotState } from './rpc-client-terminal-binary-frame'
 import {
-  handleTerminalBinaryFrame,
-  type TerminalSnapshotState
-} from './rpc-client-terminal-binary-frame'
-import {
-  decodeBrowserScreencastFrame,
-  type BrowserScreencastFrame
-} from './browser-screencast-protocol'
+  routeRpcClientStreamFrame,
+  type RpcClientStreamRequest as StreamRequest,
+  type RpcStreamingListener as StreamingListener
+} from './rpc-client-stream-frame-routing'
 import type {
   ConnectOptions,
   RpcClient,
@@ -57,18 +55,6 @@ type ConnectWaiter = {
   resolve: () => void
   reject: (error: Error) => void
   timeout: ReturnType<typeof setTimeout> | null
-}
-
-type StreamingListener = (result: unknown) => void
-
-type StreamRequest = {
-  method: string
-  params: unknown
-  listener: StreamingListener
-  onBinaryFrame?: (frame: BrowserScreencastFrame) => void
-  subscriptionId?: string
-  cancelled?: boolean
-  sent?: 'awaiting' | 'received'
 }
 
 // Why: tiered backoff — fast early entries recover blips; the slow tail avoids burning a SYN every 4s on an unreachable desktop.
@@ -412,7 +398,12 @@ export function connect(
               }
               resetTerminalStreamRoutingForRequest(id)
               if (
-                sendEncrypted({ id, deviceToken, method: stream.method, params: stream.params })
+                sendEncrypted({
+                  id,
+                  deviceToken,
+                  method: stream.method,
+                  params: stream.params
+                })
               ) {
                 stream.sent = 'awaiting'
               } else {
@@ -421,7 +412,10 @@ export function connect(
               }
             }
           } else if (msg.type === 'e2ee_error' || (!msg.ok && msg.error?.code === 'unauthorized')) {
-            console.log('[net] e2ee auth FAILED', { msgType: msg.type, error: msg.error })
+            console.log('[net] e2ee auth FAILED', {
+              msgType: msg.type,
+              error: msg.error
+            })
             if (handshakeTimer) {
               clearTimeout(handshakeTimer)
               handshakeTimer = null
@@ -451,7 +445,12 @@ export function connect(
         if (!plaintextBytes) {
           return
         }
-        handleBinaryFrame(plaintextBytes)
+        routeRpcClientStreamFrame(plaintextBytes, {
+          activeBrowserRequestId: activeBrowserScreencastRequestId,
+          streams: streamListeners,
+          terminalSnapshots,
+          terminalListeners: terminalStreamListeners
+        })
         return
       }
 
@@ -471,11 +470,13 @@ export function connect(
       }
       const request = pending.get(response.id)
       const lateApplicationResponse = applicationResponseTracker.consumeLateResponse(response.id)
+      const responseStream = streamListeners.get(response.id)
+      const firstStreamResponse = consumeFirstStreamControlResponse(responseStream)
       if (
         request ||
         timedOutControlRequestIds.consume(response.id) ||
         lateApplicationResponse ||
-        consumeFirstStreamControlResponse(streamListeners.get(response.id))
+        firstStreamResponse
       ) {
         controlResponseSequence++
       }
@@ -485,20 +486,22 @@ export function connect(
         handleAuthRejection('Unauthorized — pairing may be revoked')
         return
       }
+      if (response.ok && firstStreamResponse && responseStream) {
+        applicationResponseTracker.recordResponse(responseStream.method)
+      }
       const isStreaming = response.ok && (response as RpcSuccess).streaming === true
 
       if (isStreaming) {
-        const stream = streamListeners.get(response.id)
-        if (stream && response.ok) {
+        if (responseStream && response.ok) {
           const result = (response as RpcSuccess).result
           if (isStreamingSubscriptionReadyResult(result)) {
-            stream.subscriptionId = result.subscriptionId
-            if (stream.cancelled) {
-              sendServerSubscriptionUnsubscribe(stream)
+            responseStream.subscriptionId = result.subscriptionId
+            if (responseStream.cancelled) {
+              sendServerSubscriptionUnsubscribe(responseStream)
               removeStreamListener(response.id)
               return
             }
-            if (stream.method === 'browser.screencast') {
+            if (responseStream.method === 'browser.screencast') {
               if (
                 pendingBrowserScreencastRequestId !== response.id &&
                 activeBrowserScreencastRequestId !== response.id
@@ -518,10 +521,10 @@ export function connect(
               terminalStreamIdsByRequest.set(response.id, ids)
             }
             ids.add(result.streamId)
-            terminalStreamListeners.set(result.streamId, stream.listener)
+            terminalStreamListeners.set(result.streamId, responseStream.listener)
           }
-          if (!stream.cancelled) {
-            stream.listener(result)
+          if (!responseStream.cancelled) {
+            responseStream.listener(result)
           }
         }
         return
@@ -762,7 +765,9 @@ export function connect(
       if (controlResponded) {
         return
       }
-      console.log('[net] activity-probe TIMEOUT — forcing reconnect', { state })
+      console.log('[net] activity-probe TIMEOUT — forcing reconnect', {
+        state
+      })
       forceSocketReconnect(probeWs)
     }, 8_000)
     pending.set(id, {
@@ -910,29 +915,6 @@ export function connect(
     }
   }
 
-  function handleBinaryFrame(bytes: Uint8Array): void {
-    const browserFrame = decodeBrowserScreencastFrame(bytes)
-    if (browserFrame) {
-      handleBrowserBinaryFrame(browserFrame)
-      return
-    }
-    handleTerminalBinaryFrame(bytes, {
-      terminalSnapshots,
-      getListener: (streamId) => terminalStreamListeners.get(streamId)
-    })
-  }
-
-  function handleBrowserBinaryFrame(frame: BrowserScreencastFrame) {
-    if (!activeBrowserScreencastRequestId) {
-      return
-    }
-    const stream = streamListeners.get(activeBrowserScreencastRequestId)
-    if (!stream || stream.cancelled || stream.method !== 'browser.screencast') {
-      return
-    }
-    stream.onBinaryFrame?.(frame)
-  }
-
   function sendEncrypted(request: unknown): boolean {
     if (ws && ws.readyState === WebSocket.OPEN && sharedKey) {
       ws.send(encrypt(JSON.stringify(request), sharedKey))
@@ -1014,7 +996,11 @@ export function connect(
         const id = nextId()
         const timeout = setTimeout(() => {
           pending.delete(id)
-          console.log('[net] sendRequest TIMEOUT', { method, timeoutMs, state })
+          console.log('[net] sendRequest TIMEOUT', {
+            method,
+            timeoutMs,
+            state
+          })
           // Why: the frame was written 30s ago — the host may have processed it.
           reject(markRpcDeliveryUnknown(new Error(`Request timed out: ${method}`)))
           if (requestWs === ws) {
@@ -1084,7 +1070,10 @@ export function connect(
         }
       } else {
         // Registered now; the outbound subscribe is (re-)sent once the channel reaches 'connected'.
-        console.log('[net] subscribe queued — waiting for connected', { method, state })
+        console.log('[net] subscribe queued — waiting for connected', {
+          method,
+          state
+        })
       }
 
       return () => {
@@ -1111,7 +1100,12 @@ export function connect(
         } else {
           const unsub = buildStreamUnsubscribe(stream?.method, stream?.params)
           if (unsub) {
-            sendEncrypted({ id: nextId(), deviceToken, method: unsub.method, params: unsub.params })
+            sendEncrypted({
+              id: nextId(),
+              deviceToken,
+              method: unsub.method,
+              params: unsub.params
+            })
           }
         }
         removeStreamListener(id)

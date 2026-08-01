@@ -52,7 +52,8 @@ export function connectMobileRelayRpcSession(
   const streams = new MobileRelayRpcStreams({
     nextId,
     sendFrame,
-    waitForConnected: () => waitForConnected()
+    waitForConnected: () => waitForConnected(),
+    onApplicationResponse: (method) => applicationResponseTracker.recordResponse(method)
   })
 
   const link = new MobileRelayE2eeLink({

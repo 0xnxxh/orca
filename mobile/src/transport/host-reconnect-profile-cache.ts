@@ -1,4 +1,5 @@
 import type { HostProfile } from './types'
+import { hostProfileAfterEdit, type HostProfileEdit } from './host-endpoint-edit'
 
 type CachedHostProfile = {
   host: HostProfile
@@ -31,7 +32,12 @@ export class HostReconnectProfileCache {
         ? previous.publicationVersion
         : (this.publicationVersions.get(host.id) ?? 0) + 1
     this.publicationVersions.set(host.id, publicationVersion)
-    this.profiles.set(host.id, { host, version, publicationVersion, sourceRevision })
+    this.profiles.set(host.id, {
+      host,
+      version,
+      publicationVersion,
+      sourceRevision
+    })
     return version
   }
 
@@ -51,6 +57,22 @@ export class HostReconnectProfileCache {
           sourceRevision: currentRevision,
           version: this.version(hostId, currentRevision)
         }
+  }
+
+  reconnectEditedProfile(
+    hostId: string,
+    currentRevision: number,
+    fallbackHost: HostProfile,
+    updates: HostProfileEdit
+  ): HostOpenProfile {
+    const cached = this.profiles.get(hostId)?.host
+    const base = cached && reconnectIdentityMatches(cached, fallbackHost) ? cached : fallbackHost
+    const host = hostProfileAfterEdit(base, updates)
+    return {
+      host,
+      sourceRevision: currentRevision,
+      version: this.prime(host, currentRevision)
+    }
   }
 
   openProfile(
@@ -92,7 +114,12 @@ export class HostReconnectProfileCache {
     const publicationVersion = sourcePublicationVersion + 1
     this.latestVersions.set(host.id, version)
     this.publicationVersions.set(host.id, publicationVersion)
-    this.profiles.set(host.id, { host, version, publicationVersion, sourceRevision })
+    this.profiles.set(host.id, {
+      host,
+      version,
+      publicationVersion,
+      sourceRevision
+    })
     return version
   }
 
@@ -152,5 +179,13 @@ function reconnectProfileMatches(left: HostProfile, right: HostProfile): boolean
     left.relayHostId === right.relayHostId &&
     JSON.stringify(left.endpoints ?? null) === JSON.stringify(right.endpoints ?? null) &&
     JSON.stringify(left.relay ?? null) === JSON.stringify(right.relay ?? null)
+  )
+}
+
+function reconnectIdentityMatches(left: HostProfile, right: HostProfile): boolean {
+  return (
+    left.id === right.id &&
+    left.deviceToken === right.deviceToken &&
+    left.publicKeyB64 === right.publicKeyB64
   )
 }

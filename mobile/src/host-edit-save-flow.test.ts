@@ -7,6 +7,7 @@ const dependencies = vi.hoisted(() => ({
   alert: vi.fn(),
   back: vi.fn(),
   forceReconnectHost: vi.fn(),
+  forceReconnectHostAfterEdit: vi.fn(),
   getHostListLoadRevision: vi.fn(() => 0),
   loadHosts: vi.fn(),
   primeHosts: vi.fn(),
@@ -51,6 +52,7 @@ vi.mock('./transport/host-list-load-sharing', () => ({
 
 vi.mock('./transport/client-context', () => ({
   useForceReconnect: () => dependencies.forceReconnectHost,
+  useForceReconnectAfterEdit: () => dependencies.forceReconnectHostAfterEdit,
   usePrimeHosts: () => dependencies.primeHosts
 }))
 
@@ -147,6 +149,7 @@ describe('edit host handleSave', () => {
     dependencies.alert.mockReset()
     dependencies.back.mockReset()
     dependencies.forceReconnectHost.mockReset().mockResolvedValue(undefined)
+    dependencies.forceReconnectHostAfterEdit.mockReset().mockResolvedValue(undefined)
     dependencies.getHostListLoadRevision.mockReset().mockReturnValue(0)
     dependencies.loadHosts.mockReset().mockResolvedValue([HOST_FIXTURE])
     dependencies.primeHosts.mockReset()
@@ -264,8 +267,23 @@ describe('edit host handleSave', () => {
     await pressSave(renderer)
 
     expect(dependencies.primeHosts).not.toHaveBeenCalled()
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', {
-      ...HOST_FIXTURE,
+    expect(dependencies.forceReconnectHost).not.toHaveBeenCalled()
+    expect(dependencies.forceReconnectHostAfterEdit).toHaveBeenCalledWith('host-1', HOST_FIXTURE, {
+      endpoint: 'ws://192.168.1.20:6768'
+    })
+    expect(dependencies.back).toHaveBeenCalledTimes(1)
+
+    act(() => renderer.unmount())
+  })
+
+  it('merges the endpoint edit into the current cache when the host reload omits it', async () => {
+    dependencies.loadHosts.mockResolvedValueOnce([HOST_FIXTURE]).mockResolvedValueOnce([])
+    const renderer = await renderEditHostRoute()
+    setFieldValue(renderer, 'Address', '192.168.1.20:6768')
+    await pressSave(renderer)
+
+    expect(dependencies.forceReconnectHost).not.toHaveBeenCalled()
+    expect(dependencies.forceReconnectHostAfterEdit).toHaveBeenCalledWith('host-1', HOST_FIXTURE, {
       endpoint: 'ws://192.168.1.20:6768'
     })
     expect(dependencies.back).toHaveBeenCalledTimes(1)
@@ -297,8 +315,16 @@ describe('edit host handleSave', () => {
       ...HOST_FIXTURE,
       endpoint: 'ws://192.168.1.20:6768',
       endpoints: [
-        { id: 'direct-primary', kind: 'lan' as const, url: 'ws://192.168.1.20:6768' },
-        { id: 'relay-primary', kind: 'relay' as const, url: 'wss://relay.invalid/host-1' }
+        {
+          id: 'direct-primary',
+          kind: 'lan' as const,
+          url: 'ws://192.168.1.20:6768'
+        },
+        {
+          id: 'relay-primary',
+          kind: 'relay' as const,
+          url: 'wss://relay.invalid/host-1'
+        }
       ]
     }
     dependencies.loadHosts.mockResolvedValueOnce([HOST_FIXTURE]).mockResolvedValueOnce([relayHost])
@@ -370,6 +396,7 @@ describe('edit host load() error states', () => {
     dependencies.alert.mockReset()
     dependencies.back.mockReset()
     dependencies.forceReconnectHost.mockReset().mockResolvedValue(undefined)
+    dependencies.forceReconnectHostAfterEdit.mockReset().mockResolvedValue(undefined)
     dependencies.getHostListLoadRevision.mockReset().mockReturnValue(0)
     dependencies.loadHosts.mockReset().mockResolvedValue([HOST_FIXTURE])
     dependencies.primeHosts.mockReset()

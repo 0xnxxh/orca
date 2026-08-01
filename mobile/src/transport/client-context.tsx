@@ -193,13 +193,8 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     entry.refCount = Math.max(0, entry.refCount - 1)
   }, [])
 
-  const forceReconnect = useCallback(
-    (hostId: string, requestedHost?: HostProfile): Promise<void> => {
-      const profile = primedHostsRef.current.reconnectProfile(
-        hostId,
-        getHostListLoadRevision(),
-        requestedHost
-      )
+  const runForceReconnect = useCallback(
+    (hostId: string, profile: HostOpenProfile): Promise<void> => {
       return forceReconnectCoordinatorRef.current.run({
         hostId,
         profileVersion: profile.version,
@@ -218,6 +213,35 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
       })
     },
     [openEntry]
+  )
+
+  const forceReconnect = useCallback(
+    (hostId: string, requestedHost?: HostProfile): Promise<void> => {
+      const profile = primedHostsRef.current.reconnectProfile(
+        hostId,
+        getHostListLoadRevision(),
+        requestedHost
+      )
+      return runForceReconnect(hostId, profile)
+    },
+    [runForceReconnect]
+  )
+
+  const forceReconnectAfterEdit = useCallback(
+    (
+      hostId: string,
+      fallbackHost: HostProfile,
+      updates: { name?: string; endpoint?: string }
+    ): Promise<void> => {
+      const profile = primedHostsRef.current.reconnectEditedProfile(
+        hostId,
+        getHostListLoadRevision(),
+        fallbackHost,
+        updates
+      )
+      return runForceReconnect(hostId, profile)
+    },
+    [runForceReconnect]
   )
 
   const getState = useCallback((hostId: string): ConnectionState => {
@@ -262,7 +286,10 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
     []
   )
 
-  const getAllClients = useCallback((): Array<{ hostId: string; client: RpcClient }> => {
+  const getAllClients = useCallback((): Array<{
+    hostId: string
+    client: RpcClient
+  }> => {
     const out: Array<{ hostId: string; client: RpcClient }> = []
     for (const [hostId, entry] of storeRef.current) {
       out.push({ hostId, client: entry.client })
@@ -302,6 +329,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
       acquire,
       release,
       forceReconnect,
+      forceReconnectAfterEdit,
       closeHost: closeEntry,
       getState,
       getReconnectAttempt,
@@ -317,6 +345,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
       acquire,
       release,
       forceReconnect,
+      forceReconnectAfterEdit,
       closeEntry,
       getState,
       getReconnectAttempt,
@@ -394,5 +423,10 @@ export function useHostClient(hostId: string | undefined): {
 }
 
 // Why: host-store's removeHost() must close the live client but has no React-side handle; this hook bridges to it.
-export { useCloseHost, useForceReconnect, usePrimeHosts } from './client-context-actions'
+export {
+  useCloseHost,
+  useForceReconnect,
+  useForceReconnectAfterEdit,
+  usePrimeHosts
+} from './client-context-actions'
 export { useAllHostClients } from './client-context-all-host-clients'

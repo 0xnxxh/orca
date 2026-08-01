@@ -6,6 +6,8 @@ import {
 } from './host-endpoint'
 import type { HostProfile } from './types'
 
+export type HostProfileEdit = { name?: string; endpoint?: string }
+
 export type HostEndpointEditResolution =
   | { kind: 'unchanged'; endpoint: string }
   | { kind: 'changed'; endpoint: string }
@@ -44,10 +46,7 @@ export function resolveHostEndpointEdit(
   }
 }
 
-export function hostProfileAfterEdit(
-  host: HostProfile,
-  updates: { name?: string; endpoint?: string }
-): HostProfile {
+export function hostProfileAfterEdit(host: HostProfile, updates: HostProfileEdit): HostProfile {
   const updatedEndpoint = updates.endpoint
   const endpoints =
     updatedEndpoint === undefined || !host.endpoints

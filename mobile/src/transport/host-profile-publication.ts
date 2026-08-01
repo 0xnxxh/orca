@@ -14,6 +14,10 @@ export function getHostProfilePublicationRevision(hostId: string): number {
   return revisionByHost.get(hostId) ?? 0
 }
 
+export function recordHostProfileMutation(hostId: string): void {
+  revisionByHost.set(hostId, getHostProfilePublicationRevision(hostId) + 1)
+}
+
 export function getPublishedHostIdentity(
   hostId: string
 ): Pick<HostProfile, 'deviceToken' | 'publicKeyB64'> | undefined {
@@ -43,7 +47,10 @@ export function beginHostEndpointPublicationLifecycle(
 ): HostEndpointPublicationLifecycle {
   const generation = (endpointGenerationByHost.get(hostId) ?? 0) + 1
   endpointGenerationByHost.set(hostId, generation)
-  return { generation, profileRevision: getHostProfilePublicationRevision(hostId) }
+  return {
+    generation,
+    profileRevision: getHostProfilePublicationRevision(hostId)
+  }
 }
 
 export function getHostEndpointPublicationLifecycle(
@@ -77,9 +84,9 @@ export function serializeHostProfilePublication<T>(
 export function publishHostProfileTransaction(
   host: HostProfile,
   beforeHostSave: (() => Promise<void>) | null,
-  saveHost: (host: HostProfile) => Promise<void>
+  saveHost: (host: HostProfile) => Promise<void>,
+  publicationRevision = getHostProfilePublicationRevision(host.id)
 ): Promise<void> {
-  const publicationRevision = getHostProfilePublicationRevision(host.id)
   return serializeHostProfilePublication(host.id, async () => {
     requirePublicationRevision(host.id, publicationRevision)
     await beforeHostSave?.()

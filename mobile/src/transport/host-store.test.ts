@@ -44,6 +44,7 @@ import {
   updateLastConnected
 } from './host-store'
 import {
+  MobileRelayUpgradeLifecycleRetiredError,
   MobileRelayUpgradeHostRemovedError,
   MobileRelayUpgradeHostSupersededError,
   saveExistingHostRelayRouting,
@@ -463,13 +464,8 @@ describe('host-store list mutations', () => {
     })
 
     releaseOldToken?.('token-1')
-    await stalePublication
-    const [overlay] = JSON.parse(storedOverlayRaw ?? '[]') as MobileRelayHostOverlay[]
-    expect(overlay?.endpoints).toContainEqual({
-      id: 'direct-primary',
-      kind: 'lan',
-      url: 'ws://127.0.0.1:9'
-    })
+    await expect(stalePublication).rejects.toBeInstanceOf(MobileRelayUpgradeLifecycleRetiredError)
+    expect(JSON.parse(storedOverlayRaw ?? '[]')).toEqual([])
   })
 
   it('lets same-host re-pair supersede a publication stalled on identity lookup', async () => {

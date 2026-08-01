@@ -93,7 +93,9 @@ describe('direct RPC application responsiveness', () => {
       .catch((error: unknown) => error)
 
     await vi.advanceTimersByTimeAsync(100)
-    await expect(first).resolves.toMatchObject({ message: 'Request timed out: browser.screenshot' })
+    await expect(first).resolves.toMatchObject({
+      message: 'Request timed out: browser.screenshot'
+    })
     const probe = sentRequest(socket, 'status.get')
     socket.receive(`encrypted:${JSON.stringify({ id: probe.id, ok: true, result: {} })}`)
     await vi.advanceTimersByTimeAsync(0)
@@ -119,6 +121,44 @@ describe('direct RPC application responsiveness', () => {
     })
     expect(socket.close).toHaveBeenCalledOnce()
     expect(client.getState()).toBe('reconnecting')
+    client.close()
+  })
+
+  it('clears an application stall when a subscription answers', async () => {
+    const client = connect('ws://desktop.invalid', 'token', 'server-key')
+    const socket = sockets[0]!
+    socket.openAndAuthenticate()
+    const first = client
+      .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+      .catch((error: unknown) => error)
+
+    await vi.advanceTimersByTimeAsync(100)
+    await expect(first).resolves.toMatchObject({
+      message: 'Request timed out: browser.screenshot'
+    })
+    expect(client.getRpcUnresponsiveSince?.()).not.toBeNull()
+
+    client.subscribe('terminal.subscribe', { terminal: 'term-1' }, () => {})
+    const subscribe = sentRequest(socket, 'terminal.subscribe')
+    socket.receive(
+      `encrypted:${JSON.stringify({
+        id: subscribe.id,
+        ok: true,
+        streaming: true,
+        result: { type: 'subscribed', streamId: 42 }
+      })}`
+    )
+    expect(client.getRpcUnresponsiveSince?.()).toBeNull()
+
+    const second = client
+      .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+      .catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(100)
+    await expect(second).resolves.toMatchObject({
+      message: 'Request timed out: browser.screenshot'
+    })
+    expect(socket.close).not.toHaveBeenCalled()
+    expect(client.getState()).toBe('connected')
     client.close()
   })
 })

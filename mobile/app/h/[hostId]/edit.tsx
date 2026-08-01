@@ -17,11 +17,12 @@ import { colors, radii, spacing, typography } from '../../../src/theme/mobile-th
 import { loadHosts, updateHostNameAndEndpoint } from '../../../src/transport/host-store'
 import { getHostListLoadRevision } from '../../../src/transport/host-list-load-sharing'
 import { displayHostEndpoint } from '../../../src/transport/host-endpoint'
+import { resolveHostEndpointEdit } from '../../../src/transport/host-endpoint-edit'
 import {
-  hostProfileAfterEdit,
-  resolveHostEndpointEdit
-} from '../../../src/transport/host-endpoint-edit'
-import { useForceReconnect, usePrimeHosts } from '../../../src/transport/client-context'
+  useForceReconnect,
+  useForceReconnectAfterEdit,
+  usePrimeHosts
+} from '../../../src/transport/client-context'
 import { showForceReconnectError } from '../../../src/transport/force-reconnect-feedback'
 import type { HostProfile } from '../../../src/transport/types'
 
@@ -31,6 +32,7 @@ export default function EditHostScreen() {
   const { hostId } = useLocalSearchParams<{ hostId: string }>()
   const primeHosts = usePrimeHosts()
   const forceReconnectHost = useForceReconnect()
+  const forceReconnectHostAfterEdit = useForceReconnectAfterEdit()
 
   const [host, setHost] = useState<HostProfile | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -109,7 +111,7 @@ export default function EditHostScreen() {
       ...(willRename ? { name: nextName } : {}),
       ...(nextEndpoint !== undefined ? { endpoint: nextEndpoint } : {})
     }
-    let reconnectProfile = hostProfileAfterEdit(host, updates)
+    let reconnectProfile: HostProfile | null = null
     savingRef.current = true
     setSaving(true)
     setSaveError(null)
@@ -157,7 +159,10 @@ export default function EditHostScreen() {
       // Why: reconnect is a follow-on side effect of a save that already
       // committed — its failure or a hang must not be reported as a save
       // failure or block navigating back.
-      void forceReconnectHost(host.id, reconnectProfile).catch(showForceReconnectError)
+      const reconnect = reconnectProfile
+        ? forceReconnectHost(host.id, reconnectProfile)
+        : forceReconnectHostAfterEdit(host.id, host, updates)
+      void reconnect.catch(showForceReconnectError)
     }
   }
 

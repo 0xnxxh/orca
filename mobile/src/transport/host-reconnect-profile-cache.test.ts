@@ -18,7 +18,11 @@ describe('HostReconnectProfileCache', () => {
       ...HOST,
       endpoints: [
         { id: 'direct-primary', kind: 'lan', url: HOST.endpoint },
-        { id: 'relay-primary', kind: 'relay', url: 'wss://relay.invalid/v1/connect/host' }
+        {
+          id: 'relay-primary',
+          kind: 'relay',
+          url: 'wss://relay.invalid/v1/connect/host'
+        }
       ],
       relayHostId: 'AbCdEf0123_-xyZ9',
       relay: {
@@ -94,5 +98,44 @@ describe('HostReconnectProfileCache', () => {
     })
 
     expect(cache.get(HOST.id, 4)).toEqual(editedHost)
+  })
+
+  it('merges a fallback endpoint edit into the latest cached relay routing', () => {
+    const cache = new HostReconnectProfileCache()
+    const relayHost: HostProfile = {
+      ...HOST,
+      endpoints: [
+        { id: 'direct-primary', kind: 'lan', url: HOST.endpoint },
+        {
+          id: 'relay-primary',
+          kind: 'relay',
+          url: 'wss://relay.invalid/v1/connect/host'
+        }
+      ],
+      relayHostId: 'AbCdEf0123_-xyZ9',
+      relay: {
+        v: 1,
+        directorUrl: 'https://relay.invalid',
+        cellUrl: 'https://relay.invalid',
+        assignmentEpoch: 1,
+        relayHostId: 'AbCdEf0123_-xyZ9',
+        e2eeFraming: 2
+      }
+    }
+    cache.prime(HOST, 4)
+    cache.prime(relayHost, 5)
+
+    const edited = cache.reconnectEditedProfile(HOST.id, 6, HOST, {
+      endpoint: 'ws://127.0.0.1:2'
+    })
+
+    expect(edited.host).toEqual({
+      ...relayHost,
+      endpoint: 'ws://127.0.0.1:2',
+      endpoints: [
+        { id: 'direct-primary', kind: 'lan', url: 'ws://127.0.0.1:2' },
+        relayHost.endpoints![1]
+      ]
+    })
   })
 })

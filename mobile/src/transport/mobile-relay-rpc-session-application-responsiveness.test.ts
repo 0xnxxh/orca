@@ -1,0 +1,130 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const fakes = vi.hoisted(() => ({
+  linkOptions: null as null | {
+    onHello(value: unknown): void
+    onAuthenticated(): void
+    onText(value: string): void
+  },
+  sendText: vi.fn(() => true),
+  close: vi.fn()
+}))
+
+vi.mock('./mobile-relay-e2ee-link', () => ({
+  MobileRelayE2eeLink: class {
+    constructor(options: NonNullable<typeof fakes.linkOptions>) {
+      fakes.linkOptions = options
+    }
+    sendText = fakes.sendText
+    close = fakes.close
+  }
+}))
+
+import { connectMobileRelayRpcSession } from './mobile-relay-rpc-session'
+
+const relay = {
+  v: 1 as const,
+  directorUrl: 'https://relay.onorca.dev',
+  cellUrl: 'https://relay-c1.onorca.dev',
+  assignmentEpoch: 7,
+  relayHostId: 'AbCdEf0123_-xyZ9',
+  e2eeFraming: 2 as const
+}
+
+async function authenticateSession() {
+  const session = connectMobileRelayRpcSession({
+    relay,
+    resumeToken: 'resume-secret',
+    resumeCredentialVersion: 3,
+    resumeConfirmReqId: 'confirm-1',
+    deviceToken: 'device-token',
+    desktopPublicKeyB64: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+    requestTimeoutMs: 1000
+  })
+  fakes.linkOptions!.onHello({
+    type: 'relay-hello',
+    ok: true,
+    credentialKind: 'resume',
+    leaseExpiresAt: Date.now() + 60_000,
+    acceptedCredentialVersion: 3,
+    acceptedAs: 'current',
+    resumeExpiresAt: Date.now() + 300_000
+  })
+  fakes.linkOptions!.onAuthenticated()
+  await vi.waitFor(() => expect(fakes.sendText).toHaveBeenCalledOnce())
+  const request = JSON.parse(fakes.sendText.mock.calls[0]![0] as string) as { id: string }
+  fakes.linkOptions!.onText(
+    JSON.stringify({
+      id: request.id,
+      ok: true,
+      result: {
+        v: 1,
+        relay,
+        resumeConfirmation: {
+          v: 1,
+          reqId: 'confirm-1',
+          currentVersion: 3,
+          acceptedAs: 'current',
+          renewed: true,
+          resumeExpiresAt: Date.now() + 300_000
+        }
+      },
+      _meta: { runtimeId: 'runtime-1' }
+    })
+  )
+  await vi.waitFor(() => expect(session.getState()).toBe('connected'))
+  fakes.sendText.mockClear()
+  return session
+}
+
+describe('mobile relay subscription application responsiveness', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    fakes.linkOptions = null
+    fakes.sendText.mockReturnValue(true)
+  })
+
+  it('clears an application stall when a subscription answers', async () => {
+    const session = await authenticateSession()
+    vi.useFakeTimers()
+    try {
+      const first = session
+        .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+        .catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(100)
+      await expect(first).resolves.toMatchObject({
+        message: 'relay RPC timed out: browser.screenshot'
+      })
+      expect(session.getRpcUnresponsiveSince?.()).not.toBeNull()
+
+      session.subscribe('terminal.subscribe', { terminal: 'term-1' }, vi.fn())
+      await vi.advanceTimersByTimeAsync(0)
+      const subscribe = fakes.sendText.mock.calls
+        .map(([payload]) => JSON.parse(payload as string) as { id: string; method: string })
+        .find(({ method }) => method === 'terminal.subscribe')!
+      fakes.linkOptions!.onText(
+        JSON.stringify({
+          id: subscribe.id,
+          ok: true,
+          streaming: true,
+          result: { type: 'subscribed', streamId: 42 },
+          _meta: {}
+        })
+      )
+      expect(session.getRpcUnresponsiveSince?.()).toBeNull()
+
+      const second = session
+        .sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+        .catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(100)
+      await expect(second).resolves.toMatchObject({
+        message: 'relay RPC timed out: browser.screenshot'
+      })
+      expect(session.getState()).toBe('connected')
+      expect(fakes.close).not.toHaveBeenCalled()
+    } finally {
+      session.close()
+      vi.useRealTimers()
+    }
+  })
+})
