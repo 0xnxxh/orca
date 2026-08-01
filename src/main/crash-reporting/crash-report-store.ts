@@ -158,7 +158,25 @@ export class CrashReportStore {
         resolved.push(recovered)
         return recovered
       })
-      return { reports: nextReports, result: resolved }
+      if (resolved.length === 0) {
+        return { reports: nextReports, result: resolved }
+      }
+      // Why: one kill burst can emit a Utility/GPU exit alongside the renderer's.
+      // dismiss() already sweeps those siblings; without the same sweep here the
+      // healed crash still reaches the user, just wearing the sibling's report.
+      const anchors = [...resolved]
+      const sweptReports = nextReports.map((report) => {
+        if (report.status !== 'pending') {
+          return report
+        }
+        if (!anchors.some((anchor) => isRelatedCrashEvent(anchor, report))) {
+          return report
+        }
+        const swept: CrashReportRecord = { ...report, status: 'dismissed' }
+        resolved.push(swept)
+        return swept
+      })
+      return { reports: sweptReports, result: resolved }
     })
   }
 

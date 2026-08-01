@@ -86,7 +86,13 @@ function killedRendererCrash(exitCode = 9): CrashReportCreateInput {
     arch: process.arch,
     electronVersion: '41',
     chromeVersion: '141',
-    details: { processType: 'renderer' }
+    details: { processType: 'renderer' },
+    // Why: the pre-crash trail is the whole point of keeping the healed report
+    // sendable, so the retention assertion needs a non-empty snapshot.
+    breadcrumbs: [
+      { createdAt: '2026-08-01T00:00:00.000Z', name: 'renderer_bootstrap_rendered' },
+      { createdAt: '2026-08-01T00:00:01.000Z', name: 'terminal_focus', data: { paneKey: 'a' } }
+    ]
   }
 }
 
@@ -99,6 +105,16 @@ function reactErrorBoundaryCrash(): CrashReportCreateInput {
     reason: 'react-error-boundary',
     exitCode: null,
     details: { processType: 'react-render' }
+  }
+}
+
+// A kernel OOM-kill / jetsam burst takes a child process down with the renderer.
+function killedChildCrash(): CrashReportCreateInput {
+  return {
+    ...killedRendererCrash(),
+    source: 'child',
+    processType: 'Utility',
+    details: { processType: 'Utility', serviceName: 'storage.mojom.StorageService' }
   }
 }
 
@@ -190,6 +206,30 @@ describe('auto-recovered renderer crash reporting', () => {
     emitRendererBootstrapRendered()
 
     await expect(getLatestPending()).resolves.toMatchObject({ id: boundary.id, status: 'pending' })
+  })
+
+  it('sweeps a sibling child crash from the same kill burst', async () => {
+    const store = await createStore()
+    registerCrashReportingHandlers(store)
+    await store.record(killedChildCrash())
+    await store.record(killedRendererCrash())
+
+    noteRendererRecoveryReloadIssued()
+    emitRendererBootstrapRendered()
+
+    await expect(getLatestPending()).resolves.toBeNull()
+  })
+
+  it('leaves an unrelated pending crash alone while sweeping the burst', async () => {
+    const store = await createStore()
+    registerCrashReportingHandlers(store)
+    const unrelated = await store.record({ ...killedChildCrash(), reason: 'oom', exitCode: 5 })
+    await store.record(killedRendererCrash())
+
+    noteRendererRecoveryReloadIssued()
+    emitRendererBootstrapRendered()
+
+    await expect(getLatestPending()).resolves.toMatchObject({ id: unrelated.id, status: 'pending' })
   })
 
   it('still prompts when the renderer booted without an auto-recovery reload', async () => {
