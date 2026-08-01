@@ -84,6 +84,7 @@ import {
 } from '../providers/ssh-pty-errors'
 import { parseAppSshPtyId, toAppSshPtyId, toRelaySshPtyId } from '../providers/ssh-pty-id'
 import { createPtySpawnTiming } from './pty-spawn-timing'
+import { resolvePaneSpawnReservationPathFlavor } from './pty-spawn-reservation-path-flavor'
 import {
   isSafePtySessionId,
   mintPtySessionId,
@@ -544,43 +545,72 @@ async function awaitPaneSpawnReservation(
   return { ...(await reservation.promise), spawnDisposition: 'awaited' }
 }
 
-type FreshPtySetupRetirement = {
+type CreatorOnlyPtyRetirementToken = {
   retired: boolean
+  creator: boolean
   result: PtySpawnResult
   provider: IPtyProvider
   connectionId: string | null
   runtime?: OrcaRuntimeService
   store?: Store
   binding?: { worktreeId: string; tabId: string; leafId: string }
+  initialRegistrationPtyId?: string
+  provisionalProviderPtyId?: string
 }
 
-function createFreshPtySetupRetirement(args: Omit<FreshPtySetupRetirement, 'retired'>) {
-  return args.result.isReattach || args.result.agentSessionEnsure?.disposition === 'adopted'
-    ? null
-    : { ...args, retired: false }
+function createCreatorOnlyPtyRetirementToken(
+  args: Omit<CreatorOnlyPtyRetirementToken, 'creator' | 'retired'>
+): CreatorOnlyPtyRetirementToken {
+  const claimDisposition = args.result.agentSessionEnsure?.disposition
+  return {
+    ...args,
+    creator: claimDisposition ? claimDisposition === 'created' : args.result.isReattach !== true,
+    retired: false
+  }
 }
 
 async function retireFreshPtyAfterSetupFailure(
-  retirement: FreshPtySetupRetirement | null
+  retirement: CreatorOnlyPtyRetirementToken | null
 ): Promise<void> {
   if (!retirement || retirement.retired) {
     return
   }
   retirement.retired = true
-  const { result, provider, connectionId, runtime, store, binding } = retirement
-  try {
-    await provider.shutdown(result.id, { immediate: true })
-  } catch (error) {
-    console.warn('[pty] failed to retire PTY after spawn setup failure:', error)
+  const {
+    result,
+    provider,
+    connectionId,
+    runtime,
+    store,
+    binding,
+    initialRegistrationPtyId,
+    provisionalProviderPtyId
+  } = retirement
+  if (retirement.creator) {
+    await runPtyRetirementStep('retire provider PTY', () =>
+      provider.shutdown(result.id, { immediate: true })
+    )
+    await runPtyRetirementStep('roll back runtime PTY registration', () =>
+      runtime?.retireFreshPtyRegistration?.(result.id, result.incarnationId)
+    )
   }
-  try {
-    runtime?.retireFreshPtyRegistration?.(result.id, result.incarnationId)
-  } catch (error) {
-    console.warn('[pty] failed to roll back runtime PTY registration:', error)
+  await runPtyRetirementStep('clear pending PTY registration', () =>
+    runtime?.cancelPendingPtyRegistration?.(result.id, result.incarnationId)
+  )
+  await runPtyRetirementStep('clear rejected PTY registration fence', () =>
+    runtime?.releaseRejectedPtyRegistrationFence?.(result.id, result.incarnationId)
+  )
+  if (initialRegistrationPtyId && initialRegistrationPtyId !== result.id) {
+    await runPtyRetirementStep('clear provisional PTY registration', () =>
+      runtime?.cancelPendingPtyRegistration?.(initialRegistrationPtyId, result.incarnationId)
+    )
   }
-  try {
+  if (!retirement.creator) {
+    return
+  }
+  await runPtyRetirementStep('roll back persisted PTY binding', () => {
     if (binding) {
-      store?.removePtyBindingIfMatches(
+      store?.removePtyBindingIfMatches?.(
         {
           ...binding,
           ptyId: result.id,
@@ -589,14 +619,30 @@ async function retireFreshPtyAfterSetupFailure(
         connectionId ? toSshExecutionHostId(connectionId) : null
       )
     }
+  })
+  await runPtyRetirementStep('roll back persisted PTY lease', () => {
     if (connectionId) {
-      store?.removeSshRemotePtyLease(connectionId, getRelayPtyId(connectionId, result.id))
+      store?.removeSshRemotePtyLease?.(connectionId, getRelayPtyId(connectionId, result.id))
     }
-  } catch (error) {
-    console.warn('[pty] failed to roll back persisted PTY ownership:', error)
+  })
+  await runPtyRetirementStep('clear provider PTY state', () => clearProviderPtyState(result.id))
+  if (provisionalProviderPtyId && provisionalProviderPtyId !== result.id) {
+    await runPtyRetirementStep('clear provisional provider PTY state', () =>
+      clearProviderPtyState(provisionalProviderPtyId)
+    )
   }
-  clearProviderPtyState(result.id)
-  deletePtyOwnership(result.id)
+  await runPtyRetirementStep('clear PTY ownership', () => deletePtyOwnership(result.id))
+}
+
+async function runPtyRetirementStep(
+  description: string,
+  step: () => void | Promise<void>
+): Promise<void> {
+  try {
+    await step()
+  } catch (error) {
+    console.warn(`[pty] failed to ${description}:`, error)
+  }
 }
 
 function settlePendingPaneSerializer(paneKey: string, gen: number): boolean {
@@ -4140,16 +4186,22 @@ export function registerPtyHandlers(
       const materializedPaneKey = hostSessionBinding
         ? makePaneKey(hostSessionBinding.tabId, hostSessionBinding.leafId)
         : null
+      const paneSpawnExecutionRuntime = getPaneSpawnExecutionRuntimeId({
+        connectionId: args.connectionId,
+        shellOverride: daemonShellOverride,
+        cwd,
+        wslDistro: expectedWslDistro
+      })
       const paneSpawnReservationKey = materializedPaneKey
         ? makePaneSpawnReservationKey({
             paneKey: materializedPaneKey,
             providerId: getPaneSpawnProviderId(provider),
             connectionId: args.connectionId,
-            executionRuntime: getPaneSpawnExecutionRuntimeId({
+            executionRuntime: paneSpawnExecutionRuntime,
+            pathFlavor: resolvePaneSpawnReservationPathFlavor({
               connectionId: args.connectionId,
-              shellOverride: daemonShellOverride,
-              cwd,
-              wslDistro: expectedWslDistro
+              executionRuntime: paneSpawnExecutionRuntime,
+              remotePathFlavor: (provider as IPtyProvider).getExecutionHostPathFlavor?.()
             }),
             workspaceId: hostSessionBinding?.worktreeId,
             sessionId: callerRequestedSessionId
@@ -4234,7 +4286,7 @@ export function registerPtyHandlers(
       let result: PtySpawnResult
       let rejectedRegistrationCandidate: PtySpawnResult | null = null
       let pendingRegistrationPtyId: string | null = null
-      let freshPtySetupRetirement: FreshPtySetupRetirement | null = null
+      let freshPtySetupRetirement: CreatorOnlyPtyRetirementToken | null = null
       let preparedProvisionalExecutionContext = false
       let releaseWorktreeSpawn: (() => void) | undefined
       try {
@@ -4268,18 +4320,13 @@ export function registerPtyHandlers(
               throw new Error('tab_not_found')
             }
           }
-          const rejectStaleWorkspaceSpawn = async (candidate: PtySpawnResult): Promise<void> => {
+          const rejectStaleWorkspaceSpawn = async (
+            retirement: CreatorOnlyPtyRetirementToken
+          ): Promise<void> => {
             if (args.acceptWorkspaceInventory?.() !== false) {
               return
             }
-            if (candidate.isReattach !== true) {
-              try {
-                await provider.shutdown(candidate.id, { immediate: true })
-              } catch (error) {
-                console.warn('[pty] failed to clean up stale workspace spawn:', error)
-              }
-              clearProviderPtyState(candidate.id)
-            }
+            await retireFreshPtyAfterSetupFailure(retirement)
             throw new Error('tab_not_found')
           }
           if (args.agentSessionEnsure) {
@@ -4305,15 +4352,21 @@ export function registerPtyHandlers(
                 assertClientStillConnected()
                 assertWorkspaceInventoryAccepted()
                 providerResult = await provider.spawn(spawnOptions)
-                await rejectStaleWorkspaceSpawn(providerResult)
-                freshPtySetupRetirement = createFreshPtySetupRetirement({
+                freshPtySetupRetirement = createCreatorOnlyPtyRetirementToken({
                   result: providerResult,
                   provider,
                   connectionId: args.connectionId ?? null,
                   runtime,
                   store,
+                  ...(pendingRegistrationPtyId
+                    ? { initialRegistrationPtyId: pendingRegistrationPtyId }
+                    : {}),
+                  ...(isMintedSessionId && sessionId
+                    ? { provisionalProviderPtyId: sessionId }
+                    : {}),
                   ...(spawnRetirementBinding ? { binding: spawnRetirementBinding } : {})
                 })
+                await rejectStaleWorkspaceSpawn(freshPtySetupRetirement)
                 rejectedRegistrationCandidate = providerResult
                 // Why: a successful lower-owner return proves physical work committed even if admission sees an early exit.
                 reportPtySpawnCommitted()
@@ -4361,15 +4414,19 @@ export function registerPtyHandlers(
             assertClientStillConnected()
             assertWorkspaceInventoryAccepted()
             result = await provider.spawn(spawnOptions)
-            await rejectStaleWorkspaceSpawn(result)
-            freshPtySetupRetirement = createFreshPtySetupRetirement({
+            freshPtySetupRetirement = createCreatorOnlyPtyRetirementToken({
               result,
               provider,
               connectionId: args.connectionId ?? null,
               runtime,
               store,
+              ...(pendingRegistrationPtyId
+                ? { initialRegistrationPtyId: pendingRegistrationPtyId }
+                : {}),
+              ...(isMintedSessionId && sessionId ? { provisionalProviderPtyId: sessionId } : {}),
               ...(spawnRetirementBinding ? { binding: spawnRetirementBinding } : {})
             })
+            await rejectStaleWorkspaceSpawn(freshPtySetupRetirement)
             rejectedRegistrationCandidate = result
             // Why: daemon/relay returns cross the physical commit boundary before controller admission.
             reportPtySpawnCommitted()
@@ -4401,19 +4458,24 @@ export function registerPtyHandlers(
                 : result.wslDistro
           )
         } catch (err) {
+          await retireFreshPtyAfterSetupFailure(freshPtySetupRetirement)
           if ((isMintedSessionId || preparedProvisionalExecutionContext) && effectiveSessionAppId) {
             runtime?.preparePtyExecutionContext?.(effectiveSessionAppId, null, {
               resetIncarnation: true
             })
           }
           const rawMessage = err instanceof Error ? err.message : String(err)
-          if (rawMessage === 'agent_session_exited_during_start' && rejectedRegistrationCandidate) {
+          if (
+            !freshPtySetupRetirement &&
+            rawMessage === 'agent_session_exited_during_start' &&
+            rejectedRegistrationCandidate
+          ) {
             runtime?.releaseRejectedPtyRegistrationFence?.(
               rejectedRegistrationCandidate.id,
               rejectedRegistrationCandidate.incarnationId
             )
           }
-          if (pendingRegistrationPtyId) {
+          if (!freshPtySetupRetirement && pendingRegistrationPtyId) {
             runtime?.cancelPendingPtyRegistration?.(
               pendingRegistrationPtyId,
               rejectedRegistrationCandidate?.incarnationId
@@ -4423,7 +4485,7 @@ export function registerPtyHandlers(
           const spawnError = normalizeNodePtySpawnError(err)
           const isIdentityMismatch =
             isSshPtyIdentityMismatchError(spawnError) || isSshPtyIdentityMismatchError(rawMessage)
-          if (effectiveSessionAppId !== undefined) {
+          if (!freshPtySetupRetirement && effectiveSessionAppId !== undefined) {
             if (isIdentityMismatch && hadSessionSizeBeforeAttach && sessionSizeBeforeAttach) {
               ptySizes.set(effectiveSessionAppId, sessionSizeBeforeAttach)
             } else {
@@ -4431,6 +4493,7 @@ export function registerPtyHandlers(
             }
           }
           if (
+            !freshPtySetupRetirement &&
             args.connectionId &&
             effectiveSessionRelayId !== undefined &&
             (spawnError.message.includes(SSH_SESSION_EXPIRED_ERROR) ||
@@ -4444,7 +4507,7 @@ export function registerPtyHandlers(
               store?.markSshRemotePtyLease(args.connectionId, effectiveSessionRelayId, 'expired')
             }
           }
-          if (isMintedSessionId && sessionId !== undefined) {
+          if (!freshPtySetupRetirement && isMintedSessionId && sessionId !== undefined) {
             clearProviderPtyState(sessionId)
           }
           throw spawnError
@@ -4628,7 +4691,7 @@ export function registerPtyHandlers(
         return resolvePaneSpawnReservation(paneSpawnReservationKey, paneSpawnReservation, response)
       } catch (err) {
         await retireFreshPtyAfterSetupFailure(freshPtySetupRetirement)
-        if (pendingRegistrationPtyId) {
+        if (!freshPtySetupRetirement && pendingRegistrationPtyId) {
           runtime?.cancelPendingPtyRegistration?.(
             pendingRegistrationPtyId,
             rejectedRegistrationCandidate?.incarnationId
@@ -5224,16 +5287,22 @@ export function registerPtyHandlers(
       const reservationPaneKey = metadataPaneKey ?? validatedPaneKey
       const validatedLeafId = verifiedLeafId ?? metadataLeafId
       const effectiveShellOverride = terminalRuntimeOptions.shellOverride
+      const paneSpawnExecutionRuntime = getPaneSpawnExecutionRuntimeId({
+        connectionId: args.connectionId,
+        shellOverride: effectiveShellOverride,
+        cwd,
+        wslDistro: expectedWslDistro
+      })
       const paneSpawnReservationKey = reservationPaneKey
         ? makePaneSpawnReservationKey({
             paneKey: reservationPaneKey,
             providerId: getPaneSpawnProviderId(provider),
             connectionId: args.connectionId,
-            executionRuntime: getPaneSpawnExecutionRuntimeId({
+            executionRuntime: paneSpawnExecutionRuntime,
+            pathFlavor: resolvePaneSpawnReservationPathFlavor({
               connectionId: args.connectionId,
-              shellOverride: effectiveShellOverride,
-              cwd,
-              wslDistro: expectedWslDistro
+              executionRuntime: paneSpawnExecutionRuntime,
+              remotePathFlavor: (provider as IPtyProvider).getExecutionHostPathFlavor?.()
             }),
             workspaceId: args.worktreeId,
             sessionId: args.sessionId ? getRelayPtyId(args.connectionId, args.sessionId) : null
@@ -5483,7 +5552,7 @@ export function registerPtyHandlers(
       let result: PtySpawnResult
       let rejectedRegistrationCandidate: PtySpawnResult | null = null
       let pendingRegistrationPtyId: string | null = null
-      let freshPtySetupRetirement: FreshPtySetupRetirement | null = null
+      let freshPtySetupRetirement: CreatorOnlyPtyRetirementToken | null = null
       let preparedProvisionalExecutionContext = false
       let releaseWorktreeSpawn: (() => void) | undefined
       try {
@@ -5509,12 +5578,18 @@ export function registerPtyHandlers(
             ? (runtime?.getPtyOutputSequence?.(expectedPtyId) ?? 0)
             : 0
           result = await provider.spawn(spawnOptions)
-          freshPtySetupRetirement = createFreshPtySetupRetirement({
+          freshPtySetupRetirement = createCreatorOnlyPtyRetirementToken({
             result,
             provider,
             connectionId: args.connectionId ?? null,
             runtime,
             store,
+            ...(pendingRegistrationPtyId
+              ? { initialRegistrationPtyId: pendingRegistrationPtyId }
+              : {}),
+            ...(isMintedSessionId && effectiveSessionId
+              ? { provisionalProviderPtyId: effectiveSessionId }
+              : {}),
             ...(spawnRetirementBinding ? { binding: spawnRetirementBinding } : {})
           })
           rejectedRegistrationCandidate = result
@@ -5544,6 +5619,7 @@ export function registerPtyHandlers(
           )
           spawnTiming.mark('provider_spawn')
         } catch (err) {
+          await retireFreshPtyAfterSetupFailure(freshPtySetupRetirement)
           if ((isMintedSessionId || preparedProvisionalExecutionContext) && effectiveSessionAppId) {
             runtime?.preparePtyExecutionContext?.(effectiveSessionAppId, null, {
               resetIncarnation: true
@@ -5554,13 +5630,17 @@ export function registerPtyHandlers(
             transitionSpawnHiddenRendererPtyDeliveryState(preSpawnHiddenMarkId, false)
           }
           const rawMessage = err instanceof Error ? err.message : String(err)
-          if (rawMessage === 'agent_session_exited_during_start' && rejectedRegistrationCandidate) {
+          if (
+            !freshPtySetupRetirement &&
+            rawMessage === 'agent_session_exited_during_start' &&
+            rejectedRegistrationCandidate
+          ) {
             runtime?.releaseRejectedPtyRegistrationFence?.(
               rejectedRegistrationCandidate.id,
               rejectedRegistrationCandidate.incarnationId
             )
           }
-          if (pendingRegistrationPtyId) {
+          if (!freshPtySetupRetirement && pendingRegistrationPtyId) {
             runtime?.cancelPendingPtyRegistration?.(
               pendingRegistrationPtyId,
               rejectedRegistrationCandidate?.incarnationId
@@ -5570,7 +5650,7 @@ export function registerPtyHandlers(
           const spawnError = normalizeNodePtySpawnError(err)
           const isIdentityMismatch =
             isSshPtyIdentityMismatchError(spawnError) || isSshPtyIdentityMismatchError(rawMessage)
-          if (effectiveSessionAppId !== undefined) {
+          if (!freshPtySetupRetirement && effectiveSessionAppId !== undefined) {
             if (isIdentityMismatch && hadSessionSizeBeforeAttach && sessionSizeBeforeAttach) {
               ptySizes.set(effectiveSessionAppId, sessionSizeBeforeAttach)
             } else {
@@ -5578,6 +5658,7 @@ export function registerPtyHandlers(
             }
           }
           if (
+            !freshPtySetupRetirement &&
             args.connectionId &&
             effectiveSessionRelayId !== undefined &&
             (spawnError.message.includes(SSH_SESSION_EXPIRED_ERROR) ||
@@ -5593,7 +5674,7 @@ export function registerPtyHandlers(
             }
           }
           // Why: provider state buildPtyHostEnv materialized for this minted id leaks if spawn failed.
-          if (isMintedSessionId && effectiveSessionId !== undefined) {
+          if (!freshPtySetupRetirement && isMintedSessionId && effectiveSessionId !== undefined) {
             clearProviderPtyState(effectiveSessionId)
           }
           // Why: telemetry-plan.md§agent_error — attribute the error to the renderer-threaded agent_kind, else sniff the command for `claude`; raw messages are dropped at the validator boundary.
@@ -5873,7 +5954,7 @@ export function registerPtyHandlers(
         return resolvePaneSpawnReservation(paneSpawnReservationKey, paneSpawnReservation, response)
       } catch (err) {
         await retireFreshPtyAfterSetupFailure(freshPtySetupRetirement)
-        if (pendingRegistrationPtyId) {
+        if (!freshPtySetupRetirement && pendingRegistrationPtyId) {
           runtime?.cancelPendingPtyRegistration?.(
             pendingRegistrationPtyId,
             rejectedRegistrationCandidate?.incarnationId

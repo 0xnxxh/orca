@@ -4,6 +4,7 @@ import {
   isTerminalLeafId,
   makePaneKey,
   makePaneSpawnReservationKey,
+  type PaneSpawnReservationPathFlavor,
   parseLegacyNumericPaneKey,
   parsePaneKey
 } from './stable-pane-id'
@@ -13,13 +14,18 @@ const PANE_KEY = makePaneKey('tab-1', LEAF_ID)
 
 function reservationKey(
   workspaceId: string,
-  scope: { connectionId?: string; executionRuntime?: string } = {}
+  scope: {
+    connectionId?: string
+    executionRuntime?: string
+    pathFlavor?: PaneSpawnReservationPathFlavor
+  } = {}
 ) {
   return makePaneSpawnReservationKey({
     paneKey: PANE_KEY,
     providerId: 'provider-1',
     workspaceId,
     sessionId: 'session-1',
+    pathFlavor: 'posix',
     ...scope
   })
 }
@@ -73,10 +79,21 @@ describe('stable pane ids', () => {
 
   it.each([
     ['local', { executionRuntime: 'native' }],
-    ['SSH', { connectionId: 'ssh-1' }]
-  ])('keeps NFC and NFD POSIX workspace paths distinct on %s', (_label, scope) => {
+    ['SSH', { connectionId: 'ssh-1' }],
+    ['unknown SSH', { connectionId: 'ssh-unknown', pathFlavor: 'unknown' as const }]
+  ])('keeps NFC and NFD workspace paths distinct on %s', (_label, scope) => {
     expect(reservationKey('repo-1::/workspaces/café', scope)).not.toBe(
       reservationKey('repo-1::/workspaces/cafe\u0301', scope)
+    )
+  })
+
+  it.each([
+    ['POSIX', { executionRuntime: 'native', pathFlavor: 'posix' as const }],
+    ['SSH POSIX', { connectionId: 'ssh-1', pathFlavor: 'posix' as const }],
+    ['unknown remote', { connectionId: 'ssh-unknown', pathFlavor: 'unknown' as const }]
+  ])('keeps leading-double-slash path case byte-exact on %s', (_label, scope) => {
+    expect(reservationKey('repo-1:://Server/Share', scope)).not.toBe(
+      reservationKey('repo-1:://server/share', scope)
     )
   })
 
@@ -89,7 +106,15 @@ describe('stable pane ids', () => {
       'repo-1:://wsl$/ubuntu/home/Project'
     ]
   ])('canonicalizes equivalent Windows %s paths', (_label, left, right) => {
-    expect(reservationKey(left)).toBe(reservationKey(right))
+    expect(reservationKey(left, { pathFlavor: 'windows' })).toBe(
+      reservationKey(right, { pathFlavor: 'windows' })
+    )
+  })
+
+  it('fails safe for Windows-looking paths on an unknown host', () => {
+    expect(reservationKey('repo-1::C:\\Work\\Project', { pathFlavor: 'unknown' })).not.toBe(
+      reservationKey('repo-1::c:/work/project', { pathFlavor: 'unknown' })
+    )
   })
 
   it('canonicalizes raw and worktree-scoped aliases', () => {
@@ -104,6 +129,7 @@ describe('stable pane ids', () => {
       providerId: 'provider-1',
       connectionId: 'ssh-1',
       executionRuntime: 'wsl:Ubuntu',
+      pathFlavor: 'windows' as const,
       workspaceId: 'worktree:repo-1::/workspaces/project',
       sessionId: 'session-1'
     }
@@ -125,7 +151,8 @@ describe('stable pane ids', () => {
     expect(
       makePaneSpawnReservationKey({
         paneKey: makePaneKey('tab-1', LEAF_ID),
-        providerId: 'provider-1'
+        providerId: 'provider-1',
+        pathFlavor: 'unknown'
       })
     ).toBeNull()
   })

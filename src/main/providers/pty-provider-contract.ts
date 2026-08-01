@@ -10,6 +10,7 @@ import type {
   AgentSessionSurfaceBinding
 } from '../../shared/agent-session-host-authority'
 import type { PtyProcessInfo } from './pty-process-info'
+import type { PaneSpawnReservationPathFlavor } from '../../shared/stable-pane-id'
 
 export type {
   PtyBackgroundStreamEvent,
@@ -96,6 +97,8 @@ type PtyProbeOptions = { signal?: AbortSignal }
 
 export type IPtyProvider = {
   spawn(opts: PtySpawnOptions): Promise<PtySpawnResult>
+  /** Filesystem semantics of the host that executes this provider's PTYs. */
+  getExecutionHostPathFlavor?: () => PaneSpawnReservationPathFlavor | null
   /** Whether this spawn target can append the Git guard after its final env merge. */
   supportsGitCredentialGuardHost?: (sessionId?: string) => boolean
   /** Explicit false selects pre-claim legacy spawn for a preserved old daemon. */

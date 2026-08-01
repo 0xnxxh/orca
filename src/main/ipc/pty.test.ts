@@ -484,7 +484,10 @@ describe('registerPtyHandlers', () => {
       'ssh-reattach-fail',
       'ssh-reattach-ok',
       'ssh-runtime-env',
-      'ssh-generation-replacement'
+      'ssh-generation-replacement',
+      'ssh-adopted-stale',
+      'ssh-posix-paths',
+      'ssh-windows-paths'
     ]) {
       unregisterSshPtyProvider(leakedConnectionId)
     }
@@ -7927,6 +7930,9 @@ describe('registerPtyHandlers', () => {
       preAllocateHandleForPty: vi.fn(() => 'term_stale_spawn'),
       registerPreAllocatedHandleForPty: vi.fn(),
       registerPty: vi.fn(),
+      retireFreshPtyRegistration: vi.fn(),
+      cancelPendingPtyRegistration: vi.fn(),
+      releaseRejectedPtyRegistrationFence: vi.fn(),
       noteTerminalSpawnCommand: vi.fn(),
       onPtySpawned: vi.fn(),
       onPtyExit: vi.fn(),
@@ -7955,8 +7961,78 @@ describe('registerPtyHandlers', () => {
       })
     ).rejects.toThrow('tab_not_found')
 
+    expect(provider.shutdown).toHaveBeenCalledOnce()
     expect(provider.shutdown).toHaveBeenCalledWith('stale-workspace-spawn', { immediate: true })
+    expect(runtime.retireFreshPtyRegistration).toHaveBeenCalledOnce()
     expect(store.persistPtyBinding).not.toHaveBeenCalled()
+  })
+
+  it('does not retire an adopted relay claim without isReattach on a stale fence', async () => {
+    type RuntimeSpawnController = {
+      spawn(args: Record<string, unknown>): Promise<{ id: string }>
+    }
+    const owner = {
+      claim: recoveredAgentClaim,
+      generation: 'generation-adopted-stale',
+      phase: 'live' as const,
+      ptyId: 'ssh:ssh-adopted-stale@@pty-adopted-stale',
+      surface: recoveredAgentSurface
+    }
+    const provider = createAgentClaimProvider({
+      spawn: vi.fn(async () => ({
+        id: owner.ptyId,
+        incarnationId: 'incarnation-adopted-stale',
+        agentSessionEnsure: { disposition: 'adopted' as const, owner }
+      }))
+    })
+    registerSshPtyProvider('ssh-adopted-stale', provider as never)
+    const store = {
+      persistPtyBinding: vi.fn(),
+      removePtyBindingIfMatches: vi.fn(),
+      removeSshRemotePtyLease: vi.fn()
+    }
+    let controller: RuntimeSpawnController | null = null
+    const runtime = {
+      setPtyController: vi.fn((value) => {
+        controller = value
+      }),
+      beginPtyRegistration: vi.fn(),
+      cancelPendingPtyRegistration: vi.fn(),
+      releaseRejectedPtyRegistrationFence: vi.fn(),
+      retireFreshPtyRegistration: vi.fn(),
+      registerPreAllocatedHandleForPty: vi.fn(),
+      registerPty: vi.fn()
+    }
+    registerPtyHandlers(
+      mainWindow as never,
+      runtime as never,
+      undefined,
+      undefined,
+      undefined,
+      store as never
+    )
+    const acceptWorkspaceInventory = vi.fn().mockReturnValueOnce(true).mockReturnValue(false)
+
+    await expect(
+      (controller as unknown as RuntimeSpawnController).spawn({
+        cols: 80,
+        rows: 24,
+        connectionId: 'ssh-adopted-stale',
+        worktreeId: recoveredAgentSurface.worktreeId,
+        tabId: recoveredAgentSurface.tabId,
+        leafId: recoveredAgentSurface.leafId,
+        agentSessionEnsure: {
+          claim: recoveredAgentClaim,
+          surface: recoveredAgentSurface
+        },
+        acceptWorkspaceInventory
+      })
+    ).rejects.toThrow('tab_not_found')
+
+    expect(provider.shutdown).not.toHaveBeenCalled()
+    expect(runtime.retireFreshPtyRegistration).not.toHaveBeenCalled()
+    expect(store.removePtyBindingIfMatches).not.toHaveBeenCalled()
+    expect(store.removeSshRemotePtyLease).not.toHaveBeenCalled()
   })
 
   it('reports lower-owner commit before rejecting an early-exited runtime incarnation', async () => {
@@ -8009,6 +8085,7 @@ describe('registerPtyHandlers', () => {
     const tabId = '11111111-1111-4111-8111-111111111111'
     const leafId = '22222222-2222-4222-8222-222222222222'
 
+    const preAllocatedHandle = runtime.preAllocateHandleForPty('pty-early-exit')
     await expect(
       controller.spawn({
         cols: 80,
@@ -8016,7 +8093,7 @@ describe('registerPtyHandlers', () => {
         worktreeId: 'repo::/tmp/worktree',
         tabId,
         leafId,
-        preAllocatedHandle: 'term_early_exit',
+        preAllocatedHandle,
         persistHostSessionBinding: true,
         onPtySpawnCommitted
       })
@@ -8031,6 +8108,7 @@ describe('registerPtyHandlers', () => {
       ptysById: Map<string, { connected: boolean }>
       wslDistroByPtyId: Map<string, string>
       earlyExitedPtyIncarnations: Map<string, string | null>
+      pendingPtyRegistrationIncarnations: Map<string, string | null>
     }
     expect(internals.handleByPtyId.has('pty-early-exit')).toBe(false)
     expect(internals.providerSequenceInitializedPtys.has('pty-early-exit')).toBe(false)
@@ -8038,6 +8116,9 @@ describe('registerPtyHandlers', () => {
     expect(internals.ptysById.get('pty-early-exit')?.connected).not.toBe(true)
     expect(internals.wslDistroByPtyId.has('pty-early-exit')).toBe(false)
     expect(internals.earlyExitedPtyIncarnations.has('pty-early-exit')).toBe(false)
+    expect(internals.pendingPtyRegistrationIncarnations.has('pty-early-exit')).toBe(false)
+    expect(provider.shutdown).toHaveBeenCalledOnce()
+    expect(provider.shutdown).toHaveBeenCalledWith('pty-early-exit', { immediate: true })
     clearProviderPtyState('pty-early-exit')
   })
 
@@ -8400,6 +8481,104 @@ describe('registerPtyHandlers', () => {
     ])
   })
 
+  posixOnlyIt('keeps POSIX leading-double-slash workspace paths case-distinct', async () => {
+    const resolvers: ((result: { id: string }) => void)[] = []
+    const providerSpawn = vi.fn(
+      () =>
+        new Promise<{ id: string }>((resolve) => {
+          resolvers.push(resolve)
+        })
+    )
+    installDaemonTestProvider({ spawn: providerSpawn })
+    registerPtyHandlers(mainWindow as never)
+    const base = {
+      cols: 80,
+      rows: 24,
+      tabId: 'tab-posix-double-slash',
+      leafId: '99999999-9999-4999-8999-999999999999',
+      sessionId: 'double-slash-session'
+    }
+    const spawns = [
+      handlers.get('pty:spawn')!(null, { ...base, worktreeId: 'repo-1:://Server/Share' }),
+      handlers.get('pty:spawn')!(null, { ...base, worktreeId: 'repo-1:://server/share' })
+    ] as Promise<{ id: string }>[]
+
+    await vi.waitFor(() => expect(providerSpawn).toHaveBeenCalledTimes(2))
+    resolvers.forEach((resolve, index) => resolve({ id: `posix-double-slash-${index + 1}` }))
+    await expect(Promise.all(spawns)).resolves.toHaveLength(2)
+  })
+
+  it('routes SSH path flavor into leading-double-slash reservation identity', async () => {
+    const resolvers: ((result: { id: string }) => void)[] = []
+    const provider = createAgentClaimProvider({
+      spawn: vi.fn(
+        () =>
+          new Promise<{ id: string }>((resolve) => {
+            resolvers.push(resolve)
+          })
+      )
+    })
+    Object.assign(provider, { getExecutionHostPathFlavor: () => 'posix' as const })
+    registerSshPtyProvider('ssh-posix-paths', provider as never)
+    registerPtyHandlers(mainWindow as never)
+    const base = {
+      cols: 80,
+      rows: 24,
+      connectionId: 'ssh-posix-paths',
+      tabId: 'tab-ssh-double-slash',
+      leafId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      sessionId: 'double-slash-session'
+    }
+    const spawns = [
+      handlers.get('pty:spawn')!(null, { ...base, worktreeId: 'repo-1:://Server/Share' }),
+      handlers.get('pty:spawn')!(null, { ...base, worktreeId: 'repo-1:://server/share' })
+    ] as Promise<{ id: string }>[]
+
+    await vi.waitFor(() => expect(provider.spawn).toHaveBeenCalledTimes(2))
+    resolvers.forEach((resolve, index) =>
+      resolve({ id: `ssh:ssh-posix-paths@@double-slash-${index + 1}` })
+    )
+    await expect(Promise.all(spawns)).resolves.toHaveLength(2)
+  })
+
+  it('coalesces equivalent UNC workspace aliases only for a Windows SSH host', async () => {
+    let resolveSpawn!: (result: { id: string }) => void
+    const provider = createAgentClaimProvider({
+      spawn: vi.fn(
+        () =>
+          new Promise<{ id: string }>((resolve) => {
+            resolveSpawn = resolve
+          })
+      )
+    })
+    Object.assign(provider, { getExecutionHostPathFlavor: () => 'windows' as const })
+    registerSshPtyProvider('ssh-windows-paths', provider as never)
+    registerPtyHandlers(mainWindow as never)
+    const base = {
+      cols: 80,
+      rows: 24,
+      connectionId: 'ssh-windows-paths',
+      tabId: 'tab-windows-unc',
+      leafId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      sessionId: 'windows-unc-session'
+    }
+    const creator = handlers.get('pty:spawn')!(null, {
+      ...base,
+      worktreeId: 'repo-1::\\\\Server\\Share\\Project'
+    }) as Promise<{ id: string; spawnDisposition: string }>
+    const waiter = handlers.get('pty:spawn')!(null, {
+      ...base,
+      worktreeId: 'repo-1:://server/share/project'
+    }) as Promise<{ id: string; spawnDisposition: string }>
+
+    await vi.waitFor(() => expect(provider.spawn).toHaveBeenCalledOnce())
+    resolveSpawn({ id: 'ssh:ssh-windows-paths@@windows-unc' })
+    await expect(Promise.all([creator, waiter])).resolves.toEqual([
+      expect.objectContaining({ spawnDisposition: 'created' }),
+      expect.objectContaining({ spawnDisposition: 'awaited' })
+    ])
+  })
+
   it('keeps identical pane ids independent across local and SSH providers', async () => {
     const createProvider = (id: string) => {
       let resolveSpawn!: (result: { id: string }) => void
@@ -8600,7 +8779,9 @@ describe('registerPtyHandlers', () => {
       registerPty: vi.fn().mockImplementationOnce(() => {
         throw new Error('boom: runtime registration failed')
       }),
-      retireFreshPtyRegistration: vi.fn(),
+      retireFreshPtyRegistration: vi.fn(() => {
+        throw new Error('nested runtime cleanup failed')
+      }),
       onPtySpawned: vi.fn(),
       onPtyExit: vi.fn(),
       onPtyData: vi.fn()
@@ -9460,7 +9641,7 @@ describe('registerPtyHandlers', () => {
 
       expect(remoteShutdown).toHaveBeenCalledWith(appPtyId, { immediate: true })
       expect(store.upsertSshRemotePtyLease).not.toHaveBeenCalled()
-      expect(store.removeSshRemotePtyLease).not.toHaveBeenCalled()
+      expect(store.removeSshRemotePtyLease).toHaveBeenCalledWith('ssh-fresh-fail', 'relay-pty')
       expect(openCodeClearPtyMock).toHaveBeenCalledWith(appPtyId)
       expect(piClearPtyMock).toHaveBeenCalledWith(appPtyId)
       const internals = runtime as unknown as {

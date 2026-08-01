@@ -18,6 +18,7 @@ export type PaneKey = string & { readonly [paneKeyBrand]: true }
 export type PaneSpawnReservationKey = string & {
   readonly [paneSpawnReservationKeyBrand]: true
 }
+export type PaneSpawnReservationPathFlavor = 'posix' | 'windows' | 'unknown'
 
 export function isStablePaneId(value: string): value is StablePaneId {
   return UUID_RE.test(value)
@@ -37,9 +38,12 @@ export function makePaneKey(tabId: string, stableLeafId: string): PaneKey {
   return `${tabId}:${stableLeafId}` as PaneKey
 }
 
-function canonicalPaneReservationWorkspacePath(worktreePath: string): string {
-  // Why: POSIX and SSH paths can be byte-sensitive; fold only syntactically proven Windows paths.
-  if (!isWindowsAbsolutePathLike(worktreePath)) {
+function canonicalPaneReservationWorkspacePath(
+  worktreePath: string,
+  pathFlavor: PaneSpawnReservationPathFlavor
+): string {
+  // Why: leading // is valid on POSIX; syntax alone cannot prove Windows ownership.
+  if (pathFlavor !== 'windows' || !isWindowsAbsolutePathLike(worktreePath)) {
     return worktreePath
   }
   const normalized = normalizeRuntimePathSeparators(worktreePath)
@@ -48,7 +52,10 @@ function canonicalPaneReservationWorkspacePath(worktreePath: string): string {
   return wslUnc ? `//wsl/${wslUnc[1].toLowerCase()}${wslUnc[2] ?? ''}` : trimmed.toLowerCase()
 }
 
-function canonicalWorkspaceIdentity(workspaceId: string): readonly string[] | null {
+function canonicalWorkspaceIdentity(
+  workspaceId: string,
+  pathFlavor: PaneSpawnReservationPathFlavor
+): readonly string[] | null {
   if (!workspaceId.trim() || workspaceId.length > 1024) {
     return null
   }
@@ -62,7 +69,7 @@ function canonicalWorkspaceIdentity(workspaceId: string): readonly string[] | nu
         : workspaceId
   const parsed = splitWorktreeId(unscopedId)
   return parsed
-    ? [kind, parsed.repoId, canonicalPaneReservationWorkspacePath(parsed.worktreePath)]
+    ? [kind, parsed.repoId, canonicalPaneReservationWorkspacePath(parsed.worktreePath, pathFlavor)]
     : [kind, unscopedId]
 }
 
@@ -71,10 +78,13 @@ export function makePaneSpawnReservationKey(args: {
   providerId: string
   connectionId?: string | null
   executionRuntime?: string | null
+  pathFlavor: PaneSpawnReservationPathFlavor
   workspaceId?: string
   sessionId?: string | null
 }): PaneSpawnReservationKey | null {
-  const workspace = args.workspaceId ? canonicalWorkspaceIdentity(args.workspaceId) : null
+  const workspace = args.workspaceId
+    ? canonicalWorkspaceIdentity(args.workspaceId, args.pathFlavor)
+    : null
   const providerId = args.providerId.trim()
   const connectionId = args.connectionId?.trim() || null
   const executionRuntime = args.executionRuntime?.trim() || null
