@@ -181,6 +181,48 @@ describe('mobile rpc-client request deadline', () => {
     }
   })
 
+  it('probes before demoting a request that exceeds its deadline', async () => {
+    const client = connect('ws://desktop.invalid', 'token', 'server-key')
+    const socket = mockSockets[0]!
+    socket.open()
+    const request = client.sendRequest('speech.dictation.finish', {}, { timeoutMs: 123 })
+    const outcome = track(request)
+
+    await vi.advanceTimersByTimeAsync(123)
+    expect(outcome.read()).toBe('Request timed out: speech.dictation.finish')
+    const probe = sentRequest(socket, 'status.get')
+    expect(socket.close).not.toHaveBeenCalled()
+    expect(client.getState()).toBe('connected')
+
+    socket.receive(`encrypted:${JSON.stringify({ id: probe.id, ok: true, result: {} })}`)
+    await vi.advanceTimersByTimeAsync(8_000)
+    expect(socket.close).not.toHaveBeenCalled()
+    expect(client.getState()).toBe('connected')
+
+    client.close()
+    await request.catch(() => undefined)
+  })
+
+  it('demotes when the post-timeout control probe also stalls', async () => {
+    const client = connect('ws://desktop.invalid', 'token', 'server-key')
+    const socket = mockSockets[0]!
+    socket.open()
+    const request = client.sendRequest('browser.screenshot', {}, { timeoutMs: 123 })
+    const outcome = track(request)
+
+    await vi.advanceTimersByTimeAsync(123)
+    expect(outcome.read()).toBe('Request timed out: browser.screenshot')
+    expect(sentRequest(socket, 'status.get')).toBeDefined()
+    expect(client.getState()).toBe('connected')
+
+    await vi.advanceTimersByTimeAsync(8_000)
+    expect(socket.close).toHaveBeenCalled()
+    expect(client.getState()).toBe('reconnecting')
+
+    client.close()
+    await request.catch(() => undefined)
+  })
+
   it('does not reconnect when another control response proves the socket live', async () => {
     const client = connect('ws://desktop.invalid', 'token', 'server-key')
     const socket = mockSockets[0]!

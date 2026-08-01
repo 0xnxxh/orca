@@ -2,7 +2,10 @@ import { openAuthenticatedDirectEndpoint } from './mobile-direct-endpoint-probe'
 import type { MobileEndpointSupervisorDependencies } from './mobile-endpoint-supervisor-contract'
 import { RelayReconnectController } from './mobile-relay-reconnect-controller'
 import { RelayLeaseRotationTimer } from './mobile-relay-lease-rotation-timer'
-import { MobileEndpointHysteresis } from './mobile-endpoint-hysteresis'
+import {
+  createMobileEndpointHysteresis,
+  type MobileEndpointHysteresis
+} from './mobile-endpoint-hysteresis-policy'
 import {
   encodeBase64Url,
   isDirectorResolutionFailure,
@@ -21,9 +24,6 @@ import type { HostProfile } from './types'
 export type { MobileEndpointSupervisorDependencies } from './mobile-endpoint-supervisor-contract'
 
 const DIRECT_PROBE_INTERVAL_MS = 15_000
-const DIRECT_OBSERVATION_MS = 30_000
-const MINIMUM_DWELL_MS = 60_000
-const FAILURE_COOLDOWN_MS = 60_000
 
 export class MobileEndpointSupervisor {
   private bundle: MobileRelayCredentialBundle | null = null
@@ -43,12 +43,7 @@ export class MobileEndpointSupervisor {
     private host: HostProfile,
     private readonly dependencies: MobileEndpointSupervisorDependencies
   ) {
-    this.hysteresis = new MobileEndpointHysteresis(dependencies.now(), {
-      directSuccessesRequired: 3,
-      directObservationMs: DIRECT_OBSERVATION_MS,
-      failureCooldownMs: FAILURE_COOLDOWN_MS,
-      minimumDwellMs: MINIMUM_DWELL_MS
-    })
+    this.hysteresis = createMobileEndpointHysteresis(dependencies.now())
     this.relayReconnect = new RelayReconnectController(dependencies, this.recoverRelay.bind(this))
     this.leaseRotation = new RelayLeaseRotationTimer(dependencies, () => {
       this.relayRotationPending = true
@@ -179,6 +174,9 @@ export class MobileEndpointSupervisor {
         relay: this.host.relay,
         resumeToken: credential.token
       })
+      if (this.stopped) {
+        return { ok: false, error: new Error('relay state missing') }
+      }
       this.host = await persistRelayHost(this.host, resolved, this.dependencies.saveHost)
       this.dependencies.onHostUpdated?.(this.host)
       return await this.openAndMigrateRelay(credential)
@@ -300,6 +298,9 @@ export class MobileEndpointSupervisor {
         writeBundle: this.dependencies.writeBundle,
         randomBytes: this.dependencies.randomBytes
       })
+      if (this.stopped) {
+        return
+      }
       this.bundle = result.bundle
       // Why: a scheduled rotation can finish after the old credential enters the rejection gate.
       credentialRefreshed = true

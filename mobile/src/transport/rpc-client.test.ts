@@ -535,37 +535,6 @@ describe('mobile rpc-client connection timeout', () => {
     client.close()
   })
 
-  it('honors per-request timeout overrides', async () => {
-    const client = connect('ws://desktop.invalid', 'token', 'server-key')
-    const socket = mockSockets[0]!
-
-    socket.open()
-    socket.receive(JSON.stringify({ type: 'e2ee_ready' }))
-    socket.receive('encrypted:{"type":"e2ee_authenticated"}')
-    socket.emitCloseOnClose = false
-
-    const request = client.sendRequest(
-      'speech.dictation.finish',
-      { dictationId: 'd1' },
-      {
-        timeoutMs: 123
-      }
-    )
-    await Promise.resolve()
-
-    await vi.advanceTimersByTimeAsync(122)
-    await expect(
-      Promise.race([request.then(() => 'settled'), Promise.resolve('pending')])
-    ).resolves.toBe('pending')
-
-    await vi.advanceTimersByTimeAsync(1)
-    await expect(request).rejects.toThrow('Request timed out: speech.dictation.finish')
-    expect(socket.close).toHaveBeenCalled()
-    expect(client.getState()).toBe('reconnecting')
-
-    client.close()
-  })
-
   it('applies per-request timeout overrides while waiting for reconnect', async () => {
     const client = connect('ws://desktop.invalid', 'token', 'server-key')
     const socket = mockSockets[0]!

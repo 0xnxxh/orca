@@ -218,7 +218,7 @@ describe('mobile relay RPC session', () => {
     await expect(pending.catch((error: unknown) => isRpcDeliveryUnknown(error))).resolves.toBe(true)
   })
 
-  it('marks a relay RPC timeout delivery-unknown', async () => {
+  it('probes before demoting a timed-out relay RPC', async () => {
     const { session } = await authenticateSession()
     vi.useFakeTimers()
     try {
@@ -234,11 +234,42 @@ describe('mobile relay RPC session', () => {
         message: 'relay RPC timed out: terminal.send',
         unknown: true
       })
-      expect(session.getFailure()).toMatchObject({
-        message: 'relay RPC timed out: terminal.send'
-      })
+      expect(session.getState()).toBe('connected')
+      expect(fakes.close).not.toHaveBeenCalled()
+      expect(
+        fakes.sendText.mock.calls.map(([payload]) => JSON.parse(payload as string)).at(-1)
+      ).toMatchObject({ method: 'status.get' })
+
+      await vi.advanceTimersByTimeAsync(8_000)
+      expect(session.getFailure()).toMatchObject({ message: 'relay RPC timed out: status.get' })
       expect(session.getState()).toBe('disconnected')
       expect(fakes.close).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a relay session when its post-timeout probe answers', async () => {
+    const { session } = await authenticateSession()
+    vi.useFakeTimers()
+    try {
+      const request = session.sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+      const outcome = request.catch((error: unknown) => error)
+
+      await vi.advanceTimersByTimeAsync(100)
+      await expect(outcome).resolves.toMatchObject({
+        message: 'relay RPC timed out: browser.screenshot'
+      })
+      const probe = fakes.sendText.mock.calls
+        .map(([payload]) => JSON.parse(payload as string) as { id: string; method: string })
+        .find(({ method }) => method === 'status.get')!
+      fakes.linkOptions!.onText(
+        JSON.stringify({ id: probe.id, ok: true, result: {}, _meta: { runtimeId: 'runtime-1' } })
+      )
+
+      await vi.advanceTimersByTimeAsync(8_000)
+      expect(session.getState()).toBe('connected')
+      expect(fakes.close).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }

@@ -31,12 +31,17 @@ export function startMobileEndpointLifecycle(
   let stopped = false
   let foreground = true
   let owner: EndpointOwner
+  const publishHostUpdate = (host: HostProfile): void => {
+    if (!stopped) {
+      onHostUpdated(host)
+    }
+  }
 
   const startSupervisor = async (host: HostProfile): Promise<void> => {
     if (stopped) {
       return
     }
-    const supervisor = createSupervisor(logical, host, onLog, onHostUpdated)
+    const supervisor = createSupervisor(logical, host, onLog, publishHostUpdate)
     owner.stop()
     owner = supervisor
     supervisor.setForeground(foreground)
@@ -44,7 +49,7 @@ export function startMobileEndpointLifecycle(
   }
 
   if (initialHost.relay) {
-    owner = createSupervisor(logical, initialHost, onLog, onHostUpdated)
+    owner = createSupervisor(logical, initialHost, onLog, publishHostUpdate)
     void owner.start()
   } else {
     owner = new MobileRelayDirectUpgradeController(logical, initialHost, {
@@ -55,7 +60,7 @@ export function startMobileEndpointLifecycle(
           dependencies: { randomBytes: ExpoCrypto.getRandomBytes }
         }),
       onUpgraded: async ({ host }) => {
-        onHostUpdated(host)
+        publishHostUpdate(host)
         await startSupervisor(host)
       }
     })

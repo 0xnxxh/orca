@@ -768,8 +768,8 @@ export function connect(
   }
 
   // Why: stream frames can flow while control RPC is wedged; only a control response satisfies this probe.
-  function runActivityProbe() {
-    if (state !== 'connected' || !ws || activityProbeInFlight) {
+  function runActivityProbe(expectedWs: WebSocket | null = ws) {
+    if (state !== 'connected' || !ws || ws !== expectedWs || activityProbeInFlight) {
       return
     }
     activityProbeInFlight = true
@@ -1037,7 +1037,7 @@ export function connect(
           // Why: the frame was written 30s ago — the host may have processed it.
           reject(markRpcDeliveryUnknown(new Error(`Request timed out: ${method}`)))
           if (controlResponseSequence === requestControlResponseSequence) {
-            forceSocketReconnect(requestWs)
+            runActivityProbe(requestWs)
           }
         }, timeoutMs)
 
