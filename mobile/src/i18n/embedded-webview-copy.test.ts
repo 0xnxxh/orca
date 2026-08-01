@@ -31,4 +31,40 @@ describe('embedded WebView copy', () => {
     expect(terminalHtml).toContain('id="sel-menu-copy">Copiar</button>')
     expect(terminalHtml).toContain('id="sel-menu-all">Seleccionar todo</button>')
   })
+
+  it('HTML-escapes rich-editor placeholders before insertHTML parses them', () => {
+    const codePlaceholder = mobileI18n.getResource(
+      'en',
+      'translation',
+      'richMarkdown.codePlaceholder'
+    )
+    const taskPlaceholder = mobileI18n.getResource(
+      'en',
+      'translation',
+      'richMarkdown.taskPlaceholder'
+    )
+    mobileI18n.addResource(
+      'en',
+      'translation',
+      'richMarkdown.codePlaceholder',
+      '<img src=x onerror=alert(1)>'
+    )
+    mobileI18n.addResource(
+      'en',
+      'translation',
+      'richMarkdown.taskPlaceholder',
+      '<b>Task & more</b>'
+    )
+
+    try {
+      const editorHtml = buildMobileRichMarkdownEditorHtml()
+      expect(editorHtml).toContain('&lt;img src=x onerror=alert(1)&gt;')
+      expect(editorHtml).toContain('&lt;b&gt;Task &amp; more&lt;/b&gt;')
+      expect(editorHtml).not.toContain('<img src=x onerror=alert(1)>')
+      expect(editorHtml).not.toContain('<b>Task & more</b>')
+    } finally {
+      mobileI18n.addResource('en', 'translation', 'richMarkdown.codePlaceholder', codePlaceholder)
+      mobileI18n.addResource('en', 'translation', 'richMarkdown.taskPlaceholder', taskPlaceholder)
+    }
+  })
 })

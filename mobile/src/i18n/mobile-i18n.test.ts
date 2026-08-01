@@ -90,6 +90,28 @@ describe('mobile i18n', () => {
     )
   })
 
+  it('renders Japanese branch-readiness guidance in Japanese', async () => {
+    await mobileI18n.changeLanguage('ja')
+
+    expect([
+      t('m.-CpqM4g', { value0: 'PR' }),
+      t('m.Kdbzhtg', { value0: 'PR' }),
+      t('m.i65iwXo', { value0: 'PR' }),
+      t('m.h5c6qGM', { value0: 'PR' }),
+      t('m.aDj0ISs', { value0: 'PR' }),
+      t('m.eL3YqZQ', { value0: 'PR' }),
+      t('m.fS2uz3k', { value0: 'PR' })
+    ]).toEqual([
+      'このブランチはまだ PR の準備ができていません。',
+      'このブランチはまだ PR の準備ができていません。',
+      '認証してから PR を作成してください。',
+      'このブランチを同期してから PR を作成してください。',
+      'コミットを公開してから PR を作成してください。',
+      'ブランチをチェックアウトしてから PR を作成してください。',
+      '変更をコミットしてから PR を作成してください。'
+    ])
+  })
+
   it.each([
     ['es', ['Sin comprobaciones', 'En staging', 'Nota de revisión']],
     ['ja', ['チェックなし', 'ステージ済み', 'レビューメモ']],

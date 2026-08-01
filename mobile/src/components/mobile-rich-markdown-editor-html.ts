@@ -620,8 +620,8 @@ export function buildMobileRichMarkdownEditorHtml(): string {
         else if (command === 'orderedList') document.execCommand('insertOrderedList');
         else if (command === 'quote') document.execCommand('formatBlock', false, 'blockquote');
         else if (command === 'inlineCode') wrapSelection('code');
-        else if (command === 'codeBlock') document.execCommand('insertHTML', false, '<pre data-language=""><code>' + ${escapeInjectedJavaScriptString(t('richMarkdown.codePlaceholder'))} + '</code></pre><p><br></p>');
-        else if (command === 'taskList') document.execCommand('insertHTML', false, '<ul data-type="taskList"><li data-checked="false"><label contenteditable="false"><input type="checkbox" /></label><div><p>' + ${escapeInjectedJavaScriptString(t('richMarkdown.taskPlaceholder'))} + '</p></div></li></ul>');
+        else if (command === 'codeBlock') document.execCommand('insertHTML', false, '<pre data-language=""><code>' + ${escapeInjectedJavaScriptString(escapeEmbeddedHtmlCopy(t('richMarkdown.codePlaceholder')))} + '</code></pre><p><br></p>');
+        else if (command === 'taskList') document.execCommand('insertHTML', false, '<ul data-type="taskList"><li data-checked="false"><label contenteditable="false"><input type="checkbox" /></label><div><p>' + ${escapeInjectedJavaScriptString(escapeEmbeddedHtmlCopy(t('richMarkdown.taskPlaceholder')))} + '</p></div></li></ul>');
         else if (command === 'link') {
           var href = window.prompt(${escapeInjectedJavaScriptString(t('richMarkdown.linkUrlPrompt'))});
           if (href && isSafeUrl(href)) document.execCommand('createLink', false, href);
