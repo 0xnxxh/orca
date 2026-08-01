@@ -343,7 +343,6 @@ describe('shouldRecoverRendererAfterProcessGone', () => {
     expect(
       shouldRecoverRendererAfterProcessGone({
         reason: 'killed',
-        exitCode: null,
         expectedTeardown: 'renderer-reload'
       })
     ).toBe(false)
@@ -353,7 +352,6 @@ describe('shouldRecoverRendererAfterProcessGone', () => {
     expect(
       shouldRecoverRendererAfterProcessGone({
         reason: 'oom',
-        exitCode: null,
         expectedTeardown: 'renderer-reload'
       })
     ).toBe(true)
@@ -363,7 +361,6 @@ describe('shouldRecoverRendererAfterProcessGone', () => {
     expect(
       shouldRecoverRendererAfterProcessGone({
         reason: 'crashed',
-        exitCode: null,
         expectedTeardown: 'app-shutdown'
       })
     ).toBe(false)
@@ -373,43 +370,23 @@ describe('shouldRecoverRendererAfterProcessGone', () => {
     expect(
       shouldRecoverRendererAfterProcessGone({
         reason: 'launch-failed',
-        exitCode: null,
         expectedTeardown: 'none'
       })
     ).toBe(true)
     expect(
       shouldRecoverRendererAfterProcessGone({
         reason: 'launch-failed',
-        exitCode: null,
         expectedTeardown: 'renderer-reload'
       })
     ).toBe(true)
   })
 
-  it('does not recover normal termination statuses outside a known teardown window', () => {
-    // An OS/session-manager stop SIGTERMs the whole process tree with no teardown scope set.
+  // Regression: report 95917814 — an external killer SIGTERMs only the Chromium children
+  // while the main process keeps running, so the reload is the only way back to a live UI.
+  it('recovers renderers killed outside a known teardown window', () => {
     expect(
       shouldRecoverRendererAfterProcessGone({
         reason: 'killed',
-        exitCode: 15,
-        expectedTeardown: 'none'
-      })
-    ).toBe(false)
-    expect(
-      shouldRecoverRendererAfterProcessGone({
-        reason: 'killed',
-        exitCode: 0xc000013a,
-        expectedTeardown: 'none'
-      })
-    ).toBe(false)
-  })
-
-  it('recovers renderer kills that are not normal termination statuses', () => {
-    // SIGKILL without a preceding SIGTERM is a real loss (e.g. the Linux OOM killer).
-    expect(
-      shouldRecoverRendererAfterProcessGone({
-        reason: 'killed',
-        exitCode: 9,
         expectedTeardown: 'none'
       })
     ).toBe(true)
@@ -419,7 +396,6 @@ describe('shouldRecoverRendererAfterProcessGone', () => {
     expect(
       shouldRecoverRendererAfterProcessGone({
         reason: 'integrity-failure',
-        exitCode: null,
         expectedTeardown: 'none'
       })
     ).toBe(false)
