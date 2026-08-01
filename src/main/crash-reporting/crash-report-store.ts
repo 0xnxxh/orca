@@ -166,13 +166,12 @@ export class CrashReportStore {
       // healed crash still reaches the user, just wearing the sibling's report.
       const anchors = [...resolved]
       const sweptReports = nextReports.map((report) => {
-        // Why: relation matching ignores processType, so re-state the anchor
-        // pass's exclusion — a renderer-sourced report that is not the renderer
-        // process is the error boundary reporting itself, not a burst sibling.
-        if (
-          report.status !== 'pending' ||
-          (report.source === 'renderer' && report.processType !== 'renderer')
-        ) {
+        // Why: no renderer-sourced report is a burst sibling. The anchor pass
+        // already ruled on the renderer process, and relation matching (which
+        // ignores processType and reaches 5s either side of an anchor) would
+        // otherwise re-admit the older crashes `notBeforeMs` just excluded, or
+        // an error-boundary report that no reload caused.
+        if (report.status !== 'pending' || report.source === 'renderer') {
           return report
         }
         if (!anchors.some((anchor) => isRelatedCrashEvent(anchor, report))) {
