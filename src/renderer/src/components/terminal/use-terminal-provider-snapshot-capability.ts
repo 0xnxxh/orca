@@ -25,7 +25,10 @@ export function useTerminalProviderSnapshotCapability(enabled: boolean): void {
   )
 
   useEffect(() => {
-    // Why: hydration exposes restored PTY ids before activation unlocks; prefetching here preserves cold deferral without blocking render.
+    // Why bound ids run regardless of `enabled`: hydration exposes restored PTY ids before
+    // activation unlocks, and Terminal decides deferral from the cache during render.
+    // `enabled` only separates "not hydrated yet" from "hydrated with no terminals", where
+    // an empty pass is the prune that retires closed PTYs.
     if (!enabled && boundPtyIds.length === 0) {
       return
     }
