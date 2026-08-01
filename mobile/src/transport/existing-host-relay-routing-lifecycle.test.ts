@@ -25,6 +25,7 @@ import {
   getHostProfilePublicationRevision,
   publishHostProfileTransaction,
   recordDurableHostIdentity,
+  retireHostProfilePublication,
   resetHostProfilePublicationForTests,
   serializeHostProfilePublication
 } from './host-profile-publication'
@@ -139,7 +140,7 @@ describe('existing host relay endpoint lifecycle publication', () => {
     expect(writeBundle).not.toHaveBeenCalled()
   })
 
-  it('conditionally cleans a bundle written after its endpoint lifecycle retires', async () => {
+  it('preserves a committed bundle for a replacement endpoint lifecycle', async () => {
     let releaseWrite: (() => void) | null = null
     let markWriteStarted: (() => void) | null = null
     const writeStarted = new Promise<void>((resolve) => {
@@ -166,8 +167,56 @@ describe('existing host relay endpoint lifecycle publication', () => {
     releaseWrite?.()
 
     await expect(staleWrite).rejects.toBeInstanceOf(MobileRelayUpgradeLifecycleRetiredError)
+    expect(cleanupBundle).not.toHaveBeenCalled()
+  })
+
+  it('cleans a committed bundle after its host identity is removed', async () => {
+    let releaseWrite: (() => void) | null = null
+    const staleBundle = credentialBundle(1)
+    const cleanupBundle = vi.fn(async () => true)
+    const lifecycle = beginHostEndpointPublicationLifecycle(HOST.id)
+    const staleWrite = writeExistingHostRelayCredentialBundle(
+      HOST,
+      staleBundle,
+      () =>
+        new Promise<void>((resolve) => {
+          releaseWrite = resolve
+        }),
+      lifecycle,
+      cleanupBundle
+    )
+    await vi.waitFor(() => expect(releaseWrite).not.toBeNull())
+
+    retireHostProfilePublication(HOST.id)
+    hostStoreMock.loadStoredHostIdentity.mockResolvedValue(null)
+    releaseWrite?.()
+
+    await expect(staleWrite).rejects.toBeInstanceOf(MobileRelayUpgradeLifecycleRetiredError)
     await vi.waitFor(() => expect(cleanupBundle).toHaveBeenCalledWith(staleBundle))
-    expect(await cleanupBundle.mock.results[0]!.value).toBe(false)
+  })
+
+  it('cleans a committed bundle after its host identity is superseded', async () => {
+    let releaseWrite: (() => void) | null = null
+    const staleBundle = credentialBundle(1)
+    const cleanupBundle = vi.fn(async () => true)
+    const lifecycle = beginHostEndpointPublicationLifecycle(HOST.id)
+    const staleWrite = writeExistingHostRelayCredentialBundle(
+      HOST,
+      staleBundle,
+      () =>
+        new Promise<void>((resolve) => {
+          releaseWrite = resolve
+        }),
+      lifecycle,
+      cleanupBundle
+    )
+    await vi.waitFor(() => expect(releaseWrite).not.toBeNull())
+
+    recordDurableHostIdentity({ ...HOST, deviceToken: 'token-2' })
+    releaseWrite?.()
+
+    await expect(staleWrite).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
+    await vi.waitFor(() => expect(cleanupBundle).toHaveBeenCalledWith(staleBundle))
   })
 
   it('rechecks routing publication after its credential write', async () => {

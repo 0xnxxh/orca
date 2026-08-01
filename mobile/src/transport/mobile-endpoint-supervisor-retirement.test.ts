@@ -10,9 +10,43 @@ import type { RpcClient } from './rpc-client'
 import type { MobileConnectionPath, StableLogicalRpcClient } from './stable-logical-rpc-client'
 import type { ConnectionState, HostProfile, RpcResponse } from './types'
 
+const asyncStorageMock = vi.hoisted(() => ({
+  getItem: vi.fn(),
+  setItem: vi.fn(),
+  removeItem: vi.fn()
+}))
+const secureStoreMock = vi.hoisted(() => ({
+  getItemAsync: vi.fn(),
+  setItemAsync: vi.fn(),
+  deleteItemAsync: vi.fn()
+}))
+const hostStoreMock = vi.hoisted(() => ({ loadStoredHostIdentity: vi.fn() }))
+const tokenStoreMock = vi.hoisted(() => ({ readHostDeviceToken: vi.fn() }))
+
+vi.mock('@react-native-async-storage/async-storage', () => ({ default: asyncStorageMock }))
 vi.mock('react-native', () => ({ Platform: { OS: 'ios' } }))
-vi.mock('expo-secure-store', () => ({ WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'when-unlocked' }))
+vi.mock('expo-secure-store', () => ({
+  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'when-unlocked',
+  ...secureStoreMock
+}))
 vi.mock('expo-crypto', () => ({ getRandomBytes: (length: number) => new Uint8Array(length) }))
+vi.mock('./host-store', () => hostStoreMock)
+vi.mock('./host-device-token-store', () => tokenStoreMock)
+
+import {
+  deleteMobileRelayCredentialBundleIfCurrent,
+  readMobileRelayCredentialBundle,
+  writeMobileRelayCredentialBundle
+} from './mobile-relay-credential-bundle'
+import {
+  MobileRelayUpgradeLifecycleRetiredError,
+  writeExistingHostRelayCredentialBundle
+} from './existing-host-relay-routing'
+import {
+  beginHostEndpointPublicationLifecycle,
+  resetHostProfilePublicationForTests
+} from './host-profile-publication'
+import { resetPairingKeychainForTests } from './pairing-keychain'
 
 class FakeSession implements RpcClient {
   readonly sendRequest = vi.fn(
@@ -162,9 +196,27 @@ function mockCredentialRotation(logical: FakeLogicalClient): void {
 }
 
 describe('mobile endpoint supervisor retirement', () => {
+  let storedCredentialRaw: string | null
+
   beforeEach(() => {
+    vi.clearAllMocks()
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-13T12:00:00Z'))
+    resetPairingKeychainForTests()
+    resetHostProfilePublicationForTests()
+    storedCredentialRaw = null
+    asyncStorageMock.getItem.mockResolvedValue(null)
+    asyncStorageMock.setItem.mockResolvedValue(undefined)
+    asyncStorageMock.removeItem.mockResolvedValue(undefined)
+    secureStoreMock.getItemAsync.mockImplementation(async () => storedCredentialRaw)
+    secureStoreMock.setItemAsync.mockImplementation(async (_key: string, value: string) => {
+      storedCredentialRaw = value
+    })
+    secureStoreMock.deleteItemAsync.mockImplementation(async () => {
+      storedCredentialRaw = null
+    })
+    hostStoreMock.loadStoredHostIdentity.mockResolvedValue(host)
+    tokenStoreMock.readHostDeviceToken.mockResolvedValue(host.deviceToken)
   })
 
   afterEach(() => vi.useRealTimers())
@@ -218,5 +270,99 @@ describe('mobile endpoint supervisor retirement', () => {
 
     expect(deps.saveHost).not.toHaveBeenCalled()
     expect(onHostUpdated).not.toHaveBeenCalled()
+  })
+
+  it('keeps a replacement-owned rotation durable across direct loss and restart', async () => {
+    const rotatedBundle: MobileRelayCredentialBundle = {
+      ...bundle,
+      current: {
+        token: 'C'.repeat(43),
+        hash: 'D'.repeat(43),
+        version: 3,
+        expiresAt: Number.MAX_SAFE_INTEGER
+      },
+      grace: bundle.current
+    }
+    await writeMobileRelayCredentialBundle(bundle)
+
+    let finishSecureWrite: (() => void) | null = null
+    let markSecureWriteStarted: (() => void) | null = null
+    const secureWriteStarted = new Promise<void>((resolve) => {
+      markSecureWriteStarted = resolve
+    })
+    secureStoreMock.setItemAsync.mockImplementation(async (_key: string, value: string) => {
+      if (value === JSON.stringify(rotatedBundle)) {
+        markSecureWriteStarted?.()
+        await new Promise<void>((resolve) => {
+          finishSecureWrite = resolve
+        })
+      }
+      storedCredentialRaw = value
+    })
+
+    let markReplacementRecovered: (() => void) | null = null
+    const replacementRecovered = new Promise<void>((resolve) => {
+      markReplacementRecovered = resolve
+    })
+    const cleanupBundle = vi.fn(async (value: MobileRelayCredentialBundle) => {
+      await replacementRecovered
+      return deleteMobileRelayCredentialBundleIfCurrent(value)
+    })
+    const oldLifecycle = beginHostEndpointPublicationLifecycle(host.id)
+    const oldWrite = writeExistingHostRelayCredentialBundle(
+      host,
+      rotatedBundle,
+      writeMobileRelayCredentialBundle,
+      oldLifecycle,
+      cleanupBundle
+    )
+    await secureWriteStarted
+
+    beginHostEndpointPublicationLifecycle(host.id)
+    const replacementLogical = new FakeLogicalClient('disconnected', 'lan')
+    const replacementOpenRelay = vi.fn(() => {
+      markReplacementRecovered?.()
+      return new FakeRelaySession('connected')
+    })
+    const replacement = new MobileEndpointSupervisor(
+      replacementLogical,
+      host,
+      dependencies({ readBundle: readMobileRelayCredentialBundle, openRelay: replacementOpenRelay })
+    )
+    const replacementStart = replacement.start()
+
+    finishSecureWrite?.()
+    await expect(oldWrite).rejects.toBeInstanceOf(MobileRelayUpgradeLifecycleRetiredError)
+    await replacementStart
+    expect(replacementOpenRelay).toHaveBeenCalledWith(
+      relay,
+      expect.objectContaining({
+        token: rotatedBundle.current.token,
+        version: rotatedBundle.current.version
+      }),
+      expect.any(String)
+    )
+    replacement.stop()
+
+    const restartedLogical = new FakeLogicalClient('disconnected', 'lan')
+    const restartedOpenRelay = vi.fn(() => new FakeRelaySession('connected'))
+    const restarted = new MobileEndpointSupervisor(
+      restartedLogical,
+      host,
+      dependencies({ readBundle: readMobileRelayCredentialBundle, openRelay: restartedOpenRelay })
+    )
+    await restarted.start()
+
+    expect(restartedOpenRelay).toHaveBeenCalledWith(
+      relay,
+      expect.objectContaining({
+        token: rotatedBundle.current.token,
+        version: rotatedBundle.current.version
+      }),
+      expect.any(String)
+    )
+    expect(JSON.parse(storedCredentialRaw ?? 'null')).toEqual(rotatedBundle)
+    expect(cleanupBundle).not.toHaveBeenCalled()
+    restarted.stop()
   })
 })

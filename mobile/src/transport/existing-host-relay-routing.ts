@@ -71,7 +71,9 @@ export async function writeExistingHostRelayCredentialBundle(
     try {
       requireCurrentPublication(validated, endpointLifecycle)
     } catch (error) {
-      void cleanupBundle(bundle).catch(() => {})
+      if (!(await currentHostMayOwnBundle(validated))) {
+        void cleanupBundle(bundle).catch(() => {})
+      }
       throw error
     }
   })
@@ -107,6 +109,31 @@ function requireMatchingHostMetadata(
 ): asserts existing is Pick<HostProfile, 'endpoint' | 'publicKeyB64'> {
   if (!existing || existing.publicKeyB64 !== host.publicKeyB64) {
     throw new MobileRelayUpgradeHostRemovedError('mobile relay upgrade host was removed')
+  }
+}
+
+async function currentHostMayOwnBundle(host: HostProfile): Promise<boolean> {
+  const publishedIdentity = getPublishedHostIdentity(host.id)
+  if (publishedIdentity) {
+    return (
+      publishedIdentity.deviceToken === host.deviceToken &&
+      publishedIdentity.publicKeyB64 === host.publicKeyB64
+    )
+  }
+  let existing: Pick<HostProfile, 'publicKeyB64'> | null
+  try {
+    existing = await loadStoredHostIdentity(host.id)
+  } catch {
+    return true
+  }
+  if (!existing || existing.publicKeyB64 !== host.publicKeyB64) {
+    return false
+  }
+  try {
+    return (await readHostDeviceToken(host.id)) === host.deviceToken
+  } catch {
+    // Why: uncertain storage ownership must not destroy the only resumable Relay credential.
+    return true
   }
 }
 
