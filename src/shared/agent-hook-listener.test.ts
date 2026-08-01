@@ -3156,6 +3156,37 @@ describe('shared agent-hook-listener', () => {
       expect(duplicate).toBeNull()
     })
 
+    it('never claims done from a teammate park with no lead record', () => {
+      // Why: teammate ids are persistent across turns — a delayed stop from turn N
+      // parks the id even while its newer turn N+1 is live. Claiming done here is
+      // the uncorrelated-completion race that closed PR #11353.
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'alane-6d3cb5b52120b7bf',
+        agent_type: 'lane'
+      })
+      const staleStop = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'alane-6d3cb5b52120b7bf'
+      })
+      expect(staleStop).toBeNull()
+      const duplicatePark = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'alane-6d3cb5b52120b7bf'
+      })
+      expect(duplicatePark).toBeNull()
+    })
+
+    it('never claims done from a no-lead TeammateIdle park', () => {
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'alane-6d3cb5b52120b7bf',
+        agent_type: 'lane'
+      })
+      const idled = claudeEvent({ hook_event_name: 'TeammateIdle', teammate_name: 'lane' })
+      expect(idled).toBeNull()
+    })
+
     it('re-emits the lead done state on a start-less SubagentStop after a completed turn', () => {
       claudeEvent({ hook_event_name: 'UserPromptSubmit', prompt: 'go' })
       claudeEvent({ hook_event_name: 'Stop', background_tasks: [] })
@@ -3525,6 +3556,11 @@ describe('shared agent-hook-listener', () => {
     })
 
     it('scopes TeammateIdle to the exact teammate name for hyphen-prefix names', () => {
+      // Why: a lead record anchors the emissions — no-lead teammate parks are
+      // deliberately silent (uncorrelated-completion guard), which is not what
+      // this test pins; it pins the name-scoping of the park itself.
+      claudeEvent({ hook_event_name: 'UserPromptSubmit', prompt: 'spawn lanes' })
+      claudeEvent({ hook_event_name: 'Stop', background_tasks: [] })
       claudeEvent({
         hook_event_name: 'SubagentStart',
         agent_id: 'alane-hooks-6d3cb5b5',

@@ -2436,11 +2436,13 @@ function normalizeClaudeSubagentLifecycleEvent(
   // Why: only a spawn may allocate a roster — stop/idle on an unknown pane would retain an empty
   // roster per untrusted pane key with no lifecycle bound (STA-2915 review finding).
   const roster = state.claudeSubagentRosterByPaneKey.get(paneKey)
-  let rosterChanged = false
+  let removedRow = false
   if (eventName === 'TeammateIdle') {
     const teammateName = lifecycleId
     // Why: on claude 2.1.21x teammates are turn-based — TeammateIdle means "turn over, awaiting mail", not finished. The row parks as idle (confirmed teammate) instead of leaving, so the sidebar keeps showing resumable children.
-    rosterChanged = roster ? idleClaudeTeammateByName(roster, teammateName) : false
+    if (roster) {
+      idleClaudeTeammateByName(roster, teammateName)
+    }
     clearClaudePendingWaitForAgent(state, paneKey, (waitingAgentId) =>
       claudeTeammateIdMatchesName(waitingAgentId, teammateName)
     )
@@ -2455,20 +2457,21 @@ function normalizeClaudeSubagentLifecycleEvent(
           { agentType: readString(hookPayload, 'agent_type') },
           Date.now()
         )
-        rosterChanged = true
       }
     } else {
       if (roster) {
-        // Why: a stop of an untracked id (e.g. compact's start-less SubagentStop) is a roster no-op, not evidence.
-        rosterChanged = roster.has(agentId)
+        const hadRow = roster.has(agentId)
         // Why: one-shot stops are true finishes (row removed); teammate-shaped stops are turn ends on 2.1.21x — the row parks idle and a later SubagentStart revives it.
         stopClaudeSubagent(roster, agentId)
+        removedRow = hadRow && !roster.has(agentId)
       }
       // Why: a blocked child that dies without another tool event would pin its permission/question wait on the pane forever — nothing else references that agent again.
       clearClaudePendingWaitForAgent(state, paneKey, (waitingAgentId) => waitingAgentId === agentId)
     }
   }
-  return buildClaudeChildDrivenStatusPayload(state, eventName, paneKey, hookPayload, rosterChanged)
+  return buildClaudeChildDrivenStatusPayload(state, eventName, paneKey, hookPayload, {
+    removedRow
+  })
 }
 
 /** Sync the Claude lead-turn record when the SERVER infers an interrupt outside the hook stream (Ctrl+C with a missed Stop); else a later child lifecycle event resurrects the cancelled pane. */
@@ -2566,26 +2569,37 @@ function buildClaudeChildDrivenStatusPayload(
   eventName: unknown,
   paneKey: string,
   hookPayload: Record<string, unknown>,
-  rosterChanged = false
+  evidence: { removedRow?: boolean } = {}
 ): ParsedAgentStatusPayload | null {
   const lead = state.claudeLeadStateByPaneKey.get(paneKey)
   const roster = state.claudeSubagentRosterByPaneKey.get(paneKey)
-  // Why: no lead record, no live child, and an unchanged roster mean the event proves nothing is
-  // running. Compact's start-less SubagentStop is exactly that; minting the default below left a
-  // sticky 'working' no Stop ever clears on freshly resumed panes (STA-2915).
   const rosterHasWorking = claudeRosterHasWorkingSubagent(roster)
-  if (!lead && !rosterChanged && !rosterHasWorking) {
-    return null
+  if (lead) {
+    return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
+      stateName: lead.state === 'done' && rosterHasWorking ? 'working' : lead.state,
+      updateToolSnapshot: false,
+      interrupted: lead.interrupted
+    })
   }
-  // Why: with no lead record the pane state is inferred from tracked children only — a live child
-  // shows working, while an identity-matched drain/park resolves to done. The old unconditional
-  // 'working' default stuck until the stale sweeper once the last child left (STA-2915 review).
-  const leadState = lead?.state ?? (rosterHasWorking ? 'working' : 'done')
-  return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
-    stateName: leadState === 'done' && rosterHasWorking ? 'working' : leadState,
-    updateToolSnapshot: false,
-    interrupted: lead?.interrupted
-  })
+  // Why: with no lead record only positive evidence may speak. A live child shows working; a
+  // one-shot removal resolves to done — the row is gone, so a delayed duplicate stop finds
+  // nothing and cannot re-claim. Teammate parks and idle-only refreshes claim nothing: a stale
+  // stop from a previous turn parks a persistent id even while its newer turn is live, so
+  // inferring done there is PR #11353's uncorrelated-completion race. Everything else (e.g.
+  // compact's start-less SubagentStop) proves nothing and stays silent (STA-2915).
+  if (rosterHasWorking) {
+    return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
+      stateName: 'working',
+      updateToolSnapshot: false
+    })
+  }
+  if (evidence.removedRow) {
+    return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
+      stateName: 'done',
+      updateToolSnapshot: false
+    })
+  }
+  return null
 }
 
 function normalizeClaudeEvent(
