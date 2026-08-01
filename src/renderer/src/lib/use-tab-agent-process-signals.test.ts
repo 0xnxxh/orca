@@ -217,6 +217,7 @@ describe('useTabAgent process signals', () => {
     })
 
     expect(clearTabLaunchAgent).toHaveBeenCalledWith('tab-1')
+    expect(latestHookAgent).toBeNull()
   })
 
   it('does not clear launch identity from shell foreground before any agent activity', async () => {

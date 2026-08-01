@@ -796,6 +796,7 @@ describe('useTabAgent', () => {
 
     const root = await renderHookProbe(hydratedTab)
     expect(clearTabLaunchAgent).not.toHaveBeenCalled()
+    expect(latestHookAgent).toBe('codex')
 
     const { titleHydrationPending: _pendingTitle, ...settledTab } = hydratedTab
     void _pendingTitle

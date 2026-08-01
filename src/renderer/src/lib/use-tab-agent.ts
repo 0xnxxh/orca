@@ -326,10 +326,12 @@ export function useTabAgent(tab: TerminalTab): TuiAgent | null {
     tab.title
   ])
 
+  // Why: the neutral hydration title is not exit evidence until replay; current shell proof still wins.
+  const titleForResolution = tab.titleHydrationPending && !processShellForeground ? '' : tab.title
   return resolveTabAgentFromSignals({
     hasObservedAgentSignal,
     isRemote: isRemoteLike,
-    title: tab.title,
+    title: titleForResolution,
     defaultTitle: tab.defaultTitle,
     hookAgent: focusedHookAgent,
     siblingHookAgent,
