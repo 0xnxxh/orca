@@ -102,7 +102,6 @@ import {
 import type { RepoSummary } from '../../../src/worktree/host-worktree-rpc-types'
 import type { WorkspaceStatusDefinition } from '../../../../src/shared/types'
 import { DEFAULT_MOBILE_WORKSPACE_STATUSES } from '../../../src/worktree/mobile-workspace-statuses'
-import { useMobileTaskHostRouteNavigation } from '../../../src/tasks/use-mobile-task-host-route-navigation'
 
 function isErrorVerdict(v: ConnectionVerdict): boolean {
   return v.kind === 'warning' || v.kind === 'unreachable' || v.kind === 'auth-failed'
@@ -1397,7 +1396,6 @@ export function HostScreen({
 
 // On wide layouts the sidebar hosts the list, so this route is just the empty detail pane.
 export default function HostWorktreeRoute() {
-  useMobileTaskHostRouteNavigation()
   const { isWideLayout } = useResponsiveLayout()
   if (isWideLayout) {
     return <WorkspaceDetailPlaceholder />
