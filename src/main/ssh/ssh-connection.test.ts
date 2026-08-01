@@ -16,6 +16,7 @@ let execBehavior: 'callback' | 'pending' = 'callback'
 let pendingExecCallback: ((err: Error | undefined, channel: unknown) => void) | null = null
 let sftpBehavior: 'callback' | 'pending' = 'callback'
 let pendingSftpCallback: ((err: Error | undefined, channel: unknown) => void) | null = null
+let notifyClientCreated: (() => void) | undefined
 
 type MockSshClient = {
   setNoDelay: ReturnType<typeof vi.fn>
@@ -45,6 +46,8 @@ vi.mock('ssh2', () => {
     lastConnectConfig?: unknown
     constructor() {
       clientInstances.push(this)
+      notifyClientCreated?.()
+      notifyClientCreated = undefined
     }
     on(event: string, handler: (...args: unknown[]) => void) {
       const handlers = eventHandlers?.get(event) ?? new Set<(...args: unknown[]) => void>()
@@ -282,6 +285,7 @@ describe('SshConnection', () => {
     pendingExecCallback = null
     sftpBehavior = 'callback'
     pendingSftpCallback = null
+    notifyClientCreated = undefined
     clientInstances = []
     getOrcaControlSocketPathMock.mockReset()
     getOrcaControlSocketPathMock.mockReturnValue(null)
@@ -466,10 +470,11 @@ describe('SshConnection', () => {
     const callbacks = createCallbacks()
     const conn = new SshConnection(createTarget(), callbacks)
 
+    const clientCreated = new Promise<void>((resolve) => {
+      notifyClientCreated = resolve
+    })
     const connectResult = conn.connect().catch((error: Error) => error)
-    for (let i = 0; i < 5 && clientInstances.length === 0; i++) {
-      await Promise.resolve()
-    }
+    await clientCreated
     expect(clientInstances).toHaveLength(1)
     await conn.disconnect()
 
@@ -489,10 +494,11 @@ describe('SshConnection', () => {
     const callbacks = createCallbacks()
     const conn = new SshConnection(createTarget(), callbacks)
 
+    const clientCreated = new Promise<void>((resolve) => {
+      notifyClientCreated = resolve
+    })
     const connectResult = conn.connect().catch((error: Error) => error)
-    for (let i = 0; i < 5 && clientInstances.length === 0; i++) {
-      await Promise.resolve()
-    }
+    await clientCreated
     expect(clientInstances).toHaveLength(1)
     await conn.disconnect()
 

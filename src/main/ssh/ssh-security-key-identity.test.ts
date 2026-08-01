@@ -1,7 +1,7 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SshTarget } from '../../shared/ssh-types'
 import {
   isOpenSshSecurityKeyPrivateKey,
@@ -12,6 +12,18 @@ import {
   createOpenSshPublicKeyFixture
 } from './ssh-security-key-identity.test-fixture'
 import { requiresSystemSshForSecurityKey } from './ssh-transport-selection'
+
+const { findSystemSshMock } = vi.hoisted(() => ({ findSystemSshMock: vi.fn() }))
+
+vi.mock('./system-ssh-binary', () => ({ findSystemSsh: findSystemSshMock }))
+
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<{ homedir: () => string }>()
+  return {
+    ...actual,
+    homedir: () => process.env.ORCA_TEST_SSH_HOME || actual.homedir()
+  }
+})
 
 const ED25519_SECURITY_KEY = 'sk-ssh-ed25519@openssh.com'
 const ECDSA_SECURITY_KEY = 'sk-ecdsa-sha2-nistp256@openssh.com'
@@ -28,6 +40,11 @@ function createTarget(overrides: Partial<SshTarget> = {}): SshTarget {
   }
 }
 
+beforeEach(() => {
+  findSystemSshMock.mockReset()
+  findSystemSshMock.mockReturnValue('/usr/bin/ssh')
+})
+
 async function writeKey(contents: Buffer, filename = 'security key'): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'orca-security-key-'))
   tempDirs.push(directory)
@@ -37,6 +54,7 @@ async function writeKey(contents: Buffer, filename = 'security key'): Promise<st
 }
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true })))
 })
 
@@ -78,6 +96,15 @@ describe('isOpenSshSecurityKeyPrivateKey', () => {
     ).toBe(true)
   })
 
+  it('recognizes OpenSSH envelopes without optional base64 padding', () => {
+    const key = createOpenSshPrivateKeyFixture([ED25519_SECURITY_KEY], {
+      privateBlock: Buffer.alloc(0)
+    })
+    const unpadded = Buffer.from(key.toString().replace(/=+(?=\n-----END)/, ''))
+    expect(unpadded).not.toEqual(key)
+    expect(isOpenSshSecurityKeyPrivateKey(unpadded)).toBe(true)
+  })
+
   it('does not match security-key text outside a valid public-key type', () => {
     const key = createOpenSshPrivateKeyFixture(['ssh-ed25519'], {
       privateBlock: Buffer.from(ED25519_SECURITY_KEY)
@@ -94,6 +121,13 @@ describe('isOpenSshSecurityKeyPrivateKey', () => {
       expect(isOpenSshSecurityKeyPublicKey(createOpenSshPublicKeyFixture(keyType))).toBe(true)
     }
   )
+
+  it('recognizes public keys without optional base64 padding', () => {
+    const key = createOpenSshPublicKeyFixture(ECDSA_SECURITY_KEY)
+    const unpadded = Buffer.from(key.toString().replace(/=+(?=\s)/, ''))
+    expect(unpadded).not.toEqual(key)
+    expect(isOpenSshSecurityKeyPublicKey(unpadded)).toBe(true)
+  })
 
   it('rejects regular or mismatched OpenSSH public key blobs', () => {
     expect(isOpenSshSecurityKeyPublicKey(createOpenSshPublicKeyFixture('ssh-ed25519'))).toBe(false)
@@ -120,6 +154,67 @@ describe('isOpenSshSecurityKeyPrivateKey', () => {
 })
 
 describe('requiresSystemSshForSecurityKey', () => {
+  it('uses default FIDO2 identities only when config resolution is unavailable', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'orca-security-key-home-'))
+    tempDirs.push(directory)
+    await mkdir(join(directory, '.ssh'))
+    await writeFile(
+      join(directory, '.ssh', 'id_ed25519_sk'),
+      createOpenSshPrivateKeyFixture([ED25519_SECURITY_KEY])
+    )
+    vi.stubEnv('ORCA_TEST_SSH_HOME', directory)
+
+    await expect(requiresSystemSshForSecurityKey(createTarget(), null)).resolves.toBe(true)
+    await expect(
+      requiresSystemSshForSecurityKey(createTarget(), { identityFile: [] })
+    ).resolves.toBe(false)
+  })
+
+  it('keeps a regular default ahead of a dormant FIDO2 identity', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'orca-regular-key-home-'))
+    tempDirs.push(directory)
+    await mkdir(join(directory, '.ssh'))
+    await writeFile(join(directory, '.ssh', 'id_rsa'), createOpenSshPrivateKeyFixture(['ssh-rsa']))
+    await writeFile(
+      join(directory, '.ssh', 'id_ed25519_sk'),
+      createOpenSshPrivateKeyFixture([ED25519_SECURITY_KEY])
+    )
+    vi.stubEnv('ORCA_TEST_SSH_HOME', directory)
+
+    await expect(requiresSystemSshForSecurityKey(createTarget(), null)).resolves.toBe(false)
+  })
+
+  it('keeps password and agent fallback when default FIDO2 needs unavailable OpenSSH', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'orca-no-system-ssh-home-'))
+    tempDirs.push(directory)
+    await mkdir(join(directory, '.ssh'))
+    await writeFile(
+      join(directory, '.ssh', 'id_ed25519_sk'),
+      createOpenSshPrivateKeyFixture([ED25519_SECURITY_KEY])
+    )
+    vi.stubEnv('ORCA_TEST_SSH_HOME', directory)
+    findSystemSshMock.mockReturnValue(null)
+
+    await expect(requiresSystemSshForSecurityKey(createTarget(), null)).resolves.toBe(false)
+  })
+
+  it('ignores an orphan regular sidecar before a valid default FIDO2 identity', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'orca-orphan-sidecar-home-'))
+    tempDirs.push(directory)
+    await mkdir(join(directory, '.ssh'))
+    await writeFile(
+      join(directory, '.ssh', 'id_ed25519.pub'),
+      createOpenSshPublicKeyFixture('ssh-ed25519')
+    )
+    await writeFile(
+      join(directory, '.ssh', 'id_ed25519_sk'),
+      createOpenSshPrivateKeyFixture([ED25519_SECURITY_KEY])
+    )
+    vi.stubEnv('ORCA_TEST_SSH_HOME', directory)
+
+    await expect(requiresSystemSshForSecurityKey(createTarget(), null)).resolves.toBe(true)
+  })
+
   it('detects a manual target identity path with spaces', async () => {
     const keyPath = await writeKey(createOpenSshPrivateKeyFixture([ED25519_SECURITY_KEY]))
     await expect(
@@ -157,6 +252,18 @@ describe('requiresSystemSshForSecurityKey', () => {
       ).resolves.toBe(true)
     }
   )
+
+  it('ignores a stale FIDO2 sidecar beside a regular private identity', async () => {
+    const identityPath = await writeKey(
+      createOpenSshPrivateKeyFixture(['ssh-ed25519']),
+      'regular-with-stale-sidecar'
+    )
+    await writeFile(`${identityPath}.pub`, createOpenSshPublicKeyFixture(ED25519_SECURITY_KEY))
+
+    await expect(
+      requiresSystemSshForSecurityKey(createTarget({ identityFile: identityPath }), null)
+    ).resolves.toBe(false)
+  })
 
   it('ignores stale imported identity paths when fresh config has regular keys', async () => {
     const staleKey = await writeKey(createOpenSshPrivateKeyFixture([ED25519_SECURITY_KEY]), 'stale')

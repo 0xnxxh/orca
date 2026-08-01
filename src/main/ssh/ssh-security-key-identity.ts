@@ -1,7 +1,7 @@
 const OPENSSH_PRIVATE_KEY_HEADER = '-----BEGIN OPENSSH PRIVATE KEY-----'
 const OPENSSH_PRIVATE_KEY_FOOTER = '-----END OPENSSH PRIVATE KEY-----'
 const OPENSSH_KEY_MAGIC = Buffer.from('openssh-key-v1\0', 'ascii')
-const MAX_IDENTITY_FILE_BYTES = 1024 * 1024
+export const MAX_SSH_IDENTITY_FILE_BYTES = 1024 * 1024
 const MAX_PUBLIC_KEYS = 64
 const SECURITY_KEY_TYPES = new Set([
   'sk-ssh-ed25519@openssh.com',
@@ -9,6 +9,15 @@ const SECURITY_KEY_TYPES = new Set([
 ])
 
 type SshString = { value: Buffer; nextOffset: number }
+
+function decodeBase64(value: string): Buffer | null {
+  if (!value || value.length % 4 === 1 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+    return null
+  }
+  const unpadded = value.replace(/=+$/, '')
+  const decoded = Buffer.from(unpadded, 'base64')
+  return decoded.toString('base64').replace(/=+$/, '') === unpadded ? decoded : null
+}
 
 function readSshString(buffer: Buffer, offset: number): SshString | null {
   if (offset < 0 || offset + 4 > buffer.length) {
@@ -24,7 +33,7 @@ function readSshString(buffer: Buffer, offset: number): SshString | null {
 }
 
 function decodeOpenSshPrivateKey(contents: Buffer): Buffer | null {
-  if (contents.length > MAX_IDENTITY_FILE_BYTES) {
+  if (contents.length > MAX_SSH_IDENTITY_FILE_BYTES) {
     return null
   }
   const lines = contents.toString('ascii').trim().split(/\r?\n/)
@@ -32,10 +41,10 @@ function decodeOpenSshPrivateKey(contents: Buffer): Buffer | null {
     return null
   }
   const encoded = lines.slice(1, -1).join('')
-  if (!encoded || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+  const decoded = decodeBase64(encoded)
+  if (!decoded) {
     return null
   }
-  const decoded = Buffer.from(encoded, 'base64')
   return decoded.subarray(0, OPENSSH_KEY_MAGIC.length).equals(OPENSSH_KEY_MAGIC) ? decoded : null
 }
 
@@ -82,16 +91,17 @@ export function isOpenSshSecurityKeyPrivateKey(contents: Buffer): boolean {
 }
 
 export function isOpenSshSecurityKeyPublicKey(contents: Buffer): boolean {
-  if (contents.length > MAX_IDENTITY_FILE_BYTES) {
+  if (contents.length > MAX_SSH_IDENTITY_FILE_BYTES) {
     return false
   }
   const [declaredType, encoded] = contents.toString('ascii').trim().split(/\s+/, 3)
   if (!declaredType || !encoded || !SECURITY_KEY_TYPES.has(declaredType)) {
     return false
   }
-  if (encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+  const decoded = decodeBase64(encoded)
+  if (!decoded) {
     return false
   }
-  const keyType = readSshString(Buffer.from(encoded, 'base64'), 0)
+  const keyType = readSshString(decoded, 0)
   return keyType?.value.toString('ascii') === declaredType
 }
