@@ -2573,14 +2573,16 @@ function buildClaudeChildDrivenStatusPayload(
   // Why: no lead record, no live child, and an unchanged roster mean the event proves nothing is
   // running. Compact's start-less SubagentStop is exactly that; minting the default below left a
   // sticky 'working' no Stop ever clears on freshly resumed panes (STA-2915).
-  if (!lead && !rosterChanged && !claudeRosterHasWorkingSubagent(roster)) {
+  const rosterHasWorking = claudeRosterHasWorkingSubagent(roster)
+  if (!lead && !rosterChanged && !rosterHasWorking) {
     return null
   }
-  // Why: default 'working' — a spawn proves activity even before the lead's first state-bearing event (e.g. Orca restarted mid-session).
-  const leadState = lead?.state ?? 'working'
+  // Why: with no lead record the pane state is inferred from tracked children only — a live child
+  // shows working, while an identity-matched drain/park resolves to done. The old unconditional
+  // 'working' default stuck until the stale sweeper once the last child left (STA-2915 review).
+  const leadState = lead?.state ?? (rosterHasWorking ? 'working' : 'done')
   return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
-    stateName:
-      leadState === 'done' && claudeRosterHasWorkingSubagent(roster) ? 'working' : leadState,
+    stateName: leadState === 'done' && rosterHasWorking ? 'working' : leadState,
     updateToolSnapshot: false,
     interrupted: lead?.interrupted
   })

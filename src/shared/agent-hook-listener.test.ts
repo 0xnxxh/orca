@@ -3132,6 +3132,30 @@ describe('shared agent-hook-listener', () => {
       expect(state.claudeSubagentRosterByPaneKey.has(PANE_KEY)).toBe(false)
     })
 
+    it('resolves a known-child drain to done instead of sticky working when no lead ever spoke', () => {
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a1',
+        agent_type: 'general-purpose'
+      })
+      // Why: the child's own identity-matched stop drains the roster; the old no-lead
+      // 'working' default left this pane spinning until the stale sweeper.
+      const drained = claudeEvent({ hook_event_name: 'SubagentStop', agent_id: 'a1' })
+      expect(drained?.payload.state).toBe('done')
+      expect(drained?.payload.subagents).toBeUndefined()
+    })
+
+    it('suppresses a duplicate stale stop after a no-lead drain', () => {
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a1',
+        agent_type: 'general-purpose'
+      })
+      claudeEvent({ hook_event_name: 'SubagentStop', agent_id: 'a1' })
+      const duplicate = claudeEvent({ hook_event_name: 'SubagentStop', agent_id: 'a1' })
+      expect(duplicate).toBeNull()
+    })
+
     it('re-emits the lead done state on a start-less SubagentStop after a completed turn', () => {
       claudeEvent({ hook_event_name: 'UserPromptSubmit', prompt: 'go' })
       claudeEvent({ hook_event_name: 'Stop', background_tasks: [] })
