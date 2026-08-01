@@ -126,6 +126,35 @@ export class CrashReportStore {
     return this.transitionPending(id, 'dismissed')
   }
 
+  /**
+   * Resolve pending renderer crashes that an auto-recovery reload healed.
+   *
+   * Why: `dismissed` keeps the record sendable from Help > Report Crash while
+   * taking it out of the startup prompt; the detail flag preserves the reason.
+   */
+  async markRendererCrashesAutoRecovered(notBeforeMs: number): Promise<CrashReportRecord[]> {
+    return this.withWrite(async (reports) => {
+      const resolved: CrashReportRecord[] = []
+      const nextReports = reports.map((report) => {
+        if (report.status !== 'pending' || report.source !== 'renderer') {
+          return report
+        }
+        const createdAtMs = Date.parse(report.createdAt)
+        if (!Number.isFinite(createdAtMs) || createdAtMs < notBeforeMs) {
+          return report
+        }
+        const recovered: CrashReportRecord = {
+          ...report,
+          status: 'dismissed',
+          details: { ...report.details, rendererAutoRecovered: true }
+        }
+        resolved.push(recovered)
+        return recovered
+      })
+      return { reports: nextReports, result: resolved }
+    })
+  }
+
   async formatDiagnosticText(id: string, notes?: string): Promise<string | null> {
     const reports = await this.readReports()
     const report = reports.find((candidate) => candidate.id === id)

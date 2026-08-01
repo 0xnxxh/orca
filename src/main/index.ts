@@ -281,6 +281,7 @@ import {
   type ExpectedTeardownScope
 } from './crash-reporting/process-gone-classification'
 import { recordProcessGoneCrash as recordProcessGoneCrashEvent } from './crash-reporting/process-gone-recorder'
+import { noteRendererRecoveryReloadIssued } from './crash-reporting/renderer-recovery-crash-outcome'
 import {
   advanceSyntheticTitleSpinnerEntries,
   type SyntheticTitleSpinnerEntry
@@ -1246,6 +1247,8 @@ function openMainWindow(): BrowserWindow {
     // Why: the recovery reload re-fires did-finish-load; flag it so the local-PTY orphan sweep skips that reload (#5787).
     onBeforeRecoveryReload: (webContentsId) => {
       markRecoveryReloadInFlight(webContentsId)
+      // Why: arm the outcome check before the reload so a crash this heals never prompts the user.
+      noteRendererRecoveryReloadIssued()
       recordDurableCrashBreadcrumb('renderer_recovery_reload')
     }
   })

@@ -1,0 +1,190 @@
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const { handlers, listeners } = vi.hoisted(() => ({
+  handlers: new Map<string, (_event: unknown, args?: unknown) => unknown>(),
+  listeners: new Map<string, (_event: unknown, args?: unknown) => void>()
+}))
+
+vi.mock('electron', () => ({
+  app: { getVersion: () => '1.4.162' },
+  clipboard: { writeText: vi.fn() },
+  ipcMain: {
+    removeHandler: vi.fn((channel: string) => handlers.delete(channel)),
+    handle: vi.fn((channel: string, handler: (_event: unknown, args?: unknown) => unknown) => {
+      handlers.set(channel, handler)
+    }),
+    removeAllListeners: vi.fn((channel: string) => listeners.delete(channel)),
+    on: vi.fn((channel: string, listener: (_event: unknown, args?: unknown) => void) => {
+      listeners.set(channel, listener)
+    })
+  }
+}))
+
+vi.mock('./feedback', () => ({ submitFeedback: vi.fn() }))
+
+vi.mock('../crash-reporting/crash-breadcrumb-store', () => ({
+  getCrashBreadcrumbSnapshot: vi.fn(() => []),
+  recordCoalescedCrashBreadcrumb: vi.fn(() => ({ suppressedSinceLast: 0 })),
+  recordCrashBreadcrumb: vi.fn()
+}))
+
+vi.mock('../observability', () => ({
+  collectDiagnosticBundle: vi.fn(),
+  getDiagnosticsStatus: vi.fn()
+}))
+
+vi.mock('../observability/diagnostic-upload-endpoint', () => ({
+  resolveDiagnosticOrcaChannel: vi.fn()
+}))
+
+vi.mock('../observability/tracer', () => ({
+  startSpan: vi.fn(() => ({
+    traceId: 'trace-id',
+    spanId: 'span-id',
+    setAttribute: vi.fn(),
+    addEvent: vi.fn(),
+    fail: vi.fn(),
+    interrupt: vi.fn(),
+    end: vi.fn()
+  })),
+  flushActiveSink: vi.fn()
+}))
+
+import { CrashReportStore } from '../crash-reporting/crash-report-store'
+import {
+  _resetRendererRecoveryOutcomeForTests,
+  noteRendererRecoveryReloadIssued,
+  resolveRecoveredRendererCrashReports
+} from '../crash-reporting/renderer-recovery-crash-outcome'
+import type { CrashReportCreateInput, CrashReportRecord } from '../../shared/crash-reporting'
+import {
+  _resetRendererErrorReportDedupeForTests,
+  registerCrashReportingHandlers
+} from './crash-reporting'
+
+const tempDirs: string[] = []
+
+async function createStore(): Promise<CrashReportStore> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'orca-recovered-renderer-crash-'))
+  tempDirs.push(dir)
+  return new CrashReportStore(path.join(dir, 'crash-reports.json'))
+}
+
+// The cluster-F shape: macOS/Linux SIGKILL, Windows uses different codes on the same path.
+function killedRendererCrash(exitCode = 9): CrashReportCreateInput {
+  return {
+    source: 'renderer',
+    processType: 'renderer',
+    reason: 'killed',
+    exitCode,
+    appVersion: '1.4.162',
+    platform: process.platform,
+    osRelease: 'test',
+    arch: process.arch,
+    electronVersion: '41',
+    chromeVersion: '141',
+    details: { processType: 'renderer' }
+  }
+}
+
+function emitRendererBootstrapRendered(): void {
+  listeners.get('crashReports:recordBreadcrumb')?.(null, { name: 'renderer_bootstrap_rendered' })
+}
+
+async function getLatestPending(): Promise<CrashReportRecord | null> {
+  return (await handlers.get('crashReports:getLatestPending')?.(null)) as CrashReportRecord | null
+}
+
+async function getLatestReport(): Promise<CrashReportRecord | null> {
+  return (await handlers.get('crashReports:getLatestReport')?.(null)) as CrashReportRecord | null
+}
+
+beforeEach(() => {
+  handlers.clear()
+  listeners.clear()
+  _resetRendererRecoveryOutcomeForTests()
+  _resetRendererErrorReportDedupeForTests()
+})
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })))
+})
+
+describe('auto-recovered renderer crash reporting', () => {
+  it('does not prompt the recovered renderer for a crash the reload healed', async () => {
+    const store = await createStore()
+    registerCrashReportingHandlers(store)
+    await store.record(killedRendererCrash())
+
+    noteRendererRecoveryReloadIssued()
+    emitRendererBootstrapRendered()
+
+    await expect(getLatestPending()).resolves.toBeNull()
+  })
+
+  it.each([
+    ['macOS/Linux SIGKILL', 9],
+    ['Windows ACCESS_VIOLATION', -1073741819],
+    ['Windows renderer OOM', -536870904]
+  ])('suppresses the prompt for %s once recovery is observed', async (_label, exitCode) => {
+    const store = await createStore()
+    registerCrashReportingHandlers(store)
+    await store.record(killedRendererCrash(exitCode))
+
+    noteRendererRecoveryReloadIssued()
+    emitRendererBootstrapRendered()
+
+    await expect(getLatestPending()).resolves.toBeNull()
+  })
+
+  it('keeps the healed report sendable from Help > Report Crash with its recovery flag', async () => {
+    const store = await createStore()
+    registerCrashReportingHandlers(store)
+    const recorded = await store.record(killedRendererCrash())
+
+    noteRendererRecoveryReloadIssued()
+    emitRendererBootstrapRendered()
+    await getLatestPending()
+
+    const sendable = await getLatestReport()
+    expect(sendable?.id).toBe(recorded.id)
+    expect(sendable?.status).toBe('dismissed')
+    expect(sendable?.details.rendererAutoRecovered).toBe(true)
+    expect(sendable?.breadcrumbs).toEqual(recorded.breadcrumbs)
+  })
+
+  it('still prompts when the renderer booted without an auto-recovery reload', async () => {
+    const store = await createStore()
+    registerCrashReportingHandlers(store)
+    const recorded = await store.record(killedRendererCrash())
+
+    emitRendererBootstrapRendered()
+
+    await expect(getLatestPending()).resolves.toMatchObject({ id: recorded.id, status: 'pending' })
+  })
+
+  it('still prompts when the recovery reload never brought the renderer back', async () => {
+    const store = await createStore()
+    registerCrashReportingHandlers(store)
+    const recorded = await store.record(killedRendererCrash())
+
+    noteRendererRecoveryReloadIssued()
+
+    await expect(getLatestPending()).resolves.toMatchObject({ id: recorded.id, status: 'pending' })
+  })
+
+  it('leaves an unresolved crash from a previous session pending', async () => {
+    const store = await createStore()
+    registerCrashReportingHandlers(store)
+    const recorded = await store.record(killedRendererCrash())
+
+    const oneHourLater = Date.parse(recorded.createdAt) + 3_600_000
+    noteRendererRecoveryReloadIssued(oneHourLater)
+    resolveRecoveredRendererCrashReports(store, oneHourLater)
+
+    await expect(getLatestPending()).resolves.toMatchObject({ id: recorded.id, status: 'pending' })
+  })
+})
