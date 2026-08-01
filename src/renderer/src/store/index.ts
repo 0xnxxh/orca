@@ -44,6 +44,11 @@ import { e2eConfig } from '@/lib/e2e-config'
 import type { createWebRuntimeSessionTerminal } from '@/runtime/web-runtime-session'
 import { registerHttpLinkStoreAccessor } from '@/lib/http-link-routing'
 import { installStoreListenerCensus } from './store-listener-census'
+// Why the side-effect import: the census registers on module load, and it otherwise
+// loads only if an editor panel mounts — making a missing editorContent.* key
+// ambiguous between "no editor was opened" and "the instrument never ran".
+import '@/components/editor/editor-content-memory-census'
+import { measureTerminalScrollbackBuffers } from './terminal-scrollback-memory-census'
 import {
   registerRendererMemoryProfileContributor,
   summarizeStateCollectionSizes
@@ -102,6 +107,13 @@ registerHttpLinkStoreAccessor(() => useAppStore.getState())
 // so OOM crash reports identify what grew without a local repro.
 registerRendererMemoryProfileContributor('store', () =>
   summarizeStateCollectionSizes(useAppStore.getState(), 20)
+)
+
+// Why: the 'store' profile above counts keys without recursing, so a scrollback
+// blowup reads as an unchanged tab count while each tab hides leaf buffers of up
+// to 512KB. Char sums are what separate "170 tabs" from "170 tabs holding 800MB".
+registerRendererMemoryProfileContributor('terminalScrollback', () =>
+  measureTerminalScrollbackBuffers(useAppStore.getState())
 )
 
 export type { AppState } from './types'

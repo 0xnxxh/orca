@@ -12,8 +12,15 @@ export type EditorContentCensus = { files: number; chars: number }
 
 const readers = new Set<() => EditorContentCensus>()
 
+// Why bounded: each reader closes over a panel's fileContents, so a panel that ever
+// leaked its unmount would make this diagnostic a retainer of what it measures.
+const MAX_CENSUS_READERS = 64
+
 /** Registers one live panel's contents; call the returned function on unmount. */
 export function registerEditorContentCensusReader(read: () => EditorContentCensus): () => void {
+  if (readers.size >= MAX_CENSUS_READERS) {
+    return () => {}
+  }
   readers.add(read)
   return () => {
     readers.delete(read)
