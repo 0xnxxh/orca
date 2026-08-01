@@ -244,7 +244,7 @@ describe('mobile relay RPC session', () => {
     }
   })
 
-  it('keeps a Relay session when another control response proves it live', async () => {
+  it('keeps a Relay session when a fresh timeout probe proves it live', async () => {
     const { session } = await authenticateSession()
     vi.useFakeTimers()
     try {
@@ -265,8 +265,47 @@ describe('mobile relay RPC session', () => {
       await expect(stalledOutcome).resolves.toMatchObject({
         message: 'relay RPC timed out: browser.screenshot'
       })
+      const probeRequest = fakes.sendText.mock.calls
+        .map(([payload]) => JSON.parse(payload as string) as { id: string; method: string })
+        .findLast(({ id, method }) => method === 'status.get' && id !== healthRequest.id)!
+      fakes.linkOptions!.onText(
+        JSON.stringify({ id: probeRequest.id, ok: true, result: {}, _meta: {} })
+      )
       expect(session.getState()).toBe('connected')
       expect(fakes.close).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('demotes Relay when an earlier response precedes a later control-plane stall', async () => {
+    const { session } = await authenticateSession()
+    vi.useFakeTimers()
+    try {
+      const stalled = session.sendRequest('browser.screenshot', {}, { timeoutMs: 100 })
+      const stalledOutcome = stalled.catch((error: unknown) => error)
+      const healthy = session.sendRequest('status.get', undefined, { timeoutMs: 100 })
+      await vi.advanceTimersByTimeAsync(0)
+      const healthRequest = fakes.sendText.mock.calls
+        .map(([payload]) => JSON.parse(payload as string) as { id: string; method: string })
+        .find(({ method }) => method === 'status.get')!
+      fakes.linkOptions!.onText(
+        JSON.stringify({ id: healthRequest.id, ok: true, result: {}, _meta: {} })
+      )
+
+      await expect(healthy).resolves.toMatchObject({ ok: true })
+      await vi.advanceTimersByTimeAsync(100)
+      await expect(stalledOutcome).resolves.toMatchObject({
+        message: 'relay RPC timed out: browser.screenshot'
+      })
+      expect(session.getState()).toBe('connected')
+
+      await vi.advanceTimersByTimeAsync(8_000)
+      expect(session.getFailure()).toMatchObject({
+        message: 'relay RPC timed out: status.get'
+      })
+      expect(session.getState()).toBe('disconnected')
+      expect(fakes.close).toHaveBeenCalledOnce()
     } finally {
       vi.useRealTimers()
     }

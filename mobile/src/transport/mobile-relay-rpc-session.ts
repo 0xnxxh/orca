@@ -6,11 +6,13 @@ import {
 import { MobileRelayE2eeLink } from './mobile-relay-e2ee-link'
 import { MobileRelayRpcStreams } from './mobile-relay-rpc-streams'
 import { MobileE2EEAuthenticationError } from './mobile-e2ee-v2-physical-channel'
-import { markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
+import { isRpcDeliveryUnknown, markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
 import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-request-budget'
 import { isRpcResponse } from './rpc-response-shape'
 import type { RpcClient } from './rpc-client'
 import type { ConnectionState, RpcResponse } from './types'
+
+const CONTROL_PROBE_TIMEOUT_MS = 8_000
 
 type PendingRequest = {
   resolve: (response: RpcResponse) => void
@@ -40,6 +42,7 @@ export function connectMobileRelayRpcSession(args: {
   let state: ConnectionState = 'connecting'
   let requestCounter = 0
   let controlResponseSequence = 0
+  let controlProbeInFlight = false
   let lastConnectedAt: number | null = null
   let leaseExpiresAt: number | null = null
   let resumeConfirmation: DeviceResumeConfirmed | null = null
@@ -158,6 +161,8 @@ export function connectMobileRelayRpcSession(args: {
         reject(error)
         if (controlResponseSequence === requestControlResponseSequence) {
           fail(error)
+        } else {
+          probeControlPlane()
         }
       }, timeoutMs)
       pending.set(id, { resolve, reject, timer })
@@ -196,6 +201,33 @@ export function connectMobileRelayRpcSession(args: {
 
   function handleBinary(bytes: Uint8Array): void {
     streams.handleBinary(bytes)
+  }
+
+  function probeControlPlane(): void {
+    if (closed || state !== 'connected' || controlProbeInFlight) {
+      return
+    }
+    controlProbeInFlight = true
+    const probeControlResponseSequence = controlResponseSequence
+    void sendRpc('status.get', undefined, CONTROL_PROBE_TIMEOUT_MS).then(
+      () => {
+        controlProbeInFlight = false
+      },
+      (error: unknown) => {
+        controlProbeInFlight = false
+        if (closed || state !== 'connected') {
+          return
+        }
+        if (
+          !isRpcDeliveryUnknown(error) ||
+          controlResponseSequence === probeControlResponseSequence
+        ) {
+          fail(asError(error))
+        } else {
+          probeControlPlane()
+        }
+      }
+    )
   }
 
   function waitForConnected(timeoutMs = requestTimeoutMs): Promise<void> {
