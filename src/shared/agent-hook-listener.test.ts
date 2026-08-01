@@ -3102,6 +3102,15 @@ describe('shared agent-hook-listener', () => {
       // fresh process this minted a sticky empty-prompt 'working' no Stop ever clears (STA-2915).
       const stopped = claudeEvent({ hook_event_name: 'SubagentStop', agent_id: 'compact-1' })
       expect(stopped).toBeNull()
+      // Why: stop/idle on an unknown pane must not retain an empty roster — authenticated but
+      // untrusted payloads could otherwise grow the map by one entry per invented pane key.
+      expect(state.claudeSubagentRosterByPaneKey.has(PANE_KEY)).toBe(false)
+    })
+
+    it('does not retain a roster for TeammateIdle on a pane with no roster', () => {
+      const idled = claudeEvent({ hook_event_name: 'TeammateIdle', teammate_name: 'lane' })
+      expect(idled).toBeNull()
+      expect(state.claudeSubagentRosterByPaneKey.has(PANE_KEY)).toBe(false)
     })
 
     it('re-emits the lead done state on a start-less SubagentStop after a completed turn', () => {

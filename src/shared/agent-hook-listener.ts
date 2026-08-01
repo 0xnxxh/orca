@@ -2432,12 +2432,14 @@ function normalizeClaudeSubagentLifecycleEvent(
   if (!lifecycleId) {
     return null
   }
-  const roster = getOrCreateClaudeSubagentRoster(state, paneKey)
+  // Why: only a spawn may allocate a roster — stop/idle on an unknown pane would retain an empty
+  // roster per untrusted pane key with no lifecycle bound (STA-2915 review finding).
+  const roster = state.claudeSubagentRosterByPaneKey.get(paneKey)
   let rosterChanged = false
   if (eventName === 'TeammateIdle') {
     const teammateName = lifecycleId
     // Why: on claude 2.1.21x teammates are turn-based — TeammateIdle means "turn over, awaiting mail", not finished. The row parks as idle (confirmed teammate) instead of leaving, so the sidebar keeps showing resumable children.
-    rosterChanged = idleClaudeTeammateByName(roster, teammateName)
+    rosterChanged = roster ? idleClaudeTeammateByName(roster, teammateName) : false
     clearClaudePendingWaitForAgent(state, paneKey, (waitingAgentId) =>
       claudeTeammateIdMatchesName(waitingAgentId, teammateName)
     )
@@ -2445,17 +2447,19 @@ function normalizeClaudeSubagentLifecycleEvent(
     const agentId = lifecycleId
     if (eventName === 'SubagentStart') {
       upsertWorkingClaudeSubagent(
-        roster,
+        getOrCreateClaudeSubagentRoster(state, paneKey),
         agentId,
         { agentType: readString(hookPayload, 'agent_type') },
         Date.now()
       )
       rosterChanged = true
     } else {
-      // Why: a stop of an untracked id (e.g. compact's start-less SubagentStop) is a roster no-op, not evidence.
-      rosterChanged = roster.has(agentId)
-      // Why: one-shot stops are true finishes (row removed); teammate-shaped stops are turn ends on 2.1.21x — the row parks idle and a later SubagentStart revives it.
-      stopClaudeSubagent(roster, agentId)
+      if (roster) {
+        // Why: a stop of an untracked id (e.g. compact's start-less SubagentStop) is a roster no-op, not evidence.
+        rosterChanged = roster.has(agentId)
+        // Why: one-shot stops are true finishes (row removed); teammate-shaped stops are turn ends on 2.1.21x — the row parks idle and a later SubagentStart revives it.
+        stopClaudeSubagent(roster, agentId)
+      }
       // Why: a blocked child that dies without another tool event would pin its permission/question wait on the pane forever — nothing else references that agent again.
       clearClaudePendingWaitForAgent(state, paneKey, (waitingAgentId) => waitingAgentId === agentId)
     }
