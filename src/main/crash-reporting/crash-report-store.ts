@@ -136,7 +136,14 @@ export class CrashReportStore {
     return this.withWrite(async (reports) => {
       const resolved: CrashReportRecord[] = []
       const nextReports = reports.map((report) => {
-        if (report.status !== 'pending' || report.source !== 'renderer') {
+        // Why: `source: 'renderer'` also covers React error-boundary reports
+        // (processType 'react-render'), which the recovery reload did not cause
+        // and must keep prompting on their own evidence.
+        if (
+          report.status !== 'pending' ||
+          report.source !== 'renderer' ||
+          report.processType !== 'renderer'
+        ) {
           return report
         }
         const createdAtMs = Date.parse(report.createdAt)

@@ -90,6 +90,18 @@ function killedRendererCrash(exitCode = 9): CrashReportCreateInput {
   }
 }
 
+// Same `source`, different producer: reported by the renderer's own error
+// boundary, not by a dead renderer process.
+function reactErrorBoundaryCrash(): CrashReportCreateInput {
+  return {
+    ...killedRendererCrash(),
+    processType: 'react-render',
+    reason: 'react-error-boundary',
+    exitCode: null,
+    details: { processType: 'react-render' }
+  }
+}
+
 function emitRendererBootstrapRendered(): void {
   listeners.get('crashReports:recordBreadcrumb')?.(null, { name: 'renderer_bootstrap_rendered' })
 }
@@ -154,6 +166,30 @@ describe('auto-recovered renderer crash reporting', () => {
     expect(sendable?.status).toBe('dismissed')
     expect(sendable?.details.rendererAutoRecovered).toBe(true)
     expect(sendable?.breadcrumbs).toEqual(recorded.breadcrumbs)
+  })
+
+  it('still prompts for a React error-boundary crash caught in the recovery window', async () => {
+    const store = await createStore()
+    registerCrashReportingHandlers(store)
+    const recorded = await store.record(reactErrorBoundaryCrash())
+
+    noteRendererRecoveryReloadIssued()
+    emitRendererBootstrapRendered()
+
+    await expect(getLatestPending()).resolves.toMatchObject({ id: recorded.id, status: 'pending' })
+    expect((await getLatestReport())?.details.rendererAutoRecovered).toBeUndefined()
+  })
+
+  it('resolves the process crash without sweeping a React error-boundary crash beside it', async () => {
+    const store = await createStore()
+    registerCrashReportingHandlers(store)
+    const boundary = await store.record(reactErrorBoundaryCrash())
+    await store.record(killedRendererCrash())
+
+    noteRendererRecoveryReloadIssued()
+    emitRendererBootstrapRendered()
+
+    await expect(getLatestPending()).resolves.toMatchObject({ id: boundary.id, status: 'pending' })
   })
 
   it('still prompts when the renderer booted without an auto-recovery reload', async () => {
