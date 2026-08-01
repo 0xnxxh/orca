@@ -183,15 +183,17 @@ describe('speech model download progress storm (render pressure)', () => {
     const EVENTS = 200
     const renders = await runDownloadProgressBurst(EVENTS)
 
-    // Progress is rendered as whole percent, so 200 chunks carry at most 100
-    // distinct states — a refresh that changed nothing must not force a commit.
-    expect(renders).toBeLessThanOrEqual(100)
+    // 200 chunks carry 100 distinct whole percents and the mount refresh already
+    // applied the first, so exactly 99 of these are real work. Asserting the floor
+    // too: over-holding freezes the progress bar, which a ceiling alone calls a pass.
+    expect(renders).toBe(99)
+    expect(useDictationTestStore.getState().modelStates[0]?.progress).toBe(reportedProgress)
   })
 
   it('records the churn breadcrumb when refreshes outrun coalescing', async () => {
     // Own store instance: the churn window is per-slice state the other tests advance.
     const churnStore = create<DictationTestStore>(dictationSlice)
-    for (let refresh = 0; refresh < 60; refresh += 1) {
+    for (let refresh = 0; refresh < 250; refresh += 1) {
       await churnStore.getState().refreshModelStates()
     }
 
@@ -199,7 +201,7 @@ describe('speech model download progress storm (render pressure)', () => {
     const churn = recordBreadcrumb.mock.calls
       .map((call) => call[0] as { name: string; data?: Record<string, number> })
       .find((entry) => entry.name === SPEECH_MODEL_STATE_CHURN_BREADCRUMB)
-    expect(churn?.data).toMatchObject({ refreshes: 60, noOpRefreshes: 59 })
+    expect(churn?.data).toMatchObject({ refreshes: 250, noOpRefreshes: 249 })
     // Registered in COALESCED/NAME_ONLY sets in src/main/ipc/crash-reporting.ts.
     expect(SPEECH_MODEL_STATE_CHURN_BREADCRUMB).toBe('speech_model_state_churn')
   })

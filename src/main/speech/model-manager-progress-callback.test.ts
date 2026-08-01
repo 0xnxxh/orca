@@ -59,7 +59,11 @@ describe('ModelManager progress callbacks', () => {
         internals.updateState('model-a', 'downloading', chunk / 8_000)
       }
 
-      expect(listener.mock.calls.length).toBeLessThanOrEqual(101)
+      // Exact, not a ceiling: a bound alone passes when coalescing swallows every
+      // step after the first and the progress bar sits at 0% for the whole download.
+      expect(listener.mock.calls.map(([, progress]) => Math.round(progress * 100))).toEqual(
+        Array.from({ length: 101 }, (_unused, percent) => percent)
+      )
       // Status transitions must still reach the UI unconditionally.
       const afterDownload = listener.mock.calls.length
       internals.updateState('model-a', 'extracting')
@@ -103,7 +107,10 @@ describe('ModelManager progress callbacks', () => {
         seen.add((await manager.getModelState('whisper-tiny')).progress)
       }
 
-      expect(seen.size).toBeLessThanOrEqual(101)
+      // Exact, not a ceiling: a bound alone passes when every poll reports 0%.
+      expect([...seen].sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual(
+        Array.from({ length: 101 }, (_unused, percent) => percent / 100)
+      )
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

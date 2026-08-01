@@ -4,11 +4,13 @@ import type { DictationState, SpeechModelState } from '../../../../shared/speech
 import { recordRendererCrashBreadcrumb } from '../../lib/crash-breadcrumb-recorder'
 
 export const SPEECH_MODEL_STATE_CHURN_BREADCRUMB = 'speech_model_state_churn'
-// Why: a whole-percent download emits ~100 refreshes total; anything past this in
-// one window means the coalescing upstream stopped holding and the renderer is
-// being driven per HTTP chunk again — the shape that starves React's commit loop.
 const CHURN_WINDOW_MS = 5_000
-const CHURN_REFRESH_THRESHOLD = 60
+// Why this high: main clamps download progress at 0.9 and emits on whole-percent
+// change, so one healthy download is capped at ~91 refreshes and a 56MB model on a
+// fast link lands all of them inside a single window. Anything past 50/s is the
+// renderer being driven per HTTP chunk again — the shape that starves React's
+// commit loop. `noOpRefreshes` in the payload separates the two causes.
+const CHURN_REFRESH_THRESHOLD = 250
 
 export type DictationSlice = {
   dictationState: DictationState
