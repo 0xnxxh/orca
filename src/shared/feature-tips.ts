@@ -59,7 +59,7 @@ export const FEATURE_TIPS = [
     title: 'Dictate into any pane',
     description: 'Start voice dictation in any focused pane, then use the shortcut again to stop.',
     action: 'enable-voice',
-    ctaLabel: 'Set up voice',
+    ctaLabel: 'Set up voice dictation',
     completedByFeatureInteractions: ['voice-dictation']
   }
 ] as const satisfies readonly FeatureTip[]
