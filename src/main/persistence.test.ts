@@ -6797,6 +6797,58 @@ describe('Store', () => {
     expect(reloaded.getUI().browserKagiSessionLink).toBe(sessionLink)
   })
 
+  it('durably encrypts SSH PTY consumer ownership for process restart recovery', async () => {
+    const store = await createStore()
+    store.upsertSshPtyConsumerRecovery({
+      targetId: 'ssh-1',
+      clientInstanceId: 'client-1',
+      serverBuildId: 'relay-build-1',
+      clientGeneration: 3,
+      ownerGeneration: 5,
+      ownerLease: 'secret-owner-lease',
+      outputFlowControl: { version: 1, windowSu: 256 * 1024 }
+    })
+
+    const persisted = readDataFile() as {
+      sshPtyConsumerRecoveries: { ownerLease: string }[]
+    }
+    expect(persisted.sshPtyConsumerRecoveries[0]?.ownerLease).not.toBe('secret-owner-lease')
+
+    const reloaded = await createStore()
+    expect(reloaded.getSshPtyConsumerRecovery('ssh-1')).toEqual({
+      targetId: 'ssh-1',
+      clientInstanceId: 'client-1',
+      serverBuildId: 'relay-build-1',
+      clientGeneration: 3,
+      ownerGeneration: 5,
+      ownerLease: 'secret-owner-lease',
+      outputFlowControl: { version: 1, windowSu: 256 * 1024 }
+    })
+  })
+
+  it('removes persisted SSH PTY consumer ownership with its target', async () => {
+    const store = await createStore()
+    store.addSshTarget({
+      id: 'ssh-1',
+      label: 'SSH 1',
+      host: 'example.test',
+      port: 22,
+      username: 'orca'
+    })
+    store.upsertSshPtyConsumerRecovery({
+      targetId: 'ssh-1',
+      clientInstanceId: 'client-1',
+      serverBuildId: 'relay-build-1',
+      clientGeneration: 3,
+      ownerGeneration: 5,
+      ownerLease: 'secret-owner-lease'
+    })
+
+    store.removeSshTarget('ssh-1')
+
+    expect(store.getSshPtyConsumerRecovery('ssh-1')).toBeNull()
+  })
+
   it('keeps plaintext Kagi session links readable for migration from older builds', async () => {
     const sessionLink = 'https://kagi.com/search?token=secret'
     writeDataFile({
