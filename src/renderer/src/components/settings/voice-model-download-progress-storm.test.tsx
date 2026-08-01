@@ -112,6 +112,7 @@ afterEach(() => {
   act(() => root?.unmount())
   document.body.replaceChildren()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 /**
@@ -191,6 +192,9 @@ describe('speech model download progress storm (render pressure)', () => {
   })
 
   it('records the churn breadcrumb when refreshes outrun coalescing', async () => {
+    // Why pin Date.now: the threshold is per 5s window, so a loaded machine that
+    // takes longer than one window to run the loop would measure itself, not the rule.
+    vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
     // Own store instance: the churn window is per-slice state the other tests advance.
     const churnStore = create<DictationTestStore>(dictationSlice)
     for (let refresh = 0; refresh < 250; refresh += 1) {

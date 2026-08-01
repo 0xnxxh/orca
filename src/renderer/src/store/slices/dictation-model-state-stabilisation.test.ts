@@ -124,6 +124,7 @@ describe('dictation model-state stabilisation', () => {
   })
 
   it('reports churn once the renderer is driven far past whole-percent pacing', async () => {
+    pinClock()
     const store = newStore()
     reply = [{ id: 'whisper-tiny', status: 'downloading', progress: 0.42 }]
     for (let refresh = 0; refresh < 250; refresh += 1) {
@@ -133,6 +134,23 @@ describe('dictation model-state stabilisation', () => {
     const churn = churnBreadcrumbs()
     expect(churn).toHaveLength(1)
     expect(churn[0].data).toMatchObject({ refreshes: 250, noOpRefreshes: 249 })
+  })
+
+  // Why spread across the window: a burst-only test passes for any window length,
+  // including one too short for a real storm to ever accumulate the threshold. The
+  // window has to be wide enough to hold a sustained storm, not just an instant one.
+  it('still reports a storm that is spread across most of one window', async () => {
+    const clock = pinClock()
+    const store = newStore()
+    reply = [{ id: 'whisper-tiny', status: 'downloading', progress: 0.42 }]
+    for (let refresh = 0; refresh < 250; refresh += 1) {
+      await store.getState().refreshModelStates()
+      clock.advance(19)
+    }
+
+    const churn = churnBreadcrumbs()
+    expect(churn).toHaveLength(1)
+    expect(churn[0].data).toMatchObject({ refreshes: 250, windowMs: 249 * 19 })
   })
 
   // Stopping at exactly the threshold cannot tell "fires once" from "fires on every
