@@ -4657,7 +4657,7 @@ describe('getGitHubPRLookupRateLimitBlock', () => {
     })
   })
 
-  it('reports the latest reset when both lookup buckets are exhausted', async () => {
+  it('reports the later reset when graphql outlasts core', async () => {
     // Retrying at the earlier reset would fail again on the bucket still blocked.
     rateLimitGuardMock.mockImplementation(((bucket: string) => ({
       blocked: true,
