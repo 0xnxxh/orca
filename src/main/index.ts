@@ -1247,6 +1247,9 @@ function openMainWindow(): BrowserWindow {
     onBeforeReload: ({ ignoreCache, webContentsId }) => {
       if (mainWindow?.webContents.id === webContentsId) {
         markExpectedRendererReload(webContentsId)
+        // Why: the user reloading by hand makes the next bootstrap their retry, so a
+        // recovery reload that stalled short of bootstrap must not claim the credit.
+        clearRendererRecoveryReloadIssued()
       }
       recordCrashBreadcrumb('manual_reload_requested', { ignoreCache })
     },
@@ -2654,6 +2657,9 @@ void app.whenReady().then(async () => {
     onBeforeReload: ({ ignoreCache, webContentsId }) => {
       if (mainWindow?.webContents.id === webContentsId) {
         markExpectedRendererReload(webContentsId)
+        // Why: the user reloading by hand makes the next bootstrap their retry, so a
+        // recovery reload that stalled short of bootstrap must not claim the credit.
+        clearRendererRecoveryReloadIssued()
       }
       recordCrashBreadcrumb('manual_reload_requested', { ignoreCache })
     },
