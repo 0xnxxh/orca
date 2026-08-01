@@ -79,9 +79,9 @@ describe('resolveActiveTabOwnerWorktreeId', () => {
     expect(recordRendererCrashBreadcrumb).toHaveBeenCalledTimes(1)
   })
 
-  // Why: the active worktree changes under a persisting duplicate, and a guard
-  // keyed on the tab id alone drops the non-converging sample once that tab has
-  // already reported a benign one — the exact payload the crumb exists to catch.
+  // Why: the active worktree changes under a persisting duplicate, and coalescing
+  // keeps only the newest payload — keyed on the tab id alone, whichever verdict
+  // a tab reported first would suppress the other for the rest of the session.
   it('still reports a non-converging verdict after that tab id reported a converging one', () => {
     const maps = { 'wt-other': [tab('t1', 'wt-other')], 'wt-active': [tab('t1', 'wt-active')] }
     resolveActiveTabOwnerWorktreeId(maps, 'wt-active', 't1')
@@ -98,5 +98,28 @@ describe('resolveActiveTabOwnerWorktreeId', () => {
         { ownerCount: 2, resolvedToActiveWorktree: false }
       ]
     ])
+  })
+
+  // Why the count and not just "reports twice": a guard keyed on the active
+  // worktree id passes the two tests above yet emits once per worktree, which is
+  // the flood this guard exists to prevent.
+  it('never exceeds two crumbs for one tab id however the active worktree moves', () => {
+    const maps = { 'wt-a': [tab('t1', 'wt-a')], 'wt-b': [tab('t1', 'wt-b')] }
+    const activeWorktreeIds = ['wt-a', 'wt-b', 'wt-c', '', 'wt-d', 'wt-a']
+    for (let i = 0; i < 600; i += 1) {
+      resolveActiveTabOwnerWorktreeId(maps, activeWorktreeIds[i % activeWorktreeIds.length], 't1')
+    }
+    expect(recordRendererCrashBreadcrumb).toHaveBeenCalledTimes(2)
+  })
+
+  // Why: the guard set is never pruned and tab ids are minted per created tab.
+  it('stops recording once the per-session sample cap is reached', () => {
+    for (let i = 0; i < 400; i += 1) {
+      const id = `t-${i}`
+      const maps = { 'wt-a': [tab(id, 'wt-a')], 'wt-b': [tab(id, 'wt-b')] }
+      resolveActiveTabOwnerWorktreeId(maps, 'wt-a', id)
+      resolveActiveTabOwnerWorktreeId(maps, 'wt-c', id)
+    }
+    expect(recordRendererCrashBreadcrumb).toHaveBeenCalledTimes(256)
   })
 })
