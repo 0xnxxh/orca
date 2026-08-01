@@ -85,6 +85,22 @@ describe('resolveGpuFallbackEscalation', () => {
     })
   })
 
+  it('skips a lower rung that is known ineffective for the crash signature', () => {
+    expect(
+      resolveGpuFallbackEscalation(0, () => null, {
+        minimumNextTier: MAX_GPU_FALLBACK_TIER
+      })
+    ).toEqual({ nextTier: 2, resumedFromHistory: false })
+  })
+
+  it('does not label a tier above history as resumed from history', () => {
+    expect(
+      resolveGpuFallbackEscalation(0, () => 1, {
+        minimumNextTier: MAX_GPU_FALLBACK_TIER
+      })
+    ).toEqual({ nextTier: 2, resumedFromHistory: false })
+  })
+
   it('ignores history once a tier is applied and escalates one rung', () => {
     let historyReads = 0
     expect(

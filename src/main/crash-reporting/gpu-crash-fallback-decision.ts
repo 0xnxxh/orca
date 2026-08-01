@@ -17,6 +17,16 @@ const GPU_FALLBACK_CRASH_REASONS = new Set(['abnormal-exit', 'crashed', 'launch-
 export const DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS = 30_000
 export const DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD = 3
 
+const WINDOWS_STATUS_BREAKPOINT_SIGNED_EXIT_CODE = -2147483645
+const WINDOWS_STATUS_BREAKPOINT_UNSIGNED_EXIT_CODE = 0x80000003
+
+export function isWindowsStatusBreakpointExitCode(exitCode: number | null): boolean {
+  return (
+    exitCode === WINDOWS_STATUS_BREAKPOINT_SIGNED_EXIT_CODE ||
+    exitCode === WINDOWS_STATUS_BREAKPOINT_UNSIGNED_EXIT_CODE
+  )
+}
+
 /**
  * Tracks GPU child-process crashes and decides when to fall back to software
  * rendering on the next launch. Pure and deterministic: callers pass `now`
@@ -43,11 +53,14 @@ export class GpuCrashFallbackTracker {
 
   /**
    * Records a GPU child crash at `msSinceLaunch` and reports whether this crash
-   * just pushed the count over the threshold (i.e. fallback should engage now).
+   * just pushed the count over the threshold or matched the fatal breakpoint signature.
    * Returns false after fallback already engaged, so the caller relaunches at
    * most once.
    */
-  recordGpuCrash(msSinceLaunch: number): {
+  recordGpuCrash(
+    msSinceLaunch: number,
+    exitCode: number | null = null
+  ): {
     shouldEngageFallback: boolean
     crashesInWindow: number
   } {
@@ -64,7 +77,10 @@ export class GpuCrashFallbackTracker {
       stale += 1
     }
     this.recentCrashes.splice(0, stale)
-    if (this.recentCrashes.length >= this.threshold) {
+    if (
+      isWindowsStatusBreakpointExitCode(exitCode) ||
+      this.recentCrashes.length >= this.threshold
+    ) {
       this.engaged = true
       return { shouldEngageFallback: true, crashesInWindow: this.recentCrashes.length }
     }

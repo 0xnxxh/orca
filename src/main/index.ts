@@ -136,6 +136,7 @@ import {
   type WindowsGpuFallbackEnvironment
 } from './startup/gpu-fallback-marker'
 import {
+  MAX_GPU_FALLBACK_TIER,
   NO_GPU_FALLBACK_TIER,
   getGpuFallbackTierSwitches,
   resolveGpuFallbackEscalation,
@@ -156,7 +157,8 @@ import {
   DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS,
   GpuCrashFallbackTracker,
   isGpuChildProcessType,
-  isGpuFallbackCrashCandidate
+  isGpuFallbackCrashCandidate,
+  isWindowsStatusBreakpointExitCode
 } from './crash-reporting/gpu-crash-fallback-decision'
 import {
   promptForGpuFallbackRestart,
@@ -1623,7 +1625,10 @@ async function handleGpuChildCrash(
   if (isQuitting || isServeMode) {
     return
   }
-  const result = gpuCrashFallbackTracker.recordGpuCrash(performance.now())
+  // Why: Cluster E loses the only GPU child after one STATUS_BREAKPOINT, so waiting
+  // for three same-process events can leave every cold start below the threshold.
+  const statusBreakpoint = isWindowsStatusBreakpointExitCode(exitCode)
+  const result = gpuCrashFallbackTracker.recordGpuCrash(performance.now(), exitCode)
   if (!result.shouldEngageFallback) {
     return
   }
@@ -1632,8 +1637,10 @@ async function handleGpuChildCrash(
   // Why: after an update the build-scoped marker is gone but the machine is not.
   // Resuming at the tier it already needed is the difference between one relaunch
   // per update and re-walking the whole ladder every time.
-  const { nextTier, resumedFromHistory } = resolveGpuFallbackEscalation(currentTier, () =>
-    getResumeGpuFallbackTier(userDataPath)
+  const { nextTier, resumedFromHistory } = resolveGpuFallbackEscalation(
+    currentTier,
+    () => getResumeGpuFallbackTier(userDataPath),
+    statusBreakpoint ? { minimumNextTier: MAX_GPU_FALLBACK_TIER } : undefined
   )
   if (currentTier !== NO_GPU_FALLBACK_TIER) {
     // Why: 20 of 21 crashed launches on the reported machine already carried
@@ -1643,6 +1650,7 @@ async function handleGpuChildCrash(
       exitCode,
       tier: currentTier,
       nextTier: nextTier ?? null,
+      statusBreakpoint,
       crashesInWindow: result.crashesInWindow
     })
   }
@@ -1653,6 +1661,7 @@ async function handleGpuChildCrash(
       reason,
       exitCode,
       tier: currentTier,
+      statusBreakpoint,
       crashesInWindow: result.crashesInWindow
     })
     return
@@ -1669,6 +1678,7 @@ async function handleGpuChildCrash(
     tier: nextTier,
     previousTier: currentTier,
     resumedFromHistory,
+    statusBreakpoint,
     crashesInWindow: result.crashesInWindow
   })
   const engagedAt = Date.now()
@@ -1685,6 +1695,7 @@ async function handleGpuChildCrash(
     exitCode,
     tier: nextTier,
     previousTier: currentTier,
+    statusBreakpoint,
     crashesInWindow: result.crashesInWindow
   }
   if (isQuitting) {

@@ -4,7 +4,8 @@ import {
   DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS,
   GpuCrashFallbackTracker,
   isGpuChildProcessType,
-  isGpuFallbackCrashCandidate
+  isGpuFallbackCrashCandidate,
+  isWindowsStatusBreakpointExitCode
 } from './gpu-crash-fallback-decision'
 
 describe('GpuCrashFallbackTracker', () => {
@@ -22,6 +23,15 @@ describe('GpuCrashFallbackTracker', () => {
     expect(tracker.recordGpuCrash(16_000)).toEqual({
       shouldEngageFallback: true,
       crashesInWindow: 3
+    })
+  })
+
+  it('engages on the first known-fatal STATUS_BREAKPOINT crash', () => {
+    const tracker = new GpuCrashFallbackTracker({ windowMs: 30_000, threshold: 3 })
+
+    expect(tracker.recordGpuCrash(1_700, -2147483645)).toEqual({
+      shouldEngageFallback: true,
+      crashesInWindow: 1
     })
   })
 
@@ -184,5 +194,17 @@ describe('isGpuFallbackCrashCandidate', () => {
         reason: 'crashed'
       })
     ).toBe(false)
+  })
+})
+
+describe('isWindowsStatusBreakpointExitCode', () => {
+  it('accepts the signed and unsigned forms of 0x80000003', () => {
+    expect(isWindowsStatusBreakpointExitCode(-2147483645)).toBe(true)
+    expect(isWindowsStatusBreakpointExitCode(0x80000003)).toBe(true)
+  })
+
+  it('rejects unrelated and missing exit codes', () => {
+    expect(isWindowsStatusBreakpointExitCode(5)).toBe(false)
+    expect(isWindowsStatusBreakpointExitCode(null)).toBe(false)
   })
 })
