@@ -40,7 +40,10 @@ describe('terminal live input affordance', () => {
     expect(block).toContain('!canSend && styles.liveInputFocusTargetDisabled')
     expect(block).toContain('showSoftInputOnFocus')
     expect(sessionRouteSource).toContain('useTerminalLiveInputFocus({')
+    expect(sessionRouteSource).toContain('return resetLiveInputFocus')
     expect(liveInputFocusSource).toContain('focusTerminalLiveInputTarget(inputRef.current')
+    expect(liveInputFocusSource).toContain('lifecycleIdentity,')
+    expect(liveInputFocusSource).toContain('resetLiveInputFocus')
     expect(liveInputFocusSource).toContain('keyboardHeight: context.keyboardHeight')
     expect(liveInputFocusSource).toContain(
       'scheduleTerminalLiveInputFocus(timerRef, focusLiveInput)'

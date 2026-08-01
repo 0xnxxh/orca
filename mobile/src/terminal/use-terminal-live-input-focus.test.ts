@@ -12,6 +12,8 @@ type HarnessProps = {
   readonly canSend: boolean
   readonly inputRef: RefObject<TerminalLiveInputFocusTarget | null>
   readonly keyboardHeight?: number
+  readonly lifecycleIdentity: object | null
+  readonly lifecycleKey: string
   readonly liveInputEnabled: boolean
   readonly timerRef: TerminalLiveInputFocusTimerRef
 }
@@ -103,6 +105,8 @@ function connectedProps(
     activeHandleRef,
     canSend: true,
     inputRef,
+    lifecycleIdentity: null,
+    lifecycleKey: 'host-a:worktree-a:connected',
     liveInputEnabled: true,
     timerRef
   }
@@ -145,42 +149,72 @@ describe('terminal live input focus hook', () => {
     harness.unmount()
   })
 
-  it('cancels the old route focus and focuses the navigation remount', () => {
+  it('cancels focus when navigation reuses the mounted route', () => {
     vi.useFakeTimers()
     const oldInput = createFocusTarget()
-    const oldHarness = createHarness(connectedProps({ current: oldInput }))
-    oldHarness.handlers().handleTerminalTap('terminal-a')
-    oldHarness.unmount()
-
+    const inputRef: RefObject<TerminalLiveInputFocusTarget | null> = { current: oldInput }
+    const timerRef = createTimerRef()
+    const harness = createHarness(connectedProps(inputRef, timerRef))
+    harness.handlers().handleTerminalTap('terminal-a')
     const newInput = createFocusTarget()
-    const newHarness = createHarness(connectedProps({ current: newInput }))
-    newHarness.handlers().handleTerminalTap('terminal-a')
+    inputRef.current = newInput
+    harness.render({
+      ...connectedProps(inputRef, timerRef),
+      lifecycleKey: 'host-a:worktree-b:connected'
+    })
     vi.runOnlyPendingTimers()
-
     expect(oldInput.focus).not.toHaveBeenCalled()
+    expect(newInput.focus).not.toHaveBeenCalled()
+
+    harness.handlers().handleTerminalTap('terminal-a')
+    vi.runOnlyPendingTimers()
     expect(newInput.focus).toHaveBeenCalledTimes(1)
-    newHarness.unmount()
+    harness.unmount()
   })
 
-  it('drops a pending focus across a full reconnect and focuses the replacement mount', () => {
+  it('drops pending focus when reconnect reuses the mounted route', () => {
     vi.useFakeTimers()
     const oldInput = createFocusTarget()
     const oldInputRef = { current: oldInput }
-    const oldTimerRef = createTimerRef()
-    const oldHarness = createHarness(connectedProps(oldInputRef, oldTimerRef))
-    oldHarness.handlers().handleTerminalTap('terminal-a')
-
-    oldHarness.render({ ...connectedProps(oldInputRef, oldTimerRef), canSend: false })
-    oldHarness.unmount()
+    const timerRef = createTimerRef()
+    const harness = createHarness(connectedProps(oldInputRef, timerRef))
+    harness.handlers().handleTerminalTap('terminal-a')
+    harness.render({
+      ...connectedProps(oldInputRef, timerRef),
+      canSend: false,
+      lifecycleIdentity: {},
+      lifecycleKey: 'host-a:worktree-a:disconnected'
+    })
     vi.runOnlyPendingTimers()
     expect(oldInput.focus).not.toHaveBeenCalled()
 
     const replacementInput = createFocusTarget()
-    const replacementHarness = createHarness(connectedProps({ current: replacementInput }))
-    replacementHarness.handlers().handleTerminalTap('terminal-a')
+    oldInputRef.current = replacementInput
+    harness.render({
+      ...connectedProps(oldInputRef, timerRef),
+      lifecycleIdentity: {},
+      lifecycleKey: 'host-a:worktree-a:connected'
+    })
+    harness.handlers().handleTerminalTap('terminal-a')
     vi.runOnlyPendingTimers()
     expect(replacementInput.focus).toHaveBeenCalledTimes(1)
-    replacementHarness.unmount()
+    harness.unmount()
+  })
+
+  it('cancels focus when a retained screen blurs', () => {
+    vi.useFakeTimers()
+    const input = createFocusTarget()
+    const timerRef = createTimerRef()
+    const harness = createHarness(connectedProps({ current: input }, timerRef))
+
+    harness.handlers().handleTerminalTap('terminal-a')
+    harness.handlers().resetLiveInputFocus()
+    vi.runOnlyPendingTimers()
+
+    expect(timerRef.current).toBeNull()
+    expect(input.blur).toHaveBeenCalledTimes(1)
+    expect(input.focus).not.toHaveBeenCalled()
+    harness.unmount()
   })
 
   it('does not let stale handle state focus a replacement terminal', () => {

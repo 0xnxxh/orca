@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 'react'
+import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react'
 import {
   clearTerminalLiveInputFocusTimer,
   focusTerminalLiveInputTarget,
@@ -17,12 +17,15 @@ type UseTerminalLiveInputFocusOptions<T extends TerminalLiveInputFocusTarget> =
   TerminalLiveInputFocusContext & {
     readonly activeHandleRef: RefObject<string | null>
     readonly inputRef: RefObject<T | null>
+    readonly lifecycleIdentity: object | null
+    readonly lifecycleKey: string
     readonly timerRef: TerminalLiveInputFocusTimerRef
   }
 
 type TerminalLiveInputFocusHandlers = {
   readonly focusLiveInput: () => void
   readonly handleTerminalTap: (handle: string) => void
+  readonly resetLiveInputFocus: () => void
 }
 
 export function useTerminalLiveInputFocus<T extends TerminalLiveInputFocusTarget>({
@@ -30,6 +33,8 @@ export function useTerminalLiveInputFocus<T extends TerminalLiveInputFocusTarget
   canSend,
   inputRef,
   keyboardHeight,
+  lifecycleIdentity,
+  lifecycleKey,
   liveInputEnabled,
   timerRef
 }: UseTerminalLiveInputFocusOptions<T>): TerminalLiveInputFocusHandlers {
@@ -41,6 +46,14 @@ export function useTerminalLiveInputFocus<T extends TerminalLiveInputFocusTarget
   useLayoutEffect(() => {
     contextRef.current = { canSend, keyboardHeight, liveInputEnabled }
   }, [canSend, keyboardHeight, liveInputEnabled])
+
+  const resetLiveInputFocus = useCallback(() => {
+    clearTerminalLiveInputFocusTimer(timerRef)
+    inputRef.current?.blur()
+  }, [inputRef, timerRef])
+
+  // Retained Expo routes must not carry focus work across navigation or reconnect scopes.
+  useLayoutEffect(() => resetLiveInputFocus, [lifecycleIdentity, lifecycleKey, resetLiveInputFocus])
 
   const focusLiveInput = useCallback(() => {
     const context = contextRef.current
@@ -69,12 +82,5 @@ export function useTerminalLiveInputFocus<T extends TerminalLiveInputFocusTarget
     [activeHandleRef, focusLiveInput, timerRef]
   )
 
-  useEffect(
-    () => () => {
-      clearTerminalLiveInputFocusTimer(timerRef)
-    },
-    [timerRef]
-  )
-
-  return { focusLiveInput, handleTerminalTap }
+  return { focusLiveInput, handleTerminalTap, resetLiveInputFocus }
 }
