@@ -8,6 +8,7 @@ import {
   forgetCodexPaneAccount,
   getCodexPaneAccount,
   hasRecordedLegacySharedCodexPane,
+  reconcileCodexPaneAccountsWithLivePtys,
   recordCodexPaneAccount
 } from './codex-pane-account-registry'
 import { forgetStaleCodexPanes, listStaleCodexPanes } from './codex-stale-pane-accounts'
@@ -111,6 +112,29 @@ describe('codex pane account registry', () => {
     })
 
     expect(hasRecordedLegacySharedCodexPane()).toBe(true)
+  })
+
+  it('drops leaked records that are absent from the authoritative daemon inventory', () => {
+    recordCodexPaneAccount('pty-live', {
+      selectionKey: 'host',
+      accountId: null,
+      homeRoute: 'shared-home'
+    })
+    recordCodexPaneAccount('pty-dead', {
+      selectionKey: 'host',
+      accountId: null,
+      homeRoute: 'shared-home'
+    })
+
+    reconcileCodexPaneAccountsWithLivePtys(['pty-live'])
+    _internals.resetCache()
+
+    expect(getCodexPaneAccount('pty-live')).not.toBeNull()
+    expect(getCodexPaneAccount('pty-dead')).toBeNull()
+    expect(hasRecordedLegacySharedCodexPane()).toBe(true)
+
+    reconcileCodexPaneAccountsWithLivePtys([])
+    expect(hasRecordedLegacySharedCodexPane()).toBe(false)
   })
 
   it('forgets a PTY so a reused id cannot inherit a dead pane account', () => {
@@ -240,6 +264,29 @@ describe('listStaleCodexPanes', () => {
         launchAccountId: null,
         activeAccountId: null,
         reason: 'home-route-change'
+      }
+    ])
+  })
+
+  it('keeps account-switch copy when the account and home route both change', () => {
+    recordCodexPaneAccount('pty-1', {
+      selectionKey: 'host',
+      accountId: null,
+      homeRoute: 'real-home'
+    })
+
+    expect(
+      listStaleCodexPanes({
+        ptyIds: ['pty-1'],
+        settings: settingsWithSelection('account-a'),
+        activeHostHomeRoute: 'account-home'
+      })
+    ).toEqual([
+      {
+        ptyId: 'pty-1',
+        launchAccountId: null,
+        activeAccountId: 'account-a',
+        reason: 'account-change'
       }
     ])
   })

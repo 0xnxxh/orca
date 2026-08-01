@@ -248,6 +248,22 @@ export function hasRecordedLegacySharedCodexPane(): boolean {
   )
 }
 
+/** Drops records whose daemon PTYs are authoritatively absent. */
+export function reconcileCodexPaneAccountsWithLivePtys(livePtyIds: readonly string[]): void {
+  const registry = readRegistry()
+  const livePtyIdSet = new Set(livePtyIds)
+  let changed = false
+  for (const ptyId of Object.keys(registry.panes)) {
+    if (!livePtyIdSet.has(ptyId)) {
+      delete registry.panes[ptyId]
+      changed = true
+    }
+  }
+  if (changed) {
+    writeRegistry(registry)
+  }
+}
+
 export const _internals = {
   resetCache: (): void => {
     cachedRegistry = null

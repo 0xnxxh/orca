@@ -35,8 +35,13 @@ import {
   initDaemonPtyProvider,
   disconnectDaemon,
   getDaemonProvider,
+  listLiveDaemonPtyIds,
   shutdownDaemon
 } from './daemon/daemon-init'
+import {
+  hasRecordedLegacySharedCodexPane,
+  reconcileCodexPaneAccountsWithLivePtys
+} from './codex/codex-pane-account-registry'
 import { closeAllWatchers } from './ipc/filesystem-watcher'
 import { disposeWorktreeBaseDirectoryWatchers } from './ipc/worktree-base-directory-watcher'
 import { registerCoreHandlers } from './ipc/register-core-handlers'
@@ -844,6 +849,14 @@ function startTerminalRuntimeStartupServices(): Promise<void> {
       await initDaemonPtyProvider(signal, {
         macosLoginSessionWatch: process.platform === 'darwin' && !isServeMode
       })
+      if (hasRecordedLegacySharedCodexPane()) {
+        const livePtyIds = await listLiveDaemonPtyIds()
+        if (livePtyIds) {
+          reconcileCodexPaneAccountsWithLivePtys(livePtyIds)
+        }
+      }
+      // Why: retained shells can invoke Codex immediately after the startup gate.
+      codexRuntimeHome?.reconcileLegacySharedHomeForRetainedPanes()
       logStartupMilestone('startup-service-done', { service: 'daemon-pty-provider' })
     },
     // Why: PTY spawn env reads ORCA_AGENT_HOOK_* from live server state, so the renderer awaits this before restored terminals reconnect.
@@ -2586,8 +2599,6 @@ void app.whenReady().then(async () => {
       userDataPath: app.getPath('userData')
     })
   }
-  // Why: retained daemon shells can invoke Codex without crossing launch prep.
-  codexRuntimeHome.reconcileLegacySharedHomeForRetainedPanes()
   if (shouldInstallManagedHooks(is.dev)) {
     // Why: check the persisted off switch before any auto-install so removed hooks don't silently reappear on launch.
     if (isAgentStatusHooksEnabled(store.getSettings())) {

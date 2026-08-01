@@ -43,7 +43,7 @@ export function listStaleCodexPanes(args: {
         ptyId,
         launchAccountId: record.accountId,
         activeAccountId,
-        reason: homeRouteChanged ? 'home-route-change' : 'account-change'
+        reason: accountChanged ? 'account-change' : 'home-route-change'
       })
     }
   }
