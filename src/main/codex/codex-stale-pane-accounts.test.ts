@@ -102,12 +102,18 @@ describe('codex pane account registry', () => {
       accountId: null,
       homeRoute: 'wsl-home'
     })
+
+    expect(hasRecordedLegacySharedCodexPane()).toBe(false)
+
     recordCodexPaneAccount('pty-custom', {
       selectionKey: 'host',
       accountId: null,
       homeRoute: 'custom-home'
     })
 
+    expect(hasRecordedLegacySharedCodexPane()).toBe(true)
+
+    forgetCodexPaneAccount('pty-custom')
     expect(hasRecordedLegacySharedCodexPane()).toBe(false)
 
     recordCodexPaneAccount('pty-shared', {

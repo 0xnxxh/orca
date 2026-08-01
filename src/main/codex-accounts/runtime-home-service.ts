@@ -240,7 +240,7 @@ export class CodexRuntimeHomeService {
       return null
     }
     this.invalidateBackfillAfterManagedSystemDefaultLaunch(launchEnv)
-    this.syncForCurrentSelection()
+    this.syncForCurrentSelection(target, launchEnv)
     syncSystemCodexResourcesIntoManagedHome()
     syncSystemConfigIntoManagedCodexHome()
     // Why: sessions can be large; bridge them after launch so starting a fresh TUI never waits on a full tree walk.
@@ -615,7 +615,10 @@ export class CodexRuntimeHomeService {
     return this.getRuntimeHomePath()
   }
 
-  syncForCurrentSelection(target?: CodexAccountSelectionTarget): void {
+  syncForCurrentSelection(
+    target?: CodexAccountSelectionTarget,
+    launchEnv?: NodeJS.ProcessEnv
+  ): void {
     if (target?.runtime === 'wsl') {
       this.syncWslRuntimeForCurrentSelection(target)
       return
@@ -636,11 +639,11 @@ export class CodexRuntimeHomeService {
       this.lastHostAccountUsedSelfContainedHome = false
       this.lastSyncedAccountId = null
       this.lastWrittenAuthJson = null
-      if (this.isHostSystemDefaultRealHome()) {
+      if (this.isHostSystemDefaultRealHome(launchEnv)) {
         return
       }
     }
-    if (this.isHostSystemDefaultRealHome()) {
+    if (this.isHostSystemDefaultRealHome(launchEnv)) {
       // Why: retained daemon panes may own shared auth from a managed launch;
       // compatibility reconciliation runs later with durable provenance.
       if (this.lastSyncedAccountId !== null) {

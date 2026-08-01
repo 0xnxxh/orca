@@ -40,8 +40,11 @@ export function resolveCodexPaneLaunchAccount(args: {
   target: CodexAccountSelectionTarget
 }): CodexPaneAccountRecord | null {
   const selectionKey = getCodexSelectionLaneKey(args.target)
+  const resolvedHomeRoute = resolveCodexPaneHomeRoute(args)
   const homeRoute =
-    args.recordComparableHomeRoute === false ? 'custom-home' : resolveCodexPaneHomeRoute(args)
+    args.recordComparableHomeRoute === false && resolvedHomeRoute === 'shared-home'
+      ? 'custom-home'
+      : resolvedHomeRoute
   if (!args.pinnedByResume) {
     return {
       selectionKey,

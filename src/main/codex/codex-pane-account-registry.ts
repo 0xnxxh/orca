@@ -250,7 +250,9 @@ export function hasRecordedLegacySharedCodexPane(): boolean {
   return Object.values(readRegistry().panes).some(
     (record) =>
       record.selectionKey === 'host' &&
-      (record.homeRoute === undefined || record.homeRoute === 'shared-home')
+      (record.homeRoute === undefined ||
+        record.homeRoute === 'shared-home' ||
+        record.homeRoute === 'custom-home')
   )
 }
 
