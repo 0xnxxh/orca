@@ -17,9 +17,10 @@ const GPU_FALLBACK_CRASH_REASONS = new Set(['abnormal-exit', 'crashed', 'launch-
  * launch failures inside one 30s session is still a broken GPU, so the in-process
  * tracker keeps counting them.
  *
- * Costs nothing on the observed data: the 39 cluster-E bundles hold 57 distinct
- * GPU child deaths (deduped by pid and timestamp) — 56 `crashed`, 53 of those
- * STATUS_BREAKPOINT, one `killed`, and zero `launch-failed`.
+ * Costs nothing on the observed data: the 39 cluster-E bundles hold 111 distinct
+ * GPU child deaths — 97 `crashed` (87 STATUS_BREAKPOINT, 9 exit-34, 1 exit-`-1`),
+ * 14 `killed` (13 exit-1), and zero `launch-failed`. `killed` reaches neither
+ * counter, here or in `GPU_FALLBACK_CRASH_REASONS`; that predates this file.
  */
 const DURABLE_GPU_FALLBACK_CRASH_REASONS = new Set(['abnormal-exit', 'crashed'])
 

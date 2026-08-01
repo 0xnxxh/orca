@@ -1634,8 +1634,9 @@ async function handleGpuChildCrash(reason: string, exitCode: number | null): Pro
   // would otherwise move the write out from under it.
   const userDataPath = getCanonicalUserDataPath()
   const inProcess = gpuCrashFallbackTracker.recordGpuCrash(performance.now())
-  // Why durable too: this failure kills the launch ~0.8s in, so the in-memory count
-  // resets at 1 and the same-session threshold is structurally unreachable.
+  // Why durable too: the in-memory count resets on every launch, and 66 of the 73
+  // observed launches recorded only one or two GPU deaths. Per machine that takes the
+  // bundles reaching the threshold from 2 of 21 to 6 — wider reach, not a new one.
   // Why reason-gated: `launch-failed` clusters across launches for recoverable
   // reasons (driver update, RDP transition, monitor hotplug) — see the reason set.
   const countsDurably = countsTowardDurableGpuCrashHistory(reason)

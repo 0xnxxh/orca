@@ -11,21 +11,25 @@ import type { GpuFallbackEnvironment } from './gpu-fallback-marker'
  * Cross-launch record of GPU child-process deaths.
  *
  * Why durable: `GpuCrashFallbackTracker` counts crashes in memory, so its count
- * resets to zero on every launch. In the 39 Windows bundles, 53 of the 55 launches
- * that recorded a GPU death recorded exactly one (median 1.4s after `app_started`,
- * range 0.8-510s), and none recorded three inside the tracker's 30s window.
+ * resets to zero on every launch. The 39 Windows bundles hold 111 distinct GPU child
+ * deaths over 73 launches that retained an `app_started` breadcrumb; 66 of those
+ * launches recorded one or two deaths, and 7 recorded four inside 90ms.
  *
- * That per-launch count is a floor rather than a measurement: `process_gone_suppressed`
- * coalesces identical repeats on a 30s key, and the same bundles carry 36
- * `gpu_fallback_applied` breadcrumbs, so the in-process tracker does still reach three
- * and engage. Counting across launches is what makes the threshold reachable from the
- * deaths that are observable.
+ * So the 3-in-30s threshold is reachable, not unreachable — it is met on those 7, and
+ * 36 launches started with safe graphics already applied. What it misses is the common
+ * shape. Measured per machine (one bundle is one ring buffer), of the 21 bundles holding
+ * a fallback-eligible death, 2 reach three inside 30s within a single launch and 6 reach
+ * three inside 5 minutes when counted across launches. Tripling the reach is the claim
+ * this file supports; making an unreachable threshold reachable is not.
  *
- * Not established by that data: that engaging helps. 30 of the 56 attributable deaths
- * landed on a launch that had already applied safe graphics, all STATUS_BREAKPOINT —
- * but every one predates `--in-process-gpu` (#11295, v1.4.163, tagged 5h after the last
- * of them), which is what finally removed the GPU child the old fallback left running.
- * Efficacy of the current fallback is unmeasured in both directions.
+ * Per-launch counts are a floor rather than a measurement either way, since
+ * `process_gone_suppressed` coalesces identical repeats on a 30s key.
+ *
+ * Not established by that data: that engaging helps. 57 of the 111 deaths landed on a
+ * launch that had already applied safe graphics, all STATUS_BREAKPOINT — but every one
+ * predates `--in-process-gpu` (#11295, v1.4.163, tagged 5h after the last of them),
+ * which is what finally removed the GPU child the old fallback left running. Efficacy
+ * of the current fallback is unmeasured in both directions.
  *
  * Why a standalone file (not the Store): same reason as gpu-fallback-marker.ts —
  * this is read and written before app.whenReady(), where the Store does not exist.
