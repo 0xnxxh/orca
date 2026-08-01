@@ -169,6 +169,7 @@ describe('resumeTerminalVisibility reveal repaint', () => {
     })
 
     expect(flushTerminalOutput).toHaveBeenCalledOnce()
+    expect(syncTerminalScrollIntentFromViewport).toHaveBeenCalledOnce()
     expect(syncTerminalScrollIntentFromViewport.mock.invocationCallOrder[0]).toBeLessThan(
       flushTerminalOutput.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
     )

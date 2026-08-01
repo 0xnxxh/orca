@@ -184,19 +184,19 @@ test.describe('terminal streaming refocus viewport', () => {
     await injectQueuedWriteAndRefocus(orcaPage, tabId, paneKey)
     const frames = await framesPromise
 
-    expect(frames.every((frame) => frame.targetPresented)).toBe(true)
+    expect(frames.filter((frame) => !frame.targetPresented)).toEqual([])
     expect(
-      frames.every(
+      frames.filter(
         (frame) =>
-          frame.thumbTop !== null &&
-          frame.maxThumbTop !== null &&
-          Math.abs(frame.maxThumbTop - frame.thumbTop) <= 2
+          frame.thumbTop === null ||
+          frame.maxThumbTop === null ||
+          Math.abs(frame.maxThumbTop - frame.thumbTop) > 2
       )
-    ).toBe(true)
+    ).toEqual([])
     expect(frames.some((frame) => (frame.maxThumbTop ?? 0) > 1)).toBe(true)
     expect(
-      frames.every((frame) => (frame.maxThumbTop ?? 0) <= 1 || (frame.thumbTop ?? 0) > 1)
-    ).toBe(true)
+      frames.filter((frame) => (frame.maxThumbTop ?? 0) > 1 && (frame.thumbTop ?? 0) <= 1)
+    ).toEqual([])
     await expect
       .poll(() => getTerminalContent(orcaPage, 30_000), { timeout: 15_000 })
       .toContain('REFOCUS_STREAM_DONE')
