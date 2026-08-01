@@ -12,7 +12,7 @@ import {
 } from 'react'
 import type { RpcClient } from './rpc-client'
 import { connectionLogStore } from './connection-log-buffer'
-import { verifyForceReconnectRpcHealth } from './force-reconnect-rpc-health'
+import { HostForceReconnectCoordinator, type HostReconnectEntry } from './host-force-reconnect'
 import { subscribeConnectionRevivalTriggers } from './connection-revival-triggers'
 import { HostClientOpenRegistry } from './host-client-open-registry'
 import { loadHosts } from './host-store'
@@ -20,11 +20,8 @@ import { openHostLogicalClient } from './host-logical-client'
 import type { MobileConnectionPath, StableLogicalRpcClient } from './stable-logical-rpc-client'
 import type { ConnectionState, HostProfile } from './types'
 
-type StoreEntry = {
-  client: RpcClient
+type StoreEntry = HostReconnectEntry & {
   state: ConnectionState
-  refCount: number
-  unsubState: () => void
 }
 
 export type RpcClientContextValue = {
@@ -54,6 +51,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
 
   // Pending opens keyed by hostId so two acquire() callers in the same render don't race the host lookup.
   const pendingOpensRef = useRef(new HostClientOpenRegistry())
+  const forceReconnectCoordinatorRef = useRef(new HostForceReconnectCoordinator())
 
   // Why: cache of already-loaded HostProfiles so openEntry can skip a second loadHosts()/Keychain pass on cold start.
   const primedHostsRef = useRef<Map<string, HostProfile>>(new Map())
@@ -200,23 +198,14 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const forceReconnect = useCallback(
-    async (hostId: string) => {
-      const entry = storeRef.current.get(hostId)
-      // Why: preserve refcount across the swap; via Disconnect→Reconnect the entry is already gone, so fall back to listener count.
-      const listenerCount = stateListenersRef.current.get(hostId)?.size ?? 0
-      const savedRefCount = entry?.refCount ?? Math.max(1, listenerCount)
-      if (entry) {
-        entry.unsubState()
-        entry.client.close()
-        storeRef.current.delete(hostId)
-      }
-      const fresh = await openEntry(hostId)
-      if (!fresh) {
-        throw new Error('Unable to open a replacement connection')
-      }
-      fresh.refCount = savedRefCount
-      await verifyForceReconnectRpcHealth(fresh.client)
-    },
+    (hostId: string): Promise<void> =>
+      forceReconnectCoordinatorRef.current.run({
+        hostId,
+        entry: storeRef.current.get(hostId),
+        listenerCount: stateListenersRef.current.get(hostId)?.size ?? 0,
+        removeEntry: () => storeRef.current.delete(hostId),
+        openReplacement: () => openEntry(hostId)
+      }),
     [openEntry]
   )
 

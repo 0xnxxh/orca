@@ -282,6 +282,38 @@ describe('useHostClient', () => {
     harness.unmount()
   })
 
+  it('coalesces overlapping Force Reconnect calls for one host', async () => {
+    const stale = makeFakeClient('connected')
+    const fresh = makeFakeClient('connecting')
+    let resolveHealthCheck: (() => void) | null = null
+    fresh.sendRequest = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveHealthCheck = () => resolve({ id: 'health', ok: true, result: {} })
+        })
+    )
+    connectMock.mockReturnValueOnce(stale).mockReturnValueOnce(fresh)
+    loadHostsMock.mockResolvedValue([HOST])
+
+    const harness = await renderHarness(HOST.id)
+    const first = harness.forceReconnect(HOST.id)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const second = harness.forceReconnect(HOST.id)
+
+    expect(second).toBe(first)
+    expect(connectMock).toHaveBeenCalledTimes(2)
+    expect(stale.closeMock).toHaveBeenCalledOnce()
+    expect(fresh.closeMock).not.toHaveBeenCalled()
+
+    resolveHealthCheck?.()
+    await act(async () => Promise.all([first, second]))
+
+    harness.unmount()
+  })
+
   it('rejects Force Reconnect when a replacement client cannot open', async () => {
     const stale = makeFakeClient('connected')
     connectMock.mockReturnValue(stale)
