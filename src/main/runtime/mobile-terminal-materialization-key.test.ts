@@ -8,7 +8,9 @@ const BASE_IDENTITY = {
   worktreeId: 'repo::/worktree',
   parentTabId: 'tab-a',
   leafId: 'leaf-a',
-  sessionId: 'ssh:host-a@@session-a'
+  sessionId: 'ssh:host-a@@session-a',
+  workspaceFreshness: 'folder-route-a',
+  reconnectGeneration: 1
 }
 
 describe('mobile terminal materialization key', () => {
@@ -18,7 +20,9 @@ describe('mobile terminal materialization key', () => {
     ['worktree', { worktreeId: 'repo::/other-worktree' }],
     ['parent tab', { parentTabId: 'tab-b' }],
     ['leaf', { leafId: 'leaf-b' }],
-    ['persisted session', { sessionId: 'ssh:host-a@@session-b' }]
+    ['persisted session', { sessionId: 'ssh:host-a@@session-b' }],
+    ['folder routing freshness', { workspaceFreshness: 'folder-route-b' }],
+    ['reconnect generation', { reconnectGeneration: 2 }]
   ])('does not coalesce a different %s', (_label, difference) => {
     expect(mobileTerminalMaterializationKey({ ...BASE_IDENTITY, ...difference })).not.toBe(
       mobileTerminalMaterializationKey(BASE_IDENTITY)

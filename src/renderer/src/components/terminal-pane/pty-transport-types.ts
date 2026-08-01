@@ -49,6 +49,7 @@ export type LocalPtySessionMetadata = {
 export type PtyConnectResult = {
   id: string
   spawnDisposition?: PtySpawnDisposition
+  spawnRetirementToken?: string
   /** The requested session exited while it had no primary pane handler. Its
    *  buffered final data/exit were delivered, so callers must not fresh-spawn. */
   exitedBeforeAttach?: boolean

@@ -42,6 +42,8 @@ describe('createIpcPtyTransport', () => {
         pty: {
           ...originalWindow?.api?.pty,
           spawn: vi.fn().mockResolvedValue({ id: 'pty-1' }),
+          adoptSpawnReservation: vi.fn(() => true),
+          releaseSpawnReservation: vi.fn(() => true),
           write: vi.fn(),
           writeAccepted: vi.fn().mockResolvedValue(true),
           onWriteUnavailable: vi.fn((callback: (payload: { id: string }) => void) => {
@@ -1844,6 +1846,85 @@ describe('createIpcPtyTransport', () => {
     await connect
 
     expect(kill).not.toHaveBeenCalledWith('pty-shared-fresh')
+  })
+
+  it('adopts a shared fresh spawn before publishing a live transport', async () => {
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    const spawn = window.api.pty.spawn as unknown as ReturnType<typeof vi.fn>
+    const adopt = window.api.pty.adoptSpawnReservation as unknown as ReturnType<typeof vi.fn>
+    spawn.mockResolvedValueOnce({
+      id: 'pty-shared-adopted',
+      spawnDisposition: 'awaited',
+      spawnRetirementToken: 'waiter-adoption'
+    })
+    const transport = createIpcPtyTransport({})
+
+    await transport.connect({ url: '', callbacks: {} })
+
+    expect(adopt).toHaveBeenCalledExactlyOnceWith('pty-shared-adopted', 'waiter-adoption')
+    expect(transport.getPtyId()).toBe('pty-shared-adopted')
+  })
+
+  it('releases a destroyed creator without killing a spawn reserved by a live waiter', async () => {
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    let resolveSpawn!: (value: {
+      id: string
+      spawnDisposition: 'created'
+      spawnRetirementToken: string
+    }) => void
+    const spawn = window.api.pty.spawn as unknown as ReturnType<typeof vi.fn>
+    const release = window.api.pty.releaseSpawnReservation as unknown as ReturnType<typeof vi.fn>
+    const kill = window.api.pty.kill as unknown as ReturnType<typeof vi.fn>
+    release.mockReturnValueOnce(false)
+    spawn.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSpawn = resolve
+      })
+    )
+    const transport = createIpcPtyTransport({})
+    const connect = transport.connect({ url: '', callbacks: {} })
+
+    transport.destroy?.()
+    resolveSpawn({
+      id: 'pty-live-waiter',
+      spawnDisposition: 'created',
+      spawnRetirementToken: 'creator-token'
+    })
+    await connect
+
+    expect(release).toHaveBeenCalledExactlyOnceWith('pty-live-waiter', 'creator-token')
+    expect(kill).not.toHaveBeenCalledWith('pty-live-waiter')
+  })
+
+  it('kills a shared spawn when the destroyed waiter releases the final reservation', async () => {
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    let resolveSpawn!: (value: {
+      id: string
+      spawnDisposition: 'awaited'
+      spawnRetirementToken: string
+    }) => void
+    const spawn = window.api.pty.spawn as unknown as ReturnType<typeof vi.fn>
+    const release = window.api.pty.releaseSpawnReservation as unknown as ReturnType<typeof vi.fn>
+    const kill = window.api.pty.kill as unknown as ReturnType<typeof vi.fn>
+    release.mockReturnValueOnce(true)
+    spawn.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSpawn = resolve
+      })
+    )
+    const transport = createIpcPtyTransport({})
+    const connect = transport.connect({ url: '', callbacks: {} })
+
+    transport.destroy?.()
+    resolveSpawn({
+      id: 'pty-all-retired',
+      spawnDisposition: 'awaited',
+      spawnRetirementToken: 'waiter-token'
+    })
+    await connect
+
+    expect(release).toHaveBeenCalledExactlyOnceWith('pty-all-retired', 'waiter-token')
+    expect(kill).toHaveBeenCalledExactlyOnceWith('pty-all-retired')
   })
 
   it('kills a fresh session fallback that resolves after the transport was destroyed', async () => {

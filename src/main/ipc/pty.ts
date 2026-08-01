@@ -86,6 +86,16 @@ import { parseAppSshPtyId, toAppSshPtyId, toRelaySshPtyId } from '../providers/s
 import { createPtySpawnTiming } from './pty-spawn-timing'
 import { resolvePaneSpawnReservationPathFlavor } from './pty-spawn-reservation-path-flavor'
 import {
+  adoptPaneSpawn,
+  awaitPaneSpawnReservation,
+  forgetPaneSpawnRetirement,
+  getPaneSpawnReservation,
+  rejectPaneSpawnReservation,
+  releasePaneSpawn,
+  reservePaneSpawn,
+  resolvePaneSpawnReservation
+} from './pane-spawn-reservation'
+import {
   isSafePtySessionId,
   mintPtySessionId,
   ptySessionIdForAgentCreateOperation
@@ -219,7 +229,6 @@ import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import { resolveLocalProjectRuntimeForWorktreeId } from '../local-project-runtime-resolution'
 import { isPtyIncarnationId } from '../../shared/pty-incarnation'
 import type { PtyListedSession } from '../../shared/pty-listed-session'
-import type { PtySpawnDisposition } from '../../shared/pty-spawn-disposition'
 
 // ─── Provider Registry ──────────────────────────────────────────────
 // Routes PTY operations by connectionId (null = local provider).
@@ -307,18 +316,6 @@ export function registerPaneKeyTeardownListener(listener: PaneKeyTeardownListene
 let pendingSerializerGenSeq = 0
 const pendingByPaneKey = new Map<string, { gen: number; ownerWebContentsId: number | null }>()
 const pendingPaneSerializerCleanupRegistered = new Set<number>()
-type PaneSpawnReservation = {
-  promise: Promise<PaneSpawnReservationResult>
-  resolve: (result: PaneSpawnReservationResult) => void
-  reject: (error: unknown) => void
-}
-type PaneSpawnReservationResult = {
-  id: string
-  spawnDisposition: PtySpawnDisposition
-  launchConfig?: SleepingAgentLaunchConfig
-} & Partial<PtySpawnResult>
-// Why: paired clients may share one physical spawn, but identical pane ids in another execution/workspace/session scope must remain independent.
-const paneSpawnReservationsByScope = new Map<string, PaneSpawnReservation>()
 const paneSpawnProviderIds = new WeakMap<IPtyProvider, string>()
 let nextPaneSpawnProviderId = 0
 // Why: one main process can route the same remote provider namespace through
@@ -489,60 +486,6 @@ function getPaneSpawnExecutionRuntimeId(args: {
   return shouldSkipCodexHomeEnvForWindowsShell(args.shellOverride, args.cwd)
     ? `wsl:${args.wslDistro ?? 'default'}`
     : 'native'
-}
-
-function reservePaneSpawn(paneKey: string): PaneSpawnReservation {
-  let resolve!: (result: PaneSpawnReservationResult) => void
-  let reject!: (error: unknown) => void
-  const promise = new Promise<PaneSpawnReservationResult>((promiseResolve, promiseReject) => {
-    resolve = promiseResolve
-    reject = promiseReject
-  })
-  promise.catch(() => {})
-  const reservation = { promise, resolve, reject }
-  paneSpawnReservationsByScope.set(paneKey, reservation)
-  return reservation
-}
-
-function clearPaneSpawnReservation(paneKey: string, reservation: PaneSpawnReservation): void {
-  if (paneSpawnReservationsByScope.get(paneKey) === reservation) {
-    paneSpawnReservationsByScope.delete(paneKey)
-  }
-}
-
-function rejectPaneSpawnReservation(
-  paneKey: string | null | undefined,
-  reservation: PaneSpawnReservation | null | undefined,
-  error: unknown
-): void {
-  if (!reservation) {
-    return
-  }
-  reservation.reject(error)
-  if (paneKey) {
-    clearPaneSpawnReservation(paneKey, reservation)
-  }
-}
-
-function resolvePaneSpawnReservation<T extends PaneSpawnReservationResult>(
-  paneKey: string | null | undefined,
-  reservation: PaneSpawnReservation | null | undefined,
-  response: T
-): T {
-  if (!reservation) {
-    return response
-  }
-  reservation.resolve(response)
-  if (paneKey) {
-    clearPaneSpawnReservation(paneKey, reservation)
-  }
-  return response
-}
-
-async function awaitPaneSpawnReservation(
-  reservation: PaneSpawnReservation
-): Promise<PaneSpawnReservationResult> {
-  return { ...(await reservation.promise), spawnDisposition: 'awaited' }
 }
 
 type CreatorOnlyPtyRetirementToken = {
@@ -1652,6 +1595,7 @@ export function clearProviderPtyState(
   opts: { preserveAgentSessionOwners?: boolean } = {}
 ): void {
   if (!opts.preserveAgentSessionOwners) {
+    forgetPaneSpawnRetirement(id)
     agentSessionOwners.release(id)
     // Why: the launch-account record outlives the app, so only a real teardown
     // may drop it — a disconnect that can reconnect is not a death, and a reused
@@ -4263,7 +4207,7 @@ export function registerPtyHandlers(
       }
 
       const existingPaneSpawn = paneSpawnReservationKey
-        ? paneSpawnReservationsByScope.get(paneSpawnReservationKey)
+        ? getPaneSpawnReservation(paneSpawnReservationKey)
         : undefined
       if (existingPaneSpawn) {
         return await awaitPaneSpawnReservation(existingPaneSpawn)
@@ -4711,6 +4655,8 @@ export function registerPtyHandlers(
         finishTerminalInstall()
       }
     },
+    adoptSpawnReservation: (ptyId, token) => adoptPaneSpawn(ptyId, token),
+    releaseSpawnReservation: (ptyId, token) => releasePaneSpawn(ptyId, token),
     write: (ptyId, data) => {
       try {
         getProviderForPty(ptyId).write(ptyId, data)
@@ -5520,7 +5466,7 @@ export function registerPtyHandlers(
         }
       }
       const existingPaneSpawn = paneSpawnReservationKey
-        ? paneSpawnReservationsByScope.get(paneSpawnReservationKey)
+        ? getPaneSpawnReservation(paneSpawnReservationKey)
         : undefined
       if (existingPaneSpawn) {
         return await awaitPaneSpawnReservation(existingPaneSpawn)
@@ -6461,6 +6407,25 @@ export function registerPtyHandlers(
       .catch(() => {})
     runtime?.clearHeadlessTerminalBuffer(args.id).catch(() => {})
   })
+
+  ipcMain.removeAllListeners('pty:adoptSpawnReservationSync')
+  ipcMain.on('pty:adoptSpawnReservationSync', (event, args: { id?: unknown; token?: unknown }) => {
+    event.returnValue =
+      typeof args?.id === 'string' &&
+      typeof args?.token === 'string' &&
+      adoptPaneSpawn(args.id, args.token)
+  })
+
+  ipcMain.removeAllListeners('pty:releaseSpawnReservationSync')
+  ipcMain.on(
+    'pty:releaseSpawnReservationSync',
+    (event, args: { id?: unknown; token?: unknown }) => {
+      event.returnValue =
+        typeof args?.id === 'string' &&
+        typeof args?.token === 'string' &&
+        releasePaneSpawn(args.id, args.token)
+    }
+  )
 
   ipcMain.handle('pty:kill', async (_event, args: { id: string; keepHistory?: boolean }) => {
     if (typeof args?.id !== 'string' || !args.id || args.id.startsWith('remote:')) {

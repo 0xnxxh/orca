@@ -807,7 +807,13 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         const spawnDisposition =
           spawnResult.spawnDisposition ?? (spawnResult.isReattach ? 'reattached' : 'created')
         const retireFreshSpawn = async (): Promise<void> => {
-          if (spawnDisposition === 'created' && !spawnResult.coldRestore) {
+          const shouldKill = spawnResult.spawnRetirementToken
+            ? window.api.pty.releaseSpawnReservation(
+                spawnResult.id,
+                spawnResult.spawnRetirementToken
+              )
+            : spawnDisposition === 'created'
+          if (shouldKill && !spawnResult.coldRestore) {
             await window.api.pty.kill(spawnResult.id)
           }
         }
@@ -822,6 +828,10 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
           // Why: a rejected session-expired fallback has no owner to retire its newly created process.
           await retireFreshSpawn()
           return spawnResult
+        }
+
+        if (spawnResult.spawnRetirementToken) {
+          window.api.pty.adoptSpawnReservation(spawnResult.id, spawnResult.spawnRetirementToken)
         }
 
         ptyId = spawnResult.id

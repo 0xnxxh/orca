@@ -3117,6 +3117,8 @@ function createShellApi(): NonNullable<Partial<PreloadApi>['shell']> {
 function createPtyApi(): NonNullable<Partial<PreloadApi>['pty']> {
   return {
     spawn: () => Promise.reject(new Error('Local PTYs are unavailable in the web client.')),
+    adoptSpawnReservation: () => false,
+    releaseSpawnReservation: () => false,
     write: () => {},
     writeAccepted: () => Promise.resolve(false),
     resize: () => {},

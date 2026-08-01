@@ -8431,8 +8431,16 @@ describe('registerPtyHandlers', () => {
     expect(providerSpawn).toHaveBeenCalledTimes(1)
     resolveSpawn({ id: 'pty-renderer' })
     await expect(Promise.all([rendererSpawn, runtimeSpawn])).resolves.toEqual([
-      { id: 'pty-renderer', spawnDisposition: 'created' },
-      { id: 'pty-renderer', spawnDisposition: 'awaited' }
+      expect.objectContaining({
+        id: 'pty-renderer',
+        spawnDisposition: 'created',
+        spawnRetirementToken: expect.any(String)
+      }),
+      expect.objectContaining({
+        id: 'pty-renderer',
+        spawnDisposition: 'awaited',
+        spawnRetirementToken: expect.any(String)
+      })
     ])
     expect(providerSpawn).toHaveBeenCalledTimes(1)
     expect(store.persistPtyBinding).toHaveBeenCalledWith({

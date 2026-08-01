@@ -7,6 +7,8 @@ export function mobileTerminalMaterializationKey(identity: {
   parentTabId: string
   leafId: string
   sessionId?: string
+  workspaceFreshness: string | null
+  reconnectGeneration: number | null
 }): string {
   return JSON.stringify([
     identity.executionHostId,
@@ -14,6 +16,8 @@ export function mobileTerminalMaterializationKey(identity: {
     identity.worktreeId,
     identity.parentTabId,
     identity.leafId,
-    identity.sessionId ?? null
+    identity.sessionId ?? null,
+    identity.workspaceFreshness,
+    identity.reconnectGeneration
   ])
 }

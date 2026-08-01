@@ -176,8 +176,14 @@ describe('mobile folder session mutation races', () => {
       const spawn = vi.fn(async () => {
         await attach
         attached = true
-        return { id: ptyId, incarnationId }
+        return {
+          id: ptyId,
+          incarnationId,
+          spawnDisposition: 'awaited' as const,
+          spawnRetirementToken: 'live-runtime-waiter'
+        }
       })
+      const adoptSpawnReservation = vi.fn(() => true)
       const listProcesses = vi.fn(async () => [
         {
           id: ptyId,
@@ -190,6 +196,7 @@ describe('mobile folder session mutation races', () => {
       ])
       runtime.setPtyController({
         spawn,
+        adoptSpawnReservation,
         write: () => attached,
         kill: () => true,
         getForegroundProcess: async () => null,
@@ -240,6 +247,7 @@ describe('mobile folder session mutation races', () => {
       expect(spawn).toHaveBeenCalledWith(
         expect.objectContaining({ sessionId: ptyId, worktreeId: folderKey })
       )
+      expect(adoptSpawnReservation).toHaveBeenCalledExactlyOnceWith(ptyId, 'live-runtime-waiter')
       expect((await runtime.listMobileSessionTabs(`id:${folderKey}`)).activeTabId).toBe(
         `${TAB_ID}::${LEAF_ID}`
       )
@@ -414,12 +422,13 @@ describe('mobile folder session mutation races', () => {
   )
 
   it.each([
-    ['creator', 'created', true],
-    ['waiter', 'awaited', false],
-    ['reattach consumer', 'reattached', false]
+    ['creator-only', 'created', undefined, undefined, true],
+    ['shared creator', 'created', 'creator-token', false, false],
+    ['shared waiter', 'awaited', 'waiter-token', false, false],
+    ['reattach consumer', 'reattached', undefined, undefined, false]
   ] as const)(
-    'lets only the %s retire a stale materialization',
-    async (_consumer, spawnDisposition, shouldKill) => {
+    'retires a stale %s materialization without harming a live reservation peer',
+    async (_consumer, spawnDisposition, spawnRetirementToken, releaseResult, shouldKill) => {
       const folder: FolderWorkspace = {
         id: 'materialize-race-folder',
         projectGroupId: 'materialize-race-group',
@@ -474,17 +483,27 @@ describe('mobile folder session mutation races', () => {
         repo: null,
         folderWorkspace: folder
       }))
-      let releaseSpawn!: (value: { id: string; spawnDisposition: typeof spawnDisposition }) => void
+      let releaseSpawn!: (value: {
+        id: string
+        spawnDisposition: typeof spawnDisposition
+        spawnRetirementToken?: string
+      }) => void
       const spawn = vi.fn(
         () =>
-          new Promise<{ id: string; spawnDisposition: typeof spawnDisposition }>((resolve) => {
+          new Promise<{
+            id: string
+            spawnDisposition: typeof spawnDisposition
+            spawnRetirementToken?: string
+          }>((resolve) => {
             releaseSpawn = resolve
           })
       )
       const kill = vi.fn(() => true)
+      const releaseSpawnReservation = vi.fn(() => releaseResult ?? false)
       runtime.setPtyController({
         write: () => true,
         kill,
+        releaseSpawnReservation,
         getForegroundProcess: async () => null,
         listProcesses: async () => [],
         spawn
@@ -497,7 +516,11 @@ describe('mobile folder session mutation races', () => {
       await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
       folders.length = 0
       folders.push({ ...folder, folderPath: '/workspace/materialize-race-moved' })
-      releaseSpawn({ id: 'stale-materialized-pty', spawnDisposition })
+      releaseSpawn({
+        id: 'stale-materialized-pty',
+        spawnDisposition,
+        ...(spawnRetirementToken ? { spawnRetirementToken } : {})
+      })
 
       const results = await activations
       results.forEach((result) => {
@@ -510,6 +533,14 @@ describe('mobile folder session mutation races', () => {
         expect(kill).toHaveBeenCalledWith('stale-materialized-pty')
       } else {
         expect(kill).not.toHaveBeenCalled()
+      }
+      if (spawnRetirementToken) {
+        expect(releaseSpawnReservation).toHaveBeenCalledWith(
+          'stale-materialized-pty',
+          spawnRetirementToken
+        )
+      } else {
+        expect(releaseSpawnReservation).not.toHaveBeenCalled()
       }
       expect(focusTerminal).not.toHaveBeenCalled()
       expect(published).not.toContainEqual(

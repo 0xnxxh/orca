@@ -1498,6 +1498,7 @@ export type PreloadApi = {
     }) => Promise<{
       id: string
       spawnDisposition: PtySpawnDisposition
+      spawnRetirementToken?: string
       launchAgent?: TuiAgent
       launchConfig?: SleepingAgentLaunchConfig
       snapshot?: string
@@ -1511,6 +1512,8 @@ export type PreloadApi = {
       startupCwdFallback?: { kind: 'worktree'; cwd: string }
       agentResumeUnavailable?: true
     }>
+    adoptSpawnReservation: (id: string, token: string) => boolean
+    releaseSpawnReservation: (id: string, token: string) => boolean
     write: (id: string, data: string) => void
     writeAccepted: (id: string, data: string) => Promise<boolean>
     onWriteUnavailable?: (callback: (payload: { id: string }) => void) => () => void

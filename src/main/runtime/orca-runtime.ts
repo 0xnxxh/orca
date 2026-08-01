@@ -1554,8 +1554,11 @@ type RuntimePtyController = {
     wslDistro?: string | null
     isReattach?: boolean
     spawnDisposition?: PtySpawnDisposition
+    spawnRetirementToken?: string
     agentSessionEnsure?: AgentSessionClaimedSpawnResult
   }>
+  adoptSpawnReservation?(ptyId: string, token: string): boolean
+  releaseSpawnReservation?(ptyId: string, token: string): boolean
   write(ptyId: string, data: string): boolean
   kill(ptyId: string): boolean
   stopAndWait?(
@@ -4968,7 +4971,7 @@ export class OrcaRuntimeService {
 
   private createMobileSessionFolderWorkspaceMutationFence(
     worktreeId: string
-  ): (() => boolean) | undefined {
+  ): { accept: () => boolean; freshness: string } | undefined {
     const scope = parseWorkspaceKey(worktreeId)
     if (scope?.type !== 'folder' || !this.store?.getFolderWorkspaces) {
       return undefined
@@ -4977,16 +4980,19 @@ export class OrcaRuntimeService {
       .getFolderWorkspaces()
       .find((candidate) => candidate.id === scope.folderWorkspaceId)
     if (!workspace) {
-      return () => false
+      return { accept: () => false, freshness: 'missing' }
     }
     const expectedFingerprint = this.getFolderWorkspaceInventoryFingerprint(workspace)
-    return () => {
-      const current = this.store
-        ?.getFolderWorkspaces?.()
-        .find((candidate) => candidate.id === scope.folderWorkspaceId)
-      return Boolean(
-        current && this.getFolderWorkspaceInventoryFingerprint(current) === expectedFingerprint
-      )
+    return {
+      freshness: expectedFingerprint,
+      accept: () => {
+        const current = this.store
+          ?.getFolderWorkspaces?.()
+          .find((candidate) => candidate.id === scope.folderWorkspaceId)
+        return Boolean(
+          current && this.getFolderWorkspaceInventoryFingerprint(current) === expectedFingerprint
+        )
+      }
     }
   }
 
@@ -8057,8 +8063,8 @@ export class OrcaRuntimeService {
     const worktreeId =
       explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
     this.assertMobileSessionFolderWorkspaceExists(worktreeId)
-    const acceptWorkspaceInventory =
-      this.createMobileSessionFolderWorkspaceMutationFence(worktreeId)
+    const workspaceMutationFence = this.createMobileSessionFolderWorkspaceMutationFence(worktreeId)
+    const acceptWorkspaceInventory = workspaceMutationFence?.accept
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
     await this.refreshMobileSessionPtyRecords(worktreeId)
     this.assertMobileSessionFolderWorkspaceExists(worktreeId)
@@ -8106,14 +8112,6 @@ export class OrcaRuntimeService {
       if (shouldMaterializePendingTerminal) {
         const sessionId = tab.ptyId ?? tab.parentLayout?.ptyIdsByLeafId?.[tab.leafId] ?? undefined
         const sshConnectionId = sessionId ? parseAppSshPtyId(sessionId)?.connectionId : undefined
-        const reconnectGeneration = sshConnectionId
-          ? (this.sshRelayRecoveryGenerationByTargetId.get(sshConnectionId) ?? 0)
-          : null
-        const acceptMaterialization = () =>
-          acceptWorkspaceInventory?.() !== false &&
-          (sshConnectionId === undefined ||
-            (this.sshRelayRecoveryGenerationByTargetId.get(sshConnectionId) ?? 0) ===
-              reconnectGeneration)
         const targetGroupId = snapshot?.tabGroups?.find((group) =>
           group.tabOrder.includes(tab.parentTabId)
         )?.id
@@ -8122,13 +8120,23 @@ export class OrcaRuntimeService {
         const connectionId =
           sshConnectionId ??
           (parsedExecutionHost?.kind === 'ssh' ? parsedExecutionHost.targetId : null)
+        const reconnectGeneration = connectionId
+          ? (this.sshRelayRecoveryGenerationByTargetId.get(connectionId) ?? 0)
+          : null
+        const acceptMaterialization = () =>
+          acceptWorkspaceInventory?.() !== false &&
+          (connectionId === null ||
+            (this.sshRelayRecoveryGenerationByTargetId.get(connectionId) ?? 0) ===
+              reconnectGeneration)
         const materializationKey = mobileTerminalMaterializationKey({
           executionHostId,
           connectionId,
           worktreeId,
           parentTabId: tab.parentTabId,
           leafId: tab.leafId,
-          sessionId
+          sessionId,
+          workspaceFreshness: workspaceMutationFence?.freshness ?? null,
+          reconnectGeneration
         })
         let materialization = this.pendingMobileTerminalMaterializations.get(materializationKey)
         if (!materialization) {
@@ -8492,7 +8500,7 @@ export class OrcaRuntimeService {
       explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
     this.assertMobileSessionFolderWorkspaceExists(worktreeId)
     const acceptWorkspaceInventory =
-      this.createMobileSessionFolderWorkspaceMutationFence(worktreeId)
+      this.createMobileSessionFolderWorkspaceMutationFence(worktreeId)?.accept
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
     const observedPtyIds = await this.refreshMobileSessionPtyRecords()
     this.assertMobileSessionFolderWorkspaceExists(worktreeId)
@@ -25461,11 +25469,20 @@ export class OrcaRuntimeService {
           : {})
       })
       if (launchOpts.acceptWorkspaceInventory?.() === false) {
-        if (result.spawnDisposition === 'created') {
+        const shouldKill = result.spawnRetirementToken
+          ? this.ptyController.releaseSpawnReservation?.(result.id, result.spawnRetirementToken) ===
+            true
+          : result.spawnDisposition === 'created'
+        if (shouldKill) {
           this.ptyController.kill(result.id)
+        }
+        if (result.spawnDisposition === 'created') {
           this.releaseRejectedPtyRegistrationFence(result.id, result.incarnationId)
         }
         throw new Error('tab_not_found')
+      }
+      if (result.spawnRetirementToken) {
+        this.ptyController.adoptSpawnReservation?.(result.id, result.spawnRetirementToken)
       }
       reportPtySpawnCommitted()
       if (result.agentSessionEnsure) {
@@ -26970,8 +26987,17 @@ export class OrcaRuntimeService {
       })
     } catch (error) {
       this.setPairedRendererSessionOwnership(result.id, false)
-      this.ptyController.kill?.(result.id)
+      const shouldKill = result.spawnRetirementToken
+        ? this.ptyController.releaseSpawnReservation?.(result.id, result.spawnRetirementToken) ===
+          true
+        : true
+      if (shouldKill) {
+        this.ptyController.kill?.(result.id)
+      }
       throw error
+    }
+    if (result.spawnRetirementToken) {
+      this.ptyController.adoptSpawnReservation?.(result.id, result.spawnRetirementToken)
     }
     if (createdPty) {
       this.publishPtyBackedMobileSessionTerminal(workspace.id, createdPty, {

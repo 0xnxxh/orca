@@ -6,7 +6,7 @@ import { createBrowserUuid } from '@/lib/browser-uuid'
 import { getSettingsForWorktreeRuntimeOwner } from '@/lib/worktree-runtime-owner'
 import { getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 import { singlePaneLayoutSnapshot } from '@/store/slices/terminal-helpers'
-import { retireUnownedTerminal } from '@/lib/retire-unowned-background-terminal'
+import { adoptSpawn, retireUnownedTerminal } from '@/lib/retire-unowned-background-terminal'
 import { useAppStore } from '@/store'
 import { translate } from '@/i18n/i18n'
 import { isWindowsAbsolutePathLike } from '../../../shared/cross-platform-path'
@@ -133,7 +133,7 @@ async function spawnPane(args: {
   leafId: string
   command?: string
   env?: Record<string, string>
-}): Promise<string> {
+}): Promise<{ id: string; spawnRetirementToken?: string }> {
   const result = await window.api.pty.spawn({
     cols: 120,
     rows: 40,
@@ -145,7 +145,7 @@ async function spawnPane(args: {
     tabId: args.tabId,
     leafId: args.leafId
   })
-  return result.id
+  return { id: result.id, spawnRetirementToken: result.spawnRetirementToken }
 }
 
 async function createBackgroundTab(args: {
@@ -167,9 +167,9 @@ async function createBackgroundTab(args: {
 
   const leafId = createBrowserUuid()
   store.setTabLayout(tab.id, singlePaneLayoutSnapshot(leafId))
-  let ptyId: string
+  let spawnResult: Awaited<ReturnType<typeof spawnPane>>
   try {
-    ptyId = await spawnPane({
+    spawnResult = await spawnPane({
       worktree: args.worktree,
       connectionId: args.connectionId,
       tabId: tab.id,
@@ -181,15 +181,18 @@ async function createBackgroundTab(args: {
     store.closeTab(tab.id, { recordInteraction: false, reason: 'cleanup' })
     throw error
   }
+  const ptyId = spawnResult.id
   if (
     await retireUnownedTerminal({
       owner: { tabId: tab.id },
       ptyId,
-      runtimeTarget: { kind: 'local' }
+      runtimeTarget: { kind: 'local' },
+      spawnRetirementToken: spawnResult.spawnRetirementToken
     })
   ) {
     throw new Error('The terminal tab was closed before its session finished starting.')
   }
+  adoptSpawn(spawnResult)
   store.updateTabPtyId(tab.id, ptyId)
   store.setTabLayout(tab.id, singlePaneLayoutSnapshot(leafId, ptyId))
   registerBackgroundPaneBuffer(tab.id, leafId, ptyId)
@@ -205,7 +208,7 @@ async function addSetupSplit(args: {
 }): Promise<void> {
   const store = useAppStore.getState()
   const setupLeafId = createBrowserUuid()
-  const setupPtyId = await spawnPane({
+  const setupSpawn = await spawnPane({
     worktree: args.worktree,
     connectionId: args.connectionId,
     tabId: args.tab.tabId,
@@ -213,15 +216,18 @@ async function addSetupSplit(args: {
     command: buildSetupCommand(args.setup),
     env: args.setup.envVars
   })
+  const setupPtyId = setupSpawn.id
   if (
     await retireUnownedTerminal({
       owner: { tabId: args.tab.tabId },
       ptyId: setupPtyId,
-      runtimeTarget: { kind: 'local' }
+      runtimeTarget: { kind: 'local' },
+      spawnRetirementToken: setupSpawn.spawnRetirementToken
     })
   ) {
     return
   }
+  adoptSpawn(setupSpawn)
   store.updateTabPtyId(args.tab.tabId, setupPtyId)
   store.setTabLayout(
     args.tab.tabId,

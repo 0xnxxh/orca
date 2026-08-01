@@ -928,6 +928,7 @@ const api = {
     }): Promise<{
       id: string
       spawnDisposition: PtySpawnDisposition
+      spawnRetirementToken?: string
       launchConfig?: SleepingAgentLaunchConfig
       snapshot?: string
       snapshotCols?: number
@@ -940,6 +941,12 @@ const api = {
       startupCwdFallback?: { kind: 'worktree'; cwd: string }
       agentResumeUnavailable?: true
     }> => ipcRenderer.invoke('pty:spawn', opts),
+
+    adoptSpawnReservation: (id: string, token: string): boolean =>
+      ipcRenderer.sendSync('pty:adoptSpawnReservationSync', { id, token }),
+
+    releaseSpawnReservation: (id: string, token: string): boolean =>
+      ipcRenderer.sendSync('pty:releaseSpawnReservationSync', { id, token }),
 
     write: (id: string, data: string): void => {
       ipcRenderer.send('pty:write', { id, data })
