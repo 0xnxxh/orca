@@ -1,7 +1,6 @@
 // TypeScript 7 is a native CLI; AST consumers still need the legacy JavaScript API.
 import ts from 'typescript-api'
 
-const EMBEDDED_DOCUMENT_FILE_RE = /(?:-html|webview-html)\.[cm]?[jt]sx?$/
 const USER_VISIBLE_ATTRIBUTE_RE =
   /\b(aria-description|aria-label|alt|data-placeholder|placeholder|title)\s*=\s*(["'])(.*?)\2/gi
 const USER_VISIBLE_PROMPT_START_RE = /\b(?:window\.)?(alert|confirm|prompt)\(\s*/g
@@ -183,6 +182,14 @@ function insertedHtmlArgumentEnd(source, start) {
       cursor = skipQuotedString(source, cursor)
       continue
     }
+    if (source[cursor] === '`') {
+      cursor = templateLiteralEnd(source, cursor)
+      continue
+    }
+    if (source[cursor] === '\\' && source[cursor + 1] === '`') {
+      cursor = escapedTemplateLiteralEnd(source, cursor)
+      continue
+    }
     if (source[cursor] === '(') {
       depth += 1
     }
@@ -211,15 +218,22 @@ function collectInsertedHtmlCandidates(expression, baseOffset, candidates) {
       cursor = end
       continue
     }
+    const escapedTemplate = expression[cursor] === '\\' && expression[cursor + 1] === '`'
+    if (expression[cursor] === '`' || escapedTemplate) {
+      const end = escapedTemplate
+        ? escapedTemplateLiteralEnd(expression, cursor)
+        : templateLiteralEnd(expression, cursor)
+      const delimiterWidth = escapedTemplate ? 2 : 1
+      const markup = expression.slice(cursor + delimiterWidth, end - delimiterWidth)
+      collectMarkupFragmentCandidates(markup, baseOffset + cursor + delimiterWidth, candidates)
+      cursor = end
+      continue
+    }
     cursor += 1
   }
 }
 
 export function collectMobileEmbeddedDocumentCandidates(filePath, sourceText) {
-  if (!EMBEDDED_DOCUMENT_FILE_RE.test(filePath)) {
-    return []
-  }
-
   const sourceKind =
     filePath.endsWith('.tsx') || filePath.endsWith('.jsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
   const sourceFile = ts.createSourceFile(

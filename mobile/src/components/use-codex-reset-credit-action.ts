@@ -10,6 +10,7 @@ import {
   requestCodexResetCredit
 } from './codex-reset-credit'
 import { useCodexResetCreditCapability } from './codex-reset-credit-capability'
+import { appendCodexResetCleanupWarning } from './codex-reset-cleanup-warning'
 import { t } from '@/i18n/mobile-i18n'
 
 function describeScope(snapshot: AccountsSnapshot, scope: CodexResetCreditExpectedScope): string {
@@ -77,9 +78,10 @@ export function useCodexResetCreditAction({
             : ''
           Alert.alert(
             t('useCodexResetCreditAction.reset'),
-            t('useCodexResetCreditAction.account', {
-              cleanupWarning: cleanupWarning
-            })
+            appendCodexResetCleanupWarning(
+              t('useCodexResetCreditAction.account', { cleanupWarning: '' }),
+              cleanupWarning
+            )
           )
           return
         }
@@ -87,7 +89,7 @@ export function useCodexResetCreditAction({
         const cleanupWarning = result.attemptJournalRetained
           ? t('useCodexResetCreditAction.host')
           : ''
-        Alert.alert(copy.title, `${copy.message}${cleanupWarning}`)
+        Alert.alert(copy.title, appendCodexResetCleanupWarning(copy.message, cleanupWarning))
       } catch (error) {
         Alert.alert(
           t('useCodexResetCreditAction.could'),

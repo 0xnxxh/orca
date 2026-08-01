@@ -3,6 +3,7 @@ import appConfig from '../../app.json'
 
 import {
   createMobileTranslator,
+  getActiveMobileUiLanguageTag,
   mobileI18n,
   normalizeMobileUiLocale,
   selectPreferredMobileUiLocale,
@@ -53,6 +54,12 @@ describe('mobile i18n', () => {
   it('keeps prefixed translators on the active locale', async () => {
     await mobileI18n.changeLanguage('es')
     expect(createMobileTranslator('task')('gitHub')).toBe('GitHub')
+  })
+
+  it('exposes the effective BCP 47 language tag for embedded documents', async () => {
+    await mobileI18n.changeLanguage('zh')
+
+    expect(getActiveMobileUiLanguageTag()).toBe('zh-Hans')
   })
 
   it('enables localized native metadata on iOS', () => {
@@ -140,6 +147,36 @@ describe('mobile i18n', () => {
       'ブランチをチェックアウトしてから PR を作成してください。',
       '変更をコミットしてから PR を作成してください。'
     ])
+  })
+
+  it('keeps Japanese composite action grammar in the active locale', async () => {
+    await mobileI18n.changeLanguage('ja')
+
+    expect([
+      t('hostedReview.mergeConfirm', {
+        action: t('task.merge'),
+        target: t('task.pr'),
+        number: 42
+      }),
+      t('hostedReview.stateChangeTitle', {
+        action: t('task.close'),
+        target: t('task.pullRequest')
+      }),
+      t('task.action', {
+        actionVerb: t('task.close'),
+        taskKindLabel: t('task.pullRequestMessage')
+      })
+    ]).toEqual(['PR #42 をマージしますか？', 'PRを閉じる', 'PRを閉じる'])
+  })
+
+  it('renders Spanish branch counts with correct noun order and Git terminology', async () => {
+    await mobileI18n.changeLanguage('es')
+
+    expect([
+      t('mobileBranchCompare.changedFileCountFiles', { changedFileCount: 2 }),
+      t('mobileBranchCompare.commitCountCommit', { commitCount: 1 }),
+      t('mobileBranchCompare.commitCountCommits', { commitCount: 2 })
+    ]).toEqual(['2 archivos', '1 commit', '2 commits'])
   })
 
   it.each([

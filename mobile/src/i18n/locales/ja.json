@@ -508,7 +508,9 @@
     "medium": "中くらい",
     "high": "高い",
     "urgent": "緊急",
-    "selected": "選択済み"
+    "selected": "選択済み",
+    "iterationStatus": "{{iterationStatus}} · {{startDate}} · {{durationDays}}日間",
+    "action": "{{taskKindLabel}}を{{actionVerb}}"
   },
   "accounts": {
     "host": "ホスト",
@@ -948,7 +950,14 @@
   "mobileBranchCompare": {
     "committed": "ブランチに Commit",
     "changedFileCountFile": "{{changedFileCount}} ファイル",
-    "changedFileCountFiles": "{{changedFileCount}} ファイル"
+    "changedFileCountFiles": "{{changedFileCount}} ファイル",
+    "commitCountCommit": "{{commitCount}} コミット",
+    "commitCountCommits": "{{commitCount}} コミット",
+    "vs": "{{baseRef}} と比較"
+  },
+  "mobileQuickCommandLaunch": {
+    "quickCommand": "クイックコマンド",
+    "inserted": "{{commandLabel}}を挿入しました"
   },
   "mobileCommitMessageAi": {
     "failed": "commit メッセージの生成に失敗しました",
@@ -2527,5 +2536,10 @@
   },
   "filePreview": {
     "metaFallback": "プレビュー"
+  },
+  "hostedReview": {
+    "mergeConfirm": "{{target}} #{{number}} を{{action}}しますか？",
+    "stateChangeConfirm": "{{target}} #{{number}} を{{action}}？",
+    "stateChangeTitle": "{{target}}を{{action}}"
   }
 }

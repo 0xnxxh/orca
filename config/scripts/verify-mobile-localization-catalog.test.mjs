@@ -52,7 +52,13 @@ function writeJson(filePath, value) {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
 }
 
-function makeProject({ sourceText, catalogs, nativeCatalogs, appConfig }) {
+function makeProject({
+  sourceText,
+  sourceFileName = 'Example.tsx',
+  catalogs,
+  nativeCatalogs,
+  appConfig
+}) {
   const root = mkdtempSync(path.join(tmpdir(), 'orca-mobile-localization-'))
   const appDirectory = path.join(root, 'mobile', 'app')
   const sourceDirectory = path.join(root, 'mobile', 'src')
@@ -61,7 +67,7 @@ function makeProject({ sourceText, catalogs, nativeCatalogs, appConfig }) {
   mkdirSync(appDirectory, { recursive: true })
   mkdirSync(localeDirectory, { recursive: true })
   mkdirSync(nativeLocaleDirectory, { recursive: true })
-  writeFileSync(path.join(appDirectory, 'Example.tsx'), sourceText, 'utf8')
+  writeFileSync(path.join(appDirectory, sourceFileName), sourceText, 'utf8')
   writeJson(path.join(root, 'mobile', 'app.json'), appConfig ?? defaultAppConfig())
 
   for (const locale of LOCALES) {
@@ -148,6 +154,55 @@ export function local(translate) {
     expect(calls.map((call) => call.keys)).toEqual([['example.known']])
   })
 
+  it('tracks function-local prefixed and fixed translators by binding', () => {
+    const sourceText = `
+import { createMobileTranslator, mobileI18n } from '@/i18n/mobile-i18n'
+export function labels() {
+  const tr = createMobileTranslator('example')
+  const fixed = mobileI18n.getFixedT('en')
+  return [tr('known'), fixed('example.fixed')]
+}
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls.map((call) => call.keys)).toEqual([['example.known'], ['example.fixed']])
+  })
+
+  it('tracks instance and namespace translation calls', () => {
+    const sourceText = `
+import { mobileI18n } from '@/i18n/mobile-i18n'
+import * as i18n from '@/i18n/mobile-i18n'
+const tr = i18n.createMobileTranslator('example')
+export const labels = [
+  mobileI18n.t('example.instance'),
+  i18n.t('example.namespace'),
+  i18n.mobileI18n.t('example.namespaceInstance'),
+  tr('prefixed')
+]
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls.map((call) => call.keys)).toEqual([
+      ['example.instance'],
+      ['example.namespace'],
+      ['example.namespaceInstance'],
+      ['example.prefixed']
+    ])
+  })
+
+  it('limits for-loop and catch bindings to their lexical scopes', () => {
+    const sourceText = `
+import { t } from '@/i18n/mobile-i18n'
+for (const t of callbacks) t('local-loop-call')
+export const afterLoop = t('example.afterLoop')
+try { run() } catch (t) { t('local-catch-call') }
+export const afterCatch = t('example.afterCatch')
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls.map((call) => call.keys)).toEqual([['example.afterLoop'], ['example.afterCatch']])
+  })
+
   it('ignores unrelated local t functions', () => {
     const calls = collectMobileTranslationCalls(
       '/repo/mobile/app/Example.tsx',
@@ -219,6 +274,45 @@ export function local(translate) {
     expect(await runFailedVerification(root)).toContain(
       'ja.json copies English instead of using fallback: example.downloadFailed'
     )
+  })
+
+  it('does not treat URL-prefixed prose as language-neutral', async () => {
+    const root = makeProject({
+      sourceText:
+        "import { t } from '@/i18n/mobile-i18n'\nexport const label = t('example.pairingHint')\n",
+      catalogs: {
+        en: { example: { pairingHint: 'orca://pair?code=... or paste the code' } },
+        ja: { example: { pairingHint: 'orca://pair?code=... or paste the code' } }
+      }
+    })
+
+    expect(await runFailedVerification(root)).toContain(
+      'ja.json copies English instead of using fallback: example.pairingHint'
+    )
+  })
+
+  it('allows Spanish to preserve the Git term commit', async () => {
+    const root = makeProject({
+      sourceText:
+        "import { t } from '@/i18n/mobile-i18n'\nexport const label = t('example.commitCount', { commitCount: 2 })\n",
+      catalogs: {
+        en: { example: { commitCount: '{{commitCount}} commits' } },
+        es: { example: { commitCount: '{{commitCount}} commits' } }
+      }
+    })
+
+    await expect(verifyMobileCatalog(root)).resolves.toBe(0)
+  })
+
+  it('verifies translation calls in .mts source files', async () => {
+    const root = makeProject({
+      sourceFileName: 'Example.mts',
+      sourceText:
+        "import { t } from '@/i18n/mobile-i18n'\nexport const label = t('example.missing')\n",
+      catalogs: { en: { example: { known: 'Known' } } }
+    })
+
+    expect(await runFailedVerification(root)).toContain('missing English key: example.missing')
   })
 
   it('enforces Git and agent terminology', async () => {

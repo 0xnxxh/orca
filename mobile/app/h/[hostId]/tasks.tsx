@@ -1631,7 +1631,7 @@ function isGitHubPrMergeBlocked(item: Extract<TaskItem, { provider: 'github' }>)
 }
 
 function commentAuthor(comment: DetailComment): string {
-  return comment.author ?? comment.user?.displayName ?? 'unknown'
+  return comment.author ?? comment.user?.displayName ?? tr('unknown')
 }
 
 function commentDate(value: string | undefined): string {

@@ -508,7 +508,9 @@
     "medium": "중간",
     "high": "높음",
     "urgent": "긴급",
-    "selected": "선택된"
+    "selected": "선택된",
+    "iterationStatus": "{{iterationStatus}} · {{startDate}} · {{durationDays}}일",
+    "action": "{{taskKindLabel}} {{actionVerb}}"
   },
   "accounts": {
     "host": "호스트",
@@ -947,6 +949,10 @@
     "changedFileCountFile": "{{changedFileCount}} 파일",
     "changedFileCountFiles": "{{changedFileCount}} 파일",
     "vs": "대 {{baseRef}}"
+  },
+  "mobileQuickCommandLaunch": {
+    "quickCommand": "빠른 명령",
+    "inserted": "{{commandLabel}} 삽입됨"
   },
   "mobileCommitMessageAi": {
     "failed": "commit 메시지를 생성하지 못했습니다.",
@@ -2526,5 +2532,10 @@
   },
   "filePreview": {
     "metaFallback": "미리보기"
+  },
+  "hostedReview": {
+    "mergeConfirm": "{{target}} #{{number}} {{action}}?",
+    "stateChangeConfirm": "{{target}} #{{number}} {{action}}?",
+    "stateChangeTitle": "{{target}} {{action}}"
   }
 }

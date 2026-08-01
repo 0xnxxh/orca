@@ -17,10 +17,23 @@ function bindingNames(name, names = []) {
   return names
 }
 
-function lexicalScope(node, sourceFile) {
+function isLexicalScope(node) {
+  return (
+    ts.isSourceFile(node) ||
+    ts.isFunctionLike(node) ||
+    ts.isBlock(node) ||
+    ts.isCaseBlock(node) ||
+    ts.isCatchClause(node) ||
+    ts.isForStatement(node) ||
+    ts.isForInStatement(node) ||
+    ts.isForOfStatement(node)
+  )
+}
+
+function nearestScope(node, sourceFile, predicate = isLexicalScope) {
   let current = node.parent
   while (current && current !== sourceFile) {
-    if (ts.isBlock(current) || ts.isSourceFile(current) || ts.isFunctionLike(current)) {
+    if (predicate(current)) {
       return current
     }
     current = current.parent
@@ -29,29 +42,37 @@ function lexicalScope(node, sourceFile) {
 }
 
 function functionScope(node, sourceFile) {
-  let current = node.parent
-  while (current && current !== sourceFile) {
-    if (ts.isFunctionLike(current)) {
-      return current
-    }
-    current = current.parent
-  }
-  return sourceFile
+  return nearestScope(node, sourceFile, ts.isFunctionLike)
 }
 
-function addDeclarations(sourceFile) {
+function collectDeclarations(sourceFile) {
   const declarations = new Map()
 
-  function add(scope, name) {
-    const names = declarations.get(scope) ?? new Set()
-    names.add(name)
-    declarations.set(scope, names)
+  function add(scope, name, declaration) {
+    const byName = declarations.get(scope) ?? new Map()
+    const matches = byName.get(name) ?? []
+    matches.push(declaration)
+    byName.set(name, matches)
+    declarations.set(scope, byName)
   }
 
   function visit(node) {
-    if (ts.isParameter(node)) {
+    if (ts.isImportDeclaration(node)) {
+      const clause = node.importClause
+      if (clause?.name) {
+        add(sourceFile, clause.name.text, clause.name)
+      }
+      if (clause?.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
+        add(sourceFile, clause.namedBindings.name.text, clause.namedBindings)
+      }
+      if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+        for (const element of clause.namedBindings.elements) {
+          add(sourceFile, element.name.text, element)
+        }
+      }
+    } else if (ts.isParameter(node)) {
       for (const name of bindingNames(node.name)) {
-        add(node.parent, name)
+        add(node.parent, name, node)
       }
     } else if (ts.isVariableDeclaration(node)) {
       const declarationList = node.parent
@@ -59,15 +80,17 @@ function addDeclarations(sourceFile) {
         ts.isVariableDeclarationList(declarationList) &&
         (declarationList.flags & ts.NodeFlags.BlockScoped) === 0
           ? functionScope(node, sourceFile)
-          : lexicalScope(node, sourceFile)
+          : nearestScope(node, sourceFile)
       for (const name of bindingNames(node.name)) {
-        add(scope, name)
+        add(scope, name, node)
       }
     } else if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) {
-      add(lexicalScope(node, sourceFile), node.name.text)
+      add(nearestScope(node, sourceFile), node.name.text, node)
+    } else if ((ts.isFunctionExpression(node) || ts.isClassExpression(node)) && node.name) {
+      add(node, node.name.text, node)
     } else if (ts.isCatchClause(node) && node.variableDeclaration) {
       for (const name of bindingNames(node.variableDeclaration.name)) {
-        add(node, name)
+        add(node, name, node.variableDeclaration)
       }
     }
     ts.forEachChild(node, visit)
@@ -77,24 +100,46 @@ function addDeclarations(sourceFile) {
   return declarations
 }
 
-function isShadowed(identifier, sourceFile, declarations) {
+function resolveBinding(identifier, sourceFile, declarations) {
   let current = identifier.parent
-  while (current && current !== sourceFile) {
-    if (declarations.get(current)?.has(identifier.text)) {
-      return true
+  while (current) {
+    const matches = declarations.get(current)?.get(identifier.text)
+    if (matches?.length) {
+      return matches[0]
+    }
+    if (current === sourceFile) {
+      break
     }
     current = current.parent
   }
-  return false
+  return undefined
 }
 
-function isEnglishFixedTranslator(node, instanceNames, sourceFile, declarations) {
+function resolvesTo(identifier, bindings) {
+  return bindings.resolveBinding(identifier)
+}
+
+function isNamespaceMember(node, memberName, bindings) {
+  return (
+    ts.isPropertyAccessExpression(node) &&
+    node.name.text === memberName &&
+    ts.isIdentifier(node.expression) &&
+    bindings.namespaceBindings.has(resolvesTo(node.expression, bindings))
+  )
+}
+
+function isMobileI18nInstance(node, bindings) {
+  if (ts.isIdentifier(node)) {
+    return bindings.instanceBindings.has(resolvesTo(node, bindings))
+  }
+  return isNamespaceMember(node, 'mobileI18n', bindings)
+}
+
+function isEnglishFixedTranslator(node, bindings) {
   return (
     ts.isCallExpression(node) &&
     ts.isPropertyAccessExpression(node.expression) &&
-    ts.isIdentifier(node.expression.expression) &&
-    instanceNames.has(node.expression.expression.text) &&
-    !isShadowed(node.expression.expression, sourceFile, declarations) &&
+    isMobileI18nInstance(node.expression.expression, bindings) &&
     node.expression.name.text === 'getFixedT' &&
     node.arguments.length === 1 &&
     ts.isStringLiteralLike(node.arguments[0]) &&
@@ -102,12 +147,17 @@ function isEnglishFixedTranslator(node, instanceNames, sourceFile, declarations)
   )
 }
 
-function mobileTranslatorPrefix(node, factoryNames, sourceFile, declarations) {
+function isTranslatorFactory(node, bindings) {
+  if (ts.isIdentifier(node)) {
+    return bindings.factoryBindings.has(resolvesTo(node, bindings))
+  }
+  return isNamespaceMember(node, 'createMobileTranslator', bindings)
+}
+
+function mobileTranslatorPrefix(node, bindings) {
   if (
     !ts.isCallExpression(node) ||
-    !ts.isIdentifier(node.expression) ||
-    !factoryNames.has(node.expression.text) ||
-    isShadowed(node.expression, sourceFile, declarations) ||
+    !isTranslatorFactory(node.expression, bindings) ||
     node.arguments.length !== 1 ||
     !ts.isStringLiteralLike(node.arguments[0])
   ) {
@@ -116,13 +166,51 @@ function mobileTranslatorPrefix(node, factoryNames, sourceFile, declarations) {
   return node.arguments[0].text
 }
 
+function directTranslatorPrefix(callee, bindings) {
+  if (ts.isIdentifier(callee)) {
+    const binding = resolvesTo(callee, bindings)
+    if (bindings.translatorBindings.has(binding) || bindings.fixedTranslatorBindings.has(binding)) {
+      return ''
+    }
+    return bindings.prefixedTranslatorBindings.get(binding)
+  }
+  if (isNamespaceMember(callee, 't', bindings)) {
+    return ''
+  }
+  if (
+    ts.isPropertyAccessExpression(callee) &&
+    callee.name.text === 't' &&
+    isMobileI18nInstance(callee.expression, bindings)
+  ) {
+    return ''
+  }
+  return undefined
+}
+
 export function collectMobileTranslationBindings(sourceFile) {
+  const declarations = collectDeclarations(sourceFile)
+  const translatorBindings = new Set()
+  const factoryBindings = new Set()
+  const instanceBindings = new Set()
+  const namespaceBindings = new Set()
+  const fixedTranslatorBindings = new Set()
+  const prefixedTranslatorBindings = new Map()
   const translatorNames = new Set()
-  const translatorFactoryNames = new Set()
-  const instanceNames = new Set()
   const fixedTranslatorNames = new Set()
   const prefixedTranslatorNames = new Map()
-  const declarations = addDeclarations(sourceFile)
+  const bindings = {
+    declarations,
+    factoryBindings,
+    fixedTranslatorBindings,
+    fixedTranslatorNames,
+    instanceBindings,
+    namespaceBindings,
+    prefixedTranslatorBindings,
+    prefixedTranslatorNames,
+    resolveBinding: (identifier) => resolveBinding(identifier, sourceFile, declarations),
+    translatorBindings,
+    translatorNames
+  }
 
   for (const statement of sourceFile.statements) {
     if (
@@ -132,68 +220,52 @@ export function collectMobileTranslationBindings(sourceFile) {
     ) {
       continue
     }
-    for (const element of statement.importClause?.namedBindings?.elements ?? []) {
+    const namedBindings = statement.importClause?.namedBindings
+    if (namedBindings && ts.isNamespaceImport(namedBindings)) {
+      namespaceBindings.add(namedBindings)
+      continue
+    }
+    if (!namedBindings || !ts.isNamedImports(namedBindings)) {
+      continue
+    }
+    for (const element of namedBindings.elements) {
       const importedName = element.propertyName?.text ?? element.name.text
       if (importedName === 't') {
+        translatorBindings.add(element)
         translatorNames.add(element.name.text)
       } else if (importedName === 'createMobileTranslator') {
-        translatorFactoryNames.add(element.name.text)
+        factoryBindings.add(element)
       } else if (importedName === 'mobileI18n') {
-        instanceNames.add(element.name.text)
+        instanceBindings.add(element)
       }
     }
   }
 
-  function collectFixed(node) {
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.initializer &&
-      isEnglishFixedTranslator(node.initializer, instanceNames, sourceFile, declarations)
-    ) {
-      fixedTranslatorNames.add(node.name.text)
-    }
+  function collectLocalTranslators(node) {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
-      const prefix = mobileTranslatorPrefix(
-        node.initializer,
-        translatorFactoryNames,
-        sourceFile,
-        declarations
-      )
+      const binding = bindings.resolveBinding(node.name)
+      if (isEnglishFixedTranslator(node.initializer, bindings)) {
+        fixedTranslatorBindings.add(binding)
+        fixedTranslatorNames.add(node.name.text)
+      }
+      const prefix = mobileTranslatorPrefix(node.initializer, bindings)
       if (prefix !== undefined) {
+        prefixedTranslatorBindings.set(binding, prefix)
         prefixedTranslatorNames.set(node.name.text, prefix)
       }
     }
-    ts.forEachChild(node, collectFixed)
+    ts.forEachChild(node, collectLocalTranslators)
   }
-  collectFixed(sourceFile)
+  collectLocalTranslators(sourceFile)
 
-  return {
-    declarations,
-    fixedTranslatorNames,
-    instanceNames,
-    prefixedTranslatorNames,
-    translatorNames
-  }
+  return bindings
 }
 
-export function mobileTranslationCallPrefix(call, sourceFile, bindings) {
-  const callee = call.expression
-  if (ts.isIdentifier(callee)) {
-    if (isShadowed(callee, sourceFile, bindings.declarations)) {
-      return undefined
-    }
-    if (
-      bindings.translatorNames.has(callee.text) ||
-      bindings.fixedTranslatorNames.has(callee.text)
-    ) {
-      return ''
-    }
-    return bindings.prefixedTranslatorNames.get(callee.text)
-  }
-  return isEnglishFixedTranslator(callee, bindings.instanceNames, sourceFile, bindings.declarations)
-    ? ''
-    : undefined
+export function mobileTranslationCallPrefix(call, _sourceFile, bindings) {
+  return (
+    directTranslatorPrefix(call.expression, bindings) ??
+    (isEnglishFixedTranslator(call.expression, bindings) ? '' : undefined)
+  )
 }
 
 export function isMobileTranslationCall(call, sourceFile, bindings) {

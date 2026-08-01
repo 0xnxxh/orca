@@ -1,7 +1,7 @@
 // xterm.js WebView document + default Tokyonight theme; extracted from TerminalWebView.tsx for the max-lines budget.
 import type { RuntimeMobileTerminalTheme } from '../../../src/shared/runtime-types'
 import { escapeEmbeddedHtmlCopy } from '../i18n/embedded-webview-copy'
-import { t } from '../i18n/mobile-i18n'
+import { getActiveMobileUiLanguageTag, t } from '../i18n/mobile-i18n'
 import { colors } from '../theme/mobile-theme'
 import { TERMINAL_TEXT_SCALES } from '../storage/preferences'
 import { TERMINAL_PATH_TAP_JS } from './terminal-path-tap-injected'
@@ -52,7 +52,7 @@ export const MOBILE_TERMINAL_CARET_OPTIONS = {
 // Why: TUI escape codes assume the desktop's cols/rows, so init xterm at those dims and fit the phone via a measured CSS scale() instead of resizing.
 export function buildTerminalWebViewHtml(): string {
   return `<!DOCTYPE html>
-<html>
+<html lang="${getActiveMobileUiLanguageTag()}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">

@@ -1,6 +1,6 @@
 import { colors } from '../theme/mobile-theme'
 import { escapeEmbeddedHtmlCopy } from '../i18n/embedded-webview-copy'
-import { t } from '../i18n/mobile-i18n'
+import { getActiveMobileUiLanguageTag, t } from '../i18n/mobile-i18n'
 import { MOBILE_RICH_MARKDOWN_KEYBOARD_INSET_SCRIPT } from './mobile-rich-markdown-editor-keyboard-inset-script'
 
 export function escapeInjectedJavaScriptString(value: string): string {
@@ -9,7 +9,7 @@ export function escapeInjectedJavaScriptString(value: string): string {
 
 export function buildMobileRichMarkdownEditorHtml(): string {
   return `<!doctype html>
-<html>
+<html lang="${getActiveMobileUiLanguageTag()}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />

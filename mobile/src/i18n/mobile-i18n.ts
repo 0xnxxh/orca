@@ -76,6 +76,11 @@ export function t(key: string, options?: TOptions): string {
   return mobileI18n.t(key, options)
 }
 
+export function getActiveMobileUiLanguageTag(): string {
+  const locale = normalizeMobileUiLocale(mobileI18n.language)
+  return locale === 'zh' ? 'zh-Hans' : locale
+}
+
 export function createMobileTranslator(keyPrefix: string) {
   return (key: string, options?: TOptions): string => t(`${keyPrefix}.${key}`, options)
 }

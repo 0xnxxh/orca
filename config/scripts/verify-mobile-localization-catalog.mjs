@@ -12,7 +12,7 @@ import {
   mobileTranslationCallPrefix
 } from './mobile-localization-translation-bindings.mjs'
 
-const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx'])
+const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts'])
 const SOURCE_RELATIVE_ROOTS = [path.join('mobile', 'app'), path.join('mobile', 'src')]
 const LOCALES_RELATIVE_DIR = path.join('mobile', 'src', 'i18n', 'locales')
 const MOBILE_LOCALES = ['en', 'es', 'ja', 'ko', 'zh']
@@ -258,15 +258,16 @@ function verifyProtectedLiterals(englishValue, localeValue, locale, key) {
   return issues
 }
 
-function isLanguageNeutralValue(value) {
+function isLanguageNeutralValue(value, locale) {
   const withoutPlaceholders = value.replace(PLACEHOLDER_RE, '').trim()
   return (
     LANGUAGE_NEUTRAL_VALUES.has(value) ||
     /^(?:Alt|Ctrl|Shift)(?:\+(?:[A-Z]|Tab))?$/.test(value) ||
     /^(?:Del|Enter|Esc|Ins|PgDn|PgUp|Tab)$/.test(value) ||
     /^(?:F|H)\d{1,2}$/.test(value) ||
-    /^(?:https?:\/\/|orca:\/\/|lin_api_)/.test(value) ||
+    /^(?:https?:\/\/|orca:\/\/|lin_api_)\S+$/.test(value) ||
     /^(?:npm run dev|Linux: sudo ufw allow 6768|src\/renderer packages\/ui)$/.test(value) ||
+    (locale === 'es' && /^(?:commit|commits)$/.test(withoutPlaceholders)) ||
     withoutPlaceholders === '' ||
     withoutPlaceholders === '..HEAD' ||
     withoutPlaceholders === '×'
@@ -395,7 +396,7 @@ function verifyLocaleEntries(englishEntries, locale, localeEntries) {
     }
     issues.push(...verifyProtectedLiterals(englishValue, localeValue, locale, key))
     issues.push(...verifyTerminology(englishValue, localeValue, locale, key))
-    if (localeValue === englishValue && !isLanguageNeutralValue(englishValue)) {
+    if (localeValue === englishValue && !isLanguageNeutralValue(englishValue, locale)) {
       issues.push(`${locale}.json copies English instead of using fallback: ${key}`)
     }
   }

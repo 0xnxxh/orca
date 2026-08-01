@@ -2,15 +2,15 @@ import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 
-const { locales, reloadAppAsync } = vi.hoisted(() => ({
-  locales: [{ languageTag: 'es-MX' }],
+const { localeState, reloadAppAsync } = vi.hoisted(() => ({
+  localeState: { current: [{ languageTag: 'es-MX' }] },
   reloadAppAsync: vi.fn<() => Promise<void>>()
 }))
 
 vi.mock('expo', () => ({ reloadAppAsync }))
 vi.mock('expo-localization', () => ({
   getLocales: () => [{ languageTag: 'en' }],
-  useLocales: () => locales
+  useLocales: () => localeState.current
 }))
 
 import { useMobileLocaleReload } from './use-mobile-locale-reload'
@@ -28,6 +28,7 @@ describe('useMobileLocaleReload', () => {
     vi.useFakeTimers()
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     reloadAppAsync.mockReset()
+    localeState.current = [{ languageTag: 'es-MX' }]
     const original = console.error
     consoleSpy = vi.spyOn(console, 'error').mockImplementation((...args) => {
       if (typeof args[0] === 'string' && args[0].includes('react-test-renderer is deprecated')) {
@@ -54,6 +55,35 @@ describe('useMobileLocaleReload', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1_000)
     })
+    expect(reloadAppAsync).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries a rejected request after locale preferences change while it is pending', async () => {
+    let rejectReload!: (error: Error) => void
+    reloadAppAsync.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectReload = reject
+        })
+    )
+    reloadAppAsync.mockResolvedValueOnce(undefined)
+    await act(async () => {
+      renderer = create(createElement(Harness))
+    })
+    expect(reloadAppAsync).toHaveBeenCalledTimes(1)
+
+    localeState.current = [{ languageTag: 'ja-JP' }]
+    await act(async () => {
+      renderer?.update(createElement(Harness))
+    })
+    await act(async () => {
+      rejectReload(new Error('reload unavailable'))
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000)
+    })
+
     expect(reloadAppAsync).toHaveBeenCalledTimes(2)
   })
 })

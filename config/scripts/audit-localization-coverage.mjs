@@ -16,6 +16,11 @@ import {
   collectMobileTranslationBindings,
   isMobileTranslationCall
 } from './mobile-localization-translation-bindings.mjs'
+import {
+  findNewLocalizationCandidates,
+  findStaleLocalizationAllowlistEntries,
+  formatStaleLocalizationAllowlistEntries
+} from './localization-allowlist-drift.mjs'
 
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts'])
 const SKIP_PATH_PARTS = new Set(['.git', 'dist', 'node_modules', 'out', '__snapshots__', 'assets'])
@@ -550,56 +555,10 @@ function parseArgs(argv) {
   return options
 }
 
-function candidateSignature(candidate) {
-  return JSON.stringify({
-    filePath: candidate.filePath,
-    kind: candidate.kind,
-    text: candidate.text,
-    dynamic: candidate.dynamic
-  })
-}
-
-function countBySignature(reports) {
-  const counts = new Map()
-  for (const report of reports) {
-    const signature = candidateSignature(report)
-    counts.set(signature, (counts.get(signature) ?? 0) + 1)
-  }
-  return counts
-}
-
 async function readAllowlist(root, allowlistPath) {
   const absolutePath = path.resolve(root, allowlistPath)
   const raw = await fs.readFile(absolutePath, 'utf8')
   return JSON.parse(raw)
-}
-
-function findNewCandidates(reports, allowlist) {
-  const allowedCounts = new Map(
-    allowlist.map((entry) => [
-      JSON.stringify({
-        filePath: entry.filePath,
-        kind: entry.kind,
-        text: entry.text,
-        dynamic: entry.dynamic
-      }),
-      entry.count
-    ])
-  )
-  const seenCounts = countBySignature(reports)
-  const newCandidates = []
-
-  for (const report of reports) {
-    const signature = candidateSignature(report)
-    const seenCount = seenCounts.get(signature) ?? 0
-    const allowedCount = allowedCounts.get(signature) ?? 0
-    if (seenCount > allowedCount) {
-      newCandidates.push(report)
-      seenCounts.set(signature, seenCount - 1)
-    }
-  }
-
-  return newCandidates
 }
 
 export async function main(root = process.cwd(), argv = process.argv.slice(2)) {
@@ -614,13 +573,24 @@ export async function main(root = process.cwd(), argv = process.argv.slice(2)) {
   }
 
   if (options.check) {
-    const allowlist = await readAllowlist(root, options.allowlistPath)
-    const newCandidates = findNewCandidates(reports, allowlist)
+    const sourcePrefix = normalizePath(root, absoluteSourceRoot)
+    const allowlist = (await readAllowlist(root, options.allowlistPath)).filter(
+      (entry) => entry.filePath === sourcePrefix || entry.filePath.startsWith(`${sourcePrefix}/`)
+    )
+    const newCandidates = findNewLocalizationCandidates(reports, allowlist)
     if (newCandidates.length > 0) {
       console.error('New unlocalized UI strings were found.')
       console.error('Localize them or add a reviewed exclusion to the localization allowlist.')
       console.error('')
       console.error(formatReports(root, newCandidates))
+      return 1
+    }
+    const staleEntries = findStaleLocalizationAllowlistEntries(reports, allowlist)
+    if (staleEntries.length > 0) {
+      console.error('Stale localization allowlist entries were found.')
+      console.error('Remove entries or lower counts that no longer match source candidates.')
+      console.error('')
+      console.error(formatStaleLocalizationAllowlistEntries(staleEntries))
       return 1
     }
     console.log(`Localization coverage check passed with ${reports.length} allowlisted candidates.`)

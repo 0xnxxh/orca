@@ -496,7 +496,10 @@
     "medium": "Medio",
     "high": "Alto",
     "urgent": "Urgente",
-    "selected": "Seleccionado"
+    "selected": "Seleccionado",
+    "todo": "Tarea pendiente de {{todoTarget}}",
+    "iterationStatus": "{{iterationStatus}} · {{startDate}} · {{durationDays}} d",
+    "action": "{{actionVerb}} {{taskKindLabel}}"
   },
   "accounts": {
     "add": "Agregue o vuelva a autenticar cuentas desde Configuración de escritorio → Cuentas.",
@@ -930,10 +933,15 @@
   },
   "mobileBranchCompare": {
     "committed": "Commits en la rama",
-    "changedFileCountFile": "Archivo {{changedFileCount}}",
-    "changedFileCountFiles": "Archivos {{changedFileCount}}",
-    "commitCountCommits": "{{commitCount}} se compromete",
+    "changedFileCountFile": "{{changedFileCount}} archivo",
+    "changedFileCountFiles": "{{changedFileCount}} archivos",
+    "commitCountCommit": "{{commitCount}} commit",
+    "commitCountCommits": "{{commitCount}} commits",
     "vs": "frente a {{baseRef}}"
+  },
+  "mobileQuickCommandLaunch": {
+    "quickCommand": "Comando rápido",
+    "inserted": "{{commandLabel}} insertado"
   },
   "mobileCommitMessageAi": {
     "failed": "No se pudo generar el mensaje de commit",
@@ -2486,5 +2494,10 @@
   },
   "filePreview": {
     "metaFallback": "Vista previa"
+  },
+  "hostedReview": {
+    "mergeConfirm": "¿{{action}} {{target}} #{{number}}?",
+    "stateChangeConfirm": "¿{{action}} {{target}} #{{number}}?",
+    "stateChangeTitle": "{{action}} {{target}}"
   }
 }

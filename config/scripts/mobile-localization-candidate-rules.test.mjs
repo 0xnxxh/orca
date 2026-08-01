@@ -1,6 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 
-import { collectLocalizationCandidates } from './audit-localization-coverage.mjs'
+import { describe, expect, it, vi } from 'vitest'
+
+import {
+  collectLocalizationCandidates,
+  main as auditLocalizationCoverage
+} from './audit-localization-coverage.mjs'
 
 describe('mobile-localization-candidate-rules', () => {
   it('finds grammatical fragments returned by repositoryCount', () => {
@@ -61,6 +68,28 @@ export const HTML = \`<!doctype html>
     ])
   })
 
+  it('finds arbitrary doctype documents and template-literal insertHTML copy', () => {
+    const source = [
+      'export const HTML = `<!doctype html>',
+      '<main>Diagram controls</main>',
+      '<script>',
+      "document.execCommand('insertHTML', false, \\`<p>Retry ${name}</p><p>Follow up</p>\\`);",
+      '</script>',
+      '`'
+    ].join('\n')
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/pr-sidebar/MermaidDiagram.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map(({ dynamic, text }) => ({ dynamic, text }))).toEqual([
+      { dynamic: false, text: 'Diagram controls' },
+      { dynamic: true, text: 'Retry' },
+      { dynamic: false, text: 'Follow up' }
+    ])
+  })
+
   it('finds literals assigned to variables that later render in JSX', () => {
     const source = `
 export function Example({ alternate }) {
@@ -85,6 +114,56 @@ export function Example({ alternate }) {
       'Initial recovery note',
       'Updated recovery note'
     ])
+  })
+
+  it('finds literals assigned to variables rendered through user-visible JSX attributes', () => {
+    const source = `
+export function Example() {
+  const copy = 'Save changes'
+  const className = 'not-visible-copy'
+  return <Button title={copy} className={className} />
+}
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/Example.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual(['Save changes'])
+  })
+
+  it('finds unlocalized success-toast object copy', () => {
+    const source = `
+export const launch = {
+  options: { successToast: 'Quick command inserted' }
+}
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/terminal/quick-commands.ts',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual(['Quick command inserted'])
+  })
+
+  it('finds unlocalized fallbacks returned by commentAuthor', () => {
+    const source = `
+function commentAuthor(comment) {
+  return comment.author ?? 'unknown'
+}
+export function Example({ comment }) {
+  return <Text>{commentAuthor(comment)}</Text>
+}
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/app/h/[hostId]/tasks.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual(['unknown'])
   })
 
   it('finds user-visible subject fallbacks in returned rows', () => {
@@ -117,5 +196,44 @@ export function Example(translateMobile) {
     )
 
     expect(candidates.map((candidate) => candidate.text)).toEqual(['Unlocalized shadowed copy'])
+  })
+
+  it('rejects stale allowlist entries before their approval can be reused', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'orca-localization-allowlist-'))
+    const sourceDirectory = path.join(root, 'mobile', 'src')
+    const configDirectory = path.join(root, 'config')
+    mkdirSync(sourceDirectory, { recursive: true })
+    mkdirSync(configDirectory, { recursive: true })
+    writeFileSync(path.join(sourceDirectory, 'Example.tsx'), "export const value = 'internal'\n")
+    writeFileSync(
+      path.join(configDirectory, 'allowlist.json'),
+      `${JSON.stringify([
+        {
+          filePath: 'mobile/src/Example.tsx',
+          kind: 'jsx-text',
+          text: 'Removed approved copy',
+          dynamic: false,
+          count: 1
+        }
+      ])}\n`
+    )
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    try {
+      await expect(
+        auditLocalizationCoverage(root, [
+          '--check',
+          '--source-root',
+          'mobile/src',
+          '--allowlist',
+          'config/allowlist.json'
+        ])
+      ).resolves.toBe(1)
+      expect(error.mock.calls.flat().join('\n')).toContain(
+        'Stale localization allowlist entries were found.'
+      )
+    } finally {
+      error.mockRestore()
+    }
   })
 })

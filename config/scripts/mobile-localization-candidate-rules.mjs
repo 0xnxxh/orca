@@ -41,6 +41,7 @@ const USER_VISIBLE_OBJECT_KEYS = new Set([
   'placeholder',
   'subject',
   'subtitle',
+  'successToast',
   'title',
   'toggleDescription',
   'tooltip'
@@ -112,6 +113,7 @@ const USER_VISIBLE_VARIABLE_SUFFIX_RE =
 const USER_VISIBLE_RETURN_FUNCTIONS = new Set([
   'accessibilityLabelForLine',
   'autoRestoreSummary',
+  'commentAuthor',
   'commentSourceLabel',
   'composerLabel',
   'describeScope',
@@ -460,7 +462,20 @@ export function classifyMobileStringNode(node, userVisibleErrorSource) {
   if (hasAncestorObjectPropertyName(node, new Set(['className', 'classNames']))) {
     return undefined
   }
-  if (isAssignedToRenderedVariable(node)) {
+  if (
+    isAssignedToRenderedVariable(node, (expression) => {
+      if (isRenderedJsxExpression(expression)) {
+        return true
+      }
+      const attributeName = ancestorJsxAttributeName(expression)
+      return Boolean(
+        attributeName &&
+        (USER_VISIBLE_JSX_ATTRIBUTES.has(attributeName) ||
+          MOBILE_USER_VISIBLE_JSX_ATTRIBUTES.has(attributeName) ||
+          MOBILE_USER_VISIBLE_PROPERTY_SUFFIX_RE.test(attributeName))
+      )
+    })
+  ) {
     return 'rendered-variable'
   }
   if (isComparisonOperand(node)) {

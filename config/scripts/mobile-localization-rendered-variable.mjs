@@ -88,7 +88,7 @@ function assignedVariableName(node) {
     : undefined
 }
 
-export function isAssignedToRenderedVariable(node) {
+export function isAssignedToRenderedVariable(node, isRenderedExpression = isRenderedJsxExpression) {
   if (ts.isTemplateExpression(node)) {
     return false
   }
@@ -108,7 +108,7 @@ export function isAssignedToRenderedVariable(node) {
     if (rendered) {
       return
     }
-    if (ts.isIdentifier(current) && current.text === name && isRenderedJsxExpression(current)) {
+    if (ts.isIdentifier(current) && current.text === name && isRenderedExpression(current)) {
       rendered = true
       return
     }

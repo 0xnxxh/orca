@@ -25,12 +25,14 @@ describe('embedded WebView copy', () => {
     await mobileI18n.changeLanguage('es')
 
     const editorHtml = buildMobileRichMarkdownEditorHtml()
+    expect(editorHtml).toContain('<html lang="es">')
     expect(editorHtml).toContain('data-placeholder="Empieza a escribir..."')
     expect(editorHtml).toContain('window.prompt("URL del enlace")')
     expect(editorHtml).toContain('window.prompt("URL de la imagen")')
     expect(editorHtml).toContain(`+ "Tarea" +`)
 
     const terminalHtml = buildTerminalWebViewHtml()
+    expect(terminalHtml).toContain('<html lang="es">')
     expect(terminalHtml).toContain('id="sel-menu-copy">Copiar</button>')
     expect(terminalHtml).toContain('id="sel-menu-all">Seleccionar todo</button>')
   })

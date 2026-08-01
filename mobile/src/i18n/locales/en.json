@@ -1041,6 +1041,10 @@
     "commitCountCommits": "{{commitCount}} commits",
     "vs": "vs {{baseRef}}"
   },
+  "mobileQuickCommandLaunch": {
+    "quickCommand": "Quick command",
+    "inserted": "{{commandLabel}} inserted"
+  },
   "mobileCommitMessageAi": {
     "failed": "Failed to generate commit message",
     "no": "No commit message generated"

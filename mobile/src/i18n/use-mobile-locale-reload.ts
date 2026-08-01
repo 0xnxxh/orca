@@ -8,7 +8,27 @@ const LOCALE_RELOAD_RETRY_MS = 1_000
 export function useMobileLocaleReload(): void {
   const locales = useLocales()
   const reloadRequestedRef = useRef(false)
+  const mountedRef = useRef(true)
+  const [retryPending, setRetryPending] = useState(false)
   const [retryVersion, setRetryVersion] = useState(0)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!retryPending) {
+      return
+    }
+    const retryTimer = setTimeout(() => {
+      setRetryPending(false)
+      setRetryVersion((current) => current + 1)
+    }, LOCALE_RELOAD_RETRY_MS)
+    return () => clearTimeout(retryTimer)
+  }, [retryPending])
 
   useEffect(() => {
     if (
@@ -21,23 +41,12 @@ export function useMobileLocaleReload(): void {
       return
     }
     reloadRequestedRef.current = true
-    let active = true
-    let retryTimer: ReturnType<typeof setTimeout> | null = null
     void reloadAppAsync('Mobile locale changed').catch(() => {
-      if (!active) {
+      reloadRequestedRef.current = false
+      if (!mountedRef.current) {
         return
       }
-      reloadRequestedRef.current = false
-      retryTimer = setTimeout(
-        () => setRetryVersion((current) => current + 1),
-        LOCALE_RELOAD_RETRY_MS
-      )
+      setRetryPending(true)
     })
-    return () => {
-      active = false
-      if (retryTimer) {
-        clearTimeout(retryTimer)
-      }
-    }
   }, [locales, retryVersion])
 }

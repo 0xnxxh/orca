@@ -507,7 +507,9 @@
     "medium": "中等的",
     "high": "高的",
     "urgent": "紧迫的",
-    "selected": "已选择"
+    "selected": "已选择",
+    "iterationStatus": "{{iterationStatus}} · {{startDate}} · {{durationDays}} 天",
+    "action": "{{actionVerb}}{{taskKindLabel}}"
   },
   "accounts": {
     "host": "主机",
@@ -952,6 +954,10 @@
     "changedFileCountFile": "{{changedFileCount}} 文件",
     "changedFileCountFiles": "{{changedFileCount}} 文件",
     "vs": "与 {{baseRef}}"
+  },
+  "mobileQuickCommandLaunch": {
+    "quickCommand": "快捷命令",
+    "inserted": "已插入{{commandLabel}}"
   },
   "mobileCommitMessageAi": {
     "failed": "无法生成 commit 消息",
@@ -2538,5 +2544,10 @@
   },
   "filePreview": {
     "metaFallback": "预览"
+  },
+  "hostedReview": {
+    "mergeConfirm": "{{action}}{{target}} #{{number}}？",
+    "stateChangeConfirm": "{{action}}{{target}} #{{number}}？",
+    "stateChangeTitle": "{{action}}{{target}}"
   }
 }
