@@ -303,6 +303,19 @@ describe('live terminal buffer census', () => {
     expect(getLiveTerminalBufferCensus()).toEqual({ panes: 1, lines: 10, cells: 1_000 })
   })
 
+  it('prefers a manager census over materializing public pane views', () => {
+    const counted = {
+      resetWebglTextureAtlases: vi.fn<() => void>(),
+      getPaneBufferCensus: () => ({ panes: 2, lines: 30, cells: 3_000 }),
+      getPanes: vi.fn(() => [{ id: 1, terminal: terminal(80, 10) }])
+    }
+    registerLivePaneManager(counted)
+    registeredManagers.push(counted)
+
+    expect(getLiveTerminalBufferCensus()).toEqual({ panes: 2, lines: 30, cells: 3_000 })
+    expect(counted.getPanes).not.toHaveBeenCalled()
+  })
+
   it('tolerates a terminal with no buffer rather than emitting NaN', () => {
     registerPanes({ id: 1, terminal: {} })
 
