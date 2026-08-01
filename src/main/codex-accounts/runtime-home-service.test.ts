@@ -206,6 +206,16 @@ function getSharedRuntimeAuthProvenancePath(): string {
   return join(testState.userDataDir, 'codex-runtime-home', 'shared-runtime-auth-provenance.json')
 }
 
+function writePaneRegistry(
+  panes: Record<string, { selectionKey: string; accountId: string | null; homeRoute?: string }>
+): void {
+  writeFileSync(
+    join(testState.userDataDir, 'codex-pane-accounts.json'),
+    `${JSON.stringify({ version: 2, panes })}\n`,
+    'utf-8'
+  )
+}
+
 function getLegacyActiveHostCodexHomePath(): string {
   return join(testState.userDataDir, 'codex-runtime-home', 'active', 'host', 'home')
 }
@@ -300,6 +310,13 @@ describe('CodexRuntimeHomeService', () => {
     process.env.ORCA_USER_DATA_PATH = testState.userDataDir
     mkdirSync(getSystemCodexHomePath(), { recursive: true })
     mkdirSync(getRuntimeCodexHomePath(), { recursive: true })
+    writePaneRegistry({
+      'retained-shared-pane': {
+        selectionKey: 'host',
+        accountId: null,
+        homeRoute: 'shared-home'
+      }
+    })
   })
 
   afterEach(() => {
@@ -1113,6 +1130,49 @@ describe('CodexRuntimeHomeService', () => {
       } else {
         process.env.ORCA_CODEX_HOME = previousOrcaCodexHome
       }
+    }
+  })
+
+  it('skips retired-home reconciliation when no retained host pane can use it', async () => {
+    const syncLegacySharedCodexConfigForRetainedPanes = vi.fn()
+    vi.doMock('./legacy-shared-config-compatibility', () => ({
+      syncLegacySharedCodexConfigForRetainedPanes
+    }))
+    const retainedAuth = createCodexAuthJson('system@example.com', 'acct-system', 'retained')
+    const currentAuth = createCodexAuthJson('system@example.com', 'acct-system', 'current')
+    const retainedConfig = 'model = "retained"\n'
+    writePaneRegistry({
+      'real-home-pane': {
+        selectionKey: 'host',
+        accountId: null,
+        homeRoute: 'real-home'
+      }
+    })
+    writeFileSync(getRuntimeCodexAuthPath(), retainedAuth, 'utf-8')
+    writeFileSync(join(getRuntimeCodexHomePath(), 'config.toml'), retainedConfig, 'utf-8')
+    writeFileSync(getSystemCodexAuthPath(), currentAuth, 'utf-8')
+    writeFileSync(join(getSystemCodexHomePath(), 'config.toml'), 'model = "current"\n', 'utf-8')
+    writeFileSync(
+      getSharedRuntimeAuthProvenancePath(),
+      `${JSON.stringify({ owner: 'system-default', authJson: retainedAuth })}\n`,
+      'utf-8'
+    )
+    const store = createStore(createSettings({ codexSystemDefaultRealHomeEnabled: true }))
+    try {
+      const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+      const service = new CodexRuntimeHomeService(store as never)
+
+      service.reconcileLegacySharedHomeForRetainedPanes()
+      expect(service.prepareForCodexLaunch()).toBeNull()
+      expect(service.prepareForRateLimitFetch()).toBe(getSystemCodexHomePath())
+
+      expect(syncLegacySharedCodexConfigForRetainedPanes).not.toHaveBeenCalled()
+      expect(readFileSync(getRuntimeCodexAuthPath(), 'utf-8')).toBe(retainedAuth)
+      expect(readFileSync(join(getRuntimeCodexHomePath(), 'config.toml'), 'utf-8')).toBe(
+        retainedConfig
+      )
+    } finally {
+      vi.doUnmock('./legacy-shared-config-compatibility')
     }
   })
 

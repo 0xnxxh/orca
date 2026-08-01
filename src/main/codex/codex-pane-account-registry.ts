@@ -239,6 +239,15 @@ export function listRecordedCodexPaneLanes(ptyIds: readonly string[]): Record<st
   return lanesByPtyId
 }
 
+/** True when a retained host pane may still read the retired shared CODEX_HOME. */
+export function hasRecordedLegacySharedCodexPane(): boolean {
+  return Object.values(readRegistry().panes).some(
+    (record) =>
+      record.selectionKey === 'host' &&
+      (record.homeRoute === undefined || record.homeRoute === 'shared-home')
+  )
+}
+
 export const _internals = {
   resetCache: (): void => {
     cachedRegistry = null

@@ -79,7 +79,10 @@ import {
 import { migrateLegacySharedAuthToPerAccountHome } from './legacy-shared-auth-migration'
 import { hasStoredCodexCredential } from './managed-codex-auth-readiness'
 import { syncLegacySharedCodexConfigForRetainedPanes } from './legacy-shared-config-compatibility'
-import type { CodexPaneHomeRoute } from '../codex/codex-pane-account-registry'
+import {
+  hasRecordedLegacySharedCodexPane,
+  type CodexPaneHomeRoute
+} from '../codex/codex-pane-account-registry'
 import { isShellStartupEnvProbeSupported } from '../pty/shell-startup-env'
 
 type CodexSystemDefaultSnapshot = {
@@ -233,8 +236,7 @@ export class CodexRuntimeHomeService {
       // Why (flag ON, system default): run Codex on the user's own ~/.codex.
       // Returning null tells the PTY/env layer to inject no managed CODEX_HOME;
       // the retired mirror is refreshed only for pre-rollout PTYs.
-      this.syncLegacySharedSystemDefaultAuthForRetainedPanes()
-      syncLegacySharedCodexConfigForRetainedPanes()
+      this.reconcileLegacySharedHomeForRetainedPanes()
       return null
     }
     this.invalidateBackfillAfterManagedSystemDefaultLaunch(launchEnv)
@@ -516,7 +518,7 @@ export class CodexRuntimeHomeService {
   }
 
   reconcileLegacySharedHomeForRetainedPanes(): void {
-    if (!this.isHostSystemDefaultRealHome()) {
+    if (!this.isHostSystemDefaultRealHome() || !hasRecordedLegacySharedCodexPane()) {
       return
     }
     this.syncLegacySharedSystemDefaultAuthForRetainedPanes()
@@ -602,7 +604,9 @@ export class CodexRuntimeHomeService {
       // CODEX_HOME before ~/.codex. Nested Orca launches can inherit the
       // managed home, restarting the background OAuth conflict (#5370), so
       // pin this non-interactive lane to the native home explicitly.
-      this.syncLegacySharedSystemDefaultAuthForRetainedPanes()
+      if (hasRecordedLegacySharedCodexPane()) {
+        this.syncLegacySharedSystemDefaultAuthForRetainedPanes()
+      }
       return getSystemCodexHomePath()
     }
     this.syncForCurrentSelection()

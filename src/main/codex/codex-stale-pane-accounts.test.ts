@@ -7,6 +7,7 @@ import {
   _internals,
   forgetCodexPaneAccount,
   getCodexPaneAccount,
+  hasRecordedLegacySharedCodexPane,
   recordCodexPaneAccount
 } from './codex-pane-account-registry'
 import { forgetStaleCodexPanes, listStaleCodexPanes } from './codex-stale-pane-accounts'
@@ -81,6 +82,35 @@ describe('codex pane account registry', () => {
     _internals.resetCache()
 
     expect(getCodexPaneAccount('pty-1')).toEqual({ selectionKey: 'host', accountId: null })
+    expect(hasRecordedLegacySharedCodexPane()).toBe(true)
+  })
+
+  it('runs legacy reconciliation only for host panes that may use the shared home', () => {
+    recordCodexPaneAccount('pty-real', {
+      selectionKey: 'host',
+      accountId: null,
+      homeRoute: 'real-home'
+    })
+    recordCodexPaneAccount('pty-account', {
+      selectionKey: 'host',
+      accountId: 'account-a',
+      homeRoute: 'account-home'
+    })
+    recordCodexPaneAccount('pty-wsl', {
+      selectionKey: 'wsl:Ubuntu',
+      accountId: null,
+      homeRoute: 'wsl-home'
+    })
+
+    expect(hasRecordedLegacySharedCodexPane()).toBe(false)
+
+    recordCodexPaneAccount('pty-shared', {
+      selectionKey: 'host',
+      accountId: null,
+      homeRoute: 'shared-home'
+    })
+
+    expect(hasRecordedLegacySharedCodexPane()).toBe(true)
   })
 
   it('forgets a PTY so a reused id cannot inherit a dead pane account', () => {
