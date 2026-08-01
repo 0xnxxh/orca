@@ -20,6 +20,15 @@ function isWindowsControlTerminationExitCode(exitCode: number | null): boolean {
   return WINDOWS_CONTROL_TERMINATION_EXIT_CODES.has(exitCode >>> 0)
 }
 
+// Why: Electron reports normal teardown (reload/update/quit, and OS or session-manager
+// stops) as `killed` + SIGTERM or a Windows control-termination status.
+function isNormalTerminationStatus(reason: string, exitCode: number | null): boolean {
+  if (reason !== 'killed') {
+    return false
+  }
+  return exitCode === 15 || isWindowsControlTerminationExitCode(exitCode)
+}
+
 function isRecoverableChromiumChildProcess({
   source,
   processType,
@@ -73,10 +82,7 @@ export function shouldRecordProcessGoneCrash({
   if (reason !== 'killed') {
     return true
   }
-  // Why: Electron reports expected Chromium teardown during reload/update as
-  // `killed` + SIGTERM or Windows control termination statuses. Treat real
-  // crash reasons as reportable, but skip these normal termination shapes.
-  if (exitCode === 15 || isWindowsControlTerminationExitCode(exitCode)) {
+  if (isNormalTerminationStatus(reason, exitCode)) {
     return false
   }
   if (expectedTeardown === 'app-shutdown') {
@@ -87,12 +93,19 @@ export function shouldRecordProcessGoneCrash({
 
 export function shouldRecoverRendererAfterProcessGone({
   reason,
+  exitCode,
   expectedTeardown
 }: {
   reason: string
+  exitCode: number | null
   expectedTeardown: ExpectedTeardownScope
 }): boolean {
   if (expectedTeardown === 'app-shutdown') {
+    return false
+  }
+  // Why: an OS/session-manager stop SIGTERMs the whole process tree; reloading races
+  // the terminator and the resurrected renderer dies with SIGKILL, filing a bogus crash.
+  if (isNormalTerminationStatus(reason, exitCode)) {
     return false
   }
   // Why: an integrity failure means Chromium cannot trust the renderer, so a

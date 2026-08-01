@@ -3271,6 +3271,7 @@ describe('createMainWindow', () => {
         shouldRecoverRenderer: (details) =>
           shouldRecoverRendererAfterProcessGone({
             reason: details.reason,
+            exitCode: details.exitCode ?? null,
             expectedTeardown: 'none'
           })
       })
