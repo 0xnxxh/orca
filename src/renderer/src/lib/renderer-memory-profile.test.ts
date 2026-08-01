@@ -55,6 +55,30 @@ describe('collectRendererMemoryProfileCounts', () => {
     expect(collectRendererMemoryProfileCounts()).not.toHaveProperty('profile.truncated')
   })
 
+  // Why the two markers must stay decoupled: a real session sits on the store's own
+  // limit routinely, so wiring it to profile.truncated pins that flag to 1 forever and
+  // it stops meaning "a whole contributor is missing". The contributor reports its own
+  // drop by name instead.
+  it('reports a contributor drop by name without claiming profile truncation', () => {
+    const state = Object.fromEntries(
+      Array.from({ length: 30 }, (_, index) => [
+        `slice${index}`,
+        Array.from({ length: 5 }, () => 0)
+      ])
+    )
+    register('store', () => summarizeStateCollectionSizes(state, 20))
+
+    const counts = collectRendererMemoryProfileCounts()
+    expect(counts['store.unreportedCollections']).toBe(10)
+    expect(counts).not.toHaveProperty('profile.truncated')
+  })
+
+  it('omits the drop marker when a contributor hid nothing', () => {
+    register('store', () => summarizeStateCollectionSizes({ worktrees: [1, 2] }, 20))
+
+    expect(collectRendererMemoryProfileCounts()).toEqual({ 'store.worktrees': 2 })
+  })
+
   it('caps a runaway contributor instead of bloating the breadcrumb', () => {
     register('runaway', () =>
       Object.fromEntries(Array.from({ length: 500 }, (_, index) => [`key${index}`, index + 1]))
@@ -163,10 +187,18 @@ describe('summarizeStateCollectionSizes', () => {
       count: 9
     }
 
+    // Why unreportedCollections is part of the expectation: 4 collections were found
+    // and 2 reported, and a report that hides the other 2 without saying so reads as
+    // "these are all of them".
     expect(summarizeStateCollectionSizes(state, 2)).toEqual({
       worktrees: 50,
-      tabs: 3
+      tabs: 3,
+      unreportedCollections: 2
     })
+  })
+
+  it('omits the marker when nothing was hidden', () => {
+    expect(summarizeStateCollectionSizes({ worktrees: [1, 2] }, 20)).toEqual({ worktrees: 2 })
   })
 
   it('skips empty collections and non-objects', () => {
