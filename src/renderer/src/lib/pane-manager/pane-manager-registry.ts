@@ -45,10 +45,13 @@ export function resetAllTerminalWebglAtlases(): void {
   }
 }
 
-export function resetAndRefreshAllTerminalWebglAtlases(): void {
+export function resetAndRefreshAllTerminalWebglAtlases(reason?: string): void {
   // Why: the atlas wipe is the heavy recovery path; recording it lets a freeze
   // report show whether a post-wake repaint actually ran. Silent breadcrumb.
-  recordTerminalWebglDiagnostic('webgl-atlas-reset', { managers: liveManagers.size })
+  recordTerminalWebglDiagnostic('webgl-atlas-reset', {
+    managers: liveManagers.size,
+    ...(reason ? { reason } : {})
+  })
   const resetManagers: RegisteredPaneManager[] = []
   for (const manager of liveManagers) {
     try {
