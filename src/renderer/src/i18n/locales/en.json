@@ -14695,7 +14695,8 @@
       "listening": "Listening...",
       "focusPaneInstruction": "Focus a terminal, editor, or agent prompt, then press",
       "theShortcut": "the dictation shortcut",
-      "startStopInstruction": "to start or stop.",
+      "startInstruction": "to start voice dictation. Press",
+      "stopInstruction": "again to stop.",
       "settingsInstruction": "Change the model, dictation mode, or shortcut anytime in",
       "settingsLink": "Settings → Voice"
     }

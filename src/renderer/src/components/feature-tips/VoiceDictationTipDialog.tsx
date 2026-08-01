@@ -56,7 +56,6 @@ export function VoiceDictationTipDialog({
                 {tip.title}
               </DialogTitle>
               <DialogDescription className="mt-3 max-w-2xl space-y-3 text-sm leading-relaxed">
-                <span className="block">{tip.description}</span>
                 <span className="block">
                   {translate(
                     'featureTips.voice.focusPaneInstruction',
@@ -72,7 +71,21 @@ export function VoiceDictationTipDialog({
                   ) : (
                     translate('featureTips.voice.theShortcut', 'the dictation shortcut')
                   )}{' '}
-                  {translate('featureTips.voice.startStopInstruction', 'to start or stop.')}
+                  {translate(
+                    'featureTips.voice.startInstruction',
+                    'to start voice dictation. Press'
+                  )}{' '}
+                  {displayShortcut && displayShortcut.keys.length > 0 ? (
+                    <ShortcutKeyCombo
+                      keys={displayShortcut.keys}
+                      doubleTap={displayShortcut.doubleTap}
+                      className="mx-1 align-middle"
+                      keyCapClassName="min-w-0 bg-card px-1.5 py-0 text-[11px] text-foreground shadow-none"
+                    />
+                  ) : (
+                    translate('featureTips.voice.theShortcut', 'the dictation shortcut')
+                  )}{' '}
+                  {translate('featureTips.voice.stopInstruction', 'again to stop.')}
                 </span>
                 <span className="block text-muted-foreground">
                   {translate(

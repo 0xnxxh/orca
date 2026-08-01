@@ -64,7 +64,7 @@ describe('VoiceDictationTipDialog', () => {
 
     expect(html).toContain('TIP')
     expect(html).toContain('Dictate into any pane')
-    expect(html).toContain('Turn speech into text wherever')
+    expect(html).not.toContain('Turn speech into text wherever')
     expect(html).not.toContain('is here')
   })
 
@@ -73,6 +73,8 @@ describe('VoiceDictationTipDialog', () => {
 
     expect(html).toContain('⌘')
     expect(html).toContain('E')
+    expect(html).toContain('to start voice dictation. Press')
+    expect(html).toContain('again to stop.')
     expect(html).toContain('Settings → Voice')
   })
 

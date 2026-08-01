@@ -57,7 +57,7 @@ export const FEATURE_TIPS = [
     priority: 'unseen',
     eyebrow: 'Tip',
     title: 'Dictate into any pane',
-    description: "Turn speech into text wherever you're working.",
+    description: 'Start voice dictation in any focused pane, then use the shortcut again to stop.',
     action: 'enable-voice',
     ctaLabel: 'Set up voice',
     completedByFeatureInteractions: ['voice-dictation']
