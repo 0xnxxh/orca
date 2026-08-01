@@ -426,6 +426,7 @@ export function getDefaultPersistedState(homedir: string): PersistedState {
     projectHostSetups: [],
     projectGroups: [],
     folderWorkspaces: [],
+    deletedFolderWorkspaceSessionTombstones: {},
     sparsePresetsByRepo: {},
     worktreeMeta: {},
     worktreeLineageById: {},
