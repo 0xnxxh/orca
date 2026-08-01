@@ -122,9 +122,24 @@ The focused suite covers fallback decision, tiers, marker, required-tier history
 
 The changed-code-quality wrapper separately reported zero native and zero type-aware findings, then exited because its React Doctor stage did not return parseable Oxlint JSON. This review does not change renderer/React code.
 
+## Windows remote validation
+
+Orca orchestration checked out commit `0d6ea183db957d9ddf04e1536d08e3e5810afaf8` in a new top-level worktree on `windows-loca-spec` and produced these remote reports:
+
+- `validation-artifacts/CRASH-C4-WINDOWS-VALIDATION-0d6ea183.md`
+- `validation-artifacts/CRASH-C4-DEBUGBREAK-VALIDATION-0d6ea183.md`
+
+The host was Windows 11 build 26200 with Intel HD Graphics 530 driver `31.0.101.2111` and Electron 43.1.0. Eleven focused test files passed with 148 tests and one expected Windows permission-test skip; Node/main TypeScript, targeted Oxlint, the max-lines ratchet, the source build, and `dist/win-unpacked/Orca.exe` packaging also passed. Packaging reused the matching `windows-native-registry@3.2.2` binary from the installed Orca 1.4.163 because the host had no Visual Studio C++ toolchain.
+
+The packaged hardware launch loaded ANGLE, D3D11, and the Intel driver and stayed alive for several minutes, so the natural field fault did not reproduce. A separately seeded tier-2 marker selected `--use-angle=swiftshader`, loaded `vk_swiftshader.dll` instead of the Intel vendor modules, stayed alive for more than 80 seconds, and showed one main-process lifecycle with no relaunch loop. This proves packaged marker consumption and vendor-driver bypass, not the first-fault prompt or automatic relaunch.
+
+A follow-up targeted only the isolated packaged GPU child with Windows `DebugBreakProcess` after revalidating its executable, parent PID, `--type=gpu-process`, and disposable `--user-data-dir`. `OpenProcess` and `DebugBreakProcess` both returned success, but Chromium kept the GPU child alive for 15 seconds; no `child-process-gone`, marker, prompt, or relaunch followed. The exact field causal chain therefore remains unvalidated without a naturally affected host or a purpose-built in-app fault hook.
+
+The remote checkout used `core.autocrlf=true`, and its `oxfmt --check` rejected the changed worktree files. The canonical LF worktree passed `oxfmt 0.52.0 --check` on the same six files after the Windows run, so this was not treated as a source-format regression.
+
 ## Residual P1 risks
 
-1. No real affected Windows machine was exercised in this review. Tier 2's SwiftShader/vendor-bypass claim remains unproven against Electron 43.1.0 and the field drivers.
+1. The Windows hardware path and tier-2 SwiftShader path were exercised, but the field `STATUS_BREAKPOINT` did not reproduce. The first-event prompt, marker write, and automatic relaunch remain unproven as one causal packaged sequence.
 2. Launch 1 still experiences the fault, and recovery requires the user to accept a native restart prompt.
 3. Renderer-only `STATUS_BREAKPOINT` (`2369eabe`) does not engage the GPU ladder without a GPU child signal.
 4. An unreadable marker is preserved but cannot protect that launch.
