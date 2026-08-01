@@ -275,6 +275,27 @@ describe('renderer breadcrumb IPC routing', () => {
     }
   })
 
+  // Why: each window emits its own churn notice with a different payload, so
+  // coalescing by name is what keeps a download storm to one ring slot. Without
+  // the registration these carry no message and fall through uncoalesced —
+  // evicting the pre-crash trail this breadcrumb exists to sit beside.
+  it('coalesces speech model-state churn by name across windows', () => {
+    emitRendererBreadcrumb({
+      name: 'speech_model_state_churn',
+      data: { refreshes: 250, noOpRefreshes: 249, windowMs: 4200 }
+    })
+    emitRendererBreadcrumb({
+      name: 'speech_model_state_churn',
+      data: { refreshes: 250, noOpRefreshes: 12, windowMs: 3100 }
+    })
+
+    expect(recordCrashBreadcrumbMock).not.toHaveBeenCalled()
+    expect(recordCoalescedCrashBreadcrumbMock).toHaveBeenCalledTimes(2)
+    for (const call of recordCoalescedCrashBreadcrumbMock.mock.calls) {
+      expect(call[0]).toMatchObject({ coalesceKey: 'speech_model_state_churn' })
+    }
+  })
+
   // Why kind-scoped: a routine post-wake atlas reset must never suppress the
   // context-loss crumb that says the driver gave up on this renderer.
   it('coalesces WebGL diagnostics per kind so one kind cannot mask another', () => {
