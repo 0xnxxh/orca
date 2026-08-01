@@ -367,10 +367,10 @@ function rendererBreadcrumbCoalesceKey(
   // Why coalesce at all: the renderer guard is once-per-tab-id, not
   // once-per-session, so one stale worktree map duplicates every tab id at once
   // and emits a crumb per tab. Why keyed on the flag rather than name alone: the
-  // two verdicts come from different call paths — `true` from the active-terminal
-  // repair effect (the React #185 signature), `false` also from a deliberate
-  // background activation — and coalescing keeps only the newest payload, so
-  // either would erase the other. Two keys still bound the storm.
+  // verdict flips under a persisting duplicate (it tracks whether the tab still
+  // resolves to the active worktree), and coalescing keeps only the newest
+  // payload, so one verdict would erase the other. Two keys still bound the
+  // storm.
   if (name === DUPLICATE_TAB_OWNER_BREADCRUMB) {
     return `${name}:${String(data?.resolvedToActiveWorktree ?? '')}`
   }

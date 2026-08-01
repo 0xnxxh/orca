@@ -319,8 +319,8 @@ describe('renderer breadcrumb IPC routing', () => {
     }
   })
 
-  // Why flag-scoped: coalescing keeps only the newest payload, and the two
-  // verdicts come from different call paths, so either would erase the other.
+  // Why flag-scoped: coalescing keeps only the newest payload, and the verdict
+  // flips under a persisting duplicate, so one would erase the other.
   it('keeps a non-converging duplicate-tab-owner notice out of the converging one', () => {
     emitRendererBreadcrumb({
       name: 'terminal_tab_id_owned_by_multiple_worktrees',

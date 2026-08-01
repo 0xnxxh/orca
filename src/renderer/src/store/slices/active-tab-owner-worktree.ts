@@ -33,7 +33,10 @@ export function resolveActiveTabOwnerWorktreeId(
   // truthiness guard below and silently fall back to the first match — the very
   // misattribution this function exists to remove.
   let activeOwnerId: string | null = null
-  for (const [worktreeId, tabs] of Object.entries(tabsByWorktree)) {
+  // Why keys and not entries: entries allocates a pair array per worktree on a path
+  // that runs per tab activation. Own keys stay safe to index by.
+  for (const worktreeId of Object.keys(tabsByWorktree)) {
+    const tabs = tabsByWorktree[worktreeId]
     if (!tabs.some((tab) => tab.id === tabId)) {
       continue
     }
@@ -48,12 +51,16 @@ export function resolveActiveTabOwnerWorktreeId(
 
   // Why breadcrumb: no production origin for a duplicated tab id is known yet,
   // so a crash bundle carrying this is what proves or kills the hypothesis.
-  // Reading it: `ownerCount > 1` is the load-bearing datum. `true` is the
-  // repair-loop signature (that effect only ever activates a tab from the active
-  // worktree's own list), while `false` also covers a deliberate background
-  // activation such as jump-to-agent. Why the verdict is in the guard key: the
-  // active worktree changes under a persisting duplicate, and coalescing keeps
-  // only the newest payload, so either verdict would otherwise erase the other.
+  // Reading it: `ownerCount > 1` is the load-bearing datum; the verdict only
+  // hints at the caller. A sustained repair loop shows up as `true`, since that
+  // effect picks from the active worktree's own list — but it does not prove the
+  // caller, and the repair effect can emit `false` too: its closure holds the
+  // worktree from its render while this runs against live state, so a worktree
+  // switch landing in between (an earlier-flushed effect, or IPC before the
+  // passive flush) reattributes the tab. So `false` covers that race as well as
+  // a deliberate background activation such as jump-to-agent — discard neither.
+  // Why the verdict is in the guard key: it flips under a persisting duplicate,
+  // and coalescing keeps only the newest payload, so one would erase the other.
   // Still at most two crumbs per tab id.
   const resolvedToActiveWorktree = activeOwnerId !== null
   const verdictKey = `${tabId}:${resolvedToActiveWorktree}`
