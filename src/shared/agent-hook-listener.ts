@@ -2474,10 +2474,13 @@ function normalizeClaudeSubagentLifecycleEvent(
       if (inventory.present && inventory.tasks.length === 0 && roster) {
         // Why: an empty complete inventory reaps only claims not backed by live lifecycle events
         // (restored/inventory-derived phantoms). A delayed stale stop's empty list must not clear
-        // a newer live start's row — that is the uncorrelated-retirement race again.
+        // a newer live start's row — that is the uncorrelated-retirement race again. The reap is
+        // same-source-correlated removal evidence: the authority that minted those rows now
+        // reports empty, so a silent drain must not strand the published working.
         for (const [id, tracked] of roster) {
           if (tracked.restoredFromSnapshot || tracked.backgroundTasksAuthoritative) {
             roster.delete(id)
+            removedRow = true
           }
         }
       } else if (

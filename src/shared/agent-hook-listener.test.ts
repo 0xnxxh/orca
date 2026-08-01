@@ -3372,6 +3372,26 @@ describe('shared agent-hook-listener', () => {
       expect(staleStop?.payload.subagents).toEqual([expect.objectContaining({ id: 'a-new' })])
     })
 
+    it('resolves to done when an empty inventory reaps the last inventory-derived rows', () => {
+      // Why: the authority that minted a1's row now reports empty; a silent
+      // drain would strand the previously published working until the sweeper.
+      const first = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'ghost-1',
+        background_tasks: [
+          { id: 'a1', type: 'subagent', status: 'running', agent_type: 'general-purpose' }
+        ]
+      })
+      expect(first?.payload.state).toBe('working')
+      const second = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'ghost-2',
+        background_tasks: []
+      })
+      expect(second?.payload.state).toBe('done')
+      expect(second?.payload.subagents).toBeUndefined()
+    })
+
     it('clears restored phantom rows when a no-lead stop carries a complete empty inventory', () => {
       seedClaudeSubagentRosterFromSnapshots(state, PANE_KEY, [
         { id: 'a1', state: 'working', startedAt: 1, agentType: 'general-purpose' },
