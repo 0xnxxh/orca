@@ -1,4 +1,5 @@
 import { recordTerminalWebglDiagnostic } from '../../../../shared/terminal-webgl-diagnostics'
+import { registerRendererMemoryProfileContributor } from '../renderer-memory-profile'
 import type { PaneRenderingDiagnostics } from './pane-manager-types'
 
 type RegisteredPaneManager = {
@@ -109,6 +110,51 @@ export function getLivePaneCensus(): { managers: number; panes: number } {
   }
   return { managers: liveManagers.size, panes }
 }
+
+type XtermBufferShape = { cols?: number; buffer?: { active?: { length?: number } } }
+
+/**
+ * Retained size of the live xterm buffers, in scrollback lines and cells.
+ *
+ * Why lines/cells and not `terminalElements`: every retained row is a BufferLine
+ * object holding a Uint32Array of 3 words per cell, so one terminal at the 50k-row
+ * scrollback preset retains 50k of them while an idle one retains ~24. A count of
+ * live terminals is therefore consistent with anything from megabytes to gigabytes
+ * — the same ambiguity the scrollback census resolves for stored buffers, for the
+ * larger live copy. `buffer.active.length` and `cols` are both O(1) reads, so this
+ * stays safe to run inside a near-OOM highwater breadcrumb.
+ */
+export function getLiveTerminalBufferCensus(): {
+  panes: number
+  lines: number
+  cells: number
+} {
+  let panes = 0
+  let lines = 0
+  let cells = 0
+  for (const manager of liveManagers) {
+    let managerPanes: { id: number; terminal: unknown }[] = []
+    try {
+      managerPanes = manager.getPanes?.() ?? []
+    } catch {
+      continue
+    }
+    for (const pane of managerPanes) {
+      try {
+        const terminal = pane.terminal as XtermBufferShape | undefined
+        const length = terminal?.buffer?.active?.length ?? 0
+        panes += 1
+        lines += length
+        cells += length * (terminal?.cols ?? 0)
+      } catch {
+        // Why: a disposed terminal throws on buffer access; siblings still count.
+      }
+    }
+  }
+  return { panes, lines, cells }
+}
+
+registerRendererMemoryProfileContributor('liveTerminalBuffers', getLiveTerminalBufferCensus)
 
 /**
  * Iterates every live pane for the render-desync sentinel. Weakly-held manager

@@ -16,6 +16,7 @@ import { installMonacoDelayerCancellationGuard } from './monaco-delayer-cancella
 import { installMonacoDiffEditorDisposalGuard } from './monaco-diff-editor-disposal'
 import { installMonacoPeekReferencesPreviewOptions } from './monaco-peek-preview-options'
 import { installMonacoContextMenuPaste } from '@/components/editor/install-monaco-context-menu-paste'
+import { setMonacoModelCensusReader } from './monaco-model-memory-census'
 
 globalThis.MonacoEnvironment = {
   getWorker(_workerId, label) {
@@ -86,6 +87,25 @@ installMonacoPeekReferencesPreviewOptions()
 // blocked in Orca's sandboxed renderer. Route it through the trusted IPC bridge
 // so right-click Paste works like Cmd+V (which already works via native events).
 installMonacoContextMenuPaste(monaco)
+
+// Why: models outlive the React panels that opened them, so an OOM report cannot
+// otherwise tell "editor holds 200MB of open files" from "Monaco is retaining models
+// for files whose panel unmounted". getValueLength/getLineCount are both O(1) reads
+// off the piece tree, so this stays safe to run inside a near-OOM breadcrumb.
+setMonacoModelCensusReader(() => {
+  let models = 0
+  let chars = 0
+  let lines = 0
+  for (const model of monaco.editor.getModels()) {
+    models += 1
+    if (model.isDisposed()) {
+      continue
+    }
+    chars += model.getValueLength()
+    lines += model.getLineCount()
+  }
+  return { models, chars, lines }
+})
 
 // Configure Monaco to use the locally bundled editor instead of CDN
 loader.config({ monaco })

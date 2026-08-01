@@ -48,6 +48,13 @@ import { installStoreListenerCensus } from './store-listener-census'
 // loads only if an editor panel mounts — making a missing editorContent.* key
 // ambiguous between "no editor was opened" and "the instrument never ran".
 import '@/components/editor/editor-content-memory-census'
+// Same reasoning for the live terminal and Monaco instruments: each registers from a
+// leaf whose owning subsystem (output scheduler, pane manager, monaco-setup) only
+// loads on first use, so a zeroed key means "nothing held" and a missing key means
+// the instrument never ran.
+import '@/lib/terminal-output-backlog-census'
+import '@/lib/pane-manager/pane-manager-registry'
+import '@/lib/monaco-model-memory-census'
 import { measureTerminalScrollbackBuffers } from './terminal-scrollback-memory-census'
 import {
   registerRendererMemoryProfileContributor,

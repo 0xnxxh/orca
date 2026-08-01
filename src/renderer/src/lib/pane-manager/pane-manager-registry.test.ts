@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
+import { collectRendererMemoryProfileCounts } from '../renderer-memory-profile'
 import {
   forEachLivePaneForDesyncSentinel,
   getLivePaneCensus,
+  getLiveTerminalBufferCensus,
   refitAndRefreshAllTerminalPanes,
   registerLivePaneManager,
   resetAndRefreshAllTerminalWebglAtlases,
@@ -235,5 +237,75 @@ describe('pane manager registry', () => {
     registeredManagers.push(healthy)
 
     expect(getLivePaneCensus()).toEqual({ managers: 2, panes: 1 })
+  })
+})
+
+describe('live terminal buffer census', () => {
+  const registeredManagers: { resetWebglTextureAtlases(): void }[] = []
+
+  function registerPanes(...panes: { id: number; terminal: unknown }[]): void {
+    const manager = {
+      resetWebglTextureAtlases: vi.fn<() => void>(),
+      getPanes: () => panes
+    }
+    registerLivePaneManager(manager)
+    registeredManagers.push(manager)
+  }
+
+  function terminal(cols: number, lines: number): unknown {
+    return { cols, buffer: { active: { length: lines } } }
+  }
+
+  afterEach(() => {
+    for (const manager of registeredManagers.splice(0)) {
+      unregisterLivePaneManager(manager)
+    }
+  })
+
+  it('separates retained scrollback size from the live terminal count', () => {
+    // Why: `terminalElements` says 2 either way; only lines/cells tell an idle
+    // pair apart from a pair sitting at the 50k-row scrollback preset.
+    registerPanes(
+      { id: 1, terminal: terminal(120, 24) },
+      { id: 2, terminal: terminal(120, 50_000) }
+    )
+
+    expect(getLiveTerminalBufferCensus()).toEqual({
+      panes: 2,
+      lines: 50_024,
+      cells: 6_002_880
+    })
+  })
+
+  it('reports into the renderer memory profile', () => {
+    registerPanes({ id: 1, terminal: terminal(80, 5_000) })
+
+    expect(collectRendererMemoryProfileCounts()).toMatchObject({
+      'liveTerminalBuffers.panes': 1,
+      'liveTerminalBuffers.lines': 5_000,
+      'liveTerminalBuffers.cells': 400_000
+    })
+  })
+
+  it('keeps counting siblings when a disposed terminal throws on buffer access', () => {
+    registerPanes(
+      {
+        id: 1,
+        terminal: {
+          get buffer(): never {
+            throw new Error('disposed')
+          }
+        }
+      },
+      { id: 2, terminal: terminal(100, 10) }
+    )
+
+    expect(getLiveTerminalBufferCensus()).toEqual({ panes: 1, lines: 10, cells: 1_000 })
+  })
+
+  it('tolerates a terminal with no buffer rather than emitting NaN', () => {
+    registerPanes({ id: 1, terminal: {} })
+
+    expect(getLiveTerminalBufferCensus()).toEqual({ panes: 1, lines: 0, cells: 0 })
   })
 })

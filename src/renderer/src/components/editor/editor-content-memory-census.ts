@@ -16,9 +16,16 @@ const readers = new Set<() => EditorContentCensus>()
 // leaked its unmount would make this diagnostic a retainer of what it measures.
 const MAX_CENSUS_READERS = 64
 
+// Why counted: hitting the cap makes the census undercount, and an undercount with
+// no signal is worse than no number at all in the one artifact meant to settle
+// where the heap went. Cumulative, never decremented — it reports "we dropped at
+// least N panels", not a live size.
+let droppedReaders = 0
+
 /** Registers one live panel's contents; call the returned function on unmount. */
 export function registerEditorContentCensusReader(read: () => EditorContentCensus): () => void {
   if (readers.size >= MAX_CENSUS_READERS) {
+    droppedReaders += 1
     return () => {}
   }
   readers.add(read)
@@ -52,5 +59,11 @@ registerRendererMemoryProfileContributor('editorContent', () => {
     files += census.files
     chars += census.chars
   }
-  return { panels, files, chars }
+  return { panels, files, chars, droppedPanels: droppedReaders }
 })
+
+/** Test-only: the cap is process-wide, so suites must be able to clear it. */
+export function resetEditorContentCensusForTesting(): void {
+  readers.clear()
+  droppedReaders = 0
+}

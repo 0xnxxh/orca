@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { collectRendererMemoryProfileCounts } from '../../lib/renderer-memory-profile'
 import {
   measureEditorFileContents,
-  registerEditorContentCensusReader
+  registerEditorContentCensusReader,
+  resetEditorContentCensusForTesting
 } from './editor-content-memory-census'
 
 describe('measureEditorFileContents', () => {
@@ -56,5 +57,22 @@ describe('editor content memory profile contributor', () => {
 
     releaseA()
     releaseB()
+  })
+
+  it('reports how many panels the reader cap dropped instead of undercounting silently', () => {
+    // Why: past the cap the census stops seeing new panels. A stuck `panels: 64`
+    // is indistinguishable from "exactly 64 panels" unless the drops are named.
+    for (let i = 0; i < 66; i += 1) {
+      registerEditorContentCensusReader(() => ({ files: 1, chars: 10 }))
+    }
+
+    expect(collectRendererMemoryProfileCounts()).toMatchObject({
+      'editorContent.panels': 64,
+      'editorContent.droppedPanels': 2
+    })
+  })
+
+  afterEach(() => {
+    resetEditorContentCensusForTesting()
   })
 })

@@ -7,6 +7,11 @@
  * TERMINAL_SCROLLBACK_SESSION_BUFFER_BYTE_LIMIT (512KB). A count of 170 is
  * consistent with anywhere from kilobytes to ~1GB, which is the exact ambiguity
  * an OOM highwater breadcrumb needs resolved.
+ *
+ * Read coldRestores/coldRestoreChars as a tripwire, not evidence: nothing currently
+ * writes a key into pendingColdRestoreByPtyId (the live cold-restore payload goes
+ * straight to xterm via writeReplayData), so today they are 0 by construction. They
+ * stay so a future writer is measured on arrival rather than silently unmeasured.
  */
 import type { TerminalLayoutSnapshot } from '../../../shared/types'
 
