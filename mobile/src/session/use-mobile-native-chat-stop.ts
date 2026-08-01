@@ -5,6 +5,7 @@ import {
   sendMobileNativeChatMessageWithOutcome,
   type MobileNativeChatSendOutcome
 } from './mobile-native-chat-send'
+import { acquireMobileNativeChatStopLease } from './mobile-native-chat-stop-lease'
 
 const ESCAPE = String.fromCharCode(27)
 const CODEX_STOP_BACKGROUND_TERMINALS = '/stop'
@@ -36,7 +37,6 @@ export function useMobileNativeChatStop(args: {
     resolve: (completed: boolean) => void
   } | null>(null)
   const activeRouteRef = useRef({ client, enabled, streamIdentity })
-  activeRouteRef.current = { client, enabled, streamIdentity }
   const cancelDelay = useCallback(() => {
     const delay = delayRef.current
     if (!delay) {
@@ -46,26 +46,40 @@ export function useMobileNativeChatStop(args: {
     delayRef.current = null
     delay.resolve(false)
   }, [])
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    activeRouteRef.current = { client, enabled, streamIdentity }
+    return () => {
       generationRef.current += 1
       cancelDelay()
-    },
-    [cancelDelay, client, enabled, streamIdentity]
-  )
+    }
+  }, [cancelDelay, client, enabled, streamIdentity])
   return useCallback(() => {
     const handle = handleRef.current
-    if (!client || !handle || !enabled) {
+    if (!handle) {
       onSendError('Stop not sent (terminal not ready)')
       return
     }
-    cancelPending()
+    const lease = acquireMobileNativeChatStopLease(handle)
+    if (!lease) {
+      return
+    }
+    if (!client || !enabled) {
+      lease.release()
+      onSendError('Stop not sent (terminal not ready)')
+      return
+    }
+    try {
+      cancelPending()
+    } catch (error) {
+      lease.release()
+      throw error
+    }
     generationRef.current += 1
     const generation = generationRef.current
     cancelDelay()
     const agent = agentRef.current
     const stopStreamIdentity = streamIdentity
-    const deadline = openMobileNativeChatSendBudget()
+    const interruptDeadline = openMobileNativeChatSendBudget()
     const isCurrentRoute = (): boolean => {
       const activeRoute = activeRouteRef.current
       return (
@@ -96,7 +110,8 @@ export function useMobileNativeChatStop(args: {
       })
     const send = async (
       text: string,
-      enter: boolean
+      enter: boolean,
+      deadline: number
     ): Promise<MobileNativeChatSendOutcome | null> => {
       if (!isCurrentRoute()) {
         return null
@@ -113,35 +128,48 @@ export function useMobileNativeChatStop(args: {
       })
     }
     void (async () => {
-      const firstEscape = send(ESCAPE, false)
-      if (!(await waitForNextStep())) {
-        return
-      }
-      const outcomes = await Promise.all([firstEscape, send(ESCAPE, false)])
-      if (!isCurrentRoute() || outcomes.includes(null)) {
-        return
-      }
-      const escapes = outcomes as MobileNativeChatSendOutcome[]
-      if (!escapes.includes('accepted')) {
-        // An ambiguous Escape may have landed; a definite failure would invite
-        // a retry into changed prompt state.
-        onSendError(
-          escapes.includes('unknown')
-            ? 'Stop unconfirmed — check chat before retrying'
-            : 'Stop not sent'
+      try {
+        const firstEscape = send(ESCAPE, false, interruptDeadline)
+        if (!(await waitForNextStep())) {
+          await firstEscape
+          return
+        }
+        const outcomes = await Promise.all([firstEscape, send(ESCAPE, false, interruptDeadline)])
+        if (!isCurrentRoute() || outcomes.includes(null)) {
+          return
+        }
+        const escapes = outcomes as MobileNativeChatSendOutcome[]
+        if (!escapes.includes('accepted')) {
+          // An ambiguous Escape may have landed; a definite failure would invite
+          // a retry into changed prompt state.
+          onSendError(
+            escapes.includes('unknown')
+              ? 'Stop unconfirmed — check chat before retrying'
+              : 'Stop not sent'
+          )
+          return
+        }
+        if (agent !== 'codex' || !(await waitForNextStep())) {
+          return
+        }
+        // Cleanup owns a fresh budget: slow accepted Escape acknowledgements
+        // cannot underfund this session-owned final write.
+        const cleanup = await send(
+          CODEX_STOP_BACKGROUND_TERMINALS,
+          true,
+          openMobileNativeChatSendBudget()
         )
-        return
-      }
-      if (agent !== 'codex' || !(await waitForNextStep())) {
-        return
-      }
-      // Codex owns spawned background terminals beyond the interrupted turn;
-      // its /stop command closes them without exiting the reusable session.
-      const cleanup = await send(CODEX_STOP_BACKGROUND_TERMINALS, true)
-      if (cleanup === 'rejected' && isCurrentRoute()) {
-        onSendError('Stop incomplete — send /stop to close background tools')
-      } else if (cleanup === 'unknown' && isCurrentRoute()) {
-        onSendError('Stop unconfirmed — check chat before retrying')
+        if (cleanup === 'rejected' && isCurrentRoute()) {
+          onSendError(
+            'Agent interrupted; background cleanup not sent — send /stop to close background tools'
+          )
+        } else if (cleanup === 'unknown' && isCurrentRoute()) {
+          onSendError(
+            'Agent interrupted; background cleanup unconfirmed — check chat before retrying'
+          )
+        }
+      } finally {
+        lease.release()
       }
     })()
   }, [

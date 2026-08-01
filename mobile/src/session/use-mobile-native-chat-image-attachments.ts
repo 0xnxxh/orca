@@ -12,6 +12,11 @@ import {
   uploadMobileNativeChatImage,
   type PendingNativeChatImage
 } from './mobile-native-chat-image-attachment'
+import { mobileNativeChatImageErrorMessage } from './mobile-native-chat-image-attachment-error'
+import {
+  NO_MOBILE_NATIVE_CHAT_ATTACHMENTS,
+  withMobileNativeChatScopeAttachments
+} from './mobile-native-chat-image-attachment-scope'
 import {
   MOBILE_NATIVE_CHAT_IMAGE_SETTLE_MS,
   pasteMobileNativeChatImagePaths
@@ -57,6 +62,8 @@ type Args = {
     imagePreviewUris?: string[],
     deadline?: number
   ) => Promise<MobileNativeChatSendOutcome>
+  /** Stops image paste from entering the PTY while Stop owns this terminal. */
+  readonly beforeWrite: () => Promise<boolean>
   /** Launch-context text parked on the agent's TUI input line, or null. The
    *  paste's leading clear must cover every line of it, or the draft's earlier
    *  lines survive and ride along with the image. */
@@ -78,28 +85,6 @@ export type MobileNativeChatImageAttachments = {
   readonly sendNativeChat: (text: string) => Promise<boolean>
 }
 
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-const NO_ATTACHMENTS: PendingNativeChatImage[] = []
-
-function withScopeAttachments(
-  byScope: Record<string, PendingNativeChatImage[]>,
-  scope: string,
-  next: PendingNativeChatImage[]
-): Record<string, PendingNativeChatImage[]> {
-  if (next.length > 0) {
-    return { ...byScope, [scope]: next }
-  }
-  const remaining = { ...byScope }
-  delete remaining[scope]
-  return remaining
-}
-
-const defaultSleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms))
-
 export function useMobileNativeChatImageAttachments({
   client,
   activeHandleRef,
@@ -111,10 +96,11 @@ export function useMobileNativeChatImageAttachments({
   showToast,
   onSendError,
   baseSend,
+  beforeWrite,
   readSeededLaunchDraft,
   onAttachSuccess,
   onError,
-  sleep = defaultSleep
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 }: Args): MobileNativeChatImageAttachments {
   const [attachmentsByScope, setAttachmentsByScope] = useState<
     Record<string, PendingNativeChatImage[]>
@@ -130,7 +116,8 @@ export function useMobileNativeChatImageAttachments({
   // Serialize clear/paste/submit ownership per terminal while allowing other tabs to send.
   const sendInFlightTerminalsRef = useRef(new Set<string>())
 
-  const attachments = (scopeKey ? attachmentsByScope[scopeKey] : undefined) ?? NO_ATTACHMENTS
+  const attachments =
+    (scopeKey ? attachmentsByScope[scopeKey] : undefined) ?? NO_MOBILE_NATIVE_CHAT_ATTACHMENTS
 
   const attachImage = useCallback(
     async (source: MobileImageSource): Promise<void> => {
@@ -173,7 +160,7 @@ export function useMobileNativeChatImageAttachments({
           showToast('Photo permission denied', 1500)
           return
         }
-        if (getErrorMessage(error) === CLIPBOARD_IMAGE_TOO_LARGE_ERROR) {
+        if (mobileNativeChatImageErrorMessage(error) === CLIPBOARD_IMAGE_TOO_LARGE_ERROR) {
           showToast('Image too large to attach', 1500)
           return
         }
@@ -207,7 +194,7 @@ export function useMobileNativeChatImageAttachments({
         return
       }
       setAttachmentsByScope((prev) =>
-        withScopeAttachments(
+        withMobileNativeChatScopeAttachments(
           prev,
           scope,
           (prev[scope] ?? []).filter((attachment) => attachment.id !== id)
@@ -228,13 +215,24 @@ export function useMobileNativeChatImageAttachments({
       if (operationTerminal) {
         sendInFlightTerminalsRef.current.add(operationTerminal)
       }
-      // One budget for the whole user action. The paste loop, the settle, and the
-      // text body that follows are a single send from the composer's point of view;
-      // opening a budget per leg let `sending` run to twice the stated ceiling.
-      const deadline = openMobileNativeChatSendBudget()
       try {
+        if (
+          operationTerminal &&
+          client &&
+          enabled &&
+          connState === 'connected' &&
+          !(await beforeWrite())
+        ) {
+          onError?.()
+          onSendError('Message not sent')
+          return false
+        }
+        // One budget for the whole user action. Stop waiting is excluded because
+        // no part of this send has touched the PTY yet.
+        const deadline = openMobileNativeChatSendBudget()
         const scope = scopeKey
-        const pendingImages = (scope ? attachmentsByScope[scope] : undefined) ?? NO_ATTACHMENTS
+        const pendingImages =
+          (scope ? attachmentsByScope[scope] : undefined) ?? NO_MOBILE_NATIVE_CHAT_ATTACHMENTS
         if (pendingImages.length === 0 || !scope) {
           // Heal a previously failed paste: a text-only send to that terminal would
           // otherwise glue the stale image paste onto this message. Best-effort —
@@ -328,7 +326,7 @@ export function useMobileNativeChatImageAttachments({
             // send usually DID land, and a kept chip would double-send the image.
             const sentIds = new Set(pendingImages.map((attachment) => attachment.id))
             setAttachmentsByScope((prev) =>
-              withScopeAttachments(
+              withMobileNativeChatScopeAttachments(
                 prev,
                 scope,
                 (prev[scope] ?? []).filter((attachment) => !sentIds.has(attachment.id))
@@ -355,6 +353,7 @@ export function useMobileNativeChatImageAttachments({
       activeHandleRef,
       attachmentsByScope,
       baseSend,
+      beforeWrite,
       client,
       connState,
       deviceTokenRef,

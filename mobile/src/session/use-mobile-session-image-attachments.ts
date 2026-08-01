@@ -31,6 +31,7 @@ type Args = {
     images?: string[],
     deadline?: number
   ) => Promise<MobileNativeChatSendOutcome>
+  readonly beforeNativeChatWrite: () => Promise<boolean>
   /** Launch-context text parked on the agent's TUI input line, or null — sizes
    *  the image paste's leading clear so a multi-line draft cannot ride along. */
   readonly readSeededLaunchDraft: () => string | null
@@ -57,6 +58,7 @@ export function useMobileSessionImageAttachments({
   getActiveWorktreeConnectionId,
   beforeTerminalSend,
   nativeChatBaseSend,
+  beforeNativeChatWrite,
   readSeededLaunchDraft,
   showToast,
   onNativeChatSendError,
@@ -90,6 +92,7 @@ export function useMobileSessionImageAttachments({
     showToast,
     onSendError: onNativeChatSendError,
     baseSend: nativeChatBaseSend,
+    beforeWrite: beforeNativeChatWrite,
     readSeededLaunchDraft,
     onAttachSuccess: onSuccess,
     onError

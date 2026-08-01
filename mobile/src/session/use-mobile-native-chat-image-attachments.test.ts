@@ -70,6 +70,7 @@ function baseArgs(overrides: Partial<HookArgs> & Pick<HookArgs, 'client'>): Hook
     showToast: vi.fn(),
     onSendError: vi.fn(),
     baseSend: vi.fn().mockResolvedValue('accepted'),
+    beforeWrite: vi.fn().mockResolvedValue(true),
     readSeededLaunchDraft: () => null,
     sleep: async () => {},
     ...overrides

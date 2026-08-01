@@ -1,9 +1,13 @@
-import { createElement, useRef } from 'react'
+import { createElement, useEffect, useRef } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import { markRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import { MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS } from './mobile-native-chat-send'
+import {
+  resetMobileNativeChatStopLeasesForTests,
+  waitForMobileNativeChatStopLease
+} from './mobile-native-chat-stop-lease'
 import { useMobileNativeChatStop } from './use-mobile-native-chat-stop'
 
 describe('useMobileNativeChatStop', () => {
@@ -20,6 +24,7 @@ describe('useMobileNativeChatStop', () => {
       result: { send: { accepted: true } }
     })
     onSendError.mockReset()
+    resetMobileNativeChatStopLeasesForTests()
   })
 
   afterEach(() => {
@@ -27,6 +32,7 @@ describe('useMobileNativeChatStop', () => {
     renderer = null
     stop = null
     vi.useRealTimers()
+    resetMobileNativeChatStopLeasesForTests()
   })
 
   function Harness({
@@ -41,7 +47,9 @@ describe('useMobileNativeChatStop', () => {
     const handleRef = useRef<string | null>('terminal-1')
     const deviceTokenRef = useRef<string | null>('mobile-1')
     const agentRef = useRef<string | null>(agent)
-    agentRef.current = agent
+    useEffect(() => {
+      agentRef.current = agent
+    }, [agent])
     stop = useMobileNativeChatStop({
       client: { sendRequest } as unknown as RpcClient,
       enabled,
@@ -240,28 +248,117 @@ describe('useMobileNativeChatStop', () => {
 
     expect(onSendError).toHaveBeenCalledOnce()
     expect(onSendError).toHaveBeenCalledWith(
-      'Stop incomplete — send /stop to close background tools'
+      'Agent interrupted; background cleanup not sent — send /stop to close background tools'
     )
   })
 
-  it('suppresses an older Stop verdict after a newer Stop succeeds', async () => {
-    let rejectFirst!: (error: Error) => void
-    const first = new Promise((_, reject) => {
-      rejectFirst = reject
-    })
-    sendRequest
-      .mockReturnValueOnce(first)
-      .mockResolvedValue({ ok: true, result: { send: { accepted: true } } })
-    await render(true, 'stream-1')
+  it('describes an ambiguous Codex cleanup without questioning the accepted interrupt', async () => {
+    sendRequest.mockImplementation((_method: string, params: { text?: string }) =>
+      params.text === '/stop'
+        ? Promise.reject(markRpcDeliveryUnknown(new Error('rpc timeout')))
+        : Promise.resolve({ ok: true, result: { send: { accepted: true } } })
+    )
+    await render(true, 'stream-1', 'codex')
 
-    act(() => stop?.())
     act(() => stop?.())
     await act(async () => vi.runAllTimersAsync())
+
+    expect(onSendError).toHaveBeenCalledWith(
+      'Agent interrupted; background cleanup unconfirmed — check chat before retrying'
+    )
+  })
+
+  it('ignores duplicate Stop taps and runs Codex cleanup exactly once', async () => {
+    await render(true, 'stream-1', 'codex')
+
+    act(() => {
+      stop?.()
+      stop?.()
+      stop?.()
+    })
+    await act(async () => vi.runAllTimersAsync())
+
+    expect(sendRequest).toHaveBeenCalledTimes(3)
+    expect(sendRequest.mock.calls.filter(([, params]) => params.text === '/stop')).toHaveLength(1)
+  })
+
+  it.each([
+    ['first', 0],
+    ['second', 1]
+  ])(
+    'runs Codex cleanup once when only the %s Escape is accepted',
+    async (_case, acceptedIndex) => {
+      let escapeIndex = 0
+      sendRequest.mockImplementation((_method: string, params: { text?: string }) => {
+        const accepted = params.text === '/stop' || escapeIndex === acceptedIndex
+        if (params.text !== '/stop') {
+          escapeIndex += 1
+        }
+        return Promise.resolve({ ok: true, result: { send: { accepted } } })
+      })
+      await render(true, 'stream-1', 'codex')
+
+      act(() => stop?.())
+      await act(async () => vi.runAllTimersAsync())
+
+      expect(sendRequest.mock.calls.filter(([, params]) => params.text === '/stop')).toHaveLength(1)
+      expect(onSendError).not.toHaveBeenCalled()
+    }
+  )
+
+  it('gives cleanup a fresh budget after slow accepted Escape acknowledgements', async () => {
+    sendRequest.mockImplementation((_method: string, params: { text?: string }) => {
+      const response = { ok: true, result: { send: { accepted: true } } }
+      return params.text === '\x1b'
+        ? new Promise((resolve) => setTimeout(() => resolve(response), 13_500))
+        : Promise.resolve(response)
+    })
+    await render(true, 'stream-1', 'codex')
+
+    act(() => stop?.())
+    await act(async () => vi.runAllTimersAsync())
+
+    expect(sendRequest).toHaveBeenCalledTimes(3)
+    expect(sendRequest.mock.calls[2]?.[1]).toMatchObject({ text: '/stop', enter: true })
+    expect(sendRequest.mock.calls[2]?.[2]).toMatchObject({
+      timeoutMs: MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS,
+      budgetSpansConnect: true
+    })
+  })
+
+  it('releases queued writers after an Escape failure', async () => {
+    sendRequest.mockResolvedValue({ ok: true, result: { send: { accepted: false } } })
+    await render(true, 'stream-1')
+    const released = vi.fn()
+
+    act(() => stop?.())
+    void waitForMobileNativeChatStopLease('terminal-1').then(released)
+    await act(async () => vi.runAllTimersAsync())
+
+    expect(released).toHaveBeenCalledOnce()
+  })
+
+  it('holds the lease through an in-flight Escape after unmount, then releases it', async () => {
+    let resolveEscape!: (value: unknown) => void
+    sendRequest.mockReturnValue(
+      new Promise((resolve) => {
+        resolveEscape = resolve
+      })
+    )
+    await render(true, 'stream-1')
+    const released = vi.fn()
+
+    act(() => stop?.())
+    void waitForMobileNativeChatStopLease('terminal-1').then(released)
+    act(() => renderer?.unmount())
+    renderer = null
+    await Promise.resolve()
+    expect(released).not.toHaveBeenCalled()
+
     await act(async () => {
-      rejectFirst(new Error('late failure'))
+      resolveEscape({ ok: true, result: { send: { accepted: true } } })
       await Promise.resolve()
     })
-
-    expect(onSendError).not.toHaveBeenCalled()
+    expect(released).toHaveBeenCalledOnce()
   })
 })

@@ -30,7 +30,7 @@ import { useMobileNativeChatMessageSend } from './use-mobile-native-chat-message
 import { useMobileNativeChatSession } from './use-mobile-native-chat-session'
 import { useMobileNativeChatPrompts } from './use-mobile-native-chat-prompts'
 import { useMobileNativeChatStop } from './use-mobile-native-chat-stop'
-import { useNativeChatAcceptedAction } from './use-native-chat-action-outcomes'
+import { useMobileNativeChatControllerWriters } from './use-mobile-native-chat-controller-writers'
 import { useThrottledLatestValue } from './use-throttled-latest-value'
 
 const NATIVE_CHAT_STREAM_THROTTLE_MS = 50
@@ -73,6 +73,8 @@ export type MobileNativeChatController = {
     images?: string[],
     deadline?: number
   ) => Promise<MobileNativeChatSendOutcome>
+  /** Waits out a terminal Stop before a caller performs its first PTY write. */
+  beforeNativeChatWrite: () => Promise<boolean>
   /** Launch-context text still parked on the agent's TUI input line, or null.
    *  Image sends read it to size their leading clear (one Ctrl+U per line). */
   readSeededLaunchDraft: () => string | null
@@ -194,8 +196,7 @@ export function useMobileNativeChatController(args: {
   // Every chat write gates on both: the lease proves the input floor is ours, and
   // `connState` collapses a render before the lease does on disconnect.
   const inputSendable = nativeChatInputLeaseReady && connState === 'connected'
-
-  const { answerAsk: handleNativeChatAnswerAsk, cancelPending: cancelNativeChatAnswer } =
+  const { answerAsk: answerAskWrite, cancelPending: cancelNativeChatAnswer } =
     useMobileNativeChatAnswerSend({
       client,
       enabled: inputSendable,
@@ -207,7 +208,7 @@ export function useMobileNativeChatController(args: {
       onSendError
     })
 
-  const handleNativeChatCancelAsk = useMobileNativeChatCancelAsk({
+  const cancelAskWrite = useMobileNativeChatCancelAsk({
     client,
     enabled: inputSendable,
     handleRef: activeHandleRef,
@@ -216,7 +217,7 @@ export function useMobileNativeChatController(args: {
     onSendError
   })
 
-  const handleNativeChatRespondPermission = useMobileNativeChatPermissionSend({
+  const permissionWrite = useMobileNativeChatPermissionSend({
     client,
     enabled: inputSendable,
     handleRef: activeHandleRef,
@@ -241,9 +242,9 @@ export function useMobileNativeChatController(args: {
   })
 
   const {
-    send: handleNativeChatSend,
-    sendWithOutcome: handleNativeChatSendWithOutcome,
-    answerQuestion: handleNativeChatQuestionAnswer
+    send: messageWrite,
+    sendWithOutcome: messageWriteWithOutcome,
+    answerQuestion: questionAnswerWrite
   } = useMobileNativeChatMessageSend({
     client,
     enabled: inputSendable,
@@ -257,10 +258,19 @@ export function useMobileNativeChatController(args: {
     holdUnconfirmedSend,
     onSendError
   })
-  // Card actions retire the route's held failure banner too, not just sends.
-  const answerAsk = useNativeChatAcceptedAction(handleNativeChatAnswerAsk, onSendResolved)
-  const cancelAsk = useNativeChatAcceptedAction(handleNativeChatCancelAsk, onSendResolved)
-  const respond = useNativeChatAcceptedAction(handleNativeChatRespondPermission, onSendResolved)
+  const writers = useMobileNativeChatControllerWriters({
+    client,
+    enabled: inputSendable,
+    handleRef: activeHandleRef,
+    streamIdentity,
+    answerAskWrite,
+    cancelAskWrite,
+    permissionWrite,
+    questionAnswerWrite,
+    messageWrite,
+    messageWriteWithOutcome,
+    onSendResolved
+  })
 
   return {
     isTabChatView,
@@ -278,15 +288,16 @@ export function useMobileNativeChatController(args: {
     nativeChatQuestion,
     nativeChatAsk,
     handleNativeChatOpenFile,
-    handleNativeChatAnswerAsk: answerAsk,
-    handleNativeChatCancelAsk: cancelAsk,
-    handleNativeChatRespondPermission: respond,
+    handleNativeChatAnswerAsk: writers.answerAsk,
+    handleNativeChatCancelAsk: writers.cancelAsk,
+    handleNativeChatRespondPermission: writers.respondPermission,
     handleNativeChatStop,
     nativeChatFilePaths,
     loadNativeChatFiles,
-    handleNativeChatQuestionAnswer,
-    handleNativeChatSend,
-    handleNativeChatSendWithOutcome,
+    handleNativeChatQuestionAnswer: writers.answerQuestion,
+    handleNativeChatSend: writers.send,
+    handleNativeChatSendWithOutcome: writers.sendWithOutcome,
+    beforeNativeChatWrite: writers.beforeWrite,
     readSeededLaunchDraft
   }
 }
