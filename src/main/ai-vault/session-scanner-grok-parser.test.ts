@@ -41,6 +41,16 @@ describe('AI Vault Grok session parser', () => {
     expect(result?.endsWith('...')).toBe(true)
   })
 
+  it('drops an astral char straddling the preview scan cap instead of splitting it', () => {
+    // Hidden context is skipped by the fold, so the 4096-code-unit scan cap lands
+    // mid-emoji while the visible text stays well under the 220-char preview cap.
+    const hidden = `<system-reminder>${'x'.repeat(4057)}</system-reminder>`
+    const result = extractGrokContentText(`${hidden}ask😀tail`)
+
+    expect(hidden).toHaveLength(4092)
+    expect(result).toBe('ask')
+  })
+
   it('stores the unwrapped user_query as firstUserPrompt under full capture', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-ai-vault-grok-first-'))
     tempRoots.push(root)
