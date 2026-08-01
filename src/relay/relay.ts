@@ -53,7 +53,7 @@ import { resolveSetupAgentSequenceLaunchCommand } from '../shared/setup-agent-se
 import { pickRemoteCliEnv } from './remote-cli-env'
 import {
   decideRelayGrace,
-  retryDeferredShutdownAfterGraceReconfigure,
+  decideRelayGraceReconfigure,
   type RelayGraceBranch
 } from './relay-grace-branch'
 import { relayLogLine } from './relay-diagnostic-log'
@@ -690,18 +690,16 @@ async function main(): Promise<void> {
       const previousGraceMs = ptyHandler.configuredGraceTimeMs
       // Why: the host sends 0 before system sleep so live remote PTYs survive longer than the ordinary grace window.
       ptyHandler.setGraceTimeMs(Math.floor(seconds) * 1000)
-      // Why: startGrace samples the configured value at arm time, so a raise that lands while the idle
-      // timer is already running would still fire at the old deadline. Re-arm only on an actual change
-      // — the host re-asserts the same value on every establish, and restarting the window on those
-      // would keep a grace alive indefinitely.
-      if (
-        ptyHandler.configuredGraceTimeMs !== previousGraceMs &&
-        graceDeadlineAt !== null &&
-        graceReason !== null &&
-        !shutdownInFlight
-      ) {
+      const reconfigure = decideRelayGraceReconfigure({
+        previousConfiguredGraceMs: previousGraceMs,
+        nextConfiguredGraceMs: ptyHandler.configuredGraceTimeMs,
+        graceTimerArmed: graceDeadlineAt !== null && graceReason !== null,
+        shutdownInFlight,
+        currentBranch: graceBranch
+      })
+      if (reconfigure.rearm) {
         startGrace('grace reconfigured', {
-          retryDeferredShutdown: retryDeferredShutdownAfterGraceReconfigure(graceBranch)
+          retryDeferredShutdown: reconfigure.retryDeferredShutdown
         })
       }
     }

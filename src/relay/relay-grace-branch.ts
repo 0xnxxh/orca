@@ -23,10 +23,40 @@ export type RelayGraceDecision = {
   timeoutMs: number
 }
 
-export function retryDeferredShutdownAfterGraceReconfigure(
+export type RelayGraceReconfigureInput = {
+  previousConfiguredGraceMs: number
+  nextConfiguredGraceMs: number
+  /** A grace window with a real deadline is running; an unlimited (deadline-less) one is not re-armed. */
+  graceTimerArmed: boolean
+  shutdownInFlight: boolean
   currentBranch: RelayGraceBranch | null
-): boolean {
-  return currentBranch === 'shutdown-deferred'
+}
+
+export type RelayGraceReconfigureDecision =
+  | { rearm: false }
+  | { rearm: true; retryDeferredShutdown: boolean }
+
+/**
+ * Decides whether a live grace change must re-arm the running grace timer.
+ *
+ * Why a decision rather than inline gating: `startGrace` samples the configured grace at arm time, so
+ * this gate is the only thing that makes a post-launch raise take effect on an already-running window.
+ */
+export function decideRelayGraceReconfigure(
+  input: RelayGraceReconfigureInput
+): RelayGraceReconfigureDecision {
+  // Why only on an actual change: the host re-asserts the same value on every establish, and
+  // restarting the window on those would keep a grace alive indefinitely.
+  if (
+    input.nextConfiguredGraceMs === input.previousConfiguredGraceMs ||
+    !input.graceTimerArmed ||
+    input.shutdownInFlight
+  ) {
+    return { rearm: false }
+  }
+  // Why carry the branch forward: re-arming without it downgrades a deferred shutdown to an ordinary
+  // configured window, and the refused kill is never retried.
+  return { rearm: true, retryDeferredShutdown: input.currentBranch === 'shutdown-deferred' }
 }
 
 /**

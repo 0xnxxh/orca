@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   decideRelayGrace,
-  retryDeferredShutdownAfterGraceReconfigure,
-  type RelayGraceDecisionInput
+  decideRelayGraceReconfigure,
+  type RelayGraceDecisionInput,
+  type RelayGraceReconfigureInput
 } from './relay-grace-branch'
 
 const EMPTY_DETACHED_STARTUP_GRACE_MS = 30_000
@@ -68,19 +69,6 @@ describe('decideRelayGrace', () => {
       ).toEqual({ branch: 'shutdown-deferred', timeoutMs: IDLE_RELAY_GRACE_MS })
     })
 
-    it('preserves shutdown-deferred when grace is reconfigured to zero', () => {
-      // Why a non-zero starting grace: configureRelayGraceTime only re-arms on an actual change,
-      // so the reconfiguration this models must cross a real boundary, not 0 → 0.
-      const current = decide({ configuredGraceMs: 10_000, retryDeferredShutdown: true })
-
-      expect(
-        decide({
-          configuredGraceMs: 0,
-          retryDeferredShutdown: retryDeferredShutdownAfterGraceReconfigure(current.branch)
-        })
-      ).toEqual({ branch: 'shutdown-deferred', timeoutMs: IDLE_RELAY_GRACE_MS })
-    })
-
     it('prefers startup-empty-detached over the idle cap', () => {
       expect(
         decide({
@@ -113,5 +101,50 @@ describe('decideRelayGrace', () => {
         })
       ).toEqual({ branch: 'idle-no-ptys', timeoutMs: IDLE_RELAY_GRACE_MS })
     })
+  })
+})
+
+function reconfigure(overrides: Partial<RelayGraceReconfigureInput> = {}) {
+  return decideRelayGraceReconfigure({
+    previousConfiguredGraceMs: 10_000,
+    nextConfiguredGraceMs: 86_400_000,
+    graceTimerArmed: true,
+    shutdownInFlight: false,
+    currentBranch: 'configured',
+    ...overrides
+  })
+}
+
+describe('decideRelayGraceReconfigure', () => {
+  it('re-arms a running window so a raised grace takes effect at the new deadline', () => {
+    // Why: the reported bug's call site. startGrace samples the grace at arm time, so without this
+    // re-arm a raise landing mid-window still fires at the old deadline.
+    expect(reconfigure()).toEqual({ rearm: true, retryDeferredShutdown: false })
+  })
+
+  it('preserves shutdown-deferred across the re-arm', () => {
+    const rearmed = reconfigure({ nextConfiguredGraceMs: 0, currentBranch: 'shutdown-deferred' })
+
+    expect(rearmed).toEqual({ rearm: true, retryDeferredShutdown: true })
+    expect(
+      decide({
+        configuredGraceMs: 0,
+        retryDeferredShutdown: rearmed.rearm && rearmed.retryDeferredShutdown
+      })
+    ).toEqual({ branch: 'shutdown-deferred', timeoutMs: IDLE_RELAY_GRACE_MS })
+  })
+
+  it('ignores a re-assertion of the same grace', () => {
+    // Why: the host re-asserts its grace on every establish; re-arming on those would keep the
+    // window alive indefinitely.
+    expect(reconfigure({ previousConfiguredGraceMs: 86_400_000 })).toEqual({ rearm: false })
+  })
+
+  it('does not arm a window that was never running', () => {
+    expect(reconfigure({ graceTimerArmed: false })).toEqual({ rearm: false })
+  })
+
+  it('does not re-arm once shutdown is in flight', () => {
+    expect(reconfigure({ shutdownInFlight: true })).toEqual({ rearm: false })
   })
 })
