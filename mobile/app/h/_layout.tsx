@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { View, StyleSheet, PanResponder } from 'react-native'
-import { Stack, useGlobalSearchParams, usePathname } from 'expo-router'
+import { Stack, useGlobalSearchParams, usePathname, useRouter } from 'expo-router'
 import { colors } from '../../src/theme/mobile-theme'
 import { useResponsiveLayout } from '../../src/layout/responsive-layout'
 import {
@@ -12,6 +12,7 @@ import {
 } from '../../src/storage/preferences'
 import { HostProtocolGate } from '../../src/components/HostProtocolGate'
 import { HostScreen } from './[hostId]/index'
+import { useMobileTaskHostNavigation } from '../../src/tasks/use-mobile-task-host-navigation'
 
 // Keep at least this much room for the detail pane when resizing the sidebar.
 const MIN_DETAIL_WIDTH = 320
@@ -63,6 +64,8 @@ export default function HostGroupLayout() {
   const { isWideLayout, width: windowWidth } = useResponsiveLayout()
   const { hostId, action } = useGlobalSearchParams<{ hostId?: string; action?: string }>()
   const pathname = usePathname()
+  const router = useRouter()
+  useMobileTaskHostNavigation(router, hostId)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [sidebarWidth, setSidebarWidth] = useState(HOST_SIDEBAR_DEFAULT_WIDTH)
 
