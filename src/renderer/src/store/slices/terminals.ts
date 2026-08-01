@@ -1904,15 +1904,18 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
   },
 
   setActiveTab: (tabId) => {
+    let tabOwnerWorktreeId: string | null = null
     set((s) => {
       // Why: focusing a terminal tab clears its bell, but only for the active worktree — clearing a not-yet-visible background tab (worktree activation / jump-to-agent) would swallow the signal.
-      const tabOwnerWorktreeId = resolveActiveTabOwnerWorktreeId(
+      tabOwnerWorktreeId = resolveActiveTabOwnerWorktreeId(
         s.tabsByWorktree,
         s.activeWorktreeId,
         tabId
       )
+      const isActiveWorktreeTab =
+        tabOwnerWorktreeId !== null && tabOwnerWorktreeId === s.activeWorktreeId
       const nextUnreadTerminalTabs =
-        tabOwnerWorktreeId === s.activeWorktreeId && s.unreadTerminalTabs[tabId]
+        isActiveWorktreeTab && s.unreadTerminalTabs[tabId]
           ? (() => {
               const copy = { ...s.unreadTerminalTabs }
               delete copy[tabId]
@@ -1920,7 +1923,6 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
             })()
           : s.unreadTerminalTabs
       // Why: only pin global activeTabId to active-worktree tabs — markTerminalTabUnread treats it as "the visible tab" and would swallow BELs on a background tab (e.g. jump-to-agent).
-      const isActiveWorktreeTab = tabOwnerWorktreeId === s.activeWorktreeId
       return {
         activeTabId: isActiveWorktreeTab ? tabId : s.activeTabId,
         // Why: a redundant activation must not reallocate this map — Terminal's
@@ -1928,17 +1930,25 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         // can't converge activeTabId (tab id reused by an earlier-scanned
         // worktree) would otherwise re-trigger itself into React error #185.
         activeTabIdByWorktree:
-          tabOwnerWorktreeId && s.activeTabIdByWorktree[tabOwnerWorktreeId] !== tabId
+          tabOwnerWorktreeId !== null && s.activeTabIdByWorktree[tabOwnerWorktreeId] !== tabId
             ? { ...s.activeTabIdByWorktree, [tabOwnerWorktreeId]: tabId }
             : s.activeTabIdByWorktree,
         unreadTerminalTabs: nextUnreadTerminalTabs
       }
     })
-    const item = Object.values(get().unifiedTabsByWorktree)
-      .flat()
-      .find((entry) => entry.contentType === 'terminal' && entry.entityId === tabId)
+    const state = get()
+    const ownerUnifiedTabs =
+      tabOwnerWorktreeId !== null ? (state.unifiedTabsByWorktree[tabOwnerWorktreeId] ?? []) : []
+    // Why: a duplicated entity id must activate the same owner chosen above.
+    const item =
+      ownerUnifiedTabs.find(
+        (entry) => entry.contentType === 'terminal' && entry.entityId === tabId
+      ) ??
+      Object.values(state.unifiedTabsByWorktree)
+        .flat()
+        .find((entry) => entry.contentType === 'terminal' && entry.entityId === tabId)
     if (item) {
-      get().activateTab(item.id)
+      state.activateTab(item.id)
     }
   },
 

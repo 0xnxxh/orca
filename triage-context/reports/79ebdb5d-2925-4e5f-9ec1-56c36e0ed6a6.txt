@@ -1,0 +1,100 @@
+[Crash Report]
+
+Report ID: 79ebdb5d-2925-4e5f-9ec1-56c36e0ed6a6
+Created: 2026-08-01T03:49:58.640Z
+Status: pending
+Source: renderer
+Process: react-render
+Reason: react-error-boundary
+Exit code: unknown
+App version: 1.4.163
+Platform: win32 10.0.26200 x64
+Electron: 43.1.0
+Chrome: 150.0.7871.47
+
+Diagnostic log:
+- Status: attached
+- Bundle submission ID: 0fQs_s-Bk96DYxJvnMXZCA
+- Spans: 428
+- Bytes: 184041
+
+Details:
+- boundary_id: terminal.workbench
+- surface: terminal-workbench
+- error_name: Error
+- error_message: Minified React error #185; visit https:/[redacted-path]
+- error_stack: Error: Minified React error #185; visit https:/[redacted-path]
+    at getRootForUpdatedFiber (file:///C:[redacted-path])
+    at enqueueConcurrentHookUpdate (file:///C:[redacted-path])
+    at dispatchSetStateInternal (file:///C:[redacted-path])
+    at dispatchSetState (file:///C:[redacted-path])
+    at file:///C:[redacted-path]
+    at commitHookEffectListMount (file:///C:[redacted-path])
+    at commitPassiveMountOnFiber (file:///C:[redacted-path])
+    at recursivelyTraversePassiveMountEffects (file:///C:[redacted-path])
+    at commitPassiveMountOnFiber (file:///C:[redacted-path])
+    at recursivelyTraversePassiveMountEffects (file:///C:[redacted-path])
+- component_stack: at TerminalPaneOverlayLayer$1 (file:///C:[redacted-path])
+    at div (<anonymous>)
+    at WorktreeSplitSurface$1 (file:///C:[redacted-path])
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at Terminal (file:///C:[redacted-path])
+    at RecoverableRenderErrorBoundary (file:///C:[redacted-path])
+    at Suspense (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at RecoverableRenderErrorBoundary (file:///C:[redacted-path])
+    at LinkRoutingPreferenceDialogProvider (file:///C:[redacted-path])
+    at ConfirmationDialogProvider (file:///C:[redacted-path])
+    at Provider (file:///C:[redacted-path])
+    at TooltipProvider$1 (file:///C:[redacted-path])
+    at TooltipProvider (file:///C:[redacted-path])
+    at div (<anonymous>)
+    at App (file:///C:[redacted-path])
+    at RecoverableRenderErrorBoundary (file:///C:[redacted-path])
+    at RendererRoot (file:///C:[redacted-path])
+    at I18nextProvider (file:///C:[redacted-path])
+    at I18nProvider (file:///C:[redacted-path])
+- active_view: terminal
+- active_modal: none
+- active_tab_type: terminal
+- right_sidebar_tab: explorer
+- has_active_worktree: true
+
+Recent activity:
+- 2026-08-01T03:37:21.082Z: terminal_webgl_diagnostic (managers=6, kind=webgl-atlas-reset, suppressedSinceLast=9)
+- 2026-08-01T03:37:39.371Z: renderer_memory (reason=interval, usedHeapMB=138, totalHeapMB=243, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=80, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T03:37:51.642Z: terminal_webgl_diagnostic (managers=6, kind=webgl-atlas-reset, suppressedSinceLast=28)
+- 2026-08-01T03:38:39.365Z: renderer_memory (reason=interval, usedHeapMB=89, totalHeapMB=105, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=12, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T03:39:39.370Z: renderer_memory (reason=interval, usedHeapMB=89, totalHeapMB=161, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=12, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T03:40:39.367Z: renderer_memory (reason=interval, usedHeapMB=98, totalHeapMB=117, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=21, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T03:41:39.370Z: renderer_memory (reason=interval, usedHeapMB=110, totalHeapMB=149, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=14, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T03:42:38.167Z: terminal_webgl_diagnostic (managers=6, kind=webgl-atlas-reset, suppressedSinceLast=24)
+- 2026-08-01T03:42:39.363Z: renderer_memory (reason=interval, usedHeapMB=89, totalHeapMB=157, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=14, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T03:43:08.426Z: terminal_webgl_diagnostic (managers=6, kind=webgl-atlas-reset, suppressedSinceLast=19)
+- 2026-08-01T03:43:39.073Z: terminal_webgl_diagnostic (managers=6, kind=webgl-atlas-reset, suppressedSinceLast=31)
+- 2026-08-01T03:43:39.385Z: renderer_memory (reason=interval, usedHeapMB=122, totalHeapMB=204, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=33, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T03:44:09.199Z: terminal_webgl_diagnostic (managers=6, kind=webgl-atlas-reset, suppressedSinceLast=39)
+- 2026-08-01T03:44:39.366Z: renderer_memory (reason=interval, usedHeapMB=93, totalHeapMB=158, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=15, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T03:44:40.528Z: terminal_webgl_diagnostic (managers=6, kind=webgl-atlas-reset, suppressedSinceLast=29)
+- 2026-08-01T03:45:11.147Z: terminal_webgl_diagnostic (managers=6, kind=webgl-atlas-reset, suppressedSinceLast=17)
+- 2026-08-01T03:45:39.410Z: renderer_memory (reason=interval, usedHeapMB=127, totalHeapMB=202, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=29, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T03:45:41.907Z: terminal_webgl_diagnostic (managers=6, kind=webgl-atlas-reset, suppressedSinceLast=7)
+- 2026-08-01T03:46:12.078Z: terminal_webgl_diagnostic (managers=6, kind=webgl-atlas-reset, suppressedSinceLast=6)
+- 2026-08-01T03:46:39.368Z: renderer_memory (reason=interval, usedHeapMB=112, totalHeapMB=252, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=17, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T03:46:42.109Z: terminal_webgl_diagnostic (managers=6, kind=webgl-atlas-reset, suppressedSinceLast=14)
+- 2026-08-01T03:47:12.208Z: terminal_webgl_diagnostic (managers=6, kind=webgl-atlas-reset, suppressedSinceLast=27)
+- 2026-08-01T03:47:39.406Z: renderer_memory (reason=interval, usedHeapMB=107, totalHeapMB=185, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=14, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T03:47:42.327Z: terminal_webgl_diagnostic (managers=6, kind=webgl-atlas-reset, suppressedSinceLast=33)
+- 2026-08-01T03:48:13.503Z: terminal_webgl_diagnostic (managers=6, kind=webgl-atlas-reset, suppressedSinceLast=8)
+- 2026-08-01T03:48:39.428Z: renderer_memory (reason=interval, usedHeapMB=185, totalHeapMB=250, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=105, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T03:48:44.188Z: terminal_webgl_diagnostic (managers=6, kind=webgl-atlas-reset, suppressedSinceLast=7)
+- 2026-08-01T03:49:14.745Z: terminal_webgl_diagnostic (managers=6, kind=webgl-atlas-reset, suppressedSinceLast=24)
+- 2026-08-01T03:49:39.395Z: renderer_memory (reason=interval, usedHeapMB=123, totalHeapMB=233, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=30, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T03:49:48.722Z: terminal_webgl_diagnostic (managers=0, kind=webgl-atlas-reset, suppressedSinceLast=10)

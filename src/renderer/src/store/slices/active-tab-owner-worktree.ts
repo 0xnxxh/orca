@@ -2,9 +2,8 @@ import type { TerminalTab } from '../../../../shared/types'
 import { recordRendererCrashBreadcrumb } from '../../lib/crash-breadcrumb-recorder'
 
 const reportedDuplicateTabVerdicts = new Set<string>()
-// Why capped: this set is never pruned and tab ids are minted per created tab,
-// so a long-lived duplicated session would grow it without bound. 256 distinct
-// tab ids have already made the point a crash bundle needs.
+// Why capped: this set is never pruned and each tab id adds up to two verdict
+// keys. 256 keys cover 128–256 duplicated ids, enough evidence for a bundle.
 const MAX_REPORTED_DUPLICATE_TAB_VERDICTS = 256
 
 /** Test seam: the duplicate breadcrumb is once-per-tab-id-per-verdict per session. */
@@ -49,8 +48,8 @@ export function resolveActiveTabOwnerWorktreeId(
     }
   }
 
-  // Why breadcrumb: no production origin for a duplicated tab id is known yet,
-  // so a crash bundle carrying this is what proves or kills the hypothesis.
+  // Why breadcrumb: hydration can retain duplicates after a worktree id change,
+  // but current field reports predate this signal.
   // Reading it: `ownerCount > 1` is the load-bearing datum; the verdict only
   // hints at the caller. A sustained repair loop shows up as `true`, since that
   // effect picks from the active worktree's own list — but it does not prove the

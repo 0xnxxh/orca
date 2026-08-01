@@ -1,0 +1,100 @@
+[Crash Report]
+
+Report ID: fb339a6b-2bc8-4502-8e72-0b7fa9c56b25
+Created: 2026-08-01T18:29:09.352Z
+Status: pending
+Source: renderer
+Process: react-render
+Reason: react-error-boundary
+Exit code: unknown
+App version: 1.4.163
+Platform: win32 10.0.26200 x64
+Electron: 43.1.0
+Chrome: 150.0.7871.47
+
+Diagnostic log:
+- Status: attached
+- Bundle submission ID: RVuz36cvczjSXVw7D4C3Cw
+- Spans: 7853
+- Bytes: 4193953
+
+Details:
+- boundary_id: terminal.workbench
+- surface: terminal-workbench
+- error_name: Error
+- error_message: Minified React error #185; visit https:/[redacted-path]
+- error_stack: Error: Minified React error #185; visit https:/[redacted-path]
+    at getRootForUpdatedFiber (file:///C:[redacted-path])
+    at enqueueConcurrentHookUpdate (file:///C:[redacted-path])
+    at dispatchSetStateInternal (file:///C:[redacted-path])
+    at dispatchSetState (file:///C:[redacted-path])
+    at file:///C:[redacted-path]
+    at commitHookEffectListMount (file:///C:[redacted-path])
+    at commitPassiveMountOnFiber (file:///C:[redacted-path])
+    at recursivelyTraversePassiveMountEffects (file:///C:[redacted-path])
+    at commitPassiveMountOnFiber (file:///C:[redacted-path])
+    at recursivelyTraversePassiveMountEffects (file:///C:[redacted-path])
+- component_stack: at TerminalPaneOverlayLayer$1 (file:///C:[redacted-path])
+    at div (<anonymous>)
+    at WorktreeSplitSurface$1 (file:///C:[redacted-path])
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at Terminal (file:///C:[redacted-path])
+    at RecoverableRenderErrorBoundary (file:///C:[redacted-path])
+    at Suspense (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at RecoverableRenderErrorBoundary (file:///C:[redacted-path])
+    at LinkRoutingPreferenceDialogProvider (file:///C:[redacted-path])
+    at ConfirmationDialogProvider (file:///C:[redacted-path])
+    at Provider (file:///C:[redacted-path])
+    at TooltipProvider$1 (file:///C:[redacted-path])
+    at TooltipProvider (file:///C:[redacted-path])
+    at div (<anonymous>)
+    at App (file:///C:[redacted-path])
+    at RecoverableRenderErrorBoundary (file:///C:[redacted-path])
+    at RendererRoot (file:///C:[redacted-path])
+    at I18nextProvider (file:///C:[redacted-path])
+    at I18nProvider (file:///C:[redacted-path])
+- active_view: terminal
+- active_modal: none
+- active_tab_type: terminal
+- right_sidebar_tab: source-control
+- has_active_worktree: true
+
+Recent activity:
+- 2026-08-01T18:17:30.427Z: renderer_memory (reason=interval, usedHeapMB=904, totalHeapMB=977, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=66, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T18:18:49.065Z: agent_state_changed (agentType=claude, state=working, suppressedSinceLast=5)
+- 2026-08-01T18:19:24.192Z: agent_state_changed (agentType=claude, state=done)
+- 2026-08-01T18:19:35.867Z: agent_state_changed (agentType=claude, state=working)
+- 2026-08-01T18:19:54.024Z: renderer_memory (reason=interval, usedHeapMB=690, totalHeapMB=871, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=66, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T18:20:26.316Z: agent_state_changed (agentType=claude, state=working, suppressedSinceLast=6)
+- 2026-08-01T18:21:07.748Z: agent_state_changed (agentType=claude, state=waiting, suppressedSinceLast=1)
+- 2026-08-01T18:21:13.333Z: agent_state_changed (agentType=claude, state=working)
+- 2026-08-01T18:22:11.675Z: agent_state_changed (agentType=claude, state=working, suppressedSinceLast=1)
+- 2026-08-01T18:22:41.852Z: agent_state_changed (agentType=claude, state=working, suppressedSinceLast=5)
+- 2026-08-01T18:23:03.113Z: renderer_memory (reason=interval, usedHeapMB=828, totalHeapMB=889, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=70, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T18:23:19.779Z: agent_state_changed (agentType=claude, state=working, suppressedSinceLast=4)
+- 2026-08-01T18:23:35.775Z: renderer_memory (reason=interval, usedHeapMB=744, totalHeapMB=879, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=54, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T18:23:37.649Z: terminal_webgl_diagnostic (managers=67, kind=webgl-atlas-reset, suppressedSinceLast=1)
+- 2026-08-01T18:23:41.027Z: terminal_replay_guard_wedged_release (paneId=1, leafIdHash=66fba4fe, tabIdHash=99abdb70, worktreeIdHash=b9491f0d)
+- 2026-08-01T18:23:41.478Z: terminal_replay_guard_wedged_release (paneId=1, leafIdHash=9889d06b, tabIdHash=30a76265, worktreeIdHash=b9491f0d)
+- 2026-08-01T18:23:51.468Z: terminal_replay_guard_wedged_release (paneId=1, leafIdHash=50ae493c, tabIdHash=4ac3f056, worktreeIdHash=b9491f0d)
+- 2026-08-01T18:23:51.468Z: terminal_replay_guard_wedged_release (paneId=1, leafIdHash=7bbefd62, tabIdHash=6d236733, worktreeIdHash=b9491f0d)
+- 2026-08-01T18:23:51.979Z: terminal_replay_guard_wedged_release (paneId=1, leafIdHash=20fe7e50, tabIdHash=41b87b90, worktreeIdHash=b9491f0d)
+- 2026-08-01T18:24:06.617Z: agent_state_changed (agentType=claude, state=working, suppressedSinceLast=5)
+- 2026-08-01T18:24:13.829Z: agent_state_changed (agentType=claude, state=done)
+- 2026-08-01T18:24:21.698Z: renderer_memory (reason=interval, usedHeapMB=609, totalHeapMB=818, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=48, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T18:25:23.173Z: renderer_memory (reason=interval, usedHeapMB=722, totalHeapMB=833, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=51, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T18:25:51.221Z: terminal_park_verdict_churn (tabId=web-terminal-5ba47c7e-7e50-4665-9989-e8554d734470, flips=12, elapsedMs=30644, windowMs=60000)
+- 2026-08-01T18:26:21.708Z: renderer_memory (reason=interval, usedHeapMB=593, totalHeapMB=806, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=42, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T18:27:13.640Z: terminal_park_verdict_churn (tabId=web-terminal-5ba47c7e-7e50-4665-9989-e8554d734470, flips=12, elapsedMs=52143, windowMs=60000)
+- 2026-08-01T18:27:21.709Z: renderer_memory (reason=interval, usedHeapMB=619, totalHeapMB=790, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=44, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T18:27:49.452Z: terminal_park_verdict_churn (tabId=web-terminal-4ec4ba0e-f2d1-4c4e-a355-de7494f1bdb5, flips=12, elapsedMs=34328, windowMs=60000, suppressedSinceLast=1)
+- 2026-08-01T18:28:21.954Z: renderer_memory (reason=interval, usedHeapMB=595, totalHeapMB=818, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=41, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T18:28:36.273Z: terminal_park_verdict_churn (tabId=web-terminal-4ec4ba0e-f2d1-4c4e-a355-de7494f1bdb5, flips=12, elapsedMs=17478, windowMs=60000, suppressedSinceLast=2)

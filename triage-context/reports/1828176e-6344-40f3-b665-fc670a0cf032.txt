@@ -1,0 +1,116 @@
+[Crash Report]
+
+Report ID: 1828176e-6344-40f3-b665-fc670a0cf032
+Created: 2026-08-01T12:47:39.492Z
+Status: pending
+Source: renderer
+Process: react-render
+Reason: react-error-boundary
+Exit code: unknown
+App version: 1.4.163
+Platform: darwin 25.5.0 arm64
+Electron: 43.1.0
+Chrome: 150.0.7871.47
+
+Diagnostic log:
+- Status: attached
+- Bundle submission ID: zrKFm_iU20q_EfwYXOe6zQ
+- Spans: 2855
+- Bytes: 1464825
+
+Details:
+- boundary_id: terminal.workbench
+- surface: terminal-workbench
+- error_name: Error
+- error_message: Minified React error #185; visit https:/[redacted-path]
+- error_stack: Error: Minified React error #185; visit https:/[redacted-path]
+    at getRootForUpdatedFiber (file://[redacted-path])
+    at enqueueConcurrentHookUpdate (file://[redacted-path])
+    at dispatchSetStateInternal (file://[redacted-path])
+    at dispatchSetState (file://[redacted-path])
+    at file://[redacted-path]
+    at commitHookEffectListMount (file://[redacted-path])
+    at commitPassiveMountOnFiber (file://[redacted-path])
+    at recursivelyTraversePassiveMountEffects (file://[redacted-path])
+    at commitPassiveMountOnFiber (file://[redacted-path])
+    at recursivelyTraversePassiveMountEffects (file://[redacted-path])
+- component_stack: at SortableTab (file://[redacted-path])
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at SortableContext (file://[redacted-path])
+    at div (<anonymous>)
+    at TabBarInner (file://[redacted-path])
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at TabGroupPanel (file://[redacted-path])
+    at SplitNode (file://[redacted-path])
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at DndContext$1 (file://[redacted-path])
+    at TabDragProvider (file://[redacted-path])
+    at TabGroupSplitLayout (file://[redacted-path])
+    at div (<anonymous>)
+    at WorktreeSplitSurface$1 (file://[redacted-path])
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at Terminal (file://[redacted-path])
+    at RecoverableRenderErrorBoundary (file://[redacted-path])
+    at Suspense (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at div (<anonymous>)
+    at RecoverableRenderErrorBoundary (file://[redacted-path])
+    at LinkRoutingPreferenceDialogProvider (file://[redacted-path])
+    at ConfirmationDialogProvider (file://[redacted-path])
+    at Provider (file://[redacted-path])
+    at TooltipProvider$1 (file://[redacted-path])
+    at TooltipProvider (file://[redacted-path])
+    at div (<anonymous>)
+    at App (file://[redacted-path])
+    at RecoverableRenderErrorBoundary (file://[redacted-path])
+    at RendererRoot (file://[redacted-path])
+    at I18nextProvider (file://[redacted-path])
+    at I18nProvider (file://[redacted-path])
+- active_view: terminal
+- active_modal: none
+- active_tab_type: terminal
+- right_sidebar_tab: checks
+- has_active_worktree: true
+
+Recent activity:
+- 2026-08-01T12:42:18.542Z: terminal_webgl_diagnostic (managers=4, kind=webgl-atlas-reset, suppressedSinceLast=7)
+- 2026-08-01T12:42:39.451Z: manual_reload_requested (ignoreCache=true)
+- 2026-08-01T12:42:39.653Z: renderer_bootstrap_started (dev=false)
+- 2026-08-01T12:42:39.653Z: renderer_memory (reason=startup, usedHeapMB=82, totalHeapMB=105, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=35, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T12:42:39.654Z: renderer_bootstrap_rendered
+- 2026-08-01T12:42:39.657Z: main_window_loaded
+- 2026-08-01T12:42:51.320Z: terminal_webgl_diagnostic (managers=11, kind=webgl-atlas-reset, suppressedSinceLast=20)
+- 2026-08-01T12:43:21.661Z: terminal_webgl_diagnostic (managers=11, kind=webgl-atlas-reset, suppressedSinceLast=20)
+- 2026-08-01T12:43:39.669Z: renderer_memory (reason=interval, usedHeapMB=66, totalHeapMB=126, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=17, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T12:43:40.768Z: sidebar_worktree_activate (worktreeId=bd62a90c-a7ef-4e24-bf84-f80f5391b15b::C:[redacted-path], repoId=bd62a90c-a7ef-4e24-bf84-f80f5391b15b, wasActive=false, sshDisconnected=false)
+- 2026-08-01T12:44:09.299Z: terminal_webgl_diagnostic (managers=12, kind=webgl-atlas-reset, suppressedSinceLast=27)
+- 2026-08-01T12:44:31.374Z: sidebar_worktree_activate (worktreeId=bd62a90c-a7ef-4e24-bf84-f80f5391b15b::C:[redacted-path], repoId=bd62a90c-a7ef-4e24-bf84-f80f5391b15b, wasActive=false, sshDisconnected=false)
+- 2026-08-01T12:44:39.654Z: renderer_memory (reason=interval, usedHeapMB=97, totalHeapMB=160, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=38, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T12:45:00.293Z: terminal_webgl_diagnostic (managers=13, kind=webgl-atlas-reset, suppressedSinceLast=6)
+- 2026-08-01T12:45:08.206Z: sidebar_worktree_activate (worktreeId=bd62a90c-a7ef-4e24-bf84-f80f5391b15b::C:[redacted-path], repoId=bd62a90c-a7ef-4e24-bf84-f80f5391b15b, wasActive=false, sshDisconnected=false)
+- 2026-08-01T12:45:09.974Z: sidebar_worktree_activate (worktreeId=8b728906-85bd-407e-9ad9-eff919c8d1c8::[redacted-path], repoId=8b728906-85bd-407e-9ad9-eff919c8d1c8, wasActive=false, sshDisconnected=false)
+- 2026-08-01T12:45:12.176Z: sidebar_worktree_activate (worktreeId=8b728906-85bd-407e-9ad9-eff919c8d1c8::[redacted-path], repoId=8b728906-85bd-407e-9ad9-eff919c8d1c8, wasActive=false, sshDisconnected=false)
+- 2026-08-01T12:45:14.558Z: sidebar_worktree_activate (worktreeId=8b728906-85bd-407e-9ad9-eff919c8d1c8::[redacted-path], repoId=8b728906-85bd-407e-9ad9-eff919c8d1c8, wasActive=false, sshDisconnected=false)
+- 2026-08-01T12:45:21.389Z: sidebar_worktree_activate (worktreeId=8b728906-85bd-407e-9ad9-eff919c8d1c8::[redacted-path], repoId=8b728906-85bd-407e-9ad9-eff919c8d1c8, wasActive=false, sshDisconnected=false)
+- 2026-08-01T12:45:30.184Z: sidebar_worktree_activate (worktreeId=8b728906-85bd-407e-9ad9-eff919c8d1c8::[redacted-path], repoId=8b728906-85bd-407e-9ad9-eff919c8d1c8, wasActive=true, sshDisconnected=false)
+- 2026-08-01T12:45:35.890Z: sidebar_worktree_activate (worktreeId=8b728906-85bd-407e-9ad9-eff919c8d1c8::[redacted-path], repoId=8b728906-85bd-407e-9ad9-eff919c8d1c8, wasActive=true, sshDisconnected=false)
+- 2026-08-01T12:45:36.930Z: terminal_webgl_diagnostic (managers=19, kind=webgl-atlas-reset, suppressedSinceLast=12)
+- 2026-08-01T12:45:39.653Z: renderer_memory (reason=interval, usedHeapMB=123, totalHeapMB=193, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=50, browserWebviews=0, registeredBrowserGuests=0)
+- 2026-08-01T12:45:43.644Z: sidebar_worktree_activate (worktreeId=bd62a90c-a7ef-4e24-bf84-f80f5391b15b::C:[redacted-path], repoId=bd62a90c-a7ef-4e24-bf84-f80f5391b15b, wasActive=false, sshDisconnected=false)
+- 2026-08-01T12:45:45.142Z: sidebar_worktree_activate (worktreeId=8b728906-85bd-407e-9ad9-eff919c8d1c8::[redacted-path], repoId=8b728906-85bd-407e-9ad9-eff919c8d1c8, wasActive=false, sshDisconnected=false)
+- 2026-08-01T12:46:02.547Z: sidebar_worktree_activate (worktreeId=8b728906-85bd-407e-9ad9-eff919c8d1c8::[redacted-path], repoId=8b728906-85bd-407e-9ad9-eff919c8d1c8, wasActive=false, sshDisconnected=false)
+- 2026-08-01T12:46:03.484Z: sidebar_worktree_activate (worktreeId=8b728906-85bd-407e-9ad9-eff919c8d1c8::[redacted-path], repoId=8b728906-85bd-407e-9ad9-eff919c8d1c8, wasActive=true, sshDisconnected=false)
+- 2026-08-01T12:46:17.005Z: sidebar_worktree_activate (worktreeId=8b728906-85bd-407e-9ad9-eff919c8d1c8::[redacted-path], repoId=8b728906-85bd-407e-9ad9-eff919c8d1c8, wasActive=false, sshDisconnected=false)
+- 2026-08-01T12:46:17.127Z: terminal_webgl_diagnostic (managers=22, kind=webgl-atlas-reset, suppressedSinceLast=15)
+- 2026-08-01T12:46:39.712Z: renderer_memory (reason=interval, usedHeapMB=173, totalHeapMB=348, heapLimitMB=4192, heapSource=v8, mallocedMB=1, blinkAllocatedMB=26, browserWebviews=0, registeredBrowserGuests=0)

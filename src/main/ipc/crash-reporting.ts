@@ -364,13 +364,8 @@ function rendererBreadcrumbCoalesceKey(
   if (name === TERMINAL_WEBGL_DIAGNOSTIC_BREADCRUMB) {
     return `${name}:${String(data?.kind ?? '')}`
   }
-  // Why coalesce at all: the renderer guard is once-per-tab-id, not
-  // once-per-session, so one stale worktree map duplicates every tab id at once
-  // and emits a crumb per tab. Why keyed on the flag rather than name alone: the
-  // verdict flips under a persisting duplicate (it tracks whether the tab still
-  // resolves to the active worktree), and coalescing keeps only the newest
-  // payload, so one verdict would erase the other. Two keys still bound the
-  // storm.
+  // Why: a stale map can emit once per tab-id/verdict; key by verdict so
+  // last-write coalescing cannot erase the other signal while remaining bounded.
   if (name === DUPLICATE_TAB_OWNER_BREADCRUMB) {
     return `${name}:${String(data?.resolvedToActiveWorktree ?? '')}`
   }

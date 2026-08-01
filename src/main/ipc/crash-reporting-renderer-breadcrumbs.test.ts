@@ -298,8 +298,8 @@ describe('renderer breadcrumb IPC routing', () => {
     ])
   })
 
-  // Why: the renderer guard is once-per-tab-id, so one stale worktree map emits
-  // a crumb per duplicated tab and would evict the pre-crash trail.
+  // Why: the renderer guard is once per tab-id/verdict, so one stale worktree
+  // map can emit enough crumbs to evict the pre-crash trail.
   it('coalesces duplicate-tab-owner notices across tabs', () => {
     emitRendererBreadcrumb({
       name: 'terminal_tab_id_owned_by_multiple_worktrees',
