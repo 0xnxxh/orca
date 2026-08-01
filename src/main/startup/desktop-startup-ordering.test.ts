@@ -339,6 +339,12 @@ describe('startup ordering', () => {
     expect(reader).toContain('if (sweepForOrphans) {')
     expect(reader).toContain('gpuFallbackMarkerFileExists(userDataPath)')
     expect(reader).toContain('gpuCrashHistoryFileExists(userDataPath)')
+    // Why on the no-marker branch: a launch that latched clears the history outright,
+    // and without this the gate above stays armed for the life of the install.
+    expect(reader).toContain('void discardExpiredGpuCrashHistory(userDataPath, environment, {')
+    expect(reader.indexOf('discardExpiredGpuCrashHistory')).toBeGreaterThan(
+      reader.indexOf('if (!marker) {')
+    )
     // Why platform-gated: safe graphics is a Windows-only remedy, and
     // enableMainProcessGpuFeatures() carries the macOS Graphite fix it skips.
     expect(reader).toContain("process.platform !== 'win32'")

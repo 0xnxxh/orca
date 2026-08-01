@@ -7,9 +7,10 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
+import type * as FsPromises from 'node:fs/promises'
 import os from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD,
   countsTowardDurableGpuCrashHistory
@@ -21,6 +22,7 @@ import {
   MAX_GPU_CRASH_HISTORY_ENTRIES,
   appendGpuCrashTime,
   clearGpuCrashHistory,
+  discardExpiredGpuCrashHistory,
   gpuCrashHistoryFileExists,
   pruneGpuCrashTimes,
   readGpuCrashHistory,
@@ -29,6 +31,18 @@ import {
   sweepStaleGpuCrashHistoryTempFiles
 } from './gpu-crash-history'
 import type { GpuFallbackEnvironment } from './gpu-fallback-marker'
+
+// Why mocked rather than chmod: a read-only parent directory does not stop an unlink
+// on Windows, so the EPERM case this guards against would not reproduce there.
+const removalFailure = vi.hoisted(() => ({ error: null as NodeJS.ErrnoException | null }))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof FsPromises>()
+  return {
+    ...actual,
+    rm: (...args: Parameters<typeof actual.rm>) =>
+      removalFailure.error ? Promise.reject(removalFailure.error) : actual.rm(...args)
+  }
+})
 
 const WINDOW = DEFAULT_GPU_CRASH_DURABLE_WINDOW_MS
 const THRESHOLD = DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD
@@ -134,6 +148,17 @@ describe('DEFAULT_GPU_CRASH_DURABLE_WINDOW_MS', () => {
     // Every extra minute is false-positive surface, and the marker is written
     // before the user consents.
     expect(DEFAULT_GPU_CRASH_DURABLE_WINDOW_MS).toBeLessThanOrEqual(300_000)
+  })
+
+  it('reaches back 360s of real time once forward clock skew is counted', () => {
+    // The number the doc comment has to argue against. The skew tolerance sits on the
+    // young end of the window, so a stamp from a clock running 60s fast is accepted and
+    // then gets the whole window from there: 360s of real elapsed time, not 300s.
+    const skewed = NOW + 60_000
+    expect(pruneGpuCrashTimes([skewed], NOW, WINDOW)).toEqual([skewed])
+    expect(pruneGpuCrashTimes([NOW + 61_000], NOW, WINDOW)).toEqual([])
+    expect(pruneGpuCrashTimes([skewed], NOW + 360_000, WINDOW)).toEqual([skewed])
+    expect(pruneGpuCrashTimes([skewed], NOW + 361_000, WINDOW)).toEqual([])
   })
 })
 
@@ -318,6 +343,9 @@ describe('gpu-crash-history file', () => {
   it('discards a corrupt or wrong-version file instead of trusting it', () => {
     writeFileSync(join(userDataPath, GPU_CRASH_HISTORY_FILE), '{ not json')
     expect(readGpuCrashHistory(userDataPath, environment)).toEqual([])
+    // Why removed rather than left for the next write: a file nothing can read still
+    // arms the startup temp sweep on every launch it survives.
+    expect(gpuCrashHistoryFileExists(userDataPath)).toBe(false)
 
     writeFileSync(
       join(userDataPath, GPU_CRASH_HISTORY_FILE),
@@ -410,6 +438,97 @@ describe('gpu-crash-history file', () => {
     expect(existsSync(orphan)).toBe(false)
     // The history itself shares the prefix and must survive the sweep.
     expect(readGpuCrashHistory(userDataPath, environment)).toEqual([NOW])
+  })
+
+  // Why this exists at all: 66 of the 73 observed launches record one or two GPU
+  // deaths and never reach three, and no other caller deletes the file on that path —
+  // it would sit there arming the startup temp sweep for the life of the install.
+  describe('discardExpiredGpuCrashHistory', () => {
+    const discard = (now: number, env: GpuFallbackEnvironment = environment) =>
+      discardExpiredGpuCrashHistory(userDataPath, env, { now, windowMs: WINDOW })
+
+    afterEach(() => {
+      removalFailure.error = null
+    })
+
+    it('deletes a history whose entries have all aged out', async () => {
+      record(NOW)
+      record(NOW + 1_000)
+
+      await discard(NOW + WINDOW + 61_000)
+
+      expect(existsSync(join(userDataPath, GPU_CRASH_HISTORY_FILE))).toBe(false)
+    })
+
+    it('leaves the next launch with nothing to arm the temp sweep', async () => {
+      record(NOW)
+      // The exact gate maybeApplyGpuFallbackForThisLaunch reads to fire the readdirs.
+      expect(gpuCrashHistoryFileExists(userDataPath)).toBe(true)
+
+      await discard(NOW + WINDOW + 61_000)
+
+      expect(gpuCrashHistoryFileExists(userDataPath)).toBe(false)
+      expect(record(NOW + WINDOW + 62_000).crashesInWindow).toBe(1)
+    })
+
+    it('keeps a history that still holds a crash inside the window', async () => {
+      record(NOW)
+      record(NOW + WINDOW - 1_000)
+
+      // One entry has aged out and one has not. Deleting here would throw away the
+      // live count that the next crash needs to reach the threshold.
+      await discard(NOW + WINDOW + 1)
+
+      expect(readGpuCrashHistory(userDataPath, environment)).toEqual([NOW, NOW + WINDOW - 1_000])
+      expect(gpuCrashHistoryFileExists(userDataPath)).toBe(true)
+    })
+
+    it('does not throw when the unlink is refused', async () => {
+      for (const code of ['EACCES', 'EPERM', 'EBUSY']) {
+        record(NOW)
+        removalFailure.error = Object.assign(new Error(`${code}: refused`), { code })
+
+        // Why asserted: this runs on the pre-whenReady startup path, where a rejection
+        // would surface as an unhandled one before any window exists to report it.
+        await expect(discard(NOW + WINDOW + 61_000)).resolves.toBeUndefined()
+
+        // The count is untouched, so the whole cost is one more armed sweep.
+        expect([code, gpuCrashHistoryFileExists(userDataPath)]).toEqual([code, true])
+        removalFailure.error = null
+      }
+    })
+
+    it('does nothing when there is no history to discard', async () => {
+      await expect(discard(NOW)).resolves.toBeUndefined()
+      expect(readdirSync(userDataPath)).toEqual([])
+    })
+
+    it('deletes a corrupt file instead of leaving it to arm the sweep', async () => {
+      writeFileSync(join(userDataPath, GPU_CRASH_HISTORY_FILE), '{ not json')
+
+      await discard(NOW)
+
+      expect(gpuCrashHistoryFileExists(userDataPath)).toBe(false)
+    })
+
+    it('deletes another build history even while its entries are live', async () => {
+      record(NOW)
+
+      await discard(NOW, { ...environment, appVersion: '1.4.164' })
+
+      // This build can never count them, so keeping them only arms the sweep.
+      expect(gpuCrashHistoryFileExists(userDataPath)).toBe(false)
+    })
+
+    for (const platform of ['darwin', 'linux'] as const) {
+      it(`deletes a live history that followed a profile onto ${platform}`, async () => {
+        record(NOW)
+
+        await discard(NOW, { ...environment, platform })
+
+        expect(gpuCrashHistoryFileExists(userDataPath)).toBe(false)
+      })
+    }
   })
 
   for (const platform of ['darwin', 'linux'] as const) {

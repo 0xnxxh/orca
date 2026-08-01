@@ -140,6 +140,7 @@ import {
 import {
   DEFAULT_GPU_CRASH_DURABLE_WINDOW_MS,
   clearGpuCrashHistory,
+  discardExpiredGpuCrashHistory,
   evaluateGpuCrashHistory,
   gpuCrashHistoryFileExists,
   inertGpuCrashHistoryDecision,
@@ -1581,14 +1582,23 @@ function maybeApplyGpuFallbackForThisLaunch(): void {
   // Why gated: the sweep readdirs all of userData — Cache, Code Cache, GPUCache,
   // Local Storage — on a path that runs before whenReady on every Windows launch,
   // and a temp can only be orphaned next to a file the fallback already wrote.
-  const sweepForOrphans =
-    gpuFallbackMarkerFileExists(userDataPath) || gpuCrashHistoryFileExists(userDataPath)
-  const marker = readActiveGpuFallbackMarker(userDataPath, getGpuFallbackEnvironment())
+  const environment = getGpuFallbackEnvironment()
+  const historyExists = gpuCrashHistoryFileExists(userDataPath)
+  const sweepForOrphans = gpuFallbackMarkerFileExists(userDataPath) || historyExists
+  const marker = readActiveGpuFallbackMarker(userDataPath, environment)
   if (sweepForOrphans) {
     void sweepStaleGpuFallbackMarkerTempFiles(userDataPath).catch(() => undefined)
     void sweepStaleGpuCrashHistoryTempFiles(userDataPath).catch(() => undefined)
   }
   if (!marker) {
+    // Why here: one or two GPU deaths is the common launch, and nothing else ever
+    // deletes that file — it would keep the gate above armed on every later launch.
+    if (historyExists) {
+      void discardExpiredGpuCrashHistory(userDataPath, environment, {
+        now: Date.now(),
+        windowMs: DEFAULT_GPU_CRASH_DURABLE_WINDOW_MS
+      }).catch(() => undefined)
+    }
     return
   }
   app.disableHardwareAcceleration()

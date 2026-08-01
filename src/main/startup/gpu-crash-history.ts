@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   durableWriteTempPath,
@@ -47,10 +48,15 @@ export const GPU_CRASH_HISTORY_SCHEME_VERSION = 1
  * dialog or tries a driver update before relaunching — and still covers ~12
  * consecutive launches at the observed rate.
  *
- * Why not 10 minutes: false-positive surface scales linearly with the window,
- * and the marker is written before the user consents. Too short only delays the
- * remedy to the next tight burst; too long latches safe graphics on a machine
- * that was never in the loop. The asymmetry says pick the shorter number.
+ * What the code actually reaches back is 360s, not 300s: GPU_CRASH_HISTORY_FUTURE_SKEW_MS
+ * lets an entry sit up to 60s ahead of now, so one written by a clock running 60s fast
+ * survives 360s of real elapsed time. That 360s is the number to argue against.
+ *
+ * Why not 10 minutes: false-positive surface scales linearly with the window, and the
+ * marker is written before the user consents — 360s of worst-case reach is already the
+ * ceiling this trade accepts. Too short only delays the remedy to the next tight burst;
+ * too long latches safe graphics on a machine that was never in the loop. The asymmetry
+ * says pick the shorter number.
  */
 export const DEFAULT_GPU_CRASH_DURABLE_WINDOW_MS = 300_000
 
@@ -142,6 +148,30 @@ export function clearGpuCrashHistory(userDataPath: string): void {
   clearHistoryBestEffort(userDataPath)
 }
 
+/** Times this build may count, or null when the file is corrupt or another build's. */
+function parseGpuCrashHistory(raw: string, environment: GpuFallbackEnvironment): number[] | null {
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    return null
+  }
+  if (
+    parsed.schemeVersion !== GPU_CRASH_HISTORY_SCHEME_VERSION ||
+    parsed.platform !== 'win32' ||
+    parsed.appVersion !== environment.appVersion ||
+    parsed.electronVersion !== environment.electronVersion
+  ) {
+    return null
+  }
+  const stored: unknown[] = Array.isArray(parsed.crashTimes) ? parsed.crashTimes : []
+  // Range checks belong to pruneGpuCrashTimes, which needs `now`; this is only the
+  // shape boundary, so a hand-edited file cannot put a string into the array.
+  return stored.filter(
+    (time): time is number => typeof time === 'number' && Number.isFinite(time) && time >= 0
+  )
+}
+
 /**
  * Stored crash times for this exact build. A mismatched build or platform discards
  * them, the same policy the marker uses: a new build gets one clean slate.
@@ -154,28 +184,60 @@ export function readGpuCrashHistory(
     clearHistoryBestEffort(userDataPath)
     return []
   }
-  let parsed: Record<string, unknown>
+  let raw: string
   try {
-    parsed = JSON.parse(readFileSync(historyPath(userDataPath), 'utf-8')) as Record<string, unknown>
+    raw = readFileSync(historyPath(userDataPath), 'utf-8')
   } catch {
-    // Missing or corrupt means no history; a corrupt file is overwritten by the next write.
+    // Missing or unreadable means no history.
     return []
   }
-  if (
-    parsed.schemeVersion !== GPU_CRASH_HISTORY_SCHEME_VERSION ||
-    parsed.platform !== 'win32' ||
-    parsed.appVersion !== environment.appVersion ||
-    parsed.electronVersion !== environment.electronVersion
-  ) {
+  const times = parseGpuCrashHistory(raw, environment)
+  if (times === null) {
+    // Why removed rather than left for the next write to overwrite: an unusable file
+    // still arms the startup temp sweep for every launch it survives.
     clearHistoryBestEffort(userDataPath)
     return []
   }
-  const stored: unknown[] = Array.isArray(parsed.crashTimes) ? parsed.crashTimes : []
-  // Range checks belong to pruneGpuCrashTimes, which needs `now`; this is only the
-  // shape boundary, so a hand-edited file cannot put a string into the array.
-  return stored.filter(
-    (time): time is number => typeof time === 'number' && Number.isFinite(time) && time >= 0
-  )
+  return times
+}
+
+/**
+ * Deletes a history whose entries have all aged out, so it stops arming the startup
+ * temp sweep for the life of the install. Why not inside persistGpuCrashTimes: its
+ * caller always appends `now`, so the crash path never sees an empty result — only a
+ * later launch does.
+ *
+ * Why async: the launch that pays for this file already runs the sweep off the critical
+ * path, and startup must not take on a synchronous read to earn back an async readdir.
+ * The one race is a GPU death landing between the read and the unlink — its listener is
+ * registered inside app.whenReady(), so it needs a read slow enough to still be pending
+ * then. It costs that launch's first entry and nothing else, degrading toward not
+ * firing, which is the same direction every other edge in this feature takes.
+ */
+export async function discardExpiredGpuCrashHistory(
+  userDataPath: string,
+  environment: GpuFallbackEnvironment,
+  options: { now: number; windowMs: number }
+): Promise<void> {
+  const target = historyPath(userDataPath)
+  let raw: string
+  try {
+    raw = await readFile(target, 'utf-8')
+  } catch {
+    // Missing is the outcome this aims for; unreadable is retried next launch.
+    return
+  }
+  // Off Windows the file only followed a profile here, so nothing in it is countable.
+  const times = environment.platform === 'win32' ? parseGpuCrashHistory(raw, environment) : null
+  // A live entry is the cross-launch evidence this file exists to accumulate.
+  if (times !== null && pruneGpuCrashTimes(times, options.now, options.windowMs).length > 0) {
+    return
+  }
+  try {
+    await rm(target, { force: true })
+  } catch {
+    // An AV/indexer hold on Windows costs one more armed sweep, nothing else.
+  }
 }
 
 /**
