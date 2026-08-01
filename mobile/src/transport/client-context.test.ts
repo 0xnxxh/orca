@@ -290,7 +290,7 @@ describe('useHostClient', () => {
 
     expect(stale.closeMock).toHaveBeenCalledOnce()
     expect(fresh.sendRequest).toHaveBeenCalledWith(
-      'worktree.list',
+      'worktree.ps',
       { limit: 1 },
       {
         timeoutMs: expect.any(Number),
@@ -628,7 +628,7 @@ describe('useHostClient', () => {
     expect(connectMock.mock.calls[2]?.[0]).toEqual(updatedHost)
     expect(oldReplacement.closeMock).toHaveBeenCalledOnce()
     expect(newReplacement.sendRequest).toHaveBeenCalledWith(
-      'worktree.list',
+      'worktree.ps',
       { limit: 1 },
       {
         timeoutMs: expect.any(Number),

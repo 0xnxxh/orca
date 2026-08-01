@@ -22,6 +22,7 @@ import {
 import { scheduleOrphanedMobileRelayCleanup } from './mobile-relay-orphan-cleanup'
 import {
   recordDurableHostIdentity,
+  recordHostEndpointMutation,
   recordHostProfileMutation,
   resetHostProfilePublicationForTests,
   retireHostProfilePublication,
@@ -304,7 +305,11 @@ export async function updateHostNameAndEndpoint(
         ? undefined
         : () => updateMobileRelayHostOverlayDirectEndpoint(hostId, updates.endpoint!)
     )
-    recordHostProfileMutation(hostId)
+    if (updates.endpoint === undefined) {
+      recordHostProfileMutation(hostId)
+    } else {
+      recordHostEndpointMutation(hostId)
+    }
   })
 }
 

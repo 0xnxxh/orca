@@ -117,7 +117,7 @@ describe('stable logical RPC client', () => {
 
     await expect(verifying).resolves.toBeUndefined()
     expect(nextSession.sendRequest).toHaveBeenCalledWith(
-      'worktree.list',
+      'worktree.ps',
       { limit: 1 },
       {
         timeoutMs: expect.any(Number),

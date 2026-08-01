@@ -84,7 +84,7 @@ export function startMobileEndpointLifecycle(
       return (
         !stopped &&
         current.generation === endpointLifecycle.generation &&
-        current.profileRevision === endpointLifecycle.profileRevision
+        current.endpointRevision === endpointLifecycle.endpointRevision
       )
     }).catch(() => {})
     owner = createSupervisor(

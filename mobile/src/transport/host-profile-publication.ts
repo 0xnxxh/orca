@@ -2,12 +2,13 @@ import type { HostProfile } from './types'
 
 const pendingByHost = new Map<string, Promise<void>>()
 const revisionByHost = new Map<string, number>()
+const endpointRevisionByHost = new Map<string, number>()
 const endpointGenerationByHost = new Map<string, number>()
 const publishedIdentityByHost = new Map<string, Pick<HostProfile, 'deviceToken' | 'publicKeyB64'>>()
 
 export type HostEndpointPublicationLifecycle = Readonly<{
   generation: number
-  profileRevision: number
+  endpointRevision: number
 }>
 
 export function getHostProfilePublicationRevision(hostId: string): number {
@@ -16,6 +17,11 @@ export function getHostProfilePublicationRevision(hostId: string): number {
 
 export function recordHostProfileMutation(hostId: string): void {
   revisionByHost.set(hostId, getHostProfilePublicationRevision(hostId) + 1)
+}
+
+export function recordHostEndpointMutation(hostId: string): void {
+  recordHostProfileMutation(hostId)
+  advanceHostEndpointRevision(hostId)
 }
 
 export function getPublishedHostIdentity(
@@ -34,7 +40,7 @@ export function recordDurableHostIdentity(
 }
 
 export function retireHostProfilePublication(hostId: string): Promise<void> | null {
-  revisionByHost.set(hostId, getHostProfilePublicationRevision(hostId) + 1)
+  recordHostEndpointMutation(hostId)
   endpointGenerationByHost.set(hostId, (endpointGenerationByHost.get(hostId) ?? 0) + 1)
   publishedIdentityByHost.delete(hostId)
   const pending = pendingByHost.get(hostId) ?? null
@@ -49,7 +55,7 @@ export function beginHostEndpointPublicationLifecycle(
   endpointGenerationByHost.set(hostId, generation)
   return {
     generation,
-    profileRevision: getHostProfilePublicationRevision(hostId)
+    endpointRevision: getHostEndpointRevision(hostId)
   }
 }
 
@@ -58,7 +64,7 @@ export function getHostEndpointPublicationLifecycle(
 ): HostEndpointPublicationLifecycle {
   return {
     generation: endpointGenerationByHost.get(hostId) ?? 0,
-    profileRevision: getHostProfilePublicationRevision(hostId)
+    endpointRevision: getHostEndpointRevision(hostId)
   }
 }
 
@@ -94,8 +100,17 @@ export function publishHostProfileTransaction(
     await saveHost(host)
     requirePublicationRevision(host.id, publicationRevision)
     revisionByHost.set(host.id, publicationRevision + 1)
+    advanceHostEndpointRevision(host.id)
     recordDurableHostIdentity(host)
   })
+}
+
+function getHostEndpointRevision(hostId: string): number {
+  return endpointRevisionByHost.get(hostId) ?? 0
+}
+
+function advanceHostEndpointRevision(hostId: string): void {
+  endpointRevisionByHost.set(hostId, getHostEndpointRevision(hostId) + 1)
 }
 
 function requirePublicationRevision(hostId: string, expected: number): void {
@@ -108,6 +123,7 @@ function requirePublicationRevision(hostId: string, expected: number): void {
 export function resetHostProfilePublicationForTests(): void {
   pendingByHost.clear()
   revisionByHost.clear()
+  endpointRevisionByHost.clear()
   endpointGenerationByHost.clear()
   publishedIdentityByHost.clear()
 }

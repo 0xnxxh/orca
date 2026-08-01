@@ -15,8 +15,8 @@ export async function verifyForceReconnectRpcHealth(
       throw lastError ?? new Error('Force Reconnect health check timed out')
     }
     try {
-      await client.sendRequest(
-        'worktree.list',
+      const response = await client.sendRequest(
+        'worktree.ps',
         { limit: 1 },
         {
           timeoutMs,
@@ -24,6 +24,9 @@ export async function verifyForceReconnectRpcHealth(
           strictDeadline: true
         }
       )
+      if (!response.ok) {
+        throw new Error(response.error.message)
+      }
       if (client.getRpcUnresponsiveSince?.() != null) {
         throw new Error('Application RPC channel is still not responding')
       }

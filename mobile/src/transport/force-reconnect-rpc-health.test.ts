@@ -42,7 +42,7 @@ describe('Force Reconnect RPC health', () => {
     expect(outcome).toBe('stalled')
     expect(sendRequest).toHaveBeenCalledTimes(2)
     expect(sendRequest).toHaveBeenLastCalledWith(
-      'worktree.list',
+      'worktree.ps',
       { limit: 1 },
       {
         timeoutMs: 1_000,
@@ -86,11 +86,57 @@ describe('Force Reconnect RPC health', () => {
 
     await expect(verifyForceReconnectRpcHealth(client)).resolves.toBeUndefined()
     expect(sendRequest).toHaveBeenCalledWith(
-      'worktree.list',
+      'worktree.ps',
       { limit: 1 },
       expect.objectContaining({ strictDeadline: true })
     )
     expect(responsiveness.getUnresponsiveSince()).toBeNull()
+  })
+
+  it('uses an application probe allowed by older desktop hosts', async () => {
+    const sendRequest = vi.fn(async (method: string) =>
+      method === 'worktree.list'
+        ? ({
+            id: 'rpc-1',
+            ok: false,
+            error: {
+              code: 'forbidden',
+              message: "Method 'worktree.list' is not available to mobile clients"
+            }
+          } as RpcResponse)
+        : ({ id: 'rpc-1', ok: true, result: {} } as RpcResponse)
+    )
+    const client = {
+      sendRequest,
+      getState: () => 'connected' as const
+    } as unknown as RpcClient
+
+    await expect(verifyForceReconnectRpcHealth(client)).resolves.toBeUndefined()
+    expect(sendRequest).toHaveBeenCalledWith(
+      'worktree.ps',
+      { limit: 1 },
+      expect.objectContaining({ strictDeadline: true })
+    )
+  })
+
+  it('rejects an unsuccessful application response', async () => {
+    const responsiveness = new RpcApplicationResponsiveness()
+    responsiveness.recordTimeout('browser.screenshot', 123)
+    const sendRequest = vi.fn(async (method: string) => {
+      responsiveness.recordResponse(method)
+      return {
+        id: 'rpc-1',
+        ok: false,
+        error: { code: 'runtime_error', message: 'worktree scan failed' }
+      } as RpcResponse
+    })
+    const client = {
+      sendRequest,
+      getState: () => 'connected' as const,
+      getRpcUnresponsiveSince: () => responsiveness.getUnresponsiveSince()
+    } as unknown as RpcClient
+
+    await expect(verifyForceReconnectRpcHealth(client)).rejects.toThrow('worktree scan failed')
   })
 
   it('fails when authorization retries reach auth-failed', async () => {

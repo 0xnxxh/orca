@@ -3,7 +3,6 @@ import { loadStoredHostIdentity } from './host-store'
 import { readHostDeviceToken } from './host-device-token-store'
 import {
   getHostEndpointPublicationLifecycle,
-  getHostProfilePublicationRevision,
   getPublishedHostIdentity,
   serializeHostProfilePublication,
   type HostEndpointPublicationLifecycle
@@ -116,6 +115,7 @@ function requireCurrentPublication(
   endpointLifecycle: HostEndpointPublicationLifecycle
 ): void {
   const publishedIdentity = getPublishedHostIdentity(host.id)
+  const currentLifecycle = getHostEndpointPublicationLifecycle(host.id)
   if (
     publishedIdentity &&
     (publishedIdentity.deviceToken !== host.deviceToken ||
@@ -124,8 +124,8 @@ function requireCurrentPublication(
     throw new MobileRelayUpgradeHostSupersededError('mobile relay upgrade host was re-paired')
   }
   if (
-    getHostProfilePublicationRevision(host.id) !== endpointLifecycle.profileRevision ||
-    getHostEndpointPublicationLifecycle(host.id).generation !== endpointLifecycle.generation
+    currentLifecycle.endpointRevision !== endpointLifecycle.endpointRevision ||
+    currentLifecycle.generation !== endpointLifecycle.generation
   ) {
     throw new MobileRelayUpgradeLifecycleRetiredError('mobile relay endpoint lifecycle was retired')
   }
