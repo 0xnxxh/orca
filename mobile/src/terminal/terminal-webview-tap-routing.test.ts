@@ -158,7 +158,21 @@ describe('terminal WebView tap routing', () => {
     fireTouch('touchstart', [{ x: 20, y: tapY }])
     fireTouch('touchend', [])
 
-    expect(posted.find((message) => message.type === 'terminal-input')).toBeDefined()
+    expect(
+      posted
+        .filter((message) => message.type === 'terminal-input' || message.type === 'terminal-tap')
+        .map((message) => message.type)
+    ).toEqual(['terminal-input', 'terminal-tap'])
+  })
+
+  it('reports a non-mouse touch tap without terminal mouse bytes', async () => {
+    const { posted } = boot('plain prompt')
+    await settle()
+
+    fireTouch('touchstart', [{ x: 20, y: tapY }])
+    fireTouch('touchend', [])
+
+    expect(posted.find((message) => message.type === 'terminal-input')).toBeUndefined()
     expect(posted.filter((message) => message.type === 'terminal-tap')).toHaveLength(1)
   })
 
