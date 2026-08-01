@@ -20,14 +20,19 @@ export function relayWebSocketUrl(relay: { cellUrl: string; relayHostId: string 
 export async function persistRelayHost(
   host: HostProfile,
   relay: MobileRelayEndpoint,
-  saveHost: (host: HostProfile) => Promise<void>
+  saveHost: (host: HostProfile, beforePublish?: () => Promise<void>) => Promise<void>,
+  beforePublish?: () => Promise<void>
 ): Promise<HostProfile> {
   const endpoints = [
     ...(host.endpoints ?? [{ id: 'direct-primary', kind: 'lan' as const, url: host.endpoint }])
   ].filter(({ kind }) => kind !== 'relay')
   endpoints.push({ id: 'relay-primary', kind: 'relay', url: relayWebSocketUrl(relay) })
   const updated = { ...host, endpoints, relayHostId: relay.relayHostId, relay }
-  await saveHost(updated)
+  if (beforePublish) {
+    await saveHost(updated, beforePublish)
+  } else {
+    await saveHost(updated)
+  }
   return updated
 }
 

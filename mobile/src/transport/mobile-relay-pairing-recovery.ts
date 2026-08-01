@@ -26,6 +26,7 @@ import {
 } from './mobile-relay-physical-client'
 import { createRecoveringPairingRelayCandidate } from './pairing-relay-candidate'
 import type { HostProfile, RpcResponse } from './types'
+import { publishHostProfileTransaction } from './host-profile-publication'
 
 export type MobileRelayPairingRecoveryResult = 'none' | 'recovered' | 'deferred'
 
@@ -243,10 +244,15 @@ async function publishCommitted(
   if (journal.metadata.authorizationMode !== installed.authorizationMode) {
     await dependencies.updateJournal(journal.metadata.journalId, () => reconciledJournal.metadata)
   }
-  await dependencies.writeCredentialBundle(
-    promotePairingJournalCredential({ journal: reconciledJournal, installed })
+  const host = relayHost(reconciledJournal, endpoints.relay)
+  await publishHostProfileTransaction(
+    host,
+    () =>
+      dependencies.writeCredentialBundle(
+        promotePairingJournalCredential({ journal: reconciledJournal, installed })
+      ),
+    dependencies.saveHost
   )
-  await dependencies.saveHost(relayHost(reconciledJournal, endpoints.relay))
   await dependencies.clearJournal(journal.metadata.journalId)
 }
 

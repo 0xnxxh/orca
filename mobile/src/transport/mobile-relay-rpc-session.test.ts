@@ -4,6 +4,8 @@ import {
   encodeBrowserScreencastFrame
 } from '../../../src/shared/browser-screencast-protocol'
 import { encodeTerminalStreamFrame, TerminalStreamOpcode } from './terminal-stream-protocol'
+import { verifyForceReconnectRpcHealth } from './force-reconnect-rpc-health'
+import { MobileE2EEAuthenticationError } from './mobile-e2ee-v2-physical-channel'
 import { isRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
 
 const fakes = vi.hoisted(() => ({
@@ -333,6 +335,50 @@ describe('mobile relay RPC session', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('marks a Relay session auth-failed when its periodic probe is unauthorized', async () => {
+    vi.useFakeTimers()
+    try {
+      const { session } = await authenticateSession()
+
+      await vi.advanceTimersByTimeAsync(20_000)
+      const probe = fakes.sendText.mock.calls
+        .map(([payload]) => JSON.parse(payload as string) as { id: string; method: string })
+        .findLast(({ method }) => method === 'status.get')!
+      fakes.linkOptions!.onText(
+        JSON.stringify({
+          id: probe.id,
+          ok: false,
+          error: { code: 'unauthorized', message: 'Invalid device token' },
+          _meta: {}
+        })
+      )
+
+      expect(session.getFailure()).toBeInstanceOf(MobileE2EEAuthenticationError)
+      expect(session.getState()).toBe('auth-failed')
+      expect(fakes.close).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('rejects Force Reconnect health when Relay authorization was revoked', async () => {
+    const { session } = await authenticateSession()
+    const verification = verifyForceReconnectRpcHealth(session)
+    await vi.waitFor(() => expect(fakes.sendText).toHaveBeenCalledOnce())
+    const probe = JSON.parse(fakes.sendText.mock.calls[0]![0] as string) as { id: string }
+    fakes.linkOptions!.onText(
+      JSON.stringify({
+        id: probe.id,
+        ok: false,
+        error: { code: 'unauthorized', message: 'Invalid device token' },
+        _meta: {}
+      })
+    )
+
+    await expect(verification).rejects.toBeInstanceOf(MobileE2EEAuthenticationError)
+    expect(session.getState()).toBe('auth-failed')
   })
 
   it('keeps a Relay session when a fresh timeout probe proves it live', async () => {

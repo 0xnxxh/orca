@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { MobileRelayEndpoint } from '../../../src/shared/mobile-relay-credential-contract'
-import { MobileRelayUpgradeHostRemovedError } from './existing-host-relay-routing'
+import {
+  MobileRelayUpgradeHostRemovedError,
+  MobileRelayUpgradeHostSupersededError
+} from './existing-host-relay-routing'
 import {
   createMobileRelayDirectUpgradeJournal,
   type MobileRelayDirectUpgradeJournal
@@ -64,7 +67,9 @@ function dependencies(journal: MobileRelayDirectUpgradeJournal | null = null) {
     }),
     writeBundle: vi.fn(async () => {}),
     deleteBundle: vi.fn(async () => {}),
-    saveHost: vi.fn(async () => {}),
+    saveHost: vi.fn(async (_host: HostProfile, beforePublish?: () => Promise<void>) => {
+      await beforePublish?.()
+    }),
     randomBytes: (length: number) => new Uint8Array(length).fill(7)
   }
 }
@@ -113,8 +118,34 @@ describe('existing direct pairing relay upgrade', () => {
       reqId: journal!.reqId,
       newResumeTokenHash: journal!.pendingResumeTokenHash
     })
-    expect(deps.writeBundle).toHaveBeenCalledBefore(deps.saveHost)
+    expect(deps.saveHost).toHaveBeenCalledWith(expect.any(Object), expect.any(Function))
+    expect(deps.writeBundle).toHaveBeenCalledOnce()
     expect(result?.host.relay).toEqual(relay)
+    expect(deps.clearJournal).toHaveBeenCalledWith(host.id)
+  })
+
+  it('does not delete a replacement pairing bundle when the old upgrade is superseded', async () => {
+    const journal = createMobileRelayDirectUpgradeJournal(host.id, (length) =>
+      new Uint8Array(length).fill(6)
+    )
+    const committed = installed(journal)
+    const deps = dependencies(journal)
+    deps.saveHost.mockRejectedValue(
+      new MobileRelayUpgradeHostSupersededError('mobile relay upgrade host was re-paired')
+    )
+    const client = clientWith([
+      success({
+        v: 1,
+        relay,
+        installStatus: { v: 1, reqId: journal.reqId, state: 'committed', result: committed }
+      })
+    ])
+
+    await expect(
+      upgradeDirectMobileRelay({ client, host, dependencies: deps })
+    ).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
+    expect(deps.writeBundle).not.toHaveBeenCalled()
+    expect(deps.deleteBundle).not.toHaveBeenCalled()
     expect(deps.clearJournal).toHaveBeenCalledWith(host.id)
   })
 

@@ -5,6 +5,7 @@ import {
 } from '../../../src/shared/mobile-relay-credential-contract'
 import { MobileRelayE2eeLink } from './mobile-relay-e2ee-link'
 import { MobileRelayRpcStreams } from './mobile-relay-rpc-streams'
+import { waitForMobileRelayRpcConnected } from './mobile-relay-rpc-connect-wait'
 import { MobileE2EEAuthenticationError } from './mobile-e2ee-v2-physical-channel'
 import { isRpcDeliveryUnknown, markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
 import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-request-budget'
@@ -192,6 +193,10 @@ export function connectMobileRelayRpcSession(args: {
     if (!isRpcResponse(value)) {
       return
     }
+    if (!value.ok && value.error.code === 'unauthorized') {
+      fail(new MobileE2EEAuthenticationError())
+      return
+    }
     const request = pending.get(value.id)
     if (request || timedOutControlRequestIds.delete(value.id)) {
       controlResponseSequence += 1
@@ -253,30 +258,10 @@ export function connectMobileRelayRpcSession(args: {
   }
 
   function waitForConnected(timeoutMs = requestTimeoutMs): Promise<void> {
-    if (state === 'connected') {
-      return Promise.resolve()
-    }
-    return new Promise((resolve, reject) => {
-      let timer: ReturnType<typeof setTimeout> | null = null
-      const unsubscribe = client.onStateChange((next) => {
-        if (next === 'connected') {
-          finish()
-          resolve()
-        } else if (next === 'disconnected' || next === 'auth-failed') {
-          finish()
-          reject(new Error(`relay session ${next}`))
-        }
-      })
-      timer = setTimeout(() => {
-        finish()
-        reject(new Error('relay session connection timed out'))
-      }, timeoutMs)
-      function finish(): void {
-        if (timer) {
-          clearTimeout(timer)
-        }
-        unsubscribe()
-      }
+    return waitForMobileRelayRpcConnected({
+      getState: () => state,
+      subscribe: (listener) => client.onStateChange(listener),
+      timeoutMs
     })
   }
 
@@ -309,7 +294,9 @@ export function connectMobileRelayRpcSession(args: {
     // Why: pending entries only exist after their frame reached the authenticated
     // link (sendFrame failures delete them synchronously), so the desktop may
     // have processed them — mark the ambiguity for callers.
-    markRpcDeliveryUnknown(error)
+    if (!(error instanceof MobileE2EEAuthenticationError)) {
+      markRpcDeliveryUnknown(error)
+    }
     for (const request of pending.values()) {
       clearTimeout(request.timer)
       request.reject(error)

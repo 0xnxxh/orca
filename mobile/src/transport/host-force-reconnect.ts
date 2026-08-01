@@ -1,5 +1,8 @@
 import type { RpcClient } from './rpc-client'
-import { verifyForceReconnectRpcHealth } from './force-reconnect-rpc-health'
+import {
+  FORCE_RECONNECT_TIMEOUT_MS,
+  verifyForceReconnectRpcHealth
+} from './force-reconnect-rpc-health'
 
 export type HostReconnectEntry = {
   client: RpcClient
@@ -47,9 +50,14 @@ export class HostForceReconnectCoordinator {
     if (pending) {
       generation += 1
       this.generations.set(operation.hostId, generation)
-      operation.cancelPendingOpen()
     }
-    const reconnect = this.replaceAndVerify(operation, generation)
+    // Why: a first reconnect must not join an ordinary open whose Keychain read may never settle.
+    operation.cancelPendingOpen()
+    const reconnect = this.replaceAndVerify(
+      operation,
+      generation,
+      Date.now() + FORCE_RECONNECT_TIMEOUT_MS
+    )
     this.pendingByHost.set(operation.hostId, {
       profileVersion: operation.profileVersion,
       generation,
@@ -66,7 +74,8 @@ export class HostForceReconnectCoordinator {
 
   private async replaceAndVerify(
     operation: HostReconnectOperation,
-    generation: number
+    generation: number,
+    deadline: number
   ): Promise<void> {
     if (this.wasCancelled(operation.hostId, generation)) {
       return
@@ -78,7 +87,7 @@ export class HostForceReconnectCoordinator {
       entry.client.close()
       operation.removeEntry()
     }
-    const fresh = await operation.openReplacement()
+    const fresh = await this.openBeforeDeadline(operation, deadline)
     if (this.wasCancelled(operation.hostId, generation)) {
       return
     }
@@ -87,10 +96,36 @@ export class HostForceReconnectCoordinator {
     }
     fresh.refCount = savedRefCount
     try {
-      await verifyForceReconnectRpcHealth(fresh.client)
+      await verifyForceReconnectRpcHealth(fresh.client, deadline)
     } catch (error) {
       if (!this.wasCancelled(operation.hostId, generation)) {
         throw error
+      }
+    }
+  }
+
+  private async openBeforeDeadline(
+    operation: HostReconnectOperation,
+    deadline: number
+  ): Promise<HostReconnectEntry | null> {
+    const timeoutMs = deadline - Date.now()
+    if (timeoutMs <= 0) {
+      throw new Error('Force Reconnect timed out')
+    }
+    let timer: ReturnType<typeof setTimeout> | null = null
+    try {
+      return await Promise.race([
+        operation.openReplacement(),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            operation.cancelPendingOpen()
+            reject(new Error('Force Reconnect timed out'))
+          }, timeoutMs)
+        })
+      ])
+    } finally {
+      if (timer) {
+        clearTimeout(timer)
       }
     }
   }

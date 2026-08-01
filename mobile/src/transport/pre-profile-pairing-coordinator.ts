@@ -21,6 +21,7 @@ import {
   promotePairingJournalCredential,
   writeMobileRelayCredentialBundle
 } from './mobile-relay-credential-bundle'
+import { publishHostProfileTransaction } from './host-profile-publication'
 import {
   connectMobileRelayForPairing,
   type PairingCandidateClient
@@ -28,6 +29,7 @@ import {
 import { racePairingCandidates, type PairingCandidate } from './pairing-candidate-race'
 import { resolvePairingInviteThroughDirector } from './mobile-relay-invite-director'
 import { createRecoveringPairingRelayCandidate } from './pairing-relay-candidate'
+import { relayWebSocketUrl } from './mobile-endpoint-supervisor-support'
 
 export type PreProfilePairingAttempt = {
   readonly result: Promise<{ hostId: string }>
@@ -190,7 +192,11 @@ async function runPairing(
   assertActive(isDisposed)
 
   if (!journal) {
-    await dependencies.saveHost(baseHost(offer, hostId, hostName, now))
+    await publishHostProfileTransaction(
+      baseHost(offer, hostId, hostName, now),
+      null,
+      dependencies.saveHost
+    )
     return { hostId }
   }
 
@@ -211,7 +217,11 @@ async function runPairing(
     if (winner.path !== 'direct') {
       throw new Error('relay pairing RPC unavailable after relay path authentication')
     }
-    await dependencies.saveHost(baseHost(offer, hostId, hostName, now))
+    await publishHostProfileTransaction(
+      baseHost(offer, hostId, hostName, now),
+      null,
+      dependencies.saveHost
+    )
     await dependencies.clearJournal(journal.metadata.journalId)
     return { hostId }
   }
@@ -228,9 +238,17 @@ async function runPairing(
     throw new Error('desktop returned no relay endpoint after credential install')
   }
   assertActive(isDisposed)
-  await dependencies.writeCredentialBundle(promotePairingJournalCredential({ journal, installed }))
-  await dependencies.saveHost(relayHost(journal, endpoints.relay))
-  await dependencies.clearJournal(journal.metadata.journalId)
+  const committedJournal = journal
+  const host = relayHost(committedJournal, endpoints.relay)
+  await publishHostProfileTransaction(
+    host,
+    () =>
+      dependencies.writeCredentialBundle(
+        promotePairingJournalCredential({ journal: committedJournal, installed })
+      ),
+    dependencies.saveHost
+  )
+  await dependencies.clearJournal(committedJournal.metadata.journalId)
   return { hostId }
 }
 
@@ -262,13 +280,6 @@ function relayHost(journal: MobileRelayPairingJournal, relay: MobileRelayEndpoin
     relayHostId: relay.relayHostId,
     relay
   }
-}
-
-function relayWebSocketUrl(relay: MobileRelayEndpoint): string {
-  const url = new URL(relay.cellUrl)
-  url.protocol = 'wss:'
-  url.pathname = `/v1/connect/${encodeURIComponent(relay.relayHostId)}`
-  return url.toString()
 }
 
 function requireSuccess(response: RpcResponse): unknown {

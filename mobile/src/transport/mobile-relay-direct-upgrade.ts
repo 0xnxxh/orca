@@ -7,6 +7,7 @@ import {
 } from '../../../src/shared/mobile-relay-credential-contract'
 import {
   MobileRelayUpgradeHostRemovedError,
+  MobileRelayUpgradeHostSupersededError,
   saveExistingHostRelayRouting
 } from './existing-host-relay-routing'
 import { persistRelayHost } from './mobile-endpoint-supervisor-support'
@@ -118,14 +119,16 @@ async function publishCommitted(
       expiresAt: installed.resumeExpiresAt
     }
   })
-  // Why: the overlay must never advertise relay without its matching credential.
-  await dependencies.writeBundle(bundle)
   let updatedHost: HostProfile
   try {
-    updatedHost = await persistRelayHost(host, endpoints.relay, dependencies.saveHost)
+    updatedHost = await persistRelayHost(host, endpoints.relay, dependencies.saveHost, () =>
+      dependencies.writeBundle(bundle)
+    )
   } catch (error) {
     if (error instanceof MobileRelayUpgradeHostRemovedError) {
       await dependencies.deleteBundle(host.id)
+      await dependencies.clearJournal(host.id)
+    } else if (error instanceof MobileRelayUpgradeHostSupersededError) {
       await dependencies.clearJournal(host.id)
     }
     throw error

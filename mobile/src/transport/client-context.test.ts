@@ -511,7 +511,7 @@ describe('useHostClient', () => {
     expect(connectMock.mock.calls[2]?.[0]).toEqual(updatedHost)
     expect(oldReplacement.closeMock).toHaveBeenCalledOnce()
     expect(newReplacement.sendRequest).toHaveBeenCalledWith('status.get', undefined, {
-      timeoutMs: 15_000,
+      timeoutMs: expect.any(Number),
       budgetSpansConnect: true,
       strictDeadline: true
     })

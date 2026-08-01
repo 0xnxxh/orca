@@ -45,9 +45,11 @@ import {
 } from './host-store'
 import {
   MobileRelayUpgradeHostRemovedError,
+  MobileRelayUpgradeHostSupersededError,
   saveExistingHostRelayRouting
 } from './existing-host-relay-routing'
 import { resetMobileRelayHostOverlayStoreForTests } from './mobile-relay-host-overlay-store'
+import { publishHostProfileTransaction } from './host-profile-publication'
 
 const HOSTS_STORAGE_KEY = 'orca:hosts'
 const OVERLAY_STORAGE_KEY = 'orca:mobile-relay:host-overlays:v2'
@@ -284,6 +286,74 @@ describe('host-store list mutations', () => {
     expect(JSON.parse(storedOverlayRaw ?? '[]')).toContainEqual(
       expect.objectContaining({ hostId: HOST_ONE.id, relayHostId })
     )
+  })
+
+  it('rejects relay routing from a lifecycle superseded by same-host re-pairing', async () => {
+    await saveHost({ ...HOST_ONE, deviceToken: 'replacement-token' })
+    const relayHostId = 'AbCdEf0123_-xyZ9'
+
+    await expect(
+      saveExistingHostRelayRouting({
+        ...HOST_ONE,
+        deviceToken: 'token-1',
+        endpoints: [
+          { id: 'direct-primary', kind: 'lan', url: HOST_ONE.endpoint },
+          { id: 'relay-primary', kind: 'relay', url: 'wss://relay.onorca.dev/v1/connect/host' }
+        ],
+        relayHostId,
+        relay: {
+          v: 1,
+          directorUrl: 'https://relay.onorca.dev',
+          cellUrl: 'https://relay.onorca.dev',
+          assignmentEpoch: 1,
+          relayHostId,
+          e2eeFraming: 2
+        }
+      })
+    ).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
+
+    expect(JSON.parse(storedOverlayRaw ?? '[]')).toEqual([])
+  })
+
+  it('orders an in-flight relay publication before same-host re-pair persistence', async () => {
+    let releaseOldToken: ((token: string | null) => void) | null = null
+    secureStoreMock.getItemAsync.mockImplementationOnce(
+      () =>
+        new Promise<string | null>((resolve) => {
+          releaseOldToken = resolve
+        })
+    )
+    const relayHostId = 'AbCdEf0123_-xyZ9'
+    const stalePublication = saveExistingHostRelayRouting({
+      ...HOST_ONE,
+      deviceToken: 'token-1',
+      endpoints: [
+        { id: 'direct-primary', kind: 'lan', url: HOST_ONE.endpoint },
+        { id: 'relay-primary', kind: 'relay', url: 'wss://relay.onorca.dev/v1/connect/host' }
+      ],
+      relayHostId,
+      relay: {
+        v: 1,
+        directorUrl: 'https://relay.onorca.dev',
+        cellUrl: 'https://relay.onorca.dev',
+        assignmentEpoch: 1,
+        relayHostId,
+        e2eeFraming: 2
+      }
+    })
+    await vi.waitFor(() => expect(secureStoreMock.getItemAsync).toHaveBeenCalledOnce())
+
+    const replacement = publishHostProfileTransaction(
+      { ...HOST_ONE, deviceToken: 'replacement-token' },
+      null,
+      saveHost
+    )
+    await Promise.resolve()
+    expect(secureStoreMock.setItemAsync).not.toHaveBeenCalled()
+
+    releaseOldToken?.('token-1')
+    await Promise.all([stalePublication, replacement])
+    expect(JSON.parse(storedOverlayRaw ?? '[]')).toEqual([])
   })
 
   it('awaits cleanup scheduling after metadata commit', async () => {
