@@ -226,11 +226,17 @@ describe('createFileExplorerWatchRefreshScheduler', () => {
 
     scheduler.requestFullRefresh()
     scheduler.requestDirRefresh('/repo/src')
-    scheduler.cancel()
+    expect(scheduler.cancel()).toBe(true)
     await vi.advanceTimersByTimeAsync(MAX_WAIT_MS)
 
     expect(refreshTree).not.toHaveBeenCalled()
     expect(refreshDir).not.toHaveBeenCalled()
+  })
+
+  it('reports no discarded work when an idle scheduler is cancelled', () => {
+    const { scheduler } = setup()
+
+    expect(scheduler.cancel()).toBe(false)
   })
 
   it('stops refreshing queued dirs when cancelled mid-run', async () => {
