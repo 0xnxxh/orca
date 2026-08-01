@@ -33,8 +33,9 @@ import { ExternalFileChangeBanner } from './ExternalFileChangeBanner'
 const MonacoEditor = lazy(() => import('./MonacoEditor'))
 const DiffViewer = lazy(() => import('./DiffViewer'))
 const CombinedDiffViewer = lazy(() => import('./CombinedDiffViewer'))
-// Why keyed: the reload breadcrumb is the only pre-crash evidence, and an unkeyed
-// site logs `reloadKey: "unknown"` (see crash b860def2).
+// Why keyed: `reloadKey` rides on LazyChunkLoadError and on the vetoed-reload
+// breadcrumb, so the report names this chunk instead of one of the eight lazy sites
+// below. b860def2's own pre-reload crumb had already been evicted from the ring.
 const RichMarkdownEditor = lazy(() => import('./RichMarkdownEditor'), {
   reloadKey: 'rich-markdown-editor'
 })

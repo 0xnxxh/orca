@@ -1,5 +1,10 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
 
+import {
+  requestLazyChunkRecoveryReload,
+  type LazyChunkRecoveryReloadOutcome
+} from './lazy-chunk-recovery-reload'
+
 /**
  * Resilient replacement for React.lazy.
  *
@@ -8,9 +13,10 @@ import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
  * ']'"). React.lazy permanently caches that rejection, so the error boundary's
  * "Retry" — which just re-renders the same Lazy — can never recover it; the
  * surface stays dead and reports a react-error-boundary crash. This wrapper first
- * retries transient fetch failures, then performs ONE guarded full reload to
- * refetch fresh chunk bytes and rebuild the ES module map, before finally falling
- * through to the error boundary.
+ * retries transient fetch failures, then performs ONE guarded full reload — routed
+ * through the intentional-restart path so Orca's dirty-tab beforeunload guard cannot
+ * silently veto it — to refetch fresh chunk bytes and rebuild the ES module map,
+ * before finally falling through to the error boundary.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirror React.lazy's own ComponentType<any> constraint so every existing call site type-checks unchanged.
@@ -23,14 +29,18 @@ type ReloadGuardState = 'not-attempted' | 'reload-landed' | 'reload-not-landed' 
 export type LazyWithRetryOptions = {
   retries?: number
   baseDelayMs?: number
-  /** Label surfaced in the reload breadcrumb for triage; not used for control flow. */
+  /** Names the call site on the reload breadcrumbs and on LazyChunkLoadError; never control flow. */
   reloadKey?: string
 }
 
 export class LazyChunkLoadError extends Error {
-  constructor(cause: unknown) {
+  /** Which lazy call site failed; carried on the error so reports name it without a breadcrumb. */
+  readonly reloadKey: string
+
+  constructor(cause: unknown, reloadKey = 'unknown') {
     super('Lazy chunk load failed after reload recovery was exhausted')
     this.name = 'LazyChunkLoadError'
+    this.reloadKey = reloadKey
     ;(this as { cause?: unknown }).cause = cause
   }
 }
@@ -42,9 +52,9 @@ export function isLazyChunkLoadError(error: unknown): error is LazyChunkLoadErro
 // One recovery reload per session. The guard survives the reload itself (so we
 // never loop) but resets when the window/app closes, so a later launch — e.g.
 // after an update ships fresh chunks — can earn another reload. sessionStorage
-// (not localStorage) gives exactly that lifetime; it is never cleared mid-session,
-// otherwise a sibling chunk's healthy load would re-arm the reload and an
-// auto-mounted corrupt chunk would loop.
+// (not localStorage) gives exactly that lifetime; a healthy sibling load never
+// clears it, otherwise an auto-mounted corrupt chunk would loop. The one exception
+// is a reload this document proved never landed (see clearChunkReloadGuard).
 const RELOAD_GUARD_KEY = 'orca:lazy-chunk-reload-attempted'
 // Stand-in document identity for hosts without a usable performance.timeOrigin; a
 // reload re-evaluates this module, so a fresh value still means the reload landed.
@@ -88,33 +98,53 @@ function markChunkReloadAttempted(): boolean {
   }
 }
 
-function recordReloadBreadcrumb(reloadKey: string, message: string): void {
+// Why: a token this document wrote itself proves no reload happened, so leaving it in
+// place would deny the surface recovery for the whole session even after whatever
+// vetoed the navigation is gone (e.g. the user saved the dirty tab).
+function clearChunkReloadGuard(): void {
+  try {
+    window.sessionStorage.removeItem(RELOAD_GUARD_KEY)
+  } catch {
+    // Best effort: a document that cannot clear the guard just forfeits its retry.
+  }
+}
+
+// sessionStorage cannot bound a document that keeps re-arming its own guard, so cap
+// recovery requests in memory; the counter dies with the document a reload replaces.
+const MAX_RELOAD_REQUESTS_PER_DOCUMENT = 2
+let reloadRequestsThisDocument = 0
+// A sibling chunk failing mid-navigation reads the same 'reload-not-landed' guard;
+// clearing it there would re-arm a document that is already tearing down.
+let reloadRequestInFlight = false
+
+export function resetLazyChunkReloadRequestsForTest(): void {
+  reloadRequestsThisDocument = 0
+  reloadRequestInFlight = false
+}
+
+type ReloadBreadcrumbName = 'lazy_chunk_reload' | 'lazy_chunk_reload_vetoed'
+
+function recordReloadBreadcrumb(
+  name: ReloadBreadcrumbName,
+  reloadKey: string,
+  message: string,
+  outcome?: string
+): void {
   // Inlined rather than importing crash-diagnostics so this low-level recovery
   // primitive stays free of the renderer/webview module graph (keeps it SSR- and
   // unit-test-friendly). Mirrors crash-diagnostics' best-effort breadcrumb call.
   try {
     const api = (window as Window & { api?: Window['api'] }).api
-    api?.crashReports.recordBreadcrumb({ name: 'lazy_chunk_reload', data: { reloadKey, message } })
+    api?.crashReports.recordBreadcrumb({
+      name,
+      data: { reloadKey, message, ...(outcome === undefined ? {} : { outcome }) }
+    })
   } catch {
     // Crash evidence is best-effort and must never mask the original failure.
   }
 }
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
-
-// Grace window for reload() to tear the document down. Long enough that the error
-// fallback never flashes ahead of a real navigation.
-const RELOAD_SETTLE_GRACE_MS = 10_000
-
-// Suspends the boundary while reload() tears the page down. Suspending forever would
-// hang the pane on a spinner when the reload is vetoed (Orca preventDefault()s
-// beforeunload for dirty editor tabs), so surface the real failure once the grace
-// window proves the navigation never happened.
-function suspendUntilReloadLands(loadError: unknown): Promise<never> {
-  return new Promise<never>((_resolve, reject) => {
-    setTimeout(() => reject(loadError), RELOAD_SETTLE_GRACE_MS)
-  })
-}
 
 function isKnownDynamicImportFailure(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -166,21 +196,47 @@ export async function loadLazyWithRetry<T extends AnyComponent>(
     }
   }
 
+  const reloadKey = options.reloadKey ?? 'unknown'
+  const failureMessage = lastError instanceof Error ? lastError.message : String(lastError)
   const reloadGuardState = readChunkReloadGuardState()
-  if (typeof window !== 'undefined' && reloadGuardState === 'not-attempted') {
+
+  if (
+    typeof window !== 'undefined' &&
+    reloadGuardState === 'not-attempted' &&
+    reloadRequestsThisDocument < MAX_RELOAD_REQUESTS_PER_DOCUMENT
+  ) {
     if (!markChunkReloadAttempted()) {
       throw lastError
     }
-    recordReloadBreadcrumb(
-      options.reloadKey ?? 'unknown',
-      lastError instanceof Error ? lastError.message : String(lastError)
-    )
-    window.location.reload()
-    return suspendUntilReloadLands(lastError)
+    reloadRequestsThisDocument += 1
+    reloadRequestInFlight = true
+    recordReloadBreadcrumb('lazy_chunk_reload', reloadKey, failureMessage)
+    // Resolves only if the navigation was refused; a landed reload kills this document.
+    const outcome: LazyChunkRecoveryReloadOutcome = await requestLazyChunkRecoveryReload(window)
+    reloadRequestInFlight = false
+    clearChunkReloadGuard()
+    recordReloadBreadcrumb('lazy_chunk_reload_vetoed', reloadKey, failureMessage, outcome)
+    throw lastError
   }
 
   if (reloadGuardState === 'reload-landed' && isKnownDynamicImportFailure(lastError)) {
-    throw new LazyChunkLoadError(lastError)
+    throw new LazyChunkLoadError(lastError, reloadKey)
+  }
+
+  if (
+    reloadGuardState === 'reload-not-landed' &&
+    !reloadRequestInFlight &&
+    isKnownDynamicImportFailure(lastError)
+  ) {
+    // Why here and not only at request time: this crumb lands in the same tick as the
+    // crash report, so the 30-entry ring cannot evict it the way it evicted b860def2's.
+    clearChunkReloadGuard()
+    recordReloadBreadcrumb(
+      'lazy_chunk_reload_vetoed',
+      reloadKey,
+      failureMessage,
+      'guard-not-landed'
+    )
   }
 
   // No proven reload (SSR / node / blocked storage / a reload this document asked

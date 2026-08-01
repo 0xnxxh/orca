@@ -2,7 +2,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComponentType } from 'react'
 
-import { isLazyChunkLoadError, loadLazyWithRetry } from './lazy-with-retry'
+import {
+  isLazyChunkLoadError,
+  loadLazyWithRetry,
+  resetLazyChunkReloadRequestsForTest
+} from './lazy-with-retry'
+import { preventUnloadAndScheduleShutdownCheckpointReset } from './shutdown-checkpoint-guard'
+import {
+  isIntentionalAppRestartInProgress,
+  registerUpdaterBeforeUnloadBypass
+} from './updater-beforeunload'
+import { ORCA_RENDERER_UNLOAD_PREVENTED_EVENT } from '../../../shared/renderer-shutdown-events'
+import { ORCA_APP_RESTART_ABORTED_EVENT } from '../../../shared/updater-renderer-events'
+import {
+  ORCA_EDITOR_PREPARE_HOT_EXIT_EVENT,
+  type EditorPrepareHotExitDetail
+} from '../../../shared/editor-save-events'
 
 const RELOAD_GUARD_KEY = 'orca:lazy-chunk-reload-attempted'
 // A guard holding a *different* document's token is the only proof the reload
@@ -44,6 +59,8 @@ function makeSessionStorageThrow(): void {
 beforeEach(() => {
   vi.useFakeTimers()
   window.sessionStorage.clear()
+  // The per-document reload cap is module state; a fresh document per test.
+  resetLazyChunkReloadRequestsForTest()
 })
 
 afterEach(() => {
@@ -181,6 +198,33 @@ describe('loadLazyWithRetry', () => {
     expect(isLazyChunkLoadError(caught)).toBe(false)
   })
 
+  // b860def2's only reload evidence was a 19:05 breadcrumb, evicted from the 30-entry
+  // ring long before the 19:49 report. This path now files the report, so it must leave
+  // its own proof in the same tick.
+  it('records a lazy_chunk_reload_vetoed breadcrumb in the tick that reports the crash', async () => {
+    spyOnReload()
+    const recordBreadcrumb = stubCrashReportsBreadcrumb()
+    window.sessionStorage.setItem(RELOAD_GUARD_KEY, String(performance.timeOrigin))
+    const error = chunkParseError()
+
+    const loaded = loadLazyWithRetry(() => Promise.reject(error), {
+      retries: 0,
+      reloadKey: 'rich-markdown-editor'
+    })
+    const assertion = expect(loaded).rejects.toBe(error)
+    await vi.advanceTimersByTimeAsync(1)
+    await assertion
+
+    expect(recordBreadcrumb).toHaveBeenCalledWith({
+      name: 'lazy_chunk_reload_vetoed',
+      data: {
+        reloadKey: 'rich-markdown-editor',
+        message: "Unexpected token ']'",
+        outcome: 'guard-not-landed'
+      }
+    })
+  })
+
   it('preserves the original error when the guarded failure is not a dynamic import failure', async () => {
     const reload = spyOnReload()
     window.sessionStorage.setItem(RELOAD_GUARD_KEY, LANDED_RELOAD_GUARD_VALUE)
@@ -312,5 +356,233 @@ describe('loadLazyWithRetry', () => {
     // would re-arm the reload and an auto-mounted corrupt chunk would loop.
     expect(window.sessionStorage.getItem(RELOAD_GUARD_KEY)).toBe(LANDED_RELOAD_GUARD_VALUE)
     expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('carries the reloadKey on LazyChunkLoadError so the crash names the call site', async () => {
+    spyOnReload()
+    window.sessionStorage.setItem(RELOAD_GUARD_KEY, LANDED_RELOAD_GUARD_VALUE)
+    const factory = vi.fn(() => Promise.reject(chunkParseError()))
+
+    const loaded = loadLazyWithRetry(factory, { retries: 0, reloadKey: 'rich-markdown-editor' })
+    const settled = loaded.then(
+      () => null,
+      (rejection: unknown) => rejection
+    )
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(await settled).toMatchObject({ reloadKey: 'rich-markdown-editor' })
+  })
+})
+
+// Crash b860def2: `window.location.reload()` was requested at 19:05:00.984Z and never
+// landed — Terminal's beforeunload handler preventDefault()s whenever any open editor
+// file is dirty and Electron's will-prevent-unload cancels the navigation with no
+// dialog. In an editor app with one unsaved tab, chunk recovery could never run.
+describe('loadLazyWithRetry recovery reload vs the dirty-editor-tab unload veto', () => {
+  type Harness = {
+    navigations: string[]
+    hotExitBackups: number
+    restartLatchAtNavigation: boolean
+    cleanup: () => void
+  }
+
+  // Mirrors production: Terminal.tsx's dirty-tab guard + Electron's will-prevent-unload
+  // relay (preload dispatches ORCA_RENDERER_UNLOAD_PREVENTED_EVENT on cancel).
+  function installDirtyEditorTab(options: { hotExitBackupFails?: boolean } = {}): Harness {
+    const harness: Harness = {
+      navigations: [],
+      hotExitBackups: 0,
+      restartLatchAtNavigation: false,
+      cleanup: () => {}
+    }
+    const cleanupBypass = registerUpdaterBeforeUnloadBypass()
+
+    const dirtyTabGuard = (event: Event): void => {
+      if (isIntentionalAppRestartInProgress()) {
+        return
+      }
+      preventUnloadAndScheduleShutdownCheckpointReset(event, window)
+    }
+    const hotExitBackup = (event: Event): void => {
+      const detail = (event as CustomEvent<EditorPrepareHotExitDetail>).detail
+      detail.claim()
+      harness.hotExitBackups += 1
+      if (options.hotExitBackupFails === true) {
+        detail.reject('Some unsaved editor changes cannot be backed up before restart.')
+        return
+      }
+      detail.resolve()
+    }
+
+    window.addEventListener('beforeunload', dirtyTabGuard)
+    window.addEventListener(ORCA_EDITOR_PREPARE_HOT_EXIT_EVENT, hotExitBackup)
+    vi.spyOn(window.location, 'reload').mockImplementation(() => {
+      harness.restartLatchAtNavigation = isIntentionalAppRestartInProgress()
+      const accepted = window.dispatchEvent(new Event('beforeunload', { cancelable: true }))
+      harness.navigations.push(accepted ? 'landed' : 'cancelled')
+      if (!accepted) {
+        window.dispatchEvent(new Event(ORCA_RENDERER_UNLOAD_PREVENTED_EVENT))
+      }
+    })
+
+    harness.cleanup = () => {
+      window.removeEventListener('beforeunload', dirtyTabGuard)
+      window.removeEventListener(ORCA_EDITOR_PREPARE_HOT_EXIT_EVENT, hotExitBackup)
+      cleanupBypass()
+    }
+    return harness
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    window.sessionStorage.clear()
+    resetLazyChunkReloadRequestsForTest()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+    delete (window as unknown as { api?: unknown }).api
+    window.sessionStorage.clear()
+  })
+
+  it('lands the recovery reload despite an unsaved editor tab', async () => {
+    const harness = installDirtyEditorTab()
+    const error = chunkParseError()
+
+    const loaded = loadLazyWithRetry(() => Promise.reject(error), { retries: 0 })
+    let settled: unknown = 'pending'
+    void loaded.then(
+      (value) => {
+        settled = value
+      },
+      (rejection: unknown) => {
+        settled = rejection
+      }
+    )
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(harness.navigations).toEqual(['landed'])
+    expect(harness.restartLatchAtNavigation).toBe(true)
+    // Unsaved buffers are backed up before the document is thrown away.
+    expect(harness.hotExitBackups).toBe(1)
+    // A landed navigation kills the document, so the boundary never sees the error.
+    expect(settled).toBe('pending')
+    harness.cleanup()
+  })
+
+  it('refuses to reload when unsaved buffers cannot be backed up', async () => {
+    const harness = installDirtyEditorTab({ hotExitBackupFails: true })
+    const recordBreadcrumb = stubCrashReportsBreadcrumb()
+    const restartAborted = vi.fn()
+    window.addEventListener(ORCA_APP_RESTART_ABORTED_EVENT, restartAborted)
+    const error = chunkParseError()
+
+    const loaded = loadLazyWithRetry(() => Promise.reject(error), {
+      retries: 0,
+      reloadKey: 'rich-markdown-editor'
+    })
+    let settled: unknown = 'pending'
+    void loaded.then(
+      (value) => {
+        settled = value
+      },
+      (rejection: unknown) => {
+        settled = rejection
+      }
+    )
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(harness.navigations).toEqual([])
+    expect(settled).toBe(error)
+    // The latch suppresses the unsaved-changes prompt; never leave it armed.
+    expect(restartAborted).toHaveBeenCalled()
+    expect(isIntentionalAppRestartInProgress()).toBe(false)
+    expect(recordBreadcrumb).toHaveBeenCalledWith({
+      name: 'lazy_chunk_reload_vetoed',
+      data: {
+        reloadKey: 'rich-markdown-editor',
+        message: "Unexpected token ']'",
+        outcome: 'checkpoint-refused'
+      }
+    })
+    window.removeEventListener(ORCA_APP_RESTART_ABORTED_EVENT, restartAborted)
+    harness.cleanup()
+  })
+
+  it('settles on the unload-prevented signal instead of waiting out the blind grace window', async () => {
+    // Chromium throttles background-tab timers, so a 10s blind wait can stretch far past
+    // a real veto — and the old timer was never cleared for a navigation that did land.
+    vi.spyOn(window.location, 'reload').mockImplementation(() => {
+      window.dispatchEvent(new Event(ORCA_RENDERER_UNLOAD_PREVENTED_EVENT))
+    })
+    const error = chunkParseError()
+
+    const loaded = loadLazyWithRetry(() => Promise.reject(error), { retries: 0 })
+    let settled: unknown = 'pending'
+    void loaded.then(
+      (value) => {
+        settled = value
+      },
+      (rejection: unknown) => {
+        settled = rejection
+      }
+    )
+    await vi.advanceTimersByTimeAsync(50)
+
+    expect(settled).toBe(error)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('drops the stale guard after a vetoed reload but caps re-arming per document', async () => {
+    const reload = vi.fn(() => {
+      window.dispatchEvent(new Event(ORCA_RENDERER_UNLOAD_PREVENTED_EVENT))
+    })
+    vi.spyOn(window.location, 'reload').mockImplementation(reload)
+    const error = chunkParseError()
+    const attempt = async (): Promise<unknown> => {
+      let settled: unknown = 'pending'
+      void loadLazyWithRetry(() => Promise.reject(error), { retries: 0 }).then(
+        (value) => {
+          settled = value
+        },
+        (rejection: unknown) => {
+          settled = rejection
+        }
+      )
+      await vi.advanceTimersByTimeAsync(50)
+      return settled
+    }
+
+    expect(await attempt()).toBe(error)
+    // A guard left by a reload that never happened denies this document recovery for
+    // the rest of the session, even once the user saves the tab that blocked it.
+    expect(window.sessionStorage.getItem(RELOAD_GUARD_KEY)).toBeNull()
+
+    expect(await attempt()).toBe(error)
+    expect(reload).toHaveBeenCalledTimes(2)
+
+    // ...but clearing the guard must not let a permanently vetoing window loop.
+    expect(await attempt()).toBe(error)
+    expect(reload).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the guard while a reload is in flight so a sibling chunk cannot re-arm it', async () => {
+    spyOnReload() // no veto signal: the navigation stays in flight for the grace window
+    const error = chunkParseError()
+
+    void loadLazyWithRetry(() => Promise.reject(error), { retries: 0 }).then(
+      () => undefined,
+      () => undefined
+    )
+    await vi.advanceTimersByTimeAsync(50)
+    // A second lazy site fails while the document is already tearing down.
+    void loadLazyWithRetry(() => Promise.reject(error), { retries: 0 }).then(
+      () => undefined,
+      () => undefined
+    )
+    await vi.advanceTimersByTimeAsync(50)
+
+    expect(window.sessionStorage.getItem(RELOAD_GUARD_KEY)).toBe(String(performance.timeOrigin))
   })
 })

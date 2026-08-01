@@ -7,7 +7,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { lazyWithRetry } from '@/lib/lazy-with-retry'
-import { RichMarkdownErrorBoundary } from './RichMarkdownErrorBoundary'
+import {
+  clearLazyChunkBreadcrumbDedupeForTest,
+  RichMarkdownErrorBoundary
+} from './RichMarkdownErrorBoundary'
 
 const reportCrashMock = vi.hoisted(() => vi.fn())
 const recordBreadcrumbMock = vi.hoisted(() => vi.fn())
@@ -57,8 +60,10 @@ async function flushReactWork(): Promise<void> {
   })
 }
 
-// The breadcrumb dedupe is module-scoped (it has to outlive boundary remounts), so
-// every test below must use a distinct parse-error message to start from a clean slate.
+// The parse error a corrupt rich-editor chunk rejects with; reused across tests to
+// prove the module-scoped dedupe is reset rather than dodged by unique messages.
+const CORRUPT_CHUNK_PARSE_ERROR = "Unexpected token ':'"
+
 describe('RichMarkdownErrorBoundary lazy chunk containment', () => {
   let root: Root | null = null
   let container: HTMLDivElement | null = null
@@ -67,6 +72,8 @@ describe('RichMarkdownErrorBoundary lazy chunk containment', () => {
   beforeEach(() => {
     reportCrashMock.mockReset()
     recordBreadcrumbMock.mockReset()
+    // Dedupe is module-scoped so it can outlive boundary remounts; reset it per test.
+    clearLazyChunkBreadcrumbDedupeForTest()
     window.sessionStorage.clear()
     consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
   })
@@ -88,8 +95,8 @@ describe('RichMarkdownErrorBoundary lazy chunk containment', () => {
   it('renders the fallback without reporting after guarded dynamic import exhaustion', async () => {
     window.sessionStorage.setItem(RELOAD_GUARD_KEY, LANDED_RELOAD_GUARD_VALUE)
     const LazyRejectingImport = lazyWithRetry(
-      () => Promise.reject(new SyntaxError("Unexpected token ':'")),
-      { retries: 0 }
+      () => Promise.reject(new SyntaxError(CORRUPT_CHUNK_PARSE_ERROR)),
+      { retries: 0, reloadKey: 'rich-markdown-editor' }
     )
     ;({ container, root } = createContainer())
 
@@ -108,16 +115,18 @@ describe('RichMarkdownErrorBoundary lazy chunk containment', () => {
     // The suppressed report was the only artifact naming this surface; keep evidence.
     expect(recordBreadcrumbMock).toHaveBeenCalledWith('lazy_chunk_boundary_degraded', {
       boundaryId: 'editor.rich-markdown',
-      cause: "SyntaxError: Unexpected token ':'"
+      reloadKey: 'rich-markdown-editor',
+      cause: `SyntaxError: ${CORRUPT_CHUNK_PARSE_ERROR}`
     })
   })
 
   // The breadcrumb ring holds 30 entries and does not coalesce this name, so an
   // impatient Retry streak on a permanently rejected chunk would erase the trail.
+  // Reuses the previous test's error to pin that the dedupe set is actually cleared.
   it('records the degraded breadcrumb once across repeated Retry clicks', async () => {
     window.sessionStorage.setItem(RELOAD_GUARD_KEY, LANDED_RELOAD_GUARD_VALUE)
     const LazyRejectingImport = lazyWithRetry(
-      () => Promise.reject(new SyntaxError("Unexpected token '}'")),
+      () => Promise.reject(new SyntaxError(CORRUPT_CHUNK_PARSE_ERROR)),
       { retries: 0 }
     )
     ;({ container, root } = createContainer())

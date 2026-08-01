@@ -278,7 +278,7 @@ import { readRendererHeapStatistics } from './renderer-heap-statistics-reader'
 import {
   createUpdaterQuitAbortRelay,
   prepareRendererForAppRestart
-} from './renderer-restart-preparation'
+} from '../shared/renderer-restart-preparation'
 
 type NativeFileDropCallback = (data: NativeFileDropPayload) => void
 
