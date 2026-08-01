@@ -9,19 +9,18 @@ type Props = {
   onChange: (mode: MobileBrowserViewMode) => void
 }
 
-const VIEW_MODES: { id: MobileBrowserViewMode; label: string }[] = [
-  { id: 'web', label: t('m.3TuUR-s') },
-  { id: 'mobile', label: t('m.eJJUzYE') }
-]
-
 export function MobileBrowserViewModeSwitch({
   disabled,
   value,
   onChange
 }: Props): React.JSX.Element {
+  const viewModes: { id: MobileBrowserViewMode; label: string }[] = [
+    { id: 'web', label: t('m.3TuUR-s') },
+    { id: 'mobile', label: t('m.eJJUzYE') }
+  ]
   return (
     <View style={styles.switch}>
-      {VIEW_MODES.map((mode) => (
+      {viewModes.map((mode) => (
         <ViewModeButton
           key={mode.id}
           label={mode.label}

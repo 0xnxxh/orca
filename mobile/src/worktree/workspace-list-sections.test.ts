@@ -8,7 +8,9 @@ import {
   getWorktreeStatus,
   sortWorktrees
 } from './workspace-list-sections'
-import { DEFAULT_MOBILE_WORKSPACE_STATUSES } from './mobile-workspace-statuses'
+import { getDefaultMobileWorkspaceStatuses } from './mobile-workspace-statuses'
+
+const DEFAULT_MOBILE_WORKSPACE_STATUSES = getDefaultMobileWorkspaceStatuses()
 
 function worktree(overrides: Partial<Worktree> = {}): Worktree {
   const worktreePath = join('/tmp', 'orca', 'worktrees', 'feature')

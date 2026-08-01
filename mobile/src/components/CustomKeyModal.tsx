@@ -27,32 +27,6 @@ type Step = 'choose-type' | 'shortcut-combo' | 'special-keys' | 'text-macro'
 // is the only modifier that produces an ESC-prefixed byte sequence terminals
 // can read. Cmd is intentionally absent — macOS swallows it before keystrokes
 // reach the shell, so there's nothing to encode.
-const SHORTCUT_MODIFIERS: { id: TerminalShortcutModifier; label: string; glyph?: string }[] = [
-  { id: 'ctrl', label: t('m.OZLCEBo') },
-  { id: 'alt', label: t('m.Mz-qIO4'), glyph: '⌥' },
-  { id: 'shift', label: t('m.Dl9mAnI') }
-]
-
-// Why: special keys are grouped by purpose so the picker reads as three small
-// fixed grids rather than one ragged wrap row that clipped F7-F12.
-const SPECIAL_KEY_GROUPS: { title: string; ids: string[]; columns: number }[] = [
-  {
-    title: t('m.1RunS2Y'),
-    ids: ['escape', 'tab', 'enter', 'backspace', 'delete', 'insert', 'space'],
-    columns: 4
-  },
-  {
-    title: t('m.ClgDZUM'),
-    ids: ['arrowUp', 'arrowDown', 'arrowLeft', 'arrowRight', 'home', 'end', 'pageUp', 'pageDown'],
-    columns: 4
-  },
-  {
-    title: t('m.WwKbTEk'),
-    ids: ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12'],
-    columns: 6
-  }
-]
-
 const SPECIAL_KEY_BY_ID: Record<string, TerminalShortcutSpecialKey> = Object.fromEntries(
   TERMINAL_SHORTCUT_SPECIAL_KEYS.map((key) => [key.id, key])
 )
@@ -85,6 +59,28 @@ export function CustomKeyModal({ visible, onClose, onKeysChanged, onManageShortc
   const [macroText, setMacroText] = useState('')
   const [macroEnter, setMacroEnter] = useState(true)
   const [previousVisible, setPreviousVisible] = useState(visible)
+  const shortcutModifierOptions = [
+    { id: 'ctrl', label: t('m.OZLCEBo') },
+    { id: 'alt', label: t('m.Mz-qIO4'), glyph: '⌥' },
+    { id: 'shift', label: t('m.Dl9mAnI') }
+  ] satisfies readonly { id: TerminalShortcutModifier; label: string; glyph?: string }[]
+  const specialKeyGroups: { title: string; ids: string[]; columns: number }[] = [
+    {
+      title: t('m.1RunS2Y'),
+      ids: ['escape', 'tab', 'enter', 'backspace', 'delete', 'insert', 'space'],
+      columns: 4
+    },
+    {
+      title: t('m.ClgDZUM'),
+      ids: ['arrowUp', 'arrowDown', 'arrowLeft', 'arrowRight', 'home', 'end', 'pageUp', 'pageDown'],
+      columns: 4
+    },
+    {
+      title: t('m.WwKbTEk'),
+      ids: ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12'],
+      columns: 6
+    }
+  ]
 
   // Why: reset before the opening commit so the drawer does not flash the last
   // custom-key draft; keep close state unchanged for the slide-out animation.
@@ -125,9 +121,8 @@ export function CustomKeyModal({ visible, onClose, onKeysChanged, onManageShortc
     return shortcutKey.length === 1 ? shortcutKey.toUpperCase() : shortcutKey
   }, [shortcutKey])
 
-  const orderedActiveModifiers = useMemo(
-    () => SHORTCUT_MODIFIERS.filter((m) => shortcutModifiers.includes(m.id)),
-    [shortcutModifiers]
+  const orderedActiveModifiers = shortcutModifierOptions.filter((modifier) =>
+    shortcutModifiers.includes(modifier.id)
   )
 
   const toggleShortcutModifier = useCallback((modifier: TerminalShortcutModifier) => {
@@ -260,7 +255,7 @@ export function CustomKeyModal({ visible, onClose, onKeysChanged, onManageShortc
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>{t('m.9jQVv-8')}</Text>
             <View style={styles.mods}>
-              {SHORTCUT_MODIFIERS.map((modifier) => {
+              {shortcutModifierOptions.map((modifier) => {
                 const selected = shortcutModifiers.includes(modifier.id)
                 return (
                   <Pressable
@@ -324,7 +319,7 @@ export function CustomKeyModal({ visible, onClose, onKeysChanged, onManageShortc
 
       {step === 'special-keys' && (
         <View style={styles.specialKeysForm}>
-          {SPECIAL_KEY_GROUPS.map((group) => (
+          {specialKeyGroups.map((group) => (
             <View key={group.title} style={styles.specialGroup}>
               <Text style={styles.specialGroupTitle}>{group.title}</Text>
               <View style={styles.keyGrid}>

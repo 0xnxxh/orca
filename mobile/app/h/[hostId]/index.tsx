@@ -94,14 +94,15 @@ import {
 import { useWorkspaceSections } from '../../../src/worktree/use-workspace-sections'
 import { getMobileWorkspaceLineageGroupKey } from '../../../src/worktree/mobile-workspace-lineage'
 import { areWorktreeListsEqual } from '../../../src/worktree/worktree-list-snapshot'
+import { WorktreeCatalogSnapshotClient } from '../../../src/worktree/worktree-catalog-snapshot-client'
 import { repoColor } from '../../../src/worktree/repo-color'
 import {
-  WORKSPACE_GROUP_OPTIONS as GROUP_OPTIONS,
-  WORKSPACE_SORT_OPTIONS as SORT_OPTIONS
+  getWorkspaceGroupOptions,
+  getWorkspaceSortOptions
 } from '../../../src/worktree/workspace-list-picker-options'
 import type { RepoSummary } from '../../../src/worktree/host-worktree-rpc-types'
 import type { WorkspaceStatusDefinition } from '../../../../src/shared/types'
-import { DEFAULT_MOBILE_WORKSPACE_STATUSES } from '../../../src/worktree/mobile-workspace-statuses'
+import { getDefaultMobileWorkspaceStatuses } from '../../../src/worktree/mobile-workspace-statuses'
 import { t } from '@/i18n/mobile-i18n'
 
 function isErrorVerdict(v: ConnectionVerdict): boolean {
@@ -142,6 +143,9 @@ export function HostScreen({
   const lastConnectedAt = useLastConnectedAt(hostId)
   const clientRef = useRef<RpcClient | null>(null)
   const fetchWorktreesInFlightRef = useRef(false)
+  // Why: useRef, not useMemo — React may discard memoized values, which would silently
+  // reset the snapshot token this object exists to own.
+  const worktreeCatalogRef = useRef(new WorktreeCatalogSnapshotClient())
   const fetchRepoMetadataInFlightRef = useRef(new WeakSet<RpcClient>())
   const fetchRepoMetadataPendingRef = useRef(new WeakSet<RpcClient>())
   const repoMetadataFetchedAtRef = useRef(0)
@@ -170,7 +174,7 @@ export function HostScreen({
   })
   const [groupMode, setGroupMode] = useState<MobileGroupMode>('repo')
   const [workspaceStatuses, setWorkspaceStatuses] = useState<readonly WorkspaceStatusDefinition[]>(
-    DEFAULT_MOBILE_WORKSPACE_STATUSES
+    getDefaultMobileWorkspaceStatuses
   )
   // displayName → repo id: filters key on repo id, but section headers/rows key on displayName, so bridge the two.
   const [repoIdsByName, setRepoIdsByName] = useState<Map<string, string>>(new Map())
@@ -199,7 +203,7 @@ export function HostScreen({
     hideDefaultBranch: false,
     filterRepoIds: [],
     collapsedGroups: [],
-    workspaceStatuses: DEFAULT_MOBILE_WORKSPACE_STATUSES
+    workspaceStatuses: getDefaultMobileWorkspaceStatuses()
   })
 
   useEffect(() => {
@@ -424,31 +428,32 @@ export function HostScreen({
       const requestHostId = hostId
 
       try {
-        // Why: worktree.ps silently truncates at 200; use a high cap so large hosts don't drop workspaces.
-        const response = await requestClient.sendRequest('worktree.ps', { limit: 10000 })
+        const pendingCatalog = await worktreeCatalogRef.current.fetch(requestClient, requestHostId)
         if (clientRef.current !== requestClient || hostId !== requestHostId) {
           return
         }
         if (!options.allowDuringModal && newWorktreeModalVisibleRef.current) {
           return
         }
-        if (response.ok) {
-          const result = (response as RpcSuccess).result as { worktrees: Worktree[] }
+        // Why: unchanged responses still yield the confirmed rows, so every poll reasserts
+        // host truth over optimistic local edits regardless of payload size.
+        const confirmed = worktreeCatalogRef.current.admit(pendingCatalog)
+        if (confirmed) {
           // Why: reuse the existing array on identical snapshots to keep SectionList/sort rebuilds off the tap path.
           setWorktrees((current) =>
-            areWorktreeListsEqual(current, result.worktrees) ? current : result.worktrees
+            areWorktreeListsEqual(current, confirmed) ? current : confirmed
           )
           setLastKnownWorktrees((current) =>
-            areWorktreeListsEqual(current, result.worktrees) ? current : result.worktrees
+            areWorktreeListsEqual(current, confirmed) ? current : confirmed
           )
           setWorktreesLoaded(true)
           // Why (#8498): overwrite the home-written cache with the confirmed snapshot so a reconnect/remount can't serve a stale list.
           if (hostId) {
-            setCachedWorktrees(hostId, result.worktrees)
+            setCachedWorktrees(hostId, confirmed)
           }
           // Drop the optimistic active override once the host reports it active, so later desktop changes win.
           setOptimisticActiveWorktreeId((pending) =>
-            pending && result.worktrees.some((w) => w.worktreeId === pending && w.isActive)
+            pending && confirmed.some((w) => w.worktreeId === pending && w.isActive)
               ? null
               : pending
           )
@@ -460,7 +465,7 @@ export function HostScreen({
             }
             const still = new Set<string>()
             for (const id of prev) {
-              const wt = result.worktrees.find((w) => w.worktreeId === id)
+              const wt = confirmed.find((w) => w.worktreeId === id)
               if (wt && wt.liveTerminalCount > 0) {
                 still.add(id)
               }
@@ -469,9 +474,7 @@ export function HostScreen({
           })
 
           // Sync pin state from server so desktop-initiated pins reflect without relying on stale AsyncStorage.
-          const serverPinned = new Set(
-            result.worktrees.filter((w) => w.isPinned).map((w) => w.worktreeId)
-          )
+          const serverPinned = new Set(confirmed.filter((w) => w.isPinned).map((w) => w.worktreeId))
           setPinnedIds((prev) => {
             if (serverPinned.size === prev.size && [...serverPinned].every((id) => prev.has(id))) {
               return prev
@@ -706,7 +709,7 @@ export function HostScreen({
     return count
   }, [filters])
   const selectedSortLabel =
-    SORT_OPTIONS.find((option) => option.value === sortMode)?.label ?? t('m.qVCBvFg')
+    getWorkspaceSortOptions().find((option) => option.value === sortMode)?.label ?? t('m.qVCBvFg')
 
   const handleGroupChange = useCallback(
     (value: MobileGroupMode) => {
@@ -1208,7 +1211,7 @@ export function HostScreen({
       <PickerModal
         visible={showSortPicker}
         title={t('m.hFsVshM')}
-        options={SORT_OPTIONS}
+        options={getWorkspaceSortOptions()}
         selected={sortMode}
         onSelect={handleSortChange}
         onClose={() => setShowSortPicker(false)}
@@ -1217,7 +1220,7 @@ export function HostScreen({
       <PickerModal
         visible={showGroupPicker}
         title={t('m.fVWdjBk')}
-        options={GROUP_OPTIONS}
+        options={getWorkspaceGroupOptions()}
         selected={groupMode}
         onSelect={handleGroupChange}
         onClose={() => setShowGroupPicker(false)}

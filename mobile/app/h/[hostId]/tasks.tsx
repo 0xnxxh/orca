@@ -683,7 +683,7 @@ type TaskListEntry =
   | { type: 'section'; key: string; label: string; color: string }
   | { type: 'item'; key: string; item: TaskItem }
 
-const PROVIDER_OPTIONS: PickerOption<TaskProvider>[] = [
+const getProviderOptions = (): PickerOption<TaskProvider>[] => [
   {
     value: 'github',
     label: t('m.gcczsRA'),
@@ -722,21 +722,21 @@ const PROVIDER_OPTIONS: PickerOption<TaskProvider>[] = [
   }
 ]
 
-const GITLAB_FILTER_OPTIONS: PickerOption<GitLabFilter>[] = [
+const getGitLabFilterOptions = (): PickerOption<GitLabFilter>[] => [
   { value: 'opened', label: t('m.czxJ7iQ'), subtitle: t('m.Dm3BEDs') },
   { value: 'merged', label: t('m.GtruncU'), subtitle: t('m.fM4vagY') },
   { value: 'closed', label: t('m.BpviSSw'), subtitle: t('m.m5Y69Pc') },
   { value: 'all', label: t('m.gIF8518'), subtitle: t('m.Svu67QM') }
 ]
 
-const LINEAR_FILTER_OPTIONS: PickerOption<LinearFilter>[] = [
+const getLinearFilterOptions = (): PickerOption<LinearFilter>[] => [
   { value: 'all', label: t('m.gIF8518'), subtitle: t('m._kT7uQE') },
   { value: 'assigned', label: t('m.pP-07nE'), subtitle: t('m.eNsBySI') },
   { value: 'created', label: t('m.o_j-FoE'), subtitle: t('m.kRDldqg') },
   { value: 'completed', label: t('m.HauqL5Y'), subtitle: t('m.CW8el5g') }
 ]
 
-const LINEAR_VIEW_OPTIONS: PickerOption<LinearViewMode>[] = [
+const getLinearViewOptions = (): PickerOption<LinearViewMode>[] => [
   { value: 'list', label: t('m.tIgX1ak'), subtitle: t('m.6GAUUa8') },
   { value: 'board', label: t('m.uoATjeA'), subtitle: t('m.JKx6Gd0') }
 ]
@@ -766,7 +766,7 @@ const COMMENT_REACTION_EMOJI: Record<
   eyes: 'eyes'
 }
 
-const LINEAR_GROUP_OPTIONS: PickerOption<LinearGroupBy>[] = [
+const getLinearGroupOptions = (): PickerOption<LinearGroupBy>[] => [
   { value: 'none', label: t('m.Dd-TzXA') },
   { value: 'status', label: t('m.Fa6K7yI') },
   { value: 'assignee', label: t('m.b3RSkG0') },
@@ -774,13 +774,13 @@ const LINEAR_GROUP_OPTIONS: PickerOption<LinearGroupBy>[] = [
   { value: 'team', label: t('m.czBdX7w') }
 ]
 
-const LINEAR_ORDER_OPTIONS: PickerOption<LinearOrderBy>[] = [
+const getLinearOrderOptions = (): PickerOption<LinearOrderBy>[] => [
   { value: 'priority', label: t('m.ISISlFo') },
   { value: 'updated', label: t('m.43utnp4') },
   { value: 'identifier', label: t('m.kpxCp5s') }
 ]
 
-const LINEAR_DISPLAY_OPTIONS: PickerOption<LinearDisplayProperty>[] = [
+const getLinearDisplayOptions = (): PickerOption<LinearDisplayProperty>[] => [
   { value: 'state', label: t('m.Fa6K7yI') },
   { value: 'priority', label: t('m.ISISlFo') },
   { value: 'assignee', label: t('m.b3RSkG0') },
@@ -798,29 +798,29 @@ const DEFAULT_LINEAR_DISPLAY_PROPERTIES: LinearDisplayProperty[] = [
   'updated'
 ]
 
-const GITHUB_KIND_OPTIONS: PickerOption<GitHubMode>[] = [
+const getGitHubKindOptions = (): PickerOption<GitHubMode>[] => [
   { value: 'issues', label: t('m.41d4YcM'), subtitle: t('m.PAK8mwc') },
   { value: 'prs', label: t('m.Xj-3fdg'), subtitle: t('m.RU009FY') },
   { value: 'project', label: t('m.LB-QyhM'), subtitle: t('m.QNj7rUo') }
 ]
 
-const ISSUE_PRESETS: PickerOption<GitHubPreset>[] = [
+const getIssuePresets = (): PickerOption<GitHubPreset>[] => [
   { value: 'issues', label: t('m.czxJ7iQ'), subtitle: t('m.4HZ7SXw') },
   { value: 'my-issues', label: t('m.NeeUliY'), subtitle: t('m.90lx_rw') }
 ]
 
-const PR_PRESETS: PickerOption<GitHubPreset>[] = [
+const getPRPresets = (): PickerOption<GitHubPreset>[] => [
   { value: 'prs', label: t('m.czxJ7iQ'), subtitle: t('m.4q-Iqts') },
   { value: 'my-prs', label: t('m.DitaVA4'), subtitle: t('m.Qcb2h_k') },
   { value: 'review', label: t('m.ox2Q3X4'), subtitle: t('m.Vejw8iE') }
 ]
 
-const GITLAB_VIEW_OPTIONS: PickerOption<GitLabView>[] = [
+const getGitLabViewOptions = (): PickerOption<GitLabView>[] => [
   { value: 'project', label: t('m.fxhXe98'), subtitle: t('m.CNrYYPU') },
   { value: 'todos', label: t('m.uLI9QAU'), subtitle: t('m.ncl7fEY') }
 ]
 
-const SORT_OPTIONS: PickerOption<TaskSort>[] = [
+const getSortOptions = (): PickerOption<TaskSort>[] => [
   { value: 'updated', label: t('m.43utnp4'), subtitle: t('m.45bce5E') },
   {
     value: 'repository',
@@ -1150,16 +1150,15 @@ function createLinearTask(issue: LinearIssue): TaskItem {
   }
 }
 
-const LINEAR_PRIORITY_LABELS: Record<number, string> = {
-  0: t('m.pzBhZI4'),
-  1: t('m.e3kayEE'),
-  2: t('m._pcc0Zw'),
-  3: t('m.7LgwgJM'),
-  4: t('m.xPjEgDM')
-}
-
 function getLinearPriorityLabel(priority: number): string {
-  return LINEAR_PRIORITY_LABELS[priority] ?? `P${priority}`
+  const labels: Record<number, string> = {
+    0: t('m.pzBhZI4'),
+    1: t('m.e3kayEE'),
+    2: t('m._pcc0Zw'),
+    3: t('m.7LgwgJM'),
+    4: t('m.xPjEgDM')
+  }
+  return labels[priority] ?? `P${priority}`
 }
 
 function getLinearPriorityRank(priority: number): number {
@@ -8286,7 +8285,7 @@ export default function MobileTasksScreen() {
   const showHeaderCreateTask =
     provider === 'linear' || (provider === 'github' && githubMode === 'items')
   const providerOptions = useMemo(
-    () => PROVIDER_OPTIONS.filter((option) => visibleProviders.includes(option.value)),
+    () => getProviderOptions().filter((option) => visibleProviders.includes(option.value)),
     [visibleProviders]
   )
   const selectedCreateRepo =
@@ -8375,7 +8374,7 @@ export default function MobileTasksScreen() {
     return entries
   }, [reposById, sortedItems, taskSort])
   const sortLabel =
-    SORT_OPTIONS.find((option) => option.value === taskSort)?.label ?? t('m.43utnp4')
+    getSortOptions().find((option) => option.value === taskSort)?.label ?? t('m.43utnp4')
   const githubProjectFields = githubProjectTable?.selectedView.fields ?? []
   const githubProjectViewSort = githubProjectTable?.selectedView.sortByFields?.[0] ?? null
   const githubProjectSortField = githubProjectSortOverride
@@ -8437,33 +8436,32 @@ export default function MobileTasksScreen() {
       })),
     [githubProjectViews]
   )
-  const githubPresetOptions = githubKind === 'prs' ? PR_PRESETS : ISSUE_PRESETS
-  const githubPresetPickerOptions = useMemo(
-    () =>
-      githubPresetOptions.map((option) =>
-        option.value === defaultGitHubPreset
-          ? {
-              ...option,
-              subtitle: option.subtitle
-                ? t('m.dXnxHU4', { value0: option.subtitle })
-                : t('m.TNd6PjA')
-            }
-          : option
-      ),
-    [defaultGitHubPreset, githubPresetOptions]
+  const githubPresetOptions = githubKind === 'prs' ? getPRPresets() : getIssuePresets()
+  const githubPresetPickerOptions = githubPresetOptions.map((option) =>
+    option.value === defaultGitHubPreset
+      ? {
+          ...option,
+          subtitle: option.subtitle ? t('m.dXnxHU4', { value0: option.subtitle }) : t('m.TNd6PjA')
+        }
+      : option
   )
   const githubPresetLabel =
     githubPresetOptions.find((preset) => preset.value === githubPreset)?.label ?? t('m.czxJ7iQ')
   const gitlabFilterLabel =
-    GITLAB_FILTER_OPTIONS.find((filter) => filter.value === gitlabFilter)?.label ?? t('m.czxJ7iQ')
+    getGitLabFilterOptions().find((filter) => filter.value === gitlabFilter)?.label ??
+    t('m.czxJ7iQ')
   const linearFilterLabel =
-    LINEAR_FILTER_OPTIONS.find((filter) => filter.value === linearFilter)?.label ?? t('m.gIF8518')
+    getLinearFilterOptions().find((filter) => filter.value === linearFilter)?.label ??
+    t('m.gIF8518')
   const linearViewLabel =
-    LINEAR_VIEW_OPTIONS.find((option) => option.value === linearViewMode)?.label ?? t('m.tIgX1ak')
+    getLinearViewOptions().find((option) => option.value === linearViewMode)?.label ??
+    t('m.tIgX1ak')
   const linearGroupLabel =
-    LINEAR_GROUP_OPTIONS.find((option) => option.value === linearGroupBy)?.label ?? t('m.Dd-TzXA')
+    getLinearGroupOptions().find((option) => option.value === linearGroupBy)?.label ??
+    t('m.Dd-TzXA')
   const linearOrderLabel =
-    LINEAR_ORDER_OPTIONS.find((option) => option.value === linearOrderBy)?.label ?? t('m.ISISlFo')
+    getLinearOrderOptions().find((option) => option.value === linearOrderBy)?.label ??
+    t('m.ISISlFo')
   const linearWorkspaceLabel =
     selectedLinearWorkspaceId === 'all'
       ? t('m.-Qqso-0')
@@ -9956,7 +9954,7 @@ export default function MobileTasksScreen() {
       <PickerModal
         visible={taskUiReady && showGitHubKindPicker}
         title={t('m.LkEKGa8')}
-        options={GITHUB_KIND_OPTIONS}
+        options={getGitHubKindOptions()}
         selected={githubMode === 'project' ? 'project' : githubKind}
         onSelect={(kind) => {
           if (kind === 'project') {
@@ -10368,7 +10366,7 @@ export default function MobileTasksScreen() {
       <PickerModal
         visible={taskUiReady && showGitLabViewPicker}
         title={t('m.roI3I5g')}
-        options={GITLAB_VIEW_OPTIONS}
+        options={getGitLabViewOptions()}
         selected={gitlabView}
         onSelect={(view) => {
           setGitlabView(view)
@@ -10386,7 +10384,7 @@ export default function MobileTasksScreen() {
       <PickerModal
         visible={taskUiReady && showGitLabFilterPicker}
         title={t('m.k98CNAU')}
-        options={GITLAB_FILTER_OPTIONS}
+        options={getGitLabFilterOptions()}
         selected={gitlabFilter}
         onSelect={setGitlabFilter}
         onClose={() => setShowGitLabFilterPicker(false)}
@@ -10395,7 +10393,7 @@ export default function MobileTasksScreen() {
       <PickerModal
         visible={taskUiReady && showLinearFilterPicker}
         title={t('m.jnRj_2I')}
-        options={LINEAR_FILTER_OPTIONS}
+        options={getLinearFilterOptions()}
         selected={linearFilter}
         onSelect={(filter) => {
           setLinearFilter(filter)
@@ -10556,7 +10554,7 @@ export default function MobileTasksScreen() {
       <PickerModal
         visible={taskUiReady && showLinearViewPicker}
         title={t('m.59_okJI')}
-        options={LINEAR_VIEW_OPTIONS}
+        options={getLinearViewOptions()}
         selected={linearViewMode}
         onSelect={setLinearViewMode}
         onClose={() => setShowLinearViewPicker(false)}
@@ -10565,7 +10563,7 @@ export default function MobileTasksScreen() {
       <PickerModal
         visible={taskUiReady && showLinearGroupPicker}
         title={t('m.4wjHjFU')}
-        options={LINEAR_GROUP_OPTIONS}
+        options={getLinearGroupOptions()}
         selected={linearGroupBy}
         onSelect={setLinearGroupBy}
         onClose={() => setShowLinearGroupPicker(false)}
@@ -10574,7 +10572,7 @@ export default function MobileTasksScreen() {
       <PickerModal
         visible={taskUiReady && showLinearOrderPicker}
         title={t('m.skslBcE')}
-        options={LINEAR_ORDER_OPTIONS}
+        options={getLinearOrderOptions()}
         selected={linearOrderBy}
         onSelect={setLinearOrderBy}
         onClose={() => setShowLinearOrderPicker(false)}
@@ -10588,7 +10586,7 @@ export default function MobileTasksScreen() {
           <Text style={styles.sheetTitle}>{t('m.Jhimi1k')}</Text>
         </View>
         <View style={styles.repoPickerGroup}>
-          {LINEAR_DISPLAY_OPTIONS.map((property, index) => {
+          {getLinearDisplayOptions().map((property, index) => {
             const selected = effectiveLinearDisplayProperties.has(property.value)
             return (
               <View key={property.value}>
@@ -10624,7 +10622,7 @@ export default function MobileTasksScreen() {
       <PickerModal
         visible={taskUiReady && showSortPicker}
         title={t('m.QoLelVI')}
-        options={SORT_OPTIONS}
+        options={getSortOptions()}
         selected={taskSort}
         onSelect={setTaskSort}
         onClose={() => setShowSortPicker(false)}

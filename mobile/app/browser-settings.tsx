@@ -12,30 +12,25 @@ import {
 import { colors, radii, spacing, typography } from '../src/theme/mobile-theme'
 import { t } from '@/i18n/mobile-i18n'
 
-const LINK_MODE_OPTIONS: PickerOption<MobileTerminalLinkOpenMode>[] = [
-  {
-    value: 'orca-browser',
-    label: t('m.OcnHGtE'),
-    subtitle: t('m.Z49nZqQ')
-  },
-  {
-    value: 'phone-browser',
-    label: t('m.hIo6XgE'),
-    subtitle: t('m.Wj6QRnE')
-  }
-]
-
-function linkModeLabel(mode: MobileTerminalLinkOpenMode): string {
-  return (
-    LINK_MODE_OPTIONS.find((option) => option.value === mode)?.label ?? LINK_MODE_OPTIONS[0]!.label
-  )
-}
-
 export default function BrowserSettingsScreen(): React.JSX.Element {
   const router = useRouter()
   const insets = useSafeAreaInsets()
   const [linkMode, setLinkMode] = useState<MobileTerminalLinkOpenMode>('orca-browser')
   const [pickerOpen, setPickerOpen] = useState(false)
+  const linkModeOptions: PickerOption<MobileTerminalLinkOpenMode>[] = [
+    {
+      value: 'orca-browser',
+      label: t('m.OcnHGtE'),
+      subtitle: t('m.Z49nZqQ')
+    },
+    {
+      value: 'phone-browser',
+      label: t('m.hIo6XgE'),
+      subtitle: t('m.Wj6QRnE')
+    }
+  ]
+  const linkModeLabel =
+    linkModeOptions.find((option) => option.value === linkMode)?.label ?? linkModeOptions[0]!.label
 
   useEffect(() => {
     void loadTerminalLinkOpenMode().then(setLinkMode)
@@ -66,7 +61,7 @@ export default function BrowserSettingsScreen(): React.JSX.Element {
             <Globe size={16} color={colors.textSecondary} />
             <View style={styles.rowContent}>
               <Text style={styles.rowLabel}>{t('m.wdyLCXU')}</Text>
-              <Text style={styles.rowSublabel}>{linkModeLabel(linkMode)}</Text>
+              <Text style={styles.rowSublabel}>{linkModeLabel}</Text>
             </View>
             <ChevronRight size={16} color={colors.textMuted} />
           </Pressable>
@@ -76,7 +71,7 @@ export default function BrowserSettingsScreen(): React.JSX.Element {
       <PickerModal<MobileTerminalLinkOpenMode>
         visible={pickerOpen}
         title={t('m.wdyLCXU')}
-        options={LINK_MODE_OPTIONS}
+        options={linkModeOptions}
         selected={linkMode}
         onSelect={selectLinkMode}
         onClose={() => setPickerOpen(false)}

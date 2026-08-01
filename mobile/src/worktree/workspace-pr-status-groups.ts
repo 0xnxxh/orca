@@ -5,11 +5,13 @@ import { t } from '@/i18n/mobile-i18n'
 // no PR/draft/unknown -> "In Progress", open -> "In Review", merged -> "Done", closed -> "Closed"
 export type PRGroupKey = 'done' | 'in-review' | 'in-progress' | 'closed'
 
-export const PR_GROUP_LABELS: Record<PRGroupKey, string> = {
-  done: t('m.LEXdDEk'),
-  'in-review': t('m.sMpsrkY'),
-  'in-progress': t('m.epStUOc'),
-  closed: t('m.sC5iGOA')
+export function getPRGroupLabel(group: PRGroupKey): string {
+  return {
+    done: t('m.LEXdDEk'),
+    'in-review': t('m.sMpsrkY'),
+    'in-progress': t('m.epStUOc'),
+    closed: t('m.sC5iGOA')
+  }[group]
 }
 
 export const PR_GROUP_ORDER: PRGroupKey[] = ['done', 'in-review', 'in-progress', 'closed']

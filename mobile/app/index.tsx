@@ -2,17 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { View, Text, StyleSheet, Pressable, FlatList, Alert } from 'react-native'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter, useFocusEffect } from 'expo-router'
-import {
-  QrCode,
-  Settings,
-  ChevronRight,
-  Terminal,
-  Plus,
-  RefreshCw,
-  PowerOff,
-  Edit3,
-  ListTodo
-} from 'lucide-react-native'
+import { QrCode, Settings, ChevronRight, Terminal, Plus, ListTodo } from 'lucide-react-native'
 import { ClaudeIcon, OpenAIIcon } from '../src/components/AgentIcons'
 import {
   type AccountsSnapshot,
@@ -29,6 +19,7 @@ import { loadHosts } from '../src/transport/host-store'
 import { navigateToMobileHostEdit } from '../src/transport/host-edit-navigation'
 import { removeHostAndCloseClient } from '../src/transport/host-removal-lifecycle'
 import { pickResumeWorktree } from '../src/worktree/resume-worktree'
+import { WORKTREE_PS_FULL_LIMIT } from '../src/worktree/worktree-catalog-snapshot-client'
 import type { RpcClient } from '../src/transport/rpc-client'
 import { sendSingleFlightRequest } from '../src/transport/request-single-flight'
 import {
@@ -48,7 +39,8 @@ import { triggerMediumImpact } from '../src/platform/haptics'
 import { OrcaLogo } from '../src/components/OrcaLogo'
 import { MobileHostCard } from '../src/components/MobileHostCard'
 import { TaskProviderLogo } from '../src/components/TaskProviderLogo'
-import { ActionSheetModal, type ActionSheetAction } from '../src/components/ActionSheetModal'
+import { ActionSheetModal } from '../src/components/ActionSheetModal'
+import { getHostListActionSheetActions } from '../src/host-list-action-sheet-actions'
 import { ConfirmModal } from '../src/components/ConfirmModal'
 import { setCachedWorktrees, getCachedWorktrees } from '../src/cache/worktree-cache'
 import { loadHomeSnapshot, saveHomeSnapshot } from '../src/cache/home-snapshot-cache'
@@ -58,8 +50,10 @@ import {
   normalizeVisibleTaskProviders,
   type TaskProvider
 } from '../src/tasks/mobile-task-providers'
+import { useOpenMobileTasks } from '../src/tasks/use-open-mobile-tasks'
 import { useResponsiveLayout } from '../src/layout/responsive-layout'
 import { t } from '@/i18n/mobile-i18n'
+import { createMobileSessionHref } from '../src/session/mobile-session-route'
 
 function endpointLabel(endpoint: string): string {
   try {
@@ -109,10 +103,12 @@ type HomeLinearStatus = {
   connected?: boolean
 }
 
-const TASK_PROVIDER_LABELS: Record<TaskProvider, string> = {
-  github: t('m.TH4OaOM'),
-  gitlab: t('m.fvIr9H8'),
-  linear: t('m.kZGbeC4')
+function taskProviderLabel(provider: TaskProvider): string {
+  return {
+    github: t('m.TH4OaOM'),
+    gitlab: t('m.fvIr9H8'),
+    linear: t('m.kZGbeC4')
+  }[provider]
 }
 
 function formatDuration(ms: number): string {
@@ -186,8 +182,7 @@ function fetchWorktreeInfo(
     })
   }
 
-  // Why: worktree.ps defaults to 200 and silently truncates; request all so counts are accurate.
-  sendSingleFlightRequest(client, hostId, 'worktree.ps', { limit: 10000 })
+  sendSingleFlightRequest(client, hostId, 'worktree.ps', { limit: WORKTREE_PS_FULL_LIMIT })
     .then((response) => {
       if (disposed()) {
         return
@@ -295,6 +290,7 @@ function repoColor(name: string): string {
 
 export default function HomeScreen() {
   const router = useRouter()
+  const openMobileTasks = useOpenMobileTasks()
   const insets = useSafeAreaInsets()
   // Why: cap/center content on wide/tablet canvases so cards don't stretch edge-to-edge on iPad.
   const { isWideLayout, contentMaxWidth } = useResponsiveLayout()
@@ -549,7 +545,6 @@ export default function HomeScreen() {
       }
     }
     // Why: key on host-id set + each client's identity so resubs fire when forceReconnect swaps a host's client, not on every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     allClients
       .map((e) => `${e.hostId}:${clientKey(e.client)}`)
@@ -611,10 +606,9 @@ export default function HomeScreen() {
       if (!primaryConnectedHost) {
         return
       }
-      const suffix = provider ? `?taskSource=${provider}` : ''
-      router.push(`/h/${primaryConnectedHost.id}/tasks${suffix}`)
+      openMobileTasks(primaryConnectedHost.id, provider)
     },
-    [primaryConnectedHost, router]
+    [openMobileTasks, primaryConnectedHost]
   )
   const renderTaskHomeCard = () => (
     <Pressable
@@ -635,22 +629,20 @@ export default function HomeScreen() {
         <Text style={styles.taskHomeTitle}>{t('m.y7w0hIs')}</Text>
         <Text style={styles.taskHomeSubtitle} numberOfLines={1}>
           {primaryTaskProviders.length > 0
-            ? primaryTaskProviders.map((provider) => TASK_PROVIDER_LABELS[provider]).join(' · ')
+            ? primaryTaskProviders.map(taskProviderLabel).join(' · ')
             : t('m.1_sz9cs')}
         </Text>
       </View>
       <View style={styles.taskHomeTrailing}>
         <View
           style={styles.taskHomeProviderRow}
-          accessibilityLabel={primaryTaskProviders
-            .map((provider) => TASK_PROVIDER_LABELS[provider])
-            .join(', ')}
+          accessibilityLabel={primaryTaskProviders.map(taskProviderLabel).join(', ')}
         >
           {primaryTaskProviders.map((provider) => (
             <Pressable
               key={provider}
               accessibilityRole="button"
-              accessibilityLabel={t('m.tNj4XnM', { value0: TASK_PROVIDER_LABELS[provider] })}
+              accessibilityLabel={t('m.tNj4XnM', { value0: taskProviderLabel(provider) })}
               hitSlop={8}
               style={({ pressed }) => [
                 styles.taskHomeProviderButton,
@@ -724,7 +716,7 @@ export default function HomeScreen() {
 
           <View style={styles.stepsSection}>
             <Text style={styles.sectionHeading}>{t('m.9HldFAc')}</Text>
-            {ONBOARDING_STEPS.map((step, i) => (
+            {getOnboardingSteps().map((step, i) => (
               <View key={step.title} style={[styles.stepRow, i > 0 && styles.stepRowBorder]}>
                 <View style={styles.stepNum}>
                   <Text style={styles.stepNumText}>{i + 1}</Text>
@@ -817,7 +809,11 @@ export default function HomeScreen() {
                     style={({ pressed }) => [styles.resumeCard, pressed && styles.hostCardPressed]}
                     onPress={() =>
                       router.push(
-                        `/h/${resumeWorktree.hostId}/session/${encodeURIComponent(resumeWorktree.worktree.worktreeId)}`
+                        createMobileSessionHref({
+                          hostId: resumeWorktree.hostId,
+                          worktreeId: resumeWorktree.worktree.worktreeId,
+                          name: resumeWorktree.worktree.displayName || resumeWorktree.worktree.repo
+                        })
                       )
                     }
                   >
@@ -983,57 +979,25 @@ export default function HomeScreen() {
         visible={actionTarget != null}
         title={actionTarget?.name}
         message={actionTarget ? endpointLabel(actionTarget.endpoint) : undefined}
-        actions={(() => {
-          const host = actionTarget
-          if (!host) {
-            return []
-          }
-          const state = hostStates[host.id] ?? 'connecting'
-          const isLive =
-            state === 'connected' ||
-            state === 'connecting' ||
-            state === 'handshaking' ||
-            state === 'reconnecting'
-          // Why: label "Connect" (not "Reconnect") when never connected this session, so the verb matches the action.
-          const hasEverConnected = (hostLastConnected[host.id] ?? null) != null
-          const items: ActionSheetAction[] = []
-          items.push({
-            label: hasEverConnected && isLive ? t('m.Ho177Ac') : t('m.X0HdEQ0'),
-            icon: RefreshCw,
-            onPress: () => {
-              setActionTarget(null)
-              void forceReconnectHost(host.id)
-            }
-          })
-          if (isLive) {
-            items.push({
-              label: t('m.RwT781U'),
-              icon: PowerOff,
-              onPress: () => {
-                setActionTarget(null)
-                closeHostClient(host.id)
-              }
-            })
-          }
-          items.push({
-            label: t('m.dqjXxV8'),
-            icon: Edit3,
-            closeBeforePress: true,
-            onPress: () => {
-              setActionTarget(null)
-              navigateToMobileHostEdit(router, host.id)
-            }
-          })
-          items.push({
-            label: t('m.t1m0jcA'),
-            destructive: true,
-            closeBeforePress: true,
-            onPress: () => {
-              setConfirmRemove(host)
-            }
-          })
-          return items
-        })()}
+        actions={getHostListActionSheetActions({
+          host: actionTarget,
+          state: actionTarget ? (hostStates[actionTarget.id] ?? 'connecting') : 'disconnected',
+          hasEverConnected: actionTarget
+            ? (hostLastConnected[actionTarget.id] ?? null) != null
+            : false,
+          labels: {
+            connect: t('m.X0HdEQ0'),
+            reconnect: t('m.Ho177Ac'),
+            disconnect: t('m.RwT781U'),
+            editHost: t('m.dqjXxV8'),
+            remove: t('m.t1m0jcA')
+          },
+          onDismiss: () => setActionTarget(null),
+          onReconnect: (hostId) => void forceReconnectHost(hostId),
+          onDisconnect: closeHostClient,
+          onEdit: (hostId) => navigateToMobileHostEdit(router, hostId),
+          onRemove: setConfirmRemove
+        })}
         onClose={() => setActionTarget(null)}
       />
 
@@ -1054,20 +1018,13 @@ function CardGap() {
   return <View style={styles.cardGap} />
 }
 
-const ONBOARDING_STEPS = [
-  {
-    title: t('m.N1Ra8Og'),
-    desc: t('m.aCJTiqw')
-  },
-  {
-    title: t('m.bKwbnYs'),
-    desc: t('m.-SigWBo')
-  },
-  {
-    title: t('m.rqAbU9s'),
-    desc: t('m.td40qOY')
-  }
-]
+function getOnboardingSteps() {
+  return [
+    { title: t('m.N1Ra8Og'), desc: t('m.aCJTiqw') },
+    { title: t('m.bKwbnYs'), desc: t('m.-SigWBo') },
+    { title: t('m.rqAbU9s'), desc: t('m.td40qOY') }
+  ]
+}
 
 const styles = StyleSheet.create({
   container: {

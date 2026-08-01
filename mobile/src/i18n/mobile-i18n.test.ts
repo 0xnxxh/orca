@@ -49,11 +49,16 @@ describe('mobile i18n', () => {
     expect(appConfig.expo.ios.infoPlist.CFBundleAllowMixedLocalizations).toBe(true)
   })
 
-  it.each(['ja', 'ko', 'zh'] satisfies MobileUiLocale[])(
-    'falls back from unsafe %s task-status copy',
-    async (locale) => {
+  it.each([
+    ['es', 'Por hacer'],
+    ['ja', '未着手'],
+    ['ko', '할 일'],
+    ['zh', '待办']
+  ] satisfies [MobileUiLocale, string][])(
+    'uses reviewed task-status copy in %s',
+    async (locale, expected) => {
       await mobileI18n.changeLanguage(locale)
-      expect(t('m.zWwi3-o')).toBe('Todo')
+      expect(t('m.zWwi3-o')).toBe(expected)
     }
   )
 

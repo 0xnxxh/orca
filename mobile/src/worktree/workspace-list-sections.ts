@@ -1,13 +1,13 @@
 import type { WorkspaceStatusDefinition } from '../../../src/shared/types'
 import { t } from '@/i18n/mobile-i18n'
 import {
-  DEFAULT_MOBILE_WORKSPACE_STATUSES,
   coerceMobileWorkspaceStatuses,
+  getDefaultMobileWorkspaceStatuses,
   getMobileWorkspaceStatus,
   getMobileWorkspaceStatusGroupKey
 } from './mobile-workspace-statuses'
 import { applyMobileWorkspaceLineage } from './mobile-workspace-lineage'
-import { getPRGroupKey, PR_GROUP_LABELS, PR_GROUP_ORDER } from './workspace-pr-status-groups'
+import { getPRGroupKey, getPRGroupLabel, PR_GROUP_ORDER } from './workspace-pr-status-groups'
 import type { FilterState, Section, Worktree } from './workspace-list-types'
 import type { MobileGroupMode, MobileSortMode } from './workspace-view-settings'
 import { sortWorktrees } from './workspace-list-ordering'
@@ -115,7 +115,7 @@ export function buildSections(
   groupMode: MobileGroupMode,
   pinnedIds: Set<string>,
   repoIdsByName: ReadonlyMap<string, string> = new Map(),
-  workspaceStatuses: readonly WorkspaceStatusDefinition[] = DEFAULT_MOBILE_WORKSPACE_STATUSES,
+  workspaceStatuses: readonly WorkspaceStatusDefinition[] = getDefaultMobileWorkspaceStatuses(),
   collapsedGroups: ReadonlySet<string> = new Set()
 ): Section[] {
   const filtered = filterWorktrees(worktrees, filters, search)
@@ -215,7 +215,7 @@ export function buildSections(
         sections.push(
           makeSection(
             `pr:${groupKey}`,
-            PR_GROUP_LABELS[groupKey],
+            getPRGroupLabel(groupKey),
             items,
             undefined,
             collapsedGroups

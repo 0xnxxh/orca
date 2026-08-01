@@ -31,7 +31,7 @@ import {
   testHostReachability,
   unreachableHostDetail
 } from '../src/diagnostics/host-reachability'
-import { troubleshootCommonIssues } from '../src/diagnostics/troubleshoot-common-issues'
+import { getTroubleshootCommonIssues } from '../src/diagnostics/troubleshoot-common-issues'
 import { t } from '@/i18n/mobile-i18n'
 
 type DiagnosticStatus = 'idle' | 'running' | 'done'
@@ -252,7 +252,7 @@ export default function TroubleshootScreen() {
         <Text style={styles.sectionHeading}>{t('m.2J8vm70')}</Text>
 
         <View style={styles.section}>
-          {troubleshootCommonIssues.map((section, i) => (
+          {getTroubleshootCommonIssues().map((section, i) => (
             <View key={section.id}>
               {i > 0 && <View style={styles.separator} />}
               <Pressable
