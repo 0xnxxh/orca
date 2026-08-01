@@ -239,6 +239,7 @@ import {
   isHiddenRendererPty
 } from './pty-hidden-delivery-gate'
 import { OrcaRuntimeService } from '../runtime/orca-runtime'
+import type { ClaudeAgentTeamsService } from '../runtime/claude-agent-teams-service'
 import { hasLiveClaudePtys, markClaudePtySpawned } from '../claude-accounts/live-pty-gate'
 import * as livePtyGate from '../claude-accounts/live-pty-gate'
 import {
@@ -8453,6 +8454,269 @@ describe('registerPtyHandlers', () => {
       startupCwd: '/tmp'
     })
   })
+
+  it('cleans renderer waiter state behind a runtime pane creator', async () => {
+    type RuntimeSpawnController = {
+      spawn(args: {
+        cols: number
+        rows: number
+        cwd: string
+        worktreeId: string
+        env: Record<string, string>
+        tabId: string
+        leafId: string
+        persistHostSessionBinding: true
+      }): Promise<{ id: string; spawnDisposition: string }>
+      getSize(ptyId: string): { cols: number; rows: number } | null
+    }
+    let resolveSpawn!: (result: { id: string }) => void
+    const providerSpawn = vi.fn(
+      (_options: { sessionId?: string }) =>
+        new Promise<{ id: string }>((resolve) => {
+          resolveSpawn = resolve
+        })
+    )
+    installDaemonTestProvider({ spawn: providerSpawn })
+    const runtime = new OrcaRuntimeService()
+    const teams = (runtime as unknown as { claudeAgentTeams: ClaudeAgentTeamsService })
+      .claudeAgentTeams
+    const prepareTeam = vi
+      .spyOn(runtime, 'prepareClaudeAgentTeamsLeaderForHandle')
+      .mockImplementation(async ({ handle, baseEnv }) =>
+        teams.createLaunchEnv({
+          leaderHandle: handle,
+          baseEnv: baseEnv ?? {},
+          shimDir: '/tmp/orca-agent-teams-test',
+          shimBin: 'orca'
+        })
+      )
+    const discardTeam = vi.spyOn(runtime, 'discardClaudeAgentTeamsLeaderForHandle')
+    const store = { persistPtyBinding: vi.fn() }
+    registerPtyHandlers(
+      mainWindow as never,
+      runtime,
+      undefined,
+      undefined,
+      undefined,
+      store as never
+    )
+    const controller = (runtime as unknown as { ptyController: RuntimeSpawnController })
+      .ptyController
+    const tabId = 'tab-runtime-creator-cleanup'
+    const leafId = '12121212-1212-4212-8212-121212121212'
+    const paneKey = makePaneKey(tabId, leafId)
+    const runtimeSpawn = controller.spawn({
+      cols: 80,
+      rows: 24,
+      cwd: '/tmp',
+      worktreeId: 'repo-1::/tmp',
+      tabId,
+      leafId,
+      env: { ORCA_PANE_KEY: paneKey },
+      persistHostSessionBinding: true
+    })
+    await vi.waitFor(() => expect(providerSpawn).toHaveBeenCalledOnce())
+    const creatorSessionId = providerSpawn.mock.calls[0]![0].sessionId as string
+
+    const rendererSpawn = handlers.get('pty:spawn')!(null, {
+      cols: 100,
+      rows: 30,
+      cwd: '/tmp',
+      worktreeId: 'repo-1::/tmp',
+      tabId,
+      leafId,
+      env: { ORCA_PANE_KEY: paneKey },
+      command: 'claude --teammate-mode auto'
+    }) as Promise<{ id: string; spawnDisposition: string }>
+    await vi.waitFor(() => {
+      expect(openCodeBuildPtyEnvMock).toHaveBeenCalledTimes(2)
+      expect(discardTeam).toHaveBeenCalledOnce()
+    })
+    const waiterSessionId = openCodeBuildPtyEnvMock.mock.calls.at(-1)![0] as string
+
+    expect(waiterSessionId).not.toBe(creatorSessionId)
+    expect(openCodeClearPtyMock).toHaveBeenCalledWith(waiterSessionId)
+    expect(piClearPtyMock).toHaveBeenCalledWith(waiterSessionId)
+    expect(openCodeClearPtyMock).not.toHaveBeenCalledWith(creatorSessionId)
+    expect(controller.getSize(waiterSessionId)).toBeNull()
+    expect(prepareTeam).toHaveBeenCalledOnce()
+    expect(teams.getActiveTeamCount()).toBe(0)
+    expect(providerSpawn).toHaveBeenCalledOnce()
+
+    resolveSpawn({ id: creatorSessionId })
+    await expect(Promise.all([runtimeSpawn, rendererSpawn])).resolves.toEqual([
+      expect.objectContaining({ id: creatorSessionId, spawnDisposition: 'created' }),
+      expect.objectContaining({ id: creatorSessionId, spawnDisposition: 'awaited' })
+    ])
+    expect(providerSpawn).toHaveBeenCalledOnce()
+    clearProviderPtyState(creatorSessionId)
+  })
+
+  it('cleans runtime waiter state behind a renderer pane creator', async () => {
+    type RuntimeSpawnController = {
+      spawn(args: {
+        cols: number
+        rows: number
+        cwd: string
+        worktreeId: string
+        env: Record<string, string>
+        tabId: string
+        leafId: string
+        persistHostSessionBinding: true
+      }): Promise<{ id: string; spawnDisposition: string }>
+      getSize(ptyId: string): { cols: number; rows: number } | null
+    }
+    let resolveSpawn!: (result: { id: string }) => void
+    const providerSpawn = vi.fn(
+      (_options: { sessionId?: string }) =>
+        new Promise<{ id: string }>((resolve) => {
+          resolveSpawn = resolve
+        })
+    )
+    installDaemonTestProvider({ spawn: providerSpawn })
+    const runtime = new OrcaRuntimeService()
+    const store = { persistPtyBinding: vi.fn() }
+    registerPtyHandlers(
+      mainWindow as never,
+      runtime,
+      undefined,
+      undefined,
+      undefined,
+      store as never
+    )
+    const controller = (runtime as unknown as { ptyController: RuntimeSpawnController })
+      .ptyController
+    const tabId = 'tab-renderer-creator-cleanup'
+    const leafId = '13131313-1313-4313-8313-131313131313'
+    const paneKey = makePaneKey(tabId, leafId)
+    const rendererSpawn = handlers.get('pty:spawn')!(null, {
+      cols: 80,
+      rows: 24,
+      cwd: '/tmp',
+      worktreeId: 'repo-1::/tmp',
+      tabId,
+      leafId,
+      env: { ORCA_PANE_KEY: paneKey }
+    }) as Promise<{ id: string; spawnDisposition: string }>
+    await vi.waitFor(() => expect(providerSpawn).toHaveBeenCalledOnce())
+    const creatorSessionId = providerSpawn.mock.calls[0]![0].sessionId as string
+
+    const runtimeSpawn = controller.spawn({
+      cols: 100,
+      rows: 30,
+      cwd: '/tmp',
+      worktreeId: 'repo-1::/tmp',
+      tabId,
+      leafId,
+      env: { ORCA_PANE_KEY: paneKey },
+      persistHostSessionBinding: true
+    })
+    await vi.waitFor(() => expect(openCodeBuildPtyEnvMock).toHaveBeenCalledTimes(2))
+    const waiterSessionId = openCodeBuildPtyEnvMock.mock.calls.at(-1)![0] as string
+
+    expect(waiterSessionId).not.toBe(creatorSessionId)
+    expect(openCodeClearPtyMock).toHaveBeenCalledWith(waiterSessionId)
+    expect(piClearPtyMock).toHaveBeenCalledWith(waiterSessionId)
+    expect(openCodeClearPtyMock).not.toHaveBeenCalledWith(creatorSessionId)
+    expect(controller.getSize(waiterSessionId)).toBeNull()
+    expect(providerSpawn).toHaveBeenCalledOnce()
+
+    resolveSpawn({ id: creatorSessionId })
+    await expect(Promise.all([rendererSpawn, runtimeSpawn])).resolves.toEqual([
+      expect.objectContaining({ id: creatorSessionId, spawnDisposition: 'created' }),
+      expect.objectContaining({ id: creatorSessionId, spawnDisposition: 'awaited' })
+    ])
+    expect(providerSpawn).toHaveBeenCalledOnce()
+    clearProviderPtyState(creatorSessionId)
+  })
+
+  it.each(['runtime', 'renderer'] as const)(
+    'preserves caller-owned session state for a %s pane waiter',
+    async (waiterKind) => {
+      type RuntimeSpawnController = {
+        spawn(args: {
+          cols: number
+          rows: number
+          cwd: string
+          worktreeId: string
+          env: Record<string, string>
+          tabId: string
+          leafId: string
+          sessionId: string
+          persistHostSessionBinding: true
+        }): Promise<{ id: string; spawnDisposition: string }>
+        getSize(ptyId: string): { cols: number; rows: number } | null
+      }
+      let resolveSpawn!: (result: { id: string }) => void
+      const providerSpawn = vi.fn(
+        (_options: { sessionId?: string }) =>
+          new Promise<{ id: string }>((resolve) => {
+            resolveSpawn = resolve
+          })
+      )
+      installDaemonTestProvider({ spawn: providerSpawn })
+      const runtime = new OrcaRuntimeService()
+      const store = { persistPtyBinding: vi.fn() }
+      registerPtyHandlers(
+        mainWindow as never,
+        runtime,
+        undefined,
+        undefined,
+        undefined,
+        store as never
+      )
+      const controller = (runtime as unknown as { ptyController: RuntimeSpawnController })
+        .ptyController
+      const tabId = `tab-caller-owned-${waiterKind}`
+      const leafId =
+        waiterKind === 'runtime'
+          ? '14141414-1414-4414-8414-141414141414'
+          : '15151515-1515-4515-8515-151515151515'
+      const paneKey = makePaneKey(tabId, leafId)
+      const sessionId = `caller-owned-${waiterKind}`
+      const spawnRuntime = (cols: number, rows: number) =>
+        controller.spawn({
+          cols,
+          rows,
+          cwd: '/tmp',
+          worktreeId: 'repo-1::/tmp',
+          tabId,
+          leafId,
+          sessionId,
+          env: { ORCA_PANE_KEY: paneKey },
+          persistHostSessionBinding: true
+        })
+      const spawnRenderer = (cols: number, rows: number) =>
+        handlers.get('pty:spawn')!(null, {
+          cols,
+          rows,
+          cwd: '/tmp',
+          worktreeId: 'repo-1::/tmp',
+          tabId,
+          leafId,
+          sessionId,
+          env: { ORCA_PANE_KEY: paneKey }
+        }) as Promise<{ id: string; spawnDisposition: string }>
+      const creator = waiterKind === 'renderer' ? spawnRuntime(80, 24) : spawnRenderer(80, 24)
+      await vi.waitFor(() => expect(providerSpawn).toHaveBeenCalledOnce())
+
+      const waiter = waiterKind === 'runtime' ? spawnRuntime(100, 30) : spawnRenderer(100, 30)
+      await vi.waitFor(() => expect(openCodeBuildPtyEnvMock).toHaveBeenCalledTimes(2))
+
+      expect(providerSpawn).toHaveBeenCalledOnce()
+      expect(openCodeClearPtyMock).not.toHaveBeenCalledWith(sessionId)
+      expect(piClearPtyMock).not.toHaveBeenCalledWith(sessionId)
+      expect(controller.getSize(sessionId)).toEqual({ cols: 100, rows: 30 })
+
+      resolveSpawn({ id: sessionId })
+      await expect(Promise.all([creator, waiter])).resolves.toEqual([
+        expect.objectContaining({ id: sessionId, spawnDisposition: 'created' }),
+        expect.objectContaining({ id: sessionId, spawnDisposition: 'awaited' })
+      ])
+      expect(providerSpawn).toHaveBeenCalledOnce()
+      clearProviderPtyState(sessionId)
+    }
+  )
 
   it.each(['runtime', 'renderer'] as const)(
     'isolates a current folder route from a stale %s reservation creator',

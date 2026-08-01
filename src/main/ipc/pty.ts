@@ -4216,6 +4216,10 @@ export function registerPtyHandlers(
         ? getPaneSpawnReservation(paneSpawnReservationKey)
         : undefined
       if (existingPaneSpawn) {
+        // Why: the reservation creator owns the returned PTY; discard only state minted by this waiter.
+        if (isMintedSessionId && sessionId) {
+          clearProviderPtyState(sessionId)
+        }
         return await awaitPaneSpawnReservation(existingPaneSpawn)
       }
       const finishTerminalInstall = beginPtySpawnForWorktree(
@@ -5193,12 +5197,14 @@ export function registerPtyHandlers(
       const preAllocatedHandle = shouldPreAllocateTerminalHandle
         ? runtime.createPreAllocatedTerminalHandle()
         : null
+      let preparedClaudeAgentTeamsHandle: string | null = null
       if (shouldRefreshAgentTeamsEnv && preAllocatedHandle) {
         // Why: Agent Teams ids/tokens are process-local, so the team env must be regenerated for the new leader PTY.
         const prepared = await runtime.prepareClaudeAgentTeamsLeaderForHandle({
           handle: preAllocatedHandle,
           baseEnv: baseEnv ?? {}
         })
+        preparedClaudeAgentTeamsHandle = preAllocatedHandle
         baseEnv = {
           ...baseEnv,
           ...prepared.env
@@ -5479,6 +5485,13 @@ export function registerPtyHandlers(
         ? getPaneSpawnReservation(paneSpawnReservationKey)
         : undefined
       if (existingPaneSpawn) {
+        // Why: the reservation creator owns the returned PTY; discard only state minted/prepared by this waiter.
+        if (isMintedSessionId && effectiveSessionId) {
+          clearProviderPtyState(effectiveSessionId)
+        }
+        if (preparedClaudeAgentTeamsHandle) {
+          runtime?.discardClaudeAgentTeamsLeaderForHandle(preparedClaudeAgentTeamsHandle)
+        }
         return await awaitPaneSpawnReservation(existingPaneSpawn)
       }
       const finishTerminalInstall = beginPtySpawnForWorktree(

@@ -27094,6 +27094,10 @@ export class OrcaRuntimeService {
     })
   }
 
+  discardClaudeAgentTeamsLeaderForHandle(handle: string): void {
+    this.claudeAgentTeams.removeTeamForLeaderHandle(handle)
+  }
+
   private waitForNewLeafInTab(
     tabId: string,
     existingLeafKeys: Set<string>,
