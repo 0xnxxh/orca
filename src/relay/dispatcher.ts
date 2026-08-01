@@ -69,6 +69,7 @@ type RelayClient = {
   highestReceivedSeq: number
   generation: number
   closed: boolean
+  droppedNotificationLogGeneration: number | null
   sessionIdentity: RelayClientSessionIdentity
 }
 
@@ -365,9 +366,14 @@ export class RelayDispatcher {
     )
   }
 
-  producerDataBudget(
+  activeClientIds(): number[] {
+    return this.activeClients().map((client) => client.id)
+  }
+
+  // Why: signed on purpose — `budget >= 0` is an exact fits-check that a floored budget cannot express.
+  producerEnvelopeBudget(
     method: string,
-    paramsWithoutData: Record<string, unknown>,
+    params: Record<string, unknown>,
     clientId?: number
   ): number {
     const targets =
@@ -377,14 +383,18 @@ export class RelayDispatcher {
     if (targets.length === 0) {
       return Number.MAX_SAFE_INTEGER
     }
-    const emptyFrameBytes = this.estimateFrameBytes({
-      jsonrpc: '2.0',
-      method,
-      params: { ...paramsWithoutData, data: '' }
-    })
+    const frameBytes = this.estimateFrameBytes({ jsonrpc: '2.0', method, params })
+    return Math.min(...targets.map((client) => client.writer.producerFrameCapacity - frameBytes))
+  }
+
+  producerDataBudget(
+    method: string,
+    paramsWithoutData: Record<string, unknown>,
+    clientId?: number
+  ): number {
     return Math.max(
       0,
-      Math.min(...targets.map((client) => client.writer.producerFrameCapacity - emptyFrameBytes))
+      this.producerEnvelopeBudget(method, { ...paramsWithoutData, data: '' }, clientId)
     )
   }
 
@@ -423,15 +433,53 @@ export class RelayDispatcher {
           this.enqueueFrame(client, msg, 'control')
           continue
         }
+        // Why: closing can never make an oversized frame sendable — the producer regenerates it after
+        // reattach and re-kills the link, turning a recoverable drop into an endless reconnect loop.
         if (!this.publishToClient(client, msg, 'ordinary')) {
-          this.closeClient(
-            client,
-            new Error('Relay ordinary publication capacity exceeded'),
-            client !== this.primaryClient
-          )
+          this.logDroppedProducerNotification(client, method, msg)
         }
       }
     })
+  }
+
+  // Why: producer-lane publication for a single client; notifyClient/tryNotifyClient use the control lane,
+  // which floods must never occupy. Rejection drops the frame and never closes the client.
+  publishProducerNotification(
+    clientId: number,
+    method: string,
+    params?: Record<string, unknown>
+  ): boolean {
+    if (this.disposed) {
+      return false
+    }
+    const client = this.clients.get(clientId)
+    if (!client || client.closed) {
+      return false
+    }
+    return this.publishToClient(
+      client,
+      {
+        jsonrpc: '2.0',
+        method,
+        ...(params !== undefined ? { params } : {})
+      },
+      'ordinary'
+    )
+  }
+
+  // Why: one line per connection generation — a flooding producer retries every batch and would spam stderr.
+  private logDroppedProducerNotification(
+    client: RelayClient,
+    method: string,
+    msg: JsonRpcNotification
+  ): void {
+    if (client.droppedNotificationLogGeneration === client.generation) {
+      return
+    }
+    client.droppedNotificationLogGeneration = client.generation
+    process.stderr.write(
+      `[relay] Dropped ${method} (${this.estimateFrameBytes(msg)}B > producer capacity ${client.writer.producerFrameCapacity}B)\n`
+    )
   }
 
   notifyClient(clientId: number, method: string, params?: Record<string, unknown>): void {
@@ -626,6 +674,7 @@ export class RelayDispatcher {
       highestReceivedSeq: 0,
       generation: 0,
       closed: false,
+      droppedNotificationLogGeneration: null,
       sessionIdentity: sessionIdentity ?? {
         principal: `unproved:${id}`,
         authenticated: false,
@@ -820,16 +869,21 @@ export class RelayDispatcher {
     const estimatedBytes = this.estimateFrameBytes(msg)
     const lane = estimatedBytes > DISPATCHER_CONTROL_QUEUE_MAX_BYTES ? 'legacy-response' : 'control'
     const accepted = this.enqueueFrame(client, msg, lane, onSettled)
-    if (!accepted) {
-      this.closeClient(
-        client,
-        new Error(
-          `Relay response exceeds the bounded ${DEFAULT_PRODUCER_QUEUE_MAX_BYTES}-byte legacy lane`
-        ),
-        client !== this.primaryClient
-      )
+    if (accepted || error !== undefined) {
+      return accepted
     }
-    return accepted
+    // Why: an oversized result must fail its own request; closing would kill every pane on the host.
+    // A rejected first enqueue either left onSettled untouched or closed the client, so exactly one settlement happens.
+    return this.enqueueFrame(
+      client,
+      {
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32010, message: 'Relay response exceeded the bounded transport capacity' }
+      },
+      'control',
+      onSettled
+    )
   }
 
   private enqueueFrame(

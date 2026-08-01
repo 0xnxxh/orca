@@ -10,15 +10,25 @@ import { tmpdir } from 'node:os'
 
 vi.mock('@parcel/watcher', () => ({ subscribe: vi.fn() }))
 
-type Notification = { method: string; params?: Record<string, unknown> }
+type NotificationLane = 'producer' | 'bulk' | 'control'
+type Notification = {
+  method: string
+  params?: Record<string, unknown>
+  lane: NotificationLane
+  clientId?: number
+}
+type MockRequestContext = { clientId?: number; isStale: () => boolean }
 
 function createMockDispatcher() {
   const requestHandlers = new Map<
     string,
-    (params: Record<string, unknown>, context?: { isStale: () => boolean }) => Promise<unknown>
+    (params: Record<string, unknown>, context?: MockRequestContext) => Promise<unknown>
   >()
   const notificationHandlers = new Map<string, (params: Record<string, unknown>) => void>()
   const notifications: Notification[] = []
+  const droppedProducerFrames: Notification[] = []
+  // Mirrors the real lane split: a saturated producer queue drops frames, control frames still land.
+  let producerSaturated = false
   return {
     onRequest: vi.fn(
       (
@@ -32,16 +42,37 @@ function createMockDispatcher() {
       notificationHandlers.set(method, handler)
     }),
     notify: vi.fn((method: string, params?: Record<string, unknown>) => {
-      notifications.push({ method, params })
+      const frame: Notification = { method, params, lane: 'producer' }
+      if (producerSaturated) {
+        droppedProducerFrames.push(frame)
+        return
+      }
+      notifications.push(frame)
     }),
-    notifyBulk: vi.fn(async (method: string, params?: Record<string, unknown>): Promise<void> => {
-      notifications.push({ method, params })
+    notifyBulk: vi.fn(
+      async (
+        method: string,
+        params?: Record<string, unknown>,
+        opts?: { clientId?: number }
+      ): Promise<void> => {
+        notifications.push({ method, params, lane: 'bulk', clientId: opts?.clientId })
+      }
+    ),
+    notifyClient: vi.fn((clientId: number, method: string, params?: Record<string, unknown>) => {
+      notifications.push({ method, params, lane: 'control', clientId })
+    }),
+    notifyControl: vi.fn((method: string, params?: Record<string, unknown>) => {
+      notifications.push({ method, params, lane: 'control' })
     }),
     _notifications: notifications,
+    _droppedProducerFrames: droppedProducerFrames,
+    saturateProducerLane() {
+      producerSaturated = true
+    },
     callRequest(
       method: string,
       params: Record<string, unknown> = {},
-      context?: { isStale: () => boolean }
+      context?: MockRequestContext
     ) {
       const handler = requestHandlers.get(method)
       if (!handler) {
@@ -136,6 +167,50 @@ describe('FsHandler readFileStream', () => {
     expect(end).toEqual({ streamId: meta.streamId })
     const reassembled = Buffer.concat(chunks.map((c) => Buffer.from(c.data, 'base64')))
     expect(reassembled.equals(content)).toBe(true)
+  })
+
+  it('publishes fs.streamEnd after the final fs.streamChunk and targets the same client', async () => {
+    const filePath = path.join(tmpDir, 'targeted.png')
+    writeFileSync(filePath, Buffer.alloc(300 * 1024, 0x42))
+
+    const meta = (await dispatcher.callRequest(
+      'fs.readFileStream',
+      { filePath },
+      { clientId: 7, isStale: () => false }
+    )) as { streamId: number }
+
+    await waitFor(() => collectStream(dispatcher).end !== null)
+    const frames = dispatcher._notifications
+    const endIndex = frames.findIndex((n) => n.method === 'fs.streamEnd')
+    const lastChunkIndex = frames.map((n) => n.method).lastIndexOf('fs.streamChunk')
+    expect(lastChunkIndex).toBeGreaterThanOrEqual(0)
+    expect(endIndex).toBe(lastChunkIndex + 1)
+    expect(frames[endIndex]).toEqual({
+      method: 'fs.streamEnd',
+      params: { streamId: meta.streamId },
+      lane: 'control',
+      clientId: 7
+    })
+    expect(frames[lastChunkIndex].clientId).toBe(7)
+  })
+
+  it('delivers fs.streamEnd on the control lane and releases the stream when the producer lane is saturated', async () => {
+    const filePath = path.join(tmpDir, 'saturated.png')
+    writeFileSync(filePath, Buffer.alloc(300 * 1024, 0x42))
+    dispatcher.saturateProducerLane()
+
+    const meta = (await dispatcher.callRequest(
+      'fs.readFileStream',
+      { filePath },
+      { clientId: 3, isStale: () => false }
+    )) as { streamId: number }
+
+    await waitFor(() => collectStream(dispatcher).end !== null)
+    expect(dispatcher._droppedProducerFrames).toHaveLength(0)
+    expect(collectStream(dispatcher).end).toEqual({ streamId: meta.streamId })
+
+    const registry = (handler as unknown as { streamRegistry: { size(): number } }).streamRegistry
+    await waitFor(() => registry.size() === 0)
   })
 
   it('fills protocol chunks when fs.read returns short before EOF', async () => {

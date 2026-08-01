@@ -412,6 +412,159 @@ describe('SshConnection', () => {
     expect(conn.getState().status).toBe('connected')
   })
 
+  it('escalates the backoff across repeated post-handshake drops', async () => {
+    vi.useFakeTimers()
+    try {
+      const conn = new SshConnection(createTarget(), createCallbacks())
+      const connected = conn.connect()
+      await vi.advanceTimersByTimeAsync(1)
+      await connected
+      expect(clientInstances).toHaveLength(1)
+
+      emitSshEvent('close')
+      await vi.advanceTimersByTimeAsync(999)
+      expect(clientInstances).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(clientInstances).toHaveLength(2)
+      await vi.advanceTimersByTimeAsync(1)
+
+      // Why: a single published counter pinned every post-handshake drop at the 1000ms head step.
+      emitSshEvent('close')
+      await vi.advanceTimersByTimeAsync(1999)
+      expect(clientInstances).toHaveLength(2)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(clientInstances).toHaveLength(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('publishes reconnectAttempt=0 on the reconnected state and the escalating step while reconnecting', async () => {
+    vi.useFakeTimers()
+    try {
+      const published: { status: string; reconnectAttempt: number }[] = []
+      const conn = new SshConnection(
+        createTarget(),
+        createCallbacks({
+          onStateChange: vi.fn((_id, state) =>
+            published.push({ status: state.status, reconnectAttempt: state.reconnectAttempt })
+          )
+        })
+      )
+      const connected = conn.connect()
+      await vi.advanceTimersByTimeAsync(1)
+      await connected
+
+      for (let drop = 0; drop < 3; drop++) {
+        emitSshEvent('close')
+        await vi.advanceTimersByTimeAsync(30_000)
+      }
+
+      expect(
+        published.filter((e) => e.status === 'reconnecting').map((e) => e.reconnectAttempt)
+      ).toEqual([0, 1, 2])
+      // src/main/ipc/ssh.ts gates the relay redeploy on reconnectAttempt === 0 at 'connected'.
+      expect(
+        published.filter((e) => e.status === 'connected').map((e) => e.reconnectAttempt)
+      ).toEqual([0, 0, 0, 0])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('restarts the ladder at the head when an explicit reconnect fails', async () => {
+    // Accepted delta: reset() puts the ladder at the head and the explicit attempt consumes no
+    // step, so the first failure publishes 0/1000ms where the single-counter version published 1/2000ms.
+    vi.useFakeTimers()
+    try {
+      const published: { status: string; reconnectAttempt: number }[] = []
+      const conn = new SshConnection(
+        createTarget(),
+        createCallbacks({
+          onStateChange: vi.fn((_id, state) =>
+            published.push({ status: state.status, reconnectAttempt: state.reconnectAttempt })
+          )
+        })
+      )
+      const connected = conn.connect()
+      await vi.advanceTimersByTimeAsync(1)
+      await connected
+
+      connectBehavior = 'error'
+      connectErrorMessage = 'connect ETIMEDOUT 10.0.0.5:22'
+      connectErrorCode = 'ETIMEDOUT'
+      published.length = 0
+      const reconnected = conn.reconnect()
+      await vi.advanceTimersByTimeAsync(1)
+      await reconnected
+
+      // Shipped published [0, 1] here; the ladder's reset() keeps the retry at the head instead.
+      expect(
+        published.filter((e) => e.status === 'reconnecting').map((e) => e.reconnectAttempt)
+      ).toEqual([0, 0])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reaches reconnection-failed after 9 consecutive handshake failures', async () => {
+    vi.useFakeTimers()
+    try {
+      const statuses: string[] = []
+      const conn = new SshConnection(
+        createTarget(),
+        createCallbacks({
+          onStateChange: vi.fn((_id, state) => statuses.push(state.status))
+        })
+      )
+      const connected = conn.connect()
+      await vi.advanceTimersByTimeAsync(1)
+      await connected
+
+      connectBehavior = 'error'
+      connectErrorMessage = 'connect ETIMEDOUT 10.0.0.5:22'
+      connectErrorCode = 'ETIMEDOUT'
+      emitSshEvent('close')
+      // The full ladder sums to 103s; drain well past it.
+      await vi.advanceTimersByTimeAsync(200_000)
+
+      expect(statuses).toContain('reconnection-failed')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps retrying when a flap streak is followed by one handshake failure', async () => {
+    vi.useFakeTimers()
+    try {
+      const statuses: string[] = []
+      const conn = new SshConnection(
+        createTarget(),
+        createCallbacks({
+          onStateChange: vi.fn((_id, state) => statuses.push(state.status))
+        })
+      )
+      const connected = conn.connect()
+      await vi.advanceTimersByTimeAsync(1)
+      await connected
+
+      // 12 flaps saturate the delay ladder without ever touching the failure streak.
+      for (let drop = 0; drop < 12; drop++) {
+        emitSshEvent('close')
+        await vi.advanceTimersByTimeAsync(30_000)
+      }
+      connectSequence = [new Error('connect ETIMEDOUT 10.0.0.5:22')]
+      emitSshEvent('close')
+      await vi.advanceTimersByTimeAsync(30_000)
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      expect(statuses).not.toContain('reconnection-failed')
+      expect(conn.getState().status).toBe('connected')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('transitions through connecting → connected states', async () => {
     const states: string[] = []
     const callbacks = createCallbacks({

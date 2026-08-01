@@ -226,11 +226,20 @@ async function pumpChunks(
     }
 
     try {
+      // Why: the terminal frame must not be droppable by the producer-lane capacity check, and the
+      // per-chunk await already settled every chunk so a control frame cannot overtake stream data.
+      const publishTerminal = (method: string, params: Record<string, unknown>): void => {
+        if (pumpOptions.clientId !== undefined) {
+          dispatcher.notifyClient(pumpOptions.clientId, method, params)
+        } else {
+          dispatcher.notifyControl(method, params)
+        }
+      }
       if (endReason === 'end') {
-        dispatcher.notify('fs.streamEnd', { streamId })
+        publishTerminal('fs.streamEnd', { streamId })
         process.stderr.write(`[relay] stream end id=${streamId}\n`)
       } else if (endReason === 'error') {
-        dispatcher.notify('fs.streamError', {
+        publishTerminal('fs.streamError', {
           streamId,
           code: errorCode ?? 'ESTREAMERROR',
           message: errorMessage ?? 'stream error'
