@@ -1,6 +1,10 @@
 // TypeScript 7 is a native CLI; AST consumers still need the legacy JavaScript API.
 import ts from 'typescript-api'
 
+import { collectSourceBindings } from './mobile-localization-source-bindings.mjs'
+
+const SOURCE_BINDINGS = new WeakMap()
+
 function isDirectDisplayExpressionParent(parent, child) {
   if (
     ts.isParenthesizedExpression(parent) ||
@@ -104,7 +108,7 @@ function functionName(node) {
     : undefined
 }
 
-export function directReturnFunctionName(node) {
+function directReturnFunction(node) {
   let current = node
   while (current.parent && isDirectDisplayExpressionParent(current.parent, current)) {
     current = current.parent
@@ -115,18 +119,102 @@ export function directReturnFunctionName(node) {
     while (owner && !ts.isFunctionLike(owner)) {
       owner = owner.parent
     }
-    return owner ? functionName(owner) : undefined
+    return owner
   }
-  return parent && ts.isArrowFunction(parent) && parent.body === current
-    ? functionName(parent)
-    : undefined
+  return parent && ts.isArrowFunction(parent) && parent.body === current ? parent : undefined
+}
+
+export function directReturnFunctionName(node) {
+  const owner = directReturnFunction(node)
+  return owner ? functionName(owner) : undefined
+}
+
+function bindingsFor(sourceFile) {
+  const cached = SOURCE_BINDINGS.get(sourceFile)
+  if (cached) {
+    return cached
+  }
+  const bindings = collectSourceBindings(sourceFile)
+  SOURCE_BINDINGS.set(sourceFile, bindings)
+  return bindings
+}
+
+function unwrapAliasExpression(node) {
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isSatisfiesExpression(node)
+  ) {
+    return unwrapAliasExpression(node.expression)
+  }
+  return node
+}
+
+function renderedFunctionBindings(owner, sourceFile, bindings) {
+  const targets = new Set()
+  if (owner.name && ts.isIdentifier(owner.name)) {
+    const binding = bindings.resolveBinding(owner.name)
+    if (binding) {
+      targets.add(binding)
+    }
+  }
+  const declaration = owner.parent
+  if (
+    (ts.isArrowFunction(owner) || ts.isFunctionExpression(owner)) &&
+    ts.isVariableDeclaration(declaration) &&
+    ts.isIdentifier(declaration.name)
+  ) {
+    const binding = bindings.resolveBinding(declaration.name)
+    if (binding) {
+      targets.add(binding)
+    }
+  }
+
+  let changed = true
+  while (changed) {
+    changed = false
+    function visit(node) {
+      let alias
+      let initializer
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+        alias = node.name
+        initializer = unwrapAliasExpression(node.initializer)
+      } else if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(node.left)
+      ) {
+        alias = node.left
+        initializer = unwrapAliasExpression(node.right)
+      }
+      if (alias && initializer && ts.isIdentifier(initializer)) {
+        const sourceBinding = bindings.resolveBinding(initializer)
+        const aliasBinding = bindings.resolveBinding(alias)
+        if (
+          sourceBinding &&
+          aliasBinding &&
+          targets.has(sourceBinding) &&
+          !targets.has(aliasBinding)
+        ) {
+          targets.add(aliasBinding)
+          changed = true
+        }
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(sourceFile)
+  }
+  return targets
 }
 
 export function isReturnedByRenderedFunction(node, isRenderedExpression = isRenderedJsxExpression) {
-  const name = directReturnFunctionName(node)
-  if (!name) {
+  const owner = directReturnFunction(node)
+  if (!owner) {
     return false
   }
+  const sourceFile = node.getSourceFile()
+  const bindings = bindingsFor(sourceFile)
+  const targetBindings = renderedFunctionBindings(owner, sourceFile, bindings)
   let rendered = false
   function visit(current) {
     if (rendered) {
@@ -135,7 +223,7 @@ export function isReturnedByRenderedFunction(node, isRenderedExpression = isRend
     if (
       ts.isCallExpression(current) &&
       ts.isIdentifier(current.expression) &&
-      current.expression.text === name &&
+      targetBindings.has(bindings.resolveBinding(current.expression)) &&
       isRenderedExpression(current)
     ) {
       rendered = true
@@ -143,7 +231,7 @@ export function isReturnedByRenderedFunction(node, isRenderedExpression = isRend
     }
     ts.forEachChild(current, visit)
   }
-  visit(node.getSourceFile())
+  visit(sourceFile)
   return rendered
 }
 

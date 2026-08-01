@@ -193,15 +193,24 @@ function isInsideLocalizationCall(node, sourceFile, mobileBindings) {
 
 function isUnboundRenderedTranslationArgument(node, sourceFile, mobileBindings) {
   const call = findAncestor(node, ts.isCallExpression)
-  if (!call || !ts.isIdentifier(call.expression)) {
+  if (!call) {
     return false
   }
-  const name = call.expression.text
-  const resemblesTranslator =
-    LOCALIZATION_CALL_NAMES.has(name) ||
-    mobileBindings.translatorNames.has(name) ||
-    mobileBindings.fixedTranslatorNames.has(name) ||
-    mobileBindings.prefixedTranslatorNames.has(name)
+  let resemblesTranslator = false
+  if (ts.isIdentifier(call.expression)) {
+    const name = call.expression.text
+    resemblesTranslator =
+      LOCALIZATION_CALL_NAMES.has(name) ||
+      mobileBindings.translatorNames.has(name) ||
+      mobileBindings.fixedTranslatorNames.has(name) ||
+      mobileBindings.prefixedTranslatorNames.has(name)
+  } else if (ts.isPropertyAccessExpression(call.expression) && call.expression.name.text === 't') {
+    const rootName = expressionNameText(call.expression.expression)?.split('.')[0]
+    resemblesTranslator = Boolean(
+      rootName &&
+      (mobileBindings.namespaceNames.has(rootName) || mobileBindings.instanceNames.has(rootName))
+    )
+  }
   return (
     resemblesTranslator &&
     !isMobileTranslationCall(call, sourceFile, mobileBindings) &&
@@ -437,7 +446,7 @@ export function collectLocalizationCandidates(filePath, sourceText, root = proce
     }
 
     const kind = mobileSource
-      ? (classifyMobileStringNode(node, userVisibleErrorSource) ??
+      ? (classifyMobileStringNode(node, userVisibleErrorSource, mobileBindings) ??
         (isUnboundRenderedTranslationArgument(node, sourceFile, mobileBindings)
           ? 'unbound-localization-call'
           : undefined))

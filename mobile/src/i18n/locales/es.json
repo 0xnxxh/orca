@@ -152,7 +152,7 @@
     "newPreset": "Nuevo preset",
     "useWhole": "Utilice todo el repositorio",
     "full": "Checkout completo",
-    "sparse": "Pago escaso",
+    "sparse": "Checkout disperso",
     "noBranches": "Ninguna rama coincide.",
     "useRepositorys": "Utilice la base configurada de este repositorio",
     "defaultBranch": "Rama predeterminada",
@@ -610,7 +610,7 @@
     "back": "Volver a los árboles de trabajo",
     "agent": "Presets de Agent no disponibles",
     "noEnabled": "No hay Agents habilitados",
-    "detecting": "Agents de detección",
+    "detecting": "Detectando agentes",
     "browserPage": "La página del navegador aún no está disponible.",
     "desktopUpdateRequiredMobile": "Se requiere actualización de escritorio para la transmisión del navegador móvil",
     "edit": "Edite este comando rápido antes de ejecutarlo",
@@ -659,11 +659,11 @@
     "switchDesktop": "Cambiar al modo de escritorio",
     "hides": "Oculta el teclado del software y mantiene abierta la sesión actual del terminal.",
     "dismissKeyboard": "Descartar teclado",
-    "loadingTerminal": "terminal de carga",
+    "loadingTerminal": "Cargando terminal",
     "checking": "Comprobando las capacidades del escritorio: inténtalo de nuevo en un momento",
     "desktopUpdateRequiredQuick": "Se requiere actualización de escritorio para comandos rápidos",
     "newTab": "Nueva pestaña",
-    "openSource": "Control de código abierto",
+    "openSource": "Abrir control de código fuente",
     "openFile": "Abrir explorador de archivos",
     "couldNotSend": "No se pudieron enviar notas",
     "notesSent": "Notas enviadas",
@@ -2478,6 +2478,13 @@
     }
   },
   "pullRequest": {
+    "checks": {
+      "running": "{{count}} en curso"
+    },
+    "unresolvedComments": {
+      "one": ", {{count}} comentario sin resolver",
+      "other": ", {{count}} comentarios sin resolver"
+    },
     "conflicts": {
       "fileDetailsUnavailable": "Los detalles de los archivos en conflicto no están disponibles",
       "refreshing": "Actualizando los detalles de los conflictos…",

@@ -178,7 +178,8 @@ function projectRowType() {
   return 'issue'
 }
 export function Example() {
-  return <>{projectRowType() ? <Text>{lookup()}</Text> : null}</>
+  const render = lookup
+  return <>{projectRowType() ? <Text>{render()}</Text> : null}</>
 }
 `
     const candidates = collectLocalizationCandidates(
@@ -192,10 +193,11 @@ export function Example() {
 
   it('finds Android notification-channel names', () => {
     const source = `
-Notifications.setNotificationChannelAsync('orca-desktop', {
+const channel = {
   name: 'Desktop Notifications',
   importance: Notifications.AndroidImportance.HIGH
-})
+}
+Notifications.setNotificationChannelAsync('orca-desktop', channel)
 `
     const candidates = collectLocalizationCandidates(
       '/repo/mobile/src/notifications/local-notification-scheduling.ts',
@@ -224,9 +226,13 @@ export function toRow(item) {
   it('recognizes aliased translators and reports calls shadowed by parameters', () => {
     const source = `
 import { t as translateMobile } from '@/i18n/mobile-i18n'
+import * as i18n from '@/i18n/mobile-i18n'
 const localized = translateMobile('example.localized')
 export function Example(translateMobile) {
   return <Text>{translateMobile('Unlocalized shadowed copy')}</Text>
+}
+export function MemberExample(i18n) {
+  return <Text>{i18n.t('Unlocalized shadowed member copy')}</Text>
 }
 `
     const candidates = collectLocalizationCandidates(
@@ -235,7 +241,10 @@ export function Example(translateMobile) {
       '/repo'
     )
 
-    expect(candidates.map((candidate) => candidate.text)).toEqual(['Unlocalized shadowed copy'])
+    expect(candidates.map((candidate) => candidate.text)).toEqual([
+      'Unlocalized shadowed copy',
+      'Unlocalized shadowed member copy'
+    ])
   })
 
   it('rejects stale allowlist entries before their approval can be reused', async () => {

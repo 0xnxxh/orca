@@ -157,7 +157,7 @@
     "newPreset": "新预设",
     "useWhole": "使用整个存储库",
     "full": "完整检出",
-    "sparse": "稀疏结帐",
+    "sparse": "稀疏检出",
     "noBranches": "没有分支匹配。",
     "useRepositorys": "使用此存储库的配置基础",
     "defaultBranch": "默认分支",
@@ -673,11 +673,11 @@
     "switchDesktop": "切换到桌面模式",
     "hides": "隐藏软件键盘并保持当前 terminal 会话打开。",
     "dismissKeyboard": "关闭键盘",
-    "loadingTerminal": "装货码头",
+    "loadingTerminal": "正在加载终端",
     "checking": "检查桌面功能 - 稍后重试",
     "desktopUpdateRequiredQuick": "快速命令需要更新桌面",
     "newTab": "新标签页",
-    "openSource": "开源控制",
+    "openSource": "打开源代码管理",
     "openFile": "打开文件资源管理器",
     "couldNotSend": "无法发送笔记",
     "notesSent": "已发送注释",
@@ -2529,6 +2529,13 @@
     }
   },
   "pullRequest": {
+    "checks": {
+      "running": "{{count}} 项运行中"
+    },
+    "unresolvedComments": {
+      "one": "，{{count}} 条未解决评论",
+      "other": "，{{count}} 条未解决评论"
+    },
     "conflicts": {
       "fileDetailsUnavailable": "无法获取冲突文件详情",
       "refreshing": "正在刷新冲突详情…",

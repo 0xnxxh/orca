@@ -388,20 +388,57 @@ function isUserVisibleErrorArgument(node, userVisibleErrorSource) {
   )
 }
 
-function isNotificationChannelName(node) {
+function resolveObjectLiteral(node, bindings, seen = new Set()) {
+  if (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isSatisfiesExpression(node)
+  ) {
+    return resolveObjectLiteral(node.expression, bindings, seen)
+  }
+  if (ts.isObjectLiteralExpression(node)) {
+    return node
+  }
+  if (!bindings || !ts.isIdentifier(node)) {
+    return undefined
+  }
+  const binding = bindings.resolveBinding(node)
+  if (!binding || seen.has(binding) || !ts.isVariableDeclaration(binding) || !binding.initializer) {
+    return undefined
+  }
+  seen.add(binding)
+  return resolveObjectLiteral(binding.initializer, bindings, seen)
+}
+
+function isNotificationChannelName(node, bindings) {
   const property = findAncestor(node, ts.isPropertyAssignment)
   const object = property?.parent
-  const call = object?.parent
-  return Boolean(
-    property &&
-    propertyNameText(property.name) === 'name' &&
-    object &&
-    ts.isObjectLiteralExpression(object) &&
-    call &&
-    ts.isCallExpression(call) &&
-    call.arguments[1] === object &&
-    expressionNameText(call.expression)?.endsWith('setNotificationChannelAsync')
-  )
+  if (
+    !property ||
+    propertyNameText(property.name) !== 'name' ||
+    !object ||
+    !ts.isObjectLiteralExpression(object)
+  ) {
+    return false
+  }
+  let found = false
+  function visit(current) {
+    if (found) {
+      return
+    }
+    if (
+      ts.isCallExpression(current) &&
+      current.arguments[1] &&
+      expressionNameText(current.expression)?.endsWith('setNotificationChannelAsync') &&
+      resolveObjectLiteral(current.arguments[1], bindings) === object
+    ) {
+      found = true
+      return
+    }
+    ts.forEachChild(current, visit)
+  }
+  visit(node.getSourceFile())
+  return found
 }
 
 function hasDisqualifyingBinaryAncestor(node) {
@@ -448,7 +485,7 @@ function isComparisonOperand(node) {
   )
 }
 
-export function classifyMobileStringNode(node, userVisibleErrorSource) {
+export function classifyMobileStringNode(node, userVisibleErrorSource, bindings) {
   if (hasAncestorObjectPropertyName(node, new Set(['className', 'classNames']))) {
     return undefined
   }
@@ -471,7 +508,7 @@ export function classifyMobileStringNode(node, userVisibleErrorSource) {
   if (isComparisonOperand(node)) {
     return undefined
   }
-  if (isNotificationChannelName(node)) {
+  if (isNotificationChannelName(node, bindings)) {
     return 'notification-channel-name'
   }
 

@@ -11,6 +11,10 @@ import {
   isMobileTranslationCall,
   mobileTranslationCallPrefix
 } from './mobile-localization-translation-bindings.mjs'
+import {
+  PRODUCT_GLOSSARY,
+  REQUIRED_TARGET_TRANSLATIONS
+} from './mobile-localization-product-glossary.mjs'
 
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts'])
 const SOURCE_RELATIVE_ROOTS = [path.join('mobile', 'app'), path.join('mobile', 'src')]
@@ -249,11 +253,11 @@ function occurrenceCount(value, literal) {
   return value.split(literal).length - 1
 }
 
-function verifyProtectedLiterals(englishValue, localeValue, locale, key) {
+function verifyProtectedLiterals(englishValue, localeValue, catalogName, key) {
   const issues = []
   for (const literal of PROTECTED_LITERALS) {
     if (occurrenceCount(localeValue, literal) < occurrenceCount(englishValue, literal)) {
-      issues.push(`${locale}.json protected literal mismatch: ${key} must preserve ${literal}`)
+      issues.push(`${catalogName} protected literal mismatch: ${key} must preserve ${literal}`)
     }
   }
   return issues
@@ -275,20 +279,24 @@ function isLanguageNeutralValue(value, locale) {
   )
 }
 
-function verifyTerminology(englishValue, localeValue, locale, key) {
+function verifyTerminology(englishValue, localeValue, locale, catalogName, key) {
   const issues = []
   if (
     locale === 'es' &&
     /\bbranch(?:es)?\b/i.test(englishValue) &&
     /\bsucursal(?:es)?\b/i.test(localeValue)
   ) {
-    issues.push(`${locale}.json Git terminology mismatch: ${key} translates branch as sucursal`)
+    issues.push(`${catalogName} Git terminology mismatch: ${key} translates branch as sucursal`)
   }
   if (locale === 'zh' && /\bhost\b/i.test(englishValue) && localeValue.includes('主人')) {
-    issues.push(`${locale}.json host terminology mismatch: ${key} uses 主人`)
+    issues.push(`${catalogName} host terminology mismatch: ${key} uses 主人`)
   }
   if (locale === 'zh' && /\bagent/i.test(englishValue) && localeValue.includes('检测剂')) {
-    issues.push(`${locale}.json agent terminology mismatch: ${key} uses 检测剂`)
+    issues.push(`${catalogName} agent terminology mismatch: ${key} uses 检测剂`)
+  }
+  const expectedValue = PRODUCT_GLOSSARY.get(englishValue)?.[locale]
+  if (expectedValue && localeValue !== expectedValue) {
+    issues.push(`${catalogName} product terminology mismatch: ${key} must use ${expectedValue}`)
   }
   return issues
 }
@@ -379,29 +387,41 @@ function verifyEnglishEntries(calls, englishEntries) {
   return issues
 }
 
-function verifyLocaleEntries(englishEntries, locale, localeEntries) {
+function verifyLocaleEntries(
+  englishEntries,
+  locale,
+  localeEntries,
+  catalogName = `${locale}.json`,
+  requiredTranslations = REQUIRED_TARGET_TRANSLATIONS
+) {
   const issues = []
   const localeKeys = [...localeEntries.keys()].sort()
+
+  for (const key of requiredTranslations) {
+    if (englishEntries.has(key) && !localeEntries.has(key)) {
+      issues.push(`${catalogName} missing required translation: ${key}`)
+    }
+  }
 
   for (const key of localeKeys) {
     const englishValue = englishEntries.get(key)
     if (englishValue === undefined) {
-      issues.push(`${locale}.json has extra key: ${key}`)
+      issues.push(`${catalogName} has extra key: ${key}`)
       continue
     }
     const englishPlaceholders = collectPlaceholderNames(englishValue)
     const localeValue = localeEntries.get(key)
     const localePlaceholders = collectPlaceholderNames(localeValue)
     if (!sameValues(englishPlaceholders, localePlaceholders)) {
-      issues.push(`${locale}.json placeholder mismatch: ${key}`)
+      issues.push(`${catalogName} placeholder mismatch: ${key}`)
     }
     if (EXACT_LANGUAGE_NEUTRAL_VALUES.has(englishValue) && localeValue !== englishValue) {
-      issues.push(`${locale}.json must preserve language-neutral value: ${key}`)
+      issues.push(`${catalogName} must preserve language-neutral value: ${key}`)
     }
-    issues.push(...verifyProtectedLiterals(englishValue, localeValue, locale, key))
-    issues.push(...verifyTerminology(englishValue, localeValue, locale, key))
+    issues.push(...verifyProtectedLiterals(englishValue, localeValue, catalogName, key))
+    issues.push(...verifyTerminology(englishValue, localeValue, locale, catalogName, key))
     if (localeValue === englishValue && !isLanguageNeutralValue(englishValue, locale)) {
-      issues.push(`${locale}.json copies English instead of using fallback: ${key}`)
+      issues.push(`${catalogName} copies English instead of using fallback: ${key}`)
     }
   }
 
@@ -516,6 +536,21 @@ async function verifyNativeCatalogs(root) {
   const englishEntries = nativeCatalogs.get('en')
   if (englishEntries) {
     issues.push(...verifyNativeFallbacks(expoConfig, englishEntries))
+    for (const locale of NATIVE_LOCALES.slice(1)) {
+      const localeEntries = nativeCatalogs.get(locale)
+      if (localeEntries) {
+        const runtimeLocale = locale === 'zh-Hans' ? 'zh' : locale
+        issues.push(
+          ...verifyLocaleEntries(
+            englishEntries,
+            runtimeLocale,
+            localeEntries,
+            `mobile/locales/${locale}.json`,
+            []
+          )
+        )
+      }
+    }
   }
   return issues
 }

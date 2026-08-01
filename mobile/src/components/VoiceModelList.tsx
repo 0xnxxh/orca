@@ -36,7 +36,7 @@ function modelMeta(model: MobileSpeechModel): string {
   if (model.status === 'extracting') {
     return [formatSize(model.sizeBytes), t('mobileDictationSetupSheet.extracting')]
       .filter(Boolean)
-      .join(' · ')
+      .join(' ')
   }
   return formatSize(model.sizeBytes)
 }

@@ -22,6 +22,22 @@ const NATIVE_CATALOG = {
   android: { app_name: 'Orca' }
 }
 
+function nativeCatalogFor(locale) {
+  if (locale === 'en') {
+    return NATIVE_CATALOG
+  }
+  return {
+    ios: {
+      CFBundleDisplayName: 'Orca',
+      NSCameraUsageDescription: `${locale} Camera fallback`,
+      NSLocalNetworkUsageDescription: `${locale} Network fallback`,
+      NSMicrophoneUsageDescription: `${locale} Microphone fallback`,
+      NSPhotoLibraryUsageDescription: `${locale} Photo fallback`
+    },
+    android: { app_name: 'Orca' }
+  }
+}
+
 function defaultAppConfig() {
   return {
     expo: {
@@ -79,7 +95,7 @@ function makeProject({
   for (const locale of NATIVE_LOCALES) {
     writeJson(
       path.join(nativeLocaleDirectory, `${locale}.json`),
-      nativeCatalogs?.[locale] ?? NATIVE_CATALOG
+      nativeCatalogs?.[locale] ?? nativeCatalogFor(locale)
     )
   }
   return root
@@ -214,6 +230,35 @@ export const labels = [
     ])
   })
 
+  it('tracks namespace aliases and destructured translation bindings', () => {
+    const sourceText = `
+import { mobileI18n } from '@/i18n/mobile-i18n'
+import * as i18n from '@/i18n/mobile-i18n'
+const localI18n = i18n
+const { t: instanceT, getFixedT } = mobileI18n
+const { t: namespaceT, createMobileTranslator: make, mobileI18n: aliasedInstance } = localI18n
+const { t: aliasedInstanceT } = aliasedInstance
+const prefixed = make('example')
+const fixed = getFixedT('en')
+export const labels = [
+  instanceT('example.instance', { name: 'Orca' }),
+  namespaceT('example.namespace'),
+  aliasedInstanceT('example.aliasedInstance'),
+  prefixed('prefixed'),
+  fixed('example.fixed')
+]
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls.map(({ keys, options }) => ({ keys, options: options.names }))).toEqual([
+      { keys: ['example.instance'], options: ['name'] },
+      { keys: ['example.namespace'], options: [] },
+      { keys: ['example.aliasedInstance'], options: [] },
+      { keys: ['example.prefixed'], options: [] },
+      { keys: ['example.fixed'], options: [] }
+    ])
+  })
+
   it('limits for-loop and catch bindings to their lexical scopes', () => {
     const sourceText = `
 import { t } from '@/i18n/mobile-i18n'
@@ -249,7 +294,7 @@ export const afterCatch = t('example.afterCatch')
   it('requires call options to exactly match English placeholders', async () => {
     const root = makeProject({
       sourceText:
-        "import { t } from '@/i18n/mobile-i18n'\nexport const label = t('m.greeting', { value: 'Orca' })\n",
+        "import { mobileI18n } from '@/i18n/mobile-i18n'\nconst { t: translate } = mobileI18n\nexport const label = translate('m.greeting', { value: 'Orca' })\n",
       catalogs: { en: { m: { greeting: 'Hello {{name}}' } } }
     })
 
@@ -270,6 +315,36 @@ export const afterCatch = t('example.afterCatch')
     })
 
     await expect(verifyMobileCatalog(root)).resolves.toBe(0)
+  })
+
+  it('requires every target locale to translate composed PR status fragments', async () => {
+    const root = makeProject({
+      sourceText: `
+import { t } from '@/i18n/mobile-i18n'
+export const labels = [
+  t('pullRequest.checks.running', { count: 1 }),
+  t('pullRequest.unresolvedComments.one', { count: 1 }),
+  t('pullRequest.unresolvedComments.other', { count: 2 })
+]
+`,
+      catalogs: {
+        en: {
+          pullRequest: {
+            checks: { running: '{{count}} running' },
+            unresolvedComments: {
+              one: ', {{count}} unresolved comment',
+              other: ', {{count}} unresolved comments'
+            }
+          }
+        }
+      }
+    })
+
+    const report = await runFailedVerification(root)
+    expect(report).toContain('es.json missing required translation: pullRequest.checks.running')
+    expect(report).toContain(
+      'zh.json missing required translation: pullRequest.unresolvedComments.other'
+    )
   })
 
   it('rejects opaque IDs, positional placeholders, and orphaned English keys', async () => {
@@ -371,6 +446,46 @@ export const afterCatch = t('example.afterCatch')
     expect(report).toContain('uses 检测剂')
   })
 
+  it('enforces the mobile Git and product glossary', async () => {
+    const root = makeProject({
+      sourceText: `
+import { t } from '@/i18n/mobile-i18n'
+export const labels = [
+  t('example.sparse'),
+  t('example.detecting'),
+  t('example.loadingTerminal'),
+  t('example.openSource')
+]
+`,
+      catalogs: {
+        en: {
+          example: {
+            sparse: 'Sparse Checkout',
+            detecting: 'Detecting Agents',
+            loadingTerminal: 'Loading terminal',
+            openSource: 'Open source control'
+          }
+        },
+        es: {
+          example: {
+            sparse: 'Pago escaso',
+            detecting: 'Agents de detección',
+            loadingTerminal: 'terminal de carga',
+            openSource: 'Control de código abierto'
+          }
+        },
+        ja: { example: { detecting: '検出剤' } },
+        zh: { example: { sparse: '稀疏结帐', loadingTerminal: '装货码头' } }
+      }
+    })
+
+    const report = await runFailedVerification(root)
+    expect(report).toContain('es.json product terminology mismatch: example.sparse')
+    expect(report).toContain('ja.json product terminology mismatch: example.detecting')
+    expect(report).toContain('zh.json product terminology mismatch: example.loadingTerminal')
+    expect(report).toContain('es.json product terminology mismatch: example.openSource')
+  })
+
   it('validates placeholders and extra keys in present translations', async () => {
     const en = { m: { greeting: 'Hello {{name}}' } }
     const root = makeProject({
@@ -451,6 +566,33 @@ export const afterCatch = t('example.afterCatch')
 
     expect(await runFailedVerification(root)).toContain(
       'mobile/app.json English native fallback mismatch: ios.NSCameraUsageDescription'
+    )
+  })
+
+  it('checks native translations for copied English, literals, and placeholders', async () => {
+    const englishNative = structuredClone(NATIVE_CATALOG)
+    englishNative.ios.NSCameraUsageDescription = 'Allow Orca to use {{resource}}'
+    const spanishNative = nativeCatalogFor('es')
+    spanishNative.ios.NSCameraUsageDescription = 'Permite que Orka use {{wrong}}'
+    spanishNative.ios.NSLocalNetworkUsageDescription = 'Network fallback'
+    const appConfig = defaultAppConfig()
+    appConfig.expo.plugins[1][1].cameraPermission = englishNative.ios.NSCameraUsageDescription
+    const root = makeProject({
+      sourceText: "export const label = 'not rendered'\n",
+      catalogs: { en: { m: { label: 'Visible' } } },
+      nativeCatalogs: { en: englishNative, es: spanishNative },
+      appConfig
+    })
+
+    const report = await runFailedVerification(root)
+    expect(report).toContain(
+      'mobile/locales/es.json placeholder mismatch: ios.NSCameraUsageDescription'
+    )
+    expect(report).toContain(
+      'mobile/locales/es.json protected literal mismatch: ios.NSCameraUsageDescription must preserve Orca'
+    )
+    expect(report).toContain(
+      'mobile/locales/es.json copies English instead of using fallback: ios.NSLocalNetworkUsageDescription'
     )
   })
 })

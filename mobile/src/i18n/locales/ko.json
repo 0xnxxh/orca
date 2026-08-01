@@ -624,7 +624,7 @@
     "back": "작업 트리로 돌아가기",
     "agent": "Agent 사전 설정을 사용할 수 없음",
     "noEnabled": "활성화된 Agents 없음",
-    "detecting": "Agents 감지",
+    "detecting": "에이전트 감지 중",
     "browserPage": "브라우저 페이지는 아직 사용할 수 없습니다.",
     "desktopUpdateRequiredMobile": "모바일 브라우저 스트리밍을 위해서는 데스크톱 업데이트가 필요합니다.",
     "edit": "실행하기 전에 이 빠른 명령을 편집하세요",
@@ -673,11 +673,11 @@
     "switchDesktop": "데스크톱 모드로 전환",
     "hides": "소프트웨어 키보드를 숨기고 현재 terminal 세션을 열어 둡니다.",
     "dismissKeyboard": "키보드 닫기",
-    "loadingTerminal": "로딩 terminal",
+    "loadingTerminal": "터미널 불러오는 중",
     "checking": "데스크톱 기능 확인 중 — 잠시 후 다시 시도하세요",
     "desktopUpdateRequiredQuick": "빠른 명령을 사용하려면 데스크탑 업데이트가 필요합니다.",
     "newTab": "새 탭",
-    "openSource": "오픈소스 제어",
+    "openSource": "소스 제어 열기",
     "openFile": "파일 탐색기 열기",
     "couldNotSend": "메모를 보낼 수 없습니다.",
     "notesSent": "보낸 메모",
@@ -2516,6 +2516,13 @@
     }
   },
   "pullRequest": {
+    "checks": {
+      "running": "{{count}}개 실행 중"
+    },
+    "unresolvedComments": {
+      "one": ", 해결되지 않은 댓글 {{count}}개",
+      "other": ", 해결되지 않은 댓글 {{count}}개"
+    },
     "conflicts": {
       "fileDetailsUnavailable": "충돌 파일 세부 정보를 사용할 수 없습니다",
       "refreshing": "충돌 세부 정보 새로 고치는 중…",

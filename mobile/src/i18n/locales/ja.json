@@ -624,7 +624,7 @@
     "back": "ワークツリーに戻る",
     "agent": "Agent のプリセットは利用できません",
     "noEnabled": "有効な Agents がありません",
-    "detecting": "検出剤",
+    "detecting": "エージェントを検出中",
     "browserPage": "ブラウザ ページはまだ利用できません。",
     "desktopUpdateRequiredMobile": "モバイルブラウザストリーミングにはデスクトップのアップデートが必要です",
     "edit": "このクイックコマンドを実行する前に編集してください",
@@ -673,11 +673,11 @@
     "switchDesktop": "デスクトップモードに切り替える",
     "hides": "ソフトウェア キーボードを非表示にし、現在の terminal セッションを開いたままにします。",
     "dismissKeyboard": "キーボードを閉じる",
-    "loadingTerminal": "ローディング terminal",
+    "loadingTerminal": "ターミナルを読み込み中",
     "checking": "デスクトップの機能をチェックしています - しばらくしてからもう一度お試しください",
     "desktopUpdateRequiredQuick": "クイックコマンドを実行するにはデスクトップのアップデートが必要です",
     "newTab": "新規タブ",
-    "openSource": "オープンソース管理",
+    "openSource": "ソース管理を開く",
     "openFile": "ファイルエクスプローラーを開く",
     "couldNotSend": "メモを送信できませんでした",
     "notesSent": "送信されたメモ",
@@ -2521,6 +2521,13 @@
     }
   },
   "pullRequest": {
+    "checks": {
+      "running": "{{count}} 件実行中"
+    },
+    "unresolvedComments": {
+      "one": "、未解決のコメント {{count}} 件",
+      "other": "、未解決のコメント {{count}} 件"
+    },
     "conflicts": {
       "fileDetailsUnavailable": "競合ファイルの詳細を取得できません",
       "refreshing": "競合の詳細を更新しています…",

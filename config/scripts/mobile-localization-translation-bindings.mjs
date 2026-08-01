@@ -1,130 +1,23 @@
 // TypeScript 7 is a native CLI; AST consumers still need the legacy JavaScript API.
 import ts from 'typescript-api'
 
+import { collectSourceBindings } from './mobile-localization-source-bindings.mjs'
+
 const MOBILE_I18N_MODULE_RE = /(?:^|\/)mobile-i18n$/
-
-function bindingNames(name, names = []) {
-  if (!name) {
-    return names
-  }
-  if (ts.isIdentifier(name)) {
-    names.push(name.text)
-  } else {
-    for (const element of name.elements) {
-      bindingNames(element.name, names)
-    }
-  }
-  return names
-}
-
-function isLexicalScope(node) {
-  return (
-    ts.isSourceFile(node) ||
-    ts.isFunctionLike(node) ||
-    ts.isBlock(node) ||
-    ts.isCaseBlock(node) ||
-    ts.isCatchClause(node) ||
-    ts.isForStatement(node) ||
-    ts.isForInStatement(node) ||
-    ts.isForOfStatement(node)
-  )
-}
-
-function nearestScope(node, sourceFile, predicate = isLexicalScope) {
-  let current = node.parent
-  while (current && current !== sourceFile) {
-    if (predicate(current)) {
-      return current
-    }
-    current = current.parent
-  }
-  return sourceFile
-}
-
-function functionScope(node, sourceFile) {
-  return nearestScope(node, sourceFile, ts.isFunctionLike)
-}
-
-function collectDeclarations(sourceFile) {
-  const declarations = new Map()
-
-  function add(scope, name, declaration) {
-    const byName = declarations.get(scope) ?? new Map()
-    const matches = byName.get(name) ?? []
-    matches.push(declaration)
-    byName.set(name, matches)
-    declarations.set(scope, byName)
-  }
-
-  function visit(node) {
-    if (ts.isImportDeclaration(node)) {
-      const clause = node.importClause
-      if (clause?.name) {
-        add(sourceFile, clause.name.text, clause.name)
-      }
-      if (clause?.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
-        add(sourceFile, clause.namedBindings.name.text, clause.namedBindings)
-      }
-      if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
-        for (const element of clause.namedBindings.elements) {
-          add(sourceFile, element.name.text, element)
-        }
-      }
-    } else if (ts.isParameter(node)) {
-      for (const name of bindingNames(node.name)) {
-        add(node.parent, name, node)
-      }
-    } else if (ts.isVariableDeclaration(node)) {
-      const declarationList = node.parent
-      const scope =
-        ts.isVariableDeclarationList(declarationList) &&
-        (declarationList.flags & ts.NodeFlags.BlockScoped) === 0
-          ? functionScope(node, sourceFile)
-          : nearestScope(node, sourceFile)
-      for (const name of bindingNames(node.name)) {
-        add(scope, name, node)
-      }
-    } else if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) {
-      add(nearestScope(node, sourceFile), node.name.text, node)
-    } else if ((ts.isFunctionExpression(node) || ts.isClassExpression(node)) && node.name) {
-      add(node, node.name.text, node)
-    } else if (ts.isCatchClause(node) && node.variableDeclaration) {
-      for (const name of bindingNames(node.variableDeclaration.name)) {
-        add(node, name, node.variableDeclaration)
-      }
-    }
-    ts.forEachChild(node, visit)
-  }
-
-  visit(sourceFile)
-  return declarations
-}
-
-function resolveBinding(identifier, sourceFile, declarations) {
-  let current = identifier.parent
-  while (current) {
-    const matches = declarations.get(current)?.get(identifier.text)
-    if (matches?.length) {
-      return matches[0]
-    }
-    if (current === sourceFile) {
-      break
-    }
-    current = current.parent
-  }
-  return undefined
-}
 
 function resolvesTo(identifier, bindings) {
   return bindings.resolveBinding(identifier)
+}
+
+function isMobileI18nNamespace(node, bindings) {
+  return ts.isIdentifier(node) && bindings.namespaceBindings.has(resolvesTo(node, bindings))
 }
 
 function isNamespaceMember(node, memberName, bindings) {
   return (
     ts.isPropertyAccessExpression(node) &&
     node.name.text === memberName &&
-    ts.isIdentifier(node.expression) &&
-    bindings.namespaceBindings.has(resolvesTo(node.expression, bindings))
+    isMobileI18nNamespace(node.expression, bindings)
   )
 }
 
@@ -135,12 +28,21 @@ function isMobileI18nInstance(node, bindings) {
   return isNamespaceMember(node, 'mobileI18n', bindings)
 }
 
+function isFixedTranslatorFactory(node, bindings) {
+  if (ts.isIdentifier(node)) {
+    return bindings.fixedFactoryBindings.has(resolvesTo(node, bindings))
+  }
+  return (
+    ts.isPropertyAccessExpression(node) &&
+    node.name.text === 'getFixedT' &&
+    isMobileI18nInstance(node.expression, bindings)
+  )
+}
+
 function isEnglishFixedTranslator(node, bindings) {
   return (
     ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    isMobileI18nInstance(node.expression.expression, bindings) &&
-    node.expression.name.text === 'getFixedT' &&
+    isFixedTranslatorFactory(node.expression, bindings) &&
     node.arguments.length === 1 &&
     ts.isStringLiteralLike(node.arguments[0]) &&
     node.arguments[0].text === 'en'
@@ -188,26 +90,31 @@ function directTranslatorPrefix(callee, bindings) {
 }
 
 export function collectMobileTranslationBindings(sourceFile) {
-  const declarations = collectDeclarations(sourceFile)
+  const sourceBindings = collectSourceBindings(sourceFile)
   const translatorBindings = new Set()
   const factoryBindings = new Set()
+  const fixedFactoryBindings = new Set()
   const instanceBindings = new Set()
   const namespaceBindings = new Set()
   const fixedTranslatorBindings = new Set()
   const prefixedTranslatorBindings = new Map()
   const translatorNames = new Set()
   const fixedTranslatorNames = new Set()
+  const instanceNames = new Set()
+  const namespaceNames = new Set()
   const prefixedTranslatorNames = new Map()
   const bindings = {
-    declarations,
     factoryBindings,
+    fixedFactoryBindings,
     fixedTranslatorBindings,
     fixedTranslatorNames,
     instanceBindings,
+    instanceNames,
     namespaceBindings,
+    namespaceNames,
     prefixedTranslatorBindings,
     prefixedTranslatorNames,
-    resolveBinding: (identifier) => resolveBinding(identifier, sourceFile, declarations),
+    resolveBinding: sourceBindings.resolveBinding,
     translatorBindings,
     translatorNames
   }
@@ -223,6 +130,7 @@ export function collectMobileTranslationBindings(sourceFile) {
     const namedBindings = statement.importClause?.namedBindings
     if (namedBindings && ts.isNamespaceImport(namedBindings)) {
       namespaceBindings.add(namedBindings)
+      namespaceNames.add(namedBindings.name.text)
       continue
     }
     if (!namedBindings || !ts.isNamedImports(namedBindings)) {
@@ -237,18 +145,71 @@ export function collectMobileTranslationBindings(sourceFile) {
         factoryBindings.add(element)
       } else if (importedName === 'mobileI18n') {
         instanceBindings.add(element)
+        instanceNames.add(element.name.text)
+      }
+    }
+  }
+
+  function addBinding(identifier, bindingSet, nameSet) {
+    const binding = bindings.resolveBinding(identifier)
+    if (!binding) {
+      return
+    }
+    bindingSet.add(binding)
+    nameSet?.add(identifier.text)
+  }
+
+  function collectDestructuredAliases(node) {
+    if (!ts.isObjectBindingPattern(node.name) || !node.initializer) {
+      return
+    }
+    const namespaceSource = isMobileI18nNamespace(node.initializer, bindings)
+    const instanceSource = isMobileI18nInstance(node.initializer, bindings)
+    if (!namespaceSource && !instanceSource) {
+      return
+    }
+    for (const element of node.name.elements) {
+      if (!ts.isIdentifier(element.name) || element.dotDotDotToken) {
+        continue
+      }
+      const propertyName = element.propertyName ?? element.name
+      if (!ts.isIdentifier(propertyName) && !ts.isStringLiteralLike(propertyName)) {
+        continue
+      }
+      if (propertyName.text === 't') {
+        addBinding(element.name, translatorBindings, translatorNames)
+      } else if (namespaceSource && propertyName.text === 'createMobileTranslator') {
+        addBinding(element.name, factoryBindings)
+      } else if (namespaceSource && propertyName.text === 'mobileI18n') {
+        addBinding(element.name, instanceBindings, instanceNames)
+      } else if (instanceSource && propertyName.text === 'getFixedT') {
+        addBinding(element.name, fixedFactoryBindings)
       }
     }
   }
 
   function collectLocalTranslators(node) {
+    if (ts.isVariableDeclaration(node)) {
+      collectDestructuredAliases(node)
+    }
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
       const binding = bindings.resolveBinding(node.name)
-      if (isTranslatorFactory(node.initializer, bindings)) {
+      if (!binding) {
+        ts.forEachChild(node, collectLocalTranslators)
+        return
+      }
+      if (isMobileI18nNamespace(node.initializer, bindings)) {
+        namespaceBindings.add(binding)
+        namespaceNames.add(node.name.text)
+      } else if (isTranslatorFactory(node.initializer, bindings)) {
         factoryBindings.add(binding)
+      }
+      if (isFixedTranslatorFactory(node.initializer, bindings)) {
+        fixedFactoryBindings.add(binding)
       }
       if (isMobileI18nInstance(node.initializer, bindings)) {
         instanceBindings.add(binding)
+        instanceNames.add(node.name.text)
       }
       if (isEnglishFixedTranslator(node.initializer, bindings)) {
         fixedTranslatorBindings.add(binding)
