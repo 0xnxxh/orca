@@ -631,6 +631,132 @@ describe('registerPtyHandlers', () => {
     return spawn
   }
 
+  function createFullRuntimePaneRaceHarness() {
+    type ProviderSpawnOptions = {
+      cwd?: string
+      env?: Record<string, string>
+      sessionId?: string
+    }
+    const folder = {
+      id: 'full-runtime-pane-race-folder',
+      projectGroupId: 'full-runtime-pane-race-group',
+      name: 'Full runtime pane race',
+      folderPath: process.cwd(),
+      connectionId: null,
+      linkedTask: null,
+      comment: '',
+      isArchived: false,
+      isUnread: false,
+      isPinned: false,
+      sortOrder: 0,
+      lastActivityAt: 1,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const group = {
+      id: folder.projectGroupId,
+      name: folder.projectGroupId,
+      parentPath: folder.folderPath,
+      connectionId: null,
+      parentGroupId: null,
+      createdFrom: 'manual' as const,
+      tabOrder: 0,
+      isCollapsed: false,
+      color: null,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const pending: {
+      options: ProviderSpawnOptions
+      resolve: (result: { id: string }) => void
+    }[] = []
+    const providerSpawn = vi.fn(
+      (options: ProviderSpawnOptions) =>
+        new Promise<{ id: string }>((resolve) => pending.push({ options, resolve }))
+    )
+    const shutdown = vi.fn()
+    installDaemonTestProvider({ spawn: providerSpawn, shutdown })
+    const store = {
+      getFolderWorkspace: vi.fn(() => folder),
+      getFolderWorkspaces: vi.fn(() => [folder]),
+      getProjectGroups: vi.fn(() => [group]),
+      getRepos: vi.fn(() => []),
+      getSettings: vi.fn(() => ({ claudeAgentTeamsMode: 'native-panes-shim' as const })),
+      persistPtyBinding: vi.fn(),
+      removePtyBindingIfMatches: vi.fn()
+    }
+    const runtime = new OrcaRuntimeService(store as never)
+    vi.spyOn(runtime, 'createPreAllocatedTerminalHandle').mockReturnValue('term_renderer_creator')
+    registerPtyHandlers(
+      mainWindow as never,
+      runtime,
+      undefined,
+      undefined,
+      undefined,
+      store as never
+    )
+    const folderKey = `folder:${folder.id}`
+    const tabId = 'tab-full-runtime-pane-race'
+    const leafId = '16161616-1616-4616-8616-161616161616'
+    const paneKey = makePaneKey(tabId, leafId)
+    const launchConfig = (owner: string) => ({
+      agentCommand: 'claude --teammate-mode auto',
+      agentArgs: `--${owner}`,
+      agentEnv: { OWNER: owner }
+    })
+    const spawnRenderer = (sessionId?: string) =>
+      handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        cwd: folder.folderPath,
+        worktreeId: folderKey,
+        tabId,
+        leafId,
+        ...(sessionId ? { sessionId } : {}),
+        env: { ORCA_PANE_KEY: paneKey },
+        command: 'claude --teammate-mode auto',
+        launchAgent: 'claude',
+        launchConfig: launchConfig('creator')
+      }) as Promise<{ id: string; spawnDisposition: string }>
+    const spawnRuntime = (opts: {
+      sessionId?: string
+      signal?: AbortSignal
+      acceptWorkspaceInventory?: () => boolean
+      preAllocatedHandle?: string
+    }) =>
+      runtime.createTerminal(`id:${folderKey}`, {
+        command: 'claude --teammate-mode auto',
+        launchAgent: 'claude',
+        launchConfig: launchConfig('waiter'),
+        title: 'waiter title',
+        tabId,
+        leafId,
+        persistHostSessionBinding: true,
+        spawnReservationFreshness:
+          runtime.getTerminalSpawnReservationFreshness(folderKey, null) ?? undefined,
+        ...opts
+      })
+    const teams = (runtime as unknown as { claudeAgentTeams: ClaudeAgentTeamsService })
+      .claudeAgentTeams
+    return {
+      folder,
+      group,
+      folderKey,
+      tabId,
+      leafId,
+      paneKey,
+      pending,
+      providerSpawn,
+      shutdown,
+      store,
+      runtime,
+      teams,
+      launchConfig,
+      spawnRenderer,
+      spawnRuntime
+    }
+  }
+
   function installObservableDaemonTestProvider() {
     const spawn = vi.fn(async (options: { sessionId?: string }) => ({
       id: options.sessionId ?? 'daemon-pty'
@@ -8628,6 +8754,190 @@ describe('registerPtyHandlers', () => {
     ])
     expect(providerSpawn).toHaveBeenCalledOnce()
     clearProviderPtyState(creatorSessionId)
+  })
+
+  it('adopts a renderer creator without rebinding its full runtime identity', async () => {
+    const harness = createFullRuntimePaneRaceHarness()
+    const sessionId = 'caller-owned-full-runtime-session'
+    const rendererSpawn = harness.spawnRenderer(sessionId)
+    await vi.waitFor(() => expect(harness.providerSpawn).toHaveBeenCalledOnce())
+    const creatorOptions = harness.pending[0]!.options
+    expect(creatorOptions.env?.ORCA_TERMINAL_HANDLE).toBe('term_renderer_creator')
+
+    const runtimeSpawn = harness.spawnRuntime({
+      sessionId,
+      preAllocatedHandle: 'term_runtime_waiter',
+      acceptWorkspaceInventory: () => true
+    })
+    await vi.waitFor(() => expect(harness.teams.getActiveTeamCount()).toBe(2))
+
+    harness.runtime.registerPreAllocatedHandleForPty(sessionId, 'term_renderer_creator')
+    harness.runtime.registerPty(sessionId, harness.folderKey, null, {
+      tabId: harness.tabId,
+      leafId: harness.leafId
+    })
+    const creatorLaunchConfig = harness.launchConfig('stored-creator')
+    const creatorPty = (
+      harness.runtime as unknown as {
+        ptysById: Map<
+          string,
+          {
+            runtimeSessionOwned: boolean
+            title: string | null
+            titleUpdatedAt: number | null
+            launchConfig: ReturnType<typeof harness.launchConfig> | null
+            launchToken: string | null
+            launchAgent: TuiAgent | null
+          }
+        >
+      }
+    ).ptysById.get(sessionId)!
+    Object.assign(creatorPty, {
+      runtimeSessionOwned: false,
+      title: 'creator title',
+      titleUpdatedAt: Date.now(),
+      launchConfig: creatorLaunchConfig,
+      launchToken: 'creator-launch-token',
+      launchAgent: null
+    })
+
+    harness.pending[0]!.resolve({ id: sessionId })
+    await expect(Promise.all([rendererSpawn, runtimeSpawn])).resolves.toEqual([
+      expect.objectContaining({ id: sessionId, spawnDisposition: 'created' }),
+      expect.objectContaining({
+        handle: 'term_renderer_creator',
+        ptyId: sessionId,
+        tabId: harness.tabId,
+        paneKey: harness.paneKey,
+        worktreeId: harness.folderKey,
+        title: 'creator title',
+        surface: 'background'
+      })
+    ])
+
+    expect(harness.providerSpawn).toHaveBeenCalledOnce()
+    expect(harness.teams.getActiveTeamCount()).toBe(1)
+    expect(creatorPty).toMatchObject({
+      runtimeSessionOwned: false,
+      title: 'creator title',
+      launchConfig: creatorLaunchConfig,
+      launchToken: 'creator-launch-token',
+      launchAgent: null
+    })
+    expect(openCodeClearPtyMock).not.toHaveBeenCalledWith(sessionId)
+    expect(piClearPtyMock).not.toHaveBeenCalledWith(sessionId)
+    clearProviderPtyState(sessionId)
+  })
+
+  it.each([
+    { fence: 'inventory', expected: 'tab_not_found' },
+    { fence: 'abort', expected: 'client_disconnected' }
+  ] as const)('cleans a provisional runtime team before a $fence spawn exit', async (testCase) => {
+    const harness = createFullRuntimePaneRaceHarness()
+    const abort = new AbortController()
+    if (testCase.fence === 'abort') {
+      abort.abort()
+    }
+    const removeTeam = vi.spyOn(harness.teams, 'removeTeamForLaunchEnv')
+
+    await expect(
+      harness.spawnRuntime({
+        sessionId: `caller-owned-pre-spawn-${testCase.fence}`,
+        preAllocatedHandle: `term_pre_spawn_${testCase.fence}`,
+        signal: abort.signal,
+        acceptWorkspaceInventory: () => testCase.fence !== 'inventory'
+      })
+    ).rejects.toThrow(testCase.expected)
+
+    expect(harness.providerSpawn).not.toHaveBeenCalled()
+    expect(removeTeam).toHaveBeenCalledOnce()
+    expect(harness.teams.getActiveTeamCount()).toBe(0)
+    expect(openCodeClearPtyMock).not.toHaveBeenCalledWith(
+      `caller-owned-pre-spawn-${testCase.fence}`
+    )
+  })
+
+  it.each([
+    { fence: 'inventory', expected: 'tab_not_found' },
+    { fence: 'abort', expected: 'client_disconnected' }
+  ] as const)(
+    'abandons only the runtime waiter when a $fence changes after reservation',
+    async (testCase) => {
+      const harness = createFullRuntimePaneRaceHarness()
+      const sessionId = `caller-owned-post-spawn-${testCase.fence}`
+      const rendererSpawn = harness.spawnRenderer(sessionId)
+      await vi.waitFor(() => expect(harness.providerSpawn).toHaveBeenCalledOnce())
+      let inventoryAccepted = true
+      const abort = new AbortController()
+      const runtimeSpawn = harness.spawnRuntime({
+        sessionId,
+        preAllocatedHandle: `term_post_spawn_${testCase.fence}`,
+        signal: abort.signal,
+        acceptWorkspaceInventory: () => inventoryAccepted
+      })
+      await vi.waitFor(() => expect(harness.teams.getActiveTeamCount()).toBe(2))
+
+      if (testCase.fence === 'inventory') {
+        inventoryAccepted = false
+      } else {
+        abort.abort()
+      }
+      harness.pending[0]!.resolve({ id: sessionId })
+
+      await expect(rendererSpawn).resolves.toMatchObject({
+        id: sessionId,
+        spawnDisposition: 'created'
+      })
+      await expect(runtimeSpawn).rejects.toThrow(testCase.expected)
+      expect(harness.providerSpawn).toHaveBeenCalledOnce()
+      expect(harness.shutdown).not.toHaveBeenCalled()
+      expect(harness.teams.getActiveTeamCount()).toBe(1)
+      expect(
+        (harness.runtime as unknown as { handleByPtyId: Map<string, string> }).handleByPtyId.get(
+          sessionId
+        )
+      ).toBe('term_renderer_creator')
+      expect(openCodeClearPtyMock).not.toHaveBeenCalledWith(sessionId)
+      expect(piClearPtyMock).not.toHaveBeenCalledWith(sessionId)
+      clearProviderPtyState(sessionId)
+    }
+  )
+
+  it('isolates a changed folder route from the renderer creator reservation', async () => {
+    const harness = createFullRuntimePaneRaceHarness()
+    const oldPath = harness.folder.folderPath
+    const rendererSpawn = harness.spawnRenderer()
+    await vi.waitFor(() => expect(harness.providerSpawn).toHaveBeenCalledOnce())
+
+    harness.folder.folderPath = join(process.cwd(), 'src')
+    harness.group.parentPath = harness.folder.folderPath
+    const runtimeSpawn = harness.spawnRuntime({
+      preAllocatedHandle: 'term_current_folder_route',
+      acceptWorkspaceInventory: () => harness.folder.folderPath.endsWith('src')
+    })
+    expect(harness.providerSpawn).toHaveBeenCalledOnce()
+    const oldSessionId = harness.pending[0]!.options.sessionId!
+    harness.pending[0]!.resolve({ id: oldSessionId })
+    await expect(rendererSpawn).resolves.toMatchObject({ id: oldSessionId })
+    await vi.waitFor(() => expect(harness.providerSpawn).toHaveBeenCalledTimes(2))
+    expect(harness.pending.map(({ options }) => options.cwd)).toEqual([
+      oldPath,
+      harness.folder.folderPath
+    ])
+
+    const currentSessionId = harness.pending[1]!.options.sessionId!
+    expect(currentSessionId).not.toBe(oldSessionId)
+    harness.pending[1]!.resolve({ id: currentSessionId })
+
+    await expect(runtimeSpawn).resolves.toMatchObject({
+      handle: 'term_current_folder_route',
+      ptyId: currentSessionId,
+      worktreeId: harness.folderKey
+    })
+    expect(harness.providerSpawn).toHaveBeenCalledTimes(2)
+    expect(harness.shutdown).not.toHaveBeenCalled()
+    clearProviderPtyState(oldSessionId)
+    clearProviderPtyState(currentSessionId)
   })
 
   it.each(['runtime', 'renderer'] as const)(

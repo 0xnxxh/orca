@@ -25429,13 +25429,26 @@ export class OrcaRuntimeService {
       )
       const terminalColorQueryReplies =
         launchOpts.terminalColorQueryReplies ?? getTerminalViewColorQueryReplyColors()
-      if (launchOpts.signal?.aborted) {
-        throw new Error('client_disconnected')
+      let ownsProvisionalAgentTeam = agentTeamsPlan !== null
+      const discardProvisionalAgentTeam = (): void => {
+        if (!ownsProvisionalAgentTeam || !agentTeamsPlan) {
+          return
+        }
+        ownsProvisionalAgentTeam = false
+        this.claudeAgentTeams.removeTeamForLaunchEnv(agentTeamsPlan.env)
       }
-      if (launchOpts.acceptWorkspaceInventory?.() === false) {
-        throw new Error('tab_not_found')
+      const getPreAdoptionRejection = (): string | null => {
+        if (launchOpts.signal?.aborted) {
+          return 'client_disconnected'
+        }
+        return launchOpts.acceptWorkspaceInventory?.() === false ? 'tab_not_found' : null
       }
-      const result = await this.ptyController.spawn({
+      const preSpawnRejection = getPreAdoptionRejection()
+      if (preSpawnRejection) {
+        discardProvisionalAgentTeam()
+        throw new Error(preSpawnRejection)
+      }
+      const spawnPromise = this.ptyController.spawn({
         cols: 120,
         rows: 40,
         cwd,
@@ -25492,7 +25505,16 @@ export class OrcaRuntimeService {
           ? { persistHostSessionBinding: true }
           : {})
       })
-      if (launchOpts.acceptWorkspaceInventory?.() === false) {
+      let result: Awaited<typeof spawnPromise>
+      try {
+        result = await spawnPromise
+      } catch (error) {
+        discardProvisionalAgentTeam()
+        throw error
+      }
+      const postSpawnRejection = getPreAdoptionRejection()
+      if (postSpawnRejection) {
+        discardProvisionalAgentTeam()
         const shouldKill = result.spawnRetirementToken
           ? this.ptyController.releaseSpawnReservation?.(result.id, result.spawnRetirementToken) ===
             true
@@ -25503,7 +25525,38 @@ export class OrcaRuntimeService {
         if (result.spawnDisposition === 'created') {
           this.releaseRejectedPtyRegistrationFence(result.id, result.incarnationId)
         }
-        throw new Error('tab_not_found')
+        throw new Error(postSpawnRejection)
+      }
+      if (result.spawnDisposition === 'awaited') {
+        discardProvisionalAgentTeam()
+        const creatorPty = this.ptysById.get(result.id)
+        if (!creatorPty) {
+          if (
+            result.spawnRetirementToken &&
+            this.ptyController.releaseSpawnReservation?.(result.id, result.spawnRetirementToken) ===
+              true
+          ) {
+            this.ptyController.kill(result.id)
+          }
+          throw new Error('terminal_not_found')
+        }
+        if (result.spawnRetirementToken) {
+          this.ptyController.adoptSpawnReservation?.(result.id, result.spawnRetirementToken)
+        }
+        reportPtySpawnCommitted()
+        return {
+          handle: this.issuePtyHandle(creatorPty),
+          ...(creatorPty.tabId ? { tabId: creatorPty.tabId } : {}),
+          paneKey: creatorPty.paneKey,
+          ptyId: creatorPty.ptyId,
+          worktreeId: creatorPty.worktreeId,
+          title: getLatestPtyTitle(creatorPty),
+          ...this.getPtyExecutionHostMetadata(creatorPty.ptyId),
+          surface: 'background',
+          ...(result.agentSessionEnsure
+            ? { agentSessionDisposition: result.agentSessionEnsure.disposition }
+            : {})
+        }
       }
       if (result.spawnRetirementToken) {
         this.ptyController.adoptSpawnReservation?.(result.id, result.spawnRetirementToken)
@@ -25519,12 +25572,14 @@ export class OrcaRuntimeService {
       try {
         this.assertPtyDidNotExitBeforeRegistration(result.id, result.incarnationId)
       } catch (error) {
+        discardProvisionalAgentTeam()
         if (error instanceof Error && error.message === 'agent_session_exited_during_start') {
           this.releaseRejectedPtyRegistrationFence(result.id, result.incarnationId)
         }
         throw error
       }
       this.registerPreAllocatedHandleForPty(result.id, preAllocatedHandle)
+      ownsProvisionalAgentTeam = false
       if (result.wslDistro) {
         this.preparePtyExecutionContext(result.id, result.wslDistro)
       }
