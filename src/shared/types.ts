@@ -3566,6 +3566,7 @@ export type PersistedMobileClientTabSelections = Record<
 
 export type DeletedFolderWorkspaceSessionTombstone = {
   connectionId: string | null
+  deletedAt: number
   hostIds: ExecutionHostId[]
   tabConnectionIdsByHostId: Partial<Record<ExecutionHostId, Record<string, string | null>>>
 }

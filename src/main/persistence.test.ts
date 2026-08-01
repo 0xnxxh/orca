@@ -5148,6 +5148,7 @@ describe('Store', () => {
     state.deletedFolderWorkspaceSessionTombstones = {
       'folder:partial-tombstone': {
         connectionId: null,
+        deletedAt: undefined as unknown as number,
         hostIds: ['local'],
         tabConnectionIdsByHostId: {
           local: { valid: null, invalid: 42 as unknown as string }
@@ -5171,6 +5172,7 @@ describe('Store', () => {
       ]
     ).toEqual({
       connectionId: null,
+      deletedAt: expect.any(Number),
       hostIds: ['local'],
       tabConnectionIdsByHostId: { local: { valid: null } }
     })
@@ -5183,10 +5185,16 @@ describe('Store', () => {
     const workspaceKeys = Array.from({ length: 514 }, (_, index) =>
       folderWorkspaceKey(`deleted-${index}`)
     )
+    const deletedAt = Date.now() - 2 * 24 * 60 * 60 * 1000
     state.deletedFolderWorkspaceSessionTombstones = Object.fromEntries(
-      workspaceKeys.map((workspaceKey) => [
+      workspaceKeys.map((workspaceKey, index) => [
         workspaceKey,
-        { connectionId: null, hostIds: ['local'], tabConnectionIdsByHostId: {} }
+        {
+          connectionId: null,
+          deletedAt: deletedAt + index,
+          hostIds: ['local'],
+          tabConnectionIdsByHostId: {}
+        }
       ])
     ) as PersistedState['deletedFolderWorkspaceSessionTombstones']
     writeDataFile(state)
@@ -5207,30 +5215,68 @@ describe('Store', () => {
     expect(tombstones?.[workspaceKeys.at(-1)!]).toBeDefined()
   })
 
-  it('bounds deleted-folder tombstones during repeated workspace churn', async () => {
+  it('retains recent deletion fences before applying the tombstone soft cap', async () => {
     const store = await createStore()
     const group = store.createProjectGroup({
       name: 'Tombstone churn',
       parentPath: '/workspace/churn',
       createdFrom: 'folder-scan'
     })
-    const workspaceKeys: ReturnType<typeof folderWorkspaceKey>[] = []
-    for (let index = 0; index < 514; index += 1) {
-      const workspace = store.createFolderWorkspace({
-        projectGroupId: group.id,
-        name: `Deleted ${index}`
-      })
-      workspaceKeys.push(folderWorkspaceKey(workspace.id))
-      expect(store.removeFolderWorkspace(workspace.id)).toBe(true)
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+      const workspaceKeys: ReturnType<typeof folderWorkspaceKey>[] = []
+      for (let index = 0; index < 514; index += 1) {
+        const workspace = store.createFolderWorkspace({
+          projectGroupId: group.id,
+          name: `Deleted ${index}`
+        })
+        workspaceKeys.push(folderWorkspaceKey(workspace.id))
+        expect(store.removeFolderWorkspace(workspace.id)).toBe(true)
+      }
+      store.flush()
+      let tombstones = (readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstones
+      expect(Object.keys(tombstones ?? {})).toHaveLength(514)
+      expect(tombstones?.[workspaceKeys[0]!]).toBeDefined()
+
+      vi.setSystemTime(new Date('2026-01-02T00:00:00.001Z'))
+      const latest = store.createFolderWorkspace({ projectGroupId: group.id, name: 'Latest' })
+      expect(store.removeFolderWorkspace(latest.id)).toBe(true)
+      store.flush()
+
+      tombstones = (readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstones
+      expect(Object.keys(tombstones ?? {})).toHaveLength(512)
+      expect(tombstones?.[workspaceKeys[0]!]).toBeUndefined()
+      expect(tombstones?.[folderWorkspaceKey(latest.id)]).toBeDefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('removes deleted-folder tombstones after the stale-write retention window', async () => {
+    const initial = await createStore()
+    initial.flush()
+    const state = readDataFile() as PersistedState
+    state.deletedFolderWorkspaceSessionTombstones = {
+      'folder:expired-tombstone': {
+        connectionId: null,
+        deletedAt: Date.now() - 31 * 24 * 60 * 60 * 1000,
+        hostIds: ['local'],
+        tabConnectionIdsByHostId: {}
+      }
+    }
+    writeDataFile(state)
+
+    vi.useFakeTimers()
+    try {
+      const restored = await createStore()
+      await vi.advanceTimersByTimeAsync(1_000)
+      await restored.waitForPendingWrite()
+    } finally {
+      vi.useRealTimers()
     }
 
-    store.flush()
-
-    const tombstones = (readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstones
-    expect(Object.keys(tombstones ?? {})).toHaveLength(512)
-    expect(tombstones?.[workspaceKeys[0]!]).toBeUndefined()
-    expect(tombstones?.[workspaceKeys[1]!]).toBeUndefined()
-    expect(tombstones?.[workspaceKeys.at(-1)!]).toBeDefined()
+    expect((readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstones).toEqual({})
   })
 
   it('backfills folder-scope SSH provenance from unambiguous child repos on load', async () => {
@@ -6783,6 +6829,126 @@ describe('Store', () => {
         hostId
       )
     ).toThrow('folder_workspace_not_found')
+  })
+
+  it('keeps a recent remote stale-write fence through rapid folder deletion churn', async () => {
+    const store = await createStore()
+    const connectionId = 'rapid-churn-remote'
+    const hostId = toRuntimeExecutionHostId('rapid-churn-runtime')
+    const group = store.createProjectGroup({
+      name: 'Rapid churn',
+      parentPath: '/remote/rapid-churn',
+      connectionId,
+      createdFrom: 'folder-scan'
+    })
+    const workspace = store.createFolderWorkspace({ projectGroupId: group.id, connectionId })
+    const workspaceKey = folderWorkspaceKey(workspace.id)
+    const staleSession = {
+      ...getDefaultWorkspaceSession(),
+      activeWorkspaceKey: workspaceKey,
+      tabsByWorktree: {
+        [workspaceKey]: [makeTerminalTab({ id: 'rapid-churn-stale-tab', worktreeId: workspaceKey })]
+      }
+    } satisfies WorkspaceSessionState
+    store.setWorkspaceSession(staleSession, hostId)
+    expect(store.removeFolderWorkspace(workspace.id)).toBe(true)
+    for (let index = 0; index < 512; index += 1) {
+      const churned = store.createFolderWorkspace({
+        projectGroupId: group.id,
+        name: `Churned ${index}`
+      })
+      expect(store.removeFolderWorkspace(churned.id)).toBe(true)
+    }
+
+    store.setWorkspaceSession(staleSession, hostId)
+    store.upsertSshRemotePtyLease({
+      targetId: connectionId,
+      ptyId: 'rapid-churn-stale-pty',
+      worktreeId: workspaceKey,
+      tabId: 'rapid-churn-stale-tab',
+      leafId: TEST_LEAF_1,
+      state: 'detached'
+    })
+
+    expect(store.getWorkspaceSession(hostId).tabsByWorktree[workspaceKey]).toBeUndefined()
+    expect(store.getSshRemotePtyLeases()).toEqual([])
+  })
+
+  it('bounds detailed tab-owner evidence for one deleted folder', async () => {
+    const store = await createStore()
+    const hostId = toRuntimeExecutionHostId('tab-evidence-runtime')
+    const group = store.createProjectGroup({
+      name: 'Tab evidence',
+      parentPath: '/remote/tab-evidence',
+      createdFrom: 'folder-scan'
+    })
+    const workspace = store.createFolderWorkspace({ projectGroupId: group.id })
+    const workspaceKey = folderWorkspaceKey(workspace.id)
+    expect(store.removeFolderWorkspace(workspace.id)).toBe(true)
+
+    for (let index = 0; index < 300; index += 1) {
+      const tabId = `delayed-tab-${index}`
+      store.setWorkspaceSession(
+        {
+          ...getDefaultWorkspaceSession(),
+          tabsByWorktree: {
+            [workspaceKey]: [makeTerminalTab({ id: tabId, worktreeId: workspaceKey })]
+          }
+        },
+        hostId
+      )
+    }
+    store.flush()
+
+    const tombstone = (readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstones?.[
+      workspaceKey
+    ]
+    expect(Object.keys(tombstone?.tabConnectionIdsByHostId[hostId] ?? {})).toHaveLength(256)
+    const ownerIndex = (
+      store as unknown as {
+        deletedFolderOwnersByHostAndTabId: Map<string, Map<string, unknown>>
+      }
+    ).deletedFolderOwnersByHostAndTabId
+    expect(ownerIndex.get(hostId)?.size).toBe(256)
+  })
+
+  it('bounds host-partition evidence for one deleted folder', async () => {
+    const store = await createStore()
+    const group = store.createProjectGroup({
+      name: 'Host evidence',
+      parentPath: '/remote/host-evidence',
+      createdFrom: 'folder-scan'
+    })
+    const workspace = store.createFolderWorkspace({ projectGroupId: group.id })
+    const workspaceKey = folderWorkspaceKey(workspace.id)
+    expect(store.removeFolderWorkspace(workspace.id)).toBe(true)
+
+    for (let index = 0; index < 40; index += 1) {
+      const hostId = toRuntimeExecutionHostId(`host-evidence-${index}`)
+      const tabId = `host-evidence-tab-${index}`
+      store.setWorkspaceSession(
+        {
+          ...getDefaultWorkspaceSession(),
+          tabsByWorktree: {
+            [workspaceKey]: [makeTerminalTab({ id: tabId, worktreeId: workspaceKey })]
+          }
+        },
+        hostId
+      )
+    }
+    store.flush()
+
+    const tombstone = (readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstones?.[
+      workspaceKey
+    ]
+    expect(tombstone?.hostIds).toHaveLength(32)
+    expect(Object.keys(tombstone?.tabConnectionIdsByHostId ?? {})).toHaveLength(32)
+    const ownerIndex = (
+      store as unknown as {
+        deletedFolderOwnersByHostAndTabId: Map<string, Map<string, unknown>>
+      }
+    ).deletedFolderOwnersByHostAndTabId
+    expect(ownerIndex.size).toBe(32)
   })
 
   it('durably fences a delayed unified-only folder tab before a layout-only write', async () => {

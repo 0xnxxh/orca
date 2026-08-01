@@ -4920,6 +4920,20 @@ export class OrcaRuntimeService {
     return recreatedFolderWorktreeIds
   }
 
+  private assertMobileSessionFolderWorkspaceExists(worktreeId: string): void {
+    const scope = parseWorkspaceKey(worktreeId)
+    if (scope?.type !== 'folder' || !this.store?.getFolderWorkspaces) {
+      return
+    }
+    const folderWorkspaces = this.store.getFolderWorkspaces()
+    this.pruneRemovedFolderMobileSessionTabs(folderWorkspaces)
+    if (folderWorkspaces.some((workspace) => workspace.id === scope.folderWorkspaceId)) {
+      return
+    }
+    this.rememberRemovedFolderMobileSessionTabs(worktreeId)
+    throw new Error('tab_not_found')
+  }
+
   private createFolderWorkspaceInventoryFence(
     folderWorkspaces: readonly FolderWorkspace[]
   ): () => boolean {
@@ -8006,6 +8020,7 @@ export class OrcaRuntimeService {
       explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
     await this.refreshMobileSessionPtyRecords(worktreeId)
+    this.assertMobileSessionFolderWorkspaceExists(worktreeId)
     const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
     const directTab = snapshot?.tabs.find((candidate) => candidate.id === tabId)
     const tab = leafId
@@ -8350,6 +8365,7 @@ export class OrcaRuntimeService {
       explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
     const observedPtyIds = await this.refreshMobileSessionPtyRecords()
+    this.assertMobileSessionFolderWorkspaceExists(worktreeId)
     if (graphEpoch !== null) {
       this.assertStableReadyGraph(graphEpoch)
     }
