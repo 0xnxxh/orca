@@ -168,6 +168,26 @@ describe('publishAgentHookEnvelope', () => {
     }
   })
 
+  it('logs only when the final single-sink envelope is actually dropped', () => {
+    const primary = makeBoundedClient(16384)
+    const dispatcher = new RelayDispatcher(primary.write, primary.options)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    try {
+      publishAgentHookEnvelope(dispatcher, makeEnvelope({ lastAssistantMessage: 20_000 }))
+      expect(decodeEnvelopes(primary)).toHaveLength(1)
+      expect(stderr).not.toHaveBeenCalled()
+
+      const unsendable = makeEnvelope({})
+      unsendable.payload.prompt = 'p'.repeat(40_000)
+      publishAgentHookEnvelope(dispatcher, unsendable)
+      expect(stderr).toHaveBeenCalledTimes(1)
+      expect(String(stderr.mock.calls[0][0])).toContain('Dropped agent.hook')
+    } finally {
+      stderr.mockRestore()
+      dispatcher.dispose()
+    }
+  })
+
   it('sheds subagents next when dropping the assistant message is not enough', () => {
     const primary = makeBoundedClient(16384)
     const dispatcher = new RelayDispatcher(primary.write, primary.options)

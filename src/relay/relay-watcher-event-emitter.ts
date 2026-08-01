@@ -57,6 +57,10 @@ function groupWatcherEventsByDirectory(
   return Array.from(groups.values()).flat()
 }
 
+function encodedWatcherEventBytes(event: MappedWatcherEvent): number {
+  return Buffer.byteLength(JSON.stringify(event))
+}
+
 // Batches are sized to each sink's frame capacity; a batch that cannot be sized degrades to an overflow resync.
 function publishWatcherBatchToClient(
   dispatcher: RelayDispatcher,
@@ -67,8 +71,6 @@ function publishWatcherBatchToClient(
 ): void {
   const publish = (events: readonly MappedWatcherEvent[]): boolean =>
     dispatcher.publishProducerNotification(clientId, 'fs.changed', { events })
-  const budgetFor = (events: readonly MappedWatcherEvent[]): number =>
-    dispatcher.producerEnvelopeBudget('fs.changed', { events }, clientId)
 
   // Fast path: publish the whole batch first — two encodes, the same cost as an unchunked emit.
   // logDrop:false because rejection here is a measurement, not an outcome: the batch is re-sent in
@@ -87,18 +89,27 @@ function publishWatcherBatchToClient(
   }
 
   // Rejection is ambiguous: an over-capacity frame is chunkable, a full producer queue is real data loss.
-  const batchBudget = budgetFor(mapped)
-  if (batchBudget >= 0) {
+  // The empty envelope is encoded once; event JSON sizes are exact deltas apart from array commas.
+  const eventsCapacity = dispatcher.producerEnvelopeBudget('fs.changed', { events: [] }, clientId)
+  if (eventsCapacity < 0) {
     emitWatcherOverflowToClient(dispatcher, clientId, rootPath)
     return
   }
-  const eventsCapacity = budgetFor([])
-  // Measured average, so the first chunk already lands near capacity instead of at half of it.
-  const bytesPerEvent = (eventsCapacity - batchBudget) / mapped.length
+  const eventBytes = new Map<MappedWatcherEvent, number>()
+  let batchBytes = Math.max(0, mapped.length - 1)
+  for (const event of mapped) {
+    const bytes = encodedWatcherEventBytes(event)
+    eventBytes.set(event, bytes)
+    batchBytes += bytes
+  }
+  if (batchBytes <= eventsCapacity) {
+    emitWatcherOverflowToClient(dispatcher, clientId, rootPath)
+    return
+  }
 
   const grouped = groupedByDirectory()
+  const groupedEventBytes = grouped.map((event) => eventBytes.get(event)!)
   let index = 0
-  let size = Math.max(1, Math.floor(eventsCapacity / bytesPerEvent))
   while (index < grouped.length) {
     // Why: the retention ledger covers every producer publication despite its legacy name, and admission
     // is lane-agnostic: chunks queued past its low-water reserve (half the 2 MB queue) starve interactive
@@ -109,22 +120,21 @@ function publishWatcherBatchToClient(
       emitWatcherOverflowToClient(dispatcher, clientId, rootPath)
       return
     }
-    size = Math.min(size, grouped.length - index)
-    let chunk = grouped.slice(index, index + size)
-    let budget = budgetFor(chunk)
-    while (budget < 0 && size > 1) {
-      // Shrink by the measured excess rather than halving, which overshoots the byte minimum ~1.7x.
-      size = Math.max(1, Math.min(size - 1, size - Math.ceil(-budget / bytesPerEvent)))
-      chunk = grouped.slice(index, index + size)
-      budget = budgetFor(chunk)
+    let end = index
+    let chunkBytes = 0
+    while (end < grouped.length) {
+      const nextBytes = groupedEventBytes[end] + (end === index ? 0 : 1)
+      if (chunkBytes + nextBytes > eventsCapacity) {
+        break
+      }
+      chunkBytes += nextBytes
+      end += 1
     }
-    if (budget < 0 || !publish(chunk)) {
+    if (end === index || !publish(grouped.slice(index, end))) {
       emitWatcherOverflowToClient(dispatcher, clientId, rootPath)
       return
     }
-    index += size
-    // Re-grow into the measured headroom so one shrunk chunk cannot pin the rest of the walk below capacity.
-    size += Math.floor(budget / bytesPerEvent)
+    index = end
   }
 }
 
@@ -143,18 +153,25 @@ function emitWatcherOverflowToClient(
   }
   outstanding.add(key)
   outstandingOverflowMarkers.set(dispatcher, outstanding)
-  dispatcher.tryNotifyClient(
+  const release = (): void => {
+    outstanding.delete(key)
+    if (outstanding.size === 0) {
+      outstandingOverflowMarkers.delete(dispatcher)
+    }
+  }
+  const accepted = dispatcher.tryNotifyClient(
     clientId,
     'fs.changed',
     { events: [{ kind: 'overflow', absolutePath: rootPath }] },
     () => {
       // Settles on write, drop, or client close, so the slot can never leak.
-      outstanding.delete(key)
-      if (outstanding.size === 0) {
-        outstandingOverflowMarkers.delete(dispatcher)
-      }
+      release()
     }
   )
+  // A close/dispose race may reject between tryNotifyClient's pre-check and enqueue settlement.
+  if (!accepted) {
+    release()
+  }
 }
 
 export function emitRelayWatcherOverflow(

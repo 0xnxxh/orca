@@ -109,8 +109,8 @@ export const AGENT_HOOK_SHED_FIELDS_KEY = 'shedFields' as const
  * truncation cannot read as a cleared field — an absent `subagents` blanks live child rows and
  * unblocks hibernation for a pane whose teammates are still running.
  *
- * `interactivePrompt` is deliberately not restored: the cached card belongs to an earlier
- * question, and an answerable card carrying the wrong question is worse than no card.
+ * `interactivePrompt` and `lastAssistantMessage` are deliberately not restored: cached prose can
+ * belong to an earlier turn, while subagent continuity is required for correct hibernation.
  */
 export function restoreShedStatusFields(
   payload: ParsedAgentStatusPayload,
@@ -123,17 +123,12 @@ export function restoreShedStatusFields(
   const shed = new Set(shedFields.filter((field): field is string => typeof field === 'string'))
   const subagents =
     shed.has('subagents') && payload.subagents === undefined ? previous.subagents : undefined
-  const lastAssistantMessage =
-    shed.has('lastAssistantMessage') && payload.lastAssistantMessage === undefined
-      ? previous.lastAssistantMessage
-      : undefined
-  if (subagents === undefined && lastAssistantMessage === undefined) {
+  if (subagents === undefined) {
     return payload
   }
   return {
     ...payload,
-    ...(subagents === undefined ? {} : { subagents }),
-    ...(lastAssistantMessage === undefined ? {} : { lastAssistantMessage })
+    subagents
   }
 }
 

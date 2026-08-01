@@ -919,10 +919,10 @@ export class RelayDispatcher {
     const estimatedBytes = this.estimateFrameBytes(msg)
     const lane = estimatedBytes > DISPATCHER_CONTROL_QUEUE_MAX_BYTES ? 'legacy-response' : 'control'
     const accepted = this.enqueueFrame(client, msg, lane, onSettled)
-    if (accepted || error !== undefined) {
-      return accepted
+    if (accepted) {
+      return true
     }
-    // Why: an oversized result must fail its own request; closing would kill every pane on the host.
+    // Why: an oversized response must fail its own request; closing would kill every pane on the host.
     // A rejected first enqueue either left onSettled untouched or closed the client, so exactly one settlement happens.
     return this.enqueueFrame(
       client,

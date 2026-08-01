@@ -79,10 +79,15 @@ describe('restoreShedStatusFields', () => {
     expect(restored.lastAssistantMessage).toBeUndefined()
   })
 
-  it('restores the assistant message and reads the producer key', () => {
+  it('restores shed subagents without resurrecting stale prose for a new state and prompt', () => {
     expect(AGENT_HOOK_SHED_FIELDS_KEY).toBe('shedFields')
-    const restored = restoreShedStatusFields(shed, ['lastAssistantMessage', 'subagents'], cached)
-    expect(restored.lastAssistantMessage).toBe('cached message')
+    const nextTurn = { ...shed, prompt: 'next prompt' }
+    const restored = restoreShedStatusFields(
+      nextTurn,
+      ['lastAssistantMessage', 'subagents'],
+      cached
+    )
+    expect(restored.lastAssistantMessage).toBeUndefined()
     expect(restored.subagents).toEqual(roster)
   })
 
@@ -92,9 +97,10 @@ describe('restoreShedStatusFields', () => {
     expect(restored).toBe(shed)
   })
 
-  it('leaves a genuinely cleared field cleared when the relay shed nothing', () => {
+  it('leaves an intentional lastAssistantMessage clear intact when the relay shed nothing', () => {
     expect(restoreShedStatusFields(shed, undefined, cached)).toBe(shed)
     expect(restoreShedStatusFields(shed, [], cached)).toBe(shed)
+    expect(restoreShedStatusFields(shed, [], cached).lastAssistantMessage).toBeUndefined()
     // A hostile/garbled marker must not throw or restore.
     expect(restoreShedStatusFields(shed, 'subagents', cached)).toBe(shed)
     expect(restoreShedStatusFields(shed, [{ toString: () => 'subagents' }], cached)).toBe(shed)

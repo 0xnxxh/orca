@@ -203,6 +203,21 @@ describe('relay watcher overflow suppression key', () => {
       dispatcher.dispose()
     }
   })
+
+  it('releases the outstanding key when notification admission rejects without settlement', () => {
+    const sink = createRecordingSink(65536)
+    const dispatcher = new RelayDispatcher(sink.write, sink.options)
+    const notify = vi.spyOn(dispatcher, 'tryNotifyClient').mockReturnValue(false)
+
+    try {
+      emitRelayWatcherOverflow(dispatcher, '/workspace', false)
+      emitRelayWatcherOverflow(dispatcher, '/workspace', false)
+      expect(notify).toHaveBeenCalledTimes(2)
+    } finally {
+      notify.mockRestore()
+      dispatcher.dispose()
+    }
+  })
 })
 
 describe('relay watcher batch chunking', () => {
@@ -229,6 +244,21 @@ describe('relay watcher batch chunking', () => {
       )
       expect(sink.closes()).toBe(0)
     } finally {
+      dispatcher.dispose()
+    }
+  })
+
+  it('encodes the empty envelope once instead of re-encoding candidate chunks', () => {
+    const sink = createRecordingSink(16384)
+    const dispatcher = new RelayDispatcher(sink.write, sink.options)
+    const budget = vi.spyOn(dispatcher, 'producerEnvelopeBudget')
+
+    try {
+      emitRelayWatcherEvents(dispatcher, '/workspace', false, watcherBatch(5000))
+      expect(budget).toHaveBeenCalledTimes(1)
+      expect(sink.frames.flatMap(frameEvents)).toHaveLength(5000)
+    } finally {
+      budget.mockRestore()
       dispatcher.dispose()
     }
   })

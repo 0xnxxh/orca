@@ -53,11 +53,19 @@ function toNotificationParams(
 function publishToClients(
   dispatcher: RelayDispatcher,
   params: Record<string, unknown>,
-  clientIds: readonly number[]
+  clientIds: readonly number[],
+  logDrop?: boolean
 ): number[] {
   const rejected: number[] = []
   for (const clientId of clientIds) {
-    if (!dispatcher.publishProducerNotification(clientId, AGENT_HOOK_NOTIFICATION_METHOD, params)) {
+    if (
+      !dispatcher.publishProducerNotification(
+        clientId,
+        AGENT_HOOK_NOTIFICATION_METHOD,
+        params,
+        logDrop === undefined ? undefined : { logDrop }
+      )
+    ) {
       rejected.push(clientId)
     }
   }
@@ -84,8 +92,17 @@ export function publishAgentHookEnvelope(
   let step = 0
   for (;;) {
     const params = toNotificationParams(candidate, shedFields)
+    while (step < SHED_ORDER.length && candidate.payload[SHED_ORDER[step]] === undefined) {
+      step += 1
+    }
     if (!measureBeforePublish || fitsProducerFrame(dispatcher, params)) {
-      const rejected = publishToClients(dispatcher, params, clientIds)
+      // A rejected intermediate probe is not a drop if a smaller envelope is delivered next.
+      const rejected = publishToClients(
+        dispatcher,
+        params,
+        clientIds,
+        measureBeforePublish ? undefined : step >= SHED_ORDER.length
+      )
       if (rejected.length === 0) {
         clearPendingEnvelope(dispatcher, envelope.paneKey)
         return
@@ -95,9 +112,6 @@ export function publishAgentHookEnvelope(
         setPendingEnvelope(dispatcher, envelope.paneKey, params, rejected)
         return
       }
-    }
-    while (step < SHED_ORDER.length && candidate.payload[SHED_ORDER[step]] === undefined) {
-      step += 1
     }
     if (step >= SHED_ORDER.length) {
       // Nothing left to shed and it still does not fit: waiting cannot make it sendable, and this

@@ -3,15 +3,18 @@ import { CONNECT_TIMEOUT_MS, RECONNECT_BACKOFF_MS } from './ssh-connection-utils
 
 // A connection that held this long is treated as healthy, so the next drop restarts the delay ladder.
 export const STABLE_CONNECTION_MS = 60_000
+// Existing-relay attach and one bounded PTY reattach attempt each allow 10s.
+export const RELAY_REESTABLISH_BUDGET_MS = 20_000
 
 /**
  * Why: a flap leaves the remote relay in grace, and the shortest grace a target can configure is
  * MIN_SSH_RELAY_GRACE_PERIOD_SECONDS. Retrying later than this cap would let even a full-length
- * handshake (CONNECT_TIMEOUT_MS) finish after grace expires, so the relay would shut down and take
- * every remote PTY with it. Raising RECONNECT_BACKOFF_MS past this bound therefore changes nothing.
+ * handshake plus relay/mux re-establishment finish after grace expires, so the relay would shut
+ * down and take every remote PTY with it. Raising the backoff past this bound changes nothing.
  */
 export const FLAP_DELAY_CAP_MS = (() => {
-  const budgetMs = MIN_SSH_RELAY_GRACE_PERIOD_SECONDS * 1000 - CONNECT_TIMEOUT_MS
+  const budgetMs =
+    MIN_SSH_RELAY_GRACE_PERIOD_SECONDS * 1000 - CONNECT_TIMEOUT_MS - RELAY_REESTABLISH_BUDGET_MS
   const fitting = RECONNECT_BACKOFF_MS.filter((delayMs) => delayMs < budgetMs)
   return fitting.length > 0 ? Math.max(...fitting) : RECONNECT_BACKOFF_MS[0]
 })()

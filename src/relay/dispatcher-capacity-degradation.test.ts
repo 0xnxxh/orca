@@ -403,7 +403,7 @@ describe('RelayDispatcher bounded-capacity degradation', () => {
     }
   })
 
-  it('sendResponse leaves an already-failed response rejected without closing', async () => {
+  it('sendResponse settles an already-failed oversized response without closing', async () => {
     const primary = makeBoundedClient(65536)
     const bounded = new RelayDispatcher(primary.write, primary.options)
     try {
@@ -414,7 +414,14 @@ describe('RelayDispatcher bounded-capacity degradation', () => {
       await vi.advanceTimersByTimeAsync(0)
 
       expect(primary.closes).toBe(0)
-      expect(primary.frames).toHaveLength(0)
+      expect(primary.frames).toHaveLength(1)
+      const response = decodePayload(primary.frames[0]) as unknown as {
+        id: number
+        error: { code: number; message: string }
+      }
+      expect(response.id).toBe(78)
+      expect(response.error.code).toBe(RelayErrorCode.ResponseOverCapacity)
+      expect(response.error.message).toBe('Relay response exceeded the bounded transport capacity')
     } finally {
       bounded.dispose()
     }

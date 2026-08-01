@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { MIN_SSH_RELAY_GRACE_PERIOD_SECONDS } from '../../shared/ssh-types'
 import { CONNECT_TIMEOUT_MS, RECONNECT_BACKOFF_MS } from './ssh-connection-utils'
-import { FLAP_DELAY_CAP_MS, SshReconnectLadder, STABLE_CONNECTION_MS } from './ssh-reconnect-ladder'
+import {
+  FLAP_DELAY_CAP_MS,
+  RELAY_REESTABLISH_BUDGET_MS,
+  SshReconnectLadder,
+  STABLE_CONNECTION_MS
+} from './ssh-reconnect-ladder'
 
 describe('SshReconnectLadder', () => {
   it('climbs the table across consecutive post-handshake drops', () => {
@@ -37,7 +42,7 @@ describe('SshReconnectLadder', () => {
     }
   })
 
-  it('caps every flap delay so a full handshake still beats the shortest relay grace', () => {
+  it('caps every flap delay so handshake and relay re-establishment beat grace', () => {
     const ladder = new SshReconnectLadder()
     let now = 0
 
@@ -47,12 +52,13 @@ describe('SshReconnectLadder', () => {
       const decision = ladder.next(now)
       expect(decision.kind).toBe('retry')
       if (decision.kind === 'retry') {
-        expect(decision.delayMs + CONNECT_TIMEOUT_MS).toBeLessThan(
+        expect(decision.delayMs + CONNECT_TIMEOUT_MS + RELAY_REESTABLISH_BUDGET_MS).toBeLessThan(
           MIN_SSH_RELAY_GRACE_PERIOD_SECONDS * 1000
         )
         now += decision.delayMs
       }
     }
+    expect(FLAP_DELAY_CAP_MS).toBe(5_000)
   })
 
   it('keeps the uncapped table for a host whose handshakes fail', () => {
