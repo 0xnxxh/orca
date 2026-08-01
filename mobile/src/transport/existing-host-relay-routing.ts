@@ -23,6 +23,8 @@ export async function saveExistingHostRelayRouting(
   await requireCurrentHostCredential(validated)
   await serializeHostProfilePublication(validated.id, async () => {
     requireCurrentPublication(validated.id, revision, endpointGeneration)
+    await requireCurrentHostDeviceToken(validated)
+    requireCurrentPublication(validated.id, revision, endpointGeneration)
     const existing = await requireCurrentHostMetadata(validated)
     requireCurrentPublication(validated.id, revision, endpointGeneration)
     const { endpoints, relayHostId, relay } = validated
@@ -58,6 +60,8 @@ export async function writeExistingHostRelayCredentialBundle(
   await requireCurrentHostCredential(validated)
   await serializeHostProfilePublication(validated.id, async () => {
     requireCurrentPublication(validated.id, revision, endpointGeneration)
+    await requireCurrentHostDeviceToken(validated)
+    requireCurrentPublication(validated.id, revision, endpointGeneration)
     await requireCurrentHostMetadata(validated)
     if (bundle.hostId !== validated.id || bundle.deviceToken !== validated.deviceToken) {
       throw new MobileRelayUpgradeHostSupersededError('mobile relay credential identity mismatch')
@@ -70,6 +74,10 @@ export async function writeExistingHostRelayCredentialBundle(
 async function requireCurrentHostCredential(host: HostProfile): Promise<void> {
   const existing = await loadStoredHostIdentity(host.id)
   requireMatchingHostMetadata(host, existing)
+  await requireCurrentHostDeviceToken(host)
+}
+
+async function requireCurrentHostDeviceToken(host: HostProfile): Promise<void> {
   const deviceToken = await readHostDeviceToken(host.id)
   if (!deviceToken) {
     throw new Error('host credential unavailable')

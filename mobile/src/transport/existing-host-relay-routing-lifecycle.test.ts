@@ -16,7 +16,10 @@ import {
   saveExistingHostRelayRouting,
   writeExistingHostRelayCredentialBundle
 } from './existing-host-relay-routing'
-import { beginHostEndpointPublicationLifecycle } from './host-profile-publication'
+import {
+  beginHostEndpointPublicationLifecycle,
+  publishHostProfileTransaction
+} from './host-profile-publication'
 
 const HOST: HostProfile = {
   id: 'host-1',
@@ -150,6 +153,43 @@ describe('existing host relay endpoint lifecycle publication', () => {
 
     await expect(oldWrite).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
     expect(overlayStoreMock.saveMobileRelayHostOverlay).not.toHaveBeenCalled()
+  })
+
+  it('rejects an old credential write that starts during same-host re-pair publication', async () => {
+    let releaseReplacement: (() => void) | null = null
+    let markReplacementStarted: (() => void) | null = null
+    const replacementStarted = new Promise<void>((resolve) => {
+      markReplacementStarted = resolve
+    })
+    const replacementPending = new Promise<void>((resolve) => {
+      releaseReplacement = resolve
+    })
+    const replacementHost = { ...HOST, deviceToken: 'token-2' }
+    const replacement = publishHostProfileTransaction(
+      replacementHost,
+      async () => {
+        markReplacementStarted?.()
+        await replacementPending
+      },
+      async () => {
+        hostStoreMock.loadStoredHostIdentity.mockResolvedValue(replacementHost)
+        tokenStoreMock.readHostDeviceToken.mockResolvedValue(replacementHost.deviceToken)
+      }
+    )
+    await replacementStarted
+
+    const writeBundle = vi.fn(async () => {})
+    const staleWrite = writeExistingHostRelayCredentialBundle(
+      HOST,
+      credentialBundle(1),
+      writeBundle
+    )
+    await vi.waitFor(() => expect(tokenStoreMock.readHostDeviceToken).toHaveBeenCalledOnce())
+    releaseReplacement?.()
+
+    await replacement
+    await expect(staleWrite).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
+    expect(writeBundle).not.toHaveBeenCalled()
   })
 })
 

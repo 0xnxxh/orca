@@ -291,16 +291,19 @@ describe('edit host handleSave', () => {
     act(() => renderer.unmount())
   })
 
-  it('uses the newer cached profile when the persisted snapshot is invalidated mid-load', async () => {
-    const staleHost = { ...HOST_FIXTURE, endpoint: 'ws://192.168.1.20:6768' }
-    dependencies.loadHosts.mockResolvedValueOnce([HOST_FIXTURE]).mockResolvedValueOnce([staleHost])
+  it('preserves the edited profile when an unrelated write invalidates the loaded snapshot', async () => {
+    const editedHost = { ...HOST_FIXTURE, endpoint: 'ws://192.168.1.20:6768' }
+    const invalidatedHost = { ...HOST_FIXTURE, name: 'Stale snapshot' }
+    dependencies.loadHosts
+      .mockResolvedValueOnce([HOST_FIXTURE])
+      .mockResolvedValueOnce([invalidatedHost])
     dependencies.getHostListLoadRevision.mockReturnValueOnce(1).mockReturnValueOnce(2)
     const renderer = await renderEditHostRoute()
     setFieldValue(renderer, 'Address', '192.168.1.20:6768')
     await pressSave(renderer)
 
     expect(dependencies.primeHosts).not.toHaveBeenCalled()
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', undefined)
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', editedHost)
 
     act(() => renderer.unmount())
   })

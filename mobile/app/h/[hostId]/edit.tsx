@@ -109,7 +109,7 @@ export default function EditHostScreen() {
       ...(willRename ? { name: nextName } : {}),
       ...(nextEndpoint !== undefined ? { endpoint: nextEndpoint } : {})
     }
-    let reconnectProfile: HostProfile | null | undefined = hostProfileAfterEdit(host, updates)
+    let reconnectProfile: HostProfile | null = hostProfileAfterEdit(host, updates)
 
     savingRef.current = true
     setSaving(true)
@@ -135,9 +135,6 @@ export default function EditHostScreen() {
       if (hostLoadRevision === getHostListLoadRevision()) {
         primeHosts(hosts, hostLoadRevision)
         reconnectProfile = hosts.find(({ id }) => id === host.id) ?? null
-      } else {
-        // A concurrent publication already primed a newer reconnect profile.
-        reconnectProfile = undefined
       }
     } catch {
       // best-effort re-prime; persisted data is unaffected
