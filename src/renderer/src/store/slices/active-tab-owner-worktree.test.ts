@@ -139,6 +139,12 @@ describe('isTabInActiveWorktree', () => {
     expect(isTabInActiveWorktree({ 'wt-a': [tab('t1', 'wt-a')] }, null, 't1')).toBe(false)
   })
 
+  // Why: a key lookup coerces null to the string 'null', so dropping the guard
+  // would let a worktree literally named 'null' answer for "no active worktree".
+  it('does not let a null active worktree match a worktree keyed null', () => {
+    expect(isTabInActiveWorktree({ null: [tab('t1', 'null')] }, null, 't1')).toBe(false)
+  })
+
   // Why: a plain index would resolve the inherited member and `.some` would throw.
   it('does not reach an inherited member for a prototype-named active worktree id', () => {
     expect(isTabInActiveWorktree({ 'wt-a': [tab('t1', 'wt-a')] }, 'toString', 't1')).toBe(false)
