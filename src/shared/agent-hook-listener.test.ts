@@ -3245,6 +3245,46 @@ describe('shared agent-hook-listener', () => {
       expect(stopped).toBeNull()
     })
 
+    it('ignores over-length running inventory ids for allocation and liveness', () => {
+      // Why: such ids can never be tracked or drained — letting them allocate a
+      // roster or claim liveness recreates the retention/sticky holes.
+      const invented = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'ghost',
+        background_tasks: [{ id: 'x'.repeat(65), type: 'subagent', status: 'running' }]
+      })
+      expect(invented).toBeNull()
+      expect(state.claudeSubagentRosterByPaneKey.has(PANE_KEY)).toBe(false)
+
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a1',
+        agent_type: 'general-purpose'
+      })
+      const drained = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'a1',
+        background_tasks: [{ id: 'y'.repeat(65), type: 'subagent', status: 'running' }]
+      })
+      expect(drained?.payload.state).toBe('done')
+    })
+
+    it('clears a fresh-pane teammate wait card with done when its owner parks', () => {
+      // Why: the wait is identity-owned; its owner parking must clear the amber
+      // card instead of leaving it fresh for the stale sweeper.
+      claudeEvent({
+        hook_event_name: 'PermissionRequest',
+        agent_id: 'alane-6d3cb5b52120b7bf',
+        agent_type: 'lane',
+        tool_name: 'Bash'
+      })
+      const parked = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'alane-6d3cb5b52120b7bf'
+      })
+      expect(parked?.payload.state).toBe('done')
+    })
+
     it('resolves a fresh-pane child permission wait whose child dies to done, not phantom working', () => {
       // Why: the wait is this pane's FIRST lead record; the old no-stash fallback
       // fabricated 'working' when the waiting child stopped — a stuck card.

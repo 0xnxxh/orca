@@ -2437,13 +2437,14 @@ function normalizeClaudeSubagentLifecycleEvent(
   // roster per untrusted pane key with no lifecycle bound (STA-2915 review finding).
   const roster = state.claudeSubagentRosterByPaneKey.get(paneKey)
   let removedRow = false
+  let clearedOwnWait: 'none' | 'restored' | 'deleted' = 'none'
   if (eventName === 'TeammateIdle') {
     const teammateName = lifecycleId
     // Why: on claude 2.1.21x teammates are turn-based — TeammateIdle means "turn over, awaiting mail", not finished. The row parks as idle (confirmed teammate) instead of leaving, so the sidebar keeps showing resumable children.
     if (roster) {
       idleClaudeTeammateByName(roster, teammateName)
     }
-    clearClaudePendingWaitForAgent(state, paneKey, (waitingAgentId) =>
+    clearedOwnWait = clearClaudePendingWaitForAgent(state, paneKey, (waitingAgentId) =>
       claudeTeammateIdMatchesName(waitingAgentId, teammateName)
     )
   } else {
@@ -2472,7 +2473,12 @@ function normalizeClaudeSubagentLifecycleEvent(
       const inventory = readClaudeBackgroundAgentTasks(hookPayload)
       if (
         inventory.present &&
-        (roster || inventory.tasks.some((task) => task.running && !task.teammate))
+        (roster ||
+          inventory.tasks.some(
+            // Why: an id the upsert would reject can neither be tracked nor drained — letting it
+            // allocate or claim liveness recreates the retention/sticky holes through inventory ids.
+            (task) => task.running && !task.teammate && isValidClaudeSubagentId(task.id)
+          ))
       ) {
         foldClaudeBackgroundTasksIntoRoster(
           getOrCreateClaudeSubagentRoster(state, paneKey),
@@ -2486,11 +2492,16 @@ function normalizeClaudeSubagentLifecycleEvent(
         )
       }
       // Why: a blocked child that dies without another tool event would pin its permission/question wait on the pane forever — nothing else references that agent again.
-      clearClaudePendingWaitForAgent(state, paneKey, (waitingAgentId) => waitingAgentId === agentId)
+      clearedOwnWait = clearClaudePendingWaitForAgent(
+        state,
+        paneKey,
+        (waitingAgentId) => waitingAgentId === agentId
+      )
     }
   }
   return buildClaudeChildDrivenStatusPayload(state, eventName, paneKey, hookPayload, {
-    removedRow
+    removedRow,
+    clearedOwnWait: clearedOwnWait === 'deleted'
   })
 }
 
@@ -2551,19 +2562,21 @@ function clearClaudePendingWaitForAgent(
   state: HookListenerState,
   paneKey: string,
   ownsWait: (waitingAgentId: string) => boolean
-): void {
+): 'none' | 'restored' | 'deleted' {
   const lead = state.claudeLeadStateByPaneKey.get(paneKey)
   if (lead?.state !== 'waiting' || !lead.waitingAgentId || !ownsWait(lead.waitingAgentId)) {
-    return
+    return 'none'
   }
   if (lead.stateBeforeWait) {
     state.claudeLeadStateByPaneKey.set(paneKey, lead.stateBeforeWait)
-    return
+    return 'restored'
   }
   // Why: no stash means the wait was this pane's FIRST lead record (child wait on a fresh
   // process); fabricating 'working' here becomes a stuck card when the waiting child dies —
-  // drop the record and let the evidence rules decide downstream (STA-2915 review).
+  // drop the record. The caller emits an identity-correlated clearing transition so the
+  // stale waiting card does not linger (STA-2915 review).
   state.claudeLeadStateByPaneKey.delete(paneKey)
+  return 'deleted'
 }
 
 /** Clear an AskUserQuestion wait after the answer is typed (answering emits no hook event; the caller infers it from the submit keystroke). Restores the stashed pre-wait lead state or 'working', drops the cached card, and returns the pane state to emit (gated up to 'working' while children run). */
@@ -2602,7 +2615,14 @@ function rawInventoryHasRunningSubagentTask(hookPayload: Record<string, unknown>
         return false
       }
       const task = item as Record<string, unknown>
-      return task.type === 'subagent' && task.status === 'running'
+      return (
+        task.type === 'subagent' &&
+        task.status === 'running' &&
+        // Why: an id the upsert would reject can never be tracked or drained; letting it claim
+        // liveness would pin an unresolvable working on the pane.
+        typeof task.id === 'string' &&
+        isValidClaudeSubagentId(task.id)
+      )
     })
   )
 }
@@ -2612,7 +2632,7 @@ function buildClaudeChildDrivenStatusPayload(
   eventName: unknown,
   paneKey: string,
   hookPayload: Record<string, unknown>,
-  evidence: { removedRow?: boolean } = {}
+  evidence: { removedRow?: boolean; clearedOwnWait?: boolean } = {}
 ): ParsedAgentStatusPayload | null {
   const lead = state.claudeLeadStateByPaneKey.get(paneKey)
   const roster = state.claudeSubagentRosterByPaneKey.get(paneKey)
@@ -2653,6 +2673,14 @@ function buildClaudeChildDrivenStatusPayload(
     if (inventory.present && inventory.truncated) {
       return null
     }
+    return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
+      stateName: 'done',
+      updateToolSnapshot: false
+    })
+  }
+  if (evidence.clearedOwnWait) {
+    // Why: the waiting card's own agent id parked/stopped — an identity-correlated resolution.
+    // Staying silent would leave the stale amber wait visible until the stale sweeper.
     return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
       stateName: 'done',
       updateToolSnapshot: false
