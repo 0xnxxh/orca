@@ -115,6 +115,27 @@ describe('active-terminal repair effect cannot drive a React #185 update loop', 
     expect(useAppStore.getState().activeTabIdByWorktree['wt-active']).toBe('t1')
   })
 
+  it('does not reallocate activeTabIdByWorktree when the tab is already active', () => {
+    // Why: that map is a dependency of both the repair effect and the parked
+    // watcher sync, so a redundant activation must not re-run either.
+    useAppStore.setState({
+      activeWorktreeId: 'wt-active',
+      activeTabType: 'terminal',
+      activeTabId: 't1',
+      activeTabIdByWorktree: {},
+      tabsByWorktree: { 'wt-active': [terminalTab('t1', 'wt-active')] },
+      unifiedTabsByWorktree: {}
+    })
+    act(() => {
+      useAppStore.getState().setActiveTab('t1')
+    })
+    const settled = useAppStore.getState().activeTabIdByWorktree
+    act(() => {
+      useAppStore.getState().setActiveTab('t1')
+    })
+    expect(useAppStore.getState().activeTabIdByWorktree).toBe(settled)
+  })
+
   it('keeps bell attribution off a background worktree tab', () => {
     useAppStore.setState({
       activeWorktreeId: 'wt-active',

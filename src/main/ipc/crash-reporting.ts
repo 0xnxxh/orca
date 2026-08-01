@@ -331,6 +331,7 @@ const COALESCED_RENDERER_BREADCRUMB_NAMES = new Set([
   'renderer_unhandled_rejection',
   'terminal_park_verdict_churn',
   'terminal_safe_fit_retry_exhausted',
+  'terminal_tab_id_owned_by_multiple_worktrees',
   TERMINAL_WEBGL_DIAGNOSTIC_BREADCRUMB
 ])
 const RENDERER_BREADCRUMB_COALESCE_MS = 30_000
@@ -343,9 +344,14 @@ const RENDERER_BREADCRUMB_COALESCE_MS = 30_000
 // mounted pane within ~60ms. Windows crash F0BKR84AHEH lost 26-90% of its
 // 30-entry ring to two such bursts. `suppressedSinceLast` keeps the pane count
 // — the only signal these carry — in one slot.
+//
+// terminal_tab_id_owned_by_multiple_worktrees: its renderer-side guard is
+// once-per-tab-id, not once-per-session, so one stale worktree map duplicates
+// every tab id at once and emits a crumb per tab.
 const NAME_ONLY_COALESCED_BREADCRUMB_NAMES = new Set([
   'terminal_park_verdict_churn',
-  'terminal_safe_fit_retry_exhausted'
+  'terminal_safe_fit_retry_exhausted',
+  'terminal_tab_id_owned_by_multiple_worktrees'
 ])
 
 function rendererBreadcrumbCoalesceKey(
