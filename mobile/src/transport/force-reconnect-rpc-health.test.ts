@@ -2,8 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient, SendRequestOptions } from './rpc-client'
 import type { ConnectionState, RpcResponse } from './types'
 import { verifyForceReconnectRpcHealth } from './force-reconnect-rpc-health'
+import { waitForMobileRelayRpcConnected } from './mobile-relay-rpc-connect-wait'
 import { markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
-import { LogicalClientCutoverError } from './stable-logical-rpc-client'
+import {
+  createStableLogicalRpcClient,
+  LogicalClientCutoverError
+} from './stable-logical-rpc-client'
 import { RpcApplicationResponsiveness } from './rpc-application-responsiveness'
 
 describe('Force Reconnect RPC health', () => {
@@ -182,5 +186,59 @@ describe('Force Reconnect RPC health', () => {
 
     await expect(verification).resolves.toBeUndefined()
     expect(sendRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it('waits for stable-client migration when Relay disconnects before probe delivery', async () => {
+    vi.useFakeTimers()
+    let relayDeliveries = 0
+    const relaySendRequest = vi.fn(async () => {
+      await waitForMobileRelayRpcConnected({
+        getState: () => 'disconnected',
+        subscribe: () => () => {},
+        timeoutMs: 15_000
+      })
+      relayDeliveries += 1
+      return { id: 'rpc-old', ok: true, result: {} } as RpcResponse
+    })
+    const relay = {
+      sendRequest: relaySendRequest,
+      getState: () => 'disconnected' as const,
+      onStateChange: () => () => {},
+      close: vi.fn()
+    } as unknown as RpcClient
+    const replacementSendRequest = vi.fn(
+      async () => ({ id: 'rpc-new', ok: true, result: {} }) as RpcResponse
+    )
+    const replacement = {
+      sendRequest: replacementSendRequest,
+      getState: () => 'connected' as const,
+      onStateChange: () => () => {},
+      close: vi.fn()
+    } as unknown as RpcClient
+    const logical = createStableLogicalRpcClient(relay, 'relay')
+    let outcome = 'pending'
+    const verification = verifyForceReconnectRpcHealth(logical).then(
+      () => {
+        outcome = 'resolved'
+      },
+      (error: Error) => {
+        outcome = error.message
+      }
+    )
+
+    await vi.advanceTimersByTimeAsync(14_000)
+    expect(outcome).toBe('pending')
+    await logical.migrateTo(replacement, 'relay')
+    await verification
+
+    expect(outcome).toBe('resolved')
+    expect(relayDeliveries).toBe(0)
+    expect(relaySendRequest).toHaveBeenCalledOnce()
+    expect(replacementSendRequest).toHaveBeenCalledOnce()
+    expect(replacementSendRequest).toHaveBeenCalledWith(
+      'worktree.ps',
+      { limit: 1 },
+      expect.objectContaining({ timeoutMs: 1_000, strictDeadline: true })
+    )
   })
 })

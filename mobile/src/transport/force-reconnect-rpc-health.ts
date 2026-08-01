@@ -53,7 +53,11 @@ function isRecoverableHealthError(
     isLogicalClientCutoverError(error) ||
     isRpcDeliveryUnknown(error) ||
     (error instanceof Error &&
-      ['Connection interrupted', 'relay session not connected'].includes(error.message))
+      [
+        'Connection interrupted',
+        'relay session disconnected',
+        'relay session not connected'
+      ].includes(error.message))
   )
 }
 
