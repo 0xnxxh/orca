@@ -58,6 +58,7 @@ import {
   normalizeVisibleTaskProviders,
   type TaskProvider
 } from '../src/tasks/mobile-task-providers'
+import { navigateToMobileTasks } from '../src/tasks/mobile-task-navigation'
 import { useResponsiveLayout } from '../src/layout/responsive-layout'
 
 function endpointLabel(endpoint: string): string {
@@ -610,8 +611,7 @@ export default function HomeScreen() {
       if (!primaryConnectedHost) {
         return
       }
-      const suffix = provider ? `?taskSource=${provider}` : ''
-      router.push(`/h/${primaryConnectedHost.id}/tasks${suffix}`)
+      navigateToMobileTasks(router, primaryConnectedHost.id, provider)
     },
     [primaryConnectedHost, router]
   )
