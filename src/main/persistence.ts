@@ -5244,6 +5244,9 @@ export class Store {
         collectOwnerKey(workspaceKey)
       }
     }
+    const hasUnownedTruncatedTabState =
+      hasTruncatedDeletedFolderEvidence &&
+      [...tabScopedStateIds].some((tabId) => (ownerKeysByTabId.get(tabId)?.size ?? 0) === 0)
     if (
       !session.activeWorkspaceKey &&
       !session.activeWorktreeId &&
@@ -5252,7 +5255,7 @@ export class Store {
       session = { ...session, activeWorkspaceExecutionHostId: null }
     }
     const tombstonedConnectionIds = this.getDeletedFolderConnectionIdsForHost(hostId)
-    if (ownerKeys.size === 0 && !hasTruncatedDeletedFolderEvidence) {
+    if (ownerKeys.size === 0 && !hasUnownedTruncatedTabState) {
       return this.pruneDeletedFolderReconnectTargets(
         session,
         hostId,
