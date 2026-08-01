@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import * as SecureStore from 'expo-secure-store'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { updateHostNameAndEndpoint } from './host-store'
+import { loadHosts, resetHostStoreForTests, updateHostNameAndEndpoint } from './host-store'
+import { resetMobileRelayHostOverlayStoreForTests } from './mobile-relay-host-overlay-store'
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: {
@@ -25,6 +27,9 @@ describe('updateHostNameAndEndpoint', () => {
   beforeEach(() => {
     vi.mocked(AsyncStorage.getItem).mockReset()
     vi.mocked(AsyncStorage.setItem).mockReset()
+    vi.mocked(SecureStore.getItemAsync).mockReset().mockResolvedValue('device-token')
+    resetHostStoreForTests()
+    resetMobileRelayHostOverlayStoreForTests()
   })
 
   const stored = [
@@ -91,5 +96,75 @@ describe('updateHostNameAndEndpoint', () => {
       'Host not found'
     )
     expect(AsyncStorage.setItem).not.toHaveBeenCalled()
+  })
+
+  it('does not commit an endpoint when its relay overlay update fails', async () => {
+    const relayHostId = 'AbCdEf0123_-xyZ9'
+    const overlay = {
+      v: 2,
+      hostId: 'host-1',
+      endpoints: [
+        { id: 'direct-primary', kind: 'lan', url: stored[0]!.endpoint },
+        { id: 'relay-primary', kind: 'relay', url: 'wss://relay.onorca.dev/v1/connect/host' }
+      ],
+      relayHostId,
+      relay: {
+        v: 1,
+        directorUrl: 'https://relay.onorca.dev',
+        cellUrl: 'https://relay.onorca.dev',
+        assignmentEpoch: 1,
+        relayHostId,
+        e2eeFraming: 2
+      }
+    }
+    vi.mocked(AsyncStorage.getItem).mockImplementation(async (key) =>
+      key === 'orca:mobile-relay:host-overlays:v2'
+        ? JSON.stringify([overlay])
+        : JSON.stringify(stored)
+    )
+    vi.mocked(AsyncStorage.setItem).mockImplementation(async (key) => {
+      if (key === 'orca:mobile-relay:host-overlays:v2') {
+        throw new Error('overlay unavailable')
+      }
+    })
+
+    await expect(
+      updateHostNameAndEndpoint('host-1', { endpoint: 'ws://192.168.1.10:6768' })
+    ).rejects.toThrow('overlay unavailable')
+    expect(AsyncStorage.setItem).not.toHaveBeenCalledWith('orca:hosts', expect.any(String))
+  })
+
+  it('treats the base endpoint as authoritative over an ahead relay overlay', async () => {
+    const relayHostId = 'AbCdEf0123_-xyZ9'
+    const overlay = {
+      v: 2,
+      hostId: 'host-1',
+      endpoints: [
+        { id: 'direct-primary', kind: 'lan', url: 'ws://192.168.1.10:6768' },
+        { id: 'relay-primary', kind: 'relay', url: 'wss://relay.onorca.dev/v1/connect/host' }
+      ],
+      relayHostId,
+      relay: {
+        v: 1,
+        directorUrl: 'https://relay.onorca.dev',
+        cellUrl: 'https://relay.onorca.dev',
+        assignmentEpoch: 1,
+        relayHostId,
+        e2eeFraming: 2
+      }
+    }
+    vi.mocked(AsyncStorage.getItem).mockImplementation(async (key) =>
+      key === 'orca:mobile-relay:host-overlays:v2'
+        ? JSON.stringify([overlay])
+        : JSON.stringify(stored)
+    )
+
+    const hosts = await loadHosts()
+
+    expect(hosts.find(({ id }) => id === 'host-1')?.endpoints).toContainEqual({
+      id: 'direct-primary',
+      kind: 'lan',
+      url: stored[0]!.endpoint
+    })
   })
 })

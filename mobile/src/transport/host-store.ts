@@ -113,7 +113,11 @@ async function doLoadHosts(): Promise<HostProfile[]> {
       deviceToken: token,
       ...(overlay
         ? {
-            endpoints: overlay.endpoints,
+            endpoints: overlay.endpoints.map((endpoint) =>
+              endpoint.id === 'direct-primary' && endpoint.kind !== 'relay'
+                ? { ...endpoint, url: stored.endpoint }
+                : endpoint
+            ),
             relayHostId: overlay.relayHostId,
             relay: overlay.relay
           }
@@ -168,12 +172,14 @@ async function readStoredHostsForMutation(): Promise<StoredHostProfile[]> {
 }
 
 export async function mutateStoredHosts(
-  update: (hosts: StoredHostProfile[]) => StoredHostProfile[]
+  update: (hosts: StoredHostProfile[]) => StoredHostProfile[],
+  beforeWrite?: () => Promise<void>
 ): Promise<void> {
   const mutation = hostListMutation.then(async () => {
     const current = await readStoredHostsForMutation()
     const next = update(current)
     if (next !== current) {
+      await beforeWrite?.()
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next))
       hostListLoads.dropSharedHostListLoad()
     }
@@ -281,24 +287,25 @@ export async function updateHostNameAndEndpoint(
   updates: { name?: string; endpoint?: string }
 ): Promise<void> {
   await serializeHostProfilePublication(hostId, async () => {
-    await mutateStoredHosts((hosts) => {
-      const index = hosts.findIndex((host) => host.id === hostId)
-      if (index < 0) {
-        throw new Error('Host not found')
-      }
-      const next = hosts.slice()
-      if (updates.name !== undefined) {
-        next[index] = { ...next[index]!, name: updates.name }
-      }
-      if (updates.endpoint !== undefined) {
-        next[index] = { ...next[index]!, endpoint: updates.endpoint }
-      }
-      return next
-    })
-    if (updates.endpoint !== undefined) {
-      await updateMobileRelayHostOverlayDirectEndpoint(hostId, updates.endpoint)
-      hostListLoads.dropSharedHostListLoad()
-    }
+    await mutateStoredHosts(
+      (hosts) => {
+        const index = hosts.findIndex((host) => host.id === hostId)
+        if (index < 0) {
+          throw new Error('Host not found')
+        }
+        const next = hosts.slice()
+        if (updates.name !== undefined) {
+          next[index] = { ...next[index]!, name: updates.name }
+        }
+        if (updates.endpoint !== undefined) {
+          next[index] = { ...next[index]!, endpoint: updates.endpoint }
+        }
+        return next
+      },
+      updates.endpoint === undefined
+        ? undefined
+        : () => updateMobileRelayHostOverlayDirectEndpoint(hostId, updates.endpoint!)
+    )
   })
 }
 

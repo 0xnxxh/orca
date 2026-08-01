@@ -12,7 +12,7 @@ export type RpcClientContextValue = {
   getLastConnectedAt: (hostId: string) => number | null
   getActivePath: (hostId: string) => MobileConnectionPath
   subscribeHostState: (hostId: string, listener: (state: ConnectionState) => void) => () => void
-  getAllClients: () => Array<{ hostId: string; client: RpcClient }>
+  getAllClients: () => { hostId: string; client: RpcClient }[]
   subscribeAllHosts: (listener: () => void) => () => void
   primeHosts: (hosts: HostProfile[]) => void
 }

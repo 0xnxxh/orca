@@ -16,7 +16,7 @@ import { HostForceReconnectCoordinator, type HostReconnectEntry } from './host-f
 import { HostReconnectProfileCache, type HostOpenProfile } from './host-reconnect-profile-cache'
 import { subscribeConnectionRevivalTriggers } from './connection-revival-triggers'
 import { HostClientOpenRegistry } from './host-client-open-registry'
-import { loadHostClientOpenProfile } from './host-client-open-profile'
+import { cancelHostClientOpenProfile, loadHostClientOpenProfile } from './host-client-open-profile'
 import { loadHosts } from './host-store'
 import { openHostLogicalClient } from './host-logical-client'
 import { clientActivePath } from './rpc-client-active-path'
@@ -207,7 +207,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
           notifyHostState(hostId, 'disconnected')
           notifyAllHosts()
         },
-        cancelPendingOpen: () => pendingOpensRef.current.cancel(hostId),
+        cancelPendingOpen: () => cancelHostClientOpenProfile(pendingOpensRef.current, hostId),
         openReplacement: () => openEntry(hostId, profile)
       })
     },

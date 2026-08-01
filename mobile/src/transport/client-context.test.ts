@@ -3,6 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConnectionState, HostProfile } from './types'
 import type { RpcClient } from './rpc-client'
+import { dropSharedHostListLoad, shareHostListLoad } from './host-list-load-sharing'
 
 const connectMock = vi.fn()
 const loadHostsMock = vi.fn()
@@ -149,6 +150,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   connectMock.mockReset()
   loadHostsMock.mockReset()
+  dropSharedHostListLoad()
 })
 
 describe('useHostClient', () => {
@@ -325,6 +327,25 @@ describe('useHostClient', () => {
       await reconnect!
     })
     expect(harness.hook.client).toBe(fresh)
+    harness.unmount()
+  })
+
+  it('drops a stalled shared host lookup before opening a Force Reconnect replacement', async () => {
+    const stale = makeFakeClient('connected')
+    const fresh = makeFakeClient('connecting')
+    fresh.sendRequest = vi.fn(async () => ({ id: 'health', ok: true, result: {} }))
+    connectMock.mockReturnValueOnce(stale).mockReturnValueOnce(fresh)
+    loadHostsMock.mockResolvedValue([HOST])
+    const parked = new Promise<HostProfile[]>(() => {})
+    const sharedLoad = vi.fn().mockReturnValueOnce(parked).mockResolvedValueOnce([HOST])
+    const parkedLookup = shareHostListLoad(sharedLoad)
+
+    const harness = await renderHarness(HOST.id)
+    harness.primeHosts([HOST])
+    await act(async () => harness.forceReconnect(HOST.id))
+
+    expect(shareHostListLoad(sharedLoad)).not.toBe(parkedLookup)
+    expect(sharedLoad).toHaveBeenCalledTimes(2)
     harness.unmount()
   })
 

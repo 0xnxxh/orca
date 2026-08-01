@@ -272,7 +272,8 @@ describe('mobile endpoint supervisor', () => {
     expect(deps.resolveRelay).toHaveBeenCalledOnce()
     expect(openRelay).toHaveBeenLastCalledWith(resolved, expect.any(Object), expect.any(String))
     expect(deps.saveHost).toHaveBeenCalledWith(
-      expect.objectContaining({ relay: resolved, endpoint: host.endpoint })
+      expect.objectContaining({ relay: resolved, endpoint: host.endpoint }),
+      undefined
     )
     expect(onHostUpdated).toHaveBeenCalledWith(
       expect.objectContaining({ relay: resolved, endpoint: host.endpoint })

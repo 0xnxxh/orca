@@ -1,5 +1,6 @@
-import type { HostClientOpenTicket } from './host-client-open-registry'
-import { HostReconnectProfileCache } from './host-reconnect-profile-cache'
+import type { HostClientOpenTicket, HostClientOpenRegistry } from './host-client-open-registry'
+import type { HostReconnectProfileCache } from './host-reconnect-profile-cache'
+import { dropSharedHostListLoad } from './host-list-load-sharing'
 import type { HostProfile } from './types'
 
 type HostClientOpenProfileOptions = {
@@ -8,6 +9,14 @@ type HostClientOpenProfileOptions = {
   ticket: HostClientOpenTicket
   loadHosts: () => Promise<HostProfile[]>
   onUnavailable: () => void
+}
+
+export function cancelHostClientOpenProfile(
+  registry: HostClientOpenRegistry,
+  hostId: string
+): void {
+  registry.cancel(hostId)
+  dropSharedHostListLoad()
 }
 
 export async function loadHostClientOpenProfile(

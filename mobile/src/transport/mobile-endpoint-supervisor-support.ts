@@ -28,11 +28,7 @@ export async function persistRelayHost(
   ].filter(({ kind }) => kind !== 'relay')
   endpoints.push({ id: 'relay-primary', kind: 'relay', url: relayWebSocketUrl(relay) })
   const updated = { ...host, endpoints, relayHostId: relay.relayHostId, relay }
-  if (beforePublish) {
-    await saveHost(updated, beforePublish)
-  } else {
-    await saveHost(updated)
-  }
+  await saveHost(updated, beforePublish)
   return updated
 }
 
