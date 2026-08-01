@@ -6,15 +6,15 @@ for finding E of the P1 review; line numbers are as of that change.
 
 ## What decides the grace window
 
-`startGrace` (`src/relay/relay.ts:1144`) samples
+`startGrace` (`src/relay/relay.ts:1140`) samples
 `ptyHandler.configuredGraceTimeMs` and picks one branch, always passing an
 explicit `timeoutMs`:
 
 - `startup-empty-detached` — a detached relay that never accepted a client, so
   it has no PTY state to preserve. Capped at `EMPTY_DETACHED_STARTUP_GRACE_MS`.
 - `idle-no-ptys` — zero PTYs *and* zero pending creations
-  (`isRelayIdle`, `src/relay/relay.ts:1192`) under the unlimited default only.
-  Capped at `IDLE_RELAY_GRACE_MS` (`src/relay/relay.ts:73`, 15 min, overridable
+  (`isRelayIdle`, `src/relay/relay.ts:1175`) under the unlimited default only.
+  Capped at `IDLE_RELAY_GRACE_MS` (`src/relay/relay.ts:74`, 15 min, overridable
   via `ORCA_RELAY_IDLE_GRACE_MS`).
 - `shutdown-deferred` — a refused kill left the PTY pooled, so the idle branch is
   unreachable; this branch supplies its own bound or a `grace=0` default would
@@ -39,9 +39,9 @@ persistence drops an unset field (`src/main/persistence.ts`),
    calls `session.prepareForHostSleep()` for every active session.
 2. `src/main/ssh/ssh-relay-session.ts:378` — `prepareForHostSleep()` sends the
    `relay.configureGraceTime` notification with `graceTimeSeconds: 0` (`:383`).
-   `:924` sends the same method on every establish/reconnect, which is why a
+   `:925` sends the same method on every establish/reconnect, which is why a
    re-assert of an unchanged value must not restart a running grace window.
-3. `src/relay/relay.ts:682` — `configureRelayGraceTime` calls
+3. `src/relay/relay.ts:683` — `configureRelayGraceTime` calls
    `ptyHandler.setGraceTimeMs(...)` and replies with the readback.
 4. `src/relay/pty-handler.ts:471` — `setGraceTimeMs` writes `this.graceTimeMs`,
    exposed by the `configuredGraceTimeMs` getter (`:494`).
