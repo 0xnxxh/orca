@@ -1,4 +1,4 @@
-import { createElement } from 'react'
+import { createElement, useRef } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
@@ -31,16 +31,23 @@ describe('useMobileNativeChatStop', () => {
 
   function Harness({
     enabled,
-    streamIdentity
+    streamIdentity,
+    agent
   }: {
     enabled: boolean
     streamIdentity: string
+    agent: string
   }): null {
+    const handleRef = useRef<string | null>('terminal-1')
+    const deviceTokenRef = useRef<string | null>('mobile-1')
+    const agentRef = useRef<string | null>(agent)
+    agentRef.current = agent
     stop = useMobileNativeChatStop({
       client: { sendRequest } as unknown as RpcClient,
       enabled,
-      handleRef: { current: 'terminal-1' },
-      deviceTokenRef: { current: 'mobile-1' },
+      handleRef,
+      deviceTokenRef,
+      agentRef,
       streamIdentity,
       cancelPending: vi.fn(),
       onSendError
@@ -48,9 +55,9 @@ describe('useMobileNativeChatStop', () => {
     return null
   }
 
-  async function render(enabled: boolean, streamIdentity: string): Promise<void> {
+  async function render(enabled: boolean, streamIdentity: string, agent = 'claude'): Promise<void> {
     await act(async () => {
-      const element = createElement(Harness, { enabled, streamIdentity })
+      const element = createElement(Harness, { enabled, streamIdentity, agent })
       if (renderer) {
         renderer.update(element)
       } else {
@@ -162,6 +169,78 @@ describe('useMobileNativeChatStop', () => {
         timeoutMs: MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS,
         budgetSpansConnect: true
       })
+    )
+  })
+
+  it('stops acknowledged Codex background tools without closing the reusable session', async () => {
+    let backgroundToolRunning = true
+    let sessionRunning = true
+    sendRequest.mockImplementation((method: string, params: { text?: string; enter?: boolean }) => {
+      if (method === 'terminal.stop') {
+        sessionRunning = false
+      }
+      if (params.text === '/stop' && params.enter === true) {
+        backgroundToolRunning = false
+      }
+      return Promise.resolve({ ok: true, result: { send: { accepted: true } } })
+    })
+    await render(true, 'stream-1', 'codex')
+
+    act(() => stop?.())
+    await act(async () => vi.runAllTimersAsync())
+
+    expect(sendRequest.mock.calls.map(([method]) => method)).toEqual([
+      'terminal.send',
+      'terminal.send',
+      'terminal.send'
+    ])
+    expect(sendRequest.mock.calls.map(([, params]) => params)).toEqual([
+      expect.objectContaining({ text: '\x1b', enter: false }),
+      expect.objectContaining({ text: '\x1b', enter: false }),
+      expect.objectContaining({ text: '/stop', enter: true })
+    ])
+    expect(backgroundToolRunning).toBe(false)
+    expect(sessionRunning).toBe(true)
+  })
+
+  it('leaves non-Codex Stop on the existing paced Escape path', async () => {
+    await render(true, 'stream-1', 'claude')
+
+    act(() => stop?.())
+    await act(async () => vi.runAllTimersAsync())
+
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+    expect(sendRequest.mock.calls.every(([, params]) => params.text === '\x1b')).toBe(true)
+  })
+
+  it('cancels Codex cleanup when the active agent changes after the interrupt', async () => {
+    await render(true, 'stream-1', 'codex')
+
+    act(() => stop?.())
+    await act(async () => vi.advanceTimersByTimeAsync(80))
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+
+    await render(true, 'stream-1', 'claude')
+    await act(async () => vi.runAllTimersAsync())
+
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports an acknowledged interrupt whose Codex tool cleanup is rejected', async () => {
+    sendRequest.mockImplementation((_method: string, params: { text?: string }) =>
+      Promise.resolve({
+        ok: true,
+        result: { send: { accepted: params.text !== '/stop' } }
+      })
+    )
+    await render(true, 'stream-1', 'codex')
+
+    act(() => stop?.())
+    await act(async () => vi.runAllTimersAsync())
+
+    expect(onSendError).toHaveBeenCalledOnce()
+    expect(onSendError).toHaveBeenCalledWith(
+      'Stop incomplete — send /stop to close background tools'
     )
   })
 

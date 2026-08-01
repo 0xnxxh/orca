@@ -1,44 +1,57 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
-import { isRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
-import { isLogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
-import { isTerminalSendRpcAccepted } from '../terminal/terminal-send-rpc-response'
-import { openMobileNativeChatSendBudget } from './mobile-native-chat-send'
+import {
+  openMobileNativeChatSendBudget,
+  sendMobileNativeChatMessageWithOutcome,
+  type MobileNativeChatSendOutcome
+} from './mobile-native-chat-send'
+
+const ESCAPE = String.fromCharCode(27)
+const CODEX_STOP_BACKGROUND_TERMINALS = '/stop'
+const STOP_STEP_DELAY_MS = 80
 
 export function useMobileNativeChatStop(args: {
   client: RpcClient | null
   enabled: boolean
   handleRef: MutableRefObject<string | null>
   deviceTokenRef: MutableRefObject<string | null>
+  agentRef: MutableRefObject<string | null>
   streamIdentity: string
   cancelPending: () => void
   onSendError: (message: string) => void
 }): () => void {
-  const { client, enabled, handleRef, deviceTokenRef, streamIdentity, cancelPending, onSendError } =
-    args
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const {
+    client,
+    enabled,
+    handleRef,
+    deviceTokenRef,
+    agentRef,
+    streamIdentity,
+    cancelPending,
+    onSendError
+  } = args
   const generationRef = useRef(0)
-  /** Settles the paced second Escape when it is cancelled rather than sent, so a
-   *  first-Escape failure still reports instead of waiting on a write that will
-   *  never happen. */
-  const dropSecondEscapeRef = useRef<(() => void) | null>(null)
+  const delayRef = useRef<{
+    timer: ReturnType<typeof setTimeout>
+    resolve: (completed: boolean) => void
+  } | null>(null)
   const activeRouteRef = useRef({ client, enabled, streamIdentity })
   activeRouteRef.current = { client, enabled, streamIdentity }
-  const cancelSecondEscape = useCallback(() => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current)
-      timerRef.current = null
+  const cancelDelay = useCallback(() => {
+    const delay = delayRef.current
+    if (!delay) {
+      return
     }
-    const drop = dropSecondEscapeRef.current
-    dropSecondEscapeRef.current = null
-    drop?.()
+    clearTimeout(delay.timer)
+    delayRef.current = null
+    delay.resolve(false)
   }, [])
   useEffect(
     () => () => {
       generationRef.current += 1
-      cancelSecondEscape()
+      cancelDelay()
     },
-    [cancelSecondEscape, client, enabled, streamIdentity]
+    [cancelDelay, client, enabled, streamIdentity]
   )
   return useCallback(() => {
     const handle = handleRef.current
@@ -49,102 +62,92 @@ export function useMobileNativeChatStop(args: {
     cancelPending()
     generationRef.current += 1
     const generation = generationRef.current
-    cancelSecondEscape()
+    cancelDelay()
+    const agent = agentRef.current
     const stopStreamIdentity = streamIdentity
     const deadline = openMobileNativeChatSendBudget()
-    // Why: the two paced Escapes are one user action. Reporting the first one's
-    // failure the moment it lands told the user a stop failed that the second
-    // Escape then completed — and a second Stop press writes into changed prompt
-    // state. Hold the verdict until both have settled, then stay quiet if either
-    // was accepted. `pending` starts at 1 for the Escape still on its timer.
-    let pending = 1
-    let sawAccepted = false
-    let sawUnknown = false
-    let sawRejected = false
-    const reportIfSettled = (): void => {
-      if (
-        generationRef.current !== generation ||
-        pending > 0 ||
-        sawAccepted ||
-        (!sawUnknown && !sawRejected)
-      ) {
-        return
-      }
-      // Why: an ack lost after the frame was written (or a logical cutover) may
-      // still have stopped the agent — a definite "not sent" would invite a second
-      // Escape into changed state. Mirrors the cancel/answer wording.
-      onSendError(sawUnknown ? 'Stop unconfirmed — check chat before retrying' : 'Stop not sent')
-    }
-    const sendEscape = (): void => {
+    const isCurrentRoute = (): boolean => {
       const activeRoute = activeRouteRef.current
-      if (
-        !activeRoute.enabled ||
-        activeRoute.client !== client ||
-        activeRoute.streamIdentity !== stopStreamIdentity ||
-        handleRef.current !== handle
-      ) {
+      return (
+        generationRef.current === generation &&
+        activeRoute.enabled &&
+        activeRoute.client === client &&
+        activeRoute.streamIdentity === stopStreamIdentity &&
+        handleRef.current === handle &&
+        agentRef.current === agent
+      )
+    }
+    const waitForNextStep = (): Promise<boolean> =>
+      new Promise((resolve) => {
+        if (!isCurrentRoute()) {
+          resolve(false)
+          return
+        }
+        const delay = {
+          timer: setTimeout(() => {
+            if (delayRef.current === delay) {
+              delayRef.current = null
+            }
+            resolve(isCurrentRoute())
+          }, STOP_STEP_DELAY_MS),
+          resolve
+        }
+        delayRef.current = delay
+      })
+    const send = async (
+      text: string,
+      enter: boolean
+    ): Promise<MobileNativeChatSendOutcome | null> => {
+      if (!isCurrentRoute()) {
+        return null
+      }
+      return sendMobileNativeChatMessageWithOutcome({
+        client,
+        terminal: handle,
+        text,
+        enter,
+        deadline,
+        ...(deviceTokenRef.current
+          ? { mobileClient: { id: deviceTokenRef.current, type: 'mobile' as const } }
+          : {})
+      })
+    }
+    void (async () => {
+      const firstEscape = send(ESCAPE, false)
+      if (!(await waitForNextStep())) {
         return
       }
-      pending += 1
-      const timeoutMs = deadline - Date.now()
-      if (timeoutMs <= 0) {
-        sawRejected = true
-        pending -= 1
-        reportIfSettled()
+      const outcomes = await Promise.all([firstEscape, send(ESCAPE, false)])
+      if (!isCurrentRoute() || outcomes.includes(null)) {
         return
       }
-      void client
-        .sendRequest(
-          'terminal.send',
-          {
-            terminal: handle,
-            text: String.fromCharCode(27),
-            ...(deviceTokenRef.current
-              ? { client: { id: deviceTokenRef.current, type: 'mobile' as const } }
-              : {})
-          },
-          // Why: without this the call parks indefinitely on reconnect, so "Stop not
-          // sent" never appears and a stale Escape can land minutes later — into a
-          // composer that by then holds fresh text.
-          { timeoutMs, budgetSpansConnect: true }
+      const escapes = outcomes as MobileNativeChatSendOutcome[]
+      if (!escapes.includes('accepted')) {
+        // An ambiguous Escape may have landed; a definite failure would invite
+        // a retry into changed prompt state.
+        onSendError(
+          escapes.includes('unknown')
+            ? 'Stop unconfirmed — check chat before retrying'
+            : 'Stop not sent'
         )
-        .then((response) => {
-          if (isTerminalSendRpcAccepted(response)) {
-            sawAccepted = true
-          } else {
-            sawRejected = true
-          }
-        })
-        // Why: disconnect can race either fire-and-forget Escape; record one verdict
-        // instead of leaking an unhandled RPC rejection.
-        .catch((error: unknown) => {
-          if (isRpcDeliveryUnknown(error) || isLogicalClientCutoverError(error)) {
-            sawUnknown = true
-          } else {
-            sawRejected = true
-          }
-        })
-        .finally(() => {
-          pending -= 1
-          reportIfSettled()
-        })
-    }
-    sendEscape()
-    dropSecondEscapeRef.current = () => {
-      pending -= 1
-      reportIfSettled()
-    }
-    // Why: two paced Escape bytes reliably stop TUIs without remote coalescing.
-    timerRef.current = setTimeout(() => {
-      timerRef.current = null
-      dropSecondEscapeRef.current = null
-      sendEscape()
-      pending -= 1
-      reportIfSettled()
-    }, 80)
+        return
+      }
+      if (agent !== 'codex' || !(await waitForNextStep())) {
+        return
+      }
+      // Codex owns spawned background terminals beyond the interrupted turn;
+      // its /stop command closes them without exiting the reusable session.
+      const cleanup = await send(CODEX_STOP_BACKGROUND_TERMINALS, true)
+      if (cleanup === 'rejected' && isCurrentRoute()) {
+        onSendError('Stop incomplete — send /stop to close background tools')
+      } else if (cleanup === 'unknown' && isCurrentRoute()) {
+        onSendError('Stop unconfirmed — check chat before retrying')
+      }
+    })()
   }, [
+    agentRef,
     cancelPending,
-    cancelSecondEscape,
+    cancelDelay,
     client,
     deviceTokenRef,
     enabled,

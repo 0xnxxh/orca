@@ -229,6 +229,7 @@ export function useMobileNativeChatController(args: {
     enabled: inputSendable,
     handleRef: activeHandleRef,
     deviceTokenRef,
+    agentRef: activeChatAgentRef,
     streamIdentity,
     cancelPending: cancelNativeChatAnswer,
     onSendError
