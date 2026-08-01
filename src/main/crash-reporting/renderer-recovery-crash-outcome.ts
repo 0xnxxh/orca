@@ -7,6 +7,12 @@ export const RENDERER_BOOTSTRAP_RENDERED_BREADCRUMB = 'renderer_bootstrap_render
 // has to survive a loaded machine, and must expire before an unrelated boot.
 const RENDERER_RECOVERY_OUTCOME_WINDOW_MS = 30_000
 
+// Why not the window above: that bounds how long an arm stays valid, this bounds
+// how far back the arm may credit crashes — different jobs. The reload is armed
+// 250ms after its crash, so only that crash's own kill burst is ever in scope;
+// reusing the 30s window dismissed older, unhealed crashes as auto-recovered.
+const RENDERER_RECOVERY_CRASH_LOOKBACK_MS = 5_000
+
 let recoveryReloadIssuedAtMs: number | null = null
 
 export function noteRendererRecoveryReloadIssued(nowMs = Date.now()): void {
@@ -49,7 +55,7 @@ export function resolveRecoveredRendererCrashReports(
     return
   }
   void store
-    .markRendererCrashesAutoRecovered(issuedAtMs - RENDERER_RECOVERY_OUTCOME_WINDOW_MS)
+    .markRendererCrashesAutoRecovered(issuedAtMs - RENDERER_RECOVERY_CRASH_LOOKBACK_MS)
     .then((resolved) => {
       if (resolved.length === 0) {
         return

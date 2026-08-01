@@ -665,6 +665,11 @@ function createWebContentsTimedFlag(defaultDurationMs = 10_000): {
 
 function markExpectedRendererReload(webContentsId: number, durationMs = 10_000): void {
   expectedRendererReload.mark(webContentsId, durationMs)
+  // Why here and not at each call site: every caller is a manual main-window
+  // reload, so the next bootstrap is the user's retry and a stalled recovery
+  // reload must not claim it. Three call sites each repeated this and a fourth
+  // (app:reload) was missed; at the definition a new site cannot forget it.
+  clearRendererRecoveryReloadIssued()
 }
 
 function clearExpectedRendererReload(webContentsId?: number): void {
@@ -1247,9 +1252,6 @@ function openMainWindow(): BrowserWindow {
     onBeforeReload: ({ ignoreCache, webContentsId }) => {
       if (mainWindow?.webContents.id === webContentsId) {
         markExpectedRendererReload(webContentsId)
-        // Why: the user reloading by hand makes the next bootstrap their retry, so a
-        // recovery reload that stalled short of bootstrap must not claim the credit.
-        clearRendererRecoveryReloadIssued()
       }
       recordCrashBreadcrumb('manual_reload_requested', { ignoreCache })
     },
@@ -1495,6 +1497,9 @@ function openMainWindow(): BrowserWindow {
     }
   })
   logStartupMilestone('load-start')
+  // Why: this window replaces a torn-down one, so any arm still pending belongs to
+  // a recovery reload that died with it — this bootstrap is a fresh window, not it.
+  clearRendererRecoveryReloadIssued()
   loadMainWindow(window)
   return window
 }
@@ -2657,9 +2662,6 @@ void app.whenReady().then(async () => {
     onBeforeReload: ({ ignoreCache, webContentsId }) => {
       if (mainWindow?.webContents.id === webContentsId) {
         markExpectedRendererReload(webContentsId)
-        // Why: the user reloading by hand makes the next bootstrap their retry, so a
-        // recovery reload that stalled short of bootstrap must not claim the credit.
-        clearRendererRecoveryReloadIssued()
       }
       recordCrashBreadcrumb('manual_reload_requested', { ignoreCache })
     },

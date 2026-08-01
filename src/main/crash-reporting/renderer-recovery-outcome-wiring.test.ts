@@ -37,6 +37,18 @@ describe('renderer recovery outcome wiring in index.ts', () => {
     expect(block).toContain('clearRendererRecoveryReloadIssued()')
   })
 
+  // Why this carries the invariant: every manual main-window reload marks an
+  // expected reload, so disarming in the marker covers all of them at once —
+  // including a future site that would otherwise repeat the round-5 miss.
+  it('disarms inside markExpectedRendererReload itself', () => {
+    const block = sliceBlock(
+      'function markExpectedRendererReload(webContentsId: number, durationMs = 10_000): void {',
+      '\nfunction clearExpectedRendererReload'
+    )
+
+    expect(block).toContain('clearRendererRecoveryReloadIssued()')
+  })
+
   it('disarms on every user-initiated reload of the main window', () => {
     const reloadAnchor = 'onBeforeReload: ({ ignoreCache, webContentsId }) => {'
     // Why: createMainWindow's force-reload shortcut and the app menu wire this
@@ -59,8 +71,31 @@ describe('renderer recovery outcome wiring in index.ts', () => {
       expect(guardStart).toBeGreaterThanOrEqual(0)
       const guard = block.slice(guardStart, block.lastIndexOf('}'))
 
+      // The disarm rides on this call — see the markExpectedRendererReload test.
       expect(guard).toContain('markExpectedRendererReload(webContentsId)')
-      expect(guard).toContain('clearRendererRecoveryReloadIssued()')
     }
+  })
+
+  // Why: `app:reload` is a third manual-reload path with a different callback
+  // name, so the two `onBeforeReload` sites above do not cover it.
+  it('disarms on the renderer-initiated app:reload of the main window', () => {
+    const block = sliceBlock(
+      'onBeforeRendererReload: ({ ignoreCache, webContentsId }) => {',
+      "recordCrashBreadcrumb('renderer_reload_requested', { ignoreCache })"
+    )
+    const guardStart = block.indexOf('if (window.webContents.id === webContentsId) {')
+    expect(guardStart).toBeGreaterThanOrEqual(0)
+    const guard = block.slice(guardStart, block.lastIndexOf('}'))
+
+    // The disarm rides on this call — see the markExpectedRendererReload test.
+    expect(guard).toContain('markExpectedRendererReload(webContentsId)')
+  })
+
+  // Why: a replacement main window bootstraps a renderer the dead window's
+  // recovery reload never produced, so it must not consume that window's arm.
+  it('disarms before the first load of a replacement main window', () => {
+    const block = sliceBlock("logStartupMilestone('load-start')", 'loadMainWindow(window)')
+
+    expect(block).toContain('clearRendererRecoveryReloadIssued()')
   })
 })

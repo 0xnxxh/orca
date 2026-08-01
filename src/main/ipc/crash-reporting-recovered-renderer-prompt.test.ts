@@ -240,6 +240,20 @@ describe('auto-recovered renderer crash reporting', () => {
     await expect(getLatestPending()).resolves.toMatchObject({ id: unrelated.id, status: 'pending' })
   })
 
+  // Why 25s: inside the arm's own 30s validity, but long before the crash that
+  // armed it. Crediting it would dismiss an unhealed crash as auto-recovered.
+  it('leaves a crash older than the burst pending when a later reload is armed', async () => {
+    const store = await createStore()
+    registerCrashReportingHandlers(store)
+    const stale = await store.record({ ...killedRendererCrash(), reason: 'oom', exitCode: null })
+
+    const armedMs = Date.parse(stale.createdAt) + 25_000
+    noteRendererRecoveryReloadIssued(armedMs)
+    resolveRecoveredRendererCrashReports(store, armedMs)
+
+    await expect(getLatestPending()).resolves.toMatchObject({ id: stale.id, status: 'pending' })
+  })
+
   it('still prompts when the renderer booted without an auto-recovery reload', async () => {
     const store = await createStore()
     registerCrashReportingHandlers(store)
