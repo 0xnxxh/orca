@@ -166,7 +166,13 @@ export class CrashReportStore {
       // healed crash still reaches the user, just wearing the sibling's report.
       const anchors = [...resolved]
       const sweptReports = nextReports.map((report) => {
-        if (report.status !== 'pending') {
+        // Why: relation matching ignores processType, so re-state the anchor
+        // pass's exclusion — a renderer-sourced report that is not the renderer
+        // process is the error boundary reporting itself, not a burst sibling.
+        if (
+          report.status !== 'pending' ||
+          (report.source === 'renderer' && report.processType !== 'renderer')
+        ) {
           return report
         }
         if (!anchors.some((anchor) => isRelatedCrashEvent(anchor, report))) {

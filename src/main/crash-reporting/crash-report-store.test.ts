@@ -110,6 +110,21 @@ describe('CrashReportStore', () => {
     await expect(store.getLatestPending()).resolves.toBeNull()
   })
 
+  it('never sweeps a React error-boundary report, even when it matches the crash event', async () => {
+    const { store } = await createStore()
+    // Same reason/exitCode as the process crash: the guard must not depend on
+    // the boundary reason literal staying distinct from Electron's exit reasons.
+    const boundary = await store.record({ ...input(), processType: 'react-render' })
+    await store.record(input())
+
+    await store.markRendererCrashesAutoRecovered(Date.parse(boundary.createdAt) - 1_000)
+
+    await expect(store.getLatestPending()).resolves.toMatchObject({
+      id: boundary.id,
+      status: 'pending'
+    })
+  })
+
   it('dismisses sibling pending records after one crash report is sent', async () => {
     const { store } = await createStore()
     await store.record(input())

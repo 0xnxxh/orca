@@ -199,7 +199,14 @@ describe('auto-recovered renderer crash reporting', () => {
   it('resolves the process crash without sweeping a React error-boundary crash beside it', async () => {
     const store = await createStore()
     registerCrashReportingHandlers(store)
-    const boundary = await store.record(reactErrorBoundaryCrash())
+    // Why the crash-shaped reason/exitCode: relation matching ignores
+    // processType, so a boundary report only survives the sweep on its own
+    // guard — not on the reason literal happening not to collide.
+    const boundary = await store.record({
+      ...reactErrorBoundaryCrash(),
+      reason: 'killed',
+      exitCode: 9
+    })
     await store.record(killedRendererCrash())
 
     noteRendererRecoveryReloadIssued()
