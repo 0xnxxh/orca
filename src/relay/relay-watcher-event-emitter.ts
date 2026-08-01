@@ -71,7 +71,18 @@ function publishWatcherBatchToClient(
     dispatcher.producerEnvelopeBudget('fs.changed', { events }, clientId)
 
   // Fast path: publish the whole batch first — two encodes, the same cost as an unchunked emit.
-  if (publish(mapped)) {
+  // logDrop:false because rejection here is a measurement, not an outcome: the batch is re-sent in
+  // chunks below, so logging it would report a drop for events that all arrive.
+  if (
+    dispatcher.publishProducerNotification(
+      clientId,
+      'fs.changed',
+      { events: mapped },
+      {
+        logDrop: false
+      }
+    )
+  ) {
     return
   }
 
@@ -92,7 +103,9 @@ function publishWatcherBatchToClient(
     // Why: the retention ledger covers every producer publication despite its legacy name, and admission
     // is lane-agnostic: chunks queued past its low-water reserve (half the 2 MB queue) starve interactive
     // PTY frames until pty-handler pauses every remote pane. A resync costs the user far less.
-    if (!dispatcher.legacyRetentionBelowLowWater) {
+    // Per client, never dispatcher-wide: one stalled peer must not cost a healthy client a resync,
+    // which forces a readDir per directory in its file tree.
+    if (!dispatcher.producerRetentionBelowLowWater(clientId)) {
       emitWatcherOverflowToClient(dispatcher, clientId, rootPath)
       return
     }

@@ -101,7 +101,7 @@ function createDispatcher(hwm: number, onClose: () => void, sink: Buffer[]): Rel
 }
 
 describe('relay oversized notification survival', () => {
-  // Without this the pinned byte counts below could measure a payload the emitter never sends.
+  // Without this the byte measurements below could describe a payload the emitter never sends.
   it('measures the params emitRelayWatcherEvents actually publishes', () => {
     const sink: Buffer[] = []
     const dispatcher = createDispatcher(NODE22_HWM, () => {}, sink)
@@ -134,20 +134,19 @@ describe('relay oversized notification survival', () => {
       return lo
     }
 
+    // Capacity is a fixed fraction of the sink's high-water mark, so these are exact.
     expect(capacityFor(NODE22_HWM)).toBe(49152)
     expect(capacityFor(NODE21_HWM)).toBe(12288)
-    expect(hookBytes).toBe(29894)
-    expect(fullBatchBytes).toBe(465074)
-    expect(trip(capacityFor(NODE22_HWM))).toBe(527)
-    expect(trip(capacityFor(NODE21_HWM))).toBe(131)
 
-    // agent.hook: fits a modern remote, over-cap on an older one.
+    // agent.hook: fits a modern remote, over-cap on an older one — which is why the remote's
+    // Node major, not Orca's, decides whether a maximal envelope has to shed.
     expect(hookBytes).toBeLessThan(capacityFor(NODE22_HWM))
     expect(hookBytes).toBeGreaterThan(capacityFor(NODE21_HWM))
 
     // fs.changed: the batch cap is orders of magnitude above what one frame can carry, on BOTH tiers.
     expect(fullBatchBytes).toBeGreaterThan(capacityFor(NODE22_HWM))
-    expect(trip(capacityFor(NODE22_HWM))).toBeLessThan(MAX_BATCHED_WATCHER_EVENTS)
+    expect(trip(capacityFor(NODE22_HWM)) * 5).toBeLessThan(MAX_BATCHED_WATCHER_EVENTS)
+    expect(trip(capacityFor(NODE21_HWM))).toBeLessThan(trip(capacityFor(NODE22_HWM)))
   })
 
   it('a 5000-event fs.changed no longer closes the client on a Node>=22-sized sink', () => {

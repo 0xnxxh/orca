@@ -478,10 +478,18 @@ describe('FsHandler readFileStream', () => {
     await flush(10)
     expect(terminalFrames()).toHaveLength(MAX_CONCURRENT_STREAMS)
 
+    // The budget is per client, so a second peer on the same relay still reads.
+    await dispatcher.callRequest(
+      'fs.readFileStream',
+      { filePath },
+      { clientId: 9, isStale: () => false }
+    )
+    await waitFor(() => terminalFrames().length === MAX_CONCURRENT_STREAMS + 1)
+
     // Draining the sink settles the queued frames and hands the budget back.
     dispatcher.settleHeldControlFrames()
     await dispatcher.callRequest('fs.readFileStream', { filePath }, context)
-    await waitFor(() => terminalFrames().length === MAX_CONCURRENT_STREAMS + 1)
+    await waitFor(() => terminalFrames().length === MAX_CONCURRENT_STREAMS + 2)
   })
 
   it('rejects the 17th concurrent stream with TooManyStreams', async () => {

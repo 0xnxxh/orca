@@ -6,6 +6,7 @@ import {
   encodeKeepAliveFrame,
   parseJsonRpcMessage,
   KEEPALIVE_SEND_MS,
+  RelayErrorCode,
   type DecodedFrame,
   type JsonRpcRequest,
   type JsonRpcNotification,
@@ -190,6 +191,19 @@ export class RelayDispatcher {
 
   get legacyRetentionBelowLowWater(): boolean {
     return this.publicationLedger.belowLowWater(this.activeClientKeys())
+  }
+
+  /**
+   * Same reserve as legacyRetentionBelowLowWater, but scoped to one client: a paced bulk producer
+   * gated on the dispatcher-wide signal stops for a peer's stall and degrades a healthy link.
+   * The relay-wide aggregate still counts — that ceiling is shared by every client.
+   */
+  producerRetentionBelowLowWater(clientId: number): boolean {
+    const client = this.clients.get(clientId)
+    if (!client || client.closed) {
+      return false
+    }
+    return this.publicationLedger.belowLowWater([this.clientKey(client)])
   }
 
   writePrimaryBytes(data: Buffer, lane: 'control' | 'ordinary' = 'control'): boolean {
@@ -468,7 +482,10 @@ export class RelayDispatcher {
   publishProducerNotification(
     clientId: number,
     method: string,
-    params?: Record<string, unknown>
+    params?: Record<string, unknown>,
+    // Why: a caller that recovers from rejection itself (the watcher emitter re-sends the batch in
+    // chunks) would otherwise log "Dropped" for a frame it goes on to deliver in full.
+    options?: { logDrop?: boolean }
   ): boolean {
     if (this.disposed) {
       return false
@@ -487,7 +504,9 @@ export class RelayDispatcher {
       return true
     }
     // Why: same diagnostics as notify() — a producer that drops here must not do so silently.
-    this.logDroppedProducerNotification(client, method, frameBytes)
+    if (options?.logDrop !== false) {
+      this.logDroppedProducerNotification(client, method, frameBytes)
+    }
     return false
   }
 
@@ -910,7 +929,10 @@ export class RelayDispatcher {
       {
         jsonrpc: '2.0',
         id,
-        error: { code: -32010, message: RESPONSE_OVER_CAPACITY_MESSAGE }
+        error: {
+          code: RelayErrorCode.ResponseOverCapacity,
+          message: RESPONSE_OVER_CAPACITY_MESSAGE
+        }
       },
       'control',
       // Why: writing the substitute is not delivering the result — a settlement fence must never read

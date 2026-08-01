@@ -110,7 +110,7 @@ export async function readRelayFileStreamMetadata(
 
   // Why: reserved before the fd opens so a refusal costs nothing, and released only
   // once the terminal frame settles — see reserveTerminalFrameSlot.
-  const releaseTerminalFrameSlot = reserveTerminalFrameSlot(registry)
+  const releaseTerminalFrameSlot = reserveTerminalFrameSlot(registry, context.clientId)
   let handle: FileHandle | undefined
   let streamId: number
   try {
@@ -160,22 +160,36 @@ export async function readRelayFileStreamMetadata(
  * terminal frames at MAX_CONCURRENT_STREAMS, far below the killing threshold; the
  * overflow now costs one refused read (TooManyStreams, which clients already handle)
  * instead of the whole connection.
+ *
+ * Counted per client, because the control queue this protects is per client: one peer whose
+ * socket stopped draining must not refuse reads for every other peer on the same relay.
  */
-const pendingTerminalFrames = new WeakMap<RelayStreamRegistry, number>()
+const pendingTerminalFramesByClient = new WeakMap<RelayStreamRegistry, Map<number, number>>()
 
-function reserveTerminalFrameSlot(registry: RelayStreamRegistry): () => void {
-  const pending = pendingTerminalFrames.get(registry) ?? 0
+function reserveTerminalFrameSlot(registry: RelayStreamRegistry, clientId: number): () => void {
+  let byClient = pendingTerminalFramesByClient.get(registry)
+  if (!byClient) {
+    byClient = new Map()
+    pendingTerminalFramesByClient.set(registry, byClient)
+  }
+  const pending = byClient.get(clientId) ?? 0
   if (pending >= MAX_CONCURRENT_STREAMS) {
     throw new TooManyStreamsError()
   }
-  pendingTerminalFrames.set(registry, pending + 1)
+  byClient.set(clientId, pending + 1)
   let released = false
   return () => {
     if (released) {
       return
     }
     released = true
-    pendingTerminalFrames.set(registry, (pendingTerminalFrames.get(registry) ?? 1) - 1)
+    const remaining = (byClient.get(clientId) ?? 1) - 1
+    // Drop the entry at zero so a long-lived registry cannot accumulate one per detached client.
+    if (remaining <= 0) {
+      byClient.delete(clientId)
+      return
+    }
+    byClient.set(clientId, remaining)
   }
 }
 

@@ -12,6 +12,7 @@ let connectErrorMessage = ''
 let connectErrorCode = ''
 let destroyErrorMessage = ''
 let connectSequence: ('ready' | Error)[] = []
+let connectAttempts = 0
 let execBehavior: 'callback' | 'pending' = 'callback'
 let pendingExecCallback: ((err: Error | undefined, channel: unknown) => void) | null = null
 let sftpBehavior: 'callback' | 'pending' = 'callback'
@@ -59,6 +60,7 @@ vi.mock('ssh2', () => {
       }
     }
     connect(config?: unknown) {
+      connectAttempts += 1
       this.lastConnectConfig = config
       const hostVerifier = (config as { hostVerifier?: (key: Buffer) => boolean } | undefined)
         ?.hostVerifier
@@ -167,7 +169,7 @@ import {
   writeFileViaSystemSsh
 } from './ssh-system-fallback'
 import { getRemoteHostPlatform } from './ssh-remote-platform'
-import { CONNECT_TIMEOUT_MS } from './ssh-connection-utils'
+import { CONNECT_TIMEOUT_MS, RECONNECT_BACKOFF_MS } from './ssh-connection-utils'
 import { MIN_SSH_RELAY_GRACE_PERIOD_SECONDS, type SshTarget } from '../../shared/ssh-types'
 
 function createTarget(overrides?: Partial<SshTarget>): SshTarget {
@@ -275,6 +277,7 @@ describe('SshConnection', () => {
     connectErrorCode = ''
     destroyErrorMessage = ''
     connectSequence = []
+    connectAttempts = 0
     execBehavior = 'callback'
     pendingExecCallback = null
     sftpBehavior = 'callback'
@@ -530,6 +533,9 @@ describe('SshConnection', () => {
       await vi.advanceTimersByTimeAsync(200_000)
 
       expect(statuses).toContain('reconnection-failed')
+      // Pin the budget itself: the initial success plus exactly RECONNECT_BACKOFF_MS.length retries.
+      // Counting a failure twice, or giving up early, would strand a user on a flaky link.
+      expect(connectAttempts).toBe(1 + RECONNECT_BACKOFF_MS.length)
     } finally {
       vi.useRealTimers()
     }

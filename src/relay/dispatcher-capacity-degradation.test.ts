@@ -4,8 +4,9 @@ import {
   type RelayClientSinkOptions,
   type SinkWriteSettlement
 } from './dispatcher'
+import { LEGACY_CLIENT_RETAINED_BYTES_LOW } from './legacy-relay-publication-ledger'
 import type * as ProtocolModule from './protocol'
-import { encodeJsonRpcFrame } from './protocol'
+import { encodeJsonRpcFrame, RelayErrorCode } from './protocol'
 
 // Counts every frame encode (including the estimate-only ones) so a redundant re-encode is observable.
 const encodeCalls = vi.hoisted(() => ({ count: 0 }))
@@ -338,7 +339,7 @@ describe('RelayDispatcher bounded-capacity degradation', () => {
         error: { code: number; message: string }
       }
       expect(response.id).toBe(77)
-      expect(response.error.code).toBe(-32010)
+      expect(response.error.code).toBe(RelayErrorCode.ResponseOverCapacity)
       expect(response.error.message).toBe('Relay response exceeded the bounded transport capacity')
     } finally {
       bounded.dispose()
@@ -364,6 +365,39 @@ describe('RelayDispatcher bounded-capacity degradation', () => {
         ok: false,
         error: new Error('Relay response exceeded the bounded transport capacity')
       })
+    } finally {
+      bounded.dispose()
+    }
+  })
+
+  it('producerRetentionBelowLowWater reports the reserve of one client, not the dispatcher', () => {
+    const stalled = makeSaturatingClient(65536)
+    const healthy = makeBoundedClient(65536)
+    const bounded = new RelayDispatcher(stalled.write, stalled.options)
+    try {
+      const stalledId = bounded.activeClientIds()[0]
+      const healthyId = bounded.attachClient(healthy.write, healthy.options)
+      let parked = 0
+      while (
+        parked <= LEGACY_CLIENT_RETAINED_BYTES_LOW &&
+        bounded.publishProducerNotification(stalledId, 'pty.data', {
+          paneId: 'pane',
+          data: 'x'.repeat(40_000)
+        })
+      ) {
+        parked += 40_000
+      }
+      expect(parked).toBeGreaterThan(LEGACY_CLIENT_RETAINED_BYTES_LOW)
+
+      expect(bounded.producerRetentionBelowLowWater(stalledId)).toBe(false)
+      expect(bounded.producerRetentionBelowLowWater(healthyId)).toBe(true)
+      // The dispatcher-wide signal is the one that lets a stalled peer speak for a healthy client.
+      expect(bounded.legacyRetentionBelowLowWater).toBe(false)
+
+      // A client that cannot be written to has no headroom at all.
+      expect(bounded.producerRetentionBelowLowWater(999)).toBe(false)
+      bounded.detachClient(healthyId)
+      expect(bounded.producerRetentionBelowLowWater(healthyId)).toBe(false)
     } finally {
       bounded.dispose()
     }

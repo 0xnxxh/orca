@@ -1,5 +1,6 @@
 import {
   AGENT_HOOK_NOTIFICATION_METHOD,
+  AGENT_HOOK_SHED_FIELDS_KEY,
   type AgentHookRelayEnvelope
 } from '../shared/agent-hook-relay'
 import type { RelayDispatcher } from './dispatcher'
@@ -9,12 +10,9 @@ import type { RelayDispatcher } from './dispatcher'
 // Why: interactivePrompt is last on purpose — a blocking question is load-bearing (without its card
 // the pane sits on `waiting` with no way to answer from web or mobile). The roster is shed earlier
 // only because it is cheaper to rebuild, NOT because it is cosmetic: a missing roster blanks live
-// subagent rows and unblocks pane hibernation, which is why shed fields are named on the wire.
+// subagent rows and unblocks pane hibernation, which is why shed fields are named on the wire —
+// `restoreShedStatusFields` re-attaches the restorable ones from Orca's cached payload.
 const SHED_ORDER = ['lastAssistantMessage', 'subagents', 'interactivePrompt'] as const
-
-/** Wire marker listing the fields dropped to fit the frame, so a consumer can tell "shed" from
- *  "genuinely absent" and keep its current value instead of overwriting it with a gap. */
-const SHED_FIELDS_KEY = 'shedFields'
 
 // Why: these envelopes are fire-and-forget state snapshots — no ack, no producer-side retry — and
 // the only other delivery path is the reattach replay. A queue-full drop would otherwise leave the
@@ -46,7 +44,9 @@ function toNotificationParams(
   shedFields: readonly string[]
 ): Record<string, unknown> {
   const params = envelope as unknown as Record<string, unknown>
-  return shedFields.length === 0 ? params : { ...params, [SHED_FIELDS_KEY]: [...shedFields] }
+  return shedFields.length === 0
+    ? params
+    : { ...params, [AGENT_HOOK_SHED_FIELDS_KEY]: [...shedFields] }
 }
 
 /** Returns the ids of the clients that rejected the frame; a rejected client is never written to. */

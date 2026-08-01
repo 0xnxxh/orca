@@ -469,6 +469,31 @@ describe('publishAgentHookEnvelope redelivery', () => {
     }
   })
 
+  it('evicts the longest-idle pane once the pending map is full, keeping the newest', () => {
+    const primary = makeBoundedClient(16384)
+    const dispatcher = new RelayDispatcher(primary.write, primary.options)
+    try {
+      saturateProducerQueue(dispatcher, primary)
+      // 65 panes against a 64-pane cap: the first must be evicted, the last must survive.
+      for (let pane = 0; pane < 65; pane++) {
+        const envelope = makeEnvelope({})
+        envelope.paneKey = `tab-1:4f1b0f4e-0000-4000-8000-${String(pane).padStart(12, '0')}`
+        publishAgentHookEnvelope(dispatcher, envelope)
+      }
+
+      primary.blocked = false
+      primary.drain()
+      vi.advanceTimersByTime(1_000)
+
+      const redelivered = decodeEnvelopes(primary).map((envelope) => envelope.paneKey)
+      expect(redelivered).toHaveLength(64)
+      expect(redelivered).toContain('tab-1:4f1b0f4e-0000-4000-8000-000000000064')
+      expect(redelivered).not.toContain('tab-1:4f1b0f4e-0000-4000-8000-000000000000')
+    } finally {
+      dispatcher.dispose()
+    }
+  })
+
   it('drops pending redeliveries when the dispatcher is disposed', () => {
     const primary = makeBoundedClient(16384)
     const dispatcher = new RelayDispatcher(primary.write, primary.options)

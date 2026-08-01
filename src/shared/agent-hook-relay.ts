@@ -99,6 +99,44 @@ export type AgentHookRelayEnvelope = {
 /** JSON-RPC notification method name carried over the relay control channel. */
 export const AGENT_HOOK_NOTIFICATION_METHOD = 'agent.hook' as const
 
+/** Names the optional payload fields the relay dropped to fit an oversized frame
+ *  (see `src/relay/agent-hook-envelope-publication.ts`), so `ingestRemote` can tell
+ *  "shed in transit" from "the agent cleared it". */
+export const AGENT_HOOK_SHED_FIELDS_KEY = 'shedFields' as const
+
+/**
+ * Re-attaches shed fields from Orca's cached payload for this pane, so a transport-level
+ * truncation cannot read as a cleared field — an absent `subagents` blanks live child rows and
+ * unblocks hibernation for a pane whose teammates are still running.
+ *
+ * `interactivePrompt` is deliberately not restored: the cached card belongs to an earlier
+ * question, and an answerable card carrying the wrong question is worse than no card.
+ */
+export function restoreShedStatusFields(
+  payload: ParsedAgentStatusPayload,
+  shedFields: unknown,
+  previous: ParsedAgentStatusPayload | undefined
+): ParsedAgentStatusPayload {
+  if (!previous || !Array.isArray(shedFields) || shedFields.length === 0) {
+    return payload
+  }
+  const shed = new Set(shedFields.filter((field): field is string => typeof field === 'string'))
+  const subagents =
+    shed.has('subagents') && payload.subagents === undefined ? previous.subagents : undefined
+  const lastAssistantMessage =
+    shed.has('lastAssistantMessage') && payload.lastAssistantMessage === undefined
+      ? previous.lastAssistantMessage
+      : undefined
+  if (subagents === undefined && lastAssistantMessage === undefined) {
+    return payload
+  }
+  return {
+    ...payload,
+    ...(subagents === undefined ? {} : { subagents }),
+    ...(lastAssistantMessage === undefined ? {} : { lastAssistantMessage })
+  }
+}
+
 /** JSON-RPC request method Orca issues after `--connect` reattach to ask the
  *  relay to replay its per-paneKey last-payload cache. See §5 Path 3 of the
  *  design doc for the race that ruled out push-on-`setWrite`. */

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { WatcherProcessEvent } from '../main/ipc/parcel-watcher-process-protocol'
 import { RelayDispatcher } from './dispatcher'
 import { DEFAULT_PRODUCER_QUEUE_MAX_BYTES } from './dispatcher-writer-admission'
@@ -113,8 +113,38 @@ function parkProducerBytes(dispatcher: RelayDispatcher, bytes: number): number {
   return parked
 }
 
+// Parks PTY frames in ONE client's producer queue, leaving every peer's retention untouched.
+function parkProducerBytesForClient(
+  dispatcher: RelayDispatcher,
+  clientId: number,
+  bytes: number
+): number {
+  const chunk = 'x'.repeat(40_000)
+  let parked = 0
+  while (
+    parked < bytes &&
+    dispatcher.publishProducerNotification(clientId, 'pty.data', { paneId: 'pane', data: chunk })
+  ) {
+    parked += chunk.length
+  }
+  expect(parked).toBeGreaterThanOrEqual(bytes)
+  return parked
+}
+
 function isOverflowFrame(frame: Buffer): boolean {
   return frameEvents(frame).some((event) => event.kind === 'overflow')
+}
+
+function watcherFrames(frames: readonly Buffer[]): Buffer[] {
+  return frames.filter((frame) => frameMethod(frame) === 'fs.changed')
+}
+
+function deliveredEvents(events: readonly WatcherProcessEvent[]): WatcherFrameEvent[] {
+  return events.map((event) => ({
+    kind: event.type,
+    absolutePath: event.path,
+    ...(event.isDirectory === undefined ? {} : { isDirectory: event.isDirectory })
+  }))
 }
 
 describe('relay watcher writer admission', () => {
@@ -334,6 +364,27 @@ describe('relay watcher batch chunking', () => {
     }
   })
 
+  it('does not report a drop for a batch it goes on to deliver in full', () => {
+    const sink = createRecordingSink(16384)
+    const dispatcher = new RelayDispatcher(sink.write, sink.options)
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+
+    try {
+      const events = watcherBatch(5000)
+      emitRelayWatcherEvents(dispatcher, '/workspace', false, events)
+
+      expect(sink.frames.length).toBeGreaterThan(1)
+      expect(sink.frames.flatMap(frameEvents)).toHaveLength(events.length)
+      // A "Dropped fs.changed" line here would both lie and burn the one-per-generation
+      // suppression slot a genuine over-capacity drop needs.
+      const lines = stderr.mock.calls.map(([line]) => String(line))
+      expect(lines.filter((line) => line.includes('fs.changed'))).toEqual([])
+    } finally {
+      stderr.mockRestore()
+      dispatcher.dispose()
+    }
+  })
+
   it('sizes chunks near the byte minimum instead of overshooting it', () => {
     const sink = createRecordingSink(16384)
     const capacity = 12288
@@ -376,6 +427,63 @@ describe('relay watcher batch chunking', () => {
         DEFAULT_PRODUCER_QUEUE_MAX_BYTES - LEGACY_CLIENT_RETAINED_BYTES_LOW
       )
       expect(sink.closes()).toBe(0)
+    } finally {
+      dispatcher.dispose()
+    }
+  })
+
+  it('delivers a whole flood to a healthy client while a second client sits past its reserve', () => {
+    const stalled = createRecordingSink(65536)
+    const healthy = createRecordingSink(65536)
+    stalled.blockNextWrite()
+    const dispatcher = new RelayDispatcher(stalled.write, stalled.options)
+    const events = watcherBatch(5000)
+
+    try {
+      dispatcher.attachClient(healthy.write, healthy.options)
+      const stalledId = dispatcher.activeClientIds()[0]
+      parkProducerBytesForClient(dispatcher, stalledId, LEGACY_CLIENT_RETAINED_BYTES_LOW)
+
+      emitRelayWatcherEvents(dispatcher, '/workspace', false, events)
+      stalled.drainWaiters.shift()?.()
+
+      // A resync forces a readDir per directory, so an unrelated peer's stall must never trigger one here.
+      expect(watcherFrames(healthy.frames).some(isOverflowFrame)).toBe(false)
+      expect(watcherFrames(healthy.frames).flatMap(frameEvents)).toEqual(deliveredEvents(events))
+      expect(watcherFrames(stalled.frames).map(isOverflowFrame)).toEqual([true])
+      expect(healthy.closes()).toBe(0)
+      expect(stalled.closes()).toBe(0)
+    } finally {
+      dispatcher.dispose()
+    }
+  })
+
+  it('stops the walk for the congested client while a healthy peer takes the whole flood', () => {
+    const healthy = createRecordingSink(65536)
+    const stalled = createRecordingSink(65536)
+    stalled.blockNextWrite()
+    const dispatcher = new RelayDispatcher(healthy.write, healthy.options)
+    const events = watcherBatch(5000)
+
+    try {
+      // Reversed attach order from the peer-stall case: the gate must read the client being written to.
+      const stalledId = dispatcher.attachClient(stalled.write, stalled.options)
+      parkProducerBytesForClient(dispatcher, stalledId, LEGACY_CLIENT_RETAINED_BYTES_LOW)
+
+      emitRelayWatcherEvents(dispatcher, '/workspace', false, events)
+      stalled.drainWaiters.shift()?.()
+
+      const stalledWatcher = watcherFrames(stalled.frames)
+      expect(stalledWatcher.map(isOverflowFrame)).toEqual([true])
+      const injected = stalledWatcher
+        .filter((frame) => !isOverflowFrame(frame))
+        .reduce((total, frame) => total + frame.length, 0)
+      // Nothing injected: the congested client keeps its whole reserve for interactive PTY frames.
+      expect(injected).toBe(0)
+      expect(watcherFrames(healthy.frames).some(isOverflowFrame)).toBe(false)
+      expect(watcherFrames(healthy.frames).flatMap(frameEvents)).toEqual(deliveredEvents(events))
+      expect(healthy.closes()).toBe(0)
+      expect(stalled.closes()).toBe(0)
     } finally {
       dispatcher.dispose()
     }
