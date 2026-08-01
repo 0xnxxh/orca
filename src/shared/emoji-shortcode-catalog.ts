@@ -21,10 +21,24 @@ export const STANDARD_EMOJI_SHORTCODE_ENTRIES: readonly StandardEmojiShortcodeEn
 const PRIMARY_SHORTCODE_BY_EMOJI = new Map(
   CATALOG.map(({ emoji, shortcodes }) => [
     normalizeEmojiLookup(emoji),
-    // Skip `+1`/`-1` so derived branch and directory names start with a letter.
-    shortcodes.find((candidate) => /^[a-z]/i.test(candidate)) ?? shortcodes[0]
+    primaryShortcode(shortcodes)
   ])
 )
+
+/**
+ * Pick the alias that reads best as a branch or directory name: skip `+1`/`-1` so the name
+ * starts with a letter, then cryptic stubs (👎 `no`, ✌ `v`) and the `flag_xx` namespacing
+ * prefix, both of which have a spelled-out alias (`thumbsdown`, `victory`, `germany`).
+ */
+function primaryShortcode(shortcodes: readonly string[]): string {
+  const named = shortcodes.filter((candidate) => /^[a-z]/i.test(candidate))
+  return (
+    named.find((candidate) => candidate.length >= 3 && !candidate.startsWith('flag_')) ??
+    named.find((candidate) => candidate.length >= 3) ??
+    named[0] ??
+    shortcodes[0]
+  )
+}
 
 const EMOJI_SEGMENTER = new Intl.Segmenter('en', { granularity: 'grapheme' })
 

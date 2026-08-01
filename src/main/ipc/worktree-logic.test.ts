@@ -77,7 +77,8 @@ describe('sanitizeWorktreeName', () => {
   it('uses readable git-safe shortcodes for known emoji', () => {
     expect(sanitizeWorktreeName('🚀')).toBe('rocket')
     expect(sanitizeWorktreeName('👩‍💻✨')).toBe('woman-technologist-sparkles')
-    expect(sanitizeWorktreeName('🇯🇵')).toBe('flag-jp')
+    expect(sanitizeWorktreeName('🇯🇵')).toBe('japan')
+    expect(sanitizeWorktreeName('👎')).toBe('thumbsdown')
     expect(sanitizeWorktreeName('1️⃣')).toBe('one')
   })
 
