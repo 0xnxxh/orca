@@ -7,6 +7,11 @@ const ASSIGNMENT_KINDS = new Set([
   ts.SyntaxKind.BarBarEqualsToken,
   ts.SyntaxKind.QuestionQuestionEqualsToken
 ])
+const LOGICAL_ASSIGNMENT_KINDS = new Set([
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken
+])
 
 function unwrapExpression(node) {
   if (
@@ -26,6 +31,21 @@ function propertyNameText(name) {
   }
   if (ts.isComputedPropertyName(name) && ts.isStringLiteralLike(name.expression)) {
     return name.expression.text
+  }
+  return undefined
+}
+
+function memberParts(node) {
+  const expression = unwrapExpression(node)
+  if (ts.isPropertyAccessExpression(expression)) {
+    return { object: expression.expression, propertyName: expression.name.text }
+  }
+  if (
+    ts.isElementAccessExpression(expression) &&
+    expression.argumentExpression &&
+    ts.isStringLiteralLike(expression.argumentExpression)
+  ) {
+    return { object: expression.expression, propertyName: expression.argumentExpression.text }
   }
   return undefined
 }
@@ -57,10 +77,7 @@ function isConstBinding(binding) {
   )
 }
 
-function isDefiniteBefore(write, use) {
-  if (write.conditional) {
-    return false
-  }
+function isOrderedBefore(write, use) {
   const writeStatement = statementContainer(write.node)
   const useStatement = statementContainer(use)
   return Boolean(
@@ -69,6 +86,10 @@ function isDefiniteBefore(write, use) {
     writeStatement.container === useStatement.container &&
     writeStatement.statement.end <= useStatement.statement.pos
   )
+}
+
+function isDefiniteBefore(write, use) {
+  return !write.conditional && isOrderedBefore(write, use)
 }
 
 function destructuredTargets(name) {
@@ -101,77 +122,57 @@ function destructuredTargets(name) {
 export function createMobileLocalizationValueFlow(sourceFile, bindings) {
   const writes = new Map()
   const propertyWrites = new Map()
+  const pendingPropertyWrites = []
 
-  function addWrite(identifier, expression, node, propertyName, conditional = false) {
+  function addWrite(identifier, expression, node, propertyName, operator) {
     const binding = bindings.resolveBinding(identifier)
     if (!binding) {
       return
     }
     const entries = writes.get(binding) ?? []
     entries.push({
-      conditional,
+      conditional: LOGICAL_ASSIGNMENT_KINDS.has(operator),
       expression,
       node,
+      operator,
       position: node.getStart(sourceFile),
       propertyName
     })
     writes.set(binding, entries)
   }
 
-  function addTargetWrites(name, expression, node, conditional = false) {
+  function addTargetWrites(name, expression, node, operator) {
     const target = unwrapExpression(name)
     if (ts.isIdentifier(target)) {
-      addWrite(target, expression, node, undefined, conditional)
+      addWrite(target, expression, node, undefined, operator)
       return
     }
     for (const entry of destructuredTargets(target)) {
-      addWrite(entry.identifier, expression, node, entry.propertyName, conditional)
+      addWrite(entry.identifier, expression, node, entry.propertyName, operator)
     }
   }
 
   function memberWriteTarget(node) {
-    const target = unwrapExpression(node)
-    if (ts.isPropertyAccessExpression(target)) {
-      const object = unwrapExpression(target.expression)
-      return ts.isIdentifier(object)
-        ? { identifier: object, propertyName: target.name.text }
-        : undefined
-    }
-    if (
-      ts.isElementAccessExpression(target) &&
-      target.argumentExpression &&
-      ts.isStringLiteralLike(target.argumentExpression)
-    ) {
-      const object = unwrapExpression(target.expression)
-      return ts.isIdentifier(object)
-        ? { identifier: object, propertyName: target.argumentExpression.text }
-        : undefined
-    }
-    return undefined
-  }
-
-  function addPropertyWrite(target, expression, node, conditional) {
-    const binding = bindings.resolveBinding(target.identifier)
-    if (!binding) {
-      return
-    }
-    const byName = propertyWrites.get(binding) ?? new Map()
-    const entries = byName.get(target.propertyName) ?? []
-    entries.push({ conditional, expression, node, position: node.getStart(sourceFile) })
-    byName.set(target.propertyName, entries)
-    propertyWrites.set(binding, byName)
+    const member = memberParts(node)
+    return member ? { ...member, target: unwrapExpression(node) } : undefined
   }
 
   function visit(node) {
     if (ts.isVariableDeclaration(node) && node.initializer) {
       addTargetWrites(node.name, node.initializer, node)
     } else if (ts.isBinaryExpression(node) && ASSIGNMENT_KINDS.has(node.operatorToken.kind)) {
-      const conditional = node.operatorToken.kind !== ts.SyntaxKind.EqualsToken
       const memberTarget = memberWriteTarget(node.left)
       if (memberTarget) {
-        addPropertyWrite(memberTarget, node.right, node, conditional)
+        pendingPropertyWrites.push({
+          ...memberTarget,
+          conditional: LOGICAL_ASSIGNMENT_KINDS.has(node.operatorToken.kind),
+          expression: node.right,
+          node,
+          operator: node.operatorToken.kind,
+          position: node.getStart(sourceFile)
+        })
       } else {
-        addTargetWrites(node.left, node.right, node, conditional)
+        addTargetWrites(node.left, node.right, node, node.operatorToken.kind)
       }
     }
     ts.forEachChild(node, visit)
@@ -181,10 +182,72 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
   for (const entries of writes.values()) {
     entries.sort((left, right) => left.position - right.position)
   }
-  for (const byName of propertyWrites.values()) {
-    for (const entries of byName.values()) {
-      entries.sort((left, right) => left.position - right.position)
+  function staticValueState(node) {
+    const expression = unwrapExpression(node)
+    if (
+      expression.kind === ts.SyntaxKind.NullKeyword ||
+      ts.isVoidExpression(expression) ||
+      (ts.isIdentifier(expression) &&
+        expression.text === 'undefined' &&
+        !bindings.resolveBinding(expression))
+    ) {
+      return { nullish: true, truthy: false }
     }
+    if (expression.kind === ts.SyntaxKind.TrueKeyword) {
+      return { nullish: false, truthy: true }
+    }
+    if (expression.kind === ts.SyntaxKind.FalseKeyword) {
+      return { nullish: false, truthy: false }
+    }
+    if (ts.isStringLiteralLike(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
+      return { nullish: false, truthy: expression.text.length > 0 }
+    }
+    if (ts.isNumericLiteral(expression)) {
+      return { nullish: false, truthy: Number(expression.text) !== 0 }
+    }
+    if (ts.isBigIntLiteral(expression)) {
+      return { nullish: false, truthy: expression.text !== '0n' }
+    }
+    if (
+      ts.isArrowFunction(expression) ||
+      ts.isFunctionExpression(expression) ||
+      ts.isClassExpression(expression) ||
+      ts.isObjectLiteralExpression(expression) ||
+      ts.isArrayLiteralExpression(expression) ||
+      ts.isNewExpression(expression)
+    ) {
+      return { nullish: false, truthy: true }
+    }
+    if (ts.isIdentifier(expression)) {
+      const binding = bindings.resolveBinding(expression)
+      if (binding && bindings.rootDescriptors?.has(binding)) {
+        return { nullish: false, truthy: true }
+      }
+    }
+    return { nullish: undefined, truthy: undefined }
+  }
+
+  function logicalWriteAction(operator, expressions, knownEmpty = false) {
+    const values = expressions.length > 0 ? expressions : knownEmpty ? [undefined] : []
+    const actions = new Set()
+    for (const expression of values) {
+      const state =
+        expression === undefined ? { nullish: true, truthy: false } : staticValueState(expression)
+      const applies =
+        operator === ts.SyntaxKind.QuestionQuestionEqualsToken
+          ? state.nullish
+          : operator === ts.SyntaxKind.BarBarEqualsToken
+            ? state.truthy === undefined
+              ? undefined
+              : !state.truthy
+            : state.truthy
+      actions.add(applies === true ? 'assign' : applies === false ? 'keep' : 'unknown')
+    }
+    return actions.size === 1 ? [...actions][0] : 'unknown'
+  }
+
+  function isUninitializedBinding(binding) {
+    return ts.isVariableDeclaration(binding) && binding.initializer === undefined
   }
 
   function selectedWrites(identifier, use, all) {
@@ -197,13 +260,143 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
     const available = entries.filter((entry) => entry.position < usePosition)
     let selected = []
     for (const entry of available) {
-      if (isDefiniteBefore(entry, use)) {
+      const action = entry.conditional
+        ? logicalWriteAction(
+            entry.operator,
+            selected.flatMap((write) => (write.propertyName ? [] : [write.expression])),
+            selected.length === 0 && isUninitializedBinding(binding)
+          )
+        : 'assign'
+      if (!isOrderedBefore(entry, use)) {
+        if (action !== 'keep') {
+          selected.push(entry)
+        }
+        continue
+      }
+      if (!entry.conditional) {
         selected = [entry]
-      } else {
+        continue
+      }
+      if (action === 'assign') {
+        selected = [entry]
+      } else if (action === 'unknown') {
         selected.push(entry)
       }
     }
     return selected
+  }
+
+  function locationKey(location) {
+    return `${location.binding.pos}:${location.path.join('\0')}`
+  }
+
+  function objectLocations(node, use = node, seen = new Set()) {
+    const expression = unwrapExpression(node)
+    if (ts.isIdentifier(expression)) {
+      const binding = bindings.resolveBinding(expression)
+      if (!binding) {
+        return []
+      }
+      const direct = [{ binding, path: [] }]
+      if (seen.has(binding)) {
+        return direct
+      }
+      const nextSeen = new Set(seen).add(binding)
+      const sources = selectedWrites(expression, use, false)
+      const resolved = sources.flatMap((source) => {
+        const locations = objectLocations(source.expression, source.node, nextSeen)
+        return source.propertyName
+          ? locations.map((location) => ({
+              binding: location.binding,
+              path: [...location.path, source.propertyName]
+            }))
+          : locations
+      })
+      const locations = resolved.length > 0 ? resolved : direct
+      return [...new Map(locations.map((location) => [locationKey(location), location])).values()]
+    }
+    const member = memberParts(expression)
+    if (!member) {
+      return []
+    }
+    return objectLocations(member.object, use, seen).map((location) => ({
+      binding: location.binding,
+      path: [...location.path, member.propertyName]
+    }))
+  }
+
+  function indexedPropertyWrites(location) {
+    const byPath = propertyWrites.get(location.binding) ?? new Map()
+    propertyWrites.set(location.binding, byPath)
+    const key = location.path.join('\0')
+    const entries = byPath.get(key) ?? []
+    byPath.set(key, entries)
+    return entries
+  }
+
+  for (const entry of pendingPropertyWrites) {
+    const targetLocations = objectLocations(entry.object, entry.node).map((location) => ({
+      binding: location.binding,
+      path: [...location.path, entry.propertyName]
+    }))
+    const rightMember = memberParts(entry.expression)
+    const rightLocations = rightMember
+      ? objectLocations(rightMember.object, entry.node).map((location) => ({
+          binding: location.binding,
+          path: [...location.path, rightMember.propertyName]
+        }))
+      : []
+    const rightKeys = new Set(rightLocations.map(locationKey))
+    const selfAssignment =
+      targetLocations.length > 0 &&
+      targetLocations.every((location) => rightKeys.has(locationKey(location)))
+    const indexed = { ...entry, selfAssignment }
+    for (const location of targetLocations) {
+      indexedPropertyWrites(location).push(indexed)
+    }
+  }
+  for (const byPath of propertyWrites.values()) {
+    for (const entries of byPath.values()) {
+      entries.sort((left, right) => left.position - right.position)
+    }
+  }
+
+  function propertyWriteEntries(node, propertyName, use, all) {
+    const usePosition = use.getStart(sourceFile)
+    const entries = objectLocations(node, use).flatMap((location) => {
+      const key = [...location.path, propertyName].join('\0')
+      return propertyWrites.get(location.binding)?.get(key) ?? []
+    })
+    return [
+      ...new Set(
+        entries.filter((entry) => !entry.selfAssignment && (all || entry.position < usePosition))
+      )
+    ].sort((left, right) => left.position - right.position)
+  }
+
+  function applyPropertyWrites(resolved, known, node, propertyName, use, all) {
+    for (const entry of propertyWriteEntries(node, propertyName, use, all)) {
+      if (all) {
+        resolved.push(entry.expression)
+        continue
+      }
+      const action = entry.conditional
+        ? logicalWriteAction(entry.operator, resolved, known && resolved.length === 0)
+        : 'assign'
+      if (!isOrderedBefore(entry, use)) {
+        if (action !== 'keep') {
+          resolved.push(entry.expression)
+        }
+        continue
+      }
+      if (action === 'assign') {
+        resolved.splice(0, resolved.length, entry.expression)
+        known = true
+      } else if (action === 'unknown') {
+        resolved.push(entry.expression)
+      }
+    }
+    return known
   }
 
   function propertyValues(node, propertyName, use = node, seen = new Set(), all = false) {
@@ -227,18 +420,29 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
           resolved.push(...matches)
         }
       }
-      const entries = propertyWrites.get(binding)?.get(propertyName) ?? []
-      const usePosition = use.getStart(sourceFile)
-      for (const entry of all ? entries : entries.filter((value) => value.position < usePosition)) {
-        if (all) {
-          resolved.push(entry.expression)
-        } else if (isDefiniteBefore(entry, use)) {
-          resolved.splice(0, resolved.length, entry.expression)
-          known = true
+      known = applyPropertyWrites(resolved, known, expression, propertyName, use, all)
+      return known || (all && resolved.length > 0) ? resolved : undefined
+    }
+    const member = memberParts(expression)
+    if (member) {
+      const objectValues = propertyValues(
+        member.object,
+        member.propertyName,
+        use,
+        new Set(seen),
+        all
+      )
+      const resolved = []
+      let known = objectValues !== undefined
+      for (const value of objectValues ?? []) {
+        const matches = propertyValues(value, propertyName, use, new Set(seen), all)
+        if (matches === undefined) {
+          known = false
         } else {
-          resolved.push(entry.expression)
+          resolved.push(...matches)
         }
       }
+      known = applyPropertyWrites(resolved, known, expression, propertyName, use, all)
       return known || (all && resolved.length > 0) ? resolved : undefined
     }
     if (!ts.isObjectLiteralExpression(expression)) {
@@ -307,6 +511,27 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
     return selectedWrites(identifier, use, all)
   }
 
+  function stableBindingWrite(binding) {
+    let source
+    for (const entry of writes.get(binding) ?? []) {
+      if (!entry.conditional) {
+        if (source) {
+          return undefined
+        }
+        source = entry
+        continue
+      }
+      if (
+        !source ||
+        source.propertyName ||
+        logicalWriteAction(entry.operator, [source.expression]) !== 'keep'
+      ) {
+        return undefined
+      }
+    }
+    return source
+  }
+
   function bindingWrites() {
     return writes.entries()
   }
@@ -320,6 +545,7 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
     bindingWrites,
     isImmutableBinding: isConstBinding,
     propertyValues,
+    stableBindingWrite,
     unwrapExpression,
     valueExpressions,
     valueSources,

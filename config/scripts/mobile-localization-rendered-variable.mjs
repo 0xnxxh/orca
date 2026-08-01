@@ -13,7 +13,8 @@ function isDirectDisplayExpressionParent(parent, child) {
   if (
     ts.isParenthesizedExpression(parent) ||
     ts.isAsExpression(parent) ||
-    ts.isSatisfiesExpression(parent)
+    ts.isSatisfiesExpression(parent) ||
+    ts.isNonNullExpression(parent)
   ) {
     return parent.expression === child
   }
@@ -44,6 +45,9 @@ export function isRenderedJsxExpression(node) {
     if (
       ts.isConditionalExpression(current) ||
       ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isSatisfiesExpression(current) ||
+      ts.isNonNullExpression(current) ||
       ts.isTemplateExpression(current) ||
       ts.isNoSubstitutionTemplateLiteral(current)
     ) {
@@ -175,7 +179,8 @@ function unwrapAliasExpression(node) {
   if (
     ts.isParenthesizedExpression(node) ||
     ts.isAsExpression(node) ||
-    ts.isSatisfiesExpression(node)
+    ts.isSatisfiesExpression(node) ||
+    ts.isNonNullExpression(node)
   ) {
     return unwrapAliasExpression(node.expression)
   }

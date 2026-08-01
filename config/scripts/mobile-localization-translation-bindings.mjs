@@ -113,28 +113,50 @@ function expressionResolution(node, use, bindings, mode, seen = new Set()) {
     ) {
       return { descriptors: new Set([stableDescriptor.descriptor]), unknown: false }
     }
+    const potentialDescriptors = binding ? bindings.potentialDescriptors?.get(binding) : undefined
+    if (mode === 'all' && potentialDescriptors?.size) {
+      return { descriptors: new Set(potentialDescriptors), unknown: false }
+    }
     if (!binding || seen.has(binding)) {
       return emptyResolution(true)
+    }
+    if (mode === 'all') {
+      const cached = bindings.allResolutionCache?.get(binding)
+      if (cached) {
+        return cached
+      }
+      if (bindings.allResolutionInProgress?.has(binding)) {
+        return emptyResolution(true)
+      }
+      bindings.allResolutionInProgress ??= new Set()
+      bindings.allResolutionInProgress.add(binding)
     }
     const nextSeen = new Set(seen).add(binding)
     const sources = bindings.valueFlow.valueSources(expression, use, mode === 'all')
     if (sources.length === 0) {
+      bindings.allResolutionInProgress?.delete(binding)
       return emptyResolution(true)
     }
-    return mergeResolutions(
+    const resolution = mergeResolutions(
       sources.map((source) =>
         source.propertyName
           ? propertyResolution(
               source.expression,
               source.propertyName,
-              use,
+              source.node,
               bindings,
               mode,
               nextSeen
             )
-          : expressionResolution(source.expression, use, bindings, mode, nextSeen)
+          : expressionResolution(source.expression, source.node, bindings, mode, nextSeen)
       )
     )
+    if (mode === 'all') {
+      bindings.allResolutionInProgress.delete(binding)
+      bindings.allResolutionCache ??= new Map()
+      bindings.allResolutionCache.set(binding, resolution)
+    }
+    return resolution
   }
 
   const member = memberParts(expression)
@@ -196,11 +218,12 @@ function collectStableDescriptors(valueFlow, rootDescriptors, resolveBinding) {
     [...rootDescriptors].map(([binding, descriptor]) => [binding, { descriptor, writes: [] }])
   )
   const dependents = new Map()
-  for (const [binding, writes] of valueFlow.bindingWrites()) {
-    if (writes.length !== 1 || writes[0].propertyName || writes[0].conditional) {
+  for (const [binding] of valueFlow.bindingWrites()) {
+    const write = valueFlow.stableBindingWrite(binding)
+    if (!write || write.propertyName) {
       continue
     }
-    const source = valueFlow.unwrapExpression(writes[0].expression)
+    const source = valueFlow.unwrapExpression(write.expression)
     if (!ts.isIdentifier(source)) {
       continue
     }
@@ -211,7 +234,7 @@ function collectStableDescriptors(valueFlow, rootDescriptors, resolveBinding) {
     const entries = dependents.get(sourceBinding) ?? []
     entries.push({
       binding,
-      write: writes[0],
+      write,
       always: valueFlow.isImmutableBinding(binding)
     })
     dependents.set(sourceBinding, entries)
@@ -229,6 +252,42 @@ function collectStableDescriptors(valueFlow, rootDescriptors, resolveBinding) {
             : [...sourceDescriptor.writes, target.write]
         })
         queue.push(target.binding)
+      }
+    }
+  }
+  return descriptors
+}
+
+function collectPotentialDescriptors(valueFlow, rootDescriptors, resolveBinding) {
+  const descriptors = new Map(
+    [...rootDescriptors].map(([binding, descriptor]) => [binding, new Set([descriptor])])
+  )
+  const dependents = new Map()
+  for (const [binding, writes] of valueFlow.bindingWrites()) {
+    for (const write of writes) {
+      if (write.propertyName) {
+        continue
+      }
+      const source = valueFlow.unwrapExpression(write.expression)
+      const sourceBinding = ts.isIdentifier(source) ? resolveBinding(source) : undefined
+      if (!sourceBinding) {
+        continue
+      }
+      const entries = dependents.get(sourceBinding) ?? new Set()
+      entries.add(binding)
+      dependents.set(sourceBinding, entries)
+    }
+  }
+  const queue = [...descriptors.keys()]
+  for (let index = 0; index < queue.length; index += 1) {
+    const source = queue[index]
+    for (const target of dependents.get(source) ?? []) {
+      const targetDescriptors = descriptors.get(target) ?? new Set()
+      const previousSize = targetDescriptors.size
+      descriptors.get(source).forEach((descriptor) => targetDescriptors.add(descriptor))
+      descriptors.set(target, targetDescriptors)
+      if (targetDescriptors.size > previousSize) {
+        queue.push(target)
       }
     }
   }
@@ -335,6 +394,11 @@ export function collectMobileTranslationBindings(sourceFile) {
   }
   bindings.valueFlow = createMobileLocalizationValueFlow(sourceFile, bindings)
   bindings.stableDescriptors = collectStableDescriptors(
+    bindings.valueFlow,
+    rootDescriptors,
+    bindings.resolveBinding
+  )
+  bindings.potentialDescriptors = collectPotentialDescriptors(
     bindings.valueFlow,
     rootDescriptors,
     bindings.resolveBinding

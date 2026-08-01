@@ -451,6 +451,38 @@ export const label = <><Text>{box.tr('Member raw copy')}</Text><Text>{logical('L
     ])
   })
 
+  it('reports non-null renders and raw calls after snapshot or member mutations', () => {
+    const source = `
+import { t } from '@/i18n/mobile-i18n'
+const raw = (value) => value
+let source = raw
+const snapshot = source
+source = t
+const box = { tr: t }
+const alias = box
+alias.tr = raw
+const holder = { inner: { tr: t } }
+holder.inner.tr = raw
+const visible = 'Visible non-null copy'
+function render() { return 'Helper non-null copy' }
+export const label = <><Text>{snapshot('Raw snapshot copy')}</Text><Text>{box.tr('Raw alias mutation')}</Text><Text>{holder.inner.tr('Raw nested mutation')}</Text><Text>{visible!}</Text><Text>{'Direct non-null copy'!}</Text><Text>{render!()}</Text></>
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/Example.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual([
+      'Visible non-null copy',
+      'Helper non-null copy',
+      'Raw snapshot copy',
+      'Raw alias mutation',
+      'Raw nested mutation',
+      'Direct non-null copy'
+    ])
+  })
+
   it('finds user-visible subject fallbacks in returned rows', () => {
     const source = `
 export function toRow(item) {

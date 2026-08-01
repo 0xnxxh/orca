@@ -84,6 +84,28 @@ export const labels = [replaced('Raw visible copy'), prefixed('title')]
     expect(calls.map((call) => call.keys)).toEqual([['second.title']])
   })
 
+  it('evaluates alias snapshots at their assignment sites', () => {
+    const sourceText = `
+import { t } from '@/i18n/mobile-i18n'
+const raw = (value) => value
+let source = raw
+const snapshot = source
+source = t
+const box = { tr: raw }
+const { tr: memberSnapshot } = box
+box.tr = t
+export const labels = [
+  snapshot('Raw binding snapshot'),
+  memberSnapshot('Raw member snapshot'),
+  source('example.binding'),
+  box.tr('example.member')
+]
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls.map((call) => call.keys)).toEqual([['example.binding'], ['example.member']])
+  })
+
   it('tracks member and logical assignments at each call', () => {
     const sourceText = `
 import { t } from '@/i18n/mobile-i18n'
@@ -105,6 +127,65 @@ export const labels = [
     const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
 
     expect(calls.map((call) => call.keys)).toEqual([['example.element'], ['example.logical']])
+  })
+
+  it('tracks aliased and nested property writes', () => {
+    const sourceText = `
+import { t } from '@/i18n/mobile-i18n'
+const raw = (value) => value
+const box = { tr: t }
+const alias = box
+alias['tr'] = raw
+const holder = { inner: { tr: t } }
+holder.inner.tr('example.nested')
+holder.inner.tr = raw
+const assigned = { inner: {} }
+assigned.inner.tr = t
+export const labels = [
+  box.tr('Raw aliased mutation'),
+  holder.inner.tr('Raw nested mutation'),
+  assigned.inner.tr('example.nestedAssigned')
+]
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls.map((call) => call.keys)).toEqual([['example.nested'], ['example.nestedAssigned']])
+  })
+
+  it('applies statically determined logical assignments', () => {
+    const sourceText = `
+import { t } from '@/i18n/mobile-i18n'
+const raw = (value) => value
+let nullishKeep = t
+nullishKeep ??= raw
+let orKeep = t
+orKeep ||= raw
+let nullishAssign = undefined
+nullishAssign ??= t
+let andReplace = t
+andReplace &&= raw
+const propertyKeep = { tr: t }
+propertyKeep.tr ??= raw
+const propertyAssign = {}
+propertyAssign.tr ??= t
+export const labels = [
+  nullishKeep('example.nullishKeep'),
+  orKeep('example.orKeep'),
+  nullishAssign('example.nullishAssign'),
+  propertyKeep.tr('example.propertyKeep'),
+  propertyAssign.tr('example.propertyAssign'),
+  andReplace('Raw logical replacement')
+]
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls.map((call) => call.keys)).toEqual([
+      ['example.nullishKeep'],
+      ['example.orKeep'],
+      ['example.nullishAssign'],
+      ['example.propertyKeep'],
+      ['example.propertyAssign']
+    ])
   })
 
   it('unwraps non-null translator expressions', () => {
@@ -130,6 +211,18 @@ export const labels = next.map((value) => value.label)
     expect(calls).toEqual([])
   })
 
+  it('keeps translator identity across self-referential member writes', () => {
+    const sourceText = `
+import { t } from '@/i18n/mobile-i18n'
+const holder = { current: t }
+holder.current = holder.current
+export const label = holder.current('example.selfReference')
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls.map((call) => call.keys)).toEqual([['example.selfReference']])
+  })
+
   it('resolves long mutable reverse alias chains without whole-file fixed-point rescans', () => {
     const aliases = Array.from({ length: 1500 }, (_, index) =>
       index === 1499 ? `let alias${index} = t` : `let alias${index} = alias${index + 1}`
@@ -137,12 +230,30 @@ export const labels = next.map((value) => value.label)
     const sourceText = `
 import { t } from '@/i18n/mobile-i18n'
 ${aliases}
+alias1499 ??= (value) => value
 export const label = alias0('example.scaled')
 `
     const startedAt = performance.now()
     const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
 
     expect(calls.map((call) => call.keys)).toEqual([['example.scaled']])
+    expect(performance.now() - startedAt).toBeLessThan(1000)
+  })
+
+  it('collects long potential alias chains after a changing logical write', () => {
+    const aliases = Array.from({ length: 1500 }, (_, index) =>
+      index === 1499 ? `let alias${index} = t` : `let alias${index} = alias${index + 1}`
+    ).join('\n')
+    const sourceText = `
+import { t } from '@/i18n/mobile-i18n'
+${aliases}
+alias1499 &&= (value) => value
+export const label = alias0('Raw potential alias')
+`
+    const startedAt = performance.now()
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls).toEqual([])
     expect(performance.now() - startedAt).toBeLessThan(1000)
   })
 })
