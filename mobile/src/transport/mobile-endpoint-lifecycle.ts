@@ -17,6 +17,7 @@ import {
   type HostEndpointPublicationLifecycle
 } from './host-profile-publication'
 import { upgradeDirectMobileRelay } from './mobile-relay-direct-upgrade'
+import { retireMobileRelayDirectUpgradeJournalForRelayHost } from './mobile-relay-direct-upgrade-journal'
 import { MobileRelayDirectUpgradeController } from './mobile-relay-direct-upgrade-controller'
 import type { StableLogicalRpcClient } from './stable-logical-rpc-client'
 
@@ -57,6 +58,8 @@ export function startMobileEndpointLifecycle(
   }
 
   if (initialHost.relay) {
+    // Why: relay publication supersedes any committed journal retained by the retired direct owner.
+    void retireMobileRelayDirectUpgradeJournalForRelayHost(initialHost.id).catch(() => {})
     owner = createSupervisor(logical, initialHost, onLog, publishHostUpdate, endpointLifecycle)
     void owner.start()
   } else {

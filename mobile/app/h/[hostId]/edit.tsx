@@ -106,8 +106,6 @@ export default function EditHostScreen() {
       ...(willRename ? { name: nextName } : {}),
       ...(nextEndpoint !== undefined ? { endpoint: nextEndpoint } : {})
     }
-    let reconnectWithCurrentProfile = false
-
     savingRef.current = true
     setSaving(true)
     setSaveError(null)
@@ -138,7 +136,6 @@ export default function EditHostScreen() {
         }
         primeHosts(hosts, hostLoadRevision)
         if (hostLoadRevision === getHostListLoadRevision()) {
-          reconnectWithCurrentProfile = true
           break
         }
       }
@@ -150,7 +147,7 @@ export default function EditHostScreen() {
     setSaving(false)
     router.back()
 
-    if (nextEndpoint !== undefined && reconnectWithCurrentProfile) {
+    if (nextEndpoint !== undefined) {
       // Why: reconnect is a follow-on side effect of a save that already
       // committed — its failure or a hang must not be reported as a save
       // failure or block navigating back.

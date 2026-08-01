@@ -541,6 +541,7 @@ describe('useHostClient', () => {
     loadHostsMock.mockResolvedValue([HOST])
 
     const harness = await renderHarness(HOST.id)
+    harness.primeHosts([HOST])
     const first = harness.forceReconnect(HOST.id)
     await act(async () => {
       await Promise.resolve()

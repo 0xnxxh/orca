@@ -20,6 +20,21 @@ export function getPublishedHostIdentity(
   return publishedIdentityByHost.get(hostId)
 }
 
+export function recordDurableHostIdentity(
+  host: Pick<HostProfile, 'id' | 'deviceToken' | 'publicKeyB64'>
+): void {
+  publishedIdentityByHost.set(host.id, {
+    deviceToken: host.deviceToken,
+    publicKeyB64: host.publicKeyB64
+  })
+}
+
+export function retireHostProfilePublication(hostId: string): void {
+  revisionByHost.set(hostId, getHostProfilePublicationRevision(hostId) + 1)
+  endpointGenerationByHost.set(hostId, (endpointGenerationByHost.get(hostId) ?? 0) + 1)
+  publishedIdentityByHost.delete(hostId)
+}
+
 export function beginHostEndpointPublicationLifecycle(
   hostId: string
 ): HostEndpointPublicationLifecycle {
@@ -65,9 +80,14 @@ export function publishHostProfileTransaction(
     await beforeHostSave?.()
     await saveHost(host)
     revisionByHost.set(host.id, getHostProfilePublicationRevision(host.id) + 1)
-    publishedIdentityByHost.set(host.id, {
-      deviceToken: host.deviceToken,
-      publicKeyB64: host.publicKeyB64
-    })
+    recordDurableHostIdentity(host)
   })
+}
+
+/** Test-only: reset publication state between module-level storage cases. */
+export function resetHostProfilePublicationForTests(): void {
+  pendingByHost.clear()
+  revisionByHost.clear()
+  endpointGenerationByHost.clear()
+  publishedIdentityByHost.clear()
 }

@@ -105,18 +105,18 @@ function requireCurrentPublication(
   host: HostProfile,
   endpointLifecycle: HostEndpointPublicationLifecycle
 ): void {
+  const publishedIdentity = getPublishedHostIdentity(host.id)
+  if (
+    publishedIdentity &&
+    (publishedIdentity.deviceToken !== host.deviceToken ||
+      publishedIdentity.publicKeyB64 !== host.publicKeyB64)
+  ) {
+    throw new MobileRelayUpgradeHostSupersededError('mobile relay upgrade host was re-paired')
+  }
   if (
     getHostProfilePublicationRevision(host.id) !== endpointLifecycle.profileRevision ||
     getHostEndpointPublicationLifecycle(host.id).generation !== endpointLifecycle.generation
   ) {
-    const publishedIdentity = getPublishedHostIdentity(host.id)
-    if (
-      publishedIdentity &&
-      (publishedIdentity.deviceToken !== host.deviceToken ||
-        publishedIdentity.publicKeyB64 !== host.publicKeyB64)
-    ) {
-      throw new MobileRelayUpgradeHostSupersededError('mobile relay upgrade host was re-paired')
-    }
     throw new MobileRelayUpgradeLifecycleRetiredError('mobile relay endpoint lifecycle was retired')
   }
 }

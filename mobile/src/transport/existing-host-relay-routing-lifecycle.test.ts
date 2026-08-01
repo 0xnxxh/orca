@@ -20,7 +20,10 @@ import {
 import {
   beginHostEndpointPublicationLifecycle,
   getHostProfilePublicationRevision,
-  publishHostProfileTransaction
+  publishHostProfileTransaction,
+  recordDurableHostIdentity,
+  resetHostProfilePublicationForTests,
+  serializeHostProfilePublication
 } from './host-profile-publication'
 
 const HOST: HostProfile = {
@@ -35,6 +38,8 @@ const HOST: HostProfile = {
 describe('existing host relay endpoint lifecycle publication', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetHostProfilePublicationForTests()
+    recordDurableHostIdentity(HOST)
     hostStoreMock.loadStoredHostIdentity.mockResolvedValue(HOST)
     tokenStoreMock.readHostDeviceToken.mockResolvedValue(HOST.deviceToken)
     overlayStoreMock.saveMobileRelayHostOverlay.mockResolvedValue(undefined)
@@ -157,6 +162,29 @@ describe('existing host relay endpoint lifecycle publication', () => {
     expect(overlayStoreMock.saveMobileRelayHostOverlay).not.toHaveBeenCalled()
   })
 
+  it('orders host removal after an in-flight publication', async () => {
+    let releasePublication: (() => void) | null = null
+    const events: string[] = []
+    const publication = serializeHostProfilePublication(HOST.id, async () => {
+      events.push('publication-started')
+      await new Promise<void>((resolve) => {
+        releasePublication = resolve
+      })
+      events.push('publication-finished')
+    })
+    await vi.waitFor(() => expect(events).toEqual(['publication-started']))
+
+    const removal = serializeHostProfilePublication(HOST.id, async () => {
+      events.push('removed')
+    })
+    await Promise.resolve()
+    expect(events).toEqual(['publication-started'])
+
+    releasePublication?.()
+    await Promise.all([publication, removal])
+    expect(events).toEqual(['publication-started', 'publication-finished', 'removed'])
+  })
+
   it('rejects an old credential write that starts during same-host re-pair publication', async () => {
     let releaseReplacement: (() => void) | null = null
     let markReplacementStarted: (() => void) | null = null
@@ -190,6 +218,34 @@ describe('existing host relay endpoint lifecycle publication', () => {
     releaseReplacement?.()
 
     await replacement
+    await expect(staleWrite).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
+    expect(writeBundle).not.toHaveBeenCalled()
+  })
+
+  it('rejects an old credential after a replacement token commits but publication fails', async () => {
+    let releaseOldMetadata: ((host: HostProfile | null) => void) | null = null
+    hostStoreMock.loadStoredHostIdentity.mockImplementationOnce(
+      () =>
+        new Promise<HostProfile | null>((resolve) => {
+          releaseOldMetadata = resolve
+        })
+    )
+    const writeBundle = vi.fn(async () => {})
+    const staleWrite = writeExistingHostRelayCredentialBundle(
+      HOST,
+      credentialBundle(1),
+      writeBundle
+    )
+    await vi.waitFor(() => expect(hostStoreMock.loadStoredHostIdentity).toHaveBeenCalledOnce())
+
+    const replacementHost = { ...HOST, deviceToken: 'token-2' }
+    const replacement = publishHostProfileTransaction(replacementHost, null, async () => {
+      recordDurableHostIdentity(replacementHost)
+      throw new Error('overlay write failed')
+    })
+    releaseOldMetadata?.(HOST)
+
+    await expect(replacement).rejects.toThrow('overlay write failed')
     await expect(staleWrite).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
     expect(writeBundle).not.toHaveBeenCalled()
   })

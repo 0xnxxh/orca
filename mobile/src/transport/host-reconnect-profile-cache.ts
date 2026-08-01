@@ -8,6 +8,7 @@ type CachedHostProfile = {
 
 export type HostOpenProfile = {
   host: HostProfile | undefined
+  sourceRevision: number
   version: number
 }
 
@@ -32,9 +33,28 @@ export class HostReconnectProfileCache {
     requestedHost?: HostProfile
   ): HostOpenProfile {
     return requestedHost
-      ? { host: requestedHost, version: this.prime(requestedHost, currentRevision) }
+      ? {
+          host: requestedHost,
+          sourceRevision: currentRevision,
+          version: this.prime(requestedHost, currentRevision)
+        }
       : {
           host: this.get(hostId, currentRevision),
+          sourceRevision: currentRevision,
+          version: this.version(hostId, currentRevision)
+        }
+  }
+
+  openProfile(
+    hostId: string,
+    currentRevision: number,
+    requested?: HostOpenProfile
+  ): HostOpenProfile {
+    return requested?.host
+      ? requested
+      : {
+          host: this.get(hostId, currentRevision),
+          sourceRevision: currentRevision,
           version: this.version(hostId, currentRevision)
         }
   }

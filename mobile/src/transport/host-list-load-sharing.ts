@@ -29,3 +29,8 @@ export function dropSharedHostListLoad(): void {
   revision += 1
   inflight = null
 }
+
+/** Stop offering a possibly stalled pass without invalidating durable snapshot revisions. */
+export function abandonSharedHostListLoad(): void {
+  inflight = null
+}

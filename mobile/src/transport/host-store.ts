@@ -22,7 +22,12 @@ import {
 import { deleteMobileRelayCredentialBundle } from './mobile-relay-credential-bundle'
 import { deleteMobileRelayDirectUpgradeJournal } from './mobile-relay-direct-upgrade-journal'
 import { scheduleOrphanedMobileRelayCleanup } from './mobile-relay-orphan-cleanup'
-import { serializeHostProfilePublication } from './host-profile-publication'
+import {
+  recordDurableHostIdentity,
+  resetHostProfilePublicationForTests,
+  retireHostProfilePublication,
+  serializeHostProfilePublication
+} from './host-profile-publication'
 import {
   deleteHostDeviceToken,
   readHostDeviceToken,
@@ -218,6 +223,8 @@ async function persistHost(host: HostProfile): Promise<void> {
   // Why: write metadata before the keychain token so a crash leaves recoverable orphaned metadata, not an orphaned token that persists forever.
   await writeHostDeviceToken(stored.id, validated.deviceToken)
   tokenCache.set(stored.id, validated.deviceToken)
+  // Why: a later overlay failure must not hide the already-committed credential identity.
+  recordDurableHostIdentity(validated)
   hostListLoads.dropSharedHostListLoad()
   if (validated.endpoints) {
     await saveMobileRelayHostOverlay({
@@ -249,20 +256,23 @@ async function persistHost(host: HostProfile): Promise<void> {
 }
 
 export async function removeHost(hostId: string): Promise<void> {
-  await mutateStoredHosts((hosts) => hosts.filter((h) => h.id !== hostId))
-  tokenCache.delete(hostId)
-  try {
-    await removeMobileRelayHostOverlay(hostId)
-    hostListLoads.dropSharedHostListLoad()
-  } catch {
-    // Base removal is authoritative; a retained overlay can't resurrect the host and is cleaned on a later retry.
-  }
-  // Why: keychain delete can stall/reject; await only the durable cleanup intent so removeHost can't freeze the UI.
-  try {
-    await scheduleHostCredentialCleanup(hostId, deleteHostCredentials)
-  } catch {
-    // Metadata is already committed; orphan-token recovery is best-effort.
-  }
+  await serializeHostProfilePublication(hostId, async () => {
+    await mutateStoredHosts((hosts) => hosts.filter((h) => h.id !== hostId))
+    tokenCache.delete(hostId)
+    retireHostProfilePublication(hostId)
+    try {
+      await removeMobileRelayHostOverlay(hostId)
+      hostListLoads.dropSharedHostListLoad()
+    } catch {
+      // Base removal is authoritative; a retained overlay can't resurrect the host and is cleaned on a later retry.
+    }
+    // Why: keychain delete can stall/reject; await only the durable cleanup intent so removeHost can't freeze the UI.
+    try {
+      await scheduleHostCredentialCleanup(hostId, deleteHostCredentials)
+    } catch {
+      // Metadata is already committed; orphan-token recovery is best-effort.
+    }
+  })
 }
 
 export async function retryPendingHostCredentialCleanup(): Promise<{
@@ -322,5 +332,6 @@ export function resetHostStoreForTests(): void {
   hostListMutation = Promise.resolve()
   tokenCache.clear()
   hostListLoads.dropSharedHostListLoad()
+  resetHostProfilePublicationForTests()
   resetPairingKeychainForTests()
 }

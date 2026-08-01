@@ -255,6 +255,21 @@ describe('edit host handleSave', () => {
     act(() => renderer.unmount())
   })
 
+  it('retires the old endpoint client when post-save profile loading fails', async () => {
+    dependencies.loadHosts
+      .mockResolvedValueOnce([HOST_FIXTURE])
+      .mockRejectedValueOnce(new Error('keychain locked'))
+    const renderer = await renderEditHostRoute()
+    setFieldValue(renderer, 'Address', '192.168.1.20:6768')
+    await pressSave(renderer)
+
+    expect(dependencies.primeHosts).not.toHaveBeenCalled()
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
+    expect(dependencies.back).toHaveBeenCalledTimes(1)
+
+    act(() => renderer.unmount())
+  })
+
   it('still navigates back and alerts when the post-save reconnect rejects', async () => {
     const savedHost = { ...HOST_FIXTURE, endpoint: 'ws://192.168.1.20:6768' }
     dependencies.loadHosts.mockResolvedValueOnce([HOST_FIXTURE]).mockResolvedValueOnce([savedHost])

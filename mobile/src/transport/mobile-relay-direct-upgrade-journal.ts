@@ -81,6 +81,15 @@ export function deleteMobileRelayDirectUpgradeJournalIfCurrent(
   return deletePairingKeychainItemIfMatches(journalKey(parsed.hostId), JSON.stringify(parsed))
 }
 
+export async function retireMobileRelayDirectUpgradeJournalForRelayHost(
+  hostId: string
+): Promise<void> {
+  const journal = await readMobileRelayDirectUpgradeJournal(hostId)
+  if (journal) {
+    await deleteMobileRelayDirectUpgradeJournalIfCurrent(journal)
+  }
+}
+
 function encodeBase64Url(value: Uint8Array): string {
   let binary = ''
   for (const byte of value) {

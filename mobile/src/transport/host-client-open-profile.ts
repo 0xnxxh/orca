@@ -1,6 +1,6 @@
 import type { HostClientOpenTicket, HostClientOpenRegistry } from './host-client-open-registry'
 import type { HostReconnectProfileCache } from './host-reconnect-profile-cache'
-import { dropSharedHostListLoad, getHostListLoadRevision } from './host-list-load-sharing'
+import { abandonSharedHostListLoad, getHostListLoadRevision } from './host-list-load-sharing'
 import type { HostProfile } from './types'
 
 type HostClientOpenProfileOptions = {
@@ -16,12 +16,12 @@ export function cancelHostClientOpenProfile(
   hostId: string
 ): void {
   registry.cancel(hostId)
-  dropSharedHostListLoad()
+  abandonSharedHostListLoad()
 }
 
 export async function loadHostClientOpenProfile(
   options: HostClientOpenProfileOptions
-): Promise<{ host: HostProfile; version: number } | null> {
+): Promise<{ host: HostProfile; sourceRevision: number; version: number } | null> {
   const { hostId, cache, ticket } = options
   while (!ticket.cancelled) {
     const sourceRevision = getHostListLoadRevision()
@@ -47,6 +47,7 @@ export async function loadHostClientOpenProfile(
     }
     return {
       host: cache.get(hostId, currentRevision) ?? loadedHost,
+      sourceRevision: currentRevision,
       version: cache.version(hostId, currentRevision)
     }
   }

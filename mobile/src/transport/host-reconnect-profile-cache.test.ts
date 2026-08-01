@@ -44,6 +44,7 @@ describe('HostReconnectProfileCache', () => {
 
     expect(cache.reconnectProfile(HOST.id, 5)).toEqual({
       host: undefined,
+      sourceRevision: 5,
       version: cachedVersion + 1
     })
   })
