@@ -80,4 +80,19 @@ describe('HostReconnectProfileCache', () => {
 
     expect(cache.get(HOST.id, 5)).toEqual(relayHost)
   })
+
+  it('keeps an explicit endpoint edit ahead of its retired lifecycle publisher', () => {
+    const cache = new HostReconnectProfileCache()
+    const initialVersion = cache.prime(HOST, 4)
+    const publish = cache.publisher(HOST.id, initialVersion, () => 4)
+    const editedHost = { ...HOST, endpoint: 'ws://127.0.0.1:2' }
+
+    cache.reconnectProfile(HOST.id, 4, editedHost)
+    publish({
+      ...HOST,
+      endpoints: [{ id: 'direct-primary', kind: 'lan', url: HOST.endpoint }]
+    })
+
+    expect(cache.get(HOST.id, 4)).toEqual(editedHost)
+  })
 })

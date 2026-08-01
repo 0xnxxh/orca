@@ -17,7 +17,10 @@ import { colors, radii, spacing, typography } from '../../../src/theme/mobile-th
 import { loadHosts, updateHostNameAndEndpoint } from '../../../src/transport/host-store'
 import { getHostListLoadRevision } from '../../../src/transport/host-list-load-sharing'
 import { displayHostEndpoint } from '../../../src/transport/host-endpoint'
-import { resolveHostEndpointEdit } from '../../../src/transport/host-endpoint-edit'
+import {
+  hostProfileAfterEdit,
+  resolveHostEndpointEdit
+} from '../../../src/transport/host-endpoint-edit'
 import { useForceReconnect, usePrimeHosts } from '../../../src/transport/client-context'
 import { showForceReconnectError } from '../../../src/transport/force-reconnect-feedback'
 import type { HostProfile } from '../../../src/transport/types'
@@ -106,6 +109,7 @@ export default function EditHostScreen() {
       ...(willRename ? { name: nextName } : {}),
       ...(nextEndpoint !== undefined ? { endpoint: nextEndpoint } : {})
     }
+    let reconnectProfile = hostProfileAfterEdit(host, updates)
     savingRef.current = true
     setSaving(true)
     setSaveError(null)
@@ -131,11 +135,13 @@ export default function EditHostScreen() {
         if (hostLoadRevision !== getHostListLoadRevision()) {
           continue
         }
-        if (!hosts.some(({ id }) => id === host.id)) {
+        const loadedHost = hosts.find(({ id }) => id === host.id)
+        if (!loadedHost) {
           break
         }
         primeHosts(hosts, hostLoadRevision)
         if (hostLoadRevision === getHostListLoadRevision()) {
+          reconnectProfile = loadedHost
           break
         }
       }
@@ -151,7 +157,7 @@ export default function EditHostScreen() {
       // Why: reconnect is a follow-on side effect of a save that already
       // committed — its failure or a hang must not be reported as a save
       // failure or block navigating back.
-      void forceReconnectHost(host.id).catch(showForceReconnectError)
+      void forceReconnectHost(host.id, reconnectProfile).catch(showForceReconnectError)
     }
   }
 

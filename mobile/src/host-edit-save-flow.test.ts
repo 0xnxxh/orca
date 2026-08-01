@@ -187,7 +187,7 @@ describe('edit host handleSave', () => {
       endpoint: 'ws://192.168.1.20:6768'
     })
     expect(dependencies.primeHosts).toHaveBeenCalledWith([savedHost], 0)
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', savedHost)
     expect(dependencies.back).toHaveBeenCalledTimes(1)
 
     act(() => renderer.unmount())
@@ -211,7 +211,7 @@ describe('edit host handleSave', () => {
       endpoint: 'ws://192.168.1.20:6768'
     })
     expect(dependencies.primeHosts).toHaveBeenCalledWith([savedHost], 0)
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', savedHost)
     expect(dependencies.back).toHaveBeenCalledTimes(1)
 
     act(() => renderer.unmount())
@@ -264,7 +264,10 @@ describe('edit host handleSave', () => {
     await pressSave(renderer)
 
     expect(dependencies.primeHosts).not.toHaveBeenCalled()
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', {
+      ...HOST_FIXTURE,
+      endpoint: 'ws://192.168.1.20:6768'
+    })
     expect(dependencies.back).toHaveBeenCalledTimes(1)
 
     act(() => renderer.unmount())
@@ -282,7 +285,7 @@ describe('edit host handleSave', () => {
       await Promise.resolve()
     })
 
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', savedHost)
     expect(dependencies.back).toHaveBeenCalledTimes(1)
     expect(dependencies.alert).toHaveBeenCalledWith('Unable to reconnect', 'connect failed')
 
@@ -304,7 +307,7 @@ describe('edit host handleSave', () => {
     await pressSave(renderer)
 
     expect(dependencies.primeHosts).toHaveBeenCalledWith([relayHost], 0)
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', relayHost)
 
     act(() => renderer.unmount())
   })
@@ -325,7 +328,7 @@ describe('edit host handleSave', () => {
     await pressSave(renderer)
 
     expect(dependencies.primeHosts).toHaveBeenCalledWith([editedHost], 2)
-    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1')
+    expect(dependencies.forceReconnectHost).toHaveBeenCalledWith('host-1', editedHost)
 
     act(() => renderer.unmount())
   })
