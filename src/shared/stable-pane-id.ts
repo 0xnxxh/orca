@@ -1,4 +1,4 @@
-import { normalizeRuntimePathForComparison } from './cross-platform-path'
+import { isWindowsAbsolutePathLike, normalizeRuntimePathSeparators } from './cross-platform-path'
 import { parseWorkspaceKey } from './workspace-scope'
 import { splitWorktreeId } from './worktree-id'
 
@@ -37,22 +37,32 @@ export function makePaneKey(tabId: string, stableLeafId: string): PaneKey {
   return `${tabId}:${stableLeafId}` as PaneKey
 }
 
+function canonicalPaneReservationWorkspacePath(worktreePath: string): string {
+  // Why: POSIX and SSH paths can be byte-sensitive; fold only syntactically proven Windows paths.
+  if (!isWindowsAbsolutePathLike(worktreePath)) {
+    return worktreePath
+  }
+  const normalized = normalizeRuntimePathSeparators(worktreePath)
+  const trimmed = /^[A-Za-z]:\/$/.test(normalized) ? normalized : normalized.replace(/\/+$/, '')
+  const wslUnc = trimmed.match(/^\/\/(?:wsl\.localhost|wsl\$)\/([^/]+)(\/[\s\S]*)?$/i)
+  return wslUnc ? `//wsl/${wslUnc[1].toLowerCase()}${wslUnc[2] ?? ''}` : trimmed.toLowerCase()
+}
+
 function canonicalWorkspaceIdentity(workspaceId: string): readonly string[] | null {
-  const trimmed = workspaceId.trim()
-  if (!trimmed || trimmed.length > 1024) {
+  if (!workspaceId.trim() || workspaceId.length > 1024) {
     return null
   }
-  const scope = parseWorkspaceKey(trimmed)
+  const scope = parseWorkspaceKey(workspaceId)
   const kind = scope?.type ?? 'worktree'
   const unscopedId =
     scope?.type === 'worktree'
       ? scope.worktreeId
       : scope?.type === 'folder'
         ? scope.folderWorkspaceId
-        : trimmed
+        : workspaceId
   const parsed = splitWorktreeId(unscopedId)
   return parsed
-    ? [kind, parsed.repoId, normalizeRuntimePathForComparison(parsed.worktreePath)]
+    ? [kind, parsed.repoId, canonicalPaneReservationWorkspacePath(parsed.worktreePath)]
     : [kind, unscopedId]
 }
 
