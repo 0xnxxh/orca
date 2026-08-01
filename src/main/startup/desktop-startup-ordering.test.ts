@@ -266,6 +266,29 @@ describe('startup ordering', () => {
     expect(source).toContain('function turnOffGpuFallback()')
   })
 
+  // Why source-level: the listener is a closure inside the async init body, so the
+  // only alternative is booting Electron behind a fake `app`.
+  it('counts a GPU death whose breadcrumb was suppressed', () => {
+    const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const start = source.indexOf("app.on('child-process-gone'")
+    const end = source.indexOf("logStartupMilestone('services-initialized')", start)
+    const listener = source.slice(start, end)
+
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(end).toBeGreaterThan(start)
+
+    // Why siblings: `recordProcessGoneCrash` drops repeats on a 30s key, and that
+    // suppression is a `return` inside the recorder. Nesting the GPU handler under it
+    // — or making the recorder's result gate it — would hand the durable counter the
+    // deduped stream, and a crash loop repeats the same reason by definition.
+    expect(listener).toContain("recordProcessGoneCrash('child'")
+    expect(listener).toContain('    })\n    if (\n      isGpuFallbackCrashCandidate({')
+    const guardIndex = listener.indexOf('isGpuFallbackCrashCandidate({')
+    const handlerIndex = listener.indexOf('void handleGpuChildCrash(')
+    expect(guardIndex).toBeGreaterThan(listener.indexOf("recordProcessGoneCrash('child'"))
+    expect(handlerIndex).toBeGreaterThan(guardIndex)
+  })
+
   it('gives a latched user a way out that does not come straight back', () => {
     const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
     const start = source.indexOf('function turnOffGpuFallback()')

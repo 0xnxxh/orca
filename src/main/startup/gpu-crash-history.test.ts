@@ -10,7 +10,10 @@ import {
 import os from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD } from '../crash-reporting/gpu-crash-fallback-decision'
+import {
+  DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD,
+  countsTowardDurableGpuCrashHistory
+} from '../crash-reporting/gpu-crash-fallback-decision'
 import {
   DEFAULT_GPU_CRASH_DURABLE_WINDOW_MS,
   GPU_CRASH_HISTORY_FILE,
@@ -199,6 +202,26 @@ describe('gpu-crash-history file', () => {
     persistGpuCrashTimes(userDataPath, env, decision.crashTimes)
     return decision
   }
+  /**
+   * The same sequence with handleGpuChildCrash's reason gate in front of it, so a
+   * reason excluded from the durable history evaluates inert and writes nothing.
+   * Mirrors index.ts; `desktop-startup-ordering` is what holds index.ts to this shape.
+   */
+  const recordForReason = (reason: string, now: number) => {
+    const countsDurably = countsTowardDurableGpuCrashHistory(reason)
+    const decision = countsDurably
+      ? evaluateGpuCrashHistory(userDataPath, environment, {
+          now,
+          windowMs: WINDOW,
+          threshold: THRESHOLD
+        })
+      : inertGpuCrashHistoryDecision()
+    if (countsDurably) {
+      persistGpuCrashTimes(userDataPath, environment, decision.crashTimes)
+    }
+    return decision
+  }
+
   beforeEach(() => {
     userDataPath = mkdtempSync(join(os.tmpdir(), 'orca-gpu-crash-history-test-'))
   })
@@ -246,6 +269,20 @@ describe('gpu-crash-history file', () => {
     persistGpuCrashTimes(userDataPath, environment, inertGpuCrashHistoryDecision().crashTimes)
 
     expect(readGpuCrashHistory(userDataPath, environment)).toEqual([])
+  })
+
+  it('keeps the accumulated count when an excluded reason lands mid-sequence', () => {
+    // Why mixed reasons: every other durable test drives one reason, so none composes
+    // the gate with the count and the erasure above stays hypothetical. This is the
+    // real sequence — two `crashed` deaths, then a `launch-failed` that must be ignored
+    // rather than persisted over them, then the third `crashed` that still fires.
+    expect(recordForReason('crashed', NOW).crossesThreshold).toBe(false)
+    expect(recordForReason('crashed', NOW + 20_000).crossesThreshold).toBe(false)
+
+    expect(recordForReason('launch-failed', NOW + 25_000).crashesInWindow).toBe(0)
+
+    expect(readGpuCrashHistory(userDataPath, environment)).toEqual([NOW, NOW + 20_000])
+    expect(recordForReason('crashed', NOW + 41_000).crossesThreshold).toBe(true)
   })
 
   it('round-trips the persisted times', () => {
