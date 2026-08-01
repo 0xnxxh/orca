@@ -5,10 +5,10 @@ import {
   directReturnFunctionName,
   isAssignedToRenderedVariable,
   isRenderedJsxExpression,
-  isReturnedByRenderedFunction
+  isReturnedByRenderedFunction,
+  renderedVariableAssignmentStatus
 } from './mobile-localization-rendered-variable.mjs'
-
-const NOTIFICATION_CHANNEL_NAME_NODES = new WeakMap()
+import { isNotificationChannelName } from './mobile-localization-notification-channel.mjs'
 
 const USER_VISIBLE_JSX_ATTRIBUTES = new Set([
   'ariaLabel',
@@ -390,78 +390,6 @@ function isUserVisibleErrorArgument(node, userVisibleErrorSource) {
   )
 }
 
-function resolveBoundInitializer(node, bindings, seen = new Set()) {
-  if (
-    ts.isParenthesizedExpression(node) ||
-    ts.isAsExpression(node) ||
-    ts.isSatisfiesExpression(node)
-  ) {
-    return resolveBoundInitializer(node.expression, bindings, seen)
-  }
-  if (!bindings || !ts.isIdentifier(node)) {
-    return node
-  }
-  const binding = bindings.resolveBinding(node)
-  if (!binding || seen.has(binding) || !ts.isVariableDeclaration(binding) || !binding.initializer) {
-    return node
-  }
-  seen.add(binding)
-  return resolveBoundInitializer(binding.initializer, bindings, seen)
-}
-
-function objectPropertyValues(node, propertyName, bindings, seen = new Set()) {
-  const expression = resolveBoundInitializer(node, bindings, seen)
-  if (!ts.isObjectLiteralExpression(expression)) {
-    return []
-  }
-  return expression.properties.flatMap((property) => {
-    if (ts.isPropertyAssignment(property) && propertyNameText(property.name) === propertyName) {
-      return [property.initializer]
-    }
-    if (ts.isShorthandPropertyAssignment(property) && property.name.text === propertyName) {
-      return [property.name]
-    }
-    return ts.isSpreadAssignment(property)
-      ? objectPropertyValues(property.expression, propertyName, bindings, new Set(seen))
-      : []
-  })
-}
-
-function collectBoundStringNodes(expression, bindings, nodes, seen = new Set()) {
-  const resolved = resolveBoundInitializer(expression, bindings, seen)
-  if (ts.isStringLiteralLike(resolved) || ts.isTemplateExpression(resolved)) {
-    nodes.add(resolved)
-    return
-  }
-  ts.forEachChild(resolved, (child) =>
-    collectBoundStringNodes(child, bindings, nodes, new Set(seen))
-  )
-}
-
-function isNotificationChannelName(node, bindings) {
-  const sourceFile = node.getSourceFile()
-  const cached = NOTIFICATION_CHANNEL_NAME_NODES.get(sourceFile)
-  if (cached) {
-    return cached.has(node)
-  }
-  const nodes = new Set()
-  function visit(current) {
-    if (
-      ts.isCallExpression(current) &&
-      current.arguments[1] &&
-      expressionNameText(current.expression)?.endsWith('setNotificationChannelAsync')
-    ) {
-      for (const value of objectPropertyValues(current.arguments[1], 'name', bindings)) {
-        collectBoundStringNodes(value, bindings, nodes)
-      }
-    }
-    ts.forEachChild(current, visit)
-  }
-  visit(sourceFile)
-  NOTIFICATION_CHANNEL_NAME_NODES.set(sourceFile, nodes)
-  return nodes.has(node)
-}
-
 function isRenderedMobileExpression(expression) {
   return isRenderedJsxExpression(expression) || isAssignedToRenderedVariable(expression)
 }
@@ -514,27 +442,29 @@ export function classifyMobileStringNode(node, userVisibleErrorSource, bindings)
   if (hasAncestorObjectPropertyName(node, new Set(['className', 'classNames']))) {
     return undefined
   }
-  if (
-    isAssignedToRenderedVariable(node, (expression) => {
-      if (isRenderedJsxExpression(expression)) {
-        return true
-      }
-      const attributeName = ancestorJsxAttributeName(expression)
-      return Boolean(
-        attributeName &&
-        (USER_VISIBLE_JSX_ATTRIBUTES.has(attributeName) ||
-          MOBILE_USER_VISIBLE_JSX_ATTRIBUTES.has(attributeName) ||
-          MOBILE_USER_VISIBLE_PROPERTY_SUFFIX_RE.test(attributeName))
-      )
-    })
-  ) {
+  const renderedVariableStatus = renderedVariableAssignmentStatus(node, (expression) => {
+    if (isRenderedJsxExpression(expression)) {
+      return true
+    }
+    const attributeName = ancestorJsxAttributeName(expression)
+    return Boolean(
+      attributeName &&
+      (USER_VISIBLE_JSX_ATTRIBUTES.has(attributeName) ||
+        MOBILE_USER_VISIBLE_JSX_ATTRIBUTES.has(attributeName) ||
+        MOBILE_USER_VISIBLE_PROPERTY_SUFFIX_RE.test(attributeName))
+    )
+  })
+  if (renderedVariableStatus === 'reaching') {
     return 'rendered-variable'
   }
-  if (isComparisonOperand(node)) {
+  if (renderedVariableStatus === 'dead') {
     return undefined
   }
   if (isNotificationChannelName(node, bindings)) {
     return 'notification-channel-name'
+  }
+  if (isComparisonOperand(node)) {
+    return undefined
   }
 
   const jsxAttributeName = isJsxAttributeValue(node)
@@ -555,6 +485,11 @@ export function classifyMobileStringNode(node, userVisibleErrorSource, bindings)
   }
   if (ts.isJsxText(node)) {
     return 'jsx-text'
+  }
+
+  const returnFunctionName = directReturnFunctionName(node)
+  if (isReturnedByRenderedFunction(node, isRenderedMobileExpression)) {
+    return 'rendered-function-return'
   }
 
   const objectPropertyName = nearestObjectPropertyName(node)
@@ -598,16 +533,12 @@ export function classifyMobileStringNode(node, userVisibleErrorSource, bindings)
   if (isUserVisibleVariableValue(node)) {
     return 'user-visible-variable'
   }
-  const returnFunctionName = directReturnFunctionName(node)
   if (
     returnFunctionName &&
     (USER_VISIBLE_RETURN_FUNCTIONS.has(returnFunctionName) ||
       USER_VISIBLE_VARIABLE_SUFFIX_RE.test(returnFunctionName))
   ) {
     return 'user-visible-return'
-  }
-  if (returnFunctionName && isReturnedByRenderedFunction(node, isRenderedMobileExpression)) {
-    return 'rendered-function-return'
   }
   if (isUserVisibleErrorArgument(node, userVisibleErrorSource)) {
     return 'user-visible-error'

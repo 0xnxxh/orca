@@ -2,133 +2,244 @@
 import ts from 'typescript-api'
 
 import { collectSourceBindings } from './mobile-localization-source-bindings.mjs'
+import { createMobileLocalizationValueFlow } from './mobile-localization-value-flow.mjs'
 
 const MOBILE_I18N_MODULE_RE = /(?:^|\/)mobile-i18n$/
+const TRANSLATOR_PREFIX = 'translator:'
 
-function unwrapAliasExpression(node) {
-  if (
-    ts.isParenthesizedExpression(node) ||
-    ts.isAsExpression(node) ||
-    ts.isSatisfiesExpression(node)
-  ) {
-    return unwrapAliasExpression(node.expression)
+function emptyResolution(unknown = false) {
+  return { descriptors: new Set(), unknown }
+}
+
+function mergeResolutions(resolutions) {
+  const merged = emptyResolution()
+  for (const resolution of resolutions) {
+    resolution.descriptors.forEach((descriptor) => merged.descriptors.add(descriptor))
+    merged.unknown ||= resolution.unknown
   }
-  return node
+  return merged
 }
 
-function resolvesTo(identifier, bindings) {
-  return bindings.resolveBinding(identifier)
-}
-
-function isMobileI18nNamespace(node, bindings) {
-  return ts.isIdentifier(node) && bindings.namespaceBindings.has(resolvesTo(node, bindings))
-}
-
-function isNamespaceMember(node, memberName, bindings) {
-  return (
-    ts.isPropertyAccessExpression(node) &&
-    node.name.text === memberName &&
-    isMobileI18nNamespace(node.expression, bindings)
-  )
-}
-
-function isMobileI18nInstance(node, bindings) {
-  if (ts.isIdentifier(node)) {
-    return bindings.instanceBindings.has(resolvesTo(node, bindings))
-  }
-  return isNamespaceMember(node, 'mobileI18n', bindings)
-}
-
-function isFixedTranslatorFactory(node, bindings) {
-  if (ts.isIdentifier(node)) {
-    return bindings.fixedFactoryBindings.has(resolvesTo(node, bindings))
-  }
-  return (
-    ts.isPropertyAccessExpression(node) &&
-    node.name.text === 'getFixedT' &&
-    isMobileI18nInstance(node.expression, bindings)
-  )
-}
-
-function isEnglishFixedTranslator(node, bindings) {
-  return (
-    ts.isCallExpression(node) &&
-    isFixedTranslatorFactory(node.expression, bindings) &&
-    node.arguments.length === 1 &&
-    ts.isStringLiteralLike(node.arguments[0]) &&
-    node.arguments[0].text === 'en'
-  )
-}
-
-function isTranslatorFactory(node, bindings) {
-  if (ts.isIdentifier(node)) {
-    return bindings.factoryBindings.has(resolvesTo(node, bindings))
-  }
-  return isNamespaceMember(node, 'createMobileTranslator', bindings)
-}
-
-function mobileTranslatorPrefix(node, bindings) {
-  if (
-    !ts.isCallExpression(node) ||
-    !isTranslatorFactory(node.expression, bindings) ||
-    node.arguments.length !== 1 ||
-    !ts.isStringLiteralLike(node.arguments[0])
-  ) {
-    return undefined
-  }
-  return node.arguments[0].text
-}
-
-function directTranslatorPrefix(callee, bindings) {
-  if (ts.isIdentifier(callee)) {
-    const binding = resolvesTo(callee, bindings)
-    if (bindings.translatorBindings.has(binding) || bindings.fixedTranslatorBindings.has(binding)) {
-      return ''
-    }
-    return bindings.prefixedTranslatorBindings.get(binding)
-  }
-  if (isNamespaceMember(callee, 't', bindings)) {
-    return ''
+function memberParts(node) {
+  if (ts.isPropertyAccessExpression(node)) {
+    return { object: node.expression, propertyName: node.name.text }
   }
   if (
-    ts.isPropertyAccessExpression(callee) &&
-    callee.name.text === 't' &&
-    isMobileI18nInstance(callee.expression, bindings)
+    ts.isElementAccessExpression(node) &&
+    node.argumentExpression &&
+    ts.isStringLiteralLike(node.argumentExpression)
   ) {
-    return ''
+    return { object: node.expression, propertyName: node.argumentExpression.text }
   }
   return undefined
 }
 
+function builtInMemberResolution(base, propertyName) {
+  const resolutions = []
+  for (const descriptor of base.descriptors) {
+    if (descriptor === 'namespace') {
+      const member = {
+        createMobileTranslator: 'factory',
+        mobileI18n: 'instance',
+        t: `${TRANSLATOR_PREFIX}`
+      }[propertyName]
+      resolutions.push(
+        member ? { descriptors: new Set([member]), unknown: false } : emptyResolution(true)
+      )
+    } else if (descriptor === 'instance') {
+      const member = {
+        getFixedT: 'fixed-factory',
+        t: `${TRANSLATOR_PREFIX}`
+      }[propertyName]
+      resolutions.push(
+        member ? { descriptors: new Set([member]), unknown: false } : emptyResolution(true)
+      )
+    } else {
+      resolutions.push(emptyResolution(true))
+    }
+  }
+  if (base.unknown) {
+    resolutions.push(emptyResolution(true))
+  }
+  return mergeResolutions(resolutions)
+}
+
+function propertyResolution(object, propertyName, use, bindings, mode, seen) {
+  const propertyValues = bindings.valueFlow.propertyValues(object, propertyName, use)
+  if (propertyValues?.length) {
+    return mergeResolutions(
+      propertyValues.map((value) => expressionResolution(value, use, bindings, mode, seen))
+    )
+  }
+  const base = expressionResolution(object, use, bindings, mode, seen)
+  return builtInMemberResolution(base, propertyName)
+}
+
+function expressionResolution(node, use, bindings, mode, seen = new Set()) {
+  const expression = bindings.valueFlow.unwrapExpression(node)
+  if (ts.isIdentifier(expression)) {
+    const binding = bindings.resolveBinding(expression)
+    const immutableDescriptor = binding ? bindings.immutableDescriptors?.get(binding) : undefined
+    if (immutableDescriptor) {
+      return { descriptors: new Set([immutableDescriptor]), unknown: false }
+    }
+    if (!binding || seen.has(binding)) {
+      return emptyResolution(true)
+    }
+    const nextSeen = new Set(seen).add(binding)
+    const sources = bindings.valueFlow.valueSources(expression, use, mode === 'all')
+    if (sources.length === 0) {
+      return emptyResolution(true)
+    }
+    return mergeResolutions(
+      sources.map((source) =>
+        source.propertyName
+          ? propertyResolution(
+              source.expression,
+              source.propertyName,
+              use,
+              bindings,
+              mode,
+              nextSeen
+            )
+          : expressionResolution(source.expression, use, bindings, mode, nextSeen)
+      )
+    )
+  }
+
+  const member = memberParts(expression)
+  if (member) {
+    return propertyResolution(member.object, member.propertyName, use, bindings, mode, seen)
+  }
+
+  if (ts.isCallExpression(expression)) {
+    const callee = expressionResolution(expression.expression, expression, bindings, mode, seen)
+    const resolutions = []
+    for (const descriptor of callee.descriptors) {
+      if (
+        descriptor === 'factory' &&
+        expression.arguments.length === 1 &&
+        ts.isStringLiteralLike(expression.arguments[0])
+      ) {
+        resolutions.push({
+          descriptors: new Set([`${TRANSLATOR_PREFIX}${expression.arguments[0].text}`]),
+          unknown: false
+        })
+      } else if (
+        descriptor === 'fixed-factory' &&
+        expression.arguments.length === 1 &&
+        ts.isStringLiteralLike(expression.arguments[0]) &&
+        expression.arguments[0].text === 'en'
+      ) {
+        resolutions.push({ descriptors: new Set([TRANSLATOR_PREFIX]), unknown: false })
+      } else {
+        resolutions.push(emptyResolution(true))
+      }
+    }
+    if (callee.unknown) {
+      resolutions.push(emptyResolution(true))
+    }
+    return mergeResolutions(resolutions)
+  }
+
+  return emptyResolution(true)
+}
+
+function translationPrefix(node, use, bindings, mode = 'reaching') {
+  const resolution = expressionResolution(node, use, bindings, mode)
+  const prefixes = [...resolution.descriptors]
+    .filter((descriptor) => descriptor.startsWith(TRANSLATOR_PREFIX))
+    .map((descriptor) => descriptor.slice(TRANSLATOR_PREFIX.length))
+  if (
+    resolution.unknown ||
+    prefixes.length === 0 ||
+    prefixes.length !== resolution.descriptors.size ||
+    new Set(prefixes).size !== 1
+  ) {
+    return undefined
+  }
+  return prefixes[0]
+}
+
+function collectImmutableDescriptors(valueFlow, rootDescriptors, resolveBinding) {
+  const descriptors = new Map(rootDescriptors)
+  const dependents = new Map()
+  for (const [binding, writes] of valueFlow.bindingWrites()) {
+    if (!valueFlow.isImmutableBinding(binding) || writes.length !== 1 || writes[0].propertyName) {
+      continue
+    }
+    const source = valueFlow.unwrapExpression(writes[0].expression)
+    if (!ts.isIdentifier(source)) {
+      continue
+    }
+    const sourceBinding = resolveBinding(source)
+    if (!sourceBinding) {
+      continue
+    }
+    const entries = dependents.get(sourceBinding) ?? []
+    entries.push(binding)
+    dependents.set(sourceBinding, entries)
+  }
+  const queue = [...descriptors.keys()]
+  for (let index = 0; index < queue.length; index += 1) {
+    const source = queue[index]
+    const descriptor = descriptors.get(source)
+    for (const target of dependents.get(source) ?? []) {
+      if (!descriptors.has(target)) {
+        descriptors.set(target, descriptor)
+        queue.push(target)
+      }
+    }
+  }
+  return descriptors
+}
+
+function bindingName(binding) {
+  return binding.name && ts.isIdentifier(binding.name) ? binding.name.text : undefined
+}
+
+function collectPotentialBindingNames(bindings) {
+  for (const [binding, writes] of bindings.valueFlow.bindingWrites()) {
+    const name = bindingName(binding)
+    if (!name) {
+      continue
+    }
+    const resolution = mergeResolutions(
+      writes.map((write) =>
+        write.propertyName
+          ? propertyResolution(
+              write.expression,
+              write.propertyName,
+              write.node,
+              bindings,
+              'all',
+              new Set([binding])
+            )
+          : expressionResolution(write.expression, write.node, bindings, 'all', new Set([binding]))
+      )
+    )
+    if ([...resolution.descriptors].some((value) => value.startsWith(TRANSLATOR_PREFIX))) {
+      bindings.translatorNames.add(name)
+    }
+    if (resolution.descriptors.has('namespace')) {
+      bindings.namespaceNames.add(name)
+    }
+    if (resolution.descriptors.has('instance')) {
+      bindings.instanceNames.add(name)
+    }
+  }
+}
+
 export function collectMobileTranslationBindings(sourceFile) {
   const sourceBindings = collectSourceBindings(sourceFile)
+  const rootDescriptors = new Map()
   const translatorBindings = new Set()
   const factoryBindings = new Set()
-  const fixedFactoryBindings = new Set()
   const instanceBindings = new Set()
   const namespaceBindings = new Set()
-  const fixedTranslatorBindings = new Set()
-  const prefixedTranslatorBindings = new Map()
   const translatorNames = new Set()
-  const fixedTranslatorNames = new Set()
   const instanceNames = new Set()
   const namespaceNames = new Set()
-  const prefixedTranslatorNames = new Map()
-  const bindings = {
-    factoryBindings,
-    fixedFactoryBindings,
-    fixedTranslatorBindings,
-    fixedTranslatorNames,
-    instanceBindings,
-    instanceNames,
-    namespaceBindings,
-    namespaceNames,
-    prefixedTranslatorBindings,
-    prefixedTranslatorNames,
-    resolveBinding: sourceBindings.resolveBinding,
-    translatorBindings,
-    translatorNames
-  }
 
   for (const statement of sourceFile.statements) {
     if (
@@ -140,6 +251,7 @@ export function collectMobileTranslationBindings(sourceFile) {
     }
     const namedBindings = statement.importClause?.namedBindings
     if (namedBindings && ts.isNamespaceImport(namedBindings)) {
+      rootDescriptors.set(namedBindings, 'namespace')
       namespaceBindings.add(namedBindings)
       namespaceNames.add(namedBindings.name.text)
       continue
@@ -150,167 +262,55 @@ export function collectMobileTranslationBindings(sourceFile) {
     for (const element of namedBindings.elements) {
       const importedName = element.propertyName?.text ?? element.name.text
       if (importedName === 't') {
+        rootDescriptors.set(element, TRANSLATOR_PREFIX)
         translatorBindings.add(element)
         translatorNames.add(element.name.text)
       } else if (importedName === 'createMobileTranslator') {
+        rootDescriptors.set(element, 'factory')
         factoryBindings.add(element)
       } else if (importedName === 'mobileI18n') {
+        rootDescriptors.set(element, 'instance')
         instanceBindings.add(element)
         instanceNames.add(element.name.text)
       }
     }
   }
 
-  function addBinding(identifier, bindingSet, nameSet) {
-    const binding = bindings.resolveBinding(identifier)
-    if (!binding) {
-      return false
-    }
-    const changed = !bindingSet.has(binding)
-    bindingSet.add(binding)
-    nameSet?.add(identifier.text)
-    return changed
+  const bindings = {
+    factoryBindings,
+    fixedFactoryBindings: new Set(),
+    fixedTranslatorBindings: new Set(),
+    fixedTranslatorNames: new Set(),
+    instanceBindings,
+    instanceNames,
+    namespaceBindings,
+    namespaceNames,
+    prefixedTranslatorBindings: new Map(),
+    prefixedTranslatorNames: new Map(),
+    resolveBinding: sourceBindings.resolveBinding,
+    rootDescriptors,
+    translatorBindings,
+    translatorNames
   }
-
-  function destructuredTargets(name) {
-    const expression = unwrapAliasExpression(name)
-    if (ts.isObjectBindingPattern(expression)) {
-      return expression.elements.flatMap((element) => {
-        if (!ts.isIdentifier(element.name) || element.dotDotDotToken) {
-          return []
-        }
-        const propertyName = element.propertyName ?? element.name
-        return ts.isIdentifier(propertyName) || ts.isStringLiteralLike(propertyName)
-          ? [{ propertyName: propertyName.text, target: element.name }]
-          : []
-      })
-    }
-    if (!ts.isObjectLiteralExpression(expression)) {
-      return []
-    }
-    return expression.properties.flatMap((property) => {
-      if (ts.isShorthandPropertyAssignment(property)) {
-        return [{ propertyName: property.name.text, target: property.name }]
-      }
-      if (!ts.isPropertyAssignment(property)) {
-        return []
-      }
-      const target = unwrapAliasExpression(property.initializer)
-      const propertyName = property.name
-      return ts.isIdentifier(target) &&
-        (ts.isIdentifier(propertyName) || ts.isStringLiteralLike(propertyName))
-        ? [{ propertyName: propertyName.text, target }]
-        : []
-    })
-  }
-
-  function collectDestructuredAliases(name, initializer) {
-    const namespaceSource = isMobileI18nNamespace(initializer, bindings)
-    const instanceSource = isMobileI18nInstance(initializer, bindings)
-    if (!namespaceSource && !instanceSource) {
-      return false
-    }
-    let changed = false
-    for (const { propertyName, target } of destructuredTargets(name)) {
-      if (propertyName === 't') {
-        changed = addBinding(target, translatorBindings, translatorNames) || changed
-      } else if (namespaceSource && propertyName === 'createMobileTranslator') {
-        changed = addBinding(target, factoryBindings) || changed
-      } else if (namespaceSource && propertyName === 'mobileI18n') {
-        changed = addBinding(target, instanceBindings, instanceNames) || changed
-      } else if (instanceSource && propertyName === 'getFixedT') {
-        changed = addBinding(target, fixedFactoryBindings) || changed
-      }
-    }
-    return changed
-  }
-
-  function addPrefixedBinding(identifier, prefix) {
-    const binding = bindings.resolveBinding(identifier)
-    if (!binding || prefixedTranslatorBindings.has(binding)) {
-      return false
-    }
-    prefixedTranslatorBindings.set(binding, prefix)
-    prefixedTranslatorNames.set(identifier.text, prefix)
-    return true
-  }
-
-  function collectIdentifierAlias(identifier, initializer) {
-    let changed = false
-    if (isMobileI18nNamespace(initializer, bindings)) {
-      changed = addBinding(identifier, namespaceBindings, namespaceNames) || changed
-    } else if (isTranslatorFactory(initializer, bindings)) {
-      changed = addBinding(identifier, factoryBindings) || changed
-    }
-    if (isFixedTranslatorFactory(initializer, bindings)) {
-      changed = addBinding(identifier, fixedFactoryBindings) || changed
-    }
-    if (isMobileI18nInstance(initializer, bindings)) {
-      changed = addBinding(identifier, instanceBindings, instanceNames) || changed
-    }
-    if (isEnglishFixedTranslator(initializer, bindings)) {
-      changed = addBinding(identifier, fixedTranslatorBindings, fixedTranslatorNames) || changed
-    }
-    const prefix =
-      mobileTranslatorPrefix(initializer, bindings) ?? directTranslatorPrefix(initializer, bindings)
-    return prefix === undefined ? changed : addPrefixedBinding(identifier, prefix) || changed
-  }
-
-  function collectLocalTranslators(node) {
-    let name
-    let initializer
-    if (ts.isVariableDeclaration(node) && node.initializer) {
-      name = node.name
-      initializer = node.initializer
-    } else if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken
-    ) {
-      name = node.left
-      initializer = node.right
-    }
-    let changed = false
-    if (name && initializer) {
-      changed = collectDestructuredAliases(name, initializer) || changed
-      const target = unwrapAliasExpression(name)
-      if (ts.isIdentifier(target)) {
-        changed = collectIdentifierAlias(target, initializer) || changed
-      }
-    }
-    ts.forEachChild(node, (child) => {
-      changed = collectLocalTranslators(child) || changed
-    })
-    return changed
-  }
-  function bindingCount() {
-    return [
-      factoryBindings,
-      fixedFactoryBindings,
-      fixedTranslatorBindings,
-      instanceBindings,
-      namespaceBindings,
-      prefixedTranslatorBindings,
-      translatorBindings
-    ].reduce((total, collection) => total + collection.size, 0)
-  }
-
-  let previousCount
-  do {
-    previousCount = bindingCount()
-    collectLocalTranslators(sourceFile)
-  } while (bindingCount() > previousCount)
-
+  bindings.valueFlow = createMobileLocalizationValueFlow(sourceFile, bindings)
+  bindings.immutableDescriptors = collectImmutableDescriptors(
+    bindings.valueFlow,
+    rootDescriptors,
+    bindings.resolveBinding
+  )
+  collectPotentialBindingNames(bindings)
   return bindings
 }
 
 export function mobileTranslationCallPrefix(call, _sourceFile, bindings) {
-  return (
-    directTranslatorPrefix(call.expression, bindings) ??
-    mobileTranslatorPrefix(call.expression, bindings) ??
-    (isEnglishFixedTranslator(call.expression, bindings) ? '' : undefined)
-  )
+  return translationPrefix(call.expression, call, bindings)
 }
 
 export function isMobileTranslationCall(call, sourceFile, bindings) {
   return mobileTranslationCallPrefix(call, sourceFile, bindings) !== undefined
+}
+
+export function isPotentialMobileTranslationCall(call, bindings) {
+  const resolution = expressionResolution(call.expression, call, bindings, 'all')
+  return [...resolution.descriptors].some((descriptor) => descriptor.startsWith(TRANSLATOR_PREFIX))
 }

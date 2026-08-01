@@ -116,6 +116,23 @@ export function Example({ alternate }) {
     ])
   })
 
+  it('uses only assignments that can reach a rendered variable', () => {
+    const source = `
+export function Example() {
+  let label = 'Dead initial value'
+  label = 'Actually rendered value'
+  return <Text>{label}</Text>
+}
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/Example.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual(['Actually rendered value'])
+  })
+
   it('finds literals assigned to variables rendered through user-visible JSX attributes', () => {
     const source = `
 export function Example() {
@@ -210,6 +227,52 @@ export function Example() {
     expect(candidates.map((candidate) => candidate.text)).toEqual(['Extracting object model'])
   })
 
+  it('finds member, assigned, destructured, and inline rendered helpers', () => {
+    const source = `
+function lookup() {
+  return 'Member alias raw copy'
+}
+const renderers = { lookup, inline: () => 'Inline member raw copy' }
+const render = renderers.lookup
+let assigned
+assigned = renderers.lookup
+const { inline } = renderers
+export function Example() {
+  return <><Text>{render()}</Text><Text>{assigned()}</Text><Text>{inline()}</Text></>
+}
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/Example.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual([
+      'Member alias raw copy',
+      'Inline member raw copy'
+    ])
+  })
+
+  it('uses the last effective rendered-helper property', () => {
+    const source = `
+function lookup() {
+  return 'Dead helper raw copy'
+}
+const base = { lookup }
+const renderers = { ...base, lookup: () => 'Visible replacement raw copy' }
+export function Example() {
+  return <Text>{renderers.lookup()}</Text>
+}
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/Example.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual(['Visible replacement raw copy'])
+  })
+
   it('matches rendered variables by binding instead of identifier text', () => {
     const source = `
 const value = 'internal mode name'
@@ -265,6 +328,30 @@ Notifications.setNotificationChannelAsync('orca-background', spreadChannel)
     ])
   })
 
+  it('uses assigned and last-written notification names without descending calls', () => {
+    const source = `
+let assignedName
+assignedName = 'Assigned channel name'
+const base = { name: 'Dead fallback name' }
+const assigned = { name: assignedName }
+const overridden = { ...base, name: 'Actual desktop name' }
+const computed = { name: makeName('Not itself the channel name') }
+Notifications.setNotificationChannelAsync('assigned', assigned)
+Notifications.setNotificationChannelAsync('overridden', overridden)
+Notifications.setNotificationChannelAsync('computed', computed)
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/notifications/local-notification-scheduling.ts',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual([
+      'Assigned channel name',
+      'Actual desktop name'
+    ])
+  })
+
   it('reports raw copy from a namespace-local translator', () => {
     const source = `
 import { t } from '@/i18n/mobile-i18n'
@@ -281,6 +368,42 @@ export const translated = t('example.translated')
     )
 
     expect(candidates.map((candidate) => candidate.text)).toEqual(['Namespace raw copy'])
+  })
+
+  it('reports raw copy from a class-static-block translator shadow', () => {
+    const source = `
+import { t } from '@/i18n/mobile-i18n'
+class Example {
+  static {
+    var t = (value) => value
+    const label = <Text>{t('Static block raw copy')}</Text>
+  }
+}
+export const translated = t('example.translated')
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/Example.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual(['Static block raw copy'])
+  })
+
+  it('reports a rendered call after a translator alias is replaced', () => {
+    const source = `
+import { t } from '@/i18n/mobile-i18n'
+let tr = t
+tr = (value) => value
+export const label = <Text>{tr('Visible raw copy')}</Text>
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/Example.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual(['Visible raw copy'])
   })
 
   it('finds user-visible subject fallbacks in returned rows', () => {
@@ -320,6 +443,23 @@ export function MemberExample(i18n) {
       'Unlocalized shadowed copy',
       'Unlocalized shadowed member copy'
     ])
+  })
+
+  it('reports calls shadowing a prefixed translator alias', () => {
+    const source = `
+import { createMobileTranslator } from '@/i18n/mobile-i18n'
+const translateExample = createMobileTranslator('example')
+export function Example(translateExample) {
+  return <Text>{translateExample('Shadowed prefixed raw copy')}</Text>
+}
+`
+    const candidates = collectLocalizationCandidates(
+      '/repo/mobile/src/components/Example.tsx',
+      source,
+      '/repo'
+    )
+
+    expect(candidates.map((candidate) => candidate.text)).toEqual(['Shadowed prefixed raw copy'])
   })
 
   it('rejects stale allowlist entries before their approval can be reused', async () => {

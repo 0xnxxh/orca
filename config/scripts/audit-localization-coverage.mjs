@@ -14,7 +14,8 @@ import {
 } from './mobile-localization-rendered-variable.mjs'
 import {
   collectMobileTranslationBindings,
-  isMobileTranslationCall
+  isMobileTranslationCall,
+  isPotentialMobileTranslationCall
 } from './mobile-localization-translation-bindings.mjs'
 import {
   findNewLocalizationCandidates,
@@ -196,21 +197,16 @@ function isUnboundRenderedTranslationArgument(node, sourceFile, mobileBindings) 
   if (!call) {
     return false
   }
-  let resemblesTranslator = false
-  if (ts.isIdentifier(call.expression)) {
-    const name = call.expression.text
-    resemblesTranslator =
-      LOCALIZATION_CALL_NAMES.has(name) ||
-      mobileBindings.translatorNames.has(name) ||
-      mobileBindings.fixedTranslatorNames.has(name) ||
-      mobileBindings.prefixedTranslatorNames.has(name)
-  } else if (ts.isPropertyAccessExpression(call.expression) && call.expression.name.text === 't') {
-    const rootName = expressionNameText(call.expression.expression)?.split('.')[0]
-    resemblesTranslator = Boolean(
-      rootName &&
-      (mobileBindings.namespaceNames.has(rootName) || mobileBindings.instanceNames.has(rootName))
-    )
-  }
+  const resemblesTranslator =
+    isPotentialMobileTranslationCall(call, mobileBindings) ||
+    (ts.isIdentifier(call.expression) &&
+      (LOCALIZATION_CALL_NAMES.has(call.expression.text) ||
+        mobileBindings.translatorNames.has(call.expression.text))) ||
+    (ts.isPropertyAccessExpression(call.expression) &&
+      call.expression.name.text === 't' &&
+      mobileBindings.namespaceNames.has(
+        expressionNameText(call.expression.expression)?.split('.')[0] ?? ''
+      ))
   return (
     resemblesTranslator &&
     !isMobileTranslationCall(call, sourceFile, mobileBindings) &&

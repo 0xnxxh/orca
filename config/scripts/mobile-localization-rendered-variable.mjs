@@ -2,9 +2,11 @@
 import ts from 'typescript-api'
 
 import { collectSourceBindings } from './mobile-localization-source-bindings.mjs'
+import { createMobileLocalizationValueFlow } from './mobile-localization-value-flow.mjs'
 
 const SOURCE_BINDINGS = new WeakMap()
 const SOURCE_IDENTIFIERS = new WeakMap()
+const SOURCE_VALUE_FLOWS = new WeakMap()
 const RENDERED_FUNCTION_RESULTS = new WeakMap()
 
 function isDirectDisplayExpressionParent(parent, child) {
@@ -141,6 +143,16 @@ function bindingsFor(sourceFile) {
   return bindings
 }
 
+function valueFlowFor(sourceFile, bindings) {
+  const cached = SOURCE_VALUE_FLOWS.get(sourceFile)
+  if (cached) {
+    return cached
+  }
+  const valueFlow = createMobileLocalizationValueFlow(sourceFile, bindings)
+  SOURCE_VALUE_FLOWS.set(sourceFile, valueFlow)
+  return valueFlow
+}
+
 function identifiersFor(sourceFile, name) {
   let byName = SOURCE_IDENTIFIERS.get(sourceFile)
   if (!byName) {
@@ -170,46 +182,26 @@ function unwrapAliasExpression(node) {
   return node
 }
 
-function propertyNameText(name) {
-  return ts.isIdentifier(name) || ts.isStringLiteralLike(name) ? name.text : undefined
-}
-
-function propertyValueExpressions(node, propertyName, bindings, seen = new Set()) {
+function expressionTargetsFunction(node, owner, bindings, valueFlow, seen = new Set()) {
   const expression = unwrapAliasExpression(node)
+  if (expression === owner) {
+    return true
+  }
   if (ts.isIdentifier(expression)) {
     const binding = bindings.resolveBinding(expression)
-    if (
-      !binding ||
-      seen.has(binding) ||
-      !ts.isVariableDeclaration(binding) ||
-      !binding.initializer
-    ) {
-      return []
+    if (!binding || seen.has(binding)) {
+      return false
     }
-    seen.add(binding)
-    return propertyValueExpressions(binding.initializer, propertyName, bindings, seen)
-  }
-  if (!ts.isObjectLiteralExpression(expression)) {
-    return []
-  }
-  return expression.properties.flatMap((property) => {
-    if (ts.isPropertyAssignment(property) && propertyNameText(property.name) === propertyName) {
-      return [property.initializer]
+    if (binding === owner) {
+      return true
     }
-    if (ts.isShorthandPropertyAssignment(property) && property.name.text === propertyName) {
-      return [property.name]
-    }
-    return ts.isSpreadAssignment(property)
-      ? propertyValueExpressions(property.expression, propertyName, bindings, new Set(seen))
-      : []
-  })
-}
-
-function expressionTargetsBinding(node, targets, bindings, seen = new Set()) {
-  const expression = unwrapAliasExpression(node)
-  if (ts.isIdentifier(expression)) {
-    const binding = bindings.resolveBinding(expression)
-    return Boolean(binding && targets.has(binding))
+    const nextSeen = new Set(seen).add(binding)
+    const values = valueFlow.valueExpressions(expression, node, nextSeen)
+    return Boolean(
+      values?.some((value) =>
+        expressionTargetsFunction(value, owner, bindings, valueFlow, nextSeen)
+      )
+    )
   }
   let object
   let propertyName
@@ -227,66 +219,10 @@ function expressionTargetsBinding(node, targets, bindings, seen = new Set()) {
   if (!object || !propertyName) {
     return false
   }
-  return propertyValueExpressions(object, propertyName, bindings, seen).some((value) =>
-    expressionTargetsBinding(value, targets, bindings, seen)
+  const values = valueFlow.propertyValues(object, propertyName, node)
+  return Boolean(
+    values?.some((value) => expressionTargetsFunction(value, owner, bindings, valueFlow, seen))
   )
-}
-
-function renderedFunctionBindings(owner, sourceFile, bindings) {
-  const targets = new Set()
-  if (owner.name && ts.isIdentifier(owner.name)) {
-    const binding = bindings.resolveBinding(owner.name)
-    if (binding) {
-      targets.add(binding)
-    }
-  }
-  const declaration = owner.parent
-  if (
-    (ts.isArrowFunction(owner) || ts.isFunctionExpression(owner)) &&
-    ts.isVariableDeclaration(declaration) &&
-    ts.isIdentifier(declaration.name)
-  ) {
-    const binding = bindings.resolveBinding(declaration.name)
-    if (binding) {
-      targets.add(binding)
-    }
-  }
-
-  let changed = true
-  while (changed) {
-    changed = false
-    function visit(node) {
-      let alias
-      let initializer
-      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
-        alias = node.name
-        initializer = unwrapAliasExpression(node.initializer)
-      } else if (
-        ts.isBinaryExpression(node) &&
-        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        ts.isIdentifier(node.left)
-      ) {
-        alias = node.left
-        initializer = unwrapAliasExpression(node.right)
-      }
-      if (alias && initializer && ts.isIdentifier(initializer)) {
-        const sourceBinding = bindings.resolveBinding(initializer)
-        const aliasBinding = bindings.resolveBinding(alias)
-        if (
-          sourceBinding &&
-          aliasBinding &&
-          targets.has(sourceBinding) &&
-          !targets.has(aliasBinding)
-        ) {
-          targets.add(aliasBinding)
-          changed = true
-        }
-      }
-      ts.forEachChild(node, visit)
-    }
-    visit(sourceFile)
-  }
-  return targets
 }
 
 export function isReturnedByRenderedFunction(node, isRenderedExpression = isRenderedJsxExpression) {
@@ -300,7 +236,7 @@ export function isReturnedByRenderedFunction(node, isRenderedExpression = isRend
   }
   const sourceFile = node.getSourceFile()
   const bindings = bindingsFor(sourceFile)
-  const targetBindings = renderedFunctionBindings(owner, sourceFile, bindings)
+  const valueFlow = valueFlowFor(sourceFile, bindings)
   let rendered = false
   function visit(current) {
     if (rendered) {
@@ -308,7 +244,7 @@ export function isReturnedByRenderedFunction(node, isRenderedExpression = isRend
     }
     if (
       ts.isCallExpression(current) &&
-      expressionTargetsBinding(current.expression, targetBindings, bindings) &&
+      expressionTargetsFunction(current.expression, owner, bindings, valueFlow) &&
       isRenderedExpression(current)
     ) {
       rendered = true
@@ -323,31 +259,49 @@ export function isReturnedByRenderedFunction(node, isRenderedExpression = isRend
   return rendered
 }
 
-export function isAssignedToRenderedVariable(node, isRenderedExpression = isRenderedJsxExpression) {
+export function renderedVariableAssignmentStatus(
+  node,
+  isRenderedExpression = isRenderedJsxExpression
+) {
   if (ts.isTemplateExpression(node)) {
-    return false
+    return undefined
   }
   const identifier = assignedVariableIdentifier(node)
   if (!identifier) {
-    return false
+    return undefined
   }
   const bindings = bindingsFor(node.getSourceFile())
+  const valueFlow = valueFlowFor(node.getSourceFile(), bindings)
   const targetBinding = bindings.resolveBinding(identifier)
   if (!targetBinding) {
-    return false
+    return undefined
   }
   let owner = node.parent
   while (owner && !ts.isFunctionLike(owner) && !ts.isSourceFile(owner)) {
     owner = owner.parent
   }
   if (!owner) {
-    return false
+    return undefined
   }
-  return identifiersFor(node.getSourceFile(), identifier.text).some(
-    (current) =>
-      current.pos >= owner.pos &&
-      current.end <= owner.end &&
-      bindings.resolveBinding(current) === targetBinding &&
-      isRenderedExpression(current)
-  )
+  let hasRenderedUse = false
+  for (const current of identifiersFor(node.getSourceFile(), identifier.text)) {
+    if (
+      current.pos < owner.pos ||
+      current.end > owner.end ||
+      bindings.resolveBinding(current) !== targetBinding ||
+      !isRenderedExpression(current)
+    ) {
+      continue
+    }
+    hasRenderedUse = true
+    const values = valueFlow.valueExpressions(current, current)
+    if (values?.some((value) => value.pos <= node.pos && value.end >= node.end)) {
+      return 'reaching'
+    }
+  }
+  return hasRenderedUse ? 'dead' : undefined
+}
+
+export function isAssignedToRenderedVariable(node, isRenderedExpression = isRenderedJsxExpression) {
+  return renderedVariableAssignmentStatus(node, isRenderedExpression) === 'reaching'
 }

@@ -47,4 +47,56 @@ export const translated = t('example.translated')
 
     expect(calls.map((call) => call.keys)).toEqual([['example.translated']])
   })
+
+  it('tracks translators through object members and destructuring assignments', () => {
+    const sourceText = `
+import { t } from '@/i18n/mobile-i18n'
+const box = { tr: t }
+const { tr } = box
+let assigned
+;({ tr: assigned } = box)
+export const labels = [
+  box.tr('example.member'),
+  tr('example.destructured'),
+  assigned('example.assigned')
+]
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls.map((call) => call.keys)).toEqual([
+      ['example.member'],
+      ['example.destructured'],
+      ['example.assigned']
+    ])
+  })
+
+  it('uses the translator definition that reaches each call', () => {
+    const sourceText = `
+import { createMobileTranslator, t } from '@/i18n/mobile-i18n'
+let replaced = t
+replaced = (value) => value
+let prefixed = createMobileTranslator('first')
+prefixed = createMobileTranslator('second')
+export const labels = [replaced('Raw visible copy'), prefixed('title')]
+`
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls.map((call) => call.keys)).toEqual([['second.title']])
+  })
+
+  it('resolves long reverse alias chains without whole-file fixed-point rescans', () => {
+    const aliases = Array.from({ length: 1500 }, (_, index) =>
+      index === 1499 ? `const alias${index} = t` : `const alias${index} = alias${index + 1}`
+    ).join('\n')
+    const sourceText = `
+import { t } from '@/i18n/mobile-i18n'
+${aliases}
+export const label = alias0('example.scaled')
+`
+    const startedAt = performance.now()
+    const calls = collectMobileTranslationCalls('/repo/mobile/app/Example.tsx', sourceText, '/repo')
+
+    expect(calls.map((call) => call.keys)).toEqual([['example.scaled']])
+    expect(performance.now() - startedAt).toBeLessThan(1000)
+  })
 })

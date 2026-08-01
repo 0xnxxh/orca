@@ -72,7 +72,7 @@
     "changed": "변경된 파일",
     "noChecks": "검사를 찾을 수 없습니다.",
     "rerunAll": "모두 다시 실행",
-    "rerunFailed": "재실행 실패",
+    "rerunFailed": "실패한 검사 다시 실행",
     "refresh": "새로고침",
     "checks": "체크",
     "requestReview": "검토 요청",
@@ -338,7 +338,7 @@
     "updated": "업데이트됨",
     "pending": "보류 중인 GitLab 할 일",
     "myTodos": "내 할일",
-    "mergeRequests": "저장소별 요청 및 이슈 병합",
+    "mergeRequests": "저장소별 Merge Request 및 이슈",
     "projectMrs": "프로젝트 MR",
     "reviewRequests": "귀하에게 할당된 요청 검토",
     "needs": "리뷰 필요",
@@ -1503,7 +1503,7 @@
   },
   "authFailedBanner": {
     "remove": "제거",
-    "re": "수리하다",
+    "re": "다시 페어링",
     "retry": "다시 시도",
     "authentication": "인증 실패 — 먼저 다시 연결해 보십시오. 계속 실패하면 데스크톱에서 다시 페어링하세요."
   },
@@ -1536,7 +1536,7 @@
     "navigation": "탐색",
     "editing": "편집",
     "eGPnpm": "예: pnpm build",
-    "eGBuild": "예를 들어 짓다",
+    "eGBuild": "예: 빌드",
     "pick": "키를 선택하세요"
   },
   "dragReorderList": {

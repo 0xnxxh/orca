@@ -20,6 +20,7 @@ function isLexicalScope(node) {
     ts.isSourceFile(node) ||
     ts.isFunctionLike(node) ||
     ts.isModuleBlock(node) ||
+    ts.isClassStaticBlockDeclaration(node) ||
     ts.isBlock(node) ||
     ts.isCaseBlock(node) ||
     ts.isCatchClause(node) ||
@@ -44,7 +45,8 @@ function varScope(node, sourceFile) {
   return nearestScope(
     node,
     sourceFile,
-    (scope) => ts.isFunctionLike(scope) || ts.isModuleBlock(scope)
+    (scope) =>
+      ts.isFunctionLike(scope) || ts.isModuleBlock(scope) || ts.isClassStaticBlockDeclaration(scope)
   )
 }
 

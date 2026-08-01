@@ -23,6 +23,32 @@ export const REVIEWED_KEY_TRANSLATIONS = new Map([
     { es: 'GitHub informa de conflictos de fusión. Abre GitHub para continuar.' }
   ],
   ['task.viewOrder', { es: 'Orden de vista', ja: '表示順', ko: '보기 순서', zh: '视图顺序' }],
+  [
+    'task.rerunFailed',
+    {
+      es: 'Volver a ejecutar las comprobaciones fallidas',
+      ja: '失敗したチェックを再実行',
+      ko: '실패한 검사 다시 실행',
+      zh: '重新运行失败的检查'
+    }
+  ],
+  [
+    'task.mergeRequests',
+    {
+      es: 'Merge Requests e incidencias por repositorio',
+      ja: 'リポジトリごとの Merge Request と Issue',
+      ko: '저장소별 Merge Request 및 이슈',
+      zh: '按仓库显示 Merge Request 和议题'
+    }
+  ],
+  ['task.mergePullRequestTitle', { es: 'Fusionar Pull Request' }],
+  ['task.mergeMerge', { es: 'Fusionar Merge Request' }],
+  ['task.noPipeline', { zh: '此 MR 没有运行任何流水线。' }],
+  ['task.pipeline', { zh: '流水线' }],
+  [
+    'task.failedUpdateGitHubIssue',
+    { ja: 'GitHub Issue の更新に失敗しました', zh: '更新 GitHub 议题失败' }
+  ],
   ['workspaceListPickerOptions.server', { ko: '서버 순서' }],
   [
     'task.orderLinearOrder',
@@ -32,11 +58,20 @@ export const REVIEWED_KEY_TRANSLATIONS = new Map([
       zh: '顺序：{{linearOrderLabel}}'
     }
   ],
-  ['terminalAccessoryKeyCatalog.escape', { ja: 'Escapeキー', ko: 'Esc 키', zh: 'Esc 键' }],
+  [
+    'terminalAccessoryKeyCatalog.escape',
+    { es: 'Tecla Esc', ja: 'Escapeキー', ko: 'Esc 키', zh: 'Esc 键' }
+  ],
+  ['terminalAccessoryKeyCatalog.interrupt', { es: 'Interrumpir terminal' }],
   ['terminalAccessoryKeyCatalog.enter', { ja: 'Enterキー', ko: 'Enter 키', zh: 'Enter 键' }],
   ['terminalAccessoryKeyCatalog.space', { ja: 'スペース', ko: '스페이스', zh: '空格键' }],
   ['customKeyModal.key', { es: 'Tecla', ja: 'キー', zh: '按键' }],
   ['customKeyModal.pick', { es: 'Elige una tecla', ja: 'キーを選択してください', zh: '选择按键' }],
+  ['customKeyModal.eGBuild', { ko: '예: 빌드' }],
+  [
+    'authFailedBanner.re',
+    { es: 'Volver a emparejar', ja: '再ペアリング', ko: '다시 페어링', zh: '重新配对' }
+  ],
   [
     'voiceSettings.togglePress',
     {
