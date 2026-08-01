@@ -75,6 +75,67 @@ describe('useFileExplorerTree stale collapsed dirs', () => {
     expect(result.current.isDirStale('/repo/src')).toBe(false)
   })
 
+  it('keeps a mark a superseded refresh never verified, even once the dir is expanded', async () => {
+    // Regression guard: refreshTree used to REPLACE the mark set. A dir marked while collapsed and
+    // then expanded was dropped by the replacement (expanded dirs are never marked) — and when that
+    // refresh bailed on a superseded root load, nothing re-read it and nothing still called it
+    // unverified, so re-expanding served the pre-overflow listing forever.
+    const expanded = new Set<string>()
+    const { result, rerender } = renderHook(() => useFileExplorerTree('/repo', expanded, 'wt-1'))
+
+    readDirectoryMock.mockResolvedValueOnce(listing(entry('gone.ts')))
+    await act(async () => {
+      await result.current.loadDir('/repo/src', 0)
+    })
+    await act(async () => {
+      await result.current.refreshTree()
+    })
+    expect(result.current.isDirStale('/repo/src')).toBe(true)
+
+    expanded.add('/repo/src')
+    rerender()
+
+    let releaseRoot!: () => void
+    const rootGate = new Promise<void>((resolve) => {
+      releaseRoot = resolve
+    })
+    readDirectoryMock.mockImplementationOnce(async () => {
+      await rootGate
+      return listing()
+    })
+
+    let refresh!: Promise<string>
+    act(() => {
+      refresh = result.current.refreshTree()
+    })
+    await act(async () => {
+      // A concurrent root read supersedes this refresh's token, so it bails before the expanded set.
+      void result.current.refreshDir('/repo')
+      releaseRoot()
+      expect(await refresh).toBe('superseded')
+    })
+
+    expect(result.current.isDirStale('/repo/src')).toBe(true)
+  })
+
+  it('does not read the expanded dirs when the root read failed', async () => {
+    // Regression guard: loadDir swallows read errors unless failOnError is set, so a dead
+    // transport used to report a completed root read and fan out one doomed wave per 4 dirs.
+    const expanded = new Set(['/repo/a', '/repo/b'])
+    const { result } = renderHook(() => useFileExplorerTree('/repo', expanded, 'wt-1'))
+
+    readDirectoryMock.mockReset()
+    readDirectoryMock.mockRejectedValue(new Error('ETIMEDOUT'))
+
+    await act(async () => {
+      expect(await result.current.refreshTree()).toBe('root-unreadable')
+    })
+
+    // Only the root read was attempted; the expanded dirs were not.
+    expect(readDirectoryMock).toHaveBeenCalledTimes(1)
+    expect(readDirectoryMock).toHaveBeenCalledWith('wt-1', '/repo', '/repo')
+  })
+
   it('drops stale marks when the tree is reset for a new worktree', async () => {
     const { result } = renderHook(() => useFileExplorerTree('/repo', new Set(), 'wt-1'))
 

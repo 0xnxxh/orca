@@ -14,10 +14,9 @@ export type RemoteWatcherEventBatch = {
   close: () => void
 }
 
-// Why: mirrors coalesceEvents in filesystem-watcher.ts — last event wins per path, delete→create emits
-// both (delete cleans the subtree, create refreshes the parent), create→delete is a net no-op. Diverges
-// deliberately on two points the local path compensates for by stat'ing at flush time: a net delete is
-// never cancelled away, and a hoisted delete survives a later event of unknown isDirectory.
+// Mirrors coalesceEvents in filesystem-watcher.ts, with two deliberate divergences: a hoisted delete
+// survives a later event of unknown isDirectory, so delete→create→update over-emits a delete; and
+// delete→create→delete emits that delete, which local drops — the path is gone, so the renderer needs it.
 function coalesceRemoteEvents(raw: FsChangeEvent[]): FsChangeEvent[] {
   const lastByKey = new Map<string, FsChangeEvent>()
   const deleteBeforeCreate = new Map<string, FsChangeEvent>()

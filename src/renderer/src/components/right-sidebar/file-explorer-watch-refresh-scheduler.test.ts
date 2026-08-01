@@ -1,13 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createFileExplorerWatchRefreshScheduler } from './file-explorer-watch-refresh-scheduler'
+import type { FileExplorerTreeRefreshOutcome } from './file-explorer-types'
 
 const TRAILING_MS = 150
 const MAX_WAIT_MS = 500
 
-function createDeferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void
-  const promise = new Promise<void>((res) => {
-    resolve = res
+function createDeferred(): {
+  promise: Promise<FileExplorerTreeRefreshOutcome>
+  resolve: (outcome?: FileExplorerTreeRefreshOutcome) => void
+} {
+  let resolve!: (outcome?: FileExplorerTreeRefreshOutcome) => void
+  const promise = new Promise<FileExplorerTreeRefreshOutcome>((res) => {
+    resolve = (outcome = 'refreshed') => res(outcome)
   })
   return { promise, resolve }
 }
@@ -16,7 +20,9 @@ function setup(
   overrides: Partial<Parameters<typeof createFileExplorerWatchRefreshScheduler>[0]> = {}
 ) {
   const { refreshTree: treeImpl, refreshDir: dirImpl, ...rest } = overrides
-  const refreshTree = vi.fn(treeImpl ?? (async () => {}))
+  const refreshTree = vi.fn(
+    treeImpl ?? (async (): Promise<FileExplorerTreeRefreshOutcome> => 'refreshed')
+  )
   const refreshDir = vi.fn(dirImpl ?? (async (_dirPath: string) => {}))
   const scheduler = createFileExplorerWatchRefreshScheduler({
     refreshTree,
@@ -103,6 +109,47 @@ describe('createFileExplorerWatchRefreshScheduler', () => {
     await vi.advanceTimersByTimeAsync(TRAILING_MS)
 
     expect(refreshTree).toHaveBeenCalledTimes(1)
+    expect(refreshDir).not.toHaveBeenCalled()
+  })
+
+  it('re-issues covered dir refreshes when the tree refresh was superseded', async () => {
+    // Regression guard: refreshTree bails without re-reading the expanded dirs when its root
+    // load is superseded. Nothing marks an expanded dir stale, so dropping these would leave
+    // them stale until a manual refresh — collapse/re-expand does not heal it.
+    const gate = createDeferred()
+    const { refreshDir, scheduler } = setup({
+      refreshTree: () => gate.promise,
+      isCoveredByFullRefresh: (dirPath) => dirPath === '/repo/src'
+    })
+
+    scheduler.requestDirRefresh('/repo/src')
+    scheduler.requestFullRefresh()
+    await vi.advanceTimersByTimeAsync(TRAILING_MS)
+
+    gate.resolve('superseded')
+    await vi.advanceTimersByTimeAsync(TRAILING_MS)
+
+    expect(refreshDir).toHaveBeenCalledTimes(1)
+    expect(refreshDir).toHaveBeenCalledWith('/repo/src')
+  })
+
+  it('drops pending dir refreshes when the tree refresh could not read the root', async () => {
+    // Regression guard: a failed root read means the transport is down, so re-issuing buys one
+    // dead timeout per dir and holds inFlight open, blocking every later refresh.
+    const gate = createDeferred()
+    const { refreshDir, scheduler } = setup({
+      refreshTree: () => gate.promise,
+      isCoveredByFullRefresh: () => false
+    })
+
+    scheduler.requestDirRefresh('/repo/src')
+    scheduler.requestDirRefresh('/repo/docs')
+    scheduler.requestFullRefresh()
+    await vi.advanceTimersByTimeAsync(TRAILING_MS)
+
+    gate.resolve('root-unreadable')
+    await vi.advanceTimersByTimeAsync(MAX_WAIT_MS)
+
     expect(refreshDir).not.toHaveBeenCalled()
   })
 
@@ -268,8 +315,9 @@ describe('createFileExplorerWatchRefreshScheduler', () => {
   it('keeps a full refresh ahead of the dir refreshes it does not cover', async () => {
     const order: string[] = []
     const { scheduler } = setup({
-      refreshTree: async () => {
+      refreshTree: async (): Promise<FileExplorerTreeRefreshOutcome> => {
         order.push('tree')
+        return 'refreshed'
       },
       refreshDir: async (dirPath) => {
         order.push(dirPath)
@@ -281,5 +329,54 @@ describe('createFileExplorerWatchRefreshScheduler', () => {
     await vi.advanceTimersByTimeAsync(TRAILING_MS)
 
     expect(order).toEqual(['tree', '/repo/collapsed'])
+  })
+
+  // Why: local workspaces pass a zero window because the main process already coalesced the burst
+  // on the same 150/500 timings. Stacking a second debounce there only doubled paint latency.
+  describe('zero window (local transport)', () => {
+    const zeroWindow = { trailingMs: 0, maxWaitMs: 0 }
+
+    it('flushes on the next tick instead of waiting out a trailing window', async () => {
+      const { refreshTree, scheduler } = setup(zeroWindow)
+
+      scheduler.requestFullRefresh()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(refreshTree).toHaveBeenCalledTimes(1)
+    })
+
+    it('still coalesces one payload burst into a single refresh', async () => {
+      const { refreshTree, refreshDir, scheduler } = setup(zeroWindow)
+
+      for (let index = 0; index < 20; index++) {
+        scheduler.requestFullRefresh()
+        scheduler.requestDirRefresh('/repo/src')
+      }
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(refreshTree).toHaveBeenCalledTimes(1)
+      expect(refreshDir).toHaveBeenCalledTimes(1)
+      expect(refreshDir).toHaveBeenCalledWith('/repo/src')
+    })
+
+    it('does not start a second run while one is in flight', async () => {
+      const deferred = createDeferred()
+      const { refreshTree, scheduler } = setup({
+        ...zeroWindow,
+        refreshTree: () => deferred.promise
+      })
+
+      scheduler.requestFullRefresh()
+      await vi.advanceTimersByTimeAsync(0)
+      scheduler.requestFullRefresh()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(refreshTree).toHaveBeenCalledTimes(1)
+
+      deferred.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(refreshTree).toHaveBeenCalledTimes(2)
+    })
   })
 })

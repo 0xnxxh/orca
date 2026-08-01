@@ -16,7 +16,10 @@ import {
   onSshFilesystemProviderRegistered
 } from '../providers/ssh-filesystem-dispatch'
 import { MAX_BATCHED_WATCHER_EVENTS, queueWatcherEvents } from './filesystem-watcher-event-batch'
-import { createRemoteWatcherEventBatch } from './remote-watcher-event-batch'
+import {
+  createRemoteWatcherEventBatch,
+  type RemoteWatcherEventBatch
+} from './remote-watcher-event-batch'
 import {
   WATCH_BATCH_MAX_WAIT_MS,
   WATCH_BATCH_TRAILING_MS
@@ -944,6 +947,8 @@ type RemoteWatcherState = {
   unwatch: () => void
   listeners: Map<number, WebContents>
   installToken: RemoteWatcherInstallToken
+  /** Held so every teardown can drop the trailing flush timer instead of letting it fire into a dead watch. */
+  batch: RemoteWatcherEventBatch
 }
 
 type RemoteWatcherInstallToken = {
@@ -1049,6 +1054,7 @@ export async function closeRemoteWatcherForWorktreePath(
   await (provider?.closeWatch
     ? provider.closeWatch(worktreePath)
     : Promise.resolve(state?.unwatch()))
+  state?.batch.close()
   remoteWatchers.delete(key)
   loggedUnavailableRemoteWatchers.delete(key)
 }
@@ -1161,6 +1167,7 @@ function releaseRemoteWatchListener(key: string, senderId: number): void {
     return
   }
   state.unwatch()
+  state.batch.close()
   remoteWatchers.delete(key)
 }
 
@@ -1287,8 +1294,9 @@ async function doInstallRemoteWatcher(
   cancelToken: RemoteWatcherInstallToken
 ): Promise<RemoteWatcherInstallResult> {
   let unwatch: () => void
-  // Why: only the two abandon paths below close this batch; a timer that outlives any other teardown by
-  // ≤500ms fires into deliver, fails the installToken check and drops — today's behavior for late events.
+  // Why: the abandon paths below close the batch directly; once it is stored on the remoteWatchers
+  // entry, every later teardown closes it through that handle. deliver's state/installToken guard
+  // still covers a flush that races a close.
   const batch = createRemoteWatcherEventBatch({
     rootPath: worktreePath,
     trailingMs: WATCH_BATCH_TRAILING_MS,
@@ -1305,10 +1313,20 @@ async function doInstallRemoteWatcher(
         if (listener.isDestroyed()) {
           continue
         }
-        listener.send('fs:changed', {
-          worktreePath,
-          events
-        } satisfies FsChangedPayload)
+        try {
+          listener.send('fs:changed', {
+            worktreePath,
+            events
+          } satisfies FsChangedPayload)
+        } catch (err) {
+          // Why: batching moved this send out of the SSH mux's notification try/catch into a bare
+          // timer, so a frame disposed mid-window would escape as a fatal main-process exception.
+          console.warn(
+            `[filesystem-watch] failed to deliver remote fs:changed for ${worktreePath}: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          )
+        }
       }
     }
   })
@@ -1325,6 +1343,9 @@ async function doInstallRemoteWatcher(
       }
     )
   } catch (err) {
+    // Why: the provider can fire its callback before rejecting (an aborted reinstall), so this
+    // abandon path owes the same close as the two below — nothing else holds the batch.
+    batch.close()
     if (cancelToken.cancelled || cancelToken.abortController.signal.aborted) {
       return 'cancelled'
     }
@@ -1351,7 +1372,7 @@ async function doInstallRemoteWatcher(
     batch.close()
     return 'unavailable'
   }
-  remoteWatchers.set(key, { unwatch, listeners: liveListeners, installToken: cancelToken })
+  remoteWatchers.set(key, { unwatch, listeners: liveListeners, installToken: cancelToken, batch })
   for (const listener of liveListeners.values()) {
     registerSenderCleanup(listener)
   }
@@ -1372,6 +1393,7 @@ function handleRemoteWatcherTerminalError(
     return
   }
   remoteWatchers.delete(key)
+  state.batch.close()
   if (remoteWatchersClosed || suspendedRemoteWatcherListeners.has(key)) {
     return
   }
@@ -1794,6 +1816,7 @@ function reinstallRemoteWatchersForConnection(connectionId: string): void {
     const stale = remoteWatchers.get(key)
     if (stale) {
       remoteWatchers.delete(key)
+      stale.batch.close()
       try {
         stale.unwatch()
       } catch {
@@ -1927,6 +1950,7 @@ export async function closeAllWatchers(): Promise<void> {
 
   // Why: remote watchers are separate from local @parcel/watcher subs; unwatch here or the relay keeps polling FS after shutdown.
   for (const [key, state] of remoteWatchers) {
+    state.batch.close()
     try {
       state.unwatch()
     } catch (err) {

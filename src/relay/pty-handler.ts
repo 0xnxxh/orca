@@ -464,9 +464,10 @@ export class PtyHandler {
     }
   }
 
-  // Why: dead path — startGraceTimer's only caller (relay.ts) always passes an explicit timeoutMs,
-  // so this value never reaches the grace timer and only serves as an unused default parameter.
-  // Full caller chain: docs/reference/relay-grace-time-reconfiguration.md.
+  // Why: this value never reaches the grace *timer* — startGraceTimer's only caller always passes an
+  // explicit timeoutMs — but relay.startGrace reads it back through configuredGraceTimeMs to pick the
+  // grace branch, so a host-sent change does affect shutdown behavior. Callers and the host-sleep
+  // consequence: docs/reference/relay-grace-time-reconfiguration.md.
   setGraceTimeMs(graceTimeMs: number): void {
     this.graceTimeMs = Math.max(0, Math.floor(graceTimeMs))
   }
@@ -1228,6 +1229,11 @@ export class PtyHandler {
         this.pendingCreationDrainResolvers.clear()
       }
       finishPtyCreationOperations(finishRemovalOperations)
+      // Why: a creation that failed before wireAndStore still leaves the pool empty, and removePty
+      // can't announce a PTY that was never stored — without this the relay never re-arms its idle cap.
+      if (this.ptys.size === 0 && this.pendingSpawnCount === 0) {
+        this.notifyPoolListener(this.ptyPoolEmptyListener, 'pty-pool-empty')
+      }
     }
   }
 

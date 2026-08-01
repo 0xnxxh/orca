@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react'
 import { useCallback, useRef, useState } from 'react'
-import type { DirCache } from './file-explorer-types'
+import type { DirCache, FileExplorerTreeRefreshOutcome } from './file-explorer-types'
 import { splitPathSegments } from './path-tree'
 import { statRuntimePath } from '@/runtime/runtime-file-client'
 import { createFileExplorerDirLoadTracker } from './file-explorer-dir-load-tracker'
@@ -29,7 +29,7 @@ type UseFileExplorerTreeResult = {
   ) => Promise<boolean>
   statPath: (path: string) => Promise<{ isDirectory: boolean }>
   markPathAsDirectory: (path: string) => void
-  refreshTree: () => Promise<void>
+  refreshTree: () => Promise<FileExplorerTreeRefreshOutcome>
   refreshDir: (dirPath: string) => Promise<void>
   /** True while a dir's cached listing predates the last full refresh that skipped it. */
   isDirStale: (dirPath: string) => boolean
@@ -49,6 +49,8 @@ export function useFileExplorerTree(
   // Why: a ref, not state — the expansion effect must read the mark set by a refresh that landed
   // after the effect's render, and a state write would only be visible one render too late.
   const staleDirsRef = useRef(new Set<string>())
+  // Why: separates a failed root read from a superseded one — loadDir returns false for both.
+  const rootReadFailedRef = useRef(false)
   const expandedRef = useRef(expanded)
   expandedRef.current = expanded
 
@@ -106,6 +108,7 @@ export function useFileExplorerTree(
           // empty worktree. Preserve the message so the UI can distinguish
           // "no files" from "could not read this worktree".
           setRootError(error instanceof Error ? error.message : String(error))
+          rootReadFailedRef.current = true
         }
         setDirCache((prev) => ({ ...prev, [dirPath]: { children: [], loading: false } }))
         return !options?.failOnError
@@ -154,23 +157,45 @@ export function useFileExplorerTree(
     [activeWorktreeId, worktreePath]
   )
 
-  const refreshTree = useCallback(async () => {
+  const refreshTree = useCallback(async (): Promise<FileExplorerTreeRefreshOutcome> => {
     if (!worktreePath) {
-      return
+      // Why: not 'root-unreadable' — no read was attempted, and that outcome tells callers to DROP
+      // their pending refreshes. Report the refresh as not-done so they keep them instead.
+      return 'superseded'
     }
     // Why: clearing the entire dirCache here would momentarily empty the
     // visible projection and jump the virtualizer to the top. Instead we rely
     // on force-reload keeping existing children visible until fresh data lands.
     // Why: mark before the first read, against the live expanded set — a dir expanded after this
     // point loads through the expansion effect, which would otherwise trust a listing this refresh
-    // never re-read. Replacing (not merging) also clears dirs this refresh does cover.
-    staleDirsRef.current = new Set(
-      collectStaleDirCachePaths(dirCacheRef.current, worktreePath, expandedRef.current)
-    )
+    // never re-read.
+    // Why: union, not replace. This refresh can bail below without re-reading a single expanded
+    // dir, so replacing would erase an earlier mark for a dir nothing has verified since. Marks are
+    // cleared only where a read actually lands: loadDir, and onDirCommitted per committed wave.
+    // Why: prune first — a mark only means anything while the dir still has a cached listing to
+    // distrust, and unioning without this would accumulate every path visited in the session.
+    for (const dirPath of staleDirsRef.current) {
+      if (dirCacheRef.current[dirPath] === undefined) {
+        staleDirsRef.current.delete(dirPath)
+      }
+    }
+    for (const dirPath of collectStaleDirCachePaths(
+      dirCacheRef.current,
+      worktreePath,
+      expandedRef.current
+    )) {
+      staleDirsRef.current.add(dirPath)
+    }
     const refreshSession = dirLoadTrackerRef.current.getSession()
-    const rootLoadCompleted = await loadDir(worktreePath, -1, { force: true })
+    rootReadFailedRef.current = false
+    // Why: failOnError, else a dead transport reports a completed root read and we fan out one
+    // doomed wave per 4 expanded dirs — 200 dirs is ~50 sequential 15s timeouts, and the watch
+    // scheduler cannot start another refresh for that entire window.
+    const rootLoadCompleted = await loadDir(worktreePath, -1, { force: true, failOnError: true })
     if (!rootLoadCompleted || !dirLoadTrackerRef.current.isSessionCurrent(refreshSession)) {
-      return
+      // Why: the expanded dirs below were never re-read either way, but the two reasons want
+      // opposite handling from callers — see FileExplorerTreeRefreshOutcome.
+      return rootReadFailedRef.current ? 'root-unreadable' : 'superseded'
     }
     // Why: root (worktreePath) was just force-loaded above; exclude it here so
     // refreshFileExplorerExpandedDirs doesn't queue a duplicate read of root.
@@ -180,7 +205,7 @@ export function useFileExplorerTree(
         dirPath,
         depth: splitPathSegments(dirPath.slice(worktreePath.length + 1)).length - 1
       }))
-    await refreshFileExplorerExpandedDirs({
+    const allDirsCommitted = await refreshFileExplorerExpandedDirs({
       dirs: expandedDirs,
       worktreePath,
       dirLoadTracker: dirLoadTrackerRef.current,
@@ -189,8 +214,10 @@ export function useFileExplorerTree(
         readFileExplorerDirectory(activeWorktreeId, worktreePath, dirPath),
       maxConcurrentReads: fileExplorerRefreshConcurrency(
         getFileExplorerOperationOwner(activeWorktreeId)
-      )
+      ),
+      onDirCommitted: (dirPath) => staleDirsRef.current.delete(dirPath)
     })
+    return allDirsCommitted ? 'refreshed' : 'superseded'
   }, [activeWorktreeId, expanded, loadDir, worktreePath])
 
   const refreshDir = useCallback(

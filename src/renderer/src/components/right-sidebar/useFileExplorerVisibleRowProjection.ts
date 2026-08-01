@@ -117,14 +117,26 @@ export function createVisibleFileExplorerRowProjection(
  * check-ignore over the whole visible tree — the remote round trips the wave cap
  * exists to bound.
  */
-function useContentStableRelativePaths(relativePaths: string[]): string[] {
+function useContentStableRelativePaths(relativePaths: string[], enabled: boolean): string[] {
+  const cache = useRef<{ source: string[]; signature: string; value: string[] } | null>(null)
+  // Why: a name-filter list is a different population, so signing it would evict the tree
+  // signature — clearing the filter would then mint a fresh identity and re-issue the very
+  // whole-tree check-ignore this hook exists to prevent.
+  if (!enabled) {
+    return relativePaths
+  }
+  // Why: the caller memoizes, so an unchanged tree hands back the same array — skip rebuilding a
+  // signature over every visible path on re-renders that never touched the tree.
+  if (cache.current?.source === relativePaths) {
+    return cache.current.value
+  }
   // NUL separator: it is the one byte no path segment can contain.
   const signature = relativePaths.join('\u0000')
-  const cacheRef = useRef<{ signature: string; value: string[] } | null>(null)
-  if (cacheRef.current === null || cacheRef.current.signature !== signature) {
-    cacheRef.current = { signature, value: relativePaths }
-  }
-  return cacheRef.current.value
+  cache.current =
+    cache.current?.signature === signature
+      ? { ...cache.current, source: relativePaths }
+      : { source: relativePaths, signature, value: relativePaths }
+  return cache.current.value
 }
 
 export function useFileExplorerVisibleRowProjection(
@@ -158,10 +170,9 @@ export function useFileExplorerVisibleRowProjection(
         : EMPTY_RELATIVE_PATHS,
     [activeRepoSupportsGit, dirCache, expanded, nameFilter, showDotfiles, worktreePath]
   )
-  const stableTreeRelativePaths = useContentStableRelativePaths(rebuiltRelativePaths)
   // Why: the name-filter list is debounced per keystroke, so it must keep a fresh
   // identity; only the dirCache-derived list needs stability across wave commits.
-  const relativePaths = nameFilter ? rebuiltRelativePaths : stableTreeRelativePaths
+  const relativePaths = useContentStableRelativePaths(rebuiltRelativePaths, !nameFilter)
   const canLoadIgnoredPaths =
     activeRepoSupportsGit &&
     Boolean(activeWorktreeId) &&

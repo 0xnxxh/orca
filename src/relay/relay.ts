@@ -51,6 +51,7 @@ import {
 } from '../shared/pi-agent-kind'
 import { resolveSetupAgentSequenceLaunchCommand } from '../shared/setup-agent-sequencing'
 import { pickRemoteCliEnv } from './remote-cli-env'
+import { decideRelayGrace, type RelayGraceBranch } from './relay-grace-branch'
 import { relayLogLine } from './relay-diagnostic-log'
 import { remoteCliRequestTimeoutMs } from './remote-cli-timeout'
 import { shouldReadRemoteCliStdin } from './remote-cli-stdin'
@@ -682,8 +683,21 @@ async function main(): Promise<void> {
   function configureRelayGraceTime(params: Record<string, unknown>): { graceTimeMs: number } {
     const seconds = Number(params.graceTimeSeconds)
     if (Number.isFinite(seconds) && seconds >= 0) {
+      const previousGraceMs = ptyHandler.configuredGraceTimeMs
       // Why: the host sends 0 before system sleep so live remote PTYs survive longer than the ordinary grace window.
       ptyHandler.setGraceTimeMs(Math.floor(seconds) * 1000)
+      // Why: startGrace samples the configured value at arm time, so a raise that lands while the idle
+      // timer is already running would still fire at the old deadline. Re-arm only on an actual change
+      // — the host re-asserts the same value on every establish, and restarting the window on those
+      // would keep a grace alive indefinitely.
+      if (
+        ptyHandler.configuredGraceTimeMs !== previousGraceMs &&
+        graceDeadlineAt !== null &&
+        graceReason !== null &&
+        !shutdownInFlight
+      ) {
+        startGrace('grace reconfigured')
+      }
     }
     return { graceTimeMs: ptyHandler.configuredGraceTimeMs }
   }
@@ -834,7 +848,7 @@ async function main(): Promise<void> {
   let graceReason: string | null = null
   // Why: only the idle branch is a "nothing left to preserve" bet, so only it may be revoked when a
   // PTY appears mid-window; the other branches keep their armed deadline.
-  let graceBranch: 'startup-empty-detached' | 'idle-no-ptys' | 'configured' | null = null
+  let graceBranch: RelayGraceBranch | null = null
 
   dispatcher.onRequest('relay.status', async () => ({
     pid: process.pid,
@@ -1123,27 +1137,22 @@ async function main(): Promise<void> {
     dispatcher.invalidateClient()
   })
 
-  function startGrace(reason: string): void {
-    const startupEmptyDetached =
-      detached && !hasAcceptedSocketClient && ptyHandler.activePtyCount === 0
-    // Why: a detached relay that never accepted a client has no PTY state and shouldn't linger forever.
-    // Why: zero PTYs means nothing left to preserve, so only the unlimited default is capped — an
-    // explicitly configured grace is honored verbatim rather than clamped down to the idle cap.
-    // Why: a spawn parked mid-creation is not in the pool yet, so capping on it would kill the live shell it is about to produce.
-    const idleNoPtys = isRelayIdle() && graceTimeMs === 0
-    graceBranch = startupEmptyDetached
-      ? 'startup-empty-detached'
-      : idleNoPtys
-        ? 'idle-no-ptys'
-        : 'configured'
-    const timeoutMs =
-      graceBranch === 'startup-empty-detached'
-        ? graceTimeMs === 0
-          ? EMPTY_DETACHED_STARTUP_GRACE_MS
-          : Math.min(graceTimeMs, EMPTY_DETACHED_STARTUP_GRACE_MS)
-        : graceBranch === 'idle-no-ptys'
-          ? IDLE_RELAY_GRACE_MS
-          : graceTimeMs
+  function startGrace(reason: string, options?: { retryDeferredShutdown?: boolean }): void {
+    // Why: the live configured value, not the launch-time argv closure — the host can raise the grace
+    // after launch via relay.configureGraceTime, and a zero-only gate reading a stale zero would be
+    // zero-at-launch-only, i.e. correct only by coincidence.
+    const decision = decideRelayGrace({
+      configuredGraceMs: ptyHandler.configuredGraceTimeMs,
+      relayIdle: isRelayIdle(),
+      detached,
+      hasAcceptedSocketClient,
+      activePtyCount: ptyHandler.activePtyCount,
+      retryDeferredShutdown: options?.retryDeferredShutdown === true,
+      emptyDetachedStartupGraceMs: EMPTY_DETACHED_STARTUP_GRACE_MS,
+      idleRelayGraceMs: IDLE_RELAY_GRACE_MS
+    })
+    graceBranch = decision.branch
+    const timeoutMs = decision.timeoutMs
     graceDeadlineAt = timeoutMs === 0 ? null : Date.now() + timeoutMs
     graceReason = reason
     relayLogLine(
@@ -1233,7 +1242,7 @@ async function main(): Promise<void> {
         // Why: shutdown() already cleared graceReason, so without re-arming a client-less relay
         // whose kill was refused would stay resident forever with nothing left to retry it.
         if (socketClients.size === 0) {
-          startGrace('shutdown deferred')
+          startGrace('shutdown deferred', { retryDeferredShutdown: true })
         }
       })
   }

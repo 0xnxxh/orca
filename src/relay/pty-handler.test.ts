@@ -3375,6 +3375,47 @@ describe('PtyHandler', () => {
       expect(poolEmpty).toHaveBeenCalledTimes(1)
     })
 
+    it('fires when a spawn fails before the PTY ever reaches the pool', async () => {
+      // Why: removePty can only announce a PTY it stored, so a creation that dies mid-flight
+      // would otherwise leave the relay believing it is still non-idle forever.
+      mockPtySpawn.mockImplementation(() => {
+        throw new Error('posix_spawnp failed')
+      })
+      const poolEmpty = vi.fn()
+      handler.onPtyPoolEmpty(poolEmpty)
+
+      await expect(spawnPty()).rejects.toThrow()
+
+      expect(handler.activePtyCount).toBe(0)
+      expect(handler.pendingPtyCreationCount).toBe(0)
+      expect(poolEmpty).toHaveBeenCalledTimes(1)
+    })
+
+    it('stays silent when a failing creation settles while another is still admitted', async () => {
+      let spawnCall = 0
+      mockPtySpawn.mockImplementation(() => {
+        spawnCall += 1
+        if (spawnCall === 1) {
+          throw new Error('posix_spawnp failed')
+        }
+        return { ...mockPtyInstance, onData: vi.fn(), onExit: vi.fn() }
+      })
+      const poolEmpty = vi.fn()
+      handler.onPtyPoolEmpty(poolEmpty)
+
+      // Both admissions land before either creation resolves, so the failing one must not
+      // announce an empty pool while the surviving one still owns a shell.
+      const failing = spawnPty()
+      const succeeding = spawnPty()
+      expect(handler.pendingPtyCreationCount).toBe(2)
+
+      await expect(failing).rejects.toThrow()
+      await succeeding
+
+      expect(handler.activePtyCount).toBe(1)
+      expect(poolEmpty).not.toHaveBeenCalled()
+    })
+
     it('stops notifying after the returned unsubscribe runs', async () => {
       const onExitCallbacks: ((evt: { exitCode: number }) => void)[] = []
       mockPtySpawn.mockReturnValue({

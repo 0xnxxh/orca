@@ -18,6 +18,8 @@ export type RefreshFileExplorerExpandedDirsParams = {
   setDirCache: Dispatch<SetStateAction<Record<string, DirCache>>>
   readDirectory: (dirPath: string) => Promise<FileExplorerDirectoryListing>
   maxConcurrentReads: number
+  /** Called per dir whose fresh listing was committed, so callers can clear a staleness mark. */
+  onDirCommitted?: (dirPath: string) => void
 }
 
 export async function refreshFileExplorerExpandedDirs({
@@ -26,7 +28,8 @@ export async function refreshFileExplorerExpandedDirs({
   dirLoadTracker,
   setDirCache,
   readDirectory,
-  maxConcurrentReads
+  maxConcurrentReads,
+  onDirCommitted
 }: RefreshFileExplorerExpandedDirsParams): Promise<boolean> {
   if (dirs.length === 0) {
     return true
@@ -124,6 +127,9 @@ export async function refreshFileExplorerExpandedDirs({
       }
       return next
     })
+    for (const result of currentResults) {
+      onDirCommitted?.(result.dirPath)
+    }
     committedDirs += currentResults.length
   }
 

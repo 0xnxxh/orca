@@ -1,3 +1,4 @@
+import type { FileExplorerTreeRefreshOutcome } from './file-explorer-types'
 import { normalizeRuntimePathForComparison } from '../../../../shared/cross-platform-path'
 import {
   WATCH_BATCH_MAX_WAIT_MS,
@@ -14,7 +15,7 @@ export type FileExplorerWatchRefreshScheduler = {
 }
 
 export type CreateFileExplorerWatchRefreshSchedulerParams = {
-  refreshTree: () => Promise<void>
+  refreshTree: () => Promise<FileExplorerTreeRefreshOutcome>
   refreshDir: (dirPath: string) => Promise<void>
   /** Dirs a full tree refresh already re-reads; the scheduler has no view of `expanded`. */
   isCoveredByFullRefresh: (dirPath: string) => boolean
@@ -85,10 +86,20 @@ export function createFileExplorerWatchRefreshScheduler({
       // Why: isCoveredByFullRefresh reads a live `expanded` ref, so resolve it
       // against the set refreshTree is about to read — a dir expanded during the
       // tree refresh was never re-read and must keep its pending refresh.
-      const outstanding = full ? dirs.filter((dirPath) => !isCoveredByFullRefresh(dirPath)) : dirs
-      if (full && !disposed) {
-        await refreshTree()
-      }
+      const covered = full ? new Set(dirs.filter(isCoveredByFullRefresh)) : null
+      const outcome = full && !disposed ? await refreshTree() : null
+      // Why: refreshTree bails without touching the expanded dirs when its root load is
+      // superseded, so trusting `covered` there would drop those refreshes for good — nothing
+      // marks an expanded dir stale, so a later re-expansion won't re-read it either.
+      // Why: 'root-unreadable' is the opposite case. The transport just failed a read, so
+      // re-issuing buys one dead timeout per dir and holds `inFlight` open the whole time,
+      // blocking every later refresh. Drop them; a recovered watcher resyncs with an overflow.
+      const outstanding =
+        outcome === 'root-unreadable'
+          ? []
+          : covered && outcome === 'refreshed'
+            ? dirs.filter((dirPath) => !covered.has(dirPath))
+            : dirs
       // Why: forEachWithConcurrency has no cancel hook, and the bound refreshDir
       // is a live ref — a queued path would otherwise be read against the next
       // worktree's binding after a switch.
