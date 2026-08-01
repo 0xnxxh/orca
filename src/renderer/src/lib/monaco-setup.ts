@@ -16,7 +16,7 @@ import { installMonacoDelayerCancellationGuard } from './monaco-delayer-cancella
 import { installMonacoDiffEditorDisposalGuard } from './monaco-diff-editor-disposal'
 import { installMonacoPeekReferencesPreviewOptions } from './monaco-peek-preview-options'
 import { installMonacoContextMenuPaste } from '@/components/editor/install-monaco-context-menu-paste'
-import { setMonacoModelCensusReader } from './monaco-model-memory-census'
+import { setMonacoModelCensusReader, summarizeMonacoModelSizes } from './monaco-model-memory-census'
 
 globalThis.MonacoEnvironment = {
   getWorker(_workerId, label) {
@@ -94,20 +94,9 @@ installMonacoContextMenuPaste(monaco)
 // content — measured ~0.2us per model, and 333MB of open text costs the same as 30KB
 // — with getModels()'s two N-sized allocations as the floor, not the per-model reads.
 // Safe inside a near-OOM breadcrumb at any realistic model count.
-setMonacoModelCensusReader(() => {
-  let models = 0
-  let chars = 0
-  let lines = 0
-  for (const model of monaco.editor.getModels()) {
-    models += 1
-    if (model.isDisposed()) {
-      continue
-    }
-    chars += model.getValueLength()
-    lines += model.getLineCount()
-  }
-  return { models, chars, lines }
-})
+// Why the sum lives in the census module: every suite mocks this file, so anything
+// written here is unreachable under test. Only the registry read stays.
+setMonacoModelCensusReader(() => summarizeMonacoModelSizes(monaco.editor.getModels()))
 
 // Configure Monaco to use the locally bundled editor instead of CDN
 loader.config({ monaco })

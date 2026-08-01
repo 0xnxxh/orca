@@ -1,6 +1,47 @@
 import { describe, expect, it } from 'vitest'
 import { collectRendererMemoryProfileCounts } from './renderer-memory-profile'
-import { readMonacoModelCensus, setMonacoModelCensusReader } from './monaco-model-memory-census'
+import {
+  readMonacoModelCensus,
+  setMonacoModelCensusReader,
+  summarizeMonacoModelSizes
+} from './monaco-model-memory-census'
+
+function model(chars: number, lines: number, disposed = false) {
+  return {
+    isDisposed: () => disposed,
+    getValueLength: () => (disposed ? raise() : chars),
+    getLineCount: () => (disposed ? raise() : lines)
+  }
+}
+
+/** Disposed models throw on text access in real monaco; make the fakes do the same. */
+function raise(): never {
+  throw new Error('model is disposed')
+}
+
+describe('summarizeMonacoModelSizes', () => {
+  it('sums the whole registry, which is what outlives the panels', () => {
+    expect(summarizeMonacoModelSizes([model(1_000, 40), model(2_500, 90)])).toEqual({
+      models: 2,
+      chars: 3_500,
+      lines: 130
+    })
+  })
+
+  // Why: a disposed model still occupies a registry slot, and reading its text throws.
+  // Counting it while skipping its size keeps the slot visible without a bogus number.
+  it('counts a disposed model without reading its text', () => {
+    expect(summarizeMonacoModelSizes([model(1_000, 40), model(0, 0, true)])).toEqual({
+      models: 2,
+      chars: 1_000,
+      lines: 40
+    })
+  })
+
+  it('reports zeros for an empty registry rather than omitting fields', () => {
+    expect(summarizeMonacoModelSizes([])).toEqual({ models: 0, chars: 0, lines: 0 })
+  })
+})
 
 describe('monaco model memory census', () => {
   it('reports zeros before monaco loads, so a missing key means the instrument never ran', () => {

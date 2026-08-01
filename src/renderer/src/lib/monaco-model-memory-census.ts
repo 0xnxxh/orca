@@ -21,6 +21,38 @@ export type MonacoModelCensus = { models: number; chars: number; lines: number }
 
 const EMPTY_CENSUS: MonacoModelCensus = { models: 0, chars: 0, lines: 0 }
 
+/** The slice of monaco's ITextModel this census reads. */
+type MonacoModelSizeSource = {
+  isDisposed(): boolean
+  getValueLength(): number
+  getLineCount(): number
+}
+
+/**
+ * Why the sum lives here and not inline in monaco-setup: every suite mocks
+ * `@/lib/monaco-setup`, so arithmetic written there is unreachable under test and a
+ * census that silently reports zero stays green. monaco-setup keeps only the
+ * `getModels()` call.
+ */
+export function summarizeMonacoModelSizes(
+  registry: Iterable<MonacoModelSizeSource>
+): MonacoModelCensus {
+  let models = 0
+  let chars = 0
+  let lines = 0
+  for (const model of registry) {
+    models += 1
+    // Why guarded although getModels() drops disposed models: reading a disposed model
+    // throws, and one stale entry must not sink the census for its siblings.
+    if (model.isDisposed()) {
+      continue
+    }
+    chars += model.getValueLength()
+    lines += model.getLineCount()
+  }
+  return { models, chars, lines }
+}
+
 let readModels: (() => MonacoModelCensus) | null = null
 
 export function setMonacoModelCensusReader(read: () => MonacoModelCensus): void {
