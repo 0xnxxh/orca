@@ -1,9 +1,9 @@
 import { ipcMain } from 'electron'
 import {
   type AgentTrustPreset,
-  markCodexProjectTrusted,
-  markCopilotFolderTrusted,
-  markCursorWorkspaceTrusted
+  markCodexProjectTrustedAsync,
+  markCopilotFolderTrustedAsync,
+  markCursorWorkspaceTrustedAsync
 } from '../agent-trust-presets'
 import { markRemoteAgentWorkspaceTrusted } from '../remote-agent-trust-presets'
 
@@ -38,11 +38,12 @@ export function registerAgentTrustHandlers(): void {
             workspacePath: args.workspacePath
           })
         } else if (args.preset === 'cursor') {
-          markCursorWorkspaceTrusted(args.workspacePath)
+          // Why: async twins keep a stalled workspace mount off the main thread (freeze #14).
+          await markCursorWorkspaceTrustedAsync(args.workspacePath)
         } else if (args.preset === 'copilot') {
-          markCopilotFolderTrusted(args.workspacePath)
+          await markCopilotFolderTrustedAsync(args.workspacePath)
         } else if (args.preset === 'codex') {
-          markCodexProjectTrusted(args.workspacePath)
+          await markCodexProjectTrustedAsync(args.workspacePath)
         }
       } catch {
         // Best-effort: see Why above. The user can still accept the trust

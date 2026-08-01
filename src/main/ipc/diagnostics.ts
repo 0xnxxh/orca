@@ -19,7 +19,7 @@
 // constant or env var and does the POST itself.
 
 import { app, dialog, ipcMain, shell } from 'electron'
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdir, unlink, writeFile } from 'node:fs/promises'
 import { arch as osArch, platform as osPlatform, release as osRelease, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -55,7 +55,7 @@ const pendingBundles = new Map<string, PendingBundle>()
 function prunePendingBundles(now = Date.now()): void {
   for (const [id, pending] of pendingBundles) {
     if (now - pending.createdAtMs > PENDING_BUNDLE_TTL_MS) {
-      deletePendingBundle(id)
+      void deletePendingBundle(id)
     }
   }
   while (pendingBundles.size > MAX_PENDING_BUNDLES) {
@@ -63,13 +63,15 @@ function prunePendingBundles(now = Date.now()): void {
     if (!oldest) {
       break
     }
-    deletePendingBundle(oldest)
+    void deletePendingBundle(oldest)
   }
 }
 
-function rememberBundle(bundle: CollectedBundle): void {
-  deletePendingBundle(bundle.bundleSubmissionId)
-  const previewFilePath = writeBundlePreviewFile(bundle)
+async function rememberBundle(bundle: CollectedBundle): Promise<void> {
+  // Why: awaited so a re-collect under the same id cannot unlink the preview
+  // file the write below is about to create.
+  await deletePendingBundle(bundle.bundleSubmissionId)
+  const previewFilePath = await writeBundlePreviewFile(bundle)
   pendingBundles.set(bundle.bundleSubmissionId, {
     bundle,
     createdAtMs: Date.now(),
@@ -84,7 +86,7 @@ function rememberBundle(bundle: CollectedBundle): void {
 
 function schedulePendingBundleExpiry(bundleSubmissionId: string): ReturnType<typeof setTimeout> {
   const timer = setTimeout(() => {
-    deletePendingBundle(bundleSubmissionId)
+    void deletePendingBundle(bundleSubmissionId)
   }, PENDING_BUNDLE_TTL_MS)
   if (typeof timer === 'object' && 'unref' in timer) {
     timer.unref()
@@ -138,22 +140,24 @@ function getPendingPreviewFilePath(bundleSubmissionId: unknown): string {
   return pending.previewFilePath
 }
 
-function discardPendingBundle(bundleSubmissionId: unknown): void {
+function discardPendingBundle(bundleSubmissionId: unknown): Promise<void> {
   if (
     typeof bundleSubmissionId !== 'string' ||
     !/^[A-Za-z0-9_-]{16,64}$/.test(bundleSubmissionId)
   ) {
     throw new Error('bundleSubmissionId has invalid format')
   }
-  deletePendingBundle(bundleSubmissionId)
+  return deletePendingBundle(bundleSubmissionId)
 }
 
-function deletePendingBundle(bundleSubmissionId: string): void {
+async function deletePendingBundle(bundleSubmissionId: string): Promise<void> {
   const pending = pendingBundles.get(bundleSubmissionId)
   if (pending) {
     clearTimeout(pending.ttlTimer)
-    deletePreviewFile(pending.previewFilePath)
+    // Why: drop the map entry before awaiting so a caller that re-checks after
+    // the await never sees an entry whose preview file is already gone.
     pendingBundles.delete(bundleSubmissionId)
+    await deletePreviewFile(pending.previewFilePath)
   }
 }
 
@@ -167,22 +171,18 @@ function getPreviewDirectory(): string {
   return join(base, 'orca-diagnostic-bundle-previews')
 }
 
-function writeBundlePreviewFile(bundle: CollectedBundle): string {
+async function writeBundlePreviewFile(bundle: CollectedBundle): Promise<string> {
   const previewDirectory = getPreviewDirectory()
-  mkdirSync(previewDirectory, { mode: 0o700, recursive: true })
+  await mkdir(previewDirectory, { mode: 0o700, recursive: true })
   const previewFilePath = join(previewDirectory, `${bundle.bundleSubmissionId}.ndjson`)
-  writeFileSync(previewFilePath, bundle.payload, { encoding: 'utf8', mode: 0o600 })
+  await writeFile(previewFilePath, bundle.payload, { encoding: 'utf8', mode: 0o600 })
   return previewFilePath
 }
 
-function deletePreviewFile(filePath: string): void {
-  try {
-    if (existsSync(filePath)) {
-      unlinkSync(filePath)
-    }
-  } catch {
-    /* best effort */
-  }
+async function deletePreviewFile(filePath: string): Promise<void> {
+  // Unconditional unlink; ENOENT here is the same "already gone" outcome the
+  // exists() probe used to buy, in one syscall instead of two.
+  await unlink(filePath).catch(() => {})
 }
 
 function isTicketId(value: unknown): value is string {
@@ -211,7 +211,7 @@ export function registerDiagnosticsHandlers(): void {
 
   ipcMain.handle(
     'diagnostics:collectBundle',
-    (_event, lookbackMinutesIn: unknown): DiagnosticsBundlePreview => {
+    async (_event, lookbackMinutesIn: unknown): Promise<DiagnosticsBundlePreview> => {
       // Consent gate: main is the consent enforcement boundary; the
       // renderer-side button-hide is UX, not security. A compromised or
       // malicious renderer must not be able to assemble a bundle when the
@@ -235,7 +235,7 @@ export function registerDiagnosticsHandlers(): void {
         orcaChannel: resolveDiagnosticOrcaChannel(),
         ...(lookbackMinutes !== undefined ? { lookbackMinutes } : {})
       })
-      rememberBundle(bundle)
+      await rememberBundle(bundle)
       return toBundlePreview(bundle)
     }
   )
@@ -271,10 +271,7 @@ export function registerDiagnosticsHandlers(): void {
         payload,
         bundleSubmissionId: bundle.bundleSubmissionId
       })
-      const uploadedPending = pendingBundles.get(bundle.bundleSubmissionId)
-      if (uploadedPending) {
-        deletePendingBundle(bundle.bundleSubmissionId)
-      }
+      await deletePendingBundle(bundle.bundleSubmissionId)
       return result
     }
   )
@@ -291,9 +288,12 @@ export function registerDiagnosticsHandlers(): void {
     }
   })
 
-  ipcMain.handle('diagnostics:discardBundlePreview', (_event, bundleSubmissionId: unknown) => {
-    discardPendingBundle(bundleSubmissionId)
-  })
+  ipcMain.handle(
+    'diagnostics:discardBundlePreview',
+    async (_event, bundleSubmissionId: unknown) => {
+      await discardPendingBundle(bundleSubmissionId)
+    }
+  )
 
   ipcMain.handle('diagnostics:deleteBundle', async (_event, ticketId: unknown): Promise<void> => {
     if (!isTicketId(ticketId)) {

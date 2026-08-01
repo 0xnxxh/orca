@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- Why: hook parsing, layered issue-command resolution, and cross-platform runner setup share one execution surface, so keeping them together avoids subtle drift across create/read/write paths. */
 import { readFileSync, existsSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs'
+import { access, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { exec, execFile } from 'node:child_process'
 import { getDefaultRepoHookSettings } from '../shared/constants'
@@ -38,11 +39,16 @@ function getHookShell(): string | undefined {
 
 export { parseOrcaYaml }
 
+const ORCA_YAML_FILENAME = 'orca.yaml'
+
 /**
  * Load hooks from orca.yaml in the given repo root.
+ *
+ * Sync twin of `loadHooksAsync`, kept for callers that cannot await (worktree
+ * create/archive flows and runtime paths that build launch descriptors inline).
  */
 export function loadHooks(repoPath: string): OrcaHooks | null {
-  const yamlPath = join(repoPath, 'orca.yaml')
+  const yamlPath = join(repoPath, ORCA_YAML_FILENAME)
   if (!existsSync(yamlPath)) {
     return null
   }
@@ -59,7 +65,78 @@ export function loadHooks(repoPath: string): OrcaHooks | null {
  * Check whether an orca.yaml exists for a repo.
  */
 export function hasHooksFile(repoPath: string): boolean {
-  return existsSync(join(repoPath, 'orca.yaml'))
+  return existsSync(join(repoPath, ORCA_YAML_FILENAME))
+}
+
+function isFileAbsentError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  return code === 'ENOENT' || code === 'ENOTDIR'
+}
+
+/** Why: `existsSync` is `access(F_OK)`, so it answers false for EACCES/ELOOP/EIO as well as
+ *  ENOENT, and a readFile failure cannot tell an unreadable file from an unreachable path
+ *  (a repo directory at mode 000 fails both with EACCES). Re-probe the way the sync twin did
+ *  so `hasHooksFile` keeps its old answer. */
+async function orcaYamlPathExists(yamlPath: string): Promise<boolean> {
+  try {
+    await access(yamlPath)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Read `orca.yaml` in one syscall — an existsSync probe plus a read is two round trips on a
+ *  path that may be a stalled mount or a FIFO, and ENOENT already answers "is it there?".
+ *  `content` is null when the file is absent *or* unreadable; `exists` separates those. */
+async function readOrcaYaml(
+  repoPath: string
+): Promise<{ exists: boolean; content: string | null }> {
+  const yamlPath = join(repoPath, ORCA_YAML_FILENAME)
+  try {
+    return { exists: true, content: await readFile(yamlPath, 'utf-8') }
+  } catch (error) {
+    // Only the absence codes are unambiguous; anything else costs a second syscall to classify.
+    return {
+      exists: isFileAbsentError(error) ? false : await orcaYamlPathExists(yamlPath),
+      content: null
+    }
+  }
+}
+
+function parseOrcaYamlOrNull(content: string): OrcaHooks | null {
+  try {
+    return parseOrcaYaml(content)
+  } catch {
+    return null
+  }
+}
+
+/** Async twin of `loadHooks`. */
+export async function loadHooksAsync(repoPath: string): Promise<OrcaHooks | null> {
+  const { content } = await readOrcaYaml(repoPath)
+  return content == null ? null : parseOrcaYamlOrNull(content)
+}
+
+export type OrcaYamlHooksCheck = {
+  hasHooksFile: boolean
+  hooks: OrcaHooks | null
+  mayNeedUpdate: boolean
+}
+
+/** One read answers what `hasHooksFile` + `loadHooks` + `hasUnrecognizedOrcaYamlKeys` asked in three. */
+export async function checkOrcaYamlHooks(repoPath: string): Promise<OrcaYamlHooksCheck> {
+  const { exists, content } = await readOrcaYaml(repoPath)
+  if (content == null) {
+    return { hasHooksFile: exists, hooks: null, mayNeedUpdate: false }
+  }
+
+  const hooks = parseOrcaYamlOrNull(content)
+  return {
+    hasHooksFile: true,
+    hooks,
+    mayNeedUpdate: hooks == null && hasUnrecognizedTopLevelKeys(content)
+  }
 }
 
 // Why: detect unrecognised keys so the UI can suggest an update instead of showing a "could not be parsed" error.
@@ -71,18 +148,21 @@ const RECOGNIZED_ORCA_YAML_KEYS = new Set([
   'worktree'
 ])
 
+function hasUnrecognizedTopLevelKeys(content: string): boolean {
+  for (const line of iterateLfScriptLines(content)) {
+    // Why: match bare `key:` at end-of-line too, since a mapping with a block value on the next line is valid YAML.
+    const m = line.match(/^([A-Za-z][A-Za-z0-9_-]*):(\s|$)/)
+    if (m != null && !RECOGNIZED_ORCA_YAML_KEYS.has(m[1])) {
+      return true
+    }
+  }
+  return false
+}
+
 /** True when `orca.yaml` has a top-level key this version of Orca does not handle. */
 export function hasUnrecognizedOrcaYamlKeys(repoPath: string): boolean {
   try {
-    const content = readFileSync(join(repoPath, 'orca.yaml'), 'utf-8')
-    for (const line of iterateLfScriptLines(content)) {
-      // Why: match bare `key:` at end-of-line too, since a mapping with a block value on the next line is valid YAML.
-      const m = line.match(/^([A-Za-z][A-Za-z0-9_-]*):(\s|$)/)
-      if (m != null && !RECOGNIZED_ORCA_YAML_KEYS.has(m[1])) {
-        return true
-      }
-    }
-    return false
+    return hasUnrecognizedTopLevelKeys(readFileSync(join(repoPath, ORCA_YAML_FILENAME), 'utf-8'))
   } catch {
     return false
   }
@@ -127,6 +207,29 @@ export function readIssueCommand(repoPath: string): ResolvedIssueCommand {
   }
 
   const sharedContent = getSharedIssueCommand(repoPath)
+  const effectiveContent = localContent ?? sharedContent
+
+  return {
+    localContent,
+    sharedContent,
+    effectiveContent,
+    localFilePath: filePath,
+    source: localContent ? 'local' : sharedContent ? 'shared' : 'none'
+  }
+}
+
+/** Async twin of `readIssueCommand`; reads sequentially so a stalled repo holds one threadpool slot, not two. */
+export async function readIssueCommandAsync(repoPath: string): Promise<ResolvedIssueCommand> {
+  const filePath = getIssueCommandFilePath(repoPath)
+  let localContent: string | null = null
+
+  try {
+    localContent = (await readFile(filePath, 'utf-8')).trim() || null
+  } catch {
+    localContent = null
+  }
+
+  const sharedContent = (await loadHooksAsync(repoPath))?.issueCommand?.trim() || null
   const effectiveContent = localContent ?? sharedContent
 
   return {

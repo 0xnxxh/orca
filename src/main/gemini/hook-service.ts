@@ -9,12 +9,16 @@ import {
   getSharedManagedScriptPath,
   MANAGED_HOOK_TIMEOUT_MILLISECONDS,
   readHooksJson,
+  readHooksJsonAsync,
   removeManagedCommands,
   wrapPosixHookCommand,
   wrapWindowsHookCommand,
   writeHooksJson,
+  writeHooksJsonAsync,
   writeManagedScript,
-  type HookDefinition
+  writeManagedScriptAsync,
+  type HookDefinition,
+  type HooksConfig
 } from '../agent-hooks/installer-utils'
 import {
   readHooksJsonRemote,
@@ -96,49 +100,116 @@ function getManagedScript(target: 'local' | 'posix' = 'local'): string {
   ].join('\n')
 }
 
+function parseErrorStatus(configPath: string): AgentHookInstallStatus {
+  return {
+    agent: 'gemini',
+    state: 'error',
+    configPath,
+    managedHooksPresent: false,
+    detail: 'Could not parse Gemini settings.json'
+  }
+}
+
+function buildStatus(config: HooksConfig | null): AgentHookInstallStatus {
+  const configPath = getConfigPath()
+  if (!config) {
+    return parseErrorStatus(configPath)
+  }
+
+  const command = getManagedCommand(getManagedScriptPath())
+  const missing: string[] = []
+  let presentCount = 0
+  for (const eventName of GEMINI_EVENTS) {
+    const definitions = Array.isArray(config.hooks?.[eventName]) ? config.hooks![eventName]! : []
+    const hasCommand = definitions.some((definition) =>
+      (definition.hooks ?? []).some((hook) => hook.command === command)
+    )
+    if (hasCommand) {
+      presentCount += 1
+    } else {
+      missing.push(eventName)
+    }
+  }
+  const managedHooksPresent = presentCount > 0
+  let state: AgentHookInstallState
+  let detail: string | null
+  if (missing.length === 0) {
+    state = 'installed'
+    detail = null
+  } else if (presentCount === 0) {
+    state = 'not_installed'
+    detail = null
+  } else {
+    state = 'partial'
+    detail = `Managed hook missing for events: ${missing.join(', ')}`
+  }
+  return { agent: 'gemini', state, configPath, managedHooksPresent, detail }
+}
+
+function applyManagedHooks(config: HooksConfig, command: string, scriptFileName: string): void {
+  const nextHooks = { ...config.hooks }
+
+  // Why: match by filename not exact command, so installs sweep stale entries instead of duplicating them.
+  const isManagedCommand = createManagedCommandMatcher(scriptFileName)
+
+  const managedEvents = new Set<string>(GEMINI_EVENTS)
+
+  // Why: sweep managed entries from dropped event buckets so stale hooks (e.g. PreToolUse) don't keep firing.
+  for (const [eventName, definitions] of Object.entries(nextHooks)) {
+    if (managedEvents.has(eventName)) {
+      continue
+    }
+    if (!Array.isArray(definitions)) {
+      continue
+    }
+    const cleaned = removeManagedCommands(definitions, isManagedCommand)
+    if (cleaned.length === 0) {
+      delete nextHooks[eventName]
+    } else {
+      nextHooks[eventName] = cleaned
+    }
+  }
+
+  for (const eventName of GEMINI_EVENTS) {
+    const current = Array.isArray(nextHooks[eventName]) ? nextHooks[eventName] : []
+    const cleaned = removeManagedCommands(current, isManagedCommand)
+    const definition: HookDefinition = {
+      // Why: Gemini's hook `timeout` unit is milliseconds, unlike Claude/Codex.
+      hooks: [buildManagedCommandHook(command, MANAGED_HOOK_TIMEOUT_MILLISECONDS)]
+    }
+    nextHooks[eventName] = [...cleaned, definition]
+  }
+
+  config.hooks = nextHooks
+}
+
+function stripManagedHooks(config: HooksConfig): void {
+  const nextHooks = { ...config.hooks }
+  // Why: match by filename so remove() sweeps stale entries even after the script path moved.
+  const isManagedCommand = createManagedCommandMatcher(getManagedScriptFileName())
+  for (const [eventName, definitions] of Object.entries(nextHooks)) {
+    // Why: fail open on malformed (non-array) entries so a broken user config never blocks uninstall.
+    if (!Array.isArray(definitions)) {
+      continue
+    }
+    const cleaned = removeManagedCommands(definitions, isManagedCommand)
+    if (cleaned.length === 0) {
+      delete nextHooks[eventName]
+    } else {
+      nextHooks[eventName] = cleaned
+    }
+  }
+  config.hooks = nextHooks
+}
+
 export class GeminiHookService {
   getStatus(): AgentHookInstallStatus {
-    const configPath = getConfigPath()
-    const scriptPath = getManagedScriptPath()
-    const config = readHooksJson(configPath)
-    if (!config) {
-      return {
-        agent: 'gemini',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not parse Gemini settings.json'
-      }
-    }
+    return buildStatus(readHooksJson(getConfigPath()))
+  }
 
-    const command = getManagedCommand(scriptPath)
-    const missing: string[] = []
-    let presentCount = 0
-    for (const eventName of GEMINI_EVENTS) {
-      const definitions = Array.isArray(config.hooks?.[eventName]) ? config.hooks![eventName]! : []
-      const hasCommand = definitions.some((definition) =>
-        (definition.hooks ?? []).some((hook) => hook.command === command)
-      )
-      if (hasCommand) {
-        presentCount += 1
-      } else {
-        missing.push(eventName)
-      }
-    }
-    const managedHooksPresent = presentCount > 0
-    let state: AgentHookInstallState
-    let detail: string | null
-    if (missing.length === 0) {
-      state = 'installed'
-      detail = null
-    } else if (presentCount === 0) {
-      state = 'not_installed'
-      detail = null
-    } else {
-      state = 'partial'
-      detail = `Managed hook missing for events: ${missing.join(', ')}`
-    }
-    return { agent: 'gemini', state, configPath, managedHooksPresent, detail }
+  // Why: main-thread twin — the sync one stays for the CLI process.
+  async getStatusAsync(): Promise<AgentHookInstallStatus> {
+    return buildStatus(await readHooksJsonAsync(getConfigPath()))
   }
 
   install(): AgentHookInstallStatus {
@@ -146,53 +217,27 @@ export class GeminiHookService {
     const scriptPath = getManagedScriptPath()
     const config = readHooksJson(configPath)
     if (!config) {
-      return {
-        agent: 'gemini',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not parse Gemini settings.json'
-      }
+      return parseErrorStatus(configPath)
     }
 
-    const command = getManagedCommand(scriptPath)
-    const nextHooks = { ...config.hooks }
-
-    // Why: match by filename not exact command, so installs sweep stale entries instead of duplicating them.
-    const isManagedCommand = createManagedCommandMatcher(getManagedScriptFileName())
-
-    const managedEvents = new Set<string>(GEMINI_EVENTS)
-
-    // Why: sweep managed entries from dropped event buckets so stale hooks (e.g. PreToolUse) don't keep firing.
-    for (const [eventName, definitions] of Object.entries(nextHooks)) {
-      if (managedEvents.has(eventName)) {
-        continue
-      }
-      if (!Array.isArray(definitions)) {
-        continue
-      }
-      const cleaned = removeManagedCommands(definitions, isManagedCommand)
-      if (cleaned.length === 0) {
-        delete nextHooks[eventName]
-      } else {
-        nextHooks[eventName] = cleaned
-      }
-    }
-
-    for (const eventName of GEMINI_EVENTS) {
-      const current = Array.isArray(nextHooks[eventName]) ? nextHooks[eventName] : []
-      const cleaned = removeManagedCommands(current, isManagedCommand)
-      const definition: HookDefinition = {
-        // Why: Gemini's hook `timeout` unit is milliseconds, unlike Claude/Codex.
-        hooks: [buildManagedCommandHook(command, MANAGED_HOOK_TIMEOUT_MILLISECONDS)]
-      }
-      nextHooks[eventName] = [...cleaned, definition]
-    }
-
-    config.hooks = nextHooks
+    applyManagedHooks(config, getManagedCommand(scriptPath), getManagedScriptFileName())
     writeManagedScript(scriptPath, getManagedScript())
     writeHooksJson(configPath, config)
     return this.getStatus()
+  }
+
+  async installAsync(): Promise<AgentHookInstallStatus> {
+    const configPath = getConfigPath()
+    const scriptPath = getManagedScriptPath()
+    const config = await readHooksJsonAsync(configPath)
+    if (!config) {
+      return parseErrorStatus(configPath)
+    }
+
+    applyManagedHooks(config, getManagedCommand(scriptPath), getManagedScriptFileName())
+    await writeManagedScriptAsync(scriptPath, getManagedScript())
+    await writeHooksJsonAsync(configPath, config)
+    return this.getStatusAsync()
   }
 
   // POSIX-only remote install mirroring ClaudeHookService.installRemote. See docs/design/agent-status-over-ssh.md §8.
@@ -270,33 +315,22 @@ export class GeminiHookService {
     const configPath = getConfigPath()
     const config = readHooksJson(configPath)
     if (!config) {
-      return {
-        agent: 'gemini',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not parse Gemini settings.json'
-      }
+      return parseErrorStatus(configPath)
     }
-
-    const nextHooks = { ...config.hooks }
-    // Why: match by filename so remove() sweeps stale entries even after the script path moved.
-    const isManagedCommand = createManagedCommandMatcher(getManagedScriptFileName())
-    for (const [eventName, definitions] of Object.entries(nextHooks)) {
-      // Why: fail open on malformed (non-array) entries so a broken user config never blocks uninstall.
-      if (!Array.isArray(definitions)) {
-        continue
-      }
-      const cleaned = removeManagedCommands(definitions, isManagedCommand)
-      if (cleaned.length === 0) {
-        delete nextHooks[eventName]
-      } else {
-        nextHooks[eventName] = cleaned
-      }
-    }
-    config.hooks = nextHooks
+    stripManagedHooks(config)
     writeHooksJson(configPath, config)
     return this.getStatus()
+  }
+
+  async removeAsync(): Promise<AgentHookInstallStatus> {
+    const configPath = getConfigPath()
+    const config = await readHooksJsonAsync(configPath)
+    if (!config) {
+      return parseErrorStatus(configPath)
+    }
+    stripManagedHooks(config)
+    await writeHooksJsonAsync(configPath, config)
+    return this.getStatusAsync()
   }
 }
 

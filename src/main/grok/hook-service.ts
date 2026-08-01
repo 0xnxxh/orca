@@ -5,34 +5,31 @@ import { resolveGrokHomeDir } from '../../shared/grok-session-paths'
 import {
   buildManagedCommandHook,
   createManagedCommandMatcher,
-  buildWindowsAgentHookPostCommand,
   getSharedManagedScriptPath,
   readHooksJson,
+  readHooksJsonAsync,
   removeManagedCommands,
   wrapPosixHookCommand,
   wrapWindowsHookCommand,
   writeHooksJson,
+  writeHooksJsonAsync,
   writeManagedScript,
-  type HookDefinition
+  writeManagedScriptAsync,
+  type HookDefinition,
+  type HooksConfig
 } from '../agent-hooks/installer-utils'
 import {
   readHooksJsonRemote,
   writeHooksJsonRemote,
   writeManagedScriptRemote
 } from '../agent-hooks/installer-utils-remote'
-import {
-  buildPosixHookPayloadCapture,
-  buildWindowsHookEnvironmentGuardLines,
-  buildWindowsHookStdinDrainEpilogue
-} from '../agent-hooks/hook-stdin-contract'
+import { getManagedScript, GROK_HOME_ENVELOPE_MAX_LENGTH } from './managed-hook-script'
 
 // Why: Grok's tool-event matcher is a real regex (see Grok hooks docs). Bare
 // `*` is not a valid "match all" pattern and can fail to load/match, so tool
 // lifecycle hooks never fire. `.*` matches every tool name (same as Command
 // Code's managed hooks).
 const GROK_TOOL_EVENT_MATCHER = '.*'
-const GROK_HOME_ENVELOPE_MAX_LENGTH = 4096
-const WINDOWS_HOOK_PAYLOAD_FORM_LINE = '  --data-urlencode "payload@-" >nul 2>nul'
 
 const GROK_EVENTS = [
   { eventName: 'SessionStart', definition: { hooks: [{ type: 'command', command: '' }] } },
@@ -95,11 +92,6 @@ function hasControlCharacter(value: string): boolean {
   })
 }
 
-const WINDOWS_GROK_HOOK_POST_COMMAND = buildWindowsAgentHookPostCommand('grok').replace(
-  WINDOWS_HOOK_PAYLOAD_FORM_LINE,
-  `  --data-urlencode "grokHome=%ORCA_GROK_HOME%" ^\r\n${WINDOWS_HOOK_PAYLOAD_FORM_LINE}`
-)
-
 function getManagedScriptFileName(): string {
   return process.platform === 'win32' ? 'grok-hook.cmd' : 'grok-hook.sh'
 }
@@ -112,59 +104,6 @@ function getManagedCommand(scriptPath: string): string {
   return process.platform === 'win32'
     ? wrapWindowsHookCommand(scriptPath)
     : wrapPosixHookCommand(scriptPath)
-}
-
-function getManagedScript(target: 'local' | 'posix' = 'local'): string {
-  if (target === 'local' && process.platform === 'win32') {
-    return [
-      '@echo off',
-      'setlocal',
-      'if defined ORCA_AGENT_HOOK_ENDPOINT if exist "%ORCA_AGENT_HOOK_ENDPOINT%" call "%ORCA_AGENT_HOOK_ENDPOINT%" 2>nul',
-      ...buildWindowsHookEnvironmentGuardLines(),
-      'set "ORCA_GROK_HOME=%GROK_HOME%"',
-      `if not "%GROK_HOME:~${GROK_HOME_ENVELOPE_MAX_LENGTH},1%"=="" set "ORCA_GROK_HOME="`,
-      // Why: a trailing backslash escapes curl's closing argv quote on Windows,
-      // merging the payload option into grokHome and dropping the hook body.
-      'if "%ORCA_GROK_HOME:~-1%"=="\\" set "ORCA_GROK_HOME=%ORCA_GROK_HOME%."',
-      WINDOWS_GROK_HOOK_POST_COMMAND,
-      'exit /b 0',
-      ...buildWindowsHookStdinDrainEpilogue(),
-      ''
-    ].join('\r\n')
-  }
-
-  return [
-    '#!/bin/sh',
-    ...buildPosixHookPayloadCapture(),
-    'if [ -n "$ORCA_AGENT_HOOK_ENDPOINT" ] && [ -r "$ORCA_AGENT_HOOK_ENDPOINT" ]; then',
-    '  . "$ORCA_AGENT_HOOK_ENDPOINT" 2>/dev/null || :',
-    'fi',
-    'if [ -z "$ORCA_AGENT_HOOK_PORT" ] || [ -z "$ORCA_AGENT_HOOK_TOKEN" ] || [ -z "$ORCA_PANE_KEY" ]; then',
-    '  exit 0',
-    'fi',
-    'grok_home=',
-    `if [ -n "\${GROK_HOME:-}" ] && [ "\${#GROK_HOME}" -le ${GROK_HOME_ENVELOPE_MAX_LENGTH} ]; then`,
-    '  grok_home=$GROK_HOME',
-    'fi',
-    // Timeout caps best-effort hook posts if the local listener stalls.
-    // Why: pipe payload to curl's stdin (`payload@-`) instead of an inline
-    // `payload=$VALUE` arg, so tens-of-KB tool output stays off the curl
-    // command line (EDR command-line false positives). Wire body is identical.
-    'printf \'%s\' "$payload" | curl -sS -X POST "http://127.0.0.1:${ORCA_AGENT_HOOK_PORT}/hook/grok" \\',
-    '  --connect-timeout 0.5 --max-time 1.5 \\',
-    '  -H "Content-Type: application/x-www-form-urlencoded" \\',
-    '  -H "X-Orca-Agent-Hook-Token: ${ORCA_AGENT_HOOK_TOKEN}" \\',
-    '  --data-urlencode "paneKey=${ORCA_PANE_KEY}" \\',
-    '  --data-urlencode "tabId=${ORCA_TAB_ID}" \\',
-    '  --data-urlencode "launchToken=${ORCA_AGENT_LAUNCH_TOKEN}" \\',
-    '  --data-urlencode "worktreeId=${ORCA_WORKTREE_ID}" \\',
-    '  --data-urlencode "env=${ORCA_AGENT_HOOK_ENV}" \\',
-    '  --data-urlencode "version=${ORCA_AGENT_HOOK_VERSION}" \\',
-    '  --data-urlencode "grokHome=${grok_home}" \\',
-    '  --data-urlencode "payload@-" >/dev/null 2>&1 || true',
-    'exit 0',
-    ''
-  ].join('\n')
 }
 
 function buildInstalledConfig(
@@ -203,52 +142,64 @@ function buildInstalledConfig(
   config.hooks = nextHooks
 }
 
+function parseErrorStatus(configPath: string): AgentHookInstallStatus {
+  return {
+    agent: 'grok',
+    state: 'error',
+    configPath,
+    managedHooksPresent: false,
+    detail: 'Could not parse Grok hook config'
+  }
+}
+
+function buildStatus(config: HooksConfig | null): AgentHookInstallStatus {
+  const configPath = getConfigPath()
+  const scriptPath = getManagedScriptPath()
+  if (!config) {
+    return parseErrorStatus(configPath)
+  }
+
+  const command = getManagedCommand(scriptPath)
+  const missing: string[] = []
+  let presentCount = 0
+  for (const event of GROK_EVENTS) {
+    const definitions = Array.isArray(config.hooks?.[event.eventName])
+      ? config.hooks![event.eventName]!
+      : []
+    const hasCommand = definitions.some((definition) =>
+      (definition.hooks ?? []).some((hook) => hook.command === command)
+    )
+    if (hasCommand) {
+      presentCount += 1
+    } else {
+      missing.push(event.eventName)
+    }
+  }
+
+  const managedHooksPresent = presentCount > 0
+  let state: AgentHookInstallState
+  let detail: string | null
+  if (missing.length === 0) {
+    state = 'installed'
+    detail = null
+  } else if (presentCount === 0) {
+    state = 'not_installed'
+    detail = null
+  } else {
+    state = 'partial'
+    detail = `Managed hook missing for events: ${missing.join(', ')}`
+  }
+  return { agent: 'grok', state, configPath, managedHooksPresent, detail }
+}
+
 export class GrokHookService {
   getStatus(): AgentHookInstallStatus {
-    const configPath = getConfigPath()
-    const scriptPath = getManagedScriptPath()
-    const config = readHooksJson(configPath)
-    if (!config) {
-      return {
-        agent: 'grok',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not parse Grok hook config'
-      }
-    }
+    return buildStatus(readHooksJson(getConfigPath()))
+  }
 
-    const command = getManagedCommand(scriptPath)
-    const missing: string[] = []
-    let presentCount = 0
-    for (const event of GROK_EVENTS) {
-      const definitions = Array.isArray(config.hooks?.[event.eventName])
-        ? config.hooks![event.eventName]!
-        : []
-      const hasCommand = definitions.some((definition) =>
-        (definition.hooks ?? []).some((hook) => hook.command === command)
-      )
-      if (hasCommand) {
-        presentCount += 1
-      } else {
-        missing.push(event.eventName)
-      }
-    }
-
-    const managedHooksPresent = presentCount > 0
-    let state: AgentHookInstallState
-    let detail: string | null
-    if (missing.length === 0) {
-      state = 'installed'
-      detail = null
-    } else if (presentCount === 0) {
-      state = 'not_installed'
-      detail = null
-    } else {
-      state = 'partial'
-      detail = `Managed hook missing for events: ${missing.join(', ')}`
-    }
-    return { agent: 'grok', state, configPath, managedHooksPresent, detail }
+  // Why: main-thread twin — the sync one stays for the CLI process.
+  async getStatusAsync(): Promise<AgentHookInstallStatus> {
+    return buildStatus(await readHooksJsonAsync(getConfigPath()))
   }
 
   install(): AgentHookInstallStatus {
@@ -256,19 +207,27 @@ export class GrokHookService {
     const scriptPath = getManagedScriptPath()
     const config = readHooksJson(configPath)
     if (!config) {
-      return {
-        agent: 'grok',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not parse Grok hook config'
-      }
+      return parseErrorStatus(configPath)
     }
 
     buildInstalledConfig(config, getManagedCommand(scriptPath), getManagedScriptFileName())
     writeManagedScript(scriptPath, getManagedScript())
     writeHooksJson(configPath, config)
     return this.getStatus()
+  }
+
+  async installAsync(): Promise<AgentHookInstallStatus> {
+    const configPath = getConfigPath()
+    const scriptPath = getManagedScriptPath()
+    const config = await readHooksJsonAsync(configPath)
+    if (!config) {
+      return parseErrorStatus(configPath)
+    }
+
+    buildInstalledConfig(config, getManagedCommand(scriptPath), getManagedScriptFileName())
+    await writeManagedScriptAsync(scriptPath, getManagedScript())
+    await writeHooksJsonAsync(configPath, config)
+    return this.getStatusAsync()
   }
 
   async installRemote(
@@ -319,13 +278,7 @@ export class GrokHookService {
     const configPath = getConfigPath()
     const config = readHooksJson(configPath)
     if (!config) {
-      return {
-        agent: 'grok',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not parse Grok hook config'
-      }
+      return parseErrorStatus(configPath)
     }
 
     const nextHooks = { ...config.hooks }
@@ -345,6 +298,32 @@ export class GrokHookService {
     config.hooks = nextHooks
     writeHooksJson(configPath, config)
     return this.getStatus()
+  }
+
+  async removeAsync(): Promise<AgentHookInstallStatus> {
+    const configPath = getConfigPath()
+    const config = await readHooksJsonAsync(configPath)
+    if (!config) {
+      return parseErrorStatus(configPath)
+    }
+
+    const nextHooks = { ...config.hooks }
+    const isManagedCommand = createManagedCommandMatcher(getManagedScriptFileName())
+    for (const [eventName, definitions] of Object.entries(nextHooks)) {
+      if (!Array.isArray(definitions)) {
+        continue
+      }
+      const cleaned = removeManagedCommands(definitions, isManagedCommand)
+      if (cleaned.length === 0) {
+        delete nextHooks[eventName]
+      } else {
+        nextHooks[eventName] = cleaned
+      }
+    }
+
+    config.hooks = nextHooks
+    await writeHooksJsonAsync(configPath, config)
+    return this.getStatusAsync()
   }
 }
 

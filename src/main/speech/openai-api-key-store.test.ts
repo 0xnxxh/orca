@@ -72,10 +72,22 @@ describe('OpenAI speech API key store', () => {
   it('uses the in-memory key after save without decrypting from safeStorage', async () => {
     const store = await loadStoreModule()
 
-    store.saveOpenAiSpeechApiKey('saved-key')
+    await store.saveOpenAiSpeechApiKeyAsync('saved-key')
 
     expect(store.readOpenAiSpeechApiKey()).toBe('saved-key')
     expect(safeStorageMock.decryptString).not.toHaveBeenCalled()
+  })
+
+  it('does not resurrect a cleared key when a queued save lands after the clear', async () => {
+    const store = await loadStoreModule()
+
+    const save = store.saveOpenAiSpeechApiKeyAsync('saved-key')
+    const clear = store.clearOpenAiSpeechApiKeyAsync()
+    await Promise.all([save, clear])
+
+    // The cache, not the disk, is where the resurrection shows: readOpenAiSpeechApiKey
+    // returns the cached value without ever reaching the (already deleted) file.
+    expect(() => store.readOpenAiSpeechApiKey()).toThrow(/not configured/)
   })
 
   it('reports missing status without creating storage files', async () => {

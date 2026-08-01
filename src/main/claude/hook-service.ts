@@ -1,11 +1,14 @@
 import { existsSync, rmSync, writeFileSync } from 'node:fs'
+import { access, rm, writeFile } from 'node:fs/promises'
 import type { SFTPWrapper } from 'ssh2'
 import type { AgentHookInstallState, AgentHookInstallStatus } from '../../shared/agent-hook-types'
 import {
-  buildWindowsAgentHookCurlPostCommand,
   readHooksJson,
+  readHooksJsonAsync,
   writeHooksJson,
+  writeHooksJsonAsync,
   writeManagedScript,
+  writeManagedScriptAsync,
   type HooksConfig
 } from '../agent-hooks/installer-utils'
 import {
@@ -13,12 +16,7 @@ import {
   writeHooksJsonRemote,
   writeManagedScriptRemote
 } from '../agent-hooks/installer-utils-remote'
-import {
-  buildPosixHookPayloadCapture,
-  buildWindowsHookEnvironmentGuardLines,
-  buildWindowsHookStdinDrainEpilogue,
-  WINDOWS_HOOK_STDIN_DRAIN_LABEL
-} from '../agent-hooks/hook-stdin-contract'
+import { getManagedScript } from './managed-hook-script'
 import { getManagedStatusLineScript } from './statusline-script'
 import {
   applyManagedHooks,
@@ -53,66 +51,14 @@ const DEFAULT_CLAUDE_HOOK_SERVICE_OPTIONS: ClaudeHookServiceOptions = {
   settings: CLAUDE_HOOK_SETTINGS
 }
 
-function getManagedScript(
-  target: 'local' | 'posix' = 'local',
-  options: { skipWhenDevinImportsClaude?: boolean } = {}
-): string {
-  if (target === 'local' && process.platform === 'win32') {
-    return [
-      '@echo off',
-      'setlocal',
-      ...(options.skipWhenDevinImportsClaude
-        ? [
-            // Why: Devin imports .claude hooks by default; skip Orca's managed hook there so status posts stay attributed to Devin.
-            `if not "%DEVIN_PROJECT_DIR%"=="" goto :${WINDOWS_HOOK_STDIN_DRAIN_LABEL}`
-          ]
-        : []),
-      // Why: call the endpoint file to refresh port/token — a PTY that survived an Orca restart carries stale env; falls through to PTY env if missing.
-      'if defined ORCA_AGENT_HOOK_ENDPOINT if exist "%ORCA_AGENT_HOOK_ENDPOINT%" call "%ORCA_AGENT_HOOK_ENDPOINT%" 2>nul',
-      ...buildWindowsHookEnvironmentGuardLines(),
-      // Why: post via curl.exe, not PowerShell — Claude's launcher is already encoded PowerShell, so a PS post would double interpreter startups per hook.
-      buildWindowsAgentHookCurlPostCommand('claude'),
-      'exit /b 0',
-      ...buildWindowsHookStdinDrainEpilogue(),
-      ''
-    ].join('\r\n')
+// Why: pure existence probe with no follow-up read, so access(F_OK) is the honest async twin of existsSync.
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
   }
-
-  return [
-    '#!/bin/sh',
-    ...buildPosixHookPayloadCapture(),
-    ...(options.skipWhenDevinImportsClaude
-      ? [
-          // Why: Devin imports .claude hooks by default; skip Orca's managed hook there so status posts stay attributed to Devin.
-          'if [ -n "$DEVIN_PROJECT_DIR" ]; then',
-          '  exit 0',
-          'fi'
-        ]
-      : []),
-    // Why: source the endpoint file to refresh port/token — a PTY that survived an Orca restart carries stale env; falls back to PTY env if missing.
-    // Why: suppress stderr / || : so a stray parse error (TOCTOU or CRLF) can't leak into hook output or trip an outer set -e.
-    'if [ -n "$ORCA_AGENT_HOOK_ENDPOINT" ] && [ -r "$ORCA_AGENT_HOOK_ENDPOINT" ]; then',
-    '  . "$ORCA_AGENT_HOOK_ENDPOINT" 2>/dev/null || :',
-    'fi',
-    'if [ -z "$ORCA_AGENT_HOOK_PORT" ] || [ -z "$ORCA_AGENT_HOOK_TOKEN" ] || [ -z "$ORCA_PANE_KEY" ]; then',
-    '  exit 0',
-    'fi',
-    // Why: paths can hold quotes/newlines, so hand-building JSON in shell is unsafe; post the raw payload + metadata as form fields for the receiver to parse.
-    // Why: pipe payload to curl stdin (`payload@-`), not an inline arg, so large tool output stays off the command line (EDR false positives).
-    'printf \'%s\' "$payload" | curl -sS -X POST "http://127.0.0.1:${ORCA_AGENT_HOOK_PORT}/hook/claude" \\',
-    '  --connect-timeout 0.5 --max-time 1.5 \\',
-    '  -H "Content-Type: application/x-www-form-urlencoded" \\',
-    '  -H "X-Orca-Agent-Hook-Token: ${ORCA_AGENT_HOOK_TOKEN}" \\',
-    '  --data-urlencode "paneKey=${ORCA_PANE_KEY}" \\',
-    '  --data-urlencode "tabId=${ORCA_TAB_ID}" \\',
-    '  --data-urlencode "launchToken=${ORCA_AGENT_LAUNCH_TOKEN}" \\',
-    '  --data-urlencode "worktreeId=${ORCA_WORKTREE_ID}" \\',
-    '  --data-urlencode "env=${ORCA_AGENT_HOOK_ENV}" \\',
-    '  --data-urlencode "version=${ORCA_AGENT_HOOK_VERSION}" \\',
-    '  --data-urlencode "payload@-" >/dev/null 2>&1 || true',
-    'exit 0',
-    ''
-  ].join('\n')
 }
 
 export class ClaudeHookService {
@@ -124,16 +70,29 @@ export class ClaudeHookService {
 
   getStatus(): AgentHookInstallStatus {
     const configPath = getConfigPath(this.options.settings)
+    return this.buildStatus(configPath, readHooksJson(configPath))
+  }
+
+  // Why: main-thread twin — the sync one stays for the CLI process.
+  async getStatusAsync(): Promise<AgentHookInstallStatus> {
+    const configPath = getConfigPath(this.options.settings)
+    return this.buildStatus(configPath, await readHooksJsonAsync(configPath))
+  }
+
+  private parseErrorStatus(configPath: string): AgentHookInstallStatus {
+    return {
+      agent: this.options.agent,
+      state: 'error',
+      configPath,
+      managedHooksPresent: false,
+      detail: `Could not parse ${this.options.displayName} settings.json`
+    }
+  }
+
+  private buildStatus(configPath: string, config: HooksConfig | null): AgentHookInstallStatus {
     const scriptPath = getManagedScriptPath(this.options.settings)
-    const config = readHooksJson(configPath)
     if (!config) {
-      return {
-        agent: this.options.agent,
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: `Could not parse ${this.options.displayName} settings.json`
-      }
+      return this.parseErrorStatus(configPath)
     }
 
     // Why: report `partial` when only some events are registered so the sidebar shows a degraded install, not a false-positive `installed`.
@@ -174,25 +133,15 @@ export class ClaudeHookService {
     const scriptPath = getManagedScriptPath(this.options.settings)
     const config = readHooksJson(configPath)
     if (!config) {
-      return {
-        agent: this.options.agent,
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: `Could not parse ${this.options.displayName} settings.json`
-      }
+      return this.parseErrorStatus(configPath)
     }
 
-    const command = getManagedCommand(scriptPath)
     let nextConfig = applyManagedHooks(
       config,
-      command,
+      getManagedCommand(scriptPath),
       getManagedScriptFileName(this.options.settings)
     )
-    writeManagedScript(
-      scriptPath,
-      getManagedScript('local', { skipWhenDevinImportsClaude: this.options.agent === 'claude' })
-    )
+    writeManagedScript(scriptPath, this.getLocalManagedScript())
     // Why: the statusline usage feed is Claude-only — OpenClaude data would be misattributed to the Claude provider.
     if (this.options.agent === 'claude') {
       nextConfig = this.installManagedStatusLine(nextConfig)
@@ -201,28 +150,84 @@ export class ClaudeHookService {
     return this.getStatus()
   }
 
+  async installAsync(): Promise<AgentHookInstallStatus> {
+    const configPath = getConfigPath(this.options.settings)
+    const scriptPath = getManagedScriptPath(this.options.settings)
+    const config = await readHooksJsonAsync(configPath)
+    if (!config) {
+      return this.parseErrorStatus(configPath)
+    }
+
+    let nextConfig = applyManagedHooks(
+      config,
+      getManagedCommand(scriptPath),
+      getManagedScriptFileName(this.options.settings)
+    )
+    await writeManagedScriptAsync(scriptPath, this.getLocalManagedScript())
+    if (this.options.agent === 'claude') {
+      nextConfig = await this.installManagedStatusLineAsync(nextConfig)
+    }
+    await writeHooksJsonAsync(configPath, nextConfig)
+    return this.getStatusAsync()
+  }
+
+  private getLocalManagedScript(): string {
+    return getManagedScript('local', {
+      skipWhenDevinImportsClaude: this.options.agent === 'claude'
+    })
+  }
+
   // Why: the statusline feed is opportunistic (usage display, not agent status); a user who deleted the
   // managed entry has opted out, and the marker distinguishes that deletion from a first install.
   private installManagedStatusLine(config: HooksConfig): HooksConfig {
     const scriptFileName = getStatusLineScriptFileName(this.options.settings)
     const markerPath = getStatusLineInstallMarkerPath(this.options.settings)
-    const slot = getStatusLineSlotState(config, scriptFileName)
-    if (slot === 'user' || (slot === 'empty' && existsSync(markerPath))) {
+    if (this.shouldSkipManagedStatusLine(config, scriptFileName, existsSync(markerPath))) {
       return config
     }
     const statusLineScriptPath = getStatusLineScriptPath(this.options.settings)
     writeManagedScript(statusLineScriptPath, getManagedStatusLineScript('local'))
-    const next = applyManagedStatusLine(
-      config,
-      getManagedCommand(statusLineScriptPath),
-      scriptFileName
-    )
+    const next = this.withManagedStatusLine(config, statusLineScriptPath, scriptFileName)
     try {
       writeFileSync(markerPath, '')
     } catch {
       // Best-effort: a missing marker only means one future user deletion gets re-installed once.
     }
     return next
+  }
+
+  private async installManagedStatusLineAsync(config: HooksConfig): Promise<HooksConfig> {
+    const scriptFileName = getStatusLineScriptFileName(this.options.settings)
+    const markerPath = getStatusLineInstallMarkerPath(this.options.settings)
+    if (this.shouldSkipManagedStatusLine(config, scriptFileName, await pathExists(markerPath))) {
+      return config
+    }
+    const statusLineScriptPath = getStatusLineScriptPath(this.options.settings)
+    await writeManagedScriptAsync(statusLineScriptPath, getManagedStatusLineScript('local'))
+    const next = this.withManagedStatusLine(config, statusLineScriptPath, scriptFileName)
+    try {
+      await writeFile(markerPath, '')
+    } catch {
+      // Best-effort: a missing marker only means one future user deletion gets re-installed once.
+    }
+    return next
+  }
+
+  private shouldSkipManagedStatusLine(
+    config: HooksConfig,
+    scriptFileName: string,
+    markerExists: boolean
+  ): boolean {
+    const slot = getStatusLineSlotState(config, scriptFileName)
+    return slot === 'user' || (slot === 'empty' && markerExists)
+  }
+
+  private withManagedStatusLine(
+    config: HooksConfig,
+    statusLineScriptPath: string,
+    scriptFileName: string
+  ): HooksConfig {
+    return applyManagedStatusLine(config, getManagedCommand(statusLineScriptPath), scriptFileName)
   }
 
   // Why: install the Claude hook on the remote box (via SFTP); POSIX-only by design (Windows-remote deferred).
@@ -282,23 +287,10 @@ export class ClaudeHookService {
     const configPath = getConfigPath(this.options.settings)
     const config = readHooksJson(configPath)
     if (!config) {
-      return {
-        agent: this.options.agent,
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: `Could not parse ${this.options.displayName} settings.json`
-      }
+      return this.parseErrorStatus(configPath)
     }
-    const { config: hooksRemoved, changed: hooksChanged } = removeManagedHooks(
-      config,
-      getManagedScriptFileName(this.options.settings)
-    )
-    const { config: nextConfig, changed: statusLineChanged } = removeManagedStatusLine(
-      hooksRemoved,
-      getStatusLineScriptFileName(this.options.settings)
-    )
-    if (hooksChanged || statusLineChanged) {
+    const { config: nextConfig, changed } = this.planRemoval(config)
+    if (changed) {
       writeHooksJson(configPath, nextConfig)
     }
     if (this.options.agent === 'claude') {
@@ -310,6 +302,38 @@ export class ClaudeHookService {
       }
     }
     return this.getStatus()
+  }
+
+  async removeAsync(): Promise<AgentHookInstallStatus> {
+    const configPath = getConfigPath(this.options.settings)
+    const config = await readHooksJsonAsync(configPath)
+    if (!config) {
+      return this.parseErrorStatus(configPath)
+    }
+    const { config: nextConfig, changed } = this.planRemoval(config)
+    if (changed) {
+      await writeHooksJsonAsync(configPath, nextConfig)
+    }
+    if (this.options.agent === 'claude') {
+      try {
+        await rm(getStatusLineInstallMarkerPath(this.options.settings), { force: true })
+      } catch {
+        // ignore — marker cleanup is best-effort
+      }
+    }
+    return this.getStatusAsync()
+  }
+
+  private planRemoval(config: HooksConfig): { config: HooksConfig; changed: boolean } {
+    const { config: hooksRemoved, changed: hooksChanged } = removeManagedHooks(
+      config,
+      getManagedScriptFileName(this.options.settings)
+    )
+    const { config: nextConfig, changed: statusLineChanged } = removeManagedStatusLine(
+      hooksRemoved,
+      getStatusLineScriptFileName(this.options.settings)
+    )
+    return { config: nextConfig, changed: hooksChanged || statusLineChanged }
   }
 }
 

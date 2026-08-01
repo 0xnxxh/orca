@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto'
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
 import { app } from 'electron'
@@ -276,9 +277,15 @@ export class CodexAccountService {
     return next
   }
 
+  /** Sync twin kept for the runtime's synchronous accounts-snapshot builders (mobile/RPC). */
   listAccounts(): CodexRateLimitAccountsState {
     this.normalizeActiveSelection()
     return this.getSnapshot()
+  }
+
+  async listAccountsAsync(): Promise<CodexRateLimitAccountsState> {
+    this.normalizeActiveSelection()
+    return this.getSnapshotAsync()
   }
 
   async addAccount(target?: CodexAccountAddTarget): Promise<CodexRateLimitAccountsState> {
@@ -980,6 +987,14 @@ export class CodexAccountService {
   }
 
   private getSnapshot(): CodexRateLimitAccountsState {
+    return this.buildSnapshot(this.resolveSystemDefaultIdentity())
+  }
+
+  private async getSnapshotAsync(): Promise<CodexRateLimitAccountsState> {
+    return this.buildSnapshot(await this.resolveSystemDefaultIdentityAsync())
+  }
+
+  private buildSnapshot(systemDefault: CodexSystemDefaultIdentity): CodexRateLimitAccountsState {
     const settings = this.store.getSettings()
     return {
       accounts: settings.codexManagedAccounts
@@ -987,8 +1002,12 @@ export class CodexAccountService {
         .sort((a, b) => b.updatedAt - a.updatedAt),
       activeAccountId: normalizeCodexRuntimeSelection(settings).host,
       activeAccountIdsByRuntime: normalizeCodexRuntimeSelection(settings),
-      systemDefault: this.resolveSystemDefaultIdentity()
+      systemDefault
     }
+  }
+
+  private getSystemDefaultAuthPath(): string {
+    return join(homedir(), '.codex', 'auth.json')
   }
 
   // Why: the system-default (activeAccountId:null) account has no stored
@@ -996,38 +1015,55 @@ export class CodexAccountService {
   // right now. Read it live and read-only so the switcher can display who the
   // system default is and attribute usage, without ever mutating ~/.codex.
   private resolveSystemDefaultIdentity(): CodexSystemDefaultIdentity {
-    const authFilePath = join(homedir(), '.codex', 'auth.json')
     let contents: string
     try {
       // Why: a single read avoids an exists/read race and halves filesystem
       // probes whenever an accounts snapshot resolves this live identity.
-      contents = readFileSync(authFilePath, 'utf-8')
+      contents = readFileSync(this.getSystemDefaultAuthPath(), 'utf-8')
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException | null)?.code
-      if (code === 'ENOENT' || code === 'ENOTDIR') {
-        // Why: no auth.json means either a signed-out home or an env-key/custom
-        // provider that authenticates via OPENAI_API_KEY instead of a token file.
-        return {
-          hasAuth: false,
-          authKind: this.hasEnvApiKey() ? 'api-key' : 'none',
-          email: null,
-          providerAccountId: null,
-          workspaceLabel: null
-        }
-      }
-      console.warn(
-        '[codex-accounts] Failed to read system-default Codex identity',
-        code ?? 'unknown-error'
-      )
+      return this.systemDefaultIdentityForReadError(error)
+    }
+    return this.parseSystemDefaultIdentity(contents)
+  }
+
+  /** Async twin: a stalled HOME must not park the main thread on an accounts snapshot. */
+  private async resolveSystemDefaultIdentityAsync(): Promise<CodexSystemDefaultIdentity> {
+    let contents: string
+    try {
+      contents = await readFile(this.getSystemDefaultAuthPath(), 'utf-8')
+    } catch (error) {
+      return this.systemDefaultIdentityForReadError(error)
+    }
+    return this.parseSystemDefaultIdentity(contents)
+  }
+
+  private systemDefaultIdentityForReadError(error: unknown): CodexSystemDefaultIdentity {
+    const code = (error as NodeJS.ErrnoException | null)?.code
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      // Why: no auth.json means either a signed-out home or an env-key/custom
+      // provider that authenticates via OPENAI_API_KEY instead of a token file.
       return {
-        hasAuth: true,
-        authKind: 'none',
+        hasAuth: false,
+        authKind: this.hasEnvApiKey() ? 'api-key' : 'none',
         email: null,
         providerAccountId: null,
         workspaceLabel: null
       }
     }
+    console.warn(
+      '[codex-accounts] Failed to read system-default Codex identity',
+      code ?? 'unknown-error'
+    )
+    return {
+      hasAuth: true,
+      authKind: 'none',
+      email: null,
+      providerAccountId: null,
+      workspaceLabel: null
+    }
+  }
 
+  private parseSystemDefaultIdentity(contents: string): CodexSystemDefaultIdentity {
     let parsed: unknown
     try {
       parsed = JSON.parse(contents)

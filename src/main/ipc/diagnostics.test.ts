@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CollectedBundle } from '../observability/bundle'
 import type * as NodeFs from 'node:fs'
+import type * as NodeFsPromises from 'node:fs/promises'
 
 const handlers = new Map<string, (_event: unknown, ...args: unknown[]) => unknown>()
 
@@ -10,6 +11,9 @@ const {
   mkdirSyncMock,
   readFileSyncMock,
   writeFileSyncMock,
+  mkdirMock,
+  writeFileMock,
+  unlinkMock,
   showMessageBoxMock,
   openPathMock,
   collectDiagnosticBundleMock,
@@ -21,6 +25,9 @@ const {
   mkdirSyncMock: vi.fn(),
   readFileSyncMock: vi.fn(),
   writeFileSyncMock: vi.fn(),
+  mkdirMock: vi.fn(async () => undefined),
+  writeFileMock: vi.fn(async () => undefined),
+  unlinkMock: vi.fn(async () => undefined),
   showMessageBoxMock: vi.fn(),
   openPathMock: vi.fn(),
   collectDiagnosticBundleMock: vi.fn(),
@@ -36,6 +43,16 @@ vi.mock('node:fs', async () => {
     mkdirSync: mkdirSyncMock,
     readFileSync: readFileSyncMock,
     writeFileSync: writeFileSyncMock
+  }
+})
+
+vi.mock('node:fs/promises', async () => {
+  const actual = await vi.importActual<typeof NodeFsPromises>('node:fs/promises')
+  return {
+    ...actual,
+    mkdir: mkdirMock,
+    writeFile: writeFileMock,
+    unlink: unlinkMock
   }
 })
 
@@ -82,6 +99,12 @@ describe('diagnostics IPC handlers', () => {
     mkdirSyncMock.mockReset()
     readFileSyncMock.mockReset()
     writeFileSyncMock.mockReset()
+    mkdirMock.mockReset()
+    mkdirMock.mockResolvedValue(undefined)
+    writeFileMock.mockReset()
+    writeFileMock.mockResolvedValue(undefined)
+    unlinkMock.mockReset()
+    unlinkMock.mockResolvedValue(undefined)
     showMessageBoxMock.mockReset()
     showMessageBoxMock.mockResolvedValue({ response: 0 })
     openPathMock.mockReset()
@@ -281,15 +304,18 @@ describe('diagnostics IPC handlers', () => {
 
     await collect({}, 30)
 
-    expect(mkdirSyncMock).toHaveBeenCalledWith(expect.any(String), {
+    expect(mkdirMock).toHaveBeenCalledWith(expect.any(String), {
       mode: 0o700,
       recursive: true
     })
-    expect(writeFileSync).toHaveBeenCalledWith(
+    expect(writeFileMock).toHaveBeenCalledWith(
       expect.stringContaining(`${bundle.bundleSubmissionId}.ndjson`),
       bundle.payload,
       { encoding: 'utf8', mode: 0o600 }
     )
+    // The main thread must stay off the preview write entirely.
+    expect(mkdirSyncMock).not.toHaveBeenCalled()
+    expect(writeFileSync).not.toHaveBeenCalled()
   })
 
   it('returns only bundle metadata from collection', async () => {
@@ -302,7 +328,7 @@ describe('diagnostics IPC handlers', () => {
     collectDiagnosticBundleMock.mockReturnValue(bundle)
     const collect = handlers.get('diagnostics:collectBundle')!
 
-    expect(collect({}, 30)).toEqual({
+    await expect(collect({}, 30)).resolves.toEqual({
       bundleSubmissionId: bundle.bundleSubmissionId,
       bytes: bundle.bytes,
       spanCount: bundle.spanCount

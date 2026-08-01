@@ -8,6 +8,7 @@ import {
   __resetSecureFileHardenedPathsForTests,
   __resetSecureFileWindowsUserSidForTests,
   hardenExistingSecureFile,
+  hardenExistingSecureFileAsync,
   hardenSecurePath,
   writeSecureFile
 } from './secure-file'
@@ -224,6 +225,22 @@ describe('hardenSecurePath', () => {
       targetPath,
       targetPath
     ])
+  })
+
+  // The win32 directory cache is path-keyed with no metadata check, so hardening a directory
+  // that does not exist would spawn PowerShell and then cache that miss for the process life —
+  // the real directory would never be hardened once it appeared.
+  it('does not harden or cache a missing Windows directory on the read path', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-secure-file-'))
+    tempDirs.push(userDataPath)
+    const missingDir = join(userDataPath, 'never-created')
+    const targetPath = join(missingDir, 'secret.json')
+
+    await hardenExistingSecureFileAsync(targetPath)
+
+    expect(getPowerShellCalls()).toHaveLength(0)
+    expect(__getSecureFileHardeningCacheStateForTests().directories).toMatchObject({ entries: 0 })
   })
 
   it('keeps post-rename target hardening on every write while caching the directory', () => {

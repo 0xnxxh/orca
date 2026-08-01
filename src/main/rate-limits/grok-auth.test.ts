@@ -4,6 +4,26 @@ describe('readGrokAuthSession', () => {
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('node:fs')
+    vi.doUnmock('node:fs/promises')
+  })
+
+  // A mount that answers neither stat nor read (EACCES/ELOOP/EIO) is "signed out", not a
+  // failure — an 'error' here pins a status-bar alert on a user who never signed in.
+  it('treats an unreachable auth path as signed out in both twins', async () => {
+    vi.doMock('node:fs', () => ({
+      existsSync: vi.fn(() => false),
+      readFileSync: vi.fn(() => {
+        throw new Error('EIO: i/o error')
+      })
+    }))
+    vi.doMock('node:fs/promises', () => ({
+      access: vi.fn(() => Promise.reject(new Error('EIO: i/o error'))),
+      readFile: vi.fn(() => Promise.reject(new Error('EIO: i/o error')))
+    }))
+    const { readGrokAuthSession, readGrokAuthSessionAsync } = await import('./grok-auth')
+
+    expect(readGrokAuthSession()).toEqual({ status: 'missing' })
+    await expect(readGrokAuthSessionAsync()).resolves.toEqual({ status: 'missing' })
   })
 
   it('redacts filesystem paths from auth read failures', async () => {
@@ -152,5 +172,59 @@ describe('readGrokAuthSession', () => {
     const { readGrokAuthSession } = await import('./grok-auth')
 
     expect(readGrokAuthSession()).toEqual({ status: 'missing' })
+  })
+})
+
+// Coverage moved from the deleted grok-accounts/status.ts, whose sync getGrokAccountStatus
+// duplicated this mapper and lost its last production caller when the IPC handler went async.
+describe('toGrokAccountStatus', () => {
+  it('reports signed out without an error when auth is missing', async () => {
+    const { toGrokAccountStatus } = await import('./grok-auth')
+
+    expect(toGrokAccountStatus({ status: 'missing' })).toEqual({
+      signedIn: false,
+      email: null,
+      teamId: null,
+      tokenFresh: false,
+      error: null
+    })
+  })
+
+  it('surfaces auth read errors without exposing token fields', async () => {
+    const { toGrokAccountStatus } = await import('./grok-auth')
+
+    expect(toGrokAccountStatus({ status: 'error', error: 'Grok auth file is invalid' })).toEqual({
+      signedIn: false,
+      email: null,
+      teamId: null,
+      tokenFresh: false,
+      error: 'Grok auth file is invalid'
+    })
+  })
+
+  it('returns non-secret signed-in metadata and staleness', async () => {
+    const { toGrokAccountStatus } = await import('./grok-auth')
+
+    const status = toGrokAccountStatus({
+      status: 'ok',
+      session: {
+        accessToken: 'secret-token',
+        email: 'dev@example.com',
+        teamId: 'team-1',
+        userId: 'user-1',
+        expiresAtMs: Date.now() - 1_000,
+        oidcClientId: 'client-1'
+      }
+    })
+
+    expect(status).toEqual({
+      signedIn: true,
+      email: 'dev@example.com',
+      teamId: 'team-1',
+      tokenFresh: false,
+      error: null
+    })
+    expect(JSON.stringify(status)).not.toContain('secret-token')
+    expect(JSON.stringify(status)).not.toContain('client-1')
   })
 })

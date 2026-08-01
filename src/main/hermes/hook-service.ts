@@ -1,15 +1,6 @@
 /* eslint-disable max-lines -- Why: install/status/remove must share the exact Hermes plugin source, YAML enablement logic, and status classification. Splitting would make the managed plugin bytes drift from the installer tests that verify them against the real Hermes CLI. */
 import { randomUUID } from 'node:crypto'
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  unlinkSync,
-  writeFileSync
-} from 'node:fs'
+import { copyFile, mkdir, readFile, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { SFTPWrapper } from 'ssh2'
@@ -133,43 +124,63 @@ function disablePlugin(config: HermesConfig): HermesConfig {
   return next
 }
 
-function readConfigFile(configPath: string): ConfigParseResult {
-  if (!existsSync(configPath)) {
-    return { ok: true, config: {} }
-  }
-  return parseHermesConfig(readFileSync(configPath, 'utf-8'))
+// Why: async fs keeps a stalled ~/.hermes mount off the Electron main thread; a
+// hung read now parks a threadpool slot instead of freezing the whole app.
+function isMissingPath(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  return code === 'ENOENT' || code === 'ENOTDIR'
 }
 
-function writeConfigFile(configPath: string, config: HermesConfig): void {
-  const dir = dirname(configPath)
-  mkdirSync(dir, { recursive: true })
-  const serialized = serializeHermesConfig(config)
-  if (existsSync(configPath)) {
-    try {
-      if (readFileSync(configPath, 'utf-8') === serialized) {
-        return
-      }
-    } catch {
-      // Fall through to the atomic write path.
+// Why: one read replaces the existsSync probe + read; fewer syscalls on a stalled mount.
+async function readConfigFile(configPath: string): Promise<ConfigParseResult> {
+  try {
+    return parseHermesConfig(await readFile(configPath, 'utf-8'))
+  } catch (error) {
+    if (isMissingPath(error)) {
+      return { ok: true, config: {} }
     }
+    return { ok: false, detail: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+async function writeConfigFile(configPath: string, config: HermesConfig): Promise<void> {
+  const dir = dirname(configPath)
+  await mkdir(dir, { recursive: true })
+  const serialized = serializeHermesConfig(config)
+  try {
+    if ((await readFile(configPath, 'utf-8')) === serialized) {
+      return
+    }
+  } catch {
+    // Absent or unreadable: fall through to the atomic write path.
   }
 
   const tmpPath = join(dir, `.${Date.now()}-${randomUUID()}.tmp`)
   try {
-    writeFileSync(tmpPath, serialized, 'utf-8')
-    if (existsSync(configPath)) {
-      copyFileSync(configPath, `${configPath}.bak`)
-    }
-    renameSync(tmpPath, configPath)
-  } finally {
-    if (existsSync(tmpPath)) {
-      try {
-        unlinkSync(tmpPath)
-      } catch {
-        // best effort
+    await writeFile(tmpPath, serialized, 'utf-8')
+    try {
+      await copyFile(configPath, `${configPath}.bak`)
+    } catch (error) {
+      // No prior config to back up; any other failure still aborts the write.
+      if (!isMissingPath(error)) {
+        throw error
       }
     }
+    await rename(tmpPath, configPath)
+  } finally {
+    // ENOENT after a successful rename is the normal case.
+    await unlink(tmpPath).catch(() => {})
   }
+}
+
+// Why: sync fs serialized read-modify-write for free. Chain mutations so two
+// overlapping install/remove calls can never rename config.yaml out of order.
+let pendingMutation: Promise<unknown> = Promise.resolve()
+
+function serializeConfigMutation<T>(run: () => Promise<T>): Promise<T> {
+  const next = pendingMutation.then(run, run)
+  pendingMutation = next.catch(() => {})
+  return next
 }
 
 function updateConfigContent(
@@ -183,31 +194,35 @@ function updateConfigContent(
   return { content: serializeHermesConfig(updater(parsed.config)) }
 }
 
-function getPluginFilesState(pluginDir = getPluginDir()): {
+// Why: two parallel reads replace four serial sync probes (2x exists + 2x read),
+// which is the bulk of the per-status syscall cost on a stalled ~/.hermes mount.
+async function getPluginFilesState(pluginDir = getPluginDir()): Promise<{
   present: boolean
   managed: boolean
   detail: string | null
-} {
-  const manifestPath = getManifestPath(pluginDir)
-  const initPath = getInitPath(pluginDir)
-  if (!existsSync(manifestPath) || !existsSync(initPath)) {
-    return { present: false, managed: false, detail: 'Managed Hermes plugin files are missing' }
-  }
+}> {
+  let manifest: string
+  let init: string
   try {
-    const manifest = readFileSync(manifestPath, 'utf-8')
-    const init = readFileSync(initPath, 'utf-8')
-    const managed = manifest.includes(HERMES_PLUGIN_MARKER) && init.includes(HERMES_PLUGIN_MARKER)
-    return {
-      present: true,
-      managed,
-      detail: managed ? null : 'Hermes orca-status plugin exists but is not Orca-managed'
-    }
+    ;[manifest, init] = await Promise.all([
+      readFile(getManifestPath(pluginDir), 'utf-8'),
+      readFile(getInitPath(pluginDir), 'utf-8')
+    ])
   } catch (error) {
+    if (isMissingPath(error)) {
+      return { present: false, managed: false, detail: 'Managed Hermes plugin files are missing' }
+    }
     return {
       present: true,
       managed: false,
       detail: error instanceof Error ? error.message : String(error)
     }
+  }
+  const managed = manifest.includes(HERMES_PLUGIN_MARKER) && init.includes(HERMES_PLUGIN_MARKER)
+  return {
+    present: true,
+    managed,
+    detail: managed ? null : 'Hermes orca-status plugin exists but is not Orca-managed'
   }
 }
 
@@ -234,8 +249,11 @@ function getConfigEnablement(config: HermesConfig): {
   }
 }
 
-function buildStatus(configPath: string, config: HermesConfig): AgentHookInstallStatus {
-  const pluginFiles = getPluginFilesState()
+async function buildStatus(
+  configPath: string,
+  config: HermesConfig
+): Promise<AgentHookInstallStatus> {
+  const pluginFiles = await getPluginFilesState()
   const enablement = getConfigEnablement(config)
   const details = [
     pluginFiles.detail,
@@ -264,6 +282,19 @@ function buildStatus(configPath: string, config: HermesConfig): AgentHookInstall
     configPath,
     managedHooksPresent: pluginFiles.present && pluginFiles.managed,
     detail: state === 'installed' || state === 'not_installed' ? null : details.join('; ')
+  }
+}
+
+async function parseErrorStatus(
+  configPath: string,
+  detail: string
+): Promise<AgentHookInstallStatus> {
+  return {
+    agent: 'hermes',
+    state: 'error',
+    configPath,
+    managedHooksPresent: (await getPluginFilesState()).managed,
+    detail: `Could not parse Hermes config.yaml: ${detail}`
   }
 }
 
@@ -436,10 +467,12 @@ def register(ctx: Any) -> None:
 `
 }
 
-function writePluginFiles(pluginDir = getPluginDir()): void {
-  mkdirSync(pluginDir, { recursive: true })
-  writeFileSync(getManifestPath(pluginDir), getPluginManifest(), 'utf-8')
-  writeFileSync(getInitPath(pluginDir), getPluginInitSource(), 'utf-8')
+async function writePluginFiles(pluginDir = getPluginDir()): Promise<void> {
+  await mkdir(pluginDir, { recursive: true })
+  await Promise.all([
+    writeFile(getManifestPath(pluginDir), getPluginManifest(), 'utf-8'),
+    writeFile(getInitPath(pluginDir), getPluginInitSource(), 'utf-8')
+  ])
 }
 
 function stripTrailingSlash(path: string): string {
@@ -447,37 +480,27 @@ function stripTrailingSlash(path: string): string {
 }
 
 export class HermesHookService {
-  getStatus(): AgentHookInstallStatus {
+  async getStatus(): Promise<AgentHookInstallStatus> {
     const configPath = getConfigPath()
-    const parsed = readConfigFile(configPath)
+    const parsed = await readConfigFile(configPath)
     if (!parsed.ok) {
-      return {
-        agent: 'hermes',
-        state: 'error',
-        configPath,
-        managedHooksPresent: getPluginFilesState().managed,
-        detail: `Could not parse Hermes config.yaml: ${parsed.detail}`
-      }
+      return parseErrorStatus(configPath, parsed.detail)
     }
     return buildStatus(configPath, parsed.config)
   }
 
-  install(): AgentHookInstallStatus {
-    const configPath = getConfigPath()
-    const parsed = readConfigFile(configPath)
-    if (!parsed.ok) {
-      return {
-        agent: 'hermes',
-        state: 'error',
-        configPath,
-        managedHooksPresent: getPluginFilesState().managed,
-        detail: `Could not parse Hermes config.yaml: ${parsed.detail}`
+  install(): Promise<AgentHookInstallStatus> {
+    return serializeConfigMutation(async () => {
+      const configPath = getConfigPath()
+      const parsed = await readConfigFile(configPath)
+      if (!parsed.ok) {
+        return parseErrorStatus(configPath, parsed.detail)
       }
-    }
 
-    writePluginFiles()
-    writeConfigFile(configPath, enablePlugin(parsed.config))
-    return this.getStatus()
+      await writePluginFiles()
+      await writeConfigFile(configPath, enablePlugin(parsed.config))
+      return this.getStatus()
+    })
   }
 
   async installRemote(sftp: SFTPWrapper, remoteHome: string): Promise<AgentHookInstallStatus> {
@@ -517,24 +540,20 @@ export class HermesHookService {
     }
   }
 
-  remove(): AgentHookInstallStatus {
-    const configPath = getConfigPath()
-    const parsed = readConfigFile(configPath)
-    if (!parsed.ok) {
-      return {
-        agent: 'hermes',
-        state: 'error',
-        configPath,
-        managedHooksPresent: getPluginFilesState().managed,
-        detail: `Could not parse Hermes config.yaml: ${parsed.detail}`
+  remove(): Promise<AgentHookInstallStatus> {
+    return serializeConfigMutation(async () => {
+      const configPath = getConfigPath()
+      const parsed = await readConfigFile(configPath)
+      if (!parsed.ok) {
+        return parseErrorStatus(configPath, parsed.detail)
       }
-    }
-    const pluginDir = getPluginDir()
-    if (getPluginFilesState(pluginDir).managed) {
-      rmSync(pluginDir, { recursive: true, force: true })
-    }
-    writeConfigFile(configPath, disablePlugin(parsed.config))
-    return this.getStatus()
+      const pluginDir = getPluginDir()
+      if ((await getPluginFilesState(pluginDir)).managed) {
+        await rm(pluginDir, { recursive: true, force: true })
+      }
+      await writeConfigFile(configPath, disablePlugin(parsed.config))
+      return this.getStatus()
+    })
   }
 }
 

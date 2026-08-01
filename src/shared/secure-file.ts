@@ -8,27 +8,22 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
+import { chmod, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import {
   SecurePathHardeningCache,
   type SecurePathHardeningCacheBounds
 } from './secure-path-hardening-cache'
 import {
+  type HardenedPathCacheEntry,
+  hardenedPathCacheEntriesMatch,
+  toHardenedPathCacheEntry
+} from './secure-path-hardening-snapshot'
+import {
   bestEffortRestrictWindowsPath,
   resetSecureFileWindowsUserSidForTests,
   restrictWindowsPathSync
 } from './secure-path-windows-acl'
-
-type HardenedPathCacheEntry = {
-  isDirectory: boolean
-  dev: number
-  ino: number
-  size: number
-  mode: number
-  ctimeMs: number
-  mtimeMs: number
-  birthtimeMs: number
-}
 
 export const SECURE_PATH_HARDENING_CACHE_MAX_ENTRIES = 1024
 export const SECURE_PATH_HARDENING_CACHE_KEY_MAX_BYTES = 64 * 1024
@@ -89,9 +84,8 @@ export function writeSecureJsonFile(targetPath: string, value: unknown): void {
 
 export function writeSecureFile(targetPath: string, contents: string): void {
   const dir = dirname(targetPath)
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 })
-  }
+  // Why: recursive mkdir is idempotent, so the existsSync probe was a second syscall for nothing (worse on a stalled mount).
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
   // Windows dir hardening stays async + path-cached (it stormed the main thread, #4901); POSIX keeps the metadata cache to catch chmod/ctime drift.
   hardenSecurePathOnce(dir, true)
 
@@ -121,6 +115,140 @@ export function hardenExistingSecureFile(targetPath: string): void {
   }
   if (existsSync(targetPath)) {
     hardenSecurePathOnce(targetPath, false)
+  }
+}
+
+// Why: async twin so main-thread IPC callers never park the process on a stalled mount; the sync twin stays for CLI/startup callers that cannot await.
+
+/**
+ * Serializes every async mutation of a target path. The sync twin got ordering for free from
+ * the single thread; without this chain two overlapping writes could rename out of order, and
+ * a removal could unlink before an in-flight write's rename republished the file.
+ */
+const pendingSecureMutationsByPath = new Map<string, Promise<void>>()
+
+export function writeSecureJsonFileAsync(targetPath: string, value: unknown): Promise<void> {
+  return writeSecureFileAsync(targetPath, JSON.stringify(value, null, 2))
+}
+
+export function writeSecureFileAsync(targetPath: string, contents: string): Promise<void> {
+  return chainSecureMutation(targetPath, () => performSecureWrite(targetPath, contents))
+}
+
+/** Removes a secure file in call order with writeSecureFileAsync, so a clear can't lose a race with a queued save. */
+export function removeSecureFileAsync(targetPath: string): Promise<void> {
+  return chainSecureMutation(targetPath, () => rm(targetPath, { force: true }))
+}
+
+function chainSecureMutation(targetPath: string, run: () => Promise<void>): Promise<void> {
+  const previous = pendingSecureMutationsByPath.get(targetPath)
+  const result = previous ? previous.then(run, run) : run()
+  const settled: Promise<void> = result.then(
+    () => undefined,
+    () => undefined
+  )
+  pendingSecureMutationsByPath.set(targetPath, settled)
+  void settled.then(() => {
+    if (pendingSecureMutationsByPath.get(targetPath) === settled) {
+      pendingSecureMutationsByPath.delete(targetPath)
+    }
+  })
+  return result
+}
+
+async function performSecureWrite(targetPath: string, contents: string): Promise<void> {
+  const dir = dirname(targetPath)
+  await mkdir(dir, { recursive: true, mode: 0o700 })
+  await hardenSecurePathOnceAsync(dir, true, false)
+
+  const tmpFile = `${targetPath}.${process.pid}.${Date.now()}.${randomBytes(4).toString('hex')}.tmp`
+  try {
+    // Why: mode on the CREATE (not a later chmod) is what keeps the credential from ever existing world-readable.
+    await writeFile(tmpFile, contents, { encoding: 'utf-8', mode: 0o600 })
+    // Why: writeFile mode is a no-op on Windows, so restrict the ACL before the rename publishes it under inherited ACLs.
+    await applySecurePathRestrictionAsync(tmpFile, false, process.platform, true)
+    await rename(tmpFile, targetPath)
+    // Why: these hold auth credentials, so the published path must stay current-user only; cache only on confirmed success so failures retry.
+    if (await applySecurePathRestrictionAsync(targetPath, false, process.platform, true)) {
+      await rememberHardenedPathAsync(targetPath, false)
+    }
+  } catch (error) {
+    await rm(tmpFile, { force: true })
+    throw error
+  }
+}
+
+export async function hardenExistingSecureFileAsync(targetPath: string): Promise<void> {
+  // Why: one stat per path replaces the sync twin's access()+stat pair — half the syscalls on a mount that may never answer.
+  await hardenSecurePathOnceAsync(dirname(targetPath), true, true)
+  await hardenSecurePathOnceAsync(targetPath, false, true)
+}
+
+async function hardenSecurePathOnceAsync(
+  targetPath: string,
+  isDirectory: boolean,
+  skipWhenMissing: boolean
+): Promise<boolean> {
+  if (isDirectory && process.platform === 'win32') {
+    // Why: the win32 dir cache is path-keyed with no metadata check (#4901), so hardening a
+    // path that isn't there would spawn PowerShell and then cache the miss forever. The sync
+    // twin gates on existsSync; mirror that gate for the read-path callers that pass it.
+    if (skipWhenMissing && !(await getHardenedPathCacheEntryAsync(targetPath, isDirectory))) {
+      return false
+    }
+    hardenSecureDirectoryOnce(targetPath)
+    return true
+  }
+
+  const currentEntry = await getHardenedPathCacheEntryAsync(targetPath, isDirectory)
+  if (!currentEntry) {
+    hardenedPathsThisProcess.delete(targetPath)
+    if (skipWhenMissing) {
+      return false
+    }
+  }
+  const cachedEntry = hardenedPathsThisProcess.get(targetPath)
+  if (currentEntry && cachedEntry && hardenedPathCacheEntriesMatch(currentEntry, cachedEntry)) {
+    return true
+  }
+  if (await applySecurePathRestrictionAsync(targetPath, isDirectory, process.platform, false)) {
+    await rememberHardenedPathAsync(targetPath, isDirectory)
+    return true
+  }
+  return false
+}
+
+async function applySecurePathRestrictionAsync(
+  targetPath: string,
+  isDirectory: boolean,
+  platform: NodeJS.Platform,
+  sync: boolean
+): Promise<boolean> {
+  // Why: Windows hardening is a PowerShell spawn, not an fs syscall — out of the stalled-mount blast radius, so reuse it verbatim.
+  if (platform === 'win32') {
+    return applySecurePathRestriction(targetPath, isDirectory, platform, sync)
+  }
+  await chmod(targetPath, isDirectory ? 0o700 : 0o600)
+  return true
+}
+
+async function rememberHardenedPathAsync(targetPath: string, isDirectory: boolean): Promise<void> {
+  const entry = await getHardenedPathCacheEntryAsync(targetPath, isDirectory)
+  if (entry) {
+    hardenedPathsThisProcess.set(targetPath, entry)
+  } else {
+    hardenedPathsThisProcess.delete(targetPath)
+  }
+}
+
+async function getHardenedPathCacheEntryAsync(
+  targetPath: string,
+  isDirectory: boolean
+): Promise<HardenedPathCacheEntry | null> {
+  try {
+    return toHardenedPathCacheEntry(await stat(targetPath), isDirectory)
+  } catch {
+    return null
   }
 }
 
@@ -171,49 +299,15 @@ function rememberHardenedPath(targetPath: string, isDirectory: boolean): void {
   }
 }
 
-/**
- * Snapshots a path's identity, mode, and timestamps so later drift is detectable.
- * Mode is tracked directly so a chmod is caught even where coarse ctime granularity hides it.
- */
 function getHardenedPathCacheEntry(
   targetPath: string,
   isDirectory: boolean
 ): HardenedPathCacheEntry | null {
   try {
-    const stats = statSync(targetPath)
-    if (stats.isDirectory() !== isDirectory) {
-      return null
-    }
-    return {
-      isDirectory,
-      dev: stats.dev,
-      ino: stats.ino,
-      size: stats.size,
-      mode: stats.mode & 0o777,
-      ctimeMs: stats.ctimeMs,
-      mtimeMs: stats.mtimeMs,
-      birthtimeMs: stats.birthtimeMs
-    }
+    return toHardenedPathCacheEntry(statSync(targetPath), isDirectory)
   } catch {
     return null
   }
-}
-
-/** True when two snapshots describe the same unchanged path (identity, mode, timestamps). */
-function hardenedPathCacheEntriesMatch(
-  a: HardenedPathCacheEntry,
-  b: HardenedPathCacheEntry
-): boolean {
-  return (
-    a.isDirectory === b.isDirectory &&
-    a.dev === b.dev &&
-    a.ino === b.ino &&
-    a.size === b.size &&
-    a.mode === b.mode &&
-    a.ctimeMs === b.ctimeMs &&
-    a.mtimeMs === b.mtimeMs &&
-    a.birthtimeMs === b.birthtimeMs
-  )
 }
 
 export function __resetSecureFileWindowsUserSidForTests(): void {

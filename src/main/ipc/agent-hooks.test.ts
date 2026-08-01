@@ -61,37 +61,43 @@ vi.mock('../agent-hooks/migration-unsupported-pty-state', () => ({
 }))
 
 vi.mock('../claude/hook-service', () => ({
-  claudeHookService: { getStatus: vi.fn(() => ({ agent: 'claude', state: 'absent' })) }
+  claudeHookService: { getStatusAsync: vi.fn(async () => ({ agent: 'claude', state: 'absent' })) }
 }))
 vi.mock('../openclaude/hook-service', () => ({
-  openClaudeHookService: { getStatus: vi.fn(() => ({ agent: 'openclaude', state: 'absent' })) }
+  openClaudeHookService: {
+    getStatusAsync: vi.fn(async () => ({ agent: 'openclaude', state: 'absent' }))
+  }
 }))
 vi.mock('../codex/hook-service', () => ({
   codexHookService: { getStatus: vi.fn(() => ({ agent: 'codex', state: 'absent' })) }
 }))
 vi.mock('../gemini/hook-service', () => ({
-  geminiHookService: { getStatus: vi.fn(() => ({ agent: 'gemini', state: 'absent' })) }
+  geminiHookService: { getStatusAsync: vi.fn(async () => ({ agent: 'gemini', state: 'absent' })) }
 }))
 vi.mock('../antigravity/hook-service', () => ({
-  antigravityHookService: { getStatus: vi.fn(() => ({ agent: 'antigravity', state: 'absent' })) }
+  antigravityHookService: {
+    getStatusAsync: vi.fn(async () => ({ agent: 'antigravity', state: 'absent' }))
+  }
 }))
 vi.mock('../amp/hook-service', () => ({
   ampHookService: { getStatus: vi.fn(() => ({ agent: 'amp', state: 'absent' })) }
 }))
 vi.mock('../cursor/hook-service', () => ({
-  cursorHookService: { getStatus: vi.fn(() => ({ agent: 'cursor', state: 'absent' })) }
+  cursorHookService: { getStatusAsync: vi.fn(async () => ({ agent: 'cursor', state: 'absent' })) }
 }))
 vi.mock('../droid/hook-service', () => ({
-  droidHookService: { getStatus: vi.fn(() => ({ agent: 'droid', state: 'absent' })) }
+  droidHookService: { getStatusAsync: vi.fn(async () => ({ agent: 'droid', state: 'absent' })) }
 }))
 vi.mock('../command-code/hook-service', () => ({
-  commandCodeHookService: { getStatus: vi.fn(() => ({ agent: 'command-code', state: 'absent' })) }
+  commandCodeHookService: {
+    getStatusAsync: vi.fn(async () => ({ agent: 'command-code', state: 'absent' }))
+  }
 }))
 vi.mock('../grok/hook-service', () => ({
-  grokHookService: { getStatus: vi.fn(() => ({ agent: 'grok', state: 'absent' })) }
+  grokHookService: { getStatusAsync: vi.fn(async () => ({ agent: 'grok', state: 'absent' })) }
 }))
 vi.mock('../copilot/hook-service', () => ({
-  copilotHookService: { getStatus: vi.fn(() => ({ agent: 'copilot', state: 'absent' })) }
+  copilotHookService: { getStatusAsync: vi.fn(async () => ({ agent: 'copilot', state: 'absent' })) }
 }))
 vi.mock('../hermes/hook-service', () => ({
   hermesHookService: { getStatus: vi.fn(() => ({ agent: 'hermes', state: 'absent' })) }
@@ -215,7 +221,7 @@ describe('agentHooks:antigravityStatus IPC', () => {
 
     const handler = handleHandlers.get('agentHooks:antigravityStatus')
     expect(handler).toBeDefined()
-    expect(handler!({})).toEqual({ agent: 'antigravity', state: 'absent' })
+    await expect(handler!({})).resolves.toEqual({ agent: 'antigravity', state: 'absent' })
   })
 })
 
@@ -226,7 +232,7 @@ describe('agentHooks:ampStatus IPC', () => {
 
     const handler = handleHandlers.get('agentHooks:ampStatus')
     expect(handler).toBeDefined()
-    expect(handler!({})).toEqual({ agent: 'amp', state: 'absent' })
+    await expect(handler!({})).resolves.toEqual({ agent: 'amp', state: 'absent' })
   })
 })
 
@@ -237,7 +243,7 @@ describe('agentHooks:openClaudeStatus IPC', () => {
 
     const handler = handleHandlers.get('agentHooks:openClaudeStatus')
     expect(handler).toBeDefined()
-    expect(handler!({})).toEqual({ agent: 'openclaude', state: 'absent' })
+    await expect(handler!({})).resolves.toEqual({ agent: 'openclaude', state: 'absent' })
   })
 })
 
@@ -248,7 +254,7 @@ describe('agentHooks:commandCodeStatus IPC', () => {
 
     const handler = handleHandlers.get('agentHooks:commandCodeStatus')
     expect(handler).toBeDefined()
-    expect(handler!({})).toEqual({ agent: 'command-code', state: 'absent' })
+    await expect(handler!({})).resolves.toEqual({ agent: 'command-code', state: 'absent' })
   })
 })
 
@@ -259,7 +265,7 @@ describe('agentHooks:devinStatus IPC', () => {
 
     const handler = handleHandlers.get('agentHooks:devinStatus')
     expect(handler).toBeDefined()
-    expect(handler!({})).toEqual({ agent: 'devin', state: 'absent' })
+    await expect(handler!({})).resolves.toEqual({ agent: 'devin', state: 'absent' })
   })
 })
 
@@ -270,7 +276,7 @@ describe('agentHooks:kimiStatus IPC', () => {
 
     const handler = handleHandlers.get('agentHooks:kimiStatus')
     expect(handler).toBeDefined()
-    expect(handler!({})).toEqual({ agent: 'kimi', state: 'absent' })
+    await expect(handler!({})).resolves.toEqual({ agent: 'kimi', state: 'absent' })
   })
 })
 

@@ -1,19 +1,21 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { parse as parseJsonc, type ParseError } from 'jsonc-parser'
 import { isPlainObject, type HooksConfig } from '../agent-hooks/installer-utils'
 
-/** Devin documents config.json as JSONC; stock JSON.parse rejects comments. */
-export function readDevinHooksConfig(configPath: string): HooksConfig | null {
-  if (!existsSync(configPath)) {
-    return {}
-  }
-
+/**
+ * Devin documents config.json as JSONC; stock JSON.parse rejects comments.
+ * Async so a stalled ~/.config/devin mount cannot block the Electron main thread.
+ */
+export async function readDevinHooksConfig(configPath: string): Promise<HooksConfig | null> {
+  let text: string
   try {
-    const text = readFileSync(configPath, 'utf-8')
-    return parseDevinHooksConfigText(text, 'Devin config.json')
-  } catch {
-    return null
+    text = await readFile(configPath, 'utf-8')
+  } catch (error) {
+    // Absent config is an empty config; anything else is a real read failure.
+    const code = (error as NodeJS.ErrnoException | null)?.code
+    return code === 'ENOENT' || code === 'ENOTDIR' ? {} : null
   }
+  return parseDevinHooksConfigText(text, 'Devin config.json')
 }
 
 export function parseDevinHooksConfigText(

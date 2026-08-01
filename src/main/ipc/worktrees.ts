@@ -84,16 +84,14 @@ import { listRepoWorktrees } from '../repo-worktrees'
 import { getSshGitProvider, requireSshGitProvider } from '../providers/ssh-git-dispatch'
 import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import {
+  checkOrcaYamlHooks,
   createIssueCommandRunnerScript,
   getEffectiveHooks,
   getEffectiveHooksFromConfig,
   getSetupRunnerEnvVars,
-  loadHooks,
   parseOrcaYaml,
-  readIssueCommand,
+  readIssueCommandAsync,
   runHook,
-  hasHooksFile,
-  hasUnrecognizedOrcaYamlKeys,
   writeIssueCommand
 } from '../hooks'
 import {
@@ -3046,15 +3044,14 @@ export function registerWorktreeHandlers(
         }
       }
 
-      const has = hasHooksFile(repo.path)
-      const hooks = has ? loadHooks(repo.path) : null
-      // Why: unrecognised top-level keys mean the file is well-formed but from a newer Orca; suggest updating rather than "could not be parsed".
-      const mayNeedUpdate = has && !hooks && hasUnrecognizedOrcaYamlKeys(repo.path)
+      // Why: `mayNeedUpdate` means the file is well-formed but from a newer Orca; suggest
+      // updating rather than "could not be parsed". One read answers it and the rest.
+      const check = await checkOrcaYamlHooks(repo.path)
       return {
         status: 'ok',
-        hasHooks: has,
-        hooks,
-        mayNeedUpdate
+        hasHooks: check.hasHooksFile,
+        hooks: check.hooks,
+        mayNeedUpdate: check.mayNeedUpdate
       }
     }
   )
@@ -3203,7 +3200,7 @@ export function registerWorktreeHandlers(
               : ('none' as const)
         }
       }
-      return readIssueCommand(repo.path)
+      return readIssueCommandAsync(repo.path)
     }
   )
 

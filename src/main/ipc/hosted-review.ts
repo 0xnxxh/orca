@@ -16,7 +16,7 @@ import { getHostedReviewForBranch } from '../source-control/hosted-review'
 import { resolveRegisteredWorktreePath } from './filesystem-auth'
 import { listRepoWorktrees } from '../repo-worktrees'
 import { getLocalProjectWorktreeGitOptions } from '../project-runtime-git-options'
-import { getWorktreeSharedLinkPaths } from '../git/worktree-shared-directories'
+import { getWorktreeSharedLinkPathsAsync } from '../git/worktree-shared-directories'
 
 function assertRegisteredRepo(repoPath: string, store: Store, repoId?: string): Repo {
   if (repoId) {
@@ -127,7 +127,7 @@ export function registerHostedReviewHandlers(store: Store, stats: StatsCollector
     // Remote creation never materializes them, and `repo.path` is a path on the
     // remote host — reading it locally would resolve an unrelated `orca.yaml`.
     // Not dead code: SSH ignores these, so this only prevents that read and a poisoned cache entry.
-    const sharedLinkPaths = repo.connectionId ? [] : getWorktreeSharedLinkPaths(repo)
+    const sharedLinkPaths = repo.connectionId ? [] : await getWorktreeSharedLinkPathsAsync(repo)
     const executionOptions =
       Object.keys(localGitOptions).length > 0 || sharedLinkPaths.length > 0
         ? {

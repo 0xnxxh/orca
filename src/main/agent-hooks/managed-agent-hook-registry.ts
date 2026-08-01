@@ -15,56 +15,63 @@ import { hermesHookService } from '../hermes/hook-service'
 import { kimiHookService } from '../kimi/hook-service'
 import { openClaudeHookService } from '../openclaude/hook-service'
 
-export type ManagedAgentHookInstaller = readonly [HookInstallAgent, () => AgentHookInstallStatus]
-export type ManagedAgentHookRemover = readonly [HookInstallAgent, () => AgentHookInstallStatus]
-export type ManagedAgentHookStatusReader = readonly [HookInstallAgent, () => AgentHookInstallStatus]
+// Why: awaited by every caller, but stays sync-tolerant — Codex's install still
+// runs sync because its trust/TOML layer has no async twin yet.
+export type ManagedAgentHookAction = readonly [
+  HookInstallAgent,
+  () => AgentHookInstallStatus | Promise<AgentHookInstallStatus>
+]
+
+export type ManagedAgentHookInstaller = ManagedAgentHookAction
+export type ManagedAgentHookRemover = ManagedAgentHookAction
+export type ManagedAgentHookStatusReader = ManagedAgentHookAction
 
 export const MANAGED_AGENT_HOOK_INSTALLERS: readonly ManagedAgentHookInstaller[] = [
-  ['claude', () => claudeHookService.install()],
-  ['openclaude', () => openClaudeHookService.install()],
+  ['claude', () => claudeHookService.installAsync()],
+  ['openclaude', () => openClaudeHookService.installAsync()],
   ['codex', () => codexHookService.install()],
-  ['gemini', () => geminiHookService.install()],
-  ['antigravity', () => antigravityHookService.install()],
+  ['gemini', () => geminiHookService.installAsync()],
+  ['antigravity', () => antigravityHookService.installAsync()],
   ['amp', () => ampHookService.install()],
-  ['cursor', () => cursorHookService.install()],
-  ['droid', () => droidHookService.install()],
-  ['command-code', () => commandCodeHookService.install()],
-  ['grok', () => grokHookService.install()],
-  ['copilot', () => copilotHookService.install()],
+  ['cursor', () => cursorHookService.installAsync()],
+  ['droid', () => droidHookService.installAsync()],
+  ['command-code', () => commandCodeHookService.installAsync()],
+  ['grok', () => grokHookService.installAsync()],
+  ['copilot', () => copilotHookService.installAsync()],
   ['hermes', () => hermesHookService.install()],
   ['devin', () => devinHookService.install()],
   ['kimi', () => kimiHookService.install()]
 ]
 
 export const MANAGED_AGENT_HOOK_REMOVERS: readonly ManagedAgentHookRemover[] = [
-  ['claude', () => claudeHookService.remove()],
-  ['openclaude', () => openClaudeHookService.remove()],
+  ['claude', () => claudeHookService.removeAsync()],
+  ['openclaude', () => openClaudeHookService.removeAsync()],
   ['codex', () => codexHookService.remove()],
-  ['gemini', () => geminiHookService.remove()],
-  ['antigravity', () => antigravityHookService.remove()],
+  ['gemini', () => geminiHookService.removeAsync()],
+  ['antigravity', () => antigravityHookService.removeAsync()],
   ['amp', () => ampHookService.remove()],
-  ['cursor', () => cursorHookService.remove()],
-  ['droid', () => droidHookService.remove()],
-  ['command-code', () => commandCodeHookService.remove()],
-  ['grok', () => grokHookService.remove()],
-  ['copilot', () => copilotHookService.remove()],
+  ['cursor', () => cursorHookService.removeAsync()],
+  ['droid', () => droidHookService.removeAsync()],
+  ['command-code', () => commandCodeHookService.removeAsync()],
+  ['grok', () => grokHookService.removeAsync()],
+  ['copilot', () => copilotHookService.removeAsync()],
   ['hermes', () => hermesHookService.remove()],
   ['devin', () => devinHookService.remove()],
   ['kimi', () => kimiHookService.remove()]
 ]
 
 export const MANAGED_AGENT_HOOK_STATUS_READERS: readonly ManagedAgentHookStatusReader[] = [
-  ['claude', () => claudeHookService.getStatus()],
-  ['openclaude', () => openClaudeHookService.getStatus()],
+  ['claude', () => claudeHookService.getStatusAsync()],
+  ['openclaude', () => openClaudeHookService.getStatusAsync()],
   ['codex', () => codexHookService.getStatus()],
-  ['gemini', () => geminiHookService.getStatus()],
-  ['antigravity', () => antigravityHookService.getStatus()],
+  ['gemini', () => geminiHookService.getStatusAsync()],
+  ['antigravity', () => antigravityHookService.getStatusAsync()],
   ['amp', () => ampHookService.getStatus()],
-  ['cursor', () => cursorHookService.getStatus()],
-  ['droid', () => droidHookService.getStatus()],
-  ['grok', () => grokHookService.getStatus()],
-  ['command-code', () => commandCodeHookService.getStatus()],
-  ['copilot', () => copilotHookService.getStatus()],
+  ['cursor', () => cursorHookService.getStatusAsync()],
+  ['droid', () => droidHookService.getStatusAsync()],
+  ['grok', () => grokHookService.getStatusAsync()],
+  ['command-code', () => commandCodeHookService.getStatusAsync()],
+  ['copilot', () => copilotHookService.getStatusAsync()],
   ['hermes', () => hermesHookService.getStatus()],
   ['devin', () => devinHookService.getStatus()],
   ['kimi', () => kimiHookService.getStatus()]

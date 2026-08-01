@@ -21,10 +21,10 @@ import type {
   SignOutCurrentOrcaProfileResult
 } from '../../shared/orca-profiles'
 import {
-  createLocalOrcaProfile,
-  getOrcaProfileListState,
-  seedNewOrcaProfileTelemetryConsent,
-  setActiveOrcaProfile
+  createLocalOrcaProfileAsync,
+  getOrcaProfileListStateAsync,
+  seedNewOrcaProfileTelemetryConsentAsync,
+  setActiveOrcaProfileAsync
 } from '../orca-profiles/profile-index-store'
 import {
   cloudSessionIdentity,
@@ -34,7 +34,6 @@ import { getProfileUserDataPath } from '../orca-profiles/profile-storage-paths'
 import { isMultiProfileUiEnabled } from '../orca-profiles/profile-ui-scope'
 import { transferOrcaProfileProject } from '../orca-profiles/profile-project-transfer'
 import { findOrcaProfileProjectsByPath } from '../orca-profiles/profile-project-presence'
-import { normalizeExecutionHostId } from '../../shared/execution-host'
 import {
   createCloudLinkedOrcaProfile,
   connectCurrentOrcaProfile,
@@ -44,101 +43,18 @@ import {
   signOutCurrentOrcaProfile
 } from '../orca-profiles/profile-cloud-service'
 import { registerOrcaProfileOrgMemberHandlers } from './orca-profile-org-members-handlers'
+import {
+  createCloudLinkedProfileArgsFromUnknown,
+  findProjectsByPathArgsFromUnknown,
+  orgIdFromUnknown,
+  profileIdFromArgs,
+  transferProjectArgsFromUnknown
+} from './orca-profile-request-args'
 
 type RegisterOrcaProfileHandlersOptions = {
   onBeforeRelaunch?: () => void | Promise<void>
   onAuthMutation?: () => void
   onBeforeSignOut?: () => void
-}
-
-function profileIdFromArgs(args: unknown): string {
-  if (
-    !args ||
-    typeof args !== 'object' ||
-    typeof (args as SwitchOrcaProfileArgs).profileId !== 'string'
-  ) {
-    throw new Error('invalid_orca_profile_id')
-  }
-  const profileId = (args as SwitchOrcaProfileArgs).profileId.trim()
-  if (!profileId) {
-    throw new Error('invalid_orca_profile_id')
-  }
-  return profileId
-}
-
-function transferProjectArgsFromUnknown(args: unknown): TransferOrcaProfileProjectArgs {
-  if (!args || typeof args !== 'object') {
-    throw new Error('invalid_orca_profile_project_transfer')
-  }
-  const candidate = args as TransferOrcaProfileProjectArgs
-  const sourceProfileId = candidate.sourceProfileId?.trim()
-  const targetProfileId = candidate.targetProfileId?.trim()
-  const repoId = candidate.repoId?.trim()
-  const mode = candidate.mode
-  if (!sourceProfileId || !targetProfileId || !repoId || (mode !== 'move' && mode !== 'copy')) {
-    throw new Error('invalid_orca_profile_project_transfer')
-  }
-  return {
-    sourceProfileId,
-    targetProfileId,
-    repoId,
-    mode
-  }
-}
-
-function findProjectsByPathArgsFromUnknown(args: unknown): FindOrcaProfileProjectsByPathArgs {
-  if (!args || typeof args !== 'object') {
-    throw new Error('invalid_orca_profile_project_path')
-  }
-  const candidate = args as FindOrcaProfileProjectsByPathArgs
-  const path = typeof candidate.path === 'string' ? candidate.path.trim() : ''
-  if (!path) {
-    throw new Error('invalid_orca_profile_project_path')
-  }
-  let executionHostId: FindOrcaProfileProjectsByPathArgs['executionHostId'] = null
-  if (candidate.executionHostId !== null && candidate.executionHostId !== undefined) {
-    if (typeof candidate.executionHostId !== 'string') {
-      throw new Error('invalid_orca_profile_project_path')
-    }
-    executionHostId = normalizeExecutionHostId(candidate.executionHostId)
-    if (!executionHostId) {
-      throw new Error('invalid_orca_profile_project_path')
-    }
-  }
-  return {
-    path,
-    connectionId:
-      typeof candidate.connectionId === 'string' ? candidate.connectionId.trim() || null : null,
-    executionHostId,
-    excludeProfileId:
-      typeof candidate.excludeProfileId === 'string'
-        ? candidate.excludeProfileId.trim() || null
-        : null
-  }
-}
-
-function orgIdFromUnknown(args: unknown): string {
-  if (!args || typeof args !== 'object') {
-    throw new Error('invalid_orca_profile_org_selection')
-  }
-  const orgId = (args as SelectOrcaProfileOrgArgs).orgId?.trim()
-  if (!orgId) {
-    throw new Error('invalid_orca_profile_org_selection')
-  }
-  return orgId
-}
-
-function createCloudLinkedProfileArgsFromUnknown(args: unknown): CreateCloudLinkedOrcaProfileArgs {
-  if (!args || typeof args !== 'object') {
-    return {}
-  }
-  const candidate = args as CreateCloudLinkedOrcaProfileArgs
-  const orgId = typeof candidate.orgId === 'string' ? candidate.orgId.trim() : undefined
-  const name = typeof candidate.name === 'string' ? candidate.name.trim() : undefined
-  return {
-    ...(orgId ? { orgId } : {}),
-    ...(name ? { name } : {})
-  }
 }
 
 async function runBeforeProfileRelaunch(
@@ -168,10 +84,13 @@ export function registerOrcaProfileHandlers(
   store: Store,
   options: RegisterOrcaProfileHandlersOptions = {}
 ): void {
+  // Why: this channel is on the app-startup chain — it must never sit on a
+  // main-thread fs syscall. The async twin answers from the index boot already
+  // resolved, so the common case does no filesystem work at all.
   ipcMain.handle(
     'orcaProfiles:list',
-    (): OrcaProfileListResult => ({
-      ...getOrcaProfileListState(),
+    async (): Promise<OrcaProfileListResult> => ({
+      ...(await getOrcaProfileListStateAsync()),
       multiProfileUi: isMultiProfileUiEnabled()
     })
   )
@@ -183,9 +102,12 @@ export function registerOrcaProfileHandlers(
 
   ipcMain.handle(
     'orcaProfiles:createLocal',
-    (_event, args?: CreateLocalOrcaProfileArgs): CreateLocalOrcaProfileResult => {
-      const result = createLocalOrcaProfile(args)
-      seedNewOrcaProfileTelemetryConsent(result.profile.id, store.getSettings().telemetry)
+    async (_event, args?: CreateLocalOrcaProfileArgs): Promise<CreateLocalOrcaProfileResult> => {
+      const result = await createLocalOrcaProfileAsync(args)
+      await seedNewOrcaProfileTelemetryConsentAsync(
+        result.profile.id,
+        store.getSettings().telemetry
+      )
       return result
     }
   )
@@ -194,7 +116,7 @@ export function registerOrcaProfileHandlers(
     'orcaProfiles:switch',
     async (_event, args: SwitchOrcaProfileArgs): Promise<SwitchOrcaProfileResult> => {
       const profileId = profileIdFromArgs(args)
-      const current = getOrcaProfileListState()
+      const current = await getOrcaProfileListStateAsync()
       if (profileId === current.activeProfileId) {
         return { status: 'already-active' }
       }
@@ -214,7 +136,7 @@ export function registerOrcaProfileHandlers(
       // points startup at the target profile.
       await runBeforeProfileRelaunch(options.onBeforeRelaunch)
       store.flush()
-      setActiveOrcaProfile(profileId)
+      await setActiveOrcaProfileAsync(profileId)
 
       scheduleProfileRelaunch('profile-switch')
 
@@ -229,7 +151,7 @@ export function registerOrcaProfileHandlers(
       rawArgs: TransferOrcaProfileProjectArgs
     ): Promise<TransferOrcaProfileProjectResult> => {
       const args = transferProjectArgsFromUnknown(rawArgs)
-      const current = getOrcaProfileListState()
+      const current = await getOrcaProfileListStateAsync()
       if (args.targetProfileId === current.activeProfileId) {
         throw new Error('active_target_orca_profile_transfer_requires_relaunch')
       }
@@ -244,7 +166,7 @@ export function registerOrcaProfileHandlers(
         if (result.status === 'transferred') {
           store.freezeWrites()
           await runBeforeProfileRelaunch(options.onBeforeRelaunch)
-          setActiveOrcaProfile(args.targetProfileId)
+          await setActiveOrcaProfileAsync(args.targetProfileId)
           scheduleProfileRelaunch('profile-transfer')
           return { ...result, willRelaunch: true }
         }
@@ -286,7 +208,10 @@ export function registerOrcaProfileHandlers(
         createCloudLinkedProfileArgsFromUnknown(rawArgs)
       )
       if (result.status === 'created') {
-        seedNewOrcaProfileTelemetryConsent(result.profile.id, store.getSettings().telemetry)
+        await seedNewOrcaProfileTelemetryConsentAsync(
+          result.profile.id,
+          store.getSettings().telemetry
+        )
         options.onAuthMutation?.()
       }
       return result

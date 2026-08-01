@@ -2,8 +2,8 @@ import type { SFTPWrapper } from 'ssh2'
 import type { AgentHookInstallState, AgentHookInstallStatus } from '../../shared/agent-hook-types'
 import {
   buildWindowsAgentHookPostCommand,
-  writeHooksJson,
-  writeManagedScript
+  writeHooksJsonAsync,
+  writeManagedScriptAsync
 } from '../agent-hooks/installer-utils'
 import {
   readTextFileRemote,
@@ -78,11 +78,21 @@ function getManagedScript(target: 'local' | 'posix' = 'local'): string {
   ].join('\n')
 }
 
+// Why: sync fs serialized read-modify-write for free. Chain mutations so two
+// overlapping install/remove calls can never write config.json out of order.
+let pendingMutation: Promise<unknown> = Promise.resolve()
+
+function serializeConfigMutation<T>(run: () => Promise<T>): Promise<T> {
+  const next = pendingMutation.then(run, run)
+  pendingMutation = next.catch(() => {})
+  return next
+}
+
 export class DevinHookService {
-  getStatus(): AgentHookInstallStatus {
+  async getStatus(): Promise<AgentHookInstallStatus> {
     const configPath = getDevinConfigPath()
     const scriptPath = getDevinManagedScriptPath()
-    const config = readDevinHooksConfig(configPath)
+    const config = await readDevinHooksConfig(configPath)
     if (!config) {
       return {
         agent: 'devin',
@@ -132,25 +142,27 @@ export class DevinHookService {
     }
   }
 
-  install(): AgentHookInstallStatus {
-    const configPath = getDevinConfigPath()
-    const scriptPath = getDevinManagedScriptPath()
-    const config = readDevinHooksConfig(configPath)
-    if (!config) {
-      return {
-        agent: 'devin',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not parse Devin config.json'
+  install(): Promise<AgentHookInstallStatus> {
+    return serializeConfigMutation(async (): Promise<AgentHookInstallStatus> => {
+      const configPath = getDevinConfigPath()
+      const scriptPath = getDevinManagedScriptPath()
+      const config = await readDevinHooksConfig(configPath)
+      if (!config) {
+        return {
+          agent: 'devin',
+          state: 'error',
+          configPath,
+          managedHooksPresent: false,
+          detail: 'Could not parse Devin config.json'
+        }
       }
-    }
 
-    const command = getDevinManagedCommand(scriptPath)
-    const nextConfig = applyDevinManagedHooks(config, command, getDevinManagedScriptFileName())
-    writeManagedScript(scriptPath, getManagedScript())
-    writeHooksJson(configPath, nextConfig)
-    return this.getStatus()
+      const command = getDevinManagedCommand(scriptPath)
+      const nextConfig = applyDevinManagedHooks(config, command, getDevinManagedScriptFileName())
+      await writeManagedScriptAsync(scriptPath, getManagedScript())
+      await writeHooksJsonAsync(configPath, nextConfig)
+      return this.getStatus()
+    })
   }
 
   // Why: install the Devin hook on the remote box (SFTP handle + resolved remote $HOME); POSIX-only by design.
@@ -202,26 +214,28 @@ export class DevinHookService {
     }
   }
 
-  remove(): AgentHookInstallStatus {
-    const configPath = getDevinConfigPath()
-    const config = readDevinHooksConfig(configPath)
-    if (!config) {
-      return {
-        agent: 'devin',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not parse Devin config.json'
+  remove(): Promise<AgentHookInstallStatus> {
+    return serializeConfigMutation(async (): Promise<AgentHookInstallStatus> => {
+      const configPath = getDevinConfigPath()
+      const config = await readDevinHooksConfig(configPath)
+      if (!config) {
+        return {
+          agent: 'devin',
+          state: 'error',
+          configPath,
+          managedHooksPresent: false,
+          detail: 'Could not parse Devin config.json'
+        }
       }
-    }
-    const { config: nextConfig, changed } = removeDevinManagedHooks(
-      config,
-      getDevinManagedScriptFileName()
-    )
-    if (changed) {
-      writeHooksJson(configPath, nextConfig)
-    }
-    return this.getStatus()
+      const { config: nextConfig, changed } = removeDevinManagedHooks(
+        config,
+        getDevinManagedScriptFileName()
+      )
+      if (changed) {
+        await writeHooksJsonAsync(configPath, nextConfig)
+      }
+      return this.getStatus()
+    })
   }
 }
 

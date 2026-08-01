@@ -1,6 +1,5 @@
 /* eslint-disable max-lines -- Why: keeps the filesystem-auth security boundary auditable end to end. */
 import { resolve, relative, dirname, basename, isAbsolute, sep } from 'node:path'
-import { realpathSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import type { Store } from '../persistence'
 import { isRepoRoot, listRepoWorktrees } from '../repo-worktrees'
@@ -36,13 +35,44 @@ function rememberAuthorizedExternalPath(path: string): void {
   }
 }
 
-export function authorizeExternalPath(targetPath: string): void {
+// Why: realpath on a stalled mount used to block the main thread for tens of
+// seconds (freeze #10). Keyed by authorized path so a read only ever waits on
+// the canonicalization that gates it, not on some unrelated hung mount.
+const pendingExternalPathCanonicalizations = new Map<string, Promise<void>>()
+
+export function authorizeExternalPath(targetPath: string): Promise<void> {
   const resolvedTarget = resolve(targetPath)
+  // Ordering: authorize the textual form synchronously so the follow-up read this
+  // call gates on is never denied while canonicalization is still in flight.
   rememberAuthorizedExternalPath(resolvedTarget)
-  try {
-    // Why: macOS canonicalizes /tmp to /private/tmp during read authorization.
-    rememberAuthorizedExternalPath(realpathSync(resolvedTarget))
-  } catch {}
+  // Why: macOS canonicalizes /tmp to /private/tmp during read authorization.
+  const canonicalization: Promise<void> = realpath(resolvedTarget)
+    .then(rememberAuthorizedExternalPath, () => {})
+    .finally(() => {
+      if (pendingExternalPathCanonicalizations.get(resolvedTarget) === canonicalization) {
+        pendingExternalPathCanonicalizations.delete(resolvedTarget)
+      }
+    })
+  pendingExternalPathCanonicalizations.set(resolvedTarget, canonicalization)
+  return canonicalization
+}
+
+/** Returns true once every in-flight authorization covering sourcePath has landed. */
+async function awaitPendingCanonicalizationsFor(sourcePath: string): Promise<boolean> {
+  if (pendingExternalPathCanonicalizations.size === 0) {
+    return false
+  }
+  const gating: Promise<void>[] = []
+  for (const [authorizedPath, canonicalization] of pendingExternalPathCanonicalizations) {
+    if (isDescendantOrEqual(sourcePath, authorizedPath)) {
+      gating.push(canonicalization)
+    }
+  }
+  if (gating.length === 0) {
+    return false
+  }
+  await Promise.all(gating)
+  return true
 }
 
 export function invalidateAuthorizedRootsCache(): void {
@@ -386,6 +416,15 @@ async function isPathAllowedIncludingRegisteredWorktrees(
   }
 
   if (await isPathAllowedByCanonicalRegisteredRoot(targetPath, options.canonicalSourcePath)) {
+    return true
+  }
+
+  // Why: authorizeExternalPath returns before its realpath lands, and callers that
+  // can't await it (ipcMain.handle) would otherwise deny the read they just granted.
+  if (
+    (await awaitPendingCanonicalizationsFor(options.canonicalSourcePath ?? targetPath)) &&
+    isPathAllowed(targetPath, store)
+  ) {
     return true
   }
 

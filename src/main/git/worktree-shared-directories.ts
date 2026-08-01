@@ -2,17 +2,46 @@ import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { checkIgnoredPaths } from './check-ignored-paths'
 import type { GitRuntimeOptions } from './git-runtime-options'
-import { loadHooks } from '../hooks'
+import { loadHooks, loadHooksAsync } from '../hooks'
 import type { Repo } from '../../shared/types'
 
 // Why: a fresh worktree has no node_modules/.cache, and copying them is slow and
 // duplicates disk; `orca.yaml` names the ones every worktree should share instead.
 
 const CONFIGURED_SHARED_DIRECTORIES_CACHE_TTL_MS = 30_000
-const configuredSharedDirectoriesByRepoPath = new Map<
-  string,
-  { directories: string[]; expiresAt: number }
->()
+
+type SharedDirectoriesCacheEntry = {
+  value: { directories: readonly string[]; expiresAt: number } | null
+  /** Bumped on every publish, so a read that started earlier can tell a newer value landed
+   *  while it was in flight and must not be clobbered. */
+  revision: number
+  /** Non-null while an async read is in flight. A stalled mount can leave it set forever —
+   *  which is exactly when sync callers must be served the stale value instead of blocking. */
+  refresh: Promise<readonly string[]> | null
+}
+
+const sharedDirectoriesByRepoPath = new Map<string, SharedDirectoriesCacheEntry>()
+
+function getSharedDirectoriesCacheEntry(repoPath: string): SharedDirectoriesCacheEntry {
+  const existing = sharedDirectoriesByRepoPath.get(repoPath)
+  if (existing) {
+    return existing
+  }
+  const created: SharedDirectoriesCacheEntry = { value: null, revision: 0, refresh: null }
+  sharedDirectoriesByRepoPath.set(repoPath, created)
+  return created
+}
+
+/** Publishes into the entry object, not the map, so a refresh still in flight when the cache is
+ *  cleared writes to its own detached entry instead of resurrecting a stale one. */
+function publishSharedDirectories(
+  entry: SharedDirectoriesCacheEntry,
+  directories: readonly string[]
+): readonly string[] {
+  entry.value = { directories, expiresAt: Date.now() + CONFIGURED_SHARED_DIRECTORIES_CACHE_TTL_MS }
+  entry.revision++
+  return directories
+}
 
 /** The configured `worktree.sharedDirectories` names, before any existence or
  *  gitignore filtering.
@@ -24,24 +53,71 @@ const configuredSharedDirectoriesByRepoPath = new Map<
  *
  *  `readonly` because this is the cached array itself: a mutating caller would
  *  corrupt every later read for the rest of the TTL. Copying on return would fix
- *  that too, but this runs on the status-polling path — the type costs nothing. */
+ *  that too, but this runs on the status-polling path — the type costs nothing.
+ *
+ *  An expired value with a read still in flight is served anyway: a read stalled on a dead
+ *  mount never settles, so the entry would stay expired forever and push every sync caller
+ *  onto exactly the blocking read the async twin exists to avoid. */
 export function getConfiguredWorktreeSharedDirectories(repoPath: string): readonly string[] {
-  const cached = configuredSharedDirectoriesByRepoPath.get(repoPath)
-  const now = Date.now()
-  if (cached && cached.expiresAt > now) {
+  const entry = sharedDirectoriesByRepoPath.get(repoPath)
+  if (entry?.value && (entry.value.expiresAt > Date.now() || entry.refresh !== null)) {
+    return entry.value.directories
+  }
+  return publishSharedDirectories(
+    getSharedDirectoriesCacheEntry(repoPath),
+    loadHooks(repoPath)?.worktree?.sharedDirectories ?? []
+  )
+}
+
+/** Single-flight: concurrent status polls share one `orca.yaml` read per repo. */
+function refreshConfiguredWorktreeSharedDirectories(repoPath: string): Promise<readonly string[]> {
+  const entry = getSharedDirectoriesCacheEntry(repoPath)
+  if (entry.refresh) {
+    return entry.refresh
+  }
+
+  const startedAtRevision = entry.revision
+  const refresh: Promise<readonly string[]> = loadHooksAsync(repoPath)
+    .then((hooks) => {
+      const directories = hooks?.worktree?.sharedDirectories ?? []
+      // Why: the sync twin publishes into the same entry. A read that started before it must
+      // not overwrite the newer value, nor stamp a fresh TTL onto its own stale one.
+      if (entry.revision !== startedAtRevision) {
+        return entry.value?.directories ?? directories
+      }
+      return publishSharedDirectories(entry, directories)
+    })
+    .catch(() => entry.value?.directories ?? [])
+    .finally(() => {
+      if (entry.refresh === refresh) {
+        entry.refresh = null
+      }
+    })
+
+  entry.refresh = refresh
+  return refresh
+}
+
+/** Async twin of `getConfiguredWorktreeSharedDirectories`, for the polled status path.
+ *
+ *  A stalled repo mount can hold the `orca.yaml` read for a minute; while one is in
+ *  flight every later poll is served the last known value instead of queueing behind
+ *  it, so status keeps flowing and only the first-ever read can wait. */
+export async function getConfiguredWorktreeSharedDirectoriesAsync(
+  repoPath: string
+): Promise<readonly string[]> {
+  const cached = sharedDirectoriesByRepoPath.get(repoPath)?.value
+  if (cached && cached.expiresAt > Date.now()) {
     return cached.directories
   }
-  const configured = loadHooks(repoPath)?.worktree?.sharedDirectories ?? []
-  configuredSharedDirectoriesByRepoPath.set(repoPath, {
-    directories: configured,
-    expiresAt: now + CONFIGURED_SHARED_DIRECTORIES_CACHE_TTL_MS
-  })
-  return configured
+
+  const refresh = refreshConfiguredWorktreeSharedDirectories(repoPath)
+  return cached ? cached.directories : refresh
 }
 
 /** Reset the process cache between tests. */
 export function clearConfiguredWorktreeSharedDirectoriesCacheForTests(): void {
-  configuredSharedDirectoriesByRepoPath.clear()
+  sharedDirectoriesByRepoPath.clear()
 }
 
 /** Every path Orca may have symlinked into a worktree: the per-user Worktree
@@ -54,6 +130,14 @@ export function getWorktreeSharedLinkPaths(repo: Pick<Repo, 'path' | 'symlinkPat
   return Array.from(
     new Set([...(repo.symlinkPaths ?? []), ...getConfiguredWorktreeSharedDirectories(repo.path)])
   )
+}
+
+/** Async twin of `getWorktreeSharedLinkPaths` for callers that can await. */
+export async function getWorktreeSharedLinkPathsAsync(
+  repo: Pick<Repo, 'path' | 'symlinkPaths'>
+): Promise<string[]> {
+  const configured = await getConfiguredWorktreeSharedDirectoriesAsync(repo.path)
+  return Array.from(new Set([...(repo.symlinkPaths ?? []), ...configured]))
 }
 
 /** Resolve `worktree.sharedDirectories` from the repo-root `orca.yaml` to
@@ -70,7 +154,7 @@ export async function resolveWorktreeSharedDirectories(
   options: GitRuntimeOptions = {}
 ): Promise<string[]> {
   try {
-    const configured = loadHooks(repoPath)?.worktree?.sharedDirectories ?? []
+    const configured = (await loadHooksAsync(repoPath))?.worktree?.sharedDirectories ?? []
     if (configured.length === 0) {
       return []
     }

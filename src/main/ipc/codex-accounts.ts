@@ -34,7 +34,7 @@ export function registerCodexAccountHandlers(
     }
     forgetStaleCodexPanes(args.ptyIds.filter((ptyId): ptyId is string => typeof ptyId === 'string'))
   })
-  ipcMain.handle('codexAccounts:list', () => codexAccounts.listAccounts())
+  ipcMain.handle('codexAccounts:list', () => codexAccounts.listAccountsAsync())
   ipcMain.handle('codexAccounts:add', (_event, args?: CodexAccountAddTarget) =>
     codexAccounts.addAccount(args)
   )

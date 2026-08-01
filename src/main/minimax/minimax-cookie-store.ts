@@ -1,13 +1,20 @@
 import { safeStorage } from 'electron'
-import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { access, readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { hardenExistingSecureFile, writeSecureFile } from '../../shared/secure-file'
+import {
+  hardenExistingSecureFileAsync,
+  removeSecureFileAsync,
+  writeSecureFileAsync
+} from '../../shared/secure-file'
 
 const MINIMAX_COOKIE_FILE = 'minimax-session-cookie.enc'
 const COOKIE_ENVELOPE_PREFIX = 'orca-minimax-cookie:v1:'
 let cachedMiniMaxCookie: string | null = null
-let warnedMiniMaxCookieStatusHardenFailure = false
+// Why: secure-file orders the fs ops per path but not the cache, whose writes happen after
+// an await; the last caller wins the cache so a clear can't be undone by a queued save.
+let miniMaxCookieCacheGeneration = 0
 
 type MiniMaxCookieEnvelope = {
   kind: 'encrypted' | 'plaintext'
@@ -96,70 +103,114 @@ function readLegacyCookie(raw: Buffer): string {
   throw new Error('MiniMax session cookie could not be decrypted')
 }
 
+/**
+ * Sync twin kept for RateLimitService.getState(), which is a synchronous snapshot
+ * builder. Hardening is a write-time invariant, so the status probe no longer pays
+ * the stat/chmod pair — one access() instead of ~7 syscalls under a stalled HOME.
+ */
 export function hasMiniMaxSessionCookie(): boolean {
-  const keyPath = getMiniMaxCookiePath()
-  if (!existsSync(keyPath)) {
-    return false
-  }
-  try {
-    hardenExistingSecureFile(keyPath)
-  } catch (error) {
-    if (!warnedMiniMaxCookieStatusHardenFailure) {
-      warnedMiniMaxCookieStatusHardenFailure = true
-      console.warn('[minimax] Failed to harden MiniMax cookie file while checking status', error)
-    }
-  }
-  return true
+  return existsSync(getMiniMaxCookiePath())
 }
 
-export function saveMiniMaxSessionCookie(cookie: string): void {
+export async function hasMiniMaxSessionCookieAsync(): Promise<boolean> {
+  try {
+    await access(getMiniMaxCookiePath())
+    return true
+  } catch {
+    return false
+  }
+}
+
+function encodeCookieForStorage(cookie: string): string {
   const trimmed = cookie.trim()
   if (!trimmed) {
     throw new Error('MiniMax session cookie is required')
   }
   if (safeStorage.isEncryptionAvailable()) {
-    writeSecureFile(
-      getMiniMaxCookiePath(),
-      encodeCookieEnvelope('encrypted', safeStorage.encryptString(trimmed))
-    )
-    cachedMiniMaxCookie = trimmed
-    return
+    return encodeCookieEnvelope('encrypted', safeStorage.encryptString(trimmed))
   }
   console.warn('[minimax] safeStorage encryption unavailable — storing MiniMax cookie in plaintext')
-  writeSecureFile(
-    getMiniMaxCookiePath(),
-    encodeCookieEnvelope('plaintext', Buffer.from(trimmed, 'utf8'))
-  )
-  cachedMiniMaxCookie = trimmed
+  return encodeCookieEnvelope('plaintext', Buffer.from(trimmed, 'utf8'))
 }
 
-export function readMiniMaxSessionCookie(): string | null {
-  if (cachedMiniMaxCookie !== null) {
-    return cachedMiniMaxCookie
+export async function saveMiniMaxSessionCookieAsync(cookie: string): Promise<void> {
+  const encoded = encodeCookieForStorage(cookie)
+  const generation = ++miniMaxCookieCacheGeneration
+  await writeSecureFileAsync(getMiniMaxCookiePath(), encoded)
+  if (generation === miniMaxCookieCacheGeneration) {
+    cachedMiniMaxCookie = cookie.trim()
   }
-  const keyPath = getMiniMaxCookiePath()
-  if (!existsSync(keyPath)) {
-    return null
-  }
-  // Why: keep hardening out of the decode/decrypt try below so a chmod/ACL
-  // failure isn't misreported as a decrypt failure (matches hasMiniMaxSessionCookie).
+}
+
+function decodeStoredCookie(raw: Buffer): string {
   try {
-    hardenExistingSecureFile(keyPath)
-  } catch (error) {
-    console.warn('[minimax] Failed to harden MiniMax cookie file while reading', error)
-  }
-  try {
-    const raw = readFileSync(keyPath)
     const envelope = decodeCookieEnvelope(raw)
-    cachedMiniMaxCookie = envelope ? readEnvelope(envelope) : readLegacyCookie(raw)
-    return cachedMiniMaxCookie
+    return envelope ? readEnvelope(envelope) : readLegacyCookie(raw)
   } catch (error) {
     console.error('[minimax] failed to decode/decrypt session cookie', error)
     throw new Error('MiniMax session cookie could not be decrypted')
   }
 }
 
-export function clearMiniMaxSessionCookie(): void {
+// Why: re-hardening is defence in depth, not a correctness gate — fire it off-thread so a stalled mount can't park the read.
+function scheduleCookieRehardening(keyPath: string): void {
+  void hardenExistingSecureFileAsync(keyPath).catch((error: unknown) => {
+    console.warn('[minimax] Failed to harden MiniMax cookie file while reading', error)
+  })
+}
+
+/** Sync twin kept for the MiniMax config resolver, which RateLimitService calls synchronously. */
+export function readMiniMaxSessionCookie(): string | null {
+  if (cachedMiniMaxCookie !== null) {
+    return cachedMiniMaxCookie
+  }
+  const keyPath = getMiniMaxCookiePath()
+  let raw: Buffer
+  try {
+    // Why: a single read replaces existsSync+readFileSync; ENOENT already means "not configured".
+    raw = readFileSync(keyPath)
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return null
+    }
+    throw new Error('MiniMax session cookie could not be decrypted')
+  }
+  scheduleCookieRehardening(keyPath)
+  cachedMiniMaxCookie = decodeStoredCookie(raw)
+  return cachedMiniMaxCookie
+}
+
+export async function readMiniMaxSessionCookieAsync(): Promise<string | null> {
+  if (cachedMiniMaxCookie !== null) {
+    return cachedMiniMaxCookie
+  }
+  const keyPath = getMiniMaxCookiePath()
+  let raw: Buffer
+  try {
+    raw = await readFile(keyPath)
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return null
+    }
+    throw new Error('MiniMax session cookie could not be decrypted')
+  }
+  scheduleCookieRehardening(keyPath)
+  cachedMiniMaxCookie = decodeStoredCookie(raw)
+  return cachedMiniMaxCookie
+}
+
+function isMissingFileError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  return code === 'ENOENT' || code === 'ENOTDIR'
+}
+
+export async function clearMiniMaxSessionCookieAsync(): Promise<void> {
+  const generation = ++miniMaxCookieCacheGeneration
   cachedMiniMaxCookie = null
-  rmSync(getMiniMaxCookiePath(), { force: true })
+  // Why: a bare rm would unlink before an in-flight save's rename republished the file.
+  await removeSecureFileAsync(getMiniMaxCookiePath())
+  // Why: a sync read can repopulate the cache from disk while we wait for our turn.
+  if (generation === miniMaxCookieCacheGeneration) {
+    cachedMiniMaxCookie = null
+  }
 }

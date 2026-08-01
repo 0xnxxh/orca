@@ -132,7 +132,7 @@ import { registerLocalLogTailHandlers } from './local-log-tail'
 import { localLogFileIdentity } from '../ai-vault/local-log-tail-reader'
 import { sanitizeLocalDownloadFilename } from '../local-download-filename'
 import { registerFilesystemDownloadFolderHandlers } from './filesystem-download-folder'
-import { getWorktreeSharedLinkPaths } from '../git/worktree-shared-directories'
+import { getWorktreeSharedLinkPathsAsync } from '../git/worktree-shared-directories'
 import { createSenderScopedRequestCancellations } from './sender-scoped-request-cancellation'
 
 // Why: Monaco degrades features on large files like VS Code, so a 5MB block would needlessly lock out ordinary JSON/log files.
@@ -1125,7 +1125,7 @@ export function registerFilesystemHandlers(
         // handler, and the scan walks every repo's worktree meta.
         const repo = getLocalRepoForRegisteredWorktree(store, args.worktreePath, worktreePath)
         const gitOptions = getLocalGitOptionsForRepo(store, repo)
-        const sharedLinkPaths = repo ? getWorktreeSharedLinkPaths(repo) : []
+        const sharedLinkPaths = repo ? await getWorktreeSharedLinkPathsAsync(repo) : []
         return await getStatus(worktreePath, {
           ...options,
           ...gitOptions,

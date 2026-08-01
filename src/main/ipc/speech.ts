@@ -6,9 +6,9 @@ import { SPEECH_MODEL_CATALOG } from '../speech/model-catalog'
 import { deleteLocalSpeechModel } from '../speech/speech-model-deletion'
 import { getSpeechModelManager, getSpeechSttService } from '../speech/speech-runtime-service'
 import {
-  clearOpenAiSpeechApiKey,
-  hasOpenAiSpeechApiKey,
-  saveOpenAiSpeechApiKey
+  clearOpenAiSpeechApiKeyAsync,
+  hasOpenAiSpeechApiKeyAsync,
+  saveOpenAiSpeechApiKeyAsync
 } from '../speech/openai-api-key-store'
 import type { Store } from '../persistence'
 
@@ -22,16 +22,16 @@ export function registerSpeechHandlers(store: Store): void {
   })
 
   ipcMain.handle('speech:getOpenAiApiKeyStatus', async () => {
-    return { configured: hasOpenAiSpeechApiKey() }
+    return { configured: await hasOpenAiSpeechApiKeyAsync() }
   })
 
   ipcMain.handle('speech:saveOpenAiApiKey', async (_event, apiKey: string) => {
-    saveOpenAiSpeechApiKey(apiKey)
+    await saveOpenAiSpeechApiKeyAsync(apiKey)
     return { configured: true }
   })
 
   ipcMain.handle('speech:clearOpenAiApiKey', async () => {
-    clearOpenAiSpeechApiKey()
+    await clearOpenAiSpeechApiKeyAsync()
     return { configured: false }
   })
 

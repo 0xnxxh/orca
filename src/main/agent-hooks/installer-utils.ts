@@ -60,9 +60,12 @@ export function buildManagedCommandDefinition(command: string): HookDefinition {
 export {
   isPlainObject,
   readHooksJson,
+  readHooksJsonAsync,
   readHooksJsonWithRaw,
   type HooksJsonSnapshot
 } from './hooks-json-read'
+
+export { writeHooksJsonAsync, writeManagedScriptAsync } from './hooks-json-async-write'
 
 // Why: match by script file name, not exact command, so a fresh install sweeps stale entries from old/parallel installs.
 export function createManagedCommandMatcher(

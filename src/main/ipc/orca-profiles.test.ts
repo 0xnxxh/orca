@@ -49,10 +49,10 @@ vi.mock('../app-relaunch', () => ({
 }))
 
 vi.mock('../orca-profiles/profile-index-store', () => ({
-  createLocalOrcaProfile: createLocalOrcaProfileMock,
-  getOrcaProfileListState: getOrcaProfileListStateMock,
-  seedNewOrcaProfileTelemetryConsent: seedNewOrcaProfileTelemetryConsentMock,
-  setActiveOrcaProfile: setActiveOrcaProfileMock
+  createLocalOrcaProfileAsync: createLocalOrcaProfileMock,
+  getOrcaProfileListStateAsync: getOrcaProfileListStateMock,
+  seedNewOrcaProfileTelemetryConsentAsync: seedNewOrcaProfileTelemetryConsentMock,
+  setActiveOrcaProfileAsync: setActiveOrcaProfileMock
 }))
 
 function makeStoreMock(flush = vi.fn()): {

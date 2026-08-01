@@ -51,7 +51,8 @@ const {
   buildWindowsRunnerScriptMock,
   getSetupRunnerEnvVarsMock,
   runHookMock,
-  hasHooksFileMock,
+  checkOrcaYamlHooksMock,
+  readIssueCommandAsyncMock,
   loadHooksMock,
   computeWorktreePathMock,
   ensurePathWithinWorkspaceMock,
@@ -101,7 +102,8 @@ const {
   buildWindowsRunnerScriptMock: vi.fn(),
   getSetupRunnerEnvVarsMock: vi.fn(),
   runHookMock: vi.fn(),
-  hasHooksFileMock: vi.fn(),
+  checkOrcaYamlHooksMock: vi.fn(),
+  readIssueCommandAsyncMock: vi.fn(),
   loadHooksMock: vi.fn(),
   computeWorktreePathMock: vi.fn(),
   ensurePathWithinWorkspaceMock: vi.fn(),
@@ -200,7 +202,8 @@ vi.mock('../hooks', () => ({
   loadHooks: loadHooksMock,
   parseOrcaYaml: parseOrcaYamlMock,
   runHook: runHookMock,
-  hasHooksFile: hasHooksFileMock,
+  checkOrcaYamlHooks: checkOrcaYamlHooksMock,
+  readIssueCommandAsync: readIssueCommandAsyncMock,
   shouldRunSetupForCreate: shouldRunSetupForCreateMock
 }))
 
@@ -366,7 +369,8 @@ describe('registerWorktreeHandlers', () => {
       getSetupRunnerEnvVarsMock,
       shouldRunSetupForCreateMock,
       runHookMock,
-      hasHooksFileMock,
+      checkOrcaYamlHooksMock,
+      readIssueCommandAsyncMock,
       loadHooksMock,
       computeWorktreePathMock,
       ensurePathWithinWorkspaceMock,
@@ -472,6 +476,11 @@ describe('registerWorktreeHandlers', () => {
     getEffectiveHooksMock.mockReturnValue(null)
     getEffectiveHooksFromConfigMock.mockImplementation(() => getEffectiveHooksMock())
     getDefaultTabsLaunchMock.mockReturnValue(undefined)
+    checkOrcaYamlHooksMock.mockResolvedValue({
+      hasHooksFile: false,
+      hooks: null,
+      mayNeedUpdate: false
+    })
     parseOrcaYamlMock.mockReturnValue(null)
     shouldRunSetupForCreateMock.mockReturnValue(false)
     buildPosixRunnerScriptMock.mockImplementation(
@@ -8925,7 +8934,7 @@ describe('registerWorktreeHandlers', () => {
       mayNeedUpdate: false
     })
     expect(fsProvider.readFile).toHaveBeenCalledWith('/remote/repo/orca.yaml')
-    expect(hasHooksFileMock).not.toHaveBeenCalled()
+    expect(checkOrcaYamlHooksMock).not.toHaveBeenCalled()
   })
 
   it('fails hook inspection closed when duplicate repo ids omit the host', async () => {
@@ -8946,7 +8955,7 @@ describe('registerWorktreeHandlers', () => {
       mayNeedUpdate: false
     })
     expect(getSshFilesystemProviderMock).not.toHaveBeenCalled()
-    expect(hasHooksFileMock).not.toHaveBeenCalled()
+    expect(checkOrcaYamlHooksMock).not.toHaveBeenCalled()
   })
 
   it('inspects setup-script imports on the requested host when repo ids collide', async () => {

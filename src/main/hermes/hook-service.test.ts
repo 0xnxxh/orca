@@ -30,8 +30,8 @@ describe('HermesHookService', () => {
     rmSync(homeDir, { recursive: true, force: true })
   })
 
-  it('installs the managed Hermes plugin and enables it in config.yaml', () => {
-    const status = new HermesHookService().install()
+  it('installs the managed Hermes plugin and enables it in config.yaml', async () => {
+    const status = await new HermesHookService().install()
 
     expect(status).toMatchObject({
       agent: 'hermes',
@@ -48,7 +48,7 @@ describe('HermesHookService', () => {
     expect(config.plugins.enabled).toContain(_internals.HERMES_PLUGIN_NAME)
   })
 
-  it('preserves other enabled plugins and removes Orca from disabled list', () => {
+  it('preserves other enabled plugins and removes Orca from disabled list', async () => {
     writeFileSync(
       join(homeDir, 'config.yaml'),
       [
@@ -63,7 +63,7 @@ describe('HermesHookService', () => {
       'utf-8'
     )
 
-    new HermesHookService().install()
+    await new HermesHookService().install()
 
     const config = parse(readFileSync(join(homeDir, 'config.yaml'), 'utf-8')) as {
       model: string
@@ -74,14 +74,14 @@ describe('HermesHookService', () => {
     expect(config.plugins.disabled).toEqual([])
   })
 
-  it('normalizes malformed plugin lists during install', () => {
+  it('normalizes malformed plugin lists during install', async () => {
     writeFileSync(
       join(homeDir, 'config.yaml'),
       ['plugins:', '  enabled: "not-a-list"', '  disabled: "not-a-list"', ''].join('\n'),
       'utf-8'
     )
 
-    const status = new HermesHookService().install()
+    const status = await new HermesHookService().install()
 
     expect(status.state).toBe('installed')
     const config = parse(readFileSync(join(homeDir, 'config.yaml'), 'utf-8')) as {
@@ -91,8 +91,8 @@ describe('HermesHookService', () => {
     expect(config.plugins.disabled).toEqual([])
   })
 
-  it('reports partial when the plugin exists but is not enabled', () => {
-    new HermesHookService().install()
+  it('reports partial when the plugin exists but is not enabled', async () => {
+    await new HermesHookService().install()
     const update = _internals.updateConfigContent(
       readFileSync(join(homeDir, 'config.yaml'), 'utf-8'),
       _internals.disablePlugin
@@ -100,18 +100,18 @@ describe('HermesHookService', () => {
     expect(update.content).toBeTruthy()
     writeFileSync(join(homeDir, 'config.yaml'), update.content!, 'utf-8')
 
-    const status = new HermesHookService().getStatus()
+    const status = await new HermesHookService().getStatus()
 
     expect(status.state).toBe('partial')
     expect(status.detail).toContain('not enabled')
   })
 
-  it('is visible to the real hermes CLI when hermes is installed', () => {
+  it('is visible to the real hermes CLI when hermes is installed', async () => {
     const hermesAvailable = spawnSync('hermes', ['--version'], { encoding: 'utf-8' }).status === 0
     if (!hermesAvailable) {
       return
     }
-    new HermesHookService().install()
+    await new HermesHookService().install()
 
     const output = execFileSync('hermes', ['plugins', 'list'], {
       env: { ...process.env, HERMES_HOME: homeDir },
@@ -128,7 +128,7 @@ describe('HermesHookService', () => {
     if (!pythonAvailable) {
       return
     }
-    new HermesHookService().install()
+    await new HermesHookService().install()
 
     const received = new Promise<Record<string, unknown>>((resolve, reject) => {
       const server = createServer((req, res) => {
@@ -225,12 +225,12 @@ describe('HermesHookService', () => {
     })
   })
 
-  it('bounds generated plugin payload normalization before JSON encoding', () => {
+  it('bounds generated plugin payload normalization before JSON encoding', async () => {
     const pythonAvailable = spawnSync('python3', ['--version'], { encoding: 'utf-8' }).status === 0
     if (!pythonAvailable) {
       return
     }
-    new HermesHookService().install()
+    await new HermesHookService().install()
 
     const initPath = join(homeDir, 'plugins', _internals.HERMES_PLUGIN_NAME, '__init__.py')
     const script = [

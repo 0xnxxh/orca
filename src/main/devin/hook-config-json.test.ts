@@ -19,7 +19,7 @@ describe('readDevinHooksConfig', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  it('parses JSONC comments in Devin config', () => {
+  it('parses JSONC comments in Devin config', async () => {
     const path = join(dir, 'config.json')
     writeFileSync(
       path,
@@ -31,7 +31,7 @@ describe('readDevinHooksConfig', () => {
 `
     )
 
-    const config = readDevinHooksConfig(path)
+    const config = await readDevinHooksConfig(path)
 
     expect(config).toEqual({
       hooks: {},
@@ -39,7 +39,7 @@ describe('readDevinHooksConfig', () => {
     })
   })
 
-  it('rejects recovered partial parses from malformed JSONC', () => {
+  it('rejects recovered partial parses from malformed JSONC', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       expect(parseDevinHooksConfigText('{"hooks": }', 'Devin config.json')).toBeNull()
@@ -53,7 +53,7 @@ describe('readDevinHooksConfig', () => {
 })
 
 describe('readConfigFromOrcaOverlapDetail', () => {
-  it('warns when legacy read_config_from imports Claude', () => {
+  it('warns when legacy read_config_from imports Claude', async () => {
     const detail = readConfigFromOrcaOverlapDetail({
       hooks: {},
       read_config_from: ['claude', 'custom']
@@ -63,7 +63,7 @@ describe('readConfigFromOrcaOverlapDetail', () => {
     expect(detail).toContain('claude')
   })
 
-  it('warns when object-shaped read_config_from leaves Claude enabled', () => {
+  it('warns when object-shaped read_config_from leaves Claude enabled', async () => {
     const detail = readConfigFromOrcaOverlapDetail({
       hooks: {},
       read_config_from: { claude: true }
@@ -72,7 +72,7 @@ describe('readConfigFromOrcaOverlapDetail', () => {
     expect(detail).toContain('read_config_from.claude')
   })
 
-  it('warns when read_config_from is omitted because imports default to enabled', () => {
+  it('warns when read_config_from is omitted because imports default to enabled', async () => {
     const detail = readConfigFromOrcaOverlapDetail({
       hooks: {}
     })
@@ -80,7 +80,7 @@ describe('readConfigFromOrcaOverlapDetail', () => {
     expect(detail).toContain('read_config_from.claude')
   })
 
-  it('does not warn when read_config_from disables Claude', () => {
+  it('does not warn when read_config_from disables Claude', async () => {
     const detail = readConfigFromOrcaOverlapDetail({
       hooks: {},
       read_config_from: { claude: false }

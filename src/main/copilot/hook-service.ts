@@ -10,12 +10,16 @@ import {
   createManagedCommandMatcher,
   getSharedManagedScriptPath,
   readHooksJson,
+  readHooksJsonAsync,
   removeManagedCommands,
   wrapPosixHookCommand,
   wrapWindowsHookCommand,
   writeHooksJson,
+  writeHooksJsonAsync,
   writeManagedScript,
-  type HookDefinition
+  writeManagedScriptAsync,
+  type HookDefinition,
+  type HooksConfig
 } from '../agent-hooks/installer-utils'
 import {
   readHooksJsonRemote,
@@ -182,72 +186,84 @@ function getManagedScript(target: 'local' | 'posix' = 'local'): string {
   ].join('\n')
 }
 
+function parseErrorStatus(configPath: string): AgentHookInstallStatus {
+  return {
+    agent: 'copilot',
+    state: 'error',
+    configPath,
+    managedHooksPresent: false,
+    detail: 'Could not parse Copilot hooks/orca.json'
+  }
+}
+
+function buildStatus(config: HooksConfig | null): AgentHookInstallStatus {
+  const configPath = getConfigPath()
+  const scriptPath = getManagedScriptPath()
+  if (!config) {
+    return parseErrorStatus(configPath)
+  }
+
+  const isManagedCommand = createManagedCommandMatcher(getManagedScriptFileName())
+  const missing: string[] = []
+  let presentCount = 0
+  let staleManagedPresent = false
+  const managedEvents = new Set<string>(COPILOT_EVENTS)
+  for (const eventName of COPILOT_EVENTS) {
+    const command = getManagedCommand(scriptPath, eventName)
+    const definitions = Array.isArray(config.hooks?.[eventName]) ? config.hooks![eventName]! : []
+    const hasCurrentCommand = definitions.some((definition) =>
+      definitionHasCurrentCommand(definition, command)
+    )
+    if (hasCurrentCommand) {
+      presentCount += 1
+    } else {
+      missing.push(eventName)
+    }
+  }
+  for (const [eventName, definitions] of Object.entries(config.hooks ?? {})) {
+    if (!Array.isArray(definitions)) {
+      continue
+    }
+    const currentCommand = managedEvents.has(eventName)
+      ? getManagedCommand(scriptPath, eventName)
+      : null
+    staleManagedPresent =
+      staleManagedPresent ||
+      definitions.some((definition) =>
+        definitionHasStaleManagedCommand(definition, currentCommand, isManagedCommand)
+      )
+  }
+
+  const managedHooksPresent = presentCount > 0 || staleManagedPresent
+  let state: AgentHookInstallState
+  let detail: string | null
+  if (config.disableAllHooks === true && managedHooksPresent) {
+    state = 'partial'
+    detail = 'Managed Copilot hook file is disabled'
+  } else if (staleManagedPresent) {
+    state = 'partial'
+    detail = 'Managed Copilot hook file contains stale entries'
+  } else if (missing.length === 0) {
+    state = 'installed'
+    detail = null
+  } else if (presentCount === 0 && !staleManagedPresent) {
+    state = 'not_installed'
+    detail = null
+  } else {
+    state = 'partial'
+    detail = `Managed hook missing for events: ${missing.join(', ')}`
+  }
+  return { agent: 'copilot', state, configPath, managedHooksPresent, detail }
+}
+
 export class CopilotHookService {
   getStatus(): AgentHookInstallStatus {
-    const configPath = getConfigPath()
-    const scriptPath = getManagedScriptPath()
-    const config = readHooksJson(configPath)
-    if (!config) {
-      return {
-        agent: 'copilot',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not parse Copilot hooks/orca.json'
-      }
-    }
+    return buildStatus(readHooksJson(getConfigPath()))
+  }
 
-    const isManagedCommand = createManagedCommandMatcher(getManagedScriptFileName())
-    const missing: string[] = []
-    let presentCount = 0
-    let staleManagedPresent = false
-    const managedEvents = new Set<string>(COPILOT_EVENTS)
-    for (const eventName of COPILOT_EVENTS) {
-      const command = getManagedCommand(scriptPath, eventName)
-      const definitions = Array.isArray(config.hooks?.[eventName]) ? config.hooks![eventName]! : []
-      const hasCurrentCommand = definitions.some((definition) =>
-        definitionHasCurrentCommand(definition, command)
-      )
-      if (hasCurrentCommand) {
-        presentCount += 1
-      } else {
-        missing.push(eventName)
-      }
-    }
-    for (const [eventName, definitions] of Object.entries(config.hooks ?? {})) {
-      if (!Array.isArray(definitions)) {
-        continue
-      }
-      const currentCommand = managedEvents.has(eventName)
-        ? getManagedCommand(scriptPath, eventName)
-        : null
-      staleManagedPresent =
-        staleManagedPresent ||
-        definitions.some((definition) =>
-          definitionHasStaleManagedCommand(definition, currentCommand, isManagedCommand)
-        )
-    }
-
-    const managedHooksPresent = presentCount > 0 || staleManagedPresent
-    let state: AgentHookInstallState
-    let detail: string | null
-    if (config.disableAllHooks === true && managedHooksPresent) {
-      state = 'partial'
-      detail = 'Managed Copilot hook file is disabled'
-    } else if (staleManagedPresent) {
-      state = 'partial'
-      detail = 'Managed Copilot hook file contains stale entries'
-    } else if (missing.length === 0) {
-      state = 'installed'
-      detail = null
-    } else if (presentCount === 0 && !staleManagedPresent) {
-      state = 'not_installed'
-      detail = null
-    } else {
-      state = 'partial'
-      detail = `Managed hook missing for events: ${missing.join(', ')}`
-    }
-    return { agent: 'copilot', state, configPath, managedHooksPresent, detail }
+  // Why: main-thread twin — the sync one stays for the CLI process.
+  async getStatusAsync(): Promise<AgentHookInstallStatus> {
+    return buildStatus(await readHooksJsonAsync(getConfigPath()))
   }
 
   install(): AgentHookInstallStatus {
@@ -255,13 +271,7 @@ export class CopilotHookService {
     const scriptPath = getManagedScriptPath()
     const config = readHooksJson(configPath)
     if (!config) {
-      return {
-        agent: 'copilot',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not parse Copilot hooks/orca.json'
-      }
+      return parseErrorStatus(configPath)
     }
 
     const nextHooks = { ...config.hooks }
@@ -295,6 +305,47 @@ export class CopilotHookService {
     writeManagedScript(scriptPath, getManagedScript())
     writeHooksJson(configPath, config)
     return this.getStatus()
+  }
+
+  async installAsync(): Promise<AgentHookInstallStatus> {
+    const configPath = getConfigPath()
+    const scriptPath = getManagedScriptPath()
+    const config = await readHooksJsonAsync(configPath)
+    if (!config) {
+      return parseErrorStatus(configPath)
+    }
+
+    const nextHooks = { ...config.hooks }
+    const managedEvents = new Set<string>(COPILOT_EVENTS)
+    const isManagedCommand = createManagedCommandMatcher(getManagedScriptFileName())
+
+    for (const [eventName, definitions] of Object.entries(nextHooks)) {
+      if (managedEvents.has(eventName) || !Array.isArray(definitions)) {
+        continue
+      }
+      const cleaned = removeManagedCommands(definitions, isManagedCommand)
+      if (cleaned.length === 0) {
+        delete nextHooks[eventName]
+      } else {
+        nextHooks[eventName] = cleaned
+      }
+    }
+
+    for (const eventName of COPILOT_EVENTS) {
+      const current = Array.isArray(nextHooks[eventName]) ? nextHooks[eventName] : []
+      const cleaned = removeManagedCommands(current, isManagedCommand)
+      nextHooks[eventName] = [
+        ...cleaned,
+        getManagedHookDefinition(getManagedCommand(scriptPath, eventName))
+      ]
+    }
+
+    config.version = 1
+    delete config.disableAllHooks
+    config.hooks = nextHooks
+    await writeManagedScriptAsync(scriptPath, getManagedScript())
+    await writeHooksJsonAsync(configPath, config)
+    return this.getStatusAsync()
   }
 
   async installRemote(sftp: SFTPWrapper, remoteHome: string): Promise<AgentHookInstallStatus> {
@@ -375,13 +426,7 @@ export class CopilotHookService {
     }
     const config = readHooksJson(configPath)
     if (!config) {
-      return {
-        agent: 'copilot',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not parse Copilot hooks/orca.json'
-      }
+      return parseErrorStatus(configPath)
     }
 
     const nextHooks = { ...config.hooks }
@@ -405,6 +450,38 @@ export class CopilotHookService {
     config.hooks = nextHooks
     writeHooksJson(configPath, config)
     return this.getStatus()
+  }
+
+  async removeAsync(): Promise<AgentHookInstallStatus> {
+    const configPath = getConfigPath()
+    // Why: no existence probe — a missing file reads as an empty config, so the
+    // loop below finds nothing to change and short-circuits identically.
+    const config = await readHooksJsonAsync(configPath)
+    if (!config) {
+      return parseErrorStatus(configPath)
+    }
+
+    const nextHooks = { ...config.hooks }
+    const isManagedCommand = createManagedCommandMatcher(getManagedScriptFileName())
+    let changed = false
+    for (const [eventName, definitions] of Object.entries(nextHooks)) {
+      if (!Array.isArray(definitions)) {
+        continue
+      }
+      const cleaned = removeManagedCommands(definitions, isManagedCommand)
+      changed = changed || definitionsChanged(definitions, cleaned)
+      if (cleaned.length === 0) {
+        delete nextHooks[eventName]
+      } else {
+        nextHooks[eventName] = cleaned
+      }
+    }
+    if (!changed) {
+      return this.getStatusAsync()
+    }
+    config.hooks = nextHooks
+    await writeHooksJsonAsync(configPath, config)
+    return this.getStatusAsync()
   }
 }
 

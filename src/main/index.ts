@@ -1,4 +1,5 @@
 /* eslint-disable max-lines -- main-process entry point; owns app lifecycle, service wiring, window creation, and hook/daemon startup with no cleaner split seam. */
+import './libuv-threadpool-size'
 import { existsSync, statSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import os from 'node:os'
@@ -2614,7 +2615,9 @@ void app.whenReady().then(async () => {
         console.warn('[agent-hooks] failed to reconcile managed hooks on startup:', error)
       })
     } else {
-      removeManagedAgentHooks()
+      void removeManagedAgentHooks().catch((error) => {
+        console.warn('[agent-hooks] failed to remove managed hooks on startup:', error)
+      })
     }
   }
   app.on('child-process-gone', (_event, details) => {

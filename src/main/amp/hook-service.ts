@@ -3,7 +3,7 @@
    emitted plugin bytes drift from the installer checks that protect user
    plugin files from being overwritten. */
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { SFTPWrapper } from 'ssh2'
@@ -48,19 +48,28 @@ function isCompleteManagedPlugin(content: string): boolean {
   )
 }
 
-function readLocalPluginState(pluginPath: string): PluginFileState {
-  if (!existsSync(pluginPath)) {
-    return { kind: 'absent' }
-  }
+// Why: async fs keeps a stalled network mount off the Electron main thread; a
+// hung read now parks a threadpool slot instead of freezing the whole app.
+function isMissingPath(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  return code === 'ENOENT' || code === 'ENOTDIR'
+}
+
+// Why: a single read replaces the existsSync probe + read; one syscall fewer on a stalled mount.
+async function readLocalPluginState(pluginPath: string): Promise<PluginFileState> {
+  let content: string
   try {
-    const content = readFileSync(pluginPath, 'utf-8')
-    if (!isManagedPlugin(content)) {
-      return { kind: 'unmanaged' }
-    }
-    return { kind: 'managed', complete: isCompleteManagedPlugin(content) }
+    content = await readFile(pluginPath, 'utf-8')
   } catch (error) {
+    if (isMissingPath(error)) {
+      return { kind: 'absent' }
+    }
     return { kind: 'error', detail: error instanceof Error ? error.message : String(error) }
   }
+  if (!isManagedPlugin(content)) {
+    return { kind: 'unmanaged' }
+  }
+  return { kind: 'managed', complete: isCompleteManagedPlugin(content) }
 }
 
 function statusFromState(pluginPath: string, state: PluginFileState): AgentHookInstallStatus {
@@ -100,32 +109,35 @@ function statusFromState(pluginPath: string, state: PluginFileState): AgentHookI
   }
 }
 
-function writeTextFileAtomic(filePath: string, content: string): void {
+async function writeTextFileAtomic(filePath: string, content: string): Promise<void> {
   const dir = dirname(filePath)
-  mkdirSync(dir, { recursive: true })
-  if (existsSync(filePath)) {
-    try {
-      if (readFileSync(filePath, 'utf-8') === content) {
-        return
-      }
-    } catch {
-      // Fall through to the atomic write path.
+  await mkdir(dir, { recursive: true })
+  try {
+    if ((await readFile(filePath, 'utf-8')) === content) {
+      return
     }
+  } catch {
+    // Absent or unreadable: fall through to the atomic write path.
   }
 
   const tmpPath = join(dir, `.${Date.now()}-${randomUUID()}.tmp`)
   try {
-    writeFileSync(tmpPath, content, 'utf-8')
-    renameSync(tmpPath, filePath)
+    await writeFile(tmpPath, content, 'utf-8')
+    await rename(tmpPath, filePath)
   } finally {
-    if (existsSync(tmpPath)) {
-      try {
-        unlinkSync(tmpPath)
-      } catch {
-        // best effort
-      }
-    }
+    // ENOENT after a successful rename is the normal case.
+    await unlink(tmpPath).catch(() => {})
   }
+}
+
+// Why: sync fs serialized read-modify-write for free. Chain mutations so two
+// overlapping install/remove calls can never rename out of order.
+let pendingMutation: Promise<unknown> = Promise.resolve()
+
+function serializePluginMutation<T>(run: () => Promise<T>): Promise<T> {
+  const next = pendingMutation.then(run, run)
+  pendingMutation = next.catch(() => {})
+  return next
 }
 
 function getAmpPluginSource(): string {
@@ -328,19 +340,21 @@ function getAmpPluginSource(): string {
 }
 
 export class AmpHookService {
-  getStatus(): AgentHookInstallStatus {
+  async getStatus(): Promise<AgentHookInstallStatus> {
     const pluginPath = getPluginPath()
-    return statusFromState(pluginPath, readLocalPluginState(pluginPath))
+    return statusFromState(pluginPath, await readLocalPluginState(pluginPath))
   }
 
-  install(): AgentHookInstallStatus {
-    const pluginPath = getPluginPath()
-    const state = readLocalPluginState(pluginPath)
-    if (state.kind === 'unmanaged' || state.kind === 'error') {
-      return statusFromState(pluginPath, state)
-    }
-    writeTextFileAtomic(pluginPath, getAmpPluginSource())
-    return this.getStatus()
+  install(): Promise<AgentHookInstallStatus> {
+    return serializePluginMutation(async () => {
+      const pluginPath = getPluginPath()
+      const state = await readLocalPluginState(pluginPath)
+      if (state.kind === 'unmanaged' || state.kind === 'error') {
+        return statusFromState(pluginPath, state)
+      }
+      await writeTextFileAtomic(pluginPath, getAmpPluginSource())
+      return this.getStatus()
+    })
   }
 
   async installRemote(sftp: SFTPWrapper, remoteHome: string): Promise<AgentHookInstallStatus> {
@@ -369,14 +383,16 @@ export class AmpHookService {
     }
   }
 
-  remove(): AgentHookInstallStatus {
-    const pluginPath = getPluginPath()
-    const state = readLocalPluginState(pluginPath)
-    if (state.kind === 'managed') {
-      unlinkSync(pluginPath)
-      return this.getStatus()
-    }
-    return statusFromState(pluginPath, state)
+  remove(): Promise<AgentHookInstallStatus> {
+    return serializePluginMutation(async () => {
+      const pluginPath = getPluginPath()
+      const state = await readLocalPluginState(pluginPath)
+      if (state.kind === 'managed') {
+        await unlink(pluginPath)
+        return this.getStatus()
+      }
+      return statusFromState(pluginPath, state)
+    })
   }
 }
 

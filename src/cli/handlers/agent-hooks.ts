@@ -146,7 +146,7 @@ async function setAgentHooksEnabled(
   const offlineUpdate = updatedRuntime ? null : updateEnabledOnDisk(enabled)
   const settingsPath = offlineUpdate?.settingsPath ?? getDataPath()
   const statuses = updatedRuntime
-    ? getManagedAgentHookStatuses()
+    ? await getManagedAgentHookStatuses()
     : await applyAgentStatusHooksEnabled(enabled, offlineUpdate?.settings)
   return {
     enabled,
@@ -162,7 +162,7 @@ export const AGENT_HOOK_HANDLERS: Record<string, CommandHandler> = {
       enabled: readEnabledFromDisk(),
       settingsPath: getDataPath(),
       appliedBy: 'offline',
-      statuses: getManagedAgentHookStatuses()
+      statuses: await getManagedAgentHookStatuses()
     }
     printResult(localSuccess(result), json, formatAgentHookCommandResult)
   },

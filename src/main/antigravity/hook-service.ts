@@ -12,11 +12,14 @@ import {
   hookDefinitionHasManagedCommand,
   MANAGED_HOOK_TIMEOUT_SECONDS,
   readHooksJson,
+  readHooksJsonAsync,
   removeManagedCommands,
   wrapPosixHookCommand,
   wrapWindowsCmdHookCommand,
   writeHooksJson,
+  writeHooksJsonAsync,
   writeManagedScript,
+  writeManagedScriptAsync,
   type HookDefinition,
   type HooksConfig
 } from '../agent-hooks/installer-utils'
@@ -295,61 +298,73 @@ function removeInstalledConfig(config: HooksConfig): void {
   config[ANTIGRAVITY_HOOK_BUNDLE_NAME] = bundle
 }
 
+function parseErrorStatus(configPath: string): AgentHookInstallStatus {
+  return {
+    agent: 'antigravity',
+    state: 'error',
+    configPath,
+    managedHooksPresent: false,
+    detail: 'Could not parse Antigravity hooks.json'
+  }
+}
+
+function buildStatus(config: HooksConfig | null): AgentHookInstallStatus {
+  const configPath = getConfigPath()
+  const scriptPath = getManagedScriptPath()
+  if (!config) {
+    return parseErrorStatus(configPath)
+  }
+
+  const bundle = getBundle(config)
+  const isManagedCommand = createAntigravityManagedCommandMatcher()
+  const currentCommands = new Set(
+    ANTIGRAVITY_EVENTS.map((event) => getManagedCommand(scriptPath, event))
+  )
+  const staleManagedPresent = bundleHasStaleManagedCommand(
+    bundle,
+    isManagedCommand,
+    currentCommands
+  )
+  const missing: string[] = []
+  let presentCount = 0
+  for (const event of ANTIGRAVITY_EVENTS) {
+    const definitions = Array.isArray(bundle[event.eventName])
+      ? (bundle[event.eventName] as HookDefinition[])
+      : []
+    if (hasManagedCommand(definitions, getManagedCommand(scriptPath, event))) {
+      presentCount += 1
+    } else {
+      missing.push(event.eventName)
+    }
+  }
+
+  const managedHooksPresent = presentCount > 0 || staleManagedPresent
+  let state: AgentHookInstallState
+  let detail: string | null
+  if (missing.length === 0 && !staleManagedPresent) {
+    state = 'installed'
+    detail = null
+  } else if (presentCount === 0 && !staleManagedPresent) {
+    state = 'not_installed'
+    detail = null
+  } else {
+    state = 'partial'
+    detail =
+      missing.length > 0
+        ? `Managed hook missing for events: ${missing.join(', ')}`
+        : 'Stale managed hook entries need cleanup'
+  }
+  return { agent: 'antigravity', state, configPath, managedHooksPresent, detail }
+}
+
 export class AntigravityHookService {
   getStatus(): AgentHookInstallStatus {
-    const configPath = getConfigPath()
-    const scriptPath = getManagedScriptPath()
-    const config = readHooksJson(configPath)
-    if (!config) {
-      return {
-        agent: 'antigravity',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not parse Antigravity hooks.json'
-      }
-    }
+    return buildStatus(readHooksJson(getConfigPath()))
+  }
 
-    const bundle = getBundle(config)
-    const isManagedCommand = createAntigravityManagedCommandMatcher()
-    const currentCommands = new Set(
-      ANTIGRAVITY_EVENTS.map((event) => getManagedCommand(scriptPath, event))
-    )
-    const staleManagedPresent = bundleHasStaleManagedCommand(
-      bundle,
-      isManagedCommand,
-      currentCommands
-    )
-    const missing: string[] = []
-    let presentCount = 0
-    for (const event of ANTIGRAVITY_EVENTS) {
-      const definitions = Array.isArray(bundle[event.eventName])
-        ? (bundle[event.eventName] as HookDefinition[])
-        : []
-      if (hasManagedCommand(definitions, getManagedCommand(scriptPath, event))) {
-        presentCount += 1
-      } else {
-        missing.push(event.eventName)
-      }
-    }
-
-    const managedHooksPresent = presentCount > 0 || staleManagedPresent
-    let state: AgentHookInstallState
-    let detail: string | null
-    if (missing.length === 0 && !staleManagedPresent) {
-      state = 'installed'
-      detail = null
-    } else if (presentCount === 0 && !staleManagedPresent) {
-      state = 'not_installed'
-      detail = null
-    } else {
-      state = 'partial'
-      detail =
-        missing.length > 0
-          ? `Managed hook missing for events: ${missing.join(', ')}`
-          : 'Stale managed hook entries need cleanup'
-    }
-    return { agent: 'antigravity', state, configPath, managedHooksPresent, detail }
+  // Why: main-thread twin — the sync one stays for the CLI process.
+  async getStatusAsync(): Promise<AgentHookInstallStatus> {
+    return buildStatus(await readHooksJsonAsync(getConfigPath()))
   }
 
   install(): AgentHookInstallStatus {
@@ -357,13 +372,7 @@ export class AntigravityHookService {
     const scriptPath = getManagedScriptPath()
     const config = readHooksJson(configPath)
     if (!config) {
-      return {
-        agent: 'antigravity',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not parse Antigravity hooks.json'
-      }
+      return parseErrorStatus(configPath)
     }
 
     buildInstalledConfig(
@@ -384,6 +393,34 @@ export class AntigravityHookService {
     }
     writeHooksJson(configPath, config)
     return this.getStatus()
+  }
+
+  async installAsync(): Promise<AgentHookInstallStatus> {
+    const configPath = getConfigPath()
+    const scriptPath = getManagedScriptPath()
+    const config = await readHooksJsonAsync(configPath)
+    if (!config) {
+      return parseErrorStatus(configPath)
+    }
+
+    buildInstalledConfig(
+      config,
+      (event) => getManagedCommand(scriptPath, event),
+      createAntigravityManagedCommandMatcher()
+    )
+    await writeManagedScriptAsync(scriptPath, getManagedScript())
+    if (process.platform === 'win32') {
+      // Why: Antigravity wraps hook commands in cmd.exe. Keeping event env
+      // setup inside event-specific .cmd files avoids nested hooks.json quotes.
+      for (const event of ANTIGRAVITY_EVENTS) {
+        await writeManagedScriptAsync(
+          getWindowsWrapperScriptPath(event),
+          getWindowsWrapperScript(event.eventName)
+        )
+      }
+    }
+    await writeHooksJsonAsync(configPath, config)
+    return this.getStatusAsync()
   }
 
   async installRemote(sftp: SFTPWrapper, remoteHome: string): Promise<AgentHookInstallStatus> {
@@ -433,18 +470,24 @@ export class AntigravityHookService {
     const configPath = getConfigPath()
     const config = readHooksJson(configPath)
     if (!config) {
-      return {
-        agent: 'antigravity',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not parse Antigravity hooks.json'
-      }
+      return parseErrorStatus(configPath)
     }
 
     removeInstalledConfig(config)
     writeHooksJson(configPath, config)
     return this.getStatus()
+  }
+
+  async removeAsync(): Promise<AgentHookInstallStatus> {
+    const configPath = getConfigPath()
+    const config = await readHooksJsonAsync(configPath)
+    if (!config) {
+      return parseErrorStatus(configPath)
+    }
+
+    removeInstalledConfig(config)
+    await writeHooksJsonAsync(configPath, config)
+    return this.getStatusAsync()
   }
 }
 

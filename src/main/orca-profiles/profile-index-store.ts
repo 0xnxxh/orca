@@ -1,25 +1,40 @@
+// Sync bootstrap for the profile index. These run before there is a window to
+// block (src/main/index.ts) or from callers that cannot await. IPC handlers must
+// use the async twins in `profile-index-async-store.ts` instead — a sync fs call
+// on a stalled network mount freezes the whole app.
 import {
   copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
+  unlinkSync,
   writeFileSync
 } from 'node:fs'
-import { randomUUID } from 'node:crypto'
 import { dirname } from 'node:path'
 import type { GlobalSettings } from '../../shared/types'
 import {
-  createDefaultLocalOrcaProfile,
   DEFAULT_LOCAL_ORCA_PROFILE_ID,
-  DEFAULT_LOCAL_ORCA_PROFILE_NAME,
-  ORCA_PROFILE_INDEX_SCHEMA_VERSION,
   type CreateLocalOrcaProfileArgs,
   type CreateLocalOrcaProfileResult,
   type OrcaProfileIndex,
   type OrcaProfileListState,
   type OrcaProfileSummary
 } from '../../shared/orca-profiles'
+import {
+  appendProfileToIndex,
+  buildNewLocalProfile,
+  createInitialProfileIndex,
+  getActiveProfile,
+  parseProfileIndexJson,
+  serializeProfileIndex,
+  withActiveProfile
+} from './profile-index-document'
+import {
+  cacheProfileIndex,
+  claimInFlightAsyncIndexTmpPath,
+  recordSyncProfileIndexWrite
+} from './profile-index-async-store'
 import {
   getOrcaProfileBrowserSessionMetaFile,
   getOrcaProfileDataFile,
@@ -42,6 +57,15 @@ export {
   initOrcaProfilePaths
 } from './profile-storage-paths'
 
+export {
+  createLocalOrcaProfileAsync,
+  ensureActiveOrcaProfileAsync,
+  getOrcaProfileListStateAsync,
+  readProfileIndexAsync,
+  seedNewOrcaProfileTelemetryConsentAsync,
+  setActiveOrcaProfileAsync
+} from './profile-index-async-store'
+
 export type ActiveOrcaProfileState = {
   index: OrcaProfileIndex
   profile: OrcaProfileSummary
@@ -49,63 +73,9 @@ export type ActiveOrcaProfileState = {
   profileDirectory: string
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function isProfileSummary(value: unknown): value is OrcaProfileSummary {
-  if (!isObject(value)) {
-    return false
-  }
-  const avatar = value.avatar
-  const cloud = value.cloud
-  return (
-    typeof value.id === 'string' &&
-    // Why: IDs from the on-disk index become filesystem path segments; a
-    // tampered index must not be able to escape the profiles directory.
-    /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value.id) &&
-    typeof value.name === 'string' &&
-    value.name.length > 0 &&
-    (value.kind === 'local' || value.kind === 'cloud-linked') &&
-    typeof value.createdAt === 'number' &&
-    typeof value.updatedAt === 'number' &&
-    typeof value.lastOpenedAt === 'number' &&
-    isObject(avatar) &&
-    avatar.kind === 'initials' &&
-    typeof avatar.initials === 'string' &&
-    avatar.color === 'neutral' &&
-    (cloud === undefined || isObject(cloud))
-  )
-}
-
-function normalizeProfileIndex(raw: unknown): OrcaProfileIndex | null {
-  if (!isObject(raw) || !Array.isArray(raw.profiles)) {
-    return null
-  }
-  const profiles = raw.profiles.filter(isProfileSummary)
-  const activeProfileId =
-    typeof raw.activeProfileId === 'string' &&
-    profiles.some((profile) => profile.id === raw.activeProfileId)
-      ? raw.activeProfileId
-      : profiles[0]?.id
-  if (!activeProfileId) {
-    return null
-  }
-  return {
-    schemaVersion: ORCA_PROFILE_INDEX_SCHEMA_VERSION,
-    activeProfileId,
-    profiles
-  }
-}
-
-function sanitizeProfileName(value: unknown): string {
-  const trimmed = typeof value === 'string' ? value.trim() : ''
-  return trimmed.length > 0 ? trimmed.slice(0, 80) : 'New Profile'
-}
-
 function readProfileIndexFile(indexPath: string): OrcaProfileIndex | null {
   try {
-    return normalizeProfileIndex(JSON.parse(readFileSync(indexPath, 'utf-8')))
+    return parseProfileIndexJson(readFileSync(indexPath, 'utf-8'))
   } catch {
     return null
   }
@@ -118,6 +88,17 @@ export function readProfileIndex(indexPath: string): OrcaProfileIndex | null {
 }
 
 export function writeProfileIndex(indexPath: string, index: OrcaProfileIndex): void {
+  // Veto an async write already parked on `rename`: no guard can stop that
+  // rename, but deleting the temp file it is renaming makes it fail with
+  // ENOENT, so this write is not silently clobbered by the async twin.
+  const asyncTmpPath = claimInFlightAsyncIndexTmpPath(indexPath)
+  if (asyncTmpPath) {
+    try {
+      unlinkSync(asyncTmpPath)
+    } catch {
+      // Already renamed or never created; the async writer re-reads either way.
+    }
+  }
   mkdirSync(dirname(indexPath), { recursive: true })
   // Why: only a still-parseable current index may refresh the backup;
   // copying a corrupt file over the backup would destroy the recovery copy.
@@ -129,8 +110,11 @@ export function writeProfileIndex(indexPath: string, index: OrcaProfileIndex): v
     }
   }
   const tmpPath = `${indexPath}.tmp`
-  writeFileSync(tmpPath, JSON.stringify(index, null, 2), 'utf-8')
+  writeFileSync(tmpPath, serializeProfileIndex(index), 'utf-8')
   renameSync(tmpPath, indexPath)
+  // Why: keeps the zero-fs list cache correct and lets an async read-modify-write
+  // detect that a sync writer landed underneath it.
+  recordSyncProfileIndexWrite(indexPath, index)
 }
 
 function copyIfPresent(source: string, target: string): void {
@@ -179,15 +163,6 @@ export function seedNewOrcaProfileTelemetryConsent(
   renameSync(tmpPath, dataFile)
 }
 
-function createInitialProfileIndex(now = Date.now()): OrcaProfileIndex {
-  const profile = createDefaultLocalOrcaProfile(now)
-  return {
-    schemaVersion: ORCA_PROFILE_INDEX_SCHEMA_VERSION,
-    activeProfileId: profile.id,
-    profiles: [profile]
-  }
-}
-
 export function loadOrCreateProfileIndex(userDataPath: string): OrcaProfileIndex {
   const indexPath = getOrcaProfileIndexPath(userDataPath)
   const index = existsSync(indexPath) ? readProfileIndex(indexPath) : null
@@ -197,14 +172,6 @@ export function loadOrCreateProfileIndex(userDataPath: string): OrcaProfileIndex
   const nextIndex = createInitialProfileIndex()
   writeProfileIndex(indexPath, nextIndex)
   return nextIndex
-}
-
-function getActiveProfile(index: OrcaProfileIndex): OrcaProfileSummary {
-  return (
-    index.profiles.find((profile) => profile.id === index.activeProfileId) ??
-    index.profiles[0] ??
-    createDefaultLocalOrcaProfile(Date.now())
-  )
 }
 
 export function ensureActiveOrcaProfile(
@@ -233,6 +200,10 @@ export function ensureActiveOrcaProfile(
 
   if (shouldWriteIndex) {
     writeProfileIndex(indexPath, index)
+  } else {
+    // Why: boot resolves the index here; caching it lets orcaProfiles:list
+    // answer the startup chain without touching the filesystem at all.
+    cacheProfileIndex(indexPath, index)
   }
 
   return {
@@ -262,27 +233,8 @@ export function createLocalOrcaProfile(
   userDataPath = getProfileUserDataPath()
 ): CreateLocalOrcaProfileResult {
   const index = loadOrCreateProfileIndex(userDataPath)
-  const now = Date.now()
-  const name = sanitizeProfileName(args.name)
-  const profile: OrcaProfileSummary = {
-    id: `local-${randomUUID()}`,
-    name,
-    avatar: {
-      kind: 'initials',
-      initials: (
-        name.match(/[A-Za-z0-9]/)?.[0] ?? DEFAULT_LOCAL_ORCA_PROFILE_NAME[0]
-      ).toUpperCase(),
-      color: 'neutral'
-    },
-    kind: 'local',
-    createdAt: now,
-    updatedAt: now,
-    lastOpenedAt: now
-  }
-  const nextIndex: OrcaProfileIndex = {
-    ...index,
-    profiles: [...index.profiles, profile]
-  }
+  const profile = buildNewLocalProfile(args)
+  const nextIndex = appendProfileToIndex(index, profile)
   mkdirSync(getOrcaProfileDirectory(profile.id, userDataPath), { recursive: true })
   writeProfileIndex(getOrcaProfileIndexPath(userDataPath), nextIndex)
   return {
@@ -297,27 +249,7 @@ export function setActiveOrcaProfile(
   userDataPath = getProfileUserDataPath()
 ): OrcaProfileListState {
   const index = loadOrCreateProfileIndex(userDataPath)
-  const now = Date.now()
-  let found = false
-  const profiles = index.profiles.map((profile) => {
-    if (profile.id !== profileId) {
-      return profile
-    }
-    found = true
-    return {
-      ...profile,
-      updatedAt: now,
-      lastOpenedAt: now
-    }
-  })
-  if (!found) {
-    throw new Error('unknown_orca_profile')
-  }
-  const nextIndex: OrcaProfileIndex = {
-    ...index,
-    activeProfileId: profileId,
-    profiles
-  }
+  const nextIndex = withActiveProfile(index, profileId)
   mkdirSync(getOrcaProfileDirectory(profileId, userDataPath), { recursive: true })
   writeProfileIndex(getOrcaProfileIndexPath(userDataPath), nextIndex)
   return {

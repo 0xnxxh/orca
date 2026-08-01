@@ -68,19 +68,19 @@ describe('registerKeybindingHandlers', () => {
     showItemInFolderMock.mockReset()
   })
 
-  it('authorizes the keybindings file for in-app editing when ensuring it exists', () => {
-    registerKeybindingHandlers({ ensureFile: vi.fn(() => snapshot) } as never)
+  it('authorizes the keybindings file for in-app editing when ensuring it exists', async () => {
+    registerKeybindingHandlers({ ensureFileAsync: vi.fn(async () => snapshot) } as never)
 
-    expect(getHandler('keybindings:ensureFile')()).toBe(snapshot)
+    await expect(getHandler('keybindings:ensureFile')()).resolves.toBe(snapshot)
     expect(authorizeExternalPathMock).toHaveBeenCalledWith(snapshot.path)
   })
 
-  it('reconciles plugin command conflicts after a shortcut edit', () => {
+  it('reconciles plugin command conflicts after a shortcut edit', async () => {
     const onChanged = vi.fn()
-    const setActionBindings = vi.fn(() => snapshot)
-    registerKeybindingHandlers({ setActionBindings } as never, onChanged)
+    const setActionBindingsAsync = vi.fn(async () => snapshot)
+    registerKeybindingHandlers({ setActionBindingsAsync } as never, onChanged)
 
-    expect(
+    await expect(
       getHandler('keybindings:setAction')(
         {},
         {
@@ -88,13 +88,13 @@ describe('registerKeybindingHandlers', () => {
           bindings: ['Mod+Shift+T']
         }
       )
-    ).toBe(snapshot)
+    ).resolves.toBe(snapshot)
     expect(onChanged).toHaveBeenCalledOnce()
   })
 
   it('authorizes the keybindings file before opening it outside Orca', async () => {
     openPathMock.mockResolvedValue('')
-    registerKeybindingHandlers({ ensureFile: vi.fn(() => snapshot) } as never)
+    registerKeybindingHandlers({ ensureFileAsync: vi.fn(async () => snapshot) } as never)
 
     await expect(getHandler('keybindings:openFile')()).resolves.toBe(snapshot)
     expect(authorizeExternalPathMock).toHaveBeenCalledWith(snapshot.path)

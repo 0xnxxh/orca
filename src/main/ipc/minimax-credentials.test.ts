@@ -12,15 +12,15 @@ vi.mock('electron', () => ({
   }
 }))
 
-const saveMiniMaxSessionCookieMock = vi.hoisted(() => vi.fn())
-const clearMiniMaxSessionCookieMock = vi.hoisted(() => vi.fn())
-const hasMiniMaxSessionCookieMock = vi.hoisted(() => vi.fn(() => false))
+const saveMiniMaxSessionCookieMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
+const clearMiniMaxSessionCookieMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
+const hasMiniMaxSessionCookieMock = vi.hoisted(() => vi.fn(() => Promise.resolve(false)))
 const clearMiniMaxSessionCookieJarMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 
 vi.mock('../minimax/minimax-cookie-store', () => ({
-  saveMiniMaxSessionCookie: saveMiniMaxSessionCookieMock,
-  clearMiniMaxSessionCookie: clearMiniMaxSessionCookieMock,
-  hasMiniMaxSessionCookie: hasMiniMaxSessionCookieMock
+  saveMiniMaxSessionCookieAsync: saveMiniMaxSessionCookieMock,
+  clearMiniMaxSessionCookieAsync: clearMiniMaxSessionCookieMock,
+  hasMiniMaxSessionCookieAsync: hasMiniMaxSessionCookieMock
 }))
 
 vi.mock('../rate-limits/minimax-request-context', () => ({
@@ -57,11 +57,13 @@ describe('registerMiniMaxCredentialsHandlers', () => {
   beforeEach(() => {
     ipcState.handleHandlers.clear()
     saveMiniMaxSessionCookieMock.mockReset()
+    saveMiniMaxSessionCookieMock.mockResolvedValue(undefined)
     clearMiniMaxSessionCookieMock.mockReset()
+    clearMiniMaxSessionCookieMock.mockResolvedValue(undefined)
     clearMiniMaxSessionCookieJarMock.mockReset()
     clearMiniMaxSessionCookieJarMock.mockResolvedValue(undefined)
     hasMiniMaxSessionCookieMock.mockReset()
-    hasMiniMaxSessionCookieMock.mockReturnValue(false)
+    hasMiniMaxSessionCookieMock.mockResolvedValue(false)
   })
 
   afterEach(() => {
@@ -76,14 +78,14 @@ describe('registerMiniMaxCredentialsHandlers', () => {
   })
 
   it('returns the configured state on getStatus from the cookie store', async () => {
-    hasMiniMaxSessionCookieMock.mockReturnValue(true)
+    hasMiniMaxSessionCookieMock.mockResolvedValue(true)
     registerMiniMaxCredentialsHandlers(null)
     const status = await invoke<{ configured: boolean }>('minimaxCredentials:getStatus')
     expect(status).toEqual({ configured: true })
   })
 
   it('persists the cookie and reports configured after saveCookie', async () => {
-    hasMiniMaxSessionCookieMock.mockReturnValueOnce(true)
+    hasMiniMaxSessionCookieMock.mockResolvedValueOnce(true)
     registerMiniMaxCredentialsHandlers(null)
     const status = await invoke<{ configured: boolean }>(
       'minimaxCredentials:saveCookie',
@@ -111,7 +113,7 @@ describe('registerMiniMaxCredentialsHandlers', () => {
 
   it('clears the cookie and triggers a refresh on clearCookie', async () => {
     const { refresh, invalidateMiniMaxCredentialState, service } = makeRefreshMock()
-    hasMiniMaxSessionCookieMock.mockReturnValueOnce(false)
+    hasMiniMaxSessionCookieMock.mockResolvedValueOnce(false)
     registerMiniMaxCredentialsHandlers(service as RateLimitService)
     const status = await invoke<{ configured: boolean }>('minimaxCredentials:clearCookie')
     expect(clearMiniMaxSessionCookieMock).toHaveBeenCalledTimes(1)
@@ -126,7 +128,7 @@ describe('registerMiniMaxCredentialsHandlers', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const { refresh, invalidateMiniMaxCredentialState, service } = makeRefreshMock()
     clearMiniMaxSessionCookieJarMock.mockRejectedValueOnce(new Error('jar boom'))
-    hasMiniMaxSessionCookieMock.mockReturnValueOnce(false)
+    hasMiniMaxSessionCookieMock.mockResolvedValueOnce(false)
     registerMiniMaxCredentialsHandlers(service as RateLimitService)
 
     const status = await invoke<{ configured: boolean }>('minimaxCredentials:clearCookie')

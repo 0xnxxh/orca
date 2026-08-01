@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- Why: parsing, sanitizing, migrating, and writing the keybindings file must stay together so file-format edge cases share one validation path. */
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { access, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   findKeybindingConflicts,
@@ -42,16 +43,11 @@ function createEmptyDocument(): JsonObject {
   }
 }
 
-function readJsonDocument(path: string): {
-  exists: boolean
-  document: JsonObject | null
-  error?: string
-} {
-  if (!existsSync(path)) {
-    return { exists: false, document: createEmptyDocument() }
-  }
+type ReadDocumentResult = { exists: boolean; document: JsonObject | null; error?: string }
+
+function parseDocument(contents: string): ReadDocumentResult {
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown
+    const parsed = JSON.parse(contents) as unknown
     if (!isJsonObject(parsed)) {
       return { exists: true, document: null, error: 'Keybindings file must contain a JSON object.' }
     }
@@ -62,6 +58,69 @@ function readJsonDocument(path: string): {
       document: null,
       error: error instanceof Error ? error.message : String(error)
     }
+  }
+}
+
+function readJsonDocument(path: string): ReadDocumentResult {
+  if (!existsSync(path)) {
+    return { exists: false, document: createEmptyDocument() }
+  }
+  return parseDocument(readFileSync(path, 'utf8'))
+}
+
+async function readJsonDocumentAsync(path: string): Promise<ReadDocumentResult> {
+  let contents: string
+  try {
+    contents = await readFile(path, 'utf8')
+  } catch (error) {
+    // Why: ENOENT from the read replaces a separate exists() probe — one syscall
+    // instead of two, which matters when ~/.orca sits on a stalled mount.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { exists: false, document: createEmptyDocument() }
+    }
+    return {
+      exists: true,
+      document: null,
+      error: error instanceof Error ? error.message : String(error)
+    }
+  }
+  return parseDocument(contents)
+}
+
+// Why: async tmp+rename loses the serialization the single main thread gave for
+// free. Chain per path so two overlapping writes can never rename out of order,
+// and so a read-modify-write can hold the lane across its read.
+const writeChains = new Map<string, Promise<void>>()
+
+function runExclusive<T>(path: string, task: () => Promise<T>): Promise<T> {
+  const chain = (writeChains.get(path) ?? Promise.resolve()).then(task, task)
+  const settled = chain.then(
+    () => undefined,
+    () => undefined
+  )
+  writeChains.set(path, settled)
+  void settled.then(() => {
+    if (writeChains.get(path) === settled) {
+      writeChains.delete(path)
+    }
+  })
+  return chain
+}
+
+// Why: distinct from the sync `.tmp` so a startup-time sync write can never
+// rename a half-written async temp file over a good keybindings file.
+const ASYNC_TMP_SUFFIX = '.async.tmp'
+
+async function writeJsonDocumentAsync(path: string, document: JsonObject): Promise<void> {
+  await mkdir(dirname(path), { recursive: true })
+  const tempPath = `${path}${ASYNC_TMP_SUFFIX}`
+  try {
+    await writeFile(tempPath, `${JSON.stringify(document, null, 2)}\n`, 'utf8')
+    await rename(tempPath, path)
+  } catch (error) {
+    // Unconditional unlink; ENOENT here just means there was nothing to clean up.
+    await unlink(tempPath).catch(() => {})
+    throw error
   }
 }
 
@@ -245,13 +304,13 @@ function removeConflictingOverrides(
   return next
 }
 
-export function readKeybindingFile(
+function buildSnapshot(
   path: string,
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform,
+  readResult: ReadDocumentResult
 ): KeybindingFileSnapshot {
   const keybindingPlatform = getKeybindingPlatform(platform)
   const diagnostics: KeybindingFileDiagnostic[] = []
-  const readResult = readJsonDocument(path)
   if (!readResult.document) {
     return {
       path,
@@ -292,11 +351,56 @@ export function readKeybindingFile(
   }
 }
 
+export function readKeybindingFile(
+  path: string,
+  platform: NodeJS.Platform = process.platform
+): KeybindingFileSnapshot {
+  return buildSnapshot(path, platform, readJsonDocument(path))
+}
+
+export async function readKeybindingFileAsync(
+  path: string,
+  platform: NodeJS.Platform = process.platform
+): Promise<KeybindingFileSnapshot> {
+  return buildSnapshot(path, platform, await readJsonDocumentAsync(path))
+}
+
+/**
+ * Read in the write lane. Callers that install the result as cached state need
+ * this: an unordered read can start before an overlapping write and resolve
+ * after it, which would publish the pre-write snapshot as the current one.
+ */
+export function readKeybindingFileExclusiveAsync(
+  path: string,
+  platform: NodeJS.Platform = process.platform
+): Promise<KeybindingFileSnapshot> {
+  return runExclusive(path, () => readKeybindingFileAsync(path, platform))
+}
+
 export function ensureKeybindingFile(path: string): void {
   if (existsSync(path)) {
     return
   }
   writeJsonDocument(path, createEmptyDocument())
+}
+
+export async function ensureKeybindingFileAsync(path: string): Promise<void> {
+  // In the write lane so the probe and the create cannot straddle an overlapping
+  // override write and drop it by seeding an empty document over it.
+  return runExclusive(path, async () => {
+    try {
+      // Matches the sync twin's existsSync guard, which is also false for EACCES
+      // and friends: only create when there is nothing to read.
+      await access(path)
+      return
+    } catch {
+      // Missing; create it below.
+    }
+    // Why tmp+rename and not an in-place write: a torn write leaves a partial
+    // keybindings.json, which parses to no document, and every later write
+    // refuses to replace a file it could not parse — the user is stuck.
+    await writeJsonDocumentAsync(path, createEmptyDocument())
+  })
 }
 
 export function migrateLegacyKeybindings(
@@ -382,14 +486,13 @@ export function seedLegacyTabSwitchBindings(
 
 // Why: the one-shot seed migration and Settings writes must produce the same
 // on-disk document shape; a single assembly path keeps them from drifting.
-function writeActivePlatformSection(
-  path: string,
+function assembleActivePlatformDocument(
   platform: NodeJS.Platform,
+  readResult: ReadDocumentResult,
   fallbackCommonOverrides: KeybindingOverrides,
   mutateActivePlatform: (activePlatform: JsonObject) => void
-): KeybindingFileSnapshot {
+): JsonObject {
   const keybindingPlatform = getKeybindingPlatform(platform)
-  const readResult = readJsonDocument(path)
   if (!readResult.document) {
     // Why: writes must never replace a user-owned file that could not be
     // parsed; callers surface the error (or retry the migration) after repair.
@@ -419,8 +522,81 @@ function writeActivePlatformSection(
     win32: isJsonObject(platforms.win32) ? platforms.win32 : {},
     [keybindingPlatform]: activePlatform
   }
-  writeJsonDocument(path, document)
+  return document
+}
+
+function writeActivePlatformSection(
+  path: string,
+  platform: NodeJS.Platform,
+  fallbackCommonOverrides: KeybindingOverrides,
+  mutateActivePlatform: (activePlatform: JsonObject) => void
+): KeybindingFileSnapshot {
+  writeJsonDocument(
+    path,
+    assembleActivePlatformDocument(
+      platform,
+      readJsonDocument(path),
+      fallbackCommonOverrides,
+      mutateActivePlatform
+    )
+  )
   return readKeybindingFile(path, platform)
+}
+
+async function writeActivePlatformSectionAsync(
+  path: string,
+  platform: NodeJS.Platform,
+  fallbackCommonOverrides: KeybindingOverrides,
+  mutateActivePlatform: (activePlatform: JsonObject) => void
+): Promise<KeybindingFileSnapshot> {
+  await writeJsonDocumentAsync(
+    path,
+    assembleActivePlatformDocument(
+      platform,
+      await readJsonDocumentAsync(path),
+      fallbackCommonOverrides,
+      mutateActivePlatform
+    )
+  )
+  return readKeybindingFileAsync(path, platform)
+}
+
+function assertNoBlockingConflict(
+  platform: KeybindingPlatform,
+  currentOverrides: KeybindingOverrides,
+  actionId: KeybindingActionId,
+  normalizedBindings: string[] | null
+): void {
+  const candidateOverrides = { ...currentOverrides }
+  if (normalizedBindings === null) {
+    delete candidateOverrides[actionId]
+  } else {
+    candidateOverrides[actionId] = normalizedBindings
+  }
+  const blockingConflict = findKeybindingConflicts(platform, candidateOverrides).find((conflict) =>
+    conflict.actionIds.includes(actionId)
+  )
+  if (blockingConflict) {
+    throw new Error(
+      `${formatKeybindingList([blockingConflict.binding], platform)} conflicts with another shortcut.`
+    )
+  }
+}
+
+function activePlatformOverrideMutation(
+  actionId: KeybindingActionId,
+  normalizedBindings: string[] | null
+): (activePlatform: JsonObject) => void {
+  return (activePlatform) => {
+    if (normalizedBindings === null) {
+      // Why: Settings edits are scoped to the current platform. A hand-authored
+      // common binding may be intentional for other OSes, so reset only removes
+      // the platform-specific mask instead of deleting the shared value.
+      delete activePlatform[actionId]
+    } else {
+      activePlatform[actionId] = normalizedBindings
+    }
+  }
 }
 
 export function writeKeybindingOverride(
@@ -433,37 +609,46 @@ export function writeKeybindingOverride(
     throw new Error(`Unknown keybinding action "${actionId}".`)
   }
   const normalizedBindings = normalizeWriteBindingValue(actionId, bindings)
-
-  const keybindingPlatform = getKeybindingPlatform(platform)
   const currentSnapshot = readKeybindingFile(path, platform)
-  const candidateOverrides = { ...currentSnapshot.overrides }
-  if (normalizedBindings === null) {
-    delete candidateOverrides[actionId]
-  } else {
-    candidateOverrides[actionId] = normalizedBindings
-  }
-  const blockingConflict = findKeybindingConflicts(keybindingPlatform, candidateOverrides).find(
-    (conflict) => conflict.actionIds.includes(actionId)
+  assertNoBlockingConflict(
+    getKeybindingPlatform(platform),
+    currentSnapshot.overrides,
+    actionId,
+    normalizedBindings
   )
-  if (blockingConflict) {
-    throw new Error(
-      `${formatKeybindingList([blockingConflict.binding], keybindingPlatform)} conflicts with another shortcut.`
-    )
-  }
-
   return writeActivePlatformSection(
     path,
     platform,
     currentSnapshot.commonOverrides,
-    (activePlatform) => {
-      if (normalizedBindings === null) {
-        // Why: Settings edits are scoped to the current platform. A hand-authored
-        // common binding may be intentional for other OSes, so reset only removes
-        // the platform-specific mask instead of deleting the shared value.
-        delete activePlatform[actionId]
-      } else {
-        activePlatform[actionId] = normalizedBindings
-      }
-    }
+    activePlatformOverrideMutation(actionId, normalizedBindings)
   )
+}
+
+export async function writeKeybindingOverrideAsync(
+  path: string,
+  platform: NodeJS.Platform,
+  actionId: string,
+  bindings: unknown
+): Promise<KeybindingFileSnapshot> {
+  if (!isKeybindingActionId(actionId)) {
+    throw new Error(`Unknown keybinding action "${actionId}".`)
+  }
+  const normalizedBindings = normalizeWriteBindingValue(actionId, bindings)
+  // Read-modify-write inside the lane: without this, two overlapping edits could
+  // each read the pre-edit file and the second rename would drop the first.
+  return runExclusive(path, async () => {
+    const currentSnapshot = await readKeybindingFileAsync(path, platform)
+    assertNoBlockingConflict(
+      getKeybindingPlatform(platform),
+      currentSnapshot.overrides,
+      actionId,
+      normalizedBindings
+    )
+    return writeActivePlatformSectionAsync(
+      path,
+      platform,
+      currentSnapshot.commonOverrides,
+      activePlatformOverrideMutation(actionId, normalizedBindings)
+    )
+  })
 }

@@ -370,10 +370,13 @@ export function upsertHookTrustEntriesInContent(
 export function upsertProjectTrustLevel(
   configPath: string,
   projectPath: string,
-  trustLevel: CodexProjectTrustLevel
+  trustLevel: CodexProjectTrustLevel,
+  // Why: callers that already resolved the workspace path off-thread pass this
+  // so a stalled mount is never realpath()'d again on the main thread.
+  options?: { alreadyCanonical?: boolean }
 ): void {
   const existing = existsSync(configPath) ? readTomlFile(configPath) : ''
-  const updated = upsertProjectTrustLevelInContent(existing, projectPath, trustLevel)
+  const updated = upsertProjectTrustLevelInContent(existing, projectPath, trustLevel, options)
   if (updated === existing) {
     return
   }

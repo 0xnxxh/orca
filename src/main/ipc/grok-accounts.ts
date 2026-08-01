@@ -1,6 +1,8 @@
 import { ipcMain } from 'electron'
-import { getGrokAccountStatus } from '../grok-accounts/status'
+import { readGrokAuthSessionAsync, toGrokAccountStatus } from '../rate-limits/grok-auth'
 
 export function registerGrokAccountHandlers(): void {
-  ipcMain.handle('grokAccounts:getStatus', () => getGrokAccountStatus())
+  ipcMain.handle('grokAccounts:getStatus', async () =>
+    toGrokAccountStatus(await readGrokAuthSessionAsync())
+  )
 }

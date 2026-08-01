@@ -1,6 +1,16 @@
 import { randomUUID } from 'node:crypto'
-import { copyFileSync, existsSync, linkSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  linkSync,
+  realpath as realpathCallback,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
+import { copyFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { grantDirAcl, isPermissionError } from '../win32-utils'
 import { nodeFileContentsEqualSync } from '../../shared/node-file-content-equality'
 
@@ -222,9 +232,111 @@ function runFileOperationWithWindowsRetry(operation: () => void): void {
   }
 }
 
-// Why: writeFileAtomically is a sync API called from sync paths, so the retry
-// backoff must park the thread instead of burning CPU in a Date.now() loop.
+// Why: writeFileAtomically is a sync API called from sync paths (CLI, startup,
+// crash handlers), so the retry backoff must park that thread instead of
+// burning CPU in a Date.now() loop. Main-thread callers use the async twins.
 const sleepBuffer = new Int32Array(new SharedArrayBuffer(4))
 function sleepSync(ms: number): void {
   Atomics.wait(sleepBuffer, 0, 0, ms)
+}
+
+/**
+ * Async twin of writeFileAtomically for main-thread callers: a stalled network
+ * mount blocks a threadpool slot instead of freezing the whole app.
+ */
+export async function writeFileAtomicallyAsync(
+  targetPath: string,
+  contents: string,
+  options?: { mode?: number }
+): Promise<void> {
+  const tmpPath = `${targetPath}.${process.pid}.${randomUUID()}.tmp`
+  try {
+    await writeFile(tmpPath, contents, { encoding: 'utf-8', mode: options?.mode })
+    await renameFileWithWindowsRetryAsync(tmpPath, targetPath)
+  } catch (error) {
+    await rm(tmpPath, { force: true })
+    // Why: mirrors the sync path's Chromium-DACL recovery (see writeFileAtomically).
+    if (isPermissionError(error) && process.platform === 'win32') {
+      try {
+        grantDirAcl(dirname(targetPath))
+        const retryTmpPath = `${targetPath}.${process.pid}.${randomUUID()}.tmp`
+        try {
+          await writeFile(retryTmpPath, contents, { encoding: 'utf-8', mode: options?.mode })
+          await renameFileWithWindowsRetryAsync(retryTmpPath, targetPath)
+          return
+        } catch {
+          await rm(retryTmpPath, { force: true })
+        }
+      } catch {
+        // icacls failure is not actionable; re-throw the original EPERM
+      }
+    }
+    throw error
+  }
+}
+
+export function renameFileWithWindowsRetryAsync(source: string, target: string): Promise<void> {
+  return runFileOperationWithWindowsRetryAsync(() => rename(source, target))
+}
+
+export function copyFileWithWindowsRetryAsync(source: string, target: string): Promise<void> {
+  return runFileOperationWithWindowsRetryAsync(() => copyFile(source, target))
+}
+
+async function runFileOperationWithWindowsRetryAsync(
+  operation: () => Promise<void>
+): Promise<void> {
+  const maxAttempts = process.platform === 'win32' ? 6 : 1
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await operation()
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (attempt < maxAttempts && (code === 'EPERM' || code === 'EACCES' || code === 'EBUSY')) {
+        // Why: an awaited timer keeps the main thread repainting; Atomics.wait would park it.
+        await delay(attempt * 50)
+        continue
+      }
+      throw error
+    }
+  }
+}
+
+// Why: the single main thread used to serialize every read-modify-write and
+// tmp->rename for free. Async writers must chain per target file or two
+// overlapping updates can publish out of order / lose the earlier one.
+const fileWriteChains = new Map<string, Promise<void>>()
+
+export function serializeAtomicFileWrite<T>(
+  targetPath: string,
+  write: () => Promise<T>
+): Promise<T> {
+  const previous = fileWriteChains.get(targetPath) ?? Promise.resolve()
+  const current = previous.then(write)
+  const settled = current.then(
+    () => {},
+    () => {}
+  )
+  fileWriteChains.set(targetPath, settled)
+  void settled.then(() => {
+    if (fileWriteChains.get(targetPath) === settled) {
+      fileWriteChains.delete(targetPath)
+    }
+  })
+  return current
+}
+
+// Why: fs/promises has no realpath.native, and the OS resolver is what Codex,
+// Cursor, and Copilot compare against (8.3 names, drive casing, /tmp aliases).
+export function realpathNativeAsync(targetPath: string): Promise<string> {
+  return new Promise((fulfill, reject) => {
+    realpathCallback.native(targetPath, (error, resolved) => {
+      if (error) {
+        reject(error)
+        return
+      }
+      fulfill(resolved)
+    })
+  })
 }

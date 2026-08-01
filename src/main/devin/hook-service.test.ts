@@ -38,8 +38,8 @@ describe('DevinHookService', () => {
     rmSync(homeDir, { recursive: true, force: true })
   })
 
-  it('installs managed hooks into user Devin config and posts to /hook/devin', () => {
-    const status = new DevinHookService().install()
+  it('installs managed hooks into user Devin config and posts to /hook/devin', async () => {
+    const status = await new DevinHookService().install()
 
     expect(status.state).toBe('installed')
     expect(status.agent).toBe('devin')
@@ -71,7 +71,7 @@ describe('DevinHookService', () => {
     expect(script).not.toContain('--data-urlencode "payload=${payload}"')
   })
 
-  it('preserves unrelated keys in Devin config when installing hooks', () => {
+  it('preserves unrelated keys in Devin config when installing hooks', async () => {
     const configPath = getDevinConfigPath()
     mkdirSync(dirname(configPath), { recursive: true })
     writeFileSync(
@@ -79,7 +79,7 @@ describe('DevinHookService', () => {
       `${JSON.stringify({ permissions: { mode: 'normal' }, hooks: {} }, null, 2)}\n`
     )
 
-    new DevinHookService().install()
+    await new DevinHookService().install()
 
     const config = JSON.parse(readFileSync(configPath, 'utf8')) as {
       permissions: { mode: string }
@@ -89,7 +89,7 @@ describe('DevinHookService', () => {
     expect(config.hooks.UserPromptSubmit).toBeDefined()
   })
 
-  it('installs when Devin config uses JSONC comments', () => {
+  it('installs when Devin config uses JSONC comments', async () => {
     const configPath = getDevinConfigPath()
     mkdirSync(dirname(configPath), { recursive: true })
     writeFileSync(
@@ -101,13 +101,13 @@ describe('DevinHookService', () => {
 `
     )
 
-    const status = new DevinHookService().install()
+    const status = await new DevinHookService().install()
 
     expect(status.state).toBe('installed')
     expect(JSON.parse(readFileSync(configPath, 'utf8')).hooks.UserPromptSubmit).toBeDefined()
   })
 
-  it('surfaces read_config_from overlap in status detail', () => {
+  it('surfaces read_config_from overlap in status detail', async () => {
     const configPath = getDevinConfigPath()
     mkdirSync(dirname(configPath), { recursive: true })
     writeFileSync(
@@ -115,13 +115,13 @@ describe('DevinHookService', () => {
       `${JSON.stringify({ hooks: {}, read_config_from: { claude: true } }, null, 2)}\n`
     )
 
-    const status = new DevinHookService().getStatus()
+    const status = await new DevinHookService().getStatus()
 
     expect(status.detail).toContain('read_config_from')
     expect(status.detail).toContain('claude')
   })
 
-  it('uses a cmd.exe wrapper for managed hook command on Windows', () => {
+  it('uses a cmd.exe wrapper for managed hook command on Windows', async () => {
     const previous = process.platform
     Object.defineProperty(process, 'platform', { value: 'win32' })
     try {
@@ -137,23 +137,23 @@ describe('DevinHookService', () => {
     }
   })
 
-  it('reports not_installed when Devin config has no managed hooks', () => {
+  it('reports not_installed when Devin config has no managed hooks', async () => {
     const configPath = getDevinConfigPath()
     mkdirSync(dirname(configPath), { recursive: true })
     writeFileSync(configPath, `${JSON.stringify({ hooks: {} }, null, 2)}\n`)
 
-    const status = new DevinHookService().getStatus()
+    const status = await new DevinHookService().getStatus()
 
     expect(status.state).toBe('not_installed')
     expect(status.managedHooksPresent).toBe(false)
   })
 
-  it('remove clears managed hook commands from Devin config', () => {
+  it('remove clears managed hook commands from Devin config', async () => {
     const service = new DevinHookService()
-    const installed = service.install()
+    const installed = await service.install()
     expect(installed.state).toBe('installed')
 
-    const removed = service.remove()
+    const removed = await service.remove()
 
     expect(removed.state).toBe('not_installed')
     const configPath = getDevinConfigPath()
@@ -166,7 +166,7 @@ describe('DevinHookService', () => {
     expect(commands.some((command) => command.includes('devin-hook'))).toBe(false)
   })
 
-  it('returns partial status when some managed hooks are missing', () => {
+  it('returns partial status when some managed hooks are missing', async () => {
     const configPath = getDevinConfigPath()
     const scriptPath = getDevinManagedScriptPath()
     const command = getDevinManagedCommand(scriptPath)
@@ -180,7 +180,7 @@ describe('DevinHookService', () => {
       `${JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command }] }] } }, null, 2)}\n`
     )
 
-    const status = new DevinHookService().getStatus()
+    const status = await new DevinHookService().getStatus()
 
     expect(status.state).toBe('partial')
     expect(status.managedHooksPresent).toBe(true)
@@ -193,7 +193,7 @@ describe('DevinHookService', () => {
     expect(status.detail).toContain('SessionEnd')
   })
 
-  it('uses APPDATA on Windows for Devin config path', () => {
+  it('uses APPDATA on Windows for Devin config path', async () => {
     const previous = process.platform
     const previousAppData = process.env.APPDATA
     Object.defineProperty(process, 'platform', { value: 'win32' })

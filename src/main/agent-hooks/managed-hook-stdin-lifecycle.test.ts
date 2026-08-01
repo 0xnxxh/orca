@@ -138,18 +138,21 @@ const REMOTE_INSTALLERS = [
   }
 ] as const
 
+// Why: mirror MANAGED_AGENT_HOOK_INSTALLERS exactly — the *Async twin wherever
+// one exists. The sync twins no longer have a production caller, so driving them
+// here would assert the script contract on scripts the app never writes.
 const LOCAL_INSTALLERS = [
-  { agent: 'antigravity', install: () => new AntigravityHookService().install() },
-  { agent: 'claude', install: () => new ClaudeHookService().install() },
-  { agent: 'openclaude', install: () => openClaudeHookService.install() },
+  { agent: 'antigravity', install: () => new AntigravityHookService().installAsync() },
+  { agent: 'claude', install: () => new ClaudeHookService().installAsync() },
+  { agent: 'openclaude', install: () => openClaudeHookService.installAsync() },
   { agent: 'codex', install: () => new CodexHookService().install() },
-  { agent: 'command-code', install: () => new CommandCodeHookService().install() },
-  { agent: 'copilot', install: () => new CopilotHookService().install() },
-  { agent: 'cursor', install: () => new CursorHookService().install() },
+  { agent: 'command-code', install: () => new CommandCodeHookService().installAsync() },
+  { agent: 'copilot', install: () => new CopilotHookService().installAsync() },
+  { agent: 'cursor', install: () => new CursorHookService().installAsync() },
   { agent: 'devin', install: () => new DevinHookService().install() },
-  { agent: 'droid', install: () => new DroidHookService().install() },
-  { agent: 'gemini', install: () => new GeminiHookService().install() },
-  { agent: 'grok', install: () => new GrokHookService().install() },
+  { agent: 'droid', install: () => new DroidHookService().installAsync() },
+  { agent: 'gemini', install: () => new GeminiHookService().installAsync() },
+  { agent: 'grok', install: () => new GrokHookService().installAsync() },
   { agent: 'kimi', install: () => new KimiHookService().install() }
 ] as const
 
@@ -222,11 +225,13 @@ async function generatePosixScripts(): Promise<Map<string, string>> {
   return scripts
 }
 
-function withPlatform<T>(platform: NodeJS.Platform, run: () => T): T {
+// Why: several installs are async now, so the stub has to outlive the awaited
+// work — restoring at the first await would run the install on the host platform.
+async function withPlatform<T>(platform: NodeJS.Platform, run: () => T | Promise<T>): Promise<T> {
   const original = Object.getOwnPropertyDescriptor(process, 'platform')
   Object.defineProperty(process, 'platform', { configurable: true, value: platform })
   try {
-    return run()
+    return await run()
   } finally {
     if (original) {
       Object.defineProperty(process, 'platform', original)
@@ -235,7 +240,7 @@ function withPlatform<T>(platform: NodeJS.Platform, run: () => T): T {
 }
 
 describe('Windows managed hook stdin structure', () => {
-  it('routes every batch guard to a shared drain epilogue', () => {
+  it('routes every batch guard to a shared drain epilogue', async () => {
     const home = mkdtempSync(join(tmpdir(), 'orca-hook-stdin-windows-'))
     homedirMock.mockReturnValue(home)
     const previousGrokHome = process.env.GROK_HOME
@@ -243,9 +248,9 @@ describe('Windows managed hook stdin structure', () => {
     delete process.env.GROK_HOME
     delete process.env.KIMI_CODE_HOME
     try {
-      withPlatform('win32', () => {
+      await withPlatform('win32', async () => {
         for (const entry of LOCAL_INSTALLERS) {
-          expect(entry.install().state, `${entry.agent} install status`).toBe('installed')
+          expect((await entry.install()).state, `${entry.agent} install status`).toBe('installed')
         }
       })
       const hooksDir = join(home, '.orca', 'agent-hooks')
@@ -307,7 +312,7 @@ describe('Windows managed hook stdin structure', () => {
       try {
         const gitBash = findGitBash()
         for (const entry of LOCAL_INSTALLERS) {
-          expect(entry.install().state, `${entry.agent} install status`).toBe('installed')
+          expect((await entry.install()).state, `${entry.agent} install status`).toBe('installed')
         }
         const hooksDir = join(home, '.orca', 'agent-hooks')
         const mainScripts = readdirSync(hooksDir).filter(

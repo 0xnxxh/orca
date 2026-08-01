@@ -39,12 +39,12 @@ const configPath = (): string => join(home, '.kimi-code', 'config.toml')
 const scriptPath = (): string => join(home, '.orca', 'agent-hooks', 'kimi-hook.sh')
 
 describe('KimiHookService', () => {
-  it('reports not_installed before install', () => {
-    expect(new KimiHookService().getStatus().state).toBe('not_installed')
+  it('reports not_installed before install', async () => {
+    expect((await new KimiHookService().getStatus()).state).toBe('not_installed')
   })
 
-  it('installs the managed hooks block and the managed script', () => {
-    const status = new KimiHookService().install()
+  it('installs the managed hooks block and the managed script', async () => {
+    const status = await new KimiHookService().install()
     expect(status.state).toBe('installed')
     expect(status.managedHooksPresent).toBe(true)
 
@@ -64,7 +64,7 @@ describe('KimiHookService', () => {
     expect(config).toContain('agent-hooks/kimi-hook.sh')
   })
 
-  it('keeps user config when installing, then restores it on remove', () => {
+  it('keeps user config when installing, then restores it on remove', async () => {
     const dir = join(home, '.kimi-code')
     mkdirSync(dir, { recursive: true })
     // Pre-existing user config with their own provider.
@@ -73,18 +73,18 @@ describe('KimiHookService', () => {
     writeFileSync(configPath(), userConfig)
 
     const service = new KimiHookService()
-    expect(service.install().state).toBe('installed')
+    expect((await service.install()).state).toBe('installed')
 
     const installed = readFileSync(configPath(), 'utf-8')
     expect(installed).toContain('api_key = "sk-secret"')
     expect(installed).toContain('default_model = "kimi-k2.6"')
 
     // Reinstall must not duplicate the managed block.
-    service.install()
+    await service.install()
     const reinstalled = readFileSync(configPath(), 'utf-8')
     expect((reinstalled.match(/orca-managed-kimi-hooks \(/g) ?? []).length).toBe(1)
 
-    const removed = service.remove()
+    const removed = await service.remove()
     expect(removed.state).toBe('not_installed')
     const afterRemove = readFileSync(configPath(), 'utf-8')
     expect(afterRemove).toBe(userConfig)

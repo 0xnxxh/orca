@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { GrokAccountStatus } from '../../shared/rate-limit-types'
 import { resolveGrokHomeDir } from '../../shared/grok-session-paths'
 
 // Why: when GROK_HOME is set, auth.json must be the same path Grok CLI uses.
@@ -82,13 +84,59 @@ function isPreferredGrokAuthKey(key: string): boolean {
   return key === PREFERRED_GROK_AUTH_ISSUER || key.startsWith(`${PREFERRED_GROK_AUTH_ISSUER}::`)
 }
 
+/** Sync twin kept for RateLimitService, whose constructor and fetch cycles read this synchronously. */
 export function readGrokAuthSession(): GrokAuthReadResult {
   const path = getGrokAuthPath()
+  // Why: an unreachable auth path (ENOENT, but also EACCES/ELOOP/EIO, which existsSync
+  // reports as false) means "signed out", not a failure — 'error' pins a status-bar alert.
   if (!existsSync(path)) {
     return { status: 'missing' }
   }
+  let contents: string
   try {
-    const parsed: unknown = JSON.parse(readFileSync(path, 'utf-8'))
+    contents = readFileSync(path, 'utf-8')
+  } catch (err) {
+    return grokAuthReadErrorResult(err)
+  }
+  return parseGrokAuthFile(contents)
+}
+
+export async function readGrokAuthSessionAsync(): Promise<GrokAuthReadResult> {
+  const path = getGrokAuthPath()
+  // Why: same reachability gate as the sync twin, so the IPC status and the
+  // RateLimitService snapshot can never disagree about being signed in.
+  if (!(await pathIsReachable(path))) {
+    return { status: 'missing' }
+  }
+  let contents: string
+  try {
+    contents = await readFile(path, 'utf-8')
+  } catch (err) {
+    return grokAuthReadErrorResult(err)
+  }
+  return parseGrokAuthFile(contents)
+}
+
+async function pathIsReachable(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function grokAuthReadErrorResult(err: unknown): GrokAuthReadResult {
+  const code = (err as NodeJS.ErrnoException | null)?.code
+  if (code === 'ENOENT' || code === 'ENOTDIR') {
+    return { status: 'missing' }
+  }
+  return { status: 'error', error: getGrokAuthReadError(err) }
+}
+
+function parseGrokAuthFile(contents: string): GrokAuthReadResult {
+  try {
+    const parsed: unknown = JSON.parse(contents)
     if (typeof parsed !== 'object' || parsed === null) {
       return { status: 'error', error: 'Grok auth file is invalid' }
     }
@@ -132,6 +180,26 @@ export function readGrokAuthSession(): GrokAuthReadResult {
 
 export function hasGrokAuthSession(): boolean {
   return readGrokAuthSession().status === 'ok'
+}
+
+export function toGrokAccountStatus(readResult: GrokAuthReadResult): GrokAccountStatus {
+  if (readResult.status !== 'ok') {
+    return {
+      signedIn: false,
+      email: null,
+      teamId: null,
+      tokenFresh: false,
+      error: readResult.status === 'error' ? readResult.error : null
+    }
+  }
+  const session = readResult.session
+  return {
+    signedIn: true,
+    email: session.email,
+    teamId: session.teamId,
+    tokenFresh: isGrokAccessTokenFresh(session),
+    error: null
+  }
 }
 
 const TOKEN_SKEW_MS = 5 * 60 * 1000

@@ -6,11 +6,15 @@ import {
 } from '../../shared/keybindings'
 import {
   ensureKeybindingFile,
+  ensureKeybindingFileAsync,
   getUserKeybindingsPath,
   migrateLegacyKeybindings,
   readKeybindingFile,
+  readKeybindingFileAsync,
+  readKeybindingFileExclusiveAsync,
   seedLegacyTabSwitchBindings,
-  writeKeybindingOverride
+  writeKeybindingOverride,
+  writeKeybindingOverrideAsync
 } from './keybinding-file'
 
 export type KeybindingServiceOptions = {
@@ -54,12 +58,17 @@ export class KeybindingService {
         console.error('Failed to seed legacy tab-switch keybindings:', error)
       }
     }
+    // Why: sync callers (menu build, browser/runtime settings resolvers) cannot
+    // await. Warm the cache here, pre-window, so they never trigger a lazy sync
+    // read later — that read would freeze the UI if ~/.orca is on a stalled mount.
+    this.snapshot ??= readKeybindingFile(this.configPath, this.platform)
   }
 
   getPath(): string {
     return this.configPath
   }
 
+  /** Sync accessor for callers that cannot await; served from the warm cache. */
   getSnapshot(): KeybindingFileSnapshot {
     if (!this.snapshot) {
       this.snapshot = readKeybindingFile(this.configPath, this.platform)
@@ -67,8 +76,20 @@ export class KeybindingService {
     return this.snapshot
   }
 
+  async getSnapshotAsync(): Promise<KeybindingFileSnapshot> {
+    this.snapshot ??= await readKeybindingFileAsync(this.configPath, this.platform)
+    return this.snapshot
+  }
+
   reload(): KeybindingFileSnapshot {
     this.snapshot = readKeybindingFile(this.configPath, this.platform)
+    return this.snapshot
+  }
+
+  async reloadAsync(): Promise<KeybindingFileSnapshot> {
+    // Ordered against in-flight writes so a reload started before one cannot
+    // install the pre-write snapshot over it.
+    this.snapshot = await readKeybindingFileExclusiveAsync(this.configPath, this.platform)
     return this.snapshot
   }
 
@@ -81,11 +102,29 @@ export class KeybindingService {
     return this.reload()
   }
 
+  async ensureFileAsync(): Promise<KeybindingFileSnapshot> {
+    await ensureKeybindingFileAsync(this.configPath)
+    return this.reloadAsync()
+  }
+
   setActionBindings(
     actionId: KeybindingActionId,
     bindings: string[] | null
   ): KeybindingFileSnapshot {
     this.snapshot = writeKeybindingOverride(this.configPath, this.platform, actionId, bindings)
+    return this.snapshot
+  }
+
+  async setActionBindingsAsync(
+    actionId: KeybindingActionId,
+    bindings: string[] | null
+  ): Promise<KeybindingFileSnapshot> {
+    this.snapshot = await writeKeybindingOverrideAsync(
+      this.configPath,
+      this.platform,
+      actionId,
+      bindings
+    )
     return this.snapshot
   }
 }

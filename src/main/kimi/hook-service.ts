@@ -1,12 +1,4 @@
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync
-} from 'node:fs'
+import { copyFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, posix as pathPosix } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -16,7 +8,7 @@ import {
   createManagedCommandMatcher,
   getSharedManagedScriptPath,
   wrapPosixHookCommand,
-  writeManagedScript
+  writeManagedScriptAsync
 } from '../agent-hooks/installer-utils'
 import {
   readTextFileRemote,
@@ -92,48 +84,70 @@ function getManagedScript(): string {
   ].join('\n')
 }
 
+// Why: async fs keeps a stalled ~/.kimi-code mount off the Electron main thread;
+// a hung read now parks a threadpool slot instead of freezing the whole app.
+function isMissingPath(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  return code === 'ENOENT' || code === 'ENOTDIR'
+}
+
 // Returns the file text, '' when the config does not exist yet (Kimi creates it
 // lazily), or null on an unreadable file so callers can report a structured error.
-function readConfigToml(configPath: string): string | null {
-  if (!existsSync(configPath)) {
-    return ''
-  }
+async function readConfigToml(configPath: string): Promise<string | null> {
   try {
-    return readFileSync(configPath, 'utf-8')
-  } catch {
-    return null
+    return await readFile(configPath, 'utf-8')
+  } catch (error) {
+    return isMissingPath(error) ? '' : null
   }
 }
 
 // Why: temp+rename keeps a hand-editable config.toml intact if a write is
 // interrupted, and a single rolling .bak makes a bad write recoverable.
-function writeConfigToml(configPath: string, text: string): void {
+async function writeConfigToml(configPath: string, text: string): Promise<void> {
   const dir = dirname(configPath)
-  mkdirSync(dir, { recursive: true })
-  if (existsSync(configPath)) {
-    try {
-      if (readFileSync(configPath, 'utf-8') === text) {
-        return
-      }
-    } catch {
-      // Fall through to the atomic write path.
+  await mkdir(dir, { recursive: true })
+  try {
+    if ((await readFile(configPath, 'utf-8')) === text) {
+      return
     }
+  } catch {
+    // Absent or unreadable: fall through to the atomic write path.
   }
   const tmpPath = join(dir, `.${Date.now()}-${randomUUID()}.tmp`)
   try {
-    writeFileSync(tmpPath, text, 'utf-8')
-    if (existsSync(configPath)) {
-      copyFileSync(configPath, `${configPath}.bak`)
-    }
-    renameSync(tmpPath, configPath)
-  } finally {
-    if (existsSync(tmpPath)) {
-      try {
-        unlinkSync(tmpPath)
-      } catch {
-        // best effort
+    await writeFile(tmpPath, text, 'utf-8')
+    try {
+      await copyFile(configPath, `${configPath}.bak`)
+    } catch (error) {
+      // No prior config to back up; any other failure still aborts the write.
+      if (!isMissingPath(error)) {
+        throw error
       }
     }
+    await rename(tmpPath, configPath)
+  } finally {
+    // ENOENT after a successful rename is the normal case.
+    await unlink(tmpPath).catch(() => {})
+  }
+}
+
+// Why: sync fs serialized read-modify-write for free. Chain mutations so two
+// overlapping install/remove calls can never rename config.toml out of order.
+let pendingMutation: Promise<unknown> = Promise.resolve()
+
+function serializeConfigMutation<T>(run: () => Promise<T>): Promise<T> {
+  const next = pendingMutation.then(run, run)
+  pendingMutation = next.catch(() => {})
+  return next
+}
+
+function unreadableConfigStatus(configPath: string): AgentHookInstallStatus {
+  return {
+    agent: 'kimi',
+    state: 'error',
+    configPath,
+    managedHooksPresent: false,
+    detail: 'Could not read Kimi config.toml'
   }
 }
 
@@ -155,40 +169,30 @@ function buildStatus(present: Set<string>, configPath: string): AgentHookInstall
 }
 
 export class KimiHookService {
-  getStatus(): AgentHookInstallStatus {
+  async getStatus(): Promise<AgentHookInstallStatus> {
     const configPath = getConfigPath()
-    const text = readConfigToml(configPath)
+    const text = await readConfigToml(configPath)
     if (text === null) {
-      return {
-        agent: 'kimi',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not read Kimi config.toml'
-      }
+      return unreadableConfigStatus(configPath)
     }
     const isManagedCommand = createManagedCommandMatcher(MANAGED_SCRIPT_FILE_NAME)
     return buildStatus(readManagedKimiHookEvents(text, isManagedCommand), configPath)
   }
 
-  install(): AgentHookInstallStatus {
-    const configPath = getConfigPath()
-    const text = readConfigToml(configPath)
-    if (text === null) {
-      return {
-        agent: 'kimi',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not read Kimi config.toml'
+  install(): Promise<AgentHookInstallStatus> {
+    return serializeConfigMutation(async () => {
+      const configPath = getConfigPath()
+      const text = await readConfigToml(configPath)
+      if (text === null) {
+        return unreadableConfigStatus(configPath)
       }
-    }
-    const scriptPath = getManagedScriptPath()
-    const command = getManagedCommand(scriptPath)
-    // Write the script first so config.toml never points at a missing script.
-    writeManagedScript(scriptPath, getManagedScript())
-    writeConfigToml(configPath, applyManagedKimiHooks(text, command))
-    return this.getStatus()
+      const scriptPath = getManagedScriptPath()
+      const command = getManagedCommand(scriptPath)
+      // Write the script first so config.toml never points at a missing script.
+      await writeManagedScriptAsync(scriptPath, getManagedScript())
+      await writeConfigToml(configPath, applyManagedKimiHooks(text, command))
+      return this.getStatus()
+    })
   }
 
   // Why: install Orca's managed Kimi hooks on a remote box over SFTP, mirroring
@@ -227,23 +231,19 @@ export class KimiHookService {
     }
   }
 
-  remove(): AgentHookInstallStatus {
-    const configPath = getConfigPath()
-    const text = readConfigToml(configPath)
-    if (text === null) {
-      return {
-        agent: 'kimi',
-        state: 'error',
-        configPath,
-        managedHooksPresent: false,
-        detail: 'Could not read Kimi config.toml'
+  remove(): Promise<AgentHookInstallStatus> {
+    return serializeConfigMutation(async () => {
+      const configPath = getConfigPath()
+      const text = await readConfigToml(configPath)
+      if (text === null) {
+        return unreadableConfigStatus(configPath)
       }
-    }
-    const { text: nextText, changed } = removeManagedKimiHooks(text)
-    if (changed) {
-      writeConfigToml(configPath, nextText)
-    }
-    return this.getStatus()
+      const { text: nextText, changed } = removeManagedKimiHooks(text)
+      if (changed) {
+        await writeConfigToml(configPath, nextText)
+      }
+      return this.getStatus()
+    })
   }
 }
 

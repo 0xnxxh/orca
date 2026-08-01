@@ -30,8 +30,8 @@ describe('AmpHookService', () => {
     rmSync(homeDir, { recursive: true, force: true })
   })
 
-  it('installs an Orca-managed Amp system plugin', () => {
-    const status = new AmpHookService().install()
+  it('installs an Orca-managed Amp system plugin', async () => {
+    const status = await new AmpHookService().install()
 
     expect(status).toMatchObject({
       agent: 'amp',
@@ -61,12 +61,12 @@ describe('AmpHookService', () => {
     expect(source).toContain('process.env.ORCA_AGENT_HOOK_ENDPOINT')
   })
 
-  it('does not overwrite an existing user-authored Amp plugin file', () => {
+  it('does not overwrite an existing user-authored Amp plugin file', async () => {
     const pluginPath = _internals.getPluginPath()
     mkdirSync(dirname(pluginPath), { recursive: true })
     writeFileSync(pluginPath, 'export default function userPlugin() {}\n', 'utf-8')
 
-    const status = new AmpHookService().install()
+    const status = await new AmpHookService().install()
 
     expect(status).toMatchObject({
       agent: 'amp',
@@ -76,12 +76,12 @@ describe('AmpHookService', () => {
     expect(readFileSync(pluginPath, 'utf-8')).toBe('export default function userPlugin() {}\n')
   })
 
-  it('removes only Orca-managed Amp plugin files', () => {
+  it('removes only Orca-managed Amp plugin files', async () => {
     const service = new AmpHookService()
-    const installed = service.install()
+    const installed = await service.install()
     expect(existsSync(installed.configPath)).toBe(true)
 
-    const removed = service.remove()
+    const removed = await service.remove()
 
     expect(removed.state).toBe('not_installed')
     expect(existsSync(installed.configPath)).toBe(false)
@@ -90,18 +90,18 @@ describe('AmpHookService', () => {
     mkdirSync(dirname(pluginPath), { recursive: true })
     writeFileSync(pluginPath, 'export default function userPlugin() {}\n', 'utf-8')
 
-    const skipped = service.remove()
+    const skipped = await service.remove()
 
     expect(skipped.state).toBe('partial')
     expect(existsSync(pluginPath)).toBe(true)
   })
 
-  it('reports partial for stale managed plugin content missing required handlers', () => {
+  it('reports partial for stale managed plugin content missing required handlers', async () => {
     const pluginPath = _internals.getPluginPath()
     mkdirSync(dirname(pluginPath), { recursive: true })
     writeFileSync(pluginPath, `// ${_internals.AMP_PLUGIN_MARKER}\n`, 'utf-8')
 
-    const status = new AmpHookService().getStatus()
+    const status = await new AmpHookService().getStatus()
 
     expect(status).toMatchObject({
       agent: 'amp',
@@ -111,7 +111,7 @@ describe('AmpHookService', () => {
     expect(status.detail).toContain('missing required handlers')
   })
 
-  it('reports partial when a stale managed plugin is missing the session reset handler', () => {
+  it('reports partial when a stale managed plugin is missing the session reset handler', async () => {
     const pluginPath = _internals.getPluginPath()
     mkdirSync(dirname(pluginPath), { recursive: true })
     writeFileSync(
@@ -128,7 +128,7 @@ describe('AmpHookService', () => {
       'utf-8'
     )
 
-    const status = new AmpHookService().getStatus()
+    const status = await new AmpHookService().getStatus()
 
     expect(status).toMatchObject({
       agent: 'amp',
