@@ -1,4 +1,4 @@
-import { t } from '@/i18n/mobile-i18n'
+import { mobileI18n, t } from '@/i18n/mobile-i18n'
 export { TERMINAL_ACCESSORY_KEYS } from './terminal-accessory-key-catalog'
 export type TerminalAccessoryKey = {
   id: string
@@ -28,12 +28,13 @@ export type TerminalShortcutSpecialKey = {
 }
 
 const ESC = '\x1b'
+const canonicalTerminalLabel = mobileI18n.getFixedT('en')
 
 export const TERMINAL_SHORTCUT_MODIFIER_LABELS: Readonly<Record<TerminalShortcutModifier, string>> =
   {
-    ctrl: 'Ctrl',
-    alt: 'Alt',
-    shift: 'Shift'
+    ctrl: canonicalTerminalLabel('m.mthhwXw'),
+    alt: canonicalTerminalLabel('m.zN_6g9g'),
+    shift: canonicalTerminalLabel('m.lCZrWn4')
   }
 
 const MODIFIER_ORDER: TerminalShortcutModifier[] = ['ctrl', 'alt', 'shift']
@@ -79,33 +80,33 @@ const CTRL_PRINTABLE_BYTES: Record<string, string> = {
 }
 
 const SPECIAL_KEY_LABELS: Record<string, string> = {
-  escape: 'Esc',
-  tab: 'Tab',
-  enter: 'Enter',
+  escape: canonicalTerminalLabel('m.bNejRmQ'),
+  tab: canonicalTerminalLabel('m.hM5KUAw'),
+  enter: canonicalTerminalLabel('m.9KFo5zM'),
   backspace: '⌫',
-  delete: 'Del',
-  insert: 'Ins',
+  delete: canonicalTerminalLabel('m.gmy3A7M'),
+  insert: canonicalTerminalLabel('m.bh9E9Gk'),
   arrowUp: '↑',
   arrowDown: '↓',
   arrowLeft: '←',
   arrowRight: '→',
-  home: 'Home',
-  end: 'End',
-  pageUp: 'PgUp',
-  pageDown: 'PgDn',
-  space: 'Space',
-  f1: 'F1',
-  f2: 'F2',
-  f3: 'F3',
-  f4: 'F4',
-  f5: 'F5',
-  f6: 'F6',
-  f7: 'F7',
-  f8: 'F8',
-  f9: 'F9',
-  f10: 'F10',
-  f11: 'F11',
-  f12: 'F12'
+  home: canonicalTerminalLabel('m.r2L-IvQ'),
+  end: canonicalTerminalLabel('m.6UajMWQ'),
+  pageUp: canonicalTerminalLabel('m.1qkhXPI'),
+  pageDown: canonicalTerminalLabel('m.Wt9qvqo'),
+  space: canonicalTerminalLabel('m.l6KJT3M'),
+  f1: canonicalTerminalLabel('m.wPNSaMQ'),
+  f2: canonicalTerminalLabel('m.5OQeDMc'),
+  f3: canonicalTerminalLabel('m.fNbslzw'),
+  f4: canonicalTerminalLabel('m.dMpOhHI'),
+  f5: canonicalTerminalLabel('m.MmdqLFU'),
+  f6: canonicalTerminalLabel('m.xOj4ngY'),
+  f7: canonicalTerminalLabel('m.EbNp-x4'),
+  f8: canonicalTerminalLabel('m.DR9i7SU'),
+  f9: canonicalTerminalLabel('m.rI3MEx0'),
+  f10: canonicalTerminalLabel('m.d6orzBg'),
+  f11: canonicalTerminalLabel('m.T7RTOC4'),
+  f12: canonicalTerminalLabel('m._dDm4ic')
 }
 
 const SPECIAL_KEY_ACCESSIBILITY_LABELS: Record<string, string> = {
