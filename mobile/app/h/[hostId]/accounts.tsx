@@ -21,6 +21,7 @@ import {
   type AccountsSnapshot,
   type ProviderKey,
   decodeAccountsSnapshot,
+  isInvalidAccountsSnapshotError,
   getActiveProviderRateLimits,
   getInactiveProviderUsage,
   getUsageBarState,
@@ -142,7 +143,7 @@ export default function AccountsScreen() {
         setError(res.error.message)
       }
     } catch (e) {
-      if (e instanceof Error && e.message === 'Invalid accounts snapshot from host') {
+      if (isInvalidAccountsSnapshotError(e)) {
         rejectInvalidSnapshot()
       } else {
         setError(e instanceof Error ? e.message : String(e))

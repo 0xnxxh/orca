@@ -8,6 +8,7 @@ import {
   buildTerminalShortcutKey,
   normalizeShortcutKeyInput,
   TERMINAL_SHORTCUT_SPECIAL_KEYS,
+  TERMINAL_SHORTCUT_MODIFIER_LABELS,
   type TerminalShortcutModifier,
   type TerminalShortcutSpecialKey
 } from '../terminal/terminal-accessory-keys'
@@ -60,9 +61,9 @@ export function CustomKeyModal({ visible, onClose, onKeysChanged, onManageShortc
   const [macroEnter, setMacroEnter] = useState(true)
   const [previousVisible, setPreviousVisible] = useState(visible)
   const shortcutModifierOptions = [
-    { id: 'ctrl', label: t('m.OZLCEBo') },
-    { id: 'alt', label: t('m.Mz-qIO4'), glyph: '⌥' },
-    { id: 'shift', label: t('m.Dl9mAnI') }
+    { id: 'ctrl', label: TERMINAL_SHORTCUT_MODIFIER_LABELS.ctrl },
+    { id: 'alt', label: TERMINAL_SHORTCUT_MODIFIER_LABELS.alt, glyph: '⌥' },
+    { id: 'shift', label: TERMINAL_SHORTCUT_MODIFIER_LABELS.shift }
   ] satisfies readonly { id: TerminalShortcutModifier; label: string; glyph?: string }[]
   const specialKeyGroups: { title: string; ids: string[]; columns: number }[] = [
     {

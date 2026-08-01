@@ -1,6 +1,7 @@
 import type { RpcClient } from '../transport/rpc-client'
 import { isLogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
 import type { RpcFailure, RpcSuccess } from '../transport/types'
+import { CLIPBOARD_IMAGE_TOO_LARGE_ERROR } from '../../../src/shared/clipboard-image'
 import { t } from '@/i18n/mobile-i18n'
 
 export const MOBILE_CLIPBOARD_IMAGE_MAX_BASE64_CHARS = 24 * 1024 * 1024
@@ -18,7 +19,7 @@ const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/
 export function normalizeMobileClipboardImageBase64(data: string): string {
   const contentBase64 = data.replace(DATA_URL_PREFIX_RE, '')
   if (contentBase64.length > MOBILE_CLIPBOARD_IMAGE_MAX_BASE64_CHARS) {
-    throw new Error(t('m.Oht8bkc'))
+    throw new Error(CLIPBOARD_IMAGE_TOO_LARGE_ERROR)
   }
   if (contentBase64.length % 4 === 1 || !BASE64_PATTERN.test(contentBase64)) {
     throw new Error(t('m.64b63WI'))

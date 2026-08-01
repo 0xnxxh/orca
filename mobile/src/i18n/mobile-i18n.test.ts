@@ -71,6 +71,25 @@ describe('mobile i18n', () => {
     ])
   })
 
+  it('keeps generated terminal shortcut labels canonical in translated locales', async () => {
+    await mobileI18n.changeLanguage('zh')
+    const {
+      buildTerminalShortcutKey,
+      TERMINAL_SHORTCUT_MODIFIER_LABELS,
+      TERMINAL_SHORTCUT_SPECIAL_KEYS
+    } = await import('../terminal/terminal-accessory-keys')
+
+    expect(TERMINAL_SHORTCUT_MODIFIER_LABELS).toEqual({
+      ctrl: 'Ctrl',
+      alt: 'Alt',
+      shift: 'Shift'
+    })
+    expect(TERMINAL_SHORTCUT_SPECIAL_KEYS.find((key) => key.id === 'pageDown')?.label).toBe('PgDn')
+    expect(buildTerminalShortcutKey({ key: 'pageDown', modifiers: ['shift'] })?.label).toBe(
+      'Shift+PgDn'
+    )
+  })
+
   it.each([
     ['es', ['Sin comprobaciones', 'En staging', 'Nota de revisión']],
     ['ja', ['チェックなし', 'ステージ済み', 'レビューメモ']],

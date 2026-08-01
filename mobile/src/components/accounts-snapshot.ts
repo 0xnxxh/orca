@@ -228,10 +228,21 @@ export type ClaudeAccountSummary = z.infer<typeof ClaudeAccountSummarySchema>
 export type CodexAccountSummary = z.infer<typeof CodexAccountSummarySchema>
 export type AccountsSnapshot = z.infer<typeof AccountsSnapshotSchema>
 
+export class InvalidAccountsSnapshotError extends Error {
+  constructor() {
+    super(t('m.l0xDyns'))
+    this.name = 'InvalidAccountsSnapshotError'
+  }
+}
+
+export function isInvalidAccountsSnapshotError(error: unknown): boolean {
+  return error instanceof InvalidAccountsSnapshotError
+}
+
 export function decodeAccountsSnapshot(value: unknown): AccountsSnapshot {
   const result = AccountsSnapshotSchema.safeParse(value)
   if (!result.success) {
-    throw new Error(t('m.l0xDyns'))
+    throw new InvalidAccountsSnapshotError()
   }
   return result.data
 }

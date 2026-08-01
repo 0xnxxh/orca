@@ -15,6 +15,7 @@ import type {
 export {
   AccountsSnapshotSchema,
   decodeAccountsSnapshot,
+  isInvalidAccountsSnapshotError,
   ProviderRateLimitsSchema,
   RateLimitRuntimeTargetSchema,
   type AccountsSnapshot,

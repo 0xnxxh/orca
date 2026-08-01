@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
+import { isClipboardImageTooLargeError } from '../../../src/shared/clipboard-image'
 import { attachMobileImageToTerminal } from './mobile-image-attachment'
 import {
   ImageLibraryPermissionError,
@@ -33,10 +34,6 @@ type MobileImageAttachment = {
   // True only while the picked image is uploading to the host (not while the
   // picker is open) — drives the send spinner so the 3-5s transfer isn't a no-op.
   readonly isAttaching: boolean
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 export function useMobileImageAttachment({
@@ -81,7 +78,7 @@ export function useMobileImageAttachment({
           showToast(t('m.JdGd1Ic'), 1500)
           return
         }
-        if (getErrorMessage(error) === 'Clipboard image is too large') {
+        if (isClipboardImageTooLargeError(error)) {
           showToast(t('m.hJYA7AQ'), 1500)
           return
         }

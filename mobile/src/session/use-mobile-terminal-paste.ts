@@ -5,6 +5,7 @@ import { ImageManipulator, SaveFormat } from 'expo-image-manipulator'
 import type { TerminalModes } from '../terminal/terminal-webview-contract'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
+import { isClipboardImageTooLargeError } from '../../../src/shared/clipboard-image'
 import {
   buildMobileImagePastePayload,
   prepareMobileClipboardImageBase64,
@@ -174,7 +175,7 @@ export function useMobileTerminalPaste({
       console.warn('[mobile-clip] paste failed', { name: err.name, message: err.message })
       if (isDisconnected) {
         showToast(t('m.gG0saX0'), 1500)
-      } else if (err.message === 'Clipboard image is too large') {
+      } else if (isClipboardImageTooLargeError(e)) {
         showToast(t('m.5dhlsXo'), 1500)
       } else {
         showToast(t('m.weTQMew'), 1500)

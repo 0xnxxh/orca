@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
-import { CLIPBOARD_IMAGE_TOO_LARGE_ERROR } from '../../../src/shared/clipboard-image'
+import { isClipboardImageTooLargeError } from '../../../src/shared/clipboard-image'
 import { buildAgentTuiClearInputForText } from '../../../src/shared/agent-tui-input-clear'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
@@ -77,10 +77,6 @@ export type MobileNativeChatImageAttachments = {
   /** Ride any pending images along with `text`, then submit; clears the sent
    *  chips (and only those) once the send is accepted. */
   readonly sendNativeChat: (text: string) => Promise<boolean>
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 const NO_ATTACHMENTS: PendingNativeChatImage[] = []
@@ -174,7 +170,7 @@ export function useMobileNativeChatImageAttachments({
           showToast(t('m.jdkmIaw'), 1500)
           return
         }
-        if (getErrorMessage(error) === CLIPBOARD_IMAGE_TOO_LARGE_ERROR) {
+        if (isClipboardImageTooLargeError(error)) {
           showToast(t('m.-YjNIcU'), 1500)
           return
         }

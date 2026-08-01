@@ -29,11 +29,12 @@ export type TerminalShortcutSpecialKey = {
 
 const ESC = '\x1b'
 
-const MODIFIER_LABELS: Record<TerminalShortcutModifier, string> = {
-  ctrl: t('m.mthhwXw'),
-  alt: t('m.zN_6g9g'),
-  shift: t('m.lCZrWn4')
-}
+export const TERMINAL_SHORTCUT_MODIFIER_LABELS: Readonly<Record<TerminalShortcutModifier, string>> =
+  {
+    ctrl: 'Ctrl',
+    alt: 'Alt',
+    shift: 'Shift'
+  }
 
 const MODIFIER_ORDER: TerminalShortcutModifier[] = ['ctrl', 'alt', 'shift']
 
@@ -78,33 +79,33 @@ const CTRL_PRINTABLE_BYTES: Record<string, string> = {
 }
 
 const SPECIAL_KEY_LABELS: Record<string, string> = {
-  escape: t('m.bNejRmQ'),
-  tab: t('m.hM5KUAw'),
-  enter: t('m.9KFo5zM'),
+  escape: 'Esc',
+  tab: 'Tab',
+  enter: 'Enter',
   backspace: '⌫',
-  delete: t('m.gmy3A7M'),
-  insert: t('m.bh9E9Gk'),
+  delete: 'Del',
+  insert: 'Ins',
   arrowUp: '↑',
   arrowDown: '↓',
   arrowLeft: '←',
   arrowRight: '→',
-  home: t('m.r2L-IvQ'),
-  end: t('m.6UajMWQ'),
-  pageUp: t('m.1qkhXPI'),
-  pageDown: t('m.Wt9qvqo'),
-  space: t('m.l6KJT3M'),
-  f1: t('m.wPNSaMQ'),
-  f2: t('m.5OQeDMc'),
-  f3: t('m.fNbslzw'),
-  f4: t('m.dMpOhHI'),
-  f5: t('m.MmdqLFU'),
-  f6: t('m.xOj4ngY'),
-  f7: t('m.EbNp-x4'),
-  f8: t('m.DR9i7SU'),
-  f9: t('m.rI3MEx0'),
-  f10: t('m.d6orzBg'),
-  f11: t('m.T7RTOC4'),
-  f12: t('m._dDm4ic')
+  home: 'Home',
+  end: 'End',
+  pageUp: 'PgUp',
+  pageDown: 'PgDn',
+  space: 'Space',
+  f1: 'F1',
+  f2: 'F2',
+  f3: 'F3',
+  f4: 'F4',
+  f5: 'F5',
+  f6: 'F6',
+  f7: 'F7',
+  f8: 'F8',
+  f9: 'F9',
+  f10: 'F10',
+  f11: 'F11',
+  f12: 'F12'
 }
 
 const SPECIAL_KEY_ACCESSIBILITY_LABELS: Record<string, string> = {
@@ -350,7 +351,7 @@ function isPrintableShortcutKey(key: string): boolean {
 }
 
 function formatShortcutLabel(key: string, modifiers: TerminalShortcutModifier[]): string {
-  const modifierLabels = modifiers.map((modifier) => MODIFIER_LABELS[modifier])
+  const modifierLabels = modifiers.map((modifier) => TERMINAL_SHORTCUT_MODIFIER_LABELS[modifier])
   return [...modifierLabels, displayKeyLabel(key)].join('+')
 }
 
