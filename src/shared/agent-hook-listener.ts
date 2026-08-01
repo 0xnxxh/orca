@@ -2465,6 +2465,22 @@ function normalizeClaudeSubagentLifecycleEvent(
         stopClaudeSubagent(roster, agentId)
         removedRow = hadRow && !roster.has(agentId)
       }
+      // Why: the stop's inventory can list children this listener never saw start (post-restart);
+      // tracking them keeps their own later drains resolvable instead of start-less-suppressed.
+      // Additive only — a complete-inventory reap here would kill a just-parked teammate row
+      // before its TeammateIdle confirmation arrives.
+      const inventory = readClaudeBackgroundAgentTasks(hookPayload)
+      if (
+        inventory.present &&
+        (roster || inventory.tasks.some((task) => task.running && !task.teammate))
+      ) {
+        foldClaudeBackgroundTasksIntoRoster(
+          getOrCreateClaudeSubagentRoster(state, paneKey),
+          inventory.tasks,
+          Date.now(),
+          { inventoryComplete: false }
+        )
+      }
       // Why: a blocked child that dies without another tool event would pin its permission/question wait on the pane forever — nothing else references that agent again.
       clearClaudePendingWaitForAgent(state, paneKey, (waitingAgentId) => waitingAgentId === agentId)
     }
@@ -2594,16 +2610,22 @@ function buildClaudeChildDrivenStatusPayload(
     })
   }
   if (evidence.removedRow) {
-    // Why: the stop's own inventory can list work this listener never saw start (post-restart);
-    // a running non-teammate task or live shell/cron vetoes done. Teammate-typed entries prove
-    // nothing ("running" even while idle), and full folding here would reap a just-parked
-    // teammate row before its TeammateIdle confirmation arrives — veto only, no reconcile.
+    // Why: live shells/crons veto done (the raw-array check is uncapped). A truncated agent-task
+    // inventory is incomplete evidence — a running child past the parser cap would be invisible —
+    // so it claims neither done nor working. Running non-teammate tasks were already folded into
+    // the roster above and surface through the working branch.
+    if (hasActiveClaudeNonAgentBackgroundWork(hookPayload)) {
+      return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
+        stateName: 'working',
+        updateToolSnapshot: false
+      })
+    }
     const inventory = readClaudeBackgroundAgentTasks(hookPayload)
-    const inventoryShowsLiveWork =
-      inventory.tasks.some((task) => task.running && !task.teammate) ||
-      hasActiveClaudeNonAgentBackgroundWork(hookPayload)
+    if (inventory.present && inventory.truncated) {
+      return null
+    }
     return buildClaudeStatusPayload(state, eventName, '', paneKey, hookPayload, {
-      stateName: inventoryShowsLiveWork ? 'working' : 'done',
+      stateName: 'done',
       updateToolSnapshot: false
     })
   }

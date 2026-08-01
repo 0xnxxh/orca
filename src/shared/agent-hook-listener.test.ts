@@ -3192,9 +3192,36 @@ describe('shared agent-hook-listener', () => {
           { id: 'a2', type: 'subagent', status: 'running', agent_type: 'general-purpose' }
         ]
       })
-      // Why: veto only — a2's row materializes from its own events or the next
-      // lead Stop's fold; the stop must merely not retire the pane.
       expect(stopped?.payload.state).toBe('working')
+      // Why: the additive fold must TRACK a2 — otherwise its own later stop is
+      // start-less-suppressed and the pane sticks on working forever.
+      expect(stopped?.payload.subagents).toEqual([expect.objectContaining({ id: 'a2' })])
+
+      const drained = claudeEvent({ hook_event_name: 'SubagentStop', agent_id: 'a2' })
+      expect(drained?.payload.state).toBe('done')
+      expect(drained?.payload.subagents).toBeUndefined()
+    })
+
+    it('claims nothing from a no-lead removal whose agent inventory is truncated', () => {
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a1',
+        agent_type: 'general-purpose'
+      })
+      // Why: 32 teammate rows fill the parser cap; the running subagent behind
+      // them is invisible, so the inventory can prove neither done nor working.
+      const cappedTasks = Array.from({ length: 32 }, (_, i) => ({
+        id: `t${i}`,
+        type: 'teammate',
+        status: 'running'
+      }))
+      cappedTasks.push({ id: 'hidden-live', type: 'subagent', status: 'running' })
+      const stopped = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'a1',
+        background_tasks: cappedTasks
+      })
+      expect(stopped).toBeNull()
     })
 
     it('keeps working when a no-lead drain leaves a live shell in the inventory', () => {
