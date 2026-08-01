@@ -5176,6 +5176,63 @@ describe('Store', () => {
     })
   })
 
+  it('keeps only the newest deleted-folder tombstones when loading older state', async () => {
+    const initial = await createStore()
+    initial.flush()
+    const state = readDataFile() as PersistedState
+    const workspaceKeys = Array.from({ length: 514 }, (_, index) =>
+      folderWorkspaceKey(`deleted-${index}`)
+    )
+    state.deletedFolderWorkspaceSessionTombstones = Object.fromEntries(
+      workspaceKeys.map((workspaceKey) => [
+        workspaceKey,
+        { connectionId: null, hostIds: ['local'], tabConnectionIdsByHostId: {} }
+      ])
+    ) as PersistedState['deletedFolderWorkspaceSessionTombstones']
+    writeDataFile(state)
+
+    vi.useFakeTimers()
+    try {
+      const restored = await createStore()
+      await vi.advanceTimersByTimeAsync(1_000)
+      await restored.waitForPendingWrite()
+    } finally {
+      vi.useRealTimers()
+    }
+
+    const tombstones = (readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstones
+    expect(Object.keys(tombstones ?? {})).toHaveLength(512)
+    expect(tombstones?.[workspaceKeys[0]!]).toBeUndefined()
+    expect(tombstones?.[workspaceKeys[1]!]).toBeUndefined()
+    expect(tombstones?.[workspaceKeys.at(-1)!]).toBeDefined()
+  })
+
+  it('bounds deleted-folder tombstones during repeated workspace churn', async () => {
+    const store = await createStore()
+    const group = store.createProjectGroup({
+      name: 'Tombstone churn',
+      parentPath: '/workspace/churn',
+      createdFrom: 'folder-scan'
+    })
+    const workspaceKeys: ReturnType<typeof folderWorkspaceKey>[] = []
+    for (let index = 0; index < 514; index += 1) {
+      const workspace = store.createFolderWorkspace({
+        projectGroupId: group.id,
+        name: `Deleted ${index}`
+      })
+      workspaceKeys.push(folderWorkspaceKey(workspace.id))
+      expect(store.removeFolderWorkspace(workspace.id)).toBe(true)
+    }
+
+    store.flush()
+
+    const tombstones = (readDataFile() as PersistedState).deletedFolderWorkspaceSessionTombstones
+    expect(Object.keys(tombstones ?? {})).toHaveLength(512)
+    expect(tombstones?.[workspaceKeys[0]!]).toBeUndefined()
+    expect(tombstones?.[workspaceKeys[1]!]).toBeUndefined()
+    expect(tombstones?.[workspaceKeys.at(-1)!]).toBeDefined()
+  })
+
   it('backfills folder-scope SSH provenance from unambiguous child repos on load', async () => {
     writeDataFile({
       schemaVersion: 1,

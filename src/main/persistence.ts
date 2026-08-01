@@ -567,6 +567,7 @@ const WORKSPACE_SESSION_PATCH_OWNER_KEYS = new Set<keyof WorkspaceSessionState>(
   'terminalSurfaceTombstonesByPaneKey',
   'activeWorkspaceExecutionHostId'
 ])
+const MAX_DELETED_FOLDER_WORKSPACE_SESSION_TOMBSTONES = 512
 
 function logPersistenceStartupMilestone(
   event: string,
@@ -2926,6 +2927,14 @@ function normalizeDeletedFolderWorkspaceSessionTombstones(
       changed = true
     }
   }
+  const workspaceKeys = Object.keys(tombstones)
+  for (const workspaceKey of workspaceKeys.slice(
+    0,
+    Math.max(0, workspaceKeys.length - MAX_DELETED_FOLDER_WORKSPACE_SESSION_TOMBSTONES)
+  )) {
+    delete tombstones[workspaceKey as WorkspaceKey]
+    changed = true
+  }
   return { tombstones, changed }
 }
 
@@ -4546,14 +4555,12 @@ export class Store {
         hostIds.add(hostId)
       }
     }
-    const tombstones = { ...this.state.deletedFolderWorkspaceSessionTombstones }
-    const prior = tombstones[workspaceKey]
-    tombstones[workspaceKey] = {
+    const prior = this.state.deletedFolderWorkspaceSessionTombstones?.[workspaceKey as WorkspaceKey]
+    this.setDeletedFolderWorkspaceSessionTombstone(workspaceKey, {
       connectionId: connectionId ?? prior?.connectionId ?? null,
       hostIds: [...new Set([...(prior?.hostIds ?? []), ...hostIds])],
       tabConnectionIdsByHostId: prior?.tabConnectionIdsByHostId ?? {}
-    }
-    this.state.deletedFolderWorkspaceSessionTombstones = tombstones
+    })
     for (const { hostId, session } of partitions) {
       const tabIds = new Set<string>()
       const tabPtyIdByTabId = new Map<string, string>()
@@ -4683,14 +4690,13 @@ export class Store {
     owners.set(workspaceKey, connectionId ?? owners.get(workspaceKey) ?? null)
     ownersByTabId.set(tabId, owners)
     this.deletedFolderOwnersByHostAndTabId.set(hostId, ownersByTabId)
-    const tombstones = { ...this.state.deletedFolderWorkspaceSessionTombstones }
-    const prior = tombstones[workspaceKey]
+    const prior = this.state.deletedFolderWorkspaceSessionTombstones?.[workspaceKey as WorkspaceKey]
     const tabConnectionIdsByHostId = { ...prior?.tabConnectionIdsByHostId }
     tabConnectionIdsByHostId[hostId] = {
       ...tabConnectionIdsByHostId[hostId],
       [tabId]: connectionId ?? tabConnectionIdsByHostId[hostId]?.[tabId] ?? null
     }
-    tombstones[workspaceKey] = {
+    this.setDeletedFolderWorkspaceSessionTombstone(workspaceKey, {
       connectionId: prior?.connectionId ?? connectionId,
       hostIds: [
         ...new Set([
@@ -4700,8 +4706,40 @@ export class Store {
         ])
       ],
       tabConnectionIdsByHostId
+    })
+  }
+
+  private setDeletedFolderWorkspaceSessionTombstone(
+    workspaceKey: string,
+    tombstone: DeletedFolderWorkspaceSessionTombstone
+  ): void {
+    const tombstones = { ...this.state.deletedFolderWorkspaceSessionTombstones }
+    delete tombstones[workspaceKey as WorkspaceKey]
+    tombstones[workspaceKey as WorkspaceKey] = tombstone
+    const workspaceKeys = Object.keys(tombstones)
+    for (const evictedWorkspaceKey of workspaceKeys.slice(
+      0,
+      Math.max(0, workspaceKeys.length - MAX_DELETED_FOLDER_WORKSPACE_SESSION_TOMBSTONES)
+    )) {
+      delete tombstones[evictedWorkspaceKey as WorkspaceKey]
+      this.forgetDeletedFolderWorkspaceSessionTombstone(evictedWorkspaceKey)
     }
     this.state.deletedFolderWorkspaceSessionTombstones = tombstones
+  }
+
+  private forgetDeletedFolderWorkspaceSessionTombstone(workspaceKey: string): void {
+    this.deletedFolderConnectionIdByWorkspaceKey.delete(workspaceKey)
+    for (const [hostId, ownersByTabId] of this.deletedFolderOwnersByHostAndTabId) {
+      for (const [tabId, owners] of ownersByTabId) {
+        owners.delete(workspaceKey)
+        if (owners.size === 0) {
+          ownersByTabId.delete(tabId)
+        }
+      }
+      if (ownersByTabId.size === 0) {
+        this.deletedFolderOwnersByHostAndTabId.delete(hostId)
+      }
+    }
   }
 
   private removeSshRemotePtyLeasesForWorkspaceOwners(ownerKeys: ReadonlySet<string>): void {
@@ -4832,12 +4870,17 @@ export class Store {
 
   private getDeletedFolderConnectionIdsForHost(hostId: ExecutionHostId): Set<string> {
     const connectionIds = new Set<string>()
+    const liveFolderIds = new Set(
+      (this.state.folderWorkspaces ?? []).map((workspace) => workspace.id)
+    )
     for (const [workspaceKey, tombstone] of Object.entries(
       this.state.deletedFolderWorkspaceSessionTombstones ?? {}
     )) {
+      const scope = parseWorkspaceKey(workspaceKey)
       if (
         !tombstone ||
-        !this.isDeletedFolderWorkspaceKey(workspaceKey) ||
+        scope?.type !== 'folder' ||
+        liveFolderIds.has(scope.folderWorkspaceId) ||
         !tombstone.hostIds.includes(hostId)
       ) {
         continue
