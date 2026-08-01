@@ -20,6 +20,10 @@ import {
   type DiffContent,
   type FileContent
 } from './editor-panel-content-types'
+import {
+  measureEditorFileContents,
+  registerEditorContentCensusReader
+} from './editor-content-memory-census'
 import { canUseChangesModeForFile } from './editor-panel-file-mode'
 import {
   isReloadableSingleFileDiffTab,
@@ -102,6 +106,15 @@ export function useEditorPanelContentState({
   const [diffContents, setDiffContents] = useState<Record<string, DiffContent>>({})
   const diffContentsRef = useRef(diffContents)
   diffContentsRef.current = diffContents
+  const fileContentsRef = useRef(fileContents)
+  fileContentsRef.current = fileContents
+  // Why: file bodies live in React state, which the store-only memory profile
+  // cannot walk — without this an OOM report never names them.
+  useEffect(
+    () =>
+      registerEditorContentCensusReader(() => measureEditorFileContents(fileContentsRef.current)),
+    []
+  )
   const fileLoadRetryAttemptsRef = useRef<Record<string, number>>({})
   // Why: per-tab read generations let a forced/external reload supersede an
   // older in-flight read so a slower stale promise cannot overwrite fresh state.
