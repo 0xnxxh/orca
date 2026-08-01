@@ -23,11 +23,14 @@ let tr = raw
 const box = { nested: { tr } }
 const { nested: { tr: snapshot } } = box
 tr = t
-export const label = <Text>{snapshot('mobileWorkspaceStatuses.todo')}</Text>
+export const label = <><Text>{box.nested.tr('mobileWorkspaceStatuses.todo')}</Text><Text>{snapshot('mobileWorkspaceStatuses.progress')}</Text></>
 `
 
     expect(translationKeys(source)).toEqual([])
-    expect(candidateTexts(source)).toEqual(['mobileWorkspaceStatuses.todo'])
+    expect(candidateTexts(source)).toEqual([
+      'mobileWorkspaceStatuses.todo',
+      'mobileWorkspaceStatuses.progress'
+    ])
   })
 
   it('keeps property writes scoped to the current object allocation', () => {
