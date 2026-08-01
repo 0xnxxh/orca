@@ -3398,15 +3398,42 @@ describe('shared agent-hook-listener', () => {
       expect(leadStop?.payload.subagents).toBeUndefined()
     })
 
-    it('ignores child events whose agent_id is whitespace-only', () => {
+    it('ignores child events whose agent_id is whitespace-only or empty', () => {
       // Why: agent_id present means child-origin; an unattributable id treated
       // as the lead would mint a waiting no lead Stop ever clears.
-      const waiting = claudeEvent({
+      const padded = claudeEvent({
         hook_event_name: 'PermissionRequest',
         agent_id: '   ',
         tool_name: 'Bash'
       })
-      expect(waiting).toBeNull()
+      expect(padded).toBeNull()
+      const empty = claudeEvent({
+        hook_event_name: 'PermissionRequest',
+        agent_id: '',
+        tool_name: 'Bash'
+      })
+      expect(empty).toBeNull()
+    })
+
+    it('does not let a stop resurrect its own id from a pre-stop inventory snapshot', () => {
+      claudeEvent({ hook_event_name: 'UserPromptSubmit', prompt: 'go' })
+      claudeEvent({ hook_event_name: 'Stop', background_tasks: [] })
+      claudeEvent({
+        hook_event_name: 'SubagentStart',
+        agent_id: 'a1',
+        agent_type: 'general-purpose'
+      })
+      // Why: the stop outranks its own payload's stale snapshot for its own id —
+      // resurrecting a1 here would flip a done lead back to a sticky working.
+      const stopped = claudeEvent({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'a1',
+        background_tasks: [
+          { id: 'a1', type: 'subagent', status: 'running', agent_type: 'general-purpose' }
+        ]
+      })
+      expect(stopped?.payload.state).toBe('done')
+      expect(stopped?.payload.subagents).toBeUndefined()
     })
 
     it('tracks whitespace-padded inventory ids canonically so their stops can drain them', () => {

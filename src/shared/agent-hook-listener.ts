@@ -2479,7 +2479,10 @@ function normalizeClaudeSubagentLifecycleEvent(
       const runningTasks = inventory.tasks.filter(
         // Why: an id the upsert would reject can neither be tracked nor drained — letting it
         // allocate or claim liveness recreates the retention/sticky holes through inventory ids.
-        (task) => task.running && !task.teammate && isValidClaudeSubagentId(task.id)
+        // The stop is authoritative for its own id: a pre-stop snapshot still listing it as
+        // running must not resurrect the row this very event just removed.
+        (task) =>
+          task.running && !task.teammate && task.id !== agentId && isValidClaudeSubagentId(task.id)
       )
       if (inventory.present && inventory.tasks.length === 0 && roster) {
         // Why: restored rows are pre-restart claims, so ANY live inventory postdates them —
@@ -2733,12 +2736,13 @@ function normalizeClaudeEvent(
     hasActiveClaudeNonAgentBackgroundWork(hookPayload)
 
   // Why: canonicalize like the inventory parser and lifecycle handler — a padded id must hit
-  // the same roster key and wait ownership as its trimmed twin.
-  const rawAgentId = readString(hookPayload, 'agent_id')
-  const eventAgentId = rawAgentId?.trim() || undefined
-  // Why: agent_id present means child-origin by contract; a whitespace-only id cannot be
-  // attributed, and treating the event as the LEAD's would mint lead waiting/working that no
-  // lead Stop ever clears.
+  // the same roster key and wait ownership as its trimmed twin. Read the raw field, not
+  // readString: it swallows empty strings, which would erase the child-origin marker.
+  const rawAgentId = hookPayload['agent_id']
+  const eventAgentId = typeof rawAgentId === 'string' ? rawAgentId.trim() || undefined : undefined
+  // Why: an agent_id field present means child-origin by contract; an unattributable value
+  // (empty, whitespace, non-string junk) treated as the LEAD's would mint lead waiting/working
+  // that no lead Stop ever clears.
   if (rawAgentId !== undefined && eventAgentId === undefined) {
     return null
   }
