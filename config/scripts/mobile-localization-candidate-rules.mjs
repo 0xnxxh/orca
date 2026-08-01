@@ -449,6 +449,9 @@ export function classifyMobileStringNode(node, userVisibleErrorSource, bindings)
     if (isRenderedJsxExpression(expression)) {
       return true
     }
+    if (isComparisonOperand(expression)) {
+      return false
+    }
     const attributeName = ancestorJsxAttributeName(expression)
     return Boolean(
       attributeName &&

@@ -35,6 +35,16 @@ function memberParts(node) {
   return undefined
 }
 
+function propertyNameText(name) {
+  if (ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name)) {
+    return name.text
+  }
+  if (ts.isComputedPropertyName(name) && ts.isStringLiteralLike(name.expression)) {
+    return name.expression.text
+  }
+  return undefined
+}
+
 function propertyResolutionKey(object, propertyName, bindings) {
   const expression = bindings.valueFlow.unwrapExpression(object)
   const subject = ts.isIdentifier(expression)
@@ -94,11 +104,118 @@ function propertyResolution(object, propertyName, use, bindings, mode, seen) {
   )
   if (propertyValues?.length) {
     return mergeResolutions(
-      propertyValues.map((value) => expressionResolution(value, use, bindings, mode, nextSeen))
+      propertyValues.map((value) => expressionResolution(value, value, bindings, mode, nextSeen))
     )
+  }
+  const spreadResolution = spreadPropertyResolution(
+    object,
+    propertyName,
+    use,
+    bindings,
+    mode,
+    nextSeen
+  )
+  if (spreadResolution) {
+    return spreadResolution
   }
   const base = expressionResolution(object, use, bindings, mode, nextSeen)
   return builtInMemberResolution(base, propertyName)
+}
+
+function spreadPropertyResolution(object, propertyName, use, bindings, mode, seen) {
+  const expression = bindings.valueFlow.unwrapExpression(object)
+  const values = ts.isIdentifier(expression)
+    ? mode === 'all'
+      ? bindings.valueFlow.allValueExpressions(expression, use, new Set(seen))
+      : bindings.valueFlow.valueExpressions(expression, use, new Set(seen))
+    : [expression]
+  const resolutions = []
+  for (const value of values ?? []) {
+    const objectValue = bindings.valueFlow.unwrapExpression(value)
+    if (!ts.isObjectLiteralExpression(objectValue)) {
+      continue
+    }
+    for (const property of objectValue.properties.toReversed()) {
+      if (ts.isSpreadAssignment(property)) {
+        resolutions.push(
+          propertyResolution(
+            property.expression,
+            propertyName,
+            property.expression,
+            bindings,
+            mode,
+            seen
+          )
+        )
+        break
+      }
+      const name = propertyNameText(property.name)
+      if (name === undefined) {
+        resolutions.push(emptyResolution(true))
+        break
+      }
+      if (name === propertyName) {
+        break
+      }
+    }
+  }
+  return resolutions.length > 0 ? mergeResolutions(resolutions) : undefined
+}
+
+function propertyPathResolution(object, propertyPath, use, bindings, mode, seen) {
+  if (propertyPath.length === 1) {
+    return propertyResolution(object, propertyPath[0], use, bindings, mode, seen)
+  }
+  const values = bindings.valueFlow.propertyValues(
+    object,
+    propertyPath[0],
+    use,
+    new Set(seen),
+    mode === 'all'
+  )
+  if (!values?.length) {
+    return emptyResolution(true)
+  }
+  return mergeResolutions(
+    values.map((value) =>
+      propertyPathResolution(value, propertyPath.slice(1), value, bindings, mode, seen)
+    )
+  )
+}
+
+function writeSourceResolution(source, bindings, mode, seen) {
+  if (!source.propertyPath) {
+    return expressionResolution(source.expression, source.node, bindings, mode, seen)
+  }
+  const values = bindings.valueFlow.propertyPathValues(
+    source.expression,
+    source.propertyPath,
+    source.node,
+    new Set(seen),
+    mode === 'all'
+  )
+  if (values?.length) {
+    return mergeResolutions(
+      values.map((value) => expressionResolution(value, value, bindings, mode, seen))
+    )
+  }
+  if (values && source.defaultExpression) {
+    return expressionResolution(
+      source.defaultExpression,
+      source.defaultExpression,
+      bindings,
+      mode,
+      seen
+    )
+  }
+  return propertyPathResolution(
+    source.expression,
+    source.propertyPath,
+    source.node,
+    bindings,
+    mode,
+    seen
+  )
 }
 
 function expressionResolution(node, use, bindings, mode, seen = new Set()) {
@@ -138,18 +255,7 @@ function expressionResolution(node, use, bindings, mode, seen = new Set()) {
       return emptyResolution(true)
     }
     const resolution = mergeResolutions(
-      sources.map((source) =>
-        source.propertyName
-          ? propertyResolution(
-              source.expression,
-              source.propertyName,
-              source.node,
-              bindings,
-              mode,
-              nextSeen
-            )
-          : expressionResolution(source.expression, source.node, bindings, mode, nextSeen)
-      )
+      sources.map((source) => writeSourceResolution(source, bindings, mode, nextSeen))
     )
     if (mode === 'all') {
       bindings.allResolutionInProgress.delete(binding)
@@ -220,7 +326,7 @@ function collectStableDescriptors(valueFlow, rootDescriptors, resolveBinding) {
   const dependents = new Map()
   for (const [binding] of valueFlow.bindingWrites()) {
     const write = valueFlow.stableBindingWrite(binding)
-    if (!write || write.propertyName) {
+    if (!write || write.propertyPath) {
       continue
     }
     const source = valueFlow.unwrapExpression(write.expression)
@@ -265,7 +371,7 @@ function collectPotentialDescriptors(valueFlow, rootDescriptors, resolveBinding)
   const dependents = new Map()
   for (const [binding, writes] of valueFlow.bindingWrites()) {
     for (const write of writes) {
-      if (write.propertyName) {
+      if (write.propertyPath) {
         continue
       }
       const source = valueFlow.unwrapExpression(write.expression)
@@ -305,18 +411,7 @@ function collectPotentialBindingNames(bindings) {
       continue
     }
     const resolution = mergeResolutions(
-      writes.map((write) =>
-        write.propertyName
-          ? propertyResolution(
-              write.expression,
-              write.propertyName,
-              write.node,
-              bindings,
-              'all',
-              new Set([binding])
-            )
-          : expressionResolution(write.expression, write.node, bindings, 'all', new Set([binding]))
-      )
+      writes.map((write) => writeSourceResolution(write, bindings, 'all', new Set([binding])))
     )
     if ([...resolution.descriptors].some((value) => value.startsWith(TRANSLATOR_PREFIX))) {
       bindings.translatorNames.add(name)

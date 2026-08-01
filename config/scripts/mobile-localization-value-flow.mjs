@@ -1,6 +1,8 @@
 // TypeScript 7 is a native CLI; AST consumers still need the legacy JavaScript API.
 import ts from 'typescript-api'
 
+import { destructuredLocalizationTargets } from './mobile-localization-destructuring-targets.mjs'
+
 const ASSIGNMENT_KINDS = new Set([
   ts.SyntaxKind.EqualsToken,
   ts.SyntaxKind.AmpersandAmpersandEqualsToken,
@@ -103,39 +105,35 @@ function functionOwner(node) {
   return undefined
 }
 
-function canReachUse(write, use, sourceFile) {
+function loopOwner(node) {
+  let current = node.parent
+  while (current && !ts.isFunctionLike(current) && !ts.isSourceFile(current)) {
+    if (
+      ts.isForStatement(current) ||
+      ts.isForInStatement(current) ||
+      ts.isForOfStatement(current) ||
+      ts.isWhileStatement(current) ||
+      ts.isDoStatement(current)
+    ) {
+      return current
+    }
+    current = current.parent
+  }
+  return undefined
+}
+
+function canReachUse(write, use, sourceFile, scopeOwners = new Set()) {
   if (write.position < use.getStart(sourceFile)) {
     return true
   }
   const useOwner = functionOwner(use)
-  return Boolean(useOwner && functionOwner(write.node) !== useOwner)
-}
-
-function destructuredTargets(name) {
-  const target = unwrapExpression(name)
-  if (ts.isObjectBindingPattern(target)) {
-    return target.elements.flatMap((element) => {
-      if (!ts.isIdentifier(element.name) || element.dotDotDotToken) {
-        return []
-      }
-      const propertyName = propertyNameText(element.propertyName ?? element.name)
-      return propertyName ? [{ identifier: element.name, propertyName }] : []
-    })
+  if (!useOwner || functionOwner(write.node) !== useOwner) {
+    return Boolean(useOwner)
   }
-  if (!ts.isObjectLiteralExpression(target)) {
-    return []
+  if (loopOwner(write.node) && loopOwner(write.node) === loopOwner(use)) {
+    return true
   }
-  return target.properties.flatMap((property) => {
-    if (ts.isShorthandPropertyAssignment(property)) {
-      return [{ identifier: property.name, propertyName: property.name.text }]
-    }
-    if (!ts.isPropertyAssignment(property)) {
-      return []
-    }
-    const identifier = unwrapExpression(property.initializer)
-    const propertyName = propertyNameText(property.name)
-    return ts.isIdentifier(identifier) && propertyName ? [{ identifier, propertyName }] : []
-  })
+  return [...scopeOwners].some((owner) => owner !== useOwner)
 }
 
 export function createMobileLocalizationValueFlow(sourceFile, bindings) {
@@ -143,7 +141,7 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
   const propertyWrites = new Map()
   const pendingPropertyWrites = []
 
-  function addWrite(identifier, expression, node, propertyName, operator) {
+  function addWrite(identifier, expression, node, propertyPath, operator, defaultExpression) {
     const binding = bindings.resolveBinding(identifier)
     if (!binding) {
       return
@@ -155,7 +153,8 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
       node,
       operator,
       position: node.getStart(sourceFile),
-      propertyName
+      propertyPath,
+      defaultExpression
     })
     writes.set(binding, entries)
   }
@@ -166,8 +165,15 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
       addWrite(target, expression, node, undefined, operator)
       return
     }
-    for (const entry of destructuredTargets(target)) {
-      addWrite(entry.identifier, expression, node, entry.propertyName, operator)
+    for (const entry of destructuredLocalizationTargets(target)) {
+      addWrite(
+        entry.identifier,
+        expression,
+        node,
+        entry.propertyPath,
+        operator,
+        entry.defaultExpression
+      )
     }
   }
 
@@ -275,13 +281,15 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
     if (all || (binding && isConstBinding(binding))) {
       return entries
     }
-    const available = entries.filter((entry) => canReachUse(entry, use, sourceFile))
+    const available = entries.filter((entry) =>
+      canReachUse(entry, use, sourceFile, new Set([functionOwner(binding)]))
+    )
     let selected = []
     for (const entry of available) {
       const action = entry.conditional
         ? logicalWriteAction(
             entry.operator,
-            selected.flatMap((write) => (write.propertyName ? [] : [write.expression])),
+            selected.flatMap((write) => (write.propertyPath ? [] : [write.expression])),
             selected.length === 0 && isUninitializedBinding(binding)
           )
         : 'assign'
@@ -308,7 +316,7 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
     return `${location.binding.pos}:${location.path.join('\0')}`
   }
 
-  function objectLocations(node, use = node, seen = new Set()) {
+  function objectLocations(node, use = node, seen = new Set(), all = false) {
     const expression = unwrapExpression(node)
     if (ts.isIdentifier(expression)) {
       const binding = bindings.resolveBinding(expression)
@@ -320,24 +328,27 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
         return direct
       }
       const nextSeen = new Set(seen).add(binding)
-      const sources = selectedWrites(expression, use, false)
+      const sources = selectedWrites(expression, use, all)
       const resolved = sources.flatMap((source) => {
-        const locations = objectLocations(source.expression, source.node, nextSeen)
-        return source.propertyName
+        const locations = objectLocations(source.expression, source.node, nextSeen, all)
+        return source.propertyPath
           ? locations.map((location) => ({
               binding: location.binding,
-              path: [...location.path, source.propertyName]
+              path: [...location.path, ...source.propertyPath]
             }))
           : locations
       })
       const locations = resolved.length > 0 ? resolved : direct
       return [...new Map(locations.map((location) => [locationKey(location), location])).values()]
     }
+    if (ts.isObjectLiteralExpression(expression) || ts.isArrayLiteralExpression(expression)) {
+      return [{ binding: expression, path: [] }]
+    }
     const member = memberParts(expression)
     if (!member) {
       return []
     }
-    return objectLocations(member.object, use, seen).map((location) => ({
+    return objectLocations(member.object, use, seen, all).map((location) => ({
       binding: location.binding,
       path: [...location.path, member.propertyName]
     }))
@@ -369,7 +380,11 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
       targetLocations.length === 1 &&
       rightLocations.length === 1 &&
       rightKeys.has(locationKey(targetLocations[0]))
-    const indexed = { ...entry, selfAssignment }
+    const indexed = {
+      ...entry,
+      scopeOwners: new Set(targetLocations.map((location) => functionOwner(location.binding))),
+      selfAssignment
+    }
     for (const location of targetLocations) {
       indexedPropertyWrites(location).push(indexed)
     }
@@ -381,14 +396,15 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
   }
 
   function propertyWriteEntries(node, propertyName, use, all) {
-    const entries = objectLocations(node, use).flatMap((location) => {
+    const entries = objectLocations(node, use, new Set(), all).flatMap((location) => {
       const key = [...location.path, propertyName].join('\0')
       return propertyWrites.get(location.binding)?.get(key) ?? []
     })
     return [
       ...new Set(
         entries.filter(
-          (entry) => !entry.selfAssignment && (all || canReachUse(entry, use, sourceFile))
+          (entry) =>
+            !entry.selfAssignment && (all || canReachUse(entry, use, sourceFile, entry.scopeOwners))
         )
       )
     ].sort((left, right) => left.position - right.position)
@@ -419,6 +435,31 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
     return known
   }
 
+  function propertyPathValues(node, propertyPath, use = node, seen = new Set(), all = false) {
+    let sources = [{ expression: node, use }]
+    let known = true
+    for (const propertyName of propertyPath) {
+      const next = []
+      for (const source of sources) {
+        const values = propertyValues(
+          source.expression,
+          propertyName,
+          source.use,
+          new Set(seen),
+          all
+        )
+        if (values === undefined) {
+          known = false
+          continue
+        }
+        next.push(...values.map((expression) => ({ expression, use: expression })))
+      }
+      sources = next
+    }
+    const values = sources.map((source) => source.expression)
+    return known || (all && values.length > 0) ? values : undefined
+  }
+
   function propertyValues(node, propertyName, use = node, seen = new Set(), all = false) {
     const expression = unwrapExpression(node)
     if (ts.isIdentifier(expression)) {
@@ -431,8 +472,8 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
       const resolved = []
       let known = true
       for (const source of sources) {
-        const values = source.propertyName
-          ? propertyValues(source.expression, source.propertyName, source.node, nextSeen, all)
+        const values = source.propertyPath
+          ? propertyPathValues(source.expression, source.propertyPath, source.node, nextSeen, all)
           : [source.expression]
         if (values === undefined) {
           known = false
@@ -462,7 +503,7 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
       const resolved = []
       let known = objectValues !== undefined
       for (const value of objectValues ?? []) {
-        const matches = propertyValues(value, propertyName, use, new Set(seen), all)
+        const matches = propertyValues(value, propertyName, value, new Set(seen), all)
         if (matches === undefined) {
           known = false
         } else {
@@ -472,6 +513,14 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
       known = applyPropertyWrites(resolved, known, expression, propertyName, use, all)
       return known || (all && resolved.length > 0) ? resolved : undefined
     }
+    if (ts.isArrayLiteralExpression(expression)) {
+      const index = Number(propertyName)
+      if (!Number.isInteger(index) || index < 0 || index >= expression.elements.length) {
+        return []
+      }
+      const element = expression.elements[index]
+      return ts.isOmittedExpression(element) || ts.isSpreadElement(element) ? [] : [element]
+    }
     if (!ts.isObjectLiteralExpression(expression)) {
       return undefined
     }
@@ -480,7 +529,7 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
         const spreadValues = propertyValues(
           property.expression,
           propertyName,
-          use,
+          property.expression,
           new Set(seen),
           all
         )
@@ -513,15 +562,22 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
   function materializeWrites(entries, use, seen) {
     const values = []
     for (const entry of entries) {
-      if (!entry.propertyName) {
+      if (!entry.propertyPath) {
         values.push(entry.expression)
         continue
       }
-      const matches = propertyValues(entry.expression, entry.propertyName, use, new Set(seen))
+      const matches = propertyPathValues(
+        entry.expression,
+        entry.propertyPath,
+        entry.node,
+        new Set(seen)
+      )
       if (matches === undefined) {
         return undefined
       }
-      values.push(...matches)
+      values.push(
+        ...(matches.length === 0 && entry.defaultExpression ? [entry.defaultExpression] : matches)
+      )
     }
     return values
   }
@@ -550,7 +606,7 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
       }
       if (
         !source ||
-        source.propertyName ||
+        source.propertyPath ||
         logicalWriteAction(entry.operator, [source.expression]) !== 'keep'
       ) {
         return undefined
@@ -571,6 +627,7 @@ export function createMobileLocalizationValueFlow(sourceFile, bindings) {
     allValueExpressions,
     bindingWrites,
     isImmutableBinding: isConstBinding,
+    propertyPathValues,
     propertyValues,
     stableBindingWrite,
     unwrapExpression,

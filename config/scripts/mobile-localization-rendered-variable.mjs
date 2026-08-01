@@ -8,6 +8,12 @@ const SOURCE_BINDINGS = new WeakMap()
 const SOURCE_IDENTIFIERS = new WeakMap()
 const SOURCE_VALUE_FLOWS = new WeakMap()
 const RENDERED_FUNCTION_RESULTS = new WeakMap()
+const ASSIGNMENT_KINDS = new Set([
+  ts.SyntaxKind.EqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken
+])
 
 function isDirectDisplayExpressionParent(parent, child) {
   if (
@@ -80,7 +86,22 @@ export function isRenderedJsxExpression(node) {
   return false
 }
 
-function assignedVariableIdentifier(node) {
+function memberParts(node) {
+  const expression = unwrapAliasExpression(node)
+  if (ts.isPropertyAccessExpression(expression)) {
+    return { object: expression.expression, propertyName: expression.name.text }
+  }
+  if (
+    ts.isElementAccessExpression(expression) &&
+    expression.argumentExpression &&
+    ts.isStringLiteralLike(expression.argumentExpression)
+  ) {
+    return { object: expression.expression, propertyName: expression.argumentExpression.text }
+  }
+  return undefined
+}
+
+function assignedTarget(node) {
   let current = node
   while (current.parent && isDirectDisplayExpressionParent(current.parent, current)) {
     current = current.parent
@@ -96,10 +117,9 @@ function assignedVariableIdentifier(node) {
   }
   return parent &&
     ts.isBinaryExpression(parent) &&
-    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    parent.right === current &&
-    ts.isIdentifier(parent.left)
-    ? parent.left
+    ASSIGNMENT_KINDS.has(parent.operatorToken.kind) &&
+    parent.right === current
+    ? unwrapAliasExpression(parent.left)
     : undefined
 }
 
@@ -208,27 +228,15 @@ function expressionTargetsFunction(node, owner, bindings, valueFlow, seen = new 
       )
     )
   }
-  let object
-  let propertyName
-  if (ts.isPropertyAccessExpression(expression)) {
-    object = expression.expression
-    propertyName = expression.name.text
-  } else if (
-    ts.isElementAccessExpression(expression) &&
-    expression.argumentExpression &&
-    ts.isStringLiteralLike(expression.argumentExpression)
-  ) {
-    object = expression.expression
-    propertyName = expression.argumentExpression.text
-  }
-  if (!object || !propertyName) {
+  const member = memberParts(expression)
+  if (!member) {
     return false
   }
   if (seen.has(expression)) {
     return false
   }
   const nextSeen = new Set(seen).add(expression)
-  const values = valueFlow.propertyValues(object, propertyName, node)
+  const values = valueFlow.propertyValues(member.object, member.propertyName, node)
   return Boolean(
     values?.some((value) => expressionTargetsFunction(value, owner, bindings, valueFlow, nextSeen))
   )
@@ -275,16 +283,12 @@ export function renderedVariableAssignmentStatus(
   if (ts.isTemplateExpression(node)) {
     return undefined
   }
-  const identifier = assignedVariableIdentifier(node)
-  if (!identifier) {
+  const target = assignedTarget(node)
+  if (!target) {
     return undefined
   }
   const bindings = bindingsFor(node.getSourceFile())
   const valueFlow = valueFlowFor(node.getSourceFile(), bindings)
-  const targetBinding = bindings.resolveBinding(identifier)
-  if (!targetBinding) {
-    return undefined
-  }
   let owner = node.parent
   while (owner && !ts.isFunctionLike(owner) && !ts.isSourceFile(owner)) {
     owner = owner.parent
@@ -292,8 +296,40 @@ export function renderedVariableAssignmentStatus(
   if (!owner) {
     return undefined
   }
+  const member = memberParts(target)
+  if (member) {
+    let hasRenderedUse = false
+    let reachesRenderedUse = false
+    function visit(current) {
+      if (reachesRenderedUse) {
+        return
+      }
+      const currentMember = memberParts(current)
+      if (currentMember && isRenderedExpression(current)) {
+        hasRenderedUse = true
+        const values = valueFlow.propertyValues(
+          currentMember.object,
+          currentMember.propertyName,
+          current
+        )
+        reachesRenderedUse = Boolean(
+          values?.some((value) => value.pos <= node.pos && value.end >= node.end)
+        )
+      }
+      ts.forEachChild(current, visit)
+    }
+    visit(owner)
+    return reachesRenderedUse ? 'reaching' : hasRenderedUse ? 'dead' : undefined
+  }
+  if (!ts.isIdentifier(target)) {
+    return undefined
+  }
+  const targetBinding = bindings.resolveBinding(target)
+  if (!targetBinding) {
+    return undefined
+  }
   let hasRenderedUse = false
-  for (const current of identifiersFor(node.getSourceFile(), identifier.text)) {
+  for (const current of identifiersFor(node.getSourceFile(), target.text)) {
     if (
       current.pos < owner.pos ||
       current.end > owner.end ||
