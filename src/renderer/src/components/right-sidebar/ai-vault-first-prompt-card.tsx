@@ -7,6 +7,16 @@ import { translate } from '@/i18n/i18n'
 import type { AiVaultSession } from '../../../../shared/ai-vault-types'
 import { LOCAL_EXECUTION_HOST_ID } from '../../../../shared/execution-host'
 
+function canLoadFullFirstPrompt(
+  session: Pick<AiVaultSession, 'executionHostId' | 'filePath'>
+): boolean {
+  return (
+    session.executionHostId === LOCAL_EXECUTION_HOST_ID &&
+    Boolean(session.filePath.trim()) &&
+    typeof window.api.aiVault.getFirstUserPrompt === 'function'
+  )
+}
+
 export function FirstPromptCard({
   session,
   previewText
@@ -15,15 +25,18 @@ export function FirstPromptCard({
   /** Short preview from list scan; replaced by the full on-demand body when available. */
   previewText: string
 }): React.JSX.Element {
+  // Loading starts true when an on-demand re-parse is possible so the mount effect
+  // does not need a sync setState (react-doctor: no-adjust-state-on-prop-change).
   const [fullText, setFullText] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(() => canLoadFullFirstPrompt(session))
   const [copied, setCopied] = useState(false)
   const [copying, setCopying] = useState(false)
   const fullTextRef = useRef<string | null>(null)
   const loadPromiseRef = useRef<Promise<string | null> | null>(null)
-  // Bumped on every session switch so a late response from the previous session
-  // cannot write its body into the refs the Copy button reads.
+  // Bumped on unmount/cleanup so a late response cannot write into a dead card.
   const generationRef = useRef(0)
+
+  const { agent, codexHome, executionHostId, filePath, sessionId } = session
 
   const loadFullPrompt = useCallback((): Promise<string | null> => {
     if (fullTextRef.current != null) {
@@ -33,22 +46,19 @@ export function FirstPromptCard({
       return loadPromiseRef.current
     }
 
-    const canLoadFull =
-      session.executionHostId === LOCAL_EXECUTION_HOST_ID && Boolean(session.filePath.trim())
-    const getFirstUserPrompt = window.api.aiVault.getFirstUserPrompt
-    if (!canLoadFull || typeof getFirstUserPrompt !== 'function') {
+    if (!canLoadFullFirstPrompt({ executionHostId, filePath })) {
       return Promise.resolve(null)
     }
+    const getFirstUserPrompt = window.api.aiVault.getFirstUserPrompt
 
-    setLoading(true)
     const generation = generationRef.current
     const isStale = (): boolean => generationRef.current !== generation
     const promise = getFirstUserPrompt({
-      agent: session.agent,
-      filePath: session.filePath,
-      sessionId: session.sessionId,
-      executionHostId: session.executionHostId,
-      codexHome: session.codexHome
+      agent,
+      filePath,
+      sessionId,
+      executionHostId,
+      codexHome
     })
       .then((result) => {
         if (isStale()) {
@@ -78,24 +88,17 @@ export function FirstPromptCard({
 
     loadPromiseRef.current = promise
     return promise
-  }, [
-    session.agent,
-    session.codexHome,
-    session.executionHostId,
-    session.filePath,
-    session.sessionId
-  ])
+  }, [agent, codexHome, executionHostId, filePath, sessionId])
 
   // Why: list rows never carry the full first prompt (payload/perf). Load the
-  // untruncated body once when this details card mounts.
+  // untruncated body once when this details card mounts. Parent keys this card by
+  // session.id so session switches remount with fresh state.
   useEffect(() => {
-    generationRef.current += 1
-    fullTextRef.current = null
-    loadPromiseRef.current = null
-    setFullText(null)
-    setLoading(false)
     void loadFullPrompt()
-  }, [loadFullPrompt, session.id])
+    return () => {
+      generationRef.current += 1
+    }
+  }, [loadFullPrompt])
 
   const displayText = (fullText ?? previewText).trim()
   const showEmpty = !loading && !displayText

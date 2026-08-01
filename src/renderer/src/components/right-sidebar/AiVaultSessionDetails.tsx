@@ -165,7 +165,11 @@ export function SessionInlineDetails({
                 'First prompt'
               )}
             >
-              <FirstPromptCard session={session} previewText={firstPromptPreview ?? ''} />
+              <FirstPromptCard
+                key={session.id}
+                session={session}
+                previewText={firstPromptPreview ?? ''}
+              />
             </SessionReceiptSection>
             <SessionReceiptSection
               icon={<MessageSquare className="size-3" />}
@@ -176,9 +180,9 @@ export function SessionInlineDetails({
             >
               {detailTurns.length > 0 ? (
                 <div className="space-y-1.5">
-                  {detailTurns.map((turn, index) => (
+                  {detailTurns.map((turn) => (
                     <ConversationTurnCard
-                      key={`${turn.timestamp ?? 'turn'}-${index}`}
+                      key={`${turn.role}:${turn.timestamp ?? ''}:${turn.text}`}
                       role={turn.role}
                       text={turn.text}
                     />
