@@ -111,7 +111,7 @@ export class RelayDispatcher {
   }
 
   // Why: redirect outgoing frames to the reconnected socket without rebuilding the dispatcher + handler tree.
-  // Why: the new client's multiplexer restarts at seq=1, so reset seq/decoder state or acks stall and fire a false connection-dead signal.
+  // Why: a new multiplexer restarts at seq=1; reset state to avoid stalled acknowledgements.
   setWrite(write: RelayClientWrite, sinkOptions?: RelayClientSinkOptions): void {
     this.requestAborts.abortClient(this.primaryClient.id)
     this.primaryClient.closed = true
