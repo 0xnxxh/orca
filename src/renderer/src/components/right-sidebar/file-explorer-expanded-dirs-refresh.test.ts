@@ -413,6 +413,46 @@ describe('refreshFileExplorerExpandedDirs', () => {
     expect(cache['/repo/b']).toMatchObject({ loading: false, children: [{ name: 'index.ts' }] })
   })
 
+  it('stops later batches after a commit callback throws', async () => {
+    let cache: Record<string, DirCache> = {}
+    const setDirCache = vi.fn((update: CacheUpdate) => {
+      cache = typeof update === 'function' ? update(cache) : update
+    })
+    const commitError = new Error('commit failed')
+    const onDirCommitted = vi.fn((dirPath: string) => {
+      if (dirPath === '/repo/a') {
+        throw commitError
+      }
+    })
+
+    await expect(
+      refreshFileExplorerExpandedDirs({
+        dirs: ['a', 'b', 'c', 'd'].map((name) => ({ dirPath: `/repo/${name}`, depth: 0 })),
+        worktreePath: '/repo',
+        dirLoadTracker: createFileExplorerDirLoadTracker(),
+        setDirCache,
+        readDirectory: async () => ({
+          entries: [entry('index.ts')],
+          operationOwner: { kind: 'local' as const }
+        }),
+        // Two dirs per commit batch, so /repo/c and /repo/d belong to a later batch.
+        maxConcurrentReads: 2,
+        onDirCommitted
+      })
+    ).rejects.toBe(commitError)
+
+    // A surviving worker must not commit past the failure: callers observing the rejection
+    // would otherwise still get setDirCache writes and staleness clears afterwards.
+    expect(onDirCommitted.mock.calls.map(([dirPath]) => dirPath).sort()).toEqual([
+      '/repo/a',
+      '/repo/b'
+    ])
+    // One up-front loading write plus the single failed batch's result write.
+    expect(setDirCache).toHaveBeenCalledTimes(2)
+    expect(cache['/repo/c']).toMatchObject({ loading: true })
+    expect(cache['/repo/d']).toMatchObject({ loading: true })
+  })
+
   it('drops a queued directory superseded while an earlier read is blocked', async () => {
     const tracker = createFileExplorerDirLoadTracker()
     let cache: Record<string, DirCache> = {}

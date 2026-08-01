@@ -88,10 +88,11 @@ async function flushPortalFramesUntil(
   }
 }
 
-// Drain MutationObserver microtasks and the readiness rAF they schedule.
+// Drain MutationObserver microtasks and the readiness rAF they schedule. Reports whether the
+// drain settled so a caller never reads a transition whose readiness callbacks are still queued.
 async function flushPortalReadiness(
   frames: ReturnType<typeof installAnimationFrameController>
-): Promise<void> {
+): Promise<boolean> {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     await act(async () => {
       await Promise.resolve()
@@ -101,11 +102,12 @@ async function flushPortalReadiness(
         await Promise.resolve()
       })
       if (frames.pending() === 0) {
-        return
+        return true
       }
     }
     await frames.flush()
   }
+  return frames.pending() === 0
 }
 
 // Models the tab-root DOM and sibling hiding emitted by a portaled TerminalPane.
@@ -377,13 +379,14 @@ describe('Activity portal pane switching', () => {
     await act(async () => {
       root.render(<ActivityTerminalSlot />)
     })
-    await flushPortalReadiness(frames)
+    expect(await flushPortalReadiness(frames)).toBe(true)
     await flushPortalFramesUntil(frames, () => statuses.at(-1) === 'unavailable')
     expect(statuses.at(-1)).toBe('unavailable')
 
     // Feed each DOM state separately and keep going until sibling DOM reports latched
     // unavailable. A fixed 9-flip budget flakes when CI load drops MutationObserver
     // deliveries below ACTIVITY_PORTAL_READINESS_MAX_FLIPS transitions.
+    let sawSiblingLoading = false
     let sawLatchedSibling = false
     for (
       let flip = 0;
@@ -391,12 +394,21 @@ describe('Activity portal pane switching', () => {
       flip += 1
     ) {
       const mode = flip % 2 === 0 ? 'sibling' : 'hidden'
+      const statusesBefore = statuses.length
       await act(async () => {
         buildRoot(mode)
         await Promise.resolve()
       })
-      await flushPortalReadiness(frames)
-      if (mode === 'sibling' && statuses.at(-1) === 'unavailable') {
+      expect(await flushPortalReadiness(frames)).toBe(true)
+      if (mode !== 'sibling') {
+        continue
+      }
+      // Transition-local evidence: an unlatched subscription answers sibling DOM with 'loading',
+      // so the latch is only proven once a sibling transition that previously emitted 'loading'
+      // stops doing so and leaves 'unavailable' standing.
+      if (statuses.slice(statusesBefore).includes('loading')) {
+        sawSiblingLoading = true
+      } else if (sawSiblingLoading && statuses.at(-1) === 'unavailable') {
         sawLatchedSibling = true
       }
     }
@@ -407,7 +419,7 @@ describe('Activity portal pane switching', () => {
       buildRoot('ready')
       await Promise.resolve()
     })
-    await flushPortalReadiness(frames)
+    expect(await flushPortalReadiness(frames)).toBe(true)
     await flushPortalFramesUntil(frames, () => statuses.at(-1) === 'ready')
     expect(statuses.at(-1)).toBe('ready')
   })

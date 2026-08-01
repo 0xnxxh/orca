@@ -51,6 +51,9 @@ export async function refreshFileExplorerExpandedDirs({
   const pendingResults: { dirPath: string; cache: DirCache }[] = []
   let settledSinceCommit = 0
   let committedDirs = 0
+  // Why: forEachWithConcurrency has no cancel hook, so a failed commit must stop the surviving
+  // workers itself — otherwise a later batch commits after the caller already saw this reject.
+  let stopped = false
 
   // Why: mark every dir loading up front — FileExplorer's auto-load
   // effect re-runs on any `expanded` change and fans out an unbounded loadDir per
@@ -67,6 +70,9 @@ export async function refreshFileExplorerExpandedDirs({
   })
 
   const commitPendingResults = (): void => {
+    if (stopped) {
+      return
+    }
     settledSinceCommit = 0
     const currentResults = pendingResults
       .splice(0)
@@ -98,6 +104,7 @@ export async function refreshFileExplorerExpandedDirs({
       }
     }
     if (commitFailed) {
+      stopped = true
       throw firstCommitError
     }
   }
@@ -113,6 +120,9 @@ export async function refreshFileExplorerExpandedDirs({
   }
 
   await forEachWithConcurrency(uniqueDirs, maxConcurrentReads, async ({ dirPath, depth }) => {
+    if (stopped) {
+      return
+    }
     const loadToken = loadTokens.get(dirPath)!
     // A superseding load owns this dir now; do not spend a round trip on a result we must drop.
     if (!dirLoadTracker.isCurrent(loadToken)) {
