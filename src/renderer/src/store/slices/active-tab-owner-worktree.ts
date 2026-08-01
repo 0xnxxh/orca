@@ -80,29 +80,3 @@ export function resolveActiveTabOwnerWorktreeId(
   }
   return firstOwnerId
 }
-
-/**
- * Whether the active worktree's own tab list holds this tab.
- *
- * Why this and not a cached owner id: the tab-owner cache in terminals.ts is
- * last-writer-wins, so a duplicated tab id names whichever worktree it saw last
- * — which can be a background one for a pane that really is in the active
- * worktree. Callers that gate on "is this pane visible" need the active
- * worktree's own answer, not a tie-break.
- *
- * Why not resolveActiveTabOwnerWorktreeId: its full scan runs per OSC title
- * frame, and its breadcrumb would report a second caller under one verdict.
- */
-export function isTabInActiveWorktree(
-  tabsByWorktree: Record<string, TerminalTab[]>,
-  activeWorktreeId: string | null,
-  tabId: string
-): boolean {
-  // Why hasOwnProperty and not a plain index: ids like `toString` resolve an
-  // inherited member, and `.some` would then throw. Why not Object.keys: this
-  // runs per classified title frame, so it must not allocate a key array.
-  if (activeWorktreeId === null || !Object.hasOwn(tabsByWorktree, activeWorktreeId)) {
-    return false
-  }
-  return tabsByWorktree[activeWorktreeId].some((tab) => tab.id === tabId)
-}

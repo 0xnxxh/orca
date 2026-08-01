@@ -1,10 +1,10 @@
 /** @vitest-environment happy-dom */
-import { act, useEffect, useMemo } from 'react'
+import { act, useMemo } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
 import { useAppStore } from '@/store'
 import type { Tab, TabGroup, TerminalTab } from '../../../../shared/types'
-import { resolveRepairedActiveTerminalTabId } from './active-terminal-repair'
+import { useActiveTerminalRepair } from './use-active-terminal-repair'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -44,8 +44,7 @@ function tabGroup(
   return { id, worktreeId, activeTabId, tabOrder, recentTabIds: [activeTabId] }
 }
 
-/** Mirrors the active-terminal repair effect in Terminal.tsx (same deps, same store call). */
-function RepairEffectHarness({ onPass }: { onPass: () => boolean }): null {
+function RepairEffectHarness(): null {
   const activeTabId = useAppStore((s) => s.activeTabId)
   const activeTabIdByWorktree = useAppStore((s) => s.activeTabIdByWorktree)
   const activeTabType = useAppStore((s) => s.activeTabType)
@@ -53,36 +52,21 @@ function RepairEffectHarness({ onPass }: { onPass: () => boolean }): null {
   const renderedActiveWorktreeId = useAppStore((s) => s.activeWorktreeId)
   const setActiveTab = useAppStore((s) => s.setActiveTab)
   const tabs = useMemo(
-    () => (renderedActiveWorktreeId ? (tabsByWorktree[renderedActiveWorktreeId] ?? []) : []),
+    () =>
+      renderedActiveWorktreeId !== null && Object.hasOwn(tabsByWorktree, renderedActiveWorktreeId)
+        ? tabsByWorktree[renderedActiveWorktreeId]
+        : [],
     [renderedActiveWorktreeId, tabsByWorktree]
   )
 
-  useEffect(() => {
-    if (!onPass()) {
-      return
-    }
-    const rememberedTabId = renderedActiveWorktreeId
-      ? (activeTabIdByWorktree[renderedActiveWorktreeId] ?? null)
-      : null
-    const repairedTabId = resolveRepairedActiveTerminalTabId({
-      activeTabType,
-      activeTabId,
-      rememberedTabId,
-      tabs
-    })
-    if (!repairedTabId) {
-      return
-    }
-    setActiveTab(repairedTabId)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
+  useActiveTerminalRepair({
     activeTabId,
     activeTabType,
     setActiveTab,
     tabs,
     activeTabIdByWorktree,
     renderedActiveWorktreeId
-  ])
+  })
   return null
 }
 
@@ -95,15 +79,25 @@ afterEach(() => {
 
 function measureRepairPasses(): number {
   let passes = 0
+  const setActiveTab = useAppStore.getState().setActiveTab
+  useAppStore.setState({
+    setActiveTab: (tabId) => {
+      passes += 1
+      if (passes <= MAX_PASSES) {
+        setActiveTab(tabId)
+      }
+    }
+  })
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
   cleanup = () => {
     act(() => root.unmount())
+    useAppStore.setState({ setActiveTab })
     container.remove()
   }
   act(() => {
-    root.render(<RepairEffectHarness onPass={() => (passes += 1) <= MAX_PASSES} />)
+    root.render(<RepairEffectHarness />)
   })
   return passes
 }
@@ -123,9 +117,8 @@ describe('active-terminal repair effect cannot drive a React #185 update loop', 
   })
 
   it('settles when another worktree reuses the tab id and is scanned first', () => {
-    // Why: setActiveTab attributes a tab to the first worktree whose array holds
-    // the id, so a reused id makes it skip the activeTabId write while still
-    // reallocating activeTabIdByWorktree — the repair effect's own dependency.
+    // Why regression: first-match ownership skipped activeTabId while reallocating
+    // activeTabIdByWorktree, retriggering the repair effect indefinitely.
     useAppStore.setState({
       activeWorktreeId: 'wt-active',
       activeTabType: 'terminal',
@@ -145,8 +138,14 @@ describe('active-terminal repair effect cannot drive a React #185 update loop', 
   })
 
   it('activates the active worktree unified tab when another worktree reuses the entity id', () => {
-    const otherTab = unifiedTerminalTab('u-other', 't1', 'wt-other', 'g-other')
-    const activeTab = unifiedTerminalTab('u-active', 't1', 'wt-active', 'g-active')
+    const otherTab = unifiedTerminalTab('t1', 't1', 'wt-other', 'g-other')
+    const otherPreviousTab = unifiedTerminalTab(
+      'other-previous',
+      'other-previous',
+      'wt-other',
+      'g-other'
+    )
+    const activeTab = unifiedTerminalTab('t1', 't1', 'wt-active', 'g-active')
     const previousActiveTab = unifiedTerminalTab('u-previous', 't2', 'wt-active', 'g-active')
     useAppStore.setState({
       activeWorktreeId: 'wt-active',
@@ -157,11 +156,13 @@ describe('active-terminal repair effect cannot drive a React #185 update loop', 
         'wt-active': [terminalTab('t1', 'wt-active'), terminalTab('t2', 'wt-active')]
       },
       unifiedTabsByWorktree: {
-        'wt-other': [otherTab],
+        'wt-other': [otherTab, otherPreviousTab],
         'wt-active': [activeTab, previousActiveTab]
       },
       groupsByWorktree: {
-        'wt-other': [tabGroup('g-other', 'wt-other', otherTab.id, [otherTab.id])],
+        'wt-other': [
+          tabGroup('g-other', 'wt-other', otherPreviousTab.id, [otherTab.id, otherPreviousTab.id])
+        ],
         'wt-active': [
           tabGroup('g-active', 'wt-active', previousActiveTab.id, [
             activeTab.id,
@@ -177,7 +178,9 @@ describe('active-terminal repair effect cannot drive a React #185 update loop', 
     })
 
     expect(useAppStore.getState().groupsByWorktree['wt-active'][0].activeTabId).toBe(activeTab.id)
-    expect(useAppStore.getState().groupsByWorktree['wt-other'][0].activeTabId).toBe(otherTab.id)
+    expect(useAppStore.getState().groupsByWorktree['wt-other'][0].activeTabId).toBe(
+      otherPreviousTab.id
+    )
   })
 
   it('keeps unified-only terminal activation as a fallback', () => {
@@ -258,6 +261,51 @@ describe('active-terminal repair effect cannot drive a React #185 update loop', 
     })
     expect(useAppStore.getState().activeTabId).toBe('t1')
     expect(useAppStore.getState().activeTabIdByWorktree['']).toBe('t1')
+  })
+
+  it('repairs a falsy-but-valid active worktree id through the production hook', () => {
+    useAppStore.setState({
+      activeWorktreeId: '',
+      activeTabType: 'terminal',
+      activeTabId: 'stale-tab',
+      activeTabIdByWorktree: { '': 't1' },
+      tabsByWorktree: { '': [terminalTab('t1', '')] },
+      unifiedTabsByWorktree: {}
+    })
+    expect(measureRepairPasses()).toBeLessThan(10)
+    expect(useAppStore.getState().activeTabId).toBe('t1')
+  })
+
+  it('does not read inherited unified tabs for a prototype-named owner', () => {
+    useAppStore.setState({
+      activeWorktreeId: 'toString',
+      activeTabId: null,
+      activeTabIdByWorktree: {},
+      tabsByWorktree: { toString: [terminalTab('t1', 'toString')] },
+      unifiedTabsByWorktree: {}
+    })
+    expect(() => useAppStore.getState().setActiveTab('t1')).not.toThrow()
+    expect(useAppStore.getState().activeTabId).toBe('t1')
+  })
+
+  it('activates own unified tabs for a prototype-named owner', () => {
+    const target = unifiedTerminalTab('t1', 't1', 'toString', 'g-target')
+    const previous = unifiedTerminalTab('t2', 't2', 'toString', 'g-target')
+    useAppStore.setState({
+      activeWorktreeId: 'toString',
+      activeTabId: 't2',
+      activeTabIdByWorktree: { toString: 't2' },
+      tabsByWorktree: {
+        toString: [terminalTab('t1', 'toString'), terminalTab('t2', 'toString')]
+      },
+      unifiedTabsByWorktree: { toString: [target, previous] },
+      groupsByWorktree: {
+        toString: [tabGroup('g-target', 'toString', previous.id, [target.id, previous.id])]
+      },
+      activeGroupIdByWorktree: { toString: 'g-target' }
+    })
+    act(() => useAppStore.getState().setActiveTab('t1'))
+    expect(useAppStore.getState().groupsByWorktree.toString[0].activeTabId).toBe(target.id)
   })
 
   it('does not activate a tab with no owner when no worktree is active', () => {

@@ -7,11 +7,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type * as AgentStatusModule from '@/lib/agent-status'
 import type { RemoteWorkspaceSnapshot } from '../../../shared/remote-workspace-types'
-import type { DirectSshAuthority } from '../../../shared/ssh-types'
+import type { DirectSshAuthority, SshProviderEpoch } from '../../../shared/ssh-types'
 import { createTestStore, makeWorktree } from '../store/slices/store-test-helpers'
 import { applyDirectSshRemoteWorkspaceSnapshot } from './remote-workspace-snapshot-apply'
 import type { DirectSshSnapshotApplyToken } from './direct-ssh-reconnect-coordinator-types'
-import { resolveRepairedActiveTerminalTabId } from '../components/terminal/active-terminal-repair'
+import { repairActiveTerminalTab } from '../components/terminal/use-active-terminal-repair'
 
 vi.mock('sonner', () => ({ toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() } }))
 vi.mock('@/lib/agent-status', async (importOriginal) => {
@@ -29,7 +29,7 @@ const MAX_REPAIR_PASSES = 200
 
 const authority: DirectSshAuthority = {
   targetId: TARGET_ID,
-  providerEpoch: { generation: 1, restartCount: 0 } as never,
+  providerEpoch: 'provider-epoch-1' as SshProviderEpoch,
   connectionGeneration: 1
 }
 
@@ -38,7 +38,7 @@ function token(snapshotRevision: number): DirectSshSnapshotApplyToken {
     authority,
     catalogRevision: 0,
     repoFingerprint: 'fp',
-    authorityRequirement: 'required' as never,
+    authorityRequirement: 'required',
     snapshotRevision,
     outcome: 'complete'
   }
@@ -51,8 +51,10 @@ function snapshot(
   activeTabId: string | null
 ): RemoteWorkspaceSnapshot {
   return {
+    namespace: 'workspace',
     revision,
     updatedAt: revision,
+    schemaVersion: 1,
     session: {
       activeWorktreePath: worktreePath,
       activeTabId,
@@ -75,7 +77,7 @@ function snapshot(
       lastVisitedAtByWorktreePath: { [worktreePath]: revision },
       defaultTerminalTabsAppliedByWorktreePath: { [worktreePath]: true }
     }
-  } as unknown as RemoteWorkspaceSnapshot
+  } satisfies RemoteWorkspaceSnapshot
 }
 
 type TestStore = ReturnType<typeof createTestStore>
@@ -129,20 +131,18 @@ function runRepairCycle(store: TestStore): {
   let depIdentityChurn = 0
   for (; passes < MAX_REPAIR_PASSES; passes += 1) {
     const live = store.getState()
-    const activeWorktreeId = live.activeWorktreeId
-    const repairedTabId = resolveRepairedActiveTerminalTabId({
+    const depsBefore = live.activeTabIdByWorktree
+    const repaired = repairActiveTerminalTab({
       activeTabType: 'terminal',
       activeTabId: live.activeTabId,
-      rememberedTabId: activeWorktreeId
-        ? (live.activeTabIdByWorktree[activeWorktreeId] ?? null)
-        : null,
-      tabs: activeWorktreeId ? (live.tabsByWorktree[activeWorktreeId] ?? []) : []
+      activeTabIdByWorktree: live.activeTabIdByWorktree,
+      renderedActiveWorktreeId: live.activeWorktreeId,
+      setActiveTab: live.setActiveTab,
+      tabs: live.activeWorktreeId ? (live.tabsByWorktree[live.activeWorktreeId] ?? []) : []
     })
-    if (!repairedTabId) {
+    if (!repaired) {
       return { converged: true, passes, depIdentityChurn }
     }
-    const depsBefore = live.activeTabIdByWorktree
-    live.setActiveTab(repairedTabId)
     if (store.getState().activeTabIdByWorktree !== depsBefore) {
       depIdentityChurn += 1
     }
@@ -209,6 +209,11 @@ describe('direct-SSH snapshot apply, tab id owned by two worktrees', () => {
     expect(repair.converged).toBe(true)
     expect(repair.passes).toBeLessThanOrEqual(store.getState().tabsByWorktree[NEW_ID].length)
     expect(store.getState().activeTabId).toBe('tab-1')
+    const activeGroupId = store.getState().activeGroupIdByWorktree[NEW_ID]
+    expect(
+      store.getState().groupsByWorktree[NEW_ID].find((group) => group.id === activeGroupId)
+        ?.activeTabId
+    ).toBe('tab-1')
 
     // The dep identity settles: re-running the effect body after convergence
     // reallocates nothing, so the effect does not schedule itself again.

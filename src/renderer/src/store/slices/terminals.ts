@@ -38,7 +38,7 @@ import {
 } from '../../../../shared/stable-pane-id'
 import { isValidHostTerminalTabId, isValidTerminalTabId } from '../../../../shared/terminal-tab-id'
 import { buildByIdIndex, buildWorktreeByIdIndex } from './worktree-by-id-index'
-import { isTabInActiveWorktree, resolveActiveTabOwnerWorktreeId } from './active-tab-owner-worktree'
+import { resolveActiveTabOwnerWorktreeId } from './active-tab-owner-worktree'
 import { isSameCodexRestartNoticeAccount } from './codex-restart-notice-account-identity'
 import {
   getRepoIdFromWorktreeId,
@@ -1938,7 +1938,9 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     })
     const state = get()
     const ownerUnifiedTabs =
-      tabOwnerWorktreeId !== null ? (state.unifiedTabsByWorktree[tabOwnerWorktreeId] ?? []) : []
+      tabOwnerWorktreeId !== null && Object.hasOwn(state.unifiedTabsByWorktree, tabOwnerWorktreeId)
+        ? state.unifiedTabsByWorktree[tabOwnerWorktreeId]
+        : []
     // Why: a duplicated entity id must activate the same owner chosen above.
     const item =
       ownerUnifiedTabs.find(
@@ -1948,7 +1950,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         .flat()
         .find((entry) => entry.contentType === 'terminal' && entry.entityId === tabId)
     if (item) {
-      state.activateTab(item.id)
+      state.activateTab(
+        item.id,
+        tabOwnerWorktreeId !== null ? { worktreeId: tabOwnerWorktreeId } : undefined
+      )
     }
   },
 
@@ -2150,13 +2155,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const ownerWorktreeId = classificationChanged
         ? getTerminalTabOwnerWorktreeId(s.tabsByWorktree, tabId)
         : null
-      // Why the second test: the owner cache is last-writer-wins, so a tab id
-      // held under two worktrees can name a background one for a pane that is
-      // in the active worktree — reinstating the click-driven re-sort #209 removed.
-      const isActive =
-        ownerWorktreeId !== null &&
-        (ownerWorktreeId === s.activeWorktreeId ||
-          isTabInActiveWorktree(s.tabsByWorktree, s.activeWorktreeId, tabId))
+      const isActive = ownerWorktreeId !== null && ownerWorktreeId === s.activeWorktreeId
       const shouldBump = classificationChanged && ownerWorktreeId !== null && !isActive
       return {
         runtimePaneTitlesByTabId: {
@@ -2191,12 +2190,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const ownerWorktreeId = hadClassification
         ? getTerminalTabOwnerWorktreeId(s.tabsByWorktree, tabId)
         : null
-      // Why the second test: see setRuntimePaneTitle — a duplicated tab id makes
-      // the last-writer-wins owner cache name a background worktree.
-      const isActive =
-        ownerWorktreeId !== null &&
-        (ownerWorktreeId === s.activeWorktreeId ||
-          isTabInActiveWorktree(s.tabsByWorktree, s.activeWorktreeId, tabId))
+      const isActive = ownerWorktreeId !== null && ownerWorktreeId === s.activeWorktreeId
       const shouldBump = hadClassification && ownerWorktreeId !== null && !isActive
       return {
         runtimePaneTitlesByTabId: next,
