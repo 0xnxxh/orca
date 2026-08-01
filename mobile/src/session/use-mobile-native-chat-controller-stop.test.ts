@@ -4,8 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import {
   resetMobileNativeChatStopLeasesForTests,
-  waitForMobileNativeChatStopLease
+  requestMobileNativeChatWriteLease
 } from './mobile-native-chat-stop-lease'
+import { resetMobileNativeChatStopCleanupForTests } from './mobile-native-chat-stop-cleanup'
 
 const answerAskWrite = vi.fn(async () => true)
 const cancelPendingAnswer = vi.fn()
@@ -140,6 +141,7 @@ describe('useMobileNativeChatController Stop interleaving', () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     vi.clearAllMocks()
     resetMobileNativeChatStopLeasesForTests()
+    resetMobileNativeChatStopCleanupForTests()
     handleRef.current = 'terminal-1'
     cleanupPromise = new Promise((resolve) => {
       resolveCleanup = resolve
@@ -166,6 +168,7 @@ describe('useMobileNativeChatController Stop interleaving', () => {
     renderer = null
     controller = null
     resetMobileNativeChatStopLeasesForTests()
+    resetMobileNativeChatStopCleanupForTests()
     vi.useRealTimers()
   })
 
@@ -180,12 +183,10 @@ describe('useMobileNativeChatController Stop interleaving', () => {
       controller!.handleNativeChatQuestionAnswer('answer')
     ]
     const imageWrite = vi.fn()
-    const imageBarrier = controller!.beforeNativeChatWrite().then((allowed) => {
-      if (allowed) {
-        imageWrite()
-      }
-      return allowed
-    })
+    const imageBarrier = controller!.runNativeChatWrite(async () => {
+      imageWrite()
+      return true
+    }, false)
     act(() => {
       controller?.handleNativeChatStop()
       controller?.handleNativeChatStop()
@@ -211,6 +212,139 @@ describe('useMobileNativeChatController Stop interleaving', () => {
     expect(messageWriteWithOutcome).toHaveBeenCalledOnce()
     expect(questionAnswerWrite).toHaveBeenCalledOnce()
     expect(imageWrite).toHaveBeenCalledOnce()
+  })
+
+  it('runs Stop after an admitted host send settles and before an earlier queued writer', async () => {
+    let finishHostSend!: (accepted: boolean) => void
+    messageWrite.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishHostSend = resolve
+        })
+    )
+    const activeSend = controller!.handleNativeChatSend('host text and Enter')
+    await Promise.resolve()
+    expect(messageWrite).toHaveBeenCalledOnce()
+
+    const queuedPermission = controller!.handleNativeChatRespondPermission('1')
+    act(() => controller!.handleNativeChatStop())
+    await Promise.resolve()
+    expect(sendRequest).not.toHaveBeenCalled()
+    expect(permissionWrite).not.toHaveBeenCalled()
+
+    finishHostSend(true)
+    await activeSend
+    await act(async () => vi.advanceTimersByTimeAsync(160))
+    expect(sendRequest.mock.calls.at(-1)?.[1]).toMatchObject({ text: '/stop', enter: true })
+    expect(permissionWrite).not.toHaveBeenCalled()
+
+    await settleCleanup()
+    await expect(queuedPermission).resolves.toBe(true)
+    expect(permissionWrite).toHaveBeenCalledWith('1')
+  })
+
+  it('holds Stop behind every leg of an admitted card action', async () => {
+    let finishCard!: (accepted: boolean) => void
+    const legs: string[] = []
+    answerAskWrite.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          legs.push('first')
+          finishCard = (accepted) => {
+            legs.push('last')
+            resolve(accepted)
+          }
+        })
+    )
+    const card = controller!.handleNativeChatAnswerAsk({} as never, [])
+    await Promise.resolve()
+    act(() => controller!.handleNativeChatStop())
+    await Promise.resolve()
+    expect(sendRequest).not.toHaveBeenCalled()
+    expect(legs).toEqual(['first'])
+
+    finishCard(true)
+    await card
+    await act(async () => vi.advanceTimersByTimeAsync(160))
+    expect(legs).toEqual(['first', 'last'])
+    expect(sendRequest.mock.calls.at(-1)?.[1]).toMatchObject({ text: '/stop' })
+    await settleCleanup()
+  })
+
+  it('replays queued writers one at a time in call order', async () => {
+    let finishMessage!: (accepted: boolean) => void
+    let finishPermission!: (accepted: boolean) => void
+    const order: string[] = []
+    messageWrite.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          order.push('message')
+          finishMessage = resolve
+        })
+    )
+    permissionWrite.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          order.push('permission')
+          finishPermission = resolve
+        })
+    )
+    questionAnswerWrite.mockImplementationOnce(async () => {
+      order.push('question')
+      return true
+    })
+
+    const message = controller!.handleNativeChatSend('one')
+    const permission = controller!.handleNativeChatRespondPermission('2')
+    const question = controller!.handleNativeChatQuestionAnswer('three')
+    await Promise.resolve()
+    expect(order).toEqual(['message'])
+
+    finishMessage(true)
+    await message
+    await Promise.resolve()
+    expect(order).toEqual(['message', 'permission'])
+
+    finishPermission(true)
+    await permission
+    await question
+    expect(order).toEqual(['message', 'permission', 'question'])
+  })
+
+  it('releases ownership after an admitted writer rejects', async () => {
+    messageWrite.mockRejectedValueOnce(new Error('send failed'))
+    const failed = controller!.handleNativeChatSend('first')
+    const successor = controller!.handleNativeChatRespondPermission('1')
+
+    await expect(failed).rejects.toThrow('send failed')
+    await expect(successor).resolves.toBe(true)
+    expect(permissionWrite).toHaveBeenCalledOnce()
+  })
+
+  it('holds an admitted action through unmount and releases when it settles', async () => {
+    let finishMessage!: (accepted: boolean) => void
+    messageWrite.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishMessage = resolve
+        })
+    )
+    const active = controller!.handleNativeChatSend('in flight')
+    await Promise.resolve()
+
+    act(() => renderer?.unmount())
+    renderer = null
+    const successor = requestMobileNativeChatWriteLease('terminal-1')
+    const acquired = vi.fn()
+    void successor.acquired.then(acquired)
+    await Promise.resolve()
+    expect(acquired).not.toHaveBeenCalled()
+
+    finishMessage(true)
+    await active
+    const lease = await successor.acquired
+    expect(acquired).toHaveBeenCalledOnce()
+    lease?.release()
   })
 
   it('drops a queued stale-session write while allowing the replacement route', async () => {
@@ -251,7 +385,9 @@ describe('useMobileNativeChatController Stop interleaving', () => {
   it('drops queued writes on unmount and releases the terminal lease', async () => {
     await startStop()
     const queuedSend = controller!.handleNativeChatSend('stale')
-    const released = waitForMobileNativeChatStopLease('terminal-1')
+    const released = requestMobileNativeChatWriteLease('terminal-1').acquired.then((lease) => {
+      lease?.release()
+    })
 
     act(() => renderer?.unmount())
     renderer = null
@@ -271,7 +407,7 @@ describe('useMobileNativeChatController Stop interleaving', () => {
     await expect(queuedSend).resolves.toBe(true)
     expect(messageWrite).toHaveBeenCalledWith('after failure', undefined)
     expect(onSendError).toHaveBeenCalledWith(
-      'Agent interrupted; background cleanup not sent — send /stop to close background tools'
+      'Agent interrupted; background cleanup pending — reconnect or return to this chat to retry'
     )
   })
 })

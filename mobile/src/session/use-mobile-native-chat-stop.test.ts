@@ -6,14 +6,16 @@ import { markRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import { MOBILE_NATIVE_CHAT_SEND_TIMEOUT_MS } from './mobile-native-chat-send'
 import {
   resetMobileNativeChatStopLeasesForTests,
-  waitForMobileNativeChatStopLease
+  requestMobileNativeChatWriteLease
 } from './mobile-native-chat-stop-lease'
+import { resetMobileNativeChatStopCleanupForTests } from './mobile-native-chat-stop-cleanup'
 import { useMobileNativeChatStop } from './use-mobile-native-chat-stop'
 
 describe('useMobileNativeChatStop', () => {
   let renderer: ReactTestRenderer | null = null
   let stop: (() => void) | null = null
   const sendRequest = vi.fn()
+  const client = { sendRequest } as unknown as RpcClient
   const onSendError = vi.fn()
 
   beforeEach(() => {
@@ -25,6 +27,7 @@ describe('useMobileNativeChatStop', () => {
     })
     onSendError.mockReset()
     resetMobileNativeChatStopLeasesForTests()
+    resetMobileNativeChatStopCleanupForTests()
   })
 
   afterEach(() => {
@@ -33,16 +36,19 @@ describe('useMobileNativeChatStop', () => {
     stop = null
     vi.useRealTimers()
     resetMobileNativeChatStopLeasesForTests()
+    resetMobileNativeChatStopCleanupForTests()
   })
 
   function Harness({
     enabled,
     streamIdentity,
-    agent
+    agent,
+    sessionId
   }: {
     enabled: boolean
     streamIdentity: string
     agent: string
+    sessionId: string
   }): null {
     const handleRef = useRef<string | null>('terminal-1')
     const deviceTokenRef = useRef<string | null>('mobile-1')
@@ -51,11 +57,12 @@ describe('useMobileNativeChatStop', () => {
       agentRef.current = agent
     }, [agent])
     stop = useMobileNativeChatStop({
-      client: { sendRequest } as unknown as RpcClient,
+      client,
       enabled,
       handleRef,
       deviceTokenRef,
       agentRef,
+      sessionId,
       streamIdentity,
       cancelPending: vi.fn(),
       onSendError
@@ -63,9 +70,14 @@ describe('useMobileNativeChatStop', () => {
     return null
   }
 
-  async function render(enabled: boolean, streamIdentity: string, agent = 'claude'): Promise<void> {
+  async function render(
+    enabled: boolean,
+    streamIdentity: string,
+    agent = 'claude',
+    sessionId = 'session-1'
+  ): Promise<void> {
     await act(async () => {
-      const element = createElement(Harness, { enabled, streamIdentity, agent })
+      const element = createElement(Harness, { enabled, streamIdentity, agent, sessionId })
       if (renderer) {
         renderer.update(element)
       } else {
@@ -77,23 +89,29 @@ describe('useMobileNativeChatStop', () => {
   it.each([
     ['the acknowledged input lease is lost', false, 'stream-1'],
     ['the active stream changes', true, 'stream-2']
-  ])('cancels the delayed second Escape when %s', async (_case, enabled, streamIdentity) => {
+  ])('finishes the captured interrupt when %s', async (_case, enabled, streamIdentity) => {
     await render(true, 'stream-1')
 
-    act(() => stop?.())
+    await act(async () => {
+      stop?.()
+      await Promise.resolve()
+    })
     expect(sendRequest).toHaveBeenCalledTimes(1)
 
     await render(enabled as boolean, streamIdentity as string)
     await act(async () => vi.runAllTimersAsync())
 
-    expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(sendRequest).toHaveBeenCalledTimes(2)
   })
 
   it('handles a rejected Escape without leaking an unhandled rejection', async () => {
     sendRequest.mockRejectedValue(new Error('disconnected'))
     await render(true, 'stream-1')
 
-    act(() => stop?.())
+    await act(async () => {
+      stop?.()
+      await Promise.resolve()
+    })
     await act(async () => {
       await Promise.resolve()
       await vi.runAllTimersAsync()
@@ -167,7 +185,10 @@ describe('useMobileNativeChatStop', () => {
   it('bounds the Escape on a reconnect wait instead of parking forever', async () => {
     await render(true, 'stream-1')
 
-    act(() => stop?.())
+    await act(async () => {
+      stop?.()
+      await Promise.resolve()
+    })
 
     // The budget covers the reconnect wait too, so a stop can't outlast its ceiling.
     expect(sendRequest).toHaveBeenCalledWith(
@@ -234,6 +255,111 @@ describe('useMobileNativeChatStop', () => {
     expect(sendRequest).toHaveBeenCalledTimes(2)
   })
 
+  it('finishes Codex cleanup against the captured terminal after a route change', async () => {
+    await render(true, 'stream-1', 'codex')
+
+    act(() => stop?.())
+    await act(async () => vi.advanceTimersByTimeAsync(80))
+    await render(true, 'stream-2', 'codex')
+    await act(async () => vi.runAllTimersAsync())
+
+    expect(sendRequest.mock.calls.map(([, params]) => params.text)).toEqual([
+      '\x1b',
+      '\x1b',
+      '/stop'
+    ])
+  })
+
+  it('finishes Codex cleanup when the original route disconnects after the interrupt', async () => {
+    await render(true, 'stream-1', 'codex')
+
+    act(() => stop?.())
+    await act(async () => vi.advanceTimersByTimeAsync(80))
+    await render(false, 'stream-1', 'codex')
+    await act(async () => vi.runAllTimersAsync())
+
+    expect(sendRequest.mock.calls.at(-1)?.[1]).toMatchObject({ text: '/stop', enter: true })
+  })
+
+  it('finishes Codex cleanup after the chat unmounts', async () => {
+    await render(true, 'stream-1', 'codex')
+
+    act(() => stop?.())
+    await act(async () => vi.advanceTimersByTimeAsync(80))
+    act(() => renderer?.unmount())
+    renderer = null
+    await act(async () => vi.runAllTimersAsync())
+
+    expect(sendRequest.mock.calls.at(-1)?.[1]).toMatchObject({ text: '/stop', enter: true })
+    expect(onSendError).not.toHaveBeenCalled()
+  })
+
+  it('defers accepted-Escape cleanup out of a replacement session', async () => {
+    await render(true, 'stream-1', 'codex', 'session-1')
+
+    await act(async () => {
+      stop?.()
+      await Promise.resolve()
+    })
+    await render(true, 'stream-2', 'codex', 'session-2')
+    await act(async () => vi.runAllTimersAsync())
+
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(sendRequest.mock.calls.some(([, params]) => params.text === '/stop')).toBe(false)
+    expect(onSendError).not.toHaveBeenCalled()
+
+    await render(true, 'stream-1', 'codex', 'session-1')
+    await act(() => Promise.resolve())
+    expect(sendRequest.mock.calls.filter(([, params]) => params.text === '/stop')).toHaveLength(1)
+  })
+
+  it('recovers definitely rejected cleanup when the original session reconnects', async () => {
+    sendRequest.mockImplementation((_method: string, params: { text?: string }) =>
+      Promise.resolve({
+        ok: true,
+        result: { send: { accepted: params.text !== '/stop' } }
+      })
+    )
+    await render(true, 'stream-1', 'codex')
+
+    act(() => stop?.())
+    await act(async () => vi.runAllTimersAsync())
+    expect(sendRequest.mock.calls.filter(([, params]) => params.text === '/stop')).toHaveLength(1)
+
+    sendRequest.mockResolvedValue({ ok: true, result: { send: { accepted: true } } })
+    await render(false, 'stream-1', 'codex')
+    await render(true, 'stream-1', 'codex')
+    await act(() => Promise.resolve())
+
+    expect(sendRequest.mock.calls.filter(([, params]) => params.text === '/stop')).toHaveLength(2)
+    expect(sendRequest.mock.calls.filter(([, params]) => params.text === '\x1b')).toHaveLength(2)
+  })
+
+  it('defers queued recovery instead of cleaning up a replacement session', async () => {
+    sendRequest.mockImplementation((_method: string, params: { text?: string }) =>
+      Promise.resolve({
+        ok: true,
+        result: { send: { accepted: params.text !== '/stop' } }
+      })
+    )
+    await render(true, 'stream-1', 'codex', 'session-1')
+    act(() => stop?.())
+    await act(async () => vi.runAllTimersAsync())
+    await render(false, 'stream-1', 'codex', 'session-1')
+
+    const writer = await requestMobileNativeChatWriteLease('terminal-1').acquired
+    sendRequest.mockResolvedValue({ ok: true, result: { send: { accepted: true } } })
+    await render(true, 'stream-1', 'codex', 'session-1')
+    await render(true, 'stream-2', 'codex', 'session-2')
+    writer?.release()
+    await act(() => Promise.resolve())
+
+    expect(sendRequest.mock.calls.filter(([, params]) => params.text === '/stop')).toHaveLength(1)
+    await render(true, 'stream-1', 'codex', 'session-1')
+    await act(() => Promise.resolve())
+    expect(sendRequest.mock.calls.filter(([, params]) => params.text === '/stop')).toHaveLength(2)
+  })
+
   it('reports an acknowledged interrupt whose Codex tool cleanup is rejected', async () => {
     sendRequest.mockImplementation((_method: string, params: { text?: string }) =>
       Promise.resolve({
@@ -248,7 +374,7 @@ describe('useMobileNativeChatStop', () => {
 
     expect(onSendError).toHaveBeenCalledOnce()
     expect(onSendError).toHaveBeenCalledWith(
-      'Agent interrupted; background cleanup not sent — send /stop to close background tools'
+      'Agent interrupted; background cleanup pending — reconnect or return to this chat to retry'
     )
   })
 
@@ -332,7 +458,10 @@ describe('useMobileNativeChatStop', () => {
     const released = vi.fn()
 
     act(() => stop?.())
-    void waitForMobileNativeChatStopLease('terminal-1').then(released)
+    void requestMobileNativeChatWriteLease('terminal-1').acquired.then((lease) => {
+      released()
+      lease?.release()
+    })
     await act(async () => vi.runAllTimersAsync())
 
     expect(released).toHaveBeenCalledOnce()
@@ -349,7 +478,10 @@ describe('useMobileNativeChatStop', () => {
     const released = vi.fn()
 
     act(() => stop?.())
-    void waitForMobileNativeChatStopLease('terminal-1').then(released)
+    void requestMobileNativeChatWriteLease('terminal-1').acquired.then((lease) => {
+      released()
+      lease?.release()
+    })
     act(() => renderer?.unmount())
     renderer = null
     await Promise.resolve()
@@ -357,7 +489,7 @@ describe('useMobileNativeChatStop', () => {
 
     await act(async () => {
       resolveEscape({ ok: true, result: { send: { accepted: true } } })
-      await Promise.resolve()
+      await vi.runAllTimersAsync()
     })
     expect(released).toHaveBeenCalledOnce()
   })

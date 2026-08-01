@@ -32,6 +32,7 @@ import { useMobileNativeChatPrompts } from './use-mobile-native-chat-prompts'
 import { useMobileNativeChatStop } from './use-mobile-native-chat-stop'
 import { useMobileNativeChatControllerWriters } from './use-mobile-native-chat-controller-writers'
 import { useThrottledLatestValue } from './use-throttled-latest-value'
+import type { MobileNativeChatWriteAction } from './use-mobile-native-chat-writer-gate'
 
 const NATIVE_CHAT_STREAM_THROTTLE_MS = 50
 
@@ -71,10 +72,14 @@ export type MobileNativeChatController = {
   handleNativeChatSendWithOutcome: (
     text: string,
     images?: string[],
-    deadline?: number
+    deadline?: number,
+    owner?: MobileNativeChatWriteAction
   ) => Promise<MobileNativeChatSendOutcome>
-  /** Waits out a terminal Stop before a caller performs its first PTY write. */
-  beforeNativeChatWrite: () => Promise<boolean>
+  /** Owns one complete terminal action, including every paced or multi-write leg. */
+  runNativeChatWrite: <Result>(
+    write: (action: MobileNativeChatWriteAction | null) => Promise<Result>,
+    staleResult: Result
+  ) => Promise<Result>
   /** Launch-context text still parked on the agent's TUI input line, or null.
    *  Image sends read it to size their leading clear (one Ctrl+U per line). */
   readSeededLaunchDraft: () => string | null
@@ -231,6 +236,7 @@ export function useMobileNativeChatController(args: {
     handleRef: activeHandleRef,
     deviceTokenRef,
     agentRef: activeChatAgentRef,
+    sessionId: activeChatSessionId,
     streamIdentity,
     cancelPending: cancelNativeChatAnswer,
     onSendError
@@ -297,7 +303,7 @@ export function useMobileNativeChatController(args: {
     handleNativeChatQuestionAnswer: writers.answerQuestion,
     handleNativeChatSend: writers.send,
     handleNativeChatSendWithOutcome: writers.sendWithOutcome,
-    beforeNativeChatWrite: writers.beforeWrite,
+    runNativeChatWrite: writers.runWrite,
     readSeededLaunchDraft
   }
 }

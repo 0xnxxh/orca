@@ -3,7 +3,10 @@ import type { RpcClient } from '../transport/rpc-client'
 import type { AskAnswerSelection, AskPrompt } from './mobile-native-chat-ask'
 import type { MobileNativeChatSendOutcome } from './mobile-native-chat-send'
 import { useNativeChatAcceptedAction } from './use-native-chat-action-outcomes'
-import { useMobileNativeChatWriterGate } from './use-mobile-native-chat-writer-gate'
+import {
+  useMobileNativeChatWriterGate,
+  type MobileNativeChatWriteAction
+} from './use-mobile-native-chat-writer-gate'
 
 type BooleanWrite<Params extends unknown[]> = (...params: Params) => Promise<boolean>
 
@@ -32,11 +35,15 @@ export function useMobileNativeChatControllerWriters(args: {
   sendWithOutcome: (
     text: string,
     images?: string[],
-    deadline?: number
+    deadline?: number,
+    owner?: MobileNativeChatWriteAction
   ) => Promise<MobileNativeChatSendOutcome>
-  beforeWrite: () => Promise<boolean>
+  runWrite: <Result>(
+    write: (action: MobileNativeChatWriteAction | null) => Promise<Result>,
+    staleResult: Result
+  ) => Promise<Result>
 } {
-  const { beforeWrite, runWrite } = useMobileNativeChatWriterGate(args)
+  const { runWrite } = useMobileNativeChatWriterGate(args)
   const guardedAnswerAsk = useCallback(
     (prompt: AskPrompt, selections: AskAnswerSelection[]) =>
       runWrite(() => args.answerAskWrite(prompt, selections), false),
@@ -59,20 +66,24 @@ export function useMobileNativeChatControllerWriters(args: {
     [args.messageWrite, runWrite]
   )
   const sendWithOutcome = useCallback(
-    async (text: string, images?: string[], deadline?: number) => {
+    async (
+      text: string,
+      images?: string[],
+      deadline?: number,
+      owner?: MobileNativeChatWriteAction
+    ) => {
       const waitStartedAt = Date.now()
-      const allowed = await beforeWrite()
-      if (!allowed) {
-        if (!args.client || !args.enabled || !args.handleRef.current) {
-          return args.messageWriteWithOutcome(text, images, deadline)
-        }
-        return 'rejected'
-      }
-      const creditedDeadline =
-        deadline === undefined ? undefined : deadline + Date.now() - waitStartedAt
-      return args.messageWriteWithOutcome(text, images, creditedDeadline)
+      return runWrite(
+        () => {
+          const creditedDeadline =
+            deadline === undefined ? undefined : deadline + Date.now() - waitStartedAt
+          return args.messageWriteWithOutcome(text, images, creditedDeadline)
+        },
+        'rejected',
+        owner
+      )
     },
-    [args.client, args.enabled, args.handleRef, args.messageWriteWithOutcome, beforeWrite]
+    [args.messageWriteWithOutcome, runWrite]
   )
 
   return {
@@ -82,6 +93,6 @@ export function useMobileNativeChatControllerWriters(args: {
     answerQuestion,
     send,
     sendWithOutcome,
-    beforeWrite
+    runWrite
   }
 }

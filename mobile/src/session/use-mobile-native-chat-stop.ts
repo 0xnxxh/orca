@@ -1,15 +1,27 @@
-import { useCallback, useEffect, useRef, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, type MutableRefObject } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
+import {
+  hasMobileNativeChatStopCleanup,
+  recoverMobileNativeChatStopCleanup,
+  rememberMobileNativeChatStopCleanup
+} from './mobile-native-chat-stop-cleanup'
 import {
   openMobileNativeChatSendBudget,
   sendMobileNativeChatMessageWithOutcome,
   type MobileNativeChatSendOutcome
 } from './mobile-native-chat-send'
-import { acquireMobileNativeChatStopLease } from './mobile-native-chat-stop-lease'
+import { requestMobileNativeChatStopLease } from './mobile-native-chat-stop-lease'
 
 const ESCAPE = String.fromCharCode(27)
 const CODEX_STOP_BACKGROUND_TERMINALS = '/stop'
 const STOP_STEP_DELAY_MS = 80
+
+type StopRoute = {
+  readonly agent: string | null
+  readonly sessionId: string | null
+  readonly streamIdentity: string
+  readonly terminal: string | null
+}
 
 export function useMobileNativeChatStop(args: {
   client: RpcClient | null
@@ -17,6 +29,7 @@ export function useMobileNativeChatStop(args: {
   handleRef: MutableRefObject<string | null>
   deviceTokenRef: MutableRefObject<string | null>
   agentRef: MutableRefObject<string | null>
+  sessionId: string | null
   streamIdentity: string
   cancelPending: () => void
   onSendError: (message: string) => void
@@ -27,143 +40,225 @@ export function useMobileNativeChatStop(args: {
     handleRef,
     deviceTokenRef,
     agentRef,
+    sessionId,
     streamIdentity,
     cancelPending,
     onSendError
   } = args
-  const generationRef = useRef(0)
-  const delayRef = useRef<{
-    timer: ReturnType<typeof setTimeout>
-    resolve: (completed: boolean) => void
-  } | null>(null)
-  const activeRouteRef = useRef({ client, enabled, streamIdentity })
-  const cancelDelay = useCallback(() => {
-    const delay = delayRef.current
-    if (!delay) {
-      return
+  const mountedRef = useRef(false)
+  const activeRouteRef = useRef<StopRoute>({
+    agent: agentRef.current,
+    sessionId,
+    streamIdentity,
+    terminal: handleRef.current
+  })
+  useLayoutEffect(() => {
+    activeRouteRef.current = {
+      agent: agentRef.current,
+      sessionId,
+      streamIdentity,
+      terminal: handleRef.current
     }
-    clearTimeout(delay.timer)
-    delayRef.current = null
-    delay.resolve(false)
-  }, [])
+  })
+
   useEffect(() => {
-    activeRouteRef.current = { client, enabled, streamIdentity }
+    mountedRef.current = true
     return () => {
-      generationRef.current += 1
-      cancelDelay()
+      mountedRef.current = false
     }
-  }, [cancelDelay, client, enabled, streamIdentity])
-  return useCallback(() => {
-    const handle = handleRef.current
-    if (!handle) {
-      onSendError('Stop not sent (terminal not ready)')
-      return
-    }
-    const lease = acquireMobileNativeChatStopLease(handle)
-    if (!lease) {
-      return
-    }
-    if (!client || !enabled) {
-      lease.release()
-      onSendError('Stop not sent (terminal not ready)')
-      return
-    }
-    try {
-      cancelPending()
-    } catch (error) {
-      lease.release()
-      throw error
-    }
-    generationRef.current += 1
-    const generation = generationRef.current
-    cancelDelay()
-    const agent = agentRef.current
-    const stopStreamIdentity = streamIdentity
-    const interruptDeadline = openMobileNativeChatSendBudget()
-    const isCurrentRoute = (): boolean => {
-      const activeRoute = activeRouteRef.current
+  }, [])
+
+  const isVisibleOriginal = useCallback(
+    (target: StopRoute): boolean => {
+      if (!mountedRef.current) {
+        return false
+      }
+      const active = activeRouteRef.current
       return (
-        generationRef.current === generation &&
-        activeRoute.enabled &&
-        activeRoute.client === client &&
-        activeRoute.streamIdentity === stopStreamIdentity &&
-        handleRef.current === handle &&
-        agentRef.current === agent
+        active.terminal === target.terminal &&
+        agentRef.current === target.agent &&
+        (target.sessionId
+          ? active.sessionId === target.sessionId
+          : active.streamIdentity === target.streamIdentity)
       )
+    },
+    [agentRef]
+  )
+
+  const hasReplacementOnTerminal = useCallback(
+    (target: StopRoute): boolean => {
+      if (!mountedRef.current) {
+        return false
+      }
+      const active = activeRouteRef.current
+      if (active.terminal !== target.terminal) {
+        return false
+      }
+      return (
+        agentRef.current !== target.agent ||
+        (target.sessionId
+          ? active.sessionId !== target.sessionId
+          : active.streamIdentity !== target.streamIdentity)
+      )
+    },
+    [agentRef]
+  )
+
+  const recoverPendingCleanup = useCallback(async (): Promise<void> => {
+    const terminal = handleRef.current
+    if (
+      !client ||
+      !enabled ||
+      !terminal ||
+      agentRef.current !== 'codex' ||
+      !hasMobileNativeChatStopCleanup(streamIdentity)
+    ) {
+      return
     }
-    const waitForNextStep = (): Promise<boolean> =>
-      new Promise((resolve) => {
-        if (!isCurrentRoute()) {
-          resolve(false)
-          return
-        }
-        const delay = {
-          timer: setTimeout(() => {
-            if (delayRef.current === delay) {
-              delayRef.current = null
-            }
-            resolve(isCurrentRoute())
-          }, STOP_STEP_DELAY_MS),
-          resolve
-        }
-        delayRef.current = delay
-      })
-    const send = async (
+    const target: StopRoute = {
+      agent: 'codex',
+      sessionId,
+      streamIdentity,
+      terminal
+    }
+    const outcome = await recoverMobileNativeChatStopCleanup({
+      client,
+      deviceToken: deviceTokenRef.current,
+      sessionId,
+      shouldSend: () => !hasReplacementOnTerminal(target),
+      streamIdentity,
+      terminal
+    })
+    if (!isVisibleOriginal(target)) {
+      return
+    }
+    if (outcome === 'rejected') {
+      onSendError(
+        'Agent interrupted; background cleanup still pending — reconnect or return to this chat to retry'
+      )
+    } else if (outcome === 'unknown') {
+      onSendError('Agent interrupted; background cleanup unconfirmed — check chat before retrying')
+    }
+  }, [
+    agentRef,
+    client,
+    deviceTokenRef,
+    enabled,
+    handleRef,
+    hasReplacementOnTerminal,
+    isVisibleOriginal,
+    onSendError,
+    sessionId,
+    streamIdentity
+  ])
+
+  useEffect(() => {
+    void recoverPendingCleanup()
+  }, [recoverPendingCleanup])
+
+  return useCallback(() => {
+    const terminal = handleRef.current
+    if (!client || !enabled || !terminal) {
+      onSendError('Stop not sent (terminal not ready)')
+      return
+    }
+    if (hasMobileNativeChatStopCleanup(streamIdentity)) {
+      void recoverPendingCleanup()
+      return
+    }
+    const request = requestMobileNativeChatStopLease(terminal)
+    if (!request) {
+      return
+    }
+    const target: StopRoute = {
+      agent: agentRef.current,
+      sessionId,
+      streamIdentity,
+      terminal
+    }
+    const deviceToken = deviceTokenRef.current
+    const send = (
       text: string,
       enter: boolean,
       deadline: number
-    ): Promise<MobileNativeChatSendOutcome | null> => {
-      if (!isCurrentRoute()) {
-        return null
-      }
-      return sendMobileNativeChatMessageWithOutcome({
+    ): Promise<MobileNativeChatSendOutcome> =>
+      sendMobileNativeChatMessageWithOutcome({
         client,
-        terminal: handle,
+        terminal,
         text,
         enter,
         deadline,
-        ...(deviceTokenRef.current
-          ? { mobileClient: { id: deviceTokenRef.current, type: 'mobile' as const } }
-          : {})
+        ...(deviceToken ? { mobileClient: { id: deviceToken, type: 'mobile' as const } } : {})
       })
-    }
+    const waitForNextStep = (): Promise<void> =>
+      new Promise((resolve) => setTimeout(resolve, STOP_STEP_DELAY_MS))
+    const rememberCleanup = (): boolean =>
+      rememberMobileNativeChatStopCleanup({
+        sessionId: target.sessionId,
+        streamIdentity: target.streamIdentity,
+        terminal
+      })
+
     void (async () => {
+      const lease = await request.acquired
+      if (!lease) {
+        return
+      }
       try {
+        if (hasReplacementOnTerminal(target)) {
+          return
+        }
+        try {
+          cancelPending()
+        } catch {
+          if (isVisibleOriginal(target)) {
+            onSendError('Stop not sent')
+          }
+          return
+        }
+        const interruptDeadline = openMobileNativeChatSendBudget()
         const firstEscape = send(ESCAPE, false, interruptDeadline)
-        if (!(await waitForNextStep())) {
-          await firstEscape
+        await waitForNextStep()
+        if (hasReplacementOnTerminal(target)) {
+          if ((await firstEscape) === 'accepted' && target.agent === 'codex') {
+            rememberCleanup()
+          }
           return
         }
-        const outcomes = await Promise.all([firstEscape, send(ESCAPE, false, interruptDeadline)])
-        if (!isCurrentRoute() || outcomes.includes(null)) {
-          return
-        }
-        const escapes = outcomes as MobileNativeChatSendOutcome[]
+        const escapes = await Promise.all([firstEscape, send(ESCAPE, false, interruptDeadline)])
         if (!escapes.includes('accepted')) {
-          // An ambiguous Escape may have landed; a definite failure would invite
-          // a retry into changed prompt state.
-          onSendError(
-            escapes.includes('unknown')
-              ? 'Stop unconfirmed — check chat before retrying'
-              : 'Stop not sent'
-          )
+          if (isVisibleOriginal(target)) {
+            onSendError(
+              escapes.includes('unknown')
+                ? 'Stop unconfirmed — check chat before retrying'
+                : 'Stop not sent'
+            )
+          }
           return
         }
-        if (agent !== 'codex' || !(await waitForNextStep())) {
+        if (target.agent !== 'codex') {
           return
         }
-        // Cleanup owns a fresh budget: slow accepted Escape acknowledgements
-        // cannot underfund this session-owned final write.
+        await waitForNextStep()
+        if (hasReplacementOnTerminal(target)) {
+          rememberCleanup()
+          return
+        }
         const cleanup = await send(
           CODEX_STOP_BACKGROUND_TERMINALS,
           true,
           openMobileNativeChatSendBudget()
         )
-        if (cleanup === 'rejected' && isCurrentRoute()) {
-          onSendError(
-            'Agent interrupted; background cleanup not sent — send /stop to close background tools'
-          )
-        } else if (cleanup === 'unknown' && isCurrentRoute()) {
+        if (cleanup === 'rejected') {
+          const pending = rememberCleanup()
+          if (isVisibleOriginal(target)) {
+            onSendError(
+              pending
+                ? 'Agent interrupted; background cleanup pending — reconnect or return to this chat to retry'
+                : 'Agent interrupted; background cleanup not sent — return to this chat and send /stop'
+            )
+          }
+        } else if (cleanup === 'unknown' && isVisibleOriginal(target)) {
           onSendError(
             'Agent interrupted; background cleanup unconfirmed — check chat before retrying'
           )
@@ -175,12 +270,15 @@ export function useMobileNativeChatStop(args: {
   }, [
     agentRef,
     cancelPending,
-    cancelDelay,
     client,
     deviceTokenRef,
     enabled,
     handleRef,
+    hasReplacementOnTerminal,
+    isVisibleOriginal,
     onSendError,
+    recoverPendingCleanup,
+    sessionId,
     streamIdentity
   ])
 }

@@ -1,58 +1,84 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  acquireMobileNativeChatStopLease,
-  resetMobileNativeChatStopLeasesForTests,
-  waitForMobileNativeChatStopLease
+  requestMobileNativeChatStopLease,
+  requestMobileNativeChatWriteLease,
+  resetMobileNativeChatStopLeasesForTests
 } from './mobile-native-chat-stop-lease'
 
-describe('mobile native-chat Stop lease', () => {
+describe('mobile native-chat terminal leases', () => {
   afterEach(resetMobileNativeChatStopLeasesForTests)
 
-  async function flushLeaseWaiters(): Promise<void> {
-    await Promise.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
-  }
+  it('runs Stop after the active action and before queued FIFO writers', async () => {
+    const active = await requestMobileNativeChatWriteLease('terminal-1').acquired
+    const firstQueued = requestMobileNativeChatWriteLease('terminal-1')
+    const secondQueued = requestMobileNativeChatWriteLease('terminal-1')
+    const stop = requestMobileNativeChatStopLease('terminal-1')
+    const order: string[] = []
+    void firstQueued.acquired.then(() => order.push('first'))
+    void secondQueued.acquired.then(() => order.push('second'))
+    void stop?.acquired.then(() => order.push('stop'))
 
-  it('admits one Stop per terminal and releases queued writers together', async () => {
-    const lease = acquireMobileNativeChatStopLease('terminal-1')
-    const firstWriter = vi.fn()
-    const secondWriter = vi.fn()
+    active?.release()
+    const stopLease = await stop?.acquired
+    expect(order).toEqual(['stop'])
 
-    expect(lease).not.toBeNull()
-    expect(acquireMobileNativeChatStopLease('terminal-1')).toBeNull()
-    void waitForMobileNativeChatStopLease('terminal-1').then(firstWriter)
-    void waitForMobileNativeChatStopLease('terminal-1').then(secondWriter)
-    await Promise.resolve()
-    expect(firstWriter).not.toHaveBeenCalled()
-    expect(secondWriter).not.toHaveBeenCalled()
+    stopLease?.release()
+    const firstLease = await firstQueued.acquired
+    expect(order).toEqual(['stop', 'first'])
 
-    lease?.release()
-    await flushLeaseWaiters()
-    expect(firstWriter).toHaveBeenCalledOnce()
-    expect(secondWriter).toHaveBeenCalledOnce()
+    firstLease?.release()
+    const secondLease = await secondQueued.acquired
+    expect(order).toEqual(['stop', 'first', 'second'])
+    secondLease?.release()
   })
 
-  it('scopes Stop ownership per terminal', async () => {
-    const lease = acquireMobileNativeChatStopLease('terminal-1')
+  it('admits only one pending or active Stop per terminal', async () => {
+    const writer = await requestMobileNativeChatWriteLease('terminal-1').acquired
+    const stop = requestMobileNativeChatStopLease('terminal-1')
 
-    await expect(waitForMobileNativeChatStopLease('terminal-2')).resolves.toBeUndefined()
-    lease?.release()
+    expect(stop).not.toBeNull()
+    expect(requestMobileNativeChatStopLease('terminal-1')).toBeNull()
+    writer?.release()
+    const stopLease = await stop?.acquired
+    expect(requestMobileNativeChatStopLease('terminal-1')).toBeNull()
+    stopLease?.release()
   })
 
-  it('does not let a stale release retire a successor lease', async () => {
-    const first = acquireMobileNativeChatStopLease('terminal-1')
+  it('scopes ownership per terminal', async () => {
+    const first = await requestMobileNativeChatWriteLease('terminal-1').acquired
+
+    await expect(requestMobileNativeChatWriteLease('terminal-2').acquired).resolves.toMatchObject({
+      terminal: 'terminal-2'
+    })
     first?.release()
-    const second = acquireMobileNativeChatStopLease('terminal-1')
-    const writer = vi.fn()
-    void waitForMobileNativeChatStopLease('terminal-1').then(writer)
+  })
+
+  it('does not let a stale release retire a successor', async () => {
+    const first = await requestMobileNativeChatWriteLease('terminal-1').acquired
+    const successorRequest = requestMobileNativeChatWriteLease('terminal-1')
+    first?.release()
+    const successor = await successorRequest.acquired
+    const later = requestMobileNativeChatWriteLease('terminal-1')
+    const admitted = vi.fn()
+    void later.acquired.then(admitted)
 
     first?.release()
-    await flushLeaseWaiters()
-    expect(writer).not.toHaveBeenCalled()
+    await Promise.resolve()
+    expect(admitted).not.toHaveBeenCalled()
 
-    second?.release()
-    await flushLeaseWaiters()
-    expect(writer).toHaveBeenCalledOnce()
+    successor?.release()
+    await later.acquired
+    expect(admitted).toHaveBeenCalledOnce()
+  })
+
+  it('cancels a queued writer without starving its successor', async () => {
+    const active = await requestMobileNativeChatWriteLease('terminal-1').acquired
+    const canceled = requestMobileNativeChatWriteLease('terminal-1')
+    const successor = requestMobileNativeChatWriteLease('terminal-1')
+
+    canceled.cancel()
+    await expect(canceled.acquired).resolves.toBeNull()
+    active?.release()
+    await expect(successor.acquired).resolves.toMatchObject({ terminal: 'terminal-1' })
   })
 })
