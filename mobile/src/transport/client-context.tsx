@@ -16,6 +16,7 @@ import { HostForceReconnectCoordinator, type HostReconnectEntry } from './host-f
 import { HostReconnectProfileCache, type HostOpenProfile } from './host-reconnect-profile-cache'
 import { subscribeConnectionRevivalTriggers } from './connection-revival-triggers'
 import { HostClientOpenRegistry } from './host-client-open-registry'
+import { loadHostClientOpenProfile } from './host-client-open-profile'
 import { loadHosts } from './host-store'
 import { openHostLogicalClient } from './host-logical-client'
 import { clientActivePath } from './rpc-client-active-path'
@@ -85,29 +86,26 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
       const pendingOpen = pendingOpensRef.current.register(hostId, profileVersion, promise)
 
       try {
-        // Why: prefer the primed cache so we don't serialize a second Keychain pass on cold start.
-        let host = requestedProfile?.host ?? primedHostsRef.current.get(hostId)
-        if (!host) {
-          try {
-            const hosts = await loadHosts()
-            host = hosts.find((h) => h.id === hostId)
-          } catch {
-            // Why: cold-start Keychain failure (iOS mid-unlock / Android Keystore race); surface 'disconnected' so the user can Reconnect.
-            notifyHostState(hostId, 'disconnected')
-            notifyAllHosts()
-            return null
-          }
-          if (!host) {
-            // Why: silent return leaves screens on a permanent spinner (STA-1511); surface 'disconnected' so they show a retry affordance.
-            notifyHostState(hostId, 'disconnected')
-            notifyAllHosts()
-            return null
-          }
-        }
-
-        if (pendingOpen.cancelled) {
+        const cachedHost = requestedProfile?.host ?? primedHostsRef.current.get(hostId)
+        const profile = cachedHost
+          ? { host: cachedHost, version: requestedProfile?.version ?? profileVersion }
+          : await loadHostClientOpenProfile({
+              hostId,
+              cache: primedHostsRef.current,
+              ticket: pendingOpen,
+              loadHosts,
+              onUnavailable: () => {
+                notifyHostState(hostId, 'disconnected')
+                notifyAllHosts()
+              }
+            })
+        if (!profile || pendingOpen.cancelled) {
           return null
         }
+        const resolvedProfile = cachedHost
+          ? profile
+          : primedHostsRef.current.resolveLoadedOpenProfile(profile.host)
+        pendingOpen.profileVersion = resolvedProfile.version
 
         // Re-check after any await — another acquire() may have completed.
         const after = storeRef.current.get(hostId)
@@ -119,9 +117,9 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
         const onLog: ConnectionLogSink = (entry) => connectionLogStore.append(hostId, entry)
         try {
           client = openHostLogicalClient(
-            host,
+            resolvedProfile.host,
             onLog,
-            primedHostsRef.current.publisher(hostId, profileVersion)
+            primedHostsRef.current.publisher(hostId, resolvedProfile.version)
           )
         } catch {
           // Why: openHostLogicalClient can throw synchronously (bad public key / invalid URL); notify so the UI leaves 'connecting'.
@@ -459,6 +457,5 @@ export function useForceReconnect(): (hostId: string) => Promise<void> {
 
 // Why: primes already-loaded HostProfiles so the provider can skip a second loadHosts()/Keychain pass on cold start.
 export function usePrimeHosts(): (hosts: HostProfile[]) => void {
-  const ctx = useRpcClientContext()
-  return ctx.primeHosts
+  return useRpcClientContext().primeHosts
 }

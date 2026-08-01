@@ -64,19 +64,14 @@ function parseStoredHosts(raw: string | null): StoredHostProfile[] | null {
   }
 }
 
-export async function loadHosts(
-  options: { requireCredentials?: boolean } = {}
-): Promise<HostProfile[]> {
+export async function loadHosts(): Promise<HostProfile[]> {
   // Why: writers hold the mutation chain across their full RMW; wait so a load doesn't race a half-written list.
   await hostListMutation
-  if (options.requireCredentials) {
-    return doLoadHosts(true)
-  }
   // Why: deduplicate concurrent loadHosts() calls so simultaneously mounting screens share one Keychain read pass.
-  return hostListLoads.shareHostListLoad(() => doLoadHosts(false))
+  return hostListLoads.shareHostListLoad(doLoadHosts)
 }
 
-async function doLoadHosts(requireCredentials: boolean): Promise<HostProfile[]> {
+async function doLoadHosts(): Promise<HostProfile[]> {
   const raw = await AsyncStorage.getItem(STORAGE_KEY)
   const storedHosts = parseStoredHosts(raw)
   if (!storedHosts) {
@@ -99,17 +94,11 @@ async function doLoadHosts(requireCredentials: boolean): Promise<HostProfile[]> 
       let fetched: string | null
       try {
         fetched = await readHostDeviceToken(stored.id)
-      } catch (error) {
-        if (requireCredentials) {
-          throw error
-        }
+      } catch {
         // Why: a transient Keychain failure for one entry (e.g. errSecInteractionNotAllowed while locked) must not blank the whole host list; skip it.
         continue
       }
       if (!fetched) {
-        if (requireCredentials) {
-          throw new Error('host credential unavailable')
-        }
         // Why: orphaned metadata with no matching keychain entry; skip rather than surface a half-broken host.
         continue
       }
@@ -132,6 +121,21 @@ async function doLoadHosts(requireCredentials: boolean): Promise<HostProfile[]> 
     })
   }
   return out
+}
+
+export async function loadStoredHostCredentialIdentity(
+  hostId: string
+): Promise<Pick<HostProfile, 'endpoint' | 'publicKeyB64' | 'deviceToken'> | null> {
+  await hostListMutation
+  const stored = (await readStoredHostsForMutation()).find(({ id }) => id === hostId)
+  if (!stored) {
+    return null
+  }
+  const deviceToken = await readHostDeviceToken(hostId)
+  if (!deviceToken) {
+    throw new Error('host credential unavailable')
+  }
+  return { endpoint: stored.endpoint, publicKeyB64: stored.publicKeyB64, deviceToken }
 }
 
 export async function resolvePairingHostIdentity(

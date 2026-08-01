@@ -19,7 +19,7 @@ import {
 } from './mobile-relay-credential-bundle'
 import {
   createMobileRelayDirectUpgradeJournal,
-  deleteMobileRelayDirectUpgradeJournal,
+  deleteMobileRelayDirectUpgradeJournalIfCurrent,
   readMobileRelayDirectUpgradeJournal,
   writeMobileRelayDirectUpgradeJournal,
   type MobileRelayDirectUpgradeJournal
@@ -35,7 +35,7 @@ export type MobileRelayDirectUpgradeResult = {
 type Dependencies = {
   readJournal: typeof readMobileRelayDirectUpgradeJournal
   writeJournal: typeof writeMobileRelayDirectUpgradeJournal
-  clearJournal: typeof deleteMobileRelayDirectUpgradeJournal
+  clearJournal: typeof deleteMobileRelayDirectUpgradeJournalIfCurrent
   writeBundle: typeof writeMobileRelayCredentialBundle
   saveHost: typeof saveExistingHostRelayRouting
   deleteBundle: typeof deleteMobileRelayCredentialBundle
@@ -53,7 +53,7 @@ export async function upgradeDirectMobileRelay(args: {
   const dependencies: Dependencies = {
     readJournal: readMobileRelayDirectUpgradeJournal,
     writeJournal: writeMobileRelayDirectUpgradeJournal,
-    clearJournal: deleteMobileRelayDirectUpgradeJournal,
+    clearJournal: deleteMobileRelayDirectUpgradeJournalIfCurrent,
     writeBundle: writeMobileRelayCredentialBundle,
     saveHost: saveExistingHostRelayRouting,
     deleteBundle: deleteMobileRelayCredentialBundle,
@@ -69,7 +69,7 @@ export async function upgradeDirectMobileRelay(args: {
 
   const initial = await getEndpoints(args.client, journal.reqId)
   if (initial === 'method-not-found') {
-    await dependencies.clearJournal(args.host.id)
+    await dependencies.clearJournal(journal)
     return null
   }
   if (initial.installStatus?.state === 'committed') {
@@ -84,7 +84,7 @@ export async function upgradeDirectMobileRelay(args: {
     newResumeTokenHash: journal.pendingResumeTokenHash
   })
   if (isMethodNotFound(provisionResponse)) {
-    await dependencies.clearJournal(args.host.id)
+    await dependencies.clearJournal(journal)
     return null
   }
   const installed = DeviceCredentialInstalledSchema.parse(requireSuccess(provisionResponse))
@@ -127,13 +127,13 @@ async function publishCommitted(
   } catch (error) {
     if (error instanceof MobileRelayUpgradeHostRemovedError) {
       await dependencies.deleteBundle(host.id)
-      await dependencies.clearJournal(host.id)
+      await dependencies.clearJournal(journal)
     } else if (error instanceof MobileRelayUpgradeHostSupersededError) {
-      await dependencies.clearJournal(host.id)
+      await dependencies.clearJournal(journal)
     }
     throw error
   }
-  await dependencies.clearJournal(host.id)
+  await dependencies.clearJournal(journal)
   return { host: updatedHost, bundle }
 }
 

@@ -415,6 +415,74 @@ describe('useHostClient', () => {
     harness.unmount()
   })
 
+  it('publishes lifecycle updates after cold-start priming races the host lookup', async () => {
+    let resolveLookup: ((hosts: HostProfile[]) => void) | null = null
+    const lookup = new Promise<HostProfile[]>((resolve) => {
+      resolveLookup = resolve
+    })
+    const initial = makeFakeClient('connected')
+    const fresh = makeFakeClient('connected')
+    fresh.sendRequest = vi.fn(async () => ({ id: 'health', ok: true, result: {} }))
+    loadHostsMock.mockReturnValue(lookup)
+    connectMock.mockReturnValueOnce(initial).mockReturnValueOnce(fresh)
+
+    const harness = await renderHarness(HOST.id)
+    harness.primeHosts([HOST])
+    await act(async () => {
+      resolveLookup?.([HOST])
+      await lookup
+    })
+    const relayHostId = 'AbCdEf0123_-xyZ9'
+    const upgradedHost: HostProfile = {
+      ...HOST,
+      endpoints: [
+        { id: 'direct-primary', kind: 'lan', url: HOST.endpoint },
+        { id: 'relay-primary', kind: 'relay', url: 'wss://relay.invalid/v1/connect/host' }
+      ],
+      relayHostId,
+      relay: {
+        v: 1,
+        directorUrl: 'https://relay.invalid',
+        cellUrl: 'https://relay.invalid',
+        assignmentEpoch: 1,
+        relayHostId,
+        e2eeFraming: 2
+      }
+    }
+    const publishHostUpdate = connectMock.mock.calls[0]?.[2] as
+      | ((host: HostProfile) => void)
+      | undefined
+    publishHostUpdate?.(upgradedHost)
+
+    await act(async () => harness.forceReconnect(HOST.id))
+
+    expect(connectMock.mock.calls[1]?.[0]).toEqual(upgradedHost)
+    harness.unmount()
+  })
+
+  it('ignores a cancelled lookup failure after its replacement connects', async () => {
+    let rejectLookup: ((error: Error) => void) | null = null
+    const lookup = new Promise<HostProfile[]>((_resolve, reject) => {
+      rejectLookup = reject
+    })
+    const fresh = makeFakeClient('connected')
+    fresh.sendRequest = vi.fn(async () => ({ id: 'health', ok: true, result: {} }))
+    loadHostsMock.mockReturnValue(lookup)
+    connectMock.mockReturnValue(fresh)
+
+    const harness = await renderHarness(HOST.id)
+    harness.primeHosts([HOST])
+    await act(async () => harness.forceReconnect(HOST.id))
+    await act(async () => {
+      rejectLookup?.(new Error('keychain locked'))
+      await lookup.catch(() => undefined)
+    })
+
+    expect(harness.hook.client).toBe(fresh)
+    expect(harness.hook.state).toBe('connected')
+    harness.unmount()
+  })
+
   it('coalesces overlapping Force Reconnect calls for one host', async () => {
     const stale = makeFakeClient('connected')
     const fresh = makeFakeClient('connecting')

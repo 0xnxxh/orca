@@ -45,6 +45,10 @@ export class HostReconnectProfileCache {
     }
   }
 
+  resolveLoadedOpenProfile(host: HostProfile): { host: HostProfile; version: number } {
+    return { host: this.get(host.id) ?? host, version: this.version(host.id) }
+  }
+
   get(hostId: string): HostProfile | undefined {
     return this.profiles.get(hostId)?.host
   }

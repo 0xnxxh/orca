@@ -282,6 +282,49 @@ describe('host-store list mutations', () => {
     expect(storedOverlayRaw).toBeNull()
   })
 
+  it('validates only the target credential during relay publication', async () => {
+    secureStoreMock.getItemAsync.mockImplementation(async (key: string) =>
+      key.endsWith(HOST_ONE.id) ? 'token-1' : null
+    )
+    const relayHostId = 'AbCdEf0123_-xyZ9'
+
+    await saveExistingHostRelayRouting({
+      ...HOST_ONE,
+      deviceToken: 'token-1',
+      endpoints: [
+        { id: 'direct-primary', kind: 'lan', url: HOST_ONE.endpoint },
+        { id: 'relay-primary', kind: 'relay', url: 'wss://relay.onorca.dev/v1/connect/host' }
+      ],
+      relayHostId,
+      relay: {
+        v: 1,
+        directorUrl: 'https://relay.onorca.dev',
+        cellUrl: 'https://relay.onorca.dev',
+        assignmentEpoch: 1,
+        relayHostId,
+        e2eeFraming: 2
+      }
+    })
+
+    expect(secureStoreMock.getItemAsync).toHaveBeenCalledOnce()
+    expect(secureStoreMock.getItemAsync.mock.calls[0]?.[0]).toContain(HOST_ONE.id)
+    expect(JSON.parse(storedOverlayRaw ?? '[]')).toHaveLength(1)
+  })
+
+  it('does not infer host removal from unreadable identity storage', async () => {
+    storedHostsRaw = '{'
+
+    const error = await saveExistingHostRelayRouting({
+      ...HOST_ONE,
+      deviceToken: 'token-1'
+    }).catch((reason: unknown) => reason)
+
+    expect(error).toMatchObject({ message: 'host list storage unreadable' })
+    expect(error).not.toBeInstanceOf(MobileRelayUpgradeHostRemovedError)
+    expect(storedOverlayRaw).toBeNull()
+    expect(secureStoreMock.getItemAsync).not.toHaveBeenCalled()
+  })
+
   it('publishes relay routing without overwriting a newer endpoint edit', async () => {
     const relayHostId = 'AbCdEf0123_-xyZ9'
     await updateHostNameAndEndpoint(HOST_ONE.id, { endpoint: 'ws://127.0.0.1:9' })
@@ -355,6 +398,7 @@ describe('host-store list mutations', () => {
 
   it('rejects relay routing from a lifecycle superseded by same-host re-pairing', async () => {
     await saveHost({ ...HOST_ONE, deviceToken: 'replacement-token' })
+    secureStoreMock.getItemAsync.mockResolvedValueOnce('replacement-token')
     const relayHostId = 'AbCdEf0123_-xyZ9'
 
     await expect(
