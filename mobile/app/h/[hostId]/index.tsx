@@ -65,7 +65,6 @@ import { BottomDrawer } from '../../../src/components/BottomDrawer'
 import { useHostProtocolGates } from '../../../src/components/HostProtocolGate'
 import { AuthFailedBanner } from '../../../src/components/AuthFailedBanner'
 import { MobileSearchField } from '../../../src/components/MobileSearchField'
-import { WorkspaceDetailPlaceholder } from '../../../src/components/WorkspaceDetailPlaceholder'
 import { getCachedWorktrees, setCachedWorktrees } from '../../../src/cache/worktree-cache'
 import { setCachedRepos } from '../../../src/cache/repo-cache'
 import { colors, radii, spacing, typography } from '../../../src/theme/mobile-theme'
@@ -102,6 +101,7 @@ import {
 import type { RepoSummary } from '../../../src/worktree/host-worktree-rpc-types'
 import type { WorkspaceStatusDefinition } from '../../../../src/shared/types'
 import { DEFAULT_MOBILE_WORKSPACE_STATUSES } from '../../../src/worktree/mobile-workspace-statuses'
+import { MobileTaskHostRoute } from '../../../src/tasks/MobileTaskHostRoute'
 
 function isErrorVerdict(v: ConnectionVerdict): boolean {
   return v.kind === 'warning' || v.kind === 'unreachable' || v.kind === 'auth-failed'
@@ -1396,11 +1396,7 @@ export function HostScreen({
 
 // On wide layouts the sidebar hosts the list, so this route is just the empty detail pane.
 export default function HostWorktreeRoute() {
-  const { isWideLayout } = useResponsiveLayout()
-  if (isWideLayout) {
-    return <WorkspaceDetailPlaceholder />
-  }
-  return <HostScreen />
+  return <MobileTaskHostRoute hostScreen={HostScreen} />
 }
 
 function ListSeparator() {

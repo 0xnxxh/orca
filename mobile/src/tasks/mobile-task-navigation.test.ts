@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mobileTasksRoute, navigateToMobileTasks } from './mobile-task-navigation'
-
-afterEach(() => {
-  vi.unstubAllGlobals()
-})
+import { describe, expect, it, vi } from 'vitest'
+import {
+  mobileTasksHostRoute,
+  mobileTasksRoute,
+  mobileTasksRouteFromHostAction,
+  navigateToMobileTasks
+} from './mobile-task-navigation'
 
 describe('mobileTasksRoute', () => {
   it('builds a concrete encoded host route', () => {
@@ -11,20 +12,18 @@ describe('mobileTasksRoute', () => {
     expect(mobileTasksRoute('host/1', 'linear')).toBe('/h/host%2F1/tasks?taskSource=linear')
   })
 
-  it('mounts a cold host navigator before replacing its index with Tasks', () => {
-    let nextFrame: FrameRequestCallback | null = null
+  it('routes through the host index so its nested navigator owns the redirect', () => {
     const push = vi.fn()
-    const replace = vi.fn()
-    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
-      nextFrame = callback
-      return 1
-    })
 
-    navigateToMobileTasks({ push, replace }, 'host/1', 'github')
-    expect(push).toHaveBeenCalledWith('/h/host%2F1')
-    expect(replace).not.toHaveBeenCalled()
+    navigateToMobileTasks({ push }, 'host/1', 'github')
+    expect(push).toHaveBeenCalledWith(mobileTasksHostRoute('host/1', 'github'))
+  })
 
-    nextFrame?.(0)
-    expect(replace).toHaveBeenCalledWith(mobileTasksRoute('host/1', 'github'))
+  it('resolves the host-owned Tasks action after the nested navigator mounts', () => {
+    expect(mobileTasksRouteFromHostAction('host/1', 'tasks', 'linear')).toBe(
+      '/h/host%2F1/tasks?taskSource=linear'
+    )
+    expect(mobileTasksRouteFromHostAction('host-1', 'newWorktree', 'github')).toBeNull()
+    expect(mobileTasksRouteFromHostAction(undefined, 'tasks', 'github')).toBeNull()
   })
 })

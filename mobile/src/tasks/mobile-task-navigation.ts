@@ -4,9 +4,12 @@ export type MobileTasksRoute =
   | `/h/${string}/tasks`
   | `/h/${string}/tasks?taskSource=${TaskProvider}`
 
+export type MobileTasksHostRoute =
+  | `/h/${string}?action=tasks`
+  | `/h/${string}?action=tasks&taskSource=${TaskProvider}`
+
 type MobileTasksRouter = {
-  push: (href: `/h/${string}`) => void
-  replace: (href: MobileTasksRoute) => void
+  push: (href: MobileTasksHostRoute) => void
 }
 
 export function mobileTasksRoute(hostId: string, provider?: TaskProvider): MobileTasksRoute {
@@ -15,14 +18,33 @@ export function mobileTasksRoute(hostId: string, provider?: TaskProvider): Mobil
   return provider ? `${pathname}?taskSource=${provider}` : pathname
 }
 
+export function mobileTasksHostRoute(
+  hostId: string,
+  provider?: TaskProvider
+): MobileTasksHostRoute {
+  const pathname = `/h/${encodeURIComponent(hostId)}?action=tasks` as const
+  return provider ? `${pathname}&taskSource=${provider}` : pathname
+}
+
+export function mobileTasksRouteFromHostAction(
+  hostId: string | undefined,
+  action: string | undefined,
+  taskSource: string | undefined
+): MobileTasksRoute | null {
+  if (!hostId || action !== 'tasks') {
+    return null
+  }
+  const provider =
+    taskSource === 'github' || taskSource === 'gitlab' || taskSource === 'linear'
+      ? taskSource
+      : undefined
+  return mobileTasksRoute(hostId, provider)
+}
+
 export function navigateToMobileTasks(
   router: MobileTasksRouter,
   hostId: string,
   provider?: TaskProvider
 ): void {
-  // Why: a cold nested host navigator resolves a deep push to its index route.
-  router.push(`/h/${encodeURIComponent(hostId)}`)
-  requestAnimationFrame(() => {
-    router.replace(mobileTasksRoute(hostId, provider))
-  })
+  router.push(mobileTasksHostRoute(hostId, provider))
 }
