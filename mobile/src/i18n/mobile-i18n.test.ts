@@ -65,4 +65,17 @@ describe('mobile i18n', () => {
       'GitLab todo'
     ])
   })
+
+  it.each([
+    ['es', ['Sin comprobaciones', 'En staging', 'Nota de revisión']],
+    ['ja', ['チェックなし', 'ステージ済み', 'レビューメモ']],
+    ['ko', ['체크 없음', '스테이징됨', '리뷰 노트']],
+    ['zh', ['没有检查项', '已暂存', '审查备注']]
+  ] satisfies [MobileUiLocale, string[]][])(
+    'preserves source-control glossary terms in %s',
+    async (locale, expected) => {
+      await mobileI18n.changeLanguage(locale)
+      expect([t('m.hCKjn9A'), t('m.senOKG4'), t('m.2lwuEDc')]).toEqual(expected)
+    }
+  )
 })
