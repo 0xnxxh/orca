@@ -1591,7 +1591,13 @@ function normalizeSshRemotePtyLease(value: unknown): SshRemotePtyLease | null {
   }
 }
 
-function normalizeSshPtyConsumerRecovery(value: unknown): SshPtyConsumerRecovery | null {
+const SSH_PTY_OWNER_LEASE_MAX_LENGTH = 512
+const ENCRYPTED_SSH_PTY_OWNER_LEASE_MAX_LENGTH = 4096
+
+function normalizeSshPtyConsumerRecovery(
+  value: unknown,
+  ownerLeaseMaxLength = SSH_PTY_OWNER_LEASE_MAX_LENGTH
+): SshPtyConsumerRecovery | null {
   if (!value || typeof value !== 'object') {
     return null
   }
@@ -1616,7 +1622,7 @@ function normalizeSshPtyConsumerRecovery(value: unknown): SshPtyConsumerRecovery
     ownerGeneration <= 0 ||
     typeof raw.ownerLease !== 'string' ||
     raw.ownerLease.length === 0 ||
-    raw.ownerLease.length > 4096
+    raw.ownerLease.length > ownerLeaseMaxLength
   ) {
     return null
   }
@@ -2985,9 +2991,13 @@ export class Store {
         parsed.sshPtyConsumerRecoveries = (
           Array.isArray(parsed.sshPtyConsumerRecoveries) ? parsed.sshPtyConsumerRecoveries : []
         )
-          .map(normalizeSshPtyConsumerRecovery)
+          .map((record) =>
+            normalizeSshPtyConsumerRecovery(record, ENCRYPTED_SSH_PTY_OWNER_LEASE_MAX_LENGTH)
+          )
           .filter((record): record is SshPtyConsumerRecovery => record !== null)
           .map((record) => ({ ...record, ownerLease: decrypt(record.ownerLease) }))
+          .map((record) => normalizeSshPtyConsumerRecovery(record))
+          .filter((record): record is SshPtyConsumerRecovery => record !== null)
 
         // Merge with defaults in case new fields were added
         const homeDir = homedir()
@@ -6711,7 +6721,7 @@ export class Store {
       ...recoveries.filter((candidate) => candidate.targetId !== normalized.targetId),
       normalized
     ]
-    this.flush()
+    this.flushSshPtyConsumerRecovery()
   }
 
   removeSshPtyConsumerRecovery(targetId: string): void {
@@ -6721,7 +6731,16 @@ export class Store {
       return
     }
     this.state.sshPtyConsumerRecoveries = next
-    this.flush()
+    this.flushSshPtyConsumerRecovery()
+  }
+
+  private flushSshPtyConsumerRecovery(): void {
+    try {
+      // Why: ownership must be durable before relay setup continues, but active-view and GitHub sidecars are unrelated startup work.
+      this.flushOrThrow()
+    } catch (err) {
+      console.error('[persistence] Failed to flush SSH PTY consumer recovery:', err)
+    }
   }
 
   // ── SSH Remote PTY Leases ──────────────────────────────────────────

@@ -6799,6 +6799,7 @@ describe('Store', () => {
 
   it('durably encrypts SSH PTY consumer ownership for process restart recovery', async () => {
     const store = await createStore()
+    store.setGitHubCache({ pr: { 'o/r#1': { fetchedAt: 1 } as never }, issue: {} })
     store.upsertSshPtyConsumerRecovery({
       targetId: 'ssh-1',
       clientInstanceId: 'client-1',
@@ -6813,6 +6814,7 @@ describe('Store', () => {
       sshPtyConsumerRecoveries: { ownerLease: string }[]
     }
     expect(persisted.sshPtyConsumerRecoveries[0]?.ownerLease).not.toBe('secret-owner-lease')
+    expect(existsSync(join(testState.dir, 'orca-github-cache.json'))).toBe(false)
 
     const reloaded = await createStore()
     expect(reloaded.getSshPtyConsumerRecovery('ssh-1')).toEqual({
@@ -6824,6 +6826,27 @@ describe('Store', () => {
       ownerLease: 'secret-owner-lease',
       outputFlowControl: { version: 1, windowSu: 256 * 1024 }
     })
+  })
+
+  it('drops decrypted SSH PTY owner leases that exceed the relay protocol bound', async () => {
+    const oversizedLease = 'x'.repeat(513)
+    writeDataFile({
+      ...getDefaultPersistedState(testState.dir),
+      sshPtyConsumerRecoveries: [
+        {
+          targetId: 'ssh-1',
+          clientInstanceId: 'client-1',
+          serverBuildId: 'relay-build-1',
+          clientGeneration: 3,
+          ownerGeneration: 5,
+          ownerLease: Buffer.from(`encrypted:${oversizedLease}`, 'utf-8').toString('base64')
+        }
+      ]
+    })
+
+    const store = await createStore()
+
+    expect(store.getSshPtyConsumerRecovery('ssh-1')).toBeNull()
   })
 
   it('removes persisted SSH PTY consumer ownership with its target', async () => {
