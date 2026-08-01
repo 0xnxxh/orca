@@ -7,18 +7,19 @@ for finding E of the P1 review; line numbers are as of that change.
 ## What decides the grace window
 
 `startGrace` (`src/relay/relay.ts:1140`) samples
-`ptyHandler.configuredGraceTimeMs` and picks one branch, always passing an
-explicit `timeoutMs`:
+`ptyHandler.configuredGraceTimeMs` and takes the **first** branch below that
+matches (`decideRelayGrace`, `src/relay/relay-grace-branch.ts`), always passing
+an explicit `timeoutMs`. Listed in that precedence order:
 
+- `shutdown-deferred` — a refused kill left the PTY pooled, so the idle branch is
+  unreachable; this branch supplies its own bound or a `grace=0` default would
+  arm no retry at all.
 - `startup-empty-detached` — a detached relay that never accepted a client, so
   it has no PTY state to preserve. Capped at `EMPTY_DETACHED_STARTUP_GRACE_MS`.
 - `idle-no-ptys` — zero PTYs *and* zero pending creations
   (`isRelayIdle`, `src/relay/relay.ts:1175`) under the unlimited default only.
   Capped at `IDLE_RELAY_GRACE_MS` (`src/relay/relay.ts:74`, 15 min, overridable
   via `ORCA_RELAY_IDLE_GRACE_MS`).
-- `shutdown-deferred` — a refused kill left the PTY pooled, so the idle branch is
-  unreachable; this branch supplies its own bound or a `grace=0` default would
-  arm no retry at all.
 - `configured` — the configured value verbatim, never clamped.
 
 The zero-only gate is load-bearing: the idle cap bounds *only* the unlimited
