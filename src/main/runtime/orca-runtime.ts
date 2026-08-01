@@ -8090,9 +8090,12 @@ export class OrcaRuntimeService {
       // their tab id, so focusing the renderer would silently no-op.
       // Phone-local activation also needs this path for inactive restored tabs:
       // desktop focus is intentionally suppressed, but the PTY still must exist.
+      // PTY inventory proves liveness, not attachment to this runtime generation.
       const shouldMaterializePendingTerminal =
         publicTab?.type === 'terminal' &&
-        publicTab.status !== 'ready' &&
+        (publicTab.status !== 'ready' ||
+          (this.hasServeOrSshOwnedBinding(tab) &&
+            !this.hasLiveRuntimeSessionOwnedPtyBinding(worktreeId, tab))) &&
         (!targetsHost ||
           !this.notifier?.focusTerminal ||
           this.shouldMaterializeHeadlessMobileSessionTab(snapshot!, tab))

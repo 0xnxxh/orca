@@ -28259,7 +28259,88 @@ describe('OrcaRuntimeService', () => {
     })
   })
 
+  it('reattaches an inventory-restored serve terminal once before accepting input', async () => {
+    const ptyId = 'serve-restarted-git-pty'
+    const incarnationId = '91919191-9191-4919-8919-919191919191'
+    const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal({
+        tabsByWorktree: {
+          [TEST_WORKTREE_ID]: [
+            {
+              id: 'host-tab',
+              ptyId,
+              worktreeId: TEST_WORKTREE_ID,
+              title: 'Restored Git Terminal',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        terminalLayoutsByTabId: {
+          'host-tab': makeHeadlessTerminalLayout({ [HEADLESS_LEAF_ID]: ptyId })
+        },
+        terminalPtyIncarnationsByPaneKey: {
+          [makePaneKey('host-tab', HEADLESS_LEAF_ID)]: incarnationId
+        }
+      })
+    )
+    let attached = false
+    const spawn = vi.fn(async () => {
+      attached = true
+      return { id: ptyId, incarnationId }
+    })
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    runtime.setPtyController({
+      spawn,
+      write: () => attached,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      listProcesses: async () => [
+        {
+          id: ptyId,
+          cwd: TEST_WORKTREE_PATH,
+          title: 'Restored Git Terminal',
+          worktreeId: TEST_WORKTREE_ID,
+          terminalHandle: 'term_restarted_git',
+          incarnationId
+        }
+      ]
+    })
+    runtime.syncWindowGraph(0, { tabs: [], leaves: [] })
+
+    const listed = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+    const listedTab = listed.tabs[0]
+    expect(listedTab).toMatchObject({ status: 'ready', terminal: 'term_restarted_git' })
+    await expect(
+      runtime.sendTerminal(listedTab?.type === 'terminal' ? listedTab.terminal! : 'missing', {
+        text: 'before attach'
+      })
+    ).rejects.toThrow('terminal_not_writable')
+
+    const activated = await runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab')
+    const activatedTab = activated.tabs[0]
+    await expect(
+      runtime.sendTerminal(activatedTab?.type === 'terminal' ? activatedTab.terminal! : 'missing', {
+        text: 'after attach'
+      })
+    ).resolves.toMatchObject({ accepted: true, bytesWritten: 12 })
+    await runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab')
+
+    expect(spawn).toHaveBeenCalledOnce()
+    expect(spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: ptyId,
+        tabId: 'host-tab',
+        leafId: HEADLESS_LEAF_ID,
+        worktreeId: TEST_WORKTREE_ID
+      })
+    )
+  })
+
   it('reattaches hydrated SSH headless terminals with the persisted relay identity', async () => {
+    const incarnationId = '92929292-9292-4929-8929-929292929292'
     const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(
       makeWorkspaceSessionWithHeadlessTerminal({
         tabsByWorktree: {
@@ -28280,6 +28361,9 @@ describe('OrcaRuntimeService', () => {
           'host-tab': makeHeadlessTerminalLayout({
             [HEADLESS_LEAF_ID]: 'ssh:ssh-1@@relay-pty'
           })
+        },
+        terminalPtyIncarnationsByPaneKey: {
+          [makePaneKey('host-tab', HEADLESS_LEAF_ID)]: incarnationId
         }
       })
     )
@@ -28296,12 +28380,23 @@ describe('OrcaRuntimeService', () => {
       write: () => true,
       kill: () => true,
       getForegroundProcess: async () => null,
-      listProcesses: async () => []
+      listProcesses: async () => [
+        {
+          id: 'ssh:ssh-1@@relay-pty',
+          cwd: TEST_WORKTREE_PATH,
+          title: 'Remote Terminal',
+          worktreeId: TEST_WORKTREE_ID,
+          terminalHandle: 'term_restarted_ssh',
+          incarnationId
+        }
+      ]
     })
     runtime.syncWindowGraph(0, { tabs: [], leaves: [] })
 
     await runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab')
+    await runtime.activateMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab')
 
+    expect(spawn).toHaveBeenCalledOnce()
     expect(spawn).toHaveBeenCalledWith(
       expect.objectContaining({
         connectionId: 'ssh-1',
