@@ -25,9 +25,7 @@ import type { RpcClientContextValue } from './rpc-client-context-contract'
 import type { MobileConnectionPath } from './stable-logical-rpc-client'
 import type { ConnectionLogSink, ConnectionState, HostProfile } from './types'
 
-type StoreEntry = HostReconnectEntry & {
-  state: ConnectionState
-}
+type StoreEntry = HostReconnectEntry & { state: ConnectionState }
 
 const Ctx = createContext<RpcClientContextValue | null>(null)
 
@@ -74,7 +72,9 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
 
   const openEntry = useCallback(
     async (hostId: string, requestedProfile?: HostOpenProfile): Promise<StoreEntry | null> => {
-      const profileVersion = requestedProfile?.version ?? primedHostsRef.current.version(hostId)
+      const currentRevision = getHostListLoadRevision()
+      const profileVersion =
+        requestedProfile?.version ?? primedHostsRef.current.version(hostId, currentRevision)
       const existing = pendingOpensRef.current.getActivePromise(hostId, profileVersion)
       if (existing) {
         await existing
@@ -87,7 +87,8 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
       const pendingOpen = pendingOpensRef.current.register(hostId, profileVersion, promise)
 
       try {
-        const cachedHost = requestedProfile?.host ?? primedHostsRef.current.get(hostId)
+        const cachedHost =
+          requestedProfile?.host ?? primedHostsRef.current.get(hostId, currentRevision)
         const profile = cachedHost
           ? { host: cachedHost, version: requestedProfile?.version ?? profileVersion }
           : await loadHostClientOpenProfile({
@@ -103,10 +104,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
         if (!profile || pendingOpen.cancelled) {
           return null
         }
-        const resolvedProfile = cachedHost
-          ? profile
-          : primedHostsRef.current.resolveLoadedOpenProfile(profile.host)
-        pendingOpen.profileVersion = resolvedProfile.version
+        pendingOpen.profileVersion = profile.version
 
         // Re-check after any await — another acquire() may have completed.
         const after = storeRef.current.get(hostId)
@@ -118,9 +116,9 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
         const onLog: ConnectionLogSink = (entry) => connectionLogStore.append(hostId, entry)
         try {
           client = openHostLogicalClient(
-            resolvedProfile.host,
+            profile.host,
             onLog,
-            primedHostsRef.current.publisher(hostId, resolvedProfile.version)
+            primedHostsRef.current.publisher(hostId, profile.version, getHostListLoadRevision)
           )
         } catch {
           // Why: openHostLogicalClient can throw synchronously (bad public key / invalid URL); notify so the UI leaves 'connecting'.
@@ -158,7 +156,7 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
   const acquire = useCallback(
     (hostId: string, host?: HostProfile): RpcClient | null => {
       if (host) {
-        primedHostsRef.current.prime(host)
+        primedHostsRef.current.prime(host, getHostListLoadRevision())
       }
       const existing = storeRef.current.get(hostId)
       if (existing) {
@@ -192,7 +190,11 @@ export function RpcClientProvider({ children }: { children: ReactNode }) {
 
   const forceReconnect = useCallback(
     (hostId: string, requestedHost?: HostProfile): Promise<void> => {
-      const profile = primedHostsRef.current.reconnectProfile(hostId, requestedHost)
+      const profile = primedHostsRef.current.reconnectProfile(
+        hostId,
+        getHostListLoadRevision(),
+        requestedHost
+      )
       return forceReconnectCoordinatorRef.current.run({
         hostId,
         profileVersion: profile.version,

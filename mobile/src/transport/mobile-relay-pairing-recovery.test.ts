@@ -107,6 +107,7 @@ function dependencies(args: {
     resolveInviteDirector: vi.fn(async () => {
       throw new Error('director not needed')
     }),
+    onHostPublished: vi.fn(),
     now: () => now,
     platform: 'ios'
   }
@@ -140,6 +141,9 @@ describe('mobile relay pairing recovery', () => {
     )
     expect(deps.writeCredentialBundle).toHaveBeenCalledOnce()
     expect(deps.saveHost).toHaveBeenCalledOnce()
+    expect(deps.onHostPublished).toHaveBeenCalledWith(
+      expect.objectContaining({ id: saved.metadata.host.id })
+    )
     expect(deps.clearJournal).toHaveBeenCalledOnce()
   })
 

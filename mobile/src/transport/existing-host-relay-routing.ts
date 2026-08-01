@@ -4,6 +4,7 @@ import { readHostDeviceToken } from './host-device-token-store'
 import {
   getHostEndpointPublicationLifecycle,
   getHostProfilePublicationRevision,
+  getPublishedHostIdentity,
   serializeHostProfilePublication,
   type HostEndpointPublicationLifecycle
 } from './host-profile-publication'
@@ -24,17 +25,15 @@ export async function saveExistingHostRelayRouting(
   await requireCurrentHostCredential(validated)
   await serializeHostProfilePublication(validated.id, async () => {
     requireCurrentEndpointGeneration(validated.id, endpointLifecycle)
-    await requireCurrentHostDeviceToken(validated)
-    requireCurrentEndpointGeneration(validated.id, endpointLifecycle)
     const existing = await requireCurrentHostMetadata(validated)
-    requireCurrentPublication(validated.id, endpointLifecycle)
+    requireCurrentPublication(validated, endpointLifecycle)
     const { endpoints, relayHostId, relay } = validated
     if (!endpoints || !relayHostId || !relay) {
       throw new Error('mobile relay upgrade routing metadata missing')
     }
     // Why: serialize the credential before its routing overlay so neither side can cross a re-pair.
     await beforePublish?.()
-    requireCurrentPublication(validated.id, endpointLifecycle)
+    requireCurrentPublication(validated, endpointLifecycle)
     await saveMobileRelayHostOverlay({
       v: 2,
       hostId: validated.id,
@@ -60,13 +59,11 @@ export async function writeExistingHostRelayCredentialBundle(
   await requireCurrentHostCredential(validated)
   await serializeHostProfilePublication(validated.id, async () => {
     requireCurrentEndpointGeneration(validated.id, endpointLifecycle)
-    await requireCurrentHostDeviceToken(validated)
-    requireCurrentEndpointGeneration(validated.id, endpointLifecycle)
     await requireCurrentHostMetadata(validated)
     if (bundle.hostId !== validated.id || bundle.deviceToken !== validated.deviceToken) {
       throw new MobileRelayUpgradeHostSupersededError('mobile relay credential identity mismatch')
     }
-    requireCurrentPublication(validated.id, endpointLifecycle)
+    requireCurrentPublication(validated, endpointLifecycle)
     await writeBundle(bundle)
   })
 }
@@ -105,13 +102,21 @@ function requireMatchingHostMetadata(
 }
 
 function requireCurrentPublication(
-  hostId: string,
+  host: HostProfile,
   endpointLifecycle: HostEndpointPublicationLifecycle
 ): void {
   if (
-    getHostProfilePublicationRevision(hostId) !== endpointLifecycle.profileRevision ||
-    getHostEndpointPublicationLifecycle(hostId).generation !== endpointLifecycle.generation
+    getHostProfilePublicationRevision(host.id) !== endpointLifecycle.profileRevision ||
+    getHostEndpointPublicationLifecycle(host.id).generation !== endpointLifecycle.generation
   ) {
+    const publishedIdentity = getPublishedHostIdentity(host.id)
+    if (
+      publishedIdentity &&
+      (publishedIdentity.deviceToken !== host.deviceToken ||
+        publishedIdentity.publicKeyB64 !== host.publicKeyB64)
+    ) {
+      throw new MobileRelayUpgradeHostSupersededError('mobile relay upgrade host was re-paired')
+    }
     throw new MobileRelayUpgradeLifecycleRetiredError('mobile relay endpoint lifecycle was retired')
   }
 }

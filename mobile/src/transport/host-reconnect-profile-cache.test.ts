@@ -30,11 +30,21 @@ describe('HostReconnectProfileCache', () => {
         e2eeFraming: 2
       }
     }
-    cache.prime(HOST)
-    const relayVersion = cache.prime(relayHost)
+    cache.prime(HOST, 4)
+    const relayVersion = cache.prime(relayHost, 5)
 
     expect(cache.primeLoaded(HOST, 4, 5)).toBeNull()
-    expect(cache.get(HOST.id)).toEqual(relayHost)
-    expect(cache.version(HOST.id)).toBe(relayVersion)
+    expect(cache.get(HOST.id, 5)).toEqual(relayHost)
+    expect(cache.version(HOST.id, 5)).toBe(relayVersion)
+  })
+
+  it('invalidates a reconnect profile after its durable source revision changes', () => {
+    const cache = new HostReconnectProfileCache()
+    const cachedVersion = cache.prime(HOST, 4)
+
+    expect(cache.reconnectProfile(HOST.id, 5)).toEqual({
+      host: undefined,
+      version: cachedVersion + 1
+    })
   })
 })

@@ -40,6 +40,7 @@ type RecoveryDependencies = {
   saveHost: typeof saveHost
   connectRelay: typeof connectMobileRelayForPairing
   resolveInviteDirector: typeof resolvePairingInviteThroughDirector
+  onHostPublished: (host: HostProfile) => void
   now: () => number
   platform: string
 }
@@ -54,6 +55,7 @@ const defaultDependencies: RecoveryDependencies = {
   saveHost,
   connectRelay: connectMobileRelayForPairing,
   resolveInviteDirector: resolvePairingInviteThroughDirector,
+  onHostPublished: () => {},
   now: Date.now,
   platform: Platform.OS
 }
@@ -253,6 +255,7 @@ async function publishCommitted(
       ),
     dependencies.saveHost
   )
+  dependencies.onHostPublished(host)
   await dependencies.clearJournal(journal.metadata.journalId)
 }
 

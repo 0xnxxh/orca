@@ -71,7 +71,6 @@ function dependencies(journal: MobileRelayDirectUpgradeJournal | null = null) {
       return true
     }),
     writeBundle: vi.fn(async () => {}),
-    deleteBundle: vi.fn(async () => {}),
     saveHost: vi.fn(async (_host: HostProfile, beforePublish?: () => Promise<void>) => {
       await beforePublish?.()
     }),
@@ -150,7 +149,6 @@ describe('existing direct pairing relay upgrade', () => {
       upgradeDirectMobileRelay({ client, host, dependencies: deps })
     ).rejects.toBeInstanceOf(MobileRelayUpgradeHostSupersededError)
     expect(deps.writeBundle).not.toHaveBeenCalled()
-    expect(deps.deleteBundle).not.toHaveBeenCalled()
     expect(deps.clearJournal).toHaveBeenCalledWith(journal)
   })
 
@@ -225,7 +223,6 @@ describe('existing direct pairing relay upgrade', () => {
       'keychain locked'
     )
     expect(deps.writeBundle).not.toHaveBeenCalled()
-    expect(deps.deleteBundle).not.toHaveBeenCalled()
     expect(deps.clearJournal).not.toHaveBeenCalled()
   })
 
@@ -278,7 +275,7 @@ describe('existing direct pairing relay upgrade', () => {
     expect(deps.clearJournal).not.toHaveBeenCalled()
   })
 
-  it('cleans newly installed secrets instead of resurrecting a removed host', async () => {
+  it('does not delete a replacement bundle when removal wins before credential publication', async () => {
     const journal = createMobileRelayDirectUpgradeJournal(host.id, (length) =>
       new Uint8Array(length).fill(5)
     )
@@ -298,7 +295,7 @@ describe('existing direct pairing relay upgrade', () => {
     await expect(
       upgradeDirectMobileRelay({ client, host, dependencies: deps })
     ).rejects.toBeInstanceOf(MobileRelayUpgradeHostRemovedError)
-    expect(deps.deleteBundle).toHaveBeenCalledWith(host.id)
+    expect(deps.writeBundle).not.toHaveBeenCalled()
     expect(deps.clearJournal).toHaveBeenCalledWith(journal)
   })
 })

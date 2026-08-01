@@ -3,6 +3,7 @@ import type { HostProfile } from './types'
 const pendingByHost = new Map<string, Promise<void>>()
 const revisionByHost = new Map<string, number>()
 const endpointGenerationByHost = new Map<string, number>()
+const publishedIdentityByHost = new Map<string, Pick<HostProfile, 'deviceToken' | 'publicKeyB64'>>()
 
 export type HostEndpointPublicationLifecycle = Readonly<{
   generation: number
@@ -11,6 +12,12 @@ export type HostEndpointPublicationLifecycle = Readonly<{
 
 export function getHostProfilePublicationRevision(hostId: string): number {
   return revisionByHost.get(hostId) ?? 0
+}
+
+export function getPublishedHostIdentity(
+  hostId: string
+): Pick<HostProfile, 'deviceToken' | 'publicKeyB64'> | undefined {
+  return publishedIdentityByHost.get(hostId)
 }
 
 export function beginHostEndpointPublicationLifecycle(
@@ -54,9 +61,13 @@ export function publishHostProfileTransaction(
   beforeHostSave: (() => Promise<void>) | null,
   saveHost: (host: HostProfile) => Promise<void>
 ): Promise<void> {
-  revisionByHost.set(host.id, getHostProfilePublicationRevision(host.id) + 1)
   return serializeHostProfilePublication(host.id, async () => {
     await beforeHostSave?.()
     await saveHost(host)
+    revisionByHost.set(host.id, getHostProfilePublicationRevision(host.id) + 1)
+    publishedIdentityByHost.set(host.id, {
+      deviceToken: host.deviceToken,
+      publicKeyB64: host.publicKeyB64
+    })
   })
 }

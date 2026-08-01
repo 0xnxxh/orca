@@ -3,6 +3,7 @@ import type { HostProfile } from './types'
 type CachedHostProfile = {
   host: HostProfile
   version: number
+  sourceRevision: number
 }
 
 export type HostOpenProfile = {
@@ -14,28 +15,35 @@ export class HostReconnectProfileCache {
   private readonly profiles = new Map<string, CachedHostProfile>()
   private readonly latestVersions = new Map<string, number>()
 
-  prime(host: HostProfile): number {
-    const current = this.profiles.get(host.id)
+  prime(host: HostProfile, sourceRevision: number): number {
+    const current = this.freshProfile(host.id, sourceRevision)
     const version =
       current && reconnectProfileMatches(current.host, host)
         ? current.version
         : (this.latestVersions.get(host.id) ?? 0) + 1
     this.latestVersions.set(host.id, version)
-    this.profiles.set(host.id, { host, version })
+    this.profiles.set(host.id, { host, version, sourceRevision })
     return version
   }
 
-  reconnectProfile(hostId: string, requestedHost?: HostProfile): HostOpenProfile {
+  reconnectProfile(
+    hostId: string,
+    currentRevision: number,
+    requestedHost?: HostProfile
+  ): HostOpenProfile {
     return requestedHost
-      ? { host: requestedHost, version: this.prime(requestedHost) }
-      : { host: this.get(hostId), version: this.version(hostId) }
+      ? { host: requestedHost, version: this.prime(requestedHost, currentRevision) }
+      : {
+          host: this.get(hostId, currentRevision),
+          version: this.version(hostId, currentRevision)
+        }
   }
 
   primeLoaded(host: HostProfile, sourceRevision: number, currentRevision: number): number | null {
     if (sourceRevision !== currentRevision) {
       return null
     }
-    return this.prime(host)
+    return this.prime(host, sourceRevision)
   }
 
   primeLoadedHosts(hosts: HostProfile[], sourceRevision: number, currentRevision: number): void {
@@ -44,40 +52,55 @@ export class HostReconnectProfileCache {
     }
   }
 
-  primeFromVersion(host: HostProfile, sourceVersion: number): number | null {
-    if (this.version(host.id) !== sourceVersion) {
+  primeFromVersion(
+    host: HostProfile,
+    sourceVersion: number,
+    sourceRevision: number
+  ): number | null {
+    if (this.version(host.id, sourceRevision) !== sourceVersion) {
       return null
     }
-    return this.prime(host)
+    return this.prime(host, sourceRevision)
   }
 
-  publisher(hostId: string, initialVersion: number): (host: HostProfile) => void {
+  publisher(
+    hostId: string,
+    initialVersion: number,
+    getCurrentRevision: () => number
+  ): (host: HostProfile) => void {
     let sourceVersion = initialVersion
     return (host) => {
       if (host.id !== hostId) {
         return
       }
-      const nextVersion = this.primeFromVersion(host, sourceVersion)
+      const nextVersion = this.primeFromVersion(host, sourceVersion, getCurrentRevision())
       if (nextVersion !== null) {
         sourceVersion = nextVersion
       }
     }
   }
 
-  resolveLoadedOpenProfile(host: HostProfile): { host: HostProfile; version: number } {
-    return { host: this.get(host.id) ?? host, version: this.version(host.id) }
+  get(hostId: string, currentRevision: number): HostProfile | undefined {
+    return this.freshProfile(hostId, currentRevision)?.host
   }
 
-  get(hostId: string): HostProfile | undefined {
-    return this.profiles.get(hostId)?.host
-  }
-
-  version(hostId: string): number {
+  version(hostId: string, currentRevision: number): number {
+    this.freshProfile(hostId, currentRevision)
     return this.latestVersions.get(hostId) ?? 0
   }
 
   delete(hostId: string): void {
     this.profiles.delete(hostId)
+  }
+
+  private freshProfile(hostId: string, currentRevision: number): CachedHostProfile | undefined {
+    const profile = this.profiles.get(hostId)
+    if (!profile || profile.sourceRevision === currentRevision) {
+      return profile
+    }
+    this.profiles.delete(hostId)
+    this.latestVersions.set(hostId, (this.latestVersions.get(hostId) ?? 0) + 1)
+    return undefined
   }
 }
 

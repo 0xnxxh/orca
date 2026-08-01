@@ -19,6 +19,7 @@ import {
 } from './existing-host-relay-routing'
 import {
   beginHostEndpointPublicationLifecycle,
+  getHostProfilePublicationRevision,
   publishHostProfileTransaction
 } from './host-profile-publication'
 
@@ -225,6 +226,25 @@ describe('existing host relay endpoint lifecycle publication', () => {
     await recovery
     await expect(staleWrite).rejects.toBeInstanceOf(MobileRelayUpgradeLifecycleRetiredError)
     expect(writeBundle).not.toHaveBeenCalled()
+  })
+
+  it('keeps the current endpoint lifecycle valid when profile publication fails', async () => {
+    const lifecycle = beginHostEndpointPublicationLifecycle(HOST.id)
+    const revision = getHostProfilePublicationRevision(HOST.id)
+    const failedPublication = publishHostProfileTransaction(
+      HOST,
+      async () => {
+        throw new Error('keychain locked')
+      },
+      async () => {}
+    )
+
+    await expect(failedPublication).rejects.toThrow('keychain locked')
+    expect(getHostProfilePublicationRevision(HOST.id)).toBe(revision)
+
+    const writeBundle = vi.fn(async () => {})
+    await writeExistingHostRelayCredentialBundle(HOST, credentialBundle(1), writeBundle, lifecycle)
+    expect(writeBundle).toHaveBeenCalledOnce()
   })
 })
 

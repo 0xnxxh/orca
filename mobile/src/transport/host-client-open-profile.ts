@@ -1,6 +1,6 @@
 import type { HostClientOpenTicket, HostClientOpenRegistry } from './host-client-open-registry'
 import type { HostReconnectProfileCache } from './host-reconnect-profile-cache'
-import { dropSharedHostListLoad } from './host-list-load-sharing'
+import { dropSharedHostListLoad, getHostListLoadRevision } from './host-list-load-sharing'
 import type { HostProfile } from './types'
 
 type HostClientOpenProfileOptions = {
@@ -23,21 +23,32 @@ export async function loadHostClientOpenProfile(
   options: HostClientOpenProfileOptions
 ): Promise<{ host: HostProfile; version: number } | null> {
   const { hostId, cache, ticket } = options
-  let loadedHost: HostProfile | undefined
-  try {
-    loadedHost = (await options.loadHosts()).find(({ id }) => id === hostId)
-  } catch {
-    if (!ticket.cancelled) {
-      options.onUnavailable()
+  while (!ticket.cancelled) {
+    const sourceRevision = getHostListLoadRevision()
+    let loadedHost: HostProfile | undefined
+    try {
+      loadedHost = (await options.loadHosts()).find(({ id }) => id === hostId)
+    } catch {
+      if (!ticket.cancelled) {
+        options.onUnavailable()
+      }
+      return null
     }
-    return null
+    if (ticket.cancelled) {
+      return null
+    }
+    const currentRevision = getHostListLoadRevision()
+    if (sourceRevision !== currentRevision) {
+      continue
+    }
+    if (!loadedHost) {
+      options.onUnavailable()
+      return null
+    }
+    return {
+      host: cache.get(hostId, currentRevision) ?? loadedHost,
+      version: cache.version(hostId, currentRevision)
+    }
   }
-  if (ticket.cancelled) {
-    return null
-  }
-  if (!loadedHost) {
-    options.onUnavailable()
-    return null
-  }
-  return { host: cache.get(hostId) ?? loadedHost, version: cache.version(hostId) }
+  return null
 }

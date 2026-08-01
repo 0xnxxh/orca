@@ -305,9 +305,8 @@ describe('host-store list mutations', () => {
         e2eeFraming: 2
       }
     })
-    expect(secureStoreMock.getItemAsync.mock.calls.map(([key]) => key)).toEqual(
-      Array(2).fill(expect.stringContaining(HOST_ONE.id))
-    )
+    expect(secureStoreMock.getItemAsync).toHaveBeenCalledOnce()
+    expect(secureStoreMock.getItemAsync.mock.calls[0]?.[0]).toContain(HOST_ONE.id)
     expect(JSON.parse(storedOverlayRaw ?? '[]')).toHaveLength(1)
   })
 

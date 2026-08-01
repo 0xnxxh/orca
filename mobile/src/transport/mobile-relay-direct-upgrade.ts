@@ -13,7 +13,6 @@ import {
 import { persistRelayHost } from './mobile-endpoint-supervisor-support'
 import {
   MobileRelayCredentialBundleSchema,
-  deleteMobileRelayCredentialBundle,
   writeMobileRelayCredentialBundle,
   type MobileRelayCredentialBundle
 } from './mobile-relay-credential-bundle'
@@ -38,7 +37,6 @@ type Dependencies = {
   clearJournal: typeof deleteMobileRelayDirectUpgradeJournalIfCurrent
   writeBundle: typeof writeMobileRelayCredentialBundle
   saveHost: typeof saveExistingHostRelayRouting
-  deleteBundle: typeof deleteMobileRelayCredentialBundle
   randomBytes: (length: number) => Uint8Array
 }
 
@@ -56,7 +54,6 @@ export async function upgradeDirectMobileRelay(args: {
     clearJournal: deleteMobileRelayDirectUpgradeJournalIfCurrent,
     writeBundle: writeMobileRelayCredentialBundle,
     saveHost: saveExistingHostRelayRouting,
-    deleteBundle: deleteMobileRelayCredentialBundle,
     randomBytes: ExpoCrypto.getRandomBytes,
     ...args.dependencies
   }
@@ -126,7 +123,6 @@ async function publishCommitted(
     )
   } catch (error) {
     if (error instanceof MobileRelayUpgradeHostRemovedError) {
-      await dependencies.deleteBundle(host.id)
       await dependencies.clearJournal(journal)
     } else if (error instanceof MobileRelayUpgradeHostSupersededError) {
       await dependencies.clearJournal(journal)
