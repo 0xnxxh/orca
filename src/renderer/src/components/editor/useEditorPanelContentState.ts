@@ -108,7 +108,13 @@ export function useEditorPanelContentState({
   const diffContentsRef = useRef(diffContents)
   diffContentsRef.current = diffContents
   const fileContentsRef = useRef(fileContents)
-  fileContentsRef.current = fileContents
+  // Why an effect rather than a render-time write like diffContentsRef above:
+  // mutating a ref during render is a React Doctor error. Only the census reads
+  // this ref, and it reads asynchronously off the crash path, so trailing the
+  // committed value by one pass cannot change what a breadcrumb reports.
+  useEffect(() => {
+    fileContentsRef.current = fileContents
+  }, [fileContents])
   // Why: file bodies live in React state, which the store-only memory profile
   // cannot walk — without this an OOM report never names them.
   useEffect(
