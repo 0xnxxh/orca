@@ -2604,6 +2604,21 @@ function deleteScannedSessionFieldsForOwners(
   )
 }
 
+/** Every session partition that can hold state for a worktree owned by `hostId`.
+ *
+ *  Why more than one: an SSH workspace is persisted twice. The renderer keeps it in the legacy
+ *  local blob (buildHostIdByWorktreeId maps everything non-runtime to 'local'), while the main
+ *  process writes its terminal state to the host's own `ssh:*` partition
+ *  (getWorkspaceSessionHostIdForWorktree). Cleaning only one strands the other — and leaves that
+ *  side's topology fence un-bumped, so a delayed write there can resurrect the removed worktree. */
+function workspaceSessionPartitionIdsForHost(hostId: string | null | undefined): ExecutionHostId[] {
+  const parsed = parseExecutionHostId(hostId)
+  if (parsed?.kind === 'runtime') {
+    return [parsed.id]
+  }
+  return parsed?.kind === 'ssh' ? [LOCAL_EXECUTION_HOST_ID, parsed.id] : [LOCAL_EXECUTION_HOST_ID]
+}
+
 function removeWorkspaceSessionOwner(
   session: WorkspaceSessionState | undefined,
   ownerKey: string,
@@ -5265,12 +5280,32 @@ export class Store {
   }
 
   removeWorktreeMeta(worktreeId: string, hostId?: ExecutionHostId | null): void {
-    // Why: recorded ownership picks the single partition to clean, so a remote workspace never falls back to wiping local session state.
-    const ownerHostId = hostId === undefined ? this.state.worktreeMeta[worktreeId]?.hostId : hostId
+    // Why recorded ownership wins over the caller's hostId: owner keys carry no host, so the same
+    // `${repoId}::${path}` can name a live worktree on another host (see pruneWorktreeStateForRepo).
+    // A caller derives its hostId from live routing, which can go stale mid-removal — trusting it
+    // over the meta would wipe the surviving host's tabs. The arg is only a fallback for the orphan
+    // case, where the meta is already gone.
+    const owner = this.state.worktreeMeta[worktreeId]?.hostId ?? hostId
+    const partitions = new Set<ExecutionHostId>(workspaceSessionPartitionIdsForHost(owner))
+    // Why scope the fence: the topology watermark is per-REPO, so bumping a partition makes every
+    // later renderer write for that repo rebase onto main's copy, silently dropping not-yet-persisted
+    // tabs of the repo's OTHER worktrees. Fence wherever it is free (this worktree's tabs live here,
+    // or no sibling of the same repo would be rebased) and skip only where it would cost someone else.
+    const fencedPartitions = new Set(
+      [...partitions].filter(
+        (partition) =>
+          this.partitionOwnsWorktreeTabs(worktreeId, partition) ||
+          !this.partitionHasOtherRepoWorktreeTabs(worktreeId, partition)
+      )
+    )
     delete this.state.worktreeMeta[worktreeId]
     delete this.state.worktreeLineageById[worktreeId]
     delete this.state.workspaceLineageByChildKey[worktreeWorkspaceKey(worktreeId)]
-    this.removeWorkspaceSessionStateForWorktree(worktreeId, ownerHostId)
+    for (const partition of partitions) {
+      this.removeWorkspaceSessionOwnerInPartition(worktreeId, partition, {
+        advanceTerminalTopologyRevision: fencedPartitions.has(partition)
+      })
+    }
     this.scheduleSave()
   }
 
@@ -6067,12 +6102,22 @@ export class Store {
 
   removeWorkspaceSessionStateForWorktree(
     worktreeId: string,
-    hostId?: ExecutionHostId | null
+    hostId?: ExecutionHostId | null,
+    options: { advanceTerminalTopologyRevision?: boolean } = {}
   ): void {
-    const resolved = this.resolveHostId(hostId)
+    for (const resolved of workspaceSessionPartitionIdsForHost(hostId)) {
+      this.removeWorkspaceSessionOwnerInPartition(worktreeId, resolved, options)
+    }
+  }
+
+  private removeWorkspaceSessionOwnerInPartition(
+    worktreeId: string,
+    resolved: ExecutionHostId,
+    options: { advanceTerminalTopologyRevision?: boolean }
+  ): void {
     const current = this.getWorkspaceSession(resolved)
     const session = removeWorkspaceSessionOwner(current, worktreeId, {
-      advanceTerminalTopologyRevision: true
+      advanceTerminalTopologyRevision: options.advanceTerminalTopologyRevision ?? true
     })
     if (!session) {
       return
@@ -6087,6 +6132,21 @@ export class Store {
       }
     }
     this.scheduleSave()
+  }
+
+  /** Whether a partition still holds terminal membership for `worktreeId`. */
+  private partitionOwnsWorktreeTabs(worktreeId: string, hostId: ExecutionHostId): boolean {
+    return this.getWorkspaceSession(hostId).tabsByWorktree?.[worktreeId] !== undefined
+  }
+
+  /** Whether fencing this partition would rebase a sibling worktree of the same repo. */
+  private partitionHasOtherRepoWorktreeTabs(worktreeId: string, hostId: ExecutionHostId): boolean {
+    const repoId = getRepoIdFromWorktreeId(worktreeId)
+    const tabsByWorktree = this.getWorkspaceSession(hostId).tabsByWorktree ?? {}
+    return Object.entries(tabsByWorktree).some(
+      ([id, tabs]) =>
+        id !== worktreeId && getRepoIdFromWorktreeId(id) === repoId && (tabs?.length ?? 0) > 0
+    )
   }
 
   /** Persist a non-'local' host partition; remote hosts skip setLocalWorkspaceSession's local-daemon PTY-binding race guards. */

@@ -4000,7 +4000,30 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         ) {
           // The remote project/workspace is authoritative and already gone. Finish
           // by dropping this client's orphaned metadata instead of trapping the row.
-          removalResult = await window.api.worktrees.forgetLocal({ worktreeId, hostId })
+          // Why not the full assertCurrent(): a remote "already gone" verdict usually arrives with
+          // the very refresh that drops the row, so the generation guard would throw ambiguous in
+          // exactly the race this fallback exists for and re-trap the metadata. But if the route
+          // now names a DIFFERENT host, the verdict came from a remote we never meant to ask (an
+          // environment re-paired mid-call), and forgetting would discard the still-live original's
+          // displayName, links, pins and diff comments for good.
+          const currentRoute = resolveWorktreeOperationRoute(get(), worktreeId)
+          if (
+            currentRoute &&
+            (currentRoute.executionHostId !== removalRoute?.executionHostId ||
+              currentRoute.runtimeEnvironmentId !== removalRoute?.runtimeEnvironmentId)
+          ) {
+            throw error
+          }
+          try {
+            removalResult = await window.api.worktrees.forgetLocal({ worktreeId, hostId })
+          } catch (fallbackError) {
+            // Why: the fallback's message is what the failure toast renders, so keep the remote's
+            // verdict attached rather than reporting only "deletion already in progress".
+            throw new Error(
+              fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+              { cause: error }
+            )
+          }
         } else {
           throw error
         }

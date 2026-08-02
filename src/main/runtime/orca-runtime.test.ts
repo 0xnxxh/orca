@@ -33597,6 +33597,48 @@ describe('OrcaRuntimeService', () => {
     expect(killed).toBe(false)
   })
 
+  it('stops by exact id when the selector no longer resolves', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    const kill = vi.fn(() => true)
+    runtime.setPtyController({
+      write: () => true,
+      kill,
+      stopAndWait: vi.fn(async () => true),
+      getForegroundProcess: async () => null
+    })
+    syncSinglePty(runtime)
+
+    // An orphaned workspace's repo is gone, so only the caller's id can identify it.
+    await expect(
+      runtime.stopTerminalsForWorktree('id:repo-gone::/tmp/gone', {
+        resolvedWorktreeId: TEST_WORKTREE_ID
+      })
+    ).resolves.toEqual({ stopped: 1 })
+    expect(kill).toHaveBeenCalledWith('pty-1')
+  })
+
+  it('does not sweep a sibling workspace sharing the checkout dir of an exact id', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    const kill = vi.fn(() => true)
+    runtime.setPtyController({
+      write: () => true,
+      kill,
+      stopAndWait: vi.fn(async () => true),
+      getForegroundProcess: async () => null
+    })
+    syncSinglePty(runtime)
+
+    // Regression for #10252: folder-workspace instances share one checkout dir, so comparing
+    // filesystem paths (which strip `::workspace:<uuid>`) would match the root and its siblings
+    // and kill their live terminals.
+    await expect(
+      runtime.stopTerminalsForWorktree('id:repo-gone::/tmp/gone', {
+        resolvedWorktreeId: `${TEST_WORKTREE_ID}::workspace:11111111-1111-1111-1111-111111111111`
+      })
+    ).resolves.toEqual({ stopped: 0 })
+    expect(kill).not.toHaveBeenCalled()
+  })
+
   it('awaits physical PTY stop when destructive teardown supplies shared dedupe', async () => {
     const runtime = new OrcaRuntimeService(store)
     const physicalStop = makeDeferred()
@@ -41634,6 +41676,8 @@ describe('OrcaRuntimeService', () => {
     expect(deleteWorktreeHistoryDirMock).toHaveBeenCalledWith(TEST_WORKTREE_ID)
     expect(invalidateAuthorizedRootsCacheMock).toHaveBeenCalled()
     expect(removeWorktree).not.toHaveBeenCalled()
+    // Nothing is deleted on disk here, so the surviving directory's watchers must still be released.
+    expect(closeLocalWatcherForWorktreePathMock).toHaveBeenCalledWith(TEST_WORKTREE_PATH)
   })
 
   it('does not remove a runtime worktree when watcher teardown cannot release it', async () => {

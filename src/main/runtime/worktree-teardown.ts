@@ -11,6 +11,8 @@ const WORKTREE_TEARDOWN_CONCURRENCY = 32
 
 export type WorktreeTeardownDeps = {
   runtime?: OrcaRuntimeService
+  /** Authoritative id for callers whose selector no longer resolves (orphaned workspace). */
+  resolvedWorktreeId?: string
   localProvider: IPtyProvider
   onPtyStopped?: (ptyId: string) => void
   timeoutMs?: number
@@ -97,7 +99,12 @@ export async function killAllProcessesForWorktree(
   // destructive removal closed.
   const runtimeSweep = deps.runtime
     ? settleBeforeDeadline(
-        () => deps.runtime!.stopTerminalsForWorktree(worktreeId, { deadline, stopPty }),
+        () =>
+          deps.runtime!.stopTerminalsForWorktree(worktreeId, {
+            deadline,
+            stopPty,
+            ...(deps.resolvedWorktreeId ? { resolvedWorktreeId: deps.resolvedWorktreeId } : {})
+          }),
         { stopped: 0 },
         deadline,
         deps.requirePhysicalStop ? deadlineError : undefined,

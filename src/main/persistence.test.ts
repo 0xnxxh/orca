@@ -11760,6 +11760,111 @@ describe('Store host-partitioned workspace sessions', () => {
     expect(store.getWorkspaceSession('local').tabsByWorktree[worktreeId]).toHaveLength(1)
   })
 
+  it('cleans both surfaces that hold an ssh-owned worktree', async () => {
+    const store = await createStore()
+    const worktreeId = 'repo-ssh::/srv/stale'
+    const makeSession = (): ReturnType<typeof makeHostSession> => ({
+      ...makeHostSession('repo-ssh'),
+      activeWorktreeId: worktreeId,
+      lastVisitedAtByWorktreeId: { [worktreeId]: 123 },
+      tabsByWorktree: {
+        [worktreeId]: [makeTerminalTab({ id: 'stale-tab', worktreeId })]
+      }
+    })
+    // The renderer persists SSH workspaces in the local blob; the main process writes their
+    // terminal state to the host's own `ssh:*` partition. Removal must clear both.
+    store.setWorkspaceSession(makeSession(), 'local')
+    store.setWorkspaceSession(makeSession(), 'ssh:conn-1')
+    store.setWorktreeMeta(worktreeId, { hostId: 'ssh:conn-1' })
+
+    store.removeWorktreeMeta(worktreeId, 'ssh:conn-1')
+
+    for (const hostId of ['local', 'ssh:conn-1'] as const) {
+      expect(store.getWorkspaceSession(hostId)).toMatchObject({
+        tabsByWorktree: {},
+        activeWorktreeId: null,
+        lastVisitedAtByWorktreeId: {},
+        terminalTopologyRevisionByRepoId: { 'repo-ssh': 1 }
+      })
+    }
+  })
+
+  it('does not bump the topology fence in a partition that never held the worktree', async () => {
+    const store = await createStore()
+    const worktreeId = 'repo-split::/workspace/stale'
+    const otherWorktreeId = 'repo-split::/workspace/live'
+    // Why this matters: the fence is keyed by repo, so a bump here would make every later write
+    // for repo-split rebase onto main's copy and silently drop the live worktree's unsaved tabs.
+    store.setWorkspaceSession(
+      {
+        ...makeHostSession('repo-split'),
+        tabsByWorktree: {
+          [otherWorktreeId]: [makeTerminalTab({ id: 'live-tab', worktreeId: otherWorktreeId })]
+        }
+      },
+      'local'
+    )
+    store.setWorkspaceSession(
+      {
+        ...makeHostSession('repo-split'),
+        tabsByWorktree: {
+          [worktreeId]: [makeTerminalTab({ id: 'stale-tab', worktreeId })]
+        }
+      },
+      'runtime:env-a'
+    )
+    store.setWorktreeMeta(worktreeId, { hostId: 'runtime:env-a' })
+
+    store.removeWorktreeMeta(worktreeId, 'local')
+
+    expect(
+      store.getWorkspaceSession('runtime:env-a').terminalTopologyRevisionByRepoId?.['repo-split']
+    ).toBe(1)
+    expect(
+      store.getWorkspaceSession('local').terminalTopologyRevisionByRepoId?.['repo-split']
+    ).toBeUndefined()
+    expect(store.getWorkspaceSession('local').tabsByWorktree[otherWorktreeId]).toHaveLength(1)
+  })
+
+  it('trusts persisted ownership over a stale caller hostId', async () => {
+    const store = await createStore()
+    const worktreeId = 'repo-split::/workspace/stale'
+    const session = {
+      ...makeHostSession('repo-split'),
+      tabsByWorktree: {
+        [worktreeId]: [makeTerminalTab({ id: 'stale-tab', worktreeId })]
+      }
+    }
+    store.setWorkspaceSession(session, 'runtime:env-a')
+    store.setWorkspaceSession(session, 'runtime:env-b')
+    store.setWorktreeMeta(worktreeId, { hostId: 'runtime:env-a' })
+
+    // A caller's hostId comes from live routing and can go stale mid-removal; the same
+    // repoId::path can name a live worktree on env-b, whose tabs must survive.
+    store.removeWorktreeMeta(worktreeId, 'runtime:env-b')
+
+    expect(store.getWorkspaceSession('runtime:env-a').tabsByWorktree[worktreeId]).toBeUndefined()
+    expect(store.getWorkspaceSession('runtime:env-b').tabsByWorktree[worktreeId]).toHaveLength(1)
+  })
+
+  it('falls back to the caller hostId only when no ownership was recorded', async () => {
+    const store = await createStore()
+    const worktreeId = 'repo-gone::/workspace/stale'
+    const session = {
+      ...makeHostSession('repo-gone'),
+      tabsByWorktree: {
+        [worktreeId]: [makeTerminalTab({ id: 'stale-tab', worktreeId })]
+      }
+    }
+    store.setWorkspaceSession(session, 'runtime:env-a')
+    store.setWorkspaceSession(session, 'local')
+
+    store.removeWorktreeMeta(worktreeId, 'runtime:env-a')
+
+    expect(store.getWorkspaceSession('runtime:env-a').tabsByWorktree[worktreeId]).toBeUndefined()
+    expect(store.getWorkspaceSession('local').tabsByWorktree[worktreeId]).toHaveLength(1)
+  })
+
   it('fences a delayed session write when its host partition was not persisted', async () => {
     const store = await createStore()
     const worktreeId = 'repo-gone::/workspace/stale'

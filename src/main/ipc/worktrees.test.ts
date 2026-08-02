@@ -10265,6 +10265,8 @@ describe('registerWorktreeHandlers', () => {
       expect(result).toEqual({})
       expect(killAllProcessesForWorktreeMock).toHaveBeenCalledWith(worktreeId, {
         runtime: runtimeStub,
+        // Without the exact id the sweep resolves a selector that no longer exists and stops nothing.
+        resolvedWorktreeId: worktreeId,
         localProvider: ptyProvider,
         onPtyStopped: clearProviderPtyStateMock
       })

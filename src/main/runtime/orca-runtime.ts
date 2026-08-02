@@ -23241,6 +23241,10 @@ export class OrcaRuntimeService {
           if (localProvider) {
             await killAllProcessesForWorktree(removalTarget.id, {
               runtime: this,
+              // Why: the repo is gone, so the selector cannot resolve. The sweep tolerates that
+              // failure silently, so without the authoritative id graph-owned PTYs survive with no
+              // UI handle left to retry from once the metadata below is dropped.
+              resolvedWorktreeId: removalTarget.id,
               localProvider,
               onPtyStopped: this.onPtyStopped ?? undefined
             }).catch((error) => {
@@ -23249,6 +23253,30 @@ export class OrcaRuntimeService {
                 error
               )
             })
+          }
+          // Why: nothing is deleted on disk here, so the directory and its watchers survive the
+          // removal; without this they keep firing change events into a workspace-less runtime.
+          // Why the gate rather than a bare close: closeFileWatchersForRemoval only suspends
+          // listeners — only finish(true) forgets the snapshot, so an unbalanced close would strand
+          // them permanently.
+          // Why skip when the suffix was stripped (#10252): a folder-workspace instance shares its
+          // checkout directory with the root and its siblings, so forgetting watchers for that path
+          // would kill file watching for workspaces we are not removing.
+          const orphanFullPath = splitWorktreeId(removalTarget.id)?.worktreePath
+          const orphanWatcherPath =
+            splitWorktreeIdForFilesystem(removalTarget.id)?.worktreePath === orphanFullPath
+              ? orphanFullPath
+              : undefined
+          if (orphanWatcherPath) {
+            // Why meta: the repo record is gone, so recorded ownership is the only way left to learn
+            // this was SSH-hosted — without it only the local watcher closes and the remote one keeps firing.
+            const orphanHost = parseExecutionHostId(store.getWorktreeMeta(removalTarget.id)?.hostId)
+            await this.acquireFileWatcherRemoval(
+              orphanWatcherPath,
+              orphanHost?.kind === 'ssh' ? orphanHost.targetId : undefined
+            )
+              .then((gate) => gate.finish(true))
+              .catch(() => {})
           }
           this.clearOptimisticReconcileToken(removalTarget.id)
           this.removeWorktreeMetadataAndHistory(store, removalTarget.id)
@@ -26047,23 +26075,47 @@ export class OrcaRuntimeService {
         ptyId: string,
         stop: () => boolean | Promise<boolean>
       ) => Promise<{ stopped: boolean; owner: boolean }>
+      /** Skip selector resolution when the caller already holds the authoritative id.
+       *  Why: an orphaned workspace's repo is gone, so the selector no longer resolves —
+       *  without this the sweep throws selector_not_found and silently stops nothing. */
+      resolvedWorktreeId?: string
     } = {}
   ): Promise<{ stopped: number }> {
     // Why: this mutates live PTYs, so reject while the graph is reloading rather than act on cached leaf ownership.
     const graphEpoch = this.captureReadyGraphEpoch()
-    const worktree = await this.resolveWorktreeSelector(worktreeSelector)
+    const worktree = options.resolvedWorktreeId
+      ? { id: options.resolvedWorktreeId }
+      : await this.resolveWorktreeSelector(worktreeSelector)
     this.assertStableReadyGraph(graphEpoch)
     if (options.deadline !== undefined && Date.now() >= options.deadline) {
       return { stopped: 0 }
     }
+    // Why not plain ===: a resolved selector returns the graph's own spelling, but a caller-supplied
+    // id has not been canonicalized, so separator/case differences would match nothing silently.
+    // Why splitWorktreeId and NOT ...ForFilesystem (#10252): the latter strips `::workspace:<uuid>`,
+    // which would make a folder-workspace instance compare equal to its root and its siblings and
+    // sweep their live terminals.
+    const parsedTarget = splitWorktreeId(worktree.id)
+    const ownsWorktree = options.resolvedWorktreeId
+      ? (candidate: string | undefined): boolean => {
+          if (!candidate) {
+            return false
+          }
+          const parsedCandidate = splitWorktreeId(candidate)
+          return parsedCandidate && parsedTarget
+            ? parsedCandidate.repoId === parsedTarget.repoId &&
+                runtimePathsEqual(parsedCandidate.worktreePath, parsedTarget.worktreePath)
+            : candidate === worktree.id
+        }
+      : (candidate: string | undefined): boolean => candidate === worktree.id
     const ptyIds = new Set<string>()
     for (const leaf of this.leaves.values()) {
-      if (leaf.worktreeId === worktree.id && leaf.ptyId) {
+      if (ownsWorktree(leaf.worktreeId) && leaf.ptyId) {
         ptyIds.add(leaf.ptyId)
       }
     }
     for (const pty of this.ptysById.values()) {
-      if (pty.worktreeId === worktree.id && pty.connected) {
+      if (ownsWorktree(pty.worktreeId) && pty.connected) {
         ptyIds.add(pty.ptyId)
       }
     }

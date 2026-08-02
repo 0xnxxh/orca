@@ -2820,10 +2820,15 @@ export function registerWorktreeHandlers(
     ): Promise<RemoveWorktreeResult> => {
       const { repoId } = parseWorktreeId(args.worktreeId)
       const repo = getRepoForWorktreeRemoval(store, repoId, args.hostId)
-      // Why: metadata-only cleanup must work after the owning project disappears.
+      // Why: metadata-only cleanup must work after the owning project disappears. When the repo
+      // can't be resolved (gone, or ambiguous across hosts), key on the persisted owner rather than
+      // args.hostId: meta.hostId is stamped from getRepoExecutionHostId, so two forget-local calls
+      // for the same workspace still dedupe onto one promise even if their callers disagree.
       const inFlightKey = getWorktreeRemovalInFlightKey(
         args.worktreeId,
-        repo ? getRepoExecutionHostId(repo) : args.hostId
+        repo
+          ? getRepoExecutionHostId(repo)
+          : (store.getWorktreeMeta(args.worktreeId)?.hostId ?? args.hostId)
       )
       const optionsKey = 'forget-local'
       const inFlight = worktreeRemovalsInFlight.get(inFlightKey)
@@ -2835,7 +2840,12 @@ export function registerWorktreeHandlers(
       }
 
       const forget = (async (): Promise<RemoveWorktreeResult> => {
-        if (repo && isFolderRepo(repo) && args.worktreeId === getFolderWorkspaceRootId(repo)) {
+        // Why also scan every repo: getRepoForWorktreeRemoval returns undefined when the id is
+        // ambiguous across hosts, not just when it is gone, and treating that as "already gone"
+        // would strip a live folder root's metadata (displayName, links, pins, instanceId).
+        const isFolderRootOf = (candidate: Repo): boolean =>
+          isFolderRepo(candidate) && args.worktreeId === getFolderWorkspaceRootId(candidate)
+        if (repo ? isFolderRootOf(repo) : store.getRepos().some(isFolderRootOf)) {
           throw new Error(
             'Cannot delete the project root workspace. Remove the folder project instead.'
           )
@@ -2844,6 +2854,10 @@ export function registerWorktreeHandlers(
         // Why: best-effort PTY sweep; resolves synchronously for a dead SSH relay (tombstoned lease) so it never hangs.
         await killAllProcessesForWorktree(args.worktreeId, {
           runtime,
+          // Why: forget-local exists for workspaces whose project is gone or unreachable, so the
+          // selector no longer resolves. The sweep tolerates that failure silently (it is best-effort
+          // here), so without the exact id graph-owned PTYs keep running with no handle left to retry.
+          resolvedWorktreeId: args.worktreeId,
           localProvider: getLocalPtyProvider(),
           onPtyStopped: clearProviderPtyState
         }).catch((err) => {
