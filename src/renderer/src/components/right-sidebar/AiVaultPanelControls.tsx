@@ -39,6 +39,9 @@ import type { AiVaultHostScopeOption } from './ai-vault-host-scope'
 
 const VAULT_HEADER_CONTROL_CLASS = 'size-6 shrink-0'
 
+const AGENT_BULK_ACTION_CLASS =
+  'rounded-full px-2 py-0.5 text-[11px] font-normal text-muted-foreground focus:text-foreground'
+
 // Why: match ToggleGroup's spacing+outline qualifiers so selected edges out-specify its border-l-0 collapse.
 const VAULT_SCOPE_SELECTED_EDGE_CLASS =
   'data-[spacing=0]:data-[variant=outline]:aria-[checked=true]:border-l data-[spacing=0]:data-[variant=outline]:data-[state=on]:border-l'
@@ -294,30 +297,32 @@ export function VaultViewMenu({
           <span className="text-[11px] font-semibold text-muted-foreground">
             {translate('auto.components.right.sidebar.AiVaultPanelControls.agents', 'Agents')}
           </span>
+          {/* Why: real menu items so arrow keys reach them; plain buttons are skipped by Radix roving focus. */}
           <div className="flex items-center gap-1">
-            <button
-              type="button"
-              // Why: prevent focus move so Radix does not dismiss the menu mid multi-select.
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={() => onAllAgentsEnabledChange(true)}
-              className="rounded-full px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-40 disabled:hover:bg-transparent"
+            <DropdownMenuItem
               disabled={allAgentsSelected}
+              // Why: preventDefault keeps the menu open for further multi-select.
+              onSelect={(event) => {
+                event.preventDefault()
+                onAllAgentsEnabledChange(true)
+              }}
+              className={AGENT_BULK_ACTION_CLASS}
             >
               {translate(
                 'auto.components.right.sidebar.AiVaultPanelControls.selectAllAgents',
                 'Select all'
               )}
-            </button>
-            <button
-              type="button"
-              // Why: prevent focus move so Radix does not dismiss the menu mid multi-select.
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={() => onAllAgentsEnabledChange(false)}
-              className="rounded-full px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-40 disabled:hover:bg-transparent"
+            </DropdownMenuItem>
+            <DropdownMenuItem
               disabled={noAgentsSelected}
+              onSelect={(event) => {
+                event.preventDefault()
+                onAllAgentsEnabledChange(false)
+              }}
+              className={AGENT_BULK_ACTION_CLASS}
             >
               {translate('auto.components.right.sidebar.AiVaultPanelControls.clearAgents', 'Clear')}
-            </button>
+            </DropdownMenuItem>
           </div>
         </div>
         {AI_VAULT_AGENTS.map((agent) => (

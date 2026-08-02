@@ -186,8 +186,8 @@ export function AiVaultSessionVirtualList({
           title={
             noAgentsSelected
               ? translate(
-                  'auto.components.right.sidebar.AiVaultPanel.selectAtLeastOneAgent',
-                  'Select at least one agent'
+                  'auto.components.right.sidebar.AiVaultPanel.noAgentsSelected',
+                  'No agents selected'
                 )
               : translate(
                   'auto.components.right.sidebar.AiVaultPanel.noSessionsMatchFilters',

@@ -11091,7 +11091,7 @@
             "transcriptsSkipped": "{{count}} transcript skipped",
             "noAgentSessionsFound": "No agent sessions found",
             "noSessionsMatchFilters": "No sessions match the current filters",
-            "selectAtLeastOneAgent": "エージェントを1つ以上選択してください",
+            "noAgentsSelected": "エージェントが選択されていません",
             "sessionId": "セッション ID",
             "logPath": "ログパス",
             "agents": "エージェント",

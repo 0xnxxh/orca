@@ -11091,7 +11091,7 @@
             "transcriptsSkipped": "{{count}} transcripciones omitidas",
             "noAgentSessionsFound": "No se encontraron sesiones de agentes",
             "noSessionsMatchFilters": "Ninguna sesión coincide con los filtros actuales",
-            "selectAtLeastOneAgent": "Selecciona al menos un agente",
+            "noAgentsSelected": "Ningún agente seleccionado",
             "sessionId": "ID de sesión",
             "logPath": "Ruta del log",
             "agents": "Agentes",

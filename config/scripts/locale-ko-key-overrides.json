@@ -5043,9 +5043,9 @@
     "ko": "모두 선택"
   },
   "auto.components.right.sidebar.AiVaultPanelControls.clearAgents": {
-    "ko": "지우기"
+    "ko": "모두 해제"
   },
-  "auto.components.right.sidebar.AiVaultPanel.selectAtLeastOneAgent": {
-    "ko": "에이전트를 하나 이상 선택하세요"
+  "auto.components.right.sidebar.AiVaultPanel.noAgentsSelected": {
+    "ko": "선택된 에이전트가 없습니다"
   }
 }
