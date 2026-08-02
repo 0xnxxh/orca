@@ -1821,6 +1821,22 @@ describe('SshConnection', () => {
     expect(removeControlSocketPathMock).toHaveBeenCalledWith('/tmp/orca-ssh-501/stale-socket')
   })
 
+  it.each([
+    'Permission denied (publickey,password).',
+    'Encrypted private key detected, but no passphrase given'
+  ])('skips a second probe for terminal credential failures: %s', async (stderr) => {
+    getOrcaControlSocketPathMock.mockReturnValue('/tmp/orca-ssh-501/stale-socket')
+    spawnSystemSshCommandMock.mockImplementation(() =>
+      createFailingSystemCommandChannel(255, stderr)
+    )
+    vi.mocked(resolveWithSshG).mockResolvedValue(createResolvedConfig())
+    const conn = new SshConnection(createTarget({ configHost: 'fdpass-host' }), createCallbacks())
+
+    await expect(conn.connect()).rejects.toThrow(stderr)
+    expect(spawnSystemSshCommandMock).toHaveBeenCalledTimes(1)
+    expect(removeControlSocketPathMock).toHaveBeenCalledWith('/tmp/orca-ssh-501/stale-socket')
+  })
+
   it('retries a generic direct system SSH timeout without ControlMaster', async () => {
     vi.useFakeTimers()
     try {
@@ -2450,6 +2466,22 @@ describe('SshConnection', () => {
       }
     )
     expect(conn.canRunConcurrentExecCommands()).toBe(false)
+  })
+
+  it.each([
+    'Permission denied (publickey,password).',
+    'Encrypted private key detected, but no passphrase given'
+  ])('skips a direct retry for terminal credential failures: %s', async (message) => {
+    getOrcaControlSocketPathMock.mockReturnValue('/tmp/orca-ssh-501/stale-socket')
+    spawnSystemSshMock.mockImplementation(() => {
+      throw new Error(message)
+    })
+    vi.mocked(resolveWithSshG).mockResolvedValueOnce(createResolvedConfig())
+    const conn = new SshConnection(createTarget({ configHost: 'fdpass-host' }), createCallbacks())
+
+    await expect(conn.connectViaSystemSsh()).rejects.toThrow(message)
+    expect(spawnSystemSshMock).toHaveBeenCalledTimes(1)
+    expect(removeControlSocketPathMock).toHaveBeenCalledWith('/tmp/orca-ssh-501/stale-socket')
   })
 
   it('kills delayed direct system SSH startup on disconnect and ignores late stdout', async () => {

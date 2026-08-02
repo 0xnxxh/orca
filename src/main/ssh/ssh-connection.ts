@@ -986,8 +986,11 @@ export class SshConnection {
         throw err
       }
       removeControlSocketPath(controlPath)
-      // A mux-free probe cannot reach a definitively unavailable host.
-      if (isDefiniteSystemSshHostFailure(err)) {
+      // Why: a timeout retry doubles the ladder step, but a stuck master can cause the first timeout.
+      if (
+        isDefiniteSystemSshHostFailure(err) ||
+        (err instanceof Error && (isAuthError(err) || isPassphraseError(err)))
+      ) {
         throw err
       }
       this.systemSshResolvedConfig = cloneResolvedConfig(resolved)
@@ -1015,7 +1018,10 @@ export class SshConnection {
         throw err
       }
       removeControlSocketPath(controlPath)
-      if (isDefiniteSystemSshHostFailure(err)) {
+      if (
+        isDefiniteSystemSshHostFailure(err) ||
+        (err instanceof Error && (isAuthError(err) || isPassphraseError(err)))
+      ) {
         throw err
       }
       this.systemSshControlMasterDisabledForSession = true

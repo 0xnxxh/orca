@@ -14,6 +14,7 @@ describe('isTransientReconnectError', () => {
   })
 
   it.each([
+    'System SSH probe failed (exit 255).',
     'System SSH probe failed (exit 255). stderr: ssh: connect to host box port 22: Connection refused',
     'System SSH probe failed (exit 255). stderr: ssh: connect to host box port 22: No route to host',
     'System SSH probe failed (exit 255). stderr: ssh: connect to host box port 22: Network is unreachable',
@@ -21,9 +22,17 @@ describe('isTransientReconnectError', () => {
     'System SSH probe failed (exit 255). stderr: ssh: Could not resolve hostname box: Name or service not known',
     'System SSH probe failed (exit 255). stderr: ssh_exchange_identification: read: Connection reset by peer',
     'System SSH probe failed (exit 255). stderr: ssh_exchange_identification: Connection closed by remote host',
-    'System SSH probe failed (exit 255). stderr: Connection closed by remote host'
+    'System SSH probe failed (exit 255). stderr: Connection closed by remote host',
+    'System SSH probe failed (exit 255). stderr: Lost connection',
+    'System SSH probe failed (exit 255). stderr: Remote end closed connection'
   ])('treats OpenSSH network prose as recoverable: %s', (message) => {
     expect(isTransientReconnectError(new Error(message))).toBe(true)
+  })
+
+  it('keeps the bare probe failure narrow to the reconnect classifier', () => {
+    const err = new Error('System SSH probe failed (exit 255).')
+    expect(isTransientError(err)).toBe(false)
+    expect(isTransientReconnectError(err)).toBe(true)
   })
 
   // A server-side rejection prints the same verb without "remote"; retrying it forever would hide a

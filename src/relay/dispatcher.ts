@@ -1244,7 +1244,11 @@ export class RelayDispatcher {
   }
 
   private notifyClientCapacity(clientId: number): void {
-    for (const listener of Array.from(this.clientCapacityListeners.get(clientId) ?? [])) {
+    const listeners = this.clientCapacityListeners.get(clientId)
+    if (!listeners?.size) {
+      return
+    }
+    for (const listener of Array.from(listeners)) {
       try {
         listener()
       } catch (err) {

@@ -21,6 +21,8 @@ const NETWORK_LIKE_ERROR_FRAGMENTS = [
   'kex_exchange_identification',
   // Pre-7.x OpenSSH wording for the same banner-exchange failure.
   'ssh_exchange_identification',
+  'lost connection',
+  'remote end closed',
   // Deliberately not the bare 'connection closed by': OpenSSH prints "Connection closed by <ip> port 22"
   // for server-side rejections (MaxStartups, DenyUsers) too, and those must stay permanent.
   'connection closed by remote'
@@ -42,6 +44,8 @@ const DEFINITE_HOST_FAILURE_CODES = new Set(['EHOSTUNREACH', 'ENETUNREACH', 'EAI
 const OPENSSH_HOST_CONNECT_FAILURE =
   /\bconnect to host .+? port \d+: (?:connection (?:timed out|refused|reset(?: by peer)?)|operation timed out)\b/i
 
+const EMPTY_SYSTEM_SSH_PROBE_EXIT_255 = /^system ssh probe failed \(exit 255\)\.$/
+
 /**
  * Why a second classifier: connect() spends isTransientError on INITIAL_RETRY_ATTEMPTS, so widening
  * it would turn one 30s system-SSH timeout into ~160s of silence and five security-key touch
@@ -56,7 +60,10 @@ export function isTransientReconnectError(err: Error): boolean {
     return true
   }
   const message = err.message.toLowerCase()
-  return NETWORK_LIKE_ERROR_FRAGMENTS.some((fragment) => message.includes(fragment))
+  return (
+    EMPTY_SYSTEM_SSH_PROBE_EXIT_255.test(message) ||
+    NETWORK_LIKE_ERROR_FRAGMENTS.some((fragment) => message.includes(fragment))
+  )
 }
 
 /** Definite host failures where a ControlMaster-free retry cannot help. */

@@ -97,6 +97,8 @@ function createDispatcher() {
       detached.add(listener)
       return () => detached.delete(listener)
     }),
+    // Detach here always retires the id, so the emitter's marker cleanup runs.
+    isClientAttached: vi.fn(() => false),
     notificationFrameBytes: vi.fn(() => 64)
   }
 }

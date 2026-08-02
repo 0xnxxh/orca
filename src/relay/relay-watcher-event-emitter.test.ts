@@ -443,6 +443,33 @@ describe('relay watcher overflow suppression key', () => {
     }
   })
 
+  it('republishes a retained marker when invalidateClient precedes the sink replacement', () => {
+    const stalled = createRecordingSink(65536)
+    const replacement = createRecordingSink(65536)
+    stalled.blockNextWrite()
+    const dispatcher = new RelayDispatcher(stalled.write, stalled.options)
+
+    try {
+      const clientId = dispatcher.activeClientIds()[0]
+      for (let index = 0; index < DISPATCHER_CONTROL_QUEUE_MAX_FRAMES; index += 1) {
+        dispatcher.notifyClient(clientId, `control.${index}`)
+      }
+      emitRelayWatcherOverflow(dispatcher, '/workspace', false)
+      expect(watcherFrames(stalled.frames)).toHaveLength(0)
+
+      // The SSH reconnect order: invalidateClient detaches the primary without retiring the id, so the
+      // pending marker must survive that detach and ride out on the replacement sink.
+      dispatcher.invalidateClient()
+      dispatcher.setWrite(replacement.write, replacement.options)
+
+      expect(watcherFrames(replacement.frames).flatMap(frameEvents)).toEqual([
+        { kind: 'overflow', absolutePath: '/workspace' }
+      ])
+    } finally {
+      dispatcher.dispose()
+    }
+  })
+
   it('forgets a retained marker when the client detaches', () => {
     const primary = createRecordingSink(65536)
     const secondary = createRecordingSink(65536)
