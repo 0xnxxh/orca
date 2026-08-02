@@ -43,13 +43,24 @@ function makeRpcChild() {
   const child = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter
     stderr: EventEmitter
-    stdin: { write: ReturnType<typeof vi.fn> }
+    stdin: { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> }
     kill: ReturnType<typeof vi.fn>
+    exitCode: number | null
   }
   child.stdout = new EventEmitter()
   child.stderr = new EventEmitter()
-  child.stdin = { write: vi.fn() }
-  child.kill = vi.fn()
+  // Why: like the real app-server, the fake dies on stdin EOF or a signal —
+  // the graceful shutdown path resolves only once the child reports exit.
+  const exitNow = (): void => {
+    child.exitCode = 0
+    child.emit('exit', 0, null)
+  }
+  child.stdin = { write: vi.fn(), end: vi.fn(exitNow) }
+  child.exitCode = null
+  child.kill = vi.fn(() => {
+    exitNow()
+    return true
+  })
   return child
 }
 
@@ -333,7 +344,8 @@ describe('fetchCodexRateLimits', () => {
     childSpawnMock.mockReturnValue(rpcChild)
 
     const resultPromise = fetchCodexRateLimits({ allowPtyFallback: false })
-    await vi.advanceTimersByTimeAsync(10_000)
+    // Why: without an initialize response only the 30s boot deadline fires.
+    await vi.advanceTimersByTimeAsync(30_000)
 
     await expect(resultPromise).resolves.toMatchObject({
       provider: 'codex',

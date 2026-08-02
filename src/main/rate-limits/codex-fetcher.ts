@@ -36,9 +36,19 @@ import {
   createAuthFilesystemOperation,
   type SharedAuthFilesystemOperation
 } from './auth-filesystem-operation'
+import { terminateCodexProbeChild } from './codex-probe-termination'
+import {
+  resolveCodexHomeProcessLockKey,
+  withCodexHomeProcessLock
+} from '../codex-cli/codex-home-process-lock'
 
 const RPC_TIMEOUT_MS = 10_000
 const WSL_RPC_TIMEOUT_MS = 25_000
+// Why: cold app-server starts (fresh token refresh included) are documented at
+// 10-25s; the request deadline is armed only after initialize responds, so
+// these boot budgets are what protect a slow cold start from a mid-auth kill.
+const RPC_INIT_TIMEOUT_MS = 30_000
+const WSL_RPC_INIT_TIMEOUT_MS = 40_000
 const PTY_TIMEOUT_MS = 15_000
 // Why: codex ≥0.145 renders a '›' composer with placeholder text after it, so a
 // prompt-anchored send can never fire; nudge /status after a short boot grace.
@@ -619,7 +629,8 @@ async function fetchViaRpc(options?: FetchCodexRateLimitsOptions): Promise<Provi
     const wslCodex = options?.codexHomePath
       ? buildWslCodexCommand(options.codexHomePath, codexArgs, { isolateRpcStdio: true })
       : null
-    // Why: cold WSL startup can exceed the host RPC budget.
+    // Why: cold WSL startup can exceed the host budgets.
+    const initTimeoutMs = wslCodex ? WSL_RPC_INIT_TIMEOUT_MS : RPC_INIT_TIMEOUT_MS
     const rpcTimeoutMs = wslCodex ? WSL_RPC_TIMEOUT_MS : RPC_TIMEOUT_MS
     const codexCommand = wslCodex ? 'codex' : resolveCodexCommand()
     // Why: launch .cmd/.bat files through cmd.exe /c; shell:true triggers DEP0190.
@@ -659,7 +670,13 @@ async function fetchViaRpc(options?: FetchCodexRateLimitsOptions): Promise<Provi
       resolved = true
       cleanupListeners()
       if (options?.kill) {
-        child.kill()
+        // Why: resolve only after the child is gone so the per-home lock can't
+        // release while a draining process may still rewrite auth.json.
+        void terminateCodexProbeChild(child).then(
+          () => resolve(result),
+          () => resolve(result)
+        )
+        return
       }
       resolve(result)
     }
@@ -676,19 +693,25 @@ async function fetchViaRpc(options?: FetchCodexRateLimitsOptions): Promise<Provi
       options.signal.addEventListener('abort', onAbort, { once: true })
     }
 
-    timeout = setTimeout(() => {
-      settle(
-        {
-          provider: 'codex',
-          session: null,
-          weekly: null,
-          updatedAt: Date.now(),
-          error: 'RPC timeout',
-          status: 'error'
-        },
-        { kill: true }
-      )
-    }, rpcTimeoutMs)
+    function armRpcDeadline(deadlineMs: number): void {
+      if (timeout) {
+        clearTimeout(timeout)
+      }
+      timeout = setTimeout(() => {
+        settle(
+          {
+            provider: 'codex',
+            session: null,
+            weekly: null,
+            updatedAt: Date.now(),
+            error: 'RPC timeout',
+            status: 'error'
+          },
+          { kill: true }
+        )
+      }, deadlineMs)
+    }
+    armRpcDeadline(initTimeoutMs)
 
     function sendRpc(method: string, params?: unknown): number {
       const id = ++rpcId
@@ -728,6 +751,8 @@ async function fetchViaRpc(options?: FetchCodexRateLimitsOptions): Promise<Provi
           }
 
           if (msg.id === initId) {
+            // Why: the boot/auth-refresh budget ends here; the read gets its own deadline.
+            armRpcDeadline(rpcTimeoutMs)
             // Initialize succeeded — send `initialized`, then request rate limits.
             sendNotification('initialized')
             rateLimitsId = sendRpc('account/rateLimits/read')
@@ -1198,9 +1223,14 @@ export async function fetchCodexRateLimits(
     }
   }
 
+  // Why: probes spawn a real codex process inside the live credential home;
+  // the per-home lock keeps Orca's own spawns (probe vs probe, probe vs
+  // commit-message run) from refreshing one auth.json concurrently.
+  const homeLockKey = resolveCodexHomeProcessLockKey(options?.codexHomePath)
+
   // Path B: try RPC
   try {
-    const rpcResult = await fetchViaRpc(options)
+    const rpcResult = await withCodexHomeProcessLock(homeLockKey, () => fetchViaRpc(options))
     if (options?.signal?.aborted) {
       return abortedCodexRateLimitResult()
     }
@@ -1238,7 +1268,7 @@ export async function fetchCodexRateLimits(
     if (options?.signal?.aborted) {
       return abortedCodexRateLimitResult()
     }
-    const ptyResult = await fetchViaPty(options)
+    const ptyResult = await withCodexHomeProcessLock(homeLockKey, () => fetchViaPty(options))
     if (options?.signal?.aborted) {
       return abortedCodexRateLimitResult()
     }

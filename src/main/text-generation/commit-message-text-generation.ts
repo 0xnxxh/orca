@@ -48,6 +48,10 @@ import { formatLinkedIssueTemplateValue } from '../../shared/source-control-ai-a
 import { renderSourceControlActionCommandTemplate } from '../../shared/source-control-ai-actions'
 import { resolveCliCommand } from '../codex-cli/command'
 import {
+  resolveCodexHomeProcessLockKeyForSpawnEnv,
+  withCodexHomeProcessLock
+} from '../codex-cli/codex-home-process-lock'
+import {
   getSpawnArgsForWindows,
   UnsafeWindowsBatchArgumentsError,
   WINDOWS_BATCH_UNSAFE_ARGUMENTS_ERROR
@@ -312,121 +316,132 @@ export async function discoverCommitMessageModelsLocal(
     return toModelDiscoveryCapability(spec)
   }
 
-  return new Promise((resolve) => {
-    let child: ChildProcess
-    const spawnEnv = env ?? process.env
-    try {
-      const planned = planModelDiscovery(spec, agentCommandOverride)
-      if (!planned.ok) {
-        resolve({ success: false, error: planned.error })
+  const runDiscovery = (): Promise<DiscoverCommitMessageModelsResult> =>
+    new Promise((resolve) => {
+      let child: ChildProcess
+      const spawnEnv = env ?? process.env
+      try {
+        const planned = planModelDiscovery(spec, agentCommandOverride)
+        if (!planned.ok) {
+          resolve({ success: false, error: planned.error })
+          return
+        }
+        if (process.platform === 'win32' && options.wslDistro) {
+          child = wslAwareSpawn(planned.plan.binary, planned.plan.args, {
+            cwd: options.cwd,
+            env: buildWslLauncherEnv(env),
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true,
+            wslDistro: options.wslDistro,
+            useWslLoginShell: true
+          })
+        } else {
+          const resolvedBinary =
+            process.platform === 'win32'
+              ? resolveCliCommand(planned.plan.binary, {
+                  pathEnv: spawnEnv.PATH ?? spawnEnv.Path ?? null
+                })
+              : planned.plan.binary
+          const { spawnCmd, spawnArgs } = getSpawnArgsForWindows(resolvedBinary, planned.plan.args)
+          child = spawn(spawnCmd, spawnArgs, {
+            env: spawnEnv,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true
+          })
+        }
+      } catch (error) {
+        console.error('[commit-message] Failed to spawn model discovery:', error)
+        resolve({
+          success: false,
+          error: `${spec.label} model discovery could not be started. Check the agent CLI configuration and try again.`
+        })
         return
       }
-      if (process.platform === 'win32' && options.wslDistro) {
-        child = wslAwareSpawn(planned.plan.binary, planned.plan.args, {
-          cwd: options.cwd,
-          env: buildWslLauncherEnv(env),
-          stdio: ['ignore', 'pipe', 'pipe'],
-          windowsHide: true,
-          wslDistro: options.wslDistro,
-          useWslLoginShell: true
-        })
-      } else {
-        const resolvedBinary =
-          process.platform === 'win32'
-            ? resolveCliCommand(planned.plan.binary, {
-                pathEnv: spawnEnv.PATH ?? spawnEnv.Path ?? null
-              })
-            : planned.plan.binary
-        const { spawnCmd, spawnArgs } = getSpawnArgsForWindows(resolvedBinary, planned.plan.args)
-        child = spawn(spawnCmd, spawnArgs, {
-          env: spawnEnv,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          windowsHide: true
-        })
-      }
-    } catch (error) {
-      console.error('[commit-message] Failed to spawn model discovery:', error)
-      resolve({
-        success: false,
-        error: `${spec.label} model discovery could not be started. Check the agent CLI configuration and try again.`
-      })
-      return
-    }
 
-    let stdout = ''
-    let stderr = ''
-    let outputLimitExceeded = false
-    let settled = false
-    let timer: ReturnType<typeof setTimeout> | null = null
-    let detachChildListeners = (): void => {}
-    const finish = (result: DiscoverCommitMessageModelsResult): void => {
-      if (settled) {
-        return
+      let stdout = ''
+      let stderr = ''
+      let outputLimitExceeded = false
+      let settled = false
+      let timer: ReturnType<typeof setTimeout> | null = null
+      let detachChildListeners = (): void => {}
+      const finish = (result: DiscoverCommitMessageModelsResult): void => {
+        if (settled) {
+          return
+        }
+        settled = true
+        if (timer) {
+          clearTimeout(timer)
+          timer = null
+        }
+        detachChildListeners()
+        resolve(result)
       }
-      settled = true
-      if (timer) {
-        clearTimeout(timer)
-        timer = null
-      }
-      detachChildListeners()
-      resolve(result)
-    }
-    timer = setTimeout(() => {
-      killProcessTree(child)
-      finish({
-        success: false,
-        error: `${spec.label} model discovery timed out after ${GENERATION_TIMEOUT_MS / 1000}s.`
-      })
-    }, GENERATION_TIMEOUT_MS)
-
-    const onData = (chunk: Buffer, append: (text: string) => void): void => {
-      if (stdout.length + stderr.length + chunk.byteLength > MAX_AGENT_OUTPUT_BYTES) {
-        outputLimitExceeded = true
+      timer = setTimeout(() => {
         killProcessTree(child)
-        finish({ success: false, error: `${spec.label} returned too much model data.` })
-        return
-      }
-      append(chunk.toString('utf-8'))
-    }
-
-    const onStdoutData = (chunk: Buffer): void => onData(chunk, (text) => (stdout += text))
-    const onStderrData = (chunk: Buffer): void => onData(chunk, (text) => (stderr += text))
-    const onError = (error: Error): void => {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         finish({
           success: false,
-          error: `${spec.modelDiscovery?.binary ?? spec.binary} not found on PATH. Install ${spec.label} to discover models.`
+          error: `${spec.label} model discovery timed out after ${GENERATION_TIMEOUT_MS / 1000}s.`
         })
-        return
-      }
-      finish({
-        success: false,
-        error: `${spec.label} model discovery failed to start. Check the agent CLI configuration and try again.`
-      })
-    }
-    const onClose = (code: number | null): void => {
-      if (outputLimitExceeded) {
-        finish({ success: false, error: `${spec.label} returned too much model data.` })
-        return
-      }
-      if (code !== 0) {
-        finish(finalizeModelDiscoveryOutput(spec, stdout, stderr, code))
-        return
-      }
-      finish(finalizeModelDiscoveryOutput(spec, stdout, stderr, code))
-    }
+      }, GENERATION_TIMEOUT_MS)
 
-    child.stdout?.on('data', onStdoutData)
-    child.stderr?.on('data', onStderrData)
-    child.on('error', onError)
-    child.on('close', onClose)
-    detachChildListeners = () => {
-      child.stdout?.off?.('data', onStdoutData)
-      child.stderr?.off?.('data', onStderrData)
-      child.off?.('error', onError)
-      child.off?.('close', onClose)
-    }
-  })
+      const onData = (chunk: Buffer, append: (text: string) => void): void => {
+        if (stdout.length + stderr.length + chunk.byteLength > MAX_AGENT_OUTPUT_BYTES) {
+          outputLimitExceeded = true
+          killProcessTree(child)
+          finish({ success: false, error: `${spec.label} returned too much model data.` })
+          return
+        }
+        append(chunk.toString('utf-8'))
+      }
+
+      const onStdoutData = (chunk: Buffer): void => onData(chunk, (text) => (stdout += text))
+      const onStderrData = (chunk: Buffer): void => onData(chunk, (text) => (stderr += text))
+      const onError = (error: Error): void => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          finish({
+            success: false,
+            error: `${spec.modelDiscovery?.binary ?? spec.binary} not found on PATH. Install ${spec.label} to discover models.`
+          })
+          return
+        }
+        finish({
+          success: false,
+          error: `${spec.label} model discovery failed to start. Check the agent CLI configuration and try again.`
+        })
+      }
+      const onClose = (code: number | null): void => {
+        if (outputLimitExceeded) {
+          finish({ success: false, error: `${spec.label} returned too much model data.` })
+          return
+        }
+        if (code !== 0) {
+          finish(finalizeModelDiscoveryOutput(spec, stdout, stderr, code))
+          return
+        }
+        finish(finalizeModelDiscoveryOutput(spec, stdout, stderr, code))
+      }
+
+      child.stdout?.on('data', onStdoutData)
+      child.stderr?.on('data', onStderrData)
+      child.on('error', onError)
+      child.on('close', onClose)
+      detachChildListeners = () => {
+        child.stdout?.off?.('data', onStdoutData)
+        child.stderr?.off?.('data', onStderrData)
+        child.off?.('error', onError)
+        child.off?.('close', onClose)
+      }
+    })
+
+  if (agentId === 'codex') {
+    // Why: discovery spawns a real codex process in the selected home; keep it
+    // off an auth.json a quota probe may be refreshing at the same time.
+    return withCodexHomeProcessLock(
+      resolveCodexHomeProcessLockKeyForSpawnEnv(env, options.wslDistro),
+      runDiscovery
+    )
+  }
+  return runDiscovery()
 }
 
 export async function discoverCommitMessageModelsRemote(
@@ -716,6 +731,56 @@ async function runLocalPlan(
   })
 }
 
+type LocalGenerationTarget = Extract<CommitMessageGenerationTarget, { kind: 'local' }>
+
+function runLocalPlanForAgent(
+  agentId: string,
+  plan: CommitMessagePlan,
+  target: LocalGenerationTarget,
+  emptyResultName: string,
+  operation: TextGenerationOperation
+): Promise<InternalTextGenerationResult> {
+  const run = (): Promise<InternalTextGenerationResult> =>
+    runLocalPlan(plan, target.cwd, target.env, emptyResultName, operation, target.wslDistro)
+  if (agentId !== 'codex') {
+    // Why: no extra promise hops here — cancellation timing for non-codex
+    // agents must stay byte-identical to a direct runLocalPlan call.
+    return run()
+  }
+  return runCodexLocalPlanUnderHomeLock(run, target, operation)
+}
+
+// Why: codex rewrites rotating OAuth tokens in its home's auth.json; the
+// per-home lock keeps this run from racing Orca's own quota probes there.
+async function runCodexLocalPlanUnderHomeLock(
+  run: () => Promise<InternalTextGenerationResult>,
+  target: LocalGenerationTarget,
+  operation: TextGenerationOperation
+): Promise<InternalTextGenerationResult> {
+  const laneKey = localLaneKey(operation, target.cwd)
+  let canceledWhileQueued = false
+  const queuedCancelToken = (): void => {
+    canceledWhileQueued = true
+  }
+  // Why: Stop must work while this run waits behind a probe holding the lock.
+  cancelTokensByLane.set(laneKey, queuedCancelToken)
+  try {
+    return await withCodexHomeProcessLock(
+      resolveCodexHomeProcessLockKeyForSpawnEnv(target.env, target.wslDistro),
+      async () => {
+        if (canceledWhileQueued) {
+          return { success: false, error: 'Generation canceled.', canceled: true }
+        }
+        return run()
+      }
+    )
+  } finally {
+    if (cancelTokensByLane.get(laneKey) === queuedCancelToken) {
+      cancelTokensByLane.delete(laneKey)
+    }
+  }
+}
+
 function finalizeFromAgentOutput(args: {
   code: number | null
   stdout: string
@@ -890,13 +955,12 @@ export async function generateCommitMessageFromContext(
   const internalResult =
     target.kind === 'remote'
       ? await runRemotePlan(planned.plan, target)
-      : await runLocalPlan(
+      : await runLocalPlanForAgent(
+          params.agentId,
           planned.plan,
-          target.cwd,
-          target.env,
+          target,
           'message',
-          'commit-message',
-          target.wslDistro
+          'commit-message'
         )
   return formatCommitMessageGenerationResult(internalResult)
 }
@@ -967,13 +1031,12 @@ export async function generatePullRequestFieldsFromContext(
   const internalResult =
     target.kind === 'remote'
       ? await runRemotePlan(planned.plan, target, 'details', 'pull-request-fields')
-      : await runLocalPlan(
+      : await runLocalPlanForAgent(
+          params.agentId,
           planned.plan,
-          target.cwd,
-          target.env,
+          target,
           'details',
-          'pull-request-fields',
-          target.wslDistro
+          'pull-request-fields'
         )
   return formatPullRequestFieldsGenerationResult(internalResult, context)
 }
@@ -1014,13 +1077,12 @@ export async function generateBranchNameFromContext(
   const internalResult =
     target.kind === 'remote'
       ? await runRemotePlan(planned.plan, target, 'branch name', 'branch-name')
-      : await runLocalPlan(
+      : await runLocalPlanForAgent(
+          params.agentId,
           planned.plan,
-          target.cwd,
-          target.env,
+          target,
           'branch name',
-          'branch-name',
-          target.wslDistro
+          'branch-name'
         )
   if (!internalResult.success) {
     return internalResult
