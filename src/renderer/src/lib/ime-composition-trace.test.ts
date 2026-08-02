@@ -1,7 +1,10 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  createImeTraceInputEvent,
+  createImeTraceKeyboardEvent,
   createImeTraceTextarea,
+  EMPTY_IME_TRACE_STATE,
   extractImeCommitsFromTrace,
   interpretImeCommits,
   replayImeCompositionTrace
@@ -14,6 +17,15 @@ import {
   IBUS_HANGUL_TERMINAL_JAMO_COMMIT_TRACE,
   IME_COMPOSITION_TRACES
 } from './ime-recorded-composition-traces.test-fixtures'
+
+const KEY_EVENT_WITHOUT_REPEAT: ImeTraceKeyEvent = {
+  code: 'KeyE',
+  isComposing: false,
+  key: 'e',
+  keyCode: 69,
+  state: EMPTY_IME_TRACE_STATE,
+  type: 'keydown'
+}
 
 afterEach(() => {
   document.body.replaceChildren()
@@ -190,5 +202,69 @@ describe('replayImeCompositionTrace', () => {
 
     // Process keys are composing; the interleaved 'a' and the trailing Enter are not.
     expect(composing).toEqual([true, false, true, false])
+  })
+
+  it("replays Safari's undefined isComposing as undefined rather than false", () => {
+    // The whole reason the field is `boolean | undefined`: code that branches on
+    // `=== undefined` must see the two apart, and the constructor coerces.
+    const safari = createImeTraceInputEvent({
+      data: 'a',
+      inputType: 'insertText',
+      isComposing: undefined,
+      state: EMPTY_IME_TRACE_STATE,
+      type: 'input'
+    })
+    const chromium = createImeTraceInputEvent({
+      data: 'a',
+      inputType: 'insertText',
+      isComposing: false,
+      state: EMPTY_IME_TRACE_STATE,
+      type: 'input'
+    })
+
+    expect(safari.isComposing).toBeUndefined()
+    expect(chromium.isComposing).toBe(false)
+  })
+
+  it('replays the repeat flag macOS press-and-hold is distinguished by', () => {
+    const held = createImeTraceKeyboardEvent({
+      code: 'KeyE',
+      isComposing: false,
+      key: 'e',
+      keyCode: 69,
+      repeat: true,
+      state: EMPTY_IME_TRACE_STATE,
+      type: 'keydown'
+    })
+
+    expect(held.repeat).toBe(true)
+    expect(createImeTraceKeyboardEvent(KEY_EVENT_WITHOUT_REPEAT).repeat).toBe(false)
+  })
+
+  it('replays a backward selection so a preedit range is not flattened to a caret', async () => {
+    const textarea = createImeTraceTextarea(document)
+    const directions: (string | null)[] = []
+    textarea.addEventListener('keydown', () => directions.push(textarea.selectionDirection))
+
+    await replayImeCompositionTrace(textarea, {
+      ...IBUS_HANGUL_RETAINED_COMMIT_TRACE,
+      events: [
+        {
+          code: 'KeyA',
+          isComposing: false,
+          key: 'a',
+          keyCode: 65,
+          state: {
+            selectionDirection: 'backward',
+            selectionEnd: 2,
+            selectionStart: 0,
+            value: 'ab'
+          },
+          type: 'keydown'
+        }
+      ]
+    })
+
+    expect(directions).toEqual(['backward'])
   })
 })

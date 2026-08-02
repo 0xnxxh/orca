@@ -20,6 +20,8 @@ export type ImeTraceTargetState = {
   value: string
   selectionStart: number
   selectionEnd: number
+  /** Absent means 'none'. Without it a preedit range can only ever be a caret. */
+  selectionDirection?: 'backward' | 'forward' | 'none'
 }
 
 type ImeTraceEventBase = { state: ImeTraceTargetState }
@@ -30,6 +32,8 @@ export type ImeTraceKeyEvent = ImeTraceEventBase & {
   code: string
   keyCode: number
   isComposing: boolean
+  /** macOS press-and-hold drives its accent panel off this; absent means false. */
+  repeat?: boolean
   altKey?: boolean
   ctrlKey?: boolean
   metaKey?: boolean
@@ -88,13 +92,12 @@ function applyLegacyKeyCode(event: KeyboardEvent, keyCode: number): void {
 }
 
 function applyIsComposing(event: Event, isComposing: boolean | undefined): void {
-  if (
-    isComposing === undefined ||
-    (event as { isComposing?: boolean }).isComposing === isComposing
-  ) {
+  if ((event as { isComposing?: boolean }).isComposing === isComposing) {
     return
   }
-  // Testing libraries cannot set isComposing any other way.
+  // Testing libraries cannot set isComposing any other way. `undefined` is a real
+  // recorded value, not a missing one: the constructor coerces it to false, which
+  // is the one thing a Safari trace exists to tell apart.
   Object.defineProperty(event, 'isComposing', { configurable: true, value: isComposing })
 }
 
@@ -109,6 +112,7 @@ export function createImeTraceKeyboardEvent(event: ImeTraceKeyEvent): KeyboardEv
     key: event.key,
     keyCode: event.keyCode,
     metaKey: event.metaKey ?? false,
+    repeat: event.repeat ?? false,
     shiftKey: event.shiftKey ?? false
   })
   applyLegacyKeyCode(created, event.keyCode)
@@ -170,6 +174,7 @@ export type ImeTraceReplayOptions = {
 
 function readTargetState(target: HTMLTextAreaElement | HTMLInputElement): ImeTraceTargetState {
   return {
+    selectionDirection: target.selectionDirection ?? 'none',
     selectionEnd: target.selectionEnd ?? 0,
     selectionStart: target.selectionStart ?? 0,
     value: target.value
@@ -181,7 +186,7 @@ function stampTargetState(
   state: ImeTraceTargetState
 ): void {
   target.value = state.value
-  target.setSelectionRange(state.selectionStart, state.selectionEnd)
+  target.setSelectionRange(state.selectionStart, state.selectionEnd, state.selectionDirection)
 }
 
 /**
