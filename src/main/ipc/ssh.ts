@@ -1067,11 +1067,18 @@ export function registerSshHandlers(
       if (!isCurrentConnectAttempt(targetId, authority)) {
         throw createCancelledConnectAttemptError()
       }
-      await existingSession.detachAndPersist()
-      if (activeSessions.get(targetId) === existingSession) {
-        activeSessions.delete(targetId)
-        clearRelayLostBackoff(targetId)
-        clearRelayStateOverride(targetId)
+      try {
+        await existingSession.detachAndPersist()
+      } finally {
+        // Why finally: detachAndPersist runs its in-memory half synchronously, so the session is
+        // dead even when the lease write rejects — keeping it in activeSessions would strand every
+        // later connect on the same dead session. Why still after the await, not before it: the
+        // write has settled by now, so it can no longer clobber the replacement's 'attached' write.
+        if (activeSessions.get(targetId) === existingSession) {
+          activeSessions.delete(targetId)
+          clearRelayLostBackoff(targetId)
+          clearRelayStateOverride(targetId)
+        }
       }
     }
 
@@ -1475,7 +1482,10 @@ export async function resetSshHandlerStateForTests(): Promise<void> {
   }
   ipcMain.removeHandler('ssh:submitCredential')
 
-  await Promise.all([...activeSessions.values()].map((session) => session.disposeAndPersist()))
+  // Why: allSettled — a rejected disposal write must not abort the rest of the reset and leak state into the next test.
+  await Promise.allSettled(
+    [...activeSessions.values()].map((session) => session.disposeAndPersist())
+  )
   activeSessions.clear()
   for (const targetId of relayLostBackoff.keys()) {
     clearRelayLostBackoff(targetId)

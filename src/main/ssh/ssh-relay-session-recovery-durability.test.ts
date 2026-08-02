@@ -97,7 +97,7 @@ vi.mock('../providers/ssh-git-dispatch', () => ({
 }))
 
 const { deployAndLaunchRelay } = await import('./ssh-relay-deploy')
-const { clearPtyOwnershipForConnection } = await import('../ipc/pty')
+const { clearPtyOwnershipForConnection, unregisterSshPtyProvider } = await import('../ipc/pty')
 
 describe('SshRelaySession consumer recovery durability', () => {
   beforeEach(() => {
@@ -312,5 +312,44 @@ describe('SshRelaySession consumer recovery durability', () => {
     vi.mocked(mockStore.markSshRemotePtyLeasesAsync).mockClear()
     await session.detachAndPersist()
     expect(mockStore.markSshRemotePtyLeasesAsync).not.toHaveBeenCalled()
+  })
+
+  it('re-issues only the lease write after a rejected detach persistence', async () => {
+    const targetId = 'target-detach-write-retry'
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    vi.mocked(mockStore.markSshRemotePtyLeasesAsync).mockRejectedValueOnce(
+      new Error('lease write failed')
+    )
+    const session = new SshRelaySession(targetId, getMainWindow, mockStore, mockPortForward)
+    await session.establish(mockConn)
+    vi.mocked(clearPtyOwnershipForConnection).mockClear()
+
+    await expect(session.detachAndPersist()).rejects.toThrow('lease write failed')
+
+    const teardownCalls = vi.mocked(unregisterSshPtyProvider).mock.calls.length
+    vi.mocked(mockStore.markSshRemotePtyLeasesAsync).mockClear()
+    await session.detachAndPersist()
+
+    // Why: the retry re-issues the write only — re-running provider teardown would tear down
+    // whatever a replacement session has already registered for this target.
+    expect(mockStore.markSshRemotePtyLeasesAsync).toHaveBeenCalledWith(targetId, 'detached')
+    expect(unregisterSshPtyProvider).toHaveBeenCalledTimes(teardownCalls)
+    expect(clearPtyOwnershipForConnection).not.toHaveBeenCalled()
+  })
+
+  it('still upgrades to disposal after a rejected detach persistence', async () => {
+    const targetId = 'target-detach-write-failure-disposal'
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    vi.mocked(mockStore.markSshRemotePtyLeasesAsync).mockRejectedValueOnce(
+      new Error('lease write failed')
+    )
+    const session = new SshRelaySession(targetId, getMainWindow, mockStore, mockPortForward)
+    await session.establish(mockConn)
+
+    await expect(session.detachAndPersist()).rejects.toThrow('lease write failed')
+    await session.disposeAndPersist()
+
+    expect(mockStore.markSshRemotePtyLeasesAsync).toHaveBeenCalledWith(targetId, 'terminated')
+    expect(getSshPtyConsumerRecovery(targetId)).toBeUndefined()
   })
 })

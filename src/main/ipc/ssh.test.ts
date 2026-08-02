@@ -2730,6 +2730,81 @@ describe('SSH IPC handlers', () => {
       expect(order).toEqual(['leases:detached', 'leases:detached:persisted', 'recovery:upsert'])
     })
 
+    it('holds a retry that starts while the detach write is still pending', async () => {
+      const targetId = 'ssh-consumer-identity-pending-retry'
+      const order: string[] = []
+      let settleLeaseRelease!: () => void
+      mockStore.markSshRemotePtyLeasesAsync.mockImplementationOnce((_id: string, state: string) => {
+        order.push(`leases:${state}`)
+        return new Promise<void>((resolve) => {
+          settleLeaseRelease = () => {
+            order.push(`leases:${state}:persisted`)
+            resolve()
+          }
+        })
+      })
+      mockStore.upsertSshPtyConsumerRecovery.mockImplementation(async () => {
+        order.push('recovery:upsert')
+      })
+      mockSshStore.getTarget.mockReturnValue(makeTarget(targetId))
+      mockConnectionManager.connect.mockRejectedValueOnce(new Error('transport refused'))
+
+      const failedConnect = handlers.get('ssh:connect')!(null, { targetId })
+      const failure = expect(failedConnect).rejects.toThrow('transport refused')
+      await vi.waitFor(() => expect(order).toContain('leases:detached'))
+
+      // Retry mid-write: it must not mint a session or re-own leases while the release is pending.
+      mockConnectionManager.connect.mockResolvedValue({})
+      markConnected(targetId)
+      const retry = handlers.get('ssh:connect')!(null, { targetId }) as Promise<unknown>
+      const retrySettled = vi.fn()
+      void retry.then(retrySettled, retrySettled)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(retrySettled).not.toHaveBeenCalled()
+      expect(order).not.toContain('leases:detached:persisted')
+
+      settleLeaseRelease()
+      await failure
+      // Why: the retry folds onto the still-latched attempt rather than starting a second connect,
+      // so it inherits that attempt's failure instead of racing its teardown.
+      await expect(retry).rejects.toThrow('transport refused')
+      expect(mockConnectionManager.connect).toHaveBeenCalledTimes(1)
+      expect(order).toEqual(['leases:detached', 'leases:detached:persisted'])
+
+      await handlers.get('ssh:connect')!(null, { targetId })
+
+      expect(order).toEqual(['leases:detached', 'leases:detached:persisted', 'recovery:upsert'])
+    })
+
+    it('replaces a live session whose detach write keeps failing', async () => {
+      const targetId = 'ssh-consumer-identity-detach-write-failure'
+      mockSshStore.getTarget.mockReturnValue(makeTarget(targetId))
+      mockConnectionManager.connect.mockResolvedValue({})
+      markConnected(targetId)
+      await handlers.get('ssh:connect')!(null, { targetId })
+      const claimedId = getSshPtyConsumerRecovery(targetId)?.clientInstanceId
+      expect(claimedId).toEqual(expect.any(String))
+
+      // Why a permanent reject, not once: it proves the failed session is gone rather than merely
+      // retried — a second connect that still holds it would fail on the same write again.
+      mockStore.markSshRemotePtyLeasesAsync.mockImplementation((_id: string, state: string) =>
+        state === 'detached'
+          ? Promise.reject(new Error('lease write failed'))
+          : Promise.resolve(undefined)
+      )
+      await expect(handlers.get('ssh:connect')!(null, { targetId })).rejects.toThrow(
+        'lease write failed'
+      )
+
+      mockConnectionManager.connect.mockClear()
+      await handlers.get('ssh:connect')!(null, { targetId })
+
+      expect(mockConnectionManager.connect).toHaveBeenCalledTimes(1)
+      // Why: the abandoned session still released its identity synchronously, so the replacement
+      // reclaims the owner instead of minting a new one.
+      expect(getSshPtyConsumerRecovery(targetId)?.clientInstanceId).toBe(claimedId)
+    })
+
     it('resumes the remembered owner lease after a failed establish', async () => {
       const targetId = 'ssh-consumer-identity-establish-failure'
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})

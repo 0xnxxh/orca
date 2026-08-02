@@ -279,6 +279,10 @@ export class SshRelaySession {
   private sourceCancellationPublisherCleanup: (() => void) | null = null
   private teardownMode: SshRelaySessionTeardownMode | null = null
   private teardownCompletion: Promise<void> | null = null
+  // Why: detach's in-memory half is one-shot but its lease write is retryable, so they are tracked
+  // apart — a rejected write can be re-issued without re-running provider teardown.
+  private detachedInMemory = false
+  private detachFlushRejected = false
   private ptyRecoveryNotificationCleanups: (() => void)[] = []
   private readonly sourceIdentityByRelayPtyId = new Map<
     string,
@@ -736,7 +740,12 @@ export class SshRelaySession {
    * identity. Once dispose has been requested this is a no-op — see {@link disposeAndPersist}.
    */
   async detachAndPersist(): Promise<void> {
-    this.teardownCompletion ??= this.runDetach()
+    // Why: a rejected lease write must not latch forever — re-issue just the write so the caller can
+    // retry. Never under 'dispose': that supersedes detach for good and re-issuing would resurrect
+    // the 'detached' state the disposal already replaced with 'terminated'.
+    if (!this.teardownCompletion || (this.teardownMode === 'detach' && this.detachFlushRejected)) {
+      this.teardownCompletion = this.runDetach()
+    }
     this.teardownMode ??= 'detach'
     let completion = this.teardownCompletion
     while (completion) {
@@ -755,23 +764,30 @@ export class SshRelaySession {
   }
 
   private runDetach(): Promise<void> {
-    if (this._state === 'disposed') {
-      return Promise.resolve()
+    if (!this.detachedInMemory) {
+      if (this._state === 'disposed') {
+        return Promise.resolve()
+      }
+      // Why first: same synchronous-half-first rule as runDisposal, and this is the highest-value
+      // step — a fast reconnect must reclaim this identity instead of minting one, even if a
+      // teardown call below throws unexpectedly.
+      detachSshPtyConsumerRecovery(this.targetId, this.ptyConsumerClientInstanceId)
+      this.abortController?.abort()
+      this.stopPortScanning()
+      this.broadcastEmptyLists()
+      // Why: disconnect keeps PTY ownership so a later manual connect can reattach.
+      this.teardownProviders('connection_lost')
+      this.currentConnection = null
+      this._state = 'disposed'
+      this.detachedInMemory = true
     }
-    // Why first: same synchronous-half-first rule as runDisposal, and this is the highest-value
-    // step — a fast reconnect must reclaim this identity instead of minting one, even if a
-    // teardown call below throws unexpectedly.
-    detachSshPtyConsumerRecovery(this.targetId, this.ptyConsumerClientInstanceId)
-    this.abortController?.abort()
-    this.stopPortScanning()
-    this.broadcastEmptyLists()
-    // Why: disconnect keeps PTY ownership so a later manual connect can reattach.
-    this.teardownProviders('connection_lost')
-    this.currentConnection = null
-    this._state = 'disposed'
+    this.detachFlushRejected = false
     return settleSshSessionTeardown([
       this.store.markSshRemotePtyLeasesAsync(this.targetId, 'detached')
-    ])
+    ]).catch((error: unknown) => {
+      this.detachFlushRejected = true
+      throw error
+    })
   }
 
   // ── Private ───────────────────────────────────────────────────────

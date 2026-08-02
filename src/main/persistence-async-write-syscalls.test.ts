@@ -12,6 +12,7 @@ import type * as NodeFs from 'node:fs'
 import type * as NodeFsPromises from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import type { SshRemotePtyLeaseState } from '../shared/ssh-types'
 
 const testState = { dir: '' }
 
@@ -155,9 +156,9 @@ type TestStore = {
   upsertSshRemotePtyLease(lease: {
     targetId: string
     ptyId: string
-    state: 'attached' | 'detached' | 'expired'
+    state: SshRemotePtyLeaseState
   }): void
-  markSshRemotePtyLeasesAsync(targetId: string, state: 'attached' | 'detached'): Promise<void>
+  markSshRemotePtyLeasesAsync(targetId: string, state: SshRemotePtyLeaseState): Promise<void>
   markSshRemotePtyLeasesAttachedAsync(targetId: string, ptyIds: readonly string[]): Promise<void>
 }
 

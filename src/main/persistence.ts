@@ -3846,16 +3846,6 @@ export class Store {
     return write
   }
 
-  // Why: recovery ownership must be durable before relay setup continues without blocking the main thread.
-  private async flushImmediateAsync(): Promise<void> {
-    if (this.writeTimer) {
-      clearTimeout(this.writeTimer)
-      this.writeTimer = null
-    }
-    this.firstPendingSaveAt = null
-    await this.enqueueWrite()
-  }
-
   /** Wait for any in-flight async disk write to complete. Used in tests. */
   async waitForPendingWrite(): Promise<void> {
     await Promise.all([this.pendingWrite, this.activeViewPreference.waitForPendingWrite()])
@@ -6925,8 +6915,8 @@ export class Store {
   private async flushSshPtyConsumerRecovery(): Promise<void> {
     // Why: ownership must be durable before relay setup continues, but this runs on the live
     // establish/reconnect path — a sync flush would park the main thread on a stalled profile mount.
-    // Why not caught here: the failure must reach the awaiting caller; enqueueWrite already logs it.
-    await this.flushImmediateAsync()
+    // Why not caught here: the failure must reach the awaiting caller.
+    await this.flushDurableStateOrThrowAsync()
   }
 
   // ── SSH Remote PTY Leases ──────────────────────────────────────────
@@ -6981,7 +6971,7 @@ export class Store {
     state: SshRemotePtyLease['state']
   ): Promise<void> {
     if (this.updateSshRemotePtyLeaseStates(targetId, state)) {
-      await this.flushImmediateAsync()
+      await this.flushDurableStateOrThrowAsync()
     }
   }
 
@@ -6993,7 +6983,7 @@ export class Store {
       ptyIds.map((ptyId) => this.getRelayPtyIdForSshLeaseStorage(targetId, ptyId))
     )
     if (this.updateSshRemotePtyLeaseStates(targetId, 'attached', relayPtyIds)) {
-      await this.flushImmediateAsync()
+      await this.flushDurableStateOrThrowAsync()
     }
   }
 
@@ -7213,6 +7203,26 @@ export class Store {
       return Promise.reject(new Error('Cannot flush while persistence is finalized'))
     }
     return this.flushCurrentStateAsync(false, options.signal)
+  }
+
+  // Async twin of flushOrThrow: durable state only. Active-view and GitHub sidecars are
+  // quit/startup work and must not be snapshotted on the live SSH establish/reconnect path.
+  private async flushDurableStateOrThrowAsync(): Promise<void> {
+    if (this.writesFrozen || this.quitFlushStarted) {
+      throw new Error('Cannot flush while persistence is finalized')
+    }
+    for (;;) {
+      if (this.writeTimer) {
+        clearTimeout(this.writeTimer)
+        this.writeTimer = null
+      }
+      this.firstPendingSaveAt = null
+      const generation = this.writeGeneration
+      await this.enqueueWrite()
+      if (generation === this.writeGeneration) {
+        break
+      }
+    }
   }
 
   private async flushCurrentStateAsync(
