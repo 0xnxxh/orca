@@ -1102,7 +1102,8 @@ export function connectPanePty(
   let handleRendererOwnedAgentStatus: NonNullable<
     IpcPtyTransportOptions['onAgentStatus']
   > = () => {}
-  let remoteOutputPausedPtyId: string | null = null
+  let remoteOutputGatedPtyId: string | null = null
+  let remoteOutputFactConsumerPtyId: string | null = null
   let suppressViewportClaimTerminalResize = false
   // Why: idle callbacks are registered before the deferred PTY output plumbing
   // exists. Start with the shared scheduler, then switch to the PTY writer
@@ -2335,6 +2336,7 @@ export function connectPanePty(
   const dropSideEffectFactConsumer = (): void => {
     unregisterSideEffectFactConsumer?.()
     unregisterSideEffectFactConsumer = null
+    remoteOutputFactConsumerPtyId = null
   }
   const clearPanePtyFitBinding = (): void => {
     // Why: fit bindings live in a module-level map, so pane teardown must
@@ -3794,7 +3796,7 @@ export function connectPanePty(
   // predicate), so exactly one reply goes out.
   const handleHiddenMode2031SubscribeFact = (): void => {
     const ptyId = transport.getPtyId()
-    if (disposed || (!isHiddenDeliveryGateManagedPty(ptyId) && remoteOutputPausedPtyId !== ptyId)) {
+    if (disposed || (!isHiddenDeliveryGateManagedPty(ptyId) && remoteOutputGatedPtyId !== ptyId)) {
       return
     }
     const mode = resolveTerminalColorSchemeMode(
@@ -3819,7 +3821,7 @@ export function connectPanePty(
   // sent: a withdrawal is not a query.
   const handleHiddenMode2031UnsubscribeFact = (): void => {
     const ptyId = transport.getPtyId()
-    if (disposed || (!isHiddenDeliveryGateManagedPty(ptyId) && remoteOutputPausedPtyId !== ptyId)) {
+    if (disposed || (!isHiddenDeliveryGateManagedPty(ptyId) && remoteOutputGatedPtyId !== ptyId)) {
       return
     }
     deps.paneMode2031Ref.current.delete(pane.id)
@@ -5980,21 +5982,25 @@ export function connectPanePty(
       if (!ptyId || !isRemoteRuntimePtyId(ptyId)) {
         return
       }
-      if (!supported || !paused) {
-        if (remoteOutputPausedPtyId === ptyId) {
-          remoteOutputPausedPtyId = null
+      if (!paused) {
+        const wasGated = remoteOutputGatedPtyId === ptyId
+        if (wasGated) {
+          remoteOutputGatedPtyId = null
           if (!mainSideEffectAuthority) {
             dropSideEffectFactConsumer()
           }
         }
-        if (supported && !paused && hiddenOutputRestorePtyId === ptyId) {
+        if (wasGated && hiddenOutputRestorePtyId === ptyId) {
           requestHiddenOutputRestoreIfNeeded()
         }
         return
       }
-      if (remoteOutputPausedPtyId !== ptyId) {
-        remoteOutputPausedPtyId = ptyId
+      if (remoteOutputGatedPtyId !== ptyId) {
+        remoteOutputGatedPtyId = ptyId
+      }
+      if (supported && remoteOutputFactConsumerPtyId !== ptyId) {
         registerSideEffectFactConsumerForPty(ptyId, true)
+        remoteOutputFactConsumerPtyId = ptyId
       }
       markHiddenOutputRestoreNeeded()
     }
@@ -6002,8 +6008,8 @@ export function connectPanePty(
     syncHiddenRendererPtyDelivery = (): void => {
       const ptyId = transport.getPtyId()
       syncModelRestoreNeededSubscription(ptyId)
-      if (remoteOutputPausedPtyId !== null && remoteOutputPausedPtyId !== ptyId) {
-        remoteOutputPausedPtyId = null
+      if (remoteOutputGatedPtyId !== null && remoteOutputGatedPtyId !== ptyId) {
+        remoteOutputGatedPtyId = null
         if (!mainSideEffectAuthority) {
           dropSideEffectFactConsumer()
         }
@@ -6039,8 +6045,8 @@ export function connectPanePty(
     }
     releaseHiddenRendererPtyDelivery = (): void => {
       transport.setOutputPaused?.(false)
-      if (remoteOutputPausedPtyId !== null) {
-        remoteOutputPausedPtyId = null
+      if (remoteOutputGatedPtyId !== null) {
+        remoteOutputGatedPtyId = null
         if (!mainSideEffectAuthority) {
           dropSideEffectFactConsumer()
         }
@@ -6342,7 +6348,7 @@ export function connectPanePty(
       const ptyId = transport.getPtyId()
       if (
         foreground ||
-        (!shouldSnapshotHiddenCodexOutput && remoteOutputPausedPtyId !== ptyId) ||
+        (!shouldSnapshotHiddenCodexOutput && remoteOutputGatedPtyId !== ptyId) ||
         !canUseHiddenOutputSnapshot(ptyId)
       ) {
         return false
