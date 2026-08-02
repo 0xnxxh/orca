@@ -71,6 +71,8 @@ function finalizeFullFirstUserPrompt(value: string): string | null {
   // Bound before scanning so a multi-MB paste cannot force a full lowercase copy.
   const bounded = sliceAtCodeUnitLimit(trimmed, FULL_FIRST_USER_PROMPT_SAFETY_LIMIT)
   // Reject pure Grok bootstrap dumps even when they arrived via a non-Grok path.
+  // Safe on the bounded slice: stripGrokUserQueryEnvelope above already unwrapped
+  // any <user_query>, wherever it sat, so a match here means there was none.
   const lower = bounded.toLowerCase()
   if (lower.startsWith('<user_info>') && !lower.includes('<user_query>')) {
     return null
