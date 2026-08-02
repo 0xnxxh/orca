@@ -55,6 +55,8 @@ export function FirstPromptCard({
     }
 
     if (!canLoadFullFirstPrompt({ executionHostId, filePath })) {
+      // Deps can change to a non-loadable session after mount started `loading`.
+      setLoading(false)
       return Promise.resolve(null)
     }
     const getFirstUserPrompt = window.api.aiVault.getFirstUserPrompt
@@ -118,6 +120,11 @@ export function FirstPromptCard({
     void loadFullPrompt()
     return () => {
       generationRef.current += 1
+      // Why: the bump above makes the in-flight request stale, and a stale settle
+      // deliberately skips setLoading(false). Drop the dedupe handle too, or the
+      // next pass (StrictMode's remount, or a prop change) would await that same
+      // stale promise and strand the card on "Loading first prompt…" forever.
+      loadPromiseRef.current = null
     }
   }, [loadFullPrompt])
 
