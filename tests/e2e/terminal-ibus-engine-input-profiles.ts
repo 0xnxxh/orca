@@ -119,9 +119,13 @@ export const nativeIbusEngineInputProfiles: Record<string, NativeIbusEngineInput
     scenarios: [
       {
         title: 'commits Telex diacritics without leaked keystroke Latin',
-        expectedText: 'tiếng việt',
+        expectedText: 'tiếng việt ',
+        // Telex closes a word on a boundary, not on Return: hangul, anthy and libpinyin
+        // all commit their preedit when Return arrives, and this engine does not. Without
+        // the trailing space the final syllable is still composing when Return fires, so
+        // it commits into the *next* line and no two repetitions agree.
         drive: ({ key, typeClearingModifiers }) => {
-          typeClearingModifiers('tieengs vieejt')
+          typeClearingModifiers('tieengs vieejt ')
           key('Return')
         }
       }
