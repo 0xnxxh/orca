@@ -4044,6 +4044,7 @@ export class Store {
         }
       }
     }
+    // Why: later async flushes must remain serialized behind the invalidated writer.
     this.writeToDiskSync({
       force: asyncWriteWasInFlight,
       skipBackupRotation: this.backupRotationInFlight
@@ -6888,7 +6889,7 @@ export class Store {
     return record ? structuredClone(record) : null
   }
 
-  upsertSshPtyConsumerRecovery(record: SshPtyConsumerRecovery): void {
+  async upsertSshPtyConsumerRecovery(record: SshPtyConsumerRecovery): Promise<void> {
     const normalized = normalizeSshPtyConsumerRecovery(record)
     if (!normalized) {
       throw new Error('Invalid SSH PTY consumer recovery record')
@@ -6898,26 +6899,24 @@ export class Store {
       ...recoveries.filter((candidate) => candidate.targetId !== normalized.targetId),
       normalized
     ]
-    this.flushSshPtyConsumerRecovery()
+    await this.flushSshPtyConsumerRecovery()
   }
 
-  removeSshPtyConsumerRecovery(targetId: string): void {
+  async removeSshPtyConsumerRecovery(targetId: string): Promise<void> {
     const recoveries = this.state.sshPtyConsumerRecoveries ?? []
     const next = recoveries.filter((record) => record.targetId !== targetId)
     if (next.length === recoveries.length) {
       return
     }
     this.state.sshPtyConsumerRecoveries = next
-    this.flushSshPtyConsumerRecovery()
+    await this.flushSshPtyConsumerRecovery()
   }
 
-  private flushSshPtyConsumerRecovery(): void {
-    try {
-      // Why: ownership must be durable before relay setup continues, but active-view and GitHub sidecars are unrelated startup work.
-      this.flushOrThrow()
-    } catch (err) {
-      console.error('[persistence] Failed to flush SSH PTY consumer recovery:', err)
-    }
+  private async flushSshPtyConsumerRecovery(): Promise<void> {
+    // Why: ownership must be durable before relay setup continues, but this runs on the live
+    // establish/reconnect path — a sync flush would park the main thread on a stalled profile mount.
+    // Why not caught here: the failure must reach the awaiting caller.
+    await this.flushDurableStateOrThrowAsync()
   }
 
   // ── SSH Remote PTY Leases ──────────────────────────────────────────
@@ -6962,13 +6961,47 @@ export class Store {
   }
 
   markSshRemotePtyLeases(targetId: string, state: SshRemotePtyLease['state']): void {
+    if (this.updateSshRemotePtyLeaseStates(targetId, state)) {
+      this.flush()
+    }
+  }
+
+  async markSshRemotePtyLeasesAsync(
+    targetId: string,
+    state: SshRemotePtyLease['state']
+  ): Promise<void> {
+    if (this.updateSshRemotePtyLeaseStates(targetId, state)) {
+      await this.flushDurableStateOrThrowAsync()
+    }
+  }
+
+  async markSshRemotePtyLeasesAttachedAsync(
+    targetId: string,
+    ptyIds: readonly string[]
+  ): Promise<void> {
+    const relayPtyIds = new Set(
+      ptyIds.map((ptyId) => this.getRelayPtyIdForSshLeaseStorage(targetId, ptyId))
+    )
+    if (this.updateSshRemotePtyLeaseStates(targetId, 'attached', relayPtyIds)) {
+      await this.flushDurableStateOrThrowAsync()
+    }
+  }
+
+  private updateSshRemotePtyLeaseStates(
+    targetId: string,
+    state: SshRemotePtyLease['state'],
+    ptyIds?: ReadonlySet<string>
+  ): boolean {
     const now = Date.now()
     let changed = false
     const shouldClearBindings = state === 'terminated' || state === 'expired'
     const leasesToClear: SshRemotePtyLease[] = []
     this.state.sshRemotePtyLeases ??= []
     for (const lease of this.state.sshRemotePtyLeases) {
-      if (lease.targetId !== targetId) {
+      if (lease.targetId !== targetId || (ptyIds && !ptyIds.has(lease.ptyId))) {
+        continue
+      }
+      if (state === 'attached' && (lease.state === 'terminated' || lease.state === 'expired')) {
         continue
       }
       if (state === 'detached' && lease.state !== 'attached') {
@@ -6991,9 +7024,7 @@ export class Store {
     const bindingsChanged = shouldClearBindings
       ? this.clearSshRemotePtyBindingsForLeases(targetId, leasesToClear)
       : false
-    if (changed || bindingsChanged) {
-      this.flush()
-    }
+    return changed || bindingsChanged
   }
 
   markSshRemotePtyLease(targetId: string, ptyId: string, state: SshRemotePtyLease['state']): void {
@@ -7172,6 +7203,26 @@ export class Store {
       return Promise.reject(new Error('Cannot flush while persistence is finalized'))
     }
     return this.flushCurrentStateAsync(false, options.signal)
+  }
+
+  // Async twin of flushOrThrow: durable state only. Active-view and GitHub sidecars are
+  // quit/startup work and must not be snapshotted on the live SSH establish/reconnect path.
+  private async flushDurableStateOrThrowAsync(): Promise<void> {
+    if (this.writesFrozen || this.quitFlushStarted) {
+      throw new Error('Cannot flush while persistence is finalized')
+    }
+    for (;;) {
+      if (this.writeTimer) {
+        clearTimeout(this.writeTimer)
+        this.writeTimer = null
+      }
+      this.firstPendingSaveAt = null
+      const generation = this.writeGeneration
+      await this.enqueueWrite()
+      if (generation === this.writeGeneration) {
+        break
+      }
+    }
   }
 
   private async flushCurrentStateAsync(
