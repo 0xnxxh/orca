@@ -1,4 +1,8 @@
-import { MAX_DETACHED_LOOKUPS, MAX_UNSETTLED_LOOKUPS_PER_KEY } from './hosted-review-refresh-pacing'
+import {
+  MAX_DETACHED_LOOKUPS,
+  MAX_UNSETTLED_LOOKUP_KEYS,
+  MAX_UNSETTLED_LOOKUPS_PER_KEY
+} from './hosted-review-refresh-pacing'
 
 /**
  * Accounting for lookups that have not settled (P1-D).
@@ -52,6 +56,12 @@ export function settleDetachedLookup(): void {
 export function hasLookupCapacity(key: string): boolean {
   return (
     (unsettledByKey.get(key) ?? 0) < MAX_UNSETTLED_LOOKUPS_PER_KEY &&
+    // Why: this map is bounded by refusing new branches, not by evicting old
+    // ones — its entries are lookups still out there, and dropping a key would
+    // re-admit one for a branch already wedged. The bound sits above the
+    // in-flight cap so a wave wide enough to reach it is pathological, not the
+    // ordinary fan-out of a client polling a long worktree list.
+    (unsettledByKey.has(key) || unsettledByKey.size < MAX_UNSETTLED_LOOKUP_KEYS) &&
     detachedTotal < MAX_DETACHED_LOOKUPS
   )
 }

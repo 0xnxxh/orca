@@ -16,7 +16,8 @@ vi.mock('../git/runner', () => ({
 }))
 
 vi.mock('../providers/ssh-git-dispatch', () => ({
-  getSshGitProvider: getSshGitProviderMock
+  getSshGitProvider: getSshGitProviderMock,
+  getSshGitProviderGeneration: () => 0
 }))
 
 vi.mock('../source-control/pull-request-template', () => ({
