@@ -55,6 +55,10 @@ export class RelayOriginPool {
     return this.basisOrigins.get(basisConnId)?.availableControl ?? null
   }
 
+  hasLiveControl(): boolean {
+    return this.activeOrigin?.hasLiveControl() ?? false
+  }
+
   async openInitial(assignment: RelayAssignment, relayJwt: string): Promise<void> {
     this.assignment = assignment
     this.relayJwt = relayJwt
