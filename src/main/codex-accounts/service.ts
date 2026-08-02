@@ -1371,6 +1371,12 @@ export class CodexAccountService {
     return root
   }
 
+  /** Root that owns every managed account home; lets callers validate a pane's
+   *  recorded launch home without reaching into private state. */
+  getManagedAccountsRootPath(): string {
+    return this.getManagedAccountsRoot()
+  }
+
   private ensureManagedHomeForReauthentication(account: CodexManagedAccount): string {
     const wslInfo = parseWslUncPath(account.managedHomePath)
     if (wslInfo && process.platform === 'win32') {

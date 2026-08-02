@@ -2395,6 +2395,14 @@ export type PreloadApi = {
     listRecordedPaneLanes: (args: { ptyIds: string[] }) => Promise<Record<string, string>>
     /** Drops launch records so a dismissed prompt stays dismissed across restarts. */
     forgetStalePanes: (args: { ptyIds: string[] }) => Promise<void>
+    /** Decides whether an account-switch restart may `codex resume` the pane's
+     *  thread. Main bridges the rollout and the /goal row into the new home
+     *  before answering `resume`; every failure degrades to `fresh`. */
+    prepareAccountSwitchResume: (args: {
+      ptyId: string
+      threadId: string
+      transcriptPath?: string
+    }) => Promise<{ outcome: 'resume'; threadId: string } | { outcome: 'fresh'; reason: string }>
   }
   claudeAccounts: {
     list: () => Promise<ClaudeRateLimitAccountsState>

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import {
   _internals,
   bridgeCodexSessionsIntoAccountHome,
+  ensureCodexRolloutBridgedIntoAccountHome,
   startCodexAccountSessionBridgeInBackground
 } from './codex-account-session-bridge'
 
@@ -120,6 +121,91 @@ describe('bridgeCodexSessionsIntoAccountHome', () => {
     })
 
     expect(summary).toEqual({ scannedFiles: 0, linkedFiles: 0 })
+  })
+})
+
+describe('ensureCodexRolloutBridgedIntoAccountHome', () => {
+  const THREAD_ID = '123e4567-e89b-42d3-a456-426614174000'
+  const THREAD_ROLLOUT = join('2026', '07', '20', `rollout-2026-07-20T10-00-00-${THREAD_ID}.jsonl`)
+
+  it('links the located thread rollout into the target home at the same relative path', async () => {
+    const sourceHome = join(workspaceRoot, 'old-account')
+    const targetHome = join(workspaceRoot, 'new-account')
+    const sourcePath = writeRollout(sourceHome, THREAD_ROLLOUT, 'thread\n')
+
+    const targetPath = await ensureCodexRolloutBridgedIntoAccountHome({
+      threadId: THREAD_ID,
+      sourceCodexHomePath: sourceHome,
+      targetCodexHomePath: targetHome
+    })
+
+    expect(targetPath).toBe(rolloutPath(targetHome, THREAD_ROLLOUT))
+    // Why one inode: the resumed session appends to the same physical log.
+    expect(statSync(targetPath!).ino).toBe(statSync(sourcePath).ino)
+  })
+
+  it('accepts the hook-reported transcript path when it lives under the source home', async () => {
+    const sourceHome = join(workspaceRoot, 'old-account')
+    const targetHome = join(workspaceRoot, 'new-account')
+    const sourcePath = writeRollout(sourceHome, THREAD_ROLLOUT, 'thread\n')
+
+    const targetPath = await ensureCodexRolloutBridgedIntoAccountHome({
+      threadId: THREAD_ID,
+      transcriptPath: sourcePath,
+      sourceCodexHomePath: sourceHome,
+      targetCodexHomePath: targetHome
+    })
+
+    expect(targetPath).toBe(rolloutPath(targetHome, THREAD_ROLLOUT))
+  })
+
+  it('returns the existing target without relinking when the background bridge won', async () => {
+    const sourceHome = join(workspaceRoot, 'old-account')
+    const targetHome = join(workspaceRoot, 'new-account')
+    writeRollout(sourceHome, THREAD_ROLLOUT, 'thread\n')
+    writeRollout(targetHome, THREAD_ROLLOUT, 'already bridged\n')
+
+    const targetPath = await ensureCodexRolloutBridgedIntoAccountHome({
+      threadId: THREAD_ID,
+      sourceCodexHomePath: sourceHome,
+      targetCodexHomePath: targetHome
+    })
+
+    expect(targetPath).toBe(rolloutPath(targetHome, THREAD_ROLLOUT))
+    expect(readFileSync(targetPath!, 'utf-8')).toBe('already bridged\n')
+  })
+
+  it('declines when the thread has no rollout under the source home', async () => {
+    const sourceHome = join(workspaceRoot, 'old-account')
+    const targetHome = join(workspaceRoot, 'new-account')
+    writeRollout(sourceHome, ROLLOUT_A, 'someone else\n')
+
+    const targetPath = await ensureCodexRolloutBridgedIntoAccountHome({
+      threadId: THREAD_ID,
+      sourceCodexHomePath: sourceHome,
+      targetCodexHomePath: targetHome
+    })
+
+    expect(targetPath).toBeNull()
+  })
+
+  it('declines when the reported transcript path lies outside the source home', async () => {
+    const sourceHome = join(workspaceRoot, 'old-account')
+    const foreignHome = join(workspaceRoot, 'foreign')
+    const targetHome = join(workspaceRoot, 'new-account')
+    // Why: a same-id rollout also exists under the source home, but rejected
+    // provenance must not fall back to the id scan and resume it anyway.
+    writeRollout(sourceHome, THREAD_ROLLOUT, 'thread\n')
+    const foreignPath = writeRollout(foreignHome, THREAD_ROLLOUT, 'foreign\n')
+
+    const targetPath = await ensureCodexRolloutBridgedIntoAccountHome({
+      threadId: THREAD_ID,
+      transcriptPath: foreignPath,
+      sourceCodexHomePath: sourceHome,
+      targetCodexHomePath: targetHome
+    })
+
+    expect(targetPath).toBeNull()
   })
 })
 

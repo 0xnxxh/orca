@@ -144,7 +144,11 @@ import {
   readPrimarySelectionText
 } from '@/lib/primary-selection'
 import { APP_MENU_PASTE_EVENT } from '@/lib/app-menu-paste'
-import { CODEX_ACCOUNT_RESTART_STARTUP } from '@/lib/codex-session-restart'
+import {
+  CODEX_ACCOUNT_RESTART_STARTUP,
+  resolveCodexAccountRestartStartup,
+  type CodexAccountRestartStartup
+} from '@/lib/codex-session-restart'
 import { WORKSPACE_FILE_PATH_MIME, WORKSPACE_FILE_PATHS_MIME } from '@/lib/workspace-file-drag'
 import { isTerminalSessionStateSaveFailure } from '../../../../shared/terminal-session-state-save-failure'
 import { isTerminalZeroDimensionsDiagnostic } from '../../../../shared/terminal-zero-dimensions-diagnostic'
@@ -321,6 +325,8 @@ function TerminalPane(
   const paneKittyKeyboardModesRef = useRef<Map<number, TerminalKittyKeyboardModeTracker>>(new Map())
   const paneLastThemeModeRef = useRef<Map<number, 'dark' | 'light'>>(new Map())
   const panePtyBindingsRef = useRef<Map<number, IDisposable>>(new Map())
+  // Why: an account-switch restart awaits resume preparation before teardown; a second click mid-await must not tear the same pane down twice.
+  const restartingCodexPaneIdsRef = useRef<Set<number>>(new Set())
   // Why: panes replaying recorded PTY bytes; while non-zero, pty-connection drops xterm onData so auto-replies don't leak to the shell. See replay-guard.ts.
   const replayingPanesRef = useRef<Map<number, number>>(new Map())
   const isActiveRef = useRef(isActive)
@@ -1614,16 +1620,39 @@ function TerminalPane(
   }, [])
 
   const handleRestartCodexPane = useCallback(
-    (paneId: number) => {
+    async (paneId: number) => {
       const manager = managerRef.current
       const pane = manager?.getPanes().find((candidate) => candidate.id === paneId)
-      if (!manager || !pane) {
+      if (!manager || !pane || restartingCodexPaneIdsRef.current.has(paneId)) {
         return
       }
+      restartingCodexPaneIdsRef.current.add(paneId)
 
       const transport = paneTransportsRef.current.get(paneId)
       const panePtyBinding = panePtyBindingsRef.current.get(paneId)
       const existingPtyId = transport?.getPtyId()
+
+      // Why before teardown: resume preparation reads the live session's /goal
+      // through the old home's app-server and bridges it into the new home; a
+      // fresh decision leaves the restart byte-identical to today's relaunch.
+      let startup: CodexAccountRestartStartup = CODEX_ACCOUNT_RESTART_STARTUP
+      try {
+        if (existingPtyId) {
+          startup = await resolveCodexAccountRestartStartup({
+            ptyId: existingPtyId,
+            paneKey: makePaneKey(tabId, pane.leafId)
+          })
+        }
+      } finally {
+        // Why release here: everything after the await is synchronous, so no
+        // second restart can interleave before this one finishes.
+        restartingCodexPaneIdsRef.current.delete(paneId)
+      }
+      if (paneTransportsRef.current.get(paneId) !== transport) {
+        // Why: the pane reconnected while preparation ran; a second teardown
+        // would kill the replacement PTY.
+        return
+      }
 
       if (existingPtyId) {
         suppressPtyExit(existingPtyId)
@@ -1644,7 +1673,7 @@ function TerminalPane(
         tabId,
         worktreeId,
         cwd,
-        startup: CODEX_ACCOUNT_RESTART_STARTUP,
+        startup,
         paneTransportsRef,
         paneMode2031Ref,
         paneKittyKeyboardModesRef,
@@ -1723,7 +1752,7 @@ function TerminalPane(
       }
       // Why: the status-bar switcher requests a global Codex restart, but execution stays pane-scoped so a split tab doesn't lose unrelated non-Codex panes.
       if (consumePendingCodexPaneRestart(ptyId)) {
-        handleRestartCodexPane(pane.id)
+        void handleRestartCodexPane(pane.id)
       }
     }
   }, [

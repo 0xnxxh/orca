@@ -4,6 +4,7 @@ import { normalizeRuntimePathForComparison } from '../../shared/cross-platform-p
 import { listCodexSessionRolloutFilesIncrementally } from './codex-session-file-listing'
 import type { CodexSessionBridgeIncrementalOptions } from './codex-session-file-listing'
 import { linkCodexSessionFile } from './codex-session-link'
+import { findTrustedCodexSessionResume } from './codex-session-resume-home'
 
 /**
  * Bridges Codex history between Orca-managed Codex homes.
@@ -79,6 +80,56 @@ export async function bridgeCodexSessionsIntoAccountHome(args: {
     }
   }
   return summary
+}
+
+/**
+ * Bridges ONE thread's rollout into the target home ahead of `codex resume`.
+ *
+ * Why: the whole-tree bridge above runs in the background, and an account-switch
+ * restart must not race it — `codex resume` fails outright when the rollout is
+ * not yet linked under the launch home. Locating the rollout under the SOURCE
+ * home is also the attribution check: a thread that does not resolve there
+ * cannot be this pane's, so the caller drops the resume. Returns the target
+ * rollout path, or null when the thread cannot be bridged.
+ */
+export async function ensureCodexRolloutBridgedIntoAccountHome(args: {
+  threadId: string
+  transcriptPath?: string
+  sourceCodexHomePath: string
+  targetCodexHomePath: string
+}): Promise<string | null> {
+  const located = await findTrustedCodexSessionResume({
+    sessionId: args.threadId,
+    transcriptPath: args.transcriptPath,
+    trustedCodexHomes: [args.sourceCodexHomePath],
+    getSelectedAccountCodexHome: () => null,
+    systemCodexHomePath: null,
+    sharedRuntimeCodexHomePath: null
+  })
+  if (!located) {
+    return null
+  }
+  const sourceSessionsRoot = join(args.sourceCodexHomePath, 'sessions')
+  const targetSessionsRoot = join(args.targetCodexHomePath, 'sessions')
+  const targetFilePath = join(
+    targetSessionsRoot,
+    relative(sourceSessionsRoot, located.transcriptPath)
+  )
+  if (existsSync(targetFilePath)) {
+    return targetFilePath
+  }
+  try {
+    mkdirSync(dirname(targetFilePath), { recursive: true })
+  } catch (error) {
+    console.warn('[codex-account-session-bridge] Failed to create session directory:', error)
+    return null
+  }
+  if (linkCodexSessionFile(located.transcriptPath, targetFilePath)) {
+    return targetFilePath
+  }
+  // Why: the background bridge may have linked the same rollout between the
+  // existence check and the link attempt; a lost race is still a success.
+  return existsSync(targetFilePath) ? targetFilePath : null
 }
 
 /**

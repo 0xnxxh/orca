@@ -2054,7 +2054,13 @@ const api = {
     listRecordedPaneLanes: (args: { ptyIds: string[] }): Promise<Record<string, string>> =>
       ipcRenderer.invoke('codexAccounts:listRecordedPaneLanes', args),
     forgetStalePanes: (args: { ptyIds: string[] }): Promise<void> =>
-      ipcRenderer.invoke('codexAccounts:forgetStalePanes', args)
+      ipcRenderer.invoke('codexAccounts:forgetStalePanes', args),
+    prepareAccountSwitchResume: (args: {
+      ptyId: string
+      threadId: string
+      transcriptPath?: string
+    }): Promise<{ outcome: 'resume'; threadId: string } | { outcome: 'fresh'; reason: string }> =>
+      ipcRenderer.invoke('codexAccounts:prepareAccountSwitchResume', args)
   },
 
   claudeAccounts: {

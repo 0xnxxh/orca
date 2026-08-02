@@ -27,6 +27,61 @@ export const CODEX_ACCOUNT_RESTART_STARTUP = {
   startupCommandDelivery: 'shell-ready'
 } as const
 
+export type CodexAccountRestartStartup = {
+  command: string
+  startupCommandDelivery: 'shell-ready'
+}
+
+const CODEX_THREAD_ID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
+
+/**
+ * Chooses the startup command for a Codex account-switch restart.
+ *
+ * Resumes the pane's live thread (`codex resume <id>`) only when main confirms
+ * the whole bridge: thread attribution to the pane's launch home, the rollout
+ * linked into the new home, and the /goal row carried over via the app-server
+ * goal RPCs. Every other path — older codex CLIs, WSL/remote panes, unknown
+ * sessions, an older preload, any IPC failure — yields exactly today's fresh
+ * startup, because resuming the wrong session is worse than losing the goal.
+ */
+export async function resolveCodexAccountRestartStartup(args: {
+  ptyId: string
+  paneKey: string
+}): Promise<CodexAccountRestartStartup> {
+  if (isForeignMachineCodexPtyId(args.ptyId)) {
+    return CODEX_ACCOUNT_RESTART_STARTUP
+  }
+  const entry = useAppStore.getState().agentStatusByPaneKey[args.paneKey]
+  const threadId = entry?.providerSession?.id
+  if (
+    entry?.agentType !== 'codex' ||
+    entry.connectionId != null ||
+    entry.providerSession?.key !== 'session_id' ||
+    !threadId ||
+    // Why the strict match: the id is embedded in a shell command; only a bare
+    // rollout UUID may ever pass, and main re-validates it independently.
+    !CODEX_THREAD_ID_PATTERN.test(threadId)
+  ) {
+    return CODEX_ACCOUNT_RESTART_STARTUP
+  }
+  const prepareAccountSwitchResume = window.api.codexAccounts.prepareAccountSwitchResume
+  // Why the shape check: a preload older than this handler has no such method,
+  // and that must read as "resume unavailable", not as a restart failure.
+  if (typeof prepareAccountSwitchResume !== 'function') {
+    return CODEX_ACCOUNT_RESTART_STARTUP
+  }
+  const transcriptPath = entry.providerSession.transcriptPath?.trim()
+  const decision = await prepareAccountSwitchResume({
+    ptyId: args.ptyId,
+    threadId,
+    ...(transcriptPath ? { transcriptPath } : {})
+  }).catch(() => null)
+  if (decision?.outcome !== 'resume' || decision.threadId !== threadId) {
+    return CODEX_ACCOUNT_RESTART_STARTUP
+  }
+  return { command: `codex resume ${threadId}`, startupCommandDelivery: 'shell-ready' }
+}
+
 export type CodexPaneScanResult = {
   ptyId: string
   /** The pane may be shown a restart prompt (see isCodexRestartEligiblePane). */

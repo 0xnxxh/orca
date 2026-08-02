@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import type { CodexAccountAddTarget, CodexAccountService } from '../codex-accounts/service'
 import type { CodexAccountSelectionTarget } from '../codex-accounts/runtime-selection'
+import { prepareCodexAccountSwitchResumeForPane } from '../codex/codex-account-switch-resume'
 import { listRecordedCodexPaneLanes } from '../codex/codex-pane-account-registry'
 import { forgetStaleCodexPanes, listStaleCodexPanes } from '../codex/codex-stale-pane-accounts'
 import type { GlobalSettings } from '../../shared/types'
@@ -34,6 +35,35 @@ export function registerCodexAccountHandlers(
     }
     forgetStaleCodexPanes(args.ptyIds.filter((ptyId): ptyId is string => typeof ptyId === 'string'))
   })
+  ipcMain.handle(
+    'codexAccounts:prepareAccountSwitchResume',
+    (_event, args: { ptyId?: unknown; threadId?: unknown; transcriptPath?: unknown }) => {
+      const settings = getSettings?.()
+      if (
+        !settings ||
+        typeof args?.ptyId !== 'string' ||
+        typeof args.threadId !== 'string' ||
+        (args.transcriptPath !== undefined && typeof args.transcriptPath !== 'string')
+      ) {
+        return { outcome: 'fresh', reason: 'invalid-request' }
+      }
+      return prepareCodexAccountSwitchResumeForPane({
+        ptyId: args.ptyId,
+        threadId: args.threadId,
+        ...(typeof args.transcriptPath === 'string' ? { transcriptPath: args.transcriptPath } : {}),
+        settings,
+        managedAccountsRoot: codexAccounts.getManagedAccountsRootPath(),
+        selectedHostAccountCodexHomePath:
+          codexAccounts.runtimeHomeService.getSelectedHostAccountCodexHomePath(),
+        hostSystemDefaultRealHome: codexAccounts.runtimeHomeService.isHostSystemDefaultRealHome()
+      }).catch((error: unknown) => {
+        // Why: a failed preparation must degrade to today's fresh startup, never
+        // break the restart that is about to run.
+        console.warn('[codex-accounts] Account-switch resume preparation failed:', error)
+        return { outcome: 'fresh', reason: 'preparation-failed' }
+      })
+    }
+  )
   ipcMain.handle('codexAccounts:list', () => codexAccounts.listAccounts())
   ipcMain.handle('codexAccounts:add', (_event, args?: CodexAccountAddTarget) =>
     codexAccounts.addAccount(args)
