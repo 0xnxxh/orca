@@ -12,23 +12,27 @@ type ResolvedShortcutAction = { readonly type: string } | null
  * The non-Latin fallback makes it worse by re-deriving bindings from `event.code`, so
  * even a keystroke reported as `Process` still matches Ctrl+W and closes the pane.
  *
- * Two exemptions, both paths that already handle a live composition:
+ * The input-source switch is always exempt: it only hands the key back to the OS.
+ * Dropping it here would let xterm see the chord instead and write its control byte to
+ * the PTY, which is the very failure this guard exists to prevent.
  *
- * - **Enter** — the send path defers it until the commit lands, so it must get through.
- * - **Input-source switch** — it only hands the key back to the OS. Dropping it here
- *   would let xterm see the chord instead and write its control byte to the PTY, which
- *   is the very failure this guard exists to prevent.
+ * Enter is exempt only for a caller that defers it, which is a property of the caller
+ * and not of the key. A surface with a defer path needs Enter to arrive so the newline
+ * can be released after the commit; a surface without one needs Enter suppressed, so
+ * the keystroke commits the composition instead of submitting a line the user was
+ * still composing.
  *
  * Resolution is pure, so asking for the action before deciding costs nothing.
  */
 export function terminalShortcutIsOwnedByIme(
   event: KeyboardEvent,
-  resolveAction: (event: KeyboardEvent) => ResolvedShortcutAction
+  resolveAction: (event: KeyboardEvent) => ResolvedShortcutAction,
+  { enterIsDeferredToCommit = false }: { enterIsDeferredToCommit?: boolean } = {}
 ): boolean {
   if (!isImeCompositionKeyDown(event)) {
     return false
   }
-  if (event.code === 'Enter') {
+  if (enterIsDeferredToCommit && event.code === 'Enter') {
     return false
   }
   return resolveAction(event)?.type !== 'switchInputSource'

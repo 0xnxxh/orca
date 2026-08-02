@@ -457,7 +457,9 @@ export function useTerminalKeyboardShortcuts({
         return
       }
 
-      if (terminalShortcutIsOwnedByIme(e, resolveShortcutEvent)) {
+      if (
+        terminalShortcutIsOwnedByIme(e, resolveShortcutEvent, { enterIsDeferredToCommit: true })
+      ) {
         return
       }
 

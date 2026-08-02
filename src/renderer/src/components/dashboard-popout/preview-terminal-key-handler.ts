@@ -4,6 +4,7 @@ import { keybindingMatchesAction } from '../../../../shared/keybindings'
 import { useAppStore } from '@/store'
 import { prefetchLayoutBaseCharacters } from '@/lib/keyboard-layout/layout-base-character'
 import { createTerminalNativeOnlyShortcutTracker } from '@/components/terminal-pane/terminal-native-only-shortcut'
+import { terminalShortcutIsOwnedByIme } from '@/components/terminal-pane/terminal-shortcut-composition-guard'
 import {
   resolvePreviewShortcutAction,
   type PreviewShortcutContext
@@ -101,6 +102,18 @@ export function installPreviewTerminalKeyHandler(args: {
       return true
     }
     nativeOnlyShortcutTracker.prepareKeyDown(event)
+    const resolveAction = (
+      candidate: KeyboardEvent
+    ): ReturnType<typeof resolvePreviewShortcutAction> =>
+      resolvePreviewShortcutAction(candidate, {
+        ...args.getShortcutContext(),
+        optionKeyLocation
+      })
+    // Why: returning true keeps xterm's own composition handling intact; this preview has
+    // no deferred-newline path, so Enter is claimed too and commits rather than submits.
+    if (terminalShortcutIsOwnedByIme(event, resolveAction)) {
+      return true
+    }
     const keybindings = useAppStore.getState().keybindings
     if (keybindingMatchesAction('terminal.copySelection', event, platform, keybindings)) {
       const keyIdentity = event.code || event.key
@@ -129,10 +142,7 @@ export function installPreviewTerminalKeyHandler(args: {
       return consumeEvent(event)
     }
 
-    const action = resolvePreviewShortcutAction(event, {
-      ...args.getShortcutContext(),
-      optionKeyLocation
-    })
+    const action = resolveAction(event)
     if (!action) {
       return true
     }

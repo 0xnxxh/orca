@@ -30,9 +30,16 @@ describe('terminalShortcutIsOwnedByIme', () => {
 
   // Both exemptions matter in the same direction: claiming them would break a path that
   // already handles composition, rather than merely declining to fix one.
-  it('releases Enter so the send path can defer it to the commit', () => {
+  it('releases Enter for a caller that defers it to the commit', () => {
     const event = keydown({ key: 'Process', code: 'Enter', keyCode: 229, isComposing: true })
-    expect(terminalShortcutIsOwnedByIme(event, sendInput)).toBe(false)
+    expect(terminalShortcutIsOwnedByIme(event, sendInput, { enterIsDeferredToCommit: true })).toBe(
+      false
+    )
+  })
+
+  it('claims Enter for a caller with no defer path, so it commits instead of submitting', () => {
+    const event = keydown({ key: 'Process', code: 'Enter', keyCode: 229, isComposing: true })
+    expect(terminalShortcutIsOwnedByIme(event, sendInput)).toBe(true)
   })
 
   it('releases the input-source switch so the OS still receives it', () => {
