@@ -10,6 +10,7 @@ import {
   modifierFromKeyEvent,
   toModifierDoubleTapEvent
 } from '../../../../shared/modifier-double-tap-detector'
+import { isImeCompositionKeyDown } from '../../lib/ime-composition-keyboard-event'
 import { cn } from '../../lib/utils'
 import { ShortcutKeyCombo } from '../ShortcutKeyCombo'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
@@ -93,6 +94,10 @@ export function ShortcutRecorderButton({
       return
     }
 
+    // Fed to the detector rather than short-circuiting above it: withholding a composing press
+    // leaves the gesture armed, so a later real press would complete a tap nobody made.
+    const imeOwned = isImeCompositionKeyDown(event)
+
     // A modifier press never captures on its own — the detector decides whether
     // it completes a double-tap, leaving normal chords to capture on their key.
     if (modifierFromKeyEvent(event.code, event.key) !== null) {
@@ -105,6 +110,7 @@ export function ShortcutRecorderButton({
           control: event.ctrlKey,
           alt: event.altKey,
           meta: event.metaKey,
+          isComposing: imeOwned,
           isAutoRepeat: event.repeat
         }),
         Date.now()
@@ -118,6 +124,11 @@ export function ShortcutRecorderButton({
     }
 
     doubleTapDetectorRef.current?.reset()
+    // Recording a keystroke the IME owns writes a chord that can never fire: its `key` is
+    // 'Process' or 'Unidentified', and the matcher refuses IME-marked input anyway.
+    if (imeOwned) {
+      return
+    }
     onClearError(actionId)
     onCapture(actionId, {
       key: event.key,
@@ -143,7 +154,9 @@ export function ShortcutRecorderButton({
         shift: event.shiftKey,
         control: event.ctrlKey,
         alt: event.altKey,
-        meta: event.metaKey
+        meta: event.metaKey,
+        // The release is what arms the second half of the gesture, so it needs the same refusal.
+        isComposing: isImeCompositionKeyDown(event)
       }),
       Date.now()
     )
