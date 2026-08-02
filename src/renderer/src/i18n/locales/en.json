@@ -2524,7 +2524,9 @@
             "selectedForDeletionCount": "Selected for deletion: {{value0}}",
             "deleteButtonCount": "Delete {{value0}}",
             "archivedStatus": "Archived",
-            "readyStatus": "Ready"
+            "readyStatus": "Ready",
+            "f637f63882": "Resource Manager counts {{value0}}; this list found {{value1}}. That counter reads Orca's activity record alone, while this scan also checks each workspace's git history and skips disconnected remotes.",
+            "74f6c16279": "Back"
           },
           "backgroundRemoval": {
             "removed": "Removed workspaces: {{value0}}",
@@ -2571,6 +2573,16 @@
             "dirtyFilesBlocker": "Changed files",
             "unknownBaseBlocker": "Could not verify unpushed commits",
             "dismissedBlocker": "Ignored"
+          },
+          "workspace": {
+            "cleanup": {
+              "candidate": {
+                "row": {
+                  "b5d2b33e47": "Deleting…",
+                  "e1135728e3": "Queued for deletion"
+                }
+              }
+            }
           }
         }
       },
