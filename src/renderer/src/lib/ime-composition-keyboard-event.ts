@@ -101,10 +101,15 @@ export function isImeCompositionKeyDown(event: AnyKeyboardEvent): boolean {
   if (keybindingInputIsImeOwned(nativeEvent)) {
     return true
   }
-  // Why: an Escape the IME owns is marked above, so an unmarked one means this
-  // derived flag has drifted. compositionend is not guaranteed, so swallowing it
-  // would strand every cancel path behind a flag nothing is going to clear. Same
-  // rule as TERMINAL_IME_OWNED_KEYS in xterm-bypass-policy.ts, which omits Escape
-  // for exactly this reason.
+  // Why: UI Events defines `isComposing` as true for any key event dispatched between
+  // compositionstart and compositionend, so an Escape the IME owns is marked above by
+  // definition. An unmarked one is the browser stating we are not between those two
+  // events — it disagrees with this derived flag, and the browser is the authority.
+  // Escape is the one key where trusting the flag instead is unrecoverable: compositionend
+  // is not guaranteed, so swallowing it strands every cancel path behind a flag nothing
+  // will clear. Same rule as TERMINAL_IME_OWNED_KEYS in xterm-bypass-policy.ts.
+  //
+  // Spec-backed, not engine-verified: CANDIDATE_ESCAPE_DISMISSAL_TRACE is derived, and a
+  // browser that under-reports the bit would contradict this. Recording it settles it.
   return nativeEvent.key !== 'Escape' && isDocumentImeCompositionActive()
 }

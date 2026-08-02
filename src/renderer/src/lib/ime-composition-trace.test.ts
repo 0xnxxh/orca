@@ -17,7 +17,7 @@ import {
   IBUS_HANGUL_RETAINED_COMMIT_TRACE,
   IBUS_HANGUL_TERMINAL_JAMO_COMMIT_TRACE,
   IME_COMPOSITION_TRACES
-} from './ime-recorded-composition-traces.test-fixtures'
+} from './ime-derived-composition-traces.test-fixtures'
 
 const KEY_EVENT_WITHOUT_REPEAT: ImeTraceKeyEvent = {
   code: 'KeyE',

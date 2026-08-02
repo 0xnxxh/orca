@@ -2,6 +2,10 @@
 //
 // Adding a trace: prefer capturing one from a real engine and mark it `recorded`.
 // A `derived` trace pins current behavior but proves nothing about the engine.
+//
+// Everything defined below is `derived`. The only hardware recording in the suite is the
+// ibus-hangul trace re-exported here. Read a derived trace as a written-down assumption
+// waiting to be falsified by `pnpm ime:record`, not as evidence about any engine.
 
 import type {
   ImeCompositionTrace,
