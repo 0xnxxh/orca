@@ -54,7 +54,12 @@ export type XtermImeKeyboardOptions = {
   // Required Linux/Windows split: Linux passes standalone 229 keydowns like
   // macOS; the Windows-only suppression guards its preedit-diff race (preedit
   // can hit the textarea before compositionstart and be flushed by the diff).
+  // Chromium-family, so ChromeOS and Android count — they share that behavior.
   isLinux: boolean
+  /** Desktop Linux only. The candidate-key guards read ibus/fcitx behavior that
+   *  a Chromebook's IME does not share, so they are scoped tighter than the 229
+   *  policy above. Defaults to `isLinux` for callers on a known desktop. */
+  isDesktopLinux?: boolean
 }
 
 export const TERMINAL_INTERRUPT_INPUT = '\x03'
@@ -114,12 +119,15 @@ export function shouldSuppressTerminalImeKeyboardEvent(
     pendingCandidateKeyReleaseActive,
     linuxOrphanCandidateDigitGuardActive = false,
     isMac,
-    isLinux
+    isLinux,
+    isDesktopLinux = isLinux
   } = options
   const suppressOrphanCandidateDigit =
-    isLinux && linuxOrphanCandidateDigitGuardActive && isTerminalImeCandidateDigitKeyEvent(event)
+    isDesktopLinux &&
+    linuxOrphanCandidateDigitGuardActive &&
+    isTerminalImeCandidateDigitKeyEvent(event)
   const suppressCandidateKey =
-    isLinux &&
+    isDesktopLinux &&
     (pendingCandidateKeyReleaseActive ||
       (candidateKeyGuardActive && isTerminalImeCandidateSelectionKeyEvent(event)) ||
       suppressOrphanCandidateDigit)
@@ -162,7 +170,7 @@ export function shouldPreventDefaultTerminalImeCandidateKey(
   // the leaked selector to the PTY.
   return (
     event.type === 'keydown' &&
-    options.isLinux &&
+    (options.isDesktopLinux ?? options.isLinux) &&
     ((options.candidateKeyGuardActive && isTerminalImeCandidateSelectionKeyEvent(event)) ||
       (options.linuxOrphanCandidateDigitGuardActive === true &&
         isTerminalImeCandidateDigitKeyEvent(event)))

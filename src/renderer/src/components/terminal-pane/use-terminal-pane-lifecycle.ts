@@ -79,6 +79,7 @@ import { parseOsc7 } from './parse-osc7'
 import { guardParserHandler } from './terminal-parser-handler-guard'
 import { resolveTerminalJisYenInput } from './terminal-jis-yen-input'
 import { installTerminalImeCompositionTracker } from './terminal-ime-composition-tracker'
+import { resolveTerminalImePlatform } from './terminal-ime-platform'
 import { installTerminalImeLinuxCandidateState } from './terminal-ime-linux-candidate-state'
 import {
   armTerminalImePendingCandidateKeyRelease,
@@ -887,13 +888,8 @@ export function useTerminalPaneLifecycle({
         let pendingTerminalInterruptKeyup = false
         const pendingTerminalImeCandidateKeyReleases =
           createTerminalImePendingCandidateKeyReleases()
-        const isMac = navigator.userAgent.includes('Mac')
-        // Why: Android/ChromeOS UAs also contain "Linux"; scope the fcitx candidate-key policy to desktop Linux.
-        const isLinux =
-          !isMac &&
-          navigator.userAgent.includes('Linux') &&
-          !/Android|CrOS/.test(navigator.userAgent)
-        const linuxImeCandidateState = isLinux
+        const { isMac, isLinux, isDesktopLinux } = resolveTerminalImePlatform(navigator.userAgent)
+        const linuxImeCandidateState = isDesktopLinux
           ? installTerminalImeLinuxCandidateState(pane.terminal.element)
           : null
         const macNativeTextInputSourceTracker = isMac ? getMacNativeTextInputSourceTracker() : null
@@ -943,7 +939,8 @@ export function useTerminalPaneLifecycle({
             linuxOrphanCandidateDigitGuardActive:
               linuxCandidateClassification.candidateDigitGuardActive,
             isMac,
-            isLinux
+            isLinux,
+            isDesktopLinux
           }
           if (shouldSuppressTerminalImeKeyboardEvent(e, imeKeyboardOptions)) {
             // Why: clear before arm so a fresh keydown drops any stale pending release before arming its own.

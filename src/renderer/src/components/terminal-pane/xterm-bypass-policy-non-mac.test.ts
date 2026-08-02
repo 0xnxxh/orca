@@ -215,6 +215,32 @@ describe('shouldSuppressTerminalImeKeyboardEvent — Windows/Linux', () => {
     ).toBe(false)
   })
 
+  // A Chromebook's UA contains "Linux", so it is the same Chromium/229 platform, but it
+  // is not running ibus/fcitx. The two policies need different answers for it.
+  const chromeOsIdle = { ...linuxIdle, isDesktopLinux: false }
+
+  it('lets standalone ChromeOS 229 keydowns reach xterm, as on desktop Linux', () => {
+    expect(
+      shouldSuppressTerminalImeKeyboardEvent(
+        event({ key: 'Process', code: 'KeyN', keyCode: 229 }),
+        chromeOsIdle
+      )
+    ).toBe(false)
+  })
+
+  it('does not apply the fcitx candidate-key guards on ChromeOS', () => {
+    const guarded = { ...chromeOsIdle, candidateKeyGuardActive: true }
+    expect(
+      shouldPreventDefaultTerminalImeCandidateKey(event({ key: '1', code: 'Digit1' }), guarded)
+    ).toBe(false)
+    expect(
+      shouldPreventDefaultTerminalImeCandidateKey(event({ key: '1', code: 'Digit1' }), {
+        ...guarded,
+        isDesktopLinux: true
+      })
+    ).toBe(true)
+  })
+
   it('suppresses Linux 229 keydowns while the composition tracker is active', () => {
     expect(
       shouldSuppressTerminalImeKeyboardEvent(
