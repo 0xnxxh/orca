@@ -86,6 +86,24 @@ describe('document composition tracking', () => {
     expect(isImeCompositionKeyDown(keyEvent({ isComposing: false, keyCode: 13 }))).toBe(true)
   })
 
+  it('still suppresses an Escape the IME actually marked', () => {
+    dispatchOnBody('compositionstart')
+
+    expect(
+      isImeCompositionKeyDown(keyEvent({ isComposing: true, key: 'Escape', keyCode: 27 }))
+    ).toBe(true)
+    expect(isImeCompositionKeyDown(keyEvent({ key: 'Escape', keyCode: 229 }))).toBe(true)
+  })
+
+  it('lets an unmarked Escape through so a drifted flag cannot strand the cancel path', () => {
+    // No compositionend is guaranteed, so nothing else would clear this. Every
+    // rename field, search box and picker in the app cancels on Escape.
+    dispatchOnBody('compositionstart')
+
+    expect(isImeCompositionKeyDown(keyEvent({ key: 'Escape', keyCode: 27 }))).toBe(false)
+    expect(isImeCompositionKeyDown(keyEvent({ key: 'Enter', keyCode: 13 }))).toBe(true)
+  })
+
   it('tracks composition anywhere in the document', () => {
     dispatchOnBody('compositionstart')
     expect(isDocumentImeCompositionActive()).toBe(true)

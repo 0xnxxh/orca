@@ -84,21 +84,30 @@ export function _setDocumentImeCompositionActiveForTests(active: boolean): void 
  * Call this above the key dispatch, not inside each key branch, so every action
  * (send, history navigation, completion, cancel) is suppressed together.
  *
- * The 229 / 'Process' markers are unconditional here — there is deliberately no
- * opt-out argument. The only surface that needs a marked key to pass through is
- * the terminal, so it can reach xterm's CompositionHelper, and that decision
- * lives in xterm-bypass-policy.ts instead. Every caller of this predicate is
- * ordinary UI, so an opt-out would only ever be dead API.
+ * The 229 / 'Process' markers are unconditional here, and deliberately stricter
+ * than xterm-bypass-policy.ts, which lets a bare 229 keydown through on
+ * macOS/Linux. That is not a contradiction: the terminal needs the keystroke
+ * because xterm's CompositionHelper reads the committed glyph off the helper
+ * textarea. Callers of this predicate receive committed text through `input`, so
+ * a marked keydown carries nothing they could act on — its `key` is 'Process' or
+ * 'Unidentified', never the glyph. Suppressing it here costs no input.
  */
 export function isImeCompositionKeyDown(event: AnyKeyboardEvent): boolean {
   const nativeEvent = toNativeKeyboardEvent(event)
   if (!nativeEvent) {
     return isDocumentImeCompositionActive()
   }
-  return (
-    isDocumentImeCompositionActive() ||
+  if (
     nativeEvent.isComposing === true ||
     nativeEvent.keyCode === 229 ||
     nativeEvent.key === 'Process'
-  )
+  ) {
+    return true
+  }
+  // Why: an Escape the IME owns is marked above, so an unmarked one means this
+  // derived flag has drifted. compositionend is not guaranteed, so swallowing it
+  // would strand every cancel path behind a flag nothing is going to clear. Same
+  // rule as TERMINAL_IME_OWNED_KEYS in xterm-bypass-policy.ts, which omits Escape
+  // for exactly this reason.
+  return nativeEvent.key !== 'Escape' && isDocumentImeCompositionActive()
 }
