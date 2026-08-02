@@ -100,6 +100,7 @@ let initial = snapshot()
 
 function snapshot() {
   return {
+    selectionDirection: target.selectionDirection ?? 'none',
     selectionEnd: target.selectionEnd ?? 0,
     selectionStart: target.selectionStart ?? 0,
     value: target.value
@@ -114,20 +115,24 @@ function record(event) {
   } else if (event instanceof InputEvent) {
     entry.data = event.data ?? null
     entry.inputType = event.inputType
-    // Safari reports undefined rather than false and the distinction is load-bearing,
-    // so it is preserved instead of coerced.
-    entry.isComposing = event.isComposing
+    // Safari reports undefined rather than false and the distinction is load-bearing.
+    // JSON.stringify drops an undefined value outright, so null carries it instead;
+    // transcribe it back to undefined in the fixture.
+    entry.isComposing = event.isComposing ?? null
   } else if (event instanceof KeyboardEvent) {
     entry.code = event.code
     entry.isComposing = event.isComposing
     entry.key = event.key
     entry.keyCode = event.keyCode
+    // The accent panel a macOS press-and-hold opens is only recognisable by this.
+    entry.repeat = event.repeat
   }
   events.push(entry)
   countEl.textContent = String(events.length)
   const detail = [
     entry.key ? 'key=' + entry.key : '',
     entry.keyCode === undefined ? '' : 'keyCode=' + entry.keyCode,
+    entry.repeat ? 'repeat' : '',
     entry.inputType ? entry.inputType : '',
     entry.data === undefined ? '' : 'data=' + JSON.stringify(entry.data),
     'isComposing=' + entry.isComposing,
