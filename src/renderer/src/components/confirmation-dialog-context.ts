@@ -1,10 +1,6 @@
 import { createContext, useContext } from 'react'
 
-// Why: the context stays in a component-free module so React Fast Refresh never
-// rebuilds it. A module exporting both a component and this hook can never be a
-// refresh boundary, so Vite applies its updates in two waves under different
-// `?t=` stamps; importers refreshed in different waves then hold different
-// context objects and consumers throw below until a full reload.
+// Keep the context component-free so Fast Refresh preserves its identity.
 
 export type ConfirmationDialogOptions = {
   title: string
