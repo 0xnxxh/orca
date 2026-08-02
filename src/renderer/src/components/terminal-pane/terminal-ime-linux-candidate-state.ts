@@ -55,6 +55,10 @@ function acquirePhysicalKeyTracker(
       pressedCodes.delete(code)
     }
   }
+  // A key held across the blur then released on return reads as orphaned and arms the
+  // guard for one digit. Deliberate: not clearing would strand the code as pressed, and
+  // treating post-blur keyups as unknowable would miss the orphan on the first commit
+  // after focus, which is the common case.
   const reset = (): void => pressedCodes.clear()
   // Why: bubble-phase keyup cleanup runs after xterm's target handler, so the
   // pane can still classify that release against the shared pressed-key set.
