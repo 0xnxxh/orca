@@ -6800,7 +6800,7 @@ describe('Store', () => {
   it('durably encrypts SSH PTY consumer ownership for process restart recovery', async () => {
     const store = await createStore()
     store.setGitHubCache({ pr: { 'o/r#1': { fetchedAt: 1 } as never }, issue: {} })
-    store.upsertSshPtyConsumerRecovery({
+    await store.upsertSshPtyConsumerRecovery({
       targetId: 'ssh-1',
       clientInstanceId: 'client-1',
       serverBuildId: 'relay-build-1',
@@ -6858,7 +6858,7 @@ describe('Store', () => {
       port: 22,
       username: 'orca'
     })
-    store.upsertSshPtyConsumerRecovery({
+    await store.upsertSshPtyConsumerRecovery({
       targetId: 'ssh-1',
       clientInstanceId: 'client-1',
       serverBuildId: 'relay-build-1',
