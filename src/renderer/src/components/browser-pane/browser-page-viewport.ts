@@ -71,9 +71,7 @@ export function ensureBrowserPageViewport(
     if (!root || existing.shell.parentElement === root) {
       return existing
     }
-    // Why: a remounted slot root (overlay unmount while hidden, cross-worktree tab move) strands
-    // the cached shell in a removed subtree where its guest is already dead; drop it so the caller
-    // rebuilds against the live root instead of rendering into detached DOM forever (STA-3228).
+    // Why: a remounted slot strands this shell after Electron destroys its detached guest (STA-3228).
     existing.shell.remove()
     browserPageViewports.delete(browserPageId)
   }

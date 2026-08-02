@@ -45,7 +45,7 @@ import type {
 } from '../../../shared/types'
 import { hasFeatureInteraction } from '../../../shared/feature-interactions'
 import BrowserPane from './browser-pane/BrowserPane'
-import BrowserPaneOverlayLayer from './browser-pane/BrowserPaneOverlayLayer'
+import { RetainedBrowserPaneOverlayLayer } from './browser-pane/BrowserPaneOverlayLayer'
 import EmulatorPaneOverlayLayer from './emulator-pane/EmulatorPaneOverlayLayer'
 import { useBrowserAutomationVisibilityForAny } from './browser-pane/browser-automation-visibility'
 import { useBrowserMobileDriverForAny } from '@/lib/pane-manager/browser-mobile-driver-state'
@@ -2674,8 +2674,17 @@ const WorktreeSplitSurface = React.memo(function WorktreeSplitSurface({
         backgroundMountTabIds={backgroundMountTabIds}
         activationDeferredMountTabIds={activationDeferredMountTabIds}
       />
-      {/* Why: always mounted — its slots host persistent <webview> guests that die if the slot leaves the DOM (STA-3228); hidden worktrees park the pane subtree, so targeted background mounts only pay for empty slot divs. */}
-      <BrowserPaneOverlayLayer worktreeId={worktreeId} isWorktreeActive={isVisible} />
+      {/* Why: once eligible, retain slot DOM so hidden worktrees keep their Electron guests alive (STA-3228). */}
+      <RetainedBrowserPaneOverlayLayer
+        worktreeId={worktreeId}
+        isWorktreeActive={isVisible}
+        mountEligible={
+          isVisible ||
+          backgroundMountTabIds === null ||
+          hasAutomationVisibleBrowser ||
+          hasMobileDrivenBrowser
+        }
+      />
       {isVisible || backgroundMountTabIds === null ? (
         <EmulatorPaneOverlayLayer worktreeId={worktreeId} isWorktreeActive={isVisible} />
       ) : null}

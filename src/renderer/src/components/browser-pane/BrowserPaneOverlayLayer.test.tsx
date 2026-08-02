@@ -1,5 +1,7 @@
+// @vitest-environment happy-dom
+import { cleanup, render } from '@testing-library/react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserTab as BrowserTabState, Tab, TabGroup } from '../../../../shared/types'
 
 type MockAppState = {
@@ -54,7 +56,7 @@ vi.mock('./BrowserPane', () => ({
   )
 }))
 
-import BrowserPaneOverlayLayer from './BrowserPaneOverlayLayer'
+import BrowserPaneOverlayLayer, { RetainedBrowserPaneOverlayLayer } from './BrowserPaneOverlayLayer'
 
 describe('BrowserPaneOverlayLayer', () => {
   beforeEach(() => {
@@ -62,6 +64,34 @@ describe('BrowserPaneOverlayLayer', () => {
     mocks.mobileDrivenPageIds.clear()
     mocks.focusGroup.mockClear()
     mocks.state = createState()
+  })
+
+  afterEach(() => cleanup())
+
+  it('defers browser slots for a restricted hidden mount, then retains them after activation', () => {
+    const view = render(
+      <RetainedBrowserPaneOverlayLayer
+        worktreeId="wt-1"
+        isWorktreeActive={false}
+        mountEligible={false}
+      />
+    )
+
+    expect(view.container.querySelectorAll('[data-browser-overlay-tab-id]')).toHaveLength(0)
+
+    view.rerender(
+      <RetainedBrowserPaneOverlayLayer worktreeId="wt-1" isWorktreeActive mountEligible />
+    )
+    expect(view.container.querySelectorAll('[data-browser-overlay-tab-id]')).toHaveLength(2)
+
+    view.rerender(
+      <RetainedBrowserPaneOverlayLayer
+        worktreeId="wt-1"
+        isWorktreeActive={false}
+        mountEligible={false}
+      />
+    )
+    expect(view.container.querySelectorAll('[data-browser-overlay-tab-id]')).toHaveLength(2)
   })
 
   it('keeps inactive browser panes mounted for a visible worktree', () => {

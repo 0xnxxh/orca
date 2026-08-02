@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo } from 'react'
+import { memo, useCallback, useMemo, useRef } from 'react'
 import { registerBrowserOverlaySlotViewport } from './browser-page-viewport'
 import { useShallow } from 'zustand/react/shallow'
 import { useAppStore } from '../../store'
@@ -192,6 +192,25 @@ const BrowserPaneOverlayLayer = memo(function BrowserPaneOverlayLayer({
       })}
     </>
   )
+})
+
+export const RetainedBrowserPaneOverlayLayer = memo(function RetainedBrowserPaneOverlayLayer({
+  worktreeId,
+  isWorktreeActive,
+  mountEligible
+}: {
+  worktreeId: string
+  isWorktreeActive: boolean
+  mountEligible: boolean
+}): React.JSX.Element | null {
+  const hasMountedRef = useRef(mountEligible)
+  if (mountEligible) {
+    hasMountedRef.current = true
+  }
+  if (!hasMountedRef.current) {
+    return null
+  }
+  return <BrowserPaneOverlayLayer worktreeId={worktreeId} isWorktreeActive={isWorktreeActive} />
 })
 
 export default BrowserPaneOverlayLayer
