@@ -23239,16 +23239,21 @@ export class OrcaRuntimeService {
           const sshPtyProvider =
             orphanHost?.kind === 'ssh' ? this.getSshProviderFn?.(orphanHost.targetId) : undefined
           const ptyProvider = sshPtyProvider ?? this.getLocalProvider()
+          const externalOrphanHost = orphanHost?.kind === 'ssh' || orphanHost?.kind === 'runtime'
           if (ptyProvider) {
+            // External host inventories must never sweep a same-id local workspace.
             await killAllProcessesForWorktree(removalTarget.id, {
               runtime: this,
               resolvedWorktreeId: removalTarget.id,
               ...(orphanHost?.kind === 'ssh' ? { resolvedConnectionId: orphanHost.targetId } : {}),
+              ...(orphanHost?.kind === 'runtime'
+                ? { resolvedRuntimeEnvironmentId: orphanHost.environmentId }
+                : {}),
               localProvider: ptyProvider,
               onPtyStopped: this.onPtyStopped ?? undefined,
-              ...(orphanHost?.kind === 'ssh'
+              ...(externalOrphanHost
                 ? {
-                    includeProviderInventory: Boolean(sshPtyProvider),
+                    includeProviderInventory: orphanHost?.kind === 'ssh' && Boolean(sshPtyProvider),
                     includeLocalRegistry: false
                   }
                 : {})
@@ -23259,7 +23264,8 @@ export class OrcaRuntimeService {
               )
             })
           }
-          // Finish the watcher gate because the directory survives; shared folder-instance paths stay live.
+          // Why: nothing is deleted on disk here, so watchers must be restored — a folder
+          // workspace or explorer pane rooted at the same path stays live.
           const orphanFullPath = splitWorktreeId(removalTarget.id)?.worktreePath
           const orphanWatcherPath =
             splitWorktreeIdForFilesystem(removalTarget.id)?.worktreePath === orphanFullPath
@@ -23270,7 +23276,7 @@ export class OrcaRuntimeService {
               orphanWatcherPath,
               orphanHost?.kind === 'ssh' ? orphanHost.targetId : undefined
             )
-              .then((gate) => gate.finish(true))
+              .then((gate) => gate.finish(false))
               .catch(() => {})
           }
           this.clearOptimisticReconcileToken(removalTarget.id)
@@ -23280,7 +23286,10 @@ export class OrcaRuntimeService {
           this.invalidateWorktreeScanCacheForRepo(removalTarget.repoId)
           invalidateAuthorizedRootsCache()
           this.notifyWorktreesChanged(removalTarget.repoId)
-          return {}
+          // Why: non-desktop callers must be able to tell "forgotten" from "deleted"; nothing left the disk.
+          return {
+            warning: `Project ${removalTarget.repoId} is no longer tracked, so ${removalTarget.path} was forgotten without deleting the directory or its Git worktree registration.`
+          }
         }
         if (isFolderRepo(repo)) {
           if (removalTarget.id === getRuntimeFolderWorkspaceRootId(repo)) {

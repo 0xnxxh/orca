@@ -287,6 +287,20 @@ async function mapWithConcurrency<T, R>(
   return results
 }
 
+// Why: the worktree's own persisted host outranks the repo fallback; teardown and metadata purge must resolve the same owner
+// or the purge lands on the local partition while the SSH/runtime one keeps the workspace's tabs forever.
+function resolveWorktreeRemovalOwnerHostId(
+  store: Store,
+  worktreeId: string,
+  repo: Repo | undefined,
+  fallbackHostId?: ExecutionHostId
+): ExecutionHostId | undefined {
+  return (
+    store.getWorktreeMeta(worktreeId)?.hostId ??
+    (repo ? getRepoExecutionHostId(repo) : fallbackHostId)
+  )
+}
+
 function removeWorktreeMetadataAndTransientState(
   store: Store,
   worktreeId: string,
@@ -2819,7 +2833,7 @@ export function registerWorktreeHandlers(
     ): Promise<RemoveWorktreeResult> => {
       const { repoId } = parseWorktreeId(args.worktreeId)
       const repo = getRepoForWorktreeRemoval(store, repoId, args.hostId)
-      // Persisted ownership keeps ownerless concurrent forgets on one in-flight key.
+      // Repo-first (unlike owner resolution below) so this key matches worktrees:remove's; meta only covers ownerless forgets.
       const inFlightKey = getWorktreeRemovalInFlightKey(
         args.worktreeId,
         repo
@@ -2845,10 +2859,13 @@ export function registerWorktreeHandlers(
           )
         }
 
-        const ownerHost = parseExecutionHostId(
-          store.getWorktreeMeta(args.worktreeId)?.hostId ??
-            (repo ? getRepoExecutionHostId(repo) : args.hostId)
+        const ownerHostId = resolveWorktreeRemovalOwnerHostId(
+          store,
+          args.worktreeId,
+          repo,
+          args.hostId
         )
+        const ownerHost = parseExecutionHostId(ownerHostId)
         const sshPtyProvider =
           ownerHost?.kind === 'ssh' ? getSshPtyProvider(ownerHost.targetId) : undefined
         const externalHost = ownerHost?.kind === 'ssh' || ownerHost?.kind === 'runtime'
@@ -2873,7 +2890,8 @@ export function registerWorktreeHandlers(
         })
 
         runtime.clearOptimisticReconcileToken(args.worktreeId)
-        removeWorktreeMetadataAndTransientState(store, args.worktreeId, args.hostId)
+        // The resolved owner, not args.hostId: an orphan forget with no hostId still has to purge its SSH/runtime partition.
+        removeWorktreeMetadataAndTransientState(store, args.worktreeId, ownerHost?.id)
         // Why: cached roots outlive the forgotten workspace, so an ownerless path stays filesystem-authorized until a rebuild.
         invalidateAuthorizedRootsCache()
         preservedBranchCleanupByWorktreeId.delete(args.worktreeId)

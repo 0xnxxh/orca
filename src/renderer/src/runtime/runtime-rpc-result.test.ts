@@ -24,6 +24,31 @@ describe('hasRuntimeRpcErrorCode', () => {
     expect(hasRuntimeRpcErrorCode('repo_not_found', 'repo_not_found')).toBe(true)
   })
 
+  // Why: Electron IPC and relay envelopes re-wrap the token into a longer message and drop the cause.
+  it('matches codes re-wrapped into a transport message with no cause', () => {
+    expect(
+      hasRuntimeRpcErrorCode(
+        new Error("Error invoking remote method 'worktrees:updateMeta': Error: selector_not_found"),
+        'selector_not_found'
+      )
+    ).toBe(true)
+    expect(hasRuntimeRpcErrorCode('Error: selector_not_found', 'selector_not_found')).toBe(true)
+    expect(
+      hasRuntimeRpcErrorCode(
+        { message: 'relay call failed: selector_not_found\n' },
+        'selector_not_found'
+      )
+    ).toBe(true)
+    expect(
+      hasRuntimeRpcErrorCode(
+        new Error('worktree.set failed', {
+          cause: new Error('Error invoking remote method: Error: selector_not_found')
+        }),
+        'selector_not_found'
+      )
+    ).toBe(true)
+  })
+
   it('rejects diagnostic mentions and cyclic causes', () => {
     const cycle: { cause?: unknown; message: string } = { message: 'permission_denied' }
     cycle.cause = cycle
@@ -35,5 +60,9 @@ describe('hasRuntimeRpcErrorCode', () => {
       )
     ).toBe(false)
     expect(hasRuntimeRpcErrorCode(cycle, 'selector_not_found')).toBe(false)
+    // A longer identifier that merely ends in the token is a different code.
+    expect(
+      hasRuntimeRpcErrorCode(new Error('stale_selector_not_found'), 'selector_not_found')
+    ).toBe(false)
   })
 })

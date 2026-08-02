@@ -2614,13 +2614,13 @@ function deleteScannedSessionFieldsForOwners(
   )
 }
 
-// SSH workspace state can exist in both the renderer's local blob and main's host partition.
+// Remote (ssh:/runtime:) workspace state can exist in both the renderer's local blob and main's host
+// partition, because the renderer falls back to 'local' whenever worktree ownership is unresolved.
 function workspaceSessionPartitionIdsForHost(hostId: string | null | undefined): ExecutionHostId[] {
   const parsed = parseExecutionHostId(hostId)
-  if (parsed?.kind === 'runtime') {
-    return [parsed.id]
-  }
-  return parsed?.kind === 'ssh' ? [LOCAL_EXECUTION_HOST_ID, parsed.id] : [LOCAL_EXECUTION_HOST_ID]
+  return parsed && parsed.id !== LOCAL_EXECUTION_HOST_ID
+    ? [LOCAL_EXECUTION_HOST_ID, parsed.id]
+    : [LOCAL_EXECUTION_HOST_ID]
 }
 
 function removeWorkspaceSessionOwner(
@@ -5343,7 +5343,12 @@ export class Store {
   removeWorktreeMeta(worktreeId: string, hostId?: ExecutionHostId | null): void {
     // Persisted ownership beats stale live routing; hostId is only an ownerless fallback.
     const owner = this.state.worktreeMeta[worktreeId]?.hostId ?? hostId
-    const partitions = new Set<ExecutionHostId>(workspaceSessionPartitionIdsForHost(owner))
+    // Skip partitions main never wrote: materializing one fences every sibling worktree of the repo.
+    const partitions = new Set<ExecutionHostId>(
+      workspaceSessionPartitionIdsForHost(owner).filter((partition) =>
+        this.hasPersistedWorkspaceSession(partition)
+      )
+    )
     // A repo-wide fence must not rebase a sibling's unpersisted tabs onto main's copy.
     const fencedPartitions = new Set(
       [...partitions].filter(
@@ -6126,6 +6131,14 @@ export class Store {
     return this.state.workspaceSessionsByHostId?.[resolved] ?? getDefaultWorkspaceSession()
   }
 
+  /** Whether a partition was ever written; `getWorkspaceSession` defaults absent ones and cannot tell them apart. */
+  private hasPersistedWorkspaceSession(hostId: ExecutionHostId): boolean {
+    return (
+      hostId === LOCAL_EXECUTION_HOST_ID ||
+      this.state.workspaceSessionsByHostId?.[hostId] !== undefined
+    )
+  }
+
   getWorkspaceSessionHostIds(): ExecutionHostId[] {
     const hostIds = new Set<ExecutionHostId>([LOCAL_EXECUTION_HOST_ID])
     for (const key of Object.keys(this.state.workspaceSessionsByHostId ?? {})) {
@@ -6170,6 +6183,9 @@ export class Store {
     resolved: ExecutionHostId,
     options: { advanceTerminalTopologyRevision?: boolean }
   ): void {
+    if (!this.hasPersistedWorkspaceSession(resolved)) {
+      return
+    }
     const current = this.getWorkspaceSession(resolved)
     const session = removeWorkspaceSessionOwner(current, worktreeId, {
       advanceTerminalTopologyRevision: options.advanceTerminalTopologyRevision ?? true

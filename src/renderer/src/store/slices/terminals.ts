@@ -717,6 +717,8 @@ export type TerminalSlice = {
       shutdownReason?: AgentStatusWorktreeShutdownReason
       sleepingPaneKeys?: string[]
       expectedRuntimePtyIds?: string[]
+      /** Opt-in for callers that already tore the workspace down backend-side; omitting it keeps the runtime stop. */
+      backendOwnsPtyTeardown?: boolean
     }
   ) => Promise<void>
   shutdownCompletedAgentPaneForHibernation: (
@@ -3145,8 +3147,8 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       markShutdownPending()
       handlerSnapshots = unregisterPtyDataHandlers(rendererShutdownPtyIds) ?? []
       try {
-        // Backend workspace removal already owns physical PTY teardown; only retire renderer bindings here.
-        if (runtimeEnvironmentId && shutdownReason !== 'remove-worktree') {
+        // Why an opt-in, not the reason: defaulting to the stop keeps callers without backend teardown from leaking remote PTYs.
+        if (runtimeEnvironmentId && opts?.backendOwnsPtyTeardown !== true) {
           await (shutdownReason === 'manual-sleep'
             ? requestRemoteWorktreeSleep({
                 environmentId: runtimeEnvironmentId,

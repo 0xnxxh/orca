@@ -10329,7 +10329,8 @@ describe('registerWorktreeHandlers', () => {
         includeLocalRegistry: false
       })
       expect(runtimeStub.clearOptimisticReconcileToken).toHaveBeenCalledWith(worktreeId)
-      expect(store.removeWorktreeMeta).toHaveBeenCalledWith(worktreeId)
+      // The purge must be scoped to the same owner the sweep used, or the ssh:* partition keeps this worktree's session state.
+      expect(store.removeWorktreeMeta).toHaveBeenCalledWith(worktreeId, 'ssh:ssh-dead')
       expect(advertisedUrlWatcherForgetWorktreeMock).toHaveBeenCalledWith(worktreeId)
       expect(deleteWorktreeHistoryDirMock).toHaveBeenCalledWith(worktreeId)
       expect(mainWindow.webContents.send).toHaveBeenCalledWith('worktrees:changed', {
@@ -10405,6 +10406,52 @@ describe('registerWorktreeHandlers', () => {
       })
       expect(getSshGitProviderMock).not.toHaveBeenCalled()
       expect(removeWorktreeMock).not.toHaveBeenCalled()
+    })
+
+    it('purges the SSH owner partition for a hostId-less forget whose worktreeMeta row is already gone', async () => {
+      const repo = {
+        id: 'repo-ssh',
+        path: '/workspace/repo',
+        displayName: 'repo',
+        badgeColor: '#000',
+        addedAt: 0,
+        executionHostId: 'ssh:ssh-live' as const,
+        connectionId: 'ssh-live',
+        worktreeBaseRef: null
+      }
+      const worktreeId = 'repo-ssh::/workspace/feature-wt'
+      store.getRepos.mockReturnValue([repo])
+      store.getRepo.mockReturnValue(repo)
+      // The orphan case forget-local exists for: the meta row is lost, so only the repo still records ownership.
+      store.getWorktreeMeta.mockReturnValue(undefined)
+      getSshPtyProviderMock.mockReturnValue(undefined)
+      getLocalPtyProviderMock.mockReturnValue({} as never)
+
+      await expect(handlers['worktrees:forgetLocal'](null, { worktreeId })).resolves.toEqual({})
+
+      // Without the resolved owner the purge resolves to [local] only and ssh:ssh-live keeps tabsByWorktree et al. forever.
+      expect(store.removeWorktreeMeta).toHaveBeenCalledWith(worktreeId, 'ssh:ssh-live')
+    })
+
+    it('scopes the purge to a local folder workspace owner', async () => {
+      const repo = {
+        id: 'repo-folder-child',
+        path: '/workspace/folder',
+        displayName: 'folder',
+        badgeColor: '#000',
+        addedAt: 0,
+        kind: 'folder' as const
+      }
+      const worktreeId = 'repo-folder-child::/workspace/folder/child'
+      store.getRepos.mockReturnValue([repo])
+      store.getRepo.mockReturnValue(repo)
+      store.getWorktreeMeta.mockReturnValue(undefined)
+      getLocalPtyProviderMock.mockReturnValue({} as never)
+
+      await expect(handlers['worktrees:forgetLocal'](null, { worktreeId })).resolves.toEqual({})
+
+      expect(store.removeWorktreeMeta).toHaveBeenCalledWith(worktreeId, 'local')
+      expect(getSshPtyProviderMock).not.toHaveBeenCalled()
     })
 
     it('rejects forgetting a folder project root', async () => {

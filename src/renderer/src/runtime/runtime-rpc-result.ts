@@ -12,28 +12,45 @@ export class RuntimeRpcCallError extends Error {
   }
 }
 
+// Why: transports re-wrap the token into a longer message and drop the cause (Electron IPC's
+// "Error invoking remote method 'x': Error: selector_not_found", relay envelope re-throws), so a
+// trailing token still classifies while a mid-sentence diagnostic mention deliberately does not.
+function endsWithCodeToken(text: string, expectedCode: string): boolean {
+  const trimmed = text.trimEnd()
+  if (!trimmed.endsWith(expectedCode)) {
+    return false
+  }
+  const boundary = trimmed.at(-expectedCode.length - 1)
+  return boundary === undefined || !/[\w-]/.test(boundary)
+}
+
 export function hasRuntimeRpcErrorCode(error: unknown, expectedCode: string): boolean {
   const seen = new Set<unknown>()
   let current = error
   while (!seen.has(current)) {
+    if (typeof current === 'string') {
+      return endsWithCodeToken(current, expectedCode)
+    }
     if (!current || typeof current !== 'object') {
-      return current === expectedCode
+      return false
     }
     seen.add(current)
     const candidate = current as {
       cause?: unknown
       code?: unknown
+      message?: unknown
       response?: { error?: { code?: unknown; message?: unknown } }
     }
-    // Machine tokens are checked before Error.message so a subclass with a human-readable message still classifies by code.
-    if (
-      candidate.code === expectedCode ||
-      candidate.response?.error?.code === expectedCode ||
-      candidate.response?.error?.message === expectedCode
-    ) {
+    // Machine tokens are checked before messages so a subclass with a human-readable message still classifies by code.
+    if (candidate.code === expectedCode || candidate.response?.error?.code === expectedCode) {
       return true
     }
-    if (current instanceof Error && current.message === expectedCode) {
+    const messages = [candidate.message, candidate.response?.error?.message]
+    if (
+      messages.some(
+        (message) => typeof message === 'string' && endsWithCodeToken(message, expectedCode)
+      )
+    ) {
       return true
     }
     current = candidate.cause

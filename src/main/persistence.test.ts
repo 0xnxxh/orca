@@ -11731,11 +11731,14 @@ describe('Store host-partitioned workspace sessions', () => {
       lastVisitedAtByWorktreeId: { [worktreeId]: 123 },
       terminalTopologyRevisionByRepoId: { 'repo-gone': 3 }
     })
+    // The local blob is a co-owner surface for every remote host, since the renderer parks state
+    // there whenever worktree ownership is unresolved; leaving it behind leaks the removed worktree.
     expect(reloaded.getWorkspaceSession('local')).toMatchObject({
-      activeWorktreeId: worktreeId,
-      activeWorktreeIdsOnShutdown: [worktreeId],
-      lastVisitedAtByWorktreeId: { [worktreeId]: 123 },
-      terminalTopologyRevisionByRepoId: { 'repo-gone': 3 }
+      tabsByWorktree: {},
+      activeWorktreeId: null,
+      activeWorktreeIdsOnShutdown: [],
+      lastVisitedAtByWorktreeId: {},
+      terminalTopologyRevisionByRepoId: { 'repo-gone': 4 }
     })
   })
 
@@ -11756,8 +11759,10 @@ describe('Store host-partitioned workspace sessions', () => {
     store.removeWorktreeMeta(worktreeId)
 
     expect(store.getWorkspaceSession('runtime:env-a').tabsByWorktree[worktreeId]).toBeUndefined()
+    // Only the owning host's partition and the local blob it may spill into are cleaned; a same-id
+    // worktree on another host is a different workspace and must survive.
     expect(store.getWorkspaceSession('runtime:env-b').tabsByWorktree[worktreeId]).toHaveLength(1)
-    expect(store.getWorkspaceSession('local').tabsByWorktree[worktreeId]).toHaveLength(1)
+    expect(store.getWorkspaceSession('local').tabsByWorktree[worktreeId]).toBeUndefined()
   })
 
   it('cleans both surfaces that hold an ssh-owned worktree', async () => {
@@ -11862,10 +11867,12 @@ describe('Store host-partitioned workspace sessions', () => {
     store.removeWorktreeMeta(worktreeId, 'runtime:env-a')
 
     expect(store.getWorkspaceSession('runtime:env-a').tabsByWorktree[worktreeId]).toBeUndefined()
-    expect(store.getWorkspaceSession('local').tabsByWorktree[worktreeId]).toHaveLength(1)
+    expect(store.getWorkspaceSession('local').tabsByWorktree[worktreeId]).toBeUndefined()
   })
 
-  it('fences a delayed session write when its host partition was not persisted', async () => {
+  // Trade-off: the fence is repo-wide, so claiming authority over a partition main never wrote would
+  // rebase every sibling worktree of that repo onto an empty copy. A delayed write wins here instead.
+  it('does not fence a delayed session write when its host partition was never persisted', async () => {
     const store = await createStore()
     const worktreeId = 'repo-gone::/workspace/stale'
     const delayedSession = {
@@ -11878,10 +11885,9 @@ describe('Store host-partitioned workspace sessions', () => {
     store.removeWorkspaceSessionStateForWorktree(worktreeId, 'runtime:env-a')
     store.setWorkspaceSession(delayedSession, 'runtime:env-a')
 
-    expect(store.getWorkspaceSession('runtime:env-a')).toMatchObject({
-      tabsByWorktree: {},
-      terminalTopologyRevisionByRepoId: { 'repo-gone': 1 }
-    })
+    const session = store.getWorkspaceSession('runtime:env-a')
+    expect(session.tabsByWorktree[worktreeId]?.[0]?.id).toBe('stale-tab')
+    expect(session.terminalTopologyRevisionByRepoId?.['repo-gone']).toBeUndefined()
   })
 
   it('drops a corrupt host partition to defaults without failing the others', async () => {
