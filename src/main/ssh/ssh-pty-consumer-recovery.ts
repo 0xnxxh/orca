@@ -66,10 +66,9 @@ export async function rememberSshPtyConsumerRecovery(args: {
   store: Store
 }): Promise<void> {
   const current = recoveryByTarget.get(args.targetId)
-  if (current?.clientInstanceId !== args.clientInstanceId) {
+  if (current?.clientInstanceId !== args.clientInstanceId || current.detached) {
     return
   }
-  current.detached = false
   current.serverBuildId = args.serverBuildId
   current.owner = args.owner
   await args.store.upsertSshPtyConsumerRecovery({

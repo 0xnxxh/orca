@@ -115,7 +115,7 @@ export function listRegisteredRemovedSshTargetLabels(): Record<string, string> {
 export async function disconnectRegisteredSshTarget(targetId: string): Promise<void> {
   invalidateConnectAttempt(targetId)
   await runTargetLifecycle(targetId, () =>
-    teardownSshTargetTransport(targetId, (session) => session.detach())
+    teardownSshTargetTransport(targetId, (session) => session.detachAndPersist())
   )
 }
 
@@ -128,7 +128,7 @@ export async function removeRegisteredSshTarget(targetId: string): Promise<void>
   await runTargetLifecycle(targetId, async () => {
     try {
       // Why: removal is destructive; dispose so remote PTYs cannot reattach to a deleted target.
-      await teardownSshTargetTransport(targetId, (session) => session.dispose())
+      await teardownSshTargetTransport(targetId, (session) => session.disposeAndPersist())
     } catch (err) {
       // Why: a failed disconnect must not block metadata removal, else the target lingers in the store with uncleaned leases.
       console.warn(
@@ -191,7 +191,7 @@ async function awaitTargetLifecycle(targetId: string): Promise<void> {
 
 async function teardownSshTargetTransport(
   targetId: string,
-  teardown: (session: SshRelaySession) => void
+  teardown: (session: SshRelaySession) => void | Promise<void>
 ): Promise<void> {
   let transportDisconnect: Promise<{ ok: true } | { ok: false; error: unknown }>
   try {
@@ -220,7 +220,7 @@ async function teardownSshTargetTransport(
 
 async function teardownActiveSshSession(
   targetId: string,
-  teardown: (session: SshRelaySession) => void
+  teardown: (session: SshRelaySession) => void | Promise<void>
 ): Promise<void> {
   const session = activeSessions.get(targetId)
   if (!session) {
@@ -234,7 +234,7 @@ async function teardownActiveSshSession(
     teardownError = { error }
   }
   try {
-    teardown(session)
+    await teardown(session)
   } catch (error) {
     teardownError ??= { error }
   }
@@ -248,11 +248,16 @@ async function teardownActiveSshSession(
   }
 }
 
-// Why: a dropped session must detach, not just leave activeSessions — detach() releases the SSH PTY
+// Why: a dropped session must detach, not just leave activeSessions — detach releases the SSH PTY
 // consumer identity so the next connect reclaims its owner lease instead of minting a new one.
-function abandonFailedSshSession(targetId: string, session: SshRelaySession): void {
+// Why awaited, and why the map entry outlives the await: a retry can start the moment this returns,
+// so it must either find the session (and await this same latched teardown at the existing-session
+// path) or find nothing because the 'detached' lease write is already durable. Deleting first lets a
+// fast reconnect mark leases 'attached' and then have this session's late 'detached' write clobber it.
+async function abandonFailedSshSession(targetId: string, session: SshRelaySession): Promise<void> {
+  // Why: detachAndPersist transitions recovery ownership synchronously; only durability is awaited.
   try {
-    session.detach()
+    await session.detachAndPersist()
   } catch (error) {
     // Why: a teardown throw must not mask the connect error the caller is about to rethrow.
     console.warn(
@@ -1062,7 +1067,7 @@ export function registerSshHandlers(
       if (!isCurrentConnectAttempt(targetId, authority)) {
         throw createCancelledConnectAttemptError()
       }
-      existingSession.detach()
+      await existingSession.detachAndPersist()
       if (activeSessions.get(targetId) === existingSession) {
         activeSessions.delete(targetId)
         clearRelayLostBackoff(targetId)
@@ -1108,7 +1113,7 @@ export function registerSshHandlers(
       }
       // Why: clear this failed connect's flag so a later non-prompting connect isn't deferred.
       credentialRequestedForTarget.delete(targetId)
-      abandonFailedSshSession(targetId, session)
+      await abandonFailedSshSession(targetId, session)
       clearRelayLostBackoff(targetId)
       clearRelayStateOverride(targetId)
       broadcastSshState(getCurrentMainWindow, targetId, {
@@ -1146,9 +1151,16 @@ export function registerSshHandlers(
       if (!ownsSession()) {
         throw createCancelledConnectAttemptError()
       }
-      abandonFailedSshSession(targetId, session)
+      await abandonFailedSshSession(targetId, session)
       clearRelayLostBackoff(targetId)
-      await connectionManager!.disconnect(targetId)
+      try {
+        await connectionManager!.disconnect(targetId)
+      } catch (disconnectError) {
+        // Why: the establish failure is the actionable error; a teardown throw must not replace it.
+        console.warn(
+          `[ssh] Failed to disconnect transport after failed establish for ${targetId}: ${disconnectError instanceof Error ? disconnectError.message : String(disconnectError)}`
+        )
+      }
       throw err
     }
 
@@ -1218,7 +1230,7 @@ export function registerSshHandlers(
         // Why: a failed relay shutdown can leave the remote process alive in the grace window; keep the lease/session so the user can retry.
         throw new Error(`Failed to terminate SSH host sessions: ${shutdownFailures.join('; ')}`)
       }
-      await teardownSshTargetTransport(args.targetId, (session) => session.dispose())
+      await teardownSshTargetTransport(args.targetId, (session) => session.disposeAndPersist())
     })
   })
 
@@ -1237,7 +1249,9 @@ export function registerSshHandlers(
     const session = activeSessions.get(targetId)
     if (session) {
       // Why: detach() not dispose() — reset has its own stale-lease semantics below that dispose()'s clean-termination recording would hide.
-      await teardownActiveSshSession(targetId, (capturedSession) => capturedSession.detach())
+      await teardownActiveSshSession(targetId, (capturedSession) =>
+        capturedSession.detachAndPersist()
+      )
     }
 
     const existingConn = connectionManager!.getConnection(targetId)
@@ -1461,9 +1475,7 @@ export async function resetSshHandlerStateForTests(): Promise<void> {
   }
   ipcMain.removeHandler('ssh:submitCredential')
 
-  for (const session of activeSessions.values()) {
-    session.dispose()
-  }
+  await Promise.all([...activeSessions.values()].map((session) => session.disposeAndPersist()))
   activeSessions.clear()
   for (const targetId of relayLostBackoff.keys()) {
     clearRelayLostBackoff(targetId)

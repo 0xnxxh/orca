@@ -152,6 +152,13 @@ type TestStore = {
     ownerLease: string
   }): Promise<void>
   removeSshPtyConsumerRecovery(targetId: string): Promise<void>
+  upsertSshRemotePtyLease(lease: {
+    targetId: string
+    ptyId: string
+    state: 'attached' | 'detached' | 'expired'
+  }): void
+  markSshRemotePtyLeasesAsync(targetId: string, state: 'attached' | 'detached'): Promise<void>
+  markSshRemotePtyLeasesAttachedAsync(targetId: string, ptyIds: readonly string[]): Promise<void>
 }
 
 function consumerRecovery(clientInstanceId: string) {
@@ -546,6 +553,8 @@ describe('async persistence write path avoids synchronous fs syscalls', () => {
       vi.advanceTimersByTime(SAVE_DEBOUNCE_MS)
       allWrites = store.waitForPendingWrite()
       expect(fsCalls.asyncCalls.filter((call) => call === statCall)).toHaveLength(1)
+      releaseRotation()
+      await Promise.all([firstWrite, allWrites])
     } finally {
       releaseRotation()
       await allWrites
@@ -695,6 +704,26 @@ describe('async persistence write path avoids synchronous fs syscalls', () => {
     expect(persisted.sshPtyConsumerRecoveries[0]?.clientInstanceId).toBe('client-1')
   })
 
+  it('rejects the consumer-recovery durability barrier when the primary write fails', async () => {
+    const dir = makeDir()
+    const store = await createStore(dir)
+    const writeError = Object.assign(new Error('profile mount rejected write'), { code: 'EIO' })
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    fsCalls.dirPrefix = dir
+    fsCalls.recording = true
+    fsCalls.failAsync = (fn, target) =>
+      fn === 'open' && target.startsWith(`${dataFile(dir)}.`) ? writeError : null
+
+    try {
+      await expect(store.upsertSshPtyConsumerRecovery(consumerRecovery('client-1'))).rejects.toBe(
+        writeError
+      )
+    } finally {
+      fsCalls.recording = false
+      errors.mockRestore()
+    }
+  })
+
   it('removes SSH PTY consumer recovery without a sync syscall, durable once awaited', async () => {
     const dir = makeDir()
     const store = await createStore(dir)
@@ -713,6 +742,100 @@ describe('async persistence write path avoids synchronous fs syscalls', () => {
       sshPtyConsumerRecoveries: unknown[]
     }
     expect(persisted.sshPtyConsumerRecoveries).toEqual([])
+  })
+
+  it('persists failed-session lease detachment without a sync syscall', async () => {
+    const dir = makeDir()
+    const store = await createStore(dir)
+    store.upsertSshRemotePtyLease({ targetId: 'ssh-1', ptyId: 'pty-1', state: 'attached' })
+
+    fsCalls.dirPrefix = dir
+    fsCalls.recording = true
+    try {
+      await store.markSshRemotePtyLeasesAsync('ssh-1', 'detached')
+    } finally {
+      fsCalls.recording = false
+    }
+
+    expect(fsCalls.syncCalls).toEqual([])
+    const persisted = JSON.parse(readFileSync(dataFile(dir), 'utf-8')) as {
+      sshRemotePtyLeases: { state: string }[]
+    }
+    expect(persisted.sshRemotePtyLeases[0]?.state).toBe('detached')
+  })
+
+  it('persists selected reattach leases in one async write', async () => {
+    const dir = makeDir()
+    const store = await createStore(dir)
+    store.upsertSshRemotePtyLease({ targetId: 'ssh-1', ptyId: 'pty-1', state: 'detached' })
+    store.upsertSshRemotePtyLease({ targetId: 'ssh-1', ptyId: 'pty-2', state: 'expired' })
+    store.upsertSshRemotePtyLease({ targetId: 'ssh-1', ptyId: 'pty-3', state: 'detached' })
+
+    fsCalls.dirPrefix = dir
+    fsCalls.recording = true
+    try {
+      await store.markSshRemotePtyLeasesAttachedAsync('ssh-1', ['pty-1', 'pty-2'])
+    } finally {
+      fsCalls.recording = false
+    }
+
+    expect(fsCalls.syncCalls).toEqual([])
+    const persisted = JSON.parse(readFileSync(dataFile(dir), 'utf-8')) as {
+      sshRemotePtyLeases: { ptyId: string; state: string }[]
+    }
+    expect(persisted.sshRemotePtyLeases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ptyId: 'pty-1', state: 'attached' }),
+        expect.objectContaining({ ptyId: 'pty-2', state: 'expired' }),
+        expect.objectContaining({ ptyId: 'pty-3', state: 'detached' })
+      ])
+    )
+  })
+
+  it('keeps async writers serialized across a synchronous shutdown flush', async () => {
+    const dir = makeDir()
+    const store = await createStore(dir)
+    let signalFirstOpen!: () => void
+    const firstOpen = new Promise<void>((resolve) => {
+      signalFirstOpen = resolve
+    })
+    let releaseFirstOpen!: () => void
+    const firstOpenRelease = new Promise<void>((resolve) => {
+      releaseFirstOpen = resolve
+    })
+    let held = false
+    fsCalls.waitAsync = (fn, target) => {
+      if (held || fn !== 'open' || !target.endsWith('.tmp')) {
+        return null
+      }
+      held = true
+      signalFirstOpen()
+      return firstOpenRelease
+    }
+
+    fsCalls.dirPrefix = dir
+    fsCalls.recording = true
+    try {
+      const firstWrite = store.upsertSshPtyConsumerRecovery(consumerRecovery('client-1'))
+      await firstOpen
+      store.flushOrThrow()
+      const secondWrite = store.upsertSshPtyConsumerRecovery(consumerRecovery('client-2'))
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(fsCalls.asyncCalls.filter((call) => call.startsWith('open:'))).toHaveLength(1)
+      releaseFirstOpen()
+      await Promise.all([firstWrite, secondWrite])
+    } finally {
+      releaseFirstOpen()
+      fsCalls.recording = false
+      fsCalls.waitAsync = null
+    }
+
+    const persisted = JSON.parse(readFileSync(dataFile(dir), 'utf-8')) as {
+      sshPtyConsumerRecoveries: { clientInstanceId: string }[]
+    }
+    expect(persisted.sshPtyConsumerRecoveries[0]?.clientInstanceId).toBe('client-2')
   })
 
   it('lets a main-thread timer keep firing while a consumer-recovery write is in flight', async () => {

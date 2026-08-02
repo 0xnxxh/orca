@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SshRelaySession } from './ssh-relay-session'
-import { createMockDeps } from './ssh-relay-session-test-fixtures'
+import {
+  createMismatchedOwnerRecoveryError,
+  createMockDeps
+} from './ssh-relay-session-test-fixtures'
+import { getSshPtyConsumerRecovery } from './ssh-pty-consumer-recovery'
 
 const { muxRequestMock, openConsumerSessionMock } = vi.hoisted(() => ({
   muxRequestMock: vi.fn(),
@@ -93,6 +97,7 @@ vi.mock('../providers/ssh-git-dispatch', () => ({
 }))
 
 const { deployAndLaunchRelay } = await import('./ssh-relay-deploy')
+const { clearPtyOwnershipForConnection } = await import('../ipc/pty')
 
 describe('SshRelaySession consumer recovery durability', () => {
   beforeEach(() => {
@@ -147,5 +152,165 @@ describe('SshRelaySession consumer recovery durability', () => {
     await establishing
     expect(established).toBe(true)
     session.dispose()
+  })
+
+  it('keeps destructive disposal pending until consumer recovery is removed', async () => {
+    const { mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    vi.mocked(mockStore.getSshPtyConsumerRecovery).mockReturnValue({
+      targetId: 'target-disposal-durability',
+      clientInstanceId: 'client-disposal-durability',
+      serverBuildId: 'test-relay-build',
+      clientGeneration: 1,
+      ownerGeneration: 1,
+      ownerLease: 'owner-lease'
+    })
+    let settleRemoval!: () => void
+    vi.mocked(mockStore.removeSshPtyConsumerRecovery).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          settleRemoval = resolve
+        })
+    )
+    const session = new SshRelaySession(
+      'target-disposal-durability',
+      getMainWindow,
+      mockStore,
+      mockPortForward
+    )
+    let completed = false
+
+    const disposal = session.disposeAndPersist().then(() => {
+      completed = true
+    })
+    await Promise.resolve()
+
+    expect(session.getState()).toBe('disposed')
+    expect(completed).toBe(false)
+    expect(mockStore.markSshRemotePtyLeases).not.toHaveBeenCalled()
+    expect(mockStore.markSshRemotePtyLeasesAsync).toHaveBeenCalledWith(
+      'target-disposal-durability',
+      'terminated'
+    )
+
+    settleRemoval()
+    await disposal
+    expect(completed).toBe(true)
+  })
+
+  it('does not retry a stale owner after disposal wins the recovery-removal race', async () => {
+    const targetId = 'target-stale-owner-disposal'
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    vi.mocked(mockStore.getSshPtyConsumerRecovery).mockReturnValue({
+      targetId,
+      clientInstanceId: 'persisted-client',
+      serverBuildId: 'test-relay-build',
+      clientGeneration: 1,
+      ownerGeneration: 1,
+      ownerLease: 'stale-owner'
+    })
+    let signalRemovalStarted!: () => void
+    const removalStarted = new Promise<void>((resolve) => {
+      signalRemovalStarted = resolve
+    })
+    let settleRemoval!: () => void
+    vi.mocked(mockStore.removeSshPtyConsumerRecovery).mockImplementationOnce(() => {
+      signalRemovalStarted()
+      return new Promise<void>((resolve) => {
+        settleRemoval = resolve
+      })
+    })
+    openConsumerSessionMock.mockRejectedValueOnce(createMismatchedOwnerRecoveryError())
+    const session = new SshRelaySession(targetId, getMainWindow, mockStore, mockPortForward)
+
+    const establishing = session.establish(mockConn)
+    const failed = expect(establishing).rejects.toThrow('Session disposed during establish')
+    await removalStarted
+    const disposal = session.disposeAndPersist()
+    settleRemoval()
+    await Promise.all([failed, disposal])
+
+    expect(openConsumerSessionMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not remember a consumer opened after establish was disposed', async () => {
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    let signalOpenStarted!: () => void
+    const openStarted = new Promise<void>((resolve) => {
+      signalOpenStarted = resolve
+    })
+    let finishOpen!: (value: unknown) => void
+    openConsumerSessionMock.mockImplementationOnce(() => {
+      signalOpenStarted()
+      return new Promise((resolve) => {
+        finishOpen = resolve
+      })
+    })
+    const session = new SshRelaySession(
+      'target-open-disposal',
+      getMainWindow,
+      mockStore,
+      mockPortForward
+    )
+
+    const establishing = session.establish(mockConn)
+    const failed = expect(establishing).rejects.toThrow('Session disposed during establish')
+    await openStarted
+    await session.disposeAndPersist()
+    finishOpen({
+      mode: 'negotiated',
+      clientInstanceId: 'late-client',
+      clientGeneration: 1,
+      ownerGeneration: 1,
+      ownerLease: 'late-owner'
+    })
+    await failed
+
+    expect(mockStore.upsertSshPtyConsumerRecovery).not.toHaveBeenCalled()
+  })
+
+  it('upgrades a pending detach to a full disposal', async () => {
+    const targetId = 'target-teardown-upgrade'
+    const { mockConn, mockStore, mockPortForward, getMainWindow } = createMockDeps()
+    let settleDetachPersistence!: () => void
+    let settleDisposalPersistence!: () => void
+    vi.mocked(mockStore.markSshRemotePtyLeasesAsync)
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            settleDetachPersistence = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            settleDisposalPersistence = resolve
+          })
+      )
+    const session = new SshRelaySession(targetId, getMainWindow, mockStore, mockPortForward)
+    await session.establish(mockConn)
+
+    let detachCompleted = false
+    const detach = session.detachAndPersist().then(() => {
+      detachCompleted = true
+    })
+    const disposal = session.disposeAndPersist()
+
+    // Why: dispose supersedes the in-flight detach, so the destructive half must still run.
+    expect(mockStore.markSshRemotePtyLeasesAsync).toHaveBeenCalledWith(targetId, 'terminated')
+    expect(getSshPtyConsumerRecovery(targetId)).toBeUndefined()
+    // Why: 'shutdown' teardown, not detach's 'connection_lost' — PTY ownership is released for good.
+    expect(clearPtyOwnershipForConnection).toHaveBeenCalledWith(targetId)
+
+    settleDetachPersistence()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(detachCompleted).toBe(false)
+    settleDisposalPersistence()
+    await Promise.all([detach, disposal])
+
+    // Why: the reverse order is not an upgrade — a detach after disposal must not re-open ownership.
+    vi.mocked(mockStore.markSshRemotePtyLeasesAsync).mockClear()
+    await session.detachAndPersist()
+    expect(mockStore.markSshRemotePtyLeasesAsync).not.toHaveBeenCalled()
   })
 })
