@@ -60,6 +60,7 @@ These rules bind any change to keyboard handling, the chat composer, the termina
 - `attachCustomKeyEventHandler` returning `false` does **not** call `preventDefault()`, and it bypasses xterm's `CompositionHelper` entirely. Pair the two deliberately.
 - Never normalize IME output at commit. Normalize only at path handling and equality/search comparison.
 - Add a recorded event-trace fixture for the trace that motivated the change, plus a paired negative test proving non-IME behavior is unchanged.
+- Test a shortcut guard with the marked-but-real key shape (`key: 'Enter'`, `keyCode: 13`, `isComposing: true`), not `key: 'Process'`. A `Process` chord never resolves to an action, so the test passes with the guard deleted. Delete the guard and watch it fail before trusting it.
 
 ## Git Provider Compatibility
 
