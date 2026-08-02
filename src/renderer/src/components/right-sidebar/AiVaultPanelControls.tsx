@@ -234,6 +234,7 @@ export function VaultViewMenu({
   hideEmptySessions,
   adjustmentCount,
   onAgentEnabledChange,
+  onAllAgentsEnabledChange,
   onSortChange,
   onGroupChange,
   onHideEmptySessionsChange,
@@ -245,11 +246,15 @@ export function VaultViewMenu({
   hideEmptySessions: boolean
   adjustmentCount: number
   onAgentEnabledChange: (agent: AiVaultAgent, enabled: boolean) => void
+  onAllAgentsEnabledChange: (enabled: boolean) => void
   onSortChange: (sort: AiVaultSort) => void
   onGroupChange: (group: AiVaultGroup) => void
   onHideEmptySessionsChange: (hideEmptySessions: boolean) => void
   onReset: () => void
 }): React.JSX.Element {
+  const allAgentsSelected = agents.length === AI_VAULT_AGENTS.length
+  const noAgentsSelected = agents.length === 0
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -284,14 +289,41 @@ export function VaultViewMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" sideOffset={6} className="w-56">
-        <DropdownMenuLabel>
-          {translate('auto.components.right.sidebar.AiVaultPanelControls.agents', 'Agents')}
-        </DropdownMenuLabel>
+        {/* Why: Select all / Clear lets users isolate one agent without unchecking 15 boxes. */}
+        <div className="flex items-center justify-between px-2 py-1">
+          <span className="text-[11px] font-semibold text-muted-foreground">
+            {translate('auto.components.right.sidebar.AiVaultPanelControls.agents', 'Agents')}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              // Why: prevent focus move so Radix does not dismiss the menu mid multi-select.
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => onAllAgentsEnabledChange(true)}
+              className="rounded-full px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-40 disabled:hover:bg-transparent"
+              disabled={allAgentsSelected}
+            >
+              {translate(
+                'auto.components.right.sidebar.AiVaultPanelControls.selectAllAgents',
+                'Select all'
+              )}
+            </button>
+            <button
+              type="button"
+              // Why: prevent focus move so Radix does not dismiss the menu mid multi-select.
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => onAllAgentsEnabledChange(false)}
+              className="rounded-full px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-40 disabled:hover:bg-transparent"
+              disabled={noAgentsSelected}
+            >
+              {translate('auto.components.right.sidebar.AiVaultPanelControls.clearAgents', 'Clear')}
+            </button>
+          </div>
+        </div>
         {AI_VAULT_AGENTS.map((agent) => (
           <DropdownMenuCheckboxItem
             key={agent}
             checked={agents.includes(agent)}
-            disabled={agents.length === 1 && agents.includes(agent)}
             onCheckedChange={(checked) => onAgentEnabledChange(agent, checked === true)}
             onSelect={(event) => event.preventDefault()}
           >

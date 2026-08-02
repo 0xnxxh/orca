@@ -5038,5 +5038,14 @@
   },
   "settings.appearance.statusBar.sshToggleDescription": {
     "ko": "사용 가능한 SSH 및 원격 Orca 호스트가 있으면 표시합니다."
+  },
+  "auto.components.right.sidebar.AiVaultPanelControls.selectAllAgents": {
+    "ko": "모두 선택"
+  },
+  "auto.components.right.sidebar.AiVaultPanelControls.clearAgents": {
+    "ko": "지우기"
+  },
+  "auto.components.right.sidebar.AiVaultPanel.selectAtLeastOneAgent": {
+    "ko": "에이전트를 하나 이상 선택하세요"
   }
 }
