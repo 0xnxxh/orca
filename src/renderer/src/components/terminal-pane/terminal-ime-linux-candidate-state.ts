@@ -1,4 +1,5 @@
 import type { XtermBypassEvent } from './xterm-bypass-policy'
+import { isTerminalImeCandidateDigitKeyEvent } from './terminal-ime-candidate-key-release-guard'
 
 type TerminalImeLinuxCandidateState = {
   /** Classifies an event before the state observes it. */
@@ -21,7 +22,6 @@ type TerminalImeLinuxPhysicalKeyTracker = {
 
 const CANDIDATE_DIGIT_WINDOW_MS = 1500
 const ASCII_LOWERCASE_LETTER = /^[a-z]$/
-const ASCII_DIGIT = /^[0-9]$/
 const PHYSICAL_ASCII_LETTER_CODE = /^Key[A-Z]$/
 const physicalKeyTrackers = new WeakMap<
   EventTarget,
@@ -104,17 +104,6 @@ function isPlainAsciiLetterKey(event: XtermBypassEvent): boolean {
   )
 }
 
-/** Returns whether an event is an unmodified ASCII digit. */
-function isPlainAsciiDigitKey(event: XtermBypassEvent): boolean {
-  return (
-    ASCII_DIGIT.test(event.key) &&
-    !event.ctrlKey &&
-    !event.altKey &&
-    !event.metaKey &&
-    !event.shiftKey
-  )
-}
-
 /** Tracks legacy desktop Linux IME candidate-selection event sequences. */
 export function createTerminalImeLinuxCandidateState(
   now: () => number = () => Date.now(),
@@ -139,7 +128,9 @@ export function createTerminalImeLinuxCandidateState(
       const at = now()
       return {
         candidateDigitGuardActive:
-          event.type === 'keydown' && isPlainAsciiDigitKey(event) && candidateDigitUntil > at
+          event.type === 'keydown' &&
+          isTerminalImeCandidateDigitKeyEvent(event) &&
+          candidateDigitUntil > at
       }
     },
     /** Records the current event after its classification is consumed. */
@@ -155,7 +146,7 @@ export function createTerminalImeLinuxCandidateState(
       }
 
       if (event.type === 'keydown') {
-        if (!isPlainAsciiDigitKey(event)) {
+        if (!isTerminalImeCandidateDigitKeyEvent(event)) {
           candidateDigitUntil = 0
         }
         const physicalCode = event.code
