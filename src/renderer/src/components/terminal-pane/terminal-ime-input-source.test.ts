@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   _resetMacNativeTextInputSourceTrackerForTests,
   createMacNativeTextInputSourceTracker,
+  DISABLED_MAC_NATIVE_TEXT_INPUT_SOURCE_FEATURES,
   getMacNativeTextInputSourceFeatures,
   getMacNativeTextInputSourceTracker
 } from './terminal-ime-input-source'
@@ -86,9 +87,7 @@ describe('createMacNativeTextInputSourceTracker', () => {
       readInputSourceId: async () => sourceId
     })
 
-    expect(tracker.isActive()).toBe(false)
     await tracker.refresh()
-    expect(tracker.isActive()).toBe(false)
     expect(tracker.getFeatures()).toEqual({
       forwardAsciiPunctuation: false,
       forwardShortTextReplacements: false
@@ -96,7 +95,6 @@ describe('createMacNativeTextInputSourceTracker', () => {
 
     sourceId = 'com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese'
     await tracker.refresh()
-    expect(tracker.isActive()).toBe(true)
     expect(tracker.getFeatures()).toEqual({
       forwardAsciiPunctuation: true,
       forwardShortTextReplacements: false
@@ -104,7 +102,6 @@ describe('createMacNativeTextInputSourceTracker', () => {
 
     sourceId = 'com.apple.inputmethod.Vietnamese.Telex'
     await tracker.refresh()
-    expect(tracker.isActive()).toBe(true)
     expect(tracker.getFeatures()).toEqual({
       forwardAsciiPunctuation: false,
       forwardShortTextReplacements: true
@@ -123,7 +120,7 @@ describe('createMacNativeTextInputSourceTracker', () => {
     sourceId = 'com.apple.inputmethod.TCIM.Pinyin'
     window.dispatchEvent(new Event('focus'))
 
-    await vi.waitFor(() => expect(tracker.isActive()).toBe(true))
+    await vi.waitFor(() => expect(tracker.getFeatures().forwardAsciiPunctuation).toBe(true))
     tracker.dispose()
   })
 
@@ -133,7 +130,7 @@ describe('createMacNativeTextInputSourceTracker', () => {
       readInputSourceId: async () => sourceId
     })
     await tracker.refresh()
-    expect(tracker.isActive()).toBe(false)
+    expect(tracker.getFeatures()).toEqual(DISABLED_MAC_NATIVE_TEXT_INPUT_SOURCE_FEATURES)
 
     sourceId = 'com.apple.inputmethod.SCIM.ITABC'
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd' }))
@@ -168,7 +165,7 @@ describe('createMacNativeTextInputSourceTracker', () => {
       now.mockReturnValue(2001)
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c' }))
       await vi.waitFor(() => expect(readInputSourceId).toHaveBeenCalledTimes(2))
-      expect(tracker.isActive()).toBe(true)
+      expect(tracker.getFeatures().forwardAsciiPunctuation).toBe(true)
     } finally {
       now.mockRestore()
       tracker.dispose()
@@ -181,12 +178,14 @@ describe('createMacNativeTextInputSourceTracker', () => {
       readInputSourceId: async () => sourceId
     })
     await tracker.refresh()
-    expect(tracker.isActive()).toBe(true)
+    expect(tracker.getFeatures().forwardAsciiPunctuation).toBe(true)
 
     sourceId = 'com.apple.keylayout.ABC'
     window.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', ctrlKey: true }))
 
-    await vi.waitFor(() => expect(tracker.isActive()).toBe(false))
+    await vi.waitFor(() =>
+      expect(tracker.getFeatures()).toEqual(DISABLED_MAC_NATIVE_TEXT_INPUT_SOURCE_FEATURES)
+    )
     tracker.dispose()
   })
 

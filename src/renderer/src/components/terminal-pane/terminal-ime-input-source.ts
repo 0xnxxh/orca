@@ -6,8 +6,8 @@ export type MacNativeTextInputSourceFeatures = Readonly<{
 }>
 
 export type MacNativeTextInputSourceTracker = IDisposable & {
-  isActive: () => boolean
   getFeatures: () => MacNativeTextInputSourceFeatures
+  /** Test seam: awaits one read so specs need not race the fire-and-forget refresh. */
   refresh: () => Promise<void>
 }
 
@@ -175,7 +175,6 @@ export function createMacNativeTextInputSourceTracker(
   requestRefresh()
 
   return {
-    isActive: () => features.forwardAsciiPunctuation || features.forwardShortTextReplacements,
     getFeatures: () => features,
     refresh,
     dispose: () => {
