@@ -771,11 +771,13 @@ describe('async persistence write path avoids synchronous fs syscalls', () => {
     store.upsertSshRemotePtyLease({ targetId: 'ssh-1', ptyId: 'pty-1', state: 'detached' })
     store.upsertSshRemotePtyLease({ targetId: 'ssh-1', ptyId: 'pty-2', state: 'expired' })
     store.upsertSshRemotePtyLease({ targetId: 'ssh-1', ptyId: 'pty-3', state: 'detached' })
+    // Why: a PTY that exits mid-reattach is terminated before the batch write lands; it must stay dead.
+    store.upsertSshRemotePtyLease({ targetId: 'ssh-1', ptyId: 'pty-4', state: 'terminated' })
 
     fsCalls.dirPrefix = dir
     fsCalls.recording = true
     try {
-      await store.markSshRemotePtyLeasesAttachedAsync('ssh-1', ['pty-1', 'pty-2'])
+      await store.markSshRemotePtyLeasesAttachedAsync('ssh-1', ['pty-1', 'pty-2', 'pty-4'])
     } finally {
       fsCalls.recording = false
     }
@@ -788,7 +790,8 @@ describe('async persistence write path avoids synchronous fs syscalls', () => {
       expect.arrayContaining([
         expect.objectContaining({ ptyId: 'pty-1', state: 'attached' }),
         expect.objectContaining({ ptyId: 'pty-2', state: 'expired' }),
-        expect.objectContaining({ ptyId: 'pty-3', state: 'detached' })
+        expect.objectContaining({ ptyId: 'pty-3', state: 'detached' }),
+        expect.objectContaining({ ptyId: 'pty-4', state: 'terminated' })
       ])
     )
   })

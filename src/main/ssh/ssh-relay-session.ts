@@ -448,6 +448,9 @@ export class SshRelaySession {
       this.ptyConsumerSessionState = ptyConsumerSessionState
       await this.rememberPtyConsumerRecovery(serverBuildId)
       if (!ownsAttempt()) {
+        if (!mux.isDisposed()) {
+          mux.dispose()
+        }
         throw new Error('Session disposed during establish')
       }
 
@@ -695,7 +698,13 @@ export class SshRelaySession {
     }
     const pendingDetach = this.teardownCompletion
     this.teardownMode = 'dispose'
-    this.teardownCompletion = this.runDisposal(pendingDetach)
+    try {
+      this.teardownCompletion = this.runDisposal(pendingDetach)
+    } catch (error) {
+      // Why: a synchronous failure in the in-memory half must ride the completion promise, or a later
+      // disposeAndPersist reports success on a null completion and detachAndPersist re-runs runDetach.
+      this.teardownCompletion = Promise.reject(error)
+    }
     return this.teardownCompletion
   }
 
