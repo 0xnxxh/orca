@@ -69,6 +69,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import CommentMarkdown from '@/components/sidebar/CommentMarkdown'
 import { detectLanguage } from '@/lib/language-detect'
+import { isImeCompositionKeyDown } from '@/lib/ime-composition-keyboard-event'
 import { cn } from '@/lib/utils'
 import { setWithLRU } from '@/lib/scroll-cache'
 import { isScreenSubmitShortcut } from '@/lib/screen-submit-shortcut'
@@ -1304,6 +1305,12 @@ function PRReviewersPanel({
                 aria-haspopup="listbox"
                 className="h-8 min-w-0 cursor-text rounded-md border-border/50 bg-background text-xs"
                 onKeyDown={(event) => {
+                  // Above the dispatch: while a candidate window is open the arrows move the
+                  // candidate, Enter commits it and Escape dismisses it — none of the three may
+                  // also drive the reviewer picker.
+                  if (isImeCompositionKeyDown(event)) {
+                    return
+                  }
                   if (event.key === 'ArrowDown' && actionableReviewerRows.length > 0) {
                     event.preventDefault()
                     setActiveReviewerIndex(
@@ -5424,6 +5431,12 @@ function MentionTextarea({
         }}
         onBlur={() => setMentionQuery(null)}
         onKeyDown={(event) => {
+          // Above the dispatch, and above the `onKeyDown` delegate below: this is the only DOM
+          // handler on the textarea, so refusing here is what keeps a composing Escape from
+          // reaching a caller that would discard the draft.
+          if (isImeCompositionKeyDown(event)) {
+            return
+          }
           if (showSuggestions) {
             if (event.key === 'ArrowDown') {
               event.preventDefault()
